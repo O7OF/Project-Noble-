@@ -1,0 +1,11 @@
+# Build directories
+build/
+bin/
+out/
+.vs/
+*.user
+*.suo
+
+# Local cache & agent workspace
+.agents/
+*.log
