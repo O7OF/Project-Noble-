@@ -1,0 +1,49 @@
+#pragma once
+
+#include <windows.h>
+#include <d3d11.h>
+#include <memory>
+#include "ServerBrowser.hpp"
+#include "ArmorCustomizer.hpp"
+#include "WorkshopManager.hpp"
+#include "common/Types.hpp"
+
+namespace noble {
+
+enum class UIView {
+    ServerBrowser,
+    ArmorCustomizer,
+    WorkshopMods,
+    Settings
+};
+
+class UIManager {
+public:
+    static bool Initialize(HWND hwnd, ID3D11Device* device, ID3D11DeviceContext* context);
+    static void Shutdown();
+
+    static void BeginFrame();
+    static void Render();
+    static void EndFrame();
+
+    static LRESULT HandleWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
+
+    static void SetActiveView(UIView view) { s_activeView = view; }
+    static UIView GetActiveView() { return s_activeView; }
+
+    static ServerBrowser& GetServerBrowser() { return *s_serverBrowser; }
+    static ArmorCustomizer& GetArmorCustomizer() { return *s_armorCustomizer; }
+    static WorkshopManager& GetWorkshopManager() { return *s_workshopManager; }
+
+private:
+    static void ApplyReachTheme();
+    static void RenderTopNavigationBar();
+
+    static bool s_isInitialized;
+    static UIView s_activeView;
+    static std::unique_ptr<ServerBrowser> s_serverBrowser;
+    static std::unique_ptr<ArmorCustomizer> s_armorCustomizer;
+    static std::unique_ptr<WorkshopManager> s_workshopManager;
+};
+
+} // namespace noble

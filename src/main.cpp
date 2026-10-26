@@ -10,6 +10,7 @@
 #include "hooks/SigScanner.hpp"
 #include "vfs/VFS.hpp"
 #include "engine/BlamEngine.hpp"
+#include "ui/UIManager.hpp"
 
 #include <windows.h>
 #include <chrono>
@@ -74,16 +75,27 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         return 1;
     }
 
+    // Connect ImGui window message handling
+    window->SetCustomWndProc(&noble::UIManager::HandleWndProc);
     window->Show(nCmdShow);
 
-    // 8. Load and bootstrap haloreach.dll directly in process memory
+    // 8. Initialize Custom UI Overlay (ImGui + Reach Theme)
+    if (!noble::UIManager::Initialize(window->GetHwnd(), renderer->GetDevice(), renderer->GetContext())) {
+        NOBLE_ERROR("Failed to initialize UI Manager.");
+        return 1;
+    }
+
+    // Refresh workshop & local mod index
+    noble::UIManager::GetWorkshopManager().RefreshMods(reachInstall->workshopDirectory, userStoragePath / "mods");
+
+    // 9. Load and bootstrap haloreach.dll directly in process memory
     auto loader = std::make_unique<noble::Loader>();
     if (!loader->LoadReachDll(reachInstall->reachDllPath)) {
         NOBLE_ERROR("Failed to load haloreach.dll into process space.");
         return 1;
     }
 
-    // 9. Instantiate Blam! Engine & Data Access interfaces
+    // 10. Instantiate Blam! Engine & Data Access interfaces
     auto blamEngine = std::make_unique<noble::BlamEngine>();
     noble::EngineHostContext hostContext;
     hostContext.hWnd = window->GetHwnd();
@@ -98,9 +110,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         return 1;
     }
 
-    NOBLE_INFO("Phase 2 Bootstrapper & VFS active. Entering simulation and render loop...");
+    NOBLE_INFO("Phase 3 Bootstrapper, VFS & In-Game UI active. Entering render loop...");
 
-    // 10. Frame timing & message loop
+    // 11. Frame timing & message loop
     auto lastFrameTime = std::chrono::high_resolution_clock::now();
 
     while (window->ProcessMessages()) {
@@ -114,13 +126,19 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         // Graphics render pass
         renderer->BeginFrame();
         blamEngine->Render();
-        renderer->EndFrame(true);
 
+        // Custom UI Overlay render pass (Server Browser, Armor Locker, Workshop Mods)
+        noble::UIManager::BeginFrame();
+        noble::UIManager::Render();
+        noble::UIManager::EndFrame();
+
+        renderer->EndFrame(true);
         Sleep(1);
     }
 
-    // 11. Clean shutdown
+    // 12. Clean shutdown
     NOBLE_INFO("Initiating clean host shutdown...");
+    noble::UIManager::Shutdown();
     blamEngine->Shutdown();
     loader->Unload();
     noble::VFS::Shutdown();

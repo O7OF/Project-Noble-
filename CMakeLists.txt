@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(HaloReachCommunityEdition VERSION 0.2.0 LANGUAGES C CXX)
+project(HaloReachCommunityEdition VERSION 0.3.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -42,8 +42,17 @@ FetchContent_Declare(
     GIT_SHALLOW TRUE
 )
 
+# 4. Dear ImGui (Immediate Mode GUI for DirectX 11)
+FetchContent_Declare(
+    imgui
+    GIT_REPOSITORY https://github.com/ocornut/imgui.git
+    GIT_TAG v1.91.8
+    GIT_SHALLOW TRUE
+)
+
 FetchContent_MakeAvailable(spdlog nlohmann_json)
 
+# Setup MinHook as static library
 FetchContent_GetProperties(minhook)
 if(NOT minhook_POPULATED)
     FetchContent_Populate(minhook)
@@ -60,6 +69,26 @@ if(NOT minhook_POPULATED)
     )
 endif()
 
+# Setup Dear ImGui with Win32 and DX11 backends
+FetchContent_GetProperties(imgui)
+if(NOT imgui_POPULATED)
+    FetchContent_Populate(imgui)
+    add_library(imgui STATIC
+        ${imgui_SOURCE_DIR}/imgui.cpp
+        ${imgui_SOURCE_DIR}/imgui_demo.cpp
+        ${imgui_SOURCE_DIR}/imgui_draw.cpp
+        ${imgui_SOURCE_DIR}/imgui_tables.cpp
+        ${imgui_SOURCE_DIR}/imgui_widgets.cpp
+        ${imgui_SOURCE_DIR}/backends/imgui_impl_win32.cpp
+        ${imgui_SOURCE_DIR}/backends/imgui_impl_dx11.cpp
+    )
+    target_include_directories(imgui PUBLIC
+        ${imgui_SOURCE_DIR}
+        ${imgui_SOURCE_DIR}/backends
+    )
+    target_link_libraries(imgui PUBLIC d3d11)
+endif()
+
 # Source files
 set(SOURCES
     src/main.cpp
@@ -72,6 +101,10 @@ set(SOURCES
     src/hooks/HookManager.cpp
     src/vfs/VFS.cpp
     src/engine/BlamEngine.cpp
+    src/ui/UIManager.cpp
+    src/ui/ServerBrowser.cpp
+    src/ui/ArmorCustomizer.cpp
+    src/ui/WorkshopManager.cpp
 )
 
 set(HEADERS
@@ -87,6 +120,10 @@ set(HEADERS
     src/hooks/HookManager.hpp
     src/vfs/VFS.hpp
     src/engine/BlamEngine.hpp
+    src/ui/UIManager.hpp
+    src/ui/ServerBrowser.hpp
+    src/ui/ArmorCustomizer.hpp
+    src/ui/WorkshopManager.hpp
 )
 
 add_executable(noble-client WIN32 ${SOURCES} ${HEADERS})
@@ -102,4 +139,5 @@ target_link_libraries(noble-client PRIVATE
     spdlog::spdlog
     nlohmann_json::nlohmann_json
     minhook
+    imgui
 )
