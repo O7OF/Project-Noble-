@@ -48,6 +48,7 @@ public:
 private:
     void RenderSpartanCustomizer();
     void RenderEliteCustomizer();
+    void RenderCharacterPreview();
     void RenderColorPalettePicker(const char* label, int& selectedColorIndex);
 
     ArmorProfile m_profile;

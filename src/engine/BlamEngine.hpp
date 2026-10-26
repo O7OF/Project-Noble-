@@ -33,6 +33,14 @@ public:
     // Shuts down the engine cleanly
     void Shutdown();
 
+    // Launch a retail map or mission from the Steam MCC installation
+    bool LaunchMap(const std::string& mapName, const std::string& gameMode = "multiplayer", int difficulty = 1, uint32_t skulls = 0);
+
+    // Dispatches a developer/console command to haloreach.dll
+    bool ExecuteCommand(const std::string& command);
+
+    const std::string& GetCurrentMap() const { return m_currentMap; }
+
     bool IsInitialized() const { return m_isInitialized; }
     bool IsGameRunning() const { return m_isGameRunning; }
     void SetGameRunning(bool running) { m_isGameRunning = running; }
@@ -47,17 +55,20 @@ private:
     EngineHostContext m_context;
     bool m_isInitialized = false;
     bool m_isGameRunning = false;
+    std::string m_currentMap;
 
     // VTable function pointers for c_game_engine
     typedef void (*EngineShutdownFn)(void* thisPtr);
     typedef int32_t (*EngineInitFn)(void* thisPtr, void* arg1, void* arg2, void* arg3);
     typedef void (*EngineUpdateFn)(void* thisPtr, float deltaTime);
     typedef void (*EngineRenderFn)(void* thisPtr);
+    typedef int32_t (*EngineExecuteCommandFn)(void* thisPtr, const char* command);
 
     EngineShutdownFn m_fnShutdown = nullptr;
     EngineInitFn     m_fnInitialize = nullptr;
     EngineUpdateFn   m_fnUpdate = nullptr;
     EngineRenderFn   m_fnRender = nullptr;
+    EngineExecuteCommandFn m_fnExecuteCommand = nullptr;
 };
 
 } // namespace noble

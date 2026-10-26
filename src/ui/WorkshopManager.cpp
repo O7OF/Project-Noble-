@@ -2,15 +2,35 @@
 #include <imgui.h>
 #include <windows.h>
 #include <shellapi.h>
+#include <fstream>
 
 namespace noble {
 
 WorkshopManager::WorkshopManager() = default;
 
+static bool IsValidReachMap(const std::filesystem::path& path) {
+    std::ifstream file(path, std::ios::binary);
+    if (!file.is_open()) return false;
+
+    char header[8] = { 0 };
+    file.read(header, 8);
+    if (file.gcount() < 8) return false;
+
+    // Check Blam header magic: 'daeh' (0x64616568) or 'head' (0x68656164)
+    uint32_t magic = *reinterpret_cast<uint32_t*>(header);
+    if (magic != 0x68656164 && magic != 0x64616568) {
+        return false;
+    }
+
+    // Check Halo: Reach engine version (13 = 0xD for MCC Reach, 12 = 0xC for 360 Reach)
+    uint32_t version = *reinterpret_cast<uint32_t*>(header + 4);
+    return (version == 13 || version == 12);
+}
+
 void WorkshopManager::RefreshMods(const std::filesystem::path& workshopPath, const std::filesystem::path& localModsPath) {
     m_mods.clear();
 
-    // 1. Scan Steam Workshop Directory (if exists)
+    // 1. Scan Steam Workshop Directory (strictly Halo: Reach maps)
     if (std::filesystem::exists(workshopPath) && std::filesystem::is_directory(workshopPath)) {
         for (const auto& entry : std::filesystem::directory_iterator(workshopPath)) {
             if (entry.is_directory()) {
@@ -21,21 +41,21 @@ void WorkshopManager::RefreshMods(const std::filesystem::path& workshopPath, con
                 mod.isFromWorkshop = true;
                 mod.isEnabled = true;
 
-                // Count .map files
+                // Inspect .map files and ensure only Reach maps are registered
                 for (const auto& f : std::filesystem::recursive_directory_iterator(entry.path())) {
-                    if (f.is_regular_file()) {
-                        mod.sizeBytes += f.file_size();
-                        if (f.path().extension() == ".map") {
+                    if (f.is_regular_file() && f.path().extension() == ".map") {
+                        if (IsValidReachMap(f.path())) {
+                            mod.sizeBytes += f.file_size();
                             mod.mapFiles.push_back(f.path().filename().string());
                         }
                     }
                 }
 
+                // Only include if item contains valid Halo: Reach maps
                 if (!mod.mapFiles.empty()) {
-                    mod.title = mod.mapFiles[0] + " (Workshop Mod)";
+                    mod.title = mod.mapFiles[0] + " [Halo: Reach]";
+                    m_mods.push_back(mod);
                 }
-
-                m_mods.push_back(mod);
             }
         }
     }
@@ -52,40 +72,20 @@ void WorkshopManager::RefreshMods(const std::filesystem::path& workshopPath, con
                 mod.isEnabled = true;
 
                 for (const auto& f : std::filesystem::recursive_directory_iterator(entry.path())) {
-                    if (f.is_regular_file()) {
-                        mod.sizeBytes += f.file_size();
-                        if (f.path().extension() == ".map") {
+                    if (f.is_regular_file() && f.path().extension() == ".map") {
+                        if (IsValidReachMap(f.path())) {
+                            mod.sizeBytes += f.file_size();
                             mod.mapFiles.push_back(f.path().filename().string());
                         }
                     }
                 }
 
-                m_mods.push_back(mod);
+                if (!mod.mapFiles.empty()) {
+                    mod.title = mod.id + " [Halo: Reach Custom]";
+                    m_mods.push_back(mod);
+                }
             }
         }
-    }
-
-    // Fallback demo mod if no workshop items are yet subscribed
-    if (m_mods.empty()) {
-        m_mods.push_back({
-            "workshop_demo_01",
-            "Reach Evolved Overhaul (Demo Mod)",
-            "Complete sandbox overhaul restoring classic CE-style health, weapon balance, and re-tuned AI.",
-            "TheVengefulVadam",
-            1024 * 1024 * 342, // ~342 MB
-            { "m10_crash.map", "m20_sword.map" },
-            true, true, workshopPath
-        });
-
-        m_mods.push_back({
-            "local_forge_palette",
-            "Expanded Forge Palette - Extinction Map Pack",
-            "Includes 250+ cross-palette objects unlocked for Forge World, Tempest, and Anchor 9.",
-            "Community Modder",
-            1024 * 1024 * 45, // ~45 MB
-            { "forge_halo.map" },
-            true, false, localModsPath
-        });
     }
 }
 

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(HaloReachCommunityEdition VERSION 0.3.0 LANGUAGES C CXX)
+project(HaloReachCommunityEdition VERSION 0.4.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -105,6 +105,9 @@ set(SOURCES
     src/ui/ServerBrowser.cpp
     src/ui/ArmorCustomizer.cpp
     src/ui/WorkshopManager.cpp
+    src/ui/MissionLauncher.cpp
+    src/network/UPnP.cpp
+    src/network/SessionManager.cpp
 )
 
 set(HEADERS
@@ -124,6 +127,9 @@ set(HEADERS
     src/ui/ServerBrowser.hpp
     src/ui/ArmorCustomizer.hpp
     src/ui/WorkshopManager.hpp
+    src/ui/MissionLauncher.hpp
+    src/network/UPnP.hpp
+    src/network/SessionManager.hpp
 )
 
 add_executable(noble-client WIN32 ${SOURCES} ${HEADERS})
@@ -136,6 +142,8 @@ target_link_libraries(noble-client PRIVATE
     d3d11
     dxgi
     d3dcompiler
+    ws2_32
+    iphlpapi
     spdlog::spdlog
     nlohmann_json::nlohmann_json
     minhook

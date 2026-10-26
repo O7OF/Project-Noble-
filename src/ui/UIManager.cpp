@@ -9,7 +9,8 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg
 namespace noble {
 
 bool UIManager::s_isInitialized = false;
-UIView UIManager::s_activeView = UIView::ServerBrowser;
+UIView UIManager::s_activeView = UIView::MissionLauncher;
+std::unique_ptr<MissionLauncher> UIManager::s_missionLauncher;
 std::unique_ptr<ServerBrowser> UIManager::s_serverBrowser;
 std::unique_ptr<ArmorCustomizer> UIManager::s_armorCustomizer;
 std::unique_ptr<WorkshopManager> UIManager::s_workshopManager;
@@ -33,6 +34,7 @@ bool UIManager::Initialize(HWND hwnd, ID3D11Device* device, ID3D11DeviceContext*
         return false;
     }
 
+    s_missionLauncher = std::make_unique<MissionLauncher>();
     s_serverBrowser = std::make_unique<ServerBrowser>();
     s_armorCustomizer = std::make_unique<ArmorCustomizer>();
     s_workshopManager = std::make_unique<WorkshopManager>();
@@ -164,16 +166,17 @@ void UIManager::RenderTopNavigationBar() {
         ImGui::SameLine();
     };
 
-    NavButton("SERVERS", UIView::ServerBrowser);
-    NavButton("ARMOR LOCKER", UIView::ArmorCustomizer);
-    NavButton("WORKSHOP MODS", UIView::WorkshopMods);
-    NavButton("SETTINGS", UIView::Settings);
+    NavButton("MISSIONS / PLAY", UIView::MissionLauncher, 140.0f);
+    NavButton("SERVERS", UIView::ServerBrowser, 110.0f);
+    NavButton("ARMOR LOCKER", UIView::ArmorCustomizer, 130.0f);
+    NavButton("REACH MODS", UIView::WorkshopMods, 120.0f);
+    NavButton("SETTINGS", UIView::Settings, 100.0f);
 
     ImGui::End();
     ImGui::PopStyleVar();
 }
 
-void UIManager::Render() {
+void UIManager::Render(BlamEngine* engine) {
     if (!s_isInitialized) return;
 
     RenderTopNavigationBar();
@@ -194,6 +197,9 @@ void UIManager::Render() {
     ImGui::Begin("MainWorkspace", nullptr, flags);
 
     switch (s_activeView) {
+        case UIView::MissionLauncher:
+            if (s_missionLauncher) s_missionLauncher->Render(engine);
+            break;
         case UIView::ServerBrowser:
             if (s_serverBrowser) s_serverBrowser->Render();
             break;
@@ -204,13 +210,15 @@ void UIManager::Render() {
             if (s_workshopManager) s_workshopManager->Render();
             break;
         case UIView::Settings:
-            ImGui::TextColored(ImVec4(0.0f, 0.85f, 1.0f, 1.0f), "SYSTEM & GRAPHICS SETTINGS");
+            ImGui::TextColored(ImVec4(0.0f, 0.85f, 1.0f, 1.0f), "SYSTEM, NETWORK & GRAPHICS SETTINGS");
             ImGui::Separator();
             ImGui::Spacing();
-            ImGui::Text("Resolution: 1280 x 720 (Windowed)");
-            ImGui::Text("Renderer:   Direct3D 11 (Hardware)");
-            ImGui::Text("VSync:      Enabled (60 FPS Cap)");
-            ImGui::Text("Anti-Cheat: EAC Bypassed (Direct haloreach.dll host)");
+            ImGui::Text("Client Host: Project Noble (Halo: Reach Community Edition)");
+            ImGui::Text("Engine Target: haloreach.dll (Blam! Engine MCC x64)");
+            ImGui::Text("Resolution:  1280 x 720 (Hardware Scalable)");
+            ImGui::Text("Renderer:    Direct3D 11 (Hardware Acceleration)");
+            ImGui::Text("Networking:  Self-Hosted P2P with UPnP Gateway NAT Traversal");
+            ImGui::Text("Anti-Cheat:  Bypassed (Zero EAC injection)");
             break;
     }
 

@@ -11,6 +11,7 @@
 #include "vfs/VFS.hpp"
 #include "engine/BlamEngine.hpp"
 #include "ui/UIManager.hpp"
+#include "network/SessionManager.hpp"
 
 #include <windows.h>
 #include <chrono>
@@ -125,9 +126,12 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         return 1;
     }
 
-    NOBLE_INFO("Phase 3 Bootstrapper, VFS & In-Game UI active. Entering render loop...");
+    // 11. Initialize P2P & Self-Hosting Network Subsystem
+    noble::SessionManager::Get().Initialize();
 
-    // 11. Frame timing & message loop
+    NOBLE_INFO("Phase 4 Host, P2P Network, VFS & Mission Launcher active. Entering render loop...");
+
+    // 12. Frame timing & message loop
     auto lastFrameTime = std::chrono::high_resolution_clock::now();
 
     while (window->ProcessMessages()) {
@@ -142,17 +146,18 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         renderer->BeginFrame();
         blamEngine->Render();
 
-        // Custom UI Overlay render pass (Server Browser, Armor Locker, Workshop Mods)
+        // Custom UI Overlay render pass (Missions, Servers, Armor Locker, Workshop Mods)
         noble::UIManager::BeginFrame();
-        noble::UIManager::Render();
+        noble::UIManager::Render(blamEngine.get());
         noble::UIManager::EndFrame();
 
         renderer->EndFrame(true);
         Sleep(1);
     }
 
-    // 12. Clean shutdown
+    // 13. Clean shutdown
     NOBLE_INFO("Initiating clean host shutdown...");
+    noble::SessionManager::Get().Shutdown();
     noble::UIManager::Shutdown();
     blamEngine->Shutdown();
     loader->Unload();

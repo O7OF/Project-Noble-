@@ -37,6 +37,7 @@ private:
     void RenderServerList();
     void RenderServerDetails();
     void RenderDirectConnectModal();
+    void RenderHostModal();
 
     std::vector<ServerEntry> m_servers;
     int m_selectedServerIndex = -1;
@@ -52,6 +53,14 @@ private:
     bool m_showDirectConnectModal = false;
     char m_directConnectIp[64] = "127.0.0.1:11774";
     char m_directConnectPassword[64] = { 0 };
+
+    // Self-Hosting modal state
+    bool m_showHostModal = false;
+    char m_hostSessionName[64] = "Spartan's Reach Lobby";
+    int m_hostModeIndex = 0;   // 0=Multiplayer, 1=Campaign, 2=Firefight, 3=Forge
+    int m_hostMapIndex = 0;
+    int m_hostMaxPlayers = 16;
+    bool m_hostOnlineUPnP = true;
 };
 
 } // namespace noble
