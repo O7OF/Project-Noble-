@@ -34,6 +34,9 @@ public:
     void Shutdown();
 
     bool IsInitialized() const { return m_isInitialized; }
+    bool IsGameRunning() const { return m_isGameRunning; }
+    void SetGameRunning(bool running) { m_isGameRunning = running; }
+
     void* GetEngineInstance() const { return m_engineInstance; }
     void* GetDataAccessInstance() const { return m_dataAccessInstance; }
 
@@ -43,6 +46,7 @@ private:
     ReachExports m_exports;
     EngineHostContext m_context;
     bool m_isInitialized = false;
+    bool m_isGameRunning = false;
 
     // VTable function pointers for c_game_engine
     typedef void (*EngineShutdownFn)(void* thisPtr);

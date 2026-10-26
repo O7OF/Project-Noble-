@@ -63,14 +63,14 @@ bool BlamEngine::Initialize(const ReachExports& exports, const EngineHostContext
 }
 
 void BlamEngine::Update(float deltaTime) {
-    if (m_isInitialized && m_fnUpdate && m_engineInstance) {
-        // Delta time tick call
+    if (m_isInitialized && m_isGameRunning && m_fnUpdate && m_engineInstance) {
+        // Delta time tick call when game match is actively running
         m_fnUpdate(m_engineInstance, deltaTime);
     }
 }
 
 void BlamEngine::Render() {
-    if (m_isInitialized && m_fnRender && m_engineInstance) {
+    if (m_isInitialized && m_isGameRunning && m_fnRender && m_engineInstance) {
         m_fnRender(m_engineInstance);
     }
 }

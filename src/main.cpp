@@ -19,10 +19,22 @@
 
 namespace fs = std::filesystem;
 
+static LONG WINAPI NobleCrashHandler(EXCEPTION_POINTERS* pExceptionInfo) {
+    if (pExceptionInfo && pExceptionInfo->ExceptionRecord) {
+        spdlog::error("FATAL EXCEPTION CAUGHT: Code 0x{:08X} at Address 0x{:X}", 
+            pExceptionInfo->ExceptionRecord->ExceptionCode,
+            reinterpret_cast<uintptr_t>(pExceptionInfo->ExceptionRecord->ExceptionAddress));
+    }
+    spdlog::default_logger()->flush();
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine, int nCmdShow) {
     UNREFERENCED_PARAMETER(hInstance);
     UNREFERENCED_PARAMETER(hPrevInstance);
     UNREFERENCED_PARAMETER(pCmdLine);
+
+    SetUnhandledExceptionFilter(&NobleCrashHandler);
 
     // 1. Initialize logging
     noble::Logger::Init("noble-client.log");
