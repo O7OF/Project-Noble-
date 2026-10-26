@@ -105,16 +105,16 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
 }
 
 void BlamEngine::Update(float deltaTime) {
-    if (m_isInitialized && m_isGameRunning && m_fnUpdate && m_engineInstance) {
-        // Delta time tick call when game match is actively running
-        m_fnUpdate(m_engineInstance, deltaTime);
-    }
+    (void)deltaTime;
+    // Internal simulation in haloreach.dll is driven asynchronously on Blam's internal engine threads.
+    // Note: c_game_engine vfunc[2] at RVA 0xF118 is SetGameContext/SetupMatch and expects a 0x2BF30-byte
+    // match context descriptor pointer in r8. Invoking it as a delta-time tick caused an invalid
+    // memory read access violation in memcpy. Commands dispatched via ExecuteCommand govern gameplay lifecycle.
 }
 
 void BlamEngine::Render() {
-    if (m_isInitialized && m_isGameRunning && m_fnRender && m_engineInstance) {
-        m_fnRender(m_engineInstance);
-    }
+    // Direct3D 11 presentation is handled via D3D11Renderer and Dear ImGui.
+    // Note: c_game_engine vfunc[3] is an event dispatcher (ProcessEvent), not a DX11 render pass.
 }
 
 void BlamEngine::Shutdown() {

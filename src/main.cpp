@@ -12,6 +12,8 @@
 #include "engine/BlamEngine.hpp"
 #include "ui/UIManager.hpp"
 #include "network/SessionManager.hpp"
+#include "hooks/LobbyPatches.hpp"
+#include "hooks/ForgePatches.hpp"
 
 #include <windows.h>
 #include <chrono>
@@ -20,11 +22,35 @@
 
 namespace fs = std::filesystem;
 
+#include <dbghelp.h>
+#pragma comment(lib, "dbghelp.lib")
+
 static LONG WINAPI NobleCrashHandler(EXCEPTION_POINTERS* pExceptionInfo) {
     if (pExceptionInfo && pExceptionInfo->ExceptionRecord) {
-        spdlog::error("FATAL EXCEPTION CAUGHT: Code 0x{:08X} at Address 0x{:X}", 
+        uintptr_t faultAddr = reinterpret_cast<uintptr_t>(pExceptionInfo->ExceptionRecord->ExceptionAddress);
+        HMODULE hMod = nullptr;
+        WCHAR modPath[MAX_PATH] = L"Unknown Module";
+        if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                               reinterpret_cast<LPCWSTR>(faultAddr), &hMod)) {
+            GetModuleFileNameW(hMod, modPath, MAX_PATH);
+        }
+
+        spdlog::error("FATAL EXCEPTION CAUGHT: Code 0x{:08X} at Address 0x{:X} (Module: {})", 
             pExceptionInfo->ExceptionRecord->ExceptionCode,
-            reinterpret_cast<uintptr_t>(pExceptionInfo->ExceptionRecord->ExceptionAddress));
+            faultAddr,
+            std::filesystem::path(modPath).string());
+
+        // Generate crash minidump
+        HANDLE hDumpFile = CreateFileW(L"noble-crash.dmp", GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (hDumpFile != INVALID_HANDLE_VALUE) {
+            MINIDUMP_EXCEPTION_INFORMATION mei{};
+            mei.ThreadId = GetCurrentThreadId();
+            mei.ExceptionPointers = pExceptionInfo;
+            mei.ClientPointers = FALSE;
+            MiniDumpWriteDump(GetCurrentProcess(), GetCurrentProcessId(), hDumpFile, MiniDumpNormal, &mei, nullptr, nullptr);
+            CloseHandle(hDumpFile);
+            spdlog::error("Crash minidump written to noble-crash.dmp");
+        }
     }
     spdlog::default_logger()->flush();
     return EXCEPTION_CONTINUE_SEARCH;
@@ -110,6 +136,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 
     // Direct all haloreach.dll asset and map file I/O through Virtual File System (VFS)
     noble::VFS::HookTargetModule(loader->GetModuleHandle());
+
+    // Apply Lobby & Forge enhancements (16 -> 32/64 player limits, unlimited budget)
+    noble::LobbyPatches::Apply(loader->GetModuleHandle());
+    noble::ForgePatches::Apply(loader->GetModuleHandle());
 
     // 10. Instantiate Blam! Engine & Data Access interfaces
     auto blamEngine = std::make_unique<noble::BlamEngine>();

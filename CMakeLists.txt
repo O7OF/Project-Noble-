@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(HaloReachCommunityEdition VERSION 0.4.0 LANGUAGES C CXX)
+project(HaloReachCommunityEdition VERSION 0.5.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -99,6 +99,8 @@ set(SOURCES
     src/host/Loader.cpp
     src/hooks/SigScanner.cpp
     src/hooks/HookManager.cpp
+    src/hooks/LobbyPatches.cpp
+    src/hooks/ForgePatches.cpp
     src/vfs/VFS.cpp
     src/engine/BlamEngine.cpp
     src/ui/UIManager.cpp
@@ -121,6 +123,8 @@ set(HEADERS
     src/host/Loader.hpp
     src/hooks/SigScanner.hpp
     src/hooks/HookManager.hpp
+    src/hooks/LobbyPatches.hpp
+    src/hooks/ForgePatches.hpp
     src/vfs/VFS.hpp
     src/engine/BlamEngine.hpp
     src/ui/UIManager.hpp
@@ -148,4 +152,55 @@ target_link_libraries(noble-client PRIVATE
     nlohmann_json::nlohmann_json
     minhook
     imgui
+    dbghelp
+)
+
+# -----------------------------------------------------------------------------
+# Headless Dedicated Server Binary (noble-dedicated.exe)
+# -----------------------------------------------------------------------------
+set(DEDICATED_SOURCES
+    src/dedicated/main.cpp
+    src/dedicated/DedicatedServer.cpp
+    src/host/SteamLocator.cpp
+    src/host/OwnershipVerifier.cpp
+    src/host/Loader.cpp
+    src/hooks/SigScanner.cpp
+    src/hooks/HookManager.cpp
+    src/hooks/LobbyPatches.cpp
+    src/hooks/ForgePatches.cpp
+    src/vfs/VFS.cpp
+    src/network/UPnP.cpp
+    src/network/SessionManager.cpp
+)
+
+set(DEDICATED_HEADERS
+    src/dedicated/DedicatedServer.hpp
+    src/common/Logger.hpp
+    src/common/Types.hpp
+    src/common/Version.hpp
+    src/host/SteamLocator.hpp
+    src/host/OwnershipVerifier.hpp
+    src/host/Loader.hpp
+    src/hooks/SigScanner.hpp
+    src/hooks/HookManager.hpp
+    src/hooks/LobbyPatches.hpp
+    src/hooks/ForgePatches.hpp
+    src/vfs/VFS.hpp
+    src/network/UPnP.hpp
+    src/network/SessionManager.hpp
+)
+
+add_executable(noble-dedicated ${DEDICATED_SOURCES} ${DEDICATED_HEADERS})
+
+target_include_directories(noble-dedicated PRIVATE
+    src
+)
+
+target_link_libraries(noble-dedicated PRIVATE
+    ws2_32
+    iphlpapi
+    spdlog::spdlog
+    nlohmann_json::nlohmann_json
+    minhook
+    dbghelp
 )
