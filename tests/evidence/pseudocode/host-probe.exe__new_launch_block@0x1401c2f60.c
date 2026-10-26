@@ -1,0 +1,303 @@
+﻿
+/* WARNING: Unknown calling convention: __rustcall */
+/* host_probe::new_launch_block */
+
+void __rustcall
+host_probe::new_launch_block(undefined8 *param_1,longlong param_2,byte param_3)
+
+{
+  code *pcVar1;
+  char *pcVar2;
+  longlong local_68;
+  undefined8 local_60;
+  undefined8 local_58;
+  undefined *local_48;
+  undefined8 local_40;
+  undefined8 *local_38;
+  undefined8 *local_30;
+  
+  __rustc::__rust_no_alloc_shim_is_unstable_v2();
+  pcVar2 = (char *)__rustc::__rust_alloc_zeroed(0x2bf30,1);
+  if (pcVar2 == (char *)0x0) {
+    alloc::raw_vec::handle_error(1,0x2bf30);
+                    /* WARNING: Does not return */
+    pcVar1 = (code *)invalidInstructionException();
+    (*pcVar1)();
+  }
+  *pcVar2 = (param_3 ^ 1) << 3;
+  pcVar2[1] = '\x03';
+  pcVar2[2] = '\0';
+  pcVar2[3] = '\x10';
+  pcVar2[4] = '\x03';
+  pcVar2[0xc] = '\x03';
+  pcVar2[0x10] = -0x42;
+  pcVar2[0x11] = '\0';
+  pcVar2[0x12] = '\0';
+  pcVar2[0x13] = '\0';
+  pcVar2[0x14] = -0x42;
+  pcVar2[0x15] = '\0';
+  pcVar2[0x16] = '\0';
+  pcVar2[0x17] = '\0';
+  pcVar2[0x1a] = -0x78;
+  pcVar2[0x1b] = -0x78;
+  pcVar2[0x34] = '\x01';
+  pcVar2[0x44] = -1;
+  pcVar2[0x45] = -1;
+  pcVar2[0x100] = -1;
+  pcVar2[0x101] = -1;
+  pcVar2[0x102] = -1;
+  pcVar2[0x103] = -1;
+  pcVar2[0x108] = -1;
+  pcVar2[0x109] = -1;
+  pcVar2[0x10a] = -1;
+  pcVar2[0x10b] = -1;
+  pcVar2[0x10c] = -1;
+  pcVar2[0x10d] = -1;
+  pcVar2[0x10e] = -1;
+  pcVar2[0x10f] = -1;
+  pcVar2[0x120] = -1;
+  pcVar2[0x121] = -1;
+  pcVar2[0x122] = -1;
+  pcVar2[0x123] = -1;
+  pcVar2[0x128] = -1;
+  pcVar2[0x129] = -1;
+  pcVar2[0x12a] = -1;
+  pcVar2[299] = -1;
+  pcVar2[300] = -1;
+  pcVar2[0x12d] = -1;
+  pcVar2[0x12e] = -1;
+  pcVar2[0x12f] = -1;
+  pcVar2[0x140] = -1;
+  pcVar2[0x141] = -1;
+  pcVar2[0x142] = -1;
+  pcVar2[0x143] = -1;
+  pcVar2[0x148] = -1;
+  pcVar2[0x149] = -1;
+  pcVar2[0x14a] = -1;
+  pcVar2[0x14b] = -1;
+  pcVar2[0x14c] = -1;
+  pcVar2[0x14d] = -1;
+  pcVar2[0x14e] = -1;
+  pcVar2[0x14f] = -1;
+  pcVar2[0x160] = -1;
+  pcVar2[0x161] = -1;
+  pcVar2[0x162] = -1;
+  pcVar2[0x163] = -1;
+  pcVar2[0x168] = -1;
+  pcVar2[0x169] = -1;
+  pcVar2[0x16a] = -1;
+  pcVar2[0x16b] = -1;
+  pcVar2[0x16c] = -1;
+  pcVar2[0x16d] = -1;
+  pcVar2[0x16e] = -1;
+  pcVar2[0x16f] = -1;
+  pcVar2[0x180] = -1;
+  pcVar2[0x181] = -1;
+  pcVar2[0x182] = -1;
+  pcVar2[0x183] = -1;
+  pcVar2[0x188] = -1;
+  pcVar2[0x189] = -1;
+  pcVar2[0x18a] = -1;
+  pcVar2[0x18b] = -1;
+  pcVar2[0x18c] = -1;
+  pcVar2[0x18d] = -1;
+  pcVar2[0x18e] = -1;
+  pcVar2[399] = -1;
+  pcVar2[0x1a0] = -1;
+  pcVar2[0x1a1] = -1;
+  pcVar2[0x1a2] = -1;
+  pcVar2[0x1a3] = -1;
+  pcVar2[0x1a8] = -1;
+  pcVar2[0x1a9] = -1;
+  pcVar2[0x1aa] = -1;
+  pcVar2[0x1ab] = -1;
+  pcVar2[0x1ac] = -1;
+  pcVar2[0x1ad] = -1;
+  pcVar2[0x1ae] = -1;
+  pcVar2[0x1af] = -1;
+  pcVar2[0x1c0] = -1;
+  pcVar2[0x1c1] = -1;
+  pcVar2[0x1c2] = -1;
+  pcVar2[0x1c3] = -1;
+  pcVar2[0x1c8] = -1;
+  pcVar2[0x1c9] = -1;
+  pcVar2[0x1ca] = -1;
+  pcVar2[0x1cb] = -1;
+  pcVar2[0x1cc] = -1;
+  pcVar2[0x1cd] = -1;
+  pcVar2[0x1ce] = -1;
+  pcVar2[0x1cf] = -1;
+  pcVar2[0x1e0] = -1;
+  pcVar2[0x1e1] = -1;
+  pcVar2[0x1e2] = -1;
+  pcVar2[0x1e3] = -1;
+  pcVar2[0x1e8] = -1;
+  pcVar2[0x1e9] = -1;
+  pcVar2[0x1ea] = -1;
+  pcVar2[0x1eb] = -1;
+  pcVar2[0x1ec] = -1;
+  pcVar2[0x1ed] = -1;
+  pcVar2[0x1ee] = -1;
+  pcVar2[0x1ef] = -1;
+  pcVar2[0x200] = -1;
+  pcVar2[0x201] = -1;
+  pcVar2[0x202] = -1;
+  pcVar2[0x203] = -1;
+  pcVar2[0x208] = -1;
+  pcVar2[0x209] = -1;
+  pcVar2[0x20a] = -1;
+  pcVar2[0x20b] = -1;
+  pcVar2[0x20c] = -1;
+  pcVar2[0x20d] = -1;
+  pcVar2[0x20e] = -1;
+  pcVar2[0x20f] = -1;
+  pcVar2[0x220] = -1;
+  pcVar2[0x221] = -1;
+  pcVar2[0x222] = -1;
+  pcVar2[0x223] = -1;
+  pcVar2[0x228] = -1;
+  pcVar2[0x229] = -1;
+  pcVar2[0x22a] = -1;
+  pcVar2[0x22b] = -1;
+  pcVar2[0x22c] = -1;
+  pcVar2[0x22d] = -1;
+  pcVar2[0x22e] = -1;
+  pcVar2[0x22f] = -1;
+  pcVar2[0x240] = -1;
+  pcVar2[0x241] = -1;
+  pcVar2[0x242] = -1;
+  pcVar2[0x243] = -1;
+  pcVar2[0x248] = -1;
+  pcVar2[0x249] = -1;
+  pcVar2[0x24a] = -1;
+  pcVar2[0x24b] = -1;
+  pcVar2[0x24c] = -1;
+  pcVar2[0x24d] = -1;
+  pcVar2[0x24e] = -1;
+  pcVar2[0x24f] = -1;
+  pcVar2[0x260] = -1;
+  pcVar2[0x261] = -1;
+  pcVar2[0x262] = -1;
+  pcVar2[0x263] = -1;
+  pcVar2[0x268] = -1;
+  pcVar2[0x269] = -1;
+  pcVar2[0x26a] = -1;
+  pcVar2[0x26b] = -1;
+  pcVar2[0x26c] = -1;
+  pcVar2[0x26d] = -1;
+  pcVar2[0x26e] = -1;
+  pcVar2[0x26f] = -1;
+  pcVar2[0x280] = -1;
+  pcVar2[0x281] = -1;
+  pcVar2[0x282] = -1;
+  pcVar2[0x283] = -1;
+  pcVar2[0x288] = -1;
+  pcVar2[0x289] = -1;
+  pcVar2[0x28a] = -1;
+  pcVar2[0x28b] = -1;
+  pcVar2[0x28c] = -1;
+  pcVar2[0x28d] = -1;
+  pcVar2[0x28e] = -1;
+  pcVar2[0x28f] = -1;
+  pcVar2[0x2a0] = -1;
+  pcVar2[0x2a1] = -1;
+  pcVar2[0x2a2] = -1;
+  pcVar2[0x2a3] = -1;
+  pcVar2[0x2a8] = -1;
+  pcVar2[0x2a9] = -1;
+  pcVar2[0x2aa] = -1;
+  pcVar2[0x2ab] = -1;
+  pcVar2[0x2ac] = -1;
+  pcVar2[0x2ad] = -1;
+  pcVar2[0x2ae] = -1;
+  pcVar2[0x2af] = -1;
+  pcVar2[0x2c0] = -1;
+  pcVar2[0x2c1] = -1;
+  pcVar2[0x2c2] = -1;
+  pcVar2[0x2c3] = -1;
+  pcVar2[0x2c8] = -1;
+  pcVar2[0x2c9] = -1;
+  pcVar2[0x2ca] = -1;
+  pcVar2[0x2cb] = -1;
+  pcVar2[0x2cc] = -1;
+  pcVar2[0x2cd] = -1;
+  pcVar2[0x2ce] = -1;
+  pcVar2[0x2cf] = -1;
+  pcVar2[0x2e0] = -1;
+  pcVar2[0x2e1] = -1;
+  pcVar2[0x2e2] = -1;
+  pcVar2[0x2e3] = -1;
+  pcVar2[0x2e8] = -1;
+  pcVar2[0x2e9] = -1;
+  pcVar2[0x2ea] = -1;
+  pcVar2[0x2eb] = -1;
+  pcVar2[0x2ec] = -1;
+  pcVar2[0x2ed] = -1;
+  pcVar2[0x2ee] = -1;
+  pcVar2[0x2ef] = -1;
+  if (param_3 != 0) {
+    pcVar2[0x2f4] = -1;
+    pcVar2[0x2f5] = -1;
+    pcVar2[0x2f6] = -1;
+    pcVar2[0x2f7] = -1;
+    pcVar2[0x2bf14] = -0xd;
+    pcVar2[0x2bf15] = '\x01';
+    local_40 = 5;
+    local_48 = &DAT_1406d59cf;
+    goto LAB_1401c31dd;
+  }
+  if (dedicated::DEDICATED_0_llvm_15918893398050881851 == '\0') {
+LAB_1401c3180:
+    pcVar2[0x108] = '\0';
+    pcVar2[0x109] = '\0';
+    pcVar2[0x10a] = '\0';
+    pcVar2[0x10b] = '\0';
+    pcVar2[0x100] = '\0';
+    pcVar2[0x101] = '\0';
+    pcVar2[0x102] = '\0';
+    pcVar2[0x103] = '\0';
+    pcVar2[0x104] = '\0';
+    pcVar2[0x105] = '\0';
+    pcVar2[0x106] = '\0';
+    pcVar2[0x107] = '\0';
+    pcVar2[0xe8] = '\x01';
+    pcVar2[0xf0] = -0x42;
+    pcVar2[0xf1] = -0xd;
+    pcVar2[0xf2] = 'Y';
+    pcVar2[0xf3] = '?';
+    pcVar2[0x104] = '\x02';
+    pcVar2[0x10c] = -1;
+    pcVar2[0x10d] = -1;
+    pcVar2[0x10e] = -1;
+    pcVar2[0x10f] = -1;
+    pcVar2[0x2f0] = '\x01';
+  }
+  else {
+    std::sys::env::windows::getenv(&local_68,&DAT_1406d59b8,0x13);
+    if (local_68 != -1) {
+      if (local_68 != 0) {
+        __rustc::__rust_dealloc(local_60,local_68,1);
+        return;
+      }
+      goto LAB_1401c3180;
+    }
+  }
+  (*(code *)(param_2 + 0x6bff8))(pcVar2 + 0x1d308);
+  local_40 = 4;
+  local_48 = &DAT_1406d59cb;
+LAB_1401c31dd:
+  local_38 = &local_48;
+  local_30 = &<&str_as_core::fmt::Display>::fmt;
+  alloc::fmt::format::format_inner(&local_68,&DAT_1406d59d4,&local_38);
+  host::log(local_60,local_58);
+  if (local_68 != 0) {
+    __rustc::__rust_dealloc(local_60,local_68,1);
+    return;
+  }
+  *param_1 = 0x2bf30;
+  param_1[1] = pcVar2;
+  param_1[2] = 0x2bf30;
+  return;
+}
+
+
