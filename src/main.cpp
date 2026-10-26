@@ -1,5 +1,6 @@
 #include "common/Logger.hpp"
 #include "common/Types.hpp"
+#include "common/Version.hpp"
 #include "host/SteamLocator.hpp"
 #include "host/OwnershipVerifier.hpp"
 #include "host/Window.hpp"
@@ -7,9 +8,15 @@
 #include "host/Loader.hpp"
 #include "hooks/HookManager.hpp"
 #include "hooks/SigScanner.hpp"
+#include "vfs/VFS.hpp"
+#include "engine/BlamEngine.hpp"
 
 #include <windows.h>
+#include <chrono>
 #include <memory>
+#include <filesystem>
+
+namespace fs = std::filesystem;
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine, int nCmdShow) {
     UNREFERENCED_PARAMETER(hInstance);
@@ -18,7 +25,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 
     // 1. Initialize logging
     noble::Logger::Init("noble-client.log");
-    NOBLE_INFO("Starting Halo: Reach Community Edition (noble-client)...");
+    NOBLE_INFO("Starting {} - {}", noble::APP_NAME, noble::VERSION_STRING);
 
     // 2. Discover Steam MCC installation and verify Reach DLC assets
     auto reachInstall = noble::SteamLocator::LocateAndVerifyReach();
@@ -39,14 +46,28 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         return 1;
     }
 
-    // 4. Create Win32 host window
+    // 4. Initialize MinHook hooking framework early (required by VFS and engine hooks)
+    if (!noble::HookManager::Initialize()) {
+        NOBLE_ERROR("Failed to initialize MinHook.");
+        return 1;
+    }
+
+    // 5. Initialize Virtual File System (VFS)
+    // Directs all file I/O: Retail MCC files remain read-only; custom mods and configs route to ./data/
+    fs::path userStoragePath = "data";
+    if (!noble::VFS::Initialize(*reachInstall, userStoragePath)) {
+        NOBLE_ERROR("Failed to initialize Virtual File System (VFS).");
+        return 1;
+    }
+
+    // 6. Create Win32 host window
     auto window = std::make_unique<noble::Window>(L"Halo: Reach Community Edition", 1280, 720);
     if (!window->Create()) {
         NOBLE_ERROR("Failed to create Win32 host window.");
         return 1;
     }
 
-    // 5. Initialize Direct3D 11 runtime environment
+    // 7. Initialize Direct3D 11 runtime environment
     auto renderer = std::make_unique<noble::D3D11Renderer>();
     if (!renderer->Initialize(window->GetHwnd(), window->GetWidth(), window->GetHeight())) {
         NOBLE_ERROR("Failed to initialize Direct3D 11 renderer.");
@@ -55,49 +76,54 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 
     window->Show(nCmdShow);
 
-    // 6. Initialize MinHook hooking framework
-    if (!noble::HookManager::Initialize()) {
-        NOBLE_ERROR("Failed to initialize MinHook.");
-        return 1;
-    }
-
-    // 7. Load and bootstrap haloreach.dll directly in process memory
+    // 8. Load and bootstrap haloreach.dll directly in process memory
     auto loader = std::make_unique<noble::Loader>();
     if (!loader->LoadReachDll(reachInstall->reachDllPath)) {
         NOBLE_ERROR("Failed to load haloreach.dll into process space.");
         return 1;
     }
 
-    // 8. Test memory pattern scanner on haloreach.dll
-    NOBLE_INFO("Verifying signature scanner over haloreach.dll memory range...");
-    // Sample search for standard function prologue in haloreach.dll .text section
-    uintptr_t testSig = noble::SigScanner::FindPattern(
-        loader->GetBaseAddress(), 
-        loader->GetModuleSize(), 
-        "48 89 5C 24 ? 48 89 74 24 ? 57 48 83 EC"
-    );
+    // 9. Instantiate Blam! Engine & Data Access interfaces
+    auto blamEngine = std::make_unique<noble::BlamEngine>();
+    noble::EngineHostContext hostContext;
+    hostContext.hWnd = window->GetHwnd();
+    hostContext.pDevice = renderer->GetDevice();
+    hostContext.pContext = renderer->GetContext();
+    hostContext.pSwapChain = renderer->GetSwapChain();
+    hostContext.width = window->GetWidth();
+    hostContext.height = window->GetHeight();
 
-    if (testSig != 0) {
-        NOBLE_INFO("Signature scanner verified! Found test prologue pattern at 0x{:X}", testSig);
-    } else {
-        NOBLE_WARN("Signature scanner test scan completed (pattern not found, normal for generic probe).");
+    if (!blamEngine->Initialize(loader->GetExports(), hostContext)) {
+        NOBLE_ERROR("Failed to initialize Blam! engine host interfaces.");
+        return 1;
     }
 
-    NOBLE_INFO("Bootstrapper Phase 1 complete. Entering host render loop...");
+    NOBLE_INFO("Phase 2 Bootstrapper & VFS active. Entering simulation and render loop...");
 
-    // 9. Host frame and window message loop
+    // 10. Frame timing & message loop
+    auto lastFrameTime = std::chrono::high_resolution_clock::now();
+
     while (window->ProcessMessages()) {
+        auto currentFrameTime = std::chrono::high_resolution_clock::now();
+        float deltaTime = std::chrono::duration<float>(currentFrameTime - lastFrameTime).count();
+        lastFrameTime = currentFrameTime;
+
+        // Blam simulation tick
+        blamEngine->Update(deltaTime);
+
+        // Graphics render pass
         renderer->BeginFrame();
-
-        // Render pass (Phase 3 will inject ImGui overlay here)
-
+        blamEngine->Render();
         renderer->EndFrame(true);
+
         Sleep(1);
     }
 
-    // 10. Clean shutdown
+    // 11. Clean shutdown
     NOBLE_INFO("Initiating clean host shutdown...");
+    blamEngine->Shutdown();
     loader->Unload();
+    noble::VFS::Shutdown();
     noble::HookManager::Shutdown();
     renderer->Shutdown();
     noble::Logger::Shutdown();

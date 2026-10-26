@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(HaloReachCommunityEdition VERSION 0.1.0 LANGUAGES C CXX)
+project(HaloReachCommunityEdition VERSION 0.2.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -70,11 +70,14 @@ set(SOURCES
     src/host/Loader.cpp
     src/hooks/SigScanner.cpp
     src/hooks/HookManager.cpp
+    src/vfs/VFS.cpp
+    src/engine/BlamEngine.cpp
 )
 
 set(HEADERS
     src/common/Logger.hpp
     src/common/Types.hpp
+    src/common/Version.hpp
     src/host/SteamLocator.hpp
     src/host/OwnershipVerifier.hpp
     src/host/Window.hpp
@@ -82,6 +85,8 @@ set(HEADERS
     src/host/Loader.hpp
     src/hooks/SigScanner.hpp
     src/hooks/HookManager.hpp
+    src/vfs/VFS.hpp
+    src/engine/BlamEngine.hpp
 )
 
 add_executable(noble-client WIN32 ${SOURCES} ${HEADERS})
