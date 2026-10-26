@@ -89,6 +89,10 @@ bool DedicatedServer::Start(const DedicatedConfig& config) {
     NOBLE_INFO(" Map: {} | Gametype: {}", m_config.initialMap, m_config.initialGametype);
     NOBLE_INFO("=============================================================");
 
+    // 0. Ensure Winsock is initialized
+    WSADATA wsaData{};
+    WSAStartup(MAKEWORD(2, 2), &wsaData);
+
     // 1. Forward gameplay & RCON ports via UPnP
     std::thread([this]() {
         UPnP::Get().ForwardPort(m_config.port, "UDP", "Noble Dedicated Gameplay");
@@ -121,6 +125,8 @@ void DedicatedServer::Stop() {
     if (m_rconThread.joinable()) {
         m_rconThread.join();
     }
+
+    WSACleanup();
 
     NOBLE_INFO("Dedicated server stopped cleanly.");
 }

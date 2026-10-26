@@ -1,10 +1,14 @@
 #pragma once
 
 #include "common/Types.hpp"
+#include "ReachHost.hpp"
 #include <windows.h>
 #include <d3d11.h>
 #include <dxgi.h>
 #include <memory>
+#include <vector>
+#include <thread>
+#include <chrono>
 
 namespace noble {
 
@@ -24,7 +28,7 @@ public:
     ~BlamEngine();
 
     // Initializes the Blam! engine instance using resolved haloreach.dll exports
-    bool Initialize(const ReachExports& exports, const EngineHostContext& context);
+    bool Initialize(const ReachInstallInfo& installInfo, HMODULE hModule, const ReachExports& exports, const EngineHostContext& context);
     
     // Executes a single simulation and render frame
     void Update(float deltaTime);
@@ -46,11 +50,15 @@ public:
     void SetGameRunning(bool running) { m_isGameRunning = running; }
 
     void* GetEngineInstance() const { return m_engineInstance; }
-    void* GetDataAccessInstance() const { return m_dataAccessInstance; }
 
 private:
+    // Builds the 0x2BF30-byte match descriptor launch block reversed from host-probe
+    std::vector<uint8_t> BuildLaunchBlock(uint32_t mapId, uint32_t gameModeTag, int difficulty, uint32_t skulls);
+    uint32_t ResolveMapId(const std::string& mapName);
+    void InitializePoolDescriptors();
+
     void* m_engineInstance = nullptr;
-    void* m_dataAccessInstance = nullptr;
+    HMODULE m_hModule = nullptr;
     ReachExports m_exports;
     EngineHostContext m_context;
     bool m_isInitialized = false;
@@ -59,15 +67,15 @@ private:
 
     // VTable function pointers for c_game_engine
     typedef void (*EngineShutdownFn)(void* thisPtr);
-    typedef int32_t (*EngineInitFn)(void* thisPtr, void* arg1, void* arg2, void* arg3);
-    typedef void (*EngineUpdateFn)(void* thisPtr, float deltaTime);
-    typedef void (*EngineRenderFn)(void* thisPtr);
+    typedef int32_t (*EngineInitFn)(void* thisPtr, void* device, void* reserved, void* swapChain, void* extra);
+    typedef int32_t (*EngineStartFn)(void* thisPtr, void* hostInterface, void* launchBlock);
+    typedef int32_t (*EngineProcessEventFn)(void* thisPtr, uint32_t eventId, uint32_t eventData);
     typedef int32_t (*EngineExecuteCommandFn)(void* thisPtr, const char* command);
 
-    EngineShutdownFn m_fnShutdown = nullptr;
-    EngineInitFn     m_fnInitialize = nullptr;
-    EngineUpdateFn   m_fnUpdate = nullptr;
-    EngineRenderFn   m_fnRender = nullptr;
+    EngineShutdownFn       m_fnShutdown = nullptr;
+    EngineInitFn           m_fnInitialize = nullptr;
+    EngineStartFn          m_fnStart = nullptr;
+    EngineProcessEventFn   m_fnProcessEvent = nullptr;
     EngineExecuteCommandFn m_fnExecuteCommand = nullptr;
 };
 

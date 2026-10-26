@@ -26,6 +26,15 @@ struct ReachInstallInfo {
     bool areFilesVerified = false;
 };
 
+#pragma pack(push, 1)
+struct ReachLibrarySettings {
+    wchar_t gameRoot[84];      // Reach directory e.g. "...\haloreach"
+    wchar_t mapsDirectory[84]; // Maps directory e.g. "...\haloreach\maps"
+    wchar_t userDirectory[87]; // Local data directory e.g. "data"
+};
+#pragma pack(pop)
+static_assert(sizeof(ReachLibrarySettings) == 510, "ReachLibrarySettings must be 510 bytes");
+
 // Function prototypes for haloreach.dll exports
 typedef void* (*CreateGameEngineFn)(void* host_interface);
 typedef void* (*CreateDataAccessFn)();

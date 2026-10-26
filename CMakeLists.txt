@@ -103,6 +103,7 @@ set(SOURCES
     src/hooks/ForgePatches.cpp
     src/vfs/VFS.cpp
     src/engine/BlamEngine.cpp
+    src/engine/ReachHost.cpp
     src/ui/UIManager.cpp
     src/ui/ServerBrowser.cpp
     src/ui/ArmorCustomizer.cpp
@@ -127,6 +128,7 @@ set(HEADERS
     src/hooks/ForgePatches.hpp
     src/vfs/VFS.hpp
     src/engine/BlamEngine.hpp
+    src/engine/ReachHost.hpp
     src/ui/UIManager.hpp
     src/ui/ServerBrowser.hpp
     src/ui/ArmorCustomizer.hpp

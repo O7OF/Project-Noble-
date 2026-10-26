@@ -137,9 +137,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     // Direct all haloreach.dll asset and map file I/O through Virtual File System (VFS)
     noble::VFS::HookTargetModule(loader->GetModuleHandle());
 
-    // Apply Lobby & Forge enhancements (16 -> 32/64 player limits, unlimited budget)
-    noble::LobbyPatches::Apply(loader->GetModuleHandle());
-    noble::ForgePatches::Apply(loader->GetModuleHandle());
+    // Lobby & Forge patches disabled per launch sequence specification
 
     // 10. Instantiate Blam! Engine & Data Access interfaces
     auto blamEngine = std::make_unique<noble::BlamEngine>();
@@ -151,7 +149,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     hostContext.width = window->GetWidth();
     hostContext.height = window->GetHeight();
 
-    if (!blamEngine->Initialize(loader->GetExports(), hostContext)) {
+    if (!blamEngine->Initialize(*reachInstall, loader->GetModuleHandle(), loader->GetExports(), hostContext)) {
         NOBLE_ERROR("Failed to initialize Blam! engine host interfaces.");
         return 1;
     }

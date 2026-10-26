@@ -50,9 +50,9 @@ int main(int argc, char* argv[]) {
     }
     noble::VFS::HookTargetModule(loader->GetModuleHandle());
 
-    // 4. Apply lobby expansion patches (expand from 16 to 32/64 players)
-    noble::LobbyPatches::Apply(loader->GetModuleHandle());
-    noble::ForgePatches::Apply(loader->GetModuleHandle());
+    // 4. Lobby & Forge patches disabled per launch configuration
+    // noble::LobbyPatches::Apply(loader->GetModuleHandle());
+    // noble::ForgePatches::Apply(loader->GetModuleHandle());
 
     // 5. Load configuration and start server
     noble::DedicatedConfig config = noble::DedicatedConfig::LoadFromFile(configFile);
