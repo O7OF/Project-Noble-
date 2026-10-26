@@ -9,6 +9,38 @@ D3D11Renderer::~D3D11Renderer() {
     Shutdown();
 }
 
+static HRESULT SafeCreateD3D(
+    UINT Flags,
+    const D3D_FEATURE_LEVEL* pFeatureLevels,
+    UINT FeatureLevels,
+    const DXGI_SWAP_CHAIN_DESC* pSwapChainDesc,
+    IDXGISwapChain** ppSwapChain,
+    ID3D11Device** ppDevice,
+    D3D_FEATURE_LEVEL* pFeatureLevel,
+    ID3D11DeviceContext** ppImmediateContext,
+    DWORD* pExceptionCode
+) {
+    __try {
+        return D3D11CreateDeviceAndSwapChain(
+            nullptr,
+            D3D_DRIVER_TYPE_HARDWARE,
+            nullptr,
+            Flags,
+            pFeatureLevels,
+            FeatureLevels,
+            D3D11_SDK_VERSION,
+            pSwapChainDesc,
+            ppSwapChain,
+            ppDevice,
+            pFeatureLevel,
+            ppImmediateContext
+        );
+    }
+    __except (*pExceptionCode = GetExceptionCode(), EXCEPTION_EXECUTE_HANDLER) {
+        return E_FAIL;
+    }
+}
+
 bool D3D11Renderer::Initialize(HWND hwnd, uint32_t width, uint32_t height) {
     m_hwnd = hwnd;
     m_width = width;
@@ -35,33 +67,45 @@ bool D3D11Renderer::Initialize(HWND hwnd, uint32_t width, uint32_t height) {
 #endif
 
     D3D_FEATURE_LEVEL featureLevels[] = {
-        D3D_FEATURE_LEVEL_11_1,
         D3D_FEATURE_LEVEL_11_0,
         D3D_FEATURE_LEVEL_10_1,
+        D3D_FEATURE_LEVEL_10_0
     };
-    D3D_FEATURE_LEVEL featureLevel;
+    D3D_FEATURE_LEVEL featureLevel = D3D_FEATURE_LEVEL_11_0;
 
-    HRESULT hr = D3D11CreateDeviceAndSwapChain(
-        nullptr,
-        D3D_DRIVER_TYPE_HARDWARE,
-        nullptr,
+    NOBLE_INFO("Creating D3D11 device and swap chain for HWND 0x{:X}...", reinterpret_cast<uintptr_t>(hwnd));
+    spdlog::default_logger()->flush();
+
+    DWORD exceptionCode = 0;
+    HRESULT hr = SafeCreateD3D(
         createDeviceFlags,
         featureLevels,
         static_cast<UINT>(std::size(featureLevels)),
-        D3D11_SDK_VERSION,
         &scd,
         m_swapChain.GetAddressOf(),
         m_device.GetAddressOf(),
         &featureLevel,
-        m_context.GetAddressOf()
+        m_context.GetAddressOf(),
+        &exceptionCode
     );
+
+    if (exceptionCode != 0) {
+        NOBLE_ERROR("SEH Exception 0x{:08X} caught inside D3D11CreateDeviceAndSwapChain!", exceptionCode);
+        spdlog::default_logger()->flush();
+        return false;
+    }
+
+    NOBLE_INFO("D3D11CreateDeviceAndSwapChain returned HRESULT: 0x{:08X}", static_cast<uint32_t>(hr));
+    spdlog::default_logger()->flush();
 
     if (FAILED(hr)) {
         NOBLE_ERROR("D3D11CreateDeviceAndSwapChain failed with HRESULT: 0x{:08X}", static_cast<uint32_t>(hr));
+        spdlog::default_logger()->flush();
         return false;
     }
 
     NOBLE_INFO("Direct3D 11 device and swap chain created. Feature Level: 0x{:X}", static_cast<uint32_t>(featureLevel));
+    spdlog::default_logger()->flush();
 
     if (!CreateRenderTarget()) {
         return false;

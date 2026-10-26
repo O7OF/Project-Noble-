@@ -16,7 +16,6 @@ fs::path VFS::s_workshopPath;
 bool VFS::s_isInitialized = false;
 std::mutex VFS::s_mutex;
 
-// Thread-local recursion guard to prevent re-entrancy within hook calls
 static thread_local bool t_inVfsHook = false;
 
 static std::wstring NormalizePathString(std::wstring pathStr) {
@@ -29,6 +28,30 @@ bool VFS::RawPathExists(const std::wstring& path) {
     if (!s_origGetFileAttributesW) return false;
     DWORD attr = s_origGetFileAttributesW(path.c_str());
     return (attr != INVALID_FILE_ATTRIBUTES);
+}
+
+// Fast filter: only intercept game assets (maps, variants, audio banks)
+// Never intercept system libraries, DirectX drivers, or binaries
+static bool IsGameAssetPath(const std::wstring& path) {
+    std::wstring lower = path;
+    std::transform(lower.begin(), lower.end(), lower.begin(), ::towlower);
+
+    if (lower.find(L"\\windows\\") != std::wstring::npos ||
+        lower.find(L"\\system32\\") != std::wstring::npos ||
+        lower.find(L".dll") != std::wstring::npos ||
+        lower.find(L".exe") != std::wstring::npos) {
+        return false;
+    }
+
+    return (lower.find(L".map") != std::wstring::npos ||
+            lower.find(L".bin") != std::wstring::npos ||
+            lower.find(L".mvar") != std::wstring::npos ||
+            lower.find(L".bank") != std::wstring::npos ||
+            lower.find(L".bik") != std::wstring::npos ||
+            lower.find(L".bk2") != std::wstring::npos ||
+            lower.find(L"maps\\") != std::wstring::npos ||
+            lower.find(L"fmod\\") != std::wstring::npos ||
+            lower.find(L"haloreach") != std::wstring::npos);
 }
 
 bool VFS::Initialize(const ReachInstallInfo& installInfo, const fs::path& userStoragePath) {
@@ -51,13 +74,12 @@ bool VFS::Initialize(const ReachInstallInfo& installInfo, const fs::path& userSt
     NOBLE_INFO(" - User Storage Output Path: {}", s_userStoragePath.string());
     NOBLE_INFO(" - Workshop Content Path:    {}", s_workshopPath.string());
 
-    if (!InstallHooks()) {
-        NOBLE_ERROR("Failed to install VFS Win32 API hooks.");
-        return false;
-    }
+    s_origCreateFileW = &::CreateFileW;
+    s_origGetFileAttributesW = &::GetFileAttributesW;
+    s_origGetFileAttributesExW = &::GetFileAttributesExW;
 
     s_isInitialized = true;
-    NOBLE_INFO("VFS initialized and active. Retail game files are protected as read-only.");
+    NOBLE_INFO("VFS initialized. Ready to hook target engine modules.");
     return true;
 }
 
@@ -65,7 +87,7 @@ void VFS::Shutdown() {
     std::lock_guard<std::mutex> lock(s_mutex);
     if (!s_isInitialized) return;
 
-    RemoveHooks();
+    UnhookTargetModule();
     s_isInitialized = false;
     NOBLE_INFO("VFS shutdown complete.");
 }
@@ -86,11 +108,9 @@ std::wstring VFS::ResolvePath(const std::wstring& requestedPath, DWORD desiredAc
     if (p.is_absolute()) {
         if (normalized.rfind(baseStr, 0) == 0) {
             isTargetingMcc = true;
-            // Extract the relative subpath within haloreach
             p = p.lexically_relative(s_baseMccPath);
         }
     } else {
-        // Relative paths from the engine (e.g. "maps\forge_halo.map")
         isTargetingMcc = true;
     }
 
@@ -135,7 +155,7 @@ HANDLE WINAPI VFS::HookedCreateFileW(
     DWORD dwFlagsAndAttributes,
     HANDLE hTemplateFile
 ) {
-    if (t_inVfsHook || !s_isInitialized || !lpFileName) {
+    if (t_inVfsHook || !s_isInitialized || !lpFileName || !IsGameAssetPath(lpFileName)) {
         return s_origCreateFileW(lpFileName, dwDesiredAccess, dwShareMode, lpSecurityAttributes, dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile);
     }
 
@@ -156,7 +176,7 @@ HANDLE WINAPI VFS::HookedCreateFileW(
 }
 
 DWORD WINAPI VFS::HookedGetFileAttributesW(LPCWSTR lpFileName) {
-    if (t_inVfsHook || !s_isInitialized || !lpFileName) {
+    if (t_inVfsHook || !s_isInitialized || !lpFileName || !IsGameAssetPath(lpFileName)) {
         return s_origGetFileAttributesW(lpFileName);
     }
 
@@ -173,7 +193,7 @@ BOOL WINAPI VFS::HookedGetFileAttributesExW(
     GET_FILEEX_INFO_LEVELS fInfoLevelId,
     LPVOID lpFileInformation
 ) {
-    if (t_inVfsHook || !s_isInitialized || !lpFileName) {
+    if (t_inVfsHook || !s_isInitialized || !lpFileName || !IsGameAssetPath(lpFileName)) {
         return s_origGetFileAttributesExW(lpFileName, fInfoLevelId, lpFileInformation);
     }
 
@@ -185,33 +205,117 @@ BOOL WINAPI VFS::HookedGetFileAttributesExW(
     return result;
 }
 
-bool VFS::InstallHooks() {
-    HMODULE hKernel32 = GetModuleHandleW(L"kernel32.dll");
-    if (!hKernel32) return false;
+static ULONG_PTR* s_pCreateFileWEntry = nullptr;
+static ULONG_PTR* s_pGetFileAttributesWEntry = nullptr;
+static ULONG_PTR* s_pGetFileAttributesExWEntry = nullptr;
+static ULONG_PTR s_origCreateFileWValue = 0;
+static ULONG_PTR s_origGetFileAttributesWValue = 0;
+static ULONG_PTR s_origGetFileAttributesExWValue = 0;
 
-    void* pCreateFileW = reinterpret_cast<void*>(GetProcAddress(hKernel32, "CreateFileW"));
-    void* pGetFileAttributesW = reinterpret_cast<void*>(GetProcAddress(hKernel32, "GetFileAttributesW"));
-    void* pGetFileAttributesExW = reinterpret_cast<void*>(GetProcAddress(hKernel32, "GetFileAttributesExW"));
+bool VFS::HookTargetModule(HMODULE hTargetModule) {
+    if (!hTargetModule) return false;
 
-    bool ok = true;
-    ok &= HookManager::InstallHook(pCreateFileW, reinterpret_cast<void*>(&HookedCreateFileW), reinterpret_cast<void**>(&s_origCreateFileW), "CreateFileW");
-    ok &= HookManager::InstallHook(pGetFileAttributesW, reinterpret_cast<void*>(&HookedGetFileAttributesW), reinterpret_cast<void**>(&s_origGetFileAttributesW), "GetFileAttributesW");
-    ok &= HookManager::InstallHook(pGetFileAttributesExW, reinterpret_cast<void*>(&HookedGetFileAttributesExW), reinterpret_cast<void**>(&s_origGetFileAttributesExW), "GetFileAttributesExW");
+    auto pDosHeader = reinterpret_cast<PIMAGE_DOS_HEADER>(hTargetModule);
+    if (pDosHeader->e_magic != IMAGE_DOS_SIGNATURE) {
+        NOBLE_ERROR("Invalid DOS signature in target module.");
+        return false;
+    }
 
-    return ok;
+    auto pNtHeaders = reinterpret_cast<PIMAGE_NT_HEADERS>(
+        reinterpret_cast<uint8_t*>(hTargetModule) + pDosHeader->e_lfanew);
+    if (pNtHeaders->Signature != IMAGE_NT_SIGNATURE) {
+        NOBLE_ERROR("Invalid NT signature in target module.");
+        return false;
+    }
+
+    auto importDir = pNtHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
+    if (importDir.VirtualAddress == 0 || importDir.Size == 0) {
+        NOBLE_WARN("No import directory found in target module.");
+        return false;
+    }
+
+    auto pImportDesc = reinterpret_cast<PIMAGE_IMPORT_DESCRIPTOR>(
+        reinterpret_cast<uint8_t*>(hTargetModule) + importDir.VirtualAddress);
+
+    int hookedCount = 0;
+
+    for (; pImportDesc->Name != 0; ++pImportDesc) {
+        const char* dllName = reinterpret_cast<const char*>(
+            reinterpret_cast<uint8_t*>(hTargetModule) + pImportDesc->Name);
+
+        if (_stricmp(dllName, "KERNEL32.dll") == 0) {
+            auto pThunk = reinterpret_cast<PIMAGE_THUNK_DATA>(
+                reinterpret_cast<uint8_t*>(hTargetModule) + pImportDesc->FirstThunk);
+            auto pOrigThunk = reinterpret_cast<PIMAGE_THUNK_DATA>(
+                reinterpret_cast<uint8_t*>(hTargetModule) + pImportDesc->OriginalFirstThunk);
+
+            for (; pThunk->u1.Function != 0; ++pThunk, ++pOrigThunk) {
+                if (!(pOrigThunk->u1.Ordinal & IMAGE_ORDINAL_FLAG)) {
+                    auto pImportByName = reinterpret_cast<PIMAGE_IMPORT_BY_NAME>(
+                        reinterpret_cast<uint8_t*>(hTargetModule) + pOrigThunk->u1.AddressOfData);
+                    const char* funcName = reinterpret_cast<const char*>(pImportByName->Name);
+
+                    auto PatchIAT = [](ULONG_PTR* pEntry, void* detour, ULONG_PTR& outOrig) -> bool {
+                        DWORD oldProtect = 0;
+                        if (!VirtualProtect(pEntry, sizeof(ULONG_PTR), PAGE_READWRITE, &oldProtect)) {
+                            return false;
+                        }
+                        outOrig = *pEntry;
+                        *pEntry = reinterpret_cast<ULONG_PTR>(detour);
+                        VirtualProtect(pEntry, sizeof(ULONG_PTR), oldProtect, &oldProtect);
+                        return true;
+                    };
+
+                    if (strcmp(funcName, "CreateFileW") == 0) {
+                        s_pCreateFileWEntry = &pThunk->u1.Function;
+                        if (PatchIAT(s_pCreateFileWEntry, reinterpret_cast<void*>(&HookedCreateFileW), s_origCreateFileWValue)) {
+                            s_origCreateFileW = reinterpret_cast<CreateFileW_Fn>(s_origCreateFileWValue);
+                            NOBLE_INFO("VFS IAT: Hooked CreateFileW in target module (Original: 0x{:X})", s_origCreateFileWValue);
+                            hookedCount++;
+                        }
+                    } else if (strcmp(funcName, "GetFileAttributesW") == 0) {
+                        s_pGetFileAttributesWEntry = &pThunk->u1.Function;
+                        if (PatchIAT(s_pGetFileAttributesWEntry, reinterpret_cast<void*>(&HookedGetFileAttributesW), s_origGetFileAttributesWValue)) {
+                            s_origGetFileAttributesW = reinterpret_cast<GetFileAttributesW_Fn>(s_origGetFileAttributesWValue);
+                            NOBLE_INFO("VFS IAT: Hooked GetFileAttributesW in target module (Original: 0x{:X})", s_origGetFileAttributesWValue);
+                            hookedCount++;
+                        }
+                    } else if (strcmp(funcName, "GetFileAttributesExW") == 0) {
+                        s_pGetFileAttributesExWEntry = &pThunk->u1.Function;
+                        if (PatchIAT(s_pGetFileAttributesExWEntry, reinterpret_cast<void*>(&HookedGetFileAttributesExW), s_origGetFileAttributesExWValue)) {
+                            s_origGetFileAttributesExW = reinterpret_cast<GetFileAttributesExW_Fn>(s_origGetFileAttributesExWValue);
+                            NOBLE_INFO("VFS IAT: Hooked GetFileAttributesExW in target module (Original: 0x{:X})", s_origGetFileAttributesExWValue);
+                            hookedCount++;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    NOBLE_INFO("VFS: Target module IAT redirection active. Intercepted {} file APIs.", hookedCount);
+    return (hookedCount > 0);
 }
 
-void VFS::RemoveHooks() {
-    HMODULE hKernel32 = GetModuleHandleW(L"kernel32.dll");
-    if (hKernel32) {
-        void* pCreateFileW = reinterpret_cast<void*>(GetProcAddress(hKernel32, "CreateFileW"));
-        void* pGetFileAttributesW = reinterpret_cast<void*>(GetProcAddress(hKernel32, "GetFileAttributesW"));
-        void* pGetFileAttributesExW = reinterpret_cast<void*>(GetProcAddress(hKernel32, "GetFileAttributesExW"));
+void VFS::UnhookTargetModule() {
+    auto RestoreIAT = [](ULONG_PTR* pEntry, ULONG_PTR orig) {
+        if (pEntry && orig) {
+            DWORD oldProtect = 0;
+            if (VirtualProtect(pEntry, sizeof(ULONG_PTR), PAGE_READWRITE, &oldProtect)) {
+                *pEntry = orig;
+                VirtualProtect(pEntry, sizeof(ULONG_PTR), oldProtect, &oldProtect);
+            }
+        }
+    };
 
-        HookManager::RemoveHook(pCreateFileW);
-        HookManager::RemoveHook(pGetFileAttributesW);
-        HookManager::RemoveHook(pGetFileAttributesExW);
-    }
+    RestoreIAT(s_pCreateFileWEntry, s_origCreateFileWValue);
+    RestoreIAT(s_pGetFileAttributesWEntry, s_origGetFileAttributesWValue);
+    RestoreIAT(s_pGetFileAttributesExWEntry, s_origGetFileAttributesExWValue);
+
+    s_pCreateFileWEntry = nullptr;
+    s_pGetFileAttributesWEntry = nullptr;
+    s_pGetFileAttributesExWEntry = nullptr;
+    NOBLE_INFO("VFS: Target module IAT restored to original imports.");
 }
 
 } // namespace noble

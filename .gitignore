@@ -9,3 +9,5 @@ out/
 # Local cache & agent workspace
 .agents/
 *.log
+imgui.ini
+data/

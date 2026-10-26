@@ -14,6 +14,10 @@ public:
     static bool Initialize(const ReachInstallInfo& installInfo, const fs::path& userStoragePath);
     static void Shutdown();
 
+    // Hooks haloreach.dll's IAT for file I/O operations (CreateFileW, GetFileAttributesW, etc.)
+    static bool HookTargetModule(HMODULE hTargetModule);
+    static void UnhookTargetModule();
+
     // Resolves a requested file path to its redirected VFS target
     static std::wstring ResolvePath(const std::wstring& requestedPath, DWORD desiredAccess);
 
@@ -23,8 +27,6 @@ public:
 
 private:
     static bool RawPathExists(const std::wstring& path);
-    static bool InstallHooks();
-    static void RemoveHooks();
 
     // Detour function definitions
     static HANDLE WINAPI HookedCreateFileW(

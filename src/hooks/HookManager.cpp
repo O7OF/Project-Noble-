@@ -35,22 +35,30 @@ bool HookManager::InstallHook(void* target, void* detour, void** original, const
         if (!Initialize()) return false;
     }
 
-    if (!target || !detour) {
-        NOBLE_ERROR("Invalid target or detour pointer for hook '{}'", name);
-        return false;
-    }
+    NOBLE_INFO("Calling MH_CreateHook for '{}'...", name);
+    spdlog::default_logger()->flush();
 
     MH_STATUS status = MH_CreateHook(target, detour, original);
+    NOBLE_INFO("MH_CreateHook returned {} for '{}'", static_cast<int>(status), name);
+    spdlog::default_logger()->flush();
+
     if (status != MH_OK) {
         NOBLE_ERROR("MH_CreateHook failed for '{}' at 0x{:X}. Status: {}", 
             name, reinterpret_cast<uintptr_t>(target), static_cast<int>(status));
+        spdlog::default_logger()->flush();
         return false;
     }
 
+    NOBLE_INFO("Calling MH_EnableHook for '{}'...", name);
+    spdlog::default_logger()->flush();
+
     status = MH_EnableHook(target);
+    NOBLE_INFO("MH_EnableHook returned {} for '{}'", static_cast<int>(status), name);
+    spdlog::default_logger()->flush();
     if (status != MH_OK) {
         NOBLE_ERROR("MH_EnableHook failed for '{}' at 0x{:X}. Status: {}", 
             name, reinterpret_cast<uintptr_t>(target), static_cast<int>(status));
+        spdlog::default_logger()->flush();
         MH_RemoveHook(target);
         return false;
     }
@@ -58,6 +66,7 @@ bool HookManager::InstallHook(void* target, void* detour, void** original, const
     s_installedHooks[target] = name.empty() ? "unnamed_hook" : name;
     NOBLE_INFO("Hook '{}' installed at 0x{:X} -> 0x{:X}", 
         s_installedHooks[target], reinterpret_cast<uintptr_t>(target), reinterpret_cast<uintptr_t>(detour));
+    spdlog::default_logger()->flush();
 
     return true;
 }
