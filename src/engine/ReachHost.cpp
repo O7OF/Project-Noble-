@@ -383,6 +383,19 @@ static void WriteDefaultKeyBindings(uint8_t* profile) {
     }
 }
 
+// Audio volumes are profile settings too (RR live::audio::set_volume): f32 at +0xA5C (game/master),
+// +0xA60 (music) and +0xA64 (the third volume). A blank profile leaves them at 0.0, i.e. silence.
+static constexpr size_t kVolumeGameOffset = 0xA5C;
+static constexpr size_t kVolumeMusicOffset = 0xA60;
+static constexpr size_t kVolumeOtherOffset = 0xA64;
+
+static void WriteDefaultVolumes(uint8_t* profile) {
+    const float full = 1.0f;
+    memcpy(profile + kVolumeGameOffset, &full, sizeof(full));
+    memcpy(profile + kVolumeMusicOffset, &full, sizeof(full));
+    memcpy(profile + kVolumeOtherOffset, &full, sizeof(full));
+}
+
 // "-profile <path>" (or "--profile <path>") on the command line, else empty.
 static std::wstring ProfileArgPath() {
     std::wstring result;
@@ -403,7 +416,7 @@ static uint8_t s_hostProfileBuffer[0x10000] = { 0 };
 static bool s_hostProfileInitialized = false;
 
 static uint64_t __fastcall HostSlot34_ProfileSettings(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
-    (void)thisPtr; (void)a3; (void)a4;
+    (void)thisPtr; (void)a1; (void)a2; (void)a3; (void)a4;
     static std::atomic<bool> s_logged{false};
     if (!s_logged.exchange(true)) {
         NOBLE_INFO("ReachHost [Slot 34 - ProfileSettings]: Providing Spartan armor & player loadout data");
@@ -431,7 +444,8 @@ static uint64_t __fastcall HostSlot34_ProfileSettings(void* thisPtr, uint64_t a1
         }
         if (!loaded) {
             WriteDefaultKeyBindings(s_hostProfileBuffer);
-            NOBLE_INFO("ReachHost [Slot 34]: using built-in default key bindings");
+            WriteDefaultVolumes(s_hostProfileBuffer);
+            NOBLE_INFO("ReachHost [Slot 34]: using built-in default key bindings and volumes");
         }
         // RR host::hit case 0x22: the profile is a zeroed 64 KB block with only the 4-character
         // service tag (UTF-16) written at +0x1AC. The old defaults here (+0x00 = 1, armour colours
