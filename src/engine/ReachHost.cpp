@@ -2,6 +2,7 @@
 #include "ui/LoadScreen.hpp"
 #include "common/Logger.hpp"
 #include "hooks/HookManager.hpp"
+#include "ui/PauseMenu.hpp"
 #include <windows.h>
 #include <shellapi.h>
 #include <intrin.h>
@@ -209,7 +210,12 @@ static uint64_t __fastcall HostSlot0_QueryInterface(void* thisPtr, uint64_t a1, 
 
 // Slot 1: Frame tick / Render loop update callback (host_probe case 1)
 static uint64_t __fastcall HostSlot1_FrameTick(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
-    (void)thisPtr; (void)a1; (void)a2; (void)a3; (void)a4;
+    (void)thisPtr; (void)a2; (void)a3; (void)a4;
+    // a1 = the swap chain the engine is about to present (RR host::hit case 1). Our overlays draw here,
+    // on the engine thread, because the engine owns the immediate context.
+    if (a1 > 0x10000) {
+        PauseMenu::Render(reinterpret_cast<IDXGISwapChain*>(a1));
+    }
     // haloreach.dll invokes Slot 1 every frame to tick armory, loadscreen, looks, and frame timer
     static std::atomic<uint64_t> s_frameCount{0};
     uint64_t frames = ++s_frameCount;
@@ -569,6 +575,31 @@ static void FillLocalInput(uint8_t* st) {
     s_lastWindow = hwnd;
 
     const bool uiPointer = UiCursorActive();
+
+    // Esc opens/closes Noble's pause menu, except while a Reach menu owns the pointer (there Esc
+    // goes to the engine, e.g. to back out of a screen).
+    static bool s_escWasDown = false;
+    const bool escDown = (GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0;
+    if (escDown && !s_escWasDown && !uiPointer) {
+        PauseMenu::Toggle();
+    }
+    s_escWasDown = escDown;
+
+    // While the pause menu is open the game gets no keys or mouse, and the pointer is free.
+    static bool s_holdMouseUntilRelease = false;
+    if (PauseMenu::IsOpen()) {
+        InputRelease(hwnd, "pause menu open");
+        memset(s_keyDownSince, 0, sizeof(s_keyDownSince));
+        s_holdMouseUntilRelease = true;
+        return;
+    }
+    // After the menu closes, ignore the mouse buttons until they are released, so the click on
+    // RESUME doesn't fire a shot.
+    if (s_holdMouseUntilRelease) {
+        const bool anyButton = (GetAsyncKeyState(VK_LBUTTON) | GetAsyncKeyState(VK_RBUTTON) | GetAsyncKeyState(VK_MBUTTON)) & 0x8000;
+        if (!anyButton) s_holdMouseUntilRelease = false;
+    }
+
     bool firstCapturedFrame = false;
     POINT center{};
     if (uiPointer) {
@@ -612,6 +643,13 @@ static void FillLocalInput(uint8_t* st) {
             s_keyDownSince[vk] = 0;
         }
         st[0x004 + vk] = v;
+    }
+
+    if (!uiPointer) {
+        st[0x004 + VK_ESCAPE] = 0; // Esc was ours (pause menu)
+    }
+    if (s_holdMouseUntilRelease) {
+        st[0x004 + VK_LBUTTON] = st[0x004 + VK_RBUTTON] = st[0x004 + VK_MBUTTON] = 0;
     }
 
     // Mouse look: delta from the window centre, then recentre (not while a menu owns the pointer).
