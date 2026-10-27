@@ -261,14 +261,23 @@ static uint64_t __fastcall HostSlot48_FilePathResolver(void* thisPtr, uint64_t a
     std::filesystem::path resolved;
 
     std::filesystem::path checkUser = host.GetDataDir() / inStr;
+    std::filesystem::path checkUserMenuMap = host.GetDataDir() / "menumaps" / inStr;
+    std::filesystem::path checkCustomMainMenu = host.GetDataDir() / "menumaps" / "mainmenu_all.map";
+    std::filesystem::path checkUserArmor = host.GetDataDir() / "armor" / inStr;
     std::filesystem::path checkUserMaps = host.GetDataDir() / "maps" / inStr;
     std::filesystem::path mccRoot = host.GetReachDir().has_parent_path() ? host.GetReachDir().parent_path() : host.GetReachDir();
     std::filesystem::path checkMccRelative = mccRoot / inStr;
     std::filesystem::path checkRetailReach = host.GetReachDir() / inStr;
     std::filesystem::path checkRetailMaps = host.GetMapsDir() / inStr;
 
-    if (std::filesystem::exists(checkUser)) {
+    if ((inStr.find(L"mainmenu") != std::wstring::npos || inStr.find(L"mainmenu.map") != std::wstring::npos) && std::filesystem::exists(checkCustomMainMenu)) {
+        resolved = checkCustomMainMenu;
+    } else if (std::filesystem::exists(checkUser)) {
         resolved = checkUser;
+    } else if (std::filesystem::exists(checkUserMenuMap)) {
+        resolved = checkUserMenuMap;
+    } else if (std::filesystem::exists(checkUserArmor)) {
+        resolved = checkUserArmor;
     } else if (std::filesystem::exists(checkUserMaps)) {
         resolved = checkUserMaps;
     } else if (std::filesystem::exists(checkMccRelative)) {

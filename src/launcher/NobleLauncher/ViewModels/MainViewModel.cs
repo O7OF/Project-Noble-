@@ -55,9 +55,50 @@ namespace NobleLauncher.ViewModels
             set { _isBusy = value; OnPropertyChanged(); }
         }
 
+        private FirefightBlockInfo? _selectedFirefightMission;
+        private string _selectedDifficulty = "Heroic";
+        private string _selectedCampaignMission = "Winter Contingency";
+
         public ObservableCollection<ModPackage> Mods { get; } = new();
+        public ObservableCollection<FirefightBlockInfo> FirefightMissions { get; } = new();
+        public ObservableCollection<string> Difficulties { get; } = new() { "Easy", "Normal", "Heroic", "Legendary" };
+        public ObservableCollection<string> CampaignMissions { get; } = new()
+        {
+            "Noble Actual",
+            "Winter Contingency",
+            "ONI: Sword Base",
+            "Nightfall",
+            "Tip of the Spear",
+            "Long Night of Solace",
+            "Exodus",
+            "New Alexandria",
+            "The Package",
+            "The Pillar of Autumn",
+            "Lone Wolf"
+        };
+
+        public FirefightBlockInfo? SelectedFirefightMission
+        {
+            get => _selectedFirefightMission;
+            set { _selectedFirefightMission = value; OnPropertyChanged(); }
+        }
+
+        public string SelectedDifficulty
+        {
+            get => _selectedDifficulty;
+            set { _selectedDifficulty = value; OnPropertyChanged(); }
+        }
+
+        public string SelectedCampaignMission
+        {
+            get => _selectedCampaignMission;
+            set { _selectedCampaignMission = value; OnPropertyChanged(); }
+        }
 
         public ICommand LaunchGameCommand { get; }
+        public ICommand LaunchMainMenuCommand { get; }
+        public ICommand LaunchFirefightCommand { get; }
+        public ICommand LaunchCampaignCommand { get; }
         public ICommand LaunchDedicatedCommand { get; }
         public ICommand BrowseMccPathCommand { get; }
         public ICommand RefreshDiscoveryCommand { get; }
@@ -89,7 +130,10 @@ namespace NobleLauncher.ViewModels
                 });
             };
 
-            LaunchGameCommand = new RelayCommand(_ => LaunchClient(), _ => !IsBusy && Installation.IsValid);
+            LaunchGameCommand = new RelayCommand(_ => LaunchMainMenu(), _ => !IsBusy && Installation.IsValid);
+            LaunchMainMenuCommand = new RelayCommand(_ => LaunchMainMenu(), _ => !IsBusy && Installation.IsValid);
+            LaunchFirefightCommand = new RelayCommand(_ => LaunchFirefight(), _ => !IsBusy && Installation.IsValid && SelectedFirefightMission != null);
+            LaunchCampaignCommand = new RelayCommand(_ => LaunchCampaign(), _ => !IsBusy && Installation.IsValid);
             LaunchDedicatedCommand = new RelayCommand(_ => LaunchDedicated(), _ => !IsBusy && Installation.IsValid);
             BrowseMccPathCommand = new RelayCommand(_ => BrowseMccPath());
             RefreshDiscoveryCommand = new RelayCommand(_ => RunDiscovery());
@@ -106,6 +150,7 @@ namespace NobleLauncher.ViewModels
             Config = _configService.Load();
             RunDiscovery();
             RefreshMods();
+            RefreshFirefightBlocks();
         }
 
         public void RunDiscovery()
@@ -142,16 +187,58 @@ namespace NobleLauncher.ViewModels
             AppendLog($"Indexed {Mods.Count} mods ({Mods.Count(m => m.Source == ModSource.SteamWorkshop)} Workshop, {Mods.Count(m => m.Source == ModSource.LocalDirectory)} Local).");
         }
 
-        private void LaunchClient()
+        public void RefreshFirefightBlocks()
+        {
+            FirefightMissions.Clear();
+            string blocksDir = Path.Combine(Directory.GetCurrentDirectory(), "data", "blocks");
+            if (!Directory.Exists(blocksDir))
+            {
+                blocksDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "data", "blocks");
+            }
+
+            var scanned = FirefightBlockDecoder.ScanDirectory(blocksDir);
+            // Deduplicate to show one entry per map (defaulting to Normal d1)
+            var seenMaps = new HashSet<int>();
+            foreach (var block in scanned)
+            {
+                if (block.Difficulty == 1 && !seenMaps.Contains(block.MapId))
+                {
+                    seenMaps.Add(block.MapId);
+                    FirefightMissions.Add(block);
+                }
+            }
+
+            // Fallback if no d1 found
+            if (FirefightMissions.Count == 0)
+            {
+                foreach (var block in scanned)
+                {
+                    if (!seenMaps.Contains(block.MapId))
+                    {
+                        seenMaps.Add(block.MapId);
+                        FirefightMissions.Add(block);
+                    }
+                }
+            }
+
+            if (FirefightMissions.Count > 0)
+            {
+                SelectedFirefightMission = FirefightMissions[0];
+            }
+
+            AppendLog($"Decoded {FirefightMissions.Count} Firefight missions from {blocksDir}.");
+        }
+
+        private void LaunchMainMenu()
         {
             IsBusy = true;
-            StatusText = "Launching Halo Reach Community Edition...";
-            AppendLog("Initiating client launch sequence...");
+            StatusText = "Launching Halo Reach Main Menu...";
+            AppendLog("Launching interactive 3D Main Menu (mainmenu_all.map)...");
 
             _modManager.SaveModState(Mods);
             _configService.Save(Config);
 
-            bool launched = _processSupervisor.Launch(Config, Installation, dedicated: false);
+            bool launched = _processSupervisor.Launch(Config, Installation, dedicated: false, customMap: "mainmenu", customMode: "mainmenu");
             if (!launched)
             {
                 IsBusy = false;
@@ -159,8 +246,67 @@ namespace NobleLauncher.ViewModels
             }
             else
             {
-                StatusText = "noble-client.exe is running.";
+                StatusText = "noble-client.exe running (Main Menu).";
             }
+        }
+
+        private void LaunchFirefight()
+        {
+            if (SelectedFirefightMission == null) return;
+
+            IsBusy = true;
+            int diffIndex = Math.Max(0, Difficulties.IndexOf(SelectedDifficulty));
+            StatusText = $"Launching Firefight: {SelectedFirefightMission.MapName} ({SelectedDifficulty})...";
+            AppendLog($"Deploying Firefight on map {SelectedFirefightMission.MapName} (MapId: {SelectedFirefightMission.MapId}, Difficulty: {SelectedDifficulty})...");
+
+            _modManager.SaveModState(Mods);
+            _configService.Save(Config);
+
+            bool launched = _processSupervisor.Launch(Config, Installation, dedicated: false,
+                customMap: SelectedFirefightMission.MapName,
+                customMode: "firefight",
+                customDifficulty: diffIndex);
+
+            if (!launched)
+            {
+                IsBusy = false;
+                StatusText = "Firefight launch failed. Check log.";
+            }
+            else
+            {
+                StatusText = $"noble-client.exe running ({SelectedFirefightMission.MapName} Firefight).";
+            }
+        }
+
+        private void LaunchCampaign()
+        {
+            IsBusy = true;
+            int diffIndex = Math.Max(0, Difficulties.IndexOf(SelectedDifficulty));
+            StatusText = $"Launching Campaign: {SelectedCampaignMission} ({SelectedDifficulty})...";
+            AppendLog($"Deploying Campaign mission '{SelectedCampaignMission}' on {SelectedDifficulty} difficulty...");
+
+            _modManager.SaveModState(Mods);
+            _configService.Save(Config);
+
+            bool launched = _processSupervisor.Launch(Config, Installation, dedicated: false,
+                customMap: SelectedCampaignMission,
+                customMode: "campaign",
+                customDifficulty: diffIndex);
+
+            if (!launched)
+            {
+                IsBusy = false;
+                StatusText = "Campaign launch failed. Check log.";
+            }
+            else
+            {
+                StatusText = $"noble-client.exe running ({SelectedCampaignMission}).";
+            }
+        }
+
+        private void LaunchClient()
+        {
+            LaunchMainMenu();
         }
 
         private void LaunchDedicated()

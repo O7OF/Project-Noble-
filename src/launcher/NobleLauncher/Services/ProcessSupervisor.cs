@@ -105,7 +105,7 @@ namespace NobleLauncher.Services
         }
 
         public bool Launch(LauncherConfig config, GameInstallation installation, bool dedicated = false,
-                           string? customMap = null, string? customMode = null, string? customMvar = null, string? customVariant = null)
+                           string? customMap = null, string? customMode = null, string? customMvar = null, string? customVariant = null, int? customDifficulty = null)
         {
             var exePath = FindExecutable(dedicated);
             if (!File.Exists(exePath))
@@ -159,6 +159,10 @@ namespace NobleLauncher.Services
                 if (!string.IsNullOrWhiteSpace(customVariant))
                 {
                     cmdBuilder.Append($" -variant \"{customVariant}\"");
+                }
+                if (customDifficulty.HasValue)
+                {
+                    cmdBuilder.Append($" -difficulty {customDifficulty.Value}");
                 }
             }
 

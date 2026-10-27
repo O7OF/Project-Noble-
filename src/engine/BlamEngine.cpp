@@ -254,89 +254,149 @@ uint32_t BlamEngine::ResolveMapId(const std::string& mapName) {
         return static_cast<char>(std::tolower(c));
     });
 
-    if (lower.find("mainmenu") != std::string::npos) return 0;
-    if (lower.find("m10") != std::string::npos) return 1000; // Noble Actual
-    if (lower.find("m20") != std::string::npos) return 20;   // Winter Contingency
-    if (lower.find("m30") != std::string::npos) return 30;   // ONI: Sword Base
-    if (lower.find("m35") != std::string::npos) return 35;   // Nightfall
-    if (lower.find("m45") != std::string::npos) return 45;   // Tip of the Spear
-    if (lower.find("m50") != std::string::npos) return 50;   // Long Night of Solace
-    if (lower.find("m52") != std::string::npos) return 52;   // Exodus
-    if (lower.find("m60") != std::string::npos) return 60;   // New Alexandria
-    if (lower.find("m70") != std::string::npos) return 70;   // The Package
-    if (lower.find("forge_halo") != std::string::npos) return 7000;  // Forge World
-    if (lower.find("50_panopticon") != std::string::npos) return 5000; // Boardwalk
-    if (lower.find("ff10_prototype") != std::string::npos) return 1010; // Corvette Firefight
+    // Main Menu
+    if (lower.find("mainmenu") != std::string::npos || lower == "0" || lower == "menu") return 0;
+
+    // Firefight Maps (210 - 219)
+    if (lower.find("beachhead") != std::string::npos || lower.find("ff10_prototype") != std::string::npos || lower == "210") return 210;
+    if (lower.find("corvette") != std::string::npos || lower.find("ff45_corvette") != std::string::npos || lower == "211") return 211;
+    if (lower.find("courtyard") != std::string::npos || lower.find("ff20_courtyard") != std::string::npos || lower == "212") return 212;
+    if (lower.find("glacier") != std::string::npos || lower.find("ff60_icecave") != std::string::npos || lower == "213") return 213;
+    if (lower.find("holdout") != std::string::npos || lower.find("ff70_holdout") != std::string::npos || lower == "214") return 214;
+    if (lower.find("outpost") != std::string::npos || lower.find("ff60_airview") != std::string::npos || lower == "215") return 215;
+    if (lower.find("overlook") != std::string::npos || lower.find("ff50_park") != std::string::npos || lower == "216") return 216;
+    if (lower.find("waterfront") != std::string::npos || lower.find("ff30_waterfront") != std::string::npos || lower == "217") return 217;
+    if (lower.find("unearthed") != std::string::npos || lower.find("ff_unearthed") != std::string::npos || lower == "218") return 218;
+    if (lower.find("installation 04") != std::string::npos || lower.find("installation04") != std::string::npos || lower.find("cex_ff_halo") != std::string::npos || lower == "219") return 219;
+
+    // Campaign Missions (178 - 189)
+    if (lower.find("noble actual") != std::string::npos || lower.find("m05") != std::string::npos || lower == "178") return 178;
+    if (lower.find("winter contingency") != std::string::npos || lower.find("m10") != std::string::npos || lower == "179") return 179;
+    if (lower.find("oni: sword base") != std::string::npos || lower.find("m20") != std::string::npos || lower == "180") return 180;
+    if (lower.find("nightfall") != std::string::npos || lower.find("m30") != std::string::npos || lower == "181") return 181;
+    if (lower.find("tip of the spear") != std::string::npos || lower.find("m35") != std::string::npos || lower == "182") return 182;
+    if (lower.find("long night of solace") != std::string::npos || lower.find("m45") != std::string::npos || lower == "183") return 183;
+    if (lower.find("exodus") != std::string::npos || lower.find("m50") != std::string::npos || lower == "184") return 184;
+    if (lower.find("new alexandria") != std::string::npos || lower.find("m52") != std::string::npos || lower == "185") return 185;
+    if (lower.find("the package") != std::string::npos || lower.find("m60") != std::string::npos || lower == "186") return 186;
+    if (lower.find("the pillar of autumn") != std::string::npos || lower.find("m70") != std::string::npos || lower == "187") return 187;
+    if (lower.find("lone wolf") != std::string::npos || lower.find("m70_bonus") != std::string::npos || lower == "189") return 189;
+
+    // Multiplayer / Forge Maps
+    if (lower.find("forge_halo") != std::string::npos || lower.find("forge world") != std::string::npos) return 7000;
+    if (lower.find("50_panopticon") != std::string::npos || lower.find("boardwalk") != std::string::npos) return 5000;
+    if (lower.find("70_boneyard") != std::string::npos || lower.find("boneyard") != std::string::npos) return 7001;
+    if (lower.find("45_launch_station") != std::string::npos || lower.find("countdown") != std::string::npos) return 4501;
+    if (lower.find("30_settlement") != std::string::npos || lower.find("powerhouse") != std::string::npos) return 3001;
+    if (lower.find("52_ivory_tower") != std::string::npos || lower.find("reflection") != std::string::npos) return 5201;
+    if (lower.find("35_island") != std::string::npos || lower.find("spire") != std::string::npos) return 3501;
+    if (lower.find("20_sword_slayer") != std::string::npos || lower.find("sword base") != std::string::npos) return 2001;
+    if (lower.find("45_aftship") != std::string::npos || lower.find("zealot") != std::string::npos) return 4502;
 
     return 0;
 }
 
 std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameModeTag, int difficulty, uint32_t skulls,
                                                    const std::string& customMvarPath, const std::string& customVariantPath) {
-    constexpr size_t LAUNCH_BLOCK_SIZE = 0x2BF30; // 179,984 bytes
+    constexpr size_t LAUNCH_BLOCK_SIZE = 0x2BF30; // 180,016 bytes
     std::vector<uint8_t> block(LAUNCH_BLOCK_SIZE, 0);
 
-    // Initial header markers (reversed from host-probe::new_launch_block)
-    block[0] = 0x08;
-    block[1] = 0x03;
-    block[2] = 0x00;
-    block[3] = 0x10;
-    block[4] = 0x03;
-    block[0x0C] = 0x03;
-    block[0x10] = 0xBE;
-    block[0x14] = 0xBE;
-    block[0x1A] = 0x88;
-    block[0x1B] = 0x88;
-    block[0x34] = 0x01;
-    block[0x44] = 0xFF;
-    block[0x45] = 0xFF;
+    // 1. Try loading pre-built launch block from data/blocks/
+    bool loadedPrebuilt = false;
+    std::filesystem::path blockPath;
 
-    // Set 16 player slot descriptors to unassigned (-1)
-    for (size_t slot = 0; slot < 16; ++slot) {
-        size_t offset = 0x100 + (slot * 0x20);
-        block[offset + 0] = 0xFF;
-        block[offset + 1] = 0xFF;
-        block[offset + 2] = 0xFF;
-        block[offset + 3] = 0xFF;
-        for (size_t b = 8; b < 16; ++b) {
-            block[offset + b] = 0xFF;
+    int clampedDiff = (difficulty >= 0 && difficulty <= 3) ? difficulty : 1;
+
+    if (mapId >= 210 && mapId <= 219) {
+        // Firefight
+        blockPath = std::filesystem::path("data") / "blocks" / ("firefight_" + std::to_string(mapId) + "_d" + std::to_string(clampedDiff) + ".bin");
+        if (!std::filesystem::exists(blockPath)) {
+            blockPath = std::filesystem::path("data") / "blocks" / ("firefight_" + std::to_string(mapId) + ".bin");
+        }
+    } else if (mapId >= 178 && mapId <= 189) {
+        // Campaign
+        blockPath = std::filesystem::path("data") / "blocks" / ("campaign_" + std::to_string(mapId) + "_d" + std::to_string(clampedDiff) + ".bin");
+        if (!std::filesystem::exists(blockPath)) {
+            blockPath = std::filesystem::path("data") / "blocks" / ("campaign_" + std::to_string(mapId) + ".bin");
+        }
+    } else if (mapId == 0 || mapId == 190) {
+        // Main Menu
+        blockPath = std::filesystem::path("data") / "launch_block_1.bin";
+    }
+
+    if (!blockPath.empty() && std::filesystem::exists(blockPath)) {
+        std::ifstream file(blockPath, std::ios::binary);
+        if (file) {
+            file.read(reinterpret_cast<char*>(block.data()), LAUNCH_BLOCK_SIZE);
+            loadedPrebuilt = true;
+            NOBLE_INFO("BlamEngine: Loaded authentic pre-built launch block from '{}'", blockPath.string());
         }
     }
 
-    // Set local player 0 active (from host-probe::new_launch_block lines 251-274)
-    block[0xE8] = 0x01; // 1 active player
-    block[0xF0] = 0xBE;
-    block[0xF1] = 0xF3;
-    block[0xF2] = 'Y';
-    block[0xF3] = '?';
-    block[0x100] = 0x00;
-    block[0x101] = 0x00;
-    block[0x102] = 0x00;
-    block[0x103] = 0x00;
-    block[0x104] = 0x02;
-    block[0x108] = 0x00;
-    block[0x109] = 0x00;
-    block[0x10A] = 0x00;
-    block[0x10B] = 0x00;
-    block[0x2F0] = 0x01;
+    if (!loadedPrebuilt) {
+        // Initial header markers (reversed from host-probe::new_launch_block)
+        block[0] = 0x08;
+        block[1] = 0x03;
+        block[2] = 0x00;
+        block[3] = 0x10;
+        block[4] = 0x03;
+        block[0x0C] = 0x03;
+        block[0x10] = 0xBE;
+        block[0x14] = 0xBE;
+        block[0x1A] = 0x88;
+        block[0x1B] = 0x88;
+        block[0x34] = 0x01;
+        block[0x44] = 0xFF;
+        block[0x45] = 0xFF;
 
-    // Map ID & Mode tagging (from host-probe::set_map lines 78-92)
-    *reinterpret_cast<uint32_t*>(&block[0x10]) = mapId;
-    *reinterpret_cast<uint32_t*>(&block[0x14]) = mapId;
-    *reinterpret_cast<uint32_t*>(&block[0x18]) = 0x88880000;
-    *reinterpret_cast<uint64_t*>(&block[0x1C]) = 0;
-    *reinterpret_cast<uint32_t*>(&block[0x1D5C0]) = mapId;
-    *reinterpret_cast<uint32_t*>(&block[0x1D5C4]) = 0x88880000;
-    *reinterpret_cast<uint64_t*>(&block[0x1D5C8]) = 0;
-    *reinterpret_cast<uint32_t*>(&block[0x1D334]) = gameModeTag;
-    *reinterpret_cast<uint32_t*>(&block[0x1D5BC]) = gameModeTag;
+        // Set 16 player slot descriptors to unassigned (-1)
+        for (size_t slot = 0; slot < 16; ++slot) {
+            size_t offset = 0x100 + (slot * 0x20);
+            block[offset + 0] = 0xFF;
+            block[offset + 1] = 0xFF;
+            block[offset + 2] = 0xFF;
+            block[offset + 3] = 0xFF;
+            for (size_t b = 8; b < 16; ++b) {
+                block[offset + b] = 0xFF;
+            }
+        }
 
-    // Store difficulty & skulls
-    *reinterpret_cast<uint32_t*>(&block[0x38]) = static_cast<uint32_t>(difficulty);
+        // Set local player 0 active (from host-probe::new_launch_block lines 251-274)
+        block[0xE8] = 0x01; // 1 active player
+        block[0xF0] = 0xBE;
+        block[0xF1] = 0xF3;
+        block[0xF2] = 'Y';
+        block[0xF3] = '?';
+        block[0x100] = 0x00;
+        block[0x101] = 0x00;
+        block[0x102] = 0x00;
+        block[0x103] = 0x00;
+        block[0x104] = 0x02;
+        block[0x108] = 0x00;
+        block[0x109] = 0x00;
+        block[0x10A] = 0x00;
+        block[0x10B] = 0x00;
+        block[0x2F0] = 0x01;
+
+        // Map ID & Mode tagging (from host-probe::set_map lines 78-92)
+        *reinterpret_cast<uint32_t*>(&block[0x10]) = mapId;
+        *reinterpret_cast<uint32_t*>(&block[0x14]) = mapId;
+        *reinterpret_cast<uint32_t*>(&block[0x18]) = 0x88880000;
+        *reinterpret_cast<uint64_t*>(&block[0x1C]) = 0;
+        *reinterpret_cast<uint32_t*>(&block[0x1D5C0]) = mapId;
+        *reinterpret_cast<uint32_t*>(&block[0x1D5C4]) = 0x88880000;
+        *reinterpret_cast<uint64_t*>(&block[0x1D5C8]) = 0;
+        *reinterpret_cast<uint32_t*>(&block[0x1D334]) = gameModeTag;
+        *reinterpret_cast<uint32_t*>(&block[0x1D5BC]) = gameModeTag;
+    }
+
+    // Apply difficulty & skulls overrides
+    block[0x34] = static_cast<uint8_t>(clampedDiff);
+    *reinterpret_cast<uint32_t*>(&block[0x38]) = static_cast<uint32_t>(clampedDiff);
     *reinterpret_cast<uint32_t*>(&block[0x3C]) = skulls;
 
     // Default variant buffer init at offset 0x1D308 (RVA 0x6BFF8)
-    if (m_hModule) {
+    if (m_hModule && !loadedPrebuilt) {
         SafeCallVariantInit(m_hModule, &block[0x1D308]);
     }
 
@@ -409,7 +469,14 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
     NOBLE_INFO("=================================================");
 
     uint32_t mapId = ResolveMapId(mapName);
-    uint32_t gameModeTag = (gameMode == "Campaign") ? 1 : (gameMode == "mainmenu" ? 0 : 2);
+    uint32_t gameModeTag = 2; // Default multiplayer
+    if ((mapId >= 210 && mapId <= 219) || gameMode == "firefight" || gameMode == "Firefight") {
+        gameModeTag = 1035; // 0x40B Firefight
+    } else if ((mapId >= 178 && mapId <= 189) || gameMode == "Campaign" || gameMode == "campaign") {
+        gameModeTag = 1;    // Campaign
+    } else if (mapId == 0 || mapId == 190 || gameMode == "mainmenu" || gameMode == "menu") {
+        gameModeTag = 0;    // Main Menu
+    }
 
     auto launchBlock = BuildLaunchBlock(mapId, gameModeTag, difficulty, skulls, customMvarPath, customVariantPath);
 

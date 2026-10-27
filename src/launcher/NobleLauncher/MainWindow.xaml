@@ -146,7 +146,7 @@
                             <TextBlock Text="STEAM MCC APID 976730" FontSize="11" FontWeight="Bold" Foreground="{StaticResource NobleCyan}" VerticalAlignment="Center" />
                         </StackPanel>
                     </Border>
-                    <TextBlock Text="v0.5.0-ALPHA" FontSize="12" Foreground="{StaticResource TextDim}" VerticalAlignment="Center" />
+                    <TextBlock Text="v0.6.0" FontSize="12" Foreground="{StaticResource TextDim}" VerticalAlignment="Center" />
                 </StackPanel>
             </Grid>
         </Border>
@@ -177,7 +177,7 @@
 
                             <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
                                 <Button Content="START DEDICATED SERVER" Style="{StaticResource SecondaryButton}" Command="{Binding LaunchDedicatedCommand}" Margin="0,0,12,0" Padding="18,16" />
-                                <Button Content="PLAY HALO: REACH" Style="{StaticResource HeroButton}" Command="{Binding LaunchGameCommand}" Padding="32,16" />
+                                <Button Content="PLAY (MAIN MENU)" Style="{StaticResource HeroButton}" Command="{Binding LaunchMainMenuCommand}" Padding="32,16" />
                             </StackPanel>
                         </Grid>
                     </Border>
@@ -233,6 +233,94 @@
                             </StackPanel>
                         </Border>
                     </Grid>
+                </Grid>
+            </TabItem>
+
+            <!-- TAB 2: FIREFIGHT & CAMPAIGN -->
+            <TabItem Header="FIREFIGHT &amp; CAMPAIGN">
+                <Grid Margin="24">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="3*" />
+                        <ColumnDefinition Width="2*" />
+                    </Grid.ColumnDefinitions>
+
+                    <!-- Left: Firefight Operations -->
+                    <Border Grid.Column="0" Background="{StaticResource BgCard}" BorderBrush="{StaticResource BgCardBorder}" BorderThickness="1" CornerRadius="8" Padding="20" Margin="0,0,10,0">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+
+                            <StackPanel Grid.Row="0" Margin="0,0,0,14">
+                                <TextBlock Text="FIREFIGHT OPERATIONS (DECODED ENGINE BLOCKS)" FontSize="14" FontWeight="Bold" Foreground="{StaticResource NobleCyan}" />
+                                <TextBlock Text="Select a Firefight combat zone and difficulty. Loads authentic launch blocks (210-219) directly into haloreach.dll." FontSize="12" Foreground="{StaticResource TextDim}" Margin="0,4,0,0" />
+                            </StackPanel>
+
+                            <DataGrid Grid.Row="1" ItemsSource="{Binding FirefightMissions}" SelectedItem="{Binding SelectedFirefightMission}" AutoGenerateColumns="False" Background="Transparent" BorderThickness="0" RowBackground="#131922" AlternatingRowBackground="#171F2B" Foreground="#E0E6ED" GridLinesVisibility="None" HeadersVisibility="Column" SelectionMode="Single" CanUserAddRows="False" IsReadOnly="True" Margin="0,0,0,14">
+                                <DataGrid.ColumnHeaderStyle>
+                                    <Style TargetType="DataGridColumnHeader">
+                                        <Setter Property="Background" Value="#0F1318" />
+                                        <Setter Property="Foreground" Value="{StaticResource TextDim}" />
+                                        <Setter Property="FontWeight" Value="SemiBold" />
+                                        <Setter Property="Padding" Value="10,8" />
+                                        <Setter Property="BorderThickness" Value="0,0,0,1" />
+                                        <Setter Property="BorderBrush" Value="{StaticResource BgCardBorder}" />
+                                    </Style>
+                                </DataGrid.ColumnHeaderStyle>
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="Map ID" Binding="{Binding MapId}" Width="65" />
+                                    <DataGridTextColumn Header="Combat Zone" Binding="{Binding MapName}" FontWeight="Bold" Width="140" />
+                                    <DataGridTextColumn Header="Engine File" Binding="{Binding EngineMapFile}" Width="150" />
+                                    <DataGridTextColumn Header="Variant Mode" Binding="{Binding VariantName}" Width="*" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+
+                            <Grid Grid.Row="2">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                    <TextBlock Text="Difficulty:" Foreground="{StaticResource TextDim}" VerticalAlignment="Center" Margin="0,0,10,0" FontWeight="SemiBold" />
+                                    <ComboBox ItemsSource="{Binding Difficulties}" SelectedItem="{Binding SelectedDifficulty}" Width="130" Background="#0D1117" Foreground="#FFFFFF" Padding="6" />
+                                </StackPanel>
+                                <Button Grid.Column="2" Content="DEPLOY FIREFIGHT" Style="{StaticResource HeroButton}" Command="{Binding LaunchFirefightCommand}" Padding="24,12" />
+                            </Grid>
+                        </Grid>
+                    </Border>
+
+                    <!-- Right: Campaign Missions -->
+                    <Border Grid.Column="1" Background="{StaticResource BgCard}" BorderBrush="{StaticResource BgCardBorder}" BorderThickness="1" CornerRadius="8" Padding="20" Margin="10,0,0,0">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+
+                            <StackPanel Grid.Row="0" Margin="0,0,0,14">
+                                <TextBlock Text="CAMPAIGN MISSIONS" FontSize="14" FontWeight="Bold" Foreground="{StaticResource NobleCyan}" />
+                                <TextBlock Text="Deploy directly into any Noble Team campaign mission." FontSize="12" Foreground="{StaticResource TextDim}" Margin="0,4,0,0" />
+                            </StackPanel>
+
+                            <ListBox Grid.Row="1" ItemsSource="{Binding CampaignMissions}" SelectedItem="{Binding SelectedCampaignMission}" Background="Transparent" BorderThickness="0" Foreground="#E0E6ED" Margin="0,0,0,14">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Padding="10,8" Margin="0,2" CornerRadius="4" Background="#131922">
+                                            <TextBlock Text="{Binding}" FontWeight="SemiBold" FontSize="13" />
+                                        </Border>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+
+                            <Grid Grid.Row="2">
+                                <Button Content="DEPLOY MISSION" Style="{StaticResource SecondaryButton}" Command="{Binding LaunchCampaignCommand}" HorizontalAlignment="Stretch" Padding="20,12" />
+                            </Grid>
+                        </Grid>
+                    </Border>
                 </Grid>
             </TabItem>
 
