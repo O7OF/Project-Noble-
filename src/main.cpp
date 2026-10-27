@@ -231,10 +231,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         LocalFree(argvW);
     }
 
-    // If no specific map requested, default to the authentic 3D Halo Reach Main Menu
+    // If no specific map requested, default to the working 20_sword_slayer test
     if (launchMap.empty()) {
-        launchMap = "mainmenu";
-        launchMode = "mainmenu";
+        launchMap = "20_sword_slayer";
+        launchMode = "multiplayer";
     }
 
     // Map-info sandbox. The engine builds its map list by enumerating "haloreach\\maps\\info\\*.*"

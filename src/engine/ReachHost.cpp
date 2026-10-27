@@ -21,6 +21,14 @@
 
 #pragma comment(lib, "gdi32.lib")
 #pragma comment(lib, "shell32.lib")
+#pragma comment(lib, "d3d11.lib")
+#pragma comment(lib, "dxgi.lib")
+#pragma comment(lib, "d3dcompiler.lib")
+
+#include <d3d11.h>
+#include <dxgi.h>
+#include <d3dcompiler.h>
+#include <wrl/client.h>
 
 namespace noble {
 
@@ -208,15 +216,20 @@ static uint64_t __fastcall HostSlot0_QueryInterface(void* thisPtr, uint64_t a1, 
     return 0; // S_OK
 }
 
+static void ExecuteGammaPass(IDXGISwapChain* swapChain);
+static void ResetGammaPass();
+
 // Slot 1: Frame tick / Render loop update callback (host_probe case 1)
 static uint64_t __fastcall HostSlot1_FrameTick(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
     (void)thisPtr; (void)a2; (void)a3; (void)a4;
-    // a1 = the swap chain the engine is about to present (RR host::hit case 1). Our overlays draw here,
-    // on the engine thread, because the engine owns the immediate context.
+    // haloreach.dll invokes Slot 1 every frame before Present. a1 = the swap chain it is about to
+    // present (RR host::hit case 1). Our passes draw here, on the engine thread, because the engine
+    // owns the immediate context.
     if (a1 > 0x10000) {
-        PauseMenu::Render(reinterpret_cast<IDXGISwapChain*>(a1));
+        IDXGISwapChain* swapChain = reinterpret_cast<IDXGISwapChain*>(a1);
+        ExecuteGammaPass(swapChain);   // brightness/gamma first
+        PauseMenu::Render(swapChain);  // pause menu on top, unaffected by gamma
     }
-    // haloreach.dll invokes Slot 1 every frame to tick armory, loadscreen, looks, and frame timer
     static std::atomic<uint64_t> s_frameCount{0};
     uint64_t frames = ++s_frameCount;
     if (frames == 1 || (frames % 300) == 0) {
@@ -235,6 +248,7 @@ static uint64_t __fastcall HostSlot1_FrameTick(void* thisPtr, uint64_t a1, uint6
 // Slot 2: SwapChain / Buffer resize callback (host_probe case 2)
 static uint64_t __fastcall HostSlot2_ResizeBuffers(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
     (void)thisPtr; (void)a1; (void)a2; (void)a3; (void)a4;
+    ResetGammaPass();
     static std::atomic<bool> s_logged{false};
     if (!s_logged.exchange(true)) {
         NOBLE_INFO("ReachHost [Slot 2 - ResizeBuffers]: Engine requested swap chain buffer refresh");
@@ -1062,7 +1076,554 @@ static uint64_t __fastcall HostSlot61_TextPrepare(void* thisPtr, const wchar_t* 
         NOBLE_INFO("ReachHost [Slot 61 - TextPrepare]: size={} scale={:.2f} face='{}' text='{}'",
             style, size, NarrowForLog(WidenFace(face)), NarrowForLog(SafeReadWide(text, 48)));
     }
-    return 1; // RR's text::prepare always returns 1 (glyph pre-rendering not implemented yet)
+    return 1;
+}
+
+// -----------------------------------------------------------------------------
+// Font Glyph and Atlas Subsystem (Slots 62-66). Matches Reach Renaissance text::{glyph, atlas, has_icon, kerning, register_icon}.
+// haloreach.dll queries glyph data (Slot 62) and binds the font texture atlas SRV (Slot 63)
+// to render in-game HUD numbers, weapon bullet counts, clip reserves, and scoreboard text.
+// -----------------------------------------------------------------------------
+#pragma pack(push, 1)
+struct HostGlyphData {
+    uint16_t ch;        // +0x00 character code (wchar_t)
+    uint16_t atlasX;    // +0x02 X in atlas (pixels)
+    uint16_t padX[3];   // +0x04 upper 48 bits of X (0)
+    uint16_t atlasY;    // +0x0A Y in atlas (pixels)
+    uint16_t width;     // +0x0C bounding width (gmBlackBoxX)
+    uint16_t height;    // +0x0E bounding height (gmBlackBoxY)
+    int16_t  originX;   // +0x10 origin.x
+    int16_t  originY;   // +0x12 origin.y
+    int16_t  advanceX;  // +0x14 cellIncX
+    int16_t  ascent;    // +0x16 -ascent
+    uint8_t  page;      // +0x18 page index (0)
+    uint8_t  reserved;  // +0x19 0
+};
+#pragma pack(pop)
+static_assert(sizeof(HostGlyphData) == 26, "HostGlyphData must be exactly 26 bytes");
+
+class TextAtlas {
+public:
+    static TextAtlas& Get() {
+        static TextAtlas instance;
+        return instance;
+    }
+
+    void Initialize(ID3D11Device* device, ID3D11DeviceContext* context) {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (m_initialized && m_device == device) return;
+
+        m_device = device;
+        m_context = context;
+        if (!m_device) return;
+
+        D3D11_TEXTURE2D_DESC desc{};
+        desc.Width = 1024;
+        desc.Height = 1024;
+        desc.MipLevels = 1;
+        desc.ArraySize = 1;
+        desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        desc.SampleDesc.Count = 1;
+        desc.SampleDesc.Quality = 0;
+        desc.Usage = D3D11_USAGE_DEFAULT;
+        desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+        desc.CPUAccessFlags = 0;
+
+        m_pixels.assign(1024 * 1024, 0);
+
+        D3D11_SUBRESOURCE_DATA initData{};
+        initData.pSysMem = m_pixels.data();
+        initData.SysMemPitch = 1024 * sizeof(uint32_t);
+
+        m_texture.Reset();
+        m_srv.Reset();
+
+        if (SUCCEEDED(m_device->CreateTexture2D(&desc, &initData, m_texture.GetAddressOf()))) {
+            m_device->CreateShaderResourceView(m_texture.Get(), nullptr, m_srv.GetAddressOf());
+        }
+
+        m_initialized = true;
+        NOBLE_INFO("TextAtlas: 1024x1024 dynamic font atlas texture initialized.");
+
+        // Pre-warm essential HUD digits '0'-'9' and common symbols
+        PrewarmCommonGlyphs();
+    }
+
+    ID3D11ShaderResourceView* GetSRV(uint32_t pageIndex) {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (pageIndex == 0) {
+            return m_srv.Get();
+        }
+        return nullptr;
+    }
+
+    bool GetGlyph(wchar_t ch, uint32_t style, float scale, const char* face, HostGlyphData* outGlyph) {
+        if (!outGlyph) return false;
+
+        uint32_t scaleKey = static_cast<uint32_t>(scale * 1000.0f);
+        uint64_t key = (static_cast<uint64_t>(ch) << 32) | (static_cast<uint64_t>(style) << 16) | (scaleKey & 0xFFFF);
+
+        std::lock_guard<std::mutex> lock(m_mutex);
+        auto it = m_cache.find(key);
+        if (it != m_cache.end()) {
+            *outGlyph = it->second;
+            return true;
+        }
+
+        return RasterizeGlyphLocked(ch, style, scale, face, key, outGlyph);
+    }
+
+private:
+    void PrewarmCommonGlyphs() {
+        const wchar_t commonChars[] = L"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz/:.-+ /";
+        const uint32_t commonStyles[] = { 9, 13, 15, 18, 24, 30, 42 };
+
+        HostGlyphData dummy{};
+        for (uint32_t s : commonStyles) {
+            for (size_t i = 0; i < (sizeof(commonChars) / sizeof(wchar_t)) - 1; ++i) {
+                uint64_t key = (static_cast<uint64_t>(commonChars[i]) << 32) | (static_cast<uint64_t>(s) << 16) | 1000;
+                if (m_cache.find(key) == m_cache.end()) {
+                    RasterizeGlyphLocked(commonChars[i], s, 1.0f, "tvnord", key, &dummy);
+                }
+            }
+        }
+        if (m_context && m_texture) {
+            m_context->UpdateSubresource(m_texture.Get(), 0, nullptr, m_pixels.data(), 1024 * sizeof(uint32_t), 0);
+        }
+    }
+
+    bool RasterizeGlyphLocked(wchar_t ch, uint32_t style, float scale, const char* face, uint64_t key, HostGlyphData* outGlyph) {
+        std::wstring requestedFace = WidenFace(face);
+        std::wstring mappedFace = MapReachFace(requestedFace);
+
+        int pixelHeight = static_cast<int>(static_cast<float>(style) * scale + 0.5f);
+        if (pixelHeight < 1) pixelHeight = 1;
+        if (pixelHeight > 256) pixelHeight = 256;
+
+        HDC hdc = CreateCompatibleDC(nullptr);
+        if (!hdc) return false;
+
+        HFONT font = CreateFontW(-pixelHeight, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+                                 OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY, DEFAULT_PITCH, mappedFace.c_str());
+        if (!font) {
+            font = CreateFontW(-pixelHeight, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+                               OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY, DEFAULT_PITCH, L"Segoe UI");
+        }
+
+        HGDIOBJ oldFont = SelectObject(hdc, font);
+        TEXTMETRICW tm{};
+        GetTextMetricsW(hdc, &tm);
+
+        GLYPHMETRICS gm{};
+        MAT2 mat2 = { {0,1}, {0,0}, {0,0}, {0,1} };
+        DWORD bufSize = GetGlyphOutlineW(hdc, ch, GGO_GRAY8_BITMAP, &gm, 0, nullptr, &mat2);
+
+        std::vector<uint8_t> grayBuffer;
+        if (bufSize != GDI_ERROR && bufSize > 0) {
+            grayBuffer.resize(bufSize);
+            GetGlyphOutlineW(hdc, ch, GGO_GRAY8_BITMAP, &gm, bufSize, grayBuffer.data(), &mat2);
+        } else if (bufSize == 0) {
+            // Space or non-rendering glyph
+            gm.gmBlackBoxX = 0;
+            gm.gmBlackBoxY = 0;
+        } else {
+            // Fallback for symbols where GetGlyphOutlineW is unsupported
+            SIZE sz{};
+            GetTextExtentPoint32W(hdc, &ch, 1, &sz);
+            gm.gmBlackBoxX = static_cast<UINT>(sz.cx);
+            gm.gmBlackBoxY = static_cast<UINT>(sz.cy);
+            gm.gmCellIncX = static_cast<short>(sz.cx);
+            gm.gmptGlyphOrigin.x = 0;
+            gm.gmptGlyphOrigin.y = static_cast<short>(sz.cy);
+        }
+
+        SelectObject(hdc, oldFont);
+        DeleteObject(font);
+        DeleteDC(hdc);
+
+        uint32_t w = gm.gmBlackBoxX;
+        uint32_t h = gm.gmBlackBoxY;
+
+        // Shelf packing in 1024x1024 atlas with 2px padding
+        if (m_cursorX + w + 2 >= 1024) {
+            m_cursorX = 1;
+            m_cursorY += m_rowHeight + 2;
+            m_rowHeight = 0;
+        }
+        if (m_cursorY + h + 2 >= 1024) {
+            m_cursorX = 1;
+            m_cursorY = 1;
+            m_rowHeight = 0;
+        }
+
+        uint32_t gx = m_cursorX;
+        uint32_t gy = m_cursorY;
+        m_cursorX += w + 2;
+        if (h > m_rowHeight) m_rowHeight = h;
+
+        if (w > 0 && h > 0 && !grayBuffer.empty()) {
+            uint32_t pitch = (w + 3) & ~3;
+            std::vector<uint32_t> subPixels(w * h, 0);
+
+            for (uint32_t y = 0; y < h; ++y) {
+                for (uint32_t x = 0; x < w; ++x) {
+                    if (y * pitch + x < grayBuffer.size()) {
+                        uint8_t val = grayBuffer[y * pitch + x];
+                        uint8_t alpha = (val >= 64) ? 255 : static_cast<uint8_t>((val * 255) / 64);
+                        uint32_t color = (static_cast<uint32_t>(alpha) << 24) | 0x00FFFFFF;
+                        subPixels[y * w + x] = color;
+                        m_pixels[(gy + y) * 1024 + (gx + x)] = color;
+                    }
+                }
+            }
+
+            if (m_context && m_texture) {
+                D3D11_BOX box{};
+                box.left = gx;
+                box.top = gy;
+                box.front = 0;
+                box.right = gx + w;
+                box.bottom = gy + h;
+                box.back = 1;
+                m_context->UpdateSubresource(m_texture.Get(), 0, &box, subPixels.data(), w * sizeof(uint32_t), 0);
+            }
+        }
+
+        HostGlyphData data{};
+        data.ch = static_cast<uint16_t>(ch);
+        data.atlasX = static_cast<uint16_t>(gx);
+        data.padX[0] = 0;
+        data.padX[1] = 0;
+        data.padX[2] = 0;
+        data.atlasY = static_cast<uint16_t>(gy);
+        data.width = static_cast<uint16_t>(w);
+        data.height = static_cast<uint16_t>(h);
+        data.originX = static_cast<int16_t>(gm.gmptGlyphOrigin.x);
+        data.originY = static_cast<int16_t>(gm.gmptGlyphOrigin.y);
+        data.advanceX = static_cast<int16_t>(gm.gmCellIncX);
+        data.ascent = -static_cast<int16_t>(tm.tmAscent);
+        data.page = 0;
+        data.reserved = 0;
+
+        m_cache[key] = data;
+        *outGlyph = data;
+        return true;
+    }
+
+    bool m_initialized = false;
+    ID3D11Device* m_device = nullptr;
+    ID3D11DeviceContext* m_context = nullptr;
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> m_texture;
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> m_srv;
+
+    std::vector<uint32_t> m_pixels;
+    uint32_t m_cursorX = 1;
+    uint32_t m_cursorY = 1;
+    uint32_t m_rowHeight = 0;
+
+    std::unordered_map<uint64_t, HostGlyphData> m_cache;
+    std::mutex m_mutex;
+};
+
+// Slot 62: Text Glyph handler (host_probe case 0x3E)
+static uint64_t __fastcall HostSlot62_TextGlyph(void* thisPtr, uint64_t ch, void* outGlyph, uint32_t style, float scale, const char* face) {
+    (void)thisPtr;
+    if (outGlyph && reinterpret_cast<uintptr_t>(outGlyph) > 0x10000) {
+        if (TextAtlas::Get().GetGlyph(static_cast<wchar_t>(ch & 0xFFFF), style, scale, face, reinterpret_cast<HostGlyphData*>(outGlyph))) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+// Slot 63: Text Atlas handler (host_probe case 0x3F)
+static uint64_t __fastcall HostSlot63_TextAtlas(void* thisPtr, uint32_t pageIndex) {
+    (void)thisPtr;
+    return reinterpret_cast<uint64_t>(TextAtlas::Get().GetSRV(pageIndex));
+}
+
+// Slot 64: Text Has Icon (host_probe case 0x40)
+static uint64_t __fastcall HostSlot64_TextHasIcon(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
+    (void)thisPtr; (void)a1; (void)a2; (void)a3; (void)a4;
+    return 0;
+}
+
+// Slot 65: Text Kerning (host_probe case 0x41)
+static uint64_t __fastcall HostSlot65_TextKerning(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
+    (void)thisPtr; (void)a1; (void)a2; (void)a3; (void)a4;
+    return 0;
+}
+
+// Slot 66: Text Register Icon (host_probe case 0x42)
+static uint64_t __fastcall HostSlot66_TextRegisterIcon(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
+    (void)thisPtr; (void)a1; (void)a2; (void)a3; (void)a4;
+    return 0;
+}
+
+// -----------------------------------------------------------------------------
+// Gamma post-process pass (fixes dark/purple HUD icons, crosshair, radar, and shield bar)
+// Reach Renaissance executes a post-process gamma pass in Host Slot 1 before Present.
+// Halo Reach outputs linear HDR backbuffer; without gamma correction, HUD icons and UI
+// elements appear dim, dark navy, or purplish.
+// -----------------------------------------------------------------------------
+class GammaPass {
+public:
+    static GammaPass& Get() {
+        static GammaPass instance;
+        return instance;
+    }
+
+    void SetExponent(float exp) {
+        m_exponent = exp;
+    }
+
+    void OnResize() {
+        m_initialized = false;
+        m_copyTexture.Reset();
+        m_copySRV.Reset();
+        m_backBufferRTV.Reset();
+    }
+
+    void Execute(IDXGISwapChain* swapChain) {
+        if (!swapChain) return;
+
+        Microsoft::WRL::ComPtr<ID3D11Device> device;
+        if (FAILED(swapChain->GetDevice(IID_PPV_ARGS(device.GetAddressOf())))) return;
+
+        Microsoft::WRL::ComPtr<ID3D11Texture2D> backBuffer;
+        if (FAILED(swapChain->GetBuffer(0, IID_PPV_ARGS(backBuffer.GetAddressOf())))) return;
+
+        D3D11_TEXTURE2D_DESC desc{};
+        backBuffer->GetDesc(&desc);
+
+        Microsoft::WRL::ComPtr<ID3D11DeviceContext> context;
+        device->GetImmediateContext(context.GetAddressOf());
+        if (!context) return;
+
+        // Lazy initialize TextAtlas with device and context if not already done
+        TextAtlas::Get().Initialize(device.Get(), context.Get());
+
+        if (!m_initialized || m_width != desc.Width || m_height != desc.Height) {
+            if (!InitResources(device.Get(), backBuffer.Get(), desc)) {
+                return;
+            }
+        }
+
+        // Copy current frame backbuffer to our shader resource texture
+        context->CopyResource(m_copyTexture.Get(), backBuffer.Get());
+
+        // Save pipeline state
+        ID3D11RenderTargetView* oldRTV = nullptr;
+        ID3D11DepthStencilView* oldDSV = nullptr;
+        context->OMGetRenderTargets(1, &oldRTV, &oldDSV);
+
+        UINT numViewports = 1;
+        D3D11_VIEWPORT oldViewport{};
+        context->RSGetViewports(&numViewports, &oldViewport);
+
+        ID3D11VertexShader* oldVS = nullptr;
+        ID3D11PixelShader* oldPS = nullptr;
+        ID3D11ClassInstance* oldInstances[4] = { nullptr };
+        UINT numInstances = 0;
+        context->VSGetShader(&oldVS, oldInstances, &numInstances);
+        context->PSGetShader(&oldPS, oldInstances, &numInstances);
+
+        ID3D11ShaderResourceView* oldSRV = nullptr;
+        context->PSGetShaderResources(0, 1, &oldSRV);
+
+        ID3D11Buffer* oldCB = nullptr;
+        context->PSGetConstantBuffers(0, 1, &oldCB);
+
+        D3D11_PRIMITIVE_TOPOLOGY oldTopology;
+        context->IAGetPrimitiveTopology(&oldTopology);
+
+        ID3D11InputLayout* oldLayout = nullptr;
+        context->IAGetInputLayout(&oldLayout);
+
+        ID3D11BlendState* oldBlend = nullptr;
+        float oldBlendFactor[4] = { 0 };
+        UINT oldSampleMask = 0;
+        context->OMGetBlendState(&oldBlend, oldBlendFactor, &oldSampleMask);
+
+        ID3D11DepthStencilState* oldDepthState = nullptr;
+        UINT oldStencilRef = 0;
+        context->OMGetDepthStencilState(&oldDepthState, &oldStencilRef);
+
+        // Update constant buffer with gamma exponent
+        D3D11_MAPPED_SUBRESOURCE mapped{};
+        if (SUCCEEDED(context->Map(m_constantBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
+            float* cbData = static_cast<float*>(mapped.pData);
+            cbData[0] = m_exponent;
+            cbData[1] = 0.0f;
+            cbData[2] = 0.0f;
+            cbData[3] = 0.0f;
+            context->Unmap(m_constantBuffer.Get(), 0);
+        }
+
+        // Bind gamma pass state
+        D3D11_VIEWPORT vp{};
+        vp.Width = static_cast<float>(desc.Width);
+        vp.Height = static_cast<float>(desc.Height);
+        vp.MinDepth = 0.0f;
+        vp.MaxDepth = 1.0f;
+        context->RSSetViewports(1, &vp);
+
+        ID3D11RenderTargetView* rtv = m_backBufferRTV.Get();
+        context->OMSetRenderTargets(1, &rtv, nullptr);
+        context->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
+        context->OMSetDepthStencilState(nullptr, 0);
+
+        context->IASetInputLayout(nullptr);
+        context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+        context->VSSetShader(m_vs.Get(), nullptr, 0);
+        context->PSSetShader(m_ps.Get(), nullptr, 0);
+
+        ID3D11Buffer* cbs[] = { m_constantBuffer.Get() };
+        context->PSSetConstantBuffers(0, 1, cbs);
+
+        ID3D11ShaderResourceView* srvs[] = { m_copySRV.Get() };
+        context->PSSetShaderResources(0, 1, srvs);
+
+        // Draw full-screen triangle
+        context->Draw(3, 0);
+
+        // Restore pipeline state
+        ID3D11ShaderResourceView* nullSRV[] = { nullptr };
+        context->PSSetShaderResources(0, 1, nullSRV);
+
+        context->OMSetRenderTargets(1, &oldRTV, oldDSV);
+        if (oldRTV) oldRTV->Release();
+        if (oldDSV) oldDSV->Release();
+
+        context->RSSetViewports(numViewports, &oldViewport);
+
+        context->VSSetShader(oldVS, nullptr, 0);
+        if (oldVS) oldVS->Release();
+        context->PSSetShader(oldPS, nullptr, 0);
+        if (oldPS) oldPS->Release();
+
+        context->PSSetShaderResources(0, 1, &oldSRV);
+        if (oldSRV) oldSRV->Release();
+
+        context->PSSetConstantBuffers(0, 1, &oldCB);
+        if (oldCB) oldCB->Release();
+
+        context->IASetInputLayout(oldLayout);
+        if (oldLayout) oldLayout->Release();
+
+        context->IASetPrimitiveTopology(oldTopology);
+
+        context->OMSetBlendState(oldBlend, oldBlendFactor, oldSampleMask);
+        if (oldBlend) oldBlend->Release();
+
+        context->OMSetDepthStencilState(oldDepthState, oldStencilRef);
+        if (oldDepthState) oldDepthState->Release();
+    }
+
+private:
+    bool InitResources(ID3D11Device* device, ID3D11Texture2D* backBuffer, const D3D11_TEXTURE2D_DESC& desc) {
+        m_width = desc.Width;
+        m_height = desc.Height;
+
+        if (!m_vs) {
+            static const char* s_gammaShaderCode = R"(
+                Texture2D frame_copy : register(t0);
+                cbuffer Gamma : register(b0) { float4 gamma; };
+
+                float4 vs_main(uint id : SV_VertexID) : SV_Position {
+                    float2 p = float2((id << 1) & 2, id & 2);
+                    return float4(p * float2(2.0f, -2.0f) + float2(-1.0f, 1.0f), 0.0f, 1.0f);
+                }
+
+                float4 ps_main(float4 pos : SV_Position) : SV_Target {
+                    float4 c = frame_copy.Load(int3((int2)pos.xy, 0));
+                    return float4(pow(saturate(c.rgb), gamma.x), c.a);
+                }
+            )";
+
+            Microsoft::WRL::ComPtr<ID3DBlob> vsBlob;
+            Microsoft::WRL::ComPtr<ID3DBlob> errorBlob;
+            HRESULT hr = D3DCompile(s_gammaShaderCode, strlen(s_gammaShaderCode), "GammaVS", nullptr, nullptr,
+                                    "vs_main", "vs_4_0", 0, 0, vsBlob.GetAddressOf(), errorBlob.GetAddressOf());
+            if (FAILED(hr)) {
+                if (errorBlob) {
+                    NOBLE_ERROR("GammaPass: VS compile failed: {}", static_cast<const char*>(errorBlob->GetBufferPointer()));
+                }
+                return false;
+            }
+
+            Microsoft::WRL::ComPtr<ID3DBlob> psBlob;
+            hr = D3DCompile(s_gammaShaderCode, strlen(s_gammaShaderCode), "GammaPS", nullptr, nullptr,
+                            "ps_main", "ps_4_0", 0, 0, psBlob.GetAddressOf(), errorBlob.GetAddressOf());
+            if (FAILED(hr)) {
+                if (errorBlob) {
+                    NOBLE_ERROR("GammaPass: PS compile failed: {}", static_cast<const char*>(errorBlob->GetBufferPointer()));
+                }
+                return false;
+            }
+
+            if (FAILED(device->CreateVertexShader(vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(), nullptr, m_vs.GetAddressOf()))) {
+                return false;
+            }
+            if (FAILED(device->CreatePixelShader(psBlob->GetBufferPointer(), psBlob->GetBufferSize(), nullptr, m_ps.GetAddressOf()))) {
+                return false;
+            }
+
+            D3D11_BUFFER_DESC cbDesc{};
+            cbDesc.ByteWidth = 16;
+            cbDesc.Usage = D3D11_USAGE_DYNAMIC;
+            cbDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+            cbDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+            if (FAILED(device->CreateBuffer(&cbDesc, nullptr, m_constantBuffer.GetAddressOf()))) {
+                return false;
+            }
+        }
+
+        D3D11_TEXTURE2D_DESC copyDesc = desc;
+        copyDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+        copyDesc.Usage = D3D11_USAGE_DEFAULT;
+        copyDesc.CPUAccessFlags = 0;
+        copyDesc.MiscFlags = 0;
+        m_copyTexture.Reset();
+        if (FAILED(device->CreateTexture2D(&copyDesc, nullptr, m_copyTexture.GetAddressOf()))) {
+            return false;
+        }
+
+        m_copySRV.Reset();
+        if (FAILED(device->CreateShaderResourceView(m_copyTexture.Get(), nullptr, m_copySRV.GetAddressOf()))) {
+            return false;
+        }
+
+        m_backBufferRTV.Reset();
+        if (FAILED(device->CreateRenderTargetView(backBuffer, nullptr, m_backBufferRTV.GetAddressOf()))) {
+            return false;
+        }
+
+        m_initialized = true;
+        NOBLE_INFO("GammaPass: Initialized post-process gamma pass ({}x{}, exponent: {:.4f})", m_width, m_height, m_exponent);
+        return true;
+    }
+
+    bool m_initialized = false;
+    uint32_t m_width = 0;
+    uint32_t m_height = 0;
+    float m_exponent = 0.4545f; // Standard linear -> sRGB gamma correction (1.0 / 2.2)
+
+    Microsoft::WRL::ComPtr<ID3D11VertexShader> m_vs;
+    Microsoft::WRL::ComPtr<ID3D11PixelShader> m_ps;
+    Microsoft::WRL::ComPtr<ID3D11Buffer> m_constantBuffer;
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> m_copyTexture;
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> m_copySRV;
+    Microsoft::WRL::ComPtr<ID3D11RenderTargetView> m_backBufferRTV;
+};
+
+static void ExecuteGammaPass(IDXGISwapChain* swapChain) {
+    GammaPass::Get().Execute(swapChain);
+}
+
+static void ResetGammaPass() {
+    GammaPass::Get().OnResize();
 }
 
 static uint64_t __fastcall HostSlot67_TextMetrics(void* thisPtr, uint32_t style, float size, const char* face,
@@ -1160,6 +1721,11 @@ void ReachHost::InitializeVTable() {
     s_vtable[56]  = reinterpret_cast<void*>(&HostSlot56_StringsRegister);
     s_vtable[57]  = reinterpret_cast<void*>(&HostSlot57_StringLookup);
     s_vtable[61]  = reinterpret_cast<void*>(&HostSlot61_TextPrepare);
+    s_vtable[62]  = reinterpret_cast<void*>(&HostSlot62_TextGlyph);
+    s_vtable[63]  = reinterpret_cast<void*>(&HostSlot63_TextAtlas);
+    s_vtable[64]  = reinterpret_cast<void*>(&HostSlot64_TextHasIcon);
+    s_vtable[65]  = reinterpret_cast<void*>(&HostSlot65_TextKerning);
+    s_vtable[66]  = reinterpret_cast<void*>(&HostSlot66_TextRegisterIcon);
     s_vtable[67]  = reinterpret_cast<void*>(&HostSlot67_TextMetrics);
     s_vtable[88]  = reinterpret_cast<void*>(&HostSlot88_UserIdentity);
     s_vtable[97]  = reinterpret_cast<void*>(&HostSlot97_CapabilityPass);
@@ -1200,6 +1766,12 @@ void ReachHost::SetPaths(const std::filesystem::path& reachDir,
             m_dataDir = dataDir;
         }
     }
+}
+
+void ReachHost::SetDeviceAndContext(ID3D11Device* device, ID3D11DeviceContext* context) {
+    m_device = device;
+    m_context = context;
+    TextAtlas::Get().Initialize(device, context);
 }
 
 } // namespace noble

@@ -121,8 +121,9 @@ bool BlamEngine::Initialize(const ReachInstallInfo& installInfo, HMODULE hModule
         NOBLE_INFO("c_game_engine Init returned: 0x{:X}", initStatus);
     }
 
-    // Configure Host object paths
+    // Configure Host object paths and renderer devices
     ReachHost::Get().SetPaths(installInfo.reachDirectory, installInfo.mapsDirectory, ReachHost::Get().GetDataDir());
+    ReachHost::Get().SetDeviceAndContext(m_context.pDevice, m_context.pContext);
     // Pool SafeGuards: removed. The null atom arrays they guarded against came from the swap chain
     // missing DXGI_USAGE_SHADER_INPUT (fixed in D3D11Renderer.cpp) and host slot 32 not filling
     // the display-settings buffer (fixed in ReachHost.cpp).
@@ -455,7 +456,7 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
         gameModeTag = 1035; // 0x40B Firefight
     } else if ((mapId >= 178 && mapId <= 189) || gameMode == "Campaign" || gameMode == "campaign") {
         gameModeTag = 1;    // Campaign
-    } else if (mapId == static_cast<uint32_t>(-2) || mapId == 0 || mapId == 190 || gameMode == "mainmenu" || gameMode == "menu") {
+    } else if (mapId == static_cast<uint32_t>(-2) || mapId == 0 || gameMode == "mainmenu" || gameMode == "menu") {
         gameModeTag = 0;    // Main Menu
     }
 
