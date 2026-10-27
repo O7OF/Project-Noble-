@@ -1,4 +1,4 @@
-# Project Noble: handoff (2026-10-27, 17:40 ET)
+# Project Noble: handoff (2026-10-27, 18:20 ET)
 
 This picks up a reverse-engineering and C++ effort on **Tyler's Windows PC**. All paths below are real paths on that machine.
 Tyler (GitHub `WeabooTyler117`) works with a partner (GitHub `O7OF`) who owns the repo and writes most of the code.
@@ -11,7 +11,21 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 ---
 
-## 0. Pick up here (17:40 ET)
+## 0. Pick up here (18:20 ET)
+
+**Pushed to GitHub (main):** `12a9971` HUD colours + post-game hold, `5e71e53` Mods screen (Tyler-tested),
+`ab77f8b` service tag setting, plus the mouse-wheel / window-move commit below. Commits and pushes now run from
+`build\agent\jobs\job.bat` through go.bat (output in `build\git_out.txt`); `src/engine/HudColor.*` stay untracked
+(old stopgap, safe to delete).
+
+**18:18: mouse wheel works (weapon switch, tested).** Input +0x114 is an **f32** wheel pulse (RR `host::WheelPulse`:
+per notch +1/-1 for 40 ms, one pulse per 80 ms, up to 3 queued; `win::WHEEL` accumulates WM_MOUSEWHEEL / 120). The
+engine only acts on it through the key bindings: RR's profile binds action 4 (change weapon) to '1' **and** second
+key **0xAF** at entry +8 = wheel **up**. 0xAE in the third key slot did not give wheel down, so Noble sends every notch
+as "up" (with two weapons it's the same). `-wheel-after <s>` test option injects one notch. Window.cpp now counts
+WM_MOUSEWHEEL (`Window::TakeWheelNotches`) and, on WM_ENTERSIZEMOVE/KILLFOCUS, frees the cursor clip; ReachHost
+releases the mouse while the window is being moved (`Window::InSizeMove`), so a windowed game can be dragged
+(Alt+Space > Move, or title bar). The window-move part is untested by hand.
 
 **17:35: post-game freeze FIXED (tested).** Full 10-minute Sword Base Slayer: slot 6 at 17:33:07 (cR paid, panel
 shown), engine resolved `mainmenu.map` and stopped drawing; at 17:33:16 the log says "engine stopped drawing after
@@ -512,11 +526,11 @@ Test option `-end-round-after <seconds>` calls the `mp_round_end` script command
    (listed on LAN/master server) but not join. This is the big missing piece for multiplayer.
 5. **Scoreboard/results**: the slot 6 record is decoded far enough for career pay (§5 "Game results"). Still to do: a
    post-game scoreboard from it, confirm the general-stat slots with a real match, campaign "next mission".
-6. Mouse wheel (`WM_MOUSEWHEEL` → +0x114) and gamepad (XInput into +0x120..).
+6. ~~Mouse wheel~~ done 18:18 (see §0). Gamepad (XInput into +0x120.., RR `pad::fill`) still to do.
 7. Armor / Workshop tabs; remove debug-only bits when no longer useful.
    Menu ideas from Bungie's UI director (cand.land/new-page): menu backgrounds were layered concept art on cards with
    a slowly moving camera (parallax), and the main menu had a one-press "fast path" to the last mode played.
-8. **Cursor lock**: in windowed mode the game keeps the cursor clipped to its window, even while dragging the title bar,
+8. **Cursor lock** (fix in 18:18 commit, untested by hand): in windowed mode the game keeps the cursor clipped to its window, even while dragging the title bar,
    so the window can't be moved back (seen 15:14, the window ended up behind the taskbar). Only Alt+Tab frees it. Release
    the clip while the window is being moved or isn't focused (`WM_ENTERSIZEMOVE` / `WM_KILLFOCUS`), and re-clip on focus.
 9. **Respawn timer** shows "Respawn in 00000001": the number filling `camera_list.prop_respawn_time` is zero-padded.

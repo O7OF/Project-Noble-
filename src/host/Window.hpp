@@ -27,6 +27,13 @@ public:
     // Borderless window covering the primary monitor (DISPLAY setting). Call before Create().
     void SetBorderless(bool borderless) { m_borderless = borderless; }
 
+    // Mouse wheel notches (WM_MOUSEWHEEL, 120 per notch, up = positive) received since the last call;
+    // the remainder of a partial notch is kept. Any thread.
+    static int TakeWheelNotches();
+    // True while the user is moving or resizing the window (title-bar drag, Alt+Space > Move). The
+    // game releases the mouse meanwhile so the window can be moved. Any thread.
+    static bool InSizeMove();
+
 private:
     static LRESULT CALLBACK StaticWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
     LRESULT HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);

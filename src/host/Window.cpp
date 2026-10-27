@@ -1,6 +1,8 @@
 #include "Window.hpp"
 #include "common/Logger.hpp"
 
+#include <atomic>
+
 namespace noble {
 
 Window::Window(const std::wstring& title, uint32_t width, uint32_t height)
@@ -113,7 +115,30 @@ LRESULT CALLBACK Window::StaticWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPAR
     return DefWindowProcW(hwnd, uMsg, wParam, lParam);
 }
 
+namespace {
+std::atomic<int> s_wheelDelta{0};
+std::atomic<bool> s_sizeMove{false};
+} // namespace
+
+int Window::TakeWheelNotches() {
+    int delta = s_wheelDelta.load();
+    for (;;) {
+        const int notches = delta / WHEEL_DELTA;
+        if (notches == 0) return 0;
+        if (s_wheelDelta.compare_exchange_weak(delta, delta - notches * WHEEL_DELTA)) return notches;
+    }
+}
+
+bool Window::InSizeMove() { return s_sizeMove.load(); }
+
 LRESULT Window::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
+    switch (uMsg) {
+        case WM_MOUSEWHEEL: s_wheelDelta.fetch_add(GET_WHEEL_DELTA_WPARAM(wParam)); break;
+        case WM_ENTERSIZEMOVE: s_sizeMove.store(true); ClipCursor(nullptr); break;
+        case WM_EXITSIZEMOVE: s_sizeMove.store(false); break;
+        case WM_KILLFOCUS: ClipCursor(nullptr); break;
+        default: break;
+    }
     if (m_customWndProc) {
         LRESULT res = m_customWndProc(hwnd, uMsg, wParam, lParam);
         if (res != 0) return res;

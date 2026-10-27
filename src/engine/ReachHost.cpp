@@ -7,6 +7,7 @@
 #include "engine/FrameCapture.hpp"
 #include "engine/KeyBindings.hpp"
 #include "common/Settings.hpp"
+#include "host/Window.hpp"
 #include <windows.h>
 #include <shellapi.h>
 #include <psapi.h>
@@ -484,6 +485,13 @@ static void WriteDefaultKeyBindings(uint8_t* profile) {
         memcpy(entry + 0, &action, sizeof(action));
         memcpy(entry + 4, &vk, sizeof(vk));
     }
+    // Entries are {u32 action, u32 key, u32 second key, 12 zero bytes}. RR's captured profile binds
+    // action 4 (change weapon) to '1' and, as its second key, 0xAF: the mouse wheel (the engine turns
+    // the wheel pulse at input +0x114 into that code). Without it the wheel does nothing.
+    // Tested 18:13: wheel up switches weapons. 0xAE in the third key slot did nothing for wheel down,
+    // so FillLocalInput sends every notch as "up" (with two weapons either direction does the same).
+    const uint32_t kWheelUp = 0xAF;
+    memcpy(profile + kBindingTableOffset + 4 * kBindingEntrySize + 8, &kWheelUp, sizeof(kWheelUp));
 }
 
 // Audio volumes are profile settings too (RR live::audio::set_volume): f32 at +0xA5C (game/master),
@@ -602,7 +610,7 @@ static uint64_t __fastcall HostSlot34_ProfileSettings(void* thisPtr, uint64_t a1
 //   +0x004 u8[256]  key state indexed by VK code: 0 = up, 0x80 = pressed (< 500 ms),
 //                   0x81..0xFF = held (repeat counter, as RR computes it)
 //   +0x104 f32 x2   mouse look delta (x, y), already scaled
-//   +0x114 i32      mouse wheel pulse
+//   +0x114 f32      mouse wheel pulse (+1/-1 for 40 ms per notch, see FillLocalInput)
 //   +0x118 f32      1.0
 //   +0x11C u32      mouse buttons: L=1, M=2, R=4, X1=8, X2=0x10
 // Index 1 is the split-screen second user: zeroed, as RR does.
@@ -729,6 +737,11 @@ static void FillLocalInput(uint8_t* st) {
 
     static HWND s_lastWindow = nullptr;
     HWND hwnd = InputFocusedWindow();
+    if (hwnd && Window::InSizeMove()) {
+        InputRelease(hwnd, "window is being moved");
+        memset(s_keyDownSince, 0, sizeof(s_keyDownSince));
+        return;
+    }
     if (!hwnd) {
         InputRelease(s_lastWindow, "window lost focus");
         memset(s_keyDownSince, 0, sizeof(s_keyDownSince));
@@ -844,6 +857,51 @@ static void FillLocalInput(uint8_t* st) {
     if (st[0x004 + VK_XBUTTON1]) buttons |= 0x08;
     if (st[0x004 + VK_XBUTTON2]) buttons |= 0x10;
     *reinterpret_cast<uint32_t*>(st + 0x11C) = buttons;
+
+    // Mouse wheel (+0x114, f32), as RR's WheelPulse: each notch becomes a +1/-1 pulse held for 40 ms,
+    // at most one pulse every 80 ms, up to 3 notches queued (wheel up = +1).
+    static int s_wheelPending = 0;
+    static int s_pulseSign = 0;
+    static ULONGLONG s_pulseStart = 0;
+    s_wheelPending += Window::TakeWheelNotches();
+    {
+        // Test option "-wheel-after <seconds>": one wheel-down notch that long after the first input poll.
+        static double s_testAt = -1.0;
+        static bool s_testParsed = false, s_testDone = false;
+        static ULONGLONG s_testStart = 0;
+        if (!s_testParsed) {
+            s_testParsed = true;
+            int argc = 0;
+            LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+            for (int i = 1; argv && i + 1 < argc; ++i) {
+                if (_wcsicmp(argv[i], L"-wheel-after") == 0) s_testAt = _wtof(argv[i + 1]);
+            }
+            if (argv) LocalFree(argv);
+            s_testStart = GetTickCount64();
+        }
+        if (!s_testDone && s_testAt >= 0.0 && GetTickCount64() - s_testStart >= static_cast<ULONGLONG>(s_testAt * 1000.0)) {
+            s_testDone = true;
+            s_wheelPending -= 1;
+            NOBLE_INFO("ReachHost: -wheel-after {} s: one wheel notch down", s_testAt);
+        }
+    }
+    if (s_wheelPending > 3) s_wheelPending = 3;
+    if (s_wheelPending < -3) s_wheelPending = -3;
+    const ULONGLONG wheelNow = GetTickCount64();
+    float wheel = 0.0f;
+    if (s_pulseSign != 0 && wheelNow - s_pulseStart < 40) {
+        wheel = static_cast<float>(s_pulseSign);
+    } else if (s_pulseSign != 0 && wheelNow - s_pulseStart < 80) {
+        wheel = 0.0f;
+    } else if (s_wheelPending != 0) {
+        s_wheelPending -= s_wheelPending > 0 ? 1 : -1;
+        s_pulseSign = 1;  // only wheel-up (0xAF) is bound; down notches switch weapons too
+        s_pulseStart = wheelNow;
+        wheel = static_cast<float>(s_pulseSign);
+    } else {
+        s_pulseSign = 0;
+    }
+    *reinterpret_cast<float*>(st + 0x114) = wheel;
 }
 
 static uint64_t __fastcall HostSlot36_InputController(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
