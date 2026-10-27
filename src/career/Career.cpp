@@ -56,7 +56,7 @@ constexpr int kStatDeaths = 11;
 // ---------------------------------------------------------------------------------------------
 // Pay. Noble's own numbers (Bungie never published theirs); tune freely.
 // ---------------------------------------------------------------------------------------------
-constexpr double kPayPerMinuteBase = 60.0;      // Recruit
+constexpr double kPayPerMinuteBase = 13.0;      // Recruit
 constexpr double kPayPerMinutePerRank = 6.0;    // + this per rank above Recruit
 constexpr double kMinuteCap = 90.0;             // minutes paid at most per match, every base type
 constexpr int64_t kPerKill = 10;
@@ -77,7 +77,7 @@ const std::vector<Rank> kRanks = {
     { "Warrant Officer Grade 3", 144000 },    { "Captain", 210000 },
     { "Captain Grade 1", 233000 },            { "Captain Grade 2", 256000 },
     { "Captain Grade 3", 279000 },            { "Major", 325000 },
-    { "Major Grade 1", 350000 },              { "Major Grade 2", 370000 },
+    { "Major Grade 1", 350000 },              { "Major Grade 2", 375000 },
     { "Major Grade 3", 400000 },              { "Lt. Colonel", 450000 },
     { "Lt. Colonel Grade 1", 480000 },        { "Lt. Colonel Grade 2", 510000 },
     { "Lt. Colonel Grade 3", 540000 },        { "Commander", 600000 },

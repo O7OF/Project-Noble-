@@ -246,14 +246,13 @@ void SettingsPanel::RenderKeyBindings() {
     ImGui::TextDisabled("Click a key to change it, then press a key or mouse button (Esc cancels). Right-click to unbind.");
     using KeyBindings::ActionGroup;
     const ActionGroup groups[] = { ActionGroup::Movement, ActionGroup::Actions, ActionGroup::Vehicle, ActionGroup::Interface,
-                                   ActionGroup::Forge, ActionGroup::Theater, ActionGroup::Other };
+                                   ActionGroup::Forge, ActionGroup::Theater };
+    // ActionGroup::Other (bindings MCC shares with its other Halo games) is not listed: Reach doesn't
+    // use them. They still get their default keys in the profile.
     for (ActionGroup g : groups) {
         const std::vector<int> actions = KeyBindings::ActionsIn(g);
         if (actions.empty()) continue;
         Section(KeyBindings::GroupName(g));
-        if (g == ActionGroup::Other) {
-            ImGui::TextDisabled("MCC shares this list with its other games; Reach doesn't use these.");
-        }
         for (int action : actions) {
             const int def = KeyBindings::DefaultKey(action);
             auto it = m_edit.keyOverrides.find(action);

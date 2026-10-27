@@ -31,7 +31,10 @@ bool Window::Create() {
         return false;
     }
 
-    DWORD style = WS_OVERLAPPEDWINDOW;
+    // Fixed-size window: the engine renders at the size chosen in Settings and can't change it once
+    // started, so a maximized or dragged-larger window only stretched that picture. For a full-screen
+    // picture use WINDOW MODE = BORDERLESS FULL SCREEN, which renders at the monitor's size.
+    DWORD style = WS_OVERLAPPEDWINDOW & ~(WS_THICKFRAME | WS_MAXIMIZEBOX);
     int windowWidth = 0, windowHeight = 0, posX = 0, posY = 0;
     if (m_borderless) {
         // Borderless: a popup window the size of the primary monitor.

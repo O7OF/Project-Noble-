@@ -1,4 +1,4 @@
-# Project Noble: handoff (2026-10-27, 14:30 ET)
+# Project Noble: handoff (2026-10-27, 15:25 ET)
 
 This picks up a reverse-engineering and C++ effort on **Tyler's Windows PC**. All paths below are real paths on that machine.
 Tyler (GitHub `WeabooTyler117`) works with a partner (GitHub `O7OF`) who owns the repo and writes most of the code.
@@ -11,7 +11,7 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 ---
 
-## 0. Pick up here (14:30 ET)
+## 0. Pick up here (15:25 ET)
 
 **Git state.** Everything up to the career work was committed on `main` as one commit ("Front-end menus, MCC art, skulls,
 subtitles, settings, key binding names, career/cR, master server") and rebased onto the partner's `1d2a282` (their
@@ -37,6 +37,64 @@ needs to run inside the simulation update (not from slot 1), or ending a round a
 (try `game_won`'s evaluator `+0x1B0810`, or the engine's end-game function that `mp_round_end` leads to). Until then,
 test career by **playing a short match to the end** (Slayer time limit) and reading the `Career:` log lines and
 `data\userdata\results\last_game.bin`. `Q_keys.bmp` from this run has not been looked at yet.
+
+**cR test passed (15:19).** Sword Base Slayer played to the time limit after the 13 cR/min rebuild. Log: `took 10.3 min;
+local player 0 kills 0 assists 0 deaths 2 medals 0; paid 133 cR` = 10.3 x 13, matching Tyler's count (2 deaths, nothing
+else); the post-game panel showed +133 cR and 133 / 7500 toward Private. No slot-machine bonus that game (1-in-8). Per-player
+stats array: deaths appear at indices 11 and 13 (both 2).
+
+**New: freeze after the post-game panel.** The panel opened (15:19:38) but its buttons could not be clicked. Right after
+the results, the engine resolved `haloreach\maps\mainmenu.map` (slot 48), which MCC does not ship; about 7 s later it made
+its first iface2 slot 140 call (a2=0x28, a3=0x40), a slot 4 EngineEvent with reason 0 and an empty message, and slot 1
+frame ticks stopped (last frame 111000 at 15:19:45). With no frame ticks the panel is never redrawn or given input. Likely
+cause: after game over the engine tries to go to the main menu map. Next: stop or answer that transition (slot 48 for
+`mainmenu.map`, or slot 140 / slot 4), or move Noble to its own menu before the engine leaves the match.
+
+**Tyler's reference list (from the afternoon chat).** He supplied 11 screenshots plus pasted notes (loadouts, control
+schemes for MCC and Xbox 360, general Halopedia info on Reach) for: subtitles, main menus, skulls, controller layout
+(360 and MCC), keyboard/mouse key bindings, loadout names. The files are not in the repo (Bungie/343 art and wiki text;
+keep it that way). Status:
+| Item | State |
+|---|---|
+| Subtitles | ✅ SUBTITLES setting + `0xD5244` hook (§5) |
+| Main menus | ✅ Reach-style `FrontEndMenu` screens, art read from the MCC install (`UiArt`) |
+| Skulls | ✅ Skulls screen + launch block +0x48 (§5) |
+| Keyboard/mouse bindings | ✅ KEY BINDINGS tab, 66 slots named in MCC's groups; `Q_keys.bmp` (14:22 run) checked: renders correctly |
+| Loadout names | ✅ come from the game variant and render correctly (§5) |
+| Controller layout (360 and MCC) | ❌ **still to do**: a CONTROLLER tab in SETTINGS showing the MCC default and the original Xbox 360 layouts (controller picture already readable from `controllertexturepack`), and gamepad input itself (XInput into slot 36 +0x120.., §6 item 6) |
+Checked against the Halopedia notes: the menu has all 24 MP maps (incl. Noble, Defiant and Anniversary packs), all 10
+Firefight maps and all 11 campaign missions; mission descriptions are Noble's own wording (don't paste the official
+taglines). Not used yet but useful later: the Armory's 30 armour colours (10 bases × 3 shades: Steel/Silver/White,
+Red/Mauve/Salmon, Orange/Coral/Peach, Gold/Yellow/Pale, Sage/Green/Olive, Teal/Aqua/Cyan, Blue/Cobalt/Sapphire,
+Violet/Orchid/Lavender, Crimson/Rubine/Pink, Brown/Tan/Khaki) for the Armor Locker, and the Arena divisions (Onyx, Gold,
+Silver, Bronze, Iron) if a ranked mode is ever added.
+
+**Career reference data (14:45).** Tyler collected the Reach career material from Halopedia and the Bungie.net
+forums; it is now in `docs/career/`: `career-reference.md` (how Reach paid cR, campaign scoring, ranks, commendations,
+challenges, Armory, loadouts, controller layouts, sources) and the data files `ranks_and_pay.json`, `challenges.json`
+(all 18 months Sep 2010 – Feb 2012, 2,103 challenges; no month missing, only 14 days Halopedia itself lacks),
+`commendations.json` (45) and `armor.json`. Names and numbers only, no Bungie art (rank/challenge icons must be read
+from the MCC install; Tyler's rank-icon sheet stays local). Open question for Tyler: keep Noble's own cR numbers or
+switch to Reach's measured table (`career-reference.md` §1).
+
+**Partner's Armory work (in progress on his PC, not pushed yet; 15:00).**
+- Today `ArmorCustomizer` only writes `data/appearance.json`; nothing gives it to the engine. Slot 34 still sends only
+  bindings, volumes, look settings and the hardcoded tag `NOBL`. The UI's armour names are not engine IDs.
+- The engine's own main-menu Spartan preview is not possible (no Reach `mainmenu.map` in MCC; RR ships its own).
+- RR applies looks by scanning engine memory for colour records (four ARGB u32s) and suit records by string id
+  (`armory::write_colors`, `scan_suit`, `looks::*` hook on a colour-copy routine). The partner chose not to copy that.
+- Lead to test: RR's captured profile has u32 id lists separated by `0xFFFFFFFF` at +0x40..+0x1AB (e.g.
+  `0x2F 0x6B 0x7D 0x8A 0x93 0x9B`, `0xC0 0xA6 0xA5 0x9F`), possibly armour/appearance selections. Test like the zoom
+  fix: Noble defaults + only that region from RR's profile, pass with `-profile`, look at the Spartan in game.
+- Plan: Noble's own DX11 renderer for the Armory preview. For development he exported the Spartan and Elite render
+  models to OBJ (`data\armor\spartans\spartans.obj` 329 groups incl. 51 MCC Series 8, `data\armor\elite\elite.obj`
+  128 groups: default, general, officer, space, spec_ops, storyelite, ultra, zealot). **Those OBJ files are game
+  assets: keep them under the git-ignored `data\`, never commit them.** The shipped version has to read the models
+  from the player's MCC maps at run time. Next he is matching the Armory names to the model's group names
+  (e.g. `dlc2_helmet_cndmnd`, `s8_helmet_drengr_tyr`), which can be added to `docs/career/armor.json`.
+- Forwarded community request (TRAXUSi, Workshop class mods): add extra player-host object types beyond Reach's
+  three (0 spartan, 1 elite, 2 monitor), e.g. `elite2`, `spartan2`, `monitor2`, using the same host code paths, with
+  matching Megalo names. Engine patch inside `haloreach.dll` at run time; not started, idea only.
 
 ## 1. Where things are
 
@@ -134,7 +192,7 @@ Read `build\bin\Release\noble-client.log` after a run. Useful lines: `launch sta
 | Cinematic / dialogue subtitles | ✅ SUBTITLES setting (on by default), hook on `haloreach+0xD5244`; tested on Winter Contingency's intro |
 | Campaign missions (cutscene → gameplay) | ✅ tested Noble Actual (prologue, ends after cutscene) and Winter Contingency |
 | Firefight | ✅ tested with Standard. Scenario names (from MCC's preview pictures): `ff50_park` = **Beachhead**, `ff10_prototype` = **Overlook** (the old front-end menu had them swapped; BlamEngine's name aliases "beachhead"/"overlook" are still swapped, the scenario names it maps are right) |
-| Game end (engine reports results through host slot 6) | ✅ post-game panel: Play again / Return to menu / Quit (relaunches Noble); tested at Slayer's 10-minute limit |
+| Game end (engine reports results through host slot 6) | ⚠️ post-game panel shows the right cR (15:19 test), but its buttons can't be clicked: the engine stops sending frames about 7 s later (§0) |
 | Memory | ✅ no leak during a match: 12-minute run, private bytes 3835 → 3852 MB, working set ~1.3 GB, flat |
 | HUD / scoreboard text and icons | ✅ letters, numbers and weapon/grenade icons render (glyph layout and string slots fixed, see §5) |
 | HUD bars / compass / motion tracker dark navy | ❌ not gamma, not the profile (same with RR's profile), not slot 51/33; see §6 |
@@ -312,9 +370,17 @@ Test option `-end-round-after <seconds>` calls the `mp_round_end` script command
 1. **HUD bars, compass ticks and motion tracker are dark navy** (letters/icons are fine). The game-type intro box shown
    during loadout selection, the "Visegrad Communications Outpost" waypoint box and the hint bar in Winter Contingency have
    the same dark tint (in MCC that box is bright cyan), while the loadout cards are correct. Ruled out: gamma, profile (RR's
-   `profile_1.bin` gives the same picture), slot 51 mask, slot 33. Next ideas: compare a capture from RR itself (same map,
-   same spot) to be sure RR is brighter; then look at how the HUD shader gets its colour/tint (chud globals, possibly a
+   `profile_1.bin` gives the same picture), slot 51 mask, slot 33. **Confirmed 15:10:** RR's own HUD (Firefight, Beachhead)
+   is bright light blue (shield bar, compass, tracker, timer box) while Noble's on Sword Base is dark navy; the world looks
+   the same in both. The `GammaPass` in `ReachHost.cpp` is fixed at exponent 1.0 (a no-op; a whole-frame gamma washed the
+   world out), so the fix must touch only the HUD. RR has a separate "UI Gamma" setting next to Gamma, which hints at a
+   HUD-only value the host supplies. Next: look at how the HUD shader gets its colour/tint (chud globals, possibly a
    render-state or a constant the host sets in another slot, e.g. iface2 slots RR answers non-zero).
+   Background (Bungie's Halo 3 HUD spec, cand.land/halohud): HUD element colours, flashes and scale come from the
+   map's HUD tags ("HUD globals" / chud), the HUD is drawn mapped onto the inside of a sphere with a virtual camera
+   and a per-resolution FOV from those globals, and layout uses anchors (4 corners + centre) with pixel offsets. So
+   the colour is tag data the engine reads itself; if RR is bright, look for a host answer that changes which
+   resolution/exception block or render target format the engine picks, rather than a colour value.
 2. ~~Spire crash~~: no longer happens after the glyph/string fixes (3+ minutes on Spire, 2026-10-27 13:30).
 3. **Memory**: Noble logs `Memory: frame N private X MB, working set Y MB` every 1800 frames. A full 10-minute match was
    flat (+17 MB). If a leak is still seen, it is probably across front-end menu ↔ match restarts or in the menu itself.
@@ -324,7 +390,16 @@ Test option `-end-round-after <seconds>` calls the `mp_round_end` script command
    post-game scoreboard from it, confirm the general-stat slots with a real match, campaign "next mission".
 6. Mouse wheel (`WM_MOUSEWHEEL` → +0x114) and gamepad (XInput into +0x120..).
 7. Armor / Workshop tabs; remove debug-only bits when no longer useful.
-8. **Forge**: the menu launches MP with `00_basic_editing_054.bin`; the map loads, check in game that the Monitor/editor toggle works.
+   Menu ideas from Bungie's UI director (cand.land/new-page): menu backgrounds were layered concept art on cards with
+   a slowly moving camera (parallax), and the main menu had a one-press "fast path" to the last mode played.
+8. **Cursor lock**: in windowed mode the game keeps the cursor clipped to its window, even while dragging the title bar,
+   so the window can't be moved back (seen 15:14, the window ended up behind the taskbar). Only Alt+Tab frees it. Release
+   the clip while the window is being moved or isn't focused (`WM_ENTERSIZEMOVE` / `WM_KILLFOCUS`), and re-clip on focus.
+9. **Respawn timer** shows "Respawn in 00000001": the number filling `camera_list.prop_respawn_time` is zero-padded.
+   Check the format used for that string (string table entry `0x84091d25` in `ReachHost.cpp`).
+10. **Player name / service tag** in game are still the placeholders "NobleSix" / "NOBL"; they should come from the
+   player's own settings.
+11. **Forge**: the menu launches MP with `00_basic_editing_054.bin`; the map loads, check in game that the Monitor/editor toggle works.
 9. **Career system** (planned with Tyler). Done: `Career` module, 50 ranks (Halopedia table), cR after each match
    (per-minute pay rising with rank, kills/assists/medals bonus, 1-in-8 random bonus 100–3000, 1-in-200 jackpot 7,777;
    **no daily cap** and up to **90 paid minutes** per match in every mode (Tyler's calls). Pay goes by **base type** =
@@ -333,6 +408,7 @@ Test option `-end-round-after <seconds>` calls the `mp_round_end` script command
    Next: confirm stat slots (play a short Slayer with a few kills; `last_game.bin` + the `Career:` log lines), campaign
    scoring (difficulty + skull multipliers, time bonus, par scores), 45 commendations, challenges (Sep 2010 – Feb 2012
    lists) paying cR, a career/service-record screen and rank icon in the menu, Armory with the armor list.
+   All the data for this is in `docs/career/` (see §0).
 
 ## 7. Partner's Outbreak-Z code (reference for Noble's menus)
 
