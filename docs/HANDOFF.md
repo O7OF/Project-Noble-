@@ -1,4 +1,4 @@
-# Project Noble: handoff (2026-10-27, 05:05 ET)
+# Project Noble: handoff (2026-10-27, 05:20 ET)
 
 This picks up a reverse-engineering and C++ effort on **Tyler's Windows PC**. All paths below are real paths on that machine.
 Tyler (GitHub `WeabooTyler117`) works with a partner (GitHub `O7OF`) who owns the repo and writes most of the code.
@@ -200,7 +200,49 @@ look delta sent. The engine reads the pointer itself (GetCursorPos/ScreenToClien
 6. Mouse wheel (`WM_MOUSEWHEEL` → +0x114) and gamepad (XInput into +0x120..).
 7. Remove the remaining debug-only bits when they're no longer useful (slot first-call logging is fine to keep).
 
-## 7. Rules for this project
+## 7. Partner's Outbreak-Z code (reference for Noble's menus)
+
+The partner (`O7OF`) wrote and owns a Godot game, Outbreak-Z, and shared its scripts as reference material. They are
+GDScript for Godot, so none of them compile into Noble (C++ / D3D11 / ImGui). They can be used as designs to port; because
+the partner owns them, porting or copying them into this repo is fine. Keep the copies of these files outside the repo
+unless one is actually ported.
+
+**Usable almost as-is**
+- `master_server.js` + `package.json`: plain Node HTTP session registry. A host registers its session, sends a heartbeat,
+  and the session is dropped after 30 s without one; clients fetch the list. Game-agnostic, so it can back Noble's
+  SERVERS tab. Noble needs a small client (register + heartbeat when hosting, list fetch in the menu). Only useful once
+  P2P host/join works (next step 5). Before hosting it publicly, add a request body size limit and a per-IP limit on
+  registered sessions, so the list can't be flooded with fake entries.
+
+**Port as designs**
+- `server_browser.gd`: favourites list, direct connect by IP:port, ping, password prompt, join-rejected message. Feature
+  list for the SERVERS tab.
+- `settings_manager.gd`, `build_settings_menu.gd`: Gameplay / Controls / Keybinds / Controller tabs with sliders. In Noble
+  the controls write the profile fields from section 5: look settings at +0x1B4, key bindings from +0x42C,
+  volumes at +0xA5C/+0xA60/+0xA64. Can be built today (doesn't depend on networking).
+- `glass_ui.gd`: colours, border widths and corner radius, to turn into one ImGui style used by `FrontEndMenu` and
+  `PauseMenu`.
+- `audio_manager.gd`: only the menu parts apply. Click / hover / tab sounds with a 40 ms hover cooldown, and a menu music
+  playlist (in order or shuffled, loops, no repeat of the last track when a shuffle restarts). Play through XAudio2, which
+  is already loaded. In-game sound is the engine's own FMOD and needs nothing from this file. Sound source: Reach's
+  sounds can't be committed (public repo); either read them at runtime from the player's MCC install (FMOD sound banks)
+  or use our own / royalty-free sounds plus a `data\menu_music\` folder for the player's own files. Not decided yet.
+- `game_loading_screen.gd`: idea for a loading screen while the map loads.
+
+**Not applicable to Reach**
+- `barracks_menu.gd`, `save_stats_manager.gd`, `floating_damage_number.gd`: Outbreak-Z skins, capes, cards, prestige and
+  zombie stats. Reach armour lives in the engine/profile.
+- `dev_tools_menu.gd`: zombie-mode cheats (points, perks, power-ups).
+- `dev_account_search_menu.gd`, `backend_client.gd`: need Outbreak-Z's account database; its login/register ignore the
+  password, so don't carry that over.
+- `hud.gd`, `scoreboard.gd`, `chat_box.gd`: Reach draws its own HUD, scoreboard and chat; the work there is fixing the
+  engine's HUD text (next steps 1-2), not replacing it.
+- `check_api.gd`: one-line test script.
+
+**Suggested order:** SETTINGS tab wired to the profile (with the glass style), then menu sounds, then the SERVERS tab +
+master server once online joining works.
+
+## 8. Rules for this project
 
 - Read-only toward MCC files. Writes go to `build\bin\Release\data\…`.
 - Never commit or publish: RR binaries/data/decompiled code (including `profile_1.bin`, launch blocks, `mainmenu_all.map`),
