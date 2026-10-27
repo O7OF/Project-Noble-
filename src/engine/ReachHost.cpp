@@ -2,6 +2,7 @@
 #include "ui/LoadScreen.hpp"
 #include "common/Logger.hpp"
 #include <windows.h>
+#include <shellapi.h>
 #include <intrin.h>
 #include <atomic>
 #include <array>
@@ -13,8 +14,11 @@
 #include <algorithm>
 #include <filesystem>
 #include <string>
+#include <cstdlib>
+#include <cwchar>
 
 #pragma comment(lib, "gdi32.lib")
+#pragma comment(lib, "shell32.lib")
 
 namespace noble {
 
@@ -351,6 +355,50 @@ static uint64_t __fastcall HostSlot33_DisplayQuality(void* thisPtr, uint64_t a1,
 }
 
 // Slot 34: Profile & Armor settings handler (host_probe case 0x22)
+//
+// The engine takes its keyboard/mouse bindings from this profile. Without them every key
+// reaches the engine (slot 36) but is bound to nothing; only mouse look works.
+// Binding table: 66 entries of 0x18 bytes from +0x42C, each { u32 action, u32 VK, 16 zero bytes },
+// actions 0..65. The keys below are MCC's default PC layout (actions 62..65 are unbound).
+static constexpr size_t kBindingTableOffset = 0x42C;
+static constexpr size_t kBindingEntrySize = 0x18;
+static const uint8_t kDefaultKeyBindings[66] = {
+    /*  0 */ VK_SPACE, '2',        'E',        'R',        '1',        'Q',        '4',        'F',
+    /*  8 */ VK_LBUTTON, VK_LMENU, VK_RBUTTON, 'Z',        'X',        'C',        'C',        'Q',
+    /* 16 */ 'W',        'S',      'A',        'D',        VK_TAB,     VK_LCONTROL, VK_SPACE, VK_LSHIFT,
+    /* 24 */ VK_RBUTTON, 'R',      'F',        VK_LBUTTON, VK_LSHIFT,  VK_LCONTROL, VK_DELETE, '1',
+    /* 32 */ '2',        VK_OEM_3, VK_RBUTTON, VK_NUMPAD4, 'X',        'Z',        'C',        VK_RBUTTON,
+    /* 40 */ VK_RIGHT,   VK_LEFT,  VK_RETURN,  'E',        VK_SPACE,   VK_LSHIFT,  VK_NUMPAD5, 'R',
+    /* 48 */ 'F',        VK_RBUTTON, VK_RBUTTON, 'E',      'G',        'C',        'X',        'F',
+    /* 56 */ '3',        'G',      'L',        VK_UP,      VK_DOWN,    'P',        0,          0,
+    /* 64 */ 0,          0,
+};
+
+static void WriteDefaultKeyBindings(uint8_t* profile) {
+    for (uint32_t action = 0; action < 66; ++action) {
+        uint8_t* entry = profile + kBindingTableOffset + action * kBindingEntrySize;
+        const uint32_t vk = kDefaultKeyBindings[action];
+        memcpy(entry + 0, &action, sizeof(action));
+        memcpy(entry + 4, &vk, sizeof(vk));
+    }
+}
+
+// "-profile <path>" (or "--profile <path>") on the command line, else empty.
+static std::wstring ProfileArgPath() {
+    std::wstring result;
+    int argc = 0;
+    LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+    if (argv) {
+        for (int i = 1; i + 1 < argc; ++i) {
+            if (wcscmp(argv[i], L"-profile") == 0 || wcscmp(argv[i], L"--profile") == 0) {
+                result = argv[i + 1];
+            }
+        }
+        LocalFree(argv);
+    }
+    return result;
+}
+
 static uint8_t s_hostProfileBuffer[0x10000] = { 0 };
 static bool s_hostProfileInitialized = false;
 
@@ -363,53 +411,186 @@ static uint64_t __fastcall HostSlot34_ProfileSettings(void* thisPtr, uint64_t a1
 
     if (!s_hostProfileInitialized) {
         memset(s_hostProfileBuffer, 0, sizeof(s_hostProfileBuffer));
+        bool loaded = false;
         try {
-            // Try loading authentic profile_1.bin if present in data folder
-            auto& host = ReachHost::Get();
-            std::filesystem::path profilePath = host.GetDataDir() / "profile_1.bin";
-            std::error_code ec;
-            if (std::filesystem::exists(profilePath, ec)) {
-                std::ifstream pFile(profilePath, std::ios::binary);
+            // Optional: "-profile <file>" loads a captured profile, like RR's --profile.
+            // RR host::load_profile copies at most 0xC00 bytes of it.
+            const std::wstring path = ProfileArgPath();
+            if (!path.empty()) {
+                std::ifstream pFile(std::filesystem::path(path), std::ios::binary);
                 if (pFile) {
-                    pFile.read(reinterpret_cast<char*>(s_hostProfileBuffer), sizeof(s_hostProfileBuffer));
-                    NOBLE_INFO("ReachHost [Slot 34]: Ingested authentic profile_1.bin ({} bytes)", pFile.gcount());
+                    pFile.read(reinterpret_cast<char*>(s_hostProfileBuffer), 0xC00);
+                    loaded = pFile.gcount() > 0;
+                    NOBLE_INFO("ReachHost [Slot 34]: loaded profile from -profile ({} bytes)", pFile.gcount());
+                } else {
+                    NOBLE_WARN("ReachHost [Slot 34]: could not open -profile file; using built-in key bindings");
                 }
             }
         } catch (...) {
-            NOBLE_WARN("ReachHost [Slot 34]: Failed to ingest profile_1.bin, using defaults");
+            NOBLE_WARN("ReachHost [Slot 34]: failed to read -profile file; using built-in key bindings");
         }
-        if (*reinterpret_cast<uint32_t*>(s_hostProfileBuffer) == 0) {
-            *reinterpret_cast<uint32_t*>(s_hostProfileBuffer) = 1; // Active player profile valid
-            *reinterpret_cast<uint32_t*>(s_hostProfileBuffer + 0x04) = 0; // Spartan
-            *reinterpret_cast<uint32_t*>(s_hostProfileBuffer + 0x18) = 0; // Primary: Steel
-            *reinterpret_cast<uint32_t*>(s_hostProfileBuffer + 0x1C) = 12; // Secondary: Cyan
+        if (!loaded) {
+            WriteDefaultKeyBindings(s_hostProfileBuffer);
+            NOBLE_INFO("ReachHost [Slot 34]: using built-in default key bindings");
         }
+        // RR host::hit case 0x22: the profile is a zeroed 64 KB block with only the 4-character
+        // service tag (UTF-16) written at +0x1AC. The old defaults here (+0x00 = 1, armour colours
+        // at +0x18/+0x1C) are not what RR sends, so they are no longer written.
+        static const wchar_t kServiceTag[4] = { L'N', L'O', L'B', L'L' };
+        memcpy(s_hostProfileBuffer + 0x1AC, kServiceTag, sizeof(kServiceTag));
         s_hostProfileInitialized = true;
     }
 
-    // If caller provided a destination buffer, copy profile data into it
-    uintptr_t destBuf = (a2 > 0x10000) ? a2 : ((a1 > 0x10000) ? a1 : 0);
-    if (destBuf > 0x10000) {
-        SafeCopyMemory(reinterpret_cast<void*>(destBuf), s_hostProfileBuffer, 0x100);
-    }
-
-    // Reach Renaissance returns the 64KB profile buffer pointer
+    // RR only returns the pointer; it never writes into a1/a2 (the old code copied 0x100 bytes
+    // into whichever argument looked like a pointer).
     return reinterpret_cast<uint64_t>(s_hostProfileBuffer);
 }
 
-// Slot 36: Input Controller Query handler (host_probe case 0x24)
+// Slot 36: local-user input poll (RR host::hit case 0x24). Called every engine tick.
+// a1 = user index, a2 = 0x130-byte input state the host fills. Layout (from RR's handler):
+//   +0x000 u32      1 = a local user is present
+//   +0x004 u8[256]  key state indexed by VK code: 0 = up, 0x80 = pressed (< 500 ms),
+//                   0x81..0xFF = held (repeat counter, as RR computes it)
+//   +0x104 f32 x2   mouse look delta (x, y), already scaled
+//   +0x114 i32      mouse wheel pulse
+//   +0x118 f32      1.0
+//   +0x11C u32      mouse buttons: L=1, M=2, R=4, X1=8, X2=0x10
+// Index 1 is the split-screen second user: zeroed, as RR does.
+static ULONGLONG s_keyDownSince[256] = {};
+static bool s_inputCaptured = false;
+static HCURSOR s_savedClassCursor = nullptr;
+static std::atomic<bool> s_slot36Logged{false};
+
+static float InputMouseScale() {
+    static float s_scale = [] {
+        float scale = 0.0008f; // RR's default before its sensitivity multiplier
+        int argc = 0;
+        LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+        if (argv) {
+            for (int i = 1; i + 1 < argc; ++i) {
+                if (wcscmp(argv[i], L"-mouse-scale") == 0 || wcscmp(argv[i], L"--mouse-scale") == 0) {
+                    float v = static_cast<float>(_wtof(argv[i + 1]));
+                    if (v > 0.0f) scale = v;
+                }
+            }
+            LocalFree(argv);
+        }
+        return scale;
+    }();
+    return s_scale;
+}
+
+// Returns our window if it is the foreground window, else nullptr.
+static HWND InputFocusedWindow() {
+    HWND fg = GetForegroundWindow();
+    if (!fg) return nullptr;
+    DWORD pid = 0;
+    GetWindowThreadProcessId(fg, &pid);
+    return (pid == GetCurrentProcessId()) ? fg : nullptr;
+}
+
+static void InputRelease(HWND hwnd) {
+    if (!s_inputCaptured) return;
+    ClipCursor(nullptr);
+    if (hwnd && s_savedClassCursor) {
+        SetClassLongPtrW(hwnd, GCLP_HCURSOR, reinterpret_cast<LONG_PTR>(s_savedClassCursor));
+    }
+    s_inputCaptured = false;
+    NOBLE_INFO("ReachHost [Slot 36 - Input]: window lost focus, mouse released");
+}
+
+static void FillLocalInput(uint8_t* st) {
+    *reinterpret_cast<uint32_t*>(st + 0x000) = 1;
+    *reinterpret_cast<float*>(st + 0x118) = 1.0f;
+
+    static HWND s_lastWindow = nullptr;
+    HWND hwnd = InputFocusedWindow();
+    if (!hwnd) {
+        InputRelease(s_lastWindow);
+        memset(s_keyDownSince, 0, sizeof(s_keyDownSince));
+        return;
+    }
+    s_lastWindow = hwnd;
+
+    RECT rc{};
+    GetClientRect(hwnd, &rc);
+    POINT tl{rc.left, rc.top}, br{rc.right, rc.bottom};
+    ClientToScreen(hwnd, &tl);
+    ClientToScreen(hwnd, &br);
+    RECT clip{tl.x, tl.y, br.x, br.y};
+    POINT center{(tl.x + br.x) / 2, (tl.y + br.y) / 2};
+
+    bool firstCapturedFrame = false;
+    if (!s_inputCaptured) {
+        s_savedClassCursor = reinterpret_cast<HCURSOR>(GetClassLongPtrW(hwnd, GCLP_HCURSOR));
+        SetClassLongPtrW(hwnd, GCLP_HCURSOR, 0); // hide the arrow over our window
+        s_inputCaptured = true;
+        firstCapturedFrame = true;
+        NOBLE_INFO("ReachHost [Slot 36 - Input]: window focused, mouse captured (scale {})", InputMouseScale());
+    }
+    ClipCursor(&clip);
+
+    // Keyboard and mouse buttons by VK code.
+    const ULONGLONG now = GetTickCount64();
+    for (int vk = 1; vk < 256; ++vk) {
+        uint8_t v = 0;
+        if (GetAsyncKeyState(vk) < 0) {
+            if (s_keyDownSince[vk] == 0) s_keyDownSince[vk] = now;
+            ULONGLONG held = now - s_keyDownSince[vk];
+            if (held < 500) {
+                v = 0x80;
+            } else {
+                ULONGLONG n = (held - 500) / 33;
+                if (n > 0x7E) n = 0x7E;
+                v = static_cast<uint8_t>(static_cast<int>(n) - 0x7F);
+            }
+        } else {
+            s_keyDownSince[vk] = 0;
+        }
+        st[0x004 + vk] = v;
+    }
+
+    // Mouse look: delta from the window centre, then recentre.
+    POINT pos{};
+    float dx = 0.0f, dy = 0.0f;
+    if (GetCursorPos(&pos) && !firstCapturedFrame) {
+        dx = static_cast<float>(pos.x - center.x);
+        dy = static_cast<float>(pos.y - center.y);
+    }
+    SetCursorPos(center.x, center.y);
+    const float scale = InputMouseScale();
+    *reinterpret_cast<float*>(st + 0x104) = dx * scale;
+    *reinterpret_cast<float*>(st + 0x108) = dy * scale;
+
+    uint32_t buttons = 0;
+    if (st[0x004 + VK_LBUTTON])  buttons |= 0x01;
+    if (st[0x004 + VK_MBUTTON])  buttons |= 0x02;
+    if (st[0x004 + VK_RBUTTON])  buttons |= 0x04;
+    if (st[0x004 + VK_XBUTTON1]) buttons |= 0x08;
+    if (st[0x004 + VK_XBUTTON2]) buttons |= 0x10;
+    *reinterpret_cast<uint32_t*>(st + 0x11C) = buttons;
+}
+
 static uint64_t __fastcall HostSlot36_InputController(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
     (void)thisPtr; (void)a3; (void)a4;
+    uint64_t userIndex = a1;
     uintptr_t outBuf = (a2 > 0x10000) ? a2 : 0;
-    if (a1 > 0x10000) {
+    if (a1 > 0x10000) { // older calling-convention guess: a1 -> { int index; void* buffer; }
+        int idx = 0;
         uintptr_t pSub = 0;
-        if (SafeReadPointer(a1 + 8, &pSub) && pSub > 0x10000) {
-            outBuf = pSub;
-        }
+        if (SafeReadInt32(a1, &idx)) userIndex = static_cast<uint32_t>(idx);
+        if (SafeReadPointer(a1 + 8, &pSub) && pSub > 0x10000) outBuf = pSub;
     }
-    if (outBuf > 0x10000) {
-        SafeZeroMemory(reinterpret_cast<void*>(outBuf), 0x130);
+    if (!s_slot36Logged.exchange(true)) {
+        NOBLE_INFO("ReachHost [Slot 36 - Input]: first call (a1=0x{:X}, a2=0x{:X}) -> user {} buffer 0x{:X}", a1, a2, userIndex, outBuf);
     }
+    if (outBuf <= 0x10000) return 1;
+
+    alignas(16) uint8_t state[0x130] = {};
+    if (static_cast<uint32_t>(userIndex) == 0) {
+        FillLocalInput(state);
+    }
+    SafeCopyMemory(reinterpret_cast<void*>(outBuf), state, sizeof(state));
     return 1;
 }
 
@@ -832,20 +1013,13 @@ static uint64_t __fastcall HostSlot97_CapabilityPass(void* thisPtr, uint64_t a1,
     return 1;
 }
 
-// Slot 116: Controller Mapping (host_probe case 0x74)
-static uint8_t s_controllerMap[64] = { 0 };
-static bool s_controllerMapInit = false;
-
+// Slot 116: Controller Mapping (host_probe case 0x74). Called with the player's XUID in a1; the
+// other registers are leftovers (a2 was seen pointing at this function). RR's pad::controller_map
+// only logs its pad layout. The old handler wrote 64 bytes of 0xFF through a2, so it now writes
+// nothing and returns 0.
 static uint64_t __fastcall HostSlot116_ControllerMap(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
-    (void)thisPtr; (void)a1; (void)a3; (void)a4;
-    if (!s_controllerMapInit) {
-        memset(s_controllerMap, 0xFF, sizeof(s_controllerMap));
-        s_controllerMapInit = true;
-    }
-    if (a2 > 0x10000) {
-        SafeCopyMemory(reinterpret_cast<void*>(a2), s_controllerMap, 64);
-    }
-    return reinterpret_cast<uint64_t>(s_controllerMap);
+    (void)thisPtr; (void)a1; (void)a2; (void)a3; (void)a4;
+    return 0;
 }
 
 template<size_t... Is>
