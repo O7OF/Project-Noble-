@@ -101,6 +101,7 @@ set(SOURCES
     src/hooks/HookManager.cpp
     src/hooks/LobbyPatches.cpp
     src/hooks/ForgePatches.cpp
+    src/hooks/EnginePatches.cpp
     src/vfs/VFS.cpp
     src/engine/BlamEngine.cpp
     src/engine/ReachHost.cpp
@@ -130,6 +131,7 @@ set(HEADERS
     src/hooks/HookManager.hpp
     src/hooks/LobbyPatches.hpp
     src/hooks/ForgePatches.hpp
+    src/hooks/EnginePatches.hpp
     src/vfs/VFS.hpp
     src/engine/BlamEngine.hpp
     src/engine/ReachHost.hpp

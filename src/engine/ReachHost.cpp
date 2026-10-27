@@ -1160,6 +1160,15 @@ public:
             return it2->second.c_str();
         }
 
+        // Fallback: If exact tableId not found, search by stringId across all registered tables.
+        // haloreach maps have varying tableId hashes across map variants/gamemodes,
+        // but stringId is preserved (e.g. 0x2dd "Press \ue45e to access Loadout Menu").
+        for (const auto& pair : m_strings) {
+            if ((pair.first & 0xFFFFFFFFULL) == static_cast<uint64_t>(stringId)) {
+                return pair.second.c_str();
+            }
+        }
+
         return s_emptyWideString;
     }
 
@@ -1368,31 +1377,21 @@ static std::wstring SafeReadWide(const wchar_t* text, size_t maxChars) {
     return std::wstring(buf);
 }
 
-static uint64_t __fastcall HostSlot61_TextPrepare(void* thisPtr, const wchar_t* text, uint32_t style, float size, const char* face) {
-    (void)thisPtr;
-    static std::atomic<int> s_calls{0};
-    if (s_calls.fetch_add(1) < 20) {
-        NOBLE_INFO("ReachHost [Slot 61 - TextPrepare]: size={} scale={:.2f} face='{}' text='{}'",
-            style, size, NarrowForLog(WidenFace(face)), NarrowForLog(SafeReadWide(text, 48)));
-    }
-    return 1;
-}
-
 // -----------------------------------------------------------------------------
-// Font Glyph and Atlas Subsystem (Slots 62-66). Matches Reach Renaissance text::{glyph, atlas, has_icon, kerning, register_icon}.
+// Font Glyph and Atlas Subsystem (Slots 61-66). Matches Reach Renaissance text::{prepare, glyph, atlas, has_icon, kerning, register_icon}.
 // haloreach.dll queries glyph data (Slot 62) and binds the font texture atlas SRV (Slot 63)
 // to render in-game HUD numbers, weapon bullet counts, clip reserves, and scoreboard text.
 // -----------------------------------------------------------------------------
 #pragma pack(push, 1)
 struct HostGlyphData {
     uint16_t ch;        // +0x00 character code (wchar_t)
-    uint16_t atlasX;    // +0x02 X in atlas (pixels)
-    uint16_t padX[3];   // +0x04 upper 48 bits of X (0)
+    uint16_t pad[3];    // +0x02 .. +0x07 (zero)
+    uint16_t atlasX;    // +0x08 X in atlas (pixels)
     uint16_t atlasY;    // +0x0A Y in atlas (pixels)
     uint16_t width;     // +0x0C bounding width (gmBlackBoxX)
     uint16_t height;    // +0x0E bounding height (gmBlackBoxY)
-    int16_t  originX;   // +0x10 origin.x
-    int16_t  originY;   // +0x12 origin.y
+    int16_t  originY;   // +0x10 gmptGlyphOrigin.y
+    int16_t  originX;   // +0x12 gmptGlyphOrigin.x
     int16_t  advanceX;  // +0x14 cellIncX
     int16_t  ascent;    // +0x16 -ascent
     uint8_t  page;      // +0x18 page index (0)
@@ -1478,24 +1477,6 @@ public:
             return true;
         }
 
-        // For HUD digits '0'-'9', check prewarmed Fixedsys and tvnord before re-rasterizing
-        if (ch >= L'0' && ch <= L'9') {
-            uint16_t fxFaceId = HashFace("fixedsys");
-            uint64_t fxKey = MakeGlyphKey(ch, fxFaceId, style, 1000);
-            auto itFx = m_cache.find(fxKey);
-            if (itFx != m_cache.end()) {
-                *outGlyph = itFx->second;
-                return true;
-            }
-            uint16_t tvFaceId = HashFace("tvnord");
-            uint64_t tvKey = MakeGlyphKey(ch, tvFaceId, style, 1000);
-            auto itTv = m_cache.find(tvKey);
-            if (itTv != m_cache.end()) {
-                *outGlyph = itTv->second;
-                return true;
-            }
-        }
-
         return RasterizeGlyphLocked(ch, style, scale, face, key, outGlyph);
     }
 
@@ -1556,16 +1537,16 @@ public:
 
         HostGlyphData data{};
         data.ch = static_cast<uint16_t>(ch);
+        data.pad[0] = 0;
+        data.pad[1] = 0;
+        data.pad[2] = 0;
         data.atlasX = static_cast<uint16_t>(gx);
-        data.padX[0] = 0;
-        data.padX[1] = 0;
-        data.padX[2] = 0;
         data.atlasY = static_cast<uint16_t>(gy);
         data.width = static_cast<uint16_t>(w);
         data.height = static_cast<uint16_t>(h);
-        data.originX = 0;
-        // In Reach's text::register_icon, argument 8 is 'top' (baseline offset); width is advanceX.
+        // In Reach's text::register_icon, argument 8 is 'top' (baseline offset / originY); width is advanceX.
         data.originY = static_cast<int16_t>(advanceX > 0 ? advanceX : h);
+        data.originX = 0;
         data.advanceX = static_cast<int16_t>(w);
         data.ascent = -static_cast<int16_t>(h);
         data.page = 0;
@@ -1590,10 +1571,6 @@ public:
         if (m_registeredIcons.find(iconCh) != m_registeredIcons.end()) {
             return true;
         }
-        // Characters 0xE100 - 0xE1FF are font_package_icon weapon glyphs
-        if (iconCh >= 0xE100 && iconCh <= 0xE1FF) {
-            return true;
-        }
         uint16_t faceId = HashFace(face);
         uint32_t scaleKey = static_cast<uint32_t>(scale * 1000.0f);
         uint64_t key = MakeGlyphKey(iconCh, faceId, style, scaleKey);
@@ -1602,7 +1579,7 @@ public:
 
 private:
     void PrewarmCommonGlyphs() {
-        const wchar_t commonChars[] = L"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz/:.-+ /";
+        const wchar_t commonChars[] = L"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz/:.-+ _()[]><";
         const uint32_t commonStyles[] = { 9, 13, 15, 18, 24, 30, 36, 42 };
 
         HostGlyphData dummy{};
@@ -1612,6 +1589,11 @@ private:
                 uint64_t tvKey = MakeGlyphKey(commonChars[i], tvFaceId, s, 1000);
                 if (m_cache.find(tvKey) == m_cache.end()) {
                     RasterizeGlyphLocked(commonChars[i], s, 1.0f, "tvnord", tvKey, &dummy);
+                }
+                uint16_t euroFaceId = HashFace("eurostile");
+                uint64_t euroKey = MakeGlyphKey(commonChars[i], euroFaceId, s, 1000);
+                if (m_cache.find(euroKey) == m_cache.end()) {
+                    RasterizeGlyphLocked(commonChars[i], s, 1.0f, "eurostile", euroKey, &dummy);
                 }
                 if (commonChars[i] >= L'0' && commonChars[i] <= L'9') {
                     uint16_t fxFaceId = HashFace("fixedsys");
@@ -1768,15 +1750,15 @@ private:
 
         HostGlyphData data{};
         data.ch = static_cast<uint16_t>(ch);
+        data.pad[0] = 0;
+        data.pad[1] = 0;
+        data.pad[2] = 0;
         data.atlasX = static_cast<uint16_t>(gx);
-        data.padX[0] = 0;
-        data.padX[1] = 0;
-        data.padX[2] = 0;
         data.atlasY = static_cast<uint16_t>(gy);
         data.width = static_cast<uint16_t>(w);
         data.height = static_cast<uint16_t>(h);
-        data.originX = static_cast<int16_t>(gm.gmptGlyphOrigin.x);
         data.originY = static_cast<int16_t>(gm.gmptGlyphOrigin.y);
+        data.originX = static_cast<int16_t>(gm.gmptGlyphOrigin.x);
         data.advanceX = static_cast<int16_t>(gm.gmCellIncX);
         data.ascent = -static_cast<int16_t>(tm.tmAscent);
         data.page = 0;
@@ -1803,6 +1785,25 @@ private:
     std::unordered_map<uint16_t, HostGlyphData> m_iconGlyphs;
     std::mutex m_mutex;
 };
+
+// Slot 61: Text Prepare handler (host_probe case 0x3D)
+static uint64_t __fastcall HostSlot61_TextPrepare(void* thisPtr, const wchar_t* text, uint32_t style, float size, const char* face) {
+    (void)thisPtr;
+    if (text && reinterpret_cast<uintptr_t>(text) > 0x10000) {
+        HostGlyphData dummy{};
+        const wchar_t* p = text;
+        while (*p) {
+            TextAtlas::Get().GetGlyph(*p, style, size, face, &dummy);
+            ++p;
+        }
+    }
+    static std::atomic<int> s_calls{0};
+    if (s_calls.fetch_add(1) < 20) {
+        NOBLE_INFO("ReachHost [Slot 61 - TextPrepare]: size={} scale={:.2f} face='{}' text='{}'",
+            style, size, NarrowForLog(WidenFace(face)), NarrowForLog(SafeReadWide(text, 48)));
+    }
+    return 1;
+}
 
 // Slot 62: Text Glyph handler (host_probe case 0x3E)
 static uint64_t __fastcall HostSlot62_TextGlyph(void* thisPtr, uint64_t ch, void* outGlyph, uint32_t style, float scale, const char* face) {

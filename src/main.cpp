@@ -16,6 +16,7 @@
 #include "network/SessionManager.hpp"
 #include "hooks/LobbyPatches.hpp"
 #include "hooks/ForgePatches.hpp"
+#include "hooks/EnginePatches.hpp"
 
 #include <windows.h>
 #include <shellapi.h>
@@ -199,6 +200,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 
     // Apply 32/64 player lobby expansion detours
     noble::LobbyPatches::Apply(loader->GetModuleHandle());
+
+    // Apply engine stability and crash patches (e.g. whitespace underflow fix)
+    noble::EnginePatches::Apply(loader->GetModuleHandle());
 
     // 9. Instantiate Blam! Engine & Data Access interfaces
     auto blamEngine = std::make_unique<noble::BlamEngine>();
