@@ -1,165 +1,231 @@
 #include "WorkshopManager.hpp"
 #include <imgui.h>
+#include <nlohmann/json.hpp>
 #include <windows.h>
 #include <shellapi.h>
+#include <algorithm>
+#include <cctype>
 #include <fstream>
 
 namespace noble {
 
 WorkshopManager::WorkshopManager() = default;
 
-static bool IsValidReachMap(const std::filesystem::path& path) {
+namespace {
+
+// Blam map header check, used only for local mods that have no ModInfo.json. It can't tell Reach from
+// Halo 3 (Halo 3 MCC maps pass it too), so Workshop items are identified by their ModInfo.json instead.
+bool IsBlamMap(const std::filesystem::path& path) {
     std::ifstream file(path, std::ios::binary);
     if (!file.is_open()) return false;
-
     char header[8] = { 0 };
     file.read(header, 8);
     if (file.gcount() < 8) return false;
-
-    // Check Blam header magic: 'daeh' (0x64616568) or 'head' (0x68656164)
-    uint32_t magic = *reinterpret_cast<uint32_t*>(header);
-    if (magic != 0x68656164 && magic != 0x64616568) {
-        return false;
-    }
-
-    // Check Halo: Reach engine version (13 = 0xD for MCC Reach, 12 = 0xC for 360 Reach)
-    uint32_t version = *reinterpret_cast<uint32_t*>(header + 4);
-    return (version == 13 || version == 12);
+    const uint32_t magic = *reinterpret_cast<uint32_t*>(header);
+    if (magic != 0x68656164 && magic != 0x64616568) return false;
+    const uint32_t version = *reinterpret_cast<uint32_t*>(header + 4);
+    return version == 13 || version == 12;
 }
 
+std::string Lower(std::string s) {
+    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return s;
+}
+
+// MCC localised text: { "Neutral": "..." } (other language keys may follow). Plain strings are accepted too.
+std::string LocalisedText(const nlohmann::json& j, const char* key) {
+    if (!j.contains(key)) return {};
+    const auto& v = j[key];
+    if (v.is_string()) return v.get<std::string>();
+    if (v.is_object()) {
+        if (v.contains("Neutral") && v["Neutral"].is_string()) return v["Neutral"].get<std::string>();
+        for (const auto& item : v.items()) {
+            if (item.value().is_string()) return item.value().get<std::string>();
+        }
+    }
+    return {};
+}
+
+struct ModInfo {
+    bool found = false;
+    std::string engine;       // e.g. "Halo3", "HaloReach"
+    std::string title;
+    std::string description;
+};
+
+// MCC's mod manifest, <mod folder>\ModInfo.json.
+ModInfo ReadModInfo(const std::filesystem::path& folder) {
+    ModInfo info;
+    std::ifstream file(folder / "ModInfo.json", std::ios::binary);
+    if (!file.is_open()) return info;
+    try {
+        const nlohmann::json j = nlohmann::json::parse(file);
+        info.found = true;
+        if (j.contains("Engine") && j["Engine"].is_string()) info.engine = j["Engine"].get<std::string>();
+        info.title = LocalisedText(j, "Title");
+        info.description = LocalisedText(j, "Description");
+    } catch (...) {
+        info.found = false;
+    }
+    return info;
+}
+
+bool IsReachEngine(const std::string& engine) {
+    return Lower(engine).find("reach") != std::string::npos;
+}
+
+void CollectMaps(const std::filesystem::path& folder, ModItem& mod, bool checkHeader) {
+    std::error_code ec;
+    for (auto it = std::filesystem::recursive_directory_iterator(folder, ec);
+         !ec && it != std::filesystem::recursive_directory_iterator(); it.increment(ec)) {
+        if (!it->is_regular_file(ec) || it->path().extension() != ".map") continue;
+        if (checkHeader && !IsBlamMap(it->path())) continue;
+        mod.sizeBytes += it->file_size(ec);
+        mod.mapFiles.push_back(it->path().filename().string());
+    }
+}
+
+std::string FormatSize(uintmax_t bytes) {
+    char buf[32];
+    const double mb = static_cast<double>(bytes) / (1024.0 * 1024.0);
+    if (mb >= 1024.0) std::snprintf(buf, sizeof(buf), "%.1f GB", mb / 1024.0);
+    else std::snprintf(buf, sizeof(buf), "%.0f MB", mb);
+    return buf;
+}
+
+} // namespace
+
 void WorkshopManager::RefreshMods(const std::filesystem::path& workshopPath, const std::filesystem::path& localModsPath) {
+    m_workshopPath = workshopPath;
+    m_localModsPath = localModsPath;
     m_mods.clear();
+    m_skippedOtherGames = 0;
+    m_selectedModIndex = -1;
+    std::error_code ec;
 
-    // 1. Scan Steam Workshop Directory (strictly Halo: Reach maps)
-    if (std::filesystem::exists(workshopPath) && std::filesystem::is_directory(workshopPath)) {
-        for (const auto& entry : std::filesystem::directory_iterator(workshopPath)) {
-            if (entry.is_directory()) {
-                ModItem mod;
-                mod.id = entry.path().filename().string();
-                mod.title = "Steam Workshop Item #" + mod.id;
-                mod.folderPath = entry.path();
-                mod.isFromWorkshop = true;
-                mod.isEnabled = true;
-
-                // Inspect .map files and ensure only Reach maps are registered
-                for (const auto& f : std::filesystem::recursive_directory_iterator(entry.path())) {
-                    if (f.is_regular_file() && f.path().extension() == ".map") {
-                        if (IsValidReachMap(f.path())) {
-                            mod.sizeBytes += f.file_size();
-                            mod.mapFiles.push_back(f.path().filename().string());
-                        }
-                    }
-                }
-
-                // Only include if item contains valid Halo: Reach maps
-                if (!mod.mapFiles.empty()) {
-                    mod.title = mod.mapFiles[0] + " [Halo: Reach]";
-                    m_mods.push_back(mod);
-                }
+    // 1. Steam Workshop items for MCC (app 976730). Only items whose ModInfo.json names Halo: Reach.
+    if (std::filesystem::is_directory(workshopPath, ec)) {
+        for (const auto& entry : std::filesystem::directory_iterator(workshopPath, ec)) {
+            if (!entry.is_directory()) continue;
+            const ModInfo info = ReadModInfo(entry.path());
+            if (!info.found || !IsReachEngine(info.engine)) {
+                ++m_skippedOtherGames;
+                continue;
             }
+            ModItem mod;
+            mod.id = entry.path().filename().string();
+            mod.title = info.title.empty() ? "Workshop item " + mod.id : info.title;
+            mod.description = info.description;
+            mod.folderPath = entry.path();
+            mod.isFromWorkshop = true;
+            mod.isEnabled = true;
+            CollectMaps(entry.path(), mod, false);
+            m_mods.push_back(std::move(mod));
         }
     }
 
-    // 2. Scan Local User Mods Directory (data/mods)
-    if (std::filesystem::exists(localModsPath) && std::filesystem::is_directory(localModsPath)) {
-        for (const auto& entry : std::filesystem::directory_iterator(localModsPath)) {
-            if (entry.is_directory()) {
-                ModItem mod;
-                mod.id = entry.path().filename().string();
-                mod.title = mod.id;
-                mod.folderPath = entry.path();
-                mod.isFromWorkshop = false;
-                mod.isEnabled = true;
-
-                for (const auto& f : std::filesystem::recursive_directory_iterator(entry.path())) {
-                    if (f.is_regular_file() && f.path().extension() == ".map") {
-                        if (IsValidReachMap(f.path())) {
-                            mod.sizeBytes += f.file_size();
-                            mod.mapFiles.push_back(f.path().filename().string());
-                        }
-                    }
-                }
-
-                if (!mod.mapFiles.empty()) {
-                    mod.title = mod.id + " [Halo: Reach Custom]";
-                    m_mods.push_back(mod);
-                }
+    // 2. Noble's own data\mods folders. A ModInfo.json is used when present, otherwise the map headers.
+    if (std::filesystem::is_directory(localModsPath, ec)) {
+        for (const auto& entry : std::filesystem::directory_iterator(localModsPath, ec)) {
+            if (!entry.is_directory()) continue;
+            const ModInfo info = ReadModInfo(entry.path());
+            if (info.found && !info.engine.empty() && !IsReachEngine(info.engine)) {
+                ++m_skippedOtherGames;
+                continue;
             }
+            ModItem mod;
+            mod.id = entry.path().filename().string();
+            mod.title = info.title.empty() ? mod.id : info.title;
+            mod.description = info.description;
+            mod.folderPath = entry.path();
+            mod.isFromWorkshop = false;
+            mod.isEnabled = true;
+            CollectMaps(entry.path(), mod, !info.found);
+            if (!mod.mapFiles.empty() || info.found) m_mods.push_back(std::move(mod));
         }
     }
+
+    std::sort(m_mods.begin(), m_mods.end(), [](const ModItem& a, const ModItem& b) {
+        return Lower(a.title) < Lower(b.title);
+    });
 }
 
 void WorkshopManager::Render() {
-    ImGui::TextColored(ImVec4(0.0f, 0.85f, 1.0f, 1.0f), "MOD MANAGEMENT // STEAM WORKSHOP & LOCAL PACKAGES");
+    const float em = ImGui::GetFontSize();   // sizes scale with the UI font (fixed pixels were cut off at 4K)
+
+    ImGui::TextColored(ImVec4(0.42f, 0.74f, 0.93f, 1.0f), "HALO: REACH MODS");
+    ImGui::SameLine();
+    ImGui::TextDisabled("  %zu installed", m_mods.size());
+    if (m_skippedOtherGames > 0) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("(%d for other Halo games not shown)", m_skippedOtherGames);
+    }
     ImGui::Separator();
     ImGui::Spacing();
 
-    // Top action bar
-    if (ImGui::Button("Browse Steam Workshop...", ImVec2(190, 26))) {
+    if (ImGui::Button("Browse Steam Workshop")) {
         ShellExecuteA(nullptr, "open", "https://steamcommunity.com/app/976730/workshop/", nullptr, nullptr, SW_SHOWNORMAL);
     }
     ImGui::SameLine();
-    if (ImGui::Button("Open Local Mods Folder", ImVec2(180, 26))) {
-        ShellExecuteA(nullptr, "open", "data\\mods", nullptr, nullptr, SW_SHOWNORMAL);
+    if (ImGui::Button("Open Local Mods Folder")) {
+        std::error_code ec;
+        std::filesystem::create_directories(m_localModsPath, ec);
+        ShellExecuteW(nullptr, L"open", m_localModsPath.wstring().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
     }
     ImGui::SameLine();
-    if (ImGui::Button("Refresh List", ImVec2(110, 26))) {
-        // Will be refreshed by UIManager passing paths
+    if (ImGui::Button("Refresh List")) {
+        RefreshMods(m_workshopPath, m_localModsPath);
     }
-
-    ImGui::Spacing();
-    ImGui::Separator();
     ImGui::Spacing();
 
-    // Mod Table
-    static ImGuiTableFlags flags = 
-        ImGuiTableFlags_RowBg | 
-        ImGuiTableFlags_BordersInnerV | 
-        ImGuiTableFlags_ScrollY;
-
-    if (ImGui::BeginTable("ModsTable", 5, flags)) {
-        ImGui::TableSetupColumn("Active", ImGuiTableColumnFlags_WidthFixed, 50.0f);
-        ImGui::TableSetupColumn("Mod Title", ImGuiTableColumnFlags_WidthStretch);
-        ImGui::TableSetupColumn("Source", ImGuiTableColumnFlags_WidthFixed, 130.0f);
-        ImGui::TableSetupColumn("Size", ImGuiTableColumnFlags_WidthFixed, 90.0f);
-        ImGui::TableSetupColumn("Maps Included", ImGuiTableColumnFlags_WidthFixed, 150.0f);
+    // Description of the selected mod below the list.
+    const float detailHeight = em * 6.5f;
+    const ImGuiTableFlags flags = ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_ScrollY;
+    if (ImGui::BeginTable("ModsTable", 4, flags, ImVec2(0.0f, -detailHeight))) {
+        ImGui::TableSetupScrollFreeze(0, 1);
+        ImGui::TableSetupColumn("Mod", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn("Source", ImGuiTableColumnFlags_WidthFixed, em * 9.0f);
+        ImGui::TableSetupColumn("Size", ImGuiTableColumnFlags_WidthFixed, em * 5.5f);
+        ImGui::TableSetupColumn("Maps", ImGuiTableColumnFlags_WidthFixed, em * 4.5f);
         ImGui::TableHeadersRow();
 
         for (int i = 0; i < static_cast<int>(m_mods.size()); ++i) {
-            auto& mod = m_mods[i];
+            const ModItem& mod = m_mods[i];
+            ImGui::PushID(i);   // titles can repeat; the row index keeps every widget ID unique
             ImGui::TableNextRow();
 
-            // Col 0: Active checkbox
             ImGui::TableSetColumnIndex(0);
-            ImGui::PushID(i * 10);
-            ImGui::Checkbox("##Active", &mod.isEnabled);
-            ImGui::PopID();
-
-            // Col 1: Title
-            ImGui::TableSetColumnIndex(1);
-            bool isSelected = (m_selectedModIndex == i);
-            if (ImGui::Selectable(mod.title.c_str(), isSelected, ImGuiSelectableFlags_SpanAllColumns)) {
+            if (ImGui::Selectable(mod.title.c_str(), m_selectedModIndex == i, ImGuiSelectableFlags_SpanAllColumns)) {
                 m_selectedModIndex = i;
             }
 
-            // Col 2: Source
+            ImGui::TableSetColumnIndex(1);
+            if (mod.isFromWorkshop) ImGui::TextColored(ImVec4(0.42f, 0.74f, 0.93f, 1.0f), "Steam Workshop");
+            else ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1.0f), "Local");
+
             ImGui::TableSetColumnIndex(2);
-            if (mod.isFromWorkshop) {
-                ImGui::TextColored(ImVec4(0.2f, 0.8f, 1.0f, 1.0f), "Steam Workshop");
-            } else {
-                ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1.0f), "Local (data/mods)");
-            }
+            ImGui::TextUnformatted(FormatSize(mod.sizeBytes).c_str());
 
-            // Col 3: Size
             ImGui::TableSetColumnIndex(3);
-            double sizeMb = static_cast<double>(mod.sizeBytes) / (1024.0 * 1024.0);
-            ImGui::Text("%.1f MB", sizeMb);
-
-            // Col 4: Maps
-            ImGui::TableSetColumnIndex(4);
-            ImGui::Text("%zu map file(s)", mod.mapFiles.size());
+            ImGui::Text("%zu", mod.mapFiles.size());
+            ImGui::PopID();
         }
         ImGui::EndTable();
+    }
+
+    ImGui::Separator();
+    if (m_mods.empty()) {
+        ImGui::TextWrapped("No Halo: Reach mods found. Subscribe to Reach mods on the Steam Workshop, or put a mod "
+                           "folder in Noble's data\\mods folder, then press Refresh List.");
+    } else if (m_selectedModIndex >= 0 && m_selectedModIndex < static_cast<int>(m_mods.size())) {
+        const ModItem& mod = m_mods[m_selectedModIndex];
+        ImGui::BeginChild("##moddetail", ImVec2(0, 0), ImGuiChildFlags_None);
+        ImGui::TextUnformatted(mod.title.c_str());
+        ImGui::TextDisabled("%s", mod.isFromWorkshop ? ("Workshop item " + mod.id).c_str() : mod.folderPath.string().c_str());
+        ImGui::TextWrapped("%s", mod.description.empty() ? "No description." : mod.description.c_str());
+        ImGui::EndChild();
+    } else {
+        ImGui::TextDisabled("Select a mod to see its description.");
     }
 }
 
