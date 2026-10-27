@@ -26,8 +26,19 @@ bool Loader::LoadReachDll(const fs::path& dllPath) {
     // Load library with altered search path so dependencies in its directory resolve
     m_hModule = LoadLibraryExW(dllPath.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
 
-    // Reset DLL directory
-    SetDllDirectoryW(nullptr);
+    // Keep a DLL directory set for the rest of the run, pointing at MCC's own binaries folder
+    // (<MCC>\MCC\Binaries\Win64), as Reach Renaissance does. haloreach.dll loads
+    // xaudio2_9redist.dll by bare name during engine start-up (for sound); MCC ships it there,
+    // and without this the load fails and the game is silent.
+    const fs::path mccBinaries = dllPath.parent_path().parent_path() / L"MCC" / L"Binaries" / L"Win64";
+    std::error_code binEc;
+    if (fs::exists(mccBinaries / L"xaudio2_9redist.dll", binEc)) {
+        SetDllDirectoryW(mccBinaries.c_str());
+        NOBLE_INFO("DLL directory set to MCC binaries (xaudio2_9redist.dll found): {}", mccBinaries.string());
+    } else {
+        SetDllDirectoryW(nullptr);
+        NOBLE_WARN("xaudio2_9redist.dll not found in {}; the game may have no sound", mccBinaries.string());
+    }
 
     if (!m_hModule) {
         DWORD err = GetLastError();
