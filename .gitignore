@@ -1,6 +1,9 @@
 # Build directories
 build/
 bin/
+obj/
+**/bin/
+**/obj/
 out/
 .vs/
 *.user
@@ -9,6 +12,14 @@ out/
 # Local cache & agent workspace
 .agents/
 *.log
+*.dmp
 imgui.ini
 data/
+bin/vgmstream/
+vgmstream/
+
+# Reverse engineering and decompilation evidence/artifacts
+tests/evidence/
+docs/*reverse*
+docs/*decomp*
 docs/reach_renaissance_reverse_engineering_report.md

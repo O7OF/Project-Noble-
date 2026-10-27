@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(HaloReachCommunityEdition VERSION 0.5.0 LANGUAGES C CXX)
+project(HaloReachCommunityEdition VERSION 0.6.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -111,6 +111,7 @@ set(SOURCES
     src/ui/MissionLauncher.cpp
     src/network/UPnP.cpp
     src/network/SessionManager.cpp
+    src/audio/VgmAudioHook.cpp
 )
 
 set(HEADERS
@@ -136,6 +137,7 @@ set(HEADERS
     src/ui/MissionLauncher.hpp
     src/network/UPnP.hpp
     src/network/SessionManager.hpp
+    src/audio/VgmAudioHook.hpp
 )
 
 add_executable(noble-client WIN32 ${SOURCES} ${HEADERS})
