@@ -1,11 +1,11 @@
-# Project Noble: agent handoff (2026-10-27, 01:25 ET)
+# Project Noble: agent handoff (2026-10-27, 02:25 ET)
 
 You are picking up a reverse-engineering and C++ session on **Tyler's Windows PC**. All paths below are real paths on that machine.
 Tyler (GitHub `WeabooTyler117`) works with a partner (GitHub `O7OF`) who owns the repo and writes most of the code.
 Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C++ developer, so give him exact commands.
 
 **Goal:** `noble-client.exe` loads MCC's own `haloreach.dll` (Halo: Reach) and drives it **without MCC**, like the existing
-community project Reach Renaissance (RR) does. Ownership is verified through Steam, nothing in the MCC install is modified, and
+community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the MCC install is modified, and
 no RR code or data is redistributed. RR is used only as a reference for behaviour.
 
 ---
@@ -52,10 +52,11 @@ cmake --build build --config Release
 Tests (Steam must be running):
 ```
 cd build\bin\Release
-noble-client.exe                                          # main menu (launch index -2, map id 1035)
+noble-client.exe                                          # main menu (launch index -2, map id 1035): still stuck at 4%
 noble-client.exe -map 20_sword_slayer -mode multiplayer   # Sword Base: currently the most useful test
 ```
-Other args: `-difficulty N`, `-mvar <path>`, `-variant <path>`. Let it run ~60 s (the engine has 60 s / 90 s launch timeouts), close it, read
+Other args: `-mouse-scale F` (mouse look per pixel, default 0.0008), `-profile <path>` (load a captured
+profile instead of Noble's built-in key bindings, like RR's `--profile`), `-difficulty N`, `-mvar <path>`, `-variant <path>`. Let it run ~60 s (the engine has 60 s / 90 s launch timeouts), close it, read
 `build\bin\Release\noble-client.log`. Useful lines: `launch state N`, `Slot 4 - EngineEvent`, `iface2 slot N first call`, `slot N first call`, `FATAL EXCEPTION`.
 
 ## 3. Current status
@@ -68,28 +69,37 @@ Other args: `-difficulty N`, `-mvar <path>`, `-variant <path>`. Let it run ~60 s
 | Engine launch state machine reaches **11 (launched)** | ✅ (after the text metrics fix) |
 | Engine finds maps (`no map selected` fixed by the map-info sandbox) | ✅ |
 | Sword Base: engine opens `20_sword_slayer.map`, load progress **5%** | ✅ |
-| Next crash: `haloreach+0x7924D` after `iface2 slot 147` returned 0 | 🔧 **fix written (slot 147 → session GUID), NOT yet tested** |
-| Anything visible on screen | ❌ still black |
+| Crash `haloreach+0x7924D` after `iface2 slot 147` returned 0 | ✅ fixed (slot 147 → session GUID) |
+| **Sword Base renders in-game** (world, HUD compass, motion tracker, AR 32 rounds) | ✅ merged to `main` in PR #3 |
+| HUD is dim/dark blue, no HUD text | ❌ (text slots 62–66 are stubs; RR slot 1 `gamma::frame` / overlay not done) |
+| Keyboard/mouse input | ✅ move, look, jump, crouch, sprint/ability, fire, weapon + grenade swap, Tab scoreboard (slot 36 + key bindings in the slot 34 profile; cursor hidden). Uncommitted, see §4 |
+| Sound | ❌ none at all (not investigated yet) |
+| Scoreboard / HUD text | ❌ squares instead of text (text slots 62–66 are stubs) |
+| UI mouse cursor (class/loadout pick) | ❌ no cursor drawn; RR has `uicursor::*` for this |
+| Main menu (`noble-client.exe` with no args) | ❌ stuck at 4%: engine still asks for `haloreach\maps\.map` (blank scenario) even with map id 1035, so the menu needs different launch-block fields than MP |
 
-**First thing to do:** rebuild and run the Sword Base test to check the slot 147 fix, then follow the log.
+**First thing to do:** if the input branch isn't pushed yet, confirm the last test (built-in bindings, no `-profile`)
+worked and commit it (§4). Then pick from §6.
 
-## 4. Uncommitted local changes (on `main`, not pushed)
+## 4. Repo state
 
-`git status` will show these as modified. The partner has also pushed a dump-script commit, so local `main` is **behind** `origin/main`.
-Before pulling: `git checkout -b fix/text-slots-mapinfo-sandbox`, commit, then `git pull --rebase origin main`
-(or push the branch and open a PR). Ask the partner to merge PRs **as-is**; earlier conflicts were resolved by taking their side.
+Everything up to "Sword Base renders" is on `origin/main` (PR #3, merge commit `003ff30`). Local `main` was pulled and builds.
 
-| File | Change |
-|---|---|
-| `src/engine/ReachHost.cpp` | Slot 61 `TextPrepare` returns 1 + logs; slot 67 `TextMetrics` measures fonts with GDI (`pixels = size*scale`, TVNordCond → Bahnschrift Condensed) and writes ascent/descent; slot 4 decoded as `(reason, const char* msg)`; frame tick logs the engine launch state (`haloreach+0xC1A114`); **secondary interface widened to 160 slots** with per-index logging stubs; **iface2 slot 147 returns a pointer to a 16-byte zero session GUID**; SEH-safe copy helpers |
-| `src/engine/ReachHost.hpp` | `s_vtable2[160]` |
-| `src/engine/BlamEngine.cpp` | Real multiplayer map table (launch index 190–209 + map id); `+0x1D334/+0x1D5BC` now hold the **map id** (menu = 1035) instead of a "game mode tag"; `190` no longer treated as main menu; `m70_bonus` checked before `m70` |
-| `src/main.cpp` | Map-info sandbox: copy MCC `haloreach\maps\info\*` to `data\sandbox\haloreach\maps\info` and `SetCurrentDirectoryW(data\sandbox)` before `LaunchMap` |
+**Uncommitted on Tyler's PC (input work, tested 2026-10-27):** commit on branch `feat/input-slot36`:
+- `src/engine/ReachHost.cpp`: slot 36 input poll; slot 34 profile now matches RR (zeroed, service tag at +0x1AC,
+  no writes into a1/a2) **plus Noble's built-in default key-binding table**; optional `-profile <file>`; slot 116 no
+  longer writes 0xFF through a2.
+- `src/host/Window.cpp`: `WM_SETCURSOR` hides the cursor over the client area while focused.
+- `docs/HANDOFF.md`: this file.
 
-Already in `origin/main` (merged earlier): swap chain `SHADER_INPUT`, SafeGuard/atom hooks removed, `SetLibrarySettings` = 3 × `L"en-US"`
+`build\bin\Release\data\profile_1.bin` is a copy of RR's captured profile used for one test. It is git-ignored and
+no longer loaded automatically; never commit it.
+
+Already merged: swap chain `SHADER_INPUT`, SafeGuard/atom hooks removed, `SetLibrarySettings` = 3 × `L"en-US"`
 (wchar offsets 0x00/0x55/0xAA), engine-decoded game variant (`haloreach+0x373A0`) from MCC `game_variants\slayer_054.bin` into
 launch block `+0x300`, random launch GUID at `+0x50`, slot 10 → secondary interface, slot 32 display-settings fill, slot 88 rewrite,
-clean exit via `ExitProcess`.
+clean exit via `ExitProcess`, text slots 61/67, slot 4 decode, launch-state logging, 160-slot iface2 with slot 147, real MP map
+table and map ids at `+0x1D334/+0x1D5BC`, map-info sandbox in `main.cpp`.
 
 ## 5. Engine facts (haloreach.dll build above)
 
@@ -134,27 +144,54 @@ Args are `(host, a1, a2, a3, a4)`; float args arrive in XMM registers (slot 61 a
 | 4 | engine event `(reason, const char* msg)` | ✅ logs |
 | 10 | return secondary interface | ✅ |
 | 23 | load progress | ✅ |
+| 36 | **input poll** `(userIndex, u8 state[0x130])`; the engine calls it for users 0–3 every tick (`haloreach+0x23AE7`); see "Input state" below | ✅ |
 | 32 | display settings: zero `a2` bytes at `a1`; `{u32 w, u32 h}`, then `01 02 02 02 02 02 01 01 | 00 01 01 01 00 02 00 00`; return 1 | ✅ |
-| 33 | display quality (RR writes MCC display settings) | partial |
+| 33 | display quality (RR writes `0x3F80000000000201`, `0x2BF800000`, and an audio device name from a `--settings-file`) | partial |
+| 34 | **profile**: return pointer to a 64 KB block (RR: zeroed, 4-char UTF-16 service tag at +0x1AC; RR's `--profile` copies ≤0xC00 bytes of a captured profile first). **Key bindings live here**, see "Key bindings" below | ✅ |
+| 35 | called a few times at match start with `(1, engine struct, 0)`; RR has no case for it (returns 0) | stub |
 | 47 / 48 | user-data folder / game-file path resolver | ✅ |
 | 51 | feature query `(id, bool* out, u64* out2)`; RR `--features-on 6e` | always true |
 | 57 | string lookup | stub (returns empty string) |
 | 61–67 | text: prepare, glyph, atlas, has_icon, kerning, register_icon, metrics | **61, 67 done; 62–66 stubs** |
 | 72 | emblem draw | stub |
 | 88 | identity `(u64* xuid, wchar_t* name, cap, userIndex)` → 1 | ✅ |
-| 97 / 116 | capability passthrough / controller map | Noble has handlers |
-| iface2 147 | return pointer to a 16-byte session GUID (RR: zeros); all other iface2 slots return 0 | ✅ written, untested |
+| 97 | capability passthrough | Noble has a handler |
+| 116 | controller map `(xuid)`; RR `pad::controller_map` only logs its pad layout | returns 0, writes nothing |
+| iface2 147 | return pointer to a 16-byte session GUID (RR: zeros); all other iface2 slots return 0 | ✅ verified (Sword Base renders) |
+
+**Input state (slot 36 buffer, 0x130 bytes, from RR `host::hit` case 0x24).** User index 1 (split-screen) is zeroed.
+| Offset | Meaning |
+|---|---|
+| +0x000 | u32 `1` = local user present |
+| +0x004 + VK | u8 per Windows VK code: `0` up, `0x80` pressed (< 500 ms), then `(min((ms-500)/33, 0x7E) - 0x7F)` while held. E.g. `W` = +0x5B, `R` = +0x56, Tab = +0x0D, Esc = +0x1F |
+| +0x104, +0x108 | f32 mouse look dx, dy (raw delta × scale; RR default scale 0.0008 × sensitivity/100) |
+| +0x114 | i32 wheel pulse (not done yet) |
+| +0x118 | f32 `1.0` |
+| +0x11C | u32 mouse buttons: L 1, M 2, R 4, X1 8, X2 0x10 |
+Noble only fills it while its window is in the foreground. It clips the cursor and re-centres it each tick; the window
+proc hides it (`WM_SETCURSOR`). RR's `pad::fill` writes the gamepad section at `+0x120` (u16 buttons, +0x124/+0x125
+triggers, +0x126 sticks) and keeps `+0x000 = 1` for keyboard/mouse (0 when a pad is in use); Noble has no pad yet.
+RR's `live::remap_keys` only swaps keys for MCC rebinds; not needed for defaults.
+
+**Key bindings (profile, slot 34).** The engine reads key states from the slot 36 buffer through a 104-entry VK table
+(`haloreach+0x98FDF0`), but maps them to actions only through the profile's binding table: 66 entries × 0x18 bytes from
+**+0x42C**, each `{u32 action, u32 VK, 16 zero bytes}`, actions 0–65 (W=16, S=17, A=18, D=19, Tab=20, Space=22,
+LMB=8, RMB=10, R=3, …). With a blank profile every key does nothing and only mouse look works. Noble writes MCC's
+default PC layout itself (`kDefaultKeyBindings` in `ReachHost.cpp`).
 
 ## 6. Next steps (in order)
 
-1. **Test the slot 147 fix** (Sword Base). If it crashes, take the crash RVA (`address - haloreach base` from the log),
-   disassemble around it, and check which host or iface2 slot fed the bad value (compare with RR `host::hit`, `host::hit2`).
-2. **Black screen while running.** After launch, check whether frames are presented and what slot 1 gets. RR draws its load screen in slot 1;
-   the engine itself may draw nothing until a map is loaded. Glyph rendering (slots 62/63: RR `text::glyph`, `text::atlas`, which create a
-   D3D texture atlas with GDI) is probably needed for any UI text.
-3. Keep load-progress logging. Progress came from `haloreach+0x50AAD5` during map load. Watch for further `Slot 4 - EngineEvent` messages.
-4. Campaign/Firefight: work out map ids for `+0x1D334/+0x1D5BC` (compare RR captured blocks `D:\Reach\data\blocks\*.bin` for the layout only; don't ship them).
-5. When something renders: commit on a branch, PR, and update `docs\boot-investigation-2026-10-27.md` with this file's section 5.
+1. **Commit the input work** (§4) on `feat/input-slot36` and open a PR.
+2. **Sound.** No audio at all in Sword Base. Start from RR `host::hit` and the audio-related host slots (slot 33 carries
+   an audio device name in RR), and `src/audio/VgmAudioHook.cpp`.
+3. **UI cursor.** The class/loadout picker needs a visible mouse cursor; RR has `uicursor::{active, screen_update}` and
+   `win::Input::{free_pointer, release_cursor}`. While a UI cursor is active RR skips mouse-look deltas.
+4. **HUD text and brightness.** Scoreboard shows squares. Implement text slots 62 (`text::glyph`) and 63 (`text::atlas`): GDI-rendered glyphs in a D3D texture atlas.
+   Slot 62 first call was `(a1=0x31 '1', a2=ptr, a3=0x12 size 18)`. Check RR slot 1 (`gamma::frame`) for the dim/blue HUD.
+5. **Main menu.** Even with map id 1035 the engine requests `haloreach\maps\.map`. Diff Noble's menu block against RR's captured menu block
+   (`D:\Reach\data\lb_m_c_1.bin`, layout only) around `+0x0C`, `+0x10`, `+0x1D334`, `+0x1D5B8..+0x1D5F8`.
+6. Campaign/Firefight: work out map ids for `+0x1D334/+0x1D5BC` (compare RR captured blocks `D:\Reach\data\blocks\*.bin` for the layout only; don't ship them).
+7. Mouse wheel (needs `WM_MOUSEWHEEL` from the window proc) and gamepad (XInput into the `pad::fill` area).
 
 ## 7. Rules for this project
 

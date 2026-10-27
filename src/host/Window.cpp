@@ -120,6 +120,14 @@ LRESULT Window::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam
             m_width = LOWORD(lParam);
             m_height = HIWORD(lParam);
             return 0;
+        case WM_SETCURSOR:
+            // Hide the arrow over the game area while the window is focused (the engine thread
+            // can't do this itself: SetCursor/ShowCursor only work from the window's own thread).
+            if (LOWORD(lParam) == HTCLIENT && GetForegroundWindow() == hwnd) {
+                SetCursor(nullptr);
+                return TRUE;
+            }
+            break;
     }
     return DefWindowProcW(hwnd, uMsg, wParam, lParam);
 }
