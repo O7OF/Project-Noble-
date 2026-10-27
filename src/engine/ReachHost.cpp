@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <string>
+#include <vector>
 
 namespace noble {
 
@@ -239,76 +240,47 @@ static uint64_t __fastcall HostSlot23_LoadProgress(void* thisPtr, uint64_t a1, u
     return 0;
 }
 
-// Slot 32: Display / Graphics Settings & Resource Pool Atom Generator handler (host_probe case 0x20)
-static uint8_t s_hostAtomBuffer[512 * 0x88] = { 0 };
-
+// Slot 32: Graphics settings block (host_probe case 0x20)
+// host-probe: buf = a1, size = a2. If size > 0x17: zero buf[0x18..size), write 24-byte defaults,
+// then overwrite the first 8 bytes with the client width/height. Returns 1.
 static uint64_t __fastcall HostSlot32_DisplaySettings(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
-    (void)thisPtr; (void)a4;
+    (void)thisPtr; (void)a3; (void)a4;
     static std::atomic<bool> s_logged{false};
     if (!s_logged.exchange(true)) {
-        NOBLE_INFO("ReachHost [Slot 32]: a1=0x{:X}, a2=0x{:X}, a3=0x{:X}", a1, a2, a3);
+        NOBLE_INFO("ReachHost [Slot 32 - GraphicsSettings]: buf=0x{:X}, size=0x{:X}", a1, a2);
+    }
+    if (a1 <= 0x10000 || a2 <= 0x17) return 0;
+
+    uint8_t block[0x18] = {};
+    const uint64_t d0 = 0x0000064000000A00ULL; // 2560 x 1600 default
+    const uint64_t d1 = 0x0101020202020201ULL;
+    const uint64_t d2 = 0x0000020001010100ULL;
+    memcpy(block + 0x00, &d0, 8);
+    memcpy(block + 0x08, &d1, 8);
+    memcpy(block + 0x10, &d2, 8);
+
+    RECT rc{};
+    HWND hwnd = GetActiveWindow();
+    if (hwnd && GetClientRect(hwnd, &rc) && rc.right > 0 && rc.bottom > 0) {
+        uint32_t w = static_cast<uint32_t>(rc.right), h = static_cast<uint32_t>(rc.bottom);
+        memcpy(block + 0, &w, 4);
+        memcpy(block + 4, &h, 4);
     }
 
-    // Check if this is an atom generator buffer allocation request from c_tag_resource_prediction_atom_generator (a2 = 0x88)
-    if (a2 == 0x88 || (a2 > 0 && a3 > 0 && a1 <= 0x10000)) {
-        size_t totalBytes = static_cast<size_t>(a2) * static_cast<size_t>(a3);
-        NOBLE_INFO("ReachHost [Slot 32 - Atom Generator]: Supplying {} bytes for prediction atoms (elemSize=0x{:X}, count=0x{:X})",
-            totalBytes, a2, a3);
-        if (totalBytes <= sizeof(s_hostAtomBuffer)) {
-            memset(s_hostAtomBuffer, 0, totalBytes);
-            return reinterpret_cast<uint64_t>(s_hostAtomBuffer);
-        } else {
-            void* dynamicBuf = calloc(1, totalBytes);
-            return reinterpret_cast<uint64_t>(dynamicBuf);
-        }
+    if (a2 > 0x18) {
+        std::vector<uint8_t> zeros(static_cast<size_t>(a2 - 0x18), 0);
+        SafeCopyMemory(reinterpret_cast<void*>(a1 + 0x18), zeros.data(), zeros.size());
     }
-
-    // Otherwise treat as DisplaySettings query
-    uintptr_t targetPtr = a1;
-    uintptr_t deref = 0;
-    if (SafeReadPointer(a1, &deref) && deref > 0x10000) {
-        targetPtr = deref;
-    }
-
-    if (targetPtr > 0x10000) {
-        struct DisplayConfig {
-            uint32_t width;        // +0x00: 1280
-            uint32_t height;       // +0x04: 720
-            uint32_t refreshRate;  // +0x08: 60
-            uint32_t unknown;      // +0x0C: 0
-            uint32_t adapterIndex; // +0x10: 0
-            uint8_t  windowMode;   // +0x14: 0 (windowed)
-            uint8_t  displayMode;  // +0x15: 0 (windowed)
-            uint16_t pad;          // +0x16: 0
-            int32_t  field18;      // +0x18: -1
-            int32_t  field1C;      // +0x1C: -1
-        };
-        DisplayConfig cfg{};
-        cfg.width = 1280;
-        cfg.height = 720;
-        cfg.refreshRate = 60;
-        cfg.adapterIndex = 0;
-        cfg.windowMode = 0;
-        cfg.displayMode = 0;
-        SafeCopyMemory(reinterpret_cast<void*>(targetPtr), &cfg, sizeof(cfg));
-    }
-    return 1; // Return true to signal successful configuration query
+    SafeCopyMemory(reinterpret_cast<void*>(a1), block, sizeof(block));
+    return 1;
 }
 
-// Slot 33: Display Quality settings handler (host_probe case 0x21)
+// Slot 33: Display quality (host_probe case 0x21) - a1 is the destination directly
 static uint64_t __fastcall HostSlot33_DisplayQuality(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
     (void)thisPtr; (void)a2; (void)a3; (void)a4;
-    uintptr_t targetPtr = a1;
-    uintptr_t deref = 0;
-    if (SafeReadPointer(a1, &deref) && deref > 0x10000) {
-        targetPtr = deref;
-    }
-
-    if (targetPtr > 0x10000) {
-        uint64_t val1 = 0x3F80000000000201ULL; // Scale = 1.0f (0x3F800000)
-        uint64_t val2 = 0x2BF800000ULL;
-        SafeWriteUint64(targetPtr, val1);
-        SafeWriteUint64(targetPtr + 8, val2);
+    if (a1 > 0x10000) {
+        SafeWriteUint64(a1, 0x3F80000000000201ULL);
+        SafeWriteUint64(a1 + 8, 0x2BF800000ULL);
     }
     return 1;
 }

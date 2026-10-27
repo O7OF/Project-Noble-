@@ -11,67 +11,23 @@
 
 namespace noble {
 
-typedef void(__fastcall* UpdateResourcePoolFn)(uint32_t category, uint32_t poolIndex);
-static UpdateResourcePoolFn s_originalUpdateResourcePool = nullptr;
+// Fallback prediction atom buffer (512 atoms * 0x88 bytes = 69,632 bytes)
+alignas(16) static uint8_t s_fallbackAtomBuffer[512 * 0x88] = { 0 };
+
+typedef void(__fastcall* BindAtomFn)(uint32_t slot, uint32_t poolIndex);
+static BindAtomFn s_originalBindAtom = nullptr;
 static uintptr_t s_haloReachBase = 0;
 
-static void __fastcall Hook_UpdateResourcePool(uint32_t category, uint32_t poolIndex) {
-    if (poolIndex >= 16) {
-        return; // Out-of-bounds pool index (e.g. 0x1000)
-    }
-    if (s_haloReachBase) {
+static void __fastcall Hook_BindAtom(uint32_t slot, uint32_t poolIndex) {
+    if (s_haloReachBase && poolIndex < 32) {
         uintptr_t poolDesc = s_haloReachBase + 0xC8E4C0 + (static_cast<uintptr_t>(poolIndex) * 0x70);
-        if (!IsBadReadPtr(reinterpret_cast<void*>(poolDesc + 0x50), sizeof(void*))) {
-            void* atomArray = *reinterpret_cast<void**>(poolDesc + 0x50);
-            if (!atomArray) {
-                return;
-            }
+        void** pAtomArray = reinterpret_cast<void**>(poolDesc + 0x50);
+        if (*pAtomArray == nullptr) {
+            *pAtomArray = s_fallbackAtomBuffer;
         }
     }
-    if (s_originalUpdateResourcePool) {
-        s_originalUpdateResourcePool(category, poolIndex);
-    }
-}
-
-typedef void(__fastcall* UpdatePoolFn)(uint32_t poolIndex);
-static UpdatePoolFn s_originalUpdatePool = nullptr;
-
-static void __fastcall Hook_UpdatePool(uint32_t poolIndex) {
-    if (poolIndex >= 16) {
-        return; // Out-of-bounds pool index (e.g. 0x1000)
-    }
-    if (s_haloReachBase) {
-        uintptr_t poolDesc = s_haloReachBase + 0xC8E4C0 + (static_cast<uintptr_t>(poolIndex) * 0x70);
-        if (!IsBadReadPtr(reinterpret_cast<void*>(poolDesc + 0x50), sizeof(void*))) {
-            void* atomArray = *reinterpret_cast<void**>(poolDesc + 0x50);
-            if (!atomArray) {
-                return;
-            }
-        }
-    }
-    if (s_originalUpdatePool) {
-        s_originalUpdatePool(poolIndex);
-    }
-}
-
-typedef void(__fastcall* UpdatePredictionCacheFn)(uint32_t category, uint32_t poolIndex);
-static UpdatePredictionCacheFn s_originalUpdatePredictionCache = nullptr;
-
-static void __fastcall Hook_UpdatePredictionCache(uint32_t category, uint32_t poolIndex) {
-    if (poolIndex >= 16) {
-        return; // Out-of-bounds pool index (e.g. 0x1000)
-    }
-    if (s_haloReachBase) {
-        uintptr_t poolDesc = s_haloReachBase + 0xC8E4C0 + (static_cast<uintptr_t>(poolIndex) * 0x70);
-        if (!IsBadReadPtr(reinterpret_cast<void*>(poolDesc + 0x50), sizeof(void*))) {
-            void* atomArray = *reinterpret_cast<void**>(poolDesc + 0x50);
-            if (!atomArray) {
-                return;
-            }
-        }
-    }
-    if (s_originalUpdatePredictionCache) {
-        s_originalUpdatePredictionCache(category, poolIndex);
+    if (s_originalBindAtom) {
+        s_originalBindAtom(slot, poolIndex);
     }
 }
 
@@ -198,28 +154,8 @@ bool BlamEngine::Initialize(const ReachInstallInfo& installInfo, HMODULE hModule
     // Configure Host object paths
     ReachHost::Get().SetPaths(installInfo.reachDirectory, installInfo.mapsDirectory, ReachHost::Get().GetDataDir());
 
-    // Install safeguard detours for prediction atom cache (RVA 0x274488 and 0x274524)
-    s_haloReachBase = reinterpret_cast<uintptr_t>(m_hModule);
-    void* updateResourcePoolTarget = reinterpret_cast<void*>(s_haloReachBase + 0x274488);
-    HookManager::InstallHook(updateResourcePoolTarget,
-        reinterpret_cast<void*>(&Hook_UpdateResourcePool),
-        reinterpret_cast<void**>(&s_originalUpdateResourcePool),
-        "UpdateResourcePool_SafeGuard");
-
-    void* updatePredictionCacheTarget = reinterpret_cast<void*>(s_haloReachBase + 0x274524);
-    HookManager::InstallHook(updatePredictionCacheTarget,
-        reinterpret_cast<void*>(&Hook_UpdatePredictionCache),
-        reinterpret_cast<void**>(&s_originalUpdatePredictionCache),
-        "UpdatePredictionCache_SafeGuard");
-
-    void* updatePoolTarget = reinterpret_cast<void*>(s_haloReachBase + 0x2743A4);
-    HookManager::InstallHook(updatePoolTarget,
-        reinterpret_cast<void*>(&Hook_UpdatePool),
-        reinterpret_cast<void**>(&s_originalUpdatePool),
-        "UpdatePool_SafeGuard");
-
-    // Initialize pool descriptors with fallback atom arrays to prevent NULL dereferences
-    InitializePoolDescriptors();
+    // No renderer detours / pool-table writes: Reach Renaissance installs none here,
+    // and 0xC8E4C0-region writes were based on a wrong 'resource pool' guess.
 
     m_isInitialized = true;
     NOBLE_INFO("BlamEngine host interface emulation initialized and ready for single-pass map launch.");
