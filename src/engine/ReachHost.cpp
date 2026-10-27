@@ -18,6 +18,8 @@
 #include <string>
 #include <cstdlib>
 #include <cwchar>
+#include <unordered_set>
+#include <nlohmann/json.hpp>
 
 #pragma comment(lib, "gdi32.lib")
 #pragma comment(lib, "shell32.lib")
@@ -969,28 +971,270 @@ static uint64_t __fastcall HostSlot52_EngineState(void* thisPtr, uint64_t a1, ui
     return 1;
 }
 
+// -----------------------------------------------------------------------------
+// Localization String Table (Slots 55, 56, 57).
+// haloreach.dll queries localized strings for loadout names, armor abilities, frag grenade
+// counts, weapon HUD icons, game mode variants, scoreboard headers, and team names.
+// -----------------------------------------------------------------------------
+static const wchar_t s_emptyWideString[] = L"";
+
+static std::wstring Utf8ToWideString(const std::string& utf8) {
+    if (utf8.empty()) return L"";
+    int sizeNeeded = MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), static_cast<int>(utf8.size()), nullptr, 0);
+    if (sizeNeeded <= 0) return L"";
+    std::wstring wide(sizeNeeded, 0);
+    MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), static_cast<int>(utf8.size()), &wide[0], sizeNeeded);
+    return wide;
+}
+
+static std::string NarrowForLog(const std::wstring& w) {
+    std::string out;
+    for (wchar_t c : w) out.push_back(c < 0x80 ? static_cast<char>(c) : '?');
+    return out;
+}
+
+struct FallbackStringEntry {
+    uint32_t tableId;
+    uint32_t stringId;
+    const char* str;
+};
+
+static const FallbackStringEntry s_fallbackStrings[] = {
+    // Selectable Loadout Classes (fixes class boxes / missing names)
+    { 0x84141d30, 0x8e52, "sprint" },
+    { 0x84141d30, 0x8e54, "armor lock" },
+    { 0x84141d30, 0x8e55, "active camo" },
+    { 0x84141d30, 0x8e56, "hologram" },
+    { 0x84141d30, 0x8e58, "jet pack" },
+
+    // Frag Grenade Count in Loadout (evaluated dynamically by engine from token)
+    { 0x84141d30, 0x8e34, "\x07" "data_loadout.prop_frag_grenade_count" "\x07" },
+
+    // Loadout Weapon Glyphs
+    { 0x84141d30, 0x80ca, "\xEE\x84\x92" }, // \ue112 (Assault Rifle)
+    { 0x84141d30, 0x8e1a, "\xEE\x84\x94" }, // \ue114 (Magnum)
+    { 0x84141d30, 0x8e19, "\xEE\x84\x9E" }, // \ue11e (DMR)
+
+    // Loadout UI Prompts
+    { 0x84141d30, 0x8e11, "Select Loadout \xEE\x91\x9A   Cancel \xEE\x91\x9B" },
+    { 0x848f1dab, 0x02dd, "Press \xEE\x91\x9E to access Loadout Menu" },
+
+    // Gametypes & Teams
+    { 0x8e95263a, 0xb726, "Slayer" },
+    { 0x90dc1ddf, 0x0175, "Red Team" },
+    { 0x90dc1ddf, 0x0176, "Blue Team" },
+    { 0x90dc1ddf, 0x0177, "Green Team" },
+    { 0x90dc1ddf, 0x0178, "Orange Team" },
+    { 0x90dc1ddf, 0x0179, "Purple Team" },
+    { 0x90dc1ddf, 0x017a, "Gold Team" },
+    { 0x90dc1ddf, 0x017b, "Brown Team" },
+    { 0x90dc1ddf, 0x017c, "Pink Team" },
+
+    // Scoreboard & Timer
+    { 0x83771c93, 0x03cf, "%d:%02d" },
+    { 0x83981cb4, 0x8087, "\x07" "data_player_scoreboard.prop_player_score" "\x07" },
+    { 0x83981cb4, 0x8088, "\x07" "data_player_scoreboard.prop_player_place" "\x07" },
+    { 0x83981cb4, 0x8048, "\xEE\x91\xA9 Scroll  \xEE\x91\x9A Select" },
+    { 0x83981cb4, 0x807f, "\x07" "countdown_time_formatter.prop_time_string" "\x07" },
+    { 0x84091d25, 0x8da3, "Respawn in \x07" "camera_list.prop_respawn_time" "\x07" },
+    { 0x83981cb4, 0x8099, "Saving stats..." },
+    { 0x8e95263a, 0xb745, "Game over" },
+    { 0x914d28b3, 0x75af, "#winning_team wins!" },
+    { 0x8e95263a, 0xb58c, "You committed suicide" },
+
+    // Weapon pickups & icons
+    { 0x848f1dab, 0x0414, "\xEE\x84\x92" },
+    { 0x848f1dab, 0x041c, "\xEE\x84\x94" },
+    { 0x848f1dab, 0x0422, "\xEE\x84\xA5" },
+    { 0x848f1dab, 0x0424, "\xEE\x84\xAE" },
+    { 0x848f1dab, 0x0417, "\xEE\x84\xB1" },
+    { 0x848f1dab, 0x0416, "\xEE\x84\xAF" },
+    { 0x848f1dab, 0x3331, "Hold \xEE\x91\x87 to swap for\r\n\xEE\x84\x92" },
+    { 0x848f1dab, 0x3332, "Picked up an Assault Rifle" },
+    { 0x848f1dab, 0x2d93, "Hold  \xEE\x91\x87 to swap for\r\n\xEE\x84\xA5" },
+    { 0x848f1dab, 0x2d94, "Picked up a Needler" },
+    { 0x848f1dab, 0x3245, "Hold \xEE\x91\x87 to swap for\r\n\xEE\x84\xAE" },
+    { 0x848f1dab, 0x3246, "Picked up a Plasma Repeater" },
+    { 0x848f1dab, 0x2e75, "Hold \xEE\x91\x87 to swap for\r\n\xEE\x84\xB1" },
+    { 0x848f1dab, 0x2e76, "Picked up a Sniper Rifle" },
+    { 0x848f1dab, 0x2f77, "Hold \xEE\x91\x87 to swap for\r\n\xEE\x84\xAF" },
+    { 0x848f1dab, 0x2f78, "Picked up a Shotgun" },
+    { 0x848f1dab, 0x3194, "Hold \xEE\x91\x87 to swap for\r\n\xEE\x84\x94" },
+
+    // Map Locations (Sword Base)
+    { 0x82091b8a, 0x074f, "Rest Stop Balcony" },
+    { 0x82091b8a, 0x074c, "Cafe Square" },
+    { 0x82091b8a, 0x0750, "Rest Stop 2nd Floor" },
+    { 0x82091b8a, 0x0753, "Courtyard Balcony" },
+    { 0x82091b8a, 0x0756, "Courtyard" },
+    { 0x82091b8a, 0x0752, "Upper Courtyard" },
+    { 0x82091b8a, 0x0749, "Cafe Hall" },
+    { 0x82091b8a, 0x074a, "Visitor Center" },
+    { 0x82091b8a, 0x074b, "Overlook" },
+    { 0x82091b8a, 0x074d, "Service Tunnels" },
+    { 0x82091b8a, 0x0751, "Rest Stop 1st Floor" },
+
+    // Game Variant / Date
+    { 0x83771c93, 0x60000e, "<game_variant_name/>" },
+    { 0x83771c93, 0x60000f, "<game_variant_name/> on <map_variant_name/>, <day_of_week/> <month_name/> <day/>, <year/> <time_hms/>" },
+    { 0x83771c93, 0x0166, "Friday" },
+    { 0x83771c93, 0x0172, "October" },
+    { 0x837b1c97, 0x800035, "[L]" },
+    { 0x837b1c97, 0x800021, "[E]" },
+    { 0x848f1dab, 0x93e5, "25m" },
+    { 0x848f1dab, 0x9391, "WARNING" },
+    { 0x848f1dab, 0x2ea1, "DIST\r\nELEV" },
+    { 0x848f1dab, 0x2e9e, "5x" },
+    { 0x848f1dab, 0x935e, "01000100011000010111011001100101" },
+    { 0x848f1dab, 0x935f, "RANGE FOR 90\xC2\xB0 FOV CALIBRATION" },
+    { 0x848f1dab, 0x935d, "SPARTAN III BIOS S56.7854.3354-DKW" }
+};
+
+class StringTable {
+public:
+    static StringTable& Get() {
+        static StringTable instance;
+        return instance;
+    }
+
+    void Initialize() {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (m_initialized) return;
+
+        // 1. Populate hardcoded fallbacks
+        for (const auto& entry : s_fallbackStrings) {
+            uint64_t key = (static_cast<uint64_t>(entry.tableId) << 32) | static_cast<uint64_t>(entry.stringId);
+            std::wstring wide = Utf8ToWideString(entry.str);
+            m_strings[key] = wide;
+
+            char hexKey[64];
+            snprintf(hexKey, sizeof(hexKey), "%x:%x", entry.tableId, entry.stringId);
+            m_keyStrings[hexKey] = wide;
+        }
+
+        // 2. Load external strings JSON if present
+        std::vector<std::filesystem::path> candidatePaths = {
+            "data/strings_en.json",
+            "../data/strings_en.json",
+            "../../data/strings_en.json"
+        };
+
+        wchar_t exePathBuf[MAX_PATH] = { 0 };
+        if (GetModuleFileNameW(nullptr, exePathBuf, MAX_PATH)) {
+            std::filesystem::path exeDir = std::filesystem::path(exePathBuf).parent_path();
+            candidatePaths.push_back(exeDir / "data" / "strings_en.json");
+            candidatePaths.push_back(exeDir / ".." / "data" / "strings_en.json");
+            candidatePaths.push_back(exeDir / ".." / ".." / "data" / "strings_en.json");
+        }
+
+        for (const auto& p : candidatePaths) {
+            if (std::filesystem::exists(p)) {
+                LoadFromJsonFile(p);
+                break;
+            }
+        }
+
+        m_initialized = true;
+        NOBLE_INFO("StringTable: Initialized with {} localized strings.", m_strings.size());
+    }
+
+    const wchar_t* Lookup(uint32_t tableId, uint32_t stringId) {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        uint64_t key = (static_cast<uint64_t>(tableId) << 32) | static_cast<uint64_t>(stringId);
+        auto it = m_strings.find(key);
+        if (it != m_strings.end()) {
+            return it->second.c_str();
+        }
+
+        char hexKey[64];
+        snprintf(hexKey, sizeof(hexKey), "%x:%x", tableId, stringId);
+        auto it2 = m_keyStrings.find(hexKey);
+        if (it2 != m_keyStrings.end()) {
+            return it2->second.c_str();
+        }
+
+        return s_emptyWideString;
+    }
+
+    void Register(uint32_t tableId, uint32_t stringId, const wchar_t* str) {
+        if (!str) return;
+        std::lock_guard<std::mutex> lock(m_mutex);
+        uint64_t key = (static_cast<uint64_t>(tableId) << 32) | static_cast<uint64_t>(stringId);
+        m_strings[key] = str;
+
+        char hexKey[64];
+        snprintf(hexKey, sizeof(hexKey), "%x:%x", tableId, stringId);
+        m_keyStrings[hexKey] = str;
+    }
+
+    void Clear() {
+        // Retain fallbacks
+    }
+
+private:
+    void LoadFromJsonFile(const std::filesystem::path& jsonPath) {
+        try {
+            std::ifstream file(jsonPath);
+            if (!file.is_open()) return;
+
+            nlohmann::json root = nlohmann::json::parse(file);
+            if (!root.contains("data") || !root["data"].contains("table")) return;
+
+            const auto& table = root["data"]["table"];
+            for (auto it = table.begin(); it != table.end(); ++it) {
+                std::string keyStr = it.key();
+                std::string valStr = it.value().get<std::string>();
+
+                uint32_t tableId = 0, stringId = 0;
+                if (sscanf_s(keyStr.c_str(), "%x:%x", &tableId, &stringId) == 2) {
+                    uint64_t key = (static_cast<uint64_t>(tableId) << 32) | static_cast<uint64_t>(stringId);
+                    std::wstring wide = Utf8ToWideString(valStr);
+                    m_strings[key] = wide;
+                    m_keyStrings[keyStr] = wide;
+                }
+            }
+            NOBLE_INFO("StringTable: Successfully loaded JSON localization from '{}'.", jsonPath.string());
+        } catch (const std::exception& e) {
+            NOBLE_WARN("StringTable: Failed to parse localization file '{}': {}", jsonPath.string(), e.what());
+        }
+    }
+
+    bool m_initialized = false;
+    std::mutex m_mutex;
+    std::unordered_map<uint64_t, std::wstring> m_strings;
+    std::unordered_map<std::string, std::wstring> m_keyStrings;
+};
+
 // Slot 55: Strings Clear handler (host_probe case 0x37)
 static uint64_t __fastcall HostSlot55_StringsClear(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
     (void)thisPtr; (void)a1; (void)a2; (void)a3; (void)a4;
+    StringTable::Get().Clear();
     return 0;
 }
 
 // Slot 56: Strings Register handler (host_probe case 0x38)
 static uint64_t __fastcall HostSlot56_StringsRegister(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
-    (void)thisPtr; (void)a1; (void)a2; (void)a3; (void)a4;
+    (void)thisPtr; (void)a4;
+    if (a3 > 0x10000) {
+        const wchar_t* wstr = reinterpret_cast<const wchar_t*>(a3);
+        StringTable::Get().Register(static_cast<uint32_t>(a1), static_cast<uint32_t>(a2), wstr);
+    }
     return 1;
 }
 
 // Slot 57: String lookup handler (host_probe case 0x39)
-static const wchar_t s_emptyWideString[] = L"";
 static uint64_t __fastcall HostSlot57_StringLookup(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
-    (void)thisPtr; (void)a2; (void)a3; (void)a4;
-    static std::atomic<bool> s_logged{false};
-    if (!s_logged.exchange(true)) {
-        NOBLE_INFO("ReachHost [Slot 57 - StringLookup]: string query token=0x{:X}", a1);
+    (void)thisPtr; (void)a3; (void)a4;
+    const wchar_t* res = StringTable::Get().Lookup(static_cast<uint32_t>(a1), static_cast<uint32_t>(a2));
+    static std::atomic<int> s_logged{0};
+    if (s_logged.fetch_add(1) < 25) {
+        NOBLE_INFO("ReachHost [Slot 57 - StringLookup]: query table=0x{:08X} id=0x{:08X} -> '{}'",
+                   static_cast<uint32_t>(a1), static_cast<uint32_t>(a2),
+                   res ? NarrowForLog(res) : "");
     }
-    return reinterpret_cast<uint64_t>(s_emptyWideString);
+    return reinterpret_cast<uint64_t>(res ? res : s_emptyWideString);
 }
+
 
 // -----------------------------------------------------------------------------
 // Text host slots (61-67). In MCC's PC build the host owns font rendering: Reach Renaissance
@@ -1042,19 +1286,37 @@ static std::wstring WidenFace(const char* face) {
     return w;
 }
 
-static std::string NarrowForLog(const std::wstring& w) {
-    std::string out;
-    for (wchar_t c : w) out.push_back(c < 0x80 ? static_cast<char>(c) : '?');
-    return out;
-}
-
 static std::wstring MapReachFace(const std::wstring& requested) {
-    // Reach's UI fonts are not installed on Windows; RR maps TVNordCond to Bahnschrift Condensed.
-    if (requested.empty()) return L"Segoe UI";
+    if (requested.empty()) return L"Bahnschrift";
     std::wstring lower = requested;
     std::transform(lower.begin(), lower.end(), lower.begin(), [](wchar_t c) { return static_cast<wchar_t>(std::towlower(c)); });
+    
+    // Fixedsys is queried by haloreach.dll for HUD ammo / bullet counter digits.
+    // Windows legacy Fixedsys is a .fon bitmap font which fails GetGlyphOutlineW.
+    // Consolas provides monospaced TrueType vector glyphs matching Reach's ammo display.
+    if (lower.find(L"fixedsys") != std::wstring::npos) return L"Consolas";
     if (lower.find(L"tvnord") != std::wstring::npos) return L"Bahnschrift Condensed";
+    if (lower.find(L"eurostile") != std::wstring::npos) return L"Bahnschrift";
+    if (lower.find(L"bankgothic") != std::wstring::npos) return L"Bahnschrift";
     return requested;
+}
+
+static uint16_t HashFace(const char* face) {
+    if (!face) return 0;
+    uint16_t h = 0;
+    while (*face) {
+        char c = *face++;
+        if (c >= 'A' && c <= 'Z') c += ('a' - 'A');
+        h = (h * 31) + static_cast<uint8_t>(c);
+    }
+    return h;
+}
+
+static inline uint64_t MakeGlyphKey(wchar_t ch, uint16_t faceId, uint32_t style, uint32_t scaleKey) {
+    return (static_cast<uint64_t>(static_cast<uint16_t>(ch)) << 48) |
+           (static_cast<uint64_t>(faceId) << 32) |
+           (static_cast<uint64_t>(style & 0xFFFF) << 16) |
+           (scaleKey & 0xFFFF);
 }
 
 struct HostFontMetrics {
@@ -1190,8 +1452,9 @@ public:
     bool GetGlyph(wchar_t ch, uint32_t style, float scale, const char* face, HostGlyphData* outGlyph) {
         if (!outGlyph) return false;
 
+        uint16_t faceId = HashFace(face);
         uint32_t scaleKey = static_cast<uint32_t>(scale * 1000.0f);
-        uint64_t key = (static_cast<uint64_t>(ch) << 32) | (static_cast<uint64_t>(style) << 16) | (scaleKey & 0xFFFF);
+        uint64_t key = MakeGlyphKey(ch, faceId, style, scaleKey);
 
         std::lock_guard<std::mutex> lock(m_mutex);
         auto it = m_cache.find(key);
@@ -1200,20 +1463,126 @@ public:
             return true;
         }
 
+        // Check if an icon was registered for this character
+        auto iconIt = m_iconGlyphs.find(static_cast<uint16_t>(ch));
+        if (iconIt != m_iconGlyphs.end()) {
+            *outGlyph = iconIt->second;
+            return true;
+        }
+
         return RasterizeGlyphLocked(ch, style, scale, face, key, outGlyph);
+    }
+
+    bool RegisterIcon(wchar_t ch, uint32_t style, float scale, const char* face,
+                      int32_t width, int32_t height, int32_t advanceX,
+                      const void* pixels, int32_t pitch) {
+        if (width <= 0 || height <= 0 || !pixels) return false;
+        if (pitch < width * 4) return false;
+
+        std::lock_guard<std::mutex> lock(m_mutex);
+        uint32_t w = static_cast<uint32_t>(width);
+        uint32_t h = static_cast<uint32_t>(height);
+
+        // Shelf packing in 1024x1024 atlas with 2px padding
+        if (m_cursorX + w + 2 >= 1024) {
+            m_cursorX = 1;
+            m_cursorY += m_rowHeight + 2;
+            m_rowHeight = 0;
+        }
+        if (m_cursorY + h + 2 >= 1024) {
+            m_cursorX = 1;
+            m_cursorY = 1;
+            m_rowHeight = 0;
+        }
+
+        uint32_t gx = m_cursorX;
+        uint32_t gy = m_cursorY;
+        m_cursorX += w + 2;
+        if (h > m_rowHeight) m_rowHeight = h;
+
+        const uint8_t* srcBytes = static_cast<const uint8_t*>(pixels);
+        std::vector<uint32_t> subPixels(w * h, 0);
+
+        for (uint32_t y = 0; y < h; ++y) {
+            const uint32_t* srcRow = reinterpret_cast<const uint32_t*>(srcBytes + y * pitch);
+            for (uint32_t x = 0; x < w; ++x) {
+                uint32_t color = srcRow[x];
+                subPixels[y * w + x] = color;
+                m_pixels[(gy + y) * 1024 + (gx + x)] = color;
+            }
+        }
+
+        if (m_context && m_texture) {
+            D3D11_BOX box{};
+            box.left = gx;
+            box.top = gy;
+            box.front = 0;
+            box.right = gx + w;
+            box.bottom = gy + h;
+            box.back = 1;
+            m_context->UpdateSubresource(m_texture.Get(), 0, &box, subPixels.data(), w * sizeof(uint32_t), 0);
+        }
+
+        HostGlyphData data{};
+        data.ch = static_cast<uint16_t>(ch);
+        data.atlasX = static_cast<uint16_t>(gx);
+        data.padX[0] = 0;
+        data.padX[1] = 0;
+        data.padX[2] = 0;
+        data.atlasY = static_cast<uint16_t>(gy);
+        data.width = static_cast<uint16_t>(w);
+        data.height = static_cast<uint16_t>(h);
+        data.originX = 0;
+        data.originY = static_cast<int16_t>(h);
+        data.advanceX = static_cast<int16_t>(advanceX > 0 ? advanceX : w);
+        data.ascent = -static_cast<int16_t>(h);
+        data.page = 0;
+        data.reserved = 0;
+
+        uint16_t faceId = HashFace(face);
+        uint32_t scaleKey = static_cast<uint32_t>(scale * 1000.0f);
+        uint64_t key = MakeGlyphKey(ch, faceId, style, scaleKey);
+
+        m_cache[key] = data;
+        m_registeredIcons.insert(static_cast<uint16_t>(ch));
+        m_iconGlyphs[static_cast<uint16_t>(ch)] = data;
+
+        NOBLE_INFO("TextAtlas: Registered weapon/UI icon ch=0x{:04X} ({}x{}, advance={}, face='{}') at ({},{})",
+                   static_cast<uint16_t>(ch), w, h, advanceX, face ? face : "", gx, gy);
+        return true;
+    }
+
+    bool HasIcon(uint64_t ch, uint32_t style, float scale, const char* face) {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        uint16_t iconCh = static_cast<uint16_t>(ch & 0xFFFF);
+        if (m_registeredIcons.find(iconCh) != m_registeredIcons.end()) {
+            return true;
+        }
+        uint16_t faceId = HashFace(face);
+        uint32_t scaleKey = static_cast<uint32_t>(scale * 1000.0f);
+        uint64_t key = MakeGlyphKey(iconCh, faceId, style, scaleKey);
+        return m_cache.find(key) != m_cache.end();
     }
 
 private:
     void PrewarmCommonGlyphs() {
         const wchar_t commonChars[] = L"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz/:.-+ /";
-        const uint32_t commonStyles[] = { 9, 13, 15, 18, 24, 30, 42 };
+        const uint32_t commonStyles[] = { 9, 13, 15, 18, 24, 30, 36, 42 };
 
         HostGlyphData dummy{};
         for (uint32_t s : commonStyles) {
             for (size_t i = 0; i < (sizeof(commonChars) / sizeof(wchar_t)) - 1; ++i) {
-                uint64_t key = (static_cast<uint64_t>(commonChars[i]) << 32) | (static_cast<uint64_t>(s) << 16) | 1000;
-                if (m_cache.find(key) == m_cache.end()) {
-                    RasterizeGlyphLocked(commonChars[i], s, 1.0f, "tvnord", key, &dummy);
+                uint16_t tvFaceId = HashFace("tvnord");
+                uint64_t tvKey = MakeGlyphKey(commonChars[i], tvFaceId, s, 1000);
+                if (m_cache.find(tvKey) == m_cache.end()) {
+                    RasterizeGlyphLocked(commonChars[i], s, 1.0f, "tvnord", tvKey, &dummy);
+                }
+                if (commonChars[i] >= L'0' && commonChars[i] <= L'9') {
+                    uint16_t fxFaceId = HashFace("fixedsys");
+                    uint64_t fxKey = MakeGlyphKey(commonChars[i], fxFaceId, s, 1000);
+                    if (m_cache.find(fxKey) == m_cache.end()) {
+                        RasterizeGlyphLocked(commonChars[i], s, 1.0f, "fixedsys", fxKey, &dummy);
+                    }
                 }
             }
         }
@@ -1252,19 +1621,61 @@ private:
         if (bufSize != GDI_ERROR && bufSize > 0) {
             grayBuffer.resize(bufSize);
             GetGlyphOutlineW(hdc, ch, GGO_GRAY8_BITMAP, &gm, bufSize, grayBuffer.data(), &mat2);
-        } else if (bufSize == 0) {
+        } else if (bufSize == 0 || ch == L' ') {
             // Space or non-rendering glyph
             gm.gmBlackBoxX = 0;
             gm.gmBlackBoxY = 0;
+            gm.gmCellIncX = static_cast<short>(tm.tmAveCharWidth > 0 ? tm.tmAveCharWidth : (pixelHeight / 2));
         } else {
-            // Fallback for symbols where GetGlyphOutlineW is unsupported
+            // GetGlyphOutlineW failed (e.g. legacy bitmap font or unsupported symbol)
+            // Use offscreen GDI DIB section rasterization fallback so glyphs never render blank!
             SIZE sz{};
             GetTextExtentPoint32W(hdc, &ch, 1, &sz);
-            gm.gmBlackBoxX = static_cast<UINT>(sz.cx);
-            gm.gmBlackBoxY = static_cast<UINT>(sz.cy);
-            gm.gmCellIncX = static_cast<short>(sz.cx);
+            int rw = sz.cx > 0 ? sz.cx : (pixelHeight / 2);
+            int rh = sz.cy > 0 ? sz.cy : pixelHeight;
+            gm.gmBlackBoxX = static_cast<UINT>(rw);
+            gm.gmBlackBoxY = static_cast<UINT>(rh);
+            gm.gmCellIncX = static_cast<short>(rw);
             gm.gmptGlyphOrigin.x = 0;
-            gm.gmptGlyphOrigin.y = static_cast<short>(sz.cy);
+            gm.gmptGlyphOrigin.y = static_cast<short>(rh);
+
+            BITMAPINFO bmi{};
+            bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+            bmi.bmiHeader.biWidth = rw;
+            bmi.bmiHeader.biHeight = -rh; // top-down
+            bmi.bmiHeader.biPlanes = 1;
+            bmi.bmiHeader.biBitCount = 32;
+            bmi.bmiHeader.biCompression = BI_RGB;
+
+            void* dibBits = nullptr;
+            HBITMAP dibBmp = CreateDIBSection(hdc, &bmi, DIB_RGB_COLORS, &dibBits, nullptr, 0);
+            if (dibBmp && dibBits) {
+                HDC memDC = CreateCompatibleDC(hdc);
+                HGDIOBJ oldMemBmp = SelectObject(memDC, dibBmp);
+                HGDIOBJ oldMemFont = SelectObject(memDC, font);
+
+                RECT rc = { 0, 0, rw, rh };
+                FillRect(memDC, &rc, static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
+                SetBkMode(memDC, TRANSPARENT);
+                SetTextColor(memDC, RGB(255, 255, 255));
+                TextOutW(memDC, 0, 0, &ch, 1);
+
+                uint32_t pitch = (rw + 3) & ~3;
+                grayBuffer.resize(pitch * rh, 0);
+                const uint32_t* srcPixels = static_cast<const uint32_t*>(dibBits);
+                for (int y = 0; y < rh; ++y) {
+                    for (int x = 0; x < rw; ++x) {
+                        uint32_t px = srcPixels[y * rw + x];
+                        uint8_t luma = static_cast<uint8_t>((px & 0xFF) * 64 / 255);
+                        grayBuffer[y * pitch + x] = luma;
+                    }
+                }
+
+                SelectObject(memDC, oldMemFont);
+                SelectObject(memDC, oldMemBmp);
+                DeleteDC(memDC);
+                DeleteObject(dibBmp);
+            }
         }
 
         SelectObject(hdc, oldFont);
@@ -1352,6 +1763,8 @@ private:
     uint32_t m_rowHeight = 0;
 
     std::unordered_map<uint64_t, HostGlyphData> m_cache;
+    std::unordered_set<uint16_t> m_registeredIcons;
+    std::unordered_map<uint16_t, HostGlyphData> m_iconGlyphs;
     std::mutex m_mutex;
 };
 
@@ -1373,9 +1786,9 @@ static uint64_t __fastcall HostSlot63_TextAtlas(void* thisPtr, uint32_t pageInde
 }
 
 // Slot 64: Text Has Icon (host_probe case 0x40)
-static uint64_t __fastcall HostSlot64_TextHasIcon(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
-    (void)thisPtr; (void)a1; (void)a2; (void)a3; (void)a4;
-    return 0;
+static uint64_t __fastcall HostSlot64_TextHasIcon(void* thisPtr, uint64_t ch, uint32_t style, float scale, const char* face) {
+    (void)thisPtr;
+    return TextAtlas::Get().HasIcon(ch, style, scale, face) ? 1 : 0;
 }
 
 // Slot 65: Text Kerning (host_probe case 0x41)
@@ -1385,10 +1798,14 @@ static uint64_t __fastcall HostSlot65_TextKerning(void* thisPtr, uint64_t a1, ui
 }
 
 // Slot 66: Text Register Icon (host_probe case 0x42)
-static uint64_t __fastcall HostSlot66_TextRegisterIcon(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
-    (void)thisPtr; (void)a1; (void)a2; (void)a3; (void)a4;
-    return 0;
+static uint64_t __fastcall HostSlot66_TextRegisterIcon(void* thisPtr, uint64_t ch, uint32_t style, float scale,
+                                                      const char* face, int32_t width, int32_t height,
+                                                      int32_t advanceX, const void* pixels, int32_t pitch) {
+    (void)thisPtr;
+    return TextAtlas::Get().RegisterIcon(static_cast<wchar_t>(ch & 0xFFFF), style, scale, face,
+                                         width, height, advanceX, pixels, pitch) ? 1 : 0;
 }
+
 
 // -----------------------------------------------------------------------------
 // Gamma post-process pass (fixes dark/purple HUD icons, crosshair, radar, and shield bar)
@@ -1432,6 +1849,12 @@ public:
 
         // Lazy initialize TextAtlas with device and context if not already done
         TextAtlas::Get().Initialize(device.Get(), context.Get());
+
+        // Exponent of 1.0f represents identity (no extra gamma transform).
+        // Returning early avoids lifting dark values and fixes the washed-out / milky screen.
+        if (std::abs(m_exponent - 1.0f) < 0.001f) {
+            return;
+        }
 
         if (!m_initialized || m_width != desc.Width || m_height != desc.Height) {
             if (!InitResources(device.Get(), backBuffer.Get(), desc)) {
@@ -1638,7 +2061,7 @@ private:
     bool m_initialized = false;
     uint32_t m_width = 0;
     uint32_t m_height = 0;
-    float m_exponent = 0.4545f; // Standard linear -> sRGB gamma correction (1.0 / 2.2)
+    float m_exponent = 1.0f; // Default 1.0f: identity (no gamma overexposure, fixes washed-out picture)
 
     Microsoft::WRL::ComPtr<ID3D11VertexShader> m_vs;
     Microsoft::WRL::ComPtr<ID3D11PixelShader> m_ps;
@@ -1765,6 +2188,7 @@ void ReachHost::InitializeVTable() {
     s_vtable2[147] = reinterpret_cast<void*>(&Iface2Slot147_SessionGuid);
 
     s_vtableInitialized = true;
+    StringTable::Get().Initialize();
     NOBLE_INFO("ReachHost: 160-slot host vtable and secondary vtable initialized matching Reach Renaissance host.");
 }
 

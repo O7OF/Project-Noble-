@@ -165,6 +165,12 @@ target_link_libraries(noble-client PRIVATE
 
 target_link_options(noble-client PRIVATE /MAP)
 
+add_custom_command(TARGET noble-client POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_CURRENT_SOURCE_DIR}/data
+        $<TARGET_FILE_DIR:noble-client>/data
+)
+
 # -----------------------------------------------------------------------------
 # Headless Dedicated Server Binary (noble-dedicated.exe)
 # -----------------------------------------------------------------------------
