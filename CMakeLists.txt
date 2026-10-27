@@ -114,6 +114,7 @@ set(SOURCES
     src/audio/VgmAudioHook.cpp
     src/ui/LoadScreen.cpp
     src/ui/PauseMenu.cpp
+    src/ui/FrontEndMenu.cpp
 )
 
 set(HEADERS
@@ -139,6 +140,7 @@ set(HEADERS
     src/ui/MissionLauncher.hpp
     src/ui/LoadScreen.hpp
     src/ui/PauseMenu.hpp
+    src/ui/FrontEndMenu.hpp
     src/network/UPnP.hpp
     src/network/SessionManager.hpp
     src/audio/VgmAudioHook.hpp

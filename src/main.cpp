@@ -11,6 +11,7 @@
 #include "vfs/VFS.hpp"
 #include "engine/BlamEngine.hpp"
 #include "ui/UIManager.hpp"
+#include "ui/FrontEndMenu.hpp"
 #include "ui/LoadScreen.hpp"
 #include "network/SessionManager.hpp"
 #include "hooks/LobbyPatches.hpp"
@@ -166,6 +167,22 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 
     window->Show(nCmdShow);
 
+    // Front-end menu. MCC ships no mainmenu.map for Reach, so with no -map (or -map/-mode mainmenu,
+    // which the launcher's Main Menu button passes) Noble shows its own menu before the engine starts.
+    std::string frontEndMap;
+    std::string frontEndVariant;
+    if (noble::FrontEndMenu::ShouldShow()) {
+        noble::FrontEndChoice choice = noble::FrontEndMenu::Run(*window, *renderer, reachInstall->reachDirectory);
+        if (!choice.play) {
+            NOBLE_INFO("Exiting from the front-end menu.");
+            noble::UIManager::Shutdown();
+            noble::Logger::Shutdown();
+            ExitProcess(0);
+        }
+        frontEndMap = choice.map;
+        frontEndVariant = choice.variantPath;
+    }
+
     // 8. Load and bootstrap haloreach.dll directly in process memory
     auto loader = std::make_unique<noble::Loader>();
     if (!loader->LoadReachDll(reachInstall->reachDllPath)) {
@@ -229,6 +246,13 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             }
         }
         LocalFree(argvW);
+    }
+
+    // A choice made in the front-end menu replaces the menu request.
+    if (!frontEndMap.empty()) {
+        launchMap = frontEndMap;
+        launchMode = "multiplayer";
+        if (customVariant.empty()) customVariant = frontEndVariant;
     }
 
     // If no specific map requested, default to the working 20_sword_slayer test

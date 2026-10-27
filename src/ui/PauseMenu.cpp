@@ -6,6 +6,7 @@
 #include <imgui.h>
 #include <imgui_impl_dx11.h>
 #include <atomic>
+#include <string>
 
 namespace noble {
 
@@ -45,7 +46,32 @@ void PauseMenu::DrawMenu(HWND hwnd) {
         if (ImGui::Button("RESUME", button)) {
             Close();
         }
-        // Add new entries here (settings, leave match, ...).
+        // Add new entries here (settings, ...).
+        ImGui::Spacing();
+        if (ImGui::Button("QUIT TO MENU", button)) {
+            // The engine can't switch maps once started (RR also runs menu and match as separate
+            // processes), so start a fresh Noble with no -map, which opens the front-end menu, and
+            // close this one.
+            NOBLE_INFO("PauseMenu: quit to menu requested");
+            wchar_t exe[MAX_PATH] = {};
+            if (GetModuleFileNameW(nullptr, exe, MAX_PATH)) {
+                std::wstring cmd = L"\"" + std::wstring(exe) + L"\"";
+                std::wstring dir = exe;
+                const size_t slash = dir.find_last_of(L"\\/");
+                if (slash != std::wstring::npos) dir.resize(slash);
+                STARTUPINFOW si{};
+                si.cb = sizeof(si);
+                PROCESS_INFORMATION pi{};
+                if (CreateProcessW(exe, cmd.data(), nullptr, nullptr, FALSE, 0, nullptr, dir.c_str(), &si, &pi)) {
+                    CloseHandle(pi.hThread);
+                    CloseHandle(pi.hProcess);
+                } else {
+                    NOBLE_ERROR("PauseMenu: could not restart Noble (error {})", GetLastError());
+                }
+            }
+            Close();
+            PostMessageW(hwnd, WM_CLOSE, 0, 0);
+        }
         ImGui::Spacing();
         if (ImGui::Button("QUIT", button)) {
             NOBLE_INFO("PauseMenu: quit requested");
