@@ -14,10 +14,12 @@
 #include <filesystem>
 #include <string>
 
+#pragma comment(lib, "gdi32.lib")
+
 namespace noble {
 
 void* ReachHost::s_vtable[160] = { nullptr };
-void* ReachHost::s_vtable2[64] = { nullptr };
+void* ReachHost::s_vtable2[160] = { nullptr };
 bool ReachHost::s_vtableInitialized = false;
 
 // -----------------------------------------------------------------------------
@@ -57,6 +59,16 @@ static inline bool SafeWriteUint8(uintptr_t addr, uint8_t val) {
     if (addr <= 0x10000) return false;
     __try {
         *reinterpret_cast<uint8_t*>(addr) = val;
+        return true;
+    } __except(EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+static inline bool SafeReadInt32(uintptr_t addr, int* outVal) {
+    if (addr <= 0x10000 || !outVal) return false;
+    __try {
+        *outVal = *reinterpret_cast<const int*>(addr);
         return true;
     } __except(EXCEPTION_EXECUTE_HANDLER) {
         return false;
@@ -142,6 +154,41 @@ struct SlotDispatcher {
     }
 };
 
+// Secondary interface (returned by slot 10, stored at host[1]) stubs: one per index so the log
+// shows exactly which method the engine calls. RR's VTABLE2 has 160 entries; a shorter table made
+// calls past index 63 jump to address 0.
+template<size_t Slot>
+struct SlotDispatcher2 {
+    static uint64_t __fastcall Stub(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
+        (void)a4;
+        static std::atomic<bool> s_firstCall{false};
+        if (!s_firstCall.exchange(true)) {
+            NOBLE_INFO("ReachHost: iface2 slot {:3d} first call (rcx=0x{:X}, a1=0x{:X}, a2=0x{:X}, a3=0x{:X})",
+                Slot, reinterpret_cast<uintptr_t>(thisPtr), a1, a2, a3);
+        }
+        return 0;
+    }
+};
+
+// iface2 slot 147 (0x93): RR's host::hit2 returns a pointer to a static 16-byte SESSION_GUID
+// (all zero) for this index and 0 for every other index. Returning 0 here made the engine read
+// the session id from address 0 while loading a map (crash at haloreach+0x7924D).
+alignas(16) static const uint8_t s_sessionGuid[16] = { 0 };
+
+static uint64_t __fastcall Iface2Slot147_SessionGuid(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
+    (void)thisPtr; (void)a4;
+    static std::atomic<bool> s_logged{false};
+    if (!s_logged.exchange(true)) {
+        NOBLE_INFO("ReachHost: iface2 slot 147 (SessionGuid) first call (a1=0x{:X}, a2=0x{:X}, a3=0x{:X})", a1, a2, a3);
+    }
+    return reinterpret_cast<uint64_t>(s_sessionGuid);
+}
+
+template<size_t... Is>
+static void InitVTable2Helper(void** vtable, std::index_sequence<Is...>) {
+    ((vtable[Is] = reinterpret_cast<void*>(&SlotDispatcher2<Is>::Stub)), ...);
+}
+
 // Slot 0: QueryInterface handler
 static uint64_t __fastcall HostSlot0_QueryInterface(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
     (void)a3; (void)a4;
@@ -162,8 +209,14 @@ static uint64_t __fastcall HostSlot1_FrameTick(void* thisPtr, uint64_t a1, uint6
     static std::atomic<uint64_t> s_frameCount{0};
     uint64_t frames = ++s_frameCount;
     if (frames == 1 || (frames % 300) == 0) {
-        NOBLE_INFO("ReachHost [Slot 1 - FrameTick]: Frame {} pumped from haloreach.dll (LoadProgress: {:.1f}%)",
-            frames, LoadScreen::Get().GetLoadProgress() * 100.0f);
+        // Engine "external launch" state machine (haloreach+0xC1A114): 0..10 while launching, 11 = launched.
+        // State 10 waits for the game session to be ready.
+        int launchState = -1;
+        if (HMODULE reach = GetModuleHandleW(L"haloreach.dll")) {
+            SafeReadInt32(reinterpret_cast<uintptr_t>(reach) + 0xC1A114, &launchState);
+        }
+        NOBLE_INFO("ReachHost [Slot 1 - FrameTick]: Frame {} pumped from haloreach.dll (LoadProgress: {:.1f}%, launch state {})",
+            frames, LoadScreen::Get().GetLoadProgress() * 100.0f, launchState);
     }
     return 0;
 }
@@ -179,15 +232,16 @@ static uint64_t __fastcall HostSlot2_ResizeBuffers(void* thisPtr, uint64_t a1, u
 }
 
 // Slot 4: Engine logging stream (host_probe case 4)
+// Slot 4 (RR host::hit case 4): a1 = reason code, a2 = const char* message.
+// The engine reports session/launch events here, e.g. reason 4 with
+// "external_launch_individual_state_timeout" / "external_launch_overall_timeout".
 static uint64_t __fastcall HostSlot4_LogMessage(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
-    (void)thisPtr; (void)a2; (void)a3; (void)a4;
-    if (a1 > 0x10000) {
-        const char* msg = reinterpret_cast<const char*>(a1);
-        char buf[512] = { 0 };
-        if (SafeCopyAnsiString(buf, sizeof(buf), msg) && buf[0] != '\0') {
-            NOBLE_INFO("[haloreach.dll] {}", buf);
-        }
+    (void)thisPtr; (void)a3; (void)a4;
+    char buf[512] = { 0 };
+    if (a2 > 0x10000) {
+        SafeCopyAnsiString(buf, sizeof(buf), reinterpret_cast<const char*>(a2));
     }
+    NOBLE_WARN("ReachHost [Slot 4 - EngineEvent]: reason={} message='{}'", a1, buf);
     return 0;
 }
 
@@ -608,6 +662,141 @@ static uint64_t __fastcall HostSlot57_StringLookup(void* thisPtr, uint64_t a1, u
     return reinterpret_cast<uint64_t>(s_emptyWideString);
 }
 
+// -----------------------------------------------------------------------------
+// Text host slots (61-67). In MCC's PC build the host owns font rendering: Reach Renaissance
+// installs text::{prepare, glyph, atlas, has_icon, kerning, register_icon, metrics} at
+// slots 0x3D-0x43 (host::new_host @ 0x1400828E0). Signatures below come from those functions'
+// register/stack usage. This is a first, minimal implementation written for Noble:
+//   61 prepare(host, const wchar_t* text, u32 style, float size, const char* face) -> 1
+//   67 metrics(host, u32 style, float size, const char* face, u16* out0, u16* out1) -> 1 if font
+// Glyph/atlas rendering (62/63) is not implemented yet.
+// -----------------------------------------------------------------------------
+// SEH-only copy helpers (no C++ objects in these frames).
+static size_t SafeCopyAnsiRaw(const char* src, char* dst, size_t cap) {
+    if (!src || !dst || cap == 0) return 0;
+    size_t n = 0;
+    __try {
+        while (n + 1 < cap && src[n]) { dst[n] = src[n]; ++n; }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+    dst[n] = 0;
+    return n;
+}
+
+static size_t SafeCopyWideRaw(const wchar_t* src, wchar_t* dst, size_t cap) {
+    if (!src || !dst || cap == 0) return 0;
+    size_t n = 0;
+    __try {
+        while (n + 1 < cap && src[n]) { dst[n] = src[n]; ++n; }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+    dst[n] = 0;
+    return n;
+}
+
+static bool SafeWriteU16(uint16_t* dst, uint16_t value) {
+    if (reinterpret_cast<uintptr_t>(dst) <= 0x10000) return false;
+    __try {
+        *dst = value;
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+static std::wstring WidenFace(const char* face) {
+    char buf[64];
+    const size_t n = SafeCopyAnsiRaw(face, buf, sizeof(buf));
+    std::wstring w;
+    for (size_t i = 0; i < n; ++i) w.push_back(static_cast<wchar_t>(static_cast<unsigned char>(buf[i])));
+    return w;
+}
+
+static std::string NarrowForLog(const std::wstring& w) {
+    std::string out;
+    for (wchar_t c : w) out.push_back(c < 0x80 ? static_cast<char>(c) : '?');
+    return out;
+}
+
+static std::wstring MapReachFace(const std::wstring& requested) {
+    // Reach's UI fonts are not installed on Windows; RR maps TVNordCond to Bahnschrift Condensed.
+    if (requested.empty()) return L"Segoe UI";
+    std::wstring lower = requested;
+    std::transform(lower.begin(), lower.end(), lower.begin(), [](wchar_t c) { return static_cast<wchar_t>(std::towlower(c)); });
+    if (lower.find(L"tvnord") != std::wstring::npos) return L"Bahnschrift Condensed";
+    return requested;
+}
+
+struct HostFontMetrics {
+    uint16_t ascent = 0;
+    uint16_t descent = 0;
+    bool ok = false;
+};
+
+static HostFontMetrics MeasureFont(const std::wstring& face, uint32_t pointSize, float scale) {
+    HostFontMetrics m;
+    // RR's Atlas::font: pixels = round(size * scale * SIZE_SCALE); the engine passes size as an
+    // integer (9, 13, 15, 18, 24, 30, 42 seen) and scale as a float (1.0 seen).
+    int pixelHeight = static_cast<int>(static_cast<float>(pointSize) * scale + 0.5f);
+    if (pixelHeight < 1) pixelHeight = 1;
+    if (pixelHeight > 512) pixelHeight = 512;
+
+    HDC dc = CreateCompatibleDC(nullptr);
+    if (!dc) return m;
+    for (int attempt = 0; attempt < 2 && !m.ok; ++attempt) {
+        const wchar_t* name = attempt == 0 ? face.c_str() : L"Segoe UI";
+        HFONT font = CreateFontW(-pixelHeight, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+                                 OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY, DEFAULT_PITCH, name);
+        if (!font) continue;
+        HGDIOBJ old = SelectObject(dc, font);
+        TEXTMETRICW tm{};
+        if (GetTextMetricsW(dc, &tm)) {
+            m.ascent = static_cast<uint16_t>(tm.tmAscent);
+            m.descent = static_cast<uint16_t>(tm.tmDescent);
+            m.ok = true;
+        }
+        SelectObject(dc, old);
+        DeleteObject(font);
+    }
+    DeleteDC(dc);
+    return m;
+}
+
+static std::wstring SafeReadWide(const wchar_t* text, size_t maxChars) {
+    wchar_t buf[128];
+    if (maxChars > 127) maxChars = 127;
+    SafeCopyWideRaw(text, buf, maxChars + 1);
+    return std::wstring(buf);
+}
+
+static uint64_t __fastcall HostSlot61_TextPrepare(void* thisPtr, const wchar_t* text, uint32_t style, float size, const char* face) {
+    (void)thisPtr;
+    static std::atomic<int> s_calls{0};
+    if (s_calls.fetch_add(1) < 20) {
+        NOBLE_INFO("ReachHost [Slot 61 - TextPrepare]: size={} scale={:.2f} face='{}' text='{}'",
+            style, size, NarrowForLog(WidenFace(face)), NarrowForLog(SafeReadWide(text, 48)));
+    }
+    return 1; // RR's text::prepare always returns 1 (glyph pre-rendering not implemented yet)
+}
+
+static uint64_t __fastcall HostSlot67_TextMetrics(void* thisPtr, uint32_t style, float size, const char* face,
+                                                  uint16_t* out0, uint16_t* out1) {
+    (void)thisPtr;
+    const std::wstring requested = WidenFace(face);
+    const std::wstring mapped = MapReachFace(requested);
+    const HostFontMetrics m = MeasureFont(mapped, style, size);
+
+    static std::atomic<int> s_calls{0};
+    if (s_calls.fetch_add(1) < 20) {
+        NOBLE_INFO("ReachHost [Slot 67 - TextMetrics]: size={} scale={:.2f} face='{}' -> '{}' ascent={} descent={} ok={}",
+            style, size, NarrowForLog(requested), NarrowForLog(mapped), m.ascent, m.descent, m.ok);
+    }
+    if (!m.ok) return 0;
+    if (out0) SafeWriteU16(out0, m.ascent);
+    if (out1) SafeWriteU16(out1, m.descent);
+    return 1;
+}
+
 // Slot 88: User identity & Gamertag handler (host_probe case 0x58)
 static uint64_t __fastcall HostSlot88_UserIdentity(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
     // Matches Reach Renaissance host::hit case 0x58:
@@ -691,13 +880,14 @@ void ReachHost::InitializeVTable() {
     s_vtable[55]  = reinterpret_cast<void*>(&HostSlot55_StringsClear);
     s_vtable[56]  = reinterpret_cast<void*>(&HostSlot56_StringsRegister);
     s_vtable[57]  = reinterpret_cast<void*>(&HostSlot57_StringLookup);
+    s_vtable[61]  = reinterpret_cast<void*>(&HostSlot61_TextPrepare);
+    s_vtable[67]  = reinterpret_cast<void*>(&HostSlot67_TextMetrics);
     s_vtable[88]  = reinterpret_cast<void*>(&HostSlot88_UserIdentity);
     s_vtable[97]  = reinterpret_cast<void*>(&HostSlot97_CapabilityPass);
     s_vtable[116] = reinterpret_cast<void*>(&HostSlot116_ControllerMap);
 
-    for (size_t i = 0; i < 64; ++i) {
-        s_vtable2[i] = reinterpret_cast<void*>(&SlotDispatcher<0>::Stub);
-    }
+    InitVTable2Helper(s_vtable2, std::make_index_sequence<160>{});
+    s_vtable2[147] = reinterpret_cast<void*>(&Iface2Slot147_SessionGuid);
 
     s_vtableInitialized = true;
     NOBLE_INFO("ReachHost: 160-slot host vtable and secondary vtable initialized matching Reach Renaissance host.");

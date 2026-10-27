@@ -133,6 +133,50 @@ bool BlamEngine::Initialize(const ReachInstallInfo& installInfo, HMODULE hModule
     return true;
 }
 
+// Multiplayer map table: launch index (written at +0x10/+0x14/+0x1D5C0) and map id
+// (written at +0x1D334/+0x1D5BC). Values match the engine build Reach Renaissance supports
+// (its host-probe set_map table); the main menu uses launch index -2 with map id 1035.
+struct ReachMultiplayerMap {
+    const char* scenario;
+    const char* displayName;
+    uint32_t launchIndex;
+    uint32_t mapId;
+};
+
+static const ReachMultiplayerMap kMultiplayerMaps[] = {
+    { "50_panopticon",     "boardwalk",     190, 1035 },
+    { "70_boneyard",       "boneyard",      191, 1080 },
+    { "45_launch_station", "countdown",     192, 1020 },
+    { "30_settlement",     "powerhouse",    193, 1055 },
+    { "52_ivory_tower",    "reflection",    194, 1150 },
+    { "35_island",         "spire",         195, 1200 },
+    { "20_sword_slayer",   "sword base",    196, 1000 },
+    { "45_aftship",        "zealot",        197, 1040 },
+    { "dlc_slayer",        "anchor 9",      198, 2001 },
+    { "dlc_invasion",      "breakpoint",    199, 2002 },
+    { "dlc_medium",        "tempest",       200, 2004 },
+    { "condemned",         "condemned",     201, 1500 },
+    { "trainingpreserve",  "highlands",     202, 1510 },
+    { "cex_beaver_creek",  "battle canyon", 203, 10020 },
+    { "cex_damnation",     "penance",       204, 10010 },
+    { "cex_timberland",    "ridgeline",     205, 10030 },
+    { "cex_prisoner",      "solitary",      206, 10070 },
+    { "cex_hangemhigh",    "high noon",     207, 10060 },
+    { "cex_headlong",      "breakneck",     208, 10050 },
+    { "forge_halo",        "forge world",   209, 3006 },
+};
+
+static constexpr uint32_t kMainMenuLaunchIndex = static_cast<uint32_t>(-2);
+static constexpr uint32_t kMainMenuMapId = 1035; // menu backdrop map id in RR's captured menu block
+
+static uint32_t MapIdForLaunchIndex(uint32_t launchIndex) {
+    if (launchIndex == kMainMenuLaunchIndex) return kMainMenuMapId;
+    for (const auto& m : kMultiplayerMaps) {
+        if (m.launchIndex == launchIndex) return m.mapId;
+    }
+    return 0;
+}
+
 uint32_t BlamEngine::ResolveMapId(const std::string& mapName) {
     std::string lower = mapName;
     std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) {
@@ -140,7 +184,7 @@ uint32_t BlamEngine::ResolveMapId(const std::string& mapName) {
     });
 
     // Main Menu (-2 / 0xFFFFFFFE in authentic Reach Blam! engine)
-    if (lower.find("mainmenu") != std::string::npos || lower == "0" || lower == "menu" || lower == "190" || lower == "-2") {
+    if (lower.find("mainmenu") != std::string::npos || lower == "0" || lower == "menu" || lower == "-2") {
         return static_cast<uint32_t>(-2);
     }
 
@@ -166,19 +210,16 @@ uint32_t BlamEngine::ResolveMapId(const std::string& mapName) {
     if (lower.find("exodus") != std::string::npos || lower.find("m50") != std::string::npos || lower == "184") return 184;
     if (lower.find("new alexandria") != std::string::npos || lower.find("m52") != std::string::npos || lower == "185") return 185;
     if (lower.find("the package") != std::string::npos || lower.find("m60") != std::string::npos || lower == "186") return 186;
-    if (lower.find("the pillar of autumn") != std::string::npos || lower.find("m70") != std::string::npos || lower == "187") return 187;
     if (lower.find("lone wolf") != std::string::npos || lower.find("m70_bonus") != std::string::npos || lower == "189") return 189;
+    if (lower.find("the pillar of autumn") != std::string::npos || lower.find("m70") != std::string::npos || lower == "187") return 187;
 
-    // Multiplayer / Forge Maps
-    if (lower.find("forge_halo") != std::string::npos || lower.find("forge world") != std::string::npos) return 7000;
-    if (lower.find("50_panopticon") != std::string::npos || lower.find("boardwalk") != std::string::npos) return 5000;
-    if (lower.find("70_boneyard") != std::string::npos || lower.find("boneyard") != std::string::npos) return 7001;
-    if (lower.find("45_launch_station") != std::string::npos || lower.find("countdown") != std::string::npos) return 4501;
-    if (lower.find("30_settlement") != std::string::npos || lower.find("powerhouse") != std::string::npos) return 3001;
-    if (lower.find("52_ivory_tower") != std::string::npos || lower.find("reflection") != std::string::npos) return 5201;
-    if (lower.find("35_island") != std::string::npos || lower.find("spire") != std::string::npos) return 3501;
-    if (lower.find("20_sword_slayer") != std::string::npos || lower.find("sword base") != std::string::npos) return 2001;
-    if (lower.find("45_aftship") != std::string::npos || lower.find("zealot") != std::string::npos) return 4502;
+    // Multiplayer / Forge maps (launch index 190-209)
+    for (const auto& m : kMultiplayerMaps) {
+        if (lower.find(m.scenario) != std::string::npos || lower.find(m.displayName) != std::string::npos ||
+            lower == std::to_string(m.launchIndex)) {
+            return m.launchIndex;
+        }
+    }
 
     return 0;
 }
@@ -201,7 +242,8 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
 
     int clampedDiff = (difficulty >= 0 && difficulty <= 3) ? difficulty : 1;
 
-    bool isMainMenu = (mapId == static_cast<uint32_t>(-2) || mapId == 190 || mapId == 0 || gameModeTag == 0);
+    // 190 is Boardwalk (a multiplayer map), not the menu.
+    bool isMainMenu = (mapId == kMainMenuLaunchIndex || mapId == 0 || gameModeTag == 0);
     uint32_t effectiveMapId = isMainMenu ? static_cast<uint32_t>(-2) : mapId;
 
     if (isMainMenu) {
@@ -296,8 +338,14 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
         *reinterpret_cast<uint32_t*>(&block[0x1D5C0]) = effectiveMapId;
         *reinterpret_cast<uint32_t*>(&block[0x1D5C4]) = 0x88880000;
         *reinterpret_cast<uint64_t*>(&block[0x1D5C8]) = 0;
-        *reinterpret_cast<uint32_t*>(&block[0x1D334]) = gameModeTag;
-        *reinterpret_cast<uint32_t*>(&block[0x1D5BC]) = gameModeTag;
+        // +0x1D334 / +0x1D5BC hold the MAP ID (e.g. Sword Base 1000), not a game-mode tag. With 0 here the
+        // engine resolves an empty scenario name ("haloreach\maps\.map") and has nothing to render.
+        // Menu and multiplayer ids are known; campaign/firefight keep the previous value until verified.
+        uint32_t mapInfoId = MapIdForLaunchIndex(effectiveMapId);
+        if (mapInfoId == 0) mapInfoId = gameModeTag;
+        *reinterpret_cast<uint32_t*>(&block[0x1D334]) = mapInfoId;
+        *reinterpret_cast<uint32_t*>(&block[0x1D5BC]) = mapInfoId;
+        NOBLE_INFO("BlamEngine: launch block map index {} -> map id {}", static_cast<int32_t>(effectiveMapId), mapInfoId);
     }
 
     // 16-byte per-launch random identifier at +0x50 (present in RR's captured blocks, zero in ours).
