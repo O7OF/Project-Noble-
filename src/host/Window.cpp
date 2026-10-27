@@ -23,7 +23,7 @@ bool Window::Create() {
     wc.lpfnWndProc = StaticWndProc;
     wc.hInstance = m_hInstance;
     wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-    wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
+    wc.hbrBackground = reinterpret_cast<HBRUSH>(GetStockObject(BLACK_BRUSH));
     wc.lpszClassName = L"HaloReachCE_WindowClass";
 
     if (!RegisterClassExW(&wc)) {
@@ -106,6 +106,8 @@ LRESULT Window::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam
     }
 
     switch (uMsg) {
+        case WM_ERASEBKGND:
+            return 1; // Prevent GDI from clearing background over DirectX 11 presentation
         case WM_CLOSE:
             m_shouldClose = true;
             DestroyWindow(hwnd);
