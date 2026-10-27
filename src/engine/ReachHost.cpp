@@ -13,7 +13,6 @@
 #include <algorithm>
 #include <filesystem>
 #include <string>
-#include <vector>
 
 namespace noble {
 
@@ -192,10 +191,15 @@ static uint64_t __fastcall HostSlot4_LogMessage(void* thisPtr, uint64_t a1, uint
     return 0;
 }
 
-// Slot 10: Second tick / heartbeat (host_probe case 10)
+// Slot 10: Secondary host interface (host_probe case 10 returns SECOND, the iface2 object
+// that host::new_host stores at host[1]). Returning 1 here would hand the engine a bad pointer.
 static uint64_t __fastcall HostSlot10_Heartbeat(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
     (void)thisPtr; (void)a1; (void)a2; (void)a3; (void)a4;
-    return 1;
+    static std::atomic<bool> s_logged{false};
+    if (!s_logged.exchange(true)) {
+        NOBLE_INFO("ReachHost [Slot 10 - SecondInterface]: returning secondary host interface");
+    }
+    return reinterpret_cast<uint64_t>(ReachHost::Get().GetSecondInterface());
 }
 
 // Slot 18: Asset lookup (host_probe case 0x12)
@@ -240,47 +244,54 @@ static uint64_t __fastcall HostSlot23_LoadProgress(void* thisPtr, uint64_t a1, u
     return 0;
 }
 
-// Slot 32: Graphics settings block (host_probe case 0x20)
-// host-probe: buf = a1, size = a2. If size > 0x17: zero buf[0x18..size), write 24-byte defaults,
-// then overwrite the first 8 bytes with the client width/height. Returns 1.
+// Slot 32: Display settings fill (host_probe case 0x20)
+// Matches Reach Renaissance host::hit case 0x20: a1 = engine-owned buffer, a2 = its size (0x88 seen).
+// RR zeroes the buffer, writes {width, height} as two u32 at +0x00, quality bytes at +0x08..+0x17
+// (01 02 02 02 02 02 01 01 | 00 01 01 01 00 02 00 00), and returns 1.
+// The previous version treated this as an allocation request and returned its own buffer, leaving
+// the engine's settings struct uninitialised.
 static uint64_t __fastcall HostSlot32_DisplaySettings(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
     (void)thisPtr; (void)a3; (void)a4;
     static std::atomic<bool> s_logged{false};
     if (!s_logged.exchange(true)) {
-        NOBLE_INFO("ReachHost [Slot 32 - GraphicsSettings]: buf=0x{:X}, size=0x{:X}", a1, a2);
+        NOBLE_INFO("ReachHost [Slot 32 - DisplaySettings]: buffer=0x{:X} size=0x{:X}", a1, a2);
     }
-    if (a1 <= 0x10000 || a2 <= 0x17) return 0;
-
-    uint8_t block[0x18] = {};
-    const uint64_t d0 = 0x0000064000000A00ULL; // 2560 x 1600 default
-    const uint64_t d1 = 0x0101020202020201ULL;
-    const uint64_t d2 = 0x0000020001010100ULL;
-    memcpy(block + 0x00, &d0, 8);
-    memcpy(block + 0x08, &d1, 8);
-    memcpy(block + 0x10, &d2, 8);
-
-    RECT rc{};
-    HWND hwnd = GetActiveWindow();
-    if (hwnd && GetClientRect(hwnd, &rc) && rc.right > 0 && rc.bottom > 0) {
-        uint32_t w = static_cast<uint32_t>(rc.right), h = static_cast<uint32_t>(rc.bottom);
-        memcpy(block + 0, &w, 4);
-        memcpy(block + 4, &h, 4);
+    if (a1 <= 0x10000 || a2 < 0x18) {
+        return 0;
     }
 
-    if (a2 > 0x18) {
-        std::vector<uint8_t> zeros(static_cast<size_t>(a2 - 0x18), 0);
-        SafeCopyMemory(reinterpret_cast<void*>(a1 + 0x18), zeros.data(), zeros.size());
+    const size_t size = static_cast<size_t>(a2);
+    if (!SafeZeroMemory(reinterpret_cast<void*>(a1), size)) {
+        return 0;
     }
-    SafeCopyMemory(reinterpret_cast<void*>(a1), block, sizeof(block));
+
+    uint8_t header[0x18] = {
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,   // width, height (filled below)
+        0x01, 0x02, 0x02, 0x02, 0x02, 0x02, 0x01, 0x01,   // quality settings (RR defaults)
+        0x00, 0x01, 0x01, 0x01, 0x00, 0x02, 0x00, 0x00
+    };
+    const uint32_t width = 1280;   // host window client size (Window is created at 1280x720)
+    const uint32_t height = 720;
+    memcpy(&header[0], &width, sizeof(width));
+    memcpy(&header[4], &height, sizeof(height));
+    SafeCopyMemory(reinterpret_cast<void*>(a1), header, sizeof(header));
     return 1;
 }
 
-// Slot 33: Display quality (host_probe case 0x21) - a1 is the destination directly
+// Slot 33: Display Quality settings handler (host_probe case 0x21)
 static uint64_t __fastcall HostSlot33_DisplayQuality(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
     (void)thisPtr; (void)a2; (void)a3; (void)a4;
-    if (a1 > 0x10000) {
-        SafeWriteUint64(a1, 0x3F80000000000201ULL);
-        SafeWriteUint64(a1 + 8, 0x2BF800000ULL);
+    uintptr_t targetPtr = a1;
+    uintptr_t deref = 0;
+    if (SafeReadPointer(a1, &deref) && deref > 0x10000) {
+        targetPtr = deref;
+    }
+
+    if (targetPtr > 0x10000) {
+        uint64_t val1 = 0x3F80000000000201ULL; // Scale = 1.0f (0x3F800000)
+        uint64_t val2 = 0x2BF800000ULL;
+        SafeWriteUint64(targetPtr, val1);
+        SafeWriteUint64(targetPtr + 8, val2);
     }
     return 1;
 }
@@ -599,36 +610,30 @@ static uint64_t __fastcall HostSlot57_StringLookup(void* thisPtr, uint64_t a1, u
 
 // Slot 88: User identity & Gamertag handler (host_probe case 0x58)
 static uint64_t __fastcall HostSlot88_UserIdentity(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
-    (void)thisPtr; (void)a3; (void)a4;
+    // Matches Reach Renaissance host::hit case 0x58:
+    //   a1 = u64* out XUID, a2 = wchar_t* out gamertag, a3 = gamertag capacity (chars), a4 = local user index.
+    // Writes straight into a1/a2 (never dereferences their current contents) and returns 1.
+    // Users other than 0 are reported as absent (return 0), as RR does without a second local user.
+    (void)thisPtr;
     static std::atomic<bool> s_logged{false};
+    const uint32_t userIndex = static_cast<uint32_t>(a4);
     if (!s_logged.exchange(true)) {
-        NOBLE_INFO("ReachHost [Slot 88 - UserIdentity]: Supplying player identity 'NobleSix' (XUID: 0x9000000000001)");
+        NOBLE_INFO("ReachHost [Slot 88 - UserIdentity]: user {} -> 'NobleSix' (XUID: 0x9000000000001)", userIndex);
+    }
+    if (userIndex != 0) {
+        return 0;
     }
 
-    uintptr_t pXuid = 0;
-    uintptr_t pTag = 0;
-
+    const uint64_t xuid = 0x0009000000000001ULL;
     if (a1 > 0x10000) {
-        uintptr_t deref1 = 0;
-        uintptr_t deref2 = 0;
-        if (SafeReadPointer(a1, &deref1) && deref1 > 0x10000) pXuid = deref1;
-        if (SafeReadPointer(a1 + 8, &deref2) && deref2 > 0x10000) pTag = deref2;
-        if (!pXuid) pXuid = a1;
+        SafeWriteUint64(a1, xuid);
     }
 
-    if (a2 > 0x10000 && !pTag) {
-        pTag = a2;
+    const wchar_t gamerTagW[] = L"NobleSix";
+    const size_t tagChars = (sizeof(gamerTagW) / sizeof(wchar_t)) - 1;
+    if (a2 > 0x10000 && a3 > tagChars) {
+        SafeCopyWideString(reinterpret_cast<wchar_t*>(a2), static_cast<size_t>(a3), gamerTagW);
     }
-
-    if (pXuid > 0x10000) {
-        SafeWriteUint64(pXuid, 0x0009000000000001ULL);
-    }
-
-    if (pTag > 0x10000) {
-        const wchar_t gamerTagW[] = L"NobleSix";
-        SafeCopyWideString(reinterpret_cast<wchar_t*>(pTag), 32, gamerTagW);
-    }
-
     return 1;
 }
 

@@ -1,6 +1,5 @@
 #include "BlamEngine.hpp"
 #include "ReachHost.hpp"
-#include "RasterizerAtomHooks.hpp"
 #include "ui/LoadScreen.hpp"
 #include "hooks/HookManager.hpp"
 #include "common/Logger.hpp"
@@ -9,8 +8,74 @@
 #include <chrono>
 #include <fstream>
 #include <filesystem>
+#include <objbase.h>
+#pragma comment(lib, "ole32.lib")
 
 namespace noble {
+
+typedef void(__fastcall* UpdateResourcePoolFn)(uint32_t category, uint32_t poolIndex);
+static UpdateResourcePoolFn s_originalUpdateResourcePool = nullptr;
+static uintptr_t s_haloReachBase = 0;
+
+static void __fastcall Hook_UpdateResourcePool(uint32_t category, uint32_t poolIndex) {
+    if (poolIndex >= 16) {
+        return; // Out-of-bounds pool index (e.g. 0x1000)
+    }
+    if (s_haloReachBase) {
+        uintptr_t poolDesc = s_haloReachBase + 0xC8E4C0 + (static_cast<uintptr_t>(poolIndex) * 0x70);
+        if (!IsBadReadPtr(reinterpret_cast<void*>(poolDesc + 0x50), sizeof(void*))) {
+            void* atomArray = *reinterpret_cast<void**>(poolDesc + 0x50);
+            if (!atomArray) {
+                return;
+            }
+        }
+    }
+    if (s_originalUpdateResourcePool) {
+        s_originalUpdateResourcePool(category, poolIndex);
+    }
+}
+
+typedef void(__fastcall* UpdatePoolFn)(uint32_t poolIndex);
+static UpdatePoolFn s_originalUpdatePool = nullptr;
+
+static void __fastcall Hook_UpdatePool(uint32_t poolIndex) {
+    if (poolIndex >= 16) {
+        return; // Out-of-bounds pool index (e.g. 0x1000)
+    }
+    if (s_haloReachBase) {
+        uintptr_t poolDesc = s_haloReachBase + 0xC8E4C0 + (static_cast<uintptr_t>(poolIndex) * 0x70);
+        if (!IsBadReadPtr(reinterpret_cast<void*>(poolDesc + 0x50), sizeof(void*))) {
+            void* atomArray = *reinterpret_cast<void**>(poolDesc + 0x50);
+            if (!atomArray) {
+                return;
+            }
+        }
+    }
+    if (s_originalUpdatePool) {
+        s_originalUpdatePool(poolIndex);
+    }
+}
+
+typedef void(__fastcall* UpdatePredictionCacheFn)(uint32_t category, uint32_t poolIndex);
+static UpdatePredictionCacheFn s_originalUpdatePredictionCache = nullptr;
+
+static void __fastcall Hook_UpdatePredictionCache(uint32_t category, uint32_t poolIndex) {
+    if (poolIndex >= 16) {
+        return; // Out-of-bounds pool index (e.g. 0x1000)
+    }
+    if (s_haloReachBase) {
+        uintptr_t poolDesc = s_haloReachBase + 0xC8E4C0 + (static_cast<uintptr_t>(poolIndex) * 0x70);
+        if (!IsBadReadPtr(reinterpret_cast<void*>(poolDesc + 0x50), sizeof(void*))) {
+            void* atomArray = *reinterpret_cast<void**>(poolDesc + 0x50);
+            if (!atomArray) {
+                return;
+            }
+        }
+    }
+    if (s_originalUpdatePredictionCache) {
+        s_originalUpdatePredictionCache(category, poolIndex);
+    }
+}
 
 static void SafeCallVariantInit(HMODULE hModule, void* targetBuffer) {
     if (!hModule || !targetBuffer) return;
@@ -20,6 +85,20 @@ static void SafeCallVariantInit(HMODULE hModule, void* targetBuffer) {
             reinterpret_cast<uintptr_t>(hModule) + 0x6BFF8);
         pInitVariant(targetBuffer);
     } __except(EXCEPTION_EXECUTE_HANDLER) {
+    }
+}
+
+// Game variant decoder inside haloreach.dll (RVA 0x373A0, valid for the supported DLL build).
+// Same call Reach Renaissance's set_game_variant makes: ok = decode(fileBytes, out[0xFC04], &status).
+static bool SafeCallGameVariantDecode(HMODULE hModule, const void* fileData, void* outVariant, void* outStatus) {
+    if (!hModule || !fileData || !outVariant || !outStatus) return false;
+    __try {
+        typedef char (*DecodeGameVariantFn)(const void* fileData, void* outVariant, void* outStatus);
+        auto pDecode = reinterpret_cast<DecodeGameVariantFn>(
+            reinterpret_cast<uintptr_t>(hModule) + 0x373A0);
+        return pDecode(fileData, outVariant, outStatus) != 0;
+    } __except(EXCEPTION_EXECUTE_HANDLER) {
+        return false;
     }
 }
 
@@ -41,6 +120,31 @@ BlamEngine::~BlamEngine() {
     Shutdown();
 }
 
+// Fallback prediction atom buffer (512 atoms * 0x88 bytes = 69,632 bytes)
+static uint8_t s_fallbackAtomBuffer[512 * 0x88] = { 0 };
+
+void BlamEngine::InitializePoolDescriptors() {
+    if (!m_hModule) return;
+    uintptr_t base = reinterpret_cast<uintptr_t>(m_hModule);
+    uintptr_t poolTable = base + 0xC8E4C0;
+
+    DWORD oldProtect = 0;
+    VirtualProtect(reinterpret_cast<void*>(poolTable), 32 * 0x70, PAGE_READWRITE, &oldProtect);
+
+    for (size_t i = 0; i < 32; ++i) {
+        uintptr_t poolDesc = poolTable + (i * 0x70);
+        void** pAtomArray = reinterpret_cast<void**>(poolDesc + 0x50);
+        if (*pAtomArray == nullptr) {
+            *pAtomArray = s_fallbackAtomBuffer;
+        }
+    }
+
+    if (oldProtect) {
+        VirtualProtect(reinterpret_cast<void*>(poolTable), 32 * 0x70, oldProtect, &oldProtect);
+    }
+    NOBLE_INFO("BlamEngine: Initialized fallback atom arrays for all 32 resource pools.");
+}
+
 bool BlamEngine::Initialize(const ReachInstallInfo& installInfo, HMODULE hModule, const ReachExports& exports, const EngineHostContext& context) {
     if (m_isInitialized) return true;
 
@@ -53,11 +157,11 @@ bool BlamEngine::Initialize(const ReachInstallInfo& installInfo, HMODULE hModule
     // 1. Pass Library Settings FIRST (as discovered in host-probe main.c lines 3439-3490)
     // haloreach.dll requires a 510-byte (0x1FE) structure with UTF-16 strings for paths
     if (m_exports.SetLibrarySettings) {
-        NOBLE_INFO("Configuring haloreach.dll with SetLibrarySettings (510-byte layout)...");
+        NOBLE_INFO("Configuring haloreach.dll with SetLibrarySettings (3 x \"en-US\" locale strings)...");
         ReachLibrarySettings settings{};
-        wcsncpy_s(settings.gameRoot, installInfo.reachDirectory.wstring().c_str(), _TRUNCATE);
-        wcsncpy_s(settings.mapsDirectory, installInfo.mapsDirectory.wstring().c_str(), _TRUNCATE);
-        wcsncpy_s(settings.userDirectory, L"data", _TRUNCATE);
+        wcsncpy_s(settings.locale0, L"en-US", _TRUNCATE);
+        wcsncpy_s(settings.locale1, L"en-US", _TRUNCATE);
+        wcsncpy_s(settings.locale2, L"en-US", _TRUNCATE);
 
         m_exports.SetLibrarySettings(&settings);
         NOBLE_INFO("SetLibrarySettings initialized successfully.");
@@ -110,8 +214,37 @@ bool BlamEngine::Initialize(const ReachInstallInfo& installInfo, HMODULE hModule
     // Configure Host object paths
     ReachHost::Get().SetPaths(installInfo.reachDirectory, installInfo.mapsDirectory, ReachHost::Get().GetDataDir());
 
-    // Install NULL safeguard detours for Rasterizer prediction atom accessors (RVAs 0x2743A4..0x274800)
-    RasterizerAtomHooks::Install(m_hModule);
+    // Pool SafeGuards: disabled. The null atom arrays they guarded against came from host slot 32
+    // not filling the engine's display-settings buffer (now fixed in ReachHost.cpp). Pre-filling
+    // every pool with one shared fallback buffer before Start can stop the engine allocating real
+    // ones. Set to true only to compare against the old behaviour.
+    constexpr bool kUsePoolSafeGuards = false;
+    if (kUsePoolSafeGuards) {
+    // Install safeguard detours for prediction atom cache (RVA 0x274488 and 0x274524)
+    s_haloReachBase = reinterpret_cast<uintptr_t>(m_hModule);
+    void* updateResourcePoolTarget = reinterpret_cast<void*>(s_haloReachBase + 0x274488);
+    HookManager::InstallHook(updateResourcePoolTarget,
+        reinterpret_cast<void*>(&Hook_UpdateResourcePool),
+        reinterpret_cast<void**>(&s_originalUpdateResourcePool),
+        "UpdateResourcePool_SafeGuard");
+
+    void* updatePredictionCacheTarget = reinterpret_cast<void*>(s_haloReachBase + 0x274524);
+    HookManager::InstallHook(updatePredictionCacheTarget,
+        reinterpret_cast<void*>(&Hook_UpdatePredictionCache),
+        reinterpret_cast<void**>(&s_originalUpdatePredictionCache),
+        "UpdatePredictionCache_SafeGuard");
+
+    void* updatePoolTarget = reinterpret_cast<void*>(s_haloReachBase + 0x2743A4);
+    HookManager::InstallHook(updatePoolTarget,
+        reinterpret_cast<void*>(&Hook_UpdatePool),
+        reinterpret_cast<void**>(&s_originalUpdatePool),
+        "UpdatePool_SafeGuard");
+
+    // Initialize pool descriptors with fallback atom arrays to prevent NULL dereferences
+    InitializePoolDescriptors();
+    } else {
+        NOBLE_INFO("BlamEngine: Pool SafeGuard hooks and fallback atom arrays disabled.");
+    }
 
     m_isInitialized = true;
     NOBLE_INFO("BlamEngine host interface emulation initialized and ready for single-pass map launch.");
@@ -283,6 +416,12 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
         *reinterpret_cast<uint64_t*>(&block[0x1D5C8]) = 0;
         *reinterpret_cast<uint32_t*>(&block[0x1D334]) = gameModeTag;
         *reinterpret_cast<uint32_t*>(&block[0x1D5BC]) = gameModeTag;
+
+        // 16-byte per-launch random identifier at +0x50 (present in RR's captured blocks, zero in ours).
+        GUID launchId{};
+        if (SUCCEEDED(CoCreateGuid(&launchId))) {
+            memcpy(&block[0x50], &launchId, sizeof(launchId));
+        }
     }
 
     if (!isMainMenu) {
@@ -318,16 +457,36 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
         }
     }
 
-    // Dynamic Custom Game Variant (.bin) Injection at offset 0x300 (size 0xFC04)
-    if (!customVariantPath.empty() && std::filesystem::exists(customVariantPath)) {
-        NOBLE_INFO("BlamEngine: Injecting custom game variant from '{}'...", customVariantPath);
-        std::ifstream varFile(customVariantPath, std::ios::binary);
-        if (varFile) {
+    // Game variant at +0x300 (0xFC04 bytes), decoded by the engine's own decoder (RVA 0x373A0),
+    // as Reach Renaissance does. A raw .bin file is NOT the in-memory layout, so never memcpy it.
+    // Without a variant the engine cannot resolve what to load (it requests "haloreach\maps\.map"
+    // and stalls at 4%). Default: MCC's stock slayer_054.bin from the player's own install.
+    {
+        std::filesystem::path variantPath;
+        if (!customVariantPath.empty() && std::filesystem::exists(customVariantPath)) {
+            variantPath = customVariantPath;
+        } else if (!loadedPrebuilt) {
+            variantPath = ReachHost::Get().GetReachDir() / "game_variants" / "slayer_054.bin";
+        }
+
+        if (!variantPath.empty() && std::filesystem::exists(variantPath) && m_hModule) {
+            std::ifstream varFile(variantPath, std::ios::binary);
             std::vector<uint8_t> varData((std::istreambuf_iterator<char>(varFile)),
                                           std::istreambuf_iterator<char>());
-            size_t bytesToCopy = (std::min)(varData.size(), static_cast<size_t>(0xFC04));
-            memcpy(&block[0x300], varData.data(), bytesToCopy);
-            NOBLE_INFO("BlamEngine: Injected {} bytes of game variant into launch block (+0x300)", bytesToCopy);
+            if (varData.size() < 0x5329) {
+                NOBLE_WARN("BlamEngine: Game variant '{}' is too small ({} bytes)", variantPath.string(), varData.size());
+            } else {
+                std::vector<uint8_t> decoded(0xFC04, 0);
+                alignas(16) uint8_t status[256] = {};
+                if (SafeCallGameVariantDecode(m_hModule, varData.data(), decoded.data(), status)) {
+                    memcpy(&block[0x300], decoded.data(), decoded.size());
+                    NOBLE_INFO("BlamEngine: Decoded game variant '{}' into launch block (+0x300)", variantPath.string());
+                } else {
+                    NOBLE_ERROR("BlamEngine: haloreach.dll could not decode game variant '{}'", variantPath.string());
+                }
+            }
+        } else if (!loadedPrebuilt) {
+            NOBLE_WARN("BlamEngine: No game variant found for launch block (looked for '{}')", variantPath.string());
         }
     }
 
