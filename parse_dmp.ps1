@@ -1,49 +1,75 @@
-$path = "build/bin/Release/noble-crash.dmp"
+$path = "noble-crash.dmp"
 $data = [System.IO.File]::ReadAllBytes($path)
 
 $numStreams = [System.BitConverter]::ToUInt32($data, 8)
 $dirRva = [System.BitConverter]::ToUInt32($data, 12)
 
+$modules = @()
 for ($i = 0; $i -lt $numStreams; $i++) {
     $entryOffset = $dirRva + ($i * 12)
     $type = [System.BitConverter]::ToUInt32($data, $entryOffset)
-    $size = [System.BitConverter]::ToUInt32($data, $entryOffset + 4)
     $rva = [System.BitConverter]::ToUInt32($data, $entryOffset + 8)
     
-    if ($type -eq 6) { # ExceptionStream
-        $threadId = [System.BitConverter]::ToUInt32($data, $rva)
-        $code = [System.BitConverter]::ToUInt32($data, $rva + 8)
-        $addr = [System.BitConverter]::ToUInt64($data, $rva + 24)
-        Write-Host ("Exception: 0x{0:X8} at 0x{1:X16}" -f $code, $addr)
-        
-        $ctxSize = [System.BitConverter]::ToUInt32($data, $rva + 160)
-        $ctxRva  = [System.BitConverter]::ToUInt32($data, $rva + 164)
-        Write-Host "Thread Context RVA: $ctxRva (size $ctxSize)"
-        
-        $rax = [System.BitConverter]::ToUInt64($data, $ctxRva + 0x78)
-        $rcx = [System.BitConverter]::ToUInt64($data, $ctxRva + 0x80)
-        $rdx = [System.BitConverter]::ToUInt64($data, $ctxRva + 0x88)
-        $rbx = [System.BitConverter]::ToUInt64($data, $ctxRva + 0x90)
-        $rsp = [System.BitConverter]::ToUInt64($data, $ctxRva + 0x98)
-        $rbp = [System.BitConverter]::ToUInt64($data, $ctxRva + 0xA0)
-        $rsi = [System.BitConverter]::ToUInt64($data, $ctxRva + 0xA8)
-        $rdi = [System.BitConverter]::ToUInt64($data, $ctxRva + 0xB0)
-        $r8  = [System.BitConverter]::ToUInt64($data, $ctxRva + 0xB8)
-        $r9  = [System.BitConverter]::ToUInt64($data, $ctxRva + 0xC0)
-        $r10 = [System.BitConverter]::ToUInt64($data, $ctxRva + 0xC8)
-        $r11 = [System.BitConverter]::ToUInt64($data, $ctxRva + 0xD0)
-        $rip = [System.BitConverter]::ToUInt64($data, $ctxRva + 0xF8)
-        
-        Write-Host ("RAX: 0x{0:X16}" -f $rax)
-        Write-Host ("RCX: 0x{0:X16}" -f $rcx)
-        Write-Host ("RDX: 0x{0:X16}" -f $rdx)
-        Write-Host ("RBX: 0x{0:X16}" -f $rbx)
-        Write-Host ("RSP: 0x{0:X16}" -f $rsp)
-        Write-Host ("RBP: 0x{0:X16}" -f $rbp)
-        Write-Host ("R8 : 0x{0:X16}" -f $r8)
-        Write-Host ("R9 : 0x{0:X16}" -f $r9)
-        Write-Host ("R10: 0x{0:X16}" -f $r10)
-        Write-Host ("R11: 0x{0:X16}" -f $r11)
-        Write-Host ("RIP: 0x{0:X16}" -f $rip)
+    if ($type -eq 4) { # ModuleListStream
+        $numModules = [System.BitConverter]::ToUInt32($data, $rva)
+        for ($m = 0; $m -lt $numModules; $m++) {
+            $modOffset = $rva + 4 + ($m * 108)
+            $baseOfMod = [System.BitConverter]::ToUInt64($data, $modOffset)
+            $sizeOfMod = [System.BitConverter]::ToUInt32($data, $modOffset + 8)
+            $nameRva = [System.BitConverter]::ToUInt32($data, $modOffset + 20)
+            $nameLen = [System.BitConverter]::ToUInt32($data, $nameRva)
+            $name = [System.Text.Encoding]::Unicode.GetString($data, $nameRva + 4, $nameLen)
+            $modules += [PSCustomObject]@{
+                Base = $baseOfMod
+                Size = $sizeOfMod
+                Name = [System.IO.Path]::GetFileName($name)
+            }
+        }
+    }
+}
+
+function Resolve-Address($addr) {
+    foreach ($mod in $modules) {
+        if ($addr -ge $mod.Base -and $addr -lt ($mod.Base + $mod.Size)) {
+            $offset = $addr - $mod.Base
+            return ("{0}+0x{1:X}" -f $mod.Name, $offset)
+        }
+    }
+    return ("0x{0:X16}" -f $addr)
+}
+
+# Inspect all threads
+for ($i = 0; $i -lt $numStreams; $i++) {
+    $entryOffset = $dirRva + ($i * 12)
+    $type = [System.BitConverter]::ToUInt32($data, $entryOffset)
+    $rva = [System.BitConverter]::ToUInt32($data, $entryOffset + 8)
+    
+    if ($type -eq 3) { # ThreadListStream
+        $numThreads = [System.BitConverter]::ToUInt32($data, $rva)
+        for ($t = 0; $t -lt [Math]::Min(5, $numThreads); $t++) {
+            $tOffset = $rva + 4 + ($t * 48)
+            $tId        = [System.BitConverter]::ToUInt32($data, $tOffset)
+            $stackStart = [System.BitConverter]::ToUInt64($data, $tOffset + 24)
+            $stackSize  = [System.BitConverter]::ToUInt32($data, $tOffset + 32)
+            $stackRva   = [System.BitConverter]::ToUInt32($data, $tOffset + 36)
+            $cRva       = [System.BitConverter]::ToUInt32($data, $tOffset + 44)
+            
+            $rip = [System.BitConverter]::ToUInt64($data, $cRva + 0xf8)
+            $rsp = [System.BitConverter]::ToUInt64($data, $cRva + 0x98)
+            
+            Write-Host ("Thread {0} (TID {1}): RIP = {2}" -f $t, $tId, (Resolve-Address $rip))
+            
+            # Print top 5 frames from stack
+            $offsetInStack = [Math]::Max(0, [int]($rsp - $stackStart))
+            $found = 0
+            for ($p = $offsetInStack; $p -lt ($stackSize - 8) -and $found -lt 20; $p += 8) {
+                $val = [System.BitConverter]::ToUInt64($data, $stackRva + $p)
+                $res = Resolve-Address $val
+                if ($res -notmatch "^0x" -and $res -notmatch "ntdll" -and $res -notmatch "KERNELBASE") {
+                    Write-Host ("    Frame: {0}" -f $res)
+                    $found++
+                }
+            }
+        }
     }
 }

@@ -57,7 +57,6 @@ private:
     std::vector<uint8_t> BuildLaunchBlock(uint32_t mapId, uint32_t gameModeTag, int difficulty, uint32_t skulls,
                                          const std::string& customMvarPath = "", const std::string& customVariantPath = "");
     uint32_t ResolveMapId(const std::string& mapName);
-    void InitializePoolDescriptors();
 
     void* m_engineInstance = nullptr;
     HMODULE m_hModule = nullptr;

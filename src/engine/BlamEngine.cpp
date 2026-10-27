@@ -1,5 +1,6 @@
 #include "BlamEngine.hpp"
 #include "ReachHost.hpp"
+#include "RasterizerAtomHooks.hpp"
 #include "ui/LoadScreen.hpp"
 #include "hooks/HookManager.hpp"
 #include "common/Logger.hpp"
@@ -10,42 +11,6 @@
 #include <filesystem>
 
 namespace noble {
-
-// Fallback prediction atom buffer (512 atoms * 0x88 bytes = 69,632 bytes)
-alignas(16) static uint8_t s_fallbackAtomBuffer[512 * 0x88] = { 0 };
-
-typedef void(__fastcall* BindAtomFn)(uint32_t slot, uint32_t poolIndex);
-static BindAtomFn s_originalBindAtom = nullptr;
-static uintptr_t s_haloReachBase = 0;
-
-static void __fastcall Hook_BindAtom(uint32_t slot, uint32_t poolIndex) {
-    if (s_haloReachBase && poolIndex < 32) {
-        uintptr_t poolDesc = s_haloReachBase + 0xC8E4C0 + (static_cast<uintptr_t>(poolIndex) * 0x70);
-        void** pAtomArray = reinterpret_cast<void**>(poolDesc + 0x50);
-        if (*pAtomArray == nullptr) {
-            *pAtomArray = s_fallbackAtomBuffer;
-        }
-    }
-    if (s_originalBindAtom) {
-        s_originalBindAtom(slot, poolIndex);
-    }
-}
-
-typedef void(__fastcall* UpdatePoolFn)(uint32_t poolIndex);
-static UpdatePoolFn s_originalUpdatePool = nullptr;
-
-static void __fastcall Hook_UpdatePool(uint32_t poolIndex) {
-    if (s_haloReachBase && poolIndex < 32) {
-        uintptr_t poolDesc = s_haloReachBase + 0xC8E4C0 + (static_cast<uintptr_t>(poolIndex) * 0x70);
-        void** pAtomArray = reinterpret_cast<void**>(poolDesc + 0x50);
-        if (*pAtomArray == nullptr) {
-            *pAtomArray = s_fallbackAtomBuffer;
-        }
-    }
-    if (s_originalUpdatePool) {
-        s_originalUpdatePool(poolIndex);
-    }
-}
 
 static void SafeCallVariantInit(HMODULE hModule, void* targetBuffer) {
     if (!hModule || !targetBuffer) return;
@@ -74,29 +39,6 @@ BlamEngine::BlamEngine() = default;
 
 BlamEngine::~BlamEngine() {
     Shutdown();
-}
-
-
-void BlamEngine::InitializePoolDescriptors() {
-    if (!m_hModule) return;
-    uintptr_t base = reinterpret_cast<uintptr_t>(m_hModule);
-    uintptr_t poolTable = base + 0xC8E4C0;
-
-    DWORD oldProtect = 0;
-    VirtualProtect(reinterpret_cast<void*>(poolTable), 32 * 0x70, PAGE_READWRITE, &oldProtect);
-
-    for (size_t i = 0; i < 32; ++i) {
-        uintptr_t poolDesc = poolTable + (i * 0x70);
-        void** pAtomArray = reinterpret_cast<void**>(poolDesc + 0x50);
-        if (*pAtomArray == nullptr) {
-            *pAtomArray = s_fallbackAtomBuffer;
-        }
-    }
-
-    if (oldProtect) {
-        VirtualProtect(reinterpret_cast<void*>(poolTable), 32 * 0x70, oldProtect, &oldProtect);
-    }
-    NOBLE_INFO("BlamEngine: Initialized fallback atom arrays for all 32 resource pools.");
 }
 
 bool BlamEngine::Initialize(const ReachInstallInfo& installInfo, HMODULE hModule, const ReachExports& exports, const EngineHostContext& context) {
@@ -168,23 +110,8 @@ bool BlamEngine::Initialize(const ReachInstallInfo& installInfo, HMODULE hModule
     // Configure Host object paths
     ReachHost::Get().SetPaths(installInfo.reachDirectory, installInfo.mapsDirectory, ReachHost::Get().GetDataDir());
 
-    // Install NULL safeguard detour for prediction atom binder at RVA 0x274488
-    // Haloreach.dll's 0x274488 function reads poolDesc[0x50] (atom array) and dereferences
-    // offset +0x8 without checking for NULL. Providing fallback atom buffer prevents crash at 0x2744F2.
-    s_haloReachBase = reinterpret_cast<uintptr_t>(m_hModule);
-    void* bindAtomTarget = reinterpret_cast<void*>(s_haloReachBase + 0x274488);
-    HookManager::InstallHook(bindAtomTarget,
-        reinterpret_cast<void*>(&Hook_BindAtom),
-        reinterpret_cast<void**>(&s_originalBindAtom),
-        "BindAtom_NullGuard");
-
-    void* updatePoolTarget = reinterpret_cast<void*>(s_haloReachBase + 0x2743A4);
-    HookManager::InstallHook(updatePoolTarget,
-        reinterpret_cast<void*>(&Hook_UpdatePool),
-        reinterpret_cast<void**>(&s_originalUpdatePool),
-        "UpdatePool_NullGuard");
-
-    InitializePoolDescriptors();
+    // Install NULL safeguard detours for Rasterizer prediction atom accessors (RVAs 0x2743A4..0x274800)
+    RasterizerAtomHooks::Install(m_hModule);
 
     m_isInitialized = true;
     NOBLE_INFO("BlamEngine host interface emulation initialized and ready for single-pass map launch.");

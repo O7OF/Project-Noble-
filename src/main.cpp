@@ -249,16 +249,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     while (window->ProcessMessages()) {
         blamEngine->Update(0.016f);
 
-        // If loading screen is active, render the authentic 3D wireframe point cloud (.dots)
-        if (noble::LoadScreen::Get().IsActive()) {
-            renderer->BeginFrame();
-            noble::LoadScreen::Get().Render(static_cast<float>(window->GetWidth()), static_cast<float>(window->GetHeight()));
-            renderer->EndFrame(true);
-        } else {
-            // Once in game / main menu, haloreach.dll renders directly to swap chain; present and allow overlay
-            renderer->EndFrame(false);
-            Sleep(8);
-        }
+        // Allow haloreach.dll's internal render thread (Slot 1) to drive presentation
+        Sleep(10);
     }
 
     // 13. Clean shutdown (Correct order: Hooks & VFS -> Engine -> Loader -> Renderer)
