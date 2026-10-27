@@ -59,6 +59,7 @@ const MenuMap kMissions[] = {
     { "m60",       "The Package" },
     { "m70",       "The Pillar of Autumn" },
     { "m70_bonus", "Lone Wolf" },
+    { "m70_a",     "Epilogue" },
 };
 const char* const kDifficulties[] = { "Easy", "Normal", "Heroic", "Legendary" };
 

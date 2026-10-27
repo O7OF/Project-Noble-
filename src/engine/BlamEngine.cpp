@@ -211,8 +211,9 @@ uint32_t BlamEngine::ResolveMapId(const std::string& mapName) {
     if (lower.find("exodus") != std::string::npos || lower.find("m50") != std::string::npos || lower == "184") return 184;
     if (lower.find("new alexandria") != std::string::npos || lower.find("m52") != std::string::npos || lower == "185") return 185;
     if (lower.find("the package") != std::string::npos || lower.find("m60") != std::string::npos || lower == "186") return 186;
-    if (lower.find("lone wolf") != std::string::npos || lower.find("m70_bonus") != std::string::npos || lower == "189") return 189;
     if (lower.find("the pillar of autumn") != std::string::npos || lower.find("m70") != std::string::npos || lower == "187") return 187;
+    if (lower.find("epilogue") != std::string::npos || lower.find("m70_a") != std::string::npos || lower == "188") return 188;
+    if (lower.find("lone wolf") != std::string::npos || lower.find("m70_bonus") != std::string::npos || lower == "189") return 189;
 
     // Multiplayer / Forge maps (launch index 190-209)
     for (const auto& m : kMultiplayerMaps) {
@@ -412,11 +413,13 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
     // as Reach Renaissance does. A raw .bin file is NOT the in-memory layout, so never memcpy it.
     // Without a variant the engine cannot resolve what to load (it requests "haloreach\maps\.map"
     // and stalls at 4%). Default: MCC's stock slayer_054.bin from the player's own install.
-    {
+    // NOTE: Authentic pre-built Campaign launch blocks already contain authentic campaign state
+    // and mission variants at +0x300, and must NOT be overwritten with multiplayer Slayer!
+    if (!isCampaign || !customVariantPath.empty()) {
         std::filesystem::path variantPath;
         if (!customVariantPath.empty() && std::filesystem::exists(customVariantPath)) {
             variantPath = customVariantPath;
-        } else {
+        } else if (!isCampaign && !isMainMenu) {
             // Firefight needs a Firefight game variant (otherwise the engine reports "no game
             // selected"); RR likewise loads <MCC>\haloreach\game_variants\<mode>.bin for it.
             variantPath = ReachHost::Get().GetReachDir() / "game_variants" /

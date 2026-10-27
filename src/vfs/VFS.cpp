@@ -121,6 +121,17 @@ std::wstring VFS::ResolvePath(const std::wstring& requestedPath, DWORD desiredAc
             }
         } else {
             isTargetingMcc = true;
+            // Strip leading "haloreach\" or "haloreach/" from relative path
+            // s_baseMccPath already points to "<mccRoot>\haloreach", so prepending it without stripping
+            // resulted in ".../haloreach/haloreach/maps/fonts/font_package_icon.bin" (double haloreach).
+            std::wstring pStr = p.wstring();
+            std::wstring pLower = pStr;
+            std::transform(pLower.begin(), pLower.end(), pLower.begin(), ::towlower);
+            if (pLower.rfind(L"haloreach\\", 0) == 0) {
+                p = fs::path(pStr.substr(10));
+            } else if (pLower.rfind(L"haloreach/", 0) == 0) {
+                p = fs::path(pStr.substr(10));
+            }
         }
 
         if (isTargetingMcc) {
@@ -159,6 +170,20 @@ std::wstring VFS::ResolvePath(const std::wstring& requestedPath, DWORD desiredAc
             fs::path baseAsset = s_baseMccPath / p;
             if (RawPathExists(baseAsset.wstring())) {
                 return baseAsset.wstring();
+            }
+
+            // Priority D: Check inside maps directory (e.g. fonts/font_package_icon.bin)
+            fs::path mapsAsset = s_baseMccPath / "maps" / p;
+            if (RawPathExists(mapsAsset.wstring())) {
+                return mapsAsset.wstring();
+            }
+
+            // Priority E: Check MCC root relative
+            if (s_baseMccPath.has_parent_path()) {
+                fs::path mccRootAsset = s_baseMccPath.parent_path() / normalized;
+                if (RawPathExists(mccRootAsset.wstring())) {
+                    return mccRootAsset.wstring();
+                }
             }
         }
     } catch (...) {

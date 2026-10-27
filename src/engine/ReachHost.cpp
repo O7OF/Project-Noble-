@@ -676,14 +676,21 @@ static void FillLocalInput(uint8_t* st) {
     for (int vk = 1; vk < 256; ++vk) {
         uint8_t v = 0;
         if (GetAsyncKeyState(vk) < 0) {
-            if (s_keyDownSince[vk] == 0) s_keyDownSince[vk] = now;
-            ULONGLONG held = now - s_keyDownSince[vk];
-            if (held < 500) {
+            const bool isMouse = (vk == VK_LBUTTON || vk == VK_RBUTTON || vk == VK_MBUTTON || vk == VK_XBUTTON1 || vk == VK_XBUTTON2);
+            if (isMouse) {
+                // Mouse buttons (primary fire, zoom, melee) stay continuous down (0x80).
+                // Do not apply typing repeat arithmetic, which turns 0x80 into 0x81+ and breaks full-auto firing!
                 v = 0x80;
             } else {
-                ULONGLONG n = (held - 500) / 33;
-                if (n > 0x7E) n = 0x7E;
-                v = static_cast<uint8_t>(static_cast<int>(n) - 0x7F);
+                if (s_keyDownSince[vk] == 0) s_keyDownSince[vk] = now;
+                ULONGLONG held = now - s_keyDownSince[vk];
+                if (held < 500) {
+                    v = 0x80;
+                } else {
+                    ULONGLONG n = (held - 500) / 33;
+                    if (n > 0x7E) n = 0x7E;
+                    v = static_cast<uint8_t>(static_cast<int>(n) - 0x7F);
+                }
             }
         } else {
             s_keyDownSince[vk] = 0;
@@ -1452,22 +1459,41 @@ public:
     bool GetGlyph(wchar_t ch, uint32_t style, float scale, const char* face, HostGlyphData* outGlyph) {
         if (!outGlyph) return false;
 
+        std::lock_guard<std::mutex> lock(m_mutex);
+
+        // Check if an icon was registered for this character (e.g. weapon icons 0xE100..0xE1FF)
+        auto iconIt = m_iconGlyphs.find(static_cast<uint16_t>(ch));
+        if (iconIt != m_iconGlyphs.end()) {
+            *outGlyph = iconIt->second;
+            return true;
+        }
+
         uint16_t faceId = HashFace(face);
         uint32_t scaleKey = static_cast<uint32_t>(scale * 1000.0f);
         uint64_t key = MakeGlyphKey(ch, faceId, style, scaleKey);
 
-        std::lock_guard<std::mutex> lock(m_mutex);
         auto it = m_cache.find(key);
         if (it != m_cache.end()) {
             *outGlyph = it->second;
             return true;
         }
 
-        // Check if an icon was registered for this character
-        auto iconIt = m_iconGlyphs.find(static_cast<uint16_t>(ch));
-        if (iconIt != m_iconGlyphs.end()) {
-            *outGlyph = iconIt->second;
-            return true;
+        // For HUD digits '0'-'9', check prewarmed Fixedsys and tvnord before re-rasterizing
+        if (ch >= L'0' && ch <= L'9') {
+            uint16_t fxFaceId = HashFace("fixedsys");
+            uint64_t fxKey = MakeGlyphKey(ch, fxFaceId, style, 1000);
+            auto itFx = m_cache.find(fxKey);
+            if (itFx != m_cache.end()) {
+                *outGlyph = itFx->second;
+                return true;
+            }
+            uint16_t tvFaceId = HashFace("tvnord");
+            uint64_t tvKey = MakeGlyphKey(ch, tvFaceId, style, 1000);
+            auto itTv = m_cache.find(tvKey);
+            if (itTv != m_cache.end()) {
+                *outGlyph = itTv->second;
+                return true;
+            }
         }
 
         return RasterizeGlyphLocked(ch, style, scale, face, key, outGlyph);
@@ -1507,6 +1533,11 @@ public:
             const uint32_t* srcRow = reinterpret_cast<const uint32_t*>(srcBytes + y * pitch);
             for (uint32_t x = 0; x < w; ++x) {
                 uint32_t color = srcRow[x];
+                // In font_package_icon.bin, pixels may have alpha = 0.
+                // Ensure opaque alpha (0xFF) for non-black pixels so HUD icons render visibly.
+                if ((color & 0xFF000000) == 0 && (color & 0x00FFFFFF) != 0) {
+                    color |= 0xFF000000;
+                }
                 subPixels[y * w + x] = color;
                 m_pixels[(gy + y) * 1024 + (gx + x)] = color;
             }
@@ -1533,8 +1564,9 @@ public:
         data.width = static_cast<uint16_t>(w);
         data.height = static_cast<uint16_t>(h);
         data.originX = 0;
-        data.originY = static_cast<int16_t>(h);
-        data.advanceX = static_cast<int16_t>(advanceX > 0 ? advanceX : w);
+        // In Reach's text::register_icon, argument 8 is 'top' (baseline offset); width is advanceX.
+        data.originY = static_cast<int16_t>(advanceX > 0 ? advanceX : h);
+        data.advanceX = static_cast<int16_t>(w);
         data.ascent = -static_cast<int16_t>(h);
         data.page = 0;
         data.reserved = 0;
@@ -1556,6 +1588,10 @@ public:
         std::lock_guard<std::mutex> lock(m_mutex);
         uint16_t iconCh = static_cast<uint16_t>(ch & 0xFFFF);
         if (m_registeredIcons.find(iconCh) != m_registeredIcons.end()) {
+            return true;
+        }
+        // Characters 0xE100 - 0xE1FF are font_package_icon weapon glyphs
+        if (iconCh >= 0xE100 && iconCh <= 0xE1FF) {
             return true;
         }
         uint16_t faceId = HashFace(face);
