@@ -366,7 +366,7 @@ static std::atomic<float> s_loadFraction{0.0f};
 // Noble shows its post-game panel and hands the record to the career code (cR, stats).
 // Layout notes: docs/HANDOFF.md, "Game results".
 static uint64_t __fastcall HostSlot6_GameResults(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
-    (void)thisPtr; (void)a4;
+    (void)thisPtr; (void)a2; (void)a4;
     int launchState = -1;
     if (HMODULE reach = GetModuleHandleW(L"haloreach.dll")) {
         SafeReadInt32(reinterpret_cast<uintptr_t>(reach) + 0xC1A114, &launchState);

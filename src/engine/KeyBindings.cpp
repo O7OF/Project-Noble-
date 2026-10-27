@@ -22,18 +22,6 @@ const uint8_t kDefaultKeys[kActionCount] = {
     /* 64 */ 0,          0,
 };
 
-} // namespace
-
-int DefaultKey(int action) {
-    return (action >= 0 && action < kActionCount) ? kDefaultKeys[action] : 0;
-}
-
-int EffectiveKey(int action) {
-    const SettingsData s = Settings::Get().Snapshot();
-    auto it = s.keyOverrides.find(action);
-    return it != s.keyOverrides.end() ? it->second : DefaultKey(action);
-}
-
 // Slot numbers are MCC's GameAbstractButton order (the enum list in MCC-Win64-Shipping.exe, 66 entries
 // ending in CountTotal); every default key below matches MCC's default PC layout for Reach. Names and
 // groups follow MCC's CONFIGURE BINDINGS screen. Actions other Halo games use are listed last.
@@ -126,6 +114,16 @@ const ActionInfo* Find(int action) {
 }
 
 } // namespace
+
+int DefaultKey(int action) {
+    return (action >= 0 && action < kActionCount) ? kDefaultKeys[action] : 0;
+}
+
+int EffectiveKey(int action) {
+    const SettingsData s = Settings::Get().Snapshot();
+    auto it = s.keyOverrides.find(action);
+    return it != s.keyOverrides.end() ? it->second : DefaultKey(action);
+}
 
 const char* ActionName(int action) {
     const ActionInfo* a = Find(action);

@@ -1,4 +1,4 @@
-# Project Noble: handoff (2026-10-27, 14:10 ET)
+# Project Noble: handoff (2026-10-27, 14:30 ET)
 
 This picks up a reverse-engineering and C++ effort on **Tyler's Windows PC**. All paths below are real paths on that machine.
 Tyler (GitHub `WeabooTyler117`) works with a partner (GitHub `O7OF`) who owns the repo and writes most of the code.
@@ -10,6 +10,33 @@ community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownershi
 MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour.
 
 ---
+
+## 0. Pick up here (14:30 ET)
+
+**Git state.** Everything up to the career work was committed on `main` as one commit ("Front-end menus, MCC art, skulls,
+subtitles, settings, key binding names, career/cR, master server") and rebased onto the partner's `1d2a282` (their
+`EnginePatches` whitespace-crash fix is kept). The `ReachHost.cpp` conflict was resolved by keeping Noble's version: all of
+the partner's ReachHost edits were in the text code that Noble had already replaced or fixed the same way (glyph record,
+digit/icon shortcuts, string fallback). The one idea not carried over: pre-rasterising text in slot 61 (TextPrepare).
+If `git status` still says "rebase in progress", run `git add src/engine/ReachHost.cpp`, then
+`git -c core.editor=true rebase --continue`, then `git push`.
+
+**Not pushed yet:** a build fix made after that commit: `src/engine/KeyBindings.cpp` (the action table had landed outside
+the anonymous namespace) and `src/engine/ReachHost.cpp` (unused-parameter warning). With them the build passes
+(14:22). To push:
+`git add src/engine/KeyBindings.cpp src/engine/ReachHost.cpp`, `git commit -m "Fix KeyBindings.cpp build"`, `git push`.
+
+**Running the test job.** `D:\Halo-Reach-Community-Edition\build\agent\go.bat` (full path; from inside `build` the relative
+path fails). It writes to files, so the console stays quiet; the line `EXITCODE` on screen is a quirk of `nb_build.bat`
+(`echo EXITCODE 0>>` redirects) and means the build succeeded. Current job = `nb_run13.bat`: key-bindings screenshot
+(`Q_keys.bmp`), then Sword Base with `-end-round-after 40 -quit-after 90` (`R_*` files in `build\bin\Release`).
+
+**Result of the 14:22 run:** build OK, game ran 90 s without problems, but **`-end-round-after` did not end the game**:
+the log shows "ending the round" at 40 s and then nothing (no slot 6, no `Career:` lines). Either `haloreach+0x7B3EC`
+needs to run inside the simulation update (not from slot 1), or ending a round alone does not end a 1-round Slayer game
+(try `game_won`'s evaluator `+0x1B0810`, or the engine's end-game function that `mp_round_end` leads to). Until then,
+test career by **playing a short match to the end** (Slayer time limit) and reading the `Career:` log lines and
+`data\userdata\results\last_game.bin`. `Q_keys.bmp` from this run has not been looked at yet.
 
 ## 1. Where things are
 
