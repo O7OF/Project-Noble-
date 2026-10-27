@@ -121,8 +121,9 @@ bool BlamEngine::Initialize(const ReachInstallInfo& installInfo, HMODULE hModule
         NOBLE_INFO("c_game_engine Init returned: 0x{:X}", initStatus);
     }
 
-    // Configure Host object paths
+    // Configure Host object paths and renderer devices
     ReachHost::Get().SetPaths(installInfo.reachDirectory, installInfo.mapsDirectory, ReachHost::Get().GetDataDir());
+    ReachHost::Get().SetDeviceAndContext(m_context.pDevice, m_context.pContext);
     // Pool SafeGuards: removed. The null atom arrays they guarded against came from the swap chain
     // missing DXGI_USAGE_SHADER_INPUT (fixed in D3D11Renderer.cpp) and host slot 32 not filling
     // the display-settings buffer (fixed in ReachHost.cpp).
