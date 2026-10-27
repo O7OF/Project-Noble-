@@ -39,6 +39,7 @@ struct SettingsData {
 
     // Player / network
     std::string playerName = "NobleSix";
+    std::string serviceTag = "NOBL";  // Reach service tag: 1-4 letters/digits, upper case (profile +0x1AC)
     std::string masterServerUrl;   // e.g. http://203.0.113.5:8080 ; empty = LAN only
     std::vector<std::string> favorites; // "address:port" entries saved in the SERVERS tab
 };

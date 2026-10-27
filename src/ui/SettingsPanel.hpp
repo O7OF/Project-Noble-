@@ -32,6 +32,7 @@ private:
     int m_rebindAction = -1;      // action waiting for a key press
     double m_rebindStarted = 0.0;
     char m_nameBuf[32] = {};
+    char m_tagBuf[8] = {};
     char m_masterBuf[256] = {};
     const char* m_message = nullptr;
 };

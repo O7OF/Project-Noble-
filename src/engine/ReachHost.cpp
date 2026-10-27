@@ -583,8 +583,11 @@ static uint64_t __fastcall HostSlot34_ProfileSettings(void* thisPtr, uint64_t a1
         // RR host::hit case 0x22: the profile is a zeroed 64 KB block with only the 4-character
         // service tag (UTF-16) written at +0x1AC. The old defaults here (+0x00 = 1, armour colours
         // at +0x18/+0x1C) are not what RR sends, so they are no longer written.
-        static const wchar_t kServiceTag[4] = { L'N', L'O', L'B', L'L' };
-        memcpy(s_hostProfileBuffer + 0x1AC, kServiceTag, sizeof(kServiceTag));
+        // The tag is the player's (SETTINGS > GAMEPLAY > SERVICE TAG, default NOBL), 1-4 characters.
+        wchar_t serviceTag[4] = {};
+        const std::string tag = Settings::Get().Snapshot().serviceTag;
+        for (size_t i = 0; i < 4 && i < tag.size(); ++i) serviceTag[i] = static_cast<wchar_t>(tag[i]);
+        memcpy(s_hostProfileBuffer + 0x1AC, serviceTag, sizeof(serviceTag));
         s_hostProfileInitialized = true;
     }
 

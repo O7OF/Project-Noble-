@@ -521,8 +521,9 @@ Test option `-end-round-after <seconds>` calls the `mp_round_end` script command
    the clip while the window is being moved or isn't focused (`WM_ENTERSIZEMOVE` / `WM_KILLFOCUS`), and re-clip on focus.
 9. **Respawn timer** shows "Respawn in 00000001": the number filling `camera_list.prop_respawn_time` is zero-padded.
    Check the format used for that string (string table entry `0x84091d25` in `ReachHost.cpp`).
-10. **Player name / service tag** in game are still the placeholders "NobleSix" / "NOBL"; they should come from the
-   player's own settings.
+10. ~~Player name / service tag~~ done 17:58: the name comes from SETTINGS > GAMEPLAY > PLAYER NAME (slot 88) and the
+   service tag from the new SERVICE TAG field (`Settings::serviceTag`, 1-4 letters/digits, default NOBL; written to
+   profile +0x1AC).
 11. **Forge**: the menu launches MP with `00_basic_editing_054.bin`; the map loads, check in game that the Monitor/editor toggle works.
 9. **Career system** (planned with Tyler). Done: `Career` module, 50 ranks (Halopedia table), cR after each match
    (per-minute pay rising with rank, kills/assists/medals bonus, 1-in-8 random bonus 100–3000, 1-in-200 jackpot 7,777;

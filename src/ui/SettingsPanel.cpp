@@ -120,6 +120,7 @@ void SettingsPanel::Render() {
     if (!m_loaded) {
         m_edit = Settings::Get().Snapshot();
         std::snprintf(m_nameBuf, sizeof(m_nameBuf), "%s", m_edit.playerName.c_str());
+        std::snprintf(m_tagBuf, sizeof(m_tagBuf), "%s", m_edit.serviceTag.c_str());
         std::snprintf(m_masterBuf, sizeof(m_masterBuf), "%s", m_edit.masterServerUrl.c_str());
         m_loaded = true;
     }
@@ -168,6 +169,7 @@ void SettingsPanel::Render() {
     ImGui::BeginDisabled(!m_dirty);
     if (NobleStyle::PrimaryButton("APPLY", ImVec2(140, 34))) {
         m_edit.playerName = m_nameBuf;
+        m_edit.serviceTag = m_tagBuf;
         m_edit.masterServerUrl = m_masterBuf;
         Settings::Get().Update(m_edit);
         MasterServerClient::Get().SetUrl(m_edit.masterServerUrl);
@@ -193,6 +195,7 @@ void SettingsPanel::Render() {
         m_edit.favorites = favourites;
         m_edit.campaignSkulls = skulls;
         std::snprintf(m_nameBuf, sizeof(m_nameBuf), "%s", m_edit.playerName.c_str());
+        std::snprintf(m_tagBuf, sizeof(m_tagBuf), "%s", m_edit.serviceTag.c_str());
         m_dirty = true;
     }
     if (m_message) {
@@ -349,6 +352,12 @@ void SettingsPanel::RenderGameplay() {
     ImGui::SetNextItemWidth(260);
     if (ImGui::InputText("##name", m_nameBuf, 16)) m_dirty = true;
     ImGui::TextDisabled("Shown in game, up to 15 characters.");
+    RowLabel("SERVICE TAG");
+    ImGui::SetNextItemWidth(120);
+    if (ImGui::InputText("##tag", m_tagBuf, 5, ImGuiInputTextFlags_CharsUppercase | ImGuiInputTextFlags_CharsNoBlank)) {
+        m_dirty = true;
+    }
+    ImGui::TextDisabled("Up to 4 letters or digits, shown next to your name in game.");
     Section("MENUS");
     RowLabel("MENU BACKGROUND");
     static const char* const kModes[] = { "random", "reach", "noble" };

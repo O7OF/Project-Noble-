@@ -37,6 +37,16 @@ void Clamp(SettingsData& d) {
     d.volumeOther = std::clamp(d.volumeOther, 0.0f, 1.0f);
     if (d.playerName.empty()) d.playerName = "NobleSix";
     if (d.playerName.size() > 15) d.playerName.resize(15);  // Reach gamertags are at most 15 characters
+    {
+        // Service tag: Reach allows up to 4 characters, letters and digits, shown in upper case.
+        std::string tag;
+        for (char c : d.serviceTag) {
+            if (tag.size() == 4) break;
+            if (c >= 'a' && c <= 'z') c = static_cast<char>(c - 'a' + 'A');
+            if ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) tag.push_back(c);
+        }
+        d.serviceTag = tag.empty() ? "NOBL" : tag;
+    }
     if (d.favorites.size() > 50) d.favorites.resize(50);
     for (auto it = d.keyOverrides.begin(); it != d.keyOverrides.end();) {
         if (it->first < 0 || it->first >= 66 || it->second <= 0 || it->second >= 256) it = d.keyOverrides.erase(it);
@@ -75,6 +85,7 @@ void Settings::Load() {
             Read(j, "campaignSkulls", d.campaignSkulls);
             Read(j, "menuBackground", d.menuBackground);
             Read(j, "playerName", d.playerName);
+            Read(j, "serviceTag", d.serviceTag);
             Read(j, "masterServerUrl", d.masterServerUrl);
             Read(j, "favorites", d.favorites);
             auto keys = j.find("keyOverrides");
@@ -115,6 +126,7 @@ bool Settings::Save() {
         j["campaignSkulls"] = d.campaignSkulls;
         j["menuBackground"] = d.menuBackground;
         j["playerName"] = d.playerName;
+        j["serviceTag"] = d.serviceTag;
         j["masterServerUrl"] = d.masterServerUrl;
         j["favorites"] = d.favorites;
         nlohmann::json keys = nlohmann::json::object();
