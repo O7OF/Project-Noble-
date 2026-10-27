@@ -112,6 +112,7 @@ set(SOURCES
     src/network/UPnP.cpp
     src/network/SessionManager.cpp
     src/audio/VgmAudioHook.cpp
+    src/engine/RasterizerAtomHooks.cpp
     src/ui/LoadScreen.cpp
 )
 
@@ -131,6 +132,7 @@ set(HEADERS
     src/vfs/VFS.hpp
     src/engine/BlamEngine.hpp
     src/engine/ReachHost.hpp
+    src/engine/RasterizerAtomHooks.hpp
     src/ui/UIManager.hpp
     src/ui/ServerBrowser.hpp
     src/ui/ArmorCustomizer.hpp
