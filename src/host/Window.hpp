@@ -24,6 +24,9 @@ public:
 
     void SetCustomWndProc(MessageCallback callback) { m_customWndProc = callback; }
 
+    // Borderless window covering the primary monitor (DISPLAY setting). Call before Create().
+    void SetBorderless(bool borderless) { m_borderless = borderless; }
+
 private:
     static LRESULT CALLBACK StaticWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
     LRESULT HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
@@ -34,6 +37,7 @@ private:
     HWND m_hwnd = nullptr;
     HINSTANCE m_hInstance = nullptr;
     bool m_shouldClose = false;
+    bool m_borderless = false;
     MessageCallback m_customWndProc;
 };
 

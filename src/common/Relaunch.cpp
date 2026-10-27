@@ -1,0 +1,46 @@
+#include "Relaunch.hpp"
+#include "Logger.hpp"
+
+#include <windows.h>
+#include <mutex>
+
+namespace noble {
+namespace Relaunch {
+
+namespace {
+std::mutex s_mutex;
+std::wstring s_currentArgs;
+} // namespace
+
+void SetCurrentGameArgs(const std::wstring& args) {
+    std::lock_guard<std::mutex> lock(s_mutex);
+    s_currentArgs = args;
+}
+
+std::wstring CurrentGameArgs() {
+    std::lock_guard<std::mutex> lock(s_mutex);
+    return s_currentArgs;
+}
+
+bool Start(const std::wstring& args) {
+    wchar_t exe[MAX_PATH] = {};
+    if (!GetModuleFileNameW(nullptr, exe, MAX_PATH)) return false;
+    std::wstring cmd = L"\"" + std::wstring(exe) + L"\"";
+    if (!args.empty()) cmd += L" " + args;
+    std::wstring dir = exe;
+    const size_t slash = dir.find_last_of(L"\\/");
+    if (slash != std::wstring::npos) dir.resize(slash);
+    STARTUPINFOW si{};
+    si.cb = sizeof(si);
+    PROCESS_INFORMATION pi{};
+    if (!CreateProcessW(exe, cmd.data(), nullptr, nullptr, FALSE, 0, nullptr, dir.c_str(), &si, &pi)) {
+        NOBLE_ERROR("Relaunch: could not start Noble (error {})", GetLastError());
+        return false;
+    }
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    return true;
+}
+
+} // namespace Relaunch
+} // namespace noble

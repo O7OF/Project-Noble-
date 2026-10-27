@@ -1,0 +1,15 @@
+{
+  "name": "noble-master-server",
+  "version": "0.1.0",
+  "description": "Project Noble master server: list of online Halo: Reach (Noble) games. Based on the Outbreak-Z session registry by O7OF.",
+  "main": "master_server.js",
+  "private": true,
+  "scripts": {
+    "start": "node master_server.js",
+    "test": "node test_master_server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT"
+}

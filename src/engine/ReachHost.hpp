@@ -31,6 +31,9 @@ public:
     const std::filesystem::path& GetReachDir() const { return m_reachDir; }
     const std::filesystem::path& GetMapsDir() const { return m_mapsDir; }
     const std::filesystem::path& GetDataDir() const { return m_dataDir; }
+    void SetDisplaySize(uint32_t width, uint32_t height) { m_displayWidth = width; m_displayHeight = height; }
+    uint32_t GetDisplayWidth() const { return m_displayWidth; }
+    uint32_t GetDisplayHeight() const { return m_displayHeight; }
 
 private:
     struct ID3D11Device* m_device = nullptr;
@@ -45,6 +48,8 @@ private:
     std::filesystem::path m_reachDir;
     std::filesystem::path m_mapsDir;
     std::filesystem::path m_dataDir;
+    uint32_t m_displayWidth = 1280;
+    uint32_t m_displayHeight = 720;
 };
 
 } // namespace noble

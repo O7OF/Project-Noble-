@@ -14,6 +14,11 @@
 #include "ui/FrontEndMenu.hpp"
 #include "ui/LoadScreen.hpp"
 #include "network/SessionManager.hpp"
+#include "network/MasterServerClient.hpp"
+#include "common/Settings.hpp"
+#include "common/Relaunch.hpp"
+#include "ui/PauseMenu.hpp"
+#include "ui/UiArt.hpp"
 #include "hooks/LobbyPatches.hpp"
 #include "hooks/ForgePatches.hpp"
 #include "hooks/EnginePatches.hpp"
@@ -146,8 +151,14 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     // Configure Host object paths early
     noble::ReachHost::Get().SetPaths(reachInstall->reachDirectory, reachInstall->mapsDirectory, userStoragePath);
 
+    // Player settings (data\userdata\settings.json): window size, controls, volumes, name, servers.
+    noble::Settings::Get().Load();
+    const noble::SettingsData startupSettings = noble::Settings::Get().Snapshot();
+
     // 6. Create Win32 host window
-    auto window = std::make_unique<noble::Window>(L"Halo: Reach Community Edition", 1280, 720);
+    auto window = std::make_unique<noble::Window>(L"Halo: Reach Community Edition",
+        static_cast<uint32_t>(startupSettings.width), static_cast<uint32_t>(startupSettings.height));
+    window->SetBorderless(startupSettings.borderless);
     if (!window->Create()) {
         NOBLE_ERROR("Failed to create Win32 host window.");
         return 1;
@@ -165,8 +176,21 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 
     // Initialize ImGui UI Manager
     noble::UIManager::Initialize(window->GetHwnd(), renderer->GetDevice(), renderer->GetContext());
+    {
+        // Menu and loading-screen pictures: the player's own art, Noble's art, or MCC's UI packs.
+        wchar_t exePath[MAX_PATH] = {};
+        GetModuleFileNameW(nullptr, exePath, MAX_PATH);
+        noble::UiArt::Init(renderer->GetDevice(), reachInstall->reachDirectory.parent_path(),
+                           std::filesystem::path(exePath).parent_path());
+    }
 
     window->Show(nCmdShow);
+    noble::ReachHost::Get().SetDisplaySize(window->GetWidth(), window->GetHeight());
+
+    // LAN discovery and hosting must already run while the front-end menu is open, so a game
+    // hosted from the SERVERS tab (or by someone else on the LAN) shows up in the list.
+    noble::SessionManager::Get().Initialize();
+    noble::MasterServerClient::Get().SetUrl(startupSettings.masterServerUrl);
 
     // Front-end menu. MCC ships no mainmenu.map for Reach, so with no -map (or -map/-mode mainmenu,
     // which the launcher's Main Menu button passes) Noble shows its own menu before the engine starts.
@@ -174,10 +198,14 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     std::string frontEndVariant;
     std::string frontEndMode;
     int frontEndDifficulty = 1;
+    uint64_t frontEndSkulls = 0;
     if (noble::FrontEndMenu::ShouldShow()) {
         noble::FrontEndChoice choice = noble::FrontEndMenu::Run(*window, *renderer, reachInstall->reachDirectory);
         if (!choice.play) {
             NOBLE_INFO("Exiting from the front-end menu.");
+            noble::MasterServerClient::Get().Shutdown();   // removes a hosted game from the list
+            noble::SessionManager::Get().Shutdown();
+            noble::UiArt::Shutdown();
             noble::UIManager::Shutdown();
             noble::Logger::Shutdown();
             ExitProcess(0);
@@ -186,6 +214,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         frontEndVariant = choice.variantPath;
         frontEndMode = choice.mode;
         frontEndDifficulty = choice.difficulty;
+        frontEndSkulls = choice.skulls;
     }
 
     // 8. Load and bootstrap haloreach.dll directly in process memory
@@ -225,7 +254,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     std::string customMvar = "";
     std::string customVariant = "";
     int launchDifficulty = 1;
-    uint32_t launchSkulls = 0;
+    uint64_t launchSkulls = 0;
 
     auto WideToNarrow = [](const std::wstring& w) -> std::string {
         if (w.empty()) return "";
@@ -249,6 +278,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
                 customMvar = WideToNarrow(argvW[++i]);
             } else if (arg == L"-variant" && i + 1 < numArgs) {
                 customVariant = WideToNarrow(argvW[++i]);
+            } else if (arg == L"-skulls" && i + 1 < numArgs) {
+                launchSkulls = _wcstoui64(argvW[++i], nullptr, 0);  // MCC skull bits, e.g. 0x10 = Blind
             } else if (arg == L"-difficulty" && i + 1 < numArgs) {
                 launchDifficulty = _wtoi(argvW[++i]);
             }
@@ -261,6 +292,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         launchMap = frontEndMap;
         launchMode = frontEndMode.empty() ? "multiplayer" : frontEndMode;
         launchDifficulty = frontEndDifficulty;
+        launchSkulls = frontEndSkulls;
         if (customVariant.empty()) customVariant = frontEndVariant;
     }
 
@@ -297,6 +329,28 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         }
     }
 
+    // Remember this launch for the post-game "PLAY AGAIN" button and the loading screen.
+    {
+        auto toWide = [](const std::string& s) -> std::wstring {
+            if (s.empty()) return L"";
+            const int len = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
+            if (len <= 0) return L"";
+            std::wstring w(len - 1, L'\0');
+            MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, w.data(), len);
+            return w;
+        };
+        std::wstring args = L"-map \"" + toWide(launchMap) + L"\" -mode \"" + toWide(launchMode) + L"\"";
+        args += L" -difficulty " + std::to_wstring(launchDifficulty);
+        if (!customVariant.empty()) args += L" -variant \"" + toWide(customVariant) + L"\"";
+        if (!customMvar.empty()) args += L" -mvar \"" + toWide(customMvar) + L"\"";
+        if (launchSkulls != 0) args += L" -skulls " + std::to_wstring(launchSkulls);
+        noble::Relaunch::SetCurrentGameArgs(args);
+        noble::PauseMenu::SetLoadingMap(launchMap);
+        // Load the loading-screen pictures now (main thread), before the engine starts drawing.
+        noble::UiArt::LoadingBackground(launchMap);
+        noble::UiArt::MapPreview(launchMap, true);
+    }
+
     NOBLE_INFO("Launching Halo: Reach Engine: Target Map='{}', Mode='{}'", launchMap, launchMode);
     blamEngine->LaunchMap(launchMap, launchMode, launchDifficulty, launchSkulls, customMvar, customVariant);
 
@@ -315,7 +369,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 
     // 13. Clean shutdown (Correct order: Hooks & VFS -> Engine -> Loader -> Renderer)
     NOBLE_INFO("Initiating clean host shutdown...");
+    noble::MasterServerClient::Get().Shutdown();
     noble::SessionManager::Get().Shutdown();
+    noble::UiArt::Shutdown();
     noble::UIManager::Shutdown();
     noble::LoadScreen::Get().Shutdown();
     blamEngine->Shutdown();

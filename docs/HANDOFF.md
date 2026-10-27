@@ -1,4 +1,4 @@
-# Project Noble: handoff (2026-10-27, 05:20 ET)
+# Project Noble: handoff (2026-10-27, 14:10 ET)
 
 This picks up a reverse-engineering and C++ effort on **Tyler's Windows PC**. All paths below are real paths on that machine.
 Tyler (GitHub `WeabooTyler117`) works with a partner (GitHub `O7OF`) who owns the repo and writes most of the code.
@@ -68,10 +68,22 @@ Run (Steam must be running), from `build\bin\Release`:
 | `noble-client.exe` | Noble front-end menu (also for `-map mainmenu` / `-mode mainmenu`, which the C# launcher passes) |
 | `noble-client.exe -map 20_sword_slayer -mode multiplayer` | Sword Base directly (most tested map) |
 | `noble-client.exe -map m10 -mode campaign -difficulty 1` | Winter Contingency (0 easy .. 3 legendary) |
-| `noble-client.exe -map ff10_prototype -mode firefight -difficulty 1` | Firefight (default game type Standard) |
+| `noble-client.exe -map ff50_park -mode firefight -difficulty 1` | Firefight on Beachhead (default game type Standard) |
+| `noble-client.exe -map m10 -mode campaign -skulls 0x10` | campaign with skulls (MCC skull bits, here Blind; see §5 Skulls) |
 
 Other args: `-variant <path to MCC game variant .bin>`, `-mvar <path>`, `-mouse-scale F` (mouse look per pixel, default 0.0008),
 `-profile <file>` (load a captured profile instead of Noble's built-in one; relative paths are resolved against the exe folder).
+Test-only args: `-menu-screen <main|campaign|skulls|firefight|custom|forge|servers|settings|armory|mods>` opens that
+front-end screen, `-menu-tab <0-5>` picks the SETTINGS tab (1 = key bindings), `-menu-capture <frames>` saves `capture_<frames>.bmp` of the menu and exits; `-launch-poke 0x48=0x10,...`
+writes u32 values into the launch block (for finding fields by experiment). `-capture-frames 300,3600` saves `capture_<frame>.bmp` next to the exe (and one shot ~120 frames after the
+post-game panel appears); `-quit-after <seconds>` ends the run by itself; `-end-round-after <seconds>` ends the round (reaches the post-game results). Player settings (resolution, borderless, mouse,
+invert, key overrides, volumes, menu sounds, player name, master-server URL, favourites) are in
+`build\bin\Release\data\userdata\settings.json`, edited from the SETTINGS tab.
+
+Unattended build without the developer prompt: `build\nb_build.bat` calls Visual Studio's bundled `cmake.exe` directly
+and writes `build\nb_build_out.txt` (VsDevCmd hung when started from a script). `build\nb_run3.bat` = 12-minute Sword Base
+test with captures. These helper scripts are under the git-ignored `build\`.
+
 Read `build\bin\Release\noble-client.log` after a run. Useful lines: `launch state N`, `Slot 4 - EngineEvent`, `slot N first call`,
 `FATAL EXCEPTION`, `FrontEndMenu: PLAY ...`, `Slot 48 ... .map`.
 
@@ -85,15 +97,25 @@ Read `build\bin\Release\noble-client.log` after a run. Useful lines: `launch sta
 | Scoped aiming | ✅ (look settings block in profile) |
 | Sound (gunfire, footsteps, damage) | ✅ (profile volumes + XAudio2 redist directory) |
 | Mouse cursor in Reach menus (class/loadout pick) | ✅ (Windows arrow; RR uses it too) |
-| Pause menu (Esc: Resume / Quit to Menu / Quit) | ✅ (ImGui overlay, base to extend) |
-| Front-end menu (map + game type, Campaign, Firefight, old Servers/Armor/Workshop/Settings screens as tabs) | ✅ |
+| Pause menu (Esc: Resume / Quit to Menu / Quit) | ✅ (ImGui overlay, Noble style) |
+| Loading screen while the map loads (was ~5 s black) | ✅ map name + moving bar (`PauseMenu::DrawLoading`), ends on the first slot-10 call (tested) |
+| Settings tab (controls, key bindings, audio, display, player name) | ✅ `SettingsPanel`, saved to `settings.json`, applied at next launch |
+| Menu look and sounds | ✅ `NobleStyle` (Reach-like palette, Bahnschrift), `MenuSounds` (synthesised clicks, 40 ms hover cooldown) |
+| Front-end menu, Reach style (`FrontEndMenu.cpp`): MAIN MENU list (Campaign, Matchmaking*, Firefight, Custom Game, Forge, Theater*, Armory, Mods, Settings, Quit; *greyed), My Party box, button hints; Campaign (mission list + preview, difficulty, skulls, score multiplier), Skulls, Firefight / Custom Game (map + preview, game type, difficulty), Forge (MP launch with MCC's `00_basic_editing_054.bin`: Forge World loads with no score/timer HUD; switching to the editor (Monitor) is untested), Games (server browser), MCC-style Settings | ✅ screenshots of every screen checked |
+| Menu / loading art (`UiArt`): player's `data\ui\custom\`, Noble's `data\ui\noble\`, else read from the MCC install at run time (nothing shipped) | ✅ campaign scenes as backgrounds, map previews, skull icons, controller picture |
+| Skulls (launch block +0x48) | ✅ verified (Blind hides the HUD) |
+| Cinematic / dialogue subtitles | ✅ SUBTITLES setting (on by default), hook on `haloreach+0xD5244`; tested on Winter Contingency's intro |
 | Campaign missions (cutscene → gameplay) | ✅ tested Noble Actual (prologue, ends after cutscene) and Winter Contingency |
-| Firefight | ✅ tested with Standard |
-| Black screen when a game ends (engine reports results through host slot 6) | ❌ nothing handles game end yet |
-| HUD / scoreboard text | ❌ mostly boxes; partner's `TextAtlas` in progress, see `docs\hud-text-findings.md` |
-| HUD dim / dark blue | ❌ not gamma (RR leaves gamma at 1.0); suspect a profile setting, see findings doc |
-| **Spire (`35_island`) crashes ~15 s into a match** (Slayer and SWAT) | ❌ see §6 |
-| Servers / Armor Locker / Workshop Mods tabs | ⚠️ screens only; not wired to the engine |
+| Firefight | ✅ tested with Standard. Scenario names (from MCC's preview pictures): `ff50_park` = **Beachhead**, `ff10_prototype` = **Overlook** (the old front-end menu had them swapped; BlamEngine's name aliases "beachhead"/"overlook" are still swapped, the scenario names it maps are right) |
+| Game end (engine reports results through host slot 6) | ✅ post-game panel: Play again / Return to menu / Quit (relaunches Noble); tested at Slayer's 10-minute limit |
+| Memory | ✅ no leak during a match: 12-minute run, private bytes 3835 → 3852 MB, working set ~1.3 GB, flat |
+| HUD / scoreboard text and icons | ✅ letters, numbers and weapon/grenade icons render (glyph layout and string slots fixed, see §5) |
+| HUD bars / compass / motion tracker dark navy | ❌ not gamma, not the profile (same with RR's profile), not slot 51/33; see §6 |
+| Key bindings: all 66 slots named | ✅ slot numbers = MCC's `GameAbstractButton` order (enum strings in `MCC-Win64-Shipping.exe`); `KeyBindings.cpp` groups them like MCC's CONFIGURE BINDINGS (movement, actions, vehicle, UI, Forge, Theater; 10 slots only other Halo games use). Crouch default is now Left Ctrl (MCC) |
+| Career / cR (`src/career/Career.cpp`) | ⚠️ first version, needs a real match to confirm stat slots: reads MCC's game-results record at slot 6, pays cR, shows it on the post-game panel, saves `data\userdata\career.json`. See §5 "Game results" |
+| Spire (`35_island`) crash ~15 s into a match | ✅ fixed by the text fixes: 3+ minutes of Slayer on Spire without a crash (13:30 run) |
+| Servers tab | ⚠️ LAN list, own hosted game always listed, favourites, direct connect, optional master server (`tools\master-server`). **Joining** another player's game is not possible yet (engine net slots 41/43 not implemented); the UI says so |
+| Armor Locker / Workshop Mods tabs | ⚠️ screens only; not wired to the engine |
 | Engine main menu (`mainmenu.map`) | ❌ by design: MCC ships no `mainmenu.map` for Reach (RR ships its own modified 298 MB `mainmenu_all.map`, which Noble cannot) |
 
 ## 4. Repo state
@@ -103,6 +125,21 @@ Work from this session went up as separate branches/PRs, each building on the pr
 partner's TextAtlas/GammaPass) → `fix/zoom-aim` → `feat/front-end-menu` (front-end menu, then campaign, Firefight and the
 extra tabs). Check on GitHub which of these are merged into `main`. Uncommitted at the time of writing: `docs/hud-text-findings.md`
 and this file, plus possibly the campaign/Firefight changes if they weren't committed (`git status` shows it).
+
+**Uncommitted work from 2026-10-27 afternoon** (on top of the night session below): `src/ui/UiArt.*` (new),
+`FrontEndMenu.*` (rewritten, Reach-style screens + skulls), `SettingsPanel.*` (MCC style), `NobleStyle.*` (hero/small
+fonts), `PauseMenu.cpp` (loading art, Firefight names), `KeyBindings.*` (groups), `Settings.*` (subtitles, campaignSkulls,
+menuBackground), `ReachHost.cpp` (subtitle hook), `BlamEngine.*` (skulls at +0x48 as u64, `-launch-poke`), `main.cpp`
+(`-skulls`, UiArt), `FrameCapture.*` (`SaveNow`), `CMakeLists.txt` (UiArt, windowscodecs). Suggested extra PRs: (7) skulls +
+subtitles (engine), (8) UiArt + Reach-style front end + MCC settings.
+
+**Uncommitted work from the 2026-10-27 night session** (on disk in `D:\Halo-Reach-Community-Edition`, builds, nothing committed):
+new `src/common/Settings.*`, `Relaunch.*`, `src/engine/KeyBindings.*`, `FrameCapture.*`, `src/network/MasterServerClient.*`,
+`src/ui/NobleStyle.*`, `MenuSounds.*`, `SettingsPanel.*`, `tools/master-server/`; changes to `ReachHost.*` (text atlas, string
+table, slots 6/32/33/51, settings, memory log), `main.cpp`, `Window.*`, `SessionManager.cpp` (LAN beacon crash), `ServerBrowser.*`,
+`FrontEndMenu.cpp`, `PauseMenu.*`, `UIManager.cpp`, `MissionLauncher.cpp` (map names), `CMakeLists.txt` (new files, winhttp/winmm,
+`if(EXISTS data)`). Suggested PR split: (1) LAN crash fix, (2) HUD text/icons + string table, (3) settings + key bindings + style
++ sounds, (4) server browser + master server, (5) loading/post-game overlay + Relaunch, (6) test tooling (FrameCapture).
 
 Local test files that must **never** be committed (they're RR's data, all under the git-ignored `build\`):
 `build\bin\Release\data\profile_1.bin` (copy of RR's captured profile) and `data\test_profile_*.bin` (bisection files). Delete
@@ -123,7 +160,8 @@ them when convenient; Noble no longer reads `profile_1.bin` automatically.
 `haloreach.dll` loads `xaudio2_9redist.dll` by bare name during start-up: Noble keeps `SetDllDirectoryW(<MCC>\MCC\Binaries\Win64)`
 set for the whole run (as RR does), otherwise there is no sound. Audio itself is FMOD inside the DLL.
 
-**Launch state machine** `haloreach+0xC1A114`: 0…10 while launching, 11 = launched. Failure strings table `0x1803A2DCC`
+**Launch state machine** `haloreach+0xC1A114`: 0…10 while launching, 11 = launched (reached ~5 s before the map is on
+screen; the first slot-10 call marks the game session start). Failure strings table `0x1803A2DCC`
 (17 `no map selected`, 18 `no game selected`, 19 `map load failure`).
 
 **Paths:** map list from `FindFirstFileW` over `haloreach\maps\info\*.*` relative to cwd (hence the sandbox); files through slot 48.
@@ -140,6 +178,13 @@ menu, MP, campaign and Firefight are byte-identical apart from these fields (lay
 | +0x1D334, +0x1D5BC (map id) | MP map id (Sword Base 1000, Boardwalk 1035, ...) | 1035 | 1035 | 1035 |
 | +0x300 game variant (decoded with `haloreach+0x373A0`) | chosen variant (default `slayer_054`) | slayer | **a Firefight variant** (`hr_ff_*.bin`; RR loads `game_variants\<mode>.bin`) | slayer |
 
+**Skulls: u64 at +0x48** in MCC's skull numbering, verified (Blind hides the HUD). `haloreach+0x3A22C` converts it to the
+engine's own bits (game options +0x1D8, copied to game globals +0x1EAC8, which the `skull_enable` script command flips).
+The MCC bit is the skull's index in MCC's alphabetical skull list: Iron 18, Black Eye 3, Tough Luck 36, Catch 7, Cloud 13,
+Famine 11, Thunderstorm 34, Tilt 35, Mythic 23, Blind 4, Cowbell 8, Grunt Birthday Party 16, IWHBYD 19 (38 skulls in the
+converter). Noble used to write skulls to +0x3C, which is a different
+field the engine reads as u16; that was removed.
+
 Also: +0x18 / +0x1D5C4 `0x88880000`, +0x50 random 16-byte launch id, +0x1D308 map variant area (init `haloreach+0x6BFF8`).
 Launch indices: campaign 178 m05 Noble Actual, 179 m10, 180 m20, 181 m30, 182 m35, 183 m45, 184 m50, 185 m52, 186 m60, 187 m70,
 188 m70_a, 189 m70_bonus; Firefight 210 ff10_prototype, 211 ff45_corvette, 212 ff20_courtyard, 213 ff60_icecave, 214 ff70_holdout,
@@ -148,20 +193,27 @@ Launch indices: campaign 178 m05 Noble Actual, 179 m10, 180 m20, 181 m30, 182 m3
 **Host interface** (`host[0]` = 160-slot vtable, `host[1]` = secondary interface; args `(host, a1, a2, a3, a4)`).
 | Slot | Meaning | Noble |
 |---|---|---|
-| 1 | per-frame, before Present: `(swapchain, &flags)` | gamma pass, then pause menu |
+| 1 | per-frame, before Present: `(swapchain, &flags)` | gamma pass, then overlay (loading / pause / post-game), then test capture; memory log every 1800 frames |
 | 4 | engine event `(reason, msg)` | logs |
-| 6 | **game results** `(buffer, 0xD5A8, 0x14)`: called when a game ends (RR `results::on_game_results`) | stub, nothing reacts yet → black screen |
+| 6 | **game results** `(buffer, 0xD5A8, 0x14)`: called when a game ends (RR `results::on_game_results`) | shows the post-game panel (only once launch state is 11); results not decoded yet |
 | 10 | return secondary interface | ✅ |
 | 23 | load progress | ✅ |
-| 32 / 33 | display settings / quality | ✅ / partial |
+| 32 / 33 | display settings / quality | 32: size from the window; 33: writes the 16 bytes `0x3F80000000000201, 0x2BF800000` **directly at a1** (as RR) |
 | 34 | **profile**: pointer to a 64 KB block (see Profile below) | ✅ built-in defaults |
 | 36 | **input poll** `(userIndex, u8 state[0x130])`, users 0–3 every tick (`haloreach+0x23AE7`) | ✅ |
 | 47 / 48 | user-data folder / file path resolver | ✅ |
-| 51 | feature query | always true |
-| 61–67 | text: prepare, glyph, atlas, has_icon, kerning, register_icon, metrics | partner's `TextAtlas`; see `docs\hud-text-findings.md` |
+| 51 | feature query `(id, bool* out, u64* extra)`: RR answers from mask FEATURES_ON = 0x6E and zeroes `*extra` | same mask; the engine only asks 1, 2, 5, 6 (all on) |
+| 55 / 56 / 57 | strings: clear / register `(table, id, const char* name, const char* suffix)` / lookup `(table, id, wchar_t* out, cap)` | key = CRC-32/MPEG-2 (poly 0x04C11DB7, init 0xFFFFFFFF, no xorout) of upper-case `name_suffix` (leading `$` skipped); text from `<MCC>\data\ui\Localization\EN_HaloReach.bin` (magic 0x90CE6B7A; u32@0x78 key bytes, keys from 0x80; u32@0x7C string block; NUL-terminated UTF-8 in key order). Lookup returns 0 when unknown so the engine uses the map's own strings |
+| 61–67 | text: prepare, glyph, atlas, has_icon, kerning, register_icon, metrics | ✅ `TextAtlas`: 1024² pages (≤16), shelf packing, dirty-rect upload in slot 63 |
 | 88 | identity `(u64* xuid, wchar_t* name, cap, userIndex)` → 1 | ✅ |
 | 116 | controller map `(xuid)`; RR only logs | returns 0, writes nothing |
 | iface2 147 | pointer to a 16-byte session GUID; every other iface2 slot returns 0 (RR does the same) | ✅ |
+
+**Glyph record (slot 62 out, 26 bytes):** ch@0, zero@2..7, atlasX@8, atlasY@0xA, w@0xC, h@0xE, originY@0x10, originX@0x12,
+advance@0x14, -ascent@0x16, page@0x18. Glyph alpha = min((gray·255+32)>>6, 255) from GDI GGO_GRAY8. Icons (0xE000–0xE2FF): the
+engine registers one through slot 66 `(host, ch, size, f32 scale, face, w, h, top, ARGB4444-decoded pixels, pitch)` only when
+slot 64 has_icon returns false (engine path `haloreach+0x1CF4D0` reads `font_package_icon.bin`); store the pixels unchanged,
+originY = top, originX = 0, advance = w, ascent = 0.
 
 **Input state (slot 36 buffer, 0x130 bytes, same as RR byte for byte).** +0x000 u32 1 (keyboard/mouse; 0 = gamepad);
 +0x004+VK u8 per key (`0x80` pressed < 500 ms, then `0x81..0xFF` held); +0x104/+0x108 f32 mouse look; +0x114 wheel;
@@ -178,27 +230,82 @@ Noble's built-in defaults (`ReachHost.cpp`):
 | +0xA5C / +0xA60 / +0xA64 | f32 volumes (game / music / other) | no sound |
 Still zero: rest of +0x000..+0x42B and +0xA68..+0xBFF (suspected to hold the HUD brightness/opacity setting).
 
+**Subtitles.** Before drawing subtitles the engine calls `haloreach+0xD5244`, which walks the local players' table
+(`haloreach+0x2A03C50`, stride 0xAB8, profile data at +8) and reads each player's subtitle setting at profile +0xA30
+(0 automatic = only when voice and text language differ, 1 on, 2 off). That table is **not** a copy of the slot 34 buffer
+(writing +0xA30 there does nothing; volumes etc. are read field by field). Noble hooks `0xD5244` (prologue `48 89 5C 24 08`)
+and answers "on" when the SUBTITLES setting is on.
+
+**MCC UI texture packs** (`<MCC>\Data\UI\texturepacks`, read by `UiArt`): `<name>.perm.bin` = records of 0x1E0 bytes, magic
+0xCDBFA090, name at +0x44, u16 w/h at +0x74/+0x76, u64 size at +0x88, u64 offset into `<name>.temp.bin` at +0x90; data BC1 or
+BC3 (decided by size per 4x4 block). Useful packs: `levelstexturepack` (every Reach map/mission preview, 316x160 and
+668x292 `…LARGE`), `skullstexturepack` (128x128 skull icons), `controllertexturepack` (controller picture, button glyphs),
+`mainmenutexturepack`, `globaluitexturepack`. `loadingtexturepack.perm.bin` (304 MB) has no names: entries
+`{u32 0x5E73CDD7, u32 size, u32 size, u32 0, data}`, padded; 1920x1080 BC1. Reach's 12 campaign scenes are found by a CRC-32
+of their first 4 KB (table in `UiArt.cpp`). `Data\UI\BackgroundVideos\Images\*.png` are only 392x220.
+
+**Key-binding slots.** The 66 profile slots use the engine's own action numbering, which matches neither MCC list in
+`Data\BuiltInData\HaloReachController.json`. Names in `KeyBindings.cpp` come from MCC's default keys (unique key or the
+W/A/S/D block); the rest are shown as "OTHER (NOT IDENTIFIED YET)". Several defaults appear twice (two `R`, `F`, `LMB`, `Space`),
+so e.g. Fire may be slot 8 or 27: test a rebind of each named action in game.
+
+**Loadout names** come from the game variant (Slayer's default list is Sprint / Armor Lock / Jet Pack / Active Camo /
+Hologram; Invasion on Spire shows its own tier list starting with Scout; Air Assault / Operator / Grenadier etc. belong to
+such game types). They render correctly.
+
 **UI cursor.** `haloreach+0x2D2018` runs only while a Reach screen that uses the pointer is up (RR `uicursor::install` hooks it,
 prologue `48 89 5C 24 18`). Noble hooks it with MinHook; within 250 ms of a call the mouse is freed, the arrow shown and no
 look delta sent. The engine reads the pointer itself (GetCursorPos/ScreenToClient).
 
+### Game results (host slot 6)
+
+`haloreach+0xF95CB` builds MCC's results record (**0x5D138 bytes**) with `haloreach+0x39128` from the engine's own
+results at `haloreach+0x28B83B0`, then calls host slot 6 (`[host]+0x30`) with **a1 = pointer to the record**. a2 is not a
+size: it is r8 left over from the conversion loop (always 0xD5A8). Layout read from `+0x39128`:
+
+| Offset | Contents |
+|---|---|
+| +0x0000 u32 | game category (engine mode byte at results +5 mapped to MCC's list) |
+| +0x0008, +0x0010 u64; +0x18, +0x19 u8 | copied from the engine header |
+| +0x0020 | 16 player records × 0x1C8: +0x00 u8 present, +0x08 u64 player id, +0x18/+0x28/+0x2C i32, +0x30 u8, +0x34 i32 score (engine word or dword depending on mode), +0x38.., then appearance/name copy from +0x4C |
+| +0x1CA0 | 16 × 4 bytes team data |
+| +0x1CE0 | 16 per-player stat blocks × 0x5448: +0x000 23 u32 general stats, +0x05C 11 u32, +0x0AC 0x180 u32 medal counts, +0x6AC 0x32 u32, then weapon tables (0x54 weapons, 6 values each) |
+| +0x56160 | per-player pairs; +0x5D120/+0x5D124/+0x5D128 u32 and +0x5D130 u64 match totals |
+
+General-stat numbering: `haloreach+0x3B208` maps engine stat n to MCC slot (0→0, 1→1, n→n+1 for n ≥ 2). Assuming Reach
+kept Halo 3's statistic order, slots 8/9/10/11 = score/kills/assists/deaths (**provisional**, `Career.cpp` kStat*).
+Medal numbering: table built by `haloreach+0x39B00` (0x91 engine medals → MCC ids ≤ 0x17F).
+
+Test option `-end-round-after <seconds>` calls the `mp_round_end` script command's work function
+(`haloreach+0x7B3EC(-1, 0, 1)`) from slot 1, so automated runs reach slot 6. Noble writes the last record to
+`data\userdata\results\last_game.bin` (local only: it holds player names and ids; never commit it).
+
 ## 6. Known problems and next steps (in order)
 
-1. **Spire crash.** Two runs (Slayer and SWAT) crash at `haloreach+0x362FF` ~15 s into the match, right after a HUD icon is
-   registered with `TextAtlas`. That function is the engine's whitespace check (binary search over a 12-entry table at
-   `haloreach+0x9903C0`); it reads out of bounds for any character below 0x09, so the engine was laying out text containing a
-   control character. Call chain `0x36347 ← 0x1D0371 ← 0x1D0B77 ← 0x1CFEDF ...` (text layout). Most likely bad glyph/icon data
-   from the host text slots; fix §2 of `docs\hud-text-findings.md` first and re-test. To confirm, build a commit from before
-   `TextAtlas` and run Spire.
-2. **HUD text.** `docs\hud-text-findings.md`: glyph record has atlas X at +0x08 (not +0x02) and origin y/x swapped at +0x10/+0x12;
-   verify `register_icon` (slot 66) arguments against RR `text::register_icon` (0x14028cad0).
-3. **Dim HUD.** Run with `-profile D:\Reach\data\profile_1.bin`; if the HUD is bright, bisect the remaining zero profile regions
-   (same method as the zoom fix: build test profiles = Noble defaults + one region of RR's, pass with `-profile <full path>`).
-4. **End of game.** When slot 6 fires, go back to the front-end menu (restart Noble like "Quit to Menu"), or for campaign start
-   the next mission (Noble Actual → Winter Contingency, etc.).
-5. **Wire up the old tabs**: servers (P2P host/join), armor (profile/armory slots), Workshop mods (map loading through slot 48).
+1. **HUD bars, compass ticks and motion tracker are dark navy** (letters/icons are fine). The game-type intro box shown
+   during loadout selection, the "Visegrad Communications Outpost" waypoint box and the hint bar in Winter Contingency have
+   the same dark tint (in MCC that box is bright cyan), while the loadout cards are correct. Ruled out: gamma, profile (RR's
+   `profile_1.bin` gives the same picture), slot 51 mask, slot 33. Next ideas: compare a capture from RR itself (same map,
+   same spot) to be sure RR is brighter; then look at how the HUD shader gets its colour/tint (chud globals, possibly a
+   render-state or a constant the host sets in another slot, e.g. iface2 slots RR answers non-zero).
+2. ~~Spire crash~~: no longer happens after the glyph/string fixes (3+ minutes on Spire, 2026-10-27 13:30).
+3. **Memory**: Noble logs `Memory: frame N private X MB, working set Y MB` every 1800 frames. A full 10-minute match was
+   flat (+17 MB). If a leak is still seen, it is probably across front-end menu ↔ match restarts or in the menu itself.
+4. **Online joining**: engine networking slots 41/43 (and session setup) are not implemented, so the SERVERS tab can host
+   (listed on LAN/master server) but not join. This is the big missing piece for multiplayer.
+5. **Scoreboard/results**: the slot 6 record is decoded far enough for career pay (§5 "Game results"). Still to do: a
+   post-game scoreboard from it, confirm the general-stat slots with a real match, campaign "next mission".
 6. Mouse wheel (`WM_MOUSEWHEEL` → +0x114) and gamepad (XInput into +0x120..).
-7. Remove the remaining debug-only bits when they're no longer useful (slot first-call logging is fine to keep).
+7. Armor / Workshop tabs; remove debug-only bits when no longer useful.
+8. **Forge**: the menu launches MP with `00_basic_editing_054.bin`; the map loads, check in game that the Monitor/editor toggle works.
+9. **Career system** (planned with Tyler). Done: `Career` module, 50 ranks (Halopedia table), cR after each match
+   (per-minute pay rising with rank, kills/assists/medals bonus, 1-in-8 random bonus 100–3000, 1-in-200 jackpot 7,777;
+   **no daily cap** and up to **90 paid minutes** per match in every mode (Tyler's calls). Pay goes by **base type** =
+   the engine game mode BlamEngine launches with (campaign / Firefight / multiplayer incl. Forge), so modded maps and game
+   types earn exactly what their stock type earns (`Career::BeginMatch` is called from `BlamEngine::LaunchMap`); all constants at the top of `Career.cpp`, Noble's own numbers), post-game cR breakdown + rank bar.
+   Next: confirm stat slots (play a short Slayer with a few kills; `last_game.bin` + the `Career:` log lines), campaign
+   scoring (difficulty + skull multipliers, time bonus, par scores), 45 commendations, challenges (Sep 2010 – Feb 2012
+   lists) paying cR, a career/service-record screen and rank icon in the menu, Armory with the armor list.
 
 ## 7. Partner's Outbreak-Z code (reference for Noble's menus)
 
@@ -208,26 +315,26 @@ the partner owns them, porting or copying them into this repo is fine. Keep the 
 unless one is actually ported.
 
 **Usable almost as-is**
-- `master_server.js` + `package.json`: plain Node HTTP session registry. A host registers its session, sends a heartbeat,
-  and the session is dropped after 30 s without one; clients fetch the list. Game-agnostic, so it can back Noble's
-  SERVERS tab. Noble needs a small client (register + heartbeat when hosting, list fetch in the menu). Only useful once
-  P2P host/join works (next step 5). Before hosting it publicly, add a request body size limit and a per-IP limit on
-  registered sessions, so the list can't be flooded with fake entries.
+- `master_server.js` + `package.json`: **ported** to `tools/master-server/` with `MasterServerClient` in Noble. The
+  original already had a 1 MB body limit; the real gaps were that anyone could heartbeat/delete any session and that the
+  listed address came from the request body. Now: secret token per session (`X-Session-Token`), address from the socket,
+  4 KB body, 4 sessions per IP, 120 requests/min per IP, 2000 sessions, text sanitised. `node test_master_server.js` passes.
 
 **Port as designs**
-- `server_browser.gd`: favourites list, direct connect by IP:port, ping, password prompt, join-rejected message. Feature
-  list for the SERVERS tab.
+- `server_browser.gd`: **ported** (favourites, direct connect, filters, host dialog with password). Ping and join need
+  networking.
 - `settings_manager.gd`, `build_settings_menu.gd`: Gameplay / Controls / Keybinds / Controller tabs with sliders. In Noble
   the controls write the profile fields from section 5: look settings at +0x1B4, key bindings from +0x42C,
-  volumes at +0xA5C/+0xA60/+0xA64. Can be built today (doesn't depend on networking).
-- `glass_ui.gd`: colours, border widths and corner radius, to turn into one ImGui style used by `FrontEndMenu` and
-  `PauseMenu`.
+  volumes at +0xA5C/+0xA60/+0xA64. **Ported** as the SETTINGS tab (`SettingsPanel`), controller tab not yet.
+- `glass_ui.gd`: **ported** into `NobleStyle`.
 - `audio_manager.gd`: only the menu parts apply. Click / hover / tab sounds with a 40 ms hover cooldown, and a menu music
   playlist (in order or shuffled, loops, no repeat of the last track when a shuffle restarts). Play through XAudio2, which
   is already loaded. In-game sound is the engine's own FMOD and needs nothing from this file. Sound source: Reach's
   sounds can't be committed (public repo); either read them at runtime from the player's MCC install (FMOD sound banks)
-  or use our own / royalty-free sounds plus a `data\menu_music\` folder for the player's own files. Not decided yet.
-- `game_loading_screen.gd`: idea for a loading screen while the map loads.
+  or use our own / royalty-free sounds plus a `data\menu_music\` folder for the player's own files. Click/hover/tab sounds
+  are **ported** as synthesised blips (`MenuSounds`); music not done.
+- `game_loading_screen.gd`: **ported** as the loading overlay. The engine's slot 23 progress stays at 5%, so the bar only
+  shows activity, not real progress. (`ui/LoadScreen` is never drawn while the engine runs.)
 
 **Not applicable to Reach**
 - `barracks_menu.gd`, `save_stats_manager.gd`, `floating_damage_number.gd`: Outbreak-Z skins, capes, cards, prestige and
@@ -235,12 +342,14 @@ unless one is actually ported.
 - `dev_tools_menu.gd`: zombie-mode cheats (points, perks, power-ups).
 - `dev_account_search_menu.gd`, `backend_client.gd`: need Outbreak-Z's account database; its login/register ignore the
   password, so don't carry that over.
-- `hud.gd`, `scoreboard.gd`, `chat_box.gd`: Reach draws its own HUD, scoreboard and chat; the work there is fixing the
-  engine's HUD text (next steps 1-2), not replacing it.
+- `hud.gd`: Reach draws its own HUD.
+- `scoreboard.gd`: Reach's in-game scoreboard is the engine's; a post-game one would read the slot 6 results buffer.
+- `chat_box.gd`: the engine does **not** draw chat outside MCC; a chat box would have to be Noble's own overlay, and needs
+  networking first.
 - `check_api.gd`: one-line test script.
 
-**Suggested order:** SETTINGS tab wired to the profile (with the glass style), then menu sounds, then the SERVERS tab +
-master server once online joining works.
+**Status:** settings, style, menu sounds, server browser, master server and loading screen are ported (see §3). Left:
+controller settings tab, menu music, chat (after networking).
 
 ## 8. Rules for this project
 

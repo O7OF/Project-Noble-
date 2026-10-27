@@ -31,20 +31,31 @@ bool Window::Create() {
         return false;
     }
 
-    RECT rc = { 0, 0, static_cast<LONG>(m_width), static_cast<LONG>(m_height) };
-    AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, FALSE);
-
-    int windowWidth = rc.right - rc.left;
-    int windowHeight = rc.bottom - rc.top;
-
-    int posX = (GetSystemMetrics(SM_CXSCREEN) - windowWidth) / 2;
-    int posY = (GetSystemMetrics(SM_CYSCREEN) - windowHeight) / 2;
+    DWORD style = WS_OVERLAPPEDWINDOW;
+    int windowWidth = 0, windowHeight = 0, posX = 0, posY = 0;
+    if (m_borderless) {
+        // Borderless: a popup window the size of the primary monitor.
+        style = WS_POPUP;
+        m_width = static_cast<uint32_t>(GetSystemMetrics(SM_CXSCREEN));
+        m_height = static_cast<uint32_t>(GetSystemMetrics(SM_CYSCREEN));
+        windowWidth = static_cast<int>(m_width);
+        windowHeight = static_cast<int>(m_height);
+    } else {
+        RECT rc = { 0, 0, static_cast<LONG>(m_width), static_cast<LONG>(m_height) };
+        AdjustWindowRect(&rc, style, FALSE);
+        windowWidth = rc.right - rc.left;
+        windowHeight = rc.bottom - rc.top;
+        posX = (GetSystemMetrics(SM_CXSCREEN) - windowWidth) / 2;
+        posY = (GetSystemMetrics(SM_CYSCREEN) - windowHeight) / 2;
+        if (posX < 0) posX = 0;
+        if (posY < 0) posY = 0;
+    }
 
     m_hwnd = CreateWindowExW(
         0,
         wc.lpszClassName,
         m_title.c_str(),
-        WS_OVERLAPPEDWINDOW,
+        style,
         posX, posY,
         windowWidth, windowHeight,
         nullptr, nullptr,

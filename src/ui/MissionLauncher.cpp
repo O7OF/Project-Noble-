@@ -27,16 +27,16 @@ void MissionLauncher::InitializeMapRegistry() {
         // Multiplayer Maps
         { "forge_halo", "Forge World", "Multiplayer", "Massive open canvas encompassing Canyon, Island, Gulch, and Quarry.", "forge_halo.map" },
         { "70_boneyard", "Boneyard", "Multiplayer", "Large asymmetric UNSC drydock facility designed for Invasion and Big Team Battle.", "70_boneyard.map" },
-        { "50_panopticon", "Spire", "Multiplayer", "Towering Covenant spire with air-lift gravity lifts and vehicle plateaus.", "50_panopticon.map" },
+        { "50_panopticon", "Boardwalk", "Multiplayer", "Waterfront promenade in New Alexandria with a central plaza and walkways.", "50_panopticon.map" },
         { "30_settlement", "Powerhouse", "Multiplayer", "Hydroelectric facility nestled in Reach's rugged mountain wetlands.", "30_settlement.map" },
         { "20_sword_slayer", "Sword Base", "Multiplayer", "Vertical multi-tier research atrium featuring interior gravity lifts.", "20_sword_slayer.map" },
         { "45_aftship", "Zealot", "Multiplayer", "Covenant Corvette interior with low-gravity vacuum exterior catwalks.", "45_aftship.map" },
         { "45_launch_station", "Countdown", "Multiplayer", "Sabre rocket assembly launch platform with multiple close-quarters combat lanes.", "45_launch_station.map" },
         { "52_ivory_tower", "Reflection", "Multiplayer", "Luxurious executive penthouse with marble waterfalls overlooking New Alexandria.", "52_ivory_tower.map" },
-        { "35_island", "Tempest", "Multiplayer", "Lush coastal Forerunner island shoreline with twin interlocking bases.", "35_island.map" },
+        { "35_island", "Spire", "Multiplayer", "Towering Covenant spire on a coastal island, with a gravity lift and vehicle plateaus.", "35_island.map" },
         { "dlc_invasion", "Breakpoint", "Multiplayer", "High-altitude glacier research laboratory built for heavy vehicle combat.", "dlc_invasion.map" },
-        { "dlc_medium", "Anchor 9", "Multiplayer", "Orbital drydock interior with active hangars and zero-G airlocks.", "dlc_medium.map" },
-        { "dlc_slayer", "Highlands", "Multiplayer", "Military training preserve on Reach's high plateau forest.", "dlc_slayer.map" },
+        { "dlc_medium", "Tempest", "Multiplayer", "Forerunner coastline with twin interlocking bases.", "dlc_medium.map" },
+        { "dlc_slayer", "Anchor 9", "Multiplayer", "Orbital space station with hangars and zero-G airlocks.", "dlc_slayer.map" },
         { "condemned", "Condemned", "Multiplayer", "Orbital comms station taking direct plasma bombardments from Covenant cruisers.", "condemned.map" },
         { "cex_beaver_creek", "Battle Canyon", "Multiplayer", "Remastered classic canyon with twin bases, teleporters, and mid-creek cover.", "cex_beaver_creek.map" },
         { "cex_damnation", "Penance", "Multiplayer", "Covenant water-filtration facility with intricate vertical catwalks.", "cex_damnation.map" },
@@ -356,7 +356,7 @@ void MissionLauncher::RenderForgeTab(BlamEngine* engine) {
     ImGui::Spacing();
 
     static int forgeMapIndex = 0;
-    const char* forgeMaps[] = { "Forge World (forge_halo)", "Tempest (35_island)", "Anchor 9 (dlc_medium)", "Highlands (dlc_slayer)" };
+    const char* forgeMaps[] = { "Forge World (forge_halo)", "Spire (35_island)", "Tempest (dlc_medium)", "Anchor 9 (dlc_slayer)" };
     const char* forgeIds[]  = { "forge_halo", "35_island", "dlc_medium", "dlc_slayer" };
 
     ImGui::TextColored(ImVec4(0.9f, 0.7f, 0.2f, 1.0f), "SELECT CANVAS:");

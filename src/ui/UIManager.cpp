@@ -1,4 +1,5 @@
 #include "UIManager.hpp"
+#include "NobleStyle.hpp"
 #include "common/Version.hpp"
 #include <imgui.h>
 #include <imgui_impl_win32.h>
@@ -23,7 +24,14 @@ bool UIManager::Initialize(HWND hwnd, ID3D11Device* device, ID3D11DeviceContext*
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 
-    ApplyReachTheme();
+    // Controller navigation in the menus (D-pad / left stick to move, A to select, B to go back);
+    // ImGui's Win32 backend reads the pad through XInput. Replaces the focus-neighbour code the
+    // partner's settings_manager.gd needed in Godot.
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
+    io.IniFilename = nullptr;  // don't write imgui.ini next to the exe
+
+    // One shared look for all Noble screens (ui/NobleStyle.cpp).
+    NobleStyle::Apply();
 
     if (!ImGui_ImplWin32_Init(hwnd)) {
         return false;

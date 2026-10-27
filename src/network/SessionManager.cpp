@@ -6,8 +6,32 @@
 #include <ws2tcpip.h>
 #include <sstream>
 #include <algorithm>
+#include <charconv>
 
 namespace noble {
+
+namespace {
+
+// Non-throwing integer parse; the whole string must be a number.
+bool ParseInt(const std::string& s, int& out) {
+    if (s.empty() || s.size() > 10) return false;
+    const auto result = std::from_chars(s.data(), s.data() + s.size(), out);
+    return result.ec == std::errc() && result.ptr == s.data() + s.size();
+}
+
+// Text from the network is shown in the menus: drop control characters and cap the length.
+std::string SanitizeText(const std::string& s, size_t maxLen) {
+    std::string out;
+    out.reserve(std::min(s.size(), maxLen));
+    for (char c : s) {
+        if (static_cast<unsigned char>(c) < 0x20 || c == 0x7F) continue;
+        out.push_back(c);
+        if (out.size() >= maxLen) break;
+    }
+    return out;
+}
+
+} // namespace
 
 SessionManager::SessionManager() = default;
 
@@ -185,16 +209,22 @@ void SessionManager::DiscoveryListenerLoop() {
                     tokens.push_back(token);
                 }
 
-                if (tokens.size() >= 9) {
+                // Beacons come from anyone on the network: parse without exceptions (std::stoi throws
+                // on bad input, and an exception escaping this thread ends the whole process).
+                int players = 0, maxPlayers = 0, port = 0;
+                if (tokens.size() >= 9 &&
+                    ParseInt(tokens[5], players) && ParseInt(tokens[6], maxPlayers) && ParseInt(tokens[7], port) &&
+                    players >= 0 && players <= 64 && maxPlayers >= 1 && maxPlayers <= 64 &&
+                    port >= 1 && port <= 65535) {
                     DiscoveredSession session;
                     session.hostAddress = ipStr;
-                    session.sessionName = tokens[1];
-                    session.gameMode = tokens[2];
-                    session.mapName = tokens[3];
-                    session.gametypeName = tokens[4];
-                    session.playerCount = std::stoi(tokens[5]);
-                    session.maxPlayers = std::stoi(tokens[6]);
-                    session.port = static_cast<uint16_t>(std::stoi(tokens[7]));
+                    session.sessionName = SanitizeText(tokens[1], 64);
+                    session.gameMode = SanitizeText(tokens[2], 32);
+                    session.mapName = SanitizeText(tokens[3], 64);
+                    session.gametypeName = SanitizeText(tokens[4], 64);
+                    session.playerCount = players;
+                    session.maxPlayers = maxPlayers;
+                    session.port = static_cast<uint16_t>(port);
                     session.isPasswordProtected = (tokens[8] == "1");
                     session.pingMs = 12; // Local LAN base latency
                     session.lastSeen = std::chrono::steady_clock::now();
