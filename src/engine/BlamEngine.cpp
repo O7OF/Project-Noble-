@@ -1,5 +1,6 @@
 #include "BlamEngine.hpp"
 #include "ReachHost.hpp"
+#include "ui/LoadScreen.hpp"
 #include "hooks/HookManager.hpp"
 #include "common/Logger.hpp"
 #include <algorithm>
@@ -195,7 +196,7 @@ bool BlamEngine::Initialize(const ReachInstallInfo& installInfo, HMODULE hModule
     }
 
     // Configure Host object paths
-    ReachHost::Get().SetPaths(installInfo.reachDirectory, installInfo.mapsDirectory, "data");
+    ReachHost::Get().SetPaths(installInfo.reachDirectory, installInfo.mapsDirectory, ReachHost::Get().GetDataDir());
 
     // Install safeguard detours for prediction atom cache (RVA 0x274488 and 0x274524)
     s_haloReachBase = reinterpret_cast<uintptr_t>(m_hModule);
@@ -231,8 +232,10 @@ uint32_t BlamEngine::ResolveMapId(const std::string& mapName) {
         return static_cast<char>(std::tolower(c));
     });
 
-    // Main Menu (190 / 0xBE in authentic Reach engine)
-    if (lower.find("mainmenu") != std::string::npos || lower == "0" || lower == "menu" || lower == "190") return 190;
+    // Main Menu (-2 / 0xFFFFFFFE in authentic Reach Blam! engine)
+    if (lower.find("mainmenu") != std::string::npos || lower == "0" || lower == "menu" || lower == "190" || lower == "-2") {
+        return static_cast<uint32_t>(-2);
+    }
 
     // Firefight Maps (210 - 219)
     if (lower.find("beachhead") != std::string::npos || lower.find("ff10_prototype") != std::string::npos || lower == "210") return 210;
@@ -291,7 +294,15 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
 
     int clampedDiff = (difficulty >= 0 && difficulty <= 3) ? difficulty : 1;
 
-    if (mapId >= 210 && mapId <= 219) {
+    bool isMainMenu = (mapId == static_cast<uint32_t>(-2) || mapId == 190 || mapId == 0 || gameModeTag == 0);
+    uint32_t effectiveMapId = isMainMenu ? static_cast<uint32_t>(-2) : mapId;
+
+    if (isMainMenu) {
+        // Authentic Reach Main Menu launch block
+        if (std::filesystem::exists(dataRoot / "lb_m_c_1.bin")) {
+            blockPath = dataRoot / "lb_m_c_1.bin";
+        }
+    } else if (mapId >= 210 && mapId <= 219) {
         // Firefight
         blockPath = dataRoot / "blocks" / ("firefight_" + std::to_string(mapId) + "_d" + std::to_string(clampedDiff) + ".bin");
         if (!std::filesystem::exists(blockPath)) {
@@ -321,9 +332,15 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
         block[2] = 0x00;
         block[3] = 0x10;
         block[4] = 0x03;
-        block[0x0C] = 0x03;
-        block[0x10] = 0xBE;
-        block[0x14] = 0xBE;
+        block[0x0C] = isMainMenu ? 0x01 : 0x03;
+        block[0x10] = isMainMenu ? 0xFE : 0xBE;
+        block[0x11] = isMainMenu ? 0xFF : 0x00;
+        block[0x12] = isMainMenu ? 0xFF : 0x00;
+        block[0x13] = isMainMenu ? 0xFF : 0x00;
+        block[0x14] = isMainMenu ? 0xFE : 0xBE;
+        block[0x15] = isMainMenu ? 0xFF : 0x00;
+        block[0x16] = isMainMenu ? 0xFF : 0x00;
+        block[0x17] = isMainMenu ? 0xFF : 0x00;
         block[0x1A] = 0x88;
         block[0x1B] = 0x88;
         block[0x34] = 0x01;
@@ -365,21 +382,23 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
         }
 
         // Map ID & Mode tagging (from host-probe::set_map lines 78-92)
-        *reinterpret_cast<uint32_t*>(&block[0x10]) = mapId;
-        *reinterpret_cast<uint32_t*>(&block[0x14]) = mapId;
+        *reinterpret_cast<uint32_t*>(&block[0x10]) = effectiveMapId;
+        *reinterpret_cast<uint32_t*>(&block[0x14]) = effectiveMapId;
         *reinterpret_cast<uint32_t*>(&block[0x18]) = 0x88880000;
         *reinterpret_cast<uint64_t*>(&block[0x1C]) = 0;
-        *reinterpret_cast<uint32_t*>(&block[0x1D5C0]) = mapId;
+        *reinterpret_cast<uint32_t*>(&block[0x1D5C0]) = effectiveMapId;
         *reinterpret_cast<uint32_t*>(&block[0x1D5C4]) = 0x88880000;
         *reinterpret_cast<uint64_t*>(&block[0x1D5C8]) = 0;
         *reinterpret_cast<uint32_t*>(&block[0x1D334]) = gameModeTag;
         *reinterpret_cast<uint32_t*>(&block[0x1D5BC]) = gameModeTag;
     }
 
-    // Apply difficulty & skulls overrides
-    block[0x34] = static_cast<uint8_t>(clampedDiff);
-    *reinterpret_cast<uint32_t*>(&block[0x38]) = static_cast<uint32_t>(clampedDiff);
-    *reinterpret_cast<uint32_t*>(&block[0x3C]) = skulls;
+    if (!isMainMenu) {
+        // Apply difficulty & skulls overrides
+        block[0x34] = static_cast<uint8_t>(clampedDiff);
+        *reinterpret_cast<uint32_t*>(&block[0x38]) = static_cast<uint32_t>(clampedDiff);
+        *reinterpret_cast<uint32_t*>(&block[0x3C]) = skulls;
+    }
 
     // Dynamic Custom Map Variant (.mvar) Injection (RVA 0x17AF00 parse_map_variant)
     if (!customMvarPath.empty() && std::filesystem::exists(customMvarPath) && m_hModule) {
@@ -455,11 +474,14 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
         gameModeTag = 1035; // 0x40B Firefight
     } else if ((mapId >= 178 && mapId <= 189) || gameMode == "Campaign" || gameMode == "campaign") {
         gameModeTag = 1;    // Campaign
-    } else if (mapId == 0 || mapId == 190 || gameMode == "mainmenu" || gameMode == "menu") {
+    } else if (mapId == static_cast<uint32_t>(-2) || mapId == 0 || mapId == 190 || gameMode == "mainmenu" || gameMode == "menu") {
         gameModeTag = 0;    // Main Menu
     }
 
     auto launchBlock = BuildLaunchBlock(mapId, gameModeTag, difficulty, skulls, customMvarPath, customVariantPath);
+
+    // Request corresponding wireframe loading screen .dots
+    LoadScreen::Get().RequestMapDots(mapName, ReachHost::Get().GetDataDir());
 
     if (m_fnStart) {
         void* hostPtr = ReachHost::Get().GetInterface();
@@ -469,21 +491,19 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
         NOBLE_INFO("c_game_engine Start returned: 0x{:X}", startStatus);
     }
 
-    // PostCommand(10) and PostCommand(11) via vtbl+0x18 after ~300 ms (only for match sessions, not Main Menu; verified from host-probe main.c lines 4306-4323)
-    if (gameModeTag != 0) {
-        std::thread([this]() {
-            std::this_thread::sleep_for(std::chrono::milliseconds(300));
-            if (m_engineInstance && m_fnProcessEvent) {
-                NOBLE_INFO("BlamEngine: Posting Command 10 (Event: Start) via vtbl+0x18 after 300ms delay...");
-                int32_t status10 = m_fnProcessEvent(m_engineInstance, 10, 0);
-                NOBLE_INFO("BlamEngine: PostCommand(10) returned: 0x{:X}", status10);
+    // PostCommand(10) and PostCommand(11) via vtbl+0x18 after ~300 ms (verified from host-probe main.c lines 4306-4323)
+    std::thread([this]() {
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+        if (m_engineInstance && m_fnProcessEvent) {
+            NOBLE_INFO("BlamEngine: Posting Command 10 (Event: Start) via vtbl+0x18 after 300ms delay...");
+            int32_t status10 = m_fnProcessEvent(m_engineInstance, 10, 0);
+            NOBLE_INFO("BlamEngine: PostCommand(10) returned: 0x{:X}", status10);
 
-                NOBLE_INFO("BlamEngine: Posting Command 11 via vtbl+0x18...");
-                int32_t status11 = m_fnProcessEvent(m_engineInstance, 11, 0);
-                NOBLE_INFO("BlamEngine: PostCommand(11) returned: 0x{:X}", status11);
-            }
-        }).detach();
-    }
+            NOBLE_INFO("BlamEngine: Posting Command 11 via vtbl+0x18...");
+            int32_t status11 = m_fnProcessEvent(m_engineInstance, 11, 0);
+            NOBLE_INFO("BlamEngine: PostCommand(11) returned: 0x{:X}", status11);
+        }
+    }).detach();
 
     return true;
 }

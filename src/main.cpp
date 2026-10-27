@@ -11,6 +11,7 @@
 #include "vfs/VFS.hpp"
 #include "engine/BlamEngine.hpp"
 #include "ui/UIManager.hpp"
+#include "ui/LoadScreen.hpp"
 #include "network/SessionManager.hpp"
 #include "hooks/LobbyPatches.hpp"
 #include "hooks/ForgePatches.hpp"
@@ -157,6 +158,12 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         return 1;
     }
 
+    // Initialize LoadScreen wireframe particle renderer
+    noble::LoadScreen::Get().Initialize(renderer->GetDevice(), renderer->GetContext());
+
+    // Initialize ImGui UI Manager
+    noble::UIManager::Initialize(window->GetHwnd(), renderer->GetDevice(), renderer->GetContext());
+
     window->Show(nCmdShow);
 
     // 8. Load and bootstrap haloreach.dll directly in process memory
@@ -236,22 +243,33 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     // 10. Initialize P2P & Self-Hosting Network Subsystem
     noble::SessionManager::Get().Initialize();
 
-    NOBLE_INFO("Authentic Halo: Reach 3D Main Menu active. Pumping host message loop...");
+    NOBLE_INFO("Authentic Halo: Reach host message loop active. Driving frames...");
 
-    // 11. Native Win32 message pump: haloreach.dll renders directly to swap chain
+    // 11. Native Win32 message pump: Drive frame rendering, wireframe dots, UI overlays, and swap chain Present
     while (window->ProcessMessages()) {
         blamEngine->Update(0.016f);
-        Sleep(10);
+
+        // If loading screen is active, render the authentic 3D wireframe point cloud (.dots)
+        if (noble::LoadScreen::Get().IsActive()) {
+            renderer->BeginFrame();
+            noble::LoadScreen::Get().Render(static_cast<float>(window->GetWidth()), static_cast<float>(window->GetHeight()));
+            renderer->EndFrame(true);
+        } else {
+            // Once in game / main menu, haloreach.dll renders directly to swap chain; present and allow overlay
+            renderer->EndFrame(false);
+            Sleep(8);
+        }
     }
 
-    // 13. Clean shutdown
+    // 13. Clean shutdown (Correct order: Hooks & VFS -> Engine -> Loader -> Renderer)
     NOBLE_INFO("Initiating clean host shutdown...");
     noble::SessionManager::Get().Shutdown();
     noble::UIManager::Shutdown();
+    noble::LoadScreen::Get().Shutdown();
     blamEngine->Shutdown();
-    loader->Unload();
-    noble::VFS::Shutdown();
     noble::HookManager::Shutdown();
+    noble::VFS::Shutdown();
+    loader->Unload();
     renderer->Shutdown();
     noble::Logger::Shutdown();
 

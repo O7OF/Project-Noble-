@@ -1,6 +1,8 @@
 #include "ReachHost.hpp"
+#include "ui/LoadScreen.hpp"
 #include "common/Logger.hpp"
 #include <windows.h>
+#include <intrin.h>
 #include <atomic>
 #include <array>
 #include <utility>
@@ -15,6 +17,7 @@
 namespace noble {
 
 void* ReachHost::s_vtable[160] = { nullptr };
+void* ReachHost::s_vtable2[64] = { nullptr };
 bool ReachHost::s_vtableInitialized = false;
 
 // -----------------------------------------------------------------------------
@@ -155,6 +158,13 @@ static uint64_t __fastcall HostSlot0_QueryInterface(void* thisPtr, uint64_t a1, 
 // Slot 1: Frame tick / Render loop update callback (host_probe case 1)
 static uint64_t __fastcall HostSlot1_FrameTick(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
     (void)thisPtr; (void)a1; (void)a2; (void)a3; (void)a4;
+    // haloreach.dll invokes Slot 1 every frame to tick armory, loadscreen, looks, and frame timer
+    static std::atomic<uint64_t> s_frameCount{0};
+    uint64_t frames = ++s_frameCount;
+    if (frames == 1 || (frames % 300) == 0) {
+        NOBLE_INFO("ReachHost [Slot 1 - FrameTick]: Frame {} pumped from haloreach.dll (LoadProgress: {:.1f}%)",
+            frames, LoadScreen::Get().GetLoadProgress() * 100.0f);
+    }
     return 0;
 }
 
@@ -193,16 +203,39 @@ static uint64_t __fastcall HostSlot18_AssetLookup(void* thisPtr, uint64_t a1, ui
     return 0;
 }
 
-// Slot 23: Load progress handler
+// Slot 23: Load progress handler (host-probe slot23 at 0x1400822a0)
+static std::atomic<uint32_t> s_loadPhases{0};
+static std::atomic<float> s_loadFraction{0.0f};
+
 static uint64_t __fastcall HostSlot23_LoadProgress(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
-    (void)thisPtr; (void)a2; (void)a3; (void)a4;
-    float progress = 0.0f;
-    if (a1 <= 100) {
-        progress = static_cast<float>(a1) / 100.0f;
-    } else {
-        memcpy(&progress, &a1, sizeof(float));
+    (void)thisPtr; (void)a3; (void)a4;
+    void* caller = _ReturnAddress();
+    
+    // a1 is phase index or integer percentage, a2 is optional progress float
+    uint32_t phaseIndex = static_cast<uint32_t>(a1 & 0xFFFFFFFF);
+    if (phaseIndex < 32) {
+        s_loadPhases.fetch_or(1u << (phaseIndex & 0x1F));
     }
-    NOBLE_INFO("ReachHost [Slot 23 - LoadProgress]: progress={:.1f}% (raw=0x{:X})", progress * 100.0f, a1);
+
+    float fraction = 0.0f;
+    if (a1 <= 100) {
+        fraction = static_cast<float>(a1) / 100.0f;
+    } else {
+        memcpy(&fraction, &a1, sizeof(float));
+    }
+
+    if (fraction < 0.0f) fraction = 0.0f;
+    if (fraction > 1.0f) fraction = 1.0f;
+
+    s_loadFraction.store(fraction);
+    LoadScreen::Get().SetLoadProgress(fraction);
+
+    static float s_lastLoggedFraction = -1.0f;
+    if (std::abs(fraction - s_lastLoggedFraction) >= 0.01f || fraction >= 1.0f) {
+        s_lastLoggedFraction = fraction;
+        NOBLE_INFO("ReachHost [Slot 23 - LoadProgress]: progress={:.1f}% (raw=0x{:X}, phases=0x{:08X}) [Caller: 0x{:X}]",
+            fraction * 100.0f, a1, s_loadPhases.load(), reinterpret_cast<uintptr_t>(caller));
+    }
     return 0;
 }
 
@@ -522,9 +555,21 @@ static uint64_t __fastcall HostSlot48_FilePathResolver(void* thisPtr, uint64_t a
             SafeCopyAnsiString(reinterpret_cast<char*>(inOutPtr), capacity, resolvedA.c_str());
         }
 
-        NOBLE_INFO("ReachHost [Slot 48 - FilePathResolver]: kind={} in='{}' -> resolved='{}'", 
-            kind, isWide ? localA : std::string(localA), resolvedA);
-        spdlog::default_logger()->flush();
+        static std::unordered_map<std::string, bool> s_seenPaths;
+        static std::mutex s_seenMutex;
+        bool isNew = false;
+        {
+            std::lock_guard<std::mutex> lock(s_seenMutex);
+            std::string key = std::string(localA) + "->" + resolvedA;
+            if (s_seenPaths.find(key) == s_seenPaths.end()) {
+                s_seenPaths[key] = true;
+                isNew = true;
+            }
+        }
+        if (isNew) {
+            NOBLE_INFO("ReachHost [Slot 48 - FilePathResolver]: kind={} in='{}' -> resolved='{}'", 
+                kind, localA, resolvedA);
+        }
 
         return 1;
     } catch (const std::exception& e) {
@@ -673,13 +718,22 @@ void ReachHost::InitializeVTable() {
     s_vtable[97]  = reinterpret_cast<void*>(&HostSlot97_CapabilityPass);
     s_vtable[116] = reinterpret_cast<void*>(&HostSlot116_ControllerMap);
 
+    for (size_t i = 0; i < 64; ++i) {
+        s_vtable2[i] = reinterpret_cast<void*>(&SlotDispatcher<0>::Stub);
+    }
+
     s_vtableInitialized = true;
-    NOBLE_INFO("ReachHost: 160-slot host vtable initialized matching all 24 Reach Renaissance host slots.");
+    NOBLE_INFO("ReachHost: 160-slot host vtable and secondary vtable initialized matching Reach Renaissance host.");
 }
 
 ReachHost::ReachHost() {
     InitializeVTable();
-    m_vptr = s_vtable;
+    // Link host objects matching host::new_host (0x1400828e0)
+    // m_secondObject[0] = s_vtable2
+    m_secondObject[0] = s_vtable2;
+    // m_hostObject[0] = s_vtable, m_hostObject[1] = m_secondObject
+    m_hostObject[0] = s_vtable;
+    m_hostObject[1] = m_secondObject;
 }
 
 ReachHost& ReachHost::Get() {
@@ -692,7 +746,14 @@ void ReachHost::SetPaths(const std::filesystem::path& reachDir,
                          const std::filesystem::path& dataDir) {
     m_reachDir = reachDir;
     m_mapsDir = mapsDir;
-    m_dataDir = dataDir;
+    if (!dataDir.empty()) {
+        std::error_code ec;
+        if (std::filesystem::exists(dataDir / "menumaps" / "mainmenu_all.map", ec) ||
+            std::filesystem::exists(dataDir / "launch_block_1.bin", ec) ||
+            m_dataDir.empty()) {
+            m_dataDir = dataDir;
+        }
+    }
 }
 
 } // namespace noble

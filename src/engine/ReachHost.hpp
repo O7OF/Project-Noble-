@@ -14,7 +14,7 @@ public:
 
     static ReachHost& Get();
 
-    void* GetInterface() { return &m_vptr; }
+    void* GetInterface() { return m_hostObject; }
 
     void SetPaths(const std::filesystem::path& reachDir,
                   const std::filesystem::path& mapsDir,
@@ -25,8 +25,10 @@ public:
     const std::filesystem::path& GetDataDir() const { return m_dataDir; }
 
 private:
-    void* m_vptr = nullptr;
+    void* m_hostObject[64] = { nullptr }; // 0x200 bytes host object
+    void* m_secondObject[64] = { nullptr }; // 0x200 bytes second object
     static void* s_vtable[160];
+    static void* s_vtable2[64];
     static bool s_vtableInitialized;
     static void InitializeVTable();
 

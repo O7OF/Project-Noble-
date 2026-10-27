@@ -112,6 +112,7 @@ set(SOURCES
     src/network/UPnP.cpp
     src/network/SessionManager.cpp
     src/audio/VgmAudioHook.cpp
+    src/ui/LoadScreen.cpp
 )
 
 set(HEADERS
@@ -135,6 +136,7 @@ set(HEADERS
     src/ui/ArmorCustomizer.hpp
     src/ui/WorkshopManager.hpp
     src/ui/MissionLauncher.hpp
+    src/ui/LoadScreen.hpp
     src/network/UPnP.hpp
     src/network/SessionManager.hpp
     src/audio/VgmAudioHook.hpp
