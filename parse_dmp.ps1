@@ -1,5 +1,9 @@
-$path = "noble-crash.dmp"
-$data = [System.IO.File]::ReadAllBytes($path)
+param($path = "bin\noble-crash.dmp")
+if (!(Test-Path $path)) {
+    Write-Host "File not found: $path"
+    exit 1
+}
+$data = [System.IO.File]::ReadAllBytes((Resolve-Path $path))
 
 $numStreams = [System.BitConverter]::ToUInt32($data, 8)
 $dirRva = [System.BitConverter]::ToUInt32($data, 12)
@@ -26,6 +30,11 @@ for ($i = 0; $i -lt $numStreams; $i++) {
             }
         }
     }
+    if ($type -eq 6) { # ExceptionStream
+        $excTid   = [System.BitConverter]::ToUInt32($data, $rva)
+        $excCode  = [System.BitConverter]::ToUInt32($data, $rva + 8)
+        $excAddr  = [System.BitConverter]::ToUInt64($data, $rva + 24)
+    }
 }
 
 function Resolve-Address($addr) {
@@ -38,15 +47,24 @@ function Resolve-Address($addr) {
     return ("0x{0:X16}" -f $addr)
 }
 
-# Inspect all threads
+$excTid = 0
+# Inspect streams
 for ($i = 0; $i -lt $numStreams; $i++) {
     $entryOffset = $dirRva + ($i * 12)
     $type = [System.BitConverter]::ToUInt32($data, $entryOffset)
     $rva = [System.BitConverter]::ToUInt32($data, $entryOffset + 8)
     
+    if ($type -eq 6) { # ExceptionStream
+        $excTid   = [System.BitConverter]::ToUInt32($data, $rva)
+        $excCode  = [System.BitConverter]::ToUInt32($data, $rva + 8)
+        $excAddr  = [System.BitConverter]::ToUInt64($data, $rva + 24)
+        Write-Host ("Exception 0x{0:X8} on TID {1} at {2}" -f $excCode, $excTid, (Resolve-Address $excAddr))
+    }
+    
     if ($type -eq 3) { # ThreadListStream
         $numThreads = [System.BitConverter]::ToUInt32($data, $rva)
-        for ($t = 0; $t -lt [Math]::Min(5, $numThreads); $t++) {
+        Write-Host ("Total threads in dump: {0}" -f $numThreads)
+        for ($t = 0; $t -lt $numThreads; $t++) {
             $tOffset = $rva + 4 + ($t * 48)
             $tId        = [System.BitConverter]::ToUInt32($data, $tOffset)
             $stackStart = [System.BitConverter]::ToUInt64($data, $tOffset + 24)
@@ -57,17 +75,18 @@ for ($i = 0; $i -lt $numStreams; $i++) {
             $rip = [System.BitConverter]::ToUInt64($data, $cRva + 0xf8)
             $rsp = [System.BitConverter]::ToUInt64($data, $cRva + 0x98)
             
-            Write-Host ("Thread {0} (TID {1}): RIP = {2}" -f $t, $tId, (Resolve-Address $rip))
-            
-            # Print top 5 frames from stack
-            $offsetInStack = [Math]::Max(0, [int]($rsp - $stackStart))
-            $found = 0
-            for ($p = $offsetInStack; $p -lt ($stackSize - 8) -and $found -lt 20; $p += 8) {
-                $val = [System.BitConverter]::ToUInt64($data, $stackRva + $p)
-                $res = Resolve-Address $val
-                if ($res -notmatch "^0x" -and $res -notmatch "ntdll" -and $res -notmatch "KERNELBASE") {
-                    Write-Host ("    Frame: {0}" -f $res)
-                    $found++
+            # Print if crashing thread or first 3
+            if ($tId -eq $excTid -or $t -lt 3) {
+                Write-Host ("Thread {0} (TID {1}): RIP = {2}" -f $t, $tId, (Resolve-Address $rip))
+                $offsetInStack = [Math]::Max(0, [int]($rsp - $stackStart))
+                $found = 0
+                for ($p = $offsetInStack; $p -lt ($stackSize - 8) -and $found -lt 25; $p += 8) {
+                    $val = [System.BitConverter]::ToUInt64($data, $stackRva + $p)
+                    $res = Resolve-Address $val
+                    if ($res -notmatch "^0x" -and $res -notmatch "ntdll" -and $res -notmatch "KERNELBASE") {
+                        Write-Host ("    Frame: {0}" -f $res)
+                        $found++
+                    }
                 }
             }
         }
