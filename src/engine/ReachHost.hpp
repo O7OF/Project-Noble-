@@ -15,6 +15,7 @@ public:
     static ReachHost& Get();
 
     void* GetInterface() { return m_hostObject; }
+    void* GetSecondInterface() { return m_secondObject; }
 
     void SetPaths(const std::filesystem::path& reachDir,
                   const std::filesystem::path& mapsDir,

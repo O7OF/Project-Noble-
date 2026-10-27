@@ -259,11 +259,12 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     noble::UIManager::Shutdown();
     noble::LoadScreen::Get().Shutdown();
     blamEngine->Shutdown();
-    noble::HookManager::Shutdown();
-    noble::VFS::Shutdown();
-    loader->Unload();
-    renderer->Shutdown();
-    noble::Logger::Shutdown();
 
-    return 0;
+    // haloreach.dll's worker threads can still be running after its Shutdown call returns.
+    // Removing hooks, restoring the IAT or unloading the DLL underneath them crashed in ntdll
+    // (0xC0000005 on exit). Leave hooks and the DLL in place and let ExitProcess stop the
+    // engine threads before anything is torn down.
+    NOBLE_INFO("Engine shut down; exiting process without unhooking or unloading haloreach.dll.");
+    noble::Logger::Shutdown();
+    ExitProcess(0);
 }

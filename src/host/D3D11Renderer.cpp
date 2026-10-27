@@ -55,7 +55,11 @@ bool D3D11Renderer::Initialize(HWND hwnd, uint32_t width, uint32_t height) {
     scd.BufferDesc.RefreshRate.Numerator = 60;
     scd.BufferDesc.RefreshRate.Denominator = 1;
     scd.Flags = DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH;
-    scd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+    // haloreach.dll builds a shader resource view on the backbuffer (rasterizer surface pool 1).
+    // Its own swap-chain path uses BufferUsage 0x30 (SHADER_INPUT | RENDER_TARGET_OUTPUT); without
+    // SHADER_INPUT, CreateShaderResourceView fails, pool 1 is never initialised, and the engine
+    // crashes at haloreach.dll+0x2744F2 during game globals init.
+    scd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT | DXGI_USAGE_SHADER_INPUT;
     scd.OutputWindow = hwnd;
     scd.SampleDesc.Count = 1;
     scd.SampleDesc.Quality = 0;
