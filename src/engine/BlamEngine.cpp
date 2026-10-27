@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <thread>
 #include <chrono>
+#include <fstream>
+#include <filesystem>
 
 namespace noble {
 
@@ -80,6 +82,18 @@ static void SafeCallVariantInit(HMODULE hModule, void* targetBuffer) {
             reinterpret_cast<uintptr_t>(hModule) + 0x6BFF8);
         pInitVariant(targetBuffer);
     } __except(EXCEPTION_EXECUTE_HANDLER) {
+    }
+}
+
+static bool SafeCallMapVariantParse(HMODULE hModule, const void* fileData, size_t fileSize, void* outVariant, char* outStatus) {
+    if (!hModule || !fileData || !outVariant) return false;
+    __try {
+        typedef char (*ParseMapVariantFn)(const void* fileData, size_t fileSize, void* outVariant, char* outStatus);
+        auto pParse = reinterpret_cast<ParseMapVariantFn>(
+            reinterpret_cast<uintptr_t>(hModule) + 0x17AF00);
+        return pParse(fileData, fileSize, outVariant, outStatus) != 0;
+    } __except(EXCEPTION_EXECUTE_HANDLER) {
+        return false;
     }
 }
 
@@ -257,7 +271,8 @@ uint32_t BlamEngine::ResolveMapId(const std::string& mapName) {
     return 0;
 }
 
-std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameModeTag, int difficulty, uint32_t skulls) {
+std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameModeTag, int difficulty, uint32_t skulls,
+                                                   const std::string& customMvarPath, const std::string& customVariantPath) {
     constexpr size_t LAUNCH_BLOCK_SIZE = 0x2BF30; // 179,984 bytes
     std::vector<uint8_t> block(LAUNCH_BLOCK_SIZE, 0);
 
@@ -320,9 +335,48 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
     *reinterpret_cast<uint32_t*>(&block[0x38]) = static_cast<uint32_t>(difficulty);
     *reinterpret_cast<uint32_t*>(&block[0x3C]) = skulls;
 
-    // Call internal default variant setup if function available at RVA 0x6BFF8
+    // Default variant buffer init at offset 0x1D308 (RVA 0x6BFF8)
     if (m_hModule) {
         SafeCallVariantInit(m_hModule, &block[0x1D308]);
+    }
+
+    // Dynamic Custom Map Variant (.mvar) Injection (RVA 0x17AF00 parse_map_variant)
+    if (!customMvarPath.empty() && std::filesystem::exists(customMvarPath) && m_hModule) {
+        NOBLE_INFO("BlamEngine: Parsing custom Forge map variant from '{}'...", customMvarPath);
+        std::ifstream file(customMvarPath, std::ios::binary);
+        if (file) {
+            std::vector<uint8_t> mvarData((std::istreambuf_iterator<char>(file)),
+                                           std::istreambuf_iterator<char>());
+            if (mvarData.size() >= 0x7329) {
+                std::vector<uint8_t> parsedVariant(0x20000, 0); // 128 KB buffer
+                SafeCallVariantInit(m_hModule, parsedVariant.data());
+                char status = 0;
+                if (SafeCallMapVariantParse(m_hModule, mvarData.data(), 0x7329, parsedVariant.data(), &status) && status != 0) {
+                    memcpy(&block[0x1D308], parsedVariant.data(), 0xE800);
+                    uint32_t mvarMapId = *reinterpret_cast<uint32_t*>(&block[0x1D5C0]);
+                    *reinterpret_cast<uint32_t*>(&block[0x10]) = mvarMapId;
+                    *reinterpret_cast<uint32_t*>(&block[0x14]) = mvarMapId;
+                    NOBLE_INFO("BlamEngine: Custom map variant parsed successfully. Target MapId: {}", mvarMapId);
+                } else {
+                    NOBLE_WARN("BlamEngine: Failed to parse map variant header (status=0x{:X})", status);
+                }
+            } else {
+                NOBLE_WARN("BlamEngine: Map variant file size ({} bytes) is less than required 0x7329 bytes", mvarData.size());
+            }
+        }
+    }
+
+    // Dynamic Custom Game Variant (.bin) Injection at offset 0x300 (size 0xFC04)
+    if (!customVariantPath.empty() && std::filesystem::exists(customVariantPath)) {
+        NOBLE_INFO("BlamEngine: Injecting custom game variant from '{}'...", customVariantPath);
+        std::ifstream varFile(customVariantPath, std::ios::binary);
+        if (varFile) {
+            std::vector<uint8_t> varData((std::istreambuf_iterator<char>(varFile)),
+                                          std::istreambuf_iterator<char>());
+            size_t bytesToCopy = (std::min)(varData.size(), static_cast<size_t>(0xFC04));
+            memcpy(&block[0x300], varData.data(), bytesToCopy);
+            NOBLE_INFO("BlamEngine: Injected {} bytes of game variant into launch block (+0x300)", bytesToCopy);
+        }
     }
 
     return block;
@@ -340,7 +394,8 @@ bool BlamEngine::ExecuteCommand(const std::string& command) {
     return true;
 }
 
-bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMode, int difficulty, uint32_t skulls) {
+bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMode, int difficulty, uint32_t skulls,
+                           const std::string& customMvarPath, const std::string& customVariantPath) {
     if (!m_isInitialized || !m_engineInstance) return false;
 
     m_currentMap = mapName;
@@ -349,12 +404,14 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
     NOBLE_INFO("=================================================");
     NOBLE_INFO(" LAUNCHING HALO: REACH MISSION / MAP: {}", mapName);
     NOBLE_INFO(" Mode: {} | Difficulty: {} | Skulls: 0x{:X}", gameMode, difficulty, skulls);
+    if (!customMvarPath.empty()) NOBLE_INFO(" Custom MVAR: {}", customMvarPath);
+    if (!customVariantPath.empty()) NOBLE_INFO(" Custom Variant: {}", customVariantPath);
     NOBLE_INFO("=================================================");
 
     uint32_t mapId = ResolveMapId(mapName);
     uint32_t gameModeTag = (gameMode == "Campaign") ? 1 : (gameMode == "mainmenu" ? 0 : 2);
 
-    auto launchBlock = BuildLaunchBlock(mapId, gameModeTag, difficulty, skulls);
+    auto launchBlock = BuildLaunchBlock(mapId, gameModeTag, difficulty, skulls, customMvarPath, customVariantPath);
 
     if (m_fnStart) {
         void* hostPtr = ReachHost::Get().GetInterface();

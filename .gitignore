@@ -11,3 +11,4 @@ out/
 *.log
 imgui.ini
 data/
+docs/reach_renaissance_reverse_engineering_report.md

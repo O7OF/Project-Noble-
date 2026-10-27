@@ -16,6 +16,7 @@
 #include "hooks/ForgePatches.hpp"
 
 #include <windows.h>
+#include <shellapi.h>
 #include <chrono>
 #include <memory>
 #include <filesystem>
@@ -153,6 +154,48 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     if (!blamEngine->Initialize(*reachInstall, loader->GetModuleHandle(), loader->GetExports(), hostContext)) {
         NOBLE_ERROR("Failed to initialize Blam! engine host interfaces.");
         return 1;
+    }
+
+    // Parse command line arguments for direct map and variant launches (e.g. from NobleLauncher)
+    std::string launchMap = "";
+    std::string launchMode = "multiplayer";
+    std::string customMvar = "";
+    std::string customVariant = "";
+    int launchDifficulty = 1;
+    uint32_t launchSkulls = 0;
+
+    auto WideToNarrow = [](const std::wstring& w) -> std::string {
+        if (w.empty()) return "";
+        int len = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, nullptr, 0, nullptr, nullptr);
+        if (len <= 0) return "";
+        std::string s(len - 1, '\0');
+        WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, s.data(), len, nullptr, nullptr);
+        return s;
+    };
+
+    int numArgs = 0;
+    LPWSTR* argvW = CommandLineToArgvW(GetCommandLineW(), &numArgs);
+    if (argvW) {
+        for (int i = 1; i < numArgs; ++i) {
+            std::wstring arg = argvW[i];
+            if (arg == L"-map" && i + 1 < numArgs) {
+                launchMap = WideToNarrow(argvW[++i]);
+            } else if (arg == L"-mode" && i + 1 < numArgs) {
+                launchMode = WideToNarrow(argvW[++i]);
+            } else if (arg == L"-mvar" && i + 1 < numArgs) {
+                customMvar = WideToNarrow(argvW[++i]);
+            } else if (arg == L"-variant" && i + 1 < numArgs) {
+                customVariant = WideToNarrow(argvW[++i]);
+            } else if (arg == L"-difficulty" && i + 1 < numArgs) {
+                launchDifficulty = _wtoi(argvW[++i]);
+            }
+        }
+        LocalFree(argvW);
+    }
+
+    if (!launchMap.empty()) {
+        NOBLE_INFO("Command line requested direct launch: Map='{}', Mode='{}'", launchMap, launchMode);
+        blamEngine->LaunchMap(launchMap, launchMode, launchDifficulty, launchSkulls, customMvar, customVariant);
     }
 
     // 11. Initialize P2P & Self-Hosting Network Subsystem

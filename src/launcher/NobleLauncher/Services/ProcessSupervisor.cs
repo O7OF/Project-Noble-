@@ -104,7 +104,8 @@ namespace NobleLauncher.Services
             return Path.GetFullPath(Path.Combine(Directory.GetCurrentDirectory(), "bin", exeName));
         }
 
-        public bool Launch(LauncherConfig config, GameInstallation installation, bool dedicated = false)
+        public bool Launch(LauncherConfig config, GameInstallation installation, bool dedicated = false,
+                           string? customMap = null, string? customMode = null, string? customMvar = null, string? customVariant = null)
         {
             var exePath = FindExecutable(dedicated);
             if (!File.Exists(exePath))
@@ -142,6 +143,22 @@ namespace NobleLauncher.Services
                 if (!config.EnableExpandedLobby)
                 {
                     cmdBuilder.Append(" -vanillalobby");
+                }
+                if (!string.IsNullOrWhiteSpace(customMap))
+                {
+                    cmdBuilder.Append($" -map \"{customMap}\"");
+                }
+                if (!string.IsNullOrWhiteSpace(customMode))
+                {
+                    cmdBuilder.Append($" -mode \"{customMode}\"");
+                }
+                if (!string.IsNullOrWhiteSpace(customMvar))
+                {
+                    cmdBuilder.Append($" -mvar \"{customMvar}\"");
+                }
+                if (!string.IsNullOrWhiteSpace(customVariant))
+                {
+                    cmdBuilder.Append($" -variant \"{customVariant}\"");
                 }
             }
 

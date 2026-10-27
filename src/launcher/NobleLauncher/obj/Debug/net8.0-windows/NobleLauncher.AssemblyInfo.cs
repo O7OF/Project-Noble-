@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("Halo Reach Community Edition")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+5ee7c2a3b561dc6b2bdf442b468570e9b9902011")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+a6dfd0b7800065049f7ed5837588f1b8a32f4313")]
 [assembly: System.Reflection.AssemblyProductAttribute("NobleLauncher")]
 [assembly: System.Reflection.AssemblyTitleAttribute("NobleLauncher")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
