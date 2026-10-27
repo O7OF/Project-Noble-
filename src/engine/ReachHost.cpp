@@ -1,6 +1,7 @@
 #include "ReachHost.hpp"
 #include "ui/LoadScreen.hpp"
 #include "common/Logger.hpp"
+#include "hooks/HookManager.hpp"
 #include <windows.h>
 #include <shellapi.h>
 #include <intrin.h>
@@ -503,14 +504,55 @@ static HWND InputFocusedWindow() {
     return (pid == GetCurrentProcessId()) ? fg : nullptr;
 }
 
-static void InputRelease(HWND hwnd) {
+// UI cursor (menus such as the class/loadout picker). As in RR's uicursor module, haloreach+0x2D2018
+// runs only while a Reach screen that uses the mouse pointer is up; we hook it and record when it
+// last ran. While it ran within the last 250 ms the pointer is "free": not clipped, not re-centred,
+// the normal arrow is shown, and no mouse-look delta is sent. The engine reads the pointer position
+// itself (GetCursorPos/ScreenToClient).
+static constexpr uintptr_t kUiScreenRva = 0x2D2018;
+using UiScreenFn = uint64_t(__fastcall*)(uint64_t, uint64_t, uint64_t, uint64_t);
+static UiScreenFn s_origUiScreen = nullptr;
+static std::atomic<ULONGLONG> s_uiScreenLastTick{0};
+
+static uint64_t __fastcall UiScreenHook(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
+    s_uiScreenLastTick.store(GetTickCount64(), std::memory_order_relaxed);
+    return s_origUiScreen(a1, a2, a3, a4);
+}
+
+static void EnsureUiCursorHook() {
+    static bool s_tried = false;
+    if (s_tried) return;
+    s_tried = true;
+    HMODULE reach = GetModuleHandleW(L"haloreach.dll");
+    if (!reach) return;
+    uint8_t* target = reinterpret_cast<uint8_t*>(reach) + kUiScreenRva;
+    // Same check RR makes: the function must start with "mov [rsp+18h], rbx" for this build.
+    static const uint8_t kPrologue[5] = { 0x48, 0x89, 0x5C, 0x24, 0x18 };
+    uint8_t current[5] = {};
+    if (!SafeCopyMemory(current, target, sizeof(current)) || memcmp(current, kPrologue, sizeof(kPrologue)) != 0) {
+        NOBLE_WARN("ReachHost [UI cursor]: haloreach+0x{:X} does not match the expected build; menu cursor disabled", kUiScreenRva);
+        return;
+    }
+    if (HookManager::InstallHook(target, reinterpret_cast<void*>(&UiScreenHook),
+                                 reinterpret_cast<void**>(&s_origUiScreen), "ui_cursor_screen")) {
+        NOBLE_INFO("ReachHost [UI cursor]: screen hook installed");
+    }
+}
+
+static bool UiCursorActive() {
+    const ULONGLONG last = s_uiScreenLastTick.load(std::memory_order_relaxed);
+    return last != 0 && GetTickCount64() - last < 250;
+}
+
+static void InputRelease(HWND hwnd, const char* reason) {
     if (!s_inputCaptured) return;
     ClipCursor(nullptr);
-    if (hwnd && s_savedClassCursor) {
-        SetClassLongPtrW(hwnd, GCLP_HCURSOR, reinterpret_cast<LONG_PTR>(s_savedClassCursor));
+    if (hwnd) {
+        HCURSOR arrow = s_savedClassCursor ? s_savedClassCursor : LoadCursorW(nullptr, IDC_ARROW);
+        SetClassLongPtrW(hwnd, GCLP_HCURSOR, reinterpret_cast<LONG_PTR>(arrow));
     }
     s_inputCaptured = false;
-    NOBLE_INFO("ReachHost [Slot 36 - Input]: window lost focus, mouse released");
+    NOBLE_INFO("ReachHost [Slot 36 - Input]: {}, mouse released", reason);
 }
 
 static void FillLocalInput(uint8_t* st) {
@@ -520,29 +562,37 @@ static void FillLocalInput(uint8_t* st) {
     static HWND s_lastWindow = nullptr;
     HWND hwnd = InputFocusedWindow();
     if (!hwnd) {
-        InputRelease(s_lastWindow);
+        InputRelease(s_lastWindow, "window lost focus");
         memset(s_keyDownSince, 0, sizeof(s_keyDownSince));
         return;
     }
     s_lastWindow = hwnd;
 
-    RECT rc{};
-    GetClientRect(hwnd, &rc);
-    POINT tl{rc.left, rc.top}, br{rc.right, rc.bottom};
-    ClientToScreen(hwnd, &tl);
-    ClientToScreen(hwnd, &br);
-    RECT clip{tl.x, tl.y, br.x, br.y};
-    POINT center{(tl.x + br.x) / 2, (tl.y + br.y) / 2};
-
+    const bool uiPointer = UiCursorActive();
     bool firstCapturedFrame = false;
-    if (!s_inputCaptured) {
-        s_savedClassCursor = reinterpret_cast<HCURSOR>(GetClassLongPtrW(hwnd, GCLP_HCURSOR));
-        SetClassLongPtrW(hwnd, GCLP_HCURSOR, 0); // hide the arrow over our window
-        s_inputCaptured = true;
-        firstCapturedFrame = true;
-        NOBLE_INFO("ReachHost [Slot 36 - Input]: window focused, mouse captured (scale {})", InputMouseScale());
+    POINT center{};
+    if (uiPointer) {
+        // A menu is up: free the pointer and show the arrow (the window proc shows the class cursor).
+        InputRelease(hwnd, "menu with pointer is up");
+    } else {
+        RECT rc{};
+        GetClientRect(hwnd, &rc);
+        POINT tl{rc.left, rc.top}, br{rc.right, rc.bottom};
+        ClientToScreen(hwnd, &tl);
+        ClientToScreen(hwnd, &br);
+        RECT clip{tl.x, tl.y, br.x, br.y};
+        center = POINT{(tl.x + br.x) / 2, (tl.y + br.y) / 2};
+
+        if (!s_inputCaptured) {
+            HCURSOR cls = reinterpret_cast<HCURSOR>(GetClassLongPtrW(hwnd, GCLP_HCURSOR));
+            if (cls) s_savedClassCursor = cls;
+            SetClassLongPtrW(hwnd, GCLP_HCURSOR, 0); // hide the arrow over our window
+            s_inputCaptured = true;
+            firstCapturedFrame = true;
+            NOBLE_INFO("ReachHost [Slot 36 - Input]: mouse captured for look (scale {})", InputMouseScale());
+        }
+        ClipCursor(&clip);
     }
-    ClipCursor(&clip);
 
     // Keyboard and mouse buttons by VK code.
     const ULONGLONG now = GetTickCount64();
@@ -564,14 +614,16 @@ static void FillLocalInput(uint8_t* st) {
         st[0x004 + vk] = v;
     }
 
-    // Mouse look: delta from the window centre, then recentre.
-    POINT pos{};
+    // Mouse look: delta from the window centre, then recentre (not while a menu owns the pointer).
     float dx = 0.0f, dy = 0.0f;
-    if (GetCursorPos(&pos) && !firstCapturedFrame) {
-        dx = static_cast<float>(pos.x - center.x);
-        dy = static_cast<float>(pos.y - center.y);
+    if (!uiPointer) {
+        POINT pos{};
+        if (GetCursorPos(&pos) && !firstCapturedFrame) {
+            dx = static_cast<float>(pos.x - center.x);
+            dy = static_cast<float>(pos.y - center.y);
+        }
+        SetCursorPos(center.x, center.y);
     }
-    SetCursorPos(center.x, center.y);
     const float scale = InputMouseScale();
     *reinterpret_cast<float*>(st + 0x104) = dx * scale;
     *reinterpret_cast<float*>(st + 0x108) = dy * scale;
@@ -595,6 +647,7 @@ static uint64_t __fastcall HostSlot36_InputController(void* thisPtr, uint64_t a1
         if (SafeReadInt32(a1, &idx)) userIndex = static_cast<uint32_t>(idx);
         if (SafeReadPointer(a1 + 8, &pSub) && pSub > 0x10000) outBuf = pSub;
     }
+    EnsureUiCursorHook();
     if (!s_slot36Logged.exchange(true)) {
         NOBLE_INFO("ReachHost [Slot 36 - Input]: first call (a1=0x{:X}, a2=0x{:X}) -> user {} buffer 0x{:X}", a1, a2, userIndex, outBuf);
     }
