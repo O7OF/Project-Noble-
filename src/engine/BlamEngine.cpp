@@ -346,12 +346,12 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
         *reinterpret_cast<uint32_t*>(&block[0x1D334]) = mapInfoId;
         *reinterpret_cast<uint32_t*>(&block[0x1D5BC]) = mapInfoId;
         NOBLE_INFO("BlamEngine: launch block map index {} -> map id {}", static_cast<int32_t>(effectiveMapId), mapInfoId);
+    }
 
-        // 16-byte per-launch random identifier at +0x50 (present in RR's captured blocks, zero in ours).
-        GUID launchId{};
-        if (SUCCEEDED(CoCreateGuid(&launchId))) {
-            memcpy(&block[0x50], &launchId, sizeof(launchId));
-        }
+    // 16-byte per-launch random identifier at +0x50 (present in RR's captured blocks, zero in ours).
+    GUID launchId{};
+    if (SUCCEEDED(CoCreateGuid(&launchId))) {
+        memcpy(&block[0x50], &launchId, sizeof(launchId));
     }
 
     if (!isMainMenu) {
@@ -395,7 +395,7 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
         std::filesystem::path variantPath;
         if (!customVariantPath.empty() && std::filesystem::exists(customVariantPath)) {
             variantPath = customVariantPath;
-        } else if (!loadedPrebuilt) {
+        } else {
             variantPath = ReachHost::Get().GetReachDir() / "game_variants" / "slayer_054.bin";
         }
 
@@ -415,7 +415,7 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
                     NOBLE_ERROR("BlamEngine: haloreach.dll could not decode game variant '{}'", variantPath.string());
                 }
             }
-        } else if (!loadedPrebuilt) {
+        } else {
             NOBLE_WARN("BlamEngine: No game variant found for launch block (looked for '{}')", variantPath.string());
         }
     }
