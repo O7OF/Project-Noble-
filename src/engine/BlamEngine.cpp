@@ -245,6 +245,10 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
 
     // 190 is Boardwalk (a multiplayer map), not the menu.
     bool isMainMenu = (mapId == kMainMenuLaunchIndex || mapId == 0 || gameModeTag == 0);
+    // Campaign missions: launch index 178 (m05) .. 189 (m70_bonus).
+    const bool isCampaign = (mapId >= 178 && mapId <= 189);
+    // Firefight maps: launch index 210 .. 219.
+    const bool isFirefight = (mapId >= 210 && mapId <= 219);
     uint32_t effectiveMapId = isMainMenu ? static_cast<uint32_t>(-2) : mapId;
 
     if (isMainMenu) {
@@ -282,7 +286,8 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
         block[2] = 0x00;
         block[3] = 0x10;
         block[4] = 0x03;
-        block[0x0C] = isMainMenu ? 0x01 : 0x03;
+        // +0x0C: 1 = menu / campaign, 3 = multiplayer, 5 = firefight (from the layout of RR's captured blocks).
+        block[0x0C] = (isMainMenu || isCampaign) ? 0x01 : (isFirefight ? 0x05 : 0x03);
         block[0x10] = isMainMenu ? 0xFE : 0xBE;
         block[0x11] = isMainMenu ? 0xFF : 0x00;
         block[0x12] = isMainMenu ? 0xFF : 0x00;
@@ -343,7 +348,18 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
         // engine resolves an empty scenario name ("haloreach\maps\.map") and has nothing to render.
         // Menu and multiplayer ids are known; campaign/firefight keep the previous value until verified.
         uint32_t mapInfoId = MapIdForLaunchIndex(effectiveMapId);
+        // Campaign blocks keep the menu/Boardwalk map-variant id (1035) here; the mission itself is
+        // selected by the launch index at +0x10/+0x14/+0x1D5C0 (verified against RR's captured
+        // campaign blocks, which differ from its MP block only in +0x0C, +0x10/+0x14, +0x28,
+        // +0x34 and +0x1D5C0).
+        if (isCampaign || isFirefight) mapInfoId = kMainMenuMapId;
         if (mapInfoId == 0) mapInfoId = gameModeTag;
+        if (isCampaign) {
+            block[0x28] = 0x01;
+            block[0x29] = 0x00;
+            block[0x2A] = 0x11;
+            block[0x2B] = 0x11;
+        }
         *reinterpret_cast<uint32_t*>(&block[0x1D334]) = mapInfoId;
         *reinterpret_cast<uint32_t*>(&block[0x1D5BC]) = mapInfoId;
         NOBLE_INFO("BlamEngine: launch block map index {} -> map id {}", static_cast<int32_t>(effectiveMapId), mapInfoId);
@@ -355,7 +371,11 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
         memcpy(&block[0x50], &launchId, sizeof(launchId));
     }
 
-    if (!isMainMenu) {
+    if (isCampaign || isFirefight) {
+        // Campaign / Firefight: difficulty only at +0x34 (0 easy .. 3 legendary); +0x38 stays 0 as in RR's blocks.
+        block[0x34] = static_cast<uint8_t>(clampedDiff);
+        *reinterpret_cast<uint32_t*>(&block[0x3C]) = skulls;
+    } else if (!isMainMenu) {
         // Apply difficulty & skulls overrides
         block[0x34] = static_cast<uint8_t>(clampedDiff);
         *reinterpret_cast<uint32_t*>(&block[0x38]) = static_cast<uint32_t>(clampedDiff);
@@ -397,7 +417,10 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
         if (!customVariantPath.empty() && std::filesystem::exists(customVariantPath)) {
             variantPath = customVariantPath;
         } else {
-            variantPath = ReachHost::Get().GetReachDir() / "game_variants" / "slayer_054.bin";
+            // Firefight needs a Firefight game variant (otherwise the engine reports "no game
+            // selected"); RR likewise loads <MCC>\haloreach\game_variants\<mode>.bin for it.
+            variantPath = ReachHost::Get().GetReachDir() / "game_variants" /
+                          (isFirefight ? "hr_ff_standard_1set.bin" : "slayer_054.bin");
         }
 
         if (!variantPath.empty() && std::filesystem::exists(variantPath) && m_hModule) {

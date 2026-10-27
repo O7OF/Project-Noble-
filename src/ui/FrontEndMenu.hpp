@@ -12,12 +12,13 @@ class D3D11Renderer;
 // Reach (MCC draws its own menus), so instead of the engine's menu Noble shows this ImGui screen,
 // lets the player pick a map and game type, and then starts that match.
 //
-// Base to build on: multiplayer works today; Campaign and Firefight tabs are placeholders until
-// their launch blocks are worked out.
+// Base to build on: multiplayer, campaign and firefight launch from here.
 struct FrontEndChoice {
     bool play = false;           // false: the player quit or closed the window
     std::string map;             // scenario name, e.g. "20_sword_slayer"
     std::string variantPath;     // full path to a game variant .bin from MCC's game_variants
+    std::string mode = "multiplayer"; // "multiplayer", "campaign" or "firefight"
+    int difficulty = 1;          // campaign/firefight: 0 easy, 1 normal, 2 heroic, 3 legendary
 };
 
 class FrontEndMenu {

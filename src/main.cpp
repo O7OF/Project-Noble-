@@ -171,6 +171,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     // which the launcher's Main Menu button passes) Noble shows its own menu before the engine starts.
     std::string frontEndMap;
     std::string frontEndVariant;
+    std::string frontEndMode;
+    int frontEndDifficulty = 1;
     if (noble::FrontEndMenu::ShouldShow()) {
         noble::FrontEndChoice choice = noble::FrontEndMenu::Run(*window, *renderer, reachInstall->reachDirectory);
         if (!choice.play) {
@@ -181,6 +183,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         }
         frontEndMap = choice.map;
         frontEndVariant = choice.variantPath;
+        frontEndMode = choice.mode;
+        frontEndDifficulty = choice.difficulty;
     }
 
     // 8. Load and bootstrap haloreach.dll directly in process memory
@@ -251,7 +255,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     // A choice made in the front-end menu replaces the menu request.
     if (!frontEndMap.empty()) {
         launchMap = frontEndMap;
-        launchMode = "multiplayer";
+        launchMode = frontEndMode.empty() ? "multiplayer" : frontEndMode;
+        launchDifficulty = frontEndDifficulty;
         if (customVariant.empty()) customVariant = frontEndVariant;
     }
 
