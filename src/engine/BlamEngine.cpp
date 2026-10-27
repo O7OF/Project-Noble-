@@ -455,7 +455,7 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
         gameModeTag = 1035; // 0x40B Firefight
     } else if ((mapId >= 178 && mapId <= 189) || gameMode == "Campaign" || gameMode == "campaign") {
         gameModeTag = 1;    // Campaign
-    } else if (mapId == static_cast<uint32_t>(-2) || mapId == 0 || mapId == 190 || gameMode == "mainmenu" || gameMode == "menu") {
+    } else if (mapId == static_cast<uint32_t>(-2) || mapId == 0 || gameMode == "mainmenu" || gameMode == "menu") {
         gameModeTag = 0;    // Main Menu
     }
 

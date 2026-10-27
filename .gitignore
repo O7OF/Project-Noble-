@@ -17,10 +17,12 @@ imgui.ini
 data/
 bin/vgmstream/
 vgmstream/
-
+scratch/
 # Reverse engineering and decompilation evidence/artifacts
 tests/evidence/
 docs/*reverse*
 docs/*decomp*
 docs/reach_renaissance_reverse_engineering_report.md
 preferences.dat
+*dumpbin*
+dumpbin.txt
