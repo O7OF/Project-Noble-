@@ -237,6 +237,33 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         launchMode = "mainmenu";
     }
 
+    // Map-info sandbox. The engine builds its map list by enumerating "haloreach\\maps\\info\\*.*"
+    // RELATIVE TO THE WORKING DIRECTORY (root prefix "haloreach\\" at RVA 0x985D28, FindFirstFileW).
+    // With an empty list every launch fails with "no map selected" and the menu has no backdrop.
+    // Like Reach Renaissance, copy the player's own MCC .mapinfo files into a sandbox and run the
+    // engine from there; the MCC install is never modified. Map files themselves still resolve
+    // through host slot 48 to the MCC folder.
+    {
+        std::error_code ec;
+        const fs::path sandboxRoot = userStoragePath / "sandbox";
+        const fs::path sandboxInfo = sandboxRoot / "haloreach" / "maps" / "info";
+        const fs::path mccInfo = reachInstall->mapsDirectory / "info";
+        fs::create_directories(sandboxInfo, ec);
+        size_t copied = 0;
+        for (const auto& entry : fs::directory_iterator(mccInfo, ec)) {
+            if (!entry.is_regular_file(ec)) continue;
+            fs::copy_file(entry.path(), sandboxInfo / entry.path().filename(), fs::copy_options::overwrite_existing, ec);
+            if (!ec) ++copied;
+        }
+        if (copied > 0 && SetCurrentDirectoryW(sandboxRoot.c_str())) {
+            NOBLE_INFO("Map-info sandbox: copied {} file(s) from '{}'; working directory is now '{}'",
+                copied, mccInfo.string(), sandboxRoot.string());
+        } else {
+            NOBLE_ERROR("Map-info sandbox setup failed (copied {} from '{}'). The engine will report 'no map selected'.",
+                copied, mccInfo.string());
+        }
+    }
+
     NOBLE_INFO("Launching Halo: Reach Engine: Target Map='{}', Mode='{}'", launchMap, launchMode);
     blamEngine->LaunchMap(launchMap, launchMode, launchDifficulty, launchSkulls, customMvar, customVariant);
 
