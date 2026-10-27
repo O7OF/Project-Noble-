@@ -27,10 +27,13 @@ struct ReachInstallInfo {
 };
 
 #pragma pack(push, 1)
+// Layout confirmed from Reach Renaissance host-probe main (SetLibrarySettings call):
+// a zeroed 0x1FE-byte block holding three UTF-16 locale strings, each "en-US",
+// at wchar offsets 0x00, 0x55 and 0xAA (byte offsets 0x000, 0x0AA, 0x154).
 struct ReachLibrarySettings {
-    wchar_t gameRoot[84];      // Reach directory e.g. "...\haloreach"
-    wchar_t mapsDirectory[84]; // Maps directory e.g. "...\haloreach\maps"
-    wchar_t userDirectory[87]; // Local data directory e.g. "data"
+    wchar_t locale0[85]; // e.g. L"en-US"
+    wchar_t locale1[85]; // e.g. L"en-US"
+    wchar_t locale2[85]; // e.g. L"en-US"
 };
 #pragma pack(pop)
 static_assert(sizeof(ReachLibrarySettings) == 510, "ReachLibrarySettings must be 510 bytes");
