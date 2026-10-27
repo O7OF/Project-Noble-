@@ -123,7 +123,10 @@ LRESULT Window::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam
         case WM_SETCURSOR:
             // Hide the arrow over the game area while the window is focused (the engine thread
             // can't do this itself: SetCursor/ShowCursor only work from the window's own thread).
-            if (LOWORD(lParam) == HTCLIENT && GetForegroundWindow() == hwnd) {
+            // ReachHost clears the class cursor while it owns the mouse (mouse look) and restores the
+            // arrow while a menu needs the pointer, so hide it only when the class cursor is cleared.
+            if (LOWORD(lParam) == HTCLIENT && GetForegroundWindow() == hwnd &&
+                GetClassLongPtrW(hwnd, GCLP_HCURSOR) == 0) {
                 SetCursor(nullptr);
                 return TRUE;
             }
