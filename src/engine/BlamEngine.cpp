@@ -31,6 +31,22 @@ static void __fastcall Hook_BindAtom(uint32_t slot, uint32_t poolIndex) {
     }
 }
 
+typedef void(__fastcall* UpdatePoolFn)(uint32_t poolIndex);
+static UpdatePoolFn s_originalUpdatePool = nullptr;
+
+static void __fastcall Hook_UpdatePool(uint32_t poolIndex) {
+    if (s_haloReachBase && poolIndex < 32) {
+        uintptr_t poolDesc = s_haloReachBase + 0xC8E4C0 + (static_cast<uintptr_t>(poolIndex) * 0x70);
+        void** pAtomArray = reinterpret_cast<void**>(poolDesc + 0x50);
+        if (*pAtomArray == nullptr) {
+            *pAtomArray = s_fallbackAtomBuffer;
+        }
+    }
+    if (s_originalUpdatePool) {
+        s_originalUpdatePool(poolIndex);
+    }
+}
+
 static void SafeCallVariantInit(HMODULE hModule, void* targetBuffer) {
     if (!hModule || !targetBuffer) return;
     __try {
@@ -60,8 +76,6 @@ BlamEngine::~BlamEngine() {
     Shutdown();
 }
 
-// Fallback prediction atom buffer (512 atoms * 0x88 bytes = 69,632 bytes)
-static uint8_t s_fallbackAtomBuffer[512 * 0x88] = { 0 };
 
 void BlamEngine::InitializePoolDescriptors() {
     if (!m_hModule) return;
@@ -154,8 +168,23 @@ bool BlamEngine::Initialize(const ReachInstallInfo& installInfo, HMODULE hModule
     // Configure Host object paths
     ReachHost::Get().SetPaths(installInfo.reachDirectory, installInfo.mapsDirectory, ReachHost::Get().GetDataDir());
 
-    // No renderer detours / pool-table writes: Reach Renaissance installs none here,
-    // and 0xC8E4C0-region writes were based on a wrong 'resource pool' guess.
+    // Install NULL safeguard detour for prediction atom binder at RVA 0x274488
+    // Haloreach.dll's 0x274488 function reads poolDesc[0x50] (atom array) and dereferences
+    // offset +0x8 without checking for NULL. Providing fallback atom buffer prevents crash at 0x2744F2.
+    s_haloReachBase = reinterpret_cast<uintptr_t>(m_hModule);
+    void* bindAtomTarget = reinterpret_cast<void*>(s_haloReachBase + 0x274488);
+    HookManager::InstallHook(bindAtomTarget,
+        reinterpret_cast<void*>(&Hook_BindAtom),
+        reinterpret_cast<void**>(&s_originalBindAtom),
+        "BindAtom_NullGuard");
+
+    void* updatePoolTarget = reinterpret_cast<void*>(s_haloReachBase + 0x2743A4);
+    HookManager::InstallHook(updatePoolTarget,
+        reinterpret_cast<void*>(&Hook_UpdatePool),
+        reinterpret_cast<void**>(&s_originalUpdatePool),
+        "UpdatePool_NullGuard");
+
+    InitializePoolDescriptors();
 
     m_isInitialized = true;
     NOBLE_INFO("BlamEngine host interface emulation initialized and ready for single-pass map launch.");
