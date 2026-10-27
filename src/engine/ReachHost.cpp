@@ -417,6 +417,26 @@ static void WriteDefaultVolumes(uint8_t* profile) {
     memcpy(profile + kVolumeOtherOffset, &full, sizeof(full));
 }
 
+// Look / controller settings block (+0x1B4..+0x1DF). Without it zoomed look sensitivity is 0 and
+// the view freezes while scoped (walking still works). RR's live::save_pad_look writes into this
+// block (+0x1B5, +0x1B7 as u8, +0x1B8 as u32/f32). Values are the stock settings: sensitivity
+// bytes, two dead-zone floats (0.13, 0.12), two 1.0 multipliers, then on/off option bytes.
+static constexpr size_t kLookSettingsOffset = 0x1B4;
+static const uint8_t kDefaultLookSettings[0x2C] = {
+    0x00, 0x12, 0x12, 0x07,                         // +0x1B4 sensitivity bytes
+    0xB8, 0x1E, 0x05, 0x3E,                         // +0x1B8 f32 0.13
+    0x8F, 0xC2, 0xF5, 0x3D,                         // +0x1BC f32 0.12
+    0x00, 0x00, 0x80, 0x3F,                         // +0x1C0 f32 1.0
+    0x00, 0x00, 0x80, 0x3F,                         // +0x1C4 f32 1.0
+    0x09, 0x00, 0x00, 0x01, 0x00, 0x01, 0x01, 0x01, // +0x1C8 option bytes
+    0x00, 0x01, 0x01, 0x01, 0x00, 0x01, 0x01, 0x00, // +0x1D0
+    0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, // +0x1D8
+};
+
+static void WriteDefaultLookSettings(uint8_t* profile) {
+    memcpy(profile + kLookSettingsOffset, kDefaultLookSettings, sizeof(kDefaultLookSettings));
+}
+
 // "-profile <path>" (or "--profile <path>") on the command line, else empty.
 static std::wstring ProfileArgPath() {
     std::wstring result;
@@ -451,7 +471,16 @@ static uint64_t __fastcall HostSlot34_ProfileSettings(void* thisPtr, uint64_t a1
             // RR host::load_profile copies at most 0xC00 bytes of it.
             const std::wstring path = ProfileArgPath();
             if (!path.empty()) {
-                std::ifstream pFile(std::filesystem::path(path), std::ios::binary);
+                std::filesystem::path profilePath(path);
+                if (profilePath.is_relative()) {
+                    // The working directory is moved to data\sandbox during start-up, so resolve
+                    // relative paths against the folder noble-client.exe is in.
+                    wchar_t exe[MAX_PATH] = {};
+                    if (GetModuleFileNameW(nullptr, exe, MAX_PATH)) {
+                        profilePath = std::filesystem::path(exe).parent_path() / profilePath;
+                    }
+                }
+                std::ifstream pFile(profilePath, std::ios::binary);
                 if (pFile) {
                     pFile.read(reinterpret_cast<char*>(s_hostProfileBuffer), 0xC00);
                     loaded = pFile.gcount() > 0;
@@ -466,7 +495,8 @@ static uint64_t __fastcall HostSlot34_ProfileSettings(void* thisPtr, uint64_t a1
         if (!loaded) {
             WriteDefaultKeyBindings(s_hostProfileBuffer);
             WriteDefaultVolumes(s_hostProfileBuffer);
-            NOBLE_INFO("ReachHost [Slot 34]: using built-in default key bindings and volumes");
+            WriteDefaultLookSettings(s_hostProfileBuffer);
+            NOBLE_INFO("ReachHost [Slot 34]: using built-in default key bindings, volumes and look settings");
         }
         // RR host::hit case 0x22: the profile is a zeroed 64 KB block with only the 4-character
         // service tag (UTF-16) written at +0x1AC. The old defaults here (+0x00 = 1, armour colours
