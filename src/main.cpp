@@ -25,6 +25,7 @@
 
 #include <windows.h>
 #include <shellapi.h>
+#include <thread>
 #include <chrono>
 #include <memory>
 #include <filesystem>
@@ -363,9 +364,19 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     while (window->ProcessMessages()) {
         blamEngine->Update(0.016f);
 
-        // Allow haloreach.dll's internal render thread (Slot 1) to drive presentation
-        Sleep(10);
+        // haloreach.dll's engine thread presents (host slot 1). After a match it stops drawing; then the
+        // post-game panel is drawn and presented from here (PauseMenu::HoldFrame, as RR does).
+        if (!noble::PauseMenu::HoldFrame()) Sleep(10);
     }
+
+    // After a match the engine thread can be stuck (it waits for a main menu map MCC doesn't ship), and its
+    // Shutdown could then wait forever. Make sure the process still ends.
+    std::thread([] {
+        Sleep(5000);
+        NOBLE_WARN("Engine shutdown took over 5 s; exiting anyway.");
+        noble::Logger::Shutdown();
+        ExitProcess(0);
+    }).detach();
 
     // 13. Clean shutdown (Correct order: Hooks & VFS -> Engine -> Loader -> Renderer)
     NOBLE_INFO("Initiating clean host shutdown...");

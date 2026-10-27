@@ -14,7 +14,8 @@ namespace noble {
 //   - a post-game panel when the engine reports the match is over (host slot 6): Play again,
 //     Return to menu, Quit.
 //
-// Threading: everything here runs on the engine thread. ReachHost calls Render() from host slot 1
+// Threading: everything here runs on the engine thread, except HoldFrame (main thread, only once the
+// engine has stopped drawing; both paths share one lock so they never overlap). ReachHost calls Render() from host slot 1
 // (just before the engine presents), Toggle()/IsOpen() from the slot 36 input poll and
 // ShowGameOver() from slot 6. The engine owns the D3D11 immediate context on that thread, so
 // drawing anywhere else is not allowed.
@@ -38,7 +39,14 @@ public:
     // finished launching yet. Engine thread only.
     static void Render(IDXGISwapChain* swapChain, bool loading);
 
+    // Main thread, called every pass of the message loop. After a match the engine tries to go to its
+    // main menu map, which MCC doesn't ship, and stops drawing (no more slot-1 frames) about 7 s after
+    // the results. From then on Noble draws the post-game panel itself and presents the swap chain,
+    // as RR does (main loop: loadscreen::hold_frame + Present(1, 0)). Returns true when it drew.
+    static bool HoldFrame();
+
 private:
+    static void RenderImpl(IDXGISwapChain* swapChain, bool loading, bool clear);
     static void DrawMenu(HWND hwnd);
     static void DrawGameOver(HWND hwnd);
     static void DrawLoading();

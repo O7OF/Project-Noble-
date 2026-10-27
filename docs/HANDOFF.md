@@ -1,4 +1,4 @@
-# Project Noble: handoff (2026-10-27, 15:25 ET)
+# Project Noble: handoff (2026-10-27, 17:40 ET)
 
 This picks up a reverse-engineering and C++ effort on **Tyler's Windows PC**. All paths below are real paths on that machine.
 Tyler (GitHub `WeabooTyler117`) works with a partner (GitHub `O7OF`) who owns the repo and writes most of the code.
@@ -11,7 +11,43 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 ---
 
-## 0. Pick up here (15:25 ET)
+## 0. Pick up here (17:40 ET)
+
+**17:35: post-game freeze FIXED (tested).** Full 10-minute Sword Base Slayer: slot 6 at 17:33:07 (cR paid, panel
+shown), engine resolved `mainmenu.map` and stopped drawing; at 17:33:16 the log says "engine stopped drawing after
+the match; Noble draws the post-game panel itself", and `capture_900000.bmp` (taken from the main-thread frames)
+shows the GAME OVER panel with the cR lines, rank bar and the three buttons. Still to confirm by hand: clicking
+PLAY AGAIN / RETURN TO MENU / QUIT on that panel (input is polled the same way as before, so it should work).
+Note: the automated test runs pay cR into Tyler's `data\userdata\career.json` (now 2436 cR from test matches);
+delete that file to start from zero. Not committed yet: `PauseMenu.*`, `main.cpp`.
+
+**Number padding ("Respawn in 00000001", loadout grenades "0000 / 0002"), investigated 17:30, not solved.** The
+engine builds those strings itself with the zeros already in them (slot 61 TextPrepare gets the characters
+"Respawn i01"), so it is not a font/glyph problem. Widths are 8 and 4 digits, i.e. 32- and 16-bit fields, which
+smells like a number-format setting the host should supply. Not the partner's IsWhitespace hook: the original
+`haloreach+0x362E8` is a binary search over 12 Unicode whitespace ranges used for line breaking and really does
+run away for characters below 0x09 (the `\x07` property markers MCC's own strings use), so the hook is correct.
+Not slots 95/96 either (HUD scale / safe-area queries). Next idea: find where the UI formats an integer property
+(look for the code that fills `camera_list.prop_respawn_time`) and see which host answer changes it.
+
+**17:25: post-game freeze, fix (details).** After a match the engine goes for its main menu map (not in MCC) and stops
+calling slot 1, so the post-game panel was never redrawn. RR handles this in its main loop: `host::loadscreen::
+begin_hold()`, then `hold_frame()` + `swapchain->Present(1,0)` from the main thread for up to 60 s
+(`host-probe.exe__main.c` ~4950). Noble now does the same: `PauseMenu::HoldFrame()` (main thread, called from the
+message loop in `main.cpp`) draws the panel and presents once the game is over and no engine frame came for 1 s;
+Render (engine thread) and HoldFrame share a mutex. Also a 5 s watchdog after the message loop, because the engine's
+Shutdown may never return when its thread is stuck. Test running at 17:23 (full 10-minute Sword Base Slayer,
+`U_*` files: look for "Noble draws the post-game panel itself" and `U_capture_900000.bmp`).
+
+**17:20: dark HUD FIXED (host slot 97).** The engine sends every HUD colour through host slot 97 before it reaches
+the HUD shader: `haloreach+0x2DDD8C` (sets constant id 0x60000 = chud_color_output_A..F, via `+0x271200`) calls
+`+0x2DDF3C` for each colour, which packs it to ARGB and calls `[host]+0x308` (slot 97) with (a1 = filter/mode index
+from `haloreach+0xD1F71C`, a2 = ARGB), then unpacks the returned ARGB. RR (`host::hit` case 0x61) returns the colour
+unchanged; Noble returned 1, which made every HUD colour (0,0,1/255,0). `HostSlot97_ColorFilter` now returns a2. Test
+(Sword Base, 17:19, `T_capture_2400.bmp`): shield bar, compass, tracker, reticle, ammo, grenades, game-type box all in
+Reach's own colours. `src/engine/HudColor.*` (the Map/Unmap stopgap + diagnostics) is no longer built or called:
+removed from `CMakeLists.txt` and `main.cpp`; delete the two files (`git rm src/engine/HudColor.cpp
+src/engine/HudColor.hpp`). Not committed yet: `ReachHost.cpp`, `main.cpp`, `CMakeLists.txt`.
 
 **Git state.** Everything up to the career work was committed on `main` as one commit ("Front-end menus, MCC art, skulls,
 subtitles, settings, key binding names, career/cR, master server") and rebased onto the partner's `1d2a282` (their
@@ -95,6 +131,94 @@ switch to Reach's measured table (`career-reference.md` §1).
 - Forwarded community request (TRAXUSi, Workshop class mods): add extra player-host object types beyond Reach's
   three (0 spartan, 1 elite, 2 monitor), e.g. `elite2`, `spartan2`, `monitor2`, using the same host code paths, with
   matching Megalo names. Engine patch inside `haloreach.dll` at run time; not started, idea only.
+
+**17:10 update: RR's real HUD colours (RenderDoc capture of RR, Spartan, Sword Base, frame 2662).**
+- To play as a Spartan in RR, the profile matters: RR profile bytes **+0x27 and +0x38** are 1 for Elite, 0 for Spartan
+  (only 5 bytes differ between the two profiles). Spartan copy: `D:\REACH REVERSE ENGINEER\rr_profile_spartan.bin`
+  (RR data, never commit). RenderDoc: exe `D:\Reach\bin\host-probe.exe`, cwd `D:\Reach`, child capture off, args = RR's
+  match line without `--show-behind/--exit-after-game/--hold-after-game` and without the three elite options.
+- `CHUDWidgetPS` = Buffer 10679 (208 bytes = 13 float4, rewritten before every HUD draw). Rows 0-5 are
+  chud_color_output_A..F; rows 6-12 are parameters (scale, timing, transforms). Values (0-255, R,G,B,A):
+
+  | Row | Motion tracker (EID 20055, Draw 6) | Shield bar (EID 20084, Draw 18) |
+  |---|---|---|
+  | 0 A | 0,0,0,0 | 36,148,255,255 |
+  | 1 B | 8,53,121,255 | 8,53,121,255 |
+  | 2 C | 0,0,0,0 | 255,255,255,1 |
+  | 3 D | 0,19,33,0 | 4,23,62,255 |
+  | 4 E | 0,0,0,0 | 240,36,36,0 (red: low-shield colour) |
+  | 5 F | 0,0,0,0 | 255,255,255,1 |
+
+  Noble gets (0,0,1,0) in every row of every widget. **The colours differ per widget and per slot**, so a fixed
+  replacement can't be right (that's why HudColor.cpp's sky blue gave the white block). The engine computes these on
+  the CPU from the map's HUD (chud) data each frame; in Noble that computation returns 1 everywhere.
+- Next (code work, no help needed from Tyler): in `haloreach.dll`, find the CPU code that fills this 208-byte buffer
+  (follow the Map/Unmap of the CHUD widget constant buffer back to the colour evaluation), see what input makes it
+  return 1 (likely a lookup that fails: a host answer, a profile field, or the player colour records RR writes,
+  `looks::copy_colors`), and fix that instead of patching the buffer. Until then HudColor.cpp could use these values
+  as a better stopgap, but that is a guess per widget.
+- `armory-appearance.txt` (read 16:45): Spartan primary b3852a, secondary 000000, tertiary ff7a14, quaternary 6a2c00;
+  Elite 3d6084; emblem colours 2fa59a/80ddda. None is the HUD blue, so the HUD isn't simply the armour colour.
+
+**16:45 update: sky-blue HUD tested; next is an RR capture.**
+- `HudColor.cpp` result (Sword Base, Forest): motion tracker, ammo, grenades, crosshair, ability icon now light blue
+  like RR. Two regressions: the shield bar + compass background is a solid **white block** (several colour slots
+  stack), and the scope mask outside the zoom view is a **light-blue haze** (it should stay dark). Every broken slot
+  holds the same value (1), so one replacement colour can't be right. Not committed yet.
+- Next: RenderDoc capture of RR for the real CHUDWidgetPS values (motion tracker, shield bar, scope mask). Launching
+  `Reach.exe` with "Capture Child Processes" crashes RR's WebView2 menus, so launch the game process directly:
+  - Exe `D:\Reach\bin\host-probe.exe`, working dir `D:\Reach`, child capture off.
+  - RR's real launch line (16:41; `runs\<id>\match` is a per-run folder):
+    `<run>\match --launch-block D:\Reach\data\launch_block_1.bin --armory-appearance
+    %LOCALAPPDATA%\ReachRenaissance\armory-appearance.txt --profile <run>\profile.bin --strings
+    D:\Reach\data\strings_en.json --elite-looks --features-on 6e --seconds 86400 --user-id <xuid> --user-name <name>
+    --mcc "<MCC dir>" --map SwordBase --mode hr_4v4_team_slayer_dmr_ar_50points_tu --time-limit 12 --exit-after-game
+    --extra-maps D:\Reach\data\armor --armor-pack rr_elite_pack --elite-armor-slots --service-tag ONYX
+    --settings-file %LOCALAPPDATA%\ReachRenaissance\settings.txt --window-pos 100,100 --window 2560x1440
+    --hold-after-game --show-behind <launcher hwnd> --map-variant "<MCC>\haloreach\hopper_map_variants\sword_base_default_031.mvar" --ingame-chat`
+  - For RenderDoc: drop `--show-behind`, `--exit-after-game`, `--hold-after-game`; use a copied profile
+    (`D:\REACH REVERSE ENGINEER\rr_profile.bin`, RR data: never commit).
+- **New lead:** RR passes `--armory-appearance armory-appearance.txt` (player colours); HUD colours may come from
+  the player's colours. Waiting for Tyler to paste that file.
+- Loadout cards show grenades as "0000 / 0002": same zero-padding bug as the respawn timer (suspect the
+  IsWhitespace hook in `EnginePatches.cpp`).
+
+**16:30 update: dark HUD cause found (RenderDoc).**
+- Capture of Noble on Sword Base (frame 1862, saved outside the repo; never commit `.rdc` files). The HUD is
+  "Colour Pass #7" (EID 8935-9432, last pass before Present). Pixel history on the motion tracker: EID 8980 writes
+  (0.04, 0.04, 0.08). Its pixel shader has two constant buffers: `ExposurePS` = g_exposure (0.5, 2.0, 1.0, 1.0),
+  normal; `CHUDWidgetPS` (208 bytes) has **chud_color_output_A..F all (0, 0, 0.00392, 0)**, i.e. the integer 1
+  read as ARGB. So the HUD colours the engine computes are an index/flag value, not a colour. Probably the same
+  player/colour records RR rewrites in memory (`armory::write_colors`: four ARGB u32 >= 0xFF000000;
+  `looks::copy_colors` hook), which would also explain why RR's profile file alone didn't help.
+- **Stopgap (Tyler's call): `src/engine/HudColor.cpp`** hooks ID3D11DeviceContext::Map/Unmap (vtable 14/15) and,
+  in 208-byte constant buffers, replaces colour slots holding exactly that broken pattern with sky blue #87CEEB
+  (alpha kept). Installed in `main.cpp` after UIManager init; added to `CMakeLists.txt`. Real fix still to do: find
+  what fills those colours (compare a RenderDoc capture of RR: same draw, CHUDWidgetPS values; then RR's
+  `looks::copy_colors` / `armory::write_colors`).
+- The 15:45 D3D11Renderer test (BGRA flag, 1 buffer) made the HUD black and was reverted (`git restore`).
+- Mods screen rewrite (`WorkshopManager.*`) tested OK by Tyler.
+
+**15:55 update.**
+- Pushed `ebd9761` (on top of the partner's `ae7b71e`): career pay 13 cR/min, rank fix, `docs/career/`, fixed-size
+  windowed mode (`Window.cpp`: no maximize/resize, since the engine can't change resolution after start; use
+  BORDERLESS FULL SCREEN for full screen), Key Bindings no longer lists MCC's "other Halo games" actions.
+- **Dark HUD:** not resolution (borderless 3840x2160 is still dark). Pixel samples: RR tracker edge (80,148,191) vs
+  Noble (21,21,32), so the HUD colour is lost, not just dimmed. Same host slots as RR (RR's switch handles 1, 2, 4, 10,
+  18, 32-34, 36, 39, 41, 43, 47, 48, 51, 52, 55-57, 88, 97, 116; slot 33 bytes identical; iface2 identical; RR gamma
+  exponent default 1.0). Lobby patches are inactive (0 applied). **Test (reverted 16:05) in `src/host/D3D11Renderer.cpp`:**
+  device flag `D3D11_CREATE_DEVICE_BGRA_SUPPORT` (RR passes 0x20) and RR's swap chain (1 buffer, flags 0). If the HUD
+  stays dark, revert it; next suspects are RR's engine hooks (`resadapt` hooks 14 functions at haloreach+0x1BB6C0..
+  +0x1BBD34 that read tag-block elements by u16 index; `hudx`, `widgetx`, `texcam`).
+- **Respawn timer** "00000001": suspect Noble's `EnginePatches` IsWhitespace hook (returns 0 for chars < 0x09); the
+  respawn string uses `\x07` property tokens. Test with the hook off.
+- **UI to fix next (Tyler's order: HUD, then Mods screen and a clean Settings menu):** Mods: Halo 3 mods listed as
+  Reach (read each mod's `ModInfo.json`: `"Engine"` and `"Title":{"Neutral":...}`), titles are the first map file
+  name, ImGui ID clash (rows need `PushID(i)`), fixed pixel widths cut off at 4K. Controller picture is dotted/pixelated
+  (scaling/alpha). Settings: lots of empty space, Video has only resolution and window mode (RR: FOV, V-Sync, quality,
+  help text on the right). Party box says 1/16 (RR 1/64).
+- Tyler added full Spartan and Elite rips (OBJ + bitmaps) at `D:\REACH REVERSE ENGINEER\spartans` and `...\elite`
+  for the armory. Game assets: never commit them.
 
 ## 1. Where things are
 
@@ -195,7 +319,7 @@ Read `build\bin\Release\noble-client.log` after a run. Useful lines: `launch sta
 | Game end (engine reports results through host slot 6) | ⚠️ post-game panel shows the right cR (15:19 test), but its buttons can't be clicked: the engine stops sending frames about 7 s later (§0) |
 | Memory | ✅ no leak during a match: 12-minute run, private bytes 3835 → 3852 MB, working set ~1.3 GB, flat |
 | HUD / scoreboard text and icons | ✅ letters, numbers and weapon/grenade icons render (glyph layout and string slots fixed, see §5) |
-| HUD bars / compass / motion tracker dark navy | ❌ not gamma, not the profile (same with RR's profile), not slot 51/33; see §6 |
+| HUD colours (bars, compass, motion tracker) | ✅ fixed 17:20: host slot 97 must return the colour it is given (§0) |
 | Key bindings: all 66 slots named | ✅ slot numbers = MCC's `GameAbstractButton` order (enum strings in `MCC-Win64-Shipping.exe`); `KeyBindings.cpp` groups them like MCC's CONFIGURE BINDINGS (movement, actions, vehicle, UI, Forge, Theater; 10 slots only other Halo games use). Crouch default is now Left Ctrl (MCC) |
 | Career / cR (`src/career/Career.cpp`) | ⚠️ first version, needs a real match to confirm stat slots: reads MCC's game-results record at slot 6, pays cR, shows it on the post-game panel, saves `data\userdata\career.json`. See §5 "Game results" |
 | Spire (`35_island`) crash ~15 s into a match | ✅ fixed by the text fixes: 3+ minutes of Slayer on Spire without a crash (13:30 run) |
@@ -367,7 +491,7 @@ Test option `-end-round-after <seconds>` calls the `mp_round_end` script command
 
 ## 6. Known problems and next steps (in order)
 
-1. **HUD bars, compass ticks and motion tracker are dark navy** (letters/icons are fine). The game-type intro box shown
+1. ~~**HUD bars, compass ticks and motion tracker are dark navy**~~ **Fixed 17:20 (slot 97, see §0).** Old notes: (letters/icons are fine). The game-type intro box shown
    during loadout selection, the "Visegrad Communications Outpost" waypoint box and the hint bar in Winter Contingency have
    the same dark tint (in MCC that box is bright cyan), while the loadout cards are correct. Ruled out: gamma, profile (RR's
    `profile_1.bin` gives the same picture), slot 51 mask, slot 33. **Confirmed 15:10:** RR's own HUD (Firefight, Beachhead)
@@ -453,6 +577,19 @@ unless one is actually ported.
 
 **Status:** settings, style, menu sounds, server browser, master server and loading screen are ported (see §3). Left:
 controller settings tab, menu music, chat (after networking).
+
+## 7b. Partner's server (`server/`, commit `ae7b71e`) - review notes for O7OF
+
+Accounts (scrypt + random tokens), SQLite tables (users, tokens, player_stats, matches, match_player_records),
+session registry, matchmaker (8 playlists). DB goes to `server/data/` (git-ignored). Left for the partner to fix:
+1. `server.js` is missing from the commit (`package.json` "main"/"start" and `node server.js` point to it).
+2. `node:sqlite` needs Node 22.5+; `package.json` says `>=18`. The catch-block fallback requires `node:sqlite` again.
+3. `npm test` points to `test/test_backend.js`, which isn't there.
+4. `ranks.js` doesn't match `Career.cpp`: base pay 60 (game: 13 cR/min), Major Grade 2 370,000 (game: 375,000), random
+   bonus 100-999 (game: 100-3000 in steps of 10), jackpot only on roll 77 of 200 (game: plain 1-in-200), +250 win bonus
+   (not in the game). Both spell "Field Marshall"; Reach's rank is "Field Marshal".
+5. For matchmaking stats the server should be the only place cR is calculated, from the host's match results;
+   otherwise a client can submit any total.
 
 ## 8. Rules for this project
 

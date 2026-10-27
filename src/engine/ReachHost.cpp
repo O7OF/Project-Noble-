@@ -2266,10 +2266,14 @@ static uint64_t __fastcall HostSlot88_UserIdentity(void* thisPtr, uint64_t a1, u
     return 1;
 }
 
-// Slot 97: Capability pass-through (host_probe case 0x61)
-static uint64_t __fastcall HostSlot97_CapabilityPass(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
-    (void)thisPtr; (void)a1; (void)a2; (void)a3; (void)a4;
-    return 1;
+// Slot 97: colour filter. Every HUD colour goes through here before it reaches the HUD shader:
+// haloreach+0x2DDF3C packs each chud_color_output (A..F) into ARGB and calls slot 97 with
+// (a1 = a mode/filter index from haloreach+0xD1F71C, a2 = ARGB colour), then unpacks the returned
+// ARGB. MCC uses it for its colour filters; RR (host::hit case 0x61) returns the colour unchanged.
+// Noble used to return 1 here, which turned every HUD colour into (0, 0, 1/255, 0): the dark navy HUD.
+static uint64_t __fastcall HostSlot97_ColorFilter(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
+    (void)thisPtr; (void)a1; (void)a3; (void)a4;
+    return a2 & 0xFFFFFFFFull;
 }
 
 // Slot 116: Controller Mapping (host_probe case 0x74). Called with the player's XUID in a1; the
@@ -2322,7 +2326,7 @@ void ReachHost::InitializeVTable() {
     s_vtable[66]  = reinterpret_cast<void*>(&HostSlot66_TextRegisterIcon);
     s_vtable[67]  = reinterpret_cast<void*>(&HostSlot67_TextMetrics);
     s_vtable[88]  = reinterpret_cast<void*>(&HostSlot88_UserIdentity);
-    s_vtable[97]  = reinterpret_cast<void*>(&HostSlot97_CapabilityPass);
+    s_vtable[97]  = reinterpret_cast<void*>(&HostSlot97_ColorFilter);
     s_vtable[116] = reinterpret_cast<void*>(&HostSlot116_ControllerMap);
 
     InitVTable2Helper(s_vtable2, std::make_index_sequence<160>{});

@@ -2,6 +2,7 @@
 #include "NobleStyle.hpp"
 #include "UiArt.hpp"
 #include "career/Career.hpp"
+#include "engine/FrameCapture.hpp"
 #include "common/Logger.hpp"
 #include "common/Relaunch.hpp"
 
@@ -21,6 +22,10 @@ namespace {
 
 std::atomic<bool> s_open{false};
 std::atomic<bool> s_gameOver{false};
+std::mutex s_renderMutex;                          // Render (engine thread) vs HoldFrame (main thread)
+std::atomic<IDXGISwapChain*> s_swapChain{nullptr}; // last swap chain the engine presented
+std::atomic<ULONGLONG> s_lastEngineFrame{0};       // GetTickCount64 of the last slot-1 frame
+std::atomic<ULONGLONG> s_gameOverAt{0};
 std::mutex s_mapMutex;
 std::string s_loadingMap;
 std::string s_loadingMapName;
@@ -95,6 +100,7 @@ void PauseMenu::Close() {
 void PauseMenu::ShowGameOver() {
     if (!s_gameOver.exchange(true)) {
         s_open.store(false);
+        s_gameOverAt.store(GetTickCount64());
         NOBLE_INFO("PauseMenu: game over, showing post-game panel");
     }
 }
@@ -279,6 +285,41 @@ void PauseMenu::DrawLoading() {
 }
 
 void PauseMenu::Render(IDXGISwapChain* swapChain, bool loading) {
+    if (swapChain) s_swapChain.store(swapChain);
+    s_lastEngineFrame.store(GetTickCount64());
+    std::lock_guard<std::mutex> lock(s_renderMutex);
+    RenderImpl(swapChain, loading, false);
+}
+
+bool PauseMenu::HoldFrame() {
+    if (!s_gameOver.load()) return false;
+    const ULONGLONG now = GetTickCount64();
+    const ULONGLONG gameOverAt = s_gameOverAt.load();
+    // Give the engine a moment: it keeps drawing for several seconds after the results.
+    if (now - s_lastEngineFrame.load() < 1000 || now - gameOverAt < 1000) return false;
+    IDXGISwapChain* swapChain = s_swapChain.load();
+    if (!swapChain) return false;
+    static bool s_logged = false;
+    if (!s_logged) {
+        s_logged = true;
+        NOBLE_INFO("PauseMenu: engine stopped drawing after the match; Noble draws the post-game panel itself");
+    }
+    static unsigned long long s_holdFrames = 0;
+    ++s_holdFrames;
+    {
+        std::lock_guard<std::mutex> lock(s_renderMutex);
+        RenderImpl(swapChain, false, true);
+        // Test runs: one screenshot of the held panel, and -quit-after keeps working (it is normally
+        // checked from slot 1, which no longer runs).
+        static const bool s_testCapture = wcsstr(GetCommandLineW(), L"-capture-frames") != nullptr;
+        if (s_testCapture && s_holdFrames == 60) FrameCapture::SaveNow(swapChain, 900000);
+        FrameCapture::OnFrame(nullptr, 0);
+    }
+    swapChain->Present(1, 0);
+    return true;
+}
+
+void PauseMenu::RenderImpl(IDXGISwapChain* swapChain, bool loading, bool clear) {
     const bool gameOver = s_gameOver.load();
     const bool open = s_open.load();
     if (!(open || gameOver || loading) || !swapChain || !ImGui::GetCurrentContext()) return;
@@ -347,6 +388,10 @@ void PauseMenu::Render(IDXGISwapChain* swapChain, bool loading) {
         ID3D11DepthStencilView* oldDsv = nullptr;
         context->OMGetRenderTargets(1, &oldRtv, &oldDsv);
         context->OMSetRenderTargets(1, &rtv, nullptr);
+        if (clear) {
+            const float dark[4] = { 0.016f, 0.031f, 0.055f, 1.0f };
+            context->ClearRenderTargetView(rtv, dark);
+        }
         ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
         context->OMSetRenderTargets(1, &oldRtv, oldDsv);
         if (oldRtv) oldRtv->Release();
