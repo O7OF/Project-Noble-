@@ -10,6 +10,7 @@ D3D11Renderer::~D3D11Renderer() {
 }
 
 static HRESULT SafeCreateD3D(
+    D3D_DRIVER_TYPE driverType,
     UINT Flags,
     const D3D_FEATURE_LEVEL* pFeatureLevels,
     UINT FeatureLevels,
@@ -23,7 +24,7 @@ static HRESULT SafeCreateD3D(
     __try {
         return D3D11CreateDeviceAndSwapChain(
             nullptr,
-            D3D_DRIVER_TYPE_HARDWARE,
+            driverType,
             nullptr,
             Flags,
             pFeatureLevels,
@@ -78,6 +79,7 @@ bool D3D11Renderer::Initialize(HWND hwnd, uint32_t width, uint32_t height) {
 
     DWORD exceptionCode = 0;
     HRESULT hr = SafeCreateD3D(
+        D3D_DRIVER_TYPE_HARDWARE,
         createDeviceFlags,
         featureLevels,
         static_cast<UINT>(std::size(featureLevels)),
@@ -88,6 +90,23 @@ bool D3D11Renderer::Initialize(HWND hwnd, uint32_t width, uint32_t height) {
         m_context.GetAddressOf(),
         &exceptionCode
     );
+
+    if (FAILED(hr) && exceptionCode == 0) {
+        NOBLE_WARN("Hardware D3D11 creation returned 0x{:08X}. Trying WARP driver fallback...", static_cast<uint32_t>(hr));
+        spdlog::default_logger()->flush();
+        hr = SafeCreateD3D(
+            D3D_DRIVER_TYPE_WARP,
+            createDeviceFlags,
+            featureLevels,
+            static_cast<UINT>(std::size(featureLevels)),
+            &scd,
+            m_swapChain.GetAddressOf(),
+            m_device.GetAddressOf(),
+            &featureLevel,
+            m_context.GetAddressOf(),
+            &exceptionCode
+        );
+    }
 
     if (exceptionCode != 0) {
         NOBLE_ERROR("SEH Exception 0x{:08X} caught inside D3D11CreateDeviceAndSwapChain!", exceptionCode);

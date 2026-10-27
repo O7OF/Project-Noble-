@@ -220,31 +220,8 @@ bool BlamEngine::Initialize(const ReachInstallInfo& installInfo, HMODULE hModule
     // Initialize pool descriptors with fallback atom arrays to prevent NULL dereferences
     InitializePoolDescriptors();
 
-    // 4. Start(engine, host, launch_block) targeting mainmenu.map
-    m_currentMap = "mainmenu";
-    m_isGameRunning = true;
-    auto launchBlock = BuildLaunchBlock(0, 0, 0, 0); // mapId 0 = mainmenu
-
-    if (m_fnStart) {
-        void* hostPtr = ReachHost::Get().GetInterface();
-        NOBLE_INFO("Calling c_game_engine Start(engine, host:0x{:X}, launch_block) [Target: mainmenu.map]...",
-            reinterpret_cast<uintptr_t>(hostPtr));
-        int32_t startStatus = m_fnStart(m_engineInstance, hostPtr, launchBlock.data());
-        NOBLE_INFO("c_game_engine Start returned: 0x{:X}", startStatus);
-    }
-
-    // 5. PostCommand(10) via vtbl+0x18 after ~300 ms
-    std::thread([this]() {
-        std::this_thread::sleep_for(std::chrono::milliseconds(300));
-        if (m_engineInstance && m_fnProcessEvent) {
-            NOBLE_INFO("BlamEngine: Posting Command 10 (Event: Start) via vtbl+0x18 after 300ms delay...");
-            int32_t postStatus = m_fnProcessEvent(m_engineInstance, 10, 0);
-            NOBLE_INFO("BlamEngine: PostCommand(10) returned: 0x{:X}", postStatus);
-        }
-    }).detach();
-
     m_isInitialized = true;
-    NOBLE_INFO("BlamEngine host interface emulation initialized and mainmenu launch sequence dispatched.");
+    NOBLE_INFO("BlamEngine host interface emulation initialized and ready for single-pass map launch.");
     return true;
 }
 
@@ -301,27 +278,34 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
     constexpr size_t LAUNCH_BLOCK_SIZE = 0x2BF30; // 180,016 bytes
     std::vector<uint8_t> block(LAUNCH_BLOCK_SIZE, 0);
 
-    // 1. Try loading pre-built launch block from data/blocks/
+    // 1. Try loading pre-built launch block from data/blocks/ or data/
     bool loadedPrebuilt = false;
     std::filesystem::path blockPath;
+
+    std::filesystem::path dataRoot = ReachHost::Get().GetDataDir();
+    if (!std::filesystem::exists(dataRoot / "launch_block_1.bin")) {
+        if (std::filesystem::exists(std::filesystem::path("data") / "launch_block_1.bin")) {
+            dataRoot = "data";
+        }
+    }
 
     int clampedDiff = (difficulty >= 0 && difficulty <= 3) ? difficulty : 1;
 
     if (mapId >= 210 && mapId <= 219) {
         // Firefight
-        blockPath = std::filesystem::path("data") / "blocks" / ("firefight_" + std::to_string(mapId) + "_d" + std::to_string(clampedDiff) + ".bin");
+        blockPath = dataRoot / "blocks" / ("firefight_" + std::to_string(mapId) + "_d" + std::to_string(clampedDiff) + ".bin");
         if (!std::filesystem::exists(blockPath)) {
-            blockPath = std::filesystem::path("data") / "blocks" / ("firefight_" + std::to_string(mapId) + ".bin");
+            blockPath = dataRoot / "blocks" / ("firefight_" + std::to_string(mapId) + ".bin");
         }
     } else if (mapId >= 178 && mapId <= 189) {
         // Campaign
-        blockPath = std::filesystem::path("data") / "blocks" / ("campaign_" + std::to_string(mapId) + "_d" + std::to_string(clampedDiff) + ".bin");
+        blockPath = dataRoot / "blocks" / ("campaign_" + std::to_string(mapId) + "_d" + std::to_string(clampedDiff) + ".bin");
         if (!std::filesystem::exists(blockPath)) {
-            blockPath = std::filesystem::path("data") / "blocks" / ("campaign_" + std::to_string(mapId) + ".bin");
+            blockPath = dataRoot / "blocks" / ("campaign_" + std::to_string(mapId) + ".bin");
         }
     } else if (mapId == 0 || mapId == 190) {
         // Main Menu
-        blockPath = std::filesystem::path("data") / "launch_block_1.bin";
+        blockPath = dataRoot / "launch_block_1.bin";
     }
 
     if (!blockPath.empty() && std::filesystem::exists(blockPath)) {
@@ -488,12 +472,17 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
         NOBLE_INFO("c_game_engine Start returned: 0x{:X}", startStatus);
     }
 
-    // PostCommand(10) via vtbl+0x18 after ~300 ms
+    // PostCommand(10) and PostCommand(11) via vtbl+0x18 after ~300 ms (verified from host-probe main.c lines 4307-4323)
     std::thread([this]() {
         std::this_thread::sleep_for(std::chrono::milliseconds(300));
         if (m_engineInstance && m_fnProcessEvent) {
-            NOBLE_INFO("BlamEngine: Posting Command 10 via vtbl+0x18 after 300ms delay...");
-            m_fnProcessEvent(m_engineInstance, 10, 0);
+            NOBLE_INFO("BlamEngine: Posting Command 10 (Event: Start) via vtbl+0x18 after 300ms delay...");
+            int32_t status10 = m_fnProcessEvent(m_engineInstance, 10, 0);
+            NOBLE_INFO("BlamEngine: PostCommand(10) returned: 0x{:X}", status10);
+
+            NOBLE_INFO("BlamEngine: Posting Command 11 via vtbl+0x18...");
+            int32_t status11 = m_fnProcessEvent(m_engineInstance, 11, 0);
+            NOBLE_INFO("BlamEngine: PostCommand(11) returned: 0x{:X}", status11);
         }
     }).detach();
 

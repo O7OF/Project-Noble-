@@ -41,6 +41,20 @@ static LONG WINAPI NobleCrashHandler(EXCEPTION_POINTERS* pExceptionInfo) {
             faultAddr,
             std::filesystem::path(modPath).string());
 
+        // Capture call stack
+        void* stackFrames[32] = { nullptr };
+        USHORT frameCount = CaptureStackBackTrace(0, 32, stackFrames, nullptr);
+        for (USHORT i = 0; i < frameCount; ++i) {
+            uintptr_t frameAddr = reinterpret_cast<uintptr_t>(stackFrames[i]);
+            HMODULE frameMod = nullptr;
+            WCHAR frameModPath[MAX_PATH] = L"Unknown";
+            if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                                   reinterpret_cast<LPCWSTR>(frameAddr), &frameMod)) {
+                GetModuleFileNameW(frameMod, frameModPath, MAX_PATH);
+            }
+            spdlog::error(" Frame {:02d}: 0x{:X} [{}]", i, frameAddr, std::filesystem::path(frameModPath).filename().string());
+        }
+
         // Generate crash minidump
         HANDLE hDumpFile = CreateFileW(L"noble-crash.dmp", GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
         if (hDumpFile != INVALID_HANDLE_VALUE) {
@@ -93,13 +107,41 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         return 1;
     }
 
-    // 5. Initialize Virtual File System (VFS)
-    // Directs all file I/O: Retail MCC files remain read-only; custom mods and configs route to ./data/
-    fs::path userStoragePath = "data";
+    // 5. Locate authentic data directory (resolves blocks, menumaps, armor, and userdata)
+    auto FindDataDirectory = []() -> fs::path {
+        wchar_t exePathBuf[MAX_PATH] = { 0 };
+        if (GetModuleFileNameW(nullptr, exePathBuf, MAX_PATH)) {
+            fs::path exeDir = fs::path(exePathBuf).parent_path();
+            std::vector<fs::path> candidates = {
+                exeDir / "data",
+                exeDir / ".." / "data",
+                exeDir / ".." / ".." / "data",
+                exeDir / ".." / ".." / ".." / "data",
+                fs::current_path() / "data"
+            };
+            for (const auto& cand : candidates) {
+                std::error_code ec;
+                if (fs::exists(cand / "menumaps" / "mainmenu_all.map", ec) ||
+                    fs::exists(cand / "launch_block_1.bin", ec)) {
+                    return fs::absolute(cand);
+                }
+            }
+        }
+        return fs::absolute("data");
+    };
+
+    fs::path userStoragePath = FindDataDirectory();
+    NOBLE_INFO("Resolved authentic Project Noble data directory: {}", userStoragePath.string());
+
+    // Initialize Virtual File System (VFS)
+    // Directs all file I/O: Retail MCC files remain read-only; custom mods and configs route to data/
     if (!noble::VFS::Initialize(*reachInstall, userStoragePath)) {
         NOBLE_ERROR("Failed to initialize Virtual File System (VFS).");
         return 1;
     }
+
+    // Configure Host object paths early
+    noble::ReachHost::Get().SetPaths(reachInstall->reachDirectory, reachInstall->mapsDirectory, userStoragePath);
 
     // 6. Create Win32 host window
     auto window = std::make_unique<noble::Window>(L"Halo: Reach Community Edition", 1280, 720);
@@ -115,20 +157,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         return 1;
     }
 
-    // Connect ImGui window message handling
-    window->SetCustomWndProc(&noble::UIManager::HandleWndProc);
     window->Show(nCmdShow);
 
-    // 8. Initialize Custom UI Overlay (ImGui + Reach Theme)
-    if (!noble::UIManager::Initialize(window->GetHwnd(), renderer->GetDevice(), renderer->GetContext())) {
-        NOBLE_ERROR("Failed to initialize UI Manager.");
-        return 1;
-    }
-
-    // Refresh workshop & local mod index
-    noble::UIManager::GetWorkshopManager().RefreshMods(reachInstall->workshopDirectory, userStoragePath / "mods");
-
-    // 9. Load and bootstrap haloreach.dll directly in process memory
+    // 8. Load and bootstrap haloreach.dll directly in process memory
     auto loader = std::make_unique<noble::Loader>();
     if (!loader->LoadReachDll(reachInstall->reachDllPath)) {
         NOBLE_ERROR("Failed to load haloreach.dll into process space.");
@@ -141,7 +172,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     // Apply 32/64 player lobby expansion detours
     noble::LobbyPatches::Apply(loader->GetModuleHandle());
 
-    // 10. Instantiate Blam! Engine & Data Access interfaces
+    // 9. Instantiate Blam! Engine & Data Access interfaces
     auto blamEngine = std::make_unique<noble::BlamEngine>();
     noble::EngineHostContext hostContext;
     hostContext.hWnd = window->GetHwnd();
@@ -158,7 +189,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 
     // Parse command line arguments for direct map and variant launches (e.g. from NobleLauncher)
     std::string launchMap = "";
-    std::string launchMode = "multiplayer";
+    std::string launchMode = "mainmenu";
     std::string customMvar = "";
     std::string customVariant = "";
     int launchDifficulty = 1;
@@ -193,38 +224,24 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         LocalFree(argvW);
     }
 
-    if (!launchMap.empty()) {
-        NOBLE_INFO("Command line requested direct launch: Map='{}', Mode='{}'", launchMap, launchMode);
-        blamEngine->LaunchMap(launchMap, launchMode, launchDifficulty, launchSkulls, customMvar, customVariant);
+    // If no specific map requested, default to the authentic 3D Halo Reach Main Menu
+    if (launchMap.empty()) {
+        launchMap = "mainmenu";
+        launchMode = "mainmenu";
     }
 
-    // 11. Initialize P2P & Self-Hosting Network Subsystem
+    NOBLE_INFO("Launching Halo: Reach Engine: Target Map='{}', Mode='{}'", launchMap, launchMode);
+    blamEngine->LaunchMap(launchMap, launchMode, launchDifficulty, launchSkulls, customMvar, customVariant);
+
+    // 10. Initialize P2P & Self-Hosting Network Subsystem
     noble::SessionManager::Get().Initialize();
 
-    NOBLE_INFO("Phase 4 Host, P2P Network, VFS & Mission Launcher active. Entering render loop...");
+    NOBLE_INFO("Authentic Halo: Reach 3D Main Menu active. Pumping host message loop...");
 
-    // 12. Frame timing & message loop
-    auto lastFrameTime = std::chrono::high_resolution_clock::now();
-
+    // 11. Native Win32 message pump: haloreach.dll renders directly to swap chain
     while (window->ProcessMessages()) {
-        auto currentFrameTime = std::chrono::high_resolution_clock::now();
-        float deltaTime = std::chrono::duration<float>(currentFrameTime - lastFrameTime).count();
-        lastFrameTime = currentFrameTime;
-
-        // Blam simulation tick
-        blamEngine->Update(deltaTime);
-
-        // Graphics render pass
-        renderer->BeginFrame();
-        blamEngine->Render();
-
-        // Custom UI Overlay render pass (Missions, Servers, Armor Locker, Workshop Mods)
-        noble::UIManager::BeginFrame();
-        noble::UIManager::Render(blamEngine.get());
-        noble::UIManager::EndFrame();
-
-        renderer->EndFrame(true);
-        Sleep(1);
+        blamEngine->Update(0.016f);
+        Sleep(10);
     }
 
     // 13. Clean shutdown

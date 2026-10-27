@@ -159,6 +159,8 @@ target_link_libraries(noble-client PRIVATE
     dbghelp
 )
 
+target_link_options(noble-client PRIVATE /MAP)
+
 # -----------------------------------------------------------------------------
 # Headless Dedicated Server Binary (noble-dedicated.exe)
 # -----------------------------------------------------------------------------

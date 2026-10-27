@@ -95,52 +95,74 @@ void VFS::Shutdown() {
 std::wstring VFS::ResolvePath(const std::wstring& requestedPath, DWORD desiredAccess) {
     if (requestedPath.empty()) return requestedPath;
 
-    std::wstring normalized = NormalizePathString(requestedPath);
-    fs::path p(normalized);
+    try {
+        std::wstring normalized = NormalizePathString(requestedPath);
+        fs::path p(normalized);
 
-    // Check if it's a writing operation
-    bool isWriting = (desiredAccess & (GENERIC_WRITE | FILE_WRITE_DATA | FILE_APPEND_DATA)) != 0;
+        // Check if it's a writing operation
+        bool isWriting = (desiredAccess & (GENERIC_WRITE | FILE_WRITE_DATA | FILE_APPEND_DATA)) != 0;
 
-    // Check if requested path starts with or is inside base MCC path
-    std::wstring baseStr = s_baseMccPath.wstring();
-    bool isTargetingMcc = false;
+        // Check if requested path starts with or is inside base MCC path
+        std::wstring baseStr = s_baseMccPath.wstring();
+        bool isTargetingMcc = false;
 
-    if (p.is_absolute()) {
-        if (normalized.rfind(baseStr, 0) == 0) {
+        std::error_code ec;
+        if (p.is_absolute()) {
+            if (!baseStr.empty() && normalized.rfind(baseStr, 0) == 0) {
+                isTargetingMcc = true;
+                p = fs::relative(p, s_baseMccPath, ec);
+                if (ec) {
+                    std::wstring sub = normalized.substr(baseStr.length());
+                    if (!sub.empty() && (sub[0] == L'\\' || sub[0] == L'/')) {
+                        sub = sub.substr(1);
+                    }
+                    p = fs::path(sub);
+                }
+            }
+        } else {
             isTargetingMcc = true;
-            p = p.lexically_relative(s_baseMccPath);
-        }
-    } else {
-        isTargetingMcc = true;
-    }
-
-    if (isTargetingMcc) {
-        // 1. If writing, REDIRECT to User Storage! Never write to base MCC.
-        if (isWriting) {
-            fs::path redirected = s_userStoragePath / p;
-            std::error_code ec;
-            fs::create_directories(redirected.parent_path(), ec);
-            return redirected.wstring();
         }
 
-        // 2. If reading:
-        // Priority A: Check user storage (custom downloaded mods / custom variants)
-        fs::path userOverride = s_userStoragePath / p;
-        if (RawPathExists(userOverride.wstring())) {
-            return userOverride.wstring();
-        }
+        if (isTargetingMcc) {
+            // 1. If writing, REDIRECT to User Storage! Never write to base MCC.
+            if (isWriting) {
+                fs::path redirected = s_userStoragePath / p;
+                fs::create_directories(redirected.parent_path(), ec);
+                return redirected.wstring();
+            }
 
-        // Priority B: Check user mods folder (e.g. data/mods/...)
-        fs::path userMod = s_userStoragePath / "mods" / p;
-        if (RawPathExists(userMod.wstring())) {
-            return userMod.wstring();
-        }
+            // 2. If reading:
+            std::wstring normLower = normalized;
+            std::transform(normLower.begin(), normLower.end(), normLower.begin(), ::towlower);
+            if (normLower.find(L"maps\\.map") != std::wstring::npos ||
+                normLower.find(L"maps/.map") != std::wstring::npos ||
+                normLower.find(L"mainmenu.map") != std::wstring::npos) {
+                fs::path customMenu = s_userStoragePath / "menumaps" / "mainmenu_all.map";
+                if (RawPathExists(customMenu.wstring())) {
+                    return customMenu.wstring();
+                }
+            }
 
-        // Priority C: Check base MCC retail directory (maps, audio, tags)
-        fs::path baseAsset = s_baseMccPath / p;
-        if (RawPathExists(baseAsset.wstring())) {
-            return baseAsset.wstring();
+            // Priority A: Check user storage (custom downloaded mods / custom variants)
+            fs::path userOverride = s_userStoragePath / p;
+            if (RawPathExists(userOverride.wstring())) {
+                return userOverride.wstring();
+            }
+
+            // Priority B: Check user mods folder (e.g. data/mods/...)
+            fs::path userMod = s_userStoragePath / "mods" / p;
+            if (RawPathExists(userMod.wstring())) {
+                return userMod.wstring();
+            }
+
+            // Priority C: Check base MCC retail directory (maps, audio, tags)
+            fs::path baseAsset = s_baseMccPath / p;
+            if (RawPathExists(baseAsset.wstring())) {
+                return baseAsset.wstring();
+            }
         }
+    } catch (...) {
+        return requestedPath;
     }
 
     return requestedPath;
@@ -160,16 +182,21 @@ HANDLE WINAPI VFS::HookedCreateFileW(
     }
 
     t_inVfsHook = true;
-    std::wstring resolved = ResolvePath(lpFileName, dwDesiredAccess);
-    HANDLE hFile = s_origCreateFileW(
-        resolved.c_str(),
-        dwDesiredAccess,
-        dwShareMode,
-        lpSecurityAttributes,
-        dwCreationDisposition,
-        dwFlagsAndAttributes,
-        hTemplateFile
-    );
+    HANDLE hFile = INVALID_HANDLE_VALUE;
+    try {
+        std::wstring resolved = ResolvePath(lpFileName, dwDesiredAccess);
+        hFile = s_origCreateFileW(
+            resolved.c_str(),
+            dwDesiredAccess,
+            dwShareMode,
+            lpSecurityAttributes,
+            dwCreationDisposition,
+            dwFlagsAndAttributes,
+            hTemplateFile
+        );
+    } catch (...) {
+        hFile = s_origCreateFileW(lpFileName, dwDesiredAccess, dwShareMode, lpSecurityAttributes, dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile);
+    }
     t_inVfsHook = false;
 
     return hFile;
@@ -181,8 +208,13 @@ DWORD WINAPI VFS::HookedGetFileAttributesW(LPCWSTR lpFileName) {
     }
 
     t_inVfsHook = true;
-    std::wstring resolved = ResolvePath(lpFileName, GENERIC_READ);
-    DWORD result = s_origGetFileAttributesW(resolved.c_str());
+    DWORD result = INVALID_FILE_ATTRIBUTES;
+    try {
+        std::wstring resolved = ResolvePath(lpFileName, GENERIC_READ);
+        result = s_origGetFileAttributesW(resolved.c_str());
+    } catch (...) {
+        result = s_origGetFileAttributesW(lpFileName);
+    }
     t_inVfsHook = false;
 
     return result;
@@ -198,8 +230,13 @@ BOOL WINAPI VFS::HookedGetFileAttributesExW(
     }
 
     t_inVfsHook = true;
-    std::wstring resolved = ResolvePath(lpFileName, GENERIC_READ);
-    BOOL result = s_origGetFileAttributesExW(resolved.c_str(), fInfoLevelId, lpFileInformation);
+    BOOL result = FALSE;
+    try {
+        std::wstring resolved = ResolvePath(lpFileName, GENERIC_READ);
+        result = s_origGetFileAttributesExW(resolved.c_str(), fInfoLevelId, lpFileInformation);
+    } catch (...) {
+        result = s_origGetFileAttributesExW(lpFileName, fInfoLevelId, lpFileInformation);
+    }
     t_inVfsHook = false;
 
     return result;

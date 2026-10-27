@@ -1,17 +1,131 @@
 #include "ReachHost.hpp"
 #include "common/Logger.hpp"
+#include <windows.h>
 #include <atomic>
 #include <array>
 #include <utility>
 #include <cwctype>
 #include <unordered_map>
 #include <mutex>
+#include <fstream>
+#include <algorithm>
+#include <filesystem>
+#include <string>
 
 namespace noble {
 
 void* ReachHost::s_vtable[160] = { nullptr };
 bool ReachHost::s_vtableInitialized = false;
 
+// -----------------------------------------------------------------------------
+// Low-level SEH helpers (no C++ local objects with destructors allowed here)
+// -----------------------------------------------------------------------------
+static inline bool SafeReadUint32(uintptr_t addr, uint32_t* outVal) {
+    if (addr <= 0x10000 || !outVal) return false;
+    __try {
+        *outVal = *reinterpret_cast<const uint32_t*>(addr);
+        return true;
+    } __except(EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+static inline bool SafeReadPointer(uintptr_t addr, uintptr_t* outPtr) {
+    if (addr <= 0x10000 || !outPtr) return false;
+    __try {
+        *outPtr = *reinterpret_cast<const uintptr_t*>(addr);
+        return true;
+    } __except(EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+static inline bool SafeWriteUint64(uintptr_t addr, uint64_t val) {
+    if (addr <= 0x10000) return false;
+    __try {
+        *reinterpret_cast<uint64_t*>(addr) = val;
+        return true;
+    } __except(EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+static inline bool SafeWriteUint8(uintptr_t addr, uint8_t val) {
+    if (addr <= 0x10000) return false;
+    __try {
+        *reinterpret_cast<uint8_t*>(addr) = val;
+        return true;
+    } __except(EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+static inline bool SafeZeroMemory(void* dest, size_t size) {
+    if (reinterpret_cast<uintptr_t>(dest) <= 0x10000 || size == 0) return false;
+    __try {
+        memset(dest, 0, size);
+        return true;
+    } __except(EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+static inline bool SafeCopyMemory(void* dest, const void* src, size_t size) {
+    if (reinterpret_cast<uintptr_t>(dest) <= 0x10000 || !src || size == 0) return false;
+    __try {
+        memcpy(dest, src, size);
+        return true;
+    } __except(EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+static inline bool SafeCopyWideString(wchar_t* dest, size_t maxChars, const wchar_t* src) {
+    if (reinterpret_cast<uintptr_t>(dest) <= 0x10000 || !src || maxChars == 0) return false;
+    __try {
+        wcsncpy_s(dest, maxChars, src, _TRUNCATE);
+        return true;
+    } __except(EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+static inline bool SafeCopyAnsiString(char* dest, size_t maxChars, const char* src) {
+    if (reinterpret_cast<uintptr_t>(dest) <= 0x10000 || !src || maxChars == 0) return false;
+    __try {
+        strncpy_s(dest, maxChars, src, _TRUNCATE);
+        return true;
+    } __except(EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+static inline bool SafeExtractString(uintptr_t inPtr, wchar_t* outBufW, size_t maxW, char* outBufA, size_t maxA, bool* outIsWide) {
+    if (inPtr <= 0x10000) return false;
+    __try {
+        const char* rawBytes = reinterpret_cast<const char*>(inPtr);
+        if (rawBytes[0] == 0) return false;
+
+        // In Windows UTF-16 LE ASCII, byte 1 is always 0 (e.g. L"m" is 0x6D, 0x00).
+        // In UTF-8 / ANSI ASCII, byte 1 is non-zero (e.g. "ma" is 0x6D, 0x61).
+        if (rawBytes[1] == 0 && rawBytes[2] != 0 && rawBytes[3] == 0) {
+            const wchar_t* wInput = reinterpret_cast<const wchar_t*>(inPtr);
+            wcsncpy_s(outBufW, maxW, wInput, _TRUNCATE);
+            *outIsWide = true;
+            return true;
+        } else {
+            strncpy_s(outBufA, maxA, rawBytes, _TRUNCATE);
+            *outIsWide = false;
+            return true;
+        }
+    } __except(EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Slot Dispatcher
+// -----------------------------------------------------------------------------
 template<size_t Slot>
 struct SlotDispatcher {
     static uint64_t __fastcall Stub(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
@@ -32,11 +146,10 @@ static uint64_t __fastcall HostSlot0_QueryInterface(void* thisPtr, uint64_t a1, 
     if (!s_logged.exchange(true)) {
         NOBLE_INFO("ReachHost [Slot 0 - QueryInterface]: riid=0x{:X}, outPtr=0x{:X}", a1, a2);
     }
-    if (a2 > 0x10000 && !IsBadWritePtr(reinterpret_cast<void*>(a2), sizeof(void*))) {
-        *reinterpret_cast<void**>(a2) = thisPtr;
-        return 0; // S_OK
+    if (a2 > 0x10000) {
+        SafeCopyMemory(reinterpret_cast<void*>(a2), &thisPtr, sizeof(void*));
     }
-    return 0;
+    return 0; // S_OK
 }
 
 // Slot 1: Frame tick / Render loop update callback (host_probe case 1)
@@ -58,10 +171,11 @@ static uint64_t __fastcall HostSlot2_ResizeBuffers(void* thisPtr, uint64_t a1, u
 // Slot 4: Engine logging stream (host_probe case 4)
 static uint64_t __fastcall HostSlot4_LogMessage(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
     (void)thisPtr; (void)a2; (void)a3; (void)a4;
-    if (a1 > 0x10000 && !IsBadReadPtr(reinterpret_cast<const void*>(a1), 1)) {
+    if (a1 > 0x10000) {
         const char* msg = reinterpret_cast<const char*>(a1);
-        if (msg && msg[0] != '\0') {
-            NOBLE_INFO("[haloreach.dll] {}", msg);
+        char buf[512] = { 0 };
+        if (SafeCopyAnsiString(buf, sizeof(buf), msg) && buf[0] != '\0') {
+            NOBLE_INFO("[haloreach.dll] {}", buf);
         }
     }
     return 0;
@@ -117,7 +231,13 @@ static uint64_t __fastcall HostSlot32_DisplaySettings(void* thisPtr, uint64_t a1
     }
 
     // Otherwise treat as DisplaySettings query
-    if (a1 > 0x10000 && !IsBadWritePtr(reinterpret_cast<void*>(a1), 0x20)) {
+    uintptr_t targetPtr = a1;
+    uintptr_t deref = 0;
+    if (SafeReadPointer(a1, &deref) && deref > 0x10000) {
+        targetPtr = deref;
+    }
+
+    if (targetPtr > 0x10000) {
         struct DisplayConfig {
             uint32_t width;        // +0x00: 1280
             uint32_t height;       // +0x04: 720
@@ -130,13 +250,14 @@ static uint64_t __fastcall HostSlot32_DisplaySettings(void* thisPtr, uint64_t a1
             int32_t  field18;      // +0x18: -1
             int32_t  field1C;      // +0x1C: -1
         };
-        auto* cfg = reinterpret_cast<DisplayConfig*>(a1);
-        cfg->width = 1280;
-        cfg->height = 720;
-        cfg->refreshRate = 60;
-        cfg->adapterIndex = 0;
-        cfg->windowMode = 0;
-        cfg->displayMode = 0;
+        DisplayConfig cfg{};
+        cfg.width = 1280;
+        cfg.height = 720;
+        cfg.refreshRate = 60;
+        cfg.adapterIndex = 0;
+        cfg.windowMode = 0;
+        cfg.displayMode = 0;
+        SafeCopyMemory(reinterpret_cast<void*>(targetPtr), &cfg, sizeof(cfg));
     }
     return 1; // Return true to signal successful configuration query
 }
@@ -144,43 +265,80 @@ static uint64_t __fastcall HostSlot32_DisplaySettings(void* thisPtr, uint64_t a1
 // Slot 33: Display Quality settings handler (host_probe case 0x21)
 static uint64_t __fastcall HostSlot33_DisplayQuality(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
     (void)thisPtr; (void)a2; (void)a3; (void)a4;
-    if (a1 > 0x10000 && !IsBadWritePtr(reinterpret_cast<void*>(a1), 0x10)) {
-        *reinterpret_cast<uint64_t*>(a1) = 0x3F80000000000201ULL;     // Scale = 1.0f (0x3F800000)
-        *reinterpret_cast<uint64_t*>(a1 + 8) = 0x2BF800000ULL;
+    uintptr_t targetPtr = a1;
+    uintptr_t deref = 0;
+    if (SafeReadPointer(a1, &deref) && deref > 0x10000) {
+        targetPtr = deref;
+    }
+
+    if (targetPtr > 0x10000) {
+        uint64_t val1 = 0x3F80000000000201ULL; // Scale = 1.0f (0x3F800000)
+        uint64_t val2 = 0x2BF800000ULL;
+        SafeWriteUint64(targetPtr, val1);
+        SafeWriteUint64(targetPtr + 8, val2);
     }
     return 1;
 }
 
 // Slot 34: Profile & Armor settings handler (host_probe case 0x22)
+static uint8_t s_hostProfileBuffer[0x10000] = { 0 };
+static bool s_hostProfileInitialized = false;
+
 static uint64_t __fastcall HostSlot34_ProfileSettings(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
     (void)thisPtr; (void)a3; (void)a4;
     static std::atomic<bool> s_logged{false};
     if (!s_logged.exchange(true)) {
         NOBLE_INFO("ReachHost [Slot 34 - ProfileSettings]: Providing Spartan armor & player loadout data");
     }
-    void* targetBuf = nullptr;
-    if (a2 > 0x10000 && !IsBadWritePtr(reinterpret_cast<void*>(a2), 0x100)) {
-        targetBuf = reinterpret_cast<void*>(a2);
-    } else if (a1 > 0x10000 && !IsBadWritePtr(reinterpret_cast<void*>(a1), 0x100)) {
-        targetBuf = reinterpret_cast<void*>(a1);
+
+    if (!s_hostProfileInitialized) {
+        memset(s_hostProfileBuffer, 0, sizeof(s_hostProfileBuffer));
+        try {
+            // Try loading authentic profile_1.bin if present in data folder
+            auto& host = ReachHost::Get();
+            std::filesystem::path profilePath = host.GetDataDir() / "profile_1.bin";
+            std::error_code ec;
+            if (std::filesystem::exists(profilePath, ec)) {
+                std::ifstream pFile(profilePath, std::ios::binary);
+                if (pFile) {
+                    pFile.read(reinterpret_cast<char*>(s_hostProfileBuffer), sizeof(s_hostProfileBuffer));
+                    NOBLE_INFO("ReachHost [Slot 34]: Ingested authentic profile_1.bin ({} bytes)", pFile.gcount());
+                }
+            }
+        } catch (...) {
+            NOBLE_WARN("ReachHost [Slot 34]: Failed to ingest profile_1.bin, using defaults");
+        }
+        if (*reinterpret_cast<uint32_t*>(s_hostProfileBuffer) == 0) {
+            *reinterpret_cast<uint32_t*>(s_hostProfileBuffer) = 1; // Active player profile valid
+            *reinterpret_cast<uint32_t*>(s_hostProfileBuffer + 0x04) = 0; // Spartan
+            *reinterpret_cast<uint32_t*>(s_hostProfileBuffer + 0x18) = 0; // Primary: Steel
+            *reinterpret_cast<uint32_t*>(s_hostProfileBuffer + 0x1C) = 12; // Secondary: Cyan
+        }
+        s_hostProfileInitialized = true;
     }
 
-    if (targetBuf) {
-        memset(targetBuf, 0, 0x100);
-        *reinterpret_cast<uint32_t*>(targetBuf) = 1; // Active player profile valid
-        // Permutations
-        *reinterpret_cast<uint32_t*>(reinterpret_cast<uintptr_t>(targetBuf) + 0x04) = 0; // Spartan
-        *reinterpret_cast<uint32_t*>(reinterpret_cast<uintptr_t>(targetBuf) + 0x18) = 0; // Primary color: Steel
-        *reinterpret_cast<uint32_t*>(reinterpret_cast<uintptr_t>(targetBuf) + 0x1C) = 12; // Secondary color: Cyan
+    // If caller provided a destination buffer, copy profile data into it
+    uintptr_t destBuf = (a2 > 0x10000) ? a2 : ((a1 > 0x10000) ? a1 : 0);
+    if (destBuf > 0x10000) {
+        SafeCopyMemory(reinterpret_cast<void*>(destBuf), s_hostProfileBuffer, 0x100);
     }
-    return 1;
+
+    // Reach Renaissance returns the 64KB profile buffer pointer
+    return reinterpret_cast<uint64_t>(s_hostProfileBuffer);
 }
 
 // Slot 36: Input Controller Query handler (host_probe case 0x24)
 static uint64_t __fastcall HostSlot36_InputController(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
-    (void)thisPtr; (void)a1; (void)a3; (void)a4;
-    if (a2 > 0x10000 && !IsBadWritePtr(reinterpret_cast<void*>(a2), 0x130)) {
-        memset(reinterpret_cast<void*>(a2), 0, 0x130);
+    (void)thisPtr; (void)a3; (void)a4;
+    uintptr_t outBuf = (a2 > 0x10000) ? a2 : 0;
+    if (a1 > 0x10000) {
+        uintptr_t pSub = 0;
+        if (SafeReadPointer(a1 + 8, &pSub) && pSub > 0x10000) {
+            outBuf = pSub;
+        }
+    }
+    if (outBuf > 0x10000) {
+        SafeZeroMemory(reinterpret_cast<void*>(outBuf), 0x130);
     }
     return 1;
 }
@@ -204,28 +362,51 @@ static uint64_t __fastcall HostSlot43_NetRecv(void* thisPtr, uint64_t a1, uint64
 
 // Slot 47: User-data folder handler (host_probe case 0x2F)
 static wchar_t s_userDataFolderW[MAX_PATH] = L"data";
+
 static uint64_t __fastcall HostSlot47_UserDataFolder(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
-    (void)thisPtr; (void)a4;
-    uint32_t kind = static_cast<uint32_t>(a1 & 0xFFFFFFFF);
-    NOBLE_INFO("ReachHost [Slot 47 - UserDataFolder]: kind={}", kind);
+    (void)thisPtr; (void)a3; (void)a4;
+    try {
+        uint32_t kind = 0;
+        uintptr_t outBufferPtr = 0;
+        size_t charCapacity = (a2 > 0 && a2 < 4096) ? static_cast<size_t>(a2) : 260;
 
-    auto& host = ReachHost::Get();
-    std::filesystem::path userPath = host.GetDataDir() / "userdata" / ("kind" + std::to_string(kind)) / "HaloReach";
-    std::error_code ec;
-    std::filesystem::create_directories(userPath, ec);
+        if (a1 > 0x10000) {
+            // In host-probe: a1 is struct { uint32_t kind; uint32_t pad; wchar_t* outBuffer; }*
+            uint32_t k = 0;
+            uintptr_t pBuf = 0;
+            if (SafeReadUint32(a1, &k)) kind = k;
+            if (SafeReadPointer(a1 + 8, &pBuf) && pBuf > 0x10000) outBufferPtr = pBuf;
+        } else {
+            kind = static_cast<uint32_t>(a1 & 0xFFFFFFFF);
+            outBufferPtr = a2;
+            if (a3 > 0 && a3 < 4096) charCapacity = static_cast<size_t>(a3);
+        }
 
-    std::wstring pathW = userPath.wstring();
-    wcsncpy_s(s_userDataFolderW, MAX_PATH, pathW.c_str(), _TRUNCATE);
+        auto& host = ReachHost::Get();
+        std::filesystem::path userPath = host.GetDataDir() / "userdata" / ("kind" + std::to_string(kind)) / "HaloReach";
+        std::error_code ec;
+        std::filesystem::create_directories(userPath, ec);
 
-    if (a2 > 0x10000 && !IsBadWritePtr(reinterpret_cast<void*>(a2), sizeof(wchar_t))) {
-        size_t maxChars = (a3 > 0 && a3 < 2048) ? static_cast<size_t>(a3) : 260;
-        wcsncpy_s(reinterpret_cast<wchar_t*>(a2), maxChars, pathW.c_str(), _TRUNCATE);
+        std::filesystem::path absPath = std::filesystem::absolute(userPath, ec);
+        if (ec) absPath = userPath;
+
+        std::wstring pathW = absPath.wstring();
+        SafeCopyWideString(s_userDataFolderW, MAX_PATH, pathW.c_str());
+
+        NOBLE_INFO("ReachHost [Slot 47 - UserDataFolder]: kind={} outBuf=0x{:X} cap={} -> '{}'", 
+            kind, outBufferPtr, charCapacity, userPath.string());
+
+        if (outBufferPtr > 0x10000) {
+            wchar_t* pDest = reinterpret_cast<wchar_t*>(outBufferPtr);
+            size_t copyLen = (std::min)(charCapacity > 0 ? charCapacity - 1 : 259, pathW.length());
+            SafeCopyMemory(pDest, pathW.c_str(), copyLen * sizeof(wchar_t));
+            SafeWriteUint8(reinterpret_cast<uintptr_t>(pDest + copyLen), 0);
+        }
+
+        return 0; // Return 0 per host-probe case 0x2F
+    } catch (...) {
+        return 0;
     }
-    if (a1 > 0x10000 && !IsBadWritePtr(reinterpret_cast<void*>(a1), sizeof(wchar_t))) {
-        size_t maxChars = (a2 > 0 && a2 < 2048) ? static_cast<size_t>(a2) : 260;
-        wcsncpy_s(reinterpret_cast<wchar_t*>(a1), maxChars, pathW.c_str(), _TRUNCATE);
-    }
-    return 1;
 }
 
 // Slot 48: File path resolver handler (host_probe case 0x30)
@@ -233,91 +414,128 @@ static thread_local wchar_t s_resolvedPathBufW[MAX_PATH];
 static thread_local char s_resolvedPathBufA[MAX_PATH];
 
 static uint64_t __fastcall HostSlot48_FilePathResolver(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
-    (void)thisPtr;
-    uint32_t kind = static_cast<uint32_t>(a1 & 0xFFFFFFFF);
-    uintptr_t inPtr = (a1 > 0x10000) ? a1 : a2;
-    if (inPtr <= 0x10000 || IsBadReadPtr(reinterpret_cast<const void*>(inPtr), 1)) {
-        return 0;
-    }
+    (void)thisPtr; (void)a4; // haloreach.dll passes 3 arguments; a4 is uninitialized stack memory and must never be touched
+    try {
+        uint32_t kind = static_cast<uint32_t>(a1 & 0xFFFFFFFF);
+        uintptr_t inOutPtr = 0;
+        size_t capacity = (a3 > 0 && a3 <= 4096) ? static_cast<size_t>(a3) : 260;
 
-    std::wstring inStr;
-    const wchar_t* wInput = reinterpret_cast<const wchar_t*>(inPtr);
-    if (wInput[0] != 0 && (wInput[1] == 0 || iswprint(wInput[1]))) {
-        inStr = wInput;
-    } else {
-        const char* aInput = reinterpret_cast<const char*>(inPtr);
-        if (aInput && aInput[0] != 0) {
-            int len = MultiByteToWideChar(CP_UTF8, 0, aInput, -1, nullptr, 0);
+        if (a1 > 0x10000) {
+            uint32_t k = 0;
+            uintptr_t pSub = 0;
+            if (SafeReadUint32(a1, &k)) kind = k;
+            if (SafeReadPointer(a1 + 8, &pSub) && pSub > 0x10000) {
+                inOutPtr = pSub;
+            } else {
+                inOutPtr = a1;
+            }
+        } else {
+            inOutPtr = a2;
+        }
+
+        if (inOutPtr <= 0x10000) return 0;
+
+        wchar_t localW[MAX_PATH] = { 0 };
+        char localA[MAX_PATH] = { 0 };
+        bool isWide = false;
+        if (!SafeExtractString(inOutPtr, localW, MAX_PATH, localA, MAX_PATH, &isWide)) {
+            return 0;
+        }
+
+        std::wstring inStr;
+        if (isWide) {
+            inStr = localW;
+        } else {
+            int len = MultiByteToWideChar(CP_UTF8, 0, localA, -1, nullptr, 0);
             if (len > 0) {
                 inStr.resize(len - 1);
-                MultiByteToWideChar(CP_UTF8, 0, aInput, -1, inStr.data(), len);
+                MultiByteToWideChar(CP_UTF8, 0, localA, -1, inStr.data(), len);
             }
         }
-    }
 
-    if (inStr.empty()) return 0;
+        if (inStr.empty()) return 0;
 
-    auto& host = ReachHost::Get();
-    std::filesystem::path resolved;
+        auto& host = ReachHost::Get();
+        std::error_code ec;
+        std::filesystem::path resolved;
 
-    std::filesystem::path checkUser = host.GetDataDir() / inStr;
-    std::filesystem::path checkUserMenuMap = host.GetDataDir() / "menumaps" / inStr;
-    std::filesystem::path checkCustomMainMenu = host.GetDataDir() / "menumaps" / "mainmenu_all.map";
-    std::filesystem::path checkUserArmor = host.GetDataDir() / "armor" / inStr;
-    std::filesystem::path checkUserMaps = host.GetDataDir() / "maps" / inStr;
-    std::filesystem::path mccRoot = host.GetReachDir().has_parent_path() ? host.GetReachDir().parent_path() : host.GetReachDir();
-    std::filesystem::path checkMccRelative = mccRoot / inStr;
-    std::filesystem::path checkRetailReach = host.GetReachDir() / inStr;
-    std::filesystem::path checkRetailMaps = host.GetMapsDir() / inStr;
+        std::filesystem::path checkUser = host.GetDataDir() / inStr;
+        std::filesystem::path checkUserMenuMap = host.GetDataDir() / "menumaps" / inStr;
+        std::filesystem::path checkCustomMainMenu = host.GetDataDir() / "menumaps" / "mainmenu_all.map";
+        std::filesystem::path checkUserArmor = host.GetDataDir() / "armor" / inStr;
+        std::filesystem::path checkUserMaps = host.GetDataDir() / "maps" / inStr;
+        std::filesystem::path mccRoot = host.GetReachDir().has_parent_path() ? host.GetReachDir().parent_path() : host.GetReachDir();
+        std::filesystem::path checkMccRelative = mccRoot / inStr;
+        std::filesystem::path checkRetailReach = host.GetReachDir() / inStr;
+        std::filesystem::path checkRetailMaps = host.GetMapsDir() / inStr;
 
-    if ((inStr.find(L"mainmenu") != std::wstring::npos || inStr.find(L"mainmenu.map") != std::wstring::npos) && std::filesystem::exists(checkCustomMainMenu)) {
-        resolved = checkCustomMainMenu;
-    } else if (std::filesystem::exists(checkUser)) {
-        resolved = checkUser;
-    } else if (std::filesystem::exists(checkUserMenuMap)) {
-        resolved = checkUserMenuMap;
-    } else if (std::filesystem::exists(checkUserArmor)) {
-        resolved = checkUserArmor;
-    } else if (std::filesystem::exists(checkUserMaps)) {
-        resolved = checkUserMaps;
-    } else if (std::filesystem::exists(checkMccRelative)) {
-        resolved = checkMccRelative;
-    } else if (std::filesystem::exists(checkRetailReach)) {
-        resolved = checkRetailReach;
-    } else if (std::filesystem::exists(checkRetailMaps)) {
-        resolved = checkRetailMaps;
-    } else {
-        if (inStr.find(L".map") == std::wstring::npos) {
-            std::filesystem::path withExt = host.GetMapsDir() / (inStr + L".map");
-            if (std::filesystem::exists(withExt)) {
-                resolved = withExt;
+        bool isMainMenu = (inStr.find(L"mainmenu") != std::wstring::npos) ||
+                          (inStr.find(L"mainmenu.map") != std::wstring::npos) ||
+                          (inStr.find(L"maps\\.map") != std::wstring::npos) ||
+                          (inStr.find(L"maps/.map") != std::wstring::npos) ||
+                          (inStr == L"haloreach\\maps\\.map") ||
+                          (inStr == L"maps\\.map") ||
+                          (inStr == L".map");
+
+        if (isMainMenu && std::filesystem::exists(checkCustomMainMenu, ec)) {
+            resolved = checkCustomMainMenu;
+        } else if (std::filesystem::exists(checkUser, ec)) {
+            resolved = checkUser;
+        } else if (std::filesystem::exists(checkUserMenuMap, ec)) {
+            resolved = checkUserMenuMap;
+        } else if (std::filesystem::exists(checkUserArmor, ec)) {
+            resolved = checkUserArmor;
+        } else if (std::filesystem::exists(checkUserMaps, ec)) {
+            resolved = checkUserMaps;
+        } else if (std::filesystem::exists(checkMccRelative, ec)) {
+            resolved = checkMccRelative;
+        } else if (std::filesystem::exists(checkRetailReach, ec)) {
+            resolved = checkRetailReach;
+        } else if (std::filesystem::exists(checkRetailMaps, ec)) {
+            resolved = checkRetailMaps;
+        } else {
+            if (inStr.find(L".map") == std::wstring::npos) {
+                std::filesystem::path withExt = host.GetMapsDir() / (inStr + L".map");
+                if (std::filesystem::exists(withExt, ec)) {
+                    resolved = withExt;
+                } else {
+                    resolved = checkMccRelative;
+                }
             } else {
                 resolved = checkMccRelative;
             }
-        } else {
-            resolved = checkMccRelative;
         }
+
+        std::filesystem::path absPath = std::filesystem::absolute(resolved, ec);
+        if (ec) absPath = resolved;
+
+        std::wstring resolvedW = absPath.wstring();
+        SafeCopyWideString(s_resolvedPathBufW, MAX_PATH, resolvedW.c_str());
+
+        std::string resolvedA = absPath.string();
+        SafeCopyAnsiString(s_resolvedPathBufA, MAX_PATH, resolvedA.c_str());
+
+        // Safely write the resolved path back into inOutPtr without touching caller stack frames
+        if (isWide) {
+            SafeCopyWideString(reinterpret_cast<wchar_t*>(inOutPtr), capacity, resolvedW.c_str());
+        } else {
+            SafeCopyAnsiString(reinterpret_cast<char*>(inOutPtr), capacity, resolvedA.c_str());
+        }
+
+        NOBLE_INFO("ReachHost [Slot 48 - FilePathResolver]: kind={} in='{}' -> resolved='{}'", 
+            kind, isWide ? localA : std::string(localA), resolvedA);
+        spdlog::default_logger()->flush();
+
+        return 1;
+    } catch (const std::exception& e) {
+        NOBLE_ERROR("ReachHost [Slot 48]: Exception caught: {}", e.what());
+        spdlog::default_logger()->flush();
+        return 0;
+    } catch (...) {
+        NOBLE_ERROR("ReachHost [Slot 48]: Unknown exception caught!");
+        spdlog::default_logger()->flush();
+        return 0;
     }
-
-    std::wstring resolvedW = resolved.wstring();
-    wcsncpy_s(s_resolvedPathBufW, MAX_PATH, resolvedW.c_str(), _TRUNCATE);
-
-    std::string resolvedA = resolved.string();
-    strncpy_s(s_resolvedPathBufA, MAX_PATH, resolvedA.c_str(), _TRUNCATE);
-
-    if (a4 > 0x10000 && !IsBadWritePtr(reinterpret_cast<void*>(a4), 2)) {
-        size_t maxChars = (a3 > 0 && a3 < MAX_PATH) ? static_cast<size_t>(a3) : MAX_PATH;
-        strncpy_s(reinterpret_cast<char*>(a4), maxChars, resolvedA.c_str(), _TRUNCATE);
-    }
-    if (a2 > 0x10000 && !IsBadWritePtr(reinterpret_cast<void*>(a2), 2)) {
-        size_t maxChars = (a3 > 0 && a3 < MAX_PATH) ? static_cast<size_t>(a3) : MAX_PATH;
-        strncpy_s(reinterpret_cast<char*>(a2), maxChars, resolvedA.c_str(), _TRUNCATE);
-    }
-
-    NOBLE_INFO("ReachHost [Slot 48 - FilePathResolver]: kind={} in='{}' -> resolved='{}'", 
-        kind, resolvedA, resolved.string());
-
-    return 1;
 }
 
 // Slot 51: Engine capability query handler (host_probe case 0x33)
@@ -327,8 +545,8 @@ static uint64_t __fastcall HostSlot51_EngineCapability(void* thisPtr, uint64_t a
     if (!s_logged.exchange(true)) {
         NOBLE_INFO("ReachHost [Slot 51 - EngineCapability]: capability query id={}", a1);
     }
-    if (a2 > 0x10000 && !IsBadWritePtr(reinterpret_cast<void*>(a2), sizeof(uint8_t))) {
-        *reinterpret_cast<uint8_t*>(a2) = 1;
+    if (a2 > 0x10000) {
+        SafeWriteUint8(a2, 1);
     }
     return 1; // Return true
 }
@@ -369,16 +587,31 @@ static uint64_t __fastcall HostSlot88_UserIdentity(void* thisPtr, uint64_t a1, u
     if (!s_logged.exchange(true)) {
         NOBLE_INFO("ReachHost [Slot 88 - UserIdentity]: Supplying player identity 'NobleSix' (XUID: 0x9000000000001)");
     }
-    // Set 64-bit SteamID / XUID in a1
-    if (a1 > 0x10000 && !IsBadWritePtr(reinterpret_cast<void*>(a1), sizeof(uint64_t))) {
-        *reinterpret_cast<uint64_t*>(a1) = 0x0009000000000001ULL;
+
+    uintptr_t pXuid = 0;
+    uintptr_t pTag = 0;
+
+    if (a1 > 0x10000) {
+        uintptr_t deref1 = 0;
+        uintptr_t deref2 = 0;
+        if (SafeReadPointer(a1, &deref1) && deref1 > 0x10000) pXuid = deref1;
+        if (SafeReadPointer(a1 + 8, &deref2) && deref2 > 0x10000) pTag = deref2;
+        if (!pXuid) pXuid = a1;
     }
-    // Set UTF-16 gamer tag in a2
-    if (a2 > 0x10000 && !IsBadWritePtr(reinterpret_cast<void*>(a2), 32 * sizeof(wchar_t))) {
+
+    if (a2 > 0x10000 && !pTag) {
+        pTag = a2;
+    }
+
+    if (pXuid > 0x10000) {
+        SafeWriteUint64(pXuid, 0x0009000000000001ULL);
+    }
+
+    if (pTag > 0x10000) {
         const wchar_t gamerTagW[] = L"NobleSix";
-        wcsncpy_s(reinterpret_cast<wchar_t*>(a2), 32, gamerTagW, _TRUNCATE);
-        reinterpret_cast<char*>(a2)[31] = '\0';
+        SafeCopyWideString(reinterpret_cast<wchar_t*>(pTag), 32, gamerTagW);
     }
+
     return 1;
 }
 
@@ -389,12 +622,19 @@ static uint64_t __fastcall HostSlot97_CapabilityPass(void* thisPtr, uint64_t a1,
 }
 
 // Slot 116: Controller Mapping (host_probe case 0x74)
+static uint8_t s_controllerMap[64] = { 0 };
+static bool s_controllerMapInit = false;
+
 static uint64_t __fastcall HostSlot116_ControllerMap(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
     (void)thisPtr; (void)a1; (void)a3; (void)a4;
-    if (a2 > 0x10000 && !IsBadWritePtr(reinterpret_cast<void*>(a2), 64)) {
-        memset(reinterpret_cast<void*>(a2), 0xFF, 64);
+    if (!s_controllerMapInit) {
+        memset(s_controllerMap, 0xFF, sizeof(s_controllerMap));
+        s_controllerMapInit = true;
     }
-    return 1;
+    if (a2 > 0x10000) {
+        SafeCopyMemory(reinterpret_cast<void*>(a2), s_controllerMap, 64);
+    }
+    return reinterpret_cast<uint64_t>(s_controllerMap);
 }
 
 template<size_t... Is>
