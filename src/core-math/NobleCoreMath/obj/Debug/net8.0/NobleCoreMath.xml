@@ -1,0 +1,181 @@
+<?xml version="1.0" encoding="utf-8"?>
+<doc>
+<assembly><name>NobleCoreMath</name></assembly>
+<members>
+<member name="T:NobleCoreMath.BlamMath.RealMatrix4x4">
+<summary>
+ Represents a 4x4 projection matrix for rasterizer view calculations
+ Direct mapping of Bungie &apos;s_rasterizer_projection&apos;
+</summary>
+</member>
+<member name="T:NobleCoreMath.BlamMath.RealMatrix4x3">
+<summary>
+ Represents a 4x3 affine transform matrix (orientation + translation)
+ Direct mapping of Bungie &apos;struct real_matrix4x3&apos;
+</summary>
+</member>
+<member name="T:NobleCoreMath.BlamMath.Real32Quaternion">
+<summary>
+ Represents a quaternion (i, j, k, w)
+ Direct mapping of Bungie &apos;struct real32_quaternion&apos; (real_math.obj)
+</summary>
+</member>
+<member name="T:NobleCoreMath.BlamMath.RealVector3D">
+<summary>
+ Represents a 3D directional vector (i, j, k)
+ Direct mapping of Bungie &apos;union real_vector3d&apos;
+</summary>
+</member>
+<member name="T:NobleCoreMath.BlamMath.RealPoint3D">
+<summary>
+ Represents a 3D point (x, y, z) in Blam! world coordinates (Z-up, right-handed)
+ Direct mapping of Bungie &apos;union real_point3d&apos;
+</summary>
+</member>
+<member name="T:NobleCoreMath.BlamMath.RealVector2D">
+<summary>
+ Represents a 2D vector (i, j)
+</summary>
+</member>
+<member name="T:NobleCoreMath.BlamMath.RealPoint2D">
+<summary>
+ Represents a 2D point (x, y) in Blam! coordinate space
+</summary>
+</member>
+<member name="M:NobleCoreMath.BlamMath.Projection.worldToScreen(NobleCoreMath.BlamMath.RealPoint3D,NobleCoreMath.BlamMath.RealMatrix4x4,System.Single,System.Single)">
+<summary>
+ Project a 3D world space point to 2D screen coordinates
+ Essential for rendering Forge object selection boxes, name tags, and overlay gizmos
+</summary>
+</member>
+<member name="M:NobleCoreMath.BlamMath.MatrixOps.transformVector(NobleCoreMath.BlamMath.RealMatrix4x3,NobleCoreMath.BlamMath.RealVector3D)">
+<summary>
+ Transforms a 3D directional vector by a 4x3 matrix (ignoring translation)
+</summary>
+</member>
+<member name="M:NobleCoreMath.BlamMath.MatrixOps.transformPoint(NobleCoreMath.BlamMath.RealMatrix4x3,NobleCoreMath.BlamMath.RealPoint3D)">
+<summary>
+ Transforms a 3D point by a 4x3 matrix
+</summary>
+</member>
+<member name="M:NobleCoreMath.BlamMath.MatrixOps.fromPositionAndQuaternion(NobleCoreMath.BlamMath.RealPoint3D,NobleCoreMath.BlamMath.Real32Quaternion)">
+<summary>
+ Creates a 4x3 matrix from position and orientation quaternion
+</summary>
+</member>
+<member name="M:NobleCoreMath.BlamMath.QuaternionOps.rotatePoint(NobleCoreMath.BlamMath.RealPoint3D,NobleCoreMath.BlamMath.Real32Quaternion,NobleCoreMath.BlamMath.RealPoint3D)">
+<summary>
+ Rotates a 3D point around an origin point by a quaternion
+</summary>
+</member>
+<member name="M:NobleCoreMath.BlamMath.QuaternionOps.rotateVector(NobleCoreMath.BlamMath.Real32Quaternion,NobleCoreMath.BlamMath.RealVector3D)">
+<summary>
+ Rotates a 3D vector by a quaternion
+</summary>
+</member>
+<member name="M:NobleCoreMath.BlamMath.QuaternionOps.toEuler(NobleCoreMath.BlamMath.Real32Quaternion)">
+<summary>
+ Converts a quaternion to Euler angles (yaw, pitch, roll in radians)
+</summary>
+</member>
+<member name="M:NobleCoreMath.BlamMath.QuaternionOps.fromEuler(System.Single,System.Single,System.Single)">
+<summary>
+ Creates a quaternion from Euler angles (yaw, pitch, roll in radians)
+ Matching Halo Reach&apos;s rotation conventions in &apos;c_sandbox_engine::rotate_object&apos;
+</summary>
+</member>
+<member name="M:NobleCoreMath.BlamMath.QuaternionOps.slerp(NobleCoreMath.BlamMath.Real32Quaternion,NobleCoreMath.BlamMath.Real32Quaternion,System.Single)">
+<summary>
+ Functional implementation of Bungie&apos;s &apos;quaternions_interpolate&apos; (?quaternions_interpolate@@YAXPBUreal32_quaternion@@0MPAU1@@Z)
+ Spherical Linear Interpolation (Slerp)
+</summary>
+</member>
+<member name="M:NobleCoreMath.BlamMath.QuaternionOps.normalize(NobleCoreMath.BlamMath.Real32Quaternion)">
+<summary>
+ Functional implementation of Bungie&apos;s &apos;quaternion_normalize&apos; (?quaternion_normalize@@YAXPAUreal32_quaternion@@@Z)
+</summary>
+</member>
+<member name="T:NobleCoreMath.BlamMath.VectorOps">
+<summary>
+ Functional vector, quaternion and matrix operations mirroring Bungie&apos;s &apos;real_math.obj&apos;
+</summary>
+</member>
+<member name="M:NobleCoreMath.TagParser.parseVariantFile(System.String)">
+<summary>
+ Reads metadata from a .mvar or .bin file
+</summary>
+</member>
+<member name="M:NobleCoreMath.TagParser.parseBlfHeader(System.IO.Stream)">
+<summary>
+ Parses a Bungie BLF (.bin / .mvar) header container
+</summary>
+</member>
+<member name="M:NobleCoreMath.TagParser.parseMapHeader(System.String)">
+<summary>
+ Parses a Halo: Reach .map cache file header
+</summary>
+</member>
+<member name="M:NobleCoreMath.SignatureScanner.createRelativeJumpPatch(System.String,System.Int64,System.Int64,System.Byte[])">
+<summary>
+ Generates an x64 near jump (0xE9 rel32) patch
+</summary>
+</member>
+<member name="M:NobleCoreMath.SignatureScanner.createBytePatch(System.String,System.Int64,System.Byte[],System.Byte[],System.String)">
+<summary>
+ Generates a byte replacement patch
+</summary>
+</member>
+<member name="M:NobleCoreMath.SignatureScanner.createNopPatch(System.String,System.Int64,System.Int32,System.Byte[])">
+<summary>
+ Generates a NOP (0x90) patch for a specified range
+</summary>
+</member>
+<member name="M:NobleCoreMath.SignatureScanner.findAllMatches(System.Byte[],NobleCoreMath.SignatureScanner.CompiledPattern)">
+<summary>
+ Scans a byte array for all occurrences of a compiled pattern
+</summary>
+</member>
+<member name="M:NobleCoreMath.SignatureScanner.findFirstMatch(System.Byte[],NobleCoreMath.SignatureScanner.CompiledPattern)">
+<summary>
+ Scans a byte array for the first occurrence of a compiled pattern
+</summary>
+</member>
+<member name="M:NobleCoreMath.SignatureScanner.compilePattern(System.String)">
+<summary>
+ Compiles an IDA-style signature string (e.g. &quot;48 8B 05 ? ? ? ? 48 85 C0&quot;)
+</summary>
+</member>
+<member name="P:NobleCoreMath.SignatureScanner.ReachPatterns.CacheFilesCopyMap">
+<summary>
+ Pattern for cache_files_copy_map (?cache_files_copy_map@@YA_NPBDW4e_cache_file_load_action@@@Z)
+</summary>
+</member>
+<member name="P:NobleCoreMath.SignatureScanner.ReachPatterns.MainLoopBody">
+<summary>
+ Pattern for main_loop_body (?main_loop_body@@YAXV?$c_flags@W4e_main_loop_body_part_flags@@...@@PAKPA_J1@Z)
+</summary>
+</member>
+<member name="P:NobleCoreMath.SignatureScanner.ReachPatterns.ManipulateObject">
+<summary>
+ Pattern for c_sandbox_engine::manipulate_object (?manipulate_object@c_sandbox_engine@@QBAXJJ@Z)
+</summary>
+</member>
+<member name="P:NobleCoreMath.SignatureScanner.ReachPatterns.RotateObject">
+<summary>
+ Pattern for c_sandbox_engine::rotate_object (?rotate_object@c_sandbox_engine@@QBAXJJMMM@Z)
+ Forge rotational axis unlock (pitch, yaw, roll continuous float overrides)
+</summary>
+</member>
+<member name="P:NobleCoreMath.SignatureScanner.ReachPatterns.SetSlotCounts">
+<summary>
+ Pattern for c_network_session_membership::set_slot_counts (?set_slot_counts@c_network_session_membership@@QAAXJJ_N@Z)
+ Expands hardcoded 16-player lobby limits to 32/64 slots
+</summary>
+</member>
+<member name="T:NobleCoreMath.SignatureScanner.ReachPatterns">
+<summary>
+ Catalog of known Reach Blam! signatures extracted from Omaha symbol database
+</summary>
+</member>
+</members>
+</doc>

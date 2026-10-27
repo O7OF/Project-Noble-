@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/" />
+  <Folder Name="/src/core-math/">
+    <Project Path="src/core-math/NobleCoreMath/NobleCoreMath.fsproj" />
+  </Folder>
+  <Folder Name="/src/launcher/">
+    <Project Path="src/launcher/NobleLauncher.Tests/NobleLauncher.Tests.csproj" />
+    <Project Path="src/launcher/NobleLauncher/NobleLauncher.csproj" />
+  </Folder>
+</Solution>

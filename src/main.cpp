@@ -137,7 +137,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     // Direct all haloreach.dll asset and map file I/O through Virtual File System (VFS)
     noble::VFS::HookTargetModule(loader->GetModuleHandle());
 
-    // Lobby & Forge patches disabled per launch sequence specification
+    // Apply 32/64 player lobby expansion detours
+    noble::LobbyPatches::Apply(loader->GetModuleHandle());
 
     // 10. Instantiate Blam! Engine & Data Access interfaces
     auto blamEngine = std::make_unique<noble::BlamEngine>();

@@ -1,0 +1,10 @@
+{
+  "version": 2,
+  "dgSpecHash": "K5PWpMe8vsg=",
+  "success": true,
+  "projectFilePath": "C:\\Users\\Chey1\\Desktop\\Halo Reach Community Edition\\src\\core-math\\NobleCoreMath\\NobleCoreMath.fsproj",
+  "expectedPackageFiles": [
+    "C:\\Users\\Chey1\\.nuget\\packages\\fsharp.core\\10.1.402\\fsharp.core.10.1.402.nupkg.sha512"
+  ],
+  "logs": []
+}

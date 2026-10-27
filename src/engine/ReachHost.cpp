@@ -50,13 +50,31 @@ static uint64_t __fastcall HostSlot23_LoadProgress(void* thisPtr, uint64_t a1, u
     return 0;
 }
 
-// Slot 32: Display / Graphics Settings handler
+// Slot 32: Display / Graphics Settings & Resource Pool Atom Generator handler
+static uint8_t s_hostAtomBuffer[512 * 0x88] = { 0 };
+
 static uint64_t __fastcall HostSlot32_DisplaySettings(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
-    (void)thisPtr; (void)a2; (void)a3; (void)a4;
+    (void)thisPtr; (void)a4;
     static std::atomic<bool> s_logged{false};
     if (!s_logged.exchange(true)) {
-        NOBLE_INFO("ReachHost [Slot 32 - DisplaySettings]: returning 1280x720 windowed display configuration");
+        NOBLE_INFO("ReachHost [Slot 32]: a1=0x{:X}, a2=0x{:X}, a3=0x{:X}", a1, a2, a3);
     }
+
+    // Check if this is an atom generator buffer allocation request from c_tag_resource_prediction_atom_generator (a2 = 0x88)
+    if (a2 == 0x88 || (a2 > 0 && a3 > 0 && a1 <= 0x10000)) {
+        size_t totalBytes = static_cast<size_t>(a2) * static_cast<size_t>(a3);
+        NOBLE_INFO("ReachHost [Slot 32 - Atom Generator]: Supplying {} bytes for prediction atoms (elemSize=0x{:X}, count=0x{:X})",
+            totalBytes, a2, a3);
+        if (totalBytes <= sizeof(s_hostAtomBuffer)) {
+            memset(s_hostAtomBuffer, 0, totalBytes);
+            return reinterpret_cast<uint64_t>(s_hostAtomBuffer);
+        } else {
+            void* dynamicBuf = calloc(1, totalBytes);
+            return reinterpret_cast<uint64_t>(dynamicBuf);
+        }
+    }
+
+    // Otherwise treat as DisplaySettings query
     if (a1 > 0x10000 && !IsBadWritePtr(reinterpret_cast<void*>(a1), 0x20)) {
         struct DisplayConfig {
             uint32_t width;        // +0x00: 1280

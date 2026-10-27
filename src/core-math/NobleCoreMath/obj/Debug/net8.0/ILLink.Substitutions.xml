@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<linker>
+  <assembly fullname="NobleCoreMath">
+    <resource name="FSharpSignatureData.NobleCoreMath" action="remove"></resource>
+    <resource name="FSharpSignatureCompressedData.NobleCoreMath" action="remove"></resource>
+    <resource name="FSharpSignatureDataB.NobleCoreMath" action="remove"></resource>
+    <resource name="FSharpSignatureCompressedDataB.NobleCoreMath" action="remove"></resource>
+    <resource name="FSharpOptimizationData.NobleCoreMath" action="remove"></resource>
+    <resource name="FSharpOptimizationCompressedData.NobleCoreMath" action="remove"></resource>
+    <resource name="FSharpOptimizationDataB.NobleCoreMath" action="remove"></resource>
+    <resource name="FSharpOptimizationCompressedDataB.NobleCoreMath" action="remove"></resource>
+    <resource name="FSharpOptimizationInfo.NobleCoreMath" action="remove"></resource>
+    <resource name="FSharpSignatureInfo.NobleCoreMath" action="remove"></resource>
+  </assembly>
+</linker>
