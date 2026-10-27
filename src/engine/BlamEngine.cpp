@@ -231,8 +231,8 @@ uint32_t BlamEngine::ResolveMapId(const std::string& mapName) {
         return static_cast<char>(std::tolower(c));
     });
 
-    // Main Menu
-    if (lower.find("mainmenu") != std::string::npos || lower == "0" || lower == "menu") return 0;
+    // Main Menu (190 / 0xBE in authentic Reach engine)
+    if (lower.find("mainmenu") != std::string::npos || lower == "0" || lower == "menu" || lower == "190") return 190;
 
     // Firefight Maps (210 - 219)
     if (lower.find("beachhead") != std::string::npos || lower.find("ff10_prototype") != std::string::npos || lower == "210") return 210;
@@ -303,9 +303,6 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
         if (!std::filesystem::exists(blockPath)) {
             blockPath = dataRoot / "blocks" / ("campaign_" + std::to_string(mapId) + ".bin");
         }
-    } else if (mapId == 0 || mapId == 190) {
-        // Main Menu
-        blockPath = dataRoot / "launch_block_1.bin";
     }
 
     if (!blockPath.empty() && std::filesystem::exists(blockPath)) {
@@ -362,6 +359,11 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
         block[0x10B] = 0x00;
         block[0x2F0] = 0x01;
 
+        // Default variant buffer init at offset 0x1D308 (RVA 0x6BFF8)
+        if (m_hModule) {
+            SafeCallVariantInit(m_hModule, &block[0x1D308]);
+        }
+
         // Map ID & Mode tagging (from host-probe::set_map lines 78-92)
         *reinterpret_cast<uint32_t*>(&block[0x10]) = mapId;
         *reinterpret_cast<uint32_t*>(&block[0x14]) = mapId;
@@ -378,11 +380,6 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
     block[0x34] = static_cast<uint8_t>(clampedDiff);
     *reinterpret_cast<uint32_t*>(&block[0x38]) = static_cast<uint32_t>(clampedDiff);
     *reinterpret_cast<uint32_t*>(&block[0x3C]) = skulls;
-
-    // Default variant buffer init at offset 0x1D308 (RVA 0x6BFF8)
-    if (m_hModule && !loadedPrebuilt) {
-        SafeCallVariantInit(m_hModule, &block[0x1D308]);
-    }
 
     // Dynamic Custom Map Variant (.mvar) Injection (RVA 0x17AF00 parse_map_variant)
     if (!customMvarPath.empty() && std::filesystem::exists(customMvarPath) && m_hModule) {
@@ -472,19 +469,21 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
         NOBLE_INFO("c_game_engine Start returned: 0x{:X}", startStatus);
     }
 
-    // PostCommand(10) and PostCommand(11) via vtbl+0x18 after ~300 ms (verified from host-probe main.c lines 4307-4323)
-    std::thread([this]() {
-        std::this_thread::sleep_for(std::chrono::milliseconds(300));
-        if (m_engineInstance && m_fnProcessEvent) {
-            NOBLE_INFO("BlamEngine: Posting Command 10 (Event: Start) via vtbl+0x18 after 300ms delay...");
-            int32_t status10 = m_fnProcessEvent(m_engineInstance, 10, 0);
-            NOBLE_INFO("BlamEngine: PostCommand(10) returned: 0x{:X}", status10);
+    // PostCommand(10) and PostCommand(11) via vtbl+0x18 after ~300 ms (only for match sessions, not Main Menu; verified from host-probe main.c lines 4306-4323)
+    if (gameModeTag != 0) {
+        std::thread([this]() {
+            std::this_thread::sleep_for(std::chrono::milliseconds(300));
+            if (m_engineInstance && m_fnProcessEvent) {
+                NOBLE_INFO("BlamEngine: Posting Command 10 (Event: Start) via vtbl+0x18 after 300ms delay...");
+                int32_t status10 = m_fnProcessEvent(m_engineInstance, 10, 0);
+                NOBLE_INFO("BlamEngine: PostCommand(10) returned: 0x{:X}", status10);
 
-            NOBLE_INFO("BlamEngine: Posting Command 11 via vtbl+0x18...");
-            int32_t status11 = m_fnProcessEvent(m_engineInstance, 11, 0);
-            NOBLE_INFO("BlamEngine: PostCommand(11) returned: 0x{:X}", status11);
-        }
-    }).detach();
+                NOBLE_INFO("BlamEngine: Posting Command 11 via vtbl+0x18...");
+                int32_t status11 = m_fnProcessEvent(m_engineInstance, 11, 0);
+                NOBLE_INFO("BlamEngine: PostCommand(11) returned: 0x{:X}", status11);
+            }
+        }).detach();
+    }
 
     return true;
 }
