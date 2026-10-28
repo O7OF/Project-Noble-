@@ -642,6 +642,7 @@ void OnGameResults(const uint8_t* record, size_t size) {
     a.type = BaseTypeName(s_type);
     a.map = s_map;
     a.minutes = minutes;
+    a.difficulty = s_type == BaseType::Multiplayer ? -1 : s_difficulty;
 
     // Scoreboard rows for everyone present. The record has no player names, so only the local
     // player is named (from SETTINGS). Stat slots are provisional: implausible values show as 0.
@@ -747,6 +748,7 @@ void OnGameResults(const uint8_t* record, size_t size) {
             continue;
         }
         int64_t& progress = s_extra.challengeProgress[c.key];
+        const int64_t progressBefore = progress;
         if (c.def->metric == ChallengeMetric::DailyChallenges) {
             progress += newDailies;
         } else if (c.def->metric == ChallengeMetric::AllDailies) {
@@ -762,15 +764,40 @@ void OnGameResults(const uint8_t* record, size_t size) {
             if (!c.weekly) { ++newDailies; ++dailiesDone; }
             a.lines.push_back({ std::string(c.weekly ? "Weekly challenge: " : "Challenge: ") + c.def->title, c.def->reward });
         }
+        if (progress != progressBefore) {
+            Career::ProgressLine p;
+            p.kind = c.weekly ? 1 : 0;
+            p.mode = c.def->mode;
+            p.title = c.def->title;
+            p.before = progressBefore;
+            p.after = progress;
+            p.target = c.def->target;
+            p.completed = s_extra.challengeClaimed[c.key];
+            a.progress.push_back(p);
+        }
     }
 
     // Commendations: count this game, then pay every tier reached since the last match.
     for (size_t i = 0; i < std::size(kCommendations); ++i) {
         const CommendationDef& c = kCommendations[i];
         const int64_t add = unpaid ? 0 : CommendationAmount(c, s_type, s_map, assists, deaths);
+        const int64_t valueBefore = CommendationValue(i);
         if (add > 0) s_extra.commendationCount[CommendationKey(c)] += add;
         const int reached = TierFor(c, CommendationValue(i));
         int& paid = s_extra.commendationTier[CommendationKey(c)];
+        if (add > 0) {
+            Career::ProgressLine p;
+            p.kind = 2;
+            p.mode = c.mode;
+            p.title = c.title;
+            p.art = CommendationKey(c);
+            p.before = valueBefore;
+            p.after = valueBefore + add;
+            p.tier = reached;
+            p.target = reached < 6 ? c.targets[reached] : c.targets[5];
+            p.completed = reached > paid;
+            a.progress.push_back(p);
+        }
         for (int t = paid; t < reached; ++t) {
             a.lines.push_back({ std::string("Commendation: ") + c.title + " (" + kTierNames[t + 1] + ")", TierReward(c, t) });
         }

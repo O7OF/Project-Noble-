@@ -1,4 +1,4 @@
-# Project Noble: handoff (2026-10-28, 12:40 ET)
+# Project Noble: handoff (2026-10-28, 14:50 ET)
 
 This picks up a reverse-engineering and C++ effort on **Tyler's Windows PC**. All paths below are real paths on that machine.
 Tyler (GitHub `WeabooTyler117`) works with a partner (GitHub `O7OF`) who owns the repo and writes most of the code.
@@ -11,12 +11,35 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 ---
 
+## 0. Pick up here (2026-10-28, 14:50 ET) - post-game "exit experience" (spec step 7)
+
+**Status:** on Tyler's PC, syntax-checked; `job.bat` builds, commits and pushes. Needs a real game to test (the screen
+only appears after a match ends): Tyler plays a short game and sends a screenshot.
+
+- `PauseMenu.cpp` `DrawGameOver` rewritten as a full-screen Reach-style results screen: header (GAME OVER, map, mode, minutes,
+  difficulty icon), left = SCOREBOARD (local row highlighted with rank icon) + PROGRESS (challenge / commendation bars this
+  game moved: old part blue-grey, this game's part amber, green COMPLETE / "<TIER> REACHED", commendation banner art),
+  right = CREDITS (lines appear every 0.5 s and count up with `Totals`; "Random bonus"/"Jackpot!" roll like a slot machine with
+  `SlotMachine`), CREDITS EARNED total, RANK (icon, bar fills from the old cR to the new; on promotion `RankUp`, amber glow,
+  PROMOTED). `GameCompletion` plays when the screen opens. Enter / Space / a click away from the buttons skips to the end.
+  Buttons bottom-right: PLAY AGAIN, RETURN TO MENU, QUIT (always usable). Sounds respect the Menu sounds setting.
+  Keyboard is read with GetAsyncKeyState (the overlay only feeds the mouse into ImGui); no controller skip yet.
+- `Career`: `Award` now has `progress` (`ProgressLine`: kind daily/weekly/commendation, mode, title, art, before, after,
+  target, completed, tier) filled in `OnGameResults` for every challenge or commendation this match moved, and `difficulty`.
+- Idea from Tyler for spec 4.14 (map voting), "not 1 for 1 but similar": a full-screen VOTE FOR THE NEXT GAME screen with
+  the next game named at the top, a vote-closed ring with "N of M voted", 4 choice cards (map picture, map + game type, vote
+  count badge, a bar for the share of votes, "PLAYLIST'S PICK" and "NEXT GAME" tags), a PLAYERS list on the right in
+  team colours with each player's vote as a small map thumbnail, and "The next game starts once the results are over".
+  Needs networking for the multiplayer side.
+
 ## 0. Pick up here (2026-10-28, 12:40 ET) - Reach art is now in git
 
 - Tyler decided the Reach menu art goes into the repo so O7 sees exactly the same build (`3522203`, 106 PNGs, ~2 MB):
   `build/bin/Release/data/ui/reach/{ranks,difficulty,commendations}/` (force-added; `build\` is otherwise git-ignored).
   After a pull, O7's menus show the same rank icons, difficulty icons and commendation banners. New art goes in the same
   folders and is added with `git add -f build/bin/Release/data/ui/reach`.
+- `8bad0ad`: Demon / Flawless Cowboy text says "(vanilla Noble Actual and Lone Wolf don't count)". Firefight "Coming later"
+  label clipping dropped from the to-do (Firefight will be done before release).
 - Claude raised that the repo is public and the art is Microsoft's (takedown risk); Tyler chose to push it anyway.
 
 ## 0. Pick up here (2026-10-28, 12:25 ET) - Reach's 45 commendations (spec step 5)

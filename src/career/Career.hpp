@@ -45,6 +45,19 @@ struct ScoreRow {
     int64_t medals = 0;
 };
 
+// Challenge or commendation progress made by one match (post-game "exit experience").
+struct ProgressLine {
+    int kind = 0;              // 0 daily challenge, 1 weekly challenge, 2 commendation
+    int mode = 3;              // 0 campaign, 1 Firefight, 2 multiplayer, 3 any
+    std::string title;
+    std::string art;           // commendations: art stem ("campaign_demon"), else empty
+    int64_t before = 0;
+    int64_t after = 0;
+    int64_t target = 1;        // challenge target / commendation's next tier count
+    bool completed = false;    // challenge done, or commendation tier reached, by this match
+    int tier = 0;              // commendations: tier after this match (0..6)
+};
+
 struct Award {
     bool valid = false;
     std::string type;      // "campaign", "firefight", "multiplayer"
@@ -52,6 +65,8 @@ struct Award {
     double minutes = 0.0;
     std::vector<ScoreRow> players;
     std::vector<AwardLine> lines;
+    std::vector<ProgressLine> progress;
+    int difficulty = -1;   // campaign / Firefight
     int64_t total = 0;
     int64_t creditsBefore = 0;
     int64_t creditsAfter = 0;
