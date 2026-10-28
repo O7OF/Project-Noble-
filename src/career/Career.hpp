@@ -119,9 +119,12 @@ struct Commendation {
     int tier = 0;                   // tiers reached, 0..6
     int64_t nextTarget = 0;         // 0 when maxed
     int64_t prevTarget = 0;
+    int mode = 0;                   // 0 campaign, 1 Firefight, 2 multiplayer
+    std::string art;                // "campaign_demon" -> data\ui\reach\commendations\campaign_demon.png
+    bool tracked = false;           // false: Noble can't count it yet (stays at 0)
 };
 std::vector<Commendation> Commendations();
-const char* CommendationTierName(int tier);   // 0 = "None", 1 = "Iron" ... 6 = "Max"
+const char* CommendationTierName(int tier);   // 0 = "None", 1 = "Steel" ... 6 = "Max"
 
 // What a match pays as. Modded content always pays exactly like its base type: the base type is the
 // engine game mode BlamEngine launches with (campaign 1, Firefight 0x40B, everything else

@@ -134,21 +134,69 @@ const ReachChallengeDef kReachChallenges[] = {
 constexpr int kDailyCount = 7;
 constexpr int kWeeklyCount = 5;
 
+// Halo: Reach's 45 commendations (16 campaign, 15 Firefight, 14 multiplayer) with Reach's tier counts
+// (Steel, Bronze, Silver, Gold, Onyx, Max). Noble can only count some of them from what it reads at
+// the end of a game; the others stay at 0 (tracked = false) until headshots, weapon types, enemy
+// classes, multikills, sprees, medals and vehicle kills are decoded from the results record.
+enum class CommendationMetric { None, Assists, Missions, FlawlessMissions, NoDeathGames };
 struct CommendationDef {
+    int mode;                 // 0 campaign, 1 Firefight, 2 multiplayer
+    const char* key;          // art: data\ui\reach\commendations\<mode>_<key>.png
     const char* title;
     const char* description;
-    int64_t targets[6];   // Iron, Bronze, Silver, Gold, Onyx, Max
+    CommendationMetric metric;
+    int64_t targets[6];
 };
+using CM = CommendationMetric;
 const CommendationDef kCommendations[] = {
-    { "Campaign Veteran", "Campaign missions completed", { 5, 15, 40, 100, 250, 500 } },
-    { "Firefight Survivor", "Firefight games finished", { 5, 15, 40, 100, 250, 500 } },
-    { "Spartan Warrior", "Multiplayer games finished", { 10, 30, 75, 200, 500, 1000 } },
-    { "Time Served", "Hours played", { 1, 5, 15, 40, 100, 250 } },
-    { "Killing Machine", "Kills in every mode", { 100, 500, 1500, 5000, 15000, 50000 } },
-    { "Medal Collector", "Medals earned", { 25, 100, 300, 1000, 3000, 10000 } },
+    { 0, "cannon_fodder", "Cannon Fodder", "Kill infantry-class enemies", CM::None, { 250, 750, 3000, 7000, 12000, 20000 } },
+    { 0, "demon", "Demon", "Complete campaign missions", CM::Missions, { 9, 18, 81, 135, 270, 540 } },
+    { 0, "flawless_cowboy", "Flawless Cowboy", "Complete missions on Heroic or Legendary without dying", CM::FlawlessMissions, { 5, 10, 25, 50, 150, 300 } },
+    { 0, "leadership_element", "Leadership Element", "Kill leader-class enemies", CM::None, { 100, 375, 750, 3000, 6000, 10000 } },
+    { 0, "nice_arm", "Nice Arm", "Kill enemies with grenades", CM::None, { 50, 250, 500, 4000, 8000, 13000 } },
+    { 0, "pinpoint", "Pinpoint", "Kill enemies with headshots", CM::None, { 50, 250, 500, 4000, 8000, 20000 } },
+    { 0, "precisely", "Precisely", "Kill enemies with precision weapons", CM::None, { 250, 750, 4000, 10000, 20000, 32000 } },
+    { 0, "right_of_way", "Right of Way", "Destroy enemy vehicles", CM::None, { 50, 200, 1000, 2400, 4800, 7200 } },
+    { 0, "small_arms", "Small Arms", "Kill enemies with pistols", CM::None, { 250, 750, 3000, 6000, 10000, 16000 } },
+    { 0, "specops", "SpecOps", "Kill specialist-class enemies", CM::None, { 175, 525, 2100, 6000, 10000, 14000 } },
+    { 0, "splash_damage", "Splash Damage", "Kill enemies with heavy weapons", CM::None, { 100, 375, 750, 1500, 3000, 6000 } },
+    { 0, "standard_issue", "Standard Issue", "Kill enemies with automatic weapons", CM::None, { 250, 750, 3000, 6000, 10000, 15000 } },
+    { 0, "super_soldier", "Super Soldier", "Earn sprees", CM::None, { 25, 175, 500, 2000, 5000, 9000 } },
+    { 0, "support_role", "Support Role", "Earn assists", CM::Assists, { 100, 375, 750, 1500, 3000, 6000 } },
+    { 0, "walking_tank", "Walking Tank", "Earn multikills", CM::None, { 25, 175, 500, 2000, 5000, 9000 } },
+    { 0, "war_machine", "War Machine", "Kill enemies with vehicles", CM::None, { 200, 500, 800, 3200, 6400, 14000 } },
+    { 1, "backup", "Backup", "Earn assists", CM::Assists, { 50, 250, 750, 1500, 3000, 8000 } },
+    { 1, "dome_inspector", "Dome Inspector", "Kill enemies with headshots", CM::None, { 50, 250, 500, 4000, 8000, 20000 } },
+    { 1, "get_loud", "Get Loud", "Kill enemies with heavy weapons", CM::None, { 100, 375, 750, 2000, 4000, 8000 } },
+    { 1, "grounded", "Grounded", "Destroy enemy vehicles", CM::None, { 50, 200, 400, 2500, 6000, 12000 } },
+    { 1, "in_command", "In Command", "Kill Elite leaders", CM::None, { 75, 375, 750, 3000, 6000, 10000 } },
+    { 1, "longshot", "Longshot", "Kill enemies with precision weapons", CM::None, { 250, 750, 4000, 10000, 20000, 32000 } },
+    { 1, "methodical", "Methodical", "Earn sprees", CM::None, { 25, 175, 500, 2500, 5000, 10000 } },
+    { 1, "numbers_game", "Numbers Game", "Earn multikills", CM::None, { 25, 175, 500, 2500, 5000, 15000 } },
+    { 1, "perfectionist", "Perfectionist", "Finish without dying (counted per game for now)", CM::NoDeathGames, { 50, 250, 500, 2000, 5000, 8000 } },
+    { 1, "pull_the_pin", "Pull the Pin", "Kill enemies with grenades", CM::None, { 50, 250, 500, 3000, 5000, 9000 } },
+    { 1, "riflin_through", "Riflin' Through", "Kill enemies with automatic weapons", CM::None, { 250, 750, 3000, 10000, 20000, 32000 } },
+    { 1, "specialized", "Specialized", "Kill specialist-class enemies", CM::None, { 175, 525, 2000, 6000, 10000, 14000 } },
+    { 1, "target_practice", "Target Practice", "Kill Grunts", CM::None, { 250, 750, 3000, 7000, 12000, 20000 } },
+    { 1, "trigger_happy", "Trigger Happy", "Kill enemies with pistols", CM::None, { 250, 750, 3000, 6000, 10000, 16000 } },
+    { 1, "vehicular", "Vehicular", "Kill enemies with vehicles or turrets", CM::None, { 200, 500, 800, 3200, 6400, 14000 } },
+    { 2, "any_spree", "Any Spree", "Earn sprees", CM::None, { 5, 50, 250, 1000, 4000, 10000 } },
+    { 2, "assistant", "Assistant", "Earn assists", CM::Assists, { 50, 250, 1000, 4000, 8000, 20000 } },
+    { 2, "close_quarters", "Close Quarters", "Kill with the Hammer, Sword, Shotgun or melee", CM::None, { 50, 125, 400, 1600, 4000, 8000 } },
+    { 2, "crack_shot", "Crack Shot", "Kill with precision weapons", CM::None, { 100, 500, 4000, 10000, 20000, 32000 } },
+    { 2, "downshift", "Downshift", "Drive while your passenger or gunner gets kills", CM::None, { 5, 50, 750, 4000, 8000, 20000 } },
+    { 2, "grenadier", "Grenadier", "Kill with grenades", CM::None, { 25, 125, 500, 4000, 8000, 14000 } },
+    { 2, "heavy_weapon", "Heavy Weapon", "Kill with heavy weapons", CM::None, { 25, 150, 750, 3000, 7000, 14000 } },
+    { 2, "jack_of_all_trades", "Jack of All Trades", "Earn utility medals (Hijacker, Revenge, Close Call, ...)", CM::None, { 50, 125, 400, 1600, 4800, 9600 } },
+    { 2, "mobile_asset", "Mobile Asset", "Kill with vehicles", CM::None, { 25, 125, 500, 4000, 8000, 14000 } },
+    { 2, "multikill", "Multikill", "Earn multikills", CM::None, { 10, 125, 500, 2500, 5000, 15000 } },
+    { 2, "one_shot", "One Shot", "Kill with headshots", CM::None, { 50, 250, 1000, 4000, 8000, 20000 } },
+    { 2, "rear_admiral", "Rear Admiral", "Kill by assassination", CM::None, { 5, 25, 100, 1000, 4000, 8000 } },
+    { 2, "sidearm", "Sidearm", "Kill with pistols", CM::None, { 50, 250, 1000, 4000, 8000, 10000 } },
+    { 2, "trigger_man", "Trigger Man", "Kill with automatic weapons", CM::None, { 100, 500, 4000, 10000, 20000, 32000 } },
 };
 constexpr int64_t kCommendationReward[6] = { 500, 1500, 3000, 6000, 12000, 25000 };
-const char* const kTierNames[7] = { "None", "Iron", "Bronze", "Silver", "Gold", "Onyx", "Max" };
+const char* const kTierNames[7] = { "None", "Steel", "Bronze", "Silver", "Gold", "Onyx", "Max" };
 
 // Lifetime data beyond the totals.
 struct Extra {
@@ -160,7 +208,8 @@ struct Extra {
     std::vector<MatchSummary> history;                // newest first, at most 20
     std::map<std::string, int64_t> challengeProgress; // "<period>:<d|w><index>" -> progress
     std::map<std::string, bool> challengeClaimed;
-    std::map<std::string, int> commendationTier;      // title -> tiers paid
+    std::map<std::string, int> commendationTier;      // "<mode>_<key>" -> tiers paid
+    std::map<std::string, int64_t> commendationCount; // "<mode>_<key>" -> count
 };
 
 std::mutex s_mutex;
@@ -219,6 +268,7 @@ void LoadLocked() {
             if (r.contains("challengeProgress")) for (auto& [k, v] : r["challengeProgress"].items()) s_extra.challengeProgress[k] = v.get<int64_t>();
             if (r.contains("challengeClaimed")) for (auto& [k, v] : r["challengeClaimed"].items()) s_extra.challengeClaimed[k] = v.get<bool>();
             if (r.contains("commendations")) for (auto& [k, v] : r["commendations"].items()) s_extra.commendationTier[k] = v.get<int>();
+            if (r.contains("commendationCounts")) for (auto& [k, v] : r["commendationCounts"].items()) s_extra.commendationCount[k] = v.get<int64_t>();
             if (r.contains("history") && r["history"].is_array()) {
                 for (const auto& h : r["history"]) {
                     MatchSummary m;
@@ -267,6 +317,7 @@ void SaveLocked() {
         r["challengeProgress"] = s_extra.challengeProgress;
         r["challengeClaimed"] = s_extra.challengeClaimed;
         r["commendations"] = s_extra.commendationTier;
+        r["commendationCounts"] = s_extra.commendationCount;
         nlohmann::json h = nlohmann::json::array();
         for (const MatchSummary& m : s_extra.history) {
             h.push_back({ { "date", m.date }, { "type", m.type }, { "map", m.map }, { "difficulty", m.difficulty },
@@ -438,14 +489,32 @@ void PruneChallengesLocked() {
 
 // ---------------------------------------------------------------- commendations
 
+const char* const kModeKey[3] = { "campaign", "firefight", "multiplayer" };
+
+std::string CommendationKey(const CommendationDef& c) { return std::string(kModeKey[c.mode]) + "_" + c.key; }
+
 int64_t CommendationValue(size_t index) {
-    switch (index) {
-    case 0: return s_extra.games[0];
-    case 1: return s_extra.games[1];
-    case 2: return s_extra.games[2];
-    case 3: return static_cast<int64_t>(s_totals.minutesPlayed / 60.0);
-    case 4: return s_totals.kills;
-    case 5: return s_totals.medals;
+    const auto it = s_extra.commendationCount.find(CommendationKey(kCommendations[index]));
+    return it == s_extra.commendationCount.end() ? 0 : it->second;
+}
+
+// What one finished game adds to a commendation. As in Reach, Easy doesn't count in campaign or
+// Firefight, and Noble Actual (m05) and Lone Wolf (m70_bonus) don't count as missions.
+int64_t CommendationAmount(const CommendationDef& c, BaseType type, int difficulty, const std::string& map,
+                           int64_t assists, int64_t deaths) {
+    static const BaseType kModeType[3] = { BaseType::Campaign, BaseType::Firefight, BaseType::Multiplayer };
+    if (type != kModeType[c.mode]) return 0;
+    if (type != BaseType::Multiplayer && difficulty < 1) return 0;
+    std::string m = map;
+    const size_t slash = m.find_last_of("\\/");
+    if (slash != std::string::npos) m = m.substr(slash + 1);
+    for (char& ch : m) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    const bool countedMission = m != "m05" && m.find("bonus") == std::string::npos;
+    switch (c.metric) {
+    case CM::Assists: return assists;
+    case CM::Missions: return countedMission ? 1 : 0;
+    case CM::FlawlessMissions: return countedMission && difficulty >= 2 && deaths == 0 ? 1 : 0;
+    case CM::NoDeathGames: return deaths == 0 ? 1 : 0;
     default: return 0;
     }
 }
@@ -668,11 +737,13 @@ void OnGameResults(const uint8_t* record, size_t size) {
         }
     }
 
-    // Commendations: pay every tier reached since the last match.
+    // Commendations: count this game, then pay every tier reached since the last match.
     for (size_t i = 0; i < std::size(kCommendations); ++i) {
         const CommendationDef& c = kCommendations[i];
+        const int64_t add = CommendationAmount(c, s_type, s_difficulty, s_map, assists, deaths);
+        if (add > 0) s_extra.commendationCount[CommendationKey(c)] += add;
         const int reached = TierFor(c, CommendationValue(i));
-        int& paid = s_extra.commendationTier[c.title];
+        int& paid = s_extra.commendationTier[CommendationKey(c)];
         for (int t = paid; t < reached; ++t) {
             a.lines.push_back({ std::string("Commendation: ") + c.title + " (" + kTierNames[t + 1] + ")", kCommendationReward[t] });
         }
@@ -792,6 +863,9 @@ std::vector<Commendation> Commendations() {
         Commendation k;
         k.title = c.title;
         k.description = c.description;
+        k.mode = c.mode;
+        k.art = CommendationKey(c);
+        k.tracked = c.metric != CM::None;
         k.value = CommendationValue(i);
         k.tier = TierFor(c, k.value);
         k.prevTarget = k.tier > 0 ? c.targets[k.tier - 1] : 0;

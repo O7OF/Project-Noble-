@@ -365,28 +365,120 @@ void CareerPanel::RenderChallenges() {
     }
 }
 
+namespace {
+
+// Tier colours. Only the Steel art exists, so higher tiers tint it (Max is Onyx with an amber frame).
+ImU32 TierTint(int tier, bool tracked) {
+    if (!tracked) return IM_COL32(150, 150, 150, 110);
+    switch (tier) {
+    case 0: return IM_COL32(170, 170, 170, 190);
+    case 2: return IM_COL32(236, 168, 112, 255);
+    case 3: return IM_COL32(226, 234, 246, 255);
+    case 4: return IM_COL32(255, 214, 110, 255);
+    case 5:
+    case 6: return IM_COL32(120, 118, 128, 255);
+    default: return IM_COL32_WHITE;
+    }
+}
+ImU32 TierTextColour(int tier) {
+    switch (tier) {
+    case 1: return IM_COL32(200, 206, 214, 255);
+    case 2: return IM_COL32(236, 168, 112, 255);
+    case 3: return IM_COL32(226, 234, 246, 255);
+    case 4: return IM_COL32(255, 214, 110, 255);
+    case 5: return IM_COL32(170, 160, 200, 255);
+    case 6: return IM_COL32(255, 160, 70, 255);
+    default: return IM_COL32(150, 160, 170, 255);
+    }
+}
+
+// One commendation like Reach's Service Record: banner, name, tier, progress bar.
+void CommendationRow(const Career::Commendation& c, float width) {
+    using namespace NobleUi;
+    const float s = Scale();
+    const float bannerH = 58.0f * s, bannerW = bannerH * (287.0f / 90.0f);
+    const float height = bannerH + 12.0f * s;
+    const ImVec2 p0 = ImGui::GetCursorScreenPos();
+    const ImVec2 p1(p0.x + width, p0.y + height);
+    ImGui::Dummy(ImVec2(width, height));
+    const bool hovered = ImGui::IsItemHovered();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(p0, p1, IM_COL32(22, 30, 40, hovered ? 235 : 200), 3.0f * s);
+
+    // Banner (tinted by tier).
+    const ImVec2 b0(p0.x + 6.0f * s, p0.y + 6.0f * s), b1(b0.x + bannerW, b0.y + bannerH);
+    const UiTexture art = UiArt::ReachArt("commendations", c.art);
+    if (art) UiArt::DrawContain(dl, art, b0, b1, TierTint(c.tier, c.tracked));
+    else dl->AddRect(b0, b1, IM_COL32(255, 255, 255, 50));
+    if (c.tier >= 6) dl->AddRect(ImVec2(b0.x - 1, b0.y - 1), ImVec2(b1.x + 1, b1.y + 1), IM_COL32(255, 150, 60, 230), 0.0f, 0, 2.0f * s);
+
+    // Name and tier.
+    ImFont* body = ImGui::GetFont();
+    ImFont* small = NobleStyle::SmallFont();
+    const float x = b1.x + 14.0f * s, right = p1.x - 12.0f * s;
+    const float bodyPx = 18.0f * s, smallPx = 14.0f * s;
+    Text(dl, body, bodyPx, ImVec2(x, p0.y + 8.0f * s), c.tracked ? kText : kTextDim, c.title.c_str());
+    const char* tierName = c.tier > 0 ? Career::CommendationTierName(c.tier) : "";
+    const float tw = TextWidth(small, smallPx, tierName);
+    Text(dl, small, smallPx, ImVec2(right - tw, p0.y + 10.0f * s), TierTextColour(c.tier), tierName);
+    Text(dl, small, smallPx, ImVec2(x, p0.y + 8.0f * s + bodyPx + 2.0f * s), kTextDim, c.description.c_str(), right - x);
+
+    // Progress toward the next tier.
+    const float barY = p1.y - 16.0f * s, barH = 5.0f * s;
+    if (!c.tracked) {
+        const char* note = "Not tracked yet";
+        Text(dl, small, smallPx, ImVec2(right - TextWidth(small, smallPx, note), barY - 6.0f * s), kTextOff, note);
+        return;
+    }
+    char label[64];
+    float f = 1.0f;
+    if (c.nextTarget > 0) {
+        std::snprintf(label, sizeof(label), "%s / %s", Grouped(c.value).c_str(), Grouped(c.nextTarget).c_str());
+        f = static_cast<float>(c.value) / static_cast<float>(std::max<long long>(1, c.nextTarget));
+    } else {
+        std::snprintf(label, sizeof(label), "%s  MAX", Grouped(c.value).c_str());
+    }
+    const float lw = TextWidth(small, smallPx, label);
+    const float barX1 = right - lw - 10.0f * s;
+    dl->AddRectFilled(ImVec2(x, barY), ImVec2(barX1, barY + barH), IM_COL32(255, 255, 255, 26), 2.0f * s);
+    dl->AddRectFilled(ImVec2(x, barY), ImVec2(x + (barX1 - x) * std::clamp(f, 0.0f, 1.0f), barY + barH),
+                      c.tier >= 6 ? IM_COL32(255, 150, 60, 255) : kAccent, 2.0f * s);
+    Text(dl, small, smallPx, ImVec2(right - lw, barY + barH * 0.5f - smallPx * 0.5f - 1.0f * s), kText, label);
+}
+
+} // namespace
+
 void CareerPanel::RenderCommendations() {
+    using namespace NobleUi;
     const std::vector<Career::Commendation> list = Career::Commendations();
+    const float s = Scale();
+    const float avail = ImGui::GetContentRegionAvail().x;
+    const int columns = avail >= 1000.0f * s ? 2 : 1;
+    const float gap = 10.0f * s;
+    const float rowW = (avail - gap * (columns - 1)) / columns - 1.0f;
     ImGui::Dummy(ImVec2(0, 4));
-    ImGui::TextDisabled("Each tier (Iron, Bronze, Silver, Gold, Onyx, Max) pays credits once, on the post-game screen.");
-    Section("COMMENDATIONS");
-    for (const Career::Commendation& c : list) {
-        ImGui::PushID(c.title.c_str());
-        ImGui::TextColored(NobleStyle::Accent(), "%s", c.title.c_str());
-        ImGui::SameLine(400.0f);
-        ImGui::TextColored(c.tier > 0 ? kDone : NobleStyle::TextMuted(), "%s", Career::CommendationTierName(c.tier));
-        char label[96];
-        float f = 1.0f;
-        if (c.nextTarget > 0) {
-            std::snprintf(label, sizeof(label), "%s: %s / %s for %s", c.description.c_str(), Grouped(c.value).c_str(),
-                          Grouped(c.nextTarget).c_str(), Career::CommendationTierName(c.tier + 1));
-            f = static_cast<float>(c.value - c.prevTarget) / static_cast<float>(std::max<long long>(1, c.nextTarget - c.prevTarget));
-        } else {
-            std::snprintf(label, sizeof(label), "%s: %s (maxed)", c.description.c_str(), Grouped(c.value).c_str());
+    ImGui::TextDisabled("Halo: Reach's 45 commendations. Each tier (Steel, Bronze, Silver, Gold, Onyx, Max) pays credits once, on the post-game screen.");
+    ImGui::TextDisabled("Dimmed ones need stats Noble can't read from the game yet (headshots, weapons, enemy types, multikills, sprees, vehicles).");
+    static const char* const kModeTitle[3] = { "CAMPAIGN", "FIREFIGHT", "MULTIPLAYER" };
+    for (int mode = 0; mode < 3; ++mode) {
+        int tiers = 0, count = 0;
+        for (const Career::Commendation& c : list) if (c.mode == mode) { ++count; tiers += c.tier; }
+        char head[64];
+        std::snprintf(head, sizeof(head), "%s  %d / %d TIERS", kModeTitle[mode], tiers, count * 6);
+        SectionHeader(head, avail);
+        int col = 0;
+        for (const Career::Commendation& c : list) {
+            if (c.mode != mode) continue;
+            ImGui::PushID(c.art.c_str());
+            if (col > 0) ImGui::SameLine(0, gap);
+            ImGui::BeginGroup();
+            CommendationRow(c, rowW);
+            ImGui::EndGroup();
+            ImGui::PopID();
+            col = (col + 1) % columns;
+            if (col == 0) ImGui::Dummy(ImVec2(0, gap - ImGui::GetStyle().ItemSpacing.y));
         }
-        ImGui::ProgressBar(std::clamp(f, 0.0f, 1.0f), ImVec2(520, 0), label);
-        ImGui::Dummy(ImVec2(0, 6));
-        ImGui::PopID();
+        if (col != 0) ImGui::Dummy(ImVec2(0, gap - ImGui::GetStyle().ItemSpacing.y));
     }
 }
 

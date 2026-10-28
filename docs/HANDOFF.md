@@ -1,4 +1,4 @@
-# Project Noble: handoff (2026-10-28, 12:15 ET)
+# Project Noble: handoff (2026-10-28, 12:25 ET)
 
 This picks up a reverse-engineering and C++ effort on **Tyler's Windows PC**. All paths below are real paths on that machine.
 Tyler (GitHub `WeabooTyler117`) works with a partner (GitHub `O7OF`) who owns the repo and writes most of the code.
@@ -11,7 +11,60 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 ---
 
-## 0. Pick up here (2026-10-28, 12:15 ET) - Reach's real challenges (spec step 4)
+## 0. Pick up here (2026-10-28, 12:25 ET) - Reach's 45 commendations (spec step 5)
+
+**Status:** on Tyler's PC and verified; `job.bat` builds, captures the COMMENDATIONS tab (`build\bin\Release\cm_tab2.bmp`),
+commits and pushes. Waiting for Tyler to run `go.bat`.
+
+- `Career.cpp`: `kCommendations` is now Reach's 45 (mode, art key, name, requirement, Reach's six tier counts from Halopedia).
+  Tier names Steel, Bronze, Silver, Gold, Onyx, Max. Counts are kept per commendation in `record.commendationCounts`
+  (`<mode>_<key>`), tiers paid in `record.commendations` (old Noble commendations are dropped). Easy doesn't count in
+  campaign/Firefight; Noble Actual (m05) and Lone Wolf (m70_bonus) don't count as missions.
+- Counted now: Demon (missions), Flawless Cowboy (Heroic+ mission, 0 deaths), Support Role / Backup / Assistant (assists),
+  Perfectionist (Firefight game with 0 deaths, per game until rounds are decoded). Everything else shows "Not tracked yet".
+- `CareerPanel.cpp` COMMENDATIONS tab: CAMPAIGN / FIREFIGHT / MULTIPLAYER sections, Reach-style rows with the banner art
+  (`data\ui\reach\commendations\<mode>_<key>.png`) tinted by tier (Steel art only; Max gets an amber frame), name, tier,
+  requirement and "x / next" bar.
+
+### TO DO - commendation stats Noble can't read yet
+
+These commendations stay at 0 until the stats are decoded from the end-of-game results record (or engine events):
+- **Headshots:** Pinpoint, Dome Inspector, One Shot.
+- **Weapon types** (precision, pistol, automatic, heavy, grenade, close quarters): Precisely, Longshot, Crack Shot,
+  Small Arms, Trigger Happy, Sidearm, Standard Issue, Riflin' Through, Trigger Man, Splash Damage, Get Loud, Heavy Weapon,
+  Nice Arm, Pull the Pin, Grenadier, Close Quarters.
+- **Enemy classes** (infantry, leader, specialist): Cannon Fodder, Target Practice, Leadership Element, In Command, SpecOps, Specialized.
+- **Multikills:** Walking Tank, Numbers Game, Multikill.
+- **Sprees:** Super Soldier, Methodical, Any Spree.
+- **Vehicles** (vehicle kills, vehicles destroyed, driving for a gunner): War Machine, Vehicular, Mobile Asset, Right of Way,
+  Grounded, Downshift.
+- **Medals / assassinations:** Jack of All Trades, Rear Admiral.
+- **Firefight rounds:** Perfectionist should count rounds without dying, not games.
+When a stat is decoded: add a `CommendationMetric`, set it on the rows above, and fill it in `CommendationAmount`.
+
+## 0. Pick up here (2026-10-28, 12:10 ET) - commendation art in place (spec step 5)
+
+- Tyler's art: `D:\Halo Commendations` (52 named webp/png). Copied as PNG to `build\bin\Release\data\ui\reach\commendations\`
+  (git-ignored, PC only) as `<mode>_<name>.png`: 16 campaign (green), 15 firefight (red), 14 multiplayer (blue), all Steel tier,
+  plus `example_*.png` (bronze sniper, silver technician, gold assassin, onyx stars, onyx max, steel assist, service record).
+- Names/thresholds: halopedia "List of Halo: Reach commendations" (Steel/Iron, Bronze, Silver, Gold, Onyx, Max). Only Steel art
+  exists, so other tiers need tinting in code (bronze/silver/gold/onyx tint; Max = onyx with flames per example_onyx_max).
+- Full screen for Service Record/Games/Mods pushed as `bd002d9`; ranks capture confirmed the fixed order.
+- Next: Commendations tab (Reach-style rows: banner, name, tier, progress x / next), tracking what Noble can read now
+  (kills, assists, missions, no-death missions); the rest show 0 until headshots/multikills/weapons are decoded.
+
+## 0. Pick up here (2026-10-28, 11:40 ET) - challenges pushed, panel screens full screen
+
+- Challenges are committed and pushed as `c3b52f1`. `ch_tab1.bmp` checked: the cards, mode chips, countdowns and two columns look right.
+- Tyler: version **stays 0.8.2** (patch bumps only, no change needed).
+- Service Record, Games (server browser) and Mods now use the whole screen like Settings (`FrontEndMenu.cpp`: `full = true`).
+  The job on the PC builds it, captures `fs_career1.bmp`, `fs_career0.bmp` and `fs_servers.bmp`, then commits and pushes.
+  Waiting for Tyler to run `go.bat`.
+- Rank art fixed per Tyler (files on his PC only, `data\ui\reach\ranks`): Major <- old Major G3, Major G1 <- old G2,
+  Major G2 <- old G1 (by elimination), Major G3 <- old Major; Colonel G1 <- old G2, G2 <- old G3, G3 <- old G1;
+  Mythic/Noble swapped; Forerunner/Reclaimer swapped. The job also captures `fs_career3.bmp` (RANKS tab).
+
+## 0. Pick up here (2026-10-28, 11:35 ET) - Reach's real challenges (spec step 4)
 
 **Status:** files are on Tyler's PC and verified; `build\agent\jobs\job.bat` builds, captures the Challenges tab
 (`build\bin\Release\ch_tab1.bmp`), then commits and pushes. Waiting for Tyler to run `build\agent\go.bat`.
