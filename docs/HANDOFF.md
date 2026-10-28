@@ -17,8 +17,9 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 windowed 1600x900, `fieldOfView` 78 vs 110 in settings.json, frame 1500 of each run: the log shows "CameraFov: game
 field of view set to 78/110 degrees" and the 110 shot has a visibly wider view (the rifle takes up much less of the
 screen). Shots: `build\bin\Release\FOV78_capture_1500.bmp`, `FOV110_capture_1500.bmp` (different spawns, so
-compare the gun, not the scenery). Not checked yet: changing FOV live from the pause menu mid-match. Small
-mismatch: `Settings.cpp` clamps `fieldOfView` to 60-120, while the help text mentions the engine's 1-150 limit.
+compare the gun, not the scenery). Not checked yet: changing FOV live from the pause menu mid-match. FOV range is
+now 70-120 (Tyler's call, 03:45, commit `93681f4`): slider (always clamped, also for Ctrl+click typing), the
+settings file clamp and the help text all say 70-120; CameraFov still guards the engine's own 1-150.
 Tyler's settings were restored after the test (copy in `data\userdata\settings.backup.json`).
 
 ## 0a. Latest (2026-10-28, 02:00 ET) — FOV hooked up + settings reachable from the pause menu
