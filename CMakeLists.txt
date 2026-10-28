@@ -105,6 +105,9 @@ set(SOURCES
     src/vfs/VFS.cpp
     src/engine/BlamEngine.cpp
     src/engine/ReachHost.cpp
+    src/engine/FrameCapture.cpp
+    src/common/Relaunch.cpp
+    src/ui/UiArt.cpp
     src/ui/UIManager.cpp
     src/ui/ServerBrowser.cpp
     src/ui/ArmorCustomizer.cpp
@@ -118,6 +121,13 @@ set(SOURCES
     src/ui/LoadScreen.cpp
     src/ui/PauseMenu.cpp
     src/ui/FrontEndMenu.cpp
+    src/ui/NobleStyle.cpp
+    src/ui/MenuSounds.cpp
+    src/ui/SettingsPanel.cpp
+    src/common/Settings.cpp
+    src/engine/KeyBindings.cpp
+    src/career/Career.cpp
+    src/network/MasterServerClient.cpp
 )
 
 set(HEADERS
@@ -137,6 +147,9 @@ set(HEADERS
     src/vfs/VFS.hpp
     src/engine/BlamEngine.hpp
     src/engine/ReachHost.hpp
+    src/engine/FrameCapture.hpp
+    src/common/Relaunch.hpp
+    src/ui/UiArt.hpp
     src/ui/UIManager.hpp
     src/ui/ServerBrowser.hpp
     src/ui/ArmorCustomizer.hpp
@@ -150,6 +163,13 @@ set(HEADERS
     src/network/UPnP.hpp
     src/network/SessionManager.hpp
     src/audio/VgmAudioHook.hpp
+    src/ui/NobleStyle.hpp
+    src/ui/MenuSounds.hpp
+    src/ui/SettingsPanel.hpp
+    src/common/Settings.hpp
+    src/engine/KeyBindings.hpp
+    src/career/Career.hpp
+    src/network/MasterServerClient.hpp
 )
 
 add_executable(noble-client WIN32 ${SOURCES} ${HEADERS})
@@ -171,15 +191,21 @@ target_link_libraries(noble-client PRIVATE
     minhook
     imgui
     dbghelp
+    winhttp
+    winmm
+    windowscodecs
 )
 
 target_link_options(noble-client PRIVATE /MAP)
 
-add_custom_command(TARGET noble-client POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        ${CMAKE_CURRENT_SOURCE_DIR}/data
-        $<TARGET_FILE_DIR:noble-client>/data
-)
+# Copy the repo's data folder next to the exe (skipped when there is none; data\ is git-ignored).
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/data)
+    add_custom_command(TARGET noble-client POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            ${CMAKE_CURRENT_SOURCE_DIR}/data
+            $<TARGET_FILE_DIR:noble-client>/data
+    )
+endif()
 
 # -----------------------------------------------------------------------------
 # Headless Dedicated Server Binary (noble-dedicated.exe)

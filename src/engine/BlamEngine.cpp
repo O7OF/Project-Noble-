@@ -1,6 +1,7 @@
 #include "BlamEngine.hpp"
 #include "ReachHost.hpp"
 #include "ui/LoadScreen.hpp"
+#include "career/Career.hpp"
 #include "hooks/HookManager.hpp"
 #include "common/Logger.hpp"
 #include <algorithm>
@@ -9,6 +10,7 @@
 #include <fstream>
 #include <filesystem>
 #include <objbase.h>
+#include <shellapi.h>
 #pragma comment(lib, "ole32.lib")
 
 namespace noble {
@@ -226,7 +228,7 @@ uint32_t BlamEngine::ResolveMapId(const std::string& mapName) {
     return 0;
 }
 
-std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameModeTag, int difficulty, uint32_t skulls,
+std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameModeTag, int difficulty, uint64_t skulls,
                                                    const std::string& customMvarPath, const std::string& customVariantPath) {
     constexpr size_t LAUNCH_BLOCK_SIZE = 0x2BF30; // 180,016 bytes
     std::vector<uint8_t> block(LAUNCH_BLOCK_SIZE, 0);
@@ -375,12 +377,18 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
     if (isCampaign || isFirefight) {
         // Campaign / Firefight: difficulty only at +0x34 (0 easy .. 3 legendary); +0x38 stays 0 as in RR's blocks.
         block[0x34] = static_cast<uint8_t>(clampedDiff);
-        *reinterpret_cast<uint32_t*>(&block[0x3C]) = skulls;
     } else if (!isMainMenu) {
-        // Apply difficulty & skulls overrides
+        // Apply difficulty override
         block[0x34] = static_cast<uint8_t>(clampedDiff);
         *reinterpret_cast<uint32_t*>(&block[0x38]) = static_cast<uint32_t>(clampedDiff);
-        *reinterpret_cast<uint32_t*>(&block[0x3C]) = skulls;
+    }
+    // Skulls: u64 at +0x48 in MCC's skull numbering (bit = the skull's index in MCC's
+    // alphabetical list: Iron 18, Black Eye 3, Tough Luck 36, Catch 7, Cloud 13, Famine 11,
+    // Thunderstorm 34, Tilt 35, Mythic 23, Blind 4, Cowbell 8, Grunt Birthday Party 16, IWHBYD 19).
+    // haloreach+0x3A22C converts it to the engine's own skull bits (game options +0x1D8).
+    // (+0x3C, used before, is a different field the engine reads as u16.)
+    if (!isMainMenu) {
+        memcpy(&block[0x48], &skulls, sizeof(skulls));
     }
 
     // Dynamic Custom Map Variant (.mvar) Injection (RVA 0x17AF00 parse_map_variant)
@@ -447,6 +455,34 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
         }
     }
 
+    // Test-only: "-launch-poke 0x3C=0xFFFFFFFF,0x40=1" writes u32 values into the block (for finding
+    // fields such as skulls by experiment). Not used by the menu.
+    {
+        int argc = 0;
+        LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+        for (int i = 1; argv && i + 1 < argc; ++i) {
+            if (std::wstring(argv[i]) != L"-launch-poke") continue;
+            std::wstring list = argv[i + 1];
+            size_t pos = 0;
+            while (pos < list.size()) {
+                size_t comma = list.find(L',', pos);
+                if (comma == std::wstring::npos) comma = list.size();
+                const std::wstring item = list.substr(pos, comma - pos);
+                const size_t eq = item.find(L'=');
+                if (eq != std::wstring::npos) {
+                    const unsigned long off = wcstoul(item.substr(0, eq).c_str(), nullptr, 0);
+                    const unsigned long val = wcstoul(item.substr(eq + 1).c_str(), nullptr, 0);
+                    if (off + 4 <= block.size()) {
+                        *reinterpret_cast<uint32_t*>(&block[off]) = static_cast<uint32_t>(val);
+                        NOBLE_INFO("BlamEngine: -launch-poke +0x{:X} = 0x{:X}", off, val);
+                    }
+                }
+                pos = comma + 1;
+            }
+        }
+        if (argv) LocalFree(argv);
+    }
+
     return block;
 }
 
@@ -462,7 +498,7 @@ bool BlamEngine::ExecuteCommand(const std::string& command) {
     return true;
 }
 
-bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMode, int difficulty, uint32_t skulls,
+bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMode, int difficulty, uint64_t skulls,
                            const std::string& customMvarPath, const std::string& customVariantPath) {
     if (!m_isInitialized || !m_engineInstance) return false;
 
@@ -485,6 +521,9 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
     } else if (mapId == static_cast<uint32_t>(-2) || mapId == 0 || gameMode == "mainmenu" || gameMode == "menu") {
         gameModeTag = 0;    // Main Menu
     }
+
+    // Career pays by base type, so modded maps/variants earn exactly what their stock type earns.
+    if (gameModeTag != 0) Career::BeginMatch(Career::BaseTypeFromEngineMode(gameModeTag), mapName, difficulty, skulls);
 
     auto launchBlock = BuildLaunchBlock(mapId, gameModeTag, difficulty, skulls, customMvarPath, customVariantPath);
 

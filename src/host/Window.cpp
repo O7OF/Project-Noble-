@@ -1,6 +1,8 @@
 #include "Window.hpp"
 #include "common/Logger.hpp"
 
+#include <atomic>
+
 namespace noble {
 
 Window::Window(const std::wstring& title, uint32_t width, uint32_t height)
@@ -31,20 +33,34 @@ bool Window::Create() {
         return false;
     }
 
-    RECT rc = { 0, 0, static_cast<LONG>(m_width), static_cast<LONG>(m_height) };
-    AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, FALSE);
-
-    int windowWidth = rc.right - rc.left;
-    int windowHeight = rc.bottom - rc.top;
-
-    int posX = (GetSystemMetrics(SM_CXSCREEN) - windowWidth) / 2;
-    int posY = (GetSystemMetrics(SM_CYSCREEN) - windowHeight) / 2;
+    // Fixed-size window: the engine renders at the size chosen in Settings and can't change it once
+    // started, so a maximized or dragged-larger window only stretched that picture. For a full-screen
+    // picture use WINDOW MODE = BORDERLESS FULL SCREEN, which renders at the monitor's size.
+    DWORD style = WS_OVERLAPPEDWINDOW & ~(WS_THICKFRAME | WS_MAXIMIZEBOX);
+    int windowWidth = 0, windowHeight = 0, posX = 0, posY = 0;
+    if (m_borderless) {
+        // Borderless: a popup window the size of the primary monitor.
+        style = WS_POPUP;
+        m_width = static_cast<uint32_t>(GetSystemMetrics(SM_CXSCREEN));
+        m_height = static_cast<uint32_t>(GetSystemMetrics(SM_CYSCREEN));
+        windowWidth = static_cast<int>(m_width);
+        windowHeight = static_cast<int>(m_height);
+    } else {
+        RECT rc = { 0, 0, static_cast<LONG>(m_width), static_cast<LONG>(m_height) };
+        AdjustWindowRect(&rc, style, FALSE);
+        windowWidth = rc.right - rc.left;
+        windowHeight = rc.bottom - rc.top;
+        posX = (GetSystemMetrics(SM_CXSCREEN) - windowWidth) / 2;
+        posY = (GetSystemMetrics(SM_CYSCREEN) - windowHeight) / 2;
+        if (posX < 0) posX = 0;
+        if (posY < 0) posY = 0;
+    }
 
     m_hwnd = CreateWindowExW(
         0,
         wc.lpszClassName,
         m_title.c_str(),
-        WS_OVERLAPPEDWINDOW,
+        style,
         posX, posY,
         windowWidth, windowHeight,
         nullptr, nullptr,
@@ -99,7 +115,34 @@ LRESULT CALLBACK Window::StaticWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPAR
     return DefWindowProcW(hwnd, uMsg, wParam, lParam);
 }
 
+namespace {
+std::atomic<int> s_wheelDelta{0};
+std::atomic<bool> s_sizeMove{false};
+std::atomic<int> s_leftClicks{0};
+} // namespace
+
+int Window::TakeLeftClicks() { return s_leftClicks.exchange(0); }
+
+int Window::TakeWheelNotches() {
+    int delta = s_wheelDelta.load();
+    for (;;) {
+        const int notches = delta / WHEEL_DELTA;
+        if (notches == 0) return 0;
+        if (s_wheelDelta.compare_exchange_weak(delta, delta - notches * WHEEL_DELTA)) return notches;
+    }
+}
+
+bool Window::InSizeMove() { return s_sizeMove.load(); }
+
 LRESULT Window::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
+    switch (uMsg) {
+        case WM_MOUSEWHEEL: s_wheelDelta.fetch_add(GET_WHEEL_DELTA_WPARAM(wParam)); break;
+        case WM_LBUTTONDOWN: s_leftClicks.fetch_add(1); break;
+        case WM_ENTERSIZEMOVE: s_sizeMove.store(true); ClipCursor(nullptr); break;
+        case WM_EXITSIZEMOVE: s_sizeMove.store(false); break;
+        case WM_KILLFOCUS: ClipCursor(nullptr); break;
+        default: break;
+    }
     if (m_customWndProc) {
         LRESULT res = m_customWndProc(hwnd, uMsg, wParam, lParam);
         if (res != 0) return res;

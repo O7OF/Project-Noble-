@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <filesystem>
 #include <string>
 
@@ -19,6 +20,7 @@ struct FrontEndChoice {
     std::string variantPath;     // full path to a game variant .bin from MCC's game_variants
     std::string mode = "multiplayer"; // "multiplayer", "campaign" or "firefight"
     int difficulty = 1;          // campaign/firefight: 0 easy, 1 normal, 2 heroic, 3 legendary
+    uint64_t skulls = 0;         // campaign: MCC skull bits (launch block +0x48)
 };
 
 class FrontEndMenu {

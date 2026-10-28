@@ -3,8 +3,14 @@
 #include "common/Logger.hpp"
 #include "hooks/HookManager.hpp"
 #include "ui/PauseMenu.hpp"
+#include "career/Career.hpp"
+#include "engine/FrameCapture.hpp"
+#include "engine/KeyBindings.hpp"
+#include "common/Settings.hpp"
+#include "host/Window.hpp"
 #include <windows.h>
 #include <shellapi.h>
+#include <psapi.h>
 #include <intrin.h>
 #include <atomic>
 #include <array>
@@ -19,6 +25,11 @@
 #include <cstdlib>
 #include <cwchar>
 #include <unordered_set>
+#include <deque>
+#include <iterator>
+#include <cstddef>
+#include <memory>
+#include <vector>
 #include <nlohmann/json.hpp>
 
 #pragma comment(lib, "gdi32.lib")
@@ -220,6 +231,38 @@ static uint64_t __fastcall HostSlot0_QueryInterface(void* thisPtr, uint64_t a1, 
 
 static void ExecuteGammaPass(IDXGISwapChain* swapChain);
 static void ResetGammaPass();
+static std::atomic<bool> s_sessionStarted{false};
+static std::atomic<bool> s_testCaptureRequest{false};  // -scoreboard-at: screenshot on the next frame  // set on the first slot-10 call (loading screen ends)
+
+// Test option "-end-round-after <seconds>": ends the current round that many seconds after the
+// game session starts, the same as the script command mp_round_end (haloreach+0x7B3EC(-1, 0, 1),
+// called by its evaluator at +0x1B699C). Lets automated runs reach the post-game results (slot 6).
+// Runs on the engine thread (slot 1), which is where the engine's own scripts run.
+static void EndRoundForTest() {
+    static double s_seconds = -1.0;
+    static bool s_parsed = false;
+    static bool s_done = false;
+    static ULONGLONG s_start = 0;
+    if (!s_parsed) {
+        s_parsed = true;
+        int argc = 0;
+        LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+        for (int i = 1; argv && i + 1 < argc; ++i) {
+            if (_wcsicmp(argv[i], L"-end-round-after") == 0) s_seconds = _wtof(argv[i + 1]);
+        }
+        if (argv) LocalFree(argv);
+    }
+    if (s_done || s_seconds < 0.0) return;
+    if (s_start == 0) s_start = GetTickCount64();
+    if (GetTickCount64() - s_start < static_cast<ULONGLONG>(s_seconds * 1000.0)) return;
+    s_done = true;
+    HMODULE reach = GetModuleHandleW(L"haloreach.dll");
+    if (!reach) return;
+    using RoundEndFn = void(__fastcall*)(int, int, int);
+    auto roundEnd = reinterpret_cast<RoundEndFn>(reinterpret_cast<uintptr_t>(reach) + 0x7B3EC);
+    NOBLE_INFO("ReachHost: -end-round-after {} s reached, ending the round", s_seconds);
+    roundEnd(-1, 0, 1);
+}
 
 // Slot 1: Frame tick / Render loop update callback (host_probe case 1)
 static uint64_t __fastcall HostSlot1_FrameTick(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
@@ -227,13 +270,30 @@ static uint64_t __fastcall HostSlot1_FrameTick(void* thisPtr, uint64_t a1, uint6
     // haloreach.dll invokes Slot 1 every frame before Present. a1 = the swap chain it is about to
     // present (RR host::hit case 1). Our passes draw here, on the engine thread, because the engine
     // owns the immediate context.
+    static std::atomic<uint64_t> s_frameCount{0};
+    uint64_t frames = ++s_frameCount;
     if (a1 > 0x10000) {
         IDXGISwapChain* swapChain = reinterpret_cast<IDXGISwapChain*>(a1);
         ExecuteGammaPass(swapChain);   // brightness/gamma first
-        PauseMenu::Render(swapChain);  // pause menu on top, unaffected by gamma
+        // Loading screen until the game session starts. Launch state 11 comes ~5 s too early (the
+        // screen is still black); the first slot-10 call (secondary interface, game session start) is
+        // when the world appears. Fallback: 60 s.
+        static bool s_loadingDone = false;
+        static ULONGLONG s_firstTick = GetTickCount64();
+        bool loading = false;
+        if (!s_loadingDone) {
+            if (s_sessionStarted.load() || GetTickCount64() - s_firstTick > 60000) {
+                s_loadingDone = true;
+                NOBLE_INFO("ReachHost [Slot 1 - FrameTick]: game session started at frame {}, loading screen off", frames);
+            } else {
+                loading = true;
+            }
+        }
+        if (!loading) EndRoundForTest();
+        PauseMenu::Render(swapChain, loading);  // overlays on top, unaffected by gamma
+        if (s_testCaptureRequest.exchange(false)) FrameCapture::SaveNow(swapChain, 777777);
+        FrameCapture::OnFrame(swapChain, frames);  // test screenshots (-capture-frames)
     }
-    static std::atomic<uint64_t> s_frameCount{0};
-    uint64_t frames = ++s_frameCount;
     if (frames == 1 || (frames % 300) == 0) {
         // Engine "external launch" state machine (haloreach+0xC1A114): 0..10 while launching, 11 = launched.
         // State 10 waits for the game session to be ready.
@@ -243,6 +303,15 @@ static uint64_t __fastcall HostSlot1_FrameTick(void* thisPtr, uint64_t a1, uint6
         }
         NOBLE_INFO("ReachHost [Slot 1 - FrameTick]: Frame {} pumped from haloreach.dll (LoadProgress: {:.1f}%, launch state {})",
             frames, LoadScreen::Get().GetLoadProgress() * 100.0f, launchState);
+    }
+    if (frames == 1 || (frames % 1800) == 0) {
+        // Memory use over time (leak tracking): private bytes and working set of the process.
+        PROCESS_MEMORY_COUNTERS_EX pmc{};
+        pmc.cb = sizeof(pmc);
+        if (GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&pmc), sizeof(pmc))) {
+            NOBLE_INFO("Memory: frame {} private {} MB, working set {} MB", frames,
+                       pmc.PrivateUsage / (1024 * 1024), pmc.WorkingSetSize / (1024 * 1024));
+        }
     }
     return 0;
 }
@@ -280,6 +349,7 @@ static uint64_t __fastcall HostSlot10_Heartbeat(void* thisPtr, uint64_t a1, uint
     if (!s_logged.exchange(true)) {
         NOBLE_INFO("ReachHost [Slot 10 - SecondInterface]: returning secondary host interface");
     }
+    s_sessionStarted.store(true);
     return reinterpret_cast<uint64_t>(ReachHost::Get().GetSecondInterface());
 }
 
@@ -292,6 +362,31 @@ static uint64_t __fastcall HostSlot18_AssetLookup(void* thisPtr, uint64_t a1, ui
 // Slot 23: Load progress handler (host-probe slot23 at 0x1400822a0)
 static std::atomic<uint32_t> s_loadPhases{0};
 static std::atomic<float> s_loadFraction{0.0f};
+
+// Slot 6: match over. haloreach+0xF95CB builds MCC's game-results record (0x5D138 bytes, filled
+// from the engine's own results by haloreach+0x39128) and calls host slot 6 with a pointer to it
+// (a1). a2 isn't a size: it is whatever r8 held after the conversion loop (0xD5A8).
+// Noble shows its post-game panel and hands the record to the career code (cR, stats).
+// Layout notes: docs/HANDOFF.md, "Game results".
+static uint64_t __fastcall HostSlot6_GameResults(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
+    (void)thisPtr; (void)a2; (void)a4;
+    int launchState = -1;
+    if (HMODULE reach = GetModuleHandleW(L"haloreach.dll")) {
+        SafeReadInt32(reinterpret_cast<uintptr_t>(reach) + 0xC1A114, &launchState);
+    }
+    NOBLE_INFO("ReachHost [Slot 6 - GameResults]: record=0x{:X} (a2=0x{:X} a3=0x{:X}, launch state {})", a1, a2, a3, launchState);
+    if (launchState >= 11 && a1 > 0x10000) {
+        static std::vector<uint8_t> s_record;
+        s_record.assign(Career::kResultsSize, 0);
+        if (SafeCopyMemory(s_record.data(), reinterpret_cast<const void*>(a1), s_record.size())) {
+            Career::OnGameResults(s_record.data(), s_record.size());
+        } else {
+            NOBLE_WARN("ReachHost [Slot 6 - GameResults]: results record not readable");
+        }
+    }
+    if (launchState >= 11) PauseMenu::ShowGameOver();  // only for a match that was actually running
+    return 0;
+}
 
 static uint64_t __fastcall HostSlot23_LoadProgress(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
     (void)thisPtr; (void)a3; (void)a4;
@@ -351,8 +446,9 @@ static uint64_t __fastcall HostSlot32_DisplaySettings(void* thisPtr, uint64_t a1
         0x01, 0x02, 0x02, 0x02, 0x02, 0x02, 0x01, 0x01,   // quality settings (RR defaults)
         0x00, 0x01, 0x01, 0x01, 0x00, 0x02, 0x00, 0x00
     };
-    const uint32_t width = 1280;   // host window client size (Window is created at 1280x720)
-    const uint32_t height = 720;
+    // Size of Noble's window / swap chain (set by main from the DISPLAY settings).
+    const uint32_t width = ReachHost::Get().GetDisplayWidth();
+    const uint32_t height = ReachHost::Get().GetDisplayHeight();
     memcpy(&header[0], &width, sizeof(width));
     memcpy(&header[4], &height, sizeof(height));
     SafeCopyMemory(reinterpret_cast<void*>(a1), header, sizeof(header));
@@ -362,12 +458,10 @@ static uint64_t __fastcall HostSlot32_DisplaySettings(void* thisPtr, uint64_t a1
 // Slot 33: Display Quality settings handler (host_probe case 0x21)
 static uint64_t __fastcall HostSlot33_DisplayQuality(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
     (void)thisPtr; (void)a2; (void)a3; (void)a4;
-    uintptr_t targetPtr = a1;
-    uintptr_t deref = 0;
-    if (SafeReadPointer(a1, &deref) && deref > 0x10000) {
-        targetPtr = deref;
-    }
-
+    // RR host::hit case 0x21 writes these 16 bytes straight into the buffer a1 points to. (The old
+    // code followed a1 again when the buffer already held a pointer-like value, writing into
+    // whatever that value pointed at and leaving the engine's settings uninitialised.)
+    const uintptr_t targetPtr = a1;
     if (targetPtr > 0x10000) {
         uint64_t val1 = 0x3F80000000000201ULL; // Scale = 1.0f (0x3F800000)
         uint64_t val2 = 0x2BF800000ULL;
@@ -385,25 +479,21 @@ static uint64_t __fastcall HostSlot33_DisplayQuality(void* thisPtr, uint64_t a1,
 // actions 0..65. The keys below are MCC's default PC layout (actions 62..65 are unbound).
 static constexpr size_t kBindingTableOffset = 0x42C;
 static constexpr size_t kBindingEntrySize = 0x18;
-static const uint8_t kDefaultKeyBindings[66] = {
-    /*  0 */ VK_SPACE, '2',        'E',        'R',        '1',        'Q',        '4',        'F',
-    /*  8 */ VK_LBUTTON, VK_LMENU, VK_RBUTTON, 'Z',        'X',        'C',        'C',        'Q',
-    /* 16 */ 'W',        'S',      'A',        'D',        VK_TAB,     VK_LCONTROL, VK_SPACE, VK_LSHIFT,
-    /* 24 */ VK_RBUTTON, 'R',      'F',        VK_LBUTTON, VK_LSHIFT,  VK_LCONTROL, VK_DELETE, '1',
-    /* 32 */ '2',        VK_OEM_3, VK_RBUTTON, VK_NUMPAD4, 'X',        'Z',        'C',        VK_RBUTTON,
-    /* 40 */ VK_RIGHT,   VK_LEFT,  VK_RETURN,  'E',        VK_SPACE,   VK_LSHIFT,  VK_NUMPAD5, 'R',
-    /* 48 */ 'F',        VK_RBUTTON, VK_RBUTTON, 'E',      'G',        'C',        'X',        'F',
-    /* 56 */ '3',        'G',      'L',        VK_UP,      VK_DOWN,    'P',        0,          0,
-    /* 64 */ 0,          0,
-};
-
 static void WriteDefaultKeyBindings(uint8_t* profile) {
     for (uint32_t action = 0; action < 66; ++action) {
         uint8_t* entry = profile + kBindingTableOffset + action * kBindingEntrySize;
-        const uint32_t vk = kDefaultKeyBindings[action];
+        // MCC's default layout plus the player's changes from the SETTINGS tab.
+        const uint32_t vk = static_cast<uint32_t>(KeyBindings::EffectiveKey(static_cast<int>(action)));
         memcpy(entry + 0, &action, sizeof(action));
         memcpy(entry + 4, &vk, sizeof(vk));
     }
+    // Entries are {u32 action, u32 key, u32 second key, 12 zero bytes}. RR's captured profile binds
+    // action 4 (change weapon) to '1' and, as its second key, 0xAF: the mouse wheel (the engine turns
+    // the wheel pulse at input +0x114 into that code). Without it the wheel does nothing.
+    // Tested 18:13: wheel up switches weapons. 0xAE in the third key slot did nothing for wheel down,
+    // so FillLocalInput sends every notch as "up" (with two weapons either direction does the same).
+    const uint32_t kWheelUp = 0xAF;
+    memcpy(profile + kBindingTableOffset + 4 * kBindingEntrySize + 8, &kWheelUp, sizeof(kWheelUp));
 }
 
 // Audio volumes are profile settings too (RR live::audio::set_volume): f32 at +0xA5C (game/master),
@@ -413,10 +503,10 @@ static constexpr size_t kVolumeMusicOffset = 0xA60;
 static constexpr size_t kVolumeOtherOffset = 0xA64;
 
 static void WriteDefaultVolumes(uint8_t* profile) {
-    const float full = 1.0f;
-    memcpy(profile + kVolumeGameOffset, &full, sizeof(full));
-    memcpy(profile + kVolumeMusicOffset, &full, sizeof(full));
-    memcpy(profile + kVolumeOtherOffset, &full, sizeof(full));
+    const SettingsData settings = Settings::Get().Snapshot();
+    memcpy(profile + kVolumeGameOffset, &settings.volumeGame, sizeof(float));
+    memcpy(profile + kVolumeMusicOffset, &settings.volumeMusic, sizeof(float));
+    memcpy(profile + kVolumeOtherOffset, &settings.volumeOther, sizeof(float));
 }
 
 // Look / controller settings block (+0x1B4..+0x1DF). Without it zoomed look sensitivity is 0 and
@@ -503,8 +593,11 @@ static uint64_t __fastcall HostSlot34_ProfileSettings(void* thisPtr, uint64_t a1
         // RR host::hit case 0x22: the profile is a zeroed 64 KB block with only the 4-character
         // service tag (UTF-16) written at +0x1AC. The old defaults here (+0x00 = 1, armour colours
         // at +0x18/+0x1C) are not what RR sends, so they are no longer written.
-        static const wchar_t kServiceTag[4] = { L'N', L'O', L'B', L'L' };
-        memcpy(s_hostProfileBuffer + 0x1AC, kServiceTag, sizeof(kServiceTag));
+        // The tag is the player's (SETTINGS > GAMEPLAY > SERVICE TAG, default NOBL), 1-4 characters.
+        wchar_t serviceTag[4] = {};
+        const std::string tag = Settings::Get().Snapshot().serviceTag;
+        for (size_t i = 0; i < 4 && i < tag.size(); ++i) serviceTag[i] = static_cast<wchar_t>(tag[i]);
+        memcpy(s_hostProfileBuffer + 0x1AC, serviceTag, sizeof(serviceTag));
         s_hostProfileInitialized = true;
     }
 
@@ -519,7 +612,7 @@ static uint64_t __fastcall HostSlot34_ProfileSettings(void* thisPtr, uint64_t a1
 //   +0x004 u8[256]  key state indexed by VK code: 0 = up, 0x80 = pressed (< 500 ms),
 //                   0x81..0xFF = held (repeat counter, as RR computes it)
 //   +0x104 f32 x2   mouse look delta (x, y), already scaled
-//   +0x114 i32      mouse wheel pulse
+//   +0x114 f32      mouse wheel pulse (+1/-1 for 40 ms per notch, see FillLocalInput)
 //   +0x118 f32      1.0
 //   +0x11C u32      mouse buttons: L=1, M=2, R=4, X1=8, X2=0x10
 // Index 1 is the split-screen second user: zeroed, as RR does.
@@ -530,7 +623,8 @@ static std::atomic<bool> s_slot36Logged{false};
 
 static float InputMouseScale() {
     static float s_scale = [] {
-        float scale = 0.0008f; // RR's default before its sensitivity multiplier
+        // RR's default before its sensitivity multiplier, times the SETTINGS tab's sensitivity.
+        float scale = 0.0008f * Settings::Get().Snapshot().mouseSensitivity;
         int argc = 0;
         LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
         if (argv) {
@@ -571,12 +665,44 @@ static uint64_t __fastcall UiScreenHook(uint64_t a1, uint64_t a2, uint64_t a3, u
     return s_origUiScreen(a1, a2, a3, a4);
 }
 
+// Subtitles. Before drawing cinematic/dialogue subtitles the engine asks haloreach+0xD5244
+// ("should subtitles show?"), which reads each local player's subtitle setting (player profile
+// +0xA30: 0 automatic, 1 on, 2 off) from its own player table. Automatic only shows them when the
+// voice and text languages differ, so English players never see any. With the SUBTITLES setting on,
+// Noble answers "yes" here; with it off the engine decides as before.
+static constexpr uintptr_t kSubtitlesEnabledRva = 0xD5244;
+using SubtitlesEnabledFn = uint8_t(__fastcall*)();
+static SubtitlesEnabledFn s_origSubtitlesEnabled = nullptr;
+static std::atomic<bool> s_forceSubtitles{false};
+
+static uint8_t __fastcall SubtitlesEnabledHook() {
+    if (s_forceSubtitles.load(std::memory_order_relaxed)) return 1;
+    return s_origSubtitlesEnabled();
+}
+
+static void EnsureSubtitleHook(HMODULE reach) {
+    s_forceSubtitles.store(Settings::Get().Snapshot().subtitles);
+    uint8_t* target = reinterpret_cast<uint8_t*>(reach) + kSubtitlesEnabledRva;
+    static const uint8_t kPrologue[5] = { 0x48, 0x89, 0x5C, 0x24, 0x08 };  // mov [rsp+8], rbx
+    uint8_t current[5] = {};
+    if (!SafeCopyMemory(current, target, sizeof(current)) || memcmp(current, kPrologue, sizeof(kPrologue)) != 0) {
+        NOBLE_WARN("ReachHost [Subtitles]: haloreach+0x{:X} does not match the expected build; subtitle setting disabled",
+                   kSubtitlesEnabledRva);
+        return;
+    }
+    if (HookManager::InstallHook(target, reinterpret_cast<void*>(&SubtitlesEnabledHook),
+                                 reinterpret_cast<void**>(&s_origSubtitlesEnabled), "subtitles_enabled")) {
+        NOBLE_INFO("ReachHost [Subtitles]: hook installed (subtitles {})", s_forceSubtitles.load() ? "on" : "engine default");
+    }
+}
+
 static void EnsureUiCursorHook() {
     static bool s_tried = false;
     if (s_tried) return;
     s_tried = true;
     HMODULE reach = GetModuleHandleW(L"haloreach.dll");
     if (!reach) return;
+    EnsureSubtitleHook(reach);
     uint8_t* target = reinterpret_cast<uint8_t*>(reach) + kUiScreenRva;
     // Same check RR makes: the function must start with "mov [rsp+18h], rbx" for this build.
     static const uint8_t kPrologue[5] = { 0x48, 0x89, 0x5C, 0x24, 0x18 };
@@ -613,6 +739,11 @@ static void FillLocalInput(uint8_t* st) {
 
     static HWND s_lastWindow = nullptr;
     HWND hwnd = InputFocusedWindow();
+    if (hwnd && Window::InSizeMove()) {
+        InputRelease(hwnd, "window is being moved");
+        memset(s_keyDownSince, 0, sizeof(s_keyDownSince));
+        return;
+    }
     if (!hwnd) {
         InputRelease(s_lastWindow, "window lost focus");
         memset(s_keyDownSince, 0, sizeof(s_keyDownSince));
@@ -626,15 +757,15 @@ static void FillLocalInput(uint8_t* st) {
     // goes to the engine, e.g. to back out of a screen).
     static bool s_escWasDown = false;
     const bool escDown = (GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0;
-    if (escDown && !s_escWasDown && !uiPointer) {
+    if (escDown && !s_escWasDown && !uiPointer && !PauseMenu::IsGameOver()) {
         PauseMenu::Toggle();
     }
     s_escWasDown = escDown;
 
-    // While the pause menu is open the game gets no keys or mouse, and the pointer is free.
+    // While the pause menu or post-game panel is up the game gets no keys or mouse, and the pointer is free.
     static bool s_holdMouseUntilRelease = false;
-    if (PauseMenu::IsOpen()) {
-        InputRelease(hwnd, "pause menu open");
+    if (PauseMenu::WantsPointer()) {
+        InputRelease(hwnd, PauseMenu::IsGameOver() ? "post-game panel open" : "pause menu open");
         memset(s_keyDownSince, 0, sizeof(s_keyDownSince));
         s_holdMouseUntilRelease = true;
         return;
@@ -697,6 +828,34 @@ static void FillLocalInput(uint8_t* st) {
         }
         st[0x004 + vk] = v;
     }
+    {
+        // Test option "-scoreboard-at <seconds>": hold Tab (scoreboard) for 3 s that long after the first
+        // input poll, and save capture_777777.bmp halfway through (checks the service tag in game).
+        static double s_at = -1.0;
+        static bool s_parsed = false, s_shot = false;
+        static ULONGLONG s_start = 0;
+        if (!s_parsed) {
+            s_parsed = true;
+            int argc = 0;
+            LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+            for (int i = 1; argv && i + 1 < argc; ++i) {
+                if (_wcsicmp(argv[i], L"-scoreboard-at") == 0) s_at = _wtof(argv[i + 1]);
+            }
+            if (argv) LocalFree(argv);
+            s_start = now;
+        }
+        if (s_at >= 0.0) {
+            const double t = static_cast<double>(now - s_start) / 1000.0;
+            if (t >= s_at && t < s_at + 3.0) {
+                st[0x004 + VK_TAB] = 0x80;
+                if (!s_shot && t >= s_at + 1.5) {
+                    s_shot = true;
+                    s_testCaptureRequest.store(true);
+                    NOBLE_INFO("ReachHost: -scoreboard-at {} s: scoreboard screenshot requested", s_at);
+                }
+            }
+        }
+    }
 
     if (!uiPointer) {
         st[0x004 + VK_ESCAPE] = 0; // Esc was ours (pause menu)
@@ -716,6 +875,8 @@ static void FillLocalInput(uint8_t* st) {
         SetCursorPos(center.x, center.y);
     }
     const float scale = InputMouseScale();
+    static const bool s_invertLook = Settings::Get().Snapshot().invertLook;
+    if (s_invertLook) dy = -dy;
     *reinterpret_cast<float*>(st + 0x104) = dx * scale;
     *reinterpret_cast<float*>(st + 0x108) = dy * scale;
 
@@ -726,6 +887,51 @@ static void FillLocalInput(uint8_t* st) {
     if (st[0x004 + VK_XBUTTON1]) buttons |= 0x08;
     if (st[0x004 + VK_XBUTTON2]) buttons |= 0x10;
     *reinterpret_cast<uint32_t*>(st + 0x11C) = buttons;
+
+    // Mouse wheel (+0x114, f32), as RR's WheelPulse: each notch becomes a +1/-1 pulse held for 40 ms,
+    // at most one pulse every 80 ms, up to 3 notches queued (wheel up = +1).
+    static int s_wheelPending = 0;
+    static int s_pulseSign = 0;
+    static ULONGLONG s_pulseStart = 0;
+    s_wheelPending += Window::TakeWheelNotches();
+    {
+        // Test option "-wheel-after <seconds>": one wheel-down notch that long after the first input poll.
+        static double s_testAt = -1.0;
+        static bool s_testParsed = false, s_testDone = false;
+        static ULONGLONG s_testStart = 0;
+        if (!s_testParsed) {
+            s_testParsed = true;
+            int argc = 0;
+            LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+            for (int i = 1; argv && i + 1 < argc; ++i) {
+                if (_wcsicmp(argv[i], L"-wheel-after") == 0) s_testAt = _wtof(argv[i + 1]);
+            }
+            if (argv) LocalFree(argv);
+            s_testStart = GetTickCount64();
+        }
+        if (!s_testDone && s_testAt >= 0.0 && GetTickCount64() - s_testStart >= static_cast<ULONGLONG>(s_testAt * 1000.0)) {
+            s_testDone = true;
+            s_wheelPending -= 1;
+            NOBLE_INFO("ReachHost: -wheel-after {} s: one wheel notch down", s_testAt);
+        }
+    }
+    if (s_wheelPending > 3) s_wheelPending = 3;
+    if (s_wheelPending < -3) s_wheelPending = -3;
+    const ULONGLONG wheelNow = GetTickCount64();
+    float wheel = 0.0f;
+    if (s_pulseSign != 0 && wheelNow - s_pulseStart < 40) {
+        wheel = static_cast<float>(s_pulseSign);
+    } else if (s_pulseSign != 0 && wheelNow - s_pulseStart < 80) {
+        wheel = 0.0f;
+    } else if (s_wheelPending != 0) {
+        s_wheelPending -= s_wheelPending > 0 ? 1 : -1;
+        s_pulseSign = 1;  // only wheel-up (0xAF) is bound; down notches switch weapons too
+        s_pulseStart = wheelNow;
+        wheel = static_cast<float>(s_pulseSign);
+    } else {
+        s_pulseSign = 0;
+    }
+    *reinterpret_cast<float*>(st + 0x114) = wheel;
 }
 
 static uint64_t __fastcall HostSlot36_InputController(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
@@ -960,16 +1166,23 @@ static uint64_t __fastcall HostSlot48_FilePathResolver(void* thisPtr, uint64_t a
 }
 
 // Slot 51: Engine capability query handler (host_probe case 0x33)
+// Slot 51: feature query (RR host::hit case 0x33). a1 = feature id, a2 = bool* answer,
+// a3 = optional u64* that RR clears. RR answers from a bit mask (FEATURES_ON, default 0x6E, the
+// value its launcher also passes with --features-on): features 1, 2, 3, 5 and 6 on, the rest off.
+// Noble used to answer "on" for every feature, which turns on features RR leaves off.
+static constexpr uint32_t kFeaturesOn = 0x6E;
 static uint64_t __fastcall HostSlot51_EngineCapability(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
-    (void)thisPtr; (void)a3; (void)a4;
-    static std::atomic<bool> s_logged{false};
-    if (!s_logged.exchange(true)) {
-        NOBLE_INFO("ReachHost [Slot 51 - EngineCapability]: capability query id={}", a1);
+    (void)thisPtr; (void)a4;
+    const uint32_t feature = static_cast<uint32_t>(a1);
+    const bool on = feature < 32 && ((kFeaturesOn >> feature) & 1u) != 0;
+    static std::atomic<uint32_t> s_loggedMask{0};
+    if (feature < 32 && !(s_loggedMask.fetch_or(1u << feature) & (1u << feature))) {
+        NOBLE_INFO("ReachHost [Slot 51 - Feature]: feature {} -> {}", feature, on ? "on" : "off");
     }
-    if (a2 > 0x10000) {
-        SafeWriteUint8(a2, 1);
-    }
-    return 1; // Return true
+    if (a2 <= 0x10000) return 0;
+    SafeWriteUint8(a2, on ? 1 : 0);
+    if (a3 > 0x10000) SafeWriteUint64(a3, 0);
+    return 1;
 }
 
 // Slot 52: Engine State query (host_probe case 0x34)
@@ -1097,6 +1310,22 @@ static const FallbackStringEntry s_fallbackStrings[] = {
     { 0x848f1dab, 0x935d, "SPARTAN III BIOS S56.7854.3354-DKW" }
 };
 
+static size_t SafeCopyWideRaw(const wchar_t* src, wchar_t* dst, size_t cap);
+static size_t SafeCopyAnsiRaw(const char* src, char* dst, size_t cap);
+static std::wstring SafeReadWide(const wchar_t* text, size_t maxChars);
+
+// Localised text for the engine (slots 55-57), following RR's strings module:
+//  * slot 56 register(table, id, const char* name, const char* suffix): the engine names a string
+//    "<name>_<suffix>"; its key is CRC-32/MPEG-2 (poly 0x04C11DB7, init 0xFFFFFFFF, no final xor)
+//    of that name in upper case, without a leading '$';
+//  * slot 57 lookup(table, id, wchar_t* out, size_t capacity): copy the text for that key into the
+//    engine's buffer and return 1, or return 0 when there is none;
+//  * the text comes from MCC's own language file, <MCC>\data\ui\Localization\EN_HaloReach.bin,
+//    read at run time from the player's install (nothing is copied into Noble).
+// File layout: u32 magic 0x90CE6B7A at +0x00 and +0x40; u32 at +0x78 = size of the key array
+// (u32 keys) that starts at +0x80; u32 at +0x7C = size of the string block right after it, which
+// holds one NUL-terminated UTF-8 string per key, in the same order.
+// Noble's small hard-coded table (s_fallbackStrings) is still used for ids that are not found.
 class StringTable {
 public:
     static StringTable& Get() {
@@ -1107,148 +1336,182 @@ public:
     void Initialize() {
         std::lock_guard<std::mutex> lock(m_mutex);
         if (m_initialized) return;
-
-        // 1. Populate hardcoded fallbacks
         for (const auto& entry : s_fallbackStrings) {
-            uint64_t key = (static_cast<uint64_t>(entry.tableId) << 32) | static_cast<uint64_t>(entry.stringId);
-            std::wstring wide = Utf8ToWideString(entry.str);
-            m_strings[key] = wide;
-
-            char hexKey[64];
-            snprintf(hexKey, sizeof(hexKey), "%x:%x", entry.tableId, entry.stringId);
-            m_keyStrings[hexKey] = wide;
+            m_fallback[MakeKey(entry.tableId, entry.stringId)] = Utf8ToWideString(entry.str);
         }
-
-        // 2. Load external strings JSON if present
-        std::vector<std::filesystem::path> candidatePaths = {
-            "data/strings_en.json",
-            "../data/strings_en.json",
-            "../../data/strings_en.json"
-        };
-
-        wchar_t exePathBuf[MAX_PATH] = { 0 };
-        if (GetModuleFileNameW(nullptr, exePathBuf, MAX_PATH)) {
-            std::filesystem::path exeDir = std::filesystem::path(exePathBuf).parent_path();
-            candidatePaths.push_back(exeDir / "data" / "strings_en.json");
-            candidatePaths.push_back(exeDir / ".." / "data" / "strings_en.json");
-            candidatePaths.push_back(exeDir / ".." / ".." / "data" / "strings_en.json");
-        }
-
-        for (const auto& p : candidatePaths) {
-            if (std::filesystem::exists(p)) {
-                LoadFromJsonFile(p);
-                break;
-            }
-        }
-
         m_initialized = true;
-        NOBLE_INFO("StringTable: Initialized with {} localized strings.", m_strings.size());
     }
 
-    const wchar_t* Lookup(uint32_t tableId, uint32_t stringId) {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        uint64_t key = (static_cast<uint64_t>(tableId) << 32) | static_cast<uint64_t>(stringId);
-        auto it = m_strings.find(key);
-        if (it != m_strings.end()) {
-            return it->second.c_str();
+    bool LoadLanguageFile(const std::filesystem::path& file) {
+        std::ifstream in(file, std::ios::binary);
+        if (!in) {
+            NOBLE_WARN("StringTable: language file not found: {}", file.string());
+            return false;
         }
-
-        char hexKey[64];
-        snprintf(hexKey, sizeof(hexKey), "%x:%x", tableId, stringId);
-        auto it2 = m_keyStrings.find(hexKey);
-        if (it2 != m_keyStrings.end()) {
-            return it2->second.c_str();
+        std::vector<uint8_t> data((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        auto u32 = [&](size_t off) -> uint32_t {
+            uint32_t v = 0;
+            if (off + 4 <= data.size()) memcpy(&v, data.data() + off, 4);
+            return v;
+        };
+        constexpr uint32_t kMagic = 0x90CE6B7A;
+        if (data.size() < 0x80 || u32(0) != kMagic || u32(0x40) != kMagic) {
+            NOBLE_WARN("StringTable: {} is not a language file Noble understands", file.string());
+            return false;
         }
+        const size_t keyBytes = u32(0x78) & ~3u;
+        const size_t textStart = 0x80 + static_cast<size_t>(u32(0x78));
+        size_t textEnd = textStart + u32(0x7C);
+        if (textStart > data.size()) return false;
+        textEnd = std::min(textEnd, data.size());
 
-        // Fallback: If exact tableId not found, search by stringId across all registered tables.
-        // haloreach maps have varying tableId hashes across map variants/gamemodes,
-        // but stringId is preserved (e.g. 0x2dd "Press \ue45e to access Loadout Menu").
-        for (const auto& pair : m_strings) {
-            if ((pair.first & 0xFFFFFFFFULL) == static_cast<uint64_t>(stringId)) {
-                return pair.second.c_str();
+        std::unordered_map<uint32_t, std::wstring> language;
+        size_t pos = textStart;
+        for (size_t k = 0; k < keyBytes / 4 && pos < textEnd; ++k) {
+            const uint32_t key = u32(0x80 + k * 4);
+            size_t end = pos;
+            while (end < textEnd && data[end] != 0) ++end;
+            std::string text(reinterpret_cast<const char*>(data.data() + pos), end - pos);
+            pos = end + 1;
+            // Speaker tags in subtitles: "civ&idCIVILIAN<U+E900>text" -> "text".
+            const size_t tag = text.find("&id");
+            if (tag != std::string::npos) {
+                const size_t mark = text.find("\xEE\xA4\x80", tag);
+                if (mark != std::string::npos) text = text.substr(mark + 3);
             }
+            language.emplace(key, Utf8ToWideString(text));  // first string wins for a key
         }
 
-        return s_emptyWideString;
-    }
-
-    void Register(uint32_t tableId, uint32_t stringId, const wchar_t* str) {
-        if (!str) return;
         std::lock_guard<std::mutex> lock(m_mutex);
-        uint64_t key = (static_cast<uint64_t>(tableId) << 32) | static_cast<uint64_t>(stringId);
-        m_strings[key] = str;
-
-        char hexKey[64];
-        snprintf(hexKey, sizeof(hexKey), "%x:%x", tableId, stringId);
-        m_keyStrings[hexKey] = str;
+        m_language = std::move(language);
+        NOBLE_INFO("StringTable: loaded {} strings from {}", m_language.size(), file.string());
+        return true;
     }
 
     void Clear() {
-        // Retain fallbacks
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_registered.clear();
     }
 
-private:
-    void LoadFromJsonFile(const std::filesystem::path& jsonPath) {
-        try {
-            std::ifstream file(jsonPath);
-            if (!file.is_open()) return;
+    void Register(uint32_t tableId, uint32_t stringId, const char* name, const char* suffix) {
+        if (!name || !suffix) return;
+        char nameBuf[256] = {};
+        char suffixBuf[256] = {};
+        SafeCopyAnsiRaw(name, nameBuf, sizeof(nameBuf));
+        SafeCopyAnsiRaw(suffix, suffixBuf, sizeof(suffixBuf));
+        std::string full = std::string(nameBuf) + "_" + suffixBuf;
+        const uint32_t key = KeyFor(full);
 
-            nlohmann::json root = nlohmann::json::parse(file);
-            if (!root.contains("data") || !root["data"].contains("table")) return;
-
-            const auto& table = root["data"]["table"];
-            for (auto it = table.begin(); it != table.end(); ++it) {
-                std::string keyStr = it.key();
-                std::string valStr = it.value().get<std::string>();
-
-                uint32_t tableId = 0, stringId = 0;
-                if (sscanf_s(keyStr.c_str(), "%x:%x", &tableId, &stringId) == 2) {
-                    uint64_t key = (static_cast<uint64_t>(tableId) << 32) | static_cast<uint64_t>(stringId);
-                    std::wstring wide = Utf8ToWideString(valStr);
-                    m_strings[key] = wide;
-                    m_keyStrings[keyStr] = wide;
-                }
-            }
-            NOBLE_INFO("StringTable: Successfully loaded JSON localization from '{}'.", jsonPath.string());
-        } catch (const std::exception& e) {
-            NOBLE_WARN("StringTable: Failed to parse localization file '{}': {}", jsonPath.string(), e.what());
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_registered[MakeKey(tableId, stringId)] = key;
+        if (m_loggedRegistrations < 40) {
+            ++m_loggedRegistrations;
+            const auto it = m_language.find(key);
+            NOBLE_INFO("StringTable: register 0x{:08X}:0x{:X} '{}' -> key 0x{:08X} ({})", tableId, stringId, full, key,
+                       it != m_language.end() ? "found" : "not in language file");
         }
     }
 
+    // Copies the text into out (capacity in characters, including the terminator).
+    bool Lookup(uint32_t tableId, uint32_t stringId, wchar_t* out, size_t capacity) {
+        std::wstring text;
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            const uint64_t id = MakeKey(tableId, stringId);
+            bool found = false;
+            auto reg = m_registered.find(id);
+            if (reg != m_registered.end()) {
+                auto it = m_language.find(reg->second);
+                if (it != m_language.end()) {
+                    text = it->second;
+                    found = true;
+                }
+            }
+            if (!found) {
+                auto fb = m_fallback.find(id);
+                if (fb == m_fallback.end()) {
+                    ++m_misses;
+                    return false;
+                }
+                text = fb->second;
+            }
+            ++m_hits;
+        }
+        if (!out || capacity == 0 || text.size() >= capacity) return false;
+        return SafeCopyMemory(out, text.c_str(), (text.size() + 1) * sizeof(wchar_t));
+    }
+
+    void LogStats() {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        NOBLE_INFO("StringTable: {} registered, {} lookups answered, {} not found", m_registered.size(), m_hits, m_misses);
+    }
+
+private:
+    static uint64_t MakeKey(uint32_t tableId, uint32_t stringId) {
+        return (static_cast<uint64_t>(tableId) << 32) | static_cast<uint64_t>(stringId);
+    }
+
+    // CRC-32/MPEG-2 of the upper-cased name, skipping a leading '$' (RR strings::register).
+    static uint32_t KeyFor(const std::string& name) {
+        static const std::array<uint32_t, 256> table = [] {
+            std::array<uint32_t, 256> t{};
+            for (uint32_t i = 0; i < 256; ++i) {
+                uint32_t c = i << 24;
+                for (int b = 0; b < 8; ++b) c = (c & 0x80000000u) ? (c << 1) ^ 0x04C11DB7u : (c << 1);
+                t[i] = c;
+            }
+            return t;
+        }();
+        size_t start = (!name.empty() && name[0] == '$') ? 1 : 0;
+        uint32_t crc = 0xFFFFFFFFu;
+        for (size_t i = start; i < name.size(); ++i) {
+            uint8_t c = static_cast<uint8_t>(name[i]);
+            if (c >= 'a' && c <= 'z') c = static_cast<uint8_t>(c - 0x20);
+            crc = (crc << 8) ^ table[((crc >> 24) ^ c) & 0xFF];
+        }
+        return crc;
+    }
+
     bool m_initialized = false;
+    int m_loggedRegistrations = 0;
+    uint64_t m_hits = 0;
+    uint64_t m_misses = 0;
     std::mutex m_mutex;
-    std::unordered_map<uint64_t, std::wstring> m_strings;
-    std::unordered_map<std::string, std::wstring> m_keyStrings;
+    std::unordered_map<uint32_t, std::wstring> m_language;    // key -> text (MCC language file)
+    std::unordered_map<uint64_t, uint32_t> m_registered;      // (table, id) -> key (slot 56)
+    std::unordered_map<uint64_t, std::wstring> m_fallback;    // Noble's built-in strings
 };
 
-// Slot 55: Strings Clear handler (host_probe case 0x37)
+// Slot 55: strings clear (RR host::hit case 0x37)
 static uint64_t __fastcall HostSlot55_StringsClear(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
     (void)thisPtr; (void)a1; (void)a2; (void)a3; (void)a4;
     StringTable::Get().Clear();
     return 0;
 }
 
-// Slot 56: Strings Register handler (host_probe case 0x38)
+// Slot 56: strings register (case 0x38): (table, id, const char* name, const char* suffix)
 static uint64_t __fastcall HostSlot56_StringsRegister(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
-    (void)thisPtr; (void)a4;
-    if (a3 > 0x10000) {
-        const wchar_t* wstr = reinterpret_cast<const wchar_t*>(a3);
-        StringTable::Get().Register(static_cast<uint32_t>(a1), static_cast<uint32_t>(a2), wstr);
+    (void)thisPtr;
+    if (a3 > 0x10000 && a4 > 0x10000) {
+        StringTable::Get().Register(static_cast<uint32_t>(a1), static_cast<uint32_t>(a2),
+                                    reinterpret_cast<const char*>(a3), reinterpret_cast<const char*>(a4));
     }
-    return 1;
+    return 0;
 }
 
-// Slot 57: String lookup handler (host_probe case 0x39)
+// Slot 57: string lookup (case 0x39): (table, id, wchar_t* out, size_t capacity) -> 1 if written
 static uint64_t __fastcall HostSlot57_StringLookup(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
-    (void)thisPtr; (void)a3; (void)a4;
-    const wchar_t* res = StringTable::Get().Lookup(static_cast<uint32_t>(a1), static_cast<uint32_t>(a2));
+    (void)thisPtr;
+    wchar_t* out = a3 > 0x10000 ? reinterpret_cast<wchar_t*>(a3) : nullptr;
+    const size_t capacity = static_cast<size_t>(a4 > 0x100000 ? 0 : a4);
+    const bool ok = StringTable::Get().Lookup(static_cast<uint32_t>(a1), static_cast<uint32_t>(a2), out, capacity);
     static std::atomic<int> s_logged{0};
     if (s_logged.fetch_add(1) < 25) {
-        NOBLE_INFO("ReachHost [Slot 57 - StringLookup]: query table=0x{:08X} id=0x{:08X} -> '{}'",
-                   static_cast<uint32_t>(a1), static_cast<uint32_t>(a2),
-                   res ? NarrowForLog(res) : "");
+        NOBLE_INFO("ReachHost [Slot 57 - StringLookup]: table=0x{:08X} id=0x{:X} cap={} -> {}",
+                   static_cast<uint32_t>(a1), static_cast<uint32_t>(a2), capacity,
+                   ok && out ? NarrowForLog(SafeReadWide(out, 60)) : std::string("(none)"));
     }
-    return reinterpret_cast<uint64_t>(res ? res : s_emptyWideString);
+    return ok ? 1 : 0;
 }
 
 
@@ -1341,7 +1604,7 @@ struct HostFontMetrics {
     bool ok = false;
 };
 
-static HostFontMetrics MeasureFont(const std::wstring& face, uint32_t pointSize, float scale) {
+static HostFontMetrics MeasureFont(const std::wstring& face, uint32_t pointSize, float scale, int weight = FW_NORMAL) {
     HostFontMetrics m;
     // RR's Atlas::font: pixels = round(size * scale * SIZE_SCALE); the engine passes size as an
     // integer (9, 13, 15, 18, 24, 30, 42 seen) and scale as a float (1.0 seen).
@@ -1353,7 +1616,7 @@ static HostFontMetrics MeasureFont(const std::wstring& face, uint32_t pointSize,
     if (!dc) return m;
     for (int attempt = 0; attempt < 2 && !m.ok; ++attempt) {
         const wchar_t* name = attempt == 0 ? face.c_str() : L"Segoe UI";
-        HFONT font = CreateFontW(-pixelHeight, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+        HFONT font = CreateFontW(-pixelHeight, 0, 0, 0, weight, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                                  OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY, DEFAULT_PITCH, name);
         if (!font) continue;
         HGDIOBJ old = SelectObject(dc, font);
@@ -1377,426 +1640,8 @@ static std::wstring SafeReadWide(const wchar_t* text, size_t maxChars) {
     return std::wstring(buf);
 }
 
-// -----------------------------------------------------------------------------
-// Font Glyph and Atlas Subsystem (Slots 61-66). Matches Reach Renaissance text::{prepare, glyph, atlas, has_icon, kerning, register_icon}.
-// haloreach.dll queries glyph data (Slot 62) and binds the font texture atlas SRV (Slot 63)
-// to render in-game HUD numbers, weapon bullet counts, clip reserves, and scoreboard text.
-// -----------------------------------------------------------------------------
-#pragma pack(push, 1)
-struct HostGlyphData {
-    uint16_t ch;        // +0x00 character code (wchar_t)
-    uint16_t pad[3];    // +0x02 .. +0x07 (zero)
-    uint16_t atlasX;    // +0x08 X in atlas (pixels)
-    uint16_t atlasY;    // +0x0A Y in atlas (pixels)
-    uint16_t width;     // +0x0C bounding width (gmBlackBoxX)
-    uint16_t height;    // +0x0E bounding height (gmBlackBoxY)
-    int16_t  originY;   // +0x10 gmptGlyphOrigin.y
-    int16_t  originX;   // +0x12 gmptGlyphOrigin.x
-    int16_t  advanceX;  // +0x14 cellIncX
-    int16_t  ascent;    // +0x16 -ascent
-    uint8_t  page;      // +0x18 page index (0)
-    uint8_t  reserved;  // +0x19 0
-};
-#pragma pack(pop)
-static_assert(sizeof(HostGlyphData) == 26, "HostGlyphData must be exactly 26 bytes");
-
-class TextAtlas {
-public:
-    static TextAtlas& Get() {
-        static TextAtlas instance;
-        return instance;
-    }
-
-    void Initialize(ID3D11Device* device, ID3D11DeviceContext* context) {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        if (m_initialized && m_device == device) return;
-
-        m_device = device;
-        m_context = context;
-        if (!m_device) return;
-
-        D3D11_TEXTURE2D_DESC desc{};
-        desc.Width = 1024;
-        desc.Height = 1024;
-        desc.MipLevels = 1;
-        desc.ArraySize = 1;
-        desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-        desc.SampleDesc.Count = 1;
-        desc.SampleDesc.Quality = 0;
-        desc.Usage = D3D11_USAGE_DEFAULT;
-        desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-        desc.CPUAccessFlags = 0;
-
-        m_pixels.assign(1024 * 1024, 0);
-
-        D3D11_SUBRESOURCE_DATA initData{};
-        initData.pSysMem = m_pixels.data();
-        initData.SysMemPitch = 1024 * sizeof(uint32_t);
-
-        m_texture.Reset();
-        m_srv.Reset();
-
-        if (SUCCEEDED(m_device->CreateTexture2D(&desc, &initData, m_texture.GetAddressOf()))) {
-            m_device->CreateShaderResourceView(m_texture.Get(), nullptr, m_srv.GetAddressOf());
-        }
-
-        m_initialized = true;
-        NOBLE_INFO("TextAtlas: 1024x1024 dynamic font atlas texture initialized.");
-
-        // Pre-warm essential HUD digits '0'-'9' and common symbols
-        PrewarmCommonGlyphs();
-    }
-
-    ID3D11ShaderResourceView* GetSRV(uint32_t pageIndex) {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        if (pageIndex == 0) {
-            return m_srv.Get();
-        }
-        return nullptr;
-    }
-
-    bool GetGlyph(wchar_t ch, uint32_t style, float scale, const char* face, HostGlyphData* outGlyph) {
-        if (!outGlyph) return false;
-
-        std::lock_guard<std::mutex> lock(m_mutex);
-
-        // Check if an icon was registered for this character (e.g. weapon icons 0xE100..0xE1FF)
-        auto iconIt = m_iconGlyphs.find(static_cast<uint16_t>(ch));
-        if (iconIt != m_iconGlyphs.end()) {
-            *outGlyph = iconIt->second;
-            return true;
-        }
-
-        uint16_t faceId = HashFace(face);
-        uint32_t scaleKey = static_cast<uint32_t>(scale * 1000.0f);
-        uint64_t key = MakeGlyphKey(ch, faceId, style, scaleKey);
-
-        auto it = m_cache.find(key);
-        if (it != m_cache.end()) {
-            *outGlyph = it->second;
-            return true;
-        }
-
-        return RasterizeGlyphLocked(ch, style, scale, face, key, outGlyph);
-    }
-
-    bool RegisterIcon(wchar_t ch, uint32_t style, float scale, const char* face,
-                      int32_t width, int32_t height, int32_t advanceX,
-                      const void* pixels, int32_t pitch) {
-        if (width <= 0 || height <= 0 || !pixels) return false;
-        if (pitch < width * 4) return false;
-
-        std::lock_guard<std::mutex> lock(m_mutex);
-        uint32_t w = static_cast<uint32_t>(width);
-        uint32_t h = static_cast<uint32_t>(height);
-
-        // Shelf packing in 1024x1024 atlas with 2px padding
-        if (m_cursorX + w + 2 >= 1024) {
-            m_cursorX = 1;
-            m_cursorY += m_rowHeight + 2;
-            m_rowHeight = 0;
-        }
-        if (m_cursorY + h + 2 >= 1024) {
-            m_cursorX = 1;
-            m_cursorY = 1;
-            m_rowHeight = 0;
-        }
-
-        uint32_t gx = m_cursorX;
-        uint32_t gy = m_cursorY;
-        m_cursorX += w + 2;
-        if (h > m_rowHeight) m_rowHeight = h;
-
-        const uint8_t* srcBytes = static_cast<const uint8_t*>(pixels);
-        std::vector<uint32_t> subPixels(w * h, 0);
-
-        for (uint32_t y = 0; y < h; ++y) {
-            const uint32_t* srcRow = reinterpret_cast<const uint32_t*>(srcBytes + y * pitch);
-            for (uint32_t x = 0; x < w; ++x) {
-                uint32_t color = srcRow[x];
-                // In font_package_icon.bin, pixels may have alpha = 0.
-                // Ensure opaque alpha (0xFF) for non-black pixels so HUD icons render visibly.
-                if ((color & 0xFF000000) == 0 && (color & 0x00FFFFFF) != 0) {
-                    color |= 0xFF000000;
-                }
-                subPixels[y * w + x] = color;
-                m_pixels[(gy + y) * 1024 + (gx + x)] = color;
-            }
-        }
-
-        if (m_context && m_texture) {
-            D3D11_BOX box{};
-            box.left = gx;
-            box.top = gy;
-            box.front = 0;
-            box.right = gx + w;
-            box.bottom = gy + h;
-            box.back = 1;
-            m_context->UpdateSubresource(m_texture.Get(), 0, &box, subPixels.data(), w * sizeof(uint32_t), 0);
-        }
-
-        HostGlyphData data{};
-        data.ch = static_cast<uint16_t>(ch);
-        data.pad[0] = 0;
-        data.pad[1] = 0;
-        data.pad[2] = 0;
-        data.atlasX = static_cast<uint16_t>(gx);
-        data.atlasY = static_cast<uint16_t>(gy);
-        data.width = static_cast<uint16_t>(w);
-        data.height = static_cast<uint16_t>(h);
-        // In Reach's text::register_icon, argument 8 is 'top' (baseline offset / originY); width is advanceX.
-        data.originY = static_cast<int16_t>(advanceX > 0 ? advanceX : h);
-        data.originX = 0;
-        data.advanceX = static_cast<int16_t>(w);
-        data.ascent = -static_cast<int16_t>(h);
-        data.page = 0;
-        data.reserved = 0;
-
-        uint16_t faceId = HashFace(face);
-        uint32_t scaleKey = static_cast<uint32_t>(scale * 1000.0f);
-        uint64_t key = MakeGlyphKey(ch, faceId, style, scaleKey);
-
-        m_cache[key] = data;
-        m_registeredIcons.insert(static_cast<uint16_t>(ch));
-        m_iconGlyphs[static_cast<uint16_t>(ch)] = data;
-
-        NOBLE_INFO("TextAtlas: Registered weapon/UI icon ch=0x{:04X} ({}x{}, advance={}, face='{}') at ({},{})",
-                   static_cast<uint16_t>(ch), w, h, advanceX, face ? face : "", gx, gy);
-        return true;
-    }
-
-    bool HasIcon(uint64_t ch, uint32_t style, float scale, const char* face) {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        uint16_t iconCh = static_cast<uint16_t>(ch & 0xFFFF);
-        if (m_registeredIcons.find(iconCh) != m_registeredIcons.end()) {
-            return true;
-        }
-        uint16_t faceId = HashFace(face);
-        uint32_t scaleKey = static_cast<uint32_t>(scale * 1000.0f);
-        uint64_t key = MakeGlyphKey(iconCh, faceId, style, scaleKey);
-        return m_cache.find(key) != m_cache.end();
-    }
-
-private:
-    void PrewarmCommonGlyphs() {
-        const wchar_t commonChars[] = L"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz/:.-+ _()[]><";
-        const uint32_t commonStyles[] = { 9, 13, 15, 18, 24, 30, 36, 42 };
-
-        HostGlyphData dummy{};
-        for (uint32_t s : commonStyles) {
-            for (size_t i = 0; i < (sizeof(commonChars) / sizeof(wchar_t)) - 1; ++i) {
-                uint16_t tvFaceId = HashFace("tvnord");
-                uint64_t tvKey = MakeGlyphKey(commonChars[i], tvFaceId, s, 1000);
-                if (m_cache.find(tvKey) == m_cache.end()) {
-                    RasterizeGlyphLocked(commonChars[i], s, 1.0f, "tvnord", tvKey, &dummy);
-                }
-                uint16_t euroFaceId = HashFace("eurostile");
-                uint64_t euroKey = MakeGlyphKey(commonChars[i], euroFaceId, s, 1000);
-                if (m_cache.find(euroKey) == m_cache.end()) {
-                    RasterizeGlyphLocked(commonChars[i], s, 1.0f, "eurostile", euroKey, &dummy);
-                }
-                if (commonChars[i] >= L'0' && commonChars[i] <= L'9') {
-                    uint16_t fxFaceId = HashFace("fixedsys");
-                    uint64_t fxKey = MakeGlyphKey(commonChars[i], fxFaceId, s, 1000);
-                    if (m_cache.find(fxKey) == m_cache.end()) {
-                        RasterizeGlyphLocked(commonChars[i], s, 1.0f, "fixedsys", fxKey, &dummy);
-                    }
-                }
-            }
-        }
-        if (m_context && m_texture) {
-            m_context->UpdateSubresource(m_texture.Get(), 0, nullptr, m_pixels.data(), 1024 * sizeof(uint32_t), 0);
-        }
-    }
-
-    bool RasterizeGlyphLocked(wchar_t ch, uint32_t style, float scale, const char* face, uint64_t key, HostGlyphData* outGlyph) {
-        std::wstring requestedFace = WidenFace(face);
-        std::wstring mappedFace = MapReachFace(requestedFace);
-
-        int pixelHeight = static_cast<int>(static_cast<float>(style) * scale + 0.5f);
-        if (pixelHeight < 1) pixelHeight = 1;
-        if (pixelHeight > 256) pixelHeight = 256;
-
-        HDC hdc = CreateCompatibleDC(nullptr);
-        if (!hdc) return false;
-
-        HFONT font = CreateFontW(-pixelHeight, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-                                 OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY, DEFAULT_PITCH, mappedFace.c_str());
-        if (!font) {
-            font = CreateFontW(-pixelHeight, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-                               OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY, DEFAULT_PITCH, L"Segoe UI");
-        }
-
-        HGDIOBJ oldFont = SelectObject(hdc, font);
-        TEXTMETRICW tm{};
-        GetTextMetricsW(hdc, &tm);
-
-        GLYPHMETRICS gm{};
-        MAT2 mat2 = { {0,1}, {0,0}, {0,0}, {0,1} };
-        DWORD bufSize = GetGlyphOutlineW(hdc, ch, GGO_GRAY8_BITMAP, &gm, 0, nullptr, &mat2);
-
-        std::vector<uint8_t> grayBuffer;
-        if (bufSize != GDI_ERROR && bufSize > 0) {
-            grayBuffer.resize(bufSize);
-            GetGlyphOutlineW(hdc, ch, GGO_GRAY8_BITMAP, &gm, bufSize, grayBuffer.data(), &mat2);
-        } else if (bufSize == 0 || ch == L' ') {
-            // Space or non-rendering glyph
-            gm.gmBlackBoxX = 0;
-            gm.gmBlackBoxY = 0;
-            gm.gmCellIncX = static_cast<short>(tm.tmAveCharWidth > 0 ? tm.tmAveCharWidth : (pixelHeight / 2));
-        } else {
-            // GetGlyphOutlineW failed (e.g. legacy bitmap font or unsupported symbol)
-            // Use offscreen GDI DIB section rasterization fallback so glyphs never render blank!
-            SIZE sz{};
-            GetTextExtentPoint32W(hdc, &ch, 1, &sz);
-            int rw = sz.cx > 0 ? sz.cx : (pixelHeight / 2);
-            int rh = sz.cy > 0 ? sz.cy : pixelHeight;
-            gm.gmBlackBoxX = static_cast<UINT>(rw);
-            gm.gmBlackBoxY = static_cast<UINT>(rh);
-            gm.gmCellIncX = static_cast<short>(rw);
-            gm.gmptGlyphOrigin.x = 0;
-            gm.gmptGlyphOrigin.y = static_cast<short>(rh);
-
-            BITMAPINFO bmi{};
-            bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-            bmi.bmiHeader.biWidth = rw;
-            bmi.bmiHeader.biHeight = -rh; // top-down
-            bmi.bmiHeader.biPlanes = 1;
-            bmi.bmiHeader.biBitCount = 32;
-            bmi.bmiHeader.biCompression = BI_RGB;
-
-            void* dibBits = nullptr;
-            HBITMAP dibBmp = CreateDIBSection(hdc, &bmi, DIB_RGB_COLORS, &dibBits, nullptr, 0);
-            if (dibBmp && dibBits) {
-                HDC memDC = CreateCompatibleDC(hdc);
-                HGDIOBJ oldMemBmp = SelectObject(memDC, dibBmp);
-                HGDIOBJ oldMemFont = SelectObject(memDC, font);
-
-                RECT rc = { 0, 0, rw, rh };
-                FillRect(memDC, &rc, static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
-                SetBkMode(memDC, TRANSPARENT);
-                SetTextColor(memDC, RGB(255, 255, 255));
-                TextOutW(memDC, 0, 0, &ch, 1);
-
-                uint32_t pitch = (rw + 3) & ~3;
-                grayBuffer.resize(pitch * rh, 0);
-                const uint32_t* srcPixels = static_cast<const uint32_t*>(dibBits);
-                for (int y = 0; y < rh; ++y) {
-                    for (int x = 0; x < rw; ++x) {
-                        uint32_t px = srcPixels[y * rw + x];
-                        uint8_t luma = static_cast<uint8_t>((px & 0xFF) * 64 / 255);
-                        grayBuffer[y * pitch + x] = luma;
-                    }
-                }
-
-                SelectObject(memDC, oldMemFont);
-                SelectObject(memDC, oldMemBmp);
-                DeleteDC(memDC);
-                DeleteObject(dibBmp);
-            }
-        }
-
-        SelectObject(hdc, oldFont);
-        DeleteObject(font);
-        DeleteDC(hdc);
-
-        uint32_t w = gm.gmBlackBoxX;
-        uint32_t h = gm.gmBlackBoxY;
-
-        // Shelf packing in 1024x1024 atlas with 2px padding
-        if (m_cursorX + w + 2 >= 1024) {
-            m_cursorX = 1;
-            m_cursorY += m_rowHeight + 2;
-            m_rowHeight = 0;
-        }
-        if (m_cursorY + h + 2 >= 1024) {
-            m_cursorX = 1;
-            m_cursorY = 1;
-            m_rowHeight = 0;
-        }
-
-        uint32_t gx = m_cursorX;
-        uint32_t gy = m_cursorY;
-        m_cursorX += w + 2;
-        if (h > m_rowHeight) m_rowHeight = h;
-
-        if (w > 0 && h > 0 && !grayBuffer.empty()) {
-            uint32_t pitch = (w + 3) & ~3;
-            std::vector<uint32_t> subPixels(w * h, 0);
-
-            for (uint32_t y = 0; y < h; ++y) {
-                for (uint32_t x = 0; x < w; ++x) {
-                    if (y * pitch + x < grayBuffer.size()) {
-                        uint8_t val = grayBuffer[y * pitch + x];
-                        uint8_t alpha = (val >= 64) ? 255 : static_cast<uint8_t>((val * 255) / 64);
-                        uint32_t color = (static_cast<uint32_t>(alpha) << 24) | 0x00FFFFFF;
-                        subPixels[y * w + x] = color;
-                        m_pixels[(gy + y) * 1024 + (gx + x)] = color;
-                    }
-                }
-            }
-
-            if (m_context && m_texture) {
-                D3D11_BOX box{};
-                box.left = gx;
-                box.top = gy;
-                box.front = 0;
-                box.right = gx + w;
-                box.bottom = gy + h;
-                box.back = 1;
-                m_context->UpdateSubresource(m_texture.Get(), 0, &box, subPixels.data(), w * sizeof(uint32_t), 0);
-            }
-        }
-
-        HostGlyphData data{};
-        data.ch = static_cast<uint16_t>(ch);
-        data.pad[0] = 0;
-        data.pad[1] = 0;
-        data.pad[2] = 0;
-        data.atlasX = static_cast<uint16_t>(gx);
-        data.atlasY = static_cast<uint16_t>(gy);
-        data.width = static_cast<uint16_t>(w);
-        data.height = static_cast<uint16_t>(h);
-        data.originY = static_cast<int16_t>(gm.gmptGlyphOrigin.y);
-        data.originX = static_cast<int16_t>(gm.gmptGlyphOrigin.x);
-        data.advanceX = static_cast<int16_t>(gm.gmCellIncX);
-        data.ascent = -static_cast<int16_t>(tm.tmAscent);
-        data.page = 0;
-        data.reserved = 0;
-
-        m_cache[key] = data;
-        *outGlyph = data;
-        return true;
-    }
-
-    bool m_initialized = false;
-    ID3D11Device* m_device = nullptr;
-    ID3D11DeviceContext* m_context = nullptr;
-    Microsoft::WRL::ComPtr<ID3D11Texture2D> m_texture;
-    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> m_srv;
-
-    std::vector<uint32_t> m_pixels;
-    uint32_t m_cursorX = 1;
-    uint32_t m_cursorY = 1;
-    uint32_t m_rowHeight = 0;
-
-    std::unordered_map<uint64_t, HostGlyphData> m_cache;
-    std::unordered_set<uint16_t> m_registeredIcons;
-    std::unordered_map<uint16_t, HostGlyphData> m_iconGlyphs;
-    std::mutex m_mutex;
-};
-
-// Slot 61: Text Prepare handler (host_probe case 0x3D)
 static uint64_t __fastcall HostSlot61_TextPrepare(void* thisPtr, const wchar_t* text, uint32_t style, float size, const char* face) {
     (void)thisPtr;
-    if (text && reinterpret_cast<uintptr_t>(text) > 0x10000) {
-        HostGlyphData dummy{};
-        const wchar_t* p = text;
-        while (*p) {
-            TextAtlas::Get().GetGlyph(*p, style, size, face, &dummy);
-            ++p;
-        }
-    }
     static std::atomic<int> s_calls{0};
     if (s_calls.fetch_add(1) < 20) {
         NOBLE_INFO("ReachHost [Slot 61 - TextPrepare]: size={} scale={:.2f} face='{}' text='{}'",
@@ -1804,6 +1649,349 @@ static uint64_t __fastcall HostSlot61_TextPrepare(void* thisPtr, const wchar_t* 
     }
     return 1;
 }
+
+// -----------------------------------------------------------------------------
+// Font Glyph and Atlas Subsystem (Slots 62-66). Matches Reach Renaissance text::{glyph, atlas, has_icon, kerning, register_icon}.
+// haloreach.dll queries glyph data (Slot 62) and binds the font texture atlas SRV (Slot 63)
+// to render in-game HUD numbers, weapon bullet counts, clip reserves, and scoreboard text.
+// -----------------------------------------------------------------------------
+#pragma pack(push, 1)
+// Glyph record returned to the engine by slot 62 (26 bytes). Layout checked against RR's
+// text::Atlas::glyph (host-probe 0x1402869c3..0x140286a0f) and text::register_icon:
+// the atlas X is the top 16 bits of a u64 stored at +0x02, i.e. it lands at +0x08, and the
+// glyph origin is stored y first, then x.
+struct HostGlyphData {
+    uint16_t ch;        // +0x00 character code
+    uint16_t pad[3];    // +0x02 .. +0x07 zero (low 48 bits of the u64 x << 48)
+    uint16_t atlasX;    // +0x08 X in the atlas page (pixels)
+    uint16_t atlasY;    // +0x0A Y in the atlas page (pixels)
+    uint16_t width;     // +0x0C gmBlackBoxX (0 for empty glyphs such as space)
+    uint16_t height;    // +0x0E gmBlackBoxY
+    int16_t  originY;   // +0x10 gmptGlyphOrigin.y (icons: "top" argument)
+    int16_t  originX;   // +0x12 gmptGlyphOrigin.x (icons: 0)
+    int16_t  advanceX;  // +0x14 gmCellIncX (icons: width)
+    int16_t  ascent;    // +0x16 -tmAscent (icons: 0)
+    uint8_t  page;      // +0x18 atlas page index (slot 63 argument)
+    uint8_t  reserved;  // +0x19 0
+};
+#pragma pack(pop)
+static_assert(sizeof(HostGlyphData) == 26, "HostGlyphData must be exactly 26 bytes");
+static_assert(offsetof(HostGlyphData, atlasX) == 0x08, "atlas X must be at +0x08");
+static_assert(offsetof(HostGlyphData, originY) == 0x10, "origin y must be at +0x10");
+static_assert(offsetof(HostGlyphData, page) == 0x18, "page must be at +0x18");
+
+static bool FaceIsBold(const std::wstring& face) {
+    std::wstring lower = face;
+    std::transform(lower.begin(), lower.end(), lower.begin(), [](wchar_t c) { return static_cast<wchar_t>(std::towlower(c)); });
+    return lower.find(L"bold") != std::wstring::npos;
+}
+
+// Text atlas shared by the text slots (62-66). Behaviour follows RR's text::Atlas:
+//  * glyphs are rasterised with GDI (GGO_GRAY8_BITMAP) into 1024x1024 RGBA pages, white with
+//    coverage in alpha; when a page is full a new page is started (RR keeps up to 16), so old
+//    glyphs are never overwritten (overwriting them garbled long-running HUD text);
+//  * icons registered by the engine (slot 66) are copied unchanged and keyed by
+//    (face, size, scale, char), like glyphs;
+//  * slot 64 only reports icons that were really registered, so the engine registers each icon
+//    before using it;
+//  * glyph/icon calls only touch CPU memory; the GPU textures are created and updated when the
+//    engine asks for a page's SRV (slot 63), i.e. on the thread that renders.
+class TextAtlas {
+public:
+    static constexpr uint32_t kPageSize = 1024;
+    static constexpr uint32_t kMaxPages = 16;
+
+    static TextAtlas& Get() {
+        static TextAtlas instance;
+        return instance;
+    }
+
+    void Initialize(ID3D11Device* device, ID3D11DeviceContext* context) {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (m_device == device && m_context == context) return;
+        m_device = device;
+        m_context = context;
+        // New device: GPU copies are recreated (from the CPU pixels) on the next SRV request.
+        for (auto& page : m_pages) {
+            page->texture.Reset();
+            page->srv.Reset();
+            page->MarkAllDirty();
+        }
+        if (!m_loggedInit) {
+            m_loggedInit = true;
+            NOBLE_INFO("TextAtlas: ready ({}x{} pages, up to {}).", kPageSize, kPageSize, kMaxPages);
+        }
+    }
+
+    // Slot 63. Called by the engine's render code when it binds the font texture.
+    ID3D11ShaderResourceView* GetSRV(uint32_t pageIndex) {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (pageIndex >= m_pages.size() || !m_device || !m_context) return nullptr;
+        Page& page = *m_pages[pageIndex];
+        if (!page.texture) {
+            D3D11_TEXTURE2D_DESC desc{};
+            desc.Width = kPageSize;
+            desc.Height = kPageSize;
+            desc.MipLevels = 1;
+            desc.ArraySize = 1;
+            desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+            desc.SampleDesc.Count = 1;
+            desc.Usage = D3D11_USAGE_DEFAULT;
+            desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+            D3D11_SUBRESOURCE_DATA init{};
+            init.pSysMem = page.pixels.data();
+            init.SysMemPitch = kPageSize * sizeof(uint32_t);
+            if (FAILED(m_device->CreateTexture2D(&desc, &init, page.texture.GetAddressOf())) ||
+                FAILED(m_device->CreateShaderResourceView(page.texture.Get(), nullptr, page.srv.GetAddressOf()))) {
+                page.texture.Reset();
+                page.srv.Reset();
+                return nullptr;
+            }
+            page.ClearDirty();
+        } else if (page.dirty) {
+            D3D11_BOX box{};
+            box.left = page.dirtyLeft;
+            box.top = page.dirtyTop;
+            box.right = page.dirtyRight;
+            box.bottom = page.dirtyBottom;
+            box.front = 0;
+            box.back = 1;
+            const uint32_t* src = page.pixels.data() + page.dirtyTop * kPageSize + page.dirtyLeft;
+            m_context->UpdateSubresource(page.texture.Get(), 0, &box, src, kPageSize * sizeof(uint32_t), 0);
+            page.ClearDirty();
+        }
+        return page.srv.Get();
+    }
+
+    // Slot 62.
+    bool GetGlyph(wchar_t ch, uint32_t style, float scale, const char* face, HostGlyphData* outGlyph) {
+        if (!outGlyph) return false;
+        std::lock_guard<std::mutex> lock(m_mutex);
+        const uint64_t key = MakeGlyphKey(ch, HashFace(face), style, ScaleKey(scale));
+        auto it = m_cache.find(key);
+        if (it == m_cache.end()) {
+            HostGlyphData data{};
+            const bool ok = RasterizeGlyphLocked(ch, style, scale, face, &data);
+            if (ch >= 0x2000 || ch < 0x20) {
+                static std::atomic<int> s_logged{0};
+                if (s_logged.fetch_add(1) < 60) {
+                    NOBLE_INFO("TextAtlas: glyph U+{:04X} size={} scale={:.2f} face='{}' -> {} ({}x{})",
+                               static_cast<uint16_t>(ch), style, scale, NarrowForLog(WidenFace(face)),
+                               ok ? "rasterised" : "no glyph", data.width, data.height);
+                }
+            }
+            if (!ok) return false;
+            it = m_cache.emplace(key, data).first;
+        }
+        return SafeCopyMemory(outGlyph, &it->second, sizeof(HostGlyphData));
+    }
+
+    // Slot 66. Pixels are 32-bit RGBA rows (pitch in bytes), copied as they are.
+    bool RegisterIcon(wchar_t ch, uint32_t style, float scale, const char* face,
+                      int32_t width, int32_t height, int32_t top,
+                      const void* pixels, int32_t pitch) {
+        if (width <= 0 || height <= 0 || !pixels || pitch < width * 4) return false;
+        if (width > static_cast<int32_t>(kPageSize) - 2 || height > static_cast<int32_t>(kPageSize) - 2) return false;
+
+        std::lock_guard<std::mutex> lock(m_mutex);
+        const uint32_t w = static_cast<uint32_t>(width);
+        const uint32_t h = static_cast<uint32_t>(height);
+        uint32_t pageIndex = 0, gx = 0, gy = 0;
+        if (!PlaceLocked(w, h, pageIndex, gx, gy)) return false;
+
+        Page& page = *m_pages[pageIndex];
+        const uint8_t* src = static_cast<const uint8_t*>(pixels);
+        for (uint32_t y = 0; y < h; ++y) {
+            if (!SafeCopyMemory(&page.pixels[(gy + y) * kPageSize + gx], src + static_cast<size_t>(y) * pitch, w * 4)) {
+                return false;
+            }
+        }
+        page.MarkDirty(gx, gy, w, h);
+
+        HostGlyphData data{};
+        data.ch = static_cast<uint16_t>(ch);
+        data.atlasX = static_cast<uint16_t>(gx);
+        data.atlasY = static_cast<uint16_t>(gy);
+        data.width = static_cast<uint16_t>(w);
+        data.height = static_cast<uint16_t>(h);
+        data.originY = static_cast<int16_t>(top);
+        data.originX = 0;
+        data.advanceX = static_cast<int16_t>(w);
+        data.ascent = 0;
+        data.page = static_cast<uint8_t>(pageIndex);
+
+        const uint64_t key = MakeGlyphKey(ch, HashFace(face), style, ScaleKey(scale));
+        m_cache[key] = data;
+        m_icons.insert(key);
+
+        static std::atomic<int> s_logged{0};
+        if (s_logged.fetch_add(1) < 40) {
+            NOBLE_INFO("TextAtlas: icon ch=0x{:04X} {}x{} top={} size={} scale={:.2f} face='{}' -> page {} ({},{})",
+                       static_cast<uint16_t>(ch), w, h, top, style, scale,
+                       NarrowForLog(WidenFace(face)), pageIndex, gx, gy);
+        }
+        return true;
+    }
+
+    // Slot 64: true only for icons registered through slot 66 with the same font key.
+    bool HasIcon(uint64_t ch, uint32_t style, float scale, const char* face) {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        const uint64_t key = MakeGlyphKey(static_cast<wchar_t>(ch & 0xFFFF), HashFace(face), style, ScaleKey(scale));
+        const bool found = m_icons.find(key) != m_icons.end();
+        static std::atomic<int> s_logged{0};
+        if (!found && s_logged.fetch_add(1) < 40) {
+            NOBLE_INFO("TextAtlas: has_icon U+{:04X} size={} scale={:.2f} face='{}' -> no (engine should register it)",
+                       static_cast<uint16_t>(ch & 0xFFFF), style, scale, NarrowForLog(WidenFace(face)));
+        }
+        return found;
+    }
+
+private:
+    struct Page {
+        std::vector<uint32_t> pixels = std::vector<uint32_t>(kPageSize * kPageSize, 0);
+        Microsoft::WRL::ComPtr<ID3D11Texture2D> texture;
+        Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> srv;
+        uint32_t cursorX = 1, cursorY = 1, rowHeight = 0;
+        bool dirty = false;
+        uint32_t dirtyLeft = 0, dirtyTop = 0, dirtyRight = 0, dirtyBottom = 0;
+
+        void MarkDirty(uint32_t x, uint32_t y, uint32_t w, uint32_t h) {
+            if (w == 0 || h == 0) return;
+            if (!dirty) {
+                dirty = true;
+                dirtyLeft = x; dirtyTop = y; dirtyRight = x + w; dirtyBottom = y + h;
+            } else {
+                dirtyLeft = std::min(dirtyLeft, x);
+                dirtyTop = std::min(dirtyTop, y);
+                dirtyRight = std::max(dirtyRight, x + w);
+                dirtyBottom = std::max(dirtyBottom, y + h);
+            }
+        }
+        void MarkAllDirty() { dirty = true; dirtyLeft = 0; dirtyTop = 0; dirtyRight = kPageSize; dirtyBottom = kPageSize; }
+        void ClearDirty() { dirty = false; }
+    };
+
+    static uint32_t ScaleKey(float scale) {
+        return static_cast<uint32_t>(scale * 1000.0f + 0.5f);
+    }
+
+    // Shelf packing with a 1-pixel gap; starts a new page when the current one is full.
+    bool PlaceLocked(uint32_t w, uint32_t h, uint32_t& pageIndex, uint32_t& x, uint32_t& y) {
+        if (m_pages.empty()) m_pages.push_back(std::make_unique<Page>());
+        for (int attempt = 0; attempt < 2; ++attempt) {
+            Page& page = *m_pages.back();
+            if (page.cursorX + w + 1 > kPageSize) {
+                page.cursorX = 1;
+                page.cursorY += page.rowHeight + 1;
+                page.rowHeight = 0;
+            }
+            if (page.cursorY + h + 1 <= kPageSize) {
+                pageIndex = static_cast<uint32_t>(m_pages.size() - 1);
+                x = page.cursorX;
+                y = page.cursorY;
+                page.cursorX += w + 1;
+                page.rowHeight = std::max(page.rowHeight, h);
+                return true;
+            }
+            if (m_pages.size() >= kMaxPages) {
+                static std::atomic<bool> s_warned{false};
+                if (!s_warned.exchange(true)) {
+                    NOBLE_WARN("TextAtlas: all {} pages are full; new glyphs are dropped.", kMaxPages);
+                }
+                return false;
+            }
+            m_pages.push_back(std::make_unique<Page>());
+            NOBLE_INFO("TextAtlas: started page {}", m_pages.size() - 1);
+        }
+        return false;
+    }
+
+    bool RasterizeGlyphLocked(wchar_t ch, uint32_t style, float scale, const char* face, HostGlyphData* outGlyph) {
+        const std::wstring requestedFace = WidenFace(face);
+        const std::wstring mappedFace = MapReachFace(requestedFace);
+        const int weight = FaceIsBold(requestedFace) ? FW_BOLD : FW_NORMAL;
+
+        int pixelHeight = static_cast<int>(static_cast<float>(style) * scale + 0.5f);
+        pixelHeight = std::clamp(pixelHeight, 1, 256);
+
+        HDC hdc = CreateCompatibleDC(nullptr);
+        if (!hdc) return false;
+        HFONT font = CreateFontW(-pixelHeight, 0, 0, 0, weight, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+                                 OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY, DEFAULT_PITCH, mappedFace.c_str());
+        if (!font) {
+            font = CreateFontW(-pixelHeight, 0, 0, 0, weight, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+                               OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY, DEFAULT_PITCH, L"Segoe UI");
+        }
+        if (!font) {
+            DeleteDC(hdc);
+            return false;
+        }
+        HGDIOBJ oldFont = SelectObject(hdc, font);
+        TEXTMETRICW tm{};
+        GetTextMetricsW(hdc, &tm);
+
+        GLYPHMETRICS gm{};
+        const MAT2 identity = { {0, 1}, {0, 0}, {0, 0}, {0, 1} };
+        std::vector<uint8_t> gray;
+        const DWORD size = GetGlyphOutlineW(hdc, ch, GGO_GRAY8_BITMAP, &gm, 0, nullptr, &identity);
+        bool ok = true;
+        if (size == GDI_ERROR) {
+            ok = false;
+        } else if (size > 0) {
+            gray.resize(size);
+            if (GetGlyphOutlineW(hdc, ch, GGO_GRAY8_BITMAP, &gm, size, gray.data(), &identity) == GDI_ERROR) ok = false;
+        } else {
+            // Empty outline (space): no bitmap, keep the advance.
+            gm.gmBlackBoxX = 0;
+            gm.gmBlackBoxY = 0;
+        }
+        SelectObject(hdc, oldFont);
+        DeleteObject(font);
+        DeleteDC(hdc);
+        if (!ok) return false;
+
+        const uint32_t w = gray.empty() ? 0 : gm.gmBlackBoxX;
+        const uint32_t h = gray.empty() ? 0 : gm.gmBlackBoxY;
+        uint32_t pageIndex = m_pages.empty() ? 0 : static_cast<uint32_t>(m_pages.size() - 1);
+        uint32_t gx = 0, gy = 0;
+        if (w > 0 && h > 0) {
+            if (!PlaceLocked(w, h, pageIndex, gx, gy)) return false;
+            Page& page = *m_pages[pageIndex];
+            const uint32_t pitch = (w + 3) & ~3u;  // GGO_GRAY8 rows are DWORD aligned
+            for (uint32_t y = 0; y < h; ++y) {
+                for (uint32_t x = 0; x < w; ++x) {
+                    const size_t i = static_cast<size_t>(y) * pitch + x;
+                    const uint32_t g = i < gray.size() ? gray[i] : 0;  // 0..64
+                    const uint32_t alpha = std::min<uint32_t>((g * 255 + 32) >> 6, 255);
+                    page.pixels[(gy + y) * kPageSize + gx + x] = (alpha << 24) | 0x00FFFFFF;
+                }
+            }
+            page.MarkDirty(gx, gy, w, h);
+        }
+
+        HostGlyphData data{};
+        data.ch = static_cast<uint16_t>(ch);
+        data.atlasX = static_cast<uint16_t>(gx);
+        data.atlasY = static_cast<uint16_t>(gy);
+        data.width = static_cast<uint16_t>(w);
+        data.height = static_cast<uint16_t>(h);
+        data.originY = static_cast<int16_t>(gm.gmptGlyphOrigin.y);
+        data.originX = static_cast<int16_t>(gm.gmptGlyphOrigin.x);
+        data.advanceX = static_cast<int16_t>(gm.gmCellIncX);
+        data.ascent = static_cast<int16_t>(-tm.tmAscent);
+        data.page = static_cast<uint8_t>(pageIndex);
+        *outGlyph = data;
+        return true;
+    }
+
+    ID3D11Device* m_device = nullptr;
+    ID3D11DeviceContext* m_context = nullptr;
+    bool m_loggedInit = false;
+    std::vector<std::unique_ptr<Page>> m_pages;
+    std::unordered_map<uint64_t, HostGlyphData> m_cache;  // glyphs and icons, by (char, face, size, scale)
+    std::unordered_set<uint64_t> m_icons;                 // keys registered through slot 66
+    std::mutex m_mutex;
+};
 
 // Slot 62: Text Glyph handler (host_probe case 0x3E)
 static uint64_t __fastcall HostSlot62_TextGlyph(void* thisPtr, uint64_t ch, void* outGlyph, uint32_t style, float scale, const char* face) {
@@ -2121,7 +2309,7 @@ static uint64_t __fastcall HostSlot67_TextMetrics(void* thisPtr, uint32_t style,
     (void)thisPtr;
     const std::wstring requested = WidenFace(face);
     const std::wstring mapped = MapReachFace(requested);
-    const HostFontMetrics m = MeasureFont(mapped, style, size);
+    const HostFontMetrics m = MeasureFont(mapped, style, size, FaceIsBold(requested) ? FW_BOLD : FW_NORMAL);
 
     static std::atomic<int> s_calls{0};
     if (s_calls.fetch_add(1) < 20) {
@@ -2144,7 +2332,8 @@ static uint64_t __fastcall HostSlot88_UserIdentity(void* thisPtr, uint64_t a1, u
     static std::atomic<bool> s_logged{false};
     const uint32_t userIndex = static_cast<uint32_t>(a4);
     if (!s_logged.exchange(true)) {
-        NOBLE_INFO("ReachHost [Slot 88 - UserIdentity]: user {} -> 'NobleSix' (XUID: 0x9000000000001)", userIndex);
+        NOBLE_INFO("ReachHost [Slot 88 - UserIdentity]: user {} -> '{}' (XUID: 0x9000000000001)", userIndex,
+                   Settings::Get().Snapshot().playerName);
     }
     if (userIndex != 0) {
         return 0;
@@ -2155,18 +2344,27 @@ static uint64_t __fastcall HostSlot88_UserIdentity(void* thisPtr, uint64_t a1, u
         SafeWriteUint64(a1, xuid);
     }
 
-    const wchar_t gamerTagW[] = L"NobleSix";
-    const size_t tagChars = (sizeof(gamerTagW) / sizeof(wchar_t)) - 1;
-    if (a2 > 0x10000 && a3 > tagChars) {
-        SafeCopyWideString(reinterpret_cast<wchar_t*>(a2), static_cast<size_t>(a3), gamerTagW);
+    // Player name from the SETTINGS tab (Reach gamertags are at most 15 characters).
+    static const std::wstring gamerTagW = [] {
+        std::wstring w = Utf8ToWideString(Settings::Get().Snapshot().playerName);
+        if (w.empty()) w = L"NobleSix";
+        if (w.size() > 15) w.resize(15);
+        return w;
+    }();
+    if (a2 > 0x10000 && a3 > gamerTagW.size()) {
+        SafeCopyWideString(reinterpret_cast<wchar_t*>(a2), static_cast<size_t>(a3), gamerTagW.c_str());
     }
     return 1;
 }
 
-// Slot 97: Capability pass-through (host_probe case 0x61)
-static uint64_t __fastcall HostSlot97_CapabilityPass(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
-    (void)thisPtr; (void)a1; (void)a2; (void)a3; (void)a4;
-    return 1;
+// Slot 97: colour filter. Every HUD colour goes through here before it reaches the HUD shader:
+// haloreach+0x2DDF3C packs each chud_color_output (A..F) into ARGB and calls slot 97 with
+// (a1 = a mode/filter index from haloreach+0xD1F71C, a2 = ARGB colour), then unpacks the returned
+// ARGB. MCC uses it for its colour filters; RR (host::hit case 0x61) returns the colour unchanged.
+// Noble used to return 1 here, which turned every HUD colour into (0, 0, 1/255, 0): the dark navy HUD.
+static uint64_t __fastcall HostSlot97_ColorFilter(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
+    (void)thisPtr; (void)a1; (void)a3; (void)a4;
+    return a2 & 0xFFFFFFFFull;
 }
 
 // Slot 116: Controller Mapping (host_probe case 0x74). Called with the player's XUID in a1; the
@@ -2193,6 +2391,7 @@ void ReachHost::InitializeVTable() {
     s_vtable[1]   = reinterpret_cast<void*>(&HostSlot1_FrameTick);
     s_vtable[2]   = reinterpret_cast<void*>(&HostSlot2_ResizeBuffers);
     s_vtable[4]   = reinterpret_cast<void*>(&HostSlot4_LogMessage);
+    s_vtable[6]   = reinterpret_cast<void*>(&HostSlot6_GameResults);
     s_vtable[10]  = reinterpret_cast<void*>(&HostSlot10_Heartbeat);
     s_vtable[18]  = reinterpret_cast<void*>(&HostSlot18_AssetLookup);
     s_vtable[23]  = reinterpret_cast<void*>(&HostSlot23_LoadProgress);
@@ -2218,7 +2417,7 @@ void ReachHost::InitializeVTable() {
     s_vtable[66]  = reinterpret_cast<void*>(&HostSlot66_TextRegisterIcon);
     s_vtable[67]  = reinterpret_cast<void*>(&HostSlot67_TextMetrics);
     s_vtable[88]  = reinterpret_cast<void*>(&HostSlot88_UserIdentity);
-    s_vtable[97]  = reinterpret_cast<void*>(&HostSlot97_CapabilityPass);
+    s_vtable[97]  = reinterpret_cast<void*>(&HostSlot97_ColorFilter);
     s_vtable[116] = reinterpret_cast<void*>(&HostSlot116_ControllerMap);
 
     InitVTable2Helper(s_vtable2, std::make_index_sequence<160>{});
@@ -2249,6 +2448,10 @@ void ReachHost::SetPaths(const std::filesystem::path& reachDir,
                          const std::filesystem::path& dataDir) {
     m_reachDir = reachDir;
     m_mapsDir = mapsDir;
+    // MCC's own localised text for Reach (read-only, from the player's install).
+    if (reachDir.has_parent_path()) {
+        StringTable::Get().LoadLanguageFile(reachDir.parent_path() / "data" / "ui" / "Localization" / "EN_HaloReach.bin");
+    }
     if (!dataDir.empty()) {
         std::error_code ec;
         if (std::filesystem::exists(dataDir / "menumaps" / "mainmenu_all.map", ec) ||

@@ -1,0 +1,22 @@
+{
+  "name": "project-noble-server",
+  "version": "1.0.0",
+  "description": "Project Noble backend server for Halo: Reach Community Edition - Auth, Stats, Server Browser, and Matchmaking",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test/test_backend.js"
+  },
+  "keywords": [
+    "halo-reach",
+    "project-noble",
+    "master-server",
+    "matchmaking",
+    "stats"
+  ],
+  "author": "Project Noble Contributors",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
