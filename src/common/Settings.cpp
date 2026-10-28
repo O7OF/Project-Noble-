@@ -83,6 +83,7 @@ void Settings::Load() {
     SettingsData d;
     const auto path = FilePath();
     std::ifstream in(path);
+    const bool existed = in.is_open();
     if (in) {
         try {
             const nlohmann::json j = nlohmann::json::parse(in);
@@ -138,6 +139,9 @@ void Settings::Load() {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_data = d;
     m_loaded = true;
+    if (!existed) {
+        Save();
+    }
 }
 
 bool Settings::Save() {

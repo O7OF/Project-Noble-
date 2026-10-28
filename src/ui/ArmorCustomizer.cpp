@@ -839,7 +839,8 @@ bool ArmorCustomizer::LoadProfile(const std::filesystem::path& path) {
         SyncLegacyFields();
         m_previewSpecies = m_profile.species;
         SyncToReachArmory();
-        return false;
+        SaveProfile(m_profilePath);
+        return true;
     }
 
     try {

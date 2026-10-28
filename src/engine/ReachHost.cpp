@@ -932,6 +932,15 @@ static uint64_t __fastcall HostSlot34_ProfileSettings(void* thisPtr, uint64_t a1
             WriteDefaultVolumes(s_hostProfileBuffer);
             WriteDefaultLookSettings(s_hostProfileBuffer);
             NOBLE_INFO("ReachHost [Slot 34]: using built-in default key bindings, volumes and look settings");
+            std::error_code ec;
+            std::filesystem::path p1 = ReachHost::Get().GetDataDir() / "profile_1.bin";
+            if (!std::filesystem::exists(p1, ec)) {
+                std::ofstream out(p1, std::ios::binary | std::ios::trunc);
+                if (out) {
+                    out.write(reinterpret_cast<const char*>(s_hostProfileBuffer), 0xC00);
+                    NOBLE_INFO("ReachHost [Slot 34]: generated default profile_1.bin");
+                }
+            }
         }
         RefreshArmoryAppearance(s_hostProfileBuffer);
         // RR host::hit case 0x22: the profile is a zeroed 64 KB block with only the 4-character

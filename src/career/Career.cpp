@@ -240,11 +240,13 @@ std::string Today() {
     return buf;
 }
 
+void SaveLocked();
+
 void LoadLocked() {
     if (s_loaded) return;
     s_loaded = true;
     std::ifstream in(UserDir() / "career.json");
-    if (!in) return;
+    if (!in) { SaveLocked(); return; }
     try {
         nlohmann::json j = nlohmann::json::parse(in);
         s_totals.credits = j.value("credits", int64_t{0});
