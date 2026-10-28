@@ -45,8 +45,9 @@ file changes (checked twice a second), so an Armory save during a session reache
   (the first-person Elite hand looks the same for Minor and General). **Tyler: please check in game** (die, or look
   at yourself in the Armory/another player's view) that the helmet and Elite set match the Armory.
 - Unsure mappings: GRD variants (`hilands_a` -> GRD_CBRN, `hilands_b` -> GRD_OPTREX), Mariner variants by name;
-  "HIGHLANDS" chest has no MCC item (falls back to default); ODST-only voices (Dare, Dutch, Mickey, Romeo) have
-  no Reach item (fall back to Noble Six). Whether the engine re-reads the profile at respawn (live change
+  "HIGHLANDS" chest has no MCC item (falls back to default). The ODST-only Firefight voices (Dare, Dutch,
+  Mickey, Romeo) were removed from the Armory (`e950306`, Tyler's call); the voice now goes by `voice_id`, and old
+  saves that picked one of them load as Noble Six. Whether the engine re-reads the profile at respawn (live change
   mid-match) is untested.
 
 Head of main before this: `0f29293`.
