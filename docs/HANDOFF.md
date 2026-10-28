@@ -19,8 +19,11 @@ commits and pushes. Waiting for Tyler to run `go.bat`.
 - `Career.cpp`: `kCommendations` is now Reach's 45 (mode, art key, name, requirement, Reach's six tier counts from Halopedia).
   Tier names Steel, Bronze, Silver, Gold, Onyx, Max. Counts are kept per commendation in `record.commendationCounts`
   (`<mode>_<key>`), tiers paid in `record.commendations` (old Noble commendations are dropped). Tyler asked to drop
-  Reach's rules (every difficulty counts), but Noble Actual (m05) still doesn't count for Demon / Flawless Cowboy so it
-  can't be farmed. Lone Wolf counts (people use it as a modded map).
+  Reach's rules (every difficulty counts).
+- **Stock Noble Actual (`m05`) and Lone Wolf (`m70_bonus`) pay nothing** (`UnpaidMission` in OnGameResults): no cR lines at all,
+  no challenge or commendation progress; the post-game shows one 0 cR line saying so. Tyler found Noble Actual paid 5,004 cR and
+  completed a challenge after skipping the cutscene (0.3 min). Matched by scenario name, so modded maps with their own
+  names still pay. Kills/deaths still go into lifetime stats.
 - Each commendation pays Reach's own cR per tier (`CommendationDef::rewards`, from the Halopedia list Tyler sent; Max pays 0;
   Heavy Weapon was unknown, so it uses Halopedia's averages 200/700/1000/2400/2400). Rows show the next tier's cR in amber.
 - Tyler's payout rule (`TierReward`): Steel..Gold pay Reach's cR x2.5 (rounded), Onyx pays 2x that Gold, Max pays 3x Onyx.

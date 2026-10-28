@@ -605,6 +605,18 @@ void BeginMatch(BaseType type, const std::string& map, int difficulty, uint64_t 
     LoadLocked();
 }
 
+// Stock Noble Actual (m05) and Lone Wolf (m70_bonus) pay nothing: no cR, no challenge or commendation
+// progress (Tyler: both can be finished in seconds and farmed). Matched by scenario name, so modded
+// maps with their own names still pay as campaign.
+bool UnpaidMission(BaseType type, const std::string& map) {
+    if (type != BaseType::Campaign) return false;
+    std::string m = map;
+    const size_t slash = m.find_last_of("\\/");
+    if (slash != std::string::npos) m = m.substr(slash + 1);
+    for (char& ch : m) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    return m == "m05" || m == "m70_bonus";
+}
+
 void OnGameResults(const uint8_t* record, size_t size) {
     if (!record || size < kResultsSize) return;
 
@@ -669,6 +681,8 @@ void OnGameResults(const uint8_t* record, size_t size) {
     a.creditsBefore = s_totals.credits;
     a.rankBefore = RankIndex(s_totals.credits);
 
+    const bool unpaid = UnpaidMission(s_type, s_map);
+
     // One reward structure per base type (see BaseType); modded content pays as its base type.
     const double paidMinutes = std::clamp(minutes, 0.0, kMinuteCap);
     const double perMinute = kPayPerMinuteBase + kPayPerMinutePerRank * a.rankBefore;
@@ -705,6 +719,11 @@ void OnGameResults(const uint8_t* record, size_t size) {
         }
     }
 
+    if (unpaid) {
+        a.lines.clear();
+        a.lines.push_back({ "No cR, challenges or commendations in Noble Actual or Lone Wolf", 0 });
+    }
+
     // Lifetime numbers first (commendations read them).
     const int typeIndex = static_cast<int>(s_type);
     s_extra.games[typeIndex] += 1;
@@ -721,7 +740,7 @@ void OnGameResults(const uint8_t* record, size_t size) {
     const MatchFacts facts{ s_type, s_difficulty, s_skulls, minutes, kills, assists, deaths, score, s_map };
     const std::vector<ActiveChallenge> active = ActiveChallenges();   // dailies first, then weeklies
     int newDailies = 0, dailiesDone = 0, dailyCount = 0;
-    for (const ActiveChallenge& c : active) {
+    for (const ActiveChallenge& c : unpaid ? std::vector<ActiveChallenge>{} : active) {
         if (!c.weekly) ++dailyCount;
         if (s_extra.challengeClaimed[c.key]) {
             if (!c.weekly) ++dailiesDone;
@@ -748,7 +767,7 @@ void OnGameResults(const uint8_t* record, size_t size) {
     // Commendations: count this game, then pay every tier reached since the last match.
     for (size_t i = 0; i < std::size(kCommendations); ++i) {
         const CommendationDef& c = kCommendations[i];
-        const int64_t add = CommendationAmount(c, s_type, s_map, assists, deaths);
+        const int64_t add = unpaid ? 0 : CommendationAmount(c, s_type, s_map, assists, deaths);
         if (add > 0) s_extra.commendationCount[CommendationKey(c)] += add;
         const int reached = TierFor(c, CommendationValue(i));
         int& paid = s_extra.commendationTier[CommendationKey(c)];
