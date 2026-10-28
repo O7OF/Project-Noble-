@@ -13,8 +13,8 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 ## 0. Pick up here (2026-10-28, 12:25 ET) - Reach's 45 commendations (spec step 5)
 
-**Status:** on Tyler's PC and verified; `job.bat` builds, captures the COMMENDATIONS tab (`build\bin\Release\cm_tab2.bmp`),
-commits and pushes. Waiting for Tyler to run `go.bat`.
+**Status:** built and pushed (`78a943e`, then `2241e59` with the Noble Actual / Lone Wolf block). `cm_tab2.bmp` checked:
+mode tabs, banners, cR per tier and "Not tracked yet" rows look right.
 
 - `Career.cpp`: `kCommendations` is now Reach's 45 (mode, art key, name, requirement, Reach's six tier counts from Halopedia).
   Tier names Steel, Bronze, Silver, Gold, Onyx, Max. Counts are kept per commendation in `record.commendationCounts`
