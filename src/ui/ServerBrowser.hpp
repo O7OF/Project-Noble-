@@ -62,7 +62,7 @@ private:
 
     // Direct connect modal state
     bool m_showDirectConnectModal = false;
-    char m_directConnectIp[64] = "127.0.0.1:11774";
+    char m_directConnectIp[64] = "";
     char m_directConnectPassword[64] = { 0 };
 
     // Hosting modal state

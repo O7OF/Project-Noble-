@@ -62,12 +62,18 @@ void SessionManager::Shutdown() {
         m_listenerThread.join();
     }
 
+    UPnP::Get().Shutdown();
     m_isInitialized = false;
     NOBLE_INFO("SessionManager: Network Subsystem shutdown complete.");
 }
 
 void SessionManager::SetNetworkMode(NetworkMode mode) {
-    if (m_networkMode == mode) return;
+    if (m_networkMode == mode) {
+        if (mode == NetworkMode::Online_P2P && !UPnP::Get().IsActive()) {
+            UPnP::Get().ForwardPort(m_activeConfig.port, "UDP", "Halo Reach CE Lobby");
+        }
+        return;
+    }
     m_networkMode = mode;
 
     if (m_networkMode == NetworkMode::Online_P2P) {

@@ -17,6 +17,6 @@ namespace NobleLauncher.Models
         public string DedicatedRconPassword { get; set; } = "noble_admin_2026";
         public string LogLevel { get; set; } = "debug";
         public bool StartSuspendedForInjector { get; set; } = false;
-        public string MasterServerUrl { get; set; } = "http://master.projectnoble.org:8080";
+        public string MasterServerUrl { get; set; } = "https://outbreak-z-test-server.onrender.com";
     }
 }

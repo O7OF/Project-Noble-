@@ -1,5 +1,6 @@
 #include "ServerBrowser.hpp"
 #include "NobleStyle.hpp"
+#include "common/Logger.hpp"
 #include "common/Settings.hpp"
 #include "network/MasterServerClient.hpp"
 #include "network/SessionManager.hpp"
@@ -61,10 +62,14 @@ std::string Key(const std::string& address, uint16_t port) {
 } // namespace
 
 ServerBrowser::ServerBrowser() {
+    if (!UPnP::Get().Initialize()) {
+        NOBLE_WARN("ServerBrowser: local network initialization failed: {}", UPnP::Get().GetStatus());
+    }
     const SettingsData s = Settings::Get().Snapshot();
     std::snprintf(m_hostSessionName, sizeof(m_hostSessionName), "%s's game", s.playerName.c_str());
     std::snprintf(m_masterUrl, sizeof(m_masterUrl), "%s", s.masterServerUrl.c_str());
     MasterServerClient::Get().SetUrl(s.masterServerUrl);
+    std::snprintf(m_directConnectIp, sizeof(m_directConnectIp), "%s:11774", UPnP::Get().GetInternalIP().c_str());
 }
 
 void ServerBrowser::RefreshServers() {
@@ -85,7 +90,7 @@ void ServerBrowser::RefreshServers() {
         const HostConfig& cfg = sessions.GetHostConfig();
         ServerEntry e;
         e.name = cfg.sessionName;
-        e.hostAddress = "127.0.0.1";
+        e.hostAddress = UPnP::Get().GetInternalIP();
         e.port = cfg.port;
         e.ping = 0;
         e.playerCount = 1;
@@ -383,7 +388,7 @@ void ServerBrowser::RenderHostModal() {
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(520, 0));
     if (ImGui::BeginPopupModal("HOST A GAME", &m_showHostModal, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::TextWrapped("Lists your game on your LAN (and on the master server when one is set) so other players can see it.");
+        ImGui::TextWrapped("Local games use your device's LAN address. Online games open UDP 11774 with UPnP and publish your public address to the master server.");
         NobleStyle::SectionGap();
 
         ImGui::Text("Name");
@@ -406,7 +411,7 @@ void ServerBrowser::RenderHostModal() {
         ImGui::Text("Password (optional)");
         ImGui::SetNextItemWidth(-1);
         ImGui::InputText("##HostPassword", m_hostPassword, IM_ARRAYSIZE(m_hostPassword), ImGuiInputTextFlags_Password);
-        ImGui::Checkbox("Open the port with UPnP and list online", &m_hostOnline);
+        ImGui::Checkbox("Open UDP 11774 with UPnP and list online", &m_hostOnline);
         NobleStyle::SectionGap();
 
         if (NobleStyle::PrimaryButton("START HOSTING", ImVec2(180, 34))) {
@@ -419,9 +424,13 @@ void ServerBrowser::RenderHostModal() {
             cfg.port = 11774;
             cfg.password = m_hostPassword;
             cfg.mode = m_hostOnline ? NetworkMode::Online_P2P : NetworkMode::Local_LAN;
-            SessionManager::Get().StartHosting(cfg);
+            if (!SessionManager::Get().StartHosting(cfg)) {
+                m_status = "Could not start hosting. Check the network status and try again.";
+                ImGui::EndPopup();
+                return;
+            }
 
-            if (m_hostOnline && MasterServerClient::Get().Enabled()) {
+            if (m_hostOnline && UPnP::Get().IsActive() && MasterServerClient::Get().Enabled()) {
                 MasterAdvert advert;
                 advert.name = cfg.sessionName;
                 advert.port = cfg.port;
@@ -431,7 +440,17 @@ void ServerBrowser::RenderHostModal() {
                 advert.hasPassword = !cfg.password.empty();
                 MasterServerClient::Get().StartAdvertising(advert);
             }
-            m_status = "Hosting \"" + cfg.sessionName + "\" on port 11774.";
+            if (m_hostOnline && !UPnP::Get().IsActive()) {
+                m_status = "Hosting on LAN only: UPnP could not open UDP 11774, so the game was not listed online.";
+            } else if (m_hostOnline && !MasterServerClient::Get().Enabled()) {
+                m_status = "UDP 11774 is open, but no master server is configured.";
+            } else if (m_hostOnline) {
+                m_status = "Hosting \"" + cfg.sessionName + "\"; router reports public IP " +
+                           UPnP::Get().GetExternalIP() + ":11774.";
+            } else {
+                m_status = "Hosting \"" + cfg.sessionName + "\" on local address " +
+                           UPnP::Get().GetInternalIP() + ":11774.";
+            }
             m_lastRefresh = -100.0;
             m_showHostModal = false;
         }
@@ -483,10 +502,9 @@ void ServerBrowser::RenderMasterServerModal() {
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(520, 0));
     if (ImGui::BeginPopupModal("MASTER SERVER", &m_showMasterModal, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::TextWrapped("The master server lists online games. Run tools\\master-server (Node.js) somewhere players can reach "
-                           "and enter its address, for example http://203.0.113.5:8080. Leave it empty for LAN games only.");
+        ImGui::TextWrapped("The master server lists online games. The default uses the Outbreak-Z Render service; clear the address to browse LAN games only.");
         ImGui::SetNextItemWidth(-1);
-        ImGui::InputTextWithHint("##MasterUrl", "http://host:8080", m_masterUrl, IM_ARRAYSIZE(m_masterUrl));
+        ImGui::InputTextWithHint("##MasterUrl", "https://outbreak-z-test-server.onrender.com", m_masterUrl, IM_ARRAYSIZE(m_masterUrl));
         NobleStyle::SectionGap();
         if (NobleStyle::PrimaryButton("SAVE", ImVec2(110, 32))) {
             SettingsData d = Settings::Get().Snapshot();
