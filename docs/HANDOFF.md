@@ -1,4 +1,4 @@
-# Project Noble: handoff (2026-10-27, 23:15 ET)
+# Project Noble: handoff (2026-10-27, 23:20 ET)
 
 This picks up a reverse-engineering and C++ effort on **Tyler's Windows PC**. All paths below are real paths on that machine.
 Tyler (GitHub `WeabooTyler117`) works with a partner (GitHub `O7OF`) who owns the repo and writes most of the code.
@@ -12,7 +12,29 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 ---
 
 
-## 0. Pick up here (23:15 ET)
+## 0. Pick up here (23:20 ET)
+
+**23:20: everything is committed and pushed (Tyler: "all up to date").** That includes the 23:15 batch (mouse
+settings, `mouseSensitivityY`, live look settings in ReachHost, InputPrompts, D-pad/A in the front-end menus,
+`main.cpp` return) and the 23:17 fix (Settings text: controllers work in game). Working tree clean as far as known.
+
+Open list, in Tyler's order of interest:
+1. **Controller settings** (stick sensitivity, invert, dead zones, vibration): first find how Noble feeds the pad
+   to the engine today (Tyler: controller already works in game), then add a CONTROLLER section.
+2. **Video**: FOV, V-Sync, quality options.
+3. **Menu music picker**: Tyler wants it cleaner than the current grouped drop-down (~360 tracks).
+4. **Controller picture** on Settings > Controls is pixelated (MCC `LARGECONTROLLERFRONT` scaled).
+5. Check in game: Forge menus and loadout cards no longer show hex (expected fixed by slot 55).
+6. Noble exiting from inside a game: confirm `tasklist | findstr /i noble` is empty afterwards.
+7. Mod-only maps (not in Reach's tables) are listed but disabled: launching them needs map-id work in BlamEngine.
+8. Halo 2 Anniversary music (`sounds_*.dat`) not readable yet.
+
+Build/run (Developer Command Prompt, not plain PowerShell - cmake is only on PATH there):
+`cd /d D:\Halo-Reach-Community-Edition && cmake --build build --config Release && cd build\bin\Release && noble-client.exe`
+If LNK1104 (exe locked) and `taskkill` fails, a stuck process needs a real reboot; rename the exe meanwhile.
+
+## 0c2. Earlier (23:15 ET)
+(23:15 ET)
 
 **23:15: pushed + mouse settings + input prompts (built, Tyler OK'd "fine for now").** Stuck processes were from
 quitting at the menu (10:12-10:17 runs, ExitProcess hang, likely XAudio2 DLL detach); real reboot cleared them; with
