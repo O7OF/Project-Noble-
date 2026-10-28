@@ -23,6 +23,7 @@ struct MasterSession {
     std::string mode;
     bool inProgress = false;
     bool hasPassword = false;
+    bool isMod = false;
     std::string build;
 };
 
@@ -35,6 +36,7 @@ struct MasterAdvert {
     std::string map;
     std::string mode;
     bool hasPassword = false;
+    bool isMod = false;
 };
 
 // Small HTTP client for tools/master-server (see its README). The address comes from the

@@ -338,6 +338,16 @@ void SaveLocked() {
     }
     std::filesystem::rename(tmp, path, ec);
     if (ec) NOBLE_WARN("Career: could not save career.json ({})", ec.message());
+
+    PeerStats localStats;
+    localStats.playerName = Settings::Get().Snapshot().playerName;
+    localStats.credits = s_totals.credits;
+    localStats.rank = RankIndex(s_totals.credits);
+    localStats.gamesPlayed = s_totals.gamesPlayed;
+    localStats.kills = s_totals.kills;
+    localStats.deaths = s_totals.deaths;
+    localStats.assists = s_totals.assists;
+    SavePeerStats(localStats);
 }
 
 uint32_t U32(const uint8_t* p, size_t off) {
@@ -937,6 +947,70 @@ const char* CommendationTierName(int tier) {
 Award LastAward() {
     std::lock_guard<std::mutex> lock(s_mutex);
     return s_lastAward;
+}
+
+
+void SavePeerStats(const PeerStats& stats) {
+    if (stats.playerName.empty()) return;
+    std::string cleanName;
+    for (char c : stats.playerName) {
+        if (std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '-') cleanName += c;
+    }
+    if (cleanName.empty()) cleanName = "unknown";
+
+    std::error_code ec;
+    const auto dir = UserDir() / "players";
+    std::filesystem::create_directories(dir, ec);
+    const auto path = dir / (cleanName + ".json");
+    const auto tmp = dir / (cleanName + ".json.tmp");
+
+    nlohmann::json j = {
+        {"player_name", stats.playerName},
+        {"service_tag", stats.serviceTag},
+        {"credits", stats.credits},
+        {"rank", stats.rank},
+        {"games_played", stats.gamesPlayed},
+        {"kills", stats.kills},
+        {"deaths", stats.deaths},
+        {"assists", stats.assists}
+    };
+
+    {
+        std::ofstream out(tmp, std::ios::trunc);
+        out << j.dump(2);
+    }
+    std::filesystem::rename(tmp, path, ec);
+    if (!ec) {
+        NOBLE_INFO("Career: saved local peer stats for '{}'", stats.playerName);
+    }
+}
+
+bool LoadPeerStats(const std::string& playerName, PeerStats& outStats) {
+    if (playerName.empty()) return false;
+    std::string cleanName;
+    for (char c : playerName) {
+        if (std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '-') cleanName += c;
+    }
+    if (cleanName.empty()) cleanName = "unknown";
+
+    const auto path = UserDir() / "players" / (cleanName + ".json");
+    std::ifstream in(path);
+    if (!in) return false;
+    try {
+        nlohmann::json j;
+        in >> j;
+        outStats.playerName = j.value("player_name", playerName);
+        outStats.serviceTag = j.value("service_tag", "");
+        outStats.credits = j.value("credits", 0LL);
+        outStats.rank = j.value("rank", 0);
+        outStats.gamesPlayed = j.value("games_played", 0LL);
+        outStats.kills = j.value("kills", 0LL);
+        outStats.deaths = j.value("deaths", 0LL);
+        outStats.assists = j.value("assists", 0LL);
+        return true;
+    } catch (...) {
+        return false;
+    }
 }
 
 Totals Get() {

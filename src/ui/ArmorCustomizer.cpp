@@ -740,6 +740,16 @@ void ArmorCustomizer::MigrateFromLegacyFields() {
     }
 }
 
+
+void ArmorCustomizer::SetPreferredSpecies(PlayerSpecies species) {
+    m_profile.species = species;
+    m_previewSpecies = species;
+    m_focusedRow = 0;
+    m_dirty = true;
+    SaveProfile(m_profilePath);
+    SyncToReachArmory();
+}
+
 void ArmorCustomizer::UpdateArmoryCamera() const {
     if (!ReachArmory::IsMenuMode()) return;
     if (m_previewSpecies == PlayerSpecies::Elite) {
@@ -1429,6 +1439,33 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
     {
         ImGui::SetCursorScreenPos(origin);
         ImGui::BeginChild("##armory_slots", ImVec2(listW, avail.y), ImGuiChildFlags_None, ImGuiWindowFlags_NoBackground);
+
+        // Preferred Species Switcher
+        {
+            const float btnW = (listW - 12.0f * s) * 0.5f;
+            const float btnH = 28.0f * s;
+            const bool isSpartan = (m_profile.species == PlayerSpecies::Spartan);
+            const bool isElite = (m_profile.species == PlayerSpecies::Elite);
+
+            ImGui::PushStyleColor(ImGuiCol_Button, isSpartan ? ImVec4(0.20f, 0.45f, 0.70f, 0.85f) : ImVec4(0.10f, 0.14f, 0.18f, 0.6f));
+            ImGui::PushStyleColor(ImGuiCol_Border, isSpartan ? ImVec4(0.55f, 0.85f, 1.0f, 1.0f) : ImVec4(0.25f, 0.35f, 0.45f, 0.4f));
+            if (ImGui::Button("SPARTAN", ImVec2(btnW, btnH))) {
+                SetPreferredSpecies(PlayerSpecies::Spartan);
+            }
+            ImGui::PopStyleColor(2);
+
+            ImGui::SameLine();
+
+            ImGui::PushStyleColor(ImGuiCol_Button, isElite ? ImVec4(0.65f, 0.30f, 0.15f, 0.85f) : ImVec4(0.10f, 0.14f, 0.18f, 0.6f));
+            ImGui::PushStyleColor(ImGuiCol_Border, isElite ? ImVec4(1.0f, 0.65f, 0.35f, 1.0f) : ImVec4(0.25f, 0.35f, 0.45f, 0.4f));
+            if (ImGui::Button("ELITE", ImVec2(btnW, btnH))) {
+                SetPreferredSpecies(PlayerSpecies::Elite);
+            }
+            ImGui::PopStyleColor(2);
+
+            ImGui::Dummy(ImVec2(0, 4.0f * s));
+        }
+
         ImDrawList* ldl = ImGui::GetWindowDrawList();
         const float rowH = 30.0f * s;
         const char* lastGroup = nullptr;

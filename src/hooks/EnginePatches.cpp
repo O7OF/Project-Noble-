@@ -18,6 +18,17 @@ bool EnginePatches::s_isApplied = false;
 typedef uint8_t(__fastcall* IsWhitespaceFn)(uint16_t ch);
 static IsWhitespaceFn s_originalIsWhitespace = nullptr;
 
+
+// Halo: Reach internal armor unlock verification function checks game mode and capg unlock tags.
+// Detouring to return 1 ensures all customized Spartan armor pieces, helmets, shoulders, and chests
+// are permitted when spawning in multiplayer/Forge instead of falling back to default Mark V[B].
+typedef uint8_t(__fastcall* IsArmorItemUnlockedFn)(void* a1, void* a2, void* a3, void* a4);
+static IsArmorItemUnlockedFn s_originalIsArmorItemUnlocked = nullptr;
+
+static uint8_t __fastcall Hook_IsArmorItemUnlocked(void* /*a1*/, void* /*a2*/, void* /*a3*/, void* /*a4*/) {
+    return 1;
+}
+
 static uint8_t __fastcall Hook_IsWhitespace(uint16_t ch) {
     if (ch < 0x09) {
         return 0; // Characters below 0x09 are never whitespace; prevents binary search underflow crash
@@ -105,6 +116,34 @@ bool EnginePatches::Apply(HMODULE hReachDll) {
                 NOBLE_INFO("EnginePatches: Patched armor appearance cap 2 at RVA 0x10552F (0x20 -> 0xFF).");
             }
         }
+    }
+
+    // 3. Unlock all armor customization items in multiplayer/Forge (RVA 0x2C7DCC)
+    uintptr_t isArmorUnlockedAddr = SigScanner::FindPattern(
+        baseAddress, modInfo.SizeOfImage,
+        "48 8B C4 48 89 58 08 48 89 68 10 48 89 70 18 48 89 78 20 41 56 48 83 EC 20 33 DB 41 8A E8"
+    );
+    if (!isArmorUnlockedAddr) {
+        uintptr_t fallback = baseAddress + 0x2C7DCC;
+        const uint8_t* p = reinterpret_cast<const uint8_t*>(fallback);
+        if (p[0] == 0x48 && p[1] == 0x8B && p[2] == 0xC4 && p[3] == 0x48) {
+            isArmorUnlockedAddr = fallback;
+            NOBLE_INFO("EnginePatches: Located IsArmorItemUnlocked via static RVA 0x2C7DCC.");
+        }
+    }
+    if (isArmorUnlockedAddr) {
+        if (HookManager::InstallHook(
+            reinterpret_cast<void*>(isArmorUnlockedAddr),
+            reinterpret_cast<void*>(&Hook_IsArmorItemUnlocked),
+            reinterpret_cast<void**>(&s_originalIsArmorItemUnlocked),
+            "haloreach_is_armor_unlocked"
+        )) {
+            NOBLE_INFO("EnginePatches: Successfully hooked IsArmorItemUnlocked at 0x{:X} to unlock all Spartan armor.", isArmorUnlockedAddr);
+        } else {
+            NOBLE_ERROR("EnginePatches: Failed to hook IsArmorItemUnlocked at 0x{:X}!", isArmorUnlockedAddr);
+        }
+    } else {
+        NOBLE_WARN("EnginePatches: Could not locate IsArmorItemUnlocked in haloreach.dll.");
     }
 
     s_isApplied = true;

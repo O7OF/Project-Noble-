@@ -73,6 +73,8 @@ public:
 
     bool LoadProfile(const std::filesystem::path& path);
     bool SaveProfile(const std::filesystem::path& path);
+    void SetPreferredSpecies(PlayerSpecies species);
+    PlayerSpecies GetPreferredSpecies() const { return m_profile.species; }
 
     void SyncToReachArmory() const;
     void UpdateArmoryCamera() const;

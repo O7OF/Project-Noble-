@@ -20,6 +20,7 @@ struct ServerEntry {
     bool inProgress = false;
     bool isOwn = false;         // the game this player is hosting
     bool isFavorite = false;
+    bool isMod = false;
     std::string source;         // "LAN", "ONLINE", "FAVORITE", "YOU"
 };
 

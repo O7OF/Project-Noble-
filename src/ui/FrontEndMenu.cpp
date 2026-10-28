@@ -763,7 +763,7 @@ struct MainEntry {
 };
 const MainEntry kMainEntries[] = {
     { "Campaign",     "Play the story of Noble Team, from Winter Contingency to Lone Wolf.", Screen::Campaign, true, false },
-    { "Matchmaking",  "Online matchmaking isn't available in Noble yet.",                     Screen::Main, false, false },
+    { "Server Browser", "Browse and join online multiplayer, co-op and custom games.",        Screen::Servers, true, false },
     { "Firefight",    "Hold out against waves of Covenant on the map and game type you choose.", Screen::Firefight, true, false },
     { "Custom Game",  "Play any multiplayer map and game type, host a game or join one.",     Screen::CustomGame, true, false },
     { "Forge",        "Edit multiplayer maps with Forge. Experimental in Noble.",             Screen::Forge, true, false },
@@ -791,10 +791,12 @@ struct MenuState {
     int campaignSource = 0;
     int ffSource = 0;
     int mpSource = 0;
+    int forgeSource = 0;
     std::set<std::string> openMods;
     int campaignModded = 0;
     int ffModded = 0;
     int mpModded = 0;
+    int forgeModded = 0;
     bool confirmQuit = false;   // "Quit Project Noble?" box on the main menu (Esc or QUIT)
     int quitChoice = 1;         // 0 = Yes, 1 = No (No is preselected)
 };
@@ -1348,19 +1350,19 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         const MenuMap* baseMaps = ff ? kFirefightMaps : kMaps;
         const int baseCount = ff ? Count(kFirefightMaps) : Count(kMaps);
         const std::vector<const ModEntry*>& modList = ff ? ctx.ffMods : ctx.mpMods;
-        int& source = ff ? st.ffSource : st.mpSource;
+        int& source = ff ? st.ffSource : forge ? st.forgeSource : st.mpSource;
         float listTop = top + 96.0f * ui.s;
-        if (!forge) {
+        {
             if (DrawSourceTabs(ui, ImVec2(left + 34.0f * ui.s, top + 70.0f * ui.s), source, static_cast<int>(modList.size()))) {
                 st.focusRow = 0;
             }
             listTop = top + 108.0f * ui.s;
         }
-        const bool modded = !forge && source == 1;
+        const bool modded = source == 1;
         const ModMode modMode = ff ? ModMode::Firefight : ModMode::Multiplayer;
         const std::vector<MapEntry> maps = modded ? ModdedMaps(modList, modMode, baseMaps, baseCount, st.openMods)
                                                   : BaseMaps(baseMaps, baseCount);
-        int& mapIndex = modded ? (ff ? st.ffModded : st.mpModded) : (ff ? st.ffMap : forge ? st.forgeMap : st.map);
+        int& mapIndex = modded ? (ff ? st.ffModded : forge ? st.forgeModded : st.mpModded) : (ff ? st.ffMap : forge ? st.forgeMap : st.map);
         FixSelection(maps, mapIndex);
         std::vector<ListItem> items = ToItems(maps);
         if (maps.empty()) items.push_back({ ff ? "No Reach Firefight mods installed" : "No Reach multiplayer mods installed", false, false });
@@ -1455,7 +1457,7 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
             if (st.focusRow > 0) st.focusRow = 0;
             else goBack(Screen::Main);
         }
-        if (forge) DrawHints(ui, { { Prompt::Accept, "Select" }, { Prompt::Back, "Back" } });
+        if (forge) DrawHints(ui, { { Prompt::Accept, "Select" }, { Prompt::Back, "Back" }, { Prompt::Tabs, "Vanilla / Modded" } });
         else DrawHints(ui, { { Prompt::Accept, "Select" }, { Prompt::Back, "Back" }, { Prompt::Change, "Change" }, { Prompt::Tabs, "Vanilla / Modded" } });
         break;
     }

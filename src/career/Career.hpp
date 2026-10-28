@@ -160,5 +160,19 @@ void OnGameResults(const uint8_t* record, size_t size);
 Award LastAward();
 Totals Get();
 
+struct PeerStats {
+    std::string playerName;
+    std::string serviceTag;
+    int64_t credits = 0;
+    int rank = 0;
+    int64_t gamesPlayed = 0;
+    int64_t kills = 0;
+    int64_t deaths = 0;
+    int64_t assists = 0;
+};
+void SavePeerStats(const PeerStats& stats);
+bool LoadPeerStats(const std::string& playerName, PeerStats& outStats);
+
+
 } // namespace Career
 } // namespace noble

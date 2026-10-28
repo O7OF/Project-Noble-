@@ -255,6 +255,7 @@ void MasterServerClient::DoList() {
                 s.mode = Str(item, "mode", 32);
                 s.inProgress = item.value("in_progress", false);
                 s.hasPassword = item.value("has_password", false);
+                s.isMod = item.value("is_mod", false);
                 s.build = Str(item, "build", 32);
                 if (!s.address.empty()) list.push_back(std::move(s));
             }
@@ -277,7 +278,7 @@ void MasterServerClient::DoRegister() {
     nlohmann::json body = {
         {"name", advert.name}, {"port", advert.port}, {"player_count", advert.playerCount},
         {"max_players", advert.maxPlayers}, {"map", advert.map}, {"mode", advert.mode},
-        {"has_password", advert.hasPassword}, {"build", std::string(VERSION_STRING.substr(0, VERSION_STRING.find(' ')))},
+        {"has_password", advert.hasPassword}, {"is_mod", advert.isMod}, {"build", std::string(VERSION_STRING.substr(0, VERSION_STRING.find(' ')))},
     };
     const HttpResult r = HttpRequest(Url(), L"POST", "/api/sessions", body.dump());
     if (!r.ok) {

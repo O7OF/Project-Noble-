@@ -100,6 +100,7 @@ void ServerBrowser::RefreshServers() {
         e.variantName = cfg.gametypeName;
         e.isPasswordProtected = !cfg.password.empty();
         e.isOwn = true;
+        e.isMod = (cfg.mapName.find(".map") != std::string::npos || cfg.sessionName.find("[Mod]") != std::string::npos);
         e.source = "YOU";
         add(e);
     }
@@ -117,6 +118,7 @@ void ServerBrowser::RefreshServers() {
         e.mapName = d.mapName;
         e.variantName = d.gametypeName;
         e.isPasswordProtected = d.isPasswordProtected;
+        e.isMod = (d.sessionName.find("[Mod]") != std::string::npos || d.mapName.find(".map") != std::string::npos);
         e.source = "LAN";
         // Our own beacon heard on the LAN: already listed as "YOU".
         if (sessions.IsHosting() && d.port == sessions.GetHostConfig().port && d.sessionName == sessions.GetHostConfig().sessionName) continue;
@@ -136,6 +138,7 @@ void ServerBrowser::RefreshServers() {
         e.mapName = m.map;
         e.isPasswordProtected = m.hasPassword;
         e.inProgress = m.inProgress;
+        e.isMod = m.isMod || (m.name.find("[Mod]") != std::string::npos);
         e.source = "ONLINE";
         add(e);
     }
@@ -294,7 +297,10 @@ void ServerBrowser::RenderServerList() {
             ImGui::TextColored(tagColor, "%s%s", s.source.c_str(), s.isFavorite ? " *" : "");
 
             ImGui::TableSetColumnIndex(1);
-            std::string label = (s.isPasswordProtected ? "[LOCKED] " : "") + s.name + (s.inProgress ? "  (in progress)" : "");
+            std::string label = (s.isPasswordProtected ? "[LOCKED] " : "");
+            if (s.isMod) label += "[Mod] ";
+            label += s.name;
+            if (s.inProgress) label += "  (in progress)";
             if (ImGui::Selectable(label.c_str(), m_selectedServerIndex == i,
                                   ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowDoubleClick)) {
                 m_selectedServerIndex = i;
@@ -354,6 +360,11 @@ void ServerBrowser::RenderServerDetails() {
     if (ImGui::Button(s.isFavorite ? "REMOVE FAVOURITE" : "ADD TO FAVOURITES", ImVec2(-1, 0))) {
         ToggleFavorite(s.hostAddress, s.port);
         RefreshServers();
+    }
+    if (ImGui::Button("COPY INVITE", ImVec2(-1, 0))) {
+        std::string invite = s.hostAddress + ":" + std::to_string(s.port);
+        ImGui::SetClipboardText(invite.c_str());
+        m_status = "Invite copied to clipboard: " + invite;
     }
     if (ImGui::Button("COPY ADDRESS", ImVec2(-1, 0))) {
         ImGui::SetClipboardText(Key(s.hostAddress, s.port).c_str());
@@ -430,7 +441,7 @@ void ServerBrowser::RenderHostModal() {
                 return;
             }
 
-            if (m_hostOnline && UPnP::Get().IsActive() && MasterServerClient::Get().Enabled()) {
+            if (m_hostOnline && MasterServerClient::Get().Enabled()) {
                 MasterAdvert advert;
                 advert.name = cfg.sessionName;
                 advert.port = cfg.port;
@@ -438,6 +449,7 @@ void ServerBrowser::RenderHostModal() {
                 advert.map = cfg.mapName;
                 advert.mode = cfg.gameMode;
                 advert.hasPassword = !cfg.password.empty();
+                advert.isMod = (cfg.mapName.find(".map") != std::string::npos || cfg.sessionName.find("[Mod]") != std::string::npos);
                 MasterServerClient::Get().StartAdvertising(advert);
             }
             if (m_hostOnline && !UPnP::Get().IsActive()) {
@@ -466,14 +478,16 @@ void ServerBrowser::RenderDirectConnectModal() {
     ImGui::SetNextWindowSize(ImVec2(420, 0));
     if (ImGui::BeginPopupModal("DIRECT CONNECT", &m_showDirectConnectModal, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::Text("Address (IP or IP:port)");
-        ImGui::SetNextItemWidth(-1);
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 75.0f);
         ImGui::InputText("##Address", m_directConnectIp, IM_ARRAYSIZE(m_directConnectIp));
+        ImGui::SameLine();
+        if (ImGui::Button("PASTE", ImVec2(65, 0))) {
+            if (const char* clip = ImGui::GetClipboardText()) std::snprintf(m_directConnectIp, sizeof(m_directConnectIp), "%s", clip);
+        }
         ImGui::Text("Password");
         ImGui::SetNextItemWidth(-1);
         ImGui::InputText("##Password", m_directConnectPassword, IM_ARRAYSIZE(m_directConnectPassword), ImGuiInputTextFlags_Password);
-        if (ImGui::Button("PASTE")) {
-            if (const char* clip = ImGui::GetClipboardText()) std::snprintf(m_directConnectIp, sizeof(m_directConnectIp), "%s", clip);
-        }
+        // Paste button positioned inline above
         NobleStyle::SectionGap();
 
         std::string address;
