@@ -9,6 +9,7 @@
 #include "engine/KeyBindings.hpp"
 #include "engine/CameraFov.hpp"
 #include "engine/ReachArmory.hpp"
+#include "engine/ElitePack.hpp"
 #include "common/Settings.hpp"
 #include "host/Window.hpp"
 #include <windows.h>
@@ -1687,7 +1688,9 @@ static uint64_t __fastcall HostSlot48_FilePathResolver(void* thisPtr, uint64_t a
 
         bool isMainMenu = (inLower.find(L"mainmenu.map") != std::wstring::npos);
 
-        if (isMainMenu && std::filesystem::is_regular_file(checkCustomMainMenu, ec)) {
+        if (auto pack = ElitePack::ResolveFile(inStr)) {
+            resolved = *pack;  // the Elite armour pack the engine loads with the match map
+        } else if (isMainMenu && std::filesystem::is_regular_file(checkCustomMainMenu, ec)) {
             resolved = checkCustomMainMenu;
         } else if (std::filesystem::is_regular_file(checkUser, ec)) {
             resolved = checkUser;

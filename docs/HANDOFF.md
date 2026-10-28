@@ -1,4 +1,4 @@
-# Project Noble: handoff (2026-10-28, 17:35 ET)
+# Project Noble: handoff (2026-10-28, 19:25 ET)
 
 This picks up a reverse-engineering and C++ effort on **Tyler's Windows PC**. All paths below are real paths on that machine.
 Tyler (GitHub `WeabooTyler117`) works with a partner (GitHub `O7OF`) who owns the repo and writes most of the code.
@@ -10,6 +10,69 @@ community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownershi
 MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour.
 
 ---
+
+## 0. Pick up here (2026-10-28, 19:25 ET) - Elite pack: A2 + A3 work (Armory Zealot spawns as Zealot)
+
+All in `src/engine/ElitePack.cpp` (on Tyler's PC, NOT committed/pushed yet; Tyler decides when). Tested on Sword Base.
+- **A2 player Elite (works):** after the pack's cache step, the one `bipd` inside the pack section is the pack's player
+  Elite (0x85564635 here); in the map's `matg` (+0x474 representations, 0x6C each, biped datum at +0x40) every entry
+  equal to representation 1's biped is pointed at it (AI keep the stock Elite). Zone-set rebuild hook `hr+0x8EAF0`
+  re-sets active bits (state+0x30B70) for biped, its model (+0x70) and render model (model +0x0C).
+- **Armour list merge (works):** the pack replaces the pmcg; Noble puts the map's back (its Elite set list +0x74 dresses
+  the first-person arms) and copies, for the 7 Spartan piece lists (+0x20..+0x68, 12 bytes apart; selection 16 bytes:
+  name sid, changes block; change 12 bytes: region, permutation, flags), every pack change to an "Elite region" (regions
+  the pack's Elite sets change: 87EE 87F3 87F6 87F8 87F9 87FD) into the map selection of the same name; pack-only
+  selections (legs list pack 11 vs map 7, wrist 9 vs 6) are appended. New arrays: VirtualAlloc + `hr+0x688F3C` encode.
+  `-elite-pack-list` = test option keeping the pack's list (Spartans fine, but first-person Elite arms bare).
+- **Elite armour slots patch:** `hr+0x105796` `83 FE 07 41 0F 94 C7` -> `41 B7 01 90 90 90 90` (RR `--elite-armor-slots`):
+  the appearance builder `0x1055EC` then applies all 8 lists to Elites, not only +0x74.
+- **A3 picks (works: Armory Zealot -> Zealot):** calls to `0x1055EC` at `0x4AC36` (spawn), `0x447B0` (live), `0x3B184F`
+  (remote), `0x524CD5` (copy) retargeted. For Elites (mode 1, or species byte rec+4 == 1; modes 0/2 untouched) a copy of
+  the 0x28-byte appearance record gets rec+0x10..+0x15 = six pack piece indices (helmet, L, R, chest, forearms, legs),
+  rec+0x16 = 0xFF, rec+0x17 (Elite set) kept for the first-person arms. Pieces from `data\appearance.json` "elite"
+  *_id via `PieceIndex` (pack order = menu lists minus H2A; RR set table kSetPieces as fallback). Every player Elite gets
+  the local Armory pieces for now (other players need networking).
+- **Open:** pack Elite is much tougher than MCC's MP Elite (2 grenades don't drop its shields; stock Elite dies) - copy
+  MCC's MP Elite vitality, or RR's "Even Elites"; check first-person arms; H2A indices are guesses (11 helmet, 10 legs);
+  Honor Guard etc. to verify by eye; Heart Attack/Birthday effect showing once (watch); `.rrneeds` check not done
+  (campaign excluded); before pushing, consider making the pack opt-in (`-elite-pack`) so O7OF doesn't get it by surprise.
+- `NOBLE_PROFILE_SET` env var trap: it persists in a cmd window and overrides the Armory (+0x8C=C7 = General). Clear with
+  `set NOBLE_PROFILE_SET=`.
+
+## 0. Pick up here (2026-10-28, 18:20 ET) - Elite armour pack, Stage A1 works (pack loads into matches)
+
+**Goal (Tyler, Option 1):** separate Elite pieces in matches, later the H2A pieces. MCC's match maps only carry an Elite
+with one `armor_pieces` region (8 sets); the menu map's Elite (RR's `mainmenu_all.map`) has per-piece regions plus
+H2A / Honor Guard / Council / Ossoona etc. Plan: load an Elite pack into every match like Reach Renaissance does.
+Full research notes: project doc `claude/elite-pack-notes.md`. RR's pack has no H2A pieces (Tyler checked RR's Armory),
+but its piece indices suggest it does carry Honor Guard / Council / Ossoona / Schism / Combat (unverified).
+
+- **Stage A1 done and tested (18:19, Sword Base):** new `src/engine/ElitePack.{cpp,hpp}` (+ CMakeLists, `main.cpp`
+  calls `ElitePack::Install(module, dataDir, mode)` for non-menu launches, slot 48 in `ReachHost.cpp` resolves the pack
+  file name first). Only for `multiplayer` and `firefight`; `-no-elite-pack` turns it off. Files (local only, git-ignored):
+  `build\bin\Release\data\armor\rr_elite_pack.map` + `.rrreloc` (+ `.rrneeds`, `.rrpmcg` for later), copied from
+  `D:\Reach\data\armor`. What it does:
+  - call `hr+0xA38A3` (-> map load `0x141C0`) retargeted: when the request has no extra caches, adds one,
+    `haloreach\maps\rr_elite_pack` (request: +0 name, +8 extra count, +0x10 names).
+  - call `hr+0x31395` (-> extra cache load `0x31078`) retargeted: for the pack, first `hr+0xAA634(0xFFFF, name, 2)`
+    (header slot, the main map gets the same at `0xA37DC`).
+  - 2-byte patch `hr+0x30859` `8B D2` -> `66 90` (keeps the 64-bit load delta).
+  - MinHook on `hr+0x30698` (per-cache step, arg 5 = cache: +0 loaded base A, +0x24 size, +0x2F0 file base B,
+    +0x2F8 tags header): before the original, rebases the pack's packed pointers from `.rrreloc` (RRRL v1: count,
+    u64 B, u64 packed base, u32 size, then u32 offsets; addr = (p<<2)+packedBase, if in [B,B+size) write
+    `hr+0x688F3C(addr + A - B)`) and the 4 u64 table pointers at header +8/+0x18/+0x28/+0x38.
+  - MinHook on the 14 resource-interface methods (vtable `0x996978`, `0x1BB6C0..0x1BBDA0`, index in r8 for 6C0/7B4/C9C/
+    D34/DA0, else rdx): an index in a range k with lo != 0 is called on a one-range copy of the interface with the
+    index rebased (RR `resadapt`). Without them the first test crashed at `hr+0x1BB3D4` right after the map load.
+  - Log: "relocated 121513 packed pointers (0 outside ...) and 4 table pointers", "extra cache ... load returned 1";
+    the match then plays normally. Players still use the map's Elite.
+- **Next (Stage A2):** RR `armorpack::callback` after the original step: merge the pack's pmcg Elite selections into the
+  map's pmcg (`MERGE`), point player representation 1 (globals block at +0x474) at the pack's player Elite biped
+  (AI keep the stock one), and the zone-set rebuild hook `hr+0x8EAF0` that re-sets the pack's tag datums active
+  (bits at rcx+0x30B70). Then Stage A3: retarget the 4 calls to `hr+0x1055EC` (spawn `0x4AC36`, live `0x447B0`,
+  remote `0x3B184F`, copy `0x524CD5`) to feed the Armory's six Elite pieces. Not done: RR's `.rrneeds` check (that the
+  match map has all 149 stock tags the pack needs); campaign is excluded until it exists.
+- For O7OF: new ElitePack files, small hook-up in `ReachHost.cpp` (slot 48) and `main.cpp`.
 
 ## 0. Pick up here (2026-10-28, 17:35 ET) - Elite armour in game fixed, Armory scene leak fixed
 

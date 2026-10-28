@@ -12,6 +12,7 @@
 #include "engine/BlamEngine.hpp"
 #include "engine/CameraFov.hpp"
 #include "engine/ReachArmory.hpp"
+#include "engine/ElitePack.hpp"
 #include "ui/UIManager.hpp"
 #include "ui/FrontEndMenu.hpp"
 #include "ui/LoadScreen.hpp"
@@ -368,6 +369,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         noble::UiArt::LoadingBackground(launchMap);
         noble::UiArt::MapPreview(launchMap, true);
     }
+
+    // Elite armour pack (data\armor\<name>.map + .rrreloc, local only): loaded with multiplayer and Firefight maps.
+    if (!showMenu) noble::ElitePack::Install(loader->GetModuleHandle(), userStoragePath, launchMode);
 
     NOBLE_INFO("Launching Halo: Reach Engine: Target Map='{}', Mode='{}'", launchMap, launchMode);
     blamEngine->LaunchMap(launchMap, launchMode, launchDifficulty, launchSkulls, customMvar, customVariant);

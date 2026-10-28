@@ -106,6 +106,7 @@ set(SOURCES
     src/engine/BlamEngine.cpp
     src/engine/ReachHost.cpp
     src/engine/ReachArmory.cpp
+    src/engine/ElitePack.cpp
     src/engine/CameraFov.cpp
     src/engine/FrameCapture.cpp
     src/common/Relaunch.cpp
@@ -156,6 +157,7 @@ set(HEADERS
     src/engine/BlamEngine.hpp
     src/engine/ReachHost.hpp
     src/engine/ReachArmory.hpp
+    src/engine/ElitePack.hpp
     src/engine/CameraFov.hpp
     src/engine/FrameCapture.hpp
     src/common/Relaunch.hpp
