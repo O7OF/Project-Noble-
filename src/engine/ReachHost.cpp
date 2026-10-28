@@ -855,10 +855,12 @@ static void ApplyArmoryAppearance(uint8_t* profile) {
         put(0x50, kWrist + num(sp, "wrist_index", 0, 5, 0));
         put(0x54, kUtility + num(sp, "utility_index", 0, 6, 0));
         put(0x64, kSpartanMale + num(appearance, "body_type", 0, 1, 0));
-        put(0x68, kEliteSet + num(el, "armor_set", 0, 7, 0));
+        // Tested in game 2026-10-28: +0x8C is the Elite armour set (194 + set; 0xC7 spawned a General) and
+        // the Spartan armour effect sits at +0x68 (the two were swapped, so the effect picked the Elite).
+        put(0x68, kEffect + effect);
         put(0x6C, kKnees + num(sp, "knee_guards_index", 0, 3, 0));
         put(0x70, kVisor + num(sp, "visor_color_index", 0, 4, 0));
-        put(0x8C, kEffect + effect);
+        put(0x8C, kEliteSet + num(el, "armor_set", 0, 7, 0));
         put(0x90, kEliteEffect + effect);
         put(0x94, VoiceItem(str(sp, "voice_id")));
         put(0x98, kColor + num(appearance, "primary_color", 0, 29, 1));
@@ -944,11 +946,18 @@ static uint64_t __fastcall HostSlot34_ProfileSettings(void* thisPtr, uint64_t a1
         // Test option "-profile-set <hex offset>=<hex byte>[,...]": patch profile bytes (used to find
         // what the controller look bytes at +0x1B4.. do; see FillLocalPad and -fake-pad).
         {
+            // Also read from the NOBLE_PROFILE_SET environment variable: starting a game relaunches Noble without
+            // the menu's command line, but child processes keep the environment (set NOBLE_PROFILE_SET=90=B0).
+            std::vector<std::wstring> lists;
+            wchar_t envList[512] = {};
+            if (GetEnvironmentVariableW(L"NOBLE_PROFILE_SET", envList, 512) > 0) lists.push_back(envList);
             int argc = 0;
             LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
             for (int i = 1; argv && i + 1 < argc; ++i) {
-                if (_wcsicmp(argv[i], L"-profile-set") != 0) continue;
-                std::wstring list = argv[i + 1];
+                if (_wcsicmp(argv[i], L"-profile-set") == 0) lists.push_back(argv[i + 1]);
+            }
+            for (std::wstring list : lists) {
+                while (!list.empty() && (list.back() == L' ' || list.back() == L'\t')) list.pop_back();
                 size_t pos = 0;
                 while (pos < list.size()) {
                     size_t comma = list.find(L',', pos);

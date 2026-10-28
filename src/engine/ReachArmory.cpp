@@ -570,7 +570,11 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx) {
     if (base == 0 || stride == 0) return;
 
     const ReachArmorySelection sel = ReachArmory::GetSelection();
-    const bool showElite = sel.previewElite;
+    // The Elite pedestal (scene 0x0B, shows_elite) belongs to the Armory only. Outside the Armory the menu's own
+    // scene and the Spartan line-up are used, otherwise the Armory's Elite (and its camera) stayed on screen behind
+    // every other menu after leaving the Armory.
+    const bool armoryScene = targetSceneIdx >= 0x0A && targetSceneIdx <= 0x14 && targetSceneIdx != 0x0E;
+    const bool showElite = sel.previewElite && armoryScene;
 
     // 1. Camera Scene Index at GLOBALS[0x24] and shows_elite at GLOBALS[0x26]
     const int32_t effectiveSceneIdx = showElite ? 0x0B : targetSceneIdx;

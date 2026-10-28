@@ -1,4 +1,4 @@
-# Project Noble: handoff (2026-10-28, 16:30 ET)
+# Project Noble: handoff (2026-10-28, 17:35 ET)
 
 This picks up a reverse-engineering and C++ effort on **Tyler's Windows PC**. All paths below are real paths on that machine.
 Tyler (GitHub `WeabooTyler117`) works with a partner (GitHub `O7OF`) who owns the repo and writes most of the code.
@@ -10,6 +10,23 @@ community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownershi
 MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour.
 
 ---
+
+## 0. Pick up here (2026-10-28, 17:35 ET) - Elite armour in game fixed, Armory scene leak fixed
+
+- **In-game Elite fixed (tested by Tyler):** profile fields +0x68 and +0x8C were swapped in `ApplyArmoryAppearance`
+  (`ReachHost.cpp`). +0x8C is the **Elite armour set** (194 + set; `8C=C7` spawned a General, `8C=A9` a non-Minor
+  Elite), +0x68 is the **Spartan armour effect** (166 + effect; Tyler: effects work in game). Writing 173+effect to
+  +0x90 changed nothing visible. That is why the Armory's armour effect used to pick the in-game Elite and the Elite
+  Armor Set did nothing. Tell O7OF (his file). Still to confirm by eye: each of the 8 Elite sets spawns as itself.
+- **Test option survives the match restart:** starting a game relaunches Noble with only the game args, so
+  `-profile-set` was lost in the match process (every earlier in-game Elite test was void). `-profile-set` now also
+  reads the environment variable `NOBLE_PROFILE_SET` (inherited by the relaunch), e.g.
+  `set NOBLE_PROFILE_SET=8C=C7&& noble-client.exe` (no space before `&&`). Log line: `-profile-set +0x8C = 0xC7`.
+- **Armory character no longer follows into other menus:** `FrontEndMenu::UpdateSceneForScreen` default branch sets
+  `start_menu` (scene 0x0, shows_elite 0); `ReachArmory` only shows the Elite in Armory scenes (0x0A-0x14 except roster
+  0x0E). Log confirms the switch when leaving the Armory.
+- Open: black background behind the menu / Armory scene (scene environment not drawing); Tyler hasn't answered
+  whether the main menu should show his character beside the list or none.
 
 ## 0. Pick up here (2026-10-28, 16:30 ET) - Elite per-piece armor, all the menu map's Elite pieces
 

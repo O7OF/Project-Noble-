@@ -963,6 +963,8 @@ void UpdateSceneForScreen(Screen screen) {
         UIManager::GetArmorCustomizer().UpdateArmoryCamera();
         break;
     default:
+        // Settings, Service Record, Mods, ...: the main menu's scene, never the Armory's.
+        ReachArmory::SetTargetScene("start_menu");
         break;
     }
 }
