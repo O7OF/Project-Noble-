@@ -287,9 +287,11 @@ const std::vector<HelmetSpec>& GetSpartanHelmets() {
         {
             "AKIS / GRD", "hilands", "-dlc2_helmet_hilands",
             {
+                // MCC's four GRD items in MCC order: Base, Optrex, CBRN, Optrex/CBRN.
                 {"BASE", "hilands", "High-altitude reconnaissance and assassination prototype developed at the UNSC Highland Mountains facility."},
+                {"OPTREX", "hilands_b", "Optrex optical rangefinder module for the AKIS / GRD helmet."},
                 {"CBRN", "hilands_a", "CBRN filtration module for the AKIS prototype helmet."},
-                {"GRD", "hilands_b", "Full optical rangefinder and CBRN suite for the AKIS / GRD helmet."},
+                {"OPTREX/CBRN", "hilands_c", "Optrex rangefinder combined with the CBRN filtration suite for the AKIS / GRD helmet."},
             },
             "High-altitude reconnaissance and assassination prototype developed at the UNSC Highland Mountains facility."
         },
@@ -853,6 +855,17 @@ bool ArmorCustomizer::LoadProfile(const std::filesystem::path& path) {
                 m_profile.helmetIndex = sp["helmet_index"].get<int>();
             if (sp.contains("helmet_variant_index") && sp["helmet_variant_index"].is_number_integer())
                 m_profile.helmetVariantIndex = sp["helmet_variant_index"].get<int>();
+            // The helmet id wins over the variant index (variant lists can be reordered, e.g. GRD).
+            if (sp.contains("helmet_id") && sp["helmet_id"].is_string()) {
+                const std::string helmetId = sp["helmet_id"].get<std::string>();
+                const auto& helmetList = GetSpartanHelmets();
+                if (m_profile.helmetIndex >= 0 && m_profile.helmetIndex < static_cast<int>(helmetList.size())) {
+                    const auto& variants = helmetList[m_profile.helmetIndex].variants;
+                    for (size_t v = 0; v < variants.size(); ++v) {
+                        if (helmetId == variants[v].stringId) m_profile.helmetVariantIndex = static_cast<int>(v);
+                    }
+                }
+            }
             if (sp.contains("left_shoulder_index") && sp["left_shoulder_index"].is_number_integer())
                 m_profile.leftShoulderIndex = sp["left_shoulder_index"].get<int>();
             if (sp.contains("right_shoulder_index") && sp["right_shoulder_index"].is_number_integer())

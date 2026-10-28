@@ -774,7 +774,7 @@ static const std::unordered_map<std::string, uint32_t>& Helmets() {
         {"player_li", 58}, {"player_li_a", 59}, {"player_li_b", 60},        // Military Police
         {"rosenda", 61}, {"rosenda_a", 62}, {"rosenda_b", 63},              // CQB
         {"cndmnd", 64}, {"cndmnd_a", 67}, {"cndmnd_b", 65}, {"cndmnd_c", 66}, // Mariner: base, Optrex, Defiant, Mister Chief
-        {"hilands", 68}, {"hilands_a", 70}, {"hilands_b", 69},              // GRD: base, CBRN, Optrex
+        {"hilands", 68}, {"hilands_b", 69}, {"hilands_a", 70}, {"hilands_c", 71}, // GRD: base, Optrex, CBRN, Optrex/CBRN
         {"s8_helmet_belos_corinthian", 72}, {"s8_helmet_belos_transverse", 73},
         {"s8_helmet_belos_kerata", 74}, {"s8_helmet_belos_leontokardos", 75},
         {"s8_helmet_belos_stheno", 76}, {"s8_helmet_belos_cerberus", 77},
