@@ -8,6 +8,8 @@
 #include <imgui.h>
 #include <nlohmann/json.hpp>
 #include <algorithm>
+#include <cfloat>
+#include <random>
 #include <array>
 #include <cmath>
 #include <cstdio>
@@ -696,53 +698,15 @@ void ArmorCustomizer::MigrateFromLegacyFields() {
 
 void ArmorCustomizer::UpdateArmoryCamera() const {
     if (!ReachArmory::IsMenuMode()) return;
-
     if (m_previewSpecies == PlayerSpecies::Elite) {
         ReachArmory::SetTargetScene("armory_elite");
         return;
     }
-
-    // Spartan camera scene selection in mainmenu_all.map:
-    //   m_cameraMode == 0: "armory" (Reach's native Armory 3/4 view positioned on the right half of the screen)
-    //   m_cameraMode == 1: "c_full_spartan" (Full-body Spartan view)
-    //   m_cameraMode == 2: Slot-specific close-up director scenes ("c_helmet", "c_chest", etc.)
-    if (m_cameraMode == 1) {
-        ReachArmory::SetTargetScene("c_full_spartan");
-        return;
-    }
-    if (m_cameraMode == 2) {
-        // Row 0 is Preferred Species; Spartan armor rows start at 1
-        switch (m_focusedRow) {
-        case 1:
-        case 2:
-        case 8: // Helmet, Helmet Variant, Visor Color
-            ReachArmory::SetTargetScene("c_helmet");
-            return;
-        case 3: // Left Shoulder
-            ReachArmory::SetTargetScene("c_left_shoulder");
-            return;
-        case 4: // Right Shoulder
-            ReachArmory::SetTargetScene("c_right_shoulder");
-            return;
-        case 5: // Chest
-            ReachArmory::SetTargetScene("c_chest");
-            return;
-        case 6: // Wrist
-            ReachArmory::SetTargetScene("c_wrist");
-            return;
-        case 7: // Utility
-            ReachArmory::SetTargetScene("c_utility");
-            return;
-        case 9: // Knee Guards
-            ReachArmory::SetTargetScene("c_knees");
-            return;
-        default:
-            ReachArmory::SetTargetScene("c_full_spartan");
-            return;
-        }
-    }
-
-    ReachArmory::SetTargetScene("armory");
+    // Camera scenes in mainmenu_all.map: "armory" (Reach's own 3/4 view), "c_full_spartan" (whole body) and
+    // the per-slot close-ups ("c_helmet", "c_chest", ...). Mode 2 (default) follows the slot being edited.
+    if (m_cameraMode == 1) ReachArmory::SetTargetScene("c_full_spartan");
+    else if (m_cameraMode == 2) ReachArmory::SetTargetScene(m_focusScene.empty() ? "c_full_spartan" : m_focusScene.c_str());
+    else ReachArmory::SetTargetScene("armory");
 }
 
 void ArmorCustomizer::SyncToReachArmory() const {
@@ -1027,8 +991,8 @@ void ArmorCustomizer::RenderCharacterPreview(ID3D11Device* device, ID3D11DeviceC
     (void)context;
     (void)fullBleed;
 
-    // The live Halo: Reach Blam! engine (`haloreach.dll`) renders the 3D Armory Spartan / Elite
-    // scene (`mainmenu_all.map`) directly into the swap chain backbuffer behind this transparent viewport.
+    // The live Halo: Reach engine (`haloreach.dll`) renders the 3D Armory Spartan / Elite scene
+    // (`mainmenu_all.map`) into the swap chain behind this transparent area.
     const ImVec2 cursorPos = ImGui::GetCursorScreenPos();
 
     if (!ReachArmory::IsSceneReady()) {
@@ -1051,15 +1015,48 @@ void ArmorCustomizer::RenderCharacterPreview(ID3D11Device* device, ID3D11DeviceC
     if (ImGui::IsItemHovered()) {
         const float wheel = ImGui::GetIO().MouseWheel;
         if (std::abs(wheel) > 0.01f) {
-            if (wheel > 0.0f) {
-                m_cameraMode = 2; // Zoom to currently focused armor slot camera
-            } else {
-                m_cameraMode = (m_cameraMode == 2) ? 0 : 1; // Zoom out to Armory or Full Body camera
-            }
+            // Wheel up: close-up of the slot being edited; wheel down: whole body, then the Armory view.
+            if (wheel > 0.0f) m_cameraMode = 2;
+            else m_cameraMode = (m_cameraMode == 2) ? 1 : 0;
             UpdateArmoryCamera();
         }
     }
 }
+
+namespace {
+
+// One option in a picker grid.
+struct PickOption {
+    std::string name;
+    std::string description;
+    ImU32 swatch = 0;     // colour tiles
+};
+
+enum class RowKind { List, Colour, Tag };
+
+// One slot in the left list (Armory v2, spec 4.6).
+struct SlotRow {
+    const char* group;    // CHARACTER / ARMOR / COLORS / EFFECTS / IDENTITY
+    const char* label;
+    RowKind kind = RowKind::List;
+    int* index = nullptr;
+    std::vector<PickOption> options;
+    const char* scene = "c_full_spartan";   // camera close-up while this slot is edited
+};
+
+ImU32 ColourU32(float r, float g, float b) {
+    return ImGui::ColorConvertFloat4ToU32(ImVec4(r, g, b, 1.0f));
+}
+
+void TextAt(ImDrawList* dl, ImFont* f, float px, ImVec2 p, ImU32 col, const char* t, float wrap = 0.0f) {
+    dl->AddText(f ? f : ImGui::GetFont(), px, p, col, t, nullptr, wrap);
+}
+
+float TextW(ImFont* f, float px, const char* t) {
+    return (f ? f : ImGui::GetFont())->CalcTextSizeA(px, FLT_MAX, 0.0f, t).x;
+}
+
+} // namespace
 
 void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context) {
     SyncLegacyFields();
@@ -1074,8 +1071,14 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
     const ImVec2 origin = ImGui::GetCursorScreenPos();
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const float s = std::max(0.75f, avail.y / 640.0f);
+    ImFont* titleFont = NobleStyle::TitleFont();
+    ImFont* smallFont = NobleStyle::SmallFont();
+    ImFont* bodyFont = ImGui::GetFont();
+    const ImU32 kAccentCol = IM_COL32(143, 216, 255, 255);
+    const ImU32 kDimCol = IM_COL32(160, 178, 196, 255);
+    const ImU32 kWhiteCol = IM_COL32(240, 246, 252, 255);
 
-    // Keyboard / Gamepad rotation shortcuts (Q/E or Right Stick)
+    // Q / E or the right stick turn the model.
     if (!ImGui::GetIO().WantTextInput) {
         if (ImGui::IsKeyDown(ImGuiKey_Q) || ImGui::IsKeyDown(ImGuiKey_GamepadRStickLeft)) {
             ReachArmory::AddYawRotation(ImGui::GetIO().DeltaTime * 1.8f);
@@ -1085,422 +1088,319 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
         }
     }
 
-    // -------------------------------------------------------------------------
-    // 1. RIGHT SIDE: LIVE IN-ENGINE 3D CHARACTER VIEWPORT (haloreach.dll)
-    // -------------------------------------------------------------------------
-    const float leftColWidth = std::clamp(avail.x * 0.41f, 360.0f * s, 520.0f * s);
-    const float previewX = origin.x + leftColWidth - 20.0f * s;
-    const float previewW = avail.x - (leftColWidth - 20.0f * s);
-    const float previewH = avail.y;
+    // ---- Layout: slot list | picker | model (Reach's Armory camera puts the model on the right).
+    const float listW = std::clamp(avail.x * 0.22f, 250.0f * s, 330.0f * s);
+    const float gap = 14.0f * s;
+    const float pickX = origin.x + listW + gap;
+    const float pickW = std::clamp(avail.x * 0.30f, 330.0f * s, 470.0f * s);
+    const float previewX = pickX + pickW + gap;
+    const float previewW = std::max(100.0f, origin.x + avail.x - previewX);
 
     ImGui::SetCursorScreenPos(ImVec2(previewX, origin.y));
-    RenderCharacterPreview(device, context, previewW, previewH, true);
+    RenderCharacterPreview(device, context, previewW, avail.y, true);
 
-    // -------------------------------------------------------------------------
-    // 2. TOP SUB-HEADER BAR: SPARTAN/ELITE TABS + PREFERRED SPECIES BUTTON + BODY/CAMERA
-    // -------------------------------------------------------------------------
-    const float barY = origin.y + 4.0f * s;
-    float pillX = origin.x;
-
-    auto drawModePill = [&](const char* label, bool active, float w, bool highlightGold = false) -> bool {
-        const ImVec2 p0(pillX, barY);
-        const ImVec2 p1(pillX + w, barY + 28.0f * s);
-        ImGui::SetCursorScreenPos(p0);
-        const bool clicked = ImGui::InvisibleButton(label, ImVec2(w, 28.0f * s));
-        const bool hovered = ImGui::IsItemHovered();
-
-        const ImU32 bgCol = highlightGold
-                          ? (hovered ? IM_COL32(112, 82, 22, 230) : IM_COL32(78, 56, 16, 205))
-                          : active ? IM_COL32(34, 88, 136, 210)
-                          : hovered ? IM_COL32(28, 52, 82, 180)
-                                    : IM_COL32(14, 24, 38, 150);
-        dl->AddRectFilled(p0, p1, bgCol, 2.0f);
-        if (highlightGold) {
-            dl->AddLine(ImVec2(p0.x, p1.y - 2.0f), ImVec2(p1.x, p1.y - 2.0f), IM_COL32(255, 205, 85, 255), 2.5f);
-        } else if (active) {
-            dl->AddLine(ImVec2(p0.x, p1.y - 2.0f), ImVec2(p1.x, p1.y - 2.0f), IM_COL32(95, 205, 255, 255), 2.5f);
-        }
-        const ImVec2 ts = ImGui::CalcTextSize(label);
-        dl->AddText(ImVec2(p0.x + (w - ts.x) * 0.5f, p0.y + (28.0f * s - ts.y) * 0.5f),
-                    (active || highlightGold) ? IM_COL32(255, 255, 255, 255) : IM_COL32(175, 195, 215, 220), label);
-        pillX += w + 6.0f * s;
-        return clicked;
-    };
-
-    if (drawModePill("SPARTAN", m_previewSpecies == PlayerSpecies::Spartan, 90.0f * s)) {
-        m_previewSpecies = PlayerSpecies::Spartan;
-        m_profile.species = PlayerSpecies::Spartan;
-        m_focusedRow = 0;
-        m_dirty = true;
-        SaveProfile(m_profilePath);
+    // ---- Slot rows for the species being edited.
+    int speciesInt = static_cast<int>(m_profile.species);
+    int bodyInt = static_cast<int>(m_profile.bodyType);
+    std::vector<SlotRow> rows;
+    {
+        SlotRow r{ "CHARACTER", "Species", RowKind::List, &speciesInt };
+        r.options = { { "SPARTAN", "UNSC SPARTAN-III. Used in multiplayer, Forge and custom games." },
+                      { "ELITE", "Sangheili Elite. Used in multiplayer, Forge and custom games." } };
+        rows.push_back(r);
     }
-    if (drawModePill("ELITE", m_previewSpecies == PlayerSpecies::Elite, 78.0f * s)) {
-        m_previewSpecies = PlayerSpecies::Elite;
-        m_profile.species = PlayerSpecies::Elite;
-        m_focusedRow = 0;
-        m_dirty = true;
-        SaveProfile(m_profilePath);
-    }
-
-    const char* prefLabel = (m_profile.species == PlayerSpecies::Elite)
-                          ? "PREFERRED SPECIES: ELITE"
-                          : "PREFERRED SPECIES: SPARTAN";
-    if (drawModePill(prefLabel, true, 210.0f * s, true)) {
-        m_profile.species = (m_profile.species == PlayerSpecies::Spartan)
-                          ? PlayerSpecies::Elite
-                          : PlayerSpecies::Spartan;
-        m_previewSpecies = m_profile.species;
-        m_dirty = true;
-        SaveProfile(m_profilePath);
-    }
-
     if (m_previewSpecies == PlayerSpecies::Spartan) {
-        if (drawModePill(m_profile.bodyType == BodyType::Male ? "BODY: LIGHT/MALE" : "BODY: HEAVY/FEMALE", false, 142.0f * s)) {
-            m_profile.bodyType = (m_profile.bodyType == BodyType::Male) ? BodyType::Female : BodyType::Male;
-            m_dirty = true;
-            SaveProfile(m_profilePath);
+        {
+            SlotRow r{ "CHARACTER", "Body", RowKind::List, &bodyInt };
+            r.options = { { "MALE", "Male Spartan body." }, { "FEMALE", "Female Spartan body." } };
+            rows.push_back(r);
         }
-        const char* camLabel = (m_cameraMode == 0) ? "CAM: ARMORY"
-                             : (m_cameraMode == 1) ? "CAM: FULL BODY"
-                                                   : "CAM: SLOT ZOOM";
-        if (drawModePill(camLabel, m_cameraMode == 2, 122.0f * s)) {
-            m_cameraMode = (m_cameraMode + 1) % 3;
-            UpdateArmoryCamera();
-        }
-    }
-
-    // -------------------------------------------------------------------------
-    // 3. LEFT COLUMN: MCC-STYLE TRANSLUCENT CUSTOMIZATION TABLE ROWS
-    // -------------------------------------------------------------------------
-    int preferredSpeciesInt = static_cast<int>(m_profile.species);
-
-    struct RowDescriptor {
-        const char* category;
-        std::string currentValue;
-        const char* itemTitle;
-        const char* itemDesc;
-        int* indexPtr;
-        int count;
-        bool isColorRow = false;
-        bool isServiceTagRow = false;
-        bool isPreferredSpeciesRow = false;
-    };
-
-    const char* prefValueStr = (m_profile.species == PlayerSpecies::Elite) ? "ELITE" : "SPARTAN";
-    const char* prefDescStr  = (m_profile.species == PlayerSpecies::Elite)
-        ? "Selects Sangheili (Elite) as your preferred playable species for Multiplayer, Forge, and Custom Games."
-        : "Selects UNSC SPARTAN-III as your preferred playable species for Multiplayer, Forge, and Custom Games.";
-
-    std::vector<RowDescriptor> rows;
-    rows.push_back({"Preferred Species", prefValueStr, prefValueStr, prefDescStr, &preferredSpeciesInt, 2, false, false, true});
-
-    if (m_previewSpecies == PlayerSpecies::Spartan) {
+        auto addList = [&](const char* label, int* idx, const char* scene, auto&& fill) {
+            SlotRow r{ "ARMOR", label, RowKind::List, idx };
+            r.scene = scene;
+            fill(r.options);
+            rows.push_back(std::move(r));
+        };
         const auto& helmets = GetSpartanHelmets();
+        addList("Helmet", &m_profile.helmetIndex, "c_helmet", [&](std::vector<PickOption>& o) {
+            for (const auto& h : helmets) o.push_back({ h.name, h.description });
+        });
+        addList("Helmet Variant", &m_profile.helmetVariantIndex, "c_helmet", [&](std::vector<PickOption>& o) {
+            const auto& h = helmets[std::clamp(m_profile.helmetIndex, 0, static_cast<int>(helmets.size()) - 1)];
+            for (const auto& v : h.variants) o.push_back({ v.name, v.description });
+        });
         const auto& shoulders = GetSpartanShoulders();
-        const auto& chests = GetSpartanChests();
-        const auto& wrists = GetSpartanWrists();
-        const auto& utilities = GetSpartanUtilities();
-        const auto& knees = GetSpartanKneeGuards();
-
-        const auto& h = helmets[m_profile.helmetIndex];
-        const auto& hv = h.variants[m_profile.helmetVariantIndex];
-        const auto& ls = shoulders[m_profile.leftShoulderIndex];
-        const auto& rs = shoulders[m_profile.rightShoulderIndex];
-        const auto& ch = chests[m_profile.chestIndex];
-        const auto& wr = wrists[m_profile.wristIndex];
-        const auto& ut = utilities[m_profile.utilityIndex];
-        const auto& vc = kVisorColors[m_profile.visorColorIndex];
-        const auto& kn = knees[m_profile.kneeGuardsIndex];
-        const auto& ae = kArmorEffects[m_profile.armorEffectIndex];
-        const auto& fv = kFirefightVoices[m_profile.firefightVoiceIndex];
-
-        rows.push_back({"Helmet",          h.name,  h.name,  h.description,  &m_profile.helmetIndex,         static_cast<int>(helmets.size())});
-        rows.push_back({"Helmet Variant",  hv.name, hv.name, hv.description, &m_profile.helmetVariantIndex,  static_cast<int>(h.variants.size())});
-        rows.push_back({"Left Shoulder",   ls.name, ls.name, ls.description, &m_profile.leftShoulderIndex,   static_cast<int>(shoulders.size())});
-        rows.push_back({"Right Shoulder",  rs.name, rs.name, rs.description, &m_profile.rightShoulderIndex,  static_cast<int>(shoulders.size())});
-        rows.push_back({"Chest",           ch.name, ch.name, ch.description, &m_profile.chestIndex,          static_cast<int>(chests.size())});
-        rows.push_back({"Wrist",           wr.name, wr.name, wr.description, &m_profile.wristIndex,          static_cast<int>(wrists.size())});
-        rows.push_back({"Utility",         ut.name, ut.name, ut.description, &m_profile.utilityIndex,        static_cast<int>(utilities.size())});
-        rows.push_back({"Visor Color",     vc.name, vc.name, vc.description, &m_profile.visorColorIndex,     static_cast<int>(kVisorColors.size())});
-        rows.push_back({"Knee Guards",     kn.name, kn.name, kn.description, &m_profile.kneeGuardsIndex,     static_cast<int>(knees.size())});
-        rows.push_back({"Armor Effect",    ae.name, ae.name, ae.description, &m_profile.armorEffectIndex,    static_cast<int>(kArmorEffects.size())});
-        rows.push_back({"Firefight Voice", fv.name, fv.name, fv.description, &m_profile.firefightVoiceIndex, static_cast<int>(kFirefightVoices.size())});
-        rows.push_back({"CHANGE COLORS",   "",      "ARMOR COLORS", "Customize primary and secondary MJOLNIR armor plate coloration.", nullptr, 0, true, false});
-        rows.push_back({"SERVICE TAG",     m_profile.serviceTag, "SERVICE TAG", "Four-character alphanumeric UNSC identification tag.", nullptr, 0, false, true});
+        addList("Left Shoulder", &m_profile.leftShoulderIndex, "c_left_shoulder", [&](std::vector<PickOption>& o) {
+            for (const auto& x : shoulders) o.push_back({ x.name, x.description });
+        });
+        addList("Right Shoulder", &m_profile.rightShoulderIndex, "c_right_shoulder", [&](std::vector<PickOption>& o) {
+            for (const auto& x : shoulders) o.push_back({ x.name, x.description });
+        });
+        auto multi = [](const std::vector<MultiLayerSpec>& list) {
+            return [&list](std::vector<PickOption>& o) { for (const auto& x : list) o.push_back({ x.name, x.description }); };
+        };
+        addList("Chest", &m_profile.chestIndex, "c_chest", multi(GetSpartanChests()));
+        addList("Wrist", &m_profile.wristIndex, "c_wrist", multi(GetSpartanWrists()));
+        addList("Utility", &m_profile.utilityIndex, "c_utility", multi(GetSpartanUtilities()));
+        addList("Knee Guards", &m_profile.kneeGuardsIndex, "c_knees", multi(GetSpartanKneeGuards()));
+        addList("Visor Color", &m_profile.visorColorIndex, "c_helmet", [&](std::vector<PickOption>& o) {
+            for (const auto& v : kVisorColors) o.push_back({ v.name, v.description, ColourU32(v.r, v.g, v.b) });
+        });
     } else {
-        const int maxEl = static_cast<int>(kEliteSets.size());
-        const auto& preset = kEliteSets[std::clamp(m_profile.eliteArmorSet, 0, maxEl - 1)];
-        const auto& ae = kArmorEffects[m_profile.armorEffectIndex];
-        const auto& fv = kFirefightVoices[m_profile.firefightVoiceIndex];
-
-        rows.push_back({"Armor Set",       preset.name, preset.name, preset.description, &m_profile.eliteArmorSet,          maxEl});
-        rows.push_back({"Armor Effect",    ae.name,     ae.name,     ae.description,     &m_profile.armorEffectIndex,       static_cast<int>(kArmorEffects.size())});
-        rows.push_back({"Firefight Voice", fv.name,     fv.name,     fv.description,     &m_profile.firefightVoiceIndex,    static_cast<int>(kFirefightVoices.size())});
-        rows.push_back({"CHANGE COLORS",   "",          "ELITE HARNESS COLORS", "Customize primary and secondary Sangheili combat harness coloration.", nullptr, 0, true, false});
-        rows.push_back({"SERVICE TAG",     m_profile.serviceTag, "SERVICE TAG", "Four-character alphanumeric identification tag.", nullptr, 0, false, true});
+        SlotRow r{ "ARMOR", "Armor Set", RowKind::List, &m_profile.eliteArmorSet };
+        for (const auto& e : kEliteSets) r.options.push_back({ e.name, e.description });
+        rows.push_back(r);
     }
+    {
+        SlotRow p{ "COLORS", "Primary", RowKind::Colour, &m_profile.primaryColor };
+        SlotRow q{ "COLORS", "Secondary", RowKind::Colour, &m_profile.secondaryColor };
+        for (const auto& c : kReachColors) {
+            p.options.push_back({ c.name, "", ColourU32(c.r, c.g, c.b) });
+            q.options.push_back({ c.name, "", ColourU32(c.r, c.g, c.b) });
+        }
+        rows.push_back(p);
+        rows.push_back(q);
+    }
+    {
+        SlotRow r{ "EFFECTS & VOICE", "Armor Effect", RowKind::List, &m_profile.armorEffectIndex };
+        r.scene = "c_helmet";
+        for (const auto& e : kArmorEffects) r.options.push_back({ e.name, e.description });
+        rows.push_back(r);
+        SlotRow v{ "EFFECTS & VOICE", "Firefight Voice", RowKind::List, &m_profile.firefightVoiceIndex };
+        for (const auto& e : kFirefightVoices) v.options.push_back({ e.name, e.description });
+        rows.push_back(v);
+    }
+    rows.push_back({ "IDENTITY", "Service Tag", RowKind::Tag });
 
     const int rowCount = static_cast<int>(rows.size());
     m_focusedRow = std::clamp(m_focusedRow, 0, rowCount - 1);
 
-    // Keyboard/Gamepad Up/Down/Left/Right navigation when modal isn't open
-    if (!m_showColorModal && !ImGui::GetIO().WantTextInput) {
-        if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown)) {
-            m_focusedRow = (m_focusedRow + 1) % rowCount;
-            UpdateArmoryCamera();
-        }
-        if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp)) {
-            m_focusedRow = (m_focusedRow - 1 + rowCount) % rowCount;
-            UpdateArmoryCamera();
-        }
-    }
-
-    auto applyRowDelta = [&](int rowIndex, int delta) {
-        RowDescriptor& r = rows[rowIndex];
-        if (!r.indexPtr || r.count <= 0) return;
-        *r.indexPtr = (*r.indexPtr + delta + r.count) % r.count;
-        if (r.isPreferredSpeciesRow) {
-            m_profile.species = static_cast<PlayerSpecies>(std::clamp(preferredSpeciesInt, 0, 1));
+    // Picks an option for a row: saves, updates the model, keeps dependent fields right.
+    auto choose = [&](int rowIndex, int value) {
+        SlotRow& r = rows[rowIndex];
+        if (!r.index || r.options.empty()) return;
+        value = std::clamp(value, 0, static_cast<int>(r.options.size()) - 1);
+        if (*r.index == value && r.index != &speciesInt && r.index != &bodyInt) return;
+        *r.index = value;
+        if (r.index == &speciesInt) {
+            m_profile.species = static_cast<PlayerSpecies>(std::clamp(speciesInt, 0, 1));
             m_previewSpecies = m_profile.species;
-        } else if (m_previewSpecies == PlayerSpecies::Spartan && rowIndex == 1) {
-            // Reset helmet variant to BASE when switching base helmet
-            m_profile.helmetVariantIndex = 0;
-        } else if (m_previewSpecies == PlayerSpecies::Elite && rowIndex == 1) {
-            // Changing Elite Armor Set updates all Elite armor slots
-            m_profile.eliteHelmetIndex = m_profile.eliteArmorSet;
-            m_profile.eliteLeftShoulderIndex = m_profile.eliteArmorSet;
-            m_profile.eliteRightShoulderIndex = m_profile.eliteArmorSet;
-            m_profile.eliteChestIndex = m_profile.eliteArmorSet;
-            m_profile.eliteArmsIndex = m_profile.eliteArmorSet;
-            m_profile.eliteLegsIndex = m_profile.eliteArmorSet;
+            m_focusedRow = 0;
+        } else if (r.index == &bodyInt) {
+            m_profile.bodyType = static_cast<BodyType>(std::clamp(bodyInt, 0, 1));
+        } else if (r.index == &m_profile.helmetIndex) {
+            m_profile.helmetVariantIndex = 0;   // a new helmet starts on its base variant
+        } else if (r.index == &m_profile.eliteArmorSet) {
+            m_profile.eliteHelmetIndex = m_profile.eliteLeftShoulderIndex = m_profile.eliteRightShoulderIndex =
+                m_profile.eliteChestIndex = m_profile.eliteArmsIndex = m_profile.eliteLegsIndex = m_profile.eliteArmorSet;
         }
         m_dirty = true;
         SaveProfile(m_profilePath);
     };
+    auto focus = [&](int rowIndex) {
+        if (m_focusedRow == rowIndex) return;
+        m_focusedRow = rowIndex;
+        m_pickerScrollToEquipped = true;
+    };
 
-    if (!m_showColorModal && !ImGui::GetIO().WantTextInput) {
-        if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft)) {
-            applyRowDelta(m_focusedRow, -1);
-        }
-        if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight)) {
-            applyRowDelta(m_focusedRow, +1);
-        }
-        if ((ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown)) && rows[m_focusedRow].isColorRow) {
-            m_showColorModal = true;
+    // Keys / d-pad: up/down picks the slot, left/right steps through its options.
+    if (!ImGui::GetIO().WantTextInput) {
+        if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown)) focus((m_focusedRow + 1) % rowCount);
+        if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp)) focus((m_focusedRow - 1 + rowCount) % rowCount);
+        SlotRow& fr = rows[m_focusedRow];
+        if (fr.index && !fr.options.empty()) {
+            const int n = static_cast<int>(fr.options.size());
+            if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft)) {
+                choose(m_focusedRow, (*fr.index - 1 + n) % n);
+                m_pickerScrollToEquipped = true;
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight)) {
+                choose(m_focusedRow, (*fr.index + 1) % n);
+                m_pickerScrollToEquipped = true;
+            }
         }
     }
+    m_focusScene = m_previewSpecies == PlayerSpecies::Spartan ? rows[m_focusedRow].scene : "armory_elite";
 
-    const float tableTop = origin.y + 42.0f * s;
-    const float rowH = std::min(34.0f * s, (avail.y - 54.0f * s) / static_cast<float>(rowCount));
-    const float catWidth = leftColWidth * 0.43f;
-    const float valWidth = leftColWidth - catWidth;
-
-    for (int i = 0; i < rowCount; ++i) {
-        RowDescriptor& r = rows[i];
-        const float y0 = tableTop + i * rowH;
-        const float y1 = y0 + rowH - 1.0f;
-        const ImVec2 rowMin(origin.x, y0);
-        const ImVec2 rowMax(origin.x + leftColWidth, y1);
-        const ImVec2 valMin(origin.x + catWidth, y0);
-        const ImVec2 valMax(origin.x + leftColWidth, y1);
-
-        ImGui::PushID(i);
-        ImGui::SetCursorScreenPos(rowMin);
-        const bool rowClicked = ImGui::InvisibleButton("##row_hit", ImVec2(leftColWidth, rowH - 1.0f));
-        const bool rowHovered = ImGui::IsItemHovered();
-        if (rowHovered && (ImGui::GetIO().MouseDelta.x != 0.0f || ImGui::GetIO().MouseDelta.y != 0.0f)) {
-            if (m_focusedRow != i) {
-                m_focusedRow = i;
-                UpdateArmoryCamera();
+    // ---- Left: grouped slot list.
+    {
+        ImGui::SetCursorScreenPos(origin);
+        ImGui::BeginChild("##armory_slots", ImVec2(listW, avail.y), ImGuiChildFlags_None, ImGuiWindowFlags_NoBackground);
+        ImDrawList* ldl = ImGui::GetWindowDrawList();
+        const float rowH = 30.0f * s;
+        const char* lastGroup = nullptr;
+        for (int i = 0; i < rowCount; ++i) {
+            SlotRow& r = rows[i];
+            if (!lastGroup || std::strcmp(lastGroup, r.group) != 0) {
+                lastGroup = r.group;
+                ImGui::Dummy(ImVec2(0, lastGroup == rows[0].group && i == 0 ? 0.0f : 6.0f * s));
+                const ImVec2 hp = ImGui::GetCursorScreenPos();
+                TextAt(ldl, smallFont, 13.0f * s, hp, IM_COL32(150, 190, 220, 255), r.group);
+                const float tw = TextW(smallFont, 13.0f * s, r.group);
+                ldl->AddLine(ImVec2(hp.x + tw + 8.0f * s, hp.y + 7.0f * s), ImVec2(hp.x + listW - 6.0f * s, hp.y + 7.0f * s), IM_COL32(255, 255, 255, 40));
+                ImGui::Dummy(ImVec2(listW, 20.0f * s));
             }
-        }
-        const bool selected = (m_focusedRow == i);
-
-        // MCC translucent row background + active cyan gradient + left cyan vertical bar
-        if (selected) {
-            dl->AddRectFilledMultiColor(
-                rowMin, rowMax,
-                IM_COL32(28, 78, 128, 210),
-                IM_COL32(18, 48, 84, 150),
-                IM_COL32(18, 48, 84, 150),
-                IM_COL32(28, 78, 128, 210)
-            );
-            dl->AddRectFilled(ImVec2(rowMin.x, rowMin.y), ImVec2(rowMin.x + 4.0f * s, rowMax.y), IM_COL32(95, 215, 255, 255));
-        } else {
-            dl->AddRectFilled(rowMin, rowMax, IM_COL32(10, 18, 28, 130));
-            dl->AddRectFilled(valMin, valMax, IM_COL32(14, 24, 38, 155));
-        }
-        // Subtle 1px horizontal divider
-        dl->AddLine(ImVec2(rowMin.x, rowMax.y), ImVec2(rowMax.x, rowMax.y), IM_COL32(120, 165, 210, 38));
-        dl->AddLine(ImVec2(valMin.x, rowMin.y), ImVec2(valMin.x, rowMax.y), IM_COL32(120, 165, 210, 28));
-
-        // Category label on the left
-        const ImVec2 catTextSize = ImGui::CalcTextSize(r.category);
-        dl->AddText(
-            ImVec2(rowMin.x + 14.0f * s, y0 + (rowH - catTextSize.y) * 0.5f),
-            selected ? IM_COL32(240, 248, 255, 255) : IM_COL32(168, 188, 210, 225),
-            r.category
-        );
-
-        if (r.isColorRow) {
-            const auto& pCol = kReachColors[std::clamp(m_profile.primaryColor, 0, 29)];
-            const auto& sCol = kReachColors[std::clamp(m_profile.secondaryColor, 0, 29)];
-            const float swatchSz = rowH * 0.64f;
-            const float sy = y0 + (rowH - swatchSz) * 0.5f;
-            const float sx1 = valMin.x + valWidth * 0.5f - swatchSz - 4.0f * s;
-            const float sx2 = valMin.x + valWidth * 0.5f + 4.0f * s;
-
-            dl->AddRectFilled(ImVec2(sx1, sy), ImVec2(sx1 + swatchSz, sy + swatchSz),
-                              ImGui::ColorConvertFloat4ToU32(ImVec4(pCol.r, pCol.g, pCol.b, 1.0f)));
-            dl->AddRect(ImVec2(sx1, sy), ImVec2(sx1 + swatchSz, sy + swatchSz), IM_COL32(230, 240, 255, 210), 0.0f, 0, 1.5f);
-
-            dl->AddRectFilled(ImVec2(sx2, sy), ImVec2(sx2 + swatchSz, sy + swatchSz),
-                              ImGui::ColorConvertFloat4ToU32(ImVec4(sCol.r, sCol.g, sCol.b, 1.0f)));
-            dl->AddRect(ImVec2(sx2, sy), ImVec2(sx2 + swatchSz, sy + swatchSz), IM_COL32(230, 240, 255, 210), 0.0f, 0, 1.5f);
-
-            if (rowClicked) {
-                m_showColorModal = !m_showColorModal;
-            }
-        } else if (r.isServiceTagRow) {
-            ImGui::SetCursorScreenPos(ImVec2(valMin.x + valWidth * 0.25f, y0 + (rowH - 22.0f * s) * 0.5f));
-            ImGui::SetNextItemWidth(valWidth * 0.50f);
-            char tagBuf[8] = {};
-            std::snprintf(tagBuf, sizeof(tagBuf), "%s", m_profile.serviceTag.c_str());
-            if (ImGui::InputText("##service_tag_in", tagBuf, 5, ImGuiInputTextFlags_CharsUppercase)) {
-                m_profile.serviceTag = tagBuf;
-                m_dirty = true;
-                SaveProfile(m_profilePath);
-            }
-        } else {
-            // Centered uppercase value + < > arrows when selected
-            const ImVec2 valTextSize = ImGui::CalcTextSize(r.currentValue.c_str());
-            dl->AddText(
-                ImVec2(valMin.x + (valWidth - valTextSize.x) * 0.5f, y0 + (rowH - valTextSize.y) * 0.5f),
-                selected ? IM_COL32(255, 255, 255, 255) : IM_COL32(165, 185, 205, 215),
-                r.currentValue.c_str()
-            );
-
+            const ImVec2 p0 = ImGui::GetCursorScreenPos();
+            const ImVec2 p1(p0.x + listW - 6.0f * s, p0.y + rowH);
+            ImGui::PushID(i);
+            const bool clicked = ImGui::InvisibleButton("##slot", ImVec2(listW - 6.0f * s, rowH));
+            const bool hovered = ImGui::IsItemHovered();
+            ImGui::PopID();
+            if (clicked) focus(i);
+            const bool selected = m_focusedRow == i;
             if (selected) {
-                const float cy = y0 + rowH * 0.5f;
-                const float lx = valMin.x + 16.0f * s;
-                const float rx = valMax.x - 16.0f * s;
-                const float chSz = 5.5f * s;
-                dl->AddLine(ImVec2(lx + chSz, cy - chSz), ImVec2(lx, cy), IM_COL32(235, 245, 255, 245), 1.8f);
-                dl->AddLine(ImVec2(lx, cy), ImVec2(lx + chSz, cy + chSz), IM_COL32(235, 245, 255, 245), 1.8f);
-                dl->AddLine(ImVec2(rx - chSz, cy - chSz), ImVec2(rx, cy), IM_COL32(235, 245, 255, 245), 1.8f);
-                dl->AddLine(ImVec2(rx, cy), ImVec2(rx - chSz, cy + chSz), IM_COL32(235, 245, 255, 245), 1.8f);
+                ldl->AddRectFilledMultiColor(p0, p1, IM_COL32(60, 120, 170, 150), IM_COL32(60, 120, 170, 30),
+                                             IM_COL32(60, 120, 170, 30), IM_COL32(60, 120, 170, 150));
+                ldl->AddRectFilled(p0, ImVec2(p0.x + 3.0f * s, p1.y), kAccentCol);
+            } else if (hovered) {
+                ldl->AddRectFilled(p0, p1, IM_COL32(255, 255, 255, 14));
             }
-
-            if (rowClicked) {
-                m_focusedRow = i;
-                UpdateArmoryCamera();
-                const float mouseX = ImGui::GetIO().MousePos.x;
-                if (mouseX >= valMin.x && mouseX < valMin.x + valWidth * 0.35f) {
-                    applyRowDelta(i, -1);
-                } else if (mouseX >= valMin.x + valWidth * 0.35f) {
-                    applyRowDelta(i, +1);
-                }
-            }
-            if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
-                m_focusedRow = i;
-                UpdateArmoryCamera();
-                applyRowDelta(i, -1);
+            const float ty = p0.y + rowH * 0.5f - 9.0f * s;
+            TextAt(ldl, bodyFont, 17.0f * s, ImVec2(p0.x + 12.0f * s, ty), selected ? kWhiteCol : kDimCol, r.label);
+            // Current value on the right (a swatch for colours).
+            const float vr = p1.x - 8.0f * s;
+            if (r.kind == RowKind::Colour && r.index) {
+                const ImU32 c = r.options[std::clamp(*r.index, 0, 29)].swatch;
+                ldl->AddRectFilled(ImVec2(vr - 18.0f * s, p0.y + 7.0f * s), ImVec2(vr, p1.y - 7.0f * s), c);
+                ldl->AddRect(ImVec2(vr - 18.0f * s, p0.y + 7.0f * s), ImVec2(vr, p1.y - 7.0f * s), IM_COL32(230, 240, 255, 160));
+            } else {
+                std::string value = r.kind == RowKind::Tag ? m_profile.serviceTag
+                                  : (r.index && !r.options.empty()) ? r.options[std::clamp(*r.index, 0, static_cast<int>(r.options.size()) - 1)].name : "";
+                const float maxW = listW * 0.48f;
+                while (value.size() > 3 && TextW(smallFont, 14.0f * s, value.c_str()) > maxW) value = value.substr(0, value.size() - 4) + "...";
+                TextAt(ldl, smallFont, 14.0f * s, ImVec2(vr - TextW(smallFont, 14.0f * s, value.c_str()), ty + 2.0f * s),
+                       selected ? kAccentCol : IM_COL32(130, 150, 170, 255), value.c_str());
             }
         }
-        ImGui::PopID();
+        ImGui::EndChild();
     }
 
-    // -------------------------------------------------------------------------
-    // 4. BOTTOM-RIGHT ITEM TITLE & LORE DESCRIPTION OVERLAY (MCC STYLE)
-    // -------------------------------------------------------------------------
-    const RowDescriptor& activeRow = rows[m_focusedRow];
-    const float infoX = origin.x + leftColWidth + 46.0f * s;
-    const float infoY = origin.y + avail.y - 112.0f * s;
-    const float infoMaxW = std::max(260.0f * s, origin.x + avail.x - infoX - 24.0f * s);
+    // ---- Middle: picker for the focused slot.
+    SlotRow& row = rows[m_focusedRow];
+    const ImVec2 k0(pickX, origin.y), k1(pickX + pickW, origin.y + avail.y);
+    dl->AddRectFilled(k0, k1, IM_COL32(8, 14, 22, 190), 3.0f * s);
+    dl->AddRect(k0, k1, IM_COL32(170, 220, 255, 45), 3.0f * s);
+    const float pad = 14.0f * s;
+    float y = origin.y + pad;
+    std::string heading = row.label;
+    for (char& c : heading) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    TextAt(dl, titleFont, 26.0f * s, ImVec2(pickX + pad, y), kWhiteCol, heading.c_str());
+    y += 34.0f * s;
+    int hoveredOption = -1;
 
-    // Subtle dark gradient backing behind bottom-right text for readability over legs
-    dl->AddRectFilledMultiColor(
-        ImVec2(infoX - 18.0f * s, infoY - 12.0f * s),
-        ImVec2(origin.x + avail.x, origin.y + avail.y),
-        IM_COL32(6, 10, 16, 0),
-        IM_COL32(6, 10, 16, 0),
-        IM_COL32(6, 10, 16, 210),
-        IM_COL32(6, 10, 16, 195)
-    );
-
-    ImFont* heroFont = NobleStyle::HeroFont() ? NobleStyle::HeroFont() : ImGui::GetFont();
-    ImFont* bodyFont = ImGui::GetFont();
-    dl->AddText(heroFont, 32.0f * s, ImVec2(infoX + 2.0f, infoY + 2.0f), IM_COL32(0, 0, 0, 200), activeRow.itemTitle);
-    dl->AddText(heroFont, 32.0f * s, ImVec2(infoX, infoY), IM_COL32(245, 250, 255, 255), activeRow.itemTitle);
-
-    dl->AddText(bodyFont, 16.0f * s, ImVec2(infoX, infoY + 38.0f * s), IM_COL32(100, 185, 235, 245),
-                activeRow.itemDesc, nullptr, infoMaxW);
-
-    char subInfo[128];
-    if (activeRow.indexPtr && activeRow.count > 0) {
-        std::snprintf(subInfo, sizeof(subInfo), "[UNLOCKED] %s (%d / %d)  |  Drag character or press Q/E to rotate, Scroll to zoom",
-                      activeRow.category, (*activeRow.indexPtr) + 1, activeRow.count);
-    } else {
-        std::snprintf(subInfo, sizeof(subInfo), "Click row to configure  |  Drag character or press Q/E to rotate, Scroll to zoom");
-    }
-    dl->AddText(bodyFont, 14.5f * s, ImVec2(infoX, infoY + 78.0f * s), IM_COL32(215, 225, 238, 220), subInfo);
-
-    // -------------------------------------------------------------------------
-    // 5. CHANGE COLORS POPUP PANEL (30 AUTHENTIC REACH COLORS)
-    // -------------------------------------------------------------------------
-    if (m_showColorModal) {
-        const float modalW = 420.0f * s;
-        const float modalH = 310.0f * s;
-        const ImVec2 modalPos(origin.x + leftColWidth + 24.0f * s, origin.y + 42.0f * s);
-        ImGui::SetNextWindowPos(modalPos, ImGuiCond_Always);
-        ImGui::SetNextWindowSize(ImVec2(modalW, modalH), ImGuiCond_Always);
-        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.04f, 0.07f, 0.12f, 0.96f));
-        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.32f, 0.72f, 0.96f, 0.85f));
-        if (ImGui::Begin("CHANGE COLORS##ReachColorModal", &m_showColorModal,
-                         ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings)) {
-            auto renderColorGrid = [&](const char* title, int& colorIdx) {
-                const auto& cur = kReachColors[std::clamp(colorIdx, 0, 29)];
-                ImGui::TextColored(ImVec4(0.65f, 0.85f, 1.0f, 1.0f), "%s: %s", title, cur.name);
-                ImGui::PushID(title);
-                const float sw = 28.0f * s;
-                for (int c = 0; c < static_cast<int>(kReachColors.size()); ++c) {
-                    if (c % 10 != 0) ImGui::SameLine(0.0f, 5.0f * s);
-                    ImGui::PushID(c);
-                    const auto& col = kReachColors[c];
-                    const bool picked = (colorIdx == c);
-                    if (picked) {
-                        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
-                        ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 2.5f);
-                    }
-                    if (ImGui::ColorButton("##c", ImVec4(col.r, col.g, col.b, 1.0f),
-                                           ImGuiColorEditFlags_NoAlpha | ImGuiColorEditFlags_NoTooltip, ImVec2(sw, sw))) {
-                        colorIdx = c;
-                        m_dirty = true;
-                        SaveProfile(m_profilePath);
-                    }
-                    if (ImGui::IsItemHovered()) {
-                        ImGui::SetTooltip("%s", col.name);
-                    }
-                    if (picked) {
-                        ImGui::PopStyleVar();
-                        ImGui::PopStyleColor();
-                    }
-                    ImGui::PopID();
-                }
-                ImGui::PopID();
-            };
-
-            renderColorGrid("PRIMARY COLOR", m_profile.primaryColor);
-            ImGui::Dummy(ImVec2(0.0f, 8.0f * s));
-            renderColorGrid("SECONDARY COLOR", m_profile.secondaryColor);
-            ImGui::Dummy(ImVec2(0.0f, 8.0f * s));
-            if (ImGui::Button("CLOSE", ImVec2(110.0f * s, 28.0f * s)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
-                m_showColorModal = false;
+    if (row.kind == RowKind::Tag) {
+        TextAt(dl, bodyFont, 16.0f * s, ImVec2(pickX + pad, y), kDimCol,
+               "Your service tag, up to 4 letters or numbers. Shown above your head in game.", pickW - pad * 2.0f);
+        y += 48.0f * s;
+        ImGui::SetCursorScreenPos(ImVec2(pickX + pad, y));
+        ImGui::SetNextItemWidth(160.0f * s);
+        char tagBuf[8] = {};
+        std::snprintf(tagBuf, sizeof(tagBuf), "%s", m_profile.serviceTag.c_str());
+        if (ImGui::InputText("##service_tag_in", tagBuf, 5, ImGuiInputTextFlags_CharsUppercase | ImGuiInputTextFlags_CharsNoBlank)) {
+            m_profile.serviceTag = tagBuf;
+            m_dirty = true;
+            SaveProfile(m_profilePath);
+        }
+    } else if (row.index && !row.options.empty()) {
+        const int n = static_cast<int>(row.options.size());
+        const int equipped = std::clamp(*row.index, 0, n - 1);
+        // "Equipped: X" and a RANDOM button.
+        const std::string eq = "EQUIPPED: " + row.options[equipped].name;
+        TextAt(dl, smallFont, 15.0f * s, ImVec2(pickX + pad, y + 6.0f * s), kAccentCol, eq.c_str());
+        {
+            const float bw = 96.0f * s, bh = 28.0f * s;
+            const ImVec2 b0(k1.x - pad - bw, y), b1(b0.x + bw, y + bh);
+            ImGui::SetCursorScreenPos(b0);
+            const bool clicked = ImGui::InvisibleButton("##random", ImVec2(bw, bh));
+            const bool hov = ImGui::IsItemHovered();
+            dl->AddRectFilled(b0, b1, hov ? IM_COL32(60, 74, 88, 240) : IM_COL32(26, 34, 44, 230), 2.0f * s);
+            dl->AddRect(b0, b1, IM_COL32(170, 220, 255, hov ? 160 : 70), 2.0f * s);
+            TextAt(dl, smallFont, 14.0f * s, ImVec2(b0.x + (bw - TextW(smallFont, 14.0f * s, "RANDOM")) * 0.5f, b0.y + 6.0f * s), kWhiteCol, "RANDOM");
+            if (clicked && n > 1) {
+                static std::mt19937 rng{ std::random_device{}() };
+                int pick = std::uniform_int_distribution<int>(0, n - 2)(rng);
+                if (pick >= equipped) ++pick;   // always a different one
+                choose(m_focusedRow, pick);
+                m_pickerScrollToEquipped = true;
             }
         }
-        ImGui::End();
-        ImGui::PopStyleColor(2);
+        y += 40.0f * s;
+
+        // Grid of options (colours as swatches, 10 hues x 3 shades like Reach).
+        const float infoH = 120.0f * s;
+        const float gridH = std::max(80.0f * s, k1.y - y - infoH - pad);
+        ImGui::SetCursorScreenPos(ImVec2(pickX + pad, y));
+        ImGui::BeginChild("##armory_picker", ImVec2(pickW - pad * 2.0f, gridH), ImGuiChildFlags_None, ImGuiWindowFlags_NoBackground);
+        ImDrawList* gdl = ImGui::GetWindowDrawList();
+        const float gw = ImGui::GetContentRegionAvail().x;
+        const bool colourGrid = row.kind == RowKind::Colour;
+        const int cols = colourGrid ? 10 : 2;
+        const float cg = 6.0f * s;
+        const float tileW = (gw - cg * (cols - 1)) / cols;
+        const float tileH = colourGrid ? tileW : 46.0f * s;
+        for (int i = 0; i < n; ++i) {
+            // Colours: column = hue, row = shade (the palette is stored hue by hue, 3 shades each).
+            const int slot = colourGrid ? (i % 3) * 10 + i / 3 : i;
+            const int c = slot % cols, r = slot / cols;
+            const ImVec2 base = ImGui::GetCursorStartPos();
+            ImGui::SetCursorPos(ImVec2(base.x + c * (tileW + cg), base.y + r * (tileH + cg)));
+            const ImVec2 t0 = ImGui::GetCursorScreenPos(), t1(t0.x + tileW, t0.y + tileH);
+            ImGui::PushID(i);
+            const bool clicked = ImGui::InvisibleButton("##opt", ImVec2(tileW, tileH));
+            const bool hov = ImGui::IsItemHovered();
+            ImGui::PopID();
+            if (hov) hoveredOption = i;
+            if (clicked) choose(m_focusedRow, i);
+            const bool isEq = i == equipped;
+            if (isEq && m_pickerScrollToEquipped) {
+                ImGui::SetScrollHereY(0.4f);
+                m_pickerScrollToEquipped = false;
+            }
+            if (colourGrid) {
+                gdl->AddRectFilled(t0, t1, row.options[i].swatch, 2.0f * s);
+                gdl->AddRect(t0, t1, isEq ? IM_COL32(255, 255, 255, 255) : IM_COL32(255, 255, 255, hov ? 160 : 40), 2.0f * s, 0, isEq ? 2.5f * s : 1.0f);
+            } else {
+                gdl->AddRectFilled(t0, t1, isEq ? IM_COL32(34, 70, 104, 235) : (hov ? IM_COL32(40, 54, 70, 235) : IM_COL32(20, 28, 38, 220)), 2.0f * s);
+                gdl->AddRect(t0, t1, isEq ? kAccentCol : IM_COL32(170, 220, 255, hov ? 140 : 40), 2.0f * s, 0, isEq ? 1.6f * s : 1.0f);
+                float tx = t0.x + 10.0f * s;
+                if (row.options[i].swatch) {
+                    gdl->AddRectFilled(ImVec2(tx, t0.y + 12.0f * s), ImVec2(tx + 18.0f * s, t1.y - 12.0f * s), row.options[i].swatch, 2.0f * s);
+                    tx += 26.0f * s;
+                }
+                std::string name = row.options[i].name;
+                const float maxW = t1.x - tx - 26.0f * s;
+                while (name.size() > 3 && TextW(bodyFont, 16.0f * s, name.c_str()) > maxW) name = name.substr(0, name.size() - 4) + "...";
+                TextAt(gdl, bodyFont, 16.0f * s, ImVec2(tx, t0.y + tileH * 0.5f - 9.0f * s), isEq ? kWhiteCol : IM_COL32(200, 214, 228, 255), name.c_str());
+            }
+            if (isEq) {   // equipped check in the corner
+                const ImVec2 cc(t1.x - 11.0f * s, t0.y + 11.0f * s);
+                gdl->AddCircleFilled(cc, 8.0f * s, kAccentCol);
+                gdl->AddLine(ImVec2(cc.x - 4.0f * s, cc.y), ImVec2(cc.x - 1.0f * s, cc.y + 3.0f * s), IM_COL32(10, 20, 30, 255), 2.0f * s);
+                gdl->AddLine(ImVec2(cc.x - 1.0f * s, cc.y + 3.0f * s), ImVec2(cc.x + 4.0f * s, cc.y - 3.0f * s), IM_COL32(10, 20, 30, 255), 2.0f * s);
+            }
+        }
+        const int lastSlot = colourGrid ? 29 : n - 1;
+        ImGui::SetCursorPos(ImVec2(ImGui::GetCursorStartPos().x, ImGui::GetCursorStartPos().y + (lastSlot / cols + 1) * (tileH + cg)));
+        ImGui::Dummy(ImVec2(1, 1));
+        ImGui::EndChild();
+        m_pickerScrollToEquipped = false;
+
+        // Name and description of the hovered (or equipped) option.
+        const int shown = hoveredOption >= 0 ? hoveredOption : equipped;
+        const float iy = k1.y - infoH;
+        dl->AddLine(ImVec2(pickX + pad, iy), ImVec2(k1.x - pad, iy), IM_COL32(255, 255, 255, 40));
+        TextAt(dl, titleFont, 20.0f * s, ImVec2(pickX + pad, iy + 10.0f * s), kWhiteCol, row.options[shown].name.c_str());
+        const char* desc = row.options[shown].description.empty() ? (colourGrid ? "One of Reach's 30 armor colors." : "")
+                                                                  : row.options[shown].description.c_str();
+        TextAt(dl, bodyFont, 15.0f * s, ImVec2(pickX + pad, iy + 38.0f * s), kDimCol, desc, pickW - pad * 2.0f);
+        const std::string count = std::to_string(shown + 1) + " / " + std::to_string(n) + (shown == equipped ? "   EQUIPPED" : "   Click to equip");
+        TextAt(dl, smallFont, 14.0f * s, ImVec2(pickX + pad, k1.y - 26.0f * s), IM_COL32(130, 150, 170, 255), count.c_str());
     }
+
+    // ---- Over the model: camera hint.
+    const char* cam = m_cameraMode == 2 ? "CLOSE-UP" : m_cameraMode == 1 ? "FULL BODY" : "ARMORY VIEW";
+    const std::string hint = std::string("Camera: ") + cam + "   |   Drag or Q/E to turn, wheel to zoom";
+    TextAt(dl, smallFont, 14.0f * s, ImVec2(previewX + 16.0f * s, origin.y + avail.y - 24.0f * s), IM_COL32(200, 214, 228, 220), hint.c_str());
 }
 
 } // namespace noble

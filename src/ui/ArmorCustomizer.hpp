@@ -92,8 +92,11 @@ private:
     bool m_dirty = false;
     mutable bool m_syncedInitial = false;
 
-    // 0 = Standard Armory 3/4 view ("armory"), 1 = Full Body ("c_full_spartan"), 2 = Auto-Focus per slot ("c_helmet", etc.)
-    int m_cameraMode = 0;
+    // 0 = Standard Armory 3/4 view ("armory"), 1 = Full Body ("c_full_spartan"), 2 = close-up of the slot being edited
+    // ("c_helmet", ...; default, Armory v2). The mouse wheel over the model switches between them.
+    int m_cameraMode = 2;
+    std::string m_focusScene = "c_full_spartan";   // close-up scene for the focused slot
+    bool m_pickerScrollToEquipped = true;
     bool m_autoRotate = false;
 
     int m_focusedRow = 0;

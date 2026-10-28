@@ -1,4 +1,4 @@
-# Project Noble: handoff (2026-10-28, 15:10 ET)
+# Project Noble: handoff (2026-10-28, 15:15 ET)
 
 This picks up a reverse-engineering and C++ effort on **Tyler's Windows PC**. All paths below are real paths on that machine.
 Tyler (GitHub `WeabooTyler117`) works with a partner (GitHub `O7OF`) who owns the repo and writes most of the code.
@@ -10,6 +10,20 @@ community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownershi
 MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour.
 
 ---
+
+## 0. Pick up here (2026-10-28, 15:15 ET) - Armory v2, first pass (spec step 8)
+
+- `ArmorCustomizer::Render` rewritten: left = grouped slot list (CHARACTER species/body, ARMOR helmet, variant, shoulders, chest,
+  wrist, utility, knees, visor; Elite: armor set; COLORS primary/secondary; EFFECTS & VOICE; IDENTITY service tag), middle =
+  picker for the focused slot (title, EQUIPPED: X, RANDOM, tile grid with equipped check, colours as a 10 hue x 3 shade swatch
+  grid, hovered option's name + description), right = Reach's live Armory scene (Reach's camera puts the model on the right,
+  so the new panels sit left). Camera follows the focused slot by default (`m_cameraMode = 2`, `m_focusScene` = c_helmet /
+  c_left_shoulder / c_chest / ...); mouse wheel over the model: close-up / full body / Armory view. Up/down = slot,
+  left/right = option. The old top pills (SPARTAN / ELITE / PREFERRED SPECIES / BODY / CAM) and the colour pop-up are gone
+  (species and body are rows now; preview = preferred species).
+- Capture `ar_armory.bmp` (build clean) shows the layout; the 3D scene was still loading in the capture.
+- Not yet: picture thumbnails per piece (render once and cache under `data\ui\cache\armory\`), rank/cR locks
+  (`docs/career` armory list), stance poses, emblems (profile offsets unknown), ODST / Marine / mod looks (research spike, step 9).
 
 ## 0. Pick up here (2026-10-28, 15:10 ET) - default controls, VSync off
 
