@@ -1509,8 +1509,8 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
     case Screen::Mods: {
         const char* title = st.screen == Screen::Servers ? "GAMES" : st.screen == Screen::Settings ? "SETTINGS"
                           : st.screen == Screen::Career ? "SERVICE RECORD" : "MODS";
-        // SETTINGS uses the whole screen (three columns need the room); the others keep the framed panel.
-        const bool full = st.screen == Screen::Settings;
+        // These screens use the whole screen, like Settings.
+        const bool full = true;
         const float px = full ? 24.0f * ui.s : left;
         const float py = full ? 86.0f * ui.s : top + 84.0f * ui.s;
         if (full) {
