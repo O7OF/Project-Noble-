@@ -3,6 +3,7 @@
 #include "NobleStyle.hpp"
 #include "SettingsPanel.hpp"
 #include "MenuSounds.hpp"
+#include "InputPrompts.hpp"
 #include "audio/ReachAudio.hpp"
 #include "UiArt.hpp"
 #include "ServerBrowser.hpp"
@@ -431,17 +432,19 @@ bool DrawSourceTabs(const Ui& ui, ImVec2 pos, int& active, int moddedCount) {
     return true;
 }
 
-// Bottom-left hints: [Enter] Select   [Esc] Back ...
-void DrawHints(const Ui& ui, const std::vector<std::pair<const char*, const char*>>& hints) {
+// Bottom-left hints: [Enter] Select   [Esc] Back ...  (controller buttons when a controller was used last).
+using InputPrompts::Prompt;
+
+bool AcceptPressed() {
+    return ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false) ||
+           ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false);
+}
+void DrawHints(const Ui& ui, const std::vector<std::pair<Prompt, const char*>>& hints) {
     float x = ui.size.x * 0.075f;
     const float y = ui.size.y - 46.0f * ui.s;
     ui.dl->AddLine(ImVec2(x, y - 12.0f * ui.s), ImVec2(ui.size.x * 0.62f, y - 12.0f * ui.s), IM_COL32(255, 255, 255, 50), 1.0f);
-    for (const auto& [key, label] : hints) {
-        const float kw = TextWidth(NobleStyle::SmallFont(), 15.0f * ui.s, key) + 12.0f * ui.s;
-        const ImVec2 a(x, y), b(x + kw, y + 22.0f * ui.s);
-        ui.dl->AddRect(a, b, IM_COL32(200, 210, 220, 200), 3.0f * ui.s, 0, 1.2f);
-        Text(ui, NobleStyle::SmallFont(), 15.0f, ImVec2(x + 6.0f * ui.s, y + 3.0f * ui.s), kWhite, key);
-        x += kw + 7.0f * ui.s;
+    for (const auto& [prompt, label] : hints) {
+        x += InputPrompts::Draw(ui.dl, NobleStyle::SmallFont(), ImVec2(x, y), 22.0f * ui.s, prompt) + 7.0f * ui.s;
         Text(ui, NobleStyle::SmallFont(), 17.0f, ImVec2(x, y + 2.0f * ui.s), kWhite, label);
         x += TextWidth(NobleStyle::SmallFont(), 17.0f * ui.s, label) + 26.0f * ui.s;
     }
@@ -841,7 +844,7 @@ FrontEndChoice FrontEndMenu::Run(Window& window, D3D11Renderer& renderer, const 
                 else st.screen = kMainEntries[hit].target;
                 st.focusRow = 0;
             }
-            DrawHints(ui, { { "ENTER", "Select" }, { "ESC", "Back" } });
+            DrawHints(ui, { { Prompt::Accept, "Select" }, { Prompt::Back, "Back" } });
             std::string version(VERSION_STRING);
             const size_t paren = version.find(" (");
             if (paren != std::string::npos) version.resize(paren);
@@ -900,7 +903,7 @@ FrontEndChoice FrontEndMenu::Run(Window& window, D3D11Renderer& renderer, const 
             y += 34.0f * ui.s;
             const bool canStart = mission && mission->enabled;
             const bool start = (ActionButton(ui, "start", ImVec2(px, y), pw, "START MISSION") ||
-                                (st.focusRow == 3 && ImGui::IsKeyPressed(ImGuiKey_Enter, false))) && canStart;
+                                (st.focusRow == 3 && AcceptPressed())) && canStart;
             if (start) {
                 choice.play = true;
                 choice.mode = "campaign";
@@ -911,14 +914,14 @@ FrontEndChoice FrontEndMenu::Run(Window& window, D3D11Renderer& renderer, const 
                 done = true;
             }
             // Focus: list -> difficulty -> skulls -> start (Down / Tab moves on, Esc goes back a step).
-            if (st.focusRow > 0 && (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || ImGui::IsKeyPressed(ImGuiKey_Tab))) st.focusRow = std::min(3, st.focusRow + 1);
-            if (st.focusRow > 0 && ImGui::IsKeyPressed(ImGuiKey_UpArrow)) st.focusRow = std::max(1, st.focusRow - 1);
-            if (st.focusRow == 2 && ImGui::IsKeyPressed(ImGuiKey_Enter, false)) st.screen = Screen::Skulls;
+            if (st.focusRow > 0 && (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || ImGui::IsKeyPressed(ImGuiKey_Tab) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown))) st.focusRow = std::min(3, st.focusRow + 1);
+            if (st.focusRow > 0 && (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp))) st.focusRow = std::max(1, st.focusRow - 1);
+            if (st.focusRow == 2 && AcceptPressed()) st.screen = Screen::Skulls;
             if (back) {
                 if (st.focusRow > 0) st.focusRow = 0;
                 else goBack(Screen::Main);
             }
-            DrawHints(ui, { { "ENTER", "Select" }, { "ESC", "Back" }, { "LEFT / RIGHT", "Change" }, { "Q / E", "Vanilla / Modded" } });
+            DrawHints(ui, { { Prompt::Accept, "Select" }, { Prompt::Back, "Back" }, { Prompt::Change, "Change" }, { Prompt::Tabs, "Vanilla / Modded" } });
             break;
         }
 
@@ -932,11 +935,11 @@ FrontEndChoice FrontEndMenu::Run(Window& window, D3D11Renderer& renderer, const 
                 ui.dl->AddLine(ImVec2(gx, y + 26.0f * ui.s), ImVec2(gx + cell * 5.0f, y + 26.0f * ui.s), IM_COL32(255, 255, 255, 60));
             };
             // Keyboard: arrows move, Enter toggles.
-            if (ImGui::IsKeyPressed(ImGuiKey_RightArrow)) st.skull = std::min(kSkullCount - 1, st.skull + 1);
-            if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow)) st.skull = std::max(0, st.skull - 1);
-            if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) st.skull = std::min(kSkullCount - 1, st.skull + 5);
-            if (ImGui::IsKeyPressed(ImGuiKey_UpArrow)) st.skull = std::max(0, st.skull - 5);
-            bool toggle = ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_Space, false);
+            if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight)) st.skull = std::min(kSkullCount - 1, st.skull + 1);
+            if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft)) st.skull = std::max(0, st.skull - 1);
+            if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown)) st.skull = std::min(kSkullCount - 1, st.skull + 5);
+            if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp)) st.skull = std::max(0, st.skull - 5);
+            bool toggle = AcceptPressed() || ImGui::IsKeyPressed(ImGuiKey_Space, false);
 
             section("Primary Skulls", gy);
             gy += 36.0f * ui.s;
@@ -999,7 +1002,7 @@ FrontEndChoice FrontEndMenu::Run(Window& window, D3D11Renderer& renderer, const 
             std::snprintf(total, sizeof(total), "x%.2f", ScoreMultiplier(st.difficulty, st.skulls));
             Text(ui, NobleStyle::TitleFont(), 24.0f, ImVec2(ui.size.x * 0.80f - 90.0f * ui.s, by + 6.0f * ui.s), kWhite, total);
             if (back) goBack(Screen::Campaign);
-            DrawHints(ui, { { "ENTER", "Toggle" }, { "ESC", "Back" } });
+            DrawHints(ui, { { Prompt::Accept, "Toggle" }, { Prompt::Back, "Back" } });
             break;
         }
 
@@ -1070,7 +1073,7 @@ FrontEndChoice FrontEndMenu::Run(Window& window, D3D11Renderer& renderer, const 
             y += 10.0f * ui.s;
             const bool canStart = map && map->enabled;
             const bool start = (ActionButton(ui, "start", ImVec2(px, y), pw, forge ? "START FORGE" : "START GAME") ||
-                                (st.focusRow == focusRows && ImGui::IsKeyPressed(ImGuiKey_Enter, false))) && canStart;
+                                (st.focusRow == focusRows && AcceptPressed())) && canStart;
             y += 48.0f * ui.s;
             if (!ff && !forge && ActionButton(ui, "browse", ImVec2(px, y), pw, "HOST OR JOIN GAMES", false)) st.screen = Screen::Servers;
             if (start) {
@@ -1088,14 +1091,14 @@ FrontEndChoice FrontEndMenu::Run(Window& window, D3D11Renderer& renderer, const 
                 }
                 done = true;
             }
-            if (st.focusRow > 0 && (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || ImGui::IsKeyPressed(ImGuiKey_Tab))) st.focusRow = std::min(focusRows, st.focusRow + 1);
-            if (st.focusRow > 0 && ImGui::IsKeyPressed(ImGuiKey_UpArrow)) st.focusRow = std::max(1, st.focusRow - 1);
+            if (st.focusRow > 0 && (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || ImGui::IsKeyPressed(ImGuiKey_Tab) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown))) st.focusRow = std::min(focusRows, st.focusRow + 1);
+            if (st.focusRow > 0 && (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp))) st.focusRow = std::max(1, st.focusRow - 1);
             if (back) {
                 if (st.focusRow > 0) st.focusRow = 0;
                 else goBack(Screen::Main);
             }
-            if (forge) DrawHints(ui, { { "ENTER", "Select" }, { "ESC", "Back" } });
-            else DrawHints(ui, { { "ENTER", "Select" }, { "ESC", "Back" }, { "LEFT / RIGHT", "Change" }, { "Q / E", "Vanilla / Modded" } });
+            if (forge) DrawHints(ui, { { Prompt::Accept, "Select" }, { Prompt::Back, "Back" } });
+            else DrawHints(ui, { { Prompt::Accept, "Select" }, { Prompt::Back, "Back" }, { Prompt::Change, "Change" }, { Prompt::Tabs, "Vanilla / Modded" } });
             break;
         }
 
@@ -1135,7 +1138,7 @@ FrontEndChoice FrontEndMenu::Run(Window& window, D3D11Renderer& renderer, const 
             if (back && !ImGui::GetIO().WantTextInput && !settingsPanel.IsCapturingKey()) {
                 goBack(st.screen == Screen::Servers ? Screen::CustomGame : Screen::Main);
             }
-            DrawHints(ui, { { "ESC", "Back" } });
+            DrawHints(ui, { { Prompt::Back, "Back" } });
             break;
         }
         }

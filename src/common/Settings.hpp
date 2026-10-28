@@ -20,7 +20,8 @@ struct SettingsData {
     bool borderless = false;       // borderless window covering the monitor
 
     // Controls
-    float mouseSensitivity = 1.0f; // multiplier on Noble's base mouse scale (0.0008 per pixel)
+    float mouseSensitivity = 1.0f; // multiplier on Noble's base mouse scale (0.0008 per pixel); horizontal
+    float mouseSensitivityY = 1.0f; // vertical look speed relative to horizontal (1 = same)
     bool invertLook = false;
     std::map<int, int> keyOverrides; // profile action index -> virtual-key code
 

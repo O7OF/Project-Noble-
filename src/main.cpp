@@ -405,4 +405,5 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     // The log is flushed and settings are saved by now, so end the process directly.
     noble::Logger::Shutdown();
     TerminateProcess(GetCurrentProcess(), 0);  // not ExitProcess: its DLL shutdown can hang (see below)
+    return 0;   // not reached
 }

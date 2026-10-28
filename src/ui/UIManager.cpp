@@ -1,4 +1,5 @@
 #include "UIManager.hpp"
+#include "InputPrompts.hpp"
 #include "NobleStyle.hpp"
 #include "common/Version.hpp"
 #include <imgui.h>
@@ -138,6 +139,7 @@ void UIManager::BeginFrame() {
     ImGui_ImplDX11_NewFrame();
     ImGui_ImplWin32_NewFrame();
     ImGui::NewFrame();
+    InputPrompts::Update();   // keyboard/mouse or controller prompts
 }
 
 void UIManager::RenderTopNavigationBar() {

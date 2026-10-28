@@ -623,10 +623,30 @@ static bool s_inputCaptured = false;
 static HCURSOR s_savedClassCursor = nullptr;
 static std::atomic<bool> s_slot36Logged{false};
 
-static float InputMouseScale() {
+// Look speed (x, y) and inversion from SETTINGS > CONTROLS, re-read twice a second so changes apply in a
+// running game. RR's default 0.0008 per pixel times the sensitivity; "-mouse-scale <v>" overrides both axes.
+static float InputMouseScaleOverride();
+static void InputLookSettings(float& scaleX, float& scaleY, bool& invert) {
+    static ULONGLONG s_next = 0;
+    static float s_x = 0.0008f, s_y = 0.0008f;
+    static bool s_invert = false;
+    const ULONGLONG now = GetTickCount64();
+    if (now >= s_next) {
+        s_next = now + 500;
+        const SettingsData d = Settings::Get().Snapshot();
+        s_x = 0.0008f * d.mouseSensitivity;
+        s_y = s_x * d.mouseSensitivityY;
+        s_invert = d.invertLook;
+        if (const float o = InputMouseScaleOverride(); o > 0.0f) s_x = s_y = o;
+    }
+    scaleX = s_x;
+    scaleY = s_y;
+    invert = s_invert;
+}
+
+static float InputMouseScaleOverride() {
     static float s_scale = [] {
-        // RR's default before its sensitivity multiplier, times the SETTINGS tab's sensitivity.
-        float scale = 0.0008f * Settings::Get().Snapshot().mouseSensitivity;
+        float scale = 0.0f;
         int argc = 0;
         LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
         if (argv) {
@@ -803,7 +823,7 @@ static void FillLocalInput(uint8_t* st) {
             SetClassLongPtrW(hwnd, GCLP_HCURSOR, 0); // hide the arrow over our window
             s_inputCaptured = true;
             firstCapturedFrame = true;
-            NOBLE_INFO("ReachHost [Slot 36 - Input]: mouse captured for look (scale {})", InputMouseScale());
+            { float lx, ly; bool li; InputLookSettings(lx, ly, li); NOBLE_INFO("ReachHost [Slot 36 - Input]: mouse captured for look (scale {} x {}, invert {})", lx, ly, li); }
         }
         ClipCursor(&clip);
     }
@@ -880,11 +900,12 @@ static void FillLocalInput(uint8_t* st) {
         }
         SetCursorPos(center.x, center.y);
     }
-    const float scale = InputMouseScale();
-    static const bool s_invertLook = Settings::Get().Snapshot().invertLook;
-    if (s_invertLook) dy = -dy;
-    *reinterpret_cast<float*>(st + 0x104) = dx * scale;
-    *reinterpret_cast<float*>(st + 0x108) = dy * scale;
+    float scaleX = 0.0f, scaleY = 0.0f;
+    bool invertLook = false;
+    InputLookSettings(scaleX, scaleY, invertLook);
+    if (invertLook) dy = -dy;
+    *reinterpret_cast<float*>(st + 0x104) = dx * scaleX;
+    *reinterpret_cast<float*>(st + 0x108) = dy * scaleY;
 
     uint32_t buttons = 0;
     if (st[0x004 + VK_LBUTTON])  buttons |= 0x01;

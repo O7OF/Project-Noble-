@@ -1,6 +1,7 @@
 #include "SettingsPanel.hpp"
 #include "NobleStyle.hpp"
 #include "MenuSounds.hpp"
+#include "InputPrompts.hpp"
 #include "audio/ReachAudio.hpp"
 #include "UiArt.hpp"
 #include "engine/KeyBindings.hpp"
@@ -132,6 +133,15 @@ void SettingsPanel::Render() {
     // MCC-style tab row: plain upper-case words, the selected one underlined.
     static const char* const kTabs[] = { "CONTROLS", "KEY BINDINGS", "VIDEO", "AUDIO", "GAMEPLAY", "NETWORK" };
     ImGui::Dummy(ImVec2(0, 2));
+    // LB / Q before the tabs and RB / E after them, like MCC (follows the device used last).
+    auto tabPrompt = [](InputPrompts::Prompt prompt) {
+        const ImVec2 p = ImGui::GetCursorScreenPos();
+        const float h = ImGui::GetFrameHeight() * 0.8f;
+        const float w = InputPrompts::Draw(ImGui::GetWindowDrawList(), nullptr, ImVec2(p.x, p.y + ImGui::GetFrameHeight() * 0.1f), h, prompt);
+        ImGui::Dummy(ImVec2(w, ImGui::GetFrameHeight()));
+    };
+    tabPrompt(InputPrompts::Prompt::TabLeft);
+    ImGui::SameLine(0, 14.0f);
     for (int i = 0; i < 6; ++i) {
         if (i) ImGui::SameLine(0, 26.0f);
         const bool sel = m_tab == i;
@@ -150,6 +160,8 @@ void SettingsPanel::Render() {
             ImGui::GetWindowDrawList()->AddLine(ImVec2(a.x + 6, b.y), ImVec2(b.x - 6, b.y), IM_COL32(143, 216, 255, 255), 2.0f);
         }
     }
+    ImGui::SameLine(0, 14.0f);
+    tabPrompt(InputPrompts::Prompt::TabRight);
     // Q / E switch tabs like LB / RB in MCC.
     if (!ImGui::GetIO().WantTextInput && m_rebindAction < 0) {
         if (ImGui::IsKeyPressed(ImGuiKey_Q, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false)) { m_tab = (m_tab + 5) % 6; MenuSounds::Tab(-1); }
@@ -178,7 +190,7 @@ void SettingsPanel::Render() {
         MasterServerClient::Get().SetUrl(m_edit.masterServerUrl);
         m_edit = Settings::Get().Snapshot();  // clamped values
         m_dirty = false;
-        m_message = "Saved. Display size, controls and player name apply the next time a game starts.";
+        m_message = "Saved. Mouse settings apply right away; display size and player name the next time a game starts.";
     }
     ImGui::SameLine();
     if (ImGui::Button("UNDO CHANGES", ImVec2(150, 34))) {
@@ -210,16 +222,37 @@ void SettingsPanel::Render() {
 }
 
 void SettingsPanel::RenderControls() {
-    Section("KEYBOARD & MOUSE");
+    // One line of help under a row, dimmed and indented to the value column.
+    auto help = [](const char* text) {
+        ImGui::Dummy(ImVec2(0, 0));
+        ImGui::SameLine(300.0f);
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.62f, 0.68f, 0.74f, 1.0f));
+        ImGui::TextUnformatted(text);
+        ImGui::PopStyleColor();
+        ImGui::Dummy(ImVec2(0, 2));
+    };
+    Section("MOUSE");
     RowLabel("LOOK SENSITIVITY");
-    ImGui::SetNextItemWidth(260);
+    ImGui::SetNextItemWidth(330);
     if (ImGui::SliderFloat("##sens", &m_edit.mouseSensitivity, 0.1f, 5.0f, "%.2fx", ImGuiSliderFlags_Logarithmic)) m_dirty = true;
-    RowLabel("LOOK INVERSION");
-    if (Cycle("invert", m_edit.invertLook ? "INVERTED" : "NOT INVERTED")) {
+    ImGui::SameLine();
+    if (ImGui::SmallButton("RESET##sens")) { m_edit.mouseSensitivity = 1.0f; m_dirty = true; }
+    help("How far you turn per mouse movement. 1.00x is Noble's default; Ctrl+click the slider to type a value.");
+    RowLabel("VERTICAL SENSITIVITY");
+    ImGui::SetNextItemWidth(330);
+    if (ImGui::SliderFloat("##sensy", &m_edit.mouseSensitivityY, 0.25f, 4.0f, "%.2fx of horizontal", ImGuiSliderFlags_Logarithmic)) m_dirty = true;
+    ImGui::SameLine();
+    if (ImGui::SmallButton("RESET##sensy")) { m_edit.mouseSensitivityY = 1.0f; m_dirty = true; }
+    help("Up/down speed compared with left/right. Below 1 makes aiming up and down calmer.");
+    RowLabel("INVERT LOOK");
+    if (Cycle("invert", m_edit.invertLook ? "INVERTED" : "NOT INVERTED", 330.0f - 2.0f * ImGui::GetFrameHeight() - 2.0f * ImGui::GetStyle().ItemSpacing.x)) {
         m_edit.invertLook = !m_edit.invertLook;
         m_dirty = true;
     }
-    ImGui::TextDisabled("1.00x is Noble's default. The -mouse-scale command-line option still overrides this.");
+    help("Inverted: moving the mouse forward looks down, as in flight controls.");
+    ImGui::Dummy(ImVec2(0, 2));
+    ImGui::TextDisabled("Mouse settings take effect as soon as you press APPLY, also in a game you return to from the pause menu.");
+    ImGui::TextDisabled("Keyboard keys are on the KEY BINDINGS tab. The -mouse-scale command-line option overrides the sensitivity.");
 
     Section("GAMEPAD");
     ImGui::TextDisabled("Controller input isn't supported in Noble yet. This is Halo: Reach's default layout,");
