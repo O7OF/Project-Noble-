@@ -1,4 +1,4 @@
-# Project Noble: handoff (2026-10-28, 11:15 ET)
+# Project Noble: handoff (2026-10-28, 11:30 ET)
 
 This picks up a reverse-engineering and C++ effort on **Tyler's Windows PC**. All paths below are real paths on that machine.
 Tyler (GitHub `WeabooTyler117`) works with a partner (GitHub `O7OF`) who owns the repo and writes most of the code.
@@ -10,6 +10,18 @@ community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownershi
 MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour.
 
 ---
+
+## 0. Pick up here (2026-10-28, 11:30 ET) - Campaign / Firefight / Custom / Forge setup (spec step 3)
+
+- Map and mission lists show a number and MCC's small map preview before each name (`ListItem::thumb/number`,
+  rows 40-42 px, as many rows as fit above the hint line).
+- Right side: `HeroBanner` (map picture, dark gradient, accent kicker "HALO: REACH Â· CAMPAIGN / FIREFIGHT / MULTIPLAYER /
+  FORGE" or "MOD: <name>", big title, blurb under it), then the options, then `BigAction` buttons anchored above the
+  hint row (fixes START MISSION covering the hints): Campaign/Firefight PLAY SOLO ("<mission> Â· <difficulty>",
+  "Hold out alone Â· ...") + HOST CO-OP (greyed, "Needs online play"); Custom Game START GAME ("<map> Â· <game
+  type>") + HOST OR JOIN (server browser); Forge START FORGE. The banner shrinks to fit the screen height.
+- Campaign: the skulls that are on show as small skull icons next to the score multiplier.
+- Firefight: "FIREFIGHT OPTIONS Â· DEFAULT" row shown greyed ("Coming later") until Noble can write Firefight variants.
 
 ## 0. Pick up here (2026-10-28, 11:15 ET) - Settings redesign (spec steps 1-2)
 

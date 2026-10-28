@@ -136,6 +136,7 @@ const Skull kSkulls[] = {
     { "IWHBYD",       19, "IWHBYD",       "Rare combat dialogue becomes much more common.",                                              1.0f, false },
 };
 constexpr int kSkullCount = static_cast<int>(sizeof(kSkulls) / sizeof(kSkulls[0]));
+const char* const kDifficultyNames[] = { "Easy", "Normal", "Heroic", "Legendary" };
 
 template <typename T, size_t N>
 constexpr int Count(const T (&)[N]) { return static_cast<int>(N); }
@@ -317,6 +318,8 @@ struct ListItem {
     bool enabled = true;
     bool header = false;
     bool expanded = false;
+    std::string thumb;   // scenario whose small preview is drawn before the label (empty = none)
+    int number = 0;      // shown before the thumbnail when > 0
 };
 
 bool AcceptPressed();
@@ -408,8 +411,26 @@ int DrawList(const Ui& ui, const char* id, ImVec2 pos, float width, const std::v
             continue;
         }
         const ImU32 col = !items[i].enabled ? kDisabled : (i == selected ? kWhite : kDim);
-        const float indent = items[0].header ? 28.0f : 9.0f;
-        Text(ui, NobleStyle::TitleFont(), 20.0f, ImVec2(a.x + indent * ui.s, a.y + (rh - 20.0f * ui.s) * 0.5f), col,
+        float textX = a.x + (items[0].header ? 28.0f : 9.0f) * ui.s;
+        if (!items[i].thumb.empty() && rh >= 34.0f * ui.s) {
+            // Number, then the map's small preview (MCC's levels pack), then the name.
+            if (items[i].number > 0) {
+                char num[8];
+                std::snprintf(num, sizeof(num), "%02d", items[i].number);
+                Text(ui, NobleStyle::SmallFont(), 14.0f, ImVec2(textX, a.y + (rh - 14.0f * ui.s) * 0.5f),
+                     i == selected ? kAccent : IM_COL32(120, 135, 150, 255), num);
+                textX += 24.0f * ui.s;
+            }
+            const float th = rh - 8.0f * ui.s, tw = th * 316.0f / 160.0f;
+            const ImVec2 t0(textX, a.y + 4.0f * ui.s), t1(textX + tw, a.y + 4.0f * ui.s + th);
+            ui.dl->AddRectFilled(t0, t1, IM_COL32(14, 20, 26, 220));
+            if (UiTexture tex = UiArt::MapPreview(items[i].thumb, false)) {
+                UiArt::DrawCover(ui.dl, tex, t0, t1, items[i].enabled ? IM_COL32_WHITE : IM_COL32(255, 255, 255, 90));
+            }
+            ui.dl->AddRect(t0, t1, i == selected ? IM_COL32(170, 220, 255, 200) : IM_COL32(255, 255, 255, 40), 0.0f, 0, 1.0f);
+            textX += tw + 10.0f * ui.s;
+        }
+        Text(ui, NobleStyle::TitleFont(), 20.0f, ImVec2(textX, a.y + (rh - 20.0f * ui.s) * 0.5f), col,
              Upper(items[i].label).c_str());
     }
     if (activated >= 0) MenuSounds::Click();
@@ -650,6 +671,71 @@ float DrawPreview(const Ui& ui, ImVec2 pos, float width, const std::string& scen
     return y;
 }
 
+// Spec §3 HeroBanner: the map picture with a dark gradient, an accent kicker line, the title, and the
+// blurb under the picture. Returns the y below the blurb.
+float HeroBanner(const Ui& ui, ImVec2 pos, float width, float height, const std::string& scenario, const std::string& kicker,
+                 const char* title, const char* blurb) {
+    const ImVec2 b(pos.x + width, pos.y + height);
+    ui.dl->AddRectFilled(pos, b, IM_COL32(14, 20, 26, 230));
+    if (UiTexture tex = UiArt::MapPreview(scenario, true)) UiArt::DrawCover(ui.dl, tex, pos, b);
+    const float gy = pos.y + height * 0.45f;
+    ui.dl->AddRectFilledMultiColor(ImVec2(pos.x, gy), b, IM_COL32(4, 8, 12, 0), IM_COL32(4, 8, 12, 0),
+                                   IM_COL32(4, 8, 12, 235), IM_COL32(4, 8, 12, 235));
+    ui.dl->AddRect(pos, b, IM_COL32(170, 200, 220, 120), 0.0f, 0, 1.0f);
+    const float pad = 16.0f * ui.s;
+    Text(ui, NobleStyle::TitleFont(), 34.0f, ImVec2(pos.x + pad, b.y - pad - 34.0f * ui.s), kWhite, Upper(title).c_str());
+    if (!kicker.empty()) Text(ui, NobleStyle::SmallFont(), 15.0f, ImVec2(pos.x + pad, b.y - pad - 56.0f * ui.s), kAccent, kicker.c_str());
+    float y = b.y + 8.0f * ui.s;
+    if (blurb && *blurb) {
+        Text(ui, nullptr, 17.0f, ImVec2(pos.x, y), kDim, blurb, pos.x + width);
+        y += Font(nullptr)->CalcTextSizeA(17.0f * ui.s, FLT_MAX, width, blurb).y + 8.0f * ui.s;
+    }
+    return y;
+}
+
+// Spec §3 BigAction: large button with a title and a subtitle line. Disabled buttons are greyed and
+// show their subtitle as the reason.
+bool BigAction(const Ui& ui, const char* id, ImVec2 pos, float width, const char* label, const char* sub, bool primary,
+               bool enabled, bool focused = false) {
+    const float h = 50.0f * ui.s;
+    ImGui::SetCursorScreenPos(pos);
+    ImGui::PushID(id);
+    const bool pressed = ImGui::InvisibleButton("##b", ImVec2(width, h)) && enabled;
+    const bool hovered = ImGui::IsItemHovered() && enabled;
+    ImGui::PopID();
+    const ImVec2 b(pos.x + width, pos.y + h);
+    const ImU32 bg = !enabled ? IM_COL32(24, 30, 36, 200)
+                   : primary ? (hovered || focused ? IM_COL32(76, 150, 200, 255) : IM_COL32(52, 112, 156, 240))
+                             : (hovered || focused ? IM_COL32(60, 74, 88, 240) : IM_COL32(30, 38, 46, 230));
+    ui.dl->AddRectFilled(pos, b, bg);
+    ui.dl->AddRect(pos, b, enabled ? IM_COL32(170, 220, 255, hovered || focused ? 220 : 90) : IM_COL32(255, 255, 255, 30), 0.0f, 0, 1.0f);
+    Text(ui, NobleStyle::TitleFont(), 20.0f, ImVec2(pos.x + 14.0f * ui.s, pos.y + 5.0f * ui.s), enabled ? kWhite : kDisabled, label);
+    if (sub && *sub) Text(ui, NobleStyle::SmallFont(), 14.0f, ImVec2(pos.x + 14.0f * ui.s, pos.y + 29.0f * ui.s),
+                          enabled ? IM_COL32(200, 225, 245, 230) : kDisabled, sub);
+    if (hovered) MenuSounds::Hover(ImGui::GetID(id));
+    if (pressed) MenuSounds::Click();
+    return pressed;
+}
+
+// Small icons of the skulls that are on, in a row; returns the width used.
+float SkullStrip(const Ui& ui, ImVec2 pos, float size, uint64_t mask, int maxIcons);
+
+float SkullStrip(const Ui& ui, ImVec2 pos, float size, uint64_t mask, int maxIcons) {
+    float x = pos.x;
+    int shown = 0;
+    for (int i = 0; i < kSkullCount && shown < maxIcons; ++i) {
+        if (!(mask & (1ull << kSkulls[i].bit))) continue;
+        if (UiTexture icon = UiArt::SkullIcon(kSkulls[i].icon)) {
+            ui.dl->AddImage(icon.id, ImVec2(x, pos.y), ImVec2(x + size, pos.y + size));
+        } else {
+            ui.dl->AddRect(ImVec2(x, pos.y), ImVec2(x + size, pos.y + size), IM_COL32(255, 255, 255, 80));
+        }
+        x += size + 3.0f * ui.s;
+        ++shown;
+    }
+    return x - pos.x;
+}
+
 std::string SkullSummary(uint64_t mask) {
     int count = 0;
     for (const Skull& s : kSkulls) if (mask & (1ull << s.bit)) ++count;
@@ -779,8 +865,14 @@ void FixSelection(const std::vector<MapEntry>& list, int& selected) {
 std::vector<ListItem> ToItems(const std::vector<MapEntry>& list) {
     std::vector<ListItem> items;
     for (const MapEntry& m : list) {
-        if (m.header) items.push_back({ m.name, true, true, m.enabled });
-        else items.push_back({ m.name, m.enabled, false, false });
+        if (m.header) {
+            items.push_back({ m.name, true, true, m.enabled });
+        } else {
+            ListItem it{ m.name, m.enabled, false, false };
+            it.thumb = m.scenario;
+            it.number = static_cast<int>(std::count_if(items.begin(), items.end(), [](const ListItem& x) { return !x.header; })) + 1;
+            items.push_back(it);
+        }
     }
     return items;
 }
@@ -1102,8 +1194,10 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         std::vector<ListItem> items = ToItems(missions);
         if (missions.empty()) items.push_back({ "No Reach campaign mods installed", false, false });
         const float listY = top + 108.0f * ui.s;
-        const int hit = DrawList(ui, "missions", ImVec2(left + 34.0f * ui.s, listY), 380.0f * ui.s, items, pick,
-                                 st.focusRow == 0, 30.0f, 13, false);
+        const float listRow = 42.0f;
+        const int listRows = std::max(4, static_cast<int>((ui.size.y - 74.0f * ui.s - listY) / (listRow * ui.s)));
+        const int hit = DrawList(ui, "missions", ImVec2(left + 34.0f * ui.s, listY), 400.0f * ui.s, items, pick,
+                                 st.focusRow == 0, listRow, listRows, false);
         if (hit >= 0 && !missions.empty() && missions[hit].header) ToggleMod(st.openMods, ModMode::Campaign, *missions[hit].mod);
         else if (hit >= 0) st.focusRow = 1;
         FixSelection(missions, pick);
@@ -1111,15 +1205,19 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         const MapEntry* mission = (row && !row->header) ? row : nullptr;
         const ModEntry* mod = mission ? mission->mod : nullptr;
 
+        // Right column, laid out from the bottom up so the buttons never reach the hint row:
+        // PLAY SOLO / HOST CO-OP, then skulls + score, difficulty tiles, and the banner fills the rest.
         const float px = ui.size.x * 0.47f, pw = ui.size.x * 0.44f;
-        float y = DrawPreview(ui, ImVec2(px, top + 96.0f * ui.s), pw, mission ? mission->scenario : "",
-                              row ? (row->header ? row->mod->title.c_str() : row->name.c_str()) : "",
-                              row ? row->blurb.c_str() : "");
-        y += 6.0f * ui.s;
-        if (mod) {
-            Text(ui, nullptr, 16.0f, ImVec2(px + 10.0f * ui.s, y), kAccent, ("Mod: " + mod->title).c_str(), px + pw);
-            y += 24.0f * ui.s;
-        }
+        const float actionsY = ui.size.y - 58.0f * ui.s - 14.0f * ui.s - 50.0f * ui.s;
+        const float rowsH = 98.0f * ui.s + 8.0f * ui.s + 36.0f * ui.s + 30.0f * ui.s + 10.0f * ui.s;
+        const float bannerTop = top + 96.0f * ui.s;
+        const float blurbH = 30.0f * ui.s;
+        const float bannerH = std::clamp(actionsY - rowsH - blurbH - bannerTop, 110.0f * ui.s, pw * 292.0f / 668.0f);
+        const std::string kicker = mod ? "MOD: " + Upper(mod->title) : row && row->header ? std::string("MOD") : std::string("HALO: REACH \xC2\xB7 CAMPAIGN");
+        float y = HeroBanner(ui, ImVec2(px, bannerTop), pw, bannerH, mission ? mission->scenario : "", kicker,
+                             row ? (row->header ? row->mod->title.c_str() : row->name.c_str()) : "",
+                             row ? row->blurb.c_str() : "");
+        y = std::max(y, actionsY - rowsH);
         y += DifficultyTiles(ui, "diff", ImVec2(px, y), pw, st.difficulty, st.focusRow == 1) + 8.0f * ui.s;
         const std::string skullText = SkullSummary(st.skulls);
         if (OptionRow(ui, "skulls", ImVec2(px, y), pw, "SKULLS", skullText.c_str(), st.focusRow == 2)) {
@@ -1128,13 +1226,16 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         ImGui::SetCursorScreenPos(ImVec2(px, y));
         if (ImGui::InvisibleButton("##skullrow", ImVec2(pw * 0.46f, 32.0f * ui.s))) st.screen = Screen::Skulls;
         y += 36.0f * ui.s;
+        const float stripW = SkullStrip(ui, ImVec2(px + 10.0f * ui.s, y + 2.0f * ui.s), 20.0f * ui.s, st.skulls, 13);
         char mult[64];
         std::snprintf(mult, sizeof(mult), "Score multiplier  x%.2f", ScoreMultiplier(st.difficulty, st.skulls));
-        Text(ui, nullptr, 16.0f, ImVec2(px + 10.0f * ui.s, y + 4.0f * ui.s), kDim, mult);
-        y += 34.0f * ui.s;
+        Text(ui, nullptr, 16.0f, ImVec2(px + 10.0f * ui.s + (stripW > 0.0f ? stripW + 12.0f * ui.s : 0.0f), y + 3.0f * ui.s), kDim, mult);
         const bool canStart = mission && mission->enabled;
-        const bool start = (ActionButton(ui, "start", ImVec2(px, y), pw, "START MISSION") ||
+        const float bw = (pw - 10.0f * ui.s) * 0.62f;
+        std::string sub = mission ? std::string(mission->name) + " \xC2\xB7 " + kDifficultyNames[st.difficulty] : std::string("Pick a mission");
+        const bool start = (BigAction(ui, "start", ImVec2(px, actionsY), bw, "PLAY SOLO", sub.c_str(), true, canStart, st.focusRow == 3) ||
                             (st.focusRow == 3 && AcceptPressed())) && canStart;
+        BigAction(ui, "coop", ImVec2(px + bw + 10.0f * ui.s, actionsY), pw - bw - 10.0f * ui.s, "HOST CO-OP", "Needs online play (coming later)", false, false);
         if (start) {
             choice.play = true;
             choice.mode = "campaign";
@@ -1258,8 +1359,10 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         FixSelection(maps, mapIndex);
         std::vector<ListItem> items = ToItems(maps);
         if (maps.empty()) items.push_back({ ff ? "No Reach Firefight mods installed" : "No Reach multiplayer mods installed", false, false });
-        const int hit = DrawList(ui, "maps", ImVec2(left + 34.0f * ui.s, listTop), 330.0f * ui.s, items, mapIndex,
-                                 st.focusRow == 0, 27.0f, modded || !forge ? 14 : 15, false);
+        const float listRow = 40.0f;
+        const int listRows = std::max(4, static_cast<int>((ui.size.y - 74.0f * ui.s - listTop) / (listRow * ui.s)));
+        const int hit = DrawList(ui, "maps", ImVec2(left + 34.0f * ui.s, listTop), 380.0f * ui.s, items, mapIndex,
+                                 st.focusRow == 0, listRow, listRows, false);
         if (hit >= 0 && !maps.empty() && maps[hit].header) ToggleMod(st.openMods, modMode, *maps[hit].mod);
         else if (hit >= 0) st.focusRow = 1;
         FixSelection(maps, mapIndex);
@@ -1268,14 +1371,18 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         const ModEntry* mod = map ? map->mod : nullptr;
 
         const float px = ui.size.x * 0.47f, pw = ui.size.x * 0.44f;
-        float y = DrawPreview(ui, ImVec2(px, top + 96.0f * ui.s), pw, map ? map->scenario : "",
-                              row ? (row->header ? row->mod->title.c_str() : row->name.c_str()) : "",
-                              row ? row->blurb.c_str() : "");
-        y += 6.0f * ui.s;
-        if (mod) {
-            Text(ui, nullptr, 16.0f, ImVec2(px + 10.0f * ui.s, y), kAccent, ("Mod: " + mod->title).c_str(), px + pw);
-            y += 24.0f * ui.s;
-        }
+        const float actionsY = ui.size.y - 58.0f * ui.s - 14.0f * ui.s - 50.0f * ui.s;
+        const bool forgeMissing = forge && !std::filesystem::exists(ctx.forgeVariant);
+        const float rowsH = (forge ? 0.0f : 36.0f * ui.s) + (ff ? 30.0f * ui.s + 98.0f * ui.s + 8.0f * ui.s : 0.0f) +
+                            (forgeMissing ? 26.0f * ui.s : 0.0f) + 10.0f * ui.s;
+        const float bannerTop = top + 96.0f * ui.s;
+        const float bannerH = std::clamp(actionsY - rowsH - 30.0f * ui.s - bannerTop, 110.0f * ui.s, pw * 292.0f / 668.0f);
+        const std::string kicker = mod ? "MOD: " + Upper(mod->title)
+                                 : std::string(ff ? "HALO: REACH \xC2\xB7 FIREFIGHT" : forge ? "HALO: REACH \xC2\xB7 FORGE" : "HALO: REACH \xC2\xB7 MULTIPLAYER");
+        float y = HeroBanner(ui, ImVec2(px, bannerTop), pw, bannerH, map ? map->scenario : "", kicker,
+                             row ? (row->header ? row->mod->title.c_str() : row->name.c_str()) : "",
+                             row ? row->blurb.c_str() : "");
+        y = std::max(y, actionsY - rowsH);
         int focusRows = 1;
         if (!forge) {
             const std::vector<MenuVariant>& list = ff ? ctx.ffVariants : ctx.variants;
@@ -1287,20 +1394,41 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
             ++focusRows;
         }
         if (ff) {
+            // Spec §4.3: per-game overrides (time limit, lives, skulls) once Noble can write Firefight variants.
+            Text(ui, NobleStyle::TitleFont(), 18.0f, ImVec2(px + 10.0f * ui.s, y + 4.0f * ui.s), kDisabled, "FIREFIGHT OPTIONS \xC2\xB7 DEFAULT");
+            const char* later = "Coming later";
+            Text(ui, nullptr, 15.0f, ImVec2(px + pw - TextWidth(nullptr, 15.0f * ui.s, later) - 10.0f * ui.s, y + 6.0f * ui.s), kDisabled, later);
+            y += 30.0f * ui.s;
+        }
+        if (ff) {
             y += DifficultyTiles(ui, "ffdiff", ImVec2(px, y), pw, st.difficulty, st.focusRow == focusRows) + 8.0f * ui.s;
             ++focusRows;
         }
-        if (forge && !std::filesystem::exists(ctx.forgeVariant)) {
+        if (forgeMissing) {
             Text(ui, nullptr, 16.0f, ImVec2(px + 10.0f * ui.s, y), IM_COL32(255, 190, 120, 255),
                  "MCC's Forge game type (00_basic_editing_054.bin) wasn't found.");
             y += 26.0f * ui.s;
         }
-        y += 10.0f * ui.s;
         const bool canStart = map && map->enabled;
-        const bool start = (ActionButton(ui, "start", ImVec2(px, y), pw, forge ? "START FORGE" : "START GAME") ||
+        const float bw = (pw - 10.0f * ui.s) * 0.62f;
+        std::string sub;
+        if (!map) sub = "Pick a map";
+        else if (ff) sub = "Hold out alone \xC2\xB7 " + std::string(kDifficultyNames[st.difficulty]);
+        else if (forge) sub = map->name + " \xC2\xB7 Forge";
+        else {
+            const std::vector<MenuVariant>& list = ctx.variants;
+            sub = map->name + " \xC2\xB7 " + (list.empty() ? std::string("Default") : list[std::clamp(st.variant, 0, static_cast<int>(list.size()) - 1)].label);
+        }
+        const bool start = (BigAction(ui, "start", ImVec2(px, actionsY), ff ? bw : (forge ? pw : bw), ff ? "PLAY SOLO" : forge ? "START FORGE" : "START GAME",
+                                      sub.c_str(), true, canStart, st.focusRow == focusRows) ||
                             (st.focusRow == focusRows && AcceptPressed())) && canStart;
-        y += 48.0f * ui.s;
-        if (!ff && !forge && ActionButton(ui, "browse", ImVec2(px, y), pw, "HOST OR JOIN GAMES", false)) st.screen = Screen::Servers;
+        if (ff) {
+            BigAction(ui, "coop", ImVec2(px + bw + 10.0f * ui.s, actionsY), pw - bw - 10.0f * ui.s, "HOST CO-OP", "Needs online play (coming later)", false, false);
+        } else if (!forge) {
+            if (BigAction(ui, "browse", ImVec2(px + bw + 10.0f * ui.s, actionsY), pw - bw - 10.0f * ui.s, "HOST OR JOIN", "Server browser", false, true)) {
+                st.screen = Screen::Servers;
+            }
+        }
         if (start) {
             choice.play = true;
             choice.map = map->scenario;
