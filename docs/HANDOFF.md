@@ -11,6 +11,16 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 ---
 
+## 0. Pick up here (2026-10-28, 03:40 ET) - FOV checked in game
+
+**03:40 (Tyler's PC, O7OF's `c4ace4e` pulled and built clean):** FOV works when set before a match. Sword Base,
+windowed 1600x900, `fieldOfView` 78 vs 110 in settings.json, frame 1500 of each run: the log shows "CameraFov: game
+field of view set to 78/110 degrees" and the 110 shot has a visibly wider view (the rifle takes up much less of the
+screen). Shots: `build\bin\Release\FOV78_capture_1500.bmp`, `FOV110_capture_1500.bmp` (different spawns, so
+compare the gun, not the scenery). Not checked yet: changing FOV live from the pause menu mid-match. Small
+mismatch: `Settings.cpp` clamps `fieldOfView` to 60-120, while the help text mentions the engine's 1-150 limit.
+Tyler's settings were restored after the test (copy in `data\userdata\settings.backup.json`).
+
 ## 0a. Latest (2026-10-28, 02:00 ET) — FOV hooked up + settings reachable from the pause menu
 
 **02:00:** Item 3 below is implemented (not yet run in game). Static REA/Ghidra analysis of `haloreach.dll`
@@ -51,7 +61,7 @@ Open list, in priority order:
    - Use profile captures (`-capture-profile data/profile-captures`) to identify which bytes control torso, helmet, shoulders, legs, visor color, and suit color
    - Map UI selections to equipment IDs and color indices
    - Test in-game: set armor in settings, launch a game, verify the character reflects the changes
-3. ~~**Map FOV to the game camera and verify it works in-game**~~ — wired in 0a below (FOV value at
+3. ~~**Map FOV to the game camera and verify it works in-game**~~ (works at match start, 03:40) — wired in 0a below (FOV value at
    `haloreach+0xB42C10`, see `docs/fov-findings.md`); still needs an in-game check that the camera takes the value live
 4. **Controller settings** (stick sensitivity, invert, dead zones, vibration): find how Noble currently feeds input to the engine, then add UI in Settings
 5. **Menu music picker**: Tyler wants cleaner UI (~360 tracks; current grouped dropdown is unwieldy)
