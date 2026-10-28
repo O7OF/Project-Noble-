@@ -146,14 +146,14 @@ struct CommendationDef {
     const char* description;
     CommendationMetric metric;
     int64_t targets[6];       // Steel, Bronze, Silver, Gold, Onyx, Max
-    int64_t rewards[6];       // cR for reaching each tier (Max pays nothing, as in Reach)
+    int64_t rewards[6];       // Reach's cR per tier (Max paid nothing); Noble pays TierReward()
 };
 using CM = CommendationMetric;
 // Requirements, tier counts and cR are Reach's (Halopedia). Heavy Weapon's cR was unknown there, so it uses the averages.
 const CommendationDef kCommendations[] = {
     { 0, "cannon_fodder", "Cannon Fodder", "Kill any infantry-class enemy in Campaign", CM::None, { 250, 750, 3000, 7000, 12000, 20000 }, { 200, 600, 1200, 2400, 2400, 0 } },
-    { 0, "demon", "Demon", "Complete a Campaign mission", CM::Missions, { 9, 18, 81, 135, 270, 540 }, { 400, 400, 400, 400, 400, 0 } },
-    { 0, "flawless_cowboy", "Flawless Cowboy", "Complete a Campaign mission without dying", CM::FlawlessMissions, { 5, 10, 25, 50, 150, 300 }, { 450, 450, 900, 1500, 2000, 0 } },
+    { 0, "demon", "Demon", "Complete a Campaign mission (Noble Actual doesn't count)", CM::Missions, { 9, 18, 81, 135, 270, 540 }, { 400, 400, 400, 400, 400, 0 } },
+    { 0, "flawless_cowboy", "Flawless Cowboy", "Complete a Campaign mission without dying (Noble Actual doesn't count)", CM::FlawlessMissions, { 5, 10, 25, 50, 150, 300 }, { 450, 450, 900, 1500, 2000, 0 } },
     { 0, "leadership_element", "Leadership Element", "Kill a leader-class enemy in Campaign", CM::None, { 100, 375, 750, 3000, 6000, 10000 }, { 400, 750, 1250, 2500, 2500, 0 } },
     { 0, "nice_arm", "Nice Arm", "Kill an enemy with a Frag or Plasma Grenade in Campaign", CM::None, { 50, 250, 500, 4000, 8000, 13000 }, { 200, 750, 1000, 2000, 2000, 0 } },
     { 0, "pinpoint", "Pinpoint", "Kill an enemy with a headshot in Campaign", CM::None, { 50, 250, 500, 4000, 8000, 20000 }, { 100, 750, 1000, 2000, 2000, 0 } },
@@ -499,17 +499,32 @@ int64_t CommendationValue(size_t index) {
     return it == s_extra.commendationCount.end() ? 0 : it->second;
 }
 
-// What one finished game adds to a commendation (any difficulty, any mission).
-int64_t CommendationAmount(const CommendationDef& c, BaseType type, int64_t assists, int64_t deaths) {
+// What one finished game adds to a commendation (any difficulty). Noble Actual (m05) is a short
+// intro mission, so it doesn't count as a mission (Tyler: it would be farmed); Lone Wolf does.
+int64_t CommendationAmount(const CommendationDef& c, BaseType type, const std::string& map, int64_t assists, int64_t deaths) {
     static const BaseType kModeType[3] = { BaseType::Campaign, BaseType::Firefight, BaseType::Multiplayer };
     if (type != kModeType[c.mode]) return 0;
+    std::string m = map;
+    const size_t slash = m.find_last_of("\\/");
+    if (slash != std::string::npos) m = m.substr(slash + 1);
+    for (char& ch : m) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    const bool countedMission = m != "m05";
     switch (c.metric) {
     case CM::Assists: return assists;
-    case CM::Missions: return 1;
-    case CM::FlawlessMissions: return deaths == 0 ? 1 : 0;
+    case CM::Missions: return countedMission ? 1 : 0;
+    case CM::FlawlessMissions: return countedMission && deaths == 0 ? 1 : 0;
     case CM::NoDeathGames: return deaths == 0 ? 1 : 0;
     default: return 0;
     }
+}
+
+// Noble's payout per tier (Tyler): Reach's cR x2.5 for Steel to Gold, Onyx = 2x Gold, Max = 3x Onyx.
+int64_t TierReward(const CommendationDef& c, int tier) {
+    auto scaled = [&](int t) { return (c.rewards[t] * 5 + 1) / 2; };   // x2.5, rounded
+    if (tier < 0 || tier > 5) return 0;
+    if (tier <= 3) return scaled(tier);
+    const int64_t onyx = scaled(3) * 2;
+    return tier == 4 ? onyx : onyx * 3;
 }
 
 int TierFor(const CommendationDef& c, int64_t value) {
@@ -733,12 +748,12 @@ void OnGameResults(const uint8_t* record, size_t size) {
     // Commendations: count this game, then pay every tier reached since the last match.
     for (size_t i = 0; i < std::size(kCommendations); ++i) {
         const CommendationDef& c = kCommendations[i];
-        const int64_t add = CommendationAmount(c, s_type, assists, deaths);
+        const int64_t add = CommendationAmount(c, s_type, s_map, assists, deaths);
         if (add > 0) s_extra.commendationCount[CommendationKey(c)] += add;
         const int reached = TierFor(c, CommendationValue(i));
         int& paid = s_extra.commendationTier[CommendationKey(c)];
         for (int t = paid; t < reached; ++t) {
-            a.lines.push_back({ std::string("Commendation: ") + c.title + " (" + kTierNames[t + 1] + ")", c.rewards[t] });
+            a.lines.push_back({ std::string("Commendation: ") + c.title + " (" + kTierNames[t + 1] + ")", TierReward(c, t) });
         }
         paid = std::max(paid, reached);
     }
@@ -863,7 +878,7 @@ std::vector<Commendation> Commendations() {
         k.tier = TierFor(c, k.value);
         k.prevTarget = k.tier > 0 ? c.targets[k.tier - 1] : 0;
         k.nextTarget = k.tier < 6 ? c.targets[k.tier] : 0;
-        k.nextReward = k.tier < 6 ? c.rewards[k.tier] : 0;
+        k.nextReward = k.tier < 6 ? TierReward(c, k.tier) : 0;
         out.push_back(k);
     }
     return out;

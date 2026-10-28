@@ -19,9 +19,12 @@ commits and pushes. Waiting for Tyler to run `go.bat`.
 - `Career.cpp`: `kCommendations` is now Reach's 45 (mode, art key, name, requirement, Reach's six tier counts from Halopedia).
   Tier names Steel, Bronze, Silver, Gold, Onyx, Max. Counts are kept per commendation in `record.commendationCounts`
   (`<mode>_<key>`), tiers paid in `record.commendations` (old Noble commendations are dropped). Tyler asked to drop
-  Reach's rules: every difficulty and every mission counts.
+  Reach's rules (every difficulty counts), but Noble Actual (m05) still doesn't count for Demon / Flawless Cowboy so it
+  can't be farmed. Lone Wolf counts (people use it as a modded map).
 - Each commendation pays Reach's own cR per tier (`CommendationDef::rewards`, from the Halopedia list Tyler sent; Max pays 0;
   Heavy Weapon was unknown, so it uses Halopedia's averages 200/700/1000/2400/2400). Rows show the next tier's cR in amber.
+- Tyler's payout rule (`TierReward`): Steel..Gold pay Reach's cR x2.5 (rounded), Onyx pays 2x that Gold, Max pays 3x Onyx.
+  Example Any Spree: 625, 1,063, 3,000, 6,000, Onyx 12,000, Max 36,000.
 - Counted now: Demon (missions), Flawless Cowboy (mission with 0 deaths), Support Role / Backup / Assistant (assists),
   Perfectionist (Firefight game with 0 deaths, per game until rounds are decoded). Everything else shows "Not tracked yet".
 - `CareerPanel.cpp` COMMENDATIONS tab: CAMPAIGN / FIREFIGHT / MULTIPLAYER sub-tabs (click, or LT/RT; `m_commendTab`), Reach-style rows with the banner art
