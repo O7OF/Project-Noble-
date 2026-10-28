@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace noble {
@@ -32,8 +33,24 @@ struct AwardLine {
     int64_t credits = 0;
 };
 
+// One row of the post-game scoreboard (from the results record).
+struct ScoreRow {
+    std::string name;      // "You (NobleSix)" for the local player, "Player N" for others (no names in the record)
+    bool local = false;
+    int team = -1;         // -1 when the game has no teams
+    int64_t score = 0;
+    int64_t kills = 0;
+    int64_t deaths = 0;
+    int64_t assists = 0;
+    int64_t medals = 0;
+};
+
 struct Award {
     bool valid = false;
+    std::string type;      // "campaign", "firefight", "multiplayer"
+    std::string map;
+    double minutes = 0.0;
+    std::vector<ScoreRow> players;
     std::vector<AwardLine> lines;
     int64_t total = 0;
     int64_t creditsBefore = 0;
@@ -53,6 +70,55 @@ struct Totals {
     int64_t medals = 0;
     double minutesPlayed = 0.0;
 };
+
+// One match in the service record history (newest first).
+struct MatchSummary {
+    std::string date;      // YYYY-MM-DD HH:MM
+    std::string type;      // BaseTypeName
+    std::string map;
+    int difficulty = -1;   // campaign / Firefight only
+    double minutes = 0.0;
+    int64_t kills = 0, deaths = 0, assists = 0, medals = 0, score = 0;
+    int64_t credits = 0;
+};
+
+// Everything the SERVICE RECORD screen shows.
+struct Record {
+    Totals totals;
+    int64_t games[3] = {};          // by BaseType
+    double minutes[3] = {};
+    int64_t bestMatchCredits = 0;
+    int64_t challengesCompleted = 0;
+    std::vector<std::pair<std::string, int>> campaignBest;  // scenario -> best difficulty completed (0..3)
+    std::vector<MatchSummary> history;
+};
+Record GetRecord();
+
+// Daily and weekly challenges (Reach style: new ones every day / every Monday). Progress comes from
+// finished matches; a completed challenge pays its reward on the post-game screen.
+struct Challenge {
+    std::string title;
+    std::string description;
+    bool weekly = false;
+    int64_t progress = 0;
+    int64_t target = 1;
+    int64_t reward = 0;
+    bool done = false;
+};
+std::vector<Challenge> Challenges();
+std::string ChallengeResetText();   // "Daily challenges reset in 5 h 12 min"
+
+// Commendations: lifetime tracks with tiers (Iron .. Onyx, then Max), each tier pays once.
+struct Commendation {
+    std::string title;
+    std::string description;
+    int64_t value = 0;
+    int tier = 0;                   // tiers reached, 0..6
+    int64_t nextTarget = 0;         // 0 when maxed
+    int64_t prevTarget = 0;
+};
+std::vector<Commendation> Commendations();
+const char* CommendationTierName(int tier);   // 0 = "None", 1 = "Iron" ... 6 = "Max"
 
 // What a match pays as. Modded content always pays exactly like its base type: the base type is the
 // engine game mode BlamEngine launches with (campaign 1, Firefight 0x40B, everything else

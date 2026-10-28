@@ -3,6 +3,7 @@
 #include "common/Settings.hpp"
 
 #include <atomic>
+#include <shellapi.h>
 #include <cmath>
 
 namespace noble {
@@ -75,10 +76,42 @@ bool CameraFov::Read(float& degrees) {
     }
 }
 
+// Test option "-fov-test-at <seconds> <degrees>": that many seconds after the first engine frame,
+// change the saved FOV setting the way SETTINGS > VIDEO > APPLY does, so the live path can be checked
+// with -capture-frames (the player stands still, so shots before and after differ only in FOV).
+// Note: like APPLY, it saves settings.json.
+static void FovTestTick(uint64_t now) {
+    static bool s_parsed = false, s_done = false;
+    static double s_at = 0.0;
+    static float s_degrees = 0.0f;
+    static uint64_t s_start = 0;
+    if (!s_parsed) {
+        s_parsed = true;
+        s_start = now;
+        int argc = 0;
+        LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+        for (int i = 1; argv && i + 2 < argc; ++i) {
+            if (_wcsicmp(argv[i], L"-fov-test-at") == 0) {
+                s_at = _wtof(argv[i + 1]);
+                s_degrees = static_cast<float>(_wtof(argv[i + 2]));
+            }
+        }
+        if (argv) LocalFree(argv);
+        if (s_at <= 0.0) s_done = true;
+    }
+    if (s_done || now - s_start < static_cast<uint64_t>(s_at * 1000.0)) return;
+    s_done = true;
+    SettingsData d = Settings::Get().Snapshot();
+    d.fieldOfView = s_degrees;
+    Settings::Get().Update(d);
+    NOBLE_INFO("CameraFov: -fov-test-at: setting changed to {:.0f} degrees", s_degrees);
+}
+
 void CameraFov::Tick() {
     if (s_base.load() == 0) return;
 
     const uint64_t now = GetTickCount64();
+    FovTestTick(now);
     if (now - s_lastPollMs.load() < kPollMs) return;
     s_lastPollMs.store(now);
 

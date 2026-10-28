@@ -28,6 +28,15 @@ struct SettingsData {
     float mouseSensitivityY = 1.0f; // vertical look speed relative to horizontal (1 = same)
     bool invertLook = false;
     std::map<int, int> keyOverrides; // profile action index -> virtual-key code
+    int wheelUpAction = 4;         // action the mouse wheel's up notches trigger (-1 = nothing); 4 = change weapon
+    int wheelDownAction = 4;       // same for down notches (engine key 0xAE; up is 0xAF)
+    bool padVibration = true;      // controller rumble (host slot 39 -> XInputSetState)
+    int padLookX = 19;             // controller look speed 1..19 (profile +0x1B6 = value - 1; 19 = the stock profile)
+    int padLookY = 19;             // vertical, profile +0x1B5 (same scale)
+    bool padInvertLook = false;    // Noble flips the right stick's y before the engine sees it
+    float padLeftDeadZone = 0.0f;  // extra radial dead zone Noble applies (0..0.5), on top of the engine's own
+    float padRightDeadZone = 0.0f;
+    float padVibrationStrength = 1.0f; // 0..1
 
     // Audio (engine volumes, 0..1, profile +0xA5C/+0xA60/+0xA64)
     float volumeGame = 1.0f;

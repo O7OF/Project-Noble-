@@ -2,6 +2,7 @@
 #include "UIManager.hpp"
 #include "NobleStyle.hpp"
 #include "SettingsPanel.hpp"
+#include "CareerPanel.hpp"
 #include "MenuSounds.hpp"
 #include "InputPrompts.hpp"
 #include "audio/ReachAudio.hpp"
@@ -255,7 +256,7 @@ std::string Upper(std::string s) {
     return s;
 }
 
-enum class Screen { Main, Campaign, Skulls, Firefight, CustomGame, Forge, Servers, Settings, Armory, Mods };
+enum class Screen { Main, Campaign, Skulls, Firefight, CustomGame, Forge, Servers, Settings, Armory, Mods, Career };
 
 void DrawBackdrop(const Ui& ui, Screen screen) {
     const ImVec2 o(0, 0);
@@ -587,6 +588,7 @@ const MainEntry kMainEntries[] = {
     { "Custom Game",  "Play any multiplayer map and game type, host a game or join one.",     Screen::CustomGame, true, false },
     { "Forge",        "Edit multiplayer maps with Forge. Experimental in Noble.",             Screen::Forge, true, false },
     { "Theater",      "Saved films aren't supported in Noble yet.",                           Screen::Main, false, false },
+    { "Service Record", "Your rank, credits, challenges, commendations and recent games.",   Screen::Career, true, false },
     { "Armory",       "Customize your Spartan and Sangheili armor in Reach's 3D Armory.",     Screen::Armory, true, false },
     { "Mods",         "Workshop maps and mods.",                                              Screen::Mods, true, false },
     { "Settings",     "Controls, key bindings, audio, video and gameplay options.",          Screen::Settings, true, false },
@@ -704,6 +706,7 @@ Screen ParseScreenArg(const std::wstring& v) {
     if (s == L"settings") return Screen::Settings;
     if (s == L"armory") return Screen::Armory;
     if (s == L"mods") return Screen::Mods;
+    if (s == L"career") return Screen::Career;
     return Screen::Main;
 }
 
@@ -729,6 +732,7 @@ struct OverlayContext {
     std::vector<const ModEntry*> mpMods;
     MenuState st;
     SettingsPanel settingsPanel;
+    CareerPanel careerPanel;
     bool modsScanned = false;
     unsigned long long captureFrame = 0;
     unsigned long long totalFrames = 0;
@@ -1223,8 +1227,10 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
 
     case Screen::Servers:
     case Screen::Settings:
+    case Screen::Career:
     case Screen::Mods: {
-        const char* title = st.screen == Screen::Servers ? "GAMES" : st.screen == Screen::Settings ? "SETTINGS" : "MODS";
+        const char* title = st.screen == Screen::Servers ? "GAMES" : st.screen == Screen::Settings ? "SETTINGS"
+                          : st.screen == Screen::Career ? "SERVICE RECORD" : "MODS";
         DrawTitle(ui, ImVec2(left, top), title);
         ImGui::SetCursorScreenPos(ImVec2(left, top + 84.0f * ui.s));
         ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.03f, 0.05f, 0.07f, 0.82f));
@@ -1234,6 +1240,8 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
             UIManager::GetServerBrowser().Render();
         } else if (st.screen == Screen::Settings) {
             ctx.settingsPanel.Render();
+        } else if (st.screen == Screen::Career) {
+            ctx.careerPanel.Render();
         } else {
             if (!ctx.modsScanned) {
                 const auto steamapps = ctx.reachDir.parent_path().parent_path().parent_path();
@@ -1321,6 +1329,7 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
         if (argv) LocalFree(argv);
     }
     ctx.settingsPanel.SetTab(startTab);
+    ctx.careerPanel.SetTab(startTab);
     ctx.modsScanned = false;
     ctx.totalFrames = 0;
     ctx.sceneReadyFrames = 0;

@@ -310,7 +310,54 @@ void SettingsPanel::RenderControls() {
     ImGui::TextDisabled("Keyboard keys are on the KEY BINDINGS tab. The -mouse-scale command-line option overrides the sensitivity.");
 
     Section("GAMEPAD");
-    ImGui::TextDisabled("Controllers work in game with Halo: Reach's default layout:");
+    ImGui::TextDisabled("Xbox-compatible controllers (XInput) work in game. Noble switches between the controller and");
+    ImGui::TextDisabled("keyboard + mouse by whichever you used last; Start opens the pause menu.");
+    ImGui::Dummy(ImVec2(0, 2));
+    RowLabel("LOOK SENSITIVITY");
+    ImGui::SetNextItemWidth(260);
+    if (ImGui::SliderInt("##padlookx", &m_edit.padLookX, 1, 19, "%d", ImGuiSliderFlags_AlwaysClamp)) m_dirty = true;
+    ImGui::SameLine();
+    if (ImGui::SmallButton("RESET##padx")) { m_edit.padLookX = 19; m_dirty = true; }
+    RowLabel("VERTICAL SENSITIVITY");
+    ImGui::SetNextItemWidth(260);
+    if (ImGui::SliderInt("##padlooky", &m_edit.padLookY, 1, 19, "%d", ImGuiSliderFlags_AlwaysClamp)) m_dirty = true;
+    ImGui::SameLine();
+    if (ImGui::SmallButton("RESET##pady")) { m_edit.padLookY = 19; m_dirty = true; }
+    ImGui::TextDisabled("How fast the right stick turns you (Reach's own setting; 19 is the stock profile's value).");
+    RowLabel("INVERT LOOK");
+    if (Cycle("padinvert", m_edit.padInvertLook ? "INVERTED" : "NOT INVERTED")) {
+        m_edit.padInvertLook = !m_edit.padInvertLook;
+        m_dirty = true;
+    }
+    auto deadZone = [&](const char* label, const char* id, float& v) {
+        RowLabel(label);
+        ImGui::SetNextItemWidth(260);
+        float percent = v * 100.0f;
+        if (ImGui::SliderFloat(id, &percent, 0.0f, 50.0f, percent < 0.5f ? "Game default" : "%.0f%%", ImGuiSliderFlags_AlwaysClamp)) {
+            v = percent / 100.0f;
+            m_dirty = true;
+        }
+    };
+    deadZone("LEFT STICK DEAD ZONE", "##dzl", m_edit.padLeftDeadZone);
+    deadZone("RIGHT STICK DEAD ZONE", "##dzr", m_edit.padRightDeadZone);
+    ImGui::TextDisabled("Raise a dead zone if a worn stick drifts. Controller settings apply at once, also mid-game.");
+    RowLabel("VIBRATION");
+    if (Cycle("vibration", m_edit.padVibration ? "ON" : "OFF")) {
+        m_edit.padVibration = !m_edit.padVibration;
+        m_dirty = true;
+    }
+    if (m_edit.padVibration) {
+        RowLabel("VIBRATION STRENGTH");
+        ImGui::SetNextItemWidth(260);
+        float percent = m_edit.padVibrationStrength * 100.0f;
+        if (ImGui::SliderFloat("##rumble", &percent, 0.0f, 100.0f, "%.0f%%", ImGuiSliderFlags_AlwaysClamp)) {
+            m_edit.padVibrationStrength = percent / 100.0f;
+            m_dirty = true;
+        }
+    }
+    ImGui::TextDisabled("Rumble from the game (explosions, vehicles, melee) on Xbox-style controllers. Applies at once.");
+    ImGui::Dummy(ImVec2(0, 4));
+    ImGui::TextDisabled("Halo: Reach's default controller layout:");
     ImGui::Dummy(ImVec2(0, 4));
     DrawControllerDiagram();
 }
@@ -339,6 +386,27 @@ void SettingsPanel::PollRebind() {
 void SettingsPanel::RenderKeyBindings() {
     ImGui::Dummy(ImVec2(0, 2));
     ImGui::TextDisabled("Click a key to change it, then press a key or mouse button (Esc cancels). Right-click to unbind.");
+    // The mouse wheel binds to an action through a second key slot (see ReachHost WriteDefaultKeyBindings).
+    Section("MOUSE WHEEL");
+    static const int kWheelActions[] = { 4, 1, 3, 5, 7, 2, 23, 6, 11, 12, 20, -1 };
+    auto wheelName = [](int action) -> std::string {
+        if (action < 0) return "NOTHING";
+        const char* n = KeyBindings::ActionName(action);
+        return n ? Upper(n) : "SLOT " + std::to_string(action);
+    };
+    auto wheelRow = [&](const char* label, const char* id, int& action) {
+        RowLabel(label);
+        if (const int step = Cycle(id, wheelName(action).c_str())) {
+            int idx = 0;
+            const int n = static_cast<int>(std::size(kWheelActions));
+            for (int i = 0; i < n; ++i) if (kWheelActions[i] == action) idx = i;
+            action = kWheelActions[(idx + step + n) % n];
+            m_dirty = true;
+        }
+    };
+    wheelRow("WHEEL UP", "wheelup", m_edit.wheelUpAction);
+    wheelRow("WHEEL DOWN", "wheeldown", m_edit.wheelDownAction);
+    ImGui::TextDisabled("With both on CHANGE WEAPON (the default) either direction switches weapons.");
     using KeyBindings::ActionGroup;
     const ActionGroup groups[] = { ActionGroup::Movement, ActionGroup::Actions, ActionGroup::Vehicle, ActionGroup::Interface,
                                    ActionGroup::Forge, ActionGroup::Theater };
@@ -406,45 +474,116 @@ void SettingsPanel::RenderAudio() {
         m_dirty = true;
     }
     RowLabel("MENU MUSIC");
-    {
-        // Grouped list of every track Noble found in the MCC install; picking one plays it straight away
-        // (APPLY keeps it, UNDO goes back to the saved choice).
-        const std::vector<ReachAudio::TrackInfo> tracks = ReachAudio::MusicTracks();
-        const std::string current = ReachAudio::TrackLabel(m_edit.menuMusicTrack);
-        ImGui::SetNextItemWidth(420);
-        ImGui::SetNextWindowSizeConstraints(ImVec2(0, 0), ImVec2(FLT_MAX, 420));
-        if (ImGui::BeginCombo("##menumusic", current.c_str(), ImGuiComboFlags_HeightLargest)) {
-            std::string game = "\x01";
-            for (const ReachAudio::TrackInfo& t : tracks) {
-                if (t.game != game) {
-                    game = t.game;
-                    if (!game.empty()) {
-                        ImGui::Dummy(ImVec2(0, 2));
-                        ImGui::TextColored(NobleStyle::Accent(), "%s", game.c_str());
-                        ImGui::Separator();
-                    }
-                }
-                const bool selected = t.id == m_edit.menuMusicTrack;
-                ImGui::PushID(t.id.c_str());
-                if (ImGui::Selectable(t.label.c_str(), selected)) {
-                    m_edit.menuMusicTrack = t.id;
-                    m_dirty = true;
-                    MenuSounds::Click();
-                    ReachAudio::PlayMenuMusic(t.id);
-                }
-                if (ImGui::IsItemHovered()) MenuSounds::Hover(ImGui::GetItemID());
-                if (selected) ImGui::SetItemDefaultFocus();
-                ImGui::PopID();
-            }
-            ImGui::EndCombo();
-        }
-    }
+    ImGui::TextUnformatted(ReachAudio::TrackLabel(m_edit.menuMusicTrack).c_str());
+    RenderMusicPicker();
     ReachAudio::SetMusicVolume(m_edit.volumeMusic);
     const std::string problem = ReachAudio::Problem();
     if (!problem.empty()) {
         ImGui::Dummy(ImVec2(0, 4));
         ImGui::TextDisabled("Reach menu audio is off: %s", problem.c_str());
     }
+}
+
+// Menu music picker: the games on the left, the chosen game's tracks on the right (or every game's
+// tracks matching the search text). Clicking a track plays it straight away; APPLY keeps it, UNDO
+// goes back to the saved one. "Shuffle all" and "Off" sit above the game list.
+void SettingsPanel::RenderMusicPicker() {
+    const std::vector<ReachAudio::TrackInfo> tracks = ReachAudio::MusicTracks();
+    std::vector<std::string> games;
+    std::vector<int> counts;
+    for (const ReachAudio::TrackInfo& t : tracks) {
+        if (t.game.empty()) continue;
+        auto it = std::find(games.begin(), games.end(), t.game);
+        if (it == games.end()) { games.push_back(t.game); counts.push_back(1); }
+        else ++counts[it - games.begin()];
+    }
+    // Start on the game of the saved track.
+    if (m_musicGame < 0) {
+        m_musicGame = 0;
+        for (const ReachAudio::TrackInfo& t : tracks) {
+            if (t.id == m_edit.menuMusicTrack && !t.game.empty()) {
+                m_musicGame = static_cast<int>(std::find(games.begin(), games.end(), t.game) - games.begin());
+            }
+        }
+    }
+    if (m_musicGame >= static_cast<int>(games.size())) m_musicGame = 0;
+
+    // Old saved values ("shuffle", piece names) play Reach's menu theme: show that one as chosen.
+    if (std::none_of(tracks.begin(), tracks.end(), [&](const ReachAudio::TrackInfo& t) { return t.id == m_edit.menuMusicTrack; }) &&
+        std::any_of(tracks.begin(), tracks.end(), [](const ReachAudio::TrackInfo& t) { return t.id == "reach:menu"; })) {
+        m_edit.menuMusicTrack = "reach:menu";
+    }
+    auto pick = [&](const std::string& id) {
+        m_edit.menuMusicTrack = id;
+        m_dirty = true;
+        MenuSounds::Click();
+        ReachAudio::PlayMenuMusic(id);
+    };
+
+    ImGui::Dummy(ImVec2(0, 4));
+    const float height = 330.0f;
+    ImGui::BeginChild("##musicgames", ImVec2(380, height), true);
+    for (const ReachAudio::TrackInfo& t : tracks) {
+        if (!t.game.empty()) continue;   // "Shuffle all games", "Off"
+        const bool selected = t.id == m_edit.menuMusicTrack;
+        if (ImGui::Selectable(t.label.c_str(), selected)) pick(t.id);
+        if (ImGui::IsItemHovered()) MenuSounds::Hover(ImGui::GetItemID());
+    }
+    ImGui::Separator();
+    for (int i = 0; i < static_cast<int>(games.size()); ++i) {
+        char label[160];
+        std::snprintf(label, sizeof(label), "%s  (%d)", games[i].c_str(), counts[i]);
+        ImGui::PushID(i);
+        const bool open = i == m_musicGame && m_musicSearch[0] == 0;
+        if (open) ImGui::PushStyleColor(ImGuiCol_Text, NobleStyle::Accent());
+        if (ImGui::Selectable(label, open)) {
+            m_musicGame = i;
+            m_musicSearch[0] = 0;
+            MenuSounds::Scroll();
+        }
+        if (open) ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered()) MenuSounds::Hover(ImGui::GetItemID());
+        ImGui::PopID();
+    }
+    ImGui::EndChild();
+
+    ImGui::SameLine();
+    ImGui::BeginGroup();
+    ImGui::SetNextItemWidth(520);
+    ImGui::InputTextWithHint("##musicsearch", "Search every game's tracks", m_musicSearch, sizeof(m_musicSearch));
+    std::string needle = m_musicSearch;
+    for (char& c : needle) c = static_cast<char>(::tolower(static_cast<unsigned char>(c)));
+    ImGui::BeginChild("##musictracks", ImVec2(520, height - ImGui::GetFrameHeightWithSpacing()), true);
+    int shown = 0;
+    std::string lastGame;
+    for (const ReachAudio::TrackInfo& t : tracks) {
+        if (t.game.empty()) continue;
+        if (needle.empty()) {
+            if (games.empty() || t.game != games[m_musicGame]) continue;
+        } else {
+            std::string hay = t.label + " " + t.game;
+            for (char& c : hay) c = static_cast<char>(::tolower(static_cast<unsigned char>(c)));
+            if (hay.find(needle) == std::string::npos) continue;
+            if (t.game != lastGame) {   // game headings while searching
+                lastGame = t.game;
+                ImGui::TextColored(NobleStyle::Accent(), "%s", t.game.c_str());
+            }
+        }
+        const bool selected = t.id == m_edit.menuMusicTrack;
+        ImGui::PushID(t.id.c_str());
+        if (ImGui::Selectable(t.label.c_str(), selected)) pick(t.id);
+        if (ImGui::IsItemHovered()) MenuSounds::Hover(ImGui::GetItemID());
+        if (selected && m_musicScrollToCurrent) {
+            ImGui::SetScrollHereY(0.4f);
+            m_musicScrollToCurrent = false;
+        }
+        ImGui::PopID();
+        ++shown;
+    }
+    if (shown == 0) ImGui::TextDisabled(needle.empty() ? "No tracks found in the MCC install." : "No track matches.");
+    ImGui::EndChild();
+    ImGui::EndGroup();
+    ImGui::TextDisabled("Click a track to hear it. APPLY keeps it, UNDO CHANGES goes back.");
 }
 
 void SettingsPanel::RenderDisplay() {

@@ -1,4 +1,4 @@
-# Project Noble: handoff (2026-10-27, 23:58 ET)
+# Project Noble: handoff (2026-10-28, 04:30 ET)
 
 This picks up a reverse-engineering and C++ effort on **Tyler's Windows PC**. All paths below are real paths on that machine.
 Tyler (GitHub `WeabooTyler117`) works with a partner (GitHub `O7OF`) who owns the repo and writes most of the code.
@@ -11,7 +11,60 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 ---
 
-## 0. Pick up here (2026-10-28, 03:40 ET) - FOV checked in game
+## 0. Pick up here (2026-10-28, 04:30 ET) - wheel, controller, music picker, service record, post-game
+
+Tyler (03:47) asked for: career extras, post-game scoreboard, controller settings, music picker, FOV mid-match,
+wheel down. All done and tested by test options + screenshots on Tyler's PC (he was away); details:
+
+- **FOV mid-match: works.** New test option `-fov-test-at <s> <deg>` changes the saved FOV mid-match the way
+  APPLY does; standing still, frame 900 (78) vs 1500 (110) show the wider view at once (`t1_A_capture_*.bmp`).
+- **Mouse wheel down: solved.** The engine's wheel-down key code is **0xAE** (up is 0xAF); 0xB0 does nothing.
+  Proven: 0xAE as change-weapon's second key + a -1 pulse switches weapons. Only the second key slot (+8) works
+  (the "third slot" test that failed earlier was the wrong slot, not the wrong code). New settings
+  `wheelUpAction` / `wheelDownAction` (default both 4 = change weapon; -1 = nothing), shown as KEY BINDINGS >
+  MOUSE WHEEL. Same action both ways -> only 0xAF bound and down notches sent as +1 (old behaviour); different
+  actions -> 0xAF / 0xAE on each action's second key and real -1 pulses (tested: up = melee, down = change weapon).
+  Key bindings are now rewritten into the built-in profile every 500 ms, so changes may apply mid-game (not
+  verified that the engine re-reads them live).
+- **Controller: the engine never read the pad before.** With a host, haloreach.dll doesn't load XInput
+  (`hr+0x23855`: only when the host global `hr+0xC1A100` is null); MCC passes the pad in the slot-36 buffer:
+  `+0x000` u32 device (0 = controller, 1 = keyboard/mouse), `+0x120` u16 buttons, `+0x124/+0x125` u8 triggers,
+  `+0x126/128/12A/12C` i16 LX/LY/RX/RY (decoded from `hr+0x23CF0..0x23D87`). So Tyler's "controller works" was
+  probably Steam Input mapping it to keyboard/mouse - **ask him**. Noble now reads pad 0 with XInput
+  (`FillLocalPad`) and switches device to whichever was used last; Start toggles Noble's pause menu.
+  Tested with `-fake-pad <s>` (fake right stick for 1.5 s): view turns.
+  Look speed: `-profile-set <off>=<byte>` test option. **+0x1B6 = horizontal stick speed** (0 -> ~19 deg instead
+  of ~61 deg for the same push), **+0x1B5 = vertical** (`-fake-pad-y`: 0 -> barely looks up), +0x1B7 changed
+  nothing measurable (range 0..9, stock 7; maybe acceleration). Engine range 0..18, stock 18.
+  New CONTROLS > GAMEPAD rows: look sensitivity / vertical (1..19 -> +0x1B6/+0x1B5), invert (Noble flips RY),
+  left/right stick dead zone (Noble-side, radial, 0..50%), vibration on/off + strength.
+  Vibration: host slot 39 now calls XInputSetState (a1 = pad, a2 -> u16 {low, high, left trigger, right
+  trigger}, from `hr+0x24194`). **Not verified** (no pad here; rumble may only fire for a pad user).
+  The engine's dead-zone floats (+0x1B8 0.13, +0x1BC 0.12) were not tested, so Noble uses its own.
+- **Menu music picker:** AUDIO tab now has a two-pane picker: Shuffle all / Off and the games (with track counts)
+  on the left, the chosen game's tracks on the right, plus a search box over every game. Click = play + select.
+- **Service Record** (new main-menu entry, `src/ui/CareerPanel.*`, `-menu-screen career -menu-tab 0..2`):
+  rank + cR + progress, totals (games per mode, time, K/D/A, medals, best game, challenges), campaign best
+  difficulty per mission, last 20 games. CHALLENGES: 4 daily (picked per date from 9) + 1 weekly (from 5),
+  paid when completed. COMMENDATIONS: 6 tracks (campaign missions, Firefight games, MP games, hours, kills,
+  medals), tiers Iron..Max pay 500..25000 cR once. Campaign scoring: mission-complete bonus by difficulty
+  (250/500/1000/2000) + 10% per skull. All in `career.json` under `"record"` (old files load fine).
+- **Post-game scoreboard:** the post-game panel (560 px wide) now lists everyone in the results record (score,
+  K/D/A, medals; only the local player is named - the record holds no names) above the cR lines, which now
+  include challenge / commendation / mission payouts. Real 10-minute Sword Base match (04:24): paid 133 cR,
+  history row + per-mode totals + "Time on Duty" challenge progress (10/45 min) saved; career.json was restored
+  afterwards. Post-game panel checked (04:38, `build\bin\Release\t5_capture_900000.bmp`): GAME OVER, map, mode and
+  time, scoreboard row "NobleSix [NOBL]" with score/K/D/A/medals, cR lines, rank bar (now blue), buttons.
+- **Git (04:42):** pushed as `9e679d8`, rebased onto O7OF's `2b9e843` (ReachArmory + in-engine 3D menu: the front-end
+  menu now runs inside the engine on `mainmenu`). FrontEndMenu.cpp conflicted; resolved by taking O7OF's file and
+  re-adding the Service Record entry / screen / `-menu-screen career`. Builds clean; the in-engine main menu shows
+  SERVICE RECORD (screenshot `capture_780.bmp`). Notes for O7OF: in his new menu `-menu-screen <name>` seemed to be
+  ignored by the capture (it showed MAIN MENU), and the log warns `ReachArmory: Could not locate
+  mainmenu_all.string_ids.csv`. Also check that nothing from RR's `mainmenu_all.map` is committed (repo rule).
+- Small open bits: Start can't close the pause menu (the pad is only read while the game has input); vibration
+  untested with a real pad; +0x1B7 meaning unknown; challenge kills/medals depend on the provisional stat slots.
+
+### Earlier (03:40 ET) - FOV checked in game
 
 **03:40 (Tyler's PC, O7OF's `c4ace4e` pulled and built clean):** FOV works when set before a match. Sword Base,
 windowed 1600x900, `fieldOfView` 78 vs 110 in settings.json, frame 1500 of each run: the log shows "CameraFov: game
@@ -64,8 +117,8 @@ Open list, in priority order:
    - Test in-game: set armor in settings, launch a game, verify the character reflects the changes
 3. ~~**Map FOV to the game camera and verify it works in-game**~~ (works at match start, 03:40) — wired in 0a below (FOV value at
    `haloreach+0xB42C10`, see `docs/fov-findings.md`); still needs an in-game check that the camera takes the value live
-4. **Controller settings** (stick sensitivity, invert, dead zones, vibration): find how Noble currently feeds input to the engine, then add UI in Settings
-5. **Menu music picker**: Tyler wants cleaner UI (~360 tracks; current grouped dropdown is unwieldy)
+4. ~~**Controller settings**~~ done 04:30 (native XInput pad, look speed, invert, dead zones, vibration; see section 0). Left: verify with a real pad (vibration, +0x1B7)
+5. ~~**Menu music picker**~~ done 04:30 (two-pane picker with search)
 6. Check in game: Forge menus and loadout cards no longer show hex (expected fixed by Slot 55)
 7. Noble exiting from inside a game: confirm `tasklist | findstr /i noble` is empty afterwards
 8. Mod-only maps (not in Reach's tables) are listed but disabled: needs map-id work in BlamEngine
