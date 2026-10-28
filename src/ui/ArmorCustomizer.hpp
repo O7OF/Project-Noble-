@@ -19,12 +19,12 @@ enum class BodyType : int {
 
 struct AppearanceProfile {
     std::string serviceTag = "N06";
-    PlayerSpecies species = PlayerSpecies::Spartan;
+    PlayerSpecies species = PlayerSpecies::Spartan; // Preferred Species for in-game spawning
     BodyType bodyType = BodyType::Male;
 
     // Color indices (0-29 matching Reach's 30-color palette)
     int primaryColor = 1;    // Steel
-    int secondaryColor = 10; // Brick
+    int secondaryColor = 10; // Green
 
     // Spartan selections (catalog indices)
     int helmetIndex = 0;         // Mark V [B]
@@ -78,6 +78,8 @@ public:
     const AppearanceProfile& GetProfile() const { return m_profile; }
     AppearanceProfile& GetProfileMutable() { return m_profile; }
 
+    static std::filesystem::path ResolveDefaultProfilePath();
+
 private:
     void RenderCharacterPreview(ID3D11Device* device, ID3D11DeviceContext* context,
                                 float width, float height, bool fullBleed);
@@ -85,6 +87,7 @@ private:
     void MigrateFromLegacyFields();
 
     AppearanceProfile m_profile;
+    PlayerSpecies m_previewSpecies = PlayerSpecies::Spartan;
     std::filesystem::path m_profilePath;
     bool m_dirty = false;
     mutable bool m_syncedInitial = false;

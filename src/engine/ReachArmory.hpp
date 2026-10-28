@@ -8,27 +8,41 @@
 namespace noble {
 
 struct ReachArmorySelection {
+    // Preferred species for in-game spawning (0 = Spartan, 1 = Elite)
     bool isElite = false;
+    // Species currently previewed on the Armory pedestal (can be toggled independently or with Preferred Species)
+    bool previewElite = false;
     bool isFemale = false;
+
+    // Integer indices for in-game profile / appearance table
+    int primaryColorIndex = 1;    // 0..29 (Steel)
+    int secondaryColorIndex = 10; // 0..29 (Green/Brick)
+    int visorColorIndex = 0;      // 0..4
+    int armorEffectIndex = 0;     // 0..6
+    int firefightVoiceIndex = 0;  // 0..15
+    int eliteSuitIndex = 0;       // 0..7
+    std::string serviceTag = "N06";
 
     // Spartan permutation string_id names (matching mainmenu_all.string_ids.csv)
     std::string helmet = "default";
-    std::string chest = "default";
-    std::string leftShoulder = "default";
-    std::string rightShoulder = "default";
-    std::string hands = "default";      // "default" or "robot"
-    std::string wrist = "default";
-    std::string utility = "default";
-    std::string knees = "default";
+    std::string chest = "chest_blank";
+    std::string leftShoulder = "left_shoulder_blank";
+    std::string rightShoulder = "right_shoulder_blank";
+    std::string hands = "default";       // "default" or "robot"
+    std::string wrist = "wrist_blank";
+    std::string utility = "utility_blank";
+    std::string knees = "knees_default";
     std::string armorEffect = "default"; // "default", "birthday_party", "heart_attack", "pestilence", "inclement_weather", "flames", "blue_flames"
+    std::string visor = "default";
+    std::string voice = "noble_six";
 
-    // Elite suit string_id name ("minor", "spec_ops", "space", "ultra", "zealot", "general", "field_marshall", "officer")
+    // Elite suit string_id name ("minor", "spec_ops", "space", "ultra", "zealot", "general", "zealot_commander", "officer")
     std::string eliteSuit = "minor";
 
     // Linear RGB colors [0..1]
-    std::array<float, 3> primaryRgb = { 0.15294118f, 0.15294118f, 0.15294118f };
-    std::array<float, 3> secondaryRgb = { 0.15294118f, 0.15294118f, 0.15294118f };
-    std::array<float, 3> visorRgb = { 1.0f, 0.45f, 0.05f };
+    std::array<float, 3> primaryRgb = { 0.100f, 0.100f, 0.100f };
+    std::array<float, 3> secondaryRgb = { 0.100f, 0.100f, 0.100f };
+    std::array<float, 3> visorRgb = { 0.69f, 0.25f, 0.02f };
 };
 
 class ReachArmory {
@@ -48,10 +62,13 @@ public:
     static void SetYawRotation(float radians);
     static float GetYawRotation();
 
+    // Resolves a Blam! string_id name from mainmenu_all.string_ids.csv (returns 0 if not found).
+    static uint32_t ResolveStringId(const std::string& name);
+
     // Called every frame on the engine render thread inside HostSlot1_FrameTick.
     static void Tick();
 
-    // True once mainmenu_all.map director scene table is active.
+    // True once mainmenu_all.map HS GLOBALS table is active.
     static bool IsSceneReady();
 };
 

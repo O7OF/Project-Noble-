@@ -16,7 +16,7 @@ public:
             console_sink->set_level(spdlog::level::trace);
             console_sink->set_pattern("[%H:%M:%S.%e] [%^%l%$] %v");
 
-            auto file_sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(logFileName, true);
+            auto file_sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(logFileName, false);
             file_sink->set_level(spdlog::level::trace);
             file_sink->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%l] %v");
 

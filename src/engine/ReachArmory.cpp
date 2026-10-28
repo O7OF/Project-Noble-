@@ -6,6 +6,7 @@
 #include <array>
 #include <atomic>
 #include <cctype>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <fstream>
@@ -13,6 +14,7 @@
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace noble {
@@ -42,16 +44,6 @@ static bool SafeReadI32(uintptr_t addr, int32_t* out) {
     }
 }
 
-static bool SafeReadPtr(uintptr_t addr, uintptr_t* out) {
-    if (addr <= 0x10000 || !out) return false;
-    __try {
-        *out = *reinterpret_cast<const uintptr_t*>(addr);
-        return true;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return false;
-    }
-}
-
 static bool SafeWriteU32(uintptr_t addr, uint32_t val) {
     if (addr <= 0x10000) return false;
     __try {
@@ -62,10 +54,10 @@ static bool SafeWriteU32(uintptr_t addr, uint32_t val) {
     }
 }
 
-static bool SafeWriteU8(uintptr_t addr, uint8_t val) {
+static bool SafeWriteI32(uintptr_t addr, int32_t val) {
     if (addr <= 0x10000) return false;
     __try {
-        *reinterpret_cast<uint8_t*>(addr) = val;
+        *reinterpret_cast<int32_t*>(addr) = val;
         return true;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return false;
@@ -101,6 +93,13 @@ static std::string ToLowerAscii(std::string s) {
     return s;
 }
 
+static uint32_t LinearRgbToArgbU32(const std::array<float, 3>& linRgb) {
+    const uint32_t r = static_cast<uint32_t>(std::clamp(std::lround(linRgb[0] * 255.0f), 0L, 255L));
+    const uint32_t g = static_cast<uint32_t>(std::clamp(std::lround(linRgb[1] * 255.0f), 0L, 255L));
+    const uint32_t b = static_cast<uint32_t>(std::clamp(std::lround(linRgb[2] * 255.0f), 0L, 255L));
+    return 0xFF000000u | (r << 16) | (g << 8) | b;
+}
+
 // -----------------------------------------------------------------------------
 // State
 // -----------------------------------------------------------------------------
@@ -108,29 +107,30 @@ static std::filesystem::path s_dataDir;
 static std::atomic<bool> s_menuMode{false};
 static std::atomic<bool> s_sceneReady{false};
 static std::atomic<bool> s_scanning{false};
-static std::atomic<bool> s_scanLaunched{false};
+static std::atomic<bool> s_rescanRequested{false};
 static std::atomic<uint64_t> s_frameCounter{0};
 static std::atomic<int32_t> s_lastScene{-1};
+static std::atomic<int32_t> s_lastRemade{-1};
 static std::atomic<float> s_yawOffset{0.0f};
 static std::atomic<uint32_t> s_rotationBaseBits{0xFFFFFFFFu};
 static std::atomic<uint32_t> s_lastYawBits{0};
+static std::atomic<int32_t> s_lastTurnStep{-1};
 
 static std::mutex s_sceneMutex;
 static std::string s_targetScene = "armory";
 static ReachArmorySelection s_selection;
+static std::atomic<uint64_t> s_selectionGeneration{1};
+static uint64_t s_appliedGeneration = 0;
 
 static std::mutex s_dataMutex;
 static bool s_stringIdsLoaded = false;
 static std::unordered_map<std::string, uint32_t> s_stringIds;
 
-// Spartan mulg table address and stride (in bytes, typically 12 = 3 uint32_t's)
-static std::atomic<uintptr_t> s_spartanTableBase{0};
-static std::atomic<size_t> s_spartanStride{12};
-static std::atomic<uintptr_t> s_bodyTypeAddr{0};
-static std::atomic<uintptr_t> s_effectBaseAddr{0};
-static uint32_t s_effectTags[7] = { 0 }; // cached +4 tag handle for each effect 0..6
+// mainmenu_all.map HS GLOBALS table address and stride (in bytes, from {4, 8, 12, 16, 24, 32})
+static std::atomic<uintptr_t> s_globalsBase{0};
+static std::atomic<size_t> s_globalsStride{12};
 
-// Elite hlmt 6-region table
+// Elite hlmt 6-region permutation table (direct in-memory permutation swapper)
 struct ElitePermEntry {
     uint8_t bytes[0x18];
 };
@@ -141,13 +141,14 @@ struct EliteRegionCache {
 static bool s_eliteScanned = false;
 static std::array<EliteRegionCache, 6> s_eliteRegions;
 
-// Color records & Suit shader constants
+// Color records (uint32_t[4] ARGB) & Suit shader records (float[4] linear RGBA)
 static std::vector<uintptr_t> s_colorRecords;
 static std::vector<uintptr_t> s_suitRecords;
-static std::array<float, 9> s_currentLinearColors = {
-    0.15294118f, 0.15294118f, 0.15294118f, // Primary
-    0.15294118f, 0.15294118f, 0.15294118f, // Secondary
-    1.0f, 0.45f, 0.05f                      // Visor
+static std::array<uint32_t, 4> s_lastColorWords = {
+    0xFF585858u, 0xFF595959u, 0xFF2FA0CBu, 0xFFC7A167u
+};
+static std::array<float, 4> s_lastSuitFloats = {
+    0.9960785f, 0.9921569f, 0.98823535f, 1.0f
 };
 
 // -----------------------------------------------------------------------------
@@ -182,7 +183,6 @@ static void EnsureStringIdsLoaded() {
         while (std::getline(in, line)) {
             if (!line.empty() && line.back() == '\r') line.pop_back();
             // Format in mainmenu_all.string_ids.csv: Index,Total,ID,String (ID is decimal u32)
-            // Also support 2-column 0xHEX,String format if present
             size_t c1 = line.find(',');
             if (c1 == std::string::npos) continue;
             size_t c2 = line.find(',', c1 + 1);
@@ -218,113 +218,59 @@ static void EnsureStringIdsLoaded() {
 }
 
 static uint32_t LookupStringId(const std::string& name) {
+    EnsureStringIdsLoaded();
     std::lock_guard<std::mutex> lock(s_dataMutex);
     auto it = s_stringIds.find(ToLowerAscii(name));
     return (it != s_stringIds.end()) ? it->second : 0;
 }
 
 // -----------------------------------------------------------------------------
-// Scene Switching (ported from host::armory::switch_scene @ 0x1401b3fb0)
+// Scene Index Resolution (ported from host::armory::switch_scene @ 0x1401b3fb0)
 // -----------------------------------------------------------------------------
 static int32_t ResolveSceneIndex(const std::string& scene) {
     const std::string s = ToLowerAscii(scene);
-    if (s == "campaign")                         return 0x00;
-    if (s == "matchmaking")                      return 0x01;
-    if (s == "custom_games")                     return 0x02;
-    if (s == "forge")                            return 0x03;
-    if (s == "theater")                          return 0x04;
-    if (s == "firefight")                        return 0x05;
-    if (s == "start_menu" || s == "main")        return 0x06;
-    if (s == "armory")                           return 0x0A;
-    if (s == "armory_elite")                     return 0x0B;
-    if (s == "c_armory")                         return 0x0C;
-    if (s == "c_helmet" || s == "armory_head")   return 0x0D;
-    if (s == "c_left_shoulder")                  return 0x0E;
-    if (s == "c_right_shoulder")                 return 0x0F;
-    if (s == "c_chest" || s == "armory_chest")   return 0x10;
-    if (s == "c_wrist" || s == "armory_arm")     return 0x11;
-    if (s == "c_utility" || s == "armory_leg")   return 0x12;
-    if (s == "c_knees" || s == "armory_knee")    return 0x13;
-    if (s == "c_full_spartan" || s == "armory_full") return 0x14;
+    if (s == "title" || s == "start_menu" || s == "main") return 0x00;
+    if (s == "campaign" || s == "campaign_act1")          return 0x01;
+    if (s == "campaign_act2")                             return 0x02;
+    if (s == "campaign_act3")                             return 0x03;
+    if (s == "matchmaking")                               return 0x04;
+    if (s == "custom_games")                              return 0x05;
+    if (s == "forge" || s == "editor")                    return 0x06;
+    if (s == "theater")                                   return 0x07;
+    if (s == "activities")                                return 0x08;
+    if (s == "firefight" || s == "survival")              return 0x09;
+    if (s == "armory")                                    return 0x0A;
+    if (s == "armory_elite")                              return 0x0B;
+    if (s == "c_full_spartan" || s == "armory_full" || s == "c_armory") return 0x0C;
+    if (s == "c_helmet" || s == "armory_head")            return 0x0D;
+    if (s == "roster")                                    return 0x0E;
+    if (s == "c_chest" || s == "armory_chest")            return 0x0F;
+    if (s == "c_wrist" || s == "armory_arm")              return 0x10;
+    if (s == "c_utility" || s == "armory_leg")            return 0x11;
+    if (s == "c_knees" || s == "armory_knee")             return 0x12;
+    if (s == "c_left_shoulder" || s == "c_right_shoulder" || s == "armory_shoulder") return 0x13;
+    if (s == "armory_colors")                             return 0x14;
     return 0x0A;
-}
-
-static void SwitchSceneOnRenderThread(int32_t targetIdx) {
-    HMODULE hReach = GetModuleHandleW(L"haloreach.dll");
-    if (!hReach) return;
-    const uintptr_t reachBase = reinterpret_cast<uintptr_t>(hReach);
-
-    uint32_t tlsIdx = 0;
-    if (!SafeReadU32(reachBase + 0xC19CE8, &tlsIdx) || tlsIdx > 0x43F) return;
-
-    const uintptr_t tlsBase = reinterpret_cast<uintptr_t>(TlsGetValue(tlsIdx));
-    if (tlsBase <= 0x10000) return;
-
-    uintptr_t directorPtr = 0;
-    if (!SafeReadPtr(tlsBase + 0x22D0, &directorPtr) || directorPtr <= 0x10000) return;
-
-    uintptr_t sceneStateAddr = 0;
-    if (!SafeReadPtr(directorPtr + 0x5C, &sceneStateAddr) || sceneStateAddr <= 0x10000) return;
-
-    // Validate the 21-entry scene table at sceneStateAddr + 0x60 (stride 0x68)
-    for (uint32_t i = 0; i < 21; ++i) {
-        uint8_t entry[0x68];
-        if (!SafeCopyMem(entry, reinterpret_cast<const void*>(sceneStateAddr + 0x60 + i * 0x68), sizeof(entry))) {
-            return;
-        }
-        const uint32_t idx  = *reinterpret_cast<const uint32_t*>(entry + 0x00);
-        const uint32_t tag1 = *reinterpret_cast<const uint32_t*>(entry + 0x0C);
-        const uint32_t tag2 = *reinterpret_cast<const uint32_t*>(entry + 0x18);
-        if (idx != i || tag1 == 0xFFFFFFFFu || tag2 == 0xFFFFFFFFu) {
-            return;
-        }
-    }
-
-    if (!s_sceneReady.exchange(true)) {
-        NOBLE_INFO("ReachArmory: Director scene table ready at 0x{:X} (tlsBase=0x{:X})", sceneStateAddr, tlsBase);
-    }
-
-    int32_t currentScene = -1;
-    SafeReadI32(sceneStateAddr, &currentScene);
-
-    const int32_t prevScene = s_lastScene.load();
-    if (prevScene != targetIdx || currentScene != targetIdx) {
-        const uintptr_t srcEntry = sceneStateAddr + 0x60 + static_cast<uintptr_t>(targetIdx) * 0x68;
-        if (SafeCopyMem(reinterpret_cast<void*>(sceneStateAddr + 0x04),
-                        reinterpret_cast<const void*>(srcEntry + 0x0C), 0x5C)) {
-            SafeWriteU32(sceneStateAddr, static_cast<uint32_t>(targetIdx));
-            if (prevScene != targetIdx) {
-                s_lastScene.store(targetIdx);
-                NOBLE_INFO("ReachArmory: Switched menu camera scene to index 0x{:X}", targetIdx);
-            }
-        }
-    }
-
-    // Toggle Spartan (+0x2084) vs Elite (+0x2085) biped visibility on the Armory pedestal
-    const bool isSpartanScene = (targetIdx == 0x0A) || (targetIdx >= 0x0C && targetIdx <= 0x14);
-    const bool isEliteScene   = (targetIdx == 0x0B);
-
-    if (isSpartanScene) {
-        SafeWriteU8(tlsBase + 0x2084, 1);
-        SafeWriteU8(tlsBase + 0x2085, 0);
-    } else if (isEliteScene) {
-        SafeWriteU8(tlsBase + 0x2084, 0);
-        SafeWriteU8(tlsBase + 0x2085, 1);
-    } else {
-        SafeWriteU8(tlsBase + 0x2084, 0);
-        SafeWriteU8(tlsBase + 0x2085, 0);
-    }
 }
 
 // -----------------------------------------------------------------------------
 // Memory Scanners (ported from host::armory::scan, find_all, scan_suit, scan_elite)
 // -----------------------------------------------------------------------------
-static void ScanSpartanTable() {
-    if (s_spartanTableBase.load() != 0) return;
+static bool ScanGlobalsTable() {
+    const uintptr_t existing = s_globalsBase.load();
+    if (existing != 0) {
+        uint32_t m0 = 0, m1 = 0;
+        const size_t st = s_globalsStride.load();
+        if (SafeReadU32(existing, &m0) && SafeReadU32(existing + st, &m1) &&
+            m0 == 0x03BB6FEDu && m1 == 0x03BAB653u) {
+            return true;
+        }
+        s_globalsBase.store(0);
+    }
 
     const uint32_t headId    = LookupStringId("head");
     const uint32_t defaultId = LookupStringId("default");
-    if (headId == 0 || defaultId == 0) return;
+    if (headId == 0 || defaultId == 0) return false;
 
     static constexpr size_t kStrides[6] = { 4, 8, 12, 16, 24, 32 };
 
@@ -344,16 +290,18 @@ static void ScanSpartanTable() {
                     if (v0 != 0x03BB6FEDu) continue;
 
                     for (size_t stride : kStrides) {
-                        if (off + stride * 6 + 4 > size) continue;
+                        if (off + stride * 0x34 > size) continue;
                         const uint32_t v1 = *reinterpret_cast<const uint32_t*>(buf.data() + off + stride);
                         const uint32_t v4 = *reinterpret_cast<const uint32_t*>(buf.data() + off + stride * 4);
                         const uint32_t v5 = *reinterpret_cast<const uint32_t*>(buf.data() + off + stride * 5);
-                        if (v1 == 0x03BAB653u && v4 == headId && v5 == defaultId) {
+                        if (v1 == 0x03BAB653u && (v4 == headId || v5 == defaultId)) {
                             const uintptr_t foundBase = base + off;
-                            s_spartanStride.store(stride);
-                            s_spartanTableBase.store(foundBase);
-                            NOBLE_INFO("ReachArmory: Found Spartan mulg armor table at 0x{:X} (stride={})", foundBase, stride);
-                            return;
+                            s_globalsStride.store(stride);
+                            s_globalsBase.store(foundBase);
+                            if (!s_sceneReady.exchange(true)) {
+                                NOBLE_INFO("ReachArmory: Found mainmenu_all.map GLOBALS table at 0x{:X} (stride={})", foundBase, stride);
+                            }
+                            return true;
                         }
                     }
                 }
@@ -362,11 +310,17 @@ static void ScanSpartanTable() {
         if (nextAddr <= addr) break;
         addr = nextAddr;
     }
+    return false;
 }
 
 static void ScanColorRecords() {
-    // 16-byte pattern: [0.15294118f, 0.15294118f, 0.15294118f, 0.0f]
-    static constexpr uint32_t kPattern[4] = { 0x3E1C9C9Du, 0x3E1C9C9Du, 0x3E1C9C9Du, 0x00000000u };
+    // Stock 16-byte ARGB color pattern in mainmenu_all.map: { 0xFF585858, 0xFF595959, 0xFF2FA0CB, 0xFFC7A167 }
+    static constexpr uint32_t kStockColors[4] = { 0xFF585858u, 0xFF595959u, 0xFF2FA0CBu, 0xFFC7A167u };
+    uint32_t prevColors[4];
+    {
+        std::lock_guard<std::mutex> lock(s_dataMutex);
+        std::memcpy(prevColors, s_lastColorWords.data(), sizeof(prevColors));
+    }
 
     std::vector<uintptr_t> found;
     uintptr_t addr = 0;
@@ -377,11 +331,12 @@ static void ScanColorRecords() {
         const uintptr_t nextAddr = base + size;
 
         if (mbi.State == MEM_COMMIT && mbi.Type == MEM_PRIVATE && mbi.Protect == PAGE_READWRITE &&
-            size >= 0x60 && size <= 0x20000000) {
+            size >= 0x40 && size <= 0x20000000) {
             std::vector<uint8_t> buf(size);
             if (SafeCopyMem(buf.data(), reinterpret_cast<const void*>(base), size)) {
-                for (size_t off = 0; off + 0x50 <= size; off += 4) {
-                    if (std::memcmp(buf.data() + off, kPattern, sizeof(kPattern)) == 0) {
+                for (size_t off = 0; off + 16 <= size; off += 4) {
+                    if (std::memcmp(buf.data() + off, kStockColors, 16) == 0 ||
+                        std::memcmp(buf.data() + off, prevColors, 16) == 0) {
                         found.push_back(base + off);
                     }
                 }
@@ -403,10 +358,12 @@ static void ScanColorRecords() {
 }
 
 static void ScanSuitRecords() {
-    float cur[9];
+    // Stock 16-byte suit float[4] in mainmenu_all.map: { 0.9960785f, 0.9921569f, 0.98823535f, 1.0f }
+    static constexpr float kStockSuit[4] = { 0.9960785f, 0.9921569f, 0.98823535f, 1.0f };
+    float prevSuit[4];
     {
         std::lock_guard<std::mutex> lock(s_dataMutex);
-        std::memcpy(cur, s_currentLinearColors.data(), sizeof(cur));
+        std::memcpy(prevSuit, s_lastSuitFloats.data(), sizeof(prevSuit));
     }
 
     std::vector<uintptr_t> found;
@@ -421,16 +378,10 @@ static void ScanSuitRecords() {
             size >= 0x40 && size <= 0x20000000) {
             std::vector<uint8_t> buf(size);
             if (SafeCopyMem(buf.data(), reinterpret_cast<const void*>(base), size)) {
-                for (size_t off = 0; off + 36 <= size; off += 4) {
+                for (size_t off = 0; off + 16 <= size; off += 4) {
                     const float* f = reinterpret_cast<const float*>(buf.data() + off);
-                    bool match = true;
-                    for (int i = 0; i < 9; ++i) {
-                        if (!(f[i] >= 0.005f && f[i] <= 1.0f) || std::fabs(f[i] - cur[i]) >= 0.002f) {
-                            match = false;
-                            break;
-                        }
-                    }
-                    if (match) {
+                    if (std::memcmp(f, kStockSuit, 16) == 0 ||
+                        std::memcmp(f, prevSuit, 16) == 0) {
                         found.push_back(base + off);
                     }
                 }
@@ -447,6 +398,7 @@ static void ScanSuitRecords() {
                 s_suitRecords.push_back(rec);
             }
         }
+        NOBLE_INFO("ReachArmory: Tracked {} live suit shader record(s)", s_suitRecords.size());
     }
 }
 
@@ -543,141 +495,90 @@ static void ScanEliteTable() {
     }
 }
 
-static int ResolveEffectIndex(const std::string& effectName) {
-    const std::string e = ToLowerAscii(effectName);
-    if (e == "birthday_party")    return 1;
-    if (e == "heart_attack")      return 2;
-    if (e == "pestilence")        return 3;
-    if (e == "inclement_weather") return 4;
-    if (e == "flames")            return 5;
-    if (e == "blue_flames")       return 6;
-    return 0;
+// -----------------------------------------------------------------------------
+// Write Colors & Suit Shaders (ported from write_colors @ 0x1401b5ad0 & write_suit @ 0x1400468e0)
+// -----------------------------------------------------------------------------
+static void WriteColorsAndSuit(const ReachArmorySelection& sel) {
+    const uint32_t priArgb = LinearRgbToArgbU32(sel.primaryRgb);
+    const uint32_t secArgb = LinearRgbToArgbU32(sel.secondaryRgb);
+    const uint32_t terArgb = 0xFF2FA0CBu;
+    const uint32_t visArgb = (sel.visor == "default" || sel.visor.empty())
+                           ? 0xFFC7A167u
+                           : LinearRgbToArgbU32(sel.visorRgb);
+
+    const uint32_t words[4] = { priArgb, secArgb, terArgb, visArgb };
+    const float suitFloats[4] = {
+        sel.primaryRgb[0] * 4.0f,
+        sel.primaryRgb[1] * 4.0f,
+        sel.primaryRgb[2] * 4.0f,
+        1.0f
+    };
+
+    std::lock_guard<std::mutex> lock(s_dataMutex);
+    s_lastColorWords = { words[0], words[1], words[2], words[3] };
+    s_lastSuitFloats = { suitFloats[0], suitFloats[1], suitFloats[2], suitFloats[3] };
+
+    s_colorRecords.erase(
+        std::remove_if(s_colorRecords.begin(), s_colorRecords.end(), [&](uintptr_t rec) {
+            uint32_t cur[4] = {};
+            if (!SafeCopyMem(cur, reinterpret_cast<const void*>(rec), sizeof(cur))) return true;
+            if ((cur[0] >> 24) != 0xFFu || (cur[1] >> 24) != 0xFFu ||
+                (cur[2] >> 24) != 0xFFu || (cur[3] >> 24) != 0xFFu) {
+                return true;
+            }
+            return !SafeCopyMem(reinterpret_cast<void*>(rec), words, sizeof(words));
+        }),
+        s_colorRecords.end()
+    );
+
+    s_suitRecords.erase(
+        std::remove_if(s_suitRecords.begin(), s_suitRecords.end(), [&](uintptr_t suit) {
+            float cur[4] = {};
+            if (!SafeCopyMem(cur, reinterpret_cast<const void*>(suit), sizeof(cur))) return true;
+            for (int i = 0; i < 4; ++i) {
+                if (!std::isfinite(cur[i]) || cur[i] < 0.005f || cur[i] > 4.5f) return true;
+            }
+            return !SafeWriteFloats(suit, suitFloats, 4);
+        }),
+        s_suitRecords.end()
+    );
 }
 
 // -----------------------------------------------------------------------------
-// Apply Armor Permutations & Colors in Engine Memory
+// Apply Scene, Rotation, Armor Permutations & Colors via GLOBALS Table
 // -----------------------------------------------------------------------------
-static void ApplyLivePermutationsAndColors() {
+static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx) {
+    const uintptr_t base = s_globalsBase.load();
+    const size_t stride  = s_globalsStride.load();
+    if (base == 0 || stride == 0) return;
+
     const ReachArmorySelection sel = ReachArmory::GetSelection();
+    const bool showElite = sel.previewElite;
 
-    // 1. Spartan Permutations
-    const uintptr_t tableBase = s_spartanTableBase.load();
-    const size_t stride = s_spartanStride.load();
-    if (tableBase != 0 && stride != 0) {
-        const std::string slotNames[8] = {
-            sel.helmet,        // 0: head
-            sel.chest,         // 1: chest
-            sel.leftShoulder,  // 2: left_shoulder
-            sel.rightShoulder, // 3: right_shoulder
-            sel.hands,         // 4: hands ("default" or "robot")
-            sel.wrist,         // 5: wrist
-            sel.utility,       // 6: utility
-            sel.knees          // 7: knees
-        };
+    // 1. Camera Scene Index at GLOBALS[0x24] and shows_elite at GLOBALS[0x26]
+    const int32_t effectiveSceneIdx = showElite ? 0x0B : targetSceneIdx;
+    int32_t curScene = -1;
+    SafeReadI32(base + 0x24 * stride, &curScene);
+    uint32_t curElite = 0;
+    SafeReadU32(base + 0x26 * stride, &curElite);
 
-        for (size_t slot = 0; slot < 8; ++slot) {
-            uint32_t permId = LookupStringId(slotNames[slot]);
-            if (permId == 0) permId = LookupStringId("default");
-            if (permId != 0) {
-                const uintptr_t slotAddr = tableBase + slot * 3 * stride;
-                SafeWriteU32(slotAddr + stride * 5, permId); // Male permutation string_id
-                SafeWriteU32(slotAddr + stride * 6, permId); // Female permutation string_id
-            }
-        }
-
-        // Body Type (male / female at tableBase - 0x4C .. tableBase - 0x3C)
-        const uint32_t maleId   = LookupStringId("male");
-        const uint32_t femaleId = LookupStringId("female");
-        if (maleId != 0 && femaleId != 0) {
-            uintptr_t bodyAddr = s_bodyTypeAddr.load();
-            if (bodyAddr == 0) {
-                for (uintptr_t probe = tableBase - 0x4C; probe <= tableBase - 0x3C; probe += 4) {
-                    uint32_t b0 = 0, b1 = 0;
-                    if (SafeReadU32(probe, &b0) && SafeReadU32(probe + 4, &b1) &&
-                        b0 == maleId && b1 == femaleId) {
-                        bodyAddr = probe;
-                        s_bodyTypeAddr.store(bodyAddr);
-                        break;
-                    }
-                }
-            }
-            if (bodyAddr != 0) {
-                const uint32_t targetBody = sel.isFemale ? femaleId : maleId;
-                SafeWriteU32(bodyAddr + 0, targetBody);
-                SafeWriteU32(bodyAddr + 4, targetBody);
-            }
-        }
-
-        // Armor Effects (none, birthday_party, heart_attack, pestilence, inclement_weather, flames, blue_flames)
-        uintptr_t effectAddr = s_effectBaseAddr.load();
-        if (effectAddr == 0) {
-            const uint32_t noneId  = LookupStringId("none");
-            const uint32_t bdayId  = LookupStringId("birthday_party");
-            const uint32_t heartId = LookupStringId("heart_attack");
-            if (noneId != 0 && bdayId != 0 && heartId != 0) {
-                for (size_t off = 0; off < 0x1000; off += 4) {
-                    uint32_t e0 = 0, e1 = 0, e2 = 0;
-                    if (SafeReadU32(tableBase + off, &e0) &&
-                        SafeReadU32(tableBase + off + 0x10, &e1) &&
-                        SafeReadU32(tableBase + off + 0x20, &e2) &&
-                        e0 == noneId && e1 == bdayId && e2 == heartId) {
-                        effectAddr = tableBase + off;
-                        for (size_t k = 0; k < 7; ++k) {
-                            SafeReadU32(effectAddr + k * 0x10 + 4, &s_effectTags[k]);
-                        }
-                        s_effectBaseAddr.store(effectAddr);
-                        break;
-                    }
-                }
-            }
-        }
-        if (effectAddr != 0) {
-            const int effIdx = ResolveEffectIndex(sel.armorEffect);
-            SafeWriteU32(effectAddr + 4, s_effectTags[effIdx]);
+    const uint32_t wantElite = showElite ? 1u : 0u;
+    if (curScene != effectiveSceneIdx || curElite != wantElite || s_lastScene.load() != effectiveSceneIdx) {
+        SafeWriteU32(base + 0x26 * stride, wantElite);
+        SafeWriteU32(base + 0x24 * stride, static_cast<uint32_t>(effectiveSceneIdx));
+        if (s_lastScene.exchange(effectiveSceneIdx) != effectiveSceneIdx) {
+            NOBLE_INFO("ReachArmory: Switched GLOBALS camera scene to 0x{:X} (shows_elite={})", effectiveSceneIdx, wantElite);
         }
     }
 
-    // 2. Elite Permutations
-    {
-        const uint32_t elitePermId = LookupStringId(sel.eliteSuit);
-        std::lock_guard<std::mutex> lock(s_dataMutex);
-        if (s_eliteScanned && elitePermId != 0) {
-            for (size_t r = 0; r < 6; ++r) {
-                auto it = s_eliteRegions[r].permsByStringId.find(elitePermId);
-                if (it != s_eliteRegions[r].permsByStringId.end() && s_eliteRegions[r].permArrayAddr != 0) {
-                    SafeCopyMem(reinterpret_cast<void*>(s_eliteRegions[r].permArrayAddr),
-                                it->second.bytes, sizeof(ElitePermEntry));
-                }
-            }
-        }
+    // 2. Pedestal Turn Rotation at GLOBALS[0x27] (0..71 steps of 5 degrees) + haloreach.dll + 0xBE5AD8
+    const float yawRad = s_yawOffset.load();
+    const float yawDeg = yawRad * (180.0f / 3.14159265358979323846f);
+    const int32_t turnStep = ((static_cast<int32_t>(std::lround(yawDeg / 5.0f)) % 72) + 72) % 72;
+    if (s_lastTurnStep.exchange(turnStep) != turnStep) {
+        SafeWriteI32(base + 0x27 * stride, turnStep);
     }
 
-    // 3. Colors (Primary, Secondary, Visor - already in linear RGB)
-    const float priLinear[4] = { sel.primaryRgb[0], sel.primaryRgb[1], sel.primaryRgb[2], 0.0f };
-    const float secLinear[4] = { sel.secondaryRgb[0], sel.secondaryRgb[1], sel.secondaryRgb[2], 0.0f };
-    const float visLinear4[4] = { sel.visorRgb[0], sel.visorRgb[1], sel.visorRgb[2], 0.0f };
-
-    const std::array<float, 9> newLinear9 = {
-        sel.primaryRgb[0], sel.primaryRgb[1], sel.primaryRgb[2],
-        sel.secondaryRgb[0], sel.secondaryRgb[1], sel.secondaryRgb[2],
-        sel.visorRgb[0], sel.visorRgb[1], sel.visorRgb[2]
-    };
-
-    {
-        std::lock_guard<std::mutex> lock(s_dataMutex);
-        s_currentLinearColors = newLinear9;
-        for (uintptr_t rec : s_colorRecords) {
-            SafeWriteFloats(rec + 0x00, priLinear, 4);
-            SafeWriteFloats(rec + 0x20, secLinear, 4);
-            SafeWriteFloats(rec + 0x30, visLinear4, 4);
-            SafeWriteFloats(rec + 0x40, visLinear4, 4);
-        }
-        for (uintptr_t suit : s_suitRecords) {
-            SafeWriteFloats(suit, newLinear9.data(), 9);
-        }
-    }
-
-    // 4. Pedestal Rotation (haloreach.dll + 0xBE5AD8)
     if (HMODULE hReach = GetModuleHandleW(L"haloreach.dll")) {
         const uintptr_t rotAddr = reinterpret_cast<uintptr_t>(hReach) + 0xBE5AD8;
         uint32_t baseBits = s_rotationBaseBits.load();
@@ -696,7 +597,7 @@ static void ApplyLivePermutationsAndColors() {
         if (baseBits != 0xFFFFFFFFu) {
             std::memcpy(&baseAngle, &baseBits, sizeof(float));
         }
-        const float targetAngle = baseAngle + s_yawOffset.load();
+        const float targetAngle = baseAngle + yawRad;
         uint32_t targetBits = 0;
         std::memcpy(&targetBits, &targetAngle, sizeof(float));
         if (targetBits != s_lastYawBits.load()) {
@@ -705,6 +606,89 @@ static void ApplyLivePermutationsAndColors() {
             }
         }
     }
+
+    // 3. Check if mainmenu_all.map script finished rebuilding biped (REMADE counter at GLOBALS[0x32])
+    int32_t remade = 0;
+    if (SafeReadI32(base + 0x32 * stride, &remade)) {
+        const int32_t prevRemade = s_lastRemade.exchange(remade);
+        if (prevRemade != -1 && prevRemade != remade) {
+            s_rescanRequested.store(true);
+        }
+    }
+
+    // 4. Write 16 (region_string_id, permutation_string_id) pairs to GLOBALS[0x04..0x23] and trigger rebuild
+    const uint64_t gen = s_selectionGeneration.load();
+    if (gen != s_appliedGeneration) {
+        s_appliedGeneration = gen;
+
+        std::vector<std::pair<uint32_t, uint32_t>> pairs;
+        auto pushPair = [&](const std::string& regionName, const std::string& permName, const char* fallbackPerm = "default") {
+            const uint32_t regId = LookupStringId(regionName);
+            uint32_t permId = LookupStringId(permName);
+            if (permId == 0 && fallbackPerm) {
+                permId = LookupStringId(fallbackPerm);
+            }
+            if (regId != 0 && permId != 0) {
+                pairs.emplace_back(regId, permId);
+            }
+        };
+
+        if (showElite) {
+            const std::string suit = sel.eliteSuit.empty() ? "minor" : sel.eliteSuit;
+            pushPair("head",           suit, "minor");
+            pushPair("chest",          suit, "minor");
+            pushPair("left_shoulder",  suit, "minor");
+            pushPair("right_shoulder", suit, "minor");
+            pushPair("arms",           suit, "minor");
+            pushPair("legs",           suit, "minor");
+            if (!sel.armorEffect.empty() && sel.armorEffect != "default") {
+                pushPair("armor_effect", sel.armorEffect, "default");
+            }
+        } else {
+            pushPair("head",           sel.helmet,        "default");
+            pushPair("chest",          sel.chest,         "chest_blank");
+            pushPair("left_shoulder",  sel.leftShoulder,  "left_shoulder_blank");
+            pushPair("right_shoulder", sel.rightShoulder, "right_shoulder_blank");
+            pushPair("hands",          sel.hands,         "default");
+            pushPair("wrist",          sel.wrist,         "wrist_blank");
+            pushPair("utility",        sel.utility,       "utility_blank");
+            pushPair("knees",          sel.knees,         "knees_default");
+            pushPair("armor_effect",   sel.armorEffect,   "default");
+        }
+
+        if (!pairs.empty()) {
+            while (pairs.size() < 16) {
+                pairs.push_back(pairs[0]);
+            }
+            for (size_t i = 0; i < 16; ++i) {
+                SafeWriteU32(base + (0x04 + i * 2) * stride, pairs[i].first);
+                SafeWriteU32(base + (0x05 + i * 2) * stride, pairs[i].second);
+            }
+            int32_t rebuildCounter = 0;
+            SafeReadI32(base + 0x02 * stride, &rebuildCounter);
+            SafeWriteI32(base + 0x02 * stride, rebuildCounter + 1);
+            NOBLE_INFO("ReachArmory: Applied {} permutation slots to GLOBALS (rebuild={}, elite={})",
+                       showElite ? "Elite" : "Spartan", rebuildCounter + 1, showElite);
+        }
+
+        // Also update Elite hlmt permutation table directly if cached
+        if (showElite) {
+            const uint32_t elitePermId = LookupStringId(sel.eliteSuit);
+            std::lock_guard<std::mutex> lock(s_dataMutex);
+            if (s_eliteScanned && elitePermId != 0) {
+                for (size_t r = 0; r < 6; ++r) {
+                    auto it = s_eliteRegions[r].permsByStringId.find(elitePermId);
+                    if (it != s_eliteRegions[r].permsByStringId.end() && s_eliteRegions[r].permArrayAddr != 0) {
+                        SafeCopyMem(reinterpret_cast<void*>(s_eliteRegions[r].permArrayAddr),
+                                    it->second.bytes, sizeof(ElitePermEntry));
+                    }
+                }
+            }
+        }
+    }
+
+    // 5. Write live colors and suit shader constants every frame
+    WriteColorsAndSuit(sel);
 }
 
 } // namespace
@@ -718,7 +702,12 @@ void ReachArmory::SetMenuMode(bool menuMode) {
     s_menuMode.store(menuMode);
     if (!menuMode) {
         s_sceneReady.store(false);
+        s_globalsBase.store(0);
         s_lastScene.store(-1);
+        s_lastRemade.store(-1);
+        s_appliedGeneration = 0;
+    } else {
+        s_selectionGeneration.fetch_add(1);
     }
 }
 
@@ -737,8 +726,11 @@ std::string ReachArmory::GetTargetScene() {
 }
 
 void ReachArmory::SetSelection(const ReachArmorySelection& sel) {
-    std::lock_guard<std::mutex> lock(s_sceneMutex);
-    s_selection = sel;
+    {
+        std::lock_guard<std::mutex> lock(s_sceneMutex);
+        s_selection = sel;
+    }
+    s_selectionGeneration.fetch_add(1);
 }
 
 ReachArmorySelection ReachArmory::GetSelection() {
@@ -760,6 +752,10 @@ float ReachArmory::GetYawRotation() {
     return s_yawOffset.load();
 }
 
+uint32_t ReachArmory::ResolveStringId(const std::string& name) {
+    return LookupStringId(name);
+}
+
 bool ReachArmory::IsSceneReady() {
     return s_sceneReady.load();
 }
@@ -771,41 +767,37 @@ void ReachArmory::Tick() {
 
     const uint64_t frame = ++s_frameCounter;
 
-    // 1. Determine desired camera scene
-    std::string sceneName = GetTargetScene();
-    const int32_t sceneIdx = ResolveSceneIndex(sceneName);
-
-    // 2. Switch scene and set Spartan/Elite visibility on the engine render thread
-    SwitchSceneOnRenderThread(sceneIdx);
-
-    // 3. Launch background memory scanner once mainmenu_all.map is ready (frame >= 60)
-    if (s_sceneReady.load() && frame >= 60 && !s_scanLaunched.exchange(true)) {
-        s_scanning.store(true);
-        std::thread([]() {
-            NOBLE_INFO("ReachArmory: Starting background memory scan for mainmenu_all.map armor tables...");
-            ScanSpartanTable();
-            ScanColorRecords();
-            ScanSuitRecords();
-            ScanEliteTable();
+    // 1. Launch background scanner to locate mainmenu_all.map's GLOBALS table and color/suit records
+    if ((s_globalsBase.load() == 0 || s_rescanRequested.load()) && frame >= 15 && !s_scanning.exchange(true)) {
+        const bool isRescan = s_rescanRequested.exchange(false);
+        std::thread([isRescan]() {
+            if (!isRescan) {
+                NOBLE_INFO("ReachArmory: Scanning process memory for mainmenu_all.map GLOBALS table...");
+            }
+            for (int attempt = 0; attempt < 40 && s_menuMode.load(); ++attempt) {
+                if (ScanGlobalsTable()) {
+                    ScanColorRecords();
+                    ScanSuitRecords();
+                    ScanEliteTable();
+                    break;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(250));
+            }
+            if (s_menuMode.load() && s_globalsBase.load() != 0) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(400));
+                ScanColorRecords();
+                ScanSuitRecords();
+                ScanEliteTable();
+            }
             s_scanning.store(false);
-
-            // Follow-up scans for late-streamed color/suit/elite records (matches host-probe closure#0)
-            std::this_thread::sleep_for(std::chrono::milliseconds(1500));
-            ScanSpartanTable();
-            ScanColorRecords();
-            ScanSuitRecords();
-            ScanEliteTable();
-
-            std::this_thread::sleep_for(std::chrono::milliseconds(2500));
-            ScanColorRecords();
-            ScanSuitRecords();
-            ScanEliteTable();
         }).detach();
     }
 
-    // 4. Apply live permutations, colors, and pedestal rotation
-    if (s_sceneReady.load()) {
-        ApplyLivePermutationsAndColors();
+    // 2. Apply scene camera, rotation, and live armor/color updates if GLOBALS table is active
+    if (s_globalsBase.load() != 0) {
+        const std::string sceneName = GetTargetScene();
+        const int32_t sceneIdx = ResolveSceneIndex(sceneName);
+        ApplyGlobalsAndPermutations(sceneIdx);
     }
 }
 
