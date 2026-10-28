@@ -9,9 +9,10 @@ namespace KeyBindings {
 
 namespace {
 
-// MCC's default PC layout, by action index (moved here from ReachHost.cpp).
+// MCC's default PC layout, by action index (moved here from ReachHost.cpp), with Noble's changes (Tyler):
+// melee F (MCC: Q), grenade G (MCC: F), Falcon ascend Space / descend Left Ctrl (MCC: unbound).
 const uint8_t kDefaultKeys[kActionCount] = {
-    /*  0 */ VK_SPACE, '2',        'E',        'R',        '1',        'Q',        '4',        'F',
+    /*  0 */ VK_SPACE, '2',        'E',        'R',        '1',        'F',        '4',        'G',
     /*  8 */ VK_LBUTTON, VK_LCONTROL, VK_RBUTTON, 'Z',        'X',        'C',        'C',        'Q',
     /* 16 */ 'W',        'S',      'A',        'D',        VK_TAB,     VK_LCONTROL, VK_SPACE, VK_LSHIFT,
     /* 24 */ VK_RBUTTON, 'R',      'F',        VK_LBUTTON, VK_LSHIFT,  VK_LCONTROL, VK_DELETE, '1',

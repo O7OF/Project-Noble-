@@ -1,4 +1,4 @@
-# Project Noble: handoff (2026-10-28, 15:00 ET)
+# Project Noble: handoff (2026-10-28, 15:10 ET)
 
 This picks up a reverse-engineering and C++ effort on **Tyler's Windows PC**. All paths below are real paths on that machine.
 Tyler (GitHub `WeabooTyler117`) works with a partner (GitHub `O7OF`) who owns the repo and writes most of the code.
@@ -10,6 +10,16 @@ community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownershi
 MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour.
 
 ---
+
+## 0. Pick up here (2026-10-28, 15:10 ET) - default controls, VSync off
+
+- Noble's defaults (Tyler): melee F (was Q), throw grenade G (was F), crouch Left Ctrl (already), Falcon ascend Space /
+  descend Left Ctrl, VSync off by default (`Settings.hpp` `verticalSync = false`). Existing settings.json files keep their
+  saved VSync value; Restore Defaults in Graphics gives the new default.
+- Mouse 4 / Mouse 5 already work: the rebind capture takes any VK 1-255 (XBUTTON1/2 included, shown as "Mouse 4/5") and
+  slot 36 input passes them to the engine (`ReachHost.cpp`, st[0x004 + VK] and the 0x08/0x10 button bits).
+- **Remind Tyler to test** (he asked to be reminded): typing a value into a slider box (Look Sensitivity, Enter, Apply);
+  Falcon keys show Space / Left Ctrl; melee F / grenade G in game; binding an action to Mouse 4 / Mouse 5 and using it in game.
 
 ## 0. Pick up here (2026-10-28, 14:50 ET) - post-game "exit experience" (spec step 7)
 
