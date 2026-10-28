@@ -19,7 +19,7 @@ struct ReachArmorySelection {
     int secondaryColorIndex = 10; // 0..29 (Green/Brick)
     int visorColorIndex = 0;      // 0..4
     int armorEffectIndex = 0;     // 0..6
-    int firefightVoiceIndex = 0;  // 0..11
+    int firefightVoiceIndex = 0;  // 0..15
     int eliteSuitIndex = 0;       // 0..7
     std::string serviceTag = "N06";
 
@@ -36,8 +36,16 @@ struct ReachArmorySelection {
     std::string visor = "default";
     std::string voice = "noble_six";
 
-    // Elite suit string_id name ("minor", "spec_ops", "space", "ultra", "zealot", "general", "zealot_commander", "officer")
+    // Elite suit string_id name ("minor", "spec_ops", "space", "ultra", "zealot", "general", "story_elite", "officer")
     std::string eliteSuit = "minor";
+    // Elite per-piece permutation names for the menu map's Elite model regions (elite_helmet, elite_left_shoulder,
+    // elite_right_shoulder, elite_chest, elite_forearms, elite_legs).
+    std::string eliteHelmet = "minor";
+    std::string eliteLeftShoulder = "minor";
+    std::string eliteRightShoulder = "minor";
+    std::string eliteChest = "minor";
+    std::string eliteArms = "default";
+    std::string eliteLegs = "minor";
 
     // Linear RGB colors [0..1]
     std::array<float, 3> primaryRgb = { 0.100f, 0.100f, 0.100f };

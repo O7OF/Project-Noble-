@@ -577,11 +577,54 @@ constexpr std::array<EliteSetSpec, 8> kEliteSets = {{
      "Ornate crimson-forged harness of the Ministry of Fervent Intercession's Zealot strike teams."},
     {"GENERAL", "general",
      "Heavily crested golden battle harness worn by high-ranking Sangheili ground commanders."},
-    {"FIELD MARSHAL", "zealot_commander",
+    {"FIELD MARSHAL", "story_elite",
      "Supreme tactical command harness worn by Sangheili Field Marshals leading Covenant armies."},
     {"OFFICER", "officer",
      "Distinguished Sangheili Officer harness featuring sweeping cranial fins and reinforced pauldrons."},
 }};
+
+// Per-piece Elite options: the regions and permutations of the Elite model in mainmenu_all.map
+// (render model regions elite_helmet / elite_left_shoulder / elite_right_shoulder / elite_chest / elite_forearms /
+// elite_legs). The first 8 entries of every list follow kEliteSets, so an armor-set index is also a piece index.
+struct ElitePieceSpec {
+    const char* name;
+    const char* stringId;
+    const char* description;
+};
+
+enum ElitePiece { kEliteHelmet = 0, kEliteLeftShoulder, kEliteRightShoulder, kEliteChest, kEliteArms, kEliteLegs, kElitePieceCount };
+
+const std::vector<ElitePieceSpec>& GetElitePieces(int piece) {
+    static const std::array<std::vector<ElitePieceSpec>, kElitePieceCount> lists = [] {
+        std::array<std::vector<ElitePieceSpec>, kElitePieceCount> l;
+        static const char* kExtraNote = "Shows in the Armory. In matches the Elite wears its Armor Set.";
+        for (int p = 0; p < kElitePieceCount; ++p) {
+            for (const auto& set : kEliteSets) {
+                const bool minorArms = p == kEliteArms && std::strcmp(set.stringId, "minor") == 0;
+                l[p].push_back({ set.name, minorArms ? "default" : set.stringId, set.description });
+            }
+            l[p].push_back({ "HONOR GUARD", "honor_guard", kExtraNote });
+        }
+        l[kEliteHelmet].push_back({ "COUNCIL", "council", kExtraNote });
+        l[kEliteHelmet].push_back({ "OSSOONA", "ossoona", kExtraNote });
+        l[kEliteHelmet].push_back({ "RANGER (H2A)", "h2a_space_helmet", kExtraNote });
+        l[kEliteLeftShoulder].push_back({ "SCHISM", "schism", kExtraNote });
+        l[kEliteLeftShoulder].push_back({ "COMBAT", "combat", kExtraNote });
+        l[kEliteLeftShoulder].push_back({ "H2A", "h2a_l_shoulder", kExtraNote });
+        l[kEliteRightShoulder].push_back({ "SCHISM", "schism", kExtraNote });
+        l[kEliteRightShoulder].push_back({ "COMBAT", "combat", kExtraNote });
+        l[kEliteRightShoulder].push_back({ "H2A", "h2a_r_shoulder", kExtraNote });
+        l[kEliteLegs].push_back({ "HONOR GUARD (ROBE)", "honor_guard_legs", kExtraNote });
+        l[kEliteLegs].push_back({ "H2A", "h2a_legs", kExtraNote });
+        return l;
+    }();
+    return lists[std::clamp(piece, 0, kElitePieceCount - 1)];
+}
+
+const char* ElitePieceId(int piece, int index) {
+    const auto& list = GetElitePieces(piece);
+    return list[std::clamp(index, 0, static_cast<int>(list.size()) - 1)].stringId;
+}
 
 } // namespace
 
@@ -765,6 +808,12 @@ void ArmorCustomizer::SyncToReachArmory() const {
     sel.visor = vCol.stringId;
     sel.voice = kFirefightVoices[fvIdx].stringId;
     sel.eliteSuit = kEliteSets[elIdx].stringId;
+    sel.eliteHelmet = ElitePieceId(kEliteHelmet, m_profile.eliteHelmetIndex);
+    sel.eliteLeftShoulder = ElitePieceId(kEliteLeftShoulder, m_profile.eliteLeftShoulderIndex);
+    sel.eliteRightShoulder = ElitePieceId(kEliteRightShoulder, m_profile.eliteRightShoulderIndex);
+    sel.eliteChest = ElitePieceId(kEliteChest, m_profile.eliteChestIndex);
+    sel.eliteArms = ElitePieceId(kEliteArms, m_profile.eliteArmsIndex);
+    sel.eliteLegs = ElitePieceId(kEliteLegs, m_profile.eliteLegsIndex);
 
     sel.primaryRgb = { SrgbToLinear(pCol.r), SrgbToLinear(pCol.g), SrgbToLinear(pCol.b) };
     sel.secondaryRgb = { SrgbToLinear(sCol.r), SrgbToLinear(sCol.g), SrgbToLinear(sCol.b) };
@@ -870,19 +919,19 @@ bool ArmorCustomizer::LoadProfile(const std::filesystem::path& path) {
                 m_profile.eliteArmsIndex = m_profile.eliteArmorSet;
                 m_profile.eliteLegsIndex = m_profile.eliteArmorSet;
             }
-            const int maxEl = static_cast<int>(kEliteSets.size()) - 1;
+            auto maxOf = [](int piece) { return static_cast<int>(GetElitePieces(piece).size()) - 1; };
             if (el.contains("helmet_index") && el["helmet_index"].is_number_integer())
-                m_profile.eliteHelmetIndex = std::clamp(el["helmet_index"].get<int>(), 0, maxEl);
+                m_profile.eliteHelmetIndex = std::clamp(el["helmet_index"].get<int>(), 0, maxOf(kEliteHelmet));
             if (el.contains("left_shoulder_index") && el["left_shoulder_index"].is_number_integer())
-                m_profile.eliteLeftShoulderIndex = std::clamp(el["left_shoulder_index"].get<int>(), 0, maxEl);
+                m_profile.eliteLeftShoulderIndex = std::clamp(el["left_shoulder_index"].get<int>(), 0, maxOf(kEliteLeftShoulder));
             if (el.contains("right_shoulder_index") && el["right_shoulder_index"].is_number_integer())
-                m_profile.eliteRightShoulderIndex = std::clamp(el["right_shoulder_index"].get<int>(), 0, maxEl);
+                m_profile.eliteRightShoulderIndex = std::clamp(el["right_shoulder_index"].get<int>(), 0, maxOf(kEliteRightShoulder));
             if (el.contains("chest_index") && el["chest_index"].is_number_integer())
-                m_profile.eliteChestIndex = std::clamp(el["chest_index"].get<int>(), 0, maxEl);
+                m_profile.eliteChestIndex = std::clamp(el["chest_index"].get<int>(), 0, maxOf(kEliteChest));
             if (el.contains("arms_index") && el["arms_index"].is_number_integer())
-                m_profile.eliteArmsIndex = std::clamp(el["arms_index"].get<int>(), 0, maxEl);
+                m_profile.eliteArmsIndex = std::clamp(el["arms_index"].get<int>(), 0, maxOf(kEliteArms));
             if (el.contains("legs_index") && el["legs_index"].is_number_integer())
-                m_profile.eliteLegsIndex = std::clamp(el["legs_index"].get<int>(), 0, maxEl);
+                m_profile.eliteLegsIndex = std::clamp(el["legs_index"].get<int>(), 0, maxOf(kEliteLegs));
         }
 
         MigrateFromLegacyFields();
@@ -964,7 +1013,13 @@ bool ArmorCustomizer::SaveProfile(const std::filesystem::path& path) {
             {"right_shoulder_index", m_profile.eliteRightShoulderIndex},
             {"chest_index", m_profile.eliteChestIndex},
             {"arms_index", m_profile.eliteArmsIndex},
-            {"legs_index", m_profile.eliteLegsIndex}
+            {"legs_index", m_profile.eliteLegsIndex},
+            {"helmet_id", ElitePieceId(kEliteHelmet, m_profile.eliteHelmetIndex)},
+            {"left_shoulder_id", ElitePieceId(kEliteLeftShoulder, m_profile.eliteLeftShoulderIndex)},
+            {"right_shoulder_id", ElitePieceId(kEliteRightShoulder, m_profile.eliteRightShoulderIndex)},
+            {"chest_id", ElitePieceId(kEliteChest, m_profile.eliteChestIndex)},
+            {"arms_id", ElitePieceId(kEliteArms, m_profile.eliteArmsIndex)},
+            {"legs_id", ElitePieceId(kEliteLegs, m_profile.eliteLegsIndex)}
         };
 
         std::error_code ec;
@@ -1286,6 +1341,18 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
         SlotRow r{ "ARMOR", "Armor Set", RowKind::List, &m_profile.eliteArmorSet };
         for (const auto& e : kEliteSets) r.options.push_back({ e.name, e.description });
         rows.push_back(r);
+        // Single pieces (any mix, plus the menu map's extra Elite pieces). Picking an Armor Set resets them.
+        auto addPiece = [&](const char* label, int* idx, int piece) {
+            SlotRow p{ "ARMOR", label, RowKind::List, idx };
+            for (const auto& e : GetElitePieces(piece)) p.options.push_back({ e.name, e.description });
+            rows.push_back(std::move(p));
+        };
+        addPiece("Helmet", &m_profile.eliteHelmetIndex, kEliteHelmet);
+        addPiece("Left Shoulder", &m_profile.eliteLeftShoulderIndex, kEliteLeftShoulder);
+        addPiece("Right Shoulder", &m_profile.eliteRightShoulderIndex, kEliteRightShoulder);
+        addPiece("Chest", &m_profile.eliteChestIndex, kEliteChest);
+        addPiece("Arms", &m_profile.eliteArmsIndex, kEliteArms);
+        addPiece("Legs", &m_profile.eliteLegsIndex, kEliteLegs);
     }
     {
         SlotRow p{ "COLORS", "Primary", RowKind::Colour, &m_profile.primaryColor };

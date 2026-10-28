@@ -1,4 +1,4 @@
-# Project Noble: handoff (2026-10-28, 16:05 ET)
+# Project Noble: handoff (2026-10-28, 16:30 ET)
 
 This picks up a reverse-engineering and C++ effort on **Tyler's Windows PC**. All paths below are real paths on that machine.
 Tyler (GitHub `WeabooTyler117`) works with a partner (GitHub `O7OF`) who owns the repo and writes most of the code.
@@ -10,6 +10,33 @@ community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownershi
 MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour.
 
 ---
+
+## 0. Pick up here (2026-10-28, 16:30 ET) - Elite per-piece armor, all the menu map's Elite pieces
+
+- The Elite model in `mainmenu_all.map` (render model regions read from the map file; permutation array at file offset
+  0x1042b8a8, stride 24) has these regions and permutations:
+  - `elite_helmet` (12): council, general, h2a_space_helmet, honor_guard, minor, officer, ossoona, space, spec_ops, story_elite, ultra, zealot
+  - `elite_left_shoulder` / `elite_right_shoulder` (12 each): combat, general, h2a_l_shoulder / h2a_r_shoulder, honor_guard,
+    minor, officer, schism, space, spec_ops, story_elite, ultra, zealot
+  - `elite_chest` (9): minor, general, officer, space, spec_ops, ultra, story_elite, zealot, honor_guard
+  - `elite_forearms` (9): default (Minor's arms), general, honor_guard, officer, space, spec_ops, story_elite, ultra, zealot
+  - `elite_legs` (11): general, h2a_legs, honor_guard, honor_guard_legs, minor, officer, space, spec_ops, story_elite, ultra, zealot
+  - plus `body` and `head` (default only).
+- Bug fixed: `ReachArmory` wrote the Elite's GLOBALS pairs with Spartan region names (head/chest/left_shoulder/
+  right_shoulder/arms/legs; "legs" isn't even a string_id in the map), so Elite armor changes were hit or miss (Tyler saw
+  odd pieces when changing Armor Effect). It now writes `elite_helmet`, `elite_left_shoulder`, `elite_right_shoulder`,
+  `elite_chest`, `elite_forearms`, `elite_legs` from new `ReachArmorySelection` fields (`eliteHelmet` ... `eliteLegs`).
+- `ArmorCustomizer`: Elite rows are now Armor Set + Helmet, Left Shoulder, Right Shoulder, Chest, Arms, Legs
+  (`GetElitePieces(piece)`; the first 8 entries of every list follow `kEliteSets`, so a set index is also a piece index and
+  old profiles load unchanged). Extras: Honor Guard (all pieces), Council, Ossoona, Ranger (H2A) helmets; Schism, Combat,
+  H2A shoulders; Honor Guard (Robe), H2A legs. Picking an Armor Set resets all six pieces. Saved as `*_index` plus `*_id`
+  under `"elite"` in appearance.json. Field Marshal now uses `story_elite` (it pointed at `zealot_commander`, which the
+  model doesn't have, so it showed as Minor). Names of the extras are from the map's permutation names; confirm by eye.
+- **In matches** the Elite still wears only its Armor Set: Reach's player appearance has one Elite set item
+  (`ReachHost.cpp` slot 34, `kEliteSet` 194 + 0..7). Mixed pieces and the extras are Armory-only for now (their
+  descriptions say so). Getting them into games needs another route (research).
+- Tested: capture `ep1_mixed.bmp` (Ossoona/H2A/Honor Guard mix shows on the real Elite). Still open: Elite colours stay
+  stock blue; the Elite's head is cut off at the top by scene 0x0B's camera.
 
 ## 0. Pick up here (2026-10-28, 16:05 ET) - the real Armory scene works (Spartan and Elite)
 

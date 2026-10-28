@@ -651,13 +651,14 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx) {
         };
 
         if (showElite) {
-            const std::string suit = sel.eliteSuit.empty() ? "minor" : sel.eliteSuit;
-            pushPair("head",           suit, "minor");
-            pushPair("chest",          suit, "minor");
-            pushPair("left_shoulder",  suit, "minor");
-            pushPair("right_shoulder", suit, "minor");
-            pushPair("arms",           suit, "minor");
-            pushPair("legs",           suit, "minor");
+            // The menu map's Elite model has its own regions (elite_*), with Reach's 8 sets plus Honor Guard,
+            // Council, Ossoona, Schism, Combat and Halo 2 Anniversary pieces (mainmenu_all.map render model).
+            pushPair("elite_helmet",         sel.eliteHelmet,        "minor");
+            pushPair("elite_left_shoulder",  sel.eliteLeftShoulder,  "minor");
+            pushPair("elite_right_shoulder", sel.eliteRightShoulder, "minor");
+            pushPair("elite_chest",          sel.eliteChest,         "minor");
+            pushPair("elite_forearms",       sel.eliteArms,          "default");
+            pushPair("elite_legs",           sel.eliteLegs,          "minor");
             if (!sel.armorEffect.empty() && sel.armorEffect != "default") {
                 pushPair("armor_effect", sel.armorEffect, "default");
             }
