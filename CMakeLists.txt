@@ -105,6 +105,7 @@ set(SOURCES
     src/vfs/VFS.cpp
     src/engine/BlamEngine.cpp
     src/engine/ReachHost.cpp
+    src/engine/ReachArmory.cpp
     src/engine/CameraFov.cpp
     src/engine/FrameCapture.cpp
     src/common/Relaunch.cpp
@@ -112,8 +113,6 @@ set(SOURCES
     src/ui/UIManager.cpp
     src/ui/ServerBrowser.cpp
     src/ui/ArmorCustomizer.cpp
-    src/ui/ObjModel.cpp
-    src/ui/ObjModelPreview.cpp
     src/ui/WorkshopManager.cpp
     src/ui/MissionLauncher.cpp
     src/network/UPnP.cpp
@@ -151,6 +150,7 @@ set(HEADERS
     src/vfs/VFS.hpp
     src/engine/BlamEngine.hpp
     src/engine/ReachHost.hpp
+    src/engine/ReachArmory.hpp
     src/engine/CameraFov.hpp
     src/engine/FrameCapture.hpp
     src/common/Relaunch.hpp
@@ -158,8 +158,6 @@ set(HEADERS
     src/ui/UIManager.hpp
     src/ui/ServerBrowser.hpp
     src/ui/ArmorCustomizer.hpp
-    src/ui/ObjModel.hpp
-    src/ui/ObjModelPreview.hpp
     src/ui/WorkshopManager.hpp
     src/ui/MissionLauncher.hpp
     src/ui/LoadScreen.hpp

@@ -1,6 +1,5 @@
 #pragma once
 
-#include "ObjModelPreview.hpp"
 #include <d3d11.h>
 #include <filesystem>
 #include <string>
@@ -73,31 +72,25 @@ public:
     bool LoadProfile(const std::filesystem::path& path);
     bool SaveProfile(const std::filesystem::path& path);
 
+    void SyncToReachArmory() const;
+    void UpdateArmoryCamera() const;
+
     const AppearanceProfile& GetProfile() const { return m_profile; }
     AppearanceProfile& GetProfileMutable() { return m_profile; }
 
 private:
     void RenderCharacterPreview(ID3D11Device* device, ID3D11DeviceContext* context,
                                 float width, float height, bool fullBleed);
-    void BuildActiveLayers(std::vector<ObjPreviewLayer>& layers, std::string& referenceGroup) const;
     void SyncLegacyFields();
     void MigrateFromLegacyFields();
 
     AppearanceProfile m_profile;
     std::filesystem::path m_profilePath;
     bool m_dirty = false;
+    mutable bool m_syncedInitial = false;
 
-    ObjModelPreview m_spartanPreview;
-    ObjModelPreview m_elitePreview;
-    bool m_previewInitialized = false;
-    std::string m_spartanLoadError;
-    std::string m_eliteLoadError;
-
-    float m_previewYaw = -0.32f;     // MCC 3/4 left-facing angle
-    float m_previewPitch = 0.03f;
-    float m_previewZoom = 1.38f;     // MCC upper/3-4 portrait zoom
-    float m_previewFocusY = 0.12f;
-    bool m_fullBodyCamera = false;
+    // 0 = Standard Armory 3/4 view ("armory"), 1 = Full Body ("c_full_spartan"), 2 = Auto-Focus per slot ("c_helmet", etc.)
+    int m_cameraMode = 0;
     bool m_autoRotate = false;
 
     int m_focusedRow = 0;

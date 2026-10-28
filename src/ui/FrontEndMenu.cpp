@@ -12,15 +12,20 @@
 #include "ModCatalog.hpp"
 #include "vfs/VFS.hpp"
 #include "common/Logger.hpp"
+#include "common/Relaunch.hpp"
 #include "common/Settings.hpp"
 #include "common/Version.hpp"
 #include "engine/FrameCapture.hpp"
+#include "engine/ReachArmory.hpp"
 #include "host/Window.hpp"
 #include "host/D3D11Renderer.hpp"
 
 #include <windows.h>
 #include <shellapi.h>
+#include <d3d11.h>
+#include <dxgi.h>
 #include <imgui.h>
+#include <imgui_impl_dx11.h>
 #include <algorithm>
 #include <cfloat>
 #include <cmath>
@@ -186,7 +191,6 @@ std::string VariantLabel(const std::wstring& stem) {
         std::wstring w(v.stem, v.stem + strlen(v.stem));
         if (w == lower) return v.label;
     }
-    // Unknown file (e.g. one the player added): "my_cool_game_054" -> "My Cool Game".
     std::string out;
     bool up = true;
     std::wstring s = stem;
@@ -206,8 +210,8 @@ std::vector<MenuVariant> ScanVariants(const std::filesystem::path& reachDir, boo
     for (const auto& entry : std::filesystem::directory_iterator(reachDir / "game_variants", ec)) {
         if (!entry.is_regular_file(ec) || Lower(entry.path().extension().wstring()) != L".bin") continue;
         const std::wstring lower = Lower(entry.path().filename().wstring());
-        if (lower == Lower(kForgeVariant)) continue;           // Forge has its own menu entry
-        const bool isFirefightVariant = lower.rfind(L"hr_ff_", 0) == 0;  // only valid on Firefight maps
+        if (lower == Lower(kForgeVariant)) continue;
+        const bool isFirefightVariant = lower.rfind(L"hr_ff_", 0) == 0;
         if (isFirefightVariant != firefight) continue;
         list.push_back({ VariantLabel(entry.path().stem().wstring()), entry.path() });
     }
@@ -223,13 +227,12 @@ int FindVariant(const std::vector<MenuVariant>& list, const wchar_t* file) {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Drawing helpers (Reach's menu look: dark scene, big faint title, left-aligned upper-case list
-// with a soft highlight bar, description under the list, button hints at the bottom).
+// Drawing helpers
 // ---------------------------------------------------------------------------------------------
 struct Ui {
     ImDrawList* dl = nullptr;
-    ImVec2 size;   // screen size in pixels
-    float s = 1.0f; // scale (1.0 at 720p)
+    ImVec2 size;
+    float s = 1.0f;
 };
 
 const ImU32 kWhite = IM_COL32(236, 240, 244, 255);
@@ -243,7 +246,6 @@ float TextWidth(ImFont* font, float px, const char* text) {
     return Font(font)->CalcTextSizeA(px, FLT_MAX, 0.0f, text).x;
 }
 
-// `wrapRight`: screen x where lines wrap (0 = no wrapping).
 void Text(const Ui& ui, ImFont* font, float px, ImVec2 pos, ImU32 col, const char* text, float wrapRight = 0.0f) {
     ui.dl->AddText(Font(font), px * ui.s, pos, col, text, nullptr, wrapRight > pos.x ? wrapRight - pos.x : 0.0f);
 }
@@ -253,20 +255,41 @@ std::string Upper(std::string s) {
     return s;
 }
 
-void DrawBackdrop(const Ui& ui) {
+enum class Screen { Main, Campaign, Skulls, Firefight, CustomGame, Forge, Servers, Settings, Armory, Mods };
+
+void DrawBackdrop(const Ui& ui, Screen screen) {
     const ImVec2 o(0, 0);
-    ui.dl->AddRectFilled(o, ui.size, IM_COL32(8, 12, 18, 255));
-    UiArt::DrawCover(ui.dl, UiArt::MenuBackground(), o, ui.size, IM_COL32(255, 255, 255, 255));
-    // Darken the left half (where the menu is) and the bottom, like Reach's menus.
-    ui.dl->AddRectFilledMultiColor(o, ImVec2(ui.size.x * 0.45f, ui.size.y),
-                                   IM_COL32(0, 0, 0, 205), IM_COL32(0, 0, 0, 120), IM_COL32(0, 0, 0, 120), IM_COL32(0, 0, 0, 205));
-    ui.dl->AddRectFilledMultiColor(ImVec2(ui.size.x * 0.45f, 0), ImVec2(ui.size.x * 0.80f, ui.size.y),
-                                   IM_COL32(0, 0, 0, 120), IM_COL32(0, 0, 0, 0), IM_COL32(0, 0, 0, 0), IM_COL32(0, 0, 0, 120));
-    ui.dl->AddRectFilledMultiColor(ImVec2(0, ui.size.y * 0.72f), ui.size,
-                                   IM_COL32(0, 0, 0, 0), IM_COL32(0, 0, 0, 0), IM_COL32(0, 0, 0, 170), IM_COL32(0, 0, 0, 170));
+    if (!ReachArmory::IsSceneReady()) {
+        // Fallback 2D background only during the initial 1-2s while mainmenu_all.map loads into haloreach.dll
+        ui.dl->AddRectFilled(o, ui.size, IM_COL32(8, 12, 18, 255));
+        UiArt::DrawCover(ui.dl, UiArt::MenuBackground(), o, ui.size, IM_COL32(255, 255, 255, 255));
+    }
+
+    if (screen == Screen::Armory) {
+        // In the Armory, keep the right side 100% clear so the live 3D Spartan/Elite in mainmenu_all.map shines
+        ui.dl->AddRectFilledMultiColor(o, ImVec2(ui.size.x * 0.42f, ui.size.y),
+                                       IM_COL32(4, 8, 14, 175), IM_COL32(4, 8, 14, 70),
+                                       IM_COL32(4, 8, 14, 70), IM_COL32(4, 8, 14, 175));
+        ui.dl->AddRectFilledMultiColor(ImVec2(ui.size.x * 0.42f, 0), ImVec2(ui.size.x * 0.56f, ui.size.y),
+                                       IM_COL32(4, 8, 14, 70), IM_COL32(4, 8, 14, 0),
+                                       IM_COL32(4, 8, 14, 0), IM_COL32(4, 8, 14, 70));
+        ui.dl->AddRectFilledMultiColor(ImVec2(0, ui.size.y * 0.82f), ui.size,
+                                       IM_COL32(0, 0, 0, 0), IM_COL32(0, 0, 0, 0),
+                                       IM_COL32(0, 0, 0, 150), IM_COL32(0, 0, 0, 150));
+    } else {
+        // Darken the left half (where the menu list is) and the bottom, like Reach's native menus.
+        ui.dl->AddRectFilledMultiColor(o, ImVec2(ui.size.x * 0.45f, ui.size.y),
+                                       IM_COL32(0, 0, 0, 190), IM_COL32(0, 0, 0, 105),
+                                       IM_COL32(0, 0, 0, 105), IM_COL32(0, 0, 0, 190));
+        ui.dl->AddRectFilledMultiColor(ImVec2(ui.size.x * 0.45f, 0), ImVec2(ui.size.x * 0.78f, ui.size.y),
+                                       IM_COL32(0, 0, 0, 105), IM_COL32(0, 0, 0, 0),
+                                       IM_COL32(0, 0, 0, 0), IM_COL32(0, 0, 0, 105));
+        ui.dl->AddRectFilledMultiColor(ImVec2(0, ui.size.y * 0.72f), ui.size,
+                                       IM_COL32(0, 0, 0, 0), IM_COL32(0, 0, 0, 0),
+                                       IM_COL32(0, 0, 0, 165), IM_COL32(0, 0, 0, 165));
+    }
 }
 
-// "◇ TITLE" with a faint vertical side label (as on Reach's Skulls/Controller screens).
 void DrawTitle(const Ui& ui, ImVec2 pos, const char* title, const char* sideLabel = nullptr) {
     const float d = 15.0f * ui.s;
     const ImVec2 c(pos.x + d, pos.y + 28.0f * ui.s);
@@ -275,7 +298,6 @@ void DrawTitle(const Ui& ui, ImVec2 pos, const char* title, const char* sideLabe
                    ImVec2(c.x - d * 0.45f, c.y), IM_COL32(143, 216, 255, 140), 1.5f * ui.s);
     Text(ui, NobleStyle::HeroFont(), 50.0f, ImVec2(pos.x + d * 2.6f, pos.y), IM_COL32(220, 226, 232, 215), title);
     if (sideLabel) {
-        // Vertical label: draw letters one under another, small and faint.
         float y = pos.y + 70.0f * ui.s;
         for (const char* p = sideLabel; *p; ++p) {
             char ch[2] = { *p, 0 };
@@ -288,14 +310,10 @@ void DrawTitle(const Ui& ui, ImVec2 pos, const char* title, const char* sideLabe
 struct ListItem {
     std::string label;
     bool enabled = true;
-    bool header = false;   // group heading (a mod's name): click / Enter opens or closes it
+    bool header = false;
     bool expanded = false;
 };
 
-// Reach-style vertical list. Returns the index activated this frame (click / Enter), else -1.
-// `selected` follows Up/Down when `keyboard` is true. With `hoverSelects` (menus of screens) it also follows
-// the mouse; picker lists (missions, maps) only change on a click, so moving the mouse to the options on the
-// right doesn't change the pick on the way. Hovered rows are highlighted lightly either way.
 int DrawList(const Ui& ui, const char* id, ImVec2 pos, float width, const std::vector<ListItem>& items, int& selected,
              bool keyboard, float rowHeight = 30.0f, int maxRows = 0, bool hoverSelects = true) {
     const float rh = rowHeight * ui.s;
@@ -320,7 +338,6 @@ int DrawList(const Ui& ui, const char* id, ImVec2 pos, float width, const std::v
         }
     }
 
-    // Scrolling: the mouse wheel over the list scrolls it; keys keep the selection in view.
     static std::unordered_map<ImGuiID, int> s_first, s_lastSelected;
     const ImGuiID key = ImGui::GetID(id);
     int& first = s_first[key];
@@ -335,7 +352,6 @@ int DrawList(const Ui& ui, const char* id, ImVec2 pos, float width, const std::v
         const float wheel = ImGui::GetIO().MouseWheel;
         if (wheel != 0.0f && ImGui::IsMouseHoveringRect(area0, area1, false)) first -= static_cast<int>(wheel * 3.0f);
         first = std::clamp(first, 0, n - maxRows);
-        // Scroll bar.
         const float trackX = pos.x + width + 6.0f * ui.s, trackH = maxRows * rh;
         ui.dl->AddRectFilled(ImVec2(trackX, pos.y), ImVec2(trackX + 3.0f * ui.s, pos.y + trackH), IM_COL32(255, 255, 255, 25));
         const float thumbH = std::max(18.0f * ui.s, trackH * maxRows / n);
@@ -376,7 +392,6 @@ int DrawList(const Ui& ui, const char* id, ImVec2 pos, float width, const std::v
             ui.dl->AddRectFilled(a, ImVec2(a.x + 2.0f * ui.s, b.y), kWhite);
         }
         if (items[i].header) {
-            // Mod heading: arrow (open / closed), name in the accent colour, line under it.
             const float cx = a.x + 14.0f * ui.s, cy = a.y + rh * 0.5f, t = 5.0f * ui.s;
             const ImU32 ac = i == selected ? kWhite : kAccent;
             if (items[i].expanded) ui.dl->AddTriangleFilled(ImVec2(cx - t, cy - t * 0.6f), ImVec2(cx + t, cy - t * 0.6f), ImVec2(cx, cy + t * 0.8f), ac);
@@ -387,7 +402,7 @@ int DrawList(const Ui& ui, const char* id, ImVec2 pos, float width, const std::v
             continue;
         }
         const ImU32 col = !items[i].enabled ? kDisabled : (i == selected ? kWhite : kDim);
-        const float indent = items[0].header ? 28.0f : 9.0f;   // maps under a mod heading are indented
+        const float indent = items[0].header ? 28.0f : 9.0f;
         Text(ui, NobleStyle::TitleFont(), 20.0f, ImVec2(a.x + indent * ui.s, a.y + (rh - 20.0f * ui.s) * 0.5f), col,
              Upper(items[i].label).c_str());
     }
@@ -395,8 +410,6 @@ int DrawList(const Ui& ui, const char* id, ImVec2 pos, float width, const std::v
     return activated;
 }
 
-// MCC-style source tabs above a map list: VANILLA | MODDED. Click, Q/E or the bumpers switch.
-// Returns true when the tab changed.
 bool DrawSourceTabs(const Ui& ui, ImVec2 pos, int& active, int moddedCount) {
     const char* labels[2] = { "VANILLA", "MODDED" };
     int next = active;
@@ -432,13 +445,13 @@ bool DrawSourceTabs(const Ui& ui, ImVec2 pos, int& active, int moddedCount) {
     return true;
 }
 
-// Bottom-left hints: [Enter] Select   [Esc] Back ...  (controller buttons when a controller was used last).
 using InputPrompts::Prompt;
 
 bool AcceptPressed() {
     return ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false) ||
            ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false);
 }
+
 void DrawHints(const Ui& ui, const std::vector<std::pair<Prompt, const char*>>& hints) {
     float x = ui.size.x * 0.075f;
     const float y = ui.size.y - 46.0f * ui.s;
@@ -450,7 +463,6 @@ void DrawHints(const Ui& ui, const std::vector<std::pair<Prompt, const char*>>& 
     }
 }
 
-// "MY PARTY" box at the top right.
 void DrawParty(const Ui& ui, const std::string& playerName, const char* status) {
     const float w = 330.0f * ui.s;
     const float x = ui.size.x - w - 40.0f * ui.s;
@@ -464,14 +476,12 @@ void DrawParty(const Ui& ui, const std::string& playerName, const char* status) 
     Text(ui, NobleStyle::TitleFont(), 17.0f, ImVec2(x + w - 42.0f * ui.s, y + 5.0f * ui.s), kWhite, "1/16");
     y += 28.0f * ui.s;
     ui.dl->AddRectFilled(ImVec2(x2, y), ImVec2(x + w, y + 30.0f * ui.s), IM_COL32(52, 98, 138, 235));
-    // Emblem placeholder: Noble's own simple mark (two chevrons).
     const ImVec2 e(x2 + 16.0f * ui.s, y + 15.0f * ui.s);
     ui.dl->AddCircleFilled(e, 10.0f * ui.s, IM_COL32(26, 40, 52, 255));
     ui.dl->AddTriangleFilled(ImVec2(e.x - 6 * ui.s, e.y - 2 * ui.s), ImVec2(e.x + 6 * ui.s, e.y - 2 * ui.s), ImVec2(e.x, e.y + 6 * ui.s), kAccent);
     Text(ui, NobleStyle::TitleFont(), 18.0f, ImVec2(x2 + 34.0f * ui.s, y + 5.0f * ui.s), kWhite, playerName.c_str());
 }
 
-// Option row like Reach's settings: LABEL ........ ‹ VALUE ›. Returns -1/+1 when changed.
 int OptionRow(const Ui& ui, const char* id, ImVec2 pos, float width, const char* label, const char* value, bool focused) {
     const float h = 32.0f * ui.s;
     int change = 0;
@@ -485,7 +495,6 @@ int OptionRow(const Ui& ui, const char* id, ImVec2 pos, float width, const char*
     const float vx = pos.x + width * 0.48f;
     const float vw = width * 0.52f;
     const float aw = 28.0f * ui.s;
-    // Arrows
     ImGui::PushID(id);
     ImGui::SetCursorScreenPos(ImVec2(vx, pos.y));
     if (ImGui::InvisibleButton("##l", ImVec2(aw, h))) change = -1;
@@ -509,7 +518,6 @@ int OptionRow(const Ui& ui, const char* id, ImVec2 pos, float width, const char*
     return change;
 }
 
-// Big action button (START GAME etc.).
 bool ActionButton(const Ui& ui, const char* id, ImVec2 pos, float width, const char* label, bool primary = true) {
     const float h = 40.0f * ui.s;
     ImGui::SetCursorScreenPos(pos);
@@ -528,7 +536,6 @@ bool ActionButton(const Ui& ui, const char* id, ImVec2 pos, float width, const c
     return pressed;
 }
 
-// Map/mission preview with a thin frame, name and blurb under it.
 float DrawPreview(const Ui& ui, ImVec2 pos, float width, const std::string& scenario, const char* name, const char* blurb) {
     const float h = width * 292.0f / 668.0f;
     const ImVec2 b(pos.x + width, pos.y + h);
@@ -559,18 +566,12 @@ std::string SkullSummary(uint64_t mask) {
 }
 
 float ScoreMultiplier(int difficulty, uint64_t mask) {
-    // Reach campaign scoring: difficulty multiplier plus the sum of the active skulls' multipliers.
     float m = kDifficultyMultiplier[std::clamp(difficulty, 0, 3)];
     for (const Skull& s : kSkulls) {
         if ((mask & (1ull << s.bit)) && s.multiplier > 1.0f) m += s.multiplier;
     }
     return m;
 }
-
-// ---------------------------------------------------------------------------------------------
-// Screens
-// ---------------------------------------------------------------------------------------------
-enum class Screen { Main, Campaign, Skulls, Firefight, CustomGame, Forge, Servers, Settings, Armory, Mods };
 
 struct MainEntry {
     const char* label;
@@ -586,7 +587,7 @@ const MainEntry kMainEntries[] = {
     { "Custom Game",  "Play any multiplayer map and game type, host a game or join one.",     Screen::CustomGame, true, false },
     { "Forge",        "Edit multiplayer maps with Forge. Experimental in Noble.",             Screen::Forge, true, false },
     { "Theater",      "Saved films aren't supported in Noble yet.",                           Screen::Main, false, false },
-    { "Armory",       "Customize your Spartan.",                                              Screen::Armory, true, false },
+    { "Armory",       "Customize your Spartan and Sangheili armor in Reach's 3D Armory.",     Screen::Armory, true, false },
     { "Mods",         "Workshop maps and mods.",                                              Screen::Mods, true, false },
     { "Settings",     "Controls, key bindings, audio, video and gameplay options.",          Screen::Settings, true, false },
     { "Quit",         "Close Noble.",                                                         Screen::Main, true, true },
@@ -597,29 +598,28 @@ struct MenuState {
     int mainIndex = 0;
     int mission = 1;
     int difficulty = 1;
-    int focusRow = 0;           // right-hand option rows (sub-screens)
+    int focusRow = 0;
     int map = kDefaultMap;
     int variant = 0;
     int ffMap = 0;
     int ffVariant = 0;
-    int forgeMap = 19;          // Forge World
+    int forgeMap = 19;
     int skull = 0;
     uint64_t skulls = 0;
-    int campaignSource = 0;     // 0 = vanilla maps, 1 = modded maps
+    int campaignSource = 0;
     int ffSource = 0;
     int mpSource = 0;
-    std::set<std::string> openMods;   // "<mode>:<mod id>" of the mods opened in the modded lists
-    int campaignModded = 0;     // selection in the modded lists
+    std::set<std::string> openMods;
+    int campaignModded = 0;
     int ffModded = 0;
     int mpModded = 0;
 };
 
-// A row of a mission/map list: Reach's own maps, or a mod's.
 struct MapEntry {
     std::string scenario, name, blurb;
     bool enabled = true;
-    const ModEntry* mod = nullptr;   // the mod this map comes from (modded tab)
-    bool header = false;             // mod name heading in the modded tab
+    const ModEntry* mod = nullptr;
+    bool header = false;
 };
 
 bool KnownScenario(const std::string& scenario, const MenuMap* maps, int count) {
@@ -627,15 +627,12 @@ bool KnownScenario(const std::string& scenario, const MenuMap* maps, int count) 
     return false;
 }
 
-// The maps a mod adds or changes for one mode. Maps that aren't in Reach can't be launched yet (Noble starts
-// maps by Reach's own map ids), so they are listed but disabled.
 std::vector<MapEntry> ModMaps(const ModEntry& mod, const std::vector<ModMap>& listed, const MenuMap* base, int baseCount) {
     std::vector<MapEntry> out;
     for (const ModMap& m : listed) {
         const bool known = KnownScenario(m.scenario, base, baseCount);
         out.push_back({ m.scenario, m.title, known ? m.description : "A new map: Noble can only start maps that are in Reach so far.", known, &mod });
     }
-    // Maps the mod replaces without a JSON for this mode.
     for (const std::string& file : mod.mapFiles) {
         if (!KnownScenario(file, base, baseCount)) continue;
         if (std::any_of(out.begin(), out.end(), [&](const MapEntry& e) { return e.scenario == file; })) continue;
@@ -646,11 +643,9 @@ std::vector<MapEntry> ModMaps(const ModEntry& mod, const std::vector<ModMap>& li
     return out;
 }
 
-// MODDED tab: every mod's maps for one mode, under the mod's name.
 enum class ModMode { Campaign, Firefight, Multiplayer };
 std::string OpenKey(ModMode mode, const ModEntry& mod) { return std::to_string(static_cast<int>(mode)) + ":" + mod.id; }
 
-// Modded tab: one collapsed heading per mod; an opened mod shows its maps under it.
 std::vector<MapEntry> ModdedMaps(const std::vector<const ModEntry*>& mods, ModMode mode, const MenuMap* base, int baseCount,
                                  const std::set<std::string>& open) {
     std::vector<MapEntry> out;
@@ -666,7 +661,7 @@ std::vector<MapEntry> ModdedMaps(const std::vector<const ModEntry*>& mods, ModMo
         std::string about = mod->description.substr(0, 320);
         if (mod->description.size() > 320) about += "...";
         heading.blurb = about;
-        heading.enabled = open.count(OpenKey(mode, *mod)) != 0;   // used as "expanded" for headings
+        heading.enabled = open.count(OpenKey(mode, *mod)) != 0;
         out.push_back(heading);
         if (!heading.enabled) continue;
         for (MapEntry& m : maps) out.push_back(std::move(m));
@@ -712,6 +707,557 @@ Screen ParseScreenArg(const std::wstring& v) {
     return Screen::Main;
 }
 
+std::wstring ToWide(const std::string& s) {
+    if (s.empty()) return L"";
+    const int len = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
+    if (len <= 0) return L"";
+    std::wstring w(len - 1, L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, w.data(), len);
+    return w;
+}
+
+// Persistent state for in-engine overlay mode
+struct OverlayContext {
+    bool initialized = false;
+    std::filesystem::path reachDir;
+    std::vector<MenuVariant> variants;
+    std::vector<MenuVariant> ffVariants;
+    std::filesystem::path forgeVariant;
+    std::vector<ModEntry> mods;
+    std::vector<const ModEntry*> campaignMods;
+    std::vector<const ModEntry*> ffMods;
+    std::vector<const ModEntry*> mpMods;
+    MenuState st;
+    SettingsPanel settingsPanel;
+    bool modsScanned = false;
+    unsigned long long captureFrame = 0;
+    unsigned long long totalFrames = 0;
+    unsigned long long sceneReadyFrames = 0;
+    bool closed = false;
+};
+
+OverlayContext& GetOverlayCtx() {
+    static OverlayContext s_ctx;
+    return s_ctx;
+}
+
+void UpdateSceneForScreen(Screen screen) {
+    switch (screen) {
+    case Screen::Main:
+        ReachArmory::SetTargetScene("start_menu");
+        break;
+    case Screen::Campaign:
+    case Screen::Skulls:
+        ReachArmory::SetTargetScene("campaign");
+        break;
+    case Screen::Firefight:
+        ReachArmory::SetTargetScene("firefight");
+        break;
+    case Screen::CustomGame:
+    case Screen::Servers:
+        ReachArmory::SetTargetScene("custom_games");
+        break;
+    case Screen::Forge:
+        ReachArmory::SetTargetScene("forge");
+        break;
+    case Screen::Armory:
+        UIManager::GetArmorCustomizer().UpdateArmoryCamera();
+        break;
+    default:
+        break;
+    }
+}
+
+void FeedEngineThreadInputs(HWND hwnd, ImGuiIO& io) {
+    RECT client{};
+    GetClientRect(hwnd, &client);
+    POINT cursor{};
+    const bool focused = (GetForegroundWindow() == hwnd);
+    if (focused && GetCursorPos(&cursor) && ScreenToClient(hwnd, &cursor) && client.right > 0 && client.bottom > 0) {
+        const float sx = io.DisplaySize.x / static_cast<float>(client.right);
+        const float sy = io.DisplaySize.y / static_cast<float>(client.bottom);
+        io.AddMousePosEvent(static_cast<float>(cursor.x) * sx, static_cast<float>(cursor.y) * sy);
+
+        const bool lDown = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+        if (Window::TakeLeftClicks() > 0 && !lDown) {
+            io.AddMouseButtonEvent(0, true);
+            io.AddMouseButtonEvent(0, false);
+        } else {
+            io.AddMouseButtonEvent(0, lDown);
+        }
+        const bool rDown = (GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0;
+        io.AddMouseButtonEvent(1, rDown);
+
+        const int wheel = Window::TakeWheelNotches();
+        if (wheel != 0) {
+            io.AddMouseWheelEvent(0.0f, static_cast<float>(wheel));
+        }
+    } else {
+        io.AddMousePosEvent(-FLT_MAX, -FLT_MAX);
+        io.AddMouseButtonEvent(0, false);
+        io.AddMouseButtonEvent(1, false);
+    }
+
+    struct KeyMap {
+        int vk;
+        ImGuiKey key;
+        char ch;
+    };
+    static const KeyMap kKeys[] = {
+        { VK_UP,     ImGuiKey_UpArrow,     0 },
+        { VK_DOWN,   ImGuiKey_DownArrow,   0 },
+        { VK_LEFT,   ImGuiKey_LeftArrow,   0 },
+        { VK_RIGHT,  ImGuiKey_RightArrow,  0 },
+        { VK_RETURN, ImGuiKey_Enter,       0 },
+        { VK_ESCAPE, ImGuiKey_Escape,      0 },
+        { VK_TAB,    ImGuiKey_Tab,         0 },
+        { VK_SPACE,  ImGuiKey_Space,       ' ' },
+        { VK_BACK,   ImGuiKey_Backspace,   0 },
+        { VK_DELETE, ImGuiKey_Delete,      0 },
+        { 'Q',       ImGuiKey_Q,           'Q' },
+        { 'E',       ImGuiKey_E,           'E' },
+        { 'A',       ImGuiKey_A,           'A' },
+        { 'B',       ImGuiKey_B,           'B' },
+        { 'C',       ImGuiKey_C,           'C' },
+        { 'D',       ImGuiKey_D,           'D' },
+        { 'F',       ImGuiKey_F,           'F' },
+        { 'G',       ImGuiKey_G,           'G' },
+        { 'H',       ImGuiKey_H,           'H' },
+        { 'I',       ImGuiKey_I,           'I' },
+        { 'J',       ImGuiKey_J,           'J' },
+        { 'K',       ImGuiKey_K,           'K' },
+        { 'L',       ImGuiKey_L,           'L' },
+        { 'M',       ImGuiKey_M,           'M' },
+        { 'N',       ImGuiKey_N,           'N' },
+        { 'O',       ImGuiKey_O,           'O' },
+        { 'P',       ImGuiKey_P,           'P' },
+        { 'R',       ImGuiKey_R,           'R' },
+        { 'S',       ImGuiKey_S,           'S' },
+        { 'T',       ImGuiKey_T,           'T' },
+        { 'U',       ImGuiKey_U,           'U' },
+        { 'V',       ImGuiKey_V,           'V' },
+        { 'W',       ImGuiKey_W,           'W' },
+        { 'X',       ImGuiKey_X,           'X' },
+        { 'Y',       ImGuiKey_Y,           'Y' },
+        { 'Z',       ImGuiKey_Z,           'Z' },
+        { '0',       ImGuiKey_0,           '0' },
+        { '1',       ImGuiKey_1,           '1' },
+        { '2',       ImGuiKey_2,           '2' },
+        { '3',       ImGuiKey_3,           '3' },
+        { '4',       ImGuiKey_4,           '4' },
+        { '5',       ImGuiKey_5,           '5' },
+        { '6',       ImGuiKey_6,           '6' },
+        { '7',       ImGuiKey_7,           '7' },
+        { '8',       ImGuiKey_8,           '8' },
+        { '9',       ImGuiKey_9,           '9' },
+    };
+    static bool s_prevDown[sizeof(kKeys) / sizeof(kKeys[0])] = {};
+    for (size_t i = 0; i < sizeof(kKeys) / sizeof(kKeys[0]); ++i) {
+        const bool down = focused && ((GetAsyncKeyState(kKeys[i].vk) & 0x8000) != 0);
+        if (down != s_prevDown[i]) {
+            io.AddKeyEvent(kKeys[i].key, down);
+            if (down && kKeys[i].ch != 0 && io.WantTextInput) {
+                io.AddInputCharacter(static_cast<unsigned int>(kKeys[i].ch));
+            }
+            s_prevDown[i] = down;
+        }
+    }
+    InputPrompts::Update();
+}
+
+void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11DeviceContext* context,
+                          FrontEndChoice& choice, bool& done) {
+    ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(vp->Pos);
+    ImGui::SetNextWindowSize(vp->Size);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
+                                   ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoBackground |
+                                   ImGuiWindowFlags_NoScrollWithMouse;
+    ImGui::Begin("##NobleFrontEnd", nullptr, flags);
+    ImGui::PopStyleVar(2);
+
+    MenuState& st = ctx.st;
+    Ui ui;
+    ui.dl = ImGui::GetWindowDrawList();
+    ui.size = vp->Size;
+    ui.s = std::max(0.75f, vp->Size.y / 720.0f);
+    DrawBackdrop(ui, st.screen);
+
+    UpdateSceneForScreen(st.screen);
+
+    const float left = ui.size.x * 0.075f;
+    const float top = ui.size.y * 0.09f;
+    const SettingsData settings = Settings::Get().Snapshot();
+    const bool back = ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false);
+    auto goBack = [&](Screen to) {
+        st.screen = to;
+        st.focusRow = 0;
+        MenuSounds::Back();
+    };
+    auto saveSkulls = [&] {
+        SettingsData d = Settings::Get().Snapshot();
+        d.campaignSkulls = st.skulls;
+        Settings::Get().Update(d);
+    };
+
+    switch (st.screen) {
+    case Screen::Main: {
+        DrawParty(ui, settings.playerName, "In Main Menu Lobby");
+        DrawTitle(ui, ImVec2(left, ui.size.y * 0.30f), "MAIN MENU");
+        Text(ui, nullptr, 17.0f, ImVec2(left + 4.0f * ui.s, ui.size.y * 0.30f + 66.0f * ui.s), kDim,
+             "This party is local to this PC.");
+        std::vector<ListItem> items;
+        for (const MainEntry& e : kMainEntries) items.push_back({ e.label, e.enabled });
+        const float listY = ui.size.y * 0.30f + 104.0f * ui.s;
+        const int hit = DrawList(ui, "main", ImVec2(left, listY), 440.0f * ui.s, items, st.mainIndex, true, 27.0f);
+        const float descY = listY + items.size() * 27.0f * ui.s + 10.0f * ui.s;
+        Text(ui, nullptr, 17.0f, ImVec2(left + 4.0f * ui.s, descY), kDim, kMainEntries[st.mainIndex].description,
+             left + 430.0f * ui.s);
+        if (hit >= 0) {
+            if (kMainEntries[hit].quit) done = true;
+            else st.screen = kMainEntries[hit].target;
+            st.focusRow = 0;
+        }
+        DrawHints(ui, { { Prompt::Accept, "Select" }, { Prompt::Back, "Back" } });
+        std::string version(VERSION_STRING);
+        const size_t paren = version.find(" (");
+        if (paren != std::string::npos) version.resize(paren);
+        char ver[64];
+        std::snprintf(ver, sizeof(ver), "PROJECT NOBLE  v%s", version.c_str());
+        Text(ui, NobleStyle::SmallFont(), 14.0f,
+             ImVec2(ui.size.x - TextWidth(NobleStyle::SmallFont(), 14.0f * ui.s, ver) - 24.0f * ui.s, ui.size.y - 30.0f * ui.s),
+             IM_COL32(200, 210, 220, 110), ver);
+        break;
+    }
+
+    case Screen::Campaign: {
+        DrawTitle(ui, ImVec2(left, top), "CAMPAIGN", "SOLO");
+        if (DrawSourceTabs(ui, ImVec2(left + 34.0f * ui.s, top + 70.0f * ui.s), st.campaignSource,
+                           static_cast<int>(ctx.campaignMods.size()))) st.focusRow = 0;
+        const bool modded = st.campaignSource == 1;
+        const std::vector<MapEntry> missions = modded ? ModdedMaps(ctx.campaignMods, ModMode::Campaign, kMissions, Count(kMissions), st.openMods)
+                                                      : BaseMaps(kMissions, Count(kMissions));
+        int& pick = modded ? st.campaignModded : st.mission;
+        FixSelection(missions, pick);
+        std::vector<ListItem> items = ToItems(missions);
+        if (missions.empty()) items.push_back({ "No Reach campaign mods installed", false, false });
+        const float listY = top + 108.0f * ui.s;
+        const int hit = DrawList(ui, "missions", ImVec2(left + 34.0f * ui.s, listY), 380.0f * ui.s, items, pick,
+                                 st.focusRow == 0, 30.0f, 13, false);
+        if (hit >= 0 && !missions.empty() && missions[hit].header) ToggleMod(st.openMods, ModMode::Campaign, *missions[hit].mod);
+        else if (hit >= 0) st.focusRow = 1;
+        FixSelection(missions, pick);
+        const MapEntry* row = missions.empty() ? nullptr : &missions[pick];
+        const MapEntry* mission = (row && !row->header) ? row : nullptr;
+        const ModEntry* mod = mission ? mission->mod : nullptr;
+
+        const float px = ui.size.x * 0.47f, pw = ui.size.x * 0.44f;
+        float y = DrawPreview(ui, ImVec2(px, top + 96.0f * ui.s), pw, mission ? mission->scenario : "",
+                              row ? (row->header ? row->mod->title.c_str() : row->name.c_str()) : "",
+                              row ? row->blurb.c_str() : "");
+        y += 6.0f * ui.s;
+        if (mod) {
+            Text(ui, nullptr, 16.0f, ImVec2(px + 10.0f * ui.s, y), kAccent, ("Mod: " + mod->title).c_str(), px + pw);
+            y += 24.0f * ui.s;
+        }
+        const int dd = OptionRow(ui, "diff", ImVec2(px, y), pw, "DIFFICULTY", kDifficulties[st.difficulty], st.focusRow == 1);
+        if (dd) st.difficulty = (st.difficulty + dd + 4) % 4;
+        y += 36.0f * ui.s;
+        const std::string skullText = SkullSummary(st.skulls);
+        if (OptionRow(ui, "skulls", ImVec2(px, y), pw, "SKULLS", skullText.c_str(), st.focusRow == 2)) {
+            st.screen = Screen::Skulls;
+        }
+        ImGui::SetCursorScreenPos(ImVec2(px, y));
+        if (ImGui::InvisibleButton("##skullrow", ImVec2(pw * 0.46f, 32.0f * ui.s))) st.screen = Screen::Skulls;
+        y += 36.0f * ui.s;
+        char mult[64];
+        std::snprintf(mult, sizeof(mult), "Score multiplier  x%.2f", ScoreMultiplier(st.difficulty, st.skulls));
+        Text(ui, nullptr, 16.0f, ImVec2(px + 10.0f * ui.s, y + 4.0f * ui.s), kDim, mult);
+        y += 34.0f * ui.s;
+        const bool canStart = mission && mission->enabled;
+        const bool start = (ActionButton(ui, "start", ImVec2(px, y), pw, "START MISSION") ||
+                            (st.focusRow == 3 && AcceptPressed())) && canStart;
+        if (start) {
+            choice.play = true;
+            choice.mode = "campaign";
+            choice.map = mission->scenario;
+            choice.difficulty = st.difficulty;
+            choice.skulls = st.skulls;
+            if (mod) { choice.modFolder = mod->folder; choice.modTitle = mod->title; }
+            done = true;
+        }
+        if (st.focusRow > 0 && (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || ImGui::IsKeyPressed(ImGuiKey_Tab) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown))) st.focusRow = std::min(3, st.focusRow + 1);
+        if (st.focusRow > 0 && (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp))) st.focusRow = std::max(1, st.focusRow - 1);
+        if (st.focusRow == 2 && AcceptPressed()) st.screen = Screen::Skulls;
+        if (back) {
+            if (st.focusRow > 0) st.focusRow = 0;
+            else goBack(Screen::Main);
+        }
+        DrawHints(ui, { { Prompt::Accept, "Select" }, { Prompt::Back, "Back" }, { Prompt::Change, "Change" }, { Prompt::Tabs, "Vanilla / Modded" } });
+        break;
+    }
+
+    case Screen::Skulls: {
+        DrawTitle(ui, ImVec2(left, top), "SKULLS", "CAMPAIGN");
+        const float gx = left + 46.0f * ui.s;
+        float gy = top + 92.0f * ui.s;
+        const float cell = 78.0f * ui.s, icon = 64.0f * ui.s;
+        auto section = [&](const char* name, float y) {
+            Text(ui, NobleStyle::TitleFont(), 20.0f, ImVec2(gx, y), kWhite, name);
+            ui.dl->AddLine(ImVec2(gx, y + 26.0f * ui.s), ImVec2(gx + cell * 5.0f, y + 26.0f * ui.s), IM_COL32(255, 255, 255, 60));
+        };
+        if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight)) st.skull = std::min(kSkullCount - 1, st.skull + 1);
+        if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft)) st.skull = std::max(0, st.skull - 1);
+        if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown)) st.skull = std::min(kSkullCount - 1, st.skull + 5);
+        if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp)) st.skull = std::max(0, st.skull - 5);
+        bool toggle = AcceptPressed() || ImGui::IsKeyPressed(ImGuiKey_Space, false);
+
+        section("Primary Skulls", gy);
+        gy += 36.0f * ui.s;
+        int primaryIndex = 0, secondaryIndex = 0;
+        float secondaryTop = gy + cell * 2.0f + 14.0f * ui.s;
+        for (int i = 0; i < kSkullCount; ++i) {
+            const Skull& sk = kSkulls[i];
+            int idx = sk.primary ? primaryIndex++ : secondaryIndex++;
+            const float baseY = sk.primary ? gy : secondaryTop + 36.0f * ui.s;
+            const ImVec2 a(gx + (idx % 5) * cell, baseY + (idx / 5) * cell);
+            ImGui::SetCursorScreenPos(a);
+            ImGui::PushID(i);
+            if (ImGui::InvisibleButton("##skull", ImVec2(icon, icon))) {
+                st.skull = i;
+                toggle = true;
+            }
+            if (ImGui::IsItemHovered() && ImGui::GetIO().MouseDelta.x != 0.0f) st.skull = i;
+            ImGui::PopID();
+            const bool on = (st.skulls & (1ull << sk.bit)) != 0;
+            if (i == st.skull) ui.dl->AddCircle(ImVec2(a.x + icon * 0.5f, a.y + icon * 0.5f), icon * 0.56f, kWhite, 0, 2.0f * ui.s);
+            if (on) ui.dl->AddCircleFilled(ImVec2(a.x + icon * 0.5f, a.y + icon * 0.5f), icon * 0.52f, IM_COL32(230, 160, 90, 70));
+            UiTexture tex = UiArt::SkullIcon(sk.icon);
+            const ImU32 tint = on ? IM_COL32(255, 205, 160, 255) : IM_COL32(255, 255, 255, 105);
+            if (tex) ui.dl->AddImage(tex.id, a, ImVec2(a.x + icon, a.y + icon), ImVec2(0, 0), ImVec2(1, 1), tint);
+            else Text(ui, nullptr, 14.0f, ImVec2(a.x, a.y + icon * 0.4f), on ? kWhite : kDim, sk.name, a.x + icon);
+        }
+        section("Secondary Skulls", secondaryTop);
+        if (toggle) {
+            st.skulls ^= 1ull << kSkulls[st.skull].bit;
+            saveSkulls();
+            MenuSounds::Click();
+        }
+
+        const Skull& sel = kSkulls[st.skull];
+        const float dx = ui.size.x * 0.60f;
+        float dy = top + 70.0f * ui.s;
+        UiTexture big = UiArt::SkullIcon(sel.icon);
+        const float bs = 170.0f * ui.s;
+        if (big) ui.dl->AddImage(big.id, ImVec2(dx + 40.0f * ui.s, dy), ImVec2(dx + 40.0f * ui.s + bs, dy + bs));
+        dy += bs + 18.0f * ui.s;
+        Text(ui, NobleStyle::HeroFont(), 34.0f, ImVec2(dx, dy), kWhite, sel.name);
+        dy += 42.0f * ui.s;
+        Text(ui, nullptr, 17.0f, ImVec2(dx, dy), kDim, sel.description, dx + 300.0f * ui.s);
+        dy += 74.0f * ui.s;
+        const bool selOn = (st.skulls & (1ull << sel.bit)) != 0;
+        Text(ui, nullptr, 17.0f, ImVec2(dx, dy), kWhite, selOn ? "Status: On" : "Status: Off");
+        dy += 24.0f * ui.s;
+        char mult[64];
+        if (sel.multiplier > 1.0f) std::snprintf(mult, sizeof(mult), "Score bonus: +%.1f", sel.multiplier);
+        else std::snprintf(mult, sizeof(mult), "No score bonus");
+        Text(ui, nullptr, 17.0f, ImVec2(dx, dy), kDim, mult);
+
+        const float by = ui.size.y - 104.0f * ui.s;
+        ui.dl->AddRectFilledMultiColor(ImVec2(left + 40.0f * ui.s, by), ImVec2(ui.size.x * 0.80f, by + 40.0f * ui.s),
+                                       IM_COL32(40, 52, 64, 210), IM_COL32(40, 52, 64, 60), IM_COL32(40, 52, 64, 60), IM_COL32(40, 52, 64, 210));
+        Text(ui, NobleStyle::TitleFont(), 24.0f, ImVec2(left + 52.0f * ui.s, by + 6.0f * ui.s), kWhite, settings.playerName.c_str());
+        char total[64];
+        std::snprintf(total, sizeof(total), "x%.2f", ScoreMultiplier(st.difficulty, st.skulls));
+        Text(ui, NobleStyle::TitleFont(), 24.0f, ImVec2(ui.size.x * 0.80f - 90.0f * ui.s, by + 6.0f * ui.s), kWhite, total);
+        if (back) goBack(Screen::Campaign);
+        DrawHints(ui, { { Prompt::Accept, "Toggle" }, { Prompt::Back, "Back" } });
+        break;
+    }
+
+    case Screen::Firefight:
+    case Screen::CustomGame:
+    case Screen::Forge: {
+        const bool ff = st.screen == Screen::Firefight;
+        const bool forge = st.screen == Screen::Forge;
+        DrawTitle(ui, ImVec2(left, top), ff ? "FIREFIGHT" : forge ? "FORGE" : "CUSTOM GAME", ff ? "SURVIVAL" : forge ? "EDIT" : "MULTIPLAYER");
+        const MenuMap* baseMaps = ff ? kFirefightMaps : kMaps;
+        const int baseCount = ff ? Count(kFirefightMaps) : Count(kMaps);
+        const std::vector<const ModEntry*>& modList = ff ? ctx.ffMods : ctx.mpMods;
+        int& source = ff ? st.ffSource : st.mpSource;
+        float listTop = top + 96.0f * ui.s;
+        if (!forge) {
+            if (DrawSourceTabs(ui, ImVec2(left + 34.0f * ui.s, top + 70.0f * ui.s), source, static_cast<int>(modList.size()))) {
+                st.focusRow = 0;
+            }
+            listTop = top + 108.0f * ui.s;
+        }
+        const bool modded = !forge && source == 1;
+        const ModMode modMode = ff ? ModMode::Firefight : ModMode::Multiplayer;
+        const std::vector<MapEntry> maps = modded ? ModdedMaps(modList, modMode, baseMaps, baseCount, st.openMods)
+                                                  : BaseMaps(baseMaps, baseCount);
+        int& mapIndex = modded ? (ff ? st.ffModded : st.mpModded) : (ff ? st.ffMap : forge ? st.forgeMap : st.map);
+        FixSelection(maps, mapIndex);
+        std::vector<ListItem> items = ToItems(maps);
+        if (maps.empty()) items.push_back({ ff ? "No Reach Firefight mods installed" : "No Reach multiplayer mods installed", false, false });
+        const int hit = DrawList(ui, "maps", ImVec2(left + 34.0f * ui.s, listTop), 330.0f * ui.s, items, mapIndex,
+                                 st.focusRow == 0, 27.0f, modded || !forge ? 14 : 15, false);
+        if (hit >= 0 && !maps.empty() && maps[hit].header) ToggleMod(st.openMods, modMode, *maps[hit].mod);
+        else if (hit >= 0) st.focusRow = 1;
+        FixSelection(maps, mapIndex);
+        const MapEntry* row = maps.empty() ? nullptr : &maps[mapIndex];
+        const MapEntry* map = (row && !row->header) ? row : nullptr;
+        const ModEntry* mod = map ? map->mod : nullptr;
+
+        const float px = ui.size.x * 0.47f, pw = ui.size.x * 0.44f;
+        float y = DrawPreview(ui, ImVec2(px, top + 96.0f * ui.s), pw, map ? map->scenario : "",
+                              row ? (row->header ? row->mod->title.c_str() : row->name.c_str()) : "",
+                              row ? row->blurb.c_str() : "");
+        y += 6.0f * ui.s;
+        if (mod) {
+            Text(ui, nullptr, 16.0f, ImVec2(px + 10.0f * ui.s, y), kAccent, ("Mod: " + mod->title).c_str(), px + pw);
+            y += 24.0f * ui.s;
+        }
+        int focusRows = 1;
+        if (!forge) {
+            const std::vector<MenuVariant>& list = ff ? ctx.ffVariants : ctx.variants;
+            int& v = ff ? st.ffVariant : st.variant;
+            const char* label = list.empty() ? "Default" : list[std::clamp(v, 0, static_cast<int>(list.size()) - 1)].label.c_str();
+            const int dv = OptionRow(ui, "variant", ImVec2(px, y), pw, "GAME TYPE", label, st.focusRow == focusRows);
+            if (dv && !list.empty()) v = (v + dv + static_cast<int>(list.size())) % static_cast<int>(list.size());
+            y += 36.0f * ui.s;
+            ++focusRows;
+        }
+        if (ff) {
+            const int dd = OptionRow(ui, "ffdiff", ImVec2(px, y), pw, "DIFFICULTY", kDifficulties[st.difficulty], st.focusRow == focusRows);
+            if (dd) st.difficulty = (st.difficulty + dd + 4) % 4;
+            y += 36.0f * ui.s;
+            ++focusRows;
+        }
+        if (forge && !std::filesystem::exists(ctx.forgeVariant)) {
+            Text(ui, nullptr, 16.0f, ImVec2(px + 10.0f * ui.s, y), IM_COL32(255, 190, 120, 255),
+                 "MCC's Forge game type (00_basic_editing_054.bin) wasn't found.");
+            y += 26.0f * ui.s;
+        }
+        y += 10.0f * ui.s;
+        const bool canStart = map && map->enabled;
+        const bool start = (ActionButton(ui, "start", ImVec2(px, y), pw, forge ? "START FORGE" : "START GAME") ||
+                            (st.focusRow == focusRows && AcceptPressed())) && canStart;
+        y += 48.0f * ui.s;
+        if (!ff && !forge && ActionButton(ui, "browse", ImVec2(px, y), pw, "HOST OR JOIN GAMES", false)) st.screen = Screen::Servers;
+        if (start) {
+            choice.play = true;
+            choice.map = map->scenario;
+            if (mod) { choice.modFolder = mod->folder; choice.modTitle = mod->title; }
+            if (ff) {
+                choice.mode = "firefight";
+                choice.difficulty = st.difficulty;
+                if (!ctx.ffVariants.empty()) choice.variantPath = ctx.ffVariants[st.ffVariant].path.string();
+            } else {
+                choice.mode = "multiplayer";
+                if (forge) choice.variantPath = ctx.forgeVariant.string();
+                else if (!ctx.variants.empty()) choice.variantPath = ctx.variants[st.variant].path.string();
+            }
+            done = true;
+        }
+        if (st.focusRow > 0 && (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || ImGui::IsKeyPressed(ImGuiKey_Tab) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown))) st.focusRow = std::min(focusRows, st.focusRow + 1);
+        if (st.focusRow > 0 && (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp))) st.focusRow = std::max(1, st.focusRow - 1);
+        if (back) {
+            if (st.focusRow > 0) st.focusRow = 0;
+            else goBack(Screen::Main);
+        }
+        if (forge) DrawHints(ui, { { Prompt::Accept, "Select" }, { Prompt::Back, "Back" } });
+        else DrawHints(ui, { { Prompt::Accept, "Select" }, { Prompt::Back, "Back" }, { Prompt::Change, "Change" }, { Prompt::Tabs, "Vanilla / Modded" } });
+        break;
+    }
+
+    case Screen::Armory: {
+        // MCC Halo: Reach "CUSTOMIZATION / APPEARANCE" header + nameplate + live in-engine 3D Spartan/Elite
+        Text(ui, NobleStyle::SmallFont(), 15.0f, ImVec2(left, top - 8.0f * ui.s), kAccent, "CUSTOMIZATION");
+        Text(ui, NobleStyle::HeroFont(), 44.0f, ImVec2(left, top + 6.0f * ui.s), kWhite, "APPEARANCE");
+
+        // Top-right player nameplate with service tag
+        {
+            const auto& prof = UIManager::GetArmorCustomizer().GetProfile();
+            const float plateW = 280.0f * ui.s;
+            const float plateH = 42.0f * ui.s;
+            const ImVec2 p0(ui.size.x - left - plateW, top + 6.0f * ui.s);
+            const ImVec2 p1(p0.x + plateW, p0.y + plateH);
+            ui.dl->AddRectFilledMultiColor(p0, p1,
+                IM_COL32(36, 58, 82, 230), IM_COL32(82, 112, 142, 210),
+                IM_COL32(62, 88, 115, 210), IM_COL32(28, 46, 68, 230));
+            ui.dl->AddRect(p0, p1, IM_COL32(165, 205, 240, 180), 0.0f, 0, 1.2f);
+            const ImVec2 emb(p0.x + 22.0f * ui.s, p0.y + plateH * 0.5f);
+            ui.dl->AddCircleFilled(emb, 13.0f * ui.s, IM_COL32(16, 28, 42, 240));
+            ui.dl->AddTriangleFilled(ImVec2(emb.x - 7 * ui.s, emb.y - 3 * ui.s),
+                                     ImVec2(emb.x + 7 * ui.s, emb.y - 3 * ui.s),
+                                     ImVec2(emb.x, emb.y + 7 * ui.s), kAccent);
+            const std::string tagLine = "[" + prof.serviceTag + "]";
+            Text(ui, NobleStyle::SmallFont(), 14.0f, ImVec2(p0.x + 44.0f * ui.s, p0.y + 4.0f * ui.s), IM_COL32(190, 215, 235, 230), tagLine.c_str());
+            Text(ui, NobleStyle::TitleFont(), 18.0f, ImVec2(p0.x + 44.0f * ui.s, p0.y + 20.0f * ui.s), kWhite, settings.playerName.c_str());
+        }
+
+        // Thin horizontal rule with active "HALO: REACH" underline
+        const float ruleY = top + 64.0f * ui.s;
+        ui.dl->AddLine(ImVec2(left, ruleY), ImVec2(ui.size.x - left, ruleY), IM_COL32(140, 180, 220, 55), 1.0f);
+        const char* gameTab = "HALO: REACH";
+        const float tabW = TextWidth(NobleStyle::TitleFont(), 18.0f * ui.s, gameTab);
+        const float tabX = ui.size.x * 0.5f - tabW * 0.5f;
+        Text(ui, NobleStyle::TitleFont(), 18.0f, ImVec2(tabX, ruleY - 24.0f * ui.s), kWhite, gameTab);
+        ui.dl->AddLine(ImVec2(tabX - 8.0f * ui.s, ruleY), ImVec2(tabX + tabW + 8.0f * ui.s, ruleY), kAccent, 2.5f * ui.s);
+
+        ImGui::SetCursorScreenPos(ImVec2(left, ruleY + 12.0f * ui.s));
+        ImGui::BeginChild("##armory_panel", ImVec2(ui.size.x - left * 1.35f, ui.size.y - (ruleY + 12.0f * ui.s) - 62.0f * ui.s),
+                          ImGuiChildFlags_None, ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollWithMouse);
+        UIManager::GetArmorCustomizer().Render(device, context);
+        ImGui::EndChild();
+
+        if (back && !ImGui::GetIO().WantTextInput) {
+            goBack(Screen::Main);
+        }
+        DrawHints(ui, { { Prompt::Back, "Back" }, { Prompt::Change, "Change Piece" }, { Prompt::Tabs, "Rotate Character (Q/E or Drag)" } });
+        break;
+    }
+
+    case Screen::Servers:
+    case Screen::Settings:
+    case Screen::Mods: {
+        const char* title = st.screen == Screen::Servers ? "GAMES" : st.screen == Screen::Settings ? "SETTINGS" : "MODS";
+        DrawTitle(ui, ImVec2(left, top), title);
+        ImGui::SetCursorScreenPos(ImVec2(left, top + 84.0f * ui.s));
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.03f, 0.05f, 0.07f, 0.82f));
+        ImGui::BeginChild("##panel", ImVec2(ui.size.x - left * 2.0f, ui.size.y - top - 84.0f * ui.s - 70.0f * ui.s),
+                          ImGuiChildFlags_Borders, ImGuiWindowFlags_None);
+        if (st.screen == Screen::Servers) {
+            UIManager::GetServerBrowser().Render();
+        } else if (st.screen == Screen::Settings) {
+            ctx.settingsPanel.Render();
+        } else {
+            if (!ctx.modsScanned) {
+                const auto steamapps = ctx.reachDir.parent_path().parent_path().parent_path();
+                wchar_t exe[MAX_PATH] = {};
+                GetModuleFileNameW(nullptr, exe, MAX_PATH);
+                UIManager::GetWorkshopManager().RefreshMods(steamapps / "workshop" / "content" / "976730",
+                                                            std::filesystem::path(exe).parent_path() / "data" / "mods");
+                ctx.modsScanned = true;
+            }
+            UIManager::GetWorkshopManager().Render();
+        }
+        ImGui::EndChild();
+        ImGui::PopStyleColor();
+        if (back && !ImGui::GetIO().WantTextInput && !ctx.settingsPanel.IsCapturingKey()) {
+            goBack(st.screen == Screen::Servers ? Screen::CustomGame : Screen::Main);
+        }
+        DrawHints(ui, { { Prompt::Back, "Back" } });
+        break;
+    }
+    }
+
+    ImGui::End();
+}
+
 } // namespace
 
 bool FrontEndMenu::ShouldShow() {
@@ -735,483 +1281,182 @@ bool FrontEndMenu::ShouldShow() {
     return !hasMap || menuRequested;
 }
 
-FrontEndChoice FrontEndMenu::Run(Window& window, D3D11Renderer& renderer, const std::filesystem::path& reachDir) {
-    FrontEndChoice choice;
-    const std::vector<MenuVariant> variants = ScanVariants(reachDir, false);
-    const std::vector<MenuVariant> ffVariants = ScanVariants(reachDir, true);
-    const std::filesystem::path forgeVariant = reachDir / "game_variants" / kForgeVariant;
+void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
+    OverlayContext& ctx = GetOverlayCtx();
+    ctx.reachDir = reachDir;
+    ctx.variants = ScanVariants(reachDir, false);
+    ctx.ffVariants = ScanVariants(reachDir, true);
+    ctx.forgeVariant = reachDir / "game_variants" / kForgeVariant;
 
-    // Reach mods for the MOD option of Campaign, Firefight and Custom Game (one scan per menu visit).
-    const std::vector<ModEntry> mods = ModCatalog::Scan(VFS::GetWorkshopPath(), VFS::GetUserStoragePath() / "mods");
-    std::vector<const ModEntry*> campaignMods, ffMods, mpMods;
-    for (const ModEntry& m : mods) {
+    ctx.mods = ModCatalog::Scan(VFS::GetWorkshopPath(), VFS::GetUserStoragePath() / "mods");
+    ctx.campaignMods.clear();
+    ctx.ffMods.clear();
+    ctx.mpMods.clear();
+    for (const ModEntry& m : ctx.mods) {
         auto replaces = [&](const MenuMap* base, int count) {
             return std::any_of(m.mapFiles.begin(), m.mapFiles.end(), [&](const std::string& f) { return KnownScenario(f, base, count); });
         };
-        if (!m.campaign.empty() || replaces(kMissions, Count(kMissions))) campaignMods.push_back(&m);
-        if (!m.firefight.empty() || replaces(kFirefightMaps, Count(kFirefightMaps))) ffMods.push_back(&m);
-        if (!m.multiplayer.empty() || replaces(kMaps, Count(kMaps))) mpMods.push_back(&m);
+        if (!m.campaign.empty() || replaces(kMissions, Count(kMissions))) ctx.campaignMods.push_back(&m);
+        if (!m.firefight.empty() || replaces(kFirefightMaps, Count(kFirefightMaps))) ctx.ffMods.push_back(&m);
+        if (!m.multiplayer.empty() || replaces(kMaps, Count(kMaps))) ctx.mpMods.push_back(&m);
     }
 
-    MenuState st;
-    st.variant = FindVariant(variants, L"slayer_054.bin");
-    st.ffVariant = FindVariant(ffVariants, L"hr_ff_standard_1set.bin");
-    st.skulls = Settings::Get().Snapshot().campaignSkulls;
+    ctx.st = MenuState{};
+    ctx.st.variant = FindVariant(ctx.variants, L"slayer_054.bin");
+    ctx.st.ffVariant = FindVariant(ctx.ffVariants, L"hr_ff_standard_1set.bin");
+    ctx.st.skulls = Settings::Get().Snapshot().campaignSkulls;
 
-    // Reach's menu theme (or the track picked in SETTINGS > AUDIO) while the menus are up.
     ReachAudio::SetMusicVolume(Settings::Get().Snapshot().volumeMusic);
     ReachAudio::PlayMenuMusic(Settings::Get().Snapshot().menuMusicTrack);
 
-    // Test options: "-menu-screen <name>" opens a screen directly, "-menu-capture <frames>" saves a
-    // screenshot after that many frames and closes Noble (menus can't be clicked in automated tests).
-    unsigned long long captureFrame = 0;
     int startTab = 0;
     {
         int argc = 0;
         LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
         for (int i = 1; argv && i + 1 < argc; ++i) {
-            if (std::wstring(argv[i]) == L"-menu-screen") st.screen = ParseScreenArg(argv[i + 1]);
-            if (std::wstring(argv[i]) == L"-menu-capture") captureFrame = _wtoi64(argv[i + 1]);
+            if (std::wstring(argv[i]) == L"-menu-screen") ctx.st.screen = ParseScreenArg(argv[i + 1]);
+            if (std::wstring(argv[i]) == L"-menu-capture") ctx.captureFrame = _wtoi64(argv[i + 1]);
             if (std::wstring(argv[i]) == L"-menu-tab") startTab = _wtoi(argv[i + 1]);
         }
         if (argv) LocalFree(argv);
     }
-    NOBLE_INFO("FrontEndMenu: showing menu ({} game variants, {} Firefight variants)", variants.size(), ffVariants.size());
+    ctx.settingsPanel.SetTab(startTab);
+    ctx.modsScanned = false;
+    ctx.totalFrames = 0;
+    ctx.sceneReadyFrames = 0;
+    ctx.closed = false;
+    ctx.initialized = true;
 
-    // Route window messages to ImGui only while the menu is up (main thread owns ImGui here).
-    window.SetCustomWndProc([](HWND h, UINT m, WPARAM w, LPARAM l) { return UIManager::HandleWndProc(h, m, w, l); });
+    UIManager::GetArmorCustomizer().SyncToReachArmory();
+    UpdateSceneForScreen(ctx.st.screen);
 
-    SettingsPanel settingsPanel;
-    settingsPanel.SetTab(startTab);
-    bool modsScanned = false;
+    NOBLE_INFO("FrontEndMenu: initialized in-engine 3D menu overlay ({} game variants, {} Firefight variants)",
+               ctx.variants.size(), ctx.ffVariants.size());
+}
+
+void FrontEndMenu::RenderOverlay(IDXGISwapChain* swapChain) {
+    OverlayContext& ctx = GetOverlayCtx();
+    if (!ctx.initialized || ctx.closed || !swapChain || !ImGui::GetCurrentContext()) return;
+
+    DXGI_SWAP_CHAIN_DESC desc{};
+    if (FAILED(swapChain->GetDesc(&desc)) || !desc.OutputWindow) return;
+    const HWND hwnd = desc.OutputWindow;
+
+    ID3D11Device* device = nullptr;
+    if (FAILED(swapChain->GetDevice(__uuidof(ID3D11Device), reinterpret_cast<void**>(&device))) || !device) return;
+    ID3D11DeviceContext* context = nullptr;
+    device->GetImmediateContext(&context);
+
+    ID3D11Texture2D* backBuffer = nullptr;
+    ID3D11RenderTargetView* rtv = nullptr;
+    if (SUCCEEDED(swapChain->GetBuffer(0, __uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&backBuffer))) && backBuffer) {
+        device->CreateRenderTargetView(backBuffer, nullptr, &rtv);
+    }
+
+    if (context && rtv) {
+        D3D11_TEXTURE2D_DESC bbDesc{};
+        backBuffer->GetDesc(&bbDesc);
+
+        ImGuiIO& io = ImGui::GetIO();
+        io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
+        io.DisplaySize = ImVec2(static_cast<float>(bbDesc.Width), static_cast<float>(bbDesc.Height));
+
+        static LARGE_INTEGER s_freq{}, s_last{};
+        LARGE_INTEGER now{};
+        QueryPerformanceCounter(&now);
+        if (s_freq.QuadPart == 0) QueryPerformanceFrequency(&s_freq);
+        float dt = s_last.QuadPart ? static_cast<float>(now.QuadPart - s_last.QuadPart) / static_cast<float>(s_freq.QuadPart) : 1.0f / 60.0f;
+        if (dt <= 0.0f || dt > 0.25f) dt = 1.0f / 60.0f;
+        s_last = now;
+        io.DeltaTime = dt;
+
+        FeedEngineThreadInputs(hwnd, io);
+
+        ImGui_ImplDX11_NewFrame();
+        ImGui::NewFrame();
+
+        FrontEndChoice choice;
+        bool done = false;
+        DrawFrontEndContents(ctx, device, context, choice, done);
+
+        ImGui::Render();
+
+        ID3D11RenderTargetView* oldRtv = nullptr;
+        ID3D11DepthStencilView* oldDsv = nullptr;
+        context->OMGetRenderTargets(1, &oldRtv, &oldDsv);
+        context->OMSetRenderTargets(1, &rtv, nullptr);
+        ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+        context->OMSetRenderTargets(1, &oldRtv, oldDsv);
+        if (oldRtv) oldRtv->Release();
+        if (oldDsv) oldDsv->Release();
+
+        ++ctx.totalFrames;
+        if (ReachArmory::IsSceneReady()) {
+            ++ctx.sceneReadyFrames;
+        }
+
+        if (ctx.captureFrame > 0) {
+            const bool readyToCapture = (ctx.sceneReadyFrames >= ctx.captureFrame) || (ctx.totalFrames >= ctx.captureFrame + 480);
+            if (readyToCapture) {
+                FrameCapture::SaveNow(swapChain, ctx.totalFrames);
+                NOBLE_INFO("FrontEndMenu: -menu-capture done at frame {} (sceneReadyFrames={}), closing",
+                           ctx.totalFrames, ctx.sceneReadyFrames);
+                ctx.closed = true;
+                ReachAudio::StopMusic();
+                PostMessageW(hwnd, WM_CLOSE, 0, 0);
+            }
+        }
+
+        if (done && !ctx.closed) {
+            ctx.closed = true;
+            ReachAudio::StopMusic();
+            if (choice.play) {
+                std::wstring args = L"-map \"" + ToWide(choice.map) + L"\" -mode \"" + ToWide(choice.mode) + L"\"";
+                args += L" -difficulty " + std::to_wstring(choice.difficulty);
+                if (!choice.variantPath.empty()) args += L" -variant \"" + ToWide(choice.variantPath) + L"\"";
+                if (choice.skulls != 0) args += L" -skulls " + std::to_wstring(choice.skulls);
+                if (!choice.modFolder.empty()) args += L" -mod \"" + choice.modFolder.wstring() + L"\"";
+                NOBLE_INFO("FrontEndMenu: launching match via Relaunch ({} {})", choice.mode, choice.map);
+                Relaunch::Start(args);
+            } else {
+                NOBLE_INFO("FrontEndMenu: quit from menu");
+            }
+            PostMessageW(hwnd, WM_CLOSE, 0, 0);
+        }
+    }
+
+    if (rtv) rtv->Release();
+    if (backBuffer) backBuffer->Release();
+    if (context) context->Release();
+    device->Release();
+}
+
+FrontEndChoice FrontEndMenu::Run(Window& window, D3D11Renderer& renderer, const std::filesystem::path& reachDir) {
+    Initialize(reachDir);
+    OverlayContext& ctx = GetOverlayCtx();
+    FrontEndChoice choice;
     bool done = false;
-    Screen lastScreen = st.screen;
-    unsigned long long frame = 0;
 
-    auto saveSkulls = [&] {
-        SettingsData d = Settings::Get().Snapshot();
-        d.campaignSkulls = st.skulls;
-        Settings::Get().Update(d);
-    };
+    window.SetCustomWndProc([](HWND h, UINT m, WPARAM w, LPARAM l) { return UIManager::HandleWndProc(h, m, w, l); });
 
     while (!done && window.ProcessMessages()) {
         renderer.BeginFrame();
         UIManager::BeginFrame();
-        ++frame;
+        ++ctx.totalFrames;
 
-        ImGuiViewport* vp = ImGui::GetMainViewport();
-        ImGui::SetNextWindowPos(vp->Pos);
-        ImGui::SetNextWindowSize(vp->Size);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
-        const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
-                                       ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoBackground |
-                                       ImGuiWindowFlags_NoScrollWithMouse;
-        ImGui::Begin("##NobleFrontEnd", nullptr, flags);
-        ImGui::PopStyleVar(2);
-
-        Ui ui;
-        ui.dl = ImGui::GetWindowDrawList();
-        ui.size = vp->Size;
-        ui.s = std::max(0.75f, vp->Size.y / 720.0f);
-        DrawBackdrop(ui);
-
-        const float left = ui.size.x * 0.075f;
-        const float top = ui.size.y * 0.09f;
-        const SettingsData settings = Settings::Get().Snapshot();
-        const bool back = ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false);
-        auto goBack = [&](Screen to) {
-            st.screen = to;
-            st.focusRow = 0;
-            MenuSounds::Back();
-        };
-
-        switch (st.screen) {
-        case Screen::Main: {
-            DrawParty(ui, settings.playerName, "In Main Menu Lobby");
-            DrawTitle(ui, ImVec2(left, ui.size.y * 0.30f), "MAIN MENU");
-            Text(ui, nullptr, 17.0f, ImVec2(left + 4.0f * ui.s, ui.size.y * 0.30f + 66.0f * ui.s), kDim,
-                 "This party is local to this PC.");
-            std::vector<ListItem> items;
-            for (const MainEntry& e : kMainEntries) items.push_back({ e.label, e.enabled });
-            const float listY = ui.size.y * 0.30f + 104.0f * ui.s;
-            const int hit = DrawList(ui, "main", ImVec2(left, listY), 440.0f * ui.s, items, st.mainIndex, true, 27.0f);
-            const float descY = listY + items.size() * 27.0f * ui.s + 10.0f * ui.s;
-            Text(ui, nullptr, 17.0f, ImVec2(left + 4.0f * ui.s, descY), kDim, kMainEntries[st.mainIndex].description,
-                 left + 430.0f * ui.s);
-            if (hit >= 0) {
-                if (kMainEntries[hit].quit) done = true;
-                else st.screen = kMainEntries[hit].target;
-                st.focusRow = 0;
-            }
-            DrawHints(ui, { { Prompt::Accept, "Select" }, { Prompt::Back, "Back" } });
-            std::string version(VERSION_STRING);
-            const size_t paren = version.find(" (");
-            if (paren != std::string::npos) version.resize(paren);
-            char ver[64];
-            std::snprintf(ver, sizeof(ver), "PROJECT NOBLE  v%s", version.c_str());
-            Text(ui, NobleStyle::SmallFont(), 14.0f,
-                 ImVec2(ui.size.x - TextWidth(NobleStyle::SmallFont(), 14.0f * ui.s, ver) - 24.0f * ui.s, ui.size.y - 30.0f * ui.s),
-                 IM_COL32(200, 210, 220, 110), ver);
-            break;
-        }
-
-        case Screen::Campaign: {
-            DrawTitle(ui, ImVec2(left, top), "CAMPAIGN", "SOLO");
-            if (DrawSourceTabs(ui, ImVec2(left + 34.0f * ui.s, top + 70.0f * ui.s), st.campaignSource,
-                               static_cast<int>(campaignMods.size()))) st.focusRow = 0;
-            const bool modded = st.campaignSource == 1;
-            const std::vector<MapEntry> missions = modded ? ModdedMaps(campaignMods, ModMode::Campaign, kMissions, Count(kMissions), st.openMods)
-                                                          : BaseMaps(kMissions, Count(kMissions));
-            int& pick = modded ? st.campaignModded : st.mission;
-            FixSelection(missions, pick);
-            std::vector<ListItem> items = ToItems(missions);
-            if (missions.empty()) items.push_back({ "No Reach campaign mods installed", false, false });
-            const float listY = top + 108.0f * ui.s;
-            const int hit = DrawList(ui, "missions", ImVec2(left + 34.0f * ui.s, listY), 380.0f * ui.s, items, pick,
-                                     st.focusRow == 0, 30.0f, 13, false);
-            if (hit >= 0 && !missions.empty() && missions[hit].header) ToggleMod(st.openMods, ModMode::Campaign, *missions[hit].mod);
-            else if (hit >= 0) st.focusRow = 1;
-            FixSelection(missions, pick);
-            const MapEntry* row = missions.empty() ? nullptr : &missions[pick];
-            const MapEntry* mission = (row && !row->header) ? row : nullptr;
-            const ModEntry* mod = mission ? mission->mod : nullptr;
-
-            const float px = ui.size.x * 0.47f, pw = ui.size.x * 0.44f;
-            float y = DrawPreview(ui, ImVec2(px, top + 96.0f * ui.s), pw, mission ? mission->scenario : "",
-                                  row ? (row->header ? row->mod->title.c_str() : row->name.c_str()) : "",
-                                  row ? row->blurb.c_str() : "");
-            y += 6.0f * ui.s;
-            if (mod) {
-                Text(ui, nullptr, 16.0f, ImVec2(px + 10.0f * ui.s, y), kAccent, ("Mod: " + mod->title).c_str(), px + pw);
-                y += 24.0f * ui.s;
-            }
-            // Rows: 1 difficulty, 2 skulls, 3 start.
-            const int dd = OptionRow(ui, "diff", ImVec2(px, y), pw, "DIFFICULTY", kDifficulties[st.difficulty], st.focusRow == 1);
-            if (dd) st.difficulty = (st.difficulty + dd + 4) % 4;
-            y += 36.0f * ui.s;
-            const std::string skullText = SkullSummary(st.skulls);
-            if (OptionRow(ui, "skulls", ImVec2(px, y), pw, "SKULLS", skullText.c_str(), st.focusRow == 2)) {
-                st.screen = Screen::Skulls;
-            }
-            ImGui::SetCursorScreenPos(ImVec2(px, y));
-            if (ImGui::InvisibleButton("##skullrow", ImVec2(pw * 0.46f, 32.0f * ui.s))) st.screen = Screen::Skulls;
-            y += 36.0f * ui.s;
-            char mult[64];
-            std::snprintf(mult, sizeof(mult), "Score multiplier  x%.2f", ScoreMultiplier(st.difficulty, st.skulls));
-            Text(ui, nullptr, 16.0f, ImVec2(px + 10.0f * ui.s, y + 4.0f * ui.s), kDim, mult);
-            y += 34.0f * ui.s;
-            const bool canStart = mission && mission->enabled;
-            const bool start = (ActionButton(ui, "start", ImVec2(px, y), pw, "START MISSION") ||
-                                (st.focusRow == 3 && AcceptPressed())) && canStart;
-            if (start) {
-                choice.play = true;
-                choice.mode = "campaign";
-                choice.map = mission->scenario;
-                choice.difficulty = st.difficulty;
-                choice.skulls = st.skulls;
-                if (mod) { choice.modFolder = mod->folder; choice.modTitle = mod->title; }
-                done = true;
-            }
-            // Focus: list -> difficulty -> skulls -> start (Down / Tab moves on, Esc goes back a step).
-            if (st.focusRow > 0 && (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || ImGui::IsKeyPressed(ImGuiKey_Tab) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown))) st.focusRow = std::min(3, st.focusRow + 1);
-            if (st.focusRow > 0 && (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp))) st.focusRow = std::max(1, st.focusRow - 1);
-            if (st.focusRow == 2 && AcceptPressed()) st.screen = Screen::Skulls;
-            if (back) {
-                if (st.focusRow > 0) st.focusRow = 0;
-                else goBack(Screen::Main);
-            }
-            DrawHints(ui, { { Prompt::Accept, "Select" }, { Prompt::Back, "Back" }, { Prompt::Change, "Change" }, { Prompt::Tabs, "Vanilla / Modded" } });
-            break;
-        }
-
-        case Screen::Skulls: {
-            DrawTitle(ui, ImVec2(left, top), "SKULLS", "CAMPAIGN");
-            const float gx = left + 46.0f * ui.s;
-            float gy = top + 92.0f * ui.s;
-            const float cell = 78.0f * ui.s, icon = 64.0f * ui.s;
-            auto section = [&](const char* name, float y) {
-                Text(ui, NobleStyle::TitleFont(), 20.0f, ImVec2(gx, y), kWhite, name);
-                ui.dl->AddLine(ImVec2(gx, y + 26.0f * ui.s), ImVec2(gx + cell * 5.0f, y + 26.0f * ui.s), IM_COL32(255, 255, 255, 60));
-            };
-            // Keyboard: arrows move, Enter toggles.
-            if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight)) st.skull = std::min(kSkullCount - 1, st.skull + 1);
-            if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft)) st.skull = std::max(0, st.skull - 1);
-            if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown)) st.skull = std::min(kSkullCount - 1, st.skull + 5);
-            if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp)) st.skull = std::max(0, st.skull - 5);
-            bool toggle = AcceptPressed() || ImGui::IsKeyPressed(ImGuiKey_Space, false);
-
-            section("Primary Skulls", gy);
-            gy += 36.0f * ui.s;
-            int primaryIndex = 0, secondaryIndex = 0;
-            float secondaryTop = gy + cell * 2.0f + 14.0f * ui.s;
-            for (int i = 0; i < kSkullCount; ++i) {
-                const Skull& sk = kSkulls[i];
-                int idx = sk.primary ? primaryIndex++ : secondaryIndex++;
-                const float baseY = sk.primary ? gy : secondaryTop + 36.0f * ui.s;
-                const ImVec2 a(gx + (idx % 5) * cell, baseY + (idx / 5) * cell);
-                ImGui::SetCursorScreenPos(a);
-                ImGui::PushID(i);
-                if (ImGui::InvisibleButton("##skull", ImVec2(icon, icon))) {
-                    st.skull = i;
-                    toggle = true;
-                }
-                if (ImGui::IsItemHovered() && ImGui::GetIO().MouseDelta.x != 0.0f) st.skull = i;
-                ImGui::PopID();
-                const bool on = (st.skulls & (1ull << sk.bit)) != 0;
-                if (i == st.skull) ui.dl->AddCircle(ImVec2(a.x + icon * 0.5f, a.y + icon * 0.5f), icon * 0.56f, kWhite, 0, 2.0f * ui.s);
-                if (on) ui.dl->AddCircleFilled(ImVec2(a.x + icon * 0.5f, a.y + icon * 0.5f), icon * 0.52f, IM_COL32(230, 160, 90, 70));
-                UiTexture tex = UiArt::SkullIcon(sk.icon);
-                const ImU32 tint = on ? IM_COL32(255, 205, 160, 255) : IM_COL32(255, 255, 255, 105);
-                if (tex) ui.dl->AddImage(tex.id, a, ImVec2(a.x + icon, a.y + icon), ImVec2(0, 0), ImVec2(1, 1), tint);
-                else Text(ui, nullptr, 14.0f, ImVec2(a.x, a.y + icon * 0.4f), on ? kWhite : kDim, sk.name, a.x + icon);
-            }
-            section("Secondary Skulls", secondaryTop);
-            if (toggle) {
-                st.skulls ^= 1ull << kSkulls[st.skull].bit;
-                saveSkulls();
-                MenuSounds::Click();
-            }
-
-            // Detail panel
-            const Skull& sel = kSkulls[st.skull];
-            const float dx = ui.size.x * 0.60f;
-            float dy = top + 70.0f * ui.s;
-            UiTexture big = UiArt::SkullIcon(sel.icon);
-            const float bs = 170.0f * ui.s;
-            if (big) ui.dl->AddImage(big.id, ImVec2(dx + 40.0f * ui.s, dy), ImVec2(dx + 40.0f * ui.s + bs, dy + bs));
-            dy += bs + 18.0f * ui.s;
-            Text(ui, NobleStyle::HeroFont(), 34.0f, ImVec2(dx, dy), kWhite, sel.name);
-            dy += 42.0f * ui.s;
-            Text(ui, nullptr, 17.0f, ImVec2(dx, dy), kDim, sel.description, dx + 300.0f * ui.s);
-            dy += 74.0f * ui.s;
-            const bool selOn = (st.skulls & (1ull << sel.bit)) != 0;
-            Text(ui, nullptr, 17.0f, ImVec2(dx, dy), kWhite, selOn ? "Status: On" : "Status: Off");
-            dy += 24.0f * ui.s;
-            char mult[64];
-            if (sel.multiplier > 1.0f) std::snprintf(mult, sizeof(mult), "Score bonus: +%.1f", sel.multiplier);
-            else std::snprintf(mult, sizeof(mult), "No score bonus");
-            Text(ui, nullptr, 17.0f, ImVec2(dx, dy), kDim, mult);
-
-            // Bottom strip like Reach's (player + score multiplier).
-            const float by = ui.size.y - 104.0f * ui.s;
-            ui.dl->AddRectFilledMultiColor(ImVec2(left + 40.0f * ui.s, by), ImVec2(ui.size.x * 0.80f, by + 40.0f * ui.s),
-                                           IM_COL32(40, 52, 64, 210), IM_COL32(40, 52, 64, 60), IM_COL32(40, 52, 64, 60), IM_COL32(40, 52, 64, 210));
-            Text(ui, NobleStyle::TitleFont(), 24.0f, ImVec2(left + 52.0f * ui.s, by + 6.0f * ui.s), kWhite, settings.playerName.c_str());
-            char total[64];
-            std::snprintf(total, sizeof(total), "x%.2f", ScoreMultiplier(st.difficulty, st.skulls));
-            Text(ui, NobleStyle::TitleFont(), 24.0f, ImVec2(ui.size.x * 0.80f - 90.0f * ui.s, by + 6.0f * ui.s), kWhite, total);
-            if (back) goBack(Screen::Campaign);
-            DrawHints(ui, { { Prompt::Accept, "Toggle" }, { Prompt::Back, "Back" } });
-            break;
-        }
-
-        case Screen::Firefight:
-        case Screen::CustomGame:
-        case Screen::Forge: {
-            const bool ff = st.screen == Screen::Firefight;
-            const bool forge = st.screen == Screen::Forge;
-            DrawTitle(ui, ImVec2(left, top), ff ? "FIREFIGHT" : forge ? "FORGE" : "CUSTOM GAME", ff ? "SURVIVAL" : forge ? "EDIT" : "MULTIPLAYER");
-            const MenuMap* baseMaps = ff ? kFirefightMaps : kMaps;
-            const int baseCount = ff ? Count(kFirefightMaps) : Count(kMaps);
-            const std::vector<const ModEntry*>& modList = ff ? ffMods : mpMods;
-            int& source = ff ? st.ffSource : st.mpSource;
-            float listTop = top + 96.0f * ui.s;
-            if (!forge) {
-                if (DrawSourceTabs(ui, ImVec2(left + 34.0f * ui.s, top + 70.0f * ui.s), source, static_cast<int>(modList.size()))) {
-                    st.focusRow = 0;
-                }
-                listTop = top + 108.0f * ui.s;
-            }
-            const bool modded = !forge && source == 1;
-            const ModMode modMode = ff ? ModMode::Firefight : ModMode::Multiplayer;
-            const std::vector<MapEntry> maps = modded ? ModdedMaps(modList, modMode, baseMaps, baseCount, st.openMods)
-                                                      : BaseMaps(baseMaps, baseCount);
-            int& mapIndex = modded ? (ff ? st.ffModded : st.mpModded) : (ff ? st.ffMap : forge ? st.forgeMap : st.map);
-            FixSelection(maps, mapIndex);
-            std::vector<ListItem> items = ToItems(maps);
-            if (maps.empty()) items.push_back({ ff ? "No Reach Firefight mods installed" : "No Reach multiplayer mods installed", false, false });
-            const int hit = DrawList(ui, "maps", ImVec2(left + 34.0f * ui.s, listTop), 330.0f * ui.s, items, mapIndex,
-                                     st.focusRow == 0, 27.0f, modded || !forge ? 14 : 15, false);
-            if (hit >= 0 && !maps.empty() && maps[hit].header) ToggleMod(st.openMods, modMode, *maps[hit].mod);
-            else if (hit >= 0) st.focusRow = 1;
-            FixSelection(maps, mapIndex);
-            const MapEntry* row = maps.empty() ? nullptr : &maps[mapIndex];
-            const MapEntry* map = (row && !row->header) ? row : nullptr;
-            const ModEntry* mod = map ? map->mod : nullptr;
-
-            const float px = ui.size.x * 0.47f, pw = ui.size.x * 0.44f;
-            float y = DrawPreview(ui, ImVec2(px, top + 96.0f * ui.s), pw, map ? map->scenario : "",
-                                  row ? (row->header ? row->mod->title.c_str() : row->name.c_str()) : "",
-                                  row ? row->blurb.c_str() : "");
-            y += 6.0f * ui.s;
-            if (mod) {
-                Text(ui, nullptr, 16.0f, ImVec2(px + 10.0f * ui.s, y), kAccent, ("Mod: " + mod->title).c_str(), px + pw);
-                y += 24.0f * ui.s;
-            }
-            int focusRows = 1;
-            if (!forge) {
-                const std::vector<MenuVariant>& list = ff ? ffVariants : variants;
-                int& v = ff ? st.ffVariant : st.variant;
-                const char* label = list.empty() ? "Default" : list[std::clamp(v, 0, static_cast<int>(list.size()) - 1)].label.c_str();
-                const int dv = OptionRow(ui, "variant", ImVec2(px, y), pw, "GAME TYPE", label, st.focusRow == focusRows);
-                if (dv && !list.empty()) v = (v + dv + static_cast<int>(list.size())) % static_cast<int>(list.size());
-                y += 36.0f * ui.s;
-                ++focusRows;
-            }
-            if (ff) {
-                const int dd = OptionRow(ui, "ffdiff", ImVec2(px, y), pw, "DIFFICULTY", kDifficulties[st.difficulty], st.focusRow == focusRows);
-                if (dd) st.difficulty = (st.difficulty + dd + 4) % 4;
-                y += 36.0f * ui.s;
-                ++focusRows;
-            }
-            if (forge && !std::filesystem::exists(forgeVariant)) {
-                Text(ui, nullptr, 16.0f, ImVec2(px + 10.0f * ui.s, y), IM_COL32(255, 190, 120, 255),
-                     "MCC's Forge game type (00_basic_editing_054.bin) wasn't found.");
-                y += 26.0f * ui.s;
-            }
-            y += 10.0f * ui.s;
-            const bool canStart = map && map->enabled;
-            const bool start = (ActionButton(ui, "start", ImVec2(px, y), pw, forge ? "START FORGE" : "START GAME") ||
-                                (st.focusRow == focusRows && AcceptPressed())) && canStart;
-            y += 48.0f * ui.s;
-            if (!ff && !forge && ActionButton(ui, "browse", ImVec2(px, y), pw, "HOST OR JOIN GAMES", false)) st.screen = Screen::Servers;
-            if (start) {
-                choice.play = true;
-                choice.map = map->scenario;
-                if (mod) { choice.modFolder = mod->folder; choice.modTitle = mod->title; }
-                if (ff) {
-                    choice.mode = "firefight";
-                    choice.difficulty = st.difficulty;
-                    if (!ffVariants.empty()) choice.variantPath = ffVariants[st.ffVariant].path.string();
-                } else {
-                    choice.mode = "multiplayer";
-                    if (forge) choice.variantPath = forgeVariant.string();
-                    else if (!variants.empty()) choice.variantPath = variants[st.variant].path.string();
-                }
-                done = true;
-            }
-            if (st.focusRow > 0 && (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || ImGui::IsKeyPressed(ImGuiKey_Tab) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown))) st.focusRow = std::min(focusRows, st.focusRow + 1);
-            if (st.focusRow > 0 && (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp))) st.focusRow = std::max(1, st.focusRow - 1);
-            if (back) {
-                if (st.focusRow > 0) st.focusRow = 0;
-                else goBack(Screen::Main);
-            }
-            if (forge) DrawHints(ui, { { Prompt::Accept, "Select" }, { Prompt::Back, "Back" } });
-            else DrawHints(ui, { { Prompt::Accept, "Select" }, { Prompt::Back, "Back" }, { Prompt::Change, "Change" }, { Prompt::Tabs, "Vanilla / Modded" } });
-            break;
-        }
-
-        case Screen::Armory: {
-            // MCC Halo: Reach "CUSTOMIZATION / APPEARANCE" header + nameplate + full-bleed 3D preview
-            Text(ui, NobleStyle::SmallFont(), 15.0f, ImVec2(left, top - 8.0f * ui.s), kAccent, "CUSTOMIZATION");
-            Text(ui, NobleStyle::HeroFont(), 44.0f, ImVec2(left, top + 6.0f * ui.s), kWhite, "APPEARANCE");
-
-            // Top-right player nameplate with service tag
-            {
-                const auto& prof = UIManager::GetArmorCustomizer().GetProfile();
-                const float plateW = 280.0f * ui.s;
-                const float plateH = 42.0f * ui.s;
-                const ImVec2 p0(ui.size.x - left - plateW, top + 6.0f * ui.s);
-                const ImVec2 p1(p0.x + plateW, p0.y + plateH);
-                ui.dl->AddRectFilledMultiColor(p0, p1,
-                    IM_COL32(36, 58, 82, 230), IM_COL32(82, 112, 142, 210),
-                    IM_COL32(62, 88, 115, 210), IM_COL32(28, 46, 68, 230));
-                ui.dl->AddRect(p0, p1, IM_COL32(165, 205, 240, 180), 0.0f, 0, 1.2f);
-                const ImVec2 emb(p0.x + 22.0f * ui.s, p0.y + plateH * 0.5f);
-                ui.dl->AddCircleFilled(emb, 13.0f * ui.s, IM_COL32(16, 28, 42, 240));
-                ui.dl->AddTriangleFilled(ImVec2(emb.x - 7 * ui.s, emb.y - 3 * ui.s),
-                                         ImVec2(emb.x + 7 * ui.s, emb.y - 3 * ui.s),
-                                         ImVec2(emb.x, emb.y + 7 * ui.s), kAccent);
-                const std::string tagLine = "[" + prof.serviceTag + "]";
-                Text(ui, NobleStyle::SmallFont(), 14.0f, ImVec2(p0.x + 44.0f * ui.s, p0.y + 4.0f * ui.s), IM_COL32(190, 215, 235, 230), tagLine.c_str());
-                Text(ui, NobleStyle::TitleFont(), 18.0f, ImVec2(p0.x + 44.0f * ui.s, p0.y + 20.0f * ui.s), kWhite, settings.playerName.c_str());
-            }
-
-            // Thin horizontal rule with active "HALO: REACH" underline
-            const float ruleY = top + 64.0f * ui.s;
-            ui.dl->AddLine(ImVec2(left, ruleY), ImVec2(ui.size.x - left, ruleY), IM_COL32(140, 180, 220, 55), 1.0f);
-            const char* gameTab = "HALO: REACH";
-            const float tabW = TextWidth(NobleStyle::TitleFont(), 18.0f * ui.s, gameTab);
-            const float tabX = ui.size.x * 0.5f - tabW * 0.5f;
-            Text(ui, NobleStyle::TitleFont(), 18.0f, ImVec2(tabX, ruleY - 24.0f * ui.s), kWhite, gameTab);
-            ui.dl->AddLine(ImVec2(tabX - 8.0f * ui.s, ruleY), ImVec2(tabX + tabW + 8.0f * ui.s, ruleY), kAccent, 2.5f * ui.s);
-
-            ImGui::SetCursorScreenPos(ImVec2(left, ruleY + 12.0f * ui.s));
-            ImGui::BeginChild("##armory_panel", ImVec2(ui.size.x - left * 1.35f, ui.size.y - (ruleY + 12.0f * ui.s) - 62.0f * ui.s),
-                              ImGuiChildFlags_None, ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollWithMouse);
-            UIManager::GetArmorCustomizer().Render(renderer.GetDevice(), renderer.GetContext());
-            ImGui::EndChild();
-
-            if (back && !ImGui::GetIO().WantTextInput) {
-                goBack(Screen::Main);
-            }
-            DrawHints(ui, { { Prompt::Back, "Back" }, { Prompt::Change, "Change Piece" }, { Prompt::Tabs, "Rotate Character (Q/E or Drag)" } });
-            break;
-        }
-
-        case Screen::Servers:
-        case Screen::Settings:
-        case Screen::Mods: {
-            const char* title = st.screen == Screen::Servers ? "GAMES" : st.screen == Screen::Settings ? "SETTINGS" : "MODS";
-            DrawTitle(ui, ImVec2(left, top), title);
-            // The existing panels are regular ImGui widgets: put them in a framed child.
-            ImGui::SetCursorScreenPos(ImVec2(left, top + 84.0f * ui.s));
-            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.03f, 0.05f, 0.07f, 0.82f));
-            ImGui::BeginChild("##panel", ImVec2(ui.size.x - left * 2.0f, ui.size.y - top - 84.0f * ui.s - 70.0f * ui.s),
-                              ImGuiChildFlags_Borders, ImGuiWindowFlags_None);
-            if (st.screen == Screen::Servers) {
-                UIManager::GetServerBrowser().Render();
-            } else if (st.screen == Screen::Settings) {
-                settingsPanel.Render();
-            } else {
-                if (!modsScanned) {
-                    // <steamapps>\workshop\content\976730 (MCC) and Noble's own data\mods.
-                    const auto steamapps = reachDir.parent_path().parent_path().parent_path();
-                    wchar_t exe[MAX_PATH] = {};
-                    GetModuleFileNameW(nullptr, exe, MAX_PATH);
-                    UIManager::GetWorkshopManager().RefreshMods(steamapps / "workshop" / "content" / "976730",
-                                                                std::filesystem::path(exe).parent_path() / "data" / "mods");
-                    modsScanned = true;
-                }
-                UIManager::GetWorkshopManager().Render();
-            }
-            ImGui::EndChild();
-            ImGui::PopStyleColor();
-            // Esc goes back unless a text box or key rebind wants it.
-            if (back && !ImGui::GetIO().WantTextInput && !settingsPanel.IsCapturingKey()) {
-                goBack(st.screen == Screen::Servers ? Screen::CustomGame : Screen::Main);
-            }
-            DrawHints(ui, { { Prompt::Back, "Back" } });
-            break;
-        }
-        }
-
-        if (st.screen != lastScreen) {
-            lastScreen = st.screen;   // the accept / back sound already played
-        }
-
-        ImGui::End();
+        DrawFrontEndContents(ctx, renderer.GetDevice(), renderer.GetContext(), choice, done);
 
         UIManager::EndFrame();
-        if (captureFrame && frame == captureFrame) {
-            FrameCapture::SaveNow(renderer.GetSwapChain(), frame);
-            NOBLE_INFO("FrontEndMenu: -menu-capture done, closing");
+        if (ctx.captureFrame && ctx.totalFrames == ctx.captureFrame) {
+            FrameCapture::SaveNow(renderer.GetSwapChain(), ctx.totalFrames);
             choice.play = false;
             done = true;
         }
         renderer.EndFrame(true);
     }
 
-    // From here on the engine thread owns rendering; the pause menu feeds ImGui itself.
     ReachAudio::StopMusic();
     window.SetCustomWndProc(nullptr);
-    if (choice.play) {
-        NOBLE_INFO("FrontEndMenu: PLAY {} {} (difficulty {}, skulls 0x{:X}, variant '{}')", choice.mode, choice.map,
-                   choice.difficulty, choice.skulls, choice.variantPath);
-    } else {
-        NOBLE_INFO("FrontEndMenu: quit from menu");
-    }
     return choice;
 }
 
