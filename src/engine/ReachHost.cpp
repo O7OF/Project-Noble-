@@ -1,5 +1,6 @@
 #include "ReachHost.hpp"
 #include "ui/LoadScreen.hpp"
+#include "ui/FrontEndMenu.hpp"
 #include "common/Logger.hpp"
 #include "hooks/HookManager.hpp"
 #include "ui/PauseMenu.hpp"
@@ -7,6 +8,7 @@
 #include "engine/FrameCapture.hpp"
 #include "engine/KeyBindings.hpp"
 #include "engine/CameraFov.hpp"
+#include "engine/ReachArmory.hpp"
 #include "common/Settings.hpp"
 #include "host/Window.hpp"
 #include <windows.h>
@@ -334,6 +336,18 @@ static uint64_t __fastcall HostSlot1_FrameTick(void* thisPtr, uint64_t a1, uint6
     // owns the immediate context.
     static std::atomic<uint64_t> s_frameCount{0};
     uint64_t frames = ++s_frameCount;
+    if (ReachArmory::IsMenuMode()) {
+        ReachArmory::Tick();
+        if (a1 > 0x10000) {
+            IDXGISwapChain* swapChain = reinterpret_cast<IDXGISwapChain*>(a1);
+            InstallPresentSettingsHook(swapChain);
+            ExecuteGammaPass(swapChain);
+            FrontEndMenu::RenderOverlay(swapChain);
+            if (s_testCaptureRequest.exchange(false)) FrameCapture::SaveNow(swapChain, 777777);
+            FrameCapture::OnFrame(swapChain, frames);
+        }
+        return 0;
+    }
     // SETTINGS > VIDEO field of view: keep the engine's camera FOV in step with the saved setting
     // (cheap: it only reads the settings and writes haloreach+0xB42C10 when the value changed).
     CameraFov::Tick();
@@ -929,6 +943,12 @@ static void FillLocalInput(uint8_t* st) {
         return;
     }
     s_lastWindow = hwnd;
+
+    if (ReachArmory::IsMenuMode()) {
+        InputRelease(hwnd, "front-end menu open");
+        memset(s_keyDownSince, 0, sizeof(s_keyDownSince));
+        return;
+    }
 
     const bool uiPointer = UiCursorActive();
 

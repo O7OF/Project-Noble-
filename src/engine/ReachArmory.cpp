@@ -1,6 +1,4 @@
 #include "ReachArmory.hpp"
-#include "ui/UIManager.hpp"
-#include "ui/ArmorCustomizer.hpp"
 #include "common/Logger.hpp"
 
 #include <windows.h>
@@ -119,6 +117,7 @@ static std::atomic<uint32_t> s_lastYawBits{0};
 
 static std::mutex s_sceneMutex;
 static std::string s_targetScene = "armory";
+static ReachArmorySelection s_selection;
 
 static std::mutex s_dataMutex;
 static bool s_stringIdsLoaded = false;
@@ -211,22 +210,24 @@ static uint32_t LookupStringId(const std::string& name) {
 // -----------------------------------------------------------------------------
 static int32_t ResolveSceneIndex(const std::string& scene) {
     const std::string s = ToLowerAscii(scene);
-    if (s == "campaign")        return 0x00;
-    if (s == "matchmaking")     return 0x01;
-    if (s == "custom_games")    return 0x02;
-    if (s == "forge")           return 0x03;
-    if (s == "theater")         return 0x04;
-    if (s == "firefight")       return 0x05;
-    if (s == "armory")          return 0x0A;
-    if (s == "armory_elite")    return 0x0B;
-    if (s == "armory_full")     return 0x0C;
-    if (s == "armory_head")     return 0x0D;
-    if (s == "armory_chest")    return 0x0F;
-    if (s == "armory_arm")      return 0x10;
-    if (s == "armory_leg")      return 0x11;
-    if (s == "armory_knee")     return 0x12;
-    if (s == "armory_shoulder") return 0x13;
-    if (s == "armory_colors")   return 0x14;
+    if (s == "campaign")                         return 0x00;
+    if (s == "matchmaking")                      return 0x01;
+    if (s == "custom_games")                     return 0x02;
+    if (s == "forge")                            return 0x03;
+    if (s == "theater")                          return 0x04;
+    if (s == "firefight")                        return 0x05;
+    if (s == "start_menu" || s == "main")        return 0x06;
+    if (s == "armory")                           return 0x0A;
+    if (s == "armory_elite")                     return 0x0B;
+    if (s == "c_armory")                         return 0x0C;
+    if (s == "c_helmet" || s == "armory_head")   return 0x0D;
+    if (s == "c_left_shoulder")                  return 0x0E;
+    if (s == "c_right_shoulder")                 return 0x0F;
+    if (s == "c_chest" || s == "armory_chest")   return 0x10;
+    if (s == "c_wrist" || s == "armory_arm")     return 0x11;
+    if (s == "c_utility" || s == "armory_leg")   return 0x12;
+    if (s == "c_knees" || s == "armory_knee")    return 0x13;
+    if (s == "c_full_spartan" || s == "armory_full") return 0x14;
     return 0x0A;
 }
 
@@ -282,8 +283,7 @@ static void SwitchSceneOnRenderThread(int32_t targetIdx) {
     }
 
     // Toggle Spartan (+0x2084) vs Elite (+0x2085) biped visibility on the Armory pedestal
-    const bool isSpartanScene = (targetIdx == 0x0A) ||
-                                (targetIdx >= 0x0C && targetIdx <= 0x14 && targetIdx != 0x0E);
+    const bool isSpartanScene = (targetIdx == 0x0A) || (targetIdx >= 0x0C && targetIdx <= 0x14);
     const bool isEliteScene   = (targetIdx == 0x0B);
 
     if (isSpartanScene) {
@@ -385,7 +385,6 @@ static void ScanColorRecords() {
 }
 
 static void ScanSuitRecords() {
-    // Scan for 9-float suit constant blocks where each float is in [0.005f, 1.0f] and matches current or default steel
     float cur[9];
     {
         std::lock_guard<std::mutex> lock(s_dataMutex);
@@ -479,7 +478,6 @@ static void ScanEliteTable() {
                     }
                     if (!match) continue;
 
-                    // Verify region 0 contains minor and spec_ops permutations
                     const uint8_t* hdr0 = buf.data() + off;
                     const uint32_t count0 = *reinterpret_cast<const uint32_t*>(hdr0 + 0x08);
                     const uintptr_t ptr0  = *reinterpret_cast<const uintptr_t*>(hdr0 + 0x10);
@@ -495,7 +493,6 @@ static void ScanEliteTable() {
                     }
                     if (!hasMinor || !hasSpecOps) continue;
 
-                    // Cache all 6 regions
                     std::array<EliteRegionCache, 6> cached{};
                     bool allOk = true;
                     for (size_t r = 0; r < 6; ++r) {
@@ -528,177 +525,36 @@ static void ScanEliteTable() {
     }
 }
 
-// -----------------------------------------------------------------------------
-// Lookup tables from PlayerProfile indices to mainmenu_all.string_ids.csv names
-// -----------------------------------------------------------------------------
-static std::string GetHelmetPermName(int helmetIdx, int variantIdx) {
-    struct HelmetVariants {
-        const char* base;
-        const char* v1;
-        const char* v2;
-    };
-    static const HelmetVariants kHelmets[21] = {
-        { "default",     "default_ua",        "default_ua_huli" },     // 0: MARK V[B]
-        { "cqc",         "cqc_cbrn",          "cqc_ua_huli" },         // 1: CQC
-        { "odst",        "odst_ua_cnm",       "odst_cbrn_huli" },      // 2: ODST
-        { "hazop",       "hazop_cbrn",        "hazop_cnm_i" },         // 3: HAZOP
-        { "eod",         "eod_cnm",           "eod_ua_huli" },         // 4: EOD
-        { "operator",    "operator_ua_huli",  "operator_cnm" },        // 5: OPERATOR
-        { "grenadier",   "grenadier_ua",      "grenadier_ua_fc" },     // 6: GRENADIER
-        { "air_assault", "air_assault_ua_cnm","air_assault_fc_i" },    // 7: AIR ASSAULT
-        { "scout",       "scout_huli",        "scout_cbrn_cnm" },      // 8: SCOUT
-        { "eva",         "eva_cnm",           "eva_ua_huli3" },        // 9: EVA
-        { "jfo",         "jfo_huli",          "jfo_ua" },              // 10: JFO
-        { "commando",    "commando_cbrn_cnm", "commando_ua_fc_i2" },   // 11: COMMANDO
-        { "emile",       "emile_cnm",         "emile_ua_huli" },       // 12: EVA[C]
-        { "mark_v",      "mark_v_cnm",        "mark_v_ua" },           // 13: MJOLNIR MK. V
-        { "pilot",       "pilot_huli",        "pilot_ua_huli" },       // 14: PILOT
-        { "recon",       "recon_huli",        "recon_ua_huli3" },      // 15: RECON
-        { "mark_vi",     "mark_vi_fc_i",      "mark_vi_ua_huli" },     // 16: MJOLNIR MK. VI
-        { "cqb",         "cqb_huli_cnm",      "cqb_ua_huli" },         // 17: CQB
-        { "mp",          "mp_cbrn_cnm",       "mp_huli_cnm" },         // 18: SECURITY
-        { "gungnir",     "gungnir_huli",      "gungnir_cbrn" },        // 19: GUNGNIR
-        { "skull",       "skull",             "skull" }                // 20: HAUNTED
-    };
-    const int h = std::clamp(helmetIdx, 0, 20);
-    const int v = std::clamp(variantIdx, 0, 2);
-    if (v == 1) return kHelmets[h].v1;
-    if (v == 2) return kHelmets[h].v2;
-    return kHelmets[h].base;
-}
-
-static std::string GetShoulderPermName(int shoulderIdx) {
-    static const char* const kShoulders[18] = {
-        "default",          // 0: DEFAULT
-        "para_knees",       // 1: FJ/PARA
-        "hazop",            // 2: HAZOP
-        "jfo",              // 3: JFO
-        "recon",            // 4: RECON
-        "ua_multi_threat",  // 5: UA/MULTI-THREAT
-        "jump_jet",         // 6: JUMP JET
-        "eva",              // 7: EVA
-        "gungnir",          // 8: GUNGNIR
-        "odst",             // 9: ODST
-        "ua_base_security", // 10: UA/BASE SECURITY
-        "cqc",              // 11: CQC
-        "operator",         // 12: OPERATOR
-        "commando",         // 13: COMMANDO
-        "grenadier",        // 14: GRENADIER
-        "sniper",           // 15: SNIPER
-        "mjolnir_mk_v",     // 16: MJOLNIR MK. V
-        "security"          // 17: SECURITY
-    };
-    return kShoulders[std::clamp(shoulderIdx, 0, 17)];
-}
-
-static std::string GetChestPermName(int chestIdx, bool& outRobotHands) {
-    outRobotHands = (chestIdx >= 14 && chestIdx <= 16);
-    static const char* const kChests[17] = {
-        "default",             // 0: DEFAULT
-        "tactical_recon",      // 1: TACTICAL/RECON
-        "hp_halo",             // 2: HP/HALO
-        "ua_counterassault",   // 3: UA/COUNTERASSAULT
-        "tactical_lrp",        // 4: TACTICAL/LRP
-        "tactical_patrol",     // 5: TACTICAL/PATROL
-        "collar_breacher",     // 6: COLLAR/BREACHER
-        "assault_sapper",      // 7: ASSAULT/SAPPER
-        "assault_commando",    // 8: ASSAULT/COMMANDO
-        "hp_parafoil",         // 9: HP/PARAFOIL
-        "collar_grenadier",    // 10: COLLAR/GRENADIER
-        "ua_multi_threat",     // 11: UA/MULTI-THREAT
-        "ua_base_security",    // 12: UA/BASE SECURITY
-        "collar_grenadier_ua", // 13: COLLAR/GRENADIER [UA]
-        "ua_multi_threat_w",   // 14: UA/MULTI-THREAT [W]
-        "collar_breacher_r",   // 15: COLLAR/BREACHER [R]
-        "hp_parafoil_r"        // 16: HP/PARAFOIL [R]
-    };
-    return kChests[std::clamp(chestIdx, 0, 16)];
-}
-
-static std::string GetWristPermName(int wristIdx) {
-    static const char* const kWrists[6] = {
-        "default",          // 0: DEFAULT
-        "ua_buckler",       // 1: UA/BUCKLER
-        "ua_bracer",        // 2: UA/BRACER
-        "tactical_tacpad",  // 3: TACTICAL/TACPAD
-        "tactical_ugps",    // 4: TACTICAL/UGPS
-        "assault_breacher"  // 5: ASSAULT/BREACHER
-    };
-    return kWrists[std::clamp(wristIdx, 0, 5)];
-}
-
-static std::string GetUtilityPermName(int utilIdx) {
-    static const char* const kUtilities[6] = {
-        "default",             // 0: DEFAULT
-        "ua_chobham",          // 1: UA/CHOBHAM
-        "tactical_hard_case",  // 2: TACTICAL/HARD CASE
-        "ua_nxra",             // 3: UA/NXRA
-        "tactical_trauma_kit", // 4: TACTICAL/TRAUMA KIT
-        "tactical_soft_case"   // 5: TACTICAL/SOFT CASE
-    };
-    return kUtilities[std::clamp(utilIdx, 0, 5)];
-}
-
-static std::string GetKneesPermName(int kneesIdx) {
-    static const char* const kKnees[4] = {
-        "default",    // 0: DEFAULT
-        "para_knees", // 1: FJ/PARA
-        "gungnir",    // 2: GUNGNIR
-        "grenadier"   // 3: GRENADIER
-    };
-    return kKnees[std::clamp(kneesIdx, 0, 3)];
-}
-
-static std::string GetElitePermName(int eliteIdx) {
-    static const char* const kElites[8] = {
-        "minor",          // 0: MINOR
-        "spec_ops",       // 1: SPEC OPS
-        "space",          // 2: RANGER
-        "ultra",          // 3: ULTRA
-        "zealot",         // 4: ZEALOT
-        "general",        // 5: GENERAL
-        "field_marshall", // 6: FIELD MARSHAL
-        "officer"         // 7: OFFICER
-    };
-    return kElites[std::clamp(eliteIdx, 0, 7)];
-}
-
-static void GetVisorLinearRgb(int visorIdx, float outRgb[3]) {
-    // sRGB visor tints matching MCC Reach Visor palette, converted with pow(c, 2.2)
-    static const float kVisorSrgb[5][3] = {
-        { 1.00f, 0.62f, 0.12f }, // 0: DEFAULT (Amber/Gold-Orange)
-        { 0.78f, 0.82f, 0.88f }, // 1: SILVER
-        { 0.25f, 0.58f, 1.00f }, // 2: BLUE
-        { 1.00f, 0.78f, 0.15f }, // 3: GOLD
-        { 0.08f, 0.09f, 0.11f }  // 4: BLACK
-    };
-    const int idx = std::clamp(visorIdx, 0, 4);
-    for (int c = 0; c < 3; ++c) {
-        outRgb[c] = std::pow(kVisorSrgb[idx][c], 2.2f);
-    }
+static int ResolveEffectIndex(const std::string& effectName) {
+    const std::string e = ToLowerAscii(effectName);
+    if (e == "birthday_party")    return 1;
+    if (e == "heart_attack")      return 2;
+    if (e == "pestilence")        return 3;
+    if (e == "inclement_weather") return 4;
+    if (e == "flames")            return 5;
+    if (e == "blue_flames")       return 6;
+    return 0;
 }
 
 // -----------------------------------------------------------------------------
 // Apply Armor Permutations & Colors in Engine Memory
 // -----------------------------------------------------------------------------
 static void ApplyLivePermutationsAndColors() {
-    const PlayerProfile& prof = UIManager::GetArmorCustomizer().GetProfile();
+    const ReachArmorySelection sel = ReachArmory::GetSelection();
 
     // 1. Spartan Permutations
     const uintptr_t tableBase = s_spartanTableBase.load();
     const size_t stride = s_spartanStride.load();
     if (tableBase != 0 && stride != 0) {
-        bool robotHands = false;
-        const std::string chestPerm = GetChestPermName(prof.chestIndex, robotHands);
         const std::string slotNames[8] = {
-            GetHelmetPermName(prof.helmetIndex, prof.helmetVariantIndex), // 0: head
-            chestPerm,                                                    // 1: chest
-            GetShoulderPermName(prof.leftShoulderIndex),                  // 2: left_shoulder
-            GetShoulderPermName(prof.rightShoulderIndex),                 // 3: right_shoulder
-            robotHands ? "robot" : "default",                             // 4: hands
-            GetWristPermName(prof.wristIndex),                            // 5: wrist
-            GetUtilityPermName(prof.utilityIndex),                        // 6: utility
-            GetKneesPermName(prof.kneesIndex)                             // 7: knees
+            sel.helmet,        // 0: head
+            sel.chest,         // 1: chest
+            sel.leftShoulder,  // 2: left_shoulder
+            sel.rightShoulder, // 3: right_shoulder
+            sel.hands,         // 4: hands ("default" or "robot")
+            sel.wrist,         // 5: wrist
+            sel.utility,       // 6: utility
+            sel.knees          // 7: knees
         };
 
         for (size_t slot = 0; slot < 8; ++slot) {
@@ -728,7 +584,7 @@ static void ApplyLivePermutationsAndColors() {
                 }
             }
             if (bodyAddr != 0) {
-                const uint32_t targetBody = (prof.bodyType == 1) ? femaleId : maleId;
+                const uint32_t targetBody = sel.isFemale ? femaleId : maleId;
                 SafeWriteU32(bodyAddr + 0, targetBody);
                 SafeWriteU32(bodyAddr + 4, targetBody);
             }
@@ -758,14 +614,14 @@ static void ApplyLivePermutationsAndColors() {
             }
         }
         if (effectAddr != 0) {
-            const int effIdx = std::clamp(prof.armorEffectIndex, 0, 6);
+            const int effIdx = ResolveEffectIndex(sel.armorEffect);
             SafeWriteU32(effectAddr + 4, s_effectTags[effIdx]);
         }
     }
 
     // 2. Elite Permutations
     {
-        const uint32_t elitePermId = LookupStringId(GetElitePermName(prof.eliteArmorIndex));
+        const uint32_t elitePermId = LookupStringId(sel.eliteSuit);
         std::lock_guard<std::mutex> lock(s_dataMutex);
         if (s_eliteScanned && elitePermId != 0) {
             for (size_t r = 0; r < 6; ++r) {
@@ -778,35 +634,15 @@ static void ApplyLivePermutationsAndColors() {
         }
     }
 
-    // 3. Colors (Primary, Secondary, Visor)
-    const ArmorColor& priCol = ArmorCustomizer::GetColorPalette()[std::clamp(prof.primaryColor, 0, 29)];
-    const ArmorColor& secCol = ArmorCustomizer::GetColorPalette()[std::clamp(prof.secondaryColor, 0, 29)];
-    float visorLinear[3] = {};
-    GetVisorLinearRgb(prof.visorColorIndex, visorLinear);
-
-    const float priLinear[4] = {
-        std::pow(priCol.r, 2.2f),
-        std::pow(priCol.g, 2.2f),
-        std::pow(priCol.b, 2.2f),
-        0.0f
-    };
-    const float secLinear[4] = {
-        std::pow(secCol.r, 2.2f),
-        std::pow(secCol.g, 2.2f),
-        std::pow(secCol.b, 2.2f),
-        0.0f
-    };
-    const float visLinear4[4] = {
-        visorLinear[0],
-        visorLinear[1],
-        visorLinear[2],
-        0.0f
-    };
+    // 3. Colors (Primary, Secondary, Visor - already in linear RGB)
+    const float priLinear[4] = { sel.primaryRgb[0], sel.primaryRgb[1], sel.primaryRgb[2], 0.0f };
+    const float secLinear[4] = { sel.secondaryRgb[0], sel.secondaryRgb[1], sel.secondaryRgb[2], 0.0f };
+    const float visLinear4[4] = { sel.visorRgb[0], sel.visorRgb[1], sel.visorRgb[2], 0.0f };
 
     const std::array<float, 9> newLinear9 = {
-        priLinear[0], priLinear[1], priLinear[2],
-        secLinear[0], secLinear[1], secLinear[2],
-        visorLinear[0], visorLinear[1], visorLinear[2]
+        sel.primaryRgb[0], sel.primaryRgb[1], sel.primaryRgb[2],
+        sel.secondaryRgb[0], sel.secondaryRgb[1], sel.secondaryRgb[2],
+        sel.visorRgb[0], sel.visorRgb[1], sel.visorRgb[2]
     };
 
     {
@@ -882,6 +718,16 @@ std::string ReachArmory::GetTargetScene() {
     return s_targetScene;
 }
 
+void ReachArmory::SetSelection(const ReachArmorySelection& sel) {
+    std::lock_guard<std::mutex> lock(s_sceneMutex);
+    s_selection = sel;
+}
+
+ReachArmorySelection ReachArmory::GetSelection() {
+    std::lock_guard<std::mutex> lock(s_sceneMutex);
+    return s_selection;
+}
+
 void ReachArmory::AddYawRotation(float deltaRadians) {
     float cur = s_yawOffset.load();
     cur += deltaRadians;
@@ -946,4 +792,3 @@ void ReachArmory::Tick() {
 }
 
 } // namespace noble
-

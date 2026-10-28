@@ -11,6 +11,7 @@
 #include "vfs/VFS.hpp"
 #include "engine/BlamEngine.hpp"
 #include "engine/CameraFov.hpp"
+#include "engine/ReachArmory.hpp"
 #include "ui/UIManager.hpp"
 #include "ui/FrontEndMenu.hpp"
 #include "ui/LoadScreen.hpp"
@@ -153,6 +154,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 
     // Configure Host object paths early
     noble::ReachHost::Get().SetPaths(reachInstall->reachDirectory, reachInstall->mapsDirectory, userStoragePath);
+    noble::ReachArmory::Initialize(userStoragePath);
 
     // Player settings (data\userdata\settings.json): window size, controls, volumes, name, servers.
     noble::Settings::Get().Load();
@@ -198,35 +200,6 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     noble::SessionManager::Get().Initialize();
     noble::MasterServerClient::Get().SetUrl(startupSettings.masterServerUrl);
 
-    // Front-end menu. MCC ships no mainmenu.map for Reach, so with no -map (or -map/-mode mainmenu,
-    // which the launcher's Main Menu button passes) Noble shows its own menu before the engine starts.
-    std::string frontEndMap;
-    std::string frontEndVariant;
-    std::string frontEndMode;
-    int frontEndDifficulty = 1;
-    uint64_t frontEndSkulls = 0;
-    if (noble::FrontEndMenu::ShouldShow()) {
-        noble::FrontEndChoice choice = noble::FrontEndMenu::Run(*window, *renderer, reachInstall->reachDirectory);
-        if (!choice.play) {
-            NOBLE_INFO("Exiting from the front-end menu.");
-            noble::MasterServerClient::Get().Shutdown();   // removes a hosted game from the list
-            noble::SessionManager::Get().Shutdown();
-            noble::UiArt::Shutdown();
-            noble::UIManager::Shutdown();
-            noble::Logger::Shutdown();
-            TerminateProcess(GetCurrentProcess(), 0);  // not ExitProcess: its DLL shutdown can hang (see below)
-        }
-        frontEndMap = choice.map;
-        frontEndVariant = choice.variantPath;
-        frontEndMode = choice.mode;
-        frontEndDifficulty = choice.difficulty;
-        frontEndSkulls = choice.skulls;
-        if (!choice.modFolder.empty()) {
-            NOBLE_INFO("Front-end menu: playing with mod '{}'", choice.modTitle);
-            noble::VFS::SetActiveMod(choice.modFolder);
-        }
-    }
-
     // 8. Load and bootstrap haloreach.dll directly in process memory
     auto loader = std::make_unique<noble::Loader>();
     if (!loader->LoadReachDll(reachInstall->reachDllPath)) {
@@ -243,7 +216,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     // Apply 32/64 player lobby expansion detours
     noble::LobbyPatches::Apply(loader->GetModuleHandle());
 
-    // Apply engine stability and crash patches (e.g. whitespace underflow fix)
+    // Apply engine stability and appearance cap patches (unlocks all 200+ armor permutations in haloreach.dll)
     noble::EnginePatches::Apply(loader->GetModuleHandle());
 
     // 9. Instantiate Blam! Engine & Data Access interfaces
@@ -261,11 +234,12 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         return 1;
     }
 
-    // Parse command line arguments for direct map and variant launches (e.g. from NobleLauncher)
+    // Parse command line arguments for direct map and variant launches (e.g. from NobleLauncher or Relaunch)
     std::string launchMap = "";
     std::string launchMode = "mainmenu";
     std::string customMvar = "";
     std::string customVariant = "";
+    fs::path modFolder;
     int launchDifficulty = 1;
     uint64_t launchSkulls = 0;
 
@@ -291,8 +265,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
                 customMvar = WideToNarrow(argvW[++i]);
             } else if (arg == L"-variant" && i + 1 < numArgs) {
                 customVariant = WideToNarrow(argvW[++i]);
+            } else if (arg == L"-mod" && i + 1 < numArgs) {
+                modFolder = fs::path(argvW[++i]);
             } else if (arg == L"-skulls" && i + 1 < numArgs) {
-                launchSkulls = _wcstoui64(argvW[++i], nullptr, 0);  // MCC skull bits, e.g. 0x10 = Blind
+                launchSkulls = _wcstoui64(argvW[++i], nullptr, 0);
             } else if (arg == L"-difficulty" && i + 1 < numArgs) {
                 launchDifficulty = _wtoi(argvW[++i]);
             }
@@ -300,27 +276,14 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         LocalFree(argvW);
     }
 
-    // A choice made in the front-end menu replaces the menu request.
-    if (!frontEndMap.empty()) {
-        launchMap = frontEndMap;
-        launchMode = frontEndMode.empty() ? "multiplayer" : frontEndMode;
-        launchDifficulty = frontEndDifficulty;
-        launchSkulls = frontEndSkulls;
-        if (customVariant.empty()) customVariant = frontEndVariant;
-    }
-
-    // If no specific map requested, default to the working 20_sword_slayer test
-    if (launchMap.empty()) {
-        launchMap = "20_sword_slayer";
-        launchMode = "multiplayer";
+    if (!modFolder.empty()) {
+        NOBLE_INFO("Activating mod folder '{}'", modFolder.string());
+        noble::VFS::SetActiveMod(modFolder);
     }
 
     // Map-info sandbox. The engine builds its map list by enumerating "haloreach\\maps\\info\\*.*"
     // RELATIVE TO THE WORKING DIRECTORY (root prefix "haloreach\\" at RVA 0x985D28, FindFirstFileW).
     // With an empty list every launch fails with "no map selected" and the menu has no backdrop.
-    // Like Reach Renaissance, copy the player's own MCC .mapinfo files into a sandbox and run the
-    // engine from there; the MCC install is never modified. Map files themselves still resolve
-    // through host slot 48 to the MCC folder.
     {
         std::error_code ec;
         const fs::path sandboxRoot = userStoragePath / "sandbox";
@@ -342,8 +305,21 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         }
     }
 
-    // Remember this launch for the post-game "PLAY AGAIN" button and the loading screen.
-    {
+    // Check if we should launch into the Front-End Menu + 3D Armory (mainmenu_all.map inside haloreach.dll)
+    const bool showMenu = noble::FrontEndMenu::ShouldShow();
+    if (showMenu) {
+        noble::ReachArmory::SetMenuMode(true);
+        noble::FrontEndMenu::Initialize(reachInstall->reachDirectory);
+        launchMap = "mainmenu";
+        launchMode = "mainmenu";
+    } else {
+        noble::ReachArmory::SetMenuMode(false);
+        if (launchMap.empty()) {
+            launchMap = "20_sword_slayer";
+            launchMode = "multiplayer";
+        }
+
+        // Remember this launch for the post-game "PLAY AGAIN" button and the loading screen.
         auto toWide = [](const std::string& s) -> std::wstring {
             if (s.empty()) return L"";
             const int len = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
@@ -357,9 +333,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         if (!customVariant.empty()) args += L" -variant \"" + toWide(customVariant) + L"\"";
         if (!customMvar.empty()) args += L" -mvar \"" + toWide(customMvar) + L"\"";
         if (launchSkulls != 0) args += L" -skulls " + std::to_wstring(launchSkulls);
+        if (!modFolder.empty()) args += L" -mod \"" + modFolder.wstring() + L"\"";
         noble::Relaunch::SetCurrentGameArgs(args);
         noble::PauseMenu::SetLoadingMap(launchMap);
-        // Load the loading-screen pictures now (main thread), before the engine starts drawing.
         noble::UiArt::LoadingBackground(launchMap);
         noble::UiArt::MapPreview(launchMap, true);
     }
@@ -399,14 +375,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     noble::LoadScreen::Get().Shutdown();
     blamEngine->Shutdown();
 
-    // haloreach.dll's worker threads can still be running after its Shutdown call returns.
-    // Removing hooks, restoring the IAT or unloading the DLL underneath them crashed in ntdll
-    // (0xC0000005 on exit). Leave hooks and the DLL in place and let TerminateProcess stop the
-    // engine threads before anything is torn down.
     NOBLE_INFO("Engine shut down; exiting process without unhooking or unloading haloreach.dll.");
-    // ExitProcess runs every DLL's shutdown code (haloreach.dll, XAudio2, D3D) under the loader lock while engine
-    // threads may still hold it; Noble processes were left stuck half-exited (still ~2 GB, unkillable by taskkill).
-    // The log is flushed and settings are saved by now, so end the process directly.
     noble::Logger::Shutdown();
     TerminateProcess(GetCurrentProcess(), 0);  // not ExitProcess: its DLL shutdown can hang (see below)
     return 0;   // not reached
