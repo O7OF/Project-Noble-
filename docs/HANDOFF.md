@@ -1,4 +1,4 @@
-# Project Noble: handoff (2026-10-27, 23:20 ET)
+# Project Noble: handoff (2026-10-27, 23:25 ET)
 
 This picks up a reverse-engineering and C++ effort on **Tyler's Windows PC**. All paths below are real paths on that machine.
 Tyler (GitHub `WeabooTyler117`) works with a partner (GitHub `O7OF`) who owns the repo and writes most of the code.
@@ -12,22 +12,26 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 ---
 
 
-## 0. Pick up here (23:20 ET)
+## 0. Pick up here (23:25 ET)
 
-**23:20: everything is committed and pushed (Tyler: "all up to date").** That includes the 23:15 batch (mouse
-settings, `mouseSensitivityY`, live look settings in ReachHost, InputPrompts, D-pad/A in the front-end menus,
-`main.cpp` return) and the 23:17 fix (Settings text: controllers work in game). Working tree clean as far as known.
+**23:25: synced with the latest origin/main handoff (23:20 ET) and refreshed the Armory status.** The preview now
+loads local MCC-derived Spartan/Elite OBJ groups, undersuits, and Elite harness layers; color masks and visor tint
+work in the preview. Slot 34 applies only verified species flags. In-game armor and color IDs remain unmapped, so the
+preview selections do not yet change the character. Use `-capture-profile data/profile-captures` to record the Slot 34
+profile buffer for controlled before/after comparisons; do not commit capture files or local model exports.
 
 Open list, in Tyler's order of interest:
-1. **Controller settings** (stick sensitivity, invert, dead zones, vibration): first find how Noble feeds the pad
+1. **Finish in-game Armory mapping**: use profile captures to identify and verify equipment/color fields without
+   guessing offsets; then test that equipped pieces and colors affect the in-game character.
+2. **Controller settings** (stick sensitivity, invert, dead zones, vibration): first find how Noble feeds the pad
    to the engine today (Tyler: controller already works in game), then add a CONTROLLER section.
-2. **Video**: FOV, V-Sync, quality options.
-3. **Menu music picker**: Tyler wants it cleaner than the current grouped drop-down (~360 tracks).
-4. **Controller picture** on Settings > Controls is pixelated (MCC `LARGECONTROLLERFRONT` scaled).
-5. Check in game: Forge menus and loadout cards no longer show hex (expected fixed by slot 55).
-6. Noble exiting from inside a game: confirm `tasklist | findstr /i noble` is empty afterwards.
-7. Mod-only maps (not in Reach's tables) are listed but disabled: launching them needs map-id work in BlamEngine.
-8. Halo 2 Anniversary music (`sounds_*.dat`) not readable yet.
+3. **Video**: FOV, V-Sync, quality options.
+4. **Menu music picker**: Tyler wants it cleaner than the current grouped drop-down (~360 tracks).
+5. **Controller picture** on Settings > Controls is pixelated (MCC `LARGECONTROLLERFRONT` scaled).
+6. Check in game: Forge menus and loadout cards no longer show hex (expected fixed by slot 55).
+7. Noble exiting from inside a game: confirm `tasklist | findstr /i noble` is empty afterwards.
+8. Mod-only maps (not in Reach's tables) are listed but disabled: launching them needs map-id work in BlamEngine.
+9. Halo 2 Anniversary music (`sounds_*.dat`) not readable yet.
 
 Build/run (Developer Command Prompt, not plain PowerShell - cmake is only on PATH there):
 `cd /d D:\Halo-Reach-Community-Edition && cmake --build build --config Release && cd build\bin\Release && noble-client.exe`
@@ -365,21 +369,30 @@ challenges, Armory, loadouts, controller layouts, sources) and the data files `r
 from the MCC install; Tyler's rank-icon sheet stays local). Open question for Tyler: keep Noble's own cR numbers or
 switch to Reach's measured table (`career-reference.md` §1).
 
-**Partner's Armory work (in progress on his PC, not pushed yet; 15:00).**
-- Today `ArmorCustomizer` only writes `data/appearance.json`; nothing gives it to the engine. Slot 34 still sends only
-  bindings, volumes, look settings and the hardcoded tag `NOBL`. The UI's armour names are not engine IDs.
-- The engine's own main-menu Spartan preview is not possible (no Reach `mainmenu.map` in MCC; RR ships its own).
-- RR applies looks by scanning engine memory for colour records (four ARGB u32s) and suit records by string id
-  (`armory::write_colors`, `scan_suit`, `looks::*` hook on a colour-copy routine). The partner chose not to copy that.
-- Lead to test: RR's captured profile has u32 id lists separated by `0xFFFFFFFF` at +0x40..+0x1AB (e.g.
-  `0x2F 0x6B 0x7D 0x8A 0x93 0x9B`, `0xC0 0xA6 0xA5 0x9F`), possibly armour/appearance selections. Test like the zoom
-  fix: Noble defaults + only that region from RR's profile, pass with `-profile`, look at the Spartan in game.
-- Plan: Noble's own DX11 renderer for the Armory preview. For development he exported the Spartan and Elite render
-  models to OBJ (`data\armor\spartans\spartans.obj` 329 groups incl. 51 MCC Series 8, `data\armor\elite\elite.obj`
-  128 groups: default, general, officer, space, spec_ops, storyelite, ultra, zealot). **Those OBJ files are game
-  assets: keep them under the git-ignored `data\`, never commit them.** The shipped version has to read the models
-  from the player's MCC maps at run time. Next he is matching the Armory names to the model's group names
-  (e.g. `dlc2_helmet_cndmnd`, `s8_helmet_drengr_tyr`), which can be added to `docs/career/armor.json`.
+**Armory appearance (current).**
+- The Armory saves `data/appearance.json` under the resolved data directory. Slot 34 applies the verified species flags
+  at profile +0x27 and +0x38 (0 Spartan, 1 Elite); no unverified equipment/color offsets are written.
+- The local OBJ preview resolves MCC MTL texture paths into the exported `bitmaps` tree, loads matching `_cc` masks,
+  and applies the selected primary/secondary/detail colors and visor tint. It composes a Spartan base with selected
+  MCC accessory groups, or an Elite body/undersuit layer followed by the selected rank harness group. The engine's
+  own main-menu Spartan preview is unavailable because MCC has no Reach `mainmenu.map`; Armory uses Noble's DX11 OBJ
+  renderer instead.
+- The actual Spartan/Elite OBJ exports remain local-only under git-ignored `data\armor\`; never commit them. The OBJ
+  model-group UI only offers geometry that exists in the local export. Reach's equipment IDs and live player color
+  records are still unmapped, so piece/color selections affect the Armory preview, not yet the in-game character.
+- A safe in-game equipment/color implementation needs a known-good profile capture with per-piece/color changes (or
+  verified engine ID mappings). RR's profile contains candidate u32 lists at +0x40..+0x1AB, but their semantics are
+  not confirmed. Ghidra 12.1 found no direct references to the `color_armor1` or Spartan helmet property strings, and the
+  matching PDB was not present in the MCC install; static analysis has not established equipment or color IDs. Direct
+  `.map` render-model decoding also remains future work.
+- For an opt-in runtime capture, launch `noble-client.exe -capture-profile data/profile-captures`. Slot 34 writes the
+  initial 64-KB profile buffer and any later changed buffer on subsequent Slot 34 calls as session-tagged, numbered
+  `.bin` files; later runs do not overwrite earlier captures. This mode is disabled by default. Change one in-game
+  setting at a time, retain the matching before/after files locally,
+  and do not commit captures. If Slot 34 is not called again after a change, this mode cannot observe that change; Armory
+  preview JSON selections are not included until they are mapped into the game profile. Compare matching captures by
+  byte offset, substituting their actual session-tagged filenames:
+  `$a=[IO.File]::ReadAllBytes('profile-<session>-0.bin'); $b=[IO.File]::ReadAllBytes('profile-<session>-1.bin'); 0..($a.Length-1) | ? { $a[$_] -ne $b[$_] } | % { '{0:X4}: {1:X2} -> {2:X2}' -f $_,$a[$_],$b[$_] }`.
 - Forwarded community request (TRAXUSi, Workshop class mods): add extra player-host object types beyond Reach's
   three (0 spartan, 1 elite, 2 monitor), e.g. `elite2`, `spartan2`, `monitor2`, using the same host code paths, with
   matching Megalo names. Engine patch inside `haloreach.dll` at run time; not started, idea only.
