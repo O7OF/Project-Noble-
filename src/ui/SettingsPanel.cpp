@@ -451,11 +451,11 @@ void SettingsPanel::RenderDisplay() {
     Section("CAMERA");
     RowLabel("FIELD OF VIEW");
     ImGui::SetNextItemWidth(330);
-    if (ImGui::SliderFloat("##fov", &m_edit.fieldOfView, 60.0f, 120.0f, "%.0f degrees")) m_dirty = true;
+    if (ImGui::SliderFloat("##fov", &m_edit.fieldOfView, 70.0f, 120.0f, "%.0f degrees", ImGuiSliderFlags_AlwaysClamp)) m_dirty = true;
     ImGui::SameLine();
     if (ImGui::SmallButton("RESET##fov")) { m_edit.fieldOfView = 78.0f; m_dirty = true; }
     ImGui::TextDisabled("Horizontal FOV. Written into the game camera when you press APPLY (also mid-match,");
-    ImGui::TextDisabled("from the pause menu). Halo: Reach's own default is 78 degrees; the engine accepts 1-150.");
+    ImGui::TextDisabled("from the pause menu). Range 70-120 degrees; Halo: Reach's own default is 78.");
 
     Section("DISPLAY");
     RowLabel("RESOLUTION");

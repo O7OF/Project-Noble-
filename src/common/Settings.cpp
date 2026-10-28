@@ -32,7 +32,7 @@ void Read(const nlohmann::json& j, const char* key, T& out) {
 void Clamp(SettingsData& d) {
     d.width = std::clamp(d.width, 640, 7680);
     d.height = std::clamp(d.height, 360, 4320);
-    d.fieldOfView = std::clamp(d.fieldOfView, 60.0f, 120.0f);
+    d.fieldOfView = std::clamp(d.fieldOfView, 70.0f, 120.0f);  // slider range (SETTINGS > VIDEO)
     constexpr int kFpsLimits[] = { 0, 30, 60, 120, 144, 165, 200 };
     if (std::find(std::begin(kFpsLimits), std::end(kFpsLimits), d.fpsLimit) == std::end(kFpsLimits)) {
         d.fpsLimit = 0;
