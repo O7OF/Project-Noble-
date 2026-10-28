@@ -177,7 +177,7 @@ void CareerPanel::RenderChallenges() {
     ImGui::TextDisabled("%s", Career::ChallengeResetText().c_str());
     ImGui::TextDisabled("Progress counts from finished games in any mode; rewards are paid on the post-game screen.");
     for (int weekly = 0; weekly < 2; ++weekly) {
-        Section(weekly ? "WEEKLY CHALLENGE" : "DAILY CHALLENGES");
+        Section(weekly ? "WEEKLY CHALLENGES" : "DAILY CHALLENGES");
         for (const Career::Challenge& c : list) {
             if (c.weekly != (weekly == 1)) continue;
             ImGui::PushID(&c);

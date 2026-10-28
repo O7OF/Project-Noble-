@@ -108,7 +108,7 @@ constexpr int64_t kMissionBonus[4] = { 250, 500, 1000, 2000 };
 // Challenges and commendations. Reach's own lists came from Bungie's servers; these are Noble's,
 // built only on what the results record and the launch settings tell us.
 // ---------------------------------------------------------------------------------------------
-enum class Metric { Games, CampaignMissions, FirefightGames, MultiplayerGames, Minutes, Kills, Medals,
+enum class Metric { Games, CampaignMissions, FirefightGames, MultiplayerGames, Minutes, Kills, Medals, Assists,
                     HeroicMission, LegendaryMission, SkullMission };
 struct ChallengeDef {
     const char* title;
@@ -117,25 +117,43 @@ struct ChallengeDef {
     int64_t target;
     int64_t reward;
 };
+// Rotation: each day shows the next 7 daily challenges in this list (wrapping round), each week the
+// next 5 weekly ones, so consecutive days never repeat a challenge and every one comes back in turn.
+// The order mixes the modes so any 7 in a row cover campaign, Firefight, multiplayer and general goals.
 const ChallengeDef kDailyPool[] = {
     { "Daily Grind", "Finish 3 games of any kind.", Metric::Games, 3, 1500 },
     { "Mission Ready", "Complete a campaign mission.", Metric::CampaignMissions, 1, 1500 },
     { "Hold the Line", "Finish a Firefight game.", Metric::FirefightGames, 1, 1500 },
     { "Spartan Games", "Finish 2 multiplayer games.", Metric::MultiplayerGames, 2, 1500 },
-    { "Time on Duty", "Play for 45 minutes.", Metric::Minutes, 45, 2000 },
     { "Body Count", "Get 50 kills in any mode.", Metric::Kills, 50, 2000 },
+    { "Time on Duty", "Play for 45 minutes.", Metric::Minutes, 45, 2000 },
     { "Decorated", "Earn 10 medals.", Metric::Medals, 10, 1500 },
     { "No Easy Way Out", "Complete a campaign mission on Heroic or Legendary.", Metric::HeroicMission, 1, 2500 },
+    { "Wave Breaker", "Finish 3 Firefight games.", Metric::FirefightGames, 3, 3000 },
+    { "Arena Regular", "Finish 5 multiplayer games.", Metric::MultiplayerGames, 5, 3000 },
+    { "Team Player", "Get 15 assists in any mode.", Metric::Assists, 15, 2000 },
     { "Skull Session", "Complete a campaign mission with a skull on.", Metric::SkullMission, 1, 2000 },
+    { "Long Shift", "Play for 90 minutes.", Metric::Minutes, 90, 3500 },
+    { "Campaign Push", "Complete 3 campaign missions.", Metric::CampaignMissions, 3, 3000 },
+    { "Slaughterhouse", "Get 150 kills in any mode.", Metric::Kills, 150, 4000 },
+    { "Medal Haul", "Earn 30 medals.", Metric::Medals, 30, 3500 },
+    { "Marathon", "Finish 6 games of any kind.", Metric::Games, 6, 2500 },
+    { "Legendary Effort", "Complete a campaign mission on Legendary.", Metric::LegendaryMission, 1, 4000 },
 };
 const ChallengeDef kWeeklyPool[] = {
     { "Weekly Campaigner", "Complete 6 campaign missions.", Metric::CampaignMissions, 6, 15000 },
     { "Weekly Survivor", "Finish 8 Firefight games.", Metric::FirefightGames, 8, 15000 },
+    { "Weekly Arena", "Finish 15 multiplayer games.", Metric::MultiplayerGames, 15, 15000 },
     { "Weekly Veteran", "Play for 5 hours.", Metric::Minutes, 300, 15000 },
-    { "Weekly Legend", "Complete 2 campaign missions on Legendary.", Metric::LegendaryMission, 2, 20000 },
     { "Weekly Slayer", "Get 500 kills in any mode.", Metric::Kills, 500, 15000 },
+    { "Weekly Legend", "Complete 2 campaign missions on Legendary.", Metric::LegendaryMission, 2, 20000 },
+    { "Weekly Regular", "Finish 20 games of any kind.", Metric::Games, 20, 15000 },
+    { "Weekly Decorated", "Earn 100 medals.", Metric::Medals, 100, 15000 },
+    { "Weekly Supporter", "Get 75 assists in any mode.", Metric::Assists, 75, 15000 },
+    { "Weekly Skull Collector", "Complete 5 campaign missions with a skull on.", Metric::SkullMission, 5, 15000 },
 };
-constexpr int kDailyCount = 4;
+constexpr int kDailyCount = 7;
+constexpr int kWeeklyCount = 5;
 
 struct CommendationDef {
     const char* title;
@@ -324,32 +342,39 @@ std::string WeeklyKey() {
     return std::string("W") + buf;
 }
 
-uint32_t Fnv1a(const std::string& text) {
-    uint32_t h = 2166136261u;
-    for (unsigned char c : text) { h ^= c; h *= 16777619u; }
-    return h;
-}
-
 struct ActiveChallenge {
     const ChallengeDef* def;
     std::string key;
     bool weekly;
 };
 
-// Today's 4 daily challenges and this week's weekly one, picked from the pools by the period's date.
+// Day number of the local date (days since 1970-01-01) and week number (weeks since the Monday
+// 1970-01-05), used to step through the pools.
+int64_t LocalDayNumber() {
+    std::tm tm = LocalNow();
+    tm.tm_hour = 12; tm.tm_min = 0; tm.tm_sec = 0;
+    std::tm epoch{};
+    epoch.tm_year = 70; epoch.tm_mon = 0; epoch.tm_mday = 1; epoch.tm_hour = 12;
+    const double seconds = std::difftime(std::mktime(&tm), std::mktime(&epoch));
+    return static_cast<int64_t>(seconds / 86400.0 + 0.5);
+}
+
+// Today's 7 daily challenges and this week's 5 weekly ones (see the rotation note at the pools).
 std::vector<ActiveChallenge> ActiveChallenges() {
     std::vector<ActiveChallenge> out;
-    const std::string day = DailyKey();
-    std::mt19937 rng(Fnv1a(day));
-    std::vector<int> order(std::size(kDailyPool));
-    for (size_t i = 0; i < order.size(); ++i) order[i] = static_cast<int>(i);
-    std::shuffle(order.begin(), order.end(), rng);
-    for (int i = 0; i < kDailyCount && i < static_cast<int>(order.size()); ++i) {
-        out.push_back({ &kDailyPool[order[i]], day + ":d" + std::to_string(order[i]), false });
+    const int64_t day = LocalDayNumber();
+    const int64_t week = (day - 4) / 7;   // 1970-01-05 (day 4) was a Monday
+    const std::string dayKey = DailyKey(), weekKey = WeeklyKey();
+    const int64_t dailySize = static_cast<int64_t>(std::size(kDailyPool));
+    const int64_t weeklySize = static_cast<int64_t>(std::size(kWeeklyPool));
+    for (int k = 0; k < kDailyCount; ++k) {
+        const int i = static_cast<int>((day * kDailyCount + k) % dailySize);
+        out.push_back({ &kDailyPool[i], dayKey + ":d" + std::to_string(i), false });
     }
-    const std::string week = WeeklyKey();
-    const size_t w = Fnv1a(week) % std::size(kWeeklyPool);
-    out.push_back({ &kWeeklyPool[w], week + ":w" + std::to_string(w), true });
+    for (int k = 0; k < kWeeklyCount; ++k) {
+        const int i = static_cast<int>((week * kWeeklyCount + k) % weeklySize);
+        out.push_back({ &kWeeklyPool[i], weekKey + ":w" + std::to_string(i), true });
+    }
     return out;
 }
 
@@ -361,6 +386,7 @@ struct MatchFacts {
     double minutes;
     int64_t kills;
     int64_t medals;
+    int64_t assists;
 };
 int64_t MetricAmount(Metric m, const MatchFacts& f) {
     const bool campaign = f.type == BaseType::Campaign;
@@ -372,6 +398,7 @@ int64_t MetricAmount(Metric m, const MatchFacts& f) {
     case Metric::Minutes: return static_cast<int64_t>(f.minutes);
     case Metric::Kills: return f.kills;
     case Metric::Medals: return f.medals;
+    case Metric::Assists: return f.assists;
     case Metric::HeroicMission: return campaign && f.difficulty >= 2 ? 1 : 0;
     case Metric::LegendaryMission: return campaign && f.difficulty >= 3 ? 1 : 0;
     case Metric::SkullMission: return campaign && f.skulls != 0 ? 1 : 0;
@@ -596,7 +623,7 @@ void OnGameResults(const uint8_t* record, size_t size) {
 
     // Challenges: add this match's progress, pay the ones it completes.
     PruneChallengesLocked();
-    const MatchFacts facts{ s_type, s_difficulty, s_skulls, minutes, kills, medals };
+    const MatchFacts facts{ s_type, s_difficulty, s_skulls, minutes, kills, medals, assists };
     for (const ActiveChallenge& c : ActiveChallenges()) {
         if (s_extra.challengeClaimed[c.key]) continue;
         int64_t& progress = s_extra.challengeProgress[c.key];
@@ -703,7 +730,7 @@ std::string ChallengeResetText() {
     int daysToMonday = (8 - tm.tm_wday) % 7;
     if (daysToMonday == 0) daysToMonday = 7;
     char buf[128];
-    std::snprintf(buf, sizeof(buf), "Daily challenges reset in %d h %d min; the weekly one in %d day%s.",
+    std::snprintf(buf, sizeof(buf), "Daily challenges reset in %d h %d min; weekly ones in %d day%s.",
                   minutesLeft / 60, minutesLeft % 60, daysToMonday, daysToMonday == 1 ? "" : "s");
     return buf;
 }

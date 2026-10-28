@@ -45,8 +45,9 @@ wheel down. All done and tested by test options + screenshots on Tyler's PC (he 
   on the left, the chosen game's tracks on the right, plus a search box over every game. Click = play + select.
 - **Service Record** (new main-menu entry, `src/ui/CareerPanel.*`, `-menu-screen career -menu-tab 0..2`):
   rank + cR + progress, totals (games per mode, time, K/D/A, medals, best game, challenges), campaign best
-  difficulty per mission, last 20 games. CHALLENGES: 4 daily (picked per date from 9) + 1 weekly (from 5),
-  paid when completed. COMMENDATIONS: 6 tracks (campaign missions, Firefight games, MP games, hours, kills,
+  difficulty per mission, last 20 games. CHALLENGES (Tyler 08:00: 7 daily / 5 weekly, rotating): 7 daily from a pool
+  of 18 and 5 weekly from 10; each day takes the next 7 in the list (wrapping), each week the next 5, so
+  consecutive days never repeat one and all come back in turn. Paid when completed. COMMENDATIONS: 6 tracks (campaign missions, Firefight games, MP games, hours, kills,
   medals), tiers Iron..Max pay 500..25000 cR once. Campaign scoring: mission-complete bonus by difficulty
   (250/500/1000/2000) + 10% per skull. All in `career.json` under `"record"` (old files load fine).
 - **Post-game scoreboard:** the post-game panel (560 px wide) now lists everyone in the results record (score,
