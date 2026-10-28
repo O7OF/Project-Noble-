@@ -18,7 +18,7 @@ const uint8_t kDefaultKeys[kActionCount] = {
     /* 32 */ '2',        VK_OEM_3, VK_RBUTTON, VK_NUMPAD4, 'X',        'Z',        'C',        VK_RBUTTON,
     /* 40 */ VK_RIGHT,   VK_LEFT,  VK_RETURN,  'E',        VK_SPACE,   VK_LSHIFT,  VK_NUMPAD5, 'R',
     /* 48 */ 'F',        VK_RBUTTON, VK_RBUTTON, 'E',      'G',        'C',        'X',        'F',
-    /* 56 */ '3',        'G',      'L',        VK_UP,      VK_DOWN,    'P',        0,          0,
+    /* 56 */ '3',        'G',      'L',        VK_UP,      VK_DOWN,    'P',        VK_SPACE,   VK_LCONTROL,
     /* 64 */ 0,          0,
 };
 

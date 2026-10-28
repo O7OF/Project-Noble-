@@ -95,6 +95,9 @@ private:
     bool m_keyLeft = false, m_keyRight = false, m_keyAccept = false;
     bool m_navAllowed = true;
     int m_textFocusRow = -1;      // Enter on a text row puts the caret there
+    int m_typeRow = -1;           // slider whose value box is being typed into (click the value)
+    bool m_typeFocus = false;     // give that box the keyboard on its first frame
+    char m_typeBuf[32] = {};
     const char* m_pendingSection = nullptr;
     int m_pendingCat = -1;
     Details m_hover, m_focusDetails;

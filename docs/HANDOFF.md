@@ -1,4 +1,4 @@
-# Project Noble: handoff (2026-10-28, 14:50 ET)
+# Project Noble: handoff (2026-10-28, 15:00 ET)
 
 This picks up a reverse-engineering and C++ effort on **Tyler's Windows PC**. All paths below are real paths on that machine.
 Tyler (GitHub `WeabooTyler117`) works with a partner (GitHub `O7OF`) who owns the repo and writes most of the code.
@@ -13,8 +13,21 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 ## 0. Pick up here (2026-10-28, 14:50 ET) - post-game "exit experience" (spec step 7)
 
-**Status:** on Tyler's PC, syntax-checked; `job.bat` builds, commits and pushes. Needs a real game to test (the screen
-only appears after a match ends): Tyler plays a short game and sends a screenshot.
+**Status:** pushed (`2319c27`, after fixing a build break: `small` is a Windows macro, never use it as a name). Tyler
+played a game: it works.
+
+- Quit box on the main menu: the menu behind it no longer reacts to the mouse (`ImGui::BeginDisabled(modal)` around the
+  party box, title and list; `FrontEndMenu.cpp`).
+- Falcon defaults (Tyler): Ascend = Space, Descend = Left Ctrl (`KeyBindings.cpp` slots 62 / 63, were unbound).
+- Every Settings slider's value box (e.g. sensitivity "1.00x") can be clicked and typed into: Enter sets it, Esc cancels,
+  clicking away sets it. Typed values keep two decimals (not snapped to the slider step), whole numbers for whole-number
+  sliders, percent sliders take 0-100, always clamped to the slider range (mouse sensitivity 0.10-5.00x, vertical 0.25-4.00x).
+  `SettingsPanel::SliderValue`, `m_typeRow`. Typing needs ImGui keyboard input, which the in-game pause overlay doesn't feed
+  yet, so there it only works with the bar.
+- References Tyler sent (for later screens): Reach matchmaking "STARTING MATCH / BRACE FOR CARNAGE" lobby (map + game type
+  picture, countdown, roster in team colours with emblem, name and rank icon); Reach beta "MATCH FOUND / VOTE FOR GAME AND
+  MAP" (3 options + NONE OF THE ABOVE, vote counts, "Voting round ends in" timer); Halo Infinite post-game PLAYER RECAP
+  (tabs PLAYER RECAP / TEAM LINEUP / SCOREBOARD, score, rank, stat tiles, medal strip, Spartan on the right).
 
 - `PauseMenu.cpp` `DrawGameOver` rewritten as a full-screen Reach-style results screen: header (GAME OVER, map, mode, minutes,
   difficulty icon), left = SCOREBOARD (local row highlighted with rank icon) + PROGRESS (challenge / commendation bars this

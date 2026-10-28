@@ -1112,6 +1112,9 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
 
     switch (st.screen) {
     case Screen::Main: {
+        // While the quit box is open nothing behind it reacts to the mouse (no hover, sounds or clicks).
+        const bool modal = st.confirmQuit;
+        ImGui::BeginDisabled(modal);
         DrawParty(ui, settings.playerName, "In Main Menu Lobby");
         DrawTitle(ui, ImVec2(left, ui.size.y * 0.30f), "MAIN MENU");
         Text(ui, nullptr, 17.0f, ImVec2(left + 4.0f * ui.s, ui.size.y * 0.30f + 66.0f * ui.s), kDim,
@@ -1119,8 +1122,8 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         std::vector<ListItem> items;
         for (const MainEntry& e : kMainEntries) items.push_back({ e.label, e.enabled });
         const float listY = ui.size.y * 0.30f + 104.0f * ui.s;
-        const bool modal = st.confirmQuit;
         const int hit = DrawList(ui, "main", ImVec2(left, listY), 440.0f * ui.s, items, st.mainIndex, !modal, 27.0f);
+        ImGui::EndDisabled();
         const float descY = listY + items.size() * 27.0f * ui.s + 10.0f * ui.s;
         Text(ui, nullptr, 17.0f, ImVec2(left + 4.0f * ui.s, descY), kDim, kMainEntries[st.mainIndex].description,
              left + 430.0f * ui.s);

@@ -16,6 +16,8 @@
 #include <cfloat>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <iterator>
 #include <string>
 #include <vector>
@@ -471,11 +473,23 @@ bool SettingsPanel::SliderValue(float& v, float lo, float hi, float step, float 
     bool changed = false;
     const ImVec2 save = ImGui::GetCursorScreenPos();
     const float textW = std::max(86.0f * s, TextWidth(nullptr, 17.0f * s, text) + 14.0f * s);
+    const bool percent = std::strchr(text, '%') != nullptr && hi <= 1.0f;   // shown as 0-100%, stored as 0-1
     ImGui::SetCursorScreenPos(m_valMin);
     ImGui::PushID(m_curRow);
     ImGui::InvisibleButton("##slider", ImVec2(std::max(1.0f, m_valMax.x - m_valMin.x - textW), m_valMax.y - m_valMin.y));
     const bool active = ImGui::IsItemActive();
-    ImGui::PopID();
+    // The value on the right is a box: click it and type a number (Enter to set, Esc to cancel).
+    const ImVec2 box0(m_valMax.x - textW + 6.0f * s, m_valMin.y), box1 = m_valMax;
+    ImGui::SetCursorScreenPos(box0);
+    const bool typingHere = m_typeRow == m_curRow;
+    if (!typingHere && ImGui::InvisibleButton("##value", ImVec2(box1.x - box0.x, box1.y - box0.y)) && !m_rowDisabled) {
+        m_typeRow = m_curRow;
+        m_typeFocus = true;
+        m_focus = m_curRow;
+        std::snprintf(m_typeBuf, sizeof(m_typeBuf), step >= 1.0f && !percent ? "%.0f" : "%.2f", percent ? v * 100.0f : v);
+        MenuSounds::Click();
+    }
+    const bool valueHovered = !typingHere && ImGui::IsItemHovered() && !m_rowDisabled;
     if (!m_rowDisabled) {
         if (active) {
             m_focus = m_curRow;
@@ -491,8 +505,36 @@ bool SettingsPanel::SliderValue(float& v, float lo, float hi, float step, float 
             if (std::fabs(nv - v) > 1e-6f) { v = nv; changed = true; MenuSounds::Change(); }
         }
     }
-    DrawSlider(ImGui::GetWindowDrawList(), m_valMin, m_valMax, (v - lo) / (hi - lo),
-               def >= lo && def <= hi ? (def - lo) / (hi - lo) : -1.0f, text, active || m_rowFocused, m_rowDisabled, textW);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    DrawSlider(dl, m_valMin, m_valMax, (v - lo) / (hi - lo), def >= lo && def <= hi ? (def - lo) / (hi - lo) : -1.0f,
+               typingHere ? "" : text, active || m_rowFocused, m_rowDisabled, textW);
+    if (valueHovered) dl->AddRect(box0, box1, IM_COL32(170, 220, 255, 110), 2.0f * s, 0, 1.0f);
+    if (typingHere) {
+        ImGui::SetCursorScreenPos(ImVec2(box0.x, (box0.y + box1.y) * 0.5f - ImGui::GetFrameHeight() * 0.5f));
+        ImGui::SetNextItemWidth(box1.x - box0.x);
+        if (m_typeFocus) {
+            ImGui::SetKeyboardFocusHere();
+            m_typeFocus = false;
+        }
+        const bool enter = ImGui::InputText("##type", m_typeBuf, sizeof(m_typeBuf),
+                                            ImGuiInputTextFlags_CharsDecimal | ImGuiInputTextFlags_AutoSelectAll | ImGuiInputTextFlags_EnterReturnsTrue);
+        const bool done = enter || ImGui::IsItemDeactivated();
+        if (done) {
+            if (!ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+                char* end = nullptr;
+                float nv = std::strtof(m_typeBuf, &end);
+                if (end != m_typeBuf) {
+                    if (percent) nv /= 100.0f;
+                    // Typed values keep two decimals (whole numbers for whole-number sliders), inside the slider's range.
+                    nv = step >= 1.0f ? std::round(nv) : std::round(nv * 100.0f) / 100.0f;
+                    nv = std::clamp(nv, lo, hi);
+                    if (std::fabs(nv - v) > 1e-6f) { v = nv; changed = true; }
+                }
+            }
+            m_typeRow = -1;
+        }
+    }
+    ImGui::PopID();
     ImGui::SetCursorScreenPos(save);
     return changed;
 }
