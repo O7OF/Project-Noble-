@@ -152,8 +152,8 @@ std::wstring VFS::ResolvePath(const std::wstring& requestedPath, DWORD desiredAc
             // 2. If reading:
             std::wstring normLower = normalized;
             std::transform(normLower.begin(), normLower.end(), normLower.begin(), ::towlower);
-            if (normLower.find(L"maps\\.map") != std::wstring::npos ||
-                normLower.find(L"maps/.map") != std::wstring::npos ||
+            if (false ||
+                false ||
                 normLower.find(L"mainmenu.map") != std::wstring::npos) {
                 fs::path customMenu = s_userStoragePath / "menumaps" / "mainmenu_all.map";
                 if (RawPathExists(customMenu.wstring())) {

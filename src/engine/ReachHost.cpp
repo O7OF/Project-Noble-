@@ -1284,41 +1284,31 @@ static uint64_t __fastcall HostSlot48_FilePathResolver(void* thisPtr, uint64_t a
         std::filesystem::path checkRetailReach = host.GetReachDir() / inStr;
         std::filesystem::path checkRetailMaps = host.GetMapsDir() / inStr;
 
-        bool isMainMenu = (inStr.find(L"mainmenu") != std::wstring::npos) ||
-                          (inStr.find(L"mainmenu.map") != std::wstring::npos) ||
-                          (inStr.find(L"maps\\.map") != std::wstring::npos) ||
-                          (inStr.find(L"maps/.map") != std::wstring::npos) ||
-                          (inStr == L"haloreach\\maps\\.map") ||
-                          (inStr == L"maps\\.map") ||
-                          (inStr == L".map");
+        std::wstring inLower = inStr;
+        std::transform(inLower.begin(), inLower.end(), inLower.begin(), ::towlower);
 
-        if (isMainMenu && std::filesystem::exists(checkCustomMainMenu, ec)) {
+        bool isMainMenu = (inLower.find(L"mainmenu.map") != std::wstring::npos);
+
+        if (isMainMenu && std::filesystem::is_regular_file(checkCustomMainMenu, ec)) {
             resolved = checkCustomMainMenu;
-        } else if (std::filesystem::exists(checkUser, ec)) {
+        } else if (std::filesystem::is_regular_file(checkUser, ec)) {
             resolved = checkUser;
-        } else if (std::filesystem::exists(checkUserMenuMap, ec)) {
+        } else if (std::filesystem::is_regular_file(checkUserMenuMap, ec)) {
             resolved = checkUserMenuMap;
-        } else if (std::filesystem::exists(checkUserArmor, ec)) {
+        } else if (std::filesystem::is_regular_file(checkUserArmor, ec)) {
             resolved = checkUserArmor;
-        } else if (std::filesystem::exists(checkUserMaps, ec)) {
+        } else if (std::filesystem::is_regular_file(checkUserMaps, ec)) {
             resolved = checkUserMaps;
-        } else if (std::filesystem::exists(checkMccRelative, ec)) {
+        } else if (std::filesystem::is_regular_file(checkMccRelative, ec)) {
             resolved = checkMccRelative;
-        } else if (std::filesystem::exists(checkRetailReach, ec)) {
+        } else if (std::filesystem::is_regular_file(checkRetailReach, ec)) {
             resolved = checkRetailReach;
-        } else if (std::filesystem::exists(checkRetailMaps, ec)) {
+        } else if (std::filesystem::is_regular_file(checkRetailMaps, ec)) {
             resolved = checkRetailMaps;
         } else {
-            if (inStr.find(L".map") == std::wstring::npos) {
-                std::filesystem::path withExt = host.GetMapsDir() / (inStr + L".map");
-                if (std::filesystem::exists(withExt, ec)) {
-                    resolved = withExt;
-                } else {
-                    resolved = checkMccRelative;
-                }
-            } else {
-                resolved = checkMccRelative;
-            }
+            // Matching host_probe case 0x30 (0x14007c600.c lines 3070-3210):
+            // If the file does not exist on disk (e.g. "haloreach\maps\.map"), return 0 without writing to inOutPtr!
+            return 0;
         }
 
         std::filesystem::path absPath = std::filesystem::absolute(resolved, ec);

@@ -181,10 +181,28 @@ static void EnsureStringIdsLoaded() {
         size_t count = 0;
         while (std::getline(in, line)) {
             if (!line.empty() && line.back() == '\r') line.pop_back();
-            size_t comma = line.find(',');
-            if (comma == std::string::npos) continue;
-            std::string hexPart = line.substr(0, comma);
-            std::string namePart = line.substr(comma + 1);
+            // Format in mainmenu_all.string_ids.csv: Index,Total,ID,String (ID is decimal u32)
+            // Also support 2-column 0xHEX,String format if present
+            size_t c1 = line.find(',');
+            if (c1 == std::string::npos) continue;
+            size_t c2 = line.find(',', c1 + 1);
+            if (c2 != std::string::npos) {
+                size_t c3 = line.find(',', c2 + 1);
+                if (c3 != std::string::npos) {
+                    std::string idPart = line.substr(c2 + 1, c3 - (c2 + 1));
+                    std::string namePart = line.substr(c3 + 1);
+                    if (!idPart.empty() && std::isdigit(static_cast<unsigned char>(idPart[0]))) {
+                        uint32_t id = static_cast<uint32_t>(std::strtoul(idPart.c_str(), nullptr, 10));
+                        if (id != 0 && !namePart.empty()) {
+                            s_stringIds.emplace(ToLowerAscii(namePart), id);
+                            ++count;
+                        }
+                    }
+                    continue;
+                }
+            }
+            std::string hexPart = line.substr(0, c1);
+            std::string namePart = line.substr(c1 + 1);
             if (hexPart.size() > 2 && (hexPart[0] == '0') && (hexPart[1] == 'x' || hexPart[1] == 'X')) {
                 uint32_t id = static_cast<uint32_t>(std::strtoul(hexPart.c_str() + 2, nullptr, 16));
                 if (id != 0 && !namePart.empty()) {

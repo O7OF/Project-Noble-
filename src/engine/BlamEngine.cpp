@@ -370,7 +370,7 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
 
     // 16-byte per-launch random identifier at +0x50 (present in RR's captured blocks, zero in ours).
     GUID launchId{};
-    if (SUCCEEDED(CoCreateGuid(&launchId))) {
+    if ((!isMainMenu || !loadedPrebuilt) && SUCCEEDED(CoCreateGuid(&launchId))) {
         memcpy(&block[0x50], &launchId, sizeof(launchId));
     }
 
