@@ -13,6 +13,7 @@ VFS::GetFileAttributesExW_Fn VFS::s_origGetFileAttributesExW = nullptr;
 fs::path VFS::s_baseMccPath;
 fs::path VFS::s_userStoragePath;
 fs::path VFS::s_workshopPath;
+fs::path VFS::s_activeMod;
 bool VFS::s_isInitialized = false;
 std::mutex VFS::s_mutex;
 
@@ -92,6 +93,12 @@ void VFS::Shutdown() {
     NOBLE_INFO("VFS shutdown complete.");
 }
 
+void VFS::SetActiveMod(const fs::path& modFolder) {
+    std::error_code ec;
+    s_activeMod = modFolder.empty() ? fs::path() : fs::absolute(modFolder, ec);
+    if (!s_activeMod.empty()) NOBLE_INFO("VFS: mod active, reading its files first: {}", s_activeMod.string());
+}
+
 std::wstring VFS::ResolvePath(const std::wstring& requestedPath, DWORD desiredAccess) {
     if (requestedPath.empty()) return requestedPath;
 
@@ -151,6 +158,14 @@ std::wstring VFS::ResolvePath(const std::wstring& requestedPath, DWORD desiredAc
                 fs::path customMenu = s_userStoragePath / "menumaps" / "mainmenu_all.map";
                 if (RawPathExists(customMenu.wstring())) {
                     return customMenu.wstring();
+                }
+            }
+
+            // Priority 0: the mod chosen in the front-end menu.
+            if (!s_activeMod.empty()) {
+                fs::path modFile = s_activeMod / p;
+                if (RawPathExists(modFile.wstring())) {
+                    return modFile.wstring();
                 }
             }
 

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <fstream>
@@ -33,6 +34,71 @@ std::filesystem::path ResolveRelative(const std::filesystem::path& base, const s
 	const std::filesystem::path relative = std::filesystem::u8path(value);
 	if (!IsSafeRelativePath(relative)) return {};
 	return (base / relative).lexically_normal();
+}
+
+std::filesystem::path FindTextureFile(const std::filesystem::path& candidate) {
+	const std::array<std::filesystem::path, 6> extensions{
+		candidate.extension(), ".png", ".tif", ".tiff", ".jpg", ".jpeg"
+	};
+	for (const auto& extension : extensions) {
+		std::filesystem::path path = candidate;
+		path.replace_extension(extension);
+		std::error_code ec;
+		if (std::filesystem::is_regular_file(path, ec)) return path;
+	}
+	return {};
+}
+
+std::filesystem::path ResolveTexturePath(const std::filesystem::path& mtlDirectory,
+										 const std::filesystem::path& modelDirectory,
+										 const std::string& value) {
+	const std::filesystem::path relative = std::filesystem::u8path(value);
+	if (!IsSafeRelativePath(relative)) return {};
+
+	std::filesystem::path resolved = FindTextureFile((mtlDirectory / relative).lexically_normal());
+	if (!resolved.empty()) return resolved;
+
+	std::filesystem::path bitmapRelative;
+	bool afterBitmaps = false;
+	for (const auto& part : relative) {
+		std::string name = part.string();
+		std::transform(name.begin(), name.end(), name.begin(), [](unsigned char ch) {
+			return static_cast<char>(std::tolower(ch));
+		});
+		if (afterBitmaps) {
+			bitmapRelative /= part;
+		} else if (name == "bitmaps") {
+			afterBitmaps = true;
+		}
+	}
+	if (afterBitmaps && !bitmapRelative.empty()) {
+		resolved = FindTextureFile((modelDirectory / "bitmaps" / bitmapRelative).lexically_normal());
+		if (!resolved.empty()) return resolved;
+	}
+
+	return FindTextureFile(modelDirectory / "bitmaps" / relative.filename());
+}
+
+std::filesystem::path FindColorControlTexture(const std::filesystem::path& diffuseTexture) {
+	if (diffuseTexture.empty()) return {};
+	std::string stem = diffuseTexture.stem().string();
+	std::string lowered = stem;
+	std::transform(lowered.begin(), lowered.end(), lowered.begin(), [](unsigned char ch) {
+		return static_cast<char>(std::tolower(ch));
+	});
+
+	size_t suffix = lowered.rfind("_diffuse");
+	size_t suffixLength = 8;
+	if (suffix == std::string::npos) {
+		suffix = lowered.rfind("_diff");
+		suffixLength = 5;
+	}
+	if (suffix == std::string::npos) return {};
+
+	stem.replace(suffix, suffixLength, "_cc");
+	const auto candidate = diffuseTexture.parent_path() / (stem + diffuseTexture.extension().string());
+	std::error_code ec;
+	return std::filesystem::is_regular_file(candidate, ec) ? candidate : std::filesystem::path{};
 }
 
 bool ParseFloat(std::string_view text, float& value) {
@@ -161,17 +227,14 @@ bool LoadMaterials(const std::filesystem::path& path, const std::filesystem::pat
 			std::string filename;
 			std::getline(input >> std::ws, filename);
 			if (!filename.empty() && filename[0] != '-') {
-				const auto texture = ResolveRelative(path.parent_path(), filename);
-				if (texture.empty()) {
+				const auto relative = std::filesystem::u8path(filename);
+				if (!IsSafeRelativePath(relative)) {
 					error = "Diffuse texture path escapes the model directory.";
 					return false;
 				}
-				const auto textureRelative = texture.lexically_relative(modelDirectory);
-				if (!IsSafeRelativePath(textureRelative)) {
-					error = "Diffuse texture path escapes the model directory.";
-					return false;
-				}
+				const auto texture = ResolveTexturePath(path.parent_path(), modelDirectory, filename);
 				current->diffuseTexture = texture;
+				current->colorControlTexture = FindColorControlTexture(texture);
 			}
 		}
 	}

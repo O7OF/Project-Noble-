@@ -547,14 +547,100 @@ static std::wstring ProfileArgPath() {
     return result;
 }
 
+static std::filesystem::path ProfileCaptureDirArgPath() {
+    std::wstring result;
+    int argc = 0;
+    LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+    if (argv) {
+        for (int i = 1; i + 1 < argc; ++i) {
+            if (wcscmp(argv[i], L"-capture-profile") == 0 || wcscmp(argv[i], L"--capture-profile") == 0) {
+                result = argv[i + 1];
+            }
+        }
+        LocalFree(argv);
+    }
+    if (result.empty()) return {};
+
+    std::filesystem::path captureDir(result);
+    if (captureDir.is_relative()) {
+        wchar_t exe[MAX_PATH] = {};
+        if (GetModuleFileNameW(nullptr, exe, MAX_PATH)) {
+            captureDir = std::filesystem::path(exe).parent_path() / captureDir;
+        }
+    }
+    return captureDir;
+}
+
 static uint8_t s_hostProfileBuffer[0x10000] = { 0 };
 static bool s_hostProfileInitialized = false;
+
+static void CaptureProfileSnapshotIfChanged(const uint8_t* profile) {
+    static const std::filesystem::path captureDir = ProfileCaptureDirArgPath();
+    if (captureDir.empty() || !profile) return;
+
+    static std::array<uint8_t, sizeof(s_hostProfileBuffer)> lastSnapshot{};
+    static bool hasSnapshot = false;
+    static size_t snapshotIndex = 0;
+    static const std::string captureSessionId = [] {
+        FILETIME time = {};
+        GetSystemTimeAsFileTime(&time);
+        ULARGE_INTEGER ticks = {};
+        ticks.LowPart = time.dwLowDateTime;
+        ticks.HighPart = time.dwHighDateTime;
+        return std::to_string(GetCurrentProcessId()) + "-" + std::to_string(ticks.QuadPart);
+    }();
+    static std::mutex captureMutex;
+    std::lock_guard<std::mutex> lock(captureMutex);
+
+    if (hasSnapshot && std::equal(lastSnapshot.begin(), lastSnapshot.end(), profile)) return;
+
+    try {
+        std::filesystem::create_directories(captureDir);
+        const auto snapshotPath = captureDir / ("profile-" + captureSessionId + "-" + std::to_string(snapshotIndex) + ".bin");
+        std::ofstream file(snapshotPath, std::ios::binary | std::ios::trunc);
+        if (!file) {
+            NOBLE_WARN("ReachHost [Slot 34]: could not create profile capture '{}'", snapshotPath.string());
+            return;
+        }
+        file.write(reinterpret_cast<const char*>(profile), sizeof(s_hostProfileBuffer));
+        if (!file) {
+            NOBLE_WARN("ReachHost [Slot 34]: failed writing profile capture '{}'", snapshotPath.string());
+            return;
+        }
+
+        std::copy_n(profile, lastSnapshot.size(), lastSnapshot.begin());
+        hasSnapshot = true;
+        ++snapshotIndex;
+        NOBLE_INFO("ReachHost [Slot 34]: captured changed profile buffer to '{}'", snapshotPath.string());
+    } catch (const std::filesystem::filesystem_error& e) {
+        NOBLE_WARN("ReachHost [Slot 34]: could not create profile capture in '{}': {}", captureDir.string(), e.what());
+    }
+}
+
+static void ApplyArmorySpecies(uint8_t* profile) {
+    if (!profile) return;
+    const auto appearancePath = ReachHost::Get().GetDataDir() / "appearance.json";
+    std::ifstream file(appearancePath);
+    if (!file) return;
+
+    try {
+        nlohmann::json appearance;
+        file >> appearance;
+        const uint8_t species = static_cast<uint8_t>(std::clamp(appearance.value("species", 0), 0, 1));
+        // Confirmed profile fields: 0 = Spartan, 1 = Elite. Do not write unverified armor/color offsets.
+        profile[0x27] = species;
+        profile[0x38] = species;
+        NOBLE_INFO("ReachHost [Slot 34]: applied Armory species {} to the profile", species == 0 ? "Spartan" : "Elite");
+    } catch (const nlohmann::json::exception& e) {
+        NOBLE_WARN("ReachHost [Slot 34]: could not read Armory species from '{}': {}", appearancePath.string(), e.what());
+    }
+}
 
 static uint64_t __fastcall HostSlot34_ProfileSettings(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
     (void)thisPtr; (void)a1; (void)a2; (void)a3; (void)a4;
     static std::atomic<bool> s_logged{false};
     if (!s_logged.exchange(true)) {
-        NOBLE_INFO("ReachHost [Slot 34 - ProfileSettings]: Providing Spartan armor & player loadout data");
+        NOBLE_INFO("ReachHost [Slot 34 - ProfileSettings]: Providing the local player profile and settings");
     }
 
     if (!s_hostProfileInitialized) {
@@ -592,6 +678,7 @@ static uint64_t __fastcall HostSlot34_ProfileSettings(void* thisPtr, uint64_t a1
             WriteDefaultLookSettings(s_hostProfileBuffer);
             NOBLE_INFO("ReachHost [Slot 34]: using built-in default key bindings, volumes and look settings");
         }
+        ApplyArmorySpecies(s_hostProfileBuffer);
         // RR host::hit case 0x22: the profile is a zeroed 64 KB block with only the 4-character
         // service tag (UTF-16) written at +0x1AC. The old defaults here (+0x00 = 1, armour colours
         // at +0x18/+0x1C) are not what RR sends, so they are no longer written.
@@ -602,6 +689,8 @@ static uint64_t __fastcall HostSlot34_ProfileSettings(void* thisPtr, uint64_t a1
         memcpy(s_hostProfileBuffer + 0x1AC, serviceTag, sizeof(serviceTag));
         s_hostProfileInitialized = true;
     }
+
+    CaptureProfileSnapshotIfChanged(s_hostProfileBuffer);
 
     // RR only returns the pointer; it never writes into a1/a2 (the old code copied 0x100 bytes
     // into whichever argument looked like a pointer).
@@ -623,10 +712,30 @@ static bool s_inputCaptured = false;
 static HCURSOR s_savedClassCursor = nullptr;
 static std::atomic<bool> s_slot36Logged{false};
 
-static float InputMouseScale() {
+// Look speed (x, y) and inversion from SETTINGS > CONTROLS, re-read twice a second so changes apply in a
+// running game. RR's default 0.0008 per pixel times the sensitivity; "-mouse-scale <v>" overrides both axes.
+static float InputMouseScaleOverride();
+static void InputLookSettings(float& scaleX, float& scaleY, bool& invert) {
+    static ULONGLONG s_next = 0;
+    static float s_x = 0.0008f, s_y = 0.0008f;
+    static bool s_invert = false;
+    const ULONGLONG now = GetTickCount64();
+    if (now >= s_next) {
+        s_next = now + 500;
+        const SettingsData d = Settings::Get().Snapshot();
+        s_x = 0.0008f * d.mouseSensitivity;
+        s_y = s_x * d.mouseSensitivityY;
+        s_invert = d.invertLook;
+        if (const float o = InputMouseScaleOverride(); o > 0.0f) s_x = s_y = o;
+    }
+    scaleX = s_x;
+    scaleY = s_y;
+    invert = s_invert;
+}
+
+static float InputMouseScaleOverride() {
     static float s_scale = [] {
-        // RR's default before its sensitivity multiplier, times the SETTINGS tab's sensitivity.
-        float scale = 0.0008f * Settings::Get().Snapshot().mouseSensitivity;
+        float scale = 0.0f;
         int argc = 0;
         LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
         if (argv) {
@@ -803,7 +912,7 @@ static void FillLocalInput(uint8_t* st) {
             SetClassLongPtrW(hwnd, GCLP_HCURSOR, 0); // hide the arrow over our window
             s_inputCaptured = true;
             firstCapturedFrame = true;
-            NOBLE_INFO("ReachHost [Slot 36 - Input]: mouse captured for look (scale {})", InputMouseScale());
+            { float lx, ly; bool li; InputLookSettings(lx, ly, li); NOBLE_INFO("ReachHost [Slot 36 - Input]: mouse captured for look (scale {} x {}, invert {})", lx, ly, li); }
         }
         ClipCursor(&clip);
     }
@@ -880,11 +989,12 @@ static void FillLocalInput(uint8_t* st) {
         }
         SetCursorPos(center.x, center.y);
     }
-    const float scale = InputMouseScale();
-    static const bool s_invertLook = Settings::Get().Snapshot().invertLook;
-    if (s_invertLook) dy = -dy;
-    *reinterpret_cast<float*>(st + 0x104) = dx * scale;
-    *reinterpret_cast<float*>(st + 0x108) = dy * scale;
+    float scaleX = 0.0f, scaleY = 0.0f;
+    bool invertLook = false;
+    InputLookSettings(scaleX, scaleY, invertLook);
+    if (invertLook) dy = -dy;
+    *reinterpret_cast<float*>(st + 0x104) = dx * scaleX;
+    *reinterpret_cast<float*>(st + 0x108) = dy * scaleY;
 
     uint32_t buttons = 0;
     if (st[0x004 + VK_LBUTTON])  buttons |= 0x01;

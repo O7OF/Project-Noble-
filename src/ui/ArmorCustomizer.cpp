@@ -1,11 +1,14 @@
 #include "ArmorCustomizer.hpp"
+#include "engine/ReachHost.hpp"
 #include <imgui.h>
 #include <nlohmann/json.hpp>
 #include <fstream>
 #include <array>
 #include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <string>
+#include <utility>
 #include <vector>
 #include <windows.h>
 
@@ -51,6 +54,16 @@ static const char* REACH_COLOR_NAMES[] = {
     "Maroon", "Brick", "Coral", "Peach", "Yellow", "Sand", "Tan", "Smoke", "Slate", "Obsidian"
 };
 
+static const std::array<ImVec4, 7> REACH_VISOR_PALETTE = {{
+    ImVec4(0.95f, 0.62f, 0.12f, 1.0f),
+    ImVec4(0.78f, 0.84f, 0.88f, 1.0f),
+    ImVec4(0.20f, 0.50f, 0.95f, 1.0f),
+    ImVec4(0.12f, 0.14f, 0.16f, 1.0f),
+    ImVec4(1.00f, 0.72f, 0.18f, 1.0f),
+    ImVec4(0.10f, 0.82f, 0.90f, 1.0f),
+    ImVec4(0.88f, 0.16f, 0.18f, 1.0f)
+}};
+
 namespace {
 
 std::filesystem::path ResolveModelPath(int species) {
@@ -79,7 +92,7 @@ std::filesystem::path ResolveModelPath(int species) {
 std::string DefaultModelGroup(int species, int selection) {
     if (species == 0) return selection == 1 ? "-female" : "-default";
     static const char* const groups[] = {
-        "-default", "-officer", "-ultra", "-zealot", "-space", "-general", "-spec_ops", "-general"
+        "-default", "-general", "-officer", "-space", "-spec_ops", "-ultra", "-zealot", "-story_elite"
     };
     const int index = std::clamp(selection, 0, static_cast<int>(std::size(groups)) - 1);
     return groups[index];
@@ -93,11 +106,27 @@ std::string FindModelGroup(const std::vector<std::string>& groups, const std::st
     } else {
         match = std::find(groups.begin(), groups.end(), "-" + preferred);
     }
-    return match != groups.end() ? *match : (groups.empty() ? std::string{} : groups.front());
+    return match != groups.end() ? *match : std::string{};
 }
 
 std::string ModelGroupLabel(const std::string& group) {
-    return !group.empty() && group.front() == '-' ? group.substr(1) : group;
+    std::string label = !group.empty() && group.front() == '-' ? group.substr(1) : group;
+    const size_t exporterSuffix = label.find("__(");
+    if (exporterSuffix != std::string::npos) label.resize(exporterSuffix);
+    std::replace(label.begin(), label.end(), '_', ' ');
+    return label;
+}
+
+std::filesystem::path ResolveAppearancePath(const std::filesystem::path& path) {
+    if (path.is_absolute()) return path;
+    const auto& dataDirectory = ReachHost::Get().GetDataDir();
+    if (!dataDirectory.empty()) {
+        const auto firstPart = path.begin();
+        const auto relative = firstPart != path.end() && *firstPart == "data"
+            ? path.lexically_relative("data") : path;
+        return dataDirectory / relative;
+    }
+    return std::filesystem::current_path() / path;
 }
 
 } // namespace
@@ -107,29 +136,36 @@ ArmorCustomizer::ArmorCustomizer() {
 }
 
 bool ArmorCustomizer::LoadProfile(const std::filesystem::path& path) {
-    if (!std::filesystem::exists(path)) return false;
+    const auto profilePath = ResolveAppearancePath(path);
+    if (!std::filesystem::exists(profilePath)) return false;
 
     try {
-        std::ifstream file(path);
+        std::ifstream file(profilePath);
         nlohmann::json j;
         file >> j;
 
         m_profile.species = j.value("species", 0);
         m_profile.gender = j.value("gender", 0);
-        m_profile.helmet = j.value("helmet", 0);
-        m_profile.leftShoulder = j.value("leftShoulder", 0);
-        m_profile.rightShoulder = j.value("rightShoulder", 0);
-        m_profile.chest = j.value("chest", 0);
-        m_profile.wrist = j.value("wrist", 0);
-        m_profile.utility = j.value("utility", 0);
         m_profile.visorColor = j.value("visorColor", 0);
-        m_profile.kneeGuards = j.value("kneeGuards", 0);
-        m_profile.armorEffect = j.value("armorEffect", 0);
         m_profile.eliteArmor = j.value("eliteArmor", 0);
 
         m_profile.primaryColor = j.value("primaryColor", 0);
         m_profile.secondaryColor = j.value("secondaryColor", 12);
         m_profile.detailColor = j.value("detailColor", 4);
+        m_profile.helmetGroup = j.value("helmetGroup", std::string{});
+        m_profile.chestGroup = j.value("chestGroup", std::string{});
+        m_profile.leftShoulderGroup = j.value("leftShoulderGroup", std::string{});
+        m_profile.rightShoulderGroup = j.value("rightShoulderGroup", std::string{});
+        m_profile.wristGroup = j.value("wristGroup", std::string{});
+        m_profile.kneeGroup = j.value("kneeGroup", std::string{});
+
+        m_profile.species = std::clamp(m_profile.species, 0, 1);
+        m_profile.gender = std::clamp(m_profile.gender, 0, 1);
+        m_profile.eliteArmor = std::clamp(m_profile.eliteArmor, 0, 7);
+        m_profile.primaryColor = std::clamp(m_profile.primaryColor, 0, 29);
+        m_profile.secondaryColor = std::clamp(m_profile.secondaryColor, 0, 29);
+        m_profile.detailColor = std::clamp(m_profile.detailColor, 0, 29);
+        m_profile.visorColor = std::clamp(m_profile.visorColor, 0, static_cast<int>(REACH_VISOR_PALETTE.size()) - 1);
 
         std::string tag = j.value("serviceTag", "B312");
         strncpy_s(m_profile.serviceTag, tag.c_str(), sizeof(m_profile.serviceTag) - 1);
@@ -144,29 +180,29 @@ bool ArmorCustomizer::LoadProfile(const std::filesystem::path& path) {
 
 bool ArmorCustomizer::SaveProfile(const std::filesystem::path& path) {
     try {
+        const auto profilePath = ResolveAppearancePath(path);
+        std::filesystem::create_directories(profilePath.parent_path());
         nlohmann::json j;
         j["species"] = m_profile.species;
         j["gender"] = m_profile.gender;
-        j["helmet"] = m_profile.helmet;
-        j["leftShoulder"] = m_profile.leftShoulder;
-        j["rightShoulder"] = m_profile.rightShoulder;
-        j["chest"] = m_profile.chest;
-        j["wrist"] = m_profile.wrist;
-        j["utility"] = m_profile.utility;
         j["visorColor"] = m_profile.visorColor;
-        j["kneeGuards"] = m_profile.kneeGuards;
-        j["armorEffect"] = m_profile.armorEffect;
         j["eliteArmor"] = m_profile.eliteArmor;
 
         j["primaryColor"] = m_profile.primaryColor;
         j["secondaryColor"] = m_profile.secondaryColor;
         j["detailColor"] = m_profile.detailColor;
+        j["helmetGroup"] = m_profile.helmetGroup;
+        j["chestGroup"] = m_profile.chestGroup;
+        j["leftShoulderGroup"] = m_profile.leftShoulderGroup;
+        j["rightShoulderGroup"] = m_profile.rightShoulderGroup;
+        j["wristGroup"] = m_profile.wristGroup;
+        j["kneeGroup"] = m_profile.kneeGroup;
 
         j["serviceTag"] = std::string(m_profile.serviceTag);
         j["voice"] = m_profile.voice;
-        j["previewModelGroup"] = m_profile.previewModelGroup;
 
-        std::ofstream file(path);
+        std::ofstream file(profilePath);
+        if (!file) return false;
         file << j.dump(4);
         m_isDirty = false;
         return true;
@@ -259,8 +295,7 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
     ImGui::EndChild();
 }
 
-void ArmorCustomizer::RenderCharacterPreview(ID3D11Device* device, ID3D11DeviceContext* context)
-{
+void ArmorCustomizer::RenderCharacterPreview(ID3D11Device* device, ID3D11DeviceContext* context) {
     ImGui::TextColored(ImVec4(0.0f, 0.88f, 1.0f, 1.0f), "ARMOR VISUALIZER");
     ImGui::Separator();
     ImGui::Spacing();
@@ -268,7 +303,6 @@ void ArmorCustomizer::RenderCharacterPreview(ID3D11Device* device, ID3D11DeviceC
     const std::filesystem::path modelPath = ResolveModelPath(m_profile.species);
     const bool reload = ImGui::Button("RELOAD MCC MODEL");
     if (reload || m_loadedSpecies != m_profile.species) {
-        const bool speciesChanged = m_loadedSpecies != m_profile.species;
         m_loadedSpecies = m_profile.species;
         m_previewError.clear();
         m_previewGroups.clear();
@@ -284,84 +318,78 @@ void ArmorCustomizer::RenderCharacterPreview(ID3D11Device* device, ID3D11DeviceC
                 }
             }
             std::sort(m_previewGroups.begin(), m_previewGroups.end());
-            if (speciesChanged ||
-                (!m_profile.previewModelGroup.empty() &&
-                 std::find(m_previewGroups.begin(), m_previewGroups.end(), m_profile.previewModelGroup) == m_previewGroups.end())) {
-                m_profile.previewModelGroup = FindModelGroup(
-                    m_previewGroups, DefaultModelGroup(m_profile.species,
-                        m_profile.species == 0 ? m_profile.gender : m_profile.eliteArmor));
-            }
-            m_lastGender = m_profile.gender;
-            m_lastEliteArmor = m_profile.eliteArmor;
         }
     }
 
     if (m_preview.IsLoaded() && m_loadedSpecies == m_profile.species) {
-        if (m_profile.species == 0 && m_lastGender != m_profile.gender) {
-            if (m_profile.previewModelGroup == DefaultModelGroup(0, m_lastGender)) {
-                m_profile.previewModelGroup = FindModelGroup(m_previewGroups, DefaultModelGroup(0, m_profile.gender));
+        std::vector<ObjPreviewLayer> layers;
+        auto addLayer = [&](const std::string& group, std::vector<std::string> included = {},
+                            std::vector<std::string> excluded = {}) {
+            if (group.empty() || std::find(m_previewGroups.begin(), m_previewGroups.end(), group) == m_previewGroups.end()) return;
+            const auto existing = std::find_if(layers.begin(), layers.end(), [&](const ObjPreviewLayer& layer) {
+                return layer.groupName == group;
+            });
+            if (existing == layers.end()) layers.push_back({group, std::move(included), std::move(excluded)});
+        };
+
+        if (m_profile.species == 0) {
+            const std::string baseGroup = FindModelGroup(m_previewGroups, DefaultModelGroup(0, m_profile.gender));
+            std::vector<std::string> excludedBaseMaterials;
+            if (!m_profile.helmetGroup.empty()) {
+                excludedBaseMaterials = {
+                    "spartan_helmet_default", "spartan_helmet_interior", "spartan_helmet_interior_visor", "spartan_visor_default"
+                };
             }
-            m_lastGender = m_profile.gender;
-        }
-        if (m_profile.species == 1 && m_lastEliteArmor != m_profile.eliteArmor) {
-            if (m_profile.previewModelGroup == DefaultModelGroup(1, m_lastEliteArmor)) {
-                m_profile.previewModelGroup = FindModelGroup(m_previewGroups, DefaultModelGroup(1, m_profile.eliteArmor));
+            addLayer(baseGroup, {}, std::move(excludedBaseMaterials));
+            addLayer(m_profile.chestGroup);
+            addLayer(m_profile.leftShoulderGroup);
+            addLayer(m_profile.rightShoulderGroup);
+            addLayer(m_profile.wristGroup);
+            addLayer(m_profile.kneeGroup);
+            addLayer(m_profile.helmetGroup);
+        } else {
+            const std::string baseGroup = FindModelGroup(m_previewGroups, "-default");
+            if (m_profile.eliteArmor == 0) {
+                addLayer(baseGroup);
+            } else {
+                addLayer(baseGroup, {
+                    "body", "elite_base_lower", "elite_base_lower_metal", "elite_base_upper", "eyes", "head", "teeth"
+                });
+                addLayer(FindModelGroup(m_previewGroups, DefaultModelGroup(1, m_profile.eliteArmor)), {}, {"elite_base_upper"});
             }
-            m_lastEliteArmor = m_profile.eliteArmor;
-        }
-        if (!m_profile.previewModelGroup.empty() &&
-            std::find(m_previewGroups.begin(), m_previewGroups.end(), m_profile.previewModelGroup) == m_previewGroups.end()) {
-            m_profile.previewModelGroup = FindModelGroup(
-                m_previewGroups, DefaultModelGroup(m_profile.species,
-                    m_profile.species == 0 ? m_profile.gender : m_profile.eliteArmor));
         }
 
-        const std::string selectedGroupLabel = m_profile.previewModelGroup.empty()
-            ? "All groups (overlap)"
-            : ModelGroupLabel(m_profile.previewModelGroup);
-        ImGui::Text("MCC model group:");
-        ImGui::SetNextItemWidth(-1.0f);
-        if (ImGui::BeginCombo("##MccModelGroup", selectedGroupLabel.c_str(), ImGuiComboFlags_HeightLarge)) {
-            if (ImGui::Selectable("All groups (overlap)", m_profile.previewModelGroup.empty())) {
-                m_profile.previewModelGroup.clear();
-                m_isDirty = true;
-            }
-            for (const auto& group : m_previewGroups) {
-                const std::string label = ModelGroupLabel(group);
-                if (ImGui::Selectable(label.c_str(), m_profile.previewModelGroup == group)) {
-                    m_profile.previewModelGroup = group;
-                    m_isDirty = true;
-                }
-            }
-            ImGui::EndCombo();
-        }
+        ObjPreviewColors colors;
+        const auto copyColor = [](std::array<float, 4>& destination, const ImVec4& source) {
+            destination = {source.x, source.y, source.z, source.w};
+        };
+        copyColor(colors.primary, REACH_COLOR_PALETTE[static_cast<size_t>(m_profile.primaryColor)]);
+        copyColor(colors.secondary, REACH_COLOR_PALETTE[static_cast<size_t>(m_profile.secondaryColor)]);
+        copyColor(colors.detail, REACH_COLOR_PALETTE[static_cast<size_t>(m_profile.detailColor)]);
+        copyColor(colors.visor, REACH_VISOR_PALETTE[static_cast<size_t>(m_profile.visorColor)]);
 
         const ImVec2 available = ImGui::GetContentRegionAvail();
         const float side = std::max(160.0f, std::min(available.x, 330.0f));
         const float time = static_cast<float>(ImGui::GetTime());
-        m_preview.Render(context, m_previewRotation + time * 0.2f, m_profile.previewModelGroup);
-        ImGui::Image(reinterpret_cast<ImTextureID>(m_preview.GetPreviewTexture()), ImVec2(side, side));
-        if (ImGui::IsItemHovered() && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
-            m_previewRotation += ImGui::GetIO().MouseDelta.x * 0.01f;
+        const bool rendered = m_preview.Render(context, m_previewRotation + time * 0.2f, layers, colors);
+        if (rendered) {
+            ImGui::Image(reinterpret_cast<ImTextureID>(m_preview.GetPreviewTexture()), ImVec2(side, side));
+            if (ImGui::IsItemHovered() && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+                m_previewRotation += ImGui::GetIO().MouseDelta.x * 0.01f;
+            }
+        } else {
+            ImGui::TextWrapped("No valid MCC body and armor mesh combination is available for this selection.");
         }
-        ImGui::TextDisabled("Drag to rotate. MCC OBJ groups and diffuse materials are loaded from local game assets.");
+        ImGui::TextDisabled("Drag to rotate. The base body/undersuit renders first, then the selected MCC armor meshes.");
         ImGui::Spacing();
-        ImGui::TextColored(ImVec4(0.0f, 0.88f, 1.0f, 1.0f), "AVAILABLE MCC GROUPS");
-        int shown = 0;
-        for (const auto& group : m_previewGroups) {
-            if (shown >= 6) break;
-            ImGui::BulletText("%s", ModelGroupLabel(group).c_str());
-            ++shown;
-        }
-        if (m_previewGroups.size() > static_cast<size_t>(shown)) {
-            ImGui::TextDisabled("+ %u more groups", static_cast<unsigned>(m_previewGroups.size() - shown));
-        }
+        ImGui::TextDisabled("%s", m_profile.species == 0 ? "Spartan base with selected armor overlays" : "Elite undersuit/body with the selected harness on top");
+        ImGui::TextDisabled("In-game integration currently applies species only; Reach armor and color IDs still need verified profile mappings.");
     } else {
         ImGui::TextWrapped("%s", m_previewError.empty() ? "No model loaded." : m_previewError.c_str());
         ImGui::Spacing();
         ImGui::TextDisabled("Expected MCC-derived OBJ export:");
         ImGui::TextWrapped("%s", modelPath.string().c_str());
-        ImGui::TextDisabled("Keep its MTL file and diffuse textures beside it. Model exports stay local and are not shipped.");
+        ImGui::TextDisabled("Keep its MTL file and bitmaps directory beside it. Model exports stay local and are not shipped.");
     }
 }
 
@@ -378,56 +406,17 @@ void ArmorCustomizer::RenderSpartanCustomizer() {
     if (ImGui::RadioButton("Female", m_profile.gender == 1)) { m_profile.gender = 1; m_isDirty = true; }
     ImGui::Spacing();
 
-    // Helmets
-    const char* helmets[] = {
-        "Default (Mark V [B])", "CQC", "ODST", "Hazop", "EOD", "Operator",
-        "Grenadier", "Air Assault", "Scout", "EVA", "Commando", "Recon",
-        "Military Police", "Mark V", "Mark VI", "GUNGNIR", "Security", "Haunted"
-    };
-    ImGui::Text("Helmet:");
-    if (ImGui::Combo("##Helmet", &m_profile.helmet, helmets, IM_ARRAYSIZE(helmets))) m_isDirty = true;
+    RenderGroupSelector("Helmet model", m_profile.helmetGroup, "helmet");
 
-    // Visor Colors
     const char* visors[] = { "Default (Gold)", "Silver", "Blue", "Black", "Gold", "Cyan", "Crimson" };
     ImGui::Text("Visor Color:");
     if (ImGui::Combo("##Visor", &m_profile.visorColor, visors, IM_ARRAYSIZE(visors))) m_isDirty = true;
 
-    // Chests
-    const char* chests[] = {
-        "Default", "Collar/Breacher", "Collar/Up-Armor", "Tactical/LRP",
-        "Tactical/Recon", "Tactical/Patrol", "Assault/Sapper", "HP/Halo"
-    };
-    ImGui::Text("Chest Armor:");
-    if (ImGui::Combo("##Chest", &m_profile.chest, chests, IM_ARRAYSIZE(chests))) m_isDirty = true;
-
-    // Shoulders
-    const char* shoulders[] = {
-        "Default", "CQC", "ODST", "Hazop", "EOD", "Operator",
-        "Grenadier", "Air Assault", "Scout", "EVA", "Commando", "Security"
-    };
-    ImGui::Text("Left Shoulder:");
-    if (ImGui::Combo("##LeftShoulder", &m_profile.leftShoulder, shoulders, IM_ARRAYSIZE(shoulders))) m_isDirty = true;
-
-    ImGui::Text("Right Shoulder:");
-    if (ImGui::Combo("##RightShoulder", &m_profile.rightShoulder, shoulders, IM_ARRAYSIZE(shoulders))) m_isDirty = true;
-
-    // Wrist & Utility
-    const char* wrists[] = { "Default", "UA/Bracer", "Tactical/Tacpad", "Tactical/UGPS" };
-    ImGui::Text("Wrist Attachment:");
-    if (ImGui::Combo("##Wrist", &m_profile.wrist, wrists, IM_ARRAYSIZE(wrists))) m_isDirty = true;
-
-    const char* utilities[] = { "Default", "Tactical/Hard Case", "Tactical/Trauma Kit", "Chobham" };
-    ImGui::Text("Utility Attachment:");
-    if (ImGui::Combo("##Utility", &m_profile.utility, utilities, IM_ARRAYSIZE(utilities))) m_isDirty = true;
-
-    // Knees & Effects
-    const char* knees[] = { "Default", "FJ/PARA", "Gungnir", "Grenadier" };
-    ImGui::Text("Knee Guards:");
-    if (ImGui::Combo("##Knees", &m_profile.kneeGuards, knees, IM_ARRAYSIZE(knees))) m_isDirty = true;
-
-    const char* effects[] = { "None", "Inclement Weather", "Pestilence", "Heart Attack", "Birthday Party", "Flaming Helmet" };
-    ImGui::Text("Armor Effect:");
-    if (ImGui::Combo("##ArmorEffect", &m_profile.armorEffect, effects, IM_ARRAYSIZE(effects))) m_isDirty = true;
+    RenderGroupSelector("Chest model", m_profile.chestGroup, "chest");
+    RenderGroupSelector("Left shoulder model", m_profile.leftShoulderGroup, "shoulder", "left");
+    RenderGroupSelector("Right shoulder model", m_profile.rightShoulderGroup, "shoulder", "right");
+    RenderGroupSelector("Wrist model", m_profile.wristGroup, "wrist");
+    RenderGroupSelector("Knee model", m_profile.kneeGroup, "knee");
 }
 
 void ArmorCustomizer::RenderEliteCustomizer() {
@@ -436,7 +425,7 @@ void ArmorCustomizer::RenderEliteCustomizer() {
     ImGui::Spacing();
 
     const char* eliteHarnesses[] = {
-        "Minor", "Major", "Ultra", "Zealot", "Ranger", "General", "SpecOps", "Field Marshal"
+        "Minor / Stock", "General", "Officer", "Ranger / Space", "Spec Ops", "Ultra", "Zealot", "Story Elite"
     };
     ImGui::Text("Harness Rank / Armor:");
     if (ImGui::Combo("##EliteArmor", &m_profile.eliteArmor, eliteHarnesses, IM_ARRAYSIZE(eliteHarnesses))) {
@@ -444,7 +433,49 @@ void ArmorCustomizer::RenderEliteCustomizer() {
     }
 }
 
+void ArmorCustomizer::RenderGroupSelector(const char* label, std::string& selectedGroup,
+                                         std::string_view category, std::string_view side) {
+    std::vector<std::string> candidates;
+    for (const auto& group : m_previewGroups) {
+        std::string lowered = group;
+        std::transform(lowered.begin(), lowered.end(), lowered.begin(), [](unsigned char ch) {
+            return static_cast<char>(std::tolower(ch));
+        });
+        if (lowered.find(category) == std::string::npos) continue;
+        if (category == "helmet" && (lowered.find("interior") != std::string::npos || lowered.find("visor") != std::string::npos)) continue;
+        if (!side.empty()) {
+            const bool hasSide = side == "left"
+                ? (lowered.find("left") != std::string::npos || lowered.find("_l_") != std::string::npos)
+                : (lowered.find("right") != std::string::npos || lowered.find("_r_") != std::string::npos);
+            if (!hasSide) continue;
+        }
+        candidates.push_back(group);
+    }
+
+    const auto selected = std::find(candidates.begin(), candidates.end(), selectedGroup);
+    const std::string selectedLabel = selectedGroup.empty() ? "Stock MCC piece"
+        : selected == candidates.end() ? "Unavailable in this MCC export" : ModelGroupLabel(*selected);
+    ImGui::Text("%s", label);
+    ImGui::SetNextItemWidth(-1.0f);
+    const std::string id = std::string("##") + label;
+    if (ImGui::BeginCombo(id.c_str(), selectedLabel.c_str(), ImGuiComboFlags_HeightLarge)) {
+        if (ImGui::Selectable("Stock MCC piece", selectedGroup.empty())) {
+            selectedGroup.clear();
+            m_isDirty = true;
+        }
+        for (const auto& group : candidates) {
+            const std::string groupLabel = ModelGroupLabel(group) + "##" + group;
+            if (ImGui::Selectable(groupLabel.c_str(), selectedGroup == group)) {
+                selectedGroup = group;
+                m_isDirty = true;
+            }
+        }
+        ImGui::EndCombo();
+    }
+}
+
 void ArmorCustomizer::RenderColorPalettePicker(const char* label, int& selectedColorIndex) {
+    selectedColorIndex = std::clamp(selectedColorIndex, 0, static_cast<int>(REACH_COLOR_PALETTE.size()) - 1);
     ImGui::Text("%s: %s", label, REACH_COLOR_NAMES[selectedColorIndex]);
 
     float buttonSize = 22.0f;

@@ -1,5 +1,6 @@
 #include "MenuSounds.hpp"
 #include "common/Settings.hpp"
+#include "audio/ReachAudio.hpp"
 
 #include <windows.h>
 #include <mmsystem.h>
@@ -70,8 +71,14 @@ bool Enabled() {
 }
 
 void Play(const std::vector<uint8_t>& wav) {
-    if (!Enabled()) return;
     PlaySoundW(reinterpret_cast<LPCWSTR>(wav.data()), nullptr, SND_MEMORY | SND_ASYNC | SND_NODEFAULT);
+}
+
+// Reach's sound when it is ready, otherwise the generated tone.
+void Play(ReachAudio::Sfx sfx, const std::vector<uint8_t>& fallback) {
+    if (!Enabled()) return;
+    const float volume = Settings::Get().Snapshot().volumeOther;
+    if (!ReachAudio::PlaySfx(sfx, volume)) Play(fallback);
 }
 
 std::atomic<unsigned int> s_lastHovered{0};
@@ -79,15 +86,19 @@ std::atomic<ULONGLONG> s_lastHoverTime{0};
 
 } // namespace
 
-void Click() { Play(ClickWav()); }
-void Tab() { Play(TabWav()); }
+void Click() { Play(ReachAudio::Sfx::Accept, ClickWav()); }
+void Back() { Play(ReachAudio::Sfx::Back, ClickWav()); }
+void Scroll() { Play(ReachAudio::Sfx::CursorVertical, HoverWav()); }
+void Change() { Play(ReachAudio::Sfx::CursorHorizontal, TabWav()); }
+void Tab(int direction) { Play(direction < 0 ? ReachAudio::Sfx::BumperLeft : ReachAudio::Sfx::BumperRight, TabWav()); }
+void Error() { Play(ReachAudio::Sfx::Error, ClickWav()); }
 
 void Hover(unsigned int itemId) {
     if (itemId == 0 || s_lastHovered.exchange(itemId) == itemId) return;
     const ULONGLONG now = GetTickCount64();
     if (now - s_lastHoverTime.load() < 40) return;  // 40 ms cooldown, as in audio_manager.gd
     s_lastHoverTime = now;
-    Play(HoverWav());
+    Play(ReachAudio::Sfx::CursorVertical, HoverWav());
 }
 
 } // namespace MenuSounds

@@ -23,6 +23,10 @@ struct alignas(16) PreviewConstants {
 	XMFLOAT4X4 worldViewProjection;
 	XMFLOAT4X4 world;
 	XMFLOAT4 diffuse;
+	XMFLOAT4 primaryColor;
+	XMFLOAT4 secondaryColor;
+	XMFLOAT4 detailColor;
+	XMFLOAT4 visorColor;
 	XMFLOAT4 options;
 };
 
@@ -34,10 +38,15 @@ cbuffer PreviewConstants : register(b0)
 	float4x4 g_worldViewProjection;
 	float4x4 g_world;
 	float4 g_diffuse;
+	float4 g_primaryColor;
+	float4 g_secondaryColor;
+	float4 g_detailColor;
+	float4 g_visorColor;
 	float4 g_options;
 };
 
 Texture2D g_diffuseTexture : register(t0);
+Texture2D g_colorControlTexture : register(t1);
 SamplerState g_sampler : register(s0);
 
 struct VSInput
@@ -70,6 +79,16 @@ float4 PSMain(VSOutput input) : SV_TARGET
 	float4 albedo = g_diffuse;
 	if (g_options.x > 0.5f)
 		albedo *= g_diffuseTexture.Sample(g_sampler, input.texcoord);
+	if (g_options.y > 0.5f)
+	{
+		float3 mask = g_colorControlTexture.Sample(g_sampler, input.texcoord).rgb;
+		float coverage = saturate(mask.r + mask.g + mask.b);
+		float3 armorColor = (g_primaryColor.rgb * mask.r + g_secondaryColor.rgb * mask.g +
+			g_detailColor.rgb * mask.b) / max(mask.r + mask.g + mask.b, 0.0001f);
+		albedo.rgb = lerp(albedo.rgb, albedo.rgb * armorColor, coverage);
+	}
+	if (g_options.z > 0.5f)
+		albedo.rgb *= g_visorColor.rgb;
 	return float4(albedo.rgb * lighting, albedo.a);
 }
 )";
@@ -228,6 +247,7 @@ bool ObjModelPreview::CreateGpuModel(const ObjModel& model, std::string& error) 
 		GpuMaterial material;
 		std::copy(std::begin(source.diffuse), std::end(source.diffuse), material.diffuse);
 		material.diffuseTexturePath = source.diffuseTexture;
+		material.colorControlTexturePath = source.colorControlTexture;
 		materials.emplace(source.name, std::move(material));
 	}
 
@@ -316,22 +336,27 @@ bool ObjModelPreview::LoadModel(const std::filesystem::path& path, std::string& 
 	return true;
 }
 
-bool ObjModelPreview::Render(ID3D11DeviceContext* context, float rotationRadians, std::string_view visibleGroup) {
+bool ObjModelPreview::Render(ID3D11DeviceContext* context, float rotationRadians,
+							 const std::vector<ObjPreviewLayer>& layers, const ObjPreviewColors& colors) {
 	if (!context || !m_isInitialized || !m_isLoaded || !m_previewRtv || !m_previewSrv) return false;
-	float center[3] = {m_center[0], m_center[1], m_center[2]};
-	float radius = m_radius;
-	if (!visibleGroup.empty()) {
-		const auto bounds = m_groupBounds.find(std::string(visibleGroup));
+	if (layers.empty()) return false;
+	float minBounds[3] = {std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), std::numeric_limits<float>::max()};
+	float maxBounds[3] = {-std::numeric_limits<float>::max(), -std::numeric_limits<float>::max(), -std::numeric_limits<float>::max()};
+	for (const auto& layer : layers) {
+		const auto bounds = m_groupBounds.find(layer.groupName);
 		if (bounds == m_groupBounds.end()) return false;
 		for (size_t axis = 0; axis < 3; ++axis) {
-			center[axis] = (bounds->second[axis] + bounds->second[axis + 3]) * 0.5f;
+			minBounds[axis] = std::min(minBounds[axis], bounds->second[axis]);
+			maxBounds[axis] = std::max(maxBounds[axis], bounds->second[axis + 3]);
 		}
-		const float dx = bounds->second[3] - center[0];
-		const float dy = bounds->second[4] - center[1];
-		const float dz = bounds->second[5] - center[2];
-		radius = std::sqrt(dx * dx + dy * dy + dz * dz);
-		if (!std::isfinite(radius) || radius < 0.0001f) return false;
 	}
+	float center[3]{};
+	for (size_t axis = 0; axis < 3; ++axis) center[axis] = (minBounds[axis] + maxBounds[axis]) * 0.5f;
+	const float dx = maxBounds[0] - center[0];
+	const float dy = maxBounds[1] - center[1];
+	const float dz = maxBounds[2] - center[2];
+	const float radius = std::sqrt(dx * dx + dy * dy + dz * dz);
+	if (!std::isfinite(radius) || radius < 0.0001f) return false;
 
 	ComPtr<ID3D11RenderTargetView> oldRtv;
 	ComPtr<ID3D11DepthStencilView> oldDsv;
@@ -358,6 +383,10 @@ bool ObjModelPreview::Render(ID3D11DeviceContext* context, float rotationRadians
 	PreviewConstants constants{};
 	XMStoreFloat4x4(&constants.worldViewProjection, XMMatrixTranspose(world * view * projection));
 	XMStoreFloat4x4(&constants.world, XMMatrixTranspose(world));
+	constants.primaryColor = XMFLOAT4(colors.primary[0], colors.primary[1], colors.primary[2], colors.primary[3]);
+	constants.secondaryColor = XMFLOAT4(colors.secondary[0], colors.secondary[1], colors.secondary[2], colors.secondary[3]);
+	constants.detailColor = XMFLOAT4(colors.detail[0], colors.detail[1], colors.detail[2], colors.detail[3]);
+	constants.visorColor = XMFLOAT4(colors.visor[0], colors.visor[1], colors.visor[2], colors.visor[3]);
 
 	UINT stride = sizeof(ObjVertex);
 	UINT offset = 0;
@@ -369,33 +398,47 @@ bool ObjModelPreview::Render(ID3D11DeviceContext* context, float rotationRadians
 	context->OMSetDepthStencilState(m_depthState.Get(), 0);
 	context->RSSetState(m_rasterizerState.Get());
 
-	for (size_t i = 0; i < m_meshes.size(); ++i) {
-		const auto& mesh = m_meshes[i];
-		if (!visibleGroup.empty() && mesh.groupName != visibleGroup) continue;
-		const ID3D11Buffer* vertexBuffer = mesh.vertexBuffer.Get();
-		ID3D11Buffer* boundVertexBuffer = const_cast<ID3D11Buffer*>(vertexBuffer);
-		context->IASetVertexBuffers(0, 1, &boundVertexBuffer, &stride, &offset);
-		constants.diffuse = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
-		ID3D11ShaderResourceView* texture = nullptr;
-		auto material = m_materials.find(mesh.materialName);
-		if (material != m_materials.end()) {
-			std::copy(std::begin(material->second.diffuse), std::end(material->second.diffuse), &constants.diffuse.x);
-			if (!material->second.textureLoadAttempted && !material->second.diffuseTexturePath.empty()) {
-				material->second.textureLoadAttempted = true;
-				CreateTexture(material->second.diffuseTexturePath, material->second.diffuseTexture.GetAddressOf());
+	for (const auto& layer : layers) {
+		for (const auto& mesh : m_meshes) {
+			if (mesh.groupName != layer.groupName) continue;
+			if (!layer.includedMaterials.empty() &&
+				std::find(layer.includedMaterials.begin(), layer.includedMaterials.end(), mesh.materialName) == layer.includedMaterials.end()) continue;
+			if (std::find(layer.excludedMaterials.begin(), layer.excludedMaterials.end(), mesh.materialName) != layer.excludedMaterials.end()) continue;
+
+			const ID3D11Buffer* vertexBuffer = mesh.vertexBuffer.Get();
+			ID3D11Buffer* boundVertexBuffer = const_cast<ID3D11Buffer*>(vertexBuffer);
+			context->IASetVertexBuffers(0, 1, &boundVertexBuffer, &stride, &offset);
+			constants.diffuse = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
+			ID3D11ShaderResourceView* texture = nullptr;
+			ID3D11ShaderResourceView* colorControlTexture = nullptr;
+			auto material = m_materials.find(mesh.materialName);
+			if (material != m_materials.end()) {
+				std::copy(std::begin(material->second.diffuse), std::end(material->second.diffuse), &constants.diffuse.x);
+				if (!material->second.textureLoadAttempted && !material->second.diffuseTexturePath.empty()) {
+					material->second.textureLoadAttempted = true;
+					CreateTexture(material->second.diffuseTexturePath, material->second.diffuseTexture.GetAddressOf());
+				}
+				if (!material->second.colorControlLoadAttempted && !material->second.colorControlTexturePath.empty()) {
+					material->second.colorControlLoadAttempted = true;
+					CreateTexture(material->second.colorControlTexturePath, material->second.colorControlTexture.GetAddressOf());
+				}
+				texture = material->second.diffuseTexture.Get();
+				colorControlTexture = material->second.colorControlTexture.Get();
 			}
-			texture = material->second.diffuseTexture.Get();
+			const bool isVisor = mesh.materialName.find("visor") != std::string::npos;
+			constants.options = XMFLOAT4(texture ? 1.0f : 0.0f, colorControlTexture ? 1.0f : 0.0f,
+				isVisor ? 1.0f : 0.0f, 0.0f);
+			context->UpdateSubresource(m_constantBuffer.Get(), 0, nullptr, &constants, 0, 0);
+			ID3D11Buffer* cb = m_constantBuffer.Get();
+			context->VSSetConstantBuffers(0, 1, &cb);
+			context->PSSetConstantBuffers(0, 1, &cb);
+			ID3D11ShaderResourceView* textures[] = {texture, colorControlTexture};
+			context->PSSetShaderResources(0, ARRAYSIZE(textures), textures);
+			context->Draw(mesh.vertexCount, 0);
 		}
-		constants.options = XMFLOAT4(texture ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f);
-		context->UpdateSubresource(m_constantBuffer.Get(), 0, nullptr, &constants, 0, 0);
-		ID3D11Buffer* cb = m_constantBuffer.Get();
-		context->VSSetConstantBuffers(0, 1, &cb);
-		context->PSSetConstantBuffers(0, 1, &cb);
-		context->PSSetShaderResources(0, 1, &texture);
-		context->Draw(mesh.vertexCount, 0);
 	}
-	ID3D11ShaderResourceView* nullTexture = nullptr;
-	context->PSSetShaderResources(0, 1, &nullTexture);
+	ID3D11ShaderResourceView* nullTextures[2]{};
+	context->PSSetShaderResources(0, ARRAYSIZE(nullTextures), nullTextures);
 
 	ID3D11RenderTargetView* restoreRtv = oldRtv.Get();
 	context->OMSetRenderTargets(1, oldRtv ? &restoreRtv : nullptr, oldDsv.Get());

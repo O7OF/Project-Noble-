@@ -1,4 +1,4 @@
-# Project Noble: handoff (2026-10-27, 21:40 ET)
+# Project Noble: handoff (2026-10-27, 23:25 ET)
 
 This picks up a reverse-engineering and C++ effort on **Tyler's Windows PC**. All paths below are real paths on that machine.
 Tyler (GitHub `WeabooTyler117`) works with a partner (GitHub `O7OF`) who owns the repo and writes most of the code.
@@ -12,7 +12,136 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 ---
 
 
-## 0. Pick up here (21:40 ET)
+## 0. Pick up here (23:25 ET)
+
+**23:25: synced with the latest origin/main handoff (23:20 ET) and refreshed the Armory status.** The preview now
+loads local MCC-derived Spartan/Elite OBJ groups, undersuits, and Elite harness layers; color masks and visor tint
+work in the preview. Slot 34 applies only verified species flags. In-game armor and color IDs remain unmapped, so the
+preview selections do not yet change the character. Use `-capture-profile data/profile-captures` to record the Slot 34
+profile buffer for controlled before/after comparisons; do not commit capture files or local model exports.
+
+Open list, in Tyler's order of interest:
+1. **Finish in-game Armory mapping**: use profile captures to identify and verify equipment/color fields without
+   guessing offsets; then test that equipped pieces and colors affect the in-game character.
+2. **Controller settings** (stick sensitivity, invert, dead zones, vibration): first find how Noble feeds the pad
+   to the engine today (Tyler: controller already works in game), then add a CONTROLLER section.
+3. **Video**: FOV, V-Sync, quality options.
+4. **Menu music picker**: Tyler wants it cleaner than the current grouped drop-down (~360 tracks).
+5. **Controller picture** on Settings > Controls is pixelated (MCC `LARGECONTROLLERFRONT` scaled).
+6. Check in game: Forge menus and loadout cards no longer show hex (expected fixed by slot 55).
+7. Noble exiting from inside a game: confirm `tasklist | findstr /i noble` is empty afterwards.
+8. Mod-only maps (not in Reach's tables) are listed but disabled: launching them needs map-id work in BlamEngine.
+9. Halo 2 Anniversary music (`sounds_*.dat`) not readable yet.
+
+Build/run (Developer Command Prompt, not plain PowerShell - cmake is only on PATH there):
+`cd /d D:\Halo-Reach-Community-Edition && cmake --build build --config Release && cd build\bin\Release && noble-client.exe`
+If LNK1104 (exe locked) and `taskkill` fails, a stuck process needs a real reboot; rename the exe meanwhile.
+
+## 0c2. Earlier (23:15 ET)
+(23:15 ET)
+
+**23:15: pushed + mouse settings + input prompts (built, Tyler OK'd "fine for now").** Stuck processes were from
+quitting at the menu (10:12-10:17 runs, ExitProcess hang, likely XAudio2 DLL detach); real reboot cleared them; with
+TerminateProcess the menu-quit check came back clean (in-game quit not re-checked yet). Commit `d31ccff` rebased onto
+O7OF's `2248385` (adds ObjModel/ObjModelPreview armory preview, ArmorCustomizer::Render(device, ctx), default master
+server URL) and pushed as `7500059`. Since then (not committed): `main.cpp` `return 0;` after TerminateProcess (C4715);
+new `src/ui/InputPrompts.cpp/.hpp` (device tracking from ImGui input each frame in `UIManager::BeginFrame`; drawn
+glyphs: A green / B red circles, LB/RB pills, D-pad, or keyboard key boxes); FrontEndMenu `DrawHints` takes
+`Prompt` values, `AcceptPressed()` (Enter / keypad Enter / pad A) and D-pad for focus rows and skulls; SettingsPanel
+MOUSE section (look sensitivity + RESET, new `mouseSensitivityY` vertical ratio 0.25-4, invert, help lines) and LB/RB
+(Q/E) prompts around the tab row; ReachHost slot 36 reads look settings every 500 ms (`InputLookSettings`) so APPLY
+works in a running game; `-mouse-scale` still overrides. Small ReachHost change - tell O7OF. Tyler (23:17): **a controller already works in game** (correct older notes saying gamepad isn't supported). Next:
+CONTROLLER section (settings for it), Video options (FOV, V-Sync), cleaner music picker, pixelated controller picture.
+
+## 0b2. Earlier (22:40 ET)
+(22:40 ET)
+
+**22:40: stuck Noble processes + exit change (written, build untested).** 22:28-22:34: Modded tab now collapsible
+(mod heading rows with arrow + map count, click/Enter toggles, `st.openMods`), mouse-wheel scrolling + scroll bar in
+`DrawList` (per-list offset), preview blurb height measured (fixed a const ImFont compile error). Tyler built it: works.
+Three `noble-client.exe` (PIDs 41172/7516/8484, ~2 GB each) stayed listed after closing and could not be killed even
+as admin ("no running instance") - stuck in the kernel (driver wait); only a reboot clears them, and they lock the exe
+(LNK1104; workaround: rename the exe). main.cpp's three `ExitProcess(0)` are now `TerminateProcess(GetCurrentProcess(), 0)`
+(ExitProcess runs DLL detach under the loader lock and can hang). If processes still get stuck: find when (after a
+match? quit from menu?) and release D3D / stop the engine before exiting. Also sent Tyler `docs/career/armor-list.md`
+(readable Armory list from armor.json). Not committed yet: everything since 355b31f (audio, menus, mods, VFS, main.cpp).
+
+## 0a2. Earlier (22:30 ET)
+(22:30 ET)
+
+**22:30: VANILLA / MODDED tabs (written, NOT BUILT).** 22:20: Tyler tested the MOD row + click-to-pick: both work.
+He wants MCC's way instead: map selection -> vanilla maps or modded maps. The MOD option row is gone; Campaign,
+Firefight and Custom Game have `DrawSourceTabs` (VANILLA | MODDED (n); click, Q/E, LB/RB). The modded tab lists
+every mod's maps under the mod's name (`ListItem.header` rows, not selectable; `ModdedMaps`, `FixSelection`); the
+picked map carries its mod (`MapEntry.mod`) into `FrontEndChoice.modFolder`. "Mod: <title>" shows under the
+preview. Campaign rows back to 1 difficulty, 2 skulls, 3 start. Forge has no tabs.
+
+**22:25 (superseded in part by 22:30):**
+
+**22:25: list picking + MOD option (written, NOT BUILT).** Tyler (22:04): in Campaign the mission under the mouse
+became the pick, so moving to START changed it; and Campaign/Firefight need options such as Mods and game type.
+- `DrawList(..., hoverSelects)`: mission/map lists now only change on click or keys (hover = light highlight);
+  the main menu still follows hover.
+- New `src/ui/ModCatalog.cpp/.hpp`: scans Workshop (976730) + `data\mods` for `Engine: HaloReach` mods; reads
+  `campaign\*.json`, `firefight\*.json`, `multiplayer\*.json` (+ `GameModContents.*Maps`, `CampaignInfo.json`
+  CampaignMaps): `ScenarioFile` last part = scenario, `Title/Description.Neutral`; and `maps\*.map` names.
+- Campaign rows: MOD, DIFFICULTY, SKULLS, START (focus 1-4). Firefight/Custom: MOD, GAME TYPE, (DIFFICULTY), START.
+  Choosing a mod swaps the list to the mod's maps; maps not in Reach's own tables are shown disabled (Noble
+  launches by Reach map id, see BlamEngine::ResolveMapId). Maps the mod only replaces show as "<name> (modded)".
+- `FrontEndChoice.modFolder/modTitle`; main.cpp calls new `VFS::SetActiveMod(folder)`; VFS::ResolvePath reads
+  `<mod>\<relative path>` first (e.g. `maps\ff60_icecave.map`). Small VFS change - tell O7OF.
+- Test: Firefight, MOD = "Icecave: The Last Stand" (Workshop 3724674100, replaces ff60_icecave = Glacier).
+
+## 0c. Earlier (22:15 ET)
+
+**22:15: Menu music catalogue from every readable MCC game (written, NOT BUILT).** 21:47 build tested: Reach UI
+sounds + Reach menu music work (cache shows a_button, b_button, cursor_*, bumper7 L/R, 13 menu pieces; no warnings).
+Tyler asked for the whole Reach OST plus Halo 1/2/3/ODST themes.
+- ReachAudio now builds a track list per game. Reach/H3/ODST from `<game>\fmod\pc\sfx.fsb(.info)` (same format);
+  Halo: CE from `halo1\sound\pc\sounds_music.fsb` + `lst\sounds_music.lst.bin` (u32 1, u32 count, then u32 len,
+  name incl NUL, u32 first sub-sound, u32 permutations; `sound\music\` = Anniversary, `sound\old_music\music\` =
+  classic, `sound\sinomatixx*` = cutscene music). H1 index->vgmstream sub-song mapping is ASSUMED (first+k+1);
+  the stream names vgmstream prints are logged at debug level to check it.
+- Halo 2 Anniversary: sound is in `halo2\h2_maps_win64_dx11\sounds_*.dat` (custom format) - not supported yet.
+- A track = one music cue: intro, loop pieces (random), outro; `alt_*` layers, sustain/perc/stinger/ambient beds
+  skipped. Counts from the .info files: Reach 62, H3 45, ODST 80, CE Anniversary 95, CE classic 85. Labels: curated
+  for menu themes and Reach mission cues (m20 ONI Sword Base ... m70 Pillar of Autumn) and CE cutscenes (a30 Halo
+  ... d40 The Maw); the rest are prettified cue names (the in-game score is stems, not the album tracks).
+- Ids: `<game>:<cue path>` (`reach:menu`, `h3:menu`, `odst:menu`, `h1a:menu`, `h1:menu`), plus `all` (shuffle all
+  games: each track ~2.5 min then its outro) and `off`. Old setting values ("shuffle", piece names) = `reach:menu`.
+  Settings default is now `reach:menu`. MENU MUSIC row is a grouped drop-down (game headings), plays on pick.
+- Music is decoded on demand (the Reach menu theme and UI sounds up front); cache trimmed to ~1.1-1.5 GB at start.
+
+## 0b. Earlier (22:05 ET)
+
+**22:05: Reach menu sounds + menu music written, NOT BUILT YET (task #17).** Tyler asked (21:31): Reach's menu
+scroll sound instead of the beeps, Reach menu music with a track choice; then a Settings rework (MOUSE and CONTROLLER
+sections, modern but Reach-feeling navigation and previews) and prompt icons that follow keyboard/mouse vs gamepad.
+Hex fix is committed and pushed (`355b31f`).
+- New `src/audio/ReachAudio.cpp/.hpp`: reads `haloreach\fmod\pc\sfx.fsb.info` (280-byte records, name at +24,
+  record N = vgmstream sub-song N+1), decodes the sounds it needs once with `vgmstream-cli -s N+1 -o x.wav sfx.fsb`
+  on a worker thread into `<exe>\data\userdata\cache\audio` (git-ignored via `data/`), plays them with XAudio2.
+  UI sounds by bank path: omaha_ui cursor_vertical / cursor_horizontal / a_button / b_button, ui\error, first
+  `bumpers\left_bumper\` / `right_bumper\` entry, exit_experience game_completion/totals/rank_up/slot_machine.
+  Music: `data\sound\music\reach_menu\track1\in\*` = intro, `...\loop\*` = pieces (all pre-decoded in the
+  background; only the playing piece is held in RAM). "shuffle" = intro then random pieces; a piece name = that
+  piece looped; "off". vgmstream-cli is looked for in `<exe>\tools\vgmstream`, `<exe>\vgmstream`, `<exe>\bin\vgmstream`
+  (NOT shipped; Tyler copies his own into `build\bin\Release\tools\vgmstream`). Without it the old beeps play and
+  SETTINGS > AUDIO shows why.
+- `MenuSounds` API now: Click (A), Back (B), Scroll (list up/down + hover), Change (value left/right), Tab(dir)
+  (bumpers), Error. FrontEndMenu: list step -> Scroll, value cycle -> Change, goBack -> Back, the extra sound on
+  screen change removed. SettingsPanel: tabs -> Tab(+-1), Cycle -> Change. Volume = `volumeOther`.
+- Settings: new `menuMusicTrack` (default "shuffle"), SETTINGS > AUDIO > MENU MUSIC cycles the tracks and previews
+  at once (UNDO restores the saved one). Music starts in `FrontEndMenu::Run`, stops (fade) before it returns.
+- main.cpp calls `ReachAudio::Init` after `UiArt::Init`. CMake: ReachAudio files + `xaudio2`, `ole32`.
+- All edited files are CRLF (repo uses CRLF; convert before copying back).
+- Unverified: whether the `.info` order really matches vgmstream's sub-song order for every record (a warning is
+  logged if vgmstream prints a different stream name), and the exact bumper file names.
+- Next: Tyler builds + tests; then task #15 Settings rework (MOUSE: sensitivity X/Y, invert, raw input/accel?;
+  CONTROLLER: look sensitivity, invert, dead zones, vibration, button layout picture - current one is pixelated;
+  VIDEO: FOV, V-Sync, quality), task #16 prompt icons per input device, and ask Tyler to check Forge + loadouts.
+
+## 0a. Earlier (21:40 ET)
 
 **21:40: hex-number bug FIXED (tested).** With slot 55 returning 1 the engine registers its strings (log:
 "StringTable: register ... found" for all 40 logged, lookups return real text such as "Tuesday", "October") and the
@@ -240,21 +369,30 @@ challenges, Armory, loadouts, controller layouts, sources) and the data files `r
 from the MCC install; Tyler's rank-icon sheet stays local). Open question for Tyler: keep Noble's own cR numbers or
 switch to Reach's measured table (`career-reference.md` §1).
 
-**Partner's Armory work (in progress on his PC, not pushed yet; 15:00).**
-- Today `ArmorCustomizer` only writes `data/appearance.json`; nothing gives it to the engine. Slot 34 still sends only
-  bindings, volumes, look settings and the hardcoded tag `NOBL`. The UI's armour names are not engine IDs.
-- The engine's own main-menu Spartan preview is not possible (no Reach `mainmenu.map` in MCC; RR ships its own).
-- RR applies looks by scanning engine memory for colour records (four ARGB u32s) and suit records by string id
-  (`armory::write_colors`, `scan_suit`, `looks::*` hook on a colour-copy routine). The partner chose not to copy that.
-- Lead to test: RR's captured profile has u32 id lists separated by `0xFFFFFFFF` at +0x40..+0x1AB (e.g.
-  `0x2F 0x6B 0x7D 0x8A 0x93 0x9B`, `0xC0 0xA6 0xA5 0x9F`), possibly armour/appearance selections. Test like the zoom
-  fix: Noble defaults + only that region from RR's profile, pass with `-profile`, look at the Spartan in game.
-- Plan: Noble's own DX11 renderer for the Armory preview. For development he exported the Spartan and Elite render
-  models to OBJ (`data\armor\spartans\spartans.obj` 329 groups incl. 51 MCC Series 8, `data\armor\elite\elite.obj`
-  128 groups: default, general, officer, space, spec_ops, storyelite, ultra, zealot). **Those OBJ files are game
-  assets: keep them under the git-ignored `data\`, never commit them.** The armory now discovers the nested exports,
-  renders one OBJ group at a time, and maps Elite ranks to the matching exported groups. Direct `.map` render-model
-  decoding and mapping Spartan armor selectors to exported groups remain future work.
+**Armory appearance (current).**
+- The Armory saves `data/appearance.json` under the resolved data directory. Slot 34 applies the verified species flags
+  at profile +0x27 and +0x38 (0 Spartan, 1 Elite); no unverified equipment/color offsets are written.
+- The local OBJ preview resolves MCC MTL texture paths into the exported `bitmaps` tree, loads matching `_cc` masks,
+  and applies the selected primary/secondary/detail colors and visor tint. It composes a Spartan base with selected
+  MCC accessory groups, or an Elite body/undersuit layer followed by the selected rank harness group. The engine's
+  own main-menu Spartan preview is unavailable because MCC has no Reach `mainmenu.map`; Armory uses Noble's DX11 OBJ
+  renderer instead.
+- The actual Spartan/Elite OBJ exports remain local-only under git-ignored `data\armor\`; never commit them. The OBJ
+  model-group UI only offers geometry that exists in the local export. Reach's equipment IDs and live player color
+  records are still unmapped, so piece/color selections affect the Armory preview, not yet the in-game character.
+- A safe in-game equipment/color implementation needs a known-good profile capture with per-piece/color changes (or
+  verified engine ID mappings). RR's profile contains candidate u32 lists at +0x40..+0x1AB, but their semantics are
+  not confirmed. Ghidra 12.1 found no direct references to the `color_armor1` or Spartan helmet property strings, and the
+  matching PDB was not present in the MCC install; static analysis has not established equipment or color IDs. Direct
+  `.map` render-model decoding also remains future work.
+- For an opt-in runtime capture, launch `noble-client.exe -capture-profile data/profile-captures`. Slot 34 writes the
+  initial 64-KB profile buffer and any later changed buffer on subsequent Slot 34 calls as session-tagged, numbered
+  `.bin` files; later runs do not overwrite earlier captures. This mode is disabled by default. Change one in-game
+  setting at a time, retain the matching before/after files locally,
+  and do not commit captures. If Slot 34 is not called again after a change, this mode cannot observe that change; Armory
+  preview JSON selections are not included until they are mapped into the game profile. Compare matching captures by
+  byte offset, substituting their actual session-tagged filenames:
+  `$a=[IO.File]::ReadAllBytes('profile-<session>-0.bin'); $b=[IO.File]::ReadAllBytes('profile-<session>-1.bin'); 0..($a.Length-1) | ? { $a[$_] -ne $b[$_] } | % { '{0:X4}: {1:X2} -> {2:X2}' -f $_,$a[$_],$b[$_] }`.
 - Forwarded community request (TRAXUSi, Workshop class mods): add extra player-host object types beyond Reach's
   three (0 spartan, 1 elite, 2 monitor), e.g. `elite2`, `spartan2`, `monitor2`, using the same host code paths, with
   matching Megalo names. Engine patch inside `haloreach.dll` at run time; not started, idea only.

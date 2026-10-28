@@ -13,11 +13,25 @@
 
 namespace noble {
 
+struct ObjPreviewLayer {
+	std::string groupName;
+	std::vector<std::string> includedMaterials;
+	std::vector<std::string> excludedMaterials;
+};
+
+struct ObjPreviewColors {
+	std::array<float, 4> primary{1.0f, 1.0f, 1.0f, 1.0f};
+	std::array<float, 4> secondary{1.0f, 1.0f, 1.0f, 1.0f};
+	std::array<float, 4> detail{1.0f, 1.0f, 1.0f, 1.0f};
+	std::array<float, 4> visor{1.0f, 1.0f, 1.0f, 1.0f};
+};
+
 class ObjModelPreview {
 public:
 	bool Initialize(ID3D11Device* device);
 	bool LoadModel(const std::filesystem::path& path, std::string& error);
-	bool Render(ID3D11DeviceContext* context, float rotationRadians, std::string_view visibleGroup = {});
+	bool Render(ID3D11DeviceContext* context, float rotationRadians,
+			const std::vector<ObjPreviewLayer>& layers, const ObjPreviewColors& colors);
 
 	ID3D11ShaderResourceView* GetPreviewTexture() const { return m_previewSrv.Get(); }
 	bool IsLoaded() const { return m_isLoaded; }
@@ -34,8 +48,11 @@ private:
 	struct GpuMaterial {
 		float diffuse[4]{1.0f, 1.0f, 1.0f, 1.0f};
 		std::filesystem::path diffuseTexturePath;
+		std::filesystem::path colorControlTexturePath;
 		Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> diffuseTexture;
+		Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> colorControlTexture;
 		bool textureLoadAttempted = false;
+		bool colorControlLoadAttempted = false;
 	};
 
 	bool CreatePipeline();

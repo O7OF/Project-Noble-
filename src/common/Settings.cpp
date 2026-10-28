@@ -32,6 +32,7 @@ void Clamp(SettingsData& d) {
     d.width = std::clamp(d.width, 640, 7680);
     d.height = std::clamp(d.height, 360, 4320);
     d.mouseSensitivity = std::clamp(d.mouseSensitivity, 0.1f, 10.0f);
+    d.mouseSensitivityY = std::clamp(d.mouseSensitivityY, 0.25f, 4.0f);
     d.volumeGame = std::clamp(d.volumeGame, 0.0f, 1.0f);
     d.volumeMusic = std::clamp(d.volumeMusic, 0.0f, 1.0f);
     d.volumeOther = std::clamp(d.volumeOther, 0.0f, 1.0f);
@@ -76,11 +77,13 @@ void Settings::Load() {
             Read(j, "height", d.height);
             Read(j, "borderless", d.borderless);
             Read(j, "mouseSensitivity", d.mouseSensitivity);
+            Read(j, "mouseSensitivityY", d.mouseSensitivityY);
             Read(j, "invertLook", d.invertLook);
             Read(j, "volumeGame", d.volumeGame);
             Read(j, "volumeMusic", d.volumeMusic);
             Read(j, "volumeOther", d.volumeOther);
             Read(j, "menuSounds", d.menuSounds);
+            Read(j, "menuMusicTrack", d.menuMusicTrack);
             Read(j, "subtitles", d.subtitles);
             Read(j, "campaignSkulls", d.campaignSkulls);
             Read(j, "menuBackground", d.menuBackground);
@@ -117,11 +120,13 @@ bool Settings::Save() {
         j["height"] = d.height;
         j["borderless"] = d.borderless;
         j["mouseSensitivity"] = d.mouseSensitivity;
+        j["mouseSensitivityY"] = d.mouseSensitivityY;
         j["invertLook"] = d.invertLook;
         j["volumeGame"] = d.volumeGame;
         j["volumeMusic"] = d.volumeMusic;
         j["volumeOther"] = d.volumeOther;
         j["menuSounds"] = d.menuSounds;
+        j["menuMusicTrack"] = d.menuMusicTrack;
         j["subtitles"] = d.subtitles;
         j["campaignSkulls"] = d.campaignSkulls;
         j["menuBackground"] = d.menuBackground;

@@ -25,6 +25,10 @@ public:
     static const fs::path& GetUserStoragePath() { return s_userStoragePath; }
     static const fs::path& GetWorkshopPath() { return s_workshopPath; }
 
+    // A mod folder (Workshop item or data\mods\<name>) whose files the engine reads before MCC's,
+    // e.g. <mod>\maps\ff60_icecave.map for haloreach\maps\ff60_icecave.map. Empty = no mod.
+    static void SetActiveMod(const fs::path& modFolder);
+
 private:
     static bool RawPathExists(const std::wstring& path);
 
@@ -59,6 +63,7 @@ private:
     static fs::path s_baseMccPath;
     static fs::path s_userStoragePath;
     static fs::path s_workshopPath;
+    static fs::path s_activeMod;
     static bool s_isInitialized;
     static std::mutex s_mutex;
 };
