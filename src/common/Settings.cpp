@@ -81,6 +81,7 @@ void Settings::Load() {
             Read(j, "volumeMusic", d.volumeMusic);
             Read(j, "volumeOther", d.volumeOther);
             Read(j, "menuSounds", d.menuSounds);
+            Read(j, "menuMusicTrack", d.menuMusicTrack);
             Read(j, "subtitles", d.subtitles);
             Read(j, "campaignSkulls", d.campaignSkulls);
             Read(j, "menuBackground", d.menuBackground);
@@ -122,6 +123,7 @@ bool Settings::Save() {
         j["volumeMusic"] = d.volumeMusic;
         j["volumeOther"] = d.volumeOther;
         j["menuSounds"] = d.menuSounds;
+        j["menuMusicTrack"] = d.menuMusicTrack;
         j["subtitles"] = d.subtitles;
         j["campaignSkulls"] = d.campaignSkulls;
         j["menuBackground"] = d.menuBackground;

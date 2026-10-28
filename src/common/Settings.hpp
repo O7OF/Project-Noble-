@@ -29,6 +29,7 @@ struct SettingsData {
     float volumeMusic = 1.0f;
     float volumeOther = 1.0f;
     bool menuSounds = true;
+    std::string menuMusicTrack = "reach:menu"; // ReachAudio::MusicTracks() id, "all" or "off"
 
     // Gameplay
     bool subtitles = true;         // show cinematic/dialogue subtitles (ReachHost subtitle hook)

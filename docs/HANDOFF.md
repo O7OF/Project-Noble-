@@ -1,4 +1,4 @@
-# Project Noble: handoff (2026-10-27, 21:40 ET)
+# Project Noble: handoff (2026-10-27, 22:40 ET)
 
 This picks up a reverse-engineering and C++ effort on **Tyler's Windows PC**. All paths below are real paths on that machine.
 Tyler (GitHub `WeabooTyler117`) works with a partner (GitHub `O7OF`) who owns the repo and writes most of the code.
@@ -12,7 +12,94 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 ---
 
 
-## 0. Pick up here (21:40 ET)
+## 0. Pick up here (22:40 ET)
+
+**22:40: stuck Noble processes + exit change (written, build untested).** 22:28-22:34: Modded tab now collapsible
+(mod heading rows with arrow + map count, click/Enter toggles, `st.openMods`), mouse-wheel scrolling + scroll bar in
+`DrawList` (per-list offset), preview blurb height measured (fixed a const ImFont compile error). Tyler built it: works.
+Three `noble-client.exe` (PIDs 41172/7516/8484, ~2 GB each) stayed listed after closing and could not be killed even
+as admin ("no running instance") - stuck in the kernel (driver wait); only a reboot clears them, and they lock the exe
+(LNK1104; workaround: rename the exe). main.cpp's three `ExitProcess(0)` are now `TerminateProcess(GetCurrentProcess(), 0)`
+(ExitProcess runs DLL detach under the loader lock and can hang). If processes still get stuck: find when (after a
+match? quit from menu?) and release D3D / stop the engine before exiting. Also sent Tyler `docs/career/armor-list.md`
+(readable Armory list from armor.json). Not committed yet: everything since 355b31f (audio, menus, mods, VFS, main.cpp).
+
+## 0a2. Earlier (22:30 ET)
+(22:30 ET)
+
+**22:30: VANILLA / MODDED tabs (written, NOT BUILT).** 22:20: Tyler tested the MOD row + click-to-pick: both work.
+He wants MCC's way instead: map selection -> vanilla maps or modded maps. The MOD option row is gone; Campaign,
+Firefight and Custom Game have `DrawSourceTabs` (VANILLA | MODDED (n); click, Q/E, LB/RB). The modded tab lists
+every mod's maps under the mod's name (`ListItem.header` rows, not selectable; `ModdedMaps`, `FixSelection`); the
+picked map carries its mod (`MapEntry.mod`) into `FrontEndChoice.modFolder`. "Mod: <title>" shows under the
+preview. Campaign rows back to 1 difficulty, 2 skulls, 3 start. Forge has no tabs.
+
+**22:25 (superseded in part by 22:30):**
+
+**22:25: list picking + MOD option (written, NOT BUILT).** Tyler (22:04): in Campaign the mission under the mouse
+became the pick, so moving to START changed it; and Campaign/Firefight need options such as Mods and game type.
+- `DrawList(..., hoverSelects)`: mission/map lists now only change on click or keys (hover = light highlight);
+  the main menu still follows hover.
+- New `src/ui/ModCatalog.cpp/.hpp`: scans Workshop (976730) + `data\mods` for `Engine: HaloReach` mods; reads
+  `campaign\*.json`, `firefight\*.json`, `multiplayer\*.json` (+ `GameModContents.*Maps`, `CampaignInfo.json`
+  CampaignMaps): `ScenarioFile` last part = scenario, `Title/Description.Neutral`; and `maps\*.map` names.
+- Campaign rows: MOD, DIFFICULTY, SKULLS, START (focus 1-4). Firefight/Custom: MOD, GAME TYPE, (DIFFICULTY), START.
+  Choosing a mod swaps the list to the mod's maps; maps not in Reach's own tables are shown disabled (Noble
+  launches by Reach map id, see BlamEngine::ResolveMapId). Maps the mod only replaces show as "<name> (modded)".
+- `FrontEndChoice.modFolder/modTitle`; main.cpp calls new `VFS::SetActiveMod(folder)`; VFS::ResolvePath reads
+  `<mod>\<relative path>` first (e.g. `maps\ff60_icecave.map`). Small VFS change - tell O7OF.
+- Test: Firefight, MOD = "Icecave: The Last Stand" (Workshop 3724674100, replaces ff60_icecave = Glacier).
+
+## 0c. Earlier (22:15 ET)
+
+**22:15: Menu music catalogue from every readable MCC game (written, NOT BUILT).** 21:47 build tested: Reach UI
+sounds + Reach menu music work (cache shows a_button, b_button, cursor_*, bumper7 L/R, 13 menu pieces; no warnings).
+Tyler asked for the whole Reach OST plus Halo 1/2/3/ODST themes.
+- ReachAudio now builds a track list per game. Reach/H3/ODST from `<game>\fmod\pc\sfx.fsb(.info)` (same format);
+  Halo: CE from `halo1\sound\pc\sounds_music.fsb` + `lst\sounds_music.lst.bin` (u32 1, u32 count, then u32 len,
+  name incl NUL, u32 first sub-sound, u32 permutations; `sound\music\` = Anniversary, `sound\old_music\music\` =
+  classic, `sound\sinomatixx*` = cutscene music). H1 index->vgmstream sub-song mapping is ASSUMED (first+k+1);
+  the stream names vgmstream prints are logged at debug level to check it.
+- Halo 2 Anniversary: sound is in `halo2\h2_maps_win64_dx11\sounds_*.dat` (custom format) - not supported yet.
+- A track = one music cue: intro, loop pieces (random), outro; `alt_*` layers, sustain/perc/stinger/ambient beds
+  skipped. Counts from the .info files: Reach 62, H3 45, ODST 80, CE Anniversary 95, CE classic 85. Labels: curated
+  for menu themes and Reach mission cues (m20 ONI Sword Base ... m70 Pillar of Autumn) and CE cutscenes (a30 Halo
+  ... d40 The Maw); the rest are prettified cue names (the in-game score is stems, not the album tracks).
+- Ids: `<game>:<cue path>` (`reach:menu`, `h3:menu`, `odst:menu`, `h1a:menu`, `h1:menu`), plus `all` (shuffle all
+  games: each track ~2.5 min then its outro) and `off`. Old setting values ("shuffle", piece names) = `reach:menu`.
+  Settings default is now `reach:menu`. MENU MUSIC row is a grouped drop-down (game headings), plays on pick.
+- Music is decoded on demand (the Reach menu theme and UI sounds up front); cache trimmed to ~1.1-1.5 GB at start.
+
+## 0b. Earlier (22:05 ET)
+
+**22:05: Reach menu sounds + menu music written, NOT BUILT YET (task #17).** Tyler asked (21:31): Reach's menu
+scroll sound instead of the beeps, Reach menu music with a track choice; then a Settings rework (MOUSE and CONTROLLER
+sections, modern but Reach-feeling navigation and previews) and prompt icons that follow keyboard/mouse vs gamepad.
+Hex fix is committed and pushed (`355b31f`).
+- New `src/audio/ReachAudio.cpp/.hpp`: reads `haloreach\fmod\pc\sfx.fsb.info` (280-byte records, name at +24,
+  record N = vgmstream sub-song N+1), decodes the sounds it needs once with `vgmstream-cli -s N+1 -o x.wav sfx.fsb`
+  on a worker thread into `<exe>\data\userdata\cache\audio` (git-ignored via `data/`), plays them with XAudio2.
+  UI sounds by bank path: omaha_ui cursor_vertical / cursor_horizontal / a_button / b_button, ui\error, first
+  `bumpers\left_bumper\` / `right_bumper\` entry, exit_experience game_completion/totals/rank_up/slot_machine.
+  Music: `data\sound\music\reach_menu\track1\in\*` = intro, `...\loop\*` = pieces (all pre-decoded in the
+  background; only the playing piece is held in RAM). "shuffle" = intro then random pieces; a piece name = that
+  piece looped; "off". vgmstream-cli is looked for in `<exe>\tools\vgmstream`, `<exe>\vgmstream`, `<exe>\bin\vgmstream`
+  (NOT shipped; Tyler copies his own into `build\bin\Release\tools\vgmstream`). Without it the old beeps play and
+  SETTINGS > AUDIO shows why.
+- `MenuSounds` API now: Click (A), Back (B), Scroll (list up/down + hover), Change (value left/right), Tab(dir)
+  (bumpers), Error. FrontEndMenu: list step -> Scroll, value cycle -> Change, goBack -> Back, the extra sound on
+  screen change removed. SettingsPanel: tabs -> Tab(+-1), Cycle -> Change. Volume = `volumeOther`.
+- Settings: new `menuMusicTrack` (default "shuffle"), SETTINGS > AUDIO > MENU MUSIC cycles the tracks and previews
+  at once (UNDO restores the saved one). Music starts in `FrontEndMenu::Run`, stops (fade) before it returns.
+- main.cpp calls `ReachAudio::Init` after `UiArt::Init`. CMake: ReachAudio files + `xaudio2`, `ole32`.
+- All edited files are CRLF (repo uses CRLF; convert before copying back).
+- Unverified: whether the `.info` order really matches vgmstream's sub-song order for every record (a warning is
+  logged if vgmstream prints a different stream name), and the exact bumper file names.
+- Next: Tyler builds + tests; then task #15 Settings rework (MOUSE: sensitivity X/Y, invert, raw input/accel?;
+  CONTROLLER: look sensitivity, invert, dead zones, vibration, button layout picture - current one is pixelated;
+  VIDEO: FOV, V-Sync, quality), task #16 prompt icons per input device, and ask Tyler to check Forge + loadouts.
+
+## 0a. Earlier (21:40 ET)
 
 **21:40: hex-number bug FIXED (tested).** With slot 55 returning 1 the engine registers its strings (log:
 "StringTable: register ... found" for all 40 logged, lookups return real text such as "Tuesday", "October") and the

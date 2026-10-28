@@ -21,6 +21,8 @@ struct FrontEndChoice {
     std::string mode = "multiplayer"; // "multiplayer", "campaign" or "firefight"
     int difficulty = 1;          // campaign/firefight: 0 easy, 1 normal, 2 heroic, 3 legendary
     uint64_t skulls = 0;         // campaign: MCC skull bits (launch block +0x48)
+    std::filesystem::path modFolder; // mod chosen for this game (VFS::SetActiveMod), empty = none
+    std::string modTitle;
 };
 
 class FrontEndMenu {

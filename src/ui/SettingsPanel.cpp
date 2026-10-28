@@ -1,6 +1,7 @@
 #include "SettingsPanel.hpp"
 #include "NobleStyle.hpp"
 #include "MenuSounds.hpp"
+#include "audio/ReachAudio.hpp"
 #include "UiArt.hpp"
 #include "engine/KeyBindings.hpp"
 #include "network/MasterServerClient.hpp"
@@ -9,8 +10,10 @@
 #include <imgui.h>
 
 #include <algorithm>
+#include <cfloat>
 #include <cstdio>
 #include <string>
+#include <vector>
 
 namespace noble {
 
@@ -58,7 +61,7 @@ int Cycle(const char* id, const char* value, float width = 260.0f) {
     ImGui::SameLine();
     if (ImGui::ArrowButton("##r", ImGuiDir_Right)) change = 1;
     ImGui::PopID();
-    if (change) MenuSounds::Tab();
+    if (change) MenuSounds::Change();
     return change;
 }
 
@@ -138,7 +141,7 @@ void SettingsPanel::Render() {
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(1, 1, 1, 0.10f));
         ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0, 0, 0, 0));
         if (ImGui::Button(kTabs[i])) {
-            if (m_tab != i) MenuSounds::Tab();
+            if (m_tab != i) MenuSounds::Tab(i > m_tab ? 1 : -1);
             m_tab = i;
         }
         ImGui::PopStyleColor(5);
@@ -149,8 +152,8 @@ void SettingsPanel::Render() {
     }
     // Q / E switch tabs like LB / RB in MCC.
     if (!ImGui::GetIO().WantTextInput && m_rebindAction < 0) {
-        if (ImGui::IsKeyPressed(ImGuiKey_Q, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false)) { m_tab = (m_tab + 5) % 6; MenuSounds::Tab(); }
-        if (ImGui::IsKeyPressed(ImGuiKey_E, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false)) { m_tab = (m_tab + 1) % 6; MenuSounds::Tab(); }
+        if (ImGui::IsKeyPressed(ImGuiKey_Q, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false)) { m_tab = (m_tab + 5) % 6; MenuSounds::Tab(-1); }
+        if (ImGui::IsKeyPressed(ImGuiKey_E, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false)) { m_tab = (m_tab + 1) % 6; MenuSounds::Tab(1); }
     }
     ImGui::Separator();
 
@@ -181,6 +184,8 @@ void SettingsPanel::Render() {
     if (ImGui::Button("UNDO CHANGES", ImVec2(150, 34))) {
         m_loaded = false;
         m_dirty = false;
+        ReachAudio::PlayMenuMusic(Settings::Get().Snapshot().menuMusicTrack);
+        ReachAudio::SetMusicVolume(Settings::Get().Snapshot().volumeMusic);
         m_rebindAction = -1;
         m_message = nullptr;
     }
@@ -312,6 +317,46 @@ void SettingsPanel::RenderAudio() {
     if (Cycle("menusounds", m_edit.menuSounds ? "ON" : "OFF")) {
         m_edit.menuSounds = !m_edit.menuSounds;
         m_dirty = true;
+    }
+    RowLabel("MENU MUSIC");
+    {
+        // Grouped list of every track Noble found in the MCC install; picking one plays it straight away
+        // (APPLY keeps it, UNDO goes back to the saved choice).
+        const std::vector<ReachAudio::TrackInfo> tracks = ReachAudio::MusicTracks();
+        const std::string current = ReachAudio::TrackLabel(m_edit.menuMusicTrack);
+        ImGui::SetNextItemWidth(420);
+        ImGui::SetNextWindowSizeConstraints(ImVec2(0, 0), ImVec2(FLT_MAX, 420));
+        if (ImGui::BeginCombo("##menumusic", current.c_str(), ImGuiComboFlags_HeightLargest)) {
+            std::string game = "\x01";
+            for (const ReachAudio::TrackInfo& t : tracks) {
+                if (t.game != game) {
+                    game = t.game;
+                    if (!game.empty()) {
+                        ImGui::Dummy(ImVec2(0, 2));
+                        ImGui::TextColored(NobleStyle::Accent(), "%s", game.c_str());
+                        ImGui::Separator();
+                    }
+                }
+                const bool selected = t.id == m_edit.menuMusicTrack;
+                ImGui::PushID(t.id.c_str());
+                if (ImGui::Selectable(t.label.c_str(), selected)) {
+                    m_edit.menuMusicTrack = t.id;
+                    m_dirty = true;
+                    MenuSounds::Click();
+                    ReachAudio::PlayMenuMusic(t.id);
+                }
+                if (ImGui::IsItemHovered()) MenuSounds::Hover(ImGui::GetItemID());
+                if (selected) ImGui::SetItemDefaultFocus();
+                ImGui::PopID();
+            }
+            ImGui::EndCombo();
+        }
+    }
+    ReachAudio::SetMusicVolume(m_edit.volumeMusic);
+    const std::string problem = ReachAudio::Problem();
+    if (!problem.empty()) {
+        ImGui::Dummy(ImVec2(0, 4));
+        ImGui::TextDisabled("Reach menu audio is off: %s", problem.c_str());
     }
 }
 

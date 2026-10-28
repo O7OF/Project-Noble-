@@ -118,6 +118,8 @@ set(SOURCES
     src/network/UPnP.cpp
     src/network/SessionManager.cpp
     src/audio/VgmAudioHook.cpp
+    src/audio/ReachAudio.cpp
+    src/ui/ModCatalog.cpp
     src/ui/LoadScreen.cpp
     src/ui/PauseMenu.cpp
     src/ui/FrontEndMenu.cpp
@@ -163,6 +165,8 @@ set(HEADERS
     src/network/UPnP.hpp
     src/network/SessionManager.hpp
     src/audio/VgmAudioHook.hpp
+    src/audio/ReachAudio.hpp
+    src/ui/ModCatalog.hpp
     src/ui/NobleStyle.hpp
     src/ui/MenuSounds.hpp
     src/ui/SettingsPanel.hpp
@@ -193,6 +197,8 @@ target_link_libraries(noble-client PRIVATE
     dbghelp
     winhttp
     winmm
+    xaudio2
+    ole32
     windowscodecs
 )
 

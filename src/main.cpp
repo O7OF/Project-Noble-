@@ -19,6 +19,7 @@
 #include "common/Relaunch.hpp"
 #include "ui/PauseMenu.hpp"
 #include "ui/UiArt.hpp"
+#include "audio/ReachAudio.hpp"
 #include "hooks/LobbyPatches.hpp"
 #include "hooks/ForgePatches.hpp"
 #include "hooks/EnginePatches.hpp"
@@ -183,6 +184,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         GetModuleFileNameW(nullptr, exePath, MAX_PATH);
         noble::UiArt::Init(renderer->GetDevice(), reachInstall->reachDirectory.parent_path(),
                            std::filesystem::path(exePath).parent_path());
+        // Reach's menu sounds and menu music, decoded from MCC's sound bank into data\userdata\cache\audio.
+        noble::ReachAudio::Init(reachInstall->reachDirectory,
+                                std::filesystem::path(exePath).parent_path() / "data" / "userdata" / "cache" / "audio");
     }
 
     window->Show(nCmdShow);
@@ -209,13 +213,17 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             noble::UiArt::Shutdown();
             noble::UIManager::Shutdown();
             noble::Logger::Shutdown();
-            ExitProcess(0);
+            TerminateProcess(GetCurrentProcess(), 0);  // not ExitProcess: its DLL shutdown can hang (see below)
         }
         frontEndMap = choice.map;
         frontEndVariant = choice.variantPath;
         frontEndMode = choice.mode;
         frontEndDifficulty = choice.difficulty;
         frontEndSkulls = choice.skulls;
+        if (!choice.modFolder.empty()) {
+            NOBLE_INFO("Front-end menu: playing with mod '{}'", choice.modTitle);
+            noble::VFS::SetActiveMod(choice.modFolder);
+        }
     }
 
     // 8. Load and bootstrap haloreach.dll directly in process memory
@@ -375,7 +383,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         Sleep(5000);
         NOBLE_WARN("Engine shutdown took over 5 s; exiting anyway.");
         noble::Logger::Shutdown();
-        ExitProcess(0);
+        TerminateProcess(GetCurrentProcess(), 0);  // not ExitProcess: its DLL shutdown can hang (see below)
     }).detach();
 
     // 13. Clean shutdown (Correct order: Hooks & VFS -> Engine -> Loader -> Renderer)
@@ -389,9 +397,12 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 
     // haloreach.dll's worker threads can still be running after its Shutdown call returns.
     // Removing hooks, restoring the IAT or unloading the DLL underneath them crashed in ntdll
-    // (0xC0000005 on exit). Leave hooks and the DLL in place and let ExitProcess stop the
+    // (0xC0000005 on exit). Leave hooks and the DLL in place and let TerminateProcess stop the
     // engine threads before anything is torn down.
     NOBLE_INFO("Engine shut down; exiting process without unhooking or unloading haloreach.dll.");
+    // ExitProcess runs every DLL's shutdown code (haloreach.dll, XAudio2, D3D) under the loader lock while engine
+    // threads may still hold it; Noble processes were left stuck half-exited (still ~2 GB, unkillable by taskkill).
+    // The log is flushed and settings are saved by now, so end the process directly.
     noble::Logger::Shutdown();
-    ExitProcess(0);
+    TerminateProcess(GetCurrentProcess(), 0);  // not ExitProcess: its DLL shutdown can hang (see below)
 }

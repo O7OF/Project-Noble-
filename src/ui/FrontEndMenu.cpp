@@ -3,10 +3,13 @@
 #include "NobleStyle.hpp"
 #include "SettingsPanel.hpp"
 #include "MenuSounds.hpp"
+#include "audio/ReachAudio.hpp"
 #include "UiArt.hpp"
 #include "ServerBrowser.hpp"
 #include "ArmorCustomizer.hpp"
 #include "WorkshopManager.hpp"
+#include "ModCatalog.hpp"
+#include "vfs/VFS.hpp"
 #include "common/Logger.hpp"
 #include "common/Settings.hpp"
 #include "common/Version.hpp"
@@ -18,11 +21,14 @@
 #include <shellapi.h>
 #include <imgui.h>
 #include <algorithm>
+#include <cfloat>
 #include <cmath>
 #include <cstdio>
 #include <cwctype>
 #include <string>
 #include <vector>
+#include <set>
+#include <unordered_map>
 
 namespace noble {
 
@@ -281,12 +287,16 @@ void DrawTitle(const Ui& ui, ImVec2 pos, const char* title, const char* sideLabe
 struct ListItem {
     std::string label;
     bool enabled = true;
+    bool header = false;   // group heading (a mod's name): click / Enter opens or closes it
+    bool expanded = false;
 };
 
 // Reach-style vertical list. Returns the index activated this frame (click / Enter), else -1.
-// `selected` follows mouse hover and Up/Down when `keyboard` is true.
+// `selected` follows Up/Down when `keyboard` is true. With `hoverSelects` (menus of screens) it also follows
+// the mouse; picker lists (missions, maps) only change on a click, so moving the mouse to the options on the
+// right doesn't change the pick on the way. Hovered rows are highlighted lightly either way.
 int DrawList(const Ui& ui, const char* id, ImVec2 pos, float width, const std::vector<ListItem>& items, int& selected,
-             bool keyboard, float rowHeight = 30.0f, int maxRows = 0) {
+             bool keyboard, float rowHeight = 30.0f, int maxRows = 0, bool hoverSelects = true) {
     const float rh = rowHeight * ui.s;
     int activated = -1;
     const int n = static_cast<int>(items.size());
@@ -299,7 +309,7 @@ int DrawList(const Ui& ui, const char* id, ImVec2 pos, float width, const std::v
                 selected = (selected + dir + n) % n;
                 if (items[selected].enabled) break;
             }
-            MenuSounds::Tab();
+            MenuSounds::Scroll();
         };
         if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown)) step(1);
         if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp)) step(-1);
@@ -309,9 +319,30 @@ int DrawList(const Ui& ui, const char* id, ImVec2 pos, float width, const std::v
         }
     }
 
-    // Scroll so the selection stays visible.
-    int first = 0;
-    if (maxRows > 0 && n > maxRows) first = std::clamp(selected - maxRows / 2, 0, n - maxRows);
+    // Scrolling: the mouse wheel over the list scrolls it; keys keep the selection in view.
+    static std::unordered_map<ImGuiID, int> s_first, s_lastSelected;
+    const ImGuiID key = ImGui::GetID(id);
+    int& first = s_first[key];
+    if (maxRows > 0 && n > maxRows) {
+        auto lastSel = s_lastSelected.find(key);
+        if (lastSel == s_lastSelected.end() || lastSel->second != selected) {
+            if (selected < first) first = selected;
+            else if (selected >= first + maxRows) first = selected - maxRows + 1;
+            s_lastSelected[key] = selected;
+        }
+        const ImVec2 area0 = pos, area1(pos.x + width + 14.0f * ui.s, pos.y + maxRows * rh);
+        const float wheel = ImGui::GetIO().MouseWheel;
+        if (wheel != 0.0f && ImGui::IsMouseHoveringRect(area0, area1, false)) first -= static_cast<int>(wheel * 3.0f);
+        first = std::clamp(first, 0, n - maxRows);
+        // Scroll bar.
+        const float trackX = pos.x + width + 6.0f * ui.s, trackH = maxRows * rh;
+        ui.dl->AddRectFilled(ImVec2(trackX, pos.y), ImVec2(trackX + 3.0f * ui.s, pos.y + trackH), IM_COL32(255, 255, 255, 25));
+        const float thumbH = std::max(18.0f * ui.s, trackH * maxRows / n);
+        const float thumbY = pos.y + (trackH - thumbH) * first / static_cast<float>(n - maxRows);
+        ui.dl->AddRectFilled(ImVec2(trackX, thumbY), ImVec2(trackX + 3.0f * ui.s, thumbY + thumbH), IM_COL32(143, 216, 255, 170));
+    } else {
+        first = 0;
+    }
     const int last = maxRows > 0 ? std::min(n, first + maxRows) : n;
 
     for (int i = first; i < last; ++i) {
@@ -325,10 +356,14 @@ int DrawList(const Ui& ui, const char* id, ImVec2 pos, float width, const std::v
         const bool clicked = ImGui::IsItemClicked(ImGuiMouseButton_Left);
         ImGui::PopID();
         ImGui::PopID();
-        if (hovered && items[i].enabled && selected != i && ImGui::GetIO().MouseDelta.x * ImGui::GetIO().MouseDelta.x +
-                                                            ImGui::GetIO().MouseDelta.y * ImGui::GetIO().MouseDelta.y > 0.0f) {
-            selected = i;
+        const bool mouseMoved = ImGui::GetIO().MouseDelta.x * ImGui::GetIO().MouseDelta.x +
+                                ImGui::GetIO().MouseDelta.y * ImGui::GetIO().MouseDelta.y > 0.0f;
+        if (hovered && items[i].enabled && selected != i && mouseMoved) {
+            if (hoverSelects) selected = i;
             MenuSounds::Hover(ImGui::GetID(id) + i);
+        }
+        if (hovered && !hoverSelects && i != selected && items[i].enabled) {
+            ui.dl->AddRectFilled(a, b, IM_COL32(255, 255, 255, 16));
         }
         if (clicked && items[i].enabled) {
             selected = i;
@@ -339,12 +374,61 @@ int DrawList(const Ui& ui, const char* id, ImVec2 pos, float width, const std::v
                                            IM_COL32(255, 255, 255, 4), IM_COL32(255, 255, 255, 46));
             ui.dl->AddRectFilled(a, ImVec2(a.x + 2.0f * ui.s, b.y), kWhite);
         }
+        if (items[i].header) {
+            // Mod heading: arrow (open / closed), name in the accent colour, line under it.
+            const float cx = a.x + 14.0f * ui.s, cy = a.y + rh * 0.5f, t = 5.0f * ui.s;
+            const ImU32 ac = i == selected ? kWhite : kAccent;
+            if (items[i].expanded) ui.dl->AddTriangleFilled(ImVec2(cx - t, cy - t * 0.6f), ImVec2(cx + t, cy - t * 0.6f), ImVec2(cx, cy + t * 0.8f), ac);
+            else ui.dl->AddTriangleFilled(ImVec2(cx - t * 0.6f, cy - t), ImVec2(cx - t * 0.6f, cy + t), ImVec2(cx + t * 0.8f, cy), ac);
+            Text(ui, NobleStyle::TitleFont(), 19.0f, ImVec2(a.x + 28.0f * ui.s, a.y + (rh - 19.0f * ui.s) * 0.5f), ac,
+                 Upper(items[i].label).c_str());
+            ui.dl->AddLine(ImVec2(a.x, b.y - 1.0f), ImVec2(b.x, b.y - 1.0f), IM_COL32(143, 216, 255, 60), 1.0f);
+            continue;
+        }
         const ImU32 col = !items[i].enabled ? kDisabled : (i == selected ? kWhite : kDim);
-        Text(ui, NobleStyle::TitleFont(), 20.0f, ImVec2(a.x + 9.0f * ui.s, a.y + (rh - 20.0f * ui.s) * 0.5f), col,
+        const float indent = items[0].header ? 28.0f : 9.0f;   // maps under a mod heading are indented
+        Text(ui, NobleStyle::TitleFont(), 20.0f, ImVec2(a.x + indent * ui.s, a.y + (rh - 20.0f * ui.s) * 0.5f), col,
              Upper(items[i].label).c_str());
     }
     if (activated >= 0) MenuSounds::Click();
     return activated;
+}
+
+// MCC-style source tabs above a map list: VANILLA | MODDED. Click, Q/E or the bumpers switch.
+// Returns true when the tab changed.
+bool DrawSourceTabs(const Ui& ui, ImVec2 pos, int& active, int moddedCount) {
+    const char* labels[2] = { "VANILLA", "MODDED" };
+    int next = active;
+    float x = pos.x;
+    for (int i = 0; i < 2; ++i) {
+        char text[32];
+        if (i == 1) std::snprintf(text, sizeof(text), "%s (%d)", labels[i], moddedCount);
+        else std::snprintf(text, sizeof(text), "%s", labels[i]);
+        const float w = TextWidth(NobleStyle::TitleFont(), 20.0f * ui.s, text) + 24.0f * ui.s;
+        const float h = 30.0f * ui.s;
+        ImGui::SetCursorScreenPos(ImVec2(x, pos.y));
+        ImGui::PushID("srctab");
+        ImGui::PushID(i);
+        if (ImGui::InvisibleButton("##t", ImVec2(w, h))) next = i;
+        const bool hovered = ImGui::IsItemHovered();
+        ImGui::PopID();
+        ImGui::PopID();
+        const bool on = active == i;
+        if (on) {
+            ui.dl->AddRectFilled(ImVec2(x, pos.y), ImVec2(x + w, pos.y + h), IM_COL32(60, 120, 170, 90));
+            ui.dl->AddRectFilled(ImVec2(x, pos.y + h - 2.0f * ui.s), ImVec2(x + w, pos.y + h), kAccent);
+        } else if (hovered) {
+            ui.dl->AddRectFilled(ImVec2(x, pos.y), ImVec2(x + w, pos.y + h), IM_COL32(255, 255, 255, 18));
+        }
+        Text(ui, NobleStyle::TitleFont(), 20.0f, ImVec2(x + 12.0f * ui.s, pos.y + 4.0f * ui.s), on ? kWhite : kDim, text);
+        x += w + 6.0f * ui.s;
+    }
+    if (ImGui::IsKeyPressed(ImGuiKey_Q, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false)) next = 0;
+    if (ImGui::IsKeyPressed(ImGuiKey_E, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false)) next = 1;
+    if (next == active) return false;
+    MenuSounds::Tab(next > active ? 1 : -1);
+    active = next;
+    return true;
 }
 
 // Bottom-left hints: [Enter] Select   [Esc] Back ...
@@ -418,7 +502,7 @@ int OptionRow(const Ui& ui, const char* id, ImVec2 pos, float width, const char*
         if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft)) change = -1;
         if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight)) change = 1;
     }
-    if (change) MenuSounds::Tab();
+    if (change) MenuSounds::Change();
     return change;
 }
 
@@ -454,7 +538,9 @@ float DrawPreview(const Ui& ui, ImVec2 pos, float width, const std::string& scen
     y += 32.0f * ui.s;
     if (blurb && *blurb) {
         Text(ui, nullptr, 17.0f, ImVec2(pos.x, y), kDim, blurb, pos.x + width);
-        y += 26.0f * ui.s;
+        ImFont* font = Font(nullptr);
+        const float blurbHeight = font->CalcTextSizeA(17.0f * ui.s, FLT_MAX, width, blurb).y;
+        y += blurbHeight + 8.0f * ui.s;
     }
     return y;
 }
@@ -516,7 +602,98 @@ struct MenuState {
     int forgeMap = 19;          // Forge World
     int skull = 0;
     uint64_t skulls = 0;
+    int campaignSource = 0;     // 0 = vanilla maps, 1 = modded maps
+    int ffSource = 0;
+    int mpSource = 0;
+    std::set<std::string> openMods;   // "<mode>:<mod id>" of the mods opened in the modded lists
+    int campaignModded = 0;     // selection in the modded lists
+    int ffModded = 0;
+    int mpModded = 0;
 };
+
+// A row of a mission/map list: Reach's own maps, or a mod's.
+struct MapEntry {
+    std::string scenario, name, blurb;
+    bool enabled = true;
+    const ModEntry* mod = nullptr;   // the mod this map comes from (modded tab)
+    bool header = false;             // mod name heading in the modded tab
+};
+
+bool KnownScenario(const std::string& scenario, const MenuMap* maps, int count) {
+    for (int i = 0; i < count; ++i) if (scenario == maps[i].scenario) return true;
+    return false;
+}
+
+// The maps a mod adds or changes for one mode. Maps that aren't in Reach can't be launched yet (Noble starts
+// maps by Reach's own map ids), so they are listed but disabled.
+std::vector<MapEntry> ModMaps(const ModEntry& mod, const std::vector<ModMap>& listed, const MenuMap* base, int baseCount) {
+    std::vector<MapEntry> out;
+    for (const ModMap& m : listed) {
+        const bool known = KnownScenario(m.scenario, base, baseCount);
+        out.push_back({ m.scenario, m.title, known ? m.description : "A new map: Noble can only start maps that are in Reach so far.", known, &mod });
+    }
+    // Maps the mod replaces without a JSON for this mode.
+    for (const std::string& file : mod.mapFiles) {
+        if (!KnownScenario(file, base, baseCount)) continue;
+        if (std::any_of(out.begin(), out.end(), [&](const MapEntry& e) { return e.scenario == file; })) continue;
+        for (int i = 0; i < baseCount; ++i) {
+            if (file == base[i].scenario) out.push_back({ file, base[i].name, base[i].blurb, true, &mod });
+        }
+    }
+    return out;
+}
+
+// MODDED tab: every mod's maps for one mode, under the mod's name.
+enum class ModMode { Campaign, Firefight, Multiplayer };
+std::string OpenKey(ModMode mode, const ModEntry& mod) { return std::to_string(static_cast<int>(mode)) + ":" + mod.id; }
+
+// Modded tab: one collapsed heading per mod; an opened mod shows its maps under it.
+std::vector<MapEntry> ModdedMaps(const std::vector<const ModEntry*>& mods, ModMode mode, const MenuMap* base, int baseCount,
+                                 const std::set<std::string>& open) {
+    std::vector<MapEntry> out;
+    for (const ModEntry* mod : mods) {
+        const std::vector<ModMap>& listed = mode == ModMode::Campaign ? mod->campaign
+                                          : mode == ModMode::Firefight ? mod->firefight : mod->multiplayer;
+        std::vector<MapEntry> maps = ModMaps(*mod, listed, base, baseCount);
+        if (maps.empty()) continue;
+        MapEntry heading;
+        heading.name = mod->title + "  (" + std::to_string(maps.size()) + ")";
+        heading.header = true;
+        heading.mod = mod;
+        std::string about = mod->description.substr(0, 320);
+        if (mod->description.size() > 320) about += "...";
+        heading.blurb = about;
+        heading.enabled = open.count(OpenKey(mode, *mod)) != 0;   // used as "expanded" for headings
+        out.push_back(heading);
+        if (!heading.enabled) continue;
+        for (MapEntry& m : maps) out.push_back(std::move(m));
+    }
+    return out;
+}
+
+void ToggleMod(std::set<std::string>& open, ModMode mode, const ModEntry& mod) {
+    const std::string k = OpenKey(mode, mod);
+    if (!open.erase(k)) open.insert(k);
+}
+
+void FixSelection(const std::vector<MapEntry>& list, int& selected) {
+    selected = list.empty() ? 0 : std::clamp(selected, 0, static_cast<int>(list.size()) - 1);
+}
+
+std::vector<ListItem> ToItems(const std::vector<MapEntry>& list) {
+    std::vector<ListItem> items;
+    for (const MapEntry& m : list) {
+        if (m.header) items.push_back({ m.name, true, true, m.enabled });
+        else items.push_back({ m.name, m.enabled, false, false });
+    }
+    return items;
+}
+
+std::vector<MapEntry> BaseMaps(const MenuMap* maps, int count) {
+    std::vector<MapEntry> out;
+    for (int i = 0; i < count; ++i) out.push_back({ maps[i].scenario, maps[i].name, maps[i].blurb, true });
+    return out;
+}
 
 Screen ParseScreenArg(const std::wstring& v) {
     const std::wstring s = Lower(v);
@@ -561,10 +738,26 @@ FrontEndChoice FrontEndMenu::Run(Window& window, D3D11Renderer& renderer, const 
     const std::vector<MenuVariant> ffVariants = ScanVariants(reachDir, true);
     const std::filesystem::path forgeVariant = reachDir / "game_variants" / kForgeVariant;
 
+    // Reach mods for the MOD option of Campaign, Firefight and Custom Game (one scan per menu visit).
+    const std::vector<ModEntry> mods = ModCatalog::Scan(VFS::GetWorkshopPath(), VFS::GetUserStoragePath() / "mods");
+    std::vector<const ModEntry*> campaignMods, ffMods, mpMods;
+    for (const ModEntry& m : mods) {
+        auto replaces = [&](const MenuMap* base, int count) {
+            return std::any_of(m.mapFiles.begin(), m.mapFiles.end(), [&](const std::string& f) { return KnownScenario(f, base, count); });
+        };
+        if (!m.campaign.empty() || replaces(kMissions, Count(kMissions))) campaignMods.push_back(&m);
+        if (!m.firefight.empty() || replaces(kFirefightMaps, Count(kFirefightMaps))) ffMods.push_back(&m);
+        if (!m.multiplayer.empty() || replaces(kMaps, Count(kMaps))) mpMods.push_back(&m);
+    }
+
     MenuState st;
     st.variant = FindVariant(variants, L"slayer_054.bin");
     st.ffVariant = FindVariant(ffVariants, L"hr_ff_standard_1set.bin");
     st.skulls = Settings::Get().Snapshot().campaignSkulls;
+
+    // Reach's menu theme (or the track picked in SETTINGS > AUDIO) while the menus are up.
+    ReachAudio::SetMusicVolume(Settings::Get().Snapshot().volumeMusic);
+    ReachAudio::PlayMenuMusic(Settings::Get().Snapshot().menuMusicTrack);
 
     // Test options: "-menu-screen <name>" opens a screen directly, "-menu-capture <frames>" saves a
     // screenshot after that many frames and closes Noble (menus can't be clicked in automated tests).
@@ -627,7 +820,7 @@ FrontEndChoice FrontEndMenu::Run(Window& window, D3D11Renderer& renderer, const 
         auto goBack = [&](Screen to) {
             st.screen = to;
             st.focusRow = 0;
-            MenuSounds::Click();
+            MenuSounds::Back();
         };
 
         switch (st.screen) {
@@ -662,17 +855,35 @@ FrontEndChoice FrontEndMenu::Run(Window& window, D3D11Renderer& renderer, const 
 
         case Screen::Campaign: {
             DrawTitle(ui, ImVec2(left, top), "CAMPAIGN", "SOLO");
-            std::vector<ListItem> items;
-            for (const MenuMap& m : kMissions) items.push_back({ m.name, true });
-            const float listY = top + 96.0f * ui.s;
-            const int hit = DrawList(ui, "missions", ImVec2(left + 34.0f * ui.s, listY), 380.0f * ui.s, items, st.mission,
-                                     st.focusRow == 0, 30.0f);
-            if (hit >= 0) st.focusRow = 1;
+            if (DrawSourceTabs(ui, ImVec2(left + 34.0f * ui.s, top + 70.0f * ui.s), st.campaignSource,
+                               static_cast<int>(campaignMods.size()))) st.focusRow = 0;
+            const bool modded = st.campaignSource == 1;
+            const std::vector<MapEntry> missions = modded ? ModdedMaps(campaignMods, ModMode::Campaign, kMissions, Count(kMissions), st.openMods)
+                                                          : BaseMaps(kMissions, Count(kMissions));
+            int& pick = modded ? st.campaignModded : st.mission;
+            FixSelection(missions, pick);
+            std::vector<ListItem> items = ToItems(missions);
+            if (missions.empty()) items.push_back({ "No Reach campaign mods installed", false, false });
+            const float listY = top + 108.0f * ui.s;
+            const int hit = DrawList(ui, "missions", ImVec2(left + 34.0f * ui.s, listY), 380.0f * ui.s, items, pick,
+                                     st.focusRow == 0, 30.0f, 13, false);
+            if (hit >= 0 && !missions.empty() && missions[hit].header) ToggleMod(st.openMods, ModMode::Campaign, *missions[hit].mod);
+            else if (hit >= 0) st.focusRow = 1;
+            FixSelection(missions, pick);
+            const MapEntry* row = missions.empty() ? nullptr : &missions[pick];
+            const MapEntry* mission = (row && !row->header) ? row : nullptr;
+            const ModEntry* mod = mission ? mission->mod : nullptr;
 
             const float px = ui.size.x * 0.47f, pw = ui.size.x * 0.44f;
-            float y = DrawPreview(ui, ImVec2(px, top + 96.0f * ui.s), pw, kMissions[st.mission].scenario,
-                                  kMissions[st.mission].name, kMissions[st.mission].blurb);
+            float y = DrawPreview(ui, ImVec2(px, top + 96.0f * ui.s), pw, mission ? mission->scenario : "",
+                                  row ? (row->header ? row->mod->title.c_str() : row->name.c_str()) : "",
+                                  row ? row->blurb.c_str() : "");
             y += 6.0f * ui.s;
+            if (mod) {
+                Text(ui, nullptr, 16.0f, ImVec2(px + 10.0f * ui.s, y), kAccent, ("Mod: " + mod->title).c_str(), px + pw);
+                y += 24.0f * ui.s;
+            }
+            // Rows: 1 difficulty, 2 skulls, 3 start.
             const int dd = OptionRow(ui, "diff", ImVec2(px, y), pw, "DIFFICULTY", kDifficulties[st.difficulty], st.focusRow == 1);
             if (dd) st.difficulty = (st.difficulty + dd + 4) % 4;
             y += 36.0f * ui.s;
@@ -687,17 +898,19 @@ FrontEndChoice FrontEndMenu::Run(Window& window, D3D11Renderer& renderer, const 
             std::snprintf(mult, sizeof(mult), "Score multiplier  x%.2f", ScoreMultiplier(st.difficulty, st.skulls));
             Text(ui, nullptr, 16.0f, ImVec2(px + 10.0f * ui.s, y + 4.0f * ui.s), kDim, mult);
             y += 34.0f * ui.s;
-            const bool start = ActionButton(ui, "start", ImVec2(px, y), pw, "START MISSION") ||
-                               (st.focusRow == 3 && ImGui::IsKeyPressed(ImGuiKey_Enter, false));
+            const bool canStart = mission && mission->enabled;
+            const bool start = (ActionButton(ui, "start", ImVec2(px, y), pw, "START MISSION") ||
+                                (st.focusRow == 3 && ImGui::IsKeyPressed(ImGuiKey_Enter, false))) && canStart;
             if (start) {
                 choice.play = true;
                 choice.mode = "campaign";
-                choice.map = kMissions[st.mission].scenario;
+                choice.map = mission->scenario;
                 choice.difficulty = st.difficulty;
                 choice.skulls = st.skulls;
+                if (mod) { choice.modFolder = mod->folder; choice.modTitle = mod->title; }
                 done = true;
             }
-            // Focus: list -> difficulty -> skulls -> start (Tab / Right moves on, Esc goes back a step).
+            // Focus: list -> difficulty -> skulls -> start (Down / Tab moves on, Esc goes back a step).
             if (st.focusRow > 0 && (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || ImGui::IsKeyPressed(ImGuiKey_Tab))) st.focusRow = std::min(3, st.focusRow + 1);
             if (st.focusRow > 0 && ImGui::IsKeyPressed(ImGuiKey_UpArrow)) st.focusRow = std::max(1, st.focusRow - 1);
             if (st.focusRow == 2 && ImGui::IsKeyPressed(ImGuiKey_Enter, false)) st.screen = Screen::Skulls;
@@ -705,7 +918,7 @@ FrontEndChoice FrontEndMenu::Run(Window& window, D3D11Renderer& renderer, const 
                 if (st.focusRow > 0) st.focusRow = 0;
                 else goBack(Screen::Main);
             }
-            DrawHints(ui, { { "ENTER", "Select" }, { "ESC", "Back" }, { "LEFT / RIGHT", "Change" } });
+            DrawHints(ui, { { "ENTER", "Select" }, { "ESC", "Back" }, { "LEFT / RIGHT", "Change" }, { "Q / E", "Vanilla / Modded" } });
             break;
         }
 
@@ -796,18 +1009,43 @@ FrontEndChoice FrontEndMenu::Run(Window& window, D3D11Renderer& renderer, const 
             const bool ff = st.screen == Screen::Firefight;
             const bool forge = st.screen == Screen::Forge;
             DrawTitle(ui, ImVec2(left, top), ff ? "FIREFIGHT" : forge ? "FORGE" : "CUSTOM GAME", ff ? "SURVIVAL" : forge ? "EDIT" : "MULTIPLAYER");
-            const MenuMap* maps = ff ? kFirefightMaps : kMaps;
-            const int mapCount = ff ? Count(kFirefightMaps) : Count(kMaps);
-            int& mapIndex = ff ? st.ffMap : forge ? st.forgeMap : st.map;
-            std::vector<ListItem> items;
-            for (int i = 0; i < mapCount; ++i) items.push_back({ maps[i].name, true });
-            const int hit = DrawList(ui, "maps", ImVec2(left + 34.0f * ui.s, top + 96.0f * ui.s), 330.0f * ui.s, items, mapIndex,
-                                     st.focusRow == 0, 27.0f, 15);
-            if (hit >= 0) st.focusRow = 1;
+            const MenuMap* baseMaps = ff ? kFirefightMaps : kMaps;
+            const int baseCount = ff ? Count(kFirefightMaps) : Count(kMaps);
+            const std::vector<const ModEntry*>& modList = ff ? ffMods : mpMods;
+            int& source = ff ? st.ffSource : st.mpSource;
+            float listTop = top + 96.0f * ui.s;
+            if (!forge) {
+                if (DrawSourceTabs(ui, ImVec2(left + 34.0f * ui.s, top + 70.0f * ui.s), source, static_cast<int>(modList.size()))) {
+                    st.focusRow = 0;
+                }
+                listTop = top + 108.0f * ui.s;
+            }
+            const bool modded = !forge && source == 1;
+            const ModMode modMode = ff ? ModMode::Firefight : ModMode::Multiplayer;
+            const std::vector<MapEntry> maps = modded ? ModdedMaps(modList, modMode, baseMaps, baseCount, st.openMods)
+                                                      : BaseMaps(baseMaps, baseCount);
+            int& mapIndex = modded ? (ff ? st.ffModded : st.mpModded) : (ff ? st.ffMap : forge ? st.forgeMap : st.map);
+            FixSelection(maps, mapIndex);
+            std::vector<ListItem> items = ToItems(maps);
+            if (maps.empty()) items.push_back({ ff ? "No Reach Firefight mods installed" : "No Reach multiplayer mods installed", false, false });
+            const int hit = DrawList(ui, "maps", ImVec2(left + 34.0f * ui.s, listTop), 330.0f * ui.s, items, mapIndex,
+                                     st.focusRow == 0, 27.0f, modded || !forge ? 14 : 15, false);
+            if (hit >= 0 && !maps.empty() && maps[hit].header) ToggleMod(st.openMods, modMode, *maps[hit].mod);
+            else if (hit >= 0) st.focusRow = 1;
+            FixSelection(maps, mapIndex);
+            const MapEntry* row = maps.empty() ? nullptr : &maps[mapIndex];
+            const MapEntry* map = (row && !row->header) ? row : nullptr;
+            const ModEntry* mod = map ? map->mod : nullptr;
 
             const float px = ui.size.x * 0.47f, pw = ui.size.x * 0.44f;
-            float y = DrawPreview(ui, ImVec2(px, top + 96.0f * ui.s), pw, maps[mapIndex].scenario, maps[mapIndex].name, maps[mapIndex].blurb);
+            float y = DrawPreview(ui, ImVec2(px, top + 96.0f * ui.s), pw, map ? map->scenario : "",
+                                  row ? (row->header ? row->mod->title.c_str() : row->name.c_str()) : "",
+                                  row ? row->blurb.c_str() : "");
             y += 6.0f * ui.s;
+            if (mod) {
+                Text(ui, nullptr, 16.0f, ImVec2(px + 10.0f * ui.s, y), kAccent, ("Mod: " + mod->title).c_str(), px + pw);
+                y += 24.0f * ui.s;
+            }
             int focusRows = 1;
             if (!forge) {
                 const std::vector<MenuVariant>& list = ff ? ffVariants : variants;
@@ -830,13 +1068,15 @@ FrontEndChoice FrontEndMenu::Run(Window& window, D3D11Renderer& renderer, const 
                 y += 26.0f * ui.s;
             }
             y += 10.0f * ui.s;
-            const bool start = ActionButton(ui, "start", ImVec2(px, y), pw, forge ? "START FORGE" : "START GAME") ||
-                               (st.focusRow == focusRows && ImGui::IsKeyPressed(ImGuiKey_Enter, false));
+            const bool canStart = map && map->enabled;
+            const bool start = (ActionButton(ui, "start", ImVec2(px, y), pw, forge ? "START FORGE" : "START GAME") ||
+                                (st.focusRow == focusRows && ImGui::IsKeyPressed(ImGuiKey_Enter, false))) && canStart;
             y += 48.0f * ui.s;
             if (!ff && !forge && ActionButton(ui, "browse", ImVec2(px, y), pw, "HOST OR JOIN GAMES", false)) st.screen = Screen::Servers;
             if (start) {
                 choice.play = true;
-                choice.map = maps[mapIndex].scenario;
+                choice.map = map->scenario;
+                if (mod) { choice.modFolder = mod->folder; choice.modTitle = mod->title; }
                 if (ff) {
                     choice.mode = "firefight";
                     choice.difficulty = st.difficulty;
@@ -854,7 +1094,8 @@ FrontEndChoice FrontEndMenu::Run(Window& window, D3D11Renderer& renderer, const 
                 if (st.focusRow > 0) st.focusRow = 0;
                 else goBack(Screen::Main);
             }
-            DrawHints(ui, { { "ENTER", "Select" }, { "ESC", "Back" }, { "LEFT / RIGHT", "Change" } });
+            if (forge) DrawHints(ui, { { "ENTER", "Select" }, { "ESC", "Back" } });
+            else DrawHints(ui, { { "ENTER", "Select" }, { "ESC", "Back" }, { "LEFT / RIGHT", "Change" }, { "Q / E", "Vanilla / Modded" } });
             break;
         }
 
@@ -900,8 +1141,7 @@ FrontEndChoice FrontEndMenu::Run(Window& window, D3D11Renderer& renderer, const 
         }
 
         if (st.screen != lastScreen) {
-            if (st.screen != Screen::Main || lastScreen != Screen::Main) MenuSounds::Tab();
-            lastScreen = st.screen;
+            lastScreen = st.screen;   // the accept / back sound already played
         }
 
         ImGui::End();
@@ -917,6 +1157,7 @@ FrontEndChoice FrontEndMenu::Run(Window& window, D3D11Renderer& renderer, const 
     }
 
     // From here on the engine thread owns rendering; the pause menu feeds ImGui itself.
+    ReachAudio::StopMusic();
     window.SetCustomWndProc(nullptr);
     if (choice.play) {
         NOBLE_INFO("FrontEndMenu: PLAY {} {} (difficulty {}, skulls 0x{:X}, variant '{}')", choice.mode, choice.map,
