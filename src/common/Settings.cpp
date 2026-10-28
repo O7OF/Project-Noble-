@@ -55,6 +55,13 @@ void Clamp(SettingsData& d) {
         d.serviceTag = tag.empty() ? "NOBL" : tag;
     }
     if (d.favorites.size() > 50) d.favorites.resize(50);
+    d.wheelUpAction = std::clamp(d.wheelUpAction, -1, 65);
+    d.wheelDownAction = std::clamp(d.wheelDownAction, -1, 65);
+    d.padVibrationStrength = std::clamp(d.padVibrationStrength, 0.0f, 1.0f);
+    d.padLookX = std::clamp(d.padLookX, 1, 19);
+    d.padLookY = std::clamp(d.padLookY, 1, 19);
+    d.padLeftDeadZone = std::clamp(d.padLeftDeadZone, 0.0f, 0.5f);
+    d.padRightDeadZone = std::clamp(d.padRightDeadZone, 0.0f, 0.5f);
     for (auto it = d.keyOverrides.begin(); it != d.keyOverrides.end();) {
         if (it->first < 0 || it->first >= 66 || it->second <= 0 || it->second >= 256) it = d.keyOverrides.erase(it);
         else ++it;
@@ -89,6 +96,15 @@ void Settings::Load() {
             Read(j, "mouseSensitivity", d.mouseSensitivity);
             Read(j, "mouseSensitivityY", d.mouseSensitivityY);
             Read(j, "invertLook", d.invertLook);
+            Read(j, "wheelUpAction", d.wheelUpAction);
+            Read(j, "wheelDownAction", d.wheelDownAction);
+            Read(j, "padVibration", d.padVibration);
+            Read(j, "padVibrationStrength", d.padVibrationStrength);
+            Read(j, "padLookX", d.padLookX);
+            Read(j, "padLookY", d.padLookY);
+            Read(j, "padInvertLook", d.padInvertLook);
+            Read(j, "padLeftDeadZone", d.padLeftDeadZone);
+            Read(j, "padRightDeadZone", d.padRightDeadZone);
             Read(j, "volumeGame", d.volumeGame);
             Read(j, "volumeMusic", d.volumeMusic);
             Read(j, "volumeOther", d.volumeOther);
@@ -136,6 +152,15 @@ bool Settings::Save() {
         j["mouseSensitivity"] = d.mouseSensitivity;
         j["mouseSensitivityY"] = d.mouseSensitivityY;
         j["invertLook"] = d.invertLook;
+        j["wheelUpAction"] = d.wheelUpAction;
+        j["wheelDownAction"] = d.wheelDownAction;
+        j["padVibration"] = d.padVibration;
+        j["padVibrationStrength"] = d.padVibrationStrength;
+        j["padLookX"] = d.padLookX;
+        j["padLookY"] = d.padLookY;
+        j["padInvertLook"] = d.padInvertLook;
+        j["padLeftDeadZone"] = d.padLeftDeadZone;
+        j["padRightDeadZone"] = d.padRightDeadZone;
         j["volumeGame"] = d.volumeGame;
         j["volumeMusic"] = d.volumeMusic;
         j["volumeOther"] = d.volumeOther;

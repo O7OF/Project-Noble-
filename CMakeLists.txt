@@ -127,6 +127,7 @@ set(SOURCES
     src/ui/NobleStyle.cpp
     src/ui/MenuSounds.cpp
     src/ui/SettingsPanel.cpp
+    src/ui/CareerPanel.cpp
     src/common/Settings.cpp
     src/engine/KeyBindings.cpp
     src/career/Career.cpp
@@ -172,6 +173,7 @@ set(HEADERS
     src/ui/NobleStyle.hpp
     src/ui/MenuSounds.hpp
     src/ui/SettingsPanel.hpp
+    src/ui/CareerPanel.hpp
     src/common/Settings.hpp
     src/engine/KeyBindings.hpp
     src/career/Career.hpp

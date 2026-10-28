@@ -26,6 +26,7 @@
 #include <filesystem>
 #include <string>
 #include <cstdlib>
+#include <cmath>
 #include <cwchar>
 #include <cstdio>
 #include <locale.h>
@@ -560,20 +561,52 @@ static uint64_t __fastcall HostSlot33_DisplayQuality(void* thisPtr, uint64_t a1,
 static constexpr size_t kBindingTableOffset = 0x42C;
 static constexpr size_t kBindingEntrySize = 0x18;
 static void WriteDefaultKeyBindings(uint8_t* profile) {
+    const SettingsData settings = Settings::Get().Snapshot();
     for (uint32_t action = 0; action < 66; ++action) {
         uint8_t* entry = profile + kBindingTableOffset + action * kBindingEntrySize;
         // MCC's default layout plus the player's changes from the SETTINGS tab.
-        const uint32_t vk = static_cast<uint32_t>(KeyBindings::EffectiveKey(static_cast<int>(action)));
+        auto it = settings.keyOverrides.find(static_cast<int>(action));
+        const uint32_t vk = static_cast<uint32_t>(it != settings.keyOverrides.end() ? it->second
+                                                                                  : KeyBindings::DefaultKey(static_cast<int>(action)));
+        const uint32_t none = 0;
         memcpy(entry + 0, &action, sizeof(action));
         memcpy(entry + 4, &vk, sizeof(vk));
+        memcpy(entry + 8, &none, sizeof(none));
     }
-    // Entries are {u32 action, u32 key, u32 second key, 12 zero bytes}. RR's captured profile binds
-    // action 4 (change weapon) to '1' and, as its second key, 0xAF: the mouse wheel (the engine turns
-    // the wheel pulse at input +0x114 into that code). Without it the wheel does nothing.
-    // Tested 18:13: wheel up switches weapons. 0xAE in the third key slot did nothing for wheel down,
-    // so FillLocalInput sends every notch as "up" (with two weapons either direction does the same).
-    const uint32_t kWheelUp = 0xAF;
-    memcpy(profile + kBindingTableOffset + 4 * kBindingEntrySize + 8, &kWheelUp, sizeof(kWheelUp));
+    // Entries are {u32 action, u32 key, u32 second key, 12 zero bytes}. The mouse wheel is bound
+    // through the second key: the engine turns the wheel pulse at input +0x114 into key 0xAF (up,
+    // +1) or 0xAE (down, -1). RR binds 0xAF to action 4 (change weapon). Tested 2026-10-28:
+    // 0xAE as action 4's second key + a -1 pulse switches weapons; 0xB0 does nothing. Only one
+    // second key per action works, so when both directions go to the same action only 0xAF is bound
+    // and FillLocalInput sends down notches as up (see WheelPulseSign).
+    const int up = settings.wheelUpAction, down = settings.wheelDownAction;
+    if (up >= 0 && up < 66) {
+        const uint32_t code = 0xAF;
+        memcpy(profile + kBindingTableOffset + up * kBindingEntrySize + 8, &code, sizeof(code));
+    }
+    if (down >= 0 && down < 66) {
+        const uint32_t code = down == up ? 0xAF : 0xAE;
+        memcpy(profile + kBindingTableOffset + down * kBindingEntrySize + 8, &code, sizeof(code));
+    }
+}
+
+// Controller look speed (SETTINGS > CONTROLS > GAMEPAD). Tested 2026-10-28 with -fake-pad and
+// -profile-set: +0x1B6 = 0 turns the view about a third as far as the stock 0x12 (horizontal look
+// speed, engine range 0..18); +0x1B5 and +0x1B7 = 0 left horizontal turning unchanged. +0x1B5 is
+// taken to be the vertical speed (same range and default as +0x1B6).
+static void WritePadLookSettings(uint8_t* profile) {
+    const SettingsData s = Settings::Get().Snapshot();
+    profile[0x1B5] = static_cast<uint8_t>(std::clamp(s.padLookY, 1, 19) - 1);
+    profile[0x1B6] = static_cast<uint8_t>(std::clamp(s.padLookX, 1, 19) - 1);
+}
+
+// Pulse to send for one wheel notch (+1 = up, -1 = down), or 0 to drop it (direction unbound).
+static int WheelPulseSign(bool upNotch) {
+    const SettingsData s = Settings::Get().Snapshot();
+    const int action = upNotch ? s.wheelUpAction : s.wheelDownAction;
+    if (action < 0) return 0;
+    if (upNotch) return 1;
+    return s.wheelDownAction == s.wheelUpAction ? 1 : -1;
 }
 
 // Audio volumes are profile settings too (RR live::audio::set_volume): f32 at +0xA5C (game/master),
@@ -651,6 +684,8 @@ static std::filesystem::path ProfileCaptureDirArgPath() {
 
 static uint8_t s_hostProfileBuffer[0x10000] = { 0 };
 static bool s_hostProfileInitialized = false;
+static bool s_profileBuiltIn = false;   // false when -profile supplied the profile
+static std::vector<std::pair<uint32_t, uint8_t>> s_profilePatches;   // -profile-set test option
 
 static void CaptureProfileSnapshotIfChanged(const uint8_t* profile) {
     static const std::filesystem::path captureDir = ProfileCaptureDirArgPath();
@@ -766,7 +801,47 @@ static uint64_t __fastcall HostSlot34_ProfileSettings(void* thisPtr, uint64_t a1
         for (size_t i = 0; i < 4 && i < tag.size(); ++i) serviceTag[i] = static_cast<wchar_t>(tag[i]);
         memcpy(s_hostProfileBuffer + 0x1AC, serviceTag, sizeof(serviceTag));
         s_hostProfileInitialized = true;
+        s_profileBuiltIn = !loaded;
+        // Test option "-profile-set <hex offset>=<hex byte>[,...]": patch profile bytes (used to find
+        // what the controller look bytes at +0x1B4.. do; see FillLocalPad and -fake-pad).
+        {
+            int argc = 0;
+            LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+            for (int i = 1; argv && i + 1 < argc; ++i) {
+                if (_wcsicmp(argv[i], L"-profile-set") != 0) continue;
+                std::wstring list = argv[i + 1];
+                size_t pos = 0;
+                while (pos < list.size()) {
+                    size_t comma = list.find(L',', pos);
+                    if (comma == std::wstring::npos) comma = list.size();
+                    const std::wstring item = list.substr(pos, comma - pos);
+                    const size_t eq = item.find(L'=');
+                    if (eq != std::wstring::npos) {
+                        const unsigned long off = wcstoul(item.substr(0, eq).c_str(), nullptr, 16);
+                        const unsigned long val = wcstoul(item.substr(eq + 1).c_str(), nullptr, 16);
+                        if (off < 0xC00) {
+                            s_profilePatches.push_back({ static_cast<uint32_t>(off), static_cast<uint8_t>(val) });
+                            NOBLE_INFO("ReachHost [Slot 34]: -profile-set +0x{:X} = 0x{:02X}", off, val & 0xFF);
+                        }
+                    }
+                    pos = comma + 1;
+                }
+            }
+            if (argv) LocalFree(argv);
+        }
     }
+    // Key bindings and the mouse wheel from SETTINGS > KEY BINDINGS also reach a running game
+    // (the pause menu's SETTINGS page): the built-in profile's table is rewritten twice a second.
+    if (s_profileBuiltIn) {
+        static ULONGLONG s_lastBindings = 0;
+        const ULONGLONG now = GetTickCount64();
+        if (now - s_lastBindings >= 500) {
+            s_lastBindings = now;
+            WriteDefaultKeyBindings(s_hostProfileBuffer);
+            WritePadLookSettings(s_hostProfileBuffer);
+        }
+    }
+    for (const auto& [off, val] : s_profilePatches) s_hostProfileBuffer[off] = val;
 
     CaptureProfileSnapshotIfChanged(s_hostProfileBuffer);
 
@@ -924,6 +999,96 @@ static void InputRelease(HWND hwnd, const char* reason) {
     }
     s_inputCaptured = false;
     NOBLE_INFO("ReachHost [Slot 36 - Input]: {}, mouse released", reason);
+}
+
+// XInput, loaded on first use (xinput1_4.dll ships with Windows 8+). The engine loads it as well and
+// reads the pads itself; Noble only needs XInputSetState for rumble and GetState for tests.
+struct NobleXInputGamepad { WORD wButtons; BYTE bLeftTrigger, bRightTrigger; SHORT sThumbLX, sThumbLY, sThumbRX, sThumbRY; };
+struct NobleXInputState { DWORD dwPacketNumber; NobleXInputGamepad Gamepad; };
+struct NobleXInputVibration { WORD wLeftMotorSpeed, wRightMotorSpeed; };
+using XInputGetStateFn = DWORD(WINAPI*)(DWORD, NobleXInputState*);
+using XInputSetStateFn = DWORD(WINAPI*)(DWORD, NobleXInputVibration*);
+static HMODULE XInputModule() {
+    static HMODULE s_module = LoadLibraryW(L"xinput1_4.dll");
+    return s_module;
+}
+
+// ------------------------------------------------------------------ controller
+// With a host, haloreach.dll never loads XInput itself (haloreach+0x23855: only when the host global
+// at +0xC1A100 is null); MCC hands it the pad through this same input buffer. From the engine's
+// reader (haloreach+0x23CF0..0x23D87, which rebuilds an XINPUT_STATE from it):
+//   +0x000 u32  device: 0 = controller (the pad fields below are used), 1 = keyboard and mouse
+//   +0x120 u16  buttons (XINPUT_GAMEPAD_* bits)
+//   +0x124 u8   left trigger, +0x125 u8 right trigger
+//   +0x126 i16  left stick x, +0x128 y, +0x12A right stick x, +0x12C y
+// Noble reads pad 0 with XInput and switches the device to whichever was used last, as MCC does.
+static bool AnyKeyDown(const uint8_t* st) {
+    for (int vk = 8; vk < 256; ++vk) if (st[0x004 + vk]) return true;
+    return false;
+}
+
+static double FakePadAt();
+static bool ReadPad(NobleXInputState& state);
+
+static void FillLocalPad(uint8_t* st, bool keyboardMouseUsed) {
+    static bool s_padMode = false;
+    static WORD s_lastButtons = 0;
+    NobleXInputState state{};
+    const bool connected = ReadPad(state);
+    if (!connected) {
+        if (s_padMode) NOBLE_INFO("ReachHost [Slot 36 - Input]: controller disconnected, back to keyboard and mouse");
+        s_padMode = false;
+        s_lastButtons = 0;
+        return;
+    }
+    const NobleXInputGamepad& g = state.Gamepad;
+    const bool padUsed = g.wButtons != 0 || g.bLeftTrigger > 40 || g.bRightTrigger > 40 ||
+                         std::abs(g.sThumbLX) > 9000 || std::abs(g.sThumbLY) > 9000 ||
+                         std::abs(g.sThumbRX) > 9000 || std::abs(g.sThumbRY) > 9000;
+    if (padUsed && !s_padMode) {
+        s_padMode = true;
+        NOBLE_INFO("ReachHost [Slot 36 - Input]: controller in use");
+    } else if (keyboardMouseUsed && !padUsed && s_padMode) {
+        s_padMode = false;
+        NOBLE_INFO("ReachHost [Slot 36 - Input]: keyboard and mouse in use");
+    }
+    // Start opens Noble's pause menu (the engine has none outside MCC), like Esc.
+    const WORD pressed = static_cast<WORD>(g.wButtons & ~s_lastButtons);
+    s_lastButtons = g.wButtons;
+    if ((pressed & 0x0010) && !PauseMenu::IsGameOver()) PauseMenu::Toggle();
+    if (!s_padMode) return;
+
+    // Noble's own options: extra radial dead zones (rescaled so the edge still reaches full speed)
+    // and look inversion. The engine applies its own dead zones and look speed after this.
+    static SettingsData s_pad;
+    static ULONGLONG s_padRead = 0;
+    if (GetTickCount64() - s_padRead > 500) {
+        s_padRead = GetTickCount64();
+        s_pad = Settings::Get().Snapshot();
+    }
+    auto deadZone = [](SHORT& x, SHORT& y, float zone) {
+        if (zone <= 0.0f) return;
+        const float fx = x / 32767.0f, fy = y / 32767.0f;
+        const float len = std::sqrt(fx * fx + fy * fy);
+        if (len <= zone) { x = y = 0; return; }
+        const float scale = std::min(1.0f, (len - zone) / (1.0f - zone)) / len;
+        x = static_cast<SHORT>(std::clamp(fx * scale, -1.0f, 1.0f) * 32767.0f);
+        y = static_cast<SHORT>(std::clamp(fy * scale, -1.0f, 1.0f) * 32767.0f);
+    };
+    SHORT lx = g.sThumbLX, ly = g.sThumbLY, rx = g.sThumbRX, ry = g.sThumbRY;
+    deadZone(lx, ly, s_pad.padLeftDeadZone);
+    deadZone(rx, ry, s_pad.padRightDeadZone);
+    if (s_pad.padInvertLook) ry = static_cast<SHORT>(ry == -32768 ? 32767 : -ry);
+
+    *reinterpret_cast<uint32_t*>(st + 0x000) = 0;
+    const WORD buttons = static_cast<WORD>(g.wButtons & ~0x0010);   // Start stays Noble's
+    memcpy(st + 0x120, &buttons, sizeof(buttons));
+    st[0x124] = g.bLeftTrigger;
+    st[0x125] = g.bRightTrigger;
+    memcpy(st + 0x126, &lx, sizeof(SHORT));
+    memcpy(st + 0x128, &ly, sizeof(SHORT));
+    memcpy(st + 0x12A, &rx, sizeof(SHORT));
+    memcpy(st + 0x12C, &ry, sizeof(SHORT));
 }
 
 static void FillLocalInput(uint8_t* st) {
@@ -1124,14 +1289,17 @@ static void FillLocalInput(uint8_t* st) {
     } else if (s_pulseSign != 0 && wheelNow - s_pulseStart < 80) {
         wheel = 0.0f;
     } else if (s_wheelPending != 0) {
+        const int pendingBefore = s_wheelPending;
         s_wheelPending -= s_wheelPending > 0 ? 1 : -1;
-        s_pulseSign = 1;  // only wheel-up (0xAF) is bound; down notches switch weapons too
+        s_pulseSign = WheelPulseSign(pendingBefore > 0);
         s_pulseStart = wheelNow;
         wheel = static_cast<float>(s_pulseSign);
     } else {
         s_pulseSign = 0;
     }
     *reinterpret_cast<float*>(st + 0x114) = wheel;
+
+    FillLocalPad(st, dx != 0.0f || dy != 0.0f || buttons != 0 || wheel != 0.0f || AnyKeyDown(st));
 }
 
 static uint64_t __fastcall HostSlot36_InputController(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
@@ -1158,10 +1326,91 @@ static uint64_t __fastcall HostSlot36_InputController(void* thisPtr, uint64_t a1
     return 1;
 }
 
-// Slot 39: Pad Rumble handler (host_probe case 0x27)
+
+// Slot 39: pad rumble (host_probe case 0x27). haloreach+0x24194 calls it once per pad (0..3) with
+// a1 = pad index and a2 -> four u16 motor speeds {low-frequency, high-frequency, left trigger,
+// right trigger}; without a host it calls XInputSetState itself with the first two. Noble passes
+// them on, scaled by SETTINGS > CONTROLS > VIBRATION (trigger motors aren't reachable through XInput).
 static uint64_t __fastcall HostSlot39_PadRumble(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
-    (void)thisPtr; (void)a1; (void)a2; (void)a3; (void)a4;
+    (void)thisPtr; (void)a3; (void)a4;
+    if (a1 > 3 || a2 <= 0x10000) return 0;
+    uint16_t motors[4] = {};
+    if (!SafeCopyMemory(motors, reinterpret_cast<const void*>(a2), sizeof(motors))) return 0;
+    static XInputSetStateFn s_set = reinterpret_cast<XInputSetStateFn>(XInputModule() ? GetProcAddress(XInputModule(), "XInputSetState") : nullptr);
+    if (!s_set) return 0;
+
+    static bool s_enabled = true;
+    static float s_strength = 1.0f;
+    static ULONGLONG s_lastRead = 0;
+    const ULONGLONG now = GetTickCount64();
+    if (now - s_lastRead > 500) {   // settings can change from the pause menu
+        s_lastRead = now;
+        const SettingsData settings = Settings::Get().Snapshot();
+        s_enabled = settings.padVibration;
+        s_strength = settings.padVibrationStrength;
+    }
+    const float scale = s_enabled ? s_strength : 0.0f;
+    NobleXInputVibration v{ static_cast<WORD>(motors[0] * scale), static_cast<WORD>(motors[1] * scale) };
+
+    // XInputSetState is only sent when the value changes (the engine calls every frame for all pads).
+    static WORD s_last[4][2] = { { 0xFFFF, 0xFFFF }, { 0xFFFF, 0xFFFF }, { 0xFFFF, 0xFFFF }, { 0xFFFF, 0xFFFF } };
+    if (s_last[a1][0] == v.wLeftMotorSpeed && s_last[a1][1] == v.wRightMotorSpeed) return 0;
+    s_last[a1][0] = v.wLeftMotorSpeed;
+    s_last[a1][1] = v.wRightMotorSpeed;
+    const DWORD r = s_set(static_cast<DWORD>(a1), &v);
+    static std::atomic<int> s_logged{0};
+    if ((v.wLeftMotorSpeed || v.wRightMotorSpeed) && s_logged.fetch_add(1) < 5) {
+        NOBLE_INFO("ReachHost [Slot 39 - Rumble]: pad {} motors {} / {} (triggers {} / {}) -> XInputSetState {}",
+                   a1, v.wLeftMotorSpeed, v.wRightMotorSpeed, motors[2], motors[3], r);
+    }
     return 0;
+}
+
+// Test option "-fake-pad <seconds>": that many seconds after the first input poll, pad 0 reads as
+// connected for 1.5 s with the right stick pushed right (no controller needed to test pad look).
+static double FakePadAt() {
+    static double s_at = -2.0;
+    if (s_at == -2.0) {
+        s_at = -1.0;
+        int argc = 0;
+        LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+        for (int i = 1; argv && i + 1 < argc; ++i) {
+            if (_wcsicmp(argv[i], L"-fake-pad") == 0) s_at = _wtof(argv[i + 1]);
+        }
+        if (argv) LocalFree(argv);
+    }
+    return s_at;
+}
+
+static bool ReadPad(NobleXInputState& state) {
+    const double fakeAt = FakePadAt();
+    if (fakeAt >= 0.0) {
+        static ULONGLONG s_start = GetTickCount64();
+        const ULONGLONG t = GetTickCount64() - s_start;
+        const ULONGLONG at = static_cast<ULONGLONG>(fakeAt * 1000.0);
+        static bool s_logged = false;
+        if (t >= at && t < at + 1500) {
+            if (!s_logged) { s_logged = true; NOBLE_INFO("ReachHost: -fake-pad: right stick held right for 1.5 s"); }
+            memset(&state, 0, sizeof(state));
+            state.dwPacketNumber = static_cast<DWORD>(t);
+            static const bool s_vertical = wcsstr(GetCommandLineW(), L"-fake-pad-y") != nullptr;
+            if (s_vertical) state.Gamepad.sThumbRY = 20000;
+            else state.Gamepad.sThumbRX = 20000;
+            return true;
+        }
+        if (t >= at && t < at + 1600) { memset(&state, 0, sizeof(state)); return true; }   // let go
+    }
+    static XInputGetStateFn s_get = reinterpret_cast<XInputGetStateFn>(XInputModule() ? GetProcAddress(XInputModule(), "XInputGetState") : nullptr);
+    if (!s_get) return false;
+    // A missing pad makes XInputGetState slow; ask again only every 2 s while none is connected.
+    static ULONGLONG s_nextTry = 0;
+    const ULONGLONG now = GetTickCount64();
+    if (now < s_nextTry) return false;
+    if (s_get(0, &state) != ERROR_SUCCESS) {
+        s_nextTry = now + 2000;
+        return false;
+    }
+    return true;
 }
 
 // Slot 41 & 43: Network Packet handlers (host_probe case 0x29, 0x2B)

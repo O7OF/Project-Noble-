@@ -222,6 +222,36 @@ void DrawSettingsPage(HWND hwnd) {
 
 } // namespace
 
+// Post-game scoreboard: everyone in the results record (Noble only knows the local player's name).
+static void DrawScoreboard() {
+    const Career::Award a = Career::LastAward();
+    if (!a.valid || a.players.empty()) return;
+    ImGui::TextColored(NobleStyle::TextMuted(), "%s  -  %.0f min", a.type.c_str(), a.minutes);
+    const ImGuiTableFlags flags = ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingFixedFit;
+    if (ImGui::BeginTable("##postgame", 6, flags)) {
+        ImGui::TableSetupColumn("PLAYER", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn("SCORE", ImGuiTableColumnFlags_WidthFixed, 70);
+        ImGui::TableSetupColumn("K", ImGuiTableColumnFlags_WidthFixed, 40);
+        ImGui::TableSetupColumn("D", ImGuiTableColumnFlags_WidthFixed, 40);
+        ImGui::TableSetupColumn("A", ImGuiTableColumnFlags_WidthFixed, 40);
+        ImGui::TableSetupColumn("MEDALS", ImGuiTableColumnFlags_WidthFixed, 70);
+        ImGui::TableHeadersRow();
+        for (const Career::ScoreRow& r : a.players) {
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            if (r.local) ImGui::TextColored(NobleStyle::Accent(), "%s", r.name.c_str());
+            else ImGui::TextUnformatted(r.name.c_str());
+            ImGui::TableNextColumn(); ImGui::Text("%lld", static_cast<long long>(r.score));
+            ImGui::TableNextColumn(); ImGui::Text("%lld", static_cast<long long>(r.kills));
+            ImGui::TableNextColumn(); ImGui::Text("%lld", static_cast<long long>(r.deaths));
+            ImGui::TableNextColumn(); ImGui::Text("%lld", static_cast<long long>(r.assists));
+            ImGui::TableNextColumn(); ImGui::Text("%lld", static_cast<long long>(r.medals));
+        }
+        ImGui::EndTable();
+    }
+    ImGui::Spacing();
+}
+
 // Credits paid for the match that just ended (career/Career.cpp), with rank progress.
 static void DrawCredits() {
     const Career::Award a = Career::LastAward();
@@ -229,12 +259,12 @@ static void DrawCredits() {
     const auto& ranks = Career::Ranks();
     for (const Career::AwardLine& l : a.lines) {
         ImGui::TextColored(NobleStyle::TextMuted(), "%s", l.label.c_str());
-        ImGui::SameLine(260.0f);
+        ImGui::SameLine(400.0f);
         ImGui::Text("+%lld cR", static_cast<long long>(l.credits));
     }
     ImGui::Separator();
     ImGui::TextColored(NobleStyle::Accent(), "CREDITS EARNED");
-    ImGui::SameLine(260.0f);
+    ImGui::SameLine(400.0f);
     ImGui::TextColored(NobleStyle::Accent(), "+%lld cR", static_cast<long long>(a.total));
     ImGui::Spacing();
     if (a.rankAfter > a.rankBefore) {
@@ -262,13 +292,14 @@ void PauseMenu::DrawGameOver(HWND hwnd) {
         mapName = s_loadingMapName;
     }
 
-    const ImVec2 button = CenteredWindow(380.0f);
+    const ImVec2 button = CenteredWindow(560.0f);
     if (ImGui::Begin("##NobleGameOver", nullptr, kPanelFlags)) {
         NobleStyle::Header("GAME OVER");
         if (!mapName.empty()) {
             ImGui::TextColored(NobleStyle::TextMuted(), "%s", mapName.c_str());
         }
         ImGui::Spacing();
+        DrawScoreboard();
         DrawCredits();
         ImGui::Spacing();
 

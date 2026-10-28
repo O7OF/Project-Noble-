@@ -1,5 +1,6 @@
 #include "Career.hpp"
 #include "common/Logger.hpp"
+#include "common/Settings.hpp"
 
 #include <windows.h>
 #include <nlohmann/json.hpp>
@@ -9,7 +10,10 @@
 #include <cstring>
 #include <ctime>
 #include <filesystem>
+#include <map>
+#include <cstdio>
 #include <fstream>
+#include <iterator>
 #include <mutex>
 #include <random>
 
@@ -96,9 +100,76 @@ const std::vector<Rank> kRanks = {
     { "Reclaimer", 16500000 },                { "Inheritor", 20000000 },
 };
 
+// Campaign: bonus for finishing a mission, by difficulty (Easy, Normal, Heroic, Legendary), plus
+// 10% of it per skull that was on (up to +100%).
+constexpr int64_t kMissionBonus[4] = { 250, 500, 1000, 2000 };
+
+// ---------------------------------------------------------------------------------------------
+// Challenges and commendations. Reach's own lists came from Bungie's servers; these are Noble's,
+// built only on what the results record and the launch settings tell us.
+// ---------------------------------------------------------------------------------------------
+enum class Metric { Games, CampaignMissions, FirefightGames, MultiplayerGames, Minutes, Kills, Medals,
+                    HeroicMission, LegendaryMission, SkullMission };
+struct ChallengeDef {
+    const char* title;
+    const char* description;
+    Metric metric;
+    int64_t target;
+    int64_t reward;
+};
+const ChallengeDef kDailyPool[] = {
+    { "Daily Grind", "Finish 3 games of any kind.", Metric::Games, 3, 1500 },
+    { "Mission Ready", "Complete a campaign mission.", Metric::CampaignMissions, 1, 1500 },
+    { "Hold the Line", "Finish a Firefight game.", Metric::FirefightGames, 1, 1500 },
+    { "Spartan Games", "Finish 2 multiplayer games.", Metric::MultiplayerGames, 2, 1500 },
+    { "Time on Duty", "Play for 45 minutes.", Metric::Minutes, 45, 2000 },
+    { "Body Count", "Get 50 kills in any mode.", Metric::Kills, 50, 2000 },
+    { "Decorated", "Earn 10 medals.", Metric::Medals, 10, 1500 },
+    { "No Easy Way Out", "Complete a campaign mission on Heroic or Legendary.", Metric::HeroicMission, 1, 2500 },
+    { "Skull Session", "Complete a campaign mission with a skull on.", Metric::SkullMission, 1, 2000 },
+};
+const ChallengeDef kWeeklyPool[] = {
+    { "Weekly Campaigner", "Complete 6 campaign missions.", Metric::CampaignMissions, 6, 15000 },
+    { "Weekly Survivor", "Finish 8 Firefight games.", Metric::FirefightGames, 8, 15000 },
+    { "Weekly Veteran", "Play for 5 hours.", Metric::Minutes, 300, 15000 },
+    { "Weekly Legend", "Complete 2 campaign missions on Legendary.", Metric::LegendaryMission, 2, 20000 },
+    { "Weekly Slayer", "Get 500 kills in any mode.", Metric::Kills, 500, 15000 },
+};
+constexpr int kDailyCount = 4;
+
+struct CommendationDef {
+    const char* title;
+    const char* description;
+    int64_t targets[6];   // Iron, Bronze, Silver, Gold, Onyx, Max
+};
+const CommendationDef kCommendations[] = {
+    { "Campaign Veteran", "Campaign missions completed", { 5, 15, 40, 100, 250, 500 } },
+    { "Firefight Survivor", "Firefight games finished", { 5, 15, 40, 100, 250, 500 } },
+    { "Spartan Warrior", "Multiplayer games finished", { 10, 30, 75, 200, 500, 1000 } },
+    { "Time Served", "Hours played", { 1, 5, 15, 40, 100, 250 } },
+    { "Killing Machine", "Kills in every mode", { 100, 500, 1500, 5000, 15000, 50000 } },
+    { "Medal Collector", "Medals earned", { 25, 100, 300, 1000, 3000, 10000 } },
+};
+constexpr int64_t kCommendationReward[6] = { 500, 1500, 3000, 6000, 12000, 25000 };
+const char* const kTierNames[7] = { "None", "Iron", "Bronze", "Silver", "Gold", "Onyx", "Max" };
+
+// Lifetime data beyond the totals.
+struct Extra {
+    int64_t games[3] = {};
+    double minutes[3] = {};
+    int64_t bestMatch = 0;
+    int64_t challengesCompleted = 0;
+    std::map<std::string, int> campaignBest;          // scenario -> best difficulty
+    std::vector<MatchSummary> history;                // newest first, at most 20
+    std::map<std::string, int64_t> challengeProgress; // "<period>:<d|w><index>" -> progress
+    std::map<std::string, bool> challengeClaimed;
+    std::map<std::string, int> commendationTier;      // title -> tiers paid
+};
+
 std::mutex s_mutex;
 bool s_loaded = false;
 Totals s_totals;
+Extra s_extra;
 Award s_lastAward;
 
 BaseType s_type = BaseType::Multiplayer;
@@ -138,6 +209,37 @@ void LoadLocked() {
         s_totals.assists = j.value("assists", int64_t{0});
         s_totals.medals = j.value("medals", int64_t{0});
         s_totals.minutesPlayed = j.value("minutesPlayed", 0.0);
+        if (j.contains("record") && j["record"].is_object()) {
+            const nlohmann::json& r = j["record"];
+            const char* names[3] = { "campaign", "firefight", "multiplayer" };
+            for (int i = 0; i < 3; ++i) {
+                if (r.contains("games")) s_extra.games[i] = r["games"].value(names[i], int64_t{0});
+                if (r.contains("minutes")) s_extra.minutes[i] = r["minutes"].value(names[i], 0.0);
+            }
+            s_extra.bestMatch = r.value("bestMatchCredits", int64_t{0});
+            s_extra.challengesCompleted = r.value("challengesCompleted", int64_t{0});
+            if (r.contains("campaignBest")) for (auto& [k, v] : r["campaignBest"].items()) s_extra.campaignBest[k] = v.get<int>();
+            if (r.contains("challengeProgress")) for (auto& [k, v] : r["challengeProgress"].items()) s_extra.challengeProgress[k] = v.get<int64_t>();
+            if (r.contains("challengeClaimed")) for (auto& [k, v] : r["challengeClaimed"].items()) s_extra.challengeClaimed[k] = v.get<bool>();
+            if (r.contains("commendations")) for (auto& [k, v] : r["commendations"].items()) s_extra.commendationTier[k] = v.get<int>();
+            if (r.contains("history") && r["history"].is_array()) {
+                for (const auto& h : r["history"]) {
+                    MatchSummary m;
+                    m.date = h.value("date", std::string());
+                    m.type = h.value("type", std::string());
+                    m.map = h.value("map", std::string());
+                    m.difficulty = h.value("difficulty", -1);
+                    m.minutes = h.value("minutes", 0.0);
+                    m.kills = h.value("kills", int64_t{0});
+                    m.deaths = h.value("deaths", int64_t{0});
+                    m.assists = h.value("assists", int64_t{0});
+                    m.medals = h.value("medals", int64_t{0});
+                    m.score = h.value("score", int64_t{0});
+                    m.credits = h.value("credits", int64_t{0});
+                    s_extra.history.push_back(m);
+                }
+            }
+        }
     } catch (...) {
         NOBLE_WARN("Career: career.json could not be read, starting from zero");
     }
@@ -154,6 +256,29 @@ void SaveLocked() {
     j["assists"] = s_totals.assists;
     j["medals"] = s_totals.medals;
     j["minutesPlayed"] = s_totals.minutesPlayed;
+    {
+        nlohmann::json r;
+        const char* names[3] = { "campaign", "firefight", "multiplayer" };
+        for (int i = 0; i < 3; ++i) {
+            r["games"][names[i]] = s_extra.games[i];
+            r["minutes"][names[i]] = s_extra.minutes[i];
+        }
+        r["bestMatchCredits"] = s_extra.bestMatch;
+        r["challengesCompleted"] = s_extra.challengesCompleted;
+        r["campaignBest"] = s_extra.campaignBest;
+        // Only this week's challenge entries are worth keeping.
+        r["challengeProgress"] = s_extra.challengeProgress;
+        r["challengeClaimed"] = s_extra.challengeClaimed;
+        r["commendations"] = s_extra.commendationTier;
+        nlohmann::json h = nlohmann::json::array();
+        for (const MatchSummary& m : s_extra.history) {
+            h.push_back({ { "date", m.date }, { "type", m.type }, { "map", m.map }, { "difficulty", m.difficulty },
+                          { "minutes", m.minutes }, { "kills", m.kills }, { "deaths", m.deaths }, { "assists", m.assists },
+                          { "medals", m.medals }, { "score", m.score }, { "credits", m.credits } });
+        }
+        r["history"] = h;
+        j["record"] = r;
+    }
     std::error_code ec;
     std::filesystem::create_directories(UserDir(), ec);
     const auto path = UserDir() / "career.json";
@@ -175,6 +300,120 @@ uint64_t U64(const uint8_t* p, size_t off) {
     uint64_t v;
     std::memcpy(&v, p + off, sizeof(v));
     return v;
+}
+
+// ---------------------------------------------------------------- challenges
+
+std::tm LocalNow() {
+    std::time_t t = std::time(nullptr);
+    std::tm tm{};
+    localtime_s(&tm, &t);
+    return tm;
+}
+
+// Daily period = today's date; weekly period = the date of this week's Monday.
+std::string DailyKey() { return Today(); }
+std::string WeeklyKey() {
+    std::tm tm = LocalNow();
+    const int sinceMonday = (tm.tm_wday + 6) % 7;
+    tm.tm_mday -= sinceMonday;
+    tm.tm_hour = 12;
+    std::mktime(&tm);
+    char buf[16];
+    std::strftime(buf, sizeof(buf), "%Y-%m-%d", &tm);
+    return std::string("W") + buf;
+}
+
+uint32_t Fnv1a(const std::string& text) {
+    uint32_t h = 2166136261u;
+    for (unsigned char c : text) { h ^= c; h *= 16777619u; }
+    return h;
+}
+
+struct ActiveChallenge {
+    const ChallengeDef* def;
+    std::string key;
+    bool weekly;
+};
+
+// Today's 4 daily challenges and this week's weekly one, picked from the pools by the period's date.
+std::vector<ActiveChallenge> ActiveChallenges() {
+    std::vector<ActiveChallenge> out;
+    const std::string day = DailyKey();
+    std::mt19937 rng(Fnv1a(day));
+    std::vector<int> order(std::size(kDailyPool));
+    for (size_t i = 0; i < order.size(); ++i) order[i] = static_cast<int>(i);
+    std::shuffle(order.begin(), order.end(), rng);
+    for (int i = 0; i < kDailyCount && i < static_cast<int>(order.size()); ++i) {
+        out.push_back({ &kDailyPool[order[i]], day + ":d" + std::to_string(order[i]), false });
+    }
+    const std::string week = WeeklyKey();
+    const size_t w = Fnv1a(week) % std::size(kWeeklyPool);
+    out.push_back({ &kWeeklyPool[w], week + ":w" + std::to_string(w), true });
+    return out;
+}
+
+// What one finished match adds to a challenge metric.
+struct MatchFacts {
+    BaseType type;
+    int difficulty;
+    uint64_t skulls;
+    double minutes;
+    int64_t kills;
+    int64_t medals;
+};
+int64_t MetricAmount(Metric m, const MatchFacts& f) {
+    const bool campaign = f.type == BaseType::Campaign;
+    switch (m) {
+    case Metric::Games: return 1;
+    case Metric::CampaignMissions: return campaign ? 1 : 0;
+    case Metric::FirefightGames: return f.type == BaseType::Firefight ? 1 : 0;
+    case Metric::MultiplayerGames: return f.type == BaseType::Multiplayer ? 1 : 0;
+    case Metric::Minutes: return static_cast<int64_t>(f.minutes);
+    case Metric::Kills: return f.kills;
+    case Metric::Medals: return f.medals;
+    case Metric::HeroicMission: return campaign && f.difficulty >= 2 ? 1 : 0;
+    case Metric::LegendaryMission: return campaign && f.difficulty >= 3 ? 1 : 0;
+    case Metric::SkullMission: return campaign && f.skulls != 0 ? 1 : 0;
+    }
+    return 0;
+}
+
+// Forget challenge entries from past periods.
+void PruneChallengesLocked() {
+    const std::string day = DailyKey(), week = WeeklyKey();
+    auto current = [&](const std::string& key) { return key.rfind(day + ":", 0) == 0 || key.rfind(week + ":", 0) == 0; };
+    for (auto it = s_extra.challengeProgress.begin(); it != s_extra.challengeProgress.end();) {
+        it = current(it->first) ? std::next(it) : s_extra.challengeProgress.erase(it);
+    }
+    for (auto it = s_extra.challengeClaimed.begin(); it != s_extra.challengeClaimed.end();) {
+        it = current(it->first) ? std::next(it) : s_extra.challengeClaimed.erase(it);
+    }
+}
+
+// ---------------------------------------------------------------- commendations
+
+int64_t CommendationValue(size_t index) {
+    switch (index) {
+    case 0: return s_extra.games[0];
+    case 1: return s_extra.games[1];
+    case 2: return s_extra.games[2];
+    case 3: return static_cast<int64_t>(s_totals.minutesPlayed / 60.0);
+    case 4: return s_totals.kills;
+    case 5: return s_totals.medals;
+    default: return 0;
+    }
+}
+
+int TierFor(const CommendationDef& c, int64_t value) {
+    int tier = 0;
+    for (int t = 0; t < 6; ++t) if (value >= c.targets[t]) tier = t + 1;
+    return tier;
+}
+
+const char* DifficultyName(int d) {
+    static const char* const kNames[4] = { "Easy", "Normal", "Heroic", "Legendary" };
+    return d >= 0 && d < 4 ? kNames[d] : "?";
 }
 
 // The record for this machine's player. Offline, the local player is the first one present.
@@ -263,17 +502,41 @@ void OnGameResults(const uint8_t* record, size_t size) {
     const double minutes =
         std::chrono::duration<double>(std::chrono::steady_clock::now() - s_matchStart).count() / 60.0;
     const int local = LocalPlayer(record);
-    int64_t kills = 0, deaths = 0, assists = 0, medals = 0;
-    if (local >= 0) {
-        const uint8_t* st = record + kStatBlocks + local * kStatBlockSize;
-        kills = U32(st, kStatKills * 4);
-        assists = U32(st, kStatAssists * 4);
-        deaths = U32(st, kStatDeaths * 4);
-        for (size_t m = 0; m < kMedalCount; ++m) medals += U32(st, kMedalOffset + m * 4);
-        // Sanity: the stat slots are provisional; drop anything implausible rather than pay for it.
-        if (kills > 1000 || assists > 1000 || deaths > 1000) kills = assists = deaths = 0;
-        if (medals > 2000) medals = 0;
+    int64_t kills = 0, deaths = 0, assists = 0, medals = 0, score = 0;
+    Award a;
+    a.valid = true;
+    a.type = BaseTypeName(s_type);
+    a.map = s_map;
+    a.minutes = minutes;
+
+    // Scoreboard rows for everyone present. The record has no player names, so only the local
+    // player is named (from SETTINGS). Stat slots are provisional: implausible values show as 0.
+    const SettingsData settings = Settings::Get().Snapshot();
+    for (int i = 0; i < kMaxPlayers; ++i) {
+        const uint8_t* pr = record + kPlayerRecords + i * kPlayerRecordSize;
+        if (pr[0] == 0 && U64(pr, 0x08) == 0) continue;
+        const uint8_t* st = record + kStatBlocks + i * kStatBlockSize;
+        ScoreRow row;
+        row.local = i == local;
+        row.name = row.local ? settings.playerName + "  [" + settings.serviceTag + "]" : "Player " + std::to_string(i + 1);
+        row.score = static_cast<int32_t>(U32(pr, 0x34));
+        row.kills = U32(st, kStatKills * 4);
+        row.assists = U32(st, kStatAssists * 4);
+        row.deaths = U32(st, kStatDeaths * 4);
+        for (size_t m = 0; m < kMedalCount; ++m) row.medals += U32(st, kMedalOffset + m * 4);
+        if (row.kills > 1000 || row.assists > 1000 || row.deaths > 1000) row.kills = row.assists = row.deaths = 0;
+        if (row.medals > 2000) row.medals = 0;
+        if (row.score < -100000 || row.score > 1000000) row.score = 0;
+        if (row.local) {
+            kills = row.kills;
+            assists = row.assists;
+            deaths = row.deaths;
+            medals = row.medals;
+            score = row.score;
+        }
+        a.players.push_back(row);
     }
+    std::stable_sort(a.players.begin(), a.players.end(), [](const ScoreRow& x, const ScoreRow& y) { return x.score > y.score; });
 
     const std::string today = Today();
     if (s_totals.day != today) {
@@ -281,12 +544,10 @@ void OnGameResults(const uint8_t* record, size_t size) {
         s_totals.creditsToday = 0;
     }
 
-    Award a;
-    a.valid = true;
     a.creditsBefore = s_totals.credits;
     a.rankBefore = RankIndex(s_totals.credits);
 
-    // One reward structure per base type (see BaseType); today all three share these rules.
+    // One reward structure per base type (see BaseType); modded content pays as its base type.
     const double paidMinutes = std::clamp(minutes, 0.0, kMinuteCap);
     const double perMinute = kPayPerMinuteBase + kPayPerMinutePerRank * a.rankBefore;
     const int64_t complete = static_cast<int64_t>(paidMinutes * perMinute + 0.5);
@@ -294,6 +555,23 @@ void OnGameResults(const uint8_t* record, size_t size) {
 
     const int64_t performance = kills * kPerKill + assists * kPerAssist + medals * kPerMedal;
     if (performance > 0) a.lines.push_back({ "Performance", performance });
+
+    // Campaign scoring: a bonus for finishing the mission by difficulty, more with skulls on.
+    if (s_type == BaseType::Campaign) {
+        const int d = std::clamp(s_difficulty, 0, 3);
+        const int64_t bonus = kMissionBonus[d];
+        a.lines.push_back({ std::string("Mission complete (") + DifficultyName(d) + ")", bonus });
+        int skullCount = 0;
+        for (uint64_t bits = s_skulls; bits; bits &= bits - 1) ++skullCount;
+        if (skullCount > 0) {
+            const int64_t skullBonus = bonus * std::min(skullCount, 10) / 10;
+            a.lines.push_back({ "Skulls (" + std::to_string(skullCount) + " on)", skullBonus });
+        }
+        if (!s_map.empty()) {
+            auto it = s_extra.campaignBest.find(s_map);
+            if (it == s_extra.campaignBest.end() || it->second < d) s_extra.campaignBest[s_map] = d;
+        }
+    }
 
     static std::mt19937 rng{ std::random_device{}() };
     if (std::uniform_int_distribution<int>(1, kRandomBonusOneIn)(rng) == 1) {
@@ -305,6 +583,43 @@ void OnGameResults(const uint8_t* record, size_t size) {
         }
     }
 
+    // Lifetime numbers first (commendations read them).
+    const int typeIndex = static_cast<int>(s_type);
+    s_extra.games[typeIndex] += 1;
+    s_extra.minutes[typeIndex] += minutes;
+    s_totals.gamesPlayed += 1;
+    s_totals.kills += kills;
+    s_totals.deaths += deaths;
+    s_totals.assists += assists;
+    s_totals.medals += medals;
+    s_totals.minutesPlayed += minutes;
+
+    // Challenges: add this match's progress, pay the ones it completes.
+    PruneChallengesLocked();
+    const MatchFacts facts{ s_type, s_difficulty, s_skulls, minutes, kills, medals };
+    for (const ActiveChallenge& c : ActiveChallenges()) {
+        if (s_extra.challengeClaimed[c.key]) continue;
+        int64_t& progress = s_extra.challengeProgress[c.key];
+        progress += MetricAmount(c.def->metric, facts);
+        if (progress >= c.def->target) {
+            progress = c.def->target;
+            s_extra.challengeClaimed[c.key] = true;
+            s_extra.challengesCompleted += 1;
+            a.lines.push_back({ std::string(c.weekly ? "Weekly challenge: " : "Challenge: ") + c.def->title, c.def->reward });
+        }
+    }
+
+    // Commendations: pay every tier reached since the last match.
+    for (size_t i = 0; i < std::size(kCommendations); ++i) {
+        const CommendationDef& c = kCommendations[i];
+        const int reached = TierFor(c, CommendationValue(i));
+        int& paid = s_extra.commendationTier[c.title];
+        for (int t = paid; t < reached; ++t) {
+            a.lines.push_back({ std::string("Commendation: ") + c.title + " (" + kTierNames[t + 1] + ")", kCommendationReward[t] });
+        }
+        paid = std::max(paid, reached);
+    }
+
     // No daily limit: every match pays in full, whatever the mode (campaign, Firefight, multiplayer,
     // Forge) and whether the map or game type is stock or modded.
     int64_t total = 0;
@@ -313,12 +628,28 @@ void OnGameResults(const uint8_t* record, size_t size) {
 
     s_totals.credits += total;
     s_totals.creditsToday += total;
-    s_totals.gamesPlayed += 1;
-    s_totals.kills += kills;
-    s_totals.deaths += deaths;
-    s_totals.assists += assists;
-    s_totals.medals += medals;
-    s_totals.minutesPlayed += minutes;
+    s_extra.bestMatch = std::max(s_extra.bestMatch, total);
+
+    MatchSummary m;
+    {
+        std::tm tm = LocalNow();
+        char buf[32];
+        std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M", &tm);
+        m.date = buf;
+    }
+    m.type = BaseTypeName(s_type);
+    m.map = s_map;
+    m.difficulty = s_type == BaseType::Multiplayer ? -1 : s_difficulty;
+    m.minutes = minutes;
+    m.kills = kills;
+    m.deaths = deaths;
+    m.assists = assists;
+    m.medals = medals;
+    m.score = score;
+    m.credits = total;
+    s_extra.history.insert(s_extra.history.begin(), m);
+    if (s_extra.history.size() > 20) s_extra.history.resize(20);
+
     a.creditsAfter = s_totals.credits;
     a.rankAfter = RankIndex(s_totals.credits);
     s_lastAward = a;
@@ -328,6 +659,75 @@ void OnGameResults(const uint8_t* record, size_t size) {
                "(today {}), total {} cR, rank {}",
                BaseTypeName(s_type), s_map, minutes, local, kills, assists, deaths, medals, total, s_totals.creditsToday,
                s_totals.credits, kRanks[a.rankAfter].name);
+}
+
+Record GetRecord() {
+    std::lock_guard<std::mutex> lock(s_mutex);
+    LoadLocked();
+    Record r;
+    r.totals = s_totals;
+    for (int i = 0; i < 3; ++i) {
+        r.games[i] = s_extra.games[i];
+        r.minutes[i] = s_extra.minutes[i];
+    }
+    r.bestMatchCredits = s_extra.bestMatch;
+    r.challengesCompleted = s_extra.challengesCompleted;
+    for (const auto& [map, d] : s_extra.campaignBest) r.campaignBest.push_back({ map, d });
+    r.history = s_extra.history;
+    return r;
+}
+
+std::vector<Challenge> Challenges() {
+    std::lock_guard<std::mutex> lock(s_mutex);
+    LoadLocked();
+    std::vector<Challenge> out;
+    for (const ActiveChallenge& c : ActiveChallenges()) {
+        Challenge ch;
+        ch.title = c.def->title;
+        ch.description = c.def->description;
+        ch.weekly = c.weekly;
+        ch.target = c.def->target;
+        ch.reward = c.def->reward;
+        auto p = s_extra.challengeProgress.find(c.key);
+        ch.progress = p != s_extra.challengeProgress.end() ? p->second : 0;
+        auto d = s_extra.challengeClaimed.find(c.key);
+        ch.done = d != s_extra.challengeClaimed.end() && d->second;
+        out.push_back(ch);
+    }
+    return out;
+}
+
+std::string ChallengeResetText() {
+    std::tm tm = LocalNow();
+    const int minutesLeft = (23 - tm.tm_hour) * 60 + (59 - tm.tm_min) + 1;
+    int daysToMonday = (8 - tm.tm_wday) % 7;
+    if (daysToMonday == 0) daysToMonday = 7;
+    char buf[128];
+    std::snprintf(buf, sizeof(buf), "Daily challenges reset in %d h %d min; the weekly one in %d day%s.",
+                  minutesLeft / 60, minutesLeft % 60, daysToMonday, daysToMonday == 1 ? "" : "s");
+    return buf;
+}
+
+std::vector<Commendation> Commendations() {
+    std::lock_guard<std::mutex> lock(s_mutex);
+    LoadLocked();
+    std::vector<Commendation> out;
+    for (size_t i = 0; i < std::size(kCommendations); ++i) {
+        const CommendationDef& c = kCommendations[i];
+        Commendation k;
+        k.title = c.title;
+        k.description = c.description;
+        k.value = CommendationValue(i);
+        k.tier = TierFor(c, k.value);
+        k.prevTarget = k.tier > 0 ? c.targets[k.tier - 1] : 0;
+        k.nextTarget = k.tier < 6 ? c.targets[k.tier] : 0;
+        out.push_back(k);
+    }
+    return out;
+}
+
+const char* CommendationTierName(int tier) {
+    return tier >= 0 && tier <= 6 ? kTierNames[tier] : "?";
 }
 
 Award LastAward() {

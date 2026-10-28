@@ -19,6 +19,7 @@ private:
     void RenderControls();
     void RenderKeyBindings();
     void RenderAudio();
+    void RenderMusicPicker();
     void RenderDisplay();
     void RenderGameplay();
     void RenderNetwork();
@@ -35,6 +36,9 @@ private:
     char m_tagBuf[8] = {};
     char m_masterBuf[256] = {};
     const char* m_message = nullptr;
+    int m_musicGame = -1;              // game shown in the music picker (-1: the saved track's game)
+    char m_musicSearch[64] = {};
+    bool m_musicScrollToCurrent = true;
 };
 
 } // namespace noble
