@@ -33,6 +33,9 @@ public:
     // True while the user is moving or resizing the window (title-bar drag, Alt+Space > Move). The
     // game releases the mouse meanwhile so the window can be moved. Any thread.
     static bool InSizeMove();
+    // Left-button presses (WM_LBUTTONDOWN) since the last call. Overlay menus use it so that a click
+    // shorter than one frame still counts. Any thread.
+    static int TakeLeftClicks();
 
 private:
     static LRESULT CALLBACK StaticWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);

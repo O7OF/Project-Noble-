@@ -1,4 +1,4 @@
-# Project Noble: handoff (2026-10-27, 18:20 ET)
+# Project Noble: handoff (2026-10-27, 20:20 ET)
 
 This picks up a reverse-engineering and C++ effort on **Tyler's Windows PC**. All paths below are real paths on that machine.
 Tyler (GitHub `WeabooTyler117`) works with a partner (GitHub `O7OF`) who owns the repo and writes most of the code.
@@ -11,7 +11,26 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 ---
 
-## 0. Pick up here (18:20 ET)
+## 0. Pick up here (20:20 ET)
+
+**20:15: hand checks done by computer use (all pass).** Windowed 1600x900 Sword Base:
+- Post-game panel (held after the engine stops): PLAY AGAIN relaunches into a new match. A very short synthetic click
+  was missed (the panel polled GetAsyncKeyState once per frame), so overlay menus now also count WM_LBUTTONDOWN
+  (`Window::TakeLeftClicks`; cleared when the pause menu / post-game panel opens so in-game shots don't click).
+- Pause menu QUIT TO MENU returns to the front-end menu; its QUIT closes Noble.
+- Moving the window: with the mouse captured the title bar can't be reached (cursor clipped to the game), so the
+  click lands in the game. Alt+Space > Move works, and with the pause menu open the title bar drags normally.
+- Service tag: scoreboard shows "NobleSix  TEST" (`-scoreboard-at <s>` test option holds Tab 3 s and saves
+  `capture_777777.bmp`).
+- Not checked: kills/medals in the results (no enemies in an offline Slayer; needs Firefight or a second player).
+- **New clue for the padded numbers:** the scoreboard shows score "0000001c" and place "0000": the numbers are printed
+  as **hex at full field width** (8 digits for 32-bit, 4 for 16-bit), not just zero-padded. Looks like the UI's
+  value-to-text falls back to a raw hex dump when it doesn't recognise the property's type. `%x` users in the DLL
+  checked so far: `+0x2B6F12` is only locale detection (GetLocaleInfoEx + swscanf). Slot 61 only gets the set of
+  unique characters, so it can't be used to catch the padded strings. Open question for Tyler: does RR show the
+  same hex numbers?
+- Tyler's settings were switched to windowed 1600x900 + tag TEST for the test and restored afterwards
+  (`settings.backup.json` next to it is the copy).
 
 **Pushed to GitHub (main):** `12a9971` HUD colours + post-game hold, `5e71e53` Mods screen (Tyler-tested),
 `ab77f8b` service tag setting, plus the mouse-wheel / window-move commit below. Commits and pushes now run from

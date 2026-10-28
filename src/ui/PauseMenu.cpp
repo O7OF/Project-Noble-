@@ -3,6 +3,7 @@
 #include "UiArt.hpp"
 #include "career/Career.hpp"
 #include "engine/FrameCapture.hpp"
+#include "host/Window.hpp"
 #include "common/Logger.hpp"
 #include "common/Relaunch.hpp"
 
@@ -87,6 +88,7 @@ bool PauseMenu::IsOpen() { return s_open.load(); }
 void PauseMenu::Toggle() {
     if (s_gameOver.load()) return;  // the post-game panel replaces the pause menu
     const bool nowOpen = !s_open.load();
+    if (nowOpen) Window::TakeLeftClicks();  // forget clicks made in game (shots) before the menu opened
     s_open.store(nowOpen);
     NOBLE_INFO("PauseMenu: {}", nowOpen ? "opened" : "closed");
 }
@@ -101,6 +103,7 @@ void PauseMenu::ShowGameOver() {
     if (!s_gameOver.exchange(true)) {
         s_open.store(false);
         s_gameOverAt.store(GetTickCount64());
+        Window::TakeLeftClicks();
         NOBLE_INFO("PauseMenu: game over, showing post-game panel");
     }
 }
@@ -367,7 +370,15 @@ void PauseMenu::RenderImpl(IDXGISwapChain* swapChain, bool loading, bool clear) 
             const float sx = io.DisplaySize.x / static_cast<float>(client.right);
             const float sy = io.DisplaySize.y / static_cast<float>(client.bottom);
             io.AddMousePosEvent(static_cast<float>(cursor.x) * sx, static_cast<float>(cursor.y) * sy);
-            io.AddMouseButtonEvent(0, (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0);
+            // A click shorter than a frame is seen only as a WM_LBUTTONDOWN; give ImGui a full
+            // press + release for it (ImGui spreads queued events over frames).
+            const bool down = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+            if (Window::TakeLeftClicks() > 0 && !down) {
+                io.AddMouseButtonEvent(0, true);
+                io.AddMouseButtonEvent(0, false);
+            } else {
+                io.AddMouseButtonEvent(0, down);
+            }
         } else {
             io.AddMousePosEvent(-FLT_MAX, -FLT_MAX);
             io.AddMouseButtonEvent(0, false);

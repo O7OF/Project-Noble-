@@ -231,7 +231,8 @@ static uint64_t __fastcall HostSlot0_QueryInterface(void* thisPtr, uint64_t a1, 
 
 static void ExecuteGammaPass(IDXGISwapChain* swapChain);
 static void ResetGammaPass();
-static std::atomic<bool> s_sessionStarted{false};  // set on the first slot-10 call (loading screen ends)
+static std::atomic<bool> s_sessionStarted{false};
+static std::atomic<bool> s_testCaptureRequest{false};  // -scoreboard-at: screenshot on the next frame  // set on the first slot-10 call (loading screen ends)
 
 // Test option "-end-round-after <seconds>": ends the current round that many seconds after the
 // game session starts, the same as the script command mp_round_end (haloreach+0x7B3EC(-1, 0, 1),
@@ -290,6 +291,7 @@ static uint64_t __fastcall HostSlot1_FrameTick(void* thisPtr, uint64_t a1, uint6
         }
         if (!loading) EndRoundForTest();
         PauseMenu::Render(swapChain, loading);  // overlays on top, unaffected by gamma
+        if (s_testCaptureRequest.exchange(false)) FrameCapture::SaveNow(swapChain, 777777);
         FrameCapture::OnFrame(swapChain, frames);  // test screenshots (-capture-frames)
     }
     if (frames == 1 || (frames % 300) == 0) {
@@ -825,6 +827,34 @@ static void FillLocalInput(uint8_t* st) {
             s_keyDownSince[vk] = 0;
         }
         st[0x004 + vk] = v;
+    }
+    {
+        // Test option "-scoreboard-at <seconds>": hold Tab (scoreboard) for 3 s that long after the first
+        // input poll, and save capture_777777.bmp halfway through (checks the service tag in game).
+        static double s_at = -1.0;
+        static bool s_parsed = false, s_shot = false;
+        static ULONGLONG s_start = 0;
+        if (!s_parsed) {
+            s_parsed = true;
+            int argc = 0;
+            LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+            for (int i = 1; argv && i + 1 < argc; ++i) {
+                if (_wcsicmp(argv[i], L"-scoreboard-at") == 0) s_at = _wtof(argv[i + 1]);
+            }
+            if (argv) LocalFree(argv);
+            s_start = now;
+        }
+        if (s_at >= 0.0) {
+            const double t = static_cast<double>(now - s_start) / 1000.0;
+            if (t >= s_at && t < s_at + 3.0) {
+                st[0x004 + VK_TAB] = 0x80;
+                if (!s_shot && t >= s_at + 1.5) {
+                    s_shot = true;
+                    s_testCaptureRequest.store(true);
+                    NOBLE_INFO("ReachHost: -scoreboard-at {} s: scoreboard screenshot requested", s_at);
+                }
+            }
+        }
     }
 
     if (!uiPointer) {

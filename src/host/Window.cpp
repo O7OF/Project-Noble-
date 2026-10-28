@@ -118,7 +118,10 @@ LRESULT CALLBACK Window::StaticWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPAR
 namespace {
 std::atomic<int> s_wheelDelta{0};
 std::atomic<bool> s_sizeMove{false};
+std::atomic<int> s_leftClicks{0};
 } // namespace
+
+int Window::TakeLeftClicks() { return s_leftClicks.exchange(0); }
 
 int Window::TakeWheelNotches() {
     int delta = s_wheelDelta.load();
@@ -134,6 +137,7 @@ bool Window::InSizeMove() { return s_sizeMove.load(); }
 LRESULT Window::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
     switch (uMsg) {
         case WM_MOUSEWHEEL: s_wheelDelta.fetch_add(GET_WHEEL_DELTA_WPARAM(wParam)); break;
+        case WM_LBUTTONDOWN: s_leftClicks.fetch_add(1); break;
         case WM_ENTERSIZEMOVE: s_sizeMove.store(true); ClipCursor(nullptr); break;
         case WM_EXITSIZEMOVE: s_sizeMove.store(false); break;
         case WM_KILLFOCUS: ClipCursor(nullptr); break;
