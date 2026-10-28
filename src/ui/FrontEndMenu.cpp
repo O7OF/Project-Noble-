@@ -1,4 +1,5 @@
 #include "FrontEndMenu.hpp"
+#include "network/UPnP.hpp"
 #include "UIManager.hpp"
 #include "NobleStyle.hpp"
 #include "SettingsPanel.hpp"
@@ -797,9 +798,70 @@ struct MenuState {
     int ffModded = 0;
     int mpModded = 0;
     int forgeModded = 0;
+    int lobbyNetMode = 1;       // 0 = Local (LAN), 1 = Online (P2P)
+    int lobbyPrivacy = 0;       // 0 = Public (Master Server), 1 = Private (Direct Connect)
     bool confirmQuit = false;   // "Quit Project Noble?" box on the main menu (Esc or QUIT)
     int quitChoice = 1;         // 0 = Yes, 1 = No (No is preselected)
 };
+
+void DrawLobbyControls(const Ui& ui, ImVec2 pos, float width, MenuState& st) {
+    const float h = 32.0f * ui.s;
+    const float btnW = 150.0f * ui.s;
+    float x = pos.x;
+
+    // Network Mode Toggle (Online P2P vs Local LAN)
+    const bool isOnline = (st.lobbyNetMode == 1);
+    const char* netLabel = isOnline ? "NETWORK: ONLINE" : "NETWORK: LOCAL";
+    ImGui::SetCursorScreenPos(ImVec2(x, pos.y));
+    ImGui::PushID("btn_lobby_net");
+    if (ImGui::InvisibleButton("##net", ImVec2(btnW, h))) {
+        st.lobbyNetMode = isOnline ? 0 : 1;
+        MenuSounds::Click();
+    }
+    const bool netHover = ImGui::IsItemHovered();
+    ImGui::PopID();
+    const ImVec2 bNet(x + btnW, pos.y + h);
+    ui.dl->AddRectFilled(ImVec2(x, pos.y), bNet, isOnline ? (netHover ? IM_COL32(40, 110, 170, 230) : IM_COL32(28, 80, 128, 200))
+                                                           : (netHover ? IM_COL32(80, 80, 90, 230) : IM_COL32(50, 52, 60, 200)));
+    ui.dl->AddRect(ImVec2(x, pos.y), bNet, netHover ? IM_COL32(180, 220, 255, 230) : IM_COL32(100, 140, 180, 120), 0.0f, 0, 1.0f);
+    Text(ui, NobleStyle::SmallFont(), 13.0f, ImVec2(x + 10.0f * ui.s, pos.y + 8.0f * ui.s), kWhite, netLabel);
+    x += btnW + 8.0f * ui.s;
+
+    // Privacy Toggle (Public vs Private) - only relevant if online
+    if (isOnline) {
+        const bool isPublic = (st.lobbyPrivacy == 0);
+        const char* privLabel = isPublic ? "LOBBY: PUBLIC" : "LOBBY: PRIVATE";
+        ImGui::SetCursorScreenPos(ImVec2(x, pos.y));
+        ImGui::PushID("btn_lobby_priv");
+        if (ImGui::InvisibleButton("##priv", ImVec2(btnW, h))) {
+            st.lobbyPrivacy = isPublic ? 1 : 0;
+            MenuSounds::Click();
+        }
+        const bool privHover = ImGui::IsItemHovered();
+        ImGui::PopID();
+        const ImVec2 bPriv(x + btnW, pos.y + h);
+        ui.dl->AddRectFilled(ImVec2(x, pos.y), bPriv, isPublic ? (privHover ? IM_COL32(36, 120, 90, 230) : IM_COL32(24, 90, 68, 200))
+                                                               : (privHover ? IM_COL32(110, 80, 40, 230) : IM_COL32(80, 58, 28, 200)));
+        ui.dl->AddRect(ImVec2(x, pos.y), bPriv, privHover ? IM_COL32(180, 255, 220, 230) : IM_COL32(100, 180, 140, 120), 0.0f, 0, 1.0f);
+        Text(ui, NobleStyle::SmallFont(), 13.0f, ImVec2(x + 10.0f * ui.s, pos.y + 8.0f * ui.s), kWhite, privLabel);
+        x += btnW + 12.0f * ui.s;
+    }
+
+    // Status / IP info
+    char statusBuf[160];
+    if (isOnline) {
+        const std::string& extIp = UPnP::Get().GetExternalIP();
+        const bool upnpOk = UPnP::Get().IsActive();
+        if (upnpOk && extIp != "Unknown") {
+            std::snprintf(statusBuf, sizeof(statusBuf), "UPnP Ready (%s:11774) · %s", extIp.c_str(), st.lobbyPrivacy == 0 ? "Broadcasting to Master" : "Direct Connect");
+        } else {
+            std::snprintf(statusBuf, sizeof(statusBuf), "Online P2P (Port 11774) · %s", st.lobbyPrivacy == 0 ? "Broadcasting to Master" : "Direct Connect");
+        }
+    } else {
+        std::snprintf(statusBuf, sizeof(statusBuf), "Local LAN Match · Discoverable on subnet");
+    }
+    Text(ui, NobleStyle::SmallFont(), 13.0f, ImVec2(x, pos.y + 9.0f * ui.s), kDim, statusBuf);
+}
 
 struct MapEntry {
     std::string scenario, name, blurb;
@@ -1237,14 +1299,22 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         char mult[64];
         std::snprintf(mult, sizeof(mult), "Score multiplier  x%.2f", ScoreMultiplier(st.difficulty, st.skulls));
         Text(ui, nullptr, 16.0f, ImVec2(px + 10.0f * ui.s + (stripW > 0.0f ? stripW + 12.0f * ui.s : 0.0f), y + 3.0f * ui.s), kDim, mult);
+        const float lobbyY = actionsY - 38.0f * ui.s;
+        DrawLobbyControls(ui, ImVec2(px, lobbyY), pw, st);
+
         const bool canStart = mission && mission->enabled;
-        const float bw = (pw - 10.0f * ui.s) * 0.62f;
-        std::string sub = mission ? std::string(mission->name) + " \xC2\xB7 " + kDifficultyNames[st.difficulty] : std::string("Pick a mission");
-        const bool start = (BigAction(ui, "start", ImVec2(px, actionsY), bw, "PLAY SOLO", sub.c_str(), true, canStart, st.focusRow == 3) ||
-                            (st.focusRow == 3 && AcceptPressed())) && canStart;
-        BigAction(ui, "coop", ImVec2(px + bw + 10.0f * ui.s, actionsY), pw - bw - 10.0f * ui.s, "HOST CO-OP", "Needs online play (coming later)", false, false);
-        if (start) {
+        const float bw = (pw - 10.0f * ui.s) * 0.5f;
+        std::string sub = mission ? std::string(mission->name) + " · " + kDifficultyNames[st.difficulty] : std::string("Pick a mission");
+        const bool startSolo = (BigAction(ui, "start", ImVec2(px, actionsY), bw, "PLAY SOLO", sub.c_str(), true, canStart, st.focusRow == 3) ||
+                                (st.focusRow == 3 && AcceptPressed())) && canStart;
+        const char* coopSub = st.lobbyNetMode == 1 ? (st.lobbyPrivacy == 0 ? "Public Online P2P" : "Private Online P2P") : "Local LAN Co-op";
+        const bool hostCoop = BigAction(ui, "coop", ImVec2(px + bw + 10.0f * ui.s, actionsY), pw - bw - 10.0f * ui.s, "HOST CO-OP", coopSub, true, canStart);
+        if (startSolo || hostCoop) {
             choice.play = true;
+            choice.host = hostCoop;
+            choice.hostOnline = (st.lobbyNetMode == 1);
+            choice.hostPublic = (st.lobbyPrivacy == 0);
+            choice.hostMaxPlayers = 4;
             choice.mode = "campaign";
             choice.map = mission->scenario;
             choice.difficulty = st.difficulty;
@@ -1416,28 +1486,34 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
                  "MCC's Forge game type (00_basic_editing_054.bin) wasn't found.");
             y += 26.0f * ui.s;
         }
+        const float lobbyY = actionsY - 38.0f * ui.s;
+        DrawLobbyControls(ui, ImVec2(px, lobbyY), pw, st);
+
         const bool canStart = map && map->enabled;
-        const float bw = (pw - 10.0f * ui.s) * 0.62f;
+        const float bw = (pw - 10.0f * ui.s) * 0.5f;
         std::string sub;
         if (!map) sub = "Pick a map";
-        else if (ff) sub = "Hold out alone \xC2\xB7 " + std::string(kDifficultyNames[st.difficulty]);
-        else if (forge) sub = map->name + " \xC2\xB7 Forge";
+        else if (ff) sub = "Hold out alone · " + std::string(kDifficultyNames[st.difficulty]);
+        else if (forge) sub = map->name + " · Forge";
         else {
             const std::vector<MenuVariant>& list = ctx.variants;
-            sub = map->name + " \xC2\xB7 " + (list.empty() ? std::string("Default") : list[std::clamp(st.variant, 0, static_cast<int>(list.size()) - 1)].label);
+            sub = map->name + " · " + (list.empty() ? std::string("Default") : list[std::clamp(st.variant, 0, static_cast<int>(list.size()) - 1)].label);
         }
-        const bool start = (BigAction(ui, "start", ImVec2(px, actionsY), ff ? bw : (forge ? pw : bw), ff ? "PLAY SOLO" : forge ? "START FORGE" : "START GAME",
-                                      sub.c_str(), true, canStart, st.focusRow == focusRows) ||
-                            (st.focusRow == focusRows && AcceptPressed())) && canStart;
-        if (ff) {
-            BigAction(ui, "coop", ImVec2(px + bw + 10.0f * ui.s, actionsY), pw - bw - 10.0f * ui.s, "HOST CO-OP", "Needs online play (coming later)", false, false);
-        } else if (!forge) {
-            if (BigAction(ui, "browse", ImVec2(px + bw + 10.0f * ui.s, actionsY), pw - bw - 10.0f * ui.s, "HOST OR JOIN", "Server browser", false, true)) {
-                st.screen = Screen::Servers;
-            }
-        }
-        if (start) {
+
+        const char* soloLabel = ff ? "PLAY SOLO" : forge ? "SOLO FORGE" : "PLAY LOCAL";
+        const char* hostLabel = ff ? "HOST CO-OP" : forge ? "HOST FORGE" : "HOST LOBBY";
+        const char* hostSub = st.lobbyNetMode == 1 ? (st.lobbyPrivacy == 0 ? "Public Online P2P" : "Private Online P2P") : "Local LAN Lobby";
+
+        const bool startSolo = (BigAction(ui, "start", ImVec2(px, actionsY), bw, soloLabel, sub.c_str(), true, canStart, st.focusRow == focusRows) ||
+                                (st.focusRow == focusRows && AcceptPressed())) && canStart;
+        const bool startHost = BigAction(ui, "host", ImVec2(px + bw + 10.0f * ui.s, actionsY), pw - bw - 10.0f * ui.s, hostLabel, hostSub, true, canStart);
+
+        if (startSolo || startHost) {
             choice.play = true;
+            choice.host = startHost;
+            choice.hostOnline = (st.lobbyNetMode == 1);
+            choice.hostPublic = (st.lobbyPrivacy == 0);
+            choice.hostMaxPlayers = (ff ? 4 : 16);
             choice.map = map->scenario;
             if (mod) { choice.modFolder = mod->folder; choice.modTitle = mod->title; }
             if (ff) {
@@ -1752,6 +1828,14 @@ void FrontEndMenu::RenderOverlayImpl(IDXGISwapChain* swapChain, bool clear) {
                 if (!choice.variantPath.empty()) args += L" -variant \"" + ToWide(choice.variantPath) + L"\"";
                 if (choice.skulls != 0) args += L" -skulls " + std::to_wstring(choice.skulls);
                 if (!choice.modFolder.empty()) args += L" -mod \"" + choice.modFolder.wstring() + L"\"";
+                if (choice.host) {
+                    args += L" -host";
+                    if (choice.hostOnline) args += L" -online";
+                    else args += L" -lan";
+                    if (choice.hostPublic) args += L" -public";
+                    else args += L" -private";
+                    args += L" -max-players " + std::to_wstring(choice.hostMaxPlayers);
+                }
                 NOBLE_INFO("FrontEndMenu: launching match via Relaunch ({} {})", choice.mode, choice.map);
                 Relaunch::Start(args);
             } else {

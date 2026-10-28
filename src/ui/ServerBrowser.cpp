@@ -1,4 +1,6 @@
+#include <windows.h>
 #include "ServerBrowser.hpp"
+#include "common/Relaunch.hpp"
 #include "NobleStyle.hpp"
 #include "common/Logger.hpp"
 #include "common/Settings.hpp"
@@ -390,10 +392,29 @@ void ServerBrowser::ToggleFavorite(const std::string& address, uint16_t port) {
 
 void ServerBrowser::TryJoin(const std::string& address, uint16_t port, bool hasPassword) {
     (void)hasPassword;
-    // Joining needs haloreach.dll's own network session (host slots 41/43 and the online session
-    // interface), which Noble doesn't drive yet. Say so instead of pretending to connect.
-    m_status = "Joining " + Key(address, port) +
-               " isn't possible yet: Noble can't link two games together yet (online play is still being worked on).";
+    const std::string key = Key(address, port);
+
+    std::string map = "20_sword_slayer";
+    std::string mode = "multiplayer";
+
+    for (const auto& s : m_servers) {
+        if (s.hostAddress == address && s.port == port) {
+            if (!s.mapName.empty()) map = s.mapName;
+            if (!s.gameMode.empty()) mode = s.gameMode;
+            break;
+        }
+    }
+
+    std::transform(mode.begin(), mode.end(), mode.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+
+    std::wstring args = L"-map \"" + std::wstring(map.begin(), map.end()) + L"\"";
+    args += L" -mode \"" + std::wstring(mode.begin(), mode.end()) + L"\"";
+    args += L" -connect \"" + std::wstring(address.begin(), address.end()) + L":" + std::to_wstring(port) + L"\"";
+
+    m_status = "Connecting to " + key + "...";
+    NOBLE_INFO("ServerBrowser: Connecting to {}:{} ({}) via Relaunch", address, port, map);
+    Relaunch::Start(args);
+    PostMessageW(GetActiveWindow(), WM_CLOSE, 0, 0);
 }
 
 void ServerBrowser::RenderHostModal() {

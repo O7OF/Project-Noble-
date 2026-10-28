@@ -17,6 +17,7 @@
 #include "ui/LoadScreen.hpp"
 #include "network/SessionManager.hpp"
 #include "network/MasterServerClient.hpp"
+#include "network/UPnP.hpp"
 #include "common/Settings.hpp"
 #include "common/Relaunch.hpp"
 #include "ui/PauseMenu.hpp"
@@ -243,6 +244,11 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     fs::path modFolder;
     int launchDifficulty = 1;
     uint64_t launchSkulls = 0;
+    bool launchHost = false;
+    bool hostOnline = true;
+    bool hostPublic = true;
+    int hostMaxPlayers = 16;
+    std::string connectAddress = "";
 
     auto WideToNarrow = [](const std::wstring& w) -> std::string {
         if (w.empty()) return "";
@@ -272,6 +278,20 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
                 launchSkulls = _wcstoui64(argvW[++i], nullptr, 0);
             } else if (arg == L"-difficulty" && i + 1 < numArgs) {
                 launchDifficulty = _wtoi(argvW[++i]);
+            } else if (arg == L"-host") {
+                launchHost = true;
+            } else if (arg == L"-online") {
+                hostOnline = true;
+            } else if (arg == L"-lan") {
+                hostOnline = false;
+            } else if (arg == L"-public") {
+                hostPublic = true;
+            } else if (arg == L"-private") {
+                hostPublic = false;
+            } else if (arg == L"-max-players" && i + 1 < numArgs) {
+                hostMaxPlayers = _wtoi(argvW[++i]);
+            } else if (arg == L"-connect" && i + 1 < numArgs) {
+                connectAddress = WideToNarrow(argvW[++i]);
             }
         }
         LocalFree(argvW);
@@ -335,6 +355,14 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         if (!customMvar.empty()) args += L" -mvar \"" + toWide(customMvar) + L"\"";
         if (launchSkulls != 0) args += L" -skulls " + std::to_wstring(launchSkulls);
         if (!modFolder.empty()) args += L" -mod \"" + modFolder.wstring() + L"\"";
+        if (launchHost) {
+            args += L" -host";
+            if (hostOnline) args += L" -online";
+            else args += L" -lan";
+            if (hostPublic) args += L" -public";
+            else args += L" -private";
+            args += L" -max-players " + std::to_wstring(hostMaxPlayers);
+        }
         noble::Relaunch::SetCurrentGameArgs(args);
         noble::PauseMenu::SetLoadingMap(launchMap);
         noble::UiArt::LoadingBackground(launchMap);
@@ -344,8 +372,44 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     NOBLE_INFO("Launching Halo: Reach Engine: Target Map='{}', Mode='{}'", launchMap, launchMode);
     blamEngine->LaunchMap(launchMap, launchMode, launchDifficulty, launchSkulls, customMvar, customVariant);
 
-    // 10. Initialize P2P & Self-Hosting Network Subsystem
+// 10. Initialize P2P & Self-Hosting Network Subsystem
     noble::SessionManager::Get().Initialize();
+
+    if (launchHost) {
+        noble::HostConfig cfg;
+        std::string modeTitle = launchMode;
+        if (!modeTitle.empty()) modeTitle[0] = static_cast<char>(toupper(static_cast<unsigned char>(modeTitle[0])));
+        cfg.sessionName = startupSettings.playerName + "'s " + modeTitle;
+        if (launchMode == "campaign") cfg.sessionName = startupSettings.playerName + "'s Co-op Campaign";
+        else if (launchMode == "firefight") cfg.sessionName = startupSettings.playerName + "'s Firefight";
+        else if (launchMode == "forge") cfg.sessionName = startupSettings.playerName + "'s Forge";
+
+        cfg.gameMode = launchMode;
+        cfg.mapName = launchMap;
+        cfg.gametypeName = (launchMode == "firefight" ? "Firefight" : launchMode == "forge" ? "Forge" : "Slayer");
+        cfg.maxPlayers = hostMaxPlayers;
+        cfg.port = 11774;
+        cfg.mode = hostOnline ? noble::NetworkMode::Online_P2P : noble::NetworkMode::Local_LAN;
+
+        if (noble::SessionManager::Get().StartHosting(cfg)) {
+            NOBLE_INFO("main: Started self-hosting match '{}' on port {} (Mode: {})", cfg.sessionName, cfg.port, hostOnline ? "Online P2P" : "Local LAN");
+            if (hostOnline && hostPublic && noble::MasterServerClient::Get().Enabled()) {
+                noble::MasterAdvert advert;
+                advert.name = cfg.sessionName;
+                advert.port = cfg.port;
+                advert.maxPlayers = cfg.maxPlayers;
+                advert.map = cfg.mapName;
+                advert.mode = cfg.gameMode;
+                advert.hasPassword = false;
+                advert.isMod = !modFolder.empty();
+                advert.address = noble::UPnP::Get().GetExternalIP();
+                noble::MasterServerClient::Get().StartAdvertising(advert);
+                NOBLE_INFO("main: Advertised hosted match to master server ({}:{})", advert.address, advert.port);
+            }
+        } else {
+            NOBLE_WARN("main: Failed to start self-hosting match");
+        }
+    }
 
     NOBLE_INFO("Authentic Halo: Reach host message loop active. Driving frames...");
 

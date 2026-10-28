@@ -13,6 +13,10 @@ class D3D11Renderer;
 
 struct FrontEndChoice {
     bool play = false;           // false: the player quit or closed the window
+    bool host = false;           // true: host a multiplayer/co-op lobby session
+    bool hostOnline = true;      // true: UPnP online P2P; false: Local LAN
+    bool hostPublic = true;      // true: listed on master server; false: private
+    int hostMaxPlayers = 16;     // max players (4 for co-op, 16 for custom/forge)
     std::string map;             // scenario name, e.g. "20_sword_slayer"
     std::string variantPath;     // full path to a game variant .bin from MCC's game_variants
     std::string mode = "multiplayer"; // "multiplayer", "campaign" or "firefight"
