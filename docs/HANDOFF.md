@@ -1,4 +1,4 @@
-# Project Noble: handoff (2026-10-28, 04:30 ET)
+# Project Noble: handoff (2026-10-28, 08:30 ET)
 
 This picks up a reverse-engineering and C++ effort on **Tyler's Windows PC**. All paths below are real paths on that machine.
 Tyler (GitHub `WeabooTyler117`) works with a partner (GitHub `O7OF`) who owns the repo and writes most of the code.
@@ -10,6 +10,18 @@ community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownershi
 MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour.
 
 ---
+
+## 0. Pick up here (2026-10-28, 08:30 ET) - Armory status from Tyler
+
+**08:29 (Tyler, after O7OF's `f4f2d48`; Tyler is offline until later):**
+- Preferred species now works (Spartan / Elite pick reaches the game).
+- **Armor still doesn't swap in game**, and an **Elite always spawns as the Minor variant**.
+- Appearance choices now save and survive a restart, but still don't change the character in game.
+- From O7OF's side: FPS limit has several settings including uncapped, V-Sync fixed, FOV offset found,
+  settings can be changed mid-match.
+Next for the Armory: find the profile/player bytes the engine reads for armor pieces and the Elite variant
+(Minor / Officer / Ultra / ...), e.g. with `-capture-profile` before/after captures and `-profile-set`
+experiments like the controller look bytes (+0x1B5/+0x1B6) were found. Head of main: `6cfadc4`.
 
 ## 0. Pick up here (2026-10-28, 04:30 ET) - wheel, controller, music picker, service record, post-game
 
