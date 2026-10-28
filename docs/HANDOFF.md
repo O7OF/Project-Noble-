@@ -18,11 +18,11 @@ commits and pushes. Waiting for Tyler to run `go.bat`.
 
 - `Career.cpp`: `kCommendations` is now Reach's 45 (mode, art key, name, requirement, Reach's six tier counts from Halopedia).
   Tier names Steel, Bronze, Silver, Gold, Onyx, Max. Counts are kept per commendation in `record.commendationCounts`
-  (`<mode>_<key>`), tiers paid in `record.commendations` (old Noble commendations are dropped). Easy doesn't count in
-  campaign/Firefight; Noble Actual (m05) and Lone Wolf (m70_bonus) don't count as missions.
-- Counted now: Demon (missions), Flawless Cowboy (Heroic+ mission, 0 deaths), Support Role / Backup / Assistant (assists),
+  (`<mode>_<key>`), tiers paid in `record.commendations` (old Noble commendations are dropped). Tyler asked to drop
+  Reach's rules: every difficulty and every mission counts.
+- Counted now: Demon (missions), Flawless Cowboy (mission with 0 deaths), Support Role / Backup / Assistant (assists),
   Perfectionist (Firefight game with 0 deaths, per game until rounds are decoded). Everything else shows "Not tracked yet".
-- `CareerPanel.cpp` COMMENDATIONS tab: CAMPAIGN / FIREFIGHT / MULTIPLAYER sections, Reach-style rows with the banner art
+- `CareerPanel.cpp` COMMENDATIONS tab: CAMPAIGN / FIREFIGHT / MULTIPLAYER sub-tabs (click, or LT/RT; `m_commendTab`), Reach-style rows with the banner art
   (`data\ui\reach\commendations\<mode>_<key>.png`) tinted by tier (Steel art only; Max gets an amber frame), name, tier,
   requirement and "x / next" bar.
 

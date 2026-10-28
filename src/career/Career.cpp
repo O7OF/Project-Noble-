@@ -151,7 +151,7 @@ using CM = CommendationMetric;
 const CommendationDef kCommendations[] = {
     { 0, "cannon_fodder", "Cannon Fodder", "Kill infantry-class enemies", CM::None, { 250, 750, 3000, 7000, 12000, 20000 } },
     { 0, "demon", "Demon", "Complete campaign missions", CM::Missions, { 9, 18, 81, 135, 270, 540 } },
-    { 0, "flawless_cowboy", "Flawless Cowboy", "Complete missions on Heroic or Legendary without dying", CM::FlawlessMissions, { 5, 10, 25, 50, 150, 300 } },
+    { 0, "flawless_cowboy", "Flawless Cowboy", "Complete campaign missions without dying", CM::FlawlessMissions, { 5, 10, 25, 50, 150, 300 } },
     { 0, "leadership_element", "Leadership Element", "Kill leader-class enemies", CM::None, { 100, 375, 750, 3000, 6000, 10000 } },
     { 0, "nice_arm", "Nice Arm", "Kill enemies with grenades", CM::None, { 50, 250, 500, 4000, 8000, 13000 } },
     { 0, "pinpoint", "Pinpoint", "Kill enemies with headshots", CM::None, { 50, 250, 500, 4000, 8000, 20000 } },
@@ -498,22 +498,14 @@ int64_t CommendationValue(size_t index) {
     return it == s_extra.commendationCount.end() ? 0 : it->second;
 }
 
-// What one finished game adds to a commendation. As in Reach, Easy doesn't count in campaign or
-// Firefight, and Noble Actual (m05) and Lone Wolf (m70_bonus) don't count as missions.
-int64_t CommendationAmount(const CommendationDef& c, BaseType type, int difficulty, const std::string& map,
-                           int64_t assists, int64_t deaths) {
+// What one finished game adds to a commendation (any difficulty, any mission).
+int64_t CommendationAmount(const CommendationDef& c, BaseType type, int64_t assists, int64_t deaths) {
     static const BaseType kModeType[3] = { BaseType::Campaign, BaseType::Firefight, BaseType::Multiplayer };
     if (type != kModeType[c.mode]) return 0;
-    if (type != BaseType::Multiplayer && difficulty < 1) return 0;
-    std::string m = map;
-    const size_t slash = m.find_last_of("\\/");
-    if (slash != std::string::npos) m = m.substr(slash + 1);
-    for (char& ch : m) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-    const bool countedMission = m != "m05" && m.find("bonus") == std::string::npos;
     switch (c.metric) {
     case CM::Assists: return assists;
-    case CM::Missions: return countedMission ? 1 : 0;
-    case CM::FlawlessMissions: return countedMission && difficulty >= 2 && deaths == 0 ? 1 : 0;
+    case CM::Missions: return 1;
+    case CM::FlawlessMissions: return deaths == 0 ? 1 : 0;
     case CM::NoDeathGames: return deaths == 0 ? 1 : 0;
     default: return 0;
     }
@@ -740,7 +732,7 @@ void OnGameResults(const uint8_t* record, size_t size) {
     // Commendations: count this game, then pay every tier reached since the last match.
     for (size_t i = 0; i < std::size(kCommendations); ++i) {
         const CommendationDef& c = kCommendations[i];
-        const int64_t add = CommendationAmount(c, s_type, s_difficulty, s_map, assists, deaths);
+        const int64_t add = CommendationAmount(c, s_type, assists, deaths);
         if (add > 0) s_extra.commendationCount[CommendationKey(c)] += add;
         const int reached = TierFor(c, CommendationValue(i));
         int& paid = s_extra.commendationTier[CommendationKey(c)];

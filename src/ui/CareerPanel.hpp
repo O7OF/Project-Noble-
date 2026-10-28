@@ -9,6 +9,7 @@ class CareerPanel {
 public:
     void Render();
     void SetTab(int tab) { m_tab = tab % 4; }   // test option -menu-tab
+    void SetCommendationTab(int mode) { m_commendTab = mode % 3; }
 
 private:
     void RenderRecord();
@@ -17,6 +18,7 @@ private:
     void RenderRanks();
 
     int m_tab = 0;
+    int m_commendTab = 0;   // COMMENDATIONS: 0 campaign, 1 Firefight, 2 multiplayer
 };
 
 } // namespace noble

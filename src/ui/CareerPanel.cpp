@@ -452,33 +452,56 @@ void CareerPanel::RenderCommendations() {
     using namespace NobleUi;
     const std::vector<Career::Commendation> list = Career::Commendations();
     const float s = Scale();
+    static const char* const kModeTitle[3] = { "CAMPAIGN", "FIREFIGHT", "MULTIPLAYER" };
+    static const ImU32 kModeColour[3] = { IM_COL32(150, 170, 90, 255), IM_COL32(200, 80, 60, 255), IM_COL32(80, 140, 200, 255) };
+
+    // Mode tabs (click, or LT / RT on a controller).
+    ImGui::Dummy(ImVec2(0, 4));
+    if (!ImGui::GetIO().WantTextInput) {
+        if (ImGui::IsKeyPressed(ImGuiKey_GamepadL2, false)) { m_commendTab = (m_commendTab + 2) % 3; MenuSounds::Tab(-1); }
+        if (ImGui::IsKeyPressed(ImGuiKey_GamepadR2, false)) { m_commendTab = (m_commendTab + 1) % 3; MenuSounds::Tab(1); }
+    }
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    for (int mode = 0; mode < 3; ++mode) {
+        int tiers = 0, count = 0;
+        for (const Career::Commendation& c : list) if (c.mode == mode) { ++count; tiers += c.tier; }
+        char label[64];
+        std::snprintf(label, sizeof(label), "%s  %d/%d", kModeTitle[mode], tiers, count * 6);
+        const float w = TextWidth(nullptr, 17.0f * s, label) + 36.0f * s, h = 34.0f * s;
+        if (mode) ImGui::SameLine(0, 8.0f * s);
+        const ImVec2 p0 = ImGui::GetCursorScreenPos();
+        ImGui::PushID(mode);
+        if (ImGui::InvisibleButton("##mode", ImVec2(w, h)) && m_commendTab != mode) {
+            MenuSounds::Tab(mode > m_commendTab ? 1 : -1);
+            m_commendTab = mode;
+        }
+        const bool sel = m_commendTab == mode, hov = ImGui::IsItemHovered();
+        ImGui::PopID();
+        const ImVec2 p1(p0.x + w, p0.y + h);
+        dl->AddRectFilled(p0, p1, sel ? IM_COL32(30, 40, 52, 255) : IM_COL32(20, 26, 34, hov ? 240 : 190), 3.0f * s);
+        dl->AddRectFilled(p0, ImVec2(p0.x + 4.0f * s, p1.y), kModeColour[mode], 3.0f * s, ImDrawFlags_RoundCornersLeft);
+        if (sel) dl->AddRect(p0, p1, IM_COL32(143, 216, 255, 200), 3.0f * s, 0, 1.0f);
+        Text(dl, nullptr, 17.0f * s, ImVec2(p0.x + 18.0f * s, p0.y + h * 0.5f - 9.0f * s), sel ? kText : kTextDim, label);
+    }
+    ImGui::Dummy(ImVec2(0, 4));
+    ImGui::TextDisabled("Each tier (Steel, Bronze, Silver, Gold, Onyx, Max) pays credits once, on the post-game screen. Dimmed ones can't be counted yet.");
+    ImGui::Dummy(ImVec2(0, 4));
+
     const float avail = ImGui::GetContentRegionAvail().x;
     const int columns = avail >= 1000.0f * s ? 2 : 1;
     const float gap = 10.0f * s;
     const float rowW = (avail - gap * (columns - 1)) / columns - 1.0f;
-    ImGui::Dummy(ImVec2(0, 4));
-    ImGui::TextDisabled("Halo: Reach's 45 commendations. Each tier (Steel, Bronze, Silver, Gold, Onyx, Max) pays credits once, on the post-game screen.");
-    ImGui::TextDisabled("Dimmed ones need stats Noble can't read from the game yet (headshots, weapons, enemy types, multikills, sprees, vehicles).");
-    static const char* const kModeTitle[3] = { "CAMPAIGN", "FIREFIGHT", "MULTIPLAYER" };
-    for (int mode = 0; mode < 3; ++mode) {
-        int tiers = 0, count = 0;
-        for (const Career::Commendation& c : list) if (c.mode == mode) { ++count; tiers += c.tier; }
-        char head[64];
-        std::snprintf(head, sizeof(head), "%s  %d / %d TIERS", kModeTitle[mode], tiers, count * 6);
-        SectionHeader(head, avail);
-        int col = 0;
-        for (const Career::Commendation& c : list) {
-            if (c.mode != mode) continue;
-            ImGui::PushID(c.art.c_str());
-            if (col > 0) ImGui::SameLine(0, gap);
-            ImGui::BeginGroup();
-            CommendationRow(c, rowW);
-            ImGui::EndGroup();
-            ImGui::PopID();
-            col = (col + 1) % columns;
-            if (col == 0) ImGui::Dummy(ImVec2(0, gap - ImGui::GetStyle().ItemSpacing.y));
-        }
-        if (col != 0) ImGui::Dummy(ImVec2(0, gap - ImGui::GetStyle().ItemSpacing.y));
+    int col = 0;
+    for (const Career::Commendation& c : list) {
+        if (c.mode != m_commendTab) continue;
+        ImGui::PushID(c.art.c_str());
+        if (col > 0) ImGui::SameLine(0, gap);
+        ImGui::BeginGroup();
+        CommendationRow(c, rowW);
+        ImGui::EndGroup();
+        ImGui::PopID();
+        col = (col + 1) % columns;
+        if (col == 0) ImGui::Dummy(ImVec2(0, gap - ImGui::GetStyle().ItemSpacing.y));
     }
 }
 
