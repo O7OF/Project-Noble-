@@ -3,6 +3,8 @@
 #include <nlohmann/json.hpp>
 #include <fstream>
 #include <array>
+#include <algorithm>
+#include <windows.h>
 
 namespace noble {
 
@@ -118,7 +120,7 @@ bool ArmorCustomizer::SaveProfile(const std::filesystem::path& path) {
     }
 }
 
-void ArmorCustomizer::Render() {
+void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context) {
     ImGui::TextColored(ImVec4(0.0f, 0.85f, 1.0f, 1.0f), "THE ARMORY // PLAYER CUSTOMIZATION");
     ImGui::Separator();
     ImGui::Spacing();
@@ -162,7 +164,7 @@ void ArmorCustomizer::Render() {
     ImGui::SameLine();
 
     ImGui::BeginChild("PreviewRegion", ImVec2(col2Width, 0), true);
-    RenderCharacterPreview();
+    RenderCharacterPreview(device, context);
     ImGui::EndChild();
 
     ImGui::SameLine();
@@ -202,95 +204,59 @@ void ArmorCustomizer::Render() {
     ImGui::EndChild();
 }
 
-void ArmorCustomizer::RenderCharacterPreview() {
+void ArmorCustomizer::RenderCharacterPreview(ID3D11Device* device, ID3D11DeviceContext* context)
+{
     ImGui::TextColored(ImVec4(0.0f, 0.88f, 1.0f, 1.0f), "ARMOR VISUALIZER");
     ImGui::Separator();
     ImGui::Spacing();
 
-    ImDrawList* drawList = ImGui::GetWindowDrawList();
-    ImVec2 canvasPos = ImGui::GetCursorScreenPos();
-    ImVec2 canvasSize = ImVec2(ImGui::GetContentRegionAvail().x, 380.0f);
-
-    // Draw background card with Reach slate blue gradient
-    drawList->AddRectFilled(canvasPos, ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y),
-        IM_COL32(13, 17, 24, 255), 8.0f);
-    drawList->AddRect(canvasPos, ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y),
-        IM_COL32(0, 180, 220, 180), 8.0f, 0, 1.5f);
-
-    float centerX = canvasPos.x + canvasSize.x * 0.5f;
-    float centerY = canvasPos.y + canvasSize.y * 0.45f;
-
-    // Convert Reach primary and secondary colors to ImU32
-    ImVec4 primV = REACH_COLOR_PALETTE[m_profile.primaryColor];
-    ImVec4 secV  = REACH_COLOR_PALETTE[m_profile.secondaryColor];
-    ImU32 primColor = IM_COL32((int)(primV.x * 255), (int)(primV.y * 255), (int)(primV.z * 255), 255);
-    ImU32 secColor  = IM_COL32((int)(secV.x * 255), (int)(secV.y * 255), (int)(secV.z * 255), 255);
-
-    // Visor color
-    ImU32 visorColors[] = {
-        IM_COL32(240, 180, 20, 255),  // 0: Gold
-        IM_COL32(220, 225, 230, 255), // 1: Silver
-        IM_COL32(40, 130, 240, 255),  // 2: Blue
-        IM_COL32(30, 30, 35, 255),    // 3: Black
-        IM_COL32(255, 200, 0, 255),   // 4: Gold
-        IM_COL32(0, 230, 240, 255),   // 5: Cyan
-        IM_COL32(220, 30, 30, 255)    // 6: Crimson
-    };
-    int vIdx = (m_profile.visorColor >= 0 && m_profile.visorColor < 7) ? m_profile.visorColor : 0;
-    ImU32 visorCol = visorColors[vIdx];
-
-    // Draw Chest & Torso plate
-    drawList->AddRectFilled(ImVec2(centerX - 45, centerY - 15), ImVec2(centerX + 45, centerY + 65), primColor, 6.0f);
-    drawList->AddRect(ImVec2(centerX - 45, centerY - 15), ImVec2(centerX + 45, centerY + 65), IM_COL32(10, 10, 15, 255), 6.0f, 0, 2.0f);
-
-    // Shoulder Pauldrons (Secondary Color)
-    drawList->AddRectFilled(ImVec2(centerX - 75, centerY - 10), ImVec2(centerX - 45, centerY + 30), secColor, 4.0f);
-    drawList->AddRectFilled(ImVec2(centerX + 45, centerY - 10), ImVec2(centerX + 75, centerY + 30), secColor, 4.0f);
-
-    // Draw Helmet (Mark V [B] / Custom)
-    drawList->AddCircleFilled(ImVec2(centerX, centerY - 60), 34.0f, primColor, 32);
-    drawList->AddCircle(ImVec2(centerX, centerY - 60), 34.0f, IM_COL32(15, 18, 22, 255), 32, 2.0f);
-
-    // Visor Shield (Reflective curved oval)
-    drawList->AddRectFilled(ImVec2(centerX - 20, centerY - 66), ImVec2(centerX + 20, centerY - 48), visorCol, 8.0f);
-    drawList->AddRect(ImVec2(centerX - 20, centerY - 66), ImVec2(centerX + 20, centerY - 48), IM_COL32(255, 255, 255, 140), 8.0f, 0, 1.5f);
-
-    // Service Tag stencil on armor
-    char tagStr[32];
-    snprintf(tagStr, sizeof(tagStr), "[%s]", m_profile.serviceTag);
-    drawList->AddText(ImVec2(centerX - 18, centerY + 8), IM_COL32(0, 240, 255, 240), tagStr);
-
-    // Animated Armor Effect overlay
-    float time = (float)ImGui::GetTime();
-    if (m_profile.armorEffect == 1) { // Inclement Weather (Lightning)
-        for (int i = 0; i < 3; ++i) {
-            float sparkX = centerX + sinf(time * 8.0f + i) * 36.0f;
-            float sparkY = centerY - 60.0f + cosf(time * 7.0f + i) * 36.0f;
-            drawList->AddLine(ImVec2(centerX, centerY - 60), ImVec2(sparkX, sparkY), IM_COL32(100, 220, 255, 220), 2.0f);
+    wchar_t executablePath[MAX_PATH]{};
+    const DWORD pathLength = GetModuleFileNameW(nullptr, executablePath, MAX_PATH);
+    const std::filesystem::path executableDirectory = pathLength > 0
+        ? std::filesystem::path(executablePath).parent_path()
+        : std::filesystem::current_path();
+    const char* modelName = m_profile.species == 0 ? "spartan.obj" : "elite.obj";
+    const std::filesystem::path modelPath = executableDirectory / "data" / "armor" / modelName;
+    const bool reload = ImGui::Button("RELOAD MODEL");
+    if (reload || m_loadedSpecies != m_profile.species) {
+        m_loadedSpecies = m_profile.species;
+        m_previewError.clear();
+        if (!m_preview.Initialize(device)) {
+            m_previewError = "Could not initialize the Direct3D model preview.";
+        } else if (!m_preview.LoadModel(modelPath, m_previewError)) {
+            m_previewError += "\n" + modelPath.string();
         }
-    } else if (m_profile.armorEffect == 5) { // Flaming Helmet
-        float flameY = centerY - 95.0f + sinf(time * 10.0f) * 6.0f;
-        drawList->AddTriangleFilled(
-            ImVec2(centerX - 22, centerY - 65),
-            ImVec2(centerX + 22, centerY - 65),
-            ImVec2(centerX, flameY),
-            IM_COL32(255, 120, 0, 200));
-        drawList->AddTriangleFilled(
-            ImVec2(centerX - 14, centerY - 65),
-            ImVec2(centerX + 14, centerY - 65),
-            ImVec2(centerX, flameY + 8.0f),
-            IM_COL32(255, 240, 50, 240));
-    } else if (m_profile.armorEffect == 2) { // Pestilence
-        float moteX = centerX + sinf(time * 3.0f) * 30.0f;
-        float moteY = centerY - 60.0f + cosf(time * 3.0f) * 30.0f;
-        drawList->AddCircleFilled(ImVec2(moteX, moteY), 8.0f, IM_COL32(60, 180, 40, 140));
     }
 
-    // Badge Footer
-    ImGui::Dummy(canvasSize);
-    ImGui::Spacing();
-    ImGui::TextColored(ImVec4(0.0f, 0.88f, 1.0f, 1.0f), "SPARTAN-III ACTIVE LOADOUT");
-    ImGui::TextDisabled("Armor Profile Saved in ./data/appearance.json");
+    if (m_preview.IsLoaded() && m_loadedSpecies == m_profile.species) {
+        const ImVec2 available = ImGui::GetContentRegionAvail();
+        const float side = std::max(160.0f, std::min(available.x, 330.0f));
+        const float time = static_cast<float>(ImGui::GetTime());
+        m_preview.Render(context, m_previewRotation + time * 0.2f);
+        ImGui::Image(reinterpret_cast<ImTextureID>(m_preview.GetPreviewTexture()), ImVec2(side, side));
+        if (ImGui::IsItemHovered() && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+            m_previewRotation += ImGui::GetIO().MouseDelta.x * 0.01f;
+        }
+        ImGui::TextDisabled("Drag to rotate. OBJ object/group and material assignments are retained.");
+        ImGui::Spacing();
+        ImGui::TextColored(ImVec4(0.0f, 0.88f, 1.0f, 1.0f), "MODEL COMPONENTS");
+        int shown = 0;
+        for (const auto& mesh : m_preview.GetModel().meshes) {
+            if (shown >= 6) break;
+            ImGui::BulletText("%s / %s%s%s", mesh.objectName.c_str(), mesh.groupName.c_str(),
+                              mesh.materialName.empty() ? "" : " - ", mesh.materialName.c_str());
+            ++shown;
+        }
+        if (m_preview.GetModel().meshes.size() > static_cast<size_t>(shown)) {
+            ImGui::TextDisabled("+ %u more mesh groups", static_cast<unsigned>(m_preview.GetModel().meshes.size() - shown));
+        }
+    } else {
+        ImGui::TextWrapped("%s", m_previewError.empty() ? "No model loaded." : m_previewError.c_str());
+        ImGui::Spacing();
+        ImGui::TextDisabled("Place an authorized OBJ/MTL export at:");
+        ImGui::TextWrapped("%s", modelPath.string().c_str());
+        ImGui::TextDisabled("Keep the MTL file and diffuse textures beside the OBJ or in a subfolder.");
+    }
 }
 
 void ArmorCustomizer::RenderSpartanCustomizer() {

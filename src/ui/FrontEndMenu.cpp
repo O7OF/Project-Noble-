@@ -309,7 +309,7 @@ FrontEndChoice FrontEndMenu::Run(Window& window, D3D11Renderer& renderer, const 
                     ImGui::EndTabItem();
                 }
                 if (ImGui::BeginTabItem("ARMOR LOCKER")) {
-                    UIManager::GetArmorCustomizer().Render();
+                    UIManager::GetArmorCustomizer().Render(renderer.GetDevice(), renderer.GetContext());
                     ImGui::EndTabItem();
                 }
                 if (ImGui::BeginTabItem("WORKSHOP MODS")) {

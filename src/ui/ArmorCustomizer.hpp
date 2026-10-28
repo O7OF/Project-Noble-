@@ -3,6 +3,8 @@
 #include <string>
 #include <vector>
 #include <filesystem>
+#include <d3d11.h>
+#include "ObjModelPreview.hpp"
 
 namespace noble {
 
@@ -39,7 +41,7 @@ public:
     ArmorCustomizer();
     ~ArmorCustomizer() = default;
 
-    void Render();
+    void Render(ID3D11Device* device, ID3D11DeviceContext* context);
     bool LoadProfile(const std::filesystem::path& path = "data/appearance.json");
     bool SaveProfile(const std::filesystem::path& path = "data/appearance.json");
 
@@ -48,11 +50,15 @@ public:
 private:
     void RenderSpartanCustomizer();
     void RenderEliteCustomizer();
-    void RenderCharacterPreview();
+    void RenderCharacterPreview(ID3D11Device* device, ID3D11DeviceContext* context);
     void RenderColorPalettePicker(const char* label, int& selectedColorIndex);
 
     ArmorProfile m_profile;
     bool m_isDirty = false;
+    ObjModelPreview m_preview;
+    int m_loadedSpecies = -1;
+    float m_previewRotation = 0.0f;
+    std::string m_previewError;
 };
 
 } // namespace noble

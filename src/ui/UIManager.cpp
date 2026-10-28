@@ -10,6 +10,8 @@ namespace noble {
 
 bool UIManager::s_isInitialized = false;
 UIView UIManager::s_activeView = UIView::MissionLauncher;
+ID3D11Device* UIManager::s_device = nullptr;
+ID3D11DeviceContext* UIManager::s_context = nullptr;
 std::unique_ptr<MissionLauncher> UIManager::s_missionLauncher;
 std::unique_ptr<ServerBrowser> UIManager::s_serverBrowser;
 std::unique_ptr<ArmorCustomizer> UIManager::s_armorCustomizer;
@@ -34,6 +36,8 @@ bool UIManager::Initialize(HWND hwnd, ID3D11Device* device, ID3D11DeviceContext*
         return false;
     }
 
+    s_device = device;
+    s_context = context;
     s_missionLauncher = std::make_unique<MissionLauncher>();
     s_serverBrowser = std::make_unique<ServerBrowser>();
     s_armorCustomizer = std::make_unique<ArmorCustomizer>();
@@ -54,6 +58,8 @@ void UIManager::Shutdown() {
     ImGui_ImplWin32_Shutdown();
     ImGui::DestroyContext();
 
+    s_device = nullptr;
+    s_context = nullptr;
     s_isInitialized = false;
 }
 
@@ -204,7 +210,7 @@ void UIManager::Render(BlamEngine* engine) {
             if (s_serverBrowser) s_serverBrowser->Render();
             break;
         case UIView::ArmorCustomizer:
-            if (s_armorCustomizer) s_armorCustomizer->Render();
+            if (s_armorCustomizer) s_armorCustomizer->Render(s_device, s_context);
             break;
         case UIView::WorkshopMods:
             if (s_workshopManager) s_workshopManager->Render();

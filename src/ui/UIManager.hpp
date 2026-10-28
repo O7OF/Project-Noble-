@@ -46,6 +46,8 @@ private:
 
     static bool s_isInitialized;
     static UIView s_activeView;
+    static ID3D11Device* s_device;
+    static ID3D11DeviceContext* s_context;
     static std::unique_ptr<MissionLauncher> s_missionLauncher;
     static std::unique_ptr<ServerBrowser> s_serverBrowser;
     static std::unique_ptr<ArmorCustomizer> s_armorCustomizer;
