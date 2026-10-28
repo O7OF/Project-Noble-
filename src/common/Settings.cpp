@@ -116,6 +116,9 @@ void Settings::Load() {
             Read(j, "playerName", d.playerName);
             Read(j, "serviceTag", d.serviceTag);
             Read(j, "masterServerUrl", d.masterServerUrl);
+            if (d.masterServerUrl.empty()) {
+                d.masterServerUrl = "https://outbreak-z-test-server.onrender.com";
+            }
             Read(j, "favorites", d.favorites);
             auto keys = j.find("keyOverrides");
             if (keys != j.end() && keys->is_object()) {

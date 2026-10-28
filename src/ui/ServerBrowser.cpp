@@ -67,8 +67,10 @@ ServerBrowser::ServerBrowser() {
     }
     const SettingsData s = Settings::Get().Snapshot();
     std::snprintf(m_hostSessionName, sizeof(m_hostSessionName), "%s's game", s.playerName.c_str());
-    std::snprintf(m_masterUrl, sizeof(m_masterUrl), "%s", s.masterServerUrl.c_str());
-    MasterServerClient::Get().SetUrl(s.masterServerUrl);
+
+    const std::string masterUrl = s.masterServerUrl.empty() ? "https://outbreak-z-test-server.onrender.com" : s.masterServerUrl;
+    std::snprintf(m_masterUrl, sizeof(m_masterUrl), "%s", masterUrl.c_str());
+    MasterServerClient::Get().SetUrl(masterUrl);
     std::snprintf(m_directConnectIp, sizeof(m_directConnectIp), "%s:11774", UPnP::Get().GetInternalIP().c_str());
 }
 
