@@ -24,6 +24,8 @@
 #include <string>
 #include <cstdlib>
 #include <cwchar>
+#include <cstdio>
+#include <locale.h>
 #include <unordered_set>
 #include <deque>
 #include <iterator>
@@ -679,6 +681,10 @@ static uint8_t __fastcall SubtitlesEnabledHook() {
     if (s_forceSubtitles.load(std::memory_order_relaxed)) return 1;
     return s_origSubtitlesEnabled();
 }
+
+static std::wstring SafeReadWide(const wchar_t* text, size_t maxChars);
+static std::string NarrowForLog(const std::wstring& w);
+static size_t SafeCopyAnsiRaw(const char* src, char* dst, size_t cap);
 
 static void EnsureSubtitleHook(HMODULE reach) {
     s_forceSubtitles.store(Settings::Get().Snapshot().subtitles);
@@ -1486,7 +1492,10 @@ private:
 static uint64_t __fastcall HostSlot55_StringsClear(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
     (void)thisPtr; (void)a1; (void)a2; (void)a3; (void)a4;
     StringTable::Get().Clear();
-    return 0;
+    // Must return non-zero: the engine (haloreach+0x3140D) only registers its string tables through slot 56
+    // when slot 55 returns true ("test al,al / je skip"). Returning 0 left every slot 57 lookup unanswered, so
+    // string-id fields (score, place, respawn time, loadout grenades, Forge menus) showed the raw id in hex.
+    return 1;
 }
 
 // Slot 56: strings register (case 0x38): (table, id, const char* name, const char* suffix)

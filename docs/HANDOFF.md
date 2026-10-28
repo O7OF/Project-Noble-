@@ -1,4 +1,4 @@
-# Project Noble: handoff (2026-10-27, 20:20 ET)
+# Project Noble: handoff (2026-10-27, 21:40 ET)
 
 This picks up a reverse-engineering and C++ effort on **Tyler's Windows PC**. All paths below are real paths on that machine.
 Tyler (GitHub `WeabooTyler117`) works with a partner (GitHub `O7OF`) who owns the repo and writes most of the code.
@@ -11,7 +11,101 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 ---
 
-## 0. Pick up here (20:20 ET)
+
+## 0. Pick up here (21:40 ET)
+
+**21:40: hex-number bug FIXED (tested).** With slot 55 returning 1 the engine registers its strings (log:
+"StringTable: register ... found" for all 40 logged, lookups return real text such as "Tuesday", "October") and the
+scoreboard shows place "1", score "0" (`capture_777777.bmp`, 21:27). Tyler confirmed it works. All diagnostics
+(`crtfmt` IAT wrappers, `[tokendiag]`, `[hexdiag]`) are removed from ReachHost.cpp (112,875 bytes). Still to do:
+build, commit ReachHost.cpp + this handoff, push; delete the untracked `src/engine/HudColor.*`. Then check Forge
+menus and loadout cards in game (expected fixed by the same change).
+
+**21:35: hex-number bug ROOT CAUSE FOUND: host slot 55 must return 1.**
+- `hr+0x3140D` calls host slot 55 (vtable +0x1B8, "strings clear") and only if it returns true ("test al,al /
+  je skip") registers the string tables through slot 56 (+0x1C0, ~8700 strings; RR's log: "strings registered by
+  the engine: 8712; lookups answered from the language file: 11178"). Noble's slot 55 returned 0, so slot 56 was
+  never called and every slot 57 lookup missed (Noble log: all "(none)"). Fields bound to string ids then show
+  the raw id as 8 hex digits: score/place, "Respawn in", loadout grenades, Forge menu title "00000002", prices
+  "$00000001", rotation snap "00000008". The `[tokendiag]` hook on `hr+0x2D26C0` never fired for them (they use
+  the int -> string-id conversion of value tag 6, `hr+0x2F8FD4`, not `\x07` tokens).
+- **Fix (uncommitted, ReachHost.cpp):** `HostSlot55_StringsClear` returns 1. Test with go.bat; check the log for
+  "StringTable: register ... found" lines and the scoreboard / loadout / Forge numbers.
+- Once confirmed: remove `[tokendiag]`, `[hexdiag]` and the crtfmt diagnostics; the fallback string table in
+  ReachHost.cpp may then be mostly unneeded (lookups come from MCC's EN_HaloReach.bin via registered keys).
+
+**21:25: hex bug, UI token pipeline mapped (static) + diagnostic running.**
+- `hr+0x2D288C` = string id -> text: gets the text via `hr+0x2D25A4` -> `hr+0x9E0D0` (host slot 57 =
+  vtable +0x1C8, then the map's own strings; no hex there), then expands `\x07` tokens in a loop. For each token it
+  asks host slot 51 feature 5 (`[hr+0xC1A100]` vtable +0x198, Noble answers on, like RR). On: splits
+  "datasource.property" at '.', turns both into string ids (`hr+0x9DB08`), finds the property (`hr+0x9E350`) and
+  calls **`hr+0x2D26C0`** to write the value as text. Off: parses the token as 8 hex digits (`wcstoul` radix 16).
+- `hr+0x2D26C0`: datasource object -> column (vtable +0x50), rows (+0x60), value (+0x68 -> {tag, value});
+  int value whose column info (+0x58) says "string list" -> recurse into `hr+0x2D288C` with that string id;
+  otherwise tag handler to_text (`hr+0x2D284E`).
+- The slot 61 call stack only shows the draw path (`hr+0x2C2BF6` -> `0x2DA7FB` -> `0x2DA262` -> `0x2DF075` ->
+  `0x2DF68F` -> `0x2DF533` -> `0x26921B` -> `0x268DD4` -> `0x1CF393` -> slot 61), not where the text is built.
+- **Running (uncommitted, ReachHost.cpp):** `[tokendiag]` MinHook on `hr+0x2D26C0` logs column id, extra, output
+  text (first 40 calls + any 4/8-digit hex-looking output with a call stack). `[hexdiag]` in slot 61 logs stacks for
+  "Respawn"/"01c"/"02" texts. Both must be removed before committing (with the crtfmt code).
+- **Warning:** the stale-copy revert also hit `ReachHost.cpp` twice (a 76 KB / older copy reappeared after a
+  write). Always check sizes after writing and run `git diff --stat` before committing.
+
+**21:30: hex-number bug, cause narrowed down (static analysis of haloreach.dll).**
+- The loadout's "0000 / 0002" is one 8-digit value `00000002` wrapped onto two lines, so all cases are a 32-bit
+  int shown as hex (score, place, respawn time, frag grenade count). All four come from strings with a
+  `\x07datasource.prop_x\x07` token. Noble's fallback strings are identical to RR's (`D:\Reach\data\strings_en.json`
+  is RR's capture of what it answered: 71 strings, all present in Noble's table; slot 56 never registers anything,
+  so every lookup uses the fallback table). The strings are not the problem.
+- UI value types: sorted handler array at `hr+0xB4C800` (14 entries, looked up by tag with binary search
+  `hr+0x1802E9720`; built at init `hr+0x2AA09A`). Each handler = {u64 tag, can_convert_from(tag), convert(src,dst),
+  to_text(value, buf, cap)}. Tag 1 = int32 (`hr+0xA36058`, to_text `hr+0x2F3AB8` = `_itow_s` radix 10). Tag 8 =
+  int64 (`hr+0xA45B50`): convert `hr+0x381EF0` accepts tag 1 (sign-extends), **to_text `hr+0x381F10` =
+  `_i64tow_s(v, buf, cap, 16)`**, i.e. hex. Other tags: 0 bool ("true"/"false"), 2 float, 3/12/13 strings.
+- Value to text: `hr+0x2D284E` (handler->to_text for the value's tag; tag 6 handled separately). Data binding:
+  `hr+0x2F4F29` converts the source value to the widget property's tag (handler->convert), then sets the property
+  (vtable+0x70). So an int reaches the text as tag 8 and prints in hex. Why RR doesn't hit this is still unknown
+  (maybe the source value's tag, or which widget property type is bound).
+- Ruled out this round: the engine's own narrow printf at `hr+0x7C2EF0` is OpenSSL's BIO_printf (next to
+  `crypto\bio\b_print.c`); narrow `%08x`/`%04x` strings are OpenSSL/network/marker messages; the only wide `%x`
+  is the locale check; no hand-written hex-digit code in the UI.
+- Padding to 8 digits isn't explained by `_i64tow_s` (it doesn't pad), so check where the zeros come from if the
+  test below shows decimal but still padded.
+- **Test (done, reverted):** `src/hooks/EnginePatches.cpp` patch 2 changes the radix byte at
+  `hr+0x381F1A` (`41 B9 10 00 00 00` -> radix 10), only if the bytes match. Tyler runs
+  `D:\Halo-Reach-Community-Edition\build\agent\go.bat` (job = build + Sword Base + scoreboard shot
+  `capture_777777.bmp`, log `Y_noble-client.log`; look for "UI int64 values now convert to text in decimal").
+  **Result (21:12): no change.** The patch was applied (log: "UI int64 values now convert to text in decimal"),
+  but the scoreboard still shows place "0000" and score "0000001c" (`capture_777777.bmp`). So the tag-8 to_text
+  is NOT the source; the patch was reverted (EnginePatches.cpp restored to the committed version).
+  Remaining ideas: the token `\x07datasource.prop\x07` may not be evaluated at all (property lookup fails and the
+  text widget dumps the raw value / handle; 0x1c and 1 look like small indices, place is 4 digits = 16-bit);
+  find where the text widget expands `\x07` tokens (wide 0x0007 compare in the UI code around hr+0x2C0000-0x300000
+  found nothing with `cmp ...,0x7`, so it may scan with a table or `wcschr`), or compare at run time which
+  datasource the scoreboard binds (RR vs Noble). An interactive debugger (x64dbg on Tyler's PC, breakpoint on
+  memory write of the text) would find it fastest.
+- Still in `ReachHost.cpp` (uncommitted): the crtfmt diagnostics; remove before committing.
+
+**20:55: hex-number bug (score "0000001c", "Respawn in 00000001", loadout grenades "0000 / 0002") still open.**
+RR shows all of these correctly, so it is something Noble's host does differently.
+- Ruled out: the engine's wide sprintf `hr+0x35D84` (only normal output: '%d'->'10', '%d:%02d'->'0:00', ...);
+  `_itow_s` (only caller `hr+0x2F3AB8`, radix 10; a UI data-value vtable at `0x180A36070`); locale code
+  `hr+0x2B6F12`; Noble's own source (no hex formatting on these paths).
+- Found: `hr+0x381F10` calls `_i64tow_s` with **radix 16** (another data-value type: type 8 = int64, and
+  `hr+0x381EF0` converts type 1 int32 -> type 8). It does not zero-pad, so it is a lead, not the answer.
+- There are two more wide sprintf wrappers: `hr+0x35CC8` and `hr+0x35D24` (20 callers, incl. `hr+0x381ED4`).
+- **Running now (uncommitted, on the PC):** the old 0x35D84 hook is replaced by IAT wrappers around all six CRT
+  format imports (`__stdio_common_vsnwprintf_s/vswprintf/vswprintf_s/vsprintf/vsprintf_s/vsnprintf_s`, IAT RVAs
+  0x91EA20/28/48/60/70/38). Log lines: `ReachHost [crtfmt ...]`, plus `zero-padded` for outputs starting "0000".
+  job.bat = build + Sword Base with `-scoreboard-at 20 -quit-after 30`, log copied to
+  `build\bin\Release\Y_noble-client.log`. **Result (20:56):** no CRT call produces any hex/zero-padded text
+  (every format seen is normal: '%d'->'0', '%d:%02d'->'0:00', '%i'->'25', '%s%s%s'->'0', ...), so the hex text
+  is made by engine code itself, not printf. If no CRT call makes the hex text, the text is
+  made by engine code (look for code that writes hex digits by the value's size), or the value reaching the UI
+  has the wrong type tag (compare with RR at the data-value vtables).
+- Remove the diagnostic (`EnsureFormatDiagnostics` + `crtfmt` wrappers in ReachHost.cpp) before committing.
+
+### Earlier (20:20 ET)
 
 **20:15: hand checks done by computer use (all pass).** Windowed 1600x900 Sword Base:
 - Post-game panel (held after the engine stops): PLAY AGAIN relaunches into a new match. A very short synthetic click
