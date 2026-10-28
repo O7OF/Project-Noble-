@@ -397,7 +397,7 @@ void CommendationRow(const Career::Commendation& c, float width) {
     using namespace NobleUi;
     const float s = Scale();
     const float bannerH = 58.0f * s, bannerW = bannerH * (287.0f / 90.0f);
-    const float height = bannerH + 12.0f * s;
+    const float height = bannerH + 26.0f * s;   // room for a two-line requirement above the bar
     const ImVec2 p0 = ImGui::GetCursorScreenPos();
     const ImVec2 p1(p0.x + width, p0.y + height);
     ImGui::Dummy(ImVec2(width, height));
@@ -406,7 +406,7 @@ void CommendationRow(const Career::Commendation& c, float width) {
     dl->AddRectFilled(p0, p1, IM_COL32(22, 30, 40, hovered ? 235 : 200), 3.0f * s);
 
     // Banner (tinted by tier).
-    const ImVec2 b0(p0.x + 6.0f * s, p0.y + 6.0f * s), b1(b0.x + bannerW, b0.y + bannerH);
+    const ImVec2 b0(p0.x + 6.0f * s, p0.y + (height - bannerH) * 0.5f), b1(b0.x + bannerW, b0.y + bannerH);
     const UiTexture art = UiArt::ReachArt("commendations", c.art);
     if (art) UiArt::DrawContain(dl, art, b0, b1, TierTint(c.tier, c.tracked));
     else dl->AddRect(b0, b1, IM_COL32(255, 255, 255, 50));
@@ -419,8 +419,12 @@ void CommendationRow(const Career::Commendation& c, float width) {
     const float bodyPx = 18.0f * s, smallPx = 14.0f * s;
     Text(dl, body, bodyPx, ImVec2(x, p0.y + 8.0f * s), c.tracked ? kText : kTextDim, c.title.c_str());
     const char* tierName = c.tier > 0 ? Career::CommendationTierName(c.tier) : "";
+    char reward[48] = "";
+    if (c.nextReward > 0) std::snprintf(reward, sizeof(reward), "+%s cR", Grouped(c.nextReward).c_str());
+    const float rw = TextWidth(small, smallPx, reward);
+    Text(dl, small, smallPx, ImVec2(right - rw, p0.y + 10.0f * s), kAmber, reward);
     const float tw = TextWidth(small, smallPx, tierName);
-    Text(dl, small, smallPx, ImVec2(right - tw, p0.y + 10.0f * s), TierTextColour(c.tier), tierName);
+    Text(dl, small, smallPx, ImVec2(right - rw - (rw > 0 ? 12.0f * s : 0.0f) - tw, p0.y + 10.0f * s), TierTextColour(c.tier), tierName);
     Text(dl, small, smallPx, ImVec2(x, p0.y + 8.0f * s + bodyPx + 2.0f * s), kTextDim, c.description.c_str(), right - x);
 
     // Progress toward the next tier.

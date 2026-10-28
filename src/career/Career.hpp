@@ -122,6 +122,7 @@ struct Commendation {
     int mode = 0;                   // 0 campaign, 1 Firefight, 2 multiplayer
     std::string art;                // "campaign_demon" -> data\ui\reach\commendations\campaign_demon.png
     bool tracked = false;           // false: Noble can't count it yet (stays at 0)
+    int64_t nextReward = 0;         // cR paid when the next tier is reached
 };
 std::vector<Commendation> Commendations();
 const char* CommendationTierName(int tier);   // 0 = "None", 1 = "Steel" ... 6 = "Max"
