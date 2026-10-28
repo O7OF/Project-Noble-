@@ -53,7 +53,16 @@ wheel down. All done and tested by test options + screenshots on Tyler's PC (he 
   K/D/A, medals; only the local player is named - the record holds no names) above the cR lines, which now
   include challenge / commendation / mission payouts. Real 10-minute Sword Base match (04:24): paid 133 cR,
   history row + per-mode totals + "Time on Duty" challenge progress (10/45 min) saved; career.json was restored
-  afterwards. Post-game panel screenshot: `build\bin\Release\t5_capture_900000.bmp` (04:45 run).
+  afterwards. Post-game panel checked (04:38, `build\bin\Release\t5_capture_900000.bmp`): GAME OVER, map, mode and
+  time, scoreboard row "NobleSix [NOBL]" with score/K/D/A/medals, cR lines, rank bar (now blue), buttons.
+- **Git (04:42):** pushed as `9e679d8`, rebased onto O7OF's `2b9e843` (ReachArmory + in-engine 3D menu: the front-end
+  menu now runs inside the engine on `mainmenu`). FrontEndMenu.cpp conflicted; resolved by taking O7OF's file and
+  re-adding the Service Record entry / screen / `-menu-screen career`. Builds clean; the in-engine main menu shows
+  SERVICE RECORD (screenshot `capture_780.bmp`). Notes for O7OF: in his new menu `-menu-screen <name>` seemed to be
+  ignored by the capture (it showed MAIN MENU), and the log warns `ReachArmory: Could not locate
+  mainmenu_all.string_ids.csv`. Also check that nothing from RR's `mainmenu_all.map` is committed (repo rule).
+- Small open bits: Start can't close the pause menu (the pad is only read while the game has input); vibration
+  untested with a real pad; +0x1B7 meaning unknown; challenge kills/medals depend on the provisional stat slots.
 
 ### Earlier (03:40 ET) - FOV checked in game
 

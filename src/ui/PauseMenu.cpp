@@ -278,7 +278,9 @@ static void DrawCredits() {
         const float f = static_cast<float>(a.creditsAfter - lo) / static_cast<float>(hi - lo);
         char label[64];
         std::snprintf(label, sizeof(label), "%lld / %lld cR", static_cast<long long>(a.creditsAfter), static_cast<long long>(hi));
+        ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(0.27f, 0.62f, 0.86f, 1.0f));   // Noble blue, not ImGui yellow
         ImGui::ProgressBar(f, ImVec2(-1.0f, 0.0f), label);
+        ImGui::PopStyleColor();
     }
 }
 
