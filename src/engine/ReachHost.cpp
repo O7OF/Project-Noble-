@@ -730,7 +730,85 @@ static void CaptureProfileSnapshotIfChanged(const uint8_t* profile) {
     }
 }
 
-static void ApplyArmorySpecies(uint8_t* profile) {
+// Armory appearance -> profile. haloreach+0x2EDA08 copies these profile fields into the player's
+// settings (Elite flag at +0x27/+0x38, then dword "global item ids" at +0x40..+0xA0). A global item
+// id is the item's position in MCC's own Reach customization list (the HR_* names in
+// MCC-Win64-Shipping.exe, HR_Helmet_MarkVB_Base = 0 ... HR_Chest_UACounterAssault_RoboArm = 239);
+// haloreach+0x3B2F4 turns it into the engine's index for that slot. A field left at 0 becomes
+// item 0 of its slot, which is why the Elite always spawned as a Minor before.
+namespace armory_ids {
+constexpr uint32_t kLeftShoulder = 90;     // HR_LeftShoulder_Default .. _Security (18, Armory order)
+constexpr uint32_t kRightShoulder = 108;   // HR_RightShoulder_Default .. _Security (18)
+constexpr uint32_t kWrist = 144;           // 6, Armory order
+constexpr uint32_t kUtility = 150;         // 7, Armory order
+constexpr uint32_t kVisor = 157;           // 5, Armory order
+constexpr uint32_t kKnees = 162;           // 4, Armory order
+constexpr uint32_t kEffect = 166;          // 7, Armory order
+constexpr uint32_t kEliteEffect = 173;     // 7, same order
+constexpr uint32_t kSpartanMale = 192;     // HR_Spartan_Male, +1 = Female
+constexpr uint32_t kEliteSet = 194;        // HR_Elite_Minor .. _Officer (8, Armory order)
+constexpr uint32_t kColor = 202;           // HR_Color_Steel .. _Pale (30, Armory order)
+
+// Helmets by the Armory's helmet_id (permutation string id) -> MCC item.
+static const std::unordered_map<std::string, uint32_t>& Helmets() {
+    static const std::unordered_map<std::string, uint32_t> k = {
+        {"default", 0}, {"default_a", 1}, {"default_b", 2},                 // Mark V [B]
+        {"kurt", 3}, {"kurt_a", 4}, {"kurt_b", 5},                          // CQC
+        {"jai", 6}, {"jai_a", 7}, {"jai_b", 8},                             // ODST
+        {"isaac", 9}, {"isaac_a", 10}, {"isaac_b", 11},                     // HAZOP
+        {"vinh", 12}, {"vinh_a", 13}, {"vinh_b", 14},                       // EOD
+        {"nicole", 15}, {"nicole_a", 16}, {"nicole_b", 17},                 // Operator
+        {"joshua", 18}, {"joshua_a", 19}, {"joshua_b", 20},                 // Grenadier
+        {"female", 21}, {"female_a", 22}, {"female_b", 23},                 // Air Assault
+        {"jun", 24}, {"jun_a", 25}, {"jun_b", 26},                          // Scout
+        {"kelly", 27}, {"kelly_a", 28}, {"kelly_b", 29},                    // EVA
+        {"adrianna", 30}, {"adrianna_a", 31}, {"adrianna_b", 32},           // JFO
+        {"carter", 33}, {"carter_a", 34}, {"carter_b", 35},                 // Commando
+        {"emile", 36}, {"emile_a", 37}, {"emile_b", 38},                    // EVA [C]
+        {"will", 39}, {"will_a", 40}, {"will_b", 41},                       // Mjolnir Mk. V
+        {"skull", 42}, {"skull_a", 43}, {"skull_b", 44}, {"sam_c", 45},     // Pilot (+ Haunted)
+        {"malcolm", 46}, {"malcolm_a", 47}, {"malcolm_b", 48},              // Recon
+        {"john117", 49}, {"john117_a", 50}, {"john117_b", 51},              // Mjolnir Mk. VI
+        {"sam", 52}, {"sam_a", 53}, {"sam_b", 54},                          // Gungnir
+        {"linda", 55}, {"linda_a", 56}, {"linda_b", 57},                    // Security
+        {"player_li", 58}, {"player_li_a", 59}, {"player_li_b", 60},        // Military Police
+        {"rosenda", 61}, {"rosenda_a", 62}, {"rosenda_b", 63},              // CQB
+        {"cndmnd", 64}, {"cndmnd_a", 67}, {"cndmnd_b", 65}, {"cndmnd_c", 66}, // Mariner: base, Optrex, Defiant, Mister Chief
+        {"hilands", 68}, {"hilands_a", 70}, {"hilands_b", 69},              // GRD: base, CBRN, Optrex
+        {"s8_helmet_belos_corinthian", 72}, {"s8_helmet_belos_transverse", 73},
+        {"s8_helmet_belos_kerata", 74}, {"s8_helmet_belos_leontokardos", 75},
+        {"s8_helmet_belos_stheno", 76}, {"s8_helmet_belos_cerberus", 77},
+        {"s8_helmet_blackguard_base", 78}, {"s8_helmet_blackguard_bishop", 79},
+        {"s8_helmet_blackguard_dragon", 80}, {"s8_helmet_blackguard_wind", 81},
+        {"s8_helmet_blackguard_visage", 82}, {"s8_helmet_blackguard_crown", 83},
+        {"s8_helmet_drengr_base", 84}, {"s8_helmet_drengr_valdemar", 85},
+        {"s8_helmet_drengr_dvalinn", 86}, {"s8_helmet_drengr_nari", 87},
+        {"s8_helmet_drengr_thyra", 88}, {"s8_helmet_drengr_tyr", 89},
+    };
+    return k;
+}
+
+// Chests by the Armory's chest_id -> MCC item (the [W]/[R] and later chests sit after the colours).
+static const std::unordered_map<std::string, uint32_t>& Chests() {
+    static const std::unordered_map<std::string, uint32_t> k = {
+        {"chest_blank", 126}, {"chest_1", 127}, {"chest_2", 128}, {"chest_3", 129}, {"chest_4", 130},
+        {"chest_5", 131}, {"chest_6", 132}, {"chest_7", 133}, {"chest_8", 134}, {"chest_9", 135},
+        {"chest_10", 136}, {"chest_11", 137}, {"chest_12", 138},
+        {"chest_wp_2", 139}, {"chest_robo_1", 140}, {"chest_robo_2", 141}, {"chest_robo_3", 142},
+        {"dlc2_chest_cndmnd", 143},
+        {"chest_kurt", 232}, {"chest_13", 233}, {"chest_wp_1", 234},
+        {"chest_default_roboarm", 235}, {"chest_7_roboarm", 236}, {"chest_5_roboarm", 237},
+        {"chest_12_roboarm", 238}, {"chest_2_roboarm", 239},
+    };
+    return k;
+}
+
+// Firefight voices in Armory order -> MCC item. Reach has 12; the four ODST-only voices
+// (Dare, Dutch, Mickey, Romeo) have no Reach item and fall back to Noble Six.
+constexpr uint32_t kVoices[16] = { 180, 190, 191, 189, 188, 180, 180, 180, 180, 187, 186, 184, 182, 183, 181, 185 };
+} // namespace armory_ids
+
+static void ApplyArmoryAppearance(uint8_t* profile) {
     if (!profile) return;
     const auto appearancePath = ReachHost::Get().GetDataDir() / "appearance.json";
     std::ifstream file(appearancePath);
@@ -739,14 +817,69 @@ static void ApplyArmorySpecies(uint8_t* profile) {
     try {
         nlohmann::json appearance;
         file >> appearance;
-        const uint8_t species = static_cast<uint8_t>(std::clamp(appearance.value("species", 0), 0, 1));
-        // Confirmed profile fields: 0 = Spartan, 1 = Elite. Do not write unverified armor/color offsets.
+        using namespace armory_ids;
+        auto num = [](const nlohmann::json& j, const char* key, int lo, int hi, int def) {
+            const auto it = j.find(key);
+            return (it != j.end() && it->is_number_integer()) ? std::clamp(it->get<int>(), lo, hi) : def;
+        };
+        auto str = [](const nlohmann::json& j, const char* key) {
+            const auto it = j.find(key);
+            return (it != j.end() && it->is_string()) ? it->get<std::string>() : std::string();
+        };
+        auto put = [profile](uint32_t offset, uint32_t id) { memcpy(profile + offset, &id, sizeof(id)); };
+
+        const uint8_t species = static_cast<uint8_t>(num(appearance, "species", 0, 1, 0));
         profile[0x27] = species;
         profile[0x38] = species;
-        NOBLE_INFO("ReachHost [Slot 34]: applied Armory species {} to the profile", species == 0 ? "Spartan" : "Elite");
+
+        const nlohmann::json empty = nlohmann::json::object();
+        const nlohmann::json& sp = appearance.contains("spartan") && appearance["spartan"].is_object() ? appearance["spartan"] : empty;
+        const nlohmann::json& el = appearance.contains("elite") && appearance["elite"].is_object() ? appearance["elite"] : empty;
+
+        uint32_t helmet = 0;
+        if (auto it = Helmets().find(str(sp, "helmet_id")); it != Helmets().end()) helmet = it->second;
+        uint32_t chest = 126;
+        if (auto it = Chests().find(str(sp, "chest_id")); it != Chests().end()) chest = it->second;
+        const int effect = num(sp, "armor_effect_index", 0, 6, 0);
+
+        put(0x40, helmet);
+        put(0x44, kLeftShoulder + num(sp, "left_shoulder_index", 0, 17, 0));
+        put(0x48, kRightShoulder + num(sp, "right_shoulder_index", 0, 17, 0));
+        put(0x4C, chest);
+        put(0x50, kWrist + num(sp, "wrist_index", 0, 5, 0));
+        put(0x54, kUtility + num(sp, "utility_index", 0, 6, 0));
+        put(0x64, kSpartanMale + num(appearance, "body_type", 0, 1, 0));
+        put(0x68, kEliteSet + num(el, "armor_set", 0, 7, 0));
+        put(0x6C, kKnees + num(sp, "knee_guards_index", 0, 3, 0));
+        put(0x70, kVisor + num(sp, "visor_color_index", 0, 4, 0));
+        put(0x8C, kEffect + effect);
+        put(0x90, kEliteEffect + effect);
+        put(0x94, kVoices[num(sp, "firefight_voice_index", 0, 15, 0)]);
+        put(0x98, kColor + num(appearance, "primary_color", 0, 29, 1));
+        put(0x9C, kColor + num(appearance, "secondary_color", 0, 29, 10));
+        put(0xA0, kColor);
+        NOBLE_INFO("ReachHost [Slot 34]: applied Armory appearance ({}, helmet {}, chest {}, Elite set {}, colours {}/{})",
+                   species == 0 ? "Spartan" : "Elite", helmet, chest, num(el, "armor_set", 0, 7, 0),
+                   num(appearance, "primary_color", 0, 29, 1), num(appearance, "secondary_color", 0, 29, 10));
     } catch (const nlohmann::json::exception& e) {
-        NOBLE_WARN("ReachHost [Slot 34]: could not read Armory species from '{}': {}", appearancePath.string(), e.what());
+        NOBLE_WARN("ReachHost [Slot 34]: could not read Armory appearance from '{}': {}", appearancePath.string(), e.what());
     }
+}
+
+// Re-applies appearance.json when the Armory saves it, so a change made from the menu reaches
+// the profile without a restart (the game reads the profile again when the player spawns).
+static void RefreshArmoryAppearance(uint8_t* profile) {
+    static std::filesystem::file_time_type s_lastWrite{};
+    static ULONGLONG s_lastCheck = 0;
+    const ULONGLONG now = GetTickCount64();
+    if (now - s_lastCheck < 500) return;
+    s_lastCheck = now;
+    std::error_code ec;
+    const auto path = ReachHost::Get().GetDataDir() / "appearance.json";
+    const auto t = std::filesystem::last_write_time(path, ec);
+    if (ec || t == s_lastWrite) return;
+    s_lastWrite = t;
+    ApplyArmoryAppearance(profile);
 }
 
 static uint64_t __fastcall HostSlot34_ProfileSettings(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
@@ -791,7 +924,7 @@ static uint64_t __fastcall HostSlot34_ProfileSettings(void* thisPtr, uint64_t a1
             WriteDefaultLookSettings(s_hostProfileBuffer);
             NOBLE_INFO("ReachHost [Slot 34]: using built-in default key bindings, volumes and look settings");
         }
-        ApplyArmorySpecies(s_hostProfileBuffer);
+        RefreshArmoryAppearance(s_hostProfileBuffer);
         // RR host::hit case 0x22: the profile is a zeroed 64 KB block with only the 4-character
         // service tag (UTF-16) written at +0x1AC. The old defaults here (+0x00 = 1, armour colours
         // at +0x18/+0x1C) are not what RR sends, so they are no longer written.
@@ -841,6 +974,7 @@ static uint64_t __fastcall HostSlot34_ProfileSettings(void* thisPtr, uint64_t a1
             WritePadLookSettings(s_hostProfileBuffer);
         }
     }
+    RefreshArmoryAppearance(s_hostProfileBuffer);
     for (const auto& [off, val] : s_profilePatches) s_hostProfileBuffer[off] = val;
 
     CaptureProfileSnapshotIfChanged(s_hostProfileBuffer);

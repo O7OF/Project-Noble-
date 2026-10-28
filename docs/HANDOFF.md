@@ -1,4 +1,4 @@
-# Project Noble: handoff (2026-10-28, 08:30 ET)
+# Project Noble: handoff (2026-10-28, 09:15 ET)
 
 This picks up a reverse-engineering and C++ effort on **Tyler's Windows PC**. All paths below are real paths on that machine.
 Tyler (GitHub `WeabooTyler117`) works with a partner (GitHub `O7OF`) who owns the repo and writes most of the code.
@@ -10,6 +10,46 @@ community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownershi
 MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour.
 
 ---
+
+## 0. Pick up here (2026-10-28, 09:15 ET) - Armory appearance now reaches the game
+
+**What was wrong:** Noble only wrote the Elite flag (+0x27/+0x38) into the profile; every armor field stayed 0,
+and 0 means "item 0" of each slot (Mark V [B] helmet, default pieces, Steel, **Elite Minor**).
+
+**How the profile carries appearance** (haloreach+0x2EDA08 copies it into the player's settings):
+dword "global item ids" at +0x40 helmet, +0x44 left shoulder, +0x48 right shoulder, +0x4C chest, +0x50 wrist,
++0x54 utility, +0x64 body (192 male / 193 female), +0x68 Elite armor set, +0x6C knee guards, +0x70 visor colour,
++0x8C armor effect, +0x90 Elite armor effect, +0x94 Firefight voice, +0x98 primary colour, +0x9C secondary colour,
++0xA0 third colour (RR: Steel). (+0xA4/+0xA8 are the Armory poses, HR_Rifle_Salute / HR_Elite_Rifle_Salute in RR.)
+A global item id is the item's position in **MCC's own Reach customization list**: the `HR_*` names stored in order
+in `MCC-Win64-Shipping.exe` (HR_Helmet_MarkVB_Base = 0 ... Drengr_TYR = 89, LeftShoulder 90-107, RightShoulder
+108-125, Chest 126-143, Wrist 144-149, Utility 150-156, Visor 157-161, Knees 162-165, ArmorEffect 166-172,
+EliteArmorEffect 173-179, FirefightVoice 180-191, Spartan_Male/Female 192/193, Elite_Minor..Officer 194-201,
+Color_Steel..Pale 202-231, later chests 232-239). `haloreach+0x3B2F4` turns it into the engine's slot index;
+the group sizes match that function exactly.
+
+**Code:** `ApplyArmoryAppearance` in `ReachHost.cpp` (replaces `ApplyArmorySpecies`) reads `data/appearance.json`
+and writes all of the above; helmets and chests go by the Armory's `helmet_id` / `chest_id` string ids, the other
+slots by index (the Armory lists are already in MCC order). `RefreshArmoryAppearance` re-applies it whenever the
+file changes (checked twice a second), so an Armory save during a session reaches the profile.
+
+**Tested on Tyler's PC (screenshots, he was away):**
+- `-profile-set 98=E0` (Brick) turns the player's colour swatch on the scoreboard red; 27/38 = Elite gives the
+  Elite HUD. So the colour fields reach the game.
+- Built with the new code and two appearance.json files (Spartan EVA helmet / Brick, and Elite General / Blue):
+  log `applied Armory appearance (Spartan, helmet 27, chest 133, Elite set 0, colours 22/0)` with a red swatch,
+  and `(Elite, helmet 0, chest 126, Elite set 5, colours 15/2)` with the Elite HUD and a blue swatch
+  (`build\bin\Release\t14_P/Q_capture_1450.bmp`). Tyler's own appearance.json was not touched (there was none in
+  `build\bin\Release\data\`).
+- **Not verifiable in first person:** helmet, shoulders, chest and the Elite armor set only show in third person
+  (the first-person Elite hand looks the same for Minor and General). **Tyler: please check in game** (die, or look
+  at yourself in the Armory/another player's view) that the helmet and Elite set match the Armory.
+- Unsure mappings: GRD variants (`hilands_a` -> GRD_CBRN, `hilands_b` -> GRD_OPTREX), Mariner variants by name;
+  "HIGHLANDS" chest has no MCC item (falls back to default); ODST-only voices (Dare, Dutch, Mickey, Romeo) have
+  no Reach item (fall back to Noble Six). Whether the engine re-reads the profile at respawn (live change
+  mid-match) is untested.
+
+Head of main before this: `0f29293`.
 
 ## 0. Pick up here (2026-10-28, 08:30 ET) - Armory status from Tyler
 
@@ -474,8 +514,8 @@ from the MCC install; Tyler's rank-icon sheet stays local). Open question for Ty
 switch to Reach's measured table (`career-reference.md` §1).
 
 **Armory appearance (current).**
-- The Armory saves `data/appearance.json` under the resolved data directory. Slot 34 applies the verified species flags
-  at profile +0x27 and +0x38 (0 Spartan, 1 Elite); no unverified equipment/color offsets are written.
+- The Armory saves `data/appearance.json` under the resolved data directory. Slot 34 writes species, armor pieces,
+  colours and the Elite armor set into the profile (see section 0, 09:15).
 - The local OBJ preview resolves MCC MTL texture paths into the exported `bitmaps` tree, loads matching `_cc` masks,
   and applies the selected primary/secondary/detail colors and visor tint. It composes a Spartan base with selected
   MCC accessory groups, or an Elite body/undersuit layer followed by the selected rank harness group. The engine's
