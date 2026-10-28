@@ -34,8 +34,16 @@ public:
     // the live haloreach.dll 3D mainmenu_all.map scene and Armory Spartan/Elite.
     static void RenderOverlay(IDXGISwapChain* swapChain);
 
+    // Main thread, from the message loop: once the engine has stopped calling slot 1 for a second
+    // (MCC has no Reach menu map, so the engine drops it after about a minute), draws and presents
+    // the menu itself. Returns true when it drew a frame.
+    static bool HoldFrame();
+
     // Standalone loop fallback.
     static FrontEndChoice Run(Window& window, D3D11Renderer& renderer, const std::filesystem::path& reachDir);
+
+private:
+    static void RenderOverlayImpl(IDXGISwapChain* swapChain, bool clear);
 };
 
 } // namespace noble

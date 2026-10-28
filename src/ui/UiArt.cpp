@@ -7,6 +7,7 @@
 #include <wincodec.h>
 
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 #include <fstream>
 #include <functional>
@@ -452,14 +453,67 @@ UiTexture MapPreview(const std::string& scenario, bool large) {
     return {};
 }
 
-UiTexture SkullIcon(const std::string& iconName) {
-    return PackImage("skullstexturepack", iconName);
+namespace {
+fs::path ReachArtFile(const std::string& category, const std::string& stem, bool prefix) {
+    std::error_code ec;
+    for (const fs::path& base : { CustomDir() / "reach", s_exeDir / "data" / "ui" / "reach" }) {
+        const fs::path dir = base / category;
+        if (!prefix) {
+            const fs::path p = FindImage(dir, stem);
+            if (!p.empty()) return p;
+            continue;
+        }
+        if (!fs::is_directory(dir, ec)) continue;
+        for (const fs::path& p : ImagesIn(dir)) {
+            if (p.stem().string().rfind(stem, 0) == 0) return p;
+        }
+    }
+    return {};
+}
+UiTexture ReachArtLocked(const std::string& category, const std::string& stem) {
+    return Cached("reach:" + category + "/" + stem, [&] {
+        const fs::path p = ReachArtFile(category, stem, false);
+        return p.empty() ? UiTexture{} : LoadImageFile(p);
+    });
+}
+} // namespace
+
+UiTexture ReachArt(const std::string& category, const std::string& stem) {
+    std::lock_guard<std::mutex> lock(s_mutex);
+    return ReachArtLocked(category, stem);
 }
 
-UiTexture ControllerImage() {
-    UiTexture t = PackImage("controllertexturepack", "LARGECONTROLLERFRONT");
-    if (!t) t = PackImage("globaluitexturepack", "LARGECONTROLLERTOP");
-    return t;
+UiTexture RankIcon(int rankIndex) {
+    if (rankIndex < 0 || rankIndex > 99) return {};
+    char stem[8];
+    std::snprintf(stem, sizeof(stem), "%02d", rankIndex);
+    const std::string key = stem;
+    std::lock_guard<std::mutex> lock(s_mutex);
+    return Cached("rank:" + key, [&] {
+        const fs::path p = ReachArtFile("ranks", key + "_", true);
+        return p.empty() ? UiTexture{} : LoadImageFile(p);
+    });
+}
+
+UiTexture DifficultyIcon(int difficulty) {
+    static const char* const kNames[4] = { "easy", "normal", "heroic", "legendary" };
+    if (difficulty < 0 || difficulty > 3) return {};
+    std::lock_guard<std::mutex> lock(s_mutex);
+    return ReachArtLocked("difficulty", kNames[difficulty]);
+}
+
+void DrawContain(ImDrawList* dl, const UiTexture& tex, ImVec2 min, ImVec2 max, ImU32 tint) {
+    if (!tex || !dl) return;
+    const float w = max.x - min.x, h = max.y - min.y;
+    if (w <= 0 || h <= 0) return;
+    const float scale = std::min(w / static_cast<float>(tex.width), h / static_cast<float>(tex.height));
+    const float dw = tex.width * scale, dh = tex.height * scale;
+    const ImVec2 p0(min.x + (w - dw) * 0.5f, min.y + (h - dh) * 0.5f);
+    dl->AddImage(tex.id, p0, ImVec2(p0.x + dw, p0.y + dh), ImVec2(0, 0), ImVec2(1, 1), tint);
+}
+
+UiTexture SkullIcon(const std::string& iconName) {
+    return PackImage("skullstexturepack", iconName);
 }
 
 UiTexture NobleControllerImage() {
@@ -473,6 +527,12 @@ UiTexture NobleControllerImage() {
         }
         return {};
     });
+}
+
+UiTexture ControllerImage() {
+    UiTexture t = PackImage("controllertexturepack", "LARGECONTROLLERFRONT");
+    if (!t) t = PackImage("globaluitexturepack", "LARGECONTROLLERTOP");
+    return t;
 }
 
 void DrawCover(ImDrawList* dl, const UiTexture& tex, ImVec2 min, ImVec2 max, ImU32 tint) {

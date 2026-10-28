@@ -1,4 +1,4 @@
-# Project Noble: handoff (2026-10-28, 09:15 ET)
+# Project Noble: handoff (2026-10-28, 11:00 ET)
 
 This picks up a reverse-engineering and C++ effort on **Tyler's Windows PC**. All paths below are real paths on that machine.
 Tyler (GitHub `WeabooTyler117`) works with a partner (GitHub `O7OF`) who owns the repo and writes most of the code.
@@ -10,6 +10,57 @@ community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownershi
 MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour.
 
 ---
+
+## 0. Pick up here (2026-10-28, 11:00 ET) - menu redesign spec, rank + difficulty icons
+
+**Menu redesign spec (Tyler 10:34):** `docs/menu-redesign-spec.md` ("Reclaimer layout, Reach soul"): the plan for
+every front-end screen, the Armory, career screens and the features Reach never had. Read it before menu work; its
+§6 gives the order (UI kit + three-column Settings first). Tyler has 43 Reclaimer reference screenshots: ask him when a
+screen in the spec is unclear.
+
+**Reach art (placeholders, never committed):** Tyler sent a sheet of Reach rank icons + the four difficulty icons.
+Cut into one file each and copied to his PC only: `build\bin\Release\data\ui\reach\ranks\<NN>_<name>.png`
+(NN = `Career::Ranks()` index 00 Recruit .. 49 Inheritor) and `...\reach\difficulty\{easy,normal,heroic,legendary}.png`
+(git-ignored like all of `data\`). New `UiArt::ReachArt(category, stem)`, `RankIcon(index)`, `DifficultyIcon(d)`,
+`DrawContain(...)` look in `data\ui\custom\reach\` then `data\ui\reach\`; everything falls back to text when a file
+is missing. Rank order is partly a guess (Major = two stars, Lt. Colonel G3 = the slashed L, Warrant Officer grade
+order, Mythic..Nova = moon, crescent, black hole, sun): Tyler checks `rank_order_check.png`; fixing one = renaming files.
+- Campaign / Firefight: DIFFICULTY is four icon tiles (`DifficultyTiles` in FrontEndMenu.cpp; click or Left/Right).
+- Party box: rank icon at the end of the player's row (career.json read at most every 2 s).
+- Service Record: big rank icon in the header, progress "x / y cR", "Next: <icon> <rank> at N cR (M to go)";
+  new **RANKS** tab (4th; Q/E cycle 4 tabs; `-menu-tab 3`): all 50 ranks, earned bright, current framed in blue, next
+  outlined, cR under each.
+- `-menu-screen` works (it only looked ignored before); the menu logs `FrontEndMenu: screen a -> b`.
+- Note: the working copy of `src/ui/UiArt.cpp` on Tyler's PC had lost `NobleControllerImage` (an older copy had come
+  back, the stale-file problem from §8): restored from `git show HEAD`. The test job now writes `build\git_status_r3.txt`
+  (`git status` + `git diff --stat`) before building so stale files show up.
+
+## 0. Pick up here (2026-10-28, 09:55 ET) - menu freeze fixed, clickable hints, quit confirmation
+
+Also pushed since 09:15: `e950306` ODST-only Firefight voices removed (Armory lists Reach's 12; voice saved/loaded
+by `voice_id`), `5808e5e` GRD helmet offers MCC's four variants (Base, Optrex, CBRN, Optrex/CBRN; helmets load by
+`helmet_id`; tested: item 71 reaches the profile and a match runs). The menu changes below are committed with this
+handoff (FrontEndMenu.cpp/.hpp, main.cpp); the quit box still needs a hand check (Esc on the main menu).
+
+**Menu "freeze" (Tyler 09:26: Armory froze, Esc / Service Record tabs dead after Alt+Tab).** Not the Armory and not
+Alt+Tab: in both of his runs the whole front-end menu stopped exactly ~60 s after start. The in-engine menu (O7OF's
+mainmenu mode) asks the engine for a menu map MCC doesn't ship (RR's `mainmenu_all.map` is not used/shipped), so after
+a minute the engine gives up (slot 3 with a1=0xA, then slot 4 `_map_state_none`) and stops calling slot 1, which is
+where `FrontEndMenu::RenderOverlay` draws. Fix: `FrontEndMenu::HoldFrame()` (main thread, called from the message loop
+in `main.cpp` next to `PauseMenu::HoldFrame`): once no slot-1 frame came for 1 s it clears the back buffer, draws the
+menu itself and presents (mutex shared with RenderOverlay). Tested 09:48: log `engine stopped drawing the menu; Noble
+draws it itself` at 09:48:06, menu kept running and `-menu-capture 5000` saved `m1_capture_5480.bmp` 30 s later.
+After that minute the Armory has no 3D scene behind it. Note: `-menu-screen` is still ignored by the in-engine menu.
+
+**Clickable button hints:** the ENTER Select / ESC Back hints at the bottom of every front-end screen are buttons now
+(hover highlight, click = the key). Change / Tabs hints only describe keys and stay plain labels.
+
+**Quit confirmation (Tyler 09:48):** Esc on the main menu, or choosing QUIT, opens "QUIT PROJECT NOBLE?" with YES / NO
+(No preselected; arrows switch, Enter picks, Esc = No). The main-menu hint now reads "ESC Quit".
+
+**Version number (Tyler 09:48):** "slow down with the version number, we'll hit 1.0 in no time." Currently 0.8.2
+(`src/common/Version.hpp`). Waiting for Tyler's answer on the scheme before changing it; proposal: only bump the
+patch number for normal changes, minor only for milestones Tyler/O7OF agree on, 1.0 reserved for a real release.
 
 ## 0. Pick up here (2026-10-28, 09:15 ET) - Armory appearance now reaches the game
 

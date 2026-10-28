@@ -354,7 +354,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 
         // haloreach.dll's engine thread presents (host slot 1). After a match it stops drawing; then the
         // post-game panel is drawn and presented from here (PauseMenu::HoldFrame, as RR does).
-        if (!noble::PauseMenu::HoldFrame()) Sleep(10);
+        // The front-end menu likewise once the engine drops its menu map (FrontEndMenu::HoldFrame).
+        if (!noble::PauseMenu::HoldFrame() && !noble::FrontEndMenu::HoldFrame()) Sleep(10);
     }
 
     // After a match the engine thread can be stuck (it waits for a main menu map MCC doesn't ship), and its

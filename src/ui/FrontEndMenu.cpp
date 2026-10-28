@@ -12,6 +12,7 @@
 #include "WorkshopManager.hpp"
 #include "ModCatalog.hpp"
 #include "vfs/VFS.hpp"
+#include "career/Career.hpp"
 #include "common/Logger.hpp"
 #include "common/Relaunch.hpp"
 #include "common/Settings.hpp"
@@ -36,6 +37,9 @@
 #include <vector>
 #include <set>
 #include <unordered_map>
+#include <atomic>
+#include <mutex>
+#include <utility>
 
 namespace noble {
 
@@ -315,6 +319,8 @@ struct ListItem {
     bool expanded = false;
 };
 
+bool AcceptPressed();
+
 int DrawList(const Ui& ui, const char* id, ImVec2 pos, float width, const std::vector<ListItem>& items, int& selected,
              bool keyboard, float rowHeight = 30.0f, int maxRows = 0, bool hoverSelects = true) {
     const float rh = rowHeight * ui.s;
@@ -333,8 +339,7 @@ int DrawList(const Ui& ui, const char* id, ImVec2 pos, float width, const std::v
         };
         if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown)) step(1);
         if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp)) step(-1);
-        if ((ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false) ||
-             ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false)) && items[selected].enabled) {
+        if (AcceptPressed() && items[selected].enabled) {
             activated = selected;
         }
     }
@@ -448,9 +453,15 @@ bool DrawSourceTabs(const Ui& ui, ImVec2 pos, int& active, int moddedCount) {
 
 using InputPrompts::Prompt;
 
+// A button hint at the bottom (ESC Back, ENTER Select, ...) clicked with the mouse. Set by DrawHints,
+// read on the next frame as if the key had been pressed.
+int s_hintClicked = -1;      // Prompt clicked during the last frame, -1 = none
+int s_hintThisFrame = -1;    // the click being handled this frame
+bool HintClicked(Prompt p) { return s_hintThisFrame == static_cast<int>(p); }
+
 bool AcceptPressed() {
     return ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false) ||
-           ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false);
+           ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false) || HintClicked(Prompt::Accept);
 }
 
 void DrawHints(const Ui& ui, const std::vector<std::pair<Prompt, const char*>>& hints) {
@@ -458,9 +469,24 @@ void DrawHints(const Ui& ui, const std::vector<std::pair<Prompt, const char*>>& 
     const float y = ui.size.y - 46.0f * ui.s;
     ui.dl->AddLine(ImVec2(x, y - 12.0f * ui.s), ImVec2(ui.size.x * 0.62f, y - 12.0f * ui.s), IM_COL32(255, 255, 255, 50), 1.0f);
     for (const auto& [prompt, label] : hints) {
+        const float x0 = x;
         x += InputPrompts::Draw(ui.dl, NobleStyle::SmallFont(), ImVec2(x, y), 22.0f * ui.s, prompt) + 7.0f * ui.s;
         Text(ui, NobleStyle::SmallFont(), 17.0f, ImVec2(x, y + 2.0f * ui.s), kWhite, label);
-        x += TextWidth(NobleStyle::SmallFont(), 17.0f * ui.s, label) + 26.0f * ui.s;
+        x += TextWidth(NobleStyle::SmallFont(), 17.0f * ui.s, label);
+        // Back and Select can also be clicked (Change / Tabs only describe keys, so they are not buttons).
+        if (prompt == Prompt::Back || prompt == Prompt::Accept) {
+            const ImVec2 r0(x0 - 6.0f * ui.s, y - 5.0f * ui.s);
+            const ImVec2 r1(x + 8.0f * ui.s, y + 27.0f * ui.s);
+            if (ImGui::IsMouseHoveringRect(r0, r1, false)) {
+                ui.dl->AddRectFilled(r0, r1, IM_COL32(143, 216, 255, 40), 3.0f * ui.s);
+                ui.dl->AddRect(r0, r1, IM_COL32(143, 216, 255, 120), 3.0f * ui.s);
+                if (ImGui::IsMouseClicked(0)) {
+                    s_hintClicked = static_cast<int>(prompt);
+                    MenuSounds::Click();
+                }
+            }
+        }
+        x += 26.0f * ui.s;
     }
 }
 
@@ -481,6 +507,74 @@ void DrawParty(const Ui& ui, const std::string& playerName, const char* status) 
     ui.dl->AddCircleFilled(e, 10.0f * ui.s, IM_COL32(26, 40, 52, 255));
     ui.dl->AddTriangleFilled(ImVec2(e.x - 6 * ui.s, e.y - 2 * ui.s), ImVec2(e.x + 6 * ui.s, e.y - 2 * ui.s), ImVec2(e.x, e.y + 6 * ui.s), kAccent);
     Text(ui, NobleStyle::TitleFont(), 18.0f, ImVec2(x2 + 34.0f * ui.s, y + 5.0f * ui.s), kWhite, playerName.c_str());
+    // Rank icon at the right end of the player's row (career.json is read at most every 2 s).
+    static int s_rank = -1;
+    static ULONGLONG s_rankRead = 0;
+    if (s_rank < 0 || GetTickCount64() - s_rankRead > 2000) {
+        s_rank = Career::RankIndex(Career::Get().credits);
+        s_rankRead = GetTickCount64();
+    }
+    const UiTexture rankIcon = UiArt::RankIcon(s_rank);
+    if (rankIcon) {
+        const float is = 26.0f * ui.s;
+        UiArt::DrawContain(ui.dl, rankIcon, ImVec2(x + w - is - 8.0f * ui.s, y + 2.0f * ui.s),
+                           ImVec2(x + w - 8.0f * ui.s, y + 2.0f * ui.s + is));
+    }
+}
+
+// DIFFICULTY as four tiles with Reach's difficulty icons (from the player's Reach art, see
+// UiArt::DifficultyIcon; plain named tiles when there is none). Click picks; Left/Right change it
+// when the row has focus. Returns the height used.
+float DifficultyTiles(const Ui& ui, const char* id, ImVec2 pos, float width, int& difficulty, bool focused) {
+    const float top = 6.0f * ui.s;      // keeps the label clear of the row above
+    const float labelH = 26.0f * ui.s;
+    const float gap = 8.0f * ui.s;
+    const float tw = (width - gap * 3.0f) / 4.0f;
+    const float th = 66.0f * ui.s;
+    pos.y += top;
+    Text(ui, NobleStyle::TitleFont(), 18.0f, ImVec2(pos.x + 10.0f * ui.s, pos.y), focused ? kWhite : kDim, "DIFFICULTY");
+    if (focused) ui.dl->AddRectFilled(ImVec2(pos.x, pos.y), ImVec2(pos.x + 2.0f * ui.s, pos.y + labelH - 6.0f * ui.s), kAccent);
+    const float ty = pos.y + labelH;
+    static const char* const kNames[4] = { "EASY", "NORMAL", "HEROIC", "LEGENDARY" };
+    ImGui::PushID(id);
+    for (int d = 0; d < 4; ++d) {
+        const ImVec2 a(pos.x + d * (tw + gap), ty);
+        const ImVec2 b(a.x + tw, ty + th);
+        ImGui::SetCursorScreenPos(a);
+        ImGui::PushID(d);
+        const bool clicked = ImGui::InvisibleButton("##tile", ImVec2(tw, th));
+        const bool hovered = ImGui::IsItemHovered();
+        const ImGuiID hoverId = ImGui::GetItemID();
+        ImGui::PopID();
+        const bool sel = d == difficulty;
+        ui.dl->AddRectFilled(a, b, sel ? IM_COL32(52, 98, 138, 200) : (hovered ? IM_COL32(40, 56, 72, 200) : IM_COL32(16, 22, 30, 190)));
+        ui.dl->AddRect(a, b, sel ? kAccent : IM_COL32(170, 220, 255, hovered ? 120 : 45), 0.0f, 0, sel ? 2.0f : 1.0f);
+        const UiTexture icon = UiArt::DifficultyIcon(d);
+        const float nameH = 20.0f * ui.s;
+        if (icon) {
+            UiArt::DrawContain(ui.dl, icon, ImVec2(a.x + 4.0f * ui.s, a.y + 4.0f * ui.s), ImVec2(b.x - 4.0f * ui.s, b.y - nameH),
+                               sel || hovered ? IM_COL32_WHITE : IM_COL32(255, 255, 255, 170));
+        }
+        const float nw = TextWidth(NobleStyle::TitleFont(), 15.0f * ui.s, kNames[d]);
+        Text(ui, NobleStyle::TitleFont(), 15.0f, ImVec2(a.x + (tw - nw) * 0.5f, icon ? b.y - nameH : a.y + (th - nameH) * 0.5f),
+             sel ? kWhite : kDim, kNames[d]);
+        if (hovered) MenuSounds::Hover(hoverId);
+        if (clicked && difficulty != d) {
+            difficulty = d;
+            MenuSounds::Change();
+        }
+    }
+    ImGui::PopID();
+    if (focused) {
+        int change = 0;
+        if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft)) change = -1;
+        if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight)) change = 1;
+        if (change) {
+            difficulty = std::clamp(difficulty + change, 0, 3);
+            MenuSounds::Change();
+        }
+    }
+    return top + labelH + th;
 }
 
 int OptionRow(const Ui& ui, const char* id, ImVec2 pos, float width, const char* label, const char* value, bool focused) {
@@ -615,6 +709,8 @@ struct MenuState {
     int campaignModded = 0;
     int ffModded = 0;
     int mpModded = 0;
+    bool confirmQuit = false;   // "Quit Project Noble?" box on the main menu (Esc or QUIT)
+    int quitChoice = 1;         // 0 = Yes, 1 = No (No is preselected)
 };
 
 struct MapEntry {
@@ -739,6 +835,13 @@ struct OverlayContext {
     unsigned long long sceneReadyFrames = 0;
     bool closed = false;
 };
+
+// The engine draws the menu scene and calls RenderOverlay from slot 1. MCC ships no Reach menu map,
+// so about a minute after start the engine gives up on it ("_map_state_none") and stops calling
+// slot 1; HoldFrame then draws the menu from the main thread so it keeps working.
+std::mutex s_overlayMutex;
+std::atomic<IDXGISwapChain*> s_overlaySwapChain{nullptr};
+std::atomic<ULONGLONG> s_lastEngineOverlayFrame{0};
 
 OverlayContext& GetOverlayCtx() {
     static OverlayContext s_ctx;
@@ -883,6 +986,13 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
     ImGui::PopStyleVar(2);
 
     MenuState& st = ctx.st;
+    {
+        static int s_lastScreen = -1;
+        if (static_cast<int>(st.screen) != s_lastScreen) {
+            NOBLE_INFO("FrontEndMenu: screen {} -> {}", s_lastScreen, static_cast<int>(st.screen));
+            s_lastScreen = static_cast<int>(st.screen);
+        }
+    }
     Ui ui;
     ui.dl = ImGui::GetWindowDrawList();
     ui.size = vp->Size;
@@ -894,7 +1004,9 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
     const float left = ui.size.x * 0.075f;
     const float top = ui.size.y * 0.09f;
     const SettingsData settings = Settings::Get().Snapshot();
-    const bool back = ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false);
+    s_hintThisFrame = std::exchange(s_hintClicked, -1);
+    const bool back = ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) ||
+                      HintClicked(Prompt::Back);
     auto goBack = [&](Screen to) {
         st.screen = to;
         st.focusRow = 0;
@@ -915,16 +1027,58 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         std::vector<ListItem> items;
         for (const MainEntry& e : kMainEntries) items.push_back({ e.label, e.enabled });
         const float listY = ui.size.y * 0.30f + 104.0f * ui.s;
-        const int hit = DrawList(ui, "main", ImVec2(left, listY), 440.0f * ui.s, items, st.mainIndex, true, 27.0f);
+        const bool modal = st.confirmQuit;
+        const int hit = DrawList(ui, "main", ImVec2(left, listY), 440.0f * ui.s, items, st.mainIndex, !modal, 27.0f);
         const float descY = listY + items.size() * 27.0f * ui.s + 10.0f * ui.s;
         Text(ui, nullptr, 17.0f, ImVec2(left + 4.0f * ui.s, descY), kDim, kMainEntries[st.mainIndex].description,
              left + 430.0f * ui.s);
-        if (hit >= 0) {
-            if (kMainEntries[hit].quit) done = true;
-            else st.screen = kMainEntries[hit].target;
-            st.focusRow = 0;
+        if (!modal) {
+            if (hit >= 0) {
+                if (kMainEntries[hit].quit) {
+                    st.confirmQuit = true;
+                    st.quitChoice = 1;
+                } else {
+                    st.screen = kMainEntries[hit].target;
+                }
+                st.focusRow = 0;
+            } else if (back) {
+                // Esc on the main menu asks before closing Noble.
+                st.confirmQuit = true;
+                st.quitChoice = 1;
+                MenuSounds::Back();
+            }
+            DrawHints(ui, { { Prompt::Accept, "Select" }, { Prompt::Back, "Quit" } });
+        } else {
+            // Dim everything and show the question in the middle.
+            ui.dl->AddRectFilled(ImVec2(0, 0), ui.size, IM_COL32(0, 0, 0, 150));
+            const float bw = 460.0f * ui.s, bh = 190.0f * ui.s;
+            const ImVec2 b0((ui.size.x - bw) * 0.5f, (ui.size.y - bh) * 0.5f);
+            const ImVec2 b1(b0.x + bw, b0.y + bh);
+            ui.dl->AddRectFilled(b0, b1, IM_COL32(12, 20, 30, 245));
+            ui.dl->AddRect(b0, b1, IM_COL32(143, 216, 255, 160), 0.0f, 0, 1.2f);
+            ui.dl->AddLine(ImVec2(b0.x, b0.y + 3.0f * ui.s), ImVec2(b1.x, b0.y + 3.0f * ui.s), kAccent, 3.0f * ui.s);
+            Text(ui, NobleStyle::TitleFont(), 26.0f, ImVec2(b0.x + 24.0f * ui.s, b0.y + 22.0f * ui.s), kWhite, "QUIT PROJECT NOBLE?");
+            Text(ui, nullptr, 17.0f, ImVec2(b0.x + 24.0f * ui.s, b0.y + 62.0f * ui.s), kDim, "Are you sure you want to close the game?");
+            const float btnW = (bw - 24.0f * ui.s * 3.0f) * 0.5f;
+            const float btnY = b1.y - 64.0f * ui.s;
+            if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || ImGui::IsKeyPressed(ImGuiKey_RightArrow) ||
+                ImGui::IsKeyPressed(ImGuiKey_UpArrow) || ImGui::IsKeyPressed(ImGuiKey_DownArrow) ||
+                ImGui::IsKeyPressed(ImGuiKey_Tab) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft) ||
+                ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight)) {
+                st.quitChoice = 1 - st.quitChoice;
+                MenuSounds::Scroll();
+            }
+            const bool yes = ActionButton(ui, "quit_yes", ImVec2(b0.x + 24.0f * ui.s, btnY), btnW, "YES", st.quitChoice == 0);
+            const bool no = ActionButton(ui, "quit_no", ImVec2(b0.x + 48.0f * ui.s + btnW, btnY), btnW, "NO", st.quitChoice == 1);
+            if (yes || (AcceptPressed() && st.quitChoice == 0)) {
+                st.confirmQuit = false;
+                done = true;
+            } else if (no || back || (AcceptPressed() && st.quitChoice == 1)) {
+                st.confirmQuit = false;
+                if (!no) MenuSounds::Back();
+            }
+            DrawHints(ui, { { Prompt::Accept, "Select" }, { Prompt::Back, "Cancel" } });
         }
-        DrawHints(ui, { { Prompt::Accept, "Select" }, { Prompt::Back, "Back" } });
         std::string version(VERSION_STRING);
         const size_t paren = version.find(" (");
         if (paren != std::string::npos) version.resize(paren);
@@ -966,9 +1120,7 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
             Text(ui, nullptr, 16.0f, ImVec2(px + 10.0f * ui.s, y), kAccent, ("Mod: " + mod->title).c_str(), px + pw);
             y += 24.0f * ui.s;
         }
-        const int dd = OptionRow(ui, "diff", ImVec2(px, y), pw, "DIFFICULTY", kDifficulties[st.difficulty], st.focusRow == 1);
-        if (dd) st.difficulty = (st.difficulty + dd + 4) % 4;
-        y += 36.0f * ui.s;
+        y += DifficultyTiles(ui, "diff", ImVec2(px, y), pw, st.difficulty, st.focusRow == 1) + 8.0f * ui.s;
         const std::string skullText = SkullSummary(st.skulls);
         if (OptionRow(ui, "skulls", ImVec2(px, y), pw, "SKULLS", skullText.c_str(), st.focusRow == 2)) {
             st.screen = Screen::Skulls;
@@ -1135,9 +1287,7 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
             ++focusRows;
         }
         if (ff) {
-            const int dd = OptionRow(ui, "ffdiff", ImVec2(px, y), pw, "DIFFICULTY", kDifficulties[st.difficulty], st.focusRow == focusRows);
-            if (dd) st.difficulty = (st.difficulty + dd + 4) % 4;
-            y += 36.0f * ui.s;
+            y += DifficultyTiles(ui, "ffdiff", ImVec2(px, y), pw, st.difficulty, st.focusRow == focusRows) + 8.0f * ui.s;
             ++focusRows;
         }
         if (forge && !std::filesystem::exists(ctx.forgeVariant)) {
@@ -1344,6 +1494,34 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
 }
 
 void FrontEndMenu::RenderOverlay(IDXGISwapChain* swapChain) {
+    if (!swapChain) return;
+    s_overlaySwapChain.store(swapChain);
+    s_lastEngineOverlayFrame.store(GetTickCount64());
+    std::lock_guard<std::mutex> lock(s_overlayMutex);
+    RenderOverlayImpl(swapChain, false);
+}
+
+bool FrontEndMenu::HoldFrame() {
+    OverlayContext& ctx = GetOverlayCtx();
+    if (!ctx.initialized || ctx.closed || !ReachArmory::IsMenuMode()) return false;
+    const ULONGLONG last = s_lastEngineOverlayFrame.load();
+    IDXGISwapChain* swapChain = s_overlaySwapChain.load();
+    if (!swapChain || last == 0 || GetTickCount64() - last < 1000) return false;
+    static bool s_logged = false;
+    if (!s_logged) {
+        s_logged = true;
+        NOBLE_INFO("FrontEndMenu: engine stopped drawing the menu; Noble draws it itself");
+    }
+    {
+        std::lock_guard<std::mutex> lock(s_overlayMutex);
+        RenderOverlayImpl(swapChain, true);
+        FrameCapture::OnFrame(nullptr, 0);   // keeps -quit-after working in test runs
+    }
+    swapChain->Present(1, 0);
+    return true;
+}
+
+void FrontEndMenu::RenderOverlayImpl(IDXGISwapChain* swapChain, bool clear) {
     OverlayContext& ctx = GetOverlayCtx();
     if (!ctx.initialized || ctx.closed || !swapChain || !ImGui::GetCurrentContext()) return;
 
@@ -1380,6 +1558,11 @@ void FrontEndMenu::RenderOverlay(IDXGISwapChain* swapChain) {
         io.DeltaTime = dt;
 
         FeedEngineThreadInputs(hwnd, io);
+        if (clear) {
+            // No engine frame underneath: start from the menu's dark backdrop colour.
+            const float black[4] = { 0.02f, 0.03f, 0.05f, 1.0f };
+            context->ClearRenderTargetView(rtv, black);
+        }
 
         ImGui_ImplDX11_NewFrame();
         ImGui::NewFrame();

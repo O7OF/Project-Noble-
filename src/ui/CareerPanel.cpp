@@ -1,6 +1,7 @@
 #include "CareerPanel.hpp"
 #include "NobleStyle.hpp"
 #include "MenuSounds.hpp"
+#include "UiArt.hpp"
 #include "career/Career.hpp"
 
 #include <imgui.h>
@@ -57,9 +58,9 @@ const char* DifficultyName(int d) {
 } // namespace
 
 void CareerPanel::Render() {
-    static const char* const kTabs[] = { "SERVICE RECORD", "CHALLENGES", "COMMENDATIONS" };
+    static const char* const kTabs[] = { "SERVICE RECORD", "CHALLENGES", "COMMENDATIONS", "RANKS" };
     ImGui::Dummy(ImVec2(0, 2));
-    for (int i = 0; i < 3; ++i) {
+    for (int i = 0; i < 4; ++i) {
         if (i) ImGui::SameLine(0, 26.0f);
         const bool sel = m_tab == i;
         ImGui::PushStyleColor(ImGuiCol_Text, sel ? ImVec4(1, 1, 1, 1) : kLabel);
@@ -78,8 +79,8 @@ void CareerPanel::Render() {
         }
     }
     if (!ImGui::GetIO().WantTextInput) {
-        if (ImGui::IsKeyPressed(ImGuiKey_Q, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false)) { m_tab = (m_tab + 2) % 3; MenuSounds::Tab(-1); }
-        if (ImGui::IsKeyPressed(ImGuiKey_E, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false)) { m_tab = (m_tab + 1) % 3; MenuSounds::Tab(1); }
+        if (ImGui::IsKeyPressed(ImGuiKey_Q, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false)) { m_tab = (m_tab + 3) % 4; MenuSounds::Tab(-1); }
+        if (ImGui::IsKeyPressed(ImGuiKey_E, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false)) { m_tab = (m_tab + 1) % 4; MenuSounds::Tab(1); }
     }
     ImGui::Separator();
     ImGui::BeginChild("##careerBody", ImVec2(0, 0), ImGuiChildFlags_None);
@@ -87,10 +88,59 @@ void CareerPanel::Render() {
     switch (m_tab) {
     case 0: RenderRecord(); break;
     case 1: RenderChallenges(); break;
-    default: RenderCommendations(); break;
+    case 2: RenderCommendations(); break;
+    default: RenderRanks(); break;
     }
     ImGui::PopStyleColor();
     ImGui::EndChild();
+}
+
+void CareerPanel::RenderRanks() {
+    const Career::Totals t = Career::Get();
+    const auto& ranks = Career::Ranks();
+    const int rank = Career::RankIndex(t.credits);
+    ImGui::Dummy(ImVec2(0, 4));
+    ImGui::TextDisabled("Earned ranks are bright, the next one is framed. cR needed under each rank.");
+    ImGui::Dummy(ImVec2(0, 6));
+    // Cell width from the widest name / cR line so neighbours never overlap.
+    float widest = 0.0f;
+    for (const auto& r : ranks) {
+        std::string n = r.name;
+        const size_t g = n.find(" Grade ");
+        if (g != std::string::npos) n = n.substr(0, g) + " G" + n.substr(g + 7);
+        widest = std::max(widest, ImGui::CalcTextSize(n.c_str()).x);
+        widest = std::max(widest, ImGui::CalcTextSize((Grouped(r.credits) + " cR").c_str()).x);
+    }
+    const float cell = std::max(118.0f, widest + 18.0f), iconSize = 64.0f;
+    const int perRow = std::max(1, static_cast<int>(ImGui::GetContentRegionAvail().x / cell));
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    for (int i = 0; i < static_cast<int>(ranks.size()); ++i) {
+        if (i % perRow) ImGui::SameLine(0, 0);
+        const ImVec2 p = ImGui::GetCursorScreenPos();
+        ImGui::Dummy(ImVec2(cell, cell + 10.0f));
+        const bool earned = i <= rank, next = i == rank + 1, current = i == rank;
+        const ImU32 tint = earned ? IM_COL32_WHITE : (next ? IM_COL32(255, 255, 255, 200) : IM_COL32(255, 255, 255, 70));
+        if (current || next) {
+            dl->AddRectFilled(ImVec2(p.x + 4, p.y + 2), ImVec2(p.x + cell - 4, p.y + cell + 6),
+                              current ? IM_COL32(143, 216, 255, 40) : IM_COL32(255, 255, 255, 14), 3.0f);
+            dl->AddRect(ImVec2(p.x + 4, p.y + 2), ImVec2(p.x + cell - 4, p.y + cell + 6),
+                        current ? IM_COL32(143, 216, 255, 220) : IM_COL32(255, 255, 255, 90), 3.0f, 0, 1.2f);
+        }
+        const ImVec2 i0(p.x + (cell - iconSize) * 0.5f, p.y + 8.0f);
+        const UiTexture icon = UiArt::RankIcon(i);
+        if (icon) UiArt::DrawContain(dl, icon, i0, ImVec2(i0.x + iconSize, i0.y + iconSize), tint);
+        else dl->AddRect(i0, ImVec2(i0.x + iconSize, i0.y + iconSize), IM_COL32(255, 255, 255, earned ? 120 : 40));
+        // Name (shortened: "Grade 1" -> "G1") and cR, centred.
+        std::string name = ranks[i].name;
+        const size_t g = name.find(" Grade ");
+        if (g != std::string::npos) name = name.substr(0, g) + " G" + name.substr(g + 7);
+        const std::string cr = Grouped(ranks[i].credits) + " cR";
+        const ImU32 textCol = earned ? IM_COL32(236, 240, 244, 255) : IM_COL32(150, 160, 170, next ? 230 : 150);
+        const ImVec2 nw = ImGui::CalcTextSize(name.c_str());
+        dl->AddText(ImVec2(p.x + (cell - nw.x) * 0.5f, p.y + 8.0f + iconSize + 4.0f), textCol, name.c_str());
+        const ImVec2 cw = ImGui::CalcTextSize(cr.c_str());
+        dl->AddText(ImVec2(p.x + (cell - cw.x) * 0.5f, p.y + 8.0f + iconSize + 4.0f + nw.y), IM_COL32(150, 170, 190, earned ? 220 : 120), cr.c_str());
+    }
 }
 
 void CareerPanel::RenderRecord() {
@@ -99,6 +149,15 @@ void CareerPanel::RenderRecord() {
     const int rank = Career::RankIndex(r.totals.credits);
 
     ImGui::Dummy(ImVec2(0, 4));
+    // Header: big rank icon (when the player has the rank pictures), rank, cR and progress.
+    const UiTexture icon = UiArt::RankIcon(rank);
+    if (icon) {
+        const ImVec2 p = ImGui::GetCursorScreenPos();
+        UiArt::DrawContain(ImGui::GetWindowDrawList(), icon, p, ImVec2(p.x + 96.0f, p.y + 96.0f));
+        ImGui::Dummy(ImVec2(96.0f, 96.0f));
+        ImGui::SameLine(0, 18.0f);
+    }
+    ImGui::BeginGroup();
     if (ImFont* f = NobleStyle::TitleFont()) ImGui::PushFont(f);
     ImGui::TextUnformatted(ranks[rank].name);
     if (NobleStyle::TitleFont()) ImGui::PopFont();
@@ -107,11 +166,26 @@ void CareerPanel::RenderRecord() {
         const long long lo = ranks[rank].credits, hi = ranks[rank + 1].credits;
         const float f = static_cast<float>(r.totals.credits - lo) / static_cast<float>(hi - lo);
         char label[96];
-        std::snprintf(label, sizeof(label), "%s cR to %s", Grouped(hi - r.totals.credits).c_str(), ranks[rank + 1].name);
+        std::snprintf(label, sizeof(label), "%s / %s cR", Grouped(r.totals.credits).c_str(), Grouped(hi).c_str());
         ImGui::ProgressBar(f, ImVec2(520, 0), label);
+        const UiTexture next = UiArt::RankIcon(rank + 1);
+        if (next) {
+            ImGui::TextDisabled("Next:");
+            ImGui::SameLine();
+            const ImVec2 p = ImGui::GetCursorScreenPos();
+            const float h = ImGui::GetTextLineHeight() + 6.0f;
+            UiArt::DrawContain(ImGui::GetWindowDrawList(), next, ImVec2(p.x, p.y - 3.0f), ImVec2(p.x + h, p.y - 3.0f + h));
+            ImGui::Dummy(ImVec2(h, ImGui::GetTextLineHeight()));
+            ImGui::SameLine();
+        } else {
+            ImGui::TextDisabled("Next:");
+            ImGui::SameLine();
+        }
+        ImGui::Text("%s at %s cR (%s to go)", ranks[rank + 1].name, Grouped(hi).c_str(), Grouped(hi - r.totals.credits).c_str());
     } else {
         ImGui::TextUnformatted("Highest rank reached.");
     }
+    ImGui::EndGroup();
 
     Section("TOTALS");
     const long long games = r.totals.gamesPlayed;

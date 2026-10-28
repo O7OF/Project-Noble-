@@ -56,6 +56,21 @@ UiTexture ControllerImage();
 // 1600x1000 layout); empty when there is none, then the page falls back to ControllerImage().
 UiTexture NobleControllerImage();
 
+// Reach art the player supplies (rank icons, difficulty icons, ...), never shipped with Noble:
+// data\ui\custom\reach\<category>\ first, then data\ui\reach\<category>\ (both under the git-ignored
+// data folder). Files are found by stem: ranks\07_warrant_officer.png, difficulty\heroic.png, ...
+UiTexture ReachArt(const std::string& category, const std::string& stem);
+
+// Rank icon for Career::Ranks() index 0..49: ranks\<NN>_<name>.png (any file whose name starts with
+// the two-digit index). Empty when the player has none; callers then draw text only.
+UiTexture RankIcon(int rankIndex);
+
+// Difficulty icon 0 easy, 1 normal, 2 heroic, 3 legendary: difficulty\<name>.png.
+UiTexture DifficultyIcon(int difficulty);
+
+// Draws `tex` inside the rectangle, keeping its aspect ratio (centred, nothing cropped).
+void DrawContain(ImDrawList* dl, const UiTexture& tex, ImVec2 min, ImVec2 max, ImU32 tint = IM_COL32_WHITE);
+
 // Draws `tex` to cover the rectangle (keeps the aspect ratio, crops the overflow).
 void DrawCover(ImDrawList* dl, const UiTexture& tex, ImVec2 min, ImVec2 max, ImU32 tint = IM_COL32_WHITE);
 
