@@ -255,8 +255,7 @@ void SettingsPanel::RenderControls() {
     ImGui::TextDisabled("Keyboard keys are on the KEY BINDINGS tab. The -mouse-scale command-line option overrides the sensitivity.");
 
     Section("GAMEPAD");
-    ImGui::TextDisabled("Controller input isn't supported in Noble yet. This is Halo: Reach's default layout,");
-    ImGui::TextDisabled("which Noble will use once it is.");
+    ImGui::TextDisabled("Controllers work in game with Halo: Reach's default layout:");
     ImGui::Dummy(ImVec2(0, 4));
     DrawControllerDiagram();
 }

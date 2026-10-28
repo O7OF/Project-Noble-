@@ -24,8 +24,8 @@ glyphs: A green / B red circles, LB/RB pills, D-pad, or keyboard key boxes); Fro
 `Prompt` values, `AcceptPressed()` (Enter / keypad Enter / pad A) and D-pad for focus rows and skulls; SettingsPanel
 MOUSE section (look sensitivity + RESET, new `mouseSensitivityY` vertical ratio 0.25-4, invert, help lines) and LB/RB
 (Q/E) prompts around the tab row; ReachHost slot 36 reads look settings every 500 ms (`InputLookSettings`) so APPLY
-works in a running game; `-mouse-scale` still overrides. Small ReachHost change - tell O7OF. Next: CONTROLLER section +
-in-game XInput (slot 36 +0x120..), Video options (FOV, V-Sync), cleaner music picker, pixelated controller picture.
+works in a running game; `-mouse-scale` still overrides. Small ReachHost change - tell O7OF. Tyler (23:17): **a controller already works in game** (correct older notes saying gamepad isn't supported). Next:
+CONTROLLER section (settings for it), Video options (FOV, V-Sync), cleaner music picker, pixelated controller picture.
 
 ## 0b2. Earlier (22:40 ET)
 (22:40 ET)
