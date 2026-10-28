@@ -256,6 +256,34 @@ static int32_t ResolveSceneIndex(const std::string& scene) {
 // -----------------------------------------------------------------------------
 // Memory Scanners (ported from host::armory::scan, find_all, scan_suit, scan_elite)
 // -----------------------------------------------------------------------------
+// Committed private read/write memory, cut into 16 MB pieces that overlap by 4 KB so a
+// record that straddles a cut is still seen whole. Reach keeps its tag data in regions far
+// larger than 512 MB, which the old whole-region copy skipped (RR reads 1 MB at a time).
+static std::vector<std::pair<uintptr_t, size_t>> ReadWriteChunks(size_t minSize) {
+    constexpr size_t kChunk = 16u * 1024u * 1024u;
+    constexpr size_t kOverlap = 0x1000;
+    std::vector<std::pair<uintptr_t, size_t>> chunks;
+    uintptr_t addr = 0;
+    MEMORY_BASIC_INFORMATION mbi{};
+    while (VirtualQuery(reinterpret_cast<LPCVOID>(addr), &mbi, sizeof(mbi)) != 0) {
+        const uintptr_t base = reinterpret_cast<uintptr_t>(mbi.BaseAddress);
+        const size_t size = mbi.RegionSize;
+        const uintptr_t nextAddr = base + size;
+        if (mbi.State == MEM_COMMIT && mbi.Type == MEM_PRIVATE && mbi.Protect == PAGE_READWRITE && size >= minSize) {
+            for (size_t off = 0; off < size; off += kChunk) {
+                const size_t len = std::min(size - off, kChunk + kOverlap);
+                chunks.emplace_back(base + off, len);
+                if (off + len >= size) break;
+            }
+        }
+        if (nextAddr <= addr) break;
+        addr = nextAddr;
+    }
+    return chunks;
+}
+
+static std::atomic<uint64_t> s_globalsMarkerHits{0};
+
 static bool ScanGlobalsTable() {
     const uintptr_t existing = s_globalsBase.load();
     if (existing != 0) {
@@ -274,20 +302,20 @@ static bool ScanGlobalsTable() {
 
     static constexpr size_t kStrides[6] = { 4, 8, 12, 16, 24, 32 };
 
-    uintptr_t addr = 0;
-    MEMORY_BASIC_INFORMATION mbi{};
-    while (VirtualQuery(reinterpret_cast<LPCVOID>(addr), &mbi, sizeof(mbi)) != 0) {
-        const uintptr_t base = reinterpret_cast<uintptr_t>(mbi.BaseAddress);
-        const size_t size = mbi.RegionSize;
-        const uintptr_t nextAddr = base + size;
-
-        if (mbi.State == MEM_COMMIT && mbi.Type == MEM_PRIVATE && mbi.Protect == PAGE_READWRITE &&
-            size >= 0x100 && size <= 0x20000000) {
+    for (const auto& chunk : ReadWriteChunks(0x100)) {
+        const uintptr_t base = chunk.first;
+        const size_t size = chunk.second;
+        {
             std::vector<uint8_t> buf(size);
+            {   // never scan our own copy buffer (RR skips its read buffer the same way)
+                const uintptr_t self = reinterpret_cast<uintptr_t>(buf.data());
+                if (base < self + size && self < base + size) continue;
+            }
             if (SafeCopyMem(buf.data(), reinterpret_cast<const void*>(base), size)) {
                 for (size_t off = 0; off + 0xC0 <= size; off += 4) {
                     const uint32_t v0 = *reinterpret_cast<const uint32_t*>(buf.data() + off);
                     if (v0 != 0x03BB6FEDu) continue;
+                    ++s_globalsMarkerHits;
 
                     for (size_t stride : kStrides) {
                         if (off + stride * 0x34 > size) continue;
@@ -307,8 +335,6 @@ static bool ScanGlobalsTable() {
                 }
             }
         }
-        if (nextAddr <= addr) break;
-        addr = nextAddr;
     }
     return false;
 }
@@ -323,16 +349,15 @@ static void ScanColorRecords() {
     }
 
     std::vector<uintptr_t> found;
-    uintptr_t addr = 0;
-    MEMORY_BASIC_INFORMATION mbi{};
-    while (VirtualQuery(reinterpret_cast<LPCVOID>(addr), &mbi, sizeof(mbi)) != 0) {
-        const uintptr_t base = reinterpret_cast<uintptr_t>(mbi.BaseAddress);
-        const size_t size = mbi.RegionSize;
-        const uintptr_t nextAddr = base + size;
-
-        if (mbi.State == MEM_COMMIT && mbi.Type == MEM_PRIVATE && mbi.Protect == PAGE_READWRITE &&
-            size >= 0x40 && size <= 0x20000000) {
+    for (const auto& chunk : ReadWriteChunks(0x40)) {
+        const uintptr_t base = chunk.first;
+        const size_t size = chunk.second;
+        {
             std::vector<uint8_t> buf(size);
+            {   // never scan our own copy buffer (RR skips its read buffer the same way)
+                const uintptr_t self = reinterpret_cast<uintptr_t>(buf.data());
+                if (base < self + size && self < base + size) continue;
+            }
             if (SafeCopyMem(buf.data(), reinterpret_cast<const void*>(base), size)) {
                 for (size_t off = 0; off + 16 <= size; off += 4) {
                     if (std::memcmp(buf.data() + off, kStockColors, 16) == 0 ||
@@ -342,8 +367,6 @@ static void ScanColorRecords() {
                 }
             }
         }
-        if (nextAddr <= addr) break;
-        addr = nextAddr;
     }
 
     if (!found.empty()) {
@@ -367,16 +390,15 @@ static void ScanSuitRecords() {
     }
 
     std::vector<uintptr_t> found;
-    uintptr_t addr = 0;
-    MEMORY_BASIC_INFORMATION mbi{};
-    while (VirtualQuery(reinterpret_cast<LPCVOID>(addr), &mbi, sizeof(mbi)) != 0) {
-        const uintptr_t base = reinterpret_cast<uintptr_t>(mbi.BaseAddress);
-        const size_t size = mbi.RegionSize;
-        const uintptr_t nextAddr = base + size;
-
-        if (mbi.State == MEM_COMMIT && mbi.Type == MEM_PRIVATE && mbi.Protect == PAGE_READWRITE &&
-            size >= 0x40 && size <= 0x20000000) {
+    for (const auto& chunk : ReadWriteChunks(0x40)) {
+        const uintptr_t base = chunk.first;
+        const size_t size = chunk.second;
+        {
             std::vector<uint8_t> buf(size);
+            {   // never scan our own copy buffer (RR skips its read buffer the same way)
+                const uintptr_t self = reinterpret_cast<uintptr_t>(buf.data());
+                if (base < self + size && self < base + size) continue;
+            }
             if (SafeCopyMem(buf.data(), reinterpret_cast<const void*>(base), size)) {
                 for (size_t off = 0; off + 16 <= size; off += 4) {
                     const float* f = reinterpret_cast<const float*>(buf.data() + off);
@@ -387,8 +409,6 @@ static void ScanSuitRecords() {
                 }
             }
         }
-        if (nextAddr <= addr) break;
-        addr = nextAddr;
     }
 
     if (!found.empty()) {
@@ -423,16 +443,15 @@ static void ScanEliteTable() {
     const uint32_t specOpsId = LookupStringId("spec_ops");
     if (minorId == 0 || specOpsId == 0) return;
 
-    uintptr_t addr = 0;
-    MEMORY_BASIC_INFORMATION mbi{};
-    while (VirtualQuery(reinterpret_cast<LPCVOID>(addr), &mbi, sizeof(mbi)) != 0) {
-        const uintptr_t base = reinterpret_cast<uintptr_t>(mbi.BaseAddress);
-        const size_t size = mbi.RegionSize;
-        const uintptr_t nextAddr = base + size;
-
-        if (mbi.State == MEM_COMMIT && mbi.Type == MEM_PRIVATE && mbi.Protect == PAGE_READWRITE &&
-            size >= 0x90 && size <= 0x20000000) {
+    for (const auto& chunk : ReadWriteChunks(0x90)) {
+        const uintptr_t base = chunk.first;
+        const size_t size = chunk.second;
+        {
             std::vector<uint8_t> buf(size);
+            {   // never scan our own copy buffer (RR skips its read buffer the same way)
+                const uintptr_t self = reinterpret_cast<uintptr_t>(buf.data());
+                if (base < self + size && self < base + size) continue;
+            }
             if (SafeCopyMem(buf.data(), reinterpret_cast<const void*>(base), size)) {
                 for (size_t off = 0; off + 0x90 <= size; off += 4) {
                     bool match = true;
@@ -490,8 +509,6 @@ static void ScanEliteTable() {
                 }
             }
         }
-        if (nextAddr <= addr) break;
-        addr = nextAddr;
     }
 }
 
@@ -774,14 +791,22 @@ void ReachArmory::Tick() {
             if (!isRescan) {
                 NOBLE_INFO("ReachArmory: Scanning process memory for mainmenu_all.map GLOBALS table...");
             }
-            for (int attempt = 0; attempt < 40 && s_menuMode.load(); ++attempt) {
+            // The menu map can take a while to finish loading, so keep looking while the menu is up
+            // (every 250 ms for the first 10 s, then once a second) instead of giving up after 10 s.
+            for (int attempt = 0; s_menuMode.load(); ++attempt) {
                 if (ScanGlobalsTable()) {
                     ScanColorRecords();
                     ScanSuitRecords();
                     ScanEliteTable();
                     break;
                 }
-                std::this_thread::sleep_for(std::chrono::milliseconds(250));
+                if (!isRescan && (attempt == 4 || attempt % 20 == 19)) {
+                    size_t regions = 0, bytes = 0;
+                    for (const auto& c : ReadWriteChunks(0x100)) { ++regions; bytes += c.second; }
+                    NOBLE_INFO("ReachArmory: GLOBALS not found yet (pass {}, {} marker hit(s), {} chunk(s), {} MB scanned)",
+                               attempt + 1, s_globalsMarkerHits.load(), regions, bytes >> 20);
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(attempt < 40 ? 250 : 1000));
             }
             if (s_menuMode.load() && s_globalsBase.load() != 0) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(400));
@@ -791,6 +816,21 @@ void ReachArmory::Tick() {
             }
             s_scanning.store(false);
         }).detach();
+    }
+
+    // The Elite's region table only exists once the Elite model has loaded, so while the Elite is
+    // shown and the table hasn't been found, look again about every 2 seconds.
+    if (s_globalsBase.load() != 0 && GetSelection().previewElite && frame % 240 == 0 && !s_scanning.load()) {
+        bool scanned;
+        {
+            std::lock_guard<std::mutex> lock(s_dataMutex);
+            scanned = s_eliteScanned;
+        }
+        static int eliteTries = 0;
+        if (!scanned && eliteTries < 10) {
+            if (++eliteTries == 10) NOBLE_WARN("ReachArmory: Elite region table still not found after 10 looks; armor sets go through GLOBALS only");
+            s_rescanRequested.store(true);
+        }
     }
 
     // 2. Apply scene camera, rotation, and live armor/color updates if GLOBALS table is active

@@ -1033,6 +1033,23 @@ void ArmorCustomizer::RenderCharacterPreview(ID3D11Device* device, ID3D11DeviceC
     //    is only a stand-in until that works without a main-menu map.
     // 2. Noble's own DX11 preview of the local OBJ exports (O7OF's ObjModelPreview).
     const bool engineScene = ReachArmory::IsSceneReady();
+
+    // With the menu map installed, the real scene shows up a few seconds after launch. Show a loading
+    // line until then instead of flashing the OBJ stand-in; fall back to the OBJ only if it never comes.
+    static const bool menuMapPresent = std::filesystem::exists(ReachHost::Get().GetDataDir() / "menumaps" / "mainmenu_all.map");
+    static double sceneWaitStart = -1.0;
+    if (sceneWaitStart < 0.0) sceneWaitStart = ImGui::GetTime();
+    const bool waitingForScene = !engineScene && menuMapPresent && (ImGui::GetTime() - sceneWaitStart) < 30.0;
+    if (waitingForScene) {
+        const int dots = static_cast<int>(ImGui::GetTime() * 2.0) % 4;
+        const std::string msg = std::string("LOADING ARMORY") + std::string(static_cast<size_t>(dots), '.');
+        const ImVec2 ts = ImGui::CalcTextSize("LOADING ARMORY...");
+        dl->AddText(ImVec2(cursorPos.x + std::max(0.0f, (width - ts.x) * 0.5f), cursorPos.y + height * 0.45f),
+                    IM_COL32(143, 216, 255, 220), msg.c_str());
+        ImGui::InvisibleButton("##character_preview_drag", ImVec2(width, height));
+        return;
+    }
+
     if (!engineScene && device && context && !m_objInitialized) {
         m_objInitialized = true;
 

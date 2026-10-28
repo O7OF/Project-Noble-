@@ -1,4 +1,4 @@
-# Project Noble: handoff (2026-10-28, 15:15 ET)
+# Project Noble: handoff (2026-10-28, 16:05 ET)
 
 This picks up a reverse-engineering and C++ effort on **Tyler's Windows PC**. All paths below are real paths on that machine.
 Tyler (GitHub `WeabooTyler117`) works with a partner (GitHub `O7OF`) who owns the repo and writes most of the code.
@@ -10,6 +10,27 @@ community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownershi
 MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour.
 
 ---
+
+## 0. Pick up here (2026-10-28, 16:05 ET) - the real Armory scene works (Spartan and Elite)
+
+- **Engine Armory scene now loads.** With RR's `mainmenu_all.map` + `mainmenu_all.string_ids.csv` copied into
+  `build\bin\Release\data\menumaps\` (local only, git-ignored, over GitHub's size limit), the menu map was always loading;
+  `ReachArmory` just never found its GLOBALS table. Cause: the scanners skipped any memory region over 512 MB (Reach's tag
+  data sits in bigger ones) and gave up after 10 s. Fix (O7OF's `src/engine/ReachArmory.cpp`, small): `ReadWriteChunks()`
+  walks committed private RW memory in 16 MB pieces with 4 KB overlap (RR reads 1 MB pieces with no size cap), skips the
+  scanner's own copy buffer, keeps looking while the menu is up (250 ms, then 1 s), and logs progress every 20 passes.
+  Result: "Found mainmenu_all.map GLOBALS table ... (stride=8)" about 5 s after launch; the posed MCC Spartan shows with
+  the saved armor and colours (capture `es3_armory.bmp`).
+- **Elite:** species Elite switches the scene to 0x0B (shows_elite=1) and the real Elite shows (captures `el1_elite.bmp`,
+  `el2_specops.bmp`). Armor sets go through the GLOBALS permutation slots (Tyler clicked through all 8; the head changes).
+  The Elite hlmt region-table scan (`ScanEliteTable`) never matches; it now retries 10 times while the Elite is shown, then
+  warns once. **Open:** Elite colours stay stock blue (the 6 tracked colour records look like the Spartan's); the Elite's head
+  is cut off at the top of the screen (Reach's own scene 0x0B camera, not Noble's framing).
+- `ArmorCustomizer`: with `data\menumaps\mainmenu_all.map` present the preview says "LOADING ARMORY..." until the scene is
+  ready instead of flashing the OBJ stand-in; the OBJ preview only shows if the scene isn't up after 30 s (or the map is
+  missing). Note `-menu-capture N` counts frames after the scene is ready (`sceneReadyFrames`).
+- For O7OF: the scanner change above is in your file; nothing else in ReachArmory/BlamEngine changed. Noble still builds its
+  own main-menu launch block (no `lb_m_c_1.bin` in Noble's data folder) and that works.
 
 ## 0. Pick up here (2026-10-28, 15:15 ET) - Armory v2, first pass (spec step 8)
 
