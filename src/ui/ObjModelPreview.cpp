@@ -5,6 +5,7 @@
 #include <objbase.h>
 #include <wincodec.h>
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstddef>
 #include <cstring>
@@ -17,7 +18,8 @@ namespace {
 using Microsoft::WRL::ComPtr;
 using namespace DirectX;
 
-constexpr UINT kPreviewSize = 512;
+constexpr UINT kPreviewWidth = 960;
+constexpr UINT kPreviewHeight = 1080;
 
 struct alignas(16) PreviewConstants {
 	XMFLOAT4X4 worldViewProjection;
@@ -27,7 +29,7 @@ struct alignas(16) PreviewConstants {
 	XMFLOAT4 secondaryColor;
 	XMFLOAT4 detailColor;
 	XMFLOAT4 visorColor;
-	XMFLOAT4 options;
+	XMFLOAT4 options; // x = hasDiffuse, y = hasColorControl, z = hasNormalMap, w = materialMode
 };
 
 static_assert(sizeof(PreviewConstants) % 16 == 0);
@@ -47,6 +49,7 @@ cbuffer PreviewConstants : register(b0)
 
 Texture2D g_diffuseTexture : register(t0);
 Texture2D g_colorControlTexture : register(t1);
+Texture2D g_normalTexture : register(t2);
 SamplerState g_sampler : register(s0);
 
 struct VSInput
@@ -61,37 +64,229 @@ struct VSOutput
 	float4 position : SV_POSITION;
 	float3 normal : NORMAL;
 	float2 texcoord : TEXCOORD0;
+	float3 worldPos : TEXCOORD1;
 };
 
 VSOutput VSMain(VSInput input)
 {
 	VSOutput output;
+	float4 worldPos = mul(float4(input.position, 1.0f), g_world);
 	output.position = mul(float4(input.position, 1.0f), g_worldViewProjection);
 	output.normal = normalize(mul(float4(input.normal, 0.0f), g_world).xyz);
 	output.texcoord = input.texcoord;
+	output.worldPos = worldPos.xyz;
 	return output;
 }
 
 float4 PSMain(VSOutput input) : SV_TARGET
 {
-	float3 lightDirection = normalize(float3(-0.45f, 0.75f, -0.5f));
-	float lighting = 0.28f + 0.72f * saturate(dot(normalize(input.normal), lightDirection));
-	float4 albedo = g_diffuse;
-	if (g_options.x > 0.5f)
-		albedo *= g_diffuseTexture.Sample(g_sampler, input.texcoord);
-	if (g_options.y > 0.5f)
+	float3 N = normalize(input.normal);
+	float3 V = normalize(float3(0.0f, 0.08f, -3.2f) - input.worldPos);
+	if (dot(N, V) < 0.0f)
+		N = -N;
+
+	if (g_options.z > 0.5f)
 	{
+		float3 mapN = g_normalTexture.Sample(g_sampler, input.texcoord).xyz * 2.0f - 1.0f;
+		mapN.y = -mapN.y;
+		mapN.xy *= 1.15f;
+		mapN = normalize(mapN);
+
+		float3 dp1 = ddx(input.worldPos);
+		float3 dp2 = ddy(input.worldPos);
+		float2 duv1 = ddx(input.texcoord);
+		float2 duv2 = ddy(input.texcoord);
+		float3 dp2perp = cross(dp2, N);
+		float3 dp1perp = cross(N, dp1);
+		float3 T = dp2perp * duv1.x + dp1perp * duv2.x;
+		float3 B = dp2perp * duv1.y + dp1perp * duv2.y;
+		float invmax = rsqrt(max(dot(T, T), dot(B, B)) + 1e-8f);
+		float3x3 TBN = float3x3(T * invmax, B * invmax, N);
+		N = normalize(mul(mapN, TBN));
+	}
+
+	// 3-point MCC Armory studio lighting:
+	// Key light (cool upper-left-front), Fill light (soft front-right), Rim light (Halo ring cyan-blue back-left)
+	float3 keyDir = normalize(float3(-0.48f, 0.62f, -0.62f));
+	float3 fillDir = normalize(float3(0.65f, 0.15f, -0.74f));
+	float3 rimDir = normalize(float3(-0.72f, 0.35f, 0.60f));
+
+	float NdotKey = saturate(dot(N, keyDir));
+	float NdotFill = saturate(dot(N, fillDir));
+	float NdotRim = saturate(dot(N, rimDir));
+	float fresnel = pow(1.0f - saturate(dot(N, V)), 3.0f);
+
+	float3 HKey = normalize(keyDir + V);
+	float3 HFill = normalize(fillDir + V);
+	float specKey = pow(saturate(dot(N, HKey)), 24.0f);
+	float specWide = pow(saturate(dot(N, HKey)), 6.0f);
+
+	int mode = (int)round(g_options.w);
+
+	// Mode 5: Emissive armor lights
+	if (mode == 5)
+	{
+		return float4(0.42f, 0.78f, 1.0f, 1.0f);
+	}
+
+	// Mode 1: Reflective metallic Visor
+	if (mode == 1)
+	{
+		float3 visorBase = g_visorColor.rgb;
+		float3 envDark = visorBase * 0.28f;
+		float3 envBright = lerp(visorBase * 1.35f, float3(1.0f, 0.98f, 0.90f), 0.28f);
+		float2 reflUv = N.xy * 0.5f + 0.5f;
+		float horizon = smoothstep(-0.15f, 0.45f, N.y);
+		float3 visorCol = lerp(envDark, visorBase, 0.45f + 0.55f * NdotKey);
+		visorCol = lerp(visorCol, envBright, fresnel * 0.65f + horizon * 0.22f);
+		float visorSpec = pow(saturate(dot(N, HKey)), 64.0f) * 1.35f + pow(saturate(dot(N, HFill)), 28.0f) * 0.35f;
+		visorCol += visorSpec * lerp(visorBase, float3(1.0f, 1.0f, 1.0f), 0.55f);
+		visorCol += float3(0.30f, 0.55f, 0.85f) * (NdotRim * fresnel * 0.55f);
+		return float4(saturate(visorCol), 1.0f);
+	}
+
+	float4 texSample = float4(1.0f, 1.0f, 1.0f, 1.0f);
+	if (g_options.x > 0.5f)
+		texSample = g_diffuseTexture.Sample(g_sampler, input.texcoord);
+
+	// Contrast-enhance AO/wear in Reach diffuse maps
+	float3 aoWear = pow(saturate(texSample.rgb), 1.35f);
+	float3 baseColor = aoWear * g_diffuse.rgb;
+	float specStrength = 0.28f;
+
+	if (mode == 2)
+	{
+		// Rubber undersuit / techsuit / helmet interior
+		baseColor = aoWear * float3(0.11f, 0.12f, 0.14f);
+		specStrength = 0.14f;
+	}
+	else if (mode == 3)
+	{
+		// Tactical gear / pouches / unpainted titanium / prosthetic arm / attachments
+		baseColor = aoWear * float3(0.25f, 0.27f, 0.30f);
+		specStrength = 0.32f;
+	}
+	else if (mode == 6)
+	{
+		// Haunted skull bone ivory
+		baseColor = aoWear * float3(0.72f, 0.67f, 0.56f);
+		specStrength = 0.18f;
+	}
+	else if (g_options.y > 0.5f)
+	{
+		// Painted armor with _cc mask:
+		// R = Primary, G = Secondary, B = Detail, Black (unpainted) = Dark Gunmetal (g_detailColor)
 		float3 mask = g_colorControlTexture.Sample(g_sampler, input.texcoord).rgb;
 		float coverage = saturate(mask.r + mask.g + mask.b);
-		float3 armorColor = (g_primaryColor.rgb * mask.r + g_secondaryColor.rgb * mask.g +
+		float3 paintedColor = (g_primaryColor.rgb * mask.r + g_secondaryColor.rgb * mask.g +
 			g_detailColor.rgb * mask.b) / max(mask.r + mask.g + mask.b, 0.0001f);
-		albedo.rgb = lerp(albedo.rgb, albedo.rgb * armorColor, coverage);
+		float3 armorTint = lerp(g_detailColor.rgb, paintedColor, coverage);
+		baseColor = aoWear * armorTint;
+		specStrength = lerp(0.36f, 0.26f, coverage);
 	}
-	if (g_options.z > 0.5f)
-		albedo.rgb *= g_visorColor.rgb;
-	return float4(albedo.rgb * lighting, albedo.a);
+	else if (mode == 4)
+	{
+		// Painted armor piece without a separate _cc texture
+		baseColor = aoWear * g_primaryColor.rgb;
+		specStrength = 0.28f;
+	}
+	else if (mode == 7)
+	{
+		// Secondary-painted armor piece without a separate _cc texture
+		baseColor = aoWear * g_secondaryColor.rgb;
+		specStrength = 0.28f;
+	}
+
+	float3 ambient = float3(0.16f, 0.18f, 0.22f) + 0.06f * saturate(N.y * 0.5f + 0.5f);
+	float3 keyLight = float3(0.96f, 0.98f, 1.00f) * (NdotKey * 0.78f);
+	float3 fillLight = float3(0.32f, 0.38f, 0.48f) * (NdotFill * 0.34f);
+	float3 rimLight = float3(0.38f, 0.62f, 0.92f) * (NdotRim * (0.25f + 0.45f * fresnel));
+
+	float3 lit = baseColor * (ambient + keyLight + fillLight) + rimLight * 0.28f;
+	float3 specCol = lerp(baseColor, float3(0.90f, 0.95f, 1.0f), 0.65f);
+	lit += specCol * (specKey * specStrength + specWide * specStrength * 0.25f);
+
+	return float4(saturate(lit), 1.0f);
 }
 )";
+
+bool ContainsIgnoreCase(std::string_view haystack, std::string_view needle) {
+	if (needle.empty() || haystack.size() < needle.size()) return false;
+	auto it = std::search(haystack.begin(), haystack.end(), needle.begin(), needle.end(),
+		[](unsigned char a, unsigned char b) { return std::tolower(a) == std::tolower(b); });
+	return it != haystack.end();
+}
+
+bool EndsWithIgnoreCase(std::string_view str, std::string_view suffix) {
+	if (str.size() < suffix.size()) return false;
+	return ContainsIgnoreCase(str.substr(str.size() - suffix.size()), suffix);
+}
+
+bool ShouldSkipDecalCardMaterial(std::string_view materialName) {
+	return ContainsIgnoreCase(materialName, "illum_cards") ||
+		   ContainsIgnoreCase(materialName, "emblem_patch") ||
+		   ContainsIgnoreCase(materialName, "carter_259") ||
+		   ContainsIgnoreCase(materialName, "unsc_decals") ||
+		   ContainsIgnoreCase(materialName, "spartan_decals") ||
+		   ContainsIgnoreCase(materialName, "bullet_burn_decal") ||
+		   ContainsIgnoreCase(materialName, "scratch_decal") ||
+		   ContainsIgnoreCase(materialName, "paintwear") ||
+		   ContainsIgnoreCase(materialName, "paint_emile") ||
+		   ContainsIgnoreCase(materialName, "paint_jun") ||
+		   ContainsIgnoreCase(materialName, "paint_carter");
+}
+
+int ClassifyMaterialMode(std::string_view materialName, bool hasColorControl, bool useSecondaryColor) {
+	if (ContainsIgnoreCase(materialName, "lights") || ContainsIgnoreCase(materialName, "shield_display")) {
+		return 5; // Emissive lights
+	}
+	if (ContainsIgnoreCase(materialName, "visor") && !ContainsIgnoreCase(materialName, "interior")) {
+		return 1; // Reflective Visor
+	}
+	if (ContainsIgnoreCase(materialName, "rubber") ||
+		ContainsIgnoreCase(materialName, "bodysuit") ||
+		ContainsIgnoreCase(materialName, "interior") ||
+		ContainsIgnoreCase(materialName, "black")) {
+		return 2; // Dark matte rubber undersuit
+	}
+	if (ContainsIgnoreCase(materialName, "skull_main") ||
+		ContainsIgnoreCase(materialName, "skull_teeth") ||
+		ContainsIgnoreCase(materialName, "skull_port") ||
+		ContainsIgnoreCase(materialName, "skull_emile")) {
+		return 6; // Bone / skull
+	}
+	if (EndsWithIgnoreCase(materialName, "_metal") ||
+		ContainsIgnoreCase(materialName, "untinted") ||
+		ContainsIgnoreCase(materialName, "robotarm") ||
+		ContainsIgnoreCase(materialName, "robo_arm")) {
+		return 3; // Unpainted gunmetal / prosthetic arm
+	}
+	if (hasColorControl) {
+		return 0; // Painted armor with _cc mask
+	}
+	if (ContainsIgnoreCase(materialName, "knife") ||
+		ContainsIgnoreCase(materialName, "kukri") ||
+		ContainsIgnoreCase(materialName, "pouch") ||
+		ContainsIgnoreCase(materialName, "grenade") ||
+		ContainsIgnoreCase(materialName, "ammopack") ||
+		ContainsIgnoreCase(materialName, "backpack") ||
+		ContainsIgnoreCase(materialName, "harness") ||
+		ContainsIgnoreCase(materialName, "shotgun") ||
+		ContainsIgnoreCase(materialName, "flask") ||
+		ContainsIgnoreCase(materialName, "packs") ||
+		ContainsIgnoreCase(materialName, "ear_piece") ||
+		ContainsIgnoreCase(materialName, "ear_peice") ||
+		ContainsIgnoreCase(materialName, "_aug") ||
+		ContainsIgnoreCase(materialName, "aug_") ||
+		ContainsIgnoreCase(materialName, "flare") ||
+		ContainsIgnoreCase(materialName, "chesttech") ||
+		ContainsIgnoreCase(materialName, "helmettech") ||
+		ContainsIgnoreCase(materialName, "gauntlets") ||
+		ContainsIgnoreCase(materialName, "sniper_li")) {
+		return 3; // Tactical gear / attachments
+	}
+	return useSecondaryColor ? 7 : 4;
+}
 
 bool CompileShader(const char* entryPoint, const char* profile, ComPtr<ID3DBlob>& bytecode) {
 	ComPtr<ID3DBlob> errors;
@@ -107,6 +302,8 @@ bool ObjModelPreview::Initialize(ID3D11Device* device) {
 	if (m_isInitialized) return true;
 	if (!device) return false;
 	m_device = device;
+	m_rtWidth = kPreviewWidth;
+	m_rtHeight = kPreviewHeight;
 	if (!CreatePipeline() || !CreatePreviewTarget()) {
 		m_device = nullptr;
 		return false;
@@ -141,7 +338,8 @@ bool ObjModelPreview::CreatePipeline() {
 	if (FAILED(m_device->CreateBuffer(&constantDesc, nullptr, m_constantBuffer.GetAddressOf()))) return false;
 
 	D3D11_SAMPLER_DESC samplerDesc{};
-	samplerDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+	samplerDesc.Filter = D3D11_FILTER_ANISOTROPIC;
+	samplerDesc.MaxAnisotropy = 8;
 	samplerDesc.AddressU = D3D11_TEXTURE_ADDRESS_WRAP;
 	samplerDesc.AddressV = D3D11_TEXTURE_ADDRESS_WRAP;
 	samplerDesc.AddressW = D3D11_TEXTURE_ADDRESS_WRAP;
@@ -164,8 +362,8 @@ bool ObjModelPreview::CreatePipeline() {
 
 bool ObjModelPreview::CreatePreviewTarget() {
 	D3D11_TEXTURE2D_DESC colorDesc{};
-	colorDesc.Width = kPreviewSize;
-	colorDesc.Height = kPreviewSize;
+	colorDesc.Width = m_rtWidth;
+	colorDesc.Height = m_rtHeight;
 	colorDesc.MipLevels = 1;
 	colorDesc.ArraySize = 1;
 	colorDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
@@ -177,8 +375,8 @@ bool ObjModelPreview::CreatePreviewTarget() {
 		FAILED(m_device->CreateShaderResourceView(m_previewTexture.Get(), nullptr, m_previewSrv.GetAddressOf()))) return false;
 
 	D3D11_TEXTURE2D_DESC depthDesc{};
-	depthDesc.Width = kPreviewSize;
-	depthDesc.Height = kPreviewSize;
+	depthDesc.Width = m_rtWidth;
+	depthDesc.Height = m_rtHeight;
 	depthDesc.MipLevels = 1;
 	depthDesc.ArraySize = 1;
 	depthDesc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
@@ -248,6 +446,7 @@ bool ObjModelPreview::CreateGpuModel(const ObjModel& model, std::string& error) 
 		std::copy(std::begin(source.diffuse), std::end(source.diffuse), material.diffuse);
 		material.diffuseTexturePath = source.diffuseTexture;
 		material.colorControlTexturePath = source.colorControlTexture;
+		material.normalTexturePath = source.normalTexture;
 		materials.emplace(source.name, std::move(material));
 	}
 
@@ -337,19 +536,45 @@ bool ObjModelPreview::LoadModel(const std::filesystem::path& path, std::string& 
 }
 
 bool ObjModelPreview::Render(ID3D11DeviceContext* context, float rotationRadians,
-							 const std::vector<ObjPreviewLayer>& layers, const ObjPreviewColors& colors) {
+							 const std::vector<ObjPreviewLayer>& layers, const ObjPreviewColors& colors,
+							 const ObjPreviewCamera* camera) {
 	if (!context || !m_isInitialized || !m_isLoaded || !m_previewRtv || !m_previewSrv) return false;
 	if (layers.empty()) return false;
+
+	ObjPreviewCamera defaultCam{};
+	const ObjPreviewCamera& cam = camera ? *camera : defaultCam;
+
 	float minBounds[3] = {std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), std::numeric_limits<float>::max()};
 	float maxBounds[3] = {-std::numeric_limits<float>::max(), -std::numeric_limits<float>::max(), -std::numeric_limits<float>::max()};
-	for (const auto& layer : layers) {
-		const auto bounds = m_groupBounds.find(layer.groupName);
-		if (bounds == m_groupBounds.end()) return false;
-		for (size_t axis = 0; axis < 3; ++axis) {
-			minBounds[axis] = std::min(minBounds[axis], bounds->second[axis]);
-			maxBounds[axis] = std::max(maxBounds[axis], bounds->second[axis + 3]);
+	bool foundBounds = false;
+
+	if (!cam.referenceGroup.empty()) {
+		const auto refIt = m_groupBounds.find(cam.referenceGroup);
+		if (refIt != m_groupBounds.end()) {
+			for (size_t axis = 0; axis < 3; ++axis) {
+				minBounds[axis] = refIt->second[axis];
+				maxBounds[axis] = refIt->second[axis + 3];
+			}
+			foundBounds = true;
 		}
 	}
+
+	if (!foundBounds) {
+		// Lock to the first valid layer (typically the base body) so adding/removing armor pieces never shifts the camera
+		for (const auto& layer : layers) {
+			const auto bounds = m_groupBounds.find(layer.groupName);
+			if (bounds != m_groupBounds.end()) {
+				for (size_t axis = 0; axis < 3; ++axis) {
+					minBounds[axis] = bounds->second[axis];
+					maxBounds[axis] = bounds->second[axis + 3];
+				}
+				foundBounds = true;
+				break;
+			}
+		}
+	}
+	if (!foundBounds) return false;
+
 	float center[3]{};
 	for (size_t axis = 0; axis < 3; ++axis) center[axis] = (minBounds[axis] + maxBounds[axis]) * 0.5f;
 	const float dx = maxBounds[0] - center[0];
@@ -367,19 +592,28 @@ bool ObjModelPreview::Render(ID3D11DeviceContext* context, float rotationRadians
 
 	ID3D11RenderTargetView* target = m_previewRtv.Get();
 	context->OMSetRenderTargets(1, &target, m_depthDsv.Get());
-	const D3D11_VIEWPORT viewport{0.0f, 0.0f, static_cast<float>(kPreviewSize), static_cast<float>(kPreviewSize), 0.0f, 1.0f};
+	const D3D11_VIEWPORT viewport{0.0f, 0.0f, static_cast<float>(m_rtWidth), static_cast<float>(m_rtHeight), 0.0f, 1.0f};
 	context->RSSetViewports(1, &viewport);
-	const float clear[4] = {0.035f, 0.045f, 0.065f, 1.0f};
+	const float clear[4] = {
+		0.0f, 0.0f, 0.0f,
+		cam.transparentBackground ? 0.0f : 1.0f
+	};
 	context->ClearRenderTargetView(target, clear);
 	context->ClearDepthStencilView(m_depthDsv.Get(), D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
 
-	const XMVECTOR eye = XMVectorSet(0.0f, 0.0f, -3.2f, 1.0f);
-	const XMVECTOR focus = XMVectorZero();
+	const float zoom = std::clamp(cam.zoom, 0.65f, 2.8f);
+	const XMVECTOR eye = XMVectorSet(0.0f, 0.06f, -3.2f / zoom, 1.0f);
+	const XMVECTOR focus = XMVectorSet(cam.focusXOffset, cam.focusYOffset, 0.0f, 1.0f);
 	const XMVECTOR up = XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
 	const XMMATRIX view = XMMatrixLookAtLH(eye, focus, up);
-	const XMMATRIX projection = XMMatrixPerspectiveFovLH(XMConvertToRadians(35.0f), 1.0f, 0.05f, 100.0f);
+	const float aspect = static_cast<float>(m_rtWidth) / static_cast<float>(m_rtHeight);
+	const XMMATRIX projection = XMMatrixPerspectiveFovLH(XMConvertToRadians(30.0f), aspect, 0.05f, 100.0f);
+	const float uniformScale = 1.72f / radius;
 	const XMMATRIX world = XMMatrixTranslation(-center[0], -center[1], -center[2]) *
-						   XMMatrixRotationY(rotationRadians) * XMMatrixScaling(1.7f / radius, 1.7f / radius, 1.7f / radius);
+						   XMMatrixRotationY(rotationRadians) *
+						   XMMatrixRotationX(cam.pitchRadians) *
+						   XMMatrixScaling(uniformScale, uniformScale, uniformScale);
+
 	PreviewConstants constants{};
 	XMStoreFloat4x4(&constants.worldViewProjection, XMMatrixTranspose(world * view * projection));
 	XMStoreFloat4x4(&constants.world, XMMatrixTranspose(world));
@@ -404,6 +638,7 @@ bool ObjModelPreview::Render(ID3D11DeviceContext* context, float rotationRadians
 			if (!layer.includedMaterials.empty() &&
 				std::find(layer.includedMaterials.begin(), layer.includedMaterials.end(), mesh.materialName) == layer.includedMaterials.end()) continue;
 			if (std::find(layer.excludedMaterials.begin(), layer.excludedMaterials.end(), mesh.materialName) != layer.excludedMaterials.end()) continue;
+			if (ShouldSkipDecalCardMaterial(mesh.materialName)) continue;
 
 			const ID3D11Buffer* vertexBuffer = mesh.vertexBuffer.Get();
 			ID3D11Buffer* boundVertexBuffer = const_cast<ID3D11Buffer*>(vertexBuffer);
@@ -411,6 +646,7 @@ bool ObjModelPreview::Render(ID3D11DeviceContext* context, float rotationRadians
 			constants.diffuse = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
 			ID3D11ShaderResourceView* texture = nullptr;
 			ID3D11ShaderResourceView* colorControlTexture = nullptr;
+			ID3D11ShaderResourceView* normalTexture = nullptr;
 			auto material = m_materials.find(mesh.materialName);
 			if (material != m_materials.end()) {
 				std::copy(std::begin(material->second.diffuse), std::end(material->second.diffuse), &constants.diffuse.x);
@@ -422,22 +658,32 @@ bool ObjModelPreview::Render(ID3D11DeviceContext* context, float rotationRadians
 					material->second.colorControlLoadAttempted = true;
 					CreateTexture(material->second.colorControlTexturePath, material->second.colorControlTexture.GetAddressOf());
 				}
+				if (!material->second.normalLoadAttempted && !material->second.normalTexturePath.empty()) {
+					material->second.normalLoadAttempted = true;
+					CreateTexture(material->second.normalTexturePath, material->second.normalTexture.GetAddressOf());
+				}
 				texture = material->second.diffuseTexture.Get();
 				colorControlTexture = material->second.colorControlTexture.Get();
+				normalTexture = material->second.normalTexture.Get();
 			}
-			const bool isVisor = mesh.materialName.find("visor") != std::string::npos;
-			constants.options = XMFLOAT4(texture ? 1.0f : 0.0f, colorControlTexture ? 1.0f : 0.0f,
-				isVisor ? 1.0f : 0.0f, 0.0f);
+
+			const int mode = ClassifyMaterialMode(mesh.materialName, colorControlTexture != nullptr, layer.useSecondaryColor);
+			constants.options = XMFLOAT4(
+				texture ? 1.0f : 0.0f,
+				colorControlTexture ? 1.0f : 0.0f,
+				normalTexture ? 1.0f : 0.0f,
+				static_cast<float>(mode)
+			);
 			context->UpdateSubresource(m_constantBuffer.Get(), 0, nullptr, &constants, 0, 0);
 			ID3D11Buffer* cb = m_constantBuffer.Get();
 			context->VSSetConstantBuffers(0, 1, &cb);
 			context->PSSetConstantBuffers(0, 1, &cb);
-			ID3D11ShaderResourceView* textures[] = {texture, colorControlTexture};
+			ID3D11ShaderResourceView* textures[] = {texture, colorControlTexture, normalTexture};
 			context->PSSetShaderResources(0, ARRAYSIZE(textures), textures);
 			context->Draw(mesh.vertexCount, 0);
 		}
 	}
-	ID3D11ShaderResourceView* nullTextures[2]{};
+	ID3D11ShaderResourceView* nullTextures[3]{};
 	context->PSSetShaderResources(0, ARRAYSIZE(nullTextures), nullTextures);
 
 	ID3D11RenderTargetView* restoreRtv = oldRtv.Get();

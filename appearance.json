@@ -1,0 +1,29 @@
+{
+    "service_tag":  "N312",
+    "body_type":  0,
+    "secondary_color":  9,
+    "spartan":  {
+                    "wrist_index":  5,
+                    "helmet_index":  4,
+                    "left_shoulder_index":  12,
+                    "right_shoulder_index":  17,
+                    "armor_effect_index":  2,
+                    "firefight_voice_index":  3,
+                    "helmet_variant_index":  0,
+                    "utility_index":  2,
+                    "visor_color_index":  4,
+                    "chest_index":  15,
+                    "knee_guards_index":  3
+                },
+    "species":  0,
+    "primary_color":  2,
+    "elite":  {
+                  "armor_set":  3,
+                  "helmet_index":  3,
+                  "chest_index":  3,
+                  "legs_index":  3,
+                  "arms_index":  3,
+                  "right_shoulder_index":  3,
+                  "left_shoulder_index":  3
+              }
+}

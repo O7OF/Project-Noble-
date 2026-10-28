@@ -79,26 +79,75 @@ std::filesystem::path ResolveTexturePath(const std::filesystem::path& mtlDirecto
 	return FindTextureFile(modelDirectory / "bitmaps" / relative.filename());
 }
 
-std::filesystem::path FindColorControlTexture(const std::filesystem::path& diffuseTexture) {
+std::filesystem::path FindSiblingTexture(const std::filesystem::path& diffuseTexture,
+										 std::initializer_list<const char*> targetSuffixes) {
 	if (diffuseTexture.empty()) return {};
-	std::string stem = diffuseTexture.stem().string();
+	const std::string stem = diffuseTexture.stem().string();
 	std::string lowered = stem;
 	std::transform(lowered.begin(), lowered.end(), lowered.begin(), [](unsigned char ch) {
 		return static_cast<char>(std::tolower(ch));
 	});
 
-	size_t suffix = lowered.rfind("_diffuse");
-	size_t suffixLength = 8;
-	if (suffix == std::string::npos) {
-		suffix = lowered.rfind("_diff");
-		suffixLength = 5;
-	}
-	if (suffix == std::string::npos) return {};
+	constexpr std::array<std::pair<std::string_view, size_t>, 4> sourceSuffixes{{
+		{"_diffuse", 8},
+		{"_diff", 5},
+		{"_color", 6},
+		{"_d", 2},
+	}};
 
-	stem.replace(suffix, suffixLength, "_cc");
-	const auto candidate = diffuseTexture.parent_path() / (stem + diffuseTexture.extension().string());
-	std::error_code ec;
-	return std::filesystem::is_regular_file(candidate, ec) ? candidate : std::filesystem::path{};
+	size_t suffixPos = std::string::npos;
+	size_t suffixLen = 0;
+	for (const auto& [suf, len] : sourceSuffixes) {
+		const size_t pos = lowered.rfind(suf);
+		if (pos != std::string::npos && pos + len == lowered.size()) {
+			suffixPos = pos;
+			suffixLen = len;
+			break;
+		}
+	}
+	if (suffixPos == std::string::npos) {
+		for (const auto& [suf, len] : sourceSuffixes) {
+			const size_t pos = lowered.rfind(suf);
+			if (pos != std::string::npos) {
+				suffixPos = pos;
+				suffixLen = len;
+				break;
+			}
+		}
+	}
+	if (suffixPos == std::string::npos) return {};
+
+	for (const char* replacement : targetSuffixes) {
+		std::string candidateStem = stem;
+		candidateStem.replace(suffixPos, suffixLen, replacement);
+		const auto found = FindTextureFile(diffuseTexture.parent_path() / (candidateStem + diffuseTexture.extension().string()));
+		if (!found.empty()) return found;
+	}
+	return {};
+}
+
+std::filesystem::path FindColorControlTexture(const std::filesystem::path& diffuseTexture) {
+	return FindSiblingTexture(diffuseTexture, {"_cc"});
+}
+
+std::filesystem::path FindNormalTexture(const std::filesystem::path& diffuseTexture) {
+	return FindSiblingTexture(diffuseTexture, {"_normal", "_zbump", "_bump", "_n"});
+}
+
+std::filesystem::path FindFallbackByMaterialName(const std::filesystem::path& modelDirectory,
+												 const std::string& materialName,
+												 std::initializer_list<const char*> suffixes) {
+	constexpr std::array<const char*, 6> subdirs{
+		"", "spartan_shoulder", "spartan_helmets", "spartan_chest", "spartan_thigh", "spartan_forearm"
+	};
+	for (const char* subdir : subdirs) {
+		const auto dir = std::string_view(subdir).empty() ? (modelDirectory / "bitmaps") : (modelDirectory / "bitmaps" / subdir);
+		for (const char* suffix : suffixes) {
+			const auto found = FindTextureFile(dir / (materialName + suffix + ".png"));
+			if (!found.empty()) return found;
+		}
+	}
+	return {};
 }
 
 bool ParseFloat(std::string_view text, float& value) {
@@ -232,9 +281,19 @@ bool LoadMaterials(const std::filesystem::path& path, const std::filesystem::pat
 					error = "Diffuse texture path escapes the model directory.";
 					return false;
 				}
-				const auto texture = ResolveTexturePath(path.parent_path(), modelDirectory, filename);
+				auto texture = ResolveTexturePath(path.parent_path(), modelDirectory, filename);
+				if (texture.empty()) {
+					texture = FindFallbackByMaterialName(modelDirectory, current->name, {"_diffuse", "_diff", "_color", "_d"});
+				}
 				current->diffuseTexture = texture;
 				current->colorControlTexture = FindColorControlTexture(texture);
+				if (current->colorControlTexture.empty()) {
+					current->colorControlTexture = FindFallbackByMaterialName(modelDirectory, current->name, {"_cc"});
+				}
+				current->normalTexture = FindNormalTexture(texture);
+				if (current->normalTexture.empty()) {
+					current->normalTexture = FindFallbackByMaterialName(modelDirectory, current->name, {"_normal", "_zbump", "_bump", "_n"});
+				}
 			}
 		}
 	}

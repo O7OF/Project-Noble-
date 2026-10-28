@@ -1,38 +1,66 @@
 #pragma once
 
-#include <string>
-#include <string_view>
-#include <vector>
-#include <filesystem>
-#include <d3d11.h>
 #include "ObjModelPreview.hpp"
+#include <d3d11.h>
+#include <filesystem>
+#include <string>
+#include <vector>
 
 namespace noble {
 
-struct ArmorProfile {
-    int species = 0; // 0 = Spartan, 1 = Elite
-    int gender = 0;  // 0 = Male, 1 = Female
+enum class PlayerSpecies : int {
+    Spartan = 0,
+    Elite = 1
+};
 
-    int visorColor = 0;
+enum class BodyType : int {
+    Male = 0,
+    Female = 1
+};
 
-    int eliteArmor = 0; // Selects a locally exported Elite harness group.
+struct AppearanceProfile {
+    std::string serviceTag = "N06";
+    PlayerSpecies species = PlayerSpecies::Spartan;
+    BodyType bodyType = BodyType::Male;
 
-    // Colors
-    int primaryColor = 0;
-    int secondaryColor = 12;
-    int detailColor = 4;
+    // Color indices (0-29 matching Reach's 30-color palette)
+    int primaryColor = 1;    // Steel
+    int secondaryColor = 10; // Brick
 
-    // MCC OBJ groups selected as visible armor overlays; empty means the stock piece.
-    std::string helmetGroup;
-    std::string chestGroup;
-    std::string leftShoulderGroup;
-    std::string rightShoulderGroup;
-    std::string wristGroup;
-    std::string kneeGroup;
+    // Spartan selections (catalog indices)
+    int helmetIndex = 0;         // Mark V [B]
+    int helmetVariantIndex = 0;  // Base
+    int leftShoulderIndex = 0;   // Default
+    int rightShoulderIndex = 0;  // Default
+    int chestIndex = 0;          // Default
+    int wristIndex = 0;          // Default
+    int utilityIndex = 0;        // Default / None
+    int visorColorIndex = 0;     // Default (Amber/Gold)
+    int kneeGuardsIndex = 0;     // Default
+    int armorEffectIndex = 0;    // None
+    int firefightVoiceIndex = 0; // Noble Six
 
-    // Identity
-    char serviceTag[5] = "B312";
-    int voice = 0;
+    // Elite selections (0=Minor, 1=Spec Ops, 2=Ranger, 3=Ultra, 4=Zealot, 5=General, 6=Field Marshal, 7=Officer)
+    int eliteArmorSet = 0;
+    int eliteHelmetIndex = 0;
+    int eliteLeftShoulderIndex = 0;
+    int eliteRightShoulderIndex = 0;
+    int eliteChestIndex = 0;
+    int eliteArmsIndex = 0;
+    int eliteLegsIndex = 0;
+
+    // Legacy string fields preserved for backward compatibility with existing appearance.json files
+    std::string spartanHelmetGroup;
+    std::string spartanChestGroup;
+    std::string spartanLeftShoulderGroup;
+    std::string spartanRightShoulderGroup;
+    std::string spartanWristGroup;
+    std::string spartanKneesGroup;
+};
+
+struct ReachColorEntry {
+    const char* name;
+    float r, g, b;
 };
 
 class ArmorCustomizer {
@@ -41,26 +69,39 @@ public:
     ~ArmorCustomizer() = default;
 
     void Render(ID3D11Device* device, ID3D11DeviceContext* context);
-    bool LoadProfile(const std::filesystem::path& path = "data/appearance.json");
-    bool SaveProfile(const std::filesystem::path& path = "data/appearance.json");
 
-    const ArmorProfile& GetProfile() const { return m_profile; }
+    bool LoadProfile(const std::filesystem::path& path);
+    bool SaveProfile(const std::filesystem::path& path);
+
+    const AppearanceProfile& GetProfile() const { return m_profile; }
+    AppearanceProfile& GetProfileMutable() { return m_profile; }
 
 private:
-    void RenderSpartanCustomizer();
-    void RenderEliteCustomizer();
-    void RenderCharacterPreview(ID3D11Device* device, ID3D11DeviceContext* context);
-    void RenderColorPalettePicker(const char* label, int& selectedColorIndex);
-    void RenderGroupSelector(const char* label, std::string& selectedGroup,
-                             std::string_view category, std::string_view side = {});
+    void RenderCharacterPreview(ID3D11Device* device, ID3D11DeviceContext* context,
+                                float width, float height, bool fullBleed);
+    void BuildActiveLayers(std::vector<ObjPreviewLayer>& layers, std::string& referenceGroup) const;
+    void SyncLegacyFields();
+    void MigrateFromLegacyFields();
 
-    ArmorProfile m_profile;
-    bool m_isDirty = false;
-    ObjModelPreview m_preview;
-    int m_loadedSpecies = -1;
-    std::vector<std::string> m_previewGroups;
-    float m_previewRotation = 0.0f;
-    std::string m_previewError;
+    AppearanceProfile m_profile;
+    std::filesystem::path m_profilePath;
+    bool m_dirty = false;
+
+    ObjModelPreview m_spartanPreview;
+    ObjModelPreview m_elitePreview;
+    bool m_previewInitialized = false;
+    std::string m_spartanLoadError;
+    std::string m_eliteLoadError;
+
+    float m_previewYaw = -0.32f;     // MCC 3/4 left-facing angle
+    float m_previewPitch = 0.03f;
+    float m_previewZoom = 1.38f;     // MCC upper/3-4 portrait zoom
+    float m_previewFocusY = 0.12f;
+    bool m_fullBodyCamera = false;
+    bool m_autoRotate = false;
+
+    int m_focusedRow = 0;
+    bool m_showColorModal = false;
 };
 
 } // namespace noble

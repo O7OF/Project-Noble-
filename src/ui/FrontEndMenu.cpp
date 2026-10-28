@@ -1102,12 +1102,58 @@ FrontEndChoice FrontEndMenu::Run(Window& window, D3D11Renderer& renderer, const 
             break;
         }
 
+        case Screen::Armory: {
+            // MCC Halo: Reach "CUSTOMIZATION / APPEARANCE" header + nameplate + full-bleed 3D preview
+            Text(ui, NobleStyle::SmallFont(), 15.0f, ImVec2(left, top - 8.0f * ui.s), kAccent, "CUSTOMIZATION");
+            Text(ui, NobleStyle::HeroFont(), 44.0f, ImVec2(left, top + 6.0f * ui.s), kWhite, "APPEARANCE");
+
+            // Top-right player nameplate with service tag
+            {
+                const auto& prof = UIManager::GetArmorCustomizer().GetProfile();
+                const float plateW = 280.0f * ui.s;
+                const float plateH = 42.0f * ui.s;
+                const ImVec2 p0(ui.size.x - left - plateW, top + 6.0f * ui.s);
+                const ImVec2 p1(p0.x + plateW, p0.y + plateH);
+                ui.dl->AddRectFilledMultiColor(p0, p1,
+                    IM_COL32(36, 58, 82, 230), IM_COL32(82, 112, 142, 210),
+                    IM_COL32(62, 88, 115, 210), IM_COL32(28, 46, 68, 230));
+                ui.dl->AddRect(p0, p1, IM_COL32(165, 205, 240, 180), 0.0f, 0, 1.2f);
+                const ImVec2 emb(p0.x + 22.0f * ui.s, p0.y + plateH * 0.5f);
+                ui.dl->AddCircleFilled(emb, 13.0f * ui.s, IM_COL32(16, 28, 42, 240));
+                ui.dl->AddTriangleFilled(ImVec2(emb.x - 7 * ui.s, emb.y - 3 * ui.s),
+                                         ImVec2(emb.x + 7 * ui.s, emb.y - 3 * ui.s),
+                                         ImVec2(emb.x, emb.y + 7 * ui.s), kAccent);
+                const std::string tagLine = "[" + prof.serviceTag + "]";
+                Text(ui, NobleStyle::SmallFont(), 14.0f, ImVec2(p0.x + 44.0f * ui.s, p0.y + 4.0f * ui.s), IM_COL32(190, 215, 235, 230), tagLine.c_str());
+                Text(ui, NobleStyle::TitleFont(), 18.0f, ImVec2(p0.x + 44.0f * ui.s, p0.y + 20.0f * ui.s), kWhite, settings.playerName.c_str());
+            }
+
+            // Thin horizontal rule with active "HALO: REACH" underline
+            const float ruleY = top + 64.0f * ui.s;
+            ui.dl->AddLine(ImVec2(left, ruleY), ImVec2(ui.size.x - left, ruleY), IM_COL32(140, 180, 220, 55), 1.0f);
+            const char* gameTab = "HALO: REACH";
+            const float tabW = TextWidth(NobleStyle::TitleFont(), 18.0f * ui.s, gameTab);
+            const float tabX = ui.size.x * 0.5f - tabW * 0.5f;
+            Text(ui, NobleStyle::TitleFont(), 18.0f, ImVec2(tabX, ruleY - 24.0f * ui.s), kWhite, gameTab);
+            ui.dl->AddLine(ImVec2(tabX - 8.0f * ui.s, ruleY), ImVec2(tabX + tabW + 8.0f * ui.s, ruleY), kAccent, 2.5f * ui.s);
+
+            ImGui::SetCursorScreenPos(ImVec2(left, ruleY + 12.0f * ui.s));
+            ImGui::BeginChild("##armory_panel", ImVec2(ui.size.x - left * 1.35f, ui.size.y - (ruleY + 12.0f * ui.s) - 62.0f * ui.s),
+                              ImGuiChildFlags_None, ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollWithMouse);
+            UIManager::GetArmorCustomizer().Render(renderer.GetDevice(), renderer.GetContext());
+            ImGui::EndChild();
+
+            if (back && !ImGui::GetIO().WantTextInput) {
+                goBack(Screen::Main);
+            }
+            DrawHints(ui, { { Prompt::Back, "Back" }, { Prompt::Change, "Change Piece" }, { Prompt::Tabs, "Rotate Character (Q/E or Drag)" } });
+            break;
+        }
+
         case Screen::Servers:
         case Screen::Settings:
-        case Screen::Armory:
         case Screen::Mods: {
-            const char* title = st.screen == Screen::Servers ? "GAMES" : st.screen == Screen::Settings ? "SETTINGS"
-                              : st.screen == Screen::Armory ? "ARMORY" : "MODS";
+            const char* title = st.screen == Screen::Servers ? "GAMES" : st.screen == Screen::Settings ? "SETTINGS" : "MODS";
             DrawTitle(ui, ImVec2(left, top), title);
             // The existing panels are regular ImGui widgets: put them in a framed child.
             ImGui::SetCursorScreenPos(ImVec2(left, top + 84.0f * ui.s));
@@ -1118,8 +1164,6 @@ FrontEndChoice FrontEndMenu::Run(Window& window, D3D11Renderer& renderer, const 
                 UIManager::GetServerBrowser().Render();
             } else if (st.screen == Screen::Settings) {
                 settingsPanel.Render();
-            } else if (st.screen == Screen::Armory) {
-                UIManager::GetArmorCustomizer().Render(renderer.GetDevice(), renderer.GetContext());
             } else {
                 if (!modsScanned) {
                     // <steamapps>\workshop\content\976730 (MCC) and Noble's own data\mods.

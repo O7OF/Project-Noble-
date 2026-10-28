@@ -17,6 +17,7 @@ struct ObjMaterial {
 	float diffuse[4]{1.0f, 1.0f, 1.0f, 1.0f};
 	std::filesystem::path diffuseTexture;
 	std::filesystem::path colorControlTexture;
+	std::filesystem::path normalTexture;
 };
 
 struct ObjMesh {

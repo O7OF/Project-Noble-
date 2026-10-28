@@ -3,6 +3,7 @@
 #include "SigScanner.hpp"
 #include "common/Logger.hpp"
 #include <psapi.h>
+#include <cstring>
 
 namespace noble {
 
@@ -74,6 +75,36 @@ bool EnginePatches::Apply(HMODULE hReachDll) {
         }
     } else {
         NOBLE_WARN("EnginePatches: Could not locate IsWhitespace function in haloreach.dll.");
+    }
+
+    // 2. Armor permutation index cap patches (appearancecap::apply @ RVA 0x10545A and 0x10552F)
+    // Allows armor permutation indices >= 5 / >= 32 without clamping to base Mark V[B].
+    {
+        static const uint8_t kExpectedCap1[7] = { 0x80, 0xFA, 0x05, 0x72, 0x1A, 0xB1, 0x01 };
+        static const uint8_t kPatchedCap1[7]  = { 0x80, 0xFA, 0xFF, 0x72, 0x1A, 0xB1, 0x01 };
+        uint8_t* addr1 = reinterpret_cast<uint8_t*>(baseAddress + 0x10545A);
+        if (std::memcmp(addr1, kExpectedCap1, sizeof(kExpectedCap1)) == 0) {
+            DWORD oldProt = 0;
+            if (VirtualProtect(addr1, sizeof(kPatchedCap1), PAGE_EXECUTE_READWRITE, &oldProt)) {
+                std::memcpy(addr1, kPatchedCap1, sizeof(kPatchedCap1));
+                FlushInstructionCache(GetCurrentProcess(), addr1, sizeof(kPatchedCap1));
+                VirtualProtect(addr1, sizeof(kPatchedCap1), oldProt, &oldProt);
+                NOBLE_INFO("EnginePatches: Patched armor appearance cap 1 at RVA 0x10545A (0x05 -> 0xFF).");
+            }
+        }
+
+        static const uint8_t kExpectedCap2[6] = { 0x41, 0x80, 0xF8, 0x20, 0x73, 0x21 };
+        static const uint8_t kPatchedCap2[6]  = { 0x41, 0x80, 0xF8, 0xFF, 0x73, 0x21 };
+        uint8_t* addr2 = reinterpret_cast<uint8_t*>(baseAddress + 0x10552F);
+        if (std::memcmp(addr2, kExpectedCap2, sizeof(kExpectedCap2)) == 0) {
+            DWORD oldProt = 0;
+            if (VirtualProtect(addr2, sizeof(kPatchedCap2), PAGE_EXECUTE_READWRITE, &oldProt)) {
+                std::memcpy(addr2, kPatchedCap2, sizeof(kPatchedCap2));
+                FlushInstructionCache(GetCurrentProcess(), addr2, sizeof(kPatchedCap2));
+                VirtualProtect(addr2, sizeof(kPatchedCap2), oldProt, &oldProt);
+                NOBLE_INFO("EnginePatches: Patched armor appearance cap 2 at RVA 0x10552F (0x20 -> 0xFF).");
+            }
+        }
     }
 
     s_isApplied = true;
