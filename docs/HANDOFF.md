@@ -1,4 +1,4 @@
-# Project Noble: handoff (2026-10-28, 12:25 ET)
+# Project Noble: handoff (2026-10-28, 12:40 ET)
 
 This picks up a reverse-engineering and C++ effort on **Tyler's Windows PC**. All paths below are real paths on that machine.
 Tyler (GitHub `WeabooTyler117`) works with a partner (GitHub `O7OF`) who owns the repo and writes most of the code.
@@ -10,6 +10,14 @@ community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownershi
 MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour.
 
 ---
+
+## 0. Pick up here (2026-10-28, 12:40 ET) - Reach art is now in git
+
+- Tyler decided the Reach menu art goes into the repo so O7 sees exactly the same build (`3522203`, 106 PNGs, ~2 MB):
+  `build/bin/Release/data/ui/reach/{ranks,difficulty,commendations}/` (force-added; `build\` is otherwise git-ignored).
+  After a pull, O7's menus show the same rank icons, difficulty icons and commendation banners. New art goes in the same
+  folders and is added with `git add -f build/bin/Release/data/ui/reach`.
+- Claude raised that the repo is public and the art is Microsoft's (takedown risk); Tyler chose to push it anyway.
 
 ## 0. Pick up here (2026-10-28, 12:25 ET) - Reach's 45 commendations (spec step 5)
 
@@ -53,7 +61,7 @@ When a stat is decoded: add a `CommendationMetric`, set it on the rows above, an
 ## 0. Pick up here (2026-10-28, 12:10 ET) - commendation art in place (spec step 5)
 
 - Tyler's art: `D:\Halo Commendations` (52 named webp/png). Copied as PNG to `build\bin\Release\data\ui\reach\commendations\`
-  (git-ignored, PC only) as `<mode>_<name>.png`: 16 campaign (green), 15 firefight (red), 14 multiplayer (blue), all Steel tier,
+  (now committed, see 12:40) as `<mode>_<name>.png`: 16 campaign (green), 15 firefight (red), 14 multiplayer (blue), all Steel tier,
   plus `example_*.png` (bronze sniper, silver technician, gold assassin, onyx stars, onyx max, steel assist, service record).
 - Names/thresholds: halopedia "List of Halo: Reach commendations" (Steel/Iron, Bronze, Silver, Gold, Onyx, Max). Only Steel art
   exists, so other tiers need tinting in code (bronze/silver/gold/onyx tint; Max = onyx with flames per example_onyx_max).
@@ -1186,6 +1194,7 @@ session registry, matchmaker (8 playlists). DB goes to `server/data/` (git-ignor
 - Never commit or publish: RR binaries/data/decompiled code (including `profile_1.bin`, launch blocks, `mainmenu_all.map`),
   Omaha-derived files, `haloreach.dll` or dumps of it (e.g. dumpbin output), crash dumps, logs (they contain a player name/ID).
   The repo is **public**. GitHub rejects files over 100 MB.
+- Exception (Tyler, 2026-10-28): the Reach menu art in `build/bin/Release/data/ui/reach/` is committed on purpose.
 - Keep the Steam ownership check. No anti-cheat bypassing, no official MCC online services.
 - Small, separate PRs. The partner edits `ReachHost.cpp`/`BlamEngine.cpp` too, so tell him before large edits; when both sides
   change `HostSlot1_FrameTick`, keep the gamma pass first and the pause menu after it.
