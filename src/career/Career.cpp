@@ -6,6 +6,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstring>
 #include <ctime>
@@ -108,49 +109,27 @@ constexpr int64_t kMissionBonus[4] = { 250, 500, 1000, 2000 };
 // Challenges and commendations. Reach's own lists came from Bungie's servers; these are Noble's,
 // built only on what the results record and the launch settings tell us.
 // ---------------------------------------------------------------------------------------------
-enum class Metric { Games, CampaignMissions, FirefightGames, MultiplayerGames, Minutes, Kills, Medals, Assists,
-                    HeroicMission, LegendaryMission, SkullMission };
-struct ChallengeDef {
+// Halo: Reach's own challenges (docs/career/challenges.json, 2010-2012), the ones Noble can track from
+// a finished game (see tools/career/gen_reach_challenges.py, which writes ReachChallenges.inc).
+enum class ChallengeMetric { Kills, Assists, Games, Missions, Score, DailyChallenges, AllDailies };
+struct ReachChallengeDef {
+    bool weekly;
+    int mode;                 // 0 campaign, 1 Firefight, 2 multiplayer, 3 any
     const char* title;
     const char* description;
-    Metric metric;
-    int64_t target;
     int64_t reward;
+    ChallengeMetric metric;
+    int64_t target;
+    bool perGame;             // best single game instead of a running total
+    int minDifficulty;        // -1 = any
+    bool exactDifficulty;     // "on Heroic" (exact) vs "on Heroic or harder"
+    uint64_t skulls;          // MCC skull bits that must all be on
+    const char* mission;      // scenario ("m10"), empty = any
+    bool noDeaths;
+    int maxMinutes;           // 0 = no time limit
 };
-// Rotation: each day shows the next 7 daily challenges in this list (wrapping round), each week the
-// next 5 weekly ones, so consecutive days never repeat a challenge and every one comes back in turn.
-// The order mixes the modes so any 7 in a row cover campaign, Firefight, multiplayer and general goals.
-const ChallengeDef kDailyPool[] = {
-    { "Daily Grind", "Finish 3 games of any kind.", Metric::Games, 3, 1500 },
-    { "Mission Ready", "Complete a campaign mission.", Metric::CampaignMissions, 1, 1500 },
-    { "Hold the Line", "Finish a Firefight game.", Metric::FirefightGames, 1, 1500 },
-    { "Spartan Games", "Finish 2 multiplayer games.", Metric::MultiplayerGames, 2, 1500 },
-    { "Body Count", "Get 50 kills in any mode.", Metric::Kills, 50, 2000 },
-    { "Time on Duty", "Play for 45 minutes.", Metric::Minutes, 45, 2000 },
-    { "Decorated", "Earn 10 medals.", Metric::Medals, 10, 1500 },
-    { "No Easy Way Out", "Complete a campaign mission on Heroic or Legendary.", Metric::HeroicMission, 1, 2500 },
-    { "Wave Breaker", "Finish 3 Firefight games.", Metric::FirefightGames, 3, 3000 },
-    { "Arena Regular", "Finish 5 multiplayer games.", Metric::MultiplayerGames, 5, 3000 },
-    { "Team Player", "Get 15 assists in any mode.", Metric::Assists, 15, 2000 },
-    { "Skull Session", "Complete a campaign mission with a skull on.", Metric::SkullMission, 1, 2000 },
-    { "Long Shift", "Play for 90 minutes.", Metric::Minutes, 90, 3500 },
-    { "Campaign Push", "Complete 3 campaign missions.", Metric::CampaignMissions, 3, 3000 },
-    { "Slaughterhouse", "Get 150 kills in any mode.", Metric::Kills, 150, 4000 },
-    { "Medal Haul", "Earn 30 medals.", Metric::Medals, 30, 3500 },
-    { "Marathon", "Finish 6 games of any kind.", Metric::Games, 6, 2500 },
-    { "Legendary Effort", "Complete a campaign mission on Legendary.", Metric::LegendaryMission, 1, 4000 },
-};
-const ChallengeDef kWeeklyPool[] = {
-    { "Weekly Campaigner", "Complete 6 campaign missions.", Metric::CampaignMissions, 6, 15000 },
-    { "Weekly Survivor", "Finish 8 Firefight games.", Metric::FirefightGames, 8, 15000 },
-    { "Weekly Arena", "Finish 15 multiplayer games.", Metric::MultiplayerGames, 15, 15000 },
-    { "Weekly Veteran", "Play for 5 hours.", Metric::Minutes, 300, 15000 },
-    { "Weekly Slayer", "Get 500 kills in any mode.", Metric::Kills, 500, 15000 },
-    { "Weekly Legend", "Complete 2 campaign missions on Legendary.", Metric::LegendaryMission, 2, 20000 },
-    { "Weekly Regular", "Finish 20 games of any kind.", Metric::Games, 20, 15000 },
-    { "Weekly Decorated", "Earn 100 medals.", Metric::Medals, 100, 15000 },
-    { "Weekly Supporter", "Get 75 assists in any mode.", Metric::Assists, 75, 15000 },
-    { "Weekly Skull Collector", "Complete 5 campaign missions with a skull on.", Metric::SkullMission, 5, 15000 },
+const ReachChallengeDef kReachChallenges[] = {
+#include "ReachChallenges.inc"
 };
 constexpr int kDailyCount = 7;
 constexpr int kWeeklyCount = 5;
@@ -329,81 +308,120 @@ std::tm LocalNow() {
     return tm;
 }
 
-// Daily period = today's date; weekly period = the date of this week's Monday.
-std::string DailyKey() { return Today(); }
-std::string WeeklyKey() {
-    std::tm tm = LocalNow();
-    const int sinceMonday = (tm.tm_wday + 6) % 7;
-    tm.tm_mday -= sinceMonday;
-    tm.tm_hour = 12;
-    std::mktime(&tm);
-    char buf[16];
-    std::strftime(buf, sizeof(buf), "%Y-%m-%d", &tm);
-    return std::string("W") + buf;
+// Reach's challenge day starts at 11:00 GMT (3 AM Pacific); the challenge week on Monday at 11:00 GMT.
+int64_t ChallengeDay() {
+    const int64_t now = static_cast<int64_t>(std::time(nullptr));
+    return (now - 11 * 3600) / 86400;
 }
+int64_t ChallengeWeek() { return (ChallengeDay() - 4) / 7; }   // day 4 (1970-01-05) was a Monday
+std::string DailyKey() { return "D" + std::to_string(ChallengeDay()); }
+std::string WeeklyKey() { return "W" + std::to_string(ChallengeWeek()); }
 
 struct ActiveChallenge {
-    const ChallengeDef* def;
+    const ReachChallengeDef* def;
     std::string key;
     bool weekly;
 };
 
-// Day number of the local date (days since 1970-01-01) and week number (weeks since the Monday
-// 1970-01-05), used to step through the pools.
-int64_t LocalDayNumber() {
-    std::tm tm = LocalNow();
-    tm.tm_hour = 12; tm.tm_min = 0; tm.tm_sec = 0;
-    std::tm epoch{};
-    epoch.tm_year = 70; epoch.tm_mon = 0; epoch.tm_mday = 1; epoch.tm_hour = 12;
-    const double seconds = std::difftime(std::mktime(&tm), std::mktime(&epoch));
-    return static_cast<int64_t>(seconds / 86400.0 + 0.5);
+uint64_t SplitMix(uint64_t& x) {
+    uint64_t z = (x += 0x9E3779B97F4A7C15ull);
+    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
+    z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
+    return z ^ (z >> 31);
 }
 
-// Today's 7 daily challenges and this week's 5 weekly ones (see the rotation note at the pools).
+// A random pick from the whole pool, the same for every player and every start on that day / week
+// (seeded with the day / week number). Dailies mix the modes like Reach did (campaign, Firefight,
+// multiplayer and any-mode goals); no name appears twice in one set.
+std::vector<int> PickChallenges(bool weekly, int64_t period, int count) {
+    std::vector<int> pool;
+    for (int i = 0; i < static_cast<int>(std::size(kReachChallenges)); ++i) {
+        if (kReachChallenges[i].weekly == weekly) pool.push_back(i);
+    }
+    uint64_t seed = static_cast<uint64_t>(period) * 2654435761ull + (weekly ? 0x5EEDull : 0xDA11ull);
+    for (int i = static_cast<int>(pool.size()) - 1; i > 0; --i) {
+        const int j = static_cast<int>(SplitMix(seed) % static_cast<uint64_t>(i + 1));
+        std::swap(pool[i], pool[j]);
+    }
+    // How many of each mode (campaign, Firefight, multiplayer, any) to take first.
+    const int dailyMix[4] = { 2, 2, 2, 1 };
+    const int weeklyMix[4] = { 2, 0, 2, 1 };
+    const int* mix = weekly ? weeklyMix : dailyMix;
+    std::vector<int> out;
+    std::vector<std::string> names;
+    auto take = [&](int idx) {
+        if (static_cast<int>(out.size()) >= count) return;
+        const std::string name = kReachChallenges[idx].title;
+        if (std::find(names.begin(), names.end(), name) != names.end()) return;
+        if (std::find(out.begin(), out.end(), idx) != out.end()) return;
+        out.push_back(idx);
+        names.push_back(name);
+    };
+    for (int mode = 0; mode < 4; ++mode) {
+        int taken = 0;
+        for (int idx : pool) {
+            if (taken >= mix[mode]) break;
+            if (kReachChallenges[idx].mode != mode) continue;
+            const size_t before = out.size();
+            take(idx);
+            if (out.size() > before) ++taken;
+        }
+    }
+    for (int idx : pool) take(idx);   // fill up when a mode ran short
+    return out;
+}
+
+// Today's 7 daily challenges and this week's 5 weekly ones.
 std::vector<ActiveChallenge> ActiveChallenges() {
     std::vector<ActiveChallenge> out;
-    const int64_t day = LocalDayNumber();
-    const int64_t week = (day - 4) / 7;   // 1970-01-05 (day 4) was a Monday
     const std::string dayKey = DailyKey(), weekKey = WeeklyKey();
-    const int64_t dailySize = static_cast<int64_t>(std::size(kDailyPool));
-    const int64_t weeklySize = static_cast<int64_t>(std::size(kWeeklyPool));
-    for (int k = 0; k < kDailyCount; ++k) {
-        const int i = static_cast<int>((day * kDailyCount + k) % dailySize);
-        out.push_back({ &kDailyPool[i], dayKey + ":d" + std::to_string(i), false });
+    for (int i : PickChallenges(false, ChallengeDay(), kDailyCount)) {
+        out.push_back({ &kReachChallenges[i], dayKey + ":r" + std::to_string(i), false });
     }
-    for (int k = 0; k < kWeeklyCount; ++k) {
-        const int i = static_cast<int>((week * kWeeklyCount + k) % weeklySize);
-        out.push_back({ &kWeeklyPool[i], weekKey + ":w" + std::to_string(i), true });
+    for (int i : PickChallenges(true, ChallengeWeek(), kWeeklyCount)) {
+        out.push_back({ &kReachChallenges[i], weekKey + ":r" + std::to_string(i), true });
     }
     return out;
 }
 
-// What one finished match adds to a challenge metric.
+// What one finished match adds to a challenge (0 when the game doesn't count for it).
 struct MatchFacts {
     BaseType type;
     int difficulty;
     uint64_t skulls;
     double minutes;
     int64_t kills;
-    int64_t medals;
     int64_t assists;
+    int64_t deaths;
+    int64_t score;
+    std::string map;
 };
-int64_t MetricAmount(Metric m, const MatchFacts& f) {
-    const bool campaign = f.type == BaseType::Campaign;
-    switch (m) {
-    case Metric::Games: return 1;
-    case Metric::CampaignMissions: return campaign ? 1 : 0;
-    case Metric::FirefightGames: return f.type == BaseType::Firefight ? 1 : 0;
-    case Metric::MultiplayerGames: return f.type == BaseType::Multiplayer ? 1 : 0;
-    case Metric::Minutes: return static_cast<int64_t>(f.minutes);
-    case Metric::Kills: return f.kills;
-    case Metric::Medals: return f.medals;
-    case Metric::Assists: return f.assists;
-    case Metric::HeroicMission: return campaign && f.difficulty >= 2 ? 1 : 0;
-    case Metric::LegendaryMission: return campaign && f.difficulty >= 3 ? 1 : 0;
-    case Metric::SkullMission: return campaign && f.skulls != 0 ? 1 : 0;
+int64_t ChallengeAmount(const ReachChallengeDef& c, const MatchFacts& f) {
+    static const BaseType kModeType[3] = { BaseType::Campaign, BaseType::Firefight, BaseType::Multiplayer };
+    if (c.mode < 3 && f.type != kModeType[c.mode]) return 0;
+    if (c.mission && *c.mission) {
+        // The map can come as "m10" or as a path ("levels\\solo\\m10\\m10"); compare the last part.
+        std::string m = f.map;
+        const size_t slash = m.find_last_of("\\/");
+        if (slash != std::string::npos) m = m.substr(slash + 1);
+        for (char& ch : m) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+        if (m != c.mission) return 0;
     }
-    return 0;
+    if (c.minDifficulty >= 0) {
+        if (f.type == BaseType::Multiplayer) return 0;
+        if (c.exactDifficulty ? f.difficulty != c.minDifficulty : f.difficulty < c.minDifficulty) return 0;
+    }
+    if ((f.skulls & c.skulls) != c.skulls) return 0;
+    if (c.noDeaths && f.deaths > 0) return 0;
+    if (c.maxMinutes > 0 && f.minutes > c.maxMinutes) return 0;
+    switch (c.metric) {
+    case ChallengeMetric::Kills: return f.kills;
+    case ChallengeMetric::Assists: return f.assists;
+    case ChallengeMetric::Games: return 1;
+    case ChallengeMetric::Missions: return f.type == BaseType::Campaign ? 1 : 0;
+    case ChallengeMetric::Score: return std::max<int64_t>(0, f.score);
+    default: return 0;   // DailyChallenges / AllDailies: counted after the dailies (see OnGameResults)
+    }
 }
 
 // Forget challenge entries from past periods.
@@ -623,15 +641,29 @@ void OnGameResults(const uint8_t* record, size_t size) {
 
     // Challenges: add this match's progress, pay the ones it completes.
     PruneChallengesLocked();
-    const MatchFacts facts{ s_type, s_difficulty, s_skulls, minutes, kills, medals, assists };
-    for (const ActiveChallenge& c : ActiveChallenges()) {
-        if (s_extra.challengeClaimed[c.key]) continue;
+    const MatchFacts facts{ s_type, s_difficulty, s_skulls, minutes, kills, assists, deaths, score, s_map };
+    const std::vector<ActiveChallenge> active = ActiveChallenges();   // dailies first, then weeklies
+    int newDailies = 0, dailiesDone = 0, dailyCount = 0;
+    for (const ActiveChallenge& c : active) {
+        if (!c.weekly) ++dailyCount;
+        if (s_extra.challengeClaimed[c.key]) {
+            if (!c.weekly) ++dailiesDone;
+            continue;
+        }
         int64_t& progress = s_extra.challengeProgress[c.key];
-        progress += MetricAmount(c.def->metric, facts);
+        if (c.def->metric == ChallengeMetric::DailyChallenges) {
+            progress += newDailies;
+        } else if (c.def->metric == ChallengeMetric::AllDailies) {
+            progress = dailyCount > 0 && dailiesDone >= dailyCount ? 1 : 0;
+        } else {
+            const int64_t amount = ChallengeAmount(*c.def, facts);
+            progress = c.def->perGame ? std::max(progress, amount) : progress + amount;
+        }
         if (progress >= c.def->target) {
             progress = c.def->target;
             s_extra.challengeClaimed[c.key] = true;
             s_extra.challengesCompleted += 1;
+            if (!c.weekly) { ++newDailies; ++dailiesDone; }
             a.lines.push_back({ std::string(c.weekly ? "Weekly challenge: " : "Challenge: ") + c.def->title, c.def->reward });
         }
     }
@@ -713,6 +745,7 @@ std::vector<Challenge> Challenges() {
         ch.title = c.def->title;
         ch.description = c.def->description;
         ch.weekly = c.weekly;
+        ch.mode = c.def->mode;
         ch.target = c.def->target;
         ch.reward = c.def->reward;
         auto p = s_extra.challengeProgress.find(c.key);
@@ -724,15 +757,30 @@ std::vector<Challenge> Challenges() {
     return out;
 }
 
-std::string ChallengeResetText() {
-    std::tm tm = LocalNow();
-    const int minutesLeft = (23 - tm.tm_hour) * 60 + (59 - tm.tm_min) + 1;
-    int daysToMonday = (8 - tm.tm_wday) % 7;
-    if (daysToMonday == 0) daysToMonday = 7;
-    char buf[128];
-    std::snprintf(buf, sizeof(buf), "Daily challenges reset in %d h %d min; weekly ones in %d day%s.",
-                  minutesLeft / 60, minutesLeft % 60, daysToMonday, daysToMonday == 1 ? "" : "s");
+namespace {
+std::string Countdown(int64_t seconds) {
+    seconds = std::max<int64_t>(seconds, 60);
+    const int64_t days = seconds / 86400, hours = seconds % 86400 / 3600, minutes = seconds % 3600 / 60;
+    char buf[64];
+    if (days > 0) std::snprintf(buf, sizeof(buf), "%lld day%s %lld h", static_cast<long long>(days), days == 1 ? "" : "s", static_cast<long long>(hours));
+    else std::snprintf(buf, sizeof(buf), "%lld h %lld min", static_cast<long long>(hours), static_cast<long long>(minutes));
     return buf;
+}
+int64_t SecondsToNextDay() {
+    const int64_t now = static_cast<int64_t>(std::time(nullptr));
+    return (ChallengeDay() + 1) * 86400 + 11 * 3600 - now;
+}
+} // namespace
+
+std::string DailyResetText() { return "Resets in " + Countdown(SecondsToNextDay()); }
+
+std::string WeeklyResetText() {
+    const int64_t daysLeft = 7 - ((ChallengeDay() - 4) % 7) - 1;   // full days after today until Monday
+    return "Resets in " + Countdown(SecondsToNextDay() + daysLeft * 86400);
+}
+
+std::string ChallengeResetText() {
+    return "Daily challenges: " + DailyResetText() + ". Weekly: " + WeeklyResetText() + ". (11:00 GMT, like Reach.)";
 }
 
 std::vector<Commendation> Commendations() {

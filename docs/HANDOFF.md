@@ -1,4 +1,4 @@
-# Project Noble: handoff (2026-10-28, 11:30 ET)
+# Project Noble: handoff (2026-10-28, 12:15 ET)
 
 This picks up a reverse-engineering and C++ effort on **Tyler's Windows PC**. All paths below are real paths on that machine.
 Tyler (GitHub `WeabooTyler117`) works with a partner (GitHub `O7OF`) who owns the repo and writes most of the code.
@@ -10,6 +10,35 @@ community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownershi
 MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour.
 
 ---
+
+## 0. Pick up here (2026-10-28, 12:15 ET) - Reach's real challenges (spec step 4)
+
+**Status:** files are on Tyler's PC and verified; `build\agent\jobs\job.bat` builds, captures the Challenges tab
+(`build\bin\Release\ch_tab1.bmp`), then commits and pushes. Waiting for Tyler to run `build\agent\go.bat`.
+Results: `build\bin\Release\ch_done.txt` (DONE or BUILD FAILED), `build\nb_build_out.txt`, `build\git_out.txt`.
+
+Tyler's choices: **original timing** (daily reset 11:00 GMT, weekly reset Monday 11:00 GMT, as in Reach) and a
+**random pick from the whole pool** (7 daily, 5 weekly).
+
+- `docs/career/challenges.json`: Reach's 2,103 daily/weekly challenges (2010-2012: kind, mode, name, requirement, cR).
+- `tools/career/gen_reach_challenges.py` (run from the repo root) writes `src/career/ReachChallenges.inc`. It keeps only
+  what Noble can track from a finished game: kills, assists, games, missions, best-game score, no-death games, mission
+  time, difficulty, skulls, mission (m10..m70), "complete N daily challenges", "complete all dailies". 262 kept
+  (228 daily, 34 weekly). Matchmaking wording is dropped. Left out: co-op, wins, waves, rounds, sets, Bungie.net/file share,
+  and anything needing stats Noble can't read yet (headshots, weapons, medals, enemy types). Skull names map to MCC bits:
+  Iron 18, Black Eye 3, Tough Luck 36, Catch 7, Cloud 13, Famine 11, Thunderstorm 34, Tilt 35, Mythic 23.
+- `Career.cpp`: `ChallengeDay() = (unix time - 11 h) / 86400`, `ChallengeWeek() = (day - 4) / 7`; progress keys
+  `D<day>:r<row>` / `W<week>:r<row>` (old date keys are pruned once). `PickChallenges` shuffles the pool with splitmix64
+  seeded by the day/week (same set for everyone that day), taking 2 campaign, 2 Firefight, 2 multiplayer, 1 any for dailies
+  and 2 campaign, 2 multiplayer, 1 any for weeklies, no repeated names, filling up from the rest. `ChallengeAmount` checks
+  mode, mission (last part of the map path), difficulty (exact or "or harder"), skulls (all required), no deaths, time limit.
+  Best-game challenges keep the max; others add up. Dailies are processed before weeklies so "complete N dailies" and
+  "all dailies" count in the same game. New: `Challenge::mode`, `DailyResetText()`, `WeeklyResetText()`.
+- `CareerPanel.cpp` CHALLENGES tab: DAILY / WEEKLY headers with done count and reset countdown, cards in two columns
+  (one when narrow): mode chip, name, requirement, progress bar `x / y`, `+cR` in amber, green COMPLETE with a check.
+- Next: check `ch_tab1.bmp`; then commendations (spec step 5, needs Tyler's commendation art), post-game, Armory v2.
+  Still open: rank-order check (`rank_order_check.png`), version number (0.8.2, patch bumps only), Firefight
+  "Coming later" label clipping.
 
 ## 0. Pick up here (2026-10-28, 11:30 ET) - Campaign / Firefight / Custom / Forge setup (spec step 3)
 

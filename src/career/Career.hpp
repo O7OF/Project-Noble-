@@ -100,13 +100,16 @@ struct Challenge {
     std::string title;
     std::string description;
     bool weekly = false;
+    int mode = 3;            // 0 campaign, 1 Firefight, 2 multiplayer, 3 any
     int64_t progress = 0;
     int64_t target = 1;
     int64_t reward = 0;
     bool done = false;
 };
 std::vector<Challenge> Challenges();
-std::string ChallengeResetText();   // "Daily challenges reset in 5 h 12 min"
+std::string ChallengeResetText();
+std::string DailyResetText();       // "Resets in 7 h 12 min" (Reach's 11:00 GMT)
+std::string WeeklyResetText();      // "Resets in 3 days 4 h" (Monday 11:00 GMT)   // "Daily challenges reset in 5 h 12 min"
 
 // Commendations: lifetime tracks with tiers (Iron .. Onyx, then Max), each tier pays once.
 struct Commendation {

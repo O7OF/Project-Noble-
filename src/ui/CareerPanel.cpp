@@ -2,10 +2,12 @@
 #include "NobleStyle.hpp"
 #include "MenuSounds.hpp"
 #include "UiArt.hpp"
+#include "NobleUi.hpp"
 #include "career/Career.hpp"
 
 #include <imgui.h>
 #include <algorithm>
+#include <cfloat>
 #include <cstdio>
 #include <string>
 
@@ -245,28 +247,121 @@ void CareerPanel::RenderRecord() {
     }
 }
 
+namespace {
+
+const char* const kModeChip[4] = { "CAMPAIGN", "FIREFIGHT", "MULTIPLAYER", "ANY MODE" };
+const ImU32 kModeColour[4] = { IM_COL32(120, 190, 255, 255), IM_COL32(255, 150, 90, 255),
+                               IM_COL32(150, 220, 120, 255), IM_COL32(200, 200, 210, 255) };
+const ImU32 kDoneColour = IM_COL32(140, 217, 140, 255);
+
+// One challenge as a card: mode chip, name, requirement, progress bar, reward.
+void ChallengeCard(const Career::Challenge& c, float width) {
+    using namespace NobleUi;
+    const float s = Scale();
+    const float pad = 12.0f * s;
+    ImFont* body = ImGui::GetFont();
+    ImFont* small = NobleStyle::SmallFont();
+    const float bodyPx = 18.0f * s, smallPx = 14.0f * s;
+    const float textW = width - pad * 2.0f;
+    // At least two lines for the requirement so cards side by side line up.
+    ImFont* descFont = small ? small : body;
+    const float descH = std::max(descFont->CalcTextSizeA(smallPx + 1.0f * s, FLT_MAX, textW, c.description.c_str()).y,
+                                 descFont->CalcTextSizeA(smallPx + 1.0f * s, FLT_MAX, 0.0f, "A\nA").y);
+    const float height = pad + smallPx + 6.0f * s + bodyPx + 4.0f * s + descH + 10.0f * s + 8.0f * s + pad;
+
+    const ImVec2 p0 = ImGui::GetCursorScreenPos();
+    const ImVec2 p1(p0.x + width, p0.y + height);
+    ImGui::Dummy(ImVec2(width, height));
+    const bool hovered = ImGui::IsItemHovered();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const int mode = std::clamp(c.mode, 0, 3);
+    dl->AddRectFilled(p0, p1, c.done ? IM_COL32(30, 52, 36, 220) : IM_COL32(22, 30, 40, hovered ? 240 : 215), 4.0f * s);
+    dl->AddRect(p0, p1, c.done ? IM_COL32(140, 217, 140, 150) : IM_COL32(170, 220, 255, hovered ? 110 : 45), 4.0f * s, 0, 1.0f);
+    dl->AddRectFilled(p0, ImVec2(p0.x + 3.0f * s, p1.y), c.done ? kDoneColour : kModeColour[mode], 4.0f * s, ImDrawFlags_RoundCornersLeft);
+
+    float y = p0.y + pad;
+    // Mode chip (left) and reward (right).
+    const float chipW = TextWidth(small, smallPx, kModeChip[mode]) + 12.0f * s;
+    dl->AddRect(ImVec2(p0.x + pad, y - 2.0f * s), ImVec2(p0.x + pad + chipW, y + smallPx + 3.0f * s), kModeColour[mode], 3.0f * s, 0, 1.0f);
+    Text(dl, small, smallPx, ImVec2(p0.x + pad + 6.0f * s, y), kModeColour[mode], kModeChip[mode]);
+    char reward[48];
+    std::snprintf(reward, sizeof(reward), "+%s cR", Grouped(c.reward).c_str());
+    const float rw = TextWidth(body, bodyPx, reward);
+    Text(dl, body, bodyPx, ImVec2(p1.x - pad - rw, y - 2.0f * s), c.done ? kTextDim : kAmber, reward);
+    y += smallPx + 6.0f * s;
+
+    // Name and requirement.
+    Text(dl, body, bodyPx, ImVec2(p0.x + pad, y), c.done ? kDoneColour : kText, c.title.c_str());
+    y += bodyPx + 4.0f * s;
+    Text(dl, small, smallPx + 1.0f * s, ImVec2(p0.x + pad, y), kTextDim, c.description.c_str(), textW);
+    y += descH + 10.0f * s;
+
+    // Progress bar with "x / y" (or a check and COMPLETE).
+    const float f = c.target > 0 ? std::clamp(static_cast<float>(c.progress) / static_cast<float>(c.target), 0.0f, 1.0f) : 0.0f;
+    char label[64];
+    if (c.done) std::snprintf(label, sizeof(label), "COMPLETE");
+    else std::snprintf(label, sizeof(label), "%s / %s", Grouped(c.progress).c_str(), Grouped(c.target).c_str());
+    const float lw = TextWidth(small, smallPx, label);
+    const float barX1 = p1.x - pad - lw - (c.done ? 26.0f : 12.0f) * s;
+    const float barY = y + 1.0f * s, barH = 6.0f * s;
+    dl->AddRectFilled(ImVec2(p0.x + pad, barY), ImVec2(barX1, barY + barH), IM_COL32(255, 255, 255, 26), 3.0f * s);
+    if (f > 0.0f) {
+        dl->AddRectFilled(ImVec2(p0.x + pad, barY), ImVec2(p0.x + pad + (barX1 - p0.x - pad) * f, barY + barH),
+                          c.done ? kDoneColour : kAccent, 3.0f * s);
+    }
+    const float ly = barY + barH * 0.5f - smallPx * 0.5f - 1.0f * s;
+    if (c.done) {
+        // Check mark before COMPLETE.
+        const float cx = p1.x - pad - lw - 16.0f * s, cy = barY + barH * 0.5f;
+        dl->AddLine(ImVec2(cx, cy), ImVec2(cx + 4.0f * s, cy + 4.0f * s), kDoneColour, 2.0f * s);
+        dl->AddLine(ImVec2(cx + 4.0f * s, cy + 4.0f * s), ImVec2(cx + 11.0f * s, cy - 5.0f * s), kDoneColour, 2.0f * s);
+    }
+    Text(dl, small, smallPx, ImVec2(p1.x - pad - lw, ly), c.done ? kDoneColour : kText, label);
+}
+
+} // namespace
+
 void CareerPanel::RenderChallenges() {
+    using namespace NobleUi;
     const std::vector<Career::Challenge> list = Career::Challenges();
+    const float s = Scale();
+    const float avail = ImGui::GetContentRegionAvail().x;
+    const int columns = avail >= 820.0f * s ? 2 : 1;
+    const float gap = 12.0f * s;
+    const float cardW = (avail - gap * (columns - 1)) / columns - 1.0f;
     ImGui::Dummy(ImVec2(0, 4));
-    ImGui::TextDisabled("%s", Career::ChallengeResetText().c_str());
-    ImGui::TextDisabled("Progress counts from finished games in any mode; rewards are paid on the post-game screen.");
+    ImGui::TextDisabled("Halo: Reach's own challenges. Progress counts from finished games; rewards are paid on the post-game screen.");
     for (int weekly = 0; weekly < 2; ++weekly) {
-        Section(weekly ? "WEEKLY CHALLENGES" : "DAILY CHALLENGES");
+        int done = 0, count = 0;
+        for (const Career::Challenge& c : list) {
+            if (c.weekly != (weekly == 1)) continue;
+            ++count;
+            if (c.done) ++done;
+        }
+        // Header: name, done count, and the reset countdown on the right.
+        const float headerY = ImGui::GetCursorScreenPos().y;
+        char head[64];
+        std::snprintf(head, sizeof(head), "%s  %d / %d", weekly ? "WEEKLY CHALLENGES" : "DAILY CHALLENGES", done, count);
+        const std::string reset = weekly ? Career::WeeklyResetText() : Career::DailyResetText();
+        ImFont* small = NobleStyle::SmallFont();
+        const float rw = TextWidth(small, 14.0f * s, reset.c_str());
+        const float left = ImGui::GetCursorScreenPos().x;
+        SectionHeader(head, avail - rw - 14.0f * s);   // the rule stops before the countdown
+        Text(ImGui::GetWindowDrawList(), small, 14.0f * s, ImVec2(left + avail - rw, headerY + 8.0f * s), kTextDim, reset.c_str());
+
+        int col = 0;
         for (const Career::Challenge& c : list) {
             if (c.weekly != (weekly == 1)) continue;
             ImGui::PushID(&c);
-            ImGui::TextColored(c.done ? kDone : NobleStyle::Accent(), "%s", c.title.c_str());
-            ImGui::SameLine(400.0f);
-            ImGui::Text("+%s cR", Grouped(c.reward).c_str());
-            ImGui::TextUnformatted(c.description.c_str());
-            char label[64];
-            if (c.done) std::snprintf(label, sizeof(label), "COMPLETE");
-            else std::snprintf(label, sizeof(label), "%lld / %lld", static_cast<long long>(c.progress), static_cast<long long>(c.target));
-            const float f = c.target > 0 ? static_cast<float>(c.progress) / static_cast<float>(c.target) : 0.0f;
-            ImGui::ProgressBar(std::clamp(f, 0.0f, 1.0f), ImVec2(520, 0), label);
-            ImGui::Dummy(ImVec2(0, 6));
+            if (col > 0) ImGui::SameLine(0, gap);
+            ImGui::BeginGroup();
+            ChallengeCard(c, cardW);
+            ImGui::EndGroup();
             ImGui::PopID();
+            col = (col + 1) % columns;
+            if (col == 0) ImGui::Dummy(ImVec2(0, gap - ImGui::GetStyle().ItemSpacing.y));
         }
+        if (col != 0) ImGui::Dummy(ImVec2(0, gap - ImGui::GetStyle().ItemSpacing.y));
     }
 }
 
