@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <cfloat>
 #include <cstdio>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -190,7 +191,7 @@ void SettingsPanel::Render() {
         MasterServerClient::Get().SetUrl(m_edit.masterServerUrl);
         m_edit = Settings::Get().Snapshot();  // clamped values
         m_dirty = false;
-        m_message = "Saved. Mouse settings apply right away; display size and player name the next time a game starts.";
+        m_message = "Saved. VSync, frame-rate limit, and mouse settings apply immediately.";
     }
     ImGui::SameLine();
     if (ImGui::Button("UNDO CHANGES", ImVec2(150, 34))) {
@@ -393,6 +394,14 @@ void SettingsPanel::RenderAudio() {
 }
 
 void SettingsPanel::RenderDisplay() {
+    Section("CAMERA");
+    RowLabel("FIELD OF VIEW");
+    ImGui::SetNextItemWidth(330);
+    if (ImGui::SliderFloat("##fov", &m_edit.fieldOfView, 60.0f, 120.0f, "%.0f degrees")) m_dirty = true;
+    ImGui::SameLine();
+    if (ImGui::SmallButton("RESET##fov")) { m_edit.fieldOfView = 90.0f; m_dirty = true; }
+    ImGui::TextDisabled("Horizontal FOV, up to 120 degrees. Engine camera integration still needs a verified mapping.");
+
     Section("DISPLAY");
     RowLabel("RESOLUTION");
     int current = 0;
@@ -414,7 +423,37 @@ void SettingsPanel::RenderDisplay() {
         m_edit.borderless = !m_edit.borderless;
         m_dirty = true;
     }
-    ImGui::TextDisabled("Borderless uses the monitor's size. Both apply the next time Noble starts.");
+    RowLabel("VERTICAL SYNC");
+    if (Cycle("vsync", m_edit.verticalSync ? "ON" : "OFF")) {
+        m_edit.verticalSync = !m_edit.verticalSync;
+        m_dirty = true;
+    }
+    RowLabel("FRAME RATE LIMIT");
+    static constexpr int kFpsLimits[] = { 30, 60, 120, 144, 165, 200, 0 };
+    int currentFpsLimit = 0;
+    for (int i = 0; i < static_cast<int>(std::size(kFpsLimits)); ++i) {
+        if (kFpsLimits[i] == m_edit.fpsLimit) currentFpsLimit = i;
+    }
+    const char* fpsLabel = m_edit.fpsLimit == 0 ? "UNCAPPED" : nullptr;
+    char fpsText[24];
+    if (!fpsLabel) {
+        std::snprintf(fpsText, sizeof(fpsText), "%d FPS", m_edit.fpsLimit);
+        fpsLabel = fpsText;
+    }
+    const int fpsChange = Cycle("fpsLimit", fpsLabel);
+    if (fpsChange) {
+        const int n = static_cast<int>(std::size(kFpsLimits));
+        currentFpsLimit = (currentFpsLimit + fpsChange + n) % n;
+        m_edit.fpsLimit = kFpsLimits[currentFpsLimit];
+        m_dirty = true;
+    }
+    RowLabel("FPS COUNTER");
+    if (Cycle("showFps", m_edit.showFps ? "ON" : "OFF")) {
+        m_edit.showFps = !m_edit.showFps;
+        m_dirty = true;
+    }
+    ImGui::TextDisabled("The FPS counter is shown in the upper-right corner while playing.");
+    ImGui::TextDisabled("Resolution and window mode apply the next time Noble starts.");
 }
 
 void SettingsPanel::RenderGameplay() {

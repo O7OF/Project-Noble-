@@ -6,6 +6,7 @@
 #include "host/Window.hpp"
 #include "common/Logger.hpp"
 #include "common/Relaunch.hpp"
+#include "common/Settings.hpp"
 
 #include <d3d11.h>
 #include <dxgi.h>
@@ -325,7 +326,8 @@ bool PauseMenu::HoldFrame() {
 void PauseMenu::RenderImpl(IDXGISwapChain* swapChain, bool loading, bool clear) {
     const bool gameOver = s_gameOver.load();
     const bool open = s_open.load();
-    if (!(open || gameOver || loading) || !swapChain || !ImGui::GetCurrentContext()) return;
+    const bool showFps = Settings::Get().Snapshot().showFps;
+    if (!(open || gameOver || loading || showFps) || !swapChain || !ImGui::GetCurrentContext()) return;
 
     DXGI_SWAP_CHAIN_DESC desc{};
     if (FAILED(swapChain->GetDesc(&desc)) || !desc.OutputWindow) return;
@@ -386,6 +388,17 @@ void PauseMenu::RenderImpl(IDXGISwapChain* swapChain, bool loading, bool clear) 
 
         ImGui_ImplDX11_NewFrame();
         ImGui::NewFrame();
+        if (showFps) {
+            char fpsLabel[32];
+            std::snprintf(fpsLabel, sizeof(fpsLabel), "FPS %.0f", io.Framerate);
+            ImDrawList* foreground = ImGui::GetForegroundDrawList();
+            const ImVec2 textSize = ImGui::CalcTextSize(fpsLabel);
+            const ImVec2 pos(io.DisplaySize.x - textSize.x - 24.0f, 16.0f);
+            foreground->AddRectFilled(ImVec2(pos.x - 8.0f, pos.y - 5.0f),
+                ImVec2(pos.x + textSize.x + 8.0f, pos.y + textSize.y + 5.0f),
+                IM_COL32(10, 16, 24, 190), 5.0f);
+            foreground->AddText(pos, IM_COL32(143, 216, 255, 255), fpsLabel);
+        }
         if (gameOver) {
             DrawGameOver(hwnd);
         } else {

@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <fstream>
+#include <iterator>
 
 namespace noble {
 
@@ -31,6 +32,11 @@ void Read(const nlohmann::json& j, const char* key, T& out) {
 void Clamp(SettingsData& d) {
     d.width = std::clamp(d.width, 640, 7680);
     d.height = std::clamp(d.height, 360, 4320);
+    d.fieldOfView = std::clamp(d.fieldOfView, 60.0f, 120.0f);
+    constexpr int kFpsLimits[] = { 0, 30, 60, 120, 144, 165, 200 };
+    if (std::find(std::begin(kFpsLimits), std::end(kFpsLimits), d.fpsLimit) == std::end(kFpsLimits)) {
+        d.fpsLimit = 0;
+    }
     d.mouseSensitivity = std::clamp(d.mouseSensitivity, 0.1f, 10.0f);
     d.mouseSensitivityY = std::clamp(d.mouseSensitivityY, 0.25f, 4.0f);
     d.volumeGame = std::clamp(d.volumeGame, 0.0f, 1.0f);
@@ -76,6 +82,10 @@ void Settings::Load() {
             Read(j, "width", d.width);
             Read(j, "height", d.height);
             Read(j, "borderless", d.borderless);
+            Read(j, "fieldOfView", d.fieldOfView);
+            Read(j, "verticalSync", d.verticalSync);
+            Read(j, "fpsLimit", d.fpsLimit);
+            Read(j, "showFps", d.showFps);
             Read(j, "mouseSensitivity", d.mouseSensitivity);
             Read(j, "mouseSensitivityY", d.mouseSensitivityY);
             Read(j, "invertLook", d.invertLook);
@@ -119,6 +129,10 @@ bool Settings::Save() {
         j["width"] = d.width;
         j["height"] = d.height;
         j["borderless"] = d.borderless;
+        j["fieldOfView"] = d.fieldOfView;
+        j["verticalSync"] = d.verticalSync;
+        j["fpsLimit"] = d.fpsLimit;
+        j["showFps"] = d.showFps;
         j["mouseSensitivity"] = d.mouseSensitivity;
         j["mouseSensitivityY"] = d.mouseSensitivityY;
         j["invertLook"] = d.invertLook;

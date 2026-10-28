@@ -18,6 +18,10 @@ struct SettingsData {
     int width = 1280;
     int height = 720;
     bool borderless = false;       // borderless window covering the monitor
+    float fieldOfView = 90.0f;
+    bool verticalSync = true;
+    int fpsLimit = 0;              // 0 = uncapped
+    bool showFps = false;
 
     // Controls
     float mouseSensitivity = 1.0f; // multiplier on Noble's base mouse scale (0.0008 per pixel); horizontal

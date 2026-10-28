@@ -267,6 +267,65 @@ static void EndRoundForTest() {
 }
 
 // Slot 1: Frame tick / Render loop update callback (host_probe case 1)
+using SwapChainPresentFn = HRESULT(STDMETHODCALLTYPE*)(IDXGISwapChain*, UINT, UINT);
+static SwapChainPresentFn s_originalSwapChainPresent = nullptr;
+static std::atomic<bool> s_presentHookInstalled{false};
+static std::atomic<bool> s_presentHookAttempted{false};
+
+static HRESULT STDMETHODCALLTYPE HookSwapChainPresent(IDXGISwapChain* swapChain, UINT syncInterval, UINT flags) {
+    (void)syncInterval;
+    const SettingsData settings = Settings::Get().Snapshot();
+    const UINT effectiveSyncInterval = settings.verticalSync ? 1u : 0u;
+
+    static thread_local LONGLONG nextPresentTicks = 0;
+    static thread_local int previousLimit = -1;
+    LARGE_INTEGER frequency{}, now{};
+    QueryPerformanceFrequency(&frequency);
+    QueryPerformanceCounter(&now);
+    if (settings.fpsLimit != previousLimit) {
+        previousLimit = settings.fpsLimit;
+        nextPresentTicks = now.QuadPart;
+    }
+
+    if (settings.fpsLimit > 0 && frequency.QuadPart > 0) {
+        const LONGLONG interval = frequency.QuadPart / settings.fpsLimit;
+        if (now.QuadPart < nextPresentTicks) {
+            const LONGLONG remaining = nextPresentTicks - now.QuadPart;
+            const LONGLONG sleepTicks = frequency.QuadPart / 1000;
+            if (remaining > sleepTicks * 2) {
+                const DWORD sleepMilliseconds = static_cast<DWORD>((remaining - sleepTicks) * 1000 / frequency.QuadPart);
+                if (sleepMilliseconds > 0) Sleep(sleepMilliseconds);
+            }
+            do {
+                YieldProcessor();
+                QueryPerformanceCounter(&now);
+            } while (now.QuadPart < nextPresentTicks);
+        }
+        QueryPerformanceCounter(&now);
+        nextPresentTicks = now.QuadPart + interval;
+    }
+
+    return s_originalSwapChainPresent
+        ? s_originalSwapChainPresent(swapChain, effectiveSyncInterval, flags)
+        : DXGI_ERROR_INVALID_CALL;
+}
+
+static void InstallPresentSettingsHook(IDXGISwapChain* swapChain) {
+    if (!swapChain || s_presentHookAttempted.exchange(true)) return;
+    void** vtable = *reinterpret_cast<void***>(swapChain);
+    if (!vtable || !vtable[8]) {
+        NOBLE_WARN("ReachHost: swap chain has no IDXGISwapChain::Present entry");
+        return;
+    }
+
+    if (HookManager::InstallHook(vtable[8], reinterpret_cast<void*>(&HookSwapChainPresent),
+        reinterpret_cast<void**>(&s_originalSwapChainPresent), "dxgi_swapchain_present_settings")) {
+        s_presentHookInstalled.store(true);
+    } else {
+        NOBLE_WARN("ReachHost: VSync and frame-rate settings could not hook IDXGISwapChain::Present");
+    }
+}
+
 static uint64_t __fastcall HostSlot1_FrameTick(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
     (void)thisPtr; (void)a2; (void)a3; (void)a4;
     // haloreach.dll invokes Slot 1 every frame before Present. a1 = the swap chain it is about to
@@ -276,6 +335,7 @@ static uint64_t __fastcall HostSlot1_FrameTick(void* thisPtr, uint64_t a1, uint6
     uint64_t frames = ++s_frameCount;
     if (a1 > 0x10000) {
         IDXGISwapChain* swapChain = reinterpret_cast<IDXGISwapChain*>(a1);
+        InstallPresentSettingsHook(swapChain);
         ExecuteGammaPass(swapChain);   // brightness/gamma first
         // Loading screen until the game session starts. Launch state 11 comes ~5 s too early (the
         // screen is still black); the first slot-10 call (secondary interface, game session start) is

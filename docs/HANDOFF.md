@@ -1,4 +1,4 @@
-# Project Noble: handoff (2026-10-27, 23:25 ET)
+# Project Noble: handoff (2026-10-27, 23:58 ET)
 
 This picks up a reverse-engineering and C++ effort on **Tyler's Windows PC**. All paths below are real paths on that machine.
 Tyler (GitHub `WeabooTyler117`) works with a partner (GitHub `O7OF`) who owns the repo and writes most of the code.
@@ -12,26 +12,29 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 ---
 
 
-## 0. Pick up here (23:25 ET)
+## 0. Pick up here (23:58 ET) — Display Settings & FPS Control
 
-**23:25: synced with the latest origin/main handoff (23:20 ET) and refreshed the Armory status.** The preview now
-loads local MCC-derived Spartan/Elite OBJ groups, undersuits, and Elite harness layers; color masks and visor tint
-work in the preview. Slot 34 applies only verified species flags. In-game armor and color IDs remain unmapped, so the
-preview selections do not yet change the character. Use `-capture-profile data/profile-captures` to record the Slot 34
-profile buffer for controlled before/after comparisons; do not commit capture files or local model exports.
+**23:58 (O7OF):** Bumped to version 0.8.1 with FOV/VSync/FPS limit/FPS counter display fully implemented. The FPS counter displays in-game (upper-right, blue text on dark box, toggled via Settings > Display). VSync and frame-cap are applied in the swap-chain Present hook and take effect immediately without restarting. FOV slider stores selections (60–120°, default 90) but remains **UI-only** until the game camera mapping is verified via profile capture. The preview loads local MCC-derived Spartan/Elite OBJ groups, undersuits, and Elite harness layers; color masks and visor tint work in the preview. In-game armor and color IDs remain unmapped, so preview selections do not change the character yet.
 
-Open list, in Tyler's order of interest:
-1. **Finish in-game Armory mapping**: use profile captures to identify and verify equipment/color fields without
-   guessing offsets; then test that equipped pieces and colors affect the in-game character.
-2. **Controller settings** (stick sensitivity, invert, dead zones, vibration): first find how Noble feeds the pad
-   to the engine today (Tyler: controller already works in game), then add a CONTROLLER section.
-3. **Video**: FOV, V-Sync, quality options.
-4. **Menu music picker**: Tyler wants it cleaner than the current grouped drop-down (~360 tracks).
-5. **Controller picture** on Settings > Controls is pixelated (MCC `LARGECONTROLLERFRONT` scaled).
-6. Check in game: Forge menus and loadout cards no longer show hex (expected fixed by slot 55).
-7. Noble exiting from inside a game: confirm `tasklist | findstr /i noble` is empty afterwards.
-8. Mod-only maps (not in Reach's tables) are listed but disabled: launching them needs map-id work in BlamEngine.
-9. Halo 2 Anniversary music (`sounds_*.dat`) not readable yet.
+**Do not commit or distribute OBJ files from `data/armor` or profile captures.** Use `-capture-profile data/profile-captures` to record Slot 34 profile buffers for before/after comparisons; delete captures after analysis.
+
+Open list, in priority order:
+1. **Load armor geometry from MCC maps instead of local OBJ exports:**
+   - Locate Spartan/Elite model files (`.model`) in `{MCC_INSTALL}\haloreach\models\` (e.g., `m_spartans.model`, `m_elites.model`)
+   - Parse and extract mesh/skeleton at runtime; discard local OBJ files to avoid shipping game assets
+   - Harness and armor should layer correctly on both species (tested in preview, not in-game)
+2. **Determine armor equipment/color offsets in Slot 34 profile:**
+   - Use profile captures (`-capture-profile data/profile-captures`) to identify which bytes control torso, helmet, shoulders, legs, visor color, and suit color
+   - Map UI selections to equipment IDs and color indices
+   - Test in-game: set armor in settings, launch a game, verify the character reflects the changes
+3. **Map FOV to the game camera and verify it works in-game** (`camera_set_field_of_view` found but not yet wired)
+4. **Controller settings** (stick sensitivity, invert, dead zones, vibration): find how Noble currently feeds input to the engine, then add UI in Settings
+5. **Menu music picker**: Tyler wants cleaner UI (~360 tracks; current grouped dropdown is unwieldy)
+6. **Controller picture** on Settings > Controls is pixelated (MCC `LARGECONTROLLERFRONT` scaled)
+7. Check in game: Forge menus and loadout cards no longer show hex (expected fixed by Slot 55)
+8. Noble exiting from inside a game: confirm `tasklist | findstr /i noble` is empty afterwards
+9. Mod-only maps (not in Reach's tables) are listed but disabled: needs map-id work in BlamEngine
+10. Halo 2 Anniversary music (`sounds_*.dat`) not readable yet
 
 Build/run (Developer Command Prompt, not plain PowerShell - cmake is only on PATH there):
 `cd /d D:\Halo-Reach-Community-Edition && cmake --build build --config Release && cd build\bin\Release && noble-client.exe`
