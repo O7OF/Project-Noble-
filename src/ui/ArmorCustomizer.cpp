@@ -4,6 +4,9 @@
 #include <fstream>
 #include <array>
 #include <algorithm>
+#include <filesystem>
+#include <string>
+#include <vector>
 #include <windows.h>
 
 namespace noble {
@@ -47,6 +50,57 @@ static const char* REACH_COLOR_NAMES[] = {
     "Teal", "Aqua", "Cyan", "Cobalt", "Blue", "Violet", "Purple", "Pink", "Rose", "Crimson",
     "Maroon", "Brick", "Coral", "Peach", "Yellow", "Sand", "Tan", "Smoke", "Slate", "Obsidian"
 };
+
+namespace {
+
+std::filesystem::path ResolveModelPath(int species) {
+    wchar_t executablePath[MAX_PATH]{};
+    const DWORD pathLength = GetModuleFileNameW(nullptr, executablePath, MAX_PATH);
+    const std::filesystem::path executableDirectory = pathLength > 0
+        ? std::filesystem::path(executablePath).parent_path()
+        : std::filesystem::current_path();
+    const std::string speciesDirectory = species == 0 ? "spartans" : "elite";
+    const std::string modelFile = species == 0 ? "spartans.obj" : "elite.obj";
+    const std::string legacyFile = species == 0 ? "spartan.obj" : "elite.obj";
+    std::vector<std::filesystem::path> roots{ executableDirectory / "data" / "armor" };
+    std::error_code ec;
+    const auto workingDirectory = std::filesystem::current_path(ec);
+    if (!ec && workingDirectory != executableDirectory) roots.push_back(workingDirectory / "data" / "armor");
+
+    for (const auto& root : roots) {
+        for (const auto& candidate : { root / speciesDirectory / modelFile, root / legacyFile }) {
+            ec.clear();
+            if (std::filesystem::is_regular_file(candidate, ec)) return candidate;
+        }
+    }
+    return roots.front() / speciesDirectory / modelFile;
+}
+
+std::string DefaultModelGroup(int species, int selection) {
+    if (species == 0) return selection == 1 ? "-female" : "-default";
+    static const char* const groups[] = {
+        "-default", "-officer", "-ultra", "-zealot", "-space", "-general", "-spec_ops", "-general"
+    };
+    const int index = std::clamp(selection, 0, static_cast<int>(std::size(groups)) - 1);
+    return groups[index];
+}
+
+std::string FindModelGroup(const std::vector<std::string>& groups, const std::string& preferred) {
+    auto match = std::find(groups.begin(), groups.end(), preferred);
+    if (match != groups.end()) return *match;
+    if (!preferred.empty() && preferred.front() == '-') {
+        match = std::find(groups.begin(), groups.end(), preferred.substr(1));
+    } else {
+        match = std::find(groups.begin(), groups.end(), "-" + preferred);
+    }
+    return match != groups.end() ? *match : (groups.empty() ? std::string{} : groups.front());
+}
+
+std::string ModelGroupLabel(const std::string& group) {
+    return !group.empty() && group.front() == '-' ? group.substr(1) : group;
+}
+
+} // namespace
 
 ArmorCustomizer::ArmorCustomizer() {
     LoadProfile();
@@ -110,6 +164,7 @@ bool ArmorCustomizer::SaveProfile(const std::filesystem::path& path) {
 
         j["serviceTag"] = std::string(m_profile.serviceTag);
         j["voice"] = m_profile.voice;
+        j["previewModelGroup"] = m_profile.previewModelGroup;
 
         std::ofstream file(path);
         file << j.dump(4);
@@ -210,52 +265,103 @@ void ArmorCustomizer::RenderCharacterPreview(ID3D11Device* device, ID3D11DeviceC
     ImGui::Separator();
     ImGui::Spacing();
 
-    wchar_t executablePath[MAX_PATH]{};
-    const DWORD pathLength = GetModuleFileNameW(nullptr, executablePath, MAX_PATH);
-    const std::filesystem::path executableDirectory = pathLength > 0
-        ? std::filesystem::path(executablePath).parent_path()
-        : std::filesystem::current_path();
-    const char* modelName = m_profile.species == 0 ? "spartan.obj" : "elite.obj";
-    const std::filesystem::path modelPath = executableDirectory / "data" / "armor" / modelName;
-    const bool reload = ImGui::Button("RELOAD MODEL");
+    const std::filesystem::path modelPath = ResolveModelPath(m_profile.species);
+    const bool reload = ImGui::Button("RELOAD MCC MODEL");
     if (reload || m_loadedSpecies != m_profile.species) {
+        const bool speciesChanged = m_loadedSpecies != m_profile.species;
         m_loadedSpecies = m_profile.species;
         m_previewError.clear();
+        m_previewGroups.clear();
         if (!m_preview.Initialize(device)) {
             m_previewError = "Could not initialize the Direct3D model preview.";
         } else if (!m_preview.LoadModel(modelPath, m_previewError)) {
             m_previewError += "\n" + modelPath.string();
+        } else {
+            for (const auto& mesh : m_preview.GetModel().meshes) {
+                if (!mesh.groupName.empty() &&
+                    std::find(m_previewGroups.begin(), m_previewGroups.end(), mesh.groupName) == m_previewGroups.end()) {
+                    m_previewGroups.push_back(mesh.groupName);
+                }
+            }
+            std::sort(m_previewGroups.begin(), m_previewGroups.end());
+            if (speciesChanged ||
+                (!m_profile.previewModelGroup.empty() &&
+                 std::find(m_previewGroups.begin(), m_previewGroups.end(), m_profile.previewModelGroup) == m_previewGroups.end())) {
+                m_profile.previewModelGroup = FindModelGroup(
+                    m_previewGroups, DefaultModelGroup(m_profile.species,
+                        m_profile.species == 0 ? m_profile.gender : m_profile.eliteArmor));
+            }
+            m_lastGender = m_profile.gender;
+            m_lastEliteArmor = m_profile.eliteArmor;
         }
     }
 
     if (m_preview.IsLoaded() && m_loadedSpecies == m_profile.species) {
+        if (m_profile.species == 0 && m_lastGender != m_profile.gender) {
+            if (m_profile.previewModelGroup == DefaultModelGroup(0, m_lastGender)) {
+                m_profile.previewModelGroup = FindModelGroup(m_previewGroups, DefaultModelGroup(0, m_profile.gender));
+            }
+            m_lastGender = m_profile.gender;
+        }
+        if (m_profile.species == 1 && m_lastEliteArmor != m_profile.eliteArmor) {
+            if (m_profile.previewModelGroup == DefaultModelGroup(1, m_lastEliteArmor)) {
+                m_profile.previewModelGroup = FindModelGroup(m_previewGroups, DefaultModelGroup(1, m_profile.eliteArmor));
+            }
+            m_lastEliteArmor = m_profile.eliteArmor;
+        }
+        if (!m_profile.previewModelGroup.empty() &&
+            std::find(m_previewGroups.begin(), m_previewGroups.end(), m_profile.previewModelGroup) == m_previewGroups.end()) {
+            m_profile.previewModelGroup = FindModelGroup(
+                m_previewGroups, DefaultModelGroup(m_profile.species,
+                    m_profile.species == 0 ? m_profile.gender : m_profile.eliteArmor));
+        }
+
+        const std::string selectedGroupLabel = m_profile.previewModelGroup.empty()
+            ? "All groups (overlap)"
+            : ModelGroupLabel(m_profile.previewModelGroup);
+        ImGui::Text("MCC model group:");
+        ImGui::SetNextItemWidth(-1.0f);
+        if (ImGui::BeginCombo("##MccModelGroup", selectedGroupLabel.c_str(), ImGuiComboFlags_HeightLarge)) {
+            if (ImGui::Selectable("All groups (overlap)", m_profile.previewModelGroup.empty())) {
+                m_profile.previewModelGroup.clear();
+                m_isDirty = true;
+            }
+            for (const auto& group : m_previewGroups) {
+                const std::string label = ModelGroupLabel(group);
+                if (ImGui::Selectable(label.c_str(), m_profile.previewModelGroup == group)) {
+                    m_profile.previewModelGroup = group;
+                    m_isDirty = true;
+                }
+            }
+            ImGui::EndCombo();
+        }
+
         const ImVec2 available = ImGui::GetContentRegionAvail();
         const float side = std::max(160.0f, std::min(available.x, 330.0f));
         const float time = static_cast<float>(ImGui::GetTime());
-        m_preview.Render(context, m_previewRotation + time * 0.2f);
+        m_preview.Render(context, m_previewRotation + time * 0.2f, m_profile.previewModelGroup);
         ImGui::Image(reinterpret_cast<ImTextureID>(m_preview.GetPreviewTexture()), ImVec2(side, side));
         if (ImGui::IsItemHovered() && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
             m_previewRotation += ImGui::GetIO().MouseDelta.x * 0.01f;
         }
-        ImGui::TextDisabled("Drag to rotate. OBJ object/group and material assignments are retained.");
+        ImGui::TextDisabled("Drag to rotate. MCC OBJ groups and diffuse materials are loaded from local game assets.");
         ImGui::Spacing();
-        ImGui::TextColored(ImVec4(0.0f, 0.88f, 1.0f, 1.0f), "MODEL COMPONENTS");
+        ImGui::TextColored(ImVec4(0.0f, 0.88f, 1.0f, 1.0f), "AVAILABLE MCC GROUPS");
         int shown = 0;
-        for (const auto& mesh : m_preview.GetModel().meshes) {
+        for (const auto& group : m_previewGroups) {
             if (shown >= 6) break;
-            ImGui::BulletText("%s / %s%s%s", mesh.objectName.c_str(), mesh.groupName.c_str(),
-                              mesh.materialName.empty() ? "" : " - ", mesh.materialName.c_str());
+            ImGui::BulletText("%s", ModelGroupLabel(group).c_str());
             ++shown;
         }
-        if (m_preview.GetModel().meshes.size() > static_cast<size_t>(shown)) {
-            ImGui::TextDisabled("+ %u more mesh groups", static_cast<unsigned>(m_preview.GetModel().meshes.size() - shown));
+        if (m_previewGroups.size() > static_cast<size_t>(shown)) {
+            ImGui::TextDisabled("+ %u more groups", static_cast<unsigned>(m_previewGroups.size() - shown));
         }
     } else {
         ImGui::TextWrapped("%s", m_previewError.empty() ? "No model loaded." : m_previewError.c_str());
         ImGui::Spacing();
-        ImGui::TextDisabled("Place an authorized OBJ/MTL export at:");
+        ImGui::TextDisabled("Expected MCC-derived OBJ export:");
         ImGui::TextWrapped("%s", modelPath.string().c_str());
-        ImGui::TextDisabled("Keep the MTL file and diffuse textures beside the OBJ or in a subfolder.");
+        ImGui::TextDisabled("Keep its MTL file and diffuse textures beside it. Model exports stay local and are not shipped.");
     }
 }
 

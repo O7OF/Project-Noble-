@@ -227,9 +227,7 @@ bool ObjModelPreview::CreateGpuModel(const ObjModel& model, std::string& error) 
 	for (const auto& source : model.materials) {
 		GpuMaterial material;
 		std::copy(std::begin(source.diffuse), std::end(source.diffuse), material.diffuse);
-		if (!source.diffuseTexture.empty()) {
-			CreateTexture(source.diffuseTexture, material.diffuseTexture.GetAddressOf());
-		}
+		material.diffuseTexturePath = source.diffuseTexture;
 		materials.emplace(source.name, std::move(material));
 	}
 
@@ -253,6 +251,7 @@ bool ObjModelPreview::CreateGpuModel(const ObjModel& model, std::string& error) 
 		}
 		mesh.vertexCount = static_cast<UINT>(source.vertices.size());
 		mesh.materialName = source.materialName;
+		mesh.groupName = source.groupName;
 		meshes.push_back(std::move(mesh));
 	}
 	if (meshes.empty()) {
@@ -262,11 +261,24 @@ bool ObjModelPreview::CreateGpuModel(const ObjModel& model, std::string& error) 
 
 	float minBounds[3] = {std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), std::numeric_limits<float>::max()};
 	float maxBounds[3] = {-std::numeric_limits<float>::max(), -std::numeric_limits<float>::max(), -std::numeric_limits<float>::max()};
+	std::unordered_map<std::string, std::array<float, 6>> groupBounds;
 	for (const auto& mesh : model.meshes) {
+		auto group = groupBounds.end();
+		if (!mesh.groupName.empty()) {
+			const std::array<float, 6> initial{
+				std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), std::numeric_limits<float>::max(),
+				-std::numeric_limits<float>::max(), -std::numeric_limits<float>::max(), -std::numeric_limits<float>::max()
+			};
+			group = groupBounds.try_emplace(mesh.groupName, initial).first;
+		}
 		for (const auto& vertex : mesh.vertices) {
 			for (size_t axis = 0; axis < 3; ++axis) {
 				minBounds[axis] = std::min(minBounds[axis], vertex.position[axis]);
 				maxBounds[axis] = std::max(maxBounds[axis], vertex.position[axis]);
+				if (group != groupBounds.end()) {
+					group->second[axis] = std::min(group->second[axis], vertex.position[axis]);
+					group->second[axis + 3] = std::max(group->second[axis + 3], vertex.position[axis]);
+				}
 			}
 		}
 	}
@@ -282,6 +294,7 @@ bool ObjModelPreview::CreateGpuModel(const ObjModel& model, std::string& error) 
 
 	m_meshes = std::move(meshes);
 	m_materials = std::move(materials);
+	m_groupBounds = std::move(groupBounds);
 	return true;
 }
 
@@ -289,6 +302,7 @@ bool ObjModelPreview::LoadModel(const std::filesystem::path& path, std::string& 
 	m_isLoaded = false;
 	m_meshes.clear();
 	m_materials.clear();
+	m_groupBounds.clear();
 	m_model = {};
 	if (!m_isInitialized) {
 		error = "The Direct3D preview renderer is not initialized.";
@@ -302,8 +316,22 @@ bool ObjModelPreview::LoadModel(const std::filesystem::path& path, std::string& 
 	return true;
 }
 
-bool ObjModelPreview::Render(ID3D11DeviceContext* context, float rotationRadians) {
+bool ObjModelPreview::Render(ID3D11DeviceContext* context, float rotationRadians, std::string_view visibleGroup) {
 	if (!context || !m_isInitialized || !m_isLoaded || !m_previewRtv || !m_previewSrv) return false;
+	float center[3] = {m_center[0], m_center[1], m_center[2]};
+	float radius = m_radius;
+	if (!visibleGroup.empty()) {
+		const auto bounds = m_groupBounds.find(std::string(visibleGroup));
+		if (bounds == m_groupBounds.end()) return false;
+		for (size_t axis = 0; axis < 3; ++axis) {
+			center[axis] = (bounds->second[axis] + bounds->second[axis + 3]) * 0.5f;
+		}
+		const float dx = bounds->second[3] - center[0];
+		const float dy = bounds->second[4] - center[1];
+		const float dz = bounds->second[5] - center[2];
+		radius = std::sqrt(dx * dx + dy * dy + dz * dz);
+		if (!std::isfinite(radius) || radius < 0.0001f) return false;
+	}
 
 	ComPtr<ID3D11RenderTargetView> oldRtv;
 	ComPtr<ID3D11DepthStencilView> oldDsv;
@@ -325,8 +353,8 @@ bool ObjModelPreview::Render(ID3D11DeviceContext* context, float rotationRadians
 	const XMVECTOR up = XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
 	const XMMATRIX view = XMMatrixLookAtLH(eye, focus, up);
 	const XMMATRIX projection = XMMatrixPerspectiveFovLH(XMConvertToRadians(35.0f), 1.0f, 0.05f, 100.0f);
-	const XMMATRIX world = XMMatrixTranslation(-m_center[0], -m_center[1], -m_center[2]) *
-						   XMMatrixRotationY(rotationRadians) * XMMatrixScaling(1.7f / m_radius, 1.7f / m_radius, 1.7f / m_radius);
+	const XMMATRIX world = XMMatrixTranslation(-center[0], -center[1], -center[2]) *
+						   XMMatrixRotationY(rotationRadians) * XMMatrixScaling(1.7f / radius, 1.7f / radius, 1.7f / radius);
 	PreviewConstants constants{};
 	XMStoreFloat4x4(&constants.worldViewProjection, XMMatrixTranspose(world * view * projection));
 	XMStoreFloat4x4(&constants.world, XMMatrixTranspose(world));
@@ -343,6 +371,7 @@ bool ObjModelPreview::Render(ID3D11DeviceContext* context, float rotationRadians
 
 	for (size_t i = 0; i < m_meshes.size(); ++i) {
 		const auto& mesh = m_meshes[i];
+		if (!visibleGroup.empty() && mesh.groupName != visibleGroup) continue;
 		const ID3D11Buffer* vertexBuffer = mesh.vertexBuffer.Get();
 		ID3D11Buffer* boundVertexBuffer = const_cast<ID3D11Buffer*>(vertexBuffer);
 		context->IASetVertexBuffers(0, 1, &boundVertexBuffer, &stride, &offset);
@@ -351,6 +380,10 @@ bool ObjModelPreview::Render(ID3D11DeviceContext* context, float rotationRadians
 		auto material = m_materials.find(mesh.materialName);
 		if (material != m_materials.end()) {
 			std::copy(std::begin(material->second.diffuse), std::end(material->second.diffuse), &constants.diffuse.x);
+			if (!material->second.textureLoadAttempted && !material->second.diffuseTexturePath.empty()) {
+				material->second.textureLoadAttempted = true;
+				CreateTexture(material->second.diffuseTexturePath, material->second.diffuseTexture.GetAddressOf());
+			}
 			texture = material->second.diffuseTexture.Get();
 		}
 		constants.options = XMFLOAT4(texture ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f);

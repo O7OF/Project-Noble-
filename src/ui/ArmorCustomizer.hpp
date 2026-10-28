@@ -34,6 +34,7 @@ struct ArmorProfile {
     // Identity
     char serviceTag[5] = "B312";
     int voice = 0;
+    std::string previewModelGroup;
 };
 
 class ArmorCustomizer {
@@ -57,6 +58,9 @@ private:
     bool m_isDirty = false;
     ObjModelPreview m_preview;
     int m_loadedSpecies = -1;
+    int m_lastGender = -1;
+    int m_lastEliteArmor = -1;
+    std::vector<std::string> m_previewGroups;
     float m_previewRotation = 0.0f;
     std::string m_previewError;
 };

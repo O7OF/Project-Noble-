@@ -252,9 +252,9 @@ switch to Reach's measured table (`career-reference.md` §1).
 - Plan: Noble's own DX11 renderer for the Armory preview. For development he exported the Spartan and Elite render
   models to OBJ (`data\armor\spartans\spartans.obj` 329 groups incl. 51 MCC Series 8, `data\armor\elite\elite.obj`
   128 groups: default, general, officer, space, spec_ops, storyelite, ultra, zealot). **Those OBJ files are game
-  assets: keep them under the git-ignored `data\`, never commit them.** The shipped version has to read the models
-  from the player's MCC maps at run time. Next he is matching the Armory names to the model's group names
-  (e.g. `dlc2_helmet_cndmnd`, `s8_helmet_drengr_tyr`), which can be added to `docs/career/armor.json`.
+  assets: keep them under the git-ignored `data\`, never commit them.** The armory now discovers the nested exports,
+  renders one OBJ group at a time, and maps Elite ranks to the matching exported groups. Direct `.map` render-model
+  decoding and mapping Spartan armor selectors to exported groups remain future work.
 - Forwarded community request (TRAXUSi, Workshop class mods): add extra player-host object types beyond Reach's
   three (0 spartan, 1 elite, 2 monitor), e.g. `elite2`, `spartan2`, `monitor2`, using the same host code paths, with
   matching Megalo names. Engine patch inside `haloreach.dll` at run time; not started, idea only.

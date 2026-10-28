@@ -4,8 +4,10 @@
 
 #include <d3d11.h>
 #include <wrl/client.h>
+#include <array>
 #include <filesystem>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -15,7 +17,7 @@ class ObjModelPreview {
 public:
 	bool Initialize(ID3D11Device* device);
 	bool LoadModel(const std::filesystem::path& path, std::string& error);
-	bool Render(ID3D11DeviceContext* context, float rotationRadians);
+	bool Render(ID3D11DeviceContext* context, float rotationRadians, std::string_view visibleGroup = {});
 
 	ID3D11ShaderResourceView* GetPreviewTexture() const { return m_previewSrv.Get(); }
 	bool IsLoaded() const { return m_isLoaded; }
@@ -26,11 +28,14 @@ private:
 		Microsoft::WRL::ComPtr<ID3D11Buffer> vertexBuffer;
 		UINT vertexCount = 0;
 		std::string materialName;
+		std::string groupName;
 	};
 
 	struct GpuMaterial {
 		float diffuse[4]{1.0f, 1.0f, 1.0f, 1.0f};
+		std::filesystem::path diffuseTexturePath;
 		Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> diffuseTexture;
+		bool textureLoadAttempted = false;
 	};
 
 	bool CreatePipeline();
@@ -55,6 +60,7 @@ private:
 	ObjModel m_model;
 	std::vector<GpuMesh> m_meshes;
 	std::unordered_map<std::string, GpuMaterial> m_materials;
+	std::unordered_map<std::string, std::array<float, 6>> m_groupBounds;
 	float m_center[3]{};
 	float m_radius = 1.0f;
 	bool m_isInitialized = false;
