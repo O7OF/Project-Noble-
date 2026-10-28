@@ -152,8 +152,8 @@ using CM = CommendationMetric;
 // Requirements, tier counts and cR are Reach's (Halopedia). Heavy Weapon's cR was unknown there, so it uses the averages.
 const CommendationDef kCommendations[] = {
     { 0, "cannon_fodder", "Cannon Fodder", "Kill any infantry-class enemy in Campaign", CM::None, { 250, 750, 3000, 7000, 12000, 20000 }, { 200, 600, 1200, 2400, 2400, 0 } },
-    { 0, "demon", "Demon", "Complete a Campaign mission (Noble Actual doesn't count)", CM::Missions, { 9, 18, 81, 135, 270, 540 }, { 400, 400, 400, 400, 400, 0 } },
-    { 0, "flawless_cowboy", "Flawless Cowboy", "Complete a Campaign mission without dying (Noble Actual doesn't count)", CM::FlawlessMissions, { 5, 10, 25, 50, 150, 300 }, { 450, 450, 900, 1500, 2000, 0 } },
+    { 0, "demon", "Demon", "Complete a Campaign mission (vanilla Noble Actual and Lone Wolf don't count)", CM::Missions, { 9, 18, 81, 135, 270, 540 }, { 400, 400, 400, 400, 400, 0 } },
+    { 0, "flawless_cowboy", "Flawless Cowboy", "Complete a Campaign mission without dying (vanilla Noble Actual and Lone Wolf don't count)", CM::FlawlessMissions, { 5, 10, 25, 50, 150, 300 }, { 450, 450, 900, 1500, 2000, 0 } },
     { 0, "leadership_element", "Leadership Element", "Kill a leader-class enemy in Campaign", CM::None, { 100, 375, 750, 3000, 6000, 10000 }, { 400, 750, 1250, 2500, 2500, 0 } },
     { 0, "nice_arm", "Nice Arm", "Kill an enemy with a Frag or Plasma Grenade in Campaign", CM::None, { 50, 250, 500, 4000, 8000, 13000 }, { 200, 750, 1000, 2000, 2000, 0 } },
     { 0, "pinpoint", "Pinpoint", "Kill an enemy with a headshot in Campaign", CM::None, { 50, 250, 500, 4000, 8000, 20000 }, { 100, 750, 1000, 2000, 2000, 0 } },
