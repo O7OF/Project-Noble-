@@ -11,6 +11,28 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 ---
 
+## 0a. Latest (2026-10-28, 02:00 ET) — FOV hooked up + settings reachable from the pause menu
+
+**02:00:** Item 3 below is implemented (not yet run in game). Static REA/Ghidra analysis of `haloreach.dll`
+(`docs/fov-findings.md`) shows the game's FOV is a float in degrees at **`haloreach+0xB42C10`** (78.0f in the
+shipped DLL; the engine multiplies it by pi/180 for the camera and only accepts 1–150 degrees).
+- New `src/engine/CameraFov.{hpp,cpp}`: `SetEngineModule()` from `main.cpp`, `Apply(degrees)` writes the global,
+  `Read()` logs what the engine holds, and `Tick()` (called from ReachHost slot 1) applies `Settings::fieldOfView`
+  when it changes and re-asserts it every 2 s because the engine refreshes its camera block from the profile.
+- `SETTINGS > VIDEO > FIELD OF VIEW` now reaches the running game on APPLY; the default is 78 (Reach's own value),
+  RESET goes back to 78, and the help text states the 1–150 limit.
+- The pause menu has a **SETTINGS** entry: it renders the same `SettingsPanel` in a large window, so FOV, VSync,
+  frame cap, mouse, audio and key bindings can be changed mid-match. Esc (or `< BACK`) returns to the pause menu;
+  Esc during a key rebind still cancels the rebind only.
+- Version is 0.8.2. Rebuilt `build\bin\Release\noble-client.exe`.
+- Build note: `build\` had a broken Ninja `CMakeCache.txt` (left over from a failed configure; no build.ninja).
+  It was reconfigured as `cmake -S . -B build -G "Visual Studio 18 2026" -A x64` (MSVC, not ClangCL) and built with
+  `cmake --build build --config Release`.
+- **Still to verify in game:** whether the camera picks the new value up live (it may cache FOV at spawn; a map load
+  or a respawn may be needed) and whether 78 vs 90 looks right. Test: pause → SETTINGS → VIDEO, drag FOV, APPLY.
+
+---
+
 
 ## 0. Pick up here (23:58 ET) — Display Settings & FPS Control + Controller Picture
 
@@ -29,7 +51,8 @@ Open list, in priority order:
    - Use profile captures (`-capture-profile data/profile-captures`) to identify which bytes control torso, helmet, shoulders, legs, visor color, and suit color
    - Map UI selections to equipment IDs and color indices
    - Test in-game: set armor in settings, launch a game, verify the character reflects the changes
-3. **Map FOV to the game camera and verify it works in-game** (`camera_set_field_of_view` found but not yet wired)
+3. ~~**Map FOV to the game camera and verify it works in-game**~~ — wired in 0a below (FOV value at
+   `haloreach+0xB42C10`, see `docs/fov-findings.md`); still needs an in-game check that the camera takes the value live
 4. **Controller settings** (stick sensitivity, invert, dead zones, vibration): find how Noble currently feeds input to the engine, then add UI in Settings
 5. **Menu music picker**: Tyler wants cleaner UI (~360 tracks; current grouped dropdown is unwieldy)
 6. Check in game: Forge menus and loadout cards no longer show hex (expected fixed by Slot 55)

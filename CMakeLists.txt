@@ -105,6 +105,7 @@ set(SOURCES
     src/vfs/VFS.cpp
     src/engine/BlamEngine.cpp
     src/engine/ReachHost.cpp
+    src/engine/CameraFov.cpp
     src/engine/FrameCapture.cpp
     src/common/Relaunch.cpp
     src/ui/UiArt.cpp
@@ -150,6 +151,7 @@ set(HEADERS
     src/vfs/VFS.hpp
     src/engine/BlamEngine.hpp
     src/engine/ReachHost.hpp
+    src/engine/CameraFov.hpp
     src/engine/FrameCapture.hpp
     src/common/Relaunch.hpp
     src/ui/UiArt.hpp

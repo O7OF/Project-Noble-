@@ -5,6 +5,7 @@
 #include "audio/ReachAudio.hpp"
 #include "UiArt.hpp"
 #include "engine/KeyBindings.hpp"
+#include "engine/CameraFov.hpp"
 #include "network/MasterServerClient.hpp"
 
 #include <windows.h>
@@ -239,9 +240,12 @@ void SettingsPanel::Render() {
         m_edit.masterServerUrl = m_masterBuf;
         Settings::Get().Update(m_edit);
         MasterServerClient::Get().SetUrl(m_edit.masterServerUrl);
+        // Field of view goes straight into the running engine (haloreach+0xB42C10, degrees); the
+        // per-frame CameraFov::Tick keeps it there and picks it up for the next game too.
+        CameraFov::Apply(m_edit.fieldOfView);
         m_edit = Settings::Get().Snapshot();  // clamped values
         m_dirty = false;
-        m_message = "Saved. VSync, frame-rate limit, and mouse settings apply immediately.";
+        m_message = "Saved. FOV, VSync, frame-rate limit, and mouse settings apply immediately.";
     }
     ImGui::SameLine();
     if (ImGui::Button("UNDO CHANGES", ImVec2(150, 34))) {
@@ -449,8 +453,9 @@ void SettingsPanel::RenderDisplay() {
     ImGui::SetNextItemWidth(330);
     if (ImGui::SliderFloat("##fov", &m_edit.fieldOfView, 60.0f, 120.0f, "%.0f degrees")) m_dirty = true;
     ImGui::SameLine();
-    if (ImGui::SmallButton("RESET##fov")) { m_edit.fieldOfView = 90.0f; m_dirty = true; }
-    ImGui::TextDisabled("Horizontal FOV, up to 120 degrees. Engine camera integration still needs a verified mapping.");
+    if (ImGui::SmallButton("RESET##fov")) { m_edit.fieldOfView = 78.0f; m_dirty = true; }
+    ImGui::TextDisabled("Horizontal FOV. Written into the game camera when you press APPLY (also mid-match,");
+    ImGui::TextDisabled("from the pause menu). Halo: Reach's own default is 78 degrees; the engine accepts 1-150.");
 
     Section("DISPLAY");
     RowLabel("RESOLUTION");

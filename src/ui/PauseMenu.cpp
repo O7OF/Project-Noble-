@@ -1,5 +1,7 @@
 #include "PauseMenu.hpp"
 #include "NobleStyle.hpp"
+#include "SettingsPanel.hpp"
+#include "MenuSounds.hpp"
 #include "UiArt.hpp"
 #include "career/Career.hpp"
 #include "engine/FrameCapture.hpp"
@@ -13,6 +15,7 @@
 #include <imgui.h>
 #include <imgui_impl_dx11.h>
 #include <atomic>
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <mutex>
@@ -24,6 +27,7 @@ namespace {
 
 std::atomic<bool> s_open{false};
 std::atomic<bool> s_gameOver{false};
+std::atomic<bool> s_showSettings{false};   // the SETTINGS page opened from the pause menu
 std::mutex s_renderMutex;                          // Render (engine thread) vs HoldFrame (main thread)
 std::atomic<IDXGISwapChain*> s_swapChain{nullptr}; // last swap chain the engine presented
 std::atomic<ULONGLONG> s_lastEngineFrame{0};       // GetTickCount64 of the last slot-1 frame
@@ -82,12 +86,32 @@ ImVec2 CenteredWindow(float width) {
 constexpr ImGuiWindowFlags kPanelFlags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
                                          ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysAutoResize;
 
+// The SETTINGS page is the same panel the front-end menu shows, reused inside the pause menu so the
+// player can change settings during a match (FOV, VSync, frame cap, mouse, ...). It lives for the
+// life of the process because it keeps the edited copy and the key-rebind state between frames.
+SettingsPanel& PauseSettings() {
+    static SettingsPanel panel;
+    return panel;
+}
+
+void DrawSettingsPage(HWND hwnd);
+
 } // namespace
 
 bool PauseMenu::IsOpen() { return s_open.load(); }
 
 void PauseMenu::Toggle() {
     if (s_gameOver.load()) return;  // the post-game panel replaces the pause menu
+    // Esc on the SETTINGS page goes back to the pause menu instead of resuming. While a key rebind
+    // is waiting for a key, Esc belongs to the rebind (SettingsPanel::PollRebind cancels it).
+    if (s_open.load() && s_showSettings.load()) {
+        if (!PauseSettings().IsCapturingKey()) {
+            s_showSettings.store(false);
+            MenuSounds::Back();
+            NOBLE_INFO("PauseMenu: settings closed");
+        }
+        return;
+    }
     const bool nowOpen = !s_open.load();
     if (nowOpen) Window::TakeLeftClicks();  // forget clicks made in game (shots) before the menu opened
     s_open.store(nowOpen);
@@ -95,6 +119,7 @@ void PauseMenu::Toggle() {
 }
 
 void PauseMenu::Close() {
+    s_showSettings.store(false);
     if (s_open.exchange(false)) {
         NOBLE_INFO("PauseMenu: closed");
     }
@@ -103,6 +128,7 @@ void PauseMenu::Close() {
 void PauseMenu::ShowGameOver() {
     if (!s_gameOver.exchange(true)) {
         s_open.store(false);
+        s_showSettings.store(false);
         s_gameOverAt.store(GetTickCount64());
         Window::TakeLeftClicks();
         NOBLE_INFO("PauseMenu: game over, showing post-game panel");
@@ -125,6 +151,11 @@ void PauseMenu::DrawMenu(HWND hwnd) {
     // Dim the game behind the menu.
     ImGui::GetBackgroundDrawList()->AddRectFilled(ImVec2(0, 0), io.DisplaySize, IM_COL32(0, 0, 0, 140));
 
+    if (s_showSettings.load()) {
+        DrawSettingsPage(hwnd);
+        return;
+    }
+
     const ImVec2 button = CenteredWindow(340.0f);
     if (ImGui::Begin("##NoblePauseMenu", nullptr, kPanelFlags)) {
         NobleStyle::Header("PAUSED");
@@ -133,7 +164,13 @@ void PauseMenu::DrawMenu(HWND hwnd) {
         if (NobleStyle::PrimaryButton("RESUME", button)) {
             Close();
         }
-        // Add new entries here (settings, ...).
+        ImGui::Spacing();
+        if (ImGui::Button("SETTINGS", button)) {
+            MenuSounds::Click();
+            Window::TakeLeftClicks();
+            s_showSettings.store(true);
+            NOBLE_INFO("PauseMenu: settings opened from the pause menu");
+        }
         ImGui::Spacing();
         if (ImGui::Button("QUIT TO MENU", button)) {
             // The engine can't switch maps once started (RR also runs menu and match as separate
@@ -153,6 +190,37 @@ void PauseMenu::DrawMenu(HWND hwnd) {
     }
     ImGui::End();
 }
+
+// The front-end SETTINGS panel, reused while paused so settings can be changed during a match.
+// Every value that Noble can reach live (FOV, VSync, frame cap, mouse, audio, key bindings) is
+// applied on APPLY; the panels' own help lines list the few that need a restart.
+namespace {
+
+void DrawSettingsPage(HWND hwnd) {
+    (void)hwnd;
+    ImGuiIO& io = ImGui::GetIO();
+    const float width = std::min(io.DisplaySize.x - 80.0f, 1120.0f);
+    const float height = std::min(io.DisplaySize.y - 80.0f, 780.0f);
+    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(width, height), ImGuiCond_Always);
+    const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+                                   ImGuiWindowFlags_NoSavedSettings;
+    if (ImGui::Begin("##NoblePauseSettings", nullptr, flags)) {
+        NobleStyle::Header("SETTINGS");
+        if (ImGui::Button("< BACK", ImVec2(110, 0))) {
+            s_showSettings.store(false);
+            MenuSounds::Back();
+            NOBLE_INFO("PauseMenu: settings closed");
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("Changes apply immediately, also in this match. Esc goes back to the pause menu.");
+        ImGui::Separator();
+        PauseSettings().Render();
+    }
+    ImGui::End();
+}
+
+} // namespace
 
 // Credits paid for the match that just ended (career/Career.cpp), with rank progress.
 static void DrawCredits() {

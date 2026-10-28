@@ -18,7 +18,7 @@ struct SettingsData {
     int width = 1280;
     int height = 720;
     bool borderless = false;       // borderless window covering the monitor
-    float fieldOfView = 90.0f;
+    float fieldOfView = 78.0f;     // horizontal degrees; 78 is Halo: Reach's own default (haloreach+0xB42C10)
     bool verticalSync = true;
     int fpsLimit = 0;              // 0 = uncapped
     bool showFps = false;

@@ -6,6 +6,7 @@
 #include "career/Career.hpp"
 #include "engine/FrameCapture.hpp"
 #include "engine/KeyBindings.hpp"
+#include "engine/CameraFov.hpp"
 #include "common/Settings.hpp"
 #include "host/Window.hpp"
 #include <windows.h>
@@ -333,6 +334,9 @@ static uint64_t __fastcall HostSlot1_FrameTick(void* thisPtr, uint64_t a1, uint6
     // owns the immediate context.
     static std::atomic<uint64_t> s_frameCount{0};
     uint64_t frames = ++s_frameCount;
+    // SETTINGS > VIDEO field of view: keep the engine's camera FOV in step with the saved setting
+    // (cheap: it only reads the settings and writes haloreach+0xB42C10 when the value changed).
+    CameraFov::Tick();
     if (a1 > 0x10000) {
         IDXGISwapChain* swapChain = reinterpret_cast<IDXGISwapChain*>(a1);
         InstallPresentSettingsHook(swapChain);

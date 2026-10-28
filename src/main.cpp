@@ -10,6 +10,7 @@
 #include "hooks/SigScanner.hpp"
 #include "vfs/VFS.hpp"
 #include "engine/BlamEngine.hpp"
+#include "engine/CameraFov.hpp"
 #include "ui/UIManager.hpp"
 #include "ui/FrontEndMenu.hpp"
 #include "ui/LoadScreen.hpp"
@@ -235,6 +236,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 
     // Direct all haloreach.dll asset and map file I/O through Virtual File System (VFS)
     noble::VFS::HookTargetModule(loader->GetModuleHandle());
+
+    // The SETTINGS > VIDEO field-of-view slider writes the engine's own camera FOV global.
+    noble::CameraFov::SetEngineModule(loader->GetModuleHandle());
 
     // Apply 32/64 player lobby expansion detours
     noble::LobbyPatches::Apply(loader->GetModuleHandle());
