@@ -93,7 +93,57 @@ const Callout kReachDefault[] = {
     { 0.76f, 0.39f, true, "Jump (A)" },
 };
 
+// The same layout on Noble's Xbox 360 controller picture (assets\ui\noble\controller.png, by O7OF).
+// Listed top to bottom on each side so the leader lines don't cross.
+const Callout kReach360[] = {
+    { 0.22f, 0.07f, false, "Throw grenade (LT)" },
+    { 0.20f, 0.19f, false, "Use armor ability (LB)" },
+    { 0.39f, 0.50f, false, "Multiplayer scoreboard (Back)" },
+    { 0.20f, 0.53f, false, "Move / crouch (click)" },
+    { 0.35f, 0.74f, false, "Night vision, team chat (D-pad)" },
+    { 0.77f, 0.07f, true, "Fire (RT)" },
+    { 0.81f, 0.19f, true, "Melee (RB)" },
+    { 0.80f, 0.39f, true, "Swap weapons (Y)" },
+    { 0.87f, 0.49f, true, "Switch grenades (B)" },
+    { 0.72f, 0.50f, true, "Action / reload (X)" },
+    { 0.61f, 0.50f, true, "Game menu (Start)" },
+    { 0.79f, 0.60f, true, "Jump (A)" },
+    { 0.64f, 0.76f, true, "Look / zoom (click)" },
+};
+
+// Noble's picture: straight leader lines from each button to its label.
+void DrawNobleControllerDiagram(const UiTexture& pad) {
+    const float w = 440.0f, h = w * pad.height / pad.width;
+    float leftWidth = 0.0f, rightWidth = 0.0f;   // widest label on each side
+    for (const Callout& c : kReach360) {
+        float& side = c.right ? rightWidth : leftWidth;
+        side = std::max(side, ImGui::CalcTextSize(c.label).x);
+    }
+    const ImVec2 origin = ImGui::GetCursorScreenPos();
+    const float padX = origin.x + leftWidth + 40.0f, padY = origin.y + 30.0f;
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddImage(pad.id, ImVec2(padX, padY), ImVec2(padX + w, padY + h));
+    int leftRow = 0, rightRow = 0;
+    const float leftStep = h / 5.0f, rightStep = h / 8.0f;
+    for (const Callout& c : kReach360) {
+        const ImVec2 btn(padX + c.bx * w, padY + c.by * h);
+        const float rowY = c.right ? padY + (rightRow++ + 0.5f) * rightStep - 8.0f
+                                   : padY + (leftRow++ + 0.5f) * leftStep - 8.0f;
+        const ImVec2 elbow = c.right ? ImVec2(padX + w + 20.0f, rowY + 8.0f) : ImVec2(padX - 12.0f, rowY + 8.0f);
+        const ImVec2 textPos = c.right ? ImVec2(elbow.x + 10.0f, rowY)
+                                       : ImVec2(elbow.x - 10.0f - ImGui::CalcTextSize(c.label).x, rowY);
+        dl->AddLine(btn, elbow, IM_COL32(200, 210, 220, 140), 1.2f);
+        dl->AddCircleFilled(btn, 3.0f, IM_COL32(143, 216, 255, 255));
+        dl->AddText(textPos, IM_COL32(236, 240, 244, 255), c.label);
+    }
+    ImGui::Dummy(ImVec2(leftWidth + 40.0f + w + 30.0f + rightWidth + 10.0f, h + 50.0f));
+}
+
 void DrawControllerDiagram() {
+    if (const UiTexture noblePad = UiArt::NobleControllerImage()) {
+        DrawNobleControllerDiagram(noblePad);
+        return;
+    }
     const UiTexture pad = UiArt::ControllerImage();
     const float w = 404.0f, h = pad ? w * pad.height / pad.width : 268.0f;
     const ImVec2 origin = ImGui::GetCursorScreenPos();

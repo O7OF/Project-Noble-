@@ -462,6 +462,19 @@ UiTexture ControllerImage() {
     return t;
 }
 
+UiTexture NobleControllerImage() {
+    std::lock_guard<std::mutex> lock(s_mutex);
+    return Cached("noble:controller", [&]() -> UiTexture {
+        for (const fs::path& dir : { CustomDir(), NobleDir() }) {
+            const fs::path p = FindImage(dir, "controller");
+            if (!p.empty()) {
+                if (UiTexture t = FileCached(p)) return t;
+            }
+        }
+        return {};
+    });
+}
+
 void DrawCover(ImDrawList* dl, const UiTexture& tex, ImVec2 min, ImVec2 max, ImU32 tint) {
     if (!tex || !dl) return;
     const float w = max.x - min.x, h = max.y - min.y;

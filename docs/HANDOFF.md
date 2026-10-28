@@ -1,4 +1,4 @@
-# Project Noble: handoff (2026-10-27, 23:25 ET)
+# Project Noble: handoff (2026-10-27, 23:45 ET)
 
 This picks up a reverse-engineering and C++ effort on **Tyler's Windows PC**. All paths below are real paths on that machine.
 Tyler (GitHub `WeabooTyler117`) works with a partner (GitHub `O7OF`) who owns the repo and writes most of the code.
@@ -12,7 +12,17 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 ---
 
 
-## 0. Pick up here (23:25 ET)
+## 0. Pick up here (23:45 ET)
+
+**23:45: controller picture replaced (item 5, built + screenshot-checked).** O7OF made a 1600x1000 transparent PNG of
+an Xbox 360 pad; it is tracked at `assets/ui/noble/controller.png` (original work, OK for the public repo). CMake now
+also copies `assets\` into `<exe>\data\` after a build (data\ itself stays git-ignored).
+`UiArt::NobleControllerImage()` loads `controller.png` from `data\ui\custom` then `data\ui\noble`; SettingsPanel
+uses it with its own callout table (`kReach360`, straight leader lines, left margin sized from the widest label) and
+falls back to MCC's LARGECONTROLLERFRONT with the old table when the file is missing.
+Test: `noble-client.exe -mode menu -menu-screen settings -menu-tab 0 -menu-capture 120` -> `capture_120.bmp`.
+
+### Earlier (23:25 ET)
 
 **23:25: synced with the latest origin/main handoff (23:20 ET) and refreshed the Armory status.** The preview now
 loads local MCC-derived Spartan/Elite OBJ groups, undersuits, and Elite harness layers; color masks and visor tint
@@ -27,7 +37,7 @@ Open list, in Tyler's order of interest:
    to the engine today (Tyler: controller already works in game), then add a CONTROLLER section.
 3. **Video**: FOV, V-Sync, quality options.
 4. **Menu music picker**: Tyler wants it cleaner than the current grouped drop-down (~360 tracks).
-5. **Controller picture** on Settings > Controls is pixelated (MCC `LARGECONTROLLERFRONT` scaled).
+5. ~~Controller picture pixelated~~ done 23:45 (O7OF's picture, see above).
 6. Check in game: Forge menus and loadout cards no longer show hex (expected fixed by slot 55).
 7. Noble exiting from inside a game: confirm `tasklist | findstr /i noble` is empty afterwards.
 8. Mod-only maps (not in Reach's tables) are listed but disabled: launching them needs map-id work in BlamEngine.
