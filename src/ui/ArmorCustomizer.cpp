@@ -1338,12 +1338,13 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
         const float cg = 6.0f * s;
         const float tileW = (gw - cg * (cols - 1)) / cols;
         const float tileH = colourGrid ? tileW : 46.0f * s;
+        // Grid origin in screen space, taken once (it already includes the scroll offset).
+        const ImVec2 base = ImGui::GetCursorScreenPos();
         for (int i = 0; i < n; ++i) {
             // Colours: column = hue, row = shade (the palette is stored hue by hue, 3 shades each).
             const int slot = colourGrid ? (i % 3) * 10 + i / 3 : i;
             const int c = slot % cols, r = slot / cols;
-            const ImVec2 base = ImGui::GetCursorStartPos();
-            ImGui::SetCursorPos(ImVec2(base.x + c * (tileW + cg), base.y + r * (tileH + cg)));
+            ImGui::SetCursorScreenPos(ImVec2(base.x + c * (tileW + cg), base.y + r * (tileH + cg)));
             const ImVec2 t0 = ImGui::GetCursorScreenPos(), t1(t0.x + tileW, t0.y + tileH);
             ImGui::PushID(i);
             const bool clicked = ImGui::InvisibleButton("##opt", ImVec2(tileW, tileH));
@@ -1380,7 +1381,7 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
             }
         }
         const int lastSlot = colourGrid ? 29 : n - 1;
-        ImGui::SetCursorPos(ImVec2(ImGui::GetCursorStartPos().x, ImGui::GetCursorStartPos().y + (lastSlot / cols + 1) * (tileH + cg)));
+        ImGui::SetCursorScreenPos(ImVec2(base.x, base.y + (lastSlot / cols + 1) * (tileH + cg)));
         ImGui::Dummy(ImVec2(1, 1));
         ImGui::EndChild();
         m_pickerScrollToEquipped = false;

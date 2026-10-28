@@ -21,7 +21,13 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
   c_left_shoulder / c_chest / ...); mouse wheel over the model: close-up / full body / Armory view. Up/down = slot,
   left/right = option. The old top pills (SPARTAN / ELITE / PREFERRED SPECIES / BODY / CAM) and the colour pop-up are gone
   (species and body are rows now; preview = preferred species).
-- Capture `ar_armory.bmp` (build clean) shows the layout; the 3D scene was still loading in the capture.
+- Capture `ar_armory.bmp` (build clean) shows the layout. Picker scroll bounced back (Tyler's video): tiles were placed with
+  `SetCursorPos(GetCursorStartPos() + ...)`, which counts the scroll twice; now placed from one screen-space origin.
+- **No 3D model in the Armory (not new):** `ReachArmory` waits for `mainmenu_all.map`'s GLOBALS table, which never appears
+  (log: "Scanning process memory for mainmenu_all.map GLOBALS table..." every 10 s, and "Could not locate
+  mainmenu_all.string_ids.csv") because MCC ships no Reach main-menu map. Same in every log since at least 14:53, before
+  Armory v2. O7OF's earlier DX11 OBJ preview (`ObjModelPreview`) is no longer in `src/`. Needs a decision: bring back a
+  Noble-drawn preview (models read from the player's MCC maps, spec 4.6) or get the engine's Armory scene to load.
 - Not yet: picture thumbnails per piece (render once and cache under `data\ui\cache\armory\`), rank/cR locks
   (`docs/career` armory list), stance poses, emblems (profile offsets unknown), ODST / Marine / mod looks (research spike, step 9).
 
