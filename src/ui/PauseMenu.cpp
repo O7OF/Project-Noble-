@@ -199,8 +199,9 @@ namespace {
 void DrawSettingsPage(HWND hwnd) {
     (void)hwnd;
     ImGuiIO& io = ImGui::GetIO();
-    const float width = std::min(io.DisplaySize.x - 80.0f, 1120.0f);
-    const float height = std::min(io.DisplaySize.y - 80.0f, 780.0f);
+    // Full screen (small margin): the three-column settings need the room.
+    const float width = io.DisplaySize.x - 32.0f;
+    const float height = io.DisplaySize.y - 32.0f;
     ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(width, height), ImGuiCond_Always);
     const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |

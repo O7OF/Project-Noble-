@@ -1381,10 +1381,19 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
     case Screen::Mods: {
         const char* title = st.screen == Screen::Servers ? "GAMES" : st.screen == Screen::Settings ? "SETTINGS"
                           : st.screen == Screen::Career ? "SERVICE RECORD" : "MODS";
-        DrawTitle(ui, ImVec2(left, top), title);
-        ImGui::SetCursorScreenPos(ImVec2(left, top + 84.0f * ui.s));
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.03f, 0.05f, 0.07f, 0.82f));
-        ImGui::BeginChild("##panel", ImVec2(ui.size.x - left * 2.0f, ui.size.y - top - 84.0f * ui.s - 70.0f * ui.s),
+        // SETTINGS uses the whole screen (three columns need the room); the others keep the framed panel.
+        const bool full = st.screen == Screen::Settings;
+        const float px = full ? 24.0f * ui.s : left;
+        const float py = full ? 86.0f * ui.s : top + 84.0f * ui.s;
+        if (full) {
+            ui.dl->AddRectFilled(ImVec2(0, 0), ui.size, IM_COL32(4, 8, 12, 215));
+            DrawTitle(ui, ImVec2(px, 10.0f * ui.s), title);
+        } else {
+            DrawTitle(ui, ImVec2(left, top), title);
+        }
+        ImGui::SetCursorScreenPos(ImVec2(px, py));
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.03f, 0.05f, 0.07f, full ? 0.60f : 0.82f));
+        ImGui::BeginChild("##panel", ImVec2(ui.size.x - px * 2.0f, ui.size.y - py - 62.0f * ui.s),
                           ImGuiChildFlags_Borders, ImGuiWindowFlags_None);
         if (st.screen == Screen::Servers) {
             UIManager::GetServerBrowser().Render();

@@ -1,4 +1,4 @@
-# Project Noble: handoff (2026-10-28, 11:00 ET)
+# Project Noble: handoff (2026-10-28, 11:15 ET)
 
 This picks up a reverse-engineering and C++ effort on **Tyler's Windows PC**. All paths below are real paths on that machine.
 Tyler (GitHub `WeabooTyler117`) works with a partner (GitHub `O7OF`) who owns the repo and writes most of the code.
@@ -10,6 +10,29 @@ community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownershi
 MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour.
 
 ---
+
+## 0. Pick up here (2026-10-28, 11:15 ET) - Settings redesign (spec steps 1-2)
+
+Tyler chose option A (build the spec in its order). Done:
+- **UI kit** `src/ui/NobleUi.{hpp,cpp}` (spec §3, first pieces): colours, `Scale()`, `SectionHeader`, `RowBackground`
+  (3 px accent edge + gradient focus, faint hover), `ChangedDot` (amber), `DrawSlider` (fill bar, default tick),
+  `DrawCycle` (‹ value › with position dots, ends greyed when not wrapping), `DrawToggle` (ON/OFF pill), `DrawBox`,
+  `Text`/`TextWidth`/`Paragraph`. They only draw; interaction lives in the screen so keys, pad and mouse share one path.
+- **Settings in three columns** (`SettingsPanel` rewritten, same public API, same settings.json keys): left = search
+  box, categories grouped DISPLAY & SOUND (Graphics, Audio) / GAME (Game options, Player) / CONTROLS (Keyboard & mouse,
+  Controller) / ONLINE (Online services), each with a live summary and an amber dot when it has unapplied changes;
+  bottom = "N UNSAVED CHANGES / In ..." with APPLY CHANGES / DISCARD, or a per-category RESTORE DEFAULTS (greyed when
+  already default). Middle = rows (slider / cycle / toggle / key box / text / info), changed rows get a dot; search
+  shows matching rows from every category. Right = details for the hovered (else focused) row: title, when it takes
+  effect, description, DEFAULT, and previews (FOV cone vs Reach's 78, frame-time bar, volume meters, controller status
+  + picture, graphics card from DXGI adapter 0). Keys/pad: Up/Down rows, Left/Right value, Enter activate, Q/E (LB/RB)
+  category, Y apply, X discard. Rows that can't work yet are shown greyed with a reason (advanced graphics, mute in
+  background, in-vehicle FOV, hide HUD, mouse acceleration, controller button layouts). `-menu-tab N` = category 0..6.
+  Old menu-music values are normalised to `reach:menu` on load so they don't show as an unsaved change.
+- **Full screen** (Tyler 11:09): the front-end SETTINGS screen uses the whole screen (dark backdrop, small title);
+  the pause menu's SETTINGS window is the display size minus 16 px each side.
+- Next per spec §6: campaign/Firefight setup polish (thumbnails, hero banner; difficulty tiles done), then challenges
+  cards, commendations (Reach's 45), post-game exit experience, Armory v2.
 
 ## 0. Pick up here (2026-10-28, 11:00 ET) - menu redesign spec, rank + difficulty icons
 

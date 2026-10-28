@@ -1,7 +1,7 @@
 #include "SettingsPanel.hpp"
 #include "NobleStyle.hpp"
+#include "NobleUi.hpp"
 #include "MenuSounds.hpp"
-#include "InputPrompts.hpp"
 #include "audio/ReachAudio.hpp"
 #include "UiArt.hpp"
 #include "engine/KeyBindings.hpp"
@@ -9,10 +9,12 @@
 #include "network/MasterServerClient.hpp"
 
 #include <windows.h>
+#include <dxgi.h>
 #include <imgui.h>
 
 #include <algorithm>
 #include <cfloat>
+#include <cmath>
 #include <cstdio>
 #include <iterator>
 #include <string>
@@ -22,81 +24,113 @@ namespace noble {
 
 namespace {
 
+using namespace NobleUi;
+
 struct Resolution {
     int w, h;
 };
 const Resolution kResolutions[] = {
     {1280, 720}, {1366, 768}, {1600, 900}, {1920, 1080}, {2560, 1080}, {2560, 1440}, {3440, 1440}, {3840, 2160},
 };
-
-// MCC's settings look: light-blue upper-case labels, values on the right between arrows.
-const ImVec4 kLabel = ImVec4(0.42f, 0.74f, 0.93f, 1.0f);
-const ImVec4 kSection = ImVec4(0.80f, 0.86f, 0.90f, 1.0f);
-
-void Section(const char* text) {
-    ImGui::Dummy(ImVec2(0, 6));
-    ImGui::TextColored(kSection, "%s", text);
-    const ImVec2 p = ImGui::GetCursorScreenPos();
-    ImGui::GetWindowDrawList()->AddLine(p, ImVec2(p.x + std::min(560.0f, ImGui::GetContentRegionAvail().x), p.y),
-                                        IM_COL32(255, 255, 255, 50));
-    ImGui::Dummy(ImVec2(0, 4));
-}
-
-// Starts a settings row: label in the left column, then the cursor is placed in the value column.
-void RowLabel(const char* label) {
-    ImGui::AlignTextToFramePadding();
-    ImGui::TextColored(kLabel, "%s", label);
-    ImGui::SameLine(300.0f);
-}
-
-// ‹ VALUE › selector. Returns -1/+1 when the player changes it.
-int Cycle(const char* id, const char* value, float width = 260.0f) {
-    int change = 0;
-    ImGui::PushID(id);
-    if (ImGui::ArrowButton("##l", ImGuiDir_Left)) change = -1;
-    ImGui::SameLine();
-    const ImVec2 p = ImGui::GetCursorScreenPos();
-    const float h = ImGui::GetFrameHeight();
-    const ImVec2 ts = ImGui::CalcTextSize(value);
-    ImGui::Dummy(ImVec2(width, h));
-    ImGui::GetWindowDrawList()->AddText(ImVec2(p.x + (width - ts.x) * 0.5f, p.y + (h - ts.y) * 0.5f),
-                                        IM_COL32(236, 240, 244, 255), value);
-    ImGui::SameLine();
-    if (ImGui::ArrowButton("##r", ImGuiDir_Right)) change = 1;
-    ImGui::PopID();
-    if (change) MenuSounds::Change();
-    return change;
-}
+constexpr int kFpsLimits[] = { 30, 60, 120, 144, 165, 200, 0 };
+const int kWheelActions[] = { 4, 1, 3, 5, 7, 2, 23, 6, 11, 12, 20, -1 };
 
 std::string Upper(std::string s) {
     for (char& c : s) c = static_cast<char>(::toupper(static_cast<unsigned char>(c)));
     return s;
 }
+std::string Lower(std::string s) {
+    for (char& c : s) c = static_cast<char>(::tolower(static_cast<unsigned char>(c)));
+    return s;
+}
+std::string Format(const char* fmt, double v) {
+    char buf[64];
+    std::snprintf(buf, sizeof(buf), fmt, v);
+    return buf;
+}
+std::string Percent(float v) { return Format("%.0f %%", v * 100.0f); }
 
-// Reach (Xbox 360) default controller layout, labelled on MCC's controller picture.
+struct CatInfo {
+    const char* group;   // printed above the first category of a group
+    const char* name;
+    const char* footer;  // when this category's changes take effect
+};
+const CatInfo kCats[] = {
+    { "DISPLAY & SOUND", "GRAPHICS", "Window size and display mode take effect the next time Noble starts; everything else when you apply changes." },
+    { nullptr, "AUDIO", "Volumes take effect when you apply changes; a menu song plays as soon as you pick it." },
+    { "GAME", "GAME OPTIONS", "Takes effect when you apply changes, also in a game you return to from the pause menu." },
+    { nullptr, "PLAYER", "Saved when you apply changes; shown from the next game you start." },
+    { "CONTROLS", "KEYBOARD & MOUSE", "Takes effect when you apply changes, also mid-game from the pause menu." },
+    { nullptr, "CONTROLLER", "Takes effect when you apply changes, also mid-game from the pause menu." },
+    { "ONLINE", "ONLINE SERVICES", "Saved when you apply changes." },
+};
+static_assert(std::size(kCats) == 7);
+
+const char* WhenText(int when) {
+    switch (when) {
+    case 0: return "Takes effect when you apply changes";
+    case 1: return "Saved when you apply changes; takes effect the next time Noble starts";
+    case 2: return "Saved and used as soon as you change it";
+    default: return "Information";
+    }
+}
+
+// The graphics card Windows uses for Noble (adapter 0), read once.
+std::string GpuLine() {
+    static std::string s_line;
+    static bool s_done = false;
+    if (s_done) return s_line;
+    s_done = true;
+    IDXGIFactory1* factory = nullptr;
+    if (SUCCEEDED(CreateDXGIFactory1(__uuidof(IDXGIFactory1), reinterpret_cast<void**>(&factory))) && factory) {
+        IDXGIAdapter1* adapter = nullptr;
+        if (SUCCEEDED(factory->EnumAdapters1(0, &adapter)) && adapter) {
+            DXGI_ADAPTER_DESC1 desc{};
+            if (SUCCEEDED(adapter->GetDesc1(&desc))) {
+                char name[128] = {};
+                WideCharToMultiByte(CP_UTF8, 0, desc.Description, -1, name, sizeof(name), nullptr, nullptr);
+                char buf[200];
+                std::snprintf(buf, sizeof(buf), "%s (%.1f GB)", name, desc.DedicatedVideoMemory / (1024.0 * 1024.0 * 1024.0));
+                s_line = buf;
+            }
+            adapter->Release();
+        }
+        factory->Release();
+    }
+    if (s_line.empty()) s_line = "Unknown";
+    return s_line;
+}
+
+// First connected XInput controller (0..3), or -1. Polled at most once a second.
+int ConnectedPad() {
+    struct State { DWORD packet; WORD buttons; BYTE lt, rt; SHORT lx, ly, rx, ry; };
+    using GetStateFn = DWORD(WINAPI*)(DWORD, State*);
+    static GetStateFn s_get = [] {
+        HMODULE m = LoadLibraryW(L"xinput1_4.dll");
+        if (!m) m = LoadLibraryW(L"xinput9_1_0.dll");
+        return m ? reinterpret_cast<GetStateFn>(GetProcAddress(m, "XInputGetState")) : nullptr;
+    }();
+    static int s_pad = -1;
+    static double s_checked = -10.0;
+    const double now = ImGui::GetTime();
+    if (now - s_checked < 1.0) return s_pad;
+    s_checked = now;
+    s_pad = -1;
+    if (!s_get) return s_pad;
+    for (DWORD i = 0; i < 4; ++i) {
+        State st{};
+        if (s_get(i, &st) == ERROR_SUCCESS) { s_pad = static_cast<int>(i); break; }
+    }
+    return s_pad;
+}
+
+// Reach (Xbox 360) default controller layout on Noble's controller picture (assets\ui\noble\controller.png,
+// by O7OF), or on MCC's own picture when Noble's isn't there. Listed top to bottom on each side.
 struct Callout {
-    float bx, by;      // button position on the 404x268 picture (0..1)
-    bool right;        // label on the right side
+    float bx, by;
+    bool right;
     const char* label;
 };
-const Callout kReachDefault[] = {
-    { 0.26f, 0.02f, false, "Use armor ability (LB)" },
-    { 0.24f, 0.00f, false, "Throw grenade (LT)" },
-    { 0.24f, 0.31f, false, "Move / crouch (click)" },
-    { 0.37f, 0.54f, false, "Night vision, team chat (D-pad)" },
-    { 0.43f, 0.30f, false, "Multiplayer scoreboard (Back)" },
-    { 0.57f, 0.30f, true, "Game menu (Start)" },
-    { 0.62f, 0.52f, true, "Look / zoom (click)" },
-    { 0.76f, 0.02f, true, "Melee (RB)" },
-    { 0.77f, 0.00f, true, "Fire (RT)" },
-    { 0.76f, 0.18f, true, "Swap weapons (Y)" },
-    { 0.82f, 0.29f, true, "Switch grenades (B)" },
-    { 0.70f, 0.29f, true, "Action / reload (X)" },
-    { 0.76f, 0.39f, true, "Jump (A)" },
-};
-
-// The same layout on Noble's Xbox 360 controller picture (assets\ui\noble\controller.png, by O7OF).
-// Listed top to bottom on each side so the leader lines don't cross.
 const Callout kReach360[] = {
     { 0.22f, 0.07f, false, "Throw grenade (LT)" },
     { 0.20f, 0.19f, false, "Use armor ability (LB)" },
@@ -113,253 +147,677 @@ const Callout kReach360[] = {
     { 0.64f, 0.76f, true, "Look / zoom (click)" },
 };
 
-// Noble's picture: straight leader lines from each button to its label.
-void DrawNobleControllerDiagram(const UiTexture& pad) {
-    const float w = 440.0f, h = w * pad.height / pad.width;
-    float leftWidth = 0.0f, rightWidth = 0.0f;   // widest label on each side
+// Controller picture with straight leader lines to the labels, fitted into `width`.
+void DrawControllerDiagram(float width) {
+    UiTexture pad = UiArt::NobleControllerImage();
+    if (!pad) pad = UiArt::ControllerImage();
+    float leftWidth = 0.0f, rightWidth = 0.0f;
     for (const Callout& c : kReach360) {
         float& side = c.right ? rightWidth : leftWidth;
         side = std::max(side, ImGui::CalcTextSize(c.label).x);
     }
+    const float w = std::clamp(width - leftWidth - rightWidth - 70.0f, 160.0f, 440.0f);
+    const float h = pad ? w * pad.height / pad.width : w * 0.62f;
     const ImVec2 origin = ImGui::GetCursorScreenPos();
-    const float padX = origin.x + leftWidth + 40.0f, padY = origin.y + 30.0f;
+    const float padX = origin.x + leftWidth + 30.0f, padY = origin.y + 16.0f;
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    dl->AddImage(pad.id, ImVec2(padX, padY), ImVec2(padX + w, padY + h));
+    if (pad) dl->AddImage(pad.id, ImVec2(padX, padY), ImVec2(padX + w, padY + h));
+    else dl->AddRect(ImVec2(padX, padY), ImVec2(padX + w, padY + h), IM_COL32(200, 210, 220, 120), 30.0f);
     int leftRow = 0, rightRow = 0;
     const float leftStep = h / 5.0f, rightStep = h / 8.0f;
+    const float lh = ImGui::GetTextLineHeight();
     for (const Callout& c : kReach360) {
         const ImVec2 btn(padX + c.bx * w, padY + c.by * h);
-        const float rowY = c.right ? padY + (rightRow++ + 0.5f) * rightStep - 8.0f
-                                   : padY + (leftRow++ + 0.5f) * leftStep - 8.0f;
-        const ImVec2 elbow = c.right ? ImVec2(padX + w + 20.0f, rowY + 8.0f) : ImVec2(padX - 12.0f, rowY + 8.0f);
-        const ImVec2 textPos = c.right ? ImVec2(elbow.x + 10.0f, rowY)
-                                       : ImVec2(elbow.x - 10.0f - ImGui::CalcTextSize(c.label).x, rowY);
+        const float rowY = c.right ? padY + (rightRow++ + 0.5f) * rightStep - lh * 0.5f
+                                   : padY + (leftRow++ + 0.5f) * leftStep - lh * 0.5f;
+        const ImVec2 elbow = c.right ? ImVec2(padX + w + 14.0f, rowY + lh * 0.5f) : ImVec2(padX - 10.0f, rowY + lh * 0.5f);
+        const ImVec2 textPos = c.right ? ImVec2(elbow.x + 8.0f, rowY)
+                                       : ImVec2(elbow.x - 8.0f - ImGui::CalcTextSize(c.label).x, rowY);
         dl->AddLine(btn, elbow, IM_COL32(200, 210, 220, 140), 1.2f);
-        dl->AddCircleFilled(btn, 3.0f, IM_COL32(143, 216, 255, 255));
-        dl->AddText(textPos, IM_COL32(236, 240, 244, 255), c.label);
+        dl->AddCircleFilled(btn, 3.0f, kAccent);
+        dl->AddText(textPos, kText, c.label);
     }
-    ImGui::Dummy(ImVec2(leftWidth + 40.0f + w + 30.0f + rightWidth + 10.0f, h + 50.0f));
-}
-
-void DrawControllerDiagram() {
-    if (const UiTexture noblePad = UiArt::NobleControllerImage()) {
-        DrawNobleControllerDiagram(noblePad);
-        return;
-    }
-    const UiTexture pad = UiArt::ControllerImage();
-    const float w = 404.0f, h = pad ? w * pad.height / pad.width : 268.0f;
-    const ImVec2 origin = ImGui::GetCursorScreenPos();
-    const float padX = origin.x + 230.0f, padY = origin.y + 40.0f;
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    if (pad) {
-        dl->AddImage(pad.id, ImVec2(padX, padY), ImVec2(padX + w, padY + h));
-    } else {
-        dl->AddRect(ImVec2(padX, padY), ImVec2(padX + w, padY + h), IM_COL32(200, 210, 220, 120), 30.0f);
-    }
-    int leftRow = 0, rightRow = 0;
-    for (const Callout& c : kReachDefault) {
-        const ImVec2 btn(padX + c.bx * w, padY + c.by * h);
-        const float rowY = origin.y + 20.0f + (c.right ? rightRow++ : leftRow++) * 30.0f;
-        const ImVec2 textPos = c.right ? ImVec2(padX + w + 40.0f, rowY) : ImVec2(origin.x, rowY);
-        const ImVec2 elbow = c.right ? ImVec2(padX + w + 30.0f, rowY + 8.0f) : ImVec2(padX - 20.0f, rowY + 8.0f);
-        dl->AddLine(btn, ImVec2(elbow.x, btn.y), IM_COL32(200, 210, 220, 110));
-        dl->AddLine(ImVec2(elbow.x, btn.y), elbow, IM_COL32(200, 210, 220, 110));
-        dl->AddCircleFilled(btn, 2.5f, IM_COL32(143, 216, 255, 255));
-        dl->AddText(textPos, IM_COL32(236, 240, 244, 255), c.label);
-    }
-    ImGui::Dummy(ImVec2(w + 460.0f, std::max(h + 60.0f, 430.0f)));
+    ImGui::Dummy(ImVec2(leftWidth + 30.0f + w + 22.0f + rightWidth, h + 30.0f));
 }
 
 } // namespace
 
+// ---------------------------------------------------------------------------------------------
+// Frame
+// ---------------------------------------------------------------------------------------------
+
+void SettingsPanel::SetTab(int tab) {
+    const int n = static_cast<int>(Cat::Count);
+    m_cat = static_cast<Cat>(((tab % n) + n) % n);
+    m_focus = 0;
+}
+
+void SettingsPanel::SyncBuffers() {
+    m_edit.playerName = m_nameBuf;
+    m_edit.serviceTag = m_tagBuf;
+    m_edit.masterServerUrl = m_masterBuf;
+}
+
 void SettingsPanel::Render() {
     if (!m_loaded) {
-        m_edit = Settings::Get().Snapshot();
+        m_saved = Settings::Get().Snapshot();
+        // Old saved menu-music values ("shuffle", piece names) play Reach's menu theme: treat them as
+        // that track so they don't count as an unsaved change.
+        {
+            const std::vector<ReachAudio::TrackInfo> tracks = ReachAudio::MusicTracks();
+            if (std::none_of(tracks.begin(), tracks.end(), [&](const ReachAudio::TrackInfo& t) { return t.id == m_saved.menuMusicTrack; }) &&
+                std::any_of(tracks.begin(), tracks.end(), [](const ReachAudio::TrackInfo& t) { return t.id == "reach:menu"; })) {
+                m_saved.menuMusicTrack = "reach:menu";
+            }
+        }
+        m_edit = m_saved;
         std::snprintf(m_nameBuf, sizeof(m_nameBuf), "%s", m_edit.playerName.c_str());
         std::snprintf(m_tagBuf, sizeof(m_tagBuf), "%s", m_edit.serviceTag.c_str());
         std::snprintf(m_masterBuf, sizeof(m_masterBuf), "%s", m_edit.masterServerUrl.c_str());
         m_loaded = true;
     }
     PollRebind();
+    SyncBuffers();
 
-    // MCC-style tab row: plain upper-case words, the selected one underlined.
-    static const char* const kTabs[] = { "CONTROLS", "KEY BINDINGS", "VIDEO", "AUDIO", "GAMEPLAY", "NETWORK" };
-    ImGui::Dummy(ImVec2(0, 2));
-    // LB / Q before the tabs and RB / E after them, like MCC (follows the device used last).
-    auto tabPrompt = [](InputPrompts::Prompt prompt) {
+    // Shared key state for this frame (rows read it; text fields and rebinding take the keys).
+    m_navAllowed = !ImGui::GetIO().WantTextInput && m_rebindAction < 0;
+    m_keyLeft = m_navAllowed && (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft));
+    m_keyRight = m_navAllowed && (ImGui::IsKeyPressed(ImGuiKey_RightArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight));
+    m_keyAccept = m_navAllowed && (ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false) ||
+                                   ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false));
+    if (m_navAllowed) {
+        const int rows = std::max(1, m_lastRowCount);
+        if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown)) {
+            m_focus = (m_focus + 1) % rows; m_scrollToFocus = true; MenuSounds::Scroll();
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp)) {
+            m_focus = (m_focus + rows - 1) % rows; m_scrollToFocus = true; MenuSounds::Scroll();
+        }
+        const int n = static_cast<int>(Cat::Count);
+        if (ImGui::IsKeyPressed(ImGuiKey_Q, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false)) {
+            m_cat = static_cast<Cat>((static_cast<int>(m_cat) + n - 1) % n); m_focus = 0; m_search[0] = 0; MenuSounds::Tab(-1);
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_E, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false)) {
+            m_cat = static_cast<Cat>((static_cast<int>(m_cat) + 1) % n); m_focus = 0; m_search[0] = 0; MenuSounds::Tab(1);
+        }
+        if (TotalChanges() > 0) {
+            if (ImGui::IsKeyPressed(ImGuiKey_Y, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false)) Apply();
+            else if (ImGui::IsKeyPressed(ImGuiKey_X, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceLeft, false)) Discard();
+        }
+    }
+
+    const ImVec2 avail = ImGui::GetContentRegionAvail();
+    const float s = Scale();
+    const float gap = 14.0f * s;
+    const float leftW = std::clamp(avail.x * 0.24f, 230.0f * s, 330.0f * s);
+    const float rightW = std::clamp(avail.x * 0.28f, 250.0f * s, 430.0f * s);
+    const float midW = std::max(200.0f, avail.x - leftW - rightW - gap * 2.0f);
+
+    RenderCategories(leftW, avail.y);
+    ImGui::SameLine(0, gap);
+    RenderRows(midW, avail.y);
+    ImGui::SameLine(0, gap);
+    RenderDetails(rightW, avail.y);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Left column: search, categories, unsaved box
+// ---------------------------------------------------------------------------------------------
+
+void SettingsPanel::RenderCategories(float width, float height) {
+    const float s = Scale();
+    ImGui::BeginChild("##setcats", ImVec2(width, height), ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+
+    ImGui::SetNextItemWidth(width);
+    if (ImGui::InputTextWithHint("##setsearch", "Search all settings", m_search, sizeof(m_search))) {
+        m_focus = 0;
+    }
+    ImGui::Dummy(ImVec2(0, 4.0f * s));
+
+    const int total = TotalChanges();
+    const float boxH = total > 0 ? 132.0f * s : 52.0f * s;
+    ImGui::BeginChild("##setcatlist", ImVec2(width, ImGui::GetContentRegionAvail().y - boxH), ImGuiChildFlags_None);
+    for (int i = 0; i < static_cast<int>(Cat::Count); ++i) {
+        const CatInfo& ci = kCats[i];
+        if (ci.group) SectionHeader(ci.group, width - 8.0f * s);
         const ImVec2 p = ImGui::GetCursorScreenPos();
-        const float h = ImGui::GetFrameHeight() * 0.8f;
-        const float w = InputPrompts::Draw(ImGui::GetWindowDrawList(), nullptr, ImVec2(p.x, p.y + ImGui::GetFrameHeight() * 0.1f), h, prompt);
-        ImGui::Dummy(ImVec2(w, ImGui::GetFrameHeight()));
-    };
-    tabPrompt(InputPrompts::Prompt::TabLeft);
-    ImGui::SameLine(0, 14.0f);
-    for (int i = 0; i < 6; ++i) {
-        if (i) ImGui::SameLine(0, 26.0f);
-        const bool sel = m_tab == i;
-        ImGui::PushStyleColor(ImGuiCol_Text, sel ? ImVec4(1, 1, 1, 1) : kLabel);
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1, 1, 1, 0.06f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(1, 1, 1, 0.10f));
-        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0, 0, 0, 0));
-        if (ImGui::Button(kTabs[i])) {
-            if (m_tab != i) MenuSounds::Tab(i > m_tab ? 1 : -1);
-            m_tab = i;
+        const float w = ImGui::GetContentRegionAvail().x;
+        const float h = 50.0f * s;
+        ImGui::PushID(i);
+        const bool clicked = ImGui::InvisibleButton("##cat", ImVec2(w, h));
+        const bool hovered = ImGui::IsItemHovered();
+        ImGui::PopID();
+        const bool sel = static_cast<int>(m_cat) == i && m_search[0] == 0;
+        RowBackground(dl, p, ImVec2(p.x + w, p.y + h), sel, hovered);
+        ImDrawList* wdl = ImGui::GetWindowDrawList();
+        Text(wdl, NobleStyle::TitleFont(), 19.0f * s, ImVec2(p.x + 14.0f * s, p.y + 5.0f * s), sel ? kText : kTextDim, ci.name);
+        const std::string summary = Summary(static_cast<Cat>(i));
+        Text(wdl, NobleStyle::SmallFont(), 14.0f * s, ImVec2(p.x + 14.0f * s, p.y + 28.0f * s), kTextDim, summary.c_str());
+        if (ChangesIn(static_cast<Cat>(i)) > 0) ChangedDot(wdl, ImVec2(p.x + w - 12.0f * s, p.y + h * 0.5f), s);
+        if (hovered) MenuSounds::Hover(ImGui::GetItemID());
+        if (clicked) {
+            if (static_cast<int>(m_cat) != i) MenuSounds::Tab(i > static_cast<int>(m_cat) ? 1 : -1);
+            m_cat = static_cast<Cat>(i);
+            m_focus = 0;
+            m_search[0] = 0;
         }
-        ImGui::PopStyleColor(5);
-        if (sel) {
-            const ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
-            ImGui::GetWindowDrawList()->AddLine(ImVec2(a.x + 6, b.y), ImVec2(b.x - 6, b.y), IM_COL32(143, 216, 255, 255), 2.0f);
-        }
-    }
-    ImGui::SameLine(0, 14.0f);
-    tabPrompt(InputPrompts::Prompt::TabRight);
-    // Q / E switch tabs like LB / RB in MCC.
-    if (!ImGui::GetIO().WantTextInput && m_rebindAction < 0) {
-        if (ImGui::IsKeyPressed(ImGuiKey_Q, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false)) { m_tab = (m_tab + 5) % 6; MenuSounds::Tab(-1); }
-        if (ImGui::IsKeyPressed(ImGuiKey_E, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false)) { m_tab = (m_tab + 1) % 6; MenuSounds::Tab(1); }
-    }
-    ImGui::Separator();
-
-    ImGui::BeginChild("##settingsBody", ImVec2(0, ImGui::GetContentRegionAvail().y - 52.0f), ImGuiChildFlags_None);
-    switch (m_tab) {
-    case 0: RenderControls(); break;
-    case 1: RenderKeyBindings(); break;
-    case 2: RenderDisplay(); break;
-    case 3: RenderAudio(); break;
-    case 4: RenderGameplay(); break;
-    default: RenderNetwork(); break;
     }
     ImGui::EndChild();
 
-    ImGui::Separator();
-    ImGui::BeginDisabled(!m_dirty);
-    if (NobleStyle::PrimaryButton("APPLY", ImVec2(140, 34))) {
-        m_edit.playerName = m_nameBuf;
-        m_edit.serviceTag = m_tagBuf;
-        m_edit.masterServerUrl = m_masterBuf;
-        Settings::Get().Update(m_edit);
-        MasterServerClient::Get().SetUrl(m_edit.masterServerUrl);
-        // Field of view goes straight into the running engine (haloreach+0xB42C10, degrees); the
-        // per-frame CameraFov::Tick keeps it there and picks it up for the next game too.
-        CameraFov::Apply(m_edit.fieldOfView);
-        m_edit = Settings::Get().Snapshot();  // clamped values
-        m_dirty = false;
-        m_message = "Saved. FOV, VSync, frame-rate limit, and mouse settings apply immediately.";
+    // Bottom: unsaved-changes box, or RESTORE DEFAULTS for this category.
+    const ImVec2 b0 = ImGui::GetCursorScreenPos();
+    if (total > 0) {
+        const ImVec2 b1(b0.x + width, b0.y + boxH - 6.0f * s);
+        dl->AddRectFilled(b0, b1, IM_COL32(40, 30, 14, 200));
+        dl->AddRect(b0, b1, IM_COL32(255, 186, 74, 120), 0.0f, 0, 1.0f);
+        ChangedDot(dl, ImVec2(b0.x + 14.0f * s, b0.y + 16.0f * s), s);
+        char head[64];
+        std::snprintf(head, sizeof(head), "%d UNSAVED CHANGE%s", total, total == 1 ? "" : "S");
+        Text(dl, NobleStyle::TitleFont(), 17.0f * s, ImVec2(b0.x + 24.0f * s, b0.y + 6.0f * s), kAmber, head);
+        std::string where = "In ";
+        bool first = true;
+        for (int i = 0; i < static_cast<int>(Cat::Count); ++i) {
+            if (ChangesIn(static_cast<Cat>(i)) == 0) continue;
+            if (!first) where += ", ";
+            std::string n = kCats[i].name;
+            for (size_t k = 1; k < n.size(); ++k) if (n[k - 1] != ' ' && n[k - 1] != '&') n[k] = static_cast<char>(::tolower(static_cast<unsigned char>(n[k])));
+            where += n;
+            first = false;
+        }
+        Text(dl, NobleStyle::SmallFont(), 14.0f * s, ImVec2(b0.x + 24.0f * s, b0.y + 30.0f * s), kTextDim, where.c_str(), width - 30.0f * s);
+        const float bw = (width - 30.0f * s) * 0.5f;
+        ImGui::SetCursorScreenPos(ImVec2(b0.x + 10.0f * s, b1.y - 44.0f * s));
+        if (NobleStyle::PrimaryButton("APPLY CHANGES", ImVec2(bw, 30.0f * s))) Apply();
+        ImGui::SameLine(0, 10.0f * s);
+        if (ImGui::Button("DISCARD", ImVec2(bw, 30.0f * s))) Discard();
+        Text(dl, NobleStyle::SmallFont(), 13.0f * s, ImVec2(b0.x + 10.0f * s, b1.y - 12.0f * s), kTextDim, "Y apply   X discard");
+    } else {
+        // Greyed when this category already has its default values.
+        const bool differs = CountDiff(m_edit, WithDefaults(m_edit, m_cat), m_cat) > 0;
+        ImGui::SetCursorScreenPos(ImVec2(b0.x, b0.y + 8.0f * s));
+        ImGui::BeginDisabled(!differs || m_search[0] != 0);
+        if (ImGui::Button("RESTORE DEFAULTS", ImVec2(width, 32.0f * s))) {
+            RestoreDefaults(m_cat);
+            MenuSounds::Click();
+        }
+        ImGui::EndDisabled();
+        if (!m_message.empty() && ImGui::GetTime() - m_messageTime < 4.0) {
+            Text(dl, NobleStyle::SmallFont(), 14.0f * s, ImVec2(b0.x, b0.y + 44.0f * s), kAccent, m_message.c_str());
+        }
     }
-    ImGui::SameLine();
-    if (ImGui::Button("UNDO CHANGES", ImVec2(150, 34))) {
-        m_loaded = false;
-        m_dirty = false;
-        ReachAudio::PlayMenuMusic(Settings::Get().Snapshot().menuMusicTrack);
-        ReachAudio::SetMusicVolume(Settings::Get().Snapshot().volumeMusic);
-        m_rebindAction = -1;
-        m_message = nullptr;
+    ImGui::EndChild();
+}
+
+// ---------------------------------------------------------------------------------------------
+// Middle column: the rows
+// ---------------------------------------------------------------------------------------------
+
+void SettingsPanel::RenderRows(float width, float height) {
+    const float s = Scale();
+    ImGui::BeginChild("##setrows", ImVec2(width, height), ImGuiChildFlags_None);
+    m_rowCount = 0;
+    m_hover = Details{};
+    m_focusDetails = Details{};
+    m_pendingSection = nullptr;
+    m_pendingCat = -1;
+
+    if (m_search[0] != 0) {
+        ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(kTextDim), "Results for \"%s\"", m_search);
+        for (int i = 0; i < static_cast<int>(Cat::Count); ++i) {
+            m_pendingCat = i;
+            RenderCategory(static_cast<Cat>(i));
+            m_pendingCat = -1;
+        }
+        if (m_rowCount == 0) {
+            ImGui::Dummy(ImVec2(0, 10.0f * s));
+            Paragraph("No setting matches. Try another word, or clear the search to browse the categories.");
+        }
+    } else {
+        const CatInfo& ci = kCats[static_cast<int>(m_cat)];
+        const ImVec2 p = ImGui::GetCursorScreenPos();
+        Text(ImGui::GetWindowDrawList(), NobleStyle::TitleFont(), 26.0f * s, p, kText, ci.name);
+        ImGui::Dummy(ImVec2(0, 30.0f * s));
+        Paragraph(ci.footer);
+        RenderCategory(m_cat);
     }
-    ImGui::EndDisabled();
-    ImGui::SameLine();
-    if (ImGui::Button("RESTORE DEFAULTS", ImVec2(180, 34))) {
-        const std::string master = m_edit.masterServerUrl;
-        const auto favourites = m_edit.favorites;
-        const uint64_t skulls = m_edit.campaignSkulls;
-        m_edit = SettingsData{};
-        m_edit.masterServerUrl = master;      // keep network entries and skull choices
-        m_edit.favorites = favourites;
-        m_edit.campaignSkulls = skulls;
-        std::snprintf(m_nameBuf, sizeof(m_nameBuf), "%s", m_edit.playerName.c_str());
-        std::snprintf(m_tagBuf, sizeof(m_tagBuf), "%s", m_edit.serviceTag.c_str());
-        m_dirty = true;
-    }
-    if (m_message) {
-        ImGui::SameLine();
-        ImGui::TextColored(NobleStyle::Accent(), "%s", m_message);
+    m_lastRowCount = m_rowCount;
+    if (m_rowCount > 0 && m_focus >= m_rowCount) m_focus = m_rowCount - 1;
+    m_scrollToFocus = false;
+    ImGui::Dummy(ImVec2(0, 20.0f * s));
+    ImGui::EndChild();
+}
+
+void SettingsPanel::RenderCategory(Cat c) {
+    switch (c) {
+    case Cat::Graphics: RenderGraphics(); break;
+    case Cat::Audio: RenderAudio(); break;
+    case Cat::Game: RenderGame(); break;
+    case Cat::Player: RenderPlayer(); break;
+    case Cat::KeyboardMouse: RenderKeyboardMouse(); break;
+    case Cat::Controller: RenderController(); break;
+    case Cat::Online: RenderOnline(); break;
+    default: break;
     }
 }
 
-void SettingsPanel::RenderControls() {
-    // One line of help under a row, dimmed and indented to the value column.
-    auto help = [](const char* text) {
-        ImGui::Dummy(ImVec2(0, 0));
-        ImGui::SameLine(300.0f);
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.62f, 0.68f, 0.74f, 1.0f));
-        ImGui::TextUnformatted(text);
-        ImGui::PopStyleColor();
-        ImGui::Dummy(ImVec2(0, 2));
-    };
-    Section("MOUSE");
-    RowLabel("LOOK SENSITIVITY");
-    ImGui::SetNextItemWidth(330);
-    if (ImGui::SliderFloat("##sens", &m_edit.mouseSensitivity, 0.1f, 5.0f, "%.2fx", ImGuiSliderFlags_Logarithmic)) m_dirty = true;
-    ImGui::SameLine();
-    if (ImGui::SmallButton("RESET##sens")) { m_edit.mouseSensitivity = 1.0f; m_dirty = true; }
-    help("How far you turn per mouse movement. 1.00x is Noble's default; Ctrl+click the slider to type a value.");
-    RowLabel("VERTICAL SENSITIVITY");
-    ImGui::SetNextItemWidth(330);
-    if (ImGui::SliderFloat("##sensy", &m_edit.mouseSensitivityY, 0.25f, 4.0f, "%.2fx of horizontal", ImGuiSliderFlags_Logarithmic)) m_dirty = true;
-    ImGui::SameLine();
-    if (ImGui::SmallButton("RESET##sensy")) { m_edit.mouseSensitivityY = 1.0f; m_dirty = true; }
-    help("Up/down speed compared with left/right. Below 1 makes aiming up and down calmer.");
-    RowLabel("INVERT LOOK");
-    if (Cycle("invert", m_edit.invertLook ? "INVERTED" : "NOT INVERTED", 330.0f - 2.0f * ImGui::GetFrameHeight() - 2.0f * ImGui::GetStyle().ItemSpacing.x)) {
-        m_edit.invertLook = !m_edit.invertLook;
-        m_dirty = true;
+void SettingsPanel::Section(const char* text) {
+    if (m_search[0] != 0) {
+        m_pendingSection = text;   // printed only when a row under it matches
+        return;
     }
-    help("Inverted: moving the mouse forward looks down, as in flight controls.");
-    ImGui::Dummy(ImVec2(0, 2));
-    ImGui::TextDisabled("Mouse settings take effect as soon as you press APPLY, also in a game you return to from the pause menu.");
-    ImGui::TextDisabled("Keyboard keys are on the KEY BINDINGS tab. The -mouse-scale command-line option overrides the sensitivity.");
+    SectionHeader(text, ImGui::GetContentRegionAvail().x);
+}
 
-    Section("GAMEPAD");
-    ImGui::TextDisabled("Xbox-compatible controllers (XInput) work in game. Noble switches between the controller and");
-    ImGui::TextDisabled("keyboard + mouse by whichever you used last; Start opens the pause menu.");
-    ImGui::Dummy(ImVec2(0, 2));
-    RowLabel("LOOK SENSITIVITY");
-    ImGui::SetNextItemWidth(260);
-    if (ImGui::SliderInt("##padlookx", &m_edit.padLookX, 1, 19, "%d", ImGuiSliderFlags_AlwaysClamp)) m_dirty = true;
-    ImGui::SameLine();
-    if (ImGui::SmallButton("RESET##padx")) { m_edit.padLookX = 19; m_dirty = true; }
-    RowLabel("VERTICAL SENSITIVITY");
-    ImGui::SetNextItemWidth(260);
-    if (ImGui::SliderInt("##padlooky", &m_edit.padLookY, 1, 19, "%d", ImGuiSliderFlags_AlwaysClamp)) m_dirty = true;
-    ImGui::SameLine();
-    if (ImGui::SmallButton("RESET##pady")) { m_edit.padLookY = 19; m_dirty = true; }
-    ImGui::TextDisabled("How fast the right stick turns you (Reach's own setting; 19 is the stock profile's value).");
-    RowLabel("INVERT LOOK");
-    if (Cycle("padinvert", m_edit.padInvertLook ? "INVERTED" : "NOT INVERTED")) {
-        m_edit.padInvertLook = !m_edit.padInvertLook;
-        m_dirty = true;
+bool SettingsPanel::Row(const char* label, const char* description, When when, const std::string& defaultText,
+                        bool changed, bool disabled, Preview preview) {
+    const float s = Scale();
+    if (m_search[0] != 0) {
+        const std::string needle = Lower(m_search);
+        if (Lower(label).find(needle) == std::string::npos && Lower(description).find(needle) == std::string::npos) return false;
+        if (m_pendingCat >= 0) {
+            ImGui::Dummy(ImVec2(0, 8.0f * s));
+            const ImVec2 p = ImGui::GetCursorScreenPos();
+            Text(ImGui::GetWindowDrawList(), NobleStyle::TitleFont(), 20.0f * s, p, kText, kCats[m_pendingCat].name);
+            ImGui::Dummy(ImVec2(0, 24.0f * s));
+            m_pendingCat = -1;
+        }
+        if (m_pendingSection) {
+            SectionHeader(m_pendingSection, ImGui::GetContentRegionAvail().x);
+            m_pendingSection = nullptr;
+        }
     }
-    auto deadZone = [&](const char* label, const char* id, float& v) {
-        RowLabel(label);
-        ImGui::SetNextItemWidth(260);
-        float percent = v * 100.0f;
-        if (ImGui::SliderFloat(id, &percent, 0.0f, 50.0f, percent < 0.5f ? "Game default" : "%.0f%%", ImGuiSliderFlags_AlwaysClamp)) {
-            v = percent / 100.0f;
-            m_dirty = true;
+    const int index = m_rowCount++;
+    m_curRow = index;
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    const float w = ImGui::GetContentRegionAvail().x;
+    const float h = 40.0f * s;
+    const ImVec2 q(p.x + w, p.y + h);
+    const bool hovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) && ImGui::IsMouseHoveringRect(p, q);
+    if (hovered && ImGui::IsMouseClicked(0) && m_focus != index) {
+        m_focus = index;
+        MenuSounds::Scroll();
+    }
+    const bool focused = index == m_focus;
+    if (focused && m_scrollToFocus) ImGui::SetScrollFromPosY(p.y - ImGui::GetWindowPos().y, 0.4f);
+
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    RowBackground(dl, p, q, focused, hovered);
+    if (changed) ChangedDot(dl, ImVec2(p.x + 10.0f * s, p.y + h * 0.5f), s);
+    Text(dl, NobleStyle::TitleFont(), 17.0f * s, ImVec2(p.x + 20.0f * s, p.y + h * 0.5f - 10.0f * s),
+         disabled ? kTextOff : (focused ? kText : IM_COL32(190, 214, 232, 255)), label);
+    ImGui::Dummy(ImVec2(w, h));
+
+    m_valMin = ImVec2(p.x + w * 0.46f, p.y + 4.0f * s);
+    m_valMax = ImVec2(q.x - 10.0f * s, q.y - 4.0f * s);
+    m_rowFocused = focused;
+    m_rowHovered = hovered;
+    m_rowDisabled = disabled;
+
+    Details d;
+    d.set = true;
+    d.title = label;
+    d.effect = WhenText(static_cast<int>(when));
+    d.text = description;
+    if (!defaultText.empty()) d.facts = "DEFAULT   " + defaultText;
+    d.preview = preview;
+    if (hovered) m_hover = d;
+    if (focused) m_focusDetails = d;
+    return true;
+}
+
+bool SettingsPanel::SliderValue(float& v, float lo, float hi, float step, float def, const char* text) {
+    const float s = Scale();
+    bool changed = false;
+    const ImVec2 save = ImGui::GetCursorScreenPos();
+    const float textW = std::max(86.0f * s, TextWidth(nullptr, 17.0f * s, text) + 14.0f * s);
+    ImGui::SetCursorScreenPos(m_valMin);
+    ImGui::PushID(m_curRow);
+    ImGui::InvisibleButton("##slider", ImVec2(std::max(1.0f, m_valMax.x - m_valMin.x - textW), m_valMax.y - m_valMin.y));
+    const bool active = ImGui::IsItemActive();
+    ImGui::PopID();
+    if (!m_rowDisabled) {
+        if (active) {
+            m_focus = m_curRow;
+            const float t = std::clamp((ImGui::GetIO().MousePos.x - m_valMin.x) / std::max(1.0f, m_valMax.x - m_valMin.x - textW), 0.0f, 1.0f);
+            float nv = lo + t * (hi - lo);
+            if (step > 0.0f) nv = std::round(nv / step) * step;
+            nv = std::clamp(nv, lo, hi);
+            if (std::fabs(nv - v) > 1e-6f) { v = nv; changed = true; }
+        }
+        if (m_rowFocused && (m_keyLeft || m_keyRight)) {
+            const float st = step > 0.0f ? step : (hi - lo) / 50.0f;
+            const float nv = std::clamp(v + (m_keyRight ? st : -st), lo, hi);
+            if (std::fabs(nv - v) > 1e-6f) { v = nv; changed = true; MenuSounds::Change(); }
+        }
+    }
+    DrawSlider(ImGui::GetWindowDrawList(), m_valMin, m_valMax, (v - lo) / (hi - lo),
+               def >= lo && def <= hi ? (def - lo) / (hi - lo) : -1.0f, text, active || m_rowFocused, m_rowDisabled, textW);
+    ImGui::SetCursorScreenPos(save);
+    return changed;
+}
+
+int SettingsPanel::CycleValue(const char* value, int index, int count, bool wraps) {
+    const float s = Scale();
+    const ImVec2 save = ImGui::GetCursorScreenPos();
+    const float aw = 30.0f * s;
+    const float h = m_valMax.y - m_valMin.y;
+    int change = 0;
+    ImGui::PushID(m_curRow);
+    ImGui::SetCursorScreenPos(m_valMin);
+    if (ImGui::InvisibleButton("##l", ImVec2(aw, h))) change = -1;
+    const bool hl = ImGui::IsItemHovered();
+    ImGui::SetCursorScreenPos(ImVec2(m_valMax.x - aw, m_valMin.y));
+    if (ImGui::InvisibleButton("##r", ImVec2(aw, h))) change = 1;
+    const bool hr = ImGui::IsItemHovered();
+    ImGui::PopID();
+    if (m_rowFocused) {
+        if (m_keyLeft) change = -1;
+        if (m_keyRight || m_keyAccept) change = 1;
+    }
+    if (m_rowDisabled) change = 0;
+    if (change && !wraps) {
+        if ((change < 0 && index <= 0) || (change > 0 && index >= count - 1)) change = 0;
+    }
+    if (change) {
+        m_focus = m_curRow;
+        MenuSounds::Change();
+    }
+    DrawCycle(ImGui::GetWindowDrawList(), m_valMin, m_valMax, value, index, count, wraps, hl, hr, m_rowDisabled);
+    ImGui::SetCursorScreenPos(save);
+    return change;
+}
+
+bool SettingsPanel::ToggleValue(bool& v) {
+    const ImVec2 save = ImGui::GetCursorScreenPos();
+    ImGui::PushID(m_curRow);
+    ImGui::SetCursorScreenPos(m_valMin);
+    const bool clicked = ImGui::InvisibleButton("##toggle", ImVec2(m_valMax.x - m_valMin.x, m_valMax.y - m_valMin.y));
+    const bool hovered = ImGui::IsItemHovered();
+    ImGui::PopID();
+    bool changed = false;
+    if (!m_rowDisabled && (clicked || (m_rowFocused && (m_keyAccept || m_keyLeft || m_keyRight)))) {
+        v = !v;
+        changed = true;
+        m_focus = m_curRow;
+        MenuSounds::Change();
+    }
+    DrawToggle(ImGui::GetWindowDrawList(), m_valMin, m_valMax, v, hovered, m_rowDisabled);
+    ImGui::SetCursorScreenPos(save);
+    return changed;
+}
+
+void SettingsPanel::InfoValue(const char* text) {
+    const float s = Scale();
+    const float tw = TextWidth(nullptr, 17.0f * s, text);
+    const float x = std::max(m_valMin.x, m_valMax.x - tw);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->PushClipRect(m_valMin, m_valMax, true);
+    Text(dl, nullptr, 17.0f * s, ImVec2(x, (m_valMin.y + m_valMax.y) * 0.5f - 9.0f * s), m_rowDisabled ? kTextOff : kTextDim, text);
+    dl->PopClipRect();
+}
+
+// ---------------------------------------------------------------------------------------------
+// Right column: details
+// ---------------------------------------------------------------------------------------------
+
+void SettingsPanel::RenderDetails(float width, float height) {
+    const float s = Scale();
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.02f, 0.04f, 0.06f, 0.55f));
+    ImGui::BeginChild("##setdetails", ImVec2(width, height), ImGuiChildFlags_Borders);
+    const Details& d = m_hover.set ? m_hover : m_focusDetails;
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    if (!d.set) {
+        Paragraph("Pick a setting to see what it does, when it takes effect and its default value.");
+        ImGui::EndChild();
+        ImGui::PopStyleColor();
+        return;
+    }
+    ImGui::Dummy(ImVec2(0, 4.0f * s));
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    const float w = ImGui::GetContentRegionAvail().x;
+    Text(dl, NobleStyle::TitleFont(), 22.0f * s, p, kText, d.title.c_str(), w);
+    ImGui::Dummy(ImVec2(0, 28.0f * s));
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(kAccent));
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextUnformatted(d.effect.c_str());
+    ImGui::PopTextWrapPos();
+    ImGui::PopStyleColor();
+    ImGui::Dummy(ImVec2(0, 8.0f * s));
+
+    // Preview.
+    const ImVec2 pv = ImGui::GetCursorScreenPos();
+    switch (d.preview) {
+    case Preview::Fov: {
+        // Top-down view cone with the chosen angle.
+        const float r = std::min(w * 0.42f, 110.0f * s);
+        const ImVec2 eye(pv.x + w * 0.5f, pv.y + r + 6.0f * s);
+        const float half = m_edit.fieldOfView * 0.5f * 3.14159265f / 180.0f;
+        const float a0 = -1.5707963f - half, a1 = -1.5707963f + half;
+        dl->PathLineTo(eye);
+        dl->PathArcTo(eye, r, a0, a1, 32);
+        dl->PathFillConvex(IM_COL32(110, 180, 225, 70));
+        dl->AddLine(eye, ImVec2(eye.x + std::cos(a0) * r, eye.y + std::sin(a0) * r), kAccent, 1.5f);
+        dl->AddLine(eye, ImVec2(eye.x + std::cos(a1) * r, eye.y + std::sin(a1) * r), kAccent, 1.5f);
+        const float hd = 78.0f * 0.5f * 3.14159265f / 180.0f;   // Reach's own 78 degrees, dashed
+        dl->AddLine(eye, ImVec2(eye.x + std::cos(-1.5707963f - hd) * r, eye.y + std::sin(-1.5707963f - hd) * r), IM_COL32(255, 255, 255, 70), 1.0f);
+        dl->AddLine(eye, ImVec2(eye.x + std::cos(-1.5707963f + hd) * r, eye.y + std::sin(-1.5707963f + hd) * r), IM_COL32(255, 255, 255, 70), 1.0f);
+        dl->AddCircleFilled(eye, 4.0f * s, kText);
+        const std::string deg = Format("%.0f\xC2\xB0", m_edit.fieldOfView);
+        Text(dl, NobleStyle::TitleFont(), 22.0f * s, ImVec2(eye.x - TextWidth(NobleStyle::TitleFont(), 22.0f * s, deg.c_str()) * 0.5f, eye.y + 6.0f * s), kText, deg.c_str());
+        ImGui::Dummy(ImVec2(w, r + 44.0f * s));
+        break;
+    }
+    case Preview::FrameLimit: {
+        const std::string big = m_edit.fpsLimit == 0 ? std::string("NO LIMIT") : std::to_string(m_edit.fpsLimit) + " FPS";
+        Text(dl, NobleStyle::TitleFont(), 28.0f * s, pv, kText, big.c_str());
+        const float ms = m_edit.fpsLimit == 0 ? 0.0f : 1000.0f / static_cast<float>(m_edit.fpsLimit);
+        const ImVec2 b0(pv.x, pv.y + 40.0f * s), b1(pv.x + w, pv.y + 52.0f * s);
+        dl->AddRectFilled(b0, b1, IM_COL32(255, 255, 255, 25));
+        if (ms > 0.0f) dl->AddRectFilled(b0, ImVec2(b0.x + w * std::min(ms / 100.0f, 1.0f), b1.y), kAccent);
+        const std::string cap = ms > 0.0f ? Format("%.1f ms per frame (scale 0 - 100 ms)", ms) : std::string("As many frames as your PC can draw");
+        Text(dl, NobleStyle::SmallFont(), 14.0f * s, ImVec2(pv.x, b1.y + 6.0f * s), kTextDim, cap.c_str());
+        ImGui::Dummy(ImVec2(w, 82.0f * s));
+        break;
+    }
+    case Preview::Volume: {
+        const struct { const char* name; float v; } meters[] = {
+            { "GAME", m_edit.volumeGame }, { "MUSIC", m_edit.volumeMusic }, { "VOICE / OTHER", m_edit.volumeOther } };
+        float y = pv.y;
+        for (const auto& m : meters) {
+            Text(dl, NobleStyle::SmallFont(), 14.0f * s, ImVec2(pv.x, y), kTextDim, m.name);
+            const ImVec2 b0(pv.x + 110.0f * s, y + 3.0f * s), b1(pv.x + w, y + 13.0f * s);
+            dl->AddRectFilled(b0, b1, IM_COL32(255, 255, 255, 25));
+            const int segs = 20;
+            for (int i = 0; i < segs; ++i) {
+                if ((i + 0.5f) / segs > m.v) break;
+                const float x0 = b0.x + (b1.x - b0.x) * i / segs, x1 = b0.x + (b1.x - b0.x) * (i + 1) / segs - 2.0f;
+                dl->AddRectFilled(ImVec2(x0, b0.y), ImVec2(x1, b1.y), i >= 17 ? kAmber : kAccent);
+            }
+            y += 24.0f * s;
+        }
+        ImGui::Dummy(ImVec2(w, y - pv.y + 6.0f * s));
+        break;
+    }
+    case Preview::Controller: {
+        const int pad = ConnectedPad();
+        const std::string line = pad >= 0 ? "Controller " + std::to_string(pad + 1) + " connected." : std::string("No controller found.");
+        Text(dl, NobleStyle::TitleFont(), 18.0f * s, pv, pad >= 0 ? kAccent : kTextDim, line.c_str());
+        ImGui::Dummy(ImVec2(w, 28.0f * s));
+        if (UiTexture img = UiArt::NobleControllerImage()) {
+            const ImVec2 i0 = ImGui::GetCursorScreenPos();
+            const float iw = w, ih = iw * img.height / img.width;
+            dl->AddImage(img.id, i0, ImVec2(i0.x + iw, i0.y + ih));
+            ImGui::Dummy(ImVec2(iw, ih + 6.0f * s));
+        }
+        break;
+    }
+    case Preview::Gpu: {
+        Text(dl, NobleStyle::SmallFont(), 14.0f * s, pv, kTextDim, "IN USE NOW");
+        Text(dl, NobleStyle::TitleFont(), 18.0f * s, ImVec2(pv.x, pv.y + 18.0f * s), kText, GpuLine().c_str(), w);
+        ImGui::Dummy(ImVec2(w, 64.0f * s));
+        break;
+    }
+    default: break;
+    }
+
+    if (!d.text.empty()) {
+        Paragraph(d.text.c_str(), IM_COL32(205, 214, 222, 255));
+    }
+    if (!d.facts.empty()) {
+        ImGui::Dummy(ImVec2(0, 8.0f * s));
+        const ImVec2 f = ImGui::GetCursorScreenPos();
+        dl->AddLine(f, ImVec2(f.x + w, f.y), kRule, 1.0f);
+        ImGui::Dummy(ImVec2(0, 6.0f * s));
+        Paragraph(d.facts.c_str(), kTextDim);
+    }
+    ImGui::EndChild();
+    ImGui::PopStyleColor();
+}
+
+// ---------------------------------------------------------------------------------------------
+// Categories
+// ---------------------------------------------------------------------------------------------
+
+void SettingsPanel::RenderGraphics() {
+    const SettingsData def;
+    Section("DISPLAY");
+    if (Row("GRAPHICS CARD", "The graphics card Windows gave Noble. Choosing another card here will come later.",
+            When::Info, "", false, false, Preview::Gpu)) {
+        InfoValue(GpuLine().c_str());
+    }
+    if (Row("DISPLAY MODE", "Windowed: a fixed-size window you can move. Borderless full screen: a window that covers the whole display (use it for full screen; the engine can't change resolution while it runs).",
+            When::Restart, def.borderless ? "Borderless" : "Windowed", m_edit.borderless != m_saved.borderless)) {
+        if (CycleValue(m_edit.borderless ? "BORDERLESS FULL SCREEN" : "WINDOWED", m_edit.borderless ? 1 : 0, 2)) m_edit.borderless = !m_edit.borderless;
+    }
+    {
+        int current = 0;
+        const int n = static_cast<int>(std::size(kResolutions));
+        for (int i = 0; i < n; ++i) if (kResolutions[i].w == m_edit.width && kResolutions[i].h == m_edit.height) current = i;
+        char label[32];
+        if (m_edit.borderless) std::snprintf(label, sizeof(label), "Fills your display");
+        else std::snprintf(label, sizeof(label), "%d x %d", m_edit.width, m_edit.height);
+        const bool changed = m_edit.width != m_saved.width || m_edit.height != m_saved.height;
+        if (Row("WINDOW SIZE", "Size of the game window in windowed mode. In borderless full screen the window fills your display, so this is greyed out.",
+                When::Restart, "1280 x 720", changed, m_edit.borderless)) {
+            if (const int d = CycleValue(label, current, n, false)) {
+                current = std::clamp(current + d, 0, n - 1);
+                m_edit.width = kResolutions[current].w;
+                m_edit.height = kResolutions[current].h;
+            }
+        }
+    }
+    Section("FRAME RATE");
+    if (Row("VERTICAL SYNC", "Waits for your display before showing each frame: no tearing, but a little more input delay.",
+            When::Apply, def.verticalSync ? "On" : "Off", m_edit.verticalSync != m_saved.verticalSync)) {
+        ToggleValue(m_edit.verticalSync);
+    }
+    {
+        const int n = static_cast<int>(std::size(kFpsLimits));
+        int current = n - 1;
+        for (int i = 0; i < n; ++i) if (kFpsLimits[i] == m_edit.fpsLimit) current = i;
+        const std::string label = m_edit.fpsLimit == 0 ? std::string("NO LIMIT") : std::to_string(m_edit.fpsLimit) + " FPS";
+        if (Row("FRAME-RATE LIMIT", "Highest frame rate Noble draws. A limit at your display's refresh rate keeps the PC cooler and quieter; menus and loading screens keep the display's own rate.",
+                When::Apply, "No limit", m_edit.fpsLimit != m_saved.fpsLimit, false, Preview::FrameLimit)) {
+            if (const int d = CycleValue(label.c_str(), current, n, false)) m_edit.fpsLimit = kFpsLimits[std::clamp(current + d, 0, n - 1)];
+        }
+    }
+    if (Row("FPS COUNTER", "Shows the frame rate in the upper-right corner while you play.",
+            When::Apply, "Off", m_edit.showFps != m_saved.showFps)) {
+        ToggleValue(m_edit.showFps);
+    }
+    Section("ADVANCED GRAPHICS");
+    static const char* const kLater[] = { "TEXTURE FILTERING", "ANTIALIASING", "MOTION BLUR", "SHADOWS", "DRAW DISTANCE" };
+    for (const char* name : kLater) {
+        if (Row(name, "Needs the matching setting to be found inside Halo: Reach first; it will light up here when it works.",
+                When::Info, "", false, true)) {
+            InfoValue("Not available yet");
+        }
+    }
+}
+
+void SettingsPanel::RenderAudio() {
+    const SettingsData def;
+    Section("VOLUME");
+    auto volume = [&](const char* label, const char* text, float& v, float saved) {
+        if (Row(label, text, When::Apply, "100 %", std::fabs(v - saved) > 1e-4f, false, Preview::Volume)) {
+            SliderValue(v, 0.0f, 1.0f, 0.01f, 1.0f, Percent(v).c_str());
         }
     };
-    deadZone("LEFT STICK DEAD ZONE", "##dzl", m_edit.padLeftDeadZone);
-    deadZone("RIGHT STICK DEAD ZONE", "##dzr", m_edit.padRightDeadZone);
-    ImGui::TextDisabled("Raise a dead zone if a worn stick drifts. Controller settings apply at once, also mid-game.");
-    RowLabel("VIBRATION");
-    if (Cycle("vibration", m_edit.padVibration ? "ON" : "OFF")) {
-        m_edit.padVibration = !m_edit.padVibration;
-        m_dirty = true;
+    volume("GAME", "Gunfire, vehicles, footsteps and everything else in the world.", m_edit.volumeGame, m_saved.volumeGame);
+    volume("MUSIC", "Halo: Reach's score in game, and the menu music.", m_edit.volumeMusic, m_saved.volumeMusic);
+    volume("VOICE / OTHER", "Dialogue, radio chatter, announcer and menu sounds.", m_edit.volumeOther, m_saved.volumeOther);
+    Section("MENUS");
+    if (Row("MENU SOUNDS", "Reach's own clicks and swooshes when you move through the menus.",
+            When::Apply, "On", m_edit.menuSounds != m_saved.menuSounds)) {
+        ToggleValue(m_edit.menuSounds);
     }
-    if (m_edit.padVibration) {
-        RowLabel("VIBRATION STRENGTH");
-        ImGui::SetNextItemWidth(260);
-        float percent = m_edit.padVibrationStrength * 100.0f;
-        if (ImGui::SliderFloat("##rumble", &percent, 0.0f, 100.0f, "%.0f%%", ImGuiSliderFlags_AlwaysClamp)) {
-            m_edit.padVibrationStrength = percent / 100.0f;
-            m_dirty = true;
-        }
+    if (Row("MENU MUSIC", "The song the menus play. Pick one in the list below: it plays at once; APPLY CHANGES keeps it, DISCARD goes back. Also plays in the pre-game lobby.",
+            When::Instant, "Halo: Reach - Main Menu Theme", m_edit.menuMusicTrack != m_saved.menuMusicTrack)) {
+        InfoValue(ReachAudio::TrackLabel(m_edit.menuMusicTrack).c_str());
     }
-    ImGui::TextDisabled("Rumble from the game (explosions, vehicles, melee) on Xbox-style controllers. Applies at once.");
-    ImGui::Dummy(ImVec2(0, 4));
-    ImGui::TextDisabled("Halo: Reach's default controller layout:");
-    ImGui::Dummy(ImVec2(0, 4));
-    DrawControllerDiagram();
+    if (m_search[0] == 0) RenderMusicPicker();
+    ReachAudio::SetMusicVolume(m_edit.volumeMusic);
+    const std::string problem = ReachAudio::Problem();
+    if (!problem.empty() && m_search[0] == 0) {
+        ImGui::Dummy(ImVec2(0, 4));
+        Paragraph(("Reach menu audio is off: " + problem).c_str());
+    }
+    Section("MORE");
+    if (Row("MUTE IN BACKGROUND", "Lowers the game's sound while Noble isn't the active window. Coming in a later update.",
+            When::Info, "", false, true)) {
+        InfoValue("Not available yet");
+    }
+}
+
+void SettingsPanel::RenderGame() {
+    Section("CAMERA");
+    if (Row("FIELD OF VIEW", "How wide you see, in horizontal degrees (70 - 120). Halo: Reach's own value is 78 (the faint lines in the picture). Also changes mid-match from the pause menu.",
+            When::Apply, "78\xC2\xB0", std::fabs(m_edit.fieldOfView - m_saved.fieldOfView) > 0.01f, false, Preview::Fov)) {
+        SliderValue(m_edit.fieldOfView, 70.0f, 120.0f, 1.0f, 78.0f, Format("%.0f\xC2\xB0", m_edit.fieldOfView).c_str());
+    }
+    if (Row("IN-VEHICLE FOV", "A separate field of view while driving or flying. Needs the vehicle camera to be found in the engine first.",
+            When::Info, "", false, true)) {
+        InfoValue("Not available yet");
+    }
+    Section("HUD");
+    if (Row("SUBTITLES", "Subtitles for cutscenes and radio dialogue.", When::Apply, "On", m_edit.subtitles != m_saved.subtitles)) {
+        ToggleValue(m_edit.subtitles);
+    }
+    if (Row("HIDE HUD", "Turns the whole HUD off, for screenshots and videos. Needs HUD research first.", When::Info, "", false, true)) {
+        InfoValue("Not available yet");
+    }
+    Section("MENUS");
+    static const char* const kModes[] = { "random", "reach", "noble" };
+    static const char* const kLabels[] = { "RANDOM", "HALO: REACH (MCC)", "NOBLE ART" };
+    int mode = 0;
+    for (int i = 0; i < 3; ++i) if (m_edit.menuBackground == kModes[i]) mode = i;
+    if (Row("MENU BACKGROUND", "Where the menu's background pictures come from. Your own pictures in data\\ui\\custom\\backgrounds are always used first.",
+            When::Restart, "Random", m_edit.menuBackground != m_saved.menuBackground)) {
+        if (const int d = CycleValue(kLabels[mode], mode, 3)) m_edit.menuBackground = kModes[(mode + d + 3) % 3];
+    }
+}
+
+void SettingsPanel::RenderPlayer() {
+    const float s = Scale();
+    Section("IDENTITY");
+    auto textRow = [&](const char* label, const char* text, const char* def, bool changed, char* buf, size_t size, ImGuiInputTextFlags flags) {
+        if (!Row(label, text, When::Apply, def, changed)) return;
+        const ImVec2 save = ImGui::GetCursorScreenPos();
+        ImGui::SetCursorScreenPos(ImVec2(m_valMin.x, (m_valMin.y + m_valMax.y) * 0.5f - ImGui::GetFrameHeight() * 0.5f));
+        ImGui::SetNextItemWidth(m_valMax.x - m_valMin.x);
+        ImGui::PushID(m_curRow);
+        if (m_rowFocused && m_keyAccept) ImGui::SetKeyboardFocusHere();
+        ImGui::InputText("##text", buf, size, flags);
+        if (ImGui::IsItemActive()) m_focus = m_curRow;
+        ImGui::PopID();
+        ImGui::SetCursorScreenPos(save);
+        (void)s;
+    };
+    textRow("PLAYER NAME", "Your name on scoreboards, in the party box and (later) in chat. Up to 15 characters.",
+            "NobleSix", m_edit.playerName != m_saved.playerName, m_nameBuf, 16, ImGuiInputTextFlags_None);
+    textRow("SERVICE TAG", "Up to 4 letters or digits, shown next to your name in game (Reach's service tag).",
+            "NOBL", m_edit.serviceTag != m_saved.serviceTag, m_tagBuf, 5, ImGuiInputTextFlags_CharsUppercase | ImGuiInputTextFlags_CharsNoBlank);
 }
 
 void SettingsPanel::PollRebind() {
@@ -376,37 +834,47 @@ void SettingsPanel::PollRebind() {
             if (vk == KeyBindings::DefaultKey(m_rebindAction)) m_edit.keyOverrides.erase(m_rebindAction);
             else m_edit.keyOverrides[m_rebindAction] = vk;
             m_rebindAction = -1;
-            m_dirty = true;
             MenuSounds::Click();
             return;
         }
     }
 }
 
-void SettingsPanel::RenderKeyBindings() {
-    ImGui::Dummy(ImVec2(0, 2));
-    ImGui::TextDisabled("Click a key to change it, then press a key or mouse button (Esc cancels). Right-click to unbind.");
-    // The mouse wheel binds to an action through a second key slot (see ReachHost WriteDefaultKeyBindings).
+void SettingsPanel::RenderKeyboardMouse() {
+    const float s = Scale();
+    Section("MOUSE");
+    if (Row("LOOK SENSITIVITY", "How far you turn for each bit of mouse movement. 1.00x is Noble's default.",
+            When::Apply, "1.00x", std::fabs(m_edit.mouseSensitivity - m_saved.mouseSensitivity) > 1e-4f)) {
+        SliderValue(m_edit.mouseSensitivity, 0.1f, 5.0f, 0.05f, 1.0f, Format("%.2fx", m_edit.mouseSensitivity).c_str());
+    }
+    if (Row("VERTICAL SENSITIVITY", "Up/down speed compared with left/right. Below 1 makes aiming up and down calmer.",
+            When::Apply, "1.00x", std::fabs(m_edit.mouseSensitivityY - m_saved.mouseSensitivityY) > 1e-4f)) {
+        SliderValue(m_edit.mouseSensitivityY, 0.25f, 4.0f, 0.05f, 1.0f, Format("%.2fx", m_edit.mouseSensitivityY).c_str());
+    }
+    if (Row("INVERT LOOK", "Inverted: moving the mouse forward looks down, as in flight controls.",
+            When::Apply, "Off", m_edit.invertLook != m_saved.invertLook)) {
+        ToggleValue(m_edit.invertLook);
+    }
+    if (Row("MOUSE ACCELERATION", "Turns faster the quicker you move the mouse. Coming in a later update.", When::Info, "", false, true)) {
+        InfoValue("Not available yet");
+    }
     Section("MOUSE WHEEL");
-    static const int kWheelActions[] = { 4, 1, 3, 5, 7, 2, 23, 6, 11, 12, 20, -1 };
     auto wheelName = [](int action) -> std::string {
         if (action < 0) return "NOTHING";
         const char* n = KeyBindings::ActionName(action);
         return n ? Upper(n) : "SLOT " + std::to_string(action);
     };
-    auto wheelRow = [&](const char* label, const char* id, int& action) {
-        RowLabel(label);
-        if (const int step = Cycle(id, wheelName(action).c_str())) {
-            int idx = 0;
-            const int n = static_cast<int>(std::size(kWheelActions));
-            for (int i = 0; i < n; ++i) if (kWheelActions[i] == action) idx = i;
-            action = kWheelActions[(idx + step + n) % n];
-            m_dirty = true;
-        }
+    auto wheelRow = [&](const char* label, int& action, int saved) {
+        if (!Row(label, "The action the mouse wheel triggers. With both directions on CHANGE WEAPON (the default) either way switches weapons.",
+                 When::Apply, "Change weapon", action != saved)) return;
+        const int n = static_cast<int>(std::size(kWheelActions));
+        int idx = 0;
+        for (int i = 0; i < n; ++i) if (kWheelActions[i] == action) idx = i;
+        if (const int d = CycleValue(wheelName(action).c_str(), idx, n)) action = kWheelActions[(idx + d + n) % n];
     };
-    wheelRow("WHEEL UP", "wheelup", m_edit.wheelUpAction);
-    wheelRow("WHEEL DOWN", "wheeldown", m_edit.wheelDownAction);
-    ImGui::TextDisabled("With both on CHANGE WEAPON (the default) either direction switches weapons.");
+    wheelRow("WHEEL UP", m_edit.wheelUpAction, m_saved.wheelUpAction);
+    wheelRow("WHEEL DOWN", m_edit.wheelDownAction, m_saved.wheelDownAction);
+
     using KeyBindings::ActionGroup;
     const ActionGroup groups[] = { ActionGroup::Movement, ActionGroup::Actions, ActionGroup::Vehicle, ActionGroup::Interface,
                                    ActionGroup::Forge, ActionGroup::Theater };
@@ -415,79 +883,115 @@ void SettingsPanel::RenderKeyBindings() {
     for (ActionGroup g : groups) {
         const std::vector<int> actions = KeyBindings::ActionsIn(g);
         if (actions.empty()) continue;
-        Section(KeyBindings::GroupName(g));
+        Section(Upper(KeyBindings::GroupName(g)).c_str());
         for (int action : actions) {
             const int def = KeyBindings::DefaultKey(action);
             auto it = m_edit.keyOverrides.find(action);
             const int current = it != m_edit.keyOverrides.end() ? it->second : def;
-            ImGui::PushID(action);
+            auto sit = m_saved.keyOverrides.find(action);
+            const int saved = sit != m_saved.keyOverrides.end() ? sit->second : def;
             const char* name = KeyBindings::ActionName(action);
-            char fallback[32];
-            std::snprintf(fallback, sizeof(fallback), "SLOT %d", action);
-            RowLabel(name ? Upper(name).c_str() : fallback);
-            std::string keyText = m_rebindAction == action ? std::string("PRESS A KEY...") : KeyBindings::KeyName(current);
-            if (current == 0 && m_rebindAction != action) keyText = "UNBOUND";
-            const bool changed = current != def;
-            ImGui::PushStyleColor(ImGuiCol_Text, changed ? NobleStyle::Accent() : ImVec4(0.92f, 0.94f, 0.96f, 1.0f));
-            if (ImGui::Button(keyText.c_str(), ImVec2(180, 0))) {
-                m_rebindAction = action;
-                m_rebindStarted = ImGui::GetTime();
-            }
-            ImGui::PopStyleColor();
-            if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
+            const std::string label = name ? Upper(name) : "SLOT " + std::to_string(action);
+            const std::string defText = def ? KeyBindings::KeyName(def) : std::string("-");
+            if (!Row(label.c_str(), "Click (or press Enter), then press the key or mouse button you want. Esc cancels, right-click unbinds, Delete puts the default back.",
+                     When::Apply, defText, current != saved)) continue;
+            std::string keyText = m_rebindAction == action ? std::string("PRESS A KEY...")
+                                : current == 0 ? std::string("\xE2\x80\x94") : KeyBindings::KeyName(current);
+            const ImVec2 save = ImGui::GetCursorScreenPos();
+            const float bw = std::min(220.0f * s, m_valMax.x - m_valMin.x);
+            const ImVec2 b0(m_valMax.x - bw, m_valMin.y), b1(m_valMax.x, m_valMax.y);
+            ImGui::SetCursorScreenPos(b0);
+            ImGui::PushID(m_curRow);
+            const bool clicked = ImGui::InvisibleButton("##key", ImVec2(bw, b1.y - b0.y), ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
+            const bool hovered = ImGui::IsItemHovered();
+            const bool right = hovered && ImGui::IsMouseReleased(ImGuiMouseButton_Right);
+            ImGui::PopID();
+            if (right) {
                 if (def == 0) m_edit.keyOverrides.erase(action);
                 else m_edit.keyOverrides[action] = 0;
-                m_dirty = true;
+            } else if ((clicked && !ImGui::IsMouseReleased(ImGuiMouseButton_Right)) || (m_rowFocused && m_keyAccept)) {
+                m_rebindAction = action;
+                m_rebindStarted = ImGui::GetTime();
+                m_focus = m_curRow;
             }
-            if (changed) {
-                ImGui::SameLine();
-                ImGui::TextDisabled("default: %s", KeyBindings::KeyName(def).c_str());
-                ImGui::SameLine();
-                if (ImGui::SmallButton("RESET")) {
-                    m_edit.keyOverrides.erase(action);
-                    m_dirty = true;
-                }
-            }
-            ImGui::PopID();
+            if (m_rowFocused && m_navAllowed && ImGui::IsKeyPressed(ImGuiKey_Delete, false)) m_edit.keyOverrides.erase(action);
+            DrawBox(ImGui::GetWindowDrawList(), b0, b1, keyText.c_str(), hovered, current != def || m_rebindAction == action, false);
+            ImGui::SetCursorScreenPos(save);
         }
     }
 }
 
-void SettingsPanel::RenderAudio() {
-    Section("VOLUME");
-    auto volume = [&](const char* label, const char* id, float& v) {
-        RowLabel(label);
-        ImGui::SetNextItemWidth(260);
-        float percent = v * 100.0f;
-        if (ImGui::SliderFloat(id, &percent, 0.0f, 100.0f, "%.0f%%")) {
-            v = percent / 100.0f;
-            m_dirty = true;
+void SettingsPanel::RenderController() {
+    const SettingsData def;
+    const float s = Scale();
+    Section("STATUS");
+    {
+        const int pad = ConnectedPad();
+        const std::string line = pad >= 0 ? "Controller " + std::to_string(pad + 1) + " connected" : std::string("No controller found");
+        if (Row("CONTROLLER", "Xbox and other XInput controllers work as soon as Windows sees them. Noble switches between the controller and keyboard + mouse by whichever you used last; Start opens the pause menu.",
+                When::Info, "", false, false, Preview::Controller)) {
+            InfoValue(line.c_str());
         }
+    }
+    if (Row("BUTTON LAYOUT", "Reach's layouts (Default, Southpaw, Boxer, Green Thumb, Bumper Jumper, Recon). Only Default for now; the others come in a later update.",
+            When::Info, "Default", false, true, Preview::Controller)) {
+        InfoValue("DEFAULT");
+    }
+    Section("STICKS");
+    auto speed = [&](const char* label, const char* text, int& v, int saved) {
+        if (!Row(label, text, When::Apply, "19", v != saved)) return;
+        float f = static_cast<float>(v);
+        if (SliderValue(f, 1.0f, 19.0f, 1.0f, 19.0f, std::to_string(v).c_str())) v = static_cast<int>(std::lround(f));
     };
-    volume("MASTER / GAME", "##vgame", m_edit.volumeGame);
-    volume("MUSIC", "##vmusic", m_edit.volumeMusic);
-    volume("VOICE / OTHER", "##vother", m_edit.volumeOther);
-    Section("MENUS");
-    RowLabel("MENU SOUNDS");
-    if (Cycle("menusounds", m_edit.menuSounds ? "ON" : "OFF")) {
-        m_edit.menuSounds = !m_edit.menuSounds;
-        m_dirty = true;
+    speed("LOOK SENSITIVITY", "How fast the right stick turns you left and right (Reach's own setting; 19 is the stock profile's value).", m_edit.padLookX, m_saved.padLookX);
+    speed("VERTICAL SENSITIVITY", "How fast the right stick looks up and down.", m_edit.padLookY, m_saved.padLookY);
+    if (Row("INVERT LOOK", "Pushing the right stick forward looks down.", When::Apply, "Off", m_edit.padInvertLook != m_saved.padInvertLook)) {
+        ToggleValue(m_edit.padInvertLook);
     }
-    RowLabel("MENU MUSIC");
-    ImGui::TextUnformatted(ReachAudio::TrackLabel(m_edit.menuMusicTrack).c_str());
-    RenderMusicPicker();
-    ReachAudio::SetMusicVolume(m_edit.volumeMusic);
-    const std::string problem = ReachAudio::Problem();
-    if (!problem.empty()) {
-        ImGui::Dummy(ImVec2(0, 4));
-        ImGui::TextDisabled("Reach menu audio is off: %s", problem.c_str());
+    auto deadZone = [&](const char* label, float& v, float saved) {
+        if (!Row(label, "Raise a dead zone if a worn stick drifts. 0 keeps the game's own dead zone.", When::Apply, "Game default",
+                 std::fabs(v - saved) > 1e-4f)) return;
+        float percent = v * 100.0f;
+        const std::string text = percent < 0.5f ? std::string("Game default") : Format("%.0f %%", percent);
+        if (SliderValue(percent, 0.0f, 50.0f, 1.0f, 0.0f, text.c_str())) v = percent / 100.0f;
+    };
+    deadZone("LEFT STICK DEAD ZONE", m_edit.padLeftDeadZone, m_saved.padLeftDeadZone);
+    deadZone("RIGHT STICK DEAD ZONE", m_edit.padRightDeadZone, m_saved.padRightDeadZone);
+    Section("VIBRATION");
+    if (Row("VIBRATION", "Rumble from the game (explosions, vehicles, melee) on Xbox-style controllers.", When::Apply,
+            def.padVibration ? "On" : "Off", m_edit.padVibration != m_saved.padVibration)) {
+        ToggleValue(m_edit.padVibration);
     }
+    if (Row("VIBRATION STRENGTH", "How strong the rumble is.", When::Apply, "100 %",
+            std::fabs(m_edit.padVibrationStrength - m_saved.padVibrationStrength) > 1e-4f, !m_edit.padVibration)) {
+        SliderValue(m_edit.padVibrationStrength, 0.0f, 1.0f, 0.05f, 1.0f, Percent(m_edit.padVibrationStrength).c_str());
+    }
+    if (m_search[0] == 0) {
+        Section("HALO: REACH DEFAULT LAYOUT");
+        DrawControllerDiagram(ImGui::GetContentRegionAvail().x);
+    }
+    (void)s;
+}
+
+void SettingsPanel::RenderOnline() {
+    Section("SERVERS");
+    if (!Row("MASTER SERVER", "The list of online games for the GAMES screen. Leave it empty to only see games on your LAN.",
+             When::Apply, "Noble's test server", m_edit.masterServerUrl != m_saved.masterServerUrl)) return;
+    const ImVec2 save = ImGui::GetCursorScreenPos();
+    ImGui::SetCursorScreenPos(ImVec2(m_valMin.x, (m_valMin.y + m_valMax.y) * 0.5f - ImGui::GetFrameHeight() * 0.5f));
+    ImGui::SetNextItemWidth(m_valMax.x - m_valMin.x);
+    ImGui::PushID(m_curRow);
+    if (m_rowFocused && m_keyAccept) ImGui::SetKeyboardFocusHere();
+    ImGui::InputTextWithHint("##master", "empty = LAN only", m_masterBuf, sizeof(m_masterBuf));
+    if (ImGui::IsItemActive()) m_focus = m_curRow;
+    ImGui::PopID();
+    ImGui::SetCursorScreenPos(save);
 }
 
 // Menu music picker: the games on the left, the chosen game's tracks on the right (or every game's
-// tracks matching the search text). Clicking a track plays it straight away; APPLY keeps it, UNDO
-// goes back to the saved one. "Shuffle all" and "Off" sit above the game list.
+// tracks matching the search text). Clicking a track plays it straight away.
 void SettingsPanel::RenderMusicPicker() {
+    const float s = Scale();
     const std::vector<ReachAudio::TrackInfo> tracks = ReachAudio::MusicTracks();
     std::vector<std::string> games;
     std::vector<int> counts;
@@ -497,7 +1001,6 @@ void SettingsPanel::RenderMusicPicker() {
         if (it == games.end()) { games.push_back(t.game); counts.push_back(1); }
         else ++counts[it - games.begin()];
     }
-    // Start on the game of the saved track.
     if (m_musicGame < 0) {
         m_musicGame = 0;
         for (const ReachAudio::TrackInfo& t : tracks) {
@@ -507,7 +1010,6 @@ void SettingsPanel::RenderMusicPicker() {
         }
     }
     if (m_musicGame >= static_cast<int>(games.size())) m_musicGame = 0;
-
     // Old saved values ("shuffle", piece names) play Reach's menu theme: show that one as chosen.
     if (std::none_of(tracks.begin(), tracks.end(), [&](const ReachAudio::TrackInfo& t) { return t.id == m_edit.menuMusicTrack; }) &&
         std::any_of(tracks.begin(), tracks.end(), [](const ReachAudio::TrackInfo& t) { return t.id == "reach:menu"; })) {
@@ -515,14 +1017,16 @@ void SettingsPanel::RenderMusicPicker() {
     }
     auto pick = [&](const std::string& id) {
         m_edit.menuMusicTrack = id;
-        m_dirty = true;
         MenuSounds::Click();
         ReachAudio::PlayMenuMusic(id);
     };
 
-    ImGui::Dummy(ImVec2(0, 4));
-    const float height = 330.0f;
-    ImGui::BeginChild("##musicgames", ImVec2(380, height), true);
+    ImGui::Dummy(ImVec2(0, 4.0f * s));
+    const float total = ImGui::GetContentRegionAvail().x;
+    const float leftW = std::max(150.0f * s, total * 0.40f);
+    const float rightW = std::max(150.0f * s, total - leftW - ImGui::GetStyle().ItemSpacing.x);
+    const float height = 300.0f * s;
+    ImGui::BeginChild("##musicgames", ImVec2(leftW, height), ImGuiChildFlags_Borders);
     for (const ReachAudio::TrackInfo& t : tracks) {
         if (!t.game.empty()) continue;   // "Shuffle all games", "Off"
         const bool selected = t.id == m_edit.menuMusicTrack;
@@ -549,11 +1053,10 @@ void SettingsPanel::RenderMusicPicker() {
 
     ImGui::SameLine();
     ImGui::BeginGroup();
-    ImGui::SetNextItemWidth(520);
+    ImGui::SetNextItemWidth(rightW);
     ImGui::InputTextWithHint("##musicsearch", "Search every game's tracks", m_musicSearch, sizeof(m_musicSearch));
-    std::string needle = m_musicSearch;
-    for (char& c : needle) c = static_cast<char>(::tolower(static_cast<unsigned char>(c)));
-    ImGui::BeginChild("##musictracks", ImVec2(520, height - ImGui::GetFrameHeightWithSpacing()), true);
+    const std::string needle = Lower(m_musicSearch);
+    ImGui::BeginChild("##musictracks", ImVec2(rightW, height - ImGui::GetFrameHeightWithSpacing()), ImGuiChildFlags_Borders);
     int shown = 0;
     std::string lastGame;
     for (const ReachAudio::TrackInfo& t : tracks) {
@@ -561,10 +1064,8 @@ void SettingsPanel::RenderMusicPicker() {
         if (needle.empty()) {
             if (games.empty() || t.game != games[m_musicGame]) continue;
         } else {
-            std::string hay = t.label + " " + t.game;
-            for (char& c : hay) c = static_cast<char>(::tolower(static_cast<unsigned char>(c)));
-            if (hay.find(needle) == std::string::npos) continue;
-            if (t.game != lastGame) {   // game headings while searching
+            if (Lower(t.label + " " + t.game).find(needle) == std::string::npos) continue;
+            if (t.game != lastGame) {
                 lastGame = t.game;
                 ImGui::TextColored(NobleStyle::Accent(), "%s", t.game.c_str());
             }
@@ -583,111 +1084,159 @@ void SettingsPanel::RenderMusicPicker() {
     if (shown == 0) ImGui::TextDisabled(needle.empty() ? "No tracks found in the MCC install." : "No track matches.");
     ImGui::EndChild();
     ImGui::EndGroup();
-    ImGui::TextDisabled("Click a track to hear it. APPLY keeps it, UNDO CHANGES goes back.");
 }
 
-void SettingsPanel::RenderDisplay() {
-    Section("CAMERA");
-    RowLabel("FIELD OF VIEW");
-    ImGui::SetNextItemWidth(330);
-    if (ImGui::SliderFloat("##fov", &m_edit.fieldOfView, 70.0f, 120.0f, "%.0f degrees", ImGuiSliderFlags_AlwaysClamp)) m_dirty = true;
-    ImGui::SameLine();
-    if (ImGui::SmallButton("RESET##fov")) { m_edit.fieldOfView = 78.0f; m_dirty = true; }
-    ImGui::TextDisabled("Horizontal FOV. Written into the game camera when you press APPLY (also mid-match,");
-    ImGui::TextDisabled("from the pause menu). Range 70-120 degrees; Halo: Reach's own default is 78.");
+// ---------------------------------------------------------------------------------------------
+// Changes
+// ---------------------------------------------------------------------------------------------
 
-    Section("DISPLAY");
-    RowLabel("RESOLUTION");
-    int current = 0;
-    for (int i = 0; i < static_cast<int>(sizeof(kResolutions) / sizeof(kResolutions[0])); ++i) {
-        if (kResolutions[i].w == m_edit.width && kResolutions[i].h == m_edit.height) current = i;
-    }
-    char label[32];
-    std::snprintf(label, sizeof(label), "%d x %d", m_edit.width, m_edit.height);
-    const int dr = Cycle("res", label);
-    if (dr) {
-        const int n = static_cast<int>(sizeof(kResolutions) / sizeof(kResolutions[0]));
-        current = (current + dr + n) % n;
-        m_edit.width = kResolutions[current].w;
-        m_edit.height = kResolutions[current].h;
-        m_dirty = true;
-    }
-    RowLabel("WINDOW MODE");
-    if (Cycle("borderless", m_edit.borderless ? "BORDERLESS FULL SCREEN" : "WINDOWED")) {
-        m_edit.borderless = !m_edit.borderless;
-        m_dirty = true;
-    }
-    RowLabel("VERTICAL SYNC");
-    if (Cycle("vsync", m_edit.verticalSync ? "ON" : "OFF")) {
-        m_edit.verticalSync = !m_edit.verticalSync;
-        m_dirty = true;
-    }
-    RowLabel("FRAME RATE LIMIT");
-    static constexpr int kFpsLimits[] = { 30, 60, 120, 144, 165, 200, 0 };
-    int currentFpsLimit = 0;
-    for (int i = 0; i < static_cast<int>(std::size(kFpsLimits)); ++i) {
-        if (kFpsLimits[i] == m_edit.fpsLimit) currentFpsLimit = i;
-    }
-    const char* fpsLabel = m_edit.fpsLimit == 0 ? "UNCAPPED" : nullptr;
-    char fpsText[24];
-    if (!fpsLabel) {
-        std::snprintf(fpsText, sizeof(fpsText), "%d FPS", m_edit.fpsLimit);
-        fpsLabel = fpsText;
-    }
-    const int fpsChange = Cycle("fpsLimit", fpsLabel);
-    if (fpsChange) {
-        const int n = static_cast<int>(std::size(kFpsLimits));
-        currentFpsLimit = (currentFpsLimit + fpsChange + n) % n;
-        m_edit.fpsLimit = kFpsLimits[currentFpsLimit];
-        m_dirty = true;
-    }
-    RowLabel("FPS COUNTER");
-    if (Cycle("showFps", m_edit.showFps ? "ON" : "OFF")) {
-        m_edit.showFps = !m_edit.showFps;
-        m_dirty = true;
-    }
-    ImGui::TextDisabled("The FPS counter is shown in the upper-right corner while playing.");
-    ImGui::TextDisabled("Resolution and window mode apply the next time Noble starts.");
+int SettingsPanel::ChangesIn(Cat c) const {
+    return CountDiff(m_edit, m_saved, c);
 }
 
-void SettingsPanel::RenderGameplay() {
-    Section("GAMEPLAY");
-    RowLabel("SUBTITLES");
-    if (Cycle("subtitles", m_edit.subtitles ? "ON" : "OFF")) {
-        m_edit.subtitles = !m_edit.subtitles;
-        m_dirty = true;
+int SettingsPanel::CountDiff(const SettingsData& a, const SettingsData& b, Cat c) {
+    auto f = [](float x, float y) { return std::fabs(x - y) > 1e-4f ? 1 : 0; };
+    switch (c) {
+    case Cat::Graphics:
+        return (a.width != b.width || a.height != b.height) + (a.borderless != b.borderless) + (a.verticalSync != b.verticalSync) +
+               (a.fpsLimit != b.fpsLimit) + (a.showFps != b.showFps);
+    case Cat::Audio:
+        return f(a.volumeGame, b.volumeGame) + f(a.volumeMusic, b.volumeMusic) + f(a.volumeOther, b.volumeOther) +
+               (a.menuSounds != b.menuSounds) + (a.menuMusicTrack != b.menuMusicTrack);
+    case Cat::Game:
+        return f(a.fieldOfView, b.fieldOfView) + (a.subtitles != b.subtitles) + (a.menuBackground != b.menuBackground);
+    case Cat::Player:
+        return (a.playerName != b.playerName) + (a.serviceTag != b.serviceTag);
+    case Cat::KeyboardMouse: {
+        int n = f(a.mouseSensitivity, b.mouseSensitivity) + f(a.mouseSensitivityY, b.mouseSensitivityY) + (a.invertLook != b.invertLook) +
+                (a.wheelUpAction != b.wheelUpAction) + (a.wheelDownAction != b.wheelDownAction);
+        for (int i = 0; i < KeyBindings::kActionCount; ++i) {
+            auto ia = a.keyOverrides.find(i);
+            auto ib = b.keyOverrides.find(i);
+            const int ka = ia != a.keyOverrides.end() ? ia->second : KeyBindings::DefaultKey(i);
+            const int kb = ib != b.keyOverrides.end() ? ib->second : KeyBindings::DefaultKey(i);
+            if (ka != kb) ++n;
+        }
+        return n;
     }
-    Section("PLAYER");
-    RowLabel("PLAYER NAME");
-    ImGui::SetNextItemWidth(260);
-    if (ImGui::InputText("##name", m_nameBuf, 16)) m_dirty = true;
-    ImGui::TextDisabled("Shown in game, up to 15 characters.");
-    RowLabel("SERVICE TAG");
-    ImGui::SetNextItemWidth(120);
-    if (ImGui::InputText("##tag", m_tagBuf, 5, ImGuiInputTextFlags_CharsUppercase | ImGuiInputTextFlags_CharsNoBlank)) {
-        m_dirty = true;
+    case Cat::Controller:
+        return (a.padLookX != b.padLookX) + (a.padLookY != b.padLookY) + (a.padInvertLook != b.padInvertLook) +
+               f(a.padLeftDeadZone, b.padLeftDeadZone) + f(a.padRightDeadZone, b.padRightDeadZone) +
+               (a.padVibration != b.padVibration) + f(a.padVibrationStrength, b.padVibrationStrength);
+    case Cat::Online:
+        return a.masterServerUrl != b.masterServerUrl;
+    default:
+        return 0;
     }
-    ImGui::TextDisabled("Up to 4 letters or digits, shown next to your name in game.");
-    Section("MENUS");
-    RowLabel("MENU BACKGROUND");
-    static const char* const kModes[] = { "random", "reach", "noble" };
-    static const char* const kLabels[] = { "RANDOM", "HALO: REACH (MCC)", "NOBLE ART" };
-    int mode = 0;
-    for (int i = 0; i < 3; ++i) if (m_edit.menuBackground == kModes[i]) mode = i;
-    const int dm = Cycle("menubg", kLabels[mode]);
-    if (dm) {
-        m_edit.menuBackground = kModes[(mode + dm + 3) % 3];
-        m_dirty = true;
-    }
-    ImGui::TextDisabled("Your own pictures in data\\ui\\custom\\backgrounds are always used first.");
 }
 
-void SettingsPanel::RenderNetwork() {
-    Section("NETWORK");
-    RowLabel("MASTER SERVER");
-    ImGui::SetNextItemWidth(360);
-    if (ImGui::InputTextWithHint("##master", "http://host:8080 (empty = LAN only)", m_masterBuf, sizeof(m_masterBuf))) m_dirty = true;
-    ImGui::TextDisabled("The list of online games for the GAMES screen. Leave empty to only see games on your LAN.");
+int SettingsPanel::TotalChanges() const {
+    int n = 0;
+    for (int i = 0; i < static_cast<int>(Cat::Count); ++i) n += ChangesIn(static_cast<Cat>(i));
+    return n;
+}
+
+void SettingsPanel::RestoreDefaults(Cat c) {
+    m_edit = WithDefaults(m_edit, c);
+    std::snprintf(m_nameBuf, sizeof(m_nameBuf), "%s", m_edit.playerName.c_str());
+    std::snprintf(m_tagBuf, sizeof(m_tagBuf), "%s", m_edit.serviceTag.c_str());
+    std::snprintf(m_masterBuf, sizeof(m_masterBuf), "%s", m_edit.masterServerUrl.c_str());
+}
+
+SettingsData SettingsPanel::WithDefaults(SettingsData e, Cat c) {
+    const SettingsData d;
+    switch (c) {
+    case Cat::Graphics:
+        e.width = d.width; e.height = d.height; e.borderless = d.borderless; e.verticalSync = d.verticalSync;
+        e.fpsLimit = d.fpsLimit; e.showFps = d.showFps;
+        break;
+    case Cat::Audio:
+        e.volumeGame = d.volumeGame; e.volumeMusic = d.volumeMusic; e.volumeOther = d.volumeOther;
+        e.menuSounds = d.menuSounds; e.menuMusicTrack = d.menuMusicTrack;
+        break;
+    case Cat::Game:
+        e.fieldOfView = d.fieldOfView; e.subtitles = d.subtitles; e.menuBackground = d.menuBackground;
+        break;
+    case Cat::Player:
+        e.playerName = d.playerName; e.serviceTag = d.serviceTag;
+        break;
+    case Cat::KeyboardMouse:
+        e.mouseSensitivity = d.mouseSensitivity; e.mouseSensitivityY = d.mouseSensitivityY; e.invertLook = d.invertLook;
+        e.wheelUpAction = d.wheelUpAction; e.wheelDownAction = d.wheelDownAction; e.keyOverrides.clear();
+        break;
+    case Cat::Controller:
+        e.padLookX = d.padLookX; e.padLookY = d.padLookY; e.padInvertLook = d.padInvertLook;
+        e.padLeftDeadZone = d.padLeftDeadZone; e.padRightDeadZone = d.padRightDeadZone;
+        e.padVibration = d.padVibration; e.padVibrationStrength = d.padVibrationStrength;
+        break;
+    case Cat::Online:
+        e.masterServerUrl = d.masterServerUrl;
+        break;
+    default:
+        break;
+    }
+    return e;
+}
+
+void SettingsPanel::Apply() {
+    SyncBuffers();
+    Settings::Get().Update(m_edit);
+    MasterServerClient::Get().SetUrl(m_edit.masterServerUrl);
+    // Field of view goes straight into the running engine (haloreach+0xB42C10, degrees); the
+    // per-frame CameraFov::Tick keeps it there and picks it up for the next game too.
+    CameraFov::Apply(m_edit.fieldOfView);
+    m_saved = Settings::Get().Snapshot();  // clamped values
+    m_edit = m_saved;
+    std::snprintf(m_nameBuf, sizeof(m_nameBuf), "%s", m_edit.playerName.c_str());
+    std::snprintf(m_tagBuf, sizeof(m_tagBuf), "%s", m_edit.serviceTag.c_str());
+    std::snprintf(m_masterBuf, sizeof(m_masterBuf), "%s", m_edit.masterServerUrl.c_str());
+    m_message = "Saved.";
+    m_messageTime = ImGui::GetTime();
+    MenuSounds::Click();
+}
+
+void SettingsPanel::Discard() {
+    m_loaded = false;          // reload from the saved settings next frame
+    m_rebindAction = -1;
+    ReachAudio::PlayMenuMusic(Settings::Get().Snapshot().menuMusicTrack);
+    ReachAudio::SetMusicVolume(Settings::Get().Snapshot().volumeMusic);
+    m_message = "Changes discarded.";
+    m_messageTime = ImGui::GetTime();
+    MenuSounds::Back();
+}
+
+std::string SettingsPanel::Summary(Cat c) const {
+    const SettingsData& e = m_edit;
+    char buf[96];
+    switch (c) {
+    case Cat::Graphics:
+        if (e.borderless) std::snprintf(buf, sizeof(buf), "Borderless \xC2\xB7 %s", e.fpsLimit ? (std::to_string(e.fpsLimit) + " FPS").c_str() : "No limit");
+        else std::snprintf(buf, sizeof(buf), "%d x %d \xC2\xB7 %s", e.width, e.height, e.fpsLimit ? (std::to_string(e.fpsLimit) + " FPS").c_str() : "No limit");
+        return buf;
+    case Cat::Audio:
+        std::snprintf(buf, sizeof(buf), "Game %.0f %% \xC2\xB7 Music %s", e.volumeGame * 100.0f, e.menuMusicTrack == "off" ? "off" : "on");
+        return buf;
+    case Cat::Game:
+        std::snprintf(buf, sizeof(buf), "%.0f\xC2\xB0 FOV \xC2\xB7 Subtitles %s", e.fieldOfView, e.subtitles ? "on" : "off");
+        return buf;
+    case Cat::Player:
+        std::snprintf(buf, sizeof(buf), "%s [%s]", m_nameBuf, m_tagBuf);
+        return buf;
+    case Cat::KeyboardMouse: {
+        int rebound = 0;
+        for (const auto& [action, key] : e.keyOverrides) if (key != KeyBindings::DefaultKey(action)) ++rebound;
+        std::snprintf(buf, sizeof(buf), "Sensitivity %.2f \xC2\xB7 %d rebound", e.mouseSensitivity, rebound);
+        return buf;
+    }
+    case Cat::Controller: {
+        const int pad = ConnectedPad();
+        return pad >= 0 ? std::string("Controller connected") : std::string("No controller connected");
+    }
+    case Cat::Online:
+        return e.masterServerUrl.empty() ? std::string("LAN only") : std::string("Master server set");
+    default:
+        return {};
+    }
 }
 
 } // namespace noble
