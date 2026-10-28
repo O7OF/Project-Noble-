@@ -1,5 +1,7 @@
 #pragma once
 
+#include "ObjModelPreview.hpp"
+
 #include <d3d11.h>
 #include <filesystem>
 #include <string>
@@ -97,6 +99,16 @@ private:
     int m_cameraMode = 2;
     std::string m_focusScene = "c_full_spartan";   // close-up scene for the focused slot
     bool m_pickerScrollToEquipped = true;
+
+    // Noble's DX11 preview of the local OBJ exports (data\armor\..., git-ignored; O7OF's ObjModelPreview).
+    ObjModelPreview m_spartanObj;
+    ObjModelPreview m_eliteObj;
+    bool m_objInitialized = false;
+    std::string m_spartanObjError, m_eliteObjError;
+    float m_objYaw = -0.32f;      // MCC 3/4 left-facing angle
+    float m_objPitch = 0.03f;
+    float m_objZoom = 0.41f;
+    float m_objFocusY = 0.0f;
     bool m_autoRotate = false;
 
     int m_focusedRow = 0;

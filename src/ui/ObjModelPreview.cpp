@@ -601,7 +601,7 @@ bool ObjModelPreview::Render(ID3D11DeviceContext* context, float rotationRadians
 	context->ClearRenderTargetView(target, clear);
 	context->ClearDepthStencilView(m_depthDsv.Get(), D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
 
-	const float zoom = std::clamp(cam.zoom, 0.65f, 2.8f);
+	const float zoom = std::clamp(cam.zoom, 0.30f, 2.8f);
 	const XMVECTOR eye = XMVectorSet(0.0f, 0.06f, -3.2f / zoom, 1.0f);
 	const XMVECTOR focus = XMVectorSet(cam.focusXOffset, cam.focusYOffset, 0.0f, 1.0f);
 	const XMVECTOR up = XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
@@ -686,8 +686,10 @@ bool ObjModelPreview::Render(ID3D11DeviceContext* context, float rotationRadians
 	ID3D11ShaderResourceView* nullTextures[3]{};
 	context->PSSetShaderResources(0, ARRAYSIZE(nullTextures), nullTextures);
 
+	// Put back whatever was bound before. With no previous target (Noble's own menu frames) the count must be 0:
+	// OMSetRenderTargets(1, nullptr, ...) reads through the null array and crashes inside d3d11.dll.
 	ID3D11RenderTargetView* restoreRtv = oldRtv.Get();
-	context->OMSetRenderTargets(1, oldRtv ? &restoreRtv : nullptr, oldDsv.Get());
+	context->OMSetRenderTargets(oldRtv ? 1u : 0u, oldRtv ? &restoreRtv : nullptr, oldDsv.Get());
 	if (viewportCount > 0) context->RSSetViewports(viewportCount, oldViewports);
 	return true;
 }

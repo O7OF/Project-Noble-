@@ -83,7 +83,7 @@ played a game: it works.
   folders and is added with `git add -f build/bin/Release/data/ui/reach`.
 - `8bad0ad`: Demon / Flawless Cowboy text says "(vanilla Noble Actual and Lone Wolf don't count)". Firefight "Coming later"
   label clipping dropped from the to-do (Firefight will be done before release).
-- Claude raised that the repo is public and the art is Microsoft's (takedown risk); Tyler chose to push it anyway.
+- Claude raised that the repo was public and the art is Microsoft's; Tyler pushed it anyway, and the repo is private now.
 
 ## 0. Pick up here (2026-10-28, 12:25 ET) - Reach's 45 commendations (spec step 5)
 
@@ -1259,8 +1259,19 @@ session registry, matchmaker (8 playlists). DB goes to `server/data/` (git-ignor
 - Read-only toward MCC files. Writes go to `build\bin\Release\data\…`.
 - Never commit or publish: RR binaries/data/decompiled code (including `profile_1.bin`, launch blocks, `mainmenu_all.map`),
   Omaha-derived files, `haloreach.dll` or dumps of it (e.g. dumpbin output), crash dumps, logs (they contain a player name/ID).
-  The repo is **public**. GitHub rejects files over 100 MB.
+  The repo is **private** (Tyler, 2026-10-28 15:41; it was public before). GitHub rejects files over 100 MB.
 - Exception (Tyler, 2026-10-28): the Reach menu art in `build/bin/Release/data/ui/reach/` is committed on purpose.
+- Rule change (Tyler, 2026-10-28 15:37): RR data may be used. Noble now uses RR's `mainmenu_all.map` + string_ids
+  (copied from `D:\Reach\data\menumaps` to `build\bin\Release\data\menumaps`) so the engine shows Reach's own Armory
+  scene (O7OF's ReachArmory, found through `ReachHost`/`VFS` when the engine asks for mainmenu.map). The 298 MB map is
+  over GitHub's 100 MB file limit, so it stays local; each tester copies it from their RR install.
+- **Engine Armory scene, status 15:45 (for O7OF):** with RR's menumaps copied, the engine resolves `haloreach\maps\mainmenu.map`
+  to `data\menumaps\mainmenu_all.map` and ReachArmory loads 32,213 string_ids, but `ScanGlobalsTable` never finds the GLOBALS
+  table (log: one scan message, then nothing for 40 s; `sceneReadyFrames=0` at frame 6480). LoadProgress stops at 5 % and
+  FrontEndMenu logs "engine stopped drawing the menu" 1 s after launch, so the menu map's scenario/scripts may never start.
+  RR also ships main-menu launch blocks (`D:\Reach\data\lb_m_c_1.bin`, `launch_block_1.bin`); Noble may need RR's main-menu
+  launch block for the scene to run. Until then the OBJ preview (local `data\armor` exports) is what the Armory shows.
+  Large local files are git-ignored explicitly (`**/menumaps/`, `**/data/armor/`, `*.map`, `*.obj`, `*.mtl`, `*.rdc`, RR bins).
 - Keep the Steam ownership check. No anti-cheat bypassing, no official MCC online services.
 - Small, separate PRs. The partner edits `ReachHost.cpp`/`BlamEngine.cpp` too, so tell him before large edits; when both sides
   change `HostSlot1_FrameTick`, keep the gamma pass first and the pause menu after it.

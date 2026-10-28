@@ -1,4 +1,5 @@
 #include "ArmorCustomizer.hpp"
+#include "ArmoryPreviewLayers.hpp"
 #include "NobleStyle.hpp"
 #include "common/Logger.hpp"
 #include "engine/ReachArmory.hpp"
@@ -985,28 +986,145 @@ bool ArmorCustomizer::SaveProfile(const std::filesystem::path& path) {
     }
 }
 
+namespace {
+
+// The OBJ exports live outside the repo (git-ignored data\armor\, never committed): looked up next to the exe
+// and up to three folders above it.
+std::filesystem::path FindArmorAssetPath(const std::filesystem::path& relativePath) {
+    std::error_code ec;
+    wchar_t exePath[MAX_PATH] = {};
+    if (GetModuleFileNameW(nullptr, exePath, MAX_PATH) > 0) {
+        std::filesystem::path dir = std::filesystem::path(exePath).parent_path();
+        for (int depth = 0; depth < 4 && !dir.empty(); ++depth) {
+            const std::filesystem::path candidate = dir / relativePath;
+            if (std::filesystem::is_regular_file(candidate, ec)) return candidate;
+            dir = dir.parent_path();
+        }
+    }
+    return relativePath;
+}
+
+// Camera framing per slot for the OBJ preview: {zoom, look-at height}. 1.0 = whole body.
+struct Framing { float zoom, focusY; };
+Framing FramingFor(const std::string& scene, int cameraMode, bool elite) {
+    // The preview scales the body to a fixed size around its centre (about the hips); the camera sees
+    // +-0.86/zoom up and down. Measured from a capture: head ~+1.7, shoulders ~+1.3, chest ~+0.9,
+    // thighs ~-0.5, knees ~-1.05, feet ~-1.95.
+    if (cameraMode == 1 || elite) return { 0.41f, 0.0f };
+    if (cameraMode == 0) return { 0.52f, 0.40f };
+    if (scene == "c_helmet") return { 1.50f, 1.70f };
+    if (scene == "c_left_shoulder" || scene == "c_right_shoulder") return { 1.05f, 1.30f };
+    if (scene == "c_chest") return { 0.95f, 0.90f };
+    if (scene == "c_wrist") return { 0.60f, 0.80f };
+    if (scene == "c_utility") return { 0.95f, -0.50f };
+    if (scene == "c_knees") return { 0.95f, -1.05f };
+    return { 0.41f, 0.0f };
+}
+
+} // namespace
+
 void ArmorCustomizer::RenderCharacterPreview(ID3D11Device* device, ID3D11DeviceContext* context,
                                              float width, float height, bool fullBleed) {
-    (void)device;
-    (void)context;
-    (void)fullBleed;
-
-    // The live Halo: Reach engine (`haloreach.dll`) renders the 3D Armory Spartan / Elite scene
-    // (`mainmenu_all.map`) into the swap chain behind this transparent area.
     const ImVec2 cursorPos = ImGui::GetCursorScreenPos();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const bool elite = m_previewSpecies == PlayerSpecies::Elite;
 
-    if (!ReachArmory::IsSceneReady()) {
-        ImDrawList* dl = ImGui::GetWindowDrawList();
-        const char* msg = "LOADING HALO: REACH ARMORY SCENE...";
-        const ImVec2 ts = ImGui::CalcTextSize(msg);
-        dl->AddText(ImVec2(cursorPos.x + (width - ts.x) * 0.5f, cursorPos.y + height * 0.45f),
-                    IM_COL32(143, 216, 255, 220), msg);
+    // 1. Reach's own Armory scene (MCC's model, O7OF's ReachArmory) wins whenever it is up; the OBJ preview below
+    //    is only a stand-in until that works without a main-menu map.
+    // 2. Noble's own DX11 preview of the local OBJ exports (O7OF's ObjModelPreview).
+    const bool engineScene = ReachArmory::IsSceneReady();
+    if (!engineScene && device && context && !m_objInitialized) {
+        m_objInitialized = true;
+
+        if (m_spartanObj.Initialize(device)) m_spartanObj.LoadModel(FindArmorAssetPath("data/armor/spartans/spartans.obj"), m_spartanObjError);
+        if (m_eliteObj.Initialize(device)) m_eliteObj.LoadModel(FindArmorAssetPath("data/armor/elite/elite.obj"), m_eliteObjError);
+        NOBLE_INFO("ArmorCustomizer: OBJ preview Spartan {} ({}), Elite {} ({})", m_spartanObj.IsLoaded() ? "loaded" : "missing",
+                   m_spartanObjError, m_eliteObj.IsLoaded() ? "loaded" : "missing", m_eliteObjError);
+    }
+    ObjModelPreview& obj = elite ? m_eliteObj : m_spartanObj;
+    if (!engineScene && context && obj.IsLoaded()) {
+        // Ease toward the framing of the slot being edited.
+        const Framing target = FramingFor(m_focusScene, m_cameraMode, elite);
+        const float k = std::clamp(ImGui::GetIO().DeltaTime * 6.0f, 0.0f, 1.0f);
+        m_objZoom += (target.zoom - m_objZoom) * k;
+        m_objFocusY += (target.focusY - m_objFocusY) * k;
+        if (m_autoRotate) m_objYaw += ImGui::GetIO().DeltaTime * 0.35f;
+
+        ArmoryLook look;
+        look.elite = elite;
+        look.female = m_profile.bodyType == BodyType::Female;
+        look.eliteSet = m_profile.eliteArmorSet;
+        const auto& helmets = GetSpartanHelmets();
+        const auto& h = helmets[std::clamp(m_profile.helmetIndex, 0, static_cast<int>(helmets.size()) - 1)];
+        look.helmet = h.name;
+        look.helmetVariant = h.variants[std::clamp(m_profile.helmetVariantIndex, 0, static_cast<int>(h.variants.size()) - 1)].name;
+        const auto& shoulders = GetSpartanShoulders();
+        look.leftShoulder = shoulders[std::clamp(m_profile.leftShoulderIndex, 0, static_cast<int>(shoulders.size()) - 1)].name;
+        look.rightShoulder = shoulders[std::clamp(m_profile.rightShoulderIndex, 0, static_cast<int>(shoulders.size()) - 1)].name;
+        const auto& chests = GetSpartanChests();
+        const auto& c = chests[std::clamp(m_profile.chestIndex, 0, static_cast<int>(chests.size()) - 1)];
+        look.chest = c.name;
+        look.prostheticArm = c.hasProstheticArm;
+        auto nameAt = [](const std::vector<MultiLayerSpec>& list, int i) { return std::string(list[std::clamp(i, 0, static_cast<int>(list.size()) - 1)].name); };
+        look.wrist = nameAt(GetSpartanWrists(), m_profile.wristIndex);
+        look.utility = nameAt(GetSpartanUtilities(), m_profile.utilityIndex);
+        look.knees = nameAt(GetSpartanKneeGuards(), m_profile.kneeGuardsIndex);
+
+        std::vector<ObjPreviewLayer> layers;
+        std::string referenceGroup;
+        BuildArmoryPreviewLayers(look, layers, referenceGroup);
+
+        const auto& pCol = kReachColors[std::clamp(m_profile.primaryColor, 0, 29)];
+        const auto& sCol = kReachColors[std::clamp(m_profile.secondaryColor, 0, 29)];
+        const auto& vCol = kVisorColors[std::clamp(m_profile.visorColorIndex, 0, static_cast<int>(kVisorColors.size()) - 1)];
+        ObjPreviewColors colors;
+        colors.primary = { pCol.r, pCol.g, pCol.b, 1.0f };
+        colors.secondary = { sCol.r, sCol.g, sCol.b, 1.0f };
+        colors.detail = { 0.15f, 0.16f, 0.18f, 1.0f };
+        colors.visor = { vCol.r, vCol.g, vCol.b, 1.0f };
+
+        ObjPreviewCamera cam{};
+        cam.referenceGroup = referenceGroup;
+        cam.pitchRadians = m_objPitch;
+        cam.zoom = m_objZoom;
+        cam.focusYOffset = m_objFocusY;
+        cam.transparentBackground = fullBleed;
+        obj.Render(context, m_objYaw, layers, colors, &cam);
+
+        if (ID3D11ShaderResourceView* srv = obj.GetPreviewTexture()) {
+            // Cover the area, keeping the render target's aspect.
+            const float aspect = static_cast<float>(obj.GetWidth()) / static_cast<float>(std::max<UINT>(1, obj.GetHeight()));
+            float dw = width, dh = dw / aspect;
+            if (dh < height) { dh = height; dw = dh * aspect; }
+            const ImVec2 p0(cursorPos.x + (width - dw) * 0.5f, cursorPos.y + (height - dh) * 0.5f);
+            dl->PushClipRect(cursorPos, ImVec2(cursorPos.x + width, cursorPos.y + height), true);
+            dl->AddImage(reinterpret_cast<ImTextureID>(srv), p0, ImVec2(p0.x + dw, p0.y + dh));
+            dl->PopClipRect();
+        }
+        ImGui::InvisibleButton("##character_preview_drag", ImVec2(width, height));
+        if (ImGui::IsItemActive() &&
+            (ImGui::IsMouseDragging(ImGuiMouseButton_Left) || ImGui::IsMouseDragging(ImGuiMouseButton_Right))) {
+            m_objYaw -= ImGui::GetIO().MouseDelta.x * 0.011f;
+            m_objPitch = std::clamp(m_objPitch + ImGui::GetIO().MouseDelta.y * 0.005f, -0.35f, 0.35f);
+        }
+        if (ImGui::IsItemHovered()) {
+            const float wheel = ImGui::GetIO().MouseWheel;
+            if (std::abs(wheel) > 0.01f) {
+                if (wheel > 0.0f) m_cameraMode = 2;
+                else m_cameraMode = (m_cameraMode == 2) ? 1 : 0;
+            }
+        }
+        return;
     }
 
-    if (m_autoRotate) {
-        ReachArmory::AddYawRotation(ImGui::GetIO().DeltaTime * 0.45f);
+    // Engine scene (or nothing to show).
+    if (!engineScene) {
+        const std::string msg = "NO 3D PREVIEW: put the Armory model exports in data\\armor\\spartans and data\\armor\\elite";
+        const ImVec2 ts = ImGui::CalcTextSize(msg.c_str());
+        dl->AddText(ImVec2(cursorPos.x + std::max(0.0f, (width - ts.x) * 0.5f), cursorPos.y + height * 0.45f),
+                    IM_COL32(143, 216, 255, 220), msg.c_str());
     }
-
+    if (m_autoRotate) ReachArmory::AddYawRotation(ImGui::GetIO().DeltaTime * 0.45f);
     ImGui::InvisibleButton("##character_preview_drag", ImVec2(width, height));
     if (ImGui::IsItemActive() &&
         (ImGui::IsMouseDragging(ImGuiMouseButton_Left) || ImGui::IsMouseDragging(ImGuiMouseButton_Right))) {
@@ -1015,7 +1133,6 @@ void ArmorCustomizer::RenderCharacterPreview(ID3D11Device* device, ID3D11DeviceC
     if (ImGui::IsItemHovered()) {
         const float wheel = ImGui::GetIO().MouseWheel;
         if (std::abs(wheel) > 0.01f) {
-            // Wheel up: close-up of the slot being edited; wheel down: whole body, then the Armory view.
             if (wheel > 0.0f) m_cameraMode = 2;
             else m_cameraMode = (m_cameraMode == 2) ? 1 : 0;
             UpdateArmoryCamera();
@@ -1082,9 +1199,11 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
     if (!ImGui::GetIO().WantTextInput) {
         if (ImGui::IsKeyDown(ImGuiKey_Q) || ImGui::IsKeyDown(ImGuiKey_GamepadRStickLeft)) {
             ReachArmory::AddYawRotation(ImGui::GetIO().DeltaTime * 1.8f);
+            m_objYaw += ImGui::GetIO().DeltaTime * 1.8f;
         }
         if (ImGui::IsKeyDown(ImGuiKey_E) || ImGui::IsKeyDown(ImGuiKey_GamepadRStickRight)) {
             ReachArmory::AddYawRotation(-ImGui::GetIO().DeltaTime * 1.8f);
+            m_objYaw -= ImGui::GetIO().DeltaTime * 1.8f;
         }
     }
 

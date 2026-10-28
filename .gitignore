@@ -26,3 +26,14 @@ docs/reach_renaissance_reverse_engineering_report.md
 preferences.dat
 *dumpbin*
 dumpbin.txt
+
+# Large local game / RR files: never in git (GitHub limit 100 MB). Copy them from your own MCC / RR install.
+**/menumaps/
+**/data/armor/
+*.map
+*.rdc
+*.obj
+*.mtl
+profile_*.bin
+rr_profile*.bin
+launch_block*.bin
