@@ -535,16 +535,14 @@ constexpr std::array<SimpleOption, 7> kArmorEffects = {{
     {"BLUE FLAMES",       "blue_flames",       "Bungie Eternal cobalt-plasma flames wreathe the operator's helmet."},
 }};
 
-constexpr std::array<SimpleOption, 16> kFirefightVoices = {{
+// Reach's own 12 Firefight voices (MCC playercustomization.xml). The ODST-only voices
+// (Dare, Dutch, Mickey, Romeo) were removed: Reach has no voice files for them.
+constexpr std::array<SimpleOption, 12> kFirefightVoices = {{
     {"NOBLE SIX",      "noble_six", "Default Spartan-B312 combat vocalizations for Firefight."},
     {"CORTANA",        "cortana",   "CTN 0452-9 AI construct combat callouts for Firefight."},
     {"JOHN-117",       "chief",     "Master Chief Petty Officer John-117 combat callouts for Firefight."},
     {"SGTMAJ JOHNSON", "johnson",   "Sergeant Major Avery Junior Johnson combat callouts for Firefight."},
     {"GY. SGT BUCK",   "buck",      "Gunnery Sergeant Edward Buck ODST combat callouts for Firefight."},
-    {"CAPT. DARE",     "dare",      "ONI Captain Veronica Dare combat callouts for Firefight."},
-    {"CPL. DUTCH",     "dutch",     "Corporal Taylor 'Dutch' Miles ODST combat callouts for Firefight."},
-    {"PFC. MICKEY",    "mickey",    "Private First Class Michael 'Mickey' Crespo ODST callouts."},
-    {"LCPL. ROMEO",    "romeo",     "Lance Corporal Kojo 'Romeo' Agu ODST combat callouts."},
     {"GYSGT. STACKER", "stacker",   "Gunnery Sergeant Pete Stacker UNSC Marine combat callouts."},
     {"CDR. CARTER",    "carter",    "Commander Carter-A259 (Noble One) combat callouts for Firefight."},
     {"LCDR. KAT",      "kat",       "Lieutenant Commander Catherine-B320 (Noble Two) combat callouts."},
@@ -873,6 +871,14 @@ bool ArmorCustomizer::LoadProfile(const std::filesystem::path& path) {
                 m_profile.armorEffectIndex = sp["armor_effect_index"].get<int>();
             if (sp.contains("firefight_voice_index") && sp["firefight_voice_index"].is_number_integer())
                 m_profile.firefightVoiceIndex = sp["firefight_voice_index"].get<int>();
+            // The voice id wins over the index: files saved with the old 16-voice list have other indices.
+            if (sp.contains("voice_id") && sp["voice_id"].is_string()) {
+                const std::string voiceId = sp["voice_id"].get<std::string>();
+                m_profile.firefightVoiceIndex = 0;   // removed ODST voices -> Noble Six
+                for (size_t v = 0; v < kFirefightVoices.size(); ++v) {
+                    if (voiceId == kFirefightVoices[v].stringId) m_profile.firefightVoiceIndex = static_cast<int>(v);
+                }
+            }
         }
 
         if (j.contains("elite") && j["elite"].is_object()) {

@@ -803,9 +803,15 @@ static const std::unordered_map<std::string, uint32_t>& Chests() {
     return k;
 }
 
-// Firefight voices in Armory order -> MCC item. Reach has 12; the four ODST-only voices
-// (Dare, Dutch, Mickey, Romeo) have no Reach item and fall back to Noble Six.
-constexpr uint32_t kVoices[16] = { 180, 190, 191, 189, 188, 180, 180, 180, 180, 187, 186, 184, 182, 183, 181, 185 };
+// Firefight voices by the Armory's voice_id -> MCC item (HR_FirefightVoice_*). Unknown ids -> Noble Six.
+static uint32_t VoiceItem(const std::string& id) {
+    static const std::unordered_map<std::string, uint32_t> k = {
+        {"noble_six", 180}, {"jorge", 181}, {"jun", 182}, {"emile", 183}, {"kat", 184}, {"dot", 185},
+        {"carter", 186}, {"stacker", 187}, {"buck", 188}, {"johnson", 189}, {"cortana", 190}, {"chief", 191},
+    };
+    const auto it = k.find(id);
+    return it != k.end() ? it->second : 180;
+}
 } // namespace armory_ids
 
 static void ApplyArmoryAppearance(uint8_t* profile) {
@@ -854,7 +860,7 @@ static void ApplyArmoryAppearance(uint8_t* profile) {
         put(0x70, kVisor + num(sp, "visor_color_index", 0, 4, 0));
         put(0x8C, kEffect + effect);
         put(0x90, kEliteEffect + effect);
-        put(0x94, kVoices[num(sp, "firefight_voice_index", 0, 15, 0)]);
+        put(0x94, VoiceItem(str(sp, "voice_id")));
         put(0x98, kColor + num(appearance, "primary_color", 0, 29, 1));
         put(0x9C, kColor + num(appearance, "secondary_color", 0, 29, 10));
         put(0xA0, kColor);

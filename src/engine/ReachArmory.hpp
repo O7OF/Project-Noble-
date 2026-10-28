@@ -19,7 +19,7 @@ struct ReachArmorySelection {
     int secondaryColorIndex = 10; // 0..29 (Green/Brick)
     int visorColorIndex = 0;      // 0..4
     int armorEffectIndex = 0;     // 0..6
-    int firefightVoiceIndex = 0;  // 0..15
+    int firefightVoiceIndex = 0;  // 0..11
     int eliteSuitIndex = 0;       // 0..7
     std::string serviceTag = "N06";
 
