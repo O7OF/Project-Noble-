@@ -44,7 +44,9 @@ file changes (checked twice a second), so an Armory save during a session reache
 - **Not verifiable in first person:** helmet, shoulders, chest and the Elite armor set only show in third person
   (the first-person Elite hand looks the same for Minor and General). **Tyler: please check in game** (die, or look
   at yourself in the Armory/another player's view) that the helmet and Elite set match the Armory.
-- Unsure mappings: GRD variants (`hilands_a` -> GRD_CBRN, `hilands_b` -> GRD_OPTREX), Mariner variants by name;
+- GRD now offers MCC's four variants in MCC order (`5808e5e`): BASE `hilands`, OPTREX `hilands_b`, CBRN `hilands_a`,
+  OPTREX/CBRN `hilands_c` (new; the Armory preview may have no model for it). Saved helmets load by `helmet_id`.
+  Tested: GRD Optrex/CBRN reaches the profile as item 71 and a Sword Base match runs. Mariner variants map by name;
   "HIGHLANDS" chest has no MCC item (falls back to default). The ODST-only Firefight voices (Dare, Dutch,
   Mickey, Romeo) were removed from the Armory (`e950306`, Tyler's call); the voice now goes by `voice_id`, and old
   saves that picked one of them load as Noble Six. Whether the engine re-reads the profile at respawn (live change
