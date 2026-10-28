@@ -49,8 +49,12 @@ UiTexture MapPreview(const std::string& scenario, bool large);
 // Skull icon (128x128) by MCC icon name ("IRON", "BLACKEYE", ...).
 UiTexture SkullIcon(const std::string& iconName);
 
-// Controller picture for the controls settings page.
+// Controller picture for the controls settings page: MCC's own picture (texture packs).
 UiTexture ControllerImage();
+
+// Noble's Xbox 360 controller picture (controller.png in data\ui\custom or data\ui\noble, front view,
+// 1600x1000 layout); empty when there is none, then the page falls back to ControllerImage().
+UiTexture NobleControllerImage();
 
 // Draws `tex` to cover the rectangle (keeps the aspect ratio, crops the overflow).
 void DrawCover(ImDrawList* dl, const UiTexture& tex, ImVec2 min, ImVec2 max, ImU32 tint = IM_COL32_WHITE);

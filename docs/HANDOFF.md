@@ -12,9 +12,11 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 ---
 
 
-## 0. Pick up here (23:58 ET) — Display Settings & FPS Control
+## 0. Pick up here (23:58 ET) — Display Settings & FPS Control + Controller Picture
 
 **23:58 (O7OF):** Bumped to version 0.8.1 with FOV/VSync/FPS limit/FPS counter display fully implemented. The FPS counter displays in-game (upper-right, blue text on dark box, toggled via Settings > Display). VSync and frame-cap are applied in the swap-chain Present hook and take effect immediately without restarting. FOV slider stores selections (60–120°, default 90) but remains **UI-only** until the game camera mapping is verified via profile capture. The preview loads local MCC-derived Spartan/Elite OBJ groups, undersuits, and Elite harness layers; color masks and visor tint work in the preview. In-game armor and color IDs remain unmapped, so preview selections do not change the character yet.
+
+**23:45 (upstream):** Controller picture replaced (item 5, built + screenshot-checked). O7OF made a 1600x1000 transparent PNG of an Xbox 360 pad; it is tracked at `assets/ui/noble/controller.png` (original work, OK for the public repo). CMake now also copies `assets\` into `<exe>\data\` after a build (data\ itself stays git-ignored). `UiArt::NobleControllerImage()` loads `controller.png` from `data\ui\custom` then `data\ui\noble`; SettingsPanel uses it with its own callout table (`kReach360`, straight leader lines, left margin sized from the widest label) and falls back to MCC's LARGECONTROLLERFRONT with the old table when the file is missing.
 
 **Do not commit or distribute OBJ files from `data/armor` or profile captures.** Use `-capture-profile data/profile-captures` to record Slot 34 profile buffers for before/after comparisons; delete captures after analysis.
 
@@ -30,11 +32,10 @@ Open list, in priority order:
 3. **Map FOV to the game camera and verify it works in-game** (`camera_set_field_of_view` found but not yet wired)
 4. **Controller settings** (stick sensitivity, invert, dead zones, vibration): find how Noble currently feeds input to the engine, then add UI in Settings
 5. **Menu music picker**: Tyler wants cleaner UI (~360 tracks; current grouped dropdown is unwieldy)
-6. **Controller picture** on Settings > Controls is pixelated (MCC `LARGECONTROLLERFRONT` scaled)
-7. Check in game: Forge menus and loadout cards no longer show hex (expected fixed by Slot 55)
-8. Noble exiting from inside a game: confirm `tasklist | findstr /i noble` is empty afterwards
-9. Mod-only maps (not in Reach's tables) are listed but disabled: needs map-id work in BlamEngine
-10. Halo 2 Anniversary music (`sounds_*.dat`) not readable yet
+6. Check in game: Forge menus and loadout cards no longer show hex (expected fixed by Slot 55)
+7. Noble exiting from inside a game: confirm `tasklist | findstr /i noble` is empty afterwards
+8. Mod-only maps (not in Reach's tables) are listed but disabled: needs map-id work in BlamEngine
+9. Halo 2 Anniversary music (`sounds_*.dat`) not readable yet
 
 Build/run (Developer Command Prompt, not plain PowerShell - cmake is only on PATH there):
 `cd /d D:\Halo-Reach-Community-Edition && cmake --build build --config Release && cd build\bin\Release && noble-client.exe`

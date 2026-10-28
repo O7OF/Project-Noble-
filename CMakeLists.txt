@@ -215,6 +215,15 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/data)
     )
 endif()
 
+# Noble's own art (original work, tracked in assets\) goes into the same data folder.
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/assets)
+    add_custom_command(TARGET noble-client POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            ${CMAKE_CURRENT_SOURCE_DIR}/assets
+            $<TARGET_FILE_DIR:noble-client>/data
+    )
+endif()
+
 # -----------------------------------------------------------------------------
 # Headless Dedicated Server Binary (noble-dedicated.exe)
 # -----------------------------------------------------------------------------
