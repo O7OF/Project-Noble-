@@ -121,6 +121,10 @@ void Settings::Load() {
                 d.masterServerUrl = "https://outbreak-z-test-server.onrender.com";
             }
             Read(j, "favorites", d.favorites);
+            Read(j, "accountUsername", d.accountUsername);
+            Read(j, "accountToken", d.accountToken);
+            Read(j, "isDeveloper", d.isDeveloper);
+            Read(j, "accountUserId", d.accountUserId);
             auto keys = j.find("keyOverrides");
             if (keys != j.end() && keys->is_object()) {
                 for (auto it = keys->begin(); it != keys->end(); ++it) {
@@ -180,6 +184,10 @@ bool Settings::Save() {
         j["serviceTag"] = d.serviceTag;
         j["masterServerUrl"] = d.masterServerUrl;
         j["favorites"] = d.favorites;
+        j["accountUsername"] = d.accountUsername;
+        j["accountToken"] = d.accountToken;
+        j["isDeveloper"] = d.isDeveloper;
+        j["accountUserId"] = d.accountUserId;
         nlohmann::json keys = nlohmann::json::object();
         for (const auto& [action, vk] : d.keyOverrides) keys[std::to_string(action)] = vk;
         j["keyOverrides"] = keys;

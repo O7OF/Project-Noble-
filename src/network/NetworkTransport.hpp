@@ -6,6 +6,9 @@
 #include <string>
 #include <mutex>
 #include <unordered_map>
+#include <vector>
+#include <deque>
+#include <thread>
 #include <atomic>
 
 namespace noble {
@@ -33,6 +36,13 @@ public:
 
     void GetSessionGuid(uint8_t outGuid16[16]) const;
 
+    // Direct peer registration & NAT hole punching
+    void AddPeer(uint64_t machineId, const std::string& ip, uint16_t port);
+
+    // Master Server WebSocket packet relay
+    void StartRelay(const std::string& relayUrl, const std::string& sessionId, bool isHost, uint64_t machineId);
+    void StopRelay();
+
     // Host Slot 41 callback: Engine sending packet to a remote peer
     uint64_t OnNetSend(uint64_t targetPeerId, const uint8_t* data, size_t size);
 
@@ -42,6 +52,8 @@ public:
 private:
     NetworkTransport();
     ~NetworkTransport();
+
+    void RelayWorkerThread(std::string relayUrl, std::string sessionId, bool isHost, uint64_t machineId);
 
     std::atomic<bool> m_active{ false };
     bool m_isHost = true;
@@ -59,7 +71,13 @@ private:
 
     std::atomic<uint64_t> m_packetsSent{ 0 };
     std::atomic<uint64_t> m_packetsRecv{ 0 };
+
+    // Relay members
+    std::atomic<bool> m_relayActive{ false };
+    std::thread m_relayThread;
+    std::mutex m_relayMutex;
+    std::deque<std::vector<uint8_t>> m_relaySendQueue;
+    std::deque<std::vector<uint8_t>> m_relayRecvQueue;
 };
 
 } // namespace noble
-

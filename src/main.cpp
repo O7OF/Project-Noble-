@@ -18,6 +18,7 @@
 #include "ui/LoadScreen.hpp"
 #include "network/SessionManager.hpp"
 #include "network/MasterServerClient.hpp"
+#include "network/AuthClient.hpp"
 #include "network/UPnP.hpp"
 #include "common/Settings.hpp"
 #include "common/Relaunch.hpp"
@@ -160,6 +161,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 
     // Player settings (data\userdata\settings.json): window size, controls, volumes, name, servers.
     noble::Settings::Get().Load();
+    noble::AuthClient::Get().Initialize();
     const noble::SettingsData startupSettings = noble::Settings::Get().Snapshot();
 
     // 6. Create Win32 host window

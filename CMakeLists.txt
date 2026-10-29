@@ -149,6 +149,7 @@ set(SOURCES
     src/career/Career.cpp
     src/network/MasterServerClient.cpp
     src/network/NetworkTransport.cpp
+    src/network/AuthClient.cpp
 )
 
 set(HEADERS
@@ -201,6 +202,7 @@ set(HEADERS
     src/career/Career.hpp
     src/network/MasterServerClient.hpp
     src/network/NetworkTransport.hpp
+    src/network/AuthClient.hpp
 )
 
 add_executable(noble-client WIN32 ${SOURCES} ${HEADERS})

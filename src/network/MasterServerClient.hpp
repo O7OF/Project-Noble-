@@ -40,6 +40,14 @@ struct MasterAdvert {
     bool isMod = false;
 };
 
+struct MasterJoinInfo {
+    bool ok = false;
+    std::string error;
+    std::string hostIp;
+    uint16_t hostPort = 11774;
+    std::string relayUrl;
+};
+
 // Small HTTP client for tools/master-server (see its README). The address comes from the
 // SETTINGS tab (settings.json "masterServerUrl") or "-master-server <url>"; when it is empty only
 // LAN games are shown. All network calls run on one background thread, so the menus never block.
@@ -57,6 +65,9 @@ public:
     void UpdateAdvert(int playerCount, bool inProgress);
     void StopAdvertising();
     bool IsAdvertising() const { return m_advertising.load(); }
+
+    // Join signaling to trigger host NAT hole punching & WebSocket relay URL retrieval
+    MasterJoinInfo JoinSessionSync(const std::string& sessionId, uint64_t guestMachineId, uint16_t guestPort);
 
     // Browsing: ask for the list (asynchronously); the result is read with Sessions().
     void RequestList();

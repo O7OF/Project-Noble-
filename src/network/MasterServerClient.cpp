@@ -1,5 +1,6 @@
 #include "MasterServerClient.hpp"
 #include "UPnP.hpp"
+#include "NetworkTransport.hpp"
 #include "common/Logger.hpp"
 #include "common/Version.hpp"
 
@@ -355,12 +356,31 @@ void MasterServerClient::DoHeartbeat() {
                 {"map", m_advert.map}};
     }
     const HttpResult r = HttpRequest(Url(), L"PUT", "/api/sessions/heartbeat", body.dump(), token);
-    if (r.status == 404) {
-        // The server forgot us (restart or timeout): register again on the next tick.
+    if (r.ok) {
+        try {
+            auto j = nlohmann::json::parse(r.body);
+            if (j.contains("pending_joins") && j["pending_joins"].is_array()) {
+                for (const auto& pj : j["pending_joins"]) {
+                    std::string ip = pj.value("ip", "");
+                    uint16_t port = static_cast<uint16_t>(pj.value("port", 11774));
+                    std::string midStr = pj.value("machine_id", "");
+                    uint64_t mid = 0;
+                    try { mid = std::stoull(midStr); } catch (...) {}
+                    if (!ip.empty()) {
+                        NetworkTransport::Get().AddPeer(mid, ip, port);
+                    }
+                }
+            }
+            if (j.contains("relay_url") && j["relay_url"].is_string()) {
+                std::string relayUrl = j["relay_url"].get<std::string>();
+                NetworkTransport::Get().StartRelay(relayUrl, id, true, NetworkTransport::Get().GetLocalMachineId());
+            }
+        } catch (...) {}
+    } else if (r.status == 404) {
         std::lock_guard<std::mutex> lock(m_mutex);
         m_sessionId.clear();
         m_sessionToken.clear();
-    } else if (!r.ok) {
+    } else {
         SetStatus("heartbeat failed: " + r.error);
     }
 }
@@ -377,6 +397,35 @@ void MasterServerClient::DoUnregister() {
     if (id.empty()) return;
     HttpRequest(Url(), L"DELETE", "/api/sessions/" + id, {}, token);
     SetStatus("your game was removed from the master server");
+}
+
+MasterJoinInfo MasterServerClient::JoinSessionSync(const std::string& sessionId, uint64_t guestMachineId, uint16_t guestPort) {
+    MasterJoinInfo info;
+    if (sessionId.empty()) {
+        info.error = "Session ID is empty";
+        return info;
+    }
+    nlohmann::json body = {
+        { "guest_port", guestPort },
+        { "guest_machine_id", std::to_string(guestMachineId) },
+        { "guest_address", UPnP::Get().GetExternalIP() }
+    };
+    const HttpResult r = HttpRequest(Url(), L"POST", "/api/sessions/" + sessionId + "/join", body.dump());
+    if (!r.ok) {
+        info.error = r.error;
+        return info;
+    }
+    try {
+        auto j = nlohmann::json::parse(r.body);
+        info.ok = true;
+        info.hostIp = j.value("host_ip", "");
+        info.hostPort = static_cast<uint16_t>(j.value("host_port", 11774));
+        info.relayUrl = j.value("relay_url", "");
+        return info;
+    } catch (...) {
+        info.error = "Unreadable join response";
+        return info;
+    }
 }
 
 } // namespace noble

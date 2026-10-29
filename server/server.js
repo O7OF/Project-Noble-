@@ -3,6 +3,7 @@ const sqlite3 = require('sqlite3').verbose();
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const net = require('net');
+const { WebSocketServer } = require('ws');
 const path = require('path');
 const fs = require('fs');
 
@@ -439,7 +440,48 @@ app.put('/api/sessions/heartbeat', (req, res) => {
     }
     if (body.in_progress !== undefined) session.inProgress = body.in_progress === true;
     if (body.map !== undefined) session.map = masterCleanText(body.map, session.map, 48);
-    res.json({ success: true });
+
+    const pendingJoins = session.pendingJoins || [];
+    session.pendingJoins = [];
+    const hostHeader = req.headers.host || 'outbreak-z-test-server.onrender.com';
+    res.json({
+        success: true,
+        pending_joins: pendingJoins,
+        relay_url: `wss://${hostHeader}/ws/relay?session=${session.id}&role=host`
+    });
+});
+
+app.post('/api/sessions/:id/join', (req, res) => {
+    const session = masterSessions.get(String(req.params.id));
+    if (!session) return res.status(404).json({ error: "Session not found" });
+
+    const body = req.body || {};
+    let guestIp = masterClientIp(req);
+    if (typeof body.guest_address === 'string' && net.isIP(body.guest_address.trim())) {
+        const cand = body.guest_address.trim();
+        if (!isPrivateIp(cand)) guestIp = cand;
+        else if (isPrivateIp(guestIp)) guestIp = cand;
+    }
+    const guestPort = masterCleanInt(body.guest_port, 11774, 1, 65535);
+    const guestMachineId = String(body.guest_machine_id || '');
+
+    if (!session.pendingJoins) session.pendingJoins = [];
+    session.pendingJoins.push({
+        ip: guestIp,
+        port: guestPort,
+        machine_id: guestMachineId,
+        timestamp: Date.now()
+    });
+    if (session.pendingJoins.length > 32) session.pendingJoins.shift();
+
+    const hostHeader = req.headers.host || 'outbreak-z-test-server.onrender.com';
+    res.json({
+        success: true,
+        session_id: session.id,
+        host_ip: session.address,
+        host_port: session.port,
+        relay_url: `wss://${hostHeader}/ws/relay?session=${session.id}&role=guest&peerId=${guestMachineId}`
+    });
 });
 
 
@@ -1739,6 +1781,91 @@ app.use((err, req, res, next) => {
 const PORT = process.env.PORT || 3000;
 const server = app.listen(PORT, () => {
     console.log(`[Server] Outbreak-Z dedicated backend running on port ${PORT}`);
+});
+
+// ── WebSocket Netcode Packet Relay ──────────────────────────────────────────
+const wss = new WebSocketServer({ noServer: true });
+const relayRooms = new Map(); // sessionId -> { hostWs: WebSocket|null, guests: Map<string, WebSocket> }
+
+server.on('upgrade', (request, socket, head) => {
+    let reqUrl;
+    try {
+        reqUrl = new URL(request.url, 'http://' + (request.headers.host || 'localhost'));
+    } catch (e) {
+        socket.destroy();
+        return;
+    }
+
+    if (reqUrl.pathname === '/ws/relay') {
+        wss.handleUpgrade(request, socket, head, (ws) => {
+            wss.emit('connection', ws, request, reqUrl);
+        });
+    } else {
+        socket.destroy();
+    }
+});
+
+wss.on('connection', (ws, req, reqUrl) => {
+    const sessionId = reqUrl.searchParams.get('session') || '';
+    const role = (reqUrl.searchParams.get('role') || 'guest').toLowerCase();
+    const peerId = reqUrl.searchParams.get('peerId') || '';
+
+    if (!sessionId) {
+        ws.close(1008, 'Session ID required');
+        return;
+    }
+
+    let room = relayRooms.get(sessionId);
+    if (!room) {
+        room = { hostWs: null, guests: new Map() };
+        relayRooms.set(sessionId, room);
+    }
+
+    if (role === 'host') {
+        room.hostWs = ws;
+        console.log(`[Relay] Host connected for session ${sessionId}`);
+    } else {
+        room.guests.set(peerId, ws);
+        console.log(`[Relay] Guest 0x${peerId} connected for session ${sessionId}`);
+    }
+
+    ws.on('message', (data, isBinary) => {
+        if (!isBinary && typeof data === 'string') {
+            try { data = Buffer.from(data); } catch(e) { return; }
+        }
+        if (!Buffer.isBuffer(data) || data.length < 8) return;
+
+        if (role === 'guest') {
+            // Forward Guest packet directly to Host
+            if (room.hostWs && room.hostWs.readyState === ws.OPEN) {
+                room.hostWs.send(data, { binary: true });
+            }
+        } else if (role === 'host') {
+            // Host sends packet to Guest(s)
+            for (const [gid, gws] of room.guests.entries()) {
+                if (gws.readyState === ws.OPEN) {
+                    gws.send(data, { binary: true });
+                }
+            }
+        }
+    });
+
+    ws.on('close', () => {
+        if (role === 'host') {
+            if (room.hostWs === ws) room.hostWs = null;
+            console.log(`[Relay] Host disconnected for session ${sessionId}`);
+        } else {
+            room.guests.delete(peerId);
+            console.log(`[Relay] Guest 0x${peerId} disconnected for session ${sessionId}`);
+        }
+        if (!room.hostWs && room.guests.size === 0) {
+            relayRooms.delete(sessionId);
+        }
+    });
+
+    ws.on('error', (err) => {
+        console.error(`[Relay] Error on session ${sessionId}:`, err.message);
+    });
 });
 
 // ── Graceful Shutdown ────────────────────────────────────────────────────────

@@ -56,7 +56,13 @@ struct SettingsData {
     std::string playerName = "NobleSix";
     std::string serviceTag = "NOBL";  // Reach service tag: 1-4 letters/digits, upper case (profile +0x1AC)
     std::string masterServerUrl = "https://outbreak-z-test-server.onrender.com"; // empty = LAN only
-    std::vector<std::string> favorites; // "address:port" entries saved in the SERVERS tab
+    std::vector<std::string> favorites;
+
+    // Account / Auth
+    std::string accountUsername = "";
+    std::string accountToken = "";
+    bool isDeveloper = false;
+    int accountUserId = 0; // "address:port" entries saved in the SERVERS tab
 };
 
 class Settings {

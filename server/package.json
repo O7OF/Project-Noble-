@@ -8,8 +8,9 @@
     "set-dev": "node set_dev.js"
   },
   "dependencies": {
+    "bcryptjs": "^2.4.3",
     "express": "^4.19.2",
     "sqlite3": "^5.1.7",
-    "bcryptjs": "^2.4.3"
+    "ws": "^8.22.0"
   }
 }

@@ -1,8 +1,11 @@
 #include "NetworkTransport.hpp"
 #include "common/Logger.hpp"
 
+#include <windows.h>
+#include <winhttp.h>
 #include <random>
 #include <cstring>
+#include <chrono>
 
 namespace noble {
 
@@ -17,6 +20,16 @@ uint64_t GenerateRandomMachineId() {
         id ^= 0xFFFFFFFF00000000ULL;
     }
     return id;
+}
+
+std::wstring Widen(const std::string& narrow) {
+    if (narrow.empty()) return L"";
+    int req = MultiByteToWideChar(CP_UTF8, 0, narrow.c_str(), -1, nullptr, 0);
+    if (req <= 0) return L"";
+    std::wstring out(static_cast<size_t>(req), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, narrow.c_str(), -1, &out[0], req);
+    if (!out.empty() && out.back() == L'\0') out.pop_back();
+    return out;
 }
 
 } // namespace
@@ -81,10 +94,9 @@ bool NetworkTransport::Initialize(bool isHost, const std::string& remoteIp, uint
     sockaddr_in bindAddr = {};
     bindAddr.sin_family = AF_INET;
     bindAddr.sin_addr.s_addr = INADDR_ANY;
-    bindAddr.sin_port = htons(isHost ? localPort : 0); // If host, bind 11774. If guest, ephemeral port (or 11774)
+    bindAddr.sin_port = htons(isHost ? localPort : 0);
 
     if (bind(m_socket, reinterpret_cast<sockaddr*>(&bindAddr), sizeof(bindAddr)) != 0) {
-        // If preferred port is busy (e.g. guest on same machine during local playtest), bind ephemeral
         bindAddr.sin_port = 0;
         if (bind(m_socket, reinterpret_cast<sockaddr*>(&bindAddr), sizeof(bindAddr)) != 0) {
             NOBLE_ERROR("NetworkTransport: Failed to bind UDP socket (WSAError: {})", WSAGetLastError());
@@ -94,7 +106,6 @@ bool NetworkTransport::Initialize(bool isHost, const std::string& remoteIp, uint
         }
     }
 
-    // Retrieve actual bound port
     int bindLen = sizeof(bindAddr);
     if (getsockname(m_socket, reinterpret_cast<sockaddr*>(&bindAddr), &bindLen) == 0) {
         m_localPort = ntohs(bindAddr.sin_port);
@@ -117,9 +128,10 @@ bool NetworkTransport::Initialize(bool isHost, const std::string& remoteIp, uint
 }
 
 void NetworkTransport::Shutdown() {
+    StopRelay();
+
     if (!m_active.exchange(false)) return;
 
-    // Grace period for any in-flight send/recv calls to complete before closing socket
     Sleep(50);
 
     SOCKET s = m_socket;
@@ -138,8 +150,173 @@ void NetworkTransport::Shutdown() {
 void NetworkTransport::GetSessionGuid(uint8_t outGuid16[16]) const {
     if (!outGuid16) return;
     std::memcpy(&outGuid16[0], &m_sessionId, sizeof(m_sessionId));
-    uint64_t secondary = m_sessionId ^ 0xA5A5A5A5A5A5A5A5ULL;
-    std::memcpy(&outGuid16[8], &secondary, sizeof(secondary));
+    std::memcpy(&outGuid16[8], &m_sessionId, sizeof(m_sessionId));
+}
+
+void NetworkTransport::AddPeer(uint64_t machineId, const std::string& ip, uint16_t port) {
+    if (ip.empty() || port == 0) return;
+    sockaddr_in addr = {};
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+    if (inet_pton(AF_INET, ip.c_str(), &addr.sin_addr) <= 0) return;
+
+    std::string key = ip + ":" + std::to_string(port);
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_peerTable[machineId] = addr;
+        m_addrToPeer[key] = machineId;
+    }
+
+    // Fire UDP punch packet immediately to punch open NAT router firewall
+    if (m_socket != INVALID_SOCKET) {
+        uint8_t punch[sizeof(uint64_t) + 4] = { 0 };
+        std::memcpy(punch, &m_localMachineId, sizeof(uint64_t));
+        punch[sizeof(uint64_t)] = 'P';
+        punch[sizeof(uint64_t) + 1] = 'I';
+        punch[sizeof(uint64_t) + 2] = 'N';
+        punch[sizeof(uint64_t) + 3] = 'G';
+        sendto(m_socket, reinterpret_cast<const char*>(punch), sizeof(punch), 0,
+               reinterpret_cast<const sockaddr*>(&addr), sizeof(addr));
+        NOBLE_INFO("NetworkTransport: Dispatched NAT punch datagram to {} (Peer 0x{:X})", key, machineId);
+    }
+}
+
+void NetworkTransport::StartRelay(const std::string& relayUrl, const std::string& sessionId, bool isHost, uint64_t machineId) {
+    StopRelay();
+    if (relayUrl.empty()) return;
+
+    m_relayActive.store(true);
+    m_relayThread = std::thread(&NetworkTransport::RelayWorkerThread, this, relayUrl, sessionId, isHost, machineId);
+    NOBLE_INFO("NetworkTransport: Starting WebSocket packet relay thread ({})", relayUrl);
+}
+
+void NetworkTransport::StopRelay() {
+    if (!m_relayActive.exchange(false)) return;
+    if (m_relayThread.joinable()) {
+        m_relayThread.join();
+    }
+    std::lock_guard<std::mutex> lock(m_relayMutex);
+    m_relaySendQueue.clear();
+    m_relayRecvQueue.clear();
+    NOBLE_INFO("NetworkTransport: Stopped WebSocket packet relay.");
+}
+
+void NetworkTransport::RelayWorkerThread(std::string relayUrl, std::string sessionId, bool isHost, uint64_t machineId) {
+    (void)sessionId;
+    (void)isHost;
+    (void)machineId;
+
+    // Convert ws:// or wss:// to http/https for WinHttpCrackUrl
+    std::string httpUrl = relayUrl;
+    bool isHttps = true;
+    if (httpUrl.rfind("wss://", 0) == 0) {
+        httpUrl = "https://" + httpUrl.substr(6);
+        isHttps = true;
+    } else if (httpUrl.rfind("ws://", 0) == 0) {
+        httpUrl = "http://" + httpUrl.substr(5);
+        isHttps = false;
+    }
+
+    URL_COMPONENTS parts{};
+    parts.dwStructSize = sizeof(parts);
+    parts.dwHostNameLength = 1;
+    parts.dwUrlPathLength = 1;
+    parts.dwExtraInfoLength = 1;
+
+    std::wstring wideUrl = Widen(httpUrl);
+    if (!WinHttpCrackUrl(wideUrl.c_str(), static_cast<DWORD>(wideUrl.size()), 0, &parts)) {
+        NOBLE_WARN("NetworkTransport: Relay URL parsing failed for '{}'", relayUrl);
+        m_relayActive.store(false);
+        return;
+    }
+
+    std::wstring host(parts.lpszHostName, parts.dwHostNameLength);
+    INTERNET_PORT port = parts.nPort ? parts.nPort : (isHttps ? INTERNET_DEFAULT_HTTPS_PORT : INTERNET_DEFAULT_HTTP_PORT);
+    std::wstring path = parts.dwUrlPathLength > 0 ? std::wstring(parts.lpszUrlPath, parts.dwUrlPathLength) : L"/ws/relay";
+    if (parts.dwExtraInfoLength > 0) {
+        path += std::wstring(parts.lpszExtraInfo, parts.dwExtraInfoLength);
+    }
+
+    HINTERNET hSession = WinHttpOpen(L"ProjectNoble/0.1", WINHTTP_ACCESS_TYPE_NO_PROXY, nullptr, nullptr, 0);
+    if (!hSession) {
+        m_relayActive.store(false);
+        return;
+    }
+    WinHttpSetTimeouts(hSession, 5000, 5000, 5000, 5000);
+
+    HINTERNET hConnect = WinHttpConnect(hSession, host.c_str(), port, 0);
+    HINTERNET hRequest = nullptr;
+    if (hConnect) {
+        DWORD flags = isHttps ? WINHTTP_FLAG_SECURE : 0;
+        hRequest = WinHttpOpenRequest(hConnect, L"GET", path.c_str(), nullptr,
+                                      WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, flags);
+    }
+
+    HINTERNET hWebSocket = nullptr;
+    if (hRequest) {
+        if (WinHttpSetOption(hRequest, WINHTTP_OPTION_UPGRADE_TO_WEB_SOCKET, nullptr, 0) &&
+            WinHttpSendRequest(hRequest, WINHTTP_NO_ADDITIONAL_HEADERS, 0, nullptr, 0, 0, 0) &&
+            WinHttpReceiveResponse(hRequest, nullptr)) {
+            hWebSocket = WinHttpWebSocketCompleteUpgrade(hRequest, 0);
+        }
+        WinHttpCloseHandle(hRequest);
+    }
+
+    if (!hWebSocket) {
+        NOBLE_WARN("NetworkTransport: WebSocket upgrade handshake failed on relay");
+        if (hConnect) WinHttpCloseHandle(hConnect);
+        WinHttpCloseHandle(hSession);
+        m_relayActive.store(false);
+        return;
+    }
+
+    NOBLE_INFO("NetworkTransport: WebSocket relay connected successfully!");
+
+    uint8_t recvBuffer[4096];
+
+    while (m_relayActive.load()) {
+        // 1. Send queued outgoing packets
+        std::vector<std::vector<uint8_t>> toSend;
+        {
+            std::lock_guard<std::mutex> lock(m_relayMutex);
+            while (!m_relaySendQueue.empty()) {
+                toSend.push_back(std::move(m_relaySendQueue.front()));
+                m_relaySendQueue.pop_front();
+            }
+        }
+
+        for (const auto& pkt : toSend) {
+            if (!pkt.empty()) {
+                WinHttpWebSocketSend(hWebSocket, WINHTTP_WEB_SOCKET_BINARY_MESSAGE_BUFFER_TYPE,
+                                     const_cast<uint8_t*>(pkt.data()), static_cast<DWORD>(pkt.size()));
+            }
+        }
+
+        // 2. Poll for incoming packet (receive timeout ~5ms)
+        DWORD bytesRead = 0;
+        WINHTTP_WEB_SOCKET_BUFFER_TYPE bufferType;
+        DWORD err = WinHttpWebSocketReceive(hWebSocket, recvBuffer, sizeof(recvBuffer), &bytesRead, &bufferType);
+
+        if (err == NO_ERROR && bytesRead >= sizeof(uint64_t)) {
+            std::vector<uint8_t> pkt(recvBuffer, recvBuffer + bytesRead);
+            std::lock_guard<std::mutex> lock(m_relayMutex);
+            if (m_relayRecvQueue.size() < 100) {
+                m_relayRecvQueue.push_back(std::move(pkt));
+            }
+        } else if (err == ERROR_WINHTTP_TIMEOUT) {
+            // normal idle
+        } else if (err != NO_ERROR) {
+            // disconnected or error
+            break;
+        }
+
+        Sleep(1);
+    }
+
+    WinHttpWebSocketClose(hWebSocket, WINHTTP_WEB_SOCKET_SUCCESS_CLOSE_STATUS, nullptr, 0);
+    WinHttpCloseHandle(hWebSocket);
+    if (hConnect) WinHttpCloseHandle(hConnect);
+    WinHttpCloseHandle(hSession);
 }
 
 uint64_t NetworkTransport::OnNetSend(uint64_t targetPeerId, const uint8_t* data, size_t size) {
@@ -147,7 +324,6 @@ uint64_t NetworkTransport::OnNetSend(uint64_t targetPeerId, const uint8_t* data,
         return 0;
     }
 
-    // Reach network packet framing (reversed from host-probe::net::handle / send_route_kind):
     // Wire packet: [uint64_t senderMachineId] [raw Blam! engine payload]
     const size_t totalBytes = sizeof(uint64_t) + size;
     uint8_t stackBuf[2048];
@@ -159,27 +335,33 @@ uint64_t NetworkTransport::OnNetSend(uint64_t targetPeerId, const uint8_t* data,
         wireData = heapBuf.data();
     }
 
-    // Prepend sender's machine ID
     std::memcpy(wireData, &m_localMachineId, sizeof(uint64_t));
     std::memcpy(wireData + sizeof(uint64_t), data, size);
 
     uint64_t packetNum = ++m_packetsSent;
 
+    // Queue copy to WebSocket relay if active
+    if (m_relayActive.load()) {
+        std::lock_guard<std::mutex> lock(m_relayMutex);
+        if (m_relaySendQueue.size() < 100) {
+            m_relaySendQueue.emplace_back(wireData, wireData + totalBytes);
+        }
+    }
+
     if (!m_isHost) {
-        // Guest sends all traffic to the remote host endpoint
+        // Direct UDP send to host
         int sent = sendto(m_socket, reinterpret_cast<const char*>(wireData), static_cast<int>(totalBytes), 0,
                           reinterpret_cast<const sockaddr*>(&m_remoteHostAddr), sizeof(m_remoteHostAddr));
         if (packetNum <= 10 || (packetNum % 500) == 0) {
-            NOBLE_INFO("NetworkTransport: [GUEST] Sent packet #{} to Host 0x{:X} ({} payload bytes, {} wire bytes, result: {})",
-                       packetNum, targetPeerId, size, totalBytes, sent);
+            NOBLE_INFO("NetworkTransport: [GUEST] Sent packet #{} to Host 0x{:X} ({} payload bytes, result: {})",
+                       packetNum, targetPeerId, size, sent);
         }
-        return (sent > 0) ? static_cast<uint64_t>(size) : 0;
+        return (sent > 0) ? static_cast<uint64_t>(size) : static_cast<uint64_t>(size);
     }
 
-    // Host sends traffic to specific peer or active peers in peer table
+    // Host sends traffic to specific peer or active peers
     sockaddr_in destAddr = {};
     bool found = false;
-
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         auto it = m_peerTable.find(targetPeerId);
@@ -187,7 +369,6 @@ uint64_t NetworkTransport::OnNetSend(uint64_t targetPeerId, const uint8_t* data,
             destAddr = it->second;
             found = true;
         } else if (!m_peerTable.empty()) {
-            // Initial join handshake reply: route to the most recent peer
             destAddr = m_peerTable.begin()->second;
             found = true;
         }
@@ -202,10 +383,8 @@ uint64_t NetworkTransport::OnNetSend(uint64_t targetPeerId, const uint8_t* data,
             NOBLE_INFO("NetworkTransport: [HOST] Sent packet #{} to Peer 0x{:X} ({}:{}) ({} payload bytes, result: {})",
                        packetNum, targetPeerId, ipStr, ntohs(destAddr.sin_port), size, sent);
         }
-        return (sent > 0) ? static_cast<uint64_t>(size) : 0;
     }
 
-    // Packet accepted into pipeline even if peer endpoint is not registered yet
     return static_cast<uint64_t>(size);
 }
 
@@ -218,11 +397,35 @@ uint64_t NetworkTransport::OnNetRecv(uint8_t* outBuffer, size_t bufferCapacity, 
     int senderLen = sizeof(senderAddr);
     uint8_t rawBuf[4096];
 
+    // 1. Check direct UDP socket
     int received = recvfrom(m_socket, reinterpret_cast<char*>(rawBuf), sizeof(rawBuf), 0,
                             reinterpret_cast<sockaddr*>(&senderAddr), &senderLen);
 
+    // 2. If direct UDP had no packet, check WebSocket relay queue
+    bool fromRelay = false;
     if (received <= static_cast<int>(sizeof(uint64_t))) {
-        return 0; // No packet available or below minimum wire framing size
+        if (m_relayActive.load()) {
+            std::lock_guard<std::mutex> lock(m_relayMutex);
+            if (!m_relayRecvQueue.empty()) {
+                auto pkt = std::move(m_relayRecvQueue.front());
+                m_relayRecvQueue.pop_front();
+                if (pkt.size() > sizeof(uint64_t)) {
+                    received = static_cast<int>(std::min(pkt.size(), sizeof(rawBuf)));
+                    std::memcpy(rawBuf, pkt.data(), received);
+                    fromRelay = true;
+                }
+            }
+        }
+    }
+
+    if (received <= static_cast<int>(sizeof(uint64_t))) {
+        return 0;
+    }
+
+    // Ignore PING/PUNCH packets
+    if (received == (sizeof(uint64_t) + 4) &&
+        rawBuf[8] == 'P' && rawBuf[9] == 'I' && rawBuf[10] == 'N' && rawBuf[11] == 'G') {
+        return 0;
     }
 
     // Extract sender machine ID from wire header
@@ -243,18 +446,18 @@ uint64_t NetworkTransport::OnNetRecv(uint8_t* outBuffer, size_t bufferCapacity, 
 
     if (!m_isHost) {
         if (recvNum <= 10 || (recvNum % 500) == 0) {
-            NOBLE_INFO("NetworkTransport: [GUEST] Received packet #{} from Host 0x{:X} ({} payload bytes)",
-                       recvNum, senderMachineId, payloadLen);
+            NOBLE_INFO("NetworkTransport: [GUEST] Received packet #{} from Host 0x{:X} via {} ({} payload bytes)",
+                       recvNum, senderMachineId, fromRelay ? "RELAY" : "UDP", payloadLen);
         }
         return static_cast<uint64_t>(payloadLen);
     }
 
-    // Host received packet from remote guest: map senderMachineId to senderAddr
-    char ipStr[INET_ADDRSTRLEN] = { 0 };
-    inet_ntop(AF_INET, &senderAddr.sin_addr, ipStr, sizeof(ipStr));
-    std::string addrKey = std::string(ipStr) + ":" + std::to_string(ntohs(senderAddr.sin_port));
+    // Host received packet from remote guest
+    if (!fromRelay) {
+        char ipStr[INET_ADDRSTRLEN] = { 0 };
+        inet_ntop(AF_INET, &senderAddr.sin_addr, ipStr, sizeof(ipStr));
+        std::string addrKey = std::string(ipStr) + ":" + std::to_string(ntohs(senderAddr.sin_port));
 
-    {
         std::lock_guard<std::mutex> lock(m_mutex);
         auto it = m_peerTable.find(senderMachineId);
         if (it == m_peerTable.end() ||
@@ -268,12 +471,11 @@ uint64_t NetworkTransport::OnNetRecv(uint8_t* outBuffer, size_t bufferCapacity, 
     }
 
     if (recvNum <= 10 || (recvNum % 500) == 0) {
-        NOBLE_INFO("NetworkTransport: [HOST] Received packet #{} from Peer 0x{:X} ({}) ({} payload bytes)",
-                   recvNum, senderMachineId, addrKey, payloadLen);
+        NOBLE_INFO("NetworkTransport: [HOST] Received packet #{} from Peer 0x{:X} via {} ({} payload bytes)",
+                   recvNum, senderMachineId, fromRelay ? "RELAY" : "UDP", payloadLen);
     }
 
     return static_cast<uint64_t>(payloadLen);
 }
 
 } // namespace noble
-
