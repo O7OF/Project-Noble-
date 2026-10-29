@@ -80,12 +80,15 @@ private:
 
     std::atomic<uint64_t> m_packetsSent{ 0 };
     std::atomic<uint64_t> m_packetsRecv{ 0 };
+    std::atomic<uint64_t> m_lastUdpRecvTick{ 0 };
 
     // Relay members
     std::atomic<bool> m_relayActive{ false };
     std::string m_relayUrl;
     std::thread m_relayThread;
     std::mutex m_relayMutex;
+    void* m_relaySessionHandle = nullptr;
+    void* m_relayWsHandle = nullptr;
     std::deque<std::vector<uint8_t>> m_relaySendQueue;
     std::deque<std::vector<uint8_t>> m_relayRecvQueue;
     std::deque<std::string> m_relayTextSendQueue;

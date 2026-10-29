@@ -11,6 +11,7 @@
 #include "engine/ReachArmory.hpp"
 #include "engine/ElitePack.hpp"
 #include "common/Settings.hpp"
+#include "common/Relaunch.hpp"
 #include "host/Window.hpp"
 #include "network/NetworkTransport.hpp"
 #include <windows.h>
@@ -366,7 +367,13 @@ static uint64_t __fastcall HostSlot1_FrameTick(void* thisPtr, uint64_t a1, uint6
         static ULONGLONG s_firstTick = GetTickCount64();
         bool loading = false;
         if (!s_loadingDone) {
-            if (s_sessionStarted.load() || GetTickCount64() - s_firstTick > 60000) {
+            int curLaunchState = -1;
+            if (HMODULE reach = GetModuleHandleW(L"haloreach.dll")) {
+                SafeReadInt32(reinterpret_cast<uintptr_t>(reach) + 0xC1A114, &curLaunchState);
+            }
+            const bool waitingForRemoteJoin = (curLaunchState >= 0 && curLaunchState < 10 &&
+                                               NetworkTransport::Get().IsActive() && !NetworkTransport::Get().IsHost());
+            if (s_sessionStarted.load() || (!waitingForRemoteJoin && GetTickCount64() - s_firstTick > 60000)) {
                 s_loadingDone = true;
                 NOBLE_INFO("ReachHost [Slot 1 - FrameTick]: game session started at frame {}, loading screen off", frames);
             } else {
@@ -422,6 +429,16 @@ static uint64_t __fastcall HostSlot4_LogMessage(void* thisPtr, uint64_t a1, uint
         SafeCopyAnsiString(buf, sizeof(buf), reinterpret_cast<const char*>(a2));
     }
     NOBLE_WARN("ReachHost [Slot 4 - EngineEvent]: reason={} message='{}'", a1, buf);
+    if (a1 == 4 && NetworkTransport::Get().IsActive() && !NetworkTransport::Get().IsHost() && !s_sessionStarted.load()) {
+        if (std::strstr(buf, "timeout") != nullptr) {
+            NOBLE_ERROR("ReachHost [Slot 4 - EngineEvent]: Remote session join timed out ('{}'); returning to main menu.", buf);
+            if (Relaunch::Start(L"")) {
+                if (HWND hwnd = FindWindowW(L"NobleReachWindowClass", nullptr)) {
+                    PostMessageW(hwnd, WM_CLOSE, 0, 0);
+                }
+            }
+        }
+    }
     return 0;
 }
 
@@ -2939,15 +2956,20 @@ static uint64_t __fastcall HostSlot88_UserIdentity(void* thisPtr, uint64_t a1, u
     (void)thisPtr;
     static std::atomic<bool> s_logged{false};
     const uint32_t userIndex = static_cast<uint32_t>(a4);
-    if (!s_logged.exchange(true)) {
-        NOBLE_INFO("ReachHost [Slot 88 - UserIdentity]: user {} -> '{}' (XUID: 0x9000000000001)", userIndex,
-                   Settings::Get().Snapshot().playerName);
-    }
     if (userIndex != 0) {
         return 0;
     }
 
-    const uint64_t xuid = 0x0009000000000001ULL;
+    uint64_t xuid = 0x0009000000000001ULL;
+    if (NetworkTransport::Get().IsActive() && !NetworkTransport::Get().IsHost()) {
+        uint64_t guestLow = NetworkTransport::Get().GetLocalMachineId() & 0x0000FFFFFFFFFFFFULL;
+        if (guestLow <= 1ULL) guestLow = 2ULL;
+        xuid = 0x0009000000000000ULL | guestLow;
+    }
+    if (!s_logged.exchange(true)) {
+        NOBLE_INFO("ReachHost [Slot 88 - UserIdentity]: user {} -> '{}' (XUID: 0x{:X})", userIndex,
+                   Settings::Get().Snapshot().playerName, xuid);
+    }
     if (a1 > 0x10000) {
         SafeWriteUint64(a1, xuid);
     }

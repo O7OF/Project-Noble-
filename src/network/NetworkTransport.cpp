@@ -35,7 +35,9 @@ std::wstring Widen(const std::string& narrow) {
 
 } // namespace
 
-NetworkTransport::NetworkTransport() = default;
+NetworkTransport::NetworkTransport()
+    : m_localMachineId(kDefaultHostMachineId)
+    , m_hostMachineId(kDefaultHostMachineId) {}
 
 NetworkTransport::~NetworkTransport() {
     Shutdown();
@@ -120,6 +122,7 @@ bool NetworkTransport::Initialize(bool isHost, const std::string& remoteIp, uint
 
     m_packetsSent.store(0);
     m_packetsRecv.store(0);
+    m_lastUdpRecvTick.store(0);
 
     m_active.store(true);
     NOBLE_INFO("NetworkTransport: Initialized {} on UDP port {} (Local Machine ID: 0x{:X}, Host ID: 0x{:X}, Session ID: 0x{:X})",
@@ -237,6 +240,17 @@ void NetworkTransport::SendLobbyControlJson(const std::string& jsonString) {
 
 void NetworkTransport::StopRelay() {
     if (!m_relayActive.exchange(false)) return;
+    {
+        std::lock_guard<std::mutex> lock(m_relayMutex);
+        if (m_relayWsHandle) {
+            WinHttpCloseHandle(static_cast<HINTERNET>(m_relayWsHandle));
+            m_relayWsHandle = nullptr;
+        }
+        if (m_relaySessionHandle) {
+            WinHttpCloseHandle(static_cast<HINTERNET>(m_relaySessionHandle));
+            m_relaySessionHandle = nullptr;
+        }
+    }
     if (m_relayThread.joinable()) {
         m_relayThread.join();
     }
@@ -321,6 +335,11 @@ void NetworkTransport::RelayWorkerThread(std::string relayUrl, std::string sessi
     // Set a short 15 ms receive timeout on the upgraded WebSocket handle so WinHttpWebSocketReceive
     // does not block outgoing packet flushing or shutdown for 5 seconds.
     WinHttpSetTimeouts(hWebSocket, 5000, 5000, 1000, 15);
+    {
+        std::lock_guard<std::mutex> lock(m_relayMutex);
+        m_relaySessionHandle = hSession;
+        m_relayWsHandle = hWebSocket;
+    }
     NOBLE_INFO("NetworkTransport: WebSocket relay connected successfully!");
 
     uint8_t recvBuffer[4096];
@@ -349,11 +368,13 @@ void NetworkTransport::RelayWorkerThread(std::string relayUrl, std::string sessi
         }
 
         for (const auto& pkt : toSend) {
-            if (!pkt.empty()) {
+            if (!pkt.empty() && m_relayActive.load()) {
                 WinHttpWebSocketSend(hWebSocket, WINHTTP_WEB_SOCKET_BINARY_MESSAGE_BUFFER_TYPE,
                                      const_cast<uint8_t*>(pkt.data()), static_cast<DWORD>(pkt.size()));
             }
         }
+
+        if (!m_relayActive.load()) break;
 
         // 2. Poll for incoming packet (receive timeout ~15ms)
         DWORD bytesRead = 0;
@@ -414,10 +435,21 @@ void NetworkTransport::RelayWorkerThread(std::string relayUrl, std::string sessi
         }
     }
 
-    WinHttpWebSocketClose(hWebSocket, WINHTTP_WEB_SOCKET_SUCCESS_CLOSE_STATUS, nullptr, 0);
-    WinHttpCloseHandle(hWebSocket);
+    HINTERNET wsToClose = nullptr;
+    HINTERNET sessionToClose = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(m_relayMutex);
+        wsToClose = static_cast<HINTERNET>(m_relayWsHandle);
+        sessionToClose = static_cast<HINTERNET>(m_relaySessionHandle);
+        m_relayWsHandle = nullptr;
+        m_relaySessionHandle = nullptr;
+    }
+    if (wsToClose) {
+        WinHttpWebSocketClose(wsToClose, WINHTTP_WEB_SOCKET_SUCCESS_CLOSE_STATUS, nullptr, 0);
+        WinHttpCloseHandle(wsToClose);
+    }
     if (hConnect) WinHttpCloseHandle(hConnect);
-    WinHttpCloseHandle(hSession);
+    if (sessionToClose) WinHttpCloseHandle(sessionToClose);
 }
 
 uint64_t NetworkTransport::OnNetSend(uint64_t targetPeerId, const uint8_t* data, size_t size) {
@@ -441,8 +473,12 @@ uint64_t NetworkTransport::OnNetSend(uint64_t targetPeerId, const uint8_t* data,
 
     uint64_t packetNum = ++m_packetsSent;
 
-    // Queue copy to WebSocket relay if active
-    if (m_relayActive.load()) {
+    // Only queue a copy to the WebSocket relay when direct UDP has not recently delivered packets.
+    // Sending every packet over both UDP and WebSocket simultaneously causes every packet to arrive
+    // twice (with the relay copy delayed ~50ms), corrupting Blam!'s sliding-window packet sequence.
+    const uint64_t lastUdpTick = m_lastUdpRecvTick.load();
+    const bool directUdpAlive = (lastUdpTick != 0 && (GetTickCount64() - lastUdpTick) < 3000);
+    if (m_relayActive.load() && !directUdpAlive) {
         std::lock_guard<std::mutex> lock(m_relayMutex);
         if (m_relaySendQueue.size() < 100) {
             m_relaySendQueue.emplace_back(wireData, wireData + totalBytes);
@@ -453,9 +489,9 @@ uint64_t NetworkTransport::OnNetSend(uint64_t targetPeerId, const uint8_t* data,
         // Direct UDP send to host
         int sent = sendto(m_socket, reinterpret_cast<const char*>(wireData), static_cast<int>(totalBytes), 0,
                           reinterpret_cast<const sockaddr*>(&m_remoteHostAddr), sizeof(m_remoteHostAddr));
-        if (packetNum <= 10 || (packetNum % 500) == 0) {
-            NOBLE_INFO("NetworkTransport: [GUEST] Sent packet #{} to Host 0x{:X} ({} payload bytes, result: {})",
-                       packetNum, targetPeerId, size, sent);
+        if (packetNum <= 15 || (packetNum % 500) == 0) {
+            NOBLE_INFO("NetworkTransport: [GUEST] Sent packet #{} to Host 0x{:X} ({} payload bytes, result: {}, relayFallback: {})",
+                       packetNum, targetPeerId, size, sent, !directUdpAlive && m_relayActive.load());
         }
         return (sent > 0) ? static_cast<uint64_t>(size) : static_cast<uint64_t>(size);
     }
@@ -478,7 +514,7 @@ uint64_t NetworkTransport::OnNetSend(uint64_t targetPeerId, const uint8_t* data,
     for (const auto& destAddr : targets) {
         int sent = sendto(m_socket, reinterpret_cast<const char*>(wireData), static_cast<int>(totalBytes), 0,
                           reinterpret_cast<const sockaddr*>(&destAddr), sizeof(destAddr));
-        if (packetNum <= 10 || (packetNum % 500) == 0) {
+        if (packetNum <= 15 || (packetNum % 500) == 0) {
             char ipStr[INET_ADDRSTRLEN] = { 0 };
             inet_ntop(AF_INET, &destAddr.sin_addr, ipStr, sizeof(ipStr));
             NOBLE_INFO("NetworkTransport: [HOST] Sent packet #{} to Peer 0x{:X} ({}:{}) ({} payload bytes, result: {})",
@@ -507,6 +543,7 @@ uint64_t NetworkTransport::OnNetRecv(uint8_t* outBuffer, size_t bufferCapacity, 
         if (received <= static_cast<int>(sizeof(uint64_t))) {
             break;
         }
+        m_lastUdpRecvTick.store(GetTickCount64());
         if (received == static_cast<int>(sizeof(uint64_t) + 4) &&
             rawBuf[8] == 'P' && rawBuf[9] == 'I' && rawBuf[10] == 'N' && rawBuf[11] == 'G') {
             uint64_t pingSenderId = 0;
@@ -516,10 +553,21 @@ uint64_t NetworkTransport::OnNetRecv(uint8_t* outBuffer, size_t bufferCapacity, 
                 inet_ntop(AF_INET, &senderAddr.sin_addr, ipStr, sizeof(ipStr));
                 std::string addrKey = std::string(ipStr) + ":" + std::to_string(ntohs(senderAddr.sin_port));
 
-                std::lock_guard<std::mutex> lock(m_mutex);
-                m_peerTable[pingSenderId] = senderAddr;
-                m_addrToPeer[addrKey] = pingSenderId;
-                NOBLE_INFO("NetworkTransport: [HOST] Registered peer 0x{:X} via NAT punch PING from {}",
+                {
+                    std::lock_guard<std::mutex> lock(m_mutex);
+                    m_peerTable[pingSenderId] = senderAddr;
+                    m_addrToPeer[addrKey] = pingSenderId;
+                }
+                // Echo PING back to Guest over direct UDP so Guest immediately confirms direct UDP is open
+                uint8_t pong[sizeof(uint64_t) + 4] = { 0 };
+                std::memcpy(pong, &m_localMachineId, sizeof(uint64_t));
+                pong[sizeof(uint64_t)]     = 'P';
+                pong[sizeof(uint64_t) + 1] = 'I';
+                pong[sizeof(uint64_t) + 2] = 'N';
+                pong[sizeof(uint64_t) + 3] = 'G';
+                sendto(m_socket, reinterpret_cast<const char*>(pong), sizeof(pong), 0,
+                       reinterpret_cast<const sockaddr*>(&senderAddr), sizeof(senderAddr));
+                NOBLE_INFO("NetworkTransport: [HOST] Registered peer 0x{:X} via NAT punch PING from {} (echoed PING)",
                            pingSenderId, addrKey);
             }
             received = -1;
@@ -528,23 +576,29 @@ uint64_t NetworkTransport::OnNetRecv(uint8_t* outBuffer, size_t bufferCapacity, 
         break;
     }
 
-    // 2. If direct UDP had no game packet, check WebSocket relay queue
+    // 2. If direct UDP had no game packet, check WebSocket relay queue (only when direct UDP is not active)
     bool fromRelay = false;
     if (received <= static_cast<int>(sizeof(uint64_t))) {
         if (m_relayActive.load()) {
+            const uint64_t lastUdpTick = m_lastUdpRecvTick.load();
+            const bool directUdpAlive = (lastUdpTick != 0 && (GetTickCount64() - lastUdpTick) < 3000);
             std::lock_guard<std::mutex> lock(m_relayMutex);
-            while (!m_relayRecvQueue.empty()) {
-                auto pkt = std::move(m_relayRecvQueue.front());
-                m_relayRecvQueue.pop_front();
-                if (pkt.size() == sizeof(uint64_t) + 4 &&
-                    pkt[8] == 'P' && pkt[9] == 'I' && pkt[10] == 'N' && pkt[11] == 'G') {
-                    continue;
-                }
-                if (pkt.size() > sizeof(uint64_t)) {
-                    received = static_cast<int>(std::min(pkt.size(), sizeof(rawBuf)));
-                    std::memcpy(rawBuf, pkt.data(), received);
-                    fromRelay = true;
-                    break;
+            if (directUdpAlive) {
+                m_relayRecvQueue.clear();
+            } else {
+                while (!m_relayRecvQueue.empty()) {
+                    auto pkt = std::move(m_relayRecvQueue.front());
+                    m_relayRecvQueue.pop_front();
+                    if (pkt.size() == sizeof(uint64_t) + 4 &&
+                        pkt[8] == 'P' && pkt[9] == 'I' && pkt[10] == 'N' && pkt[11] == 'G') {
+                        continue;
+                    }
+                    if (pkt.size() > sizeof(uint64_t)) {
+                        received = static_cast<int>(std::min(pkt.size(), sizeof(rawBuf)));
+                        std::memcpy(rawBuf, pkt.data(), received);
+                        fromRelay = true;
+                        break;
+                    }
                 }
             }
         }

@@ -366,14 +366,19 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
         uint64_t hostMachineId = NetworkTransport::Get().GetHostMachineId();
 
         if (isGuest) {
-            // Guest mode: 1 local active player, target host machine at 0x2F8
+            // Guest mode: 1 local active player, target host machine at 0x2F8.
+            // Note: +0xF0..+0xF7 is the 8-byte s_player_identifier copied by haloreach.dll (State 6,
+            // RVA 0xE804) into 0x182A1E94C and sent in join-request. It MUST be unique per client so
+            // c_network_session::can_accept_player_join_request (RVA 0x3973BC -> 0x39D59C) on the Host
+            // does not see it colliding with Host Player 0 (0x000000003F59F3BE) and reject with 0x16.
+            uint64_t guestPlayerId = localMachineId ^ 0x3F59F3BE00000000ULL;
+            if (guestPlayerId == 0 || guestPlayerId == 0x000000003F59F3BEULL) {
+                guestPlayerId = localMachineId | 0x504C520000000001ULL;
+            }
             block[0] &= ~0x08; // bit 3 cleared for guest
             *reinterpret_cast<uint64_t*>(&block[0x60]) = 0; // Host machine id is 0 at 0x60 on guest
             block[0xE8] = 0x01; // 1 active local player
-            block[0xF0] = 0xBE;
-            block[0xF1] = 0xF3;
-            block[0xF2] = 'Y';
-            block[0xF3] = '?';
+            *reinterpret_cast<uint64_t*>(&block[0xF0]) = guestPlayerId;
             *reinterpret_cast<uint64_t*>(&block[0xF8]) = localMachineId; // Local player 0 machine ID
             block[0x100] = 0x00;
             block[0x101] = 0x00;
@@ -389,8 +394,8 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
             *reinterpret_cast<uint64_t*>(&block[0x2F8]) = hostMachineId; // uint64 Host Machine ID
             block[0x2BF14] = 0xF3;
             block[0x2BF15] = 0x01;
-            NOBLE_INFO("BlamEngine: Configured Guest Launch Block targeting host {}:{} (Local: 0x{:X}, Host: 0x{:X})",
-                targetHostIp, targetHostPort, localMachineId, hostMachineId);
+            NOBLE_INFO("BlamEngine: Configured Guest Launch Block targeting host {}:{} (Local: 0x{:X}, Host: 0x{:X}, PlayerId: 0x{:X})",
+                targetHostIp, targetHostPort, localMachineId, hostMachineId, guestPlayerId);
         } else {
             // Host mode: 1 local active player, host machine at 0x60 and 0xF8
             block[0] |= 0x08; // bit 3 set for host
@@ -451,8 +456,36 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
 
     // Synchronized Network Session ID at +0x50 and local machine ID at +0x58
     if (!isMainMenu || !loadedPrebuilt) {
+        const uint64_t localMachineId = NetworkTransport::Get().GetLocalMachineId();
+        const uint64_t hostMachineId = NetworkTransport::Get().GetHostMachineId();
         *reinterpret_cast<uint64_t*>(&block[0x50]) = NetworkTransport::Get().GetSessionId();
-        *reinterpret_cast<uint64_t*>(&block[0x58]) = NetworkTransport::Get().GetLocalMachineId();
+        *reinterpret_cast<uint64_t*>(&block[0x58]) = localMachineId;
+        if (!isMainMenu && loadedPrebuilt) {
+            if (isGuest) {
+                uint64_t guestPlayerId = localMachineId ^ 0x3F59F3BE00000000ULL;
+                if (guestPlayerId == 0 || guestPlayerId == 0x000000003F59F3BEULL) {
+                    guestPlayerId = localMachineId | 0x504C520000000001ULL;
+                }
+                block[0] &= ~0x08;
+                *reinterpret_cast<uint64_t*>(&block[0x60]) = 0;
+                block[0xE8] = 0x01;
+                *reinterpret_cast<uint64_t*>(&block[0xF0]) = guestPlayerId;
+                *reinterpret_cast<uint64_t*>(&block[0xF8]) = localMachineId;
+                block[0x2F0] = 0x00;
+                *reinterpret_cast<uint32_t*>(&block[0x2F4]) = 0xFFFFFFFF;
+                *reinterpret_cast<uint64_t*>(&block[0x2F8]) = hostMachineId;
+                block[0x2BF14] = 0xF3;
+                block[0x2BF15] = 0x01;
+            } else {
+                block[0] |= 0x08;
+                *reinterpret_cast<uint64_t*>(&block[0x60]) = localMachineId;
+                block[0xE8] = 0x01;
+                *reinterpret_cast<uint64_t*>(&block[0xF8]) = localMachineId;
+                block[0x2F0] = 0x01;
+                *reinterpret_cast<uint32_t*>(&block[0x2F4]) = 0;
+                *reinterpret_cast<uint64_t*>(&block[0x2F8]) = 0;
+            }
+        }
     }
 
     if (isCampaign || isFirefight) {

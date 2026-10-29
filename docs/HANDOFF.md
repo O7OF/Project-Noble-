@@ -1,4 +1,4 @@
-# Project Noble: handoff (2026-10-29, 00:20 ET)
+# Project Noble: handoff (2026-10-29, 00:40 ET)
 Dominus join the team 20261028! 
 This picks up a reverse-engineering and C++ effort on **Tyler's Windows PC**. All paths below are real paths on that machine.
 Tyler (GitHub `WeabooTyler117`) works with a partner (GitHub `O7OF`) who owns the repo and writes most of the code.
@@ -8,6 +8,38 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 **Goal:** `noble-client.exe` loads MCC's own `haloreach.dll` (Halo: Reach) and drives it **without MCC**, like the existing
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
 MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour.
+
+---
+
+## 0. Pick up here (2026-10-29, 00:40 ET) - Dominus Remote Join & Black Screen Fixes: Unique `s_player_identifier` (`+0xF0`), Unique Guest XUID, UDP/Relay Dedup & Timeout Recovery
+
+All changes compiled cleanly via `build.bat` (`noble-client.exe` and `noble-dedicated.exe`) with **0 errors and 0 warnings** under `/W4`:
+
+- **Fixed Remote Join Refusal (`refuse_reason = 0x16` / `22`) Caused by Duplicate `s_player_identifier` at `launch_block[0xF0..0xF7]` (`src/engine/BlamEngine.cpp`):**
+  - **Root Cause (from `haloreach.dll` Disassembly):**
+    1. In `State 6` (`haloreach.dll+0xE804`), `haloreach.dll` copies the 8-byte value at `launch_block + 0xF0` directly into `[0x182A1E94C]` (`0x182A1E860 + 0xEC`) as local Player 0's 8-byte `s_player_identifier`.
+    2. Both Host and Guest previously hardcoded `block[0xF0..0xF7]` to `{0xBE, 0xF3, 'Y', '?', 0, 0, 0, 0}` (`0x000000003F59F3BE`).
+    3. When a Guest sent a `join-request` (`haloreach.dll+0x3923DC`), the Host validated the request in `c_network_session::can_accept_join_request` (`haloreach.dll+0x3975D8`) -> `c_network_session::can_accept_player_join_request` (`haloreach.dll+0x3973BC`) -> `c_network_session_membership::find_player_by_identifier` (`haloreach.dll+0x39D59C`).
+    4. Because the Guest's `s_player_identifier` (`0x000000003F59F3BE`) matched the Host's existing Player 0 (`[membership + 0x1714]`), and Player 0's owning peer index (`[membership + 0x174C] == 0`) did not match the joining Guest's peer index (`1`), `haloreach.dll+0x397513` (`mov ebx, 16h`) immediately rejected every Guest join with refusal code `0x16` (`22`).
+  - **Fix:**
+    - `BlamEngine::BuildLaunchBlock()` now generates a unique 8-byte `s_player_identifier` at `block[0xF0..0xF7]` for Guest sessions derived from the Guest's random `localMachineId` (`localMachineId ^ 0x3F59F3BE00000000ULL`), ensuring it never collides with Host Player 0 (`0x000000003F59F3BE`) or any other joining Guest.
+    - Also applies the Host/Guest network session and player identity fields (`+0x00`, `+0x50`, `+0x58`, `+0x60`, `+0xE8`, `+0xF0`, `+0xF8`, `+0x2F0`, `+0x2F4`, `+0x2F8`, `+0x2BF14`) when loading prebuilt Firefight or Campaign launch blocks (`loadedPrebuilt == true`).
+
+- **Fixed Duplicate Hardcoded XUID (`0x0009000000000001ULL`) Across Host and Guest Clients (`src/engine/ReachHost.cpp`):**
+  - **Root Cause:** `HostSlot88_UserIdentity` returned the same hardcoded XUID (`0x0009000000000001ULL`) on all machines, which `haloreach.dll` (`State 6` `0x18000E8B3` -> `0x18003AB1C`) stores into `0x182A1E860 + 0x128` and sends in the `join-request` player configuration block, colliding with the Host's Player 0 XUID.
+  - **Fix:** When `NetworkTransport::Get().IsActive() && !NetworkTransport::Get().IsHost()`, `HostSlot88_UserIdentity` now derives a unique per-Guest XUID (`0x0009000000000000ULL | (localMachineId & 0x0000FFFFFFFFFFFFULL)`) guaranteed never to equal the Host's `0x0009000000000001ULL`.
+
+- **Fixed Simultaneous Duplicate Packet Delivery Over Direct UDP and WebSocket Relay (`src/network/NetworkTransport.hpp`, `src/network/NetworkTransport.cpp`, `src/main.cpp`):**
+  - **Root Cause:** When direct UDP was open between Guest and Host, `NetworkTransport::OnNetSend()` and `OnNetRecv()` sent and received every packet over **both** Direct UDP and the WebSocket Relay simultaneously, delivering a delayed (~50 ms) duplicate of every packet and corrupting Blam!'s sliding-window packet sequence.
+  - **Fix:**
+    - Added `m_lastUdpRecvTick` tracking to `NetworkTransport` and an automatic direct-UDP `PING` echo from Host to Guest upon receiving a NAT hole-punch `PING`.
+    - `OnNetSend()` and `OnNetRecv()` now use the WebSocket Relay strictly as a fallback when direct UDP has not received traffic within the last 3 seconds.
+    - In `src/main.cpp`, `NetworkTransport::Initialize(false, ...)`, `MasterServerClient::JoinSessionSync()`, and `NetworkTransport::StartRelay()` now run **before** `BlamEngine::LaunchMap()` starts `haloreach.dll`'s engine thread, so NAT hole-punching and the WebSocket relay are ready before the first `join-request` packet is sent.
+
+- **Fixed Black Screen on 60s Join Timeout & 5s Shutdown Hang (`src/engine/ReachHost.cpp`, `src/network/NetworkTransport.cpp`):**
+  - `HostSlot1_FrameTick` no longer hides the loading screen at 60 seconds while `haloreach.dll` is still waiting in `launch state < 10` (`waitingForRemoteJoin`).
+  - `HostSlot4_LogMessage` now detects `reason == 4` (`external_launch_individual_state_timeout` / `external_launch_overall_timeout`) during a Guest join and cleanly relaunches back to the Front-End Menu (`Relaunch::Start(L"")`) instead of stranding the player on a black screen.
+  - `NetworkTransport::StopRelay()` now closes the active WinHTTP WebSocket and session handles before joining `m_relayThread`, unblocking `WinHttpWebSocketReceive` immediately on exit.
 
 ---
 

@@ -391,24 +391,25 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         launchHost = false; // Guest joining remote match
         NOBLE_INFO("Launching Halo: Reach Engine as Guest connecting to '{}' (Map: {}, Mode: {}, Session: '{}')",
                    connectAddress, launchMap, launchMode, connectSessionId);
-        blamEngine->LaunchMap(launchMap, launchMode, launchDifficulty, launchSkulls, customMvar, customVariant, connectAddress);
 
-        // Now that LaunchMap -> BuildLaunchBlock has initialized NetworkTransport with the Guest's
-        // generated LocalMachineId and bound LocalPort, register the join on the Master Server (for
-        // Host NAT hole-punching and WebSocket relay fallback) or connect to the explicit -relay URL.
+        std::string tip = connectAddress;
+        uint16_t tport = 11774;
+        const size_t c = connectAddress.rfind(':');
+        if (c != std::string::npos) {
+            tip = connectAddress.substr(0, c);
+            const int p = std::atoi(connectAddress.substr(c + 1).c_str());
+            if (p > 0 && p <= 65535) tport = static_cast<uint16_t>(p);
+        }
+
+        // Initialize Guest NetworkTransport and register the join with the Master Server / WebSocket Relay
+        // BEFORE starting haloreach.dll's engine thread so the Host's NAT hole-punching and the WebSocket
+        // relay are already active when the engine sends its first join-request packet.
+        noble::NetworkTransport::Get().Initialize(false, tip, tport);
         const uint64_t guestMachineId = noble::NetworkTransport::Get().GetLocalMachineId();
         const uint16_t guestPort = noble::NetworkTransport::Get().GetLocalPort();
         if (!relayUrl.empty()) {
             noble::NetworkTransport::Get().StartRelay(relayUrl, connectSessionId.empty() ? "HALOREAC" : connectSessionId, false, guestMachineId);
         } else if (noble::MasterServerClient::Get().Enabled()) {
-            std::string tip = connectAddress;
-            uint16_t tport = 11774;
-            const size_t c = connectAddress.rfind(':');
-            if (c != std::string::npos) {
-                tip = connectAddress.substr(0, c);
-                const int p = std::atoi(connectAddress.substr(c + 1).c_str());
-                if (p > 0 && p <= 65535) tport = static_cast<uint16_t>(p);
-            }
             const noble::MasterJoinInfo joinInfo = noble::MasterServerClient::Get().JoinSessionSync(
                 connectSessionId, guestMachineId, guestPort, tip, tport);
             if (joinInfo.ok && !joinInfo.relayUrl.empty()) {
@@ -419,6 +420,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
                     guestMachineId);
             }
         }
+
+        blamEngine->LaunchMap(launchMap, launchMode, launchDifficulty, launchSkulls, customMvar, customVariant, connectAddress);
     } else {
         NOBLE_INFO("Launching Halo: Reach Engine: Target Map='{}', Mode='{}'", launchMap, launchMode);
         blamEngine->LaunchMap(launchMap, launchMode, launchDifficulty, launchSkulls, customMvar, customVariant);
