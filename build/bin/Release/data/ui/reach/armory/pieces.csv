@@ -1,0 +1,184 @@
+section,slot,name,attachment_of,rank,credits,file,source
+Spartan,helmets,Mark V [B],,,0,helmets/mark_v_b.png,https://halo.wiki.gallery/images/5/58/HR_Default_Visor_Icon.png
+Spartan,helmets,UA,Mark V [B],Recruit,750,helmets/mark_v_b__ua.png,https://halo.wiki.gallery/images/b/be/HR_MarkVB_UA_Helmet_Icon.png
+Spartan,helmets,UA/HUL,Mark V [B],Corporal,1500,helmets/mark_v_b__ua_hul.png,https://halo.wiki.gallery/images/9/9a/HR_MarkVB_UAHUL_Helmet_Icon.png
+Spartan,helmets,CQC,,Recruit,0,helmets/cqc.png,https://halo.wiki.gallery/images/4/4d/HR_CQC_Helmet_Icon.png
+Spartan,helmets,CBRN,CQC,Sergeant,750,helmets/cqc__cbrn.png,https://halo.wiki.gallery/images/d/da/HR_CQC_CBRN_Helmet_Icon.png
+Spartan,helmets,UA/HUL,CQC,Sergeant,1500,helmets/cqc__ua_hul.png,https://halo.wiki.gallery/images/c/c0/HR_CQC_UAHUL_Helmet_Icon.png
+Spartan,helmets,ODST,,Recruit,2000,helmets/odst.png,https://halo.wiki.gallery/images/8/89/HR_ODST_Helmet_Icon.png
+Spartan,helmets,UA/CNM,ODST,Corporal,1000,helmets/odst__ua_cnm.png,https://halo.wiki.gallery/images/6/6e/HR_ODST_UACNM_Helmet_Icon.png
+Spartan,helmets,CBRN/HUL,ODST,Sergeant,500,helmets/odst__cbrn_hul.png,https://halo.wiki.gallery/images/f/fa/HR_ODST_CBRNHUL_Helmet_Icon.png
+Spartan,helmets,HAZOP,,Recruit,7000,helmets/hazop.png,https://halo.wiki.gallery/images/4/44/HR_HAZOP_Helmet_Icon.png
+Spartan,helmets,CBRN/HUL,HAZOP,Sergeant,2000,helmets/hazop__cbrn_hul.png,https://halo.wiki.gallery/images/3/3e/HR_HAZOP_CBRNHUL_Helmet_Icon.png
+Spartan,helmets,CNM-I,HAZOP,Captain,1000,helmets/hazop__cnm_i.png,https://halo.wiki.gallery/images/e/e9/HR_HAZOP_CNMI_Helmet_Icon.png
+Spartan,helmets,EOD,,Sergeant,15000,helmets/eod.png,https://halo.wiki.gallery/images/1/13/HR_EOD_Helmet_Icon.png
+Spartan,helmets,CNM,EOD,Sergeant,5000,helmets/eod__cnm.png,https://halo.wiki.gallery/images/c/ce/HR_EOD_CNM_Helmet_Icon.png
+Spartan,helmets,UA/HUL,EOD,Sergeant,3000,helmets/eod__ua_hul.png,https://halo.wiki.gallery/images/1/1a/HR_EOD_UAHUL_Helmet_Icon.png
+Spartan,helmets,Operator,,Sergeant,7000,helmets/operator.png,https://halo.wiki.gallery/images/7/73/HR_Operator_Helmet_Icon.png
+Spartan,helmets,UA/HUL,Operator,Sergeant,2000,helmets/operator__ua_hul.png,https://halo.wiki.gallery/images/c/c0/HR_Operator_UAHUL_Helmet_Icon.png
+Spartan,helmets,CNM,Operator,Sergeant,1000,helmets/operator__cnm.png,https://halo.wiki.gallery/images/2/28/HR_Operator_CNM_Helmet_Icon.png
+Spartan,helmets,Grenadier,,Warrant Officer,25000,helmets/grenadier.png,https://halo.wiki.gallery/images/8/8e/HR_Grenadier_Helmet_Icon.png
+Spartan,helmets,UA,Grenadier,Warrant Officer,5000,helmets/grenadier__ua.png,https://halo.wiki.gallery/images/4/46/HR_Grenadier_UA_Helmet_Icon.png
+Spartan,helmets,UA/FC,Grenadier,Warrant Officer,2000,helmets/grenadier__ua_fc.png,https://halo.wiki.gallery/images/8/8d/HR_Grenadier_UAFC_Helmet_Icon.png
+Spartan,helmets,Air Assault,,Warrant Officer,15000,helmets/air_assault.png,https://halo.wiki.gallery/images/8/8d/HR_AirAssault_Helmet_Icon.png
+Spartan,helmets,UA/CNM,Air Assault,Warrant Officer,7500,helmets/air_assault__ua_cnm.png,https://halo.wiki.gallery/images/d/d7/HR_AirAssault_UACNM_Helmet_Icon.png
+Spartan,helmets,FC-I,Air Assault,Warrant Officer,5000,helmets/air_assault__fc_i.png,https://halo.wiki.gallery/images/8/86/HR_AirAssault_FCI_Helmet_Icon.png
+Spartan,helmets,Scout,,Captain,40000,helmets/scout.png,https://halo.wiki.gallery/images/a/a2/HR_Scout_Helmet_Icon.png
+Spartan,helmets,HU/RS,Scout,Captain,5000,helmets/scout__hu_rs.png,https://halo.wiki.gallery/images/9/9b/HR_Scout_HURS_Helmet_Icon.png
+Spartan,helmets,CBRN/CNM,Scout,Captain,5000,helmets/scout__cbrn_cnm.png,https://halo.wiki.gallery/images/9/97/HR_Scout_CBRNCNM_Helmet_Icon.png
+Spartan,helmets,EVA,,Major,30000,helmets/eva.png,https://halo.wiki.gallery/images/e/ee/HR_EVA_Helmet_Icon.png
+Spartan,helmets,CNM,EVA,Major,7000,helmets/eva__cnm.png,https://halo.wiki.gallery/images/6/6e/HR_EVA_CNM_Helmet_Icon.png
+Spartan,helmets,UA/HUL[3],EVA,Lieutenant Colonel,15000,helmets/eva__ua_hul3.png,https://halo.wiki.gallery/images/8/83/HR_EVA_UAHUL3_Helmet_Icon.png
+Spartan,helmets,JFO,,Lieutenant Colonel,60000,helmets/jfo.png,https://halo.wiki.gallery/images/6/6f/HR_JFO_Helmet_Icon.png
+Spartan,helmets,HUL-I,JFO,Lieutenant Colonel,20000,helmets/jfo__hul_i.png,https://halo.wiki.gallery/images/1/1e/HR_JFO_HULI_Helmet_Icon.png
+Spartan,helmets,UA,JFO,Lieutenant Colonel,10000,helmets/jfo__ua.png,https://halo.wiki.gallery/images/f/fe/HR_JFO_UA_Helmet_Icon.png
+Spartan,helmets,Commando,,Commander,85000,helmets/commando.png,https://halo.wiki.gallery/images/0/09/HR_Commando_Helmet_Icon.png
+Spartan,helmets,CBRN/CNM,Commando,Commander,40000,helmets/commando__cbrn_cnm.png,https://halo.wiki.gallery/images/3/36/HR_Commando_CBRNCNM_Helmet_Icon.png
+Spartan,helmets,UA/FC-I[2],Commando,Commander,40000,helmets/commando__ua_fc_i2.png,https://halo.wiki.gallery/images/d/df/HR_Commando_UAFCI2_Helmet_Icon.png
+Spartan,helmets,EVA [C],,Commander,120000,helmets/eva_c.png,https://halo.wiki.gallery/images/a/ab/HR_EVAC_Helmet_Icon.png
+Spartan,helmets,CNM,EVA [C],Commander,25000,helmets/eva_c__cnm.png,https://halo.wiki.gallery/images/a/af/HR_EVAC_CNM_Helmet_Icon.png
+Spartan,helmets,UA/HUL[3],EVA [C],Commander,140000,helmets/eva_c__ua_hul3.png,https://halo.wiki.gallery/images/b/bc/HR_EVAC_UAHUL3_Helmet_Icon.png
+Spartan,helmets,Mark V,,Lieutenant Colonel,130000,helmets/mark_v.png,https://halo.wiki.gallery/images/8/8d/HR_MarkV_Helmet_Icon.png
+Spartan,helmets,CNM,Mark V,Lieutenant Colonel,10000,helmets/mark_v__cnm.png,https://halo.wiki.gallery/images/f/f2/HR_MarkV_CNM_Helmet_Icon.png
+Spartan,helmets,UA,Mark V,Lieutenant Colonel,15000,helmets/mark_v__ua.png,https://halo.wiki.gallery/images/c/c5/HR_MarkV_UA_Helmet_Icon.png
+Spartan,helmets,Pilot,,Commander,90000,helmets/pilot.png,https://halo.wiki.gallery/images/5/5b/HR_Pilot_Helmet_Icon.png
+Spartan,helmets,HUL[3],Pilot,Commander,25000,helmets/pilot__hul3.png,https://halo.wiki.gallery/images/1/16/HR_Pilot_HUL3_Helmet_Icon.png
+Spartan,helmets,UA/HUL[3],Pilot,Commander,55000,helmets/pilot__ua_hul3.png,https://halo.wiki.gallery/images/5/58/HR_Pilot_UAHUL3_Helmet_Icon.png
+Spartan,helmets,Haunted,Pilot,Inheritor,1,helmets/pilot__haunted.png,https://halo.wiki.gallery/images/b/b6/HR_Pilot_Haunted_Helmet_Icon.png
+Spartan,helmets,Recon,,Colonel,100000,helmets/recon.png,https://halo.wiki.gallery/images/d/d0/HR_Recon_Helmet_Icon.png
+Spartan,helmets,HUL-I,Recon,Colonel,75000,helmets/recon__hul_i.png,https://halo.wiki.gallery/images/9/9c/HR_Recon_HUL_Helmet_Icon.png
+Spartan,helmets,UA/HUL[3],Recon,,,helmets/recon__ua_hul3.png,https://halo.wiki.gallery/images/8/88/HR_Recon_UAHUL_Helmet_Icon.png
+Spartan,helmets,Mark VI,,Brigadier,300000,helmets/mark_vi.png,https://halo.wiki.gallery/images/2/24/HR_MarkVI_Helmet_Icon.png
+Spartan,helmets,FC-I[2],Mark VI,Brigadier,75000,helmets/mark_vi__fc_i2.png,https://halo.wiki.gallery/images/9/9c/HR_MarkVI_FCI2_Helmet_Icon.png
+Spartan,helmets,UA/HUL-I,Mark VI,Brigadier,75000,helmets/mark_vi__ua_hul_i.png,https://halo.wiki.gallery/images/2/2e/HR_MarkVI_UAHULI_Helmet_Icon.png
+Spartan,helmets,GUNGNIR,,Brigadier,250000,helmets/gungnir.png,https://halo.wiki.gallery/images/e/ea/HR_Gungnir_Helmet_Icon.png
+Spartan,helmets,HU/RS,GUNGNIR,Brigadier,125000,helmets/gungnir__hu_rs.png,https://halo.wiki.gallery/images/2/22/HR_Gungnir_HURS_Helmet_Icon.png
+Spartan,helmets,CBRN,GUNGNIR,Mythic,400000,helmets/gungnir__cbrn.png,https://halo.wiki.gallery/images/b/b5/HR_Gungnir_CBRN_Helmet_Icon.png
+Spartan,helmets,Security,,General,250000,helmets/security.png,https://halo.wiki.gallery/images/8/8a/HR_Security_Helmet_Icon.png
+Spartan,helmets,UA/HUL,Security,General,200000,helmets/security__ua_hul.png,https://halo.wiki.gallery/images/b/bd/HR_Security_UAHUL_Helmet_Icon.png
+Spartan,helmets,CBRN/CNM,Security,Legend,200000,helmets/security__cbrn_cnm.png,https://halo.wiki.gallery/images/9/92/HR_Security_CBRNCNM_Helmet_Icon.png
+Spartan,helmets,Military Police,,,,helmets/military_police.png,https://halo.wiki.gallery/images/a/a4/HR_MilitaryPolice_Helmet_Icon.png
+Spartan,helmets,CBRN/HU/RS,Military Police,,,helmets/military_police__cbrn_hu_rs.png,https://halo.wiki.gallery/images/7/7c/HR_MilitaryPolice_CBRNHURS_Helmet_Icon.png
+Spartan,helmets,HU/RS/CNM,Military Police,,,helmets/military_police__hu_rs_cnm.png,https://halo.wiki.gallery/images/a/a2/HR_MilitaryPolice_HURSCNM_Helmet_Icon.png
+Spartan,helmets,CQB,,Hero,,helmets/cqb.png,https://halo.wiki.gallery/images/f/f1/HR_CQB_Helmet_Icon.png
+Spartan,helmets,HU/RS/CNM,CQB,Hero,,helmets/cqb__hu_rs_cnm.png,https://halo.wiki.gallery/images/5/52/HR_CQB_HURS_Helmet_Icon.png
+Spartan,helmets,UA/HUL,CQB,Legend,,helmets/cqb__ua_hul.png,https://halo.wiki.gallery/images/0/08/HR_CQB_UAHUL_Helmet_Icon.png
+Spartan,helmets,AKIS,,,,helmets/akis.png,https://halo.wiki.gallery/images/2/26/HR_AKIS_Helmet_Icon.png
+Spartan,helmets,GRD,AKIS,,,helmets/akis__grd.png,https://halo.wiki.gallery/images/0/0b/HR_AKIS_GRD_Helmet_Icon.png
+Spartan,helmets,CBRN,AKIS,,,helmets/akis__cbrn.png,https://halo.wiki.gallery/images/c/ce/HR_AKIS_CBRN_Helmet_Icon.png
+Spartan,helmets,GRD/CBRN,AKIS,,,helmets/akis__grd_cbrn.png,https://halo.wiki.gallery/images/a/a6/HR_AKIS_GRDCBRN_Helmet_Icon.png
+Spartan,helmets,Mariner,,,,helmets/mariner.png,https://halo.wiki.gallery/images/7/76/HR_Mariner_Helmet_Icon.png
+Spartan,helmets,Defiant,Mariner,,,helmets/mariner__defiant.png,https://halo.wiki.gallery/images/0/03/HR_Mariner_Defiant_Helmet_Icon.png
+Spartan,helmets,Mister Chief,Mariner,,,helmets/mariner__mister_chief.png,https://halo.wiki.gallery/images/6/6b/HR_Mariner_MisterChief_Helmet_Icon.png
+Spartan,helmets,OPTREX,Mariner,,,helmets/mariner__optrex.png,https://halo.wiki.gallery/images/b/bc/HR_Mariner_OPTREX_Helmet_Icon.png
+Spartan,helmets,Belos Heran,Mariner,,,helmets/mariner__belos_heran.png,https://halo.wiki.gallery/images/9/92/HTMCC_H3_Belos_Heran_Helmet_Icon.png
+Spartan,helmets,Belos Syntrofos,Mariner,,,helmets/mariner__belos_syntrofos.png,https://halo.wiki.gallery/images/2/28/HTMCC_H3_Belos_Syntrofos_Helmet_Icon.png
+Spartan,helmets,Belos Kerata,Mariner,,,helmets/mariner__belos_kerata.png,https://halo.wiki.gallery/images/a/ac/HTMCC_H3_Belos_Kerata_Helmet_Icon.png
+Spartan,helmets,Belos Leontokardos,Mariner,,,helmets/mariner__belos_leontokardos.png,https://halo.wiki.gallery/images/8/81/HTMCC_H3_Belos_Leontokardos_Helmet_Icon.png
+Spartan,helmets,Belos Stheno,Mariner,,,helmets/mariner__belos_stheno.png,https://halo.wiki.gallery/images/9/96/HTMCC_H3_Belos_Stheno_Helmet_Icon.png
+Spartan,helmets,Belos Cerberus,Mariner,,,helmets/mariner__belos_cerberus.png,https://halo.wiki.gallery/images/d/d5/HTMCC_H3_Belos_Cerberus_Helmet_Icon.png
+Spartan,helmets,Blackguard Warfeast,Mariner,,,helmets/mariner__blackguard_warfeast.png,https://halo.wiki.gallery/images/b/bb/HTMCC_H3_Blackguard_Warfeast_Helmet_Icon.png
+Spartan,helmets,Blackguard Fallen Equerry,Mariner,,,helmets/mariner__blackguard_fallen_equerry.png,https://halo.wiki.gallery/images/f/fe/HTMCC_H3_Blackguard_FallenEquerry_Helmet_Icon.png
+Spartan,helmets,Blackguard Forsaken Dragon,Mariner,,,helmets/mariner__blackguard_forsaken_dragon.png,https://halo.wiki.gallery/images/3/35/HTMCC_H3_Blackguard_ForsakenDragon_Helmet_Icon.png
+Spartan,helmets,Blackguard Carrion Crow,Mariner,,,helmets/mariner__blackguard_carrion_crow.png,https://halo.wiki.gallery/images/9/92/HTMCC_H3_Blackguard_CarrionCrow_Helmet_Icon.png
+Spartan,helmets,Blackguard Sorrowful Visage,Mariner,,,helmets/mariner__blackguard_sorrowful_visage.png,https://halo.wiki.gallery/images/d/da/HTMCC_H3_Blackguard_SorrowfulVisage_Helmet_Icon.png
+Spartan,helmets,Blackguard Ashen Crown,Mariner,,,helmets/mariner__blackguard_ashen_crown.png,https://halo.wiki.gallery/images/0/0c/HTMCC_H3_Blackguard_AshenCrown_Helmet_Icon.png
+Spartan,helmets,Drengr Skald,Mariner,,,helmets/mariner__drengr_skald.png,https://halo.wiki.gallery/images/a/ac/HTMCC_H3_Drengr_Skald_Helmet_Icon.png
+Spartan,helmets,Drengr Valdemar,Mariner,,,helmets/mariner__drengr_valdemar.png,https://halo.wiki.gallery/images/7/7b/HTMCC_H3_Drengr_Valdemar_Helmet_Icon.png
+Spartan,helmets,Drengr Dvalinn,Mariner,,,helmets/mariner__drengr_dvalinn.png,https://halo.wiki.gallery/images/1/11/HTMCC_H3_Drengr_Dvalinn_Helmet_Icon.png
+Spartan,helmets,Drengr Thyra,Mariner,,,helmets/mariner__drengr_thyra.png,https://halo.wiki.gallery/images/a/af/HTMCC_H3_Drengr_Thyra_Helmet_Icon.png
+Spartan,helmets,Drengr Nari,Mariner,,,helmets/mariner__drengr_nari.png,https://halo.wiki.gallery/images/e/e7/HTMCC_H3_Drengr_Nari_Helmet_Icon.png
+Spartan,helmets,Drengr Tyr,Mariner,,,helmets/mariner__drengr_tyr.png,https://halo.wiki.gallery/images/d/de/HTMCC_H3_Drengr_Tyr_Helmet_Icon.png
+Spartan,shoulder,Default,,,0,shoulder/default.png,https://halo.wiki.gallery/images/e/e6/HR_Default_LShoulder_Icon.png
+Spartan,shoulder,FJ/PARA,,Recruit,250,shoulder/fj_para.png,https://halo.wiki.gallery/images/3/34/HR_FJPara_LShoulder_Icon.png
+Spartan,shoulder,HAZOP,,Recruit,500,shoulder/hazop.png,https://halo.wiki.gallery/images/f/f2/HR_HAZOP_LShoulder_Icon.png
+Spartan,shoulder,JFO,,Recruit,1000,shoulder/jfo.png,https://halo.wiki.gallery/images/7/7a/HR_JFO_LShoulder_Icon.png
+Spartan,shoulder,Recon,,Corporal,1500,shoulder/recon.png,https://halo.wiki.gallery/images/d/d5/HR_Recon_LShoulder_Icon.png
+Spartan,shoulder,UA/Multi-Threat,,Corporal,2000,shoulder/ua_multi_threat.png,https://halo.wiki.gallery/images/2/20/HR_MultiThreat_LShoulder_Icon.png
+Spartan,shoulder,Jump Jet,,Sergeant,5000,shoulder/jump_jet.png,https://halo.wiki.gallery/images/8/87/HR_JumpJet_LShoulder_Icon.png
+Spartan,shoulder,EVA,,Sergeant,3000,shoulder/eva.png,https://halo.wiki.gallery/images/e/e6/HR_EVA_LShoulder_Icon.png
+Spartan,shoulder,GUNGNIR,,Warrant Officer,5000,shoulder/gungnir.png,https://halo.wiki.gallery/images/6/64/HR_Gungnir_LShoulder_Icon.png
+Spartan,shoulder,ODST,,Captain,25000,shoulder/odst.png,https://halo.wiki.gallery/images/8/8f/HR_ODST_LShoulder_Icon.png
+Spartan,shoulder,UA/Base Security,,Major,12000,shoulder/ua_base_security.png,https://halo.wiki.gallery/images/6/65/HR_BaseSecurity_LShoulder_Icon.png
+Spartan,shoulder,CQC,,Lieutenant Colonel,20000,shoulder/cqc.png,https://halo.wiki.gallery/images/a/af/HR_CQC_LShoulder_Icon.png
+Spartan,shoulder,Operator,,Commander,28000,shoulder/operator.png,https://halo.wiki.gallery/images/3/3f/HR_Operator_LShoulder_Icon.png
+Spartan,shoulder,Commando,,Commander,40000,shoulder/commando.png,https://halo.wiki.gallery/images/5/57/HR_Commando_LShoulder_Icon.png
+Spartan,shoulder,Grenadier,,Colonel,65000,shoulder/grenadier.png,https://halo.wiki.gallery/images/4/4e/HR_Grenadier_LShoulder_Icon.png
+Spartan,shoulder,Sniper,,Brigadier,80000,shoulder/sniper.png,https://halo.wiki.gallery/images/4/4d/HR_Sniper_LShoulder_Icon.png
+Spartan,shoulder,MJOLNIR Mk. V,,Brigadier,100000,shoulder/mjolnir_mk_v.png,https://halo.wiki.gallery/images/1/14/HR_MarkV_LShoulder_Icon.png
+Spartan,shoulder,Security,,General,70000,shoulder/security.png,https://halo.wiki.gallery/images/f/fd/HR_Security_LShoulder_Icon.png
+Spartan,chest_armor,Default,,,0,chest_armor/default.png,https://halo.wiki.gallery/images/8/82/HR_Default_Chest_Icon.png
+Spartan,chest_armor,HP/HALO,,Recruit,600,chest_armor/hp_halo.png,https://halo.wiki.gallery/images/0/03/HR_HPHALO_Chest_Icon.png
+Spartan,chest_armor,UA/Counterassault,,Corporal,600,chest_armor/ua_counterassault.png,https://halo.wiki.gallery/images/1/1d/HR_Counterassault_Chest_Icon.png
+Spartan,chest_armor,Tactical/LRP,,Sergeant,1000,chest_armor/tactical_lrp.png,https://halo.wiki.gallery/images/a/aa/HR_LRP_Chest_Icon.png
+Spartan,chest_armor,UA/ODST,,Warrant Officer,750,chest_armor/ua_odst.png,https://halo.wiki.gallery/images/3/30/HR_ODST_Chest_Icon.png
+Spartan,chest_armor,Tactical/Recon,,Warrant Officer,1500,chest_armor/tactical_recon.png,https://halo.wiki.gallery/images/b/b0/HR_Recon_Chest_Icon.png
+Spartan,chest_armor,Collar/Grenadier,,Captain,4000,chest_armor/collar_grenadier.png,https://halo.wiki.gallery/images/f/f6/HR_Grenadier_Chest_Icon.png
+Spartan,chest_armor,Tactical/Patrol,,Major,4000,chest_armor/tactical_patrol.png,https://halo.wiki.gallery/images/8/82/HR_Patrol_Chest_Icon.png
+Spartan,chest_armor,Collar/Breacher,,Lieutenant Colonel,8000,chest_armor/collar_breacher.png,https://halo.wiki.gallery/images/b/b5/HR_Breacher_Chest_Icon.png
+Spartan,chest_armor,Assault/Sapper,,Commander,14000,chest_armor/assault_sapper.png,https://halo.wiki.gallery/images/c/cf/HR_Sapper_Chest_Icon.png
+Spartan,chest_armor,Assault/Commando,,Colonel,12000,chest_armor/assault_commando.png,https://halo.wiki.gallery/images/3/3a/HR_Commando_Chest_Icon.png
+Spartan,chest_armor,HP/Parafoil,,Colonel,8000,chest_armor/hp_parafoil.png,https://halo.wiki.gallery/images/1/18/HR_Parafoil_Chest_Icon.png
+Spartan,chest_armor,Collar/Grenadier [UA],,General,40000,chest_armor/collar_grenadier_ua.png,https://halo.wiki.gallery/images/f/f6/HR_Grenadier_Chest_Icon.png
+Spartan,chest_armor,UA/Multi-Threat [W],,,,chest_armor/ua_multi_threat_w.png,https://halo.wiki.gallery/images/3/3f/HR_MultiThreatW_Chest_Icon.png
+Spartan,chest_armor,UA/Base Security [W],,,,chest_armor/ua_base_security_w.png,https://halo.wiki.gallery/images/a/a8/HR_BaseSecurityW_Chest_Icon.png
+Spartan,chest_armor,Collar/Breacher [R],,Lieutenant Colonel,75000,chest_armor/collar_breacher_r.png,https://halo.wiki.gallery/images/b/b5/HR_Breacher_Chest_Icon.png
+Spartan,chest_armor,HP/Parafoil [R],,Brigadier,175000,chest_armor/hp_parafoil_r.png,https://halo.wiki.gallery/images/1/18/HR_Parafoil_Chest_Icon.png
+Spartan,chest_armor,Assault/Sapper [R],,General,250000,chest_armor/assault_sapper_r.png,https://halo.wiki.gallery/images/c/cf/HR_Sapper_Chest_Icon.png
+Spartan,chest_armor,UA/Multi-Threat,,,,chest_armor/ua_multi_threat.png,https://halo.wiki.gallery/images/2/2e/HR_MultiThreat_Chest_Icon.png
+Spartan,chest_armor,UA/Base Security,,,,chest_armor/ua_base_security.png,https://halo.wiki.gallery/images/b/b8/HR_BaseSecurity_Chest_Icon.png
+Spartan,chest_armor,Default [R],,,,chest_armor/default_r.png,https://halo.wiki.gallery/images/4/4d/HR_DefaultR_Chest_Icon.png
+Spartan,chest_armor,UA/Counterassault [R],,,,chest_armor/ua_counterassault_r.png,https://halo.wiki.gallery/images/3/3f/HR_CounterassaultR_Chest_Icon.png
+Spartan,chest_armor,Tactical/Recon [R],,,,chest_armor/tactical_recon_r.png,https://halo.wiki.gallery/images/4/4e/HR_ReconR_Chest_Icon.png
+Spartan,chest_armor,Tactical/Patrol [R],,,,chest_armor/tactical_patrol_r.png,https://halo.wiki.gallery/images/2/27/HR_PatrolR_Chest_Icon.png
+Spartan,chest_armor,Collar/Grenadier [UA] [R],,,,chest_armor/collar_grenadier_ua_r.png,https://halo.wiki.gallery/images/c/ce/HR_GrenadierUAR_Chest_Icon.png
+Spartan,chest_armor,EXO/TSCS,,,,chest_armor/exo_tscs.png,https://halo.wiki.gallery/images/3/3d/HR_EXO-TSCS_Chest_Icon.png
+Spartan,wrist_attachment,Default,,,0,wrist_attachment/default.png,https://halo.wiki.gallery/images/b/b4/HR_Default_Wrist_Icon.png
+Spartan,wrist_attachment,UA/Buckler,,Sergeant,5000,wrist_attachment/ua_buckler.png,https://halo.wiki.gallery/images/7/73/HR_Buckler_Wrist_Icon.png
+Spartan,wrist_attachment,UA/Bracer,,Warrant Officer,10000,wrist_attachment/ua_bracer.png,https://halo.wiki.gallery/images/7/7b/HR_Bracer_Wrist_Icon.png
+Spartan,wrist_attachment,Tactical/TACPAD,,Major,50000,wrist_attachment/tactical_tacpad.png,https://halo.wiki.gallery/images/0/00/HR_TACPAD_Wrist_Icon.png
+Spartan,wrist_attachment,Tactical/UGPS,,Lieutenant Colonel,80000,wrist_attachment/tactical_ugps.png,https://halo.wiki.gallery/images/0/06/HR_UGPS_Wrist_Icon.png
+Spartan,wrist_attachment,Assault/Breacher,,Colonel,200000,wrist_attachment/assault_breacher.png,https://halo.wiki.gallery/images/3/3b/HR_Breacher_Wrist_Icon.png
+Spartan,utility,Default,,,0,utility/default.png,https://halo.wiki.gallery/images/a/af/HR_Default_Utility_Icon.png
+Spartan,utility,Tactical/Hard Case,,Captain,40000,utility/tactical_hard_case.png,https://halo.wiki.gallery/images/4/4a/HR_HardCase_Utility_Icon.png
+Spartan,utility,UA/CHOBHAM,,,30000,utility/ua_chobham.png,https://halo.wiki.gallery/images/f/fd/HR_Chobham_Utility_Icon.png
+Spartan,utility,UA/NxRA,,Major,40000,utility/ua_nxra.png,https://halo.wiki.gallery/images/8/8b/HR_NxRA_Utility_Icon.png
+Spartan,utility,Tactical/Trauma Kit,,Lieutenant Colonel,80000,utility/tactical_trauma_kit.png,https://halo.wiki.gallery/images/7/73/HR_TraumaKit_Utility_Icon.png
+Spartan,utility,Tactical/Soft Case,,Colonel,100000,utility/tactical_soft_case.png,https://halo.wiki.gallery/images/6/62/HR_SoftCase_Utility_Icon.png
+Spartan,utility,Hydration Container,,,,utility/hydration_container.png,https://halo.wiki.gallery/images/e/e0/HR_HydrationContainer_Utility_Icon.png
+Spartan,visor_color,Default,,,0,visor_color/default.png,https://halo.wiki.gallery/images/5/58/HR_Default_Visor_Icon.png
+Spartan,visor_color,Silver,,Sergeant,35000,visor_color/silver.png,https://halo.wiki.gallery/images/9/95/HR_Silver_Visor_Icon.png
+Spartan,visor_color,Blue,,Warrant Officer,50000,visor_color/blue.png,https://halo.wiki.gallery/images/b/ba/HR_Blue_Visor_Icon.png
+Spartan,visor_color,Black,,Lieutenant Colonel,100000,visor_color/black.png,https://halo.wiki.gallery/images/6/64/HR_Black_Visor_Icon.png
+Spartan,visor_color,Gold,,Colonel,250000,visor_color/gold.png,https://halo.wiki.gallery/images/a/ac/HR_Gold_Visor_Icon.png
+Spartan,knee_guards,Default,,,0,knee_guards/default.png,https://halo.wiki.gallery/images/d/d7/HR_Default_Knee_Icon.png
+Spartan,knee_guards,FJ/PARA,,Sergeant,10000,knee_guards/fj_para.png,https://halo.wiki.gallery/images/4/4e/HR_FJPara_Knee_Icon.png
+Spartan,knee_guards,GUNGNIR,,Captain,25000,knee_guards/gungnir.png,https://halo.wiki.gallery/images/5/51/HR_Gungnir_Knee_Icon.png
+Spartan,knee_guards,Grenadier,,Lieutenant Colonel,45000,knee_guards/grenadier.png,https://halo.wiki.gallery/images/b/b0/HR_Grenadier_Knee_Icon.png
+Spartan,armor_effects,Default,,,,armor_effects/default.png,https://halo.wiki.gallery/images/3/3d/HR_Default_Armor_Effect.png
+Spartan,armor_effects,Legendary,,Legend,0,armor_effects/legendary.png,https://halo.wiki.gallery/images/a/af/HR_Legendary_Armor_Effect.png
+Spartan,armor_effects,Eternal,,,0,armor_effects/eternal.png,https://halo.wiki.gallery/images/1/1b/HR_Eternal_Armor_Effect.png
+Spartan,armor_effects,Birthday Party,,,200000,armor_effects/birthday_party.png,https://halo.wiki.gallery/images/8/83/HR_BirthdayParty_Effect_Icon.png
+Spartan,armor_effects,Heart Attack,,,300000,armor_effects/heart_attack.png,https://halo.wiki.gallery/images/4/47/HR_HeartAttack_Effect_Icon.png
+Spartan,armor_effects,Pestilence,,,1000000,armor_effects/pestilence.png,https://halo.wiki.gallery/images/8/8c/HR_Pestilence_Armor_Effect.png
+Spartan,armor_effects,Inclement Weather,,,2000000,armor_effects/inclement_weather.png,https://halo.wiki.gallery/images/2/24/HR_Inclement_Weather_Armor_Effect.png
+Spartan,firefight_voices,Noble Six,,,,firefight_voices/noble_six.png,https://halo.wiki.gallery/images/5/5a/HR_NobleSix_Firefight_Icon.png
+Spartan,firefight_voices,Jorge S-052,,,10000,firefight_voices/jorge_s_052.png,https://halo.wiki.gallery/images/d/d5/HR_Jorge052_Firefight_Icon.png
+Spartan,firefight_voices,Jun S-266,,,10000,firefight_voices/jun_s_266.png,https://halo.wiki.gallery/images/3/36/HR_JunA266_Firefight_Icon.png
+Spartan,firefight_voices,Emile S-239,,,10000,firefight_voices/emile_s_239.png,https://halo.wiki.gallery/images/8/8e/HR_EmileA239_Firefight_Icon.png
+Spartan,firefight_voices,Kat S-320,,,10000,firefight_voices/kat_s_320.png,https://halo.wiki.gallery/images/c/c5/HR_KatB320_Firefight_Icon.png
+Spartan,firefight_voices,Auntie Dot [A.I.],,,15000,firefight_voices/auntie_dot_a_i.png,https://halo.wiki.gallery/images/d/df/HR_AuntieDot_Firefight_Icon.png
+Spartan,firefight_voices,Carter S-259,,,100000,firefight_voices/carter_s_259.png,https://halo.wiki.gallery/images/f/f2/HR_CarterA259_Firefight_Icon.png
+Spartan,firefight_voices,GYSGT Stacker,,,5000,firefight_voices/gysgt_stacker.png,https://halo.wiki.gallery/images/6/61/HR_Stacker_Firefight_Icon.png
+Spartan,firefight_voices,GYSGT Buck,,,15000,firefight_voices/gysgt_buck.png,https://halo.wiki.gallery/images/b/be/HR_Buck_Firefight_Icon.png
+Spartan,firefight_voices,SGTMAJ Johnson,,,100000,firefight_voices/sgtmaj_johnson.png,https://halo.wiki.gallery/images/b/ba/HR_Johnson_Firefight_Icon.png
+Spartan,firefight_voices,Cortana [A.I.],,,100000,firefight_voices/cortana_a_i.png,https://halo.wiki.gallery/images/a/a4/HR_Cortana_Firefight_Icon.png
+Spartan,firefight_voices,John S-117,,,150000,firefight_voices/john_s_117.png,https://halo.wiki.gallery/images/b/bc/HR_John117_Firefight_Icon.png
+Elite,elite_armor,Minor,,,,elite_armor/minor.png,https://halo.wiki.gallery/images/6/66/HR_Elite_Minor_Icon.png
+Elite,elite_armor,Spec Ops,,Corporal,,elite_armor/spec_ops.png,https://halo.wiki.gallery/images/2/2c/HR_Elite_SpecOps_Icon.png
+Elite,elite_armor,Ranger,,Sergeant,,elite_armor/ranger.png,https://halo.wiki.gallery/images/a/af/HR_Elite_Ranger_Icon.png
+Elite,elite_armor,Ultra,,Warrant Officer,,elite_armor/ultra.png,https://halo.wiki.gallery/images/c/c3/HR_Elite_Ultra_Icon.png
+Elite,elite_armor,Zealot,,Captain,,elite_armor/zealot.png,https://halo.wiki.gallery/images/6/6f/HR_Elite_Zealot_Icon.png
+Elite,elite_armor,General,,Major,,elite_armor/general.png,https://halo.wiki.gallery/images/9/91/HR_Elite_General_Icon.png
+Elite,elite_armor,Field Marshal,,Lieutenant Colonel,,elite_armor/field_marshal.png,https://halo.wiki.gallery/images/4/49/HR_Elite_FieldMarshal_Icon.png
+Elite,elite_armor,Officer,,Legend,,elite_armor/officer.png,https://halo.wiki.gallery/images/8/84/HR_Elite_Officer_Icon.png

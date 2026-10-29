@@ -2,11 +2,13 @@
 #include "ArmoryPreviewLayers.hpp"
 #include "NobleStyle.hpp"
 #include "UiArt.hpp"
+#include "career/Career.hpp"
 #include "common/Logger.hpp"
 #include "engine/ReachArmory.hpp"
 #include "engine/ReachHost.hpp"
 
 #include <windows.h>
+#include <shellapi.h>
 #include <imgui.h>
 #include <nlohmann/json.hpp>
 #include <algorithm>
@@ -129,7 +131,7 @@ const std::vector<HelmetSpec>& GetSpartanHelmets() {
             "HAZOP", "isaac", "-player_isaac",
             {
                 {"BASE", "isaac", "The Mark V[H] variant is environmentally sealed for prolonged operations in hazardous environments."},
-                {"CBRN", "isaac_a", "Twin CBRN filtration canisters for extreme hazard zone operations."},
+                {"CBRN/HUL", "isaac_a", "Twin CBRN filtration canisters and a Hardened Uplink for extreme hazard zone operations."},
                 {"CNM-I", "isaac_b", "Command Network Module and CBRN filtration suite for the HAZOP helmet."},
             },
             "The Mark V[H] variant is environmentally sealed for prolonged operations in hazardous environments."
@@ -265,7 +267,7 @@ const std::vector<HelmetSpec>& GetSpartanHelmets() {
             "RECON", "malcolm", "-player_malcolm",
             {
                 {"BASE", "malcolm", "An ONI developmental prototype designed to decrease noticeability and silhouette in deep-reconnaissance operations."},
-                {"HUL", "malcolm_a", "Hardened Uplink transceiver mounted to the ONI Recon helmet."},
+                {"HUL-I", "malcolm_a", "Hardened Uplink transceiver mounted to the ONI Recon helmet."},
                 {"UA/HUL[3]", "malcolm_b", "Up-Armored blast shield and triple Hardened Uplink array for the Recon helmet."},
             },
             "An ONI developmental prototype designed to decrease noticeability and silhouette in deep-reconnaissance operations."
@@ -289,61 +291,15 @@ const std::vector<HelmetSpec>& GetSpartanHelmets() {
             "Created as part of Project GUNGNIR to pair with the M6 Grindell/Galilean Nonlinear Rifle."
         },
         {
-            "AKIS / GRD", "hilands", "-dlc2_helmet_hilands",
+            "AKIS", "hilands", "-dlc2_helmet_hilands",
             {
-                // MCC's four GRD items in MCC order: Base, Optrex, CBRN, Optrex/CBRN.
+                // MCC's four AKIS items in MCC order: Base, GRD, CBRN, GRD/CBRN (names as on Halopedia).
                 {"BASE", "hilands", "High-altitude reconnaissance and assassination prototype developed at the UNSC Highland Mountains facility."},
-                {"OPTREX", "hilands_b", "Optrex optical rangefinder module for the AKIS / GRD helmet."},
+                {"GRD", "hilands_b", "GRD optical rangefinder module for the AKIS helmet."},
                 {"CBRN", "hilands_a", "CBRN filtration module for the AKIS prototype helmet."},
-                {"OPTREX/CBRN", "hilands_c", "Optrex rangefinder combined with the CBRN filtration suite for the AKIS / GRD helmet."},
+                {"GRD/CBRN", "hilands_c", "GRD rangefinder combined with the CBRN filtration suite for the AKIS helmet."},
             },
             "High-altitude reconnaissance and assassination prototype developed at the UNSC Highland Mountains facility."
-        },
-        {
-            "MARINER", "cndmnd", "-dlc2_helmet_cndmnd",
-            {
-                {"BASE", "cndmnd", "Deep-space orbital salvage and boarding operations helmet developed near the Condemned orbital station."},
-                {"OPTREX", "cndmnd_a", "External Optrex sensor array for the Mariner orbital helmet."},
-                {"DEFIANT", "cndmnd_b", "Defiant-pattern reinforced faceplate for the Mariner orbital helmet."},
-                {"MISTER CHIEF", "cndmnd_c", "Custom hand-drawn commemorative faceplate on the Mariner orbital dome."},
-            },
-            "Deep-space orbital salvage and boarding operations helmet developed near the Condemned orbital station."
-        },
-        {
-            "BELOS", "s8_helmet_belos_cerberus", "-s8_helmet_belos_cerberus",
-            {
-                {"CERBERUS", "s8_helmet_belos_cerberus", "Mythic Hellas-inspired Corinthian combat helm."},
-                {"TRANSVERSE", "s8_helmet_belos_transverse", "Belos helm crested with a transverse horsehair plume."},
-                {"STHENO", "s8_helmet_belos_stheno", "Gorgon-visaged Belos variant."},
-                {"KERATA", "s8_helmet_belos_kerata", "Horned Belos assault helm."},
-                {"CORINTHIAN", "s8_helmet_belos_corinthian", "High-crested Corinthian Belos helm."},
-                {"LEONTOKARDOS", "s8_helmet_belos_leontokardos", "Lion-hearted Belos champion helm."},
-            },
-            "Mythic Hellas-inspired MJOLNIR combat helmet from MCC Season 8."
-        },
-        {
-            "BLACKGUARD", "s8_helmet_blackguard_base", "-s8_helmet_blckgrd_base",
-            {
-                {"BASE", "s8_helmet_blackguard_base", "Knightly great-helm forged for frontline siege warfare."},
-                {"CROWN", "s8_helmet_blackguard_crown", "Crowned Blackguard command helm."},
-                {"VISAGE", "s8_helmet_blackguard_visage", "Visored Blackguard dread helm."},
-                {"BISHOP", "s8_helmet_blackguard_bishop", "Mitred Blackguard inquisitor helm."},
-                {"DRAGON", "s8_helmet_blackguard_dragon", "Wyrm-crested Blackguard helm."},
-                {"WIND", "s8_helmet_blackguard_wind", "Winged Blackguard tournament helm."},
-            },
-            "Medieval siege-plate inspired MJOLNIR combat helmet from MCC Season 8."
-        },
-        {
-            "DRENGR", "s8_helmet_drengr_base", "-s8_helmet_drengr_base",
-            {
-                {"BASE", "s8_helmet_drengr_base", "Norse spectacle-guard war helm built for shock-drop boarding actions."},
-                {"TYR", "s8_helmet_drengr_tyr", "Tyr-pattern Drengr war helm."},
-                {"NARI", "s8_helmet_drengr_nari", "Nari-pattern Drengr war helm."},
-                {"THYRA", "s8_helmet_drengr_thyra", "Thyra-pattern Drengr war helm."},
-                {"DVALINN", "s8_helmet_drengr_dvalinn", "Dvalinn-pattern Drengr war helm."},
-                {"VALDEMAR", "s8_helmet_drengr_valdemar", "Valdemar-pattern Drengr war helm."},
-            },
-            "Norse-inspired MJOLNIR shock-assault helmet from MCC Season 8."
         },
     };
     return kHelmets;
@@ -454,18 +410,14 @@ const std::vector<MultiLayerSpec>& GetSpartanChests() {
          "Reinforced security cuirass designed to deflect small-arms and plasma bolts."},
         {"DEFAULT [R]", "chest_default_roboarm", "", true,
          "Standard Mark V [B] battle plate paired with a cybernetic right arm."},
-        {"UA/COUNTERASSAULT [R]", "chest_2_roboarm", "-flair_chest_perm1_default__", true,
+        {"UA/COUNTERASSAULT [R]", "chest_uacounterassault_roboarm", "-flair_chest_perm1_default__", true,
          "UA/Counterassault chest armor paired with a cybernetic right arm."},
-        {"TACTICAL/RECON [R]", "chest_5_roboarm", "-flair_chest__(spartans_player_isaac_render)", true,
+        {"TACTICAL/RECON [R]", "chest_tacticalrecon_roboarm", "-flair_chest__(spartans_player_isaac_render)", true,
          "Tactical/Recon chest webbing paired with a cybernetic right arm."},
-        {"TACTICAL/PATROL [R]", "chest_7_roboarm", "-flair_chest__(spartans_jun_render)", true,
+        {"TACTICAL/PATROL [R]", "chest_tacticalpatrol_roboarm", "-flair_chest__(spartans_jun_render)", true,
          "Tactical/Patrol sniper harness paired with a cybernetic right arm."},
-        {"COLLAR/GRENADIER [UA] [R]", "chest_12_roboarm", "-flair_joshua_torso", true,
+        {"COLLAR/GRENADIER [UA] [R]", "chest_collargrenadierua_roboarm", "-flair_joshua_torso", true,
          "Collar/Grenadier [UA] heavy chest plate paired with a cybernetic right arm."},
-        {"CONDEMNED", "dlc2_chest_cndmnd", "-dlc2_chest_cndmnd", false,
-         "Heavy orbital salvage chest rig from the Condemned development series."},
-        {"HIGHLANDS", "dlc2_chest_hilands", "-dlc2_chest_hilands", false,
-         "Highland Mountains training facility composite chest harness."},
     };
     return kChests;
 }
@@ -537,8 +489,8 @@ constexpr std::array<SimpleOption, 7> kArmorEffects = {{
     {"HEART ATTACK",      "heart_attack",      "Cupid's arrows and floating hearts trail the operator in combat."},
     {"PESTILENCE",        "pestilence",        "Avirulent swarm and toxic miasma billow from the armor seals."},
     {"INCLEMENT WEATHER", "inclement_weather", "Localized electrical storm and lightning arcs crackle across the MJOLNIR shell."},
-    {"FLAMES",            "flames",            "Legendary solar-plasma flames wreathe the operator's helmet."},
-    {"BLUE FLAMES",       "blue_flames",       "Bungie Eternal cobalt-plasma flames wreathe the operator's helmet."},
+    {"LEGENDARY",         "flames",            "Legendary solar-plasma flames wreathe the operator's helmet."},
+    {"ETERNAL",           "blue_flames",       "Bungie Eternal cobalt-plasma flames wreathe the operator's helmet."},
 }};
 
 // Reach's own 12 Firefight voices (MCC playercustomization.xml). The ODST-only voices
@@ -598,7 +550,7 @@ enum ElitePiece { kEliteHelmet = 0, kEliteLeftShoulder, kEliteRightShoulder, kEl
 const std::vector<ElitePieceSpec>& GetElitePieces(int piece) {
     static const std::array<std::vector<ElitePieceSpec>, kElitePieceCount> lists = [] {
         std::array<std::vector<ElitePieceSpec>, kElitePieceCount> l;
-        static const char* kExtraNote = "Shows in the Armory. In matches the Elite wears its Armor Set.";
+        static const char* kExtraNote = "Extra Elite piece (from the Elite armour pack); mix it with any set.";
         for (int p = 0; p < kElitePieceCount; ++p) {
             for (const auto& set : kEliteSets) {
                 const bool minorArms = p == kEliteArms && std::strcmp(set.stringId, "minor") == 0;
@@ -625,6 +577,105 @@ const std::vector<ElitePieceSpec>& GetElitePieces(int piece) {
 const char* ElitePieceId(int piece, int index) {
     const auto& list = GetElitePieces(piece);
     return list[std::clamp(index, 0, static_cast<int>(list.size()) - 1)].stringId;
+}
+
+// Elite unlocks (Tyler, 2026-10-28): Elites unlock by rank only (no cR, like Reach), a whole set or extra piece
+// group at once; every piece of an unlocked set can then be mixed freely. Minor (and its "default" arms) is free.
+// Ranks are names from Career::Ranks(). "-armory-unlock-all" unlocks everything (testing).
+struct EliteUnlock {
+    const char* id;     // piece / set string id (as in GetElitePieces / kEliteSets)
+    const char* rank;
+};
+constexpr EliteUnlock kEliteUnlocks[] = {
+    { "spec_ops", "Corporal" },          { "space", "Sergeant" },              { "officer", "Sergeant Grade 2" },
+    { "ultra", "Warrant Officer" },      { "zealot", "Captain" },              { "general", "Major" },
+    { "story_elite", "Lt. Colonel" },    { "ossoona", "Major Grade 3" },       { "schism", "Commander Grade 2" },
+    { "combat", "Commander Grade 2" },   { "h2a_space_helmet", "Colonel Grade 1" },
+    { "h2a_l_shoulder", "Colonel Grade 1" }, { "h2a_r_shoulder", "Colonel Grade 1" }, { "h2a_legs", "Colonel Grade 1" },
+    { "council", "Brigadier" },          { "honor_guard", "General" },         { "honor_guard_legs", "General" },
+};
+
+// Rank needed for an Elite item: index into Career::Ranks() (0 = from the start) and its name.
+int EliteUnlockRank(const char* id, const char** rankName = nullptr) {
+    if (rankName) *rankName = nullptr;
+    if (!id) return 0;
+    for (const auto& u : kEliteUnlocks) {
+        if (std::strcmp(u.id, id) != 0) continue;
+        const auto& ranks = Career::Ranks();
+        for (size_t i = 0; i < ranks.size(); ++i) {
+            if (std::strcmp(ranks[i].name, u.rank) == 0) {
+                if (rankName) *rankName = ranks[i].name;
+                return static_cast<int>(i);
+            }
+        }
+        return 0;
+    }
+    return 0;
+}
+
+bool UnlockAllArg() {
+    static const bool v = [] {
+        int argc = 0;
+        LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+        bool found = false;
+        for (int i = 1; argv && i < argc; ++i) if (_wcsicmp(argv[i], L"-armory-unlock-all") == 0) found = true;
+        if (argv) LocalFree(argv);
+        return found;
+    }();
+    return v;
+}
+
+// The player's rank (career.json read at most every 2 s).
+int PlayerRankIndex() {
+    static int rank = 0;
+    static ULONGLONG next = 0;
+    const ULONGLONG now = GetTickCount64();
+    if (now >= next) {
+        rank = Career::RankIndex(Career::Get().credits);
+        next = now + 2000;
+    }
+    return rank;
+}
+
+bool EliteLocked(const char* id) {
+    return !UnlockAllArg() && EliteUnlockRank(id) > PlayerRankIndex();
+}
+
+// Spartan Armory catalog: picture, rank and cR for every Spartan option (Reach's Armory prices from Halopedia,
+// docs/career/armory_overrides.json for the items Reach didn't sell). Generated by tools/armory/build_spartan_catalog.py.
+struct SpartanItem {
+    const char* slot;     // "helmet", "helmet attachment", "left shoulder", "right shoulder", "chest", "wrist",
+                          // "utility", "knees", "visor", "armor effect", "firefight voice"
+    const char* id;       // permutation string id (as in the Armory lists)
+    const char* picDir;   // under data/ui/reach ("" = no picture)
+    const char* pic;
+    const char* rank;     // Career::Ranks() name ("" = from the start)
+    int64_t credits;
+};
+constexpr SpartanItem kSpartanItems[] = {
+#include "SpartanArmoryCatalog.inc"
+};
+
+const SpartanItem* FindSpartanItem(const char* slot, const char* id) {
+    for (const auto& it : kSpartanItems)
+        if (std::strcmp(it.slot, slot) == 0 && std::strcmp(it.id, id) == 0) return &it;
+    return nullptr;
+}
+
+int RankIndexByName(const char* name) {
+    if (!name || !*name) return 0;
+    const auto& ranks = Career::Ranks();
+    for (size_t i = 0; i < ranks.size(); ++i) if (std::strcmp(ranks[i].name, name) == 0) return static_cast<int>(i);
+    return 0;
+}
+
+std::string WithCommas(int64_t v) {
+    std::string d = std::to_string(v), out;
+    for (size_t i = 0; i < d.size(); ++i) {
+        if (i && (d.size() - i) % 3 == 0) out += ',';
+        out += d[i];
+    }
+    return out;
 }
 
 } // namespace
@@ -1232,7 +1283,33 @@ struct PickOption {
     std::string description;
     ImU32 swatch = 0;     // colour tiles
     const char* art = nullptr;   // picture tiles: stem of data\ui\reach\elite_sets\<art>.png (Elite armour sets)
+    bool locked = false;         // rank not reached yet
+    const char* lockRank = nullptr;
+    const char* artDir = nullptr;   // picture folder under data/ui/reach (nullptr = "elite_sets")
+    bool forSale = false;        // rank reached, not bought yet (Spartan items with a cR price)
+    int64_t price = 0;
+    std::string buyKey;          // "<slot>:<permutation id>" in career.json
 };
+
+// Picture, rank lock and price of a Spartan option (from kSpartanItems). Rank not reached -> locked;
+// rank reached but not bought (cR price > 0) -> for sale. "-armory-unlock-all" skips both.
+void SpartanArmoryItem(PickOption& o, const char* slot, const char* id) {
+    const SpartanItem* it = FindSpartanItem(slot, id);
+    if (!it) return;
+    if (it->pic[0]) { o.art = it->pic; o.artDir = it->picDir; }
+    o.buyKey = std::string(slot) + ":" + id;
+    if (UnlockAllArg()) return;
+    const int need = RankIndexByName(it->rank);
+    if (need > PlayerRankIndex()) {
+        o.locked = true;
+        o.lockRank = Career::Ranks()[static_cast<size_t>(need)].name;
+        o.description += std::string(o.description.empty() ? "" : " ") + "Unlocks at " + o.lockRank + ".";
+    } else if (it->credits > 0 && !Career::OwnsArmoryItem(o.buyKey)) {
+        o.forSale = true;
+        o.price = it->credits;
+        o.description += std::string(o.description.empty() ? "" : " ") + "Costs " + WithCommas(it->credits) + " cR.";
+    }
+}
 
 enum class RowKind { List, Colour, Tag };
 
@@ -1325,39 +1402,76 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
             fill(r.options);
             rows.push_back(std::move(r));
         };
+        auto spartanItem = [](PickOption& o, const char* slot, const char* id) { SpartanArmoryItem(o, slot, id); };
         const auto& helmets = GetSpartanHelmets();
         addList("Helmet", &m_profile.helmetIndex, "c_helmet", [&](std::vector<PickOption>& o) {
-            for (const auto& h : helmets) o.push_back({ h.name, h.description });
+            for (const auto& h : helmets) { o.push_back({ h.name, h.description }); spartanItem(o.back(), "helmet", h.stringId); }
         });
         addList("Helmet Variant", &m_profile.helmetVariantIndex, "c_helmet", [&](std::vector<PickOption>& o) {
             const auto& h = helmets[std::clamp(m_profile.helmetIndex, 0, static_cast<int>(helmets.size()) - 1)];
-            for (const auto& v : h.variants) o.push_back({ v.name, v.description });
+            for (const auto& v : h.variants) {
+                o.push_back({ v.name, v.description });
+                // The base variant is the helmet itself.
+                if (std::strcmp(v.stringId, h.stringId) == 0) spartanItem(o.back(), "helmet", h.stringId);
+                else spartanItem(o.back(), "helmet attachment", v.stringId);
+            }
         });
         const auto& shoulders = GetSpartanShoulders();
         addList("Left Shoulder", &m_profile.leftShoulderIndex, "c_left_shoulder", [&](std::vector<PickOption>& o) {
-            for (const auto& x : shoulders) o.push_back({ x.name, x.description });
+            for (const auto& x : shoulders) { o.push_back({ x.name, x.description }); spartanItem(o.back(), "left shoulder", x.leftStringId); }
         });
         addList("Right Shoulder", &m_profile.rightShoulderIndex, "c_right_shoulder", [&](std::vector<PickOption>& o) {
-            for (const auto& x : shoulders) o.push_back({ x.name, x.description });
+            for (const auto& x : shoulders) { o.push_back({ x.name, x.description }); spartanItem(o.back(), "right shoulder", x.rightStringId); }
         });
-        auto multi = [](const std::vector<MultiLayerSpec>& list) {
-            return [&list](std::vector<PickOption>& o) { for (const auto& x : list) o.push_back({ x.name, x.description }); };
+        auto multi = [&](const std::vector<MultiLayerSpec>& list, const char* slot) {
+            return [&list, slot, &spartanItem](std::vector<PickOption>& o) {
+                for (const auto& x : list) { o.push_back({ x.name, x.description }); spartanItem(o.back(), slot, x.stringId); }
+            };
         };
-        addList("Chest", &m_profile.chestIndex, "c_chest", multi(GetSpartanChests()));
-        addList("Wrist", &m_profile.wristIndex, "c_wrist", multi(GetSpartanWrists()));
-        addList("Utility", &m_profile.utilityIndex, "c_utility", multi(GetSpartanUtilities()));
-        addList("Knee Guards", &m_profile.kneeGuardsIndex, "c_knees", multi(GetSpartanKneeGuards()));
+        addList("Chest", &m_profile.chestIndex, "c_chest", multi(GetSpartanChests(), "chest"));
+        addList("Wrist", &m_profile.wristIndex, "c_wrist", multi(GetSpartanWrists(), "wrist"));
+        addList("Utility", &m_profile.utilityIndex, "c_utility", multi(GetSpartanUtilities(), "utility"));
+        addList("Knee Guards", &m_profile.kneeGuardsIndex, "c_knees", multi(GetSpartanKneeGuards(), "knees"));
         addList("Visor Color", &m_profile.visorColorIndex, "c_helmet", [&](std::vector<PickOption>& o) {
-            for (const auto& v : kVisorColors) o.push_back({ v.name, v.description, ColourU32(v.r, v.g, v.b) });
+            for (const auto& v : kVisorColors) { o.push_back({ v.name, v.description, ColourU32(v.r, v.g, v.b) }); spartanItem(o.back(), "visor", v.stringId); }
         });
     } else {
+        // Locked items can't stay equipped (e.g. a look saved before the rank locks): they fall back to Minor.
+        {
+            bool reset = false;
+            const int set = std::clamp(m_profile.eliteArmorSet, 0, static_cast<int>(kEliteSets.size()) - 1);
+            if (EliteLocked(kEliteSets[set].stringId)) { m_profile.eliteArmorSet = 0; reset = true; }
+            int* pieces[kElitePieceCount] = { &m_profile.eliteHelmetIndex, &m_profile.eliteLeftShoulderIndex,
+                &m_profile.eliteRightShoulderIndex, &m_profile.eliteChestIndex, &m_profile.eliteArmsIndex, &m_profile.eliteLegsIndex };
+            for (int p = 0; p < kElitePieceCount; ++p)
+                if (EliteLocked(ElitePieceId(p, *pieces[p]))) { *pieces[p] = 0; reset = true; }
+            if (reset) {
+                NOBLE_INFO("ArmorCustomizer: locked Elite items in the saved look were put back to Minor (rank {})",
+                           Career::Ranks()[static_cast<size_t>(PlayerRankIndex())].name);
+                m_dirty = true;
+                SaveProfile(m_profilePath);
+            }
+        }
+        auto lockOption = [](PickOption& o, const char* id) {
+            const char* rank = nullptr;
+            if (EliteUnlockRank(id, &rank) == 0 || !rank) return;
+            o.lockRank = rank;
+            o.locked = EliteLocked(id);
+            o.description += std::string(o.description.empty() ? "" : " ") + "Unlocks at " + rank + ".";
+        };
         SlotRow r{ "ARMOR", "Armor Set", RowKind::List, &m_profile.eliteArmorSet };
-        for (const auto& e : kEliteSets) r.options.push_back({ e.name, e.description, 0, e.stringId });
+        for (const auto& e : kEliteSets) {
+            r.options.push_back({ e.name, e.description, 0, e.stringId });
+            lockOption(r.options.back(), e.stringId);
+        }
         rows.push_back(r);
-        // Single pieces (any mix, plus the menu map's extra Elite pieces). Picking an Armor Set resets them.
+        // Single pieces (any mix, plus the extra Elite pieces). Picking an Armor Set resets them.
         auto addPiece = [&](const char* label, int* idx, int piece) {
             SlotRow p{ "ARMOR", label, RowKind::List, idx };
-            for (const auto& e : GetElitePieces(piece)) p.options.push_back({ e.name, e.description });
+            for (const auto& e : GetElitePieces(piece)) {
+                p.options.push_back({ e.name, e.description });
+                lockOption(p.options.back(), e.stringId);
+            }
             rows.push_back(std::move(p));
         };
         addPiece("Helmet", &m_profile.eliteHelmetIndex, kEliteHelmet);
@@ -1380,10 +1494,16 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
     {
         SlotRow r{ "EFFECTS & VOICE", "Armor Effect", RowKind::List, &m_profile.armorEffectIndex };
         r.scene = "c_helmet";
-        for (const auto& e : kArmorEffects) r.options.push_back({ e.name, e.description });
+        for (const auto& e : kArmorEffects) {
+            r.options.push_back({ e.name, e.description });
+            if (m_previewSpecies == PlayerSpecies::Spartan) SpartanArmoryItem(r.options.back(), "armor effect", e.stringId);
+        }
         rows.push_back(r);
         SlotRow v{ "EFFECTS & VOICE", "Firefight Voice", RowKind::List, &m_profile.firefightVoiceIndex };
-        for (const auto& e : kFirefightVoices) v.options.push_back({ e.name, e.description });
+        for (const auto& e : kFirefightVoices) {
+            v.options.push_back({ e.name, e.description });
+            SpartanArmoryItem(v.options.back(), "firefight voice", e.stringId);
+        }
         rows.push_back(v);
     }
     rows.push_back({ "IDENTITY", "Service Tag", RowKind::Tag });
@@ -1391,11 +1511,38 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
     const int rowCount = static_cast<int>(rows.size());
     m_focusedRow = std::clamp(m_focusedRow, 0, rowCount - 1);
 
+    // Items that are locked or not bought can't stay equipped (e.g. a look saved before the locks): back to the
+    // slot's first option (the default piece).
+    if (m_previewSpecies == PlayerSpecies::Spartan) {
+        bool reset = false;
+        for (SlotRow& r : rows) {
+            if (!r.index || r.options.empty() || r.index == &speciesInt || r.index == &bodyInt) continue;
+            const int v = std::clamp(*r.index, 0, static_cast<int>(r.options.size()) - 1);
+            if (r.options[v].locked || r.options[v].forSale) {
+                NOBLE_INFO("ArmorCustomizer: {} '{}' isn't unlocked yet; back to '{}'", r.label, r.options[v].name, r.options[0].name);
+                *r.index = 0;
+                if (r.index == &m_profile.helmetIndex) m_profile.helmetVariantIndex = 0;
+                reset = true;
+            }
+        }
+        if (reset) {
+            m_dirty = true;
+            SaveProfile(m_profilePath);
+        }
+    }
+
+    // An item clicked but not bought yet: the info panel offers BUY for it.
+    static int s_buyRow = -1, s_buyValue = -1;
+
     // Picks an option for a row: saves, updates the model, keeps dependent fields right.
-    auto choose = [&](int rowIndex, int value) {
+    // bought = true right after a purchase (the option was built as "for sale" this frame).
+    auto choose = [&](int rowIndex, int value, bool bought = false) {
         SlotRow& r = rows[rowIndex];
         if (!r.index || r.options.empty()) return;
         value = std::clamp(value, 0, static_cast<int>(r.options.size()) - 1);
+        if (r.options[value].locked) return;   // rank not reached
+        if (r.options[value].forSale && !bought) { s_buyRow = rowIndex; s_buyValue = value; return; }
+        s_buyRow = -1;
         if (*r.index == value && r.index != &speciesInt && r.index != &bodyInt) return;
         *r.index = value;
         if (r.index == &speciesInt) {
@@ -1416,6 +1563,7 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
     auto focus = [&](int rowIndex) {
         if (m_focusedRow == rowIndex) return;
         m_focusedRow = rowIndex;
+        s_buyRow = -1;
         m_pickerScrollToEquipped = true;
     };
 
@@ -1426,14 +1574,17 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
         SlotRow& fr = rows[m_focusedRow];
         if (fr.index && !fr.options.empty()) {
             const int n = static_cast<int>(fr.options.size());
-            if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft)) {
-                choose(m_focusedRow, (*fr.index - 1 + n) % n);
+            // Steps to the next option that isn't locked.
+            auto step = [&](int dir) {
+                int v = *fr.index;
+                for (int k = 0; k < n; ++k) {
+                    v = (v + dir + n) % n;
+                    if (!fr.options[v].locked && !fr.options[v].forSale) { choose(m_focusedRow, v); break; }
+                }
                 m_pickerScrollToEquipped = true;
-            }
-            if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight)) {
-                choose(m_focusedRow, (*fr.index + 1) % n);
-                m_pickerScrollToEquipped = true;
-            }
+            };
+            if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft)) step(-1);
+            if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight)) step(1);
         }
     }
     m_focusScene = m_previewSpecies == PlayerSpecies::Spartan ? rows[m_focusedRow].scene : "armory_elite";
@@ -1561,9 +1712,10 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
             TextAt(dl, smallFont, 14.0f * s, ImVec2(b0.x + (bw - TextW(smallFont, 14.0f * s, "RANDOM")) * 0.5f, b0.y + 6.0f * s), kWhiteCol, "RANDOM");
             if (clicked && n > 1) {
                 static std::mt19937 rng{ std::random_device{}() };
-                int pick = std::uniform_int_distribution<int>(0, n - 2)(rng);
-                if (pick >= equipped) ++pick;   // always a different one
-                choose(m_focusedRow, pick);
+                std::vector<int> open;   // unlocked options other than the equipped one
+                for (int i = 0; i < n; ++i) if (i != equipped && !row.options[i].locked && !row.options[i].forSale) open.push_back(i);
+                if (!open.empty())
+                    choose(m_focusedRow, open[std::uniform_int_distribution<size_t>(0, open.size() - 1)(rng)]);
                 m_pickerScrollToEquipped = true;
             }
         }
@@ -1582,7 +1734,8 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
         const float tileW = (gw - cg * (cols - 1)) / cols;
         // Picture tiles (Elite armour sets) when at least the equipped option's picture is there.
         const char* eqArt = row.options[equipped].art;
-        const bool artGrid = !colourGrid && eqArt && UiArt::ReachArt("elite_sets", eqArt);
+        auto artDir = [](const PickOption& o) { return o.artDir ? o.artDir : "elite_sets"; };
+        const bool artGrid = !colourGrid && eqArt && UiArt::ReachArt(artDir(row.options[equipped]), eqArt);
         const float tileH = colourGrid ? tileW : artGrid ? tileW * 1.15f : 46.0f * s;
         // Grid origin in screen space, taken once (it already includes the scroll offset).
         const ImVec2 base = ImGui::GetCursorScreenPos();
@@ -1610,14 +1763,29 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
                 gdl->AddRectFilled(t0, t1, isEq ? IM_COL32(34, 70, 104, 235) : (hov ? IM_COL32(40, 54, 70, 235) : IM_COL32(20, 28, 38, 220)), 2.0f * s);
                 const float nameH = 30.0f * s;
                 if (row.options[i].art) {
-                    const UiTexture pic = UiArt::ReachArt("elite_sets", row.options[i].art);
+                    const UiTexture pic = UiArt::ReachArt(artDir(row.options[i]), row.options[i].art);
                     if (pic) UiArt::DrawContain(gdl, pic, ImVec2(t0.x + 4.0f * s, t0.y + 4.0f * s), ImVec2(t1.x - 4.0f * s, t1.y - nameH),
-                                                (isEq || hov) ? IM_COL32_WHITE : IM_COL32(205, 205, 205, 255));
+                                                row.options[i].locked ? IM_COL32(70, 70, 70, 255)
+                                                : (isEq || hov) ? IM_COL32_WHITE : IM_COL32(205, 205, 205, 255));
                 }
                 gdl->AddRectFilled(ImVec2(t0.x, t1.y - nameH), t1, IM_COL32(8, 12, 18, 200), 2.0f * s);
                 const std::string& name = row.options[i].name;
                 TextAt(gdl, bodyFont, 16.0f * s, ImVec2(t0.x + (tileW - TextW(bodyFont, 16.0f * s, name.c_str())) * 0.5f, t1.y - nameH + 6.0f * s),
-                       isEq ? kWhiteCol : IM_COL32(200, 214, 228, 255), name.c_str());
+                       row.options[i].locked ? IM_COL32(120, 130, 140, 255) : isEq ? kWhiteCol : IM_COL32(200, 214, 228, 255), name.c_str());
+                if (row.options[i].forSale) {   // price in the picture's corner
+                    const std::string price = WithCommas(row.options[i].price) + " cR";
+                    const float pw = TextW(smallFont, 13.0f * s, price.c_str()) + 10.0f * s;
+                    gdl->AddRectFilled(ImVec2(t0.x + 4.0f * s, t0.y + 4.0f * s), ImVec2(t0.x + 4.0f * s + pw, t0.y + 22.0f * s), IM_COL32(8, 12, 18, 210), 2.0f * s);
+                    TextAt(gdl, smallFont, 13.0f * s, ImVec2(t0.x + 9.0f * s, t0.y + 6.0f * s), IM_COL32(255, 196, 92, 255), price.c_str());
+                }
+                if (row.options[i].locked) {   // "LOCKED / <rank>" over the darkened picture
+                    const std::string rank = row.options[i].lockRank ? row.options[i].lockRank : "";
+                    const float my = t0.y + (tileH - nameH) * 0.5f;
+                    TextAt(gdl, smallFont, 14.0f * s, ImVec2(t0.x + (tileW - TextW(smallFont, 14.0f * s, "LOCKED")) * 0.5f, my - 16.0f * s),
+                           IM_COL32(255, 196, 92, 255), "LOCKED");
+                    TextAt(gdl, smallFont, 13.0f * s, ImVec2(t0.x + (tileW - TextW(smallFont, 13.0f * s, rank.c_str())) * 0.5f, my + 2.0f * s),
+                           IM_COL32(230, 230, 230, 255), rank.c_str());
+                }
                 gdl->AddRect(t0, t1, isEq ? kAccentCol : IM_COL32(170, 220, 255, hov ? 140 : 40), 2.0f * s, 0, isEq ? 1.6f * s : 1.0f);
             } else {
                 gdl->AddRectFilled(t0, t1, isEq ? IM_COL32(34, 70, 104, 235) : (hov ? IM_COL32(40, 54, 70, 235) : IM_COL32(20, 28, 38, 220)), 2.0f * s);
@@ -1628,9 +1796,18 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
                     tx += 26.0f * s;
                 }
                 std::string name = row.options[i].name;
+                const bool locked = row.options[i].locked || row.options[i].forSale;
                 const float maxW = t1.x - tx - 26.0f * s;
-                while (name.size() > 3 && TextW(bodyFont, 16.0f * s, name.c_str()) > maxW) name = name.substr(0, name.size() - 4) + "...";
-                TextAt(gdl, bodyFont, 16.0f * s, ImVec2(tx, t0.y + tileH * 0.5f - 9.0f * s), isEq ? kWhiteCol : IM_COL32(200, 214, 228, 255), name.c_str());
+                if (locked) {   // name on top, "LOCKED - <rank>" or "<price> cR" under it
+                    while (name.size() > 3 && TextW(bodyFont, 15.0f * s, name.c_str()) > maxW) name = name.substr(0, name.size() - 4) + "...";
+                    TextAt(gdl, bodyFont, 15.0f * s, ImVec2(tx, t0.y + 5.0f * s), IM_COL32(120, 130, 140, 255), name.c_str());
+                    const std::string lock = row.options[i].forSale ? WithCommas(row.options[i].price) + " cR"
+                        : std::string("LOCKED - ") + (row.options[i].lockRank ? row.options[i].lockRank : "");
+                    TextAt(gdl, smallFont, 12.0f * s, ImVec2(tx, t1.y - 18.0f * s), IM_COL32(255, 196, 92, 230), lock.c_str());
+                } else {
+                    while (name.size() > 3 && TextW(bodyFont, 16.0f * s, name.c_str()) > maxW) name = name.substr(0, name.size() - 4) + "...";
+                    TextAt(gdl, bodyFont, 16.0f * s, ImVec2(tx, t0.y + tileH * 0.5f - 9.0f * s), isEq ? kWhiteCol : IM_COL32(200, 214, 228, 255), name.c_str());
+                }
             }
             if (isEq) {   // equipped check in the corner
                 const ImVec2 cc(t1.x - 11.0f * s, t0.y + 11.0f * s);
@@ -1645,16 +1822,41 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
         ImGui::EndChild();
         m_pickerScrollToEquipped = false;
 
-        // Name and description of the hovered (or equipped) option.
-        const int shown = hoveredOption >= 0 ? hoveredOption : equipped;
+        // Name and description of the hovered (or equipped, or about-to-be-bought) option.
+        const bool pending = s_buyRow == m_focusedRow && s_buyValue >= 0 && s_buyValue < n;
+        const int shown = hoveredOption >= 0 ? hoveredOption : pending ? s_buyValue : equipped;
         const float iy = k1.y - infoH;
         dl->AddLine(ImVec2(pickX + pad, iy), ImVec2(k1.x - pad, iy), IM_COL32(255, 255, 255, 40));
         TextAt(dl, titleFont, 20.0f * s, ImVec2(pickX + pad, iy + 10.0f * s), kWhiteCol, row.options[shown].name.c_str());
         const char* desc = row.options[shown].description.empty() ? (colourGrid ? "One of Reach's 30 armor colors." : "")
                                                                   : row.options[shown].description.c_str();
         TextAt(dl, bodyFont, 15.0f * s, ImVec2(pickX + pad, iy + 38.0f * s), kDimCol, desc, pickW - pad * 2.0f);
-        const std::string count = std::to_string(shown + 1) + " / " + std::to_string(n) + (shown == equipped ? "   EQUIPPED" : "   Click to equip");
+        const std::string count = std::to_string(shown + 1) + " / " + std::to_string(n) +
+            (shown == equipped ? "   EQUIPPED" : row.options[shown].locked ? "   LOCKED"
+             : row.options[shown].forSale ? "   Click to buy" : "   Click to equip");
         TextAt(dl, smallFont, 14.0f * s, ImVec2(pickX + pad, k1.y - 26.0f * s), IM_COL32(130, 150, 170, 255), count.c_str());
+
+        // BUY for an item that was clicked but isn't bought yet. cR balance = earned - spent (rank follows earned).
+        if (pending && row.options[s_buyValue].forSale) {
+            const PickOption& o = row.options[s_buyValue];
+            const int64_t balance = Career::Balance();
+            const bool afford = balance >= o.price;
+            const std::string label = afford ? "BUY  " + WithCommas(o.price) + " cR" : "NEED " + WithCommas(o.price) + " cR";
+            const float bw = std::max(170.0f * s, TextW(smallFont, 15.0f * s, label.c_str()) + 30.0f * s), bh = 30.0f * s;
+            const ImVec2 b0(k1.x - pad - bw, k1.y - 36.0f * s), b1(b0.x + bw, b0.y + bh);
+            ImGui::SetCursorScreenPos(b0);
+            const bool clicked = ImGui::InvisibleButton("##buy", ImVec2(bw, bh));
+            const bool hov = ImGui::IsItemHovered();
+            dl->AddRectFilled(b0, b1, !afford ? IM_COL32(40, 40, 44, 230) : hov ? IM_COL32(150, 110, 40, 245) : IM_COL32(110, 80, 30, 235), 2.0f * s);
+            dl->AddRect(b0, b1, afford ? IM_COL32(255, 196, 92, hov ? 255 : 170) : IM_COL32(120, 120, 120, 120), 2.0f * s);
+            TextAt(dl, smallFont, 15.0f * s, ImVec2(b0.x + (bw - TextW(smallFont, 15.0f * s, label.c_str())) * 0.5f, b0.y + 6.0f * s),
+                   afford ? kWhiteCol : IM_COL32(150, 150, 150, 255), label.c_str());
+            const std::string bal = "Balance: " + WithCommas(balance) + " cR";
+            TextAt(dl, smallFont, 13.0f * s, ImVec2(b0.x, b0.y - 18.0f * s), IM_COL32(200, 214, 228, 220), bal.c_str());
+            if (clicked && afford && Career::BuyArmoryItem(o.buyKey, o.price)) {
+                choose(m_focusedRow, s_buyValue, true);
+            }
+        }
     }
 
     // ---- Over the model: camera hint.

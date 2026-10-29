@@ -569,6 +569,108 @@ void MergeElitePieces(uint8_t* mapList, uint8_t* packList) {
 }
 
 void MatchStockDamage(const TagTable& tt, uint32_t packElite, uint32_t stockElite);
+
+// ---- First-person Elite arms and body ---------------------------------------------------------
+// The globals' player representation (matg +0x474, 0x6C each) names three models per character: +0x14 the
+// first-person arms (render model objects\characters\elite\fp\fp, datum at +0x20), +0x24 the first-person body
+// (objects\characters\elite\fp_body\fp_body, datum +0x30) and +0x34 the third-person biped (datum +0x40).
+// Both first-person models have one armour region, "armor_pieces", with a permutation per Elite set (general,
+// officer, space, spec_ops, ultra, story_elite, zealot, default = Minor) and no shoulders / Honor Guard / H2A.
+// With the pack's per-piece Elite the first-person arms came out bare (no "armor_pieces" in the third-person
+// model to follow). Override: every permutation of the region gets the mesh of the wanted set, so whatever the
+// engine picks shows that set. The arms follow the Armory's Arms piece, the body follows the shoulders; pieces
+// without a first-person version (Honor Guard, H2A, Council...) use the Armor Set. "-no-fp-override" turns it off.
+// Render model: +0x0C regions {i32 count, u32 pointer, u32}, region 0x10 bytes {name, permutations block},
+// permutation 0x18 bytes {+0 name, +4.. mesh data}. Set order (pmcg list +0x74): Minor, Spec Ops, Ranger,
+// Ultra, Zealot, General, Field Marshal, Officer.
+constexpr uint32_t kMode = 0x6D6F6465;
+constexpr size_t kPermSize = 0x18;
+struct FpRegion {
+    uint8_t* perms = nullptr;          // permutation array of "armor_pieces"
+    int32_t count = 0;
+    std::vector<uint8_t> original;     // untouched copy, restored before every change
+    int applied = -1;                  // set shown now (-1 = the model's own)
+    const char* label = "";
+};
+FpRegion s_fp[2];                      // 0 = arms, 1 = body
+uint32_t s_setPermutation[8] = {};     // permutation string id of each Elite set (from the map's pmcg list +0x74)
+bool s_fpOverride = true;
+
+void SetupFirstPerson(const TagTable& tt, const uint8_t* rep1, const uint8_t* mapPmcg) {
+    if (!s_fpOverride || !rep1 || !mapPmcg) return;
+    // armor_pieces region name and each set's permutation name, from the map's Elite set list.
+    int32_t sets = 0;
+    uint32_t setsPtr = 0;
+    std::memcpy(&sets, mapPmcg + 0x74, 4);
+    std::memcpy(&setsPtr, mapPmcg + 0x78, 4);
+    if (sets < 8 || !setsPtr) { NOBLE_WARN("ElitePack: first-person override: Elite set list has {} entries", sets); return; }
+    uint32_t region = 0;
+    const uint8_t* sel = TagAt(setsPtr);
+    for (int k = 0; k < 8; ++k) {
+        int32_t changes = 0;
+        uint32_t changesPtr = 0;
+        std::memcpy(&changes, sel + k * 16 + 4, 4);
+        std::memcpy(&changesPtr, sel + k * 16 + 8, 4);
+        if (changes < 1 || !changesPtr) { NOBLE_WARN("ElitePack: first-person override: set {} has no change", k); return; }
+        const uint8_t* ch = TagAt(changesPtr);
+        std::memcpy(&region, ch, 4);
+        std::memcpy(&s_setPermutation[k], ch + 4, 4);
+    }
+    const size_t datumAt[2] = {0x20, 0x30};
+    const char* labels[2] = {"arms", "body"};
+    for (int w = 0; w < 2; ++w) {
+        FpRegion& fp = s_fp[w];
+        fp = FpRegion{};
+        fp.label = labels[w];
+        uint32_t datum = 0xFFFFFFFFu;
+        std::memcpy(&datum, rep1 + datumAt[w], 4);
+        if (!tt.Is(datum, kMode)) { NOBLE_WARN("ElitePack: first-person {} model not found (0x{:X})", labels[w], datum); continue; }
+        uint8_t* mode = TagAt(tt.Address(datum & 0xFFFF));
+        int32_t regions = 0;
+        uint32_t regionsPtr = 0;
+        std::memcpy(&regions, mode + 0x0C, 4);
+        std::memcpy(&regionsPtr, mode + 0x10, 4);
+        if (regions <= 0 || regions > 64 || !regionsPtr) continue;
+        uint8_t* r = TagAt(regionsPtr);
+        for (int32_t i = 0; i < regions; ++i) {
+            uint32_t name = 0;
+            std::memcpy(&name, r + i * 0x10, 4);
+            if (name != region) continue;
+            int32_t perms = 0;
+            uint32_t permsPtr = 0;
+            std::memcpy(&perms, r + i * 0x10 + 4, 4);
+            std::memcpy(&permsPtr, r + i * 0x10 + 8, 4);
+            if (perms <= 0 || perms > 64 || !permsPtr) break;
+            fp.perms = TagAt(permsPtr);
+            fp.count = perms;
+            fp.original.assign(fp.perms, fp.perms + size_t(perms) * kPermSize);
+            break;
+        }
+        NOBLE_INFO("ElitePack: first-person {} model 0x{:X}: {} armour permutations{}", labels[w], datum, fp.count,
+                   fp.perms ? "" : " (no armor_pieces region found)");
+    }
+}
+
+// Shows Elite set 0..7 on first-person model w (arms / body).
+void ApplyFirstPersonSet(int w, int set) {
+    FpRegion& fp = s_fp[w];
+    if (!fp.perms || set < 0 || set > 7 || set == fp.applied) return;
+    std::memcpy(fp.perms, fp.original.data(), fp.original.size());
+    const uint8_t* want = nullptr;
+    for (int32_t i = 0; i < fp.count; ++i) {
+        uint32_t name = 0;
+        std::memcpy(&name, fp.original.data() + i * kPermSize, 4);
+        if (name == s_setPermutation[set]) { want = fp.original.data() + i * kPermSize; break; }
+    }
+    if (!want) {
+        NOBLE_WARN("ElitePack: first-person {} has no permutation for set {}", fp.label, set);
+        fp.applied = set;
+        return;
+    }
+    for (int32_t i = 0; i < fp.count; ++i) std::memcpy(fp.perms + i * kPermSize + 4, want + 4, kPermSize - 4);
+    fp.applied = set;
+    NOBLE_INFO("ElitePack: first-person {} now show Elite set {}", fp.label, set);
+}
 void DropDeathArmourEffect(const TagTable& tt, uint32_t packElite, uint32_t bodyName);
 bool HasArg(const wchar_t* name);
 
@@ -635,6 +737,8 @@ void AfterPackStep(uint8_t* tags, uint8_t* cache) {
     // Keep the pack Elite's biped (+0x70 model) and the model's render model (+0x0C) active.
     MatchStockDamage(tt, packElite, stockElite);
     DropDeathArmourEffect(tt, packElite, 0xE2 /* "body" */);
+
+    SetupFirstPerson(tt, rep + 1 * 0x6C, s_pmcgAddress ? TagAt(s_pmcgAddress) : nullptr);
 
     s_activeDatums[0] = packElite;
     uint32_t model = 0xFFFFFFFFu, render = 0xFFFFFFFFu;
@@ -968,22 +1072,38 @@ int PieceIndex(int slot, const std::string& id) {
     static const std::vector<std::string> kHelmet = {"council", "general", "honor_guard", "minor", "officer", "ossoona",
         "space", "spec_ops", "story_elite", "ultra", "zealot", "h2a_space_helmet"};
     static const std::vector<std::string> kShoulder = {"combat", "general", "honor_guard", "minor", "officer", "schism",
-        "space", "spec_ops", "story_elite", "ultra", "zealot"};
+        "space", "spec_ops", "story_elite", "ultra", "zealot", "h2a_shoulder"};
     static const std::vector<std::string> kChest = {"minor", "general", "officer", "space", "spec_ops", "ultra",
         "story_elite", "zealot", "honor_guard"};
     static const std::vector<std::string> kForearms = {"default", "general", "honor_guard", "officer", "space",
         "spec_ops", "story_elite", "ultra", "zealot"};
     static const std::vector<std::string> kLegs = {"general", "honor_guard", "minor", "officer", "space", "spec_ops",
-        "story_elite", "ultra", "zealot", "honor_guard_legs", "h2a_legs"};
+        "story_elite", "ultra", "zealot", "h2a_legs", "honor_guard_legs"};
     const std::vector<std::string>* lists[6] = {&kHelmet, &kShoulder, &kShoulder, &kChest, &kForearms, &kLegs};
     std::string want = id;
-    if (slot == 1 || slot == 2) {   // "h2a_l_shoulder" / "h2a_r_shoulder" have no pack piece yet
-        if (want.rfind("h2a_", 0) == 0) return -1;
-    }
+    // Orders checked against the pack's armour list (2026-10-28): H2A shoulders are piece 11 on both sides,
+    // H2A legs 9 and Honor Guard (robe) legs 10.
+    if ((slot == 1 || slot == 2) && want.rfind("h2a_", 0) == 0) want = "h2a_shoulder";
     if (slot == 4 && want == "minor") want = "default";
     const auto& l = *lists[slot];
     const auto it = std::find(l.begin(), l.end(), want);
     return it == l.end() ? -1 : static_cast<int>(it - l.begin());
+}
+
+// Elite set (0..7, pmcg list +0x74 order) whose first-person version matches a pack piece, or -1 when the
+// piece has none (Honor Guard, H2A, Council, Ossoona, Schism, Combat). slot: 1 left shoulder, 4 forearms.
+int SetOfPiece(int slot, int index) {
+    static const char* kSetIds[8] = {"minor", "spec_ops", "space", "ultra", "zealot", "general", "story_elite", "officer"};
+    static const char* kShoulder[] = {"combat", "general", "honor_guard", "minor", "officer", "schism", "space",
+                                      "spec_ops", "story_elite", "ultra", "zealot", "h2a_shoulder"};
+    static const char* kForearms[] = {"minor" /* default */, "general", "honor_guard", "officer", "space",
+                                      "spec_ops", "story_elite", "ultra", "zealot"};
+    const char* id = nullptr;
+    if (slot == 1 && index >= 0 && index < int(std::size(kShoulder))) id = kShoulder[index];
+    if (slot == 4 && index >= 0 && index < int(std::size(kForearms))) id = kForearms[index];
+    if (!id) return -1;
+    for (int k = 0; k < 8; ++k) if (std::strcmp(kSetIds[k], id) == 0) return k;
+    return -1;
 }
 
 std::filesystem::path s_appearancePath;
@@ -1039,6 +1159,12 @@ uint64_t __fastcall BuilderHook(uint8_t* record, uint32_t mode, void* unit, void
     }
     std::memcpy(copy + 0x10, picks, 6);
     copy[0x16] = 0xFF;
+    {   // first-person arms follow the forearms, the first-person body the shoulders (else the Armor Set)
+        const int set = copy[0x17] < 8 ? copy[0x17] : 0;
+        const int arms = SetOfPiece(4, picks[4]), body = SetOfPiece(1, picks[1]);
+        ApplyFirstPersonSet(0, arms >= 0 ? arms : set);
+        ApplyFirstPersonSet(1, body >= 0 ? body : set);
+    }
     if (s_picksLogged.fetch_add(1) < 8)
         NOBLE_INFO("ElitePack: Elite dressed with pieces {} {} {} {} {} {} (mode {}, set byte {})", picks[0], picks[1],
                    picks[2], picks[3], picks[4], picks[5], mode, copy[0x17]);
@@ -1091,6 +1217,7 @@ void Install(HMODULE engine, const std::filesystem::path& dataDir, const std::st
     s_keepPackHealth = HasArg(L"-elite-pack-own-health");
     s_keepPackGlobals = HasArg(L"-elite-pack-keep-globals");
     s_keepDeathEffect = HasArg(L"-elite-pack-death-fx");
+    s_fpOverride = !HasArg(L"-no-fp-override");
     // First <name>.map in data\armor that has a .rrreloc sidecar.
     std::error_code ec;
     const auto folder = dataDir / "armor";

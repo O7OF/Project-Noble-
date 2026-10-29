@@ -250,6 +250,10 @@ void LoadLocked() {
     try {
         nlohmann::json j = nlohmann::json::parse(in);
         s_totals.credits = j.value("credits", int64_t{0});
+        s_totals.creditsSpent = j.value("creditsSpent", int64_t{0});
+        s_totals.armoryOwned.clear();
+        if (j.contains("armoryOwned") && j["armoryOwned"].is_array())
+            for (const auto& k : j["armoryOwned"]) if (k.is_string()) s_totals.armoryOwned.push_back(k.get<std::string>());
         s_totals.creditsToday = j.value("creditsToday", int64_t{0});
         s_totals.day = j.value("day", std::string());
         s_totals.gamesPlayed = j.value("gamesPlayed", int64_t{0});
@@ -298,6 +302,8 @@ void LoadLocked() {
 void SaveLocked() {
     nlohmann::json j;
     j["credits"] = s_totals.credits;
+    j["creditsSpent"] = s_totals.creditsSpent;
+    j["armoryOwned"] = s_totals.armoryOwned;
     j["creditsToday"] = s_totals.creditsToday;
     j["day"] = s_totals.day;
     j["gamesPlayed"] = s_totals.gamesPlayed;
@@ -1019,6 +1025,31 @@ Totals Get() {
     std::lock_guard<std::mutex> lock(s_mutex);
     LoadLocked();
     return s_totals;
+}
+
+int64_t Balance() {
+    std::lock_guard<std::mutex> lock(s_mutex);
+    LoadLocked();
+    return std::max<int64_t>(0, s_totals.credits - s_totals.creditsSpent);
+}
+
+bool OwnsArmoryItem(const std::string& key) {
+    std::lock_guard<std::mutex> lock(s_mutex);
+    LoadLocked();
+    return std::find(s_totals.armoryOwned.begin(), s_totals.armoryOwned.end(), key) != s_totals.armoryOwned.end();
+}
+
+bool BuyArmoryItem(const std::string& key, int64_t price) {
+    std::lock_guard<std::mutex> lock(s_mutex);
+    LoadLocked();
+    if (std::find(s_totals.armoryOwned.begin(), s_totals.armoryOwned.end(), key) != s_totals.armoryOwned.end()) return false;
+    price = std::max<int64_t>(0, price);
+    if (s_totals.credits - s_totals.creditsSpent < price) return false;
+    s_totals.creditsSpent += price;
+    s_totals.armoryOwned.push_back(key);
+    SaveLocked();
+    NOBLE_INFO("Career: bought Armory item {} for {} cR (balance {} cR)", key, price, s_totals.credits - s_totals.creditsSpent);
+    return true;
 }
 
 } // namespace Career

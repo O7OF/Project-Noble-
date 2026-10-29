@@ -802,6 +802,9 @@ static const std::unordered_map<std::string, uint32_t>& Chests() {
         {"chest_kurt", 232}, {"chest_13", 233}, {"chest_wp_1", 234},
         {"chest_default_roboarm", 235}, {"chest_7_roboarm", 236}, {"chest_5_roboarm", 237},
         {"chest_12_roboarm", 238}, {"chest_2_roboarm", 239},
+        // The same [R] chests under the engine's own permutation names (the Armory uses these since 2026-10-29).
+        {"chest_tacticalpatrol_roboarm", 236}, {"chest_tacticalrecon_roboarm", 237},
+        {"chest_collargrenadierua_roboarm", 238}, {"chest_uacounterassault_roboarm", 239},
     };
     return k;
 }

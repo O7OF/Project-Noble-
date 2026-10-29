@@ -1,4 +1,4 @@
-# Project Noble: handoff (2026-10-28, 23:55 ET)
+# Project Noble: handoff (2026-10-29, 00:20 ET)
 Dominus join the team 20261028! 
 This picks up a reverse-engineering and C++ effort on **Tyler's Windows PC**. All paths below are real paths on that machine.
 Tyler (GitHub `WeabooTyler117`) works with a partner (GitHub `O7OF`) who owns the repo and writes most of the code.
@@ -10,6 +10,35 @@ community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownershi
 MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour.
 
 ---
+
+## 0. Pick up here (2026-10-29, 00:20 ET) - Spartan Armory: Halopedia catalog, pictures, rank + cR locks, BUY
+
+Built and tested by Tyler: pictures show, locks work, buying works.
+- **Catalog:** `tools/armory/fetch_halopedia_armory.py` pulled every Spartan piece's picture, rank and cR from Halopedia
+  (into `build/bin/Release/data/ui/reach/armory/<slot>/`, plus `pieces.csv`). `tools/armory/build_spartan_catalog.py` joins that
+  with the Armory lists, ReachHost's item ids and `docs/career/armory_overrides.json` (Noble's own rules for pieces Reach
+  didn't sell) and writes `docs/career/spartan_armory_catalog.csv/.json` and `src/ui/SpartanArmoryCatalog.inc`.
+  Re-run it after changing a list or an override (it reports pieces it couldn't match; only EXO/TSCS is left out, on purpose).
+- **Tyler's rules:** CQB and its attachments free from the start; AKIS (+GRD/CBRN) Sergeant; UA [W] chests Sergeant; Military
+  Police Warrant Officer. Removed: Mariner (+Defiant/Mister Chief/OPTREX), Belos, Blackguard, Drengr helmets, Condemned and
+  Highlands chests. Other prices are picks marked "Claude's pick" in the overrides file; change freely.
+- **Renamed to Halopedia names:** AKIS (was Highlands helmet) and its GRD/CBRN attachments, HAZOP CBRN/HUL, Recon HUL-I, effects
+  Legendary (flames) and Eternal (blue_flames).
+- **[R] chests:** UA/Counterassault, Tactical/Recon, Tactical/Patrol and Collar/Grenadier [UA] [R] now use the `_roboarm` ids;
+  `ReachHost.cpp` Chests() has them as aliases (236-239). **O7OF:** small edit in your file.
+- **Career (`Career.cpp/.hpp`):** career.json has `creditsSpent` and `armoryOwned`; new `Career::Balance()` (earned - spent),
+  `OwnsArmoryItem(key)`, `BuyArmoryItem(key, price)`. Rank still follows cR earned, so buying never lowers rank. Key = "<slot>:<id>".
+- **Armory (`ArmorCustomizer.cpp`):** Spartan tiles show the Halopedia picture; above-rank pieces are dimmed with the rank;
+  pieces with a price show it and clicking opens BUY in the info panel (with Balance). Saved looks with locked/unbought pieces
+  fall back to the slot's first piece. `-armory-unlock-all` skips every lock (Spartan and Elite).
+- **Still to do (Tyler's notes after testing):**
+  - Unlocked/owned pieces should sort to the top of each list.
+  - No preview of a piece before buying: clicking a for-sale piece only opens BUY and doesn't put it on the character.
+  - Each equip makes the 3D character flash white (the old test-account white) for a moment. Every equip calls SaveProfile ->
+    SyncToReachArmory -> ReachArmory::SetSelection, and the scene re-applies the whole look; not yet looked into further.
+- **Elite (from the 22:35 entry) still untested:** rank locks, H2A shoulder/legs fix, all 9 sets + mixed pieces in a match.
+  Elite armour effects and first-person Elite arms come later.
+- Pictures are in the git-ignored `build/` folder: add with `git add -f`.
 
 ## 0. Pick up here (2026-10-28, 23:55 ET) - Dominus Critical Bug Fixes: Menu-to-Match ntdll Crash, UDP Port Stealing, Relay Reconnect Drop & NAT Join Flow
 
@@ -151,6 +180,17 @@ All tested by Tyler unless marked.
 - **Armory:** Elite Armor Set tiles show pictures from `data\ui\reach\elite_sets\<set id>.png` (Tyler's 8 renders;
   Ranger = `space`, Field Marshal = `story_elite`). Add with `git add -f`.
 - **Spec:** `docs/menu-redesign-spec.md` trimmed to what's still to do (steps 1-8 done).
+- **Elite rank locks (not built/tested yet):** `ArmorCustomizer.cpp` `kEliteUnlocks`: Spec Ops Corporal, Ranger Sergeant, Officer
+  Sergeant Grade 2 (Tyler may pick Commander), Ultra Warrant Officer, Zealot Captain, General Major, Field Marshal Lt. Colonel,
+  Ossoona Major G3, Schism/Combat Commander G2, H2A helmet/shoulders/legs Colonel G1, Council Brigadier, Honor Guard General.
+  Rank only, no cR; locked tiles dimmed with the rank; saved locked pieces fall back to Minor; `-armory-unlock-all` for tests.
+  Also fixed `ElitePack::PieceIndex`: H2A shoulders are piece 11 (were dropped), H2A legs 9 / Honor Guard robe legs 10 (were swapped).
+- **First-person Elite arms (later, Tyler 23:33):** player representation 1 (matg +0x474) = FP hands `objects\characters\elite\fp\fp`,
+  FP body `...\elite\fp_body\fp_body` (+0x20 / +0x30 tagrefs), 3P unit +0x40. The FP model has region `armor_pieces`
+  (general, officer, space, spec_ops, ultra, story_elite, zealot, default) + `body`; markers left_hand, secondary_weapon. The Elite set
+  list (pmcg +0x74) changes only `armor_pieces`. Likely cause of bare arms: the pack's 3P Elite has per-piece regions and no
+  `armor_pieces` region, so nothing selects the FP permutation. Idea: drive the FP `armor_pieces` permutation from the forearms pick
+  (needs the code that picks FP permutations; research). The FP model has no shoulder region.
 - Open: Elite armour effects (needs an armor_fx region or another route); the menu process still logs an ntdll access
   violation when it exits for a match (22:03, 22:24; separate from the ImGui fix, not looked at yet); first-person Elite arms.
 

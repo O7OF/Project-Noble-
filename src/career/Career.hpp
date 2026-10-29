@@ -84,6 +84,8 @@ struct Totals {
     int64_t assists = 0;
     int64_t medals = 0;
     double minutesPlayed = 0.0;
+    int64_t creditsSpent = 0;               // cR spent in the Armory (rank still follows cR earned, as in Reach)
+    std::vector<std::string> armoryOwned;   // bought Armory items, "<slot>:<permutation id>"
 };
 
 // One match in the service record history (newest first).
@@ -159,6 +161,12 @@ void OnGameResults(const uint8_t* record, size_t size);
 
 Award LastAward();
 Totals Get();
+
+// Armory purchases. Balance = cR earned - cR spent.
+int64_t Balance();
+bool OwnsArmoryItem(const std::string& key);
+// Spends the cR and marks the item owned; false (nothing spent) if already owned or the balance is too low.
+bool BuyArmoryItem(const std::string& key, int64_t price);
 
 struct PeerStats {
     std::string playerName;
