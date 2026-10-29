@@ -771,28 +771,31 @@ constexpr uint32_t kColor = 202;           // HR_Color_Steel .. _Pale (30, Armor
 
 // Helmets by the Armory's helmet_id (permutation string id) -> MCC item.
 static const std::unordered_map<std::string, uint32_t>& Helmets() {
+    // 2026-10-29: 13 helmets' ids were swapped round in the Armory (Tyler checked each one in the menu's 3D
+    // Armory: e.g. the menu model's player_malcolm head is the ODST). Each item number below stays with its
+    // helmet name; only the id next to it changed.
     static const std::unordered_map<std::string, uint32_t> k = {
         {"default", 0}, {"default_a", 1}, {"default_b", 2},                 // Mark V [B]
-        {"kurt", 3}, {"kurt_a", 4}, {"kurt_b", 5},                          // CQC
-        {"jai", 6}, {"jai_a", 7}, {"jai_b", 8},                             // ODST
-        {"isaac", 9}, {"isaac_a", 10}, {"isaac_b", 11},                     // HAZOP
+        {"rosenda", 3}, {"rosenda_a", 4}, {"rosenda_b", 5},                          // CQC
+        {"malcolm", 6}, {"malcolm_a", 7}, {"malcolm_b", 8},                             // ODST
+        {"skull", 9}, {"skull_a", 10}, {"skull_b", 11},                     // HAZOP
         {"vinh", 12}, {"vinh_a", 13}, {"vinh_b", 14},                       // EOD
-        {"nicole", 15}, {"nicole_a", 16}, {"nicole_b", 17},                 // Operator
+        {"isaac", 15}, {"isaac_a", 16}, {"isaac_b", 17},                 // Operator
         {"joshua", 18}, {"joshua_a", 19}, {"joshua_b", 20},                 // Grenadier
         {"female", 21}, {"female_a", 22}, {"female_b", 23},                 // Air Assault
         {"jun", 24}, {"jun_a", 25}, {"jun_b", 26},                          // Scout
-        {"kelly", 27}, {"kelly_a", 28}, {"kelly_b", 29},                    // EVA
-        {"adrianna", 30}, {"adrianna_a", 31}, {"adrianna_b", 32},           // JFO
+        {"player_li", 27}, {"player_li_a", 28}, {"player_li_b", 29},                    // EVA
+        {"nicole", 30}, {"nicole_a", 31}, {"nicole_b", 32},           // JFO
         {"carter", 33}, {"carter_a", 34}, {"carter_b", 35},                 // Commando
         {"emile", 36}, {"emile_a", 37}, {"emile_b", 38},                    // EVA [C]
-        {"will", 39}, {"will_a", 40}, {"will_b", 41},                       // Mjolnir Mk. V
-        {"skull", 42}, {"skull_a", 43}, {"skull_b", 44}, {"sam_c", 45},     // Pilot (+ Haunted)
-        {"malcolm", 46}, {"malcolm_a", 47}, {"malcolm_b", 48},              // Recon
-        {"john117", 49}, {"john117_a", 50}, {"john117_b", 51},              // Mjolnir Mk. VI
-        {"sam", 52}, {"sam_a", 53}, {"sam_b", 54},                          // Gungnir
+        {"john117", 39}, {"john117_a", 40}, {"john117_b", 41},                       // Mjolnir Mk. V
+        {"sam", 42}, {"sam_a", 43}, {"sam_b", 44}, {"sam_c", 45},     // Pilot (+ Haunted)
+        {"jai", 46}, {"jai_a", 47}, {"jai_b", 48},              // Recon
+        {"will", 49}, {"will_a", 50}, {"will_b", 51},              // Mjolnir Mk. VI
+        {"kelly", 52}, {"kelly_a", 53}, {"kelly_b", 54},                          // Gungnir
         {"linda", 55}, {"linda_a", 56}, {"linda_b", 57},                    // Security
-        {"player_li", 58}, {"player_li_a", 59}, {"player_li_b", 60},        // Military Police
-        {"rosenda", 61}, {"rosenda_a", 62}, {"rosenda_b", 63},              // CQB
+        {"adrianna", 58}, {"adrianna_a", 59}, {"adrianna_b", 60},        // Military Police
+        {"kurt", 61}, {"kurt_a", 62}, {"kurt_b", 63},              // CQB
         {"cndmnd", 64}, {"cndmnd_a", 67}, {"cndmnd_b", 65}, {"cndmnd_c", 66}, // Mariner: base, Optrex, Defiant, Mister Chief
         {"hilands", 68}, {"hilands_b", 69}, {"hilands_a", 70}, {"hilands_c", 71}, // GRD: base, Optrex, CBRN, Optrex/CBRN
         {"s8_helmet_belos_corinthian", 72}, {"s8_helmet_belos_transverse", 73},
@@ -869,14 +872,26 @@ static void ApplyArmoryAppearance(uint8_t* profile) {
         if (auto it = Helmets().find(str(sp, "helmet_id")); it != Helmets().end()) helmet = it->second;
         uint32_t chest = 126;
         if (auto it = Chests().find(str(sp, "chest_id")); it != Chests().end()) chest = it->second;
-        const int effect = num(sp, "armor_effect_index", 0, 6, 0);
+        int effect = num(sp, "armor_effect_index", 0, 6, 0);
+        int utility = num(sp, "utility_index", 0, 6, 0);
+        // Eternal (effect 6) and the Hydration Container (utility 6) aren't items Reach sold. With both equipped
+        // the engine crashed building the player (haloreach+0x105512, 2026-10-29, in a match and on the menu),
+        // so one of them is past the end of the map's list. Both stay Armory-only until we know which.
+        if (effect >= 6) {
+            NOBLE_WARN("ReachHost [Slot 34]: armour effect {} isn't in Reach's list; no effect in game", effect);
+            effect = 0;
+        }
+        if (utility >= 6) {
+            NOBLE_WARN("ReachHost [Slot 34]: utility {} isn't in Reach's list; default utility in game", utility);
+            utility = 0;
+        }
 
         put(0x40, helmet);
         put(0x44, kLeftShoulder + num(sp, "left_shoulder_index", 0, 17, 0));
         put(0x48, kRightShoulder + num(sp, "right_shoulder_index", 0, 17, 0));
         put(0x4C, chest);
         put(0x50, kWrist + num(sp, "wrist_index", 0, 5, 0));
-        put(0x54, kUtility + num(sp, "utility_index", 0, 6, 0));
+        put(0x54, kUtility + utility);
         put(0x64, kSpartanMale + num(appearance, "body_type", 0, 1, 0));
         // Tested in game 2026-10-28: +0x8C is the Elite armour set (194 + set; 0xC7 spawned a General) and
         // the Spartan armour effect sits at +0x68 (the two were swapped, so the effect picked the Elite).
@@ -884,7 +899,7 @@ static void ApplyArmoryAppearance(uint8_t* profile) {
         put(0x6C, kKnees + num(sp, "knee_guards_index", 0, 3, 0));
         put(0x70, kVisor + num(sp, "visor_color_index", 0, 4, 0));
         put(0x8C, kEliteSet + num(el, "armor_set", 0, 7, 0));
-        put(0x90, kEliteEffect + effect);
+        put(0x90, kEliteEffect);   // Elite armour effects are off for now (Tyler 2026-10-29)
         put(0x94, VoiceItem(str(sp, "voice_id")));
         put(0x98, kColor + num(appearance, "primary_color", 0, 29, 1));
         put(0x9C, kColor + num(appearance, "secondary_color", 0, 29, 10));

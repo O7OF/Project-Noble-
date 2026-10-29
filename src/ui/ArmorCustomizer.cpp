@@ -110,29 +110,29 @@ const std::vector<HelmetSpec>& GetSpartanHelmets() {
             "The Mark V[B] was entering service in standard issue across the UNSC just prior to the fall of Reach."
         },
         {
-            "CQC", "kurt", "-player_kurt",
+            "CQC", "rosenda", "-player_kurt",
             {
-                {"BASE", "kurt", "Standard-issue close quarters combat variant developed at the UNSC Hoppocken testing facility."},
-                {"CBRN", "kurt_a", "Chemical, Biological, Radiological and Nuclear filtration unit for the CQC helmet."},
-                {"UA/HUL", "kurt_b", "Up-Armored visor shield with Hardened Uplink module for the CQC helmet."},
+                {"BASE", "rosenda", "Standard-issue close quarters combat variant developed at the UNSC Hoppocken testing facility."},
+                {"CBRN", "rosenda_a", "Chemical, Biological, Radiological and Nuclear filtration unit for the CQC helmet."},
+                {"UA/HUL", "rosenda_b", "Up-Armored visor shield with Hardened Uplink module for the CQC helmet."},
             },
             "Standard-issue close quarters combat variant developed at the UNSC Hoppocken testing facility."
         },
         {
-            "ODST", "jai", "-player_jai",
+            "ODST", "malcolm", "-player_jai",
             {
-                {"BASE", "jai", "Many technologies initially developed for MJOLNIR have gained widespread adoption by the ODST."},
-                {"UA/CNM", "jai_a", "Up-Armored brow plate with Command Network Module for the ODST helmet."},
-                {"CBRN/HUL", "jai_b", "CBRN rebreather and Hardened Uplink package for the ODST helmet."},
+                {"BASE", "malcolm", "Many technologies initially developed for MJOLNIR have gained widespread adoption by the ODST."},
+                {"UA/CNM", "malcolm_a", "Up-Armored brow plate with Command Network Module for the ODST helmet."},
+                {"CBRN/HUL", "malcolm_b", "CBRN rebreather and Hardened Uplink package for the ODST helmet."},
             },
             "Many technologies initially developed for MJOLNIR have gained widespread adoption by the ODST."
         },
         {
-            "HAZOP", "isaac", "-player_isaac",
+            "HAZOP", "skull", "-player_isaac",
             {
-                {"BASE", "isaac", "The Mark V[H] variant is environmentally sealed for prolonged operations in hazardous environments."},
-                {"CBRN/HUL", "isaac_a", "Twin CBRN filtration canisters and a Hardened Uplink for extreme hazard zone operations."},
-                {"CNM-I", "isaac_b", "Command Network Module and CBRN filtration suite for the HAZOP helmet."},
+                {"BASE", "skull", "The Mark V[H] variant is environmentally sealed for prolonged operations in hazardous environments."},
+                {"CBRN/HUL", "skull_a", "Twin CBRN filtration canisters and a Hardened Uplink for extreme hazard zone operations."},
+                {"CNM-I", "skull_b", "Command Network Module and CBRN filtration suite for the HAZOP helmet."},
             },
             "The Mark V[H] variant is environmentally sealed for prolonged operations in hazardous environments."
         },
@@ -146,11 +146,11 @@ const std::vector<HelmetSpec>& GetSpartanHelmets() {
             "Designed specifically to channel the pressure wave of a detonation around the user's head."
         },
         {
-            "OPERATOR", "nicole", "-player_nicole",
+            "OPERATOR", "isaac", "-player_nicole",
             {
-                {"BASE", "nicole", "A multi-role variant optimized for specialized vehicle and espionage teams within Asymmetric Action Groups."},
-                {"UA/HUL", "nicole_a", "Up-Armored brow plate and Hardened Uplink module for the Operator helmet."},
-                {"CNM", "nicole_b", "Command Network Module and optical rangefinder suite for the Operator helmet."},
+                {"BASE", "isaac", "A multi-role variant optimized for specialized vehicle and espionage teams within Asymmetric Action Groups."},
+                {"UA/HUL", "isaac_a", "Up-Armored brow plate and Hardened Uplink module for the Operator helmet."},
+                {"CNM", "isaac_b", "Command Network Module and optical rangefinder suite for the Operator helmet."},
             },
             "A multi-role variant optimized for specialized vehicle and espionage teams within Asymmetric Action Groups."
         },
@@ -182,20 +182,20 @@ const std::vector<HelmetSpec>& GetSpartanHelmets() {
             "Sharing many components with the Recon variant, the Scout relies more heavily on stealth coatings."
         },
         {
-            "EVA", "kelly", "-player_kelly",
+            "EVA", "player_li", "-player_kelly",
             {
-                {"BASE", "kelly", "Created in a zero-g facility above Damascus on Chi Ceti IV, the Mark V[V] was designed to increase exo-atmospheric survivability."},
-                {"CNM", "kelly_a", "Command Network Module for the Extra-Vehicular Activity helmet."},
-                {"UA/HUL[3]", "kelly_b", "Up-Armored brow plate and triple Hardened Uplink transceiver for the EVA helmet."},
+                {"BASE", "player_li", "Created in a zero-g facility above Damascus on Chi Ceti IV, the Mark V[V] was designed to increase exo-atmospheric survivability."},
+                {"CNM", "player_li_a", "Command Network Module for the Extra-Vehicular Activity helmet."},
+                {"UA/HUL[3]", "player_li_b", "Up-Armored brow plate and triple Hardened Uplink transceiver for the EVA helmet."},
             },
             "Created in a zero-g facility above Damascus on Chi Ceti IV, the Mark V[V] was designed to increase exo-atmospheric survivability."
         },
         {
-            "JFO", "adrianna", "-player_adrianna",
+            "JFO", "nicole", "-player_adrianna",
             {
-                {"BASE", "adrianna", "Designed to coordinate orbital fire-support and close air strikes in contested combat zones."},
-                {"HUL-I", "adrianna_a", "Internalized Hardened Uplink module for the Joint Fires Observer helmet."},
-                {"UA", "adrianna_b", "Up-Armored blast shield and Hardened Uplink suite for the JFO helmet."},
+                {"BASE", "nicole", "Designed to coordinate orbital fire-support and close air strikes in contested combat zones."},
+                {"HUL-I", "nicole_a", "Internalized Hardened Uplink module for the Joint Fires Observer helmet."},
+                {"UA", "nicole_b", "Up-Armored blast shield and Hardened Uplink suite for the JFO helmet."},
             },
             "Designed to coordinate orbital fire-support and close air strikes in contested combat zones."
         },
@@ -218,20 +218,20 @@ const std::vector<HelmetSpec>& GetSpartanHelmets() {
             "Field-modified EVA variant featuring a hand-carved ballistic polarization dome (Noble Four configuration)."
         },
         {
-            "MJOLNIR MK. V", "will", "-player_will",
+            "MJOLNIR MK. V", "john117", "-player_will",
             {
-                {"BASE", "will", "Entered service on November 24, 2541; the Mark V was the first generation of MJOLNIR to incorporate energy shielding."},
-                {"CNM", "will_a", "Command Network Module for the classic MJOLNIR Mark V helmet."},
-                {"UA", "will_b", "Up-Armored brow plate and Command Network Module for the MJOLNIR Mark V helmet."},
+                {"BASE", "john117", "Entered service on November 24, 2541; the Mark V was the first generation of MJOLNIR to incorporate energy shielding."},
+                {"CNM", "john117_a", "Command Network Module for the classic MJOLNIR Mark V helmet."},
+                {"UA", "john117_b", "Up-Armored brow plate and Command Network Module for the MJOLNIR Mark V helmet."},
             },
             "Entered service on November 24, 2541; the Mark V was the first generation of MJOLNIR to incorporate energy shielding."
         },
         {
-            "PILOT", "skull", "-player_skull",
+            "PILOT", "sam", "-player_skull",
             {
-                {"BASE", "skull", "Utilizing the latest in holographic HUD interfaces, the Pilot variant is widespread among UNSC Air Force and Navy crews."},
-                {"HUL[3]", "skull_a", "Triple Hardened Uplink module for the Pilot helmet."},
-                {"UA/HUL[3]", "skull_b", "Up-Armored blast shield and triple Hardened Uplink module for the Pilot helmet."},
+                {"BASE", "sam", "Utilizing the latest in holographic HUD interfaces, the Pilot variant is widespread among UNSC Air Force and Navy crews."},
+                {"HUL[3]", "sam_a", "Triple Hardened Uplink module for the Pilot helmet."},
+                {"UA/HUL[3]", "sam_b", "Up-Armored blast shield and triple Hardened Uplink module for the Pilot helmet."},
                 {"HAUNTED", "sam_c", "And when he had opened the fourth seal, I heard the voice of the fourth beast say, Come and see."},
             },
             "Utilizing the latest in holographic HUD interfaces, the Pilot variant is widespread among UNSC Air Force and Navy crews."
@@ -246,47 +246,47 @@ const std::vector<HelmetSpec>& GetSpartanHelmets() {
             "Manufactured by Misriah Armory on Mars, the Mark V[M] Security variant was designed for shipboard defense."
         },
         {
-            "MILITARY POLICE", "player_li", "-helmet_base__(spartans_player_mp_render)",
+            "MILITARY POLICE", "adrianna", "-helmet_base__(spartans_player_mp_render)",
             {
-                {"BASE", "player_li", "Previously an exclusive asset of Beta-5 security forces, the MP variant has entered service with the Army and Air Force."},
-                {"CBRN/HU/RS", "player_li_a", "CBRN rebreather and Hardened Uplink / Remote Sensor package for the Military Police helmet."},
-                {"HU/RS/CNM", "player_li_b", "Hardened Uplink, Remote Sensor, and Command Network Module for the Military Police helmet."},
+                {"BASE", "adrianna", "Previously an exclusive asset of Beta-5 security forces, the MP variant has entered service with the Army and Air Force."},
+                {"CBRN/HU/RS", "adrianna_a", "CBRN rebreather and Hardened Uplink / Remote Sensor package for the Military Police helmet."},
+                {"HU/RS/CNM", "adrianna_b", "Hardened Uplink, Remote Sensor, and Command Network Module for the Military Police helmet."},
             },
             "Previously an exclusive asset of Beta-5 security forces, the MP variant has entered service with the Army and Air Force."
         },
         {
-            "CQB", "rosenda", "-player_rosenda",
+            "CQB", "kurt", "-player_rosenda",
             {
-                {"BASE", "rosenda", "The Mark V[C] variant improves survivability in close-quarters combat via hardened T-visor plating."},
-                {"HU/RS/CNM", "rosenda_a", "Hardened Uplink, Remote Sensor, and Command Network Module for the CQB helmet."},
-                {"UA/HUL", "rosenda_b", "Up-Armored brow plate and Hardened Uplink suite for the CQB helmet."},
+                {"BASE", "kurt", "The Mark V[C] variant improves survivability in close-quarters combat via hardened T-visor plating."},
+                {"HU/RS/CNM", "kurt_a", "Hardened Uplink, Remote Sensor, and Command Network Module for the CQB helmet."},
+                {"UA/HUL", "kurt_b", "Up-Armored brow plate and Hardened Uplink suite for the CQB helmet."},
             },
             "The Mark V[C] variant improves survivability in close-quarters combat via hardened T-visor plating."
         },
         {
-            "RECON", "malcolm", "-player_malcolm",
+            "RECON", "jai", "-player_malcolm",
             {
-                {"BASE", "malcolm", "An ONI developmental prototype designed to decrease noticeability and silhouette in deep-reconnaissance operations."},
-                {"HUL-I", "malcolm_a", "Hardened Uplink transceiver mounted to the ONI Recon helmet."},
-                {"UA/HUL[3]", "malcolm_b", "Up-Armored blast shield and triple Hardened Uplink array for the Recon helmet."},
+                {"BASE", "jai", "An ONI developmental prototype designed to decrease noticeability and silhouette in deep-reconnaissance operations."},
+                {"HUL-I", "jai_a", "Hardened Uplink transceiver mounted to the ONI Recon helmet."},
+                {"UA/HUL[3]", "jai_b", "Up-Armored blast shield and triple Hardened Uplink array for the Recon helmet."},
             },
             "An ONI developmental prototype designed to decrease noticeability and silhouette in deep-reconnaissance operations."
         },
         {
-            "MJOLNIR MK. VI", "john117", "-player_john117",
+            "MJOLNIR MK. VI", "will", "-player_john117",
             {
-                {"BASE", "john117", "Field-tested in the final months of 2552 on Reach prior to full deployment across remaining SPARTAN-II personnel."},
-                {"FC-I[2]", "john117_a", "Dual internalized Fascia Command sensors for the prototype Mark VI helmet."},
-                {"UA/HUL-I", "john117_b", "Up-Armored brow plate and internalized Hardened Uplink for the prototype Mark VI helmet."},
+                {"BASE", "will", "Field-tested in the final months of 2552 on Reach prior to full deployment across remaining SPARTAN-II personnel."},
+                {"FC-I[2]", "will_a", "Dual internalized Fascia Command sensors for the prototype Mark VI helmet."},
+                {"UA/HUL-I", "will_b", "Up-Armored brow plate and internalized Hardened Uplink for the prototype Mark VI helmet."},
             },
             "Field-tested in the final months of 2552 on Reach prior to full deployment across remaining SPARTAN-II personnel."
         },
         {
-            "GUNGNIR", "sam", "-player_sam",
+            "GUNGNIR", "kelly", "-player_sam",
             {
-                {"BASE", "sam", "Created as part of Project GUNGNIR to pair with the M6 Grindell/Galilean Nonlinear Rifle."},
-                {"HU/RS", "sam_a", "Hardened Uplink and Remote Sensor module for the enclosed GUNGNIR helmet."},
-                {"CBRN", "sam_b", "CBRN filtration and Remote Sensor suite for the GUNGNIR helmet."},
+                {"BASE", "kelly", "Created as part of Project GUNGNIR to pair with the M6 Grindell/Galilean Nonlinear Rifle."},
+                {"HU/RS", "kelly_a", "Hardened Uplink and Remote Sensor module for the enclosed GUNGNIR helmet."},
+                {"CBRN", "kelly_b", "CBRN filtration and Remote Sensor suite for the GUNGNIR helmet."},
             },
             "Created as part of Project GUNGNIR to pair with the M6 Grindell/Galilean Nonlinear Rifle."
         },
@@ -433,9 +433,9 @@ const std::vector<MultiLayerSpec>& GetSpartanWrists() {
          "Reinforced forearm bracer protecting wrist actuators and suit seals."},
         {"TACTICAL/TACPAD", "wrist_3", "-flair_tricorder_kat", false,
          "Ruggedized forearm Tactical Data Pad providing real-time battlefield telemetry."},
-        {"TACTICAL/UGPS", "wrist_4", "-flair_wrist__(spartans_player_kelly_render)", false,
+        {"TACTICAL/UGPS", "wrist_5", "-flair_wrist__(spartans_player_kelly_render)", false,
          "Universal Global Positioning System wrist terminal for orbital and terrestrial navigation."},
-        {"ASSAULT/BREACHER", "wrist_5", "-flair_shotgun_reloader__(spartans_player_rosenda_render)", false,
+        {"ASSAULT/BREACHER", "wrist_4", "-flair_shotgun_reloader__(spartans_player_rosenda_render)", false,
          "Forearm-mounted 8-gauge tactical shotgun shell caddy for rapid CQB reloading."},
     };
     return kWrists;
@@ -1492,12 +1492,12 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
         rows.push_back(p);
         rows.push_back(q);
     }
-    {
+    if (m_previewSpecies == PlayerSpecies::Spartan) {   // Elite armour effects and voices are off for now
         SlotRow r{ "EFFECTS & VOICE", "Armor Effect", RowKind::List, &m_profile.armorEffectIndex };
         r.scene = "c_helmet";
         for (const auto& e : kArmorEffects) {
             r.options.push_back({ e.name, e.description });
-            if (m_previewSpecies == PlayerSpecies::Spartan) SpartanArmoryItem(r.options.back(), "armor effect", e.stringId);
+            SpartanArmoryItem(r.options.back(), "armor effect", e.stringId);
         }
         rows.push_back(r);
         SlotRow v{ "EFFECTS & VOICE", "Firefight Voice", RowKind::List, &m_profile.firefightVoiceIndex };
@@ -1532,7 +1532,8 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
         }
     }
 
-    // An item clicked but not bought yet: the info panel offers BUY for it.
+    // An item clicked that can't be equipped yet (rank not reached, or not bought): it is tried on in the 3D
+    // preview, and the info panel shows its rank or offers BUY.
     static int s_buyRow = -1, s_buyValue = -1;
 
     // Picks an option for a row: saves, updates the model, keeps dependent fields right.
@@ -1541,8 +1542,11 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
         SlotRow& r = rows[rowIndex];
         if (!r.index || r.options.empty()) return;
         value = std::clamp(value, 0, static_cast<int>(r.options.size()) - 1);
-        if (r.options[value].locked) return;   // rank not reached
-        if (r.options[value].forSale && !bought) { s_buyRow = rowIndex; s_buyValue = value; return; }
+        if (r.options[value].locked || (r.options[value].forSale && !bought)) {   // try it on, don't equip
+            s_buyRow = rowIndex;
+            s_buyValue = value;
+            return;
+        }
         s_buyRow = -1;
         if (*r.index == value && r.index != &speciesInt && r.index != &bodyInt) return;
         *r.index = value;
@@ -1740,9 +1744,20 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
         const float tileH = colourGrid ? tileW : artGrid ? tileW * 1.15f : 46.0f * s;
         // Grid origin in screen space, taken once (it already includes the scroll offset).
         const ImVec2 base = ImGui::GetCursorScreenPos();
+        // Tiles you can use come first, then ones for sale, then locked ones (each group keeps the list order).
+        std::vector<int> tileOf(static_cast<size_t>(n));
+        {
+            int next = 0;
+            for (int group = 0; group < 3; ++group)
+                for (int i = 0; i < n; ++i) {
+                    const PickOption& o = row.options[i];
+                    const int g = o.locked ? 2 : o.forSale ? 1 : 0;
+                    if (g == group) tileOf[static_cast<size_t>(i)] = next++;
+                }
+        }
         for (int i = 0; i < n; ++i) {
             // Colours: column = hue, row = shade (the palette is stored hue by hue, 3 shades each).
-            const int slot = colourGrid ? (i % 3) * 10 + i / 3 : i;
+            const int slot = colourGrid ? (i % 3) * 10 + i / 3 : tileOf[static_cast<size_t>(i)];
             const int c = slot % cols, r = slot / cols;
             ImGui::SetCursorScreenPos(ImVec2(base.x + c * (tileW + cg), base.y + r * (tileH + cg)));
             const ImVec2 t0 = ImGui::GetCursorScreenPos(), t1(t0.x + tileW, t0.y + tileH);
@@ -1753,6 +1768,7 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
             if (hov) hoveredOption = i;
             if (clicked) choose(m_focusedRow, i);
             const bool isEq = i == equipped;
+            const bool isTry = s_buyRow == m_focusedRow && s_buyValue == i;   // tried on, not equipped
             if (isEq && m_pickerScrollToEquipped) {
                 ImGui::SetScrollHereY(0.4f);
                 m_pickerScrollToEquipped = false;
@@ -1787,10 +1803,12 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
                     TextAt(gdl, smallFont, 13.0f * s, ImVec2(t0.x + (tileW - TextW(smallFont, 13.0f * s, rank.c_str())) * 0.5f, my + 2.0f * s),
                            IM_COL32(230, 230, 230, 255), rank.c_str());
                 }
-                gdl->AddRect(t0, t1, isEq ? kAccentCol : IM_COL32(170, 220, 255, hov ? 140 : 40), 2.0f * s, 0, isEq ? 1.6f * s : 1.0f);
+                gdl->AddRect(t0, t1, isEq ? kAccentCol : isTry ? IM_COL32(255, 196, 92, 255) : IM_COL32(170, 220, 255, hov ? 140 : 40),
+                             2.0f * s, 0, (isEq || isTry) ? 1.6f * s : 1.0f);
             } else {
                 gdl->AddRectFilled(t0, t1, isEq ? IM_COL32(34, 70, 104, 235) : (hov ? IM_COL32(40, 54, 70, 235) : IM_COL32(20, 28, 38, 220)), 2.0f * s);
-                gdl->AddRect(t0, t1, isEq ? kAccentCol : IM_COL32(170, 220, 255, hov ? 140 : 40), 2.0f * s, 0, isEq ? 1.6f * s : 1.0f);
+                gdl->AddRect(t0, t1, isEq ? kAccentCol : isTry ? IM_COL32(255, 196, 92, 255) : IM_COL32(170, 220, 255, hov ? 140 : 40),
+                             2.0f * s, 0, (isEq || isTry) ? 1.6f * s : 1.0f);
                 float tx = t0.x + 10.0f * s;
                 if (row.options[i].swatch) {
                     gdl->AddRectFilled(ImVec2(tx, t0.y + 12.0f * s), ImVec2(tx + 18.0f * s, t1.y - 12.0f * s), row.options[i].swatch, 2.0f * s);
@@ -1817,7 +1835,7 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
                 gdl->AddLine(ImVec2(cc.x - 1.0f * s, cc.y + 3.0f * s), ImVec2(cc.x + 4.0f * s, cc.y - 3.0f * s), IM_COL32(10, 20, 30, 255), 2.0f * s);
             }
         }
-        const int lastSlot = colourGrid ? 29 : n - 1;
+        const int lastSlot = colourGrid ? 29 : n - 1;   // tileOf covers 0..n-1
         ImGui::SetCursorScreenPos(ImVec2(base.x, base.y + (lastSlot / cols + 1) * (tileH + cg)));
         ImGui::Dummy(ImVec2(1, 1));
         ImGui::EndChild();
@@ -1833,8 +1851,10 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
                                                                   : row.options[shown].description.c_str();
         TextAt(dl, bodyFont, 15.0f * s, ImVec2(pickX + pad, iy + 38.0f * s), kDimCol, desc, pickW - pad * 2.0f);
         const std::string count = std::to_string(shown + 1) + " / " + std::to_string(n) +
-            (shown == equipped ? "   EQUIPPED" : row.options[shown].locked ? "   LOCKED"
-             : row.options[shown].forSale ? "   Click to buy" : "   Click to equip");
+            (shown == equipped ? "   EQUIPPED"
+             : row.options[shown].locked ? std::string("   PREVIEW - unlocks at ") + (row.options[shown].lockRank ? row.options[shown].lockRank : "a higher rank")
+             : row.options[shown].forSale ? std::string(pending && shown == s_buyValue ? "   PREVIEW - buy to equip" : "   Click to preview")
+             : std::string("   Click to equip"));
         TextAt(dl, smallFont, 14.0f * s, ImVec2(pickX + pad, k1.y - 26.0f * s), IM_COL32(130, 150, 170, 255), count.c_str());
 
         // BUY for an item that was clicked but isn't bought yet. cR balance = earned - spent (rank follows earned).
@@ -1856,6 +1876,34 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
             TextAt(dl, smallFont, 13.0f * s, ImVec2(b0.x, b0.y - 18.0f * s), IM_COL32(200, 214, 228, 220), bal.c_str());
             if (clicked && afford && Career::BuyArmoryItem(o.buyKey, o.price)) {
                 choose(m_focusedRow, s_buyValue, true);
+            }
+        }
+    }
+
+    // ---- Try-on: the 3D scene shows the clicked piece that can't be equipped yet; the saved look is unchanged.
+    {
+        static int s_shownRow = -1, s_shownValue = -1;
+        int wantRow = -1, wantValue = -1;
+        if (s_buyRow >= 0 && s_buyRow < rowCount && rows[s_buyRow].index && s_buyValue >= 0 &&
+            s_buyValue < static_cast<int>(rows[s_buyRow].options.size()) && s_buyValue != *rows[s_buyRow].index) {
+            wantRow = s_buyRow;
+            wantValue = s_buyValue;
+        }
+        if (wantRow != s_shownRow || wantValue != s_shownValue) {
+            s_shownRow = wantRow;
+            s_shownValue = wantValue;
+            if (wantRow >= 0) {
+                int* field = rows[wantRow].index;
+                const AppearanceProfile saved = m_profile;
+                *field = wantValue;
+                if (field == &m_profile.helmetIndex) m_profile.helmetVariantIndex = 0;   // a helmet is tried on with its base
+                if (field == &m_profile.eliteArmorSet)   // an Elite set is tried on whole
+                    m_profile.eliteHelmetIndex = m_profile.eliteLeftShoulderIndex = m_profile.eliteRightShoulderIndex =
+                        m_profile.eliteChestIndex = m_profile.eliteArmsIndex = m_profile.eliteLegsIndex = wantValue;
+                SyncToReachArmory();
+                m_profile = saved;
+            } else {
+                SyncToReachArmory();   // back to the equipped look
             }
         }
     }

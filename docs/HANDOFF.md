@@ -1,4 +1,4 @@
-# Project Noble: handoff (2026-10-29, 01:55 ET)
+# Project Noble: handoff (2026-10-29, 02:05 ET)
 Dominus join the team 20261028! 
 This picks up a reverse-engineering and C++ effort on **Tyler's Windows PC**. All paths below are real paths on that machine.
 Tyler (GitHub `WeabooTyler117`) works with a partner (GitHub `O7OF`) who owns the repo and writes most of the code.
@@ -10,6 +10,36 @@ community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownershi
 MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour.
 
 --
+
+## 0. Pick up here (2026-10-29, 02:05 ET) - Armory 3D preview: real model pieces, try-on, Elite effects off
+
+Built and partly tested by Tyler (helmet/wrist id fix and the stray visor fix are not tested yet).
+- **The 3D Armory took item names as model pieces.** The menu script's GLOBALS pairs are (model region, permutation),
+  e.g. head:player_kurt. Noble wrote Armory item ids (kurt_a, chest_3, ...), so only items whose id equals a head
+  permutation changed. `ReachArmory.cpp` now translates each item with Reach's pmcg table, read at run time from
+  `data\armor\*.rrpmcg` (dumped from the RR armour pack; not in git): helmet -> head + flair_head_a/b/c, shoulders ->
+  flair_*_shoulder, chest -> flair_chest_a/b (+ arms for [R], male/female by flag 1/2), wrist/utility/knees -> flair_*,
+  effect -> armor_fx (armor_fx_00 Legendary, _01 Eternal, _02 Heart Attack, _03 Pestilence, _04 Inclement Weather,
+  _05 Birthday Party). Only the regions the items change are written ("default" is a real piece in some flair regions).
+- **13 helmet ids were attached to the wrong helmet** (Tyler checked each in the 3D Armory). New ids: CQC rosenda, ODST
+  malcolm, HAZOP skull, Operator isaac, EVA player_li, JFO nicole, Mk V john117, Pilot sam (+ Haunted sam_c), Military
+  Police adrianna, CQB kurt, Recon jai, Mk VI will, Gungnir kelly. Wrist: Tactical/UGPS wrist_5, Assault/Breacher wrist_4.
+  Each helmet keeps its MCC item number in `ReachHost.cpp` Helmets() (only the id key moved), so in-game looks are as before.
+  Catalog (.inc, docs csv/json) updated the same way. `tools/armory/build_spartan_catalog.py` reads the lists, so a re-run agrees.
+- **Try-on:** clicking a locked or unbought piece shows it on the 3D model without equipping (orange outline, "PREVIEW").
+  Lists show usable pieces first, then for sale, then locked.
+- **Rebuilds:** unchanged pairs don't rebuild the biped (colour-only changes no longer flash). REBUILD is bumped 2 frames
+  after the pairs; `-armory-settle-rebuild` adds a second rebuild (test switch). After a rebuild the colour/suit records are
+  looked for in the memory regions they were found in before (every 4 ms, up to 1.5 s).
+- **Crash fixed (haloreach+0x105512, building the player in a match and on the menu):** with Eternal (effect 6) and the
+  Hydration Container (utility 6) equipped. `ReachHost.cpp` now sends no effect / default utility for those two in the
+  profile (log says so). Not yet known which of the two it was.
+- **Elites:** no Armor Effect / Firefight Voice rows for Elites; Elite armour effect in the profile is always none; the Elite
+  3D preview gets no effect pair.
+- **Still open:** a knife stays on the 3D Spartan's chest whatever chest is picked (was there before these changes too); the
+  log line "menu script's starting pairs" lists the regions the menu sets itself, look there first. Colours sometimes stay
+  white/brown after an armour change (the rebuilt biped's colour records aren't always found).
+- **O7OF:** `ReachArmory.cpp` and `ReachHost.cpp` (Helmets keys, effect/utility guard, Elite effect) changed.
 
 ## 0. Pick up here (2026-10-29, 01:55 ET) - Developer Account Display, Mini Dev Menu, and [DEV] Name Tags
 

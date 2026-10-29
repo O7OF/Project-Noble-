@@ -8,7 +8,11 @@
 #include <cctype>
 #include <chrono>
 #include <cmath>
+#include <cstdlib>
+#include <cstdio>
 #include <cstring>
+#include <cwchar>
+#include <filesystem>
 #include <fstream>
 #include <mutex>
 #include <string>
@@ -150,6 +154,20 @@ static std::array<uint32_t, 4> s_lastColorWords = {
 static std::array<float, 4> s_lastSuitFloats = {
     0.9960785f, 0.9921569f, 0.98823535f, 1.0f
 };
+// Memory regions the colour / suit records were found in. A rebuilt biped's new records land in the same
+// regions, so after a rebuild only these are searched (a few ms) instead of all memory (the white flash).
+static std::vector<std::pair<uintptr_t, size_t>> s_recordRegions;
+static std::atomic<bool> s_quickScanning{false};
+
+// Last permutation pairs written (unchanged pairs = no rebuild, so colour-only changes don't rebuild the biped),
+// and the rebuild: REBUILD is bumped a couple of frames after the pairs are written (and, with
+// -armory-settle-rebuild, once more after the biped has been remade).
+static std::vector<std::pair<uint32_t, uint32_t>> s_lastPairs;
+static uintptr_t s_lastPairsBase = 0;
+static uint64_t s_bumpAtFrame = 0;       // 0 = none
+static bool s_settlePending = false;
+static uint64_t s_settleDeadline = 0;
+static int32_t s_remadeAtBump = 0;
 
 // -----------------------------------------------------------------------------
 // Load string_ids from data/menumaps/mainmenu_all.string_ids.csv
@@ -215,6 +233,17 @@ static void EnsureStringIdsLoaded() {
         return;
     }
     NOBLE_WARN("ReachArmory: Could not locate mainmenu_all.string_ids.csv!");
+}
+
+// string_id -> name from the csv (for logging), or the hex value.
+static std::string NameOfStringId(uint32_t id) {
+    EnsureStringIdsLoaded();
+    std::lock_guard<std::mutex> lock(s_dataMutex);
+    for (const auto& kv : s_stringIds)
+        if (kv.second == id) return kv.first;
+    char buf[16];
+    std::snprintf(buf, sizeof(buf), "0x%X", id);
+    return buf;
 }
 
 static uint32_t LookupStringId(const std::string& name) {
@@ -328,6 +357,15 @@ static bool ScanGlobalsTable() {
                             s_globalsBase.store(foundBase);
                             if (!s_sceneReady.exchange(true)) {
                                 NOBLE_INFO("ReachArmory: Found mainmenu_all.map GLOBALS table at 0x{:X} (stride={})", foundBase, stride);
+                                // The menu script's own pairs before Noble writes any (which regions it sets itself).
+                                std::string pairsText;
+                                for (size_t i = 0; i < 16; ++i) {
+                                    uint32_t r = 0, pm = 0;
+                                    SafeReadU32(foundBase + (0x04 + i * 2) * stride, &r);
+                                    SafeReadU32(foundBase + (0x05 + i * 2) * stride, &pm);
+                                    pairsText += " " + NameOfStringId(r) + ":" + NameOfStringId(pm);
+                                }
+                                NOBLE_INFO("ReachArmory: menu script's starting pairs:{}", pairsText);
                             }
                             return true;
                         }
@@ -339,7 +377,84 @@ static bool ScanGlobalsTable() {
     return false;
 }
 
-static void ScanColorRecords() {
+static void RememberRegion(uintptr_t addr) {
+    MEMORY_BASIC_INFORMATION mbi{};
+    if (VirtualQuery(reinterpret_cast<LPCVOID>(addr), &mbi, sizeof(mbi)) == 0) return;
+    const auto region = std::make_pair(reinterpret_cast<uintptr_t>(mbi.BaseAddress), static_cast<size_t>(mbi.RegionSize));
+    if (region.second > 128u * 1024u * 1024u) return;   // tag data blocks are huge; only the object memory is worth re-reading
+    if (std::find(s_recordRegions.begin(), s_recordRegions.end(), region) == s_recordRegions.end()) s_recordRegions.push_back(region);
+}
+
+// The remembered regions, cut like ReadWriteChunks (only ones still committed read/write).
+static std::vector<std::pair<uintptr_t, size_t>> RecordRegionChunks() {
+    constexpr size_t kChunk = 16u * 1024u * 1024u;
+    constexpr size_t kOverlap = 0x1000;
+    std::vector<std::pair<uintptr_t, size_t>> regions;
+    {
+        std::lock_guard<std::mutex> lock(s_dataMutex);
+        regions = s_recordRegions;
+    }
+    std::vector<std::pair<uintptr_t, size_t>> chunks;
+    for (const auto& r : regions) {
+        MEMORY_BASIC_INFORMATION mbi{};
+        if (VirtualQuery(reinterpret_cast<LPCVOID>(r.first), &mbi, sizeof(mbi)) == 0) continue;
+        if (mbi.State != MEM_COMMIT || mbi.Protect != PAGE_READWRITE) continue;
+        const size_t size = std::min(r.second, static_cast<size_t>(mbi.RegionSize));
+        for (size_t off = 0; off < size; off += kChunk) {
+            const size_t len = std::min(size - off, kChunk + kOverlap);
+            chunks.emplace_back(r.first + off, len);
+            if (off + len >= size) break;
+        }
+    }
+    return chunks;
+}
+
+static size_t ScanColorRecordsIn(const std::vector<std::pair<uintptr_t, size_t>>& chunks, bool quiet);
+static size_t ScanSuitRecordsIn(const std::vector<std::pair<uintptr_t, size_t>>& chunks, bool quiet);
+
+static void ScanColorRecords() { ScanColorRecordsIn(ReadWriteChunks(0x40), false); }
+static void ScanSuitRecords() { ScanSuitRecordsIn(ReadWriteChunks(0x40), false); }
+
+// After the biped is remade: look for its new colour / suit records in the remembered regions every few ms
+// (up to ~1.5 s) so they get Noble's colours before the old full scan would have found them.
+static void StartQuickRescan() {
+    if (s_quickScanning.exchange(true)) return;
+    std::thread([]() {
+        size_t colours = 0, suits = 0;
+        {
+            std::lock_guard<std::mutex> lock(s_dataMutex);
+            colours = s_colorRecords.size();
+            suits = s_suitRecords.size();
+        }
+        const auto start = std::chrono::steady_clock::now();
+        for (int pass = 0; pass < 300 && s_menuMode.load(); ++pass) {
+            const auto chunks = RecordRegionChunks();
+            if (chunks.empty()) break;
+            ScanColorRecordsIn(chunks, true);
+            ScanSuitRecordsIn(chunks, true);
+            size_t c = 0, sr = 0;
+            {
+                std::lock_guard<std::mutex> lock(s_dataMutex);
+                c = s_colorRecords.size();
+                sr = s_suitRecords.size();
+            }
+            // The old biped's records are dropped as they go stale, so "found something new" = a record that
+            // wasn't tracked before; the full scan still runs afterwards and picks up anything missed.
+            if ((c > colours || colours == 0) && (sr > suits || suits == 0) && (c > 0 && sr > 0)) {
+                const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count();
+                NOBLE_INFO("ReachArmory: rebuilt biped's colour records found in {} ms ({} region chunk(s))", ms, chunks.size());
+                break;
+            }
+            colours = std::min(colours, c);
+            suits = std::min(suits, sr);
+            if (std::chrono::steady_clock::now() - start > std::chrono::milliseconds(1500)) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(4));
+        }
+        s_quickScanning.store(false);
+    }).detach();
+}
+
+static size_t ScanColorRecordsIn(const std::vector<std::pair<uintptr_t, size_t>>& chunks, bool quiet) {
     // Stock 16-byte ARGB color pattern in mainmenu_all.map: { 0xFF585858, 0xFF595959, 0xFF2FA0CB, 0xFFC7A167 }
     static constexpr uint32_t kStockColors[4] = { 0xFF585858u, 0xFF595959u, 0xFF2FA0CBu, 0xFFC7A167u };
     uint32_t prevColors[4];
@@ -349,7 +464,7 @@ static void ScanColorRecords() {
     }
 
     std::vector<uintptr_t> found;
-    for (const auto& chunk : ReadWriteChunks(0x40)) {
+    for (const auto& chunk : chunks) {
         const uintptr_t base = chunk.first;
         const size_t size = chunk.second;
         {
@@ -369,18 +484,22 @@ static void ScanColorRecords() {
         }
     }
 
+    size_t added = 0;
     if (!found.empty()) {
         std::lock_guard<std::mutex> lock(s_dataMutex);
         for (uintptr_t rec : found) {
             if (std::find(s_colorRecords.begin(), s_colorRecords.end(), rec) == s_colorRecords.end()) {
                 s_colorRecords.push_back(rec);
+                RememberRegion(rec);
+                ++added;
             }
         }
-        NOBLE_INFO("ReachArmory: Tracked {} live armor color record(s)", s_colorRecords.size());
+        if (!quiet || added) NOBLE_INFO("ReachArmory: Tracked {} live armor color record(s)", s_colorRecords.size());
     }
+    return added;
 }
 
-static void ScanSuitRecords() {
+static size_t ScanSuitRecordsIn(const std::vector<std::pair<uintptr_t, size_t>>& chunks, bool quiet) {
     // Stock 16-byte suit float[4] in mainmenu_all.map: { 0.9960785f, 0.9921569f, 0.98823535f, 1.0f }
     static constexpr float kStockSuit[4] = { 0.9960785f, 0.9921569f, 0.98823535f, 1.0f };
     float prevSuit[4];
@@ -390,7 +509,7 @@ static void ScanSuitRecords() {
     }
 
     std::vector<uintptr_t> found;
-    for (const auto& chunk : ReadWriteChunks(0x40)) {
+    for (const auto& chunk : chunks) {
         const uintptr_t base = chunk.first;
         const size_t size = chunk.second;
         {
@@ -411,15 +530,19 @@ static void ScanSuitRecords() {
         }
     }
 
+    size_t added = 0;
     if (!found.empty()) {
         std::lock_guard<std::mutex> lock(s_dataMutex);
         for (uintptr_t rec : found) {
             if (std::find(s_suitRecords.begin(), s_suitRecords.end(), rec) == s_suitRecords.end()) {
                 s_suitRecords.push_back(rec);
+                RememberRegion(rec);
+                ++added;
             }
         }
-        NOBLE_INFO("ReachArmory: Tracked {} live suit shader record(s)", s_suitRecords.size());
+        if (!quiet || added) NOBLE_INFO("ReachArmory: Tracked {} live suit shader record(s)", s_suitRecords.size());
     }
+    return added;
 }
 
 static void ScanEliteTable() {
@@ -564,6 +687,89 @@ static void WriteColorsAndSuit(const ReachArmorySelection& sel) {
 // -----------------------------------------------------------------------------
 // Apply Scene, Rotation, Armor Permutations & Colors via GLOBALS Table
 // -----------------------------------------------------------------------------
+// "-armory-settle-rebuild": rebuild the biped a second time after each change (test switch; off by default).
+static bool SingleRebuild() {
+    static const bool settle = std::wcsstr(GetCommandLineW(), L"-armory-settle-rebuild") != nullptr;
+    return !settle;
+}
+
+// -----------------------------------------------------------------------------
+// Armory item -> model regions. An Armory item (e.g. helmet "kurt_a") isn't a permutation of the Spartan model:
+// Reach's customization globals (pmcg) turn it into one or more (region, permutation) changes, e.g. kurt_a =
+// head:player_kurt + flair_head_a:kat + flair_head_b:player_adrianna. The menu script takes (region, permutation)
+// pairs, so the items are translated with that table, read from data\armor\*.rrpmcg (pmcg dumped from the
+// armour pack; not in git). Lines: "L <list offset hex> <count>", "S <item>", "C <region> <permutation> <flags>".
+// -----------------------------------------------------------------------------
+struct PmcgChange {
+    std::string region;
+    std::string permutation;
+    int flags = 0;   // arms: 1 = male body, 2 = female body
+};
+static std::unordered_map<std::string, std::vector<PmcgChange>> s_pmcg;   // "<list>:<item>" -> changes
+static bool s_pmcgLoaded = false;
+
+static void EnsurePmcgLoaded() {
+    std::lock_guard<std::mutex> lock(s_dataMutex);
+    if (s_pmcgLoaded) return;
+    s_pmcgLoaded = true;
+    std::vector<std::filesystem::path> dirs;
+    if (!s_dataDir.empty()) dirs.push_back(s_dataDir / "armor");
+    wchar_t exeBuf[MAX_PATH] = {};
+    if (GetModuleFileNameW(nullptr, exeBuf, MAX_PATH)) dirs.push_back(std::filesystem::path(exeBuf).parent_path() / "data" / "armor");
+    for (const auto& dir : dirs) {
+        std::error_code ec;
+        if (!std::filesystem::is_directory(dir, ec)) continue;
+        for (const auto& entry : std::filesystem::directory_iterator(dir, ec)) {
+            if (entry.path().extension() != ".rrpmcg") continue;
+            std::ifstream in(entry.path());
+            std::string line, list, item;
+            size_t items = 0;
+            while (std::getline(in, line)) {
+                if (!line.empty() && line.back() == '\r') line.pop_back();
+                char kind = line.empty() ? 0 : line[0];
+                std::vector<std::string> f;
+                {
+                    size_t i = 0;
+                    while (i < line.size()) {
+                        while (i < line.size() && line[i] == ' ') ++i;
+                        size_t j = i;
+                        while (j < line.size() && line[j] != ' ') ++j;
+                        if (j > i) f.push_back(line.substr(i, j - i));
+                        i = j;
+                    }
+                }
+                if (kind == 'L' && f.size() >= 2) { list = f[1]; }
+                else if (kind == 'S' && f.size() >= 2) { item = list + ":" + f[1]; s_pmcg[item]; ++items; }
+                else if (kind == 'C' && f.size() >= 3 && !item.empty()) {
+                    s_pmcg[item].push_back({ f[1], f[2], f.size() >= 4 ? std::atoi(f[3].c_str()) : 0 });
+                }
+            }
+            NOBLE_INFO("ReachArmory: {} Armory items -> model regions from '{}'", items, entry.path().string());
+            return;
+        }
+    }
+    NOBLE_WARN("ReachArmory: no data\\armor\\*.rrpmcg; Armory items go to the 3D model by name only (attachments won't show)");
+}
+
+// The changes for an Armory item in a pmcg list ("20" helmets, "2c"/"38" shoulders, "44" chest, "50" wrist,
+// "5c" utility, "68" knees, "80" Spartan effects). nullptr = not in the table.
+static const std::vector<PmcgChange>* PmcgItem(const char* list, const std::string& item) {
+    EnsurePmcgLoaded();
+    std::lock_guard<std::mutex> lock(s_dataMutex);
+    auto it = s_pmcg.find(std::string(list) + ":" + item);
+    return it == s_pmcg.end() ? nullptr : &it->second;
+}
+
+// Armory effect ids (kArmorEffects) -> pmcg names.
+static std::string PmcgEffectName(const std::string& id) {
+    if (id == "default" || id.empty()) return "default_armor";
+    if (id == "flames") return "legendary_flame";
+    if (id == "blue_flames") return "eternal_flame";
+    if (id == "birthday_party") return "halo_bday";
+    if (id == "inclement_weather") return "storm";
+    return id;   // heart_attack, pestilence
+}
+
 static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx) {
     const uintptr_t base = s_globalsBase.load();
     const size_t stride  = s_globalsStride.load();
@@ -633,8 +839,28 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx) {
     if (SafeReadI32(base + 0x32 * stride, &remade)) {
         const int32_t prevRemade = s_lastRemade.exchange(remade);
         if (prevRemade != -1 && prevRemade != remade) {
+            StartQuickRescan();
             s_rescanRequested.store(true);
         }
+    }
+    const uint64_t frameNow = s_frameCounter.load();
+    auto bumpRebuild = [&](const char* why) {
+        int32_t rebuildCounter = 0;
+        SafeReadI32(base + 0x02 * stride, &rebuildCounter);
+        SafeWriteI32(base + 0x02 * stride, rebuildCounter + 1);
+        NOBLE_INFO("ReachArmory: rebuild {} ({})", rebuildCounter + 1, why);
+    };
+    // Step 2 of a change: the pairs went in a couple of frames ago; rebuild the biped now.
+    if (s_bumpAtFrame != 0 && frameNow >= s_bumpAtFrame) {
+        s_bumpAtFrame = 0;
+        s_remadeAtBump = remade;
+        bumpRebuild("new pieces");
+        s_settlePending = !SingleRebuild();
+        s_settleDeadline = frameNow + 45;
+    } else if (s_settlePending && (remade != s_remadeAtBump || frameNow >= s_settleDeadline)) {
+        // Step 3: once the biped has been remade, remake it once more so it shows the pieces just picked.
+        s_settlePending = false;
+        bumpRebuild("settle");
     }
 
     // 4. Write 16 (region_string_id, permutation_string_id) pairs to GLOBALS[0x04..0x23] and trigger rebuild
@@ -646,6 +872,13 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx) {
         auto pushPair = [&](const std::string& regionName, const std::string& permName, const char* fallbackPerm = "default") {
             const uint32_t regId = LookupStringId(regionName);
             uint32_t permId = LookupStringId(permName);
+            static std::vector<std::string> s_warned;   // each missing name is logged once
+            if (permId == 0 && !permName.empty() &&
+                std::find(s_warned.begin(), s_warned.end(), permName) == s_warned.end()) {
+                s_warned.push_back(permName);
+                NOBLE_WARN("ReachArmory: '{}' isn't in the menu map's string_ids; {} shows '{}'", permName, regionName,
+                           fallbackPerm ? fallbackPerm : "nothing");
+            }
             if (permId == 0 && fallbackPerm) {
                 permId = LookupStringId(fallbackPerm);
             }
@@ -663,18 +896,48 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx) {
             pushPair("elite_chest",          sel.eliteChest,         "minor");
             pushPair("elite_forearms",       sel.eliteArms,          "default");
             pushPair("elite_legs",           sel.eliteLegs,          "minor");
-            if (!sel.armorEffect.empty() && sel.armorEffect != "default") {
-                pushPair("armor_effect", sel.armorEffect, "default");
+            // Elite armour effects are off for now (Tyler 2026-10-29).
+        } else if (PmcgItem("20", "default") != nullptr) {
+            // Only the regions the picked items change get a pair. "default" is a real permutation in several
+            // flair regions (a visor piece on every helmet when it was written for "no attachment"), and the
+            // remade biped starts from its own defaults anyway.
+            static const char* const kRegions[] = { "head", "flair_head_a", "flair_head_b", "flair_head_c",
+                "flair_left_shoulder", "flair_right_shoulder", "flair_chest_a", "flair_chest_b", "arms",
+                "flair_forearm", "flair_thigh", "flair_knees", "armor_fx" };
+            std::unordered_map<std::string, std::string> perm;
+            auto apply = [&](const char* list, const std::string& item) {
+                const std::vector<PmcgChange>* changes = PmcgItem(list, item);
+                if (!changes) {
+                    NOBLE_WARN("ReachArmory: Armory item '{}' isn't in pmcg list {}", item, list);
+                    return;
+                }
+                for (const PmcgChange& c : *changes) {
+                    // arms has a male (1) and a female (2) permutation for the prosthetic arm.
+                    if (c.flags == 1 && sel.isFemale) continue;
+                    if (c.flags == 2 && !sel.isFemale) continue;
+                    perm[c.region] = c.permutation;
+                }
+            };
+            apply("20", sel.helmet);
+            apply("2c", sel.leftShoulder);
+            apply("38", sel.rightShoulder);
+            apply("44", sel.chest);
+            apply("50", sel.wrist);
+            apply("5c", sel.utility);
+            apply("68", sel.knees);
+            apply("80", PmcgEffectName(sel.armorEffect));
+            for (const char* region : kRegions) {
+                auto it = perm.find(region);
+                if (it != perm.end()) pushPair(region, it->second, nullptr);
             }
         } else {
+            // No pmcg table: item names straight in (base helmets that share the model's name only).
             pushPair("head",           sel.helmet,        "default");
             pushPair("chest",          sel.chest,         "chest_blank");
             pushPair("left_shoulder",  sel.leftShoulder,  "left_shoulder_blank");
             pushPair("right_shoulder", sel.rightShoulder, "right_shoulder_blank");
-            pushPair("hands",          sel.hands,         "default");
             pushPair("wrist",          sel.wrist,         "wrist_blank");
             pushPair("utility",        sel.utility,       "utility_blank");
-            pushPair("knees",          sel.knees,         "knees_default");
             pushPair("armor_effect",   sel.armorEffect,   "default");
         }
 
@@ -682,15 +945,26 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx) {
             while (pairs.size() < 16) {
                 pairs.push_back(pairs[0]);
             }
-            for (size_t i = 0; i < 16; ++i) {
-                SafeWriteU32(base + (0x04 + i * 2) * stride, pairs[i].first);
-                SafeWriteU32(base + (0x05 + i * 2) * stride, pairs[i].second);
+            if (pairs == s_lastPairs && base == s_lastPairsBase) {
+                // Same pieces (a colour, voice or tag change): no rebuild, the colours are written every frame.
+            } else {
+                s_lastPairs = pairs;
+                s_lastPairsBase = base;
+                for (size_t i = 0; i < 16; ++i) {
+                    SafeWriteU32(base + (0x04 + i * 2) * stride, pairs[i].first);
+                    SafeWriteU32(base + (0x05 + i * 2) * stride, pairs[i].second);
+                }
+                s_bumpAtFrame = frameNow + 2;
+                s_settlePending = false;
+                if (showElite) {
+                    NOBLE_INFO("ReachArmory: Elite pieces {} / {} / {} / {} / {} / {}", sel.eliteHelmet, sel.eliteLeftShoulder,
+                               sel.eliteRightShoulder, sel.eliteChest, sel.eliteArms, sel.eliteLegs);
+                } else {
+                    NOBLE_INFO("ReachArmory: Spartan pieces head {}, chest {}, L {}, R {}, wrist {}, utility {}, knees {}, effect {}",
+                               sel.helmet, sel.chest, sel.leftShoulder, sel.rightShoulder, sel.wrist, sel.utility, sel.knees,
+                               sel.armorEffect);
+                }
             }
-            int32_t rebuildCounter = 0;
-            SafeReadI32(base + 0x02 * stride, &rebuildCounter);
-            SafeWriteI32(base + 0x02 * stride, rebuildCounter + 1);
-            NOBLE_INFO("ReachArmory: Applied {} permutation slots to GLOBALS (rebuild={}, elite={})",
-                       showElite ? "Elite" : "Spartan", rebuildCounter + 1, showElite);
         }
 
         // Also update Elite hlmt permutation table directly if cached
@@ -728,6 +1002,10 @@ void ReachArmory::SetMenuMode(bool menuMode) {
         s_lastScene.store(-1);
         s_lastRemade.store(-1);
         s_appliedGeneration = 0;
+        s_lastPairs.clear();
+        s_lastPairsBase = 0;
+        s_bumpAtFrame = 0;
+        s_settlePending = false;
     } else {
         s_selectionGeneration.fetch_add(1);
     }
