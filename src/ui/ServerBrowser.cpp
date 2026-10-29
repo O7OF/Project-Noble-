@@ -19,6 +19,23 @@ namespace noble {
 
 namespace {
 
+// Closes this process's game window so the menu copy of Noble exits once the match copy has started.
+// GetActiveWindow() is not enough: the browser is drawn on the engine thread, which owns no window, so it
+// returned NULL and the menu stayed open behind the match.
+BOOL CALLBACK CloseIfOurWindow(HWND hwnd, LPARAM) {
+    DWORD pid = 0;
+    GetWindowThreadProcessId(hwnd, &pid);
+    if (pid == GetCurrentProcessId() && IsWindowVisible(hwnd) && GetWindow(hwnd, GW_OWNER) == nullptr) {
+        PostMessageW(hwnd, WM_CLOSE, 0, 0);
+    }
+    return TRUE;
+}
+
+void CloseThisNobleWindow() {
+    EnumWindows(&CloseIfOurWindow, 0);
+}
+
+
 std::string Lower(std::string s) {
     std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(::tolower(c)); });
     return s;
@@ -452,7 +469,7 @@ void ServerBrowser::TryJoin(const std::string& address, uint16_t port, bool hasP
     m_status = "Connecting to " + key + "...";
     NOBLE_INFO("ServerBrowser: Connecting to {}:{} ({}) via Relaunch", address, port, map);
     Relaunch::Start(args);
-    PostMessageW(GetActiveWindow(), WM_CLOSE, 0, 0);
+    CloseThisNobleWindow();
 }
 
 void ServerBrowser::RenderDirectConnectModal() {
