@@ -1,6 +1,11 @@
 #include "FrontEndMenu.hpp"
 #include "network/UPnP.hpp"
 #include "network/AuthClient.hpp"
+#include "network/MasterServerClient.hpp"
+#include "network/NetworkTransport.hpp"
+#include "network/SessionManager.hpp"
+#include <format>
+#include <nlohmann/json.hpp>
 #include "UIManager.hpp"
 #include "NobleStyle.hpp"
 #include "SettingsPanel.hpp"
@@ -961,9 +966,8 @@ struct MenuState {
 };
 
 
-static void SetupHostLobby(OverlayContext& ctx, MenuState& st, const std::string& mapScenario, const std::string& mode,
+static void SetupHostLobby(MenuState& st, const std::string& mapScenario, const std::string& mode,
                            const std::string& varPath, const std::string& varName, int diff, uint64_t skulls, int maxPlayers) {
-    (void)ctx;
     st.isLobbyHost = true;
     st.lobbyMap = mapScenario;
     st.lobbyMode = mode;
@@ -999,9 +1003,7 @@ static void SetupHostLobby(OverlayContext& ctx, MenuState& st, const std::string
         adv.skulls = st.lobbySkulls;
         adv.inProgress = false;
         adv.hostPeerId = AuthClient::Get().IsLoggedIn() ? static_cast<uint64_t>(AuthClient::Get().GetUserId()) : 1ULL;
-        char midBuf[32];
-        std::snprintf(midBuf, sizeof(midBuf), "0x%llX", static_cast<unsigned long long>(NetworkTransport::kDefaultHostMachineId));
-        adv.hostMachineId = midBuf;
+        adv.hostMachineId = "0x484F535400000001";
         adv.hostUsername = pName;
         adv.hostIsDev = AuthClient::Get().IsDeveloper();
         adv.hostServiceTag = Settings::Get().Snapshot().serviceTag.empty() ? "117" : Settings::Get().Snapshot().serviceTag;
@@ -1348,6 +1350,290 @@ void FeedEngineThreadInputs(HWND hwnd, ImGuiIO& io) {
     InputPrompts::Update();
 }
 
+
+static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, float top, FrontEndChoice& choice, bool& done, bool back) {
+    MenuState& st = ctx.st;
+    const float colW = ui.size.x * 0.44f;
+    const float pxLeft = left + 34.0f * ui.s;
+    const float pxRight = ui.size.x * 0.52f;
+    const float actionsY = ui.size.y - 58.0f * ui.s - 14.0f * ui.s - 50.0f * ui.s;
+
+    // Polling for lobby state updates
+    const double now = ImGui::GetTime();
+    if (now - st.lastLobbyPoll > 1.2) {
+        st.lastLobbyPoll = now;
+        if (!st.lobbySessionId.empty() && MasterServerClient::Get().Enabled()) {
+            LobbyState current = MasterServerClient::Get().FetchLobbyStateSync(st.lobbySessionId);
+            if (current.ok) {
+                if (!st.isLobbyHost) {
+                    st.lobbyMap = current.map;
+                    st.lobbyMode = current.mode;
+                    st.lobbyVariantName = current.variant;
+                    st.lobbyDifficulty = current.difficulty;
+                    st.lobbySkulls = current.skulls;
+                }
+                if (!current.roster.empty()) {
+                    st.lobbyRoster = current.roster;
+                }
+                if (!st.isLobbyHost && (current.launchTriggered || current.inProgress)) {
+                    st.lobbyLaunchPending = true;
+                    st.lobbyLaunchMap = current.launchMap.empty() ? current.map : current.launchMap;
+                    st.lobbyLaunchMode = current.launchMode.empty() ? current.mode : current.launchMode;
+                    st.lobbyLaunchVariant = current.launchVariant;
+                    st.lobbyLaunchDiff = current.launchDifficulty;
+                    st.lobbyLaunchSkulls = current.launchSkulls;
+                }
+            }
+        }
+    }
+
+    // If launch was signaled (via WebSocket or HTTP poll) and we are guest, launch!
+    if (!st.isLobbyHost && st.lobbyLaunchPending && !done) {
+        choice.play = true;
+        choice.host = false;
+        choice.map = st.lobbyLaunchMap.empty() ? st.lobbyMap : st.lobbyLaunchMap;
+        choice.mode = st.lobbyLaunchMode.empty() ? st.lobbyMode : st.lobbyLaunchMode;
+        choice.variantPath = st.lobbyLaunchVariant;
+        choice.difficulty = st.lobbyLaunchDiff;
+        choice.skulls = st.lobbyLaunchSkulls;
+
+        std::wstring args = L"-map \"" + ToWide(choice.map) + L"\" -mode \"" + ToWide(choice.mode) + L"\"";
+        args += L" -difficulty " + std::to_wstring(choice.difficulty);
+        if (choice.skulls != 0) args += L" -skulls " + std::to_wstring(choice.skulls);
+        args += L" -connect \"" + ToWide(st.lobbyHostEndpoint) + L"\"";
+        if (!st.lobbySessionId.empty()) args += L" -session-id \"" + ToWide(st.lobbySessionId) + L"\"";
+        NOBLE_INFO("FrontEndMenu: Guest executing synchronized lobby launch to {}", st.lobbyHostEndpoint);
+        Relaunch::Start(args);
+        done = true;
+        return;
+    }
+
+    // Title Header
+    std::string modeSubtitle = Upper(st.lobbyMode);
+    if (st.lobbyMode == "custom" || st.lobbyMode == "multiplayer") modeSubtitle = "MULTIPLAYER";
+    else if (st.lobbyMode == "firefight") modeSubtitle = "SURVIVAL";
+    else if (st.lobbyMode == "campaign") modeSubtitle = "CO-OP CAMPAIGN";
+    else if (st.lobbyMode == "forge") modeSubtitle = "FORGE EDIT";
+
+    DrawTitle(ui, ImVec2(left, top), "PRE-GAME LOBBY", modeSubtitle.c_str());
+
+    // ── LEFT COLUMN: Map & Match Settings ─────────────────────────────────────
+    const float bannerTop = top + 96.0f * ui.s;
+    const float bannerH = std::clamp(actionsY - 140.0f * ui.s - bannerTop, 110.0f * ui.s, colW * 292.0f / 668.0f);
+
+    std::string kicker = "LOBBY Â· " + modeSubtitle;
+    std::string mapDisplay = st.lobbyMap;
+    for (int i = 0; i < Count(kMaps); ++i) {
+        if (kMaps[i].scenario == st.lobbyMap) { mapDisplay = kMaps[i].name; break; }
+    }
+    for (int i = 0; i < Count(kFirefightMaps); ++i) {
+        if (kFirefightMaps[i].scenario == st.lobbyMap) { mapDisplay = kFirefightMaps[i].name; break; }
+    }
+    for (int i = 0; i < Count(kMissions); ++i) {
+        if (kMissions[i].scenario == st.lobbyMap) { mapDisplay = kMissions[i].name; break; }
+    }
+
+    float y = HeroBanner(ui, ImVec2(pxLeft, bannerTop), colW, bannerH, st.lobbyMap, kicker, mapDisplay.c_str(), "Gather players before launching into the match.");
+    y += 12.0f * ui.s;
+
+    // Map selector row (host can cycle maps)
+    if (st.isLobbyHost) {
+        const char* const mapLabel = mapDisplay.c_str();
+        const int dv = OptionRow(ui, "lobby_map", ImVec2(pxLeft, y), colW, "SELECTED MAP", mapLabel, false);
+        if (dv) {
+            const MenuMap* baseMaps = (st.lobbyMode == "firefight") ? kFirefightMaps : kMaps;
+            const int count = (st.lobbyMode == "firefight") ? Count(kFirefightMaps) : Count(kMaps);
+            int curIdx = 0;
+            for (int i = 0; i < count; ++i) {
+                if (baseMaps[i].scenario == st.lobbyMap) { curIdx = i; break; }
+            }
+            curIdx = (curIdx + dv + count) % count;
+            st.lobbyMap = baseMaps[curIdx].scenario;
+            MasterServerClient::Get().UpdateLobbyAdvert(st.lobbyMap, st.lobbyMode, st.lobbyVariantName, st.lobbyDifficulty, st.lobbySkulls);
+        }
+    } else {
+        OptionRow(ui, "lobby_map", ImVec2(pxLeft, y), colW, "SELECTED MAP", mapDisplay.c_str(), false);
+    }
+    y += 36.0f * ui.s;
+
+    // Gametype / Variant row
+    if (st.isLobbyHost && st.lobbyMode != "campaign" && st.lobbyMode != "forge") {
+        const std::vector<MenuVariant>& varList = (st.lobbyMode == "firefight") ? ctx.ffVariants : ctx.variants;
+        const char* vLabel = st.lobbyVariantName.empty() ? "Default" : st.lobbyVariantName.c_str();
+        const int dv = OptionRow(ui, "lobby_var", ImVec2(pxLeft, y), colW, "GAME TYPE", vLabel, false);
+        if (dv && !varList.empty()) {
+            int curIdx = 0;
+            for (int i = 0; i < static_cast<int>(varList.size()); ++i) {
+                if (varList[i].label == st.lobbyVariantName || varList[i].path.string() == st.lobbyVariantPath) {
+                    curIdx = i;
+                    break;
+                }
+            }
+            curIdx = (curIdx + dv + static_cast<int>(varList.size())) % static_cast<int>(varList.size());
+            st.lobbyVariantPath = varList[curIdx].path.string();
+            st.lobbyVariantName = varList[curIdx].label;
+            MasterServerClient::Get().UpdateLobbyAdvert(st.lobbyMap, st.lobbyMode, st.lobbyVariantName, st.lobbyDifficulty, st.lobbySkulls);
+        }
+    } else {
+        OptionRow(ui, "lobby_var", ImVec2(pxLeft, y), colW, "GAME TYPE", st.lobbyVariantName.c_str(), false);
+    }
+    y += 40.0f * ui.s;
+
+    // Network / Invite Info Card
+    const float cardH = 68.0f * ui.s;
+    ui.dl->AddRectFilled(ImVec2(pxLeft, y), ImVec2(pxLeft + colW, y + cardH), IM_COL32(14, 20, 30, 200), 4.0f * ui.s);
+    ui.dl->AddRect(ImVec2(pxLeft, y), ImVec2(pxLeft + colW, y + cardH), IM_COL32(60, 90, 130, 120), 4.0f * ui.s);
+
+    std::string extIp = UPnP::Get().GetExternalIP();
+    if (extIp.empty() || extIp == "Unknown") extIp = "Direct IP";
+    char hostAddrBuf[128];
+    if (st.isLobbyHost) {
+        std::snprintf(hostAddrBuf, sizeof(hostAddrBuf), "HOST ADDRESS: %s:11774 (%s)", extIp.c_str(), st.lobbyNetMode == 1 ? "ONLINE P2P" : "LOCAL LAN");
+    } else {
+        std::snprintf(hostAddrBuf, sizeof(hostAddrBuf), "CONNECTED TO: %s", st.lobbyHostEndpoint.c_str());
+    }
+    Text(ui, NobleStyle::SmallFont(), 13.0f, ImVec2(pxLeft + 12.0f * ui.s, y + 10.0f * ui.s), IM_COL32(160, 210, 255, 230), hostAddrBuf);
+
+    char statusSub[128];
+    std::snprintf(statusSub, sizeof(statusSub), "%s Â· %s",
+        st.isLobbyHost ? (st.lobbyPrivacy == 0 ? "Public Master Listing" : "Private Direct Join") : "Joined Session",
+        UPnP::Get().IsActive() ? "UPnP Active" : "Direct Port");
+    Text(ui, NobleStyle::SmallFont(), 12.0f, ImVec2(pxLeft + 12.0f * ui.s, y + 36.0f * ui.s), kDim, statusSub);
+
+    // Copy Invite Button inside network card
+    const float copyW = 120.0f * ui.s;
+    const float copyH = 26.0f * ui.s;
+    ImGui::SetCursorScreenPos(ImVec2(pxLeft + colW - copyW - 10.0f * ui.s, y + (cardH - copyH) * 0.5f));
+    ImGui::PushID("btn_copy_lobby_inv");
+    if (ImGui::Button("COPY INVITE", ImVec2(copyW, copyH))) {
+        std::string inv = "/connect " + (st.isLobbyHost ? extIp + ":11774" : st.lobbyHostEndpoint);
+        ImGui::SetClipboardText(inv.c_str());
+        MenuSounds::Click();
+    }
+    ImGui::PopID();
+
+    // ── RIGHT COLUMN: Player Lobby List (Roster) ──────────────────────────────
+    const float rosterW = colW;
+    const float rosterTop = top + 96.0f * ui.s;
+    const float rosterH = actionsY - rosterTop;
+
+    // Header bar: PLAYERS (X / 16)
+    const float rHeaderH = 36.0f * ui.s;
+    ui.dl->AddRectFilled(ImVec2(pxRight, rosterTop), ImVec2(pxRight + rosterW, rosterTop + rHeaderH), IM_COL32(16, 24, 38, 240), 4.0f * ui.s, ImDrawFlags_RoundCornersTop);
+    ui.dl->AddRect(ImVec2(pxRight, rosterTop), ImVec2(pxRight + rosterW, rosterTop + rHeaderH), IM_COL32(60, 100, 150, 150), 4.0f * ui.s, ImDrawFlags_RoundCornersTop);
+
+    char rosterHeaderBuf[64];
+    std::snprintf(rosterHeaderBuf, sizeof(rosterHeaderBuf), "PLAYERS  (%zu / %d)", st.lobbyRoster.size(), st.lobbyMaxPlayers);
+    Text(ui, NobleStyle::TitleFont(), 18.0f, ImVec2(pxRight + 14.0f * ui.s, rosterTop + 9.0f * ui.s), IM_COL32(230, 240, 255, 240), rosterHeaderBuf);
+
+    // Background container for player rows
+    ui.dl->AddRectFilled(ImVec2(pxRight, rosterTop + rHeaderH), ImVec2(pxRight + rosterW, rosterTop + rosterH), IM_COL32(8, 12, 18, 210), 4.0f * ui.s, ImDrawFlags_RoundCornersBottom);
+    ui.dl->AddRect(ImVec2(pxRight, rosterTop + rHeaderH), ImVec2(pxRight + rosterW, rosterTop + rosterH), IM_COL32(40, 60, 90, 120), 4.0f * ui.s, ImDrawFlags_RoundCornersBottom);
+
+    // Player Rows
+    float rowY = rosterTop + rHeaderH + 6.0f * ui.s;
+    const float rowH = 44.0f * ui.s;
+
+    if (st.lobbyRoster.empty()) {
+        Text(ui, NobleStyle::SmallFont(), 14.0f, ImVec2(pxRight + 20.0f * ui.s, rowY + 12.0f * ui.s), kDim, "Waiting for players to join...");
+    }
+
+    for (size_t idx = 0; idx < st.lobbyRoster.size(); ++idx) {
+        if (rowY + rowH > rosterTop + rosterH - 8.0f * ui.s) break;
+        const auto& player = st.lobbyRoster[idx];
+
+        const ImVec2 rMin(pxRight + 8.0f * ui.s, rowY);
+        const ImVec2 rMax(pxRight + rosterW - 8.0f * ui.s, rowY + rowH);
+
+        const ImU32 bgCol = player.isHost ? IM_COL32(24, 42, 68, 210) : IM_COL32(14, 20, 30, 180);
+        ui.dl->AddRectFilled(rMin, rMax, bgCol, 3.0f * ui.s);
+
+        const ImU32 stripCol = player.isHost ? IM_COL32(255, 200, 80, 255) : (player.isDev ? IM_COL32(255, 180, 50, 255) : IM_COL32(80, 160, 240, 220));
+        ui.dl->AddRectFilled(rMin, ImVec2(rMin.x + 4.0f * ui.s, rMax.y), stripCol, 2.0f * ui.s);
+
+        float textX = rMin.x + 14.0f * ui.s;
+
+        if (player.isHost) {
+            Text(ui, NobleStyle::SmallFont(), 12.0f, ImVec2(textX, rowY + 6.0f * ui.s), IM_COL32(255, 200, 80, 255), "[HOST]");
+            textX += 44.0f * ui.s;
+        }
+
+        Text(ui, NobleStyle::TitleFont(), 17.0f, ImVec2(textX, rowY + 4.0f * ui.s), kWhite, player.username.c_str());
+
+        std::string tagStr = "[" + (player.serviceTag.empty() ? "117" : player.serviceTag) + "]";
+        float tagX = textX + TextWidth(NobleStyle::TitleFont(), 17.0f * ui.s, player.username.c_str()) + 8.0f * ui.s;
+        Text(ui, NobleStyle::SmallFont(), 13.0f, ImVec2(tagX, rowY + 7.0f * ui.s), IM_COL32(150, 170, 190, 200), tagStr.c_str());
+
+        if (player.isDev) {
+            float devX = tagX + TextWidth(NobleStyle::SmallFont(), 13.0f * ui.s, tagStr.c_str()) + 8.0f * ui.s;
+            ui.dl->AddRectFilled(ImVec2(devX, rowY + 6.0f * ui.s), ImVec2(devX + 44.0f * ui.s, rowY + 22.0f * ui.s), IM_COL32(180, 130, 20, 220), 2.0f * ui.s);
+            Text(ui, NobleStyle::SmallFont(), 11.0f, ImVec2(devX + 5.0f * ui.s, rowY + 7.0f * ui.s), IM_COL32(255, 255, 255, 255), "DEV");
+        }
+
+        char subInfo[96];
+        if (player.isHost) {
+            std::snprintf(subInfo, sizeof(subInfo), "P:ID %llu Â· Host Â· Session Leader", static_cast<unsigned long long>(player.peerId));
+        } else {
+            std::snprintf(subInfo, sizeof(subInfo), "P:ID %llu Â· Ready Â· %dms", static_cast<unsigned long long>(player.peerId), player.ping);
+        }
+        Text(ui, NobleStyle::SmallFont(), 12.0f, ImVec2(rMin.x + 14.0f * ui.s, rowY + 25.0f * ui.s), kDim, subInfo);
+
+        rowY += rowH + 4.0f * ui.s;
+    }
+
+    // ── BOTTOM ACTION BUTTONS ─────────────────────────────────────────────────
+    if (st.isLobbyHost) {
+        if (BigAction(ui, "btn_start_match", ImVec2(pxLeft, actionsY), colW - 140.0f * ui.s, "START MATCH", "Launch match for all players in lobby", true, true, false)) {
+            MasterServerClient::Get().LaunchLobbySync(st.lobbySessionId, st.lobbyMap, st.lobbyMode, st.lobbyVariantPath, st.lobbyDifficulty, st.lobbySkulls);
+
+            nlohmann::json launchPayload = {
+                { "type", "lobby_launch" },
+                { "launch", {
+                    { "map", st.lobbyMap },
+                    { "mode", st.lobbyMode },
+                    { "variant", st.lobbyVariantPath },
+                    { "difficulty", st.lobbyDifficulty },
+                    { "skulls", std::to_string(st.lobbySkulls) },
+                    { "host_ip", UPnP::Get().GetExternalIP() },
+                    { "host_port", 11774 },
+                    { "session_id", st.lobbySessionId }
+                }}
+            };
+            NetworkTransport::Get().SendLobbyControlJson(launchPayload.dump());
+
+            choice.play = true;
+            choice.host = true;
+            choice.hostOnline = (st.lobbyNetMode == 1);
+            choice.hostPublic = (st.lobbyPrivacy == 0);
+            choice.hostMaxPlayers = st.lobbyMaxPlayers;
+            choice.map = st.lobbyMap;
+            choice.mode = st.lobbyMode;
+            choice.variantPath = st.lobbyVariantPath;
+            choice.difficulty = st.lobbyDifficulty;
+            choice.skulls = st.lobbySkulls;
+            done = true;
+        }
+
+        if (BigAction(ui, "btn_cancel_lobby", ImVec2(pxLeft + colW - 130.0f * ui.s, actionsY), 130.0f * ui.s, "CANCEL", "Close Lobby", false, true, false) || back) {
+            MasterServerClient::Get().StopAdvertising();
+            SessionManager::Get().StopHosting();
+            NetworkTransport::Get().StopRelay();
+            st.screen = Screen::CustomGame;
+        }
+    } else {
+        BigAction(ui, "btn_waiting_match", ImVec2(pxLeft, actionsY), colW - 140.0f * ui.s, "WAITING FOR HOST", "Host will launch match synchronously", false, false, false);
+
+        if (BigAction(ui, "btn_leave_lobby", ImVec2(pxLeft + colW - 130.0f * ui.s, actionsY), 130.0f * ui.s, "LEAVE", "Exit Lobby", false, true, false) || back) {
+            uint64_t pId = AuthClient::Get().IsLoggedIn() ? static_cast<uint64_t>(AuthClient::Get().GetUserId()) : 2ULL;
+            MasterServerClient::Get().LeaveLobbySync(st.lobbySessionId, pId);
+            NetworkTransport::Get().StopRelay();
+            st.screen = Screen::Servers;
+        }
+    }
+
+    DrawHints(ui, { { Prompt::Accept, st.isLobbyHost ? "Start Match" : "Ready" }, { Prompt::Back, st.isLobbyHost ? "Cancel Lobby" : "Leave Lobby" } });
+}
+
 void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11DeviceContext* context,
                           FrontEndChoice& choice, bool& done) {
     ImGuiViewport* vp = ImGui::GetMainViewport();
@@ -1531,7 +1817,7 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         const char* coopSub = st.lobbyNetMode == 1 ? (st.lobbyPrivacy == 0 ? "Public Online P2P" : "Private Online P2P") : "Local LAN Co-op";
         const bool hostCoop = BigAction(ui, "coop", ImVec2(px + bw + 10.0f * ui.s, actionsY), pw - bw - 10.0f * ui.s, "HOST CO-OP", coopSub, true, canStart);
         if (hostCoop) {
-            SetupHostLobby(ctx, st, mission->scenario, "campaign", "", "Campaign", st.difficulty, st.skulls, 4);
+            SetupHostLobby(st, mission->scenario, "campaign", "", "Campaign", st.difficulty, st.skulls, 4);
         } else if (startSolo) {
             choice.play = true;
             choice.host = false;
@@ -1749,7 +2035,7 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
                 }
             }
             const std::string mode = ff ? "firefight" : (forge ? "forge" : "multiplayer");
-            SetupHostLobby(ctx, st, map ? map->scenario : "20_sword_slayer", mode, varPath, varName, ff ? st.difficulty : 1, 0, ff ? 4 : 16);
+            SetupHostLobby(st, map ? map->scenario : "20_sword_slayer", mode, varPath, varName, ff ? st.difficulty : 1, 0, ff ? 4 : 16);
         } else if (startSolo) {
             choice.play = true;
             choice.host = false;
@@ -1953,7 +2239,7 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
     UIManager::GetArmorCustomizer().SyncToReachArmory();
 
     // Server Browser Join Pre-Game Lobby Handler
-    ctx.serverBrowser.SetJoinLobbyHandler([&ctx](const ServerEntry& s) {
+    UIManager::GetServerBrowser().SetJoinLobbyHandler([&ctx](const ServerEntry& s) {
         ctx.st.isLobbyHost = false;
         ctx.st.lobbySessionId = s.id;
         ctx.st.lobbyHostEndpoint = s.hostAddress + ":" + std::to_string(s.port);
