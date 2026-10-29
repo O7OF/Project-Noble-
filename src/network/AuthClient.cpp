@@ -230,3 +230,4 @@ std::string AuthClient::GetSessionToken() const { return m_sessionToken; }
 int AuthClient::GetUserId() const { return m_userId; }
 
 } // namespace noble
+
