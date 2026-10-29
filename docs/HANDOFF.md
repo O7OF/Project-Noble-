@@ -1,4 +1,4 @@
-# Project Noble: handoff (2026-10-28, 22:50 ET)
+# Project Noble: handoff (2026-10-28, 22:55 ET)
 Dominus join the team 20261028! 
 This picks up a reverse-engineering and C++ effort on **Tyler's Windows PC**. All paths below are real paths on that machine.
 Tyler (GitHub `WeabooTyler117`) works with a partner (GitHub `O7OF`) who owns the repo and writes most of the code.
@@ -8,6 +8,16 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 **Goal:** `noble-client.exe` loads MCC's own `haloreach.dll` (Halo: Reach) and drives it **without MCC**, like the existing
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
 MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour.
+
+---
+
+## 0. Pick up here (2026-10-28, 22:55 ET) - Render Master Server Deployment Repo Synchronized & Pushed
+
+- **Server Backend Sync & Render Trigger (`O7OF/ServerTestDeploy`):**
+  - Synchronized the full server architecture (`src/` backend modules: `auth.js`, `config.js`, `database.js`, `matchmaker.js`, `ranks.js`, `sessionManager.js`, and `routes/authRoutes.js`) from `Halo Reach Community Edition/server/` into `C:\Users\Chey1\Desktop\ServerTestDeploy/`.
+  - Verified JavaScript syntax across all modules with `node --check`.
+  - Committed and pushed changes to `https://github.com/O7OF/ServerTestDeploy.git` (`origin main`, commit `986f2b9`).
+  - Render automatic deployment triggered for `https://outbreak-z-test-server.onrender.com`.
 
 ---
 
