@@ -440,10 +440,12 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     NOBLE_INFO("Initiating clean host shutdown...");
     noble::MasterServerClient::Get().Shutdown();
     noble::SessionManager::Get().Shutdown();
+    // The engine thread keeps drawing Noble's overlay (ImGui) until the engine stops, so stop it first:
+    // shutting ImGui down while a frame is still coming crashed in ImGui_ImplDX11_NewFrame (2026-10-28).
+    blamEngine->Shutdown();
     noble::UiArt::Shutdown();
     noble::UIManager::Shutdown();
     noble::LoadScreen::Get().Shutdown();
-    blamEngine->Shutdown();
 
     NOBLE_INFO("Engine shut down; exiting process without unhooking or unloading haloreach.dll.");
     noble::Logger::Shutdown();

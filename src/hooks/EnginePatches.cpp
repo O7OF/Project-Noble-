@@ -118,6 +118,15 @@ bool EnginePatches::Apply(HMODULE hReachDll) {
         }
     }
 
+    // 3. "IsArmorItemUnlocked" hook: TURNED OFF (Tyler/Claude 2026-10-28).
+    // The signature below is a generic function prologue (mov rax,rsp / save rbx,rbp,rsi,rdi / push r14 / sub rsp,20h /
+    // xor ebx,ebx / mov bpl,r8b), so FindPattern returned the FIRST function that starts this way: haloreach RVA 0x105BDC,
+    // inside the player appearance builder (0x1055EC..), not 0x2C7DCC. Replacing that function with "return 1" stopped
+    // the engine building player appearance, and character models became invisible in matches. Armory pieces reach the
+    // game without this hook (profile item ids, ReachHost slot 34). If an unlock check is still needed, hook the exact
+    // RVA after verifying it in a disassembler, check more bytes than a common prologue, and call the original.
+    NOBLE_INFO("EnginePatches: IsArmorItemUnlocked hook is off (its signature matched the appearance builder at RVA 0x105BDC).");
+#if 0
     // 3. Unlock all armor customization items in multiplayer/Forge (RVA 0x2C7DCC)
     uintptr_t isArmorUnlockedAddr = SigScanner::FindPattern(
         baseAddress, modInfo.SizeOfImage,
@@ -145,6 +154,7 @@ bool EnginePatches::Apply(HMODULE hReachDll) {
     } else {
         NOBLE_WARN("EnginePatches: Could not locate IsArmorItemUnlocked in haloreach.dll.");
     }
+#endif
 
     s_isApplied = true;
     return true;
