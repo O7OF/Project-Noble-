@@ -44,6 +44,10 @@ struct LobbyState {
     std::string launchVariant;
     int launchDifficulty = 1;
     uint64_t launchSkulls = 0;
+    std::string hostLanIp;
+    bool isLan = false;
+    bool isClosed = false;
+    std::string closeReason;
 };
 
 // One game listed by the master server.
@@ -59,6 +63,8 @@ struct MasterSession {
     bool inProgress = false;
     bool hasPassword = false;
     bool isMod = false;
+    bool isPrivate = false;
+    std::string lanAddress;
     std::string build;
 };
 
@@ -79,6 +85,8 @@ struct MasterAdvert {
     bool inProgress = false;
     bool hasPassword = false;
     bool isMod = false;
+    bool isPrivate = false;
+    std::string lanAddress;
     uint64_t hostPeerId = 1;
     std::string hostMachineId;
     std::string hostUsername;
@@ -93,6 +101,8 @@ struct MasterJoinInfo {
     std::string hostIp;
     uint16_t hostPort = 11774;
     std::string relayUrl;
+    std::string hostLanIp;
+    bool isLan = false;
 };
 
 // Small HTTP client for tools/master-server (see its README). The address comes from the
@@ -101,6 +111,7 @@ struct MasterJoinInfo {
 class MasterServerClient {
 public:
     static MasterServerClient& Get();
+    static uint64_t GetLobbyMachineId();
 
     void SetUrl(const std::string& url);
     std::string Url() const;

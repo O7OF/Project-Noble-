@@ -12,6 +12,10 @@
 
 namespace noble {
 
+uint64_t MasterServerClient::GetLobbyMachineId() {
+    return LobbyMachineId();
+}
+
 namespace {
 
 // The id a menu (not yet in a match) uses in a lobby. The menu's NetworkTransport isn't initialised, so
@@ -384,7 +388,7 @@ void MasterServerClient::DoRegister() {
     nlohmann::json body = {
         {"name", advert.name}, {"port", advert.port}, {"player_count", advert.playerCount},
         {"max_players", advert.maxPlayers}, {"map", advert.map}, {"mode", advert.mode},
-        {"has_password", advert.hasPassword}, {"is_mod", advert.isMod}, {"address", advert.address}, {"build", std::string(VERSION_STRING.substr(0, VERSION_STRING.find(' ')))},
+        {"has_password", advert.hasPassword}, {"is_mod", advert.isMod}, {"is_private", advert.isPrivate}, {"address", advert.address}, {"lan_address", UPnP::Get().GetInternalIP()}, {"build", std::string(VERSION_STRING.substr(0, VERSION_STRING.find(' ')))},
     };
     const HttpResult r = HttpRequest(Url(), L"POST", "/api/sessions", body.dump());
     if (!r.ok) {
@@ -414,6 +418,8 @@ void MasterServerClient::DoHeartbeat() {
             {"session_id", id},
             {"player_count", m_advert.playerCount},
             {"in_progress", m_advertInProgress},
+            {"is_private", m_advert.isPrivate},
+            {"lan_address", UPnP::Get().GetInternalIP()},
             {"map", m_advert.map},
             {"mode", m_advert.mode},
             {"variant", m_advert.variant},
@@ -527,6 +533,8 @@ MasterJoinInfo MasterServerClient::JoinSessionSync(const std::string& sessionId,
         info.hostIp = j.value("host_ip", "");
         info.hostPort = static_cast<uint16_t>(j.value("host_port", 11774));
         info.relayUrl = j.value("relay_url", "");
+        info.hostLanIp = j.value("host_lan_ip", "");
+        info.isLan = j.value("is_lan", false);
         NOBLE_INFO("MasterServer: joined session {} (relay: {})", resolvedId, info.relayUrl);
         return info;
     } catch (...) {
@@ -558,6 +566,10 @@ LobbyState MasterServerClient::FetchLobbyStateSync(const std::string& sessionId)
         state.maxPlayers = j.value("max_players", 16);
         state.hostIp = j.value("host_ip", "");
         state.hostPort = static_cast<uint16_t>(j.value("host_port", 11774));
+        state.hostLanIp = j.value("host_lan_ip", "");
+        state.isLan = j.value("is_lan", false);
+        state.isClosed = j.value("is_closed", false);
+        state.closeReason = j.value("close_reason", "");
 
         if (j.contains("roster") && j["roster"].is_array()) {
             for (const auto& item : j["roster"]) {
@@ -616,6 +628,10 @@ LobbyState MasterServerClient::JoinLobbySync(const std::string& sessionId,
         state.sessionId = j.value("session_id", sessionId);
         state.hostIp = j.value("host_ip", "");
         state.hostPort = static_cast<uint16_t>(j.value("host_port", 11774));
+        state.hostLanIp = j.value("host_lan_ip", "");
+        state.isLan = j.value("is_lan", false);
+        state.isClosed = j.value("is_closed", false);
+        state.closeReason = j.value("close_reason", "");
         state.map = j.value("map", "20_sword_slayer");
         state.mode = j.value("mode", "multiplayer");
         state.variant = j.value("variant", "");

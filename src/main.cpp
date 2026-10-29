@@ -481,7 +481,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 
         if (noble::SessionManager::Get().StartHosting(cfg)) {
             NOBLE_INFO("main: Started self-hosting match '{}' on port {} (Mode: {})", cfg.sessionName, cfg.port, hostOnline ? "Online P2P" : "Local LAN");
-            if (hostOnline && hostPublic && noble::MasterServerClient::Get().Enabled()) {
+            if (hostOnline && noble::MasterServerClient::Get().Enabled()) {
                 noble::MasterAdvert advert;
                 advert.name = cfg.sessionName;
                 advert.port = cfg.port;
@@ -489,6 +489,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
                 advert.map = cfg.mapName;
                 advert.mode = cfg.gameMode;
                 advert.hasPassword = false;
+                advert.isPrivate = !hostPublic;
                 advert.isMod = !modFolder.empty();
                 advert.address = noble::UPnP::Get().GetExternalIP();
                 if (!connectSessionId.empty()) {

@@ -1791,20 +1791,20 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
                 : std::filesystem::path(st.lobbyVariantPath).filename().string();
             MasterServerClient::Get().LaunchLobbySync(st.lobbySessionId, st.lobbyMap, st.lobbyMode, variantFileName, st.lobbyDifficulty, st.lobbySkulls);
 
-            nlohmann::json launchPayload = {
-                { "type", "lobby_launch" },
-                { "launch", {
-                    { "map", st.lobbyMap },
-                    { "mode", st.lobbyMode },
-                    { "variant", variantFileName },
-                    { "difficulty", st.lobbyDifficulty },
-                    { "skulls", std::to_string(st.lobbySkulls) },
-                    { "host_ip", UPnP::Get().GetExternalIP() },
-                    { "host_port", 11774 },
+
+
+
+
+
+
+
+
+
+
                     { "session_id", st.lobbySessionId }
                 }}
             };
-            NetworkTransport::Get().SendLobbyControlJson(launchPayload.dump());
+            // Duplicate WS launch removed (Finding #6)
 
             choice.play = true;
             choice.host = true;
