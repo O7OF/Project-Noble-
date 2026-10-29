@@ -614,6 +614,7 @@ int EliteUnlockRank(const char* id, const char** rankName = nullptr) {
 }
 
 bool UnlockAllArg() {
+    if (Career::ArmoryUnlockAll()) return true;
     static const bool v = [] {
         int argc = 0;
         LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);

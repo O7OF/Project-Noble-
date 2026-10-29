@@ -255,6 +255,7 @@ void LoadLocked() {
         if (j.contains("armoryOwned") && j["armoryOwned"].is_array())
             for (const auto& k : j["armoryOwned"]) if (k.is_string()) s_totals.armoryOwned.push_back(k.get<std::string>());
         s_totals.creditsToday = j.value("creditsToday", int64_t{0});
+        s_totals.armoryUnlockAll = j.value("armoryUnlockAll", false);
         s_totals.day = j.value("day", std::string());
         s_totals.gamesPlayed = j.value("gamesPlayed", int64_t{0});
         s_totals.kills = j.value("kills", int64_t{0});
@@ -304,6 +305,7 @@ void SaveLocked() {
     j["credits"] = s_totals.credits;
     j["creditsSpent"] = s_totals.creditsSpent;
     j["armoryOwned"] = s_totals.armoryOwned;
+    j["armoryUnlockAll"] = s_totals.armoryUnlockAll;
     j["creditsToday"] = s_totals.creditsToday;
     j["day"] = s_totals.day;
     j["gamesPlayed"] = s_totals.gamesPlayed;
@@ -1050,6 +1052,50 @@ bool BuyArmoryItem(const std::string& key, int64_t price) {
     SaveLocked();
     NOBLE_INFO("Career: bought Armory item {} for {} cR (balance {} cR)", key, price, s_totals.credits - s_totals.creditsSpent);
     return true;
+}
+
+bool ArmoryUnlockAll() {
+    std::lock_guard<std::mutex> lock(s_mutex);
+    LoadLocked();
+    return s_totals.armoryUnlockAll;
+}
+
+void DevSetArmoryUnlockAll(bool on) {
+    std::lock_guard<std::mutex> lock(s_mutex);
+    LoadLocked();
+    s_totals.armoryUnlockAll = on;
+    SaveLocked();
+    NOBLE_INFO("Career [DEV]: Armory unlock-all set to {}", on ? "ON" : "OFF");
+}
+
+void DevGrantMaxCredits() {
+    std::lock_guard<std::mutex> lock(s_mutex);
+    LoadLocked();
+    constexpr int64_t kMaxBalance = 999999999;
+    s_totals.credits = std::max<int64_t>(s_totals.credits, s_totals.creditsSpent + kMaxBalance);
+    SaveLocked();
+    NOBLE_INFO("Career [DEV]: granted max credits (total {} cR, balance {} cR)", s_totals.credits,
+               s_totals.credits - s_totals.creditsSpent);
+}
+
+void DevSetMaxRank() {
+    std::lock_guard<std::mutex> lock(s_mutex);
+    LoadLocked();
+    const int64_t top = Ranks().back().credits;
+    s_totals.credits = std::max<int64_t>(s_totals.credits, top);
+    SaveLocked();
+    NOBLE_INFO("Career [DEV]: rank set to {} ({} cR earned)", Ranks().back().name, s_totals.credits);
+}
+
+void DevResetProgress() {
+    std::lock_guard<std::mutex> lock(s_mutex);
+    LoadLocked();
+    s_totals.credits = 0;
+    s_totals.creditsSpent = 0;
+    s_totals.armoryOwned.clear();
+    s_totals.armoryUnlockAll = false;
+    SaveLocked();
+    NOBLE_INFO("Career [DEV]: progress reset to Recruit");
 }
 
 } // namespace Career

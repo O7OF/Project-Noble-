@@ -1,4 +1,4 @@
-# Project Noble: handoff (2026-10-29, 00:40 ET)
+# Project Noble: handoff (2026-10-29, 01:55 ET)
 Dominus join the team 20261028! 
 This picks up a reverse-engineering and C++ effort on **Tyler's Windows PC**. All paths below are real paths on that machine.
 Tyler (GitHub `WeabooTyler117`) works with a partner (GitHub `O7OF`) who owns the repo and writes most of the code.
@@ -11,6 +11,27 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-29, 01:55 ET) - Developer Account Display, Mini Dev Menu, and [DEV] Name Tags
+
+- **Developer Account Status in Account Menu (`src/ui/FrontEndMenu.cpp`):**
+  - Updated `DrawAccountModal()`: When logged in as a developer, the modal explicitly renders **"Developer Account (ID: %d)"** in gold with active status and an **"OPEN DEVELOPER MENU"** button, replacing the previous "Standard User Account" text.
+  - Automatically polls `/api/dev/check` every ~2.5 seconds via `AuthClient::RefreshDeveloperStatusAsync()` while the account modal is viewed, allowing developer privileges granted via `node set_dev.js <user>` on the Render server shell to take effect in real time without restarting the game.
+
+- **Mini Developer Menu (`src/ui/FrontEndMenu.cpp`, `src/career/Career.hpp`, `src/career/Career.cpp`, `src/ui/ArmorCustomizer.cpp`):**
+  - Added `DrawDevMenuModal()` popup accessible exclusively by authenticated developers via either the Account Menu or the quick party action button.
+  - Hardened access control: immediately auto-closes and rejects access if `!AuthClient::Get().IsDeveloper()`.
+  - **Commands Implemented:**
+    1. **Unlock All Armors:** Invokes `Career::DevSetArmoryUnlockAll(true)`, bypassing all rank and credit requirements across all Spartan permutations and Sangheili harnesses.
+    2. **Give Max Credits:** Invokes `Career::DevGrantMaxCredits()` granting +999,999,999 cR spendable balance.
+    3. **Give Max Rank:** Invokes `Career::DevSetMaxRank()` instantly promoting the player profile to Inheritor (20,000,000 cR).
+    4. **Max Everything:** Combined action to unlock all armors, set Inheritor rank, and grant max credits in one click.
+    5. **Reset Career:** Helper button to reset progress back to Recruit (0 cR, locked armors) for QA and testing fresh account states.
+
+- **[DEV] Name Badges in Main Menu & Pre-Game Lobby (`src/ui/FrontEndMenu.cpp`):**
+  - **Main Menu Party Box:** Appends ` [DEV]` in gold right next to the player's name and displays `ONLINE [DEV]: <name>` in the account quick bar for developers.
+  - **Pre-Game Lobby Roster:** Renders `<username> [DEV]` in gold next to the player's name and service tag whenever `player.isDev` is true.
+
+---
 
 ## 0. Pick up here (2026-10-29, 00:40 ET) - Dominus Remote Join & Black Screen Fixes: Unique `s_player_identifier` (`+0xF0`), Unique Guest XUID, UDP/Relay Dedup & Timeout Recovery
 

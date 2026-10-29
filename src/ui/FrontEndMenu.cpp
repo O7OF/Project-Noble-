@@ -525,6 +525,95 @@ static char s_accountUser[32] = "";
 static char s_accountPass[32] = "";
 static std::string s_accountStatusMsg = "";
 static bool s_accountStatusError = false;
+static bool s_showDevMenu = false;
+static std::string s_devStatusMsg = "";
+
+void DrawDevMenuModal(const Ui& ui) {
+    if (!s_showDevMenu) return;
+
+    // Strict security check: only developers can access this menu!
+    if (!AuthClient::Get().IsDeveloper()) {
+        s_showDevMenu = false;
+        return;
+    }
+
+    ImGui::OpenPopup("NOBLE DEVELOPER CONSOLE");
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(480.0f * ui.s, 0));
+
+    if (ImGui::BeginPopupModal("NOBLE DEVELOPER CONSOLE", &s_showDevMenu, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextColored(ImVec4(1.0f, 0.84f, 0.0f, 1.0f), "[DEV] NOBLE DEVELOPER MENU");
+        ImGui::TextDisabled("Logged in as Developer: %s (User ID: %d)",
+                           AuthClient::Get().GetUsername().c_str(), AuthClient::Get().GetUserId());
+        ImGui::Separator();
+        ImGui::Dummy(ImVec2(0, 4));
+
+        // 1. UNLOCK ALL ARMORS
+        if (ImGui::Button("UNLOCK ALL ARMORS", ImVec2(220, 32))) {
+            Career::DevSetArmoryUnlockAll(true);
+            s_devStatusMsg = "SUCCESS: All Spartan and Elite armors unlocked!";
+            MenuSounds::Click();
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("Unlocks all armors & permutations");
+
+        // 2. GIVE MAX CREDITS
+        if (ImGui::Button("GIVE MAX CREDITS", ImVec2(220, 32))) {
+            Career::DevGrantMaxCredits();
+            s_devStatusMsg = "SUCCESS: Max credits granted (+999,999,999 cR)!";
+            MenuSounds::Click();
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("Grants 999,999,999 cR spendable balance");
+
+        // 3. GIVE MAX RANK
+        if (ImGui::Button("GIVE MAX RANK", ImVec2(220, 32))) {
+            Career::DevSetMaxRank();
+            s_devStatusMsg = "SUCCESS: Promoted to highest rank (Inheritor)!";
+            MenuSounds::Click();
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("Sets rank to Inheritor (20,000,000 cR)");
+
+        ImGui::Dummy(ImVec2(0, 4));
+        ImGui::Separator();
+        ImGui::Dummy(ImVec2(0, 4));
+
+        // Convenience: UNLOCK ALL & MAX EVERYTHING
+        if (ImGui::Button("MAX EVERYTHING", ImVec2(220, 32))) {
+            Career::DevSetArmoryUnlockAll(true);
+            Career::DevGrantMaxCredits();
+            Career::DevSetMaxRank();
+            s_devStatusMsg = "SUCCESS: All armors unlocked, Inheritor rank & 999M cR granted!";
+            MenuSounds::Click();
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("Unlock all armors, max rank & credits");
+
+        // Reset progress option
+        if (ImGui::Button("RESET CAREER", ImVec2(220, 28))) {
+            Career::DevResetProgress();
+            s_devStatusMsg = "Career reset: 0 cR, Recruit rank, armors locked.";
+            MenuSounds::Click();
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("Reset to default (testing only)");
+
+        if (!s_devStatusMsg.empty()) {
+            ImGui::Dummy(ImVec2(0, 6));
+            ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "%s", s_devStatusMsg.c_str());
+        }
+
+        ImGui::Dummy(ImVec2(0, 8));
+        ImGui::Separator();
+        ImGui::Dummy(ImVec2(0, 4));
+        if (ImGui::Button("CLOSE", ImVec2(100, 30))) {
+            s_showDevMenu = false;
+        }
+
+        ImGui::EndPopup();
+    }
+}
 
 void DrawAccountModal(const Ui& ui) {
     if (!s_showAccountModal) return;
@@ -536,14 +625,33 @@ void DrawAccountModal(const Ui& ui) {
     if (ImGui::BeginPopupModal("ACCOUNT LOGIN / REGISTER", &s_showAccountModal, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_AlwaysAutoResize)) {
         bool isLoggedIn = AuthClient::Get().IsLoggedIn();
         if (isLoggedIn) {
-            ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.4f, 1.0f), "Logged in as: %s", AuthClient::Get().GetUsername().c_str());
-            if (AuthClient::Get().IsDeveloper()) {
+            static uint64_t s_lastDevCheck = 0;
+            uint64_t now = GetTickCount64();
+            if (now - s_lastDevCheck > 2500) {
+                s_lastDevCheck = now;
+                AuthClient::Get().RefreshDeveloperStatusAsync();
+            }
+
+            const bool isDev = AuthClient::Get().IsDeveloper();
+            std::string userDisplay = "Logged in as: " + AuthClient::Get().GetUsername();
+            if (isDev) {
+                userDisplay += " [DEV]";
+            }
+            ImGui::TextColored(isDev ? ImVec4(1.0f, 0.85f, 0.2f, 1.0f) : ImVec4(0.4f, 0.9f, 0.4f, 1.0f), "%s", userDisplay.c_str());
+
+            if (isDev) {
                 ImGui::SameLine();
                 ImGui::TextColored(ImVec4(1.0f, 0.84f, 0.0f, 1.0f), "[DEVELOPER]");
                 ImGui::Dummy(ImVec2(0, 4));
+                ImGui::TextColored(ImVec4(1.0f, 0.84f, 0.2f, 1.0f), "Developer Account (ID: %d)", AuthClient::Get().GetUserId());
                 ImGui::TextDisabled("Developer Status: ACTIVE");
                 ImGui::TextDisabled("All armors, developer matrix camos, and special privileges unlocked.");
+                ImGui::Dummy(ImVec2(0, 4));
+                if (ImGui::Button("OPEN DEVELOPER MENU", ImVec2(200, 30))) {
+                    s_showDevMenu = true;
+                }
             } else {
+                ImGui::Dummy(ImVec2(0, 4));
                 ImGui::TextDisabled("Standard User Account (ID: %d)", AuthClient::Get().GetUserId());
             }
             ImGui::Separator();
@@ -629,11 +737,17 @@ void DrawParty(const Ui& ui, const std::string& playerName, const char* status) 
     const ImVec2 e(x2 + 16.0f * ui.s, y + 15.0f * ui.s);
     ui.dl->AddCircleFilled(e, 10.0f * ui.s, IM_COL32(26, 40, 52, 255));
     ui.dl->AddTriangleFilled(ImVec2(e.x - 6 * ui.s, e.y - 2 * ui.s), ImVec2(e.x + 6 * ui.s, e.y - 2 * ui.s), ImVec2(e.x, e.y + 6 * ui.s), kAccent);
-    Text(ui, NobleStyle::TitleFont(), 18.0f, ImVec2(x2 + 34.0f * ui.s, y + 5.0f * ui.s), kWhite, playerName.c_str());
+    std::string partyUser = playerName;
+    if (AuthClient::Get().IsDeveloper()) {
+        partyUser += " [DEV]";
+    }
+    Text(ui, NobleStyle::TitleFont(), 18.0f, ImVec2(x2 + 34.0f * ui.s, y + 5.0f * ui.s),
+         AuthClient::Get().IsDeveloper() ? IM_COL32(255, 215, 0, 255) : kWhite,
+         partyUser.c_str());
 
     // Developer badge
     if (AuthClient::Get().IsDeveloper()) {
-        float nameW = TextWidth(NobleStyle::TitleFont(), 18.0f * ui.s, playerName.c_str());
+        float nameW = TextWidth(NobleStyle::TitleFont(), 18.0f * ui.s, partyUser.c_str());
         ImVec2 badgePos(x2 + 40.0f * ui.s + nameW, y + 6.0f * ui.s);
         ui.dl->AddRectFilled(badgePos, ImVec2(badgePos.x + 46.0f * ui.s, badgePos.y + 18.0f * ui.s), IM_COL32(220, 160, 20, 240), 3.0f * ui.s);
         Text(ui, NobleStyle::SmallFont(), 11.0f, ImVec2(badgePos.x + 10.0f * ui.s, badgePos.y + 3.0f * ui.s), IM_COL32(10, 10, 10, 255), "DEV");
@@ -671,10 +785,34 @@ void DrawParty(const Ui& ui, const std::string& playerName, const char* status) 
     ui.dl->AddRect(accP0, accP1, accHov ? IM_COL32(143, 216, 255, 180) : IM_COL32(60, 90, 120, 100), 0.0f, 0, 1.0f);
     if (AuthClient::Get().IsLoggedIn()) {
         char buf[64];
-        std::snprintf(buf, sizeof(buf), "ONLINE: %s", AuthClient::Get().GetUsername().c_str());
-        Text(ui, NobleStyle::SmallFont(), 12.0f, ImVec2(x2 + 8.0f * ui.s, y + 4.0f * ui.s), IM_COL32(120, 220, 160, 255), buf);
+        if (AuthClient::Get().IsDeveloper()) {
+            std::snprintf(buf, sizeof(buf), "ONLINE [DEV]: %s", AuthClient::Get().GetUsername().c_str());
+        } else {
+            std::snprintf(buf, sizeof(buf), "ONLINE: %s", AuthClient::Get().GetUsername().c_str());
+        }
+        Text(ui, NobleStyle::SmallFont(), 12.0f, ImVec2(x2 + 8.0f * ui.s, y + 4.0f * ui.s),
+             AuthClient::Get().IsDeveloper() ? IM_COL32(255, 215, 0, 255) : IM_COL32(120, 220, 160, 255), buf);
     } else {
         Text(ui, NobleStyle::SmallFont(), 12.0f, ImVec2(x2 + 8.0f * ui.s, y + 4.0f * ui.s), IM_COL32(200, 210, 220, 200), "[ LOGIN / REGISTER ]");
+    }
+
+    if (AuthClient::Get().IsDeveloper()) {
+        y += 26.0f * ui.s;
+        const float devH = 22.0f * ui.s;
+        const ImVec2 devP0(x2, y);
+        const ImVec2 devP1(x + w, y + devH);
+        ImGui::SetCursorScreenPos(devP0);
+        ImGui::PushID("party_dev_menu_btn");
+        bool devClicked = ImGui::InvisibleButton("##devbtn", ImVec2(devP1.x - devP0.x, devH));
+        bool devHov = ImGui::IsItemHovered();
+        ImGui::PopID();
+        if (devClicked) {
+            s_showDevMenu = true;
+            MenuSounds::Click();
+        }
+        ui.dl->AddRectFilled(devP0, devP1, devHov ? IM_COL32(90, 60, 10, 240) : IM_COL32(45, 30, 8, 220));
+        ui.dl->AddRect(devP0, devP1, devHov ? IM_COL32(255, 215, 0, 240) : IM_COL32(180, 130, 20, 180), 0.0f, 0, 1.0f);
+        Text(ui, NobleStyle::SmallFont(), 12.0f, ImVec2(x2 + 8.0f * ui.s, y + 4.0f * ui.s), IM_COL32(255, 215, 0, 255), "[ DEVELOPER MENU ]");
     }
 }
 
@@ -1566,10 +1704,16 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
             textX += 44.0f * ui.s;
         }
 
-        Text(ui, NobleStyle::TitleFont(), 17.0f, ImVec2(textX, rowY + 4.0f * ui.s), kWhite, player.username.c_str());
+        std::string lobbyUser = player.username;
+        if (player.isDev) {
+            lobbyUser += " [DEV]";
+        }
+        Text(ui, NobleStyle::TitleFont(), 17.0f, ImVec2(textX, rowY + 4.0f * ui.s),
+             player.isDev ? IM_COL32(255, 215, 0, 255) : kWhite,
+             lobbyUser.c_str());
 
         std::string tagStr = "[" + (player.serviceTag.empty() ? "117" : player.serviceTag) + "]";
-        float tagX = textX + TextWidth(NobleStyle::TitleFont(), 17.0f * ui.s, player.username.c_str()) + 8.0f * ui.s;
+        float tagX = textX + TextWidth(NobleStyle::TitleFont(), 17.0f * ui.s, lobbyUser.c_str()) + 8.0f * ui.s;
         Text(ui, NobleStyle::SmallFont(), 13.0f, ImVec2(tagX, rowY + 7.0f * ui.s), IM_COL32(150, 170, 190, 200), tagStr.c_str());
 
         if (player.isDev) {
@@ -1671,6 +1815,7 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
     ui.s = std::max(0.75f, vp->Size.y / 720.0f);
     DrawBackdrop(ui, st.screen);
     DrawAccountModal(ui);
+    DrawDevMenuModal(ui);
 
     UpdateSceneForScreen(st.screen);
 

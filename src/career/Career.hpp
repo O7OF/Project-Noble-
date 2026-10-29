@@ -86,6 +86,7 @@ struct Totals {
     double minutesPlayed = 0.0;
     int64_t creditsSpent = 0;               // cR spent in the Armory (rank still follows cR earned, as in Reach)
     std::vector<std::string> armoryOwned;   // bought Armory items, "<slot>:<permutation id>"
+    bool armoryUnlockAll = false;            // developer unlock: every Armory item usable
 };
 
 // One match in the service record history (newest first).
@@ -167,6 +168,14 @@ int64_t Balance();
 bool OwnsArmoryItem(const std::string& key);
 // Spends the cR and marks the item owned; false (nothing spent) if already owned or the balance is too low.
 bool BuyArmoryItem(const std::string& key, int64_t price);
+
+// Developer tools (only accessible to developer accounts)
+bool ArmoryUnlockAll();
+void DevSetArmoryUnlockAll(bool on);
+void DevGrantMaxCredits();
+void DevSetMaxRank();
+void DevResetProgress();
+
 
 struct PeerStats {
     std::string playerName;

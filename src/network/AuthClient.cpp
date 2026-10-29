@@ -6,6 +6,7 @@
 #include <winhttp.h>
 #include <nlohmann/json.hpp>
 #include <string>
+#include <thread>
 
 namespace noble {
 
@@ -111,7 +112,40 @@ void AuthClient::Initialize() {
         m_isDeveloper = s.isDeveloper;
         m_userId = s.accountUserId;
         NOBLE_INFO("AuthClient: Restored cached session for '{}' (Developer: {})", m_username, m_isDeveloper ? "YES" : "NO");
+        RefreshDeveloperStatusAsync();
     }
+}
+
+void AuthClient::RefreshDeveloperStatusAsync() {
+    if (!m_isLoggedIn || m_refreshing.exchange(true)) return;
+    const int userId = m_userId;
+    const std::string username = m_username;
+    std::thread([this, userId, username]() {
+        try {
+            nlohmann::json body = { { "userId", userId }, { "username", username } };
+            int statusCode = 0;
+            const std::string response = PostJson(ResolveMasterUrl(), "/api/dev/check", body.dump(), statusCode);
+            if (statusCode >= 200 && statusCode < 300) {
+                auto j = nlohmann::json::parse(response);
+                bool dev = false;
+                if (j.contains("is_developer")) {
+                    const auto& v = j["is_developer"];
+                    dev = v.is_boolean() ? v.get<bool>() : (v.is_number() ? v.get<int>() == 1 : false);
+                }
+                if (m_isLoggedIn && m_username == username) {
+                    const bool was = m_isDeveloper.exchange(dev);
+                    if (was != dev) {
+                        auto s = Settings::Get().Snapshot();
+                        s.isDeveloper = dev;
+                        Settings::Get().Update(s);
+                        NOBLE_INFO("AuthClient: Developer status for '{}' updated: {}", username, dev ? "DEVELOPER" : "STANDARD");
+                    }
+                }
+            }
+        } catch (...) {
+        }
+        m_refreshing = false;
+    }).detach();
 }
 
 AuthResult AuthClient::Login(const std::string& username, const std::string& password) {
@@ -141,7 +175,12 @@ AuthResult AuthClient::Login(const std::string& username, const std::string& pas
             res.success = true;
             res.username = j.value("username", username);
             res.token = j.value("session_token", "");
-            res.isDeveloper = j.value("is_developer", false);
+            if (j.contains("is_developer")) {
+                const auto& v = j["is_developer"];
+                res.isDeveloper = v.is_boolean() ? v.get<bool>() : (v.is_number() ? v.get<int>() == 1 : false);
+            } else {
+                res.isDeveloper = false;
+            }
             res.userId = j.value("userId", 0);
 
             m_isLoggedIn = true;
