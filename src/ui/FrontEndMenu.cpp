@@ -1503,6 +1503,8 @@ struct PendingLobbyEvents {
     uint64_t skulls = 0;
     bool roster = false;
     std::vector<LobbyPlayer> rosterPlayers;
+    bool closed = false;
+    std::string closeReason;
 };
 static std::mutex s_lobbyEventMutex;
 static PendingLobbyEvents s_lobbyEvents;
@@ -1511,9 +1513,19 @@ static void TakePendingLobbyEvents(MenuState& st) {
     PendingLobbyEvents ev;
     {
         std::lock_guard<std::mutex> lock(s_lobbyEventMutex);
-        if (!s_lobbyEvents.launch && !s_lobbyEvents.roster) return;
+        if (!s_lobbyEvents.launch && !s_lobbyEvents.roster && !s_lobbyEvents.closed) return;
         ev = std::move(s_lobbyEvents);
         s_lobbyEvents = PendingLobbyEvents{};
+    }
+    if (ev.closed) {
+        st.screen = FrontEndMenu::Screen::Servers;
+        st.activeLobbySessionId.clear();
+        st.lobbySessionId.clear();
+        st.lobbyRoster.clear();
+        st.isLobbyHost = false;
+        NetworkTransport::Get().StopRelay();
+        st.notification = ev.closeReason.empty() ? "Lobby closed by host" : ("Lobby closed: " + ev.closeReason);
+        return;
     }
     if (ev.roster) st.lobbyRoster = std::move(ev.rosterPlayers);
     if (ev.launch && !st.lobbyLaunchPending) {
@@ -1546,13 +1558,27 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         }
         if (!st.lobbySessionId.empty() && MasterServerClient::Get().Enabled()) {
             LobbyState current = MasterServerClient::Get().FetchLobbyStateSync(st.lobbySessionId);
-            if (current.ok) {
+            if (!current.ok || current.isClosed) {
+                if (!st.isLobbyHost) {
+                    st.screen = Screen::Servers;
+                    st.activeLobbySessionId.clear();
+                    st.lobbySessionId.clear();
+                    st.lobbyRoster.clear();
+                    st.isLobbyHost = false;
+                    NetworkTransport::Get().StopRelay();
+                    st.notification = current.closeReason.empty() ? "Lobby closed by host" : ("Lobby closed: " + current.closeReason);
+                    return;
+                }
+            } else if (current.ok) {
                 if (!st.isLobbyHost) {
                     st.lobbyMap = current.map;
                     st.lobbyMode = current.mode;
                     st.lobbyVariantName = current.variant;
                     st.lobbyDifficulty = current.difficulty;
                     st.lobbySkulls = current.skulls;
+                    if (current.isLan && !current.hostLanIp.empty()) {
+                        st.lobbyHostEndpoint = current.hostLanIp + ":" + std::to_string(current.hostPort);
+                    }
                 }
                 if (!current.roster.empty()) {
                     st.lobbyRoster = current.roster;
@@ -1791,20 +1817,7 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
                 : std::filesystem::path(st.lobbyVariantPath).filename().string();
             MasterServerClient::Get().LaunchLobbySync(st.lobbySessionId, st.lobbyMap, st.lobbyMode, variantFileName, st.lobbyDifficulty, st.lobbySkulls);
 
-
-
-
-
-
-
-
-
-
-
-                    { "session_id", st.lobbySessionId }
-                }}
-            };
-            // Duplicate WS launch removed (Finding #6)
+            // Duplicate WS launch removed (Finding #6) - only HTTP LaunchLobbySync is used to avoid duplicate launch signals
 
             choice.play = true;
             choice.host = true;
@@ -1831,7 +1844,9 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         BigAction(ui, "btn_waiting_match", ImVec2(pxLeft, actionsY), colW - 140.0f * ui.s, "WAITING FOR HOST", "Host will launch match synchronously", false, false, false);
 
         if (BigAction(ui, "btn_leave_lobby", ImVec2(pxLeft + colW - 130.0f * ui.s, actionsY), 130.0f * ui.s, "LEAVE", "Exit Lobby", false, true, false) || back) {
-            uint64_t pId = AuthClient::Get().IsLoggedIn() ? static_cast<uint64_t>(AuthClient::Get().GetUserId()) : 2ULL;
+            uint64_t fallbackId = (MasterServerClient::GetLobbyMachineId() & 0x7FFFFFFFULL);
+            if (fallbackId < 2ULL) fallbackId = 2ULL;
+            uint64_t pId = AuthClient::Get().IsLoggedIn() ? static_cast<uint64_t>(AuthClient::Get().GetUserId()) : fallbackId;
             MasterServerClient::Get().LeaveLobbySync(st.lobbySessionId, pId);
             NetworkTransport::Get().StopRelay();
             st.screen = Screen::Servers;
@@ -2465,7 +2480,9 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
 
         std::string pName = AuthClient::Get().IsLoggedIn() ? AuthClient::Get().GetUsername() : Settings::Get().Snapshot().playerName;
         if (pName.empty()) pName = "Guest";
-        uint64_t pId = AuthClient::Get().IsLoggedIn() ? static_cast<uint64_t>(AuthClient::Get().GetUserId()) : 2ULL;
+        uint64_t fallbackId = (MasterServerClient::GetLobbyMachineId() & 0x7FFFFFFFULL);
+        if (fallbackId < 2ULL) fallbackId = 2ULL;
+        uint64_t pId = AuthClient::Get().IsLoggedIn() ? static_cast<uint64_t>(AuthClient::Get().GetUserId()) : fallbackId;
         std::string sTag = Settings::Get().Snapshot().serviceTag.empty() ? "117" : Settings::Get().Snapshot().serviceTag;
 
         LobbyState state = MasterServerClient::Get().JoinLobbySync(s.id, pId, pName, AuthClient::Get().IsDeveloper(), sTag, 11774);
@@ -2476,6 +2493,9 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
             ctx.st.lobbyVariantName = state.variant;
             ctx.st.lobbyDifficulty = state.difficulty;
             ctx.st.lobbySkulls = state.skulls;
+            if (state.isLan && !state.hostLanIp.empty()) {
+                ctx.st.lobbyHostEndpoint = state.hostLanIp + ":" + std::to_string(state.hostPort);
+            }
         } else {
             LobbyPlayer hostP;
             hostP.peerId = 1;
@@ -2513,6 +2533,13 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
         s_lobbyEvents.skulls = lSkulls;
         if (!hIp.empty()) s_lobbyEvents.hostEndpoint = hIp + ":" + std::to_string(hPort);
         s_lobbyEvents.sessionId = sId;
+    });
+
+    NetworkTransport::Get().SetLobbyClosedCallback([](const std::string& reason) {
+        NOBLE_INFO("FrontEndMenu: Received lobby_closed event! (reason: {})", reason);
+        std::lock_guard<std::mutex> lock(s_lobbyEventMutex);
+        s_lobbyEvents.closed = true;
+        s_lobbyEvents.closeReason = reason;
     });
 
     NetworkTransport::Get().SetLobbyRosterCallback([](const std::string& rosterJson) {

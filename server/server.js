@@ -94,7 +94,10 @@ function masterPublicSession(session) {
 setInterval(() => {
     const now = Date.now();
     for (const [id, session] of masterSessions) {
-        if (now - session.lastHeartbeat > MASTER_SESSION_TIMEOUT_MS) masterSessions.delete(id);
+        if (now - session.lastHeartbeat > MASTER_SESSION_TIMEOUT_MS) {
+            broadcastLobbyEvent(id, { type: 'lobby_closed', reason: 'Session timed out' });
+            masterSessions.delete(id);
+        }
     }
     for (const [ip, entry] of masterRequestCounts) {
         if (now - entry.windowStart > 120_000) masterRequestCounts.delete(ip);
@@ -381,7 +384,7 @@ app.get('/api/sessions', (req, res) => {
     const now = Date.now();
     const sessions = [];
     for (const session of masterSessions.values()) {
-        if (now - session.lastHeartbeat <= MASTER_SESSION_TIMEOUT_MS) sessions.push(masterPublicSession(session));
+        if (!session.isPrivate && (now - session.lastHeartbeat <= MASTER_SESSION_TIMEOUT_MS)) sessions.push(masterPublicSession(session));
     }
     res.set('Cache-Control', 'no-store').json(sessions);
 });
@@ -463,11 +466,13 @@ app.post('/api/sessions', (req, res) => {
         difficulty: masterCleanInt(body.difficulty, 1, 0, 3),
         skulls: String(body.skulls || '0'),
         inProgress: body.in_progress === true,
+        isPrivate: body.is_private === true,
+        lanAddress: masterCleanText(body.lan_address, '', 64),
         hasPassword: body.has_password === true,
         build: masterCleanText(body.build, '', 24),
         isMod: body.is_mod === true || String(body.name || '').includes('[Mod]') || String(body.mode || '').toLowerCase().includes('mod'),
         roster: initialRoster,
-        launchData: existing ? existing.launchData : null,
+        launchData: (existing && body.in_progress === true) ? existing.launchData : null,
         lastHeartbeat: Date.now()
     });
     if (existing) console.log(`[Master] Host ${ip}:${reqPort} re-registered; reusing session ${id}`);
@@ -488,7 +493,12 @@ app.put('/api/sessions/heartbeat', (req, res) => {
     if (body.player_count !== undefined) {
         session.playerCount = masterCleanInt(body.player_count, session.playerCount, 0, MASTER_MAX_PLAYERS);
     }
-    if (body.in_progress !== undefined) session.inProgress = body.in_progress === true;
+    if (body.in_progress !== undefined) {
+        session.inProgress = body.in_progress === true;
+        if (!session.inProgress) session.launchData = null;
+    }
+    if (body.is_private !== undefined) session.isPrivate = body.is_private === true;
+    if (body.lan_address !== undefined) session.lanAddress = masterCleanText(body.lan_address, session.lanAddress || '', 64);
     if (body.map !== undefined) session.map = masterCleanText(body.map, session.map, 48);
     if (body.mode !== undefined) session.mode = masterCleanText(body.mode, session.mode, 24);
     if (body.variant !== undefined) session.variant = masterCleanText(body.variant, session.variant, 64);
@@ -538,7 +548,9 @@ app.post('/api/sessions/:id/join', (req, res) => {
     res.json({
         success: true,
         session_id: session.id,
-        host_ip: session.address,
+        host_ip: (guestIp === session.address && session.lanAddress) ? session.lanAddress : session.address,
+        host_lan_ip: session.lanAddress || '',
+        is_lan: (guestIp === session.address && !!session.lanAddress),
         host_port: session.port,
         relay_url: `wss://${hostHeader}/ws/relay?session=${session.id}&role=guest&peerId=${guestMachineId}`
     });
@@ -548,6 +560,7 @@ app.post('/api/sessions/:id/join', (req, res) => {
 app.get('/api/sessions/:id/lobby', (req, res) => {
     const session = masterSessions.get(String(req.params.id));
     if (!session) return res.status(404).json({ error: "Session not found" });
+    const guestIp = masterClientIp(req);
     res.json({
         success: true,
         session_id: session.id,
@@ -560,7 +573,9 @@ app.get('/api/sessions/:id/lobby', (req, res) => {
         in_progress: session.inProgress === true,
         player_count: session.playerCount,
         max_players: session.maxPlayers,
-        host_ip: session.address,
+        host_ip: (guestIp === session.address && session.lanAddress) ? session.lanAddress : session.address,
+        host_lan_ip: session.lanAddress || '',
+        is_lan: (guestIp === session.address && !!session.lanAddress),
         host_port: session.port,
         roster: session.roster || [],
         launch_data: session.launchData
@@ -570,6 +585,7 @@ app.get('/api/sessions/:id/lobby', (req, res) => {
 app.post('/api/sessions/:id/lobby/join', (req, res) => {
     const session = masterSessions.get(String(req.params.id));
     if (!session) return res.status(404).json({ error: "Session not found" });
+    const guestIp = masterClientIp(req);
 
     const body = req.body || {};
     const peerId = body.peer_id || body.player_id || (session.roster.length + 1);
@@ -580,7 +596,11 @@ app.post('/api/sessions/:id/lobby/join', (req, res) => {
     const ping = masterCleanInt(body.ping, 25, 0, 999);
 
     if (!session.roster) session.roster = [];
-    const existingIdx = session.roster.findIndex(p => p.peerId == peerId || (p.username.toLowerCase() === username.toLowerCase()));
+    const existingIdx = session.roster.findIndex(p =>
+        (machineId && p.machineId === machineId) ||
+        (peerId != 2 && p.peerId == peerId) ||
+        (username !== 'Spartan' && username !== 'Guest' && p.username.toLowerCase() === username.toLowerCase())
+    );
     const playerEntry = {
         peerId,
         machineId,
@@ -599,8 +619,6 @@ app.post('/api/sessions/:id/lobby/join', (req, res) => {
         }
     }
     session.playerCount = session.roster.length;
-
-    let guestIp = masterClientIp(req);
     const guestPort = masterCleanInt(body.guest_port, 11774, 1, 65535);
     if (!session.pendingJoins) session.pendingJoins = [];
     session.pendingJoins.push({
@@ -620,7 +638,9 @@ app.post('/api/sessions/:id/lobby/join', (req, res) => {
     res.json({
         success: true,
         session_id: session.id,
-        host_ip: session.address,
+        host_ip: (guestIp === session.address && session.lanAddress) ? session.lanAddress : session.address,
+        host_lan_ip: session.lanAddress || '',
+        is_lan: (guestIp === session.address && !!session.lanAddress),
         host_port: session.port,
         roster: session.roster,
         map: session.map,
@@ -635,6 +655,7 @@ app.post('/api/sessions/:id/lobby/join', (req, res) => {
 app.post('/api/sessions/:id/lobby/leave', (req, res) => {
     const session = masterSessions.get(String(req.params.id));
     if (!session) return res.status(404).json({ error: "Session not found" });
+    const guestIp = masterClientIp(req);
     const body = req.body || {};
     const peerId = body.peer_id;
     const username = body.username ? String(body.username).toLowerCase() : '';
@@ -654,6 +675,7 @@ app.post('/api/sessions/:id/lobby/leave', (req, res) => {
 app.post('/api/sessions/:id/lobby/launch', (req, res) => {
     const session = masterSessions.get(String(req.params.id));
     if (!session) return res.status(404).json({ error: "Session not found" });
+    const guestIp = masterClientIp(req);
     if (!masterTokenMatches(req.get('X-Session-Token'), session.token)) {
         return res.status(403).json({ error: "Wrong token" });
     }
@@ -665,7 +687,9 @@ app.post('/api/sessions/:id/lobby/launch', (req, res) => {
         variant: masterCleanText(body.variant, session.variant || '', 64),
         difficulty: masterCleanInt(body.difficulty, session.difficulty || 1, 0, 3),
         skulls: String(body.skulls || session.skulls || '0'),
-        host_ip: session.address,
+        host_ip: (guestIp === session.address && session.lanAddress) ? session.lanAddress : session.address,
+        host_lan_ip: session.lanAddress || '',
+        is_lan: (guestIp === session.address && !!session.lanAddress),
         host_port: session.port,
         session_id: session.id
     };
@@ -754,6 +778,7 @@ app.delete('/api/sessions/:id', (req, res) => {
     if (!masterTokenMatches(req.get('X-Session-Token'), session.token)) {
         return res.status(403).json({ error: "Wrong token" });
     }
+    broadcastLobbyEvent(session.id, { type: 'lobby_closed', reason: 'Host closed the lobby' });
     masterSessions.delete(session.id);
     res.json({ success: true });
 });

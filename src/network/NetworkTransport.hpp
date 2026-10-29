@@ -44,13 +44,32 @@ public:
     // Master Server WebSocket packet relay & lobby signaling
     using LobbyLaunchCallback = std::function<void(const std::string& map, const std::string& mode, const std::string& variant, int diff, uint64_t skulls, const std::string& hostIp, uint16_t hostPort, const std::string& sessionId)>;
     using LobbyRosterCallback = std::function<void(const std::string& rosterJson)>;
+    using LobbyClosedCallback = std::function<void(const std::string& reason)>;
 
     void SetLobbyLaunchCallback(LobbyLaunchCallback cb);
     void SetLobbyRosterCallback(LobbyRosterCallback cb);
+    void SetLobbyClosedCallback(LobbyClosedCallback cb);
     void SendLobbyControlJson(const std::string& jsonString);
 
     void StartRelay(const std::string& relayUrl, const std::string& sessionId, bool isHost, uint64_t machineId);
     void StopRelay();
+
+    // Simulation Profiler & Network Telemetry
+    struct NetworkProfile {
+        uint64_t packetsSent = 0;
+        uint64_t packetsRecv = 0;
+        uint64_t bytesSent = 0;
+        uint64_t bytesRecv = 0;
+        uint32_t sendRateBps = 0;
+        uint32_t recvRateBps = 0;
+        uint32_t packetsSentPerSec = 0;
+        uint32_t packetsRecvPerSec = 0;
+        uint64_t duplicatePacketsDropped = 0;
+        uint64_t heldPacketsCount = 0;
+        bool directUdpActive = false;
+        bool relayActive = false;
+    };
+    NetworkProfile GetNetworkProfile() const;
 
     // Host Slot 41 callback: Engine sending packet to a remote peer
     uint64_t OnNetSend(uint64_t targetPeerId, const uint8_t* data, size_t size);
@@ -94,6 +113,45 @@ private:
     std::deque<std::string> m_relayTextSendQueue;
     LobbyLaunchCallback m_lobbyLaunchCb;
     LobbyRosterCallback m_lobbyRosterCb;
+    LobbyClosedCallback m_lobbyClosedCb;
+
+    struct HeldPacket {
+        std::vector<uint8_t> data;
+        uint64_t enqueueTick = 0;
+    };
+    struct PeerRouteState {
+        sockaddr_in addr{};
+        uint64_t lastUdpRecvTick = 0;
+        uint64_t lastUdpSendTick = 0;
+        bool directConfirmed = false;
+    };
+
+    void FlushHeldPackets(uint64_t peerId, const sockaddr_in& destAddr);
+    uint64_t ComputePacketHash(const uint8_t* data, size_t size) const;
+    bool IsDuplicatePacket(uint64_t hash);
+
+    std::unordered_map<uint64_t, std::deque<HeldPacket>> m_heldPackets;
+    std::unordered_map<uint64_t, PeerRouteState> m_peerRouteStates;
+
+    static constexpr size_t kDedupeBufferSize = 128;
+    uint64_t m_dedupeHashes[kDedupeBufferSize] = { 0 };
+    size_t m_dedupeIndex = 0;
+    std::atomic<uint64_t> m_duplicatesDropped{ 0 };
+
+    std::atomic<uint64_t> m_bytesSent{ 0 };
+    std::atomic<uint64_t> m_bytesRecv{ 0 };
+    mutable std::mutex m_profMutex;
+    mutable uint64_t m_lastProfTick{ 0 };
+    mutable uint64_t m_lastSentBytesSnapshot{ 0 };
+    mutable uint64_t m_lastRecvBytesSnapshot{ 0 };
+    mutable uint64_t m_lastSentPacketsSnapshot{ 0 };
+    mutable uint64_t m_lastRecvPacketsSnapshot{ 0 };
+    mutable uint32_t m_sendRateBps{ 0 };
+    mutable uint32_t m_recvRateBps{ 0 };
+    mutable uint32_t m_packetsSentPerSec{ 0 };
+    mutable uint32_t m_packetsRecvPerSec{ 0 };
+
+    std::atomic<bool> m_relayStopRequested{ false };
 };
 
 } // namespace noble
