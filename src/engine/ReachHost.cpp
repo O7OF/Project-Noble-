@@ -3002,6 +3002,18 @@ static uint64_t __fastcall HostSlot88_UserIdentity(void* thisPtr, uint64_t a1, u
     return 1;
 }
 
+// Slot 25: User Privilege / Multiplayer Clearance Check.
+// Called by haloreach when verifying remote guest players during connection handshake:
+// rcx = HostInterface, rdx = guest XUID (e.g. 0x99CC93FAFC1B3), r8 = privilege type, r9 = context.
+// Returning 0 causes haloreach.dll to treat the user as unauthorized, producing Join Refusal 15 (0xF).
+// Returning 1 grants permission and allows the guest to join the session.
+static uint64_t __fastcall HostSlot25_UserPrivilege(void* thisPtr, uint64_t xuid, uint64_t privilegeId, uint64_t context, uint64_t a4) {
+    (void)thisPtr; (void)a4;
+    NOBLE_INFO("ReachHost [Slot 25 - UserPrivilege]: xuid=0x{:X}, privilege=0x{:X}, context=0x{:X} -> returning 1 (Allowed)",
+               xuid, privilegeId, context);
+    return 1;
+}
+
 // Slot 97: colour filter. Every HUD colour goes through here before it reaches the HUD shader:
 // haloreach+0x2DDF3C packs each chud_color_output (A..F) into ARGB and calls slot 97 with
 // (a1 = a mode/filter index from haloreach+0xD1F71C, a2 = ARGB colour), then unpacks the returned
@@ -3040,6 +3052,7 @@ void ReachHost::InitializeVTable() {
     s_vtable[10]  = reinterpret_cast<void*>(&HostSlot10_Heartbeat);
     s_vtable[18]  = reinterpret_cast<void*>(&HostSlot18_AssetLookup);
     s_vtable[23]  = reinterpret_cast<void*>(&HostSlot23_LoadProgress);
+    s_vtable[25]  = reinterpret_cast<void*>(&HostSlot25_UserPrivilege);
     s_vtable[32]  = reinterpret_cast<void*>(&HostSlot32_DisplaySettings);
     s_vtable[33]  = reinterpret_cast<void*>(&HostSlot33_DisplayQuality);
     s_vtable[34]  = reinterpret_cast<void*>(&HostSlot34_ProfileSettings);

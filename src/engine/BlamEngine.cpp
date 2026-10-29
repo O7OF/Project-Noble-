@@ -558,7 +558,7 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
     // and stalls at 4%). Default: MCC's stock slayer_054.bin from the player's own install.
     // NOTE: Authentic pre-built Campaign launch blocks already contain authentic campaign state
     // and mission variants at +0x300, and must NOT be overwritten with multiplayer Slayer!
-    if (!isCampaign || !customVariantPath.empty()) {
+    if ((!isCampaign || !customVariantPath.empty()) && !isGuest) {
         std::filesystem::path variantPath;
         if (!customVariantPath.empty() && std::filesystem::exists(customVariantPath)) {
             variantPath = customVariantPath;
@@ -597,7 +597,7 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
     // session), +0x2BF14 = F3 01, then +0x50 session, +0x58 self, +0x2F8 host. Noble's default guest block sets
     // one local player, a player id at +0xF0 and the decoded variant instead; guests have been stuck at
     // launch state 9 with traffic flowing both ways, so this lets the two layouts be compared.
-    if (isGuest && !isMainMenu && std::wcsstr(GetCommandLineW(), L"-rr-guest-block") != nullptr) {
+    if (isGuest && !isMainMenu && std::wcsstr(GetCommandLineW(), L"-legacy-guest-block") == nullptr) {
         const uint64_t self = NetworkTransport::Get().GetLocalMachineId();
         const uint64_t host = NetworkTransport::Get().GetHostMachineId();
         const uint64_t session = NetworkTransport::Get().GetSessionId();

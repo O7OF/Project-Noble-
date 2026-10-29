@@ -73,6 +73,17 @@ static int32_t __fastcall Hook_CanAcceptPlayerJoinRequest(void* thisPtr, void* p
 // guest away. Log-only: the original always runs. Arg 3 points at {u64 session, u32 reason} for joins
 // and {u32 id, u32 reason} for connects.
 typedef void(__fastcall* RefuseFn)(void* a1, void* a2, void* a3);
+typedef void(__fastcall* AcknowledgeJoinRequestFn)(void* thisPtr, void* targetAddr, uint32_t reason);
+static AcknowledgeJoinRequestFn s_originalAcknowledgeJoinRequest = nullptr;
+
+static void __fastcall Hook_AcknowledgeJoinRequest(void* thisPtr, void* targetAddr, uint32_t reason) {
+    NOBLE_WARN("LobbyPatches: [{} pid {}] c_network_session::acknowledge_join_request: session={}, target={}, reason={} (0x{:X}) caller hr+0x{:X}",
+        RefuseRole(), GetCurrentProcessId(), thisPtr, targetAddr, reason, reason, CallerRva(_ReturnAddress()));
+    if (s_originalAcknowledgeJoinRequest) {
+        s_originalAcknowledgeJoinRequest(thisPtr, targetAddr, reason);
+    }
+}
+
 static RefuseFn s_originalJoinRefuse = nullptr;
 static RefuseFn s_originalConnectRefuse = nullptr;
 static std::atomic<int> s_refuseLogCount{0};
@@ -184,17 +195,50 @@ bool LobbyPatches::Apply(HMODULE hReachDll) {
         }
     }
 
+    // 3b. Fallback direct RVA for can_accept_player_join_request if pattern scan missed
+    if (!s_originalCanAcceptPlayerJoinRequest) {
+        uint8_t* fnPlayerJoin = reinterpret_cast<uint8_t*>(base + 0x3973BC);
+        static const uint8_t kPlayerJoinPrologue[5] = { 0x48, 0x8B, 0xC4, 0x48, 0x89 };
+        if (0x3973BC + 5 <= size && std::memcmp(fnPlayerJoin, kPlayerJoinPrologue, 5) == 0) {
+            if (HookManager::InstallHook(fnPlayerJoin,
+                                         reinterpret_cast<void*>(&Hook_CanAcceptPlayerJoinRequest),
+                                         reinterpret_cast<void**>(&s_originalCanAcceptPlayerJoinRequest),
+                                         "c_network_session::can_accept_player_join_request")) {
+                patchCount++;
+                NOBLE_INFO("LobbyPatches: Installed MinHook detour on can_accept_player_join_request at hr+0x3973BC");
+            }
+        }
+    }
+
     // 4. MinHook Detour on c_network_session::can_accept_join_request (RVA 0x3975D8)
     std::string_view sigJoinReq = "8B 81 F8 0E 06 00 45 33 ED 83 C0 FA 48 8B EA";
     uintptr_t matchJoinPattern = SigScanner::FindPattern(base, size, sigJoinReq);
-    if (matchJoinPattern && matchJoinPattern >= 0x29) {
-        uintptr_t fnJoinEntry = matchJoinPattern - 0x29;
-        if (HookManager::InstallHook(reinterpret_cast<void*>(fnJoinEntry),
-                                     reinterpret_cast<void*>(&Hook_CanAcceptJoinRequest),
-                                     reinterpret_cast<void**>(&s_originalCanAcceptJoinRequest),
-                                     "c_network_session::can_accept_join_request")) {
-            patchCount++;
-            NOBLE_INFO("LobbyPatches: Installed MinHook detour on can_accept_join_request at 0x{:X}", fnJoinEntry);
+    uintptr_t fnJoinEntry = (matchJoinPattern && matchJoinPattern >= 0x29) ? (matchJoinPattern - 0x29) : (base + 0x3975D8);
+    if (fnJoinEntry) {
+        static const uint8_t kJoinPrologue[5] = { 0x48, 0x89, 0x5C, 0x24, 0x18 };
+        if (std::memcmp(reinterpret_cast<void*>(fnJoinEntry), kJoinPrologue, 5) == 0) {
+            if (HookManager::InstallHook(reinterpret_cast<void*>(fnJoinEntry),
+                                         reinterpret_cast<void*>(&Hook_CanAcceptJoinRequest),
+                                         reinterpret_cast<void**>(&s_originalCanAcceptJoinRequest),
+                                         "c_network_session::can_accept_join_request")) {
+                patchCount++;
+                NOBLE_INFO("LobbyPatches: Installed MinHook detour on can_accept_join_request at 0x{:X}", fnJoinEntry);
+            }
+        }
+    }
+
+    // 4b. MinHook Detour on c_network_session::acknowledge_join_request (RVA 0x397914)
+    {
+        uint8_t* fnAck = reinterpret_cast<uint8_t*>(base + 0x397914);
+        static const uint8_t kAckPrologue[5] = { 0x53, 0x48, 0x83, 0xEC, 0x50 };
+        if (0x397914 + 5 <= size && std::memcmp(fnAck, kAckPrologue, 5) == 0) {
+            if (HookManager::InstallHook(fnAck,
+                                         reinterpret_cast<void*>(&Hook_AcknowledgeJoinRequest),
+                                         reinterpret_cast<void**>(&s_originalAcknowledgeJoinRequest),
+                                         "c_network_session::acknowledge_join_request")) {
+                patchCount++;
+                NOBLE_INFO("LobbyPatches: Installed MinHook detour on acknowledge_join_request at hr+0x397914");
+            }
         }
     }
 
