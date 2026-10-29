@@ -12,6 +12,7 @@
 #include "engine/ElitePack.hpp"
 #include "common/Settings.hpp"
 #include "host/Window.hpp"
+#include "network/NetworkTransport.hpp"
 #include <windows.h>
 #include <shellapi.h>
 #include <psapi.h>
@@ -207,7 +208,7 @@ struct SlotDispatcher2 {
 // iface2 slot 147 (0x93): RR's host::hit2 returns a pointer to a static 16-byte SESSION_GUID
 // (all zero) for this index and 0 for every other index. Returning 0 here made the engine read
 // the session id from address 0 while loading a map (crash at haloreach+0x7924D).
-alignas(16) static const uint8_t s_sessionGuid[16] = { 0 };
+alignas(16) static uint8_t s_sessionGuid[16] = { 0 };
 
 static uint64_t __fastcall Iface2Slot147_SessionGuid(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
     (void)thisPtr; (void)a4;
@@ -215,6 +216,7 @@ static uint64_t __fastcall Iface2Slot147_SessionGuid(void* thisPtr, uint64_t a1,
     if (!s_logged.exchange(true)) {
         NOBLE_INFO("ReachHost: iface2 slot 147 (SessionGuid) first call (a1=0x{:X}, a2=0x{:X}, a3=0x{:X})", a1, a2, a3);
     }
+    NetworkTransport::Get().GetSessionGuid(s_sessionGuid);
     return reinterpret_cast<uint64_t>(s_sessionGuid);
 }
 
@@ -1574,13 +1576,13 @@ static bool ReadPad(NobleXInputState& state) {
 
 // Slot 41 & 43: Network Packet handlers (host_probe case 0x29, 0x2B)
 static uint64_t __fastcall HostSlot41_NetSend(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
-    (void)thisPtr; (void)a1; (void)a2; (void)a3; (void)a4;
-    return 0;
+    (void)thisPtr; (void)a4;
+    return NetworkTransport::Get().OnNetSend(a1, reinterpret_cast<const uint8_t*>(a2), static_cast<size_t>(a3));
 }
 
 static uint64_t __fastcall HostSlot43_NetRecv(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
-    (void)thisPtr; (void)a1; (void)a2; (void)a3; (void)a4;
-    return 0;
+    (void)thisPtr; (void)a4;
+    return NetworkTransport::Get().OnNetRecv(reinterpret_cast<uint8_t*>(a1), static_cast<size_t>(a2), reinterpret_cast<uint64_t*>(a3));
 }
 
 // Slot 47: User-data folder handler (host_probe case 0x2F)
