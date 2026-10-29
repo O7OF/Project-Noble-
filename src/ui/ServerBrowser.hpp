@@ -7,6 +7,7 @@
 namespace noble {
 
 struct ServerEntry {
+    std::string id;
     std::string name;
     std::string hostAddress;
     uint16_t port = 11774;

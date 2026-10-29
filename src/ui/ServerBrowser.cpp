@@ -5,6 +5,7 @@
 #include "common/Logger.hpp"
 #include "common/Settings.hpp"
 #include "network/MasterServerClient.hpp"
+#include "network/NetworkTransport.hpp"
 #include "network/SessionManager.hpp"
 #include "network/UPnP.hpp"
 
@@ -154,6 +155,7 @@ void ServerBrowser::RefreshServers() {
     for (const auto& m : MasterServerClient::Get().Sessions()) {
         if (m.maxPlayers <= 0 || m.map.empty()) continue;
         ServerEntry e;
+        e.id = m.id;
         e.name = m.name;
         e.hostAddress = m.address;
         e.port = m.port;
@@ -476,12 +478,26 @@ void ServerBrowser::TryJoin(const std::string& address, uint16_t port, bool hasP
 
     std::string map = "20_sword_slayer";
     std::string mode = "multiplayer";
+    std::string sessionId = "";
 
     for (const auto& s : m_servers) {
         if (s.hostAddress == address && s.port == port) {
             if (!s.mapName.empty()) map = s.mapName;
             if (!s.gameMode.empty()) mode = s.gameMode;
+            sessionId = s.id;
             break;
+        }
+    }
+
+    std::string relayUrl = "";
+    if (!sessionId.empty()) {
+        auto joinInfo = MasterServerClient::Get().JoinSessionSync(sessionId, NetworkTransport::Get().GetLocalMachineId(), 11774);
+        if (joinInfo.ok) {
+            relayUrl = joinInfo.relayUrl;
+            NOBLE_INFO("ServerBrowser: Master Server join signaling succeeded, host={}:{}, relay={}",
+                       joinInfo.hostIp, joinInfo.hostPort, relayUrl);
+        } else {
+            NOBLE_WARN("ServerBrowser: JoinSessionSync returned: {}", joinInfo.error);
         }
     }
 
@@ -490,6 +506,9 @@ void ServerBrowser::TryJoin(const std::string& address, uint16_t port, bool hasP
     std::wstring args = L"-map \"" + std::wstring(map.begin(), map.end()) + L"\"";
     args += L" -mode \"" + std::wstring(mode.begin(), mode.end()) + L"\"";
     args += L" -connect \"" + std::wstring(address.begin(), address.end()) + L":" + std::to_wstring(port) + L"\"";
+    if (!relayUrl.empty()) {
+        args += L" -relay \"" + std::wstring(relayUrl.begin(), relayUrl.end()) + L"\"";
+    }
 
     m_status = "Connecting to " + key + "...";
     NOBLE_INFO("ServerBrowser: Connecting to {}:{} ({}) via Relaunch", address, port, map);

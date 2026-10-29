@@ -1,4 +1,4 @@
-# Project Noble: handoff (2026-10-28, 22:55 ET)
+# Project Noble: handoff (2026-10-28, 23:35 ET)
 Dominus join the team 20261028! 
 This picks up a reverse-engineering and C++ effort on **Tyler's Windows PC**. All paths below are real paths on that machine.
 Tyler (GitHub `WeabooTyler117`) works with a partner (GitHub `O7OF`) who owns the repo and writes most of the code.
@@ -8,6 +8,50 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 **Goal:** `noble-client.exe` loads MCC's own `haloreach.dll` (Halo: Reach) and drives it **without MCC**, like the existing
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
 MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour.
+
+---
+
+## 0. Pick up here (2026-10-28, 23:35 ET) - P2P NAT Traversal, WebSocket Netcode Relay, In-Menu Account System & Developer Tools
+
+- **Infinite Loading on Join Fixed (Home NAT Firewall Traversal & WebSocket Netcode Packet Relay):**
+  - **Root Cause from Client Logs:**
+    The log revealed that when Tyler joined his friend's game at `35.147.220.133:11774`, the guest sent 10 UDP handshake packets over port `52354` but received **0 packets back**. Because both players are behind residential NAT routers without manual port forwarding, the host's router firewall blocked inbound UDP packets on port 11774. The host never received the packet, never knew the guest was trying to connect, and never sent a reply, causing `external_launch_individual_state_timeout`.
+  - **Solution Implemented (Two-Tier Traversal):**
+    1. **Master Server Join Signaling & NAT Hole Punching:**
+       - Added `POST /api/sessions/:id/join` on the backend. When a guest joins, their public IP, port, and machine ID are registered with the session.
+       - On `PUT /api/sessions/heartbeat`, the host receives `pending_joins`.
+       - In `NetworkTransport::AddPeer(machineId, ip, port)`, the host immediately fires a direct UDP punch packet to the guest's endpoint, opening the host router's NAT pinhole bidirectionally.
+    2. **WebSocket Netcode Packet Relay Fallback (`/ws/relay`):**
+       - Built a high-performance binary WebSocket packet relay into `server.js` using `ws`.
+       - In `NetworkTransport.cpp`, a background worker thread (`RelayWorkerThread`) maintains a persistent WebSocket connection to `wss://outbreak-z-test-server.onrender.com/ws/relay`.
+       - In `OnNetSend`, outgoing packets are sent directly over UDP AND queued to the WebSocket relay.
+       - In `OnNetRecv`, if no direct UDP packet is ready, packets from the relay queue are delivered to `haloreach.dll`.
+       - **Result:** Players can now join each other regardless of NAT type, ISP CGNAT, or firewall restrictions with zero router configuration.
+
+- **In-Game Main Menu Account Login & Registration System (`AuthClient`):**
+  - Implemented `noble::AuthClient` in `src/network/AuthClient.hpp` and `.cpp`:
+    - Handles asynchronous authentication with the master backend (`/api/login` and `/api/register`).
+    - Saves session token, username, user ID, and developer status into `settings.json`.
+    - Auto-restores cached logins on startup.
+  - Implemented `DrawAccountModal` and Main Menu integration in `src/ui/FrontEndMenu.cpp`:
+    - Added "Account" entry to the Main Menu list.
+    - Added interactive account status bar and clickable badge to `DrawParty` (top right).
+    - Modal features tab switching between **LOG IN** and **REGISTER**, password masking, real-time error handling, and clean logout.
+
+- **Developer Accounts & `/var/data/database.db` Disk Integration:**
+  - Upgraded `set_dev.js` (`O7OF/ServerTestDeploy` and client `server/`):
+    - Added `node set_dev.js list` command to display all registered users and their dev status.
+    - Automatic seeding of `/var/data/database.db` from repository database if newly mounted.
+    - Case-insensitive username lookup (`LOWER(username) = LOWER(?)`).
+    - Automatically unlocks developer cosmetics (Matrix camos, Developer skins, titles, calling cards, capes).
+  - In-Game Developer Recognition:
+    - Glowing gold `[DEV]` badge rendered directly on the party header next to the player's name in `DrawParty`.
+    - Developer status indicator displayed in the Account modal with perks overview.
+
+- **Binaries Built & Deployed:**
+  - Release binaries (`noble-client.exe`, `noble-dedicated.exe`) compiled with 0 errors.
+  - Deployed directly to `C:\Users\Chey1\Desktop\Release For Test\`.
+  - Pushed backend updates to `https://github.com/O7OF/ServerTestDeploy.git` (`510b797`) - live on Render.
 
 ---
 

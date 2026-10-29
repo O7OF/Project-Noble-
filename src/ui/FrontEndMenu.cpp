@@ -1,5 +1,6 @@
 #include "FrontEndMenu.hpp"
 #include "network/UPnP.hpp"
+#include "network/AuthClient.hpp"
 #include "UIManager.hpp"
 #include "NobleStyle.hpp"
 #include "SettingsPanel.hpp"
@@ -512,6 +513,101 @@ void DrawHints(const Ui& ui, const std::vector<std::pair<Prompt, const char*>>& 
     }
 }
 
+
+static bool s_showAccountModal = false;
+static int s_accountTab = 0;
+static char s_accountUser[32] = "";
+static char s_accountPass[32] = "";
+static std::string s_accountStatusMsg = "";
+static bool s_accountStatusError = false;
+
+void DrawAccountModal(const Ui& ui) {
+    if (!s_showAccountModal) return;
+
+    ImGui::OpenPopup("ACCOUNT LOGIN / REGISTER");
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(440.0f * ui.s, 0));
+
+    if (ImGui::BeginPopupModal("ACCOUNT LOGIN / REGISTER", &s_showAccountModal, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_AlwaysAutoResize)) {
+        bool isLoggedIn = AuthClient::Get().IsLoggedIn();
+        if (isLoggedIn) {
+            ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.4f, 1.0f), "Logged in as: %s", AuthClient::Get().GetUsername().c_str());
+            if (AuthClient::Get().IsDeveloper()) {
+                ImGui::SameLine();
+                ImGui::TextColored(ImVec4(1.0f, 0.84f, 0.0f, 1.0f), "[DEVELOPER]");
+                ImGui::Dummy(ImVec2(0, 4));
+                ImGui::TextDisabled("Developer Status: ACTIVE");
+                ImGui::TextDisabled("All armors, developer matrix camos, and special privileges unlocked.");
+            } else {
+                ImGui::TextDisabled("Standard User Account (ID: %d)", AuthClient::Get().GetUserId());
+            }
+            ImGui::Separator();
+            ImGui::Dummy(ImVec2(0, 10));
+            if (ImGui::Button("LOG OUT", ImVec2(120, 32))) {
+                AuthClient::Get().Logout();
+                s_accountStatusMsg = "Logged out successfully.";
+                s_accountStatusError = false;
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("CLOSE", ImVec2(100, 32))) {
+                s_showAccountModal = false;
+            }
+        } else {
+            if (ImGui::Button("LOG IN", ImVec2(120, 28))) s_accountTab = 0;
+            ImGui::SameLine();
+            if (ImGui::Button("REGISTER", ImVec2(120, 28))) s_accountTab = 1;
+            ImGui::Separator();
+
+            ImGui::Text(s_accountTab == 0 ? "Log in to your Noble account:" : "Register a new Noble account:");
+            ImGui::Dummy(ImVec2(0, 4));
+
+            ImGui::Text("Username:");
+            ImGui::InputText("##acc_user", s_accountUser, sizeof(s_accountUser));
+
+            ImGui::Text("Password:");
+            ImGui::InputText("##acc_pass", s_accountPass, sizeof(s_accountPass), ImGuiInputTextFlags_Password);
+
+            if (!s_accountStatusMsg.empty()) {
+                ImGui::Dummy(ImVec2(0, 4));
+                ImGui::TextColored(s_accountStatusError ? ImVec4(1.0f, 0.4f, 0.4f, 1.0f) : ImVec4(0.4f, 0.9f, 0.4f, 1.0f),
+                                   "%s", s_accountStatusMsg.c_str());
+            }
+
+            ImGui::Dummy(ImVec2(0, 8));
+            if (s_accountTab == 0) {
+                if (ImGui::Button("LOG IN##submit", ImVec2(120, 32)) || (ImGui::IsKeyPressed(ImGuiKey_Enter) && ImGui::IsWindowFocused())) {
+                    auto res = AuthClient::Get().Login(s_accountUser, s_accountPass);
+                    if (res.success) {
+                        s_accountStatusMsg = "Login successful!";
+                        s_accountStatusError = false;
+                        s_showAccountModal = false;
+                    } else {
+                        s_accountStatusMsg = res.error;
+                        s_accountStatusError = true;
+                    }
+                }
+            } else {
+                if (ImGui::Button("REGISTER##submit", ImVec2(120, 32)) || (ImGui::IsKeyPressed(ImGuiKey_Enter) && ImGui::IsWindowFocused())) {
+                    auto res = AuthClient::Get().Register(s_accountUser, s_accountPass);
+                    if (res.success) {
+                        s_accountStatusMsg = "Registration successful! Logged in.";
+                        s_accountStatusError = false;
+                        s_showAccountModal = false;
+                    } else {
+                        s_accountStatusMsg = res.error;
+                        s_accountStatusError = true;
+                    }
+                }
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("CANCEL", ImVec2(100, 32))) {
+                s_showAccountModal = false;
+            }
+        }
+        ImGui::EndPopup();
+    }
+}
+
 void DrawParty(const Ui& ui, const std::string& playerName, const char* status) {
     const float w = 330.0f * ui.s;
     const float x = ui.size.x - w - 40.0f * ui.s;
@@ -529,7 +625,16 @@ void DrawParty(const Ui& ui, const std::string& playerName, const char* status) 
     ui.dl->AddCircleFilled(e, 10.0f * ui.s, IM_COL32(26, 40, 52, 255));
     ui.dl->AddTriangleFilled(ImVec2(e.x - 6 * ui.s, e.y - 2 * ui.s), ImVec2(e.x + 6 * ui.s, e.y - 2 * ui.s), ImVec2(e.x, e.y + 6 * ui.s), kAccent);
     Text(ui, NobleStyle::TitleFont(), 18.0f, ImVec2(x2 + 34.0f * ui.s, y + 5.0f * ui.s), kWhite, playerName.c_str());
-    // Rank icon at the right end of the player's row (career.json is read at most every 2 s).
+
+    // Developer badge
+    if (AuthClient::Get().IsDeveloper()) {
+        float nameW = TextWidth(NobleStyle::TitleFont(), 18.0f * ui.s, playerName.c_str());
+        ImVec2 badgePos(x2 + 40.0f * ui.s + nameW, y + 6.0f * ui.s);
+        ui.dl->AddRectFilled(badgePos, ImVec2(badgePos.x + 46.0f * ui.s, badgePos.y + 18.0f * ui.s), IM_COL32(220, 160, 20, 240), 3.0f * ui.s);
+        Text(ui, NobleStyle::SmallFont(), 11.0f, ImVec2(badgePos.x + 10.0f * ui.s, badgePos.y + 3.0f * ui.s), IM_COL32(10, 10, 10, 255), "DEV");
+    }
+
+    // Rank icon
     static int s_rank = -1;
     static ULONGLONG s_rankRead = 0;
     if (s_rank < 0 || GetTickCount64() - s_rankRead > 2000) {
@@ -541,6 +646,30 @@ void DrawParty(const Ui& ui, const std::string& playerName, const char* status) 
         const float is = 26.0f * ui.s;
         UiArt::DrawContain(ui.dl, rankIcon, ImVec2(x + w - is - 8.0f * ui.s, y + 2.0f * ui.s),
                            ImVec2(x + w - 8.0f * ui.s, y + 2.0f * ui.s + is));
+    }
+
+    // Account quick button
+    y += 30.0f * ui.s;
+    const float accH = 22.0f * ui.s;
+    const ImVec2 accP0(x2, y);
+    const ImVec2 accP1(x + w, y + accH);
+    ImGui::SetCursorScreenPos(accP0);
+    ImGui::PushID("party_account_btn");
+    bool accClicked = ImGui::InvisibleButton("##acc", ImVec2(accP1.x - accP0.x, accH));
+    bool accHov = ImGui::IsItemHovered();
+    ImGui::PopID();
+    if (accClicked) {
+        s_showAccountModal = true;
+        MenuSounds::Click();
+    }
+    ui.dl->AddRectFilled(accP0, accP1, accHov ? IM_COL32(30, 48, 68, 230) : IM_COL32(15, 24, 34, 200));
+    ui.dl->AddRect(accP0, accP1, accHov ? IM_COL32(143, 216, 255, 180) : IM_COL32(60, 90, 120, 100), 0.0f, 0, 1.0f);
+    if (AuthClient::Get().IsLoggedIn()) {
+        char buf[64];
+        std::snprintf(buf, sizeof(buf), "ONLINE: %s", AuthClient::Get().GetUsername().c_str());
+        Text(ui, NobleStyle::SmallFont(), 12.0f, ImVec2(x2 + 8.0f * ui.s, y + 4.0f * ui.s), IM_COL32(120, 220, 160, 255), buf);
+    } else {
+        Text(ui, NobleStyle::SmallFont(), 12.0f, ImVec2(x2 + 8.0f * ui.s, y + 4.0f * ui.s), IM_COL32(200, 210, 220, 200), "[ LOGIN / REGISTER ]");
     }
 }
 
@@ -771,6 +900,7 @@ const MainEntry kMainEntries[] = {
     { "Theater",      "Saved films aren't supported in Noble yet.",                           Screen::Main, false, false },
     { "Service Record", "Your rank, credits, challenges, commendations and recent games.",   Screen::Career, true, false },
     { "Armory",       "Customize your Spartan and Sangheili armor in Reach's 3D Armory.",     Screen::Armory, true, false },
+    { "Account",      "Log in or register your account to sync data and unlock developer access.", Screen::Main, true, false },
     { "Mods",         "Workshop maps and mods.",                                              Screen::Mods, true, false },
     { "Settings",     "Controls, key bindings, audio, video and gameplay options.",          Screen::Settings, true, false },
     { "Quit",         "Close Noble.",                                                         Screen::Main, true, true },
@@ -802,6 +932,12 @@ struct MenuState {
     int lobbyPrivacy = 0;       // 0 = Public (Master Server), 1 = Private (Direct Connect)
     bool confirmQuit = false;   // "Quit Project Noble?" box on the main menu (Esc or QUIT)
     int quitChoice = 1;         // 0 = Yes, 1 = No (No is preselected)
+    bool showAccountModal = false;
+    int accountTab = 0;         // 0 = Login, 1 = Register
+    char accountUser[32] = "";
+    char accountPass[32] = "";
+    std::string accountStatusMsg = "";
+    bool accountStatusError = false;
 };
 
 void DrawLobbyControls(const Ui& ui, ImVec2 pos, [[maybe_unused]] float width, MenuState& st) {
@@ -1156,6 +1292,7 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
     ui.size = vp->Size;
     ui.s = std::max(0.75f, vp->Size.y / 720.0f);
     DrawBackdrop(ui, st.screen);
+    DrawAccountModal(ui);
 
     UpdateSceneForScreen(st.screen);
 
@@ -1198,6 +1335,8 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
                 if (kMainEntries[hit].quit) {
                     st.confirmQuit = true;
                     st.quitChoice = 1;
+                } else if (std::string(kMainEntries[hit].label) == "Account") {
+                    s_showAccountModal = true;
                 } else {
                     st.screen = kMainEntries[hit].target;
                 }

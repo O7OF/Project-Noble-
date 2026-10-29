@@ -19,6 +19,7 @@
 #include "network/SessionManager.hpp"
 #include "network/MasterServerClient.hpp"
 #include "network/AuthClient.hpp"
+#include "network/NetworkTransport.hpp"
 #include "network/UPnP.hpp"
 #include "common/Settings.hpp"
 #include "common/Relaunch.hpp"
@@ -252,6 +253,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     bool hostPublic = true;
     int hostMaxPlayers = 16;
     std::string connectAddress = "";
+    std::string relayUrl = "";
 
     auto WideToNarrow = [](const std::wstring& w) -> std::string {
         if (w.empty()) return "";
@@ -295,6 +297,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
                 hostMaxPlayers = _wtoi(argvW[++i]);
             } else if (arg == L"-connect" && i + 1 < numArgs) {
                 connectAddress = WideToNarrow(argvW[++i]);
+            } else if (arg == L"-relay" && i + 1 < numArgs) {
+                relayUrl = WideToNarrow(argvW[++i]);
             }
         }
         LocalFree(argvW);
@@ -379,6 +383,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 
     if (!connectAddress.empty()) {
         launchHost = false; // Guest joining remote match
+        if (!relayUrl.empty()) {
+            noble::NetworkTransport::Get().StartRelay(relayUrl, "HALOREAC", false, noble::NetworkTransport::Get().GetLocalMachineId());
+        }
         NOBLE_INFO("Launching Halo: Reach Engine as Guest connecting to '{}' (Map: {}, Mode: {})", connectAddress, launchMap, launchMode);
         blamEngine->LaunchMap(launchMap, launchMode, launchDifficulty, launchSkulls, customMvar, customVariant, connectAddress);
     } else {
