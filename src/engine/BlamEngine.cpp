@@ -396,7 +396,7 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
             *reinterpret_cast<uint64_t*>(&block[0x2F8]) = hostMachineId; // uint64 Host Machine ID
             // Zero variant buffer on guest (0x300 to end) so replicated game and map variants from the host
             // are received and mounted cleanly without local conflict.
-            std::memset(&block[0x300], 0, LAUNCH_BLOCK_SIZE - 0x300);
+            // Note: do NOT memset +0x300..+0x2BF30; block is already zero-initialized and +0x1D308 holds c_map_variant.
             block[0x2BF14] = 0xF3;
             block[0x2BF15] = 0x01;
             NOBLE_INFO("BlamEngine: Configured Guest Launch Block targeting host {}:{} (Local: 0x{:X}, Host: 0x{:X}, PlayerId: 0x{:X})",
@@ -426,7 +426,7 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
         }
 
         // Default variant buffer init at offset 0x1D308 (RVA 0x6BFF8)
-        if (m_hModule && !isGuest) {
+        if (m_hModule) {
             SafeCallVariantInit(m_hModule, &block[0x1D308]);
         }
 
@@ -530,7 +530,7 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
     }
 
     // Dynamic Custom Map Variant (.mvar) Injection (RVA 0x17AF00 parse_map_variant)
-    if (!isGuest && !customMvarPath.empty() && std::filesystem::exists(customMvarPath) && m_hModule) {
+    if (!customMvarPath.empty() && std::filesystem::exists(customMvarPath) && m_hModule) {
         NOBLE_INFO("BlamEngine: Parsing custom Forge map variant from '{}'...", customMvarPath);
         std::ifstream file(customMvarPath, std::ios::binary);
         if (file) {
@@ -561,10 +561,12 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
     // and stalls at 4%). Default: MCC's stock slayer_054.bin from the player's own install.
     // NOTE: Authentic pre-built Campaign launch blocks already contain authentic campaign state
     // and mission variants at +0x300, and must NOT be overwritten with multiplayer Slayer!
-    if ((!isCampaign || !customVariantPath.empty()) && !isGuest) {
+    if (!isCampaign || !customVariantPath.empty()) {
         std::filesystem::path variantPath;
         if (!customVariantPath.empty() && std::filesystem::exists(customVariantPath)) {
             variantPath = customVariantPath;
+        } else if (!customVariantPath.empty() && std::filesystem::exists(ReachHost::Get().GetReachDir() / "game_variants" / customVariantPath)) {
+            variantPath = ReachHost::Get().GetReachDir() / "game_variants" / customVariantPath;
         } else if (!isCampaign && !isMainMenu) {
             // Firefight needs a Firefight game variant (otherwise the engine reports "no game
             // selected"); RR likewise loads <MCC>\haloreach\game_variants\<mode>.bin for it.
@@ -600,7 +602,7 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
     // session), +0x2BF14 = F3 01, then +0x50 session, +0x58 self, +0x2F8 host. Noble's default guest block sets
     // one local player, a player id at +0xF0 and the decoded variant instead; guests have been stuck at
     // launch state 9 with traffic flowing both ways, so this lets the two layouts be compared.
-    if (isGuest && !isMainMenu && std::wcsstr(GetCommandLineW(), L"-legacy-guest-block") == nullptr) {
+    if (isGuest && !isMainMenu && std::wcsstr(GetCommandLineW(), L"-rr-guest-block") != nullptr) {
         const uint64_t self = NetworkTransport::Get().GetLocalMachineId();
         const uint64_t host = NetworkTransport::Get().GetHostMachineId();
         const uint64_t session = NetworkTransport::Get().GetSessionId();
@@ -611,7 +613,7 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
         *reinterpret_cast<uint64_t*>(&block[0x108]) = ~0ULL;
         std::memset(&block[0x2F0], 0, 0x10);
         *reinterpret_cast<uint32_t*>(&block[0x2F4]) = 0xFFFFFFFFu;
-        std::memset(&block[0x300], 0, block.size() - 0x300);
+        std::memset(&block[0x300], 0, 0x1D308 - 0x300);
         block[0x2BF14] = 0xF3;
         block[0x2BF15] = 0x01;
         *reinterpret_cast<uint64_t*>(&block[0x50]) = session;

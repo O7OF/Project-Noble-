@@ -82,6 +82,7 @@ private:
 
     std::vector<DiscoveredSession> m_discoveredSessions;
     std::mutex m_sessionsMutex;
+    mutable std::mutex m_hostingMutex;
 
     std::thread m_beaconThread;
     std::thread m_listenerThread;

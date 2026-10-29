@@ -1527,7 +1527,7 @@ static void TakePendingLobbyEvents(MenuState& st) {
         return;
     }
     if (ev.roster) st.lobbyRoster = std::move(ev.rosterPlayers);
-    if (ev.launch && !st.lobbyLaunchPending) {
+    if (ev.launch && !st.lobbyLaunchPending && !st.isLobbyHost) {
         st.lobbyLaunchPending = true;
         st.lobbyLaunchMap = ev.map;
         st.lobbyLaunchMode = ev.mode;

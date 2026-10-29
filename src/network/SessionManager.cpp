@@ -95,6 +95,12 @@ void SessionManager::SetNetworkMode(NetworkMode mode) {
 }
 
 bool SessionManager::StartHosting(const HostConfig& config) {
+    std::lock_guard<std::mutex> lock(m_hostingMutex);
+    if (m_beaconThread.joinable()) {
+        m_isHosting = false;
+        m_beaconThread.join();
+    }
+
     m_activeConfig = config;
     SetNetworkMode(config.mode);
 
@@ -102,21 +108,18 @@ bool SessionManager::StartHosting(const HostConfig& config) {
     NOBLE_INFO("SessionManager: Self-hosting session '{}' on port {} (Mode: {}, Map: {})", 
         config.sessionName, config.port, config.gameMode, config.mapName);
 
-    if (m_beaconThread.joinable()) {
-        m_beaconThread.join();
-    }
     m_beaconThread = std::thread(&SessionManager::BeaconLoop, this);
 
     return true;
 }
 
 void SessionManager::StopHosting() {
-    if (!m_isHosting) return;
-
-    m_isHosting = false;
+    std::lock_guard<std::mutex> lock(m_hostingMutex);
+    const bool wasHosting = m_isHosting.exchange(false);
     if (m_beaconThread.joinable()) {
         m_beaconThread.join();
     }
+    if (!wasHosting) return;
 
     if (m_networkMode == NetworkMode::Online_P2P) {
         UPnP::Get().ReleasePort(m_activeConfig.port, "UDP");
