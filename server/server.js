@@ -401,13 +401,34 @@ app.post('/api/sessions', (req, res) => {
     if (masterSessions.size >= MASTER_MAX_SESSIONS) return res.status(503).json({ error: "Server list is full" });
     let sessionsFromAddress = 0;
     for (const session of masterSessions.values()) if (session.address === ip) sessionsFromAddress += 1;
-    if (sessionsFromAddress >= MASTER_MAX_SESSIONS_PER_IP) {
+    const reusingSession = (() => {
+        const b0 = req.body || {};
+        const port0 = masterCleanInt(b0.port, 11774, 1, 65535);
+        for (const s0 of masterSessions.values()) if (s0.address === ip && (s0.port === port0 || s0.id === String(b0.session_id || ''))) return true;
+        return false;
+    })();
+    if (!reusingSession && sessionsFromAddress >= MASTER_MAX_SESSIONS_PER_IP) {
         return res.status(429).json({ error: "Too many games from this address" });
     }
 
     const body = req.body || {};
-    const id = crypto.randomBytes(8).toString('hex');
-    const token = crypto.randomBytes(24).toString('hex');
+    // Reuse the existing session for the same host address + port so a host that
+    // re-registers (pre-game lobby -> match launch) keeps ONE session id. Otherwise
+    // the advertised id, the relay room and the guests' lobby id all diverge and the
+    // guests end up in a different session than the host.
+    const reqPort = masterCleanInt(body.port, 11774, 1, 65535);
+    let existing = null;
+    if (body.session_id && masterSessions.has(String(body.session_id))) {
+        const s0 = masterSessions.get(String(body.session_id));
+        if (s0.address === ip) existing = s0;
+    }
+    if (!existing) {
+        for (const s0 of masterSessions.values()) {
+            if (s0.address === ip && s0.port === reqPort) { existing = s0; break; }
+        }
+    }
+    const id = existing ? existing.id : crypto.randomBytes(8).toString('hex');
+    const token = existing ? existing.token : crypto.randomBytes(24).toString('hex');
 
     const hostPeerId = body.host_peer_id || body.player_id || 1;
     const hostMachineId = body.host_machine_id || '0x484F535400000001';
@@ -415,7 +436,7 @@ app.post('/api/sessions', (req, res) => {
     const hostIsDev = body.host_is_dev === true;
     const hostTag = masterCleanText(body.host_service_tag, '117', 4);
 
-    const initialRoster = Array.isArray(body.roster) && body.roster.length > 0 ? body.roster : [
+    const initialRoster = Array.isArray(body.roster) && body.roster.length > 0 ? body.roster : (existing && Array.isArray(existing.roster) && existing.roster.length > 0) ? existing.roster : [
         {
             peerId: hostPeerId,
             machineId: hostMachineId,
@@ -446,10 +467,11 @@ app.post('/api/sessions', (req, res) => {
         build: masterCleanText(body.build, '', 24),
         isMod: body.is_mod === true || String(body.name || '').includes('[Mod]') || String(body.mode || '').toLowerCase().includes('mod'),
         roster: initialRoster,
-        launchData: null,
+        launchData: existing ? existing.launchData : null,
         lastHeartbeat: Date.now()
     });
-    res.status(201).json({ success: true, session_id: id, token });
+    if (existing) console.log(`[Master] Host ${ip}:${reqPort} re-registered; reusing session ${id}`);
+    res.status(existing ? 200 : 201).json({ success: true, session_id: id, token, reused: !!existing });
 });
 
 app.put('/api/sessions/heartbeat', (req, res) => {
