@@ -157,6 +157,16 @@ void ServerBrowser::RefreshServers() {
     // 3. Master server list of active online games.
     for (const auto& m : MasterServerClient::Get().Sessions()) {
         if (m.maxPlayers <= 0 || m.map.empty()) continue;
+        bool mergedWithLan = false;
+        for (auto& existing : list) {
+            if ((existing.hostAddress == m.address || (!m.lanAddress.empty() && existing.hostAddress == m.lanAddress)) && existing.port == m.port) {
+                if (existing.id.empty() && !m.id.empty()) existing.id = m.id;
+                existing.inProgress = m.inProgress;
+                mergedWithLan = true;
+                break;
+            }
+        }
+        if (mergedWithLan) continue;
         ServerEntry e;
         e.id = m.id;
         e.name = m.name;

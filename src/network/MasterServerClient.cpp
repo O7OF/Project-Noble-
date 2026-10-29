@@ -349,6 +349,8 @@ void MasterServerClient::DoList() {
                 s.inProgress = item.value("in_progress", false);
                 s.hasPassword = item.value("has_password", false);
                 s.isMod = item.value("is_mod", false);
+                s.isPrivate = item.value("is_private", false);
+                s.lanAddress = Str(item, "lan_address", 64);
                 s.build = Str(item, "build", 32);
                 if (!s.address.empty()) list.push_back(std::move(s));
             }
@@ -389,7 +391,25 @@ void MasterServerClient::DoRegister() {
         {"name", advert.name}, {"port", advert.port}, {"player_count", advert.playerCount},
         {"max_players", advert.maxPlayers}, {"map", advert.map}, {"mode", advert.mode},
         {"has_password", advert.hasPassword}, {"is_mod", advert.isMod}, {"is_private", advert.isPrivate}, {"address", advert.address}, {"lan_address", UPnP::Get().GetInternalIP()}, {"build", std::string(VERSION_STRING.substr(0, VERSION_STRING.find(' ')))},
+        {"variant", advert.variant}, {"difficulty", advert.difficulty}, {"skulls", std::to_string(advert.skulls)}, {"in_progress", advert.inProgress},
+        {"host_peer_id", advert.hostPeerId == 0 ? 1ULL : advert.hostPeerId}, {"player_id", advert.hostPeerId == 0 ? 1ULL : advert.hostPeerId},
+        {"host_machine_id", advert.hostMachineId.empty() ? "0x484F535400000001" : advert.hostMachineId},
+        {"host_username", advert.hostUsername.empty() ? "Host" : advert.hostUsername}, {"player_name", advert.hostUsername.empty() ? "Host" : advert.hostUsername},
+        {"host_is_dev", advert.hostIsDev}, {"host_service_tag", advert.hostServiceTag.empty() ? "117" : advert.hostServiceTag},
     };
+    if (!advert.inProgress) {
+        body["roster"] = nlohmann::json::array({
+            {
+                {"peerId", advert.hostPeerId == 0 ? 1ULL : advert.hostPeerId},
+                {"machineId", advert.hostMachineId.empty() ? "0x484F535400000001" : advert.hostMachineId},
+                {"username", advert.hostUsername.empty() ? "Host" : advert.hostUsername},
+                {"isHost", true},
+                {"isDev", advert.hostIsDev},
+                {"serviceTag", advert.hostServiceTag.empty() ? "117" : advert.hostServiceTag},
+                {"ping", 0}
+            }
+        });
+    }
     const HttpResult r = HttpRequest(Url(), L"POST", "/api/sessions", body.dump());
     if (!r.ok) {
         SetStatus("could not list your game: " + r.error);
@@ -547,6 +567,7 @@ MasterJoinInfo MasterServerClient::JoinSessionSync(const std::string& sessionId,
 LobbyState MasterServerClient::FetchLobbyStateSync(const std::string& sessionId) {
     LobbyState state;
     if (sessionId.empty() || !Enabled()) return state;
+    const std::string& resolvedId = sessionId;
 
     const HttpResult r = HttpRequest(Url(), L"GET", "/api/sessions/" + sessionId + "/lobby", {});
     if (!r.ok) return state;
@@ -554,7 +575,7 @@ LobbyState MasterServerClient::FetchLobbyStateSync(const std::string& sessionId)
     try {
         const auto j = nlohmann::json::parse(r.body);
         state.ok = true;
-        state.sessionId = j.value("session_id", sessionId);
+        state.sessionId = j.value("session_id", resolvedId);
         state.name = j.value("name", "Reach Lobby");
         state.map = j.value("map", "20_sword_slayer");
         state.mode = j.value("mode", "multiplayer");
@@ -604,9 +625,34 @@ LobbyState MasterServerClient::JoinLobbySync(const std::string& sessionId,
                                              const std::string& username,
                                              bool isDev,
                                              const std::string& serviceTag,
-                                             uint16_t localPort) {
+                                             uint16_t localPort,
+                                             const std::string& fallbackHostIp,
+                                             uint16_t fallbackHostPort) {
     LobbyState state;
-    if (sessionId.empty() || !Enabled()) return state;
+
+    if (!Enabled()) return state;
+    std::string resolvedId = sessionId;
+    if (resolvedId.empty() && !fallbackHostIp.empty()) {
+        const HttpResult listRes = HttpRequest(Url(), L"GET", "/api/sessions", {});
+        if (listRes.ok) {
+            try {
+                const nlohmann::json arr = nlohmann::json::parse(listRes.body);
+                if (arr.is_array()) {
+                    for (const auto& item : arr) {
+                        if (!item.is_object()) continue;
+                        const std::string addr = Str(item, "address", 64);
+                        const std::string lanAddr = Str(item, "lan_address", 64);
+                        const uint16_t port = static_cast<uint16_t>(Int(item, "port", 11774, 1, 65535));
+                        if ((addr == fallbackHostIp || (!lanAddr.empty() && lanAddr == fallbackHostIp)) && port == fallbackHostPort) {
+                            resolvedId = Str(item, "id", 64);
+                            break;
+                        }
+                    }
+                }
+            } catch (...) {}
+        }
+    }
+    if (resolvedId.empty()) return state;
 
     nlohmann::json body = {
         { "peer_id", peerId },
@@ -619,13 +665,13 @@ LobbyState MasterServerClient::JoinLobbySync(const std::string& sessionId,
         { "ping", 25 }
     };
 
-    const HttpResult r = HttpRequest(Url(), L"POST", "/api/sessions/" + sessionId + "/lobby/join", body.dump());
+    const HttpResult r = HttpRequest(Url(), L"POST", "/api/sessions/" + resolvedId + "/lobby/join", body.dump());
     if (!r.ok) return state;
 
     try {
         const auto j = nlohmann::json::parse(r.body);
         state.ok = true;
-        state.sessionId = j.value("session_id", sessionId);
+        state.sessionId = j.value("session_id", resolvedId);
         state.hostIp = j.value("host_ip", "");
         state.hostPort = static_cast<uint16_t>(j.value("host_port", 11774));
         state.hostLanIp = j.value("host_lan_ip", "");
@@ -654,7 +700,7 @@ LobbyState MasterServerClient::JoinLobbySync(const std::string& sessionId,
 
         std::string relayUrl = j.value("relay_url", "");
         if (!relayUrl.empty()) {
-            NetworkTransport::Get().StartRelay(relayUrl, sessionId, false, LobbyMachineId());
+            NetworkTransport::Get().StartRelay(relayUrl, resolvedId, false, LobbyMachineId());
         }
     } catch (...) {}
 

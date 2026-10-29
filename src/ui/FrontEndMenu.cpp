@@ -1105,6 +1105,8 @@ struct MenuState {
 };
 
 
+static void ClearPendingLobbyEvents();
+
 static void SetupHostLobby(MenuState& st, const std::string& mapScenario, const std::string& mode,
                            const std::string& varPath, const std::string& varName, int diff, uint64_t skulls, int maxPlayers) {
     st.isLobbyHost = true;
@@ -1116,6 +1118,7 @@ static void SetupHostLobby(MenuState& st, const std::string& mapScenario, const 
     st.lobbySkulls = skulls;
     st.lobbyMaxPlayers = maxPlayers;
     st.lobbyLaunchPending = false;
+    ClearPendingLobbyEvents();
     st.lastLobbyPoll = ImGui::GetTime();
 
     HostConfig cfg;
@@ -1130,7 +1133,7 @@ static void SetupHostLobby(MenuState& st, const std::string& mapScenario, const 
     cfg.mode = (st.lobbyNetMode == 1) ? NetworkMode::Online_P2P : NetworkMode::Local_LAN;
     SessionManager::Get().StartHosting(cfg);
 
-    if (st.lobbyNetMode == 1 && st.lobbyPrivacy == 0 && MasterServerClient::Get().Enabled()) {
+    if (st.lobbyNetMode == 1 && MasterServerClient::Get().Enabled()) {
         MasterAdvert adv;
         adv.name = cfg.sessionName;
         adv.port = cfg.port;
@@ -1141,6 +1144,7 @@ static void SetupHostLobby(MenuState& st, const std::string& mapScenario, const 
         adv.difficulty = st.lobbyDifficulty;
         adv.skulls = st.lobbySkulls;
         adv.inProgress = false;
+        adv.isPrivate = (st.lobbyPrivacy != 0);
         adv.hostPeerId = AuthClient::Get().IsLoggedIn() ? static_cast<uint64_t>(AuthClient::Get().GetUserId()) : 1ULL;
         adv.hostMachineId = "0x484F535400000001";
         adv.hostUsername = pName;
@@ -1509,6 +1513,11 @@ struct PendingLobbyEvents {
 static std::mutex s_lobbyEventMutex;
 static PendingLobbyEvents s_lobbyEvents;
 
+static void ClearPendingLobbyEvents() {
+    std::lock_guard<std::mutex> lock(s_lobbyEventMutex);
+    s_lobbyEvents = PendingLobbyEvents{};
+}
+
 static void TakePendingLobbyEvents(MenuState& st) {
     PendingLobbyEvents ev;
     {
@@ -1526,7 +1535,24 @@ static void TakePendingLobbyEvents(MenuState& st) {
         NetworkTransport::Get().StopRelay();
         return;
     }
-    if (ev.roster) st.lobbyRoster = std::move(ev.rosterPlayers);
+    if (ev.roster) {
+        st.lobbyRoster = std::move(ev.rosterPlayers);
+        if (st.isLobbyHost) {
+            std::string pName = AuthClient::Get().IsLoggedIn() ? AuthClient::Get().GetUsername() : Settings::Get().Snapshot().playerName;
+            if (pName.empty()) pName = "Host";
+            const uint64_t hostPId = AuthClient::Get().IsLoggedIn() ? static_cast<uint64_t>(AuthClient::Get().GetUserId()) : 1ULL;
+            const std::string hostTag = Settings::Get().Snapshot().serviceTag.empty() ? "117" : Settings::Get().Snapshot().serviceTag;
+            const bool hostDev = AuthClient::Get().IsDeveloper();
+            for (auto& p : st.lobbyRoster) {
+                if (p.isHost) {
+                    p.peerId = hostPId;
+                    p.username = pName;
+                    p.serviceTag = hostTag;
+                    p.isDev = hostDev;
+                }
+            }
+        }
+    }
     if (ev.launch && !st.lobbyLaunchPending && !st.isLobbyHost) {
         st.lobbyLaunchPending = true;
         st.lobbyLaunchMap = ev.map;
@@ -1534,7 +1560,7 @@ static void TakePendingLobbyEvents(MenuState& st) {
         st.lobbyLaunchVariant = ev.variant;
         st.lobbyLaunchDiff = ev.difficulty;
         st.lobbyLaunchSkulls = ev.skulls;
-        if (!ev.hostEndpoint.empty()) st.lobbyHostEndpoint = ev.hostEndpoint;
+        if (st.lobbyHostEndpoint.empty() && !ev.hostEndpoint.empty()) st.lobbyHostEndpoint = ev.hostEndpoint;
         if (!ev.sessionId.empty()) st.lobbySessionId = ev.sessionId;
     }
 }
@@ -1546,6 +1572,13 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
     const float pxLeft = left + 34.0f * ui.s;
     const float pxRight = ui.size.x * 0.52f;
     const float actionsY = ui.size.y - 58.0f * ui.s - 14.0f * ui.s - 50.0f * ui.s;
+
+    if (st.isLobbyHost) {
+        const std::string curId = MasterServerClient::Get().GetCurrentSessionId();
+        const std::string curTok = MasterServerClient::Get().GetCurrentSessionToken();
+        if (!curId.empty()) st.lobbySessionId = curId;
+        if (!curTok.empty()) st.lobbySessionToken = curTok;
+    }
 
     // Polling for lobby state updates
     const double now = ImGui::GetTime();
@@ -1580,6 +1613,21 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
                 }
                 if (!current.roster.empty()) {
                     st.lobbyRoster = current.roster;
+                    if (st.isLobbyHost) {
+                        std::string pName = AuthClient::Get().IsLoggedIn() ? AuthClient::Get().GetUsername() : Settings::Get().Snapshot().playerName;
+                        if (pName.empty()) pName = "Host";
+                        const uint64_t hostPId = AuthClient::Get().IsLoggedIn() ? static_cast<uint64_t>(AuthClient::Get().GetUserId()) : 1ULL;
+                        const std::string hostTag = Settings::Get().Snapshot().serviceTag.empty() ? "117" : Settings::Get().Snapshot().serviceTag;
+                        const bool hostDev = AuthClient::Get().IsDeveloper();
+                        for (auto& p : st.lobbyRoster) {
+                            if (p.isHost) {
+                                p.peerId = hostPId;
+                                p.username = pName;
+                                p.serviceTag = hostTag;
+                                p.isDev = hostDev;
+                            }
+                        }
+                    }
                 }
                 // Launch only while the host's match is running. The server keeps the last launch_data when the host
                 // re-registers the same address and port for its next lobby, so "launch_data present" alone sent a
@@ -1610,12 +1658,17 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
 
         // The host sends its variant as a path on its own PC; use the guest's copy of the same file. Without a
         // variant the guest's launch block has no game variant (the 5% load hang from 2026-10-28).
+        if (st.lobbyLaunchVariant.empty() && !st.lobbyVariantName.empty()) {
+            st.lobbyLaunchVariant = st.lobbyVariantName;
+        }
         if (!st.lobbyLaunchVariant.empty()) {
             const std::filesystem::path want = std::filesystem::path(st.lobbyLaunchVariant).filename();
             std::filesystem::path local;
             for (const auto* list : { &ctx.variants, &ctx.ffVariants })
                 for (const MenuVariant& v : *list)
-                    if (local.empty() && _wcsicmp(v.path.filename().c_str(), want.c_str()) == 0) local = v.path;
+                    if (local.empty() && (_wcsicmp(v.path.filename().c_str(), want.c_str()) == 0 ||
+                                          _stricmp(v.label.c_str(), st.lobbyLaunchVariant.c_str()) == 0))
+                        local = v.path;
             if (!local.empty()) {
                 choice.variantPath = local.string();
             } else {
@@ -1813,6 +1866,12 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
             const std::string variantFileName = st.lobbyVariantPath.empty()
                 ? ""
                 : std::filesystem::path(st.lobbyVariantPath).filename().string();
+            {
+                const std::string curId = MasterServerClient::Get().GetCurrentSessionId();
+                const std::string curTok = MasterServerClient::Get().GetCurrentSessionToken();
+                if (!curId.empty()) st.lobbySessionId = curId;
+                if (!curTok.empty()) st.lobbySessionToken = curTok;
+            }
             MasterServerClient::Get().LaunchLobbySync(st.lobbySessionId, st.lobbyMap, st.lobbyMode, variantFileName, st.lobbyDifficulty, st.lobbySkulls);
 
             // Duplicate WS launch removed (Finding #6) - only HTTP LaunchLobbySync is used to avoid duplicate launch signals
@@ -2483,8 +2542,9 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
         uint64_t pId = AuthClient::Get().IsLoggedIn() ? static_cast<uint64_t>(AuthClient::Get().GetUserId()) : fallbackId;
         std::string sTag = Settings::Get().Snapshot().serviceTag.empty() ? "117" : Settings::Get().Snapshot().serviceTag;
 
-        LobbyState state = MasterServerClient::Get().JoinLobbySync(s.id, pId, pName, AuthClient::Get().IsDeveloper(), sTag, 11774);
+        LobbyState state = MasterServerClient::Get().JoinLobbySync(s.id, pId, pName, AuthClient::Get().IsDeveloper(), sTag, 11774, s.hostAddress, s.port);
         if (state.ok) {
+            if (!state.sessionId.empty()) ctx.st.lobbySessionId = state.sessionId;
             ctx.st.lobbyRoster = state.roster;
             ctx.st.lobbyMap = state.map;
             ctx.st.lobbyMode = state.mode;

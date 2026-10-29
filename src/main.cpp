@@ -464,6 +464,15 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
                 advert.maxPlayers = cfg.maxPlayers;
                 advert.map = cfg.mapName;
                 advert.mode = cfg.gameMode;
+                advert.variant = customVariant.empty() ? cfg.gametypeName : fs::path(customVariant).filename().string();
+                advert.difficulty = launchDifficulty;
+                advert.skulls = launchSkulls;
+                advert.inProgress = true;
+                advert.hostPeerId = noble::AuthClient::Get().IsLoggedIn() ? static_cast<uint64_t>(noble::AuthClient::Get().GetUserId()) : 1ULL;
+                advert.hostMachineId = "0x484F535400000001";
+                advert.hostUsername = noble::AuthClient::Get().IsLoggedIn() ? noble::AuthClient::Get().GetUsername() : (startupSettings.playerName.empty() ? "Host" : startupSettings.playerName);
+                advert.hostIsDev = noble::AuthClient::Get().IsDeveloper();
+                advert.hostServiceTag = startupSettings.serviceTag.empty() ? "117" : startupSettings.serviceTag;
                 advert.hasPassword = false;
                 advert.isPrivate = !hostPublic;
                 advert.isMod = !modFolder.empty();

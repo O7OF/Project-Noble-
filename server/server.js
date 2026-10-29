@@ -578,7 +578,11 @@ app.get('/api/sessions/:id/lobby', (req, res) => {
         is_lan: (guestIp === session.address && !!session.lanAddress),
         host_port: session.port,
         roster: session.roster || [],
-        launch_data: session.launchData
+        launch_data: session.launchData ? {
+            ...session.launchData,
+            host_ip: (guestIp === session.address && session.lanAddress) ? session.lanAddress : session.address,
+            is_lan: (guestIp === session.address && !!session.lanAddress)
+        } : null
     });
 });
 
@@ -696,7 +700,7 @@ app.post('/api/sessions/:id/lobby/launch', (req, res) => {
 
     broadcastLobbyEvent(session.id, {
         type: 'lobby_launch',
-        launch: session.launchData
+        launch: Object.assign(session.launchData, { host_ip: session.address, is_lan: false })
     });
 
     res.json({ success: true, launch_data: session.launchData });

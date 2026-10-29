@@ -139,7 +139,9 @@ public:
                             const std::string& username,
                             bool isDev,
                             const std::string& serviceTag,
-                            uint16_t localPort);
+                            uint16_t localPort,
+                            const std::string& fallbackHostIp = "",
+                            uint16_t fallbackHostPort = 11774);
     bool LeaveLobbySync(const std::string& sessionId, uint64_t peerId);
     bool LaunchLobbySync(const std::string& sessionId,
                          const std::string& map,

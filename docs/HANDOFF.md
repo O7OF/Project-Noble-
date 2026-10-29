@@ -11,6 +11,50 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-29, 17:30 ET) - Pre-Game Lobby Host P:ID / Username Revert & Guest Match Launch Mismatch Fixed (Dominus / Dominus-VII)
+
+### 1. Why the Host's `P:ID` and Username Reverted to `P:ID 1` and `"Host"` After ~1.2 Seconds in the Pre-Game Lobby
+- **Root Cause:**
+  1. When clicking **Custom Games -> HOST LOBBY** (Online P2P), `SetupHostLobby` (`src/ui/FrontEndMenu.cpp`) constructed `MasterAdvert adv` with the Host's real `adv.hostPeerId` (from `AuthClient::Get().GetUserId()`), `adv.hostUsername`, `adv.hostIsDev`, `adv.hostServiceTag`, `adv.variant`, `adv.difficulty`, `adv.skulls`, and `adv.inProgress = false`, and populated `st.lobbyRoster[0]` locally with the Host's real `P:ID` and username.
+  2. However, `MasterServerClient::DoRegister()` (`src/network/MasterServerClient.cpp`) omitted all of those fields from the `POST /api/sessions` JSON payload! It only sent `name`, `port`, `player_count`, `max_players`, `map`, `mode`, `has_password`, `is_private`, `is_mod`, `address`, and `lan_address`.
+  3. On the Master Server (`server/server.js`), missing `body.host_peer_id` and `body.host_username` caused `POST /api/sessions` to default to `hostPeerId = 1` and `hostUsername = 'Host'`, and if reusing an existing session from the same IP+port within 30s (`existing.roster || body.roster`), omitted `body.roster` kept the stale `[ { peerId: 1, username: 'Host', isHost: true } ]` roster.
+  4. ~1.2 seconds later, `DrawPreGameLobby` (`src/ui/FrontEndMenu.cpp`) polled `FetchLobbyStateSync` (`GET /api/sessions/:id/lobby`) and overwrote `st.lobbyRoster = current.roster`, replacing the Host's real `P:ID` and username with `P:ID 1` and `"Host"`.
+- **Fix:**
+  - **`src/network/MasterServerClient.cpp` (`DoRegister`):** Serialized `variant`, `difficulty`, `skulls`, `in_progress`, `host_peer_id`, `player_id`, `host_machine_id`, `host_username`, `player_name`, `host_is_dev`, `host_service_tag`, and (when `!advert.inProgress`) the initial 1-entry `roster` array containing the Host's authoritative identity (`peerId`, `machineId`, `username`, `isHost: true`, `isDev`, `serviceTag`).
+  - **`src/ui/FrontEndMenu.cpp` (`TakePendingLobbyEvents` & `DrawPreGameLobby`):** Added a client-side guard on the Host so whenever `st.lobbyRoster` is refreshed from WebSocket or HTTP polling, any `p.isHost` entry is pinned to the Host's authoritative `AuthClient` / `Settings` `peerId`, `username`, `serviceTag`, and `isDev`.
+
+### 2. Why Guest Clients Mismatched or Failed to Launch Into the Same Game as the Host
+- **Root Causes:**
+  1. **WebSocket `lobby_launch` Broadcast Overwrote Remote Guest's `st.lobbyHostEndpoint` With Host's Private LAN IP (`192.168.x.x`):**
+     - When the Host clicked **START MATCH**, `POST /api/sessions/:id/lobby/launch` (`server/server.js`) was called by the Host (`guestIp === session.address`). Because `guestIp === session.address && session.lanAddress` was `true` for the Host's own request, `server.js` set `session.launchData.host_ip = session.lanAddress` (e.g. `192.168.1.x`) and broadcast that private LAN IP to all remote guests via WebSocket `lobby_launch`.
+     - In `TakePendingLobbyEvents` (`src/ui/FrontEndMenu.cpp`), `if (!ev.hostEndpoint.empty()) st.lobbyHostEndpoint = ev.hostEndpoint;` unconditionally overwrote the remote Guest's valid public `st.lobbyHostEndpoint` with the Host's unreachable private LAN IP!
+  2. **Race on `st.lobbySessionId` / `st.lobbySessionToken` Before `START MATCH`:**
+     - `SetupHostLobby` read `GetCurrentSessionId()` immediately after `StartAdvertising(adv)`, before the background thread finished `DoRegister()`, leaving `st.lobbySessionId` and `st.lobbySessionToken` empty until a poll ran. If `st.lobbySessionId` was empty at launch, `LaunchLobbySync` wasn't called and `Relaunch::Start` (`handsOnSession == false`) called `StopAdvertising()` (`DELETE /api/sessions/:id`), deleting the lobby session right as the Host launched.
+  3. **Variant Lookup Mismatch on Guest Launch:**
+     - The Host advertised `st.lobbyVariantName` (the UI label or filename), whereas the Guest's launch handler only checked `v.filename == st.lobbyLaunchVariant` and did not check `v.label` or fall back to `st.lobbyVariantName`.
+  4. **Host Match Process Wiped Lobby Metadata on First Heartbeat:**
+     - When the Host relaunched into the match process (`src/main.cpp`), `MasterAdvert advert` did not set `variant`, `difficulty`, `skulls`, or `hostPeerId`/`hostUsername`, and only set `inProgress = true` when `connectSessionId` was non-empty. Its first `DoHeartbeat()` then overwrote the session's `variant` with `""`, `difficulty` with `1`, and `skulls` with `"0"`.
+  5. **LAN vs. Online Session Deduplication in `ServerBrowser`:**
+     - Same-LAN discovery added a `"LAN"` entry (`hostAddress = <LAN IP>`, `id = ""`), while the Master Server returned `address = <Public IP>`, `lan_address = <LAN IP>`, `id = <sessionId>`. Because `ServerBrowser::RefreshServers` only matched `existing.hostAddress == m.address`, clicking the LAN entry had an empty `s.id` and could not join the Master Server Pre-Game Lobby.
+- **Fixes:**
+  - **`src/ui/FrontEndMenu.cpp`:**
+    - In `TakePendingLobbyEvents`: Changed `st.lobbyHostEndpoint` assignment to `if (st.lobbyHostEndpoint.empty() && !ev.hostEndpoint.empty())` so a WebSocket `lobby_launch` event never clobbers the Guest's already-resolved public/LAN Host endpoint.
+    - In `DrawPreGameLobby`: Continuously sync `st.lobbySessionId` and `st.lobbySessionToken` from `MasterServerClient::Get()` every frame and immediately prior to `LaunchLobbySync` on **START MATCH**.
+    - In `DrawPreGameLobby` (Guest launch handler): Match `varToMatch` (`st.lobbyLaunchVariant` or fallback `st.lobbyVariantName`) against both `v.filename` and `v.label`.
+    - In `SetupHostLobby`: Advertise both public and private Online P2P lobbies (`if (st.lobbyNetMode == 1 && MasterServerClient::Get().Enabled())` with `adv.isPrivate = (st.lobbyPrivacy != 0)`).
+  - **`src/network/MasterServerClient.hpp` & `src/network/MasterServerClient.cpp`:**
+    - Added `isPrivate` and `lanAddress` parsing to `MasterServerClient::DoList()`.
+    - Enhanced `MasterServerClient::JoinLobbySync` with fallback resolution by `fallbackHostIp` (matching `s.address` or `s.lanAddress`) + `fallbackHostPort` when `sessionId` is empty, and returned the resolved `state.sessionId`.
+  - **`src/ui/ServerBrowser.cpp` (`RefreshServers`):**
+    - Matched Master Server entries against existing LAN entries by either `existing.hostAddress == m.address` or `existing.hostAddress == m.lanAddress`, merging `existing.id = m.id` and `existing.inProgress = m.inProgress`.
+  - **`src/main.cpp`:**
+    - Populated `advert.variant`, `advert.difficulty`, `advert.skulls`, `advert.inProgress = true`, `advert.hostPeerId`, `advert.hostMachineId`, `advert.hostUsername`, `advert.hostIsDev`, and `advert.hostServiceTag` when the Host match process starts advertising/heartbeating.
+  - **`server/server.js`:**
+    - Fixed `POST /api/sessions/:id/lobby/launch` so `session.launchData.host_ip` is `session.address` (public IP) and `is_lan: false` for the WebSocket broadcast, while `GET /api/sessions/:id/lobby` dynamically substitutes `lanAddress` per-requester when `guestIp === session.address`.
+- **Verification:** Built cleanly via `.\build.bat` with **0 errors and 0 warnings**.
+
+--
+
 ## 0. Pick up here (2026-10-29, 16:15 ET) - Audit after 2605bf7 / 622907a: no crashes since the fix build; two hardening fixes (Dominus)
 
 - **Verified from `build\bin\Release\noble-client.log` and the Windows Application log:** every crash before the 12:34 PT
