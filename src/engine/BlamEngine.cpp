@@ -561,7 +561,9 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
     // and stalls at 4%). Default: MCC's stock slayer_054.bin from the player's own install.
     // NOTE: Authentic pre-built Campaign launch blocks already contain authentic campaign state
     // and mission variants at +0x300, and must NOT be overwritten with multiplayer Slayer!
-    if (!isCampaign || !customVariantPath.empty()) {
+    // The main menu (mainmenu_all.map) never carries a game variant, so it skips this block entirely
+    // (before 2026-10-29 it logged a bogus "No game variant found (looked for '')" on every menu boot).
+    if (!isMainMenu && (!isCampaign || !customVariantPath.empty())) {
         std::filesystem::path variantPath;
         if (!customVariantPath.empty() && std::filesystem::exists(customVariantPath)) {
             variantPath = customVariantPath;

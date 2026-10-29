@@ -57,7 +57,9 @@ bool SessionManager::Initialize() {
 }
 
 void SessionManager::Shutdown() {
-    if (!m_isInitialized) return;
+    // exchange() so two threads (Relaunch on the engine/render thread, process exit on the main thread)
+    // can never both reach m_listenerThread.join() - a concurrent join throws std::system_error (0xE06D7363).
+    if (!m_isInitialized.exchange(false)) return;
 
     m_stopThreads = true;
     StopHosting();

@@ -1,4 +1,4 @@
-﻿# Project Noble: handoff (2026-10-29, 15:20 ET)
+# Project Noble: handoff (2026-10-29, 15:20 ET)
 Dominus join the team 20261028! 
 This picks up a reverse-engineering and C++ effort on **Tyler's Windows PC**. All paths below are real paths on that machine.
 Tyler (GitHub `WeabooTyler117`) works with a partner (GitHub `O7OF`) who owns the repo and writes most of the code.
@@ -8,6 +8,30 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 **Goal:** `noble-client.exe` loads MCC's own `haloreach.dll` (Halo: Reach) and drives it **without MCC**, like the existing
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
 MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES.)
+
+--
+
+## 0. Pick up here (2026-10-29, 16:15 ET) - Audit after 2605bf7 / 622907a: no crashes since the fix build; two hardening fixes (Dominus)
+
+- **Verified from `build\bin\Release\noble-client.log` and the Windows Application log:** every crash before the 12:34 PT
+  build was `0xE06D7363` (`std::system_error` from a double `std::thread::join` in `SessionManager`) or the older
+  `0xC0000005` in ntdll at menu exit. Since `622907a` (beacon-thread fix + MP launch block fix) there are **no fatal exceptions**
+  in 4 sessions, including a hosted online MP match on `45_launch_station` that ran past the old 2-3 minute host crash. The host message loop
+  now starts ~1.5 s after launch (it used to never start). The leftover `main blckd` lines are only during map load (before
+  "loading screen off").
+- **`src/network/SessionManager.cpp` - `Shutdown()`:** now `if (!m_isInitialized.exchange(false)) return;`. Before, the flag was
+  only cleared at the end, so `Relaunch::Start` (engine/render thread) and the exit path in `main.cpp` (main thread) could both
+  reach `m_listenerThread.join()` and throw the same `0xE06D7363`.
+- **`src/engine/BlamEngine.cpp` - `BuildLaunchBlock`:** the game-variant decode block is skipped for the main menu. Behaviour is
+  unchanged (the menu never had a variant), but it stops the bogus `No game variant found (looked for '')` warning on every menu boot.
+- **Open / please check (O7OF):** the Season 8 / robo-arm clamp in `ApplyArmoryAppearance` (2605bf7) uses MCC item
+  numbers (`helmet >= 72`, `chest >= 235`), but the dump notes say engine index helmet >= 64 / chest >= 20 crashes. By the
+  `Chests()` table, `chest_wp_1` (234) is engine index 20 and the AKIS/GRD helmets (68-71) are >= 64, so they may still hit
+  hr+0x105512. Not changed until it's confirmed in a disassembler or tested in game.
+- **Open:** the Armory now waits without a time limit for the engine scene (`ArmorCustomizer.cpp`, 2605bf7). If `mainmenu_all.map` is
+  present but the scene never comes up, the preview shows "LOADING ARMORY..." forever.
+- **Still untested after the fix:** a remote guest (two PCs) loading into an MP match with the restored map variant at +0x1D308.
+- Build: `noble-client.exe` / `noble-dedicated.exe` 0 errors, 0 warnings (/W4).
 
 --
 
