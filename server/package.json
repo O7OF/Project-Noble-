@@ -1,22 +1,15 @@
 {
-  "name": "project-noble-server",
+  "name": "zombie-fps-server",
   "version": "1.0.0",
-  "description": "Project Noble backend server for Halo: Reach Community Edition - Auth, Stats, Server Browser, and Matchmaking",
+  "description": "Backend database server for 3D FPS Zombie Survival Shooter",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node test/test_backend.js"
+    "set-dev": "node set_dev.js"
   },
-  "keywords": [
-    "halo-reach",
-    "project-noble",
-    "master-server",
-    "matchmaking",
-    "stats"
-  ],
-  "author": "Project Noble Contributors",
-  "license": "MIT",
-  "engines": {
-    "node": ">=18.0.0"
+  "dependencies": {
+    "express": "^4.19.2",
+    "sqlite3": "^5.1.7",
+    "bcryptjs": "^2.4.3"
   }
 }
