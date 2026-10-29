@@ -1,5 +1,6 @@
 #include "BlamEngine.hpp"
 #include "ReachHost.hpp"
+#include "network/NetworkTransport.hpp"
 #include "ui/LoadScreen.hpp"
 #include "career/Career.hpp"
 #include "hooks/HookManager.hpp"
@@ -247,8 +248,24 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
 
     int clampedDiff = (difficulty >= 0 && difficulty <= 3) ? difficulty : 1;
 
-    // 190 is Boardwalk (a multiplayer map), not the menu.
-        const bool isGuest = !connectAddress.empty();
+    const bool isGuest = !connectAddress.empty();
+    if (!NetworkTransport::Get().IsActive()) {
+        if (isGuest) {
+            std::string tip = "127.0.0.1";
+            uint16_t tport = 11774;
+            size_t c = connectAddress.rfind(':');
+            if (c != std::string::npos) {
+                tip = connectAddress.substr(0, c);
+                int p = std::atoi(connectAddress.substr(c + 1).c_str());
+                if (p > 0 && p <= 65535) tport = static_cast<uint16_t>(p);
+            } else {
+                tip = connectAddress;
+            }
+            NetworkTransport::Get().Initialize(false, tip, tport);
+        } else {
+            NetworkTransport::Get().Initialize(true);
+        }
+    }
     if (isGuest) {
         loadedPrebuilt = false;
     }
@@ -345,30 +362,45 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
             }
         }
 
+        uint64_t localMachineId = NetworkTransport::Get().GetLocalMachineId();
+        uint64_t hostMachineId = NetworkTransport::Get().GetHostMachineId();
+
         if (isGuest) {
-            // Guest mode: 0 local players, host session holds membership
-            memset(&block[0x60], 0, 8);
-            memset(&block[0xE8], 0, 32);
-            memset(&block[0x2F0], 0, 4);
-            *reinterpret_cast<uint32_t*>(&block[0x2F4]) = 0xFFFFFFFF;
-            // Write remote host endpoint into +0x2F8 (IPv4 4-bytes, port uint16, pad uint16)
-            block[0x2F8] = targetOctets[0];
-            block[0x2F9] = targetOctets[1];
-            block[0x2FA] = targetOctets[2];
-            block[0x2FB] = targetOctets[3];
-            *reinterpret_cast<uint16_t*>(&block[0x2FC]) = targetHostPort;
-            *reinterpret_cast<uint16_t*>(&block[0x2FE]) = 0;
-            // Flags at 0x2BF14
-            block[0x2BF14] = 0xF3;
-            block[0x2BF15] = 0x01;
-            NOBLE_INFO("BlamEngine: Configured Guest Launch Block targeting host {}:{}", targetHostIp, targetHostPort);
-        } else {
-            // Set local player 0 active (from host-probe::new_launch_block lines 251-274)
-            block[0xE8] = 0x01; // 1 active player
+            // Guest mode: 1 local active player, target host machine at 0x2F8
+            block[0] &= ~0x08; // bit 3 cleared for guest
+            *reinterpret_cast<uint64_t*>(&block[0x60]) = 0; // Host machine id is 0 at 0x60 on guest
+            block[0xE8] = 0x01; // 1 active local player
             block[0xF0] = 0xBE;
             block[0xF1] = 0xF3;
             block[0xF2] = 'Y';
             block[0xF3] = '?';
+            *reinterpret_cast<uint64_t*>(&block[0xF8]) = localMachineId; // Local player 0 machine ID
+            block[0x100] = 0x00;
+            block[0x101] = 0x00;
+            block[0x102] = 0x00;
+            block[0x103] = 0x00;
+            block[0x104] = 0x02;
+            block[0x108] = 0x00;
+            block[0x109] = 0x00;
+            block[0x10A] = 0x00;
+            block[0x10B] = 0x00;
+            block[0x2F0] = 0x00;
+            *reinterpret_cast<uint32_t*>(&block[0x2F4]) = 0xFFFFFFFF;
+            *reinterpret_cast<uint64_t*>(&block[0x2F8]) = hostMachineId; // uint64 Host Machine ID
+            block[0x2BF14] = 0xF3;
+            block[0x2BF15] = 0x01;
+            NOBLE_INFO("BlamEngine: Configured Guest Launch Block targeting host {}:{} (Local: 0x{:X}, Host: 0x{:X})",
+                targetHostIp, targetHostPort, localMachineId, hostMachineId);
+        } else {
+            // Host mode: 1 local active player, host machine at 0x60 and 0xF8
+            block[0] |= 0x08; // bit 3 set for host
+            *reinterpret_cast<uint64_t*>(&block[0x60]) = localMachineId;
+            block[0xE8] = 0x01; // 1 active local player
+            block[0xF0] = 0xBE;
+            block[0xF1] = 0xF3;
+            block[0xF2] = 'Y';
+            block[0xF3] = '?';
+            *reinterpret_cast<uint64_t*>(&block[0xF8]) = localMachineId;
             block[0x100] = 0x00;
             block[0x101] = 0x00;
             block[0x102] = 0x00;
@@ -379,6 +411,8 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
             block[0x10A] = 0x00;
             block[0x10B] = 0x00;
             block[0x2F0] = 0x01;
+            *reinterpret_cast<uint32_t*>(&block[0x2F4]) = 0;
+            *reinterpret_cast<uint64_t*>(&block[0x2F8]) = 0;
         }
 
         // Default variant buffer init at offset 0x1D308 (RVA 0x6BFF8)
@@ -415,10 +449,10 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
         NOBLE_INFO("BlamEngine: launch block map index {} -> map id {}", static_cast<int32_t>(effectiveMapId), mapInfoId);
     }
 
-    // 16-byte per-launch random identifier at +0x50 (present in RR's captured blocks, zero in ours).
-    GUID launchId{};
-    if ((!isMainMenu || !loadedPrebuilt) && SUCCEEDED(CoCreateGuid(&launchId))) {
-        memcpy(&block[0x50], &launchId, sizeof(launchId));
+    // Synchronized Network Session ID at +0x50 and local machine ID at +0x58
+    if (!isMainMenu || !loadedPrebuilt) {
+        *reinterpret_cast<uint64_t*>(&block[0x50]) = NetworkTransport::Get().GetSessionId();
+        *reinterpret_cast<uint64_t*>(&block[0x58]) = NetworkTransport::Get().GetLocalMachineId();
     }
 
     if (isCampaign || isFirefight) {
@@ -470,7 +504,7 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
     // and stalls at 4%). Default: MCC's stock slayer_054.bin from the player's own install.
     // NOTE: Authentic pre-built Campaign launch blocks already contain authentic campaign state
     // and mission variants at +0x300, and must NOT be overwritten with multiplayer Slayer!
-    if (!isGuest && (!isCampaign || !customVariantPath.empty())) {
+    if (!isCampaign || !customVariantPath.empty()) {
         std::filesystem::path variantPath;
         if (!customVariantPath.empty() && std::filesystem::exists(customVariantPath)) {
             variantPath = customVariantPath;
@@ -614,6 +648,7 @@ void BlamEngine::Shutdown() {
     if (!m_isInitialized) return;
 
     NOBLE_INFO("Shutting down Blam! engine...");
+    NetworkTransport::Get().Shutdown();
     if (m_fnShutdown && m_engineInstance) {
         m_fnShutdown(m_engineInstance);
     }

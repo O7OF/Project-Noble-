@@ -137,6 +137,7 @@ set(SOURCES
     src/engine/KeyBindings.cpp
     src/career/Career.cpp
     src/network/MasterServerClient.cpp
+    src/network/NetworkTransport.cpp
 )
 
 set(HEADERS
@@ -188,6 +189,7 @@ set(HEADERS
     src/engine/KeyBindings.hpp
     src/career/Career.hpp
     src/network/MasterServerClient.hpp
+    src/network/NetworkTransport.hpp
 )
 
 add_executable(noble-client WIN32 ${SOURCES} ${HEADERS})

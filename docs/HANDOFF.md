@@ -11,6 +11,23 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 ---
 
+## 0. Pick up here (2026-10-28, 22:15 ET) - Netcode Fixed: Host Slot 41/43 NetworkTransport, Synchronized Session IDs, Active Guest Player Slot & Variant Decoding
+
+- **Root Cause Resolution for "Loads forever at 5% on join" and "Player joined never pops up":**
+  1. **Missing Game Variant Decoding on Guest:** In `BlamEngine.cpp` (`BuildLaunchBlock`), `!isGuest` previously skipped variant decoding into `block[0x300]` when joining. Halo: Reach's Blam! engine requires the game variant layout in memory to resolve scenario dependencies during map loading; without it, the engine stalls at 5% indefinitely. Fixed by decoding stock or custom game variants (`slayer_054.bin` / `hr_ff_standard_1set.bin`) for **both** host and guest.
+  2. **Unimplemented Packet Transport (Host Slots 41 & 43):** Reversed Reach Renaissance (`host-probe.exe`) and discovered that in MCC, `haloreach.dll` abstracts network packet transmission through the host interface callbacks rather than raw WinSock sockets:
+     - **Host Slot 41 (`HostSlot41_NetSend`):** Engine calls to send UDP packets (`targetPeerId`, `data`, `size`).
+     - **Host Slot 43 (`HostSlot43_NetRecv`):** Engine polls to receive incoming packets (`outBuffer`, `capacity`, `outSenderPeerId`).
+     Previously, both slots were silent stubs returning 0, dropping 100% of network traffic. Created `NetworkTransport` (`src/network/NetworkTransport.hpp` & `NetworkTransport.cpp`) providing non-blocking UDP socket I/O on port 11774 with automated peer table mapping.
+  3. **Mismatched Network Session IDs:** Previously, each client generated a random GUID at `block[0x50]` independently, causing the host to reject incoming guest packets due to mismatched session credentials. Fixed by synchronizing `block[0x50]` and secondary interface slot 147 (`Iface2Slot147_SessionGuid`) using a shared, deterministic session ID (`0x48414C4F52454143ULL`).
+  4. **Zeroed Local Player Count on Guest:** `BuildLaunchBlock` previously cleared `block[0xE8]` and player slots on the guest, leaving 0 active local players. Reach engine requires at least 1 local active player (`block[0xE8] = 0x01`, descriptor at `0x100..0x10B`) so the guest can spawn its player into the session and communicate membership to the host.
+  5. **Host Machine ID in Launch Block:** Corrected `block[0x2F8]` to carry the 64-bit uint64 Host Machine ID (`kDefaultHostMachineId = 0x484F535400000001ULL`) rather than raw IP octets.
+
+- **Fresh Release Binaries Deployed:**
+  - Built with MSVC Release configuration (`noble-client.exe`, `noble-dedicated.exe`) and copied to `C:\Users\Chey1\Desktop\Release For Test\`.
+
+---
+
 ## 0. Pick up here (2026-10-28, 21:00 ET) - O7OF Updates: Master Server Online, IPify Public IP Detection, Guest Launch Block & Robust UPnP P2P
 
 - **Master Server Deployed & Live on Render (`https://outbreak-z-test-server.onrender.com/`):**
