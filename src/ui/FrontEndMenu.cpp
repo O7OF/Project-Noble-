@@ -2703,6 +2703,7 @@ void FrontEndMenu::RenderOverlayImpl(IDXGISwapChain* swapChain, bool clear) {
                     // the Noble-drawn menu reads choice.connectAddress itself).
                     args += L" -connect \"" + ToWide(choice.connectAddress) + L"\"";
                     if (!choice.sessionId.empty()) args += L" -session-id \"" + ToWide(choice.sessionId) + L"\"";
+                    if (!choice.sessionToken.empty()) args += L" -session-token \"" + ToWide(choice.sessionToken) + L"\"";
                 }
                 NOBLE_INFO("FrontEndMenu: launching match via Relaunch ({} {})", choice.mode, choice.map);
                 ShowWindow(hwnd, SW_HIDE); UpdateWindow(hwnd);

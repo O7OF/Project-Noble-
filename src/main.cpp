@@ -276,48 +276,21 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         }
         LocalFree(argvW);
     }
-
-    // Run Front-End Menu directly in the host window before haloreach.dll starts.
-    // This allows browsing servers, hosting/joining lobbies, picking variants, and launching
-    // directly in the SAME application window with ZERO window swapping or child process relaunches.
-    if (noble::FrontEndMenu::ShouldShow()) {
-        noble::FrontEndChoice choice = noble::FrontEndMenu::Run(*window, *renderer, reachInstall->reachDirectory);
-        if (!choice.play) {
-            NOBLE_INFO("Exiting from the front-end menu.");
-            noble::MasterServerClient::Get().Shutdown();
-            noble::SessionManager::Get().Shutdown();
-            noble::UiArt::Shutdown();
-            noble::UIManager::Shutdown();
-            noble::Logger::Shutdown();
-            TerminateProcess(GetCurrentProcess(), 0);
-        }
-        launchMap = choice.map;
-        launchMode = choice.mode;
-        customVariant = choice.variantPath;
-        launchDifficulty = choice.difficulty;
-        launchSkulls = choice.skulls;
-        if (!choice.modFolder.empty()) {
-            modFolder = choice.modFolder;
-        }
-        if (choice.host) {
-            launchHost = true;
-            hostOnline = choice.hostOnline;
-            hostPublic = choice.hostPublic;
-            hostMaxPlayers = choice.hostMaxPlayers;
-            connectSessionId = choice.sessionId;
-            connectSessionToken = choice.sessionToken;
-        } else if (!choice.connectAddress.empty()) {
-            connectAddress = choice.connectAddress;
-            connectSessionId = choice.sessionId;
-            connectSessionToken = choice.sessionToken;
+    // Check if we should launch into the Front-End Menu + 3D Armory (mainmenu_all.map inside haloreach.dll)
+    const bool showMenu = noble::FrontEndMenu::ShouldShow();
+    if (showMenu) {
+        noble::ReachArmory::SetMenuMode(true);
+        noble::FrontEndMenu::Initialize(reachInstall->reachDirectory);
+        launchMap = "mainmenu";
+        launchMode = "mainmenu";
+    } else {
+        noble::ReachArmory::SetMenuMode(false);
+        if (launchMap.empty()) {
+            launchMap = "20_sword_slayer";
+            launchMode = "multiplayer";
         }
     }
 
-    noble::ReachArmory::SetMenuMode(false);
-    if (launchMap.empty()) {
-        launchMap = "20_sword_slayer";
-        launchMode = "multiplayer";
-    }
 
     if (!modFolder.empty()) {
         NOBLE_INFO("Activating mod folder '{}'", modFolder.string());
@@ -349,6 +322,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     }
 
     // Remember this launch for the post-game "PLAY AGAIN" button and the loading screen.
+    if (!showMenu) {
     auto toWide = [](const std::string& s) -> std::wstring {
         if (s.empty()) return L"";
         const int len = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
@@ -383,6 +357,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     noble::PauseMenu::SetLoadingMap(launchMap);
     noble::UiArt::LoadingBackground(launchMap);
     noble::UiArt::MapPreview(launchMap, true);
+    }
 
     // 8. Load and bootstrap haloreach.dll directly in process memory
     auto loader = std::make_unique<noble::Loader>();
@@ -419,7 +394,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     }
 
     // Elite armour pack (data\armor\<name>.map + .rrreloc, local only): loaded with multiplayer and Firefight maps.
-    noble::ElitePack::Install(loader->GetModuleHandle(), userStoragePath, launchMode);
+    if (!showMenu) noble::ElitePack::Install(loader->GetModuleHandle(), userStoragePath, launchMode);
 
     if (!connectAddress.empty()) {
         launchHost = false; // Guest joining remote match

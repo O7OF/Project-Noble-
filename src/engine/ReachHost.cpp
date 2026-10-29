@@ -900,6 +900,16 @@ static void ApplyArmoryAppearance(uint8_t* profile) {
             NOBLE_WARN("ReachHost [Slot 34]: utility {} isn't in Reach's list; default utility in game", utility);
             utility = 0;
         }
+        // Season 8 helmets (72..89) and prosthetic roboarm chests (235..239) exceed base scenario tag limits
+        // and trigger the bugged haloreach+0x10532a fallback builder which causes an access violation at 0x105512.
+        if (helmet >= 72) {
+            NOBLE_WARN("ReachHost [Slot 34]: helmet {} (Season 8) clamped to Mark V [B] in match to avoid engine tag crash", helmet);
+            helmet = 0;
+        }
+        if (chest >= 235) {
+            NOBLE_WARN("ReachHost [Slot 34]: chest {} (Robo-arm) clamped to base chest in match to avoid engine tag crash", chest);
+            chest = 126;
+        }
 
         put(0x40, helmet);
         put(0x44, kLeftShoulder + num(sp, "left_shoulder_index", 0, 17, 0));

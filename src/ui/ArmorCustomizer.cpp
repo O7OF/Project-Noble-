@@ -1158,7 +1158,7 @@ void ArmorCustomizer::RenderCharacterPreview(ID3D11Device* device, ID3D11DeviceC
     static const bool menuMapPresent = std::filesystem::exists(ReachHost::Get().GetDataDir() / "menumaps" / "mainmenu_all.map");
     static double sceneWaitStart = -1.0;
     if (sceneWaitStart < 0.0) sceneWaitStart = ImGui::GetTime();
-    const bool waitingForScene = !engineScene && menuMapPresent && (ImGui::GetTime() - sceneWaitStart) < 30.0;
+    const bool waitingForScene = !engineScene && menuMapPresent;
     if (waitingForScene) {
         const int dots = static_cast<int>(ImGui::GetTime() * 2.0) % 4;
         const std::string msg = std::string("LOADING ARMORY") + std::string(static_cast<size_t>(dots), '.');
