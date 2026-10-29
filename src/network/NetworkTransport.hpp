@@ -56,6 +56,9 @@ private:
     std::mutex m_mutex;
     std::unordered_map<uint64_t, sockaddr_in> m_peerTable;
     std::unordered_map<std::string, uint64_t> m_addrToPeer;
+
+    std::atomic<uint64_t> m_packetsSent{ 0 };
+    std::atomic<uint64_t> m_packetsRecv{ 0 };
 };
 
 } // namespace noble

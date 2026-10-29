@@ -106,6 +106,9 @@ bool NetworkTransport::Initialize(bool isHost, const std::string& remoteIp, uint
         m_addrToPeer.clear();
     }
 
+    m_packetsSent.store(0);
+    m_packetsRecv.store(0);
+
     m_active.store(true);
     NOBLE_INFO("NetworkTransport: Initialized {} on UDP port {} (Local Machine ID: 0x{:X}, Host ID: 0x{:X}, Session ID: 0x{:X})",
         m_isHost ? "HOST" : "GUEST", m_localPort, m_localMachineId, m_hostMachineId, m_sessionId);
@@ -116,9 +119,13 @@ bool NetworkTransport::Initialize(bool isHost, const std::string& remoteIp, uint
 void NetworkTransport::Shutdown() {
     if (!m_active.exchange(false)) return;
 
-    if (m_socket != INVALID_SOCKET) {
-        closesocket(m_socket);
-        m_socket = INVALID_SOCKET;
+    // Grace period for any in-flight send/recv calls to complete before closing socket
+    Sleep(50);
+
+    SOCKET s = m_socket;
+    m_socket = INVALID_SOCKET;
+    if (s != INVALID_SOCKET) {
+        closesocket(s);
     }
 
     std::lock_guard<std::mutex> lock(m_mutex);
@@ -140,14 +147,36 @@ uint64_t NetworkTransport::OnNetSend(uint64_t targetPeerId, const uint8_t* data,
         return 0;
     }
 
-    if (!m_isHost) {
-        // Guest sends all traffic to the remote host endpoint
-        int sent = sendto(m_socket, reinterpret_cast<const char*>(data), static_cast<int>(size), 0,
-                          reinterpret_cast<const sockaddr*>(&m_remoteHostAddr), sizeof(m_remoteHostAddr));
-        return (sent > 0) ? static_cast<uint64_t>(sent) : 0;
+    // Reach network packet framing (reversed from host-probe::net::handle / send_route_kind):
+    // Wire packet: [uint64_t senderMachineId] [raw Blam! engine payload]
+    const size_t totalBytes = sizeof(uint64_t) + size;
+    uint8_t stackBuf[2048];
+    std::vector<uint8_t> heapBuf;
+    uint8_t* wireData = stackBuf;
+
+    if (totalBytes > sizeof(stackBuf)) {
+        heapBuf.resize(totalBytes);
+        wireData = heapBuf.data();
     }
 
-    // Host sends traffic to specific peer or broadcasts to active peers
+    // Prepend sender's machine ID
+    std::memcpy(wireData, &m_localMachineId, sizeof(uint64_t));
+    std::memcpy(wireData + sizeof(uint64_t), data, size);
+
+    uint64_t packetNum = ++m_packetsSent;
+
+    if (!m_isHost) {
+        // Guest sends all traffic to the remote host endpoint
+        int sent = sendto(m_socket, reinterpret_cast<const char*>(wireData), static_cast<int>(totalBytes), 0,
+                          reinterpret_cast<const sockaddr*>(&m_remoteHostAddr), sizeof(m_remoteHostAddr));
+        if (packetNum <= 10 || (packetNum % 500) == 0) {
+            NOBLE_INFO("NetworkTransport: [GUEST] Sent packet #{} to Host 0x{:X} ({} payload bytes, {} wire bytes, result: {})",
+                       packetNum, targetPeerId, size, totalBytes, sent);
+        }
+        return (sent > 0) ? static_cast<uint64_t>(size) : 0;
+    }
+
+    // Host sends traffic to specific peer or active peers in peer table
     sockaddr_in destAddr = {};
     bool found = false;
 
@@ -158,16 +187,22 @@ uint64_t NetworkTransport::OnNetSend(uint64_t targetPeerId, const uint8_t* data,
             destAddr = it->second;
             found = true;
         } else if (!m_peerTable.empty()) {
-            // If targeting unknown peer or initial join reply, route to the most recent peer
+            // Initial join handshake reply: route to the most recent peer
             destAddr = m_peerTable.begin()->second;
             found = true;
         }
     }
 
     if (found) {
-        int sent = sendto(m_socket, reinterpret_cast<const char*>(data), static_cast<int>(size), 0,
+        int sent = sendto(m_socket, reinterpret_cast<const char*>(wireData), static_cast<int>(totalBytes), 0,
                           reinterpret_cast<const sockaddr*>(&destAddr), sizeof(destAddr));
-        return (sent > 0) ? static_cast<uint64_t>(sent) : 0;
+        if (packetNum <= 10 || (packetNum % 500) == 0) {
+            char ipStr[INET_ADDRSTRLEN] = { 0 };
+            inet_ntop(AF_INET, &destAddr.sin_addr, ipStr, sizeof(ipStr));
+            NOBLE_INFO("NetworkTransport: [HOST] Sent packet #{} to Peer 0x{:X} ({}:{}) ({} payload bytes, result: {})",
+                       packetNum, targetPeerId, ipStr, ntohs(destAddr.sin_port), size, sent);
+        }
+        return (sent > 0) ? static_cast<uint64_t>(size) : 0;
     }
 
     // Packet accepted into pipeline even if peer endpoint is not registered yet
@@ -181,50 +216,63 @@ uint64_t NetworkTransport::OnNetRecv(uint8_t* outBuffer, size_t bufferCapacity, 
 
     sockaddr_in senderAddr = {};
     int senderLen = sizeof(senderAddr);
-    int received = recvfrom(m_socket, reinterpret_cast<char*>(outBuffer), static_cast<int>(bufferCapacity), 0,
+    uint8_t rawBuf[4096];
+
+    int received = recvfrom(m_socket, reinterpret_cast<char*>(rawBuf), sizeof(rawBuf), 0,
                             reinterpret_cast<sockaddr*>(&senderAddr), &senderLen);
 
-    if (received <= 0) {
-        return 0; // No packet available (non-blocking)
+    if (received <= static_cast<int>(sizeof(uint64_t))) {
+        return 0; // No packet available or below minimum wire framing size
     }
+
+    // Extract sender machine ID from wire header
+    uint64_t senderMachineId = *reinterpret_cast<const uint64_t*>(rawBuf);
+    size_t payloadLen = static_cast<size_t>(received) - sizeof(uint64_t);
+
+    if (payloadLen > bufferCapacity) {
+        payloadLen = bufferCapacity;
+    }
+
+    std::memcpy(outBuffer, rawBuf + sizeof(uint64_t), payloadLen);
+
+    if (outSenderPeerId) {
+        *outSenderPeerId = senderMachineId;
+    }
+
+    uint64_t recvNum = ++m_packetsRecv;
 
     if (!m_isHost) {
-        // Guest received packet from host
-        if (outSenderPeerId) {
-            *outSenderPeerId = m_hostMachineId;
+        if (recvNum <= 10 || (recvNum % 500) == 0) {
+            NOBLE_INFO("NetworkTransport: [GUEST] Received packet #{} from Host 0x{:X} ({} payload bytes)",
+                       recvNum, senderMachineId, payloadLen);
         }
-        return static_cast<uint64_t>(received);
+        return static_cast<uint64_t>(payloadLen);
     }
 
-    // Host received packet from remote guest
+    // Host received packet from remote guest: map senderMachineId to senderAddr
     char ipStr[INET_ADDRSTRLEN] = { 0 };
     inet_ntop(AF_INET, &senderAddr.sin_addr, ipStr, sizeof(ipStr));
     std::string addrKey = std::string(ipStr) + ":" + std::to_string(ntohs(senderAddr.sin_port));
 
-    uint64_t senderPeerId = 0;
     {
         std::lock_guard<std::mutex> lock(m_mutex);
-        auto it = m_addrToPeer.find(addrKey);
-        if (it != m_addrToPeer.end()) {
-            senderPeerId = it->second;
-        } else {
-            // Map new remote peer
-            senderPeerId = std::hash<std::string>{}(addrKey) | 1ULL;
-            if (senderPeerId == m_localMachineId) {
-                senderPeerId ^= 0xFFFFFFFF00000000ULL;
-            }
-            m_peerTable[senderPeerId] = senderAddr;
-            m_addrToPeer[addrKey] = senderPeerId;
-            NOBLE_INFO("NetworkTransport: New remote peer connected from {} -> assigned Peer ID 0x{:X}",
-                       addrKey, senderPeerId);
+        auto it = m_peerTable.find(senderMachineId);
+        if (it == m_peerTable.end() ||
+            it->second.sin_addr.s_addr != senderAddr.sin_addr.s_addr ||
+            it->second.sin_port != senderAddr.sin_port) {
+            m_peerTable[senderMachineId] = senderAddr;
+            m_addrToPeer[addrKey] = senderMachineId;
+            NOBLE_INFO("NetworkTransport: Registered remote peer 0x{:X} at {}",
+                       senderMachineId, addrKey);
         }
     }
 
-    if (outSenderPeerId) {
-        *outSenderPeerId = senderPeerId;
+    if (recvNum <= 10 || (recvNum % 500) == 0) {
+        NOBLE_INFO("NetworkTransport: [HOST] Received packet #{} from Peer 0x{:X} ({}) ({} payload bytes)",
+                   recvNum, senderMachineId, addrKey, payloadLen);
     }
 
-    return static_cast<uint64_t>(received);
+    return static_cast<uint64_t>(payloadLen);
 }
 
 } // namespace noble

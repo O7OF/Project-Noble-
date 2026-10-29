@@ -1,4 +1,4 @@
-# Project Noble: handoff (2026-10-28, 20:30 ET)
+# Project Noble: handoff (2026-10-28, 22:50 ET)
 Dominus join the team 20261028! 
 This picks up a reverse-engineering and C++ effort on **Tyler's Windows PC**. All paths below are real paths on that machine.
 Tyler (GitHub `WeabooTyler117`) works with a partner (GitHub `O7OF`) who owns the repo and writes most of the code.
@@ -8,6 +8,31 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 **Goal:** `noble-client.exe` loads MCC's own `haloreach.dll` (Halo: Reach) and drives it **without MCC**, like the existing
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
 MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour.
+
+---
+
+## 0. Pick up here (2026-10-28, 22:50 ET) - Infinite Load on Join Fixed: Wire Packet Framing (8-Byte Machine ID Header), Peer Resolution & Shutdown Order
+
+- **Root Cause of Infinite Load at `LoadProgress: 2.0%, launch state 9` Resolved:**
+  - Reversed `host-probe.exe` (`0x1400271c0.c` / `0x140028df0.c` / `0x140025af0.c` / `0x140038130.c`) to uncover the exact wire protocol between Blam! engine peers:
+    1. **Missing 8-Byte Machine ID Header on Wire Packets:**
+       In `haloreach.dll`, network transport is abstracted through host callbacks Slot 41 (`OnNetSend`) and Slot 43 (`OnNetRecv`).
+       - On `OnNetSend`, the host must prepend the sender's 8-byte uint64 machine ID (`m_localMachineId`) to the packet payload before transmitting over UDP (`[uint64_t senderMachineId] [payload]`).
+       - On `OnNetRecv`, the host must inspect incoming UDP datagrams, extract the first 8 bytes as `senderMachineId`, pass `*outSenderPeerId = senderMachineId`, and deliver the payload stripped of those 8 bytes to `outBuffer`.
+       - Previously, `NetworkTransport` transmitted raw payloads without prepending `m_localMachineId`, and `OnNetRecv` delivered the raw bytes directly while generating a random hash of the sender's IP string.
+       - Because `*outSenderPeerId` was a random hash rather than the guest's authentic machine ID, `haloreach.dll`'s native network session protocol rejected incoming join packets, leaving the guest engine waiting forever in `launch state 9` (`c_network_session::join_synchronize` / waiting for membership replication).
+    2. **Host-to-Peer Address Mapping:**
+       On the host, `OnNetRecv` now maps the extracted `senderMachineId` directly to the sender's `sockaddr_in` in `m_peerTable[senderMachineId]`. When `haloreach.dll` invokes `OnNetSend(targetPeerId, ...)` to reply to the guest, `m_peerTable.find(targetPeerId)` finds the exact IP/port of that remote player.
+    3. **Diagnostic Packet Counters:**
+       Added packet counters (`m_packetsSent`, `m_packetsRecv`) logging payload and wire sizes, target/sender peer IDs, and endpoints for the first 10 packets and every 500 packets thereafter.
+    4. **Clean Engine Shutdown Sequence:**
+       Fixed `0xC0000005` access violation during process shutdown. In `BlamEngine::Shutdown()`, `m_fnShutdown(m_engineInstance)` is now invoked **before** `NetworkTransport::Get().Shutdown()` so the engine's internal session teardown can dispatch disconnect packets cleanly before the socket is closed.
+    5. **Master Server URL Path Normalization:**
+       In `MasterServerClient.cpp`, trailing slashes on custom master server URLs (e.g. `https://outbreak-z-test-server.onrender.com/`) are now properly trimmed before appending endpoint paths, preventing double-slash HTTP 400/404 routing errors.
+
+- **Binaries Deployed & Verified:**
+  - Built Release binaries (`noble-client.exe`, `noble-dedicated.exe`) with 0 errors and 0 warnings.
+  - Fresh binaries deployed directly to `C:\Users\Chey1\Desktop\Release For Test\`.
 
 ---
 

@@ -648,10 +648,10 @@ void BlamEngine::Shutdown() {
     if (!m_isInitialized) return;
 
     NOBLE_INFO("Shutting down Blam! engine...");
-    NetworkTransport::Get().Shutdown();
     if (m_fnShutdown && m_engineInstance) {
         m_fnShutdown(m_engineInstance);
     }
+    NetworkTransport::Get().Shutdown();
 
     m_engineInstance = nullptr;
     m_isInitialized = false;

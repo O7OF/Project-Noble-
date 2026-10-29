@@ -57,8 +57,10 @@ HttpResult HttpRequest(const std::string& fullUrl,
     const INTERNET_PORT port = parts.nPort ? parts.nPort : (isHttps ? INTERNET_DEFAULT_HTTPS_PORT : INTERNET_DEFAULT_HTTP_PORT);
 
     std::wstring requestPath = parts.dwUrlPathLength > 0 ? std::wstring(parts.lpszUrlPath, parts.dwUrlPathLength) : L"";
-    if (requestPath.size() > 1 && requestPath.back() == L'/') requestPath.pop_back();
-    requestPath += Widen(path);
+    while (!requestPath.empty() && requestPath.back() == L'/') requestPath.pop_back();
+    std::wstring subPath = Widen(path);
+    if (!subPath.empty() && subPath.front() != L'/') requestPath += L'/';
+    requestPath += subPath;
 
     HINTERNET session = WinHttpOpen(L"ProjectNoble/0.1", WINHTTP_ACCESS_TYPE_NO_PROXY, nullptr, nullptr, 0);
     if (!session) {
