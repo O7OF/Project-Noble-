@@ -1,4 +1,4 @@
-# Project Noble: handoff (2026-10-28, 19:25 ET)
+# Project Noble: handoff (2026-10-28, 19:50 ET)
 
 This picks up a reverse-engineering and C++ effort on **Tyler's Windows PC**. All paths below are real paths on that machine.
 Tyler (GitHub `WeabooTyler117`) works with a partner (GitHub `O7OF`) who owns the repo and writes most of the code.
@@ -10,6 +10,19 @@ community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownershi
 MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour.
 
 ---
+
+## 0. Pick up here (2026-10-28, 19:50 ET) - pushed 4483029; menu -> match crash fixed (not yet built/tested)
+
+- **Pushed** `4483029` (Elite pack A1-A3, ElitePack files, docs) on top of O7OF's pulled `0f4d050` (career),
+  `f94c4cb` (settings / main / server browser), `f87c367` (main entry + network client). Working tree was clean.
+- **Crash starting a match from the menu (Windows error):** the menu process shuts down to relaunch for the match;
+  `main.cpp` shut ImGui down (`UIManager::Shutdown`) before `blamEngine->Shutdown()`, and the engine thread drew one
+  more overlay frame -> AV in `ImGui_ImplDX11_NewFrame` (fault RVA 0x1B3D1E, found with `noble-client.map`, exe base
+  from the IsWhitespace hook address in the log). Fix written to `src/main.cpp` (engine shutdown first, then UiArt /
+  UIManager / LoadScreen). **Not built, tested or committed yet.** Tell O7OF (his main.cpp area).
+- The log showed two Noble processes writing the same log at once, and a fresh launch self-hosting
+  "Mode: Campaign, Map: Boneyard" right away (O7OF's new network code?) - ask O7OF if intended.
+- Elite pack state: see 19:25 below (first-person Elite arms still bare, pack Elite too tough).
 
 ## 0. Pick up here (2026-10-28, 19:25 ET) - Elite pack: A2 + A3 work (Armory Zealot spawns as Zealot)
 
@@ -33,7 +46,7 @@ All in `src/engine/ElitePack.cpp` (on Tyler's PC, NOT committed/pushed yet; Tyle
   *_id via `PieceIndex` (pack order = menu lists minus H2A; RR set table kSetPieces as fallback). Every player Elite gets
   the local Armory pieces for now (other players need networking).
 - **Open:** pack Elite is much tougher than MCC's MP Elite (2 grenades don't drop its shields; stock Elite dies) - copy
-  MCC's MP Elite vitality, or RR's "Even Elites"; check first-person arms; H2A indices are guesses (11 helmet, 10 legs);
+  MCC's MP Elite vitality, or RR's "Even Elites"; first-person Elite arms still bare (Tyler 19:22) even with the map list + set byte kept - find which model draws them (pack FP model? representation entry has more refs than +0x40); H2A indices are guesses (11 helmet, 10 legs);
   Honor Guard etc. to verify by eye; Heart Attack/Birthday effect showing once (watch); `.rrneeds` check not done
   (campaign excluded); before pushing, consider making the pack opt-in (`-elite-pack`) so O7OF doesn't get it by surprise.
 - `NOBLE_PROFILE_SET` env var trap: it persists in a cmd window and overrides the Armory (+0x8C=C7 = General). Clear with
