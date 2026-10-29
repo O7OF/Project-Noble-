@@ -1518,13 +1518,12 @@ static void TakePendingLobbyEvents(MenuState& st) {
         s_lobbyEvents = PendingLobbyEvents{};
     }
     if (ev.closed) {
-        st.screen = FrontEndMenu::Screen::Servers;
-        st.activeLobbySessionId.clear();
+        st.screen = Screen::Servers;
         st.lobbySessionId.clear();
+        st.lobbySessionToken.clear();
         st.lobbyRoster.clear();
         st.isLobbyHost = false;
         NetworkTransport::Get().StopRelay();
-        st.notification = ev.closeReason.empty() ? "Lobby closed by host" : ("Lobby closed: " + ev.closeReason);
         return;
     }
     if (ev.roster) st.lobbyRoster = std::move(ev.rosterPlayers);
@@ -1561,12 +1560,11 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
             if (!current.ok || current.isClosed) {
                 if (!st.isLobbyHost) {
                     st.screen = Screen::Servers;
-                    st.activeLobbySessionId.clear();
                     st.lobbySessionId.clear();
+                    st.lobbySessionToken.clear();
                     st.lobbyRoster.clear();
                     st.isLobbyHost = false;
                     NetworkTransport::Get().StopRelay();
-                    st.notification = current.closeReason.empty() ? "Lobby closed by host" : ("Lobby closed: " + current.closeReason);
                     return;
                 }
             } else if (current.ok) {

@@ -12,10 +12,6 @@
 
 namespace noble {
 
-uint64_t MasterServerClient::GetLobbyMachineId() {
-    return LobbyMachineId();
-}
-
 namespace {
 
 // The id a menu (not yet in a match) uses in a lobby. The menu's NetworkTransport isn't initialised, so
@@ -166,6 +162,10 @@ int Int(const nlohmann::json& j, const char* key, int fallback, int lo, int hi) 
 }
 
 } // namespace
+
+uint64_t MasterServerClient::GetLobbyMachineId() {
+    return LobbyMachineId();
+}
 
 MasterServerClient& MasterServerClient::Get() {
     static MasterServerClient instance;
