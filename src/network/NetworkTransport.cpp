@@ -12,6 +12,23 @@ namespace noble {
 
 namespace {
 
+// Diagnostic: hex-dump Blam! payloads so the join handshake (55-byte join request,
+// 16-byte host reply, 26/10-byte channel traffic) can be decoded from the log.
+constexpr uint64_t kPacketDumpLimit = 60;
+std::string HexDump(const uint8_t* data, size_t size, size_t maxBytes = 96) {
+    static const char* kHex = "0123456789ABCDEF";
+    const size_t n = size < maxBytes ? size : maxBytes;
+    std::string out;
+    out.reserve(n * 3 + 8);
+    for (size_t i = 0; i < n; ++i) {
+        out.push_back(kHex[data[i] >> 4]);
+        out.push_back(kHex[data[i] & 0xF]);
+        out.push_back(' ');
+    }
+    if (n < size) out += "...";
+    return out;
+}
+
 uint64_t GenerateRandomMachineId() {
     std::random_device rd;
     std::mt19937_64 gen(rd());
@@ -472,6 +489,10 @@ uint64_t NetworkTransport::OnNetSend(uint64_t targetPeerId, const uint8_t* data,
     std::memcpy(wireData + sizeof(uint64_t), data, size);
 
     uint64_t packetNum = ++m_packetsSent;
+    if (packetNum <= kPacketDumpLimit) {
+        NOBLE_INFO("NetworkTransport: [{}] TX #{} -> 0x{:X} len={} | {}", m_isHost ? "HOST" : "GUEST",
+                   packetNum, targetPeerId, size, HexDump(data, size));
+    }
 
     // Only queue a copy to the WebSocket relay when direct UDP has not recently delivered packets.
     // Sending every packet over both UDP and WebSocket simultaneously causes every packet to arrive
@@ -624,6 +645,10 @@ uint64_t NetworkTransport::OnNetRecv(uint8_t* outBuffer, size_t bufferCapacity, 
     }
 
     uint64_t recvNum = ++m_packetsRecv;
+    if (recvNum <= kPacketDumpLimit) {
+        NOBLE_INFO("NetworkTransport: [{}] RX #{} <- 0x{:X} via {} len={} | {}", m_isHost ? "HOST" : "GUEST",
+                   recvNum, senderMachineId, fromRelay ? "RELAY" : "UDP", payloadLen, HexDump(outBuffer, payloadLen));
+    }
 
     if (!m_isHost) {
         if (recvNum <= 10 || (recvNum % 500) == 0) {
