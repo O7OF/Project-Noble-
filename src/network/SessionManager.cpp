@@ -62,10 +62,9 @@ void SessionManager::Shutdown() {
     m_stopThreads = true;
     StopHosting();
 
-    if (m_listenerSock != ~0ull && m_listenerSock != 0) {
-        SOCKET s = static_cast<SOCKET>(m_listenerSock);
-        m_listenerSock = ~0ull;
-        closesocket(s);
+    uintptr_t s = m_listenerSock.exchange(~0ull);
+    if (s != ~0ull && s != 0) {
+        closesocket(static_cast<SOCKET>(s));
     }
 
     if (m_listenerThread.joinable()) {
@@ -201,7 +200,7 @@ void SessionManager::DiscoveryListenerLoop() {
         return;
     }
 
-    m_listenerSock = static_cast<uintptr_t>(sock);
+    m_listenerSock.store(static_cast<uintptr_t>(sock));
 
     char buffer[1024];
 
@@ -276,8 +275,10 @@ void SessionManager::DiscoveryListenerLoop() {
         }
     }
 
-    m_listenerSock = ~0ull;
-    closesocket(sock);
+    uintptr_t s = m_listenerSock.exchange(~0ull);
+    if (s != ~0ull && s != 0) {
+        closesocket(static_cast<SOCKET>(s));
+    }
 }
 
 std::vector<DiscoveredSession> SessionManager::GetDiscoveredSessions() {

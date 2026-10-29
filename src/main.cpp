@@ -356,7 +356,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         if (!customMvar.empty()) args += L" -mvar \"" + toWide(customMvar) + L"\"";
         if (launchSkulls != 0) args += L" -skulls " + std::to_wstring(launchSkulls);
         if (!modFolder.empty()) args += L" -mod \"" + modFolder.wstring() + L"\"";
-        if (launchHost) {
+        if (!connectAddress.empty()) {
+            args += L" -connect \"" + toWide(connectAddress) + L"\"";
+        } else if (launchHost) {
             args += L" -host";
             if (hostOnline) args += L" -online";
             else args += L" -lan";
@@ -373,8 +375,14 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     // Elite armour pack (data\armor\<name>.map + .rrreloc, local only): loaded with multiplayer and Firefight maps.
     if (!showMenu) noble::ElitePack::Install(loader->GetModuleHandle(), userStoragePath, launchMode);
 
-    NOBLE_INFO("Launching Halo: Reach Engine: Target Map='{}', Mode='{}'", launchMap, launchMode);
-    blamEngine->LaunchMap(launchMap, launchMode, launchDifficulty, launchSkulls, customMvar, customVariant);
+    if (!connectAddress.empty()) {
+        launchHost = false; // Guest joining remote match
+        NOBLE_INFO("Launching Halo: Reach Engine as Guest connecting to '{}' (Map: {}, Mode: {})", connectAddress, launchMap, launchMode);
+        blamEngine->LaunchMap(launchMap, launchMode, launchDifficulty, launchSkulls, customMvar, customVariant, connectAddress);
+    } else {
+        NOBLE_INFO("Launching Halo: Reach Engine: Target Map='{}', Mode='{}'", launchMap, launchMode);
+        blamEngine->LaunchMap(launchMap, launchMode, launchDifficulty, launchSkulls, customMvar, customVariant);
+    }
 
 // 10. Initialize P2P & Self-Hosting Network Subsystem
     noble::SessionManager::Get().Initialize();

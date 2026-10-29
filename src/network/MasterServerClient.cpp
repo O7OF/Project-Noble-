@@ -102,6 +102,12 @@ HttpResult HttpRequest(const std::string& fullUrl,
             result.ok = (statusCode >= 200 && statusCode < 300);
             if (!result.ok) {
                 result.error = "master server replied " + std::to_string(statusCode);
+                try {
+                    auto ej = nlohmann::json::parse(result.body);
+                    if (ej.contains("error") && ej["error"].is_string()) {
+                        result.error += ": " + ej["error"].get<std::string>();
+                    }
+                } catch (...) {}
             }
         } else {
             result.error = "connection to master server failed";
@@ -190,11 +196,11 @@ void MasterServerClient::StartAdvertising(const MasterAdvert& advert) {
     std::lock_guard<std::mutex> lock(m_mutex);
     if (m_url.empty()) return;
     m_advert = advert;
-    if (m_advert.address.empty() || m_advert.address == "Unknown" || m_advert.address == "127.0.0.1") {
-        std::string ip = UPnP::Get().GetExternalIP();
-        if (ip.empty() || ip == "Unknown" || ip == "127.0.0.1") {
-            ip = UPnP::Get().GetInternalIP();
-        }
+    std::string pub = UPnP::Get().GetExternalIP();
+    if (UPnP::Get().IsPublicIP(pub)) {
+        m_advert.address = pub;
+    } else if (m_advert.address.empty() || m_advert.address == "Unknown" || m_advert.address == "127.0.0.1") {
+        std::string ip = UPnP::Get().GetInternalIP();
         if (!ip.empty() && ip != "Unknown") {
             m_advert.address = ip;
         }
@@ -307,10 +313,11 @@ void MasterServerClient::DoRegister() {
         std::lock_guard<std::mutex> lock(m_mutex);
         advert = m_advert;
     }
-    if (advert.address.empty() || advert.address == "Unknown") {
-        std::string ip = UPnP::Get().GetExternalIP();
-        if (ip.empty() || ip == "Unknown") ip = UPnP::Get().GetInternalIP();
-        advert.address = ip;
+    std::string pub = UPnP::Get().GetExternalIP();
+    if (UPnP::Get().IsPublicIP(pub)) {
+        advert.address = pub;
+    } else if (advert.address.empty() || advert.address == "Unknown" || advert.address == "127.0.0.1") {
+        advert.address = UPnP::Get().GetInternalIP();
     }
 
     nlohmann::json body = {

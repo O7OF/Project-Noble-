@@ -11,6 +11,39 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 ---
 
+## 0. Pick up here (2026-10-28, 21:00 ET) - O7OF Updates: Master Server Online, IPify Public IP Detection, Guest Launch Block & Robust UPnP P2P
+
+- **Master Server Deployed & Live on Render (`https://outbreak-z-test-server.onrender.com/`):**
+  - Updated `server.js` and `package.json` in `server/` and pushed to remote GitHub repo `https://github.com/O7OF/ServerTestDeploy` (`main` branch, commit `2362b5d`).
+  - Render auto-deployed and confirmed healthy: `GET /api/sessions` returns 200, `POST /api/sessions` registers active games with 201 Created and public IP detection via reverse proxy headers (`x-forwarded-for`).
+  - Added JSON error body parsing in `MasterServerClient.cpp` `HttpRequest()` so any master server error returns human-readable diagnostic messages.
+
+- **Public IP Discovery with Ipify & Zero-Conflict UPnP (`UPnP.cpp`, `UPnP.hpp`):**
+  - Added background public IP resolution via `https://api.ipify.org` (with `http://api.ipify.org` fallback) during `UPnP::Initialize()`.
+  - Added `IsPublicIP()` validator ensuring loopback (`127.0.0.1`), link-local (`169.254.x.x`), and RFC 1918 private subnets (`10.x.x.x`, `192.168.x.x`, `172.16-31.x.x`) are never advertised as external public IPs.
+  - UPnP `ForwardPort()` now issues `DeletePortMapping` before `AddPortMapping` to clear stale router leases, preventing conflict 718 errors. If router UPnP is disabled or rejected, it cleanly falls back to Direct IP mode while preserving the valid public IP for P2P connection.
+  - Removed premature `WSACleanup()` from `UPnP::Shutdown()` to ensure WinSock remains active while the Blam! engine network thread shuts down.
+
+- **Guest Launch Block Construction & Network Plumber (`BlamEngine.cpp`, `main.cpp`):**
+  - Fixed `src/main.cpp`: explicitly forwards `connectAddress` into `blamEngine->LaunchMap(..., connectAddress)` and sets `launchHost = false` when joining as guest.
+  - In `BlamEngine.cpp` (`BuildLaunchBlock`):
+    - Sets `block[0] = 0x00` (guest mode).
+    - Clears 32 bytes of local player block at offset `0xE8`.
+    - Writes `0xFFFFFFFF` at offset `0x2F4`.
+    - Serializes target host endpoint (IPv4 octets + uint16 port + uint16 pad) at offset `0x2F8`.
+    - Sets guest sync flags at offset `0x2BF14` (`0xF3 0x01`).
+    - Skips local variant decoding/mvar injection so match parameters are synced directly from the host.
+
+- **Server Browser & Direct Connect Enhancements (`ServerBrowser.cpp`):**
+  - **Public IP in Browser & Clipboard:** Display and "COPY INVITE" / "COPY ADDRESS" now copy the resolved public IP (`UPnP::Get().GetExternalIP()`) instead of the private LAN IP when self-hosting.
+  - **Invite Parsing Resiliency:** `ParseAddress()` now automatically strips prefixes (`/connect `, `-connect `, `connect `, `http://`, `https://`) and whitespace/quotes, allowing one-click paste from Discord, Steam chat, or server browser invites.
+  - **Direct Connect Modal Polish:** Cleaned default input text (starts empty with informative hint placeholder `IP or IP:port (e.g. 147.124.149.202:11774)`).
+
+- **Release Test Build Deployed:**
+  - Fresh binaries built with CMake/MSBuild (`noble-client.exe`, `noble-dedicated.exe`) and copied to `C:\Users\Chey1\Desktop\Release For Test\`.
+
+---
+
 ## 0. Pick up here (2026-10-28, 20:30 ET) - O7OF Updates: Netcode Fixes, Server Browser Live Overhaul, P2P Join & First-Run Setup
 
 All committed to `main` branch (commits `60fb4a3`, `14d3852`, `5d50fc2`). Release test binaries deployed to `C:\Users\Chey1\Desktop\Release For Test`.

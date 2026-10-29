@@ -85,7 +85,7 @@ private:
 
     std::thread m_beaconThread;
     std::thread m_listenerThread;
-    uintptr_t m_listenerSock{ ~0ull };
+    std::atomic<uintptr_t> m_listenerSock{ ~0ull };
 };
 
 } // namespace noble

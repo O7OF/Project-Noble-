@@ -44,7 +44,17 @@ std::string Lower(std::string s) {
 // "1.2.3.4:5678" or "1.2.3.4" -> address + port (default 11774). False for empty/bad input.
 bool ParseAddress(const std::string& text, std::string& address, uint16_t& port) {
     std::string t = text;
-    t.erase(std::remove_if(t.begin(), t.end(), [](unsigned char c) { return std::isspace(c) != 0; }), t.end());
+    auto stripPrefix = [&](const std::string& prefix) {
+        if (t.size() >= prefix.size() && _strnicmp(t.c_str(), prefix.c_str(), prefix.size()) == 0) {
+            t = t.substr(prefix.size());
+        }
+    };
+    stripPrefix("/connect ");
+    stripPrefix("-connect ");
+    stripPrefix("connect ");
+    stripPrefix("http://");
+    stripPrefix("https://");
+    t.erase(std::remove_if(t.begin(), t.end(), [](unsigned char c) { return std::isspace(c) != 0 || c == '"' || c == '\''; }), t.end());
     if (t.empty()) return false;
     port = 11774;
     const size_t colon = t.rfind(':');
@@ -75,7 +85,7 @@ ServerBrowser::ServerBrowser() {
     const std::string masterUrl = s.masterServerUrl.empty() ? "https://outbreak-z-test-server.onrender.com" : s.masterServerUrl;
     std::snprintf(m_masterUrl, sizeof(m_masterUrl), "%s", masterUrl.c_str());
     MasterServerClient::Get().SetUrl(masterUrl);
-    std::snprintf(m_directConnectIp, sizeof(m_directConnectIp), "%s:11774", UPnP::Get().GetInternalIP().c_str());
+    m_directConnectIp[0] = '\0';
 }
 
 void ServerBrowser::RefreshServers() {
@@ -98,7 +108,12 @@ void ServerBrowser::RefreshServers() {
         if (cfg.maxPlayers > 0 && !cfg.mapName.empty()) {
             ServerEntry e;
             e.name = cfg.sessionName;
-            e.hostAddress = UPnP::Get().GetInternalIP();
+            std::string pubIp = UPnP::Get().GetExternalIP();
+            if (UPnP::Get().IsPublicIP(pubIp)) {
+                e.hostAddress = pubIp;
+            } else {
+                e.hostAddress = UPnP::Get().GetInternalIP();
+            }
             e.port = cfg.port;
             e.ping = 0;
             e.playerCount = 1;
@@ -420,14 +435,24 @@ void ServerBrowser::RenderServerDetails() {
     }
 
     if (ImGui::Button("COPY INVITE", ImVec2(-1, 30))) {
-        const std::string invite = s.hostAddress + ":" + std::to_string(s.port);
+        std::string ipToCopy = s.hostAddress;
+        if (s.isOwn) {
+            std::string pubIp = UPnP::Get().GetExternalIP();
+            if (UPnP::Get().IsPublicIP(pubIp)) ipToCopy = pubIp;
+        }
+        const std::string invite = ipToCopy + ":" + std::to_string(s.port);
         ImGui::SetClipboardText(invite.c_str());
-        m_status = "Copied address " + invite + " to clipboard.";
+        m_status = "Copied invite address " + invite + " to clipboard.";
     }
 
     if (ImGui::Button("COPY ADDRESS", ImVec2(-1, 30))) {
-        ImGui::SetClipboardText(s.hostAddress.c_str());
-        m_status = "Copied " + s.hostAddress + " to clipboard.";
+        std::string ipToCopy = s.hostAddress;
+        if (s.isOwn) {
+            std::string pubIp = UPnP::Get().GetExternalIP();
+            if (UPnP::Get().IsPublicIP(pubIp)) ipToCopy = pubIp;
+        }
+        ImGui::SetClipboardText(ipToCopy.c_str());
+        m_status = "Copied " + ipToCopy + " to clipboard.";
     }
 }
 
@@ -479,7 +504,7 @@ void ServerBrowser::RenderDirectConnectModal() {
     if (ImGui::BeginPopupModal("DIRECT CONNECT", &m_showDirectConnectModal, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::Text("Address (IP or IP:port)");
         ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 75.0f);
-        ImGui::InputText("##Address", m_directConnectIp, IM_ARRAYSIZE(m_directConnectIp));
+        ImGui::InputTextWithHint("##Address", "IP or IP:port (e.g. 147.124.149.202:11774)", m_directConnectIp, IM_ARRAYSIZE(m_directConnectIp));
         ImGui::SameLine();
         if (ImGui::Button("PASTE", ImVec2(65, 0))) {
             if (const char* clip = ImGui::GetClipboardText()) std::snprintf(m_directConnectIp, sizeof(m_directConnectIp), "%s", clip);

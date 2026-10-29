@@ -253,6 +253,28 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
         loadedPrebuilt = false;
     }
 
+    std::string targetHostIp = "127.0.0.1";
+    uint16_t targetHostPort = 11774;
+    if (isGuest) {
+        size_t colon = connectAddress.rfind(':');
+        if (colon != std::string::npos) {
+            targetHostIp = connectAddress.substr(0, colon);
+            int p = std::atoi(connectAddress.substr(colon + 1).c_str());
+            if (p > 0 && p <= 65535) targetHostPort = static_cast<uint16_t>(p);
+        } else {
+            targetHostIp = connectAddress;
+        }
+    }
+
+    uint8_t targetOctets[4] = { 127, 0, 0, 1 };
+    int to0 = 0, to1 = 0, to2 = 0, to3 = 0;
+    if (sscanf_s(targetHostIp.c_str(), "%d.%d.%d.%d", &to0, &to1, &to2, &to3) == 4) {
+        targetOctets[0] = static_cast<uint8_t>(to0);
+        targetOctets[1] = static_cast<uint8_t>(to1);
+        targetOctets[2] = static_cast<uint8_t>(to2);
+        targetOctets[3] = static_cast<uint8_t>(to3);
+    }
+
     bool isMainMenu = (mapId == kMainMenuLaunchIndex || mapId == 0 || gameModeTag == 0);
     // Campaign missions: launch index 178 (m05) .. 189 (m70_bonus).
     const bool isCampaign = (mapId >= 178 && mapId <= 189);
@@ -323,22 +345,41 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
             }
         }
 
-        // Set local player 0 active (from host-probe::new_launch_block lines 251-274)
-        block[0xE8] = 0x01; // 1 active player
-        block[0xF0] = 0xBE;
-        block[0xF1] = 0xF3;
-        block[0xF2] = 'Y';
-        block[0xF3] = '?';
-        block[0x100] = 0x00;
-        block[0x101] = 0x00;
-        block[0x102] = 0x00;
-        block[0x103] = 0x00;
-        block[0x104] = 0x02;
-        block[0x108] = 0x00;
-        block[0x109] = 0x00;
-        block[0x10A] = 0x00;
-        block[0x10B] = 0x00;
-        block[0x2F0] = 0x01;
+        if (isGuest) {
+            // Guest mode: 0 local players, host session holds membership
+            memset(&block[0x60], 0, 8);
+            memset(&block[0xE8], 0, 32);
+            memset(&block[0x2F0], 0, 4);
+            *reinterpret_cast<uint32_t*>(&block[0x2F4]) = 0xFFFFFFFF;
+            // Write remote host endpoint into +0x2F8 (IPv4 4-bytes, port uint16, pad uint16)
+            block[0x2F8] = targetOctets[0];
+            block[0x2F9] = targetOctets[1];
+            block[0x2FA] = targetOctets[2];
+            block[0x2FB] = targetOctets[3];
+            *reinterpret_cast<uint16_t*>(&block[0x2FC]) = targetHostPort;
+            *reinterpret_cast<uint16_t*>(&block[0x2FE]) = 0;
+            // Flags at 0x2BF14
+            block[0x2BF14] = 0xF3;
+            block[0x2BF15] = 0x01;
+            NOBLE_INFO("BlamEngine: Configured Guest Launch Block targeting host {}:{}", targetHostIp, targetHostPort);
+        } else {
+            // Set local player 0 active (from host-probe::new_launch_block lines 251-274)
+            block[0xE8] = 0x01; // 1 active player
+            block[0xF0] = 0xBE;
+            block[0xF1] = 0xF3;
+            block[0xF2] = 'Y';
+            block[0xF3] = '?';
+            block[0x100] = 0x00;
+            block[0x101] = 0x00;
+            block[0x102] = 0x00;
+            block[0x103] = 0x00;
+            block[0x104] = 0x02;
+            block[0x108] = 0x00;
+            block[0x109] = 0x00;
+            block[0x10A] = 0x00;
+            block[0x10B] = 0x00;
+            block[0x2F0] = 0x01;
+        }
 
         // Default variant buffer init at offset 0x1D308 (RVA 0x6BFF8)
         if (m_hModule) {
@@ -398,7 +439,7 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
     }
 
     // Dynamic Custom Map Variant (.mvar) Injection (RVA 0x17AF00 parse_map_variant)
-    if (!customMvarPath.empty() && std::filesystem::exists(customMvarPath) && m_hModule) {
+    if (!isGuest && !customMvarPath.empty() && std::filesystem::exists(customMvarPath) && m_hModule) {
         NOBLE_INFO("BlamEngine: Parsing custom Forge map variant from '{}'...", customMvarPath);
         std::ifstream file(customMvarPath, std::ios::binary);
         if (file) {
@@ -429,7 +470,7 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
     // and stalls at 4%). Default: MCC's stock slayer_054.bin from the player's own install.
     // NOTE: Authentic pre-built Campaign launch blocks already contain authentic campaign state
     // and mission variants at +0x300, and must NOT be overwritten with multiplayer Slayer!
-    if (!isCampaign || !customVariantPath.empty()) {
+    if (!isGuest && (!isCampaign || !customVariantPath.empty())) {
         std::filesystem::path variantPath;
         if (!customVariantPath.empty() && std::filesystem::exists(customVariantPath)) {
             variantPath = customVariantPath;

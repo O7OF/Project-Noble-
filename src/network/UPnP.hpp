@@ -22,9 +22,12 @@ public:
     bool ReleasePort(uint16_t port, const std::string& protocol = "UDP");
 
     bool IsActive() const { return m_isActive; }
-    const std::string& GetExternalIP() const { return m_externalIp; }
+    const std::string& GetExternalIP() const;
     const std::string& GetInternalIP() const { return m_internalIp; }
     const std::string& GetStatus() const { return m_statusMessage; }
+
+    std::string QueryPublicIPWithIpify();
+    bool IsPublicIP(const std::string& ip) const;
 
 private:
     UPnP();

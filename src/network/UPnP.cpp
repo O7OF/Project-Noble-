@@ -168,6 +168,55 @@ std::string UPnP::GetLocalAdapterIP() {
     return fallback.empty() ? "127.0.0.1" : fallback;
 }
 
+bool UPnP::IsPublicIP(const std::string& ip) const {
+    if (ip.empty() || ip == "Unknown" || ip == "127.0.0.1" || ip == "0.0.0.0") return false;
+    if (ip.rfind("10.", 0) == 0) return false;
+    if (ip.rfind("192.168.", 0) == 0) return false;
+    if (ip.rfind("169.254.", 0) == 0) return false;
+    if (ip.rfind("172.", 0) == 0) {
+        size_t dot = ip.find('.', 4);
+        if (dot != std::string::npos) {
+            int second = std::atoi(ip.substr(4, dot - 4).c_str());
+            if (second >= 16 && second <= 31) return false;
+        }
+    }
+    int dots = 0;
+    for (char c : ip) {
+        if (c == '.') dots++;
+        else if (!std::isdigit(static_cast<unsigned char>(c))) return false;
+    }
+    return (dots == 3);
+}
+
+std::string UPnP::QueryPublicIPWithIpify() {
+    HttpResponse resp = HttpRequest("https://api.ipify.org", L"GET", {}, {});
+    if (!resp.ok || resp.body.empty()) {
+        resp = HttpRequest("http://api.ipify.org", L"GET", {}, {});
+    }
+    if (resp.ok && !resp.body.empty()) {
+        std::string ip = resp.body;
+        ip.erase(std::remove_if(ip.begin(), ip.end(), [](unsigned char c) {
+            return std::isspace(c) || c == '\r' || c == '\n';
+        }), ip.end());
+        if (IsPublicIP(ip)) {
+            return ip;
+        }
+    }
+    return "";
+}
+
+const std::string& UPnP::GetExternalIP() const {
+    if (IsPublicIP(m_externalIp)) {
+        return m_externalIp;
+    }
+    std::string ip = const_cast<UPnP*>(this)->QueryPublicIPWithIpify();
+    if (IsPublicIP(ip)) {
+        const_cast<UPnP*>(this)->m_externalIp = ip;
+        return m_externalIp;
+    }
+    return m_externalIp.empty() ? m_internalIp : m_externalIp;
+}
+
 bool UPnP::Initialize() {
     std::lock_guard<std::mutex> lock(m_mutex);
     if (m_isInitialized) return true;
@@ -181,6 +230,17 @@ bool UPnP::Initialize() {
     m_internalIp = GetLocalAdapterIP();
     m_isInitialized = true;
     m_statusMessage = "Ready for discovery (Local IP: " + m_internalIp + ")";
+
+    std::thread([this]() {
+        std::string pub = QueryPublicIPWithIpify();
+        std::lock_guard<std::mutex> lk(m_mutex);
+        if (IsPublicIP(pub)) {
+            m_externalIp = pub;
+            m_statusMessage = "Network ready: " + m_externalIp + " (Local: " + m_internalIp + ")";
+            NOBLE_INFO("UPnP: Public IP resolved via ipify: {}", m_externalIp);
+        }
+    }).detach();
+
     return true;
 }
 
@@ -189,7 +249,7 @@ void UPnP::Shutdown() {
         ReleasePort(m_forwardedPort, m_protocol);
     }
     m_isActive = false;
-    if (m_isInitialized.exchange(false)) WSACleanup();
+    // haloreach.dll WinSock preserved for engine shutdown
 }
 
 bool UPnP::SendSSDPDiscovery(std::string& outLocation) {
@@ -305,6 +365,13 @@ bool UPnP::ForwardPort(uint16_t port, const std::string& protocol, const std::st
         if (!Initialize()) return false;
     }
 
+    if (!IsPublicIP(m_externalIp)) {
+        std::string pub = QueryPublicIPWithIpify();
+        if (IsPublicIP(pub)) {
+            m_externalIp = pub;
+        }
+    }
+
     std::string normalizedProtocol = protocol;
     std::transform(normalizedProtocol.begin(), normalizedProtocol.end(), normalizedProtocol.begin(),
                    [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
@@ -320,17 +387,24 @@ bool UPnP::ForwardPort(uint16_t port, const std::string& protocol, const std::st
 
     std::string location;
     if (!SendSSDPDiscovery(location)) {
-        m_statusMessage = "UPnP Gateway not found (Router UPnP disabled or LAN mode)";
-        NOBLE_INFO("UPnP: Gateway not detected. Operating in Local LAN / Direct IP mode.");
         m_isActive = false;
+        m_statusMessage = "Direct IP mode: " + m_externalIp + ":" + std::to_string(port) + " (UPnP router not found)";
+        NOBLE_INFO("UPnP: Router UPnP not detected. Operating in Direct IP mode (Public IP: {}).", m_externalIp);
         return false;
     }
 
     if (!ParseDeviceDescription(location)) {
-        m_statusMessage = "UPnP gateway found, but its WAN service could not be read";
+        m_isActive = false;
+        m_statusMessage = "Direct IP mode: " + m_externalIp + ":" + std::to_string(port) + " (WAN service not readable)";
         NOBLE_WARN("UPnP: Could not parse gateway device description.");
         return false;
     }
+
+    // Clear stale mapping to prevent conflict errors
+    std::string delResponse;
+    const std::string delBody = "<NewRemoteHost></NewRemoteHost><NewExternalPort>" + std::to_string(port) +
+                                "</NewExternalPort><NewProtocol>" + normalizedProtocol + "</NewProtocol>";
+    SendSOAPAction("DeletePortMapping", delBody, delResponse);
 
     const std::string mapping =
         "<NewRemoteHost></NewRemoteHost><NewExternalPort>" + std::to_string(port) +
@@ -340,7 +414,8 @@ bool UPnP::ForwardPort(uint16_t port, const std::string& protocol, const std::st
         "</NewPortMappingDescription><NewLeaseDuration>0</NewLeaseDuration>";
     std::string response;
     if (!SendSOAPAction("AddPortMapping", mapping, response)) {
-        m_statusMessage = "UPnP gateway rejected " + normalizedProtocol + " " + std::to_string(port) + "; check router settings";
+        m_isActive = false;
+        m_statusMessage = "Direct IP mode: " + m_externalIp + ":" + std::to_string(port) + " (Router rejected port mapping)";
         NOBLE_WARN("UPnP: AddPortMapping failed for port {} ({})", port, normalizedProtocol);
         return false;
     }
@@ -348,13 +423,15 @@ bool UPnP::ForwardPort(uint16_t port, const std::string& protocol, const std::st
     m_forwardedPort = port;
     m_protocol = normalizedProtocol;
     m_isActive = true;
-    m_externalIp = "Unknown";
+
     if (SendSOAPAction("GetExternalIPAddress", {}, response)) {
         const std::string externalIp = ElementText(response, "NewExternalIPAddress");
-        if (!externalIp.empty()) m_externalIp = externalIp;
+        if (IsPublicIP(externalIp)) {
+            m_externalIp = externalIp;
+        }
     }
     m_statusMessage = "UPnP active: " + m_externalIp + ":" + std::to_string(port) + " forwarded to " + m_internalIp;
-    NOBLE_INFO("UPnP: Port {} ({}) mapped to {}. External IP: {}", port, normalizedProtocol, m_internalIp, m_externalIp);
+    NOBLE_INFO("UPnP: Port {} ({}) mapped to {}. Public IP: {}", port, normalizedProtocol, m_internalIp, m_externalIp);
 
     return true;
 }
