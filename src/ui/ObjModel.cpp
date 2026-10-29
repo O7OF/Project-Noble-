@@ -30,8 +30,12 @@ bool IsSafeRelativePath(const std::filesystem::path& path) {
 	return true;
 }
 
+std::filesystem::path PathFromUtf8(std::string_view value) {
+	return std::filesystem::path(std::u8string_view(reinterpret_cast<const char8_t*>(value.data()), value.size()));
+}
+
 std::filesystem::path ResolveRelative(const std::filesystem::path& base, const std::string& value) {
-	const std::filesystem::path relative = std::filesystem::u8path(value);
+	const std::filesystem::path relative = PathFromUtf8(value);
 	if (!IsSafeRelativePath(relative)) return {};
 	return (base / relative).lexically_normal();
 }
@@ -52,7 +56,7 @@ std::filesystem::path FindTextureFile(const std::filesystem::path& candidate) {
 std::filesystem::path ResolveTexturePath(const std::filesystem::path& mtlDirectory,
 										 const std::filesystem::path& modelDirectory,
 										 const std::string& value) {
-	const std::filesystem::path relative = std::filesystem::u8path(value);
+	const std::filesystem::path relative = PathFromUtf8(value);
 	if (!IsSafeRelativePath(relative)) return {};
 
 	std::filesystem::path resolved = FindTextureFile((mtlDirectory / relative).lexically_normal());
@@ -276,8 +280,8 @@ bool LoadMaterials(const std::filesystem::path& path, const std::filesystem::pat
 			std::string filename;
 			std::getline(input >> std::ws, filename);
 			if (!filename.empty() && filename[0] != '-') {
-				const auto relative = std::filesystem::u8path(filename);
-				if (!IsSafeRelativePath(relative)) {
+				const auto texRelative = PathFromUtf8(filename);
+				if (!IsSafeRelativePath(texRelative)) {
 					error = "Diffuse texture path escapes the model directory.";
 					return false;
 				}

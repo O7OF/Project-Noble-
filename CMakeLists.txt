@@ -7,16 +7,24 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Enforce UTF-8 and standard conformance on MSVC
 if(MSVC)
-    add_compile_options(/W4 /utf-8 /permissive- /Zc:__cplusplus /EHsc)
+    add_compile_options(/utf-8 /permissive- /Zc:__cplusplus /EHsc)
     add_compile_definitions(UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
 endif()
 
 # Set output directories
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
-set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+if(NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin/$<IF:$<CONFIG:>,Release,$<CONFIG>>)
+    set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin/$<IF:$<CONFIG:>,Release,$<CONFIG>>)
+else()
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+    set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+endif()
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 
 include(FetchContent)
+if(POLICY CMP0169)
+    cmake_policy(SET CMP0169 OLD)
+endif()
 
 # 1. spdlog (Fast C++ logging)
 FetchContent_Declare(
@@ -67,6 +75,9 @@ if(NOT minhook_POPULATED)
         ${minhook_SOURCE_DIR}/include
         ${minhook_SOURCE_DIR}/src
     )
+    if(MSVC)
+        target_compile_options(minhook PRIVATE /W0)
+    endif()
 endif()
 
 # Setup Dear ImGui with Win32 and DX11 backends
@@ -191,6 +202,9 @@ set(HEADERS
 )
 
 add_executable(noble-client WIN32 ${SOURCES} ${HEADERS})
+if(MSVC)
+    target_compile_options(noble-client PRIVATE /W4)
+endif()
 
 target_include_directories(noble-client PRIVATE
     src
@@ -272,6 +286,9 @@ set(DEDICATED_HEADERS
 )
 
 add_executable(noble-dedicated ${DEDICATED_SOURCES} ${DEDICATED_HEADERS})
+if(MSVC)
+    target_compile_options(noble-dedicated PRIVATE /W4)
+endif()
 
 target_include_directories(noble-dedicated PRIVATE
     src

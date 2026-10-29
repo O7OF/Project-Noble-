@@ -804,7 +804,7 @@ struct MenuState {
     int quitChoice = 1;         // 0 = Yes, 1 = No (No is preselected)
 };
 
-void DrawLobbyControls(const Ui& ui, ImVec2 pos, float width, MenuState& st) {
+void DrawLobbyControls(const Ui& ui, ImVec2 pos, [[maybe_unused]] float width, MenuState& st) {
     const float h = 32.0f * ui.s;
     const float btnW = 150.0f * ui.s;
     float x = pos.x;

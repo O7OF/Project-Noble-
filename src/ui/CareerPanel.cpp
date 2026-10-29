@@ -457,7 +457,7 @@ void CareerPanel::RenderCommendations() {
     const std::vector<Career::Commendation> list = Career::Commendations();
     const float s = Scale();
     static const char* const kModeTitle[3] = { "CAMPAIGN", "FIREFIGHT", "MULTIPLAYER" };
-    static const ImU32 kModeColour[3] = { IM_COL32(150, 170, 90, 255), IM_COL32(200, 80, 60, 255), IM_COL32(80, 140, 200, 255) };
+    static const ImU32 kTabModeColour[3] = { IM_COL32(150, 170, 90, 255), IM_COL32(200, 80, 60, 255), IM_COL32(80, 140, 200, 255) };
 
     // Mode tabs (click, or LT / RT on a controller).
     ImGui::Dummy(ImVec2(0, 4));
@@ -483,7 +483,7 @@ void CareerPanel::RenderCommendations() {
         ImGui::PopID();
         const ImVec2 p1(p0.x + w, p0.y + h);
         dl->AddRectFilled(p0, p1, sel ? IM_COL32(30, 40, 52, 255) : IM_COL32(20, 26, 34, hov ? 240 : 190), 3.0f * s);
-        dl->AddRectFilled(p0, ImVec2(p0.x + 4.0f * s, p1.y), kModeColour[mode], 3.0f * s, ImDrawFlags_RoundCornersLeft);
+        dl->AddRectFilled(p0, ImVec2(p0.x + 4.0f * s, p1.y), kTabModeColour[mode], 3.0f * s, ImDrawFlags_RoundCornersLeft);
         if (sel) dl->AddRect(p0, p1, IM_COL32(143, 216, 255, 200), 3.0f * s, 0, 1.0f);
         Text(dl, nullptr, 17.0f * s, ImVec2(p0.x + 18.0f * s, p0.y + h * 0.5f - 9.0f * s), sel ? kText : kTextDim, label);
     }

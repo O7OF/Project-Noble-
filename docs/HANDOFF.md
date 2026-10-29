@@ -1,5 +1,5 @@
 # Project Noble: handoff (2026-10-28, 20:30 ET)
-Dominus join the team 20261028 but hes a little bitch!!!
+Dominus join the team 20261028! 
 This picks up a reverse-engineering and C++ effort on **Tyler's Windows PC**. All paths below are real paths on that machine.
 Tyler (GitHub `WeabooTyler117`) works with a partner (GitHub `O7OF`) who owns the repo and writes most of the code.
 Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C++ developer, so give him exact commands

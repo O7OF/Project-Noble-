@@ -414,7 +414,7 @@ static uint64_t __fastcall HostSlot2_ResizeBuffers(void* thisPtr, uint64_t a1, u
 // The engine reports session/launch events here, e.g. reason 4 with
 // "external_launch_individual_state_timeout" / "external_launch_overall_timeout".
 static uint64_t __fastcall HostSlot4_LogMessage(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
-    (void)thisPtr; (void)a3; (void)a4;
+    (void)thisPtr; (void)a2; (void)a3; (void)a4;
     char buf[512] = { 0 };
     if (a2 > 0x10000) {
         SafeCopyAnsiString(buf, sizeof(buf), reinterpret_cast<const char*>(a2));
@@ -471,7 +471,7 @@ static uint64_t __fastcall HostSlot6_GameResults(void* thisPtr, uint64_t a1, uin
 }
 
 static uint64_t __fastcall HostSlot23_LoadProgress(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
-    (void)thisPtr; (void)a3; (void)a4;
+    (void)thisPtr; (void)a2; (void)a3; (void)a4;
     void* caller = _ReturnAddress();
     
     // a1 is phase index or integer percentage, a2 is optional progress float
@@ -509,7 +509,7 @@ static uint64_t __fastcall HostSlot23_LoadProgress(void* thisPtr, uint64_t a1, u
 // The previous version treated this as an allocation request and returned its own buffer, leaving
 // the engine's settings struct uninitialised.
 static uint64_t __fastcall HostSlot32_DisplaySettings(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
-    (void)thisPtr; (void)a3; (void)a4;
+    (void)thisPtr; (void)a2; (void)a3; (void)a4;
     static std::atomic<bool> s_logged{false};
     if (!s_logged.exchange(true)) {
         NOBLE_INFO("ReachHost [Slot 32 - DisplaySettings]: buffer=0x{:X} size=0x{:X}", a1, a2);
@@ -1462,7 +1462,7 @@ static void FillLocalInput(uint8_t* st) {
 }
 
 static uint64_t __fastcall HostSlot36_InputController(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
-    (void)thisPtr; (void)a3; (void)a4;
+    (void)thisPtr; (void)a2; (void)a3; (void)a4;
     uint64_t userIndex = a1;
     uintptr_t outBuf = (a2 > 0x10000) ? a2 : 0;
     if (a1 > 0x10000) { // older calling-convention guess: a1 -> { int index; void* buffer; }
@@ -1491,7 +1491,7 @@ static uint64_t __fastcall HostSlot36_InputController(void* thisPtr, uint64_t a1
 // right trigger}; without a host it calls XInputSetState itself with the first two. Noble passes
 // them on, scaled by SETTINGS > CONTROLS > VIBRATION (trigger motors aren't reachable through XInput).
 static uint64_t __fastcall HostSlot39_PadRumble(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
-    (void)thisPtr; (void)a3; (void)a4;
+    (void)thisPtr; (void)a2; (void)a3; (void)a4;
     if (a1 > 3 || a2 <= 0x10000) return 0;
     uint16_t motors[4] = {};
     if (!SafeCopyMemory(motors, reinterpret_cast<const void*>(a2), sizeof(motors))) return 0;
@@ -1587,7 +1587,7 @@ static uint64_t __fastcall HostSlot43_NetRecv(void* thisPtr, uint64_t a1, uint64
 static wchar_t s_userDataFolderW[MAX_PATH] = L"data";
 
 static uint64_t __fastcall HostSlot47_UserDataFolder(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
-    (void)thisPtr; (void)a3; (void)a4;
+    (void)thisPtr; (void)a2; (void)a3; (void)a4;
     try {
         uint32_t kind = 0;
         uintptr_t outBufferPtr = 0;

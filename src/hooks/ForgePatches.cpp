@@ -9,7 +9,7 @@ bool ForgePatches::s_isApplied = false;
 bool ForgePatches::s_unlimitedBudget = true;
 bool ForgePatches::s_unlockedRotation = true;
 
-static bool WriteProtectedMemory(void* destination, const void* source, size_t size) {
+[[maybe_unused]] static bool WriteProtectedMemory(void* destination, const void* source, size_t size) {
     DWORD oldProtect = 0;
     if (!VirtualProtect(destination, size, PAGE_EXECUTE_READWRITE, &oldProtect)) {
         return false;

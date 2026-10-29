@@ -25,7 +25,7 @@ static IsWhitespaceFn s_originalIsWhitespace = nullptr;
 typedef uint8_t(__fastcall* IsArmorItemUnlockedFn)(void* a1, void* a2, void* a3, void* a4);
 static IsArmorItemUnlockedFn s_originalIsArmorItemUnlocked = nullptr;
 
-static uint8_t __fastcall Hook_IsArmorItemUnlocked(void* /*a1*/, void* /*a2*/, void* /*a3*/, void* /*a4*/) {
+[[maybe_unused]] static uint8_t __fastcall Hook_IsArmorItemUnlocked(void* /*a1*/, void* /*a2*/, void* /*a3*/, void* /*a4*/) {
     return 1;
 }
 
