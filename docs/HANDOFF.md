@@ -1,4 +1,4 @@
-# Project Noble: handoff (2026-10-28, 19:50 ET)
+# Project Noble: handoff (2026-10-28, 20:30 ET)
 
 This picks up a reverse-engineering and C++ effort on **Tyler's Windows PC**. All paths below are real paths on that machine.
 Tyler (GitHub `WeabooTyler117`) works with a partner (GitHub `O7OF`) who owns the repo and writes most of the code.
@@ -8,6 +8,40 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 **Goal:** `noble-client.exe` loads MCC's own `haloreach.dll` (Halo: Reach) and drives it **without MCC**, like the existing
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
 MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour.
+
+---
+
+## 0. Pick up here (2026-10-28, 20:30 ET) - O7OF Updates: Netcode Fixes, Server Browser Live Overhaul, P2P Join & First-Run Setup
+
+All committed to `main` branch (commits `60fb4a3`, `14d3852`, `5d50fc2`). Release test binaries deployed to `C:\Users\Chey1\Desktop\Release For Test`.
+
+- **Network Shutdown Crash & Port Contention Fixed (`SessionManager`, `UPnP`):**
+  - **Discovery Port Separation:** LAN discovery beacons and listener moved from UDP `11774` to UDP `11775` (`kDiscoveryBeaconPort = 11775`). UDP `11774` is kept strictly dedicated to Blam! engine packets and UPnP port forwarding. Previously, `SessionManager::DiscoveryListenerLoop` binding `SO_REUSEADDR` on 11774 intercepted and consumed `haloreach.dll`'s native game packets.
+  - **Clean Thread Shutdown:** Added `uintptr_t m_listenerSock` handle. In `SessionManager::Shutdown()`, `closesocket(m_listenerSock)` is now called before joining `m_listenerThread`, immediately interrupting any blocking `recvfrom()` call and eliminating the shutdown freeze/deadlock.
+  - **Sliced Beacon Polling:** Replaced the monolithic 1500 ms `std::this_thread::sleep_for` in `SessionManager::BeaconLoop()` with a 50 ms polled sleep loop checking `!m_stopThreads && m_isHosting`, allowing `StopHosting()` to join threads instantly.
+  - **Safe WinSock Lifetime:** Removed premature `WSACleanup()` from `UPnP::Shutdown()` that was tearing down network sockets while threads were exiting.
+
+- **Server Browser Overhaul & Hosting Flow (`ServerBrowser`, `FrontEndMenu`):**
+  - **Removed Dummy Hosting Modal:** The broken placeholder "HOST GAME..." modal and form variables in `ServerBrowser` were removed entirely. Hosting is now driven exclusively by the Pre-Game Lobbies (Campaign, Firefight, Custom Game, Forge) where map, gametype, and lobby privacy (Public / Friends / Local) are configured.
+  - **Main Menu Navigation:** Renamed "Matchmaking" button on the main menu to "Server Browser" (`FrontEndMenu.cpp`).
+  - **Live Games Only:** `ServerBrowser::RefreshServers()` now filters out offline saved servers or empty placeholder entries. Only live matches discovered via LAN broadcast, the master server, or the local hosted match are shown in the server list.
+  - **Active Session Termination:** Added a "STOP HOSTING" button to the Server Browser when hosting, which cleanly deregisters the match from the master server (`DELETE /api/sessions/:id`), stops LAN beacons, and closes the UPnP port forwarding.
+  - **Direct Connect & Invites:** Added Direct Connect dialog with IP and Port fields, along with Copy Invite (`/connect <ip>:<port>`) and Copy Address clipboard buttons for easy sharing.
+  - **Master Server HTTP 400 Resolution:** Resolved HTTP 400 Bad Request error by auto-populating external public IP via `UPnP::Get().GetExternalIP()` (falling back to local IP) when registering sessions on `MasterServerClient.cpp`. Live master server deployed at `https://outbreak-z-test-server.onrender.com/`.
+
+- **Halo: Reach Built-in Netcode P2P Remote Joining (`BlamEngine`, `main.cpp`):**
+  - Added `-connect <ip>:<port>` command-line argument plumbing in `main.cpp` into `BlamEngine::LaunchMap(..., connectAddress)`.
+  - Adapted `BlamEngine::BuildLaunchBlock` for remote guest joins when `!connectAddress.empty()`:
+    - Sets `block[0] = 0x00` (guest mode vs `0x08` for host, derived from `(param_3 ^ 1) << 3`).
+    - Skips local host slot registration.
+    - Sets connection flags `block[0x2F4] = -1` and `block[0x2BF14] = 0xF3 0x01` based on reverse-engineering analysis of `host-probe.exe`.
+
+- **First-Run Profile & Configuration Auto-Generation:**
+  - Automated initial generation of `profile.json`, `appearance.json`, `career.json`, and `settings.json` on first run if they do not exist. Prevents crashes and missing data directory errors for fresh playtesters.
+
+- **Playtest Deployment Packaging:**
+  - Fresh Release binaries (`noble-client.exe`, `noble-dedicated.exe`) compiled and copied to `C:\Users\Chey1\Desktop\Release For Test\`.
+  - Backend server repository updated in `C:\Users\Chey1\Desktop\ServerTestDeploy`.
 
 ---
 
