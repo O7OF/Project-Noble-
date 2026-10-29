@@ -11,6 +11,27 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 ---
 
+## 0. Pick up here (2026-10-28, 22:20 ET) - Dominus Updates: Build System Fallback, Zero-Warning Compilation & Git/Toolchain Setup
+
+- **Git & Team Onboarding (`Dominus-VII`):**
+  - Configured global Git author identity (`Dominus-VII <349591305+Dominus-VII@users.noreply.github.com>`) on Dominus's workstation (`Reeve`) and verified remote push access to `origin/main` (`https://github.com/O7OF/test-build-01.git`).
+
+- **Build Script & Toolchain Auto-Detection (`build.bat`, `CMakeLists.txt`):**
+  - Updated `build.bat` to verify via `vswhere` whether the installed Visual Studio instance includes `Microsoft.VisualStudio.Component.VC.Tools.x86.x64` before invoking the Visual Studio CMake generator.
+  - Added automatic fallback in `build.bat` to configure and build using Ninja + local MSVC 19.44 (`%LOCALAPPDATA%\Programs\MSVC\VC\Tools\MSVC\14.44.35207`) + Windows SDK when the full Visual Studio IDE C++ workload is absent.
+  - Configured single-config CMake generators (Ninja) in `CMakeLists.txt` to output directly to `build/bin/Release` so `build\bin\Release\noble-client.exe` and `build\bin\Release\noble-dedicated.exe` match `build.bat` and `run.bat`.
+  - Set CMake policy `CMP0169` to `OLD` to silence CMake 4.x `FetchContent_Populate` deprecation warnings for `minhook` and `imgui`.
+  - Scoped `/W4` strictly to `noble-client` and `noble-dedicated` and `/W0` to third-party `minhook`, eliminating `D9025` flag-override warnings and third-party C warnings.
+
+- **Zero-Warning Source Fixes Across `src/` (`/W4`):**
+  - `src/ui/ObjModel.cpp`: Replaced C++20-deprecated `std::filesystem::u8path` calls (`C4996`) with `PathFromUtf8()` (`std::filesystem::path(std::u8string_view)`), and renamed shadowed local variable `relative` to `texRelative` (`C4456`).
+  - `src/ui/CareerPanel.cpp`: Renamed local `kModeColour` array in `CareerPanel::RenderCommendations()` to `kTabModeColour` to avoid shadowing the file-scope `kModeColour` (`C4459`).
+  - `src/hooks/ForgePatches.cpp` & `src/hooks/EnginePatches.cpp`: Added `[[maybe_unused]]` to internal helpers `WriteProtectedMemory` and `Hook_IsArmorItemUnlocked` (`C4505`).
+  - `src/ui/FrontEndMenu.cpp` & `src/engine/ReachHost.cpp`: Marked unused parameters in `DrawLobbyControls` (`width`) and `HostSlot23_LoadProgress` (`a2`) (`C4100`).
+  - Verified full `build.bat rebuild` compiles all 82 targets (`noble-client.exe` and `noble-dedicated.exe`) with **0 errors and 0 warnings**.
+
+---
+
 ## 0. Pick up here (2026-10-28, 22:15 ET) - Netcode Fixed: Host Slot 41/43 NetworkTransport, Synchronized Session IDs, Active Guest Player Slot & Variant Decoding
 
 - **Root Cause Resolution for "Loads forever at 5% on join" and "Player joined never pops up":**
