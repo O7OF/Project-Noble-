@@ -1548,7 +1548,6 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         args += L" -connect \"" + ToWide(st.lobbyHostEndpoint) + L"\"";
         if (!st.lobbySessionId.empty()) args += L" -session-id \"" + ToWide(st.lobbySessionId) + L"\"";
         NOBLE_INFO("FrontEndMenu: Guest executing synchronized lobby launch to {}", st.lobbyHostEndpoint);
-        if (HWND hwnd = FindWindowW(L"HaloReachCE_WindowClass", nullptr)) { ShowWindow(hwnd, SW_HIDE); UpdateWindow(hwnd); }
         Relaunch::Start(args);
         done = true;
         return;
@@ -2616,7 +2615,7 @@ void FrontEndMenu::RenderOverlayImpl(IDXGISwapChain* swapChain, bool clear) {
                     }
                 }
                 NOBLE_INFO("FrontEndMenu: launching match via Relaunch ({} {})", choice.mode, choice.map);
-                if (HWND hwnd = FindWindowW(L"HaloReachCE_WindowClass", nullptr)) { ShowWindow(hwnd, SW_HIDE); UpdateWindow(hwnd); }
+                ShowWindow(hwnd, SW_HIDE); UpdateWindow(hwnd);
                 Relaunch::Start(args);
             } else {
                 NOBLE_INFO("FrontEndMenu: quit from menu");
