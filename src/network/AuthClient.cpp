@@ -21,13 +21,22 @@ std::wstring Widen(const std::string& narrow) {
     return out;
 }
 
+std::string ResolveMasterUrl() {
+    std::string url = Settings::Get().Snapshot().masterServerUrl;
+    if (url.empty()) {
+        url = "https://outbreak-z-test-server.onrender.com";
+    }
+    return url;
+}
+
 std::string PostJson(const std::string& fullUrl, const std::string& path, const std::string& jsonBody, int& outStatusCode) {
     outStatusCode = 0;
     URL_COMPONENTS parts{};
     parts.dwStructSize = sizeof(parts);
-    parts.dwHostNameLength = 1;
-    parts.dwUrlPathLength = 1;
-    parts.dwExtraInfoLength = 1;
+    parts.dwSchemeLength = static_cast<DWORD>(-1);
+    parts.dwHostNameLength = static_cast<DWORD>(-1);
+    parts.dwUrlPathLength = static_cast<DWORD>(-1);
+    parts.dwExtraInfoLength = static_cast<DWORD>(-1);
 
     std::wstring wideUrl = Widen(fullUrl);
     if (!WinHttpCrackUrl(wideUrl.c_str(), static_cast<DWORD>(wideUrl.size()), 0, &parts)) {
@@ -112,7 +121,7 @@ AuthResult AuthClient::Login(const std::string& username, const std::string& pas
         return res;
     }
 
-    const std::string masterUrl = Settings::Get().Snapshot().masterServerUrl;
+    const std::string masterUrl = ResolveMasterUrl();
     nlohmann::json body = {
         { "username", username },
         { "password", password },
@@ -174,7 +183,7 @@ AuthResult AuthClient::Register(const std::string& username, const std::string& 
         return res;
     }
 
-    const std::string masterUrl = Settings::Get().Snapshot().masterServerUrl;
+    const std::string masterUrl = ResolveMasterUrl();
     nlohmann::json body = {
         { "username", username },
         { "password", password }
@@ -230,4 +239,3 @@ std::string AuthClient::GetSessionToken() const { return m_sessionToken; }
 int AuthClient::GetUserId() const { return m_userId; }
 
 } // namespace noble
-

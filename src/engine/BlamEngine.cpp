@@ -248,8 +248,9 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
 
     int clampedDiff = (difficulty >= 0 && difficulty <= 3) ? difficulty : 1;
 
+    bool isMainMenu = (mapId == kMainMenuLaunchIndex || mapId == 0 || gameModeTag == 0);
     const bool isGuest = !connectAddress.empty();
-    if (!NetworkTransport::Get().IsActive()) {
+    if (!isMainMenu && !NetworkTransport::Get().IsActive()) {
         if (isGuest) {
             std::string tip = "127.0.0.1";
             uint16_t tport = 11774;
@@ -292,7 +293,6 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
         targetOctets[3] = static_cast<uint8_t>(to3);
     }
 
-    bool isMainMenu = (mapId == kMainMenuLaunchIndex || mapId == 0 || gameModeTag == 0);
     // Campaign missions: launch index 178 (m05) .. 189 (m70_bonus).
     const bool isCampaign = (mapId >= 178 && mapId <= 189);
     // Firefight maps: launch index 210 .. 219.
@@ -647,12 +647,12 @@ void BlamEngine::Render() {
 void BlamEngine::Shutdown() {
     if (!m_isInitialized) return;
 
-    NOBLE_INFO("Shutting down Blam! engine...");
-    if (m_fnShutdown && m_engineInstance) {
-        m_fnShutdown(m_engineInstance);
-    }
+    NOBLE_INFO("Shutting down Blam! engine network transport...");
     NetworkTransport::Get().Shutdown();
-
+    // Do not call m_fnShutdown(m_engineInstance) (vtable[0], c_game_engine's scalar deleting destructor)
+    // while haloreach.dll's engine thread is still running (such as when the menu process exits to launch
+    // a match): freeing c_game_engine's critical sections and heap while the engine thread is active
+    // caused the ntdll.dll access violation on exit. Process termination reclaims all engine memory cleanly.
     m_engineInstance = nullptr;
     m_isInitialized = false;
 }

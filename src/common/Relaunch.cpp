@@ -1,5 +1,8 @@
 #include "Relaunch.hpp"
 #include "Logger.hpp"
+#include "network/MasterServerClient.hpp"
+#include "network/NetworkTransport.hpp"
+#include "network/SessionManager.hpp"
 
 #include <windows.h>
 #include <mutex>
@@ -23,6 +26,12 @@ std::wstring CurrentGameArgs() {
 }
 
 bool Start(const std::wstring& args) {
+    // Release all network sockets (UDP 11774 / 11775) and master server advertisements in this
+    // process BEFORE spawning the replacement process so the new process can bind port 11774 cleanly.
+    MasterServerClient::Get().Shutdown();
+    SessionManager::Get().Shutdown();
+    NetworkTransport::Get().Shutdown();
+
     wchar_t exe[MAX_PATH] = {};
     if (!GetModuleFileNameW(nullptr, exe, MAX_PATH)) return false;
     std::wstring cmd = L"\"" + std::wstring(exe) + L"\"";

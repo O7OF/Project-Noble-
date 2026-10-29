@@ -43,6 +43,7 @@ struct MasterAdvert {
 struct MasterJoinInfo {
     bool ok = false;
     std::string error;
+    std::string sessionId;
     std::string hostIp;
     uint16_t hostPort = 11774;
     std::string relayUrl;
@@ -59,15 +60,20 @@ public:
     std::string Url() const;
     bool Enabled() const { return !Url().empty(); }
 
-    // Hosting: register, then send a heartbeat every 10 s until StopAdvertising (which removes the
+    // Hosting: register, then send a heartbeat until StopAdvertising (which removes the
     // listing). The server forgets a game 30 s after its last heartbeat.
     void StartAdvertising(const MasterAdvert& advert);
     void UpdateAdvert(int playerCount, bool inProgress);
     void StopAdvertising();
     bool IsAdvertising() const { return m_advertising.load(); }
 
-    // Join signaling to trigger host NAT hole punching & WebSocket relay URL retrieval
-    MasterJoinInfo JoinSessionSync(const std::string& sessionId, uint64_t guestMachineId, uint16_t guestPort);
+    // Join signaling to trigger host NAT hole punching & WebSocket relay URL retrieval.
+    // If sessionId is empty and fallbackHostIp is provided, resolves the session ID from /api/sessions.
+    MasterJoinInfo JoinSessionSync(const std::string& sessionId,
+                                   uint64_t guestMachineId,
+                                   uint16_t guestPort,
+                                   const std::string& fallbackHostIp = "",
+                                   uint16_t fallbackHostPort = 11774);
 
     // Browsing: ask for the list (asynchronously); the result is read with Sessions().
     void RequestList();

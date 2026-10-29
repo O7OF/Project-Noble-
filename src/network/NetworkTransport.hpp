@@ -33,6 +33,7 @@ public:
     uint64_t GetLocalMachineId() const { return m_localMachineId; }
     uint64_t GetHostMachineId() const { return m_hostMachineId; }
     uint64_t GetSessionId() const { return m_sessionId; }
+    uint16_t GetLocalPort() const { return m_localPort; }
 
     void GetSessionGuid(uint8_t outGuid16[16]) const;
 
@@ -74,6 +75,7 @@ private:
 
     // Relay members
     std::atomic<bool> m_relayActive{ false };
+    std::string m_relayUrl;
     std::thread m_relayThread;
     std::mutex m_relayMutex;
     std::deque<std::vector<uint8_t>> m_relaySendQueue;

@@ -95,7 +95,10 @@ void ServerBrowser::RefreshServers() {
     auto add = [&](ServerEntry e) {
         if (e.hostAddress.empty() || e.maxPlayers <= 0 || e.mapName.empty()) return;
         for (auto& existing : list) {
-            if (existing.hostAddress == e.hostAddress && existing.port == e.port) return;  // keep the first source
+            if (existing.hostAddress == e.hostAddress && existing.port == e.port) {
+                if (existing.id.empty() && !e.id.empty()) existing.id = e.id;
+                return;  // keep the first source, but preserve Master Server session ID if matched
+            }
         }
         const std::string key = Key(e.hostAddress, e.port);
         e.isFavorite = std::find(settings.favorites.begin(), settings.favorites.end(), key) != settings.favorites.end();
@@ -489,29 +492,19 @@ void ServerBrowser::TryJoin(const std::string& address, uint16_t port, bool hasP
         }
     }
 
-    std::string relayUrl = "";
-    if (!sessionId.empty()) {
-        auto joinInfo = MasterServerClient::Get().JoinSessionSync(sessionId, NetworkTransport::Get().GetLocalMachineId(), 11774);
-        if (joinInfo.ok) {
-            relayUrl = joinInfo.relayUrl;
-            NOBLE_INFO("ServerBrowser: Master Server join signaling succeeded, host={}:{}, relay={}",
-                       joinInfo.hostIp, joinInfo.hostPort, relayUrl);
-        } else {
-            NOBLE_WARN("ServerBrowser: JoinSessionSync returned: {}", joinInfo.error);
-        }
-    }
-
     std::transform(mode.begin(), mode.end(), mode.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
 
+    // Pass -session-id to the relaunched match process so the child process calls JoinSessionSync
+    // with its own generated Guest Machine ID and bound UDP port after NetworkTransport::Initialize.
     std::wstring args = L"-map \"" + std::wstring(map.begin(), map.end()) + L"\"";
     args += L" -mode \"" + std::wstring(mode.begin(), mode.end()) + L"\"";
     args += L" -connect \"" + std::wstring(address.begin(), address.end()) + L":" + std::to_wstring(port) + L"\"";
-    if (!relayUrl.empty()) {
-        args += L" -relay \"" + std::wstring(relayUrl.begin(), relayUrl.end()) + L"\"";
+    if (!sessionId.empty()) {
+        args += L" -session-id \"" + std::wstring(sessionId.begin(), sessionId.end()) + L"\"";
     }
 
     m_status = "Connecting to " + key + "...";
-    NOBLE_INFO("ServerBrowser: Connecting to {}:{} ({}) via Relaunch", address, port, map);
+    NOBLE_INFO("ServerBrowser: Connecting to {}:{} (map='{}', session='{}') via Relaunch", address, port, map, sessionId);
     Relaunch::Start(args);
     CloseThisNobleWindow();
 }

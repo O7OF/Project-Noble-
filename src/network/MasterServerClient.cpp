@@ -29,7 +29,7 @@ struct HttpResult {
     std::string error;
 };
 
-// Blocking HTTP request (used only on the worker thread). Short timeouts so a dead server
+// Blocking HTTP request (used only on the worker thread or during join setup). Short timeouts so a dead server
 // does not freeze the worker loop.
 HttpResult HttpRequest(const std::string& fullUrl,
                        const wchar_t* method,
@@ -263,12 +263,18 @@ void MasterServerClient::WorkerLoop() {
 
         if (doUnregister) DoUnregister();
         if (doHeartbeat) {
-            if (!registered) DoRegister(); else DoHeartbeat();
+            if (!registered) {
+                DoRegister();
+                // Immediately heartbeat after registering so the host receives relay_url and connects its WebSocket relay right away
+                DoHeartbeat();
+            } else {
+                DoHeartbeat();
+            }
         }
         if (doList) DoList();
 
         lock.lock();
-        if (doHeartbeat) m_nextHeartbeat = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        if (doHeartbeat) m_nextHeartbeat = std::chrono::steady_clock::now() + std::chrono::seconds(3);
         if (stop) break;
     }
 }
@@ -355,6 +361,7 @@ void MasterServerClient::DoHeartbeat() {
         body = {{"session_id", id}, {"player_count", m_advert.playerCount}, {"in_progress", m_advertInProgress},
                 {"map", m_advert.map}};
     }
+    if (id.empty() || token.empty()) return;
     const HttpResult r = HttpRequest(Url(), L"PUT", "/api/sessions/heartbeat", body.dump(), token);
     if (r.ok) {
         try {
@@ -399,18 +406,56 @@ void MasterServerClient::DoUnregister() {
     SetStatus("your game was removed from the master server");
 }
 
-MasterJoinInfo MasterServerClient::JoinSessionSync(const std::string& sessionId, uint64_t guestMachineId, uint16_t guestPort) {
+MasterJoinInfo MasterServerClient::JoinSessionSync(const std::string& sessionId,
+                                                   uint64_t guestMachineId,
+                                                   uint16_t guestPort,
+                                                   const std::string& fallbackHostIp,
+                                                   uint16_t fallbackHostPort) {
     MasterJoinInfo info;
-    if (sessionId.empty()) {
+    std::string resolvedId = sessionId;
+
+    // If no sessionId was provided (e.g. Direct Connect via IP:port), attempt to resolve it from /api/sessions
+    if (resolvedId.empty() && !fallbackHostIp.empty() && Enabled()) {
+        const HttpResult listRes = HttpRequest(Url(), L"GET", "/api/sessions", {});
+        if (listRes.ok) {
+            try {
+                const nlohmann::json arr = nlohmann::json::parse(listRes.body);
+                if (arr.is_array()) {
+                    for (const auto& item : arr) {
+                        if (!item.is_object()) continue;
+                        const std::string addr = Str(item, "address", 64);
+                        const uint16_t port = static_cast<uint16_t>(Int(item, "port", 11774, 1, 65535));
+                        if (addr == fallbackHostIp && port == fallbackHostPort) {
+                            resolvedId = Str(item, "id", 64);
+                            break;
+                        }
+                    }
+                    // Fallback: match by IP if port was NAT-mapped
+                    if (resolvedId.empty()) {
+                        for (const auto& item : arr) {
+                            if (!item.is_object()) continue;
+                            if (Str(item, "address", 64) == fallbackHostIp) {
+                                resolvedId = Str(item, "id", 64);
+                                break;
+                            }
+                        }
+                    }
+                }
+            } catch (...) {}
+        }
+    }
+
+    if (resolvedId.empty()) {
         info.error = "Session ID is empty";
         return info;
     }
+
     nlohmann::json body = {
         { "guest_port", guestPort },
         { "guest_machine_id", std::to_string(guestMachineId) },
         { "guest_address", UPnP::Get().GetExternalIP() }
     };
-    const HttpResult r = HttpRequest(Url(), L"POST", "/api/sessions/" + sessionId + "/join", body.dump());
+    const HttpResult r = HttpRequest(Url(), L"POST", "/api/sessions/" + resolvedId + "/join", body.dump());
     if (!r.ok) {
         info.error = r.error;
         return info;
@@ -418,9 +463,11 @@ MasterJoinInfo MasterServerClient::JoinSessionSync(const std::string& sessionId,
     try {
         auto j = nlohmann::json::parse(r.body);
         info.ok = true;
+        info.sessionId = resolvedId;
         info.hostIp = j.value("host_ip", "");
         info.hostPort = static_cast<uint16_t>(j.value("host_port", 11774));
         info.relayUrl = j.value("relay_url", "");
+        NOBLE_INFO("MasterServer: joined session {} (relay: {})", resolvedId, info.relayUrl);
         return info;
     } catch (...) {
         info.error = "Unreadable join response";

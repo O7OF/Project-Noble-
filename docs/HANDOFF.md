@@ -1,4 +1,4 @@
-# Project Noble: handoff (2026-10-28, 23:35 ET)
+# Project Noble: handoff (2026-10-28, 23:55 ET)
 Dominus join the team 20261028! 
 This picks up a reverse-engineering and C++ effort on **Tyler's Windows PC**. All paths below are real paths on that machine.
 Tyler (GitHub `WeabooTyler117`) works with a partner (GitHub `O7OF`) who owns the repo and writes most of the code.
@@ -8,6 +8,44 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 **Goal:** `noble-client.exe` loads MCC's own `haloreach.dll` (Halo: Reach) and drives it **without MCC**, like the existing
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
 MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour.
+
+---
+
+## 0. Pick up here (2026-10-28, 23:55 ET) - Dominus Critical Bug Fixes: Menu-to-Match ntdll Crash, UDP Port Stealing, Relay Reconnect Drop & NAT Join Flow
+
+All changes compiled cleanly via `build.bat` (`noble-client.exe` and `noble-dedicated.exe`) with **0 errors and 0 warnings** under `/W4`:
+
+- **Fixed Menu-to-Match `ntdll.dll` Access Violation on Exit (`src/engine/BlamEngine.cpp`, `src/main.cpp`):**
+  - **Root Cause:** When the menu process (`mainmenu_all.map`) exited to launch a match, `haloreach.dll`'s engine thread was still actively running its simulation/render loop. Calling `m_fnShutdown(m_engineInstance)` (`vtable[0]`, `c_game_engine`'s scalar deleting destructor) or tearing down `UiArt`/`UIManager`/`LoadScreen` on the main thread freed the engine's critical sections and heap buffers while the engine thread was still locking/reading them inside `ntdll.dll`.
+  - **Fix:** `BlamEngine::Shutdown()` and `main.cpp` now cleanly stop `MasterServerClient` (sending `DELETE /api/sessions/:id`), `SessionManager` (releasing UPnP and LAN sockets), and `NetworkTransport` (closing the WebSocket relay and UDP socket), flush `Logger::Shutdown()`, and terminate the process via `TerminateProcess(GetCurrentProcess(), 0)` without freeing live engine/D3D11 structures underneath the running engine thread.
+
+- **Fixed Menu Process Stealing UDP Port `11774` & Wrong Guest Machine ID on Join (`src/engine/BlamEngine.cpp`, `src/common/Relaunch.cpp`, `src/ui/ServerBrowser.cpp`, `src/main.cpp`):**
+  - **Root Cause 1 (UDP Port 11774 Conflict):** `BlamEngine::BuildLaunchBlock()` previously called `NetworkTransport::Get().Initialize(true)` even when launching `mainmenu_all.map`, binding UDP port `11774` inside the menu process. When `Relaunch::Start()` spawned the match process before the menu process finished closing, port `11774` was still held by the dying menu process.
+  - **Root Cause 2 (Wrong Guest Machine ID in `JoinSessionSync`):** `ServerBrowser::TryJoin()` previously called `MasterServerClient::Get().JoinSessionSync()` inside the **menu process** before relaunching, sending the menu process's host Machine ID (`0x484F535400000001`) instead of the child guest process's randomly generated Machine ID and bound port.
+  - **Fix:**
+    - `BlamEngine::BuildLaunchBlock()` no longer initializes `NetworkTransport` when `isMainMenu` is true.
+    - `Relaunch::Start()` now shuts down `MasterServerClient`, `SessionManager`, and `NetworkTransport` **before** calling `CreateProcessW`, guaranteeing ports `11774` and `11775` are free before the child process starts.
+    - `ServerBrowser::TryJoin()` passes `-session-id "<id>"` to the child process, and `main.cpp` executes `MasterServerClient::Get().JoinSessionSync()` in the **child process** after `NetworkTransport::Initialize(false, ...)` has generated the guest's actual `m_localMachineId` and bound `m_localPort` (with automatic session ID lookup by `ip:port` for Direct Connect).
+    - Removed the duplicate `SessionManager::Get().Initialize()` call in `src/main.cpp`.
+
+- **Fixed WebSocket Relay Disconnecting Every Heartbeat & 5-Second Send Blocking (`src/network/NetworkTransport.cpp`, `src/network/MasterServerClient.cpp`):**
+  - **Root Cause 1:** `MasterServerClient::DoHeartbeat()` received `relay_url` on every heartbeat and called `NetworkTransport::StartRelay()`, which unconditionally called `StopRelay()`, tearing down the active WebSocket connection and dropping all queued packets in `m_relaySendQueue` and `m_relayRecvQueue` every heartbeat.
+  - **Root Cause 2:** `NetworkTransport::RelayWorkerThread()` inherited a 5,000 ms receive timeout from `WinHttpSetTimeouts`, causing `WinHttpWebSocketReceive` to block outgoing packet sends (`m_relaySendQueue`) for up to 5 seconds whenever no incoming relay packet arrived.
+  - **Root Cause 3:** When hosting, `MasterServerClient::WorkerLoop()` waited 10 seconds after `DoRegister()` before sending the first heartbeat, delaying WebSocket relay startup and `pending_joins` NAT hole-punching by 10 seconds.
+  - **Fix:**
+    - `NetworkTransport::StartRelay()` is now a no-op if the relay is already active on the same `relayUrl`.
+    - `NetworkTransport::RelayWorkerThread()` sets a 15 ms receive timeout (`WinHttpSetTimeouts(hWebSocket, 5000, 5000, 1000, 15)`) after upgrading the WebSocket handle so outgoing packets flush immediately.
+    - `MasterServerClient::WorkerLoop()` now triggers `DoHeartbeat()` immediately after `DoRegister()` and polls every 3 seconds so `relay_url` and `pending_joins` are processed rapidly.
+
+- **Fixed NAT Hole-Punch `PING` Peer Registration & Multi-Peer Host Routing (`src/network/NetworkTransport.cpp`):**
+  - `NetworkTransport::Initialize()` now sends an immediate `"PING"` NAT hole-punch datagram from Guest to Host upon socket creation, and tries binding `localPort` (`11774`) first for both Host and Guest before falling back to an ephemeral port.
+  - `NetworkTransport::OnNetRecv()` now registers the sender's `senderMachineId -> senderAddr` in `m_peerTable` when a `"PING"` NAT punch packet arrives on the Host (instead of discarding `"PING"` before peer registration) and loops to read any subsequent game packet without returning `0` early.
+  - `NetworkTransport::AddPeer()` no longer overwrites an already-learned direct UDP peer address in `m_peerTable`.
+  - `NetworkTransport::OnNetSend()` on the Host now broadcasts to all peers in `m_peerTable` when `targetPeerId` is not yet mapped, rather than only sending to `m_peerTable.begin()->second`.
+
+- **Fixed `AuthClient` HTTPS Scheme Detection & Default URL Fallback (`src/network/AuthClient.cpp`, `.gitignore`):**
+  - Set `parts.dwSchemeLength = static_cast<DWORD>(-1)` in `AuthClient.cpp` (`PostJson`) so `WinHttpCrackUrl` populates `parts.nScheme == INTERNET_SCHEME_HTTPS` reliably, and added fallback to `https://outbreak-z-test-server.onrender.com` when `masterServerUrl` is empty.
+  - Added `node_modules/` and `**/node_modules/` to `.gitignore`.
 
 ---
 

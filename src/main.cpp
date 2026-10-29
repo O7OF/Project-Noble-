@@ -253,6 +253,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     bool hostPublic = true;
     int hostMaxPlayers = 16;
     std::string connectAddress = "";
+    std::string connectSessionId = "";
     std::string relayUrl = "";
 
     auto WideToNarrow = [](const std::wstring& w) -> std::string {
@@ -297,6 +298,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
                 hostMaxPlayers = _wtoi(argvW[++i]);
             } else if (arg == L"-connect" && i + 1 < numArgs) {
                 connectAddress = WideToNarrow(argvW[++i]);
+            } else if (arg == L"-session-id" && i + 1 < numArgs) {
+                connectSessionId = WideToNarrow(argvW[++i]);
             } else if (arg == L"-relay" && i + 1 < numArgs) {
                 relayUrl = WideToNarrow(argvW[++i]);
             }
@@ -364,6 +367,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         if (!modFolder.empty()) args += L" -mod \"" + modFolder.wstring() + L"\"";
         if (!connectAddress.empty()) {
             args += L" -connect \"" + toWide(connectAddress) + L"\"";
+            if (!connectSessionId.empty()) {
+                args += L" -session-id \"" + toWide(connectSessionId) + L"\"";
+            }
         } else if (launchHost) {
             args += L" -host";
             if (hostOnline) args += L" -online";
@@ -383,19 +389,42 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 
     if (!connectAddress.empty()) {
         launchHost = false; // Guest joining remote match
-        if (!relayUrl.empty()) {
-            noble::NetworkTransport::Get().StartRelay(relayUrl, "HALOREAC", false, noble::NetworkTransport::Get().GetLocalMachineId());
-        }
-        NOBLE_INFO("Launching Halo: Reach Engine as Guest connecting to '{}' (Map: {}, Mode: {})", connectAddress, launchMap, launchMode);
+        NOBLE_INFO("Launching Halo: Reach Engine as Guest connecting to '{}' (Map: {}, Mode: {}, Session: '{}')",
+                   connectAddress, launchMap, launchMode, connectSessionId);
         blamEngine->LaunchMap(launchMap, launchMode, launchDifficulty, launchSkulls, customMvar, customVariant, connectAddress);
+
+        // Now that LaunchMap -> BuildLaunchBlock has initialized NetworkTransport with the Guest's
+        // generated LocalMachineId and bound LocalPort, register the join on the Master Server (for
+        // Host NAT hole-punching and WebSocket relay fallback) or connect to the explicit -relay URL.
+        const uint64_t guestMachineId = noble::NetworkTransport::Get().GetLocalMachineId();
+        const uint16_t guestPort = noble::NetworkTransport::Get().GetLocalPort();
+        if (!relayUrl.empty()) {
+            noble::NetworkTransport::Get().StartRelay(relayUrl, connectSessionId.empty() ? "HALOREAC" : connectSessionId, false, guestMachineId);
+        } else if (noble::MasterServerClient::Get().Enabled()) {
+            std::string tip = connectAddress;
+            uint16_t tport = 11774;
+            const size_t c = connectAddress.rfind(':');
+            if (c != std::string::npos) {
+                tip = connectAddress.substr(0, c);
+                const int p = std::atoi(connectAddress.substr(c + 1).c_str());
+                if (p > 0 && p <= 65535) tport = static_cast<uint16_t>(p);
+            }
+            const noble::MasterJoinInfo joinInfo = noble::MasterServerClient::Get().JoinSessionSync(
+                connectSessionId, guestMachineId, guestPort, tip, tport);
+            if (joinInfo.ok && !joinInfo.relayUrl.empty()) {
+                noble::NetworkTransport::Get().StartRelay(
+                    joinInfo.relayUrl,
+                    joinInfo.sessionId.empty() ? "HALOREAC" : joinInfo.sessionId,
+                    false,
+                    guestMachineId);
+            }
+        }
     } else {
         NOBLE_INFO("Launching Halo: Reach Engine: Target Map='{}', Mode='{}'", launchMap, launchMode);
         blamEngine->LaunchMap(launchMap, launchMode, launchDifficulty, launchSkulls, customMvar, customVariant);
     }
 
-// 10. Initialize P2P & Self-Hosting Network Subsystem
-    noble::SessionManager::Get().Initialize();
-
+    // 10. Start P2P & Self-Hosting Network Subsystem if hosting a match
     if (launchHost) {
         noble::HostConfig cfg;
         std::string modeTitle = launchMode;
@@ -444,28 +473,24 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         if (!noble::PauseMenu::HoldFrame() && !noble::FrontEndMenu::HoldFrame()) Sleep(10);
     }
 
-    // After a match the engine thread can be stuck (it waits for a main menu map MCC doesn't ship), and its
-    // Shutdown could then wait forever. Make sure the process still ends.
+    // Watchdog in case network shutdown stalls on an unresponsive router or server.
     std::thread([] {
         Sleep(5000);
-        NOBLE_WARN("Engine shutdown took over 5 s; exiting anyway.");
+        NOBLE_WARN("Shutdown took over 5 s; exiting anyway.");
         noble::Logger::Shutdown();
         TerminateProcess(GetCurrentProcess(), 0);  // not ExitProcess: its DLL shutdown can hang (see below)
     }).detach();
 
-    // 13. Clean shutdown (Correct order: Hooks & VFS -> Engine -> Loader -> Renderer)
+    // 13. Clean shutdown: stop master server advertisement, UPnP/LAN discovery, and UDP/relay sockets,
+    // flush logs, and terminate the process without tearing down live D3D11/ImGui or c_game_engine
+    // heap objects under haloreach.dll's running engine/audio threads (fixes the ntdll access violation on exit).
     NOBLE_INFO("Initiating clean host shutdown...");
     noble::MasterServerClient::Get().Shutdown();
     noble::SessionManager::Get().Shutdown();
-    // The engine thread keeps drawing Noble's overlay (ImGui) until the engine stops, so stop it first:
-    // shutting ImGui down while a frame is still coming crashed in ImGui_ImplDX11_NewFrame (2026-10-28).
     blamEngine->Shutdown();
-    noble::UiArt::Shutdown();
-    noble::UIManager::Shutdown();
-    noble::LoadScreen::Get().Shutdown();
 
-    NOBLE_INFO("Engine shut down; exiting process without unhooking or unloading haloreach.dll.");
+    NOBLE_INFO("Network and host services shut down; exiting process cleanly.");
     noble::Logger::Shutdown();
-    TerminateProcess(GetCurrentProcess(), 0);  // not ExitProcess: its DLL shutdown can hang (see below)
+    TerminateProcess(GetCurrentProcess(), 0);  // not ExitProcess: its DLL shutdown can hang
     return 0;   // not reached
 }
