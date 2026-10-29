@@ -256,12 +256,14 @@ void MasterServerClient::StopAdvertising() {
     m_wake.notify_all();
 }
 
-void MasterServerClient::Shutdown() {
+void MasterServerClient::Shutdown(bool keepSession) {
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         if (m_advertising) {
             m_advertising = false;
-            m_unregisterRequested = true;
+            // Handing the session to the match process: deleting it here made the match's first heartbeat
+            // get 404 and register a brand-new session, while the guests were sent to the old one (2026-10-29).
+            m_unregisterRequested = !keepSession;
         }
         m_stop = true;
         m_wake.notify_all();

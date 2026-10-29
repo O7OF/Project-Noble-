@@ -1492,8 +1492,45 @@ void FeedEngineThreadInputs(HWND hwnd, ImGuiIO& io) {
 }
 
 
+// Lobby events from the WebSocket relay thread. The callbacks used to write MenuState's strings and roster on that
+// thread while the menu read them on its own; two launch events 0.1 s apart (2026-10-29, joining O7OF) then killed
+// the menu without a crash log (heap corruption ends the process before the crash handler runs). The relay
+// thread now only fills this, and the menu takes it over at the top of the lobby screen.
+struct PendingLobbyEvents {
+    bool launch = false;
+    std::string map, mode, variant, hostEndpoint, sessionId;
+    int difficulty = 1;
+    uint64_t skulls = 0;
+    bool roster = false;
+    std::vector<LobbyPlayer> rosterPlayers;
+};
+static std::mutex s_lobbyEventMutex;
+static PendingLobbyEvents s_lobbyEvents;
+
+static void TakePendingLobbyEvents(MenuState& st) {
+    PendingLobbyEvents ev;
+    {
+        std::lock_guard<std::mutex> lock(s_lobbyEventMutex);
+        if (!s_lobbyEvents.launch && !s_lobbyEvents.roster) return;
+        ev = std::move(s_lobbyEvents);
+        s_lobbyEvents = PendingLobbyEvents{};
+    }
+    if (ev.roster) st.lobbyRoster = std::move(ev.rosterPlayers);
+    if (ev.launch && !st.lobbyLaunchPending) {
+        st.lobbyLaunchPending = true;
+        st.lobbyLaunchMap = ev.map;
+        st.lobbyLaunchMode = ev.mode;
+        st.lobbyLaunchVariant = ev.variant;
+        st.lobbyLaunchDiff = ev.difficulty;
+        st.lobbyLaunchSkulls = ev.skulls;
+        if (!ev.hostEndpoint.empty()) st.lobbyHostEndpoint = ev.hostEndpoint;
+        if (!ev.sessionId.empty()) st.lobbySessionId = ev.sessionId;
+    }
+}
+
 static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, float top, FrontEndChoice& choice, bool& done, bool back) {
     MenuState& st = ctx.st;
+    TakePendingLobbyEvents(st);
     const float colW = ui.size.x * 0.44f;
     const float pxLeft = left + 34.0f * ui.s;
     const float pxRight = ui.size.x * 0.52f;
@@ -1544,6 +1581,22 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
 
         std::wstring args = L"-map \"" + ToWide(choice.map) + L"\" -mode \"" + ToWide(choice.mode) + L"\"";
         args += L" -difficulty " + std::to_wstring(choice.difficulty);
+        // The host sends its variant as a path on its own PC; use the guest's copy of the same file. Without a
+        // variant the guest's launch block has no game variant (the 5% load hang from 2026-10-28).
+        if (!st.lobbyLaunchVariant.empty()) {
+            const std::filesystem::path want = std::filesystem::path(st.lobbyLaunchVariant).filename();
+            std::filesystem::path local;
+            for (const auto* list : { &ctx.variants, &ctx.ffVariants })
+                for (const MenuVariant& v : *list)
+                    if (local.empty() && _wcsicmp(v.path.filename().c_str(), want.c_str()) == 0) local = v.path;
+            if (!local.empty()) {
+                choice.variantPath = local.string();
+                args += L" -variant \"" + local.wstring() + L"\"";
+            } else {
+                NOBLE_WARN("FrontEndMenu: host's game variant '{}' isn't in this PC's variants; launching without it",
+                           st.lobbyLaunchVariant);
+            }
+        }
         if (choice.skulls != 0) args += L" -skulls " + std::to_wstring(choice.skulls);
         args += L" -connect \"" + ToWide(st.lobbyHostEndpoint) + L"\"";
         if (!st.lobbySessionId.empty()) args += L" -session-id \"" + ToWide(st.lobbySessionId) + L"\"";
@@ -2403,6 +2456,10 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
         ctx.st.lobbyMaxPlayers = s.maxPlayers;
         ctx.st.lobbyRoster.clear();
         ctx.st.lobbyLaunchPending = false;
+        {   // a launch or roster left over from an earlier lobby doesn't apply to this one
+            std::lock_guard<std::mutex> lock(s_lobbyEventMutex);
+            s_lobbyEvents = PendingLobbyEvents{};
+        }
         ctx.st.lastLobbyPoll = ImGui::GetTime();
 
         std::string pName = AuthClient::Get().IsLoggedIn() ? AuthClient::Get().GetUsername() : Settings::Get().Snapshot().playerName;
@@ -2440,25 +2497,24 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
     });
 
     // Real-time WebSocket Lobby Callbacks
-    NetworkTransport::Get().SetLobbyLaunchCallback([&ctx](const std::string& lMap, const std::string& lMode,
-                                                          const std::string& lVar, int lDiff, uint64_t lSkulls,
-                                                          const std::string& hIp, uint16_t hPort, const std::string& sId) {
+    // These run on the WebSocket relay thread: they only queue the event (see PendingLobbyEvents).
+    NetworkTransport::Get().SetLobbyLaunchCallback([](const std::string& lMap, const std::string& lMode,
+                                                      const std::string& lVar, int lDiff, uint64_t lSkulls,
+                                                      const std::string& hIp, uint16_t hPort, const std::string& sId) {
         NOBLE_INFO("FrontEndMenu: Received WebSocket real-time lobby launch event! (map: {}, mode: {})", lMap, lMode);
-        ctx.st.lobbyLaunchPending = true;
-        ctx.st.lobbyLaunchMap = lMap;
-        ctx.st.lobbyLaunchMode = lMode;
-        ctx.st.lobbyLaunchVariant = lVar;
-        ctx.st.lobbyLaunchDiff = lDiff;
-        ctx.st.lobbyLaunchSkulls = lSkulls;
-        if (!hIp.empty()) {
-            ctx.st.lobbyHostEndpoint = hIp + ":" + std::to_string(hPort);
-        }
-        if (!sId.empty()) {
-            ctx.st.lobbySessionId = sId;
-        }
+        std::lock_guard<std::mutex> lock(s_lobbyEventMutex);
+        if (s_lobbyEvents.launch) return;   // the host's launch can arrive twice
+        s_lobbyEvents.launch = true;
+        s_lobbyEvents.map = lMap;
+        s_lobbyEvents.mode = lMode;
+        s_lobbyEvents.variant = lVar;
+        s_lobbyEvents.difficulty = lDiff;
+        s_lobbyEvents.skulls = lSkulls;
+        if (!hIp.empty()) s_lobbyEvents.hostEndpoint = hIp + ":" + std::to_string(hPort);
+        s_lobbyEvents.sessionId = sId;
     });
 
-    NetworkTransport::Get().SetLobbyRosterCallback([&ctx](const std::string& rosterJson) {
+    NetworkTransport::Get().SetLobbyRosterCallback([](const std::string& rosterJson) {
         try {
             auto j = nlohmann::json::parse(rosterJson);
             if (j.contains("roster") && j["roster"].is_array()) {
@@ -2474,7 +2530,9 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
                     p.ping = item.value("ping", 0);
                     updated.push_back(p);
                 }
-                ctx.st.lobbyRoster = std::move(updated);
+                std::lock_guard<std::mutex> lock(s_lobbyEventMutex);
+                s_lobbyEvents.roster = true;
+                s_lobbyEvents.rosterPlayers = std::move(updated);
             }
         } catch (...) {}
     });

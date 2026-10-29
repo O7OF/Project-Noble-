@@ -146,7 +146,9 @@ public:
     std::vector<MasterSession> Sessions() const;
     std::string Status() const;   // last result / error, for the menu
 
-    void Shutdown();
+    // keepSession: stop this process's master-server thread but leave the session listed, because the
+    // relaunched match process (given -session-id/-session-token) carries it on.
+    void Shutdown(bool keepSession = false);
 
 private:
     MasterServerClient() = default;

@@ -28,7 +28,9 @@ std::wstring CurrentGameArgs() {
 bool Start(const std::wstring& args) {
     // Release all network sockets (UDP 11774 / 11775) and master server advertisements in this
     // process BEFORE spawning the replacement process so the new process can bind port 11774 cleanly.
-    MasterServerClient::Get().Shutdown();
+    // A host launching its lobby's match passes the session on (-session-id): keep it listed.
+    const bool handsOnSession = args.find(L"-host") != std::wstring::npos && args.find(L"-session-id") != std::wstring::npos;
+    MasterServerClient::Get().Shutdown(handsOnSession);
     SessionManager::Get().Shutdown();
     NetworkTransport::Get().Shutdown();
 
