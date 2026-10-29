@@ -1571,16 +1571,16 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
 
     // If launch was signaled (via WebSocket or HTTP poll) and we are guest, launch!
     if (!st.isLobbyHost && st.lobbyLaunchPending && !done) {
-        choice.play = false;
+        choice.play = true;
         choice.host = false;
         choice.map = st.lobbyLaunchMap.empty() ? st.lobbyMap : st.lobbyLaunchMap;
         choice.mode = st.lobbyLaunchMode.empty() ? st.lobbyMode : st.lobbyLaunchMode;
         choice.variantPath = st.lobbyLaunchVariant;
         choice.difficulty = st.lobbyLaunchDiff;
         choice.skulls = st.lobbyLaunchSkulls;
+        choice.connectAddress = st.lobbyHostEndpoint;
+        choice.sessionId = st.lobbySessionId;
 
-        std::wstring args = L"-map \"" + ToWide(choice.map) + L"\" -mode \"" + ToWide(choice.mode) + L"\"";
-        args += L" -difficulty " + std::to_wstring(choice.difficulty);
         // The host sends its variant as a path on its own PC; use the guest's copy of the same file. Without a
         // variant the guest's launch block has no game variant (the 5% load hang from 2026-10-28).
         if (!st.lobbyLaunchVariant.empty()) {
@@ -1591,17 +1591,12 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
                     if (local.empty() && _wcsicmp(v.path.filename().c_str(), want.c_str()) == 0) local = v.path;
             if (!local.empty()) {
                 choice.variantPath = local.string();
-                args += L" -variant \"" + local.wstring() + L"\"";
             } else {
                 NOBLE_WARN("FrontEndMenu: host's game variant '{}' isn't in this PC's variants; launching without it",
                            st.lobbyLaunchVariant);
             }
         }
-        if (choice.skulls != 0) args += L" -skulls " + std::to_wstring(choice.skulls);
-        args += L" -connect \"" + ToWide(st.lobbyHostEndpoint) + L"\"";
-        if (!st.lobbySessionId.empty()) args += L" -session-id \"" + ToWide(st.lobbySessionId) + L"\"";
         NOBLE_INFO("FrontEndMenu: Guest executing synchronized lobby launch to {}", st.lobbyHostEndpoint);
-        Relaunch::Start(args);
         done = true;
         return;
     }
@@ -2699,6 +2694,16 @@ FrontEndChoice FrontEndMenu::Run(Window& window, D3D11Renderer& renderer, const 
 
     window.SetCustomWndProc([](HWND h, UINT m, WPARAM w, LPARAM l) { return UIManager::HandleWndProc(h, m, w, l); });
 
+    UIManager::GetServerBrowser().SetDirectJoinHandler([&choice, &done](const std::string& map, const std::string& mode, const std::string& addr, const std::string& sessId) {
+        choice.play = true;
+        choice.host = false;
+        choice.map = map;
+        choice.mode = mode;
+        choice.connectAddress = addr;
+        choice.sessionId = sessId;
+        done = true;
+    });
+
     while (!done && window.ProcessMessages()) {
         renderer.BeginFrame();
         UIManager::BeginFrame();
@@ -2716,6 +2721,8 @@ FrontEndChoice FrontEndMenu::Run(Window& window, D3D11Renderer& renderer, const 
     }
 
     ReachAudio::StopMusic();
+    UIManager::GetServerBrowser().SetDirectJoinHandler(nullptr);
+    UIManager::GetServerBrowser().SetJoinLobbyHandler(nullptr);
     window.SetCustomWndProc(nullptr);
     return choice;
 }

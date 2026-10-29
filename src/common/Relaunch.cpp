@@ -34,11 +34,6 @@ bool Start(const std::wstring& args) {
     SessionManager::Get().Shutdown();
     NetworkTransport::Get().Shutdown();
 
-    // Immediately hide the existing window so there are never multiple windows visible on screen
-    if (HWND hwnd = FindWindowW(L"HaloReachCE_WindowClass", nullptr)) {
-        ShowWindow(hwnd, SW_HIDE);
-        UpdateWindow(hwnd);
-    }
 
     wchar_t exe[MAX_PATH] = {};
     if (!GetModuleFileNameW(nullptr, exe, MAX_PATH)) return false;

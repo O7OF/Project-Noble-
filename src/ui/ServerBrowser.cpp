@@ -503,6 +503,13 @@ void ServerBrowser::TryJoin(const std::string& address, uint16_t port, bool hasP
 
     std::transform(mode.begin(), mode.end(), mode.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
 
+    if (m_directJoinHandler) {
+        m_status = "Connecting to " + key + "...";
+        NOBLE_INFO("ServerBrowser: Direct join to {}:{} (map='{}', session='{}')", address, port, map, sessionId);
+        m_directJoinHandler(map, mode, address + ":" + std::to_string(port), sessionId);
+        return;
+    }
+
     // Pass -session-id to the relaunched match process so the child process calls JoinSessionSync
     // with its own generated Guest Machine ID and bound UDP port after NetworkTransport::Initialize.
     std::wstring args = L"-map \"" + std::wstring(map.begin(), map.end()) + L"\"";

@@ -39,6 +39,8 @@ public:
 
     using JoinLobbyHandler = std::function<void(const ServerEntry& server)>;
     void SetJoinLobbyHandler(JoinLobbyHandler handler) { m_joinLobbyHandler = std::move(handler); }
+    using DirectJoinHandler = std::function<void(const std::string& map, const std::string& mode, const std::string& address, const std::string& sessionId)>;
+    void SetDirectJoinHandler(DirectJoinHandler handler) { m_directJoinHandler = std::move(handler); }
 
     const std::vector<ServerEntry>& GetServers() const { return m_servers; }
 
@@ -53,6 +55,7 @@ private:
     void ToggleFavorite(const std::string& address, uint16_t port);
 
     JoinLobbyHandler m_joinLobbyHandler;
+    DirectJoinHandler m_directJoinHandler;
     std::vector<ServerEntry> m_servers;
     int m_selectedServerIndex = -1;
     double m_lastRefresh = -100.0;

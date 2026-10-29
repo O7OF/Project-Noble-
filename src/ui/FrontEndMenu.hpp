@@ -19,6 +19,7 @@ struct FrontEndChoice {
     int hostMaxPlayers = 16;     // max players (4 for co-op, 16 for custom/forge)
     std::string sessionId;
     std::string sessionToken;
+    std::string connectAddress;  // remote host endpoint for guest join (e.g. "127.0.0.1:11774")
     std::string map;             // scenario name, e.g. "20_sword_slayer"
     std::string variantPath;     // full path to a game variant .bin from MCC's game_variants
     std::string mode = "multiplayer"; // "multiplayer", "campaign" or "firefight"

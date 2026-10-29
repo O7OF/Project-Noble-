@@ -206,43 +206,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     const std::string masterUrl = startupSettings.masterServerUrl.empty() ? "https://outbreak-z-test-server.onrender.com" : startupSettings.masterServerUrl;
     noble::MasterServerClient::Get().SetUrl(masterUrl);
 
-    // 8. Load and bootstrap haloreach.dll directly in process memory
-    auto loader = std::make_unique<noble::Loader>();
-    if (!loader->LoadReachDll(reachInstall->reachDllPath)) {
-        NOBLE_ERROR("Failed to load haloreach.dll into process space.");
-        return 1;
-    }
-
-    // Direct all haloreach.dll asset and map file I/O through Virtual File System (VFS)
-    noble::VFS::HookTargetModule(loader->GetModuleHandle());
-
-    // The SETTINGS > VIDEO field-of-view slider writes the engine's own camera FOV global.
-    noble::CameraFov::SetEngineModule(loader->GetModuleHandle());
-
-    // Apply 32/64 player lobby expansion detours
-    noble::LobbyPatches::Apply(loader->GetModuleHandle());
-
-    // Apply engine stability and appearance cap patches (unlocks all 200+ armor permutations in haloreach.dll)
-    noble::EnginePatches::Apply(loader->GetModuleHandle());
-
-    // 9. Instantiate Blam! Engine & Data Access interfaces
-    auto blamEngine = std::make_unique<noble::BlamEngine>();
-    noble::EngineHostContext hostContext;
-    hostContext.hWnd = window->GetHwnd();
-    hostContext.pDevice = renderer->GetDevice();
-    hostContext.pContext = renderer->GetContext();
-    hostContext.pSwapChain = renderer->GetSwapChain();
-    hostContext.width = window->GetWidth();
-    hostContext.height = window->GetHeight();
-
-    if (!blamEngine->Initialize(*reachInstall, loader->GetModuleHandle(), loader->GetExports(), hostContext)) {
-        NOBLE_ERROR("Failed to initialize Blam! engine host interfaces.");
-        return 1;
-    }
-
     // Parse command line arguments for direct map and variant launches (e.g. from NobleLauncher or Relaunch)
     std::string launchMap = "";
-    std::string launchMode = "mainmenu";
+    std::string launchMode = "";
     std::string customMvar = "";
     std::string customVariant = "";
     fs::path modFolder;
@@ -310,6 +276,48 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         LocalFree(argvW);
     }
 
+    // Run Front-End Menu directly in the host window before haloreach.dll starts.
+    // This allows browsing servers, hosting/joining lobbies, picking variants, and launching
+    // directly in the SAME application window with ZERO window swapping or child process relaunches.
+    if (noble::FrontEndMenu::ShouldShow()) {
+        noble::FrontEndChoice choice = noble::FrontEndMenu::Run(*window, *renderer, reachInstall->reachDirectory);
+        if (!choice.play) {
+            NOBLE_INFO("Exiting from the front-end menu.");
+            noble::MasterServerClient::Get().Shutdown();
+            noble::SessionManager::Get().Shutdown();
+            noble::UiArt::Shutdown();
+            noble::UIManager::Shutdown();
+            noble::Logger::Shutdown();
+            TerminateProcess(GetCurrentProcess(), 0);
+        }
+        launchMap = choice.map;
+        launchMode = choice.mode;
+        customVariant = choice.variantPath;
+        launchDifficulty = choice.difficulty;
+        launchSkulls = choice.skulls;
+        if (!choice.modFolder.empty()) {
+            modFolder = choice.modFolder;
+        }
+        if (choice.host) {
+            launchHost = true;
+            hostOnline = choice.hostOnline;
+            hostPublic = choice.hostPublic;
+            hostMaxPlayers = choice.hostMaxPlayers;
+            connectSessionId = choice.sessionId;
+            connectSessionToken = choice.sessionToken;
+        } else if (!choice.connectAddress.empty()) {
+            connectAddress = choice.connectAddress;
+            connectSessionId = choice.sessionId;
+            connectSessionToken = choice.sessionToken;
+        }
+    }
+
+    noble::ReachArmory::SetMenuMode(false);
+    if (launchMap.empty()) {
+        launchMap = "20_sword_slayer";
+        launchMode = "multiplayer";
+    }
+
     if (!modFolder.empty()) {
         NOBLE_INFO("Activating mod folder '{}'", modFolder.string());
         noble::VFS::SetActiveMod(modFolder);
@@ -339,59 +347,78 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         }
     }
 
-    // Check if we should launch into the Front-End Menu + 3D Armory (mainmenu_all.map inside haloreach.dll)
-    const bool showMenu = noble::FrontEndMenu::ShouldShow();
-    if (showMenu) {
-        noble::ReachArmory::SetMenuMode(true);
-        noble::FrontEndMenu::Initialize(reachInstall->reachDirectory);
-        launchMap = "mainmenu";
-        launchMode = "mainmenu";
-    } else {
-        noble::ReachArmory::SetMenuMode(false);
-        if (launchMap.empty()) {
-            launchMap = "20_sword_slayer";
-            launchMode = "multiplayer";
-        }
-
-        // Remember this launch for the post-game "PLAY AGAIN" button and the loading screen.
-        auto toWide = [](const std::string& s) -> std::wstring {
-            if (s.empty()) return L"";
-            const int len = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
-            if (len <= 0) return L"";
-            std::wstring w(len - 1, L'\0');
-            MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, w.data(), len);
-            return w;
-        };
-        std::wstring args = L"-map \"" + toWide(launchMap) + L"\" -mode \"" + toWide(launchMode) + L"\"";
-        args += L" -difficulty " + std::to_wstring(launchDifficulty);
-        if (!customVariant.empty()) args += L" -variant \"" + toWide(customVariant) + L"\"";
-        if (!customMvar.empty()) args += L" -mvar \"" + toWide(customMvar) + L"\"";
-        if (launchSkulls != 0) args += L" -skulls " + std::to_wstring(launchSkulls);
-        if (!modFolder.empty()) args += L" -mod \"" + modFolder.wstring() + L"\"";
-        if (!connectAddress.empty()) {
-            args += L" -connect \"" + toWide(connectAddress) + L"\"";
-            if (!connectSessionId.empty()) {
-                args += L" -session-id \"" + toWide(connectSessionId) + L"\"";
-                if (!connectSessionToken.empty()) {
-                    args += L" -session-token \"" + toWide(connectSessionToken) + L"\"";
-                }
+    // Remember this launch for the post-game "PLAY AGAIN" button and the loading screen.
+    auto toWide = [](const std::string& s) -> std::wstring {
+        if (s.empty()) return L"";
+        const int len = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
+        if (len <= 0) return L"";
+        std::wstring w(len - 1, L'\0');
+        MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, w.data(), len);
+        return w;
+    };
+    std::wstring args = L"-map \"" + toWide(launchMap) + L"\" -mode \"" + toWide(launchMode) + L"\"";
+    args += L" -difficulty " + std::to_wstring(launchDifficulty);
+    if (!customVariant.empty()) args += L" -variant \"" + toWide(customVariant) + L"\"";
+    if (!customMvar.empty()) args += L" -mvar \"" + toWide(customMvar) + L"\"";
+    if (launchSkulls != 0) args += L" -skulls " + std::to_wstring(launchSkulls);
+    if (!modFolder.empty()) args += L" -mod \"" + modFolder.wstring() + L"\"";
+    if (!connectAddress.empty()) {
+        args += L" -connect \"" + toWide(connectAddress) + L"\"";
+        if (!connectSessionId.empty()) {
+            args += L" -session-id \"" + toWide(connectSessionId) + L"\"";
+            if (!connectSessionToken.empty()) {
+                args += L" -session-token \"" + toWide(connectSessionToken) + L"\"";
             }
-        } else if (launchHost) {
-            args += L" -host";
-            if (hostOnline) args += L" -online";
-            else args += L" -lan";
-            if (hostPublic) args += L" -public";
-            else args += L" -private";
-            args += L" -max-players " + std::to_wstring(hostMaxPlayers);
         }
-        noble::Relaunch::SetCurrentGameArgs(args);
-        noble::PauseMenu::SetLoadingMap(launchMap);
-        noble::UiArt::LoadingBackground(launchMap);
-        noble::UiArt::MapPreview(launchMap, true);
+    } else if (launchHost) {
+        args += L" -host";
+        if (hostOnline) args += L" -online";
+        else args += L" -lan";
+        if (hostPublic) args += L" -public";
+        else args += L" -private";
+        args += L" -max-players " + std::to_wstring(hostMaxPlayers);
+    }
+    noble::Relaunch::SetCurrentGameArgs(args);
+    noble::PauseMenu::SetLoadingMap(launchMap);
+    noble::UiArt::LoadingBackground(launchMap);
+    noble::UiArt::MapPreview(launchMap, true);
+
+    // 8. Load and bootstrap haloreach.dll directly in process memory
+    auto loader = std::make_unique<noble::Loader>();
+    if (!loader->LoadReachDll(reachInstall->reachDllPath)) {
+        NOBLE_ERROR("Failed to load haloreach.dll into process space.");
+        return 1;
+    }
+
+    // Direct all haloreach.dll asset and map file I/O through Virtual File System (VFS)
+    noble::VFS::HookTargetModule(loader->GetModuleHandle());
+
+    // The SETTINGS > VIDEO field-of-view slider writes the engine's own camera FOV global.
+    noble::CameraFov::SetEngineModule(loader->GetModuleHandle());
+
+    // Apply 32/64 player lobby expansion detours
+    noble::LobbyPatches::Apply(loader->GetModuleHandle());
+
+    // Apply engine stability and appearance cap patches (unlocks all 200+ armor permutations in haloreach.dll)
+    noble::EnginePatches::Apply(loader->GetModuleHandle());
+
+    // 9. Instantiate Blam! Engine & Data Access interfaces
+    auto blamEngine = std::make_unique<noble::BlamEngine>();
+    noble::EngineHostContext hostContext;
+    hostContext.hWnd = window->GetHwnd();
+    hostContext.pDevice = renderer->GetDevice();
+    hostContext.pContext = renderer->GetContext();
+    hostContext.pSwapChain = renderer->GetSwapChain();
+    hostContext.width = window->GetWidth();
+    hostContext.height = window->GetHeight();
+
+    if (!blamEngine->Initialize(*reachInstall, loader->GetModuleHandle(), loader->GetExports(), hostContext)) {
+        NOBLE_ERROR("Failed to initialize Blam! engine host interfaces.");
+        return 1;
     }
 
     // Elite armour pack (data\armor\<name>.map + .rrreloc, local only): loaded with multiplayer and Firefight maps.
-    if (!showMenu) noble::ElitePack::Install(loader->GetModuleHandle(), userStoragePath, launchMode);
+    noble::ElitePack::Install(loader->GetModuleHandle(), userStoragePath, launchMode);
 
     if (!connectAddress.empty()) {
         launchHost = false; // Guest joining remote match
