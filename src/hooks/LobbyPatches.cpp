@@ -4,6 +4,10 @@
 #include "common/Logger.hpp"
 #include <psapi.h>
 #include <vector>
+#include <atomic>
+#include <cstring>
+#include <cwchar>
+#include <intrin.h>
 
 namespace noble {
 
@@ -62,6 +66,47 @@ static int32_t __fastcall Hook_CanAcceptPlayerJoinRequest(void* thisPtr, void* p
         result = 0;
     }
     return result;
+}
+
+// Join / connect refusal tracing. Reach Renaissance's host-probe hooks these two haloreach.dll
+// functions (RVA 0x425368 "join refused", RVA 0x42459C "connect refused") to log why a host turns a
+// guest away. Log-only: the original always runs. Arg 3 points at {u64 session, u32 reason} for joins
+// and {u32 id, u32 reason} for connects.
+typedef void(__fastcall* RefuseFn)(void* a1, void* a2, void* a3);
+static RefuseFn s_originalJoinRefuse = nullptr;
+static RefuseFn s_originalConnectRefuse = nullptr;
+static std::atomic<int> s_refuseLogCount{0};
+static uintptr_t s_reachBase = 0;
+
+// Which window logged it (both share one log file) and where in haloreach.dll the call came from.
+static const char* RefuseRole() {
+    return std::wcsstr(GetCommandLineW(), L"-connect") != nullptr ? "GUEST" : "HOST";
+}
+static uintptr_t CallerRva(void* ret) {
+    uintptr_t r = reinterpret_cast<uintptr_t>(ret);
+    return (s_reachBase && r > s_reachBase) ? r - s_reachBase : r;
+}
+
+static void __fastcall Hook_JoinRefuse(void* a1, void* a2, void* a3) {
+    if (a3 && s_refuseLogCount.fetch_add(1) < 50) {
+        uint64_t session = 0; uint32_t reason = 0;
+        std::memcpy(&session, a3, 8);
+        std::memcpy(&reason, static_cast<uint8_t*>(a3) + 8, 4);
+        NOBLE_WARN("LobbyPatches: [{} pid {}] JOIN REFUSED: session 0x{:X} reason {} (0x{:X}) caller hr+0x{:X} a1={} a2={}",
+            RefuseRole(), GetCurrentProcessId(), session, reason, reason, CallerRva(_ReturnAddress()), a1, a2);
+    }
+    if (s_originalJoinRefuse) s_originalJoinRefuse(a1, a2, a3);
+}
+
+static void __fastcall Hook_ConnectRefuse(void* a1, void* a2, void* a3) {
+    if (a3 && s_refuseLogCount.fetch_add(1) < 50) {
+        uint32_t id = 0, reason = 0;
+        std::memcpy(&id, a3, 4);
+        std::memcpy(&reason, static_cast<uint8_t*>(a3) + 4, 4);
+        NOBLE_WARN("LobbyPatches: [{} pid {}] CONNECT REFUSED: id 0x{:X} reason {} (0x{:X}) caller hr+0x{:X}",
+            RefuseRole(), GetCurrentProcessId(), id, reason, reason, CallerRva(_ReturnAddress()));
+    }
+    if (s_originalConnectRefuse) s_originalConnectRefuse(a1, a2, a3);
 }
 
 static bool WriteProtectedMemory(void* destination, const void* source, size_t size) {
@@ -150,6 +195,49 @@ bool LobbyPatches::Apply(HMODULE hReachDll) {
                                      "c_network_session::can_accept_join_request")) {
             patchCount++;
             NOBLE_INFO("LobbyPatches: Installed MinHook detour on can_accept_join_request at 0x{:X}", fnJoinEntry);
+        }
+    }
+
+    // 5. Refusal tracing (log-only, same RVAs Reach Renaissance's host-probe uses). Prologue bytes are
+    //    checked first so a different haloreach.dll build is left alone.
+    {
+        s_reachBase = base;
+        static const uint8_t kPrologue[5] = { 0x48, 0x89, 0x5C, 0x24, 0x08 };
+        struct { uintptr_t rva; void* detour; void** orig; const char* name; } traces[] = {
+            { 0x425368, reinterpret_cast<void*>(&Hook_JoinRefuse),    reinterpret_cast<void**>(&s_originalJoinRefuse),    "join_refuse" },
+            { 0x42459C, reinterpret_cast<void*>(&Hook_ConnectRefuse), reinterpret_cast<void**>(&s_originalConnectRefuse), "connect_refuse" },
+        };
+        for (auto& t : traces) {
+            uint8_t* fn = reinterpret_cast<uint8_t*>(base + t.rva);
+            if (t.rva + 5 <= size && std::memcmp(fn, kPrologue, 5) == 0) {
+                if (HookManager::InstallHook(fn, t.detour, t.orig, t.name)) {
+                    NOBLE_INFO("LobbyPatches: refusal trace on {} at hr+0x{:X}", t.name, t.rva);
+                }
+            } else {
+                NOBLE_WARN("LobbyPatches: {} prologue mismatch at hr+0x{:X}; trace skipped", t.name, t.rva);
+            }
+        }
+    }
+
+    // 6. -join-any: Reach Renaissance's RR_JOIN_ANY patch. Turns two join-gate branches into jumps
+    //    (hr+0x397635 74 5E -> EB 5E, hr+0x397363 74 4D -> EB 4D) so the host accepts any join.
+    //    Off by default; in-memory only.
+    if (std::wcsstr(GetCommandLineW(), L"-join-any") != nullptr) {
+        struct { uintptr_t rva; uint8_t expect; uint8_t disp; } gates[] = {
+            { 0x397635, 0x74, 0x5E },
+            { 0x397363, 0x74, 0x4D },
+        };
+        for (auto& g : gates) {
+            uint8_t* at = reinterpret_cast<uint8_t*>(base + g.rva);
+            if (g.rva + 2 <= size && at[0] == g.expect && at[1] == g.disp) {
+                const uint8_t jmp[2] = { 0xEB, g.disp };
+                if (WriteProtectedMemory(at, jmp, 2)) {
+                    patchCount++;
+                    NOBLE_INFO("LobbyPatches: -join-any patched hr+0x{:X} (74 {:02X} -> EB {:02X})", g.rva, static_cast<int>(g.disp), static_cast<int>(g.disp));
+                }
+            } else {
+                NOBLE_WARN("LobbyPatches: -join-any bytes differ at hr+0x{:X} ({:02X} {:02X}); left alone", g.rva, static_cast<int>(at[0]), static_cast<int>(at[1]));
+            }
         }
     }
 

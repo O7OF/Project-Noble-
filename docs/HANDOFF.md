@@ -1,4 +1,4 @@
-# Project Noble: handoff (2026-10-29, 03:10 ET)
+# Project Noble: handoff (2026-10-29, 03:45 ET)
 Dominus join the team 20261028! 
 This picks up a reverse-engineering and C++ effort on **Tyler's Windows PC**. All paths below are real paths on that machine.
 Tyler (GitHub `WeabooTyler117`) works with a partner (GitHub `O7OF`) who owns the repo and writes most of the code.
@@ -10,6 +10,33 @@ community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownershi
 MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour.
 
 --
+
+## 0. Pick up here (2026-10-29, 03:45 ET) - Guest stuck loading: the HOST refuses the join (reason 15)
+
+Tested by Tyler with two instances on one PC (O7 offline), so NAT, relay and the master server are out of the picture:
+host `noble-client.exe -map 20_sword_slayer -mode multiplayer -host -lan`, guest the same with `-connect 127.0.0.1:11774`.
+The guest sits at launch state 9 (2%) and its join timeout sends it back to the main menu after about a minute.
+- **Cause found:** the host's haloreach.dll refuses every join request. Log (03:40, new trace below):
+  `[HOST pid 9696] JOIN REFUSED: session 0x48414C4F52454143 reason 15 (0xF) caller hr+0x423E2E a1=0x7ffcb6e272f0 a2=0xc`.
+  The session id is right ("HALOREAC"), so the request reaches the right session and is turned down on purpose; one
+  refusal per guest retry (about one a second, in bursts). The first one always follows, by about 15 ms, the first
+  call of host slot 25 with the guest's XUID: `slot 25 (a1=0x99CC93FAFC1B3, a2=0, a3=0xFFFFFFFF)` (our stub returns 0).
+- **Why nobody saw it before:** the Dominus hooks on can_accept_join_request / can_accept_player_join_request
+  (`LobbyPatches.cpp`, RVA 0x3975D8 / 0x3973BC) never fire on this path; refusal 15 comes from somewhere else.
+- **New in `src/hooks/LobbyPatches.cpp`** (built and run by Tyler; not committed yet):
+  - Log-only hooks on the two functions RR's host-probe.exe traces as "join refused" (hr+0x425368, arg3 =
+    {u64 session, u32 reason}) and "connect refused" (hr+0x42459C, arg3 = {u32 id, u32 reason}). The original always
+    runs. Each line says HOST or GUEST (both instances write one log), the pid, and the caller RVA. The prologue
+    (48 89 5C 24 08) is checked first; a mismatch only logs a warning.
+  - Switch `-join-any` (host, off by default, in memory only): RR's `RR_JOIN_ANY` patch, hr+0x397635 74 5E -> EB 5E
+    and hr+0x397363 74 4D -> EB 4D (bytes checked first). Tested: both patches apply on Tyler's dll, but **reason 15
+    still comes back**, so those two gates are not it. RR's launcher never sets RR_JOIN_ANY; it is a debug knob.
+- **RR facts checked:** RR's host::hit sends slot 25 to its default case, which returns 0 - same as our stub - so slot
+  25's return value alone does not explain the difference (RR's per-slot thunk was not checked).
+- **Next:** disassemble haloreach.dll around hr+0x423E2E (the caller that builds the refusal) to see which test sets
+  reason 15, then compare that state with RR's host (session / membership / privacy, the guest's XUID, what slot 25
+  asks). This needs a read-only copy of haloreach.dll in a disassembler (Tyler, O7OF or Dominus); nothing was
+  disassembled yet. Reach's refusal enum was not confirmed for this build, so 15 is not named here.
 
 ## 0. Pick up here (2026-10-29, 03:10 ET) - Networking review: why guests don't get in, fixes, test switch
 
