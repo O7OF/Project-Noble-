@@ -11,6 +11,41 @@
 
 namespace noble {
 
+// A participant in a pre-game lobby.
+struct LobbyPlayer {
+    uint64_t peerId = 0;
+    std::string machineId;
+    std::string username;
+    std::string serviceTag = "117";
+    bool isHost = false;
+    bool isDev = false;
+    int ping = 0;
+};
+
+// Snapshot of a pre-game lobby session.
+struct LobbyState {
+    bool ok = false;
+    std::string sessionId;
+    std::string name;
+    std::string map;
+    std::string mode;
+    std::string variant;
+    int difficulty = 1;
+    uint64_t skulls = 0;
+    bool inProgress = false;
+    int playerCount = 1;
+    int maxPlayers = 16;
+    std::string hostIp;
+    uint16_t hostPort = 11774;
+    std::vector<LobbyPlayer> roster;
+    bool launchTriggered = false;
+    std::string launchMap;
+    std::string launchMode;
+    std::string launchVariant;
+    int launchDifficulty = 1;
+    uint64_t launchSkulls = 0;
+};
+
 // One game listed by the master server.
 struct MasterSession {
     std::string id;
@@ -36,8 +71,17 @@ struct MasterAdvert {
     int maxPlayers = 16;
     std::string map;
     std::string mode;
+    std::string variant;
+    int difficulty = 1;
+    uint64_t skulls = 0;
+    bool inProgress = false;
     bool hasPassword = false;
     bool isMod = false;
+    uint64_t hostPeerId = 1;
+    std::string hostMachineId;
+    std::string hostUsername;
+    bool hostIsDev = false;
+    std::string hostServiceTag = "117";
 };
 
 struct MasterJoinInfo {
@@ -74,6 +118,26 @@ public:
                                    uint16_t guestPort,
                                    const std::string& fallbackHostIp = "",
                                    uint16_t fallbackHostPort = 11774);
+
+    // Pre-game lobby API
+    LobbyState FetchLobbyStateSync(const std::string& sessionId);
+    LobbyState JoinLobbySync(const std::string& sessionId,
+                            uint64_t peerId,
+                            const std::string& username,
+                            bool isDev,
+                            const std::string& serviceTag,
+                            uint16_t localPort);
+    bool LeaveLobbySync(const std::string& sessionId, uint64_t peerId);
+    bool LaunchLobbySync(const std::string& sessionId,
+                         const std::string& map,
+                         const std::string& mode,
+                         const std::string& variant,
+                         int difficulty,
+                         uint64_t skulls);
+
+    void UpdateLobbyAdvert(const std::string& map, const std::string& mode, const std::string& variant, int diff, uint64_t skulls);
+    std::string GetCurrentSessionId() const;
+    std::string GetCurrentSessionToken() const;
 
     // Browsing: ask for the list (asynchronously); the result is read with Sessions().
     void RequestList();

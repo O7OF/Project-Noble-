@@ -1,3 +1,4 @@
+#include <functional>
 #pragma once
 
 #include <cstdint>
@@ -36,6 +37,9 @@ public:
     void Render();
     void RefreshServers();
 
+    using JoinLobbyHandler = std::function<void(const ServerEntry& server)>;
+    void SetJoinLobbyHandler(JoinLobbyHandler handler) { m_joinLobbyHandler = std::move(handler); }
+
     const std::vector<ServerEntry>& GetServers() const { return m_servers; }
 
 private:
@@ -48,6 +52,7 @@ private:
     bool PassesFilters(const ServerEntry& s) const;
     void ToggleFavorite(const std::string& address, uint16_t port);
 
+    JoinLobbyHandler m_joinLobbyHandler;
     std::vector<ServerEntry> m_servers;
     int m_selectedServerIndex = -1;
     double m_lastRefresh = -100.0;

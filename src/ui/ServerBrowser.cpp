@@ -326,7 +326,11 @@ void ServerBrowser::RenderServerList() {
             m_selectedServerIndex = i;
         }
         if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0) && !s.isOwn) {
-            TryJoin(s.hostAddress, s.port, s.isPasswordProtected);
+            if (!s.inProgress && m_joinLobbyHandler) {
+                m_joinLobbyHandler(s);
+            } else {
+                TryJoin(s.hostAddress, s.port, s.isPasswordProtected);
+            }
         }
 
         // Column 2: mode
@@ -428,8 +432,13 @@ void ServerBrowser::RenderServerDetails() {
             RefreshServers();
         }
     } else {
-        if (NobleStyle::PrimaryButton("JOIN GAME", ImVec2(-1, 38))) {
-            TryJoin(s.hostAddress, s.port, s.isPasswordProtected);
+        const char* joinLabel = s.inProgress ? "JOIN IN PROGRESS" : "JOIN PRE-GAME LOBBY";
+        if (NobleStyle::PrimaryButton(joinLabel, ImVec2(-1, 38))) {
+            if (!s.inProgress && m_joinLobbyHandler) {
+                m_joinLobbyHandler(s);
+            } else {
+                TryJoin(s.hostAddress, s.port, s.isPasswordProtected);
+            }
         }
     }
 

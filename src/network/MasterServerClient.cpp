@@ -224,6 +224,25 @@ void MasterServerClient::UpdateAdvert(int playerCount, bool inProgress) {
     m_advertInProgress = inProgress;
 }
 
+void MasterServerClient::UpdateLobbyAdvert(const std::string& map, const std::string& mode, const std::string& variant, int diff, uint64_t skulls) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_advert.map = map;
+    m_advert.mode = mode;
+    m_advert.variant = variant;
+    m_advert.difficulty = diff;
+    m_advert.skulls = skulls;
+}
+
+std::string MasterServerClient::GetCurrentSessionId() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_sessionId;
+}
+
+std::string MasterServerClient::GetCurrentSessionToken() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_sessionToken;
+}
+
 void MasterServerClient::StopAdvertising() {
     std::lock_guard<std::mutex> lock(m_mutex);
     if (!m_advertising) return;
@@ -358,8 +377,16 @@ void MasterServerClient::DoHeartbeat() {
         std::lock_guard<std::mutex> lock(m_mutex);
         id = m_sessionId;
         token = m_sessionToken;
-        body = {{"session_id", id}, {"player_count", m_advert.playerCount}, {"in_progress", m_advertInProgress},
-                {"map", m_advert.map}};
+        body = {
+            {"session_id", id},
+            {"player_count", m_advert.playerCount},
+            {"in_progress", m_advertInProgress},
+            {"map", m_advert.map},
+            {"mode", m_advert.mode},
+            {"variant", m_advert.variant},
+            {"difficulty", m_advert.difficulty},
+            {"skulls", std::to_string(m_advert.skulls)}
+        };
     }
     if (id.empty() || token.empty()) return;
     const HttpResult r = HttpRequest(Url(), L"PUT", "/api/sessions/heartbeat", body.dump(), token);
@@ -473,6 +500,151 @@ MasterJoinInfo MasterServerClient::JoinSessionSync(const std::string& sessionId,
         info.error = "Unreadable join response";
         return info;
     }
+}
+
+
+LobbyState MasterServerClient::FetchLobbyStateSync(const std::string& sessionId) {
+    LobbyState state;
+    if (sessionId.empty() || !Enabled()) return state;
+
+    const HttpResult r = HttpRequest(Url(), L"GET", "/api/sessions/" + sessionId + "/lobby", {});
+    if (!r.ok) return state;
+
+    try {
+        const auto j = nlohmann::json::parse(r.body);
+        state.ok = true;
+        state.sessionId = j.value("session_id", sessionId);
+        state.name = j.value("name", "Reach Lobby");
+        state.map = j.value("map", "20_sword_slayer");
+        state.mode = j.value("mode", "multiplayer");
+        state.variant = j.value("variant", "");
+        state.difficulty = j.value("difficulty", 1);
+        try { state.skulls = std::stoull(j.value("skulls", "0")); } catch (...) {}
+        state.inProgress = j.value("in_progress", false);
+        state.playerCount = j.value("player_count", 1);
+        state.maxPlayers = j.value("max_players", 16);
+        state.hostIp = j.value("host_ip", "");
+        state.hostPort = static_cast<uint16_t>(j.value("host_port", 11774));
+
+        if (j.contains("roster") && j["roster"].is_array()) {
+            for (const auto& item : j["roster"]) {
+                LobbyPlayer p;
+                p.peerId = item.value("peerId", 1ULL);
+                p.machineId = item.value("machineId", "");
+                p.username = item.value("username", "Spartan");
+                p.serviceTag = item.value("serviceTag", "117");
+                p.isHost = item.value("isHost", false);
+                p.isDev = item.value("isDev", false);
+                p.ping = item.value("ping", 0);
+                state.roster.push_back(p);
+            }
+        }
+
+        if (j.contains("launch_data") && j["launch_data"].is_object()) {
+            const auto& ld = j["launch_data"];
+            state.launchTriggered = true;
+            state.launchMap = ld.value("map", state.map);
+            state.launchMode = ld.value("mode", state.mode);
+            state.launchVariant = ld.value("variant", state.variant);
+            state.launchDifficulty = ld.value("difficulty", state.difficulty);
+            try { state.launchSkulls = std::stoull(ld.value("skulls", "0")); } catch (...) {}
+        }
+    } catch (...) {}
+
+    return state;
+}
+
+LobbyState MasterServerClient::JoinLobbySync(const std::string& sessionId,
+                                             uint64_t peerId,
+                                             const std::string& username,
+                                             bool isDev,
+                                             const std::string& serviceTag,
+                                             uint16_t localPort) {
+    LobbyState state;
+    if (sessionId.empty() || !Enabled()) return state;
+
+    nlohmann::json body = {
+        { "peer_id", peerId },
+        { "player_id", peerId },
+        { "username", username },
+        { "is_dev", isDev },
+        { "service_tag", serviceTag },
+        { "machine_id", std::to_string(NetworkTransport::Get().GetLocalMachineId()) },
+        { "guest_port", localPort },
+        { "ping", 25 }
+    };
+
+    const HttpResult r = HttpRequest(Url(), L"POST", "/api/sessions/" + sessionId + "/lobby/join", body.dump());
+    if (!r.ok) return state;
+
+    try {
+        const auto j = nlohmann::json::parse(r.body);
+        state.ok = true;
+        state.sessionId = j.value("session_id", sessionId);
+        state.hostIp = j.value("host_ip", "");
+        state.hostPort = static_cast<uint16_t>(j.value("host_port", 11774));
+        state.map = j.value("map", "20_sword_slayer");
+        state.mode = j.value("mode", "multiplayer");
+        state.variant = j.value("variant", "");
+        state.difficulty = j.value("difficulty", 1);
+        state.inProgress = j.value("in_progress", false);
+
+        if (j.contains("roster") && j["roster"].is_array()) {
+            for (const auto& item : j["roster"]) {
+                LobbyPlayer p;
+                p.peerId = item.value("peerId", 1ULL);
+                p.machineId = item.value("machineId", "");
+                p.username = item.value("username", "Spartan");
+                p.serviceTag = item.value("serviceTag", "117");
+                p.isHost = item.value("isHost", false);
+                p.isDev = item.value("isDev", false);
+                p.ping = item.value("ping", 0);
+                state.roster.push_back(p);
+            }
+        }
+
+        std::string relayUrl = j.value("relay_url", "");
+        if (!relayUrl.empty()) {
+            NetworkTransport::Get().StartRelay(relayUrl, sessionId, false, NetworkTransport::Get().GetLocalMachineId());
+        }
+    } catch (...) {}
+
+    return state;
+}
+
+bool MasterServerClient::LeaveLobbySync(const std::string& sessionId, uint64_t peerId) {
+    if (sessionId.empty() || !Enabled()) return false;
+    nlohmann::json body = {
+        { "peer_id", peerId }
+    };
+    const HttpResult r = HttpRequest(Url(), L"POST", "/api/sessions/" + sessionId + "/lobby/leave", body.dump());
+    return r.ok;
+}
+
+bool MasterServerClient::LaunchLobbySync(const std::string& sessionId,
+                                         const std::string& map,
+                                         const std::string& mode,
+                                         const std::string& variant,
+                                         int difficulty,
+                                         uint64_t skulls) {
+    std::string token;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        token = m_sessionToken;
+        m_advertInProgress = true;
+    }
+    if (sessionId.empty() || token.empty() || !Enabled()) return false;
+
+    nlohmann::json body = {
+        { "map", map },
+        { "mode", mode },
+        { "variant", variant },
+        { "difficulty", difficulty },
+        { "skulls", std::to_string(skulls) }
+    };
+
+    const HttpResult r = HttpRequest(Url(), L"POST", "/api/sessions/" + sessionId + "/lobby/launch", body.dump(), token);
+    return r.ok;
 }
 
 } // namespace noble

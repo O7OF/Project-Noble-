@@ -1,3 +1,4 @@
+#include <functional>
 #pragma once
 
 #include <winsock2.h>
@@ -40,7 +41,14 @@ public:
     // Direct peer registration & NAT hole punching
     void AddPeer(uint64_t machineId, const std::string& ip, uint16_t port);
 
-    // Master Server WebSocket packet relay
+    // Master Server WebSocket packet relay & lobby signaling
+    using LobbyLaunchCallback = std::function<void(const std::string& map, const std::string& mode, const std::string& variant, int diff, uint64_t skulls, const std::string& hostIp, uint16_t hostPort, const std::string& sessionId)>;
+    using LobbyRosterCallback = std::function<void(const std::string& rosterJson)>;
+
+    void SetLobbyLaunchCallback(LobbyLaunchCallback cb);
+    void SetLobbyRosterCallback(LobbyRosterCallback cb);
+    void SendLobbyControlJson(const std::string& jsonString);
+
     void StartRelay(const std::string& relayUrl, const std::string& sessionId, bool isHost, uint64_t machineId);
     void StopRelay();
 
@@ -80,6 +88,9 @@ private:
     std::mutex m_relayMutex;
     std::deque<std::vector<uint8_t>> m_relaySendQueue;
     std::deque<std::vector<uint8_t>> m_relayRecvQueue;
+    std::deque<std::string> m_relayTextSendQueue;
+    LobbyLaunchCallback m_lobbyLaunchCb;
+    LobbyRosterCallback m_lobbyRosterCb;
 };
 
 } // namespace noble

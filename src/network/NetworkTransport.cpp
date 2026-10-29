@@ -1,4 +1,5 @@
 #include "NetworkTransport.hpp"
+#include <nlohmann/json.hpp>
 #include "common/Logger.hpp"
 
 #include <windows.h>
@@ -217,6 +218,23 @@ void NetworkTransport::StartRelay(const std::string& relayUrl, const std::string
     NOBLE_INFO("NetworkTransport: Starting WebSocket packet relay thread ({})", relayUrl);
 }
 
+void NetworkTransport::SetLobbyLaunchCallback(LobbyLaunchCallback cb) {
+    std::lock_guard<std::mutex> lock(m_relayMutex);
+    m_lobbyLaunchCb = std::move(cb);
+}
+
+void NetworkTransport::SetLobbyRosterCallback(LobbyRosterCallback cb) {
+    std::lock_guard<std::mutex> lock(m_relayMutex);
+    m_lobbyRosterCb = std::move(cb);
+}
+
+void NetworkTransport::SendLobbyControlJson(const std::string& jsonString) {
+    std::lock_guard<std::mutex> lock(m_relayMutex);
+    if (m_relayActive.load()) {
+        m_relayTextSendQueue.push_back(jsonString);
+    }
+}
+
 void NetworkTransport::StopRelay() {
     if (!m_relayActive.exchange(false)) return;
     if (m_relayThread.joinable()) {
@@ -226,6 +244,7 @@ void NetworkTransport::StopRelay() {
     m_relayUrl.clear();
     m_relaySendQueue.clear();
     m_relayRecvQueue.clear();
+    m_relayTextSendQueue.clear();
     NOBLE_INFO("NetworkTransport: Stopped WebSocket packet relay.");
 }
 
@@ -307,13 +326,25 @@ void NetworkTransport::RelayWorkerThread(std::string relayUrl, std::string sessi
     uint8_t recvBuffer[4096];
 
     while (m_relayActive.load()) {
-        // 1. Send queued outgoing packets
+        // 1. Send queued outgoing control text frames and binary packets
+        std::vector<std::string> toSendText;
         std::vector<std::vector<uint8_t>> toSend;
         {
             std::lock_guard<std::mutex> lock(m_relayMutex);
+            while (!m_relayTextSendQueue.empty()) {
+                toSendText.push_back(std::move(m_relayTextSendQueue.front()));
+                m_relayTextSendQueue.pop_front();
+            }
             while (!m_relaySendQueue.empty()) {
                 toSend.push_back(std::move(m_relaySendQueue.front()));
                 m_relaySendQueue.pop_front();
+            }
+        }
+
+        for (const auto& text : toSendText) {
+            if (!text.empty()) {
+                WinHttpWebSocketSend(hWebSocket, WINHTTP_WEB_SOCKET_UTF8_MESSAGE_BUFFER_TYPE,
+                                     const_cast<char*>(text.data()), static_cast<DWORD>(text.size()));
             }
         }
 
@@ -329,11 +360,51 @@ void NetworkTransport::RelayWorkerThread(std::string relayUrl, std::string sessi
         WINHTTP_WEB_SOCKET_BUFFER_TYPE bufferType;
         DWORD err = WinHttpWebSocketReceive(hWebSocket, recvBuffer, sizeof(recvBuffer), &bytesRead, &bufferType);
 
-        if (err == NO_ERROR && bytesRead >= sizeof(uint64_t)) {
-            std::vector<uint8_t> pkt(recvBuffer, recvBuffer + bytesRead);
-            std::lock_guard<std::mutex> lock(m_relayMutex);
-            if (m_relayRecvQueue.size() < 100) {
-                m_relayRecvQueue.push_back(std::move(pkt));
+        if (err == NO_ERROR && bytesRead > 0) {
+            if (bufferType == WINHTTP_WEB_SOCKET_UTF8_MESSAGE_BUFFER_TYPE ||
+                (bytesRead >= 2 && recvBuffer[0] == '{')) {
+                // Parse JSON control message (lobby_launch, lobby_roster)
+                std::string msgStr(reinterpret_cast<char*>(recvBuffer), bytesRead);
+                try {
+                    auto j = nlohmann::json::parse(msgStr);
+                    std::string type = j.value("type", "");
+                    if (type == "lobby_launch") {
+                        auto ld = j.value("launch", nlohmann::json::object());
+                        std::string lMap = ld.value("map", "20_sword_slayer");
+                        std::string lMode = ld.value("mode", "multiplayer");
+                        std::string lVar = ld.value("variant", "");
+                        int lDiff = ld.value("difficulty", 1);
+                        uint64_t lSkulls = 0;
+                        try { lSkulls = std::stoull(ld.value("skulls", "0")); } catch (...) {}
+                        std::string hIp = ld.value("host_ip", "");
+                        uint16_t hPort = static_cast<uint16_t>(ld.value("host_port", 11774));
+                        std::string sId = ld.value("session_id", sessionId);
+
+                        LobbyLaunchCallback cb;
+                        {
+                            std::lock_guard<std::mutex> lock(m_relayMutex);
+                            cb = m_lobbyLaunchCb;
+                        }
+                        if (cb) {
+                            cb(lMap, lMode, lVar, lDiff, lSkulls, hIp, hPort, sId);
+                        }
+                    } else if (type == "lobby_roster") {
+                        LobbyRosterCallback cb;
+                        {
+                            std::lock_guard<std::mutex> lock(m_relayMutex);
+                            cb = m_lobbyRosterCb;
+                        }
+                        if (cb) {
+                            cb(msgStr);
+                        }
+                    }
+                } catch (...) {}
+            } else if (bytesRead >= sizeof(uint64_t)) {
+                std::vector<uint8_t> pkt(recvBuffer, recvBuffer + bytesRead);
+                std::lock_guard<std::mutex> lock(m_relayMutex);
+                if (m_relayRecvQueue.size() < 100) {
+                    m_relayRecvQueue.push_back(std::move(pkt));
+                }
             }
         } else if (err == ERROR_WINHTTP_TIMEOUT) {
             // normal idle

@@ -263,7 +263,7 @@ std::string Upper(std::string s) {
     return s;
 }
 
-enum class Screen { Main, Campaign, Skulls, Firefight, CustomGame, Forge, Servers, Settings, Armory, Mods, Career };
+enum class Screen { Main, Campaign, Skulls, Firefight, CustomGame, Forge, Servers, Settings, Armory, Mods, Career, PreGameLobby };
 
 void DrawBackdrop(const Ui& ui, Screen screen) {
     const ImVec2 o(0, 0);
@@ -938,7 +938,88 @@ struct MenuState {
     char accountPass[32] = "";
     std::string accountStatusMsg = "";
     bool accountStatusError = false;
+
+    // Pre-game lobby state
+    bool isLobbyHost = false;
+    std::string lobbySessionId;
+    std::string lobbyMap = "20_sword_slayer";
+    std::string lobbyMode = "multiplayer";
+    std::string lobbyVariantPath;
+    std::string lobbyVariantName = "Slayer";
+    int lobbyDifficulty = 1;
+    uint64_t lobbySkulls = 0;
+    int lobbyMaxPlayers = 16;
+    std::string lobbyHostEndpoint;
+    std::vector<LobbyPlayer> lobbyRoster;
+    bool lobbyLaunchPending = false;
+    std::string lobbyLaunchMap;
+    std::string lobbyLaunchMode;
+    std::string lobbyLaunchVariant;
+    int lobbyLaunchDiff = 1;
+    uint64_t lobbyLaunchSkulls = 0;
+    double lastLobbyPoll = 0.0;
 };
+
+
+static void SetupHostLobby(OverlayContext& ctx, MenuState& st, const std::string& mapScenario, const std::string& mode,
+                           const std::string& varPath, const std::string& varName, int diff, uint64_t skulls, int maxPlayers) {
+    (void)ctx;
+    st.isLobbyHost = true;
+    st.lobbyMap = mapScenario;
+    st.lobbyMode = mode;
+    st.lobbyVariantPath = varPath;
+    st.lobbyVariantName = varName;
+    st.lobbyDifficulty = diff;
+    st.lobbySkulls = skulls;
+    st.lobbyMaxPlayers = maxPlayers;
+    st.lobbyLaunchPending = false;
+    st.lastLobbyPoll = ImGui::GetTime();
+
+    HostConfig cfg;
+    std::string pName = AuthClient::Get().IsLoggedIn() ? AuthClient::Get().GetUsername() : Settings::Get().Snapshot().playerName;
+    if (pName.empty()) pName = "Host";
+    cfg.sessionName = pName + "'s Lobby";
+    cfg.gameMode = st.lobbyMode;
+    cfg.mapName = st.lobbyMap;
+    cfg.gametypeName = st.lobbyVariantName;
+    cfg.maxPlayers = st.lobbyMaxPlayers;
+    cfg.port = 11774;
+    cfg.mode = (st.lobbyNetMode == 1) ? NetworkMode::Online_P2P : NetworkMode::Local_LAN;
+    SessionManager::Get().StartHosting(cfg);
+
+    if (st.lobbyNetMode == 1 && st.lobbyPrivacy == 0 && MasterServerClient::Get().Enabled()) {
+        MasterAdvert adv;
+        adv.name = cfg.sessionName;
+        adv.port = cfg.port;
+        adv.maxPlayers = cfg.maxPlayers;
+        adv.map = cfg.mapName;
+        adv.mode = cfg.gameMode;
+        adv.variant = st.lobbyVariantName;
+        adv.difficulty = st.lobbyDifficulty;
+        adv.skulls = st.lobbySkulls;
+        adv.inProgress = false;
+        adv.hostPeerId = AuthClient::Get().IsLoggedIn() ? static_cast<uint64_t>(AuthClient::Get().GetUserId()) : 1ULL;
+        char midBuf[32];
+        std::snprintf(midBuf, sizeof(midBuf), "0x%llX", static_cast<unsigned long long>(NetworkTransport::kDefaultHostMachineId));
+        adv.hostMachineId = midBuf;
+        adv.hostUsername = pName;
+        adv.hostIsDev = AuthClient::Get().IsDeveloper();
+        adv.hostServiceTag = Settings::Get().Snapshot().serviceTag.empty() ? "117" : Settings::Get().Snapshot().serviceTag;
+        MasterServerClient::Get().StartAdvertising(adv);
+    }
+
+    st.lobbyRoster.clear();
+    LobbyPlayer me;
+    me.peerId = AuthClient::Get().IsLoggedIn() ? static_cast<uint64_t>(AuthClient::Get().GetUserId()) : 1ULL;
+    me.username = pName;
+    me.serviceTag = Settings::Get().Snapshot().serviceTag.empty() ? "117" : Settings::Get().Snapshot().serviceTag;
+    me.isHost = true;
+    me.isDev = AuthClient::Get().IsDeveloper();
+    me.ping = 0;
+    st.lobbyRoster.push_back(me);
+
+    st.screen = Screen::PreGameLobby;
+}
 
 void DrawLobbyControls(const Ui& ui, ImVec2 pos, [[maybe_unused]] float width, MenuState& st) {
     const float h = 32.0f * ui.s;
@@ -1095,6 +1176,7 @@ Screen ParseScreenArg(const std::wstring& v) {
     if (s == L"armory") return Screen::Armory;
     if (s == L"mods") return Screen::Mods;
     if (s == L"career") return Screen::Career;
+    if (s == L"lobby" || s == L"pregame") return Screen::PreGameLobby;
     return Screen::Main;
 }
 
@@ -1448,12 +1530,11 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
                                 (st.focusRow == 3 && AcceptPressed())) && canStart;
         const char* coopSub = st.lobbyNetMode == 1 ? (st.lobbyPrivacy == 0 ? "Public Online P2P" : "Private Online P2P") : "Local LAN Co-op";
         const bool hostCoop = BigAction(ui, "coop", ImVec2(px + bw + 10.0f * ui.s, actionsY), pw - bw - 10.0f * ui.s, "HOST CO-OP", coopSub, true, canStart);
-        if (startSolo || hostCoop) {
+        if (hostCoop) {
+            SetupHostLobby(ctx, st, mission->scenario, "campaign", "", "Campaign", st.difficulty, st.skulls, 4);
+        } else if (startSolo) {
             choice.play = true;
-            choice.host = hostCoop;
-            choice.hostOnline = (st.lobbyNetMode == 1);
-            choice.hostPublic = (st.lobbyPrivacy == 0);
-            choice.hostMaxPlayers = 4;
+            choice.host = false;
             choice.mode = "campaign";
             choice.map = mission->scenario;
             choice.difficulty = st.difficulty;
@@ -1647,12 +1728,31 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
                                 (st.focusRow == focusRows && AcceptPressed())) && canStart;
         const bool startHost = BigAction(ui, "host", ImVec2(px + bw + 10.0f * ui.s, actionsY), pw - bw - 10.0f * ui.s, hostLabel, hostSub, true, canStart);
 
-        if (startSolo || startHost) {
+        if (startHost) {
+            std::string varPath, varName;
+            if (ff) {
+                if (!ctx.ffVariants.empty()) {
+                    varPath = ctx.ffVariants[st.ffVariant].path.string();
+                    varName = ctx.ffVariants[st.ffVariant].label;
+                } else {
+                    varName = "Firefight Standard";
+                }
+            } else if (forge) {
+                varPath = ctx.forgeVariant.string();
+                varName = "Basic Editing";
+            } else {
+                if (!ctx.variants.empty()) {
+                    varPath = ctx.variants[st.variant].path.string();
+                    varName = ctx.variants[st.variant].label;
+                } else {
+                    varName = "Slayer";
+                }
+            }
+            const std::string mode = ff ? "firefight" : (forge ? "forge" : "multiplayer");
+            SetupHostLobby(ctx, st, map ? map->scenario : "20_sword_slayer", mode, varPath, varName, ff ? st.difficulty : 1, 0, ff ? 4 : 16);
+        } else if (startSolo) {
             choice.play = true;
-            choice.host = startHost;
-            choice.hostOnline = (st.lobbyNetMode == 1);
-            choice.hostPublic = (st.lobbyPrivacy == 0);
-            choice.hostMaxPlayers = (ff ? 4 : 16);
+            choice.host = false;
             choice.map = map->scenario;
             if (mod) { choice.modFolder = mod->folder; choice.modTitle = mod->title; }
             if (ff) {
@@ -1770,6 +1870,11 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         DrawHints(ui, { { Prompt::Back, "Back" } });
         break;
     }
+
+    case Screen::PreGameLobby: {
+        DrawPreGameLobby(ctx, ui, left, top, choice, done, back);
+        break;
+    }
     }
 
     ImGui::End();
@@ -1846,6 +1951,94 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
     ctx.initialized = true;
 
     UIManager::GetArmorCustomizer().SyncToReachArmory();
+
+    // Server Browser Join Pre-Game Lobby Handler
+    ctx.serverBrowser.SetJoinLobbyHandler([&ctx](const ServerEntry& s) {
+        ctx.st.isLobbyHost = false;
+        ctx.st.lobbySessionId = s.id;
+        ctx.st.lobbyHostEndpoint = s.hostAddress + ":" + std::to_string(s.port);
+        ctx.st.lobbyMap = s.mapName.empty() ? "20_sword_slayer" : s.mapName;
+        ctx.st.lobbyMode = s.gameMode.empty() ? "multiplayer" : s.gameMode;
+        ctx.st.lobbyVariantName = s.variantName.empty() ? "Default" : s.variantName;
+        ctx.st.lobbyMaxPlayers = s.maxPlayers;
+        ctx.st.lobbyRoster.clear();
+        ctx.st.lobbyLaunchPending = false;
+        ctx.st.lastLobbyPoll = ImGui::GetTime();
+
+        std::string pName = AuthClient::Get().IsLoggedIn() ? AuthClient::Get().GetUsername() : Settings::Get().Snapshot().playerName;
+        if (pName.empty()) pName = "Guest";
+        uint64_t pId = AuthClient::Get().IsLoggedIn() ? static_cast<uint64_t>(AuthClient::Get().GetUserId()) : 2ULL;
+        std::string sTag = Settings::Get().Snapshot().serviceTag.empty() ? "117" : Settings::Get().Snapshot().serviceTag;
+
+        LobbyState state = MasterServerClient::Get().JoinLobbySync(s.id, pId, pName, AuthClient::Get().IsDeveloper(), sTag, 11774);
+        if (state.ok) {
+            ctx.st.lobbyRoster = state.roster;
+            ctx.st.lobbyMap = state.map;
+            ctx.st.lobbyMode = state.mode;
+            ctx.st.lobbyVariantName = state.variant;
+            ctx.st.lobbyDifficulty = state.difficulty;
+            ctx.st.lobbySkulls = state.skulls;
+        } else {
+            LobbyPlayer hostP;
+            hostP.peerId = 1;
+            hostP.username = s.name;
+            hostP.isHost = true;
+            hostP.ping = s.ping >= 0 ? s.ping : 25;
+            ctx.st.lobbyRoster.push_back(hostP);
+
+            LobbyPlayer me;
+            me.peerId = pId;
+            me.username = pName;
+            me.serviceTag = sTag;
+            me.isHost = false;
+            me.isDev = AuthClient::Get().IsDeveloper();
+            me.ping = s.ping >= 0 ? s.ping : 25;
+            ctx.st.lobbyRoster.push_back(me);
+        }
+
+        ctx.st.screen = Screen::PreGameLobby;
+    });
+
+    // Real-time WebSocket Lobby Callbacks
+    NetworkTransport::Get().SetLobbyLaunchCallback([&ctx](const std::string& lMap, const std::string& lMode,
+                                                          const std::string& lVar, int lDiff, uint64_t lSkulls,
+                                                          const std::string& hIp, uint16_t hPort, const std::string& sId) {
+        NOBLE_INFO("FrontEndMenu: Received WebSocket real-time lobby launch event! (map: {}, mode: {})", lMap, lMode);
+        ctx.st.lobbyLaunchPending = true;
+        ctx.st.lobbyLaunchMap = lMap;
+        ctx.st.lobbyLaunchMode = lMode;
+        ctx.st.lobbyLaunchVariant = lVar;
+        ctx.st.lobbyLaunchDiff = lDiff;
+        ctx.st.lobbyLaunchSkulls = lSkulls;
+        if (!hIp.empty()) {
+            ctx.st.lobbyHostEndpoint = hIp + ":" + std::to_string(hPort);
+        }
+        if (!sId.empty()) {
+            ctx.st.lobbySessionId = sId;
+        }
+    });
+
+    NetworkTransport::Get().SetLobbyRosterCallback([&ctx](const std::string& rosterJson) {
+        try {
+            auto j = nlohmann::json::parse(rosterJson);
+            if (j.contains("roster") && j["roster"].is_array()) {
+                std::vector<LobbyPlayer> updated;
+                for (const auto& item : j["roster"]) {
+                    LobbyPlayer p;
+                    p.peerId = item.value("peerId", 1ULL);
+                    p.machineId = item.value("machineId", "");
+                    p.username = item.value("username", "Spartan");
+                    p.serviceTag = item.value("serviceTag", "117");
+                    p.isHost = item.value("isHost", false);
+                    p.isDev = item.value("isDev", false);
+                    p.ping = item.value("ping", 0);
+                    updated.push_back(p);
+                }
+                ctx.st.lobbyRoster = std::move(updated);
+            }
+        } catch (...) {}
+    });
+
     UpdateSceneForScreen(ctx.st.screen);
 
     NOBLE_INFO("FrontEndMenu: initialized in-engine 3D menu overlay ({} game variants, {} Firefight variants)",

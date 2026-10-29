@@ -81,10 +81,13 @@ function masterPublicSession(session) {
         max_players: session.maxPlayers,
         map: session.map,
         mode: session.mode,
-        in_progress: session.inProgress,
+        variant: session.variant || '',
+        difficulty: session.difficulty !== undefined ? session.difficulty : 1,
+        in_progress: session.inProgress === true,
         has_password: session.hasPassword,
         build: session.build,
-        is_mod: session.isMod === true
+        is_mod: session.isMod === true,
+        roster: session.roster || []
     };
 }
 
@@ -405,20 +408,45 @@ app.post('/api/sessions', (req, res) => {
     const body = req.body || {};
     const id = crypto.randomBytes(8).toString('hex');
     const token = crypto.randomBytes(24).toString('hex');
+
+    const hostPeerId = body.host_peer_id || body.player_id || 1;
+    const hostMachineId = body.host_machine_id || '0x484F535400000001';
+    const hostUsername = masterCleanText(body.host_username || body.player_name, 'Host', 24);
+    const hostIsDev = body.host_is_dev === true;
+    const hostTag = masterCleanText(body.host_service_tag, '117', 4);
+
+    const initialRoster = Array.isArray(body.roster) && body.roster.length > 0 ? body.roster : [
+        {
+            peerId: hostPeerId,
+            machineId: hostMachineId,
+            username: hostUsername,
+            isHost: true,
+            isDev: hostIsDev,
+            serviceTag: hostTag,
+            ping: 0,
+            joinedAt: Date.now()
+        }
+    ];
+
     masterSessions.set(id, {
         id,
         token,
         address: ip,
         name: masterCleanText(body.name, 'Reach game', 48),
         port: masterCleanInt(body.port, 11774, 1, 65535),
-        playerCount: masterCleanInt(body.player_count, 1, 0, MASTER_MAX_PLAYERS),
+        playerCount: masterCleanInt(body.player_count, initialRoster.length, 0, MASTER_MAX_PLAYERS),
         maxPlayers: masterCleanInt(body.max_players, 16, 1, MASTER_MAX_PLAYERS),
-        map: masterCleanText(body.map, 'Unknown map', 48),
+        map: masterCleanText(body.map, '20_sword_slayer', 48),
         mode: masterCleanText(body.mode, 'Multiplayer', 24),
+        variant: masterCleanText(body.variant, '', 64),
+        difficulty: masterCleanInt(body.difficulty, 1, 0, 3),
+        skulls: String(body.skulls || '0'),
         inProgress: body.in_progress === true,
         hasPassword: body.has_password === true,
         build: masterCleanText(body.build, '', 24),
         isMod: body.is_mod === true || String(body.name || '').includes('[Mod]') || String(body.mode || '').toLowerCase().includes('mod'),
+        roster: initialRoster,
+        launchData: null,
         lastHeartbeat: Date.now()
     });
     res.status(201).json({ success: true, session_id: id, token });
@@ -440,6 +468,14 @@ app.put('/api/sessions/heartbeat', (req, res) => {
     }
     if (body.in_progress !== undefined) session.inProgress = body.in_progress === true;
     if (body.map !== undefined) session.map = masterCleanText(body.map, session.map, 48);
+    if (body.mode !== undefined) session.mode = masterCleanText(body.mode, session.mode, 24);
+    if (body.variant !== undefined) session.variant = masterCleanText(body.variant, session.variant, 64);
+    if (body.difficulty !== undefined) session.difficulty = masterCleanInt(body.difficulty, session.difficulty, 0, 3);
+    if (body.skulls !== undefined) session.skulls = String(body.skulls);
+    if (body.roster && Array.isArray(body.roster)) {
+        session.roster = body.roster;
+        session.playerCount = session.roster.length;
+    }
 
     const pendingJoins = session.pendingJoins || [];
     session.pendingJoins = [];
@@ -447,6 +483,8 @@ app.put('/api/sessions/heartbeat', (req, res) => {
     res.json({
         success: true,
         pending_joins: pendingJoins,
+        roster: session.roster || [],
+        launch_data: session.launchData,
         relay_url: `wss://${hostHeader}/ws/relay?session=${session.id}&role=host`
     });
 });
@@ -483,6 +521,141 @@ app.post('/api/sessions/:id/join', (req, res) => {
         relay_url: `wss://${hostHeader}/ws/relay?session=${session.id}&role=guest&peerId=${guestMachineId}`
     });
 });
+
+// ── Pre-Game Lobby Signaling Endpoints ─────────────────────────────────────
+app.get('/api/sessions/:id/lobby', (req, res) => {
+    const session = masterSessions.get(String(req.params.id));
+    if (!session) return res.status(404).json({ error: "Session not found" });
+    res.json({
+        success: true,
+        session_id: session.id,
+        name: session.name,
+        map: session.map,
+        mode: session.mode,
+        variant: session.variant || '',
+        difficulty: session.difficulty !== undefined ? session.difficulty : 1,
+        skulls: session.skulls || '0',
+        in_progress: session.inProgress === true,
+        player_count: session.playerCount,
+        max_players: session.maxPlayers,
+        host_ip: session.address,
+        host_port: session.port,
+        roster: session.roster || [],
+        launch_data: session.launchData
+    });
+});
+
+app.post('/api/sessions/:id/lobby/join', (req, res) => {
+    const session = masterSessions.get(String(req.params.id));
+    if (!session) return res.status(404).json({ error: "Session not found" });
+
+    const body = req.body || {};
+    const peerId = body.peer_id || body.player_id || (session.roster.length + 1);
+    const username = masterCleanText(body.username, 'Spartan', 24);
+    const isDev = body.is_dev === true;
+    const serviceTag = masterCleanText(body.service_tag, '117', 4);
+    const machineId = String(body.machine_id || '');
+    const ping = masterCleanInt(body.ping, 25, 0, 999);
+
+    if (!session.roster) session.roster = [];
+    const existingIdx = session.roster.findIndex(p => p.peerId == peerId || (p.username.toLowerCase() === username.toLowerCase()));
+    const playerEntry = {
+        peerId,
+        machineId,
+        username,
+        isHost: false,
+        isDev,
+        serviceTag,
+        ping,
+        joinedAt: Date.now()
+    };
+    if (existingIdx >= 0) {
+        session.roster[existingIdx] = playerEntry;
+    } else {
+        if (session.roster.length < session.maxPlayers) {
+            session.roster.push(playerEntry);
+        }
+    }
+    session.playerCount = session.roster.length;
+
+    let guestIp = masterClientIp(req);
+    const guestPort = masterCleanInt(body.guest_port, 11774, 1, 65535);
+    if (!session.pendingJoins) session.pendingJoins = [];
+    session.pendingJoins.push({
+        ip: guestIp,
+        port: guestPort,
+        machine_id: machineId,
+        timestamp: Date.now()
+    });
+    if (session.pendingJoins.length > 32) session.pendingJoins.shift();
+
+    broadcastLobbyEvent(session.id, {
+        type: 'lobby_roster',
+        roster: session.roster
+    });
+
+    const hostHeader = req.headers.host || 'outbreak-z-test-server.onrender.com';
+    res.json({
+        success: true,
+        session_id: session.id,
+        host_ip: session.address,
+        host_port: session.port,
+        roster: session.roster,
+        map: session.map,
+        mode: session.mode,
+        variant: session.variant || '',
+        difficulty: session.difficulty !== undefined ? session.difficulty : 1,
+        in_progress: session.inProgress === true,
+        relay_url: `wss://${hostHeader}/ws/relay?session=${session.id}&role=guest&peerId=${machineId}`
+    });
+});
+
+app.post('/api/sessions/:id/lobby/leave', (req, res) => {
+    const session = masterSessions.get(String(req.params.id));
+    if (!session) return res.status(404).json({ error: "Session not found" });
+    const body = req.body || {};
+    const peerId = body.peer_id;
+    const username = body.username ? String(body.username).toLowerCase() : '';
+
+    if (session.roster) {
+        session.roster = session.roster.filter(p => p.peerId != peerId && p.username.toLowerCase() !== username);
+        session.playerCount = session.roster.length;
+    }
+
+    broadcastLobbyEvent(session.id, {
+        type: 'lobby_roster',
+        roster: session.roster || []
+    });
+    res.json({ success: true, roster: session.roster || [] });
+});
+
+app.post('/api/sessions/:id/lobby/launch', (req, res) => {
+    const session = masterSessions.get(String(req.params.id));
+    if (!session) return res.status(404).json({ error: "Session not found" });
+    if (!masterTokenMatches(req.get('X-Session-Token'), session.token)) {
+        return res.status(403).json({ error: "Wrong token" });
+    }
+    const body = req.body || {};
+    session.inProgress = true;
+    session.launchData = {
+        map: masterCleanText(body.map, session.map, 48),
+        mode: masterCleanText(body.mode, session.mode, 24),
+        variant: masterCleanText(body.variant, session.variant || '', 64),
+        difficulty: masterCleanInt(body.difficulty, session.difficulty || 1, 0, 3),
+        skulls: String(body.skulls || session.skulls || '0'),
+        host_ip: session.address,
+        host_port: session.port,
+        session_id: session.id
+    };
+
+    broadcastLobbyEvent(session.id, {
+        type: 'lobby_launch',
+        launch: session.launchData
+    });
+
+    res.json({ success: true, launch_data: session.launchData });
+});
+
 
 
 // ── Relay & Direct Connect Lobby Signaling ──────────────────────────────────
@@ -1785,7 +1958,21 @@ const server = app.listen(PORT, () => {
 
 // ── WebSocket Netcode Packet Relay ──────────────────────────────────────────
 const wss = new WebSocketServer({ noServer: true });
-const relayRooms = new Map(); // sessionId -> { hostWs: WebSocket|null, guests: Map<string, WebSocket> }
+const relayRooms = new Map();
+
+function broadcastLobbyEvent(sessionId, eventObj) {
+    const room = relayRooms.get(sessionId);
+    if (!room) return;
+    const msgStr = typeof eventObj === 'string' ? eventObj : JSON.stringify(eventObj);
+    if (room.hostWs && room.hostWs.readyState === 1) { // 1 = OPEN
+        try { room.hostWs.send(msgStr); } catch (e) {}
+    }
+    for (const gws of room.guests.values()) {
+        if (gws && gws.readyState === 1) {
+            try { gws.send(msgStr); } catch (e) {}
+        }
+    }
+} // sessionId -> { hostWs: WebSocket|null, guests: Map<string, WebSocket> }
 
 server.on('upgrade', (request, socket, head) => {
     let reqUrl;
@@ -1830,7 +2017,70 @@ wss.on('connection', (ws, req, reqUrl) => {
     }
 
     ws.on('message', (data, isBinary) => {
-        if (!isBinary && typeof data === 'string') {
+        // Check if message is a JSON control/lobby frame
+        let isJson = false;
+        let jsonMsg = null;
+        if (!isBinary) {
+            try {
+                const str = (typeof data === 'string') ? data.trim() : data.toString('utf8').trim();
+                if (str.startsWith('{') && str.endsWith('}')) {
+                    jsonMsg = JSON.parse(str);
+                    isJson = true;
+                }
+            } catch (e) {}
+        }
+
+        if (isJson && jsonMsg) {
+            if (jsonMsg.type === 'lobby_launch') {
+                const session = masterSessions.get(sessionId);
+                if (session) {
+                    session.inProgress = true;
+                    session.launchData = jsonMsg.launch || jsonMsg;
+                }
+                broadcastLobbyEvent(sessionId, {
+                    type: 'lobby_launch',
+                    launch: session ? session.launchData : jsonMsg
+                });
+            } else if (jsonMsg.type === 'lobby_join') {
+                const session = masterSessions.get(sessionId);
+                if (session) {
+                    if (!session.roster) session.roster = [];
+                    const p = {
+                        peerId: jsonMsg.peerId || peerId || (session.roster.length + 1),
+                        machineId: jsonMsg.machineId || peerId,
+                        username: jsonMsg.username || 'Spartan',
+                        isHost: false,
+                        isDev: jsonMsg.isDev === true,
+                        serviceTag: jsonMsg.serviceTag || '117',
+                        ping: jsonMsg.ping || 25,
+                        joinedAt: Date.now()
+                    };
+                    const idx = session.roster.findIndex(x => x.peerId == p.peerId || x.username.toLowerCase() === p.username.toLowerCase());
+                    if (idx >= 0) session.roster[idx] = p;
+                    else session.roster.push(p);
+                    session.playerCount = session.roster.length;
+                    broadcastLobbyEvent(sessionId, {
+                        type: 'lobby_roster',
+                        roster: session.roster
+                    });
+                }
+            } else if (jsonMsg.type === 'lobby_leave') {
+                const session = masterSessions.get(sessionId);
+                if (session && session.roster) {
+                    session.roster = session.roster.filter(x => x.peerId != jsonMsg.peerId && x.peerId != peerId);
+                    session.playerCount = session.roster.length;
+                    broadcastLobbyEvent(sessionId, {
+                        type: 'lobby_roster',
+                        roster: session.roster
+                    });
+                }
+            } else if (jsonMsg.type === 'ping') {
+                try { ws.send(JSON.stringify({ type: 'pong' })); } catch(e) {}
+            }
+            return;
+        }
+
+        if (typeof data === 'string') {
             try { data = Buffer.from(data); } catch(e) { return; }
         }
         if (!Buffer.isBuffer(data) || data.length < 8) return;
