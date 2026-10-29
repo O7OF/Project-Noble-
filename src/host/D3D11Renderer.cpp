@@ -134,7 +134,7 @@ bool D3D11Renderer::Initialize(HWND hwnd, uint32_t width, uint32_t height) {
     // Enable multithread protection on the D3D11 device/context so haloreach.dll's render/engine threads
     // and host overlay passes can safely access D3D11 immediate context without deadlocking.
     ComPtr<ID3D11Multithread> multithread;
-    if (SUCCEEDED(m_context.As(&multithread)) && multithread) {
+    if (SUCCEEDED(m_context->QueryInterface(IID_PPV_ARGS(multithread.GetAddressOf()))) && multithread) {
         multithread->SetMultithreadProtected(TRUE);
         NOBLE_INFO("Direct3D 11 multithread protection enabled.");
     }
