@@ -947,6 +947,7 @@ struct MenuState {
     // Pre-game lobby state
     bool isLobbyHost = false;
     std::string lobbySessionId;
+    std::string lobbySessionToken;
     std::string lobbyMap = "20_sword_slayer";
     std::string lobbyMode = "multiplayer";
     std::string lobbyVariantPath;
@@ -1008,6 +1009,8 @@ static void SetupHostLobby(MenuState& st, const std::string& mapScenario, const 
         adv.hostIsDev = AuthClient::Get().IsDeveloper();
         adv.hostServiceTag = Settings::Get().Snapshot().serviceTag.empty() ? "117" : Settings::Get().Snapshot().serviceTag;
         MasterServerClient::Get().StartAdvertising(adv);
+        st.lobbySessionId = MasterServerClient::Get().GetCurrentSessionId();
+        st.lobbySessionToken = MasterServerClient::Get().GetCurrentSessionToken();
     }
 
     st.lobbyRoster.clear();
@@ -1362,6 +1365,10 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
     const double now = ImGui::GetTime();
     if (now - st.lastLobbyPoll > 1.2) {
         st.lastLobbyPoll = now;
+        if (st.isLobbyHost && st.lobbySessionId.empty()) {
+            st.lobbySessionId = MasterServerClient::Get().GetCurrentSessionId();
+            st.lobbySessionToken = MasterServerClient::Get().GetCurrentSessionToken();
+        }
         if (!st.lobbySessionId.empty() && MasterServerClient::Get().Enabled()) {
             LobbyState current = MasterServerClient::Get().FetchLobbyStateSync(st.lobbySessionId);
             if (current.ok) {
@@ -1603,6 +1610,8 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
 
             choice.play = true;
             choice.host = true;
+            choice.sessionId = st.lobbySessionId;
+            choice.sessionToken = st.lobbySessionToken;
             choice.hostOnline = (st.lobbyNetMode == 1);
             choice.hostPublic = (st.lobbyPrivacy == 0);
             choice.hostMaxPlayers = st.lobbyMaxPlayers;
@@ -2453,6 +2462,12 @@ void FrontEndMenu::RenderOverlayImpl(IDXGISwapChain* swapChain, bool clear) {
                     if (choice.hostPublic) args += L" -public";
                     else args += L" -private";
                     args += L" -max-players " + std::to_wstring(choice.hostMaxPlayers);
+                    if (!choice.sessionId.empty()) {
+                        args += L" -session-id \"" + ToWide(choice.sessionId) + L"\"";
+                        if (!choice.sessionToken.empty()) {
+                            args += L" -session-token \"" + ToWide(choice.sessionToken) + L"\"";
+                        }
+                    }
                 }
                 NOBLE_INFO("FrontEndMenu: launching match via Relaunch ({} {})", choice.mode, choice.map);
                 Relaunch::Start(args);

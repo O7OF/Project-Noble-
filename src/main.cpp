@@ -254,6 +254,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     int hostMaxPlayers = 16;
     std::string connectAddress = "";
     std::string connectSessionId = "";
+    std::string connectSessionToken = "";
     std::string relayUrl = "";
 
     auto WideToNarrow = [](const std::wstring& w) -> std::string {
@@ -299,7 +300,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             } else if (arg == L"-connect" && i + 1 < numArgs) {
                 connectAddress = WideToNarrow(argvW[++i]);
             } else if (arg == L"-session-id" && i + 1 < numArgs) {
-                connectSessionId = WideToNarrow(argvW[++i]);
+                connectSessionId = WideToNarrow(argvW[++i]); 
+            } else if (arg == L"-session-token" && i + 1 < numArgs) {
+                connectSessionToken = WideToNarrow(argvW[++i]);
             } else if (arg == L"-relay" && i + 1 < numArgs) {
                 relayUrl = WideToNarrow(argvW[++i]);
             }
@@ -369,6 +372,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             args += L" -connect \"" + toWide(connectAddress) + L"\"";
             if (!connectSessionId.empty()) {
                 args += L" -session-id \"" + toWide(connectSessionId) + L"\"";
+                if (!connectSessionToken.empty()) {
+                    args += L" -session-token \"" + toWide(connectSessionToken) + L"\"";
+                }
             }
         } else if (launchHost) {
             args += L" -host";
@@ -456,8 +462,13 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
                 advert.hasPassword = false;
                 advert.isMod = !modFolder.empty();
                 advert.address = noble::UPnP::Get().GetExternalIP();
+                if (!connectSessionId.empty()) {
+                    advert.id = connectSessionId;
+                    advert.token = connectSessionToken;
+                    advert.inProgress = true;
+                }
                 noble::MasterServerClient::Get().StartAdvertising(advert);
-                NOBLE_INFO("main: Advertised hosted match to master server ({}:{})", advert.address, advert.port);
+                NOBLE_INFO("main: Advertised hosted match to master server ({}:{}) [Session: '{}']", advert.address, advert.port, connectSessionId.empty() ? "new" : connectSessionId);
             }
         } else {
             NOBLE_WARN("main: Failed to start self-hosting match");

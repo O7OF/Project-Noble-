@@ -208,9 +208,14 @@ void MasterServerClient::StartAdvertising(const MasterAdvert& advert) {
             m_advert.address = ip;
         }
     }
-    m_advertInProgress = false;
-    m_sessionId.clear();
-    m_sessionToken.clear();
+    m_advertInProgress = advert.inProgress;
+    if (!advert.id.empty()) {
+        m_sessionId = advert.id;
+        m_sessionToken = advert.token;
+    } else {
+        m_sessionId.clear();
+        m_sessionToken.clear();
+    }
     m_unregisterRequested = false;
     m_nextHeartbeat = std::chrono::steady_clock::now();
     m_advertising = true;
@@ -336,6 +341,16 @@ void MasterServerClient::DoList() {
 }
 
 void MasterServerClient::DoRegister() {
+    std::string existingId;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        existingId = m_sessionId;
+    }
+    if (!existingId.empty()) {
+        NOBLE_INFO("MasterServer: Continuing existing session {}", existingId);
+        DoHeartbeat();
+        return;
+    }
     MasterAdvert advert;
     {
         std::lock_guard<std::mutex> lock(m_mutex);

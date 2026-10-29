@@ -64,6 +64,8 @@ struct MasterSession {
 
 // Description of the game this player hosts, sent to the master server.
 struct MasterAdvert {
+    std::string id;
+    std::string token;
     std::string name;
     std::string address;
     uint16_t port = 11774;
