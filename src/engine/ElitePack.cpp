@@ -270,6 +270,14 @@ struct TagTable {
         return m == magic;
     }
     uint32_t Address(int32_t i) const { uint32_t a = 0; std::memcpy(&a, t + i * 8 + 4, 4); return a; }
+    uint32_t Magic(int32_t i) const {
+        int16_t group = 0;
+        std::memcpy(&group, t + i * 8, 2);
+        if (group < 0) return 0;
+        uint32_t m = 0;
+        std::memcpy(&m, t + 0x3FFFC + group * 16, 4);
+        return m;
+    }
     void SetAddress(int32_t i, uint32_t a) { std::memcpy(t + i * 8 + 4, &a, 4); }
     uint32_t Datum(int32_t i) const { uint16_t salt = 0; std::memcpy(&salt, t + i * 8 + 2, 2); return (uint32_t(salt) << 16) | uint32_t(i); }
     int32_t First(uint32_t magic) const { for (int32_t i = 0; i < Count(); ++i) if (Valid(i, magic)) return i; return -1; }
@@ -298,13 +306,63 @@ void __fastcall RebuildHook(uint8_t* state) {
 }
 
 bool s_keepPackList = false;
+bool s_keepPackHealth = false;
 int32_t s_pmcgIndex = -1;
 uint32_t s_pmcgAddress = 0;
+std::vector<uint32_t> s_addressesBefore;   // every tag's address before the pack's step
+bool s_keepPackGlobals = false;
+bool s_keepDeathEffect = false;
 
 void BeforePackStep(uint8_t* tags) {
     TagTable tt{tags};
     s_pmcgIndex = tt.First(kPmcg);
     s_pmcgAddress = s_pmcgIndex >= 0 ? tt.Address(s_pmcgIndex) : 0;
+    s_addressesBefore.resize(static_cast<size_t>(tt.Count()));
+    for (int32_t i = 0; i < tt.Count(); ++i) s_addressesBefore[static_cast<size_t>(i)] = tt.Address(i);
+}
+
+std::string fmt_hex(uint32_t v) {
+    char b[16];
+    std::snprintf(b, sizeof(b), " 0x%08X", v);
+    return b;
+}
+
+std::string GroupText(uint32_t magic) {
+    char g[5] = {static_cast<char>(magic >> 24), static_cast<char>(magic >> 16), static_cast<char>(magic >> 8),
+                 static_cast<char>(magic), 0};
+    for (char& ch : g) if (ch && (ch < 0x20 || ch > 0x7E)) ch = '?';
+    return g;
+}
+
+// Besides the armour list, the pack carries its own copy of some of the map's one-of-a-kind tags (globals
+// such as effect_globals) and loading it points those at the pack's copies. The pack's effect globals made
+// Elites play Heart Attack and Grunt Birthday Party. Put back the map's own copy of every one-of-a-kind tag
+// the pack replaced (tags of a group the pack has only one of). "-elite-pack-keep-globals" leaves them (test).
+void RestoreMapGlobals(TagTable& tt, uint64_t packStart, uint64_t packEnd) {
+    std::vector<std::pair<int32_t, uint32_t>> replaced;
+    std::vector<uint32_t> packGroups;   // group magic of every tag stored inside the pack
+    const int32_t n = std::min<int32_t>(tt.Count(), static_cast<int32_t>(s_addressesBefore.size()));
+    for (int32_t i = 0; i < tt.Count(); ++i) {
+        const uint32_t now = tt.Address(i);
+        if (!now) continue;
+        const uint64_t at = reinterpret_cast<uint64_t>(TagAt(now));
+        if (at < packStart || at >= packEnd) continue;
+        packGroups.push_back(tt.Magic(i));
+        if (i < n && s_addressesBefore[static_cast<size_t>(i)] && s_addressesBefore[static_cast<size_t>(i)] != now)
+            replaced.push_back({i, s_addressesBefore[static_cast<size_t>(i)]});
+    }
+    std::string restoredText, keptText;
+    int restored = 0, kept = 0;
+    for (const auto& [i, before] : replaced) {
+        const uint32_t magic = tt.Magic(i);
+        if (magic == kPmcg) continue;   // handled above (merged)
+        const bool single = std::count(packGroups.begin(), packGroups.end(), magic) == 1;
+        std::string& text = (single && !s_keepPackGlobals) ? restoredText : keptText;
+        text += (text.empty() ? "" : ", ") + GroupText(magic) + fmt_hex(tt.Datum(i));
+        if (single && !s_keepPackGlobals) { tt.SetAddress(i, before); ++restored; } else ++kept;
+    }
+    NOBLE_INFO("ElitePack: the pack replaced {} of the map's tags; map's copy put back for {} [{}]; pack's kept for {} [{}]{}",
+               replaced.size(), restored, restoredText, kept, keptText, s_keepPackGlobals ? " (-elite-pack-keep-globals)" : "");
 }
 
 // Armour list (pmcg): 11 lists from +0x20, 12 bytes apart ({i32 count, u32 packed pointer, u32});
@@ -510,6 +568,10 @@ void MergeElitePieces(uint8_t* mapList, uint8_t* packList) {
                failed ? " (" + std::to_string(failed) + " failed)" : std::string(), regions);
 }
 
+void MatchStockDamage(const TagTable& tt, uint32_t packElite, uint32_t stockElite);
+void DropDeathArmourEffect(const TagTable& tt, uint32_t packElite, uint32_t bodyName);
+bool HasArg(const wchar_t* name);
+
 void AfterPackStep(uint8_t* tags, uint8_t* cache) {
     TagTable tt{tags};
     uint64_t a = 0;
@@ -533,6 +595,7 @@ void AfterPackStep(uint8_t* tags, uint8_t* cache) {
             MergeElitePieces(mapList, packList);
         }
     }
+    RestoreMapGlobals(tt, a, end);
 
     // The pack's player Elite: the biped whose tag lies inside the pack's section.
     std::vector<uint32_t> packBipeds;
@@ -570,6 +633,9 @@ void AfterPackStep(uint8_t* tags, uint8_t* cache) {
     }
 
     // Keep the pack Elite's biped (+0x70 model) and the model's render model (+0x0C) active.
+    MatchStockDamage(tt, packElite, stockElite);
+    DropDeathArmourEffect(tt, packElite, 0xE2 /* "body" */);
+
     s_activeDatums[0] = packElite;
     uint32_t model = 0xFFFFFFFFu, render = 0xFFFFFFFFu;
     std::memcpy(&model, TagAt(tt.Address(packElite & 0xFFFF)) + 0x70, 4);
@@ -580,6 +646,184 @@ void AfterPackStep(uint8_t* tags, uint8_t* cache) {
     s_haveActive = true;
     NOBLE_INFO("ElitePack: player representation {} -> the pack's player Elite biped 0x{:X} (AI Elites keep the map's 0x{:X}); "
                "kept active: 0x{:X}, 0x{:X}, 0x{:X}", changed, packElite, stockElite, s_activeDatums[0], model, render);
+}
+
+// Model (hlmt) +0xC0: "new damage info" block {i32 count, u32 packed pointer, u32}. Element: +0x00 flags,
+// +0x04 global indirect material (string id), +0x08 indirect damage section (i16), body from +0x28 (maximum
+// vitality), shield from +0x7C (maximum vitality, +0x80 shield material, +0x88 stun time, +0x8C recharge time),
+// effect references up to +0xC8, then +0xCC the damage sections block (left alone: it lists the pack model's own).
+constexpr uint32_t kHlmt = 0x686C6D74;
+constexpr size_t kModelDamageInfo = 0xC0, kDamageCopyEnd = 0xCC;
+
+constexpr size_t kModelShield = 0xD0;
+
+// Model tag of a biped (biped +0x70); DamageInfo() has already checked it is an hlmt.
+uint8_t* ModelOf(const TagTable& tt, uint32_t biped) {
+    uint32_t model = 0xFFFFFFFFu;
+    std::memcpy(&model, TagAt(tt.Address(biped & 0xFFFF)) + 0x70, 4);
+    return TagAt(tt.Address(model & 0xFFFF));
+}
+
+uint8_t* DamageInfo(const TagTable& tt, uint32_t biped) {
+    uint32_t model = 0xFFFFFFFFu;
+    std::memcpy(&model, TagAt(tt.Address(biped & 0xFFFF)) + 0x70, 4);
+    if (!tt.Is(model, kHlmt)) return nullptr;
+    uint8_t* m = TagAt(tt.Address(model & 0xFFFF));
+    int32_t count = 0;
+    uint32_t packed = 0;
+    std::memcpy(&count, m + kModelDamageInfo, 4);
+    std::memcpy(&packed, m + kModelDamageInfo + 4, 4);
+    return (count >= 1 && packed) ? TagAt(packed) : nullptr;
+}
+
+std::string VitalityText(const uint8_t* info) {
+    float body = 0, shield = 0, stun = 0, recharge = 0;
+    std::memcpy(&body, info + 0x28, 4);
+    std::memcpy(&shield, info + 0x7C, 4);
+    std::memcpy(&stun, info + 0x88, 4);
+    std::memcpy(&recharge, info + 0x8C, 4);
+    char text[128];
+    std::snprintf(text, sizeof(text), "body %g, shield %g, shield stun %g s, recharge %g s", body, shield, stun, recharge);
+    return text;
+}
+
+std::string Hex(const uint8_t* p, size_t n) {
+    std::string out;
+    char b[12];
+    for (size_t i = 0; i < n; i += 4) {
+        uint32_t v = 0;
+        std::memcpy(&v, p + i, 4);
+        std::snprintf(b, sizeof(b), "%s%08X", (i % 32 == 0 && i) ? " | " : " ", v);
+        out += b;
+    }
+    return out;
+}
+
+// Diagnostic (Elite toughness): logs the model's damage-related data so the pack Elite and the stock Elite
+// can be compared line by line. Raw dwords; " | " every 32 bytes.
+void DumpDamageData(const char* label, const TagTable& tt, uint32_t biped) {
+    uint32_t model = 0xFFFFFFFFu;
+    std::memcpy(&model, TagAt(tt.Address(biped & 0xFFFF)) + 0x70, 4);
+    if (!tt.Is(model, kHlmt)) { NOBLE_WARN("ElitePack dump {}: no model", label); return; }
+    const uint8_t* m = TagAt(tt.Address(model & 0xFFFF));
+    NOBLE_INFO("ElitePack dump {}: biped 0x{:X} model 0x{:X} hlmt[0x00..0x1A0]:{}", label, biped, model, Hex(m, 0x1A0));
+    auto block = [&](const uint8_t* base, size_t at, const char* name, size_t stride, int maxItems) {
+        int32_t count = 0;
+        uint32_t packed = 0;
+        std::memcpy(&count, base + at, 4);
+        std::memcpy(&packed, base + at + 4, 4);
+        if (count <= 0 || !packed) { NOBLE_INFO("ElitePack dump {}: {} (+0x{:X}) empty", label, name, at); return; }
+        const uint8_t* e = TagAt(packed);
+        for (int i = 0; i < std::min(count, maxItems); ++i)
+            NOBLE_INFO("ElitePack dump {}: {} (+0x{:X}) {}/{}:{}", label, name, at, i, count, Hex(e + i * stride, stride));
+    };
+    block(m, 0xA8, "hlmt block A8", 0x14, 4);
+    block(m, 0xB4, "hlmt block B4", 0x14, 4);
+    block(m, 0xC0, "damage info", 0x140, 1);
+    const uint8_t* info = DamageInfo(tt, biped);
+    if (info) {
+        block(info, 0xCC, "damage sections", 0x44, 6);
+        block(info, 0xD8, "damage info block D8", 0x10, 2);
+        block(info, 0xE4, "damage info block E4", 0x10, 2);
+    }
+    uint32_t coll = 0xFFFFFFFFu;
+    std::memcpy(&coll, m + 0x1C, 4);
+    if (coll != 0xFFFFFFFFu && (coll & 0xFFFF) < uint32_t(tt.Count()))
+        NOBLE_INFO("ElitePack dump {}: coll 0x{:X} [0x00..0x80]:{}", label, coll, Hex(TagAt(tt.Address(coll & 0xFFFF)), 0x80));
+}
+
+bool TryDump(const char* label, const TagTable& tt, uint32_t biped) {
+    __try {
+        DumpDamageData(label, tt, biped);
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+// The pack's Elite comes with its own damage settings, which make it much tougher than MCC's multiplayer Elite
+// (two grenades don't take its shields down). Give it the stock player Elite's settings instead.
+// "-elite-pack-own-health" keeps the pack's (test).
+void MatchStockDamage(const TagTable& tt, uint32_t packElite, uint32_t stockElite) {
+    uint8_t* pack = DamageInfo(tt, packElite);
+    const uint8_t* stock = DamageInfo(tt, stockElite);
+    if (!pack || !stock) {
+        NOBLE_WARN("ElitePack: damage info not found (pack {}, stock {}); the pack Elite keeps its own health",
+                   pack != nullptr, stock != nullptr);
+        return;
+    }
+    if (HasArg(L"-elite-pack-dump")) {
+        if (!TryDump("stock", tt, stockElite)) NOBLE_WARN("ElitePack: stock Elite dump stopped early");
+        if (!TryDump("pack", tt, packElite)) NOBLE_WARN("ElitePack: pack Elite dump stopped early");
+    }
+    const std::string before = VitalityText(pack);
+    if (s_keepPackHealth) {
+        NOBLE_INFO("ElitePack: pack Elite keeps its own health (-elite-pack-own-health): {}; stock Elite: {}",
+                   before, VitalityText(stock));
+        return;
+    }
+    std::memcpy(pack + 0x04, stock + 0x04, 4);
+    std::memcpy(pack + 0x10, stock + 0x10, kDamageCopyEnd - 0x10);
+
+    // The model's own shield strength (hlmt +0xD0, float; +0xCC is a count, 1): the stock multiplayer Elite
+    // has 79 (its damage info's shield vitality), the pack's Elite 210, so two grenades never took its shields down.
+    float* packShield = reinterpret_cast<float*>(ModelOf(tt, packElite) + kModelShield);
+    const float stockShield = *reinterpret_cast<const float*>(ModelOf(tt, stockElite) + kModelShield);
+    const float oldShield = *packShield;
+    if (stockShield > 0.0f && stockShield < 10000.0f) *packShield = stockShield;
+    NOBLE_INFO("ElitePack: pack Elite now uses the stock Elite's damage settings ({}; model shield {:g}, was {:g}; before: {})",
+               VitalityText(pack), *packShield, oldShield, before);
+}
+
+// Death armour effect. The model's damage sections (hlmt +0xE0, {i32 count, u32 pointer, u32}, 0xC0 bytes each:
+// +0x00 name, e.g. "body") carry what happens when a section is used up; the pack Elite's "body" section plays
+// objects\characters\spartans\fx\armor_fx\armor_fx_death (in its blocks at +0x1C and +0x84). That effect picks
+// the armour effect from the character's "armor_fx" model region, which the pack's Elite doesn't have, so every
+// pack Elite played Heart Attack and Grunt Birthday Party. Drop it for the pack Elite only (Elites have no armour
+// effect in Noble yet). "-elite-pack-death-fx" keeps it (test).
+constexpr uint32_t kEffe = 0x65666665;
+constexpr size_t kModelSections = 0xE0, kSectionSize = 0xC0;
+
+void DropDeathArmourEffect(const TagTable& tt, uint32_t packElite, uint32_t bodyName) {
+    uint8_t* m = ModelOf(tt, packElite);
+    int32_t count = 0;
+    uint32_t packed = 0;
+    std::memcpy(&count, m + kModelSections, 4);
+    std::memcpy(&packed, m + kModelSections + 4, 4);
+    if (count <= 0 || count > 32 || !packed) { NOBLE_WARN("ElitePack: pack Elite has no damage sections"); return; }
+    uint8_t* sections = TagAt(packed);
+    int dropped = 0;
+    std::string datums;
+    for (int32_t i = 0; i < count; ++i) {
+        uint8_t* sec = sections + i * kSectionSize;
+        uint32_t name = 0;
+        std::memcpy(&name, sec, 4);
+        if (name != bodyName) continue;
+        for (size_t blockAt : {size_t(0x1C), size_t(0x84)}) {
+            int32_t n = 0;
+            uint32_t p = 0;
+            std::memcpy(&n, sec + blockAt, 4);
+            std::memcpy(&p, sec + blockAt + 4, 4);
+            if (n <= 0 || n > 8 || !p) continue;
+            uint8_t* e = TagAt(p);
+            for (size_t k = 0; k + 16 <= size_t(n) * 0x40; k += 4) {
+                uint32_t group = 0, datum = 0;
+                std::memcpy(&group, e + k, 4);
+                if (group != kEffe) continue;
+                std::memcpy(&datum, e + k + 12, 4);
+                if (datum == 0xFFFFFFFFu) continue;
+                if (s_keepDeathEffect) { datums += fmt_hex(datum); continue; }
+                const uint32_t none = 0xFFFFFFFFu;
+                std::memcpy(e + k + 12, &none, 4);
+                datums += fmt_hex(datum);
+                ++dropped;
+            }
+        }
+    }
+    if (s_keepDeathEffect)
+        NOBLE_INFO("ElitePack: pack Elite keeps its death armour effect (-elite-pack-death-fx):{}", datums);
+    else
+        NOBLE_INFO("ElitePack: dropped {} death armour effect reference(s) from the pack Elite's body section:{}", dropped, datums);
 }
 
 bool TryAfterPackStep(uint8_t* tags, uint8_t* cache) {
@@ -778,6 +1022,10 @@ BuilderFn s_builder = nullptr;
 
 uint64_t __fastcall BuilderHook(uint8_t* record, uint32_t mode, void* unit, void* player) {
     const bool elite = record && mode != 0 && mode != 2 && (mode == 1 || record[4] == 1);
+    // Diagnostic (armour effects on Elites): the appearance record as the engine passes it.
+    static std::atomic<int> s_recordsLogged{0};
+    if (record && s_recordsLogged.fetch_add(1) < 6)
+        NOBLE_INFO("ElitePack: appearance record (mode {}, elite {}):{}", mode, elite, Hex(record, 0x28));
     if (!elite || !s_loaded || !s_haveActive) return s_builder(record, mode, unit, player);
     alignas(8) uint8_t copy[0x28];
     std::memcpy(copy, record, sizeof(copy));
@@ -840,6 +1088,9 @@ void Install(HMODULE engine, const std::filesystem::path& dataDir, const std::st
         return;
     }
     s_keepPackList = HasArg(L"-elite-pack-list");
+    s_keepPackHealth = HasArg(L"-elite-pack-own-health");
+    s_keepPackGlobals = HasArg(L"-elite-pack-keep-globals");
+    s_keepDeathEffect = HasArg(L"-elite-pack-death-fx");
     // First <name>.map in data\armor that has a .rrreloc sidecar.
     std::error_code ec;
     const auto folder = dataDir / "armor";
@@ -863,9 +1114,11 @@ void Install(HMODULE engine, const std::filesystem::path& dataDir, const std::st
     const bool patched = PatchCode(kDeltaTruncation, kMovEdx1, kNop2, 2) || PatchCode(kDeltaTruncation, kMovEdx2, kNop2, 2);
     // Elite armour slots (RR --elite-armor-slots): the appearance builder 0x1055EC applies only the Elite
     // set list (+0x74) to Elites ("cmp esi,7; sete r15b" at 0x105796). With the pack, Elites take their
-    // pieces from the Spartan piece lists (which now carry the pack's Elite changes), so every list applies.
+    // pieces from the Spartan piece lists (which now carry the pack's Elite changes), so lists 0..7 apply
+    // ("cmp esi,8; setb r15b"). Not 8+ (+0x80 Spartan armour effects, +0x8C Elite armour effects, +0x98): with
+    // every list on (RR's "mov r15b,1"), Elites played Heart Attack and Birthday Party at once from leftover bytes.
     static const uint8_t kSlotCheck[7] = {0x83, 0xFE, 0x07, 0x41, 0x0F, 0x94, 0xC7};
-    static const uint8_t kSlotAll[7] = {0x41, 0xB7, 0x01, 0x90, 0x90, 0x90, 0x90};
+    static const uint8_t kSlotAll[7] = {0x83, 0xFE, 0x08, 0x41, 0x0F, 0x92, 0xC7};
     const bool slots = PatchCode(0x105796, kSlotCheck, kSlotAll, 7);
     static const uint8_t kStepPrologue[7] = {0x48, 0x8B, 0xC4, 0x4C, 0x89, 0x48, 0x20};
     const bool stepOk = std::memcmp(At<void*>(kCacheStep), kStepPrologue, 7) == 0;

@@ -11,6 +11,34 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 ---
 
+## 0. Pick up here (2026-10-28, 22:35 ET) - invisible players, menu crash, join window, Elite pack fixes
+
+All tested by Tyler unless marked.
+- **Invisible character models (pushed):** O7OF's `IsArmorItemUnlocked` hook (`EnginePatches.cpp` §3) found its target with a
+  generic function-prologue signature, which matched `hr+0x105BDC` inside the appearance builder instead of `0x2C7DCC`;
+  replacing it with "return 1" stopped player models from being built. The hook is now off (`#if 0`, comment says why).
+- **Menu -> match crash (pushed):** `main.cpp` shuts the engine down before UiArt / UIManager / LoadScreen (the engine thread
+  drew one more ImGui frame after ImGui was gone).
+- **Joining left the menu open (pushed):** `ServerBrowser::TryJoin` closed `GetActiveWindow()`, which is NULL on the engine
+  thread; it now closes this process's own top-level window. (Written before O7OF's 22:15 netcode entry below; joining is his area.)
+- **Elite pack (`ElitePack.cpp`):**
+  - Shield: the pack model's own shield value (hlmt +0xD0) was 210, the stock MP Elite's 79; now copied from the stock Elite
+    (its damage info at hlmt +0xC0 was already identical: body 50, shield 79, stun 3 s, recharge 3.5 s). `-elite-pack-own-health` keeps the pack's.
+  - Heart Attack + Birthday Party on every pack Elite death: the pack model's "body" damage section (hlmt +0xE0, 0xC0 each,
+    blocks at +0x1C / +0x84) plays `armor_fx_death`, which reads the "armor_fx" model region the pack Elite lacks. Those two
+    references are cleared for the pack Elite only (log "dropped 2 death armour effect reference(s)"). `-elite-pack-death-fx` keeps them.
+  - Elite slot patch at `0x105796` is now `cmp esi,8; setb r15b` (lists 0..7 for Elites, not the effect lists 8/9).
+  - Kept as diagnostics: `RestoreMapGlobals` (logs tags the pack replaced; only pmcg so far), `-elite-pack-dump`, and the first
+    6 appearance records are logged (Elite record: +0x10..+0x17 pieces/set, +0x18/+0x19 effects, +0x1A visor?).
+  - The pack's render model has H2A pieces too (h2a_space_helmet, h2a_l/r_shoulder, h2a_legs), not only the menu map.
+- **Armory:** Elite Armor Set tiles show pictures from `data\ui\reach\elite_sets\<set id>.png` (Tyler's 8 renders;
+  Ranger = `space`, Field Marshal = `story_elite`). Add with `git add -f`.
+- **Spec:** `docs/menu-redesign-spec.md` trimmed to what's still to do (steps 1-8 done).
+- Open: Elite armour effects (needs an armor_fx region or another route); the menu process still logs an ntdll access
+  violation when it exits for a match (22:03, 22:24; separate from the ImGui fix, not looked at yet); first-person Elite arms.
+
+---
+
 ## 0. Pick up here (2026-10-28, 22:20 ET) - Dominus Updates: Build System Fallback, Zero-Warning Compilation & Git/Toolchain Setup
 
 - **Git & Team Onboarding (`Dominus-VII`):**

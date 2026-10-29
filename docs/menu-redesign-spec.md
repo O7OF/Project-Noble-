@@ -11,6 +11,11 @@ something real to look at; they are templates until the final art and how it is 
 replace them with AI-generated art.** Tyler also has the 43 Reclaimer reference screenshots this spec was written
 from (described in Appendix A): **if any screen here is unclear, ask Tyler for the matching screenshots.**
 
+**Status (updated 2026-10-28, 22:15 ET):** items that are built have been removed from this spec, so what is left
+here is still to do. What was built, and how, is in `docs/HANDOFF.md` (11:00-19:25 entries): the UI kit, three-column
+Settings, Campaign / Firefight setup, ranks, Reach's challenges and commendations, the post-game exit experience and
+Armory v2 (§6 steps 1-8).
+
 **Goal in one line:** Noble's menus should work like Reclaimer's (clear three-column layouts, live previews, every
 option explained, fast to use with mouse, keyboard or controller) but look and sound like Halo: Reach (Reach's
 colours, type, icons, art, sounds and music). Reach is a 2010 game; keep its identity, modernise the usability.
@@ -36,13 +41,13 @@ colours, type, icons, art, sounds and music). Reach is a 2010 game; keep its ide
 
 | Area | Files | State |
 |---|---|---|
-| Front-end menu | `src/ui/FrontEndMenu.cpp/.hpp` | O7OF's in-engine menu (`mainmenu` mode) drawn by `RenderOverlay` from host slot 1; `HoldFrame()` keeps drawing after the engine stops (~60 s). Screens: Main, Campaign, Skulls, Firefight, Custom Game, Forge, Servers, Settings, Armory, Mods, Service Record. Vanilla / Modded tabs with collapsible mods, click-to-pick lists, scrolling, quit confirmation, clickable hints. `-menu-screen` is ignored by the in-engine menu. |
-| Shared look | `src/ui/NobleStyle.cpp/.hpp`, `UiArt.cpp/.hpp` | Fonts, accent colour, MCC texture-pack reader (map previews, skulls, controller), backgrounds. |
+| Front-end menu | `src/ui/FrontEndMenu.cpp/.hpp` | O7OF's in-engine menu (`mainmenu` mode) drawn by `RenderOverlay` from host slot 1; `HoldFrame()` keeps drawing after the engine stops (~60 s). Screens: Main, Campaign, Skulls, Firefight, Custom Game, Forge, Servers, Settings, Armory, Mods, Service Record. Vanilla / Modded tabs with collapsible mods, click-to-pick lists, scrolling, quit confirmation, clickable hints, `-menu-screen` / `-menu-tab`. |
+| Shared look | `src/ui/NobleStyle.cpp/.hpp`, `NobleUi.cpp/.hpp`, `UiArt.cpp/.hpp` | Fonts, accent colour, UI kit (§3), MCC texture-pack reader (map previews, skulls, controller), backgrounds, Reach art from `data\ui\reach\` (ranks, difficulty, commendations, Elite armour sets). |
 | Input prompts | `src/ui/InputPrompts.cpp/.hpp` | Last-used device tracking, drawn A/B/LB/RB/D-pad glyphs or key boxes. |
-| Sounds / music | `src/audio/ReachAudio.cpp/.hpp`, `src/ui/MenuSounds.*` | Reach UI sounds and menu music from MCC's FMOD banks via vgmstream; ~360 tracks; two-pane music picker in Settings > Audio. Post-game sounds (`GameCompletion`, `Totals`, `RankUp`, `SlotMachine`) are decoded but not used yet. |
-| Settings | `src/ui/SettingsPanel.cpp/.hpp`, `src/common/Settings.*` | Tabs: Controls (mouse, gamepad incl. stick speed +0x1B5/+0x1B6, dead zones, vibration), Key bindings (incl. wheel up/down), Video (resolution, borderless, FOV 70-120, FPS limit, V-Sync), Audio, Gameplay, Network. |
-| Armory | `ArmorCustomizer.*`, `ReachArmory`, `ObjModel*.cpp` | 3D OBJ preview (local exports only), colours/visor tint; `ApplyArmoryAppearance` writes helmet/shoulders/chest/wrist/utility/knees/visor/effects/voice/colours/Elite set into the profile (+0x40..+0xA0, MCC global item ids). Third-person check still pending. |
-| Career | `src/career/Career.*`, `src/ui/CareerPanel.*` | 50 ranks, cR pay, Service Record (rank, totals, campaign, last 20 games), 7 daily / 5 weekly challenges from a small pool, 6 commendation tracks, post-game scoreboard + cR lines. Reference data in `docs/career/` (all 45 Reach commendations, 2,103 real Reach challenges, ranks and pay, Armory list). |
+| Sounds / music | `src/audio/ReachAudio.cpp/.hpp`, `src/ui/MenuSounds.*` | Reach UI sounds and menu music from MCC's FMOD banks via vgmstream; ~360 tracks; two-pane music picker in Settings > Audio; post-game sounds (`GameCompletion`, `Totals`, `RankUp`, `SlotMachine`) used by the post-game screen. |
+| Settings | `src/ui/SettingsPanel.cpp/.hpp`, `src/common/Settings.*` | Three columns (§4.2): categories Graphics, Audio, Game options, Player, Keyboard & mouse, Controller, Online services; search, unsaved box, restore defaults, details panel with previews; typed slider values. |
+| Armory | `ArmorCustomizer.*`, `ReachArmory`, `engine/ElitePack.*` | Armory v2 (slot list, picker grid, RANDOM, camera per slot) over Reach's own Armory scene (`mainmenu_all.map`); Spartan pieces and Elite per-piece armour reach the game (`ApplyArmoryAppearance`, Elite pack); Elite Armor Set tiles have pictures. |
+| Career | `src/career/Career.*`, `src/ui/CareerPanel.*` | 50 ranks with Reach icons, Service Record + RANKS tab, Reach's real daily / weekly challenges (11:00 GMT reset), Reach's 45 commendations with tier art, post-game exit experience. Reference data in `docs/career/`. |
 | Servers / mods | `ServerBrowser.*`, `MasterServerClient.*`, `WorkshopManager.*`, `ModCatalog.*`, `vfs/VFS.*` | Server list + favourites + direct connect (joining needs engine networking, handoff §6 item 4); Workshop/local Reach mods; `VFS::SetActiveMod`. |
 
 ---
@@ -88,24 +93,20 @@ selects (lists don't change selection on hover, already the rule in `DrawList`),
 
 ---
 
-## 3. Shared UI kit (build first, then every screen uses it)
+## 3. Shared UI kit
 
-Put these in a new `src/ui/NobleUi.cpp/.hpp` (or grow `NobleStyle`), drawn with ImGui draw lists like `FrontEndMenu`:
+Built: `src/ui/NobleUi.cpp/.hpp` (`SectionHeader`, `RowBackground`, `ChangedDot`, `DrawSlider`, `DrawCycle`,
+`DrawToggle`, `DrawBox`, text helpers); `HeroBanner`, `BigAction` and difficulty tiles in `FrontEndMenu.cpp`; the
+category list, details panel and unsaved box inside `SettingsPanel`. Still to add as shared pieces when a screen
+needs them:
 
 | Component | Notes |
 |---|---|
 | `ScreenShell(title, topActions)` | Title, top-right text buttons, background, safe margins, scale by window height (as `Ui::s`). |
-| `SectionHeader(text)` | Caps + rule. |
-| `CategoryList` | Icon + name + live summary + unsaved dot; groups with headers. |
-| `Row` types | Slider (fill bar, value text, optional default tick), Cycle `‹ value ›` with position dots under the value, Toggle pill, Binding pair (primary + alternate key/button, "—" when unbound), Text field, Path row (path + CHANGE… / OPEN), Button row. Disabled/greyed state when a parent option is off. Changed-not-applied dot. |
-| `DetailsPanel` | Title, effect line, preview slot (callback), description, facts. |
-| `UnsavedBox` | "● N UNSAVED CHANGES / In <category>" + APPLY / DISCARD. |
-| `TileGrid` | Picture tiles with name strip, corner badge ("+8 VARIANTS"), equipped check, hover/selected frames; keyboard/pad navigation in 2D. |
-| `HeroBanner` | Big picture with gradient, small accent kicker ("HALO: REACH · FIREFIGHT"), title, one line. |
-| `BigAction` | Large primary button with subtitle ("START GAME / Sword Base · Slayer") and a secondary next to it. |
-| `Modal` | Kicker + title + body + prompts row + CLOSE / primary (required mods, players list, quit). |
-| `SearchBox`, `FilterChips`, `SortableTable` | For servers, maps, game types, settings search, music. |
-| `CountUp`, `ProgressBar`, `ProgressRing` | Career screens and post-game. |
+| `TileGrid` | Picture tiles with name strip, corner badge ("+8 VARIANTS"), equipped check, hover/selected frames; keyboard/pad navigation in 2D (the Armory picker has a first version). |
+| `Modal` | Kicker + title + body + prompts row + CLOSE / primary (required mods, players list). |
+| `SearchBox`, `FilterChips`, `SortableTable` | For servers, maps, game types, music. |
+| `ProgressRing` | Career screens. |
 
 ---
 
@@ -116,7 +117,7 @@ Each screen lists: reference (Reclaimer), what Noble's version should do, data/e
 ### 4.1 Main menu
 - Keep Reach's vertical list (Campaign, Matchmaking (disabled), Firefight, Custom Games, Forge, Theater (disabled
   until films exist), Armory, Service Record, Settings, Quit) over a layered background, party box top-right with
-  emblem, name, service tag and **rank icon**.
+  emblem, name and service tag (the rank icon is there).
 - Add a "fast path" tile: "Continue: <last mode> on <last map>" (Bungie's idea from the original menus).
 - Test: every entry reachable by mouse, keys and pad; prompts switch with the device.
 
@@ -124,41 +125,33 @@ Each screen lists: reference (Reclaimer), what Noble's version should do, data/e
 Reference: Settings screenshots (Graphics, Advanced graphics, Audio, Game options, Language, Keyboard & mouse,
 Controller, Communication, Online services, Mods, Folders).
 
-Categories for Noble (every Reclaimer row is wanted, see §4.10; rows that can't work yet are shown disabled with a
-one-line reason):
+Built: three columns, categories Graphics / Audio / Game options / Player / Keyboard & mouse / Controller / Online
+services, search, unsaved box, restore defaults, details panel with previews (FOV, frame time, volume meters,
+controller, graphics card line). Still to do (rows that can't work yet are shown greyed with a reason):
 
-| Group | Category | Rows (status) |
+| Group | Category | Rows still to do |
 |---|---|---|
-| DISPLAY & SOUND | Graphics | Display mode, window size, resolution, FPS limit with frame-time preview, V-Sync (exist); graphics card info line (new, read from DXGI). |
-| | Advanced graphics | Every row from §4.10; each enabled as its engine field is found. |
-| | Audio | Master/game/music/voice volumes (exist), mute in background (new, easy), menu music on/off + volume + song order + per-song on/off with ▶ preview and length (extend the current two-pane picker), volume meters preview. |
-| GAME | Game options | FOV 70-120 (exists), subtitles (exists), crosshair/HUD options only if the engine supports them; preview images like Reclaimer's crosshair mock. |
+| DISPLAY & SOUND | Advanced graphics | Every row from §4.10; each enabled as its engine field is found. |
+| | Audio | Mute in background (greyed now), master mute, menu music song order + per-song on/off with ▶ preview and length. |
+| GAME | Game options | Crosshair / HUD options only if the engine supports them; preview images like Reclaimer's crosshair mock. |
 | | Language | Text/voice/subtitle language once MCC's Reach language files are understood (§4.10). |
-| CONTROLS | Keyboard & mouse | Mouse section (sensitivity, vertical ratio, invert exist; acceleration/smoothing new, Noble-side), bindings grouped MOVEMENT / COMBAT / VEHICLES / FORGE / COMMUNICATION & INTERFACE / ARMOR ABILITY, two keys per action (engine has a second key slot at +8, see handoff), wheel up/down (exists). |
-| | Controller | Status line ("No controller found" / name), button layout (Reach presets: Default, Southpaw, Boxer, Green Thumb, Bumper Jumper, Recon...), stick speed H/V, invert, dead zones, vibration (exist), per-action pad bindings. |
+| CONTROLS | Keyboard & mouse | Acceleration / smoothing (greyed now, Noble-side), bindings grouped MOVEMENT / COMBAT / VEHICLES / FORGE / COMMUNICATION & INTERFACE / ARMOR ABILITY, two keys per action (engine has a second key slot at +8). |
+| | Controller | Button layout presets (greyed now: Default, Southpaw, Boxer, Green Thumb, Bumper Jumper, Recon), per-action pad bindings. |
 | ONLINE | Communication | Chat, voice, content filters, Discord (§4.10). Filters work now on names; chat/voice with networking. |
-| | Online services | Master server URL(s), player ID + COPY. |
 | SYSTEM | Mods | Workshop/local folders, installed Reach mods with ON/OFF, OPEN FOLDER, size; character-mod toggles (see 4.6). |
 | | Folders | MCC folder, Noble data folder, audio cache folder + size + CLEAR, disk space bars. |
 
-Rules: search across all settings; per-category footer says when changes apply; unsaved box; RESTORE DEFAULTS per
-category. Keep the existing `Settings` JSON keys (old files must load).
-Test: change a value, see the unsaved dot and box, DISCARD restores, APPLY saves to `settings.json`.
+Keep the existing `Settings` JSON keys (old files must load).
 
 ### 4.3 Campaign and Firefight setup
 Reference: Firefight screenshots (map list with thumbnails + numbers, hero banner, game type dropdown, options
 button, difficulty tiles, PLAY SOLO / HOST CO-OP, "Firefight options" override page with skulls).
-- Left: VANILLA / MODDED tabs (exist) + list rows with **map thumbnail** (UiArt::MapPreview small) and number.
-  Modded: collapsible mod groups (exist).
-- Right: HeroBanner (kicker "HALO: REACH · CAMPAIGN" or "MOD: <name>"), mission/map blurb.
-- Campaign: DIFFICULTY as four big tiles with **Reach's difficulty icons** (Easy/Normal/Heroic/Legendary; art per
-  §7), SKULLS as a row of small skull icons (opens the Skulls screen, exists), score multiplier, (later) insertion
-  point / chapter select if the engine exposes it.
-- Firefight: GAME TYPE picker (variants from MCC, exist) + "FIREFIGHT OPTIONS · DEFAULT" button that opens an
-  override page (time limit, lives, skulls on all game) **only once Noble can write those variant fields**;
-  difficulty tiles.
-- Bottom: PLAY SOLO (primary) and HOST CO-OP (disabled until networking).
-- Test: pick a mission/map, change difficulty and skulls, start; the right mission/map/difficulty load.
+Built: map/mission thumbnails and numbers, hero banner, difficulty tiles with Reach's icons, skull icons, PLAY SOLO /
+START buttons. Still to do:
+- Campaign: insertion point / chapter select if the engine exposes it.
+- Firefight: the "FIREFIGHT OPTIONS" override page (time limit, lives, skulls on all game), shown greyed until Noble
+  can write those variant fields.
+- HOST CO-OP: greyed until networking.
 
 ### 4.4 Custom games: lobby, map picker, game type picker, game options
 Reference: Host Game, Select Map, Select Game Type, Game Options screenshots.
@@ -192,21 +185,18 @@ Reference: Server browser screenshots, filters panel, required mods dialog, play
 Reference: Customize screenshots (identity card, character, armour slots, colours, emblem, 3D model with rotate /
 zoom / stance / reset, picture grids with equipped check and randomise, Looks priority list).
 
-**Layout:** left = identity card (emblem, name, service tag, species/character) + slot list grouped CHARACTER /
-ARMOR / COLORS / EMBLEM / VOICE; middle = 3D model (drag to rotate, wheel to zoom, STANCE ‹ Rifle / Pistol / Crouch
-/ Reach Armory poses ›, RESET VIEW; camera moves to the slot being edited: helmet close-up, shoulder, chest);
-right = picker for the focused slot: title, "Equipped: X", RANDOM button, TileGrid of rendered thumbnails with name,
-rank/cR lock state (career unlocks, `docs/armor-list.md`), equipped check; IDENTITY panel (player name, service
-tag, voice).
-
-**Reach slots:** helmet + helmet attachment (variant), left/right shoulder, chest, wrist, utility, knee guards,
-visor colour, armour effect, Firefight voice, body (male/female), primary/secondary colour (Reach has no third
-user colour; the third is fixed), emblem foreground/background/colours. Elite: armour set + armour effect.
-These map to the profile fields already written by `ApplyArmoryAppearance` (+0x40..+0xA0). Colours are Reach's
-**30 palette colours only** (10 × 3 shades); a custom hex picker can't reach the engine, so leave it out (or use
-it only for the menu's own accent theme).
-**Emblems:** Reach emblem foreground/background indices and colours: the profile offsets are not mapped yet
-(research item); the picker grid can use MCC's emblem art if it is in a texture pack, otherwise Tyler's art (§7).
+Built: Armory v2 layout (slot list grouped CHARACTER / ARMOR / COLORS / EFFECTS & VOICE / IDENTITY, picker with
+"Equipped", RANDOM, Reach's 30 colours, camera close-up per slot, wheel to change the view) over Reach's own Armory
+scene; Spartan and Elite pieces reach the game; Elite per-piece armour (with the Elite pack); Elite Armor Set tiles
+with pictures. Still to do:
+- **Picture thumbnails** for every other piece (render once and cache under `data\ui\cache\armory\`).
+- **Rank / cR locks** on every item with BUY (§4.12, `docs/armor-list.md`).
+- **Stances** (Rifle / Pistol / Crouch / Reach Armory poses), drag to rotate, RESET VIEW.
+- **Emblems:** foreground/background indices and colours; the profile offsets are not mapped yet (research item);
+  the picker grid can use MCC's emblem art if it is in a texture pack, otherwise Tyler's art (§7).
+- **Identity:** player name with a random button next to the service tag.
+- **Elite armour effect:** Elites show no armour effect for now; an Elite effect row needs its own engine work.
+- **Third-person check** of every Spartan piece and colour in a match.
 
 **Characters per mod (Tyler's requirement):** a player keeps a *preferred look per character type*, and a mod that
 puts the player in that character type uses it:
@@ -223,47 +213,21 @@ puts the player in that character type uses it:
   thumbnail paths) plus a runtime step that applies the chosen permutations to the player's biped when the mod is
   active. Prove it on one Workshop mod that uses Marines or ODSTs before building the full UI. Until then the ODST /
   Marine looks are saved and previewed but marked "used by mods that support Noble looks".
-- Preview models come from local OBJ exports today (git-ignored `data\armor\`); the shipped version must read models
-  from the player's MCC maps (handoff Armory notes). Thumbnails for the picker grids can be rendered once with the
-  preview renderer and cached under `data\ui\cache\armory\`.
 - Test: pick each Reach slot, APPLY, start a game, check in third person (or the post-game/Armory view) that the
   piece and colours match; switch character types and confirm each keeps its own look.
 
 ### 4.7 Service Record: ranks, commendations, challenges
-Data already exists in `docs/career/` (all 45 commendations with tiers and cR, 2,103 real challenges, 50 ranks).
-
-**Ranks**
-- Rank icon everywhere a player appears: party box, lobby, scoreboard, post-game, Service Record header.
-- Service Record header: big rank icon + name ("Lt. Colonel, Grade 2"), cR total, progress bar to next rank with
-  numbers, "next: <rank icon> <name> at N cR".
-- A RANKS tab: all 50 ranks as a grid of icons (earned bright, next highlighted, later dim) with the cR needed.
-- Post-game rank-up: icon flips to the new rank with `ReachAudio::Sfx::RankUp`.
-
-**Commendations** (replace the 6 generic tracks with Reach's 45)
-- Tabs CAMPAIGN (16) / FIREFIGHT (15) / MULTIPLAYER (14); a grid of commendation cards: icon in the tier's frame
-  (Iron, Bronze, Silver, Gold, Onyx, Max), name, progress ring or bar toward the next tier ("312 / 500"), cR for the
-  next tier. Selecting one shows the details panel: what counts, all tiers with their counts and cR, date reached.
-- Tier-up during a game shows on the post-game screen with the tier icon and `Totals`/`RankUp` sounds.
-- Counting needs the stats from the slot-6 results record (kills by weapon class, headshots, sprees, ...;
-  `career-reference.md` §4). Wire the ones that are already decoded first; show the others as "tracking soon".
-- **Art:** Tyler said he would attach the commendation rank pictures and commendation photos; **they were not in
-  the reference set received on 2026-10-28** (the 43 images are all Reclaimer screens). Ask Tyler for them.
-
-**Challenges** (make them feel like Reach, not a plain list)
-- DAILY and WEEKLY sections with a **countdown to reset** ("Resets in 7 h 12 m", reset 11:00 GMT like Reach or local
-  time, decide with Tyler).
-- Each challenge is a card: mode icon (Campaign / Firefight / Multiplayer), name, requirement, progress bar with
-  numbers, cR reward in amber; completed cards flip to a "COMPLETE" state with a check and the cR counted in.
-- Use Reach's real challenges: pick today's set from `challenges.json` (e.g. the same calendar day of 2010-2012 or a
-  seeded pick per mode; Tyler earlier chose 7 daily / 5 weekly). Skip or reword ones that need Xbox Live.
-- Post-game: a "Challenges" strip showing progress made this game; completion plays `SlotMachine`/`Totals`.
-- Test: finish a short game, see progress move on the post-game screen and in the Service Record; completed
-  challenge pays its cR once.
+Built: rank icons (party box, Service Record header, post-game), RANKS tab, rank-up on the post-game screen;
+Reach's 45 commendations with tabs, tier art and Reach's cR; Reach's real daily / weekly challenges with reset
+countdowns, cards and post-game progress. Still to do:
+- Rank icon in the lobby, the in-game scoreboard and the players list once those exist.
+- Commendations: the stats Noble can't read yet (headshots, weapon types, enemy classes, multikills, sprees,
+  vehicles, medals, Firefight rounds; list in `HANDOFF.md` "TO DO - commendation stats"); a details panel per
+  commendation (what counts, all tiers with counts and cR, date reached).
 
 ### 4.8 Post-game
-Already has scoreboard + cR lines + rank bar. Make it Reach's "exit experience": staged reveal (score, then cR lines
-counting up with `Totals`, slot-machine bonus with `SlotMachine`, challenge/commendation progress, rank bar fill,
-rank-up), skippable with A/Enter, then CONTINUE / PLAY AGAIN / LEAVE.
+Built (staged reveal, cR count-up, slot machine, progress, rank bar, rank-up, skip, PLAY AGAIN / RETURN TO MENU /
+QUIT). Still to do: skip with a controller (A / Start); the keyboard skip uses GetAsyncKeyState.
 
 ### 4.9 Theater
 Reference: Theater screenshot (recent games list, hero card, players, WATCH / SAVE FILM / RENAME / DELETE / EXPORT).
@@ -291,7 +255,7 @@ one-line reason instead of hiding it.
 | Hide HUD, hide helmet visor | Game options | Engine/HUD research (HUD already hooked for colour). |
 | Fade distant player labels (distance, opacity) | Game options | Engine/HUD research. |
 | Weapon viewmodel offsets (sprint sway, H/V/depth, per weapon) | Game options | Engine research. |
-| Graphics card choice + "in use now" line | Graphics | Noble-side (DXGI adapter enumeration; choose adapter when creating the D3D11 device). |
+| Graphics card choice | Graphics | Noble-side (choose the adapter when creating the D3D11 device; the "in use now" line exists). |
 | Advanced graphics (texture filtering, AA, motion blur, shadows, lights, effects, draw distance, LOD, decals, water, presets) | Advanced graphics | Engine research per item; texture filtering / AA may be Noble-side in the D3D11 layer. |
 | Mute in background | Audio | Noble-side (lower XAudio2/engine volume when the window loses focus). |
 | Menu music playlist: per-song on/off, ▶ preview, length, song order | Audio | Noble-side (ReachAudio already knows every track and length). |
@@ -317,7 +281,6 @@ one-line reason instead of hiding it.
 | Per-character looks (Spartan, Elite, ODST, Marine, mod characters) + LOOKS priority list | Armory | §4.6 (research spike first). |
 | Theater: recent games, save film, rename, delete, export MP4, open folder | Theater | Engine research (film recording/playback); MP4 export via the frame capture path. |
 | "Continue last game" fast path | Main menu | Noble-side. |
-| Search across every setting | Settings | Noble-side. |
 
 ### 4.11 Details found on the second and third pass over the screenshots
 Small things that make the Reclaimer screens feel finished; add them while building the matching screen.
@@ -326,11 +289,7 @@ Small things that make the Reclaimer screens feel finished; add them while build
   own graphics preset ("Auto keeps less detail with more players"). Reach supported 4-player split screen on
   Xbox 360; engine research for the PC host.
 - **Mute** (separate from mute in background), and a master volume above the per-group volumes.
-- **Default marks on sliders**: a small tick shows the default (FOV, mouse sensitivity) and on the FPS-limit track
-  the display's refresh rate. "Custom" values (FPS 30-1000) typed in.
-- **Value position dots** under every ‹ value › selector, and the arrow greys out at the first/last value.
-- **When it applies**, stated per option: "Takes effect when you apply changes", "Saved and used as soon as you
-  change it", "Takes effect the next time you start the game", "The game restarts to use a folder you choose here".
+- **FPS-limit track** marks the display's refresh rate (default ticks and typed values exist).
 - **Unlock viewmodel FOV** (weapon FOV separate from world FOV) and **per-weapon viewmodel** ("Weapon: All weapons"
   ‹›, "Own placement" per weapon).
 - **Record my games** (Theater) on/off.
@@ -340,7 +299,6 @@ Small things that make the Reclaimer screens feel finished; add them while build
 - **Window size greys out** in borderless ("Fills your display").
 - **Identity**: player name with a random-name button, service tag "blank keeps a random one", voice male/female,
   note "On lobby cards, scoreboards and chat".
-- **Equipped line** on every picker ("Equipped: CQB", "Equipped: #54 of 80", "Equipped: White, Cobalt on White").
 - **Armour lights colour** and **visor colour** rows; **Uniform** colour for ODST/Marine.
 - **Emblem options**: INVERT and HIDE SECONDARY toggles, big emblem preview with "FOREGROUND 54 · BACKGROUND 38".
 - **Custom colour with nearest-palette fallback**: Reclaimer allows any hex colour and shows "Older versions show
@@ -434,9 +392,7 @@ Small things that make the Reclaimer screens feel finished; add them while build
   - Emblem colours: "Equipped: White, Cobalt on White" (primary, secondary on background); colour swatches in the
     slot list show all three; HEX CODE field with a big swatch; HUE (degrees), SATURATION and BRIGHTNESS (%) sliders
     with value labels; the palette marks the chosen colour with a check.
-  - Firefight hero banner: kicker in the accent colour ("HALO 3: ODST · FIREFIGHT"), one-line blurb; difficulty tiles
-    show the icon left of the name; PLAY SOLO subtitle "Hold out alone", HOST CO-OP "A lobby for up to 16 players";
-    "Night" variants of maps listed as their own entries.
+  - Firefight: "Night" variants of maps listed as their own entries.
   - Server list: favourite star on every row (filled when starred), the selected row keeps the accent bar, rows of
     modded servers show the mod count next to the cube, campaign/firefight servers use a different game-type icon,
     long names cut with "…", PLAYERS sorted descending by default.
@@ -602,25 +558,22 @@ For the lobby host and dedicated-server admins (from the lobby and the in-game p
 
 `menuMotion` (full / reduced), `muteInBackground`, `menuMusicPlaylist` (per-track on/off + order), `mouseAcceleration`,
 `mouseSmoothing`, `secondaryKeyOverrides`, `padLayout`, `lastPlayed` (mode, map, variant, mod) for the fast path,
-`appearance.json` v2 (per character type + priority, §4.6), `challengeResetMode`.
+`appearance.json` v2 (per character type + priority, §4.6). (Challenge reset is fixed at Reach's 11:00 GMT.)
 
 ---
 
 ## 6. Order of work (small PRs)
 
-1. UI kit (§3) + screen shell, applied to one screen (Settings) as the pilot.
-2. Settings in three columns with details panel, search and unsaved box (§4.2).
-3. Campaign / Firefight setup with thumbnails, hero banner, difficulty tiles (§4.3).
-4. Ranks everywhere + Service Record header + ranks grid (§4.7), using art from §7.
-5. Challenges cards with reset timers using `challenges.json` (§4.7).
-6. Commendations with Reach's 45 and tier art (§4.7), stats wiring as available.
-7. Post-game exit experience (§4.8).
-8. Armory layout v2: slot list + picture grids + camera focus + identity panel (§4.6, Spartan/Elite).
-9. Research spike: one mod with ODST/Marine player; then per-character looks + LOOKS priority (§4.6).
-10. Custom game lobby + map / game type pickers (§4.4); game options editor after variant read/write exists.
-11. Server browser upgrade (§4.5) incl. favourites, filters and the clickable mod badge; joining after networking.
-12. The Noble-side items of §4.10-§4.12, then §4.13-§4.16 (several need networking) in small batches (mouse acceleration/smoothing, content filters, Discord, folders,
-    favourite maps, mute in background, playlist editor, graphics card), then the engine-research items one by one.
+Steps 1-8 of the original order are done (UI kit, Settings, Campaign / Firefight setup, ranks, challenges,
+commendations, post-game, Armory v2). Next:
+
+1. Armory leftovers (§4.6): thumbnails, rank / cR locks, stances, emblems, identity name.
+2. Research spike: one mod with ODST/Marine player; then per-character looks + LOOKS priority (§4.6).
+3. Custom game lobby + map / game type pickers (§4.4); game options editor after variant read/write exists.
+4. Server browser upgrade (§4.5) incl. favourites, filters and the clickable mod badge; joining after networking.
+5. The Noble-side items of §4.10-§4.12, then §4.13-§4.16 (several need networking) in small batches (mouse
+   acceleration/smoothing, content filters, Discord, folders, favourite maps, mute in background, playlist editor,
+   graphics card choice), then the engine-research items one by one.
 
 ---
 
@@ -637,31 +590,22 @@ For the lobby host and dedicated-server admins (from the lobby and the in-game p
    author and licence in `assets/ui/reach/CREDITS.md`.
 4. Noble's own drawings as the fallback (like the controller and button glyphs).
 
-**Layout and names** (whatever the source): `ranks/<00-49>_<name>.png`, `commendations/<id>_<tier>.png` and
-`commendations/frames/<tier>.png`, `difficulty/<easy|normal|heroic|legendary>.png`, `gametypes/<type>.png`,
+**Layout and names** (whatever the source). In use: `ranks/<00-49>_<name>.png`, `difficulty/<easy|normal|heroic|legendary>.png`,
+`commendations/<mode>_<key>.png` (Steel art, other tiers tinted in code), `elite_sets/<set id>.png`. Still to come:
+`gametypes/<type>.png`,
 `medals/<id>.png`, `emblems/fg_<n>.png` / `bg_<n>.png`, plus `manifest.json` mapping ids used in code
 (`Career.cpp` rank index, commendation ids from `commendations.json`) to files. Code must work with any subset
 present (fall back to text/drawn shapes).
-
-**Rank placeholders:** start with the rank images Tyler uploads with this document: name them by the layout above
-(`ranks/<00-49>_<name>.png`, rank order as in `Career.cpp` `kRanks`) and load them through `UiArt`. Where they live
-(git-ignored `data\ui\reach\` or a tracked `assets/ui/reach/` that CMake copies into `<exe>\data\` like
-`assets/ui/noble/`) is O7OF's call.
 
 ---
 
 ## 8. Open questions for Tyler / O7OF
 
-1. Commendation tier pictures and commendation icons: please send them (not in the 2026-10-28 set).
-0. Anything unclear in this spec: ask Tyler for the matching Reclaimer screenshot(s).
-2. Rank icons: Tyler's uploaded rank images are the placeholders; final source (MCC packs, Tyler's Reach copy or a
-   community HD set) later.
+1. Anything unclear in this spec: ask Tyler for the matching Reclaimer screenshot(s).
+2. Final source of the Reach art (MCC packs, Tyler's Reach copy or a community HD set); today's images are placeholders.
 3. Accent colour: keep Noble's Reach blue for focus, amber only for emphasis (proposed), or a different scheme?
-4. Challenge reset: Reach's 11:00 GMT or local midnight? Real 2010-2012 challenge sets by date, or random from the
-   pool?
-5. Which mods (Workshop ids) use ODST/Marine/other player characters, to test per-character looks?
-6. Is Theater wanted soon (needs film support in the engine) or later?
-7. Version scheme (handoff 09:55): patch bumps for normal changes, minor for agreed milestones, 1.0 for a release?
+4. Which mods (Workshop ids) use ODST/Marine/other player characters, to test per-character looks?
+5. Is Theater wanted soon (needs film support in the engine) or later?
 
 ---
 

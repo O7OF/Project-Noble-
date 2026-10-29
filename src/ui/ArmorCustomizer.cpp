@@ -1,6 +1,7 @@
 #include "ArmorCustomizer.hpp"
 #include "ArmoryPreviewLayers.hpp"
 #include "NobleStyle.hpp"
+#include "UiArt.hpp"
 #include "common/Logger.hpp"
 #include "engine/ReachArmory.hpp"
 #include "engine/ReachHost.hpp"
@@ -1230,6 +1231,7 @@ struct PickOption {
     std::string name;
     std::string description;
     ImU32 swatch = 0;     // colour tiles
+    const char* art = nullptr;   // picture tiles: stem of data\ui\reach\elite_sets\<art>.png (Elite armour sets)
 };
 
 enum class RowKind { List, Colour, Tag };
@@ -1350,7 +1352,7 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
         });
     } else {
         SlotRow r{ "ARMOR", "Armor Set", RowKind::List, &m_profile.eliteArmorSet };
-        for (const auto& e : kEliteSets) r.options.push_back({ e.name, e.description });
+        for (const auto& e : kEliteSets) r.options.push_back({ e.name, e.description, 0, e.stringId });
         rows.push_back(r);
         // Single pieces (any mix, plus the menu map's extra Elite pieces). Picking an Armor Set resets them.
         auto addPiece = [&](const char* label, int* idx, int piece) {
@@ -1578,7 +1580,10 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
         const int cols = colourGrid ? 10 : 2;
         const float cg = 6.0f * s;
         const float tileW = (gw - cg * (cols - 1)) / cols;
-        const float tileH = colourGrid ? tileW : 46.0f * s;
+        // Picture tiles (Elite armour sets) when at least the equipped option's picture is there.
+        const char* eqArt = row.options[equipped].art;
+        const bool artGrid = !colourGrid && eqArt && UiArt::ReachArt("elite_sets", eqArt);
+        const float tileH = colourGrid ? tileW : artGrid ? tileW * 1.15f : 46.0f * s;
         // Grid origin in screen space, taken once (it already includes the scroll offset).
         const ImVec2 base = ImGui::GetCursorScreenPos();
         for (int i = 0; i < n; ++i) {
@@ -1601,6 +1606,19 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
             if (colourGrid) {
                 gdl->AddRectFilled(t0, t1, row.options[i].swatch, 2.0f * s);
                 gdl->AddRect(t0, t1, isEq ? IM_COL32(255, 255, 255, 255) : IM_COL32(255, 255, 255, hov ? 160 : 40), 2.0f * s, 0, isEq ? 2.5f * s : 1.0f);
+            } else if (artGrid) {
+                gdl->AddRectFilled(t0, t1, isEq ? IM_COL32(34, 70, 104, 235) : (hov ? IM_COL32(40, 54, 70, 235) : IM_COL32(20, 28, 38, 220)), 2.0f * s);
+                const float nameH = 30.0f * s;
+                if (row.options[i].art) {
+                    const UiTexture pic = UiArt::ReachArt("elite_sets", row.options[i].art);
+                    if (pic) UiArt::DrawContain(gdl, pic, ImVec2(t0.x + 4.0f * s, t0.y + 4.0f * s), ImVec2(t1.x - 4.0f * s, t1.y - nameH),
+                                                (isEq || hov) ? IM_COL32_WHITE : IM_COL32(205, 205, 205, 255));
+                }
+                gdl->AddRectFilled(ImVec2(t0.x, t1.y - nameH), t1, IM_COL32(8, 12, 18, 200), 2.0f * s);
+                const std::string& name = row.options[i].name;
+                TextAt(gdl, bodyFont, 16.0f * s, ImVec2(t0.x + (tileW - TextW(bodyFont, 16.0f * s, name.c_str())) * 0.5f, t1.y - nameH + 6.0f * s),
+                       isEq ? kWhiteCol : IM_COL32(200, 214, 228, 255), name.c_str());
+                gdl->AddRect(t0, t1, isEq ? kAccentCol : IM_COL32(170, 220, 255, hov ? 140 : 40), 2.0f * s, 0, isEq ? 1.6f * s : 1.0f);
             } else {
                 gdl->AddRectFilled(t0, t1, isEq ? IM_COL32(34, 70, 104, 235) : (hov ? IM_COL32(40, 54, 70, 235) : IM_COL32(20, 28, 38, 220)), 2.0f * s);
                 gdl->AddRect(t0, t1, isEq ? kAccentCol : IM_COL32(170, 220, 255, hov ? 140 : 40), 2.0f * s, 0, isEq ? 1.6f * s : 1.0f);
