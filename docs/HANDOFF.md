@@ -11,6 +11,42 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-29, 05:00 ET) - Networking Fixes: Host Reason 15 / Slot 25 Clearance & Guest Launch Block Desync Fixed (Dominus / Tyler) by [O7OF]
+
+Built and verified in Release configuration (`noble-client.exe` and `noble-dedicated.exe`).
+Addressed the two critical issues that prevented match hosting and joining:
+
+- **Host Interface Slot 25 Implemented (`src/engine/ReachHost.cpp`):**
+  - **Root Cause of Join Refusal 15 (`0x0F`):** When a remote guest joins, `haloreach.dll` queries host interface Slot 25:
+    `rcx = HostInterface`, `rdx = guest XUID` (e.g. `0x99CC93FAFC1B3`), `r8 = privilege ID`, `r9 = context`.
+    Previously, Slot 25 was unmapped in the vtable and fell back to `SlotDispatcher<25>::Stub`, which returned `0` (denied).
+    `haloreach.dll` interpreted this as the guest lacking online/multiplayer clearance, triggering a join refusal response with
+    reason 15 (`0x0F`) after ~15 ms.
+  - **Resolution:** Implemented `HostSlot25_UserPrivilege`: logs the query and returns `1` (clearance granted).
+    Registered `s_vtable[25] = reinterpret_cast<void*>(&HostSlot25_UserPrivilege);` in `ReachHost::InitializeVTable()`.
+
+- **Guest Launch Block Layout Defaulting (`src/engine/BlamEngine.cpp`):**
+  - **Root Cause of Guest Stalling at Launch State 9 (2% load progress):** Previously, Noble's guest launch block defaulted
+    to setting 1 local player at `+0xE8`, player ID at `+0xF0`, and loaded/decoded `slayer_054.bin` into `+0x300`.
+    In Reach Renaissance (`host-probe.exe` / `0x140026690.c`), authentic guest blocks have zero local players (`+0xE8..+0x10F`
+    zeroed except `+0x100 = 0xFFFFFFFF` and `+0x108 = -1`), zeroed machine targets except `+0x2F4 = 0xFFFFFFFF` and `+0x2F8 = hostMachineId`,
+    and zeroed out variant data from `+0x300` onwards (since variant state synchronizes over the wire from the host).
+    Decoding a local variant into `+0x300` on the guest created state divergence, stalling the guest at launch state 9.
+  - **Resolution:** Suppressed local game variant loading when `isGuest` (`if ((!isCampaign || !customVariantPath.empty()) && !isGuest)`),
+    and made the authentic RR guest launch block layout the default unless explicitly overridden with `-legacy-guest-block`.
+
+- **LobbyPatches Tracing & RVA Fallbacks (`src/hooks/LobbyPatches.cpp`):**
+  - Hooked `c_network_session::acknowledge_join_request` at RVA `0x397914` via MinHook (`Hook_AcknowledgeJoinRequest`) to trace
+    join response packets, targets, and refusal reason codes.
+  - Added direct RVA fallbacks for `can_accept_player_join_request` (RVA `0x3973BC`) and `can_accept_join_request` (RVA `0x3975D8`)
+    with prologue verification to ensure hooks install reliably even if signature patterns miss.
+
+- **Tyler Test Instructions:**
+  - Launch Host:
+    `noble-client.exe -map 20_sword_slayer -mode multiplayer -host -lan`
+  - Launch Guest:
+    `noble-client.exe -connect 127.0.0.1:11774`
+
 ## 0. Pick up here (2026-10-29, 03:45 ET) - Guest stuck loading: the HOST refuses the join (reason 15)
 
 Tested by Tyler with two instances on one PC (O7 offline), so NAT, relay and the master server are out of the picture:

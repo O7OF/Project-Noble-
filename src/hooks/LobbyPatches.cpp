@@ -73,16 +73,6 @@ static int32_t __fastcall Hook_CanAcceptPlayerJoinRequest(void* thisPtr, void* p
 // guest away. Log-only: the original always runs. Arg 3 points at {u64 session, u32 reason} for joins
 // and {u32 id, u32 reason} for connects.
 typedef void(__fastcall* RefuseFn)(void* a1, void* a2, void* a3);
-typedef void(__fastcall* AcknowledgeJoinRequestFn)(void* thisPtr, void* targetAddr, uint32_t reason);
-static AcknowledgeJoinRequestFn s_originalAcknowledgeJoinRequest = nullptr;
-
-static void __fastcall Hook_AcknowledgeJoinRequest(void* thisPtr, void* targetAddr, uint32_t reason) {
-    NOBLE_WARN("LobbyPatches: [{} pid {}] c_network_session::acknowledge_join_request: session={}, target={}, reason={} (0x{:X}) caller hr+0x{:X}",
-        RefuseRole(), GetCurrentProcessId(), thisPtr, targetAddr, reason, reason, CallerRva(_ReturnAddress()));
-    if (s_originalAcknowledgeJoinRequest) {
-        s_originalAcknowledgeJoinRequest(thisPtr, targetAddr, reason);
-    }
-}
 
 static RefuseFn s_originalJoinRefuse = nullptr;
 static RefuseFn s_originalConnectRefuse = nullptr;
@@ -96,6 +86,17 @@ static const char* RefuseRole() {
 static uintptr_t CallerRva(void* ret) {
     uintptr_t r = reinterpret_cast<uintptr_t>(ret);
     return (s_reachBase && r > s_reachBase) ? r - s_reachBase : r;
+}
+
+typedef void(__fastcall* AcknowledgeJoinRequestFn)(void* thisPtr, void* targetAddr, uint32_t reason);
+static AcknowledgeJoinRequestFn s_originalAcknowledgeJoinRequest = nullptr;
+
+static void __fastcall Hook_AcknowledgeJoinRequest(void* thisPtr, void* targetAddr, uint32_t reason) {
+    NOBLE_WARN("LobbyPatches: [{} pid {}] c_network_session::acknowledge_join_request: session={}, target={}, reason={} (0x{:X}) caller hr+0x{:X}",
+        RefuseRole(), GetCurrentProcessId(), thisPtr, targetAddr, reason, reason, CallerRva(_ReturnAddress()));
+    if (s_originalAcknowledgeJoinRequest) {
+        s_originalAcknowledgeJoinRequest(thisPtr, targetAddr, reason);
+    }
 }
 
 static void __fastcall Hook_JoinRefuse(void* a1, void* a2, void* a3) {
