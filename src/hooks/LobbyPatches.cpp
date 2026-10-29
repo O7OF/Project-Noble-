@@ -29,6 +29,41 @@ static void __fastcall Hook_SetSlotCounts(void* thisPtr, int32_t privateSlots, i
     }
 }
 
+
+// Detours for c_network_session::can_accept_join_request and can_accept_player_join_request
+// By default, haloreach.dll rejects remote join-in-progress requests during Firefight (refusal 0x20)
+// and match simulation (refusal 6). These detours override non-zero refusals to 0 (ACCEPT) so
+// all remote players can join the match and synchronize into the same game.
+typedef int32_t(__fastcall* CanAcceptJoinRequestFn)(void* thisPtr, void* joinRequestData);
+static CanAcceptJoinRequestFn s_originalCanAcceptJoinRequest = nullptr;
+
+static int32_t __fastcall Hook_CanAcceptJoinRequest(void* thisPtr, void* joinRequestData) {
+    int32_t result = 0;
+    if (s_originalCanAcceptJoinRequest) {
+        result = s_originalCanAcceptJoinRequest(thisPtr, joinRequestData);
+    }
+    if (result != 0) {
+        NOBLE_WARN("LobbyPatches: can_accept_join_request rejected with refusal code 0x{:X}; overriding to ACCEPT (0)", result);
+        result = 0;
+    }
+    return result;
+}
+
+typedef int32_t(__fastcall* CanAcceptPlayerJoinRequestFn)(void* thisPtr, void* playerData, int32_t playerIndex, int32_t flags);
+static CanAcceptPlayerJoinRequestFn s_originalCanAcceptPlayerJoinRequest = nullptr;
+
+static int32_t __fastcall Hook_CanAcceptPlayerJoinRequest(void* thisPtr, void* playerData, int32_t playerIndex, int32_t flags) {
+    int32_t result = 0;
+    if (s_originalCanAcceptPlayerJoinRequest) {
+        result = s_originalCanAcceptPlayerJoinRequest(thisPtr, playerData, playerIndex, flags);
+    }
+    if (result != 0) {
+        NOBLE_WARN("LobbyPatches: can_accept_player_join_request rejected with refusal code 0x{:X}; overriding to ACCEPT (0)", result);
+        result = 0;
+    }
+    return result;
+}
+
 static bool WriteProtectedMemory(void* destination, const void* source, size_t size) {
     DWORD oldProtect = 0;
     if (!VirtualProtect(destination, size, PAGE_EXECUTE_READWRITE, &oldProtect)) {
@@ -87,6 +122,34 @@ bool LobbyPatches::Apply(HMODULE hReachDll) {
             patchCount++;
             NOBLE_INFO("LobbyPatches: Patched validated network session peer capacity to {} at 0x{:X}",
                 s_maxMultiplayerPlayers, matchPeer);
+        }
+    }
+
+    
+    // 3. MinHook Detour on c_network_session::can_accept_player_join_request (RVA 0x3973BC)
+    std::string_view sigPlayerJoinReq = "48 8B C4 48 89 58 08 48 89 68 10 48 89 70 18 44 89 48 20 57 41 54 41 55 41 56 41 57 48 83 EC 20";
+    uintptr_t matchPlayerJoin = SigScanner::FindPattern(base, size, sigPlayerJoinReq);
+    if (matchPlayerJoin) {
+        if (HookManager::InstallHook(reinterpret_cast<void*>(matchPlayerJoin),
+                                     reinterpret_cast<void*>(&Hook_CanAcceptPlayerJoinRequest),
+                                     reinterpret_cast<void**>(&s_originalCanAcceptPlayerJoinRequest),
+                                     "c_network_session::can_accept_player_join_request")) {
+            patchCount++;
+            NOBLE_INFO("LobbyPatches: Installed MinHook detour on can_accept_player_join_request at 0x{:X}", matchPlayerJoin);
+        }
+    }
+
+    // 4. MinHook Detour on c_network_session::can_accept_join_request (RVA 0x3975D8)
+    std::string_view sigJoinReq = "8B 81 F8 0E 06 00 45 33 ED 83 C0 FA 48 8B EA";
+    uintptr_t matchJoinPattern = SigScanner::FindPattern(base, size, sigJoinReq);
+    if (matchJoinPattern && matchJoinPattern >= 0x29) {
+        uintptr_t fnJoinEntry = matchJoinPattern - 0x29;
+        if (HookManager::InstallHook(reinterpret_cast<void*>(fnJoinEntry),
+                                     reinterpret_cast<void*>(&Hook_CanAcceptJoinRequest),
+                                     reinterpret_cast<void**>(&s_originalCanAcceptJoinRequest),
+                                     "c_network_session::can_accept_join_request")) {
+            patchCount++;
+            NOBLE_INFO("LobbyPatches: Installed MinHook detour on can_accept_join_request at 0x{:X}", fnJoinEntry);
         }
     }
 

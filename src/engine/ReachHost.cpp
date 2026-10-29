@@ -433,7 +433,7 @@ static uint64_t __fastcall HostSlot4_LogMessage(void* thisPtr, uint64_t a1, uint
         if (std::strstr(buf, "timeout") != nullptr) {
             NOBLE_ERROR("ReachHost [Slot 4 - EngineEvent]: Remote session join timed out ('{}'); returning to main menu.", buf);
             if (Relaunch::Start(L"")) {
-                if (HWND hwnd = FindWindowW(L"NobleReachWindowClass", nullptr)) {
+                if (HWND hwnd = FindWindowW(L"HaloReachCE_WindowClass", nullptr)) {
                     PostMessageW(hwnd, WM_CLOSE, 0, 0);
                 }
             }

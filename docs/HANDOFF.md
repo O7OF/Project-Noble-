@@ -9,31 +9,8 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
 MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour.
 
----
+--
 
-## 0. Pick up here (2026-10-29, 00:50 ET) - Integration of Dom's Netcode Fixes & Pre-Game Lobby: Cross-Process Session Continuity & Conflict Resolution
-
-Compiled cleanly via `build.bat` with **0 errors and 0 warnings**:
-- **Fresh Binaries Built:** `noble-client.exe` (2,565,632 bytes) and `noble-dedicated.exe` (538,624 bytes).
-- **Released to Test Directory:** Copied directly to `C:\Users\Chey1\Desktop\Release For Test\`.
-
-### Conflict Identification & Resolution Across Last 3 Changes:
-1. **Resolved Session ID & Token Desynchronization on Host Lobby-to-Match Relaunch (`src/ui/FrontEndMenu.cpp/.hpp`, `src/network/MasterServerClient.cpp/.hpp`, `src/main.cpp`):**
-   - **Conflict Identified:** When the Host launched from `Screen::PreGameLobby` into a live match, the guest child process relaunched with `-session-id "<id>"` from the lobby, but the Host child process relaunched without `-session-id` or `-session-token`. In `main.cpp`, `MasterServerClient::Get().StartAdvertising()` saw no session ID, cleared `m_sessionId`, and registered a **brand new session** on the Master Server.
-   - **Impact:** Host and Guest ended up in two different WebSocket relay rooms, and Guest NAT hole-punch signals were delivered to the abandoned lobby session rather than the active match session.
-   - **Resolution:**
-     - Added `sessionId` and `sessionToken` fields to `struct FrontEndChoice` and `struct MasterAdvert`.
-     - In `FrontEndMenu.cpp`, Host lobby launch now preserves `st.lobbySessionId` and `st.lobbySessionToken` and passes them via `-session-id` and `-session-token` on the `Relaunch` command line.
-     - In `src/main.cpp`, parsed `-session-token` and passed both session ID and token to `MasterServerClient::StartAdvertising()`.
-     - In `MasterServerClient::DoRegister()`, if `m_sessionId` is already set (continued from lobby), it skips `POST /api/sessions` and immediately fires `DoHeartbeat()` with `in_progress = true`, preserving the room, the WebSocket relay connection, and all NAT punch peer mappings.
-
-2. **Merged Dom's `s_player_identifier` & Unique Guest XUID with Pre-Game Roster System:**
-   - Integrated Dom's unique per-client `guestPlayerId` at `launch_block[0xF0..0xF7]` (`localMachineId ^ 0x3F59F3BE00000000ULL`) and per-guest XUID in `HostSlot88_UserIdentity`. This completely eliminates Blam!'s refusal code `0x16` (22) without interfering with the Pre-Game Lobby roster or account Peer IDs.
-
-3. **Combined UDP/Relay Deduplication with Real-time JSON Lobby Signaling:**
-   - Verified that Dom's direct-UDP active check (`m_lastUdpRecvTick`) selectively suppresses duplicate binary Blam game packets without affecting text-based JSON control frames (`SendLobbyControlJson`), allowing `lobby_launch` and `lobby_roster` events to deliver instantly.
-
----
 
 ## 0. Pick up here (2026-10-29, 00:40 ET) - Dominus Remote Join & Black Screen Fixes: Unique `s_player_identifier` (`+0xF0`), Unique Guest XUID, UDP/Relay Dedup & Timeout Recovery
 
