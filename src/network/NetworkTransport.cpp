@@ -7,6 +7,7 @@
 #include <random>
 #include <cstring>
 #include <chrono>
+#include <atomic>
 
 namespace noble {
 
@@ -15,6 +16,8 @@ namespace {
 // Diagnostic: hex-dump Blam! payloads so the join handshake (55-byte join request,
 // 16-byte host reply, 26/10-byte channel traffic) can be decoded from the log.
 constexpr uint64_t kPacketDumpLimit = 60;
+// [uint64_t senderMachineId][uint16_t port] in front of every game packet (see OnNetSend).
+constexpr size_t kWireHeaderBytes = sizeof(uint64_t) + sizeof(uint16_t);
 std::string HexDump(const uint8_t* data, size_t size, size_t maxBytes = 96) {
     static const char* kHex = "0123456789ABCDEF";
     const size_t n = size < maxBytes ? size : maxBytes;
@@ -606,12 +609,29 @@ void NetworkTransport::RelayWorkerThread(std::string relayUrl, std::string sessi
     }
 }
 
-uint64_t NetworkTransport::OnNetSend(uint64_t targetPeerId, const uint8_t* data, size_t size) {
+// Wire packet: [uint64_t senderMachineId][uint16_t port][raw Blam! payload]
+//
+// haloreach.dll has two network endpoints, port 1000 (channel traffic) and port 1001 (out-of-band: join,
+// connect-request/establish, boot...). Slot 41 is send(target, data, size, port) with the DESTINATION port and
+// slot 43 is recv(buffer, capacity, &sender, port) with the endpoint's own port (hr+0x43AB88 / hr+0x43AA78).
+// The packet dispatcher (hr+0x4235E4) treats whatever the port-1001 endpoint reads as out-of-band and whatever
+// the port-1000 endpoint reads as channel data. Before 2026-10-29 the port was dropped and both endpoints
+// pulled from one queue, so channel packets were randomly handled as out-of-band (and the reverse): the host
+// ignored most connect-establish replies and joins timed out. The port now travels with each packet and every
+// endpoint only gets packets for its port.
+uint64_t NetworkTransport::OnNetSend(uint64_t targetPeerId, const uint8_t* data, size_t size, uint16_t port) {
     if (!m_active.load() || m_socket == INVALID_SOCKET || !data || size == 0) {
         return 0;
     }
 
-    const size_t totalBytes = sizeof(uint64_t) + size;
+    const size_t totalBytes = kWireHeaderBytes + size;
+    if (size > 4088) {
+        static std::atomic<int> s_bigSendLogs{0};
+        if (s_bigSendLogs.fetch_add(1) < 20) {
+            NOBLE_INFO("NetworkTransport: [{}] large packet {} bytes -> 0x{:X} port {}", m_isHost ? "HOST" : "GUEST", size,
+                       targetPeerId, port);
+        }
+    }
     uint8_t stackBuf[2048];
     std::vector<uint8_t> heapBuf;
     uint8_t* wireData = stackBuf;
@@ -622,13 +642,14 @@ uint64_t NetworkTransport::OnNetSend(uint64_t targetPeerId, const uint8_t* data,
     }
 
     std::memcpy(wireData, &m_localMachineId, sizeof(uint64_t));
-    std::memcpy(wireData + sizeof(uint64_t), data, size);
+    std::memcpy(wireData + sizeof(uint64_t), &port, sizeof(uint16_t));
+    std::memcpy(wireData + kWireHeaderBytes, data, size);
 
     m_bytesSent += totalBytes;
     uint64_t packetNum = ++m_packetsSent;
     if (packetNum <= kPacketDumpLimit) {
-        NOBLE_INFO("NetworkTransport: [{}] TX #{} -> 0x{:X} len={} | {}", m_isHost ? "HOST" : "GUEST",
-                   packetNum, targetPeerId, size, HexDump(data, size));
+        NOBLE_INFO("NetworkTransport: [{}] TX #{} -> 0x{:X} port {} len={} | {}", m_isHost ? "HOST" : "GUEST",
+                   packetNum, targetPeerId, port, size, HexDump(data, size));
     }
 
     const uint64_t nowTick = GetTickCount64();
@@ -719,51 +740,88 @@ uint64_t NetworkTransport::OnNetSend(uint64_t targetPeerId, const uint8_t* data,
     return static_cast<uint64_t>(size);
 }
 
-uint64_t NetworkTransport::OnNetRecv(uint8_t* outBuffer, size_t bufferCapacity, uint64_t* outSenderPeerId) {
+// Splits one wire packet into the per-port queues. Returns false for packets that are not game traffic.
+// Duplicate filtering only runs while the relay is active: its job is to drop the second copy of a packet that
+// arrived over both UDP and the relay. The game itself resends identical packets on purpose (keepalives,
+// connect-request retries), so filtering on direct UDP alone would eat those. The hash covers sender id and
+// port too, so identical packets from two different guests are never confused.
+bool NetworkTransport::QueueWirePacket(const uint8_t* wire, size_t wireLen, bool fromRelay) {
+    if (wireLen <= kWireHeaderBytes) {
+        return false;
+    }
+    if (m_relayActive.load() && IsDuplicatePacket(ComputePacketHash(wire, wireLen))) {
+        return false;
+    }
+    QueuedPacket pkt;
+    std::memcpy(&pkt.sender, wire, sizeof(uint64_t));
+    uint16_t port = 0;
+    std::memcpy(&port, wire + sizeof(uint64_t), sizeof(uint16_t));
+    pkt.fromRelay = fromRelay;
+    pkt.data.assign(wire + kWireHeaderBytes, wire + wireLen);
+    auto& q = m_portQueues[port];
+    if (q.size() >= 512) {
+        q.pop_front();  // never let a port nobody reads grow without bound
+    }
+    q.push_back(std::move(pkt));
+    return true;
+}
+
+uint64_t NetworkTransport::OnNetRecv(uint8_t* outBuffer, size_t bufferCapacity, uint64_t* outSenderPeerId, uint16_t port) {
     if (!m_active.load() || m_socket == INVALID_SOCKET || !outBuffer || bufferCapacity == 0) {
         return 0;
     }
 
-    sockaddr_in senderAddr = {};
-    int senderLen = sizeof(senderAddr);
-    uint8_t rawBuf[4096];
+    std::lock_guard<std::mutex> recvLock(m_recvMutex);
 
-    // 1. Check direct UDP socket
-    int received = -1;
-    while (true) {
-        senderLen = sizeof(senderAddr);
-        received = recvfrom(m_socket, reinterpret_cast<char*>(rawBuf), sizeof(rawBuf), 0,
-                            reinterpret_cast<sockaddr*>(&senderAddr), &senderLen);
+    // 1. Drain the UDP socket into the per-port queues (NAT hole-punch PINGs are handled here, not queued).
+    // haloreach.dll accepts channel packets up to 0x3000 bytes (hr+0x43BC00); 64 KB = largest UDP datagram, so
+    // nothing is truncated (a too-small buffer makes recvfrom fail with WSAEMSGSIZE and lose the datagram).
+    static thread_local uint8_t rawBuf[65536];
+    for (int drained = 0; drained < 256; ++drained) {
+        sockaddr_in senderAddr = {};
+        int senderLen = sizeof(senderAddr);
+        const int received = recvfrom(m_socket, reinterpret_cast<char*>(rawBuf), sizeof(rawBuf), 0,
+                                      reinterpret_cast<sockaddr*>(&senderAddr), &senderLen);
+        if (received == SOCKET_ERROR) {
+            if (WSAGetLastError() == WSAEMSGSIZE) {
+                static std::atomic<int> s_oversizeLogs{0};
+                if (s_oversizeLogs.fetch_add(1) < 20) {
+                    NOBLE_WARN("NetworkTransport: dropped a datagram larger than the {}-byte receive buffer", sizeof(rawBuf));
+                }
+                continue;
+            }
+            break;  // WSAEWOULDBLOCK: nothing more waiting
+        }
         if (received <= static_cast<int>(sizeof(uint64_t))) {
-            break;
+            continue;
         }
 
         const uint64_t now = GetTickCount64();
         m_lastUdpRecvTick.store(now);
         m_bytesRecv += received;
 
+        uint64_t wireSender = 0;
+        std::memcpy(&wireSender, rawBuf, sizeof(uint64_t));
+        char ipStr[INET_ADDRSTRLEN] = { 0 };
+        inet_ntop(AF_INET, &senderAddr.sin_addr, ipStr, sizeof(ipStr));
+        const std::string addrKey = std::string(ipStr) + ":" + std::to_string(ntohs(senderAddr.sin_port));
+
         // NAT hole-punch PING / PONG packet
         if (received == static_cast<int>(sizeof(uint64_t) + 4) &&
             rawBuf[8] == 'P' && rawBuf[9] == 'I' && rawBuf[10] == 'N' && rawBuf[11] == 'G') {
-            uint64_t pingSenderId = 0;
-            std::memcpy(&pingSenderId, rawBuf, sizeof(uint64_t));
-            if (pingSenderId != 0 && pingSenderId != m_localMachineId) {
-                char ipStr[INET_ADDRSTRLEN] = { 0 };
-                inet_ntop(AF_INET, &senderAddr.sin_addr, ipStr, sizeof(ipStr));
-                std::string addrKey = std::string(ipStr) + ":" + std::to_string(ntohs(senderAddr.sin_port));
-
+            if (wireSender != 0 && wireSender != m_localMachineId) {
                 {
                     std::lock_guard<std::mutex> lock(m_mutex);
-                    m_peerTable[pingSenderId] = senderAddr;
-                    m_addrToPeer[addrKey] = pingSenderId;
-                    auto& route = m_peerRouteStates[pingSenderId];
+                    m_peerTable[wireSender] = senderAddr;
+                    m_addrToPeer[addrKey] = wireSender;
+                    auto& route = m_peerRouteStates[wireSender];
                     route.addr = senderAddr;
                     route.lastUdpRecvTick = now;
                     route.directConfirmed = true;
                 }
 
                 // Flush any packets that were held waiting for this peer's address
-                FlushHeldPackets(pingSenderId, senderAddr);
+                FlushHeldPackets(wireSender, senderAddr);
 
                 if (m_isHost) {
                     // Echo PING back to Guest over direct UDP
@@ -776,121 +834,90 @@ uint64_t NetworkTransport::OnNetRecv(uint8_t* outBuffer, size_t bufferCapacity, 
                     sendto(m_socket, reinterpret_cast<const char*>(pong), sizeof(pong), 0,
                            reinterpret_cast<const sockaddr*>(&senderAddr), sizeof(senderAddr));
                     NOBLE_INFO("NetworkTransport: [HOST] Registered peer 0x{:X} via NAT punch PING from {} (echoed PING)",
-                               pingSenderId, addrKey);
+                               wireSender, addrKey);
                 } else {
                     NOBLE_INFO("NetworkTransport: [GUEST] Received NAT punch PING echo from Host");
                 }
             }
-            received = -1;
             continue;
         }
 
-        // Regular direct UDP packet: check deduplication
-        const size_t payloadLen = static_cast<size_t>(received) - sizeof(uint64_t);
-        const uint64_t hash = ComputePacketHash(rawBuf + sizeof(uint64_t), payloadLen);
-        if (IsDuplicatePacket(hash)) {
-            received = -1;
+        if (!QueueWirePacket(rawBuf, static_cast<size_t>(received), false)) {
             continue;
         }
 
-        break;
-    }
-
-    // 2. Check WebSocket relay queue
-    bool fromRelay = false;
-    if (received <= static_cast<int>(sizeof(uint64_t))) {
-        if (m_relayActive.load()) {
-            std::lock_guard<std::mutex> lock(m_relayMutex);
-            while (!m_relayRecvQueue.empty()) {
-                auto pkt = std::move(m_relayRecvQueue.front());
-                m_relayRecvQueue.pop_front();
-                if (pkt.size() == sizeof(uint64_t) + 4 &&
-                    pkt[8] == 'P' && pkt[9] == 'I' && pkt[10] == 'N' && pkt[11] == 'G') {
-                    continue;
+        // Host: remember where each guest's packets come from so replies go back to that address
+        if (m_isHost) {
+            bool needFlush = false;
+            {
+                std::lock_guard<std::mutex> lock(m_mutex);
+                auto it = m_peerTable.find(wireSender);
+                if (it == m_peerTable.end() ||
+                    it->second.sin_addr.s_addr != senderAddr.sin_addr.s_addr ||
+                    it->second.sin_port != senderAddr.sin_port) {
+                    m_peerTable[wireSender] = senderAddr;
+                    m_addrToPeer[addrKey] = wireSender;
+                    needFlush = true;
+                    NOBLE_INFO("NetworkTransport: Registered remote peer 0x{:X} at {}", wireSender, addrKey);
                 }
-                if (pkt.size() > sizeof(uint64_t)) {
-                    const size_t pLen = pkt.size() - sizeof(uint64_t);
-                    const uint64_t hash = ComputePacketHash(pkt.data() + sizeof(uint64_t), pLen);
-                    if (IsDuplicatePacket(hash)) {
-                        continue;
-                    }
-                    received = static_cast<int>(std::min(pkt.size(), sizeof(rawBuf)));
-                    std::memcpy(rawBuf, pkt.data(), received);
-                    m_bytesRecv += received;
-                    fromRelay = true;
-                    break;
-                }
+                auto& route = m_peerRouteStates[wireSender];
+                route.addr = senderAddr;
+                route.lastUdpRecvTick = now;
+                route.directConfirmed = true;
+            }
+            if (needFlush) {
+                FlushHeldPackets(wireSender, senderAddr);
             }
         }
     }
 
-    if (received <= static_cast<int>(sizeof(uint64_t))) {
+    // 2. WebSocket relay packets
+    if (m_relayActive.load()) {
+        std::lock_guard<std::mutex> lock(m_relayMutex);
+        while (!m_relayRecvQueue.empty()) {
+            auto wire = std::move(m_relayRecvQueue.front());
+            m_relayRecvQueue.pop_front();
+            if (wire.size() == sizeof(uint64_t) + 4 &&
+                wire[8] == 'P' && wire[9] == 'I' && wire[10] == 'N' && wire[11] == 'G') {
+                continue;
+            }
+            if (QueueWirePacket(wire.data(), wire.size(), true)) {
+                m_bytesRecv += wire.size();
+            }
+        }
+    }
+
+    // 3. Hand the game the oldest packet addressed to this endpoint's port
+    auto qit = m_portQueues.find(port);
+    if (qit == m_portQueues.end() || qit->second.empty()) {
         return 0;
     }
+    QueuedPacket pkt = std::move(qit->second.front());
+    qit->second.pop_front();
 
-    // Extract sender machine ID from wire header
-    uint64_t senderMachineId = 0;
-    std::memcpy(&senderMachineId, rawBuf, sizeof(uint64_t));
-    size_t payloadLen = static_cast<size_t>(received) - sizeof(uint64_t);
-
+    size_t payloadLen = pkt.data.size();
     if (payloadLen > bufferCapacity) {
+        static std::atomic<int> s_truncLogs{0};
+        if (s_truncLogs.fetch_add(1) < 20) {
+            NOBLE_WARN("NetworkTransport: packet of {} bytes truncated to the game's {}-byte buffer (port {})",
+                       payloadLen, bufferCapacity, port);
+        }
         payloadLen = bufferCapacity;
     }
-
-    std::memcpy(outBuffer, rawBuf + sizeof(uint64_t), payloadLen);
-
+    std::memcpy(outBuffer, pkt.data.data(), payloadLen);
     if (outSenderPeerId) {
-        *outSenderPeerId = senderMachineId;
+        *outSenderPeerId = pkt.sender;
     }
 
     uint64_t recvNum = ++m_packetsRecv;
     if (recvNum <= kPacketDumpLimit) {
-        NOBLE_INFO("NetworkTransport: [{}] RX #{} <- 0x{:X} via {} len={} | {}", m_isHost ? "HOST" : "GUEST",
-                   recvNum, senderMachineId, fromRelay ? "RELAY" : "UDP", payloadLen, HexDump(outBuffer, payloadLen));
+        NOBLE_INFO("NetworkTransport: [{}] RX #{} <- 0x{:X} via {} port {} len={} | {}", m_isHost ? "HOST" : "GUEST",
+                   recvNum, pkt.sender, pkt.fromRelay ? "RELAY" : "UDP", port, payloadLen, HexDump(outBuffer, payloadLen));
     }
-
-    if (!m_isHost) {
-        if (recvNum <= 10 || (recvNum % 500) == 0) {
-            NOBLE_INFO("NetworkTransport: [GUEST] Received packet #{} from Host 0x{:X} via {} ({} payload bytes)",
-                       recvNum, senderMachineId, fromRelay ? "RELAY" : "UDP", payloadLen);
-        }
-        return static_cast<uint64_t>(payloadLen);
-    }
-
-    // Host received packet from remote guest
-    if (!fromRelay) {
-        char ipStr[INET_ADDRSTRLEN] = { 0 };
-        inet_ntop(AF_INET, &senderAddr.sin_addr, ipStr, sizeof(ipStr));
-        std::string addrKey = std::string(ipStr) + ":" + std::to_string(ntohs(senderAddr.sin_port));
-
-        bool needFlush = false;
-        {
-            std::lock_guard<std::mutex> lock(m_mutex);
-            auto it = m_peerTable.find(senderMachineId);
-            if (it == m_peerTable.end() ||
-                it->second.sin_addr.s_addr != senderAddr.sin_addr.s_addr ||
-                it->second.sin_port != senderAddr.sin_port) {
-                m_peerTable[senderMachineId] = senderAddr;
-                m_addrToPeer[addrKey] = senderMachineId;
-                needFlush = true;
-                NOBLE_INFO("NetworkTransport: Registered remote peer 0x{:X} at {}",
-                           senderMachineId, addrKey);
-            }
-            auto& route = m_peerRouteStates[senderMachineId];
-            route.addr = senderAddr;
-            route.lastUdpRecvTick = GetTickCount64();
-            route.directConfirmed = true;
-        }
-        if (needFlush) {
-            FlushHeldPackets(senderMachineId, senderAddr);
-        }
-    }
-
     if (recvNum <= 10 || (recvNum % 500) == 0) {
-        NOBLE_INFO("NetworkTransport: [HOST] Received packet #{} from Peer 0x{:X} via {} ({} payload bytes)",
-                   recvNum, senderMachineId, fromRelay ? "RELAY" : "UDP", payloadLen);
+        NOBLE_INFO("NetworkTransport: [{}] Received packet #{} from 0x{:X} via {} port {} ({} payload bytes)",
+                   m_isHost ? "HOST" : "GUEST", recvNum, pkt.sender, pkt.fromRelay ? "RELAY" : "UDP", port, payloadLen);
     }
-
     return static_cast<uint64_t>(payloadLen);
 }
 

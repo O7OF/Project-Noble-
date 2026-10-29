@@ -1625,14 +1625,18 @@ static bool ReadPad(NobleXInputState& state) {
 }
 
 // Slot 41 & 43: Network Packet handlers (host_probe case 0x29, 0x2B)
+// a4 is the endpoint port (1000 channel / 1001 out-of-band): destination port for send, the polling
+// endpoint's own port for recv (hr+0x43AB88 / hr+0x43AA78). Only the low 16 bits are set by the caller.
 static uint64_t __fastcall HostSlot41_NetSend(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
-    (void)thisPtr; (void)a4;
-    return NetworkTransport::Get().OnNetSend(a1, reinterpret_cast<const uint8_t*>(a2), static_cast<size_t>(a3));
+    (void)thisPtr;
+    return NetworkTransport::Get().OnNetSend(a1, reinterpret_cast<const uint8_t*>(a2), static_cast<size_t>(a3),
+                                             static_cast<uint16_t>(a4 & 0xFFFF));
 }
 
 static uint64_t __fastcall HostSlot43_NetRecv(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
-    (void)thisPtr; (void)a4;
-    return NetworkTransport::Get().OnNetRecv(reinterpret_cast<uint8_t*>(a1), static_cast<size_t>(a2), reinterpret_cast<uint64_t*>(a3));
+    (void)thisPtr;
+    return NetworkTransport::Get().OnNetRecv(reinterpret_cast<uint8_t*>(a1), static_cast<size_t>(a2), reinterpret_cast<uint64_t*>(a3),
+                                             static_cast<uint16_t>(a4 & 0xFFFF));
 }
 
 // Slot 47: User-data folder handler (host_probe case 0x2F)

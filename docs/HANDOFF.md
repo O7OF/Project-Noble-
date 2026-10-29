@@ -1,4 +1,4 @@
-# Project Noble: handoff (2026-10-29, 03:45 ET)
+# Project Noble: handoff (2026-10-29, 13:55 ET)
 Dominus join the team 20261028! 
 This picks up a reverse-engineering and C++ effort on **Tyler's Windows PC**. All paths below are real paths on that machine.
 Tyler (GitHub `WeabooTyler117`) works with a partner (GitHub `O7OF`) who owns the repo and writes most of the code.
@@ -10,6 +10,66 @@ community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownershi
 MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES.)
 
 --
+
+## 0. Pick up here (2026-10-29, 13:55 ET) - JOIN FIXED (two instances on one PC): endpoint ports
+
+- **Root cause:** haloreach.dll uses two endpoints, port 1000 (channel) and 1001 (out-of-band). Host slot 41
+  is send(target, data, size, **port**) and slot 43 is recv(buffer, cap, &sender, **port**); Noble ignored the
+  port and fed both endpoints from one queue, so packets went to the wrong endpoint at random (connect-establish
+  lost, later messages misrouted). Details and addresses: `docs/networking-review.md`, "FIX (13:52 ET)".
+- **Fix:** `src/network/NetworkTransport.cpp/.hpp` (wire `[u64 sender][u16 port][payload]`, one receive queue
+  per port, 64 KB receive buffer) and the slot 41/43 thunks in `src/engine/ReachHost.cpp` (pass `a4`).
+  **Host and guest must both run the new build.** For O7OF / Dominus: small change in your files.
+- **Result:** in the 13:52 two-instance run the full join went through (membership, peer-establish,
+  view-establishment, player-acknowledge) and the guest loaded the map to launch state 11 with no boots.
+  Still to check: on screen, between two PCs (O7), and over the relay.
+- **Also in this round:** two compile fixes for O7OF's commit 3c7c8d0 (`FrontEndMenu.cpp` leftover braces,
+  `MasterServerClient.cpp` GetLobbyMachineId order); the can_accept_player_join_request hook now forwards all 9
+  arguments; `src/hooks/LobbyPatches.cpp` has many log-only traces (join/refusal/messages/channels/boot/net log)
+  that should be put behind a switch or removed before a release.
+- Test script (not in git): `D:\Reach\noble_test.bat` builds, starts a host, starts a guest 30 s later, waits
+  75 s, closes both; output in `D:\Reach\noble_test_out.txt`.
+
+## 0. Pick up here (2026-10-29, 06:20 ET) - Join refusal traced further; build fix for O7OF's 03:35 commit
+
+- **O7OF's commit 3c7c8d0 (03:35) did not compile:** removing the duplicate WS launch in `FrontEndMenu.cpp`
+  (DrawPreGameLobby, START MATCH) left the last three lines of the deleted JSON (`{ "session_id", ... } }} };`),
+  three unmatched braces. Fixed by deleting them. The same commit also failed in `MasterServerClient.cpp`
+  (error C3861: `GetLobbyMachineId()` was defined above the `LobbyMachineId()` it calls); moved it below the
+  anonymous namespace. Nothing else in that commit was changed.
+- **Same commit, please check (O7OF):**
+  - `main.cpp` now always runs `FrontEndMenu::Run` (the 2D menu before haloreach.dll loads) and never sets
+    `ReachArmory::SetMenuMode(true)` or calls `FrontEndMenu::Initialize`. The in-engine menu
+    (mainmenu_all.map) and with it the **3D Armory preview** from 02:05 no longer run. Intended?
+  - The client now advertises private lobbies with `is_private` and sends `lan_address`; the server copy on
+    Tyler's PC (`D:\ServerTestDeploy-main`, 02:15) does not read them yet. If the live server doesn't either,
+    private lobbies show in the public list.
+- **13:40 (more automated runs):** the guest's channel handshake with the host is flaky (most connect-establish
+  replies never reach the host channel); when it does connect, the host sends the ~9.5 KB membership-update and
+  the guest fails to decode a message. Our UDP receive buffer was 4 KB; now 64 KB in `NetworkTransport.cpp`
+  (small change, tell O7OF/Dominus). Details: `docs/networking-review.md`, "Update 13:40 ET".
+- **13:00 runs (automated, `D:\Reach\noble_test.bat` builds and runs host + guest, output in
+  `D:\Reach\noble_test_out.txt`; not in git):** the host accepts the guest, the channel connects (guest channel
+  state 5), then the host sends no membership and boots the guest after ~8.5 s. Network path is fine; the stop is
+  in the host session after the channel connects. See `docs/networking-review.md`, "Update 13:00 ET".
+- **Reason 15 = "abort ignored" (12:45 test):** the host's reply to the guest's join-ABORT (hr+0x429AA4, type 10),
+  not a refusal of the join. The guest's join-request is dropped silently on the host before any refusal; the
+  new session-message dump in `LobbyPatches.cpp` shows which check. Details in `docs/networking-review.md`.
+- **Reason 15 (06:20 notes):** see `docs/networking-review.md`, "Join refusal, reason 15". From the dll: message 11 is
+  join-refuse; every sender found (hr+0x397914's nine callers, hr+0x449EEC) sends a different reason, so the
+  path that sends 15 is still unknown. `LobbyPatches.cpp` now logs the haloreach.dll call stack at each
+  refusal (`JOIN REFUSED stack: hr+0x... <- ...`); the next two-instance test names the code.
+- **Bug fixed:** the can_accept_player_join_request hook (hr+0x3973BC) forwarded 4 of the function's 9
+  arguments; it now forwards all nine.
+- Every file written tonight was re-read on Tyler's PC and matches (stale copies of FrontEndMenu.cpp and
+  LobbyPatches.cpp reappeared once each and were rewritten). 03:45 commit 7df2cb9 is pushed.
+- **Merge notes (14:10 ET, rebase onto O7OF's ee7c10a):** `NetworkTransport.cpp` merged by hand: O7OF's route
+  states, held packets, broadcast and telemetry kept, plus the port header and per-port queues. His duplicate
+  filter now only runs while the relay is active and hashes sender + port too (the game resends identical packets
+  on purpose; filtering them on direct UDP would drop keepalives). Reason 15 is "abort ignored" (the host's answer
+  to a guest's join-abort, hr+0x429AA4 type 10), not slot 25; the real cause was the endpoint ports above. The new
+  acknowledge_join_request hook (hr+0x397914) expects `53 48 83 EC 50` but the dll starts `40 53 48 83 EC`, so it
+  never installs.
 
 ## 0. Pick up here (2026-10-29, 06:05 ET) - Host Application Hang (AppHangB1) & Match Pacing/Join Blocking Fixes (Dominus / Tyler) by [O7OF]
 

@@ -1,4 +1,4 @@
-# Networking review (2026-10-29, 02:45 ET)
+# Networking review (2026-10-29, 02:45 ET; join refusal added 06:20 ET)
 
 Why a guest still can't get into a host's match, after the 2026-10-28/29 netcode work. Every finding below was
 checked three times: (1) in Noble's code, (2) against the logs from Tyler joining O7OF (02:13 and 02:27) and the
@@ -151,3 +151,123 @@ every 3 s (inside the 30 s server timeout); relay URL built from the server's re
    `BlamEngine: -rr-guest-block: guest block laid out like RR` in the guest log and whether the launch state
    passes 9.
 4. Send both logs (host and guest). The first 60 packets each way are hex-dumped.
+
+## Join refusal, reason 15 (03:30-06:20 ET, two instances on one PC)
+
+Test: host `-host -lan`, guest `-connect 127.0.0.1:11774`, same PC, so no NAT, relay or master server involved.
+The guest waits at launch state 9 and returns to the main menu after about a minute.
+
+- **The host refuses.** `LobbyPatches` now traces the two refusal encoders RR's host-probe.exe traces. Every
+  refusal is logged by the HOST process: `JOIN REFUSED: session 0x48414C4F52454143 reason 15`, one per guest
+  join retry. The session id is right, so the request reaches the session and is turned down.
+- **Message layer (from haloreach.dll, read-only copy):** the message table built at hr+0x42609C names the
+  session messages: 8 join-request, 9 peer-connect, 10 join-abort, 11 join-refuse (encoder hr+0x425368: u64
+  session + 6-bit reason, 12 bytes), 12 leave-session, 13 leave-acknowledge, 14 session-disband. connect-refuse
+  is encoded at hr+0x42459C. hr+0x423D88 writes the 6-bit type and 16-bit size, then calls the encoder.
+- **Who sends join-refuse:** hr+0x397914 `send_join_refuse(session, address, reason)` (9 callers) and one inline
+  send at hr+0x449EEC. Reasons each caller can send:
+
+  | Caller | Reason sent |
+  |---|---|
+  | hr+0x395340 (main join-request handler) | result of can_accept_join_request (hr+0x3975D8), else 7, 11, 13 |
+  | hr+0x39BF1C | result of hr+0x397354 (7, 18, 30, 31, 35), else 6 or 18 |
+  | hr+0x39BC10 | 23, 28, 29 |
+  | hr+0x39C184 | 7 |
+  | hr+0x39C11C / 39C34D / 39C444 / 429D20 | 24 / 9 / 10 / 27 |
+  | hr+0x449EEC (inline) | 4, 11, 17 |
+
+  can_accept_join_request itself returns 5, 6, 7, 8, 19 or the result of can_accept_player_join_request
+  (hr+0x3973BC), and the existing Dominus hook forces any non-zero result to 0. **No path found sends 15**,
+  so 15 comes from a path not yet followed (passed through a register or a queued message). The new build
+  logs the haloreach.dll call stack at each refusal to settle it.
+- **`-join-any` is not the fix:** RR's RR_JOIN_ANY patches (hr+0x397363 inside hr+0x397354, hr+0x397635 inside
+  can_accept_join_request) apply cleanly on this dll, but reason 15 still comes back. RR's launcher never sets it.
+- **Bug fixed in the existing hook:** can_accept_player_join_request (hr+0x3973BC) reads stack arguments 5, 6, 7
+  and 9 ([rsp+0x70/0x78/0x80/0x90] after its prologue). The hook forwarded only 4 arguments, so the original
+  read garbage. It now forwards all nine.
+- hr+0x39BA34 is not a sender: it maps a refusal reason to a front-end error code on the guest.
+
+**Update 12:45 ET - what reason 15 really is.** The call stack (`hr+0x423E2E <- hr+0x405E11 <- hr+0x429C96 <-
+hr+0x405CAE <- ...`) puts the send in hr+0x429AA4, the host's handler for out-of-band session messages
+(switch on the message type). It is the **join-abort** case (type 10): `reason = handle_join_abort() ? 14 : 15`,
+i.e. 14 "aborted", 15 "abort ignored". So the host is not refusing a join: the guest keeps sending join-ABORT
+and the host answers that it has no pending join from it. The guest's join-request (type 8) never gets a
+refusal, so it is dropped earlier in the same handler, at one of: protocol word (must be 0xAC: the flag
+0x184E38CE0 that would make it 0x2B is never written), session lookup by id (data+0x10), session state
+(6..9), version checks against 0x182DFBE20 (refuse 25 / 26) or executable type (data+0xC must be 5, else 27);
+or it reaches the join queue (hr+0x39BF1C) and waits there. `LobbyPatches.cpp` now dumps types 8-10 as they
+arrive (`session message 8 (join-request) ... data: ...`), which shows which field it is.
+
+**Update 13:00 ET - the join gets further than it looked (four automated two-instance runs, 12:46-13:00).**
+New log-only traces in `LobbyPatches.cpp`: join-queue state after each join-request; every message encoded
+(hr+0x423D88) and decoded (hr+0x423E40) on both sides; the channel lookup (hr+0x4234E4) with channel state.
+Message types 0-7 are, in table order before join-request: ping, pong, broadcast-search, broadcast-reply,
+connect-request (4), connect-refuse (5), connect-establish (6), connect-closed (7).
+
+1. Guest sends join-request (8). It passes every check (protocol 0xAC, session "HALOREAC", versions -1,
+   executable type 5), is queued, and the queue IS drained (mode 1, session 1 state 6, kind 1). Later
+   join-requests are not queued again because the guest is already in the host's membership.
+2. Host sends connect-request (4) every 0.5 s (out-of-band). Guest answers connect-establish (6) on the channel
+   layer (hr+0x43B4FC). The host's channel for the guest is found (state 3) and in the 12:59 run the host decoded
+   the establish 2.5 s later and answered; the guest's channel went to state 4, then 5 (connected).
+3. After that the host sends nothing more: no membership or player messages. About 8.5 s later it sends
+   session-boot (15); the guest sends join-abort (10); the host answers join-refuse reason 15 "abort ignored".
+
+So the network path works (UDP, slot 41/43, out-of-band and channel). The stop is in the host's session layer
+between "channel connected" and "send membership to the new peer". Next: find what the host session waits
+for after the channel connects (candidates: the observer marking the peer connected, security (36) or
+time-synchronize (25) exchange, or a host slot the session calls at that point), and why the boot fires.
+In some earlier runs the host never decoded the establish at all; the 12:59 run did, so timing matters too.
+
+**Update 13:40 ET - channel handshake and membership (eight more automated runs, 13:17-13:40).**
+More log-only traces (`LobbyPatches.cpp`): boot_peer (hr+0x395DE8), the game's own net diagnostics ring
+(hr+0x3AFFB4: "dscrd", "exp state", "net blckd"...), channel close (hr+0x43B98C, the only writer of state 2) and
+channel packet receive (hr+0x43BAE8). Full message-type table (one table for out-of-band and channel):
+2 broadcast-search, 3 broadcast-reply, 4 connect-request, 5 connect-refuse, 6 connect-establish, 7 connect-closed,
+8 join-request ... 25 time-synchronize, 26 membership-update, 27 peer-properties, 28 delegate-leadership,
+29 boot-machine, 30 player-add, 31 player-refuse, 32 player-remove, 33 player-properties, 36 security,
+37 view-establishment, 38 player-acknowledge, 39-42 synchronous-*, 44 game-results.
+
+- Channel states seen: 2 closed, 3 connecting, 4 established, 5 connected. The dispatcher (hr+0x4235E4) only
+  passes a channel packet on when the channel state is above 2 and the packet has a payload.
+- Host side: it opens a channel to the guest (connect-request every 0.5 s, new id every ~2 s). A connecting
+  channel closes after its timeout (reason 4, hr+0x43C5A4). Most of the guest's connect-establish replies never
+  reach the host's channel receive (no "channel recv" for them); sometimes one does and the channel goes 3->4.
+  The guest closes and reopens its own channel (reason 6) on every new connect-request id.
+- When both sides do connect (13:34 run): host sends membership-update (26, 9552 bytes) and message 34 (6176
+  bytes); within 2 s the guest logs a message it could not decode, closes the channel (reason 16), sends
+  connect-closed (7), and the join restarts; the guest later aborts (join-abort) and the host boots it (reason 8).
+  13:38 run: connected in ~1 s, then the host closed with reason 7 while still in state 4 (6 s, hr+0x43B66D).
+- **Fix applied (not yet proven):** `NetworkTransport::OnNetRecv` read each datagram into a 4096-byte buffer.
+  The game accepts channel packets up to 0x3000 bytes and the membership update is ~9.5 KB, so such a datagram
+  fails recvfrom with WSAEMSGSIZE and is lost. Buffer is now 64 KB; oversize drops and sends over 4 KB are logged.
+  RR's transport has explicit oversize handling (`net::note_star_oversize`, the RR-BIG01 marker), which fits.
+- Still open: why most establish replies don't reach the host channel (timing between the net thread and the
+  channel state, or the packet header parse giving an empty payload), and the reason-7 close in state 4.
+
+## FIX (13:52 ET): the game has two network endpoints and our transport mixed them up
+
+haloreach.dll talks to the host program through two endpoints: **port 1000 = channel traffic, port 1001 =
+out-of-band** (join, connect-request/establish, boot...). With no real socket (handle -1) both go through the
+host slots:
+- slot 41 = `send(target id, data, size, port)`, port = DESTINATION endpoint (hr+0x43AB88, `[rsp+0x20]`);
+- slot 43 = `recv(buffer, capacity 0x1000, &sender, port)`, port = the polling endpoint's own port
+  (hr+0x43AA78); the game builds the sender address as {sender id, that port}.
+The packet dispatcher (hr+0x4235E4) polls endpoint 0 then 1 and treats whatever endpoint 1 returns as
+out-of-band, whatever endpoint 0 returns as channel data (header parse hr+0x423C08: `[u16 channel len]`...).
+
+Noble ignored the port (`(void)a4` in both slots) and served both endpoints from one queue, so packets were
+randomly handed to the wrong endpoint: the host usually missed the guest's connect-establish (channel
+connecting -> closed every ~2 s), and when it did connect, later packets were misrouted and the guest failed to
+decode messages. Everything before (reason 15, join queue, boots) was a consequence.
+
+**Fix** (`NetworkTransport.cpp/.hpp`, `ReachHost.cpp` slot 41/43 thunks): wire format is now
+`[u64 sender id][u16 port][payload]`; received packets go into one queue per port and each recv only returns
+packets for its port. Also: receive buffer 64 KB (was 4 KB). Host and guest must both run this build (the
+wire format changed).
+
+**Result (13:52 two-instance run):** connect in 45 ms, then membership-update (26) and 34 to the guest,
+time-synchronize (25), peer-establish (22), peer-properties (27), player-properties (33), view-establishment (37)
+both ways, player-acknowledge (38), message 44 (53 KB). No boots or refusals. The guest loaded the map and reached
+launch state 11 / 5% like the host (before: stuck at state 9 / 2%). Not yet confirmed on screen, and not yet
+tested between two PCs or over the relay.

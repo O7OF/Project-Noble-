@@ -71,17 +71,28 @@ public:
     };
     NetworkProfile GetNetworkProfile() const;
 
-    // Host Slot 41 callback: Engine sending packet to a remote peer
-    uint64_t OnNetSend(uint64_t targetPeerId, const uint8_t* data, size_t size);
+    // Host Slot 41 callback: Engine sending packet to a remote peer. port = destination endpoint port
+    // (haloreach.dll uses 1000 for channel traffic and 1001 for out-of-band messages).
+    uint64_t OnNetSend(uint64_t targetPeerId, const uint8_t* data, size_t size, uint16_t port);
 
-    // Host Slot 43 callback: Engine polling for received packets
-    uint64_t OnNetRecv(uint8_t* outBuffer, size_t bufferCapacity, uint64_t* outSenderPeerId);
+    // Host Slot 43 callback: Engine polling for received packets on the endpoint with this port.
+    uint64_t OnNetRecv(uint8_t* outBuffer, size_t bufferCapacity, uint64_t* outSenderPeerId, uint16_t port);
 
 private:
     NetworkTransport();
     ~NetworkTransport();
 
     void RelayWorkerThread(std::string relayUrl, std::string sessionId, bool isHost, uint64_t machineId);
+
+    // Received game packets, one queue per destination port (see OnNetSend / OnNetRecv).
+    struct QueuedPacket {
+        uint64_t sender = 0;
+        bool fromRelay = false;
+        std::vector<uint8_t> data;
+    };
+    bool QueueWirePacket(const uint8_t* wire, size_t wireLen, bool fromRelay);
+    std::mutex m_recvMutex;
+    std::unordered_map<uint16_t, std::deque<QueuedPacket>> m_portQueues;
 
     std::atomic<bool> m_active{ false };
     bool m_isHost = true;
