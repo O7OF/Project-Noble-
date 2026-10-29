@@ -432,62 +432,66 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 
         blamEngine->LaunchMap(launchMap, launchMode, launchDifficulty, launchSkulls, customMvar, customVariant, connectAddress);
     } else {
+        if (launchHost) {
+            // Bind UDP port 11774 and start Master Server advertisement + WebSocket Relay BEFORE
+            // blamEngine->LaunchMap loads the map so the Host's UDP socket and relay are ready before
+            // any Guest sends its first join-request packet.
+            noble::NetworkTransport::Get().Initialize(true);
+
+            noble::HostConfig cfg;
+            std::string modeTitle = launchMode;
+            if (!modeTitle.empty()) modeTitle[0] = static_cast<char>(toupper(static_cast<unsigned char>(modeTitle[0])));
+            cfg.sessionName = startupSettings.playerName + "'s " + modeTitle;
+            if (launchMode == "campaign") cfg.sessionName = startupSettings.playerName + "'s Co-op Campaign";
+            else if (launchMode == "firefight") cfg.sessionName = startupSettings.playerName + "'s Firefight";
+            else if (launchMode == "forge") cfg.sessionName = startupSettings.playerName + "'s Forge";
+
+            cfg.gameMode = launchMode;
+            cfg.mapName = launchMap;
+            cfg.gametypeName = (launchMode == "firefight" ? "Firefight" : launchMode == "forge" ? "Forge" : "Slayer");
+            cfg.maxPlayers = hostMaxPlayers;
+            // The port the game socket really got: 11774 unless another program holds it (the socket is exclusive
+            // since 2026-10-29 and then falls back to a free port). Advertising 11774 regardless sent guests elsewhere.
+            cfg.port = noble::NetworkTransport::Get().IsActive() ? noble::NetworkTransport::Get().GetLocalPort() : 11774;
+            cfg.mode = hostOnline ? noble::NetworkMode::Online_P2P : noble::NetworkMode::Local_LAN;
+
+            if (noble::SessionManager::Get().StartHosting(cfg)) {
+                NOBLE_INFO("main: Started self-hosting match '{}' on port {} (Mode: {})", cfg.sessionName, cfg.port, hostOnline ? "Online P2P" : "Local LAN");
+                if (hostOnline && noble::MasterServerClient::Get().Enabled()) {
+                    noble::MasterAdvert advert;
+                    advert.name = cfg.sessionName;
+                    advert.port = cfg.port;
+                    advert.maxPlayers = cfg.maxPlayers;
+                    advert.map = cfg.mapName;
+                    advert.mode = cfg.gameMode;
+                    advert.variant = customVariant.empty() ? cfg.gametypeName : fs::path(customVariant).filename().string();
+                    advert.difficulty = launchDifficulty;
+                    advert.skulls = launchSkulls;
+                    advert.inProgress = true;
+                    advert.hostPeerId = noble::AuthClient::Get().IsLoggedIn() ? static_cast<uint64_t>(noble::AuthClient::Get().GetUserId()) : 1ULL;
+                    advert.hostMachineId = "0x484F535400000001";
+                    advert.hostUsername = noble::AuthClient::Get().IsLoggedIn() ? noble::AuthClient::Get().GetUsername() : (startupSettings.playerName.empty() ? "Host" : startupSettings.playerName);
+                    advert.hostIsDev = noble::AuthClient::Get().IsDeveloper();
+                    advert.hostServiceTag = startupSettings.serviceTag.empty() ? "117" : startupSettings.serviceTag;
+                    advert.hasPassword = false;
+                    advert.isPrivate = !hostPublic;
+                    advert.isMod = !modFolder.empty();
+                    advert.address = noble::UPnP::Get().GetExternalIP();
+                    if (!connectSessionId.empty()) {
+                        advert.id = connectSessionId;
+                        advert.token = connectSessionToken;
+                        advert.inProgress = true;
+                    }
+                    noble::MasterServerClient::Get().StartAdvertising(advert);
+                    NOBLE_INFO("main: Advertised hosted match to master server ({}:{}) [Session: '{}']", advert.address, advert.port, connectSessionId.empty() ? "new" : connectSessionId);
+                }
+            } else {
+                NOBLE_WARN("main: Failed to start self-hosting match");
+            }
+        }
+
         NOBLE_INFO("Launching Halo: Reach Engine: Target Map='{}', Mode='{}'", launchMap, launchMode);
         blamEngine->LaunchMap(launchMap, launchMode, launchDifficulty, launchSkulls, customMvar, customVariant);
-    }
-
-    // 10. Start P2P & Self-Hosting Network Subsystem if hosting a match
-    if (launchHost) {
-        noble::HostConfig cfg;
-        std::string modeTitle = launchMode;
-        if (!modeTitle.empty()) modeTitle[0] = static_cast<char>(toupper(static_cast<unsigned char>(modeTitle[0])));
-        cfg.sessionName = startupSettings.playerName + "'s " + modeTitle;
-        if (launchMode == "campaign") cfg.sessionName = startupSettings.playerName + "'s Co-op Campaign";
-        else if (launchMode == "firefight") cfg.sessionName = startupSettings.playerName + "'s Firefight";
-        else if (launchMode == "forge") cfg.sessionName = startupSettings.playerName + "'s Forge";
-
-        cfg.gameMode = launchMode;
-        cfg.mapName = launchMap;
-        cfg.gametypeName = (launchMode == "firefight" ? "Firefight" : launchMode == "forge" ? "Forge" : "Slayer");
-        cfg.maxPlayers = hostMaxPlayers;
-        // The port the game socket really got: 11774 unless another program holds it (the socket is exclusive
-        // since 2026-10-29 and then falls back to a free port). Advertising 11774 regardless sent guests elsewhere.
-        cfg.port = noble::NetworkTransport::Get().IsActive() ? noble::NetworkTransport::Get().GetLocalPort() : 11774;
-        cfg.mode = hostOnline ? noble::NetworkMode::Online_P2P : noble::NetworkMode::Local_LAN;
-
-        if (noble::SessionManager::Get().StartHosting(cfg)) {
-            NOBLE_INFO("main: Started self-hosting match '{}' on port {} (Mode: {})", cfg.sessionName, cfg.port, hostOnline ? "Online P2P" : "Local LAN");
-            if (hostOnline && noble::MasterServerClient::Get().Enabled()) {
-                noble::MasterAdvert advert;
-                advert.name = cfg.sessionName;
-                advert.port = cfg.port;
-                advert.maxPlayers = cfg.maxPlayers;
-                advert.map = cfg.mapName;
-                advert.mode = cfg.gameMode;
-                advert.variant = customVariant.empty() ? cfg.gametypeName : fs::path(customVariant).filename().string();
-                advert.difficulty = launchDifficulty;
-                advert.skulls = launchSkulls;
-                advert.inProgress = true;
-                advert.hostPeerId = noble::AuthClient::Get().IsLoggedIn() ? static_cast<uint64_t>(noble::AuthClient::Get().GetUserId()) : 1ULL;
-                advert.hostMachineId = "0x484F535400000001";
-                advert.hostUsername = noble::AuthClient::Get().IsLoggedIn() ? noble::AuthClient::Get().GetUsername() : (startupSettings.playerName.empty() ? "Host" : startupSettings.playerName);
-                advert.hostIsDev = noble::AuthClient::Get().IsDeveloper();
-                advert.hostServiceTag = startupSettings.serviceTag.empty() ? "117" : startupSettings.serviceTag;
-                advert.hasPassword = false;
-                advert.isPrivate = !hostPublic;
-                advert.isMod = !modFolder.empty();
-                advert.address = noble::UPnP::Get().GetExternalIP();
-                if (!connectSessionId.empty()) {
-                    advert.id = connectSessionId;
-                    advert.token = connectSessionToken;
-                    advert.inProgress = true;
-                }
-                noble::MasterServerClient::Get().StartAdvertising(advert);
-                NOBLE_INFO("main: Advertised hosted match to master server ({}:{}) [Session: '{}']", advert.address, advert.port, connectSessionId.empty() ? "new" : connectSessionId);
-            }
-        } else {
-            NOBLE_WARN("main: Failed to start self-hosting match");
-        }
     }
 
     NOBLE_INFO("Authentic Halo: Reach host message loop active. Driving frames...");

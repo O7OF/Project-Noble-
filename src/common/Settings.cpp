@@ -2,6 +2,7 @@
 #include "Logger.hpp"
 
 #include <windows.h>
+#include <shellapi.h>
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
@@ -139,6 +140,41 @@ void Settings::Load() {
             NOBLE_WARN("Settings: could not read {} ({}); using defaults", path.string(), e.what());
         }
     }
+
+    // Apply per-process command-line identity overrides passed by Relaunch::Start so multiple instances
+    // running on the same PC retain their own logged-in account and player name across match relaunches.
+    {
+        auto narrowUtf8 = [](const wchar_t* w) -> std::string {
+            if (!w || !*w) return "";
+            const int len = WideCharToMultiByte(CP_UTF8, 0, w, -1, nullptr, 0, nullptr, nullptr);
+            if (len <= 0) return "";
+            std::string s(static_cast<size_t>(len - 1), '\0');
+            WideCharToMultiByte(CP_UTF8, 0, w, -1, s.data(), len, nullptr, nullptr);
+            return s;
+        };
+        int argc = 0;
+        LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+        if (argv) {
+            for (int i = 1; i + 1 < argc; ++i) {
+                const std::wstring arg = argv[i];
+                if (arg == L"-player-name") {
+                    d.playerName = narrowUtf8(argv[++i]);
+                } else if (arg == L"-service-tag") {
+                    d.serviceTag = narrowUtf8(argv[++i]);
+                } else if (arg == L"-account-user") {
+                    d.accountUsername = narrowUtf8(argv[++i]);
+                } else if (arg == L"-account-token") {
+                    d.accountToken = narrowUtf8(argv[++i]);
+                } else if (arg == L"-user-id") {
+                    d.accountUserId = _wtoi(argv[++i]);
+                } else if (arg == L"-account-dev") {
+                    d.isDeveloper = (_wtoi(argv[++i]) != 0);
+                }
+            }
+            LocalFree(argv);
+        }
+    }
+
     Clamp(d);
     std::lock_guard<std::mutex> lock(m_mutex);
     m_data = d;

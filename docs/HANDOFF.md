@@ -1,4 +1,4 @@
-# Project Noble: handoff (2026-10-29, 15:20 ET)
+# Project Noble: handoff (2026-10-29, 18:15 ET)
 Dominus join the team 20261028! 
 This picks up a reverse-engineering and C++ effort on **Tyler's Windows PC**. All paths below are real paths on that machine.
 Tyler (GitHub `WeabooTyler117`) works with a partner (GitHub `O7OF`) who owns the repo and writes most of the code.
@@ -8,6 +8,42 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 **Goal:** `noble-client.exe` loads MCC's own `haloreach.dll` (Halo: Reach) and drives it **without MCC**, like the existing
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
 MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES.)
+
+--
+
+## 0. Pick up here (2026-10-29, 18:15 ET) - Online P2P Lobby Launch Diagnostic & Fix: Guest Stealing UDP 11774, Self-Loopback Disabling Relay, & Shared `settings.json` Identity Swap (Dominus / Dominus-VII)
+
+### 1. Diagnostic Analysis of `build\bin\Release\noble-client.log` (`14:50:29`–`14:54:40`)
+- **Why It Looked Like the Guest (`TEST2`) Joined Successfully While the Host (`DOMINUS`) Crashed/Closed:**
+  1. **Zero Windows Crash Exceptions:** Checked `build\bin\Release\noble-client.log`, Windows Event Log (`Application`), WER reports, and `CrashDumps` — neither process suffered a native crash (`0xC0000005` / `0xE06D7363`). Instead, the two windows swapped identities on relaunch and the Guest timed out after 60 seconds and relaunched back to the menu.
+  2. **Account Identity Swap Across `Relaunch::Start` (`DOMINUS` -> `TEST2`):**
+     - At `14:50:29.593`, Window 1 (`PID 25292`, Host Menu) started logged in as **`DOMINUS`** and hosted Online P2P Lobby `'DOMINUS's Lobby'` (`session 4f562e4f44371cb1` at `14:52:09.824`).
+     - At `14:51:19.078`, Window 2 (`PID 3048`, Guest Menu) started on the same PC, logged out of `DOMINUS` (`14:52:21.600`), and logged in as **`TEST2`** (`14:52:30.199`), overwriting the shared `build\bin\Release\data\userdata\settings.json` file with `TEST2`'s credentials.
+     - At `14:52:48.676`, Window 1 (`DOMINUS`, Host) clicked **START MATCH**. Both windows spawned new match processes via `Relaunch::Start(args)` (`PID 22864` for Host, `PID 13820` for Guest).
+     - When the **Host match process (`PID 22864`)** booted at `14:52:49.226`, it read `settings.json` from disk—which now had **`TEST2`**! So the **Host** loaded into `20_sword_slayer` (`game session started at frame 266, loading screen off` at `14:52:58.857`) displaying **`TEST2`** on the HUD/scoreboard (`ReachHost [Slot 88 - UserIdentity]: user 0 -> 'TEST2'`), making it look as if the Guest (`TEST2`) had joined the match while the Host (`DOMINUS`) failed!
+     - Meanwhile, the actual **Guest match process (`PID 13820`)** stayed stuck at `LoadProgress: 2.0%, launch state 9` for 60 seconds and at `14:53:52.882` aborted with `Remote session join timed out ('external_launch_individual_state_timeout'); returning to main menu.` and relaunched itself back to the main menu (`PID 11220`).
+  3. **Guest Stole UDP Port `11774` From the Host by 2 Milliseconds (`14:52:51.585` vs `14:52:51.587`):**
+     - Inside `POST /api/sessions/4f562e4f44371cb1/lobby/launch`, the Master Server broadcast `lobby_launch` over WebSocket at `14:52:48.676` before the HTTP response returned to the Host at `14:52:49.106`.
+     - Furthermore, in `src/main.cpp`, the Guest called `NetworkTransport::Get().Initialize(false, ...)` *before* `blamEngine->LaunchMap`, whereas the Host only initialized `NetworkTransport` *inside* `BlamEngine::BuildLaunchBlock`.
+     - Because `NetworkTransport::Initialize` defaulted `localPort = 11774` even when `isHost == false`, the **Guest (`PID 13820`)** bound UDP port `11774` with `SO_EXCLUSIVEADDRUSE` at **`14:52:51.585`**:
+       `[14:52:51.585] NetworkTransport: Initialized GUEST on UDP port 11774`
+     - **2 milliseconds later (`14:52:51.587`)**, the **Host (`PID 22864`)** tried to bind `11774`, failed because the Guest held it, and fell back to ephemeral port **`57216`**:
+       `[14:52:51.587] NetworkTransport: Initialized HOST on UDP port 57216`
+  4. **Guest Self-Loopback on Port `11774` Disabled the WebSocket Relay Fallback:**
+     - The Guest sent its `join-request` packets (`TX #1`..`TX #60`) to `35.147.220.133:11774`, which routed back to port `11774` on the same machine—the **Guest's own socket** (`[GUEST pid 13820] SEND msg 8 (join-request)` -> `[GUEST pid 13820] RECV msg 8 (join-request)`).
+     - In `NetworkTransport::OnNetRecv`, `m_lastUdpRecvTick.store(now)` was updated before checking `wireSender == m_localMachineId`, and `QueueWirePacket` did not reject `sender == m_localMachineId`.
+     - Updating `m_lastUdpRecvTick` from its own loopback packet #1 tricked `OnNetSend` into setting `directUdpAlive = true` (`relayFallback: false` on `TX #2`..`TX #60`), shutting off the WebSocket Relay fallback while the Host's WebSocket Relay didn't finish connecting until `14:52:54.442` (108ms after Guest's `TX #1` at `14:52:54.334`).
+
+### 2. Fixes Applied
+- **`src/network/NetworkTransport.cpp`:**
+  - **Guest Ephemeral Port Binding & Host Port `11774` Retry (`Initialize`):** Guests (`!isHost`) now always bind to an ephemeral UDP port (`bindAddr.sin_port = htons(isHost ? localPort : 0)`), ensuring a Guest never steals UDP port `11774` from a Host or receives packets addressed to `11774`. When `isHost == true`, if `bind(11774)` fails transiently while the parent menu process from `Relaunch::Start` is closing its socket, the Host retries up to 10 times (`25ms` each) before falling back to port `0`.
+  - **Self-Loopback Filtering (`QueueWirePacket` & `OnNetRecv`):** Rejected any packet with `wireSender == 0 || wireSender == m_localMachineId` in both `OnNetRecv` (before updating `m_lastUdpRecvTick`) and `QueueWirePacket`, preventing self-loopback packets from ever entering engine queues or falsely disabling `relayFallback`.
+  - **Same-PC Online P2P Loopback Probe (`Initialize`, `OnNetSend`, `OnNetRecv`):** When a Guest is not yet confirmed on direct UDP and its target is a non-loopback IP, it also probes `127.0.0.1:<hostPort>` and updates `m_remoteHostAddr = senderAddr` upon receiving a packet from `m_hostMachineId`, enabling instant localhost UDP when testing two Online P2P instances on the same PC without relying on router Hairpin NAT.
+- **`src/main.cpp`:**
+  - Moved Host `NetworkTransport::Get().Initialize(true)`, `SessionManager::Get().StartHosting(cfg)`, and `MasterServerClient::Get().StartAdvertising(advert)` **before** `blamEngine->LaunchMap(...)` so the Host binds UDP port `11774` and connects its WebSocket Relay in parallel with map loading before any Guest sends its first `join-request`.
+- **`src/common/Relaunch.cpp` & `src/common/Settings.cpp`:**
+  - `Relaunch::Start` now forwards the current window's in-memory player and account identity (`-player-name`, `-service-tag`, `-account-user`, `-account-token`, `-user-id`, `-account-dev`) to the child process, and `Settings::Load()` applies those per-process overrides in memory (without overwriting `settings.json` on disk) so multiple instances on one PC retain their own accounts (`DOMINUS` vs `TEST2`) across match and menu relaunches.
+- **Verification:** Compiled cleanly via `.\build.bat` with **0 errors and 0 warnings**.
 
 --
 

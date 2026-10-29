@@ -115,13 +115,24 @@ bool NetworkTransport::Initialize(bool isHost, const std::string& remoteIp, uint
     BOOL exclusive = TRUE;
     setsockopt(m_socket, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, reinterpret_cast<const char*>(&exclusive), sizeof(exclusive));
 
-    // Bind local port (try localPort first so UPnP port mapping works, then fallback to ephemeral port 0)
+    // Bind local port:
+    // - Host binds localPort (11774) so UPnP / port-forwarding and LAN/WAN guests reach it. Retry briefly
+    //   in case the parent menu process from Relaunch::Start is still releasing 11774, then fall back to 0.
+    // - Guest ALWAYS binds an ephemeral port (0) so it never steals UDP 11774 from a local Host or receives
+    //   its own outbound packets addressed to 11774.
     sockaddr_in bindAddr = {};
     bindAddr.sin_family = AF_INET;
     bindAddr.sin_addr.s_addr = INADDR_ANY;
-    bindAddr.sin_port = htons(localPort);
+    bindAddr.sin_port = htons(isHost ? localPort : 0);
 
-    if (bind(m_socket, reinterpret_cast<sockaddr*>(&bindAddr), sizeof(bindAddr)) != 0) {
+    bool bound = (bind(m_socket, reinterpret_cast<sockaddr*>(&bindAddr), sizeof(bindAddr)) == 0);
+    if (!bound && isHost && localPort != 0) {
+        for (int attempt = 0; attempt < 10 && !bound; ++attempt) {
+            Sleep(25);
+            bound = (bind(m_socket, reinterpret_cast<sockaddr*>(&bindAddr), sizeof(bindAddr)) == 0);
+        }
+    }
+    if (!bound) {
         bindAddr.sin_port = 0;
         if (bind(m_socket, reinterpret_cast<sockaddr*>(&bindAddr), sizeof(bindAddr)) != 0) {
             NOBLE_ERROR("NetworkTransport: Failed to bind UDP socket (WSAError: {})", WSAGetLastError());
@@ -161,6 +172,16 @@ bool NetworkTransport::Initialize(bool isHost, const std::string& remoteIp, uint
         punch[sizeof(uint64_t) + 3] = 'G';
         sendto(m_socket, reinterpret_cast<const char*>(punch), sizeof(punch), 0,
                reinterpret_cast<const sockaddr*>(&m_remoteHostAddr), sizeof(m_remoteHostAddr));
+        // Also send a localhost punch to 127.0.0.1:remotePort so same-PC Online P2P tests connect directly
+        // without relying on router Hairpin NAT (harmless if the Host is on a remote PC since Guest is on an ephemeral port).
+        if (m_remoteHostAddr.sin_addr.s_addr != htonl(INADDR_LOOPBACK)) {
+            sockaddr_in localHostAddr = {};
+            localHostAddr.sin_family = AF_INET;
+            localHostAddr.sin_port = m_remoteHostAddr.sin_port;
+            localHostAddr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+            sendto(m_socket, reinterpret_cast<const char*>(punch), sizeof(punch), 0,
+                   reinterpret_cast<const sockaddr*>(&localHostAddr), sizeof(localHostAddr));
+        }
         NOBLE_INFO("NetworkTransport: [GUEST] Sent initial NAT punch PING to {}:{}", remoteIp, remotePort);
     }
 
@@ -662,6 +683,18 @@ uint64_t NetworkTransport::OnNetSend(uint64_t targetPeerId, const uint8_t* data,
         const uint64_t lastUdpTick = m_lastUdpRecvTick.load();
         const bool directUdpAlive = (lastUdpTick != 0 && (nowTick - lastUdpTick) < 3000);
 
+        // If direct UDP is not yet confirmed and target is a WAN IP, also probe 127.0.0.1:<hostPort>
+        // in case Host and Guest are running on the same PC behind a router without Hairpin NAT.
+        if (!directUdpAlive && m_remoteHostAddr.sin_addr.s_addr != 0 &&
+            m_remoteHostAddr.sin_addr.s_addr != htonl(INADDR_LOOPBACK)) {
+            sockaddr_in localHostAddr = {};
+            localHostAddr.sin_family = AF_INET;
+            localHostAddr.sin_port = m_remoteHostAddr.sin_port;
+            localHostAddr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+            sendto(m_socket, reinterpret_cast<const char*>(wireData), static_cast<int>(totalBytes), 0,
+                   reinterpret_cast<const sockaddr*>(&localHostAddr), sizeof(localHostAddr));
+        }
+
         // Fallback to relay if direct UDP not confirmed active
         if (m_relayActive.load() && !directUdpAlive) {
             std::lock_guard<std::mutex> lock(m_relayMutex);
@@ -749,11 +782,16 @@ bool NetworkTransport::QueueWirePacket(const uint8_t* wire, size_t wireLen, bool
     if (wireLen <= kWireHeaderBytes) {
         return false;
     }
+    uint64_t sender = 0;
+    std::memcpy(&sender, wire, sizeof(uint64_t));
+    if (sender == 0 || sender == m_localMachineId) {
+        return false; // Never queue our own packets
+    }
     if (m_relayActive.load() && IsDuplicatePacket(ComputePacketHash(wire, wireLen))) {
         return false;
     }
     QueuedPacket pkt;
-    std::memcpy(&pkt.sender, wire, sizeof(uint64_t));
+    pkt.sender = sender;
     uint16_t port = 0;
     std::memcpy(&port, wire + sizeof(uint64_t), sizeof(uint16_t));
     pkt.fromRelay = fromRelay;
@@ -796,12 +834,15 @@ uint64_t NetworkTransport::OnNetRecv(uint8_t* outBuffer, size_t bufferCapacity, 
             continue;
         }
 
+        uint64_t wireSender = 0;
+        std::memcpy(&wireSender, rawBuf, sizeof(uint64_t));
+        if (wireSender == 0 || wireSender == m_localMachineId) {
+            continue;  // Ignore self-loopback packets before updating m_lastUdpRecvTick
+        }
+
         const uint64_t now = GetTickCount64();
         m_lastUdpRecvTick.store(now);
         m_bytesRecv += received;
-
-        uint64_t wireSender = 0;
-        std::memcpy(&wireSender, rawBuf, sizeof(uint64_t));
         char ipStr[INET_ADDRSTRLEN] = { 0 };
         inet_ntop(AF_INET, &senderAddr.sin_addr, ipStr, sizeof(ipStr));
         const std::string addrKey = std::string(ipStr) + ":" + std::to_string(ntohs(senderAddr.sin_port));
@@ -836,7 +877,10 @@ uint64_t NetworkTransport::OnNetRecv(uint8_t* outBuffer, size_t bufferCapacity, 
                     NOBLE_INFO("NetworkTransport: [HOST] Registered peer 0x{:X} via NAT punch PING from {} (echoed PING)",
                                wireSender, addrKey);
                 } else {
-                    NOBLE_INFO("NetworkTransport: [GUEST] Received NAT punch PING echo from Host");
+                    if (wireSender == m_hostMachineId) {
+                        m_remoteHostAddr = senderAddr;
+                    }
+                    NOBLE_INFO("NetworkTransport: [GUEST] Received NAT punch PING echo from Host ({})", addrKey);
                 }
             }
             continue;
@@ -844,6 +888,10 @@ uint64_t NetworkTransport::OnNetRecv(uint8_t* outBuffer, size_t bufferCapacity, 
 
         if (!QueueWirePacket(rawBuf, static_cast<size_t>(received), false)) {
             continue;
+        }
+
+        if (!m_isHost && wireSender == m_hostMachineId) {
+            m_remoteHostAddr = senderAddr;
         }
 
         // Host: remember where each guest's packets come from so replies go back to that address
