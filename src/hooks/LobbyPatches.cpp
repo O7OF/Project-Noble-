@@ -264,10 +264,10 @@ bool LobbyPatches::Apply(HMODULE hReachDll) {
         }
     }
 
-    // 6. -join-any: Reach Renaissance's RR_JOIN_ANY patch. Turns two join-gate branches into jumps
-    //    (hr+0x397635 74 5E -> EB 5E, hr+0x397363 74 4D -> EB 4D) so the host accepts any join.
-    //    Off by default; in-memory only.
-    if (std::wcsstr(GetCommandLineW(), L"-join-any") != nullptr) {
+    // 6. Join-Any patch (Reach Renaissance RR_JOIN_ANY): Turns two join-gate branches into jumps
+    // (hr+0x397635 74 5E -> EB 5E, hr+0x397363 74 4D -> EB 4D) so the host accepts any join
+    // even while loading or in active match simulation. Enabled by default for all sessions.
+    {
         struct { uintptr_t rva; uint8_t expect; uint8_t disp; } gates[] = {
             { 0x397635, 0x74, 0x5E },
             { 0x397363, 0x74, 0x4D },
@@ -278,10 +278,10 @@ bool LobbyPatches::Apply(HMODULE hReachDll) {
                 const uint8_t jmp[2] = { 0xEB, g.disp };
                 if (WriteProtectedMemory(at, jmp, 2)) {
                     patchCount++;
-                    NOBLE_INFO("LobbyPatches: -join-any patched hr+0x{:X} (74 {:02X} -> EB {:02X})", g.rva, static_cast<int>(g.disp), static_cast<int>(g.disp));
+                    NOBLE_INFO("LobbyPatches: Join-any gate patched at hr+0x{:X} (74 {:02X} -> EB {:02X})", g.rva, static_cast<int>(g.disp), static_cast<int>(g.disp));
                 }
             } else {
-                NOBLE_WARN("LobbyPatches: -join-any bytes differ at hr+0x{:X} ({:02X} {:02X}); left alone", g.rva, static_cast<int>(at[0]), static_cast<int>(at[1]));
+                NOBLE_WARN("LobbyPatches: Join-any gate bytes differ at hr+0x{:X} ({:02X} {:02X}); left alone", g.rva, static_cast<int>(at[0]), static_cast<int>(at[1]));
             }
         }
     }

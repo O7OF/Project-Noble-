@@ -290,24 +290,39 @@ static HRESULT STDMETHODCALLTYPE HookSwapChainPresent(IDXGISwapChain* swapChain,
     LARGE_INTEGER frequency{}, now{};
     QueryPerformanceFrequency(&frequency);
     QueryPerformanceCounter(&now);
-    if (settings.fpsLimit != previousLimit) {
-        previousLimit = settings.fpsLimit;
+
+    DXGI_SWAP_CHAIN_DESC scDesc{};
+    HWND hwnd = (swapChain && SUCCEEDED(swapChain->GetDesc(&scDesc))) ? scDesc.OutputWindow : nullptr;
+    const bool isFocused = (hwnd == nullptr || GetForegroundWindow() == hwnd);
+
+    int targetFps = settings.fpsLimit;
+    if (!isFocused) {
+        // While unfocused (e.g. alt-tabbed, waiting for non-host client), throttle to 30 FPS to prevent
+        // CPU core pegging, GPU load spikes, and Windows AppHang / unresponsiveness detection.
+        targetFps = (targetFps > 0 && targetFps < 30) ? targetFps : 30;
+    } else if (targetFps <= 0) {
+        // Default cap of 120 FPS when uncapped to prevent runaway 200+ FPS loops while preserving smoothness.
+        targetFps = 120;
+    }
+
+    if (targetFps != previousLimit) {
+        previousLimit = targetFps;
         nextPresentTicks = now.QuadPart;
     }
 
-    if (settings.fpsLimit > 0 && frequency.QuadPart > 0) {
-        const LONGLONG interval = frequency.QuadPart / settings.fpsLimit;
+    if (targetFps > 0 && frequency.QuadPart > 0) {
+        const LONGLONG interval = frequency.QuadPart / targetFps;
         if (now.QuadPart < nextPresentTicks) {
-            const LONGLONG remaining = nextPresentTicks - now.QuadPart;
-            const LONGLONG sleepTicks = frequency.QuadPart / 1000;
-            if (remaining > sleepTicks * 2) {
-                const DWORD sleepMilliseconds = static_cast<DWORD>((remaining - sleepTicks) * 1000 / frequency.QuadPart);
-                if (sleepMilliseconds > 0) Sleep(sleepMilliseconds);
+            LONGLONG remaining = nextPresentTicks - now.QuadPart;
+            while (remaining > (frequency.QuadPart / 500)) { // >= 2ms
+                Sleep(1);
+                QueryPerformanceCounter(&now);
+                remaining = nextPresentTicks - now.QuadPart;
             }
-            do {
+            while (now.QuadPart < nextPresentTicks) {
                 YieldProcessor();
                 QueryPerformanceCounter(&now);
-            } while (now.QuadPart < nextPresentTicks);
+            }
         }
         QueryPerformanceCounter(&now);
         nextPresentTicks = now.QuadPart + interval;

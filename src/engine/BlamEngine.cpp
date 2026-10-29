@@ -394,6 +394,9 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
             block[0x2F0] = 0x00;
             *reinterpret_cast<uint32_t*>(&block[0x2F4]) = 0xFFFFFFFF;
             *reinterpret_cast<uint64_t*>(&block[0x2F8]) = hostMachineId; // uint64 Host Machine ID
+            // Zero variant buffer on guest (0x300 to end) so replicated game and map variants from the host
+            // are received and mounted cleanly without local conflict.
+            std::memset(&block[0x300], 0, LAUNCH_BLOCK_SIZE - 0x300);
             block[0x2BF14] = 0xF3;
             block[0x2BF15] = 0x01;
             NOBLE_INFO("BlamEngine: Configured Guest Launch Block targeting host {}:{} (Local: 0x{:X}, Host: 0x{:X}, PlayerId: 0x{:X})",
@@ -423,7 +426,7 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
         }
 
         // Default variant buffer init at offset 0x1D308 (RVA 0x6BFF8)
-        if (m_hModule) {
+        if (m_hModule && !isGuest) {
             SafeCallVariantInit(m_hModule, &block[0x1D308]);
         }
 
@@ -711,15 +714,17 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
         // clients 4000 ms to establish membership sync before posting Command 10/11.
         // For solo / offline matches, 300 ms is sufficient.
         const bool isOnlineHost = noble::NetworkTransport::Get().IsActive() && noble::NetworkTransport::Get().IsHost();
-        const int delayMs = isOnlineHost ? 4000 : 300;
-        std::thread([this, delayMs]() {
-            std::this_thread::sleep_for(std::chrono::milliseconds(delayMs));
+        std::thread([this, isOnlineHost]() {
+            const int startDelay = isOnlineHost ? 1000 : 300;
+            std::this_thread::sleep_for(std::chrono::milliseconds(startDelay));
             if (m_engineInstance && m_fnProcessEvent) {
-                NOBLE_INFO("BlamEngine: Posting Command 10 (Event: Start) via vtbl+0x18 after {}ms delay...", delayMs);
+                NOBLE_INFO("BlamEngine: Posting Command 10 (Event: Start) via vtbl+0x18 after {}ms delay...", startDelay);
                 int32_t status10 = m_fnProcessEvent(m_engineInstance, 10, 0);
                 NOBLE_INFO("BlamEngine: PostCommand(10) returned: 0x{:X}", status10);
 
-                NOBLE_INFO("BlamEngine: Posting Command 11 via vtbl+0x18...");
+                const int simDelay = isOnlineHost ? 5000 : 200;
+                std::this_thread::sleep_for(std::chrono::milliseconds(simDelay));
+                NOBLE_INFO("BlamEngine: Posting Command 11 via vtbl+0x18 after {}ms...", simDelay);
                 int32_t status11 = m_fnProcessEvent(m_engineInstance, 11, 0);
                 NOBLE_INFO("BlamEngine: PostCommand(11) returned: 0x{:X}", status11);
             }

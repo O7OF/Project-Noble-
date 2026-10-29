@@ -1,5 +1,6 @@
 #include "D3D11Renderer.hpp"
 #include "common/Logger.hpp"
+#include <d3d11_4.h>
 
 namespace noble {
 
@@ -129,6 +130,14 @@ bool D3D11Renderer::Initialize(HWND hwnd, uint32_t width, uint32_t height) {
 
     NOBLE_INFO("Direct3D 11 device and swap chain created. Feature Level: 0x{:X}", static_cast<uint32_t>(featureLevel));
     spdlog::default_logger()->flush();
+
+    // Enable multithread protection on the D3D11 device/context so haloreach.dll's render/engine threads
+    // and host overlay passes can safely access D3D11 immediate context without deadlocking.
+    ComPtr<ID3D11Multithread> multithread;
+    if (SUCCEEDED(m_context.As(&multithread)) && multithread) {
+        multithread->SetMultithreadProtected(TRUE);
+        NOBLE_INFO("Direct3D 11 multithread protection enabled.");
+    }
 
     if (!CreateRenderTarget()) {
         return false;

@@ -722,11 +722,26 @@ void PauseMenu::RenderImpl(IDXGISwapChain* swapChain, bool loading, bool clear) 
     ID3D11DeviceContext* context = nullptr;
     device->GetImmediateContext(&context);
 
+    static IDXGISwapChain* s_cachedSwapChain = nullptr;
+    static ID3D11Texture2D* s_cachedBackBuffer = nullptr;
+    static ID3D11RenderTargetView* s_cachedRtv = nullptr;
+
     ID3D11Texture2D* backBuffer = nullptr;
-    ID3D11RenderTargetView* rtv = nullptr;
-    if (SUCCEEDED(swapChain->GetBuffer(0, __uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&backBuffer))) && backBuffer) {
-        device->CreateRenderTargetView(backBuffer, nullptr, &rtv);
+    if (FAILED(swapChain->GetBuffer(0, __uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&backBuffer))) || !backBuffer) {
+        if (context) context->Release();
+        device->Release();
+        return;
     }
+
+    if (s_cachedSwapChain != swapChain || s_cachedBackBuffer != backBuffer || !s_cachedRtv) {
+        if (s_cachedRtv) { s_cachedRtv->Release(); s_cachedRtv = nullptr; }
+        if (s_cachedBackBuffer) { s_cachedBackBuffer->Release(); s_cachedBackBuffer = nullptr; }
+        s_cachedSwapChain = swapChain;
+        s_cachedBackBuffer = backBuffer;
+        s_cachedBackBuffer->AddRef();
+        device->CreateRenderTargetView(backBuffer, nullptr, &s_cachedRtv);
+    }
+    ID3D11RenderTargetView* rtv = s_cachedRtv;
 
     if (context && rtv) {
         D3D11_TEXTURE2D_DESC bbDesc{};
@@ -806,7 +821,6 @@ void PauseMenu::RenderImpl(IDXGISwapChain* swapChain, bool loading, bool clear) 
         if (oldDsv) oldDsv->Release();
     }
 
-    if (rtv) rtv->Release();
     if (backBuffer) backBuffer->Release();
     if (context) context->Release();
     device->Release();

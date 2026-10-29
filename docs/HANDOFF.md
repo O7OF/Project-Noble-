@@ -11,6 +11,40 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-29, 06:05 ET) - Host Application Hang (AppHangB1) & Match Pacing/Join Blocking Fixes (Dominus / Tyler) by [O7OF]
+
+Built and verified in Release configuration (`noble-client.exe` and `noble-dedicated.exe`).
+Resolved the host crash/hang that occurred when waiting for non-host clients to join, and eliminated join blocking on the host:
+
+- **Host Application Hang (`AppHangB1` / Event ID 1002) Fixed:**
+  - **Root Cause:** While the host engine pumped frames in Slot 1 (`HostSlot1_FrameTick`), `src/main.cpp` used a simple `Sleep(10)` loop. When the window lost focus (e.g., user alt-tabbed to Discord or waited a few minutes for a friend to load), Windows Desktop Window Manager (DWM) sent responsiveness pings. Without `DisableProcessWindowsGhosting()`, DWM detected an inactive window and flagged `AppHangB1` (Event 1002), terminating the process.
+  - **Resolution in `src/main.cpp`:**
+    1. Added `DisableProcessWindowsGhosting()` immediately at process startup in `wWinMain` to prevent Windows from replacing the window with a ghost and killing it during long waits or background states.
+    2. Replaced `Sleep(10)` in the message loop with `MsgWaitForMultipleObjectsEx(0, nullptr, 10, QS_ALLINPUT, MWMO_ALERTABLE)`: immediately wakes the window thread whenever input, focus, paint, timer, or DWM messages arrive, maintaining instant OS responsiveness while keeping idle CPU usage minimal.
+
+- **Direct3D 11 Immediate Context Multithread Protection & RTV Caching:**
+  - **Root Cause:** `haloreach.dll`'s engine thread executes Slot 1 and issues D3D11 commands while the Win32 window thread handles window messages. In `src/host/D3D11Renderer.cpp`, multithread protection was not enabled, risking immediate context contention. Concurrently, `PauseMenu::RenderImpl` called `GetBuffer` and `CreateRenderTargetView` every frame at 180+ FPS, causing intense driver resource thrashing.
+  - **Resolution:**
+    1. In `src/host/D3D11Renderer.cpp`: Added `<d3d11_4.h>`, queried `ID3D11Multithread` from `m_context`, and invoked `multithread->SetMultithreadProtected(TRUE)` to ensure thread safety across engine and UI threads.
+    2. In `src/ui/PauseMenu.cpp`: Implemented static caching of `s_cachedSwapChain`, `s_cachedBackBuffer`, and `s_cachedRtv`, reusing the render target view each frame instead of recreating/destroying it continuously.
+
+- **CPU Core Pegging & SwapChain Pacing (`src/engine/ReachHost.cpp`):**
+  - **Root Cause:** `HookSwapChainPresent` previously had a tight `do { YieldProcessor(); } while (...)` spin loop when throttling frames, burning 100% of a CPU logical core. Furthermore, when uncapped (`fpsLimit = 0`), the engine free-wheeled at 180–200+ FPS even when the window was unfocused in the background.
+  - **Resolution:**
+    1. Added background/unfocused detection (`GetForegroundWindow() != hwnd`): automatically throttles to 30 FPS when unfocused, preventing heat spikes and DWM hang flags while waiting for friends.
+    2. Set a safe default frame cap of 120 FPS when uncapped (`fpsLimit <= 0`) to prevent runaway GPU loops.
+    3. Replaced the spin loop with a hybrid wait: calls `Sleep(1)` whenever the remaining frame time is `>= 2ms`, and only yields in the final sub-2ms margin.
+
+- **Join-Any Gates Enabled by Default (`src/hooks/LobbyPatches.cpp`):**
+  - **Root Cause:** Haloreach.dll has internal join gates at `0x397635` and `0x397363` that reject incoming join requests once the host transitions to simulation (`state 11`) or during certain loading phases (refusals 0x06 / 0x20). Previously, the `-join-any` bypass patch (`74 5E -> EB 5E` and `74 4D -> EB 4D`) was only active if `-join-any` was explicitly specified on the command line, causing hosts to turn away guests who took longer than a few seconds to connect.
+  - **Resolution:** Enabled the join-any patches unconditionally for all sessions. The host engine will now always accept incoming remote players even if the match is already in simulation.
+
+- **Guest Variant Zeroing & Match Start Pacing (`src/engine/BlamEngine.cpp`):**
+  - In `BuildLaunchBlock`: Added explicit zeroing of the guest variant buffer from `+0x300` to `LAUNCH_BLOCK_SIZE`, and guarded `SafeCallVariantInit` to only run on the host. This prevents stale local variant data on the guest from conflicting with replicated host variants.
+  - In `LaunchMap`: Paced online host initialization by posting `Command 10` (Event: Start) after 1000ms and `Command 11` (Event: In-Game) after 5000ms, allowing cleaner network session handshakes.
+
+--
+
 ## 0. Pick up here (2026-10-29, 05:00 ET) - Networking Fixes: Host Reason 15 / Slot 25 Clearance & Guest Launch Block Desync Fixed (Dominus / Tyler) by [O7OF]
 
 Built and verified in Release configuration (`noble-client.exe` and `noble-dedicated.exe`).

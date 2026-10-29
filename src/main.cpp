@@ -93,6 +93,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     UNREFERENCED_PARAMETER(pCmdLine);
 
     SetUnhandledExceptionFilter(&NobleCrashHandler);
+    DisableProcessWindowsGhosting();
 
     // 1. Initialize logging
     noble::Logger::Init("noble-client.log");
@@ -514,7 +515,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         // haloreach.dll's engine thread presents (host slot 1). After a match it stops drawing; then the
         // post-game panel is drawn and presented from here (PauseMenu::HoldFrame, as RR does).
         // The front-end menu likewise once the engine drops its menu map (FrontEndMenu::HoldFrame).
-        if (!noble::PauseMenu::HoldFrame() && !noble::FrontEndMenu::HoldFrame()) Sleep(10);
+        if (!noble::PauseMenu::HoldFrame() && !noble::FrontEndMenu::HoldFrame()) {
+            MsgWaitForMultipleObjectsEx(0, nullptr, 10, QS_ALLINPUT, MWMO_ALERTABLE);
+        }
     }
 
     // Watchdog in case network shutdown stalls on an unresponsive router or server.
