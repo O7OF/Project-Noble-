@@ -5,6 +5,7 @@
 #include "network/SessionManager.hpp"
 
 #include <windows.h>
+#include <cwchar>
 #include <mutex>
 
 namespace noble {
@@ -39,6 +40,10 @@ bool Start(const std::wstring& args) {
     if (!GetModuleFileNameW(nullptr, exe, MAX_PATH)) return false;
     std::wstring cmd = L"\"" + std::wstring(exe) + L"\"";
     if (!args.empty()) cmd += L" " + args;
+    // Test switches the menu was started with carry on to the match process.
+    for (const wchar_t* sw : { L"-rr-guest-block", L"-armory-unlock-all" }) {
+        if (std::wcsstr(GetCommandLineW(), sw) && cmd.find(sw) == std::wstring::npos) cmd += std::wstring(L" ") + sw;
+    }
     std::wstring dir = exe;
     const size_t slash = dir.find_last_of(L"\\/");
     if (slash != std::wstring::npos) dir.resize(slash);

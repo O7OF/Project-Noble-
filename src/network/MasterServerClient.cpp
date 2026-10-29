@@ -14,6 +14,22 @@ namespace noble {
 
 namespace {
 
+// The id a menu (not yet in a match) uses in a lobby. The menu's NetworkTransport isn't initialised, so
+// GetLocalMachineId() was the fixed host id 0x484F535400000001 for every guest: the relay keys guests by that
+// id, so a second guest replaced the first and only one of them got lobby events (2026-10-29 review).
+uint64_t LobbyMachineId() {
+    if (NetworkTransport::Get().IsActive()) return NetworkTransport::Get().GetLocalMachineId();
+    static const uint64_t id = [] {
+        LARGE_INTEGER t{};
+        QueryPerformanceCounter(&t);
+        uint64_t x = static_cast<uint64_t>(t.QuadPart) ^ (static_cast<uint64_t>(GetCurrentProcessId()) << 32) ^ 0x9E3779B97F4A7C15ULL;
+        x ^= x >> 33; x *= 0xFF51AFD7ED558CCDULL; x ^= x >> 33;
+        if (x == NetworkTransport::kDefaultHostMachineId) x ^= 0xFFFFFFFF00000000ULL;
+        return x | 1ULL;
+    }();
+    return id;
+}
+
 std::wstring Widen(const std::string& s) {
     if (s.empty()) return L"";
     const int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), static_cast<int>(s.size()), nullptr, 0);
@@ -586,7 +602,7 @@ LobbyState MasterServerClient::JoinLobbySync(const std::string& sessionId,
         { "username", username },
         { "is_dev", isDev },
         { "service_tag", serviceTag },
-        { "machine_id", std::to_string(NetworkTransport::Get().GetLocalMachineId()) },
+        { "machine_id", std::to_string(LobbyMachineId()) },
         { "guest_port", localPort },
         { "ping", 25 }
     };
@@ -622,7 +638,7 @@ LobbyState MasterServerClient::JoinLobbySync(const std::string& sessionId,
 
         std::string relayUrl = j.value("relay_url", "");
         if (!relayUrl.empty()) {
-            NetworkTransport::Get().StartRelay(relayUrl, sessionId, false, NetworkTransport::Get().GetLocalMachineId());
+            NetworkTransport::Get().StartRelay(relayUrl, sessionId, false, LobbyMachineId());
         }
     } catch (...) {}
 

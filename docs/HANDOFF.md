@@ -1,4 +1,4 @@
-# Project Noble: handoff (2026-10-29, 02:05 ET)
+# Project Noble: handoff (2026-10-29, 03:10 ET)
 Dominus join the team 20261028! 
 This picks up a reverse-engineering and C++ effort on **Tyler's Windows PC**. All paths below are real paths on that machine.
 Tyler (GitHub `WeabooTyler117`) works with a partner (GitHub `O7OF`) who owns the repo and writes most of the code.
@@ -10,6 +10,24 @@ community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownershi
 MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour.
 
 --
+
+## 0. Pick up here (2026-10-29, 03:10 ET) - Networking review: why guests don't get in, fixes, test switch
+
+Full write-up with evidence: `docs/networking-review.md` (17 findings, checked against the code, Tyler's 02:13 / 02:27
+guest logs, the Render server log, RR's host-probe.exe, and the real server.js run locally). Not built or tested yet.
+- **Fixed (client):** host's lobby session was DELETEd at launch so guests went to a dead session (`Relaunch` ->
+  `MasterServerClient::Shutdown(keepSession)`); guest lobby launch started a second, unconnected match
+  (`FrontEndMenu`); lobby events written from the relay thread (crash with no log); host now sends the variant
+  file name (server cuts at 64 chars); every lobby guest had the host's fixed id (`LobbyMachineId`); UDP 11774 now
+  SO_EXCLUSIVEADDRUSE (SO_REUSEADDR let a 2nd process steal packets); a dropped relay now reconnects and can no
+  longer std::terminate (`NetworkTransport` Start/StopRelay); host advertises the port the socket really got.
+- **Test switch `-rr-guest-block`:** guests stuck at launch state 9 with traffic both ways. RR's
+  `patch_launch_block --as-guest` gives a guest no local players, no player id, no variant (+0x300 on zeroed). Ours
+  sets all three. The switch lays the guest block out like RR; it carries over the menu -> match relaunch.
+- **For O7OF:** one launch message, not HTTP + WS; 3+ player routing (host packets go to every guest; guest-to-guest
+  not routed; unknown targets broadcast instead of held); one-way UDP hangs (all-or-nothing relay switch, modelled);
+  private lobbies never heartbeat (30 s timeout); no "lobby closed" event; peer_id 2 for every logged-out guest;
+  same-router players need the host's LAN address (NAT loopback); a guest's relay is started once only.
 
 ## 0. Pick up here (2026-10-29, 02:05 ET) - Armory 3D preview: real model pieces, try-on, Elite effects off
 

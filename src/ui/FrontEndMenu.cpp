@@ -1557,7 +1557,10 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
                 if (!current.roster.empty()) {
                     st.lobbyRoster = current.roster;
                 }
-                if (!st.isLobbyHost && (current.launchTriggered || current.inProgress)) {
+                // Launch only while the host's match is running. The server keeps the last launch_data when the host
+                // re-registers the same address and port for its next lobby, so "launch_data present" alone sent a
+                // guest straight into a match that wasn't starting (2026-10-29 review, tested against server.js).
+                if (!st.isLobbyHost && current.inProgress) {
                     st.lobbyLaunchPending = true;
                     st.lobbyLaunchMap = current.launchMap.empty() ? current.map : current.launchMap;
                     st.lobbyLaunchMode = current.launchMode.empty() ? current.mode : current.launchMode;
@@ -2669,6 +2672,12 @@ void FrontEndMenu::RenderOverlayImpl(IDXGISwapChain* swapChain, bool clear) {
                             args += L" -session-token \"" + ToWide(choice.sessionToken) + L"\"";
                         }
                     }
+                } else if (!choice.connectAddress.empty()) {
+                    // A guest launched from the in-engine menu (pre-game lobby): the match process joins the host.
+                    // Without this the relaunch started an unconnected local match (main.cpp's in-process path for
+                    // the Noble-drawn menu reads choice.connectAddress itself).
+                    args += L" -connect \"" + ToWide(choice.connectAddress) + L"\"";
+                    if (!choice.sessionId.empty()) args += L" -session-id \"" + ToWide(choice.sessionId) + L"\"";
                 }
                 NOBLE_INFO("FrontEndMenu: launching match via Relaunch ({} {})", choice.mode, choice.map);
                 ShowWindow(hwnd, SW_HIDE); UpdateWindow(hwnd);

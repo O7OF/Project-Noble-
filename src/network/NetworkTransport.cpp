@@ -106,9 +106,11 @@ bool NetworkTransport::Initialize(bool isHost, const std::string& remoteIp, uint
     setsockopt(m_socket, SOL_SOCKET, SO_RCVBUF, reinterpret_cast<const char*>(&bufSize), sizeof(bufSize));
     setsockopt(m_socket, SOL_SOCKET, SO_SNDBUF, reinterpret_cast<const char*>(&bufSize), sizeof(bufSize));
 
-    // Allow reuse if port was recently closed
-    BOOL reuse = TRUE;
-    setsockopt(m_socket, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&reuse), sizeof(reuse));
+    // Exclusive use of the port. On Windows SO_REUSEADDR (used here before 2026-10-29) lets a SECOND process
+    // bind the same UDP port and take datagrams meant for the first: a stray second Noble on the guest's PC
+    // bound 11774 next to the joined match. With the port taken, the bind below falls back to a free port.
+    BOOL exclusive = TRUE;
+    setsockopt(m_socket, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, reinterpret_cast<const char*>(&exclusive), sizeof(exclusive));
 
     // Bind local port (try localPort first so UPnP port mapping works, then fallback to ephemeral port 0)
     sockaddr_in bindAddr = {};
@@ -256,8 +258,8 @@ void NetworkTransport::SendLobbyControlJson(const std::string& jsonString) {
 }
 
 void NetworkTransport::StopRelay() {
-    if (!m_relayActive.exchange(false)) return;
-    {
+    const bool wasActive = m_relayActive.exchange(false);
+    if (wasActive) {
         std::lock_guard<std::mutex> lock(m_relayMutex);
         if (m_relayWsHandle) {
             WinHttpCloseHandle(static_cast<HINTERNET>(m_relayWsHandle));
@@ -268,9 +270,13 @@ void NetworkTransport::StopRelay() {
             m_relaySessionHandle = nullptr;
         }
     }
-    if (m_relayThread.joinable()) {
+    // Join even when the worker already stopped on its own (handshake failed, server closed the socket): a
+    // finished-but-unjoined std::thread that gets a new thread assigned calls std::terminate, which would
+    // end Noble with no crash log.
+    if (m_relayThread.joinable() && m_relayThread.get_id() != std::this_thread::get_id()) {
         m_relayThread.join();
     }
+    if (!wasActive) return;
     std::lock_guard<std::mutex> lock(m_relayMutex);
     m_relayUrl.clear();
     m_relaySendQueue.clear();
@@ -467,6 +473,11 @@ void NetworkTransport::RelayWorkerThread(std::string relayUrl, std::string sessi
     }
     if (hConnect) WinHttpCloseHandle(hConnect);
     if (sessionToClose) WinHttpCloseHandle(sessionToClose);
+    // Dropped by the server (redeploy, timeout) rather than stopped by us: mark the relay inactive so the next
+    // StartRelay (the host's heartbeat every 3 s) connects again. Before, it stayed "active" and never came back.
+    if (m_relayActive.exchange(false)) {
+        NOBLE_WARN("NetworkTransport: WebSocket relay closed by the server; it reconnects on the next master-server heartbeat");
+    }
 }
 
 uint64_t NetworkTransport::OnNetSend(uint64_t targetPeerId, const uint8_t* data, size_t size) {

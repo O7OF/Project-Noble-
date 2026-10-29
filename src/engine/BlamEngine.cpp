@@ -8,6 +8,8 @@
 #include <algorithm>
 #include <thread>
 #include <chrono>
+#include <cstring>
+#include <cwchar>
 #include <fstream>
 #include <filesystem>
 #include <objbase.h>
@@ -586,6 +588,34 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
         } else {
             NOBLE_WARN("BlamEngine: No game variant found for launch block (looked for '{}')", variantPath.string());
         }
+    }
+
+    // Test switch "-rr-guest-block": lay out a guest's block the way Reach Renaissance does
+    // (host-probe.exe host_probe::net::patch_launch_block, "--as-guest", read 2026-10-29): no local players
+    // or player descriptors (+0xE8..+0x10F zero, +0x100 = 0xFFFFFFFF, +0x108 = -1), +0x2F0..+0x2FF zero with
+    // +0x2F4 = 0xFFFFFFFF, everything from +0x300 on zeroed (no game variant: the host's comes over the
+    // session), +0x2BF14 = F3 01, then +0x50 session, +0x58 self, +0x2F8 host. Noble's default guest block sets
+    // one local player, a player id at +0xF0 and the decoded variant instead; guests have been stuck at
+    // launch state 9 with traffic flowing both ways, so this lets the two layouts be compared.
+    if (isGuest && !isMainMenu && std::wcsstr(GetCommandLineW(), L"-rr-guest-block") != nullptr) {
+        const uint64_t self = NetworkTransport::Get().GetLocalMachineId();
+        const uint64_t host = NetworkTransport::Get().GetHostMachineId();
+        const uint64_t session = NetworkTransport::Get().GetSessionId();
+        block[0] &= static_cast<uint8_t>(~0x08);
+        *reinterpret_cast<uint64_t*>(&block[0x60]) = 0;
+        std::memset(&block[0xE8], 0, 0x110 - 0xE8);
+        *reinterpret_cast<uint32_t*>(&block[0x100]) = 0xFFFFFFFFu;
+        *reinterpret_cast<uint64_t*>(&block[0x108]) = ~0ULL;
+        std::memset(&block[0x2F0], 0, 0x10);
+        *reinterpret_cast<uint32_t*>(&block[0x2F4]) = 0xFFFFFFFFu;
+        std::memset(&block[0x300], 0, block.size() - 0x300);
+        block[0x2BF14] = 0xF3;
+        block[0x2BF15] = 0x01;
+        *reinterpret_cast<uint64_t*>(&block[0x50]) = session;
+        *reinterpret_cast<uint64_t*>(&block[0x58]) = self;
+        *reinterpret_cast<uint64_t*>(&block[0x2F8]) = host;
+        NOBLE_INFO("BlamEngine: -rr-guest-block: guest block laid out like RR (self 0x{:X}, host 0x{:X}, session 0x{:X})",
+                   self, host, session);
     }
 
     // Test-only: "-launch-poke 0x3C=0xFFFFFFFF,0x40=1" writes u32 values into the block (for finding

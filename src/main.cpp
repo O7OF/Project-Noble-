@@ -474,7 +474,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         cfg.mapName = launchMap;
         cfg.gametypeName = (launchMode == "firefight" ? "Firefight" : launchMode == "forge" ? "Forge" : "Slayer");
         cfg.maxPlayers = hostMaxPlayers;
-        cfg.port = 11774;
+        // The port the game socket really got: 11774 unless another program holds it (the socket is exclusive
+        // since 2026-10-29 and then falls back to a free port). Advertising 11774 regardless sent guests elsewhere.
+        cfg.port = noble::NetworkTransport::Get().IsActive() ? noble::NetworkTransport::Get().GetLocalPort() : 11774;
         cfg.mode = hostOnline ? noble::NetworkMode::Online_P2P : noble::NetworkMode::Local_LAN;
 
         if (noble::SessionManager::Get().StartHosting(cfg)) {
