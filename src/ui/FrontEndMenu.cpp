@@ -1571,7 +1571,7 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
 
     // If launch was signaled (via WebSocket or HTTP poll) and we are guest, launch!
     if (!st.isLobbyHost && st.lobbyLaunchPending && !done) {
-        choice.play = true;
+        choice.play = false;
         choice.host = false;
         choice.map = st.lobbyLaunchMap.empty() ? st.lobbyMap : st.lobbyLaunchMap;
         choice.mode = st.lobbyLaunchMode.empty() ? st.lobbyMode : st.lobbyLaunchMode;
@@ -1788,14 +1788,17 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
     // ── BOTTOM ACTION BUTTONS ─────────────────────────────────────────────────
     if (st.isLobbyHost) {
         if (BigAction(ui, "btn_start_match", ImVec2(pxLeft, actionsY), colW - 140.0f * ui.s, "START MATCH", "Launch match for all players in lobby", true, true, false)) {
-            MasterServerClient::Get().LaunchLobbySync(st.lobbySessionId, st.lobbyMap, st.lobbyMode, st.lobbyVariantPath, st.lobbyDifficulty, st.lobbySkulls);
+            const std::string variantFileName = st.lobbyVariantPath.empty()
+                ? ""
+                : std::filesystem::path(st.lobbyVariantPath).filename().string();
+            MasterServerClient::Get().LaunchLobbySync(st.lobbySessionId, st.lobbyMap, st.lobbyMode, variantFileName, st.lobbyDifficulty, st.lobbySkulls);
 
             nlohmann::json launchPayload = {
                 { "type", "lobby_launch" },
                 { "launch", {
                     { "map", st.lobbyMap },
                     { "mode", st.lobbyMode },
-                    { "variant", st.lobbyVariantPath },
+                    { "variant", variantFileName },
                     { "difficulty", st.lobbyDifficulty },
                     { "skulls", std::to_string(st.lobbySkulls) },
                     { "host_ip", UPnP::Get().GetExternalIP() },
