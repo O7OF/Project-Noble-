@@ -12,6 +12,10 @@ namespace noble {
 
 namespace {
 
+// Auxiliary port for local subnet peer discovery beacons.
+// UDP port 11774 is kept strictly free and dedicated to haloreach.dll's native Blam! socket and UPnP forward.
+constexpr uint16_t kDiscoveryBeaconPort = 11775;
+
 // Non-throwing integer parse; the whole string must be a number.
 bool ParseInt(const std::string& s, int& out) {
     if (s.empty() || s.size() > 10) return false;
@@ -48,16 +52,22 @@ bool SessionManager::Initialize() {
     m_listenerThread = std::thread(&SessionManager::DiscoveryListenerLoop, this);
 
     m_isInitialized = true;
-    NOBLE_INFO("SessionManager: P2P Network Subsystem initialized (Default Mode: Local LAN)");
+    NOBLE_INFO("SessionManager: P2P Network Subsystem initialized (Discovery Port: {}, Game Port: 11774)", kDiscoveryBeaconPort);
     return true;
 }
 
 void SessionManager::Shutdown() {
     if (!m_isInitialized) return;
 
+    m_stopThreads = true;
     StopHosting();
 
-    m_stopThreads = true;
+    if (m_listenerSock != ~0ull && m_listenerSock != 0) {
+        SOCKET s = static_cast<SOCKET>(m_listenerSock);
+        m_listenerSock = ~0ull;
+        closesocket(s);
+    }
+
     if (m_listenerThread.joinable()) {
         m_listenerThread.join();
     }
@@ -117,7 +127,6 @@ void SessionManager::StopHosting() {
 }
 
 void SessionManager::TriggerDiscoveryScan() {
-    // Send a discovery probe request on subnet
     SOCKET sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (sock == INVALID_SOCKET) return;
 
@@ -126,7 +135,7 @@ void SessionManager::TriggerDiscoveryScan() {
 
     sockaddr_in destAddr = { 0 };
     destAddr.sin_family = AF_INET;
-    destAddr.sin_port = htons(11774);
+    destAddr.sin_port = htons(kDiscoveryBeaconPort);
     destAddr.sin_addr.s_addr = INADDR_BROADCAST;
 
     const char* probeMsg = "NOBL_PROBE";
@@ -145,7 +154,7 @@ void SessionManager::BeaconLoop() {
 
     sockaddr_in destAddr = { 0 };
     destAddr.sin_family = AF_INET;
-    destAddr.sin_port = htons(11774);
+    destAddr.sin_port = htons(kDiscoveryBeaconPort);
     destAddr.sin_addr.s_addr = INADDR_BROADCAST;
 
     while (!m_stopThreads && m_isHosting) {
@@ -164,7 +173,9 @@ void SessionManager::BeaconLoop() {
         sendto(sock, payload.c_str(), static_cast<int>(payload.length()), 0, 
             reinterpret_cast<sockaddr*>(&destAddr), sizeof(destAddr));
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+        for (int i = 0; i < 30 && !m_stopThreads && m_isHosting; ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
     }
 
     closesocket(sock);
@@ -182,13 +193,15 @@ void SessionManager::DiscoveryListenerLoop() {
 
     sockaddr_in bindAddr = { 0 };
     bindAddr.sin_family = AF_INET;
-    bindAddr.sin_port = htons(11774);
+    bindAddr.sin_port = htons(kDiscoveryBeaconPort);
     bindAddr.sin_addr.s_addr = INADDR_ANY;
 
     if (bind(sock, reinterpret_cast<sockaddr*>(&bindAddr), sizeof(bindAddr)) != 0) {
         closesocket(sock);
         return;
     }
+
+    m_listenerSock = static_cast<uintptr_t>(sock);
 
     char buffer[1024];
 
@@ -198,6 +211,8 @@ void SessionManager::DiscoveryListenerLoop() {
 
         int received = recvfrom(sock, buffer, sizeof(buffer) - 1, 0, 
             reinterpret_cast<sockaddr*>(&senderAddr), &senderLen);
+
+        if (m_stopThreads) break;
 
         if (received > 0) {
             buffer[received] = '\0';
@@ -215,8 +230,6 @@ void SessionManager::DiscoveryListenerLoop() {
                     tokens.push_back(token);
                 }
 
-                // Beacons come from anyone on the network: parse without exceptions (std::stoi throws
-                // on bad input, and an exception escaping this thread ends the whole process).
                 int players = 0, maxPlayers = 0, port = 0;
                 if (tokens.size() >= 9 &&
                     ParseInt(tokens[5], players) && ParseInt(tokens[6], maxPlayers) && ParseInt(tokens[7], port) &&
@@ -263,6 +276,7 @@ void SessionManager::DiscoveryListenerLoop() {
         }
     }
 
+    m_listenerSock = ~0ull;
     closesocket(sock);
 }
 

@@ -229,7 +229,8 @@ uint32_t BlamEngine::ResolveMapId(const std::string& mapName) {
 }
 
 std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameModeTag, int difficulty, uint64_t skulls,
-                                                   const std::string& customMvarPath, const std::string& customVariantPath) {
+                                                   const std::string& customMvarPath, const std::string& customVariantPath,
+                                                   const std::string& connectAddress) {
     constexpr size_t LAUNCH_BLOCK_SIZE = 0x2BF30; // 180,016 bytes
     std::vector<uint8_t> block(LAUNCH_BLOCK_SIZE, 0);
 
@@ -247,6 +248,11 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
     int clampedDiff = (difficulty >= 0 && difficulty <= 3) ? difficulty : 1;
 
     // 190 is Boardwalk (a multiplayer map), not the menu.
+        const bool isGuest = !connectAddress.empty();
+    if (isGuest) {
+        loadedPrebuilt = false;
+    }
+
     bool isMainMenu = (mapId == kMainMenuLaunchIndex || mapId == 0 || gameModeTag == 0);
     // Campaign missions: launch index 178 (m05) .. 189 (m70_bonus).
     const bool isCampaign = (mapId >= 178 && mapId <= 189);
@@ -284,7 +290,7 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
 
     if (!loadedPrebuilt) {
         // Initial header markers (reversed from host-probe::new_launch_block)
-        block[0] = 0x08;
+        block[0] = isGuest ? 0x00 : 0x08;
         block[1] = 0x03;
         block[2] = 0x00;
         block[3] = 0x10;
@@ -499,7 +505,8 @@ bool BlamEngine::ExecuteCommand(const std::string& command) {
 }
 
 bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMode, int difficulty, uint64_t skulls,
-                           const std::string& customMvarPath, const std::string& customVariantPath) {
+                           const std::string& customMvarPath, const std::string& customVariantPath,
+                           const std::string& connectAddress) {
     if (!m_isInitialized || !m_engineInstance) return false;
 
     m_currentMap = mapName;
@@ -525,7 +532,7 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
     // Career pays by base type, so modded maps/variants earn exactly what their stock type earns.
     if (gameModeTag != 0) Career::BeginMatch(Career::BaseTypeFromEngineMode(gameModeTag), mapName, difficulty, skulls);
 
-    auto launchBlock = BuildLaunchBlock(mapId, gameModeTag, difficulty, skulls, customMvarPath, customVariantPath);
+    auto launchBlock = BuildLaunchBlock(mapId, gameModeTag, difficulty, skulls, customMvarPath, customVariantPath, connectAddress);
 
     // Request corresponding wireframe loading screen .dots
     LoadScreen::Get().RequestMapDots(mapName, ReachHost::Get().GetDataDir());

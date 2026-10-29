@@ -1,4 +1,5 @@
 #include "MasterServerClient.hpp"
+#include "UPnP.hpp"
 #include "common/Logger.hpp"
 #include "common/Version.hpp"
 
@@ -28,65 +29,87 @@ struct HttpResult {
 };
 
 // Blocking HTTP request (used only on the worker thread). Short timeouts so a dead server
-// doesn't hold up shutdown for long.
-HttpResult HttpRequest(const std::string& baseUrl, const wchar_t* method, const std::string& path,
-                       const std::string& body, const std::string& token = {}) {
+// does not freeze the worker loop.
+HttpResult HttpRequest(const std::string& fullUrl,
+                       const wchar_t* method,
+                       const std::string& path,
+                       const std::string& jsonBody,
+                       const std::string& sessionToken = {}) {
     HttpResult result;
-    std::wstring url = Widen(baseUrl);
-    while (!url.empty() && url.back() == L'/') url.pop_back();
-    url += Widen(path);
-
-    URL_COMPONENTS parts{};
-    parts.dwStructSize = sizeof(parts);
-    wchar_t host[256] = {};
-    wchar_t urlPath[1024] = {};
-    parts.lpszHostName = host;
-    parts.dwHostNameLength = static_cast<DWORD>(std::size(host));
-    parts.lpszUrlPath = urlPath;
-    parts.dwUrlPathLength = static_cast<DWORD>(std::size(urlPath));
-    if (!WinHttpCrackUrl(url.c_str(), 0, 0, &parts)) {
-        result.error = "bad master server address";
+    if (fullUrl.empty()) {
+        result.error = "no master server URL configured";
         return result;
     }
-    const bool https = parts.nScheme == INTERNET_SCHEME_HTTPS;
 
-    HINTERNET session = WinHttpOpen(L"NobleClient/1.0", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
-                                    WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    std::wstring wideUrl = Widen(fullUrl);
+    URL_COMPONENTS parts{};
+    parts.dwStructSize = sizeof(parts);
+    parts.dwSchemeLength = static_cast<DWORD>(-1);
+    parts.dwHostNameLength = static_cast<DWORD>(-1);
+    parts.dwUrlPathLength = static_cast<DWORD>(-1);
+    if (!WinHttpCrackUrl(wideUrl.c_str(), static_cast<DWORD>(wideUrl.size()), 0, &parts)) {
+        result.error = "invalid master server URL";
+        return result;
+    }
+
+    const std::wstring host(parts.lpszHostName, parts.dwHostNameLength);
+    const bool isHttps = (parts.nScheme == INTERNET_SCHEME_HTTPS);
+    const INTERNET_PORT port = parts.nPort ? parts.nPort : (isHttps ? INTERNET_DEFAULT_HTTPS_PORT : INTERNET_DEFAULT_HTTP_PORT);
+
+    std::wstring requestPath = parts.dwUrlPathLength > 0 ? std::wstring(parts.lpszUrlPath, parts.dwUrlPathLength) : L"";
+    if (requestPath.size() > 1 && requestPath.back() == L'/') requestPath.pop_back();
+    requestPath += Widen(path);
+
+    HINTERNET session = WinHttpOpen(L"ProjectNoble/0.1", WINHTTP_ACCESS_TYPE_NO_PROXY, nullptr, nullptr, 0);
     if (!session) {
         result.error = "WinHttpOpen failed";
         return result;
     }
-    WinHttpSetTimeouts(session, 3000, 3000, 4000, 4000);
-    HINTERNET connect = WinHttpConnect(session, host, parts.nPort, 0);
-    HINTERNET request = connect ? WinHttpOpenRequest(connect, method, urlPath, nullptr, WINHTTP_NO_REFERER,
-                                                     WINHTTP_DEFAULT_ACCEPT_TYPES, https ? WINHTTP_FLAG_SECURE : 0)
-                                : nullptr;
+    WinHttpSetTimeouts(session, 3000, 3000, 3000, 3000);
+
+    HINTERNET connect = WinHttpConnect(session, host.c_str(), port, 0);
+    HINTERNET request = nullptr;
+    if (connect) {
+        DWORD flags = isHttps ? WINHTTP_FLAG_SECURE : 0;
+        request = WinHttpOpenRequest(connect, method, requestPath.c_str(), nullptr,
+                                     WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, flags);
+    }
     if (request) {
-        std::wstring headers = L"Content-Type: application/json\r\n";
-        if (!token.empty()) headers += L"X-Session-Token: " + Widen(token) + L"\r\n";
-        const BOOL sent = WinHttpSendRequest(request, headers.c_str(), static_cast<DWORD>(-1),
-                                             body.empty() ? WINHTTP_NO_REQUEST_DATA : const_cast<char*>(body.data()),
-                                             static_cast<DWORD>(body.size()), static_cast<DWORD>(body.size()), 0);
-        if (sent && WinHttpReceiveResponse(request, nullptr)) {
-            DWORD status = 0, size = sizeof(status);
+        std::wstring headers = L"Content-Type: application/json\r\nAccept: application/json\r\n";
+        if (!sessionToken.empty()) {
+            headers += L"X-Session-Token: " + Widen(sessionToken) + L"\r\n";
+        }
+
+        const void* postData = jsonBody.empty() ? nullptr : jsonBody.data();
+        const DWORD postSize = static_cast<DWORD>(jsonBody.size());
+        if (WinHttpSendRequest(request, headers.c_str(), static_cast<DWORD>(headers.size()),
+                               const_cast<void*>(postData), postSize, postSize, 0) &&
+            WinHttpReceiveResponse(request, nullptr)) {
+            DWORD statusCode = 0;
+            DWORD statusSize = sizeof(statusCode);
             WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-                                WINHTTP_HEADER_NAME_BY_INDEX, &status, &size, WINHTTP_NO_HEADER_INDEX);
-            result.status = static_cast<int>(status);
-            DWORD available = 0;
-            while (WinHttpQueryDataAvailable(request, &available) && available > 0 && result.body.size() < 1024 * 1024) {
-                std::string chunk(available, '\0');
-                DWORD read = 0;
-                if (!WinHttpReadData(request, chunk.data(), available, &read) || read == 0) break;
-                result.body.append(chunk.data(), read);
+                                WINHTTP_HEADER_NAME_BY_INDEX, &statusCode, &statusSize, WINHTTP_NO_HEADER_INDEX);
+            result.status = static_cast<int>(statusCode);
+
+            std::string body;
+            DWORD read = 0;
+            char buffer[2048];
+            while (WinHttpReadData(request, buffer, sizeof(buffer), &read) && read > 0) {
+                body.append(buffer, read);
+                if (body.size() > 256 * 1024) break;
             }
-            result.ok = result.status >= 200 && result.status < 300;
-            if (!result.ok) result.error = "master server replied " + std::to_string(result.status);
+            result.body = std::move(body);
+            result.ok = (statusCode >= 200 && statusCode < 300);
+            if (!result.ok) {
+                result.error = "master server replied " + std::to_string(statusCode);
+            }
         } else {
-            result.error = "master server not reachable";
+            result.error = "connection to master server failed";
         }
     } else {
-        result.error = "could not open a connection to the master server";
+        result.error = "could not open request";
     }
+
     if (request) WinHttpCloseHandle(request);
     if (connect) WinHttpCloseHandle(connect);
     WinHttpCloseHandle(session);
@@ -167,6 +190,15 @@ void MasterServerClient::StartAdvertising(const MasterAdvert& advert) {
     std::lock_guard<std::mutex> lock(m_mutex);
     if (m_url.empty()) return;
     m_advert = advert;
+    if (m_advert.address.empty() || m_advert.address == "Unknown" || m_advert.address == "127.0.0.1") {
+        std::string ip = UPnP::Get().GetExternalIP();
+        if (ip.empty() || ip == "Unknown" || ip == "127.0.0.1") {
+            ip = UPnP::Get().GetInternalIP();
+        }
+        if (!ip.empty() && ip != "Unknown") {
+            m_advert.address = ip;
+        }
+    }
     m_advertInProgress = false;
     m_sessionId.clear();
     m_sessionToken.clear();
@@ -275,6 +307,12 @@ void MasterServerClient::DoRegister() {
         std::lock_guard<std::mutex> lock(m_mutex);
         advert = m_advert;
     }
+    if (advert.address.empty() || advert.address == "Unknown") {
+        std::string ip = UPnP::Get().GetExternalIP();
+        if (ip.empty() || ip == "Unknown") ip = UPnP::Get().GetInternalIP();
+        advert.address = ip;
+    }
+
     nlohmann::json body = {
         {"name", advert.name}, {"port", advert.port}, {"player_count", advert.playerCount},
         {"max_players", advert.maxPlayers}, {"map", advert.map}, {"mode", advert.mode},

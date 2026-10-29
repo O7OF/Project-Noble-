@@ -42,7 +42,6 @@ private:
     void RenderServerList();
     void RenderServerDetails();
     void RenderDirectConnectModal();
-    void RenderHostModal();
     void RenderMasterServerModal();
     void TryJoin(const std::string& address, uint16_t port, bool hasPassword);
     bool PassesFilters(const ServerEntry& s) const;
@@ -65,15 +64,6 @@ private:
     bool m_showDirectConnectModal = false;
     char m_directConnectIp[64] = "";
     char m_directConnectPassword[64] = { 0 };
-
-    // Hosting modal state
-    bool m_showHostModal = false;
-    char m_hostSessionName[64] = { 0 };
-    char m_hostPassword[64] = { 0 };
-    int m_hostModeIndex = 0;   // 0=Multiplayer, 1=Campaign, 2=Firefight, 3=Forge
-    int m_hostMapIndex = 6;    // Sword Base
-    int m_hostMaxPlayers = 16;
-    bool m_hostOnline = true;
 
     // Master server modal
     bool m_showMasterModal = false;

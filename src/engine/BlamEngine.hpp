@@ -37,9 +37,10 @@ public:
     // Shuts down the engine cleanly
     void Shutdown();
 
-    // Launch a retail map or mission from the Steam MCC installation with optional custom variants
+    // Launch a retail map or mission from the Steam MCC installation with optional custom variants or connect to remote host
     bool LaunchMap(const std::string& mapName, const std::string& gameMode = "multiplayer", int difficulty = 1, uint64_t skulls = 0,
-                   const std::string& customMvarPath = "", const std::string& customVariantPath = "");
+                   const std::string& customMvarPath = "", const std::string& customVariantPath = "",
+                   const std::string& connectAddress = "");
 
     // Dispatches a developer/console command to haloreach.dll
     bool ExecuteCommand(const std::string& command);
@@ -55,7 +56,8 @@ public:
 private:
     // Builds the 0x2BF30-byte match descriptor launch block reversed from host-probe
     std::vector<uint8_t> BuildLaunchBlock(uint32_t mapId, uint32_t gameModeTag, int difficulty, uint64_t skulls,
-                                         const std::string& customMvarPath = "", const std::string& customVariantPath = "");
+                                         const std::string& customMvarPath = "", const std::string& customVariantPath = "",
+                                         const std::string& connectAddress = "");
     uint32_t ResolveMapId(const std::string& mapName);
 
     void* m_engineInstance = nullptr;

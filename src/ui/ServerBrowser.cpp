@@ -19,20 +19,6 @@ namespace noble {
 
 namespace {
 
-struct HostMap {
-    const char* scenario;
-    const char* name;
-};
-
-const HostMap kHostMaps[] = {
-    { "50_panopticon", "Boardwalk" },   { "70_boneyard", "Boneyard" },      { "45_launch_station", "Countdown" },
-    { "30_settlement", "Powerhouse" },  { "52_ivory_tower", "Reflection" }, { "35_island", "Spire" },
-    { "20_sword_slayer", "Sword Base" }, { "45_aftship", "Zealot" },        { "dlc_slayer", "Anchor 9" },
-    { "dlc_invasion", "Breakpoint" },   { "dlc_medium", "Tempest" },        { "condemned", "Condemned" },
-    { "trainingpreserve", "Highlands" }, { "forge_halo", "Forge World" },
-};
-const char* const kHostModes[] = { "Multiplayer", "Campaign", "Firefight", "Forge" };
-
 std::string Lower(std::string s) {
     std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(::tolower(c)); });
     return s;
@@ -68,7 +54,6 @@ ServerBrowser::ServerBrowser() {
         NOBLE_WARN("ServerBrowser: local network initialization failed: {}", UPnP::Get().GetStatus());
     }
     const SettingsData s = Settings::Get().Snapshot();
-    std::snprintf(m_hostSessionName, sizeof(m_hostSessionName), "%s's game", s.playerName.c_str());
 
     const std::string masterUrl = s.masterServerUrl.empty() ? "https://outbreak-z-test-server.onrender.com" : s.masterServerUrl;
     std::snprintf(m_masterUrl, sizeof(m_masterUrl), "%s", masterUrl.c_str());
@@ -80,6 +65,7 @@ void ServerBrowser::RefreshServers() {
     const SettingsData settings = Settings::Get().Snapshot();
     std::vector<ServerEntry> list;
     auto add = [&](ServerEntry e) {
+        if (e.hostAddress.empty() || e.maxPlayers <= 0 || e.mapName.empty()) return;
         for (auto& existing : list) {
             if (existing.hostAddress == e.hostAddress && existing.port == e.port) return;  // keep the first source
         }
@@ -88,29 +74,32 @@ void ServerBrowser::RefreshServers() {
         list.push_back(std::move(e));
     };
 
-    // 1. The game this player is hosting (always shown, even if its own beacon isn't heard).
+    // 1. The game this player is currently hosting from a pre-game lobby (if any).
     SessionManager& sessions = SessionManager::Get();
     if (sessions.IsHosting()) {
         const HostConfig& cfg = sessions.GetHostConfig();
-        ServerEntry e;
-        e.name = cfg.sessionName;
-        e.hostAddress = UPnP::Get().GetInternalIP();
-        e.port = cfg.port;
-        e.ping = 0;
-        e.playerCount = 1;
-        e.maxPlayers = cfg.maxPlayers;
-        e.gameMode = cfg.gameMode;
-        e.mapName = cfg.mapName;
-        e.variantName = cfg.gametypeName;
-        e.isPasswordProtected = !cfg.password.empty();
-        e.isOwn = true;
-        e.isMod = (cfg.mapName.find(".map") != std::string::npos || cfg.sessionName.find("[Mod]") != std::string::npos);
-        e.source = "YOU";
-        add(e);
+        if (cfg.maxPlayers > 0 && !cfg.mapName.empty()) {
+            ServerEntry e;
+            e.name = cfg.sessionName;
+            e.hostAddress = UPnP::Get().GetInternalIP();
+            e.port = cfg.port;
+            e.ping = 0;
+            e.playerCount = 1;
+            e.maxPlayers = cfg.maxPlayers;
+            e.gameMode = cfg.gameMode;
+            e.mapName = cfg.mapName;
+            e.variantName = cfg.gametypeName;
+            e.isPasswordProtected = !cfg.password.empty();
+            e.isOwn = true;
+            e.isMod = (cfg.mapName.find(".map") != std::string::npos || cfg.sessionName.find("[Mod]") != std::string::npos);
+            e.source = "YOU";
+            add(e);
+        }
     }
 
-    // 2. LAN beacons.
+    // 2. LAN beacons from other live instances on the subnet.
     for (const auto& d : sessions.GetDiscoveredSessions()) {
+        if (d.maxPlayers <= 0 || d.mapName.empty()) continue;
         ServerEntry e;
         e.name = d.sessionName;
         e.hostAddress = d.hostAddress;
@@ -129,8 +118,9 @@ void ServerBrowser::RefreshServers() {
         add(e);
     }
 
-    // 3. Master server list.
+    // 3. Master server list of active online games.
     for (const auto& m : MasterServerClient::Get().Sessions()) {
+        if (m.maxPlayers <= 0 || m.map.empty()) continue;
         ServerEntry e;
         e.name = m.name;
         e.hostAddress = m.address;
@@ -144,20 +134,6 @@ void ServerBrowser::RefreshServers() {
         e.inProgress = m.inProgress;
         e.isMod = m.isMod || (m.name.find("[Mod]") != std::string::npos);
         e.source = "ONLINE";
-        add(e);
-    }
-
-    // 4. Saved favourites that aren't advertising right now.
-    for (const auto& fav : settings.favorites) {
-        std::string address;
-        uint16_t port = 0;
-        if (!ParseAddress(fav, address, port)) continue;
-        ServerEntry e;
-        e.name = "Saved server";
-        e.hostAddress = address;
-        e.port = port;
-        e.ping = -1;
-        e.source = "FAVORITE";
         add(e);
     }
 
@@ -200,7 +176,6 @@ void ServerBrowser::Render() {
     ImGui::EndChild();
 
     if (m_showDirectConnectModal) RenderDirectConnectModal();
-    if (m_showHostModal) RenderHostModal();
     if (m_showMasterModal) RenderMasterServerModal();
 }
 
@@ -212,13 +187,11 @@ void ServerBrowser::RenderFilterBar() {
         if (NobleStyle::DangerButton("STOP HOSTING", ImVec2(140, 0))) {
             sessions.StopHosting();
             MasterServerClient::Get().StopAdvertising();
-            m_status = "Stopped hosting.";
+            m_status = "Session closed. Stopped hosting.";
             RefreshServers();
         }
-    } else if (NobleStyle::PrimaryButton("HOST GAME...", ImVec2(140, 0))) {
-        m_showHostModal = true;
     }
-    ImGui::SameLine();
+    if (hosting) ImGui::SameLine();
     if (ImGui::Button("DIRECT CONNECT...", ImVec2(160, 0))) m_showDirectConnectModal = true;
     ImGui::SameLine();
     if (ImGui::Button("REFRESH", ImVec2(100, 0))) {
@@ -258,121 +231,186 @@ void ServerBrowser::RenderFilterBar() {
 
 bool ServerBrowser::PassesFilters(const ServerEntry& s) const {
     if (m_searchQuery[0] != '\0') {
-        const std::string q = Lower(m_searchQuery);
-        if (Lower(s.name).find(q) == std::string::npos && Lower(s.mapName).find(q) == std::string::npos) return false;
+        const std::string needle = Lower(m_searchQuery);
+        const std::string name = Lower(s.name);
+        const std::string map = Lower(s.mapName);
+        if (name.find(needle) == std::string::npos && map.find(needle) == std::string::npos) return false;
     }
-    if (m_modeFilter > 0) {
-        const std::string want = Lower(kHostModes[m_modeFilter - 1]);
-        if (Lower(s.gameMode).find(want) == std::string::npos && s.source != "FAVORITE") return false;
-    }
+    if (m_modeFilter == 1 && s.gameMode != "Multiplayer") return false;
+    if (m_modeFilter == 2 && s.gameMode != "Campaign") return false;
+    if (m_modeFilter == 3 && s.gameMode != "Firefight") return false;
+    if (m_modeFilter == 4 && s.gameMode != "Forge") return false;
     if (m_hideFull && s.maxPlayers > 0 && s.playerCount >= s.maxPlayers) return false;
-    if (m_hideEmpty && s.playerCount == 0 && s.source != "FAVORITE") return false;
+    if (m_hideEmpty && s.playerCount <= 0) return false;
     if (m_showOnlyFavorites && !s.isFavorite) return false;
     return true;
 }
 
 void ServerBrowser::RenderServerList() {
-    int shown = 0;
-    const ImGuiTableFlags flags = ImGuiTableFlags_Resizable | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV |
-                                  ImGuiTableFlags_ScrollY;
-    if (ImGui::BeginTable("ServerTable", 7, flags, ImVec2(0, 0))) {
-        ImGui::TableSetupScrollFreeze(0, 1);
-        ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, 70.0f);
-        ImGui::TableSetupColumn("SERVER", ImGuiTableColumnFlags_WidthStretch);
-        ImGui::TableSetupColumn("MODE", ImGuiTableColumnFlags_WidthFixed, 100.0f);
-        ImGui::TableSetupColumn("MAP", ImGuiTableColumnFlags_WidthFixed, 130.0f);
-        ImGui::TableSetupColumn("PLAYERS", ImGuiTableColumnFlags_WidthFixed, 70.0f);
-        ImGui::TableSetupColumn("PING", ImGuiTableColumnFlags_WidthFixed, 60.0f);
-        ImGui::TableSetupColumn("ADDRESS", ImGuiTableColumnFlags_WidthFixed, 150.0f);
-        ImGui::TableHeadersRow();
+    static const ImGuiTableFlags flags =
+        ImGuiTableFlags_Resizable | ImGuiTableFlags_Reorderable | ImGuiTableFlags_Hideable |
+        ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersOuter | ImGuiTableFlags_ScrollY | ImGuiTableFlags_Sortable;
 
-        for (int i = 0; i < static_cast<int>(m_servers.size()); ++i) {
-            const ServerEntry& s = m_servers[i];
-            if (!PassesFilters(s)) continue;
-            ++shown;
-            ImGui::TableNextRow();
-            ImGui::PushID(i);
+    if (!ImGui::BeginTable("ServerTable", 7, flags, ImVec2(0, 0))) return;
 
-            ImGui::TableSetColumnIndex(0);
-            const ImVec4 tagColor = s.isOwn ? NobleStyle::Accent()
-                                  : s.source == "LAN" ? ImVec4(0.45f, 0.85f, 0.45f, 1.0f)
-                                  : s.source == "ONLINE" ? ImVec4(0.45f, 0.70f, 1.0f, 1.0f)
-                                  : ImVec4(0.85f, 0.75f, 0.35f, 1.0f);
-            ImGui::TextColored(tagColor, "%s%s", s.source.c_str(), s.isFavorite ? " *" : "");
+    ImGui::TableSetupColumn("Source",   ImGuiTableColumnFlags_WidthFixed, 48.0f);
+    ImGui::TableSetupColumn("Server",   ImGuiTableColumnFlags_WidthStretch);
+    ImGui::TableSetupColumn("Mode",     ImGuiTableColumnFlags_WidthFixed, 100.0f);
+    ImGui::TableSetupColumn("Map",      ImGuiTableColumnFlags_WidthFixed, 130.0f);
+    ImGui::TableSetupColumn("Players",  ImGuiTableColumnFlags_WidthFixed, 70.0f);
+    ImGui::TableSetupColumn("Ping",     ImGuiTableColumnFlags_WidthFixed, 50.0f);
+    ImGui::TableSetupColumn("Address",  ImGuiTableColumnFlags_WidthFixed, 150.0f);
+    ImGui::TableHeadersRow();
 
-            ImGui::TableSetColumnIndex(1);
-            std::string label = (s.isPasswordProtected ? "[LOCKED] " : "");
-            if (s.isMod) label += "[Mod] ";
-            label += s.name;
-            if (s.inProgress) label += "  (in progress)";
-            if (ImGui::Selectable(label.c_str(), m_selectedServerIndex == i,
-                                  ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowDoubleClick)) {
-                m_selectedServerIndex = i;
-                if (ImGui::IsMouseDoubleClicked(0)) TryJoin(s.hostAddress, s.port, s.isPasswordProtected);
-            }
+    int visibleIndex = 0;
+    for (int i = 0; i < static_cast<int>(m_servers.size()); ++i) {
+        const ServerEntry& s = m_servers[i];
+        if (!PassesFilters(s)) continue;
 
-            ImGui::TableSetColumnIndex(2);
-            ImGui::TextUnformatted(s.gameMode.c_str());
-            ImGui::TableSetColumnIndex(3);
-            ImGui::TextUnformatted(s.mapName.c_str());
-            ImGui::TableSetColumnIndex(4);
-            if (s.source == "FAVORITE") ImGui::TextDisabled("-");
-            else ImGui::Text("%d / %d", s.playerCount, s.maxPlayers);
-            ImGui::TableSetColumnIndex(5);
-            if (s.ping < 0) {
-                ImGui::TextDisabled("-");
-            } else {
-                const ImVec4 pingColor = s.ping < 60 ? ImVec4(0.4f, 0.9f, 0.4f, 1.0f)
-                                       : s.ping < 120 ? ImVec4(0.95f, 0.8f, 0.3f, 1.0f)
-                                                      : ImVec4(0.95f, 0.35f, 0.35f, 1.0f);
-                ImGui::TextColored(pingColor, "%d", s.ping);
-            }
-            ImGui::TableSetColumnIndex(6);
-            ImGui::TextDisabled("%s:%u", s.hostAddress.c_str(), static_cast<unsigned>(s.port));
-            ImGui::PopID();
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+
+        const bool selected = (m_selectedServerIndex == i);
+
+        // Column 0: source tag
+        if (s.isOwn) {
+            ImGui::TextColored(NobleStyle::Accent(), "YOU");
+        } else if (s.isFavorite) {
+            ImGui::TextColored(ImVec4(1.0f, 0.84f, 0.0f, 1.0f), "FAV");
+        } else {
+            ImGui::TextDisabled("%s", s.source.c_str());
         }
-        ImGui::EndTable();
+
+        // Column 1: name (selectable across row)
+        ImGui::TableNextColumn();
+        char label[128];
+        std::snprintf(label, sizeof(label), "%s##row%d", s.name.c_str(), i);
+        if (ImGui::Selectable(label, selected, ImGuiSelectableFlags_SpanAllColumns)) {
+            m_selectedServerIndex = i;
+        }
+        if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0) && !s.isOwn) {
+            TryJoin(s.hostAddress, s.port, s.isPasswordProtected);
+        }
+
+        // Column 2: mode
+        ImGui::TableNextColumn();
+        ImGui::TextUnformatted(s.gameMode.c_str());
+
+        // Column 3: map
+        ImGui::TableNextColumn();
+        if (s.isMod) {
+            ImGui::TextColored(ImVec4(0.35f, 0.85f, 0.95f, 1.0f), "[Mod] %s", s.mapName.c_str());
+        } else {
+            ImGui::TextUnformatted(s.mapName.c_str());
+        }
+
+        // Column 4: players
+        ImGui::TableNextColumn();
+        ImGui::Text("%d / %d", s.playerCount, s.maxPlayers);
+
+        // Column 5: ping
+        ImGui::TableNextColumn();
+        if (s.ping >= 0) {
+            const ImVec4 color = s.ping < 60 ? ImVec4(0.35f, 0.85f, 0.45f, 1.0f)
+                               : s.ping < 120 ? ImVec4(0.95f, 0.85f, 0.35f, 1.0f)
+                                              : ImVec4(0.95f, 0.40f, 0.35f, 1.0f);
+            ImGui::TextColored(color, "%d", s.ping);
+        } else {
+            ImGui::TextDisabled("-");
+        }
+
+        // Column 6: address
+        ImGui::TableNextColumn();
+        ImGui::TextDisabled("%s:%u", s.hostAddress.c_str(), s.port);
+
+        ++visibleIndex;
     }
-    if (shown == 0) {
-        ImGui::Spacing();
-        ImGui::TextDisabled("No games found yet. The list updates by itself.");
-        ImGui::TextDisabled("HOST GAME lists your own game here and on your LAN (and on the master server, if one is set).");
+
+    if (visibleIndex == 0) {
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        ImGui::TableNextColumn();
+        ImGui::TextDisabled("No servers found matching current filters.");
     }
+
+    ImGui::EndTable();
 }
 
 void ServerBrowser::RenderServerDetails() {
-    NobleStyle::Header("GAME DETAILS");
     if (m_selectedServerIndex < 0 || m_selectedServerIndex >= static_cast<int>(m_servers.size())) {
-        ImGui::TextWrapped("Select a game in the list.");
+        NobleStyle::Header("GAME DETAILS");
+        ImGui::Spacing();
+        ImGui::TextDisabled("Select a server from the list to view match information and join.");
         return;
     }
-    const ServerEntry s = m_servers[m_selectedServerIndex];
-    ImGui::TextWrapped("%s", s.name.c_str());
-    ImGui::TextDisabled("%s:%u  (%s)", s.hostAddress.c_str(), static_cast<unsigned>(s.port), s.source.c_str());
+
+    const ServerEntry& s = m_servers[m_selectedServerIndex];
+    NobleStyle::Header("GAME DETAILS");
     ImGui::Spacing();
-    if (!s.gameMode.empty()) ImGui::Text("Mode:     %s", s.gameMode.c_str());
-    if (!s.mapName.empty()) ImGui::Text("Map:      %s", s.mapName.c_str());
-    if (!s.variantName.empty()) ImGui::Text("Game type: %s", s.variantName.c_str());
-    if (s.source != "FAVORITE") ImGui::Text("Players:  %d / %d", s.playerCount, s.maxPlayers);
-    if (s.isPasswordProtected) ImGui::TextColored(ImVec4(0.95f, 0.8f, 0.3f, 1.0f), "Password protected");
+
+    ImGui::TextWrapped("%s", s.name.c_str());
+    ImGui::TextDisabled("%s:%u%s", s.hostAddress.c_str(), s.port, s.isOwn ? " (YOU)" : "");
+    ImGui::Spacing();
+
+    ImGui::TextDisabled("Mode:");
+    ImGui::SameLine(100);
+    ImGui::TextUnformatted(s.gameMode.c_str());
+
+    ImGui::TextDisabled("Map:");
+    ImGui::SameLine(100);
+    ImGui::TextUnformatted(s.mapName.c_str());
+
+    if (!s.variantName.empty()) {
+        ImGui::TextDisabled("Game type:");
+        ImGui::SameLine(100);
+        ImGui::TextUnformatted(s.variantName.c_str());
+    }
+
+    ImGui::TextDisabled("Players:");
+    ImGui::SameLine(100);
+    ImGui::Text("%d / %d", s.playerCount, s.maxPlayers);
+
+    if (s.isPasswordProtected) {
+        ImGui::TextColored(ImVec4(1.0f, 0.84f, 0.0f, 1.0f), "Password protected");
+    }
+    if (s.inProgress) {
+        ImGui::TextColored(NobleStyle::TextMuted(), "Match in progress (join in progress allowed)");
+    }
+    if (s.isMod) {
+        ImGui::TextColored(ImVec4(0.35f, 0.85f, 0.95f, 1.0f), "Custom Map / Modded Content");
+    }
+
     NobleStyle::SectionGap();
 
-    if (!s.isOwn) {
-        if (NobleStyle::PrimaryButton("JOIN", ImVec2(-1, 36))) TryJoin(s.hostAddress, s.port, s.isPasswordProtected);
-        ImGui::Spacing();
+    if (s.isOwn) {
+        ImGui::TextDisabled("You are hosting this game.");
+        if (NobleStyle::DangerButton("STOP HOSTING", ImVec2(-1, 34))) {
+            SessionManager::Get().StopHosting();
+            MasterServerClient::Get().StopAdvertising();
+            m_status = "Session closed. Stopped hosting.";
+            RefreshServers();
+        }
+    } else {
+        if (NobleStyle::PrimaryButton("JOIN GAME", ImVec2(-1, 38))) {
+            TryJoin(s.hostAddress, s.port, s.isPasswordProtected);
+        }
     }
-    if (ImGui::Button(s.isFavorite ? "REMOVE FAVOURITE" : "ADD TO FAVOURITES", ImVec2(-1, 0))) {
+
+    const char* favLabel = s.isFavorite ? "REMOVE FAVOURITE" : "ADD TO FAVOURITES";
+    if (ImGui::Button(favLabel, ImVec2(-1, 30))) {
         ToggleFavorite(s.hostAddress, s.port);
         RefreshServers();
     }
-    if (ImGui::Button("COPY INVITE", ImVec2(-1, 0))) {
-        std::string invite = s.hostAddress + ":" + std::to_string(s.port);
+
+    if (ImGui::Button("COPY INVITE", ImVec2(-1, 30))) {
+        const std::string invite = s.hostAddress + ":" + std::to_string(s.port);
         ImGui::SetClipboardText(invite.c_str());
-        m_status = "Invite copied to clipboard: " + invite;
+        m_status = "Copied address " + invite + " to clipboard.";
     }
-    if (ImGui::Button("COPY ADDRESS", ImVec2(-1, 0))) {
-        ImGui::SetClipboardText(Key(s.hostAddress, s.port).c_str());
-        m_status = "Address copied: " + Key(s.hostAddress, s.port);
+
+    if (ImGui::Button("COPY ADDRESS", ImVec2(-1, 30))) {
+        ImGui::SetClipboardText(s.hostAddress.c_str());
+        m_status = "Copied " + s.hostAddress + " to clipboard.";
     }
 }
 
@@ -417,84 +455,6 @@ void ServerBrowser::TryJoin(const std::string& address, uint16_t port, bool hasP
     PostMessageW(GetActiveWindow(), WM_CLOSE, 0, 0);
 }
 
-void ServerBrowser::RenderHostModal() {
-    ImGui::OpenPopup("HOST A GAME");
-    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(520, 0));
-    if (ImGui::BeginPopupModal("HOST A GAME", &m_showHostModal, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::TextWrapped("Local games use your device's LAN address. Online games open UDP 11774 with UPnP and publish your public address to the master server.");
-        NobleStyle::SectionGap();
-
-        ImGui::Text("Name");
-        ImGui::SetNextItemWidth(-1);
-        ImGui::InputText("##HostName", m_hostSessionName, IM_ARRAYSIZE(m_hostSessionName));
-        ImGui::Text("Mode");
-        ImGui::SetNextItemWidth(-1);
-        ImGui::Combo("##HostMode", &m_hostModeIndex, kHostModes, IM_ARRAYSIZE(kHostModes));
-        ImGui::Text("Map");
-        ImGui::SetNextItemWidth(-1);
-        if (ImGui::BeginCombo("##HostMap", kHostMaps[m_hostMapIndex].name)) {
-            for (int i = 0; i < static_cast<int>(IM_ARRAYSIZE(kHostMaps)); ++i) {
-                if (ImGui::Selectable(kHostMaps[i].name, i == m_hostMapIndex)) m_hostMapIndex = i;
-            }
-            ImGui::EndCombo();
-        }
-        ImGui::Text("Max players");
-        ImGui::SetNextItemWidth(-1);
-        ImGui::SliderInt("##HostMaxPlayers", &m_hostMaxPlayers, 2, 16);
-        ImGui::Text("Password (optional)");
-        ImGui::SetNextItemWidth(-1);
-        ImGui::InputText("##HostPassword", m_hostPassword, IM_ARRAYSIZE(m_hostPassword), ImGuiInputTextFlags_Password);
-        ImGui::Checkbox("Open UDP 11774 with UPnP and list online", &m_hostOnline);
-        NobleStyle::SectionGap();
-
-        if (NobleStyle::PrimaryButton("START HOSTING", ImVec2(180, 34))) {
-            HostConfig cfg;
-            cfg.sessionName = m_hostSessionName[0] ? m_hostSessionName : "Reach game";
-            cfg.gameMode = kHostModes[m_hostModeIndex];
-            cfg.mapName = kHostMaps[m_hostMapIndex].name;
-            cfg.gametypeName = m_hostModeIndex == 2 ? "Firefight" : "Slayer";
-            cfg.maxPlayers = m_hostMaxPlayers;
-            cfg.port = 11774;
-            cfg.password = m_hostPassword;
-            cfg.mode = m_hostOnline ? NetworkMode::Online_P2P : NetworkMode::Local_LAN;
-            if (!SessionManager::Get().StartHosting(cfg)) {
-                m_status = "Could not start hosting. Check the network status and try again.";
-                ImGui::EndPopup();
-                return;
-            }
-
-            if (m_hostOnline && MasterServerClient::Get().Enabled()) {
-                MasterAdvert advert;
-                advert.name = cfg.sessionName;
-                advert.port = cfg.port;
-                advert.maxPlayers = cfg.maxPlayers;
-                advert.map = cfg.mapName;
-                advert.mode = cfg.gameMode;
-                advert.hasPassword = !cfg.password.empty();
-                advert.isMod = (cfg.mapName.find(".map") != std::string::npos || cfg.sessionName.find("[Mod]") != std::string::npos);
-                MasterServerClient::Get().StartAdvertising(advert);
-            }
-            if (m_hostOnline && !UPnP::Get().IsActive()) {
-                m_status = "Hosting on LAN only: UPnP could not open UDP 11774, so the game was not listed online.";
-            } else if (m_hostOnline && !MasterServerClient::Get().Enabled()) {
-                m_status = "UDP 11774 is open, but no master server is configured.";
-            } else if (m_hostOnline) {
-                m_status = "Hosting \"" + cfg.sessionName + "\"; router reports public IP " +
-                           UPnP::Get().GetExternalIP() + ":11774.";
-            } else {
-                m_status = "Hosting \"" + cfg.sessionName + "\" on local address " +
-                           UPnP::Get().GetInternalIP() + ":11774.";
-            }
-            m_lastRefresh = -100.0;
-            m_showHostModal = false;
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("CANCEL", ImVec2(110, 34))) m_showHostModal = false;
-        ImGui::EndPopup();
-    }
-}
-
 void ServerBrowser::RenderDirectConnectModal() {
     ImGui::OpenPopup("DIRECT CONNECT");
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
@@ -510,7 +470,6 @@ void ServerBrowser::RenderDirectConnectModal() {
         ImGui::Text("Password");
         ImGui::SetNextItemWidth(-1);
         ImGui::InputText("##Password", m_directConnectPassword, IM_ARRAYSIZE(m_directConnectPassword), ImGuiInputTextFlags_Password);
-        // Paste button positioned inline above
         NobleStyle::SectionGap();
 
         std::string address;
