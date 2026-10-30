@@ -69,6 +69,61 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-31, 01:40 ET) - Both sides' logs aligned: guest was in the match, then a membership update ended it (WeabooTyler117 / DeepSeek)
+
+O7 sent the **server** log for the 19:39 attempt (session `b3e82185d33714a5`). Aligning it with the guest client log
+(`docs/campaign-coop-timeline-2026-10-30.md`, also in Downloads) gives this:
+
+| ET time | side | event |
+|---|---|---|
+| 19:39:20.811 | server | host relay socket connected (menu process) |
+| 19:39:46.132 | guest | lobby launch received (m10, campaign) |
+| 19:39:46.562 | guest | guest relaunched with `-connect 147.124.149.202:11774` |
+| 19:39:47.299 | server | host relay socket connected again (match process) |
+| ~19:39:47-49 | server | second guest id connects - room has host + 2 guest ids (menu + match) |
+| 19:39:49.279 | guest | engine launched as guest, relay thread started |
+| 19:39:49.938 | guest | `SEND msg 8 (join-request)`, host replies `msg 4` |
+| 19:39:56.335 | server | host relay socket disconnected (the **menu** process exiting) + first guest id gone |
+| **19:39:57.497** | guest | **`game session started at frame 530, loading screen off`** |
+| 19:40:05.597 | guest | `RECV msg 34` (normal tick traffic) |
+| **19:40:08.863** | guest | **`RECV msg 26` (membership update) -> `SEND msg 27` -> `GameResults` 6 ms later** |
+| 19:40:10.215 | guest | channel closed, `reason 14` (state was 5) |
+| 19:40:11.189 | guest | post-game panel -> quit (user action) |
+| 19:40:20.995 | server | host relay socket disconnected (match process ending) |
+
+### What that rules out
+
+- **Relay / backend is fine.** Both sides had relay sockets; the 19:39:56 disconnect pair is the *menu* processes exiting
+  after the hand-off, not the match. The match ran over direct UDP (`relayFallback: false`) with normal traffic
+  (msg 39/41/34/35/26/27 both directions) right up to the end.
+- **The guest joined properly.** `game session started` at 19:39:57, and the 11 s of in-match traffic was healthy.
+- **Not the old mid-cinematic bug, not a join refusal.** No abort, no boot_peer, no msg 10, no refusal on the guest.
+
+### Strongest clue
+
+`RECV msg 26` (the large 9552-byte **membership update**) arrives at 19:40:08.863 and `GameResults` fires 6 ms later. A
+membership update immediately followed by results is what a client receives when **it is removed from the session** (the
+host leaves, the engine drops the peer, or a slot re-assign happens). That points at the host's membership, not at the
+guest's state.
+
+Attempted a small diagnostic (log the engine peer count around every msg 26) but reverted it: `LobbyPatches.cpp` is also
+compiled into `noble-dedicated`, which does not link `NetworkTransport`, so the client-only call broke that target. If we
+want it later, it needs a client-only macro in CMake.
+
+### Next: O7's host client log for 19:39:40-19:40:10
+
+The guest log cannot show *why* membership changed. His client log will say whether:
+
+- `abort called ... reason=` fired (27/0x1B incompatible, 28/0x1C peer disconnect, 29/0x1D co-op state sync timeout),
+- `boot_peer ... reason ...` ran (host removed the guest),
+- or the host's own `PauseMenu: game over` came first (host ended/crashed the match).
+
+```powershell
+.\tools\extract-coop-log.ps1 -Log build\bin\Release\noble-client.log `
+    -Start "2026-10-30 19:39:40" -End "2026-10-30 19:40:10" -Role host `
+    -Out "$env:USERPROFILE\Downloads\campaign-host.log.txt"
+```
+
 ## 0. Pick up here (2026-10-31, 01:00 ET) - Campaign still ends by itself; guest extract prepared for O7 (WeabooTyler117 / DeepSeek)
 
 Co-op campaign failed again at 19:39. Guest-side evidence (Tyler's log, extract at
