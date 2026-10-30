@@ -40,7 +40,7 @@ public:
     // Launch a retail map or mission from the Steam MCC installation with optional custom variants or connect to remote host
     bool LaunchMap(const std::string& mapName, const std::string& gameMode = "multiplayer", int difficulty = 1, uint64_t skulls = 0,
                    const std::string& customMvarPath = "", const std::string& customVariantPath = "",
-                   const std::string& connectAddress = "");
+                   const std::string& connectAddress = "", int expectedPeers = 0);
 
     // Dispatches a developer/console command to haloreach.dll
     bool ExecuteCommand(const std::string& command);

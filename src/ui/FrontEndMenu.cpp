@@ -1937,6 +1937,12 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
                     if (!curId.empty()) st.lobbySessionId = curId;
                     if (!curTok.empty()) st.lobbySessionToken = curTok;
                 }
+                // Refresh the roster once at launch so the host's peer barrier counts every
+                // guest that is actually in the lobby, not a snapshot that is up to 1.2 s old.
+                if (!st.lobbySessionId.empty() && MasterServerClient::Get().Enabled()) {
+                    const LobbyState current = MasterServerClient::Get().FetchLobbyStateSync(st.lobbySessionId);
+                    if (current.ok && !current.roster.empty()) st.lobbyRoster = current.roster;
+                }
                 MasterServerClient::Get().LaunchLobbySync(st.lobbySessionId, st.lobbyMap, st.lobbyMode, variantFileName, st.lobbyDifficulty, st.lobbySkulls);
 
                 choice.play = true;
@@ -1946,6 +1952,10 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
                 choice.hostOnline = (st.lobbyNetMode == 1);
                 choice.hostPublic = (st.lobbyPrivacy == 0);
                 choice.hostMaxPlayers = st.lobbyMaxPlayers;
+                choice.expectedPeers = 0;
+                for (const auto& player : st.lobbyRoster) {
+                    if (!player.isHost) ++choice.expectedPeers;
+                }
                 choice.map = st.lobbyMap;
                 choice.mode = st.lobbyMode;
                 choice.variantPath = st.lobbyVariantPath;
@@ -3060,6 +3070,9 @@ void FrontEndMenu::RenderOverlayImpl(IDXGISwapChain* swapChain, bool clear) {
                     if (choice.hostPublic) args += L" -public";
                     else args += L" -private";
                     args += L" -max-players " + std::to_wstring(choice.hostMaxPlayers);
+                    if (choice.expectedPeers > 0) {
+                        args += L" -wait-peers " + std::to_wstring(choice.expectedPeers);
+                    }
                     if (!choice.sessionId.empty()) {
                         args += L" -session-id \"" + ToWide(choice.sessionId) + L"\"";
                         if (!choice.sessionToken.empty()) {

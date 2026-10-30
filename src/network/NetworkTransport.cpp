@@ -151,6 +151,7 @@ bool NetworkTransport::Initialize(bool isHost, const std::string& remoteIp, uint
         std::lock_guard<std::mutex> lock(m_mutex);
         m_peerTable.clear();
         m_addrToPeer.clear();
+        m_gamePeers.clear();
     }
 
     m_packetsSent.store(0);
@@ -188,6 +189,11 @@ bool NetworkTransport::Initialize(bool isHost, const std::string& remoteIp, uint
     return true;
 }
 
+size_t NetworkTransport::GetGamePeerCount() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_gamePeers.size();
+}
+
 void NetworkTransport::Shutdown() {
     StopRelay();
 
@@ -204,6 +210,7 @@ void NetworkTransport::Shutdown() {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_peerTable.clear();
     m_addrToPeer.clear();
+    m_gamePeers.clear();
 
     NOBLE_INFO("NetworkTransport: Shutdown complete.");
 }
@@ -798,6 +805,12 @@ bool NetworkTransport::QueueWirePacket(const uint8_t* wire, size_t wireLen, bool
     pkt.sender = sender;
     uint16_t port = 0;
     std::memcpy(&port, wire + sizeof(uint64_t), sizeof(uint16_t));
+    if (port == 1000) {
+        // Port 1000 is the engine's channel endpoint. Seeing a peer here proves that its
+        // haloreach.dll session has progressed past the out-of-band join handshake.
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_gamePeers.insert(sender);
+    }
     pkt.fromRelay = fromRelay;
     pkt.data.assign(wire + kWireHeaderBytes, wire + wireLen);
     auto& q = m_portQueues[port];

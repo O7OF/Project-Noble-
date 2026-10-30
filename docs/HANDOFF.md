@@ -11,6 +11,54 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-30, 03:25 ET) - Forge / Campaign Netplay Root Causes, Invasion Mode Compatibility, and All-Mode Variant Loading (O7OF / Dominus)
+
+All changes compiled cleanly with MSBuild Release (`noble-client.exe` and `noble-dedicated.exe`), 0 errors.
+
+### 1. Forge was launching the map-editor engine path, not the Forge mode
+- **REA evidence:** `rea analyze` on `haloreach.dll` (SHA-256 `738dd2d24ea3aea12e1ee9aa4a61094bf116027d42004c35a19e5048608b0894`, image base `0x180000000`) and `rea decompile` at `0x18000DCCC` show the engine-mode dispatcher. Mode `0x04` is explicitly excluded from the normal game-start branch (`DAT_1824971ac != 4`); only `0x01` campaign, `0x03` multiplayer/Megalo, and `0x05` Firefight take the normal paths.
+- **Observed failure:** the 01:25 and 01:27 Forge runs set launch-block `+0x0C = 0x04`, loaded Forge World, then stalled at `launch state 2` / `LoadProgress 1.0%` forever. `c_game_engine Start` returned `0xAC4/0xAC8`, and no game session started.
+- **Fix (`BlamEngine.cpp:394`):** Forge is a **multiplayer Megalo** mode. `+0x0C` now stays `0x03`; the Forge behavior comes from `00_basic_editing_054.bin`, not a different engine class. `forge` and `sandbox` mode strings map to engine tag `3`.
+- **Verified:** a fresh `forge_halo` + `00_basic_editing_054.bin` host run reached `game session started at frame 294`, loaded the Forge HUD (`StringLookup -> Forge`), and ran until `-quit-after`.
+
+### 2. Campaign / Forge hosts entered simulation before the guest finished joining
+- **Observed failure:** in the 02:24 two-process Campaign run the guest sent join-request for ~16 s, the host only processed it after loading, then the host called `boot_peer 1 reason 9` and immediately produced `GameResults`; the mission ended instead of starting co-op.
+- **Root cause:** the host posts `Command 11` (Event: In-Game) from a detached thread 5 s after `Command 10` and does not know whether the lobby guest has completed the engine join handshake. Slayer/Firefight tolerate a late join; Campaign/Forge membership cleanup removes the peer (`haloreach+0x44FC94 -> boot_peer reason 9`) and ends the match.
+- **Fix:**
+  - `FrontEndMenu` now refreshes the lobby roster, counts non-host players, and passes `-wait-peers <n>` to the relaunched host (`FrontEndMenu.cpp:1940`, `FrontEndMenu.cpp:3073`).
+  - `main.cpp` parses `-wait-peers` and passes it to `BlamEngine::LaunchMap`.
+  - `NetworkTransport` records distinct peers that send on engine port `1000` (`NetworkTransport.cpp:812`) and exposes `GetGamePeerCount()` (`NetworkTransport.cpp:192`).
+  - `BlamEngine.cpp:847` holds `Command 11` until the expected engine peers arrive (60 s safety timeout), then waits 8 s for player-slot insertion and guest scenario load for Campaign/Forge (2 s for other modes).
+- **Result:** the host can no longer enter simulation before its lobby guests have established the engine channel. A live two-process Campaign run was not completed inside this session (the managed shell cannot reliably host two GPU clients), but the causal `boot_peer reason 9` path is fixed at the point where the host decides to advance.
+
+### 3. Invasion generic variant is map-incompatible; auto-select the stock map-specific variant
+- **Observed failure:** `70_boneyard` + `3nvasion_054.bin` produced `EngineEvent reason=4 message='map and game incompatible'` and `PostCommand(11)` returned a garbage status; the match never started.
+- **Variant evidence:** the generic file contains only `Invasion`; the Boneyard file contains `INVASION: BONEYARD` and is a different 21,753-byte variant. MCC ships map-specific Invasion variants (`3nvasion_boneyard_054`, `3nvasion_spire_054`, `3nvasion_dlc_054`).
+- **Fix (`BlamEngine.cpp:217`):** when the requested stem is exactly `3nvasion_054`, select the map-specific file for Boneyard (1080), Spire (1200), or Breakpoint (2002). The substitution is logged and only happens when the target file exists.
+- **Verified:** the same command now logs `using map-specific '3nvasion_boneyard_054.bin' instead`, reaches `game session started`, and no longer emits `map and game incompatible`.
+
+### 4. Other custom game modes no longer silently fall back to Slayer
+- **Root cause:** if a requested `-variant` path was missing, `BuildLaunchBlock` fell through to the default `slayer_054.bin`. That made CTF/Assault/Invasion/etc. appear to "work" as Slayer or fail unpredictably.
+- **Fix (`BlamEngine.cpp:188`, `BlamEngine.cpp:659`):** variants are resolved against the absolute path, MCC `game_variants`, Noble `data/game_variants`, `data/variants`, and the working directory. A requested-but-missing variant now warns and leaves the block without a substitute; only a host that requested no variant gets the stock Slayer default.
+- **Verified:** CTF on Sword Base reached the in-game CTF HUD (`CAPTURE HFLG`, timer `10:`), and Forge/Firefight defaults are unchanged.
+
+### 5. Co-op slot expansion no longer overrides Campaign/Firefight membership
+- **Fix (`LobbyPatches.cpp`):** `Hook_SetSlotCounts` now expands only the 16-player multiplayer session (`publicSlots == 16`). It no longer turns Campaign/Firefight 4-slot memberships into 8/32, which made the engine clean out legitimate co-op peers.
+- The existing Campaign abort/insertion hooks and gate patches remain in place. REA byte checks confirmed the current patch offsets:
+  - `0x411B50`: `74 0D` at `+0x1E` (the `je` after `evaluate_coop_insertion_point`), patched to `EB 0D`.
+  - `0x409530`: Campaign cap `7E 22` at `0x40954A`, Firefight cap `76 11` at `0x40955B`, `cmovz ecx,edx` at `0x40958B`.
+  - `0x397650`: Campaign in-progress join gate `75 0A` at `0x397689`.
+
+### 6. Verification summary
+- `forge_halo` + Forge: game session started, Forge loaded.
+- `70_boneyard` + generic Invasion: substituted to Boneyard variant, game session started, no incompatibility.
+- `20_sword_slayer` + CTF: in-game CTF HUD (`CAPTURE HFLG`).
+- Engine mode values and gate bytes checked with REA against the shipped `haloreach.dll`; no MCC files modified.
+
+**Remaining test:** run a real two-PC Campaign co-op and Forge join with the new `-wait-peers` barrier, and confirm host stays in-game after the guest loads. If the host still boots the guest, next step is to log `[session+0x17C]` and `[session+0x118]` for each slot inside the `0x44FC94` cleanup path to identify which membership field still fails the "in game" test.
+
+--
+
 ## 0. Pick up here (2026-10-30, 02:20 ET) - Definitive Fix for Campaign Co-op "Error hosting co-op" (Session Abort Suppression & Gate Neutralization) (O7OF / Dominus)
 
 All changes compiled cleanly via MSBuild Release configuration (`noble-client.exe` and `noble-dedicated.exe`) with **0 errors and 0 warnings**:

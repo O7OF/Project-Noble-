@@ -23,10 +23,14 @@ typedef void(__fastcall* SetSlotCountsFn)(void* thisPtr, int32_t privateSlots, i
 static SetSlotCountsFn s_originalSetSlotCounts = nullptr;
 
 static void __fastcall Hook_SetSlotCounts(void* thisPtr, int32_t privateSlots, int32_t publicSlots, bool isRanked) {
+    // Only the 16-player multiplayer session is expanded. Campaign co-op (4) and Firefight (4)
+    // use their own membership layouts; forcing them to 8/32 makes the host clean legitimate
+    // peers out of the session (haloreach+0x44FC94 -> boot reason 9), which is fatal for co-op.
     int32_t targetSlots = publicSlots;
-    if (publicSlots == 16 || publicSlots < static_cast<int32_t>(LobbyPatches::GetMaxMultiplayerPlayers())) {
-        targetSlots = static_cast<int32_t>(LobbyPatches::GetMaxMultiplayerPlayers());
-        NOBLE_INFO("LobbyPatches: Expanding session slot count from {} to {} (private={}, isRanked={})", 
+    const int32_t expanded = static_cast<int32_t>(LobbyPatches::GetMaxMultiplayerPlayers());
+    if (publicSlots == 16 && expanded > publicSlots) {
+        targetSlots = expanded;
+        NOBLE_INFO("LobbyPatches: Expanding multiplayer session slot count from {} to {} (private={}, isRanked={})",
             publicSlots, targetSlots, privateSlots, isRanked);
     }
 

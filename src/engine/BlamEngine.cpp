@@ -183,6 +183,56 @@ static uint32_t MapIdForLaunchIndex(uint32_t launchIndex) {
     return 0;
 }
 
+// Resolve a requested game variant (absolute path, file name, or "game_variants\<file>")
+// against the places Noble actually receives variants from.
+static std::filesystem::path ResolveVariantFile(const std::string& requested) {
+    if (requested.empty()) return {};
+    std::error_code ec;
+    const std::filesystem::path direct(requested);
+    if (std::filesystem::is_regular_file(direct, ec)) return direct;
+
+    const auto reachDir = ReachHost::Get().GetReachDir();
+    const auto dataDir = ReachHost::Get().GetDataDir();
+    const std::filesystem::path name = direct.filename();
+    const std::filesystem::path candidates[] = {
+        reachDir / "game_variants" / direct,
+        reachDir / "game_variants" / name,
+        dataDir / "game_variants" / direct,
+        dataDir / "game_variants" / name,
+        dataDir / "variants" / name,
+        std::filesystem::current_path() / direct,
+        std::filesystem::current_path() / name,
+    };
+    for (const auto& candidate : candidates) {
+        if (std::filesystem::is_regular_file(candidate, ec)) return candidate;
+    }
+    return {};
+}
+
+// Some stock Reach variants are map-specific even though MCC also ships a generic file
+// with the same game type. Invasion is the important case: 3nvasion_054.bin carries no
+// compatibility with Boneyard/Spire/Breakpoint and the engine rejects it with
+// "map and game incompatible" (EngineEvent reason 4). Substitute the matching stock
+// map-specific Invasion variant instead of silently running Slayer.
+static std::filesystem::path SelectMapSpecificVariant(const std::filesystem::path& requested, uint32_t mapId) {
+    if (requested.empty()) return requested;
+    const std::wstring stem = requested.stem().wstring();
+    if (_wcsicmp(stem.c_str(), L"3nvasion_054") != 0) return requested;
+
+    const wchar_t* replacement = nullptr;
+    switch (mapId) {
+        case 1080: replacement = L"3nvasion_boneyard_054.bin"; break; // Boneyard
+        case 1200: replacement = L"3nvasion_spire_054.bin";    break; // Spire
+        case 2002: replacement = L"3nvasion_dlc_054.bin";      break; // Breakpoint
+        default: return requested;
+    }
+
+    const std::filesystem::path candidate = ReachHost::Get().GetReachDir() / "game_variants" / replacement;
+    std::error_code ec;
+    if (std::filesystem::is_regular_file(candidate, ec)) return candidate;
+    return requested;
+}
+
 uint32_t BlamEngine::ResolveMapId(const std::string& mapName) {
     std::string lower = mapName;
     std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) {
@@ -337,8 +387,11 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
         block[2] = 0x00;
         block[3] = 0x10;
         block[4] = 0x03;
-        // +0x0C: 1 = menu / campaign, 3 = multiplayer, 5 = firefight (from the layout of RR's captured blocks).
-        block[0x0C] = (isMainMenu || isCampaign) ? 0x01 : (isFirefight ? 0x05 : (isForge ? 0x04 : 0x03));
+        // +0x0C selects the engine class: 1 = campaign, 3 = multiplayer/Megalo (Forge is a
+        // multiplayer mode), 5 = Firefight. 0x04 is the special map-editor path, NOT Forge:
+        // the engine's mode dispatcher explicitly excludes 0x04 from the normal game-start
+        // branch (see haloreach+0xDCCC), so launching Forge with it stalls at launch state 2.
+        block[0x0C] = (isMainMenu || isCampaign) ? 0x01 : (isFirefight ? 0x05 : 0x03);
         block[0x10] = isMainMenu ? 0xFE : 0xBE;
         block[0x11] = isMainMenu ? 0xFF : 0x00;
         block[0x12] = isMainMenu ? 0xFF : 0x00;
@@ -602,14 +655,26 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
     // (before 2026-10-29 it logged a bogus "No game variant found (looked for '')" on every menu boot).
     if (!isMainMenu && (!isCampaign || !customVariantPath.empty())) {
         std::filesystem::path variantPath;
-        if (!customVariantPath.empty() && std::filesystem::exists(customVariantPath)) {
-            variantPath = customVariantPath;
-        } else if (!customVariantPath.empty() && std::filesystem::exists(ReachHost::Get().GetReachDir() / "game_variants" / customVariantPath)) {
-            variantPath = ReachHost::Get().GetReachDir() / "game_variants" / customVariantPath;
-        } else if (!isCampaign && !isMainMenu) {
+        if (!customVariantPath.empty()) {
+            variantPath = ResolveVariantFile(customVariantPath);
+            const std::filesystem::path requestedPath = variantPath;
+            // mapId here is the launch index (190..209); the engine's compatibility field is
+            // the map-info id (e.g. Boneyard 1080, Spire 1200, Breakpoint 2002).
+            variantPath = SelectMapSpecificVariant(variantPath, MapIdForLaunchIndex(mapId));
+            if (!requestedPath.empty() && variantPath != requestedPath) {
+                NOBLE_INFO("BlamEngine: '{}' is not compatible with this map; using map-specific '{}' instead",
+                           requestedPath.filename().string(), variantPath.filename().string());
+            }
+            if (variantPath.empty()) {
+                NOBLE_WARN("BlamEngine: requested game variant '{}' was not found; refusing to substitute Slayer. "
+                           "The match will start with the launch block's embedded mode instead.",
+                           customVariantPath);
+            }
+        } else if (!isCampaign) {
             // Firefight needs a Firefight game variant (otherwise the engine reports "no game
             // selected"); RR likewise loads <MCC>\haloreach\game_variants\<mode>.bin for it.
             // Forge needs 00_basic_editing_054.bin for item spawning and editing.
+            // Campaign blocks already contain their own mission variant and are left untouched.
             const char* defaultVariant = isFirefight ? "hr_ff_standard_1set.bin"
                                        : isForge     ? "00_basic_editing_054.bin"
                                        : "slayer_054.bin";
@@ -632,7 +697,7 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
                     NOBLE_ERROR("BlamEngine: haloreach.dll could not decode game variant '{}'", variantPath.string());
                 }
             }
-        } else {
+        } else if (!variantPath.empty()) {
             NOBLE_WARN("BlamEngine: No game variant found for launch block (looked for '{}')", variantPath.string());
         }
     }
@@ -710,7 +775,7 @@ bool BlamEngine::ExecuteCommand(const std::string& command) {
 
 bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMode, int difficulty, uint64_t skulls,
                            const std::string& customMvarPath, const std::string& customVariantPath,
-                           const std::string& connectAddress) {
+                           const std::string& connectAddress, int expectedPeers) {
     if (!m_isInitialized || !m_engineInstance) return false;
 
     m_currentMap = mapName;
@@ -724,14 +789,18 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
     NOBLE_INFO("=================================================");
 
     uint32_t mapId = ResolveMapId(mapName);
-    uint32_t gameModeTag = 2; // Default multiplayer
-    if ((mapId >= 210 && mapId <= 219) || gameMode == "firefight" || gameMode == "Firefight") {
+    uint32_t gameModeTag = 2; // Default multiplayer (Slayer, CTF, Invasion, all Megalo variants)
+    const bool forgeMode = _stricmp(gameMode.c_str(), "forge") == 0 ||
+                           _stricmp(gameMode.c_str(), "sandbox") == 0;
+    if ((mapId >= 210 && mapId <= 219) || _stricmp(gameMode.c_str(), "firefight") == 0) {
         gameModeTag = 1035; // 0x40B Firefight
-    } else if (gameMode == "forge" || gameMode == "Forge") {
-        gameModeTag = 3;    // Forge
-    } else if ((mapId >= 178 && mapId <= 189) || gameMode == "Campaign" || gameMode == "campaign") {
+    } else if (forgeMode) {
+        // Forge is a multiplayer Megalo mode, not the special map-editor engine (0x04).
+        gameModeTag = 3;
+    } else if ((mapId >= 178 && mapId <= 189) || _stricmp(gameMode.c_str(), "campaign") == 0) {
         gameModeTag = 1;    // Campaign
-    } else if (mapId == static_cast<uint32_t>(-2) || mapId == 0 || gameMode == "mainmenu" || gameMode == "menu") {
+    } else if (mapId == static_cast<uint32_t>(-2) || mapId == 0 ||
+               _stricmp(gameMode.c_str(), "mainmenu") == 0 || _stricmp(gameMode.c_str(), "menu") == 0) {
         gameModeTag = 0;    // Main Menu
     }
 
@@ -760,7 +829,9 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
         // clients 4000 ms to establish membership sync before posting Command 10/11.
         // For solo / offline matches, 300 ms is sufficient.
         const bool isOnlineHost = noble::NetworkTransport::Get().IsActive() && noble::NetworkTransport::Get().IsHost();
-        std::thread([this, isOnlineHost]() {
+        const bool settleLonger = (gameModeTag == 1 || gameModeTag == 3); // campaign co-op / Forge
+        const int peersToWaitFor = (isOnlineHost && expectedPeers > 0) ? expectedPeers : 0;
+        std::thread([this, isOnlineHost, peersToWaitFor, settleLonger]() {
             const int startDelay = isOnlineHost ? 1000 : 300;
             std::this_thread::sleep_for(std::chrono::milliseconds(startDelay));
             if (m_engineInstance && m_fnProcessEvent) {
@@ -768,9 +839,46 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
                 int32_t status10 = m_fnProcessEvent(m_engineInstance, 10, 0);
                 NOBLE_INFO("BlamEngine: PostCommand(10) returned: 0x{:X}", status10);
 
-                const int simDelay = isOnlineHost ? 5000 : 200;
-                std::this_thread::sleep_for(std::chrono::milliseconds(simDelay));
-                NOBLE_INFO("BlamEngine: Posting Command 11 via vtbl+0x18 after {}ms...", simDelay);
+                // Campaign co-op and Forge do not tolerate the host entering simulation before
+                // the guest has completed the engine join handshake. Slayer/Firefight can recover
+                // from a late join; these modes instead clean the peer out of the membership and
+                // immediately end the mission. When the lobby told us how many guests it launched
+                // with, hold Command 11 until their port-1000 engine traffic arrives.
+                if (peersToWaitFor > 0) {
+                    const ULONGLONG deadline = GetTickCount64() + 60000;
+                    size_t joined = 0;
+                    ULONGLONG lastLog = 0;
+                    NOBLE_INFO("BlamEngine: waiting for {} remote engine peer(s) before starting simulation...",
+                               peersToWaitFor);
+                    while (GetTickCount64() < deadline) {
+                        joined = NetworkTransport::Get().GetGamePeerCount();
+                        if (joined >= static_cast<size_t>(peersToWaitFor)) break;
+                        const ULONGLONG now = GetTickCount64();
+                        if (lastLog == 0 || now - lastLog >= 5000) {
+                            lastLog = now;
+                            NOBLE_INFO("BlamEngine: peer wait: {}/{} engine peer(s) connected", joined, peersToWaitFor);
+                        }
+                        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                    }
+                    joined = NetworkTransport::Get().GetGamePeerCount();
+                    if (joined >= static_cast<size_t>(peersToWaitFor)) {
+                        // Give the engine time to insert the new player slots and for the guest
+                        // to finish loading its scenario before the simulation starts. Campaign
+                        // and Forge need a longer window than Slayer/Firefight.
+                        const int settleMs = settleLonger ? 8000 : 2000;
+                        NOBLE_INFO("BlamEngine: {} engine peer(s) ready; holding simulation start for {} ms",
+                                   joined, settleMs);
+                        std::this_thread::sleep_for(std::chrono::milliseconds(settleMs));
+                    } else {
+                        NOBLE_WARN("BlamEngine: peer wait timed out with {}/{} engine peer(s); starting anyway",
+                                   joined, peersToWaitFor);
+                    }
+                } else {
+                    const int simDelay = isOnlineHost ? 5000 : 200;
+                    std::this_thread::sleep_for(std::chrono::milliseconds(simDelay));
+                }
+
+                NOBLE_INFO("BlamEngine: Posting Command 11 via vtbl+0x18...");
                 int32_t status11 = m_fnProcessEvent(m_engineInstance, 11, 0);
                 NOBLE_INFO("BlamEngine: PostCommand(11) returned: 0x{:X}", status11);
             }

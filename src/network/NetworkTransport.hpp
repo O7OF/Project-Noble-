@@ -7,6 +7,7 @@
 #include <string>
 #include <mutex>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #include <deque>
 #include <thread>
@@ -35,6 +36,10 @@ public:
     uint64_t GetHostMachineId() const { return m_hostMachineId; }
     uint64_t GetSessionId() const { return m_sessionId; }
     uint16_t GetLocalPort() const { return m_localPort; }
+
+    // Number of distinct remote peers whose Blam! channel traffic (engine port 1000) has
+    // arrived in this process. Used as the join barrier for campaign co-op / Forge.
+    size_t GetGamePeerCount() const;
 
     void GetSessionGuid(uint8_t outGuid16[16]) const;
 
@@ -104,9 +109,11 @@ private:
     uint64_t m_hostMachineId = 0;
     uint64_t m_sessionId = kNobleSessionId;
 
-    std::mutex m_mutex;
+    mutable std::mutex m_mutex;
     std::unordered_map<uint64_t, sockaddr_in> m_peerTable;
     std::unordered_map<std::string, uint64_t> m_addrToPeer;
+    // Distinct peers observed sending Blam! channel traffic (port 1000).
+    std::unordered_set<uint64_t> m_gamePeers;
 
     std::atomic<uint64_t> m_packetsSent{ 0 };
     std::atomic<uint64_t> m_packetsRecv{ 0 };

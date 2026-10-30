@@ -222,6 +222,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     bool hostOnline = true;
     bool hostPublic = true;
     int hostMaxPlayers = 16;
+    int expectedPeers = 0;
     std::string connectAddress = "";
     std::string connectSessionId = "";
     std::string connectSessionToken = "";
@@ -267,6 +268,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
                 hostPublic = false;
             } else if (arg == L"-max-players" && i + 1 < numArgs) {
                 hostMaxPlayers = _wtoi(argvW[++i]);
+            } else if (arg == L"-wait-peers" && i + 1 < numArgs) {
+                expectedPeers = _wtoi(argvW[++i]);
             } else if (arg == L"-connect" && i + 1 < numArgs) {
                 connectAddress = WideToNarrow(argvW[++i]);
             } else if (arg == L"-session-id" && i + 1 < numArgs) {
@@ -355,6 +358,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         if (hostPublic) args += L" -public";
         else args += L" -private";
         args += L" -max-players " + std::to_wstring(hostMaxPlayers);
+        if (expectedPeers > 0) args += L" -wait-peers " + std::to_wstring(expectedPeers);
     }
     noble::Relaunch::SetCurrentGameArgs(args);
     noble::PauseMenu::SetLoadingMap(launchMap);
@@ -433,7 +437,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             }
         }
 
-        blamEngine->LaunchMap(launchMap, launchMode, launchDifficulty, launchSkulls, customMvar, customVariant, connectAddress);
+        blamEngine->LaunchMap(launchMap, launchMode, launchDifficulty, launchSkulls, customMvar, customVariant, connectAddress, expectedPeers);
     } else {
         if (launchHost) {
             // Bind UDP port 11774 and start Master Server advertisement + WebSocket Relay BEFORE
@@ -494,7 +498,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         }
 
         NOBLE_INFO("Launching Halo: Reach Engine: Target Map='{}', Mode='{}'", launchMap, launchMode);
-        blamEngine->LaunchMap(launchMap, launchMode, launchDifficulty, launchSkulls, customMvar, customVariant);
+        blamEngine->LaunchMap(launchMap, launchMode, launchDifficulty, launchSkulls, customMvar, customVariant, "", expectedPeers);
     }
 
     NOBLE_INFO("Authentic Halo: Reach host message loop active. Driving frames...");

@@ -17,6 +17,7 @@ struct FrontEndChoice {
     bool hostOnline = true;      // true: UPnP online P2P; false: Local LAN
     bool hostPublic = true;      // true: listed on master server; false: private
     int hostMaxPlayers = 16;     // max players (4 for co-op, 16 for custom/forge)
+    int expectedPeers = 0;       // guests currently in the lobby; host waits for them before simulation
     std::string sessionId;
     std::string sessionToken;
     std::string connectAddress;  // remote host endpoint for guest join (e.g. "127.0.0.1:11774")
