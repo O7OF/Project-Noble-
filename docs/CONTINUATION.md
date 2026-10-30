@@ -200,7 +200,8 @@ Menus (this session, all pushed):
 | `80eba4a` | `armoryPreview` setting; Noble's own renderer captured and recommended as the armory's way out of the black void |
 | `a159559` | Armory camera map verified by capture (0x0D helmet .. 0x14 colours); `-armory-scene-index` / `-armory-focus` hooks; left/right shoulder shown impossible on the engine path |
 | `d0026f1` | Armory stage (gradient + accent floor glow + vignette) behind Noble's renderer; camera pan wired via focusX |
-| (this commit) | Armory: eye strafe makes the pan visible (6.7% -> 22.8%), framing retuned, Noble renderer is the default with a Settings row |
+| `d89944e` | Armory: eye strafe makes the pan visible (6.7% -> 22.8%), framing retuned, Noble renderer is the default with a Settings row |
+| (this commit) | Docs: emblem bg/fg reality (MCC ships 330 two-layer colour masks, not a bg x fg matrix) + the two routes |
 | `5f4da08` | Prompts follow the device everywhere; `InputPrompts` button glyphs in the CONTROLLER list |
 | (this commit) | Main menu **Continue** fast path (spec 4.1/4.10) + a status block at the top of the design doc |
 | `a8f412e` | Menu music player (`PauseMusic/ResumeMusic` + `DrawMusicPlayer`) |

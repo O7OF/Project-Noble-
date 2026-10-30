@@ -22,6 +22,38 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-31, 07:05 ET) - Emblem background/foreground: what MCC actually ships (WeabooTyler117 / DeepSeek)
+
+Tyler wants Reach's emblem editor: pick a **background** (circle, triangle, hexagon...) and a **foreground** (grunt, flame,
+letters/numbers). Looked at the data before building UI around it.
+
+### What the data is
+
+`Data\UI\playercustomization.xml` in the MCC install defines **330 emblems**, each like:
+
+```xml
+<Emblem id="1" image1="e_002_p" image2="e_002_s" image1_small="e_002_p_sml" image2_small="e_002_s_sml" name="$EMBLEM_Radioactive" />
+```
+
+- `image1` (`_p`) and `image2` (`_s`) are the **primary and secondary colour layers of one finished emblem**, not a
+  background/foreground pair: of 330 entries, 225 have both fields, and the backgrounds are essentially unique per emblem
+  (there is no small reusable set of circle/triangle backdrops, and no separate symbol set).
+- Nothing in MCC's data, its `haloreach` folder, or Noble's `data` directory holds Reach 360's background/symbol sets:
+  Reach's original editor had ~30 backdrops x ~60 symbols, and those assets are not part of MCC.
+- Noble loads emblems through `UiArt::Emblem(id)` / `EmblemByName(imageName)` from the MCC packs, so any single layer
+  *can* be addressed by name - the capability is there, the authoring data is not.
+
+### So the picker needs one decision from Tyler
+
+1. **Trial the matrix from what MCC has** (fast, ~1 session): let the player choose any `imageN` as the backdrop layer and any
+   other as the symbol layer (330 x 330). The layers are colour masks of designed emblems, so many combinations will work
+   (shape + symbol) and some will look odd. It is real, it ships now, and it can be reverted.
+2. **Extract Reach 360's own emblem sets** (the faithful route): the background/symbol packs live in the Reach packages, not
+   in MCC's XML - this is tag/extraction work like the armory chamber, and needs the RE toolchain.
+
+Recommendation: try (1) as a visible prototype, keep the composed emblems as the default list, and only then decide whether
+(2) is worth the extraction work.
+
 ## 0. Pick up here (2026-10-31, 06:20 ET) - Armory: pan is visible, Noble's renderer is the default, stage tuned (WeabooTyler117 / DeepSeek)
 
 Finishing the armory work from the 05:40 entry.
