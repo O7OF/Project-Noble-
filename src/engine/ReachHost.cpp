@@ -101,6 +101,16 @@ static inline bool SafeWriteUint8(uintptr_t addr, uint8_t val) {
     }
 }
 
+static inline bool SafeWriteUint16(uintptr_t addr, uint16_t val) {
+    if (addr <= 0x10000) return false;
+    __try {
+        *reinterpret_cast<uint16_t*>(addr) = val;
+        return true;
+    } __except(EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
 static inline bool SafeReadInt32(uintptr_t addr, int* outVal) {
     if (addr <= 0x10000 || !outVal) return false;
     __try {
