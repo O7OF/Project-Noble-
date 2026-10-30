@@ -74,6 +74,29 @@ static int32_t __fastcall Hook_CanAcceptPlayerJoinRequest(void* thisPtr, void* p
     return result;
 }
 
+// Detour for c_network_session_membership::evaluate_coop_insertion_point (RVA 0x39ce10)
+// When players connect in co-op campaign, haloreach.dll compares their saved campaign
+// checkpoints/insertion points across the membership structure. If any player's campaign
+// progress does not match, the function returns -1, which causes the host to abort with
+// refusal code 0x1B (error_players_incompatible_for_network_coop: "GAME ERROR: An error
+// occurred while playing co-op." / "Error hosting co-op").
+// Overriding a negative return to 0 (mission start insertion point) allows all players
+// to play co-op campaign together without desync or rejection.
+typedef int32_t(__fastcall* EvaluateCoopInsertionPointFn)(void* thisPtr);
+static EvaluateCoopInsertionPointFn s_originalEvaluateCoopInsertionPoint = nullptr;
+
+static int32_t __fastcall Hook_EvaluateCoopInsertionPoint(void* thisPtr) {
+    int32_t result = 0;
+    if (s_originalEvaluateCoopInsertionPoint) {
+        result = s_originalEvaluateCoopInsertionPoint(thisPtr);
+    }
+    if (result < 0) {
+        NOBLE_WARN("LobbyPatches: evaluate_coop_insertion_point returned {} (incompatible); overriding to 0 (mission start) for co-op network play", result);
+        result = 0;
+    }
+    return result;
+}
+
 // Join / connect refusal tracing. Reach Renaissance's host-probe hooks these two haloreach.dll
 // functions (RVA 0x425368 "join refused", RVA 0x42459C "connect refused") to log why a host turns a
 // guest away. Log-only: the original always runs. Arg 3 points at {u64 session, u32 reason} for joins
@@ -555,6 +578,49 @@ bool LobbyPatches::Apply(HMODULE hReachDll) {
                 }
             } else {
                 NOBLE_WARN("LobbyPatches: Join-any gate bytes differ at hr+0x{:X} ({:02X} {:02X}); left alone", g.rva, static_cast<int>(at[0]), static_cast<int>(at[1]));
+            }
+        }
+    }
+
+    // 7. MinHook Detour on c_network_session_membership::evaluate_coop_insertion_point (RVA 0x39ce10)
+    // Prevents host rejection with refusal 0x1B (error_players_incompatible_for_network_coop:
+    // "GAME ERROR: An error occurred while playing co-op." / "Error hosting co-op").
+    std::string_view sigCoopInsertion = "48 89 5C 24 08 48 89 74 24 10 48 89 7C 24 18 8B 71 2C 48 83 C8 FF";
+    uintptr_t matchCoopInsertion = SigScanner::FindPattern(base, size, sigCoopInsertion);
+    uintptr_t fnCoopInsertion = matchCoopInsertion ? matchCoopInsertion : (base + 0x39CE10);
+    if (fnCoopInsertion) {
+        static const uint8_t kCoopInsertionPrologue[5] = { 0x48, 0x89, 0x5C, 0x24, 0x08 };
+        if (std::memcmp(reinterpret_cast<void*>(fnCoopInsertion), kCoopInsertionPrologue, 5) == 0) {
+            if (HookManager::InstallHook(reinterpret_cast<void*>(fnCoopInsertion),
+                                         reinterpret_cast<void*>(&Hook_EvaluateCoopInsertionPoint),
+                                         reinterpret_cast<void**>(&s_originalEvaluateCoopInsertionPoint),
+                                         "c_network_session_membership::evaluate_coop_insertion_point")) {
+                patchCount++;
+                NOBLE_INFO("LobbyPatches: Installed MinHook detour on evaluate_coop_insertion_point at 0x{:X}", fnCoopInsertion);
+            }
+        }
+    }
+
+    // 8. Co-op and Firefight player limit bypass gates
+    // Patches the campaign co-op player cap gate at hr+0x40954A (7E 22 -> EB 22)
+    // and Firefight player cap gate at hr+0x40955B (76 11 -> EB 11) to bypass "too many for net coop / firefight".
+    {
+        struct { uintptr_t rva; uint8_t expect; uint8_t disp; } coopGates[] = {
+            { 0x40954A, 0x7E, 0x22 }, // Campaign co-op player cap check (7E 22 -> EB 22)
+            { 0x40955B, 0x76, 0x11 }, // Firefight player cap check (76 11 -> EB 11)
+        };
+        for (auto& g : coopGates) {
+            uint8_t* at = reinterpret_cast<uint8_t*>(base + g.rva);
+            if (g.rva + 2 <= size && at[0] == g.expect && at[1] == g.disp) {
+                const uint8_t jmp[2] = { 0xEB, g.disp };
+                if (WriteProtectedMemory(at, jmp, 2)) {
+                    patchCount++;
+                    NOBLE_INFO("LobbyPatches: Co-op player cap gate patched at hr+0x{:X} ({:02X} {:02X} -> EB {:02X})",
+                               g.rva, static_cast<int>(g.expect), static_cast<int>(g.disp), static_cast<int>(g.disp));
+                }
+            } else {
+                NOBLE_WARN("LobbyPatches: Co-op player cap gate bytes differ at hr+0x{:X} ({:02X} {:02X}); left alone",
+                           g.rva, static_cast<int>(at[0]), static_cast<int>(at[1]));
             }
         }
     }

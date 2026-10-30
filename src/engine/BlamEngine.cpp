@@ -510,7 +510,39 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
                 *reinterpret_cast<uint32_t*>(&block[0x2F4]) = 0;
                 *reinterpret_cast<uint64_t*>(&block[0x2F8]) = 0;
             }
+
+            // In authentic prebuilt blocks (Campaign & Firefight), ensure host network listening socket is active
+            if (!isGuest) {
+                block[0x2BF14] = 0xF3;
+                block[0x2BF15] = 0x01;
+            }
+
+            // Reset slots 1..15 to unassigned (-1) on both host and guest so remote peers can be registered
+            for (size_t slot = 1; slot < 16; ++slot) {
+                size_t offset = 0x100 + (slot * 0x20);
+                block[offset + 0] = 0xFF;
+                block[offset + 1] = 0xFF;
+                block[offset + 2] = 0xFF;
+                block[offset + 3] = 0xFF;
+                for (size_t b = 4; b < 16; ++b) {
+                    block[offset + b] = 0xFF;
+                }
+            }
         }
+    }
+
+    if (!isMainMenu) {
+        uint32_t mapInfoId = MapIdForLaunchIndex(effectiveMapId);
+        if (isCampaign || isFirefight) mapInfoId = kMainMenuMapId;
+        if (mapInfoId == 0) mapInfoId = gameModeTag;
+        if (isCampaign) {
+            block[0x28] = 0x01;
+            block[0x29] = 0x00;
+            block[0x2A] = 0x11;
+            block[0x2B] = 0x11;
+        }
+        *reinterpret_cast<uint32_t*>(&block[0x1D334]) = mapInfoId;
+        *reinterpret_cast<uint32_t*>(&block[0x1D5BC]) = mapInfoId;
     }
 
     if (isCampaign || isFirefight) {

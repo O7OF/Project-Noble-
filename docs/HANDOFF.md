@@ -11,6 +11,35 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-30, 00:25 ET) - Fix Campaign Co-op "Error hosting co-op" & Firefight Co-op Match Loading (O7OF / Dominus)
+
+All changes compiled cleanly via MSBuild Release configuration (`noble-client.exe` and `noble-dedicated.exe`) with **0 errors and 0 warnings**:
+
+### 1. Reverse-Engineered Root Cause of Campaign "Error hosting co-op" (`src/hooks/LobbyPatches.cpp`)
+- **Symptoms:** In Campaign co-op, the non-host (guest) client spawned into the mission, but the host immediately crashed or aborted with Bungie's in-game dialog `"Error hosting co-op"` (`GAME ERROR: An error occurred while playing co-op.`).
+- **Binary Reverse Engineering (`haloreach.dll`):**
+  - Traced the Bungie error string to RVA `0xA3DD40` table index 27 (0x1B): `error_players_incompatible_for_network_coop` (`0x500012`).
+  - At RVA `0x409586`, `haloreach.dll`'s game start validation function checks Campaign mode (tag 1) and calls `c_network_session_membership::evaluate_coop_insertion_point` (`RVA 0x39CE10`).
+  - `0x39CE10` compares each player's campaign progression and mission checkpoint fields: `min(player[+0x144])` vs `max(player[+0x148])`. If the values do not match across all players, it returns `-1`.
+  - When `0x39CE10` returns `-1`, RVA `0x409586` executes `cmovz ecx, 1Bh`, setting error code `0x1B` and causing the host to display `"Error hosting co-op"` and abort the match.
+- **Fix:**
+  - Installed a MinHook detour on `c_network_session_membership::evaluate_coop_insertion_point` (`RVA 0x39CE10`, unique sig `"48 89 5C 24 08 48 89 74 24 10 48 89 7C 24 18 8B 71 2C 48 83 C8 FF"`).
+  - If `0x39CE10` returns `< 0`, the hook overrides it to `0` (mission start insertion point). This completely prevents the `0x1B` refusal code and allows the host and guest to play co-op campaign together seamlessly.
+  - Patched the campaign co-op player cap gate at `0x40954A` (`7E 22` -> `EB 22`) and Firefight player cap gate at `0x40955B` (`76 11` -> `EB 11`) to bypass hardcoded player caps (`0x1A` / `0x46`).
+
+### 2. Fixed Firefight Co-op Match Loading & Prebuilt Block Transport Socket Activation (`src/engine/BlamEngine.cpp`)
+- **Symptoms:** Firefight matches failed to let players load in (guest sent 52 join requests with no response from the host).
+- **Root Cause:**
+  - In `BlamEngine.cpp`, when `loadedPrebuilt` was true (which occurs for Firefight maps 210..219 and Campaign maps 178..189), the network socket enable flag at `block[0x2BF14]` was only written for the guest (`block[0x2BF14] = 0xF3; block[0x2BF15] = 0x01;`), leaving it `0x00 0x00` on the host.
+  - As a result, the host's Firefight session never activated its transport listening socket, silently dropping all incoming join-request packets from remote clients.
+  - Furthermore, slots 1..15 in authentic prebuilt dumps retained uninitialized bytes at `+0x04..` rather than the clean unassigned slot descriptor (`0xFF`).
+- **Fix:**
+  - On the host, explicitly written `block[0x2BF14] = 0xF3; block[0x2BF15] = 0x01;` for prebuilt blocks, activating the network transport listening socket.
+  - Sanitized slots 1..15 to unassigned (`0xFF`) across all 16 slot structures (`0x100 + slot * 0x20`).
+  - Added map variant ID synchronization at `+0x1D334` and `+0x1D5BC` for both Campaign and Firefight.
+
+--
+
 ## 0. Pick up here (2026-10-29, 23:35 ET) - Native Armory Character Rendering, Authentic In-Game Armor Effects (Flames & Blue Flames), Infinite Loading Fix & Netcode Updates (O7OF / Dominus)
 
 All changes compiled cleanly via MSBuild Release configuration (`noble-client.exe` and `noble-dedicated.exe`) with **0 errors and 0 warnings**:
