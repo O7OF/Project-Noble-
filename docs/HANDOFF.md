@@ -22,6 +22,32 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-31, 09:30 ET) - Career reset for Tyler: Recruit + 1,000,000 granted cR, unlocks to earn (WeabooTyler117 / DeepSeek)
+
+Tyler asked to reset his level but be given money so he can go through the unlocks. Two things came out of it.
+
+### Code: granted credits that do not fake the rank
+
+`credits` in `career.json` has always meant **cR earned over a lifetime** - the balance shown in the Armory is
+`credits - creditsSpent` - so handing out money by raising `credits` also hands out a rank (the first attempt put him at
+"Colonel Grade 1"). Added `CareerTotals::bonusCredits`: spendable, saved as `bonusCredits`, included in `Career::Balance()`,
+spent **before** earned credits, and **not** counted by `RankIndex`. So a grant or a reset can no longer promote anyone,
+and spending can never demote them.
+
+### Tyler's save
+
+- `career.json`: `credits` (earned) 0, `creditsSpent` 0, `bonusCredits` 1,000,000, `armoryOwned` empty,
+  `armoryUnlockAll` false, and all stats/history/challenges/commendations cleared. The Career screen shows **Recruit,
+  0 / 7,500 cR, next Private** with everything at zero; the million is spendable in the Armory.
+- **Gotcha found the hard way:** clearing `armoryOwned` made the Armory treat every equipped piece as "isn't unlocked yet;
+  back to 'DEFAULT'" and it **saved the default look over `data/appearance.json`**. His original Spartan (Hilands helmet,
+  Emile chest plate, Kat's tricorder, Linda's shoulder, Adrianna knee, blue flames, Jorge voice, colours 15/14) is saved
+  at `data/appearance.before-reset-20261030.json`, and `data/userdata/career.backup-20261030-154234.json` holds the whole
+  pre-reset career. Copying the former over `appearance.json` restores the look (it will report pieces as locked again
+  unless they are owned or `armoryUnlockAll` is true).
+- Rank gates still apply: most armour pieces show `LOCKED - <rank>` and need rank as well as cR, which is Reach's own
+  design. `armoryUnlockAll: true` is the switch that bypasses gating entirely, if that is wanted for testing.
+
 ## 0. Pick up here (2026-10-31, 08:40 ET) - The OBJ preview is gone: the Armory only uses Reach's in-game model (WeabooTyler117 / DeepSeek)
 
 Tyler: "OBJ re-export should not be used at all." Removed, not hidden behind a setting:

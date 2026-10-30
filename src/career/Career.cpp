@@ -251,6 +251,9 @@ void LoadLocked() {
         nlohmann::json j = nlohmann::json::parse(in);
         s_totals.credits = j.value("credits", int64_t{0});
         s_totals.creditsSpent = j.value("creditsSpent", int64_t{0});
+        // cR handed to the player outside of play (a reset, or testing the unlock flow). It is spendable but does not
+        // count toward the rank, which follows cR earned, as in Reach.
+        s_totals.bonusCredits = j.value("bonusCredits", int64_t{0});
         s_totals.armoryOwned.clear();
         if (j.contains("armoryOwned") && j["armoryOwned"].is_array())
             for (const auto& k : j["armoryOwned"]) if (k.is_string()) s_totals.armoryOwned.push_back(k.get<std::string>());
@@ -1068,7 +1071,7 @@ Totals Get() {
 int64_t Balance() {
     std::lock_guard<std::mutex> lock(s_mutex);
     LoadLocked();
-    return std::max<int64_t>(0, s_totals.credits - s_totals.creditsSpent);
+    return std::max<int64_t>(0, s_totals.credits - s_totals.creditsSpent + s_totals.bonusCredits);
 }
 
 bool OwnsArmoryItem(const std::string& key) {
@@ -1082,11 +1085,15 @@ bool BuyArmoryItem(const std::string& key, int64_t price) {
     LoadLocked();
     if (std::find(s_totals.armoryOwned.begin(), s_totals.armoryOwned.end(), key) != s_totals.armoryOwned.end()) return false;
     price = std::max<int64_t>(0, price);
-    if (s_totals.credits - s_totals.creditsSpent < price) return false;
-    s_totals.creditsSpent += price;
+    if (s_totals.credits - s_totals.creditsSpent + s_totals.bonusCredits < price) return false;
+    // Spend the granted credits first so playing still pays toward the rank.
+    const int64_t fromBonus = std::min(price, std::max<int64_t>(0, s_totals.bonusCredits));
+    s_totals.bonusCredits -= fromBonus;
+    s_totals.creditsSpent += price - fromBonus;
     s_totals.armoryOwned.push_back(key);
     SaveLocked();
-    NOBLE_INFO("Career: bought Armory item {} for {} cR (balance {} cR)", key, price, s_totals.credits - s_totals.creditsSpent);
+    NOBLE_INFO("Career: bought Armory item {} for {} cR (balance {} cR)", key, price,
+               s_totals.credits - s_totals.creditsSpent + s_totals.bonusCredits);
     return true;
 }
 

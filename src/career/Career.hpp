@@ -85,6 +85,7 @@ struct Totals {
     int64_t medals = 0;
     double minutesPlayed = 0.0;
     int64_t creditsSpent = 0;               // cR spent in the Armory (rank still follows cR earned, as in Reach)
+    int64_t bonusCredits = 0;               // cR granted outside play: spendable, but not counted for the rank
     std::vector<std::string> armoryOwned;   // bought Armory items, "<slot>:<permutation id>"
     bool armoryUnlockAll = false;            // developer unlock: every Armory item usable
 };
