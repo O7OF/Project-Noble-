@@ -8,6 +8,8 @@
 #include <nlohmann/json.hpp>
 
 #include <chrono>
+#include <filesystem>
+#include <fstream>
 
 #pragma comment(lib, "winhttp.lib")
 
@@ -118,6 +120,12 @@ SocialClient& SocialClient::Get() {
     return s_instance;
 }
 
+static std::filesystem::path FriendsFilePath() {
+    wchar_t exe[MAX_PATH];
+    GetModuleFileNameW(nullptr, exe, MAX_PATH);
+    return std::filesystem::path(exe).parent_path() / "data" / "userdata" / "friends.json";
+}
+
 SocialClient::~SocialClient() {
     Shutdown();
 }
@@ -125,6 +133,33 @@ SocialClient::~SocialClient() {
 void SocialClient::Initialize() {
     if (m_running) return;
     m_running = true;
+
+    // Load locally persisted friends
+    {
+        std::error_code ec;
+        auto path = FriendsFilePath();
+        if (std::filesystem::exists(path, ec)) {
+            std::ifstream file(path);
+            if (file) {
+                try {
+                    auto j = nlohmann::json::parse(file);
+                    if (j.is_array()) {
+                        std::lock_guard<std::mutex> lock(m_mutex);
+                        for (const auto& item : j) {
+                            FriendEntry f;
+                            f.username = item.value("username", "");
+                            f.status = item.value("status", "accepted");
+                            f.direction = item.value("dir", "local");
+                            f.endpoint = item.value("endpoint", "");
+                            if (!f.username.empty()) {
+                                m_friends.push_back(f);
+                            }
+                        }
+                    }
+                } catch (...) {}
+            }
+        }
+    }
 
     m_pollThread = std::thread([this]() {
         while (m_running) {
@@ -137,6 +172,59 @@ void SocialClient::Initialize() {
             }
         }
     });
+}
+
+void SocialClient::AddFriendDirect(const std::string& nameOrEndpoint) {
+    if (nameOrEndpoint.empty()) return;
+    std::string clean = nameOrEndpoint;
+    while (!clean.empty() && (clean.front() == ' ' || clean.front() == '\t')) clean.erase(clean.begin());
+    while (!clean.empty() && (clean.back() == ' ' || clean.back() == '\t')) clean.pop_back();
+    if (clean.empty()) return;
+
+    FriendEntry f;
+    f.username = clean;
+    f.status = "accepted";
+    f.direction = "local";
+    if (clean.find('.') != std::string::npos || clean.find(':') != std::string::npos) {
+        f.endpoint = clean;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        for (const auto& existing : m_friends) {
+            if (_stricmp(existing.username.c_str(), clean.c_str()) == 0) {
+                SetStatusMessage("Friend '" + clean + "' is already on your list");
+                return;
+            }
+        }
+        m_friends.push_back(f);
+    }
+
+    // Save locally
+    {
+        std::error_code ec;
+        auto path = FriendsFilePath();
+        std::filesystem::create_directories(path.parent_path(), ec);
+        std::ofstream file(path, std::ios::trunc);
+        if (file) {
+            nlohmann::json arr = nlohmann::json::array();
+            std::lock_guard<std::mutex> lock(m_mutex);
+            for (const auto& e : m_friends) {
+                nlohmann::json item;
+                item["username"] = e.username;
+                item["status"] = e.status;
+                item["dir"] = e.direction;
+                item["endpoint"] = e.endpoint;
+                arr.push_back(item);
+            }
+            file << arr.dump(2);
+        }
+    }
+
+    SetStatusMessage("Added friend '" + clean + "' to your friends list");
+    if (AuthClient::Get().IsLoggedIn()) {
+        SendFriendRequestAsync(clean);
+    }
 }
 
 void SocialClient::Shutdown() {
@@ -340,9 +428,38 @@ void SocialClient::AcceptFriendRequestAsync(const std::string& senderUsername, s
 }
 
 void SocialClient::RemoveFriendAsync(const std::string& targetUsername, std::function<void(bool ok, const std::string& message)> callback) {
+    // Remove locally first
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_friends.erase(std::remove_if(m_friends.begin(), m_friends.end(), [&](const FriendEntry& e) {
+            return _stricmp(e.username.c_str(), targetUsername.c_str()) == 0;
+        }), m_friends.end());
+    }
+
+    // Save locally
+    {
+        std::error_code ec;
+        auto path = FriendsFilePath();
+        std::ofstream file(path, std::ios::trunc);
+        if (file) {
+            nlohmann::json arr = nlohmann::json::array();
+            std::lock_guard<std::mutex> lock(m_mutex);
+            for (const auto& e : m_friends) {
+                nlohmann::json item;
+                item["username"] = e.username;
+                item["status"] = e.status;
+                item["dir"] = e.direction;
+                item["endpoint"] = e.endpoint;
+                arr.push_back(item);
+            }
+            file << arr.dump(2);
+        }
+    }
+
     const int userId = AuthClient::Get().GetUserId();
     if (userId <= 0) {
-        if (callback) callback(false, "Must be logged in");
+        SetStatusMessage("Removed '" + targetUsername + "' from friends list");
+        if (callback) callback(true, "Removed");
         return;
     }
 

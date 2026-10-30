@@ -505,6 +505,21 @@ static uint64_t __fastcall HostSlot6_GameResults(void* thisPtr, uint64_t a1, uin
         SafeReadInt32(reinterpret_cast<uintptr_t>(reach) + 0xC1A114, &launchState);
     }
     NOBLE_INFO("ReachHost [Slot 6 - GameResults]: record=0x{:X} (a2=0x{:X} a3=0x{:X}, launch state {})", a1, a2, a3, launchState);
+    void* stack[16];
+    WORD frames = RtlCaptureStackBackTrace(0, 16, stack, nullptr);
+    uintptr_t reachBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(L"haloreach.dll"));
+    std::string stackStr;
+    for (WORD i = 0; i < frames; ++i) {
+        uintptr_t addr = reinterpret_cast<uintptr_t>(stack[i]);
+        if (reachBase && addr >= reachBase && addr < reachBase + 0x5000000) {
+            char buf[64];
+            snprintf(buf, sizeof(buf), "hr+0x%llX ", static_cast<unsigned long long>(addr - reachBase));
+            stackStr += buf;
+        }
+    }
+    if (!stackStr.empty()) {
+        NOBLE_INFO("ReachHost [Slot 6 - GameResults]: caller stack: {}", stackStr);
+    }
     if (launchState >= 11 && a1 > 0x10000) {
         static std::vector<uint8_t> s_record;
         s_record.assign(Career::kResultsSize, 0);

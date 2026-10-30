@@ -2688,11 +2688,24 @@ static void DrawSocialScreen(OverlayContext& ctx, const Ui& ui, float left, floa
 
     // 3. Tab Contents
     if (st.socialTab == 0) {
-        // FRIENDS TAB
+        // FRIENDS TAB: Quick Add Friend by Name or IP
+        static char s_quickAddBuf[64] = "";
+        ImGui::SetNextItemWidth(300.0f * ui.s);
+        bool enterAdd = ImGui::InputTextWithHint("##quick_add_friend", "Enter player name or IP address...", s_quickAddBuf, sizeof(s_quickAddBuf), ImGuiInputTextFlags_EnterReturnsTrue);
+        ImGui::SameLine();
+        if ((ImGui::Button("ADD FRIEND", ImVec2(120.0f * ui.s, 24.0f * ui.s)) || enterAdd) && s_quickAddBuf[0] != '\0') {
+            SocialClient::Get().AddFriendDirect(s_quickAddBuf);
+            s_quickAddBuf[0] = '\0';
+            MenuSounds::Click();
+        }
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
         if (friends.empty()) {
             ImGui::Spacing();
             ImGui::TextColored(ImVec4(0.6f, 0.7f, 0.8f, 1.0f), "You have no friends on your list yet.");
-            ImGui::TextColored(ImVec4(0.5f, 0.6f, 0.7f, 0.8f), "Switch to the FIND PLAYERS tab to search and add friends!");
+            ImGui::TextColored(ImVec4(0.5f, 0.6f, 0.7f, 0.8f), "Type a player name or IP above and click ADD FRIEND, or use the FIND PLAYERS tab!");
         } else {
             std::string myIp = UPnP::Get().GetExternalIP();
             if (myIp.empty() || myIp == "Unknown") myIp = "127.0.0.1";
@@ -2700,7 +2713,7 @@ static void DrawSocialScreen(OverlayContext& ctx, const Ui& ui, float left, floa
             ImGui::BeginTable("##friends_tbl", 3, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV);
             ImGui::TableSetupColumn("Spartan / Sangheili", ImGuiTableColumnFlags_WidthStretch);
             ImGui::TableSetupColumn("Status", ImGuiTableColumnFlags_WidthFixed, 140.0f * ui.s);
-            ImGui::TableSetupColumn("Actions", ImGuiTableColumnFlags_WidthFixed, 220.0f * ui.s);
+            ImGui::TableSetupColumn("Actions", ImGuiTableColumnFlags_WidthFixed, 250.0f * ui.s);
             ImGui::TableHeadersRow();
 
             for (size_t i = 0; i < friends.size(); ++i) {
@@ -2709,7 +2722,11 @@ static void DrawSocialScreen(OverlayContext& ctx, const Ui& ui, float left, floa
 
                 // Col 0: Name
                 ImGui::TableSetColumnIndex(0);
-                ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), "%s", f.username.c_str());
+                if (!f.endpoint.empty()) {
+                    ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), "%s (%s)", f.username.c_str(), f.endpoint.c_str());
+                } else {
+                    ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), "%s", f.username.c_str());
+                }
 
                 // Col 1: Status
                 ImGui::TableSetColumnIndex(1);
@@ -2719,14 +2736,24 @@ static void DrawSocialScreen(OverlayContext& ctx, const Ui& ui, float left, floa
                 ImGui::TableSetColumnIndex(2);
                 ImGui::PushID(static_cast<int>(i));
 
-                if (ImGui::Button("INVITE", ImVec2(90.0f * ui.s, 24.0f * ui.s))) {
+                if (ImGui::Button("INVITE", ImVec2(75.0f * ui.s, 24.0f * ui.s))) {
                     SocialClient::Get().SendInviteAsync(f.username, myIp, 11774, [](bool ok, const std::string& msg) {
                         (void)msg;
                         if (ok) MenuSounds::Click();
                     });
                 }
                 ImGui::SameLine();
-                if (ImGui::Button("REMOVE", ImVec2(90.0f * ui.s, 24.0f * ui.s))) {
+                if (!f.endpoint.empty()) {
+                    if (ImGui::Button("JOIN", ImVec2(75.0f * ui.s, 24.0f * ui.s))) {
+                        choice.play = true;
+                        choice.host = false;
+                        choice.connectAddress = f.endpoint;
+                        done = true;
+                        MenuSounds::Click();
+                    }
+                    ImGui::SameLine();
+                }
+                if (ImGui::Button("REMOVE", ImVec2(75.0f * ui.s, 24.0f * ui.s))) {
                     SocialClient::Get().RemoveFriendAsync(f.username);
                     MenuSounds::Back();
                 }
