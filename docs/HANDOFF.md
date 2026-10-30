@@ -22,6 +22,32 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-30, 15:40 ET) - Button-layout remap now has tests too (WeabooTyler117 / DeepSeek)
+
+`-test-map-gametypes` runs three suites now (all headless, results in `gametype-selftest.log`):
+
+```
+PASS: 43 rule checks, 280 map x type combinations (207 allowed, 73 blocked), 0 failure(s)
+PASS: map names - 10 display cases, 0 failure(s)
+PASS: button layouts - 16 expectations, 0 failure(s)
+```
+
+What the layout suite covers (`PadLayouts::SelfTest`, src/engine/PadLayouts.cpp):
+
+- **Default is a perfect no-op**: 17 input patterns through `Apply(Default, ...)` must return the exact same buttons and
+  trigger values.
+- Per-layout expectations, e.g. Bumper Jumper `A -> B` (grenades), `LB -> A` (jump), `X -> LB` (armour); Boxer
+  `RB -> B` (grenades) and `LT -> RB` (melee); Recon `B -> RB` (melee), `X -> B` (grenades), `RB -> X` (action/reload);
+  Green Thumb `RS -> RB` (melee) and `RB -> RS` (zoom).
+- **Southpaw swaps the triggers**: LT produces fire on RT, RT produces grenades on B.
+- **Non-action bits are never swallowed**: D-pad, Back, Start and LS survive every layout unchanged.
+
+**The suite immediately caught two wrong expectations of mine** (I had assumed Southpaw would swap the *triggers'*
+outputs and that Boxer's RB would map to the armour ability). The model it forced me to write down: the engine expects
+**fire on RT (analogue)** and **grenades on the B button**, so a layout that puts grenades on a trigger has to emit B,
+and one that puts fire on a trigger has to emit RT - which is exactly what `Apply()` does. Worth reading before touching
+the tables.
+
 ## 0. Pick up here (2026-10-30, 15:05 ET) - Master mute and mute in background (WeabooTyler117 / DeepSeek)
 
 Spec 4.2 audio rows, the two that are Noble-side.

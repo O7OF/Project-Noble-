@@ -179,7 +179,8 @@ Menus (this session, all pushed):
 | `31b7362` | Mouse acceleration + smoothing, controller stick layout (Southpaw); test script teardown hardened |
 | `89a9509` | `MapNames` display names in the server browser + covered by `-test-map-gametypes` |
 | `2e075a8` | `Settings > SYSTEM` (logs folder, diagnostics to clipboard, settings backup/restore); version 0.8.3 |
-| (this commit) | Master mute + mute in background (`ReachAudio::SetMuted`) |
+| `1f8d89b` | Master mute + mute in background (`ReachAudio::SetMuted`) |
+| (this commit) | Button-layout remap tests (`PadLayouts::SelfTest`), third suite under `-test-map-gametypes` |
 | `5f4da08` | Prompts follow the device everywhere; `InputPrompts` button glyphs in the CONTROLLER list |
 | (this commit) | Main menu **Continue** fast path (spec 4.1/4.10) + a status block at the top of the design doc |
 | `a8f412e` | Menu music player (`PauseMusic/ResumeMusic` + `DrawMusicPlayer`) |
@@ -278,7 +279,10 @@ Also: invites carry `{senderUsername, hostIp, hostPort, timestamp}` only. To say
    every frame and hangs the client.
 9. Do **not** load textures from the main-thread fallback draw path (`HoldFrame`). Warm art in
    `FrontEndMenu::Initialize` (`UiArt::WarmMenuBackground()` is the pattern).
-10. Game types: `MapGameTypes::Supports()` is the only place that decides whether a vanilla map may host a type; run
+10. The headless suites under `-test-map-gametypes` cover game types, map names and button layouts; run it after
+    touching `MapGameTypes.cpp`, `MapNames.cpp` or `PadLayouts.cpp`. Engine model to remember: fire is analogue RT,
+    grenades are the **B button**, melee **RB**, armour **LB**, zoom **RS click**.
+11. Game types: `MapGameTypes::Supports()` is the only place that decides whether a vanilla map may host a type; run
     `noble-client.exe -test-map-gametypes` after touching its tables. Modded maps are deliberately never checked.
 11. `ReachAudio::MusicTracks()` builds the whole list - cache it if you call it per frame. Muting from the music widget
     is overridden while Settings > Audio is open (that page pushes its volume every frame).

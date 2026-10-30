@@ -46,5 +46,8 @@ const char* Description(int layout);
 // layout. `layout` out of range (or Default) leaves everything untouched. Non-action bits are passed through.
 void Apply(int layout, uint16_t& buttons, uint8_t& leftTrigger, uint8_t& rightTrigger);
 
+// Headless check of the layout tables (run by `-test-map-gametypes`). Returns the number of failures.
+int SelfTest();
+
 } // namespace PadLayouts
 } // namespace noble

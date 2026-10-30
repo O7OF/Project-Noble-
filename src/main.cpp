@@ -1,6 +1,7 @@
 #include "common/Logger.hpp"
 #include "engine/MapGameTypes.hpp"
 #include "common/MapNames.hpp"
+#include "engine/PadLayouts.hpp"
 #include <io.h>
 #include <fcntl.h>
 #include "common/Types.hpp"
@@ -102,7 +103,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         _setmode(_fileno(stdout), _O_U8TEXT);
         const int types = noble::MapGameTypes::SelfTest();
         const int names = noble::MapNames::SelfTest();
-        return (types == 0 && names == 0) ? 0 : 1;
+        const int layouts = noble::PadLayouts::SelfTest();
+        return (types == 0 && names == 0 && layouts == 0) ? 0 : 1;
     }
 
     SetUnhandledExceptionFilter(&NobleCrashHandler);
