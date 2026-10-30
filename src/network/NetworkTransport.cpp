@@ -556,6 +556,10 @@ void NetworkTransport::RelayWorkerThread(std::string relayUrl, std::string sessi
                             uint64_t lSkulls = 0;
                             try { lSkulls = std::stoull(ld.value("skulls", "0")); } catch (...) {}
                             std::string hIp = ld.value("host_ip", "");
+                            if (ld.value("is_lan", false) && ld.contains("host_lan_ip")) {
+                                std::string lanIp = ld.value("host_lan_ip", "");
+                                if (!lanIp.empty()) hIp = lanIp;
+                            }
                             uint16_t hPort = static_cast<uint16_t>(ld.value("host_port", 11774));
                             std::string sId = ld.value("session_id", sessionId);
 

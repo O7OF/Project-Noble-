@@ -296,9 +296,10 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
     }
 
     // Campaign missions: launch index 178 (m05) .. 189 (m70_bonus).
-    const bool isCampaign = (mapId >= 178 && mapId <= 189);
+    const bool isCampaign = (mapId >= 178 && mapId <= 189) || (gameModeTag == 1);
     // Firefight maps: launch index 210 .. 219.
-    const bool isFirefight = (mapId >= 210 && mapId <= 219);
+    const bool isFirefight = (mapId >= 210 && mapId <= 219) || (gameModeTag == 1035);
+    const bool isForge = (gameModeTag == 3);
     uint32_t effectiveMapId = isMainMenu ? static_cast<uint32_t>(-2) : mapId;
 
     if (isMainMenu) {
@@ -572,8 +573,11 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
         } else if (!isCampaign && !isMainMenu) {
             // Firefight needs a Firefight game variant (otherwise the engine reports "no game
             // selected"); RR likewise loads <MCC>\haloreach\game_variants\<mode>.bin for it.
-            variantPath = ReachHost::Get().GetReachDir() / "game_variants" /
-                          (isFirefight ? "hr_ff_standard_1set.bin" : "slayer_054.bin");
+            // Forge needs 00_basic_editing_054.bin for item spawning and editing.
+            const char* defaultVariant = isFirefight ? "hr_ff_standard_1set.bin"
+                                       : isForge     ? "00_basic_editing_054.bin"
+                                       : "slayer_054.bin";
+            variantPath = ReachHost::Get().GetReachDir() / "game_variants" / defaultVariant;
         }
 
         if (!variantPath.empty() && std::filesystem::exists(variantPath) && m_hModule) {
@@ -604,7 +608,7 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
     // session), +0x2BF14 = F3 01, then +0x50 session, +0x58 self, +0x2F8 host. Noble's default guest block sets
     // one local player, a player id at +0xF0 and the decoded variant instead; guests have been stuck at
     // launch state 9 with traffic flowing both ways, so this lets the two layouts be compared.
-    if (isGuest && !isMainMenu && std::wcsstr(GetCommandLineW(), L"-legacy-guest-block") == nullptr) {
+    if (isGuest && !isMainMenu && std::wcsstr(GetCommandLineW(), L"-rr-guest-block") != nullptr) {
         const uint64_t self = NetworkTransport::Get().GetLocalMachineId();
         const uint64_t host = NetworkTransport::Get().GetHostMachineId();
         const uint64_t session = NetworkTransport::Get().GetSessionId();
@@ -687,6 +691,8 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
     uint32_t gameModeTag = 2; // Default multiplayer
     if ((mapId >= 210 && mapId <= 219) || gameMode == "firefight" || gameMode == "Firefight") {
         gameModeTag = 1035; // 0x40B Firefight
+    } else if (gameMode == "forge" || gameMode == "Forge") {
+        gameModeTag = 3;    // Forge
     } else if ((mapId >= 178 && mapId <= 189) || gameMode == "Campaign" || gameMode == "campaign") {
         gameModeTag = 1;    // Campaign
     } else if (mapId == static_cast<uint32_t>(-2) || mapId == 0 || gameMode == "mainmenu" || gameMode == "menu") {

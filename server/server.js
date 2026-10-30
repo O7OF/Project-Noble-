@@ -700,7 +700,7 @@ app.post('/api/sessions/:id/lobby/launch', (req, res) => {
 
     broadcastLobbyEvent(session.id, {
         type: 'lobby_launch',
-        launch: Object.assign(session.launchData, { host_ip: session.address, is_lan: false })
+        launch: { ...session.launchData, host_ip: session.address, is_lan: false }
     });
 
     res.json({ success: true, launch_data: session.launchData });

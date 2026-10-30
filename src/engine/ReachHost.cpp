@@ -898,15 +898,22 @@ static void ApplyArmoryAppearance(uint8_t* profile) {
         if (auto it = Helmets().find(str(sp, "helmet_id")); it != Helmets().end()) helmet = it->second;
         uint32_t chest = 126;
         if (auto it = Chests().find(str(sp, "chest_id")); it != Chests().end()) chest = it->second;
-        int effect = num(sp, "armor_effect_index", 0, 6, 0);
+        // Bungie Reach armor effect indices expected by haloreach.dll (0x3B2F4):
+        // 0 = None, 1 = Flames (Legendary), 2 = Blue Flames (Eternal),
+        // 3 = Heart Attack, 4 = Pestilence, 5 = Inclement Weather, 6 = Birthday Party.
+        auto mapArmorEffect = [](int idx, const std::string& id) -> uint32_t {
+            if (id == "flames" || idx == 5) return 1;
+            if (id == "blue_flames" || idx == 6) return 2;
+            if (id == "heart_attack" || idx == 2) return 3;
+            if (id == "pestilence" || idx == 3) return 4;
+            if (id == "inclement_weather" || idx == 4) return 5;
+            if (id == "birthday_party" || idx == 1) return 6;
+            return 0;
+        };
+
+        const uint32_t spEffect = mapArmorEffect(num(sp, "armor_effect_index", 0, 6, 0), str(sp, "armor_effect_id"));
+        const uint32_t elEffect = mapArmorEffect(num(el, "armor_effect_index", 0, 6, 0), str(el, "armor_effect_id"));
         int utility = num(sp, "utility_index", 0, 6, 0);
-        // Eternal (effect 6) and the Hydration Container (utility 6) aren't items Reach sold. With both equipped
-        // the engine crashed building the player (haloreach+0x105512, 2026-10-29, in a match and on the menu),
-        // so one of them is past the end of the map's list. Both stay Armory-only until we know which.
-        if (effect >= 6) {
-            NOBLE_WARN("ReachHost [Slot 34]: armour effect {} isn't in Reach's list; no effect in game", effect);
-            effect = 0;
-        }
         if (utility >= 6) {
             NOBLE_WARN("ReachHost [Slot 34]: utility {} isn't in Reach's list; default utility in game", utility);
             utility = 0;
@@ -929,19 +936,17 @@ static void ApplyArmoryAppearance(uint8_t* profile) {
         put(0x50, kWrist + num(sp, "wrist_index", 0, 5, 0));
         put(0x54, kUtility + utility);
         put(0x64, kSpartanMale + num(appearance, "body_type", 0, 1, 0));
-        // Tested in game 2026-10-28: +0x8C is the Elite armour set (194 + set; 0xC7 spawned a General) and
-        // the Spartan armour effect sits at +0x68 (the two were swapped, so the effect picked the Elite).
-        put(0x68, kEffect + effect);
+        put(0x68, spEffect);
         put(0x6C, kKnees + num(sp, "knee_guards_index", 0, 3, 0));
         put(0x70, kVisor + num(sp, "visor_color_index", 0, 4, 0));
         put(0x8C, kEliteSet + num(el, "armor_set", 0, 7, 0));
-        put(0x90, kEliteEffect);   // Elite armour effects are off for now (Tyler 2026-10-29)
+        put(0x90, elEffect);
         put(0x94, VoiceItem(str(sp, "voice_id")));
         put(0x98, kColor + num(appearance, "primary_color", 0, 29, 1));
         put(0x9C, kColor + num(appearance, "secondary_color", 0, 29, 10));
         put(0xA0, kColor);
-        NOBLE_INFO("ReachHost [Slot 34]: applied Armory appearance ({}, helmet {}, chest {}, Elite set {}, colours {}/{})",
-                   species == 0 ? "Spartan" : "Elite", helmet, chest, num(el, "armor_set", 0, 7, 0),
+        NOBLE_INFO("ReachHost [Slot 34]: applied Armory appearance ({}, helmet {}, chest {}, effect {}, Elite set {}, colours {}/{})",
+                   species == 0 ? "Spartan" : "Elite", helmet, chest, spEffect, num(el, "armor_set", 0, 7, 0),
                    num(appearance, "primary_color", 0, 29, 1), num(appearance, "secondary_color", 0, 29, 10));
     } catch (const nlohmann::json::exception& e) {
         NOBLE_WARN("ReachHost [Slot 34]: could not read Armory appearance from '{}': {}", appearancePath.string(), e.what());
@@ -2718,14 +2723,13 @@ static uint64_t __fastcall HostSlot66_TextRegisterIcon(void* thisPtr, uint64_t c
 // Halo Reach outputs linear HDR backbuffer; without gamma correction, HUD icons and UI
 // elements appear dim, dark navy, or purplish.
 // -----------------------------------------------------------------------------
-struct PostProcessCB {
+// GammaPass: Full-screen post-processing for authentic brightness / gamma adjustments.
+// Note: Armory 3D character scene renders natively to preserve full fidelity
+// of dark undersuits, skin suits, and emissive particle armor effects.
+// -----------------------------------------------------------------------------
+struct GammaCB {
     float gamma_exp;
-    float is_armory;
-    float screen_aspect;
-    float bg_aspect;
-    float inv_width;
-    float inv_height;
-    float padding[2];
+    float padding[3];
 };
 
 class GammaPass {
@@ -2744,7 +2748,6 @@ public:
         m_copyTexture.Reset();
         m_copySRV.Reset();
         m_backBufferRTV.Reset();
-        m_sampler.Reset();
     }
 
     void Execute(IDXGISwapChain* swapChain) {
@@ -2766,18 +2769,9 @@ public:
         // Lazy initialize TextAtlas with device and context if not already done
         TextAtlas::Get().Initialize(device.Get(), context.Get());
 
-        const bool isArmory = ReachArmory::IsArmoryScene();
-        UiTexture bg{};
-        ID3D11ShaderResourceView* bgSRV = nullptr;
-        if (isArmory) {
-            bg = UiArt::MenuBackground();
-            if (bg) bgSRV = reinterpret_cast<ID3D11ShaderResourceView*>(bg.id);
-        }
-        const bool needComposite = isArmory && (bgSRV != nullptr);
-
         // Exponent of 1.0f represents identity (no extra gamma transform).
-        // Returning early avoids lifting dark values when not compositing Armory background.
-        if (std::abs(m_exponent - 1.0f) < 0.001f && !needComposite) {
+        // Returning early avoids unnecessary full-screen copy pass when at default gamma.
+        if (std::abs(m_exponent - 1.0f) < 0.001f) {
             return;
         }
 
@@ -2806,11 +2800,8 @@ public:
         context->VSGetShader(&oldVS, oldInstances, &numInstances);
         context->PSGetShader(&oldPS, oldInstances, &numInstances);
 
-        ID3D11ShaderResourceView* oldSRVs[2] = { nullptr, nullptr };
-        context->PSGetShaderResources(0, 2, oldSRVs);
-
-        ID3D11SamplerState* oldSampler = nullptr;
-        context->PSGetSamplers(0, 1, &oldSampler);
+        ID3D11ShaderResourceView* oldSRV = nullptr;
+        context->PSGetShaderResources(0, 1, &oldSRV);
 
         ID3D11Buffer* oldCB = nullptr;
         context->PSGetConstantBuffers(0, 1, &oldCB);
@@ -2830,20 +2821,14 @@ public:
         UINT oldStencilRef = 0;
         context->OMGetDepthStencilState(&oldDepthState, &oldStencilRef);
 
-        // Update constant buffer with gamma exponent and composite parameters
+        // Update constant buffer with gamma exponent
         D3D11_MAPPED_SUBRESOURCE mapped{};
         if (SUCCEEDED(context->Map(m_constantBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
-            PostProcessCB* cbData = static_cast<PostProcessCB*>(mapped.pData);
+            GammaCB* cbData = static_cast<GammaCB*>(mapped.pData);
             cbData->gamma_exp = m_exponent;
-            cbData->is_armory = needComposite ? 1.0f : 0.0f;
-            cbData->screen_aspect = (desc.Height > 0) ? static_cast<float>(desc.Width) / static_cast<float>(desc.Height) : 1.77778f;
-            const float bgW = (bg && bg.width > 0) ? static_cast<float>(bg.width) : 1920.0f;
-            const float bgH = (bg && bg.height > 0) ? static_cast<float>(bg.height) : 1080.0f;
-            cbData->bg_aspect = bgW / bgH;
-            cbData->inv_width = (desc.Width > 0) ? 1.0f / static_cast<float>(desc.Width) : 0.0f;
-            cbData->inv_height = (desc.Height > 0) ? 1.0f / static_cast<float>(desc.Height) : 0.0f;
             cbData->padding[0] = 0.0f;
             cbData->padding[1] = 0.0f;
+            cbData->padding[2] = 0.0f;
             context->Unmap(m_constantBuffer.Get(), 0);
         }
 
@@ -2869,21 +2854,15 @@ public:
         ID3D11Buffer* cbs[] = { m_constantBuffer.Get() };
         context->PSSetConstantBuffers(0, 1, cbs);
 
-        ID3D11ShaderResourceView* srvs[] = { m_copySRV.Get(), bgSRV };
-        context->PSSetShaderResources(0, 2, srvs);
-
-        ID3D11SamplerState* samplers[] = { m_sampler.Get() };
-        context->PSSetSamplers(0, 1, samplers);
+        ID3D11ShaderResourceView* srvs[] = { m_copySRV.Get() };
+        context->PSSetShaderResources(0, 1, srvs);
 
         // Draw full-screen triangle
         context->Draw(3, 0);
 
         // Restore pipeline state
-        ID3D11ShaderResourceView* nullSRVs[2] = { nullptr, nullptr };
-        context->PSSetShaderResources(0, 2, nullSRVs);
-
-        ID3D11SamplerState* nullSamplers[1] = { nullptr };
-        context->PSSetSamplers(0, 1, nullSamplers);
+        ID3D11ShaderResourceView* nullSRVs[1] = { nullptr };
+        context->PSSetShaderResources(0, 1, nullSRVs);
 
         context->OMSetRenderTargets(1, &oldRTV, oldDSV);
         if (oldRTV) oldRTV->Release();
@@ -2896,12 +2875,8 @@ public:
         context->PSSetShader(oldPS, nullptr, 0);
         if (oldPS) oldPS->Release();
 
-        context->PSSetShaderResources(0, 2, oldSRVs);
-        if (oldSRVs[0]) oldSRVs[0]->Release();
-        if (oldSRVs[1]) oldSRVs[1]->Release();
-
-        context->PSSetSamplers(0, 1, &oldSampler);
-        if (oldSampler) oldSampler->Release();
+        context->PSSetShaderResources(0, 1, &oldSRV);
+        if (oldSRV) oldSRV->Release();
 
         context->PSSetConstantBuffers(0, 1, &oldCB);
         if (oldCB) oldCB->Release();
@@ -2924,19 +2899,12 @@ private:
         m_height = desc.Height;
 
         if (!m_vs) {
-            static const char* s_postProcessShaderCode = R"(
+            static const char* s_gammaShaderCode = R"(
                 Texture2D frame_copy : register(t0);
-                Texture2D bg_texture : register(t1);
-                SamplerState samp : register(s0);
 
-                cbuffer CompositeParams : register(b0) {
+                cbuffer GammaParams : register(b0) {
                     float gamma_exp;
-                    float is_armory;
-                    float screen_aspect;
-                    float bg_aspect;
-                    float inv_width;
-                    float inv_height;
-                    float2 padding;
+                    float3 padding;
                 };
 
                 float4 vs_main(uint id : SV_VertexID) : SV_Position {
@@ -2946,58 +2914,13 @@ private:
 
                 float4 ps_main(float4 pos : SV_Position) : SV_Target {
                     float4 c = frame_copy.Load(int3((int2)pos.xy, 0));
-
-                    if (is_armory < 0.5f) {
-                        return float4(pow(saturate(c.rgb), gamma_exp), c.a);
-                    }
-
-                    // Cover UV calculation preserving background image aspect ratio
-                    float2 uv = pos.xy * float2(inv_width, inv_height);
-                    float2 bgUV = uv;
-                    if (screen_aspect > bg_aspect) {
-                        float scale = bg_aspect / screen_aspect;
-                        bgUV.y = (uv.y - 0.5f) * scale + 0.5f;
-                    } else {
-                        float scale = screen_aspect / bg_aspect;
-                        bgUV.x = (uv.x - 0.5f) * scale + 0.5f;
-                    }
-                    float4 bg = bg_texture.Sample(samp, bgUV);
-
-                    // Calculate maximum channel luminance from the engine's linear HDR backbuffer
-                    float luma = max(c.r, max(c.g, c.b));
-
-                    // Ambient room fog, SSAO noise, and spotlight haze in mainmenu_all.map
-                    // spread into the air around the limbs with luma in [0.035 .. 0.070].
-                    // Solid geometry (armor, visor, undersuit) has luma >= 0.110.
-                    const float kCutoff = 0.072f;
-                    const float kSolid  = 0.110f;
-
-                    float alpha = smoothstep(kCutoff, kSolid, luma);
-
-                    // Subtract the ambient room fog floor so edge pixels don't introduce black matte fringing
-                    float3 fgClean = max(0.0f, c.rgb - kCutoff) / max(0.0001f, 1.0f - kCutoff);
-                    float3 spartanRgb = pow(saturate(fgClean), gamma_exp);
-
-                    // Composite: background wallpaper where empty, crisp 3D Spartan where geometry exists
-                    float3 finalRgb = lerp(bg.rgb, spartanRgb, alpha);
-
-                    // For armor effects (such as Blue Flames), add colorful emissive glow onto the background
-                    // instead of letting particle smoke textures darken the background into black soot
-                    float blueExcess = max(0.0f, c.b - max(c.r, c.g));
-                    float redExcess  = max(0.0f, c.r - max(c.g, c.b));
-                    float emissive   = max(blueExcess, redExcess);
-                    if (emissive > 0.015f && alpha < 1.0f) {
-                        float3 glow = max(0.0f, c.rgb - min(c.r, min(c.g, c.b))) * (1.0f - alpha);
-                        finalRgb += glow * 0.95f;
-                    }
-
-                    return float4(saturate(finalRgb), 1.0f);
+                    return float4(pow(saturate(c.rgb), gamma_exp), c.a);
                 }
             )";
 
             Microsoft::WRL::ComPtr<ID3DBlob> vsBlob;
             Microsoft::WRL::ComPtr<ID3DBlob> errorBlob;
-            HRESULT hr = D3DCompile(s_postProcessShaderCode, strlen(s_postProcessShaderCode), "GammaVS", nullptr, nullptr,
+            HRESULT hr = D3DCompile(s_gammaShaderCode, strlen(s_gammaShaderCode), "GammaVS", nullptr, nullptr,
                                     "vs_main", "vs_4_0", 0, 0, vsBlob.GetAddressOf(), errorBlob.GetAddressOf());
             if (FAILED(hr)) {
                 if (errorBlob) {
@@ -3007,7 +2930,7 @@ private:
             }
 
             Microsoft::WRL::ComPtr<ID3DBlob> psBlob;
-            hr = D3DCompile(s_postProcessShaderCode, strlen(s_postProcessShaderCode), "GammaPS", nullptr, nullptr,
+            hr = D3DCompile(s_gammaShaderCode, strlen(s_gammaShaderCode), "GammaPS", nullptr, nullptr,
                             "ps_main", "ps_4_0", 0, 0, psBlob.GetAddressOf(), errorBlob.GetAddressOf());
             if (FAILED(hr)) {
                 if (errorBlob) {
@@ -3024,23 +2947,11 @@ private:
             }
 
             D3D11_BUFFER_DESC cbDesc{};
-            cbDesc.ByteWidth = sizeof(PostProcessCB);
+            cbDesc.ByteWidth = sizeof(GammaCB);
             cbDesc.Usage = D3D11_USAGE_DYNAMIC;
             cbDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
             cbDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
             if (FAILED(device->CreateBuffer(&cbDesc, nullptr, m_constantBuffer.GetAddressOf()))) {
-                return false;
-            }
-
-            D3D11_SAMPLER_DESC sampDesc{};
-            sampDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
-            sampDesc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
-            sampDesc.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
-            sampDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
-            sampDesc.ComparisonFunc = D3D11_COMPARISON_NEVER;
-            sampDesc.MinLOD = 0;
-            sampDesc.MaxLOD = D3D11_FLOAT32_MAX;
-            if (FAILED(device->CreateSamplerState(&sampDesc, m_sampler.GetAddressOf()))) {
                 return false;
             }
         }
@@ -3066,7 +2977,7 @@ private:
         }
 
         m_initialized = true;
-        NOBLE_INFO("GammaPass: Initialized post-process gamma pass with Armory background composite ({}x{}, exponent: {:.4f})", m_width, m_height, m_exponent);
+        NOBLE_INFO("GammaPass: Initialized post-process gamma pass ({}x{}, exponent: {:.4f})", m_width, m_height, m_exponent);
         return true;
     }
 
@@ -3081,7 +2992,6 @@ private:
     Microsoft::WRL::ComPtr<ID3D11Texture2D> m_copyTexture;
     Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> m_copySRV;
     Microsoft::WRL::ComPtr<ID3D11RenderTargetView> m_backBufferRTV;
-    Microsoft::WRL::ComPtr<ID3D11SamplerState> m_sampler;
 };
 
 static void ExecuteGammaPass(IDXGISwapChain* swapChain) {

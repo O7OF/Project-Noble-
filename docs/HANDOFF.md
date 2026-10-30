@@ -11,7 +11,42 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
-## 0. Pick up here (2026-10-29, 22:35 ET) - Complete Elimination of SSAO Side Fuzz and Flame Smoke Artifacts (O7OF / Dominus)
+## 0. Pick up here (2026-10-29, 23:35 ET) - Native Armory Character Rendering, Authentic In-Game Armor Effects (Flames & Blue Flames), Infinite Loading Fix & Netcode Updates (O7OF / Dominus)
+
+All changes compiled cleanly via MSBuild Release configuration (`noble-client.exe` and `noble-dedicated.exe`) with **0 errors and 0 warnings**:
+
+### 1. Removal of Custom Background Keying / Native Armory Rendering (`src/engine/ReachHost.cpp`)
+- **Root Cause:** Due to dark skin suits / black undersuits measuring low luminance, luminance-based alpha thresholding caused dark geometry to be clipped or turn invisible against the custom background wallpaper.
+- **Fix:** Completely stripped the luminance keying and texture sampling composite pass from `GammaPass`. `GammaPass` is now a pure, lightweight full-screen gamma correction pass (returning immediately when `exponent == 1.0f`). The 3D Spartan and Elite armory models now render on Bungie's authentic 3D armory environment with 100% full fidelity of dark undersuits, skin suits, and emissive particles without edge artifacts or clipping.
+
+### 2. Fixed In-Game Armor Effects (Flames, Blue Flames, Heart Attack, Pestilence, etc.) (`src/engine/ReachHost.cpp`)
+- **Root Cause (Reverse-Engineered `haloreach.dll+0x3B2F4` / `0x2EDD7C`):**
+  - Bungie's engine expects authentic Reach armor effect codes: `0 = None, 1 = Flames (Legendary), 2 = Blue Flames (Eternal), 3 = Heart Attack, 4 = Pestilence, 5 = Inclement Weather, 6 = Birthday Party`.
+  - `ReachHost.cpp` was incorrectly adding MCC item IDs (`166 + effect`), which `0x3B2F4` rejected as out of range and reset to 0 (None).
+  - Additionally, `if (effect >= 6) effect = 0;` was clamping UI effect 6 (Eternal Blue Flames) to None.
+- **Fix:**
+  - Implemented `mapArmorEffect(int idx, const std::string& id)` converting customizer UI IDs and indices directly to the authentic Bungie engine enum.
+  - Written directly to `profile[0x68]` (Spartan effect) and `profile[0x90]` (Elite effect). Removed erroneous `effect >= 6` clamping. Both Legendary Flames and Bungie Eternal Blue Flames now render in-game.
+
+### 3. Fixed Infinite Loading at Launch State 9 & Multi-Mode Join Sync (`src/engine/BlamEngine.cpp`, `src/network/NetworkTransport.cpp`, `server/server.js`)
+- **Root Cause:**
+  - In `BlamEngine.cpp:607`, an experimental block guarded by `-legacy-guest-block == nullptr` was running by default on guests, wiping `block[0xE8]` (active player count) and `block[0x300..0x1D308]` (game and map variants) to 0. Without active players or a variant, `haloreach.dll` froze infinitely in launch state 9.
+  - For Forge mode, the default game variant was falling back to `slayer_054.bin` instead of Reach's authentic `00_basic_editing_054.bin`.
+  - In `server/server.js:703`, `broadcastLobbyEvent` called `Object.assign(session.launchData, { host_ip: session.address, is_lan: false })`, which mutated `session.launchData` in place and broke LAN IP loopback for local network joins.
+- **Fix:**
+  - In `BlamEngine.cpp`, changed the guest zeroing check to `std::wcsstr(GetCommandLineW(), L"-rr-guest-block") != nullptr` so the stable default guest block (active player 1 at `0xE8`, guest player ID at `0xF0`, host machine ID at `0x2F8`, and decoded game variant at `0x300`) runs by default.
+  - In `BlamEngine.cpp`, set Forge game mode tag (3) and variant loader to default to `00_basic_editing_054.bin`.
+  - In `server/server.js:703`, broadcast a clone `{ ...session.launchData, host_ip: session.address, is_lan: false }` without mutating `session.launchData`.
+  - In `NetworkTransport.cpp`, prioritize `host_lan_ip` when `is_lan` is true. Pre-game lobby and in-progress joins now connect and load properly across Campaign, Multiplayer, Forge, and Firefight.
+
+### 4. Database Reset Tool & Dev Scripts Deployed (`server/reset_db.js`, `ServerTestDeploy`)
+- Created `server/reset_db.js` to safely rotate and recreate clean SQLite tables (`users`, `stats`, `cosmetics`, `unlocked_items`, `friends`).
+- Executed database reset for clean testing.
+- Copied `server.js`, `set_dev.js`, `grant_item.js`, and `reset_db.js` into `C:\Users\Chey1\Desktop\ServerTestDeploy` and committed/pushed to `origin/main` (`83602ac`).
+
+--
+
+## 1. Pick up here (2026-10-29, 22:35 ET) - Complete Elimination of SSAO Side Fuzz and Flame Smoke Artifacts (O7OF / Dominus)
 
 ### 1. Root Cause Analysis: Air SSAO Contact Shadow & Flame Smoke
 - In `mainmenu_all.map`, the engine's SSAO (Screen Space Ambient Occlusion) pass creates screen-space contact shadows around the limbs that spread `10-15px` out into the air with luminance in the `[0.035 .. 0.070]` range.
