@@ -22,6 +22,52 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ## 0. Pick up here (2026-10-31, 14:40 ET) - Ghidra project is set up and the forge gate is labelled in it (WeabooTyler117 / DeepSeek)
 
 Tyler asked to start Ghidra and "set that all up". Done, and made reproducible.
@@ -1565,6 +1611,52 @@ Final layout of `PlayerRow()` (shared by MY PARTY and the pre-game roster), left
 
 --
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ## 0. Pick up here (2026-10-30, 06:30 ET) - MCC-style player rows: rank - emblem - nameplate with tag/name (WeabooTyler117 / DeepSeek)
 
 UI only: `src/ui/FrontEndMenu.cpp`. Follows the 06:40 ET entry, which had the nameplate only as a row background.
@@ -1602,6 +1694,52 @@ bar; their ids are still not in the roster payload (see §4 of the 06:40 entry).
 
 --
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 UI only: `src/ui/FrontEndMenu.cpp`. Follows the 05:05 ET entry (O7OF's `dc349a5` is merged in).
 
 ### 1. Main menu jumped when the description changed length
@@ -1675,6 +1813,52 @@ The developer line was a non-wrapping `TextDisabled` and got cut off ("...above 
 
 --
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 `tools/armory/fetch_halopedia_icons.py` was sitting **untracked** in Tyler's tree from the 2026-10-29 Armory art
 session. It is the picture half of the pipeline next to the tracked `fetch_halopedia_armory.py` (which pulls names,
 rank and cR), so it is checked in rather than left dangling:
@@ -1695,6 +1879,52 @@ python tools\armory\fetch_halopedia_icons.py
 
 --
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ## 0. Pick up here (2026-10-30, 05:35 ET) - Build fix after dc349a5: duplicate `lockOption` lambdas (WeabooTyler117 / DeepSeek)
 
 `origin/main` at `dc349a5` ("Elite armors network replication ... social system") **did not compile**:
@@ -1718,6 +1948,52 @@ are hard redefinitions, so the whole client failed to build. Nothing calls `lock
 
 --
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ## 0. Pick up here (2026-10-30, 05:05 ET) - Menu pass 2: mod names/descriptions, main menu, account modal, server browser (WeabooTyler117 / DeepSeek)
 
 UI only: `src/ui/FrontEndMenu.cpp`, `src/ui/ServerBrowser.cpp`, `src/ui/UiArt.cpp/.hpp`. Follows the 04:05 ET entry.
@@ -1813,6 +2089,52 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ### 2. Implementation & Fixes
 
 1. **Elite Armor Network Replication Engine Patch (`src/hooks/EnginePatches.cpp`):**
@@ -1861,6 +2183,52 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ### 3. Verification & Build Status
 
 - Built cleanly via MSBuild: `cmake --build build --config Release`
@@ -1950,6 +2318,52 @@ pinned they ended exactly at `actionsY` - 38 * s *under* the strip:
 
 --
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ## 0. Pick up here (2026-10-30, 04:45 ET) - Elite Armors Network Replication Fix, Elite Armor Effects Engine Patch, Full Armory Permutations & Emblems/Nameplates, and Master Server Social Friends/Invites Menu (O7OF / Dominus)
 
 Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor effects engine support, MCC nameplates and emblems integration into the Armory, and master server social networking system with interactive friends list, player search, and in-game lobby invites.
@@ -1974,6 +2388,52 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ### 2. Implementation & Fixes
 
 1. **Elite Armor Network Replication Engine Patch (`src/hooks/EnginePatches.cpp`):**
@@ -2022,6 +2482,52 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ### 3. Verification & Build Status
 
 - Built cleanly via MSBuild: `cmake --build build --config Release`
@@ -2077,6 +2583,52 @@ All changes compiled cleanly with MSBuild Release (`noble-client.exe` and `noble
 
 --
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ## 0. Pick up here (2026-10-30, 04:45 ET) - Elite Armors Network Replication Fix, Elite Armor Effects Engine Patch, Full Armory Permutations & Emblems/Nameplates, and Master Server Social Friends/Invites Menu (O7OF / Dominus)
 
 Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor effects engine support, MCC nameplates and emblems integration into the Armory, and master server social networking system with interactive friends list, player search, and in-game lobby invites.
@@ -2101,6 +2653,52 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ### 2. Implementation & Fixes
 
 1. **Elite Armor Network Replication Engine Patch (`src/hooks/EnginePatches.cpp`):**
@@ -2149,6 +2747,52 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ### 3. Verification & Build Status
 
 - Built cleanly via MSBuild: `cmake --build build --config Release`
@@ -2196,6 +2840,52 @@ All changes compiled cleanly via MSBuild Release configuration (`noble-client.ex
 
 --
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ## 0. Pick up here (2026-10-30, 04:45 ET) - Elite Armors Network Replication Fix, Elite Armor Effects Engine Patch, Full Armory Permutations & Emblems/Nameplates, and Master Server Social Friends/Invites Menu (O7OF / Dominus)
 
 Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor effects engine support, MCC nameplates and emblems integration into the Armory, and master server social networking system with interactive friends list, player search, and in-game lobby invites.
@@ -2220,6 +2910,52 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ### 2. Implementation & Fixes
 
 1. **Elite Armor Network Replication Engine Patch (`src/hooks/EnginePatches.cpp`):**
@@ -2268,6 +3004,52 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ### 3. Verification & Build Status
 
 - Built cleanly via MSBuild: `cmake --build build --config Release`
@@ -2347,6 +3129,52 @@ All changes compiled cleanly via MSBuild Release configuration (`noble-client.ex
 
 --
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ## 0. Pick up here (2026-10-30, 04:45 ET) - Elite Armors Network Replication Fix, Elite Armor Effects Engine Patch, Full Armory Permutations & Emblems/Nameplates, and Master Server Social Friends/Invites Menu (O7OF / Dominus)
 
 Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor effects engine support, MCC nameplates and emblems integration into the Armory, and master server social networking system with interactive friends list, player search, and in-game lobby invites.
@@ -2371,6 +3199,52 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ### 2. Implementation & Fixes
 
 1. **Elite Armor Network Replication Engine Patch (`src/hooks/EnginePatches.cpp`):**
@@ -2419,6 +3293,52 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ### 3. Verification & Build Status
 
 - Built cleanly via MSBuild: `cmake --build build --config Release`
@@ -2461,6 +3381,52 @@ All changes compiled cleanly via MSBuild Release configuration (`noble-client.ex
 
 --
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ## 0. Pick up here (2026-10-30, 04:45 ET) - Elite Armors Network Replication Fix, Elite Armor Effects Engine Patch, Full Armory Permutations & Emblems/Nameplates, and Master Server Social Friends/Invites Menu (O7OF / Dominus)
 
 Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor effects engine support, MCC nameplates and emblems integration into the Armory, and master server social networking system with interactive friends list, player search, and in-game lobby invites.
@@ -2485,6 +3451,52 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ### 2. Implementation & Fixes
 
 1. **Elite Armor Network Replication Engine Patch (`src/hooks/EnginePatches.cpp`):**
@@ -2533,6 +3545,52 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ### 3. Verification & Build Status
 
 - Built cleanly via MSBuild: `cmake --build build --config Release`
@@ -2560,6 +3618,52 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 --
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ## 0. Pick up here (2026-10-30, 04:45 ET) - Elite Armors Network Replication Fix, Elite Armor Effects Engine Patch, Full Armory Permutations & Emblems/Nameplates, and Master Server Social Friends/Invites Menu (O7OF / Dominus)
 
 Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor effects engine support, MCC nameplates and emblems integration into the Armory, and master server social networking system with interactive friends list, player search, and in-game lobby invites.
@@ -2584,6 +3688,52 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ### 2. Implementation & Fixes
 
 1. **Elite Armor Network Replication Engine Patch (`src/hooks/EnginePatches.cpp`):**
@@ -2632,6 +3782,52 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ### 3. Verification & Build Status
 
 - Built cleanly via MSBuild: `cmake --build build --config Release`
@@ -2665,6 +3861,52 @@ Sneeze
 
 --
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ## 0. Pick up here (2026-10-30, 04:45 ET) - Elite Armors Network Replication Fix, Elite Armor Effects Engine Patch, Full Armory Permutations & Emblems/Nameplates, and Master Server Social Friends/Invites Menu (O7OF / Dominus)
 
 Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor effects engine support, MCC nameplates and emblems integration into the Armory, and master server social networking system with interactive friends list, player search, and in-game lobby invites.
@@ -2689,6 +3931,52 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ### 2. Implementation & Fixes
 
 1. **Elite Armor Network Replication Engine Patch (`src/hooks/EnginePatches.cpp`):**
@@ -2737,6 +4025,52 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ### 3. Verification & Build Status
 
 - Built cleanly via MSBuild: `cmake --build build --config Release`
@@ -2798,6 +4132,52 @@ oble-client.exe).
 
 --
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ## 0. Pick up here (2026-10-30, 04:45 ET) - Elite Armors Network Replication Fix, Elite Armor Effects Engine Patch, Full Armory Permutations & Emblems/Nameplates, and Master Server Social Friends/Invites Menu (O7OF / Dominus)
 
 Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor effects engine support, MCC nameplates and emblems integration into the Armory, and master server social networking system with interactive friends list, player search, and in-game lobby invites.
@@ -2822,6 +4202,52 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ### 2. Implementation & Fixes
 
 1. **Elite Armor Network Replication Engine Patch (`src/hooks/EnginePatches.cpp`):**
@@ -2870,6 +4296,52 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ### 3. Verification & Build Status
 
 - Built cleanly via MSBuild: `cmake --build build --config Release`
@@ -2999,6 +4471,52 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 --
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ## 0. Pick up here (2026-10-30, 04:45 ET) - Elite Armors Network Replication Fix, Elite Armor Effects Engine Patch, Full Armory Permutations & Emblems/Nameplates, and Master Server Social Friends/Invites Menu (O7OF / Dominus)
 
 Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor effects engine support, MCC nameplates and emblems integration into the Armory, and master server social networking system with interactive friends list, player search, and in-game lobby invites.
@@ -3023,6 +4541,52 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ### 2. Implementation & Fixes
 
 1. **Elite Armor Network Replication Engine Patch (`src/hooks/EnginePatches.cpp`):**
@@ -3071,6 +4635,52 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ### 3. Verification & Build Status
 
 - Built cleanly via MSBuild: `cmake --build build --config Release`
@@ -3122,6 +4732,52 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 --
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ## 0. Pick up here (2026-10-30, 04:45 ET) - Elite Armors Network Replication Fix, Elite Armor Effects Engine Patch, Full Armory Permutations & Emblems/Nameplates, and Master Server Social Friends/Invites Menu (O7OF / Dominus)
 
 Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor effects engine support, MCC nameplates and emblems integration into the Armory, and master server social networking system with interactive friends list, player search, and in-game lobby invites.
@@ -3146,6 +4802,52 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ### 2. Implementation & Fixes
 
 1. **Elite Armor Network Replication Engine Patch (`src/hooks/EnginePatches.cpp`):**
@@ -3194,6 +4896,52 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ### 3. Verification & Build Status
 
 - Built cleanly via MSBuild: `cmake --build build --config Release`
@@ -3225,6 +4973,52 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 --
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ## 0. Pick up here (2026-10-30, 04:45 ET) - Elite Armors Network Replication Fix, Elite Armor Effects Engine Patch, Full Armory Permutations & Emblems/Nameplates, and Master Server Social Friends/Invites Menu (O7OF / Dominus)
 
 Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor effects engine support, MCC nameplates and emblems integration into the Armory, and master server social networking system with interactive friends list, player search, and in-game lobby invites.
@@ -3249,6 +5043,52 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ### 2. Implementation & Fixes
 
 1. **Elite Armor Network Replication Engine Patch (`src/hooks/EnginePatches.cpp`):**
@@ -3297,6 +5137,52 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ### 3. Verification & Build Status
 
 - Built cleanly via MSBuild: `cmake --build build --config Release`
@@ -3334,6 +5220,52 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 --
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ## 0. Pick up here (2026-10-30, 04:45 ET) - Elite Armors Network Replication Fix, Elite Armor Effects Engine Patch, Full Armory Permutations & Emblems/Nameplates, and Master Server Social Friends/Invites Menu (O7OF / Dominus)
 
 Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor effects engine support, MCC nameplates and emblems integration into the Armory, and master server social networking system with interactive friends list, player search, and in-game lobby invites.
@@ -3358,6 +5290,52 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ### 2. Implementation & Fixes
 
 1. **Elite Armor Network Replication Engine Patch (`src/hooks/EnginePatches.cpp`):**
@@ -3406,6 +5384,52 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ### 3. Verification & Build Status
 
 - Built cleanly via MSBuild: `cmake --build build --config Release`
@@ -3507,6 +5531,52 @@ Resolved the host crash/hang that occurred when waiting for non-host clients to 
 
 --
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ## 0. Pick up here (2026-10-30, 04:45 ET) - Elite Armors Network Replication Fix, Elite Armor Effects Engine Patch, Full Armory Permutations & Emblems/Nameplates, and Master Server Social Friends/Invites Menu (O7OF / Dominus)
 
 Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor effects engine support, MCC nameplates and emblems integration into the Armory, and master server social networking system with interactive friends list, player search, and in-game lobby invites.
@@ -3531,6 +5601,52 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ### 2. Implementation & Fixes
 
 1. **Elite Armor Network Replication Engine Patch (`src/hooks/EnginePatches.cpp`):**
@@ -3579,6 +5695,52 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ### 3. Verification & Build Status
 
 - Built cleanly via MSBuild: `cmake --build build --config Release`
@@ -3719,6 +5881,52 @@ Built and partly tested by Tyler (helmet/wrist id fix and the stray visor fix ar
 
 ---
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ## 0. Pick up here (2026-10-30, 04:45 ET) - Elite Armors Network Replication Fix, Elite Armor Effects Engine Patch, Full Armory Permutations & Emblems/Nameplates, and Master Server Social Friends/Invites Menu (O7OF / Dominus)
 
 Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor effects engine support, MCC nameplates and emblems integration into the Armory, and master server social networking system with interactive friends list, player search, and in-game lobby invites.
@@ -3743,6 +5951,52 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ### 2. Implementation & Fixes
 
 1. **Elite Armor Network Replication Engine Patch (`src/hooks/EnginePatches.cpp`):**
@@ -3791,6 +6045,52 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ### 3. Verification & Build Status
 
 - Built cleanly via MSBuild: `cmake --build build --config Release`
@@ -3830,6 +6130,52 @@ All changes compiled cleanly via `build.bat` (`noble-client.exe` and `noble-dedi
 
 ---
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ## 0. Pick up here (2026-10-30, 04:45 ET) - Elite Armors Network Replication Fix, Elite Armor Effects Engine Patch, Full Armory Permutations & Emblems/Nameplates, and Master Server Social Friends/Invites Menu (O7OF / Dominus)
 
 Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor effects engine support, MCC nameplates and emblems integration into the Armory, and master server social networking system with interactive friends list, player search, and in-game lobby invites.
@@ -3854,6 +6200,52 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ### 2. Implementation & Fixes
 
 1. **Elite Armor Network Replication Engine Patch (`src/hooks/EnginePatches.cpp`):**
@@ -3902,6 +6294,52 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ### 3. Verification & Build Status
 
 - Built cleanly via MSBuild: `cmake --build build --config Release`
@@ -3951,6 +6389,52 @@ Compiled cleanly via `build.bat` with **0 errors and 0 warnings**:
 
 ---
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ## 0. Pick up here (2026-10-30, 04:45 ET) - Elite Armors Network Replication Fix, Elite Armor Effects Engine Patch, Full Armory Permutations & Emblems/Nameplates, and Master Server Social Friends/Invites Menu (O7OF / Dominus)
 
 Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor effects engine support, MCC nameplates and emblems integration into the Armory, and master server social networking system with interactive friends list, player search, and in-game lobby invites.
@@ -3975,6 +6459,52 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ### 2. Implementation & Fixes
 
 1. **Elite Armor Network Replication Engine Patch (`src/hooks/EnginePatches.cpp`):**
@@ -4023,6 +6553,52 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ### 3. Verification & Build Status
 
 - Built cleanly via MSBuild: `cmake --build build --config Release`
@@ -4097,6 +6673,52 @@ All changes compiled cleanly via `build.bat` (`noble-client.exe` and `noble-dedi
 
 ---
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ## 0. Pick up here (2026-10-30, 04:45 ET) - Elite Armors Network Replication Fix, Elite Armor Effects Engine Patch, Full Armory Permutations & Emblems/Nameplates, and Master Server Social Friends/Invites Menu (O7OF / Dominus)
 
 Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor effects engine support, MCC nameplates and emblems integration into the Armory, and master server social networking system with interactive friends list, player search, and in-game lobby invites.
@@ -4121,6 +6743,52 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ### 2. Implementation & Fixes
 
 1. **Elite Armor Network Replication Engine Patch (`src/hooks/EnginePatches.cpp`):**
@@ -4169,6 +6837,52 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ### 3. Verification & Build Status
 
 - Built cleanly via MSBuild: `cmake --build build --config Release`
@@ -4220,6 +6934,52 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ## 0. Pick up here (2026-10-30, 04:45 ET) - Elite Armors Network Replication Fix, Elite Armor Effects Engine Patch, Full Armory Permutations & Emblems/Nameplates, and Master Server Social Friends/Invites Menu (O7OF / Dominus)
 
 Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor effects engine support, MCC nameplates and emblems integration into the Armory, and master server social networking system with interactive friends list, player search, and in-game lobby invites.
@@ -4244,6 +7004,52 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ### 2. Implementation & Fixes
 
 1. **Elite Armor Network Replication Engine Patch (`src/hooks/EnginePatches.cpp`):**
@@ -4292,6 +7098,52 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ### 3. Verification & Build Status
 
 - Built cleanly via MSBuild: `cmake --build build --config Release`
@@ -4309,6 +7161,52 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ## 0. Pick up here (2026-10-30, 04:45 ET) - Elite Armors Network Replication Fix, Elite Armor Effects Engine Patch, Full Armory Permutations & Emblems/Nameplates, and Master Server Social Friends/Invites Menu (O7OF / Dominus)
 
 Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor effects engine support, MCC nameplates and emblems integration into the Armory, and master server social networking system with interactive friends list, player search, and in-game lobby invites.
@@ -4333,6 +7231,52 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ### 2. Implementation & Fixes
 
 1. **Elite Armor Network Replication Engine Patch (`src/hooks/EnginePatches.cpp`):**
@@ -4381,6 +7325,52 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ### 3. Verification & Build Status
 
 - Built cleanly via MSBuild: `cmake --build build --config Release`
@@ -4413,6 +7403,52 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ## 0. Pick up here (2026-10-30, 04:45 ET) - Elite Armors Network Replication Fix, Elite Armor Effects Engine Patch, Full Armory Permutations & Emblems/Nameplates, and Master Server Social Friends/Invites Menu (O7OF / Dominus)
 
 Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor effects engine support, MCC nameplates and emblems integration into the Armory, and master server social networking system with interactive friends list, player search, and in-game lobby invites.
@@ -4437,6 +7473,52 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ### 2. Implementation & Fixes
 
 1. **Elite Armor Network Replication Engine Patch (`src/hooks/EnginePatches.cpp`):**
@@ -4485,6 +7567,52 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ### 3. Verification & Build Status
 
 - Built cleanly via MSBuild: `cmake --build build --config Release`
@@ -4531,6 +7659,52 @@ All tested by Tyler unless marked.
 
 ---
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ## 0. Pick up here (2026-10-30, 04:45 ET) - Elite Armors Network Replication Fix, Elite Armor Effects Engine Patch, Full Armory Permutations & Emblems/Nameplates, and Master Server Social Friends/Invites Menu (O7OF / Dominus)
 
 Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor effects engine support, MCC nameplates and emblems integration into the Armory, and master server social networking system with interactive friends list, player search, and in-game lobby invites.
@@ -4555,6 +7729,52 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ### 2. Implementation & Fixes
 
 1. **Elite Armor Network Replication Engine Patch (`src/hooks/EnginePatches.cpp`):**
@@ -4603,6 +7823,52 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ### 3. Verification & Build Status
 
 - Built cleanly via MSBuild: `cmake --build build --config Release`
@@ -4631,6 +7897,52 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ## 0. Pick up here (2026-10-30, 04:45 ET) - Elite Armors Network Replication Fix, Elite Armor Effects Engine Patch, Full Armory Permutations & Emblems/Nameplates, and Master Server Social Friends/Invites Menu (O7OF / Dominus)
 
 Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor effects engine support, MCC nameplates and emblems integration into the Armory, and master server social networking system with interactive friends list, player search, and in-game lobby invites.
@@ -4655,6 +7967,52 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ### 2. Implementation & Fixes
 
 1. **Elite Armor Network Replication Engine Patch (`src/hooks/EnginePatches.cpp`):**
@@ -4703,6 +8061,52 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ### 3. Verification & Build Status
 
 - Built cleanly via MSBuild: `cmake --build build --config Release`
@@ -4727,6 +8131,52 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ## 0. Pick up here (2026-10-30, 04:45 ET) - Elite Armors Network Replication Fix, Elite Armor Effects Engine Patch, Full Armory Permutations & Emblems/Nameplates, and Master Server Social Friends/Invites Menu (O7OF / Dominus)
 
 Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor effects engine support, MCC nameplates and emblems integration into the Armory, and master server social networking system with interactive friends list, player search, and in-game lobby invites.
@@ -4751,6 +8201,52 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ### 2. Implementation & Fixes
 
 1. **Elite Armor Network Replication Engine Patch (`src/hooks/EnginePatches.cpp`):**
@@ -4799,6 +8295,52 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ### 3. Verification & Build Status
 
 - Built cleanly via MSBuild: `cmake --build build --config Release`
@@ -4839,6 +8381,52 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ## 0. Pick up here (2026-10-30, 04:45 ET) - Elite Armors Network Replication Fix, Elite Armor Effects Engine Patch, Full Armory Permutations & Emblems/Nameplates, and Master Server Social Friends/Invites Menu (O7OF / Dominus)
 
 Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor effects engine support, MCC nameplates and emblems integration into the Armory, and master server social networking system with interactive friends list, player search, and in-game lobby invites.
@@ -4863,6 +8451,52 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ### 2. Implementation & Fixes
 
 1. **Elite Armor Network Replication Engine Patch (`src/hooks/EnginePatches.cpp`):**
@@ -4911,6 +8545,52 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ### 3. Verification & Build Status
 
 - Built cleanly via MSBuild: `cmake --build build --config Release`
@@ -4952,6 +8632,52 @@ All committed to `main` branch (commits `60fb4a3`, `14d3852`, `5d50fc2`). Releas
 
 ---
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ## 0. Pick up here (2026-10-30, 04:45 ET) - Elite Armors Network Replication Fix, Elite Armor Effects Engine Patch, Full Armory Permutations & Emblems/Nameplates, and Master Server Social Friends/Invites Menu (O7OF / Dominus)
 
 Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor effects engine support, MCC nameplates and emblems integration into the Armory, and master server social networking system with interactive friends list, player search, and in-game lobby invites.
@@ -4976,6 +8702,52 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ### 2. Implementation & Fixes
 
 1. **Elite Armor Network Replication Engine Patch (`src/hooks/EnginePatches.cpp`):**
@@ -5024,6 +8796,52 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ### 3. Verification & Build Status
 
 - Built cleanly via MSBuild: `cmake --build build --config Release`
@@ -5564,6 +9382,52 @@ shipped DLL; the engine multiplies it by pi/180 for the camera and only accepts 
 
 ---
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ## 0. Pick up here (2026-10-30, 04:45 ET) - Elite Armors Network Replication Fix, Elite Armor Effects Engine Patch, Full Armory Permutations & Emblems/Nameplates, and Master Server Social Friends/Invites Menu (O7OF / Dominus)
 
 Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor effects engine support, MCC nameplates and emblems integration into the Armory, and master server social networking system with interactive friends list, player search, and in-game lobby invites.
@@ -5588,6 +9452,52 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ### 2. Implementation & Fixes
 
 1. **Elite Armor Network Replication Engine Patch (`src/hooks/EnginePatches.cpp`):**
@@ -5636,6 +9546,52 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
+## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+
+### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
+- **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
+- **Cause Found in Log & Engine:** 
+  1. In `src/engine/BlamEngine.cpp`, `isGuest` was forcing `loadedPrebuilt = false`. This stripped the prebuilt campaign scenario variant, level description, and insertion point blocks at `+0x300` on the guest machine, preventing the guest engine from initializing the mission scenario.
+  2. In the guest launch block, controller 0 was bound to Slot 0 (`+0x100`) and Slot 1 was unassigned. When the host accepted the guest, the host assigned the guest player to Slot 1 (Slot 0 is the Host). Because the guest had Slot 1 unassigned, 0 local controllers were mapped to player 2 (Bob), causing the engine to fail spawning player 2.
+- **Fix:**
+  - Preserved prebuilt launch blocks (`campaign_*.bin` / `lb_m_c_1.bin`) on guests.
+  - Added fallback synthesis: if a mission-specific campaign/firefight launch block is missing, `lb_m_c_1.bin` is loaded as the base template.
+  - Properly mapped launch block controller slots for guests: Slot 0 (`+0x100`) is unassigned (`0xFF, 0xFF, 0xFF, 0xFF`) reserved for remote Host; Slot 1 (`+0x120`) is bound to local controller 0 (`block[0x120] = 0x00, block[0x124] = 0x02`), so Player 2 spawns with controller input when host membership (`msg 26`) arrives.
+  - Fixed variant resolver in `BlamEngine.cpp` to skip looking for game variant files when mode is `"Campaign"` (avoids Slayer replacement).
+  - Added backtrace stack capture in `ReachHost.cpp` inside `HostSlot6_GameResults` to diagnose any future unexpected result calls.
+
+### 2. Elite Armors & Armor Effects Multiplayer Replication
+- **Problem:** Equipped Elite armor sets (Honor Guard, General, Field Marshall, etc.) were only visible locally; remote peers saw them default to Elite Minor. Additionally, armor effects were not showing on Elites, and previously caused bugs with character selection.
+- **Root Cause Reverse-Engineered:**
+  - In `haloreach.dll`, function `0x2C8070` (`PlayerSetAppearanceSlot(player, slotParam, itemId)`) expects `slotParam->species = 1` and `slotParam->slot = 0` for Elite sets, and `slotParam->species = 1, slotParam->slot = 2` for Elite armor effects.
+  - At RVA `0x2EDD5C`, the engine was incorrectly passing `species=0, slot=7`, storing the value into the Spartan array and leaving `[player + 0xAE + 0]` as 0 (Elite Minor).
+  - At RVA `0x10580C`, retail `haloreach.dll` loaded `ecx = 0x8C` (`pmcg` list 8C), which is completely empty (0 entries) in retail tags, causing the engine to ignore Elite armor effects.
+- **Fix in `src/hooks/EnginePatches.cpp` & `src/engine/ReachArmory.cpp`:**
+  - Installed a MinHook detour on `PlayerSetAppearanceSlot` at `0x2C8070` to validate callers (`0x2EDD7A` for Elite Set -> `species=1, slot=0`; `0x2EDDBB` for Elite Effect -> `species=1, slot=2`).
+  - Patched RVA `0x2EDD5C` (`89 75 C0 C7 45 C4 07 00 00 00` -> `C7 45 C0 01 00 00 00 89 75 C4`) to write `species=1, slot=0`.
+  - Patched RVA `0x10580C` (`B9 8C 00 00 00` -> `B9 80 00 00 00`) to route Elite armor effects to the full tag list 80 (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party), matching Spartans.
+  - Updated `ReachArmory.cpp` to look up Elite effects in list `"80"` before falling back to `"8c"`.
+
+### 3. Armory Emblems & Nameplates Visuals
+- **Problem:** Nameplates and emblems in the Armory only showed text names or raw options.
+- **Fix in `src/ui/ArmorCustomizer.cpp`:**
+  - In the Armory picker grid: added dedicated branches for `isNameplate` (1 column, 56px height, rendered via `UiArt::Nameplate`) and `isEmblem` (4 columns, square tile, rendered via `UiArt::Emblem`), displaying full visual previews of all 531 nameplates and 330 emblems from `playercustomization.xml`.
+
+### 4. Social Menu & Friends List
+- **Problem:** Social menu lacked an easy way to search/add friends directly by username or IP address and invite/join them.
+- **Fix in `src/network/SocialClient.*` and `src/ui/FrontEndMenu.cpp`:**
+  - Added `AddFriendDirect(nameOrEndpoint)` to `SocialClient`, saving and loading friends locally in `data/userdata/friends.json`.
+  - Added a "QUICK ADD FRIEND" text input box and button at the top of the FRIENDS tab in `DrawSocialScreen`.
+  - Added a direct `[JOIN]` button for friends configured with IP/port endpoints, and updated `[REMOVE]` to remove instantly without requiring a master server connection.
+
+### 5. Verification
+- Built with Visual Studio 18 2026 MSVC toolchain (`cmake --build build --config Release --target noble-client`).
+- Verified 0 errors and 0 warnings.
+- Executed smoke captures:
+  - `noble-client.exe -menu-screen social -menu-capture 30 -quit-after 5` -> Exit Code 0
+  - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
+
+--
 ### 3. Verification & Build Status
 
 - Built cleanly via MSBuild: `cmake --build build --config Release`

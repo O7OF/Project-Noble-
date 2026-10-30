@@ -16,10 +16,18 @@ node_modules/
 *.log
 *.dmp
 imgui.ini
-data/
 bin/vgmstream/
 vgmstream/
 scratch/
+# Ignore user data and large binaries in data/, but keep blocks and json configs
+data/userdata/
+data/menumaps/
+data/armor/
+data/sandbox/
+data/autosave/
+data/mods/
+data/*.map
+
 # Reverse engineering and decompilation evidence/artifacts
 tests/evidence/
 docs/*reverse*
@@ -38,4 +46,3 @@ dumpbin.txt
 *.mtl
 profile_*.bin
 rr_profile*.bin
-launch_block*.bin

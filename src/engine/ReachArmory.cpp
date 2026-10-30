@@ -904,9 +904,12 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx) {
             pushPair("elite_chest",          sel.eliteChest,         "minor");
             pushPair("elite_forearms",       sel.eliteArms,          "default");
             pushPair("elite_legs",           sel.eliteLegs,          "minor");
-            // Elite armor effects (pmcg list 8c, region armor_fx, permutations armor_fx_00..05)
+            // Elite armor effects (pmcg list 80 / 8c, region armor_fx, permutations armor_fx_00..05)
             const std::string fxName = PmcgEffectName(sel.eliteArmorEffect);
-            const std::vector<PmcgChange>* fxChanges = PmcgItem("8c", fxName);
+            const std::vector<PmcgChange>* fxChanges = PmcgItem("80", fxName);
+            if (!fxChanges || fxChanges->empty()) {
+                fxChanges = PmcgItem("8c", fxName);
+            }
             if (fxChanges && !fxChanges->empty()) {
                 for (const auto& c : *fxChanges) pushPair(c.region, c.permutation, nullptr);
             } else if (sel.eliteArmorEffect != "default" && !sel.eliteArmorEffect.empty()) {

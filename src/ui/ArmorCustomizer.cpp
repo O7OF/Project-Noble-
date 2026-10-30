@@ -1764,14 +1764,16 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
         ImDrawList* gdl = ImGui::GetWindowDrawList();
         const float gw = ImGui::GetContentRegionAvail().x;
         const bool colourGrid = row.kind == RowKind::Colour;
-        const int cols = colourGrid ? 10 : 2;
+        const bool isNameplate = std::strcmp(row.label, "Nameplate") == 0;
+        const bool isEmblem = std::strcmp(row.label, "Emblem") == 0;
+        const int cols = colourGrid ? 10 : isEmblem ? 4 : isNameplate ? 1 : 2;
         const float cg = 6.0f * s;
         const float tileW = (gw - cg * (cols - 1)) / cols;
         // Picture tiles (Elite armour sets) when at least the equipped option's picture is there.
         const char* eqArt = row.options[equipped].art;
         auto artDir = [](const PickOption& o) { return o.artDir ? o.artDir : "elite_sets"; };
-        const bool artGrid = !colourGrid && eqArt && UiArt::ReachArt(artDir(row.options[equipped]), eqArt);
-        const float tileH = colourGrid ? tileW : artGrid ? tileW * 1.15f : 46.0f * s;
+        const bool artGrid = !colourGrid && !isNameplate && !isEmblem && eqArt && UiArt::ReachArt(artDir(row.options[equipped]), eqArt);
+        const float tileH = colourGrid ? tileW : isEmblem ? tileW : isNameplate ? 56.0f * s : artGrid ? tileW * 1.15f : 46.0f * s;
         // Grid origin in screen space, taken once (it already includes the scroll offset).
         const ImVec2 base = ImGui::GetCursorScreenPos();
         // Tiles you can use come first, then ones for sale, then locked ones (each group keeps the list order).
@@ -1806,6 +1808,30 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
             if (colourGrid) {
                 gdl->AddRectFilled(t0, t1, row.options[i].swatch, 2.0f * s);
                 gdl->AddRect(t0, t1, isEq ? IM_COL32(255, 255, 255, 255) : IM_COL32(255, 255, 255, hov ? 160 : 40), 2.0f * s, 0, isEq ? 2.5f * s : 1.0f);
+            } else if (isNameplate) {
+                gdl->AddRectFilled(t0, t1, isEq ? IM_COL32(34, 70, 104, 235) : (hov ? IM_COL32(40, 54, 70, 235) : IM_COL32(20, 28, 38, 220)), 2.0f * s);
+                const auto& catalog = UiArt::GetNameplateCatalog();
+                if (static_cast<size_t>(i) < catalog.size()) {
+                    const UiTexture npTex = UiArt::Nameplate(catalog[i].id);
+                    if (npTex) {
+                        UiArt::DrawContain(gdl, npTex, ImVec2(t0.x + 4.0f * s, t0.y + 4.0f * s), ImVec2(t1.x - 4.0f * s, t1.y - 4.0f * s),
+                                           (isEq || hov) ? IM_COL32_WHITE : IM_COL32(220, 220, 220, 255));
+                    }
+                }
+                gdl->AddRect(t0, t1, isEq ? kAccentCol : isTry ? IM_COL32(255, 196, 92, 255) : IM_COL32(170, 220, 255, hov ? 140 : 40),
+                             2.0f * s, 0, (isEq || isTry) ? 1.6f * s : 1.0f);
+            } else if (isEmblem) {
+                gdl->AddRectFilled(t0, t1, isEq ? IM_COL32(34, 70, 104, 235) : (hov ? IM_COL32(40, 54, 70, 235) : IM_COL32(20, 28, 38, 220)), 2.0f * s);
+                const auto& catalog = UiArt::GetEmblemCatalog();
+                if (static_cast<size_t>(i) < catalog.size()) {
+                    const UiTexture embTex = UiArt::Emblem(catalog[i].id);
+                    if (embTex) {
+                        UiArt::DrawContain(gdl, embTex, ImVec2(t0.x + 4.0f * s, t0.y + 4.0f * s), ImVec2(t1.x - 4.0f * s, t1.y - 4.0f * s),
+                                           (isEq || hov) ? IM_COL32_WHITE : IM_COL32(220, 220, 220, 255));
+                    }
+                }
+                gdl->AddRect(t0, t1, isEq ? kAccentCol : isTry ? IM_COL32(255, 196, 92, 255) : IM_COL32(170, 220, 255, hov ? 140 : 40),
+                             2.0f * s, 0, (isEq || isTry) ? 1.6f * s : 1.0f);
             } else if (artGrid) {
                 gdl->AddRectFilled(t0, t1, isEq ? IM_COL32(34, 70, 104, 235) : (hov ? IM_COL32(40, 54, 70, 235) : IM_COL32(20, 28, 38, 220)), 2.0f * s);
                 const float nameH = 30.0f * s;

@@ -319,9 +319,6 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
             NetworkTransport::Get().Initialize(true);
         }
     }
-    if (isGuest) {
-        loadedPrebuilt = false;
-    }
 
     std::string targetHostIp = "127.0.0.1";
     uint16_t targetHostPort = 11774;
@@ -368,6 +365,14 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
         blockPath = dataRoot / "blocks" / ("campaign_" + std::to_string(mapId) + "_d" + std::to_string(clampedDiff) + ".bin");
         if (!std::filesystem::exists(blockPath)) {
             blockPath = dataRoot / "blocks" / ("campaign_" + std::to_string(mapId) + ".bin");
+        }
+    }
+
+    // Fallback: If prebuilt campaign or firefight block is missing, synthesize from lb_m_c_1.bin template
+    if ((blockPath.empty() || !std::filesystem::exists(blockPath)) && (isCampaign || isFirefight)) {
+        if (std::filesystem::exists(dataRoot / "lb_m_c_1.bin")) {
+            blockPath = dataRoot / "lb_m_c_1.bin";
+            NOBLE_INFO("BlamEngine: Synthesizing launch block from template '{}' for mode {}", blockPath.string(), isCampaign ? "Campaign" : "Firefight");
         }
     }
 
@@ -436,15 +441,36 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
             block[0xE8] = 0x01; // 1 active local player
             *reinterpret_cast<uint64_t*>(&block[0xF0]) = guestPlayerId;
             *reinterpret_cast<uint64_t*>(&block[0xF8]) = localMachineId; // Local player 0 machine ID
-            block[0x100] = 0x00;
-            block[0x101] = 0x00;
-            block[0x102] = 0x00;
-            block[0x103] = 0x00;
-            block[0x104] = 0x02;
-            block[0x108] = 0x00;
-            block[0x109] = 0x00;
-            block[0x10A] = 0x00;
-            block[0x10B] = 0x00;
+            // Slot 0 is reserved for remote Host
+            block[0x100] = 0xFF;
+            block[0x101] = 0xFF;
+            block[0x102] = 0xFF;
+            block[0x103] = 0xFF;
+            block[0x104] = 0x00;
+            block[0x108] = 0xFF;
+            block[0x109] = 0xFF;
+            block[0x10A] = 0xFF;
+            block[0x10B] = 0xFF;
+            // Slot 1 is bound to local controller 0 for this Guest
+            block[0x120] = 0x00;
+            block[0x121] = 0x00;
+            block[0x122] = 0x00;
+            block[0x123] = 0x00;
+            block[0x124] = 0x02;
+            block[0x128] = 0x00;
+            block[0x129] = 0x00;
+            block[0x12A] = 0x00;
+            block[0x12B] = 0x00;
+            // Slots 2..15 are unassigned
+            for (size_t s = 2; s < 16; ++s) {
+                size_t off = 0x100 + (s * 0x20);
+                block[off + 0] = 0xFF;
+                block[off + 1] = 0xFF;
+                block[off + 2] = 0xFF;
+                block[off + 3] = 0xFF;
+                block[off + 4] = 0x00;
+                for (size_t b = 8; b < 16; ++b) block[off + b] = 0xFF;
+            }
             block[0x2F0] = 0x00;
             *reinterpret_cast<uint32_t*>(&block[0x2F4]) = 0xFFFFFFFF;
             *reinterpret_cast<uint64_t*>(&block[0x2F8]) = hostMachineId; // uint64 Host Machine ID
@@ -530,15 +556,26 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
                 block[0xE8] = 0x01;
                 *reinterpret_cast<uint64_t*>(&block[0xF0]) = guestPlayerId;
                 *reinterpret_cast<uint64_t*>(&block[0xF8]) = localMachineId;
-                block[0x100] = 0x00;
-                block[0x101] = 0x00;
-                block[0x102] = 0x00;
-                block[0x103] = 0x00;
-                block[0x104] = 0x02;
-                block[0x108] = 0x00;
-                block[0x109] = 0x00;
-                block[0x10A] = 0x00;
-                block[0x10B] = 0x00;
+                // Slot 0 is reserved for remote Host
+                block[0x100] = 0xFF;
+                block[0x101] = 0xFF;
+                block[0x102] = 0xFF;
+                block[0x103] = 0xFF;
+                block[0x104] = 0x00;
+                block[0x108] = 0xFF;
+                block[0x109] = 0xFF;
+                block[0x10A] = 0xFF;
+                block[0x10B] = 0xFF;
+                // Slot 1 is bound to local controller 0 for this Guest
+                block[0x120] = 0x00;
+                block[0x121] = 0x00;
+                block[0x122] = 0x00;
+                block[0x123] = 0x00;
+                block[0x124] = 0x02;
+                block[0x128] = 0x00;
+                block[0x129] = 0x00;
+                block[0x12A] = 0x00;
+                block[0x12B] = 0x00;
                 block[0x2F0] = 0x00;
                 *reinterpret_cast<uint32_t*>(&block[0x2F4]) = 0xFFFFFFFF;
                 *reinterpret_cast<uint64_t*>(&block[0x2F8]) = hostMachineId;
@@ -570,8 +607,9 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
                 block[0x2BF15] = 0x01;
             }
 
-            // Reset slots 1..15 to unassigned (-1) on both host and guest so remote peers can be registered
-            for (size_t slot = 1; slot < 16; ++slot) {
+            // Reset unassigned slots on host and guest so remote peers can be registered
+            size_t startSlot = isGuest ? 2 : 1;
+            for (size_t slot = startSlot; slot < 16; ++slot) {
                 size_t offset = 0x100 + (slot * 0x20);
                 block[offset + 0] = 0xFF;
                 block[offset + 1] = 0xFF;
@@ -653,7 +691,7 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
     // and mission variants at +0x300, and must NOT be overwritten with multiplayer Slayer!
     // The main menu (mainmenu_all.map) never carries a game variant, so it skips this block entirely
     // (before 2026-10-29 it logged a bogus "No game variant found (looked for '')" on every menu boot).
-    if (!isMainMenu && (!isCampaign || !customVariantPath.empty())) {
+    if (!isMainMenu && (!isCampaign || (!customVariantPath.empty() && customVariantPath != "Campaign" && customVariantPath != "campaign"))) {
         std::filesystem::path variantPath;
         if (!customVariantPath.empty()) {
             variantPath = ResolveVariantFile(customVariantPath);

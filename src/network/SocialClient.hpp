@@ -12,7 +12,8 @@ namespace noble {
 struct FriendEntry {
     std::string username;
     std::string status;    // "pending" or "accepted"
-    std::string direction; // "incoming", "outgoing", "accepted"
+    std::string direction; // "incoming", "outgoing", "accepted", "local"
+    std::string endpoint;  // optional ip:port
 };
 
 struct GameInvite {
@@ -45,6 +46,7 @@ public:
     void PollInvitesAsync();
 
     // Friend management
+    void AddFriendDirect(const std::string& nameOrEndpoint);
     void SearchUsersAsync(const std::string& prefix, std::function<void(bool ok, const std::vector<UserSearchResult>& results)> callback);
     void SendFriendRequestAsync(const std::string& targetUsername, std::function<void(bool ok, const std::string& message)> callback = nullptr);
     void AcceptFriendRequestAsync(const std::string& senderUsername, std::function<void(bool ok, const std::string& message)> callback = nullptr);
