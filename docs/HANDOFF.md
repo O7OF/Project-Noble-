@@ -69,6 +69,21 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-31, 19:05 ET) - Third person: button sweep negative, next route is the command dispatcher (WeabooTyler117 / DeepSeek)
+
+- Swept RB/Y/BACK/B/X/LB as 600 ms synthetic pad presses in a sandbox forge session. Measured view change: RB 21.4 %,
+  Y 10.7 %, BACK 8.1 %, B 1.7 %, X 1.6 %, LB 1.6 %. Inspecting the frames, RB and Y only nudge the **view angle** (same
+  first-person HUD, same grenade counter); no Forge menu and no third-person monitor. So the injection is seen (the press
+  log, and RB/Y move the view) but it is not driving a menu or editor-mode action.
+- Two likely reasons: the engine latches keyboard/mouse as its input device at match start (so later synthetic gamepad
+  buttons are ignored for UI), or editor mode is not a direct binding at all - it may sit inside the Forge object menu.
+- Recommended next moves, in order: (1) keep the synthetic pad "connected" for the first few seconds so the engine latches
+  gamepad input, then press; (2) make `BlamEngine::ExecuteCommand` reachable from the running client (static active-instance
+  pointer in `Initialize`) and dispatch `enter_editor_mode` / `editor_mode 1` / `camera_set_first_person 0` - those names are
+  in `haloreach.dll`'s string table; (3) map `enter_editor_mode` to its real button through the profile control block
+  (`+0x42C`); (4) offset the first-person camera directly in the engine (Ghidra project is ready).
+- `docs/HREK-PLAYBOOK.md` carries the sweep table and the ordered plan.
+
 ## 0. Pick up here (2026-10-31, 18:45 ET) - Third person: synthetic pad hook works, BACK is not the editor toggle (WeabooTyler117 / DeepSeek)
 
 - New research hook `-pad-press <hex> -pad-press-at <s> -pad-press-ms <ms>` in `ReachHost::FillLocalPad`: injects one

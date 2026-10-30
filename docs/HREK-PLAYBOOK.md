@@ -183,3 +183,37 @@ Next candidates, in order of cheapness:
 4. Engine command route: `editor_mode`, `camera_set_first_person`, `camera_set_mode` are also in the engine's string table.
    If the host interface's command dispatcher accepts them, a Noble toggle could call them directly - `BlamEngine::
    ExecuteCommand` exists for exactly that but is not yet reachable from the running client.
+
+
+## Third-person attempt #2 (button sweep) - also negative
+
+Swept the candidate buttons in a sandbox (`-engine-mode 4`) forge session, each held 600 ms at t+14 s, and measured the
+frame-to-frame view change (before at t+12 s, after at t+19 s; >18 luma threshold, 6 px sampling):
+
+| button | view change |
+|---|---:|
+| RB (0x0200) | 21.4 % |
+| Y (0x8000) | 10.7 % |
+| BACK (0x0020, 600 ms) | 8.1 % |
+| B (0x2000) | 1.7 % |
+| X (0x4000) | 1.6 % |
+| LB (0x0100) | 1.6 % |
+
+Inspecting the frames: RB and Y produce only a small **view-angle** change (the corridor shifts, same first-person HUD,
+same grenade counter) - not the Forge object menu and not the third-person monitor. B/X/LB are within idle-animation noise.
+
+So the injected pad press is being seen by the engine (the log proves the injection, and RB/Y nudge the view) but it is not
+driving a menu or editor-mode action. Two likely reasons: the engine latches its input device (keyboard/mouse) at match
+start and ignores later synthetic gamepad buttons for UI actions, or the editor-mode switch is not a direct binding at all -
+it may live inside the Forge menu (Y in real Reach Forge opens the object menu; ours did not).
+
+Recommended next moves, in order:
+
+1. **Hold the pad connected before the press** (e.g. a neutral synthetic frame every tick for the first 5 s, then the real
+   press). If the engine latches the device once, this is what makes the sweep meaningful.
+2. **Engine command route** - make `BlamEngine::ExecuteCommand` reachable from the running client (a static active-instance
+   pointer set in `Initialize`) and dispatch `enter_editor_mode` / `editor_mode 1` / `camera_set_first_person 0`. These names
+   exist in `haloreach.dll`'s string table; if the dispatcher accepts them this is the cleanest toggle.
+3. **Real binding lookup** - the action table names are known, so map `enter_editor_mode` to its button through the profile's
+   control block (`+0x42C`) and press exactly that.
+4. **Camera patch** - offset the first-person camera in `haloreach.dll` (Ghidra project ready); client-side, any mode.
