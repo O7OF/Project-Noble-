@@ -113,7 +113,23 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     DisableProcessWindowsGhosting();
 
     // 1. Initialize logging
-    noble::Logger::Init("noble-client.log");
+    // "-log <file>" lets a second instance (or an automated test) keep its own log instead of truncating
+    // noble-client.log, which basic_file_sink does on every start.
+    {
+        std::string logName = "noble-client.log";
+        int argcPre = 0;
+        LPWSTR* argvPre = CommandLineToArgvW(GetCommandLineW(), &argcPre);
+        for (int i = 1; argvPre && i + 1 < argcPre; ++i) {
+            if (_wcsicmp(argvPre[i], L"-log") == 0) {
+                const std::wstring w(argvPre[i + 1]);
+                std::string ascii;
+                for (const wchar_t c : w) ascii.push_back(static_cast<char>(c & 0x7F));   // log names are ASCII
+                logName = ascii;
+            }
+        }
+        if (argvPre) LocalFree(argvPre);
+        noble::Logger::Init(logName);
+    }
     NOBLE_INFO("Starting {} - {}", noble::APP_NAME, noble::VERSION_STRING);
 
     // 2. Discover Steam MCC installation and verify Reach DLC assets

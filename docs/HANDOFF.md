@@ -22,6 +22,53 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-31, 13:10 ET) - Forge netplay: the host was refusing joins while its session was still closed (WeabooTyler117 / DeepSeek)
+
+Tyler: solo works on every mode; custom games, matchmaking and Firefight netplay work; **Forge netplay does not**. He asked
+for the offset.
+
+### Reproduced locally, two processes, loopback
+
+Needed a per-instance log first: `-log <file>` was added to `main.cpp` because `basic_file_sink` truncates
+`noble-client.log` on every start (a second instance used to erase the first one's log). Then:
+
+- host: `-map forge_halo -mode forge -host -online -wait-peers 1 -log f.log`
+- guest: `-map forge_halo -mode forge -connect 127.0.0.1:11774 -log g.log`
+
+### What the two sides said
+
+| | host join queue at request | guest join-requests | guest join-aborts (msg 10) | guest in game |
+|---|---|---|---|---|
+| before | `mode 0 count 0` (session state **0**) | 30 | 10 | no |
+| after | `mode 1 count 1` (session state **6**) | 1 | 0 | **yes** - `game session started ... loading screen off` |
+
+The control (Slayer, same harness) was `mode 1 count 1`, 1 request, 0 aborts, in game - so the state numbers are the
+discriminator, not map size or the Forge variant.
+
+### Root cause
+
+Forge is a Megalo session (engine tag 3), and its session must reach state 6 (loading) before a guest's join-request is
+queued. It never got there in time because of the campaign co-op fix from earlier today (`f4d247e`): that change held
+**Command 10 (Event: Start)** until lobby peers arrived, so the host sat in state **0** while the guest was knocking. The
+host answered every request with `join-abort` (msg 10), the guest retried (30 requests, 10 aborts), and it never loaded -
+exactly "netplay on forge does not work".
+
+### Fix (`src/engine/BlamEngine.cpp`)
+
+The pre-`Command 10` peer hold is now **campaign only** (`holdMissionForPeers = gameModeTag == 1`). Forge posts Command 10
+immediately (opening its session), and the existing peer barrier holds **Command 11** for 8 s instead - which is what it
+was doing before today's campaign change. Verified after the change: two-process Forge netplay reaches
+`game session started ... loading screen off` on both sides, and a solo Forge host still reaches the Forge HUD with no
+errors.
+
+### Still to confirm on real hardware
+
+This was loopback on one PC. The real two-PC test needs both machines on the same build and a reachable endpoint (or the
+relay). If it still fails there, the next step is the session-state gate itself: the join queue lives around
+`hr+0x397650` (`can_accept_join_request`, already hooked) and the state check that decides "queue vs abort" is what would
+need a byte patch - the logs now print the exact state (`join queue after request: mode N count N ... state N`) so it can
+be pinned in one run.
+
 ## 0. Pick up here (2026-10-31, 12:00 ET) - Two-machine co-op test harness + protocol for a second AI (WeabooTyler117 / DeepSeek)
 
 Tyler asked whether O7's agent (Gemini) and this one could co-work a co-op test: one hosts, the other joins, both record and
