@@ -22,6 +22,48 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-30, 07:20 ET) - Lobby identity per row + invite notifications, and a continuation guide (WeabooTyler117 / DeepSeek)
+
+### 1. Every player row can carry its own identity
+
+`LobbyPlayer` and `MasterAdvert` now have `rankIndex`, `emblemId`, `nameplateId`, `team` (0 = none, 1 = red, 2 = blue).
+`MasterServerClient` sends `host_rank_index`/`host_emblem_id`/`host_nameplate_id`/`host_team` in `POST /api/sessions` and
+the heartbeat, includes the same keys in the host's roster entry, and parses `rankIndex`/`emblemId`/`nameplateId`/`team`
+back out of both roster responses. `SetupHostLobby` fills the host advert and its local roster entry from the Armory
+profile + `Career::RankIndex`, the host-pinning refresh keeps them pinned, and the pre-game row now draws
+`player.rankIndex/emblemId/nameplateId/team` with the local profile as fallback.
+
+**Remote rows stay placeholders until the deployed master server echoes those keys** - `server/server.js` must pass
+`host_*` and the roster fields through (`D:\ServerTestDeploy-main` + the Render deploy). That is the only missing piece;
+the client half is done.
+
+### 2. Invite notifications
+
+`DrawInviteToast()` (in `FrontEndMenu.cpp`) polls `SocialClient::PollInvitesAsync()` every 4 s while logged in and shows
+the newest invite on **any** menu screen: a GAME INVITE panel with the sender, "is inviting you to a match", **JOIN**
+(`Relaunch::HandOff(-connect host:port)`) and **DISMISS** (clears it server-side via `ClearInviteAsync`). Answered invites
+are remembered per session; the quit dialog and modals suppress the toast.
+
+`SettingsData::inviteNotifications` (default on, `settings.json` key `inviteNotifications`) is exposed as
+**Settings > Online services > INVITE NOTIFICATIONS** (new INVITES section above SERVERS) and counted in the category's
+unsaved changes.
+
+Not done: naming the game type in the toast ("... a **Firefight** match") - the invite payload has no mode/map yet
+(`SocialClient::SendInviteAsync`, `/api/invites`, server side).
+
+### 3. Continuation guide
+
+`docs/CONTINUATION.md` is new: what the project is, every path on this machine (repo, MCC, RR, RE folder, server),
+build/run/screenshot commands, the source map, the menu layout contract, what is done per commit, the prioritized
+backlog with the technical pointer for each item, the working-agreement traps (build/ has tracked art, `small` macro,
+pack names are UPPER CASE, a push does not deliver the exe), and the RE material incl. Tyler's `dec_*.json` Ghidra
+exports and PE scripts in Downloads (whose hard-coded DLL path is the **old** `C:\Program Files (x86)` install).
+
+### 4. Checks
+
+- `cmake --build build --config Release`: 0 errors, 0 warnings.
+- Capture at 1920x1080: Settings > Online services shows the INVITE NOTIFICATIONS row (ON) with its details panel.
+
 ## 0. Pick up here (2026-10-30, 06:55 ET) - Player row polish: DEV tag bracket, centred rank, one frame (WeabooTyler117 / DeepSeek)
 
 Final round on the row Tyler kept circling (MCC reference crops), all in `PlayerRow()`:
