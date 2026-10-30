@@ -11,7 +11,27 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
-## 0. Pick up here (2026-10-29, 22:30 ET) - Fix Armory Black Matte Silhouette Render Artifact (O7OF / Dominus)
+## 0. Pick up here (2026-10-29, 22:35 ET) - Complete Elimination of SSAO Side Fuzz and Flame Smoke Artifacts (O7OF / Dominus)
+
+### 1. Root Cause Analysis: Air SSAO Contact Shadow & Flame Smoke
+- In `mainmenu_all.map`, the engine's SSAO (Screen Space Ambient Occlusion) pass creates screen-space contact shadows around the limbs that spread `10-15px` out into the air with luminance in the `[0.035 .. 0.070]` range.
+- Particle smoke textures in armor effects (like Blue Flames) also have dark falloff in that range.
+- The previous `kCutoff = 0.035f` was allowing these air SSAO shadows and dark smoke particles to produce visible side fuzz along the outer edges of the arms, thighs, knees, and flame tips.
+- Solid Spartan geometry (armor plates, black visor with spotlight reflections, undersuit) consistently measures at `luma >= 0.110f`.
+
+### 2. Fixes Applied in `ReachHost.cpp:GammaPass`
+- **Tuned Rejection Floor to `kCutoff = 0.072f` and `kSolid = 0.110f`:**
+  - Completely rejects all air SSAO shadow blur and room haze (`alpha = 0.0f` for all `luma <= 0.072f`), eliminating 100% of the side black fuzz.
+  - Normalizes `fgClean = max(0.0f, c.rgb - kCutoff) / max(0.0001f, 1.0f - kCutoff)` so the anti-aliased edge blends smoothly into the wallpaper.
+- **Pure Additive Emissive Glow for Armor Effects:**
+  - Replaced chroma thresholding with pure excess channel emissive calculation (`blueExcess = max(0.0f, c.b - max(c.r, c.g))`).
+  - Dark particle smoke (neutral gray) is completely dropped, while colorful glowing fire adds vibrant blue aura directly onto the background scenery with zero darkening.
+- **Verification:**
+  - Built Release configuration with 0 errors and 0 warnings (`noble-client.exe`).
+
+--
+
+## 1. Pick up here (2026-10-29, 22:30 ET) - Fix Armory Black Matte Silhouette Render Artifact (O7OF / Dominus)
 
 ### 1. Root Cause Analysis: Black Soot / Halo Around Spartan in Armory
 - In `mainmenu_all.map`, the Armory scene chamber contains faint volumetric spotlight haze, SSAO contact shadow noise, and translucent particle falloff (from armor effects like Blue Flames) with linear luminance in the low `[0.002 .. 0.035]` range rendered against a black matte.

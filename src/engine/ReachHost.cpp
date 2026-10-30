@@ -2967,9 +2967,10 @@ private:
                     float luma = max(c.r, max(c.g, c.b));
 
                     // Ambient room fog, SSAO noise, and spotlight haze in mainmenu_all.map
-                    // have luma <= 0.035. Solid geometry (armor, visor, undersuit) has luma >= 0.080.
-                    const float kCutoff = 0.035f;
-                    const float kSolid  = 0.080f;
+                    // spread into the air around the limbs with luma in [0.035 .. 0.070].
+                    // Solid geometry (armor, visor, undersuit) has luma >= 0.110.
+                    const float kCutoff = 0.072f;
+                    const float kSolid  = 0.110f;
 
                     float alpha = smoothstep(kCutoff, kSolid, luma);
 
@@ -2981,11 +2982,13 @@ private:
                     float3 finalRgb = lerp(bg.rgb, spartanRgb, alpha);
 
                     // For armor effects (such as Blue Flames), add colorful emissive glow onto the background
-                    // instead of letting it darken the background into black soot
-                    float chroma = max(c.b, c.r) - min(c.r, min(c.g, c.b));
-                    if (chroma > 0.02f && alpha < 1.0f) {
-                        float3 emissive = max(0.0f, c.rgb - min(c.r, min(c.g, c.b))) * (1.0f - alpha);
-                        finalRgb += emissive * 0.85f;
+                    // instead of letting particle smoke textures darken the background into black soot
+                    float blueExcess = max(0.0f, c.b - max(c.r, c.g));
+                    float redExcess  = max(0.0f, c.r - max(c.g, c.b));
+                    float emissive   = max(blueExcess, redExcess);
+                    if (emissive > 0.015f && alpha < 1.0f) {
+                        float3 glow = max(0.0f, c.rgb - min(c.r, min(c.g, c.b))) * (1.0f - alpha);
+                        finalRgb += glow * 0.95f;
                     }
 
                     return float4(saturate(finalRgb), 1.0f);
