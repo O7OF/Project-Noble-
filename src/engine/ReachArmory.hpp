@@ -78,6 +78,9 @@ public:
 
     // True once mainmenu_all.map HS GLOBALS table is active.
     static bool IsSceneReady();
+
+    // True when the engine is actively displaying an Armory pedestal/customization scene.
+    static bool IsArmoryScene();
 };
 
 } // namespace noble

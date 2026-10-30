@@ -1060,6 +1060,17 @@ bool ReachArmory::IsSceneReady() {
     return s_sceneReady.load();
 }
 
+bool ReachArmory::IsArmoryScene() {
+    if (!s_menuMode.load() || !s_sceneReady.load()) return false;
+    std::string scene;
+    {
+        std::lock_guard<std::mutex> lock(s_dataMutex);
+        scene = s_targetScene;
+    }
+    const int32_t idx = ResolveSceneIndex(scene);
+    return (idx >= 0x0A && idx <= 0x14 && idx != 0x0E);
+}
+
 void ReachArmory::Tick() {
     if (!s_menuMode.load()) return;
 

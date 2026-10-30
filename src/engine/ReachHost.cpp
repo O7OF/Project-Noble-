@@ -1,6 +1,7 @@
 #include "ReachHost.hpp"
 #include "ui/LoadScreen.hpp"
 #include "ui/FrontEndMenu.hpp"
+#include "ui/UiArt.hpp"
 #include "common/Logger.hpp"
 #include "hooks/HookManager.hpp"
 #include "ui/PauseMenu.hpp"
@@ -2717,6 +2718,16 @@ static uint64_t __fastcall HostSlot66_TextRegisterIcon(void* thisPtr, uint64_t c
 // Halo Reach outputs linear HDR backbuffer; without gamma correction, HUD icons and UI
 // elements appear dim, dark navy, or purplish.
 // -----------------------------------------------------------------------------
+struct PostProcessCB {
+    float gamma_exp;
+    float is_armory;
+    float screen_aspect;
+    float bg_aspect;
+    float inv_width;
+    float inv_height;
+    float padding[2];
+};
+
 class GammaPass {
 public:
     static GammaPass& Get() {
@@ -2733,6 +2744,7 @@ public:
         m_copyTexture.Reset();
         m_copySRV.Reset();
         m_backBufferRTV.Reset();
+        m_sampler.Reset();
     }
 
     void Execute(IDXGISwapChain* swapChain) {
@@ -2754,9 +2766,18 @@ public:
         // Lazy initialize TextAtlas with device and context if not already done
         TextAtlas::Get().Initialize(device.Get(), context.Get());
 
+        const bool isArmory = ReachArmory::IsArmoryScene();
+        UiTexture bg{};
+        ID3D11ShaderResourceView* bgSRV = nullptr;
+        if (isArmory) {
+            bg = UiArt::MenuBackground();
+            if (bg) bgSRV = reinterpret_cast<ID3D11ShaderResourceView*>(bg.id);
+        }
+        const bool needComposite = isArmory && (bgSRV != nullptr);
+
         // Exponent of 1.0f represents identity (no extra gamma transform).
-        // Returning early avoids lifting dark values and fixes the washed-out / milky screen.
-        if (std::abs(m_exponent - 1.0f) < 0.001f) {
+        // Returning early avoids lifting dark values when not compositing Armory background.
+        if (std::abs(m_exponent - 1.0f) < 0.001f && !needComposite) {
             return;
         }
 
@@ -2785,8 +2806,11 @@ public:
         context->VSGetShader(&oldVS, oldInstances, &numInstances);
         context->PSGetShader(&oldPS, oldInstances, &numInstances);
 
-        ID3D11ShaderResourceView* oldSRV = nullptr;
-        context->PSGetShaderResources(0, 1, &oldSRV);
+        ID3D11ShaderResourceView* oldSRVs[2] = { nullptr, nullptr };
+        context->PSGetShaderResources(0, 2, oldSRVs);
+
+        ID3D11SamplerState* oldSampler = nullptr;
+        context->PSGetSamplers(0, 1, &oldSampler);
 
         ID3D11Buffer* oldCB = nullptr;
         context->PSGetConstantBuffers(0, 1, &oldCB);
@@ -2806,14 +2830,20 @@ public:
         UINT oldStencilRef = 0;
         context->OMGetDepthStencilState(&oldDepthState, &oldStencilRef);
 
-        // Update constant buffer with gamma exponent
+        // Update constant buffer with gamma exponent and composite parameters
         D3D11_MAPPED_SUBRESOURCE mapped{};
         if (SUCCEEDED(context->Map(m_constantBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
-            float* cbData = static_cast<float*>(mapped.pData);
-            cbData[0] = m_exponent;
-            cbData[1] = 0.0f;
-            cbData[2] = 0.0f;
-            cbData[3] = 0.0f;
+            PostProcessCB* cbData = static_cast<PostProcessCB*>(mapped.pData);
+            cbData->gamma_exp = m_exponent;
+            cbData->is_armory = needComposite ? 1.0f : 0.0f;
+            cbData->screen_aspect = (desc.Height > 0) ? static_cast<float>(desc.Width) / static_cast<float>(desc.Height) : 1.77778f;
+            const float bgW = (bg && bg.width > 0) ? static_cast<float>(bg.width) : 1920.0f;
+            const float bgH = (bg && bg.height > 0) ? static_cast<float>(bg.height) : 1080.0f;
+            cbData->bg_aspect = bgW / bgH;
+            cbData->inv_width = (desc.Width > 0) ? 1.0f / static_cast<float>(desc.Width) : 0.0f;
+            cbData->inv_height = (desc.Height > 0) ? 1.0f / static_cast<float>(desc.Height) : 0.0f;
+            cbData->padding[0] = 0.0f;
+            cbData->padding[1] = 0.0f;
             context->Unmap(m_constantBuffer.Get(), 0);
         }
 
@@ -2839,15 +2869,21 @@ public:
         ID3D11Buffer* cbs[] = { m_constantBuffer.Get() };
         context->PSSetConstantBuffers(0, 1, cbs);
 
-        ID3D11ShaderResourceView* srvs[] = { m_copySRV.Get() };
-        context->PSSetShaderResources(0, 1, srvs);
+        ID3D11ShaderResourceView* srvs[] = { m_copySRV.Get(), bgSRV };
+        context->PSSetShaderResources(0, 2, srvs);
+
+        ID3D11SamplerState* samplers[] = { m_sampler.Get() };
+        context->PSSetSamplers(0, 1, samplers);
 
         // Draw full-screen triangle
         context->Draw(3, 0);
 
         // Restore pipeline state
-        ID3D11ShaderResourceView* nullSRV[] = { nullptr };
-        context->PSSetShaderResources(0, 1, nullSRV);
+        ID3D11ShaderResourceView* nullSRVs[2] = { nullptr, nullptr };
+        context->PSSetShaderResources(0, 2, nullSRVs);
+
+        ID3D11SamplerState* nullSamplers[1] = { nullptr };
+        context->PSSetSamplers(0, 1, nullSamplers);
 
         context->OMSetRenderTargets(1, &oldRTV, oldDSV);
         if (oldRTV) oldRTV->Release();
@@ -2860,8 +2896,12 @@ public:
         context->PSSetShader(oldPS, nullptr, 0);
         if (oldPS) oldPS->Release();
 
-        context->PSSetShaderResources(0, 1, &oldSRV);
-        if (oldSRV) oldSRV->Release();
+        context->PSSetShaderResources(0, 2, oldSRVs);
+        if (oldSRVs[0]) oldSRVs[0]->Release();
+        if (oldSRVs[1]) oldSRVs[1]->Release();
+
+        context->PSSetSamplers(0, 1, &oldSampler);
+        if (oldSampler) oldSampler->Release();
 
         context->PSSetConstantBuffers(0, 1, &oldCB);
         if (oldCB) oldCB->Release();
@@ -2884,9 +2924,20 @@ private:
         m_height = desc.Height;
 
         if (!m_vs) {
-            static const char* s_gammaShaderCode = R"(
+            static const char* s_postProcessShaderCode = R"(
                 Texture2D frame_copy : register(t0);
-                cbuffer Gamma : register(b0) { float4 gamma; };
+                Texture2D bg_texture : register(t1);
+                SamplerState samp : register(s0);
+
+                cbuffer CompositeParams : register(b0) {
+                    float gamma_exp;
+                    float is_armory;
+                    float screen_aspect;
+                    float bg_aspect;
+                    float inv_width;
+                    float inv_height;
+                    float2 padding;
+                };
 
                 float4 vs_main(uint id : SV_VertexID) : SV_Position {
                     float2 p = float2((id << 1) & 2, id & 2);
@@ -2895,13 +2946,42 @@ private:
 
                 float4 ps_main(float4 pos : SV_Position) : SV_Target {
                     float4 c = frame_copy.Load(int3((int2)pos.xy, 0));
-                    return float4(pow(saturate(c.rgb), gamma.x), c.a);
+
+                    if (is_armory < 0.5f) {
+                        return float4(pow(saturate(c.rgb), gamma_exp), c.a);
+                    }
+
+                    // Cover UV calculation preserving image aspect ratio
+                    float2 uv = pos.xy * float2(inv_width, inv_height);
+                    float2 bgUV = uv;
+                    if (screen_aspect > bg_aspect) {
+                        float scale = bg_aspect / screen_aspect;
+                        bgUV.y = (uv.y - 0.5f) * scale + 0.5f;
+                    } else {
+                        float scale = screen_aspect / bg_aspect;
+                        bgUV.x = (uv.x - 0.5f) * scale + 0.5f;
+                    }
+                    float4 bg = bg_texture.Sample(samp, bgUV);
+
+                    // In the Armory scene in mainmenu_all.map, the void surrounding the pedestal is pitch black (0,0,0).
+                    // The Spartan, visor, and lit pedestal all have non-zero luminance.
+                    float luma = max(c.r, max(c.g, c.b));
+
+                    // Smoothstep creates a clean anti-aliased edge between geometry and the background
+                    float alpha = smoothstep(0.001f, 0.030f, luma);
+
+                    // Apply gamma correction to the Spartan and pedestal so it matches sRGB
+                    float3 spartanRgb = pow(saturate(c.rgb), gamma_exp);
+
+                    // Seamless composite: background wallpaper behind, 3D character in front
+                    float3 finalRgb = lerp(bg.rgb, spartanRgb, alpha);
+                    return float4(finalRgb, 1.0f);
                 }
             )";
 
             Microsoft::WRL::ComPtr<ID3DBlob> vsBlob;
             Microsoft::WRL::ComPtr<ID3DBlob> errorBlob;
-            HRESULT hr = D3DCompile(s_gammaShaderCode, strlen(s_gammaShaderCode), "GammaVS", nullptr, nullptr,
+            HRESULT hr = D3DCompile(s_postProcessShaderCode, strlen(s_postProcessShaderCode), "GammaVS", nullptr, nullptr,
                                     "vs_main", "vs_4_0", 0, 0, vsBlob.GetAddressOf(), errorBlob.GetAddressOf());
             if (FAILED(hr)) {
                 if (errorBlob) {
@@ -2911,7 +2991,7 @@ private:
             }
 
             Microsoft::WRL::ComPtr<ID3DBlob> psBlob;
-            hr = D3DCompile(s_gammaShaderCode, strlen(s_gammaShaderCode), "GammaPS", nullptr, nullptr,
+            hr = D3DCompile(s_postProcessShaderCode, strlen(s_postProcessShaderCode), "GammaPS", nullptr, nullptr,
                             "ps_main", "ps_4_0", 0, 0, psBlob.GetAddressOf(), errorBlob.GetAddressOf());
             if (FAILED(hr)) {
                 if (errorBlob) {
@@ -2928,11 +3008,23 @@ private:
             }
 
             D3D11_BUFFER_DESC cbDesc{};
-            cbDesc.ByteWidth = 16;
+            cbDesc.ByteWidth = sizeof(PostProcessCB);
             cbDesc.Usage = D3D11_USAGE_DYNAMIC;
             cbDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
             cbDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
             if (FAILED(device->CreateBuffer(&cbDesc, nullptr, m_constantBuffer.GetAddressOf()))) {
+                return false;
+            }
+
+            D3D11_SAMPLER_DESC sampDesc{};
+            sampDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+            sampDesc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
+            sampDesc.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
+            sampDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+            sampDesc.ComparisonFunc = D3D11_COMPARISON_NEVER;
+            sampDesc.MinLOD = 0;
+            sampDesc.MaxLOD = D3D11_FLOAT32_MAX;
+            if (FAILED(device->CreateSamplerState(&sampDesc, m_sampler.GetAddressOf()))) {
                 return false;
             }
         }
@@ -2958,7 +3050,7 @@ private:
         }
 
         m_initialized = true;
-        NOBLE_INFO("GammaPass: Initialized post-process gamma pass ({}x{}, exponent: {:.4f})", m_width, m_height, m_exponent);
+        NOBLE_INFO("GammaPass: Initialized post-process gamma pass with Armory background composite ({}x{}, exponent: {:.4f})", m_width, m_height, m_exponent);
         return true;
     }
 
@@ -2973,6 +3065,7 @@ private:
     Microsoft::WRL::ComPtr<ID3D11Texture2D> m_copyTexture;
     Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> m_copySRV;
     Microsoft::WRL::ComPtr<ID3D11RenderTargetView> m_backBufferRTV;
+    Microsoft::WRL::ComPtr<ID3D11SamplerState> m_sampler;
 };
 
 static void ExecuteGammaPass(IDXGISwapChain* swapChain) {
