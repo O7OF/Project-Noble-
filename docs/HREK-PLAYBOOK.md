@@ -157,3 +157,29 @@ third-person monitor. Two ways to drive it from Noble:
    would be cleaner but needs a Ghidra pass over the sandbox engine's player-control functions.
 
 The `-engine-mode` research hook stays in the build (documented as test-only) so this can be exercised quickly.
+
+
+---
+
+## Third-person attempt #1 (synthetic pad press) - negative
+
+Added a research hook `-pad-press <hex> -pad-press-at <s> -pad-press-ms <ms>` (`ReachHost::FillLocalPad`), which injects
+one synthetic XInput button press into the engine's pad state. It logs
+`ReachHost [Slot 36 - Input]: synthetic pad press 0x0020 for 300 ms`, so the injection reaches the engine.
+
+Test: `forge_halo`, `-engine-mode 4`, host, press **BACK (0x0020)** at t+16 s, screenshot at t+24 s. The view stayed
+**first person** (identical HUD and framing to the no-press run), so BACK is not the editor-mode toggle - or the engine
+ignores a pad press injected while it considers itself in keyboard/mouse mode.
+
+Next candidates, in order of cheapness:
+
+1. Try the other face/shoulder buttons at the same moment: Y (0x8000), B (0x2000), X (0x4000), LB (0x0100), RB (0x0200),
+   and a longer hold (600 ms) so the engine definitely switches input device.
+2. Hold the pad in "connected" state for a few seconds *before* the press (the engine may latch its input device when the
+   match starts).
+3. Find the real binding: the engine's action table includes `enter_editor_mode` / `exit_editor_mode` / `leave_editor`
+   (string table in `haloreach.dll`), so a binding exists - it just needs mapping to a button, which the profile's control
+   block (`+0x42C`) or the Forge UI strings should reveal.
+4. Engine command route: `editor_mode`, `camera_set_first_person`, `camera_set_mode` are also in the engine's string table.
+   If the host interface's command dispatcher accepts them, a Noble toggle could call them directly - `BlamEngine::
+   ExecuteCommand` exists for exactly that but is not yet reachable from the running client.

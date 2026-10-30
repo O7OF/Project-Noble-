@@ -69,6 +69,19 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-31, 18:45 ET) - Third person: synthetic pad hook works, BACK is not the editor toggle (WeabooTyler117 / DeepSeek)
+
+- New research hook `-pad-press <hex> -pad-press-at <s> -pad-press-ms <ms>` in `ReachHost::FillLocalPad`: injects one
+  synthetic XInput button into the engine pad state and logs it (`synthetic pad press 0x0020 for 300 ms`), so the path is
+  proven end to end.
+- Test on `forge_halo` with `-engine-mode 4` (sandbox) and BACK (0x0020) at t+16 s: view stays **first person** - BACK is not
+  the editor-mode toggle, or the engine ignores a press injected while it believes keyboard/mouse is active.
+- Next: other buttons (Y 0x8000, B 0x2000, X 0x4000, LB 0x0100, RB 0x0200) and a longer 600 ms hold; better still, find the
+  real binding - `haloreach.dll`'s action table has `enter_editor_mode` / `exit_editor_mode` / `leave_editor`, and the engine
+  also exposes `editor_mode`, `camera_set_first_person`, `camera_set_mode` strings. Option 4 is to make
+  `BlamEngine::ExecuteCommand` reachable from the running client and dispatch those directly.
+- `docs/HREK-PLAYBOOK.md` records the negative result and the ordered candidates.
+
 ## 0. Pick up here (2026-10-31, 18:20 ET) - Sandbox engine 0x04 launches now; third person is the Editor-mode monitor (WeabooTyler117 / DeepSeek)
 
 - Added a test-only research hook: `-engine-mode <n>` forces launch-block `+0x0C` (`BlamEngine::SetEngineModeOverride`),

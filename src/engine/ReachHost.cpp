@@ -1290,11 +1290,59 @@ static bool AnyKeyDown(const uint8_t* st) {
 static double FakePadAt();
 static bool ReadPad(NobleXInputState& state);
 
+// Research hook: "-pad-press <hexbutton> -pad-press-at <seconds> [-pad-press-ms <ms>]" injects one synthetic gamepad
+// button press at a given time, so engine actions that no Noble UI exposes (Forge's editor-mode camera, camera modes) can be
+// tested without a physical controller. Nothing is injected when the flags are absent.
+struct SyntheticPadPress {
+    WORD button = 0;
+    int atMs = -1;
+    int durationMs = 200;
+    ULONGLONG startedAt = 0;
+    bool started = false;
+};
+static SyntheticPadPress ParseSyntheticPadPress() {
+    SyntheticPadPress press;
+    int argc = 0;
+    LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+    int atSeconds = -1;
+    for (int i = 1; argv && i + 1 < argc; ++i) {
+        if (_wcsicmp(argv[i], L"-pad-press") == 0) {
+            press.button = static_cast<WORD>(std::wcstoul(argv[i + 1], nullptr, 16));
+        } else if (_wcsicmp(argv[i], L"-pad-press-at") == 0) {
+            atSeconds = _wtoi(argv[i + 1]);
+        } else if (_wcsicmp(argv[i], L"-pad-press-ms") == 0) {
+            press.durationMs = _wtoi(argv[i + 1]);
+        }
+    }
+    if (argv) LocalFree(argv);
+    if (press.button && atSeconds >= 0) {
+        press.atMs = atSeconds * 1000;
+        press.startedAt = GetTickCount64() + static_cast<ULONGLONG>(press.atMs);
+    }
+    return press;
+}
+
 static void FillLocalPad(uint8_t* st, bool keyboardMouseUsed) {
     static bool s_padMode = false;
     static WORD s_lastButtons = 0;
+    static SyntheticPadPress s_synth = ParseSyntheticPadPress();
     NobleXInputState state{};
-    const bool connected = ReadPad(state);
+    bool connected = ReadPad(state);
+    bool synthActive = false;
+    if (s_synth.button) {
+        const ULONGLONG now = GetTickCount64();
+        if (!s_synth.started && now >= s_synth.startedAt) {
+            s_synth.started = true;
+            NOBLE_INFO("ReachHost [Slot 36 - Input]: synthetic pad press 0x{:04X} for {} ms", s_synth.button, s_synth.durationMs);
+        }
+        if (s_synth.started && now - s_synth.startedAt < static_cast<ULONGLONG>(s_synth.durationMs)) {
+            synthActive = true;
+            state = NobleXInputState{};
+            state.Gamepad.wButtons = s_synth.button;
+            connected = true;
+            s_padMode = true;
+        }
+    }
     if (!connected) {
         if (s_padMode) NOBLE_INFO("ReachHost [Slot 36 - Input]: controller disconnected, back to keyboard and mouse");
         s_padMode = false;
