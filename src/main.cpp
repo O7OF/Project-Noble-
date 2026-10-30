@@ -1,4 +1,7 @@
 #include "common/Logger.hpp"
+#include "engine/MapGameTypes.hpp"
+#include <io.h>
+#include <fcntl.h>
 #include "common/Types.hpp"
 #include "common/Version.hpp"
 #include "host/SteamLocator.hpp"
@@ -92,6 +95,12 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     UNREFERENCED_PARAMETER(hInstance);
     UNREFERENCED_PARAMETER(hPrevInstance);
     UNREFERENCED_PARAMETER(pCmdLine);
+
+    // Headless test of the map / game-type guard: no MCC, no window, no audio. `-test-map-gametypes`.
+    if (std::wstring(pCmdLine ? pCmdLine : L"").find(L"-test-map-gametypes") != std::wstring::npos) {
+        _setmode(_fileno(stdout), _O_U8TEXT);
+        return noble::MapGameTypes::SelfTest();
+    }
 
     SetUnhandledExceptionFilter(&NobleCrashHandler);
     DisableProcessWindowsGhosting();

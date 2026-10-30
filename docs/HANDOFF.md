@@ -22,6 +22,69 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-30, 11:05 ET) - Map/game-type guard with a headless test; armory backdrop investigated (WeabooTyler117 / DeepSeek)
+
+### 1. Game types are now checked against the map (`src/engine/MapGameTypes.hpp/.cpp`)
+
+Tyler: "prevent crashing the game if someone chooses Invasion on a map that doesn't support that mode... but do not
+restrict MODS and Custom game lobbies on what they want to choose."
+
+- `FromVariantStem()` maps a variant **file stem** to a game-type key using the real MCC filenames
+  (`slayer_054`, `SWAT_054`, `3nvasion_054`, `2nvasion_slayer_054`, `ctf_1flag_054`, `assault_one_bomb_054`,
+  `territories-3plot_054`, `koth_crazyking_054`, `infection_safehavens_054`, `hr_ff_*`, `00_basic_editing_054`, ...).
+- `Supports(scenario, type)` blocks only the types that genuinely need a dedicated setup: **Invasion** on anything but
+  Boneyard / Spire / Breakpoint / Forge World, and **Race / Rally / Skeeball** outside Forge World. Slayer, CTF, Assault,
+  Territories, KOTH, Oddball, Juggernaut, Infection, Headhunter and Stockpile are allowed everywhere, and an unknown type
+  is never blocked.
+- The Custom Game screen shows a red band under GAME TYPE - "Invasion isn't set up on Sword Base. Pick Boneyard, Spire,
+  Breakpoint or Forge World (modded maps are never restricted)." - and PLAY LOCAL / HOST LOBBY are disabled until the
+  combination is valid. **Modded maps are skipped entirely** (`map->mod == nullptr` check), and so are the Firefight and
+  Forge screens (Firefight uses its own maps and `hr_ff_*` variants).
+
+### 2. `-test-map-gametypes` (headless, no MCC needed)
+
+`noble-client.exe -test-map-gametypes` runs `MapGameTypes::SelfTest()` and writes `gametype-selftest.log` next to the exe,
+exit code 0/1. It covers 43 rule checks (Invasion on all four legal maps and five illegal ones, the Race family, every
+"allowed everywhere" type, and 17 real variant stems) plus **280 map x type combinations**, asserting that every blocked
+pair produces a reason string. Current result:
+
+```
+PASS: 43 rule checks, 280 map x type combinations (207 allowed, 73 blocked), 0 failure(s)
+```
+
+**It caught two real bugs on the first run:** `3nvasion_slayer` matched "slayer" before "invasion" (the stems use an 'n'
+where the 'I' glyph is, so the match is on `nvasion`), and Firefight was being treated as an always-allowed type - which
+would also have made the Firefight screen warn on every one of its own maps, since the guard ran before the `!ff` check.
+
+### 3. Armory black background: investigated, not fixed
+
+The composite that O7 added on 2026-10-29 (GammaPass sampling a wallpaper behind the 3D character) is **gone** from
+`ReachHost.cpp` - the pass now only does gamma, with a comment that the armory scene renders natively. So the void is
+back to black.
+
+I rebuilt it properly as a **depth-based** composite (paint the wallpaper only where the depth buffer says nothing was
+drawn - the only signal that works, because the Spartan's darkest pixels measure the same 0-2/255 as the void, which is
+why the earlier luma test ate dark undersuits). Findings, all in this order:
+
+1. `D3DCompile` needs a **null-terminated** `D3D_SHADER_MACRO` array; mine crashed the compiler. Fixed.
+2. `Texture2DMS` must be sized at compile time (`Texture2DMS<float, 4>`), so one PS variant per sample count is needed.
+3. Copying the engine's depth buffer and sampling it **faults inside d3d11.dll** in this swapchain (crash dump shows
+   d3d11 frames called from Noble), even with the DSV unbound first and with MSAA skipped.
+
+The whole attempt was reverted (`git checkout HEAD -- src/engine/ReachHost.cpp`); the current build is the known-good
+gamma pass and the armory shows the black void again. **Next ideas, in order:** (a) check whether the depth texture is
+MSAA by logging `OMGetRenderTargets`'s DSV desc *before* touching it, (b) try `CopySubresourceRegion` instead of
+`CopyResource`, (c) if the depth path stays hostile, composite in the *engine's* own render target by hooking the armory
+scene's clear (a D3D11 `ClearDepthStencilView`/`ClearRenderTargetView` hook) and painting the wallpaper there, behind the
+geometry, which needs no depth read at all.
+
+### 4. Verified
+
+- Build: 0 errors, 0 warnings.
+- `-test-map-gametypes`: PASS (above).
+- Screen sweep after the change: custom, forge, firefight, armory, main, lobby, servers, settings - 8/8 captured, exit 0,
+  client left closed.
+
 ## 0. Pick up here (2026-10-30, 10:20 ET) - Halo: Reach button layouts, pickable and actually applied (WeabooTyler117 / DeepSeek)
 
 Tyler: the CONTROLLER page "has them mentioned but no layout option to pick from. Halopedia has them for Halo Reach".

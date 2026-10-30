@@ -173,7 +173,8 @@ Menus (this session, all pushed):
 | `7d0d80b` | Main menu **Continue** fast path + design-doc status block |
 | `a21ebce` | Menu **background picker**: `file:<name>` backgrounds, IMPORT via file dialog, preview panel; `Row()` trap documented |
 | `5f26667` | Review pass: 6 bug fixes (preview title, stale picker cache, dead unsafe API, invite JOIN without host, stale mod on Continue, per-frame track list) |
-| (this commit) | Halo: Reach **button layouts** (PadLayouts) applied in slot 36 + BUTTON LAYOUT row + layout-aware diagram |
+| `5e512b7` | Halo: Reach **button layouts** (PadLayouts) applied in slot 36 + BUTTON LAYOUT row + layout-aware diagram |
+| (this commit) | Map/game-type guard (`MapGameTypes`) + `-test-map-gametypes` (280 combinations); armory backdrop attempt reverted |
 | `5f4da08` | Prompts follow the device everywhere; `InputPrompts` button glyphs in the CONTROLLER list |
 | (this commit) | Main menu **Continue** fast path (spec 4.1/4.10) + a status block at the top of the design doc |
 | `a8f412e` | Menu music player (`PauseMusic/ResumeMusic` + `DrawMusicPlayer`) |
@@ -272,7 +273,9 @@ Also: invites carry `{senderUsername, hostIp, hostPort, timestamp}` only. To say
    every frame and hangs the client.
 9. Do **not** load textures from the main-thread fallback draw path (`HoldFrame`). Warm art in
    `FrontEndMenu::Initialize` (`UiArt::WarmMenuBackground()` is the pattern).
-10. `ReachAudio::MusicTracks()` builds the whole list - cache it if you call it per frame. Muting from the music widget
+10. Game types: `MapGameTypes::Supports()` is the only place that decides whether a vanilla map may host a type; run
+    `noble-client.exe -test-map-gametypes` after touching its tables. Modded maps are deliberately never checked.
+11. `ReachAudio::MusicTracks()` builds the whole list - cache it if you call it per frame. Muting from the music widget
     is overridden while Settings > Audio is open (that page pushes its volume every frame).
 11. `MenuState`/`OverlayContext` state is per-screen; `st.screen` changes are logged (`FrontEndMenu: screen X -> Y`),
    which is handy when a capture lands on the wrong screen.

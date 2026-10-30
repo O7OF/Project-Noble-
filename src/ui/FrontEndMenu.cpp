@@ -27,6 +27,7 @@
 #include "common/Version.hpp"
 #include "engine/FrameCapture.hpp"
 #include "engine/ReachArmory.hpp"
+#include "engine/MapGameTypes.hpp"
 #include "host/Window.hpp"
 #include "host/D3D11Renderer.hpp"
 
@@ -3346,12 +3347,36 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         const float px = ui.size.x * 0.47f, pw = ui.size.x * 0.44f;
         const RightColumnY col = RightColumnLayout(ui);
         const float actionsY = col.actions;
+        // Game-type safety: a vanilla map only hosts the types it was built for (Invasion on Sword Base used to
+        // crash the engine). Modded maps are never checked - a mod may bring its own setup.
+        std::string gameType;
+        std::string typeConflict;
+        if (!ff && !forge && map && map->mod == nullptr) {
+            const std::vector<MenuVariant>& list = ff ? ctx.ffVariants : ctx.variants;
+            int& v = ff ? st.ffVariant : st.variant;
+            if (!list.empty()) {
+                gameType = MapGameTypes::FromVariantStem(list[std::clamp(v, 0, static_cast<int>(list.size()) - 1)].path.stem().wstring());
+            }
+            if (!gameType.empty() && !MapGameTypes::Supports(map->scenario, gameType)) {
+                // Friendly map names for the "pick ..." part of the message.
+                std::string good;
+                const std::vector<std::string> allowed = MapGameTypes::RequiredMaps(gameType);
+                for (size_t i = 0; i < allowed.size(); ++i) {
+                    std::string name = allowed[i];
+                    for (const MenuMap& m : kMaps) if (m.scenario == allowed[i]) { name = m.name; break; }
+                    if (i) good += (i + 1 == allowed.size()) ? " or " : ", ";
+                    good += name;
+                }
+                typeConflict = std::string(MapGameTypes::Name(gameType)) + " isn't set up on " + map->name +
+                               "  Pick " + good + " (modded maps are never restricted).";
+            }
+        }
         const bool forgeMissing = forge && !std::filesystem::exists(ctx.forgeVariant);
         // Custom Game / Forge get the same row block as Firefight and Campaign: game type, game options and
         // the lobby's player cap, so the column is not banner-then-void (2026-10-30).
         const float rowsH = (forge ? 0.0f : 36.0f * ui.s) + (!ff ? 72.0f * ui.s : 0.0f) +
                             (ff ? 30.0f * ui.s + 98.0f * ui.s + 8.0f * ui.s : 0.0f) +
-                            (forgeMissing ? 26.0f * ui.s : 0.0f);
+                            (forgeMissing ? 26.0f * ui.s : 0.0f) + (typeConflict.empty() ? 0.0f : 42.0f * ui.s);
         const float bannerTop = top + 96.0f * ui.s;
         const char* blurb = row ? row->blurb.c_str() : "";
         const float blurbH = BlurbBlockHeight(ui, pw, blurb);
@@ -3369,6 +3394,12 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
             if (dv && !list.empty()) v = (v + dv + static_cast<int>(list.size())) % static_cast<int>(list.size());
             y += 36.0f * ui.s;
             ++focusRows;
+        }
+        if (!typeConflict.empty()) {
+            ui.dl->AddRectFilled(ImVec2(px, y), ImVec2(px + pw, y + 38.0f * ui.s), IM_COL32(90, 26, 26, 150));
+            Text(ui, nullptr, 14.5f, ImVec2(px + 10.0f * ui.s, y + 4.0f * ui.s), IM_COL32(255, 190, 180, 255),
+                 typeConflict.c_str(), pw - 20.0f * ui.s);
+            y += 42.0f * ui.s;
         }
         if (!ff) {
             // Custom Game / Forge: the same row block the other setup screens have, so the column is not
@@ -3411,7 +3442,7 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         const float lobbyY = col.strip;
         DrawLobbyControls(ui, ImVec2(px, lobbyY), pw, st);
 
-        const bool canStart = map && map->enabled;
+        const bool canStart = map && map->enabled && typeConflict.empty();
         const float bw = (pw - 10.0f * ui.s) * 0.5f;
         std::string sub;
         if (!map) sub = "Pick a map";

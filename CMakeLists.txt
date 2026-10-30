@@ -104,6 +104,8 @@ endif()
 set(SOURCES
     src/main.cpp
     src/engine/PadLayouts.cpp
+    src/engine/MapGameTypes.cpp
+    src/engine/MapGameTypesTest.cpp
     src/host/SteamLocator.cpp
     src/host/OwnershipVerifier.cpp
     src/host/Window.cpp
