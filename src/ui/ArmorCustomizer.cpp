@@ -1189,26 +1189,29 @@ std::filesystem::path FindArmorAssetPath(const std::filesystem::path& relativePa
 }
 
 // Camera framing per slot for the OBJ preview: {zoom, look-at height}. 1.0 = whole body.
-struct Framing { float zoom, focusY; };
+struct Framing { float zoom, focusY, focusX; };
 Framing FramingFor(const std::string& scene, int cameraMode, bool elite) {
     // The preview scales the body to a fixed size around its centre (about the hips); the camera sees
     // +-0.86/zoom up and down. Measured from a capture: head ~+1.7, shoulders ~+1.3, chest ~+0.9,
     // thighs ~-0.5, knees ~-1.05, feet ~-1.95.
-    if (cameraMode == 1 || elite) return { 0.41f, 0.0f };
-    if (cameraMode == 0) return { 0.52f, 0.40f };
-    if (scene == "c_helmet") return { 1.50f, 1.70f };
-    if (scene == "c_left_shoulder" || scene == "c_right_shoulder") return { 1.05f, 1.30f };
-    if (scene == "c_chest") return { 0.95f, 0.90f };
-    if (scene == "c_wrist") return { 0.60f, 0.80f };
-    if (scene == "c_utility") return { 0.95f, -0.50f };
-    if (scene == "c_knees") return { 0.95f, -1.05f };
-    return { 0.41f, 0.0f };
+    // focusX moves the camera sideways: the left shoulder pans left, the right shoulder right, and the left-arm
+    // pieces (wrist, utility) follow their side. This is what the engine's single shoulder camera cannot do.
+    if (cameraMode == 1 || elite) return { 0.41f, 0.0f, 0.0f };
+    if (cameraMode == 0) return { 0.52f, 0.40f, 0.0f };
+    if (scene == "c_helmet") return { 1.50f, 1.70f, 0.0f };
+    if (scene == "c_left_shoulder") return { 1.15f, 1.30f, -0.52f };
+    if (scene == "c_right_shoulder") return { 1.15f, 1.30f, 0.52f };
+    if (scene == "c_chest") return { 0.95f, 0.90f, 0.0f };
+    if (scene == "c_wrist") return { 0.68f, 0.80f, -0.42f };
+    if (scene == "c_utility") return { 1.00f, -0.50f, -0.30f };
+    if (scene == "c_knees") return { 0.95f, -1.05f, 0.0f };
+    return { 0.41f, 0.0f, 0.0f };
 }
 
 } // namespace
 
 void ArmorCustomizer::RenderCharacterPreview(ID3D11Device* device, ID3D11DeviceContext* context,
-                                             float width, float height, bool fullBleed) {
+                                             float width, float height, bool /*fullBleed*/) {
     const ImVec2 cursorPos = ImGui::GetCursorScreenPos();
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const bool elite = m_previewSpecies == PlayerSpecies::Elite;
@@ -1251,6 +1254,7 @@ void ArmorCustomizer::RenderCharacterPreview(ID3D11Device* device, ID3D11DeviceC
         const float k = std::clamp(ImGui::GetIO().DeltaTime * 6.0f, 0.0f, 1.0f);
         m_objZoom += (target.zoom - m_objZoom) * k;
         m_objFocusY += (target.focusY - m_objFocusY) * k;
+        m_objFocusX += (target.focusX - m_objFocusX) * k;
         if (m_autoRotate) m_objYaw += ImGui::GetIO().DeltaTime * 0.35f;
 
         ArmoryLook look;
@@ -1291,8 +1295,42 @@ void ArmorCustomizer::RenderCharacterPreview(ID3D11Device* device, ID3D11DeviceC
         cam.pitchRadians = m_objPitch;
         cam.zoom = m_objZoom;
         cam.focusYOffset = m_objFocusY;
-        cam.transparentBackground = fullBleed;
+        cam.focusXOffset = m_objFocusX;
+        cam.transparentBackground = true;   // the stage below is drawn by us, never the renderer's clear colour
         obj.Render(context, m_objYaw, layers, colors, &cam);
+
+        // ---- Stage behind the Spartan -------------------------------------------------------------
+        // The renderer draws the model on a transparent target, so this is the armory backdrop: a deep vertical
+        // gradient, a soft ice-blue floor glow under the feet, a hairline horizon and a vignette. Designed here rather
+        // than inherited from the engine's unlit chamber, and it uses the project's accent colour.
+        {
+            const ImVec2 st0 = cursorPos;
+            const ImVec2 st1(cursorPos.x + width, cursorPos.y + height);
+            const ImU32 topCol = IM_COL32(16, 22, 32, 255);
+            const ImU32 midCol = IM_COL32(11, 15, 23, 255);
+            const ImU32 botCol = IM_COL32(6, 8, 12, 255);
+            const float horizon = cursorPos.y + height * 0.72f;
+            dl->AddRectFilledMultiColor(st0, ImVec2(st1.x, horizon), topCol, topCol, midCol, midCol);
+            dl->AddRectFilledMultiColor(ImVec2(st0.x, horizon), st1, midCol, midCol, botCol, botCol);
+            // Floor glow: a wide, very soft ellipse in the accent colour under the model.
+            const ImVec4 accent = NobleStyle::Accent();
+            const ImU32 glow = IM_COL32(static_cast<int>(accent.x * 255), static_cast<int>(accent.y * 255),
+                                        static_cast<int>(accent.z * 255), 26);
+            dl->AddEllipseFilled(ImVec2(cursorPos.x + width * 0.5f, horizon + height * 0.10f),
+                                 ImVec2(width * 0.34f, height * 0.075f), glow, 0.0f, 64);
+            dl->AddEllipseFilled(ImVec2(cursorPos.x + width * 0.5f, horizon + height * 0.10f),
+                                 ImVec2(width * 0.20f, height * 0.045f), IM_COL32(180, 220, 255, 18), 0.0f, 64);
+            // Hairline horizon.
+            dl->AddLine(ImVec2(st0.x + width * 0.06f, horizon), ImVec2(st1.x - width * 0.06f, horizon),
+                        IM_COL32(140, 185, 220, 40), 1.0f);
+            // Vignette on all four edges so the panel has depth instead of a flat cut.
+            const float vw = width * 0.22f, vh = height * 0.20f;
+            const ImU32 dark = IM_COL32(0, 0, 0, 120), clear = IM_COL32(0, 0, 0, 0);
+            dl->AddRectFilledMultiColor(st0, ImVec2(st1.x, st0.y + vh), dark, dark, clear, clear);
+            dl->AddRectFilledMultiColor(ImVec2(st0.x, st1.y - vh), st1, clear, clear, dark, dark);
+            dl->AddRectFilledMultiColor(st0, ImVec2(st0.x + vw, st1.y), dark, clear, clear, dark);
+            dl->AddRectFilledMultiColor(ImVec2(st1.x - vw, st0.y), st1, clear, dark, dark, clear);
+        }
 
         if (ID3D11ShaderResourceView* srv = obj.GetPreviewTexture()) {
             // Cover the area, keeping the render target's aspect.

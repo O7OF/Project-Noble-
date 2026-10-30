@@ -113,6 +113,7 @@ private:
     float m_objYaw = -0.32f;      // MCC 3/4 left-facing angle
     float m_objPitch = 0.03f;
     float m_objZoom = 0.41f;
+    float m_objFocusX = 0.0f;
     float m_objFocusY = 0.0f;
     bool m_autoRotate = false;
 

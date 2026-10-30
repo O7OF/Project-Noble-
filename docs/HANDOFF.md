@@ -22,6 +22,34 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-31, 05:40 ET) - Armory stage + camera pan wired into Noble's renderer (WeabooTyler117 / DeepSeek)
+
+Per Tyler's "do whatever you recommend": moved the armory onto Noble's own renderer and gave it a stage.
+
+### Done
+
+- **Stage** (`ArmorCustomizer::RenderCharacterPreview`): drawn into the panel *before* the model texture, so it sits behind
+  the Spartan. Vertical gradient (#101620 -> #06080c), an ice-blue floor glow (two soft ellipses in the project accent
+  colour), a hairline horizon and a four-edge vignette. The renderer's target is now always **transparent**
+  (`cam.transparentBackground = true`) so the stage shows through instead of its own clear colour.
+- **Camera pan plumbing**: `Framing` gained a third field (`focusX`) wired into the renderer's existing `focusXOffset`:
+  left shoulder -0.52, right shoulder +0.52, wrist -0.42, utility -0.30, everything else 0, and it is eased like the zoom
+  and vertical focus. **Measured: only 6.7 % of pixels change between the two shoulder views** - the offset aims the camera
+  (eye stays at x=0, so it rotates the view rather than strafing it), so the pan is real but too small. Next step is
+  either raise the offsets (~+-1.0) or move `eye` sideways in `ObjModelPreview::Render` (line ~605: `eye` is fixed at
+  x=0 while `focus` takes the offsets) - the latter is the correct "pan".
+- `Settings > Game options` still needs the row for `armoryPreview` (0 = Reach scene, 1 = Noble renderer); for now it is a
+  settings.json key. Default is still 0 (engine), because the pan needs the eye fix first.
+
+### Notes from this session's armory work (all verified)
+
+- The engine's armory cameras are real and per-slot (0x0D helmet, 0x0F chest, 0x10 wrist, 0x11 utility, 0x12 knees,
+  0x13 shoulders, 0x14 colours; 0x15+ leave the armory), so clicking a slot already pans on the engine path.
+- Left vs right shoulder cannot be distinguished on the engine path (one camera, no lateral offset, and rotating the
+  model does nothing because the camera rides with it).
+- Noble's renderer is the way to get both a designed backdrop and a real lateral pan; its model, lighting (3-point with a
+  cyan rim), colour-control textures and armour effects all look good (see `ui-crops/armory_noble.png`).
+
 ## 0. Pick up here (2026-10-31, 04:45 ET) - Armory cameras mapped by capture; left/right shoulder is impossible on the engine path (WeabooTyler117 / DeepSeek)
 
 Tyler asked to start on the per-piece camera pan. Went at it with captures instead of guesses, and the earlier
