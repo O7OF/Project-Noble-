@@ -106,20 +106,28 @@ AuthClient& AuthClient::Get() {
 void AuthClient::Initialize() {
     auto s = Settings::Get().Snapshot();
     if (!s.accountUsername.empty() && !s.accountToken.empty()) {
-        m_isLoggedIn = true;
-        m_username = s.accountUsername;
-        m_sessionToken = s.accountToken;
-        m_isDeveloper = s.isDeveloper;
-        m_userId = s.accountUserId;
-        NOBLE_INFO("AuthClient: Restored cached session for '{}' (Developer: {})", m_username, m_isDeveloper ? "YES" : "NO");
+        {
+            std::lock_guard<std::mutex> lock(m_authMutex);
+            m_isLoggedIn = true;
+            m_username = s.accountUsername;
+            m_sessionToken = s.accountToken;
+            m_isDeveloper = s.isDeveloper;
+            m_userId = s.accountUserId;
+        }
+        NOBLE_INFO("AuthClient: Restored cached session for '{}' (Developer: {})", s.accountUsername, s.isDeveloper ? "YES" : "NO");
         RefreshDeveloperStatusAsync();
     }
 }
 
 void AuthClient::RefreshDeveloperStatusAsync() {
-    if (!m_isLoggedIn || m_refreshing.exchange(true)) return;
-    const int userId = m_userId;
-    const std::string username = m_username;
+    int userId = 0;
+    std::string username;
+    {
+        std::lock_guard<std::mutex> lock(m_authMutex);
+        if (!m_isLoggedIn || m_refreshing.exchange(true)) return;
+        userId = m_userId;
+        username = m_username;
+    }
     std::thread([this, userId, username]() {
         try {
             nlohmann::json body = { { "userId", userId }, { "username", username } };
@@ -132,14 +140,21 @@ void AuthClient::RefreshDeveloperStatusAsync() {
                     const auto& v = j["is_developer"];
                     dev = v.is_boolean() ? v.get<bool>() : (v.is_number() ? v.get<int>() == 1 : false);
                 }
-                if (m_isLoggedIn && m_username == username) {
-                    const bool was = m_isDeveloper.exchange(dev);
-                    if (was != dev) {
-                        auto s = Settings::Get().Snapshot();
-                        s.isDeveloper = dev;
-                        Settings::Get().Update(s);
-                        NOBLE_INFO("AuthClient: Developer status for '{}' updated: {}", username, dev ? "DEVELOPER" : "STANDARD");
+                bool updated = false;
+                {
+                    std::lock_guard<std::mutex> lock(m_authMutex);
+                    if (m_isLoggedIn && m_username == username) {
+                        const bool was = m_isDeveloper.exchange(dev);
+                        if (was != dev) {
+                            updated = true;
+                        }
                     }
+                }
+                if (updated) {
+                    auto s = Settings::Get().Snapshot();
+                    s.isDeveloper = dev;
+                    Settings::Get().Update(s);
+                    NOBLE_INFO("AuthClient: Developer status for '{}' updated: {}", username, dev ? "DEVELOPER" : "STANDARD");
                 }
             }
         } catch (...) {
@@ -183,23 +198,26 @@ AuthResult AuthClient::Login(const std::string& username, const std::string& pas
             }
             res.userId = j.value("userId", 0);
 
-            m_isLoggedIn = true;
-            m_username = res.username;
-            m_sessionToken = res.token;
-            m_isDeveloper = res.isDeveloper;
-            m_userId = res.userId;
+            {
+                std::lock_guard<std::mutex> lock(m_authMutex);
+                m_isLoggedIn = true;
+                m_username = res.username;
+                m_sessionToken = res.token;
+                m_isDeveloper = res.isDeveloper;
+                m_userId = res.userId;
+            }
 
             // Persist to settings
             auto s = Settings::Get().Snapshot();
-            s.accountUsername = m_username;
-            s.accountToken = m_sessionToken;
-            s.isDeveloper = m_isDeveloper;
-            s.accountUserId = m_userId;
-            s.playerName = m_username;
+            s.accountUsername = res.username;
+            s.accountToken = res.token;
+            s.isDeveloper = res.isDeveloper;
+            s.accountUserId = res.userId;
+            s.playerName = res.username;
             Settings::Get().Update(s);
 
             NOBLE_INFO("AuthClient: Login successful for '{}' (ID: {}, Developer: {})",
-                       m_username, m_userId, m_isDeveloper ? "YES" : "NO");
+                       res.username, res.userId, res.isDeveloper ? "YES" : "NO");
             return res;
         } else {
             res.error = j.value("error", "Login failed (HTTP " + std::to_string(statusCode) + ")");
@@ -255,11 +273,14 @@ AuthResult AuthClient::Register(const std::string& username, const std::string& 
 }
 
 void AuthClient::Logout() {
-    m_isLoggedIn = false;
-    m_isDeveloper = false;
-    m_username.clear();
-    m_sessionToken.clear();
-    m_userId = 0;
+    {
+        std::lock_guard<std::mutex> lock(m_authMutex);
+        m_isLoggedIn = false;
+        m_isDeveloper = false;
+        m_username.clear();
+        m_sessionToken.clear();
+        m_userId = 0;
+    }
 
     auto s = Settings::Get().Snapshot();
     s.accountUsername.clear();
@@ -271,10 +292,28 @@ void AuthClient::Logout() {
     NOBLE_INFO("AuthClient: Logged out cleanly.");
 }
 
-bool AuthClient::IsLoggedIn() const { return m_isLoggedIn; }
-bool AuthClient::IsDeveloper() const { return m_isDeveloper; }
-std::string AuthClient::GetUsername() const { return m_username; }
-std::string AuthClient::GetSessionToken() const { return m_sessionToken; }
-int AuthClient::GetUserId() const { return m_userId; }
+bool AuthClient::IsLoggedIn() const {
+    std::lock_guard<std::mutex> lock(m_authMutex);
+    return m_isLoggedIn;
+}
+
+bool AuthClient::IsDeveloper() const {
+    return m_isDeveloper.load();
+}
+
+std::string AuthClient::GetUsername() const {
+    std::lock_guard<std::mutex> lock(m_authMutex);
+    return m_username;
+}
+
+std::string AuthClient::GetSessionToken() const {
+    std::lock_guard<std::mutex> lock(m_authMutex);
+    return m_sessionToken;
+}
+
+int AuthClient::GetUserId() const {
+    std::lock_guard<std::mutex> lock(m_authMutex);
+    return m_userId;
+}
 
 } // namespace noble

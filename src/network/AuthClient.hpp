@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <mutex>
 #include <string>
 
 namespace noble {
@@ -39,6 +40,7 @@ public:
 private:
     AuthClient() = default;
 
+    mutable std::mutex m_authMutex;
     bool m_isLoggedIn = false;
     std::atomic<bool> m_isDeveloper{ false };
     std::atomic<bool> m_refreshing{ false };

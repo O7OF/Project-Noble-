@@ -900,10 +900,10 @@ static void ApplyArmoryAppearance(uint8_t* profile) {
             NOBLE_WARN("ReachHost [Slot 34]: utility {} isn't in Reach's list; default utility in game", utility);
             utility = 0;
         }
-        // Season 8 helmets (72..89) and prosthetic roboarm chests (235..239) exceed base scenario tag limits
-        // and trigger the bugged haloreach+0x10532a fallback builder which causes an access violation at 0x105512.
-        if (helmet >= 72) {
-            NOBLE_WARN("ReachHost [Slot 34]: helmet {} (Season 8) clamped to Mark V [B] in match to avoid engine tag crash", helmet);
+        // GRD helmets (68..71), Season 8 helmets (72..89), or any helmet >= 64 exceed base Reach scenario tag limits
+        // and trigger the bugged haloreach+0x10532a fallback builder which causes an access violation at 0x105597.
+        if (helmet >= 64) {
+            NOBLE_WARN("ReachHost [Slot 34]: helmet {} (GRD/MCC/Season 8) clamped to Mark V [B] in match to avoid engine tag crash", helmet);
             helmet = 0;
         }
         if (chest >= 235) {
@@ -1689,10 +1689,10 @@ static uint64_t __fastcall HostSlot47_UserDataFolder(void* thisPtr, uint64_t a1,
             wchar_t* pDest = reinterpret_cast<wchar_t*>(outBufferPtr);
             size_t copyLen = (std::min)(charCapacity > 0 ? charCapacity - 1 : 259, pathW.length());
             SafeCopyMemory(pDest, pathW.c_str(), copyLen * sizeof(wchar_t));
-            SafeWriteUint8(reinterpret_cast<uintptr_t>(pDest + copyLen), 0);
+            SafeWriteUint16(reinterpret_cast<uintptr_t>(pDest + copyLen), 0);
         }
 
-        return 0; // Return 0 per host-probe case 0x2F
+        return 1; // Return 1 (success) - caller in haloreach.dll checks 'test al, al; je ...'
     } catch (...) {
         return 0;
     }

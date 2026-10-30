@@ -520,13 +520,27 @@ void DrawHints(const Ui& ui, const std::vector<std::pair<Prompt, const char*>>& 
 
 
 static bool s_showAccountModal = false;
+static bool s_openAccountPopup = false;
 static int s_accountTab = 0;
 static char s_accountUser[32] = "";
 static char s_accountPass[32] = "";
 static std::string s_accountStatusMsg = "";
 static bool s_accountStatusError = false;
 static bool s_showDevMenu = false;
+static bool s_openDevMenuPopup = false;
 static std::string s_devStatusMsg = "";
+
+static void OpenAccountModal() {
+    s_showAccountModal = true;
+    s_openAccountPopup = true;
+    s_accountStatusMsg.clear();
+}
+
+static void OpenDevMenuModal() {
+    s_showDevMenu = true;
+    s_openDevMenuPopup = true;
+    s_devStatusMsg.clear();
+}
 
 void DrawDevMenuModal(const Ui& ui) {
     if (!s_showDevMenu) return;
@@ -537,7 +551,10 @@ void DrawDevMenuModal(const Ui& ui) {
         return;
     }
 
-    ImGui::OpenPopup("NOBLE DEVELOPER CONSOLE");
+    if (s_openDevMenuPopup) {
+        ImGui::OpenPopup("NOBLE DEVELOPER CONSOLE");
+        s_openDevMenuPopup = false;
+    }
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(480.0f * ui.s, 0));
 
@@ -609,16 +626,22 @@ void DrawDevMenuModal(const Ui& ui) {
         ImGui::Dummy(ImVec2(0, 4));
         if (ImGui::Button("CLOSE", ImVec2(100, 30))) {
             s_showDevMenu = false;
+            ImGui::CloseCurrentPopup();
         }
 
         ImGui::EndPopup();
+    } else {
+        s_showDevMenu = false;
     }
 }
 
 void DrawAccountModal(const Ui& ui) {
     if (!s_showAccountModal) return;
 
-    ImGui::OpenPopup("ACCOUNT LOGIN / REGISTER");
+    if (s_openAccountPopup) {
+        ImGui::OpenPopup("ACCOUNT LOGIN / REGISTER");
+        s_openAccountPopup = false;
+    }
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(440.0f * ui.s, 0));
 
@@ -648,7 +671,7 @@ void DrawAccountModal(const Ui& ui) {
                 ImGui::TextDisabled("All armors, developer matrix camos, and special privileges unlocked.");
                 ImGui::Dummy(ImVec2(0, 4));
                 if (ImGui::Button("OPEN DEVELOPER MENU", ImVec2(200, 30))) {
-                    s_showDevMenu = true;
+                    OpenDevMenuModal();
                 }
             } else {
                 ImGui::Dummy(ImVec2(0, 4));
@@ -664,6 +687,7 @@ void DrawAccountModal(const Ui& ui) {
             ImGui::SameLine();
             if (ImGui::Button("CLOSE", ImVec2(100, 32))) {
                 s_showAccountModal = false;
+                ImGui::CloseCurrentPopup();
             }
         } else {
             if (ImGui::Button("LOG IN", ImVec2(120, 28))) s_accountTab = 0;
@@ -694,6 +718,7 @@ void DrawAccountModal(const Ui& ui) {
                         s_accountStatusMsg = "Login successful!";
                         s_accountStatusError = false;
                         s_showAccountModal = false;
+                        ImGui::CloseCurrentPopup();
                     } else {
                         s_accountStatusMsg = res.error;
                         s_accountStatusError = true;
@@ -706,6 +731,7 @@ void DrawAccountModal(const Ui& ui) {
                         s_accountStatusMsg = "Registration successful! Logged in.";
                         s_accountStatusError = false;
                         s_showAccountModal = false;
+                        ImGui::CloseCurrentPopup();
                     } else {
                         s_accountStatusMsg = res.error;
                         s_accountStatusError = true;
@@ -715,9 +741,12 @@ void DrawAccountModal(const Ui& ui) {
             ImGui::SameLine();
             if (ImGui::Button("CANCEL", ImVec2(100, 32))) {
                 s_showAccountModal = false;
+                ImGui::CloseCurrentPopup();
             }
         }
         ImGui::EndPopup();
+    } else {
+        s_showAccountModal = false;
     }
 }
 
@@ -778,7 +807,7 @@ void DrawParty(const Ui& ui, const std::string& playerName, const char* status) 
     bool accHov = ImGui::IsItemHovered();
     ImGui::PopID();
     if (accClicked) {
-        s_showAccountModal = true;
+        OpenAccountModal();
         MenuSounds::Click();
     }
     ui.dl->AddRectFilled(accP0, accP1, accHov ? IM_COL32(30, 48, 68, 230) : IM_COL32(15, 24, 34, 200));
@@ -807,7 +836,7 @@ void DrawParty(const Ui& ui, const std::string& playerName, const char* status) 
         bool devHov = ImGui::IsItemHovered();
         ImGui::PopID();
         if (devClicked) {
-            s_showDevMenu = true;
+            OpenDevMenuModal();
             MenuSounds::Click();
         }
         ui.dl->AddRectFilled(devP0, devP1, devHov ? IM_COL32(90, 60, 10, 240) : IM_COL32(45, 30, 8, 220));
@@ -1502,7 +1531,7 @@ void FeedEngineThreadInputs(HWND hwnd, ImGuiIO& io) {
 // thread now only fills this, and the menu takes it over at the top of the lobby screen.
 struct PendingLobbyEvents {
     bool launch = false;
-    std::string map, mode, variant, hostEndpoint, sessionId;
+    std::string map, mode, variant, hostEndpoint, sessionId, sessionToken;
     int difficulty = 1;
     uint64_t skulls = 0;
     bool roster = false;
@@ -1562,6 +1591,8 @@ static void TakePendingLobbyEvents(MenuState& st) {
         st.lobbyLaunchSkulls = ev.skulls;
         if (st.lobbyHostEndpoint.empty() && !ev.hostEndpoint.empty()) st.lobbyHostEndpoint = ev.hostEndpoint;
         if (!ev.sessionId.empty()) st.lobbySessionId = ev.sessionId;
+        if (!ev.sessionToken.empty()) st.lobbySessionToken = ev.sessionToken;
+        else if (st.lobbySessionToken.empty()) st.lobbySessionToken = MasterServerClient::Get().GetCurrentSessionToken();
     }
 }
 
@@ -1655,6 +1686,8 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         choice.skulls = st.lobbyLaunchSkulls;
         choice.connectAddress = st.lobbyHostEndpoint;
         choice.sessionId = st.lobbySessionId;
+        if (st.lobbySessionToken.empty()) st.lobbySessionToken = MasterServerClient::Get().GetCurrentSessionToken();
+        choice.sessionToken = st.lobbySessionToken;
 
         // The host sends its variant as a path on its own PC; use the guest's copy of the same file. Without a
         // variant the guest's launch block has no game variant (the 5% load hang from 2026-10-28).
@@ -1963,8 +1996,8 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
 
     switch (st.screen) {
     case Screen::Main: {
-        // While the quit box is open nothing behind it reacts to the mouse (no hover, sounds or clicks).
-        const bool modal = st.confirmQuit;
+        // While the quit box or a modal is open nothing behind it reacts to the mouse (no hover, sounds or clicks).
+        const bool modal = st.confirmQuit || s_showAccountModal || s_showDevMenu;
         ImGui::BeginDisabled(modal);
         DrawParty(ui, settings.playerName, "In Main Menu Lobby");
         DrawTitle(ui, ImVec2(left, ui.size.y * 0.30f), "MAIN MENU");
@@ -1984,7 +2017,7 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
                     st.confirmQuit = true;
                     st.quitChoice = 1;
                 } else if (std::string(kMainEntries[hit].label) == "Account") {
-                    s_showAccountModal = true;
+                    OpenAccountModal();
                 } else {
                     st.screen = kMainEntries[hit].target;
                 }
@@ -1996,7 +2029,7 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
                 MenuSounds::Back();
             }
             DrawHints(ui, { { Prompt::Accept, "Select" }, { Prompt::Back, "Quit" } });
-        } else {
+        } else if (st.confirmQuit) {
             // Dim everything and show the question in the middle.
             ui.dl->AddRectFilled(ImVec2(0, 0), ui.size, IM_COL32(0, 0, 0, 150));
             const float bw = 460.0f * ui.s, bh = 190.0f * ui.s;

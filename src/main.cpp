@@ -187,6 +187,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 
     // Initialize ImGui UI Manager
     noble::UIManager::Initialize(window->GetHwnd(), renderer->GetDevice(), renderer->GetContext());
+    window->SetCustomWndProc([](HWND h, UINT m, WPARAM w, LPARAM l) {
+        return noble::UIManager::HandleWndProc(h, m, w, l);
+    });
     {
         // Menu and loading-screen pictures: the player's own art, Noble's art, or MCC's UI packs.
         wchar_t exePath[MAX_PATH] = {};

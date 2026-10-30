@@ -88,33 +88,30 @@ bool EnginePatches::Apply(HMODULE hReachDll) {
         NOBLE_WARN("EnginePatches: Could not locate IsWhitespace function in haloreach.dll.");
     }
 
-    // 2. Armor permutation index cap patches (appearancecap::apply @ RVA 0x10545A and 0x10552F)
-    // Allows armor permutation indices >= 5 / >= 32 without clamping to base Mark V[B].
+    // 2. Armor appearance builder stack-overflow patch (RVA 0x105324)
+    // When an invalid or out-of-range armor permutation index is present (e.g. GRD/MCC/Season 8 helmets >= 64),
+    // haloreach.dll at 0x1052D0..0x10531A sets the byte to 0 and flags al = 1.
+    // If al != 0, it falls into 0x10532A - a bugged Bungie composite permutation builder with a 16-element stack array.
+    // When elements exceed 16, it writes index -1 to stack offset [rbp+0x18], corrupting the item count to a huge number,
+    // which then loops past the stack boundary and crashes with 0xC0000005 at haloreach.dll+0x105597.
+    // Patching 0x105324 (0F 84 97 02 00 00, je 0x1055c1) to an unconditional jmp (E9 98 02 00 00 90, jmp 0x1055c1; nop)
+    // cleanly skips the bugged fallback builder and exits safely, preventing the crash permanently.
     {
-        static const uint8_t kExpectedCap1[7] = { 0x80, 0xFA, 0x05, 0x72, 0x1A, 0xB1, 0x01 };
-        static const uint8_t kPatchedCap1[7]  = { 0x80, 0xFA, 0xFF, 0x72, 0x1A, 0xB1, 0x01 };
-        uint8_t* addr1 = reinterpret_cast<uint8_t*>(baseAddress + 0x10545A);
-        if (std::memcmp(addr1, kExpectedCap1, sizeof(kExpectedCap1)) == 0) {
+        static const uint8_t kExpectedFallbackJe[6] = { 0x0F, 0x84, 0x97, 0x02, 0x00, 0x00 };
+        static const uint8_t kPatchedFallbackJmp[6] = { 0xE9, 0x98, 0x02, 0x00, 0x00, 0x90 };
+        uint8_t* addr = reinterpret_cast<uint8_t*>(baseAddress + 0x105324);
+        if (std::memcmp(addr, kExpectedFallbackJe, sizeof(kExpectedFallbackJe)) == 0) {
             DWORD oldProt = 0;
-            if (VirtualProtect(addr1, sizeof(kPatchedCap1), PAGE_EXECUTE_READWRITE, &oldProt)) {
-                std::memcpy(addr1, kPatchedCap1, sizeof(kPatchedCap1));
-                FlushInstructionCache(GetCurrentProcess(), addr1, sizeof(kPatchedCap1));
-                VirtualProtect(addr1, sizeof(kPatchedCap1), oldProt, &oldProt);
-                NOBLE_INFO("EnginePatches: Patched armor appearance cap 1 at RVA 0x10545A (0x05 -> 0xFF).");
+            if (VirtualProtect(addr, sizeof(kPatchedFallbackJmp), PAGE_EXECUTE_READWRITE, &oldProt)) {
+                std::memcpy(addr, kPatchedFallbackJmp, sizeof(kPatchedFallbackJmp));
+                FlushInstructionCache(GetCurrentProcess(), addr, sizeof(kPatchedFallbackJmp));
+                VirtualProtect(addr, sizeof(kPatchedFallbackJmp), oldProt, &oldProt);
+                NOBLE_INFO("EnginePatches: Patched armor composite fallback jump at RVA 0x105324 (je -> jmp 0x1055c1). Crash at 0x105597 resolved.");
+            } else {
+                NOBLE_WARN("EnginePatches: Failed to VirtualProtect armor composite fallback jump at RVA 0x105324.");
             }
-        }
-
-        static const uint8_t kExpectedCap2[6] = { 0x41, 0x80, 0xF8, 0x20, 0x73, 0x21 };
-        static const uint8_t kPatchedCap2[6]  = { 0x41, 0x80, 0xF8, 0xFF, 0x73, 0x21 };
-        uint8_t* addr2 = reinterpret_cast<uint8_t*>(baseAddress + 0x10552F);
-        if (std::memcmp(addr2, kExpectedCap2, sizeof(kExpectedCap2)) == 0) {
-            DWORD oldProt = 0;
-            if (VirtualProtect(addr2, sizeof(kPatchedCap2), PAGE_EXECUTE_READWRITE, &oldProt)) {
-                std::memcpy(addr2, kPatchedCap2, sizeof(kPatchedCap2));
-                FlushInstructionCache(GetCurrentProcess(), addr2, sizeof(kPatchedCap2));
-                VirtualProtect(addr2, sizeof(kPatchedCap2), oldProt, &oldProt);
-                NOBLE_INFO("EnginePatches: Patched armor appearance cap 2 at RVA 0x10552F (0x20 -> 0xFF).");
-            }
+        } else {
+            NOBLE_INFO("EnginePatches: Armor composite fallback at RVA 0x105324 already patched or different opcode.");
         }
     }
 
