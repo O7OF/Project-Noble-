@@ -22,6 +22,26 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-31, 14:40 ET) - Ghidra project is set up and the forge gate is labelled in it (WeabooTyler117 / DeepSeek)
+
+Tyler asked to start Ghidra and "set that all up". Done, and made reproducible.
+
+- Project: `C:\Users\tyler\Documents\deepseek-harness\default-workspace\ghidra-proj\NobleReach.gpr`, program
+  `haloreach-copy.dll` (a copy of the Steam DLL - the install is untouched), image base `0x180000000`, imported and
+  **analysed** with Ghidra 12.1.4 + Java 21.
+- `tools/ghidra/NobleForgeGate.java` labels and plate-comments the whole join-queue gate:
+  `Noble_JoinQueue_SetMode` (`0x18039BEEC`), `Noble_JoinQueue_Dispatch` (`0x18039A8D2`),
+  `Noble_JoinQueue_ProcessCall` (`0x18039A92D`), `Noble_JoinQueue_Process` (`0x18039BDCC`), and the globals
+  `Noble_JoinQueueMode/Count/Entries/Step`, `Noble_JoinQueueSlotValid`, `Noble_JoinQueueSession1/2/34`.
+  Re-runnable: `analyzeHeadless <proj> NobleReach -process haloreach-copy.dll -noanalysis -postScript NobleForgeGate.java
+  -scriptPath tools\ghidra` (close the GUI first; it holds the project lock).
+- `tools/ghidra/VerifyGateLabels.java` re-reads the saved program and prints name + comment for each address, so the
+  labelling can be checked without the GUI. Verified: all ten addresses have their label and plate comment.
+- `docs/GHIDRA-SETUP.md` documents opening the project, all labelled addresses, the live-base mapping (runtime base from
+  the client log + RVA; e.g. base `0x7FFCA2F40000` -> mode global is `0x7FFCA59E9308`) and how to rebuild the project
+  from scratch.
+- The GUI is running again with the labelled project open (`Ghidra: NobleReach`).
+
 ## 0. Pick up here (2026-10-31, 14:00 ET) - Forge netplay: verified both join scenarios, and the join-queue gate map is written down (WeabooTyler117 / DeepSeek)
 
 Follow-up to the 13:10 entry, after Tyler asked to "look for the offset".
