@@ -11,6 +11,52 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-29, 22:00 ET) - Double Typing Fix, Seamless Armory Background, Full Controller UI Navigation & 1:1 Reach Pre-Game Lobby Layout (O7OF / Dominus)
+
+### 1. Root Cause & Fix: Double Character Typing in Login/Register Screen
+- **Root Cause:**
+  - `ImGui_ImplWin32_WndProcHandler` receives `WM_CHAR` and enqueues typed characters into `io.InputQueueCharacters` via `io.AddInputCharacterUTF16`.
+  - In `FrontEndMenu.cpp:FeedEngineThreadInputs`, an auxiliary loop polling `GetAsyncKeyState` was also unconditionally executing:
+    `if (down && kKeys[i].ch != 0 && io.WantTextInput) { io.AddInputCharacter(static_cast<unsigned int>(kKeys[i].ch)); }`
+  - Every single keystroke entered in text inputs (e.g. login/register modals) was injected twice into ImGui (once from `WM_CHAR` and once from `FeedEngineThreadInputs`), resulting in doubled characters (e.g. `TT`, `FF`, `BB`).
+- **Fix:**
+  - Removed duplicate `io.AddInputCharacter` from `FeedEngineThreadInputs`.
+  - Added `#include <imgui_impl_win32.h>` and called `ImGui_ImplWin32_NewFrame()` in `FrontEndMenu::RenderOverlayImpl` before `ImGui::NewFrame()`.
+
+### 2. Full Controller Navigation Across All UI Windows
+- **Root Cause:**
+  - `ImGui_ImplWin32_NewFrame()` was never invoked during overlay rendering; only `ImGui_ImplDX11_NewFrame()` was called. Because XInput polling inside ImGui lives in `ImGui_ImplWin32_UpdateGamepads()` (called from `ImGui_ImplWin32_NewFrame()`), gamepads were completely inert during overlay menu rendering.
+- **Fixes Applied:**
+  - Integrated `ImGui_ImplWin32_NewFrame()` and `InputPrompts::Update()` on every frame in `FrontEndMenu::RenderOverlayImpl`.
+  - Added Left Analog Stick navigation (`ImGuiKey_GamepadLStickDown`, `LStickUp`, `LStickLeft`, `LStickRight`) in addition to D-pad across all menus:
+    - Main Menu item stepping (`FrontEndMenu.cpp`)
+    - Generic option rows (`OptionRow` in `FrontEndMenu.cpp`)
+    - Pre-Game Lobby option cycling & list navigation (`FrontEndMenu.cpp`)
+    - Server Browser server list navigation (`ServerBrowser.cpp`: D-pad/stick up/down to select server, A to join, Y to favorite, X to refresh, LB/RB to cycle modes)
+    - Armor Customizer slot selection and option stepping (`ArmorCustomizer.cpp`)
+    - Settings panel sliders and checkboxes (`SettingsPanel.cpp`)
+
+### 3. Seamless Armory Background (No Black Void Flicker)
+- **Root Cause:**
+  - `DrawBackdrop` only rendered `UiArt::MenuBackground()` when `!ReachArmory::IsSceneReady()`. When opening the Armory, `ReachArmory::SetTargetScene` cuts the Blam engine camera to scene `0x0A` (interior dark hangar). When transitioning or when Noble draws without an engine frame, the right side had no background, flashing solid black.
+- **Fix Applied:**
+  - In `FrontEndMenu.cpp:DrawBackdrop`, ensured `UiArt::MenuBackground()` is rendered under `Screen::Armory` and `Screen::PreGameLobby`.
+  - Combined with `ObjPreviewCamera::transparentBackground = true` in `ArmorCustomizer.cpp`, the character model and menu list sit seamlessly on top of the Reach menu backdrop with zero flicker to black.
+
+### 4. 1:1 Pre-Game Lobby Overhaul (Campaign, Forge, Custom Games, Firefight)
+- **Visual Design Matching Reference Screenshots 1:1:**
+  - **Top-Left Preview Box:** 16:9 map preview thumbnail with dark border and corner emblem badge (Campaign difficulty/swords shield, Forge globe logo, Custom game Infection/gametype badge).
+  - **Header & Title:** Vertical `< MAIN MENU` back indicator on the left margin, Reach winged chevron emblem, bold title (`CAMPAIGN`, `FORGE`, `CUSTOM GAME`, `FIREFIGHT`), and authentic subtitle line (`This party is open to friends and recent players.`, `This party is local to this Xbox 360 console.`).
+  - **Menu Options List:** Clean alignment with label on left, value on right, contextual description tooltip below, and **Halo: Reach signature orange highlight bar** on the left edge of focused rows (`IM_COL32(255, 140, 30, 255)`).
+    - Campaign: Ready, Mission, Skulls, Difficulty, Scoring, Start Co-Op Campaign
+    - Forge: Game Type, Map, Game Options, Start Game
+    - Custom Game: Ready, Game Type, Map, Game Options, Start Game
+    - Firefight: Ready, Fire Fight, Map, Game Options, Start Firefight
+  - **Center Countdown Display:** Large `0:05` glowing timer with `Press (X) to cancel the countdown` and `Variant / Map` kicker when launching.
+  - **Right Column ("MY PARTY" Panel):** Solid black `MY PARTY` tab, subheader bar `In [Type] Lobby X/16`, player list with voice/speaker icon, emblem, gamertag, gold `BUNGIE` badge if dev, rank insignia shield / service tag `[117]`, orange/red selected row highlight, `(Y) <Host>'s Friends:` section, and host direct IP card with one-click "COPY INVITE".
+  - **Bottom Button Prompts Bar:** Non-overlapping bottom bar with Halo controller glyphs: `(A) Select`, `(B) Back`, `(Y) Select Network`, `(Start) Menu`, `(X) Prior Game Stats`.
+
+--
 ## 0. Pick up here (2026-10-29, 21:25 ET) - Fix Crash at Main Menu (0x105597), Login Modal Input/Deadlock & Crash, and Multiplayer Guest Session Launch (Dominus / O7OF)
 
 ### 1. Root Cause 1: Native Crash 0xC0000005 at haloreach.dll+0x105597 upon Entering Main Menu
