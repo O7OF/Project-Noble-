@@ -713,8 +713,7 @@ void SettingsPanel::RenderDetails(float width, float height) {
         break;
     }
     case Preview::Background: {
-        Text(dl, NobleStyle::TitleFont(), 20.0f * Scale(), p, kText, "MENU BACKGROUND");
-        ImGui::Dummy(ImVec2(0, 8.0f * Scale()));
+        // The details panel already drew the title and the effect line; a preview starts at the cursor (pv).
         const std::string value = m_edit.menuBackground;
         // The picture the menu is actually using: it was chosen and uploaded at menu init (WarmMenuBackground),
         // so nothing decodes a texture here - doing that on the fallback draw thread hung the client.

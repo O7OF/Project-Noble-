@@ -22,6 +22,37 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-30, 09:55 ET) - Review pass over the whole menu work, six fixes (WeabooTyler117 / DeepSeek)
+
+A read-through of every change from `8676b1b` to now, plus a 12-screen regression sweep. Fixed:
+
+1. **The background preview drew its own title over the details header.** `Preview::Background` called
+   `Text(..., p, "MENU BACKGROUND")` although the details panel already draws `d.title` at `p`; previews start at the
+   cursor (`pv`), so the duplicate is gone.
+2. **A freshly imported background did not appear in the picker** until a restart: `UiArt::MenuBackgroundFiles()` caches
+   the folder listing. `ImportMenuBackgroundImage()` now calls the new `RefreshMenuBackgroundFiles()`.
+3. **`UiArt::MenuBackgroundPreview()` removed** - after the change above nothing used it, and it decoded a texture on
+   the caller's thread (the thing that hung the client earlier). One way to do it now: `WarmMenuBackground()` +
+   `MenuBackground()`.
+4. **Invite JOIN with no host address** would have relaunched with `-connect ":"`. The button now reads `WAITING...` and
+   logs a warning instead.
+5. **Continue pointed at a deleted mod folder** if the mod had been removed since; it now checks
+   `std::filesystem::exists()` and falls back to the vanilla launch.
+6. **The music widget rebuilt `ReachAudio::MusicTracks()` every frame** on the main menu; it is built once now.
+7. The invite toast sat 6 px into the setup screens' action buttons; moved up by 32 * s.
+
+Verified after the fixes: 12/12 screens (main, campaign/firefight/custom MODDED, forge, servers, settings graphics +
+controller, career, armory, social, lobby) captured, every run exit code 0, **0 `[error]` lines** in the new log range,
+and the client left closed.
+
+Known and accepted (do not "fix" blindly):
+
+- Muting from the music widget is undone while **Settings > Audio** is open, because `RenderAudio()` pushes
+  `m_edit.volumeMusic` into `ReachAudio` every frame. A real fix is a `menuMusicMuted` flag in settings; low priority.
+- The pause button does nothing when the music thread is between pieces (`s_musicVoice` null); pressing play restarts.
+- `IMPORT BACKGROUND...` opens a Win32 modal dialog on whichever thread draws the Settings page; while it is open the
+  engine loop waits. That is expected for a file picker, but it is why nothing may call it from an automated run.
+
 ## 0. Pick up here (2026-10-30, 09:35 ET) - Menu background picker with preview + IMPORT (WeabooTyler117 / DeepSeek)
 
 Tyler: "players should be able to preview and choose their own background and even upload their own custom one".

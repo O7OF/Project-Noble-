@@ -47,9 +47,8 @@ void WarmMenuBackground();
 
 // The player's own background pictures (data\ui\custom\backgrounds), file names sorted, for the picker.
 std::vector<std::string> MenuBackgroundFiles();
-// The picture a stored menuBackground value would use, for the Settings preview: the named file, or a
-// representative picture for "random" / "noble" / "reach". Empty when there is nothing to show.
-UiTexture MenuBackgroundPreview(const std::string& value);
+// Drops the cached list so a picture imported this session shows up in the picker at once.
+void RefreshMenuBackgroundFiles();
 // Copies an image the player picked into data\ui\custom\backgrounds and returns the stored file name.
 bool ImportMenuBackgroundImage(const std::filesystem::path& source, std::string& outName);
 

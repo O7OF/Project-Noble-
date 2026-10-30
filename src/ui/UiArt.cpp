@@ -444,47 +444,24 @@ UiTexture MenuBackground() {
 
 void WarmMenuBackground() { (void)MenuBackground(); }
 
+namespace {
+std::vector<std::string> s_backgroundFiles;
+bool s_backgroundFilesScanned = false;
+} // namespace
+
+void RefreshMenuBackgroundFiles() { s_backgroundFilesScanned = false; }
+
 std::vector<std::string> MenuBackgroundFiles() {
     // Cached: the settings page asks every frame, and a directory scan per frame is wasteful (and it used to
-    // run while the menu was being drawn from the main thread).
-    static std::vector<std::string> names;
-    static bool scanned = false;
-    if (!scanned) {
-        scanned = true;
-        for (const fs::path& p : ImagesIn(CustomDir() / "backgrounds")) names.push_back(p.filename().string());
-        std::sort(names.begin(), names.end());
+    // run while the menu was being drawn from the main thread). ImportMenuBackgroundImage() invalidates it so a
+    // new picture shows up in the picker immediately.
+    if (!s_backgroundFilesScanned) {
+        s_backgroundFilesScanned = true;
+        s_backgroundFiles.clear();
+        for (const fs::path& p : ImagesIn(CustomDir() / "backgrounds")) s_backgroundFiles.push_back(p.filename().string());
+        std::sort(s_backgroundFiles.begin(), s_backgroundFiles.end());
     }
-    return names;
-}
-
-UiTexture MenuBackgroundPreview(const std::string& value) {
-    std::lock_guard<std::mutex> lock(s_mutex);
-    if (value.rfind("file:", 0) == 0) return FileCached(CustomDir() / "backgrounds" / value.substr(5));
-    if (value == "reach") {
-        for (const SceneFingerprint& s : kCampaignScenes) {
-            if (std::string(s.scenario) == "m70_a") continue;
-            if (UiTexture t = SceneCached(s.scenario)) return t;
-        }
-        return {};
-    }
-    if (value == "noble") {
-        for (const fs::path& p : ImagesIn(NobleDir() / "backgrounds")) {
-            if (UiTexture t = FileCached(p)) return t;
-        }
-        return {};
-    }
-    // "random": show the first picture of whatever pool it would draw from.
-    for (const fs::path& p : ImagesIn(CustomDir() / "backgrounds")) {
-        if (UiTexture t = FileCached(p)) return t;
-    }
-    for (const fs::path& p : ImagesIn(NobleDir() / "backgrounds")) {
-        if (UiTexture t = FileCached(p)) return t;
-    }
-    for (const SceneFingerprint& s : kCampaignScenes) {
-        if (std::string(s.scenario) == "m70_a") continue;
-        if (UiTexture t = SceneCached(s.scenario)) return t;
-    }
-    return {};
+    return s_backgroundFiles;
 }
 
 bool ImportMenuBackgroundImage(const std::filesystem::path& source, std::string& outName) {
@@ -499,6 +476,7 @@ bool ImportMenuBackgroundImage(const std::filesystem::path& source, std::string&
     fs::copy_file(source, target, fs::copy_options::overwrite_existing, ec);
     if (ec) return false;
     outName = target.filename().string();
+    RefreshMenuBackgroundFiles();
     NOBLE_INFO("UiArt: imported menu background '{}'", outName);
     return true;
 }

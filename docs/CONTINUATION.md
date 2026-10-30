@@ -171,7 +171,8 @@ Menus (this session, all pushed):
 | `8059115` | **Emblems load again**: MCC pack stores `E_002_P_SML`, not `e_002_p` (upper case + `_SML`) - this also fixes O7's Armory emblem grid |
 | `e93076f` | `[DEV]` as text, centred rank badge, one framed block, smaller name |
 | `7d0d80b` | Main menu **Continue** fast path + design-doc status block |
-| (this commit) | Menu **background picker**: `file:<name>` backgrounds, IMPORT via file dialog, preview panel; `Row()` trap documented |
+| `a21ebce` | Menu **background picker**: `file:<name>` backgrounds, IMPORT via file dialog, preview panel; `Row()` trap documented |
+| (this commit) | Review pass: 6 bug fixes (preview title, stale picker cache, dead unsafe API, invite JOIN without host, stale mod on Continue, per-frame track list) |
 | `5f4da08` | Prompts follow the device everywhere; `InputPrompts` button glyphs in the CONTROLLER list |
 | (this commit) | Main menu **Continue** fast path (spec 4.1/4.10) + a status block at the top of the design doc |
 | `a8f412e` | Menu music player (`PauseMusic/ResumeMusic` + `DrawMusicPlayer`) |
@@ -270,7 +271,9 @@ Also: invites carry `{senderUsername, hostIp, hostPort, timestamp}` only. To say
    every frame and hangs the client.
 9. Do **not** load textures from the main-thread fallback draw path (`HoldFrame`). Warm art in
    `FrontEndMenu::Initialize` (`UiArt::WarmMenuBackground()` is the pattern).
-10. `MenuState`/`OverlayContext` state is per-screen; `st.screen` changes are logged (`FrontEndMenu: screen X -> Y`),
+10. `ReachAudio::MusicTracks()` builds the whole list - cache it if you call it per frame. Muting from the music widget
+    is overridden while Settings > Audio is open (that page pushes its volume every frame).
+11. `MenuState`/`OverlayContext` state is per-screen; `st.screen` changes are logged (`FrontEndMenu: screen X -> Y`),
    which is handy when a capture lands on the wrong screen.
 
 ---

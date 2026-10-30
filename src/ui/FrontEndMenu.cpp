@@ -2785,7 +2785,8 @@ static void DrawSocialScreen(OverlayContext& ctx, const Ui& ui, float left, floa
 // same rule the Settings > Audio page uses for the music track.
 void DrawMusicPlayer(const Ui& ui) {
     const SettingsData sd = Settings::Get().Snapshot();
-    const std::vector<ReachAudio::TrackInfo> tracks = ReachAudio::MusicTracks();
+    // MusicTracks() builds the whole list, and this runs every frame on the main menu: build it once.
+    static const std::vector<ReachAudio::TrackInfo> tracks = ReachAudio::MusicTracks();
     if (tracks.empty()) return;
 
     static bool s_muted = false;
@@ -2902,7 +2903,7 @@ void DrawInviteToast(const Ui& ui, MenuState& st) {
     if (s_answered == key) return;
 
     const float w = 470.0f * ui.s, h = 96.0f * ui.s;
-    const ImVec2 p0(ui.size.x - w - 40.0f * ui.s, ui.size.y - h - 118.0f * ui.s);
+    const ImVec2 p0(ui.size.x - w - 40.0f * ui.s, ui.size.y - h - 150.0f * ui.s);
     const ImVec2 p1(p0.x + w, p0.y + h);
     ui.dl->AddRectFilled(p0, p1, IM_COL32(12, 20, 30, 245));
     ui.dl->AddRect(p0, p1, IM_COL32(143, 216, 255, 170), 0.0f, 0, 1.2f);
@@ -2934,13 +2935,18 @@ void DrawInviteToast(const Ui& ui, MenuState& st) {
         return pressed;
     };
 
-    if (button("invite_join", j0, "JOIN", true)) {
-        s_answered = key;
-        SocialClient::Get().ClearInviteAsync(newest->senderUsername);
-        SocialClient::Get().RefreshFriendsAsync();
-        NOBLE_INFO("FrontEndMenu: accepting invite from {} ({})", newest->senderUsername, newest->hostIp);
-        const std::wstring args = L"-connect \"" + ToWide(newest->hostIp + ":" + std::to_string(newest->hostPort)) + L"\"";
-        Relaunch::HandOff(args);
+    if (button("invite_join", j0, newest->hostIp.empty() ? "WAITING..." : "JOIN", true)) {
+        if (newest->hostIp.empty()) {
+            // The server sent an invite without an endpoint (older server build): do not relaunch with "-connect :"
+            NOBLE_WARN("FrontEndMenu: invite from {} has no host address; ignoring JOIN", newest->senderUsername);
+        } else {
+            s_answered = key;
+            SocialClient::Get().ClearInviteAsync(newest->senderUsername);
+            SocialClient::Get().RefreshFriendsAsync();
+            NOBLE_INFO("FrontEndMenu: accepting invite from {} ({})", newest->senderUsername, newest->hostIp);
+            const std::wstring args = L"-connect \"" + ToWide(newest->hostIp + ":" + std::to_string(newest->hostPort)) + L"\"";
+            Relaunch::HandOff(args);
+        }
     }
     if (button("invite_dismiss", d0, "DISMISS", false)) {
         s_answered = key;
@@ -3069,7 +3075,11 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
                     choice.variantPath = mainSnap.lastPlayedVariant;
                     choice.difficulty = mainSnap.lastPlayedDifficulty;
                     choice.skulls = mainSnap.lastPlayedSkulls;
-                    if (!mainSnap.lastPlayedMod.empty()) choice.modFolder = mainSnap.lastPlayedMod;
+                    // The mod may have been removed since; a stale folder would make the new process fail to
+                    // launch, so fall back to the vanilla game instead.
+                    if (!mainSnap.lastPlayedMod.empty() && std::filesystem::exists(mainSnap.lastPlayedMod)) {
+                        choice.modFolder = mainSnap.lastPlayedMod;
+                    }
                     done = true;
                 } else if (picked == &kDeveloperEntry) {
                     OpenDevMenuModal();
