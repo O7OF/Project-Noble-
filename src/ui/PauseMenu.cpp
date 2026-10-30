@@ -7,7 +7,9 @@
 #include "audio/ReachAudio.hpp"
 #include "career/Career.hpp"
 #include "common/Logger.hpp"
+#include "common/MapNames.hpp"
 #include "common/Relaunch.hpp"
+#include "network/NetworkTransport.hpp"
 #include "common/Settings.hpp"
 #include "engine/FrameCapture.hpp"
 #include "host/Window.hpp"
@@ -163,6 +165,7 @@ void PauseMenu::Toggle() {
 }
 
 void PauseMenu::Close() {
+    // (the open-time guard in DrawMenu is a function-local static; it re-arms by re-reading the clock below)
   s_showSettings.store(false);
   if (s_open.exchange(false)) {
     NOBLE_INFO("PauseMenu: closed");
@@ -190,52 +193,200 @@ void PauseMenu::SetLoadingMap(const std::string &scenario) {
 }
 
 void PauseMenu::DrawMenu(HWND hwnd) {
-  ImGuiIO &io = ImGui::GetIO();
+    ImGuiIO& io = ImGui::GetIO();
 
-  // Dim the game behind the menu.
-  ImGui::GetBackgroundDrawList()->AddRectFilled(ImVec2(0, 0), io.DisplaySize,
-                                                IM_COL32(0, 0, 0, 140));
+    // Dim the game behind the menu.
+    ImGui::GetBackgroundDrawList()->AddRectFilled(ImVec2(0, 0), io.DisplaySize, IM_COL32(0, 0, 0, 150));
 
-  if (s_showSettings.load()) {
-    DrawSettingsPage(hwnd);
-    return;
-  }
+    if (s_showSettings.load()) {
+        DrawSettingsPage(hwnd);
+        return;
+    }
 
-  const ImVec2 button = CenteredWindow(340.0f);
-  if (ImGui::Begin("##NoblePauseMenu", nullptr, kPanelFlags)) {
-    NobleStyle::Header("PAUSED");
+    // A held game pauses; a match with other players in it must not - MCC reaches the same conclusion and just shows
+    // the menu. Noble cannot stop the engine's simulation itself (no pause command has been found), so the header
+    // says which of the two this is instead of pretending.
+    static ULONGLONG s_openedAt = 0;
+    if (s_openedAt == 0) s_openedAt = GetTickCount64();
+    const bool interactive = GetTickCount64() - s_openedAt > 250;   // ignore the opening frames
+    if (!interactive) {
+        static bool s_resetOnClose = false;
+        (void)s_resetOnClose;
+    }
+
+    const size_t peers = NetworkTransport::Get().GetGamePeerCount();
+    const bool solo = peers == 0;
+    const std::wstring restartArgs = Relaunch::CurrentGameArgs();
+
+    // ImGui works in a logical space (1280x720 here even on a 1920x1080 buffer), so scale from 720 to keep the
+    // panel the size the reference screens suggest (about 84% of the width).
+    const float s = std::clamp(io.DisplaySize.y / 720.0f, 0.8f, 2.0f);
+    const ImVec2 size(1080.0f * s, 560.0f * s);
+    ImGui::SetNextWindowSize(size, ImGuiCond_Always);
+    ImGui::SetNextWindowPos(ImVec2((io.DisplaySize.x - size.x) * 0.5f, (io.DisplaySize.y - size.y) * 0.5f),
+                            ImGuiCond_Always);
+    if (!ImGui::Begin("##NoblePauseMenu", nullptr, kPanelFlags)) {
+        ImGui::End();
+        return;
+    }
+
+    // Header: the match type and map, like MCC's pause header.
+    NobleStyle::Header(solo ? "PAUSED" : "MENU");
+    ImGui::PushStyleColor(ImGuiCol_Text, NobleStyle::TextMuted());
+    if (solo) {
+        ImGui::TextUnformatted("The game is paused.");
+    } else {
+        ImGui::Text("The match keeps running for the other %zu player%s.", peers, peers == 1 ? "" : "s");
+    }
+    ImGui::PopStyleColor();
     ImGui::Spacing();
 
-    if (NobleStyle::PrimaryButton("RESUME", button)) {
-      Close();
+    const float availW = ImGui::GetContentRegionAvail().x;
+    const float listW = 330.0f * s;
+    const float gap = 18.0f * s;
+    const float contentH = 420.0f * s;
+
+    // ---- Left: the action list (selection + description, like Reach's pause menu) ----
+    ImGui::BeginGroup();
+    struct Entry {
+        const char* label;
+        const char* description;
+        bool danger;
+        bool enabled;
+    };
+    const bool canRestart = !restartArgs.empty();
+    const Entry entries[] = {
+        { "RESUME", "Resume the game.", false, true },
+        { "RESTART MATCH", canRestart ? "Starts this match again from the beginning." : "Needs the match arguments (only available in a launched match).",
+          false, canRestart },
+        { "SETTINGS", "Change any setting without leaving the match.", false, true },
+        { "LEAVE GAME", "Close this match and go back to the front-end menu.", false, true },
+        { "QUIT", "Close Noble and end the match.", true, true },
+    };
+    const int entryCount = static_cast<int>(sizeof(entries) / sizeof(entries[0]));
+
+    static int s_focus = 0;
+    static ULONGLONG s_lastMove = 0;
+    const ULONGLONG now = GetTickCount64();
+    const bool up = ImGui::IsKeyPressed(ImGuiKey_UpArrow, true) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp, true);
+    const bool down = ImGui::IsKeyPressed(ImGuiKey_DownArrow, true) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown, true);
+    if (interactive && (up || down) && now - s_lastMove > 120) {
+        s_lastMove = now;
+        s_focus = (s_focus + (down ? 1 : entryCount - 1)) % entryCount;
+        MenuSounds::Scroll();
+    }
+    s_focus = std::clamp(s_focus, 0, entryCount - 1);
+
+    const float rowH = 46.0f * s;
+    int activated = -1;
+    for (int i = 0; i < entryCount; ++i) {
+        ImGui::PushID(i);
+        const bool focused = i == s_focus;
+        const bool enabled = entries[i].enabled;
+        ImGui::PushStyleColor(ImGuiCol_Text, enabled ? (focused ? NobleStyle::Accent() : ImVec4(0.86f, 0.90f, 0.94f, 1.0f))
+                                                     : NobleStyle::TextMuted());
+        if (ImGui::Selectable(entries[i].label, focused, ImGuiSelectableFlags_None,
+                              ImVec2(listW, rowH + 6.0f * s)) && enabled) {
+            s_focus = i;
+            activated = i;
+        }
+        if (ImGui::IsItemHovered()) {
+            MenuSounds::Hover(ImGui::GetItemID());
+            if (enabled) s_focus = i;
+        }
+        ImGui::PopStyleColor();
+        // Underline, like the reference screens.
+        const ImVec2 p = ImGui::GetItemRectMin();
+        const ImVec2 q = ImGui::GetItemRectMax();
+        ImGui::GetWindowDrawList()->AddLine(ImVec2(p.x + 8.0f * s, q.y - 4.0f * s), ImVec2(p.x + listW - 8.0f * s, q.y - 4.0f * s),
+                                            focused ? IM_COL32(140, 200, 255, 200) : IM_COL32(90, 105, 120, 120), 1.0f);
+        ImGui::PopID();
+    }
+    if (interactive && (ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false))) {
+        if (entries[s_focus].enabled) activated = s_focus;
     }
     ImGui::Spacing();
-    if (ImGui::Button("SETTINGS", button)) {
-      MenuSounds::Click();
-      Window::TakeLeftClicks();
-      s_showSettings.store(true);
-      NOBLE_INFO("PauseMenu: settings opened from the pause menu");
+    ImGui::PushStyleColor(ImGuiCol_Text, NobleStyle::TextMuted());
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + listW);
+    ImGui::TextWrapped("%s", entries[s_focus].description);
+    ImGui::PopTextWrapPos();
+    ImGui::PopStyleColor();
+    ImGui::EndGroup();
+
+    // ---- Right: daily and weekly challenges, scrollable (the reference screens' sidebar) ----
+    ImGui::SameLine(0.0f, gap);
+    ImGui::BeginGroup();
+    ImGui::PushStyleColor(ImGuiCol_Text, NobleStyle::TextMuted());
+    ImGui::TextUnformatted(("Daily challenges - " + Career::DailyResetText()).c_str());
+    ImGui::PopStyleColor();
+    const float sideW = availW - listW - gap;
+    ImGui::BeginChild("##pausechallenges", ImVec2(sideW, contentH), ImGuiChildFlags_Borders);
+    const std::vector<Career::Challenge> challenges = Career::Challenges();
+    int shown = 0;
+    for (int weekly = 0; weekly <= 1; ++weekly) {
+        bool heading = false;
+        for (const Career::Challenge& c : challenges) {
+            if (static_cast<int>(c.weekly) != weekly) continue;
+            if (!heading) {
+                heading = true;
+                ImGui::Spacing();
+                ImGui::PushStyleColor(ImGuiCol_Text, weekly ? ImVec4(1.0f, 0.75f, 0.47f, 1.0f) : NobleStyle::Accent());
+                ImGui::TextUnformatted(weekly ? "WEEKLY" : "DAILY");
+                ImGui::PopStyleColor();
+            }
+            ImGui::PushID(shown++);
+            const ImVec4 accent = c.done ? ImVec4(0.55f, 0.85f, 0.55f, 1.0f) : NobleStyle::Accent();
+            ImGui::PushStyleColor(ImGuiCol_Text, accent);
+            ImGui::TextUnformatted(c.title.c_str());
+            ImGui::PopStyleColor();
+            ImGui::PushStyleColor(ImGuiCol_Text, NobleStyle::TextMuted());
+            ImGui::TextWrapped("%s", c.description.c_str());
+            const float fraction = c.target > 0 ? std::clamp(static_cast<float>(c.progress) / c.target, 0.0f, 1.0f) : 0.0f;
+            char bar[64];
+            std::snprintf(bar, sizeof(bar), "%lld / %lld   %lld XP", static_cast<long long>(c.progress),
+                          static_cast<long long>(c.target), static_cast<long long>(c.reward));
+            ImGui::ProgressBar(fraction, ImVec2(-1.0f, 4.0f * s), "");
+            ImGui::TextUnformatted(bar);
+            ImGui::PopStyleColor();
+            ImGui::Separator();
+            ImGui::PopID();
+        }
     }
-    ImGui::Spacing();
-    if (ImGui::Button("QUIT TO MENU", button)) {
-      // The engine can't switch maps once started (RR also runs menu and match
-      // as separate processes), so start a fresh Noble with no -map, which
-      // opens the front-end menu.
-      Close();
-      RelaunchAndClose(hwnd, L"", "quit to menu");
+    if (shown == 0) ImGui::TextDisabled("No challenges yet - finish a match to start them.");
+    ImGui::EndChild();
+    ImGui::EndGroup();
+
+    // ---- Act on the selection ----
+    if (activated == 0) {
+        Close();
+    } else if (activated == 1) {
+        MenuSounds::Click();
+        Close();
+        if (!Relaunch::HandOff(restartArgs)) NOBLE_WARN("PauseMenu: restart failed, the match keeps running");
+        else NOBLE_INFO("PauseMenu: restarting the match");
+    } else if (activated == 2) {
+        MenuSounds::Click();
+        Window::TakeLeftClicks();
+        s_showSettings.store(true);
+        NOBLE_INFO("PauseMenu: settings opened from the pause menu");
+    } else if (activated == 3) {
+        // The engine can't switch maps once started, so start a fresh Noble with no -map: that opens the menu.
+        MenuSounds::Click();
+        Close();
+        RelaunchAndClose(hwnd, L"", "leave game");
+    } else if (activated == 4) {
+        NOBLE_INFO("PauseMenu: quit requested");
+        Close();
+        PostMessageW(hwnd, WM_CLOSE, 0, 0);
+    } else if (interactive && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+        Close();
     }
+
     ImGui::Spacing();
-    if (NobleStyle::DangerButton("QUIT", button)) {
-      NOBLE_INFO("PauseMenu: quit requested");
-      Close();
-      // The main thread owns shutdown: WM_CLOSE ends its message loop and runs
-      // the normal exit path.
-      PostMessageW(hwnd, WM_CLOSE, 0, 0);
-    }
-    ImGui::Spacing();
-    ImGui::TextDisabled("Esc to resume");
-  }
-  ImGui::End();
+    ImGui::PushStyleColor(ImGuiCol_Text, NobleStyle::TextMuted());
+    ImGui::TextUnformatted("Esc resumes");
+    ImGui::PopStyleColor();
+    ImGui::End();
 }
 
 // The front-end SETTINGS panel, reused while paused so settings can be changed

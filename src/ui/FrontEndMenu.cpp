@@ -4104,6 +4104,22 @@ void FrontEndMenu::RenderOverlayImpl(IDXGISwapChain* swapChain, bool clear) {
                     Settings::Get().Update(d);
                 }
                 std::wstring args = L"-map \"" + ToWide(choice.map) + L"\" -mode \"" + ToWide(choice.mode) + L"\"";
+                // Forward the test-only capture hooks, so a harness that opened the menu can still photograph the
+                // match (the child is a fresh process with its own command line).
+                for (const wchar_t* flag : { L"-pause-at", L"-scoreboard-at", L"-quit-after" }) {
+                    int argc = 0;
+                    LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+                    for (int a = 1; argv && a + 1 < argc; ++a) {
+                        if (_wcsicmp(argv[a], flag) == 0) {
+                            args += L" ";
+                            args += flag;
+                            args += L" ";
+                            args += argv[a + 1];
+                            break;
+                        }
+                    }
+                    if (argv) LocalFree(argv);
+                }
                 args += L" -difficulty " + std::to_wstring(choice.difficulty);
                 if (!choice.variantPath.empty()) args += L" -variant \"" + ToWide(choice.variantPath) + L"\"";
                 if (choice.skulls != 0) args += L" -skulls " + std::to_wstring(choice.skulls);

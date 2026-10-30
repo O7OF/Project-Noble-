@@ -22,6 +22,48 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-30, 23:40 ET) - Pause menu rebuilt to the MCC reference (list + challenges sidebar) (WeabooTyler117 / DeepSeek)
+
+Tyler sent three MCC/Halo 4 pause screens and asked for that shape: an action list on the left, a scrollable daily/weekly
+challenge sidebar on the right, "change team if available", restart/end game, and a vote-to-kick entry; plus the rule that
+a solo game pauses while a match with other players must not.
+
+### What is in
+
+`PauseMenu::DrawMenu` is rewritten (was a centred 340 px stack of four buttons):
+
+- **Header** says `PAUSED` + "The game is paused." when `NetworkTransport::GetGamePeerCount() == 0`, and `MENU` +
+  "The match keeps running for the other N players." otherwise. (Noble cannot stop the engine's simulation - no pause
+  command has been found - so the header states which case it is instead of pretending.)
+- **Left list**: RESUME, RESTART MATCH, SETTINGS, LEAVE GAME, QUIT, with the focused row underlined and its description
+  printed underneath, exactly like the reference. Up/Down + pad D-pad move, Enter/A activate; the first 250 ms after the
+  menu opens are ignored so the press that opened it (or a held pad A) cannot bounce straight into an entry.
+  - RESTART MATCH uses `Relaunch::CurrentGameArgs()` + `Relaunch::HandOff` - it only appears enabled when the current
+    match's arguments are known.
+  - LEAVE GAME is the old QUIT TO MENU (fresh Noble, no `-map`); QUIT closes the process.
+- **Right sidebar**: `Career::Challenges()` drawn as DAILY / WEEKLY cards with title, description, progress bar, `n / m` and
+  XP reward, inside a scrollable child, headed by the daily reset countdown (`Career::DailyResetText()`).
+- **Test hook `-pause-at <seconds>`** (ReachHost, next to `-scoreboard-at`): opens the pause menu that long after the first
+  input poll and requests a screenshot, so this screen can be reviewed from a capture. The launcher now forwards
+  `-pause-at`, `-scoreboard-at` and `-quit-after` to the child process, since the child is a fresh process with its own
+  command line.
+
+Verified by a real match capture (`-menu-screen custom -auto-play -auto-play-variant ctf_054 -pause-at 35`): header,
+five entries, description line, reset countdown and six challenge cards with progress bars all render; the sidebar
+scrolls.
+
+### What is not in, and exactly what it needs
+
+- **CHANGE TEAM**: Reach's team swap is an engine action. Needs a `ReachHost` hook (or a command) that moves the local
+  player to the other team; the row can then appear only when the session reports teams (the roster already carries a
+  team per player).
+- **VOTE TO KICK**: the UI is the easy half - a roster list in the pause menu and on the TAB scoreboard with one vote per
+  player. The hard half is transport: `NetworkTransport` has no kick message today (`GetGamePeerCount`, `AddPeer`,
+  `OnNetSend/OnNetRecv` only). Plan: a `Kick(peerId)` on the host plus a `VoteKick` relay message the master server or the
+  host tallies, then the host drops the peer. Until then a vote button would be decorative, so it is not shipped.
+- **A real pause**: solo should freeze the sim. That needs the engine's pause (command or global); the header currently
+  reports the state truthfully rather than freezing it.
+
 ## 0. Pick up here (2026-10-30, 22:55 ET) - Service record reads like the menus: mission and map names (WeabooTyler117 / DeepSeek)
 
 Tyler: "need missions to link with their actual name same with multiplayer in the recent games, campaign etc."

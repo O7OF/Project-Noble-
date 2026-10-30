@@ -1467,6 +1467,29 @@ static void FillLocalInput(uint8_t* st) {
             }
         }
     }
+    {
+        // Test option "-pause-at <seconds>": open the pause menu that long after the first input poll and save a
+        // screenshot, so the menu can be reviewed without a hand on the keyboard.
+        static double s_pauseAt = -1.0;
+        static bool s_parsePause = false, s_opened = false;
+        static ULONGLONG s_pauseBase = 0;
+        if (!s_parsePause) {
+            s_parsePause = true;
+            int argc = 0;
+            LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+            for (int i = 1; argv && i + 1 < argc; ++i) {
+                if (_wcsicmp(argv[i], L"-pause-at") == 0) s_pauseAt = _wtof(argv[i + 1]);
+            }
+            if (argv) LocalFree(argv);
+            s_pauseBase = now;
+        }
+        if (s_pauseAt >= 0.0 && !s_opened && static_cast<double>(now - s_pauseBase) / 1000.0 >= s_pauseAt) {
+            s_opened = true;
+            if (!PauseMenu::IsOpen()) PauseMenu::Toggle();
+            s_testCaptureRequest.store(true);
+            NOBLE_INFO("ReachHost: -pause-at {} s: pause menu opened, screenshot requested", s_pauseAt);
+        }
+    }
 
     if (!uiPointer) {
         st[0x004 + VK_ESCAPE] = 0; // Esc was ours (pause menu)
