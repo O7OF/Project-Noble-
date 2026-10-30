@@ -22,6 +22,30 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-30, 13:45 ET) - Map display names everywhere, and the self-test covers them (WeabooTyler117 / DeepSeek)
+
+Server browser backlog item: it printed raw scenario names (`forge_halo` instead of Forge World).
+
+- **`src/common/MapNames.hpp/.cpp`** (new): `Display()` maps every scenario the game ships - multiplayer, campaign
+  (including the `m10_b`-style scene suffixes) and Firefight - to the name the menus use, and prettifies modded map
+  files (`my_custom_map.map` -> "My Custom Map"). Also `IsVanilla()` and `ScenarioOf()` (display name -> scenario).
+- **Server browser**: the Map column and the GAME DETAILS plate show the display name; modded maps keep their own name
+  and the `[Mod]` marker, with the raw file name in a tooltip. Search matches **both** forms, so typing "Sword Base"
+  now finds `20_sword_slayer`.
+- **Self-test extended** (`-test-map-gametypes` now runs both suites and writes both lines to `gametype-selftest.log`):
+
+```
+PASS: 43 rule checks, 280 map x type combinations (207 allowed, 73 blocked), 0 failure(s)
+PASS: map names - 10 display cases, 0 failure(s)
+```
+
+The map-name cases cover `forge_halo`, `forge_halo.map`, a full `maps\\20_sword_slayer.map` path, `m10_b`, `m70_bonus`,
+`ff50_park`, `cex_beaver_creek`, two modded names, plus `IsVanilla` and `ScenarioOf("sword base")`.
+
+**Not visually confirmed:** the master server reported 0 games while these captures ran, so the list column had no rows to
+show. The mapping itself is covered by the self-test above; the next person should eyeball it the next time a server is
+listed.
+
 ## 0. Pick up here (2026-10-30, 13:10 ET) - Mouse acceleration/smoothing and pad stick layout un-greyed (WeabooTyler117 / DeepSeek)
 
 Tyler: "finish the options in settings for controller and mnk for things that are greyed out". Two of them are real now.

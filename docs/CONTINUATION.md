@@ -176,7 +176,8 @@ Menus (this session, all pushed):
 | `5e512b7` | Halo: Reach **button layouts** (PadLayouts) applied in slot 36 + BUTTON LAYOUT row + layout-aware diagram |
 | `7383c54` | Map/game-type guard (`MapGameTypes`) + `-test-map-gametypes` (280 combinations); armory backdrop attempt reverted |
 | `b18cf29` | `tools/test-modes.ps1` mode/game-type smoke matrix |
-| (this commit) | Mouse acceleration + smoothing, controller stick layout (Southpaw); test script teardown hardened |
+| `31b7362` | Mouse acceleration + smoothing, controller stick layout (Southpaw); test script teardown hardened |
+| (this commit) | `MapNames` display names in the server browser + covered by `-test-map-gametypes` |
 | `5f4da08` | Prompts follow the device everywhere; `InputPrompts` button glyphs in the CONTROLLER list |
 | (this commit) | Main menu **Continue** fast path (spec 4.1/4.10) + a status block at the top of the design doc |
 | `a8f412e` | Menu music player (`PauseMusic/ResumeMusic` + `DrawMusicPlayer`) |

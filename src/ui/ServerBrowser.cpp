@@ -1,5 +1,6 @@
 #include <windows.h>
 #include "ServerBrowser.hpp"
+#include "common/MapNames.hpp"
 #include "common/Relaunch.hpp"
 #include "NobleStyle.hpp"
 #include "UiArt.hpp"
@@ -286,7 +287,8 @@ bool ServerBrowser::PassesFilters(const ServerEntry& s) const {
     if (m_searchQuery[0] != '\0') {
         const std::string needle = Lower(m_searchQuery);
         const std::string name = Lower(s.name);
-        const std::string map = Lower(s.mapName);
+        // Match the raw scenario name and the name players read ("Sword Base" finds "20_sword_slayer").
+        const std::string map = Lower(s.mapName + " " + MapNames::Display(s.mapName));
         if (name.find(needle) == std::string::npos && map.find(needle) == std::string::npos) return false;
     }
     if (m_modeFilter == 1 && s.gameMode != "Multiplayer") return false;
@@ -403,12 +405,15 @@ void ServerBrowser::RenderServerList() {
         ImGui::TableNextColumn();
         ImGui::TextUnformatted(s.gameMode.c_str());
 
-        // Column 3: map
+        // Column 3: map, by the name players know it by ("Forge World", not "forge_halo"). Modded maps keep
+        // their own name and the [Mod] marker.
         ImGui::TableNextColumn();
+        const std::string mapLabel = MapNames::Display(s.mapName);
         if (s.isMod) {
-            ImGui::TextColored(ImVec4(0.35f, 0.85f, 0.95f, 1.0f), "[Mod] %s", s.mapName.c_str());
+            ImGui::TextColored(ImVec4(0.35f, 0.85f, 0.95f, 1.0f), "[Mod] %s", mapLabel.c_str());
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", s.mapName.c_str());
         } else {
-            ImGui::TextUnformatted(s.mapName.c_str());
+            ImGui::TextUnformatted(mapLabel.c_str());
         }
 
         // Column 4: players
@@ -484,7 +489,8 @@ void ServerBrowser::RenderServerDetails() {
                                     IM_COL32(4, 8, 12, 0), IM_COL32(4, 8, 12, 0),
                                     IM_COL32(4, 8, 12, 230), IM_COL32(4, 8, 12, 230));
         dl->AddRect(p0, p1, IM_COL32(150, 185, 215, 110), 0.0f, 0, 1.0f);
-        const char* mapLabel = s.mapName.empty() ? "Unknown map" : s.mapName.c_str();
+        const std::string mapName = s.mapName.empty() ? std::string("Unknown map") : MapNames::Display(s.mapName);
+        const char* mapLabel = mapName.c_str();
         dl->AddText(ImGui::GetFont(), 20.0f, ImVec2(p0.x + 10.0f, p1.y - 28.0f), IM_COL32(240, 244, 248, 255), mapLabel);
         ImGui::Dummy(ImVec2(photoW, photoH));
     }
