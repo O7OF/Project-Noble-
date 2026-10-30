@@ -22,6 +22,40 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-31, 12:00 ET) - Two-machine co-op test harness + protocol for a second AI (WeabooTyler117 / DeepSeek)
+
+Tyler asked whether O7's agent (Gemini) and this one could co-work a co-op test: one hosts, the other joins, both record and
+fix. Agents cannot talk to each other directly, so the **repository is the message bus**. Built the missing half.
+
+### `tools/coop-test.ps1`
+
+One side of a run, usable by either agent:
+
+```powershell
+.\tools\coop-test.ps1 -Role host  -Peers 1 -PublicIp <ip> -Seconds 180
+.\tools\coop-test.ps1 -Role guest -Connect <ip:port>      -Seconds 180
+.\tools\coop-test.ps1 -Role report -InputLog <any noble-client.log>
+```
+
+- Host: kills stray clients, launches `-map m10 -mode campaign -host -online -wait-peers N` (plus `-Relay` if given), waits
+  for the transport's UDP port, publishes `coop\endpoint.txt`, runs for the requested time, then writes
+  `coop\host-<stamp>.log` and `coop\result-host-<stamp>.json`.
+- Guest: launches `-map ... -connect <ip:port>`, same artefacts with the guest prefix.
+- Report: filters any existing log into the co-op-relevant lines only (barrier, Command 10/11, insertion point, abort
+  reason, join/connect refusals) - 1111 lines out of a 2.7 MB solo log in the smoke test.
+- ASCII-only on purpose: PowerShell 5.1 misparses UTF-8 without BOM when comments contain typographic dashes (that bit us
+  while writing it).
+
+### `docs/COOP-TEST-PROTOCOL.md`
+
+The handshake: request -> host publishes endpoint + log -> guest joins + publishes log -> whoever analyses writes
+`coop/REPORT.md`. It names the pass lines verbatim, and a failure table mapping `0x1B` / `0x1C` / `0x1D` aborts and the
+`no guest engine traffic after 10 s` case to the next change. It also states the ownership rule (one side owns
+`BlamEngine.cpp` sequencing, the other `LobbyPatches.cpp` membership) and the hard precondition: the guest must be able to
+reach the host's UDP endpoint, or both sides must use the master-server lobby / relay instead.
+
+`coop/` holds a README describing every artefact. Full `noble-client.log` files are never committed.
+
 ## 0. Pick up here (2026-10-31, 11:15 ET) - Campaign co-op: the mission now waits for the guests before it starts (WeabooTyler117 / DeepSeek)
 
 Tyler's report: on every campaign match the host loads in, the guest joins, and the guest sees the opening cutscene **from
