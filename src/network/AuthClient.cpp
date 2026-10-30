@@ -173,8 +173,7 @@ AuthResult AuthClient::Login(const std::string& username, const std::string& pas
     const std::string masterUrl = ResolveMasterUrl();
     nlohmann::json body = {
         { "username", username },
-        { "password", password },
-        { "force", true }
+        { "password", password }
     };
 
     int statusCode = 0;
@@ -273,13 +272,27 @@ AuthResult AuthClient::Register(const std::string& username, const std::string& 
 }
 
 void AuthClient::Logout() {
+    std::string user;
+    int uid = 0;
     {
         std::lock_guard<std::mutex> lock(m_authMutex);
+        user = m_username;
+        uid = m_userId;
         m_isLoggedIn = false;
         m_isDeveloper = false;
         m_username.clear();
         m_sessionToken.clear();
         m_userId = 0;
+    }
+
+    if (uid > 0 || !user.empty()) {
+        const std::string masterUrl = ResolveMasterUrl();
+        nlohmann::json body = {
+            { "userId", uid },
+            { "username", user }
+        };
+        int status = 0;
+        PostJson(masterUrl, "/api/logout", body.dump(), status);
     }
 
     auto s = Settings::Get().Snapshot();

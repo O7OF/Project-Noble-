@@ -608,7 +608,8 @@ bool LobbyPatches::Apply(HMODULE hReachDll) {
         struct { uintptr_t rva; uint8_t expect; uint8_t disp; } coopGates[] = {
             { 0x40954A, 0x7E, 0x22 }, // Campaign co-op player cap check (7E 22 -> EB 22)
             { 0x40955B, 0x76, 0x11 }, // Firefight player cap check (76 11 -> EB 11)
-            { 0x411B6C, 0x74, 0x0D }, // Co-op in-progress membership compatibility abort check (74 0D -> EB 0D)
+            { 0x411B6E, 0x74, 0x0D }, // Co-op in-progress membership compatibility abort check (74 0D -> EB 0D)
+            { 0x397689, 0x75, 0x0A }, // Campaign in-progress join-request gate (75 0A -> EB 0A, bypasses refusal 5)
         };
         for (auto& g : coopGates) {
             uint8_t* at = reinterpret_cast<uint8_t*>(base + g.rva);

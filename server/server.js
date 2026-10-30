@@ -219,7 +219,7 @@ function initializeDatabase() {
         // Users table
         db.run(`CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE,
+            username TEXT UNIQUE COLLATE NOCASE,
             password TEXT,
             is_developer INTEGER DEFAULT 0
         )`, (err) => { if (err) console.error("users table error:", err.message); });
@@ -798,7 +798,16 @@ app.post('/api/register', (req, res) => {
         return res.status(400).json({ error: "Username must be 14 characters or fewer" });
     }
 
-    bcrypt.hash(password, 10, (err, hash) => {
+    db.get(`SELECT id FROM users WHERE LOWER(username) = LOWER(?)`, [username], (checkErr, existing) => {
+        if (checkErr) {
+            console.error("Register check error:", checkErr.message);
+            return res.status(500).json({ error: "Database error" });
+        }
+        if (existing) {
+            return res.status(400).json({ error: "Username already taken" });
+        }
+
+        bcrypt.hash(password, 10, (err, hash) => {
         if (err) {
             console.error("bcrypt.hash error:", err.message);
             return res.status(500).json({ error: "Failed to encrypt password" });
@@ -831,15 +840,16 @@ app.post('/api/register', (req, res) => {
             res.json({ message: "Registration successful!", userId });
         });
     });
+    });
 });
 
 app.post('/api/login', (req, res) => {
-    const { username, password, force } = req.body;
+    const { username, password } = req.body;
     if (!username || !password) {
         return res.status(400).json({ error: "Username and password required" });
     }
 
-    db.get(`SELECT * FROM users WHERE username = ?`, [username], (err, user) => {
+    db.get(`SELECT * FROM users WHERE LOWER(username) = LOWER(?)`, [username], (err, user) => {
         if (err) {
             console.error("Login DB error:", err.message);
             return res.status(500).json({ error: "Database error" });
@@ -903,16 +913,25 @@ app.post('/api/login', (req, res) => {
                             ensureUnlockedItem(stats.unlocked_titles, "Developer");
                         }
 
-                        // Smart active session check
-                        // If session has not pinged in 75 seconds or force=true is passed, supersede it cleanly
-                        if (activeSessions[String(user.id)]) {
-                            const existing = activeSessions[String(user.id)];
+                        // Strict single-instance session check:
+                        // Prevent logging into the same account on 2 instances simultaneously
+                        // or having the same username active concurrently.
+                        const activeKey = String(user.id);
+                        const existingSessionEntry = Object.entries(activeSessions).find(([uid, sess]) => {
+                            if (uid === activeKey) return true;
+                            if (sess.username && sess.username.toLowerCase() === user.username.toLowerCase()) return true;
+                            return false;
+                        });
+
+                        if (existingSessionEntry) {
+                            const [existingUid, existing] = existingSessionEntry;
                             const timeSinceLastSeen = Date.now() - existing.lastSeen;
-                            if (timeSinceLastSeen > 75 * 1000 || force) {
-                                delete activeSessions[String(user.id)];
+                            // Expire dead sessions after 120 seconds of inactivity
+                            if (timeSinceLastSeen > 120 * 1000) {
+                                delete activeSessions[existingUid];
                             } else {
                                 return res.status(409).json({
-                                    error: "This account is already logged in on another device. Log out on your other device to continue."
+                                    error: "Error Account Already Logged In Logout on the other device to proceed"
                                 });
                             }
                         }
@@ -997,7 +1016,15 @@ app.post('/api/dev/set-developer', (req, res) => {
 
 app.post('/api/logout', (req, res) => {
     const userId = String(req.body.userId || '');
+    const username = String(req.body.username || '');
     if (userId) invalidateSession(userId);
+    if (username) {
+        for (const [uid, sess] of Object.entries(activeSessions)) {
+            if (sess.username && sess.username.toLowerCase() === username.toLowerCase()) {
+                delete activeSessions[uid];
+            }
+        }
+    }
     res.json({ message: "Logged out successfully" });
 });
 
@@ -2106,7 +2133,21 @@ wss.on('connection', (ws, req, reqUrl) => {
                         ping: jsonMsg.ping || 25,
                         joinedAt: Date.now()
                     };
-                    const idx = session.roster.findIndex(x => x.peerId == p.peerId || x.username.toLowerCase() === p.username.toLowerCase());
+                    const nameConflict = session.roster.some(x =>
+                        x.peerId != p.peerId &&
+                        x.username &&
+                        x.username.toLowerCase() === p.username.toLowerCase()
+                    );
+                    if (nameConflict) {
+                        try {
+                            ws.send(JSON.stringify({
+                                type: 'lobby_error',
+                                error: 'A player with this name is already in the lobby.'
+                            }));
+                        } catch(e) {}
+                        return;
+                    }
+                    const idx = session.roster.findIndex(x => x.peerId == p.peerId);
                     if (idx >= 0) session.roster[idx] = p;
                     else session.roster.push(p);
                     session.playerCount = session.roster.length;

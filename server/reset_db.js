@@ -38,7 +38,7 @@ db.serialize(() => {
     // Users table
     db.run(`CREATE TABLE users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        username TEXT UNIQUE,
+        username TEXT UNIQUE COLLATE NOCASE,
         password TEXT,
         is_developer INTEGER DEFAULT 0
     )`);
