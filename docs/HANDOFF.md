@@ -22,6 +22,31 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-31, 07:55 ET) - Armory is back on the in-game model: the OBJ re-export is not the right mesh (WeabooTyler117 / DeepSeek)
+
+Tyler, after seeing the armory on Noble's own renderer: "this is not the right model at all - we need to go back to the
+other model." He is right, and this closes the "one change fixes everything" idea from the 04:00-06:20 entries.
+
+- **`armoryPreview` defaults back to 0** = Reach's own Armory scene, i.e. the in-game Spartan. Verified by capture: the
+  full-body 3/4 view with the correct mesh, armour and the blue-flames effect is back.
+- Noble's renderer (`ObjModelPreview`, `data/armor/spartans/spartans.obj`) is a **different mesh** - a re-export, not the
+  shipped Spartan - so it stays only as an opt-in (Settings > Graphics > ARMORY > ARMORY PREVIEW -> NOBLE) and must never
+  be the default. The stage, the eye-strafe pan and the focusX framing all still exist in that path; they are simply not
+  what players see by default.
+- **Consequence for the open items:** the black background and the left/right shoulder distinction cannot be solved by
+  swapping renderers, because the correct model lives in the engine's scene. Both therefore need the engine-side routes
+  already recorded: light/replace the chamber in `mainmenu_all.map` (data), and a camera with a lateral offset
+  (engine camera globals, still unfound) for the shoulders. Per-slot panning with the engine cameras *does* work and is
+  verified (helmet 0x0D, chest 0x0F, wrist 0x10, utility 0x11, knees 0x12, shoulders 0x13, colours 0x14).
+
+### Emblem prototype status
+
+The data layer is in: `UiArt::GetEmblemBackdropLayers()` / `GetEmblemSymbolLayers()` / `EmblemLayerTexture(image)` expose
+every emblem's `image1` (backdrop layer) and `image2` (symbol layer) - about 225 of each - loaded by name from the MCC
+packs. What is not built yet is the UI: two Armory identity rows (background / foreground), storage in the profile or
+settings, and the composition drawing (backdrop then symbol) at the two places the emblem is drawn
+(`FrontEndMenu.cpp:861` in `PlayerRow` and `:3660` in the Armory plate).
+
 ## 0. Pick up here (2026-10-31, 07:05 ET) - Emblem background/foreground: what MCC actually ships (WeabooTyler117 / DeepSeek)
 
 Tyler wants Reach's emblem editor: pick a **background** (circle, triangle, hexagon...) and a **foreground** (grunt, flame,

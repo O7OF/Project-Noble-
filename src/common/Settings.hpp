@@ -22,7 +22,9 @@ struct SettingsData {
     bool verticalSync = false;     // Noble default: off (Tyler)
     int fpsLimit = 0;              // 0 = uncapped
     bool showFps = false;
-    int armoryPreview = 1;           // 1 = Noble's renderer with its own stage (default), 0 = Reach's Armory scene
+    // 0 = Reach's own Armory scene (the in-game model - the one that looks right). 1 = Noble's OBJ re-export, which
+    // is kept as an option but is a different mesh, so it is NOT the default (Tyler, 2026-10-31).
+    int armoryPreview = 0;
     bool throttleUnfocused = true;   // drop to 30 FPS when Noble is not the active window
     float brightness = 1.0f;    // 0.7..1.4, applied as a gamma exponent by the post-process (1.0 = untouched)
     bool fxaa = false;          // post-process anti-aliasing in Noble's own pass (Noble's device can do this)

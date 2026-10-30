@@ -106,6 +106,16 @@ UiTexture Nameplate(int id);
 
 // Emblem texture for index 1..330
 UiTexture Emblem(int id);
+
+// One of the two art layers an MCC emblem is built from: `image1` (the backdrop shape) and `image2` (the symbol).
+// They are loaded by name, so the Armory prototype can compose any two of them.
+struct EmblemLayer {
+    std::string image;   // e.g. "e_002_p"
+    std::string label;   // the emblem it came from, e.g. "Radioactive"
+};
+const std::vector<EmblemLayer>& GetEmblemBackdropLayers();
+const std::vector<EmblemLayer>& GetEmblemSymbolLayers();
+UiTexture EmblemLayerTexture(const std::string& image);
 UiTexture EmblemByName(const std::string& image1);
 
 // Draws `tex` inside the rectangle, keeping its aspect ratio (centred, nothing cropped).

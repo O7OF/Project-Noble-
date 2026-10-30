@@ -629,6 +629,8 @@ void DrawCover(ImDrawList* dl, const UiTexture& tex, ImVec2 min, ImVec2 max, ImU
 
 static std::vector<NameplateInfo> s_nameplateCatalog;
 static std::vector<EmblemInfo> s_emblemCatalog;
+static std::vector<EmblemLayer> s_emblemBackdrops;   // image1 of every emblem
+static std::vector<EmblemLayer> s_emblemSymbols;     // image2 of every emblem
 static bool s_customizationCatalogLoaded = false;
 
 static std::string CleanXmlName(const std::string& raw, const std::string& prefix) {
@@ -684,11 +686,25 @@ static void EnsureCustomizationCatalogs() {
                 std::string imgStr = getAttr(line, "image1");
                 std::string nameStr = getAttr(line, "name");
                 if (!idStr.empty() && !imgStr.empty()) {
-                    EmblemInfo info;
+                    // image1 is the backdrop layer and image2 the symbol layer of the same emblem; keep both so the Armory
+            // can offer them as background/foreground choices (prototype, 2026-10-31).
+            auto attr = [&line](const char* key) -> std::string {
+                const std::string pattern = std::string(key) + "=\"";
+                const size_t at = line.find(pattern);
+                if (at == std::string::npos) return {};
+                const size_t start = at + pattern.size();
+                const size_t end = line.find('"', start);
+                return end == std::string::npos ? std::string() : line.substr(start, end - start);
+            };
+            const std::string image1 = attr("image1");
+            const std::string image2 = attr("image2");
+            EmblemInfo info;
                     info.id = std::atoi(idStr.c_str());
                     info.image1 = imgStr;
                     info.name = nameStr.empty() ? ("Emblem " + idStr) : CleanXmlName(nameStr, "$EMBLEM_");
                     s_emblemCatalog.push_back(info);
+            if (!image1.empty()) s_emblemBackdrops.push_back({ image1, info.name });
+            if (!image2.empty()) s_emblemSymbols.push_back({ image2, info.name });
                 }
             }
         }
@@ -724,6 +740,10 @@ const std::vector<NameplateInfo>& GetNameplateCatalog() {
     EnsureCustomizationCatalogs();
     return s_nameplateCatalog;
 }
+
+const std::vector<EmblemLayer>& GetEmblemBackdropLayers() { return s_emblemBackdrops; }
+const std::vector<EmblemLayer>& GetEmblemSymbolLayers() { return s_emblemSymbols; }
+UiTexture EmblemLayerTexture(const std::string& image) { return image.empty() ? UiTexture{} : EmblemByName(image); }
 
 const std::vector<EmblemInfo>& GetEmblemCatalog() {
     EnsureCustomizationCatalogs();
