@@ -11,6 +11,86 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-30, 04:05 ET) - Menu overlap cleanup: bottom-anchored network strip + lobby nameplate (WeabooTyler117 / DeepSeek)
+
+UI only: `src/ui/FrontEndMenu.cpp`, no engine, netcode or gameplay code touched. Design direction is
+`docs/menu-redesign-spec.md` §2.1 (one shell, focus bar, summaries), §4.3 (campaign / Firefight setup).
+
+### 1. What was wrong (Tyler's four screenshots, 2026-10-30 03:08)
+
+The right column of **Campaign**, **Firefight**, **Custom Game** and **Forge** is laid out top-down from the map
+banner, but the old code then pinned the option rows with `y = std::max(y, actionsY - rowsH)` and drew the
+NETWORK / LOBBY chip strip at `actionsY - 38 * s`. `rowsH` never counted that strip, so whenever the rows were
+pinned they ended exactly at `actionsY` - 38 * s *under* the strip:
+
+- **Campaign:** the chips covered the SKULLS row / skull icons / "Score multiplier" line.
+- **Firefight:** the chips covered the bottom of the four difficulty tiles (the EASY / NORMAL / HEROIC names).
+- **Custom Game:** with only one row below the banner the row was pushed to the bottom of the column, buried under
+  the chips (its label hidden, only the centred value "SLAYER" visible), leaving a dead hole under the blurb.
+- **All four:** the strip's status line ("Online P2P (Port 11774) · Broadcasting to Master") started at a fixed
+  150 * s chip and was never fitted, so it ran past the column's right edge - that is the text that also sat on top
+  of the "SLAYER" value and the HOST LOBBY subtitle.
+- **Lobby (screenshot 1):** the player row printed a gold **BUNGIE** tag after a developer's name. Tyler: not
+  needed, remove it.
+
+### 2. Fixes (all in `src/ui/FrontEndMenu.cpp`)
+
+- **One source of truth for the bottom of the right column.** New `RightColumnLayout(ui)` returns
+  `actions` (top of PLAY SOLO / HOST CO-OP), `strip` (top of the network chips) and `content` (where the option
+  rows must end), all derived from `DrawHints`' rule, plus `LobbyStripHeight(ui)`. Campaign and
+  Firefight/Custom/Forge both use it, so neither can place the strip over its rows again.
+- **Rows flow top-down and the banner takes the leftover space.** The `std::max(...)` pin is gone; `HeroBannerHeight()`
+  sizes the picture to `content - rowsH - blurbHeight - bannerTop`, capped at the picture's own aspect (292/668) and
+  floored at `64 * s` (min/max, not `std::clamp`, so the floor can never exceed the cap in a very narrow window). The
+  blurb height is measured with `ImFont::CalcTextSizeA` (wrap width = column), so a two/three-line mod description is
+  accounted for. Cost: the Campaign banner is ~80 px shorter at 1080p (the strip now has its own row).
+- **Chip strip rebuilt.** Chip widths come from their labels (`TextWidth + 22 * s`), the privacy chip only exists
+  online, and the state line is right-aligned and adaptive: `UPnP READY · LISTED PUBLICLY` -> `UPnP READY` ->
+  `LISTED` (nothing is drawn if even that does not fit, never clipped or pushed off-screen). A 6 px dot is green when
+  UPnP is forwarding, amber when it is not (fallback text `PORT 11774`), blue for LAN.
+- **Lobby nameplate:** the `BUNGIE` tag is gone (the `player.isDev` field is still sent by the server and still used
+  by the main-menu party box `[DEV]`). The player name is now clipped at the service tag with `PushClipRect`, so a
+  long gamertag cannot run into `[TAG]`.
+- **Lobby focused row:** a flat band plus the left gradient, so the row's value on the right is still on the
+  highlight (the old gradient faded to alpha 25 before reaching it).
+
+### 3. Verification
+
+- Built with `cmake --build build --config Release`: `noble-client.exe` and `noble-dedicated.exe`, **0 errors,
+  0 warnings**.
+- The column arithmetic was checked at 1024x576, 1280x720, 1920x1080, 2560x1440 and 3440x1440, including a
+  three-line mod blurb: rows always end above the strip, strip above the buttons, buttons above the hint row.
+  At 1920x1080 the rows now end 15 px above the chips (Campaign / Firefight) and 109 px (Custom Game).
+- Chip/status text measured with Bahnschrift at the sizes the menu uses: chips use 46 % of the 845 px column at
+  1080p, and every status variant fits (<= 288 px) down to 1024x576.
+- Checked in the running client: `noble-client.exe -menu-screen <campaign|firefight|custom> -menu-capture 90` writes
+  `capture_<frame>.bmp` next to the exe and closes itself (`build\ui_after_shot.bat` loops over the screens). The
+  1920x1080 frames show the chips in their own row, the tiles and skulls fully visible, and the status line inside the
+  column. Note: `-menu-screen main` can be taken over by a stray Accept (pad/keyboard) on the first frames and end up
+  on Campaign, so capture the screens with their own name rather than by starting at the main menu.
+
+### 4. What to look at in game
+
+1. **Campaign** - the network chips sit in their own row above PLAY SOLO / HOST CO-OP; the skull icons and the score
+   multiplier line are fully visible, nothing overlaps the LEGENDARY tile.
+2. **Firefight / Custom Game / Forge** - same; the GAME TYPE row is directly under the map blurb (no hole, no row
+   buried at the bottom) and the difficulty tiles are clear of the chips.
+3. Click NETWORK and LOBBY: the chips switch instantly and the status line follows (LISTED PUBLICLY / DIRECT
+   CONNECT); it never runs past the column at any window size.
+4. **Pre-game lobby** - no BUNGIE tag after the name; `[TAG]` stays on the right on its own.
+
+### 5. Repo state when this was written (please read)
+
+- `src/main.cpp` was left with `<<<<<<<` conflict markers from an interrupted `git stash apply` of `stash@{0}`
+  ("armory-menu-handoff attempt 2026-10-29"), so nothing compiled. The stash's `main.cpp` is older than HEAD (no
+  `-wait-peers`, no `UIManager::HandleWndProc`, old `BlamEngine::LaunchMap` signature), so it was resolved to HEAD
+  (`git checkout HEAD -- src/main.cpp`). The rest of that stash - the `Relaunch::HandOff` single-window handoff
+  (`Relaunch.cpp/.hpp` + four call sites) - is kept as staged changes and still builds.
+- These menu changes are **not committed**; they sit on top of those staged changes in the working tree.
+- `stash@{0}` itself is still in `git stash list` and can be dropped once Tyler is happy with the build.
+
+--
+
 ## 0. Pick up here (2026-10-30, 03:25 ET) - Forge / Campaign Netplay Root Causes, Invasion Mode Compatibility, and All-Mode Variant Loading (O7OF / Dominus)
 
 All changes compiled cleanly with MSBuild Release (`noble-client.exe` and `noble-dedicated.exe`), 0 errors.

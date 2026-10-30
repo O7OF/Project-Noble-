@@ -1224,63 +1224,112 @@ static void SetupHostLobby(MenuState& st, const std::string& mapScenario, const 
     st.screen = Screen::PreGameLobby;
 }
 
-void DrawLobbyControls(const Ui& ui, ImVec2 pos, [[maybe_unused]] float width, MenuState& st) {
-    const float h = 32.0f * ui.s;
-    const float btnW = 150.0f * ui.s;
+// The setup screens (Campaign, Firefight, Custom Game, Forge) all end their right column the same way:
+// the two action buttons at the bottom, a strip of network/lobby chips above them, and the banner and
+// option rows above that. These three heights come from one place so a screen cannot draw the strip on
+// top of the rows above it (the overlap on the 2026-10-30 screenshots).
+constexpr float kLobbyStripHeight = 34.0f;   // multiplied by ui.s
+
+float LobbyStripHeight(const Ui& ui) { return kLobbyStripHeight * ui.s; }
+
+struct RightColumnY {
+    float actions = 0.0f;   // top of PLAY SOLO / HOST CO-OP (BigAction is 50 * s tall)
+    float strip = 0.0f;     // top of the network / lobby chip strip
+    float content = 0.0f;   // the option rows must end at or above this
+};
+
+RightColumnY RightColumnLayout(const Ui& ui) {
+    RightColumnY y;
+    const float hints = ui.size.y - 58.0f * ui.s;          // DrawHints' rule sits at size.y - 58 * s
+    y.actions = hints - 14.0f * ui.s - 50.0f * ui.s;
+    y.strip = y.actions - 12.0f * ui.s - LobbyStripHeight(ui);
+    y.content = y.strip - 10.0f * ui.s;
+    return y;
+}
+
+// Map picture height: fills whatever the rows and the strip leave, never taller than the picture's own
+// aspect (292/668). Short or very narrow windows shrink it instead of pushing the rows into the strip.
+float HeroBannerHeight(const Ui& ui, float columnWidth, float contentBottom, float rowsH, float blurbH, float bannerTop) {
+    const float maxH = columnWidth * 292.0f / 668.0f;
+    const float minH = std::min(64.0f * ui.s, maxH);
+    return std::max(minH, std::min(maxH, contentBottom - rowsH - blurbH - bannerTop));
+}
+
+void DrawLobbyControls(const Ui& ui, ImVec2 pos, float width, MenuState& st) {
+    const float stripH = LobbyStripHeight(ui);
+    const float chipH = 30.0f * ui.s;
+    const float chipY = pos.y + (stripH - chipH) * 0.5f;
+    const float right = pos.x + width;
+    bool online = (st.lobbyNetMode == 1);
     float x = pos.x;
 
-    // Network Mode Toggle (Online P2P vs Local LAN)
-    const bool isOnline = (st.lobbyNetMode == 1);
-    const char* netLabel = isOnline ? "NETWORK: ONLINE" : "NETWORK: LOCAL";
-    ImGui::SetCursorScreenPos(ImVec2(x, pos.y));
-    ImGui::PushID("btn_lobby_net");
-    if (ImGui::InvisibleButton("##net", ImVec2(btnW, h))) {
-        st.lobbyNetMode = isOnline ? 0 : 1;
-        MenuSounds::Click();
-    }
-    const bool netHover = ImGui::IsItemHovered();
-    ImGui::PopID();
-    const ImVec2 bNet(x + btnW, pos.y + h);
-    ui.dl->AddRectFilled(ImVec2(x, pos.y), bNet, isOnline ? (netHover ? IM_COL32(40, 110, 170, 230) : IM_COL32(28, 80, 128, 200))
-                                                           : (netHover ? IM_COL32(80, 80, 90, 230) : IM_COL32(50, 52, 60, 200)));
-    ui.dl->AddRect(ImVec2(x, pos.y), bNet, netHover ? IM_COL32(180, 220, 255, 230) : IM_COL32(100, 140, 180, 120), 0.0f, 0, 1.0f);
-    Text(ui, NobleStyle::SmallFont(), 13.0f, ImVec2(x + 10.0f * ui.s, pos.y + 8.0f * ui.s), kWhite, netLabel);
-    x += btnW + 8.0f * ui.s;
-
-    // Privacy Toggle (Public vs Private) - only relevant if online
-    if (isOnline) {
-        const bool isPublic = (st.lobbyPrivacy == 0);
-        const char* privLabel = isPublic ? "LOBBY: PUBLIC" : "LOBBY: PRIVATE";
-        ImGui::SetCursorScreenPos(ImVec2(x, pos.y));
-        ImGui::PushID("btn_lobby_priv");
-        if (ImGui::InvisibleButton("##priv", ImVec2(btnW, h))) {
-            st.lobbyPrivacy = isPublic ? 1 : 0;
-            MenuSounds::Click();
-        }
-        const bool privHover = ImGui::IsItemHovered();
+    // Chip width follows its label, so NETWORK/LOBBY text is never clipped or overflows the column.
+    auto drawChip = [&](const char* id, const char* label, ImU32 bg, ImU32 bgHover, ImU32 edge) {
+        const float w = TextWidth(NobleStyle::SmallFont(), 13.0f * ui.s, label) + 22.0f * ui.s;
+        const ImVec2 a(x, chipY);
+        const ImVec2 b(a.x + w, a.y + chipH);
+        ImGui::SetCursorScreenPos(a);
+        ImGui::PushID(id);
+        const bool pressed = ImGui::InvisibleButton("##chip", ImVec2(w, chipH));
+        const bool hovered = ImGui::IsItemHovered();
         ImGui::PopID();
-        const ImVec2 bPriv(x + btnW, pos.y + h);
-        ui.dl->AddRectFilled(ImVec2(x, pos.y), bPriv, isPublic ? (privHover ? IM_COL32(36, 120, 90, 230) : IM_COL32(24, 90, 68, 200))
-                                                               : (privHover ? IM_COL32(110, 80, 40, 230) : IM_COL32(80, 58, 28, 200)));
-        ui.dl->AddRect(ImVec2(x, pos.y), bPriv, privHover ? IM_COL32(180, 255, 220, 230) : IM_COL32(100, 180, 140, 120), 0.0f, 0, 1.0f);
-        Text(ui, NobleStyle::SmallFont(), 13.0f, ImVec2(x + 10.0f * ui.s, pos.y + 8.0f * ui.s), kWhite, privLabel);
-        x += btnW + 12.0f * ui.s;
+        ui.dl->AddRectFilled(a, b, hovered ? bgHover : bg);
+        ui.dl->AddRect(a, b, hovered ? IM_COL32(205, 235, 255, 235) : edge, 0.0f, 0, 1.0f);
+        Text(ui, NobleStyle::SmallFont(), 13.0f, ImVec2(a.x + 11.0f * ui.s, a.y + 7.0f * ui.s), kWhite, label);
+        x = b.x + 8.0f * ui.s;
+        if (pressed) MenuSounds::Click();
+        return pressed;
+    };
+
+    // Network mode: Online P2P (master server + UPnP) or local LAN discovery.
+    {
+        const ImU32 bg = online ? IM_COL32(28, 80, 128, 215) : IM_COL32(52, 54, 62, 215);
+        const ImU32 hov = online ? IM_COL32(40, 110, 170, 235) : IM_COL32(84, 84, 94, 235);
+        const ImU32 edge = online ? IM_COL32(120, 170, 215, 110) : IM_COL32(150, 155, 165, 110);
+        if (drawChip("btn_lobby_net", online ? "NETWORK: ONLINE" : "NETWORK: LOCAL", bg, hov, edge)) {
+            online = !online;
+            st.lobbyNetMode = online ? 1 : 0;
+        }
     }
 
-    // Status / IP info
-    char statusBuf[160];
-    if (isOnline) {
-        const std::string& extIp = UPnP::Get().GetExternalIP();
-        const bool upnpOk = UPnP::Get().IsActive();
-        if (upnpOk && extIp != "Unknown") {
-            std::snprintf(statusBuf, sizeof(statusBuf), "UPnP Ready (%s:11774) · %s", extIp.c_str(), st.lobbyPrivacy == 0 ? "Broadcasting to Master" : "Direct Connect");
-        } else {
-            std::snprintf(statusBuf, sizeof(statusBuf), "Online P2P (Port 11774) · %s", st.lobbyPrivacy == 0 ? "Broadcasting to Master" : "Direct Connect");
+    // Lobby privacy only exists online.
+    if (online) {
+        const bool isPublic = (st.lobbyPrivacy == 0);
+        const ImU32 bg = isPublic ? IM_COL32(24, 90, 68, 215) : IM_COL32(80, 58, 28, 215);
+        const ImU32 hov = isPublic ? IM_COL32(36, 120, 90, 235) : IM_COL32(110, 80, 40, 235);
+        const ImU32 edge = isPublic ? IM_COL32(100, 180, 140, 120) : IM_COL32(190, 150, 90, 120);
+        if (drawChip("btn_lobby_priv", isPublic ? "LOBBY: PUBLIC" : "LOBBY: PRIVATE", bg, hov, edge)) {
+            st.lobbyPrivacy = isPublic ? 1 : 0;
         }
-    } else {
-        std::snprintf(statusBuf, sizeof(statusBuf), "Local LAN Match · Discoverable on subnet");
     }
-    Text(ui, NobleStyle::SmallFont(), 13.0f, ImVec2(x, pos.y + 9.0f * ui.s), kDim, statusBuf);
+
+    // Short connection line, right-aligned in the column. The candidates go from most to least detailed
+    // and the first one that fits is drawn; when none fits the line is left out instead of running into
+    // the chips or off the screen.
+    const bool upnpReady = UPnP::Get().IsActive() && UPnP::Get().GetExternalIP() != "Unknown";
+    const bool listed = (st.lobbyPrivacy == 0);
+    std::vector<std::string> lines;
+    ImU32 dot = IM_COL32(140, 160, 180, 200);
+    if (online) {
+        const char* host = upnpReady ? "UPnP READY" : "PORT 11774";
+        lines.push_back(std::string(host) + " \xC2\xB7 " + (listed ? "LISTED PUBLICLY" : "DIRECT CONNECT"));
+        lines.push_back(host);
+        lines.push_back(listed ? "LISTED" : "DIRECT");
+        dot = upnpReady ? IM_COL32(110, 220, 150, 230) : IM_COL32(235, 190, 90, 230);
+    } else {
+        lines.push_back("LOCAL NETWORK \xC2\xB7 DISCOVERABLE");
+        lines.push_back("LOCAL NETWORK");
+        dot = IM_COL32(150, 180, 210, 220);
+    }
+    const float avail = right - x - 4.0f * ui.s;
+    for (const std::string& line : lines) {
+        const float w = TextWidth(NobleStyle::SmallFont(), 12.0f * ui.s, line.c_str());
+        if (w > avail) continue;
+        const float tx = right - w;
+        ui.dl->AddCircleFilled(ImVec2(tx - 9.0f * ui.s, pos.y + stripH * 0.5f), 3.0f * ui.s, dot);
+        Text(ui, NobleStyle::SmallFont(), 12.0f, ImVec2(tx, pos.y + (stripH - 13.0f * ui.s) * 0.5f), kDim, line.c_str());
+        break;
+    }
 }
 
 struct MapEntry {
@@ -1999,9 +2048,11 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         }
 
         if (focused) {
-            // Subtle dark background highlight
-            ui.dl->AddRectFilledMultiColor(r0, r1, IM_COL32(35, 55, 80, 190), IM_COL32(35, 55, 80, 25),
-                                           IM_COL32(35, 55, 80, 25), IM_COL32(35, 55, 80, 190));
+            // Flat band for the whole row plus a brighter edge on the left, so the row's value on the right
+            // still sits on the highlight (the old gradient faded out before the value did).
+            ui.dl->AddRectFilled(r0, r1, IM_COL32(30, 48, 70, 145));
+            ui.dl->AddRectFilledMultiColor(r0, r1, IM_COL32(70, 120, 170, 150), IM_COL32(70, 120, 170, 0),
+                                           IM_COL32(70, 120, 170, 0), IM_COL32(70, 120, 170, 150));
             // Signature Halo: Reach Orange Accent Bar on left edge
             ui.dl->AddRectFilled(r0, ImVec2(r0.x + 3.0f * ui.s, r1.y), IM_COL32(255, 140, 30, 255));
         }
@@ -2113,21 +2164,16 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         const float embX = spkX + 18.0f * ui.s;
         ui.dl->AddRectFilled(ImVec2(embX, pr0.y + 8.0f * ui.s), ImVec2(embX + 20.0f * ui.s, pr0.y + 28.0f * ui.s), IM_COL32(60, 90, 120, 220), 2.0f * ui.s);
 
-        // Player Name
+        // Player Name, then the service tag on the right. The name is clipped at the tag so a long
+        // gamertag never runs into it (the "BUNGIE" tag that used to sit here was removed 2026-10-30).
         const float nameX = embX + 26.0f * ui.s;
-        Text(ui, NobleStyle::TitleFont(), 16.5f, ImVec2(nameX, pr0.y + 7.0f * ui.s), kWhite, player.username.c_str());
-
-        // BUNGIE / DEV Gold Badge
-        float badgeRight = nameX + TextWidth(NobleStyle::TitleFont(), 16.5f * ui.s, player.username.c_str()) + 8.0f * ui.s;
-        if (player.isDev) {
-            Text(ui, NobleStyle::TitleFont(), 13.0f, ImVec2(badgeRight, pr0.y + 9.0f * ui.s), IM_COL32(245, 200, 45, 255), "BUNGIE");
-            badgeRight += TextWidth(NobleStyle::TitleFont(), 13.0f * ui.s, "BUNGIE") + 6.0f * ui.s;
-        }
-
-        // Right Rank Shield / Service Tag
         std::string tag = "[" + (player.serviceTag.empty() ? "117" : player.serviceTag) + "]";
         const float tagW = TextWidth(NobleStyle::SmallFont(), 13.0f * ui.s, tag.c_str());
-        Text(ui, NobleStyle::SmallFont(), 13.0f, ImVec2(pr1.x - tagW - 10.0f * ui.s, pr0.y + 9.0f * ui.s), IM_COL32(170, 195, 220, 220), tag.c_str());
+        const float tagX = pr1.x - tagW - 10.0f * ui.s;
+        ui.dl->PushClipRect(ImVec2(nameX, pr0.y), ImVec2(tagX - 8.0f * ui.s, pr1.y), true);
+        Text(ui, NobleStyle::TitleFont(), 16.5f, ImVec2(nameX, pr0.y + 7.0f * ui.s), kWhite, player.username.c_str());
+        ui.dl->PopClipRect();
+        Text(ui, NobleStyle::SmallFont(), 13.0f, ImVec2(tagX, pr0.y + 9.0f * ui.s), IM_COL32(170, 195, 220, 220), tag.c_str());
 
         rosterY += playerRowH + 1.0f * ui.s;
     }
@@ -2378,19 +2424,22 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         const MapEntry* mission = (row && !row->header) ? row : nullptr;
         const ModEntry* mod = mission ? mission->mod : nullptr;
 
-        // Right column, laid out from the bottom up so the buttons never reach the hint row:
-        // PLAY SOLO / HOST CO-OP, then skulls + score, difficulty tiles, and the banner fills the rest.
+        // Right column, top down: banner, difficulty tiles, skulls row, skull icons; the network strip and
+        // the action buttons stay anchored at the bottom (RightColumnLayout) so nothing is drawn over
+        // anything else.
         const float px = ui.size.x * 0.47f, pw = ui.size.x * 0.44f;
-        const float actionsY = ui.size.y - 58.0f * ui.s - 14.0f * ui.s - 50.0f * ui.s;
-        const float rowsH = 98.0f * ui.s + 8.0f * ui.s + 36.0f * ui.s + 30.0f * ui.s + 10.0f * ui.s;
+        const RightColumnY col = RightColumnLayout(ui);
+        const float actionsY = col.actions;
+        // Everything drawn between the banner and the strip: tiles (98), gap (8), skulls row (36), icons (30).
+        const float rowsH = 98.0f * ui.s + 8.0f * ui.s + 36.0f * ui.s + 30.0f * ui.s;
         const float bannerTop = top + 96.0f * ui.s;
-        const float blurbH = 30.0f * ui.s;
-        const float bannerH = std::clamp(actionsY - rowsH - blurbH - bannerTop, 110.0f * ui.s, pw * 292.0f / 668.0f);
+        const char* blurb = row ? row->blurb.c_str() : "";
+        const float blurbH = (blurb && *blurb)
+            ? Font(nullptr)->CalcTextSizeA(17.0f * ui.s, FLT_MAX, pw, blurb).y + 16.0f * ui.s : 0.0f;
+        const float bannerH = HeroBannerHeight(ui, pw, col.content, rowsH, blurbH, bannerTop);
         const std::string kicker = mod ? "MOD: " + Upper(mod->title) : row && row->header ? std::string("MOD") : std::string("HALO: REACH \xC2\xB7 CAMPAIGN");
         float y = HeroBanner(ui, ImVec2(px, bannerTop), pw, bannerH, mission ? mission->scenario : "", kicker,
-                             row ? (row->header ? row->mod->title.c_str() : row->name.c_str()) : "",
-                             row ? row->blurb.c_str() : "");
-        y = std::max(y, actionsY - rowsH);
+                             row ? (row->header ? row->mod->title.c_str() : row->name.c_str()) : "", blurb);
         y += DifficultyTiles(ui, "diff", ImVec2(px, y), pw, st.difficulty, st.focusRow == 1) + 8.0f * ui.s;
         const std::string skullText = SkullSummary(st.skulls);
         if (OptionRow(ui, "skulls", ImVec2(px, y), pw, "SKULLS", skullText.c_str(), st.focusRow == 2)) {
@@ -2403,7 +2452,7 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         char mult[64];
         std::snprintf(mult, sizeof(mult), "Score multiplier  x%.2f", ScoreMultiplier(st.difficulty, st.skulls));
         Text(ui, nullptr, 16.0f, ImVec2(px + 10.0f * ui.s + (stripW > 0.0f ? stripW + 12.0f * ui.s : 0.0f), y + 3.0f * ui.s), kDim, mult);
-        const float lobbyY = actionsY - 38.0f * ui.s;
+        const float lobbyY = col.strip;
         DrawLobbyControls(ui, ImVec2(px, lobbyY), pw, st);
 
         const bool canStart = mission && mission->enabled;
@@ -2550,19 +2599,24 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         const MapEntry* map = (row && !row->header) ? row : nullptr;
         const ModEntry* mod = map ? map->mod : nullptr;
 
+        // Right column, top down: banner, game type row, Firefight options + difficulty; the network strip
+        // and the action buttons stay anchored at the bottom (RightColumnLayout), so the strip can never
+        // cover the difficulty tiles the way it did before.
         const float px = ui.size.x * 0.47f, pw = ui.size.x * 0.44f;
-        const float actionsY = ui.size.y - 58.0f * ui.s - 14.0f * ui.s - 50.0f * ui.s;
+        const RightColumnY col = RightColumnLayout(ui);
+        const float actionsY = col.actions;
         const bool forgeMissing = forge && !std::filesystem::exists(ctx.forgeVariant);
         const float rowsH = (forge ? 0.0f : 36.0f * ui.s) + (ff ? 30.0f * ui.s + 98.0f * ui.s + 8.0f * ui.s : 0.0f) +
-                            (forgeMissing ? 26.0f * ui.s : 0.0f) + 10.0f * ui.s;
+                            (forgeMissing ? 26.0f * ui.s : 0.0f);
         const float bannerTop = top + 96.0f * ui.s;
-        const float bannerH = std::clamp(actionsY - rowsH - 30.0f * ui.s - bannerTop, 110.0f * ui.s, pw * 292.0f / 668.0f);
+        const char* blurb = row ? row->blurb.c_str() : "";
+        const float blurbH = (blurb && *blurb)
+            ? Font(nullptr)->CalcTextSizeA(17.0f * ui.s, FLT_MAX, pw, blurb).y + 16.0f * ui.s : 0.0f;
+        const float bannerH = HeroBannerHeight(ui, pw, col.content, rowsH, blurbH, bannerTop);
         const std::string kicker = mod ? "MOD: " + Upper(mod->title)
                                  : std::string(ff ? "HALO: REACH \xC2\xB7 FIREFIGHT" : forge ? "HALO: REACH \xC2\xB7 FORGE" : "HALO: REACH \xC2\xB7 MULTIPLAYER");
         float y = HeroBanner(ui, ImVec2(px, bannerTop), pw, bannerH, map ? map->scenario : "", kicker,
-                             row ? (row->header ? row->mod->title.c_str() : row->name.c_str()) : "",
-                             row ? row->blurb.c_str() : "");
-        y = std::max(y, actionsY - rowsH);
+                             row ? (row->header ? row->mod->title.c_str() : row->name.c_str()) : "", blurb);
         int focusRows = 1;
         if (!forge) {
             const std::vector<MenuVariant>& list = ff ? ctx.ffVariants : ctx.variants;
@@ -2589,7 +2643,7 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
                  "MCC's Forge game type (00_basic_editing_054.bin) wasn't found.");
             y += 26.0f * ui.s;
         }
-        const float lobbyY = actionsY - 38.0f * ui.s;
+        const float lobbyY = col.strip;
         DrawLobbyControls(ui, ImVec2(px, lobbyY), pw, st);
 
         const bool canStart = map && map->enabled;
