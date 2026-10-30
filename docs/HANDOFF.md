@@ -22,6 +22,31 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-31, 08:40 ET) - The OBJ preview is gone: the Armory only uses Reach's in-game model (WeabooTyler117 / DeepSeek)
+
+Tyler: "OBJ re-export should not be used at all." Removed, not hidden behind a setting:
+
+- **Deleted** `src/ui/ObjModelPreview.cpp/.hpp` and `src/ui/ArmoryPreviewLayers.cpp/.hpp`, plus their `CMakeLists.txt`
+  entries.
+- `ArmorCustomizer::RenderCharacterPreview` is now ~30 lines: Reach's own Armory scene draws the Spartan; until the menu
+  map is ready it shows `LOADING ARMORY...`, and if `data\menumaps\mainmenu_all.map` is missing it says so. Drag-to-turn,
+  auto-rotate and the wheel that cycles the three camera modes are kept.
+- **`SettingsData::armoryPreview` and the ARMORY PREVIEW row are gone** (no option can select the OBJ mesh any more).
+  `data\armor\*.obj` files are still in the install for other uses (Elite pack tooling) but nothing in the client loads
+  them for the Armory.
+
+Verified: build 0/0, armory / settings / main / career all capture with exit code 0, and no `ObjModelPreview` /
+`ArmoryPreviewLayers` / `armoryPreview` references remain in `src`.
+
+### Consequence for the two open armory wishes
+
+Both are engine-side now, with no renderer shortcut:
+
+- **Black chamber** -> light or replace it in `mainmenu_all.map` (data), or accept the framed-dark look.
+- **Left/right shoulder** -> needs a camera with a lateral offset (engine camera globals, not found: the GLOBALS table
+  only carries the scene index at `base + 0x24 * stride`). Per-slot panning otherwise works through the engine's own
+  cameras (0x0D helmet, 0x0F chest, 0x10 wrist, 0x11 utility, 0x12 knees, 0x13 shoulders, 0x14 colours).
+
 ## 0. Pick up here (2026-10-31, 07:55 ET) - Armory is back on the in-game model: the OBJ re-export is not the right mesh (WeabooTyler117 / DeepSeek)
 
 Tyler, after seeing the armory on Noble's own renderer: "this is not the right model at all - we need to go back to the

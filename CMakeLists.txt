@@ -131,8 +131,6 @@ set(SOURCES
     src/ui/ServerBrowser.cpp
     src/ui/ArmorCustomizer.cpp
     src/ui/ObjModel.cpp
-    src/ui/ObjModelPreview.cpp
-    src/ui/ArmoryPreviewLayers.cpp
     src/ui/WorkshopManager.cpp
     src/ui/MissionLauncher.cpp
     src/network/UPnP.cpp
@@ -185,8 +183,6 @@ set(HEADERS
     src/ui/ServerBrowser.hpp
     src/ui/ArmorCustomizer.hpp
     src/ui/ObjModel.hpp
-    src/ui/ObjModelPreview.hpp
-    src/ui/ArmoryPreviewLayers.hpp
     src/ui/WorkshopManager.hpp
     src/ui/MissionLauncher.hpp
     src/ui/LoadScreen.hpp

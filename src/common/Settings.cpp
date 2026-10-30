@@ -95,7 +95,6 @@ void Settings::Load() {
             Read(j, "verticalSync", d.verticalSync);
             Read(j, "fpsLimit", d.fpsLimit);
             Read(j, "showFps", d.showFps);
-    Read(j, "armoryPreview", d.armoryPreview);
     Read(j, "throttleUnfocused", d.throttleUnfocused);
     Read(j, "brightness", d.brightness);
     Read(j, "fxaa", d.fxaa);
@@ -221,7 +220,6 @@ bool Settings::Save() {
         j["verticalSync"] = d.verticalSync;
         j["fpsLimit"] = d.fpsLimit;
         j["showFps"] = d.showFps;
-    j["armoryPreview"] = d.armoryPreview;
     j["throttleUnfocused"] = d.throttleUnfocused;
     j["brightness"] = d.brightness;
     j["fxaa"] = d.fxaa;

@@ -1,6 +1,5 @@
 #include "ArmorCustomizer.hpp"
 #include "common/Settings.hpp"
-#include "ArmoryPreviewLayers.hpp"
 #include "NobleStyle.hpp"
 #include "UiArt.hpp"
 #include "career/Career.hpp"
@@ -1212,160 +1211,23 @@ Framing FramingFor(const std::string& scene, int cameraMode, bool elite) {
 
 void ArmorCustomizer::RenderCharacterPreview(ID3D11Device* device, ID3D11DeviceContext* context,
                                              float width, float height, bool /*fullBleed*/) {
+    (void)device;
+    (void)context;
     const ImVec2 cursorPos = ImGui::GetCursorScreenPos();
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    const bool elite = m_previewSpecies == PlayerSpecies::Elite;
 
-    // 1. Reach's own Armory scene (MCC's model, O7OF's ReachArmory) wins whenever it is up; the OBJ preview below
-    //    is only a stand-in until that works without a main-menu map.
-    // 2. Noble's own DX11 preview of the local OBJ exports (O7OF's ObjModelPreview).
-    // SETTINGS > Game options > ARMORY PREVIEW: Noble's own renderer draws the Spartan with a stage it owns, which
-    // is the only way to get a designed backdrop (the engine's chamber is unlit black geometry).
-    const bool engineScene = Settings::Get().Snapshot().armoryPreview == 0 && ReachArmory::IsSceneReady();
-
-    // With the menu map installed, the real scene shows up a few seconds after launch. Show a loading
-    // line until then instead of flashing the OBJ stand-in; fall back to the OBJ only if it never comes.
+    // Reach's own Armory scene draws the Spartan - the shipped in-game model. Noble has no stand-in: the OBJ re-exports
+    // in data\armor are a different mesh and must not be used (Tyler, 2026-10-31).
     static const bool menuMapPresent = std::filesystem::exists(ReachHost::Get().GetDataDir() / "menumaps" / "mainmenu_all.map");
-    static double sceneWaitStart = -1.0;
-    if (sceneWaitStart < 0.0) sceneWaitStart = ImGui::GetTime();
-    // Only a run that *wants* the engine scene waits for it; Noble's renderer is ready immediately.
-    const bool waitingForScene = Settings::Get().Snapshot().armoryPreview == 0 && !engineScene && menuMapPresent;
-    if (waitingForScene) {
-        const int dots = static_cast<int>(ImGui::GetTime() * 2.0) % 4;
-        const std::string msg = std::string("LOADING ARMORY") + std::string(static_cast<size_t>(dots), '.');
-        const ImVec2 ts = ImGui::CalcTextSize("LOADING ARMORY...");
-        dl->AddText(ImVec2(cursorPos.x + std::max(0.0f, (width - ts.x) * 0.5f), cursorPos.y + height * 0.45f),
-                    IM_COL32(143, 216, 255, 220), msg.c_str());
-        ImGui::InvisibleButton("##character_preview_drag", ImVec2(width, height));
-        return;
-    }
-
-    if (!engineScene && device && context && !m_objInitialized) {
-        m_objInitialized = true;
-
-        if (m_spartanObj.Initialize(device)) m_spartanObj.LoadModel(FindArmorAssetPath("data/armor/spartans/spartans.obj"), m_spartanObjError);
-        if (m_eliteObj.Initialize(device)) m_eliteObj.LoadModel(FindArmorAssetPath("data/armor/elite/elite.obj"), m_eliteObjError);
-        NOBLE_INFO("ArmorCustomizer: OBJ preview Spartan {} ({}), Elite {} ({})", m_spartanObj.IsLoaded() ? "loaded" : "missing",
-                   m_spartanObjError, m_eliteObj.IsLoaded() ? "loaded" : "missing", m_eliteObjError);
-    }
-    ObjModelPreview& obj = elite ? m_eliteObj : m_spartanObj;
-    if (!engineScene && context && obj.IsLoaded()) {
-        // Ease toward the framing of the slot being edited.
-        const Framing target = FramingFor(m_focusScene, m_cameraMode, elite);
-        const float k = std::clamp(ImGui::GetIO().DeltaTime * 6.0f, 0.0f, 1.0f);
-        m_objZoom += (target.zoom - m_objZoom) * k;
-        m_objFocusY += (target.focusY - m_objFocusY) * k;
-        m_objFocusX += (target.focusX - m_objFocusX) * k;
-        if (m_autoRotate) m_objYaw += ImGui::GetIO().DeltaTime * 0.35f;
-
-        ArmoryLook look;
-        look.elite = elite;
-        look.female = m_profile.bodyType == BodyType::Female;
-        look.eliteSet = m_profile.eliteArmorSet;
-        const auto& helmets = GetSpartanHelmets();
-        const auto& h = helmets[std::clamp(m_profile.helmetIndex, 0, static_cast<int>(helmets.size()) - 1)];
-        look.helmet = h.name;
-        look.helmetVariant = h.variants[std::clamp(m_profile.helmetVariantIndex, 0, static_cast<int>(h.variants.size()) - 1)].name;
-        const auto& shoulders = GetSpartanShoulders();
-        look.leftShoulder = shoulders[std::clamp(m_profile.leftShoulderIndex, 0, static_cast<int>(shoulders.size()) - 1)].name;
-        look.rightShoulder = shoulders[std::clamp(m_profile.rightShoulderIndex, 0, static_cast<int>(shoulders.size()) - 1)].name;
-        const auto& chests = GetSpartanChests();
-        const auto& c = chests[std::clamp(m_profile.chestIndex, 0, static_cast<int>(chests.size()) - 1)];
-        look.chest = c.name;
-        look.prostheticArm = c.hasProstheticArm;
-        auto nameAt = [](const std::vector<MultiLayerSpec>& list, int i) { return std::string(list[std::clamp(i, 0, static_cast<int>(list.size()) - 1)].name); };
-        look.wrist = nameAt(GetSpartanWrists(), m_profile.wristIndex);
-        look.utility = nameAt(GetSpartanUtilities(), m_profile.utilityIndex);
-        look.knees = nameAt(GetSpartanKneeGuards(), m_profile.kneeGuardsIndex);
-
-        std::vector<ObjPreviewLayer> layers;
-        std::string referenceGroup;
-        BuildArmoryPreviewLayers(look, layers, referenceGroup);
-
-        const auto& pCol = kReachColors[std::clamp(m_profile.primaryColor, 0, 29)];
-        const auto& sCol = kReachColors[std::clamp(m_profile.secondaryColor, 0, 29)];
-        const auto& vCol = kVisorColors[std::clamp(m_profile.visorColorIndex, 0, static_cast<int>(kVisorColors.size()) - 1)];
-        ObjPreviewColors colors;
-        colors.primary = { pCol.r, pCol.g, pCol.b, 1.0f };
-        colors.secondary = { sCol.r, sCol.g, sCol.b, 1.0f };
-        colors.detail = { 0.15f, 0.16f, 0.18f, 1.0f };
-        colors.visor = { vCol.r, vCol.g, vCol.b, 1.0f };
-
-        ObjPreviewCamera cam{};
-        cam.referenceGroup = referenceGroup;
-        cam.pitchRadians = m_objPitch;
-        cam.zoom = m_objZoom;
-        cam.focusYOffset = m_objFocusY;
-        cam.focusXOffset = m_objFocusX;
-        cam.transparentBackground = true;   // the stage below is drawn by us, never the renderer's clear colour
-        obj.Render(context, m_objYaw, layers, colors, &cam);
-
-        // ---- Stage behind the Spartan -------------------------------------------------------------
-        // The renderer draws the model on a transparent target, so this is the armory backdrop: a deep vertical
-        // gradient, a soft ice-blue floor glow under the feet, a hairline horizon and a vignette. Designed here rather
-        // than inherited from the engine's unlit chamber, and it uses the project's accent colour.
-        {
-            const ImVec2 st0 = cursorPos;
-            const ImVec2 st1(cursorPos.x + width, cursorPos.y + height);
-            const ImU32 topCol = IM_COL32(26, 34, 48, 255);
-            const ImU32 midCol = IM_COL32(15, 20, 30, 255);
-            const ImU32 botCol = IM_COL32(8, 10, 15, 255);
-            const float horizon = cursorPos.y + height * 0.72f;
-            dl->AddRectFilledMultiColor(st0, ImVec2(st1.x, horizon), topCol, topCol, midCol, midCol);
-            dl->AddRectFilledMultiColor(ImVec2(st0.x, horizon), st1, midCol, midCol, botCol, botCol);
-            // Floor glow: a wide, very soft ellipse in the accent colour under the model.
-            const ImVec4 accent = NobleStyle::Accent();
-            const ImU32 glow = IM_COL32(static_cast<int>(accent.x * 255), static_cast<int>(accent.y * 255),
-                                        static_cast<int>(accent.z * 255), 26);
-            dl->AddEllipseFilled(ImVec2(cursorPos.x + width * 0.5f, horizon + height * 0.10f),
-                                 ImVec2(width * 0.34f, height * 0.075f), glow, 0.0f, 64);
-            dl->AddEllipseFilled(ImVec2(cursorPos.x + width * 0.5f, horizon + height * 0.10f),
-                                 ImVec2(width * 0.24f, height * 0.055f), IM_COL32(180, 220, 255, 30), 0.0f, 64);
-            // Hairline horizon.
-            dl->AddLine(ImVec2(st0.x + width * 0.06f, horizon), ImVec2(st1.x - width * 0.06f, horizon),
-                        IM_COL32(140, 185, 220, 40), 1.0f);
-            // Vignette on all four edges so the panel has depth instead of a flat cut.
-            const float vw = width * 0.22f, vh = height * 0.20f;
-            const ImU32 dark = IM_COL32(0, 0, 0, 120), clear = IM_COL32(0, 0, 0, 0);
-            dl->AddRectFilledMultiColor(st0, ImVec2(st1.x, st0.y + vh), dark, dark, clear, clear);
-            dl->AddRectFilledMultiColor(ImVec2(st0.x, st1.y - vh), st1, clear, clear, dark, dark);
-            dl->AddRectFilledMultiColor(st0, ImVec2(st0.x + vw, st1.y), dark, clear, clear, dark);
-            dl->AddRectFilledMultiColor(ImVec2(st1.x - vw, st0.y), st1, clear, dark, dark, clear);
-        }
-
-        if (ID3D11ShaderResourceView* srv = obj.GetPreviewTexture()) {
-            // Cover the area, keeping the render target's aspect.
-            const float aspect = static_cast<float>(obj.GetWidth()) / static_cast<float>(std::max<UINT>(1, obj.GetHeight()));
-            float dw = width, dh = dw / aspect;
-            if (dh < height) { dh = height; dw = dh * aspect; }
-            const ImVec2 p0(cursorPos.x + (width - dw) * 0.5f, cursorPos.y + (height - dh) * 0.5f);
-            dl->PushClipRect(cursorPos, ImVec2(cursorPos.x + width, cursorPos.y + height), true);
-            dl->AddImage(reinterpret_cast<ImTextureID>(srv), p0, ImVec2(p0.x + dw, p0.y + dh));
-            dl->PopClipRect();
-        }
-        ImGui::InvisibleButton("##character_preview_drag", ImVec2(width, height));
-        if (ImGui::IsItemActive() &&
-            (ImGui::IsMouseDragging(ImGuiMouseButton_Left) || ImGui::IsMouseDragging(ImGuiMouseButton_Right))) {
-            m_objYaw -= ImGui::GetIO().MouseDelta.x * 0.011f;
-            m_objPitch = std::clamp(m_objPitch + ImGui::GetIO().MouseDelta.y * 0.005f, -0.35f, 0.35f);
-        }
-        if (ImGui::IsItemHovered()) {
-            const float wheel = ImGui::GetIO().MouseWheel;
-            if (std::abs(wheel) > 0.01f) {
-                if (wheel > 0.0f) m_cameraMode = 2;
-                else m_cameraMode = (m_cameraMode == 2) ? 1 : 0;
-            }
-        }
-        return;
-    }
-
-    // Engine scene (or nothing to show).
-    if (!engineScene) {
-        const std::string msg = "NO 3D PREVIEW: put the Armory model exports in data\\armor\\spartans and data\\armor\\elite";
+    if (!ReachArmory::IsSceneReady()) {
+        const std::string msg = menuMapPresent
+            ? std::string("LOADING ARMORY") + std::string(static_cast<size_t>(static_cast<int>(ImGui::GetTime() * 2.0) % 4), '.')
+            : std::string("NO 3D PREVIEW: data\\menumaps\\mainmenu_all.map is missing");
         const ImVec2 ts = ImGui::CalcTextSize(msg.c_str());
         dl->AddText(ImVec2(cursorPos.x + std::max(0.0f, (width - ts.x) * 0.5f), cursorPos.y + height * 0.45f),
                     IM_COL32(143, 216, 255, 220), msg.c_str());
     }
+
     if (m_autoRotate) ReachArmory::AddYawRotation(ImGui::GetIO().DeltaTime * 0.45f);
     ImGui::InvisibleButton("##character_preview_drag", ImVec2(width, height));
     if (ImGui::IsItemActive() &&

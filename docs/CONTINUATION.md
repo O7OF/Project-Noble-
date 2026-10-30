@@ -202,7 +202,8 @@ Menus (this session, all pushed):
 | `d0026f1` | Armory stage (gradient + accent floor glow + vignette) behind Noble's renderer; camera pan wired via focusX |
 | `d89944e` | Armory: eye strafe makes the pan visible (6.7% -> 22.8%), framing retuned, Noble renderer is the default with a Settings row |
 | `cafb0f4` | Docs: emblem bg/fg reality (MCC ships 330 two-layer colour masks, not a bg x fg matrix) + the two routes |
-| (this commit) | **Armory back on the in-game model** (`armoryPreview` default 0 - the OBJ re-export is the wrong mesh); emblem layer API added for the prototype |
+| `c3a93ec` | **Armory back on the in-game model** (default 0 - the OBJ re-export is the wrong mesh); emblem layer API added for the prototype |
+| (this commit) | OBJ preview **deleted** (files, CMake, setting and row); the Armory is engine-model only |
 | `5f4da08` | Prompts follow the device everywhere; `InputPrompts` button glyphs in the CONTROLLER list |
 | (this commit) | Main menu **Continue** fast path (spec 4.1/4.10) + a status block at the top of the design doc |
 | `a8f412e` | Menu music player (`PauseMusic/ResumeMusic` + `DrawMusicPlayer`) |
