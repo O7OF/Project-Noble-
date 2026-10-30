@@ -19,6 +19,7 @@
 #include "network/SessionManager.hpp"
 #include "network/MasterServerClient.hpp"
 #include "network/AuthClient.hpp"
+#include "network/SocialClient.hpp"
 #include "network/NetworkTransport.hpp"
 #include "network/UPnP.hpp"
 #include "common/Settings.hpp"
@@ -164,6 +165,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     // Player settings (data\userdata\settings.json): window size, controls, volumes, name, servers.
     noble::Settings::Get().Load();
     noble::AuthClient::Get().Initialize();
+    noble::SocialClient::Get().Initialize();
     const noble::SettingsData startupSettings = noble::Settings::Get().Snapshot();
 
     // 6. Create Win32 host window
@@ -527,6 +529,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     // flush logs, and terminate the process without tearing down live D3D11/ImGui or c_game_engine
     // heap objects under haloreach.dll's running engine/audio threads (fixes the ntdll access violation on exit).
     NOBLE_INFO("Initiating clean host shutdown...");
+    noble::SocialClient::Get().Shutdown();
     noble::MasterServerClient::Get().Shutdown();
     noble::SessionManager::Get().Shutdown();
     blamEngine->Shutdown();

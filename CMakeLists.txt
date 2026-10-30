@@ -150,6 +150,7 @@ set(SOURCES
     src/network/MasterServerClient.cpp
     src/network/NetworkTransport.cpp
     src/network/AuthClient.cpp
+    src/network/SocialClient.cpp
 )
 
 set(HEADERS
@@ -203,6 +204,7 @@ set(HEADERS
     src/network/MasterServerClient.hpp
     src/network/NetworkTransport.hpp
     src/network/AuthClient.hpp
+    src/network/SocialClient.hpp
 )
 
 add_executable(noble-client WIN32 ${SOURCES} ${HEADERS})

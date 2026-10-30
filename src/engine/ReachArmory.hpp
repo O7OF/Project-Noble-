@@ -46,6 +46,8 @@ struct ReachArmorySelection {
     std::string eliteChest = "minor";
     std::string eliteArms = "default";
     std::string eliteLegs = "minor";
+    int eliteArmorEffectIndex = 0;
+    std::string eliteArmorEffect = "default";
 
     // Linear RGB colors [0..1]
     std::array<float, 3> primaryRgb = { 0.100f, 0.100f, 0.100f };

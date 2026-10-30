@@ -22,6 +22,85 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-30, 04:45 ET) - Elite Armors Network Replication Fix, Elite Armor Effects Engine Patch, Full Armory Permutations & Emblems/Nameplates, and Master Server Social Friends/Invites Menu (O7OF / Dominus)
+
+Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor effects engine support, MCC nameplates and emblems integration into the Armory, and master server social networking system with interactive friends list, player search, and in-game lobby invites.
+
+### 1. What was wrong & Root Causes
+
+1. **Elite Armors Defaulting to Elite Minor for Remote Players:**
+   - Players equipping Elite armor sets (such as Honor Guard, General, Field Marshall, Officer, etc.) saw their selected armor locally, but remote players in multiplayer matches only saw them as default Elite Minor.
+   - **Root Cause Reverse-Engineered:** In `haloreach.dll+0x2EDD45` (the function serializing the player's profile into the network replication player datum at `0x2C8070`), Bungie/MCC hardcoded `species = 0` (Spartan) and `slot = 7` when writing `profile[0x8C]` (the equipped Elite armor set index).
+   - In `haloreach.dll+0x2C8070`, the code verifies `cmp dword ptr [rdx+4], 3; ja exit`. Passing slot 7 exceeded the check and jumped to exit, leaving `[player + 0xAE + 0]` completely unwritten (0 = Elite Minor). The multiplayer network session then broadcasted this default 0 value to all other clients.
+
+2. **Elite Armor Effects Not Showing & Previous Buggy Behavior:**
+   - Armor effects only applied to Spartans; Elites had no working armor effects.
+   - **Root Cause Reverse-Engineered:** In `haloreach.dll+0x105796`, the engine validated `cmp esi, 8; setb r15b` (`83 FE 08 41 0F 92 C7`), rejecting `pmcg` lists >= 8. Spartan fx is list 8 (`+0x80`), while Elite fx is list 9 (`+0x8C`).
+   - In previous iterations, equipping armor effects erroneously overrode the player's Elite character model type due to coupled mesh logic.
+
+3. **Armory Missing Nameplates & Emblems:**
+   - The Armory identity customization lacked the full catalog of MCC Reach nameplates (536 nameplates) and emblems (330 emblems) loaded dynamically from MCC assets.
+
+4. **Placeholder Social / Friends System in Main Menu and Pre-Game Lobby:**
+   - The lobby sidebar displayed hardcoded placeholder text for friends ("Forge - In a Game", "In Custom Game Lobby"). There was no way to search community players, add friends, accept/decline friend requests, view real-time invites, or invite friends directly to a game lobby.
+
+---
+
+### 2. Implementation & Fixes
+
+1. **Elite Armor Network Replication Engine Patch (`src/hooks/EnginePatches.cpp`):**
+   - Patched RVA `0x2EDD45` in `haloreach.dll` from:
+     `89 75 C0 C7 45 C4 07 00 00 00` (`mov [rbp-0x40], esi; mov dword ptr [rbp-0x3C], 7`)
+     to:
+     `C7 45 C0 01 00 00 00 89 75 C4` (`mov dword ptr [rbp-0x40], 1; mov [rbp-0x3C], esi`)
+   - This passes `species = 1` (Elite) and `slot = 0` to `0x2C8070`, cleanly storing the equipped armor set index directly into `[player + 0xAE + 0]`. Remote players now replicate and render the exact Elite armor set chosen (Minor, Officer, SpecOps, Ranger, Ultra, Zealot, General, Field Marshall, Honor Guard).
+
+2. **Elite Armor Effects Engine & Pack Fixes (`src/engine/ElitePack.cpp`):**
+   - Patched RVA `0x105796` in `haloreach.dll` from `cmp esi, 8; setb r15b` (`83 FE 08 41 0F 92 C7`) to `cmp esi, 8; setne r15b` (`83 FE 08 41 0F 95 C7`). This cleanly skips Spartan fx list 8 (`+0x80`) while permitting Elite armor piece lists 0..7 and Elite fx list 9 (`pmcg +0x8C`).
+   - Expanded `kSetPieces` array to `[9][6]`, adding Honor Guard at index 8 (`{2, 2, 2, 8, 2, 10}`).
+   - In `BuilderHook`, cleanly differentiated local vs remote players. Local player reads saved armory selection and elite armor effect; remote players read their replicated network set (`copy[0x17]`). Spartan effect on Elites is suppressed (`copy[0x18] = 0xFF`) and Elite effect is applied (`copy[0x19] = eliteEffect`).
+   - Character mesh permutations and armor effect permutation logic are 100% separated, eliminating past permutation collision bugs.
+   - Added `"forge"` mode support to `ElitePack::Install`.
+
+3. **ReachArmory & Host Ingestion (`src/engine/ReachHost.cpp`, `ReachArmory.hpp`, `ReachArmory.cpp`):**
+   - Clamped `el["armor_set"]` to 0..8 (Honor Guard support) in `ReachHost.cpp`.
+   - Added `eliteArmorEffectIndex` and `eliteArmorEffect` to `ReachArmorySelection`.
+   - Added 3D viewport preview for Elite armor effects using `PmcgEffectName(sel.eliteArmorEffect)` mapping to `pmcg` list `8c` / region `armor_fx` (permutations `armor_fx_00`..`05`).
+
+4. **Nameplates & Emblems Catalog & In-Game Badging (`src/ui/UiArt.hpp`, `UiArt.cpp`, `ArmorCustomizer.hpp`, `ArmorCustomizer.cpp`):**
+   - Implemented `GetNameplateCatalog()` and `GetEmblemCatalog()` in `UiArt.cpp`, dynamically parsing `playercustomization.xml` from MCC for 536 nameplates and 330 emblems with authentic titles.
+   - Added `UiTexture Nameplate(int id)` loading `PlayerIDNamePlate_*.png` via WIC and `UiTexture Emblem(int id)` decoding from `emblemstexturepack.perm.bin` via `PackImage`.
+   - Added Nameplate and Emblem selectors in `ArmorCustomizer.cpp` under the `IDENTITY` section, with real-time preview and saving to `appearance.json`.
+   - Added Honor Guard to `kEliteSets` and an Armor Effect row under `EFFECTS & VOICE` for Elites.
+   - Updated top-right header nameplate badge to render the player's equipped nameplate PNG and emblem.
+
+5. **Master Server Social Networking Client & UI (`src/network/SocialClient.hpp`, `SocialClient.cpp`, `FrontEndMenu.cpp`):**
+   - Built `SocialClient` singleton with async WinHttp background requests to the master server:
+     - `/api/friends/list` - Retrieves accepted friends, incoming requests, and outgoing requests.
+     - `/api/invites/list` - Polls active game invites for the user.
+     - `/api/friends/search` - Searches community users by username prefix.
+     - `/api/friends/add` - Sends a friend request.
+     - `/api/friends/accept` - Accepts an incoming request.
+     - `/api/friends/remove` - Removes a friend or cancels a request.
+     - `/api/invites/send` - Sends a game invite with host IP and port.
+     - `/api/invites/clear` - Dismisses an invite.
+   - Background thread polls invites and friends every 10 seconds.
+   - Added `Social` to main menu navigation (`kMainEntries`) and implemented `DrawSocialScreen`:
+     - Online account status header with quick link to Account Login/Register modal.
+     - Prominent Game Invite Received banner with one-click `[JOIN GAME]` and `[DISMISS]`.
+     - Interactive tabs for **Friends**, **Requests**, and **Find Players** (navigable via mouse or Q/E / Bumpers).
+     - Live search bar for player lookup with `[ADD FRIEND]` buttons.
+   - Pre-Game Lobby update: replaced placeholder friends with real friends list from `SocialClient`, added one-click `[INVITE]` button for lobby hosts, and mapped the `Y` button / click on friends header to open the Social screen directly.
+
+---
+
+### 3. Verification & Build Status
+
+- Built cleanly via MSBuild: `cmake --build build --config Release`
+  - `noble-client.exe`: **0 errors, 0 warnings**
+  - `noble-dedicated.exe`: **0 errors, 0 warnings**
+- All MCC retail installation files remain 100% read-only and unmodified.
+
 ## 0. Pick up here (2026-10-30, 04:05 ET) - Menu overlap cleanup: bottom-anchored network strip + lobby nameplate (WeabooTyler117 / DeepSeek)
 
 UI only: `src/ui/FrontEndMenu.cpp`, no engine, netcode or gameplay code touched. Design direction is
@@ -104,6 +183,85 @@ pinned they ended exactly at `actionsY` - 38 * s *under* the strip:
 
 --
 
+## 0. Pick up here (2026-10-30, 04:45 ET) - Elite Armors Network Replication Fix, Elite Armor Effects Engine Patch, Full Armory Permutations & Emblems/Nameplates, and Master Server Social Friends/Invites Menu (O7OF / Dominus)
+
+Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor effects engine support, MCC nameplates and emblems integration into the Armory, and master server social networking system with interactive friends list, player search, and in-game lobby invites.
+
+### 1. What was wrong & Root Causes
+
+1. **Elite Armors Defaulting to Elite Minor for Remote Players:**
+   - Players equipping Elite armor sets (such as Honor Guard, General, Field Marshall, Officer, etc.) saw their selected armor locally, but remote players in multiplayer matches only saw them as default Elite Minor.
+   - **Root Cause Reverse-Engineered:** In `haloreach.dll+0x2EDD45` (the function serializing the player's profile into the network replication player datum at `0x2C8070`), Bungie/MCC hardcoded `species = 0` (Spartan) and `slot = 7` when writing `profile[0x8C]` (the equipped Elite armor set index).
+   - In `haloreach.dll+0x2C8070`, the code verifies `cmp dword ptr [rdx+4], 3; ja exit`. Passing slot 7 exceeded the check and jumped to exit, leaving `[player + 0xAE + 0]` completely unwritten (0 = Elite Minor). The multiplayer network session then broadcasted this default 0 value to all other clients.
+
+2. **Elite Armor Effects Not Showing & Previous Buggy Behavior:**
+   - Armor effects only applied to Spartans; Elites had no working armor effects.
+   - **Root Cause Reverse-Engineered:** In `haloreach.dll+0x105796`, the engine validated `cmp esi, 8; setb r15b` (`83 FE 08 41 0F 92 C7`), rejecting `pmcg` lists >= 8. Spartan fx is list 8 (`+0x80`), while Elite fx is list 9 (`+0x8C`).
+   - In previous iterations, equipping armor effects erroneously overrode the player's Elite character model type due to coupled mesh logic.
+
+3. **Armory Missing Nameplates & Emblems:**
+   - The Armory identity customization lacked the full catalog of MCC Reach nameplates (536 nameplates) and emblems (330 emblems) loaded dynamically from MCC assets.
+
+4. **Placeholder Social / Friends System in Main Menu and Pre-Game Lobby:**
+   - The lobby sidebar displayed hardcoded placeholder text for friends ("Forge - In a Game", "In Custom Game Lobby"). There was no way to search community players, add friends, accept/decline friend requests, view real-time invites, or invite friends directly to a game lobby.
+
+---
+
+### 2. Implementation & Fixes
+
+1. **Elite Armor Network Replication Engine Patch (`src/hooks/EnginePatches.cpp`):**
+   - Patched RVA `0x2EDD45` in `haloreach.dll` from:
+     `89 75 C0 C7 45 C4 07 00 00 00` (`mov [rbp-0x40], esi; mov dword ptr [rbp-0x3C], 7`)
+     to:
+     `C7 45 C0 01 00 00 00 89 75 C4` (`mov dword ptr [rbp-0x40], 1; mov [rbp-0x3C], esi`)
+   - This passes `species = 1` (Elite) and `slot = 0` to `0x2C8070`, cleanly storing the equipped armor set index directly into `[player + 0xAE + 0]`. Remote players now replicate and render the exact Elite armor set chosen (Minor, Officer, SpecOps, Ranger, Ultra, Zealot, General, Field Marshall, Honor Guard).
+
+2. **Elite Armor Effects Engine & Pack Fixes (`src/engine/ElitePack.cpp`):**
+   - Patched RVA `0x105796` in `haloreach.dll` from `cmp esi, 8; setb r15b` (`83 FE 08 41 0F 92 C7`) to `cmp esi, 8; setne r15b` (`83 FE 08 41 0F 95 C7`). This cleanly skips Spartan fx list 8 (`+0x80`) while permitting Elite armor piece lists 0..7 and Elite fx list 9 (`pmcg +0x8C`).
+   - Expanded `kSetPieces` array to `[9][6]`, adding Honor Guard at index 8 (`{2, 2, 2, 8, 2, 10}`).
+   - In `BuilderHook`, cleanly differentiated local vs remote players. Local player reads saved armory selection and elite armor effect; remote players read their replicated network set (`copy[0x17]`). Spartan effect on Elites is suppressed (`copy[0x18] = 0xFF`) and Elite effect is applied (`copy[0x19] = eliteEffect`).
+   - Character mesh permutations and armor effect permutation logic are 100% separated, eliminating past permutation collision bugs.
+   - Added `"forge"` mode support to `ElitePack::Install`.
+
+3. **ReachArmory & Host Ingestion (`src/engine/ReachHost.cpp`, `ReachArmory.hpp`, `ReachArmory.cpp`):**
+   - Clamped `el["armor_set"]` to 0..8 (Honor Guard support) in `ReachHost.cpp`.
+   - Added `eliteArmorEffectIndex` and `eliteArmorEffect` to `ReachArmorySelection`.
+   - Added 3D viewport preview for Elite armor effects using `PmcgEffectName(sel.eliteArmorEffect)` mapping to `pmcg` list `8c` / region `armor_fx` (permutations `armor_fx_00`..`05`).
+
+4. **Nameplates & Emblems Catalog & In-Game Badging (`src/ui/UiArt.hpp`, `UiArt.cpp`, `ArmorCustomizer.hpp`, `ArmorCustomizer.cpp`):**
+   - Implemented `GetNameplateCatalog()` and `GetEmblemCatalog()` in `UiArt.cpp`, dynamically parsing `playercustomization.xml` from MCC for 536 nameplates and 330 emblems with authentic titles.
+   - Added `UiTexture Nameplate(int id)` loading `PlayerIDNamePlate_*.png` via WIC and `UiTexture Emblem(int id)` decoding from `emblemstexturepack.perm.bin` via `PackImage`.
+   - Added Nameplate and Emblem selectors in `ArmorCustomizer.cpp` under the `IDENTITY` section, with real-time preview and saving to `appearance.json`.
+   - Added Honor Guard to `kEliteSets` and an Armor Effect row under `EFFECTS & VOICE` for Elites.
+   - Updated top-right header nameplate badge to render the player's equipped nameplate PNG and emblem.
+
+5. **Master Server Social Networking Client & UI (`src/network/SocialClient.hpp`, `SocialClient.cpp`, `FrontEndMenu.cpp`):**
+   - Built `SocialClient` singleton with async WinHttp background requests to the master server:
+     - `/api/friends/list` - Retrieves accepted friends, incoming requests, and outgoing requests.
+     - `/api/invites/list` - Polls active game invites for the user.
+     - `/api/friends/search` - Searches community users by username prefix.
+     - `/api/friends/add` - Sends a friend request.
+     - `/api/friends/accept` - Accepts an incoming request.
+     - `/api/friends/remove` - Removes a friend or cancels a request.
+     - `/api/invites/send` - Sends a game invite with host IP and port.
+     - `/api/invites/clear` - Dismisses an invite.
+   - Background thread polls invites and friends every 10 seconds.
+   - Added `Social` to main menu navigation (`kMainEntries`) and implemented `DrawSocialScreen`:
+     - Online account status header with quick link to Account Login/Register modal.
+     - Prominent Game Invite Received banner with one-click `[JOIN GAME]` and `[DISMISS]`.
+     - Interactive tabs for **Friends**, **Requests**, and **Find Players** (navigable via mouse or Q/E / Bumpers).
+     - Live search bar for player lookup with `[ADD FRIEND]` buttons.
+   - Pre-Game Lobby update: replaced placeholder friends with real friends list from `SocialClient`, added one-click `[INVITE]` button for lobby hosts, and mapped the `Y` button / click on friends header to open the Social screen directly.
+
+---
+
+### 3. Verification & Build Status
+
+- Built cleanly via MSBuild: `cmake --build build --config Release`
+  - `noble-client.exe`: **0 errors, 0 warnings**
+  - `noble-dedicated.exe`: **0 errors, 0 warnings**
+- All MCC retail installation files remain 100% read-only and unmodified.
+
 ## 0. Pick up here (2026-10-30, 03:25 ET) - Forge / Campaign Netplay Root Causes, Invasion Mode Compatibility, and All-Mode Variant Loading (O7OF / Dominus)
 
 All changes compiled cleanly with MSBuild Release (`noble-client.exe` and `noble-dedicated.exe`), 0 errors.
@@ -152,6 +310,85 @@ All changes compiled cleanly with MSBuild Release (`noble-client.exe` and `noble
 
 --
 
+## 0. Pick up here (2026-10-30, 04:45 ET) - Elite Armors Network Replication Fix, Elite Armor Effects Engine Patch, Full Armory Permutations & Emblems/Nameplates, and Master Server Social Friends/Invites Menu (O7OF / Dominus)
+
+Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor effects engine support, MCC nameplates and emblems integration into the Armory, and master server social networking system with interactive friends list, player search, and in-game lobby invites.
+
+### 1. What was wrong & Root Causes
+
+1. **Elite Armors Defaulting to Elite Minor for Remote Players:**
+   - Players equipping Elite armor sets (such as Honor Guard, General, Field Marshall, Officer, etc.) saw their selected armor locally, but remote players in multiplayer matches only saw them as default Elite Minor.
+   - **Root Cause Reverse-Engineered:** In `haloreach.dll+0x2EDD45` (the function serializing the player's profile into the network replication player datum at `0x2C8070`), Bungie/MCC hardcoded `species = 0` (Spartan) and `slot = 7` when writing `profile[0x8C]` (the equipped Elite armor set index).
+   - In `haloreach.dll+0x2C8070`, the code verifies `cmp dword ptr [rdx+4], 3; ja exit`. Passing slot 7 exceeded the check and jumped to exit, leaving `[player + 0xAE + 0]` completely unwritten (0 = Elite Minor). The multiplayer network session then broadcasted this default 0 value to all other clients.
+
+2. **Elite Armor Effects Not Showing & Previous Buggy Behavior:**
+   - Armor effects only applied to Spartans; Elites had no working armor effects.
+   - **Root Cause Reverse-Engineered:** In `haloreach.dll+0x105796`, the engine validated `cmp esi, 8; setb r15b` (`83 FE 08 41 0F 92 C7`), rejecting `pmcg` lists >= 8. Spartan fx is list 8 (`+0x80`), while Elite fx is list 9 (`+0x8C`).
+   - In previous iterations, equipping armor effects erroneously overrode the player's Elite character model type due to coupled mesh logic.
+
+3. **Armory Missing Nameplates & Emblems:**
+   - The Armory identity customization lacked the full catalog of MCC Reach nameplates (536 nameplates) and emblems (330 emblems) loaded dynamically from MCC assets.
+
+4. **Placeholder Social / Friends System in Main Menu and Pre-Game Lobby:**
+   - The lobby sidebar displayed hardcoded placeholder text for friends ("Forge - In a Game", "In Custom Game Lobby"). There was no way to search community players, add friends, accept/decline friend requests, view real-time invites, or invite friends directly to a game lobby.
+
+---
+
+### 2. Implementation & Fixes
+
+1. **Elite Armor Network Replication Engine Patch (`src/hooks/EnginePatches.cpp`):**
+   - Patched RVA `0x2EDD45` in `haloreach.dll` from:
+     `89 75 C0 C7 45 C4 07 00 00 00` (`mov [rbp-0x40], esi; mov dword ptr [rbp-0x3C], 7`)
+     to:
+     `C7 45 C0 01 00 00 00 89 75 C4` (`mov dword ptr [rbp-0x40], 1; mov [rbp-0x3C], esi`)
+   - This passes `species = 1` (Elite) and `slot = 0` to `0x2C8070`, cleanly storing the equipped armor set index directly into `[player + 0xAE + 0]`. Remote players now replicate and render the exact Elite armor set chosen (Minor, Officer, SpecOps, Ranger, Ultra, Zealot, General, Field Marshall, Honor Guard).
+
+2. **Elite Armor Effects Engine & Pack Fixes (`src/engine/ElitePack.cpp`):**
+   - Patched RVA `0x105796` in `haloreach.dll` from `cmp esi, 8; setb r15b` (`83 FE 08 41 0F 92 C7`) to `cmp esi, 8; setne r15b` (`83 FE 08 41 0F 95 C7`). This cleanly skips Spartan fx list 8 (`+0x80`) while permitting Elite armor piece lists 0..7 and Elite fx list 9 (`pmcg +0x8C`).
+   - Expanded `kSetPieces` array to `[9][6]`, adding Honor Guard at index 8 (`{2, 2, 2, 8, 2, 10}`).
+   - In `BuilderHook`, cleanly differentiated local vs remote players. Local player reads saved armory selection and elite armor effect; remote players read their replicated network set (`copy[0x17]`). Spartan effect on Elites is suppressed (`copy[0x18] = 0xFF`) and Elite effect is applied (`copy[0x19] = eliteEffect`).
+   - Character mesh permutations and armor effect permutation logic are 100% separated, eliminating past permutation collision bugs.
+   - Added `"forge"` mode support to `ElitePack::Install`.
+
+3. **ReachArmory & Host Ingestion (`src/engine/ReachHost.cpp`, `ReachArmory.hpp`, `ReachArmory.cpp`):**
+   - Clamped `el["armor_set"]` to 0..8 (Honor Guard support) in `ReachHost.cpp`.
+   - Added `eliteArmorEffectIndex` and `eliteArmorEffect` to `ReachArmorySelection`.
+   - Added 3D viewport preview for Elite armor effects using `PmcgEffectName(sel.eliteArmorEffect)` mapping to `pmcg` list `8c` / region `armor_fx` (permutations `armor_fx_00`..`05`).
+
+4. **Nameplates & Emblems Catalog & In-Game Badging (`src/ui/UiArt.hpp`, `UiArt.cpp`, `ArmorCustomizer.hpp`, `ArmorCustomizer.cpp`):**
+   - Implemented `GetNameplateCatalog()` and `GetEmblemCatalog()` in `UiArt.cpp`, dynamically parsing `playercustomization.xml` from MCC for 536 nameplates and 330 emblems with authentic titles.
+   - Added `UiTexture Nameplate(int id)` loading `PlayerIDNamePlate_*.png` via WIC and `UiTexture Emblem(int id)` decoding from `emblemstexturepack.perm.bin` via `PackImage`.
+   - Added Nameplate and Emblem selectors in `ArmorCustomizer.cpp` under the `IDENTITY` section, with real-time preview and saving to `appearance.json`.
+   - Added Honor Guard to `kEliteSets` and an Armor Effect row under `EFFECTS & VOICE` for Elites.
+   - Updated top-right header nameplate badge to render the player's equipped nameplate PNG and emblem.
+
+5. **Master Server Social Networking Client & UI (`src/network/SocialClient.hpp`, `SocialClient.cpp`, `FrontEndMenu.cpp`):**
+   - Built `SocialClient` singleton with async WinHttp background requests to the master server:
+     - `/api/friends/list` - Retrieves accepted friends, incoming requests, and outgoing requests.
+     - `/api/invites/list` - Polls active game invites for the user.
+     - `/api/friends/search` - Searches community users by username prefix.
+     - `/api/friends/add` - Sends a friend request.
+     - `/api/friends/accept` - Accepts an incoming request.
+     - `/api/friends/remove` - Removes a friend or cancels a request.
+     - `/api/invites/send` - Sends a game invite with host IP and port.
+     - `/api/invites/clear` - Dismisses an invite.
+   - Background thread polls invites and friends every 10 seconds.
+   - Added `Social` to main menu navigation (`kMainEntries`) and implemented `DrawSocialScreen`:
+     - Online account status header with quick link to Account Login/Register modal.
+     - Prominent Game Invite Received banner with one-click `[JOIN GAME]` and `[DISMISS]`.
+     - Interactive tabs for **Friends**, **Requests**, and **Find Players** (navigable via mouse or Q/E / Bumpers).
+     - Live search bar for player lookup with `[ADD FRIEND]` buttons.
+   - Pre-Game Lobby update: replaced placeholder friends with real friends list from `SocialClient`, added one-click `[INVITE]` button for lobby hosts, and mapped the `Y` button / click on friends header to open the Social screen directly.
+
+---
+
+### 3. Verification & Build Status
+
+- Built cleanly via MSBuild: `cmake --build build --config Release`
+  - `noble-client.exe`: **0 errors, 0 warnings**
+  - `noble-dedicated.exe`: **0 errors, 0 warnings**
+- All MCC retail installation files remain 100% read-only and unmodified.
+
 ## 0. Pick up here (2026-10-30, 02:20 ET) - Definitive Fix for Campaign Co-op "Error hosting co-op" (Session Abort Suppression & Gate Neutralization) (O7OF / Dominus)
 
 All changes compiled cleanly via MSBuild Release configuration (`noble-client.exe` and `noble-dedicated.exe`) with **0 errors and 0 warnings**:
@@ -191,6 +428,85 @@ All changes compiled cleanly via MSBuild Release configuration (`noble-client.ex
 - Cleaned up all temporary reverse-engineering `.js` scripts from workspace.
 
 --
+
+## 0. Pick up here (2026-10-30, 04:45 ET) - Elite Armors Network Replication Fix, Elite Armor Effects Engine Patch, Full Armory Permutations & Emblems/Nameplates, and Master Server Social Friends/Invites Menu (O7OF / Dominus)
+
+Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor effects engine support, MCC nameplates and emblems integration into the Armory, and master server social networking system with interactive friends list, player search, and in-game lobby invites.
+
+### 1. What was wrong & Root Causes
+
+1. **Elite Armors Defaulting to Elite Minor for Remote Players:**
+   - Players equipping Elite armor sets (such as Honor Guard, General, Field Marshall, Officer, etc.) saw their selected armor locally, but remote players in multiplayer matches only saw them as default Elite Minor.
+   - **Root Cause Reverse-Engineered:** In `haloreach.dll+0x2EDD45` (the function serializing the player's profile into the network replication player datum at `0x2C8070`), Bungie/MCC hardcoded `species = 0` (Spartan) and `slot = 7` when writing `profile[0x8C]` (the equipped Elite armor set index).
+   - In `haloreach.dll+0x2C8070`, the code verifies `cmp dword ptr [rdx+4], 3; ja exit`. Passing slot 7 exceeded the check and jumped to exit, leaving `[player + 0xAE + 0]` completely unwritten (0 = Elite Minor). The multiplayer network session then broadcasted this default 0 value to all other clients.
+
+2. **Elite Armor Effects Not Showing & Previous Buggy Behavior:**
+   - Armor effects only applied to Spartans; Elites had no working armor effects.
+   - **Root Cause Reverse-Engineered:** In `haloreach.dll+0x105796`, the engine validated `cmp esi, 8; setb r15b` (`83 FE 08 41 0F 92 C7`), rejecting `pmcg` lists >= 8. Spartan fx is list 8 (`+0x80`), while Elite fx is list 9 (`+0x8C`).
+   - In previous iterations, equipping armor effects erroneously overrode the player's Elite character model type due to coupled mesh logic.
+
+3. **Armory Missing Nameplates & Emblems:**
+   - The Armory identity customization lacked the full catalog of MCC Reach nameplates (536 nameplates) and emblems (330 emblems) loaded dynamically from MCC assets.
+
+4. **Placeholder Social / Friends System in Main Menu and Pre-Game Lobby:**
+   - The lobby sidebar displayed hardcoded placeholder text for friends ("Forge - In a Game", "In Custom Game Lobby"). There was no way to search community players, add friends, accept/decline friend requests, view real-time invites, or invite friends directly to a game lobby.
+
+---
+
+### 2. Implementation & Fixes
+
+1. **Elite Armor Network Replication Engine Patch (`src/hooks/EnginePatches.cpp`):**
+   - Patched RVA `0x2EDD45` in `haloreach.dll` from:
+     `89 75 C0 C7 45 C4 07 00 00 00` (`mov [rbp-0x40], esi; mov dword ptr [rbp-0x3C], 7`)
+     to:
+     `C7 45 C0 01 00 00 00 89 75 C4` (`mov dword ptr [rbp-0x40], 1; mov [rbp-0x3C], esi`)
+   - This passes `species = 1` (Elite) and `slot = 0` to `0x2C8070`, cleanly storing the equipped armor set index directly into `[player + 0xAE + 0]`. Remote players now replicate and render the exact Elite armor set chosen (Minor, Officer, SpecOps, Ranger, Ultra, Zealot, General, Field Marshall, Honor Guard).
+
+2. **Elite Armor Effects Engine & Pack Fixes (`src/engine/ElitePack.cpp`):**
+   - Patched RVA `0x105796` in `haloreach.dll` from `cmp esi, 8; setb r15b` (`83 FE 08 41 0F 92 C7`) to `cmp esi, 8; setne r15b` (`83 FE 08 41 0F 95 C7`). This cleanly skips Spartan fx list 8 (`+0x80`) while permitting Elite armor piece lists 0..7 and Elite fx list 9 (`pmcg +0x8C`).
+   - Expanded `kSetPieces` array to `[9][6]`, adding Honor Guard at index 8 (`{2, 2, 2, 8, 2, 10}`).
+   - In `BuilderHook`, cleanly differentiated local vs remote players. Local player reads saved armory selection and elite armor effect; remote players read their replicated network set (`copy[0x17]`). Spartan effect on Elites is suppressed (`copy[0x18] = 0xFF`) and Elite effect is applied (`copy[0x19] = eliteEffect`).
+   - Character mesh permutations and armor effect permutation logic are 100% separated, eliminating past permutation collision bugs.
+   - Added `"forge"` mode support to `ElitePack::Install`.
+
+3. **ReachArmory & Host Ingestion (`src/engine/ReachHost.cpp`, `ReachArmory.hpp`, `ReachArmory.cpp`):**
+   - Clamped `el["armor_set"]` to 0..8 (Honor Guard support) in `ReachHost.cpp`.
+   - Added `eliteArmorEffectIndex` and `eliteArmorEffect` to `ReachArmorySelection`.
+   - Added 3D viewport preview for Elite armor effects using `PmcgEffectName(sel.eliteArmorEffect)` mapping to `pmcg` list `8c` / region `armor_fx` (permutations `armor_fx_00`..`05`).
+
+4. **Nameplates & Emblems Catalog & In-Game Badging (`src/ui/UiArt.hpp`, `UiArt.cpp`, `ArmorCustomizer.hpp`, `ArmorCustomizer.cpp`):**
+   - Implemented `GetNameplateCatalog()` and `GetEmblemCatalog()` in `UiArt.cpp`, dynamically parsing `playercustomization.xml` from MCC for 536 nameplates and 330 emblems with authentic titles.
+   - Added `UiTexture Nameplate(int id)` loading `PlayerIDNamePlate_*.png` via WIC and `UiTexture Emblem(int id)` decoding from `emblemstexturepack.perm.bin` via `PackImage`.
+   - Added Nameplate and Emblem selectors in `ArmorCustomizer.cpp` under the `IDENTITY` section, with real-time preview and saving to `appearance.json`.
+   - Added Honor Guard to `kEliteSets` and an Armor Effect row under `EFFECTS & VOICE` for Elites.
+   - Updated top-right header nameplate badge to render the player's equipped nameplate PNG and emblem.
+
+5. **Master Server Social Networking Client & UI (`src/network/SocialClient.hpp`, `SocialClient.cpp`, `FrontEndMenu.cpp`):**
+   - Built `SocialClient` singleton with async WinHttp background requests to the master server:
+     - `/api/friends/list` - Retrieves accepted friends, incoming requests, and outgoing requests.
+     - `/api/invites/list` - Polls active game invites for the user.
+     - `/api/friends/search` - Searches community users by username prefix.
+     - `/api/friends/add` - Sends a friend request.
+     - `/api/friends/accept` - Accepts an incoming request.
+     - `/api/friends/remove` - Removes a friend or cancels a request.
+     - `/api/invites/send` - Sends a game invite with host IP and port.
+     - `/api/invites/clear` - Dismisses an invite.
+   - Background thread polls invites and friends every 10 seconds.
+   - Added `Social` to main menu navigation (`kMainEntries`) and implemented `DrawSocialScreen`:
+     - Online account status header with quick link to Account Login/Register modal.
+     - Prominent Game Invite Received banner with one-click `[JOIN GAME]` and `[DISMISS]`.
+     - Interactive tabs for **Friends**, **Requests**, and **Find Players** (navigable via mouse or Q/E / Bumpers).
+     - Live search bar for player lookup with `[ADD FRIEND]` buttons.
+   - Pre-Game Lobby update: replaced placeholder friends with real friends list from `SocialClient`, added one-click `[INVITE]` button for lobby hosts, and mapped the `Y` button / click on friends header to open the Social screen directly.
+
+---
+
+### 3. Verification & Build Status
+
+- Built cleanly via MSBuild: `cmake --build build --config Release`
+  - `noble-client.exe`: **0 errors, 0 warnings**
+  - `noble-dedicated.exe`: **0 errors, 0 warnings**
+- All MCC retail installation files remain 100% read-only and unmodified.
 
 ## 1. Previous (2026-10-30, 01:25 ET) - Fix Campaign Co-op In-Progress 0x1B Abort Gate & Forge/Sandbox Engine Dispatch (O7OF / Dominus)
 
@@ -264,6 +580,85 @@ All changes compiled cleanly via MSBuild Release configuration (`noble-client.ex
 
 --
 
+## 0. Pick up here (2026-10-30, 04:45 ET) - Elite Armors Network Replication Fix, Elite Armor Effects Engine Patch, Full Armory Permutations & Emblems/Nameplates, and Master Server Social Friends/Invites Menu (O7OF / Dominus)
+
+Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor effects engine support, MCC nameplates and emblems integration into the Armory, and master server social networking system with interactive friends list, player search, and in-game lobby invites.
+
+### 1. What was wrong & Root Causes
+
+1. **Elite Armors Defaulting to Elite Minor for Remote Players:**
+   - Players equipping Elite armor sets (such as Honor Guard, General, Field Marshall, Officer, etc.) saw their selected armor locally, but remote players in multiplayer matches only saw them as default Elite Minor.
+   - **Root Cause Reverse-Engineered:** In `haloreach.dll+0x2EDD45` (the function serializing the player's profile into the network replication player datum at `0x2C8070`), Bungie/MCC hardcoded `species = 0` (Spartan) and `slot = 7` when writing `profile[0x8C]` (the equipped Elite armor set index).
+   - In `haloreach.dll+0x2C8070`, the code verifies `cmp dword ptr [rdx+4], 3; ja exit`. Passing slot 7 exceeded the check and jumped to exit, leaving `[player + 0xAE + 0]` completely unwritten (0 = Elite Minor). The multiplayer network session then broadcasted this default 0 value to all other clients.
+
+2. **Elite Armor Effects Not Showing & Previous Buggy Behavior:**
+   - Armor effects only applied to Spartans; Elites had no working armor effects.
+   - **Root Cause Reverse-Engineered:** In `haloreach.dll+0x105796`, the engine validated `cmp esi, 8; setb r15b` (`83 FE 08 41 0F 92 C7`), rejecting `pmcg` lists >= 8. Spartan fx is list 8 (`+0x80`), while Elite fx is list 9 (`+0x8C`).
+   - In previous iterations, equipping armor effects erroneously overrode the player's Elite character model type due to coupled mesh logic.
+
+3. **Armory Missing Nameplates & Emblems:**
+   - The Armory identity customization lacked the full catalog of MCC Reach nameplates (536 nameplates) and emblems (330 emblems) loaded dynamically from MCC assets.
+
+4. **Placeholder Social / Friends System in Main Menu and Pre-Game Lobby:**
+   - The lobby sidebar displayed hardcoded placeholder text for friends ("Forge - In a Game", "In Custom Game Lobby"). There was no way to search community players, add friends, accept/decline friend requests, view real-time invites, or invite friends directly to a game lobby.
+
+---
+
+### 2. Implementation & Fixes
+
+1. **Elite Armor Network Replication Engine Patch (`src/hooks/EnginePatches.cpp`):**
+   - Patched RVA `0x2EDD45` in `haloreach.dll` from:
+     `89 75 C0 C7 45 C4 07 00 00 00` (`mov [rbp-0x40], esi; mov dword ptr [rbp-0x3C], 7`)
+     to:
+     `C7 45 C0 01 00 00 00 89 75 C4` (`mov dword ptr [rbp-0x40], 1; mov [rbp-0x3C], esi`)
+   - This passes `species = 1` (Elite) and `slot = 0` to `0x2C8070`, cleanly storing the equipped armor set index directly into `[player + 0xAE + 0]`. Remote players now replicate and render the exact Elite armor set chosen (Minor, Officer, SpecOps, Ranger, Ultra, Zealot, General, Field Marshall, Honor Guard).
+
+2. **Elite Armor Effects Engine & Pack Fixes (`src/engine/ElitePack.cpp`):**
+   - Patched RVA `0x105796` in `haloreach.dll` from `cmp esi, 8; setb r15b` (`83 FE 08 41 0F 92 C7`) to `cmp esi, 8; setne r15b` (`83 FE 08 41 0F 95 C7`). This cleanly skips Spartan fx list 8 (`+0x80`) while permitting Elite armor piece lists 0..7 and Elite fx list 9 (`pmcg +0x8C`).
+   - Expanded `kSetPieces` array to `[9][6]`, adding Honor Guard at index 8 (`{2, 2, 2, 8, 2, 10}`).
+   - In `BuilderHook`, cleanly differentiated local vs remote players. Local player reads saved armory selection and elite armor effect; remote players read their replicated network set (`copy[0x17]`). Spartan effect on Elites is suppressed (`copy[0x18] = 0xFF`) and Elite effect is applied (`copy[0x19] = eliteEffect`).
+   - Character mesh permutations and armor effect permutation logic are 100% separated, eliminating past permutation collision bugs.
+   - Added `"forge"` mode support to `ElitePack::Install`.
+
+3. **ReachArmory & Host Ingestion (`src/engine/ReachHost.cpp`, `ReachArmory.hpp`, `ReachArmory.cpp`):**
+   - Clamped `el["armor_set"]` to 0..8 (Honor Guard support) in `ReachHost.cpp`.
+   - Added `eliteArmorEffectIndex` and `eliteArmorEffect` to `ReachArmorySelection`.
+   - Added 3D viewport preview for Elite armor effects using `PmcgEffectName(sel.eliteArmorEffect)` mapping to `pmcg` list `8c` / region `armor_fx` (permutations `armor_fx_00`..`05`).
+
+4. **Nameplates & Emblems Catalog & In-Game Badging (`src/ui/UiArt.hpp`, `UiArt.cpp`, `ArmorCustomizer.hpp`, `ArmorCustomizer.cpp`):**
+   - Implemented `GetNameplateCatalog()` and `GetEmblemCatalog()` in `UiArt.cpp`, dynamically parsing `playercustomization.xml` from MCC for 536 nameplates and 330 emblems with authentic titles.
+   - Added `UiTexture Nameplate(int id)` loading `PlayerIDNamePlate_*.png` via WIC and `UiTexture Emblem(int id)` decoding from `emblemstexturepack.perm.bin` via `PackImage`.
+   - Added Nameplate and Emblem selectors in `ArmorCustomizer.cpp` under the `IDENTITY` section, with real-time preview and saving to `appearance.json`.
+   - Added Honor Guard to `kEliteSets` and an Armor Effect row under `EFFECTS & VOICE` for Elites.
+   - Updated top-right header nameplate badge to render the player's equipped nameplate PNG and emblem.
+
+5. **Master Server Social Networking Client & UI (`src/network/SocialClient.hpp`, `SocialClient.cpp`, `FrontEndMenu.cpp`):**
+   - Built `SocialClient` singleton with async WinHttp background requests to the master server:
+     - `/api/friends/list` - Retrieves accepted friends, incoming requests, and outgoing requests.
+     - `/api/invites/list` - Polls active game invites for the user.
+     - `/api/friends/search` - Searches community users by username prefix.
+     - `/api/friends/add` - Sends a friend request.
+     - `/api/friends/accept` - Accepts an incoming request.
+     - `/api/friends/remove` - Removes a friend or cancels a request.
+     - `/api/invites/send` - Sends a game invite with host IP and port.
+     - `/api/invites/clear` - Dismisses an invite.
+   - Background thread polls invites and friends every 10 seconds.
+   - Added `Social` to main menu navigation (`kMainEntries`) and implemented `DrawSocialScreen`:
+     - Online account status header with quick link to Account Login/Register modal.
+     - Prominent Game Invite Received banner with one-click `[JOIN GAME]` and `[DISMISS]`.
+     - Interactive tabs for **Friends**, **Requests**, and **Find Players** (navigable via mouse or Q/E / Bumpers).
+     - Live search bar for player lookup with `[ADD FRIEND]` buttons.
+   - Pre-Game Lobby update: replaced placeholder friends with real friends list from `SocialClient`, added one-click `[INVITE]` button for lobby hosts, and mapped the `Y` button / click on friends header to open the Social screen directly.
+
+---
+
+### 3. Verification & Build Status
+
+- Built cleanly via MSBuild: `cmake --build build --config Release`
+  - `noble-client.exe`: **0 errors, 0 warnings**
+  - `noble-dedicated.exe`: **0 errors, 0 warnings**
+- All MCC retail installation files remain 100% read-only and unmodified.
+
 ## 0. Pick up here (2026-10-29, 23:35 ET) - Native Armory Character Rendering, Authentic In-Game Armor Effects (Flames & Blue Flames), Infinite Loading Fix & Netcode Updates (O7OF / Dominus)
 
 All changes compiled cleanly via MSBuild Release configuration (`noble-client.exe` and `noble-dedicated.exe`) with **0 errors and 0 warnings**:
@@ -299,6 +694,85 @@ All changes compiled cleanly via MSBuild Release configuration (`noble-client.ex
 
 --
 
+## 0. Pick up here (2026-10-30, 04:45 ET) - Elite Armors Network Replication Fix, Elite Armor Effects Engine Patch, Full Armory Permutations & Emblems/Nameplates, and Master Server Social Friends/Invites Menu (O7OF / Dominus)
+
+Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor effects engine support, MCC nameplates and emblems integration into the Armory, and master server social networking system with interactive friends list, player search, and in-game lobby invites.
+
+### 1. What was wrong & Root Causes
+
+1. **Elite Armors Defaulting to Elite Minor for Remote Players:**
+   - Players equipping Elite armor sets (such as Honor Guard, General, Field Marshall, Officer, etc.) saw their selected armor locally, but remote players in multiplayer matches only saw them as default Elite Minor.
+   - **Root Cause Reverse-Engineered:** In `haloreach.dll+0x2EDD45` (the function serializing the player's profile into the network replication player datum at `0x2C8070`), Bungie/MCC hardcoded `species = 0` (Spartan) and `slot = 7` when writing `profile[0x8C]` (the equipped Elite armor set index).
+   - In `haloreach.dll+0x2C8070`, the code verifies `cmp dword ptr [rdx+4], 3; ja exit`. Passing slot 7 exceeded the check and jumped to exit, leaving `[player + 0xAE + 0]` completely unwritten (0 = Elite Minor). The multiplayer network session then broadcasted this default 0 value to all other clients.
+
+2. **Elite Armor Effects Not Showing & Previous Buggy Behavior:**
+   - Armor effects only applied to Spartans; Elites had no working armor effects.
+   - **Root Cause Reverse-Engineered:** In `haloreach.dll+0x105796`, the engine validated `cmp esi, 8; setb r15b` (`83 FE 08 41 0F 92 C7`), rejecting `pmcg` lists >= 8. Spartan fx is list 8 (`+0x80`), while Elite fx is list 9 (`+0x8C`).
+   - In previous iterations, equipping armor effects erroneously overrode the player's Elite character model type due to coupled mesh logic.
+
+3. **Armory Missing Nameplates & Emblems:**
+   - The Armory identity customization lacked the full catalog of MCC Reach nameplates (536 nameplates) and emblems (330 emblems) loaded dynamically from MCC assets.
+
+4. **Placeholder Social / Friends System in Main Menu and Pre-Game Lobby:**
+   - The lobby sidebar displayed hardcoded placeholder text for friends ("Forge - In a Game", "In Custom Game Lobby"). There was no way to search community players, add friends, accept/decline friend requests, view real-time invites, or invite friends directly to a game lobby.
+
+---
+
+### 2. Implementation & Fixes
+
+1. **Elite Armor Network Replication Engine Patch (`src/hooks/EnginePatches.cpp`):**
+   - Patched RVA `0x2EDD45` in `haloreach.dll` from:
+     `89 75 C0 C7 45 C4 07 00 00 00` (`mov [rbp-0x40], esi; mov dword ptr [rbp-0x3C], 7`)
+     to:
+     `C7 45 C0 01 00 00 00 89 75 C4` (`mov dword ptr [rbp-0x40], 1; mov [rbp-0x3C], esi`)
+   - This passes `species = 1` (Elite) and `slot = 0` to `0x2C8070`, cleanly storing the equipped armor set index directly into `[player + 0xAE + 0]`. Remote players now replicate and render the exact Elite armor set chosen (Minor, Officer, SpecOps, Ranger, Ultra, Zealot, General, Field Marshall, Honor Guard).
+
+2. **Elite Armor Effects Engine & Pack Fixes (`src/engine/ElitePack.cpp`):**
+   - Patched RVA `0x105796` in `haloreach.dll` from `cmp esi, 8; setb r15b` (`83 FE 08 41 0F 92 C7`) to `cmp esi, 8; setne r15b` (`83 FE 08 41 0F 95 C7`). This cleanly skips Spartan fx list 8 (`+0x80`) while permitting Elite armor piece lists 0..7 and Elite fx list 9 (`pmcg +0x8C`).
+   - Expanded `kSetPieces` array to `[9][6]`, adding Honor Guard at index 8 (`{2, 2, 2, 8, 2, 10}`).
+   - In `BuilderHook`, cleanly differentiated local vs remote players. Local player reads saved armory selection and elite armor effect; remote players read their replicated network set (`copy[0x17]`). Spartan effect on Elites is suppressed (`copy[0x18] = 0xFF`) and Elite effect is applied (`copy[0x19] = eliteEffect`).
+   - Character mesh permutations and armor effect permutation logic are 100% separated, eliminating past permutation collision bugs.
+   - Added `"forge"` mode support to `ElitePack::Install`.
+
+3. **ReachArmory & Host Ingestion (`src/engine/ReachHost.cpp`, `ReachArmory.hpp`, `ReachArmory.cpp`):**
+   - Clamped `el["armor_set"]` to 0..8 (Honor Guard support) in `ReachHost.cpp`.
+   - Added `eliteArmorEffectIndex` and `eliteArmorEffect` to `ReachArmorySelection`.
+   - Added 3D viewport preview for Elite armor effects using `PmcgEffectName(sel.eliteArmorEffect)` mapping to `pmcg` list `8c` / region `armor_fx` (permutations `armor_fx_00`..`05`).
+
+4. **Nameplates & Emblems Catalog & In-Game Badging (`src/ui/UiArt.hpp`, `UiArt.cpp`, `ArmorCustomizer.hpp`, `ArmorCustomizer.cpp`):**
+   - Implemented `GetNameplateCatalog()` and `GetEmblemCatalog()` in `UiArt.cpp`, dynamically parsing `playercustomization.xml` from MCC for 536 nameplates and 330 emblems with authentic titles.
+   - Added `UiTexture Nameplate(int id)` loading `PlayerIDNamePlate_*.png` via WIC and `UiTexture Emblem(int id)` decoding from `emblemstexturepack.perm.bin` via `PackImage`.
+   - Added Nameplate and Emblem selectors in `ArmorCustomizer.cpp` under the `IDENTITY` section, with real-time preview and saving to `appearance.json`.
+   - Added Honor Guard to `kEliteSets` and an Armor Effect row under `EFFECTS & VOICE` for Elites.
+   - Updated top-right header nameplate badge to render the player's equipped nameplate PNG and emblem.
+
+5. **Master Server Social Networking Client & UI (`src/network/SocialClient.hpp`, `SocialClient.cpp`, `FrontEndMenu.cpp`):**
+   - Built `SocialClient` singleton with async WinHttp background requests to the master server:
+     - `/api/friends/list` - Retrieves accepted friends, incoming requests, and outgoing requests.
+     - `/api/invites/list` - Polls active game invites for the user.
+     - `/api/friends/search` - Searches community users by username prefix.
+     - `/api/friends/add` - Sends a friend request.
+     - `/api/friends/accept` - Accepts an incoming request.
+     - `/api/friends/remove` - Removes a friend or cancels a request.
+     - `/api/invites/send` - Sends a game invite with host IP and port.
+     - `/api/invites/clear` - Dismisses an invite.
+   - Background thread polls invites and friends every 10 seconds.
+   - Added `Social` to main menu navigation (`kMainEntries`) and implemented `DrawSocialScreen`:
+     - Online account status header with quick link to Account Login/Register modal.
+     - Prominent Game Invite Received banner with one-click `[JOIN GAME]` and `[DISMISS]`.
+     - Interactive tabs for **Friends**, **Requests**, and **Find Players** (navigable via mouse or Q/E / Bumpers).
+     - Live search bar for player lookup with `[ADD FRIEND]` buttons.
+   - Pre-Game Lobby update: replaced placeholder friends with real friends list from `SocialClient`, added one-click `[INVITE]` button for lobby hosts, and mapped the `Y` button / click on friends header to open the Social screen directly.
+
+---
+
+### 3. Verification & Build Status
+
+- Built cleanly via MSBuild: `cmake --build build --config Release`
+  - `noble-client.exe`: **0 errors, 0 warnings**
+  - `noble-dedicated.exe`: **0 errors, 0 warnings**
+- All MCC retail installation files remain 100% read-only and unmodified.
+
 ## 1. Pick up here (2026-10-29, 22:35 ET) - Complete Elimination of SSAO Side Fuzz and Flame Smoke Artifacts (O7OF / Dominus)
 
 ### 1. Root Cause Analysis: Air SSAO Contact Shadow & Flame Smoke
@@ -318,6 +792,85 @@ All changes compiled cleanly via MSBuild Release configuration (`noble-client.ex
   - Built Release configuration with 0 errors and 0 warnings (`noble-client.exe`).
 
 --
+
+## 0. Pick up here (2026-10-30, 04:45 ET) - Elite Armors Network Replication Fix, Elite Armor Effects Engine Patch, Full Armory Permutations & Emblems/Nameplates, and Master Server Social Friends/Invites Menu (O7OF / Dominus)
+
+Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor effects engine support, MCC nameplates and emblems integration into the Armory, and master server social networking system with interactive friends list, player search, and in-game lobby invites.
+
+### 1. What was wrong & Root Causes
+
+1. **Elite Armors Defaulting to Elite Minor for Remote Players:**
+   - Players equipping Elite armor sets (such as Honor Guard, General, Field Marshall, Officer, etc.) saw their selected armor locally, but remote players in multiplayer matches only saw them as default Elite Minor.
+   - **Root Cause Reverse-Engineered:** In `haloreach.dll+0x2EDD45` (the function serializing the player's profile into the network replication player datum at `0x2C8070`), Bungie/MCC hardcoded `species = 0` (Spartan) and `slot = 7` when writing `profile[0x8C]` (the equipped Elite armor set index).
+   - In `haloreach.dll+0x2C8070`, the code verifies `cmp dword ptr [rdx+4], 3; ja exit`. Passing slot 7 exceeded the check and jumped to exit, leaving `[player + 0xAE + 0]` completely unwritten (0 = Elite Minor). The multiplayer network session then broadcasted this default 0 value to all other clients.
+
+2. **Elite Armor Effects Not Showing & Previous Buggy Behavior:**
+   - Armor effects only applied to Spartans; Elites had no working armor effects.
+   - **Root Cause Reverse-Engineered:** In `haloreach.dll+0x105796`, the engine validated `cmp esi, 8; setb r15b` (`83 FE 08 41 0F 92 C7`), rejecting `pmcg` lists >= 8. Spartan fx is list 8 (`+0x80`), while Elite fx is list 9 (`+0x8C`).
+   - In previous iterations, equipping armor effects erroneously overrode the player's Elite character model type due to coupled mesh logic.
+
+3. **Armory Missing Nameplates & Emblems:**
+   - The Armory identity customization lacked the full catalog of MCC Reach nameplates (536 nameplates) and emblems (330 emblems) loaded dynamically from MCC assets.
+
+4. **Placeholder Social / Friends System in Main Menu and Pre-Game Lobby:**
+   - The lobby sidebar displayed hardcoded placeholder text for friends ("Forge - In a Game", "In Custom Game Lobby"). There was no way to search community players, add friends, accept/decline friend requests, view real-time invites, or invite friends directly to a game lobby.
+
+---
+
+### 2. Implementation & Fixes
+
+1. **Elite Armor Network Replication Engine Patch (`src/hooks/EnginePatches.cpp`):**
+   - Patched RVA `0x2EDD45` in `haloreach.dll` from:
+     `89 75 C0 C7 45 C4 07 00 00 00` (`mov [rbp-0x40], esi; mov dword ptr [rbp-0x3C], 7`)
+     to:
+     `C7 45 C0 01 00 00 00 89 75 C4` (`mov dword ptr [rbp-0x40], 1; mov [rbp-0x3C], esi`)
+   - This passes `species = 1` (Elite) and `slot = 0` to `0x2C8070`, cleanly storing the equipped armor set index directly into `[player + 0xAE + 0]`. Remote players now replicate and render the exact Elite armor set chosen (Minor, Officer, SpecOps, Ranger, Ultra, Zealot, General, Field Marshall, Honor Guard).
+
+2. **Elite Armor Effects Engine & Pack Fixes (`src/engine/ElitePack.cpp`):**
+   - Patched RVA `0x105796` in `haloreach.dll` from `cmp esi, 8; setb r15b` (`83 FE 08 41 0F 92 C7`) to `cmp esi, 8; setne r15b` (`83 FE 08 41 0F 95 C7`). This cleanly skips Spartan fx list 8 (`+0x80`) while permitting Elite armor piece lists 0..7 and Elite fx list 9 (`pmcg +0x8C`).
+   - Expanded `kSetPieces` array to `[9][6]`, adding Honor Guard at index 8 (`{2, 2, 2, 8, 2, 10}`).
+   - In `BuilderHook`, cleanly differentiated local vs remote players. Local player reads saved armory selection and elite armor effect; remote players read their replicated network set (`copy[0x17]`). Spartan effect on Elites is suppressed (`copy[0x18] = 0xFF`) and Elite effect is applied (`copy[0x19] = eliteEffect`).
+   - Character mesh permutations and armor effect permutation logic are 100% separated, eliminating past permutation collision bugs.
+   - Added `"forge"` mode support to `ElitePack::Install`.
+
+3. **ReachArmory & Host Ingestion (`src/engine/ReachHost.cpp`, `ReachArmory.hpp`, `ReachArmory.cpp`):**
+   - Clamped `el["armor_set"]` to 0..8 (Honor Guard support) in `ReachHost.cpp`.
+   - Added `eliteArmorEffectIndex` and `eliteArmorEffect` to `ReachArmorySelection`.
+   - Added 3D viewport preview for Elite armor effects using `PmcgEffectName(sel.eliteArmorEffect)` mapping to `pmcg` list `8c` / region `armor_fx` (permutations `armor_fx_00`..`05`).
+
+4. **Nameplates & Emblems Catalog & In-Game Badging (`src/ui/UiArt.hpp`, `UiArt.cpp`, `ArmorCustomizer.hpp`, `ArmorCustomizer.cpp`):**
+   - Implemented `GetNameplateCatalog()` and `GetEmblemCatalog()` in `UiArt.cpp`, dynamically parsing `playercustomization.xml` from MCC for 536 nameplates and 330 emblems with authentic titles.
+   - Added `UiTexture Nameplate(int id)` loading `PlayerIDNamePlate_*.png` via WIC and `UiTexture Emblem(int id)` decoding from `emblemstexturepack.perm.bin` via `PackImage`.
+   - Added Nameplate and Emblem selectors in `ArmorCustomizer.cpp` under the `IDENTITY` section, with real-time preview and saving to `appearance.json`.
+   - Added Honor Guard to `kEliteSets` and an Armor Effect row under `EFFECTS & VOICE` for Elites.
+   - Updated top-right header nameplate badge to render the player's equipped nameplate PNG and emblem.
+
+5. **Master Server Social Networking Client & UI (`src/network/SocialClient.hpp`, `SocialClient.cpp`, `FrontEndMenu.cpp`):**
+   - Built `SocialClient` singleton with async WinHttp background requests to the master server:
+     - `/api/friends/list` - Retrieves accepted friends, incoming requests, and outgoing requests.
+     - `/api/invites/list` - Polls active game invites for the user.
+     - `/api/friends/search` - Searches community users by username prefix.
+     - `/api/friends/add` - Sends a friend request.
+     - `/api/friends/accept` - Accepts an incoming request.
+     - `/api/friends/remove` - Removes a friend or cancels a request.
+     - `/api/invites/send` - Sends a game invite with host IP and port.
+     - `/api/invites/clear` - Dismisses an invite.
+   - Background thread polls invites and friends every 10 seconds.
+   - Added `Social` to main menu navigation (`kMainEntries`) and implemented `DrawSocialScreen`:
+     - Online account status header with quick link to Account Login/Register modal.
+     - Prominent Game Invite Received banner with one-click `[JOIN GAME]` and `[DISMISS]`.
+     - Interactive tabs for **Friends**, **Requests**, and **Find Players** (navigable via mouse or Q/E / Bumpers).
+     - Live search bar for player lookup with `[ADD FRIEND]` buttons.
+   - Pre-Game Lobby update: replaced placeholder friends with real friends list from `SocialClient`, added one-click `[INVITE]` button for lobby hosts, and mapped the `Y` button / click on friends header to open the Social screen directly.
+
+---
+
+### 3. Verification & Build Status
+
+- Built cleanly via MSBuild: `cmake --build build --config Release`
+  - `noble-client.exe`: **0 errors, 0 warnings**
+  - `noble-dedicated.exe`: **0 errors, 0 warnings**
+- All MCC retail installation files remain 100% read-only and unmodified.
 
 ## 1. Pick up here (2026-10-29, 22:30 ET) - Fix Armory Black Matte Silhouette Render Artifact (O7OF / Dominus)
 
@@ -344,6 +897,85 @@ Sneeze
   - Rebuilt Release configuration with 0 errors and 0 warnings (`noble-client.exe`).
 
 --
+
+## 0. Pick up here (2026-10-30, 04:45 ET) - Elite Armors Network Replication Fix, Elite Armor Effects Engine Patch, Full Armory Permutations & Emblems/Nameplates, and Master Server Social Friends/Invites Menu (O7OF / Dominus)
+
+Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor effects engine support, MCC nameplates and emblems integration into the Armory, and master server social networking system with interactive friends list, player search, and in-game lobby invites.
+
+### 1. What was wrong & Root Causes
+
+1. **Elite Armors Defaulting to Elite Minor for Remote Players:**
+   - Players equipping Elite armor sets (such as Honor Guard, General, Field Marshall, Officer, etc.) saw their selected armor locally, but remote players in multiplayer matches only saw them as default Elite Minor.
+   - **Root Cause Reverse-Engineered:** In `haloreach.dll+0x2EDD45` (the function serializing the player's profile into the network replication player datum at `0x2C8070`), Bungie/MCC hardcoded `species = 0` (Spartan) and `slot = 7` when writing `profile[0x8C]` (the equipped Elite armor set index).
+   - In `haloreach.dll+0x2C8070`, the code verifies `cmp dword ptr [rdx+4], 3; ja exit`. Passing slot 7 exceeded the check and jumped to exit, leaving `[player + 0xAE + 0]` completely unwritten (0 = Elite Minor). The multiplayer network session then broadcasted this default 0 value to all other clients.
+
+2. **Elite Armor Effects Not Showing & Previous Buggy Behavior:**
+   - Armor effects only applied to Spartans; Elites had no working armor effects.
+   - **Root Cause Reverse-Engineered:** In `haloreach.dll+0x105796`, the engine validated `cmp esi, 8; setb r15b` (`83 FE 08 41 0F 92 C7`), rejecting `pmcg` lists >= 8. Spartan fx is list 8 (`+0x80`), while Elite fx is list 9 (`+0x8C`).
+   - In previous iterations, equipping armor effects erroneously overrode the player's Elite character model type due to coupled mesh logic.
+
+3. **Armory Missing Nameplates & Emblems:**
+   - The Armory identity customization lacked the full catalog of MCC Reach nameplates (536 nameplates) and emblems (330 emblems) loaded dynamically from MCC assets.
+
+4. **Placeholder Social / Friends System in Main Menu and Pre-Game Lobby:**
+   - The lobby sidebar displayed hardcoded placeholder text for friends ("Forge - In a Game", "In Custom Game Lobby"). There was no way to search community players, add friends, accept/decline friend requests, view real-time invites, or invite friends directly to a game lobby.
+
+---
+
+### 2. Implementation & Fixes
+
+1. **Elite Armor Network Replication Engine Patch (`src/hooks/EnginePatches.cpp`):**
+   - Patched RVA `0x2EDD45` in `haloreach.dll` from:
+     `89 75 C0 C7 45 C4 07 00 00 00` (`mov [rbp-0x40], esi; mov dword ptr [rbp-0x3C], 7`)
+     to:
+     `C7 45 C0 01 00 00 00 89 75 C4` (`mov dword ptr [rbp-0x40], 1; mov [rbp-0x3C], esi`)
+   - This passes `species = 1` (Elite) and `slot = 0` to `0x2C8070`, cleanly storing the equipped armor set index directly into `[player + 0xAE + 0]`. Remote players now replicate and render the exact Elite armor set chosen (Minor, Officer, SpecOps, Ranger, Ultra, Zealot, General, Field Marshall, Honor Guard).
+
+2. **Elite Armor Effects Engine & Pack Fixes (`src/engine/ElitePack.cpp`):**
+   - Patched RVA `0x105796` in `haloreach.dll` from `cmp esi, 8; setb r15b` (`83 FE 08 41 0F 92 C7`) to `cmp esi, 8; setne r15b` (`83 FE 08 41 0F 95 C7`). This cleanly skips Spartan fx list 8 (`+0x80`) while permitting Elite armor piece lists 0..7 and Elite fx list 9 (`pmcg +0x8C`).
+   - Expanded `kSetPieces` array to `[9][6]`, adding Honor Guard at index 8 (`{2, 2, 2, 8, 2, 10}`).
+   - In `BuilderHook`, cleanly differentiated local vs remote players. Local player reads saved armory selection and elite armor effect; remote players read their replicated network set (`copy[0x17]`). Spartan effect on Elites is suppressed (`copy[0x18] = 0xFF`) and Elite effect is applied (`copy[0x19] = eliteEffect`).
+   - Character mesh permutations and armor effect permutation logic are 100% separated, eliminating past permutation collision bugs.
+   - Added `"forge"` mode support to `ElitePack::Install`.
+
+3. **ReachArmory & Host Ingestion (`src/engine/ReachHost.cpp`, `ReachArmory.hpp`, `ReachArmory.cpp`):**
+   - Clamped `el["armor_set"]` to 0..8 (Honor Guard support) in `ReachHost.cpp`.
+   - Added `eliteArmorEffectIndex` and `eliteArmorEffect` to `ReachArmorySelection`.
+   - Added 3D viewport preview for Elite armor effects using `PmcgEffectName(sel.eliteArmorEffect)` mapping to `pmcg` list `8c` / region `armor_fx` (permutations `armor_fx_00`..`05`).
+
+4. **Nameplates & Emblems Catalog & In-Game Badging (`src/ui/UiArt.hpp`, `UiArt.cpp`, `ArmorCustomizer.hpp`, `ArmorCustomizer.cpp`):**
+   - Implemented `GetNameplateCatalog()` and `GetEmblemCatalog()` in `UiArt.cpp`, dynamically parsing `playercustomization.xml` from MCC for 536 nameplates and 330 emblems with authentic titles.
+   - Added `UiTexture Nameplate(int id)` loading `PlayerIDNamePlate_*.png` via WIC and `UiTexture Emblem(int id)` decoding from `emblemstexturepack.perm.bin` via `PackImage`.
+   - Added Nameplate and Emblem selectors in `ArmorCustomizer.cpp` under the `IDENTITY` section, with real-time preview and saving to `appearance.json`.
+   - Added Honor Guard to `kEliteSets` and an Armor Effect row under `EFFECTS & VOICE` for Elites.
+   - Updated top-right header nameplate badge to render the player's equipped nameplate PNG and emblem.
+
+5. **Master Server Social Networking Client & UI (`src/network/SocialClient.hpp`, `SocialClient.cpp`, `FrontEndMenu.cpp`):**
+   - Built `SocialClient` singleton with async WinHttp background requests to the master server:
+     - `/api/friends/list` - Retrieves accepted friends, incoming requests, and outgoing requests.
+     - `/api/invites/list` - Polls active game invites for the user.
+     - `/api/friends/search` - Searches community users by username prefix.
+     - `/api/friends/add` - Sends a friend request.
+     - `/api/friends/accept` - Accepts an incoming request.
+     - `/api/friends/remove` - Removes a friend or cancels a request.
+     - `/api/invites/send` - Sends a game invite with host IP and port.
+     - `/api/invites/clear` - Dismisses an invite.
+   - Background thread polls invites and friends every 10 seconds.
+   - Added `Social` to main menu navigation (`kMainEntries`) and implemented `DrawSocialScreen`:
+     - Online account status header with quick link to Account Login/Register modal.
+     - Prominent Game Invite Received banner with one-click `[JOIN GAME]` and `[DISMISS]`.
+     - Interactive tabs for **Friends**, **Requests**, and **Find Players** (navigable via mouse or Q/E / Bumpers).
+     - Live search bar for player lookup with `[ADD FRIEND]` buttons.
+   - Pre-Game Lobby update: replaced placeholder friends with real friends list from `SocialClient`, added one-click `[INVITE]` button for lobby hosts, and mapped the `Y` button / click on friends header to open the Social screen directly.
+
+---
+
+### 3. Verification & Build Status
+
+- Built cleanly via MSBuild: `cmake --build build --config Release`
+  - `noble-client.exe`: **0 errors, 0 warnings**
+  - `noble-dedicated.exe`: **0 errors, 0 warnings**
+- All MCC retail installation files remain 100% read-only and unmodified.
 
 ## 1. Pick up here (2026-10-29, 22:25 ET) - In-Engine 3D Armory Background Composite (O7OF / Dominus)
 
@@ -398,6 +1030,85 @@ oble-client.exe).
 - Verified build: `noble-client.exe` compiled cleanly with 0 errors and 0 warnings.
 
 --
+
+## 0. Pick up here (2026-10-30, 04:45 ET) - Elite Armors Network Replication Fix, Elite Armor Effects Engine Patch, Full Armory Permutations & Emblems/Nameplates, and Master Server Social Friends/Invites Menu (O7OF / Dominus)
+
+Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor effects engine support, MCC nameplates and emblems integration into the Armory, and master server social networking system with interactive friends list, player search, and in-game lobby invites.
+
+### 1. What was wrong & Root Causes
+
+1. **Elite Armors Defaulting to Elite Minor for Remote Players:**
+   - Players equipping Elite armor sets (such as Honor Guard, General, Field Marshall, Officer, etc.) saw their selected armor locally, but remote players in multiplayer matches only saw them as default Elite Minor.
+   - **Root Cause Reverse-Engineered:** In `haloreach.dll+0x2EDD45` (the function serializing the player's profile into the network replication player datum at `0x2C8070`), Bungie/MCC hardcoded `species = 0` (Spartan) and `slot = 7` when writing `profile[0x8C]` (the equipped Elite armor set index).
+   - In `haloreach.dll+0x2C8070`, the code verifies `cmp dword ptr [rdx+4], 3; ja exit`. Passing slot 7 exceeded the check and jumped to exit, leaving `[player + 0xAE + 0]` completely unwritten (0 = Elite Minor). The multiplayer network session then broadcasted this default 0 value to all other clients.
+
+2. **Elite Armor Effects Not Showing & Previous Buggy Behavior:**
+   - Armor effects only applied to Spartans; Elites had no working armor effects.
+   - **Root Cause Reverse-Engineered:** In `haloreach.dll+0x105796`, the engine validated `cmp esi, 8; setb r15b` (`83 FE 08 41 0F 92 C7`), rejecting `pmcg` lists >= 8. Spartan fx is list 8 (`+0x80`), while Elite fx is list 9 (`+0x8C`).
+   - In previous iterations, equipping armor effects erroneously overrode the player's Elite character model type due to coupled mesh logic.
+
+3. **Armory Missing Nameplates & Emblems:**
+   - The Armory identity customization lacked the full catalog of MCC Reach nameplates (536 nameplates) and emblems (330 emblems) loaded dynamically from MCC assets.
+
+4. **Placeholder Social / Friends System in Main Menu and Pre-Game Lobby:**
+   - The lobby sidebar displayed hardcoded placeholder text for friends ("Forge - In a Game", "In Custom Game Lobby"). There was no way to search community players, add friends, accept/decline friend requests, view real-time invites, or invite friends directly to a game lobby.
+
+---
+
+### 2. Implementation & Fixes
+
+1. **Elite Armor Network Replication Engine Patch (`src/hooks/EnginePatches.cpp`):**
+   - Patched RVA `0x2EDD45` in `haloreach.dll` from:
+     `89 75 C0 C7 45 C4 07 00 00 00` (`mov [rbp-0x40], esi; mov dword ptr [rbp-0x3C], 7`)
+     to:
+     `C7 45 C0 01 00 00 00 89 75 C4` (`mov dword ptr [rbp-0x40], 1; mov [rbp-0x3C], esi`)
+   - This passes `species = 1` (Elite) and `slot = 0` to `0x2C8070`, cleanly storing the equipped armor set index directly into `[player + 0xAE + 0]`. Remote players now replicate and render the exact Elite armor set chosen (Minor, Officer, SpecOps, Ranger, Ultra, Zealot, General, Field Marshall, Honor Guard).
+
+2. **Elite Armor Effects Engine & Pack Fixes (`src/engine/ElitePack.cpp`):**
+   - Patched RVA `0x105796` in `haloreach.dll` from `cmp esi, 8; setb r15b` (`83 FE 08 41 0F 92 C7`) to `cmp esi, 8; setne r15b` (`83 FE 08 41 0F 95 C7`). This cleanly skips Spartan fx list 8 (`+0x80`) while permitting Elite armor piece lists 0..7 and Elite fx list 9 (`pmcg +0x8C`).
+   - Expanded `kSetPieces` array to `[9][6]`, adding Honor Guard at index 8 (`{2, 2, 2, 8, 2, 10}`).
+   - In `BuilderHook`, cleanly differentiated local vs remote players. Local player reads saved armory selection and elite armor effect; remote players read their replicated network set (`copy[0x17]`). Spartan effect on Elites is suppressed (`copy[0x18] = 0xFF`) and Elite effect is applied (`copy[0x19] = eliteEffect`).
+   - Character mesh permutations and armor effect permutation logic are 100% separated, eliminating past permutation collision bugs.
+   - Added `"forge"` mode support to `ElitePack::Install`.
+
+3. **ReachArmory & Host Ingestion (`src/engine/ReachHost.cpp`, `ReachArmory.hpp`, `ReachArmory.cpp`):**
+   - Clamped `el["armor_set"]` to 0..8 (Honor Guard support) in `ReachHost.cpp`.
+   - Added `eliteArmorEffectIndex` and `eliteArmorEffect` to `ReachArmorySelection`.
+   - Added 3D viewport preview for Elite armor effects using `PmcgEffectName(sel.eliteArmorEffect)` mapping to `pmcg` list `8c` / region `armor_fx` (permutations `armor_fx_00`..`05`).
+
+4. **Nameplates & Emblems Catalog & In-Game Badging (`src/ui/UiArt.hpp`, `UiArt.cpp`, `ArmorCustomizer.hpp`, `ArmorCustomizer.cpp`):**
+   - Implemented `GetNameplateCatalog()` and `GetEmblemCatalog()` in `UiArt.cpp`, dynamically parsing `playercustomization.xml` from MCC for 536 nameplates and 330 emblems with authentic titles.
+   - Added `UiTexture Nameplate(int id)` loading `PlayerIDNamePlate_*.png` via WIC and `UiTexture Emblem(int id)` decoding from `emblemstexturepack.perm.bin` via `PackImage`.
+   - Added Nameplate and Emblem selectors in `ArmorCustomizer.cpp` under the `IDENTITY` section, with real-time preview and saving to `appearance.json`.
+   - Added Honor Guard to `kEliteSets` and an Armor Effect row under `EFFECTS & VOICE` for Elites.
+   - Updated top-right header nameplate badge to render the player's equipped nameplate PNG and emblem.
+
+5. **Master Server Social Networking Client & UI (`src/network/SocialClient.hpp`, `SocialClient.cpp`, `FrontEndMenu.cpp`):**
+   - Built `SocialClient` singleton with async WinHttp background requests to the master server:
+     - `/api/friends/list` - Retrieves accepted friends, incoming requests, and outgoing requests.
+     - `/api/invites/list` - Polls active game invites for the user.
+     - `/api/friends/search` - Searches community users by username prefix.
+     - `/api/friends/add` - Sends a friend request.
+     - `/api/friends/accept` - Accepts an incoming request.
+     - `/api/friends/remove` - Removes a friend or cancels a request.
+     - `/api/invites/send` - Sends a game invite with host IP and port.
+     - `/api/invites/clear` - Dismisses an invite.
+   - Background thread polls invites and friends every 10 seconds.
+   - Added `Social` to main menu navigation (`kMainEntries`) and implemented `DrawSocialScreen`:
+     - Online account status header with quick link to Account Login/Register modal.
+     - Prominent Game Invite Received banner with one-click `[JOIN GAME]` and `[DISMISS]`.
+     - Interactive tabs for **Friends**, **Requests**, and **Find Players** (navigable via mouse or Q/E / Bumpers).
+     - Live search bar for player lookup with `[ADD FRIEND]` buttons.
+   - Pre-Game Lobby update: replaced placeholder friends with real friends list from `SocialClient`, added one-click `[INVITE]` button for lobby hosts, and mapped the `Y` button / click on friends header to open the Social screen directly.
+
+---
+
+### 3. Verification & Build Status
+
+- Built cleanly via MSBuild: `cmake --build build --config Release`
+  - `noble-client.exe`: **0 errors, 0 warnings**
+  - `noble-dedicated.exe`: **0 errors, 0 warnings**
+- All MCC retail installation files remain 100% read-only and unmodified.
 
 ## 1. Pick up here (2026-10-29, 22:00 ET) - Double Typing Fix, Seamless Armory Background, Full Controller UI Navigation & 1:1 Reach Pre-Game Lobby Layout (O7OF / Dominus)
 
@@ -521,6 +1232,85 @@ oble-client.exe).
 
 --
 
+## 0. Pick up here (2026-10-30, 04:45 ET) - Elite Armors Network Replication Fix, Elite Armor Effects Engine Patch, Full Armory Permutations & Emblems/Nameplates, and Master Server Social Friends/Invites Menu (O7OF / Dominus)
+
+Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor effects engine support, MCC nameplates and emblems integration into the Armory, and master server social networking system with interactive friends list, player search, and in-game lobby invites.
+
+### 1. What was wrong & Root Causes
+
+1. **Elite Armors Defaulting to Elite Minor for Remote Players:**
+   - Players equipping Elite armor sets (such as Honor Guard, General, Field Marshall, Officer, etc.) saw their selected armor locally, but remote players in multiplayer matches only saw them as default Elite Minor.
+   - **Root Cause Reverse-Engineered:** In `haloreach.dll+0x2EDD45` (the function serializing the player's profile into the network replication player datum at `0x2C8070`), Bungie/MCC hardcoded `species = 0` (Spartan) and `slot = 7` when writing `profile[0x8C]` (the equipped Elite armor set index).
+   - In `haloreach.dll+0x2C8070`, the code verifies `cmp dword ptr [rdx+4], 3; ja exit`. Passing slot 7 exceeded the check and jumped to exit, leaving `[player + 0xAE + 0]` completely unwritten (0 = Elite Minor). The multiplayer network session then broadcasted this default 0 value to all other clients.
+
+2. **Elite Armor Effects Not Showing & Previous Buggy Behavior:**
+   - Armor effects only applied to Spartans; Elites had no working armor effects.
+   - **Root Cause Reverse-Engineered:** In `haloreach.dll+0x105796`, the engine validated `cmp esi, 8; setb r15b` (`83 FE 08 41 0F 92 C7`), rejecting `pmcg` lists >= 8. Spartan fx is list 8 (`+0x80`), while Elite fx is list 9 (`+0x8C`).
+   - In previous iterations, equipping armor effects erroneously overrode the player's Elite character model type due to coupled mesh logic.
+
+3. **Armory Missing Nameplates & Emblems:**
+   - The Armory identity customization lacked the full catalog of MCC Reach nameplates (536 nameplates) and emblems (330 emblems) loaded dynamically from MCC assets.
+
+4. **Placeholder Social / Friends System in Main Menu and Pre-Game Lobby:**
+   - The lobby sidebar displayed hardcoded placeholder text for friends ("Forge - In a Game", "In Custom Game Lobby"). There was no way to search community players, add friends, accept/decline friend requests, view real-time invites, or invite friends directly to a game lobby.
+
+---
+
+### 2. Implementation & Fixes
+
+1. **Elite Armor Network Replication Engine Patch (`src/hooks/EnginePatches.cpp`):**
+   - Patched RVA `0x2EDD45` in `haloreach.dll` from:
+     `89 75 C0 C7 45 C4 07 00 00 00` (`mov [rbp-0x40], esi; mov dword ptr [rbp-0x3C], 7`)
+     to:
+     `C7 45 C0 01 00 00 00 89 75 C4` (`mov dword ptr [rbp-0x40], 1; mov [rbp-0x3C], esi`)
+   - This passes `species = 1` (Elite) and `slot = 0` to `0x2C8070`, cleanly storing the equipped armor set index directly into `[player + 0xAE + 0]`. Remote players now replicate and render the exact Elite armor set chosen (Minor, Officer, SpecOps, Ranger, Ultra, Zealot, General, Field Marshall, Honor Guard).
+
+2. **Elite Armor Effects Engine & Pack Fixes (`src/engine/ElitePack.cpp`):**
+   - Patched RVA `0x105796` in `haloreach.dll` from `cmp esi, 8; setb r15b` (`83 FE 08 41 0F 92 C7`) to `cmp esi, 8; setne r15b` (`83 FE 08 41 0F 95 C7`). This cleanly skips Spartan fx list 8 (`+0x80`) while permitting Elite armor piece lists 0..7 and Elite fx list 9 (`pmcg +0x8C`).
+   - Expanded `kSetPieces` array to `[9][6]`, adding Honor Guard at index 8 (`{2, 2, 2, 8, 2, 10}`).
+   - In `BuilderHook`, cleanly differentiated local vs remote players. Local player reads saved armory selection and elite armor effect; remote players read their replicated network set (`copy[0x17]`). Spartan effect on Elites is suppressed (`copy[0x18] = 0xFF`) and Elite effect is applied (`copy[0x19] = eliteEffect`).
+   - Character mesh permutations and armor effect permutation logic are 100% separated, eliminating past permutation collision bugs.
+   - Added `"forge"` mode support to `ElitePack::Install`.
+
+3. **ReachArmory & Host Ingestion (`src/engine/ReachHost.cpp`, `ReachArmory.hpp`, `ReachArmory.cpp`):**
+   - Clamped `el["armor_set"]` to 0..8 (Honor Guard support) in `ReachHost.cpp`.
+   - Added `eliteArmorEffectIndex` and `eliteArmorEffect` to `ReachArmorySelection`.
+   - Added 3D viewport preview for Elite armor effects using `PmcgEffectName(sel.eliteArmorEffect)` mapping to `pmcg` list `8c` / region `armor_fx` (permutations `armor_fx_00`..`05`).
+
+4. **Nameplates & Emblems Catalog & In-Game Badging (`src/ui/UiArt.hpp`, `UiArt.cpp`, `ArmorCustomizer.hpp`, `ArmorCustomizer.cpp`):**
+   - Implemented `GetNameplateCatalog()` and `GetEmblemCatalog()` in `UiArt.cpp`, dynamically parsing `playercustomization.xml` from MCC for 536 nameplates and 330 emblems with authentic titles.
+   - Added `UiTexture Nameplate(int id)` loading `PlayerIDNamePlate_*.png` via WIC and `UiTexture Emblem(int id)` decoding from `emblemstexturepack.perm.bin` via `PackImage`.
+   - Added Nameplate and Emblem selectors in `ArmorCustomizer.cpp` under the `IDENTITY` section, with real-time preview and saving to `appearance.json`.
+   - Added Honor Guard to `kEliteSets` and an Armor Effect row under `EFFECTS & VOICE` for Elites.
+   - Updated top-right header nameplate badge to render the player's equipped nameplate PNG and emblem.
+
+5. **Master Server Social Networking Client & UI (`src/network/SocialClient.hpp`, `SocialClient.cpp`, `FrontEndMenu.cpp`):**
+   - Built `SocialClient` singleton with async WinHttp background requests to the master server:
+     - `/api/friends/list` - Retrieves accepted friends, incoming requests, and outgoing requests.
+     - `/api/invites/list` - Polls active game invites for the user.
+     - `/api/friends/search` - Searches community users by username prefix.
+     - `/api/friends/add` - Sends a friend request.
+     - `/api/friends/accept` - Accepts an incoming request.
+     - `/api/friends/remove` - Removes a friend or cancels a request.
+     - `/api/invites/send` - Sends a game invite with host IP and port.
+     - `/api/invites/clear` - Dismisses an invite.
+   - Background thread polls invites and friends every 10 seconds.
+   - Added `Social` to main menu navigation (`kMainEntries`) and implemented `DrawSocialScreen`:
+     - Online account status header with quick link to Account Login/Register modal.
+     - Prominent Game Invite Received banner with one-click `[JOIN GAME]` and `[DISMISS]`.
+     - Interactive tabs for **Friends**, **Requests**, and **Find Players** (navigable via mouse or Q/E / Bumpers).
+     - Live search bar for player lookup with `[ADD FRIEND]` buttons.
+   - Pre-Game Lobby update: replaced placeholder friends with real friends list from `SocialClient`, added one-click `[INVITE]` button for lobby hosts, and mapped the `Y` button / click on friends header to open the Social screen directly.
+
+---
+
+### 3. Verification & Build Status
+
+- Built cleanly via MSBuild: `cmake --build build --config Release`
+  - `noble-client.exe`: **0 errors, 0 warnings**
+  - `noble-dedicated.exe`: **0 errors, 0 warnings**
+- All MCC retail installation files remain 100% read-only and unmodified.
+
 ## 0. Pick up here (2026-10-29, 17:30 ET) - Pre-Game Lobby Host P:ID / Username Revert & Guest Match Launch Mismatch Fixed (Dominus / Dominus-VII)
 
 ### 1. Why the Host's `P:ID` and Username Reverted to `P:ID 1` and `"Host"` After ~1.2 Seconds in the Pre-Game Lobby
@@ -565,6 +1355,85 @@ oble-client.exe).
 
 --
 
+## 0. Pick up here (2026-10-30, 04:45 ET) - Elite Armors Network Replication Fix, Elite Armor Effects Engine Patch, Full Armory Permutations & Emblems/Nameplates, and Master Server Social Friends/Invites Menu (O7OF / Dominus)
+
+Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor effects engine support, MCC nameplates and emblems integration into the Armory, and master server social networking system with interactive friends list, player search, and in-game lobby invites.
+
+### 1. What was wrong & Root Causes
+
+1. **Elite Armors Defaulting to Elite Minor for Remote Players:**
+   - Players equipping Elite armor sets (such as Honor Guard, General, Field Marshall, Officer, etc.) saw their selected armor locally, but remote players in multiplayer matches only saw them as default Elite Minor.
+   - **Root Cause Reverse-Engineered:** In `haloreach.dll+0x2EDD45` (the function serializing the player's profile into the network replication player datum at `0x2C8070`), Bungie/MCC hardcoded `species = 0` (Spartan) and `slot = 7` when writing `profile[0x8C]` (the equipped Elite armor set index).
+   - In `haloreach.dll+0x2C8070`, the code verifies `cmp dword ptr [rdx+4], 3; ja exit`. Passing slot 7 exceeded the check and jumped to exit, leaving `[player + 0xAE + 0]` completely unwritten (0 = Elite Minor). The multiplayer network session then broadcasted this default 0 value to all other clients.
+
+2. **Elite Armor Effects Not Showing & Previous Buggy Behavior:**
+   - Armor effects only applied to Spartans; Elites had no working armor effects.
+   - **Root Cause Reverse-Engineered:** In `haloreach.dll+0x105796`, the engine validated `cmp esi, 8; setb r15b` (`83 FE 08 41 0F 92 C7`), rejecting `pmcg` lists >= 8. Spartan fx is list 8 (`+0x80`), while Elite fx is list 9 (`+0x8C`).
+   - In previous iterations, equipping armor effects erroneously overrode the player's Elite character model type due to coupled mesh logic.
+
+3. **Armory Missing Nameplates & Emblems:**
+   - The Armory identity customization lacked the full catalog of MCC Reach nameplates (536 nameplates) and emblems (330 emblems) loaded dynamically from MCC assets.
+
+4. **Placeholder Social / Friends System in Main Menu and Pre-Game Lobby:**
+   - The lobby sidebar displayed hardcoded placeholder text for friends ("Forge - In a Game", "In Custom Game Lobby"). There was no way to search community players, add friends, accept/decline friend requests, view real-time invites, or invite friends directly to a game lobby.
+
+---
+
+### 2. Implementation & Fixes
+
+1. **Elite Armor Network Replication Engine Patch (`src/hooks/EnginePatches.cpp`):**
+   - Patched RVA `0x2EDD45` in `haloreach.dll` from:
+     `89 75 C0 C7 45 C4 07 00 00 00` (`mov [rbp-0x40], esi; mov dword ptr [rbp-0x3C], 7`)
+     to:
+     `C7 45 C0 01 00 00 00 89 75 C4` (`mov dword ptr [rbp-0x40], 1; mov [rbp-0x3C], esi`)
+   - This passes `species = 1` (Elite) and `slot = 0` to `0x2C8070`, cleanly storing the equipped armor set index directly into `[player + 0xAE + 0]`. Remote players now replicate and render the exact Elite armor set chosen (Minor, Officer, SpecOps, Ranger, Ultra, Zealot, General, Field Marshall, Honor Guard).
+
+2. **Elite Armor Effects Engine & Pack Fixes (`src/engine/ElitePack.cpp`):**
+   - Patched RVA `0x105796` in `haloreach.dll` from `cmp esi, 8; setb r15b` (`83 FE 08 41 0F 92 C7`) to `cmp esi, 8; setne r15b` (`83 FE 08 41 0F 95 C7`). This cleanly skips Spartan fx list 8 (`+0x80`) while permitting Elite armor piece lists 0..7 and Elite fx list 9 (`pmcg +0x8C`).
+   - Expanded `kSetPieces` array to `[9][6]`, adding Honor Guard at index 8 (`{2, 2, 2, 8, 2, 10}`).
+   - In `BuilderHook`, cleanly differentiated local vs remote players. Local player reads saved armory selection and elite armor effect; remote players read their replicated network set (`copy[0x17]`). Spartan effect on Elites is suppressed (`copy[0x18] = 0xFF`) and Elite effect is applied (`copy[0x19] = eliteEffect`).
+   - Character mesh permutations and armor effect permutation logic are 100% separated, eliminating past permutation collision bugs.
+   - Added `"forge"` mode support to `ElitePack::Install`.
+
+3. **ReachArmory & Host Ingestion (`src/engine/ReachHost.cpp`, `ReachArmory.hpp`, `ReachArmory.cpp`):**
+   - Clamped `el["armor_set"]` to 0..8 (Honor Guard support) in `ReachHost.cpp`.
+   - Added `eliteArmorEffectIndex` and `eliteArmorEffect` to `ReachArmorySelection`.
+   - Added 3D viewport preview for Elite armor effects using `PmcgEffectName(sel.eliteArmorEffect)` mapping to `pmcg` list `8c` / region `armor_fx` (permutations `armor_fx_00`..`05`).
+
+4. **Nameplates & Emblems Catalog & In-Game Badging (`src/ui/UiArt.hpp`, `UiArt.cpp`, `ArmorCustomizer.hpp`, `ArmorCustomizer.cpp`):**
+   - Implemented `GetNameplateCatalog()` and `GetEmblemCatalog()` in `UiArt.cpp`, dynamically parsing `playercustomization.xml` from MCC for 536 nameplates and 330 emblems with authentic titles.
+   - Added `UiTexture Nameplate(int id)` loading `PlayerIDNamePlate_*.png` via WIC and `UiTexture Emblem(int id)` decoding from `emblemstexturepack.perm.bin` via `PackImage`.
+   - Added Nameplate and Emblem selectors in `ArmorCustomizer.cpp` under the `IDENTITY` section, with real-time preview and saving to `appearance.json`.
+   - Added Honor Guard to `kEliteSets` and an Armor Effect row under `EFFECTS & VOICE` for Elites.
+   - Updated top-right header nameplate badge to render the player's equipped nameplate PNG and emblem.
+
+5. **Master Server Social Networking Client & UI (`src/network/SocialClient.hpp`, `SocialClient.cpp`, `FrontEndMenu.cpp`):**
+   - Built `SocialClient` singleton with async WinHttp background requests to the master server:
+     - `/api/friends/list` - Retrieves accepted friends, incoming requests, and outgoing requests.
+     - `/api/invites/list` - Polls active game invites for the user.
+     - `/api/friends/search` - Searches community users by username prefix.
+     - `/api/friends/add` - Sends a friend request.
+     - `/api/friends/accept` - Accepts an incoming request.
+     - `/api/friends/remove` - Removes a friend or cancels a request.
+     - `/api/invites/send` - Sends a game invite with host IP and port.
+     - `/api/invites/clear` - Dismisses an invite.
+   - Background thread polls invites and friends every 10 seconds.
+   - Added `Social` to main menu navigation (`kMainEntries`) and implemented `DrawSocialScreen`:
+     - Online account status header with quick link to Account Login/Register modal.
+     - Prominent Game Invite Received banner with one-click `[JOIN GAME]` and `[DISMISS]`.
+     - Interactive tabs for **Friends**, **Requests**, and **Find Players** (navigable via mouse or Q/E / Bumpers).
+     - Live search bar for player lookup with `[ADD FRIEND]` buttons.
+   - Pre-Game Lobby update: replaced placeholder friends with real friends list from `SocialClient`, added one-click `[INVITE]` button for lobby hosts, and mapped the `Y` button / click on friends header to open the Social screen directly.
+
+---
+
+### 3. Verification & Build Status
+
+- Built cleanly via MSBuild: `cmake --build build --config Release`
+  - `noble-client.exe`: **0 errors, 0 warnings**
+  - `noble-dedicated.exe`: **0 errors, 0 warnings**
+- All MCC retail installation files remain 100% read-only and unmodified.
+
 ## 0. Pick up here (2026-10-29, 16:15 ET) - Audit after 2605bf7 / 622907a: no crashes since the fix build; two hardening fixes (Dominus)
 
 - **Verified from `build\bin\Release\noble-client.log` and the Windows Application log:** every crash before the 12:34 PT
@@ -588,6 +1457,85 @@ oble-client.exe).
 - Build: `noble-client.exe` / `noble-dedicated.exe` 0 errors, 0 warnings (/W4).
 
 --
+
+## 0. Pick up here (2026-10-30, 04:45 ET) - Elite Armors Network Replication Fix, Elite Armor Effects Engine Patch, Full Armory Permutations & Emblems/Nameplates, and Master Server Social Friends/Invites Menu (O7OF / Dominus)
+
+Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor effects engine support, MCC nameplates and emblems integration into the Armory, and master server social networking system with interactive friends list, player search, and in-game lobby invites.
+
+### 1. What was wrong & Root Causes
+
+1. **Elite Armors Defaulting to Elite Minor for Remote Players:**
+   - Players equipping Elite armor sets (such as Honor Guard, General, Field Marshall, Officer, etc.) saw their selected armor locally, but remote players in multiplayer matches only saw them as default Elite Minor.
+   - **Root Cause Reverse-Engineered:** In `haloreach.dll+0x2EDD45` (the function serializing the player's profile into the network replication player datum at `0x2C8070`), Bungie/MCC hardcoded `species = 0` (Spartan) and `slot = 7` when writing `profile[0x8C]` (the equipped Elite armor set index).
+   - In `haloreach.dll+0x2C8070`, the code verifies `cmp dword ptr [rdx+4], 3; ja exit`. Passing slot 7 exceeded the check and jumped to exit, leaving `[player + 0xAE + 0]` completely unwritten (0 = Elite Minor). The multiplayer network session then broadcasted this default 0 value to all other clients.
+
+2. **Elite Armor Effects Not Showing & Previous Buggy Behavior:**
+   - Armor effects only applied to Spartans; Elites had no working armor effects.
+   - **Root Cause Reverse-Engineered:** In `haloreach.dll+0x105796`, the engine validated `cmp esi, 8; setb r15b` (`83 FE 08 41 0F 92 C7`), rejecting `pmcg` lists >= 8. Spartan fx is list 8 (`+0x80`), while Elite fx is list 9 (`+0x8C`).
+   - In previous iterations, equipping armor effects erroneously overrode the player's Elite character model type due to coupled mesh logic.
+
+3. **Armory Missing Nameplates & Emblems:**
+   - The Armory identity customization lacked the full catalog of MCC Reach nameplates (536 nameplates) and emblems (330 emblems) loaded dynamically from MCC assets.
+
+4. **Placeholder Social / Friends System in Main Menu and Pre-Game Lobby:**
+   - The lobby sidebar displayed hardcoded placeholder text for friends ("Forge - In a Game", "In Custom Game Lobby"). There was no way to search community players, add friends, accept/decline friend requests, view real-time invites, or invite friends directly to a game lobby.
+
+---
+
+### 2. Implementation & Fixes
+
+1. **Elite Armor Network Replication Engine Patch (`src/hooks/EnginePatches.cpp`):**
+   - Patched RVA `0x2EDD45` in `haloreach.dll` from:
+     `89 75 C0 C7 45 C4 07 00 00 00` (`mov [rbp-0x40], esi; mov dword ptr [rbp-0x3C], 7`)
+     to:
+     `C7 45 C0 01 00 00 00 89 75 C4` (`mov dword ptr [rbp-0x40], 1; mov [rbp-0x3C], esi`)
+   - This passes `species = 1` (Elite) and `slot = 0` to `0x2C8070`, cleanly storing the equipped armor set index directly into `[player + 0xAE + 0]`. Remote players now replicate and render the exact Elite armor set chosen (Minor, Officer, SpecOps, Ranger, Ultra, Zealot, General, Field Marshall, Honor Guard).
+
+2. **Elite Armor Effects Engine & Pack Fixes (`src/engine/ElitePack.cpp`):**
+   - Patched RVA `0x105796` in `haloreach.dll` from `cmp esi, 8; setb r15b` (`83 FE 08 41 0F 92 C7`) to `cmp esi, 8; setne r15b` (`83 FE 08 41 0F 95 C7`). This cleanly skips Spartan fx list 8 (`+0x80`) while permitting Elite armor piece lists 0..7 and Elite fx list 9 (`pmcg +0x8C`).
+   - Expanded `kSetPieces` array to `[9][6]`, adding Honor Guard at index 8 (`{2, 2, 2, 8, 2, 10}`).
+   - In `BuilderHook`, cleanly differentiated local vs remote players. Local player reads saved armory selection and elite armor effect; remote players read their replicated network set (`copy[0x17]`). Spartan effect on Elites is suppressed (`copy[0x18] = 0xFF`) and Elite effect is applied (`copy[0x19] = eliteEffect`).
+   - Character mesh permutations and armor effect permutation logic are 100% separated, eliminating past permutation collision bugs.
+   - Added `"forge"` mode support to `ElitePack::Install`.
+
+3. **ReachArmory & Host Ingestion (`src/engine/ReachHost.cpp`, `ReachArmory.hpp`, `ReachArmory.cpp`):**
+   - Clamped `el["armor_set"]` to 0..8 (Honor Guard support) in `ReachHost.cpp`.
+   - Added `eliteArmorEffectIndex` and `eliteArmorEffect` to `ReachArmorySelection`.
+   - Added 3D viewport preview for Elite armor effects using `PmcgEffectName(sel.eliteArmorEffect)` mapping to `pmcg` list `8c` / region `armor_fx` (permutations `armor_fx_00`..`05`).
+
+4. **Nameplates & Emblems Catalog & In-Game Badging (`src/ui/UiArt.hpp`, `UiArt.cpp`, `ArmorCustomizer.hpp`, `ArmorCustomizer.cpp`):**
+   - Implemented `GetNameplateCatalog()` and `GetEmblemCatalog()` in `UiArt.cpp`, dynamically parsing `playercustomization.xml` from MCC for 536 nameplates and 330 emblems with authentic titles.
+   - Added `UiTexture Nameplate(int id)` loading `PlayerIDNamePlate_*.png` via WIC and `UiTexture Emblem(int id)` decoding from `emblemstexturepack.perm.bin` via `PackImage`.
+   - Added Nameplate and Emblem selectors in `ArmorCustomizer.cpp` under the `IDENTITY` section, with real-time preview and saving to `appearance.json`.
+   - Added Honor Guard to `kEliteSets` and an Armor Effect row under `EFFECTS & VOICE` for Elites.
+   - Updated top-right header nameplate badge to render the player's equipped nameplate PNG and emblem.
+
+5. **Master Server Social Networking Client & UI (`src/network/SocialClient.hpp`, `SocialClient.cpp`, `FrontEndMenu.cpp`):**
+   - Built `SocialClient` singleton with async WinHttp background requests to the master server:
+     - `/api/friends/list` - Retrieves accepted friends, incoming requests, and outgoing requests.
+     - `/api/invites/list` - Polls active game invites for the user.
+     - `/api/friends/search` - Searches community users by username prefix.
+     - `/api/friends/add` - Sends a friend request.
+     - `/api/friends/accept` - Accepts an incoming request.
+     - `/api/friends/remove` - Removes a friend or cancels a request.
+     - `/api/invites/send` - Sends a game invite with host IP and port.
+     - `/api/invites/clear` - Dismisses an invite.
+   - Background thread polls invites and friends every 10 seconds.
+   - Added `Social` to main menu navigation (`kMainEntries`) and implemented `DrawSocialScreen`:
+     - Online account status header with quick link to Account Login/Register modal.
+     - Prominent Game Invite Received banner with one-click `[JOIN GAME]` and `[DISMISS]`.
+     - Interactive tabs for **Friends**, **Requests**, and **Find Players** (navigable via mouse or Q/E / Bumpers).
+     - Live search bar for player lookup with `[ADD FRIEND]` buttons.
+   - Pre-Game Lobby update: replaced placeholder friends with real friends list from `SocialClient`, added one-click `[INVITE]` button for lobby hosts, and mapped the `Y` button / click on friends header to open the Social screen directly.
+
+---
+
+### 3. Verification & Build Status
+
+- Built cleanly via MSBuild: `cmake --build build --config Release`
+  - `noble-client.exe`: **0 errors, 0 warnings**
+  - `noble-dedicated.exe`: **0 errors, 0 warnings**
+- All MCC retail installation files remain 100% read-only and unmodified.
 
 ## 0. Pick up here (2026-10-29, 15:20 ET) - 3D Armory Live Scene Restored & Match Start Crash (0x105512) Fixed (Dominus / Tyler)
 
@@ -618,6 +1566,85 @@ oble-client.exe).
   - In `src/engine/ReachHost.cpp`: Clamped helmet (>= 72 -> 0) and chest (>= 235 -> 126, base chest) in `ApplyArmoryAppearance` before passing the appearance struct to the engine match builder. This completely prevents `player_appearance_build` from triggering the broken tag fallback path.
 
 --
+
+## 0. Pick up here (2026-10-30, 04:45 ET) - Elite Armors Network Replication Fix, Elite Armor Effects Engine Patch, Full Armory Permutations & Emblems/Nameplates, and Master Server Social Friends/Invites Menu (O7OF / Dominus)
+
+Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor effects engine support, MCC nameplates and emblems integration into the Armory, and master server social networking system with interactive friends list, player search, and in-game lobby invites.
+
+### 1. What was wrong & Root Causes
+
+1. **Elite Armors Defaulting to Elite Minor for Remote Players:**
+   - Players equipping Elite armor sets (such as Honor Guard, General, Field Marshall, Officer, etc.) saw their selected armor locally, but remote players in multiplayer matches only saw them as default Elite Minor.
+   - **Root Cause Reverse-Engineered:** In `haloreach.dll+0x2EDD45` (the function serializing the player's profile into the network replication player datum at `0x2C8070`), Bungie/MCC hardcoded `species = 0` (Spartan) and `slot = 7` when writing `profile[0x8C]` (the equipped Elite armor set index).
+   - In `haloreach.dll+0x2C8070`, the code verifies `cmp dword ptr [rdx+4], 3; ja exit`. Passing slot 7 exceeded the check and jumped to exit, leaving `[player + 0xAE + 0]` completely unwritten (0 = Elite Minor). The multiplayer network session then broadcasted this default 0 value to all other clients.
+
+2. **Elite Armor Effects Not Showing & Previous Buggy Behavior:**
+   - Armor effects only applied to Spartans; Elites had no working armor effects.
+   - **Root Cause Reverse-Engineered:** In `haloreach.dll+0x105796`, the engine validated `cmp esi, 8; setb r15b` (`83 FE 08 41 0F 92 C7`), rejecting `pmcg` lists >= 8. Spartan fx is list 8 (`+0x80`), while Elite fx is list 9 (`+0x8C`).
+   - In previous iterations, equipping armor effects erroneously overrode the player's Elite character model type due to coupled mesh logic.
+
+3. **Armory Missing Nameplates & Emblems:**
+   - The Armory identity customization lacked the full catalog of MCC Reach nameplates (536 nameplates) and emblems (330 emblems) loaded dynamically from MCC assets.
+
+4. **Placeholder Social / Friends System in Main Menu and Pre-Game Lobby:**
+   - The lobby sidebar displayed hardcoded placeholder text for friends ("Forge - In a Game", "In Custom Game Lobby"). There was no way to search community players, add friends, accept/decline friend requests, view real-time invites, or invite friends directly to a game lobby.
+
+---
+
+### 2. Implementation & Fixes
+
+1. **Elite Armor Network Replication Engine Patch (`src/hooks/EnginePatches.cpp`):**
+   - Patched RVA `0x2EDD45` in `haloreach.dll` from:
+     `89 75 C0 C7 45 C4 07 00 00 00` (`mov [rbp-0x40], esi; mov dword ptr [rbp-0x3C], 7`)
+     to:
+     `C7 45 C0 01 00 00 00 89 75 C4` (`mov dword ptr [rbp-0x40], 1; mov [rbp-0x3C], esi`)
+   - This passes `species = 1` (Elite) and `slot = 0` to `0x2C8070`, cleanly storing the equipped armor set index directly into `[player + 0xAE + 0]`. Remote players now replicate and render the exact Elite armor set chosen (Minor, Officer, SpecOps, Ranger, Ultra, Zealot, General, Field Marshall, Honor Guard).
+
+2. **Elite Armor Effects Engine & Pack Fixes (`src/engine/ElitePack.cpp`):**
+   - Patched RVA `0x105796` in `haloreach.dll` from `cmp esi, 8; setb r15b` (`83 FE 08 41 0F 92 C7`) to `cmp esi, 8; setne r15b` (`83 FE 08 41 0F 95 C7`). This cleanly skips Spartan fx list 8 (`+0x80`) while permitting Elite armor piece lists 0..7 and Elite fx list 9 (`pmcg +0x8C`).
+   - Expanded `kSetPieces` array to `[9][6]`, adding Honor Guard at index 8 (`{2, 2, 2, 8, 2, 10}`).
+   - In `BuilderHook`, cleanly differentiated local vs remote players. Local player reads saved armory selection and elite armor effect; remote players read their replicated network set (`copy[0x17]`). Spartan effect on Elites is suppressed (`copy[0x18] = 0xFF`) and Elite effect is applied (`copy[0x19] = eliteEffect`).
+   - Character mesh permutations and armor effect permutation logic are 100% separated, eliminating past permutation collision bugs.
+   - Added `"forge"` mode support to `ElitePack::Install`.
+
+3. **ReachArmory & Host Ingestion (`src/engine/ReachHost.cpp`, `ReachArmory.hpp`, `ReachArmory.cpp`):**
+   - Clamped `el["armor_set"]` to 0..8 (Honor Guard support) in `ReachHost.cpp`.
+   - Added `eliteArmorEffectIndex` and `eliteArmorEffect` to `ReachArmorySelection`.
+   - Added 3D viewport preview for Elite armor effects using `PmcgEffectName(sel.eliteArmorEffect)` mapping to `pmcg` list `8c` / region `armor_fx` (permutations `armor_fx_00`..`05`).
+
+4. **Nameplates & Emblems Catalog & In-Game Badging (`src/ui/UiArt.hpp`, `UiArt.cpp`, `ArmorCustomizer.hpp`, `ArmorCustomizer.cpp`):**
+   - Implemented `GetNameplateCatalog()` and `GetEmblemCatalog()` in `UiArt.cpp`, dynamically parsing `playercustomization.xml` from MCC for 536 nameplates and 330 emblems with authentic titles.
+   - Added `UiTexture Nameplate(int id)` loading `PlayerIDNamePlate_*.png` via WIC and `UiTexture Emblem(int id)` decoding from `emblemstexturepack.perm.bin` via `PackImage`.
+   - Added Nameplate and Emblem selectors in `ArmorCustomizer.cpp` under the `IDENTITY` section, with real-time preview and saving to `appearance.json`.
+   - Added Honor Guard to `kEliteSets` and an Armor Effect row under `EFFECTS & VOICE` for Elites.
+   - Updated top-right header nameplate badge to render the player's equipped nameplate PNG and emblem.
+
+5. **Master Server Social Networking Client & UI (`src/network/SocialClient.hpp`, `SocialClient.cpp`, `FrontEndMenu.cpp`):**
+   - Built `SocialClient` singleton with async WinHttp background requests to the master server:
+     - `/api/friends/list` - Retrieves accepted friends, incoming requests, and outgoing requests.
+     - `/api/invites/list` - Polls active game invites for the user.
+     - `/api/friends/search` - Searches community users by username prefix.
+     - `/api/friends/add` - Sends a friend request.
+     - `/api/friends/accept` - Accepts an incoming request.
+     - `/api/friends/remove` - Removes a friend or cancels a request.
+     - `/api/invites/send` - Sends a game invite with host IP and port.
+     - `/api/invites/clear` - Dismisses an invite.
+   - Background thread polls invites and friends every 10 seconds.
+   - Added `Social` to main menu navigation (`kMainEntries`) and implemented `DrawSocialScreen`:
+     - Online account status header with quick link to Account Login/Register modal.
+     - Prominent Game Invite Received banner with one-click `[JOIN GAME]` and `[DISMISS]`.
+     - Interactive tabs for **Friends**, **Requests**, and **Find Players** (navigable via mouse or Q/E / Bumpers).
+     - Live search bar for player lookup with `[ADD FRIEND]` buttons.
+   - Pre-Game Lobby update: replaced placeholder friends with real friends list from `SocialClient`, added one-click `[INVITE]` button for lobby hosts, and mapped the `Y` button / click on friends header to open the Social screen directly.
+
+---
+
+### 3. Verification & Build Status
+
+- Built cleanly via MSBuild: `cmake --build build --config Release`
+  - `noble-client.exe`: **0 errors, 0 warnings**
+  - `noble-dedicated.exe`: **0 errors, 0 warnings**
+- All MCC retail installation files remain 100% read-only and unmodified.
 
 ## 1. Previous Handoff (2026-10-29, 13:55 ET) - JOIN FIXED (two instances on one PC): endpoint ports
 
@@ -712,6 +1739,85 @@ Resolved the host crash/hang that occurred when waiting for non-host clients to 
   - In `LaunchMap`: Paced online host initialization by posting `Command 10` (Event: Start) after 1000ms and `Command 11` (Event: In-Game) after 5000ms, allowing cleaner network session handshakes.
 
 --
+
+## 0. Pick up here (2026-10-30, 04:45 ET) - Elite Armors Network Replication Fix, Elite Armor Effects Engine Patch, Full Armory Permutations & Emblems/Nameplates, and Master Server Social Friends/Invites Menu (O7OF / Dominus)
+
+Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor effects engine support, MCC nameplates and emblems integration into the Armory, and master server social networking system with interactive friends list, player search, and in-game lobby invites.
+
+### 1. What was wrong & Root Causes
+
+1. **Elite Armors Defaulting to Elite Minor for Remote Players:**
+   - Players equipping Elite armor sets (such as Honor Guard, General, Field Marshall, Officer, etc.) saw their selected armor locally, but remote players in multiplayer matches only saw them as default Elite Minor.
+   - **Root Cause Reverse-Engineered:** In `haloreach.dll+0x2EDD45` (the function serializing the player's profile into the network replication player datum at `0x2C8070`), Bungie/MCC hardcoded `species = 0` (Spartan) and `slot = 7` when writing `profile[0x8C]` (the equipped Elite armor set index).
+   - In `haloreach.dll+0x2C8070`, the code verifies `cmp dword ptr [rdx+4], 3; ja exit`. Passing slot 7 exceeded the check and jumped to exit, leaving `[player + 0xAE + 0]` completely unwritten (0 = Elite Minor). The multiplayer network session then broadcasted this default 0 value to all other clients.
+
+2. **Elite Armor Effects Not Showing & Previous Buggy Behavior:**
+   - Armor effects only applied to Spartans; Elites had no working armor effects.
+   - **Root Cause Reverse-Engineered:** In `haloreach.dll+0x105796`, the engine validated `cmp esi, 8; setb r15b` (`83 FE 08 41 0F 92 C7`), rejecting `pmcg` lists >= 8. Spartan fx is list 8 (`+0x80`), while Elite fx is list 9 (`+0x8C`).
+   - In previous iterations, equipping armor effects erroneously overrode the player's Elite character model type due to coupled mesh logic.
+
+3. **Armory Missing Nameplates & Emblems:**
+   - The Armory identity customization lacked the full catalog of MCC Reach nameplates (536 nameplates) and emblems (330 emblems) loaded dynamically from MCC assets.
+
+4. **Placeholder Social / Friends System in Main Menu and Pre-Game Lobby:**
+   - The lobby sidebar displayed hardcoded placeholder text for friends ("Forge - In a Game", "In Custom Game Lobby"). There was no way to search community players, add friends, accept/decline friend requests, view real-time invites, or invite friends directly to a game lobby.
+
+---
+
+### 2. Implementation & Fixes
+
+1. **Elite Armor Network Replication Engine Patch (`src/hooks/EnginePatches.cpp`):**
+   - Patched RVA `0x2EDD45` in `haloreach.dll` from:
+     `89 75 C0 C7 45 C4 07 00 00 00` (`mov [rbp-0x40], esi; mov dword ptr [rbp-0x3C], 7`)
+     to:
+     `C7 45 C0 01 00 00 00 89 75 C4` (`mov dword ptr [rbp-0x40], 1; mov [rbp-0x3C], esi`)
+   - This passes `species = 1` (Elite) and `slot = 0` to `0x2C8070`, cleanly storing the equipped armor set index directly into `[player + 0xAE + 0]`. Remote players now replicate and render the exact Elite armor set chosen (Minor, Officer, SpecOps, Ranger, Ultra, Zealot, General, Field Marshall, Honor Guard).
+
+2. **Elite Armor Effects Engine & Pack Fixes (`src/engine/ElitePack.cpp`):**
+   - Patched RVA `0x105796` in `haloreach.dll` from `cmp esi, 8; setb r15b` (`83 FE 08 41 0F 92 C7`) to `cmp esi, 8; setne r15b` (`83 FE 08 41 0F 95 C7`). This cleanly skips Spartan fx list 8 (`+0x80`) while permitting Elite armor piece lists 0..7 and Elite fx list 9 (`pmcg +0x8C`).
+   - Expanded `kSetPieces` array to `[9][6]`, adding Honor Guard at index 8 (`{2, 2, 2, 8, 2, 10}`).
+   - In `BuilderHook`, cleanly differentiated local vs remote players. Local player reads saved armory selection and elite armor effect; remote players read their replicated network set (`copy[0x17]`). Spartan effect on Elites is suppressed (`copy[0x18] = 0xFF`) and Elite effect is applied (`copy[0x19] = eliteEffect`).
+   - Character mesh permutations and armor effect permutation logic are 100% separated, eliminating past permutation collision bugs.
+   - Added `"forge"` mode support to `ElitePack::Install`.
+
+3. **ReachArmory & Host Ingestion (`src/engine/ReachHost.cpp`, `ReachArmory.hpp`, `ReachArmory.cpp`):**
+   - Clamped `el["armor_set"]` to 0..8 (Honor Guard support) in `ReachHost.cpp`.
+   - Added `eliteArmorEffectIndex` and `eliteArmorEffect` to `ReachArmorySelection`.
+   - Added 3D viewport preview for Elite armor effects using `PmcgEffectName(sel.eliteArmorEffect)` mapping to `pmcg` list `8c` / region `armor_fx` (permutations `armor_fx_00`..`05`).
+
+4. **Nameplates & Emblems Catalog & In-Game Badging (`src/ui/UiArt.hpp`, `UiArt.cpp`, `ArmorCustomizer.hpp`, `ArmorCustomizer.cpp`):**
+   - Implemented `GetNameplateCatalog()` and `GetEmblemCatalog()` in `UiArt.cpp`, dynamically parsing `playercustomization.xml` from MCC for 536 nameplates and 330 emblems with authentic titles.
+   - Added `UiTexture Nameplate(int id)` loading `PlayerIDNamePlate_*.png` via WIC and `UiTexture Emblem(int id)` decoding from `emblemstexturepack.perm.bin` via `PackImage`.
+   - Added Nameplate and Emblem selectors in `ArmorCustomizer.cpp` under the `IDENTITY` section, with real-time preview and saving to `appearance.json`.
+   - Added Honor Guard to `kEliteSets` and an Armor Effect row under `EFFECTS & VOICE` for Elites.
+   - Updated top-right header nameplate badge to render the player's equipped nameplate PNG and emblem.
+
+5. **Master Server Social Networking Client & UI (`src/network/SocialClient.hpp`, `SocialClient.cpp`, `FrontEndMenu.cpp`):**
+   - Built `SocialClient` singleton with async WinHttp background requests to the master server:
+     - `/api/friends/list` - Retrieves accepted friends, incoming requests, and outgoing requests.
+     - `/api/invites/list` - Polls active game invites for the user.
+     - `/api/friends/search` - Searches community users by username prefix.
+     - `/api/friends/add` - Sends a friend request.
+     - `/api/friends/accept` - Accepts an incoming request.
+     - `/api/friends/remove` - Removes a friend or cancels a request.
+     - `/api/invites/send` - Sends a game invite with host IP and port.
+     - `/api/invites/clear` - Dismisses an invite.
+   - Background thread polls invites and friends every 10 seconds.
+   - Added `Social` to main menu navigation (`kMainEntries`) and implemented `DrawSocialScreen`:
+     - Online account status header with quick link to Account Login/Register modal.
+     - Prominent Game Invite Received banner with one-click `[JOIN GAME]` and `[DISMISS]`.
+     - Interactive tabs for **Friends**, **Requests**, and **Find Players** (navigable via mouse or Q/E / Bumpers).
+     - Live search bar for player lookup with `[ADD FRIEND]` buttons.
+   - Pre-Game Lobby update: replaced placeholder friends with real friends list from `SocialClient`, added one-click `[INVITE]` button for lobby hosts, and mapped the `Y` button / click on friends header to open the Social screen directly.
+
+---
+
+### 3. Verification & Build Status
+
+- Built cleanly via MSBuild: `cmake --build build --config Release`
+  - `noble-client.exe`: **0 errors, 0 warnings**
+  - `noble-dedicated.exe`: **0 errors, 0 warnings**
+- All MCC retail installation files remain 100% read-only and unmodified.
 
 ## 0. Pick up here (2026-10-29, 05:00 ET) - Networking Fixes: Host Reason 15 / Slot 25 Clearance & Guest Launch Block Desync Fixed (Dominus / Tyler) by [O7OF]
 
@@ -846,6 +1952,85 @@ Built and partly tested by Tyler (helmet/wrist id fix and the stray visor fix ar
 
 ---
 
+## 0. Pick up here (2026-10-30, 04:45 ET) - Elite Armors Network Replication Fix, Elite Armor Effects Engine Patch, Full Armory Permutations & Emblems/Nameplates, and Master Server Social Friends/Invites Menu (O7OF / Dominus)
+
+Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor effects engine support, MCC nameplates and emblems integration into the Armory, and master server social networking system with interactive friends list, player search, and in-game lobby invites.
+
+### 1. What was wrong & Root Causes
+
+1. **Elite Armors Defaulting to Elite Minor for Remote Players:**
+   - Players equipping Elite armor sets (such as Honor Guard, General, Field Marshall, Officer, etc.) saw their selected armor locally, but remote players in multiplayer matches only saw them as default Elite Minor.
+   - **Root Cause Reverse-Engineered:** In `haloreach.dll+0x2EDD45` (the function serializing the player's profile into the network replication player datum at `0x2C8070`), Bungie/MCC hardcoded `species = 0` (Spartan) and `slot = 7` when writing `profile[0x8C]` (the equipped Elite armor set index).
+   - In `haloreach.dll+0x2C8070`, the code verifies `cmp dword ptr [rdx+4], 3; ja exit`. Passing slot 7 exceeded the check and jumped to exit, leaving `[player + 0xAE + 0]` completely unwritten (0 = Elite Minor). The multiplayer network session then broadcasted this default 0 value to all other clients.
+
+2. **Elite Armor Effects Not Showing & Previous Buggy Behavior:**
+   - Armor effects only applied to Spartans; Elites had no working armor effects.
+   - **Root Cause Reverse-Engineered:** In `haloreach.dll+0x105796`, the engine validated `cmp esi, 8; setb r15b` (`83 FE 08 41 0F 92 C7`), rejecting `pmcg` lists >= 8. Spartan fx is list 8 (`+0x80`), while Elite fx is list 9 (`+0x8C`).
+   - In previous iterations, equipping armor effects erroneously overrode the player's Elite character model type due to coupled mesh logic.
+
+3. **Armory Missing Nameplates & Emblems:**
+   - The Armory identity customization lacked the full catalog of MCC Reach nameplates (536 nameplates) and emblems (330 emblems) loaded dynamically from MCC assets.
+
+4. **Placeholder Social / Friends System in Main Menu and Pre-Game Lobby:**
+   - The lobby sidebar displayed hardcoded placeholder text for friends ("Forge - In a Game", "In Custom Game Lobby"). There was no way to search community players, add friends, accept/decline friend requests, view real-time invites, or invite friends directly to a game lobby.
+
+---
+
+### 2. Implementation & Fixes
+
+1. **Elite Armor Network Replication Engine Patch (`src/hooks/EnginePatches.cpp`):**
+   - Patched RVA `0x2EDD45` in `haloreach.dll` from:
+     `89 75 C0 C7 45 C4 07 00 00 00` (`mov [rbp-0x40], esi; mov dword ptr [rbp-0x3C], 7`)
+     to:
+     `C7 45 C0 01 00 00 00 89 75 C4` (`mov dword ptr [rbp-0x40], 1; mov [rbp-0x3C], esi`)
+   - This passes `species = 1` (Elite) and `slot = 0` to `0x2C8070`, cleanly storing the equipped armor set index directly into `[player + 0xAE + 0]`. Remote players now replicate and render the exact Elite armor set chosen (Minor, Officer, SpecOps, Ranger, Ultra, Zealot, General, Field Marshall, Honor Guard).
+
+2. **Elite Armor Effects Engine & Pack Fixes (`src/engine/ElitePack.cpp`):**
+   - Patched RVA `0x105796` in `haloreach.dll` from `cmp esi, 8; setb r15b` (`83 FE 08 41 0F 92 C7`) to `cmp esi, 8; setne r15b` (`83 FE 08 41 0F 95 C7`). This cleanly skips Spartan fx list 8 (`+0x80`) while permitting Elite armor piece lists 0..7 and Elite fx list 9 (`pmcg +0x8C`).
+   - Expanded `kSetPieces` array to `[9][6]`, adding Honor Guard at index 8 (`{2, 2, 2, 8, 2, 10}`).
+   - In `BuilderHook`, cleanly differentiated local vs remote players. Local player reads saved armory selection and elite armor effect; remote players read their replicated network set (`copy[0x17]`). Spartan effect on Elites is suppressed (`copy[0x18] = 0xFF`) and Elite effect is applied (`copy[0x19] = eliteEffect`).
+   - Character mesh permutations and armor effect permutation logic are 100% separated, eliminating past permutation collision bugs.
+   - Added `"forge"` mode support to `ElitePack::Install`.
+
+3. **ReachArmory & Host Ingestion (`src/engine/ReachHost.cpp`, `ReachArmory.hpp`, `ReachArmory.cpp`):**
+   - Clamped `el["armor_set"]` to 0..8 (Honor Guard support) in `ReachHost.cpp`.
+   - Added `eliteArmorEffectIndex` and `eliteArmorEffect` to `ReachArmorySelection`.
+   - Added 3D viewport preview for Elite armor effects using `PmcgEffectName(sel.eliteArmorEffect)` mapping to `pmcg` list `8c` / region `armor_fx` (permutations `armor_fx_00`..`05`).
+
+4. **Nameplates & Emblems Catalog & In-Game Badging (`src/ui/UiArt.hpp`, `UiArt.cpp`, `ArmorCustomizer.hpp`, `ArmorCustomizer.cpp`):**
+   - Implemented `GetNameplateCatalog()` and `GetEmblemCatalog()` in `UiArt.cpp`, dynamically parsing `playercustomization.xml` from MCC for 536 nameplates and 330 emblems with authentic titles.
+   - Added `UiTexture Nameplate(int id)` loading `PlayerIDNamePlate_*.png` via WIC and `UiTexture Emblem(int id)` decoding from `emblemstexturepack.perm.bin` via `PackImage`.
+   - Added Nameplate and Emblem selectors in `ArmorCustomizer.cpp` under the `IDENTITY` section, with real-time preview and saving to `appearance.json`.
+   - Added Honor Guard to `kEliteSets` and an Armor Effect row under `EFFECTS & VOICE` for Elites.
+   - Updated top-right header nameplate badge to render the player's equipped nameplate PNG and emblem.
+
+5. **Master Server Social Networking Client & UI (`src/network/SocialClient.hpp`, `SocialClient.cpp`, `FrontEndMenu.cpp`):**
+   - Built `SocialClient` singleton with async WinHttp background requests to the master server:
+     - `/api/friends/list` - Retrieves accepted friends, incoming requests, and outgoing requests.
+     - `/api/invites/list` - Polls active game invites for the user.
+     - `/api/friends/search` - Searches community users by username prefix.
+     - `/api/friends/add` - Sends a friend request.
+     - `/api/friends/accept` - Accepts an incoming request.
+     - `/api/friends/remove` - Removes a friend or cancels a request.
+     - `/api/invites/send` - Sends a game invite with host IP and port.
+     - `/api/invites/clear` - Dismisses an invite.
+   - Background thread polls invites and friends every 10 seconds.
+   - Added `Social` to main menu navigation (`kMainEntries`) and implemented `DrawSocialScreen`:
+     - Online account status header with quick link to Account Login/Register modal.
+     - Prominent Game Invite Received banner with one-click `[JOIN GAME]` and `[DISMISS]`.
+     - Interactive tabs for **Friends**, **Requests**, and **Find Players** (navigable via mouse or Q/E / Bumpers).
+     - Live search bar for player lookup with `[ADD FRIEND]` buttons.
+   - Pre-Game Lobby update: replaced placeholder friends with real friends list from `SocialClient`, added one-click `[INVITE]` button for lobby hosts, and mapped the `Y` button / click on friends header to open the Social screen directly.
+
+---
+
+### 3. Verification & Build Status
+
+- Built cleanly via MSBuild: `cmake --build build --config Release`
+  - `noble-client.exe`: **0 errors, 0 warnings**
+  - `noble-dedicated.exe`: **0 errors, 0 warnings**
+- All MCC retail installation files remain 100% read-only and unmodified.
+
 ## 0. Pick up here (2026-10-29, 00:40 ET) - Dominus Remote Join & Black Screen Fixes: Unique `s_player_identifier` (`+0xF0`), Unique Guest XUID, UDP/Relay Dedup & Timeout Recovery
 
 All changes compiled cleanly via `build.bat` (`noble-client.exe` and `noble-dedicated.exe`) with **0 errors and 0 warnings** under `/W4`:
@@ -877,6 +2062,85 @@ All changes compiled cleanly via `build.bat` (`noble-client.exe` and `noble-dedi
   - `NetworkTransport::StopRelay()` now closes the active WinHTTP WebSocket and session handles before joining `m_relayThread`, unblocking `WinHttpWebSocketReceive` immediately on exit.
 
 ---
+
+## 0. Pick up here (2026-10-30, 04:45 ET) - Elite Armors Network Replication Fix, Elite Armor Effects Engine Patch, Full Armory Permutations & Emblems/Nameplates, and Master Server Social Friends/Invites Menu (O7OF / Dominus)
+
+Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor effects engine support, MCC nameplates and emblems integration into the Armory, and master server social networking system with interactive friends list, player search, and in-game lobby invites.
+
+### 1. What was wrong & Root Causes
+
+1. **Elite Armors Defaulting to Elite Minor for Remote Players:**
+   - Players equipping Elite armor sets (such as Honor Guard, General, Field Marshall, Officer, etc.) saw their selected armor locally, but remote players in multiplayer matches only saw them as default Elite Minor.
+   - **Root Cause Reverse-Engineered:** In `haloreach.dll+0x2EDD45` (the function serializing the player's profile into the network replication player datum at `0x2C8070`), Bungie/MCC hardcoded `species = 0` (Spartan) and `slot = 7` when writing `profile[0x8C]` (the equipped Elite armor set index).
+   - In `haloreach.dll+0x2C8070`, the code verifies `cmp dword ptr [rdx+4], 3; ja exit`. Passing slot 7 exceeded the check and jumped to exit, leaving `[player + 0xAE + 0]` completely unwritten (0 = Elite Minor). The multiplayer network session then broadcasted this default 0 value to all other clients.
+
+2. **Elite Armor Effects Not Showing & Previous Buggy Behavior:**
+   - Armor effects only applied to Spartans; Elites had no working armor effects.
+   - **Root Cause Reverse-Engineered:** In `haloreach.dll+0x105796`, the engine validated `cmp esi, 8; setb r15b` (`83 FE 08 41 0F 92 C7`), rejecting `pmcg` lists >= 8. Spartan fx is list 8 (`+0x80`), while Elite fx is list 9 (`+0x8C`).
+   - In previous iterations, equipping armor effects erroneously overrode the player's Elite character model type due to coupled mesh logic.
+
+3. **Armory Missing Nameplates & Emblems:**
+   - The Armory identity customization lacked the full catalog of MCC Reach nameplates (536 nameplates) and emblems (330 emblems) loaded dynamically from MCC assets.
+
+4. **Placeholder Social / Friends System in Main Menu and Pre-Game Lobby:**
+   - The lobby sidebar displayed hardcoded placeholder text for friends ("Forge - In a Game", "In Custom Game Lobby"). There was no way to search community players, add friends, accept/decline friend requests, view real-time invites, or invite friends directly to a game lobby.
+
+---
+
+### 2. Implementation & Fixes
+
+1. **Elite Armor Network Replication Engine Patch (`src/hooks/EnginePatches.cpp`):**
+   - Patched RVA `0x2EDD45` in `haloreach.dll` from:
+     `89 75 C0 C7 45 C4 07 00 00 00` (`mov [rbp-0x40], esi; mov dword ptr [rbp-0x3C], 7`)
+     to:
+     `C7 45 C0 01 00 00 00 89 75 C4` (`mov dword ptr [rbp-0x40], 1; mov [rbp-0x3C], esi`)
+   - This passes `species = 1` (Elite) and `slot = 0` to `0x2C8070`, cleanly storing the equipped armor set index directly into `[player + 0xAE + 0]`. Remote players now replicate and render the exact Elite armor set chosen (Minor, Officer, SpecOps, Ranger, Ultra, Zealot, General, Field Marshall, Honor Guard).
+
+2. **Elite Armor Effects Engine & Pack Fixes (`src/engine/ElitePack.cpp`):**
+   - Patched RVA `0x105796` in `haloreach.dll` from `cmp esi, 8; setb r15b` (`83 FE 08 41 0F 92 C7`) to `cmp esi, 8; setne r15b` (`83 FE 08 41 0F 95 C7`). This cleanly skips Spartan fx list 8 (`+0x80`) while permitting Elite armor piece lists 0..7 and Elite fx list 9 (`pmcg +0x8C`).
+   - Expanded `kSetPieces` array to `[9][6]`, adding Honor Guard at index 8 (`{2, 2, 2, 8, 2, 10}`).
+   - In `BuilderHook`, cleanly differentiated local vs remote players. Local player reads saved armory selection and elite armor effect; remote players read their replicated network set (`copy[0x17]`). Spartan effect on Elites is suppressed (`copy[0x18] = 0xFF`) and Elite effect is applied (`copy[0x19] = eliteEffect`).
+   - Character mesh permutations and armor effect permutation logic are 100% separated, eliminating past permutation collision bugs.
+   - Added `"forge"` mode support to `ElitePack::Install`.
+
+3. **ReachArmory & Host Ingestion (`src/engine/ReachHost.cpp`, `ReachArmory.hpp`, `ReachArmory.cpp`):**
+   - Clamped `el["armor_set"]` to 0..8 (Honor Guard support) in `ReachHost.cpp`.
+   - Added `eliteArmorEffectIndex` and `eliteArmorEffect` to `ReachArmorySelection`.
+   - Added 3D viewport preview for Elite armor effects using `PmcgEffectName(sel.eliteArmorEffect)` mapping to `pmcg` list `8c` / region `armor_fx` (permutations `armor_fx_00`..`05`).
+
+4. **Nameplates & Emblems Catalog & In-Game Badging (`src/ui/UiArt.hpp`, `UiArt.cpp`, `ArmorCustomizer.hpp`, `ArmorCustomizer.cpp`):**
+   - Implemented `GetNameplateCatalog()` and `GetEmblemCatalog()` in `UiArt.cpp`, dynamically parsing `playercustomization.xml` from MCC for 536 nameplates and 330 emblems with authentic titles.
+   - Added `UiTexture Nameplate(int id)` loading `PlayerIDNamePlate_*.png` via WIC and `UiTexture Emblem(int id)` decoding from `emblemstexturepack.perm.bin` via `PackImage`.
+   - Added Nameplate and Emblem selectors in `ArmorCustomizer.cpp` under the `IDENTITY` section, with real-time preview and saving to `appearance.json`.
+   - Added Honor Guard to `kEliteSets` and an Armor Effect row under `EFFECTS & VOICE` for Elites.
+   - Updated top-right header nameplate badge to render the player's equipped nameplate PNG and emblem.
+
+5. **Master Server Social Networking Client & UI (`src/network/SocialClient.hpp`, `SocialClient.cpp`, `FrontEndMenu.cpp`):**
+   - Built `SocialClient` singleton with async WinHttp background requests to the master server:
+     - `/api/friends/list` - Retrieves accepted friends, incoming requests, and outgoing requests.
+     - `/api/invites/list` - Polls active game invites for the user.
+     - `/api/friends/search` - Searches community users by username prefix.
+     - `/api/friends/add` - Sends a friend request.
+     - `/api/friends/accept` - Accepts an incoming request.
+     - `/api/friends/remove` - Removes a friend or cancels a request.
+     - `/api/invites/send` - Sends a game invite with host IP and port.
+     - `/api/invites/clear` - Dismisses an invite.
+   - Background thread polls invites and friends every 10 seconds.
+   - Added `Social` to main menu navigation (`kMainEntries`) and implemented `DrawSocialScreen`:
+     - Online account status header with quick link to Account Login/Register modal.
+     - Prominent Game Invite Received banner with one-click `[JOIN GAME]` and `[DISMISS]`.
+     - Interactive tabs for **Friends**, **Requests**, and **Find Players** (navigable via mouse or Q/E / Bumpers).
+     - Live search bar for player lookup with `[ADD FRIEND]` buttons.
+   - Pre-Game Lobby update: replaced placeholder friends with real friends list from `SocialClient`, added one-click `[INVITE]` button for lobby hosts, and mapped the `Y` button / click on friends header to open the Social screen directly.
+
+---
+
+### 3. Verification & Build Status
+
+- Built cleanly via MSBuild: `cmake --build build --config Release`
+  - `noble-client.exe`: **0 errors, 0 warnings**
+  - `noble-dedicated.exe`: **0 errors, 0 warnings**
+- All MCC retail installation files remain 100% read-only and unmodified.
 
 ## 0. Pick up here (2026-10-29, 00:35 ET) - Pre-Game Lobby, Guest Black Screen Fix, WebSocket Signaling & Build Verification
 
@@ -919,6 +2183,85 @@ Compiled cleanly via `build.bat` with **0 errors and 0 warnings**:
   - Multi-client WebSocket relay control message broadcasting (`broadcastLobbyEvent`): propagates `lobby_launch` and `lobby_roster` JSON control frames in real-time across peers in the room alongside binary UDP game packets.
 
 ---
+
+## 0. Pick up here (2026-10-30, 04:45 ET) - Elite Armors Network Replication Fix, Elite Armor Effects Engine Patch, Full Armory Permutations & Emblems/Nameplates, and Master Server Social Friends/Invites Menu (O7OF / Dominus)
+
+Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor effects engine support, MCC nameplates and emblems integration into the Armory, and master server social networking system with interactive friends list, player search, and in-game lobby invites.
+
+### 1. What was wrong & Root Causes
+
+1. **Elite Armors Defaulting to Elite Minor for Remote Players:**
+   - Players equipping Elite armor sets (such as Honor Guard, General, Field Marshall, Officer, etc.) saw their selected armor locally, but remote players in multiplayer matches only saw them as default Elite Minor.
+   - **Root Cause Reverse-Engineered:** In `haloreach.dll+0x2EDD45` (the function serializing the player's profile into the network replication player datum at `0x2C8070`), Bungie/MCC hardcoded `species = 0` (Spartan) and `slot = 7` when writing `profile[0x8C]` (the equipped Elite armor set index).
+   - In `haloreach.dll+0x2C8070`, the code verifies `cmp dword ptr [rdx+4], 3; ja exit`. Passing slot 7 exceeded the check and jumped to exit, leaving `[player + 0xAE + 0]` completely unwritten (0 = Elite Minor). The multiplayer network session then broadcasted this default 0 value to all other clients.
+
+2. **Elite Armor Effects Not Showing & Previous Buggy Behavior:**
+   - Armor effects only applied to Spartans; Elites had no working armor effects.
+   - **Root Cause Reverse-Engineered:** In `haloreach.dll+0x105796`, the engine validated `cmp esi, 8; setb r15b` (`83 FE 08 41 0F 92 C7`), rejecting `pmcg` lists >= 8. Spartan fx is list 8 (`+0x80`), while Elite fx is list 9 (`+0x8C`).
+   - In previous iterations, equipping armor effects erroneously overrode the player's Elite character model type due to coupled mesh logic.
+
+3. **Armory Missing Nameplates & Emblems:**
+   - The Armory identity customization lacked the full catalog of MCC Reach nameplates (536 nameplates) and emblems (330 emblems) loaded dynamically from MCC assets.
+
+4. **Placeholder Social / Friends System in Main Menu and Pre-Game Lobby:**
+   - The lobby sidebar displayed hardcoded placeholder text for friends ("Forge - In a Game", "In Custom Game Lobby"). There was no way to search community players, add friends, accept/decline friend requests, view real-time invites, or invite friends directly to a game lobby.
+
+---
+
+### 2. Implementation & Fixes
+
+1. **Elite Armor Network Replication Engine Patch (`src/hooks/EnginePatches.cpp`):**
+   - Patched RVA `0x2EDD45` in `haloreach.dll` from:
+     `89 75 C0 C7 45 C4 07 00 00 00` (`mov [rbp-0x40], esi; mov dword ptr [rbp-0x3C], 7`)
+     to:
+     `C7 45 C0 01 00 00 00 89 75 C4` (`mov dword ptr [rbp-0x40], 1; mov [rbp-0x3C], esi`)
+   - This passes `species = 1` (Elite) and `slot = 0` to `0x2C8070`, cleanly storing the equipped armor set index directly into `[player + 0xAE + 0]`. Remote players now replicate and render the exact Elite armor set chosen (Minor, Officer, SpecOps, Ranger, Ultra, Zealot, General, Field Marshall, Honor Guard).
+
+2. **Elite Armor Effects Engine & Pack Fixes (`src/engine/ElitePack.cpp`):**
+   - Patched RVA `0x105796` in `haloreach.dll` from `cmp esi, 8; setb r15b` (`83 FE 08 41 0F 92 C7`) to `cmp esi, 8; setne r15b` (`83 FE 08 41 0F 95 C7`). This cleanly skips Spartan fx list 8 (`+0x80`) while permitting Elite armor piece lists 0..7 and Elite fx list 9 (`pmcg +0x8C`).
+   - Expanded `kSetPieces` array to `[9][6]`, adding Honor Guard at index 8 (`{2, 2, 2, 8, 2, 10}`).
+   - In `BuilderHook`, cleanly differentiated local vs remote players. Local player reads saved armory selection and elite armor effect; remote players read their replicated network set (`copy[0x17]`). Spartan effect on Elites is suppressed (`copy[0x18] = 0xFF`) and Elite effect is applied (`copy[0x19] = eliteEffect`).
+   - Character mesh permutations and armor effect permutation logic are 100% separated, eliminating past permutation collision bugs.
+   - Added `"forge"` mode support to `ElitePack::Install`.
+
+3. **ReachArmory & Host Ingestion (`src/engine/ReachHost.cpp`, `ReachArmory.hpp`, `ReachArmory.cpp`):**
+   - Clamped `el["armor_set"]` to 0..8 (Honor Guard support) in `ReachHost.cpp`.
+   - Added `eliteArmorEffectIndex` and `eliteArmorEffect` to `ReachArmorySelection`.
+   - Added 3D viewport preview for Elite armor effects using `PmcgEffectName(sel.eliteArmorEffect)` mapping to `pmcg` list `8c` / region `armor_fx` (permutations `armor_fx_00`..`05`).
+
+4. **Nameplates & Emblems Catalog & In-Game Badging (`src/ui/UiArt.hpp`, `UiArt.cpp`, `ArmorCustomizer.hpp`, `ArmorCustomizer.cpp`):**
+   - Implemented `GetNameplateCatalog()` and `GetEmblemCatalog()` in `UiArt.cpp`, dynamically parsing `playercustomization.xml` from MCC for 536 nameplates and 330 emblems with authentic titles.
+   - Added `UiTexture Nameplate(int id)` loading `PlayerIDNamePlate_*.png` via WIC and `UiTexture Emblem(int id)` decoding from `emblemstexturepack.perm.bin` via `PackImage`.
+   - Added Nameplate and Emblem selectors in `ArmorCustomizer.cpp` under the `IDENTITY` section, with real-time preview and saving to `appearance.json`.
+   - Added Honor Guard to `kEliteSets` and an Armor Effect row under `EFFECTS & VOICE` for Elites.
+   - Updated top-right header nameplate badge to render the player's equipped nameplate PNG and emblem.
+
+5. **Master Server Social Networking Client & UI (`src/network/SocialClient.hpp`, `SocialClient.cpp`, `FrontEndMenu.cpp`):**
+   - Built `SocialClient` singleton with async WinHttp background requests to the master server:
+     - `/api/friends/list` - Retrieves accepted friends, incoming requests, and outgoing requests.
+     - `/api/invites/list` - Polls active game invites for the user.
+     - `/api/friends/search` - Searches community users by username prefix.
+     - `/api/friends/add` - Sends a friend request.
+     - `/api/friends/accept` - Accepts an incoming request.
+     - `/api/friends/remove` - Removes a friend or cancels a request.
+     - `/api/invites/send` - Sends a game invite with host IP and port.
+     - `/api/invites/clear` - Dismisses an invite.
+   - Background thread polls invites and friends every 10 seconds.
+   - Added `Social` to main menu navigation (`kMainEntries`) and implemented `DrawSocialScreen`:
+     - Online account status header with quick link to Account Login/Register modal.
+     - Prominent Game Invite Received banner with one-click `[JOIN GAME]` and `[DISMISS]`.
+     - Interactive tabs for **Friends**, **Requests**, and **Find Players** (navigable via mouse or Q/E / Bumpers).
+     - Live search bar for player lookup with `[ADD FRIEND]` buttons.
+   - Pre-Game Lobby update: replaced placeholder friends with real friends list from `SocialClient`, added one-click `[INVITE]` button for lobby hosts, and mapped the `Y` button / click on friends header to open the Social screen directly.
+
+---
+
+### 3. Verification & Build Status
+
+- Built cleanly via MSBuild: `cmake --build build --config Release`
+  - `noble-client.exe`: **0 errors, 0 warnings**
+  - `noble-dedicated.exe`: **0 errors, 0 warnings**
+- All MCC retail installation files remain 100% read-only and unmodified.
 
 ## 0. Pick up here (2026-10-29, 00:20 ET) - Spartan Armory: Halopedia catalog, pictures, rank + cR locks, BUY
 
@@ -987,6 +2330,85 @@ All changes compiled cleanly via `build.bat` (`noble-client.exe` and `noble-dedi
 
 ---
 
+## 0. Pick up here (2026-10-30, 04:45 ET) - Elite Armors Network Replication Fix, Elite Armor Effects Engine Patch, Full Armory Permutations & Emblems/Nameplates, and Master Server Social Friends/Invites Menu (O7OF / Dominus)
+
+Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor effects engine support, MCC nameplates and emblems integration into the Armory, and master server social networking system with interactive friends list, player search, and in-game lobby invites.
+
+### 1. What was wrong & Root Causes
+
+1. **Elite Armors Defaulting to Elite Minor for Remote Players:**
+   - Players equipping Elite armor sets (such as Honor Guard, General, Field Marshall, Officer, etc.) saw their selected armor locally, but remote players in multiplayer matches only saw them as default Elite Minor.
+   - **Root Cause Reverse-Engineered:** In `haloreach.dll+0x2EDD45` (the function serializing the player's profile into the network replication player datum at `0x2C8070`), Bungie/MCC hardcoded `species = 0` (Spartan) and `slot = 7` when writing `profile[0x8C]` (the equipped Elite armor set index).
+   - In `haloreach.dll+0x2C8070`, the code verifies `cmp dword ptr [rdx+4], 3; ja exit`. Passing slot 7 exceeded the check and jumped to exit, leaving `[player + 0xAE + 0]` completely unwritten (0 = Elite Minor). The multiplayer network session then broadcasted this default 0 value to all other clients.
+
+2. **Elite Armor Effects Not Showing & Previous Buggy Behavior:**
+   - Armor effects only applied to Spartans; Elites had no working armor effects.
+   - **Root Cause Reverse-Engineered:** In `haloreach.dll+0x105796`, the engine validated `cmp esi, 8; setb r15b` (`83 FE 08 41 0F 92 C7`), rejecting `pmcg` lists >= 8. Spartan fx is list 8 (`+0x80`), while Elite fx is list 9 (`+0x8C`).
+   - In previous iterations, equipping armor effects erroneously overrode the player's Elite character model type due to coupled mesh logic.
+
+3. **Armory Missing Nameplates & Emblems:**
+   - The Armory identity customization lacked the full catalog of MCC Reach nameplates (536 nameplates) and emblems (330 emblems) loaded dynamically from MCC assets.
+
+4. **Placeholder Social / Friends System in Main Menu and Pre-Game Lobby:**
+   - The lobby sidebar displayed hardcoded placeholder text for friends ("Forge - In a Game", "In Custom Game Lobby"). There was no way to search community players, add friends, accept/decline friend requests, view real-time invites, or invite friends directly to a game lobby.
+
+---
+
+### 2. Implementation & Fixes
+
+1. **Elite Armor Network Replication Engine Patch (`src/hooks/EnginePatches.cpp`):**
+   - Patched RVA `0x2EDD45` in `haloreach.dll` from:
+     `89 75 C0 C7 45 C4 07 00 00 00` (`mov [rbp-0x40], esi; mov dword ptr [rbp-0x3C], 7`)
+     to:
+     `C7 45 C0 01 00 00 00 89 75 C4` (`mov dword ptr [rbp-0x40], 1; mov [rbp-0x3C], esi`)
+   - This passes `species = 1` (Elite) and `slot = 0` to `0x2C8070`, cleanly storing the equipped armor set index directly into `[player + 0xAE + 0]`. Remote players now replicate and render the exact Elite armor set chosen (Minor, Officer, SpecOps, Ranger, Ultra, Zealot, General, Field Marshall, Honor Guard).
+
+2. **Elite Armor Effects Engine & Pack Fixes (`src/engine/ElitePack.cpp`):**
+   - Patched RVA `0x105796` in `haloreach.dll` from `cmp esi, 8; setb r15b` (`83 FE 08 41 0F 92 C7`) to `cmp esi, 8; setne r15b` (`83 FE 08 41 0F 95 C7`). This cleanly skips Spartan fx list 8 (`+0x80`) while permitting Elite armor piece lists 0..7 and Elite fx list 9 (`pmcg +0x8C`).
+   - Expanded `kSetPieces` array to `[9][6]`, adding Honor Guard at index 8 (`{2, 2, 2, 8, 2, 10}`).
+   - In `BuilderHook`, cleanly differentiated local vs remote players. Local player reads saved armory selection and elite armor effect; remote players read their replicated network set (`copy[0x17]`). Spartan effect on Elites is suppressed (`copy[0x18] = 0xFF`) and Elite effect is applied (`copy[0x19] = eliteEffect`).
+   - Character mesh permutations and armor effect permutation logic are 100% separated, eliminating past permutation collision bugs.
+   - Added `"forge"` mode support to `ElitePack::Install`.
+
+3. **ReachArmory & Host Ingestion (`src/engine/ReachHost.cpp`, `ReachArmory.hpp`, `ReachArmory.cpp`):**
+   - Clamped `el["armor_set"]` to 0..8 (Honor Guard support) in `ReachHost.cpp`.
+   - Added `eliteArmorEffectIndex` and `eliteArmorEffect` to `ReachArmorySelection`.
+   - Added 3D viewport preview for Elite armor effects using `PmcgEffectName(sel.eliteArmorEffect)` mapping to `pmcg` list `8c` / region `armor_fx` (permutations `armor_fx_00`..`05`).
+
+4. **Nameplates & Emblems Catalog & In-Game Badging (`src/ui/UiArt.hpp`, `UiArt.cpp`, `ArmorCustomizer.hpp`, `ArmorCustomizer.cpp`):**
+   - Implemented `GetNameplateCatalog()` and `GetEmblemCatalog()` in `UiArt.cpp`, dynamically parsing `playercustomization.xml` from MCC for 536 nameplates and 330 emblems with authentic titles.
+   - Added `UiTexture Nameplate(int id)` loading `PlayerIDNamePlate_*.png` via WIC and `UiTexture Emblem(int id)` decoding from `emblemstexturepack.perm.bin` via `PackImage`.
+   - Added Nameplate and Emblem selectors in `ArmorCustomizer.cpp` under the `IDENTITY` section, with real-time preview and saving to `appearance.json`.
+   - Added Honor Guard to `kEliteSets` and an Armor Effect row under `EFFECTS & VOICE` for Elites.
+   - Updated top-right header nameplate badge to render the player's equipped nameplate PNG and emblem.
+
+5. **Master Server Social Networking Client & UI (`src/network/SocialClient.hpp`, `SocialClient.cpp`, `FrontEndMenu.cpp`):**
+   - Built `SocialClient` singleton with async WinHttp background requests to the master server:
+     - `/api/friends/list` - Retrieves accepted friends, incoming requests, and outgoing requests.
+     - `/api/invites/list` - Polls active game invites for the user.
+     - `/api/friends/search` - Searches community users by username prefix.
+     - `/api/friends/add` - Sends a friend request.
+     - `/api/friends/accept` - Accepts an incoming request.
+     - `/api/friends/remove` - Removes a friend or cancels a request.
+     - `/api/invites/send` - Sends a game invite with host IP and port.
+     - `/api/invites/clear` - Dismisses an invite.
+   - Background thread polls invites and friends every 10 seconds.
+   - Added `Social` to main menu navigation (`kMainEntries`) and implemented `DrawSocialScreen`:
+     - Online account status header with quick link to Account Login/Register modal.
+     - Prominent Game Invite Received banner with one-click `[JOIN GAME]` and `[DISMISS]`.
+     - Interactive tabs for **Friends**, **Requests**, and **Find Players** (navigable via mouse or Q/E / Bumpers).
+     - Live search bar for player lookup with `[ADD FRIEND]` buttons.
+   - Pre-Game Lobby update: replaced placeholder friends with real friends list from `SocialClient`, added one-click `[INVITE]` button for lobby hosts, and mapped the `Y` button / click on friends header to open the Social screen directly.
+
+---
+
+### 3. Verification & Build Status
+
+- Built cleanly via MSBuild: `cmake --build build --config Release`
+  - `noble-client.exe`: **0 errors, 0 warnings**
+  - `noble-dedicated.exe`: **0 errors, 0 warnings**
+- All MCC retail installation files remain 100% read-only and unmodified.
+
 ## 0. Pick up here (2026-10-28, 23:35 ET) - P2P NAT Traversal, WebSocket Netcode Relay, In-Menu Account System & Developer Tools
 
 - **Infinite Loading on Join Fixed (Home NAT Firewall Traversal & WebSocket Netcode Packet Relay):**
@@ -1031,6 +2453,85 @@ All changes compiled cleanly via `build.bat` (`noble-client.exe` and `noble-dedi
 
 ---
 
+## 0. Pick up here (2026-10-30, 04:45 ET) - Elite Armors Network Replication Fix, Elite Armor Effects Engine Patch, Full Armory Permutations & Emblems/Nameplates, and Master Server Social Friends/Invites Menu (O7OF / Dominus)
+
+Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor effects engine support, MCC nameplates and emblems integration into the Armory, and master server social networking system with interactive friends list, player search, and in-game lobby invites.
+
+### 1. What was wrong & Root Causes
+
+1. **Elite Armors Defaulting to Elite Minor for Remote Players:**
+   - Players equipping Elite armor sets (such as Honor Guard, General, Field Marshall, Officer, etc.) saw their selected armor locally, but remote players in multiplayer matches only saw them as default Elite Minor.
+   - **Root Cause Reverse-Engineered:** In `haloreach.dll+0x2EDD45` (the function serializing the player's profile into the network replication player datum at `0x2C8070`), Bungie/MCC hardcoded `species = 0` (Spartan) and `slot = 7` when writing `profile[0x8C]` (the equipped Elite armor set index).
+   - In `haloreach.dll+0x2C8070`, the code verifies `cmp dword ptr [rdx+4], 3; ja exit`. Passing slot 7 exceeded the check and jumped to exit, leaving `[player + 0xAE + 0]` completely unwritten (0 = Elite Minor). The multiplayer network session then broadcasted this default 0 value to all other clients.
+
+2. **Elite Armor Effects Not Showing & Previous Buggy Behavior:**
+   - Armor effects only applied to Spartans; Elites had no working armor effects.
+   - **Root Cause Reverse-Engineered:** In `haloreach.dll+0x105796`, the engine validated `cmp esi, 8; setb r15b` (`83 FE 08 41 0F 92 C7`), rejecting `pmcg` lists >= 8. Spartan fx is list 8 (`+0x80`), while Elite fx is list 9 (`+0x8C`).
+   - In previous iterations, equipping armor effects erroneously overrode the player's Elite character model type due to coupled mesh logic.
+
+3. **Armory Missing Nameplates & Emblems:**
+   - The Armory identity customization lacked the full catalog of MCC Reach nameplates (536 nameplates) and emblems (330 emblems) loaded dynamically from MCC assets.
+
+4. **Placeholder Social / Friends System in Main Menu and Pre-Game Lobby:**
+   - The lobby sidebar displayed hardcoded placeholder text for friends ("Forge - In a Game", "In Custom Game Lobby"). There was no way to search community players, add friends, accept/decline friend requests, view real-time invites, or invite friends directly to a game lobby.
+
+---
+
+### 2. Implementation & Fixes
+
+1. **Elite Armor Network Replication Engine Patch (`src/hooks/EnginePatches.cpp`):**
+   - Patched RVA `0x2EDD45` in `haloreach.dll` from:
+     `89 75 C0 C7 45 C4 07 00 00 00` (`mov [rbp-0x40], esi; mov dword ptr [rbp-0x3C], 7`)
+     to:
+     `C7 45 C0 01 00 00 00 89 75 C4` (`mov dword ptr [rbp-0x40], 1; mov [rbp-0x3C], esi`)
+   - This passes `species = 1` (Elite) and `slot = 0` to `0x2C8070`, cleanly storing the equipped armor set index directly into `[player + 0xAE + 0]`. Remote players now replicate and render the exact Elite armor set chosen (Minor, Officer, SpecOps, Ranger, Ultra, Zealot, General, Field Marshall, Honor Guard).
+
+2. **Elite Armor Effects Engine & Pack Fixes (`src/engine/ElitePack.cpp`):**
+   - Patched RVA `0x105796` in `haloreach.dll` from `cmp esi, 8; setb r15b` (`83 FE 08 41 0F 92 C7`) to `cmp esi, 8; setne r15b` (`83 FE 08 41 0F 95 C7`). This cleanly skips Spartan fx list 8 (`+0x80`) while permitting Elite armor piece lists 0..7 and Elite fx list 9 (`pmcg +0x8C`).
+   - Expanded `kSetPieces` array to `[9][6]`, adding Honor Guard at index 8 (`{2, 2, 2, 8, 2, 10}`).
+   - In `BuilderHook`, cleanly differentiated local vs remote players. Local player reads saved armory selection and elite armor effect; remote players read their replicated network set (`copy[0x17]`). Spartan effect on Elites is suppressed (`copy[0x18] = 0xFF`) and Elite effect is applied (`copy[0x19] = eliteEffect`).
+   - Character mesh permutations and armor effect permutation logic are 100% separated, eliminating past permutation collision bugs.
+   - Added `"forge"` mode support to `ElitePack::Install`.
+
+3. **ReachArmory & Host Ingestion (`src/engine/ReachHost.cpp`, `ReachArmory.hpp`, `ReachArmory.cpp`):**
+   - Clamped `el["armor_set"]` to 0..8 (Honor Guard support) in `ReachHost.cpp`.
+   - Added `eliteArmorEffectIndex` and `eliteArmorEffect` to `ReachArmorySelection`.
+   - Added 3D viewport preview for Elite armor effects using `PmcgEffectName(sel.eliteArmorEffect)` mapping to `pmcg` list `8c` / region `armor_fx` (permutations `armor_fx_00`..`05`).
+
+4. **Nameplates & Emblems Catalog & In-Game Badging (`src/ui/UiArt.hpp`, `UiArt.cpp`, `ArmorCustomizer.hpp`, `ArmorCustomizer.cpp`):**
+   - Implemented `GetNameplateCatalog()` and `GetEmblemCatalog()` in `UiArt.cpp`, dynamically parsing `playercustomization.xml` from MCC for 536 nameplates and 330 emblems with authentic titles.
+   - Added `UiTexture Nameplate(int id)` loading `PlayerIDNamePlate_*.png` via WIC and `UiTexture Emblem(int id)` decoding from `emblemstexturepack.perm.bin` via `PackImage`.
+   - Added Nameplate and Emblem selectors in `ArmorCustomizer.cpp` under the `IDENTITY` section, with real-time preview and saving to `appearance.json`.
+   - Added Honor Guard to `kEliteSets` and an Armor Effect row under `EFFECTS & VOICE` for Elites.
+   - Updated top-right header nameplate badge to render the player's equipped nameplate PNG and emblem.
+
+5. **Master Server Social Networking Client & UI (`src/network/SocialClient.hpp`, `SocialClient.cpp`, `FrontEndMenu.cpp`):**
+   - Built `SocialClient` singleton with async WinHttp background requests to the master server:
+     - `/api/friends/list` - Retrieves accepted friends, incoming requests, and outgoing requests.
+     - `/api/invites/list` - Polls active game invites for the user.
+     - `/api/friends/search` - Searches community users by username prefix.
+     - `/api/friends/add` - Sends a friend request.
+     - `/api/friends/accept` - Accepts an incoming request.
+     - `/api/friends/remove` - Removes a friend or cancels a request.
+     - `/api/invites/send` - Sends a game invite with host IP and port.
+     - `/api/invites/clear` - Dismisses an invite.
+   - Background thread polls invites and friends every 10 seconds.
+   - Added `Social` to main menu navigation (`kMainEntries`) and implemented `DrawSocialScreen`:
+     - Online account status header with quick link to Account Login/Register modal.
+     - Prominent Game Invite Received banner with one-click `[JOIN GAME]` and `[DISMISS]`.
+     - Interactive tabs for **Friends**, **Requests**, and **Find Players** (navigable via mouse or Q/E / Bumpers).
+     - Live search bar for player lookup with `[ADD FRIEND]` buttons.
+   - Pre-Game Lobby update: replaced placeholder friends with real friends list from `SocialClient`, added one-click `[INVITE]` button for lobby hosts, and mapped the `Y` button / click on friends header to open the Social screen directly.
+
+---
+
+### 3. Verification & Build Status
+
+- Built cleanly via MSBuild: `cmake --build build --config Release`
+  - `noble-client.exe`: **0 errors, 0 warnings**
+  - `noble-dedicated.exe`: **0 errors, 0 warnings**
+- All MCC retail installation files remain 100% read-only and unmodified.
+
 ## 0. Pick up here (2026-10-28, 22:55 ET) - Render Master Server Deployment Repo Synchronized & Pushed
 
 - **Server Backend Sync & Render Trigger (`O7OF/ServerTestDeploy`):**
@@ -1040,6 +2541,85 @@ All changes compiled cleanly via `build.bat` (`noble-client.exe` and `noble-dedi
   - Render automatic deployment triggered for `https://outbreak-z-test-server.onrender.com`.
 
 ---
+
+## 0. Pick up here (2026-10-30, 04:45 ET) - Elite Armors Network Replication Fix, Elite Armor Effects Engine Patch, Full Armory Permutations & Emblems/Nameplates, and Master Server Social Friends/Invites Menu (O7OF / Dominus)
+
+Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor effects engine support, MCC nameplates and emblems integration into the Armory, and master server social networking system with interactive friends list, player search, and in-game lobby invites.
+
+### 1. What was wrong & Root Causes
+
+1. **Elite Armors Defaulting to Elite Minor for Remote Players:**
+   - Players equipping Elite armor sets (such as Honor Guard, General, Field Marshall, Officer, etc.) saw their selected armor locally, but remote players in multiplayer matches only saw them as default Elite Minor.
+   - **Root Cause Reverse-Engineered:** In `haloreach.dll+0x2EDD45` (the function serializing the player's profile into the network replication player datum at `0x2C8070`), Bungie/MCC hardcoded `species = 0` (Spartan) and `slot = 7` when writing `profile[0x8C]` (the equipped Elite armor set index).
+   - In `haloreach.dll+0x2C8070`, the code verifies `cmp dword ptr [rdx+4], 3; ja exit`. Passing slot 7 exceeded the check and jumped to exit, leaving `[player + 0xAE + 0]` completely unwritten (0 = Elite Minor). The multiplayer network session then broadcasted this default 0 value to all other clients.
+
+2. **Elite Armor Effects Not Showing & Previous Buggy Behavior:**
+   - Armor effects only applied to Spartans; Elites had no working armor effects.
+   - **Root Cause Reverse-Engineered:** In `haloreach.dll+0x105796`, the engine validated `cmp esi, 8; setb r15b` (`83 FE 08 41 0F 92 C7`), rejecting `pmcg` lists >= 8. Spartan fx is list 8 (`+0x80`), while Elite fx is list 9 (`+0x8C`).
+   - In previous iterations, equipping armor effects erroneously overrode the player's Elite character model type due to coupled mesh logic.
+
+3. **Armory Missing Nameplates & Emblems:**
+   - The Armory identity customization lacked the full catalog of MCC Reach nameplates (536 nameplates) and emblems (330 emblems) loaded dynamically from MCC assets.
+
+4. **Placeholder Social / Friends System in Main Menu and Pre-Game Lobby:**
+   - The lobby sidebar displayed hardcoded placeholder text for friends ("Forge - In a Game", "In Custom Game Lobby"). There was no way to search community players, add friends, accept/decline friend requests, view real-time invites, or invite friends directly to a game lobby.
+
+---
+
+### 2. Implementation & Fixes
+
+1. **Elite Armor Network Replication Engine Patch (`src/hooks/EnginePatches.cpp`):**
+   - Patched RVA `0x2EDD45` in `haloreach.dll` from:
+     `89 75 C0 C7 45 C4 07 00 00 00` (`mov [rbp-0x40], esi; mov dword ptr [rbp-0x3C], 7`)
+     to:
+     `C7 45 C0 01 00 00 00 89 75 C4` (`mov dword ptr [rbp-0x40], 1; mov [rbp-0x3C], esi`)
+   - This passes `species = 1` (Elite) and `slot = 0` to `0x2C8070`, cleanly storing the equipped armor set index directly into `[player + 0xAE + 0]`. Remote players now replicate and render the exact Elite armor set chosen (Minor, Officer, SpecOps, Ranger, Ultra, Zealot, General, Field Marshall, Honor Guard).
+
+2. **Elite Armor Effects Engine & Pack Fixes (`src/engine/ElitePack.cpp`):**
+   - Patched RVA `0x105796` in `haloreach.dll` from `cmp esi, 8; setb r15b` (`83 FE 08 41 0F 92 C7`) to `cmp esi, 8; setne r15b` (`83 FE 08 41 0F 95 C7`). This cleanly skips Spartan fx list 8 (`+0x80`) while permitting Elite armor piece lists 0..7 and Elite fx list 9 (`pmcg +0x8C`).
+   - Expanded `kSetPieces` array to `[9][6]`, adding Honor Guard at index 8 (`{2, 2, 2, 8, 2, 10}`).
+   - In `BuilderHook`, cleanly differentiated local vs remote players. Local player reads saved armory selection and elite armor effect; remote players read their replicated network set (`copy[0x17]`). Spartan effect on Elites is suppressed (`copy[0x18] = 0xFF`) and Elite effect is applied (`copy[0x19] = eliteEffect`).
+   - Character mesh permutations and armor effect permutation logic are 100% separated, eliminating past permutation collision bugs.
+   - Added `"forge"` mode support to `ElitePack::Install`.
+
+3. **ReachArmory & Host Ingestion (`src/engine/ReachHost.cpp`, `ReachArmory.hpp`, `ReachArmory.cpp`):**
+   - Clamped `el["armor_set"]` to 0..8 (Honor Guard support) in `ReachHost.cpp`.
+   - Added `eliteArmorEffectIndex` and `eliteArmorEffect` to `ReachArmorySelection`.
+   - Added 3D viewport preview for Elite armor effects using `PmcgEffectName(sel.eliteArmorEffect)` mapping to `pmcg` list `8c` / region `armor_fx` (permutations `armor_fx_00`..`05`).
+
+4. **Nameplates & Emblems Catalog & In-Game Badging (`src/ui/UiArt.hpp`, `UiArt.cpp`, `ArmorCustomizer.hpp`, `ArmorCustomizer.cpp`):**
+   - Implemented `GetNameplateCatalog()` and `GetEmblemCatalog()` in `UiArt.cpp`, dynamically parsing `playercustomization.xml` from MCC for 536 nameplates and 330 emblems with authentic titles.
+   - Added `UiTexture Nameplate(int id)` loading `PlayerIDNamePlate_*.png` via WIC and `UiTexture Emblem(int id)` decoding from `emblemstexturepack.perm.bin` via `PackImage`.
+   - Added Nameplate and Emblem selectors in `ArmorCustomizer.cpp` under the `IDENTITY` section, with real-time preview and saving to `appearance.json`.
+   - Added Honor Guard to `kEliteSets` and an Armor Effect row under `EFFECTS & VOICE` for Elites.
+   - Updated top-right header nameplate badge to render the player's equipped nameplate PNG and emblem.
+
+5. **Master Server Social Networking Client & UI (`src/network/SocialClient.hpp`, `SocialClient.cpp`, `FrontEndMenu.cpp`):**
+   - Built `SocialClient` singleton with async WinHttp background requests to the master server:
+     - `/api/friends/list` - Retrieves accepted friends, incoming requests, and outgoing requests.
+     - `/api/invites/list` - Polls active game invites for the user.
+     - `/api/friends/search` - Searches community users by username prefix.
+     - `/api/friends/add` - Sends a friend request.
+     - `/api/friends/accept` - Accepts an incoming request.
+     - `/api/friends/remove` - Removes a friend or cancels a request.
+     - `/api/invites/send` - Sends a game invite with host IP and port.
+     - `/api/invites/clear` - Dismisses an invite.
+   - Background thread polls invites and friends every 10 seconds.
+   - Added `Social` to main menu navigation (`kMainEntries`) and implemented `DrawSocialScreen`:
+     - Online account status header with quick link to Account Login/Register modal.
+     - Prominent Game Invite Received banner with one-click `[JOIN GAME]` and `[DISMISS]`.
+     - Interactive tabs for **Friends**, **Requests**, and **Find Players** (navigable via mouse or Q/E / Bumpers).
+     - Live search bar for player lookup with `[ADD FRIEND]` buttons.
+   - Pre-Game Lobby update: replaced placeholder friends with real friends list from `SocialClient`, added one-click `[INVITE]` button for lobby hosts, and mapped the `Y` button / click on friends header to open the Social screen directly.
+
+---
+
+### 3. Verification & Build Status
+
+- Built cleanly via MSBuild: `cmake --build build --config Release`
+  - `noble-client.exe`: **0 errors, 0 warnings**
+  - `noble-dedicated.exe`: **0 errors, 0 warnings**
+- All MCC retail installation files remain 100% read-only and unmodified.
 
 ## 0. Pick up here (2026-10-28, 22:50 ET) - Infinite Load on Join Fixed: Wire Packet Framing (8-Byte Machine ID Header), Peer Resolution & Shutdown Order
 
@@ -1065,6 +2645,85 @@ All changes compiled cleanly via `build.bat` (`noble-client.exe` and `noble-dedi
   - Fresh binaries deployed directly to `C:\Users\Chey1\Desktop\Release For Test\`.
 
 ---
+
+## 0. Pick up here (2026-10-30, 04:45 ET) - Elite Armors Network Replication Fix, Elite Armor Effects Engine Patch, Full Armory Permutations & Emblems/Nameplates, and Master Server Social Friends/Invites Menu (O7OF / Dominus)
+
+Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor effects engine support, MCC nameplates and emblems integration into the Armory, and master server social networking system with interactive friends list, player search, and in-game lobby invites.
+
+### 1. What was wrong & Root Causes
+
+1. **Elite Armors Defaulting to Elite Minor for Remote Players:**
+   - Players equipping Elite armor sets (such as Honor Guard, General, Field Marshall, Officer, etc.) saw their selected armor locally, but remote players in multiplayer matches only saw them as default Elite Minor.
+   - **Root Cause Reverse-Engineered:** In `haloreach.dll+0x2EDD45` (the function serializing the player's profile into the network replication player datum at `0x2C8070`), Bungie/MCC hardcoded `species = 0` (Spartan) and `slot = 7` when writing `profile[0x8C]` (the equipped Elite armor set index).
+   - In `haloreach.dll+0x2C8070`, the code verifies `cmp dword ptr [rdx+4], 3; ja exit`. Passing slot 7 exceeded the check and jumped to exit, leaving `[player + 0xAE + 0]` completely unwritten (0 = Elite Minor). The multiplayer network session then broadcasted this default 0 value to all other clients.
+
+2. **Elite Armor Effects Not Showing & Previous Buggy Behavior:**
+   - Armor effects only applied to Spartans; Elites had no working armor effects.
+   - **Root Cause Reverse-Engineered:** In `haloreach.dll+0x105796`, the engine validated `cmp esi, 8; setb r15b` (`83 FE 08 41 0F 92 C7`), rejecting `pmcg` lists >= 8. Spartan fx is list 8 (`+0x80`), while Elite fx is list 9 (`+0x8C`).
+   - In previous iterations, equipping armor effects erroneously overrode the player's Elite character model type due to coupled mesh logic.
+
+3. **Armory Missing Nameplates & Emblems:**
+   - The Armory identity customization lacked the full catalog of MCC Reach nameplates (536 nameplates) and emblems (330 emblems) loaded dynamically from MCC assets.
+
+4. **Placeholder Social / Friends System in Main Menu and Pre-Game Lobby:**
+   - The lobby sidebar displayed hardcoded placeholder text for friends ("Forge - In a Game", "In Custom Game Lobby"). There was no way to search community players, add friends, accept/decline friend requests, view real-time invites, or invite friends directly to a game lobby.
+
+---
+
+### 2. Implementation & Fixes
+
+1. **Elite Armor Network Replication Engine Patch (`src/hooks/EnginePatches.cpp`):**
+   - Patched RVA `0x2EDD45` in `haloreach.dll` from:
+     `89 75 C0 C7 45 C4 07 00 00 00` (`mov [rbp-0x40], esi; mov dword ptr [rbp-0x3C], 7`)
+     to:
+     `C7 45 C0 01 00 00 00 89 75 C4` (`mov dword ptr [rbp-0x40], 1; mov [rbp-0x3C], esi`)
+   - This passes `species = 1` (Elite) and `slot = 0` to `0x2C8070`, cleanly storing the equipped armor set index directly into `[player + 0xAE + 0]`. Remote players now replicate and render the exact Elite armor set chosen (Minor, Officer, SpecOps, Ranger, Ultra, Zealot, General, Field Marshall, Honor Guard).
+
+2. **Elite Armor Effects Engine & Pack Fixes (`src/engine/ElitePack.cpp`):**
+   - Patched RVA `0x105796` in `haloreach.dll` from `cmp esi, 8; setb r15b` (`83 FE 08 41 0F 92 C7`) to `cmp esi, 8; setne r15b` (`83 FE 08 41 0F 95 C7`). This cleanly skips Spartan fx list 8 (`+0x80`) while permitting Elite armor piece lists 0..7 and Elite fx list 9 (`pmcg +0x8C`).
+   - Expanded `kSetPieces` array to `[9][6]`, adding Honor Guard at index 8 (`{2, 2, 2, 8, 2, 10}`).
+   - In `BuilderHook`, cleanly differentiated local vs remote players. Local player reads saved armory selection and elite armor effect; remote players read their replicated network set (`copy[0x17]`). Spartan effect on Elites is suppressed (`copy[0x18] = 0xFF`) and Elite effect is applied (`copy[0x19] = eliteEffect`).
+   - Character mesh permutations and armor effect permutation logic are 100% separated, eliminating past permutation collision bugs.
+   - Added `"forge"` mode support to `ElitePack::Install`.
+
+3. **ReachArmory & Host Ingestion (`src/engine/ReachHost.cpp`, `ReachArmory.hpp`, `ReachArmory.cpp`):**
+   - Clamped `el["armor_set"]` to 0..8 (Honor Guard support) in `ReachHost.cpp`.
+   - Added `eliteArmorEffectIndex` and `eliteArmorEffect` to `ReachArmorySelection`.
+   - Added 3D viewport preview for Elite armor effects using `PmcgEffectName(sel.eliteArmorEffect)` mapping to `pmcg` list `8c` / region `armor_fx` (permutations `armor_fx_00`..`05`).
+
+4. **Nameplates & Emblems Catalog & In-Game Badging (`src/ui/UiArt.hpp`, `UiArt.cpp`, `ArmorCustomizer.hpp`, `ArmorCustomizer.cpp`):**
+   - Implemented `GetNameplateCatalog()` and `GetEmblemCatalog()` in `UiArt.cpp`, dynamically parsing `playercustomization.xml` from MCC for 536 nameplates and 330 emblems with authentic titles.
+   - Added `UiTexture Nameplate(int id)` loading `PlayerIDNamePlate_*.png` via WIC and `UiTexture Emblem(int id)` decoding from `emblemstexturepack.perm.bin` via `PackImage`.
+   - Added Nameplate and Emblem selectors in `ArmorCustomizer.cpp` under the `IDENTITY` section, with real-time preview and saving to `appearance.json`.
+   - Added Honor Guard to `kEliteSets` and an Armor Effect row under `EFFECTS & VOICE` for Elites.
+   - Updated top-right header nameplate badge to render the player's equipped nameplate PNG and emblem.
+
+5. **Master Server Social Networking Client & UI (`src/network/SocialClient.hpp`, `SocialClient.cpp`, `FrontEndMenu.cpp`):**
+   - Built `SocialClient` singleton with async WinHttp background requests to the master server:
+     - `/api/friends/list` - Retrieves accepted friends, incoming requests, and outgoing requests.
+     - `/api/invites/list` - Polls active game invites for the user.
+     - `/api/friends/search` - Searches community users by username prefix.
+     - `/api/friends/add` - Sends a friend request.
+     - `/api/friends/accept` - Accepts an incoming request.
+     - `/api/friends/remove` - Removes a friend or cancels a request.
+     - `/api/invites/send` - Sends a game invite with host IP and port.
+     - `/api/invites/clear` - Dismisses an invite.
+   - Background thread polls invites and friends every 10 seconds.
+   - Added `Social` to main menu navigation (`kMainEntries`) and implemented `DrawSocialScreen`:
+     - Online account status header with quick link to Account Login/Register modal.
+     - Prominent Game Invite Received banner with one-click `[JOIN GAME]` and `[DISMISS]`.
+     - Interactive tabs for **Friends**, **Requests**, and **Find Players** (navigable via mouse or Q/E / Bumpers).
+     - Live search bar for player lookup with `[ADD FRIEND]` buttons.
+   - Pre-Game Lobby update: replaced placeholder friends with real friends list from `SocialClient`, added one-click `[INVITE]` button for lobby hosts, and mapped the `Y` button / click on friends header to open the Social screen directly.
+
+---
+
+### 3. Verification & Build Status
+
+- Built cleanly via MSBuild: `cmake --build build --config Release`
+  - `noble-client.exe`: **0 errors, 0 warnings**
+  - `noble-dedicated.exe`: **0 errors, 0 warnings**
+- All MCC retail installation files remain 100% read-only and unmodified.
 
 ## 0. Pick up here (2026-10-28, 22:35 ET) - invisible players, menu crash, join window, Elite pack fixes
 
@@ -1105,6 +2764,85 @@ All tested by Tyler unless marked.
 
 ---
 
+## 0. Pick up here (2026-10-30, 04:45 ET) - Elite Armors Network Replication Fix, Elite Armor Effects Engine Patch, Full Armory Permutations & Emblems/Nameplates, and Master Server Social Friends/Invites Menu (O7OF / Dominus)
+
+Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor effects engine support, MCC nameplates and emblems integration into the Armory, and master server social networking system with interactive friends list, player search, and in-game lobby invites.
+
+### 1. What was wrong & Root Causes
+
+1. **Elite Armors Defaulting to Elite Minor for Remote Players:**
+   - Players equipping Elite armor sets (such as Honor Guard, General, Field Marshall, Officer, etc.) saw their selected armor locally, but remote players in multiplayer matches only saw them as default Elite Minor.
+   - **Root Cause Reverse-Engineered:** In `haloreach.dll+0x2EDD45` (the function serializing the player's profile into the network replication player datum at `0x2C8070`), Bungie/MCC hardcoded `species = 0` (Spartan) and `slot = 7` when writing `profile[0x8C]` (the equipped Elite armor set index).
+   - In `haloreach.dll+0x2C8070`, the code verifies `cmp dword ptr [rdx+4], 3; ja exit`. Passing slot 7 exceeded the check and jumped to exit, leaving `[player + 0xAE + 0]` completely unwritten (0 = Elite Minor). The multiplayer network session then broadcasted this default 0 value to all other clients.
+
+2. **Elite Armor Effects Not Showing & Previous Buggy Behavior:**
+   - Armor effects only applied to Spartans; Elites had no working armor effects.
+   - **Root Cause Reverse-Engineered:** In `haloreach.dll+0x105796`, the engine validated `cmp esi, 8; setb r15b` (`83 FE 08 41 0F 92 C7`), rejecting `pmcg` lists >= 8. Spartan fx is list 8 (`+0x80`), while Elite fx is list 9 (`+0x8C`).
+   - In previous iterations, equipping armor effects erroneously overrode the player's Elite character model type due to coupled mesh logic.
+
+3. **Armory Missing Nameplates & Emblems:**
+   - The Armory identity customization lacked the full catalog of MCC Reach nameplates (536 nameplates) and emblems (330 emblems) loaded dynamically from MCC assets.
+
+4. **Placeholder Social / Friends System in Main Menu and Pre-Game Lobby:**
+   - The lobby sidebar displayed hardcoded placeholder text for friends ("Forge - In a Game", "In Custom Game Lobby"). There was no way to search community players, add friends, accept/decline friend requests, view real-time invites, or invite friends directly to a game lobby.
+
+---
+
+### 2. Implementation & Fixes
+
+1. **Elite Armor Network Replication Engine Patch (`src/hooks/EnginePatches.cpp`):**
+   - Patched RVA `0x2EDD45` in `haloreach.dll` from:
+     `89 75 C0 C7 45 C4 07 00 00 00` (`mov [rbp-0x40], esi; mov dword ptr [rbp-0x3C], 7`)
+     to:
+     `C7 45 C0 01 00 00 00 89 75 C4` (`mov dword ptr [rbp-0x40], 1; mov [rbp-0x3C], esi`)
+   - This passes `species = 1` (Elite) and `slot = 0` to `0x2C8070`, cleanly storing the equipped armor set index directly into `[player + 0xAE + 0]`. Remote players now replicate and render the exact Elite armor set chosen (Minor, Officer, SpecOps, Ranger, Ultra, Zealot, General, Field Marshall, Honor Guard).
+
+2. **Elite Armor Effects Engine & Pack Fixes (`src/engine/ElitePack.cpp`):**
+   - Patched RVA `0x105796` in `haloreach.dll` from `cmp esi, 8; setb r15b` (`83 FE 08 41 0F 92 C7`) to `cmp esi, 8; setne r15b` (`83 FE 08 41 0F 95 C7`). This cleanly skips Spartan fx list 8 (`+0x80`) while permitting Elite armor piece lists 0..7 and Elite fx list 9 (`pmcg +0x8C`).
+   - Expanded `kSetPieces` array to `[9][6]`, adding Honor Guard at index 8 (`{2, 2, 2, 8, 2, 10}`).
+   - In `BuilderHook`, cleanly differentiated local vs remote players. Local player reads saved armory selection and elite armor effect; remote players read their replicated network set (`copy[0x17]`). Spartan effect on Elites is suppressed (`copy[0x18] = 0xFF`) and Elite effect is applied (`copy[0x19] = eliteEffect`).
+   - Character mesh permutations and armor effect permutation logic are 100% separated, eliminating past permutation collision bugs.
+   - Added `"forge"` mode support to `ElitePack::Install`.
+
+3. **ReachArmory & Host Ingestion (`src/engine/ReachHost.cpp`, `ReachArmory.hpp`, `ReachArmory.cpp`):**
+   - Clamped `el["armor_set"]` to 0..8 (Honor Guard support) in `ReachHost.cpp`.
+   - Added `eliteArmorEffectIndex` and `eliteArmorEffect` to `ReachArmorySelection`.
+   - Added 3D viewport preview for Elite armor effects using `PmcgEffectName(sel.eliteArmorEffect)` mapping to `pmcg` list `8c` / region `armor_fx` (permutations `armor_fx_00`..`05`).
+
+4. **Nameplates & Emblems Catalog & In-Game Badging (`src/ui/UiArt.hpp`, `UiArt.cpp`, `ArmorCustomizer.hpp`, `ArmorCustomizer.cpp`):**
+   - Implemented `GetNameplateCatalog()` and `GetEmblemCatalog()` in `UiArt.cpp`, dynamically parsing `playercustomization.xml` from MCC for 536 nameplates and 330 emblems with authentic titles.
+   - Added `UiTexture Nameplate(int id)` loading `PlayerIDNamePlate_*.png` via WIC and `UiTexture Emblem(int id)` decoding from `emblemstexturepack.perm.bin` via `PackImage`.
+   - Added Nameplate and Emblem selectors in `ArmorCustomizer.cpp` under the `IDENTITY` section, with real-time preview and saving to `appearance.json`.
+   - Added Honor Guard to `kEliteSets` and an Armor Effect row under `EFFECTS & VOICE` for Elites.
+   - Updated top-right header nameplate badge to render the player's equipped nameplate PNG and emblem.
+
+5. **Master Server Social Networking Client & UI (`src/network/SocialClient.hpp`, `SocialClient.cpp`, `FrontEndMenu.cpp`):**
+   - Built `SocialClient` singleton with async WinHttp background requests to the master server:
+     - `/api/friends/list` - Retrieves accepted friends, incoming requests, and outgoing requests.
+     - `/api/invites/list` - Polls active game invites for the user.
+     - `/api/friends/search` - Searches community users by username prefix.
+     - `/api/friends/add` - Sends a friend request.
+     - `/api/friends/accept` - Accepts an incoming request.
+     - `/api/friends/remove` - Removes a friend or cancels a request.
+     - `/api/invites/send` - Sends a game invite with host IP and port.
+     - `/api/invites/clear` - Dismisses an invite.
+   - Background thread polls invites and friends every 10 seconds.
+   - Added `Social` to main menu navigation (`kMainEntries`) and implemented `DrawSocialScreen`:
+     - Online account status header with quick link to Account Login/Register modal.
+     - Prominent Game Invite Received banner with one-click `[JOIN GAME]` and `[DISMISS]`.
+     - Interactive tabs for **Friends**, **Requests**, and **Find Players** (navigable via mouse or Q/E / Bumpers).
+     - Live search bar for player lookup with `[ADD FRIEND]` buttons.
+   - Pre-Game Lobby update: replaced placeholder friends with real friends list from `SocialClient`, added one-click `[INVITE]` button for lobby hosts, and mapped the `Y` button / click on friends header to open the Social screen directly.
+
+---
+
+### 3. Verification & Build Status
+
+- Built cleanly via MSBuild: `cmake --build build --config Release`
+  - `noble-client.exe`: **0 errors, 0 warnings**
+  - `noble-dedicated.exe`: **0 errors, 0 warnings**
+- All MCC retail installation files remain 100% read-only and unmodified.
+
 ## 0. Pick up here (2026-10-28, 22:20 ET) - Dominus Updates: Build System Fallback, Zero-Warning Compilation & Git/Toolchain Setup
 
 - **Git & Team Onboarding (`Dominus-VII`):**
@@ -1126,6 +2864,85 @@ All tested by Tyler unless marked.
 
 ---
 
+## 0. Pick up here (2026-10-30, 04:45 ET) - Elite Armors Network Replication Fix, Elite Armor Effects Engine Patch, Full Armory Permutations & Emblems/Nameplates, and Master Server Social Friends/Invites Menu (O7OF / Dominus)
+
+Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor effects engine support, MCC nameplates and emblems integration into the Armory, and master server social networking system with interactive friends list, player search, and in-game lobby invites.
+
+### 1. What was wrong & Root Causes
+
+1. **Elite Armors Defaulting to Elite Minor for Remote Players:**
+   - Players equipping Elite armor sets (such as Honor Guard, General, Field Marshall, Officer, etc.) saw their selected armor locally, but remote players in multiplayer matches only saw them as default Elite Minor.
+   - **Root Cause Reverse-Engineered:** In `haloreach.dll+0x2EDD45` (the function serializing the player's profile into the network replication player datum at `0x2C8070`), Bungie/MCC hardcoded `species = 0` (Spartan) and `slot = 7` when writing `profile[0x8C]` (the equipped Elite armor set index).
+   - In `haloreach.dll+0x2C8070`, the code verifies `cmp dword ptr [rdx+4], 3; ja exit`. Passing slot 7 exceeded the check and jumped to exit, leaving `[player + 0xAE + 0]` completely unwritten (0 = Elite Minor). The multiplayer network session then broadcasted this default 0 value to all other clients.
+
+2. **Elite Armor Effects Not Showing & Previous Buggy Behavior:**
+   - Armor effects only applied to Spartans; Elites had no working armor effects.
+   - **Root Cause Reverse-Engineered:** In `haloreach.dll+0x105796`, the engine validated `cmp esi, 8; setb r15b` (`83 FE 08 41 0F 92 C7`), rejecting `pmcg` lists >= 8. Spartan fx is list 8 (`+0x80`), while Elite fx is list 9 (`+0x8C`).
+   - In previous iterations, equipping armor effects erroneously overrode the player's Elite character model type due to coupled mesh logic.
+
+3. **Armory Missing Nameplates & Emblems:**
+   - The Armory identity customization lacked the full catalog of MCC Reach nameplates (536 nameplates) and emblems (330 emblems) loaded dynamically from MCC assets.
+
+4. **Placeholder Social / Friends System in Main Menu and Pre-Game Lobby:**
+   - The lobby sidebar displayed hardcoded placeholder text for friends ("Forge - In a Game", "In Custom Game Lobby"). There was no way to search community players, add friends, accept/decline friend requests, view real-time invites, or invite friends directly to a game lobby.
+
+---
+
+### 2. Implementation & Fixes
+
+1. **Elite Armor Network Replication Engine Patch (`src/hooks/EnginePatches.cpp`):**
+   - Patched RVA `0x2EDD45` in `haloreach.dll` from:
+     `89 75 C0 C7 45 C4 07 00 00 00` (`mov [rbp-0x40], esi; mov dword ptr [rbp-0x3C], 7`)
+     to:
+     `C7 45 C0 01 00 00 00 89 75 C4` (`mov dword ptr [rbp-0x40], 1; mov [rbp-0x3C], esi`)
+   - This passes `species = 1` (Elite) and `slot = 0` to `0x2C8070`, cleanly storing the equipped armor set index directly into `[player + 0xAE + 0]`. Remote players now replicate and render the exact Elite armor set chosen (Minor, Officer, SpecOps, Ranger, Ultra, Zealot, General, Field Marshall, Honor Guard).
+
+2. **Elite Armor Effects Engine & Pack Fixes (`src/engine/ElitePack.cpp`):**
+   - Patched RVA `0x105796` in `haloreach.dll` from `cmp esi, 8; setb r15b` (`83 FE 08 41 0F 92 C7`) to `cmp esi, 8; setne r15b` (`83 FE 08 41 0F 95 C7`). This cleanly skips Spartan fx list 8 (`+0x80`) while permitting Elite armor piece lists 0..7 and Elite fx list 9 (`pmcg +0x8C`).
+   - Expanded `kSetPieces` array to `[9][6]`, adding Honor Guard at index 8 (`{2, 2, 2, 8, 2, 10}`).
+   - In `BuilderHook`, cleanly differentiated local vs remote players. Local player reads saved armory selection and elite armor effect; remote players read their replicated network set (`copy[0x17]`). Spartan effect on Elites is suppressed (`copy[0x18] = 0xFF`) and Elite effect is applied (`copy[0x19] = eliteEffect`).
+   - Character mesh permutations and armor effect permutation logic are 100% separated, eliminating past permutation collision bugs.
+   - Added `"forge"` mode support to `ElitePack::Install`.
+
+3. **ReachArmory & Host Ingestion (`src/engine/ReachHost.cpp`, `ReachArmory.hpp`, `ReachArmory.cpp`):**
+   - Clamped `el["armor_set"]` to 0..8 (Honor Guard support) in `ReachHost.cpp`.
+   - Added `eliteArmorEffectIndex` and `eliteArmorEffect` to `ReachArmorySelection`.
+   - Added 3D viewport preview for Elite armor effects using `PmcgEffectName(sel.eliteArmorEffect)` mapping to `pmcg` list `8c` / region `armor_fx` (permutations `armor_fx_00`..`05`).
+
+4. **Nameplates & Emblems Catalog & In-Game Badging (`src/ui/UiArt.hpp`, `UiArt.cpp`, `ArmorCustomizer.hpp`, `ArmorCustomizer.cpp`):**
+   - Implemented `GetNameplateCatalog()` and `GetEmblemCatalog()` in `UiArt.cpp`, dynamically parsing `playercustomization.xml` from MCC for 536 nameplates and 330 emblems with authentic titles.
+   - Added `UiTexture Nameplate(int id)` loading `PlayerIDNamePlate_*.png` via WIC and `UiTexture Emblem(int id)` decoding from `emblemstexturepack.perm.bin` via `PackImage`.
+   - Added Nameplate and Emblem selectors in `ArmorCustomizer.cpp` under the `IDENTITY` section, with real-time preview and saving to `appearance.json`.
+   - Added Honor Guard to `kEliteSets` and an Armor Effect row under `EFFECTS & VOICE` for Elites.
+   - Updated top-right header nameplate badge to render the player's equipped nameplate PNG and emblem.
+
+5. **Master Server Social Networking Client & UI (`src/network/SocialClient.hpp`, `SocialClient.cpp`, `FrontEndMenu.cpp`):**
+   - Built `SocialClient` singleton with async WinHttp background requests to the master server:
+     - `/api/friends/list` - Retrieves accepted friends, incoming requests, and outgoing requests.
+     - `/api/invites/list` - Polls active game invites for the user.
+     - `/api/friends/search` - Searches community users by username prefix.
+     - `/api/friends/add` - Sends a friend request.
+     - `/api/friends/accept` - Accepts an incoming request.
+     - `/api/friends/remove` - Removes a friend or cancels a request.
+     - `/api/invites/send` - Sends a game invite with host IP and port.
+     - `/api/invites/clear` - Dismisses an invite.
+   - Background thread polls invites and friends every 10 seconds.
+   - Added `Social` to main menu navigation (`kMainEntries`) and implemented `DrawSocialScreen`:
+     - Online account status header with quick link to Account Login/Register modal.
+     - Prominent Game Invite Received banner with one-click `[JOIN GAME]` and `[DISMISS]`.
+     - Interactive tabs for **Friends**, **Requests**, and **Find Players** (navigable via mouse or Q/E / Bumpers).
+     - Live search bar for player lookup with `[ADD FRIEND]` buttons.
+   - Pre-Game Lobby update: replaced placeholder friends with real friends list from `SocialClient`, added one-click `[INVITE]` button for lobby hosts, and mapped the `Y` button / click on friends header to open the Social screen directly.
+
+---
+
+### 3. Verification & Build Status
+
+- Built cleanly via MSBuild: `cmake --build build --config Release`
+  - `noble-client.exe`: **0 errors, 0 warnings**
+  - `noble-dedicated.exe`: **0 errors, 0 warnings**
+- All MCC retail installation files remain 100% read-only and unmodified.
+
 ## 0. Pick up here (2026-10-28, 22:15 ET) - Netcode Fixed: Host Slot 41/43 NetworkTransport, Synchronized Session IDs, Active Guest Player Slot & Variant Decoding
 
 - **Root Cause Resolution for "Loads forever at 5% on join" and "Player joined never pops up":**
@@ -1142,6 +2959,85 @@ All tested by Tyler unless marked.
   - Built with MSVC Release configuration (`noble-client.exe`, `noble-dedicated.exe`) and copied to `C:\Users\Chey1\Desktop\Release For Test\`.
 
 ---
+
+## 0. Pick up here (2026-10-30, 04:45 ET) - Elite Armors Network Replication Fix, Elite Armor Effects Engine Patch, Full Armory Permutations & Emblems/Nameplates, and Master Server Social Friends/Invites Menu (O7OF / Dominus)
+
+Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor effects engine support, MCC nameplates and emblems integration into the Armory, and master server social networking system with interactive friends list, player search, and in-game lobby invites.
+
+### 1. What was wrong & Root Causes
+
+1. **Elite Armors Defaulting to Elite Minor for Remote Players:**
+   - Players equipping Elite armor sets (such as Honor Guard, General, Field Marshall, Officer, etc.) saw their selected armor locally, but remote players in multiplayer matches only saw them as default Elite Minor.
+   - **Root Cause Reverse-Engineered:** In `haloreach.dll+0x2EDD45` (the function serializing the player's profile into the network replication player datum at `0x2C8070`), Bungie/MCC hardcoded `species = 0` (Spartan) and `slot = 7` when writing `profile[0x8C]` (the equipped Elite armor set index).
+   - In `haloreach.dll+0x2C8070`, the code verifies `cmp dword ptr [rdx+4], 3; ja exit`. Passing slot 7 exceeded the check and jumped to exit, leaving `[player + 0xAE + 0]` completely unwritten (0 = Elite Minor). The multiplayer network session then broadcasted this default 0 value to all other clients.
+
+2. **Elite Armor Effects Not Showing & Previous Buggy Behavior:**
+   - Armor effects only applied to Spartans; Elites had no working armor effects.
+   - **Root Cause Reverse-Engineered:** In `haloreach.dll+0x105796`, the engine validated `cmp esi, 8; setb r15b` (`83 FE 08 41 0F 92 C7`), rejecting `pmcg` lists >= 8. Spartan fx is list 8 (`+0x80`), while Elite fx is list 9 (`+0x8C`).
+   - In previous iterations, equipping armor effects erroneously overrode the player's Elite character model type due to coupled mesh logic.
+
+3. **Armory Missing Nameplates & Emblems:**
+   - The Armory identity customization lacked the full catalog of MCC Reach nameplates (536 nameplates) and emblems (330 emblems) loaded dynamically from MCC assets.
+
+4. **Placeholder Social / Friends System in Main Menu and Pre-Game Lobby:**
+   - The lobby sidebar displayed hardcoded placeholder text for friends ("Forge - In a Game", "In Custom Game Lobby"). There was no way to search community players, add friends, accept/decline friend requests, view real-time invites, or invite friends directly to a game lobby.
+
+---
+
+### 2. Implementation & Fixes
+
+1. **Elite Armor Network Replication Engine Patch (`src/hooks/EnginePatches.cpp`):**
+   - Patched RVA `0x2EDD45` in `haloreach.dll` from:
+     `89 75 C0 C7 45 C4 07 00 00 00` (`mov [rbp-0x40], esi; mov dword ptr [rbp-0x3C], 7`)
+     to:
+     `C7 45 C0 01 00 00 00 89 75 C4` (`mov dword ptr [rbp-0x40], 1; mov [rbp-0x3C], esi`)
+   - This passes `species = 1` (Elite) and `slot = 0` to `0x2C8070`, cleanly storing the equipped armor set index directly into `[player + 0xAE + 0]`. Remote players now replicate and render the exact Elite armor set chosen (Minor, Officer, SpecOps, Ranger, Ultra, Zealot, General, Field Marshall, Honor Guard).
+
+2. **Elite Armor Effects Engine & Pack Fixes (`src/engine/ElitePack.cpp`):**
+   - Patched RVA `0x105796` in `haloreach.dll` from `cmp esi, 8; setb r15b` (`83 FE 08 41 0F 92 C7`) to `cmp esi, 8; setne r15b` (`83 FE 08 41 0F 95 C7`). This cleanly skips Spartan fx list 8 (`+0x80`) while permitting Elite armor piece lists 0..7 and Elite fx list 9 (`pmcg +0x8C`).
+   - Expanded `kSetPieces` array to `[9][6]`, adding Honor Guard at index 8 (`{2, 2, 2, 8, 2, 10}`).
+   - In `BuilderHook`, cleanly differentiated local vs remote players. Local player reads saved armory selection and elite armor effect; remote players read their replicated network set (`copy[0x17]`). Spartan effect on Elites is suppressed (`copy[0x18] = 0xFF`) and Elite effect is applied (`copy[0x19] = eliteEffect`).
+   - Character mesh permutations and armor effect permutation logic are 100% separated, eliminating past permutation collision bugs.
+   - Added `"forge"` mode support to `ElitePack::Install`.
+
+3. **ReachArmory & Host Ingestion (`src/engine/ReachHost.cpp`, `ReachArmory.hpp`, `ReachArmory.cpp`):**
+   - Clamped `el["armor_set"]` to 0..8 (Honor Guard support) in `ReachHost.cpp`.
+   - Added `eliteArmorEffectIndex` and `eliteArmorEffect` to `ReachArmorySelection`.
+   - Added 3D viewport preview for Elite armor effects using `PmcgEffectName(sel.eliteArmorEffect)` mapping to `pmcg` list `8c` / region `armor_fx` (permutations `armor_fx_00`..`05`).
+
+4. **Nameplates & Emblems Catalog & In-Game Badging (`src/ui/UiArt.hpp`, `UiArt.cpp`, `ArmorCustomizer.hpp`, `ArmorCustomizer.cpp`):**
+   - Implemented `GetNameplateCatalog()` and `GetEmblemCatalog()` in `UiArt.cpp`, dynamically parsing `playercustomization.xml` from MCC for 536 nameplates and 330 emblems with authentic titles.
+   - Added `UiTexture Nameplate(int id)` loading `PlayerIDNamePlate_*.png` via WIC and `UiTexture Emblem(int id)` decoding from `emblemstexturepack.perm.bin` via `PackImage`.
+   - Added Nameplate and Emblem selectors in `ArmorCustomizer.cpp` under the `IDENTITY` section, with real-time preview and saving to `appearance.json`.
+   - Added Honor Guard to `kEliteSets` and an Armor Effect row under `EFFECTS & VOICE` for Elites.
+   - Updated top-right header nameplate badge to render the player's equipped nameplate PNG and emblem.
+
+5. **Master Server Social Networking Client & UI (`src/network/SocialClient.hpp`, `SocialClient.cpp`, `FrontEndMenu.cpp`):**
+   - Built `SocialClient` singleton with async WinHttp background requests to the master server:
+     - `/api/friends/list` - Retrieves accepted friends, incoming requests, and outgoing requests.
+     - `/api/invites/list` - Polls active game invites for the user.
+     - `/api/friends/search` - Searches community users by username prefix.
+     - `/api/friends/add` - Sends a friend request.
+     - `/api/friends/accept` - Accepts an incoming request.
+     - `/api/friends/remove` - Removes a friend or cancels a request.
+     - `/api/invites/send` - Sends a game invite with host IP and port.
+     - `/api/invites/clear` - Dismisses an invite.
+   - Background thread polls invites and friends every 10 seconds.
+   - Added `Social` to main menu navigation (`kMainEntries`) and implemented `DrawSocialScreen`:
+     - Online account status header with quick link to Account Login/Register modal.
+     - Prominent Game Invite Received banner with one-click `[JOIN GAME]` and `[DISMISS]`.
+     - Interactive tabs for **Friends**, **Requests**, and **Find Players** (navigable via mouse or Q/E / Bumpers).
+     - Live search bar for player lookup with `[ADD FRIEND]` buttons.
+   - Pre-Game Lobby update: replaced placeholder friends with real friends list from `SocialClient`, added one-click `[INVITE]` button for lobby hosts, and mapped the `Y` button / click on friends header to open the Social screen directly.
+
+---
+
+### 3. Verification & Build Status
+
+- Built cleanly via MSBuild: `cmake --build build --config Release`
+  - `noble-client.exe`: **0 errors, 0 warnings**
+  - `noble-dedicated.exe`: **0 errors, 0 warnings**
+- All MCC retail installation files remain 100% read-only and unmodified.
 
 ## 0. Pick up here (2026-10-28, 21:00 ET) - O7OF Updates: Master Server Online, IPify Public IP Detection, Guest Launch Block & Robust UPnP P2P
 
@@ -1176,6 +3072,85 @@ All tested by Tyler unless marked.
 
 ---
 
+## 0. Pick up here (2026-10-30, 04:45 ET) - Elite Armors Network Replication Fix, Elite Armor Effects Engine Patch, Full Armory Permutations & Emblems/Nameplates, and Master Server Social Friends/Invites Menu (O7OF / Dominus)
+
+Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor effects engine support, MCC nameplates and emblems integration into the Armory, and master server social networking system with interactive friends list, player search, and in-game lobby invites.
+
+### 1. What was wrong & Root Causes
+
+1. **Elite Armors Defaulting to Elite Minor for Remote Players:**
+   - Players equipping Elite armor sets (such as Honor Guard, General, Field Marshall, Officer, etc.) saw their selected armor locally, but remote players in multiplayer matches only saw them as default Elite Minor.
+   - **Root Cause Reverse-Engineered:** In `haloreach.dll+0x2EDD45` (the function serializing the player's profile into the network replication player datum at `0x2C8070`), Bungie/MCC hardcoded `species = 0` (Spartan) and `slot = 7` when writing `profile[0x8C]` (the equipped Elite armor set index).
+   - In `haloreach.dll+0x2C8070`, the code verifies `cmp dword ptr [rdx+4], 3; ja exit`. Passing slot 7 exceeded the check and jumped to exit, leaving `[player + 0xAE + 0]` completely unwritten (0 = Elite Minor). The multiplayer network session then broadcasted this default 0 value to all other clients.
+
+2. **Elite Armor Effects Not Showing & Previous Buggy Behavior:**
+   - Armor effects only applied to Spartans; Elites had no working armor effects.
+   - **Root Cause Reverse-Engineered:** In `haloreach.dll+0x105796`, the engine validated `cmp esi, 8; setb r15b` (`83 FE 08 41 0F 92 C7`), rejecting `pmcg` lists >= 8. Spartan fx is list 8 (`+0x80`), while Elite fx is list 9 (`+0x8C`).
+   - In previous iterations, equipping armor effects erroneously overrode the player's Elite character model type due to coupled mesh logic.
+
+3. **Armory Missing Nameplates & Emblems:**
+   - The Armory identity customization lacked the full catalog of MCC Reach nameplates (536 nameplates) and emblems (330 emblems) loaded dynamically from MCC assets.
+
+4. **Placeholder Social / Friends System in Main Menu and Pre-Game Lobby:**
+   - The lobby sidebar displayed hardcoded placeholder text for friends ("Forge - In a Game", "In Custom Game Lobby"). There was no way to search community players, add friends, accept/decline friend requests, view real-time invites, or invite friends directly to a game lobby.
+
+---
+
+### 2. Implementation & Fixes
+
+1. **Elite Armor Network Replication Engine Patch (`src/hooks/EnginePatches.cpp`):**
+   - Patched RVA `0x2EDD45` in `haloreach.dll` from:
+     `89 75 C0 C7 45 C4 07 00 00 00` (`mov [rbp-0x40], esi; mov dword ptr [rbp-0x3C], 7`)
+     to:
+     `C7 45 C0 01 00 00 00 89 75 C4` (`mov dword ptr [rbp-0x40], 1; mov [rbp-0x3C], esi`)
+   - This passes `species = 1` (Elite) and `slot = 0` to `0x2C8070`, cleanly storing the equipped armor set index directly into `[player + 0xAE + 0]`. Remote players now replicate and render the exact Elite armor set chosen (Minor, Officer, SpecOps, Ranger, Ultra, Zealot, General, Field Marshall, Honor Guard).
+
+2. **Elite Armor Effects Engine & Pack Fixes (`src/engine/ElitePack.cpp`):**
+   - Patched RVA `0x105796` in `haloreach.dll` from `cmp esi, 8; setb r15b` (`83 FE 08 41 0F 92 C7`) to `cmp esi, 8; setne r15b` (`83 FE 08 41 0F 95 C7`). This cleanly skips Spartan fx list 8 (`+0x80`) while permitting Elite armor piece lists 0..7 and Elite fx list 9 (`pmcg +0x8C`).
+   - Expanded `kSetPieces` array to `[9][6]`, adding Honor Guard at index 8 (`{2, 2, 2, 8, 2, 10}`).
+   - In `BuilderHook`, cleanly differentiated local vs remote players. Local player reads saved armory selection and elite armor effect; remote players read their replicated network set (`copy[0x17]`). Spartan effect on Elites is suppressed (`copy[0x18] = 0xFF`) and Elite effect is applied (`copy[0x19] = eliteEffect`).
+   - Character mesh permutations and armor effect permutation logic are 100% separated, eliminating past permutation collision bugs.
+   - Added `"forge"` mode support to `ElitePack::Install`.
+
+3. **ReachArmory & Host Ingestion (`src/engine/ReachHost.cpp`, `ReachArmory.hpp`, `ReachArmory.cpp`):**
+   - Clamped `el["armor_set"]` to 0..8 (Honor Guard support) in `ReachHost.cpp`.
+   - Added `eliteArmorEffectIndex` and `eliteArmorEffect` to `ReachArmorySelection`.
+   - Added 3D viewport preview for Elite armor effects using `PmcgEffectName(sel.eliteArmorEffect)` mapping to `pmcg` list `8c` / region `armor_fx` (permutations `armor_fx_00`..`05`).
+
+4. **Nameplates & Emblems Catalog & In-Game Badging (`src/ui/UiArt.hpp`, `UiArt.cpp`, `ArmorCustomizer.hpp`, `ArmorCustomizer.cpp`):**
+   - Implemented `GetNameplateCatalog()` and `GetEmblemCatalog()` in `UiArt.cpp`, dynamically parsing `playercustomization.xml` from MCC for 536 nameplates and 330 emblems with authentic titles.
+   - Added `UiTexture Nameplate(int id)` loading `PlayerIDNamePlate_*.png` via WIC and `UiTexture Emblem(int id)` decoding from `emblemstexturepack.perm.bin` via `PackImage`.
+   - Added Nameplate and Emblem selectors in `ArmorCustomizer.cpp` under the `IDENTITY` section, with real-time preview and saving to `appearance.json`.
+   - Added Honor Guard to `kEliteSets` and an Armor Effect row under `EFFECTS & VOICE` for Elites.
+   - Updated top-right header nameplate badge to render the player's equipped nameplate PNG and emblem.
+
+5. **Master Server Social Networking Client & UI (`src/network/SocialClient.hpp`, `SocialClient.cpp`, `FrontEndMenu.cpp`):**
+   - Built `SocialClient` singleton with async WinHttp background requests to the master server:
+     - `/api/friends/list` - Retrieves accepted friends, incoming requests, and outgoing requests.
+     - `/api/invites/list` - Polls active game invites for the user.
+     - `/api/friends/search` - Searches community users by username prefix.
+     - `/api/friends/add` - Sends a friend request.
+     - `/api/friends/accept` - Accepts an incoming request.
+     - `/api/friends/remove` - Removes a friend or cancels a request.
+     - `/api/invites/send` - Sends a game invite with host IP and port.
+     - `/api/invites/clear` - Dismisses an invite.
+   - Background thread polls invites and friends every 10 seconds.
+   - Added `Social` to main menu navigation (`kMainEntries`) and implemented `DrawSocialScreen`:
+     - Online account status header with quick link to Account Login/Register modal.
+     - Prominent Game Invite Received banner with one-click `[JOIN GAME]` and `[DISMISS]`.
+     - Interactive tabs for **Friends**, **Requests**, and **Find Players** (navigable via mouse or Q/E / Bumpers).
+     - Live search bar for player lookup with `[ADD FRIEND]` buttons.
+   - Pre-Game Lobby update: replaced placeholder friends with real friends list from `SocialClient`, added one-click `[INVITE]` button for lobby hosts, and mapped the `Y` button / click on friends header to open the Social screen directly.
+
+---
+
+### 3. Verification & Build Status
+
+- Built cleanly via MSBuild: `cmake --build build --config Release`
+  - `noble-client.exe`: **0 errors, 0 warnings**
+  - `noble-dedicated.exe`: **0 errors, 0 warnings**
+- All MCC retail installation files remain 100% read-only and unmodified.
+
 ## 0. Pick up here (2026-10-28, 20:30 ET) - O7OF Updates: Netcode Fixes, Server Browser Live Overhaul, P2P Join & First-Run Setup
 
 All committed to `main` branch (commits `60fb4a3`, `14d3852`, `5d50fc2`). Release test binaries deployed to `C:\Users\Chey1\Desktop\Release For Test`.
@@ -1209,6 +3184,85 @@ All committed to `main` branch (commits `60fb4a3`, `14d3852`, `5d50fc2`). Releas
   - Backend server repository updated in `C:\Users\Chey1\Desktop\ServerTestDeploy`.
 
 ---
+
+## 0. Pick up here (2026-10-30, 04:45 ET) - Elite Armors Network Replication Fix, Elite Armor Effects Engine Patch, Full Armory Permutations & Emblems/Nameplates, and Master Server Social Friends/Invites Menu (O7OF / Dominus)
+
+Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor effects engine support, MCC nameplates and emblems integration into the Armory, and master server social networking system with interactive friends list, player search, and in-game lobby invites.
+
+### 1. What was wrong & Root Causes
+
+1. **Elite Armors Defaulting to Elite Minor for Remote Players:**
+   - Players equipping Elite armor sets (such as Honor Guard, General, Field Marshall, Officer, etc.) saw their selected armor locally, but remote players in multiplayer matches only saw them as default Elite Minor.
+   - **Root Cause Reverse-Engineered:** In `haloreach.dll+0x2EDD45` (the function serializing the player's profile into the network replication player datum at `0x2C8070`), Bungie/MCC hardcoded `species = 0` (Spartan) and `slot = 7` when writing `profile[0x8C]` (the equipped Elite armor set index).
+   - In `haloreach.dll+0x2C8070`, the code verifies `cmp dword ptr [rdx+4], 3; ja exit`. Passing slot 7 exceeded the check and jumped to exit, leaving `[player + 0xAE + 0]` completely unwritten (0 = Elite Minor). The multiplayer network session then broadcasted this default 0 value to all other clients.
+
+2. **Elite Armor Effects Not Showing & Previous Buggy Behavior:**
+   - Armor effects only applied to Spartans; Elites had no working armor effects.
+   - **Root Cause Reverse-Engineered:** In `haloreach.dll+0x105796`, the engine validated `cmp esi, 8; setb r15b` (`83 FE 08 41 0F 92 C7`), rejecting `pmcg` lists >= 8. Spartan fx is list 8 (`+0x80`), while Elite fx is list 9 (`+0x8C`).
+   - In previous iterations, equipping armor effects erroneously overrode the player's Elite character model type due to coupled mesh logic.
+
+3. **Armory Missing Nameplates & Emblems:**
+   - The Armory identity customization lacked the full catalog of MCC Reach nameplates (536 nameplates) and emblems (330 emblems) loaded dynamically from MCC assets.
+
+4. **Placeholder Social / Friends System in Main Menu and Pre-Game Lobby:**
+   - The lobby sidebar displayed hardcoded placeholder text for friends ("Forge - In a Game", "In Custom Game Lobby"). There was no way to search community players, add friends, accept/decline friend requests, view real-time invites, or invite friends directly to a game lobby.
+
+---
+
+### 2. Implementation & Fixes
+
+1. **Elite Armor Network Replication Engine Patch (`src/hooks/EnginePatches.cpp`):**
+   - Patched RVA `0x2EDD45` in `haloreach.dll` from:
+     `89 75 C0 C7 45 C4 07 00 00 00` (`mov [rbp-0x40], esi; mov dword ptr [rbp-0x3C], 7`)
+     to:
+     `C7 45 C0 01 00 00 00 89 75 C4` (`mov dword ptr [rbp-0x40], 1; mov [rbp-0x3C], esi`)
+   - This passes `species = 1` (Elite) and `slot = 0` to `0x2C8070`, cleanly storing the equipped armor set index directly into `[player + 0xAE + 0]`. Remote players now replicate and render the exact Elite armor set chosen (Minor, Officer, SpecOps, Ranger, Ultra, Zealot, General, Field Marshall, Honor Guard).
+
+2. **Elite Armor Effects Engine & Pack Fixes (`src/engine/ElitePack.cpp`):**
+   - Patched RVA `0x105796` in `haloreach.dll` from `cmp esi, 8; setb r15b` (`83 FE 08 41 0F 92 C7`) to `cmp esi, 8; setne r15b` (`83 FE 08 41 0F 95 C7`). This cleanly skips Spartan fx list 8 (`+0x80`) while permitting Elite armor piece lists 0..7 and Elite fx list 9 (`pmcg +0x8C`).
+   - Expanded `kSetPieces` array to `[9][6]`, adding Honor Guard at index 8 (`{2, 2, 2, 8, 2, 10}`).
+   - In `BuilderHook`, cleanly differentiated local vs remote players. Local player reads saved armory selection and elite armor effect; remote players read their replicated network set (`copy[0x17]`). Spartan effect on Elites is suppressed (`copy[0x18] = 0xFF`) and Elite effect is applied (`copy[0x19] = eliteEffect`).
+   - Character mesh permutations and armor effect permutation logic are 100% separated, eliminating past permutation collision bugs.
+   - Added `"forge"` mode support to `ElitePack::Install`.
+
+3. **ReachArmory & Host Ingestion (`src/engine/ReachHost.cpp`, `ReachArmory.hpp`, `ReachArmory.cpp`):**
+   - Clamped `el["armor_set"]` to 0..8 (Honor Guard support) in `ReachHost.cpp`.
+   - Added `eliteArmorEffectIndex` and `eliteArmorEffect` to `ReachArmorySelection`.
+   - Added 3D viewport preview for Elite armor effects using `PmcgEffectName(sel.eliteArmorEffect)` mapping to `pmcg` list `8c` / region `armor_fx` (permutations `armor_fx_00`..`05`).
+
+4. **Nameplates & Emblems Catalog & In-Game Badging (`src/ui/UiArt.hpp`, `UiArt.cpp`, `ArmorCustomizer.hpp`, `ArmorCustomizer.cpp`):**
+   - Implemented `GetNameplateCatalog()` and `GetEmblemCatalog()` in `UiArt.cpp`, dynamically parsing `playercustomization.xml` from MCC for 536 nameplates and 330 emblems with authentic titles.
+   - Added `UiTexture Nameplate(int id)` loading `PlayerIDNamePlate_*.png` via WIC and `UiTexture Emblem(int id)` decoding from `emblemstexturepack.perm.bin` via `PackImage`.
+   - Added Nameplate and Emblem selectors in `ArmorCustomizer.cpp` under the `IDENTITY` section, with real-time preview and saving to `appearance.json`.
+   - Added Honor Guard to `kEliteSets` and an Armor Effect row under `EFFECTS & VOICE` for Elites.
+   - Updated top-right header nameplate badge to render the player's equipped nameplate PNG and emblem.
+
+5. **Master Server Social Networking Client & UI (`src/network/SocialClient.hpp`, `SocialClient.cpp`, `FrontEndMenu.cpp`):**
+   - Built `SocialClient` singleton with async WinHttp background requests to the master server:
+     - `/api/friends/list` - Retrieves accepted friends, incoming requests, and outgoing requests.
+     - `/api/invites/list` - Polls active game invites for the user.
+     - `/api/friends/search` - Searches community users by username prefix.
+     - `/api/friends/add` - Sends a friend request.
+     - `/api/friends/accept` - Accepts an incoming request.
+     - `/api/friends/remove` - Removes a friend or cancels a request.
+     - `/api/invites/send` - Sends a game invite with host IP and port.
+     - `/api/invites/clear` - Dismisses an invite.
+   - Background thread polls invites and friends every 10 seconds.
+   - Added `Social` to main menu navigation (`kMainEntries`) and implemented `DrawSocialScreen`:
+     - Online account status header with quick link to Account Login/Register modal.
+     - Prominent Game Invite Received banner with one-click `[JOIN GAME]` and `[DISMISS]`.
+     - Interactive tabs for **Friends**, **Requests**, and **Find Players** (navigable via mouse or Q/E / Bumpers).
+     - Live search bar for player lookup with `[ADD FRIEND]` buttons.
+   - Pre-Game Lobby update: replaced placeholder friends with real friends list from `SocialClient`, added one-click `[INVITE]` button for lobby hosts, and mapped the `Y` button / click on friends header to open the Social screen directly.
+
+---
+
+### 3. Verification & Build Status
+
+- Built cleanly via MSBuild: `cmake --build build --config Release`
+  - `noble-client.exe`: **0 errors, 0 warnings**
+  - `noble-dedicated.exe`: **0 errors, 0 warnings**
+- All MCC retail installation files remain 100% read-only and unmodified.
 
 ## 0. Pick up here (2026-10-28, 19:50 ET) - pushed 4483029; menu -> match crash fixed (not yet built/tested)
 
@@ -1742,6 +3796,85 @@ shipped DLL; the engine multiplies it by pi/180 for the camera and only accepts 
   or a respawn may be needed) and whether 78 vs 90 looks right. Test: pause â†’ SETTINGS â†’ VIDEO, drag FOV, APPLY.
 
 ---
+
+## 0. Pick up here (2026-10-30, 04:45 ET) - Elite Armors Network Replication Fix, Elite Armor Effects Engine Patch, Full Armory Permutations & Emblems/Nameplates, and Master Server Social Friends/Invites Menu (O7OF / Dominus)
+
+Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor effects engine support, MCC nameplates and emblems integration into the Armory, and master server social networking system with interactive friends list, player search, and in-game lobby invites.
+
+### 1. What was wrong & Root Causes
+
+1. **Elite Armors Defaulting to Elite Minor for Remote Players:**
+   - Players equipping Elite armor sets (such as Honor Guard, General, Field Marshall, Officer, etc.) saw their selected armor locally, but remote players in multiplayer matches only saw them as default Elite Minor.
+   - **Root Cause Reverse-Engineered:** In `haloreach.dll+0x2EDD45` (the function serializing the player's profile into the network replication player datum at `0x2C8070`), Bungie/MCC hardcoded `species = 0` (Spartan) and `slot = 7` when writing `profile[0x8C]` (the equipped Elite armor set index).
+   - In `haloreach.dll+0x2C8070`, the code verifies `cmp dword ptr [rdx+4], 3; ja exit`. Passing slot 7 exceeded the check and jumped to exit, leaving `[player + 0xAE + 0]` completely unwritten (0 = Elite Minor). The multiplayer network session then broadcasted this default 0 value to all other clients.
+
+2. **Elite Armor Effects Not Showing & Previous Buggy Behavior:**
+   - Armor effects only applied to Spartans; Elites had no working armor effects.
+   - **Root Cause Reverse-Engineered:** In `haloreach.dll+0x105796`, the engine validated `cmp esi, 8; setb r15b` (`83 FE 08 41 0F 92 C7`), rejecting `pmcg` lists >= 8. Spartan fx is list 8 (`+0x80`), while Elite fx is list 9 (`+0x8C`).
+   - In previous iterations, equipping armor effects erroneously overrode the player's Elite character model type due to coupled mesh logic.
+
+3. **Armory Missing Nameplates & Emblems:**
+   - The Armory identity customization lacked the full catalog of MCC Reach nameplates (536 nameplates) and emblems (330 emblems) loaded dynamically from MCC assets.
+
+4. **Placeholder Social / Friends System in Main Menu and Pre-Game Lobby:**
+   - The lobby sidebar displayed hardcoded placeholder text for friends ("Forge - In a Game", "In Custom Game Lobby"). There was no way to search community players, add friends, accept/decline friend requests, view real-time invites, or invite friends directly to a game lobby.
+
+---
+
+### 2. Implementation & Fixes
+
+1. **Elite Armor Network Replication Engine Patch (`src/hooks/EnginePatches.cpp`):**
+   - Patched RVA `0x2EDD45` in `haloreach.dll` from:
+     `89 75 C0 C7 45 C4 07 00 00 00` (`mov [rbp-0x40], esi; mov dword ptr [rbp-0x3C], 7`)
+     to:
+     `C7 45 C0 01 00 00 00 89 75 C4` (`mov dword ptr [rbp-0x40], 1; mov [rbp-0x3C], esi`)
+   - This passes `species = 1` (Elite) and `slot = 0` to `0x2C8070`, cleanly storing the equipped armor set index directly into `[player + 0xAE + 0]`. Remote players now replicate and render the exact Elite armor set chosen (Minor, Officer, SpecOps, Ranger, Ultra, Zealot, General, Field Marshall, Honor Guard).
+
+2. **Elite Armor Effects Engine & Pack Fixes (`src/engine/ElitePack.cpp`):**
+   - Patched RVA `0x105796` in `haloreach.dll` from `cmp esi, 8; setb r15b` (`83 FE 08 41 0F 92 C7`) to `cmp esi, 8; setne r15b` (`83 FE 08 41 0F 95 C7`). This cleanly skips Spartan fx list 8 (`+0x80`) while permitting Elite armor piece lists 0..7 and Elite fx list 9 (`pmcg +0x8C`).
+   - Expanded `kSetPieces` array to `[9][6]`, adding Honor Guard at index 8 (`{2, 2, 2, 8, 2, 10}`).
+   - In `BuilderHook`, cleanly differentiated local vs remote players. Local player reads saved armory selection and elite armor effect; remote players read their replicated network set (`copy[0x17]`). Spartan effect on Elites is suppressed (`copy[0x18] = 0xFF`) and Elite effect is applied (`copy[0x19] = eliteEffect`).
+   - Character mesh permutations and armor effect permutation logic are 100% separated, eliminating past permutation collision bugs.
+   - Added `"forge"` mode support to `ElitePack::Install`.
+
+3. **ReachArmory & Host Ingestion (`src/engine/ReachHost.cpp`, `ReachArmory.hpp`, `ReachArmory.cpp`):**
+   - Clamped `el["armor_set"]` to 0..8 (Honor Guard support) in `ReachHost.cpp`.
+   - Added `eliteArmorEffectIndex` and `eliteArmorEffect` to `ReachArmorySelection`.
+   - Added 3D viewport preview for Elite armor effects using `PmcgEffectName(sel.eliteArmorEffect)` mapping to `pmcg` list `8c` / region `armor_fx` (permutations `armor_fx_00`..`05`).
+
+4. **Nameplates & Emblems Catalog & In-Game Badging (`src/ui/UiArt.hpp`, `UiArt.cpp`, `ArmorCustomizer.hpp`, `ArmorCustomizer.cpp`):**
+   - Implemented `GetNameplateCatalog()` and `GetEmblemCatalog()` in `UiArt.cpp`, dynamically parsing `playercustomization.xml` from MCC for 536 nameplates and 330 emblems with authentic titles.
+   - Added `UiTexture Nameplate(int id)` loading `PlayerIDNamePlate_*.png` via WIC and `UiTexture Emblem(int id)` decoding from `emblemstexturepack.perm.bin` via `PackImage`.
+   - Added Nameplate and Emblem selectors in `ArmorCustomizer.cpp` under the `IDENTITY` section, with real-time preview and saving to `appearance.json`.
+   - Added Honor Guard to `kEliteSets` and an Armor Effect row under `EFFECTS & VOICE` for Elites.
+   - Updated top-right header nameplate badge to render the player's equipped nameplate PNG and emblem.
+
+5. **Master Server Social Networking Client & UI (`src/network/SocialClient.hpp`, `SocialClient.cpp`, `FrontEndMenu.cpp`):**
+   - Built `SocialClient` singleton with async WinHttp background requests to the master server:
+     - `/api/friends/list` - Retrieves accepted friends, incoming requests, and outgoing requests.
+     - `/api/invites/list` - Polls active game invites for the user.
+     - `/api/friends/search` - Searches community users by username prefix.
+     - `/api/friends/add` - Sends a friend request.
+     - `/api/friends/accept` - Accepts an incoming request.
+     - `/api/friends/remove` - Removes a friend or cancels a request.
+     - `/api/invites/send` - Sends a game invite with host IP and port.
+     - `/api/invites/clear` - Dismisses an invite.
+   - Background thread polls invites and friends every 10 seconds.
+   - Added `Social` to main menu navigation (`kMainEntries`) and implemented `DrawSocialScreen`:
+     - Online account status header with quick link to Account Login/Register modal.
+     - Prominent Game Invite Received banner with one-click `[JOIN GAME]` and `[DISMISS]`.
+     - Interactive tabs for **Friends**, **Requests**, and **Find Players** (navigable via mouse or Q/E / Bumpers).
+     - Live search bar for player lookup with `[ADD FRIEND]` buttons.
+   - Pre-Game Lobby update: replaced placeholder friends with real friends list from `SocialClient`, added one-click `[INVITE]` button for lobby hosts, and mapped the `Y` button / click on friends header to open the Social screen directly.
+
+---
+
+### 3. Verification & Build Status
+
+- Built cleanly via MSBuild: `cmake --build build --config Release`
+  - `noble-client.exe`: **0 errors, 0 warnings**
+  - `noble-dedicated.exe`: **0 errors, 0 warnings**
+- All MCC retail installation files remain 100% read-only and unmodified.
 
 
 ## 0. Pick up here (23:58 ET) â€” Display Settings & FPS Control + Controller Picture

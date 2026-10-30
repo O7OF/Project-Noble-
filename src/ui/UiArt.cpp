@@ -554,5 +554,150 @@ void DrawCover(ImDrawList* dl, const UiTexture& tex, ImVec2 min, ImVec2 max, ImU
     dl->AddImage(tex.id, min, max, uv0, uv1, tint);
 }
 
+
+static std::vector<NameplateInfo> s_nameplateCatalog;
+static std::vector<EmblemInfo> s_emblemCatalog;
+static bool s_customizationCatalogLoaded = false;
+
+static std::string CleanXmlName(const std::string& raw, const std::string& prefix) {
+    std::string s = raw;
+    if (s.rfind(prefix, 0) == 0) s = s.substr(prefix.size());
+    for (char& c : s) if (c == '_') c = ' ';
+    bool capNext = true;
+    for (char& c : s) {
+        if (std::isspace(static_cast<unsigned char>(c))) {
+            capNext = true;
+        } else if (capNext) {
+            c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+            capNext = false;
+        } else {
+            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        }
+    }
+    return s;
+}
+
+static void EnsureCustomizationCatalogs() {
+    if (s_customizationCatalogLoaded) return;
+    s_customizationCatalogLoaded = true;
+
+    // Try reading <mccRoot>/Data/UI/playercustomization.xml
+    const fs::path xmlPath = s_mccRoot / "Data" / "UI" / "playercustomization.xml";
+    std::ifstream file(xmlPath);
+    if (file) {
+        std::string line;
+        auto getAttr = [](const std::string& l, const std::string& key) -> std::string {
+            const std::string pat = key + "=\"";
+            size_t p = l.find(pat);
+            if (p == std::string::npos) return "";
+            p += pat.size();
+            size_t endP = l.find("\"", p);
+            return (endP == std::string::npos) ? "" : l.substr(p, endP - p);
+        };
+
+        while (std::getline(file, line)) {
+            if (line.find("<Nameplate ") != std::string::npos) {
+                std::string idStr = getAttr(line, "id");
+                std::string imgStr = getAttr(line, "image");
+                std::string nameStr = getAttr(line, "name");
+                if (!idStr.empty() && !imgStr.empty()) {
+                    NameplateInfo info;
+                    info.id = std::atoi(idStr.c_str());
+                    info.image = imgStr;
+                    info.name = nameStr.empty() ? ("Nameplate " + idStr) : CleanXmlName(nameStr, "$NAMEPLATE_");
+                    s_nameplateCatalog.push_back(info);
+                }
+            } else if (line.find("<Emblem ") != std::string::npos) {
+                std::string idStr = getAttr(line, "id");
+                std::string imgStr = getAttr(line, "image1");
+                std::string nameStr = getAttr(line, "name");
+                if (!idStr.empty() && !imgStr.empty()) {
+                    EmblemInfo info;
+                    info.id = std::atoi(idStr.c_str());
+                    info.image1 = imgStr;
+                    info.name = nameStr.empty() ? ("Emblem " + idStr) : CleanXmlName(nameStr, "$EMBLEM_");
+                    s_emblemCatalog.push_back(info);
+                }
+            }
+        }
+        NOBLE_INFO("UiArt: Loaded {} nameplates and {} emblems from playercustomization.xml",
+                   s_nameplateCatalog.size(), s_emblemCatalog.size());
+    }
+
+    if (s_nameplateCatalog.empty()) {
+        s_nameplateCatalog.push_back({ 1, "Default", "PlayerIDNamePlateBase" });
+        for (int i = 2; i <= 50; ++i) {
+            char buf[64];
+            std::snprintf(buf, sizeof(buf), "PlayerIDNamePlate_%03d", i);
+            s_nameplateCatalog.push_back({ i, "Nameplate " + std::to_string(i), buf });
+        }
+    }
+
+    if (s_emblemCatalog.empty()) {
+        static const char* kFallbackEmblems[] = {
+            "e_002_p", "Radioactive", "e_003_p", "Jolly Roger", "e_004_p", "Valkyrie",
+            "e_005_p", "Skull King",  "e_006_p", "Yin Yang",    "e_007_p", "Triad",
+            "e_008_p", "Flaming Ninja", "e_009_p", "Spartan Swords", "e_010_p", "Helmet",
+            "e_019_p", "Campfire",    "e_021_p", "Atomic",      "e_023_p", "Bulltrue",
+            "e_049_p", "Spartan"
+        };
+        int id = 1;
+        for (size_t i = 0; i < std::size(kFallbackEmblems); i += 2) {
+            s_emblemCatalog.push_back({ id++, kFallbackEmblems[i + 1], kFallbackEmblems[i] });
+        }
+    }
+}
+
+const std::vector<NameplateInfo>& GetNameplateCatalog() {
+    EnsureCustomizationCatalogs();
+    return s_nameplateCatalog;
+}
+
+const std::vector<EmblemInfo>& GetEmblemCatalog() {
+    EnsureCustomizationCatalogs();
+    return s_emblemCatalog;
+}
+
+UiTexture Nameplate(int id) {
+    EnsureCustomizationCatalogs();
+    const auto& catalog = s_nameplateCatalog;
+    std::string imageName = "PlayerIDNamePlateBase";
+    for (const auto& item : catalog) {
+        if (item.id == id) {
+            imageName = item.image;
+            break;
+        }
+    }
+
+    const fs::path imgDir = s_mccRoot / "Data" / "UI" / "NamePlates" / "Images";
+    fs::path target = imgDir / (imageName + ".png");
+    std::error_code ec;
+    if (!fs::exists(target, ec)) {
+        char buf[64];
+        std::snprintf(buf, sizeof(buf), "PlayerIDNamePlate_%03d.png", id);
+        target = imgDir / buf;
+    }
+    if (!fs::exists(target, ec)) {
+        target = imgDir / "PlayerIDNamePlateBase.png";
+    }
+    if (!fs::exists(target, ec)) return {};
+
+    std::lock_guard<std::mutex> lock(s_mutex);
+    return FileCached(target);
+}
+
+UiTexture Emblem(int id) {
+    EnsureCustomizationCatalogs();
+    for (const auto& item : s_emblemCatalog) {
+        if (item.id == id) return EmblemByName(item.image1);
+    }
+    return EmblemByName("e_002_p");
+}
+
+UiTexture EmblemByName(const std::string& image1) {
+    if (image1.empty()) return {};
+    return PackImage("emblemstexturepack", image1);
+}
+
 } // namespace UiArt
 } // namespace noble

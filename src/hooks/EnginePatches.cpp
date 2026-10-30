@@ -115,6 +115,34 @@ bool EnginePatches::Apply(HMODULE hReachDll) {
         }
     }
 
+    // 3. Remote Elite armor set replication patch (RVA 0x2EDD45)
+    // haloreach.dll at 0x2EDD45 passes species=0 (Spartan) and slot=7 when writing profile[0x8C] (Elite armor set)
+    // to the player object via 0x2C8070. Because 0x2C8070 only allows slot <= 3 for Elites and slot <= 7 for Spartans,
+    // passing slot 7 wrote the value into the Spartan array [player + 0xAD] while leaving [player + 0xAE + 0] (the replicated
+    // Elite armor set) as 0 (Elite Minor) for every other player in the network session.
+    // Patching 0x2EDD45 (89 75 C0 C7 45 C4 07 00 00 00) to (C7 45 C0 01 00 00 00 89 75 C4) sets species=1 (Elite)
+    // and slot=0, allowing 0x2C8070 to populate [player + 0xAE], replicating the equipped Elite armor set to all players.
+    {
+        static const uint8_t kExpectedEliteSetWrite[10] = { 0x89, 0x75, 0xC0, 0xC7, 0x45, 0xC4, 0x07, 0x00, 0x00, 0x00 };
+        static const uint8_t kPatchedEliteSetWrite[10]  = { 0xC7, 0x45, 0xC0, 0x01, 0x00, 0x00, 0x00, 0x89, 0x75, 0xC4 };
+        uint8_t* addr = reinterpret_cast<uint8_t*>(baseAddress + 0x2EDD45);
+        if (std::memcmp(addr, kExpectedEliteSetWrite, sizeof(kExpectedEliteSetWrite)) == 0) {
+            DWORD oldProt = 0;
+            if (VirtualProtect(addr, sizeof(kPatchedEliteSetWrite), PAGE_EXECUTE_READWRITE, &oldProt)) {
+                std::memcpy(addr, kPatchedEliteSetWrite, sizeof(kPatchedEliteSetWrite));
+                FlushInstructionCache(GetCurrentProcess(), addr, sizeof(kPatchedEliteSetWrite));
+                VirtualProtect(addr, sizeof(kPatchedEliteSetWrite), oldProt, &oldProt);
+                NOBLE_INFO("EnginePatches: Patched Elite armor set replication at RVA 0x2EDD45 (species=1, slot=0). Remote Elites now display equipped set.");
+            } else {
+                NOBLE_WARN("EnginePatches: Failed to VirtualProtect Elite armor set write at RVA 0x2EDD45.");
+            }
+        } else if (std::memcmp(addr, kPatchedEliteSetWrite, sizeof(kPatchedEliteSetWrite)) == 0) {
+            NOBLE_INFO("EnginePatches: Elite armor set replication at RVA 0x2EDD45 already patched.");
+        } else {
+            NOBLE_WARN("EnginePatches: Unexpected bytes at RVA 0x2EDD45; Elite armor set replication patch skipped.");
+        }
+    }
+
     // 3. "IsArmorItemUnlocked" hook: TURNED OFF (Tyler/Claude 2026-10-28).
     // The signature below is a generic function prologue (mov rax,rsp / save rbx,rbp,rsi,rdi / push r14 / sub rsp,20h /
     // xor ebx,ebx / mov bpl,r8b), so FindPattern returned the FIRST function that starts this way: haloreach RVA 0x105BDC,

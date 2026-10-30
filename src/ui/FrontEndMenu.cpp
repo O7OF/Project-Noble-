@@ -4,6 +4,7 @@
 #include "network/MasterServerClient.hpp"
 #include "network/NetworkTransport.hpp"
 #include "network/SessionManager.hpp"
+#include "network/SocialClient.hpp"
 #include <format>
 #include <nlohmann/json.hpp>
 #include "UIManager.hpp"
@@ -269,7 +270,7 @@ std::string Upper(std::string s) {
     return s;
 }
 
-enum class Screen { Main, Campaign, Skulls, Firefight, CustomGame, Forge, Servers, Settings, Armory, Mods, Career, PreGameLobby };
+enum class Screen { Main, Campaign, Skulls, Firefight, CustomGame, Forge, Servers, Settings, Armory, Mods, Career, PreGameLobby, Social };
 
 void DrawBackdrop(const Ui& ui, Screen screen) {
     const ImVec2 o(0, 0);
@@ -1087,6 +1088,7 @@ const MainEntry kMainEntries[] = {
     { "Custom Game",  "Play any multiplayer map and game type, host a game or join one.",     Screen::CustomGame, true, false },
     { "Forge",        "Edit multiplayer maps with Forge. Experimental in Noble.",             Screen::Forge, true, false },
     { "Theater",      "Saved films aren't supported in Noble yet.",                           Screen::Main, false, false },
+    { "Social",       "Manage your friends list, find players, and view game invites.",       Screen::Social, true, false },
     { "Service Record", "Your rank, credits, challenges, commendations and recent games.",   Screen::Career, true, false },
     { "Armory",       "Customize your Spartan and Sangheili armor in Reach's 3D Armory.",     Screen::Armory, true, false },
     { "Account",      "Log in or register your account to sync data and unlock developer access.", Screen::Main, true, false },
@@ -1155,6 +1157,13 @@ struct MenuState {
     int lobbyRosterSelection = 0;  // Selected player index in party roster
     int lobbyCountdown = -1;       // -1 = Inactive, >= 0 = Countdown seconds remaining
     double lobbyCountdownStart = 0.0;
+    // Social screen state
+    int socialTab = 0;              // 0 = Friends, 1 = Requests, 2 = Find Players
+    char socialSearchBuf[64] = "";
+    std::vector<UserSearchResult> socialSearchResults;
+    bool socialSearching = false;
+    double lastSocialPoll = 0.0;
+    Screen socialPreviousScreen = Screen::Main;
 };
 
 
@@ -2193,20 +2202,55 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
     std::string friendsLabel = hostName + "'s Friends:";
     Text(ui, NobleStyle::SmallFont(), 13.0f, ImVec2(fr0.x + 28.0f * ui.s, fr0.y + 6.0f * ui.s), IM_COL32(210, 225, 240, 220), friendsLabel.c_str());
 
+    const bool yPressed = ImGui::IsKeyPressed(ImGuiKey_Y, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false);
+    bool frHeaderClicked = false;
+    if (ImGui::IsMouseClicked(0)) {
+        ImVec2 m = ImGui::GetMousePos();
+        if (m.x >= fr0.x && m.x <= fr1.x && m.y >= fr0.y && m.y <= fr1.y) {
+            frHeaderClicked = true;
+        }
+    }
+    if (yPressed || frHeaderClicked) {
+        st.socialPreviousScreen = Screen::PreGameLobby;
+        st.screen = Screen::Social;
+        MenuSounds::Click();
+    }
+
     rosterY += 27.0f * ui.s;
-    // Friends list items (matching screenshot)
-    struct FriendItem { const char* act; const char* count; };
-    const FriendItem kFriends[] = {
-        { "Forge - In a Game", "1/8" },
-        { "In Custom Game Lobby", "1/16" }
-    };
-    for (const auto& f : kFriends) {
+    const auto realFriends = SocialClient::Get().GetFriends();
+    if (realFriends.empty()) {
         ui.dl->AddRectFilled(ImVec2(partyX, rosterY), ImVec2(partyX + partyW, rosterY + 24.0f * ui.s), IM_COL32(12, 16, 22, 180));
         ui.dl->AddRect(ImVec2(partyX, rosterY), ImVec2(partyX + partyW, rosterY + 24.0f * ui.s), IM_COL32(35, 50, 70, 90));
-        Text(ui, NobleStyle::SmallFont(), 12.0f, ImVec2(partyX + 16.0f * ui.s, rosterY + 5.0f * ui.s), IM_COL32(170, 190, 210, 200), f.act);
-        const float fw = TextWidth(NobleStyle::SmallFont(), 12.0f * ui.s, f.count);
-        Text(ui, NobleStyle::SmallFont(), 12.0f, ImVec2(partyX + partyW - fw - 12.0f * ui.s, rosterY + 5.0f * ui.s), IM_COL32(160, 180, 200, 180), f.count);
+        Text(ui, NobleStyle::SmallFont(), 11.5f, ImVec2(partyX + 16.0f * ui.s, rosterY + 5.0f * ui.s), IM_COL32(140, 160, 180, 180), "No friends online (Press Y for Social)");
         rosterY += 25.0f * ui.s;
+    } else {
+        int friendIdx = 0;
+        for (const auto& f : realFriends) {
+            if (friendIdx >= 4) break;
+            ui.dl->AddRectFilled(ImVec2(partyX, rosterY), ImVec2(partyX + partyW, rosterY + 24.0f * ui.s), IM_COL32(12, 16, 22, 180));
+            ui.dl->AddRect(ImVec2(partyX, rosterY), ImVec2(partyX + partyW, rosterY + 24.0f * ui.s), IM_COL32(35, 50, 70, 90));
+            Text(ui, NobleStyle::SmallFont(), 12.0f, ImVec2(partyX + 16.0f * ui.s, rosterY + 5.0f * ui.s), IM_COL32(180, 210, 240, 220), f.username.c_str());
+
+            if (st.isLobbyHost) {
+                const float invW = 55.0f * ui.s;
+                const float invH = 18.0f * ui.s;
+                ImGui::SetCursorScreenPos(ImVec2(partyX + partyW - invW - 6.0f * ui.s, rosterY + 3.0f * ui.s));
+                ImGui::PushID(1500 + friendIdx);
+                if (ImGui::Button("INVITE", ImVec2(invW, invH))) {
+                    std::string myIp = UPnP::Get().GetExternalIP();
+                    if (myIp.empty() || myIp == "Unknown") myIp = "127.0.0.1";
+                    SocialClient::Get().SendInviteAsync(f.username, myIp, 11774, [](bool ok, const std::string& msg) {
+                        (void)msg;
+                        if (ok) MenuSounds::Click();
+                    });
+                }
+                ImGui::PopID();
+            } else {
+                Text(ui, NobleStyle::SmallFont(), 11.0f, ImVec2(partyX + partyW - 55.0f * ui.s, rosterY + 5.0f * ui.s), IM_COL32(120, 150, 170, 160), "Friend");
+            }
+            rosterY += 25.0f * ui.s;
+            friendIdx++;
+        }
     }
 
     // Network Info & Copy Invite Button
@@ -2268,12 +2312,303 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
 
         drawPrompt("A", IM_COL32(92, 170, 60, 255), "Select");
         drawPrompt("B", IM_COL32(204, 52, 44, 255), "Back");
-        drawPrompt("Y", IM_COL32(236, 182, 38, 255), "Select Network");
+        drawPrompt("Y", IM_COL32(236, 182, 38, 255), "Friends / Social");
         drawPrompt(">", IM_COL32(60, 70, 85, 255), "Menu");
         if (st.lobbyMode != "campaign") {
             drawPrompt("X", IM_COL32(52, 134, 214, 255), "Prior Game Stats");
         }
     }
+}
+
+static void DrawSocialScreen(OverlayContext& ctx, const Ui& ui, float left, float top,
+                             FrontEndChoice& choice, bool& done, bool back) {
+    (void)left;
+    (void)top;
+    MenuState& st = ctx.st;
+
+    const float px = 32.0f * ui.s;
+    const float py = 88.0f * ui.s;
+    const float panelW = ui.size.x - px * 2.0f;
+    const float panelH = ui.size.y - py - 60.0f * ui.s;
+
+    ui.dl->AddRectFilled(ImVec2(0, 0), ui.size, IM_COL32(4, 8, 12, 225));
+    DrawTitle(ui, ImVec2(px, 12.0f * ui.s), "COMMUNITY", "SOCIAL");
+
+    // Account Status Badge (top right)
+    const bool loggedIn = AuthClient::Get().IsLoggedIn();
+    std::string userTag = loggedIn ? AuthClient::Get().GetUsername() : "Not logged in";
+    char statBuf[128];
+    if (loggedIn) {
+        std::snprintf(statBuf, sizeof(statBuf), "ONLINE: %s (ID: %d)", userTag.c_str(), AuthClient::Get().GetUserId());
+    } else {
+        std::snprintf(statBuf, sizeof(statBuf), "OFFLINE - Auth Required");
+    }
+    const float tagW = TextWidth(NobleStyle::SmallFont(), 13.0f * ui.s, statBuf) + 24.0f * ui.s;
+    const ImVec2 statP0(ui.size.x - px - tagW, 20.0f * ui.s);
+    const ImVec2 statP1(ui.size.x - px, 48.0f * ui.s);
+    ui.dl->AddRectFilled(statP0, statP1, loggedIn ? IM_COL32(18, 36, 24, 220) : IM_COL32(36, 18, 18, 220), 4.0f * ui.s);
+    ui.dl->AddRect(statP0, statP1, loggedIn ? IM_COL32(60, 180, 80, 200) : IM_COL32(180, 60, 60, 200), 4.0f * ui.s);
+    Text(ui, NobleStyle::SmallFont(), 13.0f, ImVec2(statP0.x + 12.0f * ui.s, statP0.y + 7.0f * ui.s),
+         loggedIn ? IM_COL32(120, 240, 140, 240) : IM_COL32(240, 140, 140, 240), statBuf);
+
+    if (!loggedIn) {
+        const float actW = 140.0f * ui.s;
+        ImGui::SetCursorScreenPos(ImVec2(statP0.x - actW - 12.0f * ui.s, 22.0f * ui.s));
+        if (ImGui::Button("LOG IN / REGISTER", ImVec2(actW, 26.0f * ui.s))) {
+            OpenAccountModal();
+            MenuSounds::Click();
+        }
+    }
+
+    ImGui::SetCursorScreenPos(ImVec2(px, py));
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.03f, 0.05f, 0.08f, 0.75f));
+    ImGui::BeginChild("##social_panel", ImVec2(panelW, panelH), ImGuiChildFlags_Borders, ImGuiWindowFlags_None);
+
+    // 1. Game Invites Card (prominent at top if any exist)
+    const auto invites = SocialClient::Get().GetInvites();
+    if (!invites.empty()) {
+        ImGui::Spacing();
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.08f, 0.14f, 0.20f, 0.85f));
+        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.9f, 0.7f, 0.2f, 0.8f));
+        const float invBoxH = (36.0f * ui.s * static_cast<float>(invites.size())) + 32.0f * ui.s;
+        ImGui::BeginChild("##invites_box", ImVec2(0, invBoxH), ImGuiChildFlags_Borders);
+        
+        ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1.0f), "GAME INVITE RECEIVED:");
+        for (size_t i = 0; i < invites.size(); ++i) {
+            const auto& inv = invites[i];
+            ImGui::PushID(static_cast<int>(500 + i));
+            ImGui::Bullet();
+            ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), "%s invited you to join their game! (%s:%u)",
+                               inv.senderUsername.c_str(), inv.hostIp.c_str(), inv.hostPort);
+            ImGui::SameLine();
+            if (ImGui::Button("JOIN GAME", ImVec2(100.0f * ui.s, 24.0f * ui.s))) {
+                choice.play = true;
+                choice.host = false;
+                choice.connectAddress = inv.hostIp + ":" + std::to_string(inv.hostPort);
+                choice.map = "20_sword_slayer";
+                choice.mode = "multiplayer";
+                SocialClient::Get().ClearInviteAsync(inv.senderUsername);
+                done = true;
+                MenuSounds::Click();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("DISMISS", ImVec2(80.0f * ui.s, 24.0f * ui.s))) {
+                SocialClient::Get().ClearInviteAsync(inv.senderUsername);
+                MenuSounds::Back();
+            }
+            ImGui::PopID();
+        }
+        ImGui::EndChild();
+        ImGui::PopStyleColor(2);
+        ImGui::Spacing();
+    }
+
+    // 2. Navigation Tabs
+    const auto friends = SocialClient::Get().GetFriends();
+    const auto incoming = SocialClient::Get().GetIncomingRequests();
+    const auto outgoing = SocialClient::Get().GetOutgoingRequests();
+
+    // Tab switcher with Q/E
+    if (!ImGui::GetIO().WantTextInput) {
+        if (ImGui::IsKeyPressed(ImGuiKey_Q, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false)) {
+            st.socialTab = (st.socialTab + 2) % 3;
+            MenuSounds::Click();
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_E, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false)) {
+            st.socialTab = (st.socialTab + 1) % 3;
+            MenuSounds::Click();
+        }
+    }
+
+    const float tabW = 180.0f * ui.s;
+    const float tabH = 32.0f * ui.s;
+
+    auto TabButton = [&](int tabIdx, const std::string& label) {
+        const bool active = (st.socialTab == tabIdx);
+        if (active) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.45f, 0.7f, 0.8f));
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+        } else {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.08f, 0.12f, 0.16f, 0.6f));
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.8f, 0.9f, 0.8f));
+        }
+        if (ImGui::Button(label.c_str(), ImVec2(tabW, tabH))) {
+            st.socialTab = tabIdx;
+            MenuSounds::Click();
+        }
+        ImGui::PopStyleColor(2);
+    };
+
+    TabButton(0, "FRIENDS (" + std::to_string(friends.size()) + ")");
+    ImGui::SameLine();
+    TabButton(1, "REQUESTS (" + std::to_string(incoming.size() + outgoing.size()) + ")");
+    ImGui::SameLine();
+    TabButton(2, "FIND PLAYERS");
+    ImGui::SameLine();
+
+    // Refresh button
+    if (ImGui::Button("REFRESH", ImVec2(100.0f * ui.s, tabH))) {
+        SocialClient::Get().RefreshFriendsAsync();
+        SocialClient::Get().PollInvitesAsync();
+        MenuSounds::Click();
+    }
+
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    // 3. Tab Contents
+    if (st.socialTab == 0) {
+        // FRIENDS TAB
+        if (friends.empty()) {
+            ImGui::Spacing();
+            ImGui::TextColored(ImVec4(0.6f, 0.7f, 0.8f, 1.0f), "You have no friends on your list yet.");
+            ImGui::TextColored(ImVec4(0.5f, 0.6f, 0.7f, 0.8f), "Switch to the FIND PLAYERS tab to search and add friends!");
+        } else {
+            std::string myIp = UPnP::Get().GetExternalIP();
+            if (myIp.empty() || myIp == "Unknown") myIp = "127.0.0.1";
+
+            ImGui::BeginTable("##friends_tbl", 3, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV);
+            ImGui::TableSetupColumn("Spartan / Sangheili", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn("Status", ImGuiTableColumnFlags_WidthFixed, 140.0f * ui.s);
+            ImGui::TableSetupColumn("Actions", ImGuiTableColumnFlags_WidthFixed, 220.0f * ui.s);
+            ImGui::TableHeadersRow();
+
+            for (size_t i = 0; i < friends.size(); ++i) {
+                const auto& f = friends[i];
+                ImGui::TableNextRow(0, 32.0f * ui.s);
+
+                // Col 0: Name
+                ImGui::TableSetColumnIndex(0);
+                ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), "%s", f.username.c_str());
+
+                // Col 1: Status
+                ImGui::TableSetColumnIndex(1);
+                ImGui::TextColored(ImVec4(0.4f, 0.85f, 0.5f, 1.0f), "Online / Friend");
+
+                // Col 2: Actions
+                ImGui::TableSetColumnIndex(2);
+                ImGui::PushID(static_cast<int>(i));
+
+                if (ImGui::Button("INVITE", ImVec2(90.0f * ui.s, 24.0f * ui.s))) {
+                    SocialClient::Get().SendInviteAsync(f.username, myIp, 11774, [](bool ok, const std::string& msg) {
+                        (void)msg;
+                        if (ok) MenuSounds::Click();
+                    });
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("REMOVE", ImVec2(90.0f * ui.s, 24.0f * ui.s))) {
+                    SocialClient::Get().RemoveFriendAsync(f.username);
+                    MenuSounds::Back();
+                }
+                ImGui::PopID();
+            }
+            ImGui::EndTable();
+        }
+    } else if (st.socialTab == 1) {
+        // REQUESTS TAB
+        ImGui::TextColored(ImVec4(0.9f, 0.8f, 0.4f, 1.0f), "INCOMING REQUESTS (%zu)", incoming.size());
+        if (incoming.empty()) {
+            ImGui::TextColored(ImVec4(0.5f, 0.6f, 0.7f, 0.8f), "No incoming friend requests.");
+        } else {
+            for (size_t i = 0; i < incoming.size(); ++i) {
+                const auto& req = incoming[i];
+                ImGui::PushID(static_cast<int>(100 + i));
+                ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), "%s wants to be your friend.", req.username.c_str());
+                ImGui::SameLine();
+                if (ImGui::Button("ACCEPT", ImVec2(80.0f * ui.s, 22.0f * ui.s))) {
+                    SocialClient::Get().AcceptFriendRequestAsync(req.username);
+                    MenuSounds::Click();
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("DECLINE", ImVec2(80.0f * ui.s, 22.0f * ui.s))) {
+                    SocialClient::Get().RemoveFriendAsync(req.username);
+                    MenuSounds::Back();
+                }
+                ImGui::PopID();
+            }
+        }
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.8f, 1.0f), "OUTGOING REQUESTS (%zu)", outgoing.size());
+        if (outgoing.empty()) {
+            ImGui::TextColored(ImVec4(0.5f, 0.6f, 0.7f, 0.8f), "No pending outgoing requests.");
+        } else {
+            for (size_t i = 0; i < outgoing.size(); ++i) {
+                const auto& req = outgoing[i];
+                ImGui::PushID(static_cast<int>(200 + i));
+                ImGui::TextColored(ImVec4(0.85f, 0.85f, 0.85f, 1.0f), "%s (Pending acceptance)", req.username.c_str());
+                ImGui::SameLine();
+                if (ImGui::Button("CANCEL", ImVec2(80.0f * ui.s, 22.0f * ui.s))) {
+                    SocialClient::Get().RemoveFriendAsync(req.username);
+                    MenuSounds::Back();
+                }
+                ImGui::PopID();
+            }
+        }
+    } else if (st.socialTab == 2) {
+        // FIND PLAYERS TAB
+        ImGui::TextColored(ImVec4(0.9f, 0.9f, 1.0f, 1.0f), "Search for community players by username:");
+        ImGui::Spacing();
+
+        ImGui::SetNextItemWidth(320.0f * ui.s);
+        bool enterPressed = ImGui::InputTextWithHint("##search_player", "Enter player name...", st.socialSearchBuf, sizeof(st.socialSearchBuf), ImGuiInputTextFlags_EnterReturnsTrue);
+        ImGui::SameLine();
+        bool doSearch = ImGui::Button("SEARCH", ImVec2(100.0f * ui.s, 26.0f * ui.s)) || enterPressed;
+
+        if (doSearch && st.socialSearchBuf[0] != '\0') {
+            st.socialSearching = true;
+            std::string q = st.socialSearchBuf;
+            SocialClient::Get().SearchUsersAsync(q, [&st](bool ok, const std::vector<UserSearchResult>& results) {
+                (void)ok;
+                st.socialSearchResults = results;
+                st.socialSearching = false;
+            });
+            MenuSounds::Click();
+        }
+
+        ImGui::Spacing();
+        if (st.socialSearching) {
+            ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), "Searching players...");
+        } else if (!st.socialSearchResults.empty()) {
+            ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), "SEARCH RESULTS (%zu):", st.socialSearchResults.size());
+            ImGui::Spacing();
+
+            for (size_t i = 0; i < st.socialSearchResults.size(); ++i) {
+                const auto& u = st.socialSearchResults[i];
+                ImGui::PushID(static_cast<int>(300 + i));
+                ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), "%s (ID: %d)", u.username.c_str(), u.id);
+                ImGui::SameLine();
+                if (ImGui::Button("ADD FRIEND", ImVec2(110.0f * ui.s, 22.0f * ui.s))) {
+                    SocialClient::Get().SendFriendRequestAsync(u.username);
+                    MenuSounds::Click();
+                }
+                ImGui::PopID();
+            }
+        } else if (st.socialSearchBuf[0] != '\0') {
+            ImGui::TextColored(ImVec4(0.7f, 0.6f, 0.5f, 1.0f), "No players found matching '%s'.", st.socialSearchBuf);
+        }
+    }
+
+    // Status message feedback
+    std::string statusMsg = SocialClient::Get().GetLastStatusMessage();
+    if (!statusMsg.empty()) {
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::TextColored(ImVec4(0.3f, 0.9f, 0.4f, 1.0f), "INFO: %s", statusMsg.c_str());
+    }
+
+    ImGui::EndChild();
+    ImGui::PopStyleColor();
+
+    if (back && !ImGui::GetIO().WantTextInput) {
+        st.screen = st.socialPreviousScreen;
+        st.focusRow = 0;
+        MenuSounds::Back();
+    }
+    DrawHints(ui, { { Prompt::Back, "Back" }, { Prompt::Tabs, "Switch Tab (Q/E)" } });
 }
 
 void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11DeviceContext* context,
@@ -2350,6 +2685,9 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
                     OpenAccountModal();
                 } else {
                     st.screen = kMainEntries[hit].target;
+                    if (st.screen == Screen::Social) {
+                        st.socialPreviousScreen = Screen::Main;
+                    }
                 }
                 st.focusRow = 0;
             } else if (back) {
@@ -2726,15 +3064,30 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
             const float plateH = 42.0f * ui.s;
             const ImVec2 p0(ui.size.x - left - plateW, top + 6.0f * ui.s);
             const ImVec2 p1(p0.x + plateW, p0.y + plateH);
-            ui.dl->AddRectFilledMultiColor(p0, p1,
-                IM_COL32(36, 58, 82, 230), IM_COL32(82, 112, 142, 210),
-                IM_COL32(62, 88, 115, 210), IM_COL32(28, 46, 68, 230));
-            ui.dl->AddRect(p0, p1, IM_COL32(165, 205, 240, 180), 0.0f, 0, 1.2f);
+
+            UiTexture npTex = UiArt::Nameplate(prof.nameplateIndex);
+            if (npTex) {
+                ui.dl->AddImage(npTex.id, p0, p1);
+                ui.dl->AddRect(p0, p1, IM_COL32(165, 205, 240, 140), 0.0f, 0, 1.0f);
+            } else {
+                ui.dl->AddRectFilledMultiColor(p0, p1,
+                    IM_COL32(36, 58, 82, 230), IM_COL32(82, 112, 142, 210),
+                    IM_COL32(62, 88, 115, 210), IM_COL32(28, 46, 68, 230));
+                ui.dl->AddRect(p0, p1, IM_COL32(165, 205, 240, 180), 0.0f, 0, 1.2f);
+            }
+
             const ImVec2 emb(p0.x + 22.0f * ui.s, p0.y + plateH * 0.5f);
-            ui.dl->AddCircleFilled(emb, 13.0f * ui.s, IM_COL32(16, 28, 42, 240));
-            ui.dl->AddTriangleFilled(ImVec2(emb.x - 7 * ui.s, emb.y - 3 * ui.s),
-                                     ImVec2(emb.x + 7 * ui.s, emb.y - 3 * ui.s),
-                                     ImVec2(emb.x, emb.y + 7 * ui.s), kAccent);
+            UiTexture embTex = UiArt::Emblem(prof.emblemIndex);
+            if (embTex) {
+                const float embR = 15.0f * ui.s;
+                ui.dl->AddImage(embTex.id, ImVec2(emb.x - embR, emb.y - embR), ImVec2(emb.x + embR, emb.y + embR));
+            } else {
+                ui.dl->AddCircleFilled(emb, 13.0f * ui.s, IM_COL32(16, 28, 42, 240));
+                ui.dl->AddTriangleFilled(ImVec2(emb.x - 7 * ui.s, emb.y - 3 * ui.s),
+                                         ImVec2(emb.x + 7 * ui.s, emb.y - 3 * ui.s),
+                                         ImVec2(emb.x, emb.y + 7 * ui.s), kAccent);
+            }
+
             const std::string tagLine = "[" + prof.serviceTag + "]";
             Text(ui, NobleStyle::SmallFont(), 14.0f, ImVec2(p0.x + 44.0f * ui.s, p0.y + 4.0f * ui.s), IM_COL32(190, 215, 235, 230), tagLine.c_str());
             Text(ui, NobleStyle::TitleFont(), 18.0f, ImVec2(p0.x + 44.0f * ui.s, p0.y + 20.0f * ui.s), kWhite, settings.playerName.c_str());
@@ -2810,6 +3163,11 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
 
     case Screen::PreGameLobby: {
         DrawPreGameLobby(ctx, ui, left, top, choice, done, back);
+        break;
+    }
+
+    case Screen::Social: {
+        DrawSocialScreen(ctx, ui, left, top, choice, done, back);
         break;
     }
     }

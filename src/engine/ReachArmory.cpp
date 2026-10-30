@@ -896,7 +896,16 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx) {
             pushPair("elite_chest",          sel.eliteChest,         "minor");
             pushPair("elite_forearms",       sel.eliteArms,          "default");
             pushPair("elite_legs",           sel.eliteLegs,          "minor");
-            // Elite armour effects are off for now (Tyler 2026-10-29).
+            // Elite armor effects (pmcg list 8c, region armor_fx, permutations armor_fx_00..05)
+            const std::string fxName = PmcgEffectName(sel.eliteArmorEffect);
+            const std::vector<PmcgChange>* fxChanges = PmcgItem("8c", fxName);
+            if (fxChanges && !fxChanges->empty()) {
+                for (const auto& c : *fxChanges) pushPair(c.region, c.permutation, nullptr);
+            } else if (sel.eliteArmorEffect != "default" && !sel.eliteArmorEffect.empty()) {
+                static const char* kFxPerms[7] = { "default", "armor_fx_00", "armor_fx_01", "armor_fx_02", "armor_fx_03", "armor_fx_04", "armor_fx_05" };
+                const int fxIdx = (sel.eliteArmorEffectIndex >= 1 && sel.eliteArmorEffectIndex <= 6) ? sel.eliteArmorEffectIndex : 0;
+                if (fxIdx > 0) pushPair("armor_fx", kFxPerms[fxIdx], "default");
+            }
         } else if (PmcgItem("20", "default") != nullptr) {
             // Only the regions the picked items change get a pair. "default" is a real permutation in several
             // flair regions (a visor piece on every helmet when it was written for "no attachment"), and the

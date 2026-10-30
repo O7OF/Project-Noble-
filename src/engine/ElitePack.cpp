@@ -1062,9 +1062,9 @@ constexpr uintptr_t kBuilderCalls[4] = {0x04AC36, 0x0447B0, 0x3B184F, 0x524CD5};
 using BuilderFn = uint64_t(__fastcall*)(uint8_t*, uint32_t, void*, void*);
 
 // RR's set -> pieces table (helmet, left, right, chest, forearms, legs), sets in Armory order.
-constexpr uint8_t kSetPieces[8][6] = {
+constexpr uint8_t kSetPieces[9][6] = {
     {3, 3, 3, 0, 0, 2},   {7, 7, 7, 4, 5, 5},   {6, 6, 6, 3, 4, 4},   {9, 9, 9, 5, 7, 7},
-    {10, 10, 10, 7, 8, 8}, {1, 1, 1, 1, 1, 0},  {8, 8, 8, 6, 6, 6},   {4, 4, 4, 2, 3, 3},
+    {10, 10, 10, 7, 8, 8}, {1, 1, 1, 1, 1, 0},  {8, 8, 8, 6, 6, 6},   {4, 4, 4, 2, 3, 3},   {2, 2, 2, 8, 2, 10},
 };
 
 // Armory piece ids -> the pack's index in that slot's list (from the indices above; extras are best guesses).
@@ -1109,6 +1109,7 @@ int SetOfPiece(int slot, int index) {
 std::filesystem::path s_appearancePath;
 std::mutex s_picksMutex;
 uint8_t s_localPicks[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+uint8_t s_localEliteEffect = 0xFF;
 int s_localSet = -1;
 std::filesystem::file_time_type s_picksStamp{};
 std::atomic<int> s_picksLogged{0};
@@ -1125,13 +1126,24 @@ void RefreshLocalPicks() {
         nlohmann::json j;
         in >> j;
         const auto& el = j.at("elite");
-        const int set = std::clamp(el.value("armor_set", 0), 0, 7);
+        const int set = std::clamp(el.value("armor_set", 0), 0, 8);
         static const char* kKeys[6] = {"helmet_id", "left_shoulder_id", "right_shoulder_id", "chest_id", "arms_id", "legs_id"};
         for (int k = 0; k < 6; ++k) {
             const int idx = PieceIndex(k, el.value(kKeys[k], std::string()));
             s_localPicks[k] = static_cast<uint8_t>(idx >= 0 ? idx : kSetPieces[set][k]);
         }
         s_localSet = set;
+
+        int fxIdx = el.value("armor_effect_index", 0);
+        const std::string fxId = el.value("armor_effect_id", std::string());
+        if (fxId == "flames" || fxIdx == 5) fxIdx = 1;
+        else if (fxId == "blue_flames" || fxIdx == 6) fxIdx = 2;
+        else if (fxId == "heart_attack" || fxIdx == 2) fxIdx = 3;
+        else if (fxId == "pestilence" || fxIdx == 3) fxIdx = 4;
+        else if (fxId == "inclement_weather" || fxIdx == 4) fxIdx = 5;
+        else if (fxId == "birthday_party" || fxIdx == 1) fxIdx = 6;
+        else fxIdx = 0;
+        s_localEliteEffect = (fxIdx >= 1 && fxIdx <= 6) ? static_cast<uint8_t>(fxIdx) : 0xFF;
         NOBLE_INFO("ElitePack: Armory Elite pieces {} {} {} {} {} {} (set {})", s_localPicks[0], s_localPicks[1],
                    s_localPicks[2], s_localPicks[3], s_localPicks[4], s_localPicks[5], set);
     } catch (...) {
@@ -1149,25 +1161,41 @@ uint64_t __fastcall BuilderHook(uint8_t* record, uint32_t mode, void* unit, void
     if (!elite || !s_loaded || !s_haveActive) return s_builder(record, mode, unit, player);
     alignas(8) uint8_t copy[0x28];
     std::memcpy(copy, record, sizeof(copy));
+    bool isLocal = false;
+    if (player) {
+        int32_t localIndex = -1;
+        std::memcpy(&localIndex, static_cast<const uint8_t*>(player) + 4, 4);
+        isLocal = (localIndex >= 0 && localIndex < 4);
+    }
+
     uint8_t picks[6];
-    {
+    uint8_t eliteEffect = 0xFF;
+    int effectiveSet = 0;
+    if (isLocal) {
         std::lock_guard<std::mutex> lock(s_picksMutex);
         RefreshLocalPicks();
-        // Every player Elite gets the local Armory's pieces for now; other players' pieces need networking.
-        const int set = copy[0x17] < 8 ? copy[0x17] : 0;
-        for (int k = 0; k < 6; ++k) picks[k] = s_localPicks[k] != 0xFF ? s_localPicks[k] : kSetPieces[set][k];
+        effectiveSet = (s_localSet >= 0 && s_localSet < 9) ? s_localSet : (copy[0x17] < 9 ? copy[0x17] : 0);
+        for (int k = 0; k < 6; ++k) picks[k] = s_localPicks[k] != 0xFF ? s_localPicks[k] : kSetPieces[effectiveSet][k];
+        eliteEffect = s_localEliteEffect;
+    } else {
+        effectiveSet = copy[0x17] < 9 ? copy[0x17] : 0;
+        for (int k = 0; k < 6; ++k) picks[k] = kSetPieces[effectiveSet][k];
+        eliteEffect = (copy[0x19] >= 1 && copy[0x19] <= 6) ? copy[0x19] : 0xFF;
     }
+
     std::memcpy(copy + 0x10, picks, 6);
     copy[0x16] = 0xFF;
+    copy[0x18] = 0xFF;
+    copy[0x19] = eliteEffect;
     {   // first-person arms follow the forearms, the first-person body the shoulders (else the Armor Set)
-        const int set = copy[0x17] < 8 ? copy[0x17] : 0;
+        const int fpSet = effectiveSet < 8 ? effectiveSet : 0;
         const int arms = SetOfPiece(4, picks[4]), body = SetOfPiece(1, picks[1]);
-        ApplyFirstPersonSet(0, arms >= 0 ? arms : set);
-        ApplyFirstPersonSet(1, body >= 0 ? body : set);
+        ApplyFirstPersonSet(0, arms >= 0 ? arms : fpSet);
+        ApplyFirstPersonSet(1, body >= 0 ? body : fpSet);
     }
     if (s_picksLogged.fetch_add(1) < 8)
-        NOBLE_INFO("ElitePack: Elite dressed with pieces {} {} {} {} {} {} (mode {}, set byte {})", picks[0], picks[1],
-                   picks[2], picks[3], picks[4], picks[5], mode, copy[0x17]);
+        NOBLE_INFO("ElitePack: Elite dressed with pieces {} {} {} {} {} {} (mode {}, set byte {}, fx {}, local {})",
+                   picks[0], picks[1], picks[2], picks[3], picks[4], picks[5], mode, copy[0x17], eliteEffect, isLocal);
     return s_builder(copy, mode, unit, player);
 }
 
@@ -1208,7 +1236,7 @@ bool Loaded() { return s_loaded; }
 
 void Install(HMODULE engine, const std::filesystem::path& dataDir, const std::string& mode) {
     if (!engine || s_base) return;
-    if (mode != "multiplayer" && mode != "firefight") return;
+    if (mode != "multiplayer" && mode != "firefight" && mode != "forge") return;
     if (HasArg(L"-no-elite-pack")) {
         NOBLE_INFO("ElitePack: off (-no-elite-pack)");
         return;
@@ -1245,8 +1273,10 @@ void Install(HMODULE engine, const std::filesystem::path& dataDir, const std::st
     // ("cmp esi,8; setb r15b"). Not 8+ (+0x80 Spartan armour effects, +0x8C Elite armour effects, +0x98): with
     // every list on (RR's "mov r15b,1"), Elites played Heart Attack and Birthday Party at once from leftover bytes.
     static const uint8_t kSlotCheck[7] = {0x83, 0xFE, 0x07, 0x41, 0x0F, 0x94, 0xC7};
-    static const uint8_t kSlotAll[7] = {0x83, 0xFE, 0x08, 0x41, 0x0F, 0x92, 0xC7};
-    const bool slots = PatchCode(0x105796, kSlotCheck, kSlotAll, 7);
+    static const uint8_t kSlotOld[7]   = {0x83, 0xFE, 0x08, 0x41, 0x0F, 0x92, 0xC7};
+    static const uint8_t kSlotAll[7]   = {0x83, 0xFE, 0x08, 0x41, 0x0F, 0x95, 0xC7};
+    const bool slots = PatchCode(0x105796, kSlotCheck, kSlotAll, 7) ||
+                       PatchCode(0x105796, kSlotOld,   kSlotAll, 7);
     static const uint8_t kStepPrologue[7] = {0x48, 0x8B, 0xC4, 0x4C, 0x89, 0x48, 0x20};
     const bool stepOk = std::memcmp(At<void*>(kCacheStep), kStepPrologue, 7) == 0;
     if (!patched || !stepOk || !slots) {

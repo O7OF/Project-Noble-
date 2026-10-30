@@ -1,4 +1,5 @@
 #include "AuthClient.hpp"
+#include "SocialClient.hpp"
 #include "common/Settings.hpp"
 #include "common/Logger.hpp"
 
@@ -214,6 +215,8 @@ AuthResult AuthClient::Login(const std::string& username, const std::string& pas
             s.accountUserId = res.userId;
             s.playerName = res.username;
             Settings::Get().Update(s);
+
+            SocialClient::Get().RefreshFriendsAsync();
 
             NOBLE_INFO("AuthClient: Login successful for '{}' (ID: {}, Developer: {})",
                        res.username, res.userId, res.isDeveloper ? "YES" : "NO");

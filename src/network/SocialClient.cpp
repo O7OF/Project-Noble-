@@ -1,0 +1,421 @@
+#include "SocialClient.hpp"
+#include "AuthClient.hpp"
+#include "common/Logger.hpp"
+#include "common/Settings.hpp"
+
+#include <windows.h>
+#include <winhttp.h>
+#include <nlohmann/json.hpp>
+
+#include <chrono>
+
+#pragma comment(lib, "winhttp.lib")
+
+namespace noble {
+
+namespace {
+
+std::wstring Widen(const std::string& narrow) {
+    if (narrow.empty()) return L"";
+    const int req = MultiByteToWideChar(CP_UTF8, 0, narrow.c_str(), -1, nullptr, 0);
+    if (req <= 0) return L"";
+    std::wstring out(static_cast<size_t>(req), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, narrow.c_str(), -1, &out[0], req);
+    if (!out.empty() && out.back() == L'\0') out.pop_back();
+    return out;
+}
+
+std::string ResolveMasterUrl() {
+    std::string url = Settings::Get().Snapshot().masterServerUrl;
+    if (url.empty()) {
+        url = "https://outbreak-z-test-server.onrender.com";
+    }
+    return url;
+}
+
+std::string PostJson(const std::string& fullUrl, const std::string& path, const std::string& jsonBody, int& outStatusCode) {
+    outStatusCode = 0;
+    URL_COMPONENTS parts{};
+    parts.dwStructSize = sizeof(parts);
+    parts.dwSchemeLength = static_cast<DWORD>(-1);
+    parts.dwHostNameLength = static_cast<DWORD>(-1);
+    parts.dwUrlPathLength = static_cast<DWORD>(-1);
+    parts.dwExtraInfoLength = static_cast<DWORD>(-1);
+
+    std::wstring wideUrl = Widen(fullUrl);
+    if (!WinHttpCrackUrl(wideUrl.c_str(), static_cast<DWORD>(wideUrl.size()), 0, &parts)) {
+        return "";
+    }
+
+    std::wstring host(parts.lpszHostName, parts.dwHostNameLength);
+    const bool isHttps = (parts.nScheme == INTERNET_SCHEME_HTTPS);
+    const INTERNET_PORT port = parts.nPort ? parts.nPort : (isHttps ? INTERNET_DEFAULT_HTTPS_PORT : INTERNET_DEFAULT_HTTP_PORT);
+
+    std::wstring requestPath = parts.dwUrlPathLength > 0 ? std::wstring(parts.lpszUrlPath, parts.dwUrlPathLength) : L"";
+    while (!requestPath.empty() && requestPath.back() == L'/') requestPath.pop_back();
+    std::wstring subPath = Widen(path);
+    if (!subPath.empty() && subPath.front() != L'/') requestPath += L'/';
+    requestPath += subPath;
+
+    HINTERNET session = WinHttpOpen(L"ProjectNoble/0.1", WINHTTP_ACCESS_TYPE_NO_PROXY, nullptr, nullptr, 0);
+    if (!session) return "";
+    WinHttpSetTimeouts(session, 5000, 5000, 5000, 5000);
+
+    HINTERNET connect = WinHttpConnect(session, host.c_str(), port, 0);
+    HINTERNET request = nullptr;
+    if (connect) {
+        DWORD flags = isHttps ? WINHTTP_FLAG_SECURE : 0;
+        request = WinHttpOpenRequest(connect, L"POST", requestPath.c_str(), nullptr,
+                                     WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, flags);
+    }
+
+    std::string responseBody;
+    if (request) {
+        if (isHttps) {
+            DWORD secFlags = SECURITY_FLAG_IGNORE_UNKNOWN_CA |
+                             SECURITY_FLAG_IGNORE_CERT_DATE_INVALID |
+                             SECURITY_FLAG_IGNORE_CERT_CN_INVALID |
+                             SECURITY_FLAG_IGNORE_CERT_WRONG_USAGE;
+            WinHttpSetOption(request, WINHTTP_OPTION_SECURITY_FLAGS, &secFlags, sizeof(secFlags));
+        }
+
+        std::wstring headers = L"Content-Type: application/json\r\n";
+        const std::string token = AuthClient::Get().GetSessionToken();
+        if (!token.empty()) {
+            headers += L"Authorization: Bearer " + Widen(token) + L"\r\n";
+        }
+
+        BOOL sent = WinHttpSendRequest(request, headers.c_str(), static_cast<DWORD>(headers.size()),
+                                       (void*)jsonBody.data(), static_cast<DWORD>(jsonBody.size()),
+                                       static_cast<DWORD>(jsonBody.size()), 0);
+        if (sent && WinHttpReceiveResponse(request, nullptr)) {
+            DWORD statusCode = 0;
+            DWORD size = sizeof(statusCode);
+            WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+                                WINHTTP_HEADER_NAME_BY_INDEX, &statusCode, &size, WINHTTP_NO_HEADER_INDEX);
+            outStatusCode = static_cast<int>(statusCode);
+
+            DWORD bytesAvailable = 0;
+            while (WinHttpQueryDataAvailable(request, &bytesAvailable) && bytesAvailable > 0) {
+                std::vector<char> buffer(bytesAvailable + 1, 0);
+                DWORD bytesRead = 0;
+                if (WinHttpReadData(request, buffer.data(), bytesAvailable, &bytesRead) && bytesRead > 0) {
+                    responseBody.append(buffer.data(), bytesRead);
+                }
+            }
+        }
+        WinHttpCloseHandle(request);
+    }
+    if (connect) WinHttpCloseHandle(connect);
+    WinHttpCloseHandle(session);
+    return responseBody;
+}
+
+} // namespace
+
+SocialClient& SocialClient::Get() {
+    static SocialClient s_instance;
+    return s_instance;
+}
+
+SocialClient::~SocialClient() {
+    Shutdown();
+}
+
+void SocialClient::Initialize() {
+    if (m_running) return;
+    m_running = true;
+
+    m_pollThread = std::thread([this]() {
+        while (m_running) {
+            if (AuthClient::Get().IsLoggedIn()) {
+                RefreshFriendsAsync();
+                PollInvitesAsync();
+            }
+            for (int i = 0; i < 50 && m_running; ++i) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(200));
+            }
+        }
+    });
+}
+
+void SocialClient::Shutdown() {
+    if (!m_running) return;
+    m_running = false;
+    if (m_pollThread.joinable()) {
+        m_pollThread.join();
+    }
+}
+
+std::vector<FriendEntry> SocialClient::GetFriends() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_friends;
+}
+
+std::vector<FriendEntry> SocialClient::GetIncomingRequests() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_incomingRequests;
+}
+
+std::vector<FriendEntry> SocialClient::GetOutgoingRequests() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_outgoingRequests;
+}
+
+std::vector<GameInvite> SocialClient::GetInvites() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_invites;
+}
+
+std::string SocialClient::GetLastStatusMessage() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_lastStatusMsg;
+}
+
+void SocialClient::SetStatusMessage(const std::string& msg) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_lastStatusMsg = msg;
+}
+
+void SocialClient::RefreshFriendsAsync() {
+    if (!AuthClient::Get().IsLoggedIn()) return;
+    const int userId = AuthClient::Get().GetUserId();
+    if (userId <= 0) return;
+
+    std::thread([this, userId]() {
+        const std::string url = ResolveMasterUrl();
+        nlohmann::json req;
+        req["userId"] = userId;
+        int status = 0;
+        std::string res = PostJson(url, "/api/friends/list", req.dump(), status);
+        if (status == 200 && !res.empty()) {
+            try {
+                auto j = nlohmann::json::parse(res);
+                if (j.is_array()) {
+                    std::vector<FriendEntry> accepted;
+                    std::vector<FriendEntry> incoming;
+                    std::vector<FriendEntry> outgoing;
+                    for (const auto& item : j) {
+                        FriendEntry f;
+                        f.username = item.value("username", "");
+                        f.status = item.value("status", "");
+                        f.direction = item.value("dir", "");
+                        if (f.direction == "accepted") {
+                            accepted.push_back(f);
+                        } else if (f.direction == "incoming") {
+                            incoming.push_back(f);
+                        } else if (f.direction == "outgoing") {
+                            outgoing.push_back(f);
+                        }
+                    }
+                    std::lock_guard<std::mutex> lock(m_mutex);
+                    m_friends = std::move(accepted);
+                    m_incomingRequests = std::move(incoming);
+                    m_outgoingRequests = std::move(outgoing);
+                }
+            } catch (...) {}
+        }
+    }).detach();
+}
+
+void SocialClient::PollInvitesAsync() {
+    if (!AuthClient::Get().IsLoggedIn()) return;
+    const std::string username = AuthClient::Get().GetUsername();
+    if (username.empty()) return;
+
+    std::thread([this, username]() {
+        const std::string url = ResolveMasterUrl();
+        nlohmann::json req;
+        req["username"] = username;
+        int status = 0;
+        std::string res = PostJson(url, "/api/invites/list", req.dump(), status);
+        if (status == 200 && !res.empty()) {
+            try {
+                auto j = nlohmann::json::parse(res);
+                if (j.is_array()) {
+                    std::vector<GameInvite> invites;
+                    for (const auto& item : j) {
+                        GameInvite inv;
+                        inv.senderUsername = item.value("senderUsername", "");
+                        inv.hostIp = item.value("hostIp", "");
+                        inv.hostPort = static_cast<uint16_t>(item.value("hostPort", 11774));
+                        inv.timestamp = item.value("timestamp", 0ULL);
+                        if (!inv.senderUsername.empty() && !inv.hostIp.empty()) {
+                            invites.push_back(inv);
+                        }
+                    }
+                    std::lock_guard<std::mutex> lock(m_mutex);
+                    m_invites = std::move(invites);
+                }
+            } catch (...) {}
+        }
+    }).detach();
+}
+
+void SocialClient::SearchUsersAsync(const std::string& prefix, std::function<void(bool ok, const std::vector<UserSearchResult>& results)> callback) {
+    std::thread([prefix, callback]() {
+        const std::string url = ResolveMasterUrl();
+        nlohmann::json req;
+        req["prefix"] = prefix;
+        int status = 0;
+        std::string res = PostJson(url, "/api/friends/search", req.dump(), status);
+        std::vector<UserSearchResult> out;
+        if (status == 200 && !res.empty()) {
+            try {
+                auto j = nlohmann::json::parse(res);
+                if (j.is_array()) {
+                    for (const auto& u : j) {
+                        UserSearchResult r;
+                        r.id = u.value("id", 0);
+                        r.username = u.value("username", "");
+                        if (!r.username.empty()) out.push_back(r);
+                    }
+                }
+            } catch (...) {}
+        }
+        if (callback) callback(status == 200, out);
+    }).detach();
+}
+
+void SocialClient::SendFriendRequestAsync(const std::string& targetUsername, std::function<void(bool ok, const std::string& message)> callback) {
+    const int userId = AuthClient::Get().GetUserId();
+    if (userId <= 0) {
+        if (callback) callback(false, "Must be logged in");
+        return;
+    }
+
+    std::thread([this, userId, targetUsername, callback]() {
+        const std::string url = ResolveMasterUrl();
+        nlohmann::json req;
+        req["userId"] = userId;
+        req["targetUsername"] = targetUsername;
+        int status = 0;
+        std::string res = PostJson(url, "/api/friends/add", req.dump(), status);
+        std::string msg = "Request sent";
+        bool ok = (status == 200);
+        if (!res.empty()) {
+            try {
+                auto j = nlohmann::json::parse(res);
+                if (j.contains("error")) { msg = j["error"]; ok = false; }
+                else if (j.contains("message")) { msg = j["message"]; }
+            } catch (...) {}
+        } else if (!ok) {
+            msg = "Failed to send request";
+        }
+        SetStatusMessage(msg);
+        RefreshFriendsAsync();
+        if (callback) callback(ok, msg);
+    }).detach();
+}
+
+void SocialClient::AcceptFriendRequestAsync(const std::string& senderUsername, std::function<void(bool ok, const std::string& message)> callback) {
+    const int userId = AuthClient::Get().GetUserId();
+    if (userId <= 0) {
+        if (callback) callback(false, "Must be logged in");
+        return;
+    }
+
+    std::thread([this, userId, senderUsername, callback]() {
+        const std::string url = ResolveMasterUrl();
+        nlohmann::json req;
+        req["userId"] = userId;
+        req["senderUsername"] = senderUsername;
+        int status = 0;
+        std::string res = PostJson(url, "/api/friends/accept", req.dump(), status);
+        std::string msg = "Accepted";
+        bool ok = (status == 200);
+        if (!res.empty()) {
+            try {
+                auto j = nlohmann::json::parse(res);
+                if (j.contains("error")) { msg = j["error"]; ok = false; }
+                else if (j.contains("message")) { msg = j["message"]; }
+            } catch (...) {}
+        } else if (!ok) {
+            msg = "Failed to accept";
+        }
+        SetStatusMessage(msg);
+        RefreshFriendsAsync();
+        if (callback) callback(ok, msg);
+    }).detach();
+}
+
+void SocialClient::RemoveFriendAsync(const std::string& targetUsername, std::function<void(bool ok, const std::string& message)> callback) {
+    const int userId = AuthClient::Get().GetUserId();
+    if (userId <= 0) {
+        if (callback) callback(false, "Must be logged in");
+        return;
+    }
+
+    std::thread([this, userId, targetUsername, callback]() {
+        const std::string url = ResolveMasterUrl();
+        nlohmann::json req;
+        req["userId"] = userId;
+        req["targetUsername"] = targetUsername;
+        int status = 0;
+        std::string res = PostJson(url, "/api/friends/remove", req.dump(), status);
+        std::string msg = "Removed";
+        bool ok = (status == 200);
+        if (!res.empty()) {
+            try {
+                auto j = nlohmann::json::parse(res);
+                if (j.contains("error")) { msg = j["error"]; ok = false; }
+                else if (j.contains("message")) { msg = j["message"]; }
+            } catch (...) {}
+        } else if (!ok) {
+            msg = "Failed to remove";
+        }
+        SetStatusMessage(msg);
+        RefreshFriendsAsync();
+        if (callback) callback(ok, msg);
+    }).detach();
+}
+
+void SocialClient::SendInviteAsync(const std::string& targetUsername, const std::string& hostIp, uint16_t hostPort, std::function<void(bool ok, const std::string& message)> callback) {
+    const std::string senderUsername = AuthClient::Get().GetUsername();
+    if (senderUsername.empty()) {
+        if (callback) callback(false, "Must be logged in");
+        return;
+    }
+
+    std::thread([this, targetUsername, senderUsername, hostIp, hostPort, callback]() {
+        const std::string url = ResolveMasterUrl();
+        nlohmann::json req;
+        req["targetUsername"] = targetUsername;
+        req["senderUsername"] = senderUsername;
+        req["hostIp"] = hostIp;
+        req["hostPort"] = hostPort;
+        int status = 0;
+        std::string res = PostJson(url, "/api/invites/send", req.dump(), status);
+        std::string msg = "Invite sent";
+        bool ok = (status == 200);
+        if (!res.empty()) {
+            try {
+                auto j = nlohmann::json::parse(res);
+                if (j.contains("error")) { msg = j["error"]; ok = false; }
+                else if (j.contains("message")) { msg = j["message"]; }
+            } catch (...) {}
+        } else if (!ok) {
+            msg = "Failed to send invite";
+        }
+        SetStatusMessage(msg);
+        if (callback) callback(ok, msg);
+    }).detach();
+}
+
+void SocialClient::ClearInviteAsync(const std::string& senderUsername) {
+    const std::string username = AuthClient::Get().GetUsername();
+    if (username.empty()) return;
+
+    std::thread([this, username, senderUsername]() {
+        const std::string url = ResolveMasterUrl();
+        nlohmann::json req;
+        req["username"] = username;
+        req["senderUsername"] = senderUsername;
+        int status = 0;
+        PostJson(url, "/api/invites/clear", req.dump(), status);
+        PollInvitesAsync();
+    }).detach();
+}
+
+} // namespace noble
+

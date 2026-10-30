@@ -68,6 +68,28 @@ UiTexture RankIcon(int rankIndex);
 // Difficulty icon 0 easy, 1 normal, 2 heroic, 3 legendary: difficulty\<name>.png.
 UiTexture DifficultyIcon(int difficulty);
 
+struct NameplateInfo {
+    int id = 1;
+    std::string name;
+    std::string image;
+};
+
+struct EmblemInfo {
+    int id = 1;
+    std::string name;
+    std::string image1;
+};
+
+const std::vector<NameplateInfo>& GetNameplateCatalog();
+const std::vector<EmblemInfo>& GetEmblemCatalog();
+
+// Nameplate texture for index 1..536
+UiTexture Nameplate(int id);
+
+// Emblem texture for index 1..330
+UiTexture Emblem(int id);
+UiTexture EmblemByName(const std::string& image1);
+
 // Draws `tex` inside the rectangle, keeping its aspect ratio (centred, nothing cropped).
 void DrawContain(ImDrawList* dl, const UiTexture& tex, ImVec2 min, ImVec2 max, ImU32 tint = IM_COL32_WHITE);
 

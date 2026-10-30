@@ -939,14 +939,14 @@ static void ApplyArmoryAppearance(uint8_t* profile) {
         put(0x68, spEffect);
         put(0x6C, kKnees + num(sp, "knee_guards_index", 0, 3, 0));
         put(0x70, kVisor + num(sp, "visor_color_index", 0, 4, 0));
-        put(0x8C, kEliteSet + num(el, "armor_set", 0, 7, 0));
+        put(0x8C, kEliteSet + num(el, "armor_set", 0, 8, 0));
         put(0x90, elEffect);
         put(0x94, VoiceItem(str(sp, "voice_id")));
         put(0x98, kColor + num(appearance, "primary_color", 0, 29, 1));
         put(0x9C, kColor + num(appearance, "secondary_color", 0, 29, 10));
         put(0xA0, kColor);
         NOBLE_INFO("ReachHost [Slot 34]: applied Armory appearance ({}, helmet {}, chest {}, effect {}, Elite set {}, colours {}/{})",
-                   species == 0 ? "Spartan" : "Elite", helmet, chest, spEffect, num(el, "armor_set", 0, 7, 0),
+                   species == 0 ? "Spartan" : "Elite", helmet, chest, spEffect, num(el, "armor_set", 0, 8, 0),
                    num(appearance, "primary_color", 0, 29, 1), num(appearance, "secondary_color", 0, 29, 10));
     } catch (const nlohmann::json::exception& e) {
         NOBLE_WARN("ReachHost [Slot 34]: could not read Armory appearance from '{}': {}", appearancePath.string(), e.what());
