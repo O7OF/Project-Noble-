@@ -185,7 +185,8 @@ Menus (this session, all pushed):
 | `04e6700` | Docs: armory backdrop clear-hook approach ruled out |
 | `45a18b6` | Docs: all 21 armory scenes probed, none has a backdrop |
 | `59154ac` | Docs: the PostCommand(11) stall investigation (conclusion corrected above) |
-| (this commit) | `-auto-play` / `-auto-play-variant` test hooks; `tools/test-modes.ps1` drives the real launch path; 15/15 modes x game types reach gameplay |
+| `3a777bf` | `-auto-play` / `-auto-play-variant` hooks; harness drives the real launch path; 15/15 modes x game types reach gameplay |
+| (this commit) | GAME TYPE list filtered to what a vanilla map can host (mods unaffected) |
 | `5f4da08` | Prompts follow the device everywhere; `InputPrompts` button glyphs in the CONTROLLER list |
 | (this commit) | Main menu **Continue** fast path (spec 4.1/4.10) + a status block at the top of the design doc |
 | `a8f412e` | Menu music player (`PauseMusic/ResumeMusic` + `DrawMusicPlayer`) |

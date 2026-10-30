@@ -22,6 +22,24 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-30, 19:55 ET) - Vanilla maps only list the game types they can host (WeabooTyler117 / DeepSeek)
+
+Follow-up to the map/game-type guard. Until now Sword Base would still *offer* Invasion and then refuse to start it;
+Tyler asked to "remove irrelevant game types such as invasion on sword base".
+
+- The **GAME TYPE cycler now skips variants a vanilla map cannot host** (`MapGameTypes::Supports`): stepping left or
+  right jumps over them instead of landing on one, and if the map changes under a game type it cannot take, the
+  selection advances to the first one it can. Invasion is simply not in Sword Base's list any more.
+- **Modded maps and the Forge screen keep every variant** (`modded || !map` short-circuits the filter); Firefight is
+  untouched. The red refusal band and the disabled PLAY/HOST from the earlier change stay as the safety net for the
+  cases the filter cannot cover (an invite or a session that arrives with a mismatched type).
+- The filter runs off the same `MapGameTypes` tables that `-test-map-gametypes` verifies, so the list and the guard can
+  never drift apart.
+
+Checked: `tools/test-modes.ps1 -Only Slayer,Invasion` still passes - Slayer starts and reaches gameplay, and a forced
+Invasion variant on Sword Base is still refused (`-auto-play-variant` sets the variant directly, which is exactly the
+"something else chose this type" case the guard exists for).
+
 ## 0. Pick up here (2026-10-30, 19:30 ET) - Every mode with every game type tested: 15/15 reach gameplay (WeabooTyler117 / DeepSeek)
 
 Tyler: "tests done on all modes to make sure multiplayer works. Every mode with every game type."

@@ -3468,7 +3468,30 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
             int& v = ff ? st.ffVariant : st.variant;
             const char* label = list.empty() ? "Default" : list[std::clamp(v, 0, static_cast<int>(list.size()) - 1)].label.c_str();
             const int dv = OptionRow(ui, "variant", ImVec2(px, y), pw, "GAME TYPE", label, st.focusRow == focusRows);
-            if (dv && !list.empty()) v = (v + dv + static_cast<int>(list.size())) % static_cast<int>(list.size());
+            if (!list.empty()) {
+                const int count = static_cast<int>(list.size());
+                // Vanilla maps only offer the game types they were built for, so Invasion simply is not in Sword
+                // Base's list; modded maps keep every variant (players asked for that, and a mod may bring its own).
+                auto allowed = [&](int index) {
+                    if (modded || !map) return true;
+                    const std::string type = MapGameTypes::FromVariantStem(list[index].path.stem().wstring());
+                    return type.empty() || MapGameTypes::Supports(map->scenario, type);
+                };
+                if (dv) {
+                    int next = v;
+                    for (int step = 0; step < count; ++step) {
+                        next = (next + dv + count) % count;
+                        if (allowed(next)) break;
+                    }
+                    v = next;
+                } else if (!allowed(v)) {
+                    // The map changed under a game type it cannot host: move to the first one it can.
+                    for (int step = 1; step <= count; ++step) {
+                        const int candidate = (v + step) % count;
+                        if (allowed(candidate)) { v = candidate; break; }
+                    }
+                }
+            }
             y += 36.0f * ui.s;
             ++focusRows;
         }
