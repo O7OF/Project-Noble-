@@ -69,6 +69,41 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-31, 20:45 ET) - Campaign grace wait for invite/direct joins + lobby diagnostics (WeabooTyler117 / DeepSeek)
+
+Tyler's latest real test: **O7 hosted campaign, guest still saw only terrain and subtitles during the "cutscene", then an
+error**; and **hosting a Forge lobby "did absolutely nothing" and never connected**.
+
+### Campaign: the barrier needed a fallback for joins that carry no peer count
+
+`-wait-peers` is only passed when the host starts from the Noble pregame lobby with guests in the roster (`expectedPeers`
+counted at `FrontEndMenu.cpp:2237`). If the guest is invited directly, joins by address, or the roster snapshot is empty, the
+host launched with `expectedPeers == 0`, took the old 1 s path, started the cinematic, and the guest hit exactly the symptom
+described (unbound cutscene camera -> co-op abort), because the server cannot help with that - it is engine sequencing.
+
+Fix (`BlamEngine::LaunchMap`): when a campaign host has **no lobby peer count** but the transport is online
+(`campaignGraceWait`), the mission start is held for up to **12 s** waiting for any engine peer, with a 3 s settle once one
+appears. Solo (`PLAY SOLO`, transport inactive) is untouched; a host with no guest pays the 12 s once and logs
+`no guest appeared within 12 s; starting the mission`. Verified in a solo host run: the grace window runs, then Command 10 /
+Command 11 and `game session started` follow normally.
+
+**Still true, and worth repeating:** both PCs must run the merged build (`8ba5b71` or later). If O7's client predates the
+barrier, no client-side change here can save that test.
+
+### Forge: nothing happened - added the diagnostics to prove where it stops
+
+Host START now logs `Lobby start broadcast: session/map/mode/variant/difficulty/skulls`; the guest logs
+`Lobby launch received: map/mode/variant/endpoint/session` when the event arrives, and
+`Guest launching from lobby: map/mode/variant/connect` when it composes the relaunch. With both logs from one attempt we can
+tell immediately whether the guest never received the event (server/relay/roster), received it but failed to resolve the
+Forge variant, or launched and failed to connect.
+
+### Server side (see 20:05 entry)
+
+`tools/push-server.ps1` is the way to ship any server change. The likely online-only culprits remain the 30 s master-session
+timeout during long Forge loads, a stale lobby roster inflating the peer count, and the single-session rule if both PCs use
+one account.
+
 ## 0. Pick up here (2026-10-31, 20:05 ET) - Server/netcode changes now go to O7OF/ServerTestDeploy (WeabooTyler117 / DeepSeek)
 
 Tyler: *"any netcode or server script changes need to be pushed to ServerTestDeploy repo"*, and he has access.

@@ -880,7 +880,10 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
         const bool settleLonger = (gameModeTag == 1 || gameModeTag == 3); // campaign co-op / Forge
         const int peersToWaitFor = (isOnlineHost && expectedPeers > 0) ? expectedPeers : 0;
         const bool holdMissionForPeers = (gameModeTag == 1);   // campaign only; Forge must open its session early
-        std::thread([this, isOnlineHost, peersToWaitFor, settleLonger, holdMissionForPeers]() {
+        // Invite / direct joins carry no lobby peer count. Campaign cinematics still cannot be joined, so without a
+        // count the host holds the mission start briefly for any guest that is already connecting.
+        const bool campaignGraceWait = (gameModeTag == 1) && isOnlineHost && peersToWaitFor == 0;
+        std::thread([this, isOnlineHost, peersToWaitFor, settleLonger, holdMissionForPeers, campaignGraceWait]() {
             const int startDelay = isOnlineHost ? 1000 : 300;
             std::this_thread::sleep_for(std::chrono::milliseconds(startDelay));
 
@@ -891,7 +894,26 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
             // co-op session (0x1B/0x1C/0x1D -> "An error occurred") and dropped everyone to the menu.
             // So the peer barrier has to gate the MISSION START, not just Command 11.
             size_t joinedBeforeStart = 0;
-            if (peersToWaitFor > 0 && holdMissionForPeers) {
+            if (campaignGraceWait) {
+                // No lobby roster was available (guest invited directly or joined by address). Campaign's opening
+                // cinematic cannot be joined mid-play - a guest that arrives late sees the world from outside the map
+                // and the engine aborts the session - so hold the mission start for up to 12 s while a guest connects.
+                const ULONGLONG graceDeadline = GetTickCount64() + 12000;
+                NOBLE_INFO("BlamEngine: campaign host without a lobby peer count - holding the mission start for up to "
+                           "12 s so a joining guest can enter before the cinematic");
+                while (GetTickCount64() < graceDeadline) {
+                    joinedBeforeStart = noble::NetworkTransport::Get().GetGamePeerCount();
+                    if (joinedBeforeStart > 0) break;
+                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                }
+                if (joinedBeforeStart > 0) {
+                    NOBLE_INFO("BlamEngine: guest engine traffic appeared ({} peer(s)); settling 3 s before the "
+                               "mission starts", joinedBeforeStart);
+                    std::this_thread::sleep_for(std::chrono::milliseconds(3000));
+                } else {
+                    NOBLE_INFO("BlamEngine: no guest appeared within 12 s; starting the mission");
+                }
+            } else if (peersToWaitFor > 0 && holdMissionForPeers) {
                 const ULONGLONG start = GetTickCount64();
                 const ULONGLONG deadline = start + 25000;       // hard cap
                 const ULONGLONG giveUpAt = start + 10000;       // no traffic at all -> the session is not joinable yet

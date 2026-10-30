@@ -1883,6 +1883,8 @@ static void TakePendingLobbyEvents(MenuState& st) {
         }
     }
     if (ev.launch && !st.lobbyLaunchPending && !st.isLobbyHost) {
+        NOBLE_INFO("Lobby launch received: map='{}' mode='{}' variant='{}' endpoint='{}' session='{}'",
+                   ev.map, ev.mode, ev.variant, ev.hostEndpoint, ev.sessionId);
         st.lobbyLaunchPending = true;
         st.lobbyLaunchMap = ev.map;
         st.lobbyLaunchMode = ev.mode;
@@ -1984,6 +1986,8 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         choice.variantPath = st.lobbyLaunchVariant;
         choice.difficulty = st.lobbyLaunchDiff;
         choice.skulls = st.lobbyLaunchSkulls;
+        NOBLE_INFO("Guest launching from lobby: map='{}' mode='{}' variant='{}' connect='{}'",
+                   choice.map, choice.mode, choice.variantPath, st.lobbyHostEndpoint);
         choice.connectAddress = st.lobbyHostEndpoint;
         choice.sessionId = st.lobbySessionId;
         if (st.lobbySessionToken.empty()) st.lobbySessionToken = MasterServerClient::Get().GetCurrentSessionToken();
@@ -2226,6 +2230,8 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
                     if (current.ok && !current.roster.empty()) st.lobbyRoster = current.roster;
                 }
                 MasterServerClient::Get().LaunchLobbySync(st.lobbySessionId, st.lobbyMap, st.lobbyMode, variantFileName, st.lobbyDifficulty, st.lobbySkulls);
+                NOBLE_INFO("Lobby start broadcast: session='{}' map='{}' mode='{}' variant='{}' difficulty={} skulls=0x{:X}",
+                           st.lobbySessionId, st.lobbyMap, st.lobbyMode, variantFileName, st.lobbyDifficulty, st.lobbySkulls);
 
                 choice.play = true;
                 choice.host = true;
