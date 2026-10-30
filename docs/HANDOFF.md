@@ -69,6 +69,38 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-31, 21:20 ET) - Backend 1.3.0: health/relay diagnostics, longer load tolerance (WeabooTyler117 / DeepSeek)
+
+Tyler asked for the server side to be made diagnosable for the Campaign/Forge online failures. Shipped to
+**O7OF/ServerTestDeploy** as `df33af7` (through `tools/push-server.ps1`).
+
+### What changed in `server.js`
+
+- **`/api/health`** now reports `version`, `commit` (`RENDER_GIT_COMMIT`/`GIT_COMMIT`), and a `relay` block
+  (`rooms`, `connections`, `binaryPackets`, `controlFrames`, `lobbyLaunches`).
+- **`/api/relay/stats`** (new) lists every live relay room as `{ session, hasHost, guests }` plus the counters. This is the
+  endpoint that proves where a failed join stopped: no room at all (registration/session problem), room without host, room
+  without the guest, or a room with both but `binaryPackets == 0` (packets never flowed).
+- `lobby_launch` control frames are now logged with `map/mode/variant`, and counted.
+- **Session tolerance**: `MASTER_SESSION_TIMEOUT_MS` 30 s -> 90 s. Long Campaign/Forge World loads can pause a host's
+  refresh beyond 30 s, and a dropped session makes the guest's join look like a netcode failure.
+- **Lobby poll headroom**: `MASTER_MAX_REQUESTS_PER_MINUTE` 120 -> 240. Two clients behind one NAT polling lobby state
+  could hit 429s that also present as failed joins.
+- Version string 1.2.0 -> 1.3.0 in `/` and the new endpoints.
+
+### Verified
+
+`node --check` clean; ran the server locally on port 8099 (had to `npm rebuild sqlite3` first - the shipped binary was
+built for a different Node) and confirmed the three endpoints return the expected JSON. The deploy repo's first sync
+rewrote `server.js` line endings (2.2k-line diff); content is correct, and `tools/push-server.ps1` now tolerates git's
+stderr warnings instead of aborting on them.
+
+### How to use it in the next test
+
+After a failed Campaign/Forge join, open `https://<backend>/api/relay/stats` and read the room for the session id from the
+client log (`NetworkTransport: Initialized HOST ... Session ID:` / `Lobby start broadcast: session='...'`). Add the JSON to
+the report; it splits server-side failure from engine-side failure in one look.
+
 ## 0. Pick up here (2026-10-31, 20:45 ET) - Campaign grace wait for invite/direct joins + lobby diagnostics (WeabooTyler117 / DeepSeek)
 
 Tyler's latest real test: **O7 hosted campaign, guest still saw only terrain and subtitles during the "cutscene", then an

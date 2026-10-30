@@ -11,10 +11,14 @@ const app = express();
 const TRUST_PROXY = process.env.TRUST_PROXY !== '0';
 app.set('trust proxy', 1);
 
-const MASTER_SESSION_TIMEOUT_MS = 30 * 1000;
+// Long map loads (Campaign, Forge World) can pause a host's registration refresh for well over 30 s; a
+// dropped session there makes the guest's join look like a netcode failure. 90 s covers the load window.
+const MASTER_SESSION_TIMEOUT_MS = 90 * 1000;
 const MASTER_MAX_SESSIONS = 2000;
 const MASTER_MAX_SESSIONS_PER_IP = 4;
-const MASTER_MAX_REQUESTS_PER_MINUTE = 120;
+// Two clients behind one NAT (the common testing setup) poll lobby state in the same minute; 120 was tight and
+// produced 429s that look like join failures. Authenticated polling is cheap, so allow more.
+const MASTER_MAX_REQUESTS_PER_MINUTE = 240;
 const MASTER_MAX_PLAYERS = 64;
 const masterSessions = new Map();
 const masterRequestCounts = new Map();
@@ -359,7 +363,7 @@ app.get('/', (req, res) => {
     res.json({
         status: "online",
         service: "Outbreak-Z Dedicated Backend",
-        version: "1.2.0",
+        version: "1.3.0",
         uptime: process.uptime(),
         timestamp: Date.now()
     });
@@ -368,9 +372,35 @@ app.get('/', (req, res) => {
 app.get('/api/health', (req, res) => {
     res.json({
         status: "healthy",
+        version: "1.3.0",
+        commit: process.env.RENDER_GIT_COMMIT || process.env.GIT_COMMIT || 'unknown',
         uptime: process.uptime(),
         activeSessions: Object.keys(activeSessions).length,
         activeLobbies: Object.keys(activeLobbies).length,
+        masterSessions: masterSessions.size,
+        relay: {
+            rooms: relayRooms.size,
+            connections: relayStats.connections,
+            binaryPackets: relayStats.binaryPackets,
+            controlFrames: relayStats.controlFrames,
+            lobbyLaunches: relayStats.lobbyLaunches
+        },
+        timestamp: Date.now()
+    });
+});
+
+// Relay diagnostics: proves whether a host and guest ever met in the same relay room, and whether packets flowed.
+app.get('/api/relay/stats', (req, res) => {
+    const rooms = [];
+    for (const [id, room] of relayRooms.entries()) {
+        rooms.push({ session: id, hasHost: !!room.hostWs, guests: room.guests.size });
+    }
+    res.json({
+        version: "1.3.0",
+        commit: process.env.RENDER_GIT_COMMIT || process.env.GIT_COMMIT || 'unknown',
+        uptime: process.uptime(),
+        stats: relayStats,
+        rooms,
         masterSessions: masterSessions.size,
         timestamp: Date.now()
     });
@@ -2037,6 +2067,17 @@ const server = app.listen(PORT, () => {
 // ── WebSocket Netcode Packet Relay ──────────────────────────────────────────
 const wss = new WebSocketServer({ noServer: true });
 const relayRooms = new Map();
+// Relay diagnostics. Exposed on /api/relay/stats and /api/health so a failed join can be diagnosed from the server side
+// (host connected? guest connected? did any binary packet flow?) without asking players for logs.
+const relayStats = {
+    connections: 0,
+    hostConnections: 0,
+    guestConnections: 0,
+    binaryPackets: 0,
+    controlFrames: 0,
+    lobbyLaunches: 0,
+    startedAt: Date.now()
+};
 
 function broadcastLobbyEvent(sessionId, eventObj) {
     const room = relayRooms.get(sessionId);
@@ -2086,12 +2127,15 @@ wss.on('connection', (ws, req, reqUrl) => {
         relayRooms.set(sessionId, room);
     }
 
+    relayStats.connections += 1;
     if (role === 'host') {
         room.hostWs = ws;
-        console.log(`[Relay] Host connected for session ${sessionId}`);
+        relayStats.hostConnections += 1;
+        console.log(`[Relay] Host connected for session ${sessionId} (rooms: ${relayRooms.size})`);
     } else {
         room.guests.set(peerId, ws);
-        console.log(`[Relay] Guest 0x${peerId} connected for session ${sessionId}`);
+        relayStats.guestConnections += 1;
+        console.log(`[Relay] Guest 0x${peerId} connected for session ${sessionId} (guests in room: ${room.guests.size})`);
     }
 
     ws.on('message', (data, isBinary) => {
@@ -2109,7 +2153,10 @@ wss.on('connection', (ws, req, reqUrl) => {
         }
 
         if (isJson && jsonMsg) {
+            relayStats.controlFrames += 1;
             if (jsonMsg.type === 'lobby_launch') {
+                relayStats.lobbyLaunches += 1;
+                console.log(`[Relay] lobby_launch for session ${sessionId}: map=${(jsonMsg.launch && jsonMsg.launch.map) || jsonMsg.map || '?'} mode=${(jsonMsg.launch && jsonMsg.launch.mode) || jsonMsg.mode || '?'} variant=${(jsonMsg.launch && jsonMsg.launch.variant) || jsonMsg.variant || '?'}`);
                 const session = masterSessions.get(sessionId);
                 if (session) {
                     session.inProgress = true;
@@ -2177,6 +2224,7 @@ wss.on('connection', (ws, req, reqUrl) => {
         }
         if (!Buffer.isBuffer(data) || data.length < 8) return;
 
+        relayStats.binaryPackets += 1;
         if (role === 'guest') {
             // Forward Guest packet directly to Host
             if (room.hostWs && room.hostWs.readyState === ws.OPEN) {

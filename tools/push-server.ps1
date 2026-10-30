@@ -20,7 +20,9 @@ param(
     [switch]$DryRun
 )
 
-$ErrorActionPreference = 'Stop'
+# git writes progress and line-ending warnings to stderr; with 'Stop' PowerShell would treat those as failures, so
+# errors are checked explicitly through $LASTEXITCODE after each git call instead.
+$ErrorActionPreference = 'Continue'
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $serverDir = Join-Path $repoRoot 'server'
