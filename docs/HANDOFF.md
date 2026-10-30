@@ -22,6 +22,29 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-31, 15:30 ET) - HREK fully extracted: 62k tags, 39.4 GB, both target tags found (WeabooTyler117 / DeepSeek)
+
+- `HREK.7z` unpacked in place: **62,017 files, 39.4 GB** under `D:\Steam\steamapps\common\HREK\tags` (D: still has
+  ~128 GB free).
+- `tags\levels\ui\mainmenu` fully present: `mainmenu.scenario` (438 KB), `mainmenu_000.scenario_structure_bsp` (245 KB),
+  **`mainmenu_000.scenario_structure_lighting_info` (10.8 KB)**, `mainmenu_lobbies.scenario_structure_bsp` (100 KB),
+  `mainmenu.structure_seams`, `instance_imposter_definition`, and the armory cubemaps.
+- The lighting tag's structure is readable in the file: a **`generic light definitions`** block (type enum omni / spot /
+  directional, flags for near/far attenuation and inverse-squared falloff, rectangle shapes) followed by lightmap data. A
+  lit Spartan against a black chamber therefore points at the **BSP lightmaps**, not at the generic lights: Noble ships its
+  own 284 MB `data\menumaps\mainmenu_all.map`, so rebuilding it from these tags with lightmaps baked
+  (`tool lightmap-farm` / `tool build-cache-file-generate-main-menu-layout`) is the clean fix; adding/brightening lights in
+  Sapien is the cheap experiment.
+- `tags\globals\emblems\global.emblem_library` structure is confirmed: `emblem bitmap list` (name / string id / bitmap
+  index), `emblem_shape_list` with `front emblems` -> `emblem_layer` (layer 0 / shape 0 / multiplier / transform:
+  scale, shear, rotation, offset, blur) and `primary layer`, `emblem_front_list`, `back emblems` -> `emblem_back_list`,
+  plus `emblem_runtime_front_list` / `emblem_runtime_back_list`. That is Reach's real background/foreground system, drawn
+  from `tags\ui\cui\common\emblems\emblems.bitmap` (plus the 3.1 MB `emblems.bitmap` next to it).
+- **Tool gotcha:** `tool.exe` answers *"Input tag path is not located in the tags directory structure"* for every path form
+  because tags resolve through the project/tag datastore (`project.xml` -> `bin\tools\tagDb.sdf`), created the first time
+  `ProjectChooser.exe`/`Foundation.exe` opens the project. `TagService.exe` with no `/projectroot` starts, finds no project
+  and ends in its crash handler. So the order is ProjectChooser -> Foundation -> then tool/sapien/MegaloEdit work.
+
 ## 0. Pick up here (2026-10-31, 15:10 ET) - HREK torn open: the armory lighting and the real emblem library are in the kit (WeabooTyler117 / DeepSeek)
 
 Tyler installed the Halo Reach Editing Kit and asked to "rip apart Foundation". Done; findings in

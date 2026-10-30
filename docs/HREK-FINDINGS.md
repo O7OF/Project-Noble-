@@ -81,3 +81,57 @@ session/editing flag that explains the netplay behaviour in `docs/FORGE-NETPLAY-
   overwriting user content.
 - MCC's own install stays read-only: everything here is a **source** tree. Rebuilt maps land in HREK's own `maps` folder
   and can then be copied into Noble's `data\menumaps` as a mod, exactly like the current `mainmenu_all.map`.
+
+
+---
+
+## Update — full extraction and the two tag structures (2026-10-31, 15:25 ET)
+
+`HREK.7z` is now unpacked in place: **62,017 files, 39.4 GB** under `D:\Steam\steamapps\common\HREK\tags`.
+`tags\levels\ui\mainmenu\mainmenu.scenario`, `mainmenu_000.scenario_structure_bsp`,
+`mainmenu_000.scenario_structure_lighting_info` and `tags\globals\emblems\global.emblem_library` are all present.
+
+### `global.emblem_library` — the real background/foreground system, confirmed
+
+The tag's own structure names (readable inside the file) define:
+
+```
+emblem_library_struct_definition
+  emblem_library_block
+    emblem bitmap list            name / string id / bitmap index
+    emblem_shape_list
+      front emblems               (foregrounds)
+        emblem_layer -> layer 0 / shape 0 / multiplier / transform (scale, shear, rotation, offset, blur)
+        primary layer
+      emblem_front_list
+      back emblems                (backgrounds)
+        emblem_back_list
+    emblem_runtime_front_list
+    emblem_runtime_back_list
+```
+
+So Reach's original system is exactly what Tyler described: **front emblems** (symbols) drawn over **back emblems**
+(backdrops), each composed from atlas bitmaps through layers with transforms. MCC's `playercustomization.xml` only carries
+the precomposed pairs; this tag is the authoring data behind them. The atlas is `tags\ui\cui\common\emblems\emblems.bitmap`
+(1.9 MB) with a second `emblems.bitmap` (3.1 MB) next to it.
+
+### `mainmenu_000.scenario_structure_lighting_info` — the chamber's lights
+
+11,072 bytes, and its structure names are visible too: `generic light definitions` block, light `type` enum
+(**omni / spot / directional**), flags (`use near attenuation`, `use far attenuation`, `inverse squared falloff`,
+`has clipping planes`), `shape` (**rectangle** ...), `lightmap` data after it.
+
+That matches the visual symptom exactly: the Spartan (a dynamic object) is lit by these generic lights, while the chamber
+**geometry** is lit by the BSP's baked lightmaps — so a dark chamber with a lit Spartan points at the menu map's lightmaps,
+not at the lights. Noble ships its own `data\menumaps\mainmenu_all.map` (284 MB); rebuilding that map from these tags with
+lightmaps baked (`tool lightmap-farm` / `build-cache-file-generate-main-menu-layout`) is the clean fix, and adding or
+brightening lights in Sapien is the cheaper experiment.
+
+### Tool setup gotcha
+
+`tool.exe export-tag-to-xml` currently answers **"Input tag path is not located in the tags directory structure"** for every
+path form tried, because the kit's tools resolve tags through the **project/tag datastore**
+(`project.xml` -> `bin\tools\tagDb.sdf`), which is created the first time **ProjectChooser.exe / Foundation.exe** opens the
+project. `TagService.exe` without `/projectroot` starts, finds no project and ends in its crash handler. So the order is:
+`ProjectChooser.exe` (pick "Omaha"/Bulgogi) -> `Foundation.exe` (tag editor) -> then `tool.exe` verbs, `sapien.exe`, and
+`MegaloEdit.exe` all behave. Everything needed is installed; it just needs that one GUI initialisation.
