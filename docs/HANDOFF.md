@@ -68,6 +68,31 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
   - `noble-client.exe -menu-screen armory -menu-capture 60 -quit-after 5` -> Exit Code 0
 
 --
+## 0. Pick up here (2026-10-31, 15:10 ET) - HREK torn open: the armory lighting and the real emblem library are in the kit (WeabooTyler117 / DeepSeek)
+
+Tyler installed the Halo Reach Editing Kit and asked to "rip apart Foundation". Done; findings in
+`docs/HREK-FINDINGS.md`. The short version:
+
+- HREK (`D:\Steam\steamapps\common\HREK`, build 2023.07.17.176677.1-QFE1) = `Foundation.exe` ("HR Foundation Tag Editor"
+  v1.903, the Bonobo tag framework), `sapien.exe`, `tool.exe`, `MegaloEdit.exe`, `ProjectChooser.exe`, and **`HREK.7z`
+  (6.5 GB) with 63,569 tag files** - the full tag tree, not a sample (objects 17,172, levels 16,507, sound 12,151,
+  cinematics 7,602, shaders 4,285, ui 1,318, globals 263).
+- **Armory lighting is now unblocked**: `tags\levels\ui\mainmenu\` (148 tags, 27.6 MB) contains `mainmenu.scenario`,
+  `mainmenu_000.scenario_structure_bsp`, `mainmenu_000.scenario_structure_lighting_info`, the armory cubemaps and
+  `menu.area_screen_effect` - i.e. the chamber's lighting can be edited in Sapien and the menu map rebuilt with `tool.exe`.
+  That was the only remaining route for the black void after the renderer swap was rejected.
+- **The real emblem library exists**: `tags\globals\emblems\global.emblem_library` (57,396 bytes) carries the original
+  `emblem_bitmap_list` (name / string id / bitmap index) and `shapes` (bitmap, address mode, transform scale, gradient)
+  structures, plus the `emblems.bitmap` atlases under `tags\ui\cui\common\`. Extracted to
+  `hrek-extract\tags\...` in the session workspace for inspection. This is the background/foreground source the emblem
+  picker needs - MCC's `playercustomization.xml` only has precomposed pairs.
+- **Forge/Megalo**: `MegaloEdit.exe` + `data\multiplayer\megalo\` sources let `00_basic_editing_054.bin` be opened as a
+  Megalo variant, the cleanest way to check for a Forge session/editing flag.
+
+Practical: the tags live inside `HREK.7z`; `HREK (Extract).bat` unpacks them (6.5 GB compressed) and Sapien/tool need the
+project (`ProjectChooser.exe`) plus the tag service. Nothing in MCC's install is touched; rebuilt maps land in HREK and can
+be copied into Noble's `data\menumaps` as a mod.
+
 ## 0. Pick up here (2026-10-31, 14:40 ET) - Ghidra project is set up and the forge gate is labelled in it (WeabooTyler117 / DeepSeek)
 
 Tyler asked to start Ghidra and "set that all up". Done, and made reproducible.

@@ -209,7 +209,8 @@ Menus (this session, all pushed):
 | `571f140` | `tools/coop-test.ps1` + `docs/COOP-TEST-PROTOCOL.md` + `coop/`: two-machine, two-agent co-op testing over the repo |
 | `320998e` | Forge netplay: mission-start hold restricted to campaign (it was aborting forge joins); `-log <file>` per instance |
 | `1915a9a` | `docs/FORGE-NETPLAY-OFFSETS.md`: join-queue state machine map + patch candidates; both forge join scenarios verified |
-| (this commit) | Ghidra project labelled (`tools/ghidra/NobleForgeGate.java`) + `docs/GHIDRA-SETUP.md` |
+| `dc41419` | Ghidra project labelled (`tools/ghidra/NobleForgeGate.java`) + `docs/GHIDRA-SETUP.md` |
+| (this commit) | `docs/HREK-FINDINGS.md`: the editing kit ships the full tag tree, including the armory lighting tags and the real emblem library |
 | `5f4da08` | Prompts follow the device everywhere; `InputPrompts` button glyphs in the CONTROLLER list |
 | (this commit) | Main menu **Continue** fast path (spec 4.1/4.10) + a status block at the top of the design doc |
 | `a8f412e` | Menu music player (`PauseMusic/ResumeMusic` + `DrawMusicPlayer`) |
