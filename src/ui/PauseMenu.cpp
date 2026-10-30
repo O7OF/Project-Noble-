@@ -108,7 +108,7 @@ std::string Upper(std::string s) {
 // Starts a new Noble (empty args = front-end menu) and closes this one.
 void RelaunchAndClose(HWND hwnd, const std::wstring &args, const char *what) {
   NOBLE_INFO("PauseMenu: {} requested", what);
-  Relaunch::Start(args);
+  Relaunch::HandOff(args);  // ends this process; returns only if the new one could not start
   PostMessageW(hwnd, WM_CLOSE, 0, 0);
 }
 

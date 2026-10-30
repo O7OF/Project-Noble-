@@ -87,5 +87,26 @@ bool Start(const std::wstring& args) {
     return true;
 }
 
+namespace {
+BOOL CALLBACK HideOwnWindow(HWND hwnd, LPARAM pid) {
+    DWORD owner = 0;
+    GetWindowThreadProcessId(hwnd, &owner);
+    if (owner == static_cast<DWORD>(pid) && IsWindowVisible(hwnd)) ShowWindow(hwnd, SW_HIDE);
+    return TRUE;
+}
+} // namespace
+
+bool HandOff(const std::wstring& args) {
+    if (!Start(args)) return false;
+    // The network was already released in Start, so the new process can bind its ports. Hide this window
+    // and end now instead of posting WM_CLOSE and waiting for a shutdown that can take seconds (the old
+    // process lingered next to the new one).
+    EnumWindows(&HideOwnWindow, static_cast<LPARAM>(GetCurrentProcessId()));
+    NOBLE_INFO("Relaunch: handed off to the new Noble process; closing this one");
+    Logger::Shutdown();
+    TerminateProcess(GetCurrentProcess(), 0);  // not ExitProcess: DLL shutdown under the engine can hang
+    return true;  // not reached
+}
+
 } // namespace Relaunch
 } // namespace noble

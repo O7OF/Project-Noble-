@@ -16,5 +16,10 @@ std::wstring CurrentGameArgs();
 // Starts noble-client.exe with these arguments (empty = front-end menu). True if it started.
 bool Start(const std::wstring& args);
 
+// Starts noble-client.exe with these arguments and ends THIS process straight away (its windows are hidden
+// first and the log is flushed), so there is never a second Noble client open next to the new one.
+// Only returns (false) if the new process could not be started; the caller then keeps running.
+bool HandOff(const std::wstring& args);
+
 } // namespace Relaunch
 } // namespace noble

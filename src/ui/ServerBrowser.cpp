@@ -579,7 +579,7 @@ void ServerBrowser::TryJoin(const std::string& address, uint16_t port, bool hasP
 
     m_status = "Connecting to " + key + "...";
     NOBLE_INFO("ServerBrowser: Connecting to {}:{} (map='{}', session='{}') via Relaunch", address, port, map, sessionId);
-    Relaunch::Start(args);
+    Relaunch::HandOff(args);  // ends this process; returns only if the new one could not start
     CloseThisNobleWindow();
 }
 

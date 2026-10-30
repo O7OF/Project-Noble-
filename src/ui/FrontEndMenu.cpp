@@ -3089,7 +3089,7 @@ void FrontEndMenu::RenderOverlayImpl(IDXGISwapChain* swapChain, bool clear) {
                 }
                 NOBLE_INFO("FrontEndMenu: launching match via Relaunch ({} {})", choice.mode, choice.map);
                 ShowWindow(hwnd, SW_HIDE); UpdateWindow(hwnd);
-                Relaunch::Start(args);
+                Relaunch::HandOff(args);  // ends this process; returns only if the match could not start
             } else {
                 NOBLE_INFO("FrontEndMenu: quit from menu");
             }
