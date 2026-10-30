@@ -22,6 +22,35 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-30, 14:20 ET) - New SYSTEM settings page, version 0.8.3 (WeabooTyler117 / DeepSeek)
+
+Spec 4.12 housekeeping that needed no engine work: crash/diagnostic helpers and settings backup/restore.
+
+### 1. `Settings > SYSTEM` (eighth category, `Cat::System`)
+
+- **NOBLE**: `VERSION` (the build), `LOG FILE`, **OPEN LOGS FOLDER** (`ShellExecuteW` on the exe folder, which holds
+  the log, the crash dump and `data\userdata\settings.json`) and **COPY DIAGNOSTICS** (version, install path and the last
+  40 log lines to the clipboard, ready to paste into a report).
+- **BACKUPS**: **BACK UP SETTINGS** copies `settings.json` and `appearance.json` into
+  `data\userdata\backups\YYYY-MM-DD_HHMMSS\`, **RESTORE NEWEST BACKUP** copies the newest one back, calls
+  `Settings::Load()` and re-syncs the panel (`m_saved`/`m_edit`/buffers) so the change is live, and **OPEN BACKUP
+  FOLDER** shows them in Explorer. Each action reports its outcome in a line under the rows.
+- Action rows use the explicit `m_rowHovered && IsMouseClicked(0)` / `m_rowFocused && Accept` test, never `Row()`'s
+  return value (that trap is written down twice now).
+- The category is **appended** after `Online`, so every existing `-menu-tab N` index is unchanged.
+
+### 2. `VERSION_STRING` is now `0.8.3 (Menu Cleanup & Controls)`
+
+It was still `0.8.2 (In-Game FOV & Pause Settings)` from before the menu pass; every screen that prints the version
+(main menu, SYSTEM page, crash header) picks it up.
+
+### 3. Verified
+
+- Build: 0 errors, 0 warnings.
+- Settings tabs 0, 1, 5, 6 and 7 all captured with exit code 0 after adding the category (the tab index shift was the
+  risk).
+- The SYSTEM page shows VERSION `0.8.3 (Menu Cleanup & Controls)`, both sections and all six rows.
+
 ## 0. Pick up here (2026-10-30, 13:45 ET) - Map display names everywhere, and the self-test covers them (WeabooTyler117 / DeepSeek)
 
 Server browser backlog item: it printed raw scenario names (`forge_halo` instead of Forge World).

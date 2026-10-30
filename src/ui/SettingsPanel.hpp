@@ -23,7 +23,7 @@ public:
     void SetTab(int tab);                                          // test option -menu-tab (0..6 = category)
 
 private:
-    enum class Cat { Graphics, Audio, Game, Player, KeyboardMouse, Controller, Online, Count };
+    enum class Cat { Graphics, Audio, Game, Player, KeyboardMouse, Controller, Online, System, Count };
     enum class When { Apply, Restart, Instant, Info };
     enum class Preview { None, Fov, FrameLimit, Volume, Controller, Gpu, Background };
     struct Details {
@@ -44,6 +44,7 @@ private:
     void RenderKeyboardMouse();
     void RenderController();
     void RenderOnline();
+    void RenderSystem();
     void RenderMusicPicker();
     void PollRebind();
 

@@ -4,6 +4,7 @@
 #include "MenuSounds.hpp"
 #include "audio/ReachAudio.hpp"
 #include "UiArt.hpp"
+#include "common/Version.hpp"
 #include "InputPrompts.hpp"
 #include "engine/KeyBindings.hpp"
 #include "engine/CameraFov.hpp"
@@ -11,7 +12,8 @@
 #include "network/MasterServerClient.hpp"
 
 #include <windows.h>
-#include <commdlg.h>   // GetOpenFileNameW for IMPORT BACKGROUND
+#include <commdlg.h>
+#include <shellapi.h>   // GetOpenFileNameW for IMPORT BACKGROUND
 #include <dxgi.h>
 #include <imgui.h>
 
@@ -23,6 +25,7 @@
 #include <cstring>
 #include <iterator>
 #include <string>
+#include <fstream>
 #include <vector>
 
 namespace noble {
@@ -68,8 +71,9 @@ const CatInfo kCats[] = {
     { "CONTROLS", "KEYBOARD & MOUSE", "Takes effect when you apply changes, also mid-game from the pause menu." },
     { nullptr, "CONTROLLER", "Takes effect when you apply changes, also mid-game from the pause menu." },
     { "ONLINE", "ONLINE SERVICES", "Saved when you apply changes." },
+    { "SYSTEM", "SYSTEM", "Diagnostics and backups. These act straight away." },
 };
-static_assert(std::size(kCats) == 7);
+static_assert(std::size(kCats) == 8);
 
 const char* WhenText(int when) {
     switch (when) {
@@ -461,6 +465,7 @@ void SettingsPanel::RenderCategory(Cat c) {
     case Cat::KeyboardMouse: RenderKeyboardMouse(); break;
     case Cat::Controller: RenderController(); break;
     case Cat::Online: RenderOnline(); break;
+    case Cat::System: RenderSystem(); break;
     default: break;
     }
 }
@@ -1452,8 +1457,129 @@ std::string SettingsPanel::Summary(Cat c) const {
     }
     case Cat::Online:
         return e.masterServerUrl.empty() ? std::string("LAN only") : std::string("Master server set");
+    case Cat::System:
+        return std::string(VERSION_STRING);
     default:
         return {};
+    }
+}
+
+
+void SettingsPanel::RenderSystem() {
+    const std::string version(VERSION_STRING);
+    const std::filesystem::path settingsFile = Settings::Get().FilePath();
+    const std::filesystem::path exeDir = settingsFile.parent_path().parent_path().parent_path();
+    const std::filesystem::path userData = settingsFile.parent_path();
+    const std::filesystem::path backups = userData / "backups";
+    static std::string s_note;
+
+    // Action rows: Row() is a layout helper that always returns true, so the click test is explicit (see the
+    // 2026-10-30 09:35 entry). The outcome of the last action is shown under the rows.
+    auto action = [&](const char* label, const char* description, const char* value, auto&& run) {
+        if (!Row(label, description, When::Instant, value, false)) return;
+        InfoValue(value);
+        const bool clicked = m_rowHovered && ImGui::IsMouseClicked(0);
+        const bool accepted = m_rowFocused && (ImGui::IsKeyPressed(ImGuiKey_Enter, false) ||
+                                               ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false));
+        if (!clicked && !accepted) return;
+        MenuSounds::Click();
+        run();
+    };
+    auto copyFile = [](const std::filesystem::path& from, const std::filesystem::path& to) {
+        std::error_code ec;
+        if (!std::filesystem::is_regular_file(from, ec)) return false;
+        std::filesystem::create_directories(to.parent_path(), ec);
+        std::filesystem::copy_file(from, to, std::filesystem::copy_options::overwrite_existing, ec);
+        return !ec;
+    };
+
+    Section("NOBLE");
+    if (Row("VERSION", "The build you are running. Worth quoting when you report a problem.", When::Info, version, false, true)) {
+        InfoValue(version.c_str());
+    }
+    if (Row("LOG FILE", "noble-client.log, next to the program. It is what a bug report needs.", When::Info, "noble-client.log", false, true)) {
+        InfoValue("noble-client.log");
+    }
+    action("OPEN LOGS FOLDER", "Opens the folder that holds the log, the crash dump and this settings file.", "Explorer",
+           [&] {
+               ShellExecuteW(nullptr, L"open", exeDir.wstring().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+               s_note = "Opened " + exeDir.string();
+           });
+    action("COPY DIAGNOSTICS", "Puts the version, the install path and the last 40 log lines on the clipboard, ready to paste into a report.",
+           "Clipboard", [&] {
+               std::string text = std::string("Project Noble ") + version + "\n" + exeDir.string() + "\n";
+               std::ifstream log(exeDir / "noble-client.log");
+               if (log) {
+                   std::vector<std::string> lines;
+                   for (std::string line; std::getline(log, line);) {
+                       lines.push_back(line);
+                       if (lines.size() > 40) lines.erase(lines.begin());
+                   }
+                   text += "\n--- last log lines ---\n";
+                   for (const std::string& line : lines) text += line + "\n";
+               }
+               ImGui::SetClipboardText(text.c_str());
+               s_note = "Diagnostics copied to the clipboard.";
+           });
+
+    Section("BACKUPS");
+    const bool haveBackup = std::filesystem::is_directory(backups);
+    action("BACK UP SETTINGS", "Copies settings.json and appearance.json into data\\userdata\\backups\\<date-time>, so they can be put back later.",
+           haveBackup ? "Backups exist" : "None yet", [&] {
+               SYSTEMTIME now{};
+               GetLocalTime(&now);
+               char stamp[64];
+               std::snprintf(stamp, sizeof(stamp), "%04u-%02u-%02u_%02u%02u%02u", now.wYear, now.wMonth, now.wDay,
+                             now.wHour, now.wMinute, now.wSecond);
+               const std::filesystem::path dir = backups / stamp;
+               int copied = 0;
+               if (copyFile(userData / "settings.json", dir / "settings.json")) ++copied;
+               if (copyFile(userData / "appearance.json", dir / "appearance.json")) ++copied;
+               if (copied == 0) {
+                   s_note = "Nothing to back up yet.";
+                   MenuSounds::Error();
+               } else {
+                   s_note = "Backed up to " + dir.string();
+               }
+           });
+    action("RESTORE NEWEST BACKUP", "Puts the most recent backup back and reloads it. Anything unsaved is lost.", "Reloads now", [&] {
+        std::error_code ec;
+        std::filesystem::path newest;
+        for (const auto& entry : std::filesystem::directory_iterator(backups, ec)) {
+            if (!entry.is_directory(ec)) continue;
+            if (newest.empty() || entry.path().filename() > newest.filename()) newest = entry.path();
+        }
+        if (newest.empty()) {
+            s_note = "No backup to restore yet.";
+            MenuSounds::Error();
+            return;
+        }
+        int restored = 0;
+        if (copyFile(newest / "settings.json", userData / "settings.json")) ++restored;
+        if (copyFile(newest / "appearance.json", userData / "appearance.json")) ++restored;
+        if (restored == 0) {
+            s_note = "That backup is empty.";
+            MenuSounds::Error();
+            return;
+        }
+        Settings::Get().Load();
+        m_saved = Settings::Get().Snapshot();
+        m_edit = m_saved;
+        SyncBuffers();
+        s_note = "Restored " + newest.filename().string() + " and reloaded it.";
+    });
+    action("OPEN BACKUP FOLDER", "Shows the backups on disk, so an old one can be copied back by hand.", "Explorer", [&] {
+        std::error_code ec;
+        std::filesystem::create_directories(backups, ec);
+        ShellExecuteW(nullptr, L"open", backups.wstring().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+        s_note = "Opened " + backups.string();
+    });
+
+    if (!s_note.empty()) {
+        ImGui::Dummy(ImVec2(0, 8.0f * Scale()));
+        ImGui::PushStyleColor(ImGuiCol_Text, NobleStyle::TextMuted());
+        ImGui::TextWrapped("%s", s_note.c_str());
+        ImGui::PopStyleColor();
     }
 }
 
