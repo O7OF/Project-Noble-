@@ -188,7 +188,8 @@ Menus (this session, all pushed):
 | `3a777bf` | `-auto-play` / `-auto-play-variant` hooks; harness drives the real launch path; 15/15 modes x game types reach gameplay |
 | `1902aed` | GAME TYPE list filtered to what a vanilla map can host (mods unaffected) |
 | `54aeecb` | Controller **per-action rebinding** (`padBindings` + BUTTON BINDINGS list); `-auto-play-map` and the 35/35 all-maps matrix |
-| (this commit) | Server browser: sortable columns + `No password` / `Not started` filters |
+| `2834507` | Server browser: sortable columns + `No password` / `Not started` filters |
+| (this commit) | Real **BRIGHTNESS** + **FXAA** (measured), dead advanced-graphics rows replaced with honest text, `InputTuning` extraction + 4th test suite, `tools/check-settings-wired.ps1` |
 | `5f4da08` | Prompts follow the device everywhere; `InputPrompts` button glyphs in the CONTROLLER list |
 | (this commit) | Main menu **Continue** fast path (spec 4.1/4.10) + a status block at the top of the design doc |
 | `a8f412e` | Menu music player (`PauseMusic/ResumeMusic` + `DrawMusicPlayer`) |
@@ -287,7 +288,10 @@ Also: invites carry `{senderUsername, hostIp, hostPort, timestamp}` only. To say
    every frame and hangs the client.
 9. Do **not** load textures from the main-thread fallback draw path (`HoldFrame`). Warm art in
    `FrontEndMenu::Initialize` (`UiArt::WarmMenuBackground()` is the pattern).
-10. The headless suites under `-test-map-gametypes` cover game types, map names and button layouts; run it after
+10. The post-process (`GammaPass`) is the only place Noble can change the picture: brightness and FXAA live there. If you
+    add a field to its constant buffer, **the sizes must match the HLSL cbuffer exactly** (a 16 vs 32 byte mismatch crashed
+    the client the first time the pass ran), and never pass a null array to `PSSetSamplers`.
+11. The headless suites under `-test-map-gametypes` cover game types, map names, button layouts and input tuning; run it after
     touching `MapGameTypes.cpp`, `MapNames.cpp` or `PadLayouts.cpp`. Engine model to remember: fire is analogue RT,
     grenades are the **B button**, melee **RB**, armour **LB**, zoom **RS click**.
 11. **A bare CLI launch cannot start a match** - the client needs the `-account-user` / `-account-token` / `-user-id` /

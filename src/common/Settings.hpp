@@ -22,6 +22,8 @@ struct SettingsData {
     bool verticalSync = false;     // Noble default: off (Tyler)
     int fpsLimit = 0;              // 0 = uncapped
     bool showFps = false;
+    float brightness = 1.0f;    // 0.7..1.4, applied as a gamma exponent by the post-process (1.0 = untouched)
+    bool fxaa = false;          // post-process anti-aliasing in Noble's own pass (Noble's device can do this)
 
     // Controls
     float mouseSensitivity = 1.0f; // multiplier on Noble's base mouse scale (0.0008 per pixel); horizontal

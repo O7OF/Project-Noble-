@@ -866,14 +866,21 @@ void SettingsPanel::RenderGraphics() {
             When::Apply, "Off", m_edit.showFps != m_saved.showFps)) {
         ToggleValue(m_edit.showFps);
     }
-    Section("ADVANCED GRAPHICS");
-    static const char* const kLater[] = { "TEXTURE FILTERING", "ANTIALIASING", "MOTION BLUR", "SHADOWS", "DRAW DISTANCE" };
-    for (const char* name : kLater) {
-        if (Row(name, "Needs the matching setting to be found inside Halo: Reach first; it will light up here when it works.",
-                When::Info, "", false, true)) {
-            InfoValue("Not available yet");
-        }
+    Section("POST-PROCESSING");
+    // These two are real: Noble owns a full-screen pass over the frame the engine drew, so it can brighten it and
+    // anti-alias it. Everything below is the engine's own and cannot be changed from here.
+    if (Row("BRIGHTNESS", "Brightens or darkens the frame the engine draws, like a monitor's brightness control but without washing out the colours. 100 % leaves it exactly as Reach renders it.",
+            When::Apply, "100 %", std::fabs(m_edit.brightness - m_saved.brightness) > 1e-4f, false, Preview::Volume)) {
+        SliderValue(m_edit.brightness, 0.7f, 1.4f, 0.01f, 1.0f, Percent(m_edit.brightness).c_str());
     }
+    if (Row("ANTI-ALIASING", "FXAA in Noble's own pass: smooths the stair-stepping on edges in the 3D scene. The menus are drawn afterwards, so text stays sharp. It is a cheap post-process, not MSAA.",
+            When::Apply, "Off", m_edit.fxaa != m_saved.fxaa)) {
+        ToggleValue(m_edit.fxaa);
+    }
+    Section("REACH'S OWN SETTINGS");
+    Paragraph("Texture filtering, shadows, motion blur and draw distance are handled inside Halo: Reach itself. Noble has no "
+              "handle on them yet, so they are not offered here rather than shown as switches that do nothing. Set them in MCC's "
+              "own video options for now.");
 }
 
 void SettingsPanel::RenderAudio() {
@@ -1456,7 +1463,8 @@ int SettingsPanel::CountDiff(const SettingsData& a, const SettingsData& b, Cat c
                (a.masterMute != b.masterMute) + (a.muteInBackground != b.muteInBackground) +
                (a.menuSounds != b.menuSounds) + (a.menuMusicTrack != b.menuMusicTrack);
     case Cat::Game:
-        return f(a.fieldOfView, b.fieldOfView) + (a.subtitles != b.subtitles) + (a.menuBackground != b.menuBackground);
+        return f(a.fieldOfView, b.fieldOfView) + (a.subtitles != b.subtitles) + (a.menuBackground != b.menuBackground) +
+               f(a.brightness, b.brightness) + (a.fxaa != b.fxaa);
     case Cat::Player:
         return (a.playerName != b.playerName) + (a.serviceTag != b.serviceTag);
     case Cat::KeyboardMouse: {

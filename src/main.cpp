@@ -2,6 +2,7 @@
 #include "engine/MapGameTypes.hpp"
 #include "common/MapNames.hpp"
 #include "engine/PadLayouts.hpp"
+#include "engine/InputTuning.hpp"
 #include <io.h>
 #include <fcntl.h>
 #include "common/Types.hpp"
@@ -104,7 +105,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         const int types = noble::MapGameTypes::SelfTest();
         const int names = noble::MapNames::SelfTest();
         const int layouts = noble::PadLayouts::SelfTest();
-        return (types == 0 && names == 0 && layouts == 0) ? 0 : 1;
+        const int tuning = noble::InputTuning::SelfTest();
+        return (types == 0 && names == 0 && layouts == 0 && tuning == 0) ? 0 : 1;
     }
 
     SetUnhandledExceptionFilter(&NobleCrashHandler);

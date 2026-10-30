@@ -104,6 +104,7 @@ endif()
 set(SOURCES
     src/main.cpp
     src/engine/PadLayouts.cpp
+    src/engine/InputTuning.cpp
     src/common/MapNames.cpp
     src/engine/MapGameTypes.cpp
     src/engine/MapGameTypesTest.cpp

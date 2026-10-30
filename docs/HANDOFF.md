@@ -22,6 +22,61 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-30, 22:30 ET) - "Does it actually do anything?": two graphics options made real, input maths proven (WeabooTyler117 / DeepSeek)
+
+Tyler asked whether the ADVANCED GRAPHICS options and the extra Mouse/Controller settings do anything. Audited, then made
+what could be real actually real.
+
+### 1. The audit (`tools/check-settings-wired.ps1`)
+
+For every field in `SettingsData`, checks whether it is mentioned anywhere outside the settings plumbing
+(Settings.cpp/SettingsPanel.cpp). Result: **50 fields, 50 mentioned outside, 0 stored-but-unused** - but a mention is not
+an effect, so the ones Tyler named were then proven by test instead (below).
+
+### 2. ADVANCED GRAPHICS: two real rows, four honestly gone
+
+- **BRIGHTNESS** (0.7-1.4, default 1.0) and **ANTI-ALIASING (FXAA)** are now real: Noble already owns a full-screen pass
+  over the frame the engine draws (`GammaPass`), so brightness is its `pow()` exponent (`1/brightness`) and FXAA is a
+  compact luma-edge pass added inside the same shader. Both read the settings twice a second; at 1.0/off the pass returns
+  early and costs nothing.
+- **Measured proof**: armory captures with `brightness` 1.0 vs 1.4 - the 3D model's mean luma goes 8.57 -> 12.35
+  (**+44%**), with **87.6% of pixels changed** in the model region; FXAA changes 61% of the same pixels (edge smoothing,
+  plus some of the armour-effect particles animating between runs).
+- **TEXTURE FILTERING, SHADOWS, MOTION BLUR, DRAW DISTANCE** were five greyed rows showing "Not available yet" and backed
+  by nothing - **the strings were the entire implementation**. They are now one paragraph under a "REACH'S OWN SETTINGS"
+  heading saying exactly that: those live inside Halo: Reach and Noble cannot change them yet, so they are not offered as
+  switches that do nothing. (The old code was a `kLater[]` array rendered with `disabled=true`; no settings field, no
+  engine write, no D3D call.)
+
+### 3. Mouse/controller extras moved into tested code
+
+The maths for **mouse smoothing**, **mouse acceleration**, the **dead zones** and the **stick layout** used to be inline
+in `ReachHost::FillLocalPad`/the look path, where nothing could test it. It now lives in
+`src/engine/InputTuning.hpp/.cpp` and both call sites use it, which also gives the fourth headless suite:
+
+```
+PASS: 43 rule checks, 280 map x type combinations (207 allowed, 73 blocked), 0 failure(s)
+PASS: map names - 10 display cases, 0 failure(s)
+PASS: button layouts - 16 expectations, 0 failure(s)
+PASS: input tuning - 0 failure(s)
+```
+
+What `InputTuning::SelfTest` proves (i.e. the settings demonstrably change the output):
+
+- dead zone **0 does nothing**; input inside the zone becomes 0; the edge of the zone still reaches full speed; a bigger
+  flick still comes out bigger;
+- **Southpaw swaps** the two sticks and Default does not;
+- **smoothing off** passes the delta through untouched; **smoothing 0.8** damps the first frame of a flick to under half
+  and keeps moving toward the input; reset clears the state;
+- **acceleration off** passes through; **acceleration 1** helps a fast flick more than a slow one, stays capped at 4x, and
+  turns further than with acceleration off.
+
+### 4. Trap found on the way (cost one crash)
+
+The first version of the new post-process crashed the moment it actually ran (brightness != 1.0 or FXAA on): the C++
+`GammaCB` was 16 bytes while the HLSL cbuffer was 32, and `PSSetSamplers(1, 1, nullptr)` was called with a null array.
+Both are fixed; the pass now runs, is measured (above), and the match harness still passes (`-Only Slayer,Firefight` 3/3).
+
 ## 0. Pick up here (2026-10-30, 21:40 ET) - Server browser: sortable columns and two more filters (WeabooTyler117 / DeepSeek)
 
 Spec 4.5 leftovers, both small and player-visible.

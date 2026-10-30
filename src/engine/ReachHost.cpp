@@ -8,6 +8,7 @@
 #include "career/Career.hpp"
 #include "engine/FrameCapture.hpp"
 #include "engine/PadLayouts.hpp"
+#include "engine/InputTuning.hpp"
 #include "engine/KeyBindings.hpp"
 #include "engine/CameraFov.hpp"
 #include "engine/ReachArmory.hpp"
@@ -1309,24 +1310,11 @@ static void FillLocalPad(uint8_t* st, bool keyboardMouseUsed) {
         s_padRead = GetTickCount64();
         s_pad = Settings::Get().Snapshot();
     }
-    auto deadZone = [](SHORT& x, SHORT& y, float zone) {
-        if (zone <= 0.0f) return;
-        const float fx = x / 32767.0f, fy = y / 32767.0f;
-        const float len = std::sqrt(fx * fx + fy * fy);
-        if (len <= zone) { x = y = 0; return; }
-        const float scale = std::min(1.0f, (len - zone) / (1.0f - zone)) / len;
-        x = static_cast<SHORT>(std::clamp(fx * scale, -1.0f, 1.0f) * 32767.0f);
-        y = static_cast<SHORT>(std::clamp(fy * scale, -1.0f, 1.0f) * 32767.0f);
-    };
+    // The maths lives in engine/InputTuning.cpp so the self-test can prove these settings change the output.
     SHORT lx = g.sThumbLX, ly = g.sThumbLY, rx = g.sThumbRX, ry = g.sThumbRY;
-    // STICK LAYOUT (SETTINGS > Controller): Southpaw puts look on the left stick and movement on the right one.
-    // The "Legacy" variants also change how the turn axis behaves, so they are not offered yet.
-    if (s_pad.padStickLayout == 1) {
-        std::swap(lx, rx);
-        std::swap(ly, ry);
-    }
-    deadZone(lx, ly, s_pad.padLeftDeadZone);
-    deadZone(rx, ry, s_pad.padRightDeadZone);
+    InputTuning::ApplyStickLayout(s_pad.padStickLayout, lx, ly, rx, ry);
+    InputTuning::ApplyDeadZone(lx, ly, s_pad.padLeftDeadZone);
+    InputTuning::ApplyDeadZone(rx, ry, s_pad.padRightDeadZone);
     if (s_pad.padInvertLook) ry = static_cast<SHORT>(ry == -32768 ? 32767 : -ry);
 
     *reinterpret_cast<uint32_t*>(st + 0x000) = 0;
@@ -1502,26 +1490,11 @@ static void FillLocalInput(uint8_t* st) {
     float accel = 0.0f, smoothing = 0.0f;
     InputLookSettings(scaleX, scaleY, invertLook, accel, smoothing);
 
-    // MOUSE SMOOTHING: exponential average of the raw delta. It trades a little latency for steadier aim, so it is
-    // off by default; the state is dropped whenever a menu owns the pointer, so it never carries stale motion.
+    // Mouse smoothing + acceleration, both from SETTINGS > KEYBOARD & MOUSE, applied by the tested maths in
+    // engine/InputTuning.cpp. The filter state is dropped whenever a menu owns the pointer.
     static float s_smoothX = 0.0f, s_smoothY = 0.0f;
-    if (uiPointer || firstCapturedFrame) {
-        s_smoothX = s_smoothY = 0.0f;
-    } else if (smoothing > 0.001f) {
-        s_smoothX = s_smoothX * smoothing + dx * (1.0f - smoothing);
-        s_smoothY = s_smoothY * smoothing + dy * (1.0f - smoothing);
-        dx = s_smoothX;
-        dy = s_smoothY;
-    }
-
-    // MOUSE ACCELERATION: fast flicks turn further than slow drifts, capped so a single huge movement cannot spin
-    // the view. 0 = off, which is the default and matches raw input.
-    if (accel > 0.001f) {
-        const float speed = std::sqrt(dx * dx + dy * dy);
-        const float factor = 1.0f + accel * std::min(speed / 60.0f, 3.0f);
-        dx *= factor;
-        dy *= factor;
-    }
+    if (uiPointer || firstCapturedFrame) InputTuning::ResetMouseCurve(s_smoothX, s_smoothY);
+    InputTuning::ApplyMouseCurve(dx, dy, accel, smoothing, s_smoothX, s_smoothY);
 
     if (invertLook) dy = -dy;
     *reinterpret_cast<float*>(st + 0x104) = dx * scaleX;
@@ -2772,9 +2745,14 @@ static uint64_t __fastcall HostSlot66_TextRegisterIcon(void* thisPtr, uint64_t c
 // Note: Armory 3D character scene renders natively to preserve full fidelity
 // of dark undersuits, skin suits, and emissive particle armor effects.
 // -----------------------------------------------------------------------------
+// Must match the HLSL cbuffer below exactly: gamma_exp, fxaa, padding (float2), screen_size (float2), padding2.
 struct GammaCB {
-    float gamma_exp;
-    float padding[3];
+    float gamma_exp;    // pow() exponent: 1.0 = untouched, < 1 = brighter
+    float fxaa;         // 0 = off, 1 = post-process anti-aliasing (Noble's own pass)
+    float padding[2];
+    float screen_w;     // the FXAA taps need the frame size
+    float screen_h;
+    float padding2[2];
 };
 
 class GammaPass {
@@ -2814,9 +2792,23 @@ public:
         // Lazy initialize TextAtlas with device and context if not already done
         TextAtlas::Get().Initialize(device.Get(), context.Get());
 
-        // Exponent of 1.0f represents identity (no extra gamma transform).
-        // Returning early avoids unnecessary full-screen copy pass when at default gamma.
-        if (std::abs(m_exponent - 1.0f) < 0.001f) {
+        // BRIGHTNESS and ANTI-ALIASING from SETTINGS > GRAPHICS. Brightness is the post-process exponent
+        // (1/brightness, so a bigger number brightens); 1.0 and FXAA off is the identity and costs nothing.
+        {
+            static ULONGLONG s_nextRead = 0;
+            static float s_brightness = 1.0f;
+            static bool s_fxaa = false;
+            const ULONGLONG now = GetTickCount64();
+            if (now >= s_nextRead) {
+                s_nextRead = now + 500;
+                const SettingsData d = Settings::Get().Snapshot();
+                s_brightness = std::clamp(d.brightness, 0.5f, 2.0f);
+                s_fxaa = d.fxaa;
+            }
+            m_exponent = 1.0f / s_brightness;
+            m_fxaa = s_fxaa ? 1.0f : 0.0f;
+        }
+        if (std::abs(m_exponent - 1.0f) < 0.001f && m_fxaa < 0.5f) {
             return;
         }
 
@@ -2848,6 +2840,11 @@ public:
         ID3D11ShaderResourceView* oldSRV = nullptr;
         context->PSGetShaderResources(0, 1, &oldSRV);
 
+        ID3D11SamplerState* oldSampler = nullptr;
+        context->PSGetSamplers(0, 1, &oldSampler);
+        ID3D11SamplerState* oldSampler1 = nullptr;
+        context->PSGetSamplers(1, 1, &oldSampler1);
+
         ID3D11Buffer* oldCB = nullptr;
         context->PSGetConstantBuffers(0, 1, &oldCB);
 
@@ -2871,9 +2868,11 @@ public:
         if (SUCCEEDED(context->Map(m_constantBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
             GammaCB* cbData = static_cast<GammaCB*>(mapped.pData);
             cbData->gamma_exp = m_exponent;
-            cbData->padding[0] = 0.0f;
-            cbData->padding[1] = 0.0f;
-            cbData->padding[2] = 0.0f;
+            cbData->fxaa = m_fxaa;
+            cbData->padding[0] = cbData->padding[1] = 0.0f;
+            cbData->screen_w = static_cast<float>(desc.Width);
+            cbData->screen_h = static_cast<float>(desc.Height);
+            cbData->padding2[0] = cbData->padding2[1] = 0.0f;
             context->Unmap(m_constantBuffer.Get(), 0);
         }
 
@@ -2901,6 +2900,8 @@ public:
 
         ID3D11ShaderResourceView* srvs[] = { m_copySRV.Get() };
         context->PSSetShaderResources(0, 1, srvs);
+        ID3D11SamplerState* frameSamplers[] = { m_frameSampler.Get() };
+        context->PSSetSamplers(1, 1, frameSamplers);
 
         // Draw full-screen triangle
         context->Draw(3, 0);
@@ -2908,6 +2909,8 @@ public:
         // Restore pipeline state
         ID3D11ShaderResourceView* nullSRVs[1] = { nullptr };
         context->PSSetShaderResources(0, 1, nullSRVs);
+        ID3D11SamplerState* nullSampler = nullptr;
+        context->PSSetSamplers(1, 1, &nullSampler);
 
         context->OMSetRenderTargets(1, &oldRTV, oldDSV);
         if (oldRTV) oldRTV->Release();
@@ -2922,6 +2925,11 @@ public:
 
         context->PSSetShaderResources(0, 1, &oldSRV);
         if (oldSRV) oldSRV->Release();
+
+        context->PSSetSamplers(0, 1, &oldSampler);
+        if (oldSampler) oldSampler->Release();
+        context->PSSetSamplers(1, 1, &oldSampler1);
+        if (oldSampler1) oldSampler1->Release();
 
         context->PSSetConstantBuffers(0, 1, &oldCB);
         if (oldCB) oldCB->Release();
@@ -2949,7 +2957,10 @@ private:
 
                 cbuffer GammaParams : register(b0) {
                     float gamma_exp;
-                    float3 padding;
+                    float fxaa;
+                    float2 padding;
+                    float2 screen_size;
+                    float2 padding2;
                 };
 
                 float4 vs_main(uint id : SV_VertexID) : SV_Position {
@@ -2957,9 +2968,45 @@ private:
                     return float4(p * float2(2.0f, -2.0f) + float2(-1.0f, 1.0f), 0.0f, 1.0f);
                 }
 
+                SamplerState frame_sampler : register(s1);
+
+                float lumaOf(float3 c) { return dot(c, float3(0.299f, 0.587f, 0.114f)); }
+
+                // Compact FXAA: luma-edge detection, blend along the gradient direction. Runs before the brightness
+                // curve so the edge tests work on the frame the engine actually drew.
+                float3 Fxaa(float2 uv, float2 texel) {
+                    float3 n = frame_copy.Sample(frame_sampler, uv + float2(0.0f, -texel.y)).rgb;
+                    float3 s = frame_copy.Sample(frame_sampler, uv + float2(0.0f, texel.y)).rgb;
+                    float3 e = frame_copy.Sample(frame_sampler, uv + float2(texel.x, 0.0f)).rgb;
+                    float3 w = frame_copy.Sample(frame_sampler, uv + float2(-texel.x, 0.0f)).rgb;
+                    float lumaM = lumaOf(frame_copy.Load(int3(uv * screen_size, 0)).rgb);
+                    float lumaN = lumaOf(n), lumaS = lumaOf(s), lumaE = lumaOf(e), lumaW = lumaOf(w);
+                    float lumaMin = min(lumaM, min(min(lumaN, lumaS), min(lumaE, lumaW)));
+                    float lumaMax = max(lumaM, max(max(lumaN, lumaS), max(lumaE, lumaW)));
+                    if ((lumaMax - lumaMin) < max(0.0312f, lumaMax * 0.125f)) {
+                        return frame_copy.Load(int3(uv * screen_size, 0)).rgb;   // no edge: leave it alone
+                    }
+                    float2 dir;
+                    dir.x = -((lumaN + lumaS) - 2.0f * lumaM);
+                    dir.y = ((lumaE + lumaW) - 2.0f * lumaM);
+                    const float reduce = max((lumaN + lumaS + lumaE + lumaW) * 0.03125f, 0.0078125f);
+                    const float rcpMin = 1.0f / (min(abs(dir.x), abs(dir.y)) + reduce);
+                    dir = clamp(dir * rcpMin, -8.0f, 8.0f) * texel;
+                    float3 rgbA = 0.5f * (frame_copy.Sample(frame_sampler, uv + dir * (1.0f / 3.0f - 0.5f)).rgb +
+                                          frame_copy.Sample(frame_sampler, uv + dir * (2.0f / 3.0f - 0.5f)).rgb);
+                    float3 rgbB = rgbA * 0.5f + 0.25f * (frame_copy.Sample(frame_sampler, uv - dir * 0.5f).rgb +
+                                                         frame_copy.Sample(frame_sampler, uv + dir * 0.5f).rgb);
+                    float lumaB = lumaOf(rgbB);
+                    return (lumaB < lumaMin || lumaB > lumaMax) ? rgbA : rgbB;
+                }
+
                 float4 ps_main(float4 pos : SV_Position) : SV_Target {
                     float4 c = frame_copy.Load(int3((int2)pos.xy, 0));
-                    return float4(pow(saturate(c.rgb), gamma_exp), c.a);
+                    float3 rgb = c.rgb;
+                    if (fxaa > 0.5f) {
+                        rgb = Fxaa(pos.xy / screen_size, float2(1.0f, 1.0f) / screen_size);
+                    }
+                    return float4(pow(saturate(rgb), gamma_exp), c.a);
                 }
             )";
 
@@ -2981,6 +3028,15 @@ private:
                 if (errorBlob) {
                     NOBLE_ERROR("GammaPass: PS compile failed: {}", static_cast<const char*>(errorBlob->GetBufferPointer()));
                 }
+                return false;
+            }
+
+            D3D11_SAMPLER_DESC frameSampler{};
+            frameSampler.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+            frameSampler.AddressU = frameSampler.AddressV = frameSampler.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+            frameSampler.ComparisonFunc = D3D11_COMPARISON_NEVER;
+            frameSampler.MaxLOD = D3D11_FLOAT32_MAX;
+            if (FAILED(device->CreateSamplerState(&frameSampler, m_frameSampler.GetAddressOf()))) {
                 return false;
             }
 
@@ -3030,10 +3086,12 @@ private:
     uint32_t m_width = 0;
     uint32_t m_height = 0;
     float m_exponent = 1.0f; // Default 1.0f: identity (no gamma overexposure, fixes washed-out picture)
+    float m_fxaa = 0.0f;     // 0 = off, 1 = post-process anti-aliasing
 
     Microsoft::WRL::ComPtr<ID3D11VertexShader> m_vs;
     Microsoft::WRL::ComPtr<ID3D11PixelShader> m_ps;
     Microsoft::WRL::ComPtr<ID3D11Buffer> m_constantBuffer;
+    Microsoft::WRL::ComPtr<ID3D11SamplerState> m_frameSampler;
     Microsoft::WRL::ComPtr<ID3D11Texture2D> m_copyTexture;
     Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> m_copySRV;
     Microsoft::WRL::ComPtr<ID3D11RenderTargetView> m_backBufferRTV;

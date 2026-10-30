@@ -95,6 +95,8 @@ void Settings::Load() {
             Read(j, "verticalSync", d.verticalSync);
             Read(j, "fpsLimit", d.fpsLimit);
             Read(j, "showFps", d.showFps);
+    Read(j, "brightness", d.brightness);
+    Read(j, "fxaa", d.fxaa);
             Read(j, "mouseSensitivity", d.mouseSensitivity);
             Read(j, "mouseSensitivityY", d.mouseSensitivityY);
     Read(j, "mouseAcceleration", d.mouseAcceleration);
@@ -217,6 +219,8 @@ bool Settings::Save() {
         j["verticalSync"] = d.verticalSync;
         j["fpsLimit"] = d.fpsLimit;
         j["showFps"] = d.showFps;
+    j["brightness"] = d.brightness;
+    j["fxaa"] = d.fxaa;
         j["mouseSensitivity"] = d.mouseSensitivity;
         j["mouseSensitivityY"] = d.mouseSensitivityY;
     j["mouseAcceleration"] = d.mouseAcceleration;
