@@ -1,6 +1,7 @@
 #include "BlamEngine.hpp"
 #include "ReachHost.hpp"
 #include "network/NetworkTransport.hpp"
+#include "network/MasterServerClient.hpp"
 #include "ui/LoadScreen.hpp"
 #include "career/Career.hpp"
 #include "hooks/HookManager.hpp"
@@ -882,8 +883,13 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
         const bool holdMissionForPeers = (gameModeTag == 1);   // campaign only; Forge must open its session early
         // Invite / direct joins carry no lobby peer count. Campaign cinematics still cannot be joined, so without a
         // count the host holds the mission start briefly for any guest that is already connecting.
+        // A host that has a lobby registered knows players are coming: give them the full cold-start window (lobby launch
+        // event -> process start -> engine load ~7 s -> first engine packet). A bare online host gets a short wait.
+        const bool lobbyRegistered = noble::MasterServerClient::Get().Enabled() &&
+                                     !noble::MasterServerClient::Get().GetCurrentSessionId().empty();
+        const int campaignGraceMs = lobbyRegistered ? 30000 : 9000;
         const bool campaignGraceWait = (gameModeTag == 1) && isOnlineHost && peersToWaitFor == 0;
-        std::thread([this, isOnlineHost, peersToWaitFor, settleLonger, holdMissionForPeers, campaignGraceWait]() {
+        std::thread([this, isOnlineHost, peersToWaitFor, settleLonger, holdMissionForPeers, campaignGraceWait, campaignGraceMs, lobbyRegistered]() {
             const int startDelay = isOnlineHost ? 1000 : 300;
             std::this_thread::sleep_for(std::chrono::milliseconds(startDelay));
 
@@ -898,20 +904,22 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
                 // No lobby roster was available (guest invited directly or joined by address). Campaign's opening
                 // cinematic cannot be joined mid-play - a guest that arrives late sees the world from outside the map
                 // and the engine aborts the session - so hold the mission start for up to 12 s while a guest connects.
-                const ULONGLONG graceDeadline = GetTickCount64() + 12000;
-                NOBLE_INFO("BlamEngine: campaign host without a lobby peer count - holding the mission start for up to "
-                           "12 s so a joining guest can enter before the cinematic");
+                const ULONGLONG graceStart = GetTickCount64();
+                const ULONGLONG graceDeadline = graceStart + static_cast<ULONGLONG>(campaignGraceMs);
+                NOBLE_INFO("BlamEngine: campaign host without a lobby peer count (lobby registered: {}) - holding the "
+                           "mission start for up to {} ms so a joining guest can enter before the cinematic",
+                           lobbyRegistered, campaignGraceMs);
                 while (GetTickCount64() < graceDeadline) {
                     joinedBeforeStart = noble::NetworkTransport::Get().GetGamePeerCount();
                     if (joinedBeforeStart > 0) break;
                     std::this_thread::sleep_for(std::chrono::milliseconds(100));
                 }
                 if (joinedBeforeStart > 0) {
-                    NOBLE_INFO("BlamEngine: guest engine traffic appeared ({} peer(s)); settling 3 s before the "
-                               "mission starts", joinedBeforeStart);
+                    NOBLE_INFO("BlamEngine: guest engine traffic appeared after {} ms ({} peer(s)); settling 3 s before "
+                               "the mission starts", GetTickCount64() - graceStart, joinedBeforeStart);
                     std::this_thread::sleep_for(std::chrono::milliseconds(3000));
                 } else {
-                    NOBLE_INFO("BlamEngine: no guest appeared within 12 s; starting the mission");
+                    NOBLE_INFO("BlamEngine: no guest appeared within {} ms; starting the mission", campaignGraceMs);
                 }
             } else if (peersToWaitFor > 0 && holdMissionForPeers) {
                 const ULONGLONG start = GetTickCount64();

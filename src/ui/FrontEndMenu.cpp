@@ -2230,8 +2230,9 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
                     if (current.ok && !current.roster.empty()) st.lobbyRoster = current.roster;
                 }
                 MasterServerClient::Get().LaunchLobbySync(st.lobbySessionId, st.lobbyMap, st.lobbyMode, variantFileName, st.lobbyDifficulty, st.lobbySkulls);
-                NOBLE_INFO("Lobby start broadcast: session='{}' map='{}' mode='{}' variant='{}' difficulty={} skulls=0x{:X}",
-                           st.lobbySessionId, st.lobbyMap, st.lobbyMode, variantFileName, st.lobbyDifficulty, st.lobbySkulls);
+                NOBLE_INFO("Lobby start broadcast: session='{}' map='{}' mode='{}' variant='{}' difficulty={} skulls=0x{:X} roster={}",
+                           st.lobbySessionId, st.lobbyMap, st.lobbyMode, variantFileName, st.lobbyDifficulty, st.lobbySkulls,
+                           st.lobbyRoster.size());
 
                 choice.play = true;
                 choice.host = true;

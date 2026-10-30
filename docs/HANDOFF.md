@@ -69,6 +69,59 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-31, 00:15 ET) - Campaign loses a 1 s race; grace window made lobby-aware (WeabooTyler117 / DeepSeek)
+
+**Forge works online now** (Tyler). Campaign still fails, and the guest-side log pins the timeline exactly.
+
+### What the guest log shows (Tyler's machine, guest)
+
+| time | event |
+|---|---|
+| 19:17:42.736 | `Received WebSocket real-time lobby launch event! (map: m10, mode: campaign)` |
+| 19:17:43.158 | `launching match via Relaunch (campaign m10)` |
+| 19:17:44.751 | `evaluate_coop_insertion_point` detour installed |
+| 19:17:45.266 | `main blckd: 251 ms` (engine start) |
+| **19:17:53.196** | `main blckd: 7092 ms` - the map load stall |
+| **19:17:53.209** | `game session started at frame 550, loading screen off` |
+| 19:18:50.6 | first session traffic after the load (`msg 37`, `msg 26` x3) |
+| **19:18:54.713** | `Slot 6 - GameResults` -> `PauseMenu: game over` (the session ended by itself) |
+| 19:18:56.1 | `CLOSE channel ... reason 10 (state was 5)` |
+| 19:18:57.1 | `EngineEvent reason=7 message=''`, then back to the menu |
+
+So the guest **did** join and run for ~60 s, then the engine ended the match. No `abort`, `boot_peer` or refusal was
+logged on the guest, so the host is the one that ended it (or the engine's co-op state timeout fired on the host).
+
+Timing detail that matters: the guest's first engine packet reaches the host only at **19:17:53**, about 10 s after the
+guest process started, because the map load blocks the main thread for ~7 s. The host's grace window was 12 s **from its own
+launch**, which is 1-2 s earlier than the guest's launch (it starts at the moment it broadcasts the lobby launch) - so the
+host's window expired just before the guest's traffic arrived, the host started the cinematic, and the guest entered too
+late. `main blckd` of ~7000 ms also appears in the working Forge run (7039 ms), so the stall itself is normal map loading,
+not a bug.
+
+### Fix in this commit
+
+`BlamEngine::LaunchMap` campaign grace is now **lobby-aware**: if a session is registered with the master server
+(`MasterServerClient::GetCurrentSessionId()` non-empty) the host waits up to **30 s** for the guest's engine traffic
+(covers: launch event -> process start -> ~7 s load -> first packet), otherwise 9 s. Logs the elapsed ms when traffic
+appears, and the host's `Lobby start broadcast` now includes `roster=N` so we can see whether `expectedPeers` should have
+been non-zero.
+
+Verified on a bare host: `lobby registered: false -> holding ... up to 9000 ms -> no guest appeared within 9000 ms ->
+Command 10 -> Command 11`, session started normally.
+
+### Still needed from the host side
+
+O7's `noble-client.log` for 19:17:40-19:19:00. The deciding lines are `abort called` (0x1B/0x1C/0x1D),
+`SUPPRESSED session abort`, `boot_peer`, `evaluate_coop_insertion_point`, `holding the mission start`, `guest engine traffic
+appeared`, and `PauseMenu: game over`. That will say whether the host timed the guest out (0x1D) or ended the mission
+deliberately.
+
+### Backend status
+
+`4a520d1` live, `/api/relay/stats` reporting `connections=8, host=4, guest=4, binaryPackets=10, heartbeats=8`, uptime
+climbing continuously (477 s -> 522 s), so the UptimeRobot pinger is keeping the free instance warm. Forge working online
+is consistent with the heartbeat + LAN/WAN routing changes.
+
 ## 0. Pick up here (2026-10-31, 23:20 ET) - O7's production log analysed: relay socket churn, not refused joins (WeabooTyler117 / DeepSeek)
 
 O7 sent the backend console log from the failed session. Reading it line by line:
