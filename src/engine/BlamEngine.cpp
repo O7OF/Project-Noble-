@@ -338,7 +338,7 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
         block[3] = 0x10;
         block[4] = 0x03;
         // +0x0C: 1 = menu / campaign, 3 = multiplayer, 5 = firefight (from the layout of RR's captured blocks).
-        block[0x0C] = (isMainMenu || isCampaign) ? 0x01 : (isFirefight ? 0x05 : 0x03);
+        block[0x0C] = (isMainMenu || isCampaign) ? 0x01 : (isFirefight ? 0x05 : (isForge ? 0x04 : 0x03));
         block[0x10] = isMainMenu ? 0xFE : 0xBE;
         block[0x11] = isMainMenu ? 0xFF : 0x00;
         block[0x12] = isMainMenu ? 0xFF : 0x00;
@@ -524,7 +524,11 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
                 block[offset + 1] = 0xFF;
                 block[offset + 2] = 0xFF;
                 block[offset + 3] = 0xFF;
-                for (size_t b = 4; b < 16; ++b) {
+                block[offset + 4] = 0x00;
+                block[offset + 5] = 0x00;
+                block[offset + 6] = 0x00;
+                block[offset + 7] = 0x00;
+                for (size_t b = 8; b < 16; ++b) {
                     block[offset + b] = 0xFF;
                 }
             }

@@ -1722,12 +1722,17 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
                     if (local.empty() && (_wcsicmp(v.path.filename().c_str(), want.c_str()) == 0 ||
                                           _stricmp(v.label.c_str(), st.lobbyLaunchVariant.c_str()) == 0))
                         local = v.path;
+            if (local.empty() && (st.lobbyLaunchMode == "forge" || st.lobbyMode == "forge" || _wcsicmp(want.c_str(), kForgeVariant) == 0)) {
+                if (std::filesystem::exists(ctx.forgeVariant)) local = ctx.forgeVariant;
+            }
             if (!local.empty()) {
                 choice.variantPath = local.string();
             } else {
                 NOBLE_WARN("FrontEndMenu: host's game variant '{}' isn't in this PC's variants; launching without it",
                            st.lobbyLaunchVariant);
             }
+        } else if (st.lobbyLaunchMode == "forge" || st.lobbyMode == "forge") {
+            if (std::filesystem::exists(ctx.forgeVariant)) choice.variantPath = ctx.forgeVariant.string();
         }
         NOBLE_INFO("FrontEndMenu: Guest executing synchronized lobby launch to {}", st.lobbyHostEndpoint);
         done = true;
@@ -2628,7 +2633,7 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
                 choice.difficulty = st.difficulty;
                 if (!ctx.ffVariants.empty()) choice.variantPath = ctx.ffVariants[st.ffVariant].path.string();
             } else {
-                choice.mode = "multiplayer";
+                choice.mode = forge ? "forge" : "multiplayer";
                 if (forge) choice.variantPath = ctx.forgeVariant.string();
                 else if (!ctx.variants.empty()) choice.variantPath = ctx.variants[st.variant].path.string();
             }
@@ -3093,13 +3098,16 @@ FrontEndChoice FrontEndMenu::Run(Window& window, D3D11Renderer& renderer, const 
 
     window.SetCustomWndProc([](HWND h, UINT m, WPARAM w, LPARAM l) { return UIManager::HandleWndProc(h, m, w, l); });
 
-    UIManager::GetServerBrowser().SetDirectJoinHandler([&choice, &done](const std::string& map, const std::string& mode, const std::string& addr, const std::string& sessId) {
+    UIManager::GetServerBrowser().SetDirectJoinHandler([&choice, &ctx, &done](const std::string& map, const std::string& mode, const std::string& addr, const std::string& sessId) {
         choice.play = true;
         choice.host = false;
         choice.map = map;
         choice.mode = mode;
         choice.connectAddress = addr;
         choice.sessionId = sessId;
+        if (mode == "forge" && std::filesystem::exists(ctx.forgeVariant)) {
+            choice.variantPath = ctx.forgeVariant.string();
+        }
         done = true;
     });
 
