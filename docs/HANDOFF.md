@@ -9,6 +9,17 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
 MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES.)
 
+### How this file is kept (Tyler, 2026-10-30)
+
+- **Every change gets an entry - no exceptions**: code, UI, docs, tools, config, server. Add it at the **top**, directly
+  under the `--` line, as `## 0. Pick up here (YYYY-MM-DD, HH:MM ET) - <what changed> (<name / GitHub handle>)`, and
+  say what was wrong, what changed and where, how it was built and verified, and what to look at in game.
+- **`docs/HANDOFF.md` in this repo is the canonical copy**: it is what gets committed and pushed with the code.
+  The export at `C:\Users\tyler\Downloads\HANDOFF (2).md` is a **copy** - overwrite it from this file after every push
+  so the two never drift.
+- Never append at the end and never reorder old entries (`append_handoff.js` in the repo root is a leftover one-off
+  script from 2026-10-30 that appends to the bottom - do not use it).
+
 --
 
 ## 0. Pick up here (2026-10-30, 04:05 ET) - Menu overlap cleanup: bottom-anchored network strip + lobby nameplate (WeabooTyler117 / DeepSeek)
