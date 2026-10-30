@@ -911,6 +911,15 @@ float PlayerRow(const Ui& ui, ImVec2 pos, float width, int rankIndex, int emblem
     return h;
 }
 
+// The service tag the player is actually wearing: the Armory profile is what Reach is given (profile +0x1AC),
+// so the menus follow it and only fall back to settings.json when no look has been saved yet. The two used to
+// drift (settings said RTRD, the Armory said N06) and the party row disagreed with the Armory (2026-10-30).
+std::string PlayerServiceTag(const SettingsData& sd) {
+    const auto& prof = UIManager::GetArmorCustomizer().GetProfile();
+    if (!prof.serviceTag.empty()) return prof.serviceTag;
+    return sd.serviceTag.empty() ? std::string("117") : sd.serviceTag;
+}
+
 void DrawParty(const Ui& ui, const std::string& playerName, const char* status) {
     const float w = 330.0f * ui.s;
     const float x = ui.size.x - w - 40.0f * ui.s;
@@ -935,7 +944,7 @@ void DrawParty(const Ui& ui, const std::string& playerName, const char* status) 
             s_rankRead = GetTickCount64();
         }
         y += PlayerRow(ui, ImVec2(x2, y), x + w - x2, s_rank, prof.emblemIndex, prof.nameplateIndex,
-                       0 /* no team in the main menu */, sd.serviceTag, playerName,
+                       0 /* no team in the main menu */, PlayerServiceTag(sd), playerName,
                        AuthClient::Get().IsDeveloper(), false);
     }
     const float accH = 22.0f * ui.s;
@@ -1335,7 +1344,7 @@ static void SetupHostLobby(MenuState& st, const std::string& mapScenario, const 
         adv.hostMachineId = "0x484F535400000001";
         adv.hostUsername = pName;
         adv.hostIsDev = AuthClient::Get().IsDeveloper();
-        adv.hostServiceTag = Settings::Get().Snapshot().serviceTag.empty() ? "117" : Settings::Get().Snapshot().serviceTag;
+        adv.hostServiceTag = PlayerServiceTag(Settings::Get().Snapshot());
         // The host's own row identity, so guests can draw it (rank / emblem / nameplate / team).
         {
             const auto& prof = UIManager::GetArmorCustomizer().GetProfile();
@@ -1352,7 +1361,7 @@ static void SetupHostLobby(MenuState& st, const std::string& mapScenario, const 
     LobbyPlayer me;
     me.peerId = AuthClient::Get().IsLoggedIn() ? static_cast<uint64_t>(AuthClient::Get().GetUserId()) : 1ULL;
     me.username = pName;
-    me.serviceTag = Settings::Get().Snapshot().serviceTag.empty() ? "117" : Settings::Get().Snapshot().serviceTag;
+    me.serviceTag = PlayerServiceTag(Settings::Get().Snapshot());
     me.isHost = true;
     me.isDev = AuthClient::Get().IsDeveloper();
     me.ping = 0;
@@ -1575,6 +1584,7 @@ Screen ParseScreenArg(const std::wstring& v) {
     if (s == L"mods") return Screen::Mods;
     if (s == L"career") return Screen::Career;
     if (s == L"lobby" || s == L"pregame") return Screen::PreGameLobby;
+    if (s == L"social" || s == L"friends" || s == L"community") return Screen::Social;
     return Screen::Main;
 }
 
@@ -1863,7 +1873,7 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
                         std::string pName = AuthClient::Get().IsLoggedIn() ? AuthClient::Get().GetUsername() : Settings::Get().Snapshot().playerName;
                         if (pName.empty()) pName = "Host";
                         const uint64_t hostPId = AuthClient::Get().IsLoggedIn() ? static_cast<uint64_t>(AuthClient::Get().GetUserId()) : 1ULL;
-                        const std::string hostTag = Settings::Get().Snapshot().serviceTag.empty() ? "117" : Settings::Get().Snapshot().serviceTag;
+                        const std::string hostTag = PlayerServiceTag(Settings::Get().Snapshot());
                         const bool hostDev = AuthClient::Get().IsDeveloper();
                         for (auto& p : st.lobbyRoster) {
                             if (p.isHost) {

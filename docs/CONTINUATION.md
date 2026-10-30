@@ -167,12 +167,16 @@ Menus (this session, all pushed):
 | `bf9d384` | MCC-style `PlayerRow` (rank / emblem / nameplate with tag+name), `MY GAME SESSION` header, empty lobby slot fix |
 | `8059115` | **Emblems load again**: MCC pack stores `E_002_P_SML`, not `e_002_p` (upper case + `_SML`) - this also fixes O7's Armory emblem grid |
 | `e93076f` | `[DEV]` as text, centred rank badge, one framed block, smaller name |
+| `f40ae67` | `docs/CONTINUATION.md` (this file) + the identity/invite handoff entry |
 | `dc71e0b` | Lobby identity per player row (`rankIndex`/`emblemId`/`nameplateId`/`team` in `LobbyPlayer` + `MasterAdvert` + register/heartbeat JSON + roster parse) and **invite notifications** with a JOIN/DISMISS toast + `Settings > Online services > INVITE NOTIFICATIONS` |
 
 Earlier work (netcode, engine, armory) is in `docs/HANDOFF.md` and is **not** summarised here - trust that file.
 
-Known-good state: `cmake --build build --config Release` = 0 errors / 0 warnings; the client boots to the main menu; the
-capture harness produces screenshots for main/campaign/firefight/custom/forge/servers/settings/lobby.
+Known-good state: `cmake --build build --config Release` = 0 errors / 0 warnings. **Full sweep on 2026-10-30**: all 17
+menu screens captured successfully (main, campaign +/- MODDED, skulls, firefight +/- MODDED, custom +/- MODDED, forge,
+servers, settings, settings > Online services, career, armory, mods, social, lobby), every run exit code 0, no `[error]` /
+`[warn]` in the log tail. The service tag now comes from the Armory profile everywhere (`PlayerServiceTag()`), because
+settings.json and appearance.json could disagree (`RTRD` vs `N06`).
 
 ---
 

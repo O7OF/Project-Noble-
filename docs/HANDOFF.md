@@ -22,6 +22,30 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-30, 07:35 ET) - Service tag single source, Social screen in the capture harness, full menu sweep (WeabooTyler117 / DeepSeek)
+
+### 1. The service tag disagreed between the Armory and the menus
+
+`settings.json` had `serviceTag = "RTRD"` while `data\appearance.json` (the Armory profile, which is what Reach is
+actually given at profile `+0x1AC`) had `service_tag = "N06"`, so MY PARTY / the lobby advert said `[RTRD] [DEV]` and
+the Armory nameplate said `[N06]`. New `PlayerServiceTag(SettingsData)` in `FrontEndMenu.cpp` returns the Armory
+profile's tag and falls back to settings.json; it is used by `DrawParty`, `SetupHostLobby` (advert **and** the local
+roster entry) and the host-pinning refresh, so everything Noble shows matches what the game wears.
+Still open (optional): have `ArmorCustomizer::SaveProfile` also write the tag into `SettingsData::serviceTag`, so a
+third-party reader of settings.json sees the same value.
+
+### 2. `-menu-screen social` did not exist
+
+`ParseScreenArg()` predates O7OF's COMMUNITY screen, so `-menu-screen social` silently produced the main menu. Added
+`social` / `friends` / `community` -> `Screen::Social`; the sweep below now captures that screen.
+
+### 3. Full menu sweep (all 17 screens, 1920x1080, `-menu-capture 90`)
+
+main, campaign, campaign MODDED, skulls, firefight, firefight MODDED, custom, custom MODDED, forge, servers, settings,
+settings > Online services, career, armory, mods, social, lobby: **17/17 captured, every run exit code 0**, and the log
+tail of the sweep has no `[error]`, `[warn]`, exception or access violation. The Armory renders the 3D Spartan and its
+nameplate; COMMUNITY lists the friend with INVITE/REMOVE; MY PARTY shows `[N06] [DEV]` over the plate.
+
 ## 0. Pick up here (2026-10-30, 07:20 ET) - Lobby identity per row + invite notifications, and a continuation guide (WeabooTyler117 / DeepSeek)
 
 ### 1. Every player row can carry its own identity
