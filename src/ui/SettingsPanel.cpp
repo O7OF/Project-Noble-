@@ -4,6 +4,7 @@
 #include "MenuSounds.hpp"
 #include "audio/ReachAudio.hpp"
 #include "UiArt.hpp"
+#include "InputPrompts.hpp"
 #include "engine/KeyBindings.hpp"
 #include "engine/CameraFov.hpp"
 #include "network/MasterServerClient.hpp"
@@ -153,10 +154,31 @@ const Callout kReach360[] = {
 void DrawControllerDiagram(float width) {
     UiTexture pad = UiArt::NobleControllerImage();
     if (!pad) pad = UiArt::ControllerImage();
+    // Each label keeps its "(RT)"-style suffix for the reader, and the button it names is drawn as a glyph
+    // in front of it (2026-10-30).
+    auto splitSuffix = [](const char* label, std::string& text, InputPrompts::Button& button) {
+        text = label;
+        button = InputPrompts::Button::A;
+        const size_t open = text.rfind('(');
+        if (open == std::string::npos || text.back() != ')') return false;
+        const std::string suffix = text.substr(open + 1, text.size() - open - 2);
+        // Both "(click)" callouts name a stick click; the label says which one.
+        if (text.find("Move / crouch") != std::string::npos) button = InputPrompts::Button::LStick;
+        else if (text.find("Look / zoom") != std::string::npos) button = InputPrompts::Button::RStick;
+        else if (!InputPrompts::ButtonFromSuffix(suffix.c_str(), button)) return false;
+        text = text.substr(0, open);
+        while (!text.empty() && text.back() == ' ') text.pop_back();
+        return true;
+    };
+    const float glyphH = ImGui::GetTextLineHeight() * 1.05f;
     float leftWidth = 0.0f, rightWidth = 0.0f;
     for (const Callout& c : kReach360) {
+        std::string text;
+        InputPrompts::Button button{};
+        const bool hasGlyph = splitSuffix(c.label, text, button);
+        const float glyphW = hasGlyph ? InputPrompts::ButtonWidth(ImGui::GetFont(), glyphH, button) + 6.0f : 0.0f;
         float& side = c.right ? rightWidth : leftWidth;
-        side = std::max(side, ImGui::CalcTextSize(c.label).x);
+        side = std::max(side, glyphW + ImGui::CalcTextSize(text.c_str()).x);
     }
     const float w = std::clamp(width - leftWidth - rightWidth - 70.0f, 160.0f, 440.0f);
     const float h = pad ? w * pad.height / pad.width : w * 0.62f;
@@ -173,11 +195,19 @@ void DrawControllerDiagram(float width) {
         const float rowY = c.right ? padY + (rightRow++ + 0.5f) * rightStep - lh * 0.5f
                                    : padY + (leftRow++ + 0.5f) * leftStep - lh * 0.5f;
         const ImVec2 elbow = c.right ? ImVec2(padX + w + 14.0f, rowY + lh * 0.5f) : ImVec2(padX - 10.0f, rowY + lh * 0.5f);
-        const ImVec2 textPos = c.right ? ImVec2(elbow.x + 8.0f, rowY)
-                                       : ImVec2(elbow.x - 8.0f - ImGui::CalcTextSize(c.label).x, rowY);
+        std::string text;
+        InputPrompts::Button button{};
+        const bool hasGlyph = splitSuffix(c.label, text, button);
+        const float glyphW = hasGlyph ? InputPrompts::ButtonWidth(ImGui::GetFont(), glyphH, button) + 6.0f : 0.0f;
+        const float rowW = glyphW + ImGui::CalcTextSize(text.c_str()).x;
+        const ImVec2 rowPos = c.right ? ImVec2(elbow.x + 8.0f, rowY)
+                                      : ImVec2(elbow.x - 8.0f - rowW, rowY);
         dl->AddLine(btn, elbow, IM_COL32(200, 210, 220, 140), 1.2f);
         dl->AddCircleFilled(btn, 3.0f, kAccent);
-        dl->AddText(textPos, kText, c.label);
+        if (hasGlyph) {
+            InputPrompts::DrawButton(dl, ImGui::GetFont(), ImVec2(rowPos.x, rowY - (glyphH - lh) * 0.5f), glyphH, button);
+        }
+        dl->AddText(ImVec2(rowPos.x + glyphW, rowY), kText, text.c_str());
     }
     ImGui::Dummy(ImVec2(leftWidth + 30.0f + w + 22.0f + rightWidth, h + 30.0f));
 }

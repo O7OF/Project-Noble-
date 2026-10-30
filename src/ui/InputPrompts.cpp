@@ -2,6 +2,7 @@
 
 #include <cfloat>
 #include <cmath>
+#include <string>
 
 namespace noble {
 namespace InputPrompts {
@@ -116,6 +117,154 @@ float Draw(ImDrawList* dl, ImFont* font, ImVec2 pos, float h, Prompt prompt) {
     }
     }
     return 0.0f;
+}
+
+
+// ------------------------------------------------------------------------------------------------
+// Single button glyphs (controller settings list, bindings, any list that names a button)
+// ------------------------------------------------------------------------------------------------
+
+namespace {
+
+ImU32 FaceColour(Button b) {
+    switch (b) {
+    case Button::A: return IM_COL32(92, 170, 60, 255);
+    case Button::B: return IM_COL32(204, 52, 44, 255);
+    case Button::X: return IM_COL32(52, 134, 214, 255);
+    case Button::Y: return IM_COL32(236, 182, 38, 255);
+    default: return IM_COL32(60, 66, 76, 255);
+    }
+}
+
+const char* FaceLetter(Button b) {
+    switch (b) {
+    case Button::A: return "A";
+    case Button::B: return "B";
+    case Button::X: return "X";
+    case Button::Y: return "Y";
+    default: return "";
+    }
+}
+
+// Pill with a short label: LB / RB / LT / RT.
+float Pill(ImDrawList* dl, ImFont* font, ImVec2 pos, float h, const char* label) {
+    const float size = h * 0.62f;
+    const float w = TextW(font, size, label) + h * 0.7f;
+    dl->AddRectFilled(pos, ImVec2(pos.x + w, pos.y + h), IM_COL32(42, 48, 56, 245), h * 0.32f);
+    dl->AddRect(pos, ImVec2(pos.x + w, pos.y + h), IM_COL32(200, 210, 220, 170), h * 0.32f, 0, 1.0f);
+    dl->AddText(font, size, ImVec2(pos.x + h * 0.35f, pos.y + (h - size) * 0.5f), kWhite, label);
+    return w;
+}
+
+// D-pad cross with one arm lit.
+float Dpad(ImDrawList* dl, ImVec2 pos, float h, bool up, bool down, bool left, bool right) {
+    const float t = h / 3.0f;
+    const ImU32 dim = IM_COL32(90, 98, 108, 255), lit = kWhite;
+    dl->AddRectFilled(ImVec2(pos.x + t, pos.y), ImVec2(pos.x + 2 * t, pos.y + h), dim, t * 0.3f);
+    dl->AddRectFilled(ImVec2(pos.x, pos.y + t), ImVec2(pos.x + h, pos.y + 2 * t), dim, t * 0.3f);
+    if (up) dl->AddRectFilled(ImVec2(pos.x + t, pos.y), ImVec2(pos.x + 2 * t, pos.y + t), lit, t * 0.3f);
+    if (down) dl->AddRectFilled(ImVec2(pos.x + t, pos.y + 2 * t), ImVec2(pos.x + 2 * t, pos.y + h), lit, t * 0.3f);
+    if (left) dl->AddRectFilled(ImVec2(pos.x, pos.y + t), ImVec2(pos.x + t, pos.y + 2 * t), lit, t * 0.3f);
+    if (right) dl->AddRectFilled(ImVec2(pos.x + 2 * t, pos.y + t), ImVec2(pos.x + h, pos.y + 2 * t), lit, t * 0.3f);
+    return h;
+}
+
+// Stick click: an outlined circle with the stick letter (L / R).
+float Stick(ImDrawList* dl, ImFont* font, ImVec2 pos, float h, const char* label) {
+    const ImVec2 c(pos.x + h * 0.5f, pos.y + h * 0.5f);
+    dl->AddCircleFilled(c, h * 0.5f, IM_COL32(34, 40, 48, 245), 24);
+    dl->AddCircle(c, h * 0.5f, IM_COL32(200, 210, 220, 180), 24, 1.2f);
+    const float size = h * 0.62f;
+    const float tw = TextW(font, size, label);
+    dl->AddText(font, size, ImVec2(c.x - tw * 0.5f, c.y - size * 0.55f), kWhite, label);
+    return h;
+}
+
+// Round "system" glyph: two bars (Start), two squares (Back) or three bars (Menu).
+float SystemGlyph(ImDrawList* dl, ImVec2 pos, float h, Button b) {
+    const ImVec2 c(pos.x + h * 0.5f, pos.y + h * 0.5f);
+    dl->AddCircleFilled(c, h * 0.5f, IM_COL32(200, 210, 220, 235), 24);
+    const ImU32 ink = IM_COL32(20, 24, 28, 255);
+    const float u = h * 0.13f;
+    if (b == Button::Back) {
+        dl->AddRectFilled(ImVec2(c.x - u * 1.6f, c.y - u * 1.2f), ImVec2(c.x - u * 0.2f, c.y + u * 0.2f), ink);
+        dl->AddRectFilled(ImVec2(c.x + u * 0.2f, c.y + u * 0.2f), ImVec2(c.x + u * 1.6f, c.y + u * 1.6f), ink);
+    } else if (b == Button::Menu) {
+        for (int i = -1; i <= 1; ++i) {
+            dl->AddRectFilled(ImVec2(c.x - u * 1.6f, c.y + i * u * 1.3f - u * 0.35f),
+                              ImVec2(c.x + u * 1.6f, c.y + i * u * 1.3f + u * 0.35f), ink);
+        }
+    } else {
+        dl->AddRectFilled(ImVec2(c.x - u * 1.5f, c.y - u * 0.9f), ImVec2(c.x + u * 1.5f, c.y - u * 0.1f), ink);
+        dl->AddRectFilled(ImVec2(c.x - u * 1.5f, c.y + u * 0.3f), ImVec2(c.x + u * 1.5f, c.y + u * 1.1f), ink);
+    }
+    return h;
+}
+
+} // namespace
+
+float ButtonWidth(ImFont* font, float height, Button button) {
+    if (!font) font = ImGui::GetFont();
+    const float h = height;
+    switch (button) {
+    case Button::LB: return TextW(font, h * 0.62f, "LB") + h * 0.7f;
+    case Button::RB: return TextW(font, h * 0.62f, "RB") + h * 0.7f;
+    case Button::LT: return TextW(font, h * 0.62f, "LT") + h * 0.7f;
+    case Button::RT: return TextW(font, h * 0.62f, "RT") + h * 0.7f;
+    default: return h;   // face buttons, d-pad and sticks are square
+    }
+}
+
+float DrawButton(ImDrawList* dl, ImFont* font, ImVec2 pos, float height, Button button) {
+    if (!font) font = ImGui::GetFont();
+    const float h = height;
+    switch (button) {
+    case Button::A: case Button::B: case Button::X: case Button::Y:
+        Face(dl, font, pos, h, FaceLetter(button), FaceColour(button));
+        return h;
+    case Button::LB: return Pill(dl, font, pos, h * 0.8f, "LB");
+    case Button::RB: return Pill(dl, font, pos, h * 0.8f, "RB");
+    case Button::LT: return Pill(dl, font, pos, h * 0.8f, "LT");
+    case Button::RT: return Pill(dl, font, pos, h * 0.8f, "RT");
+    case Button::DpadUp: return Dpad(dl, pos, h, true, false, false, false);
+    case Button::DpadDown: return Dpad(dl, pos, h, false, true, false, false);
+    case Button::DpadLeft: return Dpad(dl, pos, h, false, false, true, false);
+    case Button::DpadRight: return Dpad(dl, pos, h, false, false, false, true);
+    case Button::LStick: return Stick(dl, font, pos, h, "L");
+    case Button::RStick: return Stick(dl, font, pos, h, "R");
+    default: return SystemGlyph(dl, pos, h, button);
+    }
+}
+
+float KeyWidth(ImFont* font, float height, const char* label) {
+    if (!font) font = ImGui::GetFont();
+    return TextW(font, height * 0.68f, label) + height * 0.55f;
+}
+
+float DrawKey(ImDrawList* dl, ImFont* font, ImVec2 pos, float height, const char* label) {
+    if (!font) font = ImGui::GetFont();
+    return Key(dl, font, pos, height, label);
+}
+
+bool ButtonFromSuffix(const char* suffix, Button& outButton) {
+    if (!suffix) return false;
+    const std::string text = suffix;
+    struct Map { const char* key; Button button; };
+    static const Map kMap[] = {
+        { "A", Button::A }, { "B", Button::B }, { "X", Button::X }, { "Y", Button::Y },
+        { "LB", Button::LB }, { "RB", Button::RB }, { "LT", Button::LT }, { "RT", Button::RT },
+        { "D-pad", Button::DpadUp },
+        { "Start", Button::Start }, { "Back", Button::Back }, { "Menu", Button::Menu },
+        { "click", Button::RStick },   // "(click)": a stick click; the caller says which stick
+    };
+    // Exact match only: a substring test made "(LB)" resolve to B and "(Back)" resolve to B as well.
+    for (const Map& m : kMap) {
+        if (text == m.key) {
+            outButton = m.button;
+            return true;
+        }
+    }
+    return false;
 }
 
 } // namespace InputPrompts

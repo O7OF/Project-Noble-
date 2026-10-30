@@ -2453,20 +2453,31 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         const float barY = ui.size.y - 36.0f * ui.s;
         float bx = leftMargin + 32.0f * ui.s;
 
-        auto drawPrompt = [&](const char* glyph, ImU32 col, const char* label) {
-            ui.dl->AddCircleFilled(ImVec2(bx + 9.0f * ui.s, barY + 10.0f * ui.s), 8.5f * ui.s, col);
-            Text(ui, NobleStyle::SmallFont(), 12.0f, ImVec2(bx + 5.5f * ui.s, barY + 2.0f * ui.s), IM_COL32(15, 15, 15, 255), glyph);
-            bx += 22.0f * ui.s;
-            Text(ui, NobleStyle::SmallFont(), 14.0f, ImVec2(bx, barY + 2.0f * ui.s), kWhite, label);
-            bx += TextWidth(NobleStyle::SmallFont(), 14.0f * ui.s, label) + 20.0f * ui.s;
+        // The lobby bar follows the device that was last used, like the other screens' hint rows: controller
+        // glyphs (A / B / Y / Start / X) or keyboard keys (ENTER / ESC / Y / TAB / X), never a
+        // hard-coded Xbox glyph while the player is on mouse and keyboard (2026-10-30).
+        const float gh = 20.0f * ui.s;
+        const bool pad = InputPrompts::Current() == InputPrompts::Device::Gamepad;
+        auto label = [&](const char* text) {
+            Text(ui, NobleStyle::SmallFont(), 14.0f, ImVec2(bx, barY + 2.0f * ui.s), kWhite, text);
+            bx += TextWidth(NobleStyle::SmallFont(), 14.0f * ui.s, text) + 20.0f * ui.s;
+        };
+        auto prompt = [&](InputPrompts::Prompt p, const char* text) {
+            bx += InputPrompts::Draw(ui.dl, NobleStyle::SmallFont(), ImVec2(bx, barY), gh, p) + 7.0f * ui.s;
+            label(text);
+        };
+        auto extra = [&](InputPrompts::Button button, const char* key, const char* text) {
+            bx += (pad ? InputPrompts::DrawButton(ui.dl, NobleStyle::SmallFont(), ImVec2(bx, barY), gh, button)
+                       : InputPrompts::DrawKey(ui.dl, NobleStyle::SmallFont(), ImVec2(bx, barY), gh, key)) + 7.0f * ui.s;
+            label(text);
         };
 
-        drawPrompt("A", IM_COL32(92, 170, 60, 255), "Select");
-        drawPrompt("B", IM_COL32(204, 52, 44, 255), "Back");
-        drawPrompt("Y", IM_COL32(236, 182, 38, 255), "Friends / Social");
-        drawPrompt(">", IM_COL32(60, 70, 85, 255), "Menu");
+        prompt(InputPrompts::Prompt::Accept, "Select");
+        prompt(InputPrompts::Prompt::Back, "Back");
+        extra(InputPrompts::Button::Y, "Y", "Friends / Social");
+        extra(InputPrompts::Button::Start, "TAB", "Menu");
         if (st.lobbyMode != "campaign") {
-            drawPrompt("X", IM_COL32(52, 134, 214, 255), "Prior Game Stats");
+            extra(InputPrompts::Button::X, "X", "Prior Game Stats");
         }
     }
 }

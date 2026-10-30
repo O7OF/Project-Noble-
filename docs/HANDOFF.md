@@ -22,6 +22,48 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-30, 08:40 ET) - Prompts follow the device everywhere, button glyphs in the controller list (WeabooTyler117 / DeepSeek)
+
+Tyler: "if a player uses a controller the options on the bottom of the screen should switch to controller and vice versa"
+and "we can also use these icons on the controller mapping list".
+
+### 1. The pre-game lobby bar was hard-coded Xbox glyphs
+
+The other screens already go through `InputPrompts` (which switches on the last device used), but the lobby's bar was
+five hand-drawn circles (A / B / Y / > / X) that never changed. It now uses the shared prompts: **ENTER Select / ESC
+Back / Y Friends-Social / TAB Menu / X Prior Game Stats** on mouse+keyboard, **A / B / Y / Start / X** glyphs with a
+controller - and it flips as soon as the other device is touched (`InputPrompts::Update()` in every overlay frame).
+
+### 2. Button glyphs as a real API (`InputPrompts`)
+
+New, all drawn in code (no art shipped):
+
+```cpp
+enum class Button { A, B, X, Y, LB, RB, LT, RT, DpadUp/Down/Left/Right, LStick, RStick, Start, Back, Menu };
+float ButtonWidth(ImFont*, float h, Button);      // so callers can lay text out after the glyph
+float DrawButton(ImDrawList*, ImFont*, ImVec2, float h, Button);
+float KeyWidth(...); float DrawKey(..., const char* label);   // keyboard key box for any label
+bool  ButtonFromSuffix(const char* suffix, Button&);          // "(RT)", "(Back)", "(D-pad)", "(click)"
+```
+
+`A/B/X/Y` are the coloured circles, `LB/RB/LT/RT` grey pills, the D-pad is a cross with one arm lit, sticks are
+lettered circles, `Start`/`Back`/`Menu` are the round system glyphs.
+
+### 3. CONTROLLER settings page uses them
+
+Every callout on the Reach 360 layout diagram now draws the glyph the label names in front of the text
+(`LT Throw grenade`, `RB Melee`, `Back Multiplayer scoreboard`, ...). The two `(click)` callouts map to LStick
+("Move / crouch") and RStick ("Look / zoom").
+
+**Bug found while doing it:** `ButtonFromSuffix` first matched by substring, so `(LB)` resolved to **B** and `(Back)` to
+**B** as well. It now matches the whole suffix (`text == key`) and the stick clicks are disambiguated by the label text.
+
+### 4. Checks
+
+- `cmake --build build --config Release`: 0 errors, 0 warnings.
+- Captures at 1920x1080: the lobby bar reads `ENTER Select ... TAB Menu ...` (keyboard device, since a capture run has
+  no pad input) and the CONTROLLER page shows LT / LB / Back / RT / RB / Y / B glyphs next to the right labels.
+
 ## 0. Pick up here (2026-10-30, 08:15 ET) - Menu music player: now-playing strip, prev/next, pause, mute, shuffle (WeabooTyler117 / DeepSeek)
 
 Backlog item 3 from the continuation guide, done.

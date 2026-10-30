@@ -147,6 +147,9 @@ build/                     build output; 298 art files tracked (git add -f neede
 - `PlayerRow(ui, pos, width, rankIndex, emblemIndex, nameplateIndex, team, serviceTag, name, dev, selected)` draws
   MCC's row: rank badge, emblem tile (joined), optional team strip, nameplate bar with `[TAG]` on top and the gamertag
   below, `[DEV]` in gold next to the tag for developer accounts only. Used by MY PARTY and the pre-game roster.
+- `InputPrompts` owns every on-screen button glyph and the last-used-device switch. Use `InputPrompts::Draw(prompt)` for
+  Accept/Back/Change/Tabs, `DrawButton(...)` for a specific pad button, `DrawKey(...)` for a keyboard key - never draw a
+  glyph by hand, or it will not follow the device (that is what the lobby bar used to do).
 - The main menu list is built per frame (`rows` vector + `kDeveloperEntry` above Quit for devs) and reserves a fixed
   **two-line** description so the list never jumps when the selection changes.
 
@@ -167,6 +170,8 @@ Menus (this session, all pushed):
 | `bf9d384` | MCC-style `PlayerRow` (rank / emblem / nameplate with tag+name), `MY GAME SESSION` header, empty lobby slot fix |
 | `8059115` | **Emblems load again**: MCC pack stores `E_002_P_SML`, not `e_002_p` (upper case + `_SML`) - this also fixes O7's Armory emblem grid |
 | `e93076f` | `[DEV]` as text, centred rank badge, one framed block, smaller name |
+| `a8f412e` | Menu music player (`PauseMusic/ResumeMusic` + `DrawMusicPlayer`) |
+| (this commit) | Prompts follow the device on every screen; `InputPrompts::DrawButton/DrawKey` glyphs in the CONTROLLER list |
 | `aea6230` | Custom Game / Forge: GAME OPTIONS + PLAYERS rows, row plates for readability |
 | (this commit) | Menu music player (`PauseMusic/ResumeMusic` + `DrawMusicPlayer`) |
 | `ab4a9f4` | One service tag everywhere (Armory profile wins), `-menu-screen social` |
