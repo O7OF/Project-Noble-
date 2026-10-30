@@ -4,6 +4,7 @@
 #include "UiArt.hpp"
 #include "NobleUi.hpp"
 #include "career/Career.hpp"
+#include "common/MapNames.hpp"
 
 #include <imgui.h>
 #include <algorithm>
@@ -210,7 +211,12 @@ void CareerPanel::RenderRecord() {
     if (!r.campaignBest.empty()) {
         Section("CAMPAIGN");
         for (const auto& [map, difficulty] : r.campaignBest) {
-            ImGui::TextColored(kLabel, "%s", map.c_str());
+            const std::string name = MapNames::Display(map);
+            ImGui::TextColored(kLabel, "%s", name.c_str());
+            if (name != map) {
+                // Keep the scenario id available without cluttering the row.
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", map.c_str());
+            }
             ImGui::SameLine(260.0f);
             ImGui::Text("Completed on %s", DifficultyName(difficulty));
         }
@@ -224,7 +230,7 @@ void CareerPanel::RenderRecord() {
     const ImGuiTableFlags flags = ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingFixedFit;
     if (ImGui::BeginTable("##history", 7, flags)) {
         ImGui::TableSetupColumn("DATE", ImGuiTableColumnFlags_WidthFixed, 170);
-        ImGui::TableSetupColumn("MODE", ImGuiTableColumnFlags_WidthFixed, 120);
+        ImGui::TableSetupColumn("MODE", ImGuiTableColumnFlags_WidthFixed, 170);
         ImGui::TableSetupColumn("MAP", ImGuiTableColumnFlags_WidthFixed, 200);
         ImGui::TableSetupColumn("TIME", ImGuiTableColumnFlags_WidthFixed, 80);
         ImGui::TableSetupColumn("K / D / A", ImGuiTableColumnFlags_WidthFixed, 110);
@@ -235,9 +241,24 @@ void CareerPanel::RenderRecord() {
             ImGui::TableNextRow();
             ImGui::TableNextColumn(); ImGui::TextUnformatted(m.date.c_str());
             ImGui::TableNextColumn();
-            if (m.difficulty >= 0 && m.type != "multiplayer") ImGui::Text("%s (%s)", m.type.c_str(), DifficultyName(m.difficulty));
-            else ImGui::TextUnformatted(m.type.c_str());
-            ImGui::TableNextColumn(); ImGui::TextUnformatted(m.map.c_str());
+            // "campaign" / "firefight" / "multiplayer" are engine words; the record should read like the menus do.
+            auto modeName = [](const std::string& type) -> const char* {
+                if (type == "campaign") return "Campaign";
+                if (type == "firefight") return "Firefight";
+                if (type == "multiplayer") return "Multiplayer";
+                if (type == "forge") return "Forge";
+                return nullptr;
+            };
+            const char* modeLabel = modeName(m.type);
+            std::string modeText = modeLabel ? std::string(modeLabel) : m.type;
+            if (m.difficulty >= 0 && m.type != "multiplayer") {
+                modeText += std::string(" \xC2\xB7 ") + DifficultyName(m.difficulty);
+            }
+            ImGui::TextUnformatted(modeText.c_str());
+            ImGui::TableNextColumn();
+            const std::string mapName = MapNames::Display(m.map);
+            ImGui::TextUnformatted(mapName.c_str());
+            if (mapName != m.map && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", m.map.c_str());
             ImGui::TableNextColumn(); ImGui::Text("%.0f min", m.minutes);
             ImGui::TableNextColumn(); ImGui::Text("%lld / %lld / %lld", static_cast<long long>(m.kills), static_cast<long long>(m.deaths), static_cast<long long>(m.assists));
             ImGui::TableNextColumn(); ImGui::Text("%lld", static_cast<long long>(m.score));

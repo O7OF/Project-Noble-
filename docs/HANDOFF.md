@@ -22,6 +22,19 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-30, 22:55 ET) - Service record reads like the menus: mission and map names (WeabooTyler117 / DeepSeek)
+
+Tyler: "need missions to link with their actual name same with multiplayer in the recent games, campaign etc."
+
+- **CAMPAIGN section**: `m05` / `m10` / `m52` now read **Noble Actual / Winter Contingency / New Alexandria**, with the scenario id
+  in the tooltip.
+- **RECENT GAMES**: the MODE column said `multiplayer`, `campaign`, `firefight` and was too narrow (`firefight (Norm…`
+  was clipped) - it now reads `Multiplayer`, `Campaign · Normal`, `Firefight · Normal` in a 170 px column, and the MAP column
+  shows **Boneyard / Corvette / New Alexandria / Winter Contingency / Installation 04** with the raw name in a tooltip.
+- Both use the existing `common/MapNames` table, so they can never disagree with the server browser or the "Continue" row.
+
+Verified by capture: campaign rows and the recent-games table both show names, nothing clipped.
+
 ## 0. Pick up here (2026-10-30, 22:30 ET) - "Does it actually do anything?": two graphics options made real, input maths proven (WeabooTyler117 / DeepSeek)
 
 Tyler asked whether the ADVANCED GRAPHICS options and the extra Mouse/Controller settings do anything. Audited, then made
