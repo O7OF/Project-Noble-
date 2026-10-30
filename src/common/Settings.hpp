@@ -47,6 +47,8 @@ struct SettingsData {
     float volumeMusic = 1.0f;
     float volumeOther = 1.0f;
     bool menuSounds = true;
+    bool masterMute = false;         // silences Noble's own audio (menu music and menu sounds)
+    bool muteInBackground = false;   // ... and again whenever Noble is not the active window
     bool inviteNotifications = true;   // show a JOIN toast when a friend invites you
     std::string menuMusicTrack = "reach:menu"; // ReachAudio::MusicTracks() id, "all" or "off"
 

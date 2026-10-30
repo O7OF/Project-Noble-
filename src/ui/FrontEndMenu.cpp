@@ -1762,6 +1762,7 @@ void FeedEngineThreadInputs(HWND hwnd, ImGuiIO& io) {
         }
     }
     InputPrompts::Update();
+
 }
 
 
@@ -3910,6 +3911,26 @@ void FrontEndMenu::RenderOverlayImpl(IDXGISwapChain* swapChain, bool clear) {
         ImGui_ImplWin32_NewFrame();
         ImGui::NewFrame();
         InputPrompts::Update();
+    // Master mute / mute in background: Noble's own audio only (menu music and menu sounds). Read twice a second
+    // rather than every frame, and applied here so it also covers the pause menu and the fallback draw path.
+    {
+        static ULONGLONG s_nextMuteCheck = 0;
+        const ULONGLONG muteNow = GetTickCount64();
+        if (muteNow >= s_nextMuteCheck) {
+            s_nextMuteCheck = muteNow + 500;
+            const SettingsData audio = Settings::Get().Snapshot();
+            bool muted = audio.masterMute;
+            if (!muted && audio.muteInBackground) {
+                // "Active" means the foreground window belongs to this process: that covers the menu window and
+                // the engine's, without having to know which one is up.
+                const HWND foreground = GetForegroundWindow();
+                DWORD ownerPid = 0;
+                if (foreground) GetWindowThreadProcessId(foreground, &ownerPid);
+                muted = foreground != nullptr && ownerPid != GetCurrentProcessId();
+            }
+            ReachAudio::SetMuted(muted);
+        }
+    }
 
         FrontEndChoice choice;
         bool done = false;

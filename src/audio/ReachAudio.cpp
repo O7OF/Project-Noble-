@@ -101,6 +101,8 @@ std::atomic<IXAudio2SourceVoice*> s_musicVoice{ nullptr };   // voice of the thr
 std::atomic<bool> s_musicPaused{ false };
 std::atomic<bool> s_musicStop{false};
 std::atomic<float> s_musicVolume{1.0f};
+std::atomic<bool> s_muted{false};
+static std::atomic<float> s_sfxVolume{1.0f};
 std::string s_musicTrack;
 
 // ---------------------------------------------------------------- helpers
@@ -616,7 +618,7 @@ void MusicThread(std::string id) {
 
     auto tick = [&] {
         fade = std::min(1.0f, fade + 0.02f);
-        if (voice) voice->SetVolume(fade * s_musicVolume.load());
+        if (voice) voice->SetVolume(s_muted.load() ? 0.0f : fade * s_musicVolume.load());
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     };
     auto queued = [&]() -> UINT32 {
@@ -640,7 +642,7 @@ void MusicThread(std::string id) {
         if (!voice) {
             if (FAILED(s_xaudio->CreateSourceVoice(&voice, &clip->format))) return false;
             voiceFormat = clip->format;
-            voice->SetVolume(fade * s_musicVolume.load());
+            voice->SetVolume(s_muted.load() ? 0.0f : fade * s_musicVolume.load());
             voice->Start();
             s_musicVoice.store(voice);   // for PauseMusic()/ResumeMusic()
         }
@@ -800,6 +802,7 @@ void Shutdown() {
 
 bool PlaySfx(Sfx sfx, float volume) {
     if (!s_xaudio) return false;
+    if (s_muted.load()) return true;   // muted: pretend it played, so callers do not log failures
     const Piece p = s_sfx[static_cast<int>(sfx)];
     auto clip = GetClip(p);
     if (!clip) { Queue(p); return false; }
@@ -841,6 +844,9 @@ void StopMusic() {
 }
 
 void SetMusicVolume(float volume) { s_musicVolume = std::clamp(volume, 0.0f, 1.0f); }
+
+void SetMuted(bool muted) { s_muted.store(muted); }
+bool IsMuted() { return s_muted.load(); }
 
 bool PauseMusic() {
     IXAudio2SourceVoice* v = s_musicVoice.load();

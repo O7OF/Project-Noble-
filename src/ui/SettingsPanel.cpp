@@ -903,9 +903,13 @@ void SettingsPanel::RenderAudio() {
         Paragraph(("Reach menu audio is off: " + problem).c_str());
     }
     Section("MORE");
-    if (Row("MUTE IN BACKGROUND", "Lowers the game's sound while Noble isn't the active window. Coming in a later update.",
-            When::Info, "", false, true)) {
-        InfoValue("Not available yet");
+    if (Row("MASTER MUTE", "Silences Noble's own audio: the menu music and the menu clicks. The volumes below are kept, so turning it back off restores them. (Reach's in-game sound is the engine's own and has its own settings.)",
+            When::Instant, "Off", m_edit.masterMute != m_saved.masterMute)) {
+        ToggleValue(m_edit.masterMute);
+    }
+    if (Row("MUTE IN BACKGROUND", "Also silences Noble's audio whenever Noble is not the active window, so alt-tabbing to a video or a call leaves the game quiet.",
+            When::Instant, "Off", m_edit.muteInBackground != m_saved.muteInBackground)) {
+        ToggleValue(m_edit.muteInBackground);
     }
 }
 
@@ -1324,6 +1328,7 @@ int SettingsPanel::CountDiff(const SettingsData& a, const SettingsData& b, Cat c
                (a.fpsLimit != b.fpsLimit) + (a.showFps != b.showFps);
     case Cat::Audio:
         return f(a.volumeGame, b.volumeGame) + f(a.volumeMusic, b.volumeMusic) + f(a.volumeOther, b.volumeOther) +
+               (a.masterMute != b.masterMute) + (a.muteInBackground != b.muteInBackground) +
                (a.menuSounds != b.menuSounds) + (a.menuMusicTrack != b.menuMusicTrack);
     case Cat::Game:
         return f(a.fieldOfView, b.fieldOfView) + (a.subtitles != b.subtitles) + (a.menuBackground != b.menuBackground);

@@ -115,6 +115,8 @@ void Settings::Load() {
             Read(j, "volumeMusic", d.volumeMusic);
             Read(j, "volumeOther", d.volumeOther);
             Read(j, "menuSounds", d.menuSounds);
+    Read(j, "masterMute", d.masterMute);
+    Read(j, "muteInBackground", d.muteInBackground);
     Read(j, "inviteNotifications", d.inviteNotifications);
             Read(j, "menuMusicTrack", d.menuMusicTrack);
             Read(j, "subtitles", d.subtitles);
@@ -227,6 +229,8 @@ bool Settings::Save() {
         j["volumeMusic"] = d.volumeMusic;
         j["volumeOther"] = d.volumeOther;
         j["menuSounds"] = d.menuSounds;
+    j["masterMute"] = d.masterMute;
+    j["muteInBackground"] = d.muteInBackground;
     j["inviteNotifications"] = d.inviteNotifications;
         j["menuMusicTrack"] = d.menuMusicTrack;
         j["subtitles"] = d.subtitles;

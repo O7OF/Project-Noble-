@@ -61,6 +61,10 @@ bool PauseMusic();
 void ResumeMusic();
 bool IsMusicPaused();
 void SetMusicVolume(float volume);
+// Silences *Noble's* audio (menu music and menu sounds) without touching the saved volumes. Game audio is the
+// engine's own and is not affected.
+void SetMuted(bool muted);
+bool IsMuted();
 
 std::vector<TrackInfo> MusicTracks();
 std::string TrackLabel(const std::string& id);

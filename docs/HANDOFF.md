@@ -22,6 +22,25 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-30, 15:05 ET) - Master mute and mute in background (WeabooTyler117 / DeepSeek)
+
+Spec 4.2 audio rows, the two that are Noble-side.
+
+- **`SettingsData::masterMute`** and **`muteInBackground`** (both off by default, saved in settings.json).
+- **`ReachAudio::SetMuted(bool)` / `IsMuted()`**: one switch for everything Noble itself plays. The music thread uses
+  `muted ? 0 : fade * musicVolume`, so pausing/unpausing the menu music still works while muted, and `PlaySfx` returns
+  early, so menu clicks go quiet instead of logging failures. **Reach's in-game audio is the engine's own** and is
+  deliberately not touched - the rows say so.
+- Applied once per frame in `FrontEndMenu::RenderOverlayImpl`, re-read twice a second: `muted = masterMute ||
+  (muteInBackground && foreground window belongs to another process)`. "Active" is decided by
+  `GetWindowThreadProcessId(GetForegroundWindow()) != GetCurrentProcessId()`, which covers both the menu window and the
+  engine's without needing to know which one is up (`IDXGISwapChain1::GetHwnd` would have needed dxgi1_2 in that file).
+- Both rows are toggles in **Settings > Audio > MORE**, replacing the greyed MUTE IN BACKGROUND row, and count towards
+  the category's change count.
+
+Verified: build 0/0; AUDIO page capture shows both toggles; main / custom / lobby / armory still capture with exit 0
+after the per-frame hook went in; client left closed.
+
 ## 0. Pick up here (2026-10-30, 14:20 ET) - New SYSTEM settings page, version 0.8.3 (WeabooTyler117 / DeepSeek)
 
 Spec 4.12 housekeeping that needed no engine work: crash/diagnostic helpers and settings backup/restore.
