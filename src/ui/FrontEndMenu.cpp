@@ -274,8 +274,10 @@ enum class Screen { Main, Campaign, Skulls, Firefight, CustomGame, Forge, Server
 void DrawBackdrop(const Ui& ui, Screen screen) {
     const ImVec2 o(0, 0);
     // Draw the main menu background image whenever scene isn't ready or on screens where the 2D Reach backdrop
-    // provides the base visual layer (Armory, PreGameLobby, Main menu fallback) to eliminate black void flickers.
-    const bool needBackdropImage = !ReachArmory::IsSceneReady() || screen == Screen::Armory || screen == Screen::PreGameLobby;
+    // provides the base visual layer (PreGameLobby, Main menu fallback) to eliminate black void flickers.
+    // In Armory, when the scene is ready, haloreach.dll renders the 3D Spartan/Elite player preview directly into
+    // the DX11 backbuffer, so the preview area must remain transparent in ImGui so the character is not occluded.
+    const bool needBackdropImage = !ReachArmory::IsSceneReady() || screen == Screen::PreGameLobby;
     if (needBackdropImage) {
         ui.dl->AddRectFilled(o, ui.size, IM_COL32(8, 12, 18, 255));
         UiTexture bg = UiArt::MenuBackground();
@@ -285,8 +287,8 @@ void DrawBackdrop(const Ui& ui, Screen screen) {
     }
 
     if (screen == Screen::Armory) {
-        // In the Armory, provide sleek subtle left-side menu darkening while keeping the main menu background
-        // and 3D preview seamlessly visible with zero black flash
+        // In the Armory, provide sleek subtle left-side menu darkening while keeping the 3D Spartan/Elite
+        // character preview completely unoccluded on the right side
         ui.dl->AddRectFilledMultiColor(o, ImVec2(ui.size.x * 0.44f, ui.size.y),
                                        IM_COL32(4, 8, 14, 180), IM_COL32(4, 8, 14, 85),
                                        IM_COL32(4, 8, 14, 85), IM_COL32(4, 8, 14, 180));

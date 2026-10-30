@@ -1,4 +1,4 @@
-﻿# Project Noble: handoff (2026-10-29, 18:15 ET)
+# Project Noble: handoff (2026-10-29, 18:15 ET)
 Dominus join the team 20261028! 
 This picks up a reverse-engineering and C++ effort on **Tyler's Windows PC**. All paths below are real paths on that machine.
 Tyler (GitHub `WeabooTyler117`) works with a partner (GitHub `O7OF`) who owns the repo and writes most of the code.
@@ -11,7 +11,37 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
-## 0. Pick up here (2026-10-29, 22:00 ET) - Double Typing Fix, Seamless Armory Background, Full Controller UI Navigation & 1:1 Reach Pre-Game Lobby Layout (O7OF / Dominus)
+## 0. Pick up here (2026-10-29, 22:15 ET) - Fix Player Preview Character Rendering Behind Background (O7OF / Dominus)
+
+### 1. Root Cause Analysis
+- In Halo: Reach (`haloreach.dll`), the live 3D player Spartan/Elite character is rendered directly into the DirectX 11 swapchain backbuffer by the Blam! engine before the front-end menu overlay (`FrontEndMenu::RenderOverlayImpl`) runs.
+- In `src/ui/FrontEndMenu.cpp:DrawBackdrop`, `Screen::Armory` was included in `needBackdropImage`:
+  ```cpp
+  const bool needBackdropImage = !ReachArmory::IsSceneReady() || screen == Screen::Armory || screen == Screen::PreGameLobby;
+  if (needBackdropImage) {
+      ui.dl->AddRectFilled(o, ui.size, IM_COL32(8, 12, 18, 255));
+      UiTexture bg = UiArt::MenuBackground();
+      if (bg) {
+          UiArt::DrawCover(ui.dl, bg, o, ui.size, IM_COL32(255, 255, 255, 255));
+      }
+  }
+  ```
+- Because `needBackdropImage` evaluated to `true` whenever `screen == Screen::Armory`, `UiArt::DrawCover` drew the 2D background image over the entire viewport with 100% opacity (`IM_COL32(255, 255, 255, 255)`).
+- This painted over the DirectX 11 backbuffer, causing the live 3D Spartan/Elite player character to be drawn behind the 2D wallpaper image.
+
+### 2. Fixes Applied
+- Updated `src/ui/FrontEndMenu.cpp:DrawBackdrop`:
+  - Removed `screen == Screen::Armory` from `needBackdropImage`:
+    ```cpp
+    const bool needBackdropImage = !ReachArmory::IsSceneReady() || screen == Screen::PreGameLobby;
+    ```
+  - When `ReachArmory::IsSceneReady()` is true, the right side (`0.60f * width .. 1.0f * width`) remains 100% transparent in ImGui, allowing the live 3D Spartan/Elite rendered by `haloreach.dll` to be completely visible in front.
+  - When `!ReachArmory::IsSceneReady()` (initial engine startup while `mainmenu_all.map` is loading into memory), `needBackdropImage` remains `true` to cleanly avoid black void flickers.
+- Verified build: `noble-client.exe` compiled cleanly with 0 errors and 0 warnings.
+
+--
+
+## 1. Pick up here (2026-10-29, 22:00 ET) - Double Typing Fix, Seamless Armory Background, Full Controller UI Navigation & 1:1 Reach Pre-Game Lobby Layout (O7OF / Dominus)
 
 ### 1. Root Cause & Fix: Double Character Typing in Login/Register Screen
 - **Root Cause:**
