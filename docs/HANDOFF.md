@@ -22,7 +22,42 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
-## 0. Pick up here (2026-10-30, 06:40 ET) - Menu pass 3: stable main menu, readable map text, nameplates in the party/lobby (WeabooTyler117 / DeepSeek)
+## 0. Pick up here (2026-10-30, 07:05 ET) - MCC-style player rows: rank - emblem - nameplate with tag/name (WeabooTyler117 / DeepSeek)
+
+UI only: `src/ui/FrontEndMenu.cpp`. Follows the 06:40 ET entry, which had the nameplate only as a row background.
+
+### 1. One shared row, the way MCC draws it
+
+New `PlayerRow(ui, pos, width, rankIndex, emblemIndex, nameplateIndex, serviceTag, name, dev, selected)` draws, left
+to right:
+
+1. **rank badge** (30 * s; a flat placeholder plate when the rank is unknown),
+2. **emblem chip** (24 * s) - left out completely when MCC has no emblem texture for that id, and the bar takes its
+   space; a bare blue placeholder square looked unfinished,
+3. **nameplate bar**: the plate art with the **service tag on the top line** (`[NOBL]`, 11.5 * s, muted blue) and the
+   **gamertag underneath** (18 * s, white), the small gold **DEV** chip inside on the right, and a dark top/bottom
+   band so both lines read on the art.
+
+Used by **MY PARTY** on the main menu (local player, so rank/emblem/plate all known) and by the **pre-game lobby
+roster**. In the roster only the local player's ids are known, so remote players get the placeholder badge and the flat
+bar; their ids are still not in the roster payload (see §4 of the 06:40 entry).
+
+### 2. Fixed on the way
+
+- The nameplate is drawn only when the caller passes an id **> 0**: `UiArt::Nameplate(0)` falls back to a real plate, so
+  remote/empty rows were getting a random one.
+- An **empty lobby slot** no longer draws a phantom player row (`[117]`, no name) under "Waiting for players to join...";
+  it draws just the waiting bar.
+- The pre-game lobby panel is titled **MY GAME SESSION** (MCC's wording; the tab is 158 * s wide), not "MY PARTY" -
+  the main-menu box keeps "MY PARTY".
+
+### 3. Checks
+
+- `cmake --build build --config Release`: 0 errors, 0 warnings.
+- Captures at 1920x1080: MY PARTY row (`[NOBL]` / `WEABOOTYLER117` on the plate, rank badge left, DEV chip right) and an
+  empty pre-game session (`MY GAME SESSION`, `0/16`, "Waiting for players to join...").
+
+--
 
 UI only: `src/ui/FrontEndMenu.cpp`. Follows the 05:05 ET entry (O7OF's `dc349a5` is merged in).
 

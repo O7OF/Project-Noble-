@@ -826,6 +826,68 @@ void DrawAccountModal(const Ui& ui) {
     }
 }
 
+// One player row the way MCC draws it: rank badge, emblem chip, then a nameplate bar that carries the service
+// tag on its top line and the gamertag underneath. Used by MY PARTY and by the pre-game lobby roster so the two
+// always match. rankIndex/emblemIndex/nameplateIndex may be 0 or negative when the data is not known (a remote
+// player), in which case that piece is drawn as a plain placeholder or left out.
+float PlayerRow(const Ui& ui, ImVec2 pos, float width, int rankIndex, int emblemIndex, int nameplateIndex,
+                const std::string& serviceTag, const std::string& name, bool dev, bool selected) {
+    const float h = 40.0f * ui.s;
+    const float badge = 30.0f * ui.s;
+    const float emb = 24.0f * ui.s;
+    const float gap = 5.0f * ui.s;
+
+    // Rank badge
+    if (const UiTexture rank = UiArt::RankIcon(rankIndex)) {
+        UiArt::DrawContain(ui.dl, rank, ImVec2(pos.x, pos.y + (h - badge) * 0.5f),
+                           ImVec2(pos.x + badge, pos.y + (h - badge) * 0.5f + badge));
+    } else {
+        ui.dl->AddRectFilled(ImVec2(pos.x, pos.y + (h - badge) * 0.5f),
+                             ImVec2(pos.x + badge, pos.y + (h - badge) * 0.5f + badge), IM_COL32(26, 34, 44, 220));
+        ui.dl->AddRect(ImVec2(pos.x, pos.y + (h - badge) * 0.5f),
+                       ImVec2(pos.x + badge, pos.y + (h - badge) * 0.5f + badge), IM_COL32(90, 120, 150, 120));
+    }
+
+    // Emblem chip. Left out completely (and the bar takes its space) when MCC has no emblem texture for
+    // this id - a bare placeholder square looked unfinished in the row.
+    const float embX = pos.x + badge + gap;
+    const UiTexture emblem = UiArt::Emblem(emblemIndex);
+    if (emblem) {
+        UiArt::DrawContain(ui.dl, emblem, ImVec2(embX, pos.y + (h - emb) * 0.5f),
+                           ImVec2(embX + emb, pos.y + (h - emb) * 0.5f + emb));
+    }
+
+    // Nameplate bar: service tag on the top line, gamertag on the bottom line
+    const ImVec2 p0(embX + (emblem ? emb + gap : 0.0f), pos.y);
+    const ImVec2 p1(pos.x + width, pos.y + h);
+    ui.dl->AddRectFilled(p0, p1, selected ? IM_COL32(185, 55, 20, 235) : IM_COL32(24, 36, 52, 225));
+    if (nameplateIndex > 0) {
+      if (const UiTexture plate = UiArt::Nameplate(nameplateIndex)) {
+        UiArt::DrawCover(ui.dl, plate, p0, p1, selected ? IM_COL32(255, 215, 195, 240) : IM_COL32(255, 255, 255, 240));
+        // Dark top and bottom bands: the tag and the name sit on top of the art.
+        ui.dl->AddRectFilledMultiColor(p0, p1, IM_COL32(4, 8, 14, 145), IM_COL32(4, 8, 14, 90),
+                                       IM_COL32(4, 8, 14, 175), IM_COL32(4, 8, 14, 175));
+        ui.dl->AddRect(p0, p1, IM_COL32(165, 195, 225, 130), 0.0f, 0, 1.0f);
+      }
+    }
+
+    const float pad = 8.0f * ui.s;
+    const std::string tagText = serviceTag.empty() ? std::string("[117]") : "[" + serviceTag + "]";
+    Text(ui, NobleStyle::SmallFont(), 11.5f, ImVec2(p0.x + pad, p0.y + 3.0f * ui.s), IM_COL32(190, 215, 235, 240), tagText.c_str());
+
+    const float devW = dev ? 52.0f * ui.s : 0.0f;
+    ui.dl->PushClipRect(ImVec2(p0.x + pad, p0.y + 13.0f * ui.s), ImVec2(p1.x - pad - devW, p1.y), true);
+    Text(ui, NobleStyle::TitleFont(), 18.0f, ImVec2(p0.x + pad, p0.y + 14.0f * ui.s), kWhite, name.c_str());
+    ui.dl->PopClipRect();
+
+    if (dev) {
+        const ImVec2 b(p1.x - pad - 46.0f * ui.s, p0.y + 11.0f * ui.s);
+        ui.dl->AddRectFilled(b, ImVec2(b.x + 46.0f * ui.s, b.y + 18.0f * ui.s), IM_COL32(220, 160, 20, 240), 3.0f * ui.s);
+        Text(ui, NobleStyle::SmallFont(), 11.0f, ImVec2(b.x + 10.0f * ui.s, b.y + 3.0f * ui.s), IM_COL32(10, 10, 10, 255), "DEV");
+    }
+    return h;
+}
+
 void DrawParty(const Ui& ui, const std::string& playerName, const char* status) {
     const float w = 330.0f * ui.s;
     const float x = ui.size.x - w - 40.0f * ui.s;
@@ -838,57 +900,20 @@ void DrawParty(const Ui& ui, const std::string& playerName, const char* status) 
     Text(ui, NobleStyle::TitleFont(), 17.0f, ImVec2(x2 + 8.0f * ui.s, y + 5.0f * ui.s), kWhite, status);
     Text(ui, NobleStyle::TitleFont(), 17.0f, ImVec2(x + w - 42.0f * ui.s, y + 5.0f * ui.s), kWhite, "1/16");
     y += 28.0f * ui.s;
-    // The nameplate chosen in the Armory is the background of the player's row, the way Reach shows it in a
-    // party. The row is tall enough for the art to read, the plate runs across 80 % of it and stops short of
-    // the rank icon on the right; without a plate the old blue bar is drawn.
-    const float partyRowH = 40.0f * ui.s;
+    // MCC-style player row: rank badge, emblem, then the nameplate bar with the service tag on top and the
+    // gamertag under it (same helper the pre-game lobby uses).
     {
         const auto& prof = UIManager::GetArmorCustomizer().GetProfile();
-        const ImVec2 p0(x2, y), p1(x + w, y + partyRowH);
-        ui.dl->AddRectFilled(p0, p1, IM_COL32(52, 98, 138, 235));
-        if (const UiTexture plate = UiArt::Nameplate(prof.nameplateIndex)) {
-            const ImVec2 pr(p0.x + (p1.x - p0.x) * 0.80f, p1.y);
-            UiArt::DrawCover(ui.dl, plate, p0, pr, IM_COL32(255, 255, 255, 240));
-            // Light scrim for the name only, so the plate itself stays visible, then a fade into the row.
-            ui.dl->AddRectFilledMultiColor(p0, pr, IM_COL32(4, 8, 14, 70), IM_COL32(52, 98, 138, 255),
-                                           IM_COL32(52, 98, 138, 255), IM_COL32(4, 8, 14, 70));
-            // The steel frame the Armory preview of the same plate has.
-            ui.dl->AddRect(p0, pr, IM_COL32(165, 195, 225, 130), 0.0f, 0, 1.0f);
+        const SettingsData sd = Settings::Get().Snapshot();
+        static int s_rank = -1;
+        static ULONGLONG s_rankRead = 0;
+        if (s_rank < 0 || GetTickCount64() - s_rankRead > 2000) {
+            s_rank = Career::RankIndex(Career::Get().credits);
+            s_rankRead = GetTickCount64();
         }
-        ui.dl->AddRect(p0, p1, IM_COL32(90, 130, 170, 120), 0.0f, 0, 1.0f);
+        y += PlayerRow(ui, ImVec2(x2, y), x + w - x2, s_rank, prof.emblemIndex, prof.nameplateIndex,
+                       sd.serviceTag, playerName, AuthClient::Get().IsDeveloper(), false);
     }
-    const ImVec2 e(x2 + 16.0f * ui.s, y + partyRowH * 0.5f);
-    ui.dl->AddCircleFilled(e, 10.0f * ui.s, IM_COL32(26, 40, 52, 255));
-    ui.dl->AddTriangleFilled(ImVec2(e.x - 6 * ui.s, e.y - 2 * ui.s), ImVec2(e.x + 6 * ui.s, e.y - 2 * ui.s), ImVec2(e.x, e.y + 6 * ui.s), kAccent);
-    std::string partyUser = playerName;
-    Text(ui, NobleStyle::TitleFont(), 18.0f, ImVec2(x2 + 34.0f * ui.s, y + 8.0f * ui.s),
-         AuthClient::Get().IsDeveloper() ? IM_COL32(255, 215, 0, 255) : kWhite,
-         partyUser.c_str());
-
-    // Developer badge (the gold DEV chip is the only marker; the name no longer carries a "[DEV]" suffix)
-    if (AuthClient::Get().IsDeveloper()) {
-        float nameW = TextWidth(NobleStyle::TitleFont(), 18.0f * ui.s, partyUser.c_str());
-        ImVec2 badgePos(x2 + 40.0f * ui.s + nameW, y + 11.0f * ui.s);
-        ui.dl->AddRectFilled(badgePos, ImVec2(badgePos.x + 46.0f * ui.s, badgePos.y + 18.0f * ui.s), IM_COL32(220, 160, 20, 240), 3.0f * ui.s);
-        Text(ui, NobleStyle::SmallFont(), 11.0f, ImVec2(badgePos.x + 10.0f * ui.s, badgePos.y + 3.0f * ui.s), IM_COL32(10, 10, 10, 255), "DEV");
-    }
-
-    // Rank icon
-    static int s_rank = -1;
-    static ULONGLONG s_rankRead = 0;
-    if (s_rank < 0 || GetTickCount64() - s_rankRead > 2000) {
-        s_rank = Career::RankIndex(Career::Get().credits);
-        s_rankRead = GetTickCount64();
-    }
-    const UiTexture rankIcon = UiArt::RankIcon(s_rank);
-    if (rankIcon) {
-        const float is = 28.0f * ui.s;
-        UiArt::DrawContain(ui.dl, rankIcon, ImVec2(x + w - is - 8.0f * ui.s, y + (partyRowH - is) * 0.5f),
-                           ImVec2(x + w - 8.0f * ui.s, y + (partyRowH - is) * 0.5f + is));
-    }
-
-    // Account quick button
-    y += partyRowH;
     const float accH = 22.0f * ui.s;
     const ImVec2 accP0(x2, y);
     const ImVec2 accP1(x + w, y + accH);
@@ -2179,17 +2204,17 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         Text(ui, NobleStyle::SmallFont(), 13.0f, ImVec2(cX, cY + 68.0f * ui.s), IM_COL32(160, 185, 210, 180), kicker.c_str());
     }
 
-    // 5. Right Column: "MY PARTY" Panel (Matching 3 images 1:1)
+    // 5. Right Column: the game session panel (MCC calls it "MY GAME SESSION"; it lists this lobby)
     const float partyW = std::clamp(ui.size.x * 0.28f, 310.0f * ui.s, 420.0f * ui.s);
     const float partyX = ui.size.x - partyW - 48.0f * ui.s;
     const float partyY = top + 6.0f * ui.s;
 
-    // MY PARTY Top Tab (Solid black tab)
-    const float tabW = 120.0f * ui.s;
+    // Session top tab (solid black, like MCC)
+    const float tabW = 158.0f * ui.s;   // fits "MY GAME SESSION"
     const float tabH = 26.0f * ui.s;
     ui.dl->AddRectFilled(ImVec2(partyX, partyY), ImVec2(partyX + tabW, partyY + tabH), IM_COL32(10, 12, 16, 255), 2.0f * ui.s, ImDrawFlags_RoundCornersTop);
     ui.dl->AddRect(ImVec2(partyX, partyY), ImVec2(partyX + tabW, partyY + tabH), IM_COL32(40, 60, 90, 140), 2.0f * ui.s, ImDrawFlags_RoundCornersTop);
-    Text(ui, NobleStyle::TitleFont(), 15.0f, ImVec2(partyX + 12.0f * ui.s, partyY + 4.0f * ui.s), kWhite, "MY PARTY");
+    Text(ui, NobleStyle::TitleFont(), 15.0f, ImVec2(partyX + 12.0f * ui.s, partyY + 4.0f * ui.s), kWhite, "MY GAME SESSION");
 
     // Subheader Bar
     const float subY = partyY + tabH;
@@ -2211,7 +2236,7 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
 
     // Player Roster Container
     float rosterY = subY + subH;
-    const float playerRowH = 44.0f * ui.s;
+    const float playerRowH = 40.0f * ui.s;
     const size_t displayCount = st.lobbyRoster.empty() ? 1 : st.lobbyRoster.size();
 
     for (size_t idx = 0; idx < displayCount; ++idx) {
@@ -2222,32 +2247,31 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         const auto& player = hasPlayer ? st.lobbyRoster[idx] : LobbyPlayer{};
         const bool selected = (st.lobbyRosterSelection == static_cast<int>(idx));
 
-        // Background color: Reach orange/red highlight if selected. The local player's row uses the
-        // nameplate from the Armory (remote players' nameplates are not sent by the server yet).
+        if (!hasPlayer) {
+            // Empty slot: no player row at all (the row helper would draw a phantom [117] entry).
+            ui.dl->AddRectFilled(pr0, pr1, IM_COL32(14, 20, 30, 190));
+            ui.dl->AddRect(pr0, pr1, IM_COL32(40, 60, 90, 100));
+            Text(ui, NobleStyle::SmallFont(), 13.0f, ImVec2(pr0.x + 12.0f * ui.s, pr0.y + 12.0f * ui.s), kDim,
+                 "Waiting for players to join...");
+            rosterY += playerRowH;
+            break;
+        }
+
+        // Same MCC-style row as MY PARTY: rank badge, emblem, nameplate bar with the tag on top. Only the
+        // local player's rank/emblem/nameplate are known here; remote players get placeholder badge art and
+        // the flat bar (their ids are not in the roster payload yet).
         const bool isLocalPlayer = player.isHost ? st.isLobbyHost
                                                  : (!player.username.empty() &&
                                                     player.username == (AuthClient::Get().IsLoggedIn()
                                                                         ? AuthClient::Get().GetUsername()
                                                                         : Settings::Get().Snapshot().playerName));
-        const ImU32 rowBg = selected ? IM_COL32(185, 55, 20, 235)
-                                     : (player.isHost ? IM_COL32(24, 36, 52, 210) : IM_COL32(14, 20, 30, 190));
-        ui.dl->AddRectFilled(pr0, pr1, rowBg);
-        if (isLocalPlayer && hasPlayer) {
-            const auto& prof = UIManager::GetArmorCustomizer().GetProfile();
-            if (const UiTexture plate = UiArt::Nameplate(prof.nameplateIndex)) {
-                // Like the party row: the plate spans the name area and stops short of the service tag.
-                const ImVec2 pr(pr0.x + (pr1.x - pr0.x) * 0.76f, pr1.y);
-                UiArt::DrawCover(ui.dl, plate, pr0, pr,
-                                 selected ? IM_COL32(255, 215, 195, 240) : IM_COL32(255, 255, 255, 240));
-                ui.dl->AddRectFilledMultiColor(pr0, pr,
-                                               selected ? IM_COL32(150, 40, 12, 80) : IM_COL32(4, 8, 14, 80),
-                                               selected ? IM_COL32(185, 55, 20, 255) : IM_COL32(24, 36, 52, 255),
-                                               selected ? IM_COL32(185, 55, 20, 255) : IM_COL32(24, 36, 52, 255),
-                                               selected ? IM_COL32(150, 40, 12, 80) : IM_COL32(4, 8, 14, 80));
-                ui.dl->AddRect(pr0, pr, IM_COL32(165, 195, 225, 120), 0.0f, 0, 1.0f);
-            }
-        }
-        ui.dl->AddRect(pr0, pr1, IM_COL32(40, 60, 90, 100));
+        const auto& ownProf = UIManager::GetArmorCustomizer().GetProfile();
+        const int localRank = Career::RankIndex(Career::Get().credits);
+        PlayerRow(ui, pr0, partyW,
+                  isLocalPlayer ? localRank : -1,
+                  isLocalPlayer ? ownProf.emblemIndex : 0,
+                  isLocalPlayer ? ownProf.nameplateIndex : 0,
+                  player.serviceTag, player.username, player.isDev, selected);
 
         ImGui::SetCursorScreenPos(pr0);
         char prBtnId[64];
@@ -2255,32 +2279,6 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         if (ImGui::InvisibleButton(prBtnId, ImVec2(partyW, playerRowH))) {
             st.lobbyRosterSelection = static_cast<int>(idx);
         }
-
-        if (!hasPlayer) {
-            Text(ui, NobleStyle::SmallFont(), 13.0f, ImVec2(pr0.x + 12.0f * ui.s, pr0.y + 10.0f * ui.s), kDim, "Waiting for players to join...");
-            rosterY += playerRowH;
-            break;
-        }
-
-        // Left Speaker / Chat Bubble Icon
-        const float spkX = pr0.x + 10.0f * ui.s;
-        const float spkY = pr0.y + 16.0f * ui.s;
-        ui.dl->AddCircleFilled(ImVec2(spkX + 5.0f * ui.s, spkY + 6.0f * ui.s), 5.0f * ui.s, IM_COL32(200, 220, 245, 180));
-
-        // Player Emblem Icon
-        const float embX = spkX + 18.0f * ui.s;
-        ui.dl->AddRectFilled(ImVec2(embX, pr0.y + 12.0f * ui.s), ImVec2(embX + 20.0f * ui.s, pr0.y + 32.0f * ui.s), IM_COL32(60, 90, 120, 220), 2.0f * ui.s);
-
-        // Player Name, then the service tag on the right. The name is clipped at the tag so a long
-        // gamertag never runs into it (the "BUNGIE" tag that used to sit here was removed 2026-10-30).
-        const float nameX = embX + 26.0f * ui.s;
-        std::string tag = "[" + (player.serviceTag.empty() ? "117" : player.serviceTag) + "]";
-        const float tagW = TextWidth(NobleStyle::SmallFont(), 13.0f * ui.s, tag.c_str());
-        const float tagX = pr1.x - tagW - 10.0f * ui.s;
-        ui.dl->PushClipRect(ImVec2(nameX, pr0.y), ImVec2(tagX - 8.0f * ui.s, pr1.y), true);
-        Text(ui, NobleStyle::TitleFont(), 16.5f, ImVec2(nameX, pr0.y + 10.0f * ui.s), kWhite, player.username.c_str());
-        ui.dl->PopClipRect();
-        Text(ui, NobleStyle::SmallFont(), 13.0f, ImVec2(tagX, pr0.y + 13.0f * ui.s), IM_COL32(170, 195, 220, 220), tag.c_str());
 
         rosterY += playerRowH + 1.0f * ui.s;
     }
