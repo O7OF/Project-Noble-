@@ -22,6 +22,25 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-30, 21:40 ET) - Server browser: sortable columns and two more filters (WeabooTyler117 / DeepSeek)
+
+Spec 4.5 leftovers, both small and player-visible.
+
+- **Sortable columns.** The table already had `ImGuiTableFlags_Sortable` and `TableHeadersRow()`, but nothing ever read
+  the sort spec, so clicking a header did nothing. The list is now built as a filtered `vector<const ServerEntry*>`,
+  sorted with `ImGui::TableGetSortSpecs()` (Source, Server, Mode, Map, Players, Ping, Address; `Specs[0]` and
+  `SortDirection`), and drawn in that order. Server sorts by name by default; Players and Ping prefer descending. The
+  selection still uses the entry's index in `m_servers` (recovered with pointer arithmetic), so double-click-to-join and
+  the details panel keep working.
+- **Filters**: `No password` and `Not started` join Hide full / Hide empty / Favourites only, and are honoured in
+  `PassesFilters`.
+
+Checked: the SERVERS screen renders with the new filter row, and `tools/test-modes.ps1 -Only Slayer` still reaches
+gameplay, so the table rewrite did not disturb anything else.
+
+**Left in 4.5:** the players modal needs the master server to list the roster (ServerEntry only carries a count), and the
+"required mods" modal needs the mod list in the server entry - both are server-side additions, see `server.js`.
+
 ## 0. Pick up here (2026-10-30, 21:10 ET) - Controller per-action rebinding, and Slayer on all 20 maps (WeabooTyler117 / DeepSeek)
 
 ### 1. Per-action controller bindings (the last big Controls item)

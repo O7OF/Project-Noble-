@@ -272,6 +272,10 @@ void ServerBrowser::RenderFilterBar() {
     ImGui::Checkbox("Hide empty", &m_hideEmpty);
     ImGui::SameLine();
     ImGui::Checkbox("Favourites only", &m_showOnlyFavorites);
+    ImGui::SameLine();
+    ImGui::Checkbox("No password", &m_hidePassworded);
+    ImGui::SameLine();
+    ImGui::Checkbox("Not started", &m_hideInProgress);
 
     // Status line: LAN / master server / UPnP.
     const std::string master = MasterServerClient::Get().Enabled()
@@ -297,6 +301,8 @@ bool ServerBrowser::PassesFilters(const ServerEntry& s) const {
     if (m_modeFilter == 4 && s.gameMode != "Forge") return false;
     if (m_hideFull && s.maxPlayers > 0 && s.playerCount >= s.maxPlayers) return false;
     if (m_hideEmpty && s.playerCount <= 0) return false;
+    if (m_hidePassworded && s.isPasswordProtected) return false;
+    if (m_hideInProgress && s.inProgress) return false;
     if (m_showOnlyFavorites && !s.isFavorite) return false;
     return true;
 }
@@ -358,19 +364,48 @@ void ServerBrowser::RenderServerList() {
 
     // Widths include the cell padding and the sort arrow, so no header is elided ("Sour...", "Playe...").
     ImGui::TableSetupColumn("Source",   ImGuiTableColumnFlags_WidthFixed, 86.0f);
-    ImGui::TableSetupColumn("Server",   ImGuiTableColumnFlags_WidthStretch, 200.0f);
+    ImGui::TableSetupColumn("Server",   ImGuiTableColumnFlags_WidthStretch | ImGuiTableColumnFlags_DefaultSort, 200.0f);
     ImGui::TableSetupColumn("Mode",     ImGuiTableColumnFlags_WidthFixed, 112.0f);
     ImGui::TableSetupColumn("Map",      ImGuiTableColumnFlags_WidthFixed, 140.0f);
-    ImGui::TableSetupColumn("Players",  ImGuiTableColumnFlags_WidthFixed, 98.0f);
-    ImGui::TableSetupColumn("Ping",     ImGuiTableColumnFlags_WidthFixed, 70.0f);
+    ImGui::TableSetupColumn("Players",  ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_PreferSortDescending, 98.0f);
+    ImGui::TableSetupColumn("Ping",     ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_PreferSortDescending, 70.0f);
     ImGui::TableSetupColumn("Address",  ImGuiTableColumnFlags_WidthFixed, 170.0f);
     ImGui::TableSetupScrollFreeze(0, 1);
     ImGui::TableHeadersRow();
 
+    // Sortable headers: build the filtered list, sort it with ImGui's sort spec, then draw in that order.
+    std::vector<const ServerEntry*> visible;
+    visible.reserve(m_servers.size());
+    for (const ServerEntry& s : m_servers) {
+        if (PassesFilters(s)) visible.push_back(&s);
+    }
+    if (ImGuiTableSortSpecs* specs = ImGui::TableGetSortSpecs(); specs && specs->SpecsCount > 0) {
+        const ImGuiTableColumnSortSpecs& spec = specs->Specs[0];
+        const bool ascending = spec.SortDirection != ImGuiSortDirection_Descending;
+        auto lower = [](std::string text) {
+            for (char& c : text) c = static_cast<char>(::tolower(static_cast<unsigned char>(c)));
+            return text;
+        };
+        std::stable_sort(visible.begin(), visible.end(), [&](const ServerEntry* a, const ServerEntry* b) {
+            int cmp = 0;
+            switch (spec.ColumnIndex) {
+            case 0: cmp = a->source.compare(b->source); break;
+            case 1: cmp = lower(a->name).compare(lower(b->name)); break;
+            case 2: cmp = lower(a->gameMode).compare(lower(b->gameMode)); break;
+            case 3: cmp = lower(MapNames::Display(a->mapName)).compare(lower(MapNames::Display(b->mapName))); break;
+            case 4: cmp = a->playerCount - b->playerCount; break;
+            case 5: cmp = a->ping - b->ping; break;
+            case 6: cmp = lower(a->hostAddress).compare(lower(b->hostAddress)); break;
+            default: break;
+            }
+            return ascending ? cmp < 0 : cmp > 0;
+        });
+    }
+
     int visibleIndex = 0;
-    for (int i = 0; i < static_cast<int>(m_servers.size()); ++i) {
-        const ServerEntry& s = m_servers[i];
-        if (!PassesFilters(s)) continue;
+    for (const ServerEntry* entry : visible) {
+        const ServerEntry& s = *entry;
+        const int i = static_cast<int>(entry - m_servers.data());
 
         ImGui::TableNextRow();
         ImGui::TableNextColumn();

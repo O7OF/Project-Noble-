@@ -67,6 +67,8 @@ private:
     int m_modeFilter = 0; // 0 = All, 1 = Multiplayer, 2 = Campaign, 3 = Firefight, 4 = Forge
     bool m_hideFull = false;
     bool m_hideEmpty = false;
+    bool m_hidePassworded = false;   // only show games without a password
+    bool m_hideInProgress = false;   // only show games that have not started
     bool m_showOnlyFavorites = false;
 
     // Direct connect modal state

@@ -187,7 +187,8 @@ Menus (this session, all pushed):
 | `59154ac` | Docs: the PostCommand(11) stall investigation (conclusion corrected above) |
 | `3a777bf` | `-auto-play` / `-auto-play-variant` hooks; harness drives the real launch path; 15/15 modes x game types reach gameplay |
 | `1902aed` | GAME TYPE list filtered to what a vanilla map can host (mods unaffected) |
-| (this commit) | Controller **per-action rebinding** (`padBindings` + BUTTON BINDINGS list); `-auto-play-map` and the 35/35 all-maps matrix |
+| `54aeecb` | Controller **per-action rebinding** (`padBindings` + BUTTON BINDINGS list); `-auto-play-map` and the 35/35 all-maps matrix |
+| (this commit) | Server browser: sortable columns + `No password` / `Not started` filters |
 | `5f4da08` | Prompts follow the device everywhere; `InputPrompts` button glyphs in the CONTROLLER list |
 | (this commit) | Main menu **Continue** fast path (spec 4.1/4.10) + a status block at the top of the design doc |
 | `a8f412e` | Menu music player (`PauseMusic/ResumeMusic` + `DrawMusicPlayer`) |
