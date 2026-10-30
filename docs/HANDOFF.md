@@ -22,6 +22,44 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-30, 09:35 ET) - Menu background picker with preview + IMPORT (WeabooTyler117 / DeepSeek)
+
+Tyler: "players should be able to preview and choose their own background and even upload their own custom one".
+
+- **`SettingsData::menuBackground`** keeps its pool values (`random` / `noble` / `reach`) and now also accepts
+  **`file:<name>`**, a picture in `data\ui\custom\backgrounds\`. `UiArt::MenuBackground()` loads that file first and only
+  falls back to the random pool when it is missing (with a warning in the log).
+- **`UiArt` gains** `MenuBackgroundFiles()` (sorted names, cached), `ImportMenuBackgroundImage(source, outName)` (copies
+  PNG/JPG/BMP/WebP into the backgrounds folder, overwriting by name) and `WarmMenuBackground()`.
+- **Settings > Game options > Menus** now has **MENU BACKGROUND** (cycles Random / Noble art / Reach and every one of
+  the player's pictures, showing the file name) and **IMPORT BACKGROUND...** (Win32 open dialog via `GetOpenFileNameW`,
+  `comdlg32` linked), with an image **preview in the details column** (16:9 cover, plus a line saying where the picture
+  comes from and that a new choice is used from the next start).
+- `WarmMenuBackground()` is called from `FrontEndMenu::Initialize`, i.e. on the engine thread that owns the D3D device:
+  the fallback path that draws the menu from the main thread (`HoldFrame`) must never create textures.
+
+**Traps found (both cost a hung client):**
+1. **`SettingsPanel::Row()` always returns `true`** - it is a layout helper, not "activated". `if (Row(...)) { open a
+   dialog; }` ran the dialog **every frame**. Action rows must test `m_rowHovered && ImGui::IsMouseClicked(0)` or
+   `m_rowFocused && Accept`.
+2. Loading a texture from the main-thread fallback draw path can hang the client (the settings page was opened straight
+   from `-menu-screen settings`: the engine stops drawing after ~1 s and `HoldFrame` draws). Warm art on the device
+   thread and preview the **already loaded** picture (`UiArt::MenuBackground()`), not a fresh decode.
+
+### Still greyed in Settings (Tyler: "we really got to get them going")
+
+All of these need input-layer or engine work, not rows:
+
+- **Keyboard & mouse**: mouse acceleration, smoothing, sensitivity hotkeys (halve/double), invert flight, release
+  cursor key, second key per action. Where: `ReachHost.cpp` mouse look (slot 36) + `KeyBindings`; the engine's
+  profile has a second key slot at `+8` per action (see the 2026-10-28 handoff entry).
+- **Controller**: aim control Modern/Classic, aim acceleration, stick layout, button-layout presets (Default, Southpaw,
+  Boxer, Green Thumb, Bumper Jumper, Recon) and per-action pad bindings - a remap table in `ReachHost`'s pad poll plus
+  per-action storage in `SettingsData`; the CONTROLLER page already draws the layout and now has the glyphs for it.
+- **Graphics**: texture filtering / antialiasing / motion blur / shadows / draw distance ("Not available yet") need the
+  matching engine setting to be found first; **mute in background** needs an engine volume hook or at least a
+  focus-driven volume drop for Noble's own audio.
+
 ## 0. Pick up here (2026-10-30, 09:05 ET) - Continue fast path from the redesign spec, and the spec's status block (WeabooTyler117 / DeepSeek)
 
 Back to the redesign doc (`docs/menu-redesign-spec.md`) for the next Noble-side item: **4.1 main menu / 4.10 "Continue

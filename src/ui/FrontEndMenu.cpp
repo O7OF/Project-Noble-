@@ -3677,6 +3677,10 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
     ctx.closed = false;
     ctx.initialized = true;
 
+    // Menu background: pick and upload the texture here, on the engine thread that owns the device. The
+    // fallback draw path (HoldFrame, main thread) must never create textures - it used to hang there.
+    UiArt::WarmMenuBackground();
+
     UIManager::GetArmorCustomizer().SyncToReachArmory();
 
     // Server Browser Join Pre-Game Lobby Handler

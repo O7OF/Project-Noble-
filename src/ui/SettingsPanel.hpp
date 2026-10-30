@@ -25,7 +25,7 @@ public:
 private:
     enum class Cat { Graphics, Audio, Game, Player, KeyboardMouse, Controller, Online, Count };
     enum class When { Apply, Restart, Instant, Info };
-    enum class Preview { None, Fov, FrameLimit, Volume, Controller, Gpu };
+    enum class Preview { None, Fov, FrameLimit, Volume, Controller, Gpu, Background };
     struct Details {
         bool set = false;
         std::string title, effect, text, facts;

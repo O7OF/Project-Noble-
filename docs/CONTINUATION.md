@@ -170,6 +170,8 @@ Menus (this session, all pushed):
 | `bf9d384` | MCC-style `PlayerRow` (rank / emblem / nameplate with tag+name), `MY GAME SESSION` header, empty lobby slot fix |
 | `8059115` | **Emblems load again**: MCC pack stores `E_002_P_SML`, not `e_002_p` (upper case + `_SML`) - this also fixes O7's Armory emblem grid |
 | `e93076f` | `[DEV]` as text, centred rank badge, one framed block, smaller name |
+| `7d0d80b` | Main menu **Continue** fast path + design-doc status block |
+| (this commit) | Menu **background picker**: `file:<name>` backgrounds, IMPORT via file dialog, preview panel; `Row()` trap documented |
 | `5f4da08` | Prompts follow the device everywhere; `InputPrompts` button glyphs in the CONTROLLER list |
 | (this commit) | Main menu **Continue** fast path (spec 4.1/4.10) + a status block at the top of the design doc |
 | `a8f412e` | Menu music player (`PauseMusic/ResumeMusic` + `DrawMusicPlayer`) |
@@ -263,7 +265,12 @@ Also: invites carry `{senderUsername, hostIp, hostPort, timestamp}` only. To say
 6. The client is a single instance per account; `taskkill /IM noble-client.exe /F` before rebuilding (the linker cannot
    overwrite a running exe).
 7. `Relaunch::HandOff()` ends the process on purpose; `Relaunch::Start()` is for callers that keep running.
-8. `MenuState`/`OverlayContext` state is per-screen; `st.screen` changes are logged (`FrontEndMenu: screen X -> Y`),
+8. **`SettingsPanel::Row()` always returns true** (it draws the row); action rows must check
+   `m_rowHovered && ImGui::IsMouseClicked(0)` / `m_rowFocused && Accept`. Opening a dialog from its return value runs it
+   every frame and hangs the client.
+9. Do **not** load textures from the main-thread fallback draw path (`HoldFrame`). Warm art in
+   `FrontEndMenu::Initialize` (`UiArt::WarmMenuBackground()` is the pattern).
+10. `MenuState`/`OverlayContext` state is per-screen; `st.screen` changes are logged (`FrontEndMenu: screen X -> Y`),
    which is handy when a capture lands on the wrong screen.
 
 ---

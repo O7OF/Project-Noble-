@@ -222,6 +222,7 @@ target_link_libraries(noble-client PRIVATE
     d3dcompiler
     windowscodecs
     ole32
+    comdlg32
     ws2_32
     iphlpapi
     spdlog::spdlog

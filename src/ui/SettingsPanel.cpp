@@ -10,6 +10,7 @@
 #include "network/MasterServerClient.hpp"
 
 #include <windows.h>
+#include <commdlg.h>   // GetOpenFileNameW for IMPORT BACKGROUND
 #include <dxgi.h>
 #include <imgui.h>
 
@@ -711,6 +712,37 @@ void SettingsPanel::RenderDetails(float width, float height) {
         ImGui::Dummy(ImVec2(w, y - pv.y + 6.0f * s));
         break;
     }
+    case Preview::Background: {
+        Text(dl, NobleStyle::TitleFont(), 20.0f * Scale(), p, kText, "MENU BACKGROUND");
+        ImGui::Dummy(ImVec2(0, 8.0f * Scale()));
+        const std::string value = m_edit.menuBackground;
+        // The picture the menu is actually using: it was chosen and uploaded at menu init (WarmMenuBackground),
+        // so nothing decodes a texture here - doing that on the fallback draw thread hung the client.
+        const UiTexture tex = UiArt::MenuBackground();
+        const float bw = ImGui::GetContentRegionAvail().x;
+        const float bh = bw * 9.0f / 16.0f;
+        const ImVec2 a = ImGui::GetCursorScreenPos();
+        const ImVec2 b(a.x + bw, a.y + bh);
+        dl->AddRectFilled(a, b, IM_COL32(10, 15, 22, 255));
+        if (tex) {
+            UiArt::DrawCover(dl, tex, a, b);
+        } else {
+            const char* none = "NO PICTURE";
+            const ImVec2 ts = ImGui::CalcTextSize(none);
+            dl->AddText(ImVec2(a.x + (bw - ts.x) * 0.5f, a.y + (bh - ts.y) * 0.5f), IM_COL32(120, 135, 150, 200), none);
+        }
+        dl->AddRect(a, b, IM_COL32(150, 185, 215, 110), 0.0f, 0, 1.0f);
+        ImGui::Dummy(ImVec2(bw, bh));
+        ImGui::Dummy(ImVec2(0, 6.0f * Scale()));
+        ImGui::PushStyleColor(ImGuiCol_Text, NobleStyle::TextMuted());
+        if (value.rfind("file:", 0) == 0) ImGui::TextWrapped("Your picture: %s", value.substr(5).c_str());
+        else if (value == "reach") ImGui::TextWrapped("A random Halo: Reach campaign scene from your MCC install.");
+        else if (value == "noble") ImGui::TextWrapped("Noble's own background art.");
+        else ImGui::TextWrapped("A random picture from your own files, Noble's art and Reach's scenes.");
+        ImGui::TextWrapped("A new choice is used from the next start of Noble.");
+        ImGui::PopStyleColor();
+        break;
+    }
     case Preview::Controller: {
         const int pad = ConnectedPad();
         const std::string line = pad >= 0 ? "Controller " + std::to_string(pad + 1) + " connected." : std::string("No controller found.");
@@ -860,13 +892,55 @@ void SettingsPanel::RenderGame() {
         InfoValue("Not available yet");
     }
     Section("MENUS");
-    static const char* const kModes[] = { "random", "reach", "noble" };
-    static const char* const kLabels[] = { "RANDOM", "HALO: REACH (MCC)", "NOBLE ART" };
-    int mode = 0;
-    for (int i = 0; i < 3; ++i) if (m_edit.menuBackground == kModes[i]) mode = i;
-    if (Row("MENU BACKGROUND", "Where the menu's background pictures come from. Your own pictures in data\\ui\\custom\\backgrounds are always used first.",
-            When::Restart, "Random", m_edit.menuBackground != m_saved.menuBackground)) {
-        if (const int d = CycleValue(kLabels[mode], mode, 3)) m_edit.menuBackground = kModes[(mode + d + 3) % 3];
+    // Menu background: the three pools plus every picture the player has (their own files are "file:<name>"),
+    // with the chosen picture previewed in the details column and an IMPORT button next to it.
+    static const char* const kPoolValues[] = { "random", "noble", "reach" };
+    static const char* const kPoolLabels[] = { "RANDOM", "NOBLE ART", "HALO: REACH (MCC)" };
+    const std::vector<std::string> ownFiles = UiArt::MenuBackgroundFiles();
+    std::vector<std::string> values(kPoolValues, kPoolValues + 3);
+    std::vector<std::string> labels(kPoolLabels, kPoolLabels + 3);
+    for (const std::string& f : ownFiles) {
+        values.push_back("file:" + f);
+        labels.push_back(f);
+    }
+    int choice = 0;
+    for (size_t i = 0; i < values.size(); ++i) if (m_edit.menuBackground == values[i]) choice = static_cast<int>(i);
+    if (Row("MENU BACKGROUND", "The picture behind every menu. Pick one of the pools or one of your own images (data\\ui\\custom\\backgrounds); IMPORT adds a new one.",
+            When::Restart, "Random", m_edit.menuBackground != m_saved.menuBackground, false, Preview::Background)) {
+        if (const int d = CycleValue(labels[static_cast<size_t>(choice)].c_str(), choice, static_cast<int>(values.size()))) {
+            m_edit.menuBackground = values[static_cast<size_t>((choice + d + static_cast<int>(values.size())) % static_cast<int>(values.size()))];
+        }
+    }
+    // Action row: Row() is a layout helper that always returns true, so the file dialog must be opened from
+    // an explicit click on the row (or Accept while it is focused), not from the return value. Opening it every
+    // frame hung the client, because the dialog waits for input (2026-10-30).
+    const std::string ownCount = ownFiles.empty() ? std::string("No own pictures")
+                                                  : std::to_string(ownFiles.size()) + " own picture(s)";
+    if (Row("IMPORT BACKGROUND...", "Pick an image (PNG, JPG, BMP or WebP). It is copied into data\\ui\\custom\\backgrounds and selected here; the menu uses it from the next start.",
+            When::Restart, ownCount.c_str(), false)) {
+        InfoValue(ownFiles.empty() ? "No own pictures" : ownCount.c_str());
+        const bool clicked = m_rowHovered && ImGui::IsMouseClicked(0);
+        const bool accepted = m_rowFocused && (ImGui::IsKeyPressed(ImGuiKey_Enter, false) ||
+                                               ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false));
+        if (clicked || accepted) {
+            wchar_t file[MAX_PATH] = {};
+            OPENFILENAMEW ofn{};
+            ofn.lStructSize = sizeof(ofn);
+            ofn.hwndOwner = GetActiveWindow();
+            ofn.lpstrFilter = L"Images\0*.png;*.jpg;*.jpeg;*.bmp;*.webp\0All files\0*.*\0";
+            ofn.lpstrFile = file;
+            ofn.nMaxFile = MAX_PATH;
+            ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
+            if (GetOpenFileNameW(&ofn)) {
+                std::string name;
+                if (UiArt::ImportMenuBackgroundImage(std::filesystem::path(file), name)) {
+                    m_edit.menuBackground = "file:" + name;
+                    MenuSounds::Click();
+                } else {
+                    MenuSounds::Error();
+                }
+            }
+        }
     }
 }
 

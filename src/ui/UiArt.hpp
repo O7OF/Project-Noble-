@@ -37,8 +37,21 @@ void Shutdown();
 // An image from one of MCC's UI texture packs, e.g. ("skullstexturepack", "IRON").
 UiTexture PackImage(const std::string& pack, const std::string& name);
 
-// Full-screen background for the front-end menu. Picked once per run (see SettingsData::menuBackground).
+// Full-screen background for the front-end menu. Picked once per run (see SettingsData::menuBackground, which can
+// name one file as "file:<name>").
 UiTexture MenuBackground();
+
+// Loads and caches the menu background now. Call it once from the thread that owns the D3D device (menu init):
+// the fallback path that draws the menu from the main thread when the engine stops must not create textures.
+void WarmMenuBackground();
+
+// The player's own background pictures (data\ui\custom\backgrounds), file names sorted, for the picker.
+std::vector<std::string> MenuBackgroundFiles();
+// The picture a stored menuBackground value would use, for the Settings preview: the named file, or a
+// representative picture for "random" / "noble" / "reach". Empty when there is nothing to show.
+UiTexture MenuBackgroundPreview(const std::string& value);
+// Copies an image the player picked into data\ui\custom\backgrounds and returns the stored file name.
+bool ImportMenuBackgroundImage(const std::filesystem::path& source, std::string& outName);
 
 // Full-screen picture for the loading screen of this scenario ("m10", "20_sword_slayer", ...).
 UiTexture LoadingBackground(const std::string& scenario);
