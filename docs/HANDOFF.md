@@ -1,4 +1,4 @@
-# Project Noble: handoff (2026-10-29, 18:15 ET)
+﻿# Project Noble: handoff (2026-10-29, 18:15 ET)
 Dominus join the team 20261028! 
 This picks up a reverse-engineering and C++ effort on **Tyler's Windows PC**. All paths below are real paths on that machine.
 Tyler (GitHub `WeabooTyler117`) works with a partner (GitHub `O7OF`) who owns the repo and writes most of the code.
@@ -11,6 +11,46 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-29, 21:25 ET) - Fix Crash at Main Menu (0x105597), Login Modal Input/Deadlock & Crash, and Multiplayer Guest Session Launch (Dominus / O7OF)
+
+### 1. Root Cause 1: Native Crash 0xC0000005 at haloreach.dll+0x105597 upon Entering Main Menu
+- **Disassembly Analysis:**
+  - Disassembled haloreach.dll RVA 0x1051E0 - 0x1055D0 (Bungie player appearance verification & fallback permutation builder).
+  - At 0x1052C9: cmp byte ptr [rsp+0x58], 0x40 (64). If any armor index (e.g. Helmet ID) is >= 64, al is set to 1.
+  - When the user had 'helmet_id': 'hilands_c' (index 71), al != 0.
+  - At 0x105324: je 0x1055c1. Because al != 0, the jump does not take, dropping execution into Bungie's composite permutation fallback builder at 0x10532A.
+  - At 0x105558: The fallback routine uses a fixed 16-element stack array. When capacity is exceeded, it writes with index -1 to [rbp+0x18], corrupting the item count into an invalid large address/pointer.
+  - At 0x105597: It iterates the corrupted count over the stack, faults past the stack guard page, and crashes with Access Violation 0xC0000005.
+- **Fix Applied:**
+  - In src/hooks/EnginePatches.cpp: Patched haloreach.dll RVA 0x105324 from 0F 84 97 02 00 00 (je 0x1055c1) to E9 98 02 00 00 90 (jmp 0x1055c1; nop). Invalid indices already get clamped to 0 by the preceding code; jumping directly to the function exit completely bypasses the bugged stack-corrupting fallback routine.
+  - In src/engine/ReachHost.cpp: Clamped helmet >= 64 to 0 (Mark V [B]) in ApplyArmoryAppearance.
+
+### 2. Root Cause 2: HostSlot47 (UserDataFolder) Return Value & Directory Resolution
+- Callers in haloreach.dll at RVA 0xABB45 and 0x34DCF9 test al for success (test al, al; je ...). Returning 0 treated user data folder resolution as a failure.
+- **Fix Applied:** In src/engine/ReachHost.cpp:HostSlot47_UserDataFolder, returned 1 on success instead of 0.
+
+### 3. Root Cause 3: Login Modal Crash, Popup Focus Deadlock & Thread Safety Race
+- ImGui::OpenPopup was being invoked unconditionally every single frame in DrawAccountModal and DrawDevMenuModal, corrupting ImGui's internal popup stack.
+- The background menu continued processing keyboard navigation while the popup modals were active.
+- Data race in AuthClient: m_username, m_sessionToken, m_userId, and m_isLoggedIn were being read/written across threads concurrently without synchronization in RefreshDeveloperStatusAsync.
+- ImGui_ImplWin32_WndProcHandler was never forwarded from the main window message procedure in main.cpp.
+- **Fixes Applied:**
+  - Added mutable std::mutex m_authMutex in src/network/AuthClient.hpp and guarded all accessors and mutators in src/network/AuthClient.cpp.
+  - Added one-shot modal triggers (OpenAccountModal(), OpenDevMenuModal()) and explicit ImGui::CloseCurrentPopup() calls in src/ui/FrontEndMenu.cpp.
+  - Disabled background navigation while any modal dialog is active (modal = st.confirmQuit || s_showAccountModal || s_showDevMenu).
+  - Registered UIManager::HandleWndProc via window->SetCustomWndProc in src/main.cpp.
+
+### 4. Root Cause 4: Multiplayer Guest Desync & Missing Session Token
+- In src/ui/FrontEndMenu.cpp:DrawPreGameLobby, when launching the guest match, choice.sessionToken = st.lobbySessionToken; was omitted, causing the guest to launch without -session-token on the command line.
+- In src/engine/BlamEngine.cpp:605, commit 622907a inverted the guest launch block check (std::wcsstr(..., L" -rr-guest-block\) != nullptr), disabling the working RR layout by default and falling back to a broken legacy guest block that deadlocked in state 9.
+- In src/engine/ReachHost.cpp, added SafeWriteUint16 helper to resolve compilation error C3861.
+- **Fixes Applied:**
+ - Restored default RR guest block layout in src/engine/BlamEngine.cpp (std::wcsstr(..., L\-legacy-guest-block\) == nullptr).
+ - Propagated sessionToken into PendingLobbyEvents, TakePendingLobbyEvents, and choice.sessionToken in src/ui/FrontEndMenu.cpp.
+ - Added SafeWriteUint16 helper function in src/engine/ReachHost.cpp.
+- **Verification:** Built cleanly via cmake --build build --config Release with 0 errors and 0 warnings.
+
+--
 ## 0. Pick up here (2026-10-29, 18:15 ET) - Online P2P Lobby Launch Diagnostic & Fix: Guest Stealing UDP 11774, Self-Loopback Disabling Relay, & Shared `settings.json` Identity Swap (Dominus / Dominus-VII)
 
 ### 1. Diagnostic Analysis of `build\bin\Release\noble-client.log` (`14:50:29`–`14:54:40`)
