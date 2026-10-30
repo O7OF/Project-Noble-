@@ -5,6 +5,7 @@
 #include "ui/LoadScreen.hpp"
 #include "career/Career.hpp"
 #include "hooks/HookManager.hpp"
+#include "hooks/LobbyPatches.hpp"
 #include "common/Logger.hpp"
 #include <algorithm>
 #include <thread>
@@ -965,41 +966,35 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
                 // from a late join; these modes instead clean the peer out of the membership and
                 // immediately end the mission. When the lobby told us how many guests it launched
                 // with, hold Command 11 until their port-1000 engine traffic arrives.
-                if (peersToWaitFor > 0 && !holdMissionForPeers) {
+                const size_t targetPeers = (peersToWaitFor > 0) ? static_cast<size_t>(peersToWaitFor)
+                                         : (joinedBeforeStart > 0 ? 1 : 0);
+                if (targetPeers > 0) {
                     const ULONGLONG deadline = GetTickCount64() + 60000;
-                    size_t joined = 0;
                     ULONGLONG lastLog = 0;
-                    NOBLE_INFO("BlamEngine: waiting for {} remote engine peer(s) before starting simulation...",
-                               peersToWaitFor);
+                    NOBLE_INFO("BlamEngine: waiting for {} remote player(s) to finish loading and join membership before starting simulation...",
+                               targetPeers);
                     while (GetTickCount64() < deadline) {
-                        joined = NetworkTransport::Get().GetGamePeerCount();
-                        if (joined >= static_cast<size_t>(peersToWaitFor)) break;
+                        const size_t playersJoined = LobbyPatches::GetRemotePlayerAddCount();
+                        if (playersJoined >= targetPeers) {
+                            NOBLE_INFO("BlamEngine: {}/{} remote player(s) joined session membership (msg 27); settling {} ms for world replication",
+                                       playersJoined, targetPeers, settleLonger ? 4000 : 2000);
+                            std::this_thread::sleep_for(std::chrono::milliseconds(settleLonger ? 4000 : 2000));
+                            break;
+                        }
                         const ULONGLONG now = GetTickCount64();
                         if (lastLog == 0 || now - lastLog >= 5000) {
                             lastLog = now;
-                            NOBLE_INFO("BlamEngine: peer wait: {}/{} engine peer(s) connected", joined, peersToWaitFor);
+                            NOBLE_INFO("BlamEngine: membership wait: {}/{} player(s) in session (engine peers: {})",
+                                       playersJoined, targetPeers, NetworkTransport::Get().GetGamePeerCount());
                         }
                         std::this_thread::sleep_for(std::chrono::milliseconds(100));
                     }
-                    joined = NetworkTransport::Get().GetGamePeerCount();
-                    if (joined >= static_cast<size_t>(peersToWaitFor)) {
-                        // Give the engine time to insert the new player slots and for the guest
-                        // to finish loading its scenario before the simulation starts. Campaign
-                        // and Forge need a longer window than Slayer/Firefight.
-                        const int settleMs = settleLonger ? 8000 : 2000;
-                        NOBLE_INFO("BlamEngine: {} engine peer(s) ready; holding simulation start for {} ms",
-                                   joined, settleMs);
-                        std::this_thread::sleep_for(std::chrono::milliseconds(settleMs));
-                    } else {
-                        NOBLE_WARN("BlamEngine: peer wait timed out with {}/{} engine peer(s); starting anyway",
-                                   joined, peersToWaitFor);
+                    if (LobbyPatches::GetRemotePlayerAddCount() < targetPeers) {
+                        NOBLE_WARN("BlamEngine: membership wait timed out with {}/{} player(s); starting simulation anyway",
+                                   LobbyPatches::GetRemotePlayerAddCount(), targetPeers);
                     }
                 } else {
-                    // Campaign/Forge already waited for its peers before Command 10; a short settle lets the guest
-                    // finish loading the scenario, then simulation starts. Other modes use the classic delays.
-                    // Campaign already waited before Command 10; Forge holds Command 11 for its peers here, longer than
-                    // the multiplayer wait because the guest has a Forge map and its editor state to load.
-                    const int simDelay = (peersToWaitFor > 0 && settleLonger) ? 8000 : (isOnlineHost ? 5000 : 200);
+                    const int simDelay = isOnlineHost ? 5000 : 200;
                     std::this_thread::sleep_for(std::chrono::milliseconds(simDelay));
                 }
 

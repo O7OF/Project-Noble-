@@ -2,6 +2,7 @@
 
 #include <windows.h>
 #include <cstdint>
+#include <cstddef>
 
 namespace noble {
 
@@ -17,6 +18,10 @@ public:
     static uint32_t GetMaxMultiplayerPlayers() { return s_maxMultiplayerPlayers; }
     static uint32_t GetMaxCoopPlayers() { return s_maxCoopPlayers; }
     static bool IsApplied() { return s_isApplied; }
+
+    static bool HasRemotePlayerJoined();
+    static void ResetRemotePlayerJoined();
+    static size_t GetRemotePlayerAddCount();
 
 private:
     static bool s_isApplied;

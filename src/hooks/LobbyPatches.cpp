@@ -276,6 +276,19 @@ static const char* SessionMessageName(int32_t t) {
 }
 static std::atomic<int> s_msgOutCount[64];
 static std::atomic<int> s_msgInCount[64];
+static std::atomic<size_t> s_remotePlayersJoinedCount{0};
+
+bool LobbyPatches::HasRemotePlayerJoined() {
+    return s_remotePlayersJoinedCount.load() > 0;
+}
+
+void LobbyPatches::ResetRemotePlayerJoined() {
+    s_remotePlayersJoinedCount.store(0);
+}
+
+size_t LobbyPatches::GetRemotePlayerAddCount() {
+    return s_remotePlayersJoinedCount.load();
+}
 
 typedef uint64_t(__fastcall* EncodeMessageFn)(void* table, void* stream, int32_t type, int32_t size, void* data);
 static EncodeMessageFn s_originalEncodeMessage = nullptr;
@@ -292,6 +305,9 @@ static DecodeMessageFn s_originalDecodeMessage = nullptr;
 static uint64_t __fastcall Hook_DecodeMessage(void* table, void* stream, int32_t* type, int32_t* size, void* buffer) {
     const uint64_t ok = s_originalDecodeMessage ? s_originalDecodeMessage(table, stream, type, size, buffer) : 0;
     const int32_t t = type ? *type : -1;
+    if (t == 27 && (ok & 0xFF) != 0) {
+        s_remotePlayersJoinedCount.fetch_add(1);
+    }
     if (t >= 0 && t < 64 && s_msgInCount[t].fetch_add(1) < 15) {
         NOBLE_INFO("LobbyPatches: [{} pid {}] RECV msg {} ({}) size {} decoded {}", RefuseRole(), GetCurrentProcessId(), t,
                    SessionMessageName(t), size ? *size : -1, (ok & 0xFF) != 0);
