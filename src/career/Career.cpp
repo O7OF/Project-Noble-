@@ -218,7 +218,7 @@ bool s_loaded = false;
 Totals s_totals;
 Extra s_extra;
 Award s_lastAward;
-
+std::map<uint64_t, std::pair<std::string, std::string>> s_playerNames;   // player id -> (name, tag)
 BaseType s_type = BaseType::Multiplayer;
 std::string s_map;
 int s_difficulty = 1;
@@ -588,7 +588,30 @@ void LogRecord(const uint8_t* rec) {
                    static_cast<int32_t>(U32(pr, 0x38)), stats, medals);
     }
 }
+// A plain-ASCII UTF-16 name stored in a player record, or "" when the bytes don't look like a name.
+std::string RecordName(const uint8_t* pr, size_t off) {
+    std::string out;
+    for (size_t i = 0; i < 16; ++i) {
+        uint16_t c;
+        std::memcpy(&c, pr + off + i * 2, sizeof(c));
+        if (c == 0) break;
+        if (c < 0x20 || c > 0x7E) return {};
+        out.push_back(static_cast<char>(c));
+    }
+    return out.size() >= 2 ? out : std::string();
+}
 
+// Diagnostic: raw bytes of a player record, to find where the name lives.
+void LogRecordBytes(int index, const uint8_t* pr) {
+    std::string hex;
+    char b[4];
+    for (size_t i = 0x08; i < 0x108; ++i) {
+        std::snprintf(b, sizeof(b), "%02X", pr[i]);
+        hex += b;
+        if ((i & 3) == 3) hex += ' ';
+    }
+    NOBLE_INFO("Career: player {} id 0x{:X} record +0x08..+0x107: {}", index, U64(pr, 0x08), hex);
+}
 } // namespace
 
 const std::vector<Rank>& Ranks() { return kRanks; }
@@ -673,7 +696,20 @@ void OnGameResults(const uint8_t* record, size_t size) {
         const uint8_t* st = record + kStatBlocks + i * kStatBlockSize;
         ScoreRow row;
         row.local = i == local;
-        row.name = row.local ? settings.playerName + "  [" + settings.serviceTag + "]" : "Player " + std::to_string(i + 1);
+        LogRecordBytes(i, pr);
+        if (row.local) {
+            row.name = settings.playerName + "  [" + settings.serviceTag + "]";
+        }
+        else {
+            std::string name = RecordName(pr, 0x4C), tag;
+            const auto known = s_playerNames.find(U64(pr, 0x08));
+            if (known != s_playerNames.end()) {
+                name = known->second.first;
+                tag = known->second.second;
+            }
+            if (name.empty()) name = "Player " + std::to_string(i + 1);
+            row.name = tag.empty() ? name : name + "  [" + tag + "]";
+        }
         row.score = static_cast<int32_t>(U32(pr, 0x34));
         row.kills = U32(st, kStatKills * 4);
         row.assists = U32(st, kStatAssists * 4);
@@ -1097,6 +1133,9 @@ void DevResetProgress() {
     SaveLocked();
     NOBLE_INFO("Career [DEV]: progress reset to Recruit");
 }
-
+void RegisterPlayerName(uint64_t playerId, const std::string& name, const std::string& tag) {
+    std::lock_guard<std::mutex> lock(s_mutex);
+    s_playerNames[playerId] = { name, tag };
+}
 } // namespace Career
 } // namespace noble
