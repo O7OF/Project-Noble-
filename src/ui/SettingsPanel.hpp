@@ -82,6 +82,7 @@ private:
     std::string m_message;
     double m_messageTime = 0.0;
     int m_musicGame = -1;              // game shown in the music picker (-1: the saved track's game)
+    int m_padRebindAction = -1;        // action waiting for a button press in the CONTROLLER bindings list
     char m_musicSearch[64] = {};
     bool m_musicScrollToCurrent = true;
 

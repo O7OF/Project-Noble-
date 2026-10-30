@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cstdint>
+#include <map>
+#include <string>
 
 namespace noble {
 
@@ -35,6 +37,19 @@ struct Source {
 
 // The source for one action in `layout` (clamped). Used by the CONTROLLER page to label its diagram.
 Source SourceFor(int layout, int action);
+
+// Stable key and player-facing name for each action, for settings.json and the bindings list.
+const char* ActionKey(int action);     // "jump", "grenades", "action", "swap", "melee", "armor", "fire", "zoom"
+const char* ActionName(int action);    // "Jump", "Switch grenades", ...
+int ActionFromKey(const std::string& key);   // -1 when unknown
+
+// XInput button bit for a `Source` (0 for the analogue triggers, which are reported separately).
+uint16_t SourceBit(const Source& source);
+
+// Per-action overrides: action key -> XInput button bit. An override replaces the layout's source for that action,
+// which is how the CONTROLLER page's "click a button to rebind" works.
+void Apply(int layout, uint16_t& buttons, uint8_t& leftTrigger, uint8_t& rightTrigger,
+           const std::map<std::string, int>* overrides);
 
 // Display name of a layout ("DEFAULT", "SOUTHPAW", ...). Never null.
 const char* Name(int layout);

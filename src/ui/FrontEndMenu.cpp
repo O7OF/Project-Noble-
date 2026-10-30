@@ -1666,6 +1666,23 @@ bool AutoPlayNow() {
     return GetTickCount64() - firstDraw > 3000;
 }
 
+// "-auto-play-map <scenario>": select that map, so a test run can walk every map.
+std::string AutoPlayMap() {
+    static const std::string scenario = [] {
+        std::string out;
+        int argc = 0;
+        LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+        for (int i = 1; argv && i + 1 < argc; ++i) {
+            if (_wcsicmp(argv[i], L"-auto-play-map") == 0) {
+                for (const wchar_t* c = argv[i + 1]; c && *c; ++c) out.push_back(static_cast<char>(*c));
+            }
+        }
+        if (argv) LocalFree(argv);
+        return out;
+    }();
+    return scenario;
+}
+
 // "-auto-play-variant <text>": pick the first variant whose file stem contains <text> (e.g. "ctf", "3nvasion").
 std::string AutoPlayVariantStem() {
     static const std::string stem = [] {
@@ -3370,6 +3387,12 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         const std::vector<MapEntry> maps = modded ? ModdedMaps(modList, modMode, baseMaps, baseCount, st.openMods)
                                                   : BaseMaps(baseMaps, baseCount);
         int& mapIndex = modded ? (ff ? st.ffModded : forge ? st.forgeModded : st.mpModded) : (ff ? st.ffMap : forge ? st.forgeMap : st.map);
+        if (const std::string autoMap = AutoPlayMap(); !autoMap.empty() && !modded) {
+            for (size_t i = 0; i < maps.size(); ++i) {
+                if (maps[i].header) continue;
+                if (maps[i].scenario == autoMap) { mapIndex = static_cast<int>(i); break; }
+            }
+        }
         FixSelection(maps, mapIndex);
         std::vector<ListItem> items = ToItems(maps);
         if (maps.empty()) items.push_back({ ff ? "No Reach Firefight mods installed" : "No Reach multiplayer mods installed", false, false });

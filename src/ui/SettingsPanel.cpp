@@ -9,6 +9,7 @@
 #include "engine/KeyBindings.hpp"
 #include "engine/CameraFov.hpp"
 #include "engine/PadLayouts.hpp"
+#include <map>
 #include "network/MasterServerClient.hpp"
 
 #include <windows.h>
@@ -1179,6 +1180,96 @@ void SettingsPanel::RenderController() {
             std::fabs(m_edit.padVibrationStrength - m_saved.padVibrationStrength) > 1e-4f, !m_edit.padVibration)) {
         SliderValue(m_edit.padVibrationStrength, 0.0f, 1.0f, 0.05f, 1.0f, Percent(m_edit.padVibrationStrength).c_str());
     }
+    // Per-action bindings: click a row, then press the pad button it should use. An override replaces the
+    // button layout's source for that action; DELETE puts the layout's own button back.
+    Section("BUTTON BINDINGS");
+    {
+        // ImGui's gamepad keys are what the Win32 backend updates, so the capture works without polling XInput.
+        struct KeyMap { ImGuiKey key; int bit; };
+        static const KeyMap kKeys[] = {
+            { ImGuiKey_GamepadFaceDown, 0x1000 }, { ImGuiKey_GamepadFaceRight, 0x2000 },
+            { ImGuiKey_GamepadFaceLeft, 0x4000 }, { ImGuiKey_GamepadFaceUp, 0x8000 },
+            { ImGuiKey_GamepadL1, 0x0100 },       { ImGuiKey_GamepadR1, 0x0200 },
+            { ImGuiKey_GamepadL3, 0x0040 },       { ImGuiKey_GamepadR3, 0x0080 },
+        };
+        auto bitName = [](int bit) -> const char* {
+            switch (bit) {
+            case 0x1000: return "A";
+            case 0x2000: return "B";
+            case 0x4000: return "X";
+            case 0x8000: return "Y";
+            case 0x0100: return "LB";
+            case 0x0200: return "RB";
+            case 0x0040: return "L STICK";
+            case 0x0080: return "R STICK";
+            default: return "-";
+            }
+        };
+
+        for (int action = 0; action < PadLayouts::ActionCount; ++action) {
+            const std::string key = PadLayouts::ActionKey(action);
+            const auto override = m_edit.padBindings.find(key);
+            const bool custom = override != m_edit.padBindings.end() && override->second > 0;
+            const PadLayouts::Source layoutSource =
+                PadLayouts::SourceFor(std::clamp(m_edit.padLayout, 0, static_cast<int>(PadLayouts::Count) - 1), action);
+            const std::string layoutName = layoutSource.bit ? bitName(layoutSource.bit)
+                                                            : (layoutSource.trigger == 1 ? "LT" : "RT");
+            const std::string value = m_padRebindAction == action ? std::string("PRESS A BUTTON...")
+                                    : custom ? std::string(bitName(override->second)) + " (custom)"
+                                             : layoutName + " (layout)";
+
+            if (!Row(PadLayouts::ActionName(action),
+                     "Click, then press the controller button this action should use. Esc cancels, Delete puts the layout's own button back.",
+                     When::Apply, layoutName.c_str(), custom)) {
+                continue;
+            }
+            InfoValue(value.c_str());
+            const bool clicked = m_rowHovered && ImGui::IsMouseClicked(0);
+            const bool accepted = m_rowFocused && (ImGui::IsKeyPressed(ImGuiKey_Enter, false) ||
+                                                   ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false));
+            if (clicked || accepted) {
+                m_padRebindAction = action;
+                MenuSounds::Click();
+            }
+            if (m_padRebindAction != action) continue;
+
+            // Capturing: the next pad button becomes the binding.
+            if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+                m_padRebindAction = -1;
+            } else if (ImGui::IsKeyPressed(ImGuiKey_Delete, false) || ImGui::IsKeyPressed(ImGuiKey_Backspace, false)) {
+                m_edit.padBindings.erase(key);
+                m_padRebindAction = -1;
+                MenuSounds::Click();
+            } else {
+                for (const KeyMap& map : kKeys) {
+                    if (!ImGui::IsKeyPressed(map.key, false)) continue;
+                    // One button, one action: drop any other action that was using it.
+                    for (auto it = m_edit.padBindings.begin(); it != m_edit.padBindings.end();) {
+                        if (it->first != key && it->second == map.bit) it = m_edit.padBindings.erase(it);
+                        else ++it;
+                    }
+                    m_edit.padBindings[key] = map.bit;
+                    m_padRebindAction = -1;
+                    MenuSounds::Click();
+                    break;
+                }
+            }
+        }
+        if (!m_edit.padBindings.empty()) {
+            if (Row("RESET BUTTON BINDINGS", "Puts every action back on the button its layout gives it.",
+                    When::Apply, "Layout", true)) {
+                InfoValue("Layout");
+                const bool clicked = m_rowHovered && ImGui::IsMouseClicked(0);
+                const bool accepted = m_rowFocused && (ImGui::IsKeyPressed(ImGuiKey_Enter, false) ||
+                                                       ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false));
+                if (clicked || accepted) {
+                    m_edit.padBindings.clear();
+                    m_padRebindAction = -1;
+                    MenuSounds::Click();
+                }
+            }
+        }
+    }
     if (m_search[0] == 0) {
         {
             // Name the layout that is actually in use, so the labels below are not read as "Default" when
@@ -1190,6 +1281,7 @@ void SettingsPanel::RenderController() {
         }
         DrawControllerDiagram(ImGui::GetContentRegionAvail().x, m_edit.padLayout);
     }
+
     (void)s;
 }
 
@@ -1381,7 +1473,7 @@ int SettingsPanel::CountDiff(const SettingsData& a, const SettingsData& b, Cat c
     }
     case Cat::Controller:
         return (a.padLookX != b.padLookX) + (a.padLookY != b.padLookY) + (a.padInvertLook != b.padInvertLook) +
-               (a.padLayout != b.padLayout) + (a.padStickLayout != b.padStickLayout) +
+               (a.padLayout != b.padLayout) + (a.padStickLayout != b.padStickLayout) + (a.padBindings != b.padBindings) +
                f(a.padLeftDeadZone, b.padLeftDeadZone) + f(a.padRightDeadZone, b.padRightDeadZone) +
                (a.padVibration != b.padVibration) + f(a.padVibrationStrength, b.padVibrationStrength);
     case Cat::Online:

@@ -22,6 +22,44 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-30, 21:10 ET) - Controller per-action rebinding, and Slayer on all 20 maps (WeabooTyler117 / DeepSeek)
+
+### 1. Per-action controller bindings (the last big Controls item)
+
+- **`SettingsData::padBindings`**: `std::map<std::string,int>` - action key ("jump", "grenades", "action", "swap",
+  "melee", "armor", "fire", "zoom") to an XInput button bit. Saved as a JSON object; empty means "use the layout".
+- **`PadLayouts::Apply(layout, buttons, lt, rt, overrides)`**: an override replaces that action's source from the layout
+  table before the engine mapping is applied, so layout presets and custom bindings compose instead of fighting. The old
+  three-argument overload still exists and delegates (Default is still a no-op when there are no overrides).
+  `ReachHost::FillLocalPad` passes `&s_pad.padBindings`.
+- **Settings > Controller > BUTTON BINDINGS**: one row per action showing the button in use - `A (layout)` for the
+  layout's own choice, `B (custom)` for an override - and the capture flow: click (or Accept) a row, press a pad button,
+  done. **Esc** cancels the capture, **Delete/Backspace** drops the override and the layout's button comes back, and
+  **RESET BUTTON BINDINGS** clears them all. Binding a button that another action already uses moves it (one button,
+  one action). Analogue triggers (LT/RT) cannot be rebound this way because the engine expects them as analogue values,
+  so fire/grenade stay on their triggers unless a preset moves them.
+- The section sits directly above the layout diagram, so it is the first thing on the page; the diagram still shows the
+  *preset* (it is titled with the preset's name).
+
+### 2. Slayer on every map, plus the full matrix: 35/35 reach gameplay
+
+Added `-auto-play-map <scenario>` (same family as `-auto-play` / `-auto-play-variant`) and a `-Maps` switch to
+`tools/test-modes.ps1`, which adds every vanilla map with Slayer. Full background run:
+
+```
+[1..10]  Sword Base x (Slayer, CTF, Assault, KOTH, Oddball, Infection, Territories, Stockpile, Headhunter, Juggernaut)
+[11]     Sword Base / Invasion                                  blocked (expected)
+[12..13] Firefight / Standard, Gruntpocalypse
+[14]     Campaign / Winter Contingency
+[15]     Forge / Forge World
+[16..35] Slayer on Boardwalk, Boneyard, Countdown, Powerhouse, Reflection, Spire, Zealot, Anchor 9, Breakpoint,
+         Tempest, Condemned, Highlands, Battle Canyon, Penance, Ridgeline, Solitary, High Noon, Breakneck, Forge World
+35/35 passed
+```
+
+Every case reached in-game (HUD string lookups), zero `[error]` lines. This is the "every mode with every game type"
+and "all maps load" answer in one run; it takes about 25 minutes with `-PlaySeconds 40`.
+
 ## 0. Pick up here (2026-10-30, 19:55 ET) - Vanilla maps only list the game types they can host (WeabooTyler117 / DeepSeek)
 
 Follow-up to the map/game-type guard. Until now Sword Base would still *offer* Invasion and then refuse to start it;

@@ -1334,7 +1334,7 @@ static void FillLocalPad(uint8_t* st, bool keyboardMouseUsed) {
     uint8_t lt = g.bLeftTrigger, rt = g.bRightTrigger;
     // Halo: Reach button layout (Default / Southpaw / Boxer / Green Thumb / Bumper Jumper / Recon): permute the
     // physical buttons into the mapping the engine expects. Default is a no-op.
-    PadLayouts::Apply(s_pad.padLayout, buttons, lt, rt);
+    PadLayouts::Apply(s_pad.padLayout, buttons, lt, rt, &s_pad.padBindings);
     memcpy(st + 0x120, &buttons, sizeof(buttons));
     st[0x124] = lt;
     st[0x125] = rt;

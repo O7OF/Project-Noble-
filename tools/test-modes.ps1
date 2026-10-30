@@ -15,6 +15,7 @@
 param(
     [int]$PlaySeconds = 55,
     [string[]]$Only = @(),
+    [switch]$Maps,           # add every vanilla map with Slayer, to check that each map loads at all
     [string]$Exe = "D:\Halo-Reach-Community-Edition\build\bin\Release\noble-client.exe"
 )
 
@@ -42,6 +43,24 @@ $cases = @(
     @{ Screen = "forge";     Stem = $null;                        Label = "Forge / Forge World" }
 )
 
+if ($Maps) {
+    $allMaps = @(
+        @{ Scenario = "20_sword_slayer"; Name = "Sword Base" }, @{ Scenario = "50_panopticon"; Name = "Boardwalk" },
+        @{ Scenario = "70_boneyard"; Name = "Boneyard" },       @{ Scenario = "45_launch_station"; Name = "Countdown" },
+        @{ Scenario = "30_settlement"; Name = "Powerhouse" },   @{ Scenario = "52_ivory_tower"; Name = "Reflection" },
+        @{ Scenario = "35_island"; Name = "Spire" },            @{ Scenario = "45_aftship"; Name = "Zealot" },
+        @{ Scenario = "dlc_slayer"; Name = "Anchor 9" },        @{ Scenario = "dlc_invasion"; Name = "Breakpoint" },
+        @{ Scenario = "dlc_medium"; Name = "Tempest" },         @{ Scenario = "condemned"; Name = "Condemned" },
+        @{ Scenario = "trainingpreserve"; Name = "Highlands" }, @{ Scenario = "cex_beaver_creek"; Name = "Battle Canyon" },
+        @{ Scenario = "cex_damnation"; Name = "Penance" },      @{ Scenario = "cex_timberland"; Name = "Ridgeline" },
+        @{ Scenario = "cex_prisoner"; Name = "Solitary" },      @{ Scenario = "cex_hangemhigh"; Name = "High Noon" },
+        @{ Scenario = "cex_headlong"; Name = "Breakneck" },     @{ Scenario = "forge_halo"; Name = "Forge World" }
+    )
+    foreach ($m in $allMaps) {
+        $cases += [pscustomobject]@{ Screen = "custom"; Stem = "slayer_054"; Map = $m.Scenario; Label = ("{0} / Slayer" -f $m.Name) }
+    }
+}
+
 if ($Only.Count -gt 0) {
     $cases = @($cases | Where-Object { $name = $_.Label; ($Only | Where-Object { $name -like "*$_*" }).Count -gt 0 })
 }
@@ -56,6 +75,7 @@ foreach ($case in $cases) {
 
     $clientArgs = @("-menu-screen", $case.Screen, "-auto-play")
     if ($case.Stem) { $clientArgs += @("-auto-play-variant", $case.Stem) }
+    if ($case.Map) { $clientArgs += @("-auto-play-map", $case.Map) }
 
     $started = Get-Date
     $parent = Start-Process -FilePath $Exe -ArgumentList $clientArgs -WorkingDirectory $exeDir -PassThru

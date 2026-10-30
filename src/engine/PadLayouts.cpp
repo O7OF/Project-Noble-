@@ -1,6 +1,7 @@
 #include "engine/PadLayouts.hpp"
 
 #include <algorithm>
+#include <cstring>
 #include <cstdio>
 #include <fstream>
 
@@ -45,6 +46,26 @@ constexpr uint16_t kOwned = kA | kB | kX | kY | kLB | kRB | kRS;
 
 } // namespace
 
+const char* ActionKey(int action) {
+    static const char* const keys[ActionCount] = { "jump", "grenades", "action", "swap", "melee", "armor", "fire", "zoom" };
+    return (action >= 0 && action < ActionCount) ? keys[action] : "";
+}
+
+const char* ActionName(int action) {
+    static const char* const names[ActionCount] = { "Jump", "Switch grenades", "Action / reload", "Swap weapons",
+                                                    "Melee", "Armor ability", "Fire", "Zoom" };
+    return (action >= 0 && action < ActionCount) ? names[action] : "";
+}
+
+int ActionFromKey(const std::string& key) {
+    for (int a = 0; a < ActionCount; ++a) {
+        if (key == ActionKey(a)) return a;
+    }
+    return -1;
+}
+
+uint16_t SourceBit(const Source& source) { return source.bit; }
+
 Source SourceFor(int layout, int action) {
     if (layout < 0 || layout >= Count) layout = Default;
     if (action < 0 || action >= ActionCount) action = Jump;
@@ -75,7 +96,13 @@ const char* Description(int layout) {
 }
 
 void Apply(int layout, uint16_t& buttons, uint8_t& leftTrigger, uint8_t& rightTrigger) {
-    if (layout <= Default || layout >= Count) return;
+    Apply(layout, buttons, leftTrigger, rightTrigger, nullptr);
+}
+
+void Apply(int layout, uint16_t& buttons, uint8_t& leftTrigger, uint8_t& rightTrigger,
+           const std::map<std::string, int>* overrides) {
+    const bool hasOverrides = overrides != nullptr && !overrides->empty();
+    if ((layout <= Default || layout >= Count) && !hasOverrides) return;
     const uint16_t in = buttons;
     const uint8_t inLt = leftTrigger, inRt = rightTrigger;
 
@@ -85,7 +112,11 @@ void Apply(int layout, uint16_t& buttons, uint8_t& leftTrigger, uint8_t& rightTr
     uint16_t out = static_cast<uint16_t>(in & ~kOwned);
     uint8_t outLt = 0, outRt = 0;
     for (int a = 0; a < ActionCount; ++a) {
-        const Source& src = kLayouts[layout][a];
+        Source src = (layout > Default && layout < Count) ? kLayouts[layout][a] : kDefault[a];
+        if (hasOverrides) {
+            const auto it = overrides->find(ActionKey(a));
+            if (it != overrides->end() && it->second > 0) src = Source{ static_cast<uint16_t>(it->second), 0 };
+        }
         const Source& dst = kDefault[a];
         // Is this action active, and (for analogues) with what value?
         uint8_t value = 0;
