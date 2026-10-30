@@ -1641,6 +1641,48 @@ OverlayContext& GetOverlayCtx() {
     return s_ctx;
 }
 
+
+// "-auto-play": the capture harness cannot press PLAY LOCAL / HOST LOBBY, so a test run can ask the setup screens
+// to start the selected match by themselves after a couple of seconds. Test-only, no settings involved.
+bool AutoPlayRequested() {
+    static const bool requested = [] {
+        bool found = false;
+        int argc = 0;
+        LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+        for (int i = 1; argv && i < argc; ++i) {
+            if (_wcsicmp(argv[i], L"-auto-play") == 0) found = true;
+        }
+        if (argv) LocalFree(argv);
+        return found;
+    }();
+    return requested;
+}
+
+bool AutoPlayNow() {
+    if (!AutoPlayRequested()) return false;
+    // Time, not frames: the menu can draw at 2 fps while the engine loads, which made a frame count take 45 s.
+    static ULONGLONG firstDraw = 0;
+    if (firstDraw == 0) firstDraw = GetTickCount64();
+    return GetTickCount64() - firstDraw > 3000;
+}
+
+// "-auto-play-variant <text>": pick the first variant whose file stem contains <text> (e.g. "ctf", "3nvasion").
+std::string AutoPlayVariantStem() {
+    static const std::string stem = [] {
+        std::string out;
+        int argc = 0;
+        LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+        for (int i = 1; argv && i + 1 < argc; ++i) {
+            if (_wcsicmp(argv[i], L"-auto-play-variant") == 0) {
+                for (const wchar_t* c = argv[i + 1]; c && *c; ++c) out.push_back(static_cast<char>(*c));
+            }
+        }
+        if (argv) LocalFree(argv);
+        return out;
+    }();
+    return stem;
+}
+
 void UpdateSceneForScreen(Screen screen) {
     switch (screen) {
     case Screen::Main:
@@ -3201,8 +3243,8 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         const bool canStart = mission && mission->enabled;
         const float bw = (pw - 10.0f * ui.s) * 0.5f;
         std::string sub = mission ? std::string(mission->name) + " · " + kDifficultyNames[st.difficulty] : std::string("Pick a mission");
-        const bool startSolo = (BigAction(ui, "start", ImVec2(px, actionsY), bw, "PLAY SOLO", sub.c_str(), true, canStart, st.focusRow == 3) ||
-                                (st.focusRow == 3 && AcceptPressed())) && canStart;
+        const bool startSolo = ((BigAction(ui, "start", ImVec2(px, actionsY), bw, "PLAY SOLO", sub.c_str(), true, canStart, st.focusRow == 3) ||
+                                 (st.focusRow == 3 && AcceptPressed())) && canStart) || (AutoPlayNow() && canStart);
         const char* coopSub = st.lobbyNetMode == 1 ? (st.lobbyPrivacy == 0 ? "Public Online P2P" : "Private Online P2P") : "Local LAN Co-op";
         const bool hostCoop = BigAction(ui, "coop", ImVec2(px + bw + 10.0f * ui.s, actionsY), pw - bw - 10.0f * ui.s, "HOST CO-OP", coopSub, true, canStart);
         if (hostCoop) {
@@ -3342,6 +3384,32 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         const MapEntry* map = (row && !row->header) ? row : nullptr;
         const ModEntry* mod = map ? map->mod : nullptr;
 
+        // "-auto-play-variant <text>": a test run can ask for a specific game type (the matrix uses this).
+        if (const std::string autoStem = AutoPlayVariantStem(); !autoStem.empty() && !modded) {
+            const std::vector<MenuVariant>& list = ff ? ctx.ffVariants : ctx.variants;
+            int& v = ff ? st.ffVariant : st.variant;
+            std::string needle = autoStem;
+            for (char& c : needle) c = static_cast<char>(::tolower(static_cast<unsigned char>(c)));
+            // Prefer a file whose stem *starts* with the needle: "slayer" must pick slayer_054, not
+            // 2nvasion_slayer_054 (which sorts first and is an Invasion variant).
+            int prefix = -1, anywhere = -1;
+            for (size_t i = 0; i < list.size(); ++i) {
+                std::string stem = list[i].path.stem().string();
+                for (char& c : stem) c = static_cast<char>(::tolower(static_cast<unsigned char>(c)));
+                if (stem.rfind(needle, 0) == 0) { prefix = static_cast<int>(i); break; }
+                if (anywhere < 0 && stem.find(needle) != std::string::npos) anywhere = static_cast<int>(i);
+            }
+            const int chosen = prefix >= 0 ? prefix : anywhere;
+            if (chosen >= 0) {
+                v = chosen;
+                static bool s_logged = false;
+                if (!s_logged) {
+                    s_logged = true;
+                    NOBLE_INFO("FrontEndMenu: -auto-play-variant {} -> {}", autoStem, list[chosen].path.filename().string());
+                }
+            }
+        }
+
         // Right column, top down: banner, game type row, Firefight options + difficulty; the network strip
         // and the action buttons stay anchored at the bottom (RightColumnLayout), so the strip can never
         // cover the difficulty tiles the way it did before.
@@ -3370,6 +3438,14 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
                 }
                 typeConflict = std::string(MapGameTypes::Name(gameType)) + " isn't set up on " + map->name +
                                "  Pick " + good + " (modded maps are never restricted).";
+                // Say it in the log too: it explains a refused start to whoever reads the log later (and lets the
+                // test harness stop waiting for a match that will never start).
+                static std::string s_lastRefusal;
+                if (s_lastRefusal != (map->scenario + "|" + gameType)) {
+                    s_lastRefusal = map->scenario + "|" + gameType;
+                    NOBLE_INFO("FrontEndMenu: refused to start {} on {} - {}{}", MapGameTypes::Name(gameType),
+                               map->name, map->scenario, " has no setup for it");
+                }
             }
         }
         const bool forgeMissing = forge && !std::filesystem::exists(ctx.forgeVariant);
@@ -3458,8 +3534,9 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         const char* hostLabel = ff ? "HOST CO-OP" : forge ? "HOST FORGE" : "HOST LOBBY";
         const char* hostSub = st.lobbyNetMode == 1 ? (st.lobbyPrivacy == 0 ? "Public Online P2P" : "Private Online P2P") : "Local LAN Lobby";
 
-        const bool startSolo = (BigAction(ui, "start", ImVec2(px, actionsY), bw, soloLabel, sub.c_str(), true, canStart, st.focusRow == focusRows) ||
-                                (st.focusRow == focusRows && AcceptPressed())) && canStart;
+        const bool autoPlay = AutoPlayNow();
+        const bool startSolo = ((BigAction(ui, "start", ImVec2(px, actionsY), bw, soloLabel, sub.c_str(), true, canStart, st.focusRow == focusRows) ||
+                                 (st.focusRow == focusRows && AcceptPressed())) && canStart) || (autoPlay && canStart);
         const bool startHost = BigAction(ui, "host", ImVec2(px + bw + 10.0f * ui.s, actionsY), pw - bw - 10.0f * ui.s, hostLabel, hostSub, true, canStart);
 
         if (startHost) {

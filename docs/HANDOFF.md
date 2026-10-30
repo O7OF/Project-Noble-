@@ -22,6 +22,72 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-30, 19:30 ET) - Every mode with every game type tested: 15/15 reach gameplay (WeabooTyler117 / DeepSeek)
+
+Tyler: "tests done on all modes to make sure multiplayer works. Every mode with every game type."
+
+### 1. Root cause of the "PostCommand(11) stall" - it was never the environment
+
+**A bare CLI launch cannot start a match.** The client needs the account/profile arguments the menu adds when it hands
+off to the new process. I read the relaunched child's command line while it was running:
+
+```
+-map "20_sword_slayer" -mode "multiplayer" -difficulty 1 -variant "...\slayer_054.bin"
+-player-name "WEABOOTYLER117" -service-tag "RTRD" -account-user "..." -account-token "..."
+-user-id 5 -account-dev 1
+```
+
+Without `-account-user` / `-account-token` / `-user-id` (and the name fields) the engine logs
+`EngineEvent reason=4 message='no game selected'`, posts Command 11 and then pumps no frames at all, so `-quit-after`
+can never fire. That is what the 18:20 entry (and the earlier "idle desktop" theory) was chasing: launching
+`-map ... -mode multiplayer` by hand skips the identity, so it hangs; launching it from the menu hands off properly and
+the match runs. **The 18:20 entry's conclusion was wrong; this is not an environment problem.**
+
+### 2. Test hooks in the client (both test-only, no settings)
+
+- **`-auto-play`**: the setup screens press PLAY SOLO / HOST LOBBY by themselves 3 seconds after their first draw
+  (time-based, because the menu can draw at 2 fps while the engine loads, which made a frame count take 45 s).
+- **`-auto-play-variant <text>`**: preselects the first variant whose file stem *starts* with `<text>` (falls back to
+  a substring match). The prefix rule matters: `slayer` must pick `slayer_054`, not `2nvasion_slayer_054`, which sorts
+  first and is an Invasion variant.
+- A refused start is now logged: `FrontEndMenu: refused to start <type> on <map> - <scenario> has no setup for it`,
+  which is what the harness waits for to confirm the game-type guard did its job.
+
+### 3. `tools/test-modes.ps1` rewritten around the real launch path
+
+The harness starts the client on a screen with `-auto-play`, waits for `launching match via Relaunch`, waits for the
+child process, lets it run for `-PlaySeconds` (55 s default), kills it and judges the log: **in game** means the HUD
+string lookups (`Slot 57 - StringLookup`) appeared, which only happens inside a match.
+
+### 4. Result
+
+```
+[1/15]  Sword Base / Slayer                        ok, in game (30 frames)  60s
+[2/15]  Sword Base / CTF                           ok, in game (30 frames)  60s
+[3/15]  Sword Base / Assault                       ok, in game (31 frames)  60s
+[4/15]  Sword Base / King of the Hill              ok, in game (31 frames)  60s
+[5/15]  Sword Base / Oddball                       ok, in game (30 frames)  60s
+[6/15]  Sword Base / Infection                     ok, in game (31 frames)  60s
+[7/15]  Sword Base / Territories                   ok, in game (31 frames)  60s
+[8/15]  Sword Base / Stockpile                     ok, in game (31 frames)  60s
+[9/15]  Sword Base / Headhunter                    ok, in game (30 frames)  60s
+[10/15] Sword Base / Juggernaut                    ok, in game (31 frames)  60s
+[11/15] Sword Base / Invasion (guard must refuse)  blocked (expected)       2s
+[12/15] Firefight / Standard                       ok, in game (24 frames)  60s
+[13/15] Firefight / Gruntpocalypse                 ok, in game (25 frames)  60s
+[14/15] Campaign / Winter Contingency              ok, in game (30 frames)  60s
+[15/15] Forge / Forge World                        ok, in game (30 frames)  60s
+
+15/15 passed
+```
+
+Zero `[error]` lines across the 15 log slices (`tools/test-modes-NN.log`, kept in the repo tools folder but gitignored
+by size - regenerate with the script). The Invasion case is the guard working, not a failure: it refuses Sword Base
+before the engine is asked to start something the map cannot host.
+
+To widen the coverage: add cases to the `$cases` table in the script (every map x type, using the same rules as
+`MapGameTypes`); the script needs ~60 s per case.
+
 ## 0. Pick up here (2026-10-30, 18:20 ET) - Match launches currently stall at PostCommand(11) - NOT a regression from the UI work (WeabooTyler117 / DeepSeek)
 
 Trying to run the mode/game-type matrix again (Tyler asked for "tests on all modes: every mode with every game type"):

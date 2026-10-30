@@ -184,7 +184,8 @@ Menus (this session, all pushed):
 | `ea55d4c` | Menu music playlist: per-track ON/OFF, honoured by SHUFFLE ALL GAMES |
 | `04e6700` | Docs: armory backdrop clear-hook approach ruled out |
 | `45a18b6` | Docs: all 21 armory scenes probed, none has a backdrop |
-| (this commit) | Docs: match launches stall at PostCommand(11) in this environment (reproduces on `a21ebce`) |
+| `59154ac` | Docs: the PostCommand(11) stall investigation (conclusion corrected above) |
+| (this commit) | `-auto-play` / `-auto-play-variant` test hooks; `tools/test-modes.ps1` drives the real launch path; 15/15 modes x game types reach gameplay |
 | `5f4da08` | Prompts follow the device everywhere; `InputPrompts` button glyphs in the CONTROLLER list |
 | (this commit) | Main menu **Continue** fast path (spec 4.1/4.10) + a status block at the top of the design doc |
 | `a8f412e` | Menu music player (`PauseMusic/ResumeMusic` + `DrawMusicPlayer`) |
@@ -286,7 +287,11 @@ Also: invites carry `{senderUsername, hostIp, hostPort, timestamp}` only. To say
 10. The headless suites under `-test-map-gametypes` cover game types, map names and button layouts; run it after
     touching `MapGameTypes.cpp`, `MapNames.cpp` or `PadLayouts.cpp`. Engine model to remember: fire is analogue RT,
     grenades are the **B button**, melee **RB**, armour **LB**, zoom **RS click**.
-11. Game types: `MapGameTypes::Supports()` is the only place that decides whether a vanilla map may host a type; run
+11. **A bare CLI launch cannot start a match** - the client needs the `-account-user` / `-account-token` / `-user-id` /
+    name arguments that the menu adds on hand-off. Use `-menu-screen <setup> -auto-play [-auto-play-variant <stem>]` and
+    let it hand off (that is what `tools/test-modes.ps1` does); without identity the engine logs "no game selected" and
+    never pumps a frame.
+12. Game types: `MapGameTypes::Supports()` is the only place that decides whether a vanilla map may host a type; run
     `noble-client.exe -test-map-gametypes` after touching its tables. Modded maps are deliberately never checked.
 11. `ReachAudio::MusicTracks()` builds the whole list - cache it if you call it per frame. Muting from the music widget
     is overridden while Settings > Audio is open (that page pushes its volume every frame).
