@@ -308,14 +308,13 @@ static HRESULT STDMETHODCALLTYPE HookSwapChainPresent(IDXGISwapChain* swapChain,
     HWND hwnd = (swapChain && SUCCEEDED(swapChain->GetDesc(&scDesc))) ? scDesc.OutputWindow : nullptr;
     const bool isFocused = (hwnd == nullptr || GetForegroundWindow() == hwnd);
 
+    // FRAME-RATE LIMIT: 0 means what it says - no pacing at all while the window is active. (It used to be
+    // silently capped at 120, which made "No limit" a lie and confused the FPS counter.)
     int targetFps = settings.fpsLimit;
-    if (!isFocused) {
-        // While unfocused (e.g. alt-tabbed, waiting for non-host client), throttle to 30 FPS to prevent
-        // CPU core pegging, GPU load spikes, and Windows AppHang / unresponsiveness detection.
+    if (!isFocused && settings.throttleUnfocused) {
+        // While unfocused (alt-tabbed, or waiting as a guest) throttle to 30 FPS so a background window cannot peg a
+        // CPU core or trip Windows' unresponsive-app detection. SETTINGS > Graphics can turn this off for streaming.
         targetFps = (targetFps > 0 && targetFps < 30) ? targetFps : 30;
-    } else if (targetFps <= 0) {
-        // Default cap of 120 FPS when uncapped to prevent runaway 200+ FPS loops while preserving smoothness.
-        targetFps = 120;
     }
 
     if (targetFps != previousLimit) {
@@ -323,7 +322,9 @@ static HRESULT STDMETHODCALLTYPE HookSwapChainPresent(IDXGISwapChain* swapChain,
         nextPresentTicks = now.QuadPart;
     }
 
-    if (targetFps > 0 && frequency.QuadPart > 0) {
+    if (targetFps <= 0) {
+        nextPresentTicks = now.QuadPart;   // uncapped: present immediately
+    } else if (frequency.QuadPart > 0) {
         const LONGLONG interval = frequency.QuadPart / targetFps;
         if (now.QuadPart < nextPresentTicks) {
             LONGLONG remaining = nextPresentTicks - now.QuadPart;

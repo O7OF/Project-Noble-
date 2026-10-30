@@ -857,10 +857,14 @@ void SettingsPanel::RenderGraphics() {
         int current = n - 1;
         for (int i = 0; i < n; ++i) if (kFpsLimits[i] == m_edit.fpsLimit) current = i;
         const std::string label = m_edit.fpsLimit == 0 ? std::string("NO LIMIT") : std::to_string(m_edit.fpsLimit) + " FPS";
-        if (Row("FRAME-RATE LIMIT", "Highest frame rate Noble draws. A limit at your display's refresh rate keeps the PC cooler and quieter; menus and loading screens keep the display's own rate.",
+        if (Row("FRAME-RATE LIMIT", "Highest frame rate Noble draws. No limit means exactly that: no pacing while the window is active. A limit at your display's refresh rate keeps the PC cooler and quieter.",
                 When::Apply, "No limit", m_edit.fpsLimit != m_saved.fpsLimit, false, Preview::FrameLimit)) {
             if (const int d = CycleValue(label.c_str(), current, n, false)) m_edit.fpsLimit = kFpsLimits[std::clamp(current + d, 0, n - 1)];
         }
+    }
+    if (Row("THROTTLE WHEN UNFOCUSED", "While Noble is not the active window (alt-tabbed, or waiting in a lobby as a guest) the frame rate drops to 30 so a background game cannot peg the CPU. Turn it off if you stream or capture from another window and want the full rate.",
+            When::Apply, "On", m_edit.throttleUnfocused != m_saved.throttleUnfocused)) {
+        ToggleValue(m_edit.throttleUnfocused);
     }
     if (Row("FPS COUNTER", "Shows the frame rate in the upper-right corner while you play.",
             When::Apply, "Off", m_edit.showFps != m_saved.showFps)) {
@@ -1464,7 +1468,7 @@ int SettingsPanel::CountDiff(const SettingsData& a, const SettingsData& b, Cat c
                (a.menuSounds != b.menuSounds) + (a.menuMusicTrack != b.menuMusicTrack);
     case Cat::Game:
         return f(a.fieldOfView, b.fieldOfView) + (a.subtitles != b.subtitles) + (a.menuBackground != b.menuBackground) +
-               f(a.brightness, b.brightness) + (a.fxaa != b.fxaa);
+               f(a.brightness, b.brightness) + (a.fxaa != b.fxaa) + (a.throttleUnfocused != b.throttleUnfocused);
     case Cat::Player:
         return (a.playerName != b.playerName) + (a.serviceTag != b.serviceTag);
     case Cat::KeyboardMouse: {

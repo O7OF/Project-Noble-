@@ -95,6 +95,7 @@ void Settings::Load() {
             Read(j, "verticalSync", d.verticalSync);
             Read(j, "fpsLimit", d.fpsLimit);
             Read(j, "showFps", d.showFps);
+    Read(j, "throttleUnfocused", d.throttleUnfocused);
     Read(j, "brightness", d.brightness);
     Read(j, "fxaa", d.fxaa);
             Read(j, "mouseSensitivity", d.mouseSensitivity);
@@ -219,6 +220,7 @@ bool Settings::Save() {
         j["verticalSync"] = d.verticalSync;
         j["fpsLimit"] = d.fpsLimit;
         j["showFps"] = d.showFps;
+    j["throttleUnfocused"] = d.throttleUnfocused;
     j["brightness"] = d.brightness;
     j["fxaa"] = d.fxaa;
         j["mouseSensitivity"] = d.mouseSensitivity;

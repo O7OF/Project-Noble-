@@ -22,6 +22,28 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-31, 00:45 ET) - "No limit" was capped at 120, and 30 FPS whenever unfocused (WeabooTyler117 / DeepSeek)
+
+Tyler: "no limit fps for some reason shows 30 fps?" - two separate hard-coded caps in the Present hook explained it:
+
+1. **Focused + "No limit"**: `settings.fpsLimit <= 0` was turned into `targetFps = 120` ("prevent runaway 200+ FPS loops").
+   So "No limit" was really "120", and the FPS counter could never show more.
+2. **Unfocused (any limit)**: `if (!isFocused) targetFps = 30` - an unconditional 30 FPS throttle. A capture run, an
+   alt-tab, or a background window all showed 30, which is exactly what Tyler saw.
+
+### Fixed
+
+- **"No limit" now means no pacing** while the window is active: `targetFps <= 0` presents immediately. Proven with a
+  real match capture with `fpsLimit: 0`: the HUD counter reads **FPS 180**.
+- The unfocused throttle is still there (it stops a background game pegging a core or tripping Windows' unresponsive-app
+  detection) but it is now a **setting**: `SettingsData::throttleUnfocused` (default on) with a
+  **THROTTLE WHEN UNFOCUSED** row under FRAME-RATE LIMIT, so streamers capturing from another window can turn it off.
+- The FRAME-RATE LIMIT description now says what "No limit" means instead of implying a cap.
+
+Note for future test work: a **minimised** window does not present, so neither `-pause-at` nor any capture fires with
+`Start-Process -WindowStyle Minimized` - the throttle path cannot be photographed that way (D3D simply stops presenting).
+The throttle itself is unchanged behaviour, now behind the new switch.
+
 ## 0. Pick up here (2026-10-31, 00:15 ET) - CONTINUE is campaign-only (WeabooTyler117 / DeepSeek)
 
 Tyler: "continue should only continue on campaign missions only, nothing else".
