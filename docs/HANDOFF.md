@@ -69,6 +69,28 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-31, 17:15 ET) - HREK playbook: armory lighting explained, variants, and the truth about third person (WeabooTyler117 / DeepSeek)
+
+New document `docs/HREK-PLAYBOOK.md` turns the kit findings into work items. Headlines:
+
+- **Armory**: `data\levels\ui\mainmenu\scripts\mainmenu.hsc` shows the menu script *lighting each appearance Spartan
+  with scripted cinematic lights*: `(cinematic_light_object chief_armory target_main appearance_spartan
+  spartan_armory_light_anchor)` and the Elite equivalent, at lines 148-157, next to `(pvs_set_object ...)` and the idle
+  animation loop. Combined with **0 generic lights** in `mainmenu_000.scenario_structure_lighting_info`, that is the whole
+  void explained: the room's static geometry depends on **baked lightmaps**, the Spartan is lit by the script. Fix options,
+  cheapest first: (1) add extra `cinematic_light_object` calls in the HSC for the room (rebuild script data + map, no
+  lightmap bake), (2) set `emissive power/color` on the armory materials via the lighting tag's `material info` block,
+  (3) bake lightmaps (`tool lightmap-farm`) and rebuild the menu layout - the full-fidelity fix. The 49 `instance imposter
+  infos` (campaign backdrop imposters) are also a route to a painted backdrop instead of black geometry.
+- **Variants**: `game_engine_settings` exports a real **`sandbox variants`** block (`variant_name_sandbox_editor`, with its
+  own miscellaneous options), i.e. the engine ships Forge/sandbox as a *game* variant. `game_variant_settings` tags hold
+  every trait the UI can expose, and `data\multiplayer\megalo\*.txt` + `MegaloEdit.exe` allow authoring custom variants.
+- **Third person**: Reach has **no third-person player trait** (`game_engine_settings` has no camera field; "third" only
+  appears in unrelated tags). Two real routes: (a) mode-based via the **sandbox/Forge engine** (tag `0x04`), which is
+  third-person by construction and now has its variant definition from HREK - worth retrying after the earlier launch-state
+  2 stall; (b) a **camera patch** in `haloreach.dll` (push the first-person camera back), which is client-side by nature so
+  a host toggle can only gate local application. Recommendation: route (a) first.
+
 ## 0. Pick up here (2026-10-31, 16:35 ET) - Tag export works (absolute paths), and the real emblem data is decoded (WeabooTyler117 / DeepSeek)
 
 - **How to export tags**: run `Foundation.exe` once from the HREK root, answer its "Switch Current Project" dialog with
