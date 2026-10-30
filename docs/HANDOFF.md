@@ -22,6 +22,41 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-31, 01:30 ET) - Armory backdrop: fifth approach tried, and the evidence now points at the chamber's own geometry (WeabooTyler117 / DeepSeek)
+
+Tyler asked again for the armory's black background to be fixed. Fifth attempt, and the first that would have worked if
+the void were empty:
+
+- Built a `WallpaperPass` (fullscreen triangle sampling `UiArt::MenuBackground()` with cover UVs) and hooked
+  **`ID3D11DeviceContext::OMSetRenderTargets`** (vtable 33) so the wallpaper is painted **before the engine's own draws**
+  each frame. The reasoning: earlier attempts proved the engine never clears the back buffer per frame, so a picture
+  painted before its draws should simply stay visible in the void while geometry draws on top.
+- Crash #1: **stack overflow** - `WallpaperPass::Paint` itself calls `OMSetRenderTargets`, re-entering the hook. Fixed with
+  a `thread_local` re-entrancy guard.
+- Then it ran: the log said `Armory backdrop: wallpaper painted behind the scene (before the engine's draws)`, and the
+  armory capture still shows the black void (void mean luma 1.17, unchanged).
+
+**That is the answer to "is the void empty": it is not.** Something the engine draws covers the whole frame while the
+Armory scene is up - consistent with the chamber being inside-out geometry with an unlit black material (the handoff's
+2026-10-29 note mentions faint volumetric haze and SSAO noise inside it, which only geometry produces). Anything painted
+"behind" it is occluded, and anything painted "in front" would cover the Spartan.
+
+Five approaches are now ruled out: luma composite, depth-based composite (faults in d3d11 in this swap chain), replacing
+the clear (there is no per-frame clear), switching the menu scene (all 21 probed, the pedestal camera is always in the
+chamber), and painting before the engine's draws (occluded).
+
+### What would actually fix it
+
+1. **A data fix (the real one):** find the armory chamber's material/lightmap in `mainmenu_all.map` and light it, or swap
+   that geometry for a backdrop - i.e. a map/mod change, not a code change. `ReachArmory` already knows the map's GLOBALS
+   table and scene indexes, so this is tag/property work rather than reverse engineering from scratch.
+2. **Noble renders its own armory view:** take over the Spartan's draw with Noble's camera and render target. That is a
+   renderer project, not a fix.
+3. **Cosmetic compromise (cheap):** treat the black as deliberate - a soft vignette around the model and a caption, so the
+   screen reads as designed rather than broken.
+
+Code is reverted to the known-good state (build 0/0, armory captures normally); nothing from this attempt is left in.
+
 ## 0. Pick up here (2026-10-31, 00:45 ET) - "No limit" was capped at 120, and 30 FPS whenever unfocused (WeabooTyler117 / DeepSeek)
 
 Tyler: "no limit fps for some reason shows 30 fps?" - two separate hard-coded caps in the Present hook explained it:
