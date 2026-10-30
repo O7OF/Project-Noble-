@@ -22,6 +22,28 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-30, 05:45 ET) - tools: Halopedia Armory icon fetcher checked in (WeabooTyler117 / DeepSeek)
+
+`tools/armory/fetch_halopedia_icons.py` was sitting **untracked** in Tyler's tree from the 2026-10-29 Armory art
+session. It is the picture half of the pipeline next to the tracked `fetch_halopedia_armory.py` (which pulls names,
+rank and cR), so it is checked in rather than left dangling:
+
+- Queries Halopedia's "Armor customization (Halo: Reach)" page and maps each `File:HR_*_Icon.png` to its slot folder
+  (`helmets`, `shoulders_left/right`, `chests`, `wrists`, `utility`, `visors`, `knees`, `effects`, `voices`,
+  `elite_sets`; `HR_Rank_*` is skipped on purpose, `data/ui/reach/ranks` already has those), downloads into
+  `build/bin/Release/data/ui/reach/armory/<slot>/` and writes `manifest.csv` (category, file, url).
+- Standard library only, 0.3-0.5 s between requests, skips files that already exist, so it can be re-run.
+- `build/` is git-ignored, so the pictures themselves are **not** committed - only the script. Halopedia art is not
+  redistributed with Noble (art rule: `docs/menu-redesign-spec.md` §7).
+
+Run from the repo root:
+
+```
+python tools\armory\fetch_halopedia_icons.py
+```
+
+--
+
 ## 0. Pick up here (2026-10-30, 05:35 ET) - Build fix after dc349a5: duplicate `lockOption` lambdas (WeabooTyler117 / DeepSeek)
 
 `origin/main` at `dc349a5` ("Elite armors network replication ... social system") **did not compile**:
