@@ -73,7 +73,7 @@ All changes compiled cleanly via MSBuild Release configuration (`noble-client.ex
 - The initial composite pass used `smoothstep(0.001f, 0.030f, luma)` and `lerp(bg.rgb, spartanRgb, alpha)`:
   - Any faint ambient fog or SSAO sample in the `[0.002 .. 0.035]` range triggered `alpha > 0`, causing the bright white mountain snow wallpaper (`RGB ~ 0.85`) to lerp toward the dark engine fog (`RGB ~ 0.01`), darkening the snow into a noisy black soot cloud / dark matte fringe around the entire character silhouette.
   - Flame particle edges (premultiplied over black) were multiplied by `alpha`, causing them to darken the snow rather than adding light.
-
+Sneeze
 ### 2. Fixes Applied
 - **Eliminated Black Matte Fringe in `ReachHost.cpp:GammaPass`:**
   - Raised the cutoff threshold: `const float kCutoff = 0.035f; const float kSolid = 0.080f;` so all faint ambient fog, room haze, and SSAO noise below `0.035` luminance are completely rejected (`alpha = 0.0f`), leaving the background wallpaper 100% clean and pristine.
