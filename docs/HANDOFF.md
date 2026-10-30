@@ -50,10 +50,17 @@ clipped to two lines. Applies to Campaign / Firefight / Custom Game / Forge.
 ### 4. Armory nameplates in the party panel and the pre-game lobby
 
 `UiArt::Nameplate()` (from `dc349a5`) is now the background of the **local player's** row in `DrawParty` (MY PARTY,
-main menu) and in the pre-game lobby roster, with a dark scrim so the name stays readable; the old blue/grey bar is the
-fallback when the plate texture is missing. The plate covers only the **name area** (60 % of the party row, 58 % of a
-roster row) and fades into the flat row colour: stretched over the whole row its own emblem landed under the rank icon
-and the DEV chip sat on the busiest part of the art (Tyler's crop, 2026-10-30).
+main menu) and in the pre-game lobby roster, with the old blue/grey bar as the fallback when the plate texture is
+missing. Geometry, after two rounds of Tyler's feedback (2026-10-30):
+
+- The row is taller so the art reads: **40 * s** in the party panel, **44 * s** per roster row.
+- The plate spans **80 %** of the party row and **76 %** of a roster row, then fades into the flat row colour; the
+  remainder stays plain for the rank icon / service tag.
+- A light scrim (70-80 alpha) keeps the name readable while leaving the plate visible, and the plate area gets the same
+  steel frame the Armory preview of that plate has.
+- Stretched over the *whole* row its own emblem landed under the rank icon and the DEV chip sat on the busiest part of
+  the art (Tyler's crop) - that is why it stops short of the right edge.
+
 **Remote players still show the plain row**: the lobby roster / master advert carry no nameplate id, so showing other
 players' plates needs `nameplateId` added to the roster JSON, `MasterAdvert`, `LobbyPlayer` and `server.js`.
 
