@@ -46,6 +46,30 @@ Headless / capture harness (run from `build\bin\Release`):
 Verify UI work with **actual captures**, then look at the image — Tyler's complaints are visual, and a plausible-looking
 diff has been wrong before.
 
+## 2b. Two repositories - netcode and server scripts go to ServerTestDeploy
+
+| what | repo |
+|---|---|
+| Client, engine host, menus, tools | `O7OF/test-build-01` (this checkout) |
+| **Backend, netcode, server scripts** | **`O7OF/ServerTestDeploy`** - deployed to `https://outbreak-z-test-server.onrender.com` |
+
+Commit `19207fb` removed `server/` from this repo; the backend is centralised in ServerTestDeploy and nothing
+server-side should ever be committed here again. Workflow:
+
+```powershell
+.\tools\server-repo.ps1            # clone next to this checkout (or fast-forward an existing clone)
+# edit server.js / src/* inside that clone
+node --check server.js
+git -C <clone> add -A; git -C <clone> commit -m "..."; git -C <clone> push origin main
+```
+
+Diagnostics that exist there (use them before guessing): `GET /api/health` reports version, `commit`, and relay counters;
+`GET /api/relay/stats` lists every live relay room as `{ session, hasHost, guests }` plus connection/packet counters - that
+one look separates a server/relay failure from an engine failure.
+
+Current backend state: `4a520d1` - 25 s WebSocket heartbeat (kills idle-socket churn), timestamped relay logs,
+session timeout 90 s, lobby rate limit 240/min.
+
 ## 3. What the previous session changed (all pushed, `main` clean)
 
 | commit | what |

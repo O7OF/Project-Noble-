@@ -39,8 +39,8 @@ when you can.
 | Steam Workshop (Reach mods) | `D:\Steam\steamapps\workshop\content\976730\<id>\ModInfo.json` |
 | Reach Renaissance install (reference only) | `D:\Reach` |
 | Reverse-engineering material | `D:\REACH REVERSE ENGINEER` (see §8) |
-| Master/social server source (client copy) | `D:\Halo-Reach-Community-Edition\server\server.js` |
-| Master/social server deployed copy | `D:\ServerTestDeploy-main` + Render: `https://outbreak-z-test-server.onrender.com` |
+| Master/social server source | **`O7OF/ServerTestDeploy`** (clone next to this checkout via `tools/server-repo.ps1`) - the client repo no longer carries `server/` |
+| Master/social server deployed copy | Render: `https://outbreak-z-test-server.onrender.com` (`/api/health`, `/api/relay/stats`) |
 | Handoff log | `D:\Halo-Reach-Community-Edition\docs\HANDOFF.md` |
 | Design spec | `D:\Halo-Reach-Community-Edition\docs\menu-redesign-spec.md` |
 | Tyler's export copies | `C:\Users\tyler\Downloads\HANDOFF (2).md` (kept in sync from `docs/HANDOFF.md`) |
@@ -133,7 +133,7 @@ src/
   common/Settings.cpp/.hpp  settings.json (every persisted option)
   hooks/                   engine patches (LobbyPatches, EnginePatches)
 docs/                      HANDOFF.md (log), menu-redesign-spec.md (design), career/, armor-list.md
-server/server.js           master + social server (deployed separately to O7's ServerTestDeploy repo)
+tools/server-repo.ps1      clones/pulls the backend repo (netcode lives in O7OF/ServerTestDeploy, NOT here)
 tools/armory/              Halopedia art fetchers
 build/                     build output; 298 art files tracked (git add -f needed for new ones)
 ```
