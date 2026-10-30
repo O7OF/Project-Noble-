@@ -22,6 +22,42 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-31, 04:00 ET) - Armory: Noble's own renderer looks good, and it is the way out of the void (WeabooTyler117 / DeepSeek)
+
+Tyler asked which route to take for the armory's black background. The decisive fact: **Noble already has its own
+armory renderer** (`ObjModelPreview`, `data/armor/spartans/spartans.obj` + `data/armor/elite/elite.obj`) with
+
+- diffuse + **colour-control** + **normal** maps (so primary/secondary colours and detail areas come out right),
+- **3-point MCC studio lighting** with a cyan rim light, visor fresnel and emissive spots for armour effects,
+- per-piece **layer** meshes (`ObjPreviewLayer`) and a camera with pitch, zoom, **focusY** *and* **focusX** offsets,
+- its own render target with a transparent background - i.e. **we own what goes behind the Spartan**.
+
+It was only ever a *fallback* for "engine scene not ready". Added `SettingsData::armoryPreview` (0 = Reach's scene,
+default; 1 = Noble's renderer; row still to add to the Settings UI) and captured the armory with it forced on: the
+Spartan renders with the studio lighting, the blue-flames effect, correct colours and no black chamber - see
+`ui-crops/armory_noble.png`.
+
+### Recommendation (for Tyler to confirm)
+
+Switch the armory to **Noble's renderer as the primary preview** and give it a designed stage (dark vertical gradient with
+a soft floor ellipse, a subtle grid or horizon, and a rim glow that matches the ACCENT colour). That single change:
+
+1. **kills the black void** - the stage is ours, drawn behind a transparent render target, no engine geometry involved;
+2. **makes per-piece panning real** - `FramingFor` + the camera's `focusX`/`focusY` already exist for this renderer; left
+   shoulder moves the camera left, right shoulder right, helmet up, knees down (the engine path cannot do this: it maps
+   both shoulders to one scene);
+3. **removes the palette flash and the DMR throw** - no engine model is re-instantiated when a piece changes;
+4. keeps the engine scene one setting away for comparison.
+
+Trade-off to be honest about: the engine model is the *in-game* asset with its own shaders; the OBJ path is a faithful
+re-render with our lighting. From the capture they are close, and ours exposes more detail (armour effects, rim).
+
+### Not done yet
+
+- The Settings row for `armoryPreview` (lives in Game options next to the other ARMORY items).
+- The **stage** itself (gradient/floor/rim) - the render target is transparent today, so nothing is behind the model yet.
+- Feeding `m_focusScene` into the OBJ camera's `focusX` so the pan actually happens (currently only zoom/focusY are eased).
+
 ## 0. Pick up here (2026-10-31, 03:10 ET) - No more desktop flash between menu and match (WeabooTyler117 / DeepSeek)
 
 Tyler: every transition that crosses a loading screen (starting a match, backing out, restart, next campaign mission)

@@ -1,4 +1,5 @@
 #include "ArmorCustomizer.hpp"
+#include "common/Settings.hpp"
 #include "ArmoryPreviewLayers.hpp"
 #include "NobleStyle.hpp"
 #include "UiArt.hpp"
@@ -1194,7 +1195,9 @@ void ArmorCustomizer::RenderCharacterPreview(ID3D11Device* device, ID3D11DeviceC
     // 1. Reach's own Armory scene (MCC's model, O7OF's ReachArmory) wins whenever it is up; the OBJ preview below
     //    is only a stand-in until that works without a main-menu map.
     // 2. Noble's own DX11 preview of the local OBJ exports (O7OF's ObjModelPreview).
-    const bool engineScene = ReachArmory::IsSceneReady();
+    // SETTINGS > Game options > ARMORY PREVIEW: Noble's own renderer draws the Spartan with a stage it owns, which
+    // is the only way to get a designed backdrop (the engine's chamber is unlit black geometry).
+    const bool engineScene = Settings::Get().Snapshot().armoryPreview == 0 && ReachArmory::IsSceneReady();
 
     // With the menu map installed, the real scene shows up a few seconds after launch. Show a loading
     // line until then instead of flashing the OBJ stand-in; fall back to the OBJ only if it never comes.
