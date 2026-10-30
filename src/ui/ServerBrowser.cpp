@@ -1,4 +1,4 @@
-#include <windows.h>
+﻿#include <windows.h>
 #include "ServerBrowser.hpp"
 #include "common/Relaunch.hpp"
 #include "NobleStyle.hpp"
@@ -294,6 +294,54 @@ bool ServerBrowser::PassesFilters(const ServerEntry& s) const {
 }
 
 void ServerBrowser::RenderServerList() {
+    std::vector<int> visibleIndices;
+    for (int i = 0; i < static_cast<int>(m_servers.size()); ++i) {
+        if (PassesFilters(m_servers[i])) visibleIndices.push_back(i);
+    }
+
+    if (!ImGui::GetIO().WantTextInput) {
+        // Controller D-Pad & Left Stick navigation
+        if (!visibleIndices.empty()) {
+            int currentPos = -1;
+            for (size_t k = 0; k < visibleIndices.size(); ++k) {
+                if (visibleIndices[k] == m_selectedServerIndex) { currentPos = static_cast<int>(k); break; }
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickDown)) {
+                currentPos = (currentPos + 1) % static_cast<int>(visibleIndices.size());
+                m_selectedServerIndex = visibleIndices[currentPos];
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickUp)) {
+                currentPos = (currentPos - 1 + static_cast<int>(visibleIndices.size())) % static_cast<int>(visibleIndices.size());
+                m_selectedServerIndex = visibleIndices[currentPos];
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false)) {
+                if (m_selectedServerIndex >= 0 && m_selectedServerIndex < static_cast<int>(m_servers.size())) {
+                    const auto& s = m_servers[m_selectedServerIndex];
+                    if (!s.isOwn) {
+                        if (!s.inProgress && m_joinLobbyHandler) m_joinLobbyHandler(s);
+                        else TryJoin(s.hostAddress, s.port, s.isPasswordProtected);
+                    }
+                }
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false)) {
+                if (m_selectedServerIndex >= 0 && m_selectedServerIndex < static_cast<int>(m_servers.size())) {
+                    ToggleFavorite(m_servers[m_selectedServerIndex].hostAddress, m_servers[m_selectedServerIndex].port);
+                }
+            }
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceLeft, false)) {
+            m_lastMasterRequest = -100.0;
+            m_lastRefresh = -100.0;
+            SessionManager::Get().TriggerDiscoveryScan();
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false)) {
+            m_modeFilter = (m_modeFilter + 4) % 5;
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false)) {
+            m_modeFilter = (m_modeFilter + 1) % 5;
+        }
+    }
+
     static const ImGuiTableFlags flags =
         ImGuiTableFlags_Resizable | ImGuiTableFlags_Reorderable | ImGuiTableFlags_Hideable |
         ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersOuter | ImGuiTableFlags_ScrollY | ImGuiTableFlags_Sortable;

@@ -1,4 +1,4 @@
-#include "SettingsPanel.hpp"
+﻿#include "SettingsPanel.hpp"
 #include "NobleStyle.hpp"
 #include "NobleUi.hpp"
 #include "MenuSounds.hpp"
@@ -223,16 +223,16 @@ void SettingsPanel::Render() {
 
     // Shared key state for this frame (rows read it; text fields and rebinding take the keys).
     m_navAllowed = !ImGui::GetIO().WantTextInput && m_rebindAction < 0;
-    m_keyLeft = m_navAllowed && (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft));
-    m_keyRight = m_navAllowed && (ImGui::IsKeyPressed(ImGuiKey_RightArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight));
+    m_keyLeft = m_navAllowed && (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickLeft));
+    m_keyRight = m_navAllowed && (ImGui::IsKeyPressed(ImGuiKey_RightArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickRight));
     m_keyAccept = m_navAllowed && (ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false) ||
                                    ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false));
     if (m_navAllowed) {
         const int rows = std::max(1, m_lastRowCount);
-        if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown)) {
+        if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickDown)) {
             m_focus = (m_focus + 1) % rows; m_scrollToFocus = true; MenuSounds::Scroll();
         }
-        if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp)) {
+        if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickUp)) {
             m_focus = (m_focus + rows - 1) % rows; m_scrollToFocus = true; MenuSounds::Scroll();
         }
         const int n = static_cast<int>(Cat::Count);

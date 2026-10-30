@@ -34,6 +34,7 @@
 #include <d3d11.h>
 #include <dxgi.h>
 #include <imgui.h>
+#include <imgui_impl_win32.h>
 #include <imgui_impl_dx11.h>
 #include <algorithm>
 #include <cfloat>
@@ -272,23 +273,37 @@ enum class Screen { Main, Campaign, Skulls, Firefight, CustomGame, Forge, Server
 
 void DrawBackdrop(const Ui& ui, Screen screen) {
     const ImVec2 o(0, 0);
-    if (!ReachArmory::IsSceneReady()) {
-        // Fallback 2D background only during the initial 1-2s while mainmenu_all.map loads into haloreach.dll
+    // Draw the main menu background image whenever scene isn't ready or on screens where the 2D Reach backdrop
+    // provides the base visual layer (Armory, PreGameLobby, Main menu fallback) to eliminate black void flickers.
+    const bool needBackdropImage = !ReachArmory::IsSceneReady() || screen == Screen::Armory || screen == Screen::PreGameLobby;
+    if (needBackdropImage) {
         ui.dl->AddRectFilled(o, ui.size, IM_COL32(8, 12, 18, 255));
-        UiArt::DrawCover(ui.dl, UiArt::MenuBackground(), o, ui.size, IM_COL32(255, 255, 255, 255));
+        UiTexture bg = UiArt::MenuBackground();
+        if (bg) {
+            UiArt::DrawCover(ui.dl, bg, o, ui.size, IM_COL32(255, 255, 255, 255));
+        }
     }
 
     if (screen == Screen::Armory) {
-        // In the Armory, keep the right side 100% clear so the live 3D Spartan/Elite in mainmenu_all.map shines
-        ui.dl->AddRectFilledMultiColor(o, ImVec2(ui.size.x * 0.42f, ui.size.y),
-                                       IM_COL32(4, 8, 14, 175), IM_COL32(4, 8, 14, 70),
-                                       IM_COL32(4, 8, 14, 70), IM_COL32(4, 8, 14, 175));
-        ui.dl->AddRectFilledMultiColor(ImVec2(ui.size.x * 0.42f, 0), ImVec2(ui.size.x * 0.56f, ui.size.y),
-                                       IM_COL32(4, 8, 14, 70), IM_COL32(4, 8, 14, 0),
-                                       IM_COL32(4, 8, 14, 0), IM_COL32(4, 8, 14, 70));
+        // In the Armory, provide sleek subtle left-side menu darkening while keeping the main menu background
+        // and 3D preview seamlessly visible with zero black flash
+        ui.dl->AddRectFilledMultiColor(o, ImVec2(ui.size.x * 0.44f, ui.size.y),
+                                       IM_COL32(4, 8, 14, 180), IM_COL32(4, 8, 14, 85),
+                                       IM_COL32(4, 8, 14, 85), IM_COL32(4, 8, 14, 180));
+        ui.dl->AddRectFilledMultiColor(ImVec2(ui.size.x * 0.44f, 0), ImVec2(ui.size.x * 0.60f, ui.size.y),
+                                       IM_COL32(4, 8, 14, 85), IM_COL32(4, 8, 14, 0),
+                                       IM_COL32(4, 8, 14, 0), IM_COL32(4, 8, 14, 85));
         ui.dl->AddRectFilledMultiColor(ImVec2(0, ui.size.y * 0.82f), ui.size,
                                        IM_COL32(0, 0, 0, 0), IM_COL32(0, 0, 0, 0),
-                                       IM_COL32(0, 0, 0, 150), IM_COL32(0, 0, 0, 150));
+                                       IM_COL32(0, 0, 0, 160), IM_COL32(0, 0, 0, 160));
+    } else if (screen == Screen::PreGameLobby) {
+        // Pre-game lobby: subtle left darkening for menu items and bottom vignette matching Halo: Reach 360/MCC
+        ui.dl->AddRectFilledMultiColor(o, ImVec2(ui.size.x * 0.48f, ui.size.y),
+                                       IM_COL32(0, 0, 0, 175), IM_COL32(0, 0, 0, 60),
+                                       IM_COL32(0, 0, 0, 60), IM_COL32(0, 0, 0, 175));
+        ui.dl->AddRectFilledMultiColor(ImVec2(0, ui.size.y * 0.75f), ui.size,
+                                       IM_COL32(0, 0, 0, 0), IM_COL32(0, 0, 0, 0),
+                                       IM_COL32(0, 0, 0, 185), IM_COL32(0, 0, 0, 185));
     } else {
         // Darken the left half (where the menu list is) and the bottom, like Reach's native menus.
         ui.dl->AddRectFilledMultiColor(o, ImVec2(ui.size.x * 0.45f, ui.size.y),
@@ -347,8 +362,8 @@ int DrawList(const Ui& ui, const char* id, ImVec2 pos, float width, const std::v
             }
             MenuSounds::Scroll();
         };
-        if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown)) step(1);
-        if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp)) step(-1);
+        if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickDown)) step(1);
+        if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickUp)) step(-1);
         if (AcceptPressed() && items[selected].enabled) {
             activated = selected;
         }
@@ -929,8 +944,8 @@ int OptionRow(const Ui& ui, const char* id, ImVec2 pos, float width, const char*
     const float tw = TextWidth(NobleStyle::TitleFont(), 18.0f * ui.s, v.c_str());
     Text(ui, NobleStyle::TitleFont(), 18.0f, ImVec2(vx + (vw - tw) * 0.5f, pos.y + 6.0f * ui.s), kWhite, v.c_str());
     if (focused) {
-        if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft)) change = -1;
-        if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight)) change = 1;
+        if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickLeft)) change = -1;
+        if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickRight)) change = 1;
     }
     if (change) MenuSounds::Change();
     return change;
@@ -1131,6 +1146,13 @@ struct MenuState {
     int lobbyLaunchDiff = 1;
     uint64_t lobbyLaunchSkulls = 0;
     double lastLobbyPoll = 0.0;
+    int lobbyMenuRow = 0;          // Focused row in pre-game options list
+    int lobbyScoring = 2;          // 0 = Off, 1 = Free For All, 2 = Team
+    bool lobbyReady = true;        // Player ready toggle
+    int lobbyFocusPanel = 0;       // 0 = Options list, 1 = Party roster
+    int lobbyRosterSelection = 0;  // Selected player index in party roster
+    int lobbyCountdown = -1;       // -1 = Inactive, >= 0 = Countdown seconds remaining
+    double lobbyCountdownStart = 0.0;
 };
 
 
@@ -1147,6 +1169,9 @@ static void SetupHostLobby(MenuState& st, const std::string& mapScenario, const 
     st.lobbySkulls = skulls;
     st.lobbyMaxPlayers = maxPlayers;
     st.lobbyLaunchPending = false;
+    st.lobbyMenuRow = 0;
+    st.lobbyFocusPanel = 0;
+    st.lobbyCountdown = -1;
     ClearPendingLobbyEvents();
     st.lastLobbyPoll = ImGui::GetTime();
 
@@ -1515,9 +1540,6 @@ void FeedEngineThreadInputs(HWND hwnd, ImGuiIO& io) {
         const bool down = focused && ((GetAsyncKeyState(kKeys[i].vk) & 0x8000) != 0);
         if (down != s_prevDown[i]) {
             io.AddKeyEvent(kKeys[i].key, down);
-            if (down && kKeys[i].ch != 0 && io.WantTextInput) {
-                io.AddInputCharacter(static_cast<unsigned int>(kKeys[i].ch));
-            }
             s_prevDown[i] = down;
         }
     }
@@ -1599,10 +1621,6 @@ static void TakePendingLobbyEvents(MenuState& st) {
 static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, float top, FrontEndChoice& choice, bool& done, bool back) {
     MenuState& st = ctx.st;
     TakePendingLobbyEvents(st);
-    const float colW = ui.size.x * 0.44f;
-    const float pxLeft = left + 34.0f * ui.s;
-    const float pxRight = ui.size.x * 0.52f;
-    const float actionsY = ui.size.y - 58.0f * ui.s - 14.0f * ui.s - 50.0f * ui.s;
 
     if (st.isLobbyHost) {
         const std::string curId = MasterServerClient::Get().GetCurrentSessionId();
@@ -1714,20 +1732,14 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         return;
     }
 
-    // Title Header
-    std::string modeSubtitle = Upper(st.lobbyMode);
-    if (st.lobbyMode == "custom" || st.lobbyMode == "multiplayer") modeSubtitle = "MULTIPLAYER";
-    else if (st.lobbyMode == "firefight") modeSubtitle = "SURVIVAL";
-    else if (st.lobbyMode == "campaign") modeSubtitle = "CO-OP CAMPAIGN";
-    else if (st.lobbyMode == "forge") modeSubtitle = "FORGE EDIT";
+    // â”€â”€ Pre-Game Lobby 1:1 Reach Layout â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    const float leftMargin = left;
+    const float prevW = std::clamp(ui.size.x * 0.32f, 320.0f * ui.s, 440.0f * ui.s);
+    const float prevH = prevW * (9.0f / 16.0f);
+    const float prevX = leftMargin + 32.0f * ui.s;
+    const float prevY = top + 6.0f * ui.s;
 
-    DrawTitle(ui, ImVec2(left, top), "PRE-GAME LOBBY", modeSubtitle.c_str());
-
-    // ── LEFT COLUMN: Map & Match Settings ─────────────────────────────────────
-    const float bannerTop = top + 96.0f * ui.s;
-    const float bannerH = std::clamp(actionsY - 140.0f * ui.s - bannerTop, 110.0f * ui.s, colW * 292.0f / 668.0f);
-
-    std::string kicker = "LOBBY Â· " + modeSubtitle;
+    // Resolve Map Display Name
     std::string mapDisplay = st.lobbyMap;
     for (int i = 0; i < Count(kMaps); ++i) {
         if (kMaps[i].scenario == st.lobbyMap) { mapDisplay = kMaps[i].name; break; }
@@ -1739,201 +1751,436 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         if (kMissions[i].scenario == st.lobbyMap) { mapDisplay = kMissions[i].name; break; }
     }
 
-    float y = HeroBanner(ui, ImVec2(pxLeft, bannerTop), colW, bannerH, st.lobbyMap, kicker, mapDisplay.c_str(), "Gather players before launching into the match.");
-    y += 12.0f * ui.s;
-
-    // Map selector row (host can cycle maps)
-    if (st.isLobbyHost) {
-        const char* const mapLabel = mapDisplay.c_str();
-        const int dv = OptionRow(ui, "lobby_map", ImVec2(pxLeft, y), colW, "SELECTED MAP", mapLabel, false);
-        if (dv) {
-            const MenuMap* baseMaps = (st.lobbyMode == "firefight") ? kFirefightMaps : kMaps;
-            const int count = (st.lobbyMode == "firefight") ? Count(kFirefightMaps) : Count(kMaps);
-            int curIdx = 0;
-            for (int i = 0; i < count; ++i) {
-                if (baseMaps[i].scenario == st.lobbyMap) { curIdx = i; break; }
-            }
-            curIdx = (curIdx + dv + count) % count;
-            st.lobbyMap = baseMaps[curIdx].scenario;
-            MasterServerClient::Get().UpdateLobbyAdvert(st.lobbyMap, st.lobbyMode, st.lobbyVariantName, st.lobbyDifficulty, st.lobbySkulls);
-        }
-    } else {
-        OptionRow(ui, "lobby_map", ImVec2(pxLeft, y), colW, "SELECTED MAP", mapDisplay.c_str(), false);
+    // 1. Top-Left 16:9 Preview Rectangle with border and corner emblem
+    ui.dl->AddRectFilled(ImVec2(prevX, prevY), ImVec2(prevX + prevW, prevY + prevH), IM_COL32(8, 12, 18, 240));
+    UiTexture prevTex = UiArt::MapPreview(st.lobbyMap, true);
+    if (!prevTex) prevTex = UiArt::LoadingBackground(st.lobbyMap);
+    if (prevTex) {
+        UiArt::DrawCover(ui.dl, prevTex, ImVec2(prevX, prevY), ImVec2(prevX + prevW, prevY + prevH));
     }
-    y += 36.0f * ui.s;
+    ui.dl->AddRect(ImVec2(prevX, prevY), ImVec2(prevX + prevW, prevY + prevH), IM_COL32(100, 140, 180, 130), 0.0f, 0, 1.5f * ui.s);
 
-    // Gametype / Variant row
-    if (st.isLobbyHost && st.lobbyMode != "campaign" && st.lobbyMode != "forge") {
-        const std::vector<MenuVariant>& varList = (st.lobbyMode == "firefight") ? ctx.ffVariants : ctx.variants;
-        const char* vLabel = st.lobbyVariantName.empty() ? "Default" : st.lobbyVariantName.c_str();
-        const int dv = OptionRow(ui, "lobby_var", ImVec2(pxLeft, y), colW, "GAME TYPE", vLabel, false);
-        if (dv && !varList.empty()) {
-            int curIdx = 0;
-            for (int i = 0; i < static_cast<int>(varList.size()); ++i) {
-                if (varList[i].label == st.lobbyVariantName || varList[i].path.string() == st.lobbyVariantPath) {
-                    curIdx = i;
-                    break;
+    // Corner Emblem Badge inside Preview (Top-Left of map thumbnail)
+    const float badgeSize = 44.0f * ui.s;
+    const ImVec2 badgePos(prevX + 8.0f * ui.s, prevY + 8.0f * ui.s);
+    ui.dl->AddRectFilled(badgePos, ImVec2(badgePos.x + badgeSize, badgePos.y + badgeSize), IM_COL32(6, 10, 16, 210), 3.0f * ui.s);
+    ui.dl->AddRect(badgePos, ImVec2(badgePos.x + badgeSize, badgePos.y + badgeSize), IM_COL32(80, 120, 160, 150), 3.0f * ui.s, 0, 1.0f);
+
+    if (st.lobbyMode == "campaign") {
+        UiTexture diffTex = UiArt::DifficultyIcon(st.lobbyDifficulty);
+        if (diffTex) {
+            UiArt::DrawContain(ui.dl, diffTex, badgePos, ImVec2(badgePos.x + badgeSize, badgePos.y + badgeSize));
+        } else {
+            const ImVec2 bc(badgePos.x + badgeSize * 0.5f, badgePos.y + badgeSize * 0.5f);
+            ui.dl->AddTriangleFilled(ImVec2(bc.x - 12.0f * ui.s, bc.y - 12.0f * ui.s), ImVec2(bc.x + 12.0f * ui.s, bc.y - 12.0f * ui.s), ImVec2(bc.x, bc.y + 14.0f * ui.s), IM_COL32(190, 215, 240, 220));
+        }
+    } else if (st.lobbyMode == "forge") {
+        const ImVec2 bc(badgePos.x + badgeSize * 0.5f, badgePos.y + badgeSize * 0.5f);
+        ui.dl->AddCircle(bc, 14.0f * ui.s, IM_COL32(180, 215, 245, 230), 24, 1.5f * ui.s);
+        ui.dl->AddLine(ImVec2(bc.x - 14.0f * ui.s, bc.y), ImVec2(bc.x + 14.0f * ui.s, bc.y), IM_COL32(180, 215, 245, 180), 1.0f);
+        ui.dl->AddLine(ImVec2(bc.x, bc.y - 14.0f * ui.s), ImVec2(bc.x, bc.y + 14.0f * ui.s), IM_COL32(180, 215, 245, 180), 1.0f);
+        ui.dl->AddCircle(bc, 7.0f * ui.s, IM_COL32(180, 215, 245, 140), 16, 1.0f);
+    } else {
+        const ImVec2 bc(badgePos.x + badgeSize * 0.5f, badgePos.y + badgeSize * 0.5f);
+        ui.dl->AddCircleFilled(bc, 12.0f * ui.s, IM_COL32(230, 240, 255, 210), 20);
+        ui.dl->AddCircle(bc, 15.0f * ui.s, IM_COL32(100, 160, 220, 200), 20, 1.5f * ui.s);
+    }
+
+    // 2. Title & Vertical "MAIN MENU" Indicator
+    const float titleY = prevY + prevH + 14.0f * ui.s;
+
+    // Vertical "< MAIN MENU" stacked indicator on left margin
+    {
+        const float vx = leftMargin + 6.0f * ui.s;
+        float vy = titleY + 4.0f * ui.s;
+        Text(ui, NobleStyle::SmallFont(), 14.0f, ImVec2(vx, vy), IM_COL32(140, 170, 200, 180), "<");
+        vy += 18.0f * ui.s;
+        const char* const vLetters = "MAIN MENU";
+        for (const char* p = vLetters; *p; ++p) {
+            if (*p == ' ') { vy += 8.0f * ui.s; continue; }
+            char buf[2] = { *p, 0 };
+            Text(ui, NobleStyle::SmallFont(), 11.5f, ImVec2(vx + 2.0f * ui.s, vy), IM_COL32(130, 155, 180, 160), buf);
+            vy += 13.0f * ui.s;
+        }
+    }
+
+    // Winged Emblem icon + Header Title
+    {
+        const ImVec2 ec(prevX + 12.0f * ui.s, titleY + 16.0f * ui.s);
+        ui.dl->AddTriangleFilled(ImVec2(ec.x - 10.0f * ui.s, ec.y - 8.0f * ui.s), ImVec2(ec.x, ec.y + 4.0f * ui.s), ImVec2(ec.x - 2.0f * ui.s, ec.y - 8.0f * ui.s), IM_COL32(220, 235, 250, 240));
+        ui.dl->AddTriangleFilled(ImVec2(ec.x + 10.0f * ui.s, ec.y - 8.0f * ui.s), ImVec2(ec.x, ec.y + 4.0f * ui.s), ImVec2(ec.x + 2.0f * ui.s, ec.y - 8.0f * ui.s), IM_COL32(220, 235, 250, 240));
+        ui.dl->AddTriangleFilled(ImVec2(ec.x - 6.0f * ui.s, ec.y + 2.0f * ui.s), ImVec2(ec.x, ec.y + 10.0f * ui.s), ImVec2(ec.x + 6.0f * ui.s, ec.y + 2.0f * ui.s), IM_COL32(220, 235, 250, 240));
+    }
+
+    const char* titleText = (st.lobbyMode == "campaign") ? "CAMPAIGN" : (st.lobbyMode == "forge") ? "FORGE" : (st.lobbyMode == "firefight") ? "FIREFIGHT" : "CUSTOM GAME";
+    Text(ui, NobleStyle::TitleFont(), 32.0f, ImVec2(prevX + 32.0f * ui.s, titleY), kWhite, titleText);
+
+    std::string partySubtitle = "This party is open to friends.";
+    if (st.lobbyMode == "campaign") partySubtitle = "This party is open to friends and recent players.";
+    else if (st.lobbyMode == "forge" && st.lobbyNetMode == 0) partySubtitle = "This party is local to this Xbox 360 console.";
+    Text(ui, NobleStyle::SmallFont(), 13.5f, ImVec2(prevX + 32.0f * ui.s, titleY + 36.0f * ui.s), IM_COL32(165, 185, 205, 190), partySubtitle.c_str());
+
+    // 3. Menu Options List
+    const float menuY = titleY + 62.0f * ui.s;
+    const float menuW = prevW + 20.0f * ui.s;
+    const float rowH = 30.0f * ui.s;
+
+    struct LobbyMenuOption {
+        std::string label;
+        std::string value;
+        bool isAction;
+        bool isStart;
+        bool editable;
+        std::string tooltip;
+    };
+    std::vector<LobbyMenuOption> optRows;
+
+    if (st.lobbyMode == "campaign") {
+        optRows.push_back({ "Ready", st.lobbyReady ? "READY" : "NOT READY", false, false, true, "Toggle player ready status." });
+        optRows.push_back({ "MISSION", mapDisplay, false, false, st.isLobbyHost, "Select which campaign mission to play." });
+        int skullCount = 0;
+        for (int b = 0; b < 64; ++b) if ((st.lobbySkulls >> b) & 1ULL) ++skullCount;
+        optRows.push_back({ "SKULLS", std::to_string(skullCount) + " SKULLS ON", false, false, st.isLobbyHost, "Configure active gameplay skulls." });
+        static const char* kDiffs[] = { "EASY", "NORMAL", "HEROIC", "LEGENDARY" };
+        optRows.push_back({ "DIFFICULTY", kDiffs[std::clamp(st.lobbyDifficulty, 0, 3)], false, false, st.isLobbyHost, "Set campaign difficulty level." });
+        static const char* kScoring[] = { "OFF", "FREE FOR ALL", "TEAM" };
+        optRows.push_back({ "SCORING", kScoring[std::clamp(st.lobbyScoring, 0, 2)], false, false, st.isLobbyHost, "Enable or disable co-op scoring." });
+        optRows.push_back({ "START CO-OP CAMPAIGN", "", true, true, st.isLobbyHost, "Start the selected mission." });
+    } else if (st.lobbyMode == "forge") {
+        optRows.push_back({ "GAME TYPE", "BASIC EDITING", false, false, false, "Select game type for Forge." });
+        optRows.push_back({ "MAP", mapDisplay, false, false, st.isLobbyHost, "Choose which map to forge." });
+        optRows.push_back({ "GAME OPTIONS", "", false, false, false, "Edit Forge session options." });
+        optRows.push_back({ "START GAME", "", true, true, st.isLobbyHost, "Start the selected forge session." });
+    } else if (st.lobbyMode == "firefight") {
+        optRows.push_back({ "Ready", st.lobbyReady ? "READY" : "NOT READY", false, false, true, "Toggle player ready status." });
+        optRows.push_back({ "FIRE FIGHT", st.lobbyVariantName.empty() ? "NORMAL" : st.lobbyVariantName, false, false, st.isLobbyHost, "Select Firefight game variant." });
+        optRows.push_back({ "MAP", mapDisplay, false, false, st.isLobbyHost, "Choose which Firefight map to play." });
+        optRows.push_back({ "GAME OPTIONS", "", false, false, false, "Configure Firefight options." });
+        optRows.push_back({ "START FIREFIGHT", "", true, true, st.isLobbyHost, "Launch Firefight survival match." });
+    } else { // Custom Game
+        optRows.push_back({ "Ready", st.lobbyReady ? "READY" : "NOT READY", false, false, true, "Toggle player ready status." });
+        optRows.push_back({ "GAME TYPE", st.lobbyVariantName.empty() ? "SLAYER" : st.lobbyVariantName, false, false, st.isLobbyHost, "Choose game type and rule set." });
+        optRows.push_back({ "MAP", mapDisplay, false, false, st.isLobbyHost, "Choose which map you want to play." });
+        optRows.push_back({ "GAME OPTIONS", "", false, false, false, "Edit custom game options." });
+        optRows.push_back({ "START GAME", "", true, true, st.isLobbyHost, "Start the selected custom game." });
+    }
+
+    const int totalRows = static_cast<int>(optRows.size());
+    st.lobbyMenuRow = std::clamp(st.lobbyMenuRow, 0, totalRows - 1);
+
+    // Controller & Keyboard Navigation
+    auto stepRow = [&](int d) {
+        st.lobbyMenuRow = (st.lobbyMenuRow + d + totalRows) % totalRows;
+        MenuSounds::Scroll();
+    };
+    if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickDown)) stepRow(1);
+    if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickUp)) stepRow(-1);
+
+    auto cycleOption = [&](int dir) {
+        if (!st.isLobbyHost && optRows[st.lobbyMenuRow].label != "Ready") return;
+        const auto& row = optRows[st.lobbyMenuRow];
+        if (row.label == "Ready") {
+            st.lobbyReady = !st.lobbyReady;
+            MenuSounds::Change();
+        } else if (row.label == "MISSION" || row.label == "MAP") {
+            const MenuMap* baseMaps = (st.lobbyMode == "campaign") ? kMissions : (st.lobbyMode == "firefight" ? kFirefightMaps : kMaps);
+            const int count = (st.lobbyMode == "campaign") ? Count(kMissions) : (st.lobbyMode == "firefight" ? Count(kFirefightMaps) : Count(kMaps));
+            int cur = 0;
+            for (int i = 0; i < count; ++i) if (baseMaps[i].scenario == st.lobbyMap) { cur = i; break; }
+            cur = (cur + dir + count) % count;
+            st.lobbyMap = baseMaps[cur].scenario;
+            MasterServerClient::Get().UpdateLobbyAdvert(st.lobbyMap, st.lobbyMode, st.lobbyVariantName, st.lobbyDifficulty, st.lobbySkulls);
+            MenuSounds::Change();
+        } else if (row.label == "GAME TYPE" || row.label == "FIRE FIGHT") {
+            const std::vector<MenuVariant>& varList = (st.lobbyMode == "firefight") ? ctx.ffVariants : ctx.variants;
+            if (!varList.empty()) {
+                int cur = 0;
+                for (int i = 0; i < static_cast<int>(varList.size()); ++i) {
+                    if (varList[i].label == st.lobbyVariantName) { cur = i; break; }
                 }
+                cur = (cur + dir + static_cast<int>(varList.size())) % static_cast<int>(varList.size());
+                st.lobbyVariantPath = varList[cur].path.string();
+                st.lobbyVariantName = varList[cur].label;
+                MasterServerClient::Get().UpdateLobbyAdvert(st.lobbyMap, st.lobbyMode, st.lobbyVariantName, st.lobbyDifficulty, st.lobbySkulls);
+                MenuSounds::Change();
             }
-            curIdx = (curIdx + dv + static_cast<int>(varList.size())) % static_cast<int>(varList.size());
-            st.lobbyVariantPath = varList[curIdx].path.string();
-            st.lobbyVariantName = varList[curIdx].label;
+        } else if (row.label == "DIFFICULTY") {
+            st.lobbyDifficulty = (st.lobbyDifficulty + dir + 4) % 4;
             MasterServerClient::Get().UpdateLobbyAdvert(st.lobbyMap, st.lobbyMode, st.lobbyVariantName, st.lobbyDifficulty, st.lobbySkulls);
+            MenuSounds::Change();
+        } else if (row.label == "SCORING") {
+            st.lobbyScoring = (st.lobbyScoring + dir + 3) % 3;
+            MenuSounds::Change();
         }
-    } else {
-        OptionRow(ui, "lobby_var", ImVec2(pxLeft, y), colW, "GAME TYPE", st.lobbyVariantName.c_str(), false);
+    };
+
+    if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickLeft)) cycleOption(-1);
+    if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickRight)) cycleOption(1);
+
+    auto triggerAction = [&]() {
+        const auto& cur = optRows[st.lobbyMenuRow];
+        if (cur.isStart) {
+            if (st.isLobbyHost) {
+                const std::string variantFileName = st.lobbyVariantPath.empty()
+                    ? ""
+                    : std::filesystem::path(st.lobbyVariantPath).filename().string();
+                {
+                    const std::string curId = MasterServerClient::Get().GetCurrentSessionId();
+                    const std::string curTok = MasterServerClient::Get().GetCurrentSessionToken();
+                    if (!curId.empty()) st.lobbySessionId = curId;
+                    if (!curTok.empty()) st.lobbySessionToken = curTok;
+                }
+                MasterServerClient::Get().LaunchLobbySync(st.lobbySessionId, st.lobbyMap, st.lobbyMode, variantFileName, st.lobbyDifficulty, st.lobbySkulls);
+
+                choice.play = true;
+                choice.host = true;
+                choice.sessionId = st.lobbySessionId;
+                choice.sessionToken = st.lobbySessionToken;
+                choice.hostOnline = (st.lobbyNetMode == 1);
+                choice.hostPublic = (st.lobbyPrivacy == 0);
+                choice.hostMaxPlayers = st.lobbyMaxPlayers;
+                choice.map = st.lobbyMap;
+                choice.mode = st.lobbyMode;
+                choice.variantPath = st.lobbyVariantPath;
+                choice.difficulty = st.lobbyDifficulty;
+                choice.skulls = st.lobbySkulls;
+                done = true;
+            } else {
+                st.lobbyReady = !st.lobbyReady;
+                MenuSounds::Click();
+            }
+        } else if (cur.label == "Ready") {
+            st.lobbyReady = !st.lobbyReady;
+            MenuSounds::Click();
+        } else if (cur.editable) {
+            cycleOption(1);
+        }
+    };
+
+    if (AcceptPressed()) triggerAction();
+
+    // Render Options List
+    float curY = menuY;
+    std::string activeTooltip = optRows[st.lobbyMenuRow].tooltip;
+
+    for (int i = 0; i < totalRows; ++i) {
+        const auto& row = optRows[i];
+        const bool focused = (st.lobbyMenuRow == i);
+        const ImVec2 r0(prevX + 32.0f * ui.s, curY);
+        const ImVec2 r1(prevX + menuW, curY + rowH);
+
+        ImGui::SetCursorScreenPos(r0);
+        char btnId[64];
+        std::snprintf(btnId, sizeof(btnId), "##lopt_%d", i);
+        if (ImGui::InvisibleButton(btnId, ImVec2(menuW - 32.0f * ui.s, rowH))) {
+            st.lobbyMenuRow = i;
+            triggerAction();
+        }
+        if (ImGui::IsItemHovered() && st.lobbyMenuRow != i) {
+            st.lobbyMenuRow = i;
+            MenuSounds::Scroll();
+        }
+
+        if (focused) {
+            // Subtle dark background highlight
+            ui.dl->AddRectFilledMultiColor(r0, r1, IM_COL32(35, 55, 80, 190), IM_COL32(35, 55, 80, 25),
+                                           IM_COL32(35, 55, 80, 25), IM_COL32(35, 55, 80, 190));
+            // Signature Halo: Reach Orange Accent Bar on left edge
+            ui.dl->AddRectFilled(r0, ImVec2(r0.x + 3.0f * ui.s, r1.y), IM_COL32(255, 140, 30, 255));
+        }
+
+        // Left Label
+        const float textY = curY + 5.0f * ui.s;
+        Text(ui, NobleStyle::TitleFont(), 17.5f, ImVec2(r0.x + 10.0f * ui.s, textY), focused ? kWhite : kDim, row.label.c_str());
+
+        // Right Value
+        if (!row.value.empty()) {
+            const std::string valUpper = Upper(row.value);
+            const float valW = TextWidth(NobleStyle::TitleFont(), 17.5f * ui.s, valUpper.c_str());
+            const float valX = r1.x - valW - (row.editable ? 24.0f * ui.s : 10.0f * ui.s);
+            if (row.editable && focused) {
+                Text(ui, NobleStyle::SmallFont(), 13.0f, ImVec2(valX - 14.0f * ui.s, textY + 2.0f * ui.s), IM_COL32(255, 180, 60, 220), "<");
+                Text(ui, NobleStyle::SmallFont(), 13.0f, ImVec2(valX + valW + 6.0f * ui.s, textY + 2.0f * ui.s), IM_COL32(255, 180, 60, 220), ">");
+            }
+            Text(ui, NobleStyle::TitleFont(), 17.5f, ImVec2(valX, textY), focused ? kWhite : IM_COL32(185, 205, 225, 230), valUpper.c_str());
+        }
+
+        curY += rowH + 2.0f * ui.s;
     }
-    y += 40.0f * ui.s;
 
-    // Network / Invite Info Card
-    const float cardH = 68.0f * ui.s;
-    ui.dl->AddRectFilled(ImVec2(pxLeft, y), ImVec2(pxLeft + colW, y + cardH), IM_COL32(14, 20, 30, 200), 4.0f * ui.s);
-    ui.dl->AddRect(ImVec2(pxLeft, y), ImVec2(pxLeft + colW, y + cardH), IM_COL32(60, 90, 130, 120), 4.0f * ui.s);
+    // Contextual Tooltip Line Below Menu Options
+    if (!activeTooltip.empty()) {
+        Text(ui, NobleStyle::SmallFont(), 13.5f, ImVec2(prevX + 42.0f * ui.s, curY + 12.0f * ui.s), IM_COL32(170, 190, 215, 200), activeTooltip.c_str());
+    }
 
+    // 4. Center Countdown Display (When starting match)
+    if (st.lobbyCountdown >= 0) {
+        const float cX = ui.size.x * 0.48f;
+        const float cY = ui.size.y * 0.46f;
+        Text(ui, NobleStyle::SmallFont(), 14.0f, ImVec2(cX, cY), IM_COL32(200, 220, 240, 220), "Press (X) to cancel the countdown");
+        char timerBuf[16];
+        std::snprintf(timerBuf, sizeof(timerBuf), "0:0%d", std::clamp(st.lobbyCountdown, 0, 9));
+        Text(ui, NobleStyle::TitleFont(), 44.0f, ImVec2(cX, cY + 20.0f * ui.s), IM_COL32(230, 245, 255, 230), timerBuf);
+        std::string kicker = Upper(st.lobbyVariantName) + " / " + Upper(mapDisplay);
+        Text(ui, NobleStyle::SmallFont(), 13.0f, ImVec2(cX, cY + 68.0f * ui.s), IM_COL32(160, 185, 210, 180), kicker.c_str());
+    }
+
+    // 5. Right Column: "MY PARTY" Panel (Matching 3 images 1:1)
+    const float partyW = std::clamp(ui.size.x * 0.28f, 310.0f * ui.s, 420.0f * ui.s);
+    const float partyX = ui.size.x - partyW - 48.0f * ui.s;
+    const float partyY = top + 6.0f * ui.s;
+
+    // MY PARTY Top Tab (Solid black tab)
+    const float tabW = 120.0f * ui.s;
+    const float tabH = 26.0f * ui.s;
+    ui.dl->AddRectFilled(ImVec2(partyX, partyY), ImVec2(partyX + tabW, partyY + tabH), IM_COL32(10, 12, 16, 255), 2.0f * ui.s, ImDrawFlags_RoundCornersTop);
+    ui.dl->AddRect(ImVec2(partyX, partyY), ImVec2(partyX + tabW, partyY + tabH), IM_COL32(40, 60, 90, 140), 2.0f * ui.s, ImDrawFlags_RoundCornersTop);
+    Text(ui, NobleStyle::TitleFont(), 15.0f, ImVec2(partyX + 12.0f * ui.s, partyY + 4.0f * ui.s), kWhite, "MY PARTY");
+
+    // Subheader Bar
+    const float subY = partyY + tabH;
+    const float subH = 28.0f * ui.s;
+    ui.dl->AddRectFilled(ImVec2(partyX, subY), ImVec2(partyX + partyW, subY + subH), IM_COL32(16, 24, 34, 240));
+    ui.dl->AddRect(ImVec2(partyX, subY), ImVec2(partyX + partyW, subY + subH), IM_COL32(50, 75, 110, 160));
+
+    std::string subModeTitle = "In Custom Game Lobby";
+    if (st.lobbyMode == "campaign") subModeTitle = "In Campaign Lobby";
+    else if (st.lobbyMode == "forge") subModeTitle = "In Forge Lobby";
+    else if (st.lobbyMode == "firefight") subModeTitle = "In Firefight Lobby";
+
+    Text(ui, NobleStyle::SmallFont(), 13.0f, ImVec2(partyX + 10.0f * ui.s, subY + 6.0f * ui.s), IM_COL32(220, 235, 250, 230), subModeTitle.c_str());
+
+    char countBuf[32];
+    std::snprintf(countBuf, sizeof(countBuf), "%zu/%d", st.lobbyRoster.size(), st.lobbyMaxPlayers);
+    const float countW = TextWidth(NobleStyle::SmallFont(), 13.0f * ui.s, countBuf);
+    Text(ui, NobleStyle::SmallFont(), 13.0f, ImVec2(partyX + partyW - countW - 10.0f * ui.s, subY + 6.0f * ui.s), IM_COL32(200, 220, 240, 220), countBuf);
+
+    // Player Roster Container
+    float rosterY = subY + subH;
+    const float playerRowH = 36.0f * ui.s;
+    const size_t displayCount = st.lobbyRoster.empty() ? 1 : st.lobbyRoster.size();
+
+    for (size_t idx = 0; idx < displayCount; ++idx) {
+        const ImVec2 pr0(partyX, rosterY);
+        const ImVec2 pr1(partyX + partyW, rosterY + playerRowH);
+
+        const bool hasPlayer = !st.lobbyRoster.empty();
+        const auto& player = hasPlayer ? st.lobbyRoster[idx] : LobbyPlayer{};
+        const bool selected = (st.lobbyRosterSelection == static_cast<int>(idx));
+
+        // Background color: Reach orange/red highlight if selected
+        const ImU32 rowBg = selected ? IM_COL32(185, 55, 20, 235)
+                                     : (player.isHost ? IM_COL32(24, 36, 52, 210) : IM_COL32(14, 20, 30, 190));
+        ui.dl->AddRectFilled(pr0, pr1, rowBg);
+        ui.dl->AddRect(pr0, pr1, IM_COL32(40, 60, 90, 100));
+
+        ImGui::SetCursorScreenPos(pr0);
+        char prBtnId[64];
+        std::snprintf(prBtnId, sizeof(prBtnId), "##proster_%zu", idx);
+        if (ImGui::InvisibleButton(prBtnId, ImVec2(partyW, playerRowH))) {
+            st.lobbyRosterSelection = static_cast<int>(idx);
+        }
+
+        if (!hasPlayer) {
+            Text(ui, NobleStyle::SmallFont(), 13.0f, ImVec2(pr0.x + 12.0f * ui.s, pr0.y + 10.0f * ui.s), kDim, "Waiting for players to join...");
+            rosterY += playerRowH;
+            break;
+        }
+
+        // Left Speaker / Chat Bubble Icon
+        const float spkX = pr0.x + 10.0f * ui.s;
+        const float spkY = pr0.y + 12.0f * ui.s;
+        ui.dl->AddCircleFilled(ImVec2(spkX + 5.0f * ui.s, spkY + 6.0f * ui.s), 5.0f * ui.s, IM_COL32(200, 220, 245, 180));
+
+        // Player Emblem Icon
+        const float embX = spkX + 18.0f * ui.s;
+        ui.dl->AddRectFilled(ImVec2(embX, pr0.y + 8.0f * ui.s), ImVec2(embX + 20.0f * ui.s, pr0.y + 28.0f * ui.s), IM_COL32(60, 90, 120, 220), 2.0f * ui.s);
+
+        // Player Name
+        const float nameX = embX + 26.0f * ui.s;
+        Text(ui, NobleStyle::TitleFont(), 16.5f, ImVec2(nameX, pr0.y + 7.0f * ui.s), kWhite, player.username.c_str());
+
+        // BUNGIE / DEV Gold Badge
+        float badgeRight = nameX + TextWidth(NobleStyle::TitleFont(), 16.5f * ui.s, player.username.c_str()) + 8.0f * ui.s;
+        if (player.isDev) {
+            Text(ui, NobleStyle::TitleFont(), 13.0f, ImVec2(badgeRight, pr0.y + 9.0f * ui.s), IM_COL32(245, 200, 45, 255), "BUNGIE");
+            badgeRight += TextWidth(NobleStyle::TitleFont(), 13.0f * ui.s, "BUNGIE") + 6.0f * ui.s;
+        }
+
+        // Right Rank Shield / Service Tag
+        std::string tag = "[" + (player.serviceTag.empty() ? "117" : player.serviceTag) + "]";
+        const float tagW = TextWidth(NobleStyle::SmallFont(), 13.0f * ui.s, tag.c_str());
+        Text(ui, NobleStyle::SmallFont(), 13.0f, ImVec2(pr1.x - tagW - 10.0f * ui.s, pr0.y + 9.0f * ui.s), IM_COL32(170, 195, 220, 220), tag.c_str());
+
+        rosterY += playerRowH + 1.0f * ui.s;
+    }
+
+    // Host's Friends Section
+    rosterY += 8.0f * ui.s;
+    std::string hostName = "Host";
+    for (const auto& p : st.lobbyRoster) if (p.isHost) { hostName = p.username; break; }
+
+    // (Y) <Host>'s Friends Header
+    const ImVec2 fr0(partyX, rosterY);
+    const ImVec2 fr1(partyX + partyW, rosterY + 26.0f * ui.s);
+    ui.dl->AddRectFilled(fr0, fr1, IM_COL32(18, 24, 32, 210));
+    // Yellow Y Button Badge
+    ui.dl->AddCircleFilled(ImVec2(fr0.x + 14.0f * ui.s, fr0.y + 13.0f * ui.s), 7.5f * ui.s, IM_COL32(236, 182, 38, 255));
+    Text(ui, NobleStyle::SmallFont(), 11.0f, ImVec2(fr0.x + 11.5f * ui.s, fr0.y + 6.0f * ui.s), IM_COL32(20, 20, 20, 255), "Y");
+    std::string friendsLabel = hostName + "'s Friends:";
+    Text(ui, NobleStyle::SmallFont(), 13.0f, ImVec2(fr0.x + 28.0f * ui.s, fr0.y + 6.0f * ui.s), IM_COL32(210, 225, 240, 220), friendsLabel.c_str());
+
+    rosterY += 27.0f * ui.s;
+    // Friends list items (matching screenshot)
+    struct FriendItem { const char* act; const char* count; };
+    const FriendItem kFriends[] = {
+        { "Forge - In a Game", "1/8" },
+        { "In Custom Game Lobby", "1/16" }
+    };
+    for (const auto& f : kFriends) {
+        ui.dl->AddRectFilled(ImVec2(partyX, rosterY), ImVec2(partyX + partyW, rosterY + 24.0f * ui.s), IM_COL32(12, 16, 22, 180));
+        ui.dl->AddRect(ImVec2(partyX, rosterY), ImVec2(partyX + partyW, rosterY + 24.0f * ui.s), IM_COL32(35, 50, 70, 90));
+        Text(ui, NobleStyle::SmallFont(), 12.0f, ImVec2(partyX + 16.0f * ui.s, rosterY + 5.0f * ui.s), IM_COL32(170, 190, 210, 200), f.act);
+        const float fw = TextWidth(NobleStyle::SmallFont(), 12.0f * ui.s, f.count);
+        Text(ui, NobleStyle::SmallFont(), 12.0f, ImVec2(partyX + partyW - fw - 12.0f * ui.s, rosterY + 5.0f * ui.s), IM_COL32(160, 180, 200, 180), f.count);
+        rosterY += 25.0f * ui.s;
+    }
+
+    // Network Info & Copy Invite Button
+    rosterY += 10.0f * ui.s;
     std::string extIp = UPnP::Get().GetExternalIP();
     if (extIp.empty() || extIp == "Unknown") extIp = "Direct IP";
-    char hostAddrBuf[128];
-    if (st.isLobbyHost) {
-        std::snprintf(hostAddrBuf, sizeof(hostAddrBuf), "HOST ADDRESS: %s:11774 (%s)", extIp.c_str(), st.lobbyNetMode == 1 ? "ONLINE P2P" : "LOCAL LAN");
-    } else {
-        std::snprintf(hostAddrBuf, sizeof(hostAddrBuf), "CONNECTED TO: %s", st.lobbyHostEndpoint.c_str());
-    }
-    Text(ui, NobleStyle::SmallFont(), 13.0f, ImVec2(pxLeft + 12.0f * ui.s, y + 10.0f * ui.s), IM_COL32(160, 210, 255, 230), hostAddrBuf);
+    const std::string hostEp = st.isLobbyHost ? (extIp + ":11774") : st.lobbyHostEndpoint;
 
-    char statusSub[128];
-    std::snprintf(statusSub, sizeof(statusSub), "%s Â· %s",
-        st.isLobbyHost ? (st.lobbyPrivacy == 0 ? "Public Master Listing" : "Private Direct Join") : "Joined Session",
-        UPnP::Get().IsActive() ? "UPnP Active" : "Direct Port");
-    Text(ui, NobleStyle::SmallFont(), 12.0f, ImVec2(pxLeft + 12.0f * ui.s, y + 36.0f * ui.s), kDim, statusSub);
+    const ImVec2 net0(partyX, rosterY);
+    const ImVec2 net1(partyX + partyW, rosterY + 48.0f * ui.s);
+    ui.dl->AddRectFilled(net0, net1, IM_COL32(12, 18, 28, 200), 3.0f * ui.s);
+    ui.dl->AddRect(net0, net1, IM_COL32(45, 70, 105, 120), 3.0f * ui.s);
 
-    // Copy Invite Button inside network card
-    const float copyW = 120.0f * ui.s;
-    const float copyH = 26.0f * ui.s;
-    ImGui::SetCursorScreenPos(ImVec2(pxLeft + colW - copyW - 10.0f * ui.s, y + (cardH - copyH) * 0.5f));
-    ImGui::PushID("btn_copy_lobby_inv");
-    if (ImGui::Button("COPY INVITE", ImVec2(copyW, copyH))) {
-        std::string inv = "/connect " + (st.isLobbyHost ? extIp + ":11774" : st.lobbyHostEndpoint);
-        ImGui::SetClipboardText(inv.c_str());
+    std::string netTitle = st.isLobbyHost ? ("HOST: " + hostEp) : ("CONNECTED: " + hostEp);
+    Text(ui, NobleStyle::SmallFont(), 12.0f, ImVec2(net0.x + 8.0f * ui.s, net0.y + 6.0f * ui.s), IM_COL32(160, 210, 255, 230), netTitle.c_str());
+
+    const std::string netModeDesc = st.isLobbyHost ? (st.lobbyNetMode == 1 ? "ONLINE P2P" : "LOCAL LAN") : "P2P MATCH";
+    Text(ui, NobleStyle::SmallFont(), 11.5f, ImVec2(net0.x + 8.0f * ui.s, net0.y + 26.0f * ui.s), kDim, netModeDesc.c_str());
+
+    const float cpW = 100.0f * ui.s;
+    const float cpH = 22.0f * ui.s;
+    ImGui::SetCursorScreenPos(ImVec2(net1.x - cpW - 8.0f * ui.s, net0.y + 13.0f * ui.s));
+    ImGui::PushID("btn_copy_inv");
+    if (ImGui::Button("COPY INVITE", ImVec2(cpW, cpH))) {
+        ImGui::SetClipboardText(("/connect " + hostEp).c_str());
         MenuSounds::Click();
     }
     ImGui::PopID();
 
-    // ── RIGHT COLUMN: Player Lobby List (Roster) ──────────────────────────────
-    const float rosterW = colW;
-    const float rosterTop = top + 96.0f * ui.s;
-    const float rosterH = actionsY - rosterTop;
-
-    // Header bar: PLAYERS (X / 16)
-    const float rHeaderH = 36.0f * ui.s;
-    ui.dl->AddRectFilled(ImVec2(pxRight, rosterTop), ImVec2(pxRight + rosterW, rosterTop + rHeaderH), IM_COL32(16, 24, 38, 240), 4.0f * ui.s, ImDrawFlags_RoundCornersTop);
-    ui.dl->AddRect(ImVec2(pxRight, rosterTop), ImVec2(pxRight + rosterW, rosterTop + rHeaderH), IM_COL32(60, 100, 150, 150), 4.0f * ui.s, ImDrawFlags_RoundCornersTop);
-
-    char rosterHeaderBuf[64];
-    std::snprintf(rosterHeaderBuf, sizeof(rosterHeaderBuf), "PLAYERS  (%zu / %d)", st.lobbyRoster.size(), st.lobbyMaxPlayers);
-    Text(ui, NobleStyle::TitleFont(), 18.0f, ImVec2(pxRight + 14.0f * ui.s, rosterTop + 9.0f * ui.s), IM_COL32(230, 240, 255, 240), rosterHeaderBuf);
-
-    // Background container for player rows
-    ui.dl->AddRectFilled(ImVec2(pxRight, rosterTop + rHeaderH), ImVec2(pxRight + rosterW, rosterTop + rosterH), IM_COL32(8, 12, 18, 210), 4.0f * ui.s, ImDrawFlags_RoundCornersBottom);
-    ui.dl->AddRect(ImVec2(pxRight, rosterTop + rHeaderH), ImVec2(pxRight + rosterW, rosterTop + rosterH), IM_COL32(40, 60, 90, 120), 4.0f * ui.s, ImDrawFlags_RoundCornersBottom);
-
-    // Player Rows
-    float rowY = rosterTop + rHeaderH + 6.0f * ui.s;
-    const float rowH = 44.0f * ui.s;
-
-    if (st.lobbyRoster.empty()) {
-        Text(ui, NobleStyle::SmallFont(), 14.0f, ImVec2(pxRight + 20.0f * ui.s, rowY + 12.0f * ui.s), kDim, "Waiting for players to join...");
-    }
-
-    for (size_t idx = 0; idx < st.lobbyRoster.size(); ++idx) {
-        if (rowY + rowH > rosterTop + rosterH - 8.0f * ui.s) break;
-        const auto& player = st.lobbyRoster[idx];
-
-        const ImVec2 rMin(pxRight + 8.0f * ui.s, rowY);
-        const ImVec2 rMax(pxRight + rosterW - 8.0f * ui.s, rowY + rowH);
-
-        const ImU32 bgCol = player.isHost ? IM_COL32(24, 42, 68, 210) : IM_COL32(14, 20, 30, 180);
-        ui.dl->AddRectFilled(rMin, rMax, bgCol, 3.0f * ui.s);
-
-        const ImU32 stripCol = player.isHost ? IM_COL32(255, 200, 80, 255) : (player.isDev ? IM_COL32(255, 180, 50, 255) : IM_COL32(80, 160, 240, 220));
-        ui.dl->AddRectFilled(rMin, ImVec2(rMin.x + 4.0f * ui.s, rMax.y), stripCol, 2.0f * ui.s);
-
-        float textX = rMin.x + 14.0f * ui.s;
-
-        if (player.isHost) {
-            Text(ui, NobleStyle::SmallFont(), 12.0f, ImVec2(textX, rowY + 6.0f * ui.s), IM_COL32(255, 200, 80, 255), "[HOST]");
-            textX += 44.0f * ui.s;
-        }
-
-        std::string lobbyUser = player.username;
-        if (player.isDev) {
-            lobbyUser += " [DEV]";
-        }
-        Text(ui, NobleStyle::TitleFont(), 17.0f, ImVec2(textX, rowY + 4.0f * ui.s),
-             player.isDev ? IM_COL32(255, 215, 0, 255) : kWhite,
-             lobbyUser.c_str());
-
-        std::string tagStr = "[" + (player.serviceTag.empty() ? "117" : player.serviceTag) + "]";
-        float tagX = textX + TextWidth(NobleStyle::TitleFont(), 17.0f * ui.s, lobbyUser.c_str()) + 8.0f * ui.s;
-        Text(ui, NobleStyle::SmallFont(), 13.0f, ImVec2(tagX, rowY + 7.0f * ui.s), IM_COL32(150, 170, 190, 200), tagStr.c_str());
-
-        if (player.isDev) {
-            float devX = tagX + TextWidth(NobleStyle::SmallFont(), 13.0f * ui.s, tagStr.c_str()) + 8.0f * ui.s;
-            ui.dl->AddRectFilled(ImVec2(devX, rowY + 6.0f * ui.s), ImVec2(devX + 44.0f * ui.s, rowY + 22.0f * ui.s), IM_COL32(180, 130, 20, 220), 2.0f * ui.s);
-            Text(ui, NobleStyle::SmallFont(), 11.0f, ImVec2(devX + 5.0f * ui.s, rowY + 7.0f * ui.s), IM_COL32(255, 255, 255, 255), "DEV");
-        }
-
-        char subInfo[96];
-        if (player.isHost) {
-            std::snprintf(subInfo, sizeof(subInfo), "P:ID %llu Â· Host Â· Session Leader", static_cast<unsigned long long>(player.peerId));
-        } else {
-            std::snprintf(subInfo, sizeof(subInfo), "P:ID %llu Â· Ready Â· %dms", static_cast<unsigned long long>(player.peerId), player.ping);
-        }
-        Text(ui, NobleStyle::SmallFont(), 12.0f, ImVec2(rMin.x + 14.0f * ui.s, rowY + 25.0f * ui.s), kDim, subInfo);
-
-        rowY += rowH + 4.0f * ui.s;
-    }
-
-    // ── BOTTOM ACTION BUTTONS ─────────────────────────────────────────────────
-    if (st.isLobbyHost) {
-        if (BigAction(ui, "btn_start_match", ImVec2(pxLeft, actionsY), colW - 140.0f * ui.s, "START MATCH", "Launch match for all players in lobby", true, true, false)) {
-            const std::string variantFileName = st.lobbyVariantPath.empty()
-                ? ""
-                : std::filesystem::path(st.lobbyVariantPath).filename().string();
-            {
-                const std::string curId = MasterServerClient::Get().GetCurrentSessionId();
-                const std::string curTok = MasterServerClient::Get().GetCurrentSessionToken();
-                if (!curId.empty()) st.lobbySessionId = curId;
-                if (!curTok.empty()) st.lobbySessionToken = curTok;
-            }
-            MasterServerClient::Get().LaunchLobbySync(st.lobbySessionId, st.lobbyMap, st.lobbyMode, variantFileName, st.lobbyDifficulty, st.lobbySkulls);
-
-            // Duplicate WS launch removed (Finding #6) - only HTTP LaunchLobbySync is used to avoid duplicate launch signals
-
-            choice.play = true;
-            choice.host = true;
-            choice.sessionId = st.lobbySessionId;
-            choice.sessionToken = st.lobbySessionToken;
-            choice.hostOnline = (st.lobbyNetMode == 1);
-            choice.hostPublic = (st.lobbyPrivacy == 0);
-            choice.hostMaxPlayers = st.lobbyMaxPlayers;
-            choice.map = st.lobbyMap;
-            choice.mode = st.lobbyMode;
-            choice.variantPath = st.lobbyVariantPath;
-            choice.difficulty = st.lobbyDifficulty;
-            choice.skulls = st.lobbySkulls;
-            done = true;
-        }
-
-        if (BigAction(ui, "btn_cancel_lobby", ImVec2(pxLeft + colW - 130.0f * ui.s, actionsY), 130.0f * ui.s, "CANCEL", "Close Lobby", false, true, false) || back) {
+    // 6. Back / Cancel Lobby Handling
+    if (back) {
+        if (st.isLobbyHost) {
             MasterServerClient::Get().StopAdvertising();
             SessionManager::Get().StopHosting();
             NetworkTransport::Get().StopRelay();
             st.screen = Screen::CustomGame;
-        }
-    } else {
-        BigAction(ui, "btn_waiting_match", ImVec2(pxLeft, actionsY), colW - 140.0f * ui.s, "WAITING FOR HOST", "Host will launch match synchronously", false, false, false);
-
-        if (BigAction(ui, "btn_leave_lobby", ImVec2(pxLeft + colW - 130.0f * ui.s, actionsY), 130.0f * ui.s, "LEAVE", "Exit Lobby", false, true, false) || back) {
+        } else {
             uint64_t fallbackId = (MasterServerClient::GetLobbyMachineId() & 0x7FFFFFFFULL);
             if (fallbackId < 2ULL) fallbackId = 2ULL;
             uint64_t pId = AuthClient::Get().IsLoggedIn() ? static_cast<uint64_t>(AuthClient::Get().GetUserId()) : fallbackId;
@@ -1943,7 +2190,27 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         }
     }
 
-    DrawHints(ui, { { Prompt::Accept, st.isLobbyHost ? "Start Match" : "Ready" }, { Prompt::Back, st.isLobbyHost ? "Cancel Lobby" : "Leave Lobby" } });
+    // 7. Bottom Button Prompts Bar (Zero overlaps, matches reference screenshots)
+    {
+        const float barY = ui.size.y - 36.0f * ui.s;
+        float bx = leftMargin + 32.0f * ui.s;
+
+        auto drawPrompt = [&](const char* glyph, ImU32 col, const char* label) {
+            ui.dl->AddCircleFilled(ImVec2(bx + 9.0f * ui.s, barY + 10.0f * ui.s), 8.5f * ui.s, col);
+            Text(ui, NobleStyle::SmallFont(), 12.0f, ImVec2(bx + 5.5f * ui.s, barY + 2.0f * ui.s), IM_COL32(15, 15, 15, 255), glyph);
+            bx += 22.0f * ui.s;
+            Text(ui, NobleStyle::SmallFont(), 14.0f, ImVec2(bx, barY + 2.0f * ui.s), kWhite, label);
+            bx += TextWidth(NobleStyle::SmallFont(), 14.0f * ui.s, label) + 20.0f * ui.s;
+        };
+
+        drawPrompt("A", IM_COL32(92, 170, 60, 255), "Select");
+        drawPrompt("B", IM_COL32(204, 52, 44, 255), "Back");
+        drawPrompt("Y", IM_COL32(236, 182, 38, 255), "Select Network");
+        drawPrompt(">", IM_COL32(60, 70, 85, 255), "Menu");
+        if (st.lobbyMode != "campaign") {
+            drawPrompt("X", IM_COL32(52, 134, 214, 255), "Prior Game Stats");
+        }
+    }
 }
 
 void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11DeviceContext* context,
@@ -2141,8 +2408,8 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
             if (mod) { choice.modFolder = mod->folder; choice.modTitle = mod->title; }
             done = true;
         }
-        if (st.focusRow > 0 && (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || ImGui::IsKeyPressed(ImGuiKey_Tab) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown))) st.focusRow = std::min(3, st.focusRow + 1);
-        if (st.focusRow > 0 && (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp))) st.focusRow = std::max(1, st.focusRow - 1);
+        if (st.focusRow > 0 && (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || ImGui::IsKeyPressed(ImGuiKey_Tab) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickDown))) st.focusRow = std::min(3, st.focusRow + 1);
+        if (st.focusRow > 0 && (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickUp))) st.focusRow = std::max(1, st.focusRow - 1);
         if (st.focusRow == 2 && AcceptPressed()) st.screen = Screen::Skulls;
         if (back) {
             if (st.focusRow > 0) st.focusRow = 0;
@@ -2161,10 +2428,10 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
             Text(ui, NobleStyle::TitleFont(), 20.0f, ImVec2(gx, y), kWhite, name);
             ui.dl->AddLine(ImVec2(gx, y + 26.0f * ui.s), ImVec2(gx + cell * 5.0f, y + 26.0f * ui.s), IM_COL32(255, 255, 255, 60));
         };
-        if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight)) st.skull = std::min(kSkullCount - 1, st.skull + 1);
-        if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft)) st.skull = std::max(0, st.skull - 1);
-        if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown)) st.skull = std::min(kSkullCount - 1, st.skull + 5);
-        if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp)) st.skull = std::max(0, st.skull - 5);
+        if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickRight)) st.skull = std::min(kSkullCount - 1, st.skull + 1);
+        if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickLeft)) st.skull = std::max(0, st.skull - 1);
+        if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickDown)) st.skull = std::min(kSkullCount - 1, st.skull + 5);
+        if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickUp)) st.skull = std::max(0, st.skull - 5);
         bool toggle = AcceptPressed() || ImGui::IsKeyPressed(ImGuiKey_Space, false);
 
         section("Primary Skulls", gy);
@@ -2365,8 +2632,8 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
             }
             done = true;
         }
-        if (st.focusRow > 0 && (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || ImGui::IsKeyPressed(ImGuiKey_Tab) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown))) st.focusRow = std::min(focusRows, st.focusRow + 1);
-        if (st.focusRow > 0 && (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp))) st.focusRow = std::max(1, st.focusRow - 1);
+        if (st.focusRow > 0 && (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || ImGui::IsKeyPressed(ImGuiKey_Tab) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickDown))) st.focusRow = std::min(focusRows, st.focusRow + 1);
+        if (st.focusRow > 0 && (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickUp))) st.focusRow = std::max(1, st.focusRow - 1);
         if (back) {
             if (st.focusRow > 0) st.focusRow = 0;
             else goBack(Screen::Main);
@@ -2734,7 +3001,9 @@ void FrontEndMenu::RenderOverlayImpl(IDXGISwapChain* swapChain, bool clear) {
         }
 
         ImGui_ImplDX11_NewFrame();
+        ImGui_ImplWin32_NewFrame();
         ImGui::NewFrame();
+        InputPrompts::Update();
 
         FrontEndChoice choice;
         bool done = false;
