@@ -22,6 +22,26 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-30, 07:55 ET) - Custom Game / Forge get the same row block as the other setup screens (WeabooTyler117 / DeepSeek)
+
+Tyler: "fix the custom game screen, it looks nothing like the others such as forge, firefight and campaign". The cause:
+Campaign and Firefight fill the right column (difficulty tiles, skulls, options), while Custom Game had only a GAME TYPE
+row (and Forge had none), so both screens were a banner followed by a large void above the network strip.
+
+- **Custom Game / Forge now draw a GAME OPTIONS row and a PLAYERS row**, the same shape Firefight's options row has:
+  - `GAME OPTIONS · DEFAULT` - greyed with "Coming later" on the right (the editor needs Reach variant read/write,
+    spec 4.4), so the screen says why instead of hiding it.
+  - `PLAYERS` - a working cycler, `4 / 8 / 12 / 16 PLAYERS`, stored in `MenuState::sessionMaxPlayers` and passed to
+    `SetupHostLobby` as the lobby cap for HOST LOBBY / HOST FORGE (Firefight stays at 4). Left/Right and the on-screen
+    arrows both change it; it counts as a focus row for controller/keyboard navigation.
+- `rowsH` in the Firefight/Custom/Forge case counts those 72 * s, so `HeroBannerHeight()` shrinks the picture and the
+  rows fill the column - no more dead space, and the banner/strip can still never overlap.
+- **Readability:** `OptionRow()` now draws a faint plate (`IM_COL32(8,12,18,85)`) under every row, and the two greyed
+  option rows do the same, because dim grey text over bright map art (Forge World's snow) was hard to read.
+
+Checked with the capture harness at 1920x1080: Custom Game shows GAME TYPE / GAME OPTIONS / PLAYERS and Forge shows
+GAME OPTIONS / PLAYERS, both with the network strip and action buttons below, matching Firefight and Campaign.
+
 ## 0. Pick up here (2026-10-30, 07:35 ET) - Service tag single source, Social screen in the capture harness, full menu sweep (WeabooTyler117 / DeepSeek)
 
 ### 1. The service tag disagreed between the Armory and the menus

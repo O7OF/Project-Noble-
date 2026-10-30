@@ -167,6 +167,8 @@ Menus (this session, all pushed):
 | `bf9d384` | MCC-style `PlayerRow` (rank / emblem / nameplate with tag+name), `MY GAME SESSION` header, empty lobby slot fix |
 | `8059115` | **Emblems load again**: MCC pack stores `E_002_P_SML`, not `e_002_p` (upper case + `_SML`) - this also fixes O7's Armory emblem grid |
 | `e93076f` | `[DEV]` as text, centred rank badge, one framed block, smaller name |
+| `ab4a9f4` | One service tag everywhere (Armory profile wins), `-menu-screen social` |
+| (this commit) | Custom Game / Forge: GAME OPTIONS + PLAYERS rows (lobby cap 4-16 now real), row plates for readability |
 | `f40ae67` | `docs/CONTINUATION.md` (this file) + the identity/invite handoff entry |
 | `dc71e0b` | Lobby identity per player row (`rankIndex`/`emblemId`/`nameplateId`/`team` in `LobbyPlayer` + `MasterAdvert` + register/heartbeat JSON + roster parse) and **invite notifications** with a JOIN/DISMISS toast + `Settings > Online services > INVITE NOTIFICATIONS` |
 

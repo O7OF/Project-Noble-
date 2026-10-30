@@ -1032,6 +1032,8 @@ int OptionRow(const Ui& ui, const char* id, ImVec2 pos, float width, const char*
     const float h = 32.0f * ui.s;
     int change = 0;
     const ImVec2 b(pos.x + width, pos.y + h);
+    // Faint plate under every row: the setup screens sit on bright map art, and dim rows were hard to read.
+    ui.dl->AddRectFilled(pos, b, IM_COL32(8, 12, 18, 85));
     if (focused) {
         ui.dl->AddRectFilledMultiColor(pos, b, IM_COL32(60, 120, 170, 120), IM_COL32(60, 120, 170, 20),
                                        IM_COL32(60, 120, 170, 20), IM_COL32(60, 120, 170, 120));
@@ -1271,6 +1273,7 @@ struct MenuState {
     int lobbyDifficulty = 1;
     uint64_t lobbySkulls = 0;
     int lobbyMaxPlayers = 16;
+    int sessionMaxPlayers = 16;    // players the Custom Game / Forge lobby will allow (4..16)
     std::string lobbyHostEndpoint;
     std::vector<LobbyPlayer> lobbyRoster;
     bool lobbyLaunchPending = false;
@@ -3197,7 +3200,10 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         const RightColumnY col = RightColumnLayout(ui);
         const float actionsY = col.actions;
         const bool forgeMissing = forge && !std::filesystem::exists(ctx.forgeVariant);
-        const float rowsH = (forge ? 0.0f : 36.0f * ui.s) + (ff ? 30.0f * ui.s + 98.0f * ui.s + 8.0f * ui.s : 0.0f) +
+        // Custom Game / Forge get the same row block as Firefight and Campaign: game type, game options and
+        // the lobby's player cap, so the column is not banner-then-void (2026-10-30).
+        const float rowsH = (forge ? 0.0f : 36.0f * ui.s) + (!ff ? 72.0f * ui.s : 0.0f) +
+                            (ff ? 30.0f * ui.s + 98.0f * ui.s + 8.0f * ui.s : 0.0f) +
                             (forgeMissing ? 26.0f * ui.s : 0.0f);
         const float bannerTop = top + 96.0f * ui.s;
         const char* blurb = row ? row->blurb.c_str() : "";
@@ -3217,8 +3223,30 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
             y += 36.0f * ui.s;
             ++focusRows;
         }
+        if (!ff) {
+            // Custom Game / Forge: the same row block the other setup screens have, so the column is not
+            // banner-then-void. Game options need Reach variant read/write (spec 4.4), so they are greyed with
+            // the reason; PLAYERS is real and feeds HOST LOBBY / HOST FORGE.
+            ui.dl->AddRectFilled(ImVec2(px, y), ImVec2(px + pw, y + 32.0f * ui.s), IM_COL32(8, 12, 18, 85));
+            Text(ui, NobleStyle::TitleFont(), 18.0f, ImVec2(px + 10.0f * ui.s, y + 4.0f * ui.s), kDisabled, "GAME OPTIONS \xC2\xB7 DEFAULT");
+            const char* later = "Coming later";
+            Text(ui, nullptr, 15.0f, ImVec2(px + pw - TextWidth(nullptr, 15.0f * ui.s, later) - 10.0f * ui.s, y + 6.0f * ui.s), kDisabled, later);
+            y += 36.0f * ui.s;
+            static const int kCaps[4] = { 4, 8, 12, 16 };
+            int capIdx = (st.sessionMaxPlayers <= 4) ? 0 : (st.sessionMaxPlayers <= 8) ? 1 : (st.sessionMaxPlayers <= 12) ? 2 : 3;
+            char capText[32];
+            std::snprintf(capText, sizeof(capText), "%d PLAYERS", kCaps[capIdx]);
+            const int dc = OptionRow(ui, "players", ImVec2(px, y), pw, "PLAYERS", capText, st.focusRow == focusRows);
+            if (dc) {
+                capIdx = (capIdx + dc + 4) % 4;
+                st.sessionMaxPlayers = kCaps[capIdx];
+            }
+            y += 36.0f * ui.s;
+            ++focusRows;
+        }
         if (ff) {
             // Spec §4.3: per-game overrides (time limit, lives, skulls) once Noble can write Firefight variants.
+            ui.dl->AddRectFilled(ImVec2(px, y), ImVec2(px + pw, y + 30.0f * ui.s), IM_COL32(8, 12, 18, 85));
             Text(ui, NobleStyle::TitleFont(), 18.0f, ImVec2(px + 10.0f * ui.s, y + 4.0f * ui.s), kDisabled, "FIREFIGHT OPTIONS \xC2\xB7 DEFAULT");
             const char* later = "Coming later";
             Text(ui, nullptr, 15.0f, ImVec2(px + pw - TextWidth(nullptr, 15.0f * ui.s, later) - 10.0f * ui.s, y + 6.0f * ui.s), kDisabled, later);
@@ -3276,7 +3304,8 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
                 }
             }
             const std::string mode = ff ? "firefight" : (forge ? "forge" : "multiplayer");
-            SetupHostLobby(st, map ? map->scenario : "20_sword_slayer", mode, varPath, varName, ff ? st.difficulty : 1, 0, ff ? 4 : 16);
+            SetupHostLobby(st, map ? map->scenario : "20_sword_slayer", mode, varPath, varName, ff ? st.difficulty : 1, 0,
+                           ff ? 4 : st.sessionMaxPlayers);
         } else if (startSolo) {
             choice.play = true;
             choice.host = false;
