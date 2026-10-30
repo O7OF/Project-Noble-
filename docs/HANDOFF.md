@@ -69,6 +69,25 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-31, 20:05 ET) - Server/netcode changes now go to O7OF/ServerTestDeploy (WeabooTyler117 / DeepSeek)
+
+Tyler: *"any netcode or server script changes need to be pushed to ServerTestDeploy repo"*, and he has access.
+
+- Cloned `https://github.com/O7OF/ServerTestDeploy` and compared it with this repo's `server/` folder: **all files already
+  matched** (`server.js`, `src/*.js`, `package*.json`, `grant_item.js`, `reset_db.js`, `set_dev.js`, `database.db`) except
+  `update_auth.js`, which existed only here - pushed it as `7f00da8`.
+- Added **`tools/push-server.ps1`**: clones the deployment repo next to the checkout if missing, copies the server source
+  over it (`server.js`, `src/`, `package*.json`, `grant_item.js`, `reset_db.js`, `set_dev.js`, `update_auth.js`), commits and
+  pushes. It deliberately excludes `node_modules/` and `database.db` (live data) unless `-IncludeDb`; `-DryRun` shows what
+  would change. Verified: dry run reports parity, and every server file hashes identically against the deploy repo.
+- Added `server/README.md` naming ServerTestDeploy as canonical, documenting the script, and listing the latest upstream
+  commits.
+- Latest ServerTestDeploy commits: `7f00da8` (ours), `24075d8` auth/single-session, `83602ac` netcode+lobby sync+db reset,
+  `1af3a75`/`8f95c71`/`0f43628` uploads, `37bcf64` relay session-id reuse, `e1301b3` lobby signalling, `510b797` WebSocket
+  relay + NAT punch.
+
+**Rule from now on: netcode or server-script changes are committed here AND pushed with `tools/push-server.ps1`.**
+
 ## 0. Pick up here (2026-10-31, 19:40 ET) - Command dispatch works but vtable[9] is not a command parser (WeabooTyler117 / DeepSeek)
 
 - `BlamEngine::Active()` now exists (static pointer set in `Initialize`, cleared in `Shutdown`), and a timed test hook
