@@ -175,7 +175,8 @@ Menus (this session, all pushed):
 | `5f26667` | Review pass: 6 bug fixes (preview title, stale picker cache, dead unsafe API, invite JOIN without host, stale mod on Continue, per-frame track list) |
 | `5e512b7` | Halo: Reach **button layouts** (PadLayouts) applied in slot 36 + BUTTON LAYOUT row + layout-aware diagram |
 | `7383c54` | Map/game-type guard (`MapGameTypes`) + `-test-map-gametypes` (280 combinations); armory backdrop attempt reverted |
-| (this commit) | `tools/test-modes.ps1` mode/game-type smoke matrix (quit-after issue documented) |
+| `b18cf29` | `tools/test-modes.ps1` mode/game-type smoke matrix |
+| (this commit) | Mouse acceleration + smoothing, controller stick layout (Southpaw); test script teardown hardened |
 | `5f4da08` | Prompts follow the device everywhere; `InputPrompts` button glyphs in the CONTROLLER list |
 | (this commit) | Main menu **Continue** fast path (spec 4.1/4.10) + a status block at the top of the design doc |
 | `a8f412e` | Menu music player (`PauseMusic/ResumeMusic` + `DrawMusicPlayer`) |

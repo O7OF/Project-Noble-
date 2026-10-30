@@ -152,6 +152,7 @@ void FrameCapture::OnFrame(IDXGISwapChain* swapChain, unsigned long long frame) 
         s_frames = ParseCaptureFrames();
         s_quitAfter = ParseQuitAfter();
         s_firstFrameTick = GetTickCount64();
+        if (s_quitAfter > 0.0) NOBLE_INFO("FrameCapture: -quit-after {:.0f} s armed", s_quitAfter);
     });
     if (s_quitAfter > 0.0 && static_cast<double>(GetTickCount64() - s_firstFrameTick) / 1000.0 > s_quitAfter) {
         NOBLE_INFO("FrameCapture: -quit-after {} s reached, exiting test run", s_quitAfter);

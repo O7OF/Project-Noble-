@@ -26,6 +26,8 @@ struct SettingsData {
     // Controls
     float mouseSensitivity = 1.0f; // multiplier on Noble's base mouse scale (0.0008 per pixel); horizontal
     float mouseSensitivityY = 1.0f; // vertical look speed relative to horizontal (1 = same)
+    float mouseAcceleration = 0.0f; // 0 = off: extra turn speed for fast flicks (0..1)
+    float mouseSmoothing = 0.0f;    // 0 = off: evens out jitter, at the cost of a little latency (0..0.9)
     bool invertLook = false;
     std::map<int, int> keyOverrides; // profile action index -> virtual-key code
     int wheelUpAction = 4;         // action the mouse wheel's up notches trigger (-1 = nothing); 4 = change weapon
@@ -34,7 +36,8 @@ struct SettingsData {
     int padLookX = 19;             // controller look speed 1..19 (profile +0x1B6 = value - 1; 19 = the stock profile)
     int padLookY = 19;             // vertical, profile +0x1B5 (same scale)
     bool padInvertLook = false;
-    int padLayout = 0;             // Halo: Reach button layout (engine/PadLayouts.hpp); 0 = Default    // Noble flips the right stick's y before the engine sees it
+    int padLayout = 0;             // Halo: Reach button layout (engine/PadLayouts.hpp); 0 = Default
+    int padStickLayout = 0;        // 0 = Default (left moves, right looks), 1 = Southpaw (swapped)    // Noble flips the right stick's y before the engine sees it
     float padLeftDeadZone = 0.0f;  // extra radial dead zone Noble applies (0..0.5), on top of the engine's own
     float padRightDeadZone = 0.0f;
     float padVibrationStrength = 1.0f; // 0..1

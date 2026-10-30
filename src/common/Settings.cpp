@@ -97,6 +97,8 @@ void Settings::Load() {
             Read(j, "showFps", d.showFps);
             Read(j, "mouseSensitivity", d.mouseSensitivity);
             Read(j, "mouseSensitivityY", d.mouseSensitivityY);
+    Read(j, "mouseAcceleration", d.mouseAcceleration);
+    Read(j, "mouseSmoothing", d.mouseSmoothing);
             Read(j, "invertLook", d.invertLook);
             Read(j, "wheelUpAction", d.wheelUpAction);
             Read(j, "wheelDownAction", d.wheelDownAction);
@@ -106,6 +108,7 @@ void Settings::Load() {
             Read(j, "padLookY", d.padLookY);
             Read(j, "padInvertLook", d.padInvertLook);
     Read(j, "padLayout", d.padLayout);
+    Read(j, "padStickLayout", d.padStickLayout);
             Read(j, "padLeftDeadZone", d.padLeftDeadZone);
             Read(j, "padRightDeadZone", d.padRightDeadZone);
             Read(j, "volumeGame", d.volumeGame);
@@ -206,6 +209,8 @@ bool Settings::Save() {
         j["showFps"] = d.showFps;
         j["mouseSensitivity"] = d.mouseSensitivity;
         j["mouseSensitivityY"] = d.mouseSensitivityY;
+    j["mouseAcceleration"] = d.mouseAcceleration;
+    j["mouseSmoothing"] = d.mouseSmoothing;
         j["invertLook"] = d.invertLook;
         j["wheelUpAction"] = d.wheelUpAction;
         j["wheelDownAction"] = d.wheelDownAction;
@@ -215,6 +220,7 @@ bool Settings::Save() {
         j["padLookY"] = d.padLookY;
         j["padInvertLook"] = d.padInvertLook;
     j["padLayout"] = d.padLayout;
+    j["padStickLayout"] = d.padStickLayout;
         j["padLeftDeadZone"] = d.padLeftDeadZone;
         j["padRightDeadZone"] = d.padRightDeadZone;
         j["volumeGame"] = d.volumeGame;

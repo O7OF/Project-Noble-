@@ -22,6 +22,41 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-30, 13:10 ET) - Mouse acceleration/smoothing and pad stick layout un-greyed (WeabooTyler117 / DeepSeek)
+
+Tyler: "finish the options in settings for controller and mnk for things that are greyed out". Two of them are real now.
+
+### 1. MOUSE ACCELERATION and MOUSE SMOOTHING (Keyboard & mouse)
+
+- `SettingsData::mouseAcceleration` (0..1, default 0 = off) and `mouseSmoothing` (0..0.9, default 0 = off).
+- Applied in `ReachHost.cpp` slot 36, right where the raw cursor delta is turned into the look delta:
+  - **smoothing** is an exponential average (`smoothed = smoothed * s + delta * (1 - s)`), and the state is dropped
+    whenever a menu owns the pointer so no stale motion is carried into the next capture frame;
+  - **acceleration** multiplies the delta by `1 + accel * min(speed / 60, 3)`, capped so one enormous movement cannot
+    spin the view.
+- Both rows are sliders with an explicit `Off` label at 0, and they are counted by `ChangesIn`/`WithDefaults`.
+
+### 2. STICK LAYOUT (Controller)
+
+- `SettingsData::padStickLayout` (0 = Default, 1 = Southpaw). Applied in `FillLocalPad()` before the dead zones: Southpaw
+  swaps the left and right stick vectors, so look is on the left thumb and movement on the right.
+- Row lives in Controller > Sticks, above LEFT STICK DEAD ZONE, cycling DEFAULT / SOUTHPAW.
+- **Not offered yet:** Reach's Legacy and Legacy Southpaw stick layouts also change how the turn axis behaves (the left
+  stick both moves and turns), so they need engine-side research rather than a swap.
+
+### 3. `tools/test-modes.ps1` hardening, and why the matrix still cannot run unattended
+
+- The script now waits for a real process exit between cases (`Stop-Process` + `WaitForExit` + 3 s settle, and it
+  aborts if one is left over), passes `-quit-after` as the first argument, and has `-Limit N` for debugging.
+- `FrameCapture` logs `-quit-after {n} s armed` on the first Present, so a hung run can be diagnosed from its own log.
+  In the last two runs that line **did** appear and the client still never exited: the log ends at
+  `BlamEngine: PostCommand(11) returned` and **no frame is pumped afterwards**, so `FrameCapture::OnFrame` is never
+  called again. Manual runs minutes earlier pumped frames the whole time.
+  Prime suspect: the desktop being idle/locked (the script ran while Tyler was away) - a D3D11 presentation stops
+  pumping when the session is not interactive, and this engine's frame loop rides the Present hook.
+  **To do:** rerun `tools/test-modes.ps1 -Limit 2` with the machine unlocked; if it passes, run `-Full`. If it hangs
+  while unlocked, log `PostCommand(11)`'s surrounding state and compare a manual launch's argv with the script's.
+
 ## 0. Pick up here (2026-10-30, 12:05 ET) - Mode/game-type smoke harness, and what a bare launch does (WeabooTyler117 / DeepSeek)
 
 ### 1. What a CLI match launch actually does (important for any future test work)

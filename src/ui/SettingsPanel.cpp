@@ -1031,8 +1031,15 @@ void SettingsPanel::RenderKeyboardMouse() {
             When::Apply, "Off", m_edit.invertLook != m_saved.invertLook)) {
         ToggleValue(m_edit.invertLook);
     }
-    if (Row("MOUSE ACCELERATION", "Turns faster the quicker you move the mouse. Coming in a later update.", When::Info, "", false, true)) {
-        InfoValue("Not available yet");
+    if (Row("MOUSE ACCELERATION", "Fast flicks turn further than slow movements, like most shooters' default. 0 % is raw input, which is what the best players use for consistency.",
+            When::Apply, "Off", std::fabs(m_edit.mouseAcceleration - m_saved.mouseAcceleration) > 1e-4f)) {
+        SliderValue(m_edit.mouseAcceleration, 0.0f, 1.0f, 0.01f, 0.0f,
+                    m_edit.mouseAcceleration < 0.001f ? "Off" : Percent(m_edit.mouseAcceleration).c_str());
+    }
+    if (Row("MOUSE SMOOTHING", "Averages the mouse's movement over a few frames. It can steady a shaky hand, but it adds latency, so Off is the default.",
+            When::Apply, "Off", std::fabs(m_edit.mouseSmoothing - m_saved.mouseSmoothing) > 1e-4f)) {
+        SliderValue(m_edit.mouseSmoothing, 0.0f, 0.9f, 0.05f, 0.0f,
+                    m_edit.mouseSmoothing < 0.001f ? "Off" : Percent(m_edit.mouseSmoothing).c_str());
     }
     Section("MOUSE WHEEL");
     auto wheelName = [](int action) -> std::string {
@@ -1123,6 +1130,13 @@ void SettingsPanel::RenderController() {
     speed("VERTICAL SENSITIVITY", "How fast the right stick looks up and down.", m_edit.padLookY, m_saved.padLookY);
     if (Row("INVERT LOOK", "Pushing the right stick forward looks down.", When::Apply, "Off", m_edit.padInvertLook != m_saved.padInvertLook)) {
         ToggleValue(m_edit.padInvertLook);
+    }
+    if (Row("STICK LAYOUT", "Default puts movement on the left stick and looking on the right. Southpaw swaps them, for players who aim with the left thumb.",
+            When::Apply, "Default", m_edit.padStickLayout != m_saved.padStickLayout)) {
+        if (const int d = CycleValue(m_edit.padStickLayout == 1 ? "SOUTHPAW" : "DEFAULT", m_edit.padStickLayout, 2)) {
+            m_edit.padStickLayout = (m_edit.padStickLayout + d + 2) % 2;
+            MenuSounds::Change();
+        }
     }
     auto deadZone = [&](const char* label, float& v, float saved) {
         if (!Row(label, "Raise a dead zone if a worn stick drifts. 0 keeps the game's own dead zone.", When::Apply, "Game default",
@@ -1324,7 +1338,7 @@ int SettingsPanel::CountDiff(const SettingsData& a, const SettingsData& b, Cat c
     }
     case Cat::Controller:
         return (a.padLookX != b.padLookX) + (a.padLookY != b.padLookY) + (a.padInvertLook != b.padInvertLook) +
-               (a.padLayout != b.padLayout) +
+               (a.padLayout != b.padLayout) + (a.padStickLayout != b.padStickLayout) +
                f(a.padLeftDeadZone, b.padLeftDeadZone) + f(a.padRightDeadZone, b.padRightDeadZone) +
                (a.padVibration != b.padVibration) + f(a.padVibrationStrength, b.padVibrationStrength);
     case Cat::Online:

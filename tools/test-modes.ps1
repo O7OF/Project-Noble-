@@ -14,6 +14,7 @@
 param(
     [switch]$Full,
     [int]$QuitAfter = 22,
+    [int]$Limit = 0,          # only the first N cases (debugging)
     [string]$Exe = "D:\Halo-Reach-Community-Edition\build\bin\Release\noble-client.exe",
     [string]$Variants = "D:\Steam\steamapps\common\Halo The Master Chief Collection\haloreach\game_variants"
 )
@@ -72,11 +73,12 @@ foreach ($ff in @("hr_ff_standard_1set", "hr_ff_gruntpocalypse_1round")) {
 $cases += [pscustomobject]@{ Mode = "campaign"; Map = "m10_b"; Label = "Campaign / Winter Contingency"; Stem = $null }
 $cases += [pscustomobject]@{ Mode = "forge"; Map = "forge_halo"; Label = "Forge / Forge World"; Stem = $null }
 
+if ($Limit -gt 0) { $cases = $cases | Select-Object -First $Limit }
 $results = @()
 $index = 0
 foreach ($case in $cases) {
     $index++
-    $args = @("-map", $case.Map, "-mode", $case.Mode, "-quit-after", "$QuitAfter")
+    $args = @("-quit-after", "$QuitAfter", "-map", $case.Map, "-mode", $case.Mode)
     if ($case.Stem) {
         $variant = Variant $case.Stem
         if (-not $variant) {
@@ -87,14 +89,25 @@ foreach ($case in $cases) {
     }
     if ($case.Mode -eq "multiplayer") { $args += @("-host", "-lan") }
 
-    Get-Process noble-client -ErrorAction SilentlyContinue | Stop-Process -Force
-    Start-Sleep -Milliseconds 400
+    # The engine is a single instance per account: a process that is still shutting down makes the next launch
+    # hang at PostCommand(11) and -quit-after never fires, so wait for a real exit before starting.
+    Get-Process noble-client -ErrorAction SilentlyContinue | ForEach-Object {
+        $_ | Stop-Process -Force
+        $_.WaitForExit(15000)
+    }
+    Start-Sleep -Seconds 3
+    if (Get-Process noble-client -ErrorAction SilentlyContinue) {
+        Write-Host "a noble-client process is still running; stopping the run" -ForegroundColor Red
+        exit 1
+    }
     $before = 0
     if (Test-Path $log) { $before = (Get-Content $log | Measure-Object -Line).Lines }
     $started = Get-Date
     $proc = Start-Process -FilePath $Exe -ArgumentList $args -WorkingDirectory $exeDir -PassThru
     $finished = $proc.WaitForExit(($QuitAfter + 90) * 1000)
-    if (-not $finished) { Get-Process noble-client -ErrorAction SilentlyContinue | Stop-Process -Force }
+    if (-not $finished) {
+        Get-Process noble-client -ErrorAction SilentlyContinue | ForEach-Object { $_ | Stop-Process -Force; $_.WaitForExit(15000) }
+    }
     $seconds = [math]::Round(((Get-Date) - $started).TotalSeconds)
 
     $slice = @()

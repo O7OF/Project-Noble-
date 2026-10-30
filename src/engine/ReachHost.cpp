@@ -1106,9 +1106,10 @@ static std::atomic<bool> s_slot36Logged{false};
 // Look speed (x, y) and inversion from SETTINGS > CONTROLS, re-read twice a second so changes apply in a
 // running game. RR's default 0.0008 per pixel times the sensitivity; "-mouse-scale <v>" overrides both axes.
 static float InputMouseScaleOverride();
-static void InputLookSettings(float& scaleX, float& scaleY, bool& invert) {
+static void InputLookSettings(float& scaleX, float& scaleY, bool& invert, float& accel, float& smoothing) {
     static ULONGLONG s_next = 0;
     static float s_x = 0.0008f, s_y = 0.0008f;
+    static float s_accel = 0.0f, s_smoothing = 0.0f;
     static bool s_invert = false;
     const ULONGLONG now = GetTickCount64();
     if (now >= s_next) {
@@ -1117,11 +1118,15 @@ static void InputLookSettings(float& scaleX, float& scaleY, bool& invert) {
         s_x = 0.0008f * d.mouseSensitivity;
         s_y = s_x * d.mouseSensitivityY;
         s_invert = d.invertLook;
+        s_accel = std::clamp(d.mouseAcceleration, 0.0f, 1.0f);
+        s_smoothing = std::clamp(d.mouseSmoothing, 0.0f, 0.9f);
         if (const float o = InputMouseScaleOverride(); o > 0.0f) s_x = s_y = o;
     }
     scaleX = s_x;
     scaleY = s_y;
     invert = s_invert;
+    accel = s_accel;
+    smoothing = s_smoothing;
 }
 
 static float InputMouseScaleOverride() {
@@ -1314,6 +1319,12 @@ static void FillLocalPad(uint8_t* st, bool keyboardMouseUsed) {
         y = static_cast<SHORT>(std::clamp(fy * scale, -1.0f, 1.0f) * 32767.0f);
     };
     SHORT lx = g.sThumbLX, ly = g.sThumbLY, rx = g.sThumbRX, ry = g.sThumbRY;
+    // STICK LAYOUT (SETTINGS > Controller): Southpaw puts look on the left stick and movement on the right one.
+    // The "Legacy" variants also change how the turn axis behaves, so they are not offered yet.
+    if (s_pad.padStickLayout == 1) {
+        std::swap(lx, rx);
+        std::swap(ly, ry);
+    }
     deadZone(lx, ly, s_pad.padLeftDeadZone);
     deadZone(rx, ry, s_pad.padRightDeadZone);
     if (s_pad.padInvertLook) ry = static_cast<SHORT>(ry == -32768 ? 32767 : -ry);
@@ -1403,7 +1414,13 @@ static void FillLocalInput(uint8_t* st) {
             SetClassLongPtrW(hwnd, GCLP_HCURSOR, 0); // hide the arrow over our window
             s_inputCaptured = true;
             firstCapturedFrame = true;
-            { float lx, ly; bool li; InputLookSettings(lx, ly, li); NOBLE_INFO("ReachHost [Slot 36 - Input]: mouse captured for look (scale {} x {}, invert {})", lx, ly, li); }
+            {
+                float lx, ly, la, ls;
+                bool li;
+                InputLookSettings(lx, ly, li, la, ls);
+                NOBLE_INFO("ReachHost [Slot 36 - Input]: mouse captured for look (scale {} x {}, invert {}, accel {:.2f}, smoothing {:.2f})",
+                           lx, ly, li, la, ls);
+            }
         }
         ClipCursor(&clip);
     }
@@ -1482,7 +1499,30 @@ static void FillLocalInput(uint8_t* st) {
     }
     float scaleX = 0.0f, scaleY = 0.0f;
     bool invertLook = false;
-    InputLookSettings(scaleX, scaleY, invertLook);
+    float accel = 0.0f, smoothing = 0.0f;
+    InputLookSettings(scaleX, scaleY, invertLook, accel, smoothing);
+
+    // MOUSE SMOOTHING: exponential average of the raw delta. It trades a little latency for steadier aim, so it is
+    // off by default; the state is dropped whenever a menu owns the pointer, so it never carries stale motion.
+    static float s_smoothX = 0.0f, s_smoothY = 0.0f;
+    if (uiPointer || firstCapturedFrame) {
+        s_smoothX = s_smoothY = 0.0f;
+    } else if (smoothing > 0.001f) {
+        s_smoothX = s_smoothX * smoothing + dx * (1.0f - smoothing);
+        s_smoothY = s_smoothY * smoothing + dy * (1.0f - smoothing);
+        dx = s_smoothX;
+        dy = s_smoothY;
+    }
+
+    // MOUSE ACCELERATION: fast flicks turn further than slow drifts, capped so a single huge movement cannot spin
+    // the view. 0 = off, which is the default and matches raw input.
+    if (accel > 0.001f) {
+        const float speed = std::sqrt(dx * dx + dy * dy);
+        const float factor = 1.0f + accel * std::min(speed / 60.0f, 3.0f);
+        dx *= factor;
+        dy *= factor;
+    }
+
     if (invertLook) dy = -dy;
     *reinterpret_cast<float*>(st + 0x104) = dx * scaleX;
     *reinterpret_cast<float*>(st + 0x108) = dy * scaleY;
