@@ -1,7 +1,8 @@
-﻿#include <windows.h>
+#include <windows.h>
 #include "ServerBrowser.hpp"
 #include "common/Relaunch.hpp"
 #include "NobleStyle.hpp"
+#include "UiArt.hpp"
 #include "common/Logger.hpp"
 #include "common/Settings.hpp"
 #include "network/MasterServerClient.hpp"
@@ -210,6 +211,11 @@ void ServerBrowser::Render() {
         RefreshServers();
     }
 
+    // Highlight the first server as soon as there is one, so GAME DETAILS (map picture, players, ping)
+    // shows something without the player having to click first. Escape/back still leaves the screen.
+    if (m_selectedServerIndex < 0 && !m_servers.empty()) m_selectedServerIndex = 0;
+    if (m_selectedServerIndex >= static_cast<int>(m_servers.size())) m_selectedServerIndex = m_servers.empty() ? -1 : 0;
+
     RenderFilterBar();
     NobleStyle::SectionGap();
 
@@ -348,13 +354,15 @@ void ServerBrowser::RenderServerList() {
 
     if (!ImGui::BeginTable("ServerTable", 7, flags, ImVec2(0, 0))) return;
 
-    ImGui::TableSetupColumn("Source",   ImGuiTableColumnFlags_WidthFixed, 48.0f);
-    ImGui::TableSetupColumn("Server",   ImGuiTableColumnFlags_WidthStretch);
-    ImGui::TableSetupColumn("Mode",     ImGuiTableColumnFlags_WidthFixed, 100.0f);
-    ImGui::TableSetupColumn("Map",      ImGuiTableColumnFlags_WidthFixed, 130.0f);
-    ImGui::TableSetupColumn("Players",  ImGuiTableColumnFlags_WidthFixed, 70.0f);
-    ImGui::TableSetupColumn("Ping",     ImGuiTableColumnFlags_WidthFixed, 50.0f);
-    ImGui::TableSetupColumn("Address",  ImGuiTableColumnFlags_WidthFixed, 150.0f);
+    // Widths include the cell padding and the sort arrow, so no header is elided ("Sour...", "Playe...").
+    ImGui::TableSetupColumn("Source",   ImGuiTableColumnFlags_WidthFixed, 86.0f);
+    ImGui::TableSetupColumn("Server",   ImGuiTableColumnFlags_WidthStretch, 200.0f);
+    ImGui::TableSetupColumn("Mode",     ImGuiTableColumnFlags_WidthFixed, 112.0f);
+    ImGui::TableSetupColumn("Map",      ImGuiTableColumnFlags_WidthFixed, 140.0f);
+    ImGui::TableSetupColumn("Players",  ImGuiTableColumnFlags_WidthFixed, 98.0f);
+    ImGui::TableSetupColumn("Ping",     ImGuiTableColumnFlags_WidthFixed, 70.0f);
+    ImGui::TableSetupColumn("Address",  ImGuiTableColumnFlags_WidthFixed, 170.0f);
+    ImGui::TableSetupScrollFreeze(0, 1);
     ImGui::TableHeadersRow();
 
     int visibleIndex = 0;
@@ -439,7 +447,13 @@ void ServerBrowser::RenderServerDetails() {
     if (m_selectedServerIndex < 0 || m_selectedServerIndex >= static_cast<int>(m_servers.size())) {
         NobleStyle::Header("GAME DETAILS");
         ImGui::Spacing();
-        ImGui::TextDisabled("Select a server from the list to view match information and join.");
+        ImGui::PushStyleColor(ImGuiCol_Text, NobleStyle::TextMuted());
+        ImGui::TextWrapped("Select a server from the list to see its map, players, ping and mods.");
+        ImGui::Spacing();
+        ImGui::TextWrapped("Double-click a server to join it.");
+        ImGui::Spacing();
+        ImGui::TextWrapped("%d server(s) in the list.", static_cast<int>(m_servers.size()));
+        ImGui::PopStyleColor();
         return;
     }
 
@@ -447,6 +461,35 @@ void ServerBrowser::RenderServerDetails() {
     NobleStyle::Header("GAME DETAILS");
     ImGui::Spacing();
 
+    // Map picture: MCC's own preview for a vanilla map, or the photo the map/mod ship as
+    // data\ui\custom\loading\<map>.*. Modded maps without one get a named placeholder instead of a
+    // picture of a different map (2026-10-30).
+    {
+        const float photoW = ImGui::GetContentRegionAvail().x;
+        const float photoH = photoW * 9.0f / 16.0f;
+        const ImVec2 p0 = ImGui::GetCursorScreenPos();
+        const ImVec2 p1(p0.x + photoW, p0.y + photoH);
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        dl->AddRectFilled(p0, p1, IM_COL32(10, 15, 22, 255));
+        if (const UiTexture photo = UiArt::MapPhoto(s.mapName)) {
+            UiArt::DrawCover(dl, photo, p0, p1);
+        } else {
+            const char* missing = s.isMod ? "NO PICTURE FROM THIS MOD" : "NO MAP PICTURE";
+            const ImVec2 ts = ImGui::CalcTextSize(missing);
+            dl->AddText(ImVec2(p0.x + (photoW - ts.x) * 0.5f, p0.y + (photoH - ts.y) * 0.5f),
+                        IM_COL32(120, 135, 150, 200), missing);
+        }
+        // Scrim under the map name so it stays readable on a bright picture.
+        dl->AddRectFilledMultiColor(ImVec2(p0.x, p1.y - photoH * 0.5f), p1,
+                                    IM_COL32(4, 8, 12, 0), IM_COL32(4, 8, 12, 0),
+                                    IM_COL32(4, 8, 12, 230), IM_COL32(4, 8, 12, 230));
+        dl->AddRect(p0, p1, IM_COL32(150, 185, 215, 110), 0.0f, 0, 1.0f);
+        const char* mapLabel = s.mapName.empty() ? "Unknown map" : s.mapName.c_str();
+        dl->AddText(ImGui::GetFont(), 20.0f, ImVec2(p0.x + 10.0f, p1.y - 28.0f), IM_COL32(240, 244, 248, 255), mapLabel);
+        ImGui::Dummy(ImVec2(photoW, photoH));
+    }
+
+    ImGui::Spacing();
     ImGui::TextWrapped("%s", s.name.c_str());
     ImGui::TextDisabled("%s:%u%s", s.hostAddress.c_str(), s.port, s.isOwn ? " (YOU)" : "");
     ImGui::Spacing();
@@ -469,15 +512,25 @@ void ServerBrowser::RenderServerDetails() {
     ImGui::SameLine(100);
     ImGui::Text("%d / %d", s.playerCount, s.maxPlayers);
 
-    if (s.isPasswordProtected) {
-        ImGui::TextColored(ImVec4(1.0f, 0.84f, 0.0f, 1.0f), "Password protected");
+    ImGui::TextDisabled("Ping:");
+    ImGui::SameLine(100);
+    if (s.ping >= 0) {
+        const ImVec4 color = s.ping < 60 ? ImVec4(0.35f, 0.85f, 0.45f, 1.0f)
+                           : s.ping < 120 ? ImVec4(0.95f, 0.85f, 0.35f, 1.0f)
+                                          : ImVec4(0.95f, 0.40f, 0.35f, 1.0f);
+        ImGui::TextColored(color, "%d ms", s.ping);
+    } else {
+        ImGui::TextDisabled("-");
     }
+
+    // Status lines wrap: the details panel is only 300 px wide, so a long line used to be cut at the edge.
+    if (s.isPasswordProtected) ImGui::TextColored(ImVec4(1.0f, 0.84f, 0.0f, 1.0f), "Password protected");
     if (s.inProgress) {
-        ImGui::TextColored(NobleStyle::TextMuted(), "Match in progress (join in progress allowed)");
+        ImGui::PushStyleColor(ImGuiCol_Text, NobleStyle::TextMuted());
+        ImGui::TextWrapped("Match in progress - joining in progress is allowed.");
+        ImGui::PopStyleColor();
     }
-    if (s.isMod) {
-        ImGui::TextColored(ImVec4(0.35f, 0.85f, 0.95f, 1.0f), "Custom Map / Modded Content");
-    }
+    if (s.isMod) ImGui::TextColored(ImVec4(0.35f, 0.85f, 0.95f, 1.0f), "Custom map / modded content");
 
     NobleStyle::SectionGap();
 
@@ -500,13 +553,13 @@ void ServerBrowser::RenderServerDetails() {
         }
     }
 
-    const char* favLabel = s.isFavorite ? "REMOVE FAVOURITE" : "ADD TO FAVOURITES";
-    if (ImGui::Button(favLabel, ImVec2(-1, 30))) {
+    const float halfW = (ImGui::GetContentRegionAvail().x - 8.0f) * 0.5f;
+    if (ImGui::Button(s.isFavorite ? "UNFAVOURITE" : "FAVOURITE", ImVec2(halfW, 30))) {
         ToggleFavorite(s.hostAddress, s.port);
         RefreshServers();
     }
-
-    if (ImGui::Button("COPY INVITE", ImVec2(-1, 30))) {
+    ImGui::SameLine();
+    if (ImGui::Button("COPY INVITE", ImVec2(halfW, 30))) {
         std::string ipToCopy = s.hostAddress;
         if (s.isOwn) {
             std::string pubIp = UPnP::Get().GetExternalIP();
@@ -515,16 +568,6 @@ void ServerBrowser::RenderServerDetails() {
         const std::string invite = ipToCopy + ":" + std::to_string(s.port);
         ImGui::SetClipboardText(invite.c_str());
         m_status = "Copied invite address " + invite + " to clipboard.";
-    }
-
-    if (ImGui::Button("COPY ADDRESS", ImVec2(-1, 30))) {
-        std::string ipToCopy = s.hostAddress;
-        if (s.isOwn) {
-            std::string pubIp = UPnP::Get().GetExternalIP();
-            if (UPnP::Get().IsPublicIP(pubIp)) ipToCopy = pubIp;
-        }
-        ImGui::SetClipboardText(ipToCopy.c_str());
-        m_status = "Copied " + ipToCopy + " to clipboard.";
     }
 }
 

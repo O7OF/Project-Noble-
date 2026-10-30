@@ -46,6 +46,12 @@ UiTexture LoadingBackground(const std::string& scenario);
 // Map preview (316x160, or 668x292 when large) from MCC's levels pack; empty if the map has none.
 UiTexture MapPreview(const std::string& scenario, bool large);
 
+// "What does this map look like" for menus that show an arbitrary server's map: MCC's map preview, then a
+// picture the player or a mod supplied as data\ui\custom\loading\<scenario> (or data\ui\noble\loading\...).
+// Empty when there is none (a modded map without a picture), so callers draw a placeholder instead of a
+// picture of some other map.
+UiTexture MapPhoto(const std::string& scenario);
+
 // Skull icon (128x128) by MCC icon name ("IRON", "BLACKEYE", ...).
 UiTexture SkullIcon(const std::string& iconName);
 

@@ -22,6 +22,77 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-30, 05:05 ET) - Menu pass 2: mod names/descriptions, main menu, account modal, server browser (WeabooTyler117 / DeepSeek)
+
+UI only: `src/ui/FrontEndMenu.cpp`, `src/ui/ServerBrowser.cpp`, `src/ui/UiArt.cpp/.hpp`. Follows the 04:05 ET entry.
+
+### 1. Modded lists: names and descriptions (Tyler's screenshots)
+
+- **Long workshop mod names ran into the right column.** `DrawList` drew header rows with no clip, so
+  `DEADKIVA7'S HALO: REACH FIREFIGHT (NEW CUSTOM MAP "STAGING GROUND" OUT NOW!)` ran over the map banner. Header text
+  is now clipped to its row (`PushClipRect` at `b.x - 4 s`).
+- **Descriptions were pasted raw from `ModInfo.json`**: BBCode (`[h1]Map List[/h1]`), hard line breaks and hundreds of
+  characters, wrapped by `HeroBanner` with no height limit - which is why the text covered the picture, the GAME TYPE
+  row and the difficulty tiles, and pushed the rows into the network strip. New `PlainDescription(text, maxChars)`
+  drops `[...]` tags, collapses whitespace and cuts at a word boundary with `...`; applied in `ModMaps()` (150 chars)
+  and to the mod heading blurb in `ModdedMaps()` (180). New `BlurbBlockHeight()` measures at most **two** lines, is
+  used by both setup screens instead of their own measurement, and `HeroBanner` draws the blurb inside that same
+  two-line clip rect - so a blurb can never change the layout of the rows below it.
+- **Greyed-out modded maps are now selectable** (hover, arrows, click) so the banner can explain them; only Accept is
+  blocked. The reason: `BlamEngine::ResolveMapId()` only knows Reach's own campaign/Firefight/multiplayer tables and
+  returns 0 for a scenario it does not know, and 0 boots the **main menu**. A mod map that MCC loads through its own
+  mod system therefore cannot be started by Noble until a launch index / map id exists for its scenario - engine
+  work, not UI. `ModMaps()` keeps those rows disabled with "A new map: Noble can only start maps that are in Reach so
+  far." in the banner.
+
+### 2. Main menu
+
+- **Duplicate developer text removed**: the name was drawn as `NAME [DEV]` *and* with a gold `DEV` chip, and the
+  account bar said `ONLINE [DEV]: NAME`. Now: `NAME` (gold) + the chip, and `ONLINE: NAME`.
+- **Developer Menu moved out of the party panel** into the main-menu list, directly **above Quit**, and only built
+  into the list when `AuthClient::Get().IsDeveloper()` (`kDeveloperEntry`). The list is assembled per frame from
+  `kMainEntries` and `st.mainIndex` is clamped, so indices stay right when the row appears/disappears.
+- **Bottom of the menu no longer collides**: the description used to be placed at
+  `listY + rows * 27 s + 10 s` with no check against `DrawHints` (`y - 46 s`), so it ran under
+  "ENTER Select / ESC Quit". The list now shrinks its row step (27 s -> min 18 s) and then lifts to fit the
+  description above the hint row.
+
+### 3. Account modal (`DrawAccountModal`)
+
+- One `Logged in as: <name>` line plus a **DEV chip**; the `[DEV]` + `[DEVELOPER]` duplicate is gone.
+- **"OPEN DEVELOPER MENU" removed** (it lives on the main menu now) - that button was also the clipped
+  `OPEN DEVELOPER MEN` from the screenshot, because it was a fixed 200 px wide.
+- LOG IN / REGISTER are equal-width tabs (active one highlighted), fields are full width, and LOG OUT/CLOSE and
+  submit/CANCEL are equal halves of the dialog width.
+
+### 4. Server browser (`ServerBrowser.cpp`)
+
+- **Back returns to the main menu** (it went to Custom Game: `goBack(st.screen == Screen::Servers ? Screen::CustomGame : ...)`).
+- **Table headers fit**: widths sized to the header text plus cell padding and the sort arrow
+  (`Source` 86, `Players` 98, ...) and the header row is frozen; they used to elide to "Sour..." / "Playe...".
+- **The first server is selected automatically** once the list has one, so GAME DETAILS (map picture, players,
+  ping) shows something without clicking first.
+- **GAME DETAILS shows the map**: new `UiArt::MapPhoto(scenario)` = MCC map preview, else a picture a mod/player
+  supplies as `data\ui\custom\loading\<scenario>.*` (or `data\ui\noble\loading\`), else a named placeholder
+  ("NO PICTURE FROM THIS MOD"). It deliberately does **not** use `LoadingBackground()`'s campaign-scene fallback,
+  which would show a different map. The panel also gained a Ping row, a wrapped empty state, and FAVOURITE /
+  COPY INVITE on one row (COPY ADDRESS dropped as a duplicate of it).
+
+### 5. Test hook
+
+- `-menu-tab <n>` now also selects the VANILLA / MODDED source tab of Campaign / Firefight / Custom Game / Forge, so
+  a capture run can show the modded lists. Example:
+  `noble-client.exe -menu-screen firefight -menu-tab 1 -menu-capture 90` (writes `capture_<frame>.bmp`, closes itself).
+
+### 6. Build and checks
+
+- `cmake --build build --config Release`: 0 errors, 0 warnings. Captures at 1920x1080 for main menu, modded Firefight,
+  modded Custom Game and the server browser; the main menu shows `WEABOOTYLER117 [DEV chip]`, `ONLINE: WEABOOTYLER117`,
+  `DEVELOPER MENU` above `QUIT` and the description clear of the hint row.
+- **Still open from Tyler's list:** the post-game report showing `Player2` / `Player3` instead of names (needs the
+  engine-side player record name for remote players - `Career::ScoreRow` falls back to "Player N" when the record
+  name is empty), and a per-server *mod* photo once servers advertise their mod ids.
+
 ## 0. Pick up here (2026-10-30, 04:45 ET) - Elite Armors Network Replication Fix, Elite Armor Effects Engine Patch, Full Armory Permutations & Emblems/Nameplates, and Master Server Social Friends/Invites Menu (O7OF / Dominus)
 
 Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor effects engine support, MCC nameplates and emblems integration into the Armory, and master server social networking system with interactive friends list, player search, and in-game lobby invites.

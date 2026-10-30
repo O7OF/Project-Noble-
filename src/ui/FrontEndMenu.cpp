@@ -270,6 +270,51 @@ std::string Upper(std::string s) {
     return s;
 }
 
+// Workshop descriptions are written for a Steam page: BBCode tags, [h1]Map List[/h1] sections, hard line
+// breaks and sometimes thousands of characters. A menu row shows two lines at most, so tags are dropped,
+// whitespace is collapsed and the text is cut back to a whole word on a "...".
+std::string PlainDescription(const std::string& in, size_t maxChars) {
+    std::string out;
+    out.reserve(std::min(in.size(), maxChars + 4));
+    bool pendingSpace = false;
+    for (size_t i = 0; i < in.size() && out.size() < maxChars; ++i) {
+        const char c = in[i];
+        if (c == '[') {                                   // BBCode / Steam markup tag, e.g. [h1] or [/b]
+            const size_t close = in.find(']', i + 1);
+            if (close != std::string::npos && close - i <= 40) {
+                i = close;
+                pendingSpace = !out.empty();
+                continue;
+            }
+        }
+        if (c == '\r' || c == '\n' || c == '\t' || c == ' ') {
+            pendingSpace = !out.empty();
+            continue;
+        }
+        if (pendingSpace) {
+            out.push_back(' ');
+            pendingSpace = false;
+        }
+        out.push_back(c);
+    }
+    if (out.size() >= maxChars) {
+        const size_t cut = out.find_last_of(' ');
+        if (cut != std::string::npos && cut > maxChars / 2) out.resize(cut);
+        out += "...";
+    }
+    return out;
+}
+
+// Height of the description under a map picture: one or two lines plus the gaps above and below. The
+// setup screens reserve exactly this and HeroBanner draws exactly this, so a long mod blurb cannot push
+// the option rows over the network strip (2026-10-30).
+float BlurbBlockHeight(const Ui& ui, float width, const char* blurb) {
+    if (!blurb || !*blurb) return 0.0f;
+    const float lineH = 17.0f * ui.s * 1.35f;
+    const float textH = Font(nullptr)->CalcTextSizeA(17.0f * ui.s, FLT_MAX, width, blurb).y;
+    return std::min(textH, lineH * 2.0f) + 16.0f * ui.s;
+}
+
 enum class Screen { Main, Campaign, Skulls, Firefight, CustomGame, Forge, Servers, Settings, Armory, Mods, Career, PreGameLobby, Social };
 
 void DrawBackdrop(const Ui& ui, Screen screen) {
@@ -358,11 +403,10 @@ int DrawList(const Ui& ui, const char* id, ImVec2 pos, float width, const std::v
     selected = std::clamp(selected, 0, n - 1);
 
     if (keyboard) {
+        // Rows that cannot be started (a modded map Reach has no launch index for) are still selectable, so
+        // the map banner can say why; only Accept is blocked for them.
         auto step = [&](int dir) {
-            for (int k = 0; k < n; ++k) {
-                selected = (selected + dir + n) % n;
-                if (items[selected].enabled) break;
-            }
+            selected = (selected + dir + n) % n;
             MenuSounds::Scroll();
         };
         if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickDown)) step(1);
@@ -409,16 +453,16 @@ int DrawList(const Ui& ui, const char* id, ImVec2 pos, float width, const std::v
         ImGui::PopID();
         const bool mouseMoved = ImGui::GetIO().MouseDelta.x * ImGui::GetIO().MouseDelta.x +
                                 ImGui::GetIO().MouseDelta.y * ImGui::GetIO().MouseDelta.y > 0.0f;
-        if (hovered && items[i].enabled && selected != i && mouseMoved) {
+        if (hovered && selected != i && mouseMoved) {
             if (hoverSelects) selected = i;
             MenuSounds::Hover(ImGui::GetID(id) + i);
         }
         if (hovered && !hoverSelects && i != selected && items[i].enabled) {
             ui.dl->AddRectFilled(a, b, IM_COL32(255, 255, 255, 16));
         }
-        if (clicked && items[i].enabled) {
+        if (clicked) {
             selected = i;
-            activated = i;
+            if (items[i].enabled) activated = i;
         }
         if (i == selected) {
             ui.dl->AddRectFilledMultiColor(a, b, IM_COL32(255, 255, 255, 46), IM_COL32(255, 255, 255, 4),
@@ -430,8 +474,12 @@ int DrawList(const Ui& ui, const char* id, ImVec2 pos, float width, const std::v
             const ImU32 ac = i == selected ? kWhite : kAccent;
             if (items[i].expanded) ui.dl->AddTriangleFilled(ImVec2(cx - t, cy - t * 0.6f), ImVec2(cx + t, cy - t * 0.6f), ImVec2(cx, cy + t * 0.8f), ac);
             else ui.dl->AddTriangleFilled(ImVec2(cx - t * 0.6f, cy - t), ImVec2(cx - t * 0.6f, cy + t), ImVec2(cx + t * 0.8f, cy), ac);
+            // Workshop mod names can be very long ("... (NEW CUSTOM MAP "STAGING GROUND" OUT NOW!)"), so the
+            // heading is clipped to its row instead of running into the column on the right.
+            ui.dl->PushClipRect(ImVec2(a.x, a.y), ImVec2(b.x - 4.0f * ui.s, b.y), true);
             Text(ui, NobleStyle::TitleFont(), 19.0f, ImVec2(a.x + 28.0f * ui.s, a.y + (rh - 19.0f * ui.s) * 0.5f), ac,
                  Upper(items[i].label).c_str());
+            ui.dl->PopClipRect();
             ui.dl->AddLine(ImVec2(a.x, b.y - 1.0f), ImVec2(b.x, b.y - 1.0f), IM_COL32(143, 216, 255, 60), 1.0f);
             continue;
         }
@@ -674,52 +722,59 @@ void DrawAccountModal(const Ui& ui) {
             }
 
             const bool isDev = AuthClient::Get().IsDeveloper();
-            std::string userDisplay = "Logged in as: " + AuthClient::Get().GetUsername();
-            if (isDev) {
-                userDisplay += " [DEV]";
-            }
-            ImGui::TextColored(isDev ? ImVec4(1.0f, 0.85f, 0.2f, 1.0f) : ImVec4(0.4f, 0.9f, 0.4f, 1.0f), "%s", userDisplay.c_str());
-
+            // One line for the account, one gold chip for developer status - no more "[DEV] [DEVELOPER]".
+            ImGui::TextColored(isDev ? ImVec4(1.0f, 0.85f, 0.2f, 1.0f) : ImVec4(0.4f, 0.9f, 0.4f, 1.0f),
+                               "Logged in as: %s", AuthClient::Get().GetUsername().c_str());
             if (isDev) {
                 ImGui::SameLine();
-                ImGui::TextColored(ImVec4(1.0f, 0.84f, 0.0f, 1.0f), "[DEVELOPER]");
+                const ImVec2 chip = ImGui::GetCursorScreenPos();
+                ImGui::GetWindowDrawList()->AddRectFilled(chip, ImVec2(chip.x + 46.0f * ui.s, chip.y + 18.0f * ui.s),
+                                                          IM_COL32(220, 160, 20, 240), 3.0f * ui.s);
+                ImGui::GetWindowDrawList()->AddText(ImGui::GetFont(), 11.0f * ui.s,
+                                                    ImVec2(chip.x + 10.0f * ui.s, chip.y + 3.0f * ui.s),
+                                                    IM_COL32(10, 10, 10, 255), "DEV");
+                ImGui::Dummy(ImVec2(50.0f * ui.s, 18.0f * ui.s));
                 ImGui::Dummy(ImVec2(0, 4));
-                ImGui::TextColored(ImVec4(1.0f, 0.84f, 0.2f, 1.0f), "Developer Account (ID: %d)", AuthClient::Get().GetUserId());
-                ImGui::TextDisabled("Developer Status: ACTIVE");
-                ImGui::TextDisabled("All armors, developer matrix camos, and special privileges unlocked.");
-                ImGui::Dummy(ImVec2(0, 4));
-                if (ImGui::Button("OPEN DEVELOPER MENU", ImVec2(200, 30))) {
-                    OpenDevMenuModal();
-                }
+                ImGui::TextDisabled("Developer account (ID: %d) - the Developer Menu is on the main menu, above Quit.",
+                                    AuthClient::Get().GetUserId());
             } else {
                 ImGui::Dummy(ImVec2(0, 4));
-                ImGui::TextDisabled("Standard User Account (ID: %d)", AuthClient::Get().GetUserId());
+                ImGui::TextDisabled("Standard account (ID: %d)", AuthClient::Get().GetUserId());
             }
             ImGui::Separator();
-            ImGui::Dummy(ImVec2(0, 10));
-            if (ImGui::Button("LOG OUT", ImVec2(120, 32))) {
+            ImGui::Dummy(ImVec2(0, 8));
+            const float btnW2 = (ImGui::GetContentRegionAvail().x - 10.0f * ui.s) * 0.5f;
+            if (ImGui::Button("LOG OUT", ImVec2(btnW2, 32.0f * ui.s))) {
                 AuthClient::Get().Logout();
                 s_accountStatusMsg = "Logged out successfully.";
                 s_accountStatusError = false;
             }
             ImGui::SameLine();
-            if (ImGui::Button("CLOSE", ImVec2(100, 32))) {
+            if (ImGui::Button("CLOSE", ImVec2(btnW2, 32.0f * ui.s))) {
                 s_showAccountModal = false;
                 ImGui::CloseCurrentPopup();
             }
         } else {
-            if (ImGui::Button("LOG IN", ImVec2(120, 28))) s_accountTab = 0;
+            // Login / Register: two equal tabs over full-width fields, and the same button pairing as above.
+            const float tabW = (ImGui::GetContentRegionAvail().x - 10.0f * ui.s) * 0.5f;
+            const bool loginTab = (s_accountTab == 0);
+            const ImVec4 on(0.20f, 0.43f, 0.61f, 1.0f);
+            if (loginTab) ImGui::PushStyleColor(ImGuiCol_Button, on);
+            if (ImGui::Button("LOG IN", ImVec2(tabW, 30.0f * ui.s))) s_accountTab = 0;
+            if (loginTab) ImGui::PopStyleColor();
             ImGui::SameLine();
-            if (ImGui::Button("REGISTER", ImVec2(120, 28))) s_accountTab = 1;
-            ImGui::Separator();
+            if (!loginTab) ImGui::PushStyleColor(ImGuiCol_Button, on);
+            if (ImGui::Button("REGISTER", ImVec2(tabW, 30.0f * ui.s))) s_accountTab = 1;
+            if (!loginTab) ImGui::PopStyleColor();
+            ImGui::Dummy(ImVec2(0, 6));
 
-            ImGui::Text(s_accountTab == 0 ? "Log in to your Noble account:" : "Register a new Noble account:");
+            ImGui::TextDisabled(loginTab ? "Log in to your Noble account." : "Create a Noble account.");
             ImGui::Dummy(ImVec2(0, 4));
-
-            ImGui::Text("Username:");
+            ImGui::TextUnformatted("Username");
+            ImGui::SetNextItemWidth(-FLT_MIN);
             ImGui::InputText("##acc_user", s_accountUser, sizeof(s_accountUser));
-
-            ImGui::Text("Password:");
+            ImGui::TextUnformatted("Password");
+            ImGui::SetNextItemWidth(-FLT_MIN);
             ImGui::InputText("##acc_pass", s_accountPass, sizeof(s_accountPass), ImGuiInputTextFlags_Password);
 
             if (!s_accountStatusMsg.empty()) {
@@ -729,8 +784,9 @@ void DrawAccountModal(const Ui& ui) {
             }
 
             ImGui::Dummy(ImVec2(0, 8));
+            const float subW = (ImGui::GetContentRegionAvail().x - 10.0f * ui.s) * 0.5f;
             if (s_accountTab == 0) {
-                if (ImGui::Button("LOG IN##submit", ImVec2(120, 32)) || (ImGui::IsKeyPressed(ImGuiKey_Enter) && ImGui::IsWindowFocused())) {
+                if (ImGui::Button("LOG IN##submit", ImVec2(subW, 32.0f * ui.s)) || (ImGui::IsKeyPressed(ImGuiKey_Enter) && ImGui::IsWindowFocused())) {
                     auto res = AuthClient::Get().Login(s_accountUser, s_accountPass);
                     if (res.success) {
                         s_accountStatusMsg = "Login successful!";
@@ -743,7 +799,7 @@ void DrawAccountModal(const Ui& ui) {
                     }
                 }
             } else {
-                if (ImGui::Button("REGISTER##submit", ImVec2(120, 32)) || (ImGui::IsKeyPressed(ImGuiKey_Enter) && ImGui::IsWindowFocused())) {
+                if (ImGui::Button("REGISTER##submit", ImVec2(subW, 32.0f * ui.s)) || (ImGui::IsKeyPressed(ImGuiKey_Enter) && ImGui::IsWindowFocused())) {
                     auto res = AuthClient::Get().Register(s_accountUser, s_accountPass);
                     if (res.success) {
                         s_accountStatusMsg = "Registration successful! Logged in.";
@@ -757,7 +813,7 @@ void DrawAccountModal(const Ui& ui) {
                 }
             }
             ImGui::SameLine();
-            if (ImGui::Button("CANCEL", ImVec2(100, 32))) {
+            if (ImGui::Button("CANCEL", ImVec2(subW, 32.0f * ui.s))) {
                 s_showAccountModal = false;
                 ImGui::CloseCurrentPopup();
             }
@@ -785,14 +841,11 @@ void DrawParty(const Ui& ui, const std::string& playerName, const char* status) 
     ui.dl->AddCircleFilled(e, 10.0f * ui.s, IM_COL32(26, 40, 52, 255));
     ui.dl->AddTriangleFilled(ImVec2(e.x - 6 * ui.s, e.y - 2 * ui.s), ImVec2(e.x + 6 * ui.s, e.y - 2 * ui.s), ImVec2(e.x, e.y + 6 * ui.s), kAccent);
     std::string partyUser = playerName;
-    if (AuthClient::Get().IsDeveloper()) {
-        partyUser += " [DEV]";
-    }
     Text(ui, NobleStyle::TitleFont(), 18.0f, ImVec2(x2 + 34.0f * ui.s, y + 5.0f * ui.s),
          AuthClient::Get().IsDeveloper() ? IM_COL32(255, 215, 0, 255) : kWhite,
          partyUser.c_str());
 
-    // Developer badge
+    // Developer badge (the gold DEV chip is the only marker; the name no longer carries a "[DEV]" suffix)
     if (AuthClient::Get().IsDeveloper()) {
         float nameW = TextWidth(NobleStyle::TitleFont(), 18.0f * ui.s, partyUser.c_str());
         ImVec2 badgePos(x2 + 40.0f * ui.s + nameW, y + 6.0f * ui.s);
@@ -832,35 +885,14 @@ void DrawParty(const Ui& ui, const std::string& playerName, const char* status) 
     ui.dl->AddRect(accP0, accP1, accHov ? IM_COL32(143, 216, 255, 180) : IM_COL32(60, 90, 120, 100), 0.0f, 0, 1.0f);
     if (AuthClient::Get().IsLoggedIn()) {
         char buf[64];
-        if (AuthClient::Get().IsDeveloper()) {
-            std::snprintf(buf, sizeof(buf), "ONLINE [DEV]: %s", AuthClient::Get().GetUsername().c_str());
-        } else {
-            std::snprintf(buf, sizeof(buf), "ONLINE: %s", AuthClient::Get().GetUsername().c_str());
-        }
+        std::snprintf(buf, sizeof(buf), "ONLINE: %s", AuthClient::Get().GetUsername().c_str());
         Text(ui, NobleStyle::SmallFont(), 12.0f, ImVec2(x2 + 8.0f * ui.s, y + 4.0f * ui.s),
              AuthClient::Get().IsDeveloper() ? IM_COL32(255, 215, 0, 255) : IM_COL32(120, 220, 160, 255), buf);
     } else {
         Text(ui, NobleStyle::SmallFont(), 12.0f, ImVec2(x2 + 8.0f * ui.s, y + 4.0f * ui.s), IM_COL32(200, 210, 220, 200), "[ LOGIN / REGISTER ]");
     }
 
-    if (AuthClient::Get().IsDeveloper()) {
-        y += 26.0f * ui.s;
-        const float devH = 22.0f * ui.s;
-        const ImVec2 devP0(x2, y);
-        const ImVec2 devP1(x + w, y + devH);
-        ImGui::SetCursorScreenPos(devP0);
-        ImGui::PushID("party_dev_menu_btn");
-        bool devClicked = ImGui::InvisibleButton("##devbtn", ImVec2(devP1.x - devP0.x, devH));
-        bool devHov = ImGui::IsItemHovered();
-        ImGui::PopID();
-        if (devClicked) {
-            OpenDevMenuModal();
-            MenuSounds::Click();
-        }
-        ui.dl->AddRectFilled(devP0, devP1, devHov ? IM_COL32(90, 60, 10, 240) : IM_COL32(45, 30, 8, 220));
-        ui.dl->AddRect(devP0, devP1, devHov ? IM_COL32(255, 215, 0, 240) : IM_COL32(180, 130, 20, 180), 0.0f, 0, 1.0f);
-        Text(ui, NobleStyle::SmallFont(), 12.0f, ImVec2(x2 + 8.0f * ui.s, y + 4.0f * ui.s), IM_COL32(255, 215, 0, 255), "[ DEVELOPER MENU ]");
-    }
+    // The developer menu moved into the main-menu list (above Quit, developer accounts only).
 }
 
 // DIFFICULTY as four tiles with Reach's difficulty icons (from the player's Reach art, see
@@ -1007,8 +1039,12 @@ float HeroBanner(const Ui& ui, ImVec2 pos, float width, float height, const std:
     if (!kicker.empty()) Text(ui, NobleStyle::SmallFont(), 15.0f, ImVec2(pos.x + pad, b.y - pad - 56.0f * ui.s), kAccent, kicker.c_str());
     float y = b.y + 8.0f * ui.s;
     if (blurb && *blurb) {
+        // Two lines at most: a long workshop blurb is clipped here instead of running over the option rows.
+        const float lineH = 17.0f * ui.s * 1.35f;
+        ui.dl->PushClipRect(ImVec2(pos.x, y), ImVec2(pos.x + width, y + lineH * 2.0f), true);
         Text(ui, nullptr, 17.0f, ImVec2(pos.x, y), kDim, blurb, pos.x + width);
-        y += Font(nullptr)->CalcTextSizeA(17.0f * ui.s, FLT_MAX, width, blurb).y + 8.0f * ui.s;
+        ui.dl->PopClipRect();
+        y += std::min(Font(nullptr)->CalcTextSizeA(17.0f * ui.s, FLT_MAX, width, blurb).y, lineH * 2.0f) + 8.0f * ui.s;
     }
     return y;
 }
@@ -1095,6 +1131,13 @@ const MainEntry kMainEntries[] = {
     { "Mods",         "Workshop maps and mods.",                                              Screen::Mods, true, false },
     { "Settings",     "Controls, key bindings, audio, video and gameplay options.",          Screen::Settings, true, false },
     { "Quit",         "Close Noble.",                                                         Screen::Main, true, true },
+};
+
+// Developer-only row, built into the main-menu list per frame so it sits directly above Quit. The gold
+// DEV badge next to the player name is the only other place developer status is shown.
+const MainEntry kDeveloperEntry = {
+    "Developer Menu", "Unlock armors, grant credits, set rank or reset a career. Developer accounts only.",
+    Screen::Main, true, false
 };
 
 struct MenuState {
@@ -1357,7 +1400,10 @@ std::vector<MapEntry> ModMaps(const ModEntry& mod, const std::vector<ModMap>& li
     std::vector<MapEntry> out;
     for (const ModMap& m : listed) {
         const bool known = KnownScenario(m.scenario, base, baseCount);
-        out.push_back({ m.scenario, m.title, known ? m.description : "A new map: Noble can only start maps that are in Reach so far.", known, &mod });
+        out.push_back({ m.scenario, m.title,
+                        known ? PlainDescription(m.description, 150)
+                              : "A new map: Noble can only start maps that are in Reach so far.",
+                        known, &mod });
     }
     for (const std::string& file : mod.mapFiles) {
         if (!KnownScenario(file, base, baseCount)) continue;
@@ -1384,9 +1430,7 @@ std::vector<MapEntry> ModdedMaps(const std::vector<const ModEntry*>& mods, ModMo
         heading.name = mod->title + "  (" + std::to_string(maps.size()) + ")";
         heading.header = true;
         heading.mod = mod;
-        std::string about = mod->description.substr(0, 320);
-        if (mod->description.size() > 320) about += "...";
-        heading.blurb = about;
+        heading.blurb = PlainDescription(mod->description, 180);
         heading.enabled = open.count(OpenKey(mode, *mod)) != 0;
         out.push_back(heading);
         if (!heading.enabled) continue;
@@ -2668,23 +2712,50 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         DrawTitle(ui, ImVec2(left, ui.size.y * 0.30f), "MAIN MENU");
         Text(ui, nullptr, 17.0f, ImVec2(left + 4.0f * ui.s, ui.size.y * 0.30f + 66.0f * ui.s), kDim,
              "This party is local to this PC.");
+        // The list is built per frame so the developer row can sit above Quit without shifting indices.
+        std::vector<const MainEntry*> rows;
+        for (const MainEntry& e : kMainEntries) {
+            if (e.quit && AuthClient::Get().IsDeveloper()) rows.push_back(&kDeveloperEntry);
+            rows.push_back(&e);
+        }
+        if (rows.empty()) rows.push_back(&kMainEntries[0]);
+        st.mainIndex = std::clamp(st.mainIndex, 0, static_cast<int>(rows.size()) - 1);
         std::vector<ListItem> items;
-        for (const MainEntry& e : kMainEntries) items.push_back({ e.label, e.enabled });
-        const float listY = ui.size.y * 0.30f + 104.0f * ui.s;
-        const int hit = DrawList(ui, "main", ImVec2(left, listY), 440.0f * ui.s, items, st.mainIndex, !modal, 27.0f);
+        for (const MainEntry* e : rows) items.push_back({ e->label, e->enabled });
+
+        // Fit the list, its description and the hint row: shrink the row spacing first, then lift the list,
+        // so the description can never be drawn on top of "ENTER Select / ESC Quit" (2026-10-30).
+        const float descWidth = 430.0f * ui.s;
+        const char* desc = rows[st.mainIndex]->description;
+        const float descH = Font(nullptr)->CalcTextSizeA(17.0f * ui.s, FLT_MAX, descWidth, desc).y;
+        const float descGap = 10.0f * ui.s;
+        const float hintTop = ui.size.y - 58.0f * ui.s;
+        float listY = ui.size.y * 0.30f + 104.0f * ui.s;
+        float step = 27.0f;                                             // ui.s units
+        const float rowCount = static_cast<float>(rows.size());
+        auto blockHeight = [&](float s) { return rowCount * s * ui.s + descGap + descH + 8.0f * ui.s; };
+        if (blockHeight(step) > hintTop - listY) {
+            step = std::max(18.0f, (hintTop - listY - descGap - descH - 8.0f * ui.s) / (rowCount * ui.s));
+            if (blockHeight(step) > hintTop - listY) {
+                listY = std::max(ui.size.y * 0.22f, hintTop - blockHeight(step));
+            }
+        }
+        const int hit = DrawList(ui, "main", ImVec2(left, listY), 440.0f * ui.s, items, st.mainIndex, !modal, step);
         ImGui::EndDisabled();
-        const float descY = listY + items.size() * 27.0f * ui.s + 10.0f * ui.s;
-        Text(ui, nullptr, 17.0f, ImVec2(left + 4.0f * ui.s, descY), kDim, kMainEntries[st.mainIndex].description,
-             left + 430.0f * ui.s);
+        const float descY = listY + rowCount * step * ui.s + descGap;
+        Text(ui, nullptr, 17.0f, ImVec2(left + 4.0f * ui.s, descY), kDim, desc, left + descWidth);
         if (!modal) {
             if (hit >= 0) {
-                if (kMainEntries[hit].quit) {
+                const MainEntry* picked = rows[hit];
+                if (picked->quit) {
                     st.confirmQuit = true;
                     st.quitChoice = 1;
-                } else if (std::string(kMainEntries[hit].label) == "Account") {
+                } else if (picked == &kDeveloperEntry) {
+                    OpenDevMenuModal();
+                } else if (std::string(picked->label) == "Account") {
                     OpenAccountModal();
                 } else {
-                    st.screen = kMainEntries[hit].target;
+                    st.screen = picked->target;
                     if (st.screen == Screen::Social) {
                         st.socialPreviousScreen = Screen::Main;
                     }
@@ -2772,8 +2843,7 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         const float rowsH = 98.0f * ui.s + 8.0f * ui.s + 36.0f * ui.s + 30.0f * ui.s;
         const float bannerTop = top + 96.0f * ui.s;
         const char* blurb = row ? row->blurb.c_str() : "";
-        const float blurbH = (blurb && *blurb)
-            ? Font(nullptr)->CalcTextSizeA(17.0f * ui.s, FLT_MAX, pw, blurb).y + 16.0f * ui.s : 0.0f;
+        const float blurbH = BlurbBlockHeight(ui, pw, blurb);
         const float bannerH = HeroBannerHeight(ui, pw, col.content, rowsH, blurbH, bannerTop);
         const std::string kicker = mod ? "MOD: " + Upper(mod->title) : row && row->header ? std::string("MOD") : std::string("HALO: REACH \xC2\xB7 CAMPAIGN");
         float y = HeroBanner(ui, ImVec2(px, bannerTop), pw, bannerH, mission ? mission->scenario : "", kicker,
@@ -2948,8 +3018,7 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
                             (forgeMissing ? 26.0f * ui.s : 0.0f);
         const float bannerTop = top + 96.0f * ui.s;
         const char* blurb = row ? row->blurb.c_str() : "";
-        const float blurbH = (blurb && *blurb)
-            ? Font(nullptr)->CalcTextSizeA(17.0f * ui.s, FLT_MAX, pw, blurb).y + 16.0f * ui.s : 0.0f;
+        const float blurbH = BlurbBlockHeight(ui, pw, blurb);
         const float bannerH = HeroBannerHeight(ui, pw, col.content, rowsH, blurbH, bannerTop);
         const std::string kicker = mod ? "MOD: " + Upper(mod->title)
                                  : std::string(ff ? "HALO: REACH \xC2\xB7 FIREFIGHT" : forge ? "HALO: REACH \xC2\xB7 FORGE" : "HALO: REACH \xC2\xB7 MULTIPLAYER");
@@ -3155,7 +3224,9 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         ImGui::EndChild();
         ImGui::PopStyleColor();
         if (back && !ImGui::GetIO().WantTextInput && !ctx.settingsPanel.IsCapturingKey()) {
-            goBack(st.screen == Screen::Servers ? Screen::CustomGame : Screen::Main);
+            // The server browser is a top-level main-menu screen, so Back returns to the main menu (it used
+            // to drop the player into Custom Game).
+            goBack(Screen::Main);
         }
         DrawHints(ui, { { Prompt::Back, "Back" } });
         break;
@@ -3239,6 +3310,15 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
     }
     ctx.settingsPanel.SetTab(startTab);
     ctx.careerPanel.SetTab(startTab);
+    // -menu-tab also picks the VANILLA / MODDED source tab of the setup screens, so a test run can capture
+    // the modded lists (long workshop names and descriptions) without clicking.
+    switch (ctx.st.screen) {
+    case Screen::Campaign:   ctx.st.campaignSource = startTab ? 1 : 0; break;
+    case Screen::Firefight:  ctx.st.ffSource = startTab ? 1 : 0; break;
+    case Screen::CustomGame: ctx.st.mpSource = startTab ? 1 : 0; break;
+    case Screen::Forge:      ctx.st.forgeSource = startTab ? 1 : 0; break;
+    default: break;
+    }
     ctx.modsScanned = false;
     ctx.totalFrames = 0;
     ctx.sceneReadyFrames = 0;

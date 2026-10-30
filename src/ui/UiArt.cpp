@@ -453,6 +453,24 @@ UiTexture MapPreview(const std::string& scenario, bool large) {
     return {};
 }
 
+UiTexture MapPhoto(const std::string& scenario) {
+    if (scenario.empty()) return {};
+    if (UiTexture preview = MapPreview(scenario, true)) return preview;
+    // A mod (or the player) can supply a picture for a map MCC does not know: the same file name the
+    // loading screen uses. No scene fallback here - that would show a different map.
+    std::lock_guard<std::mutex> lock(s_mutex);
+    return Cached("mapphoto:" + scenario, [&]() -> UiTexture {
+        for (const fs::path& dir : { CustomDir() / "loading", NobleDir() / "loading" }) {
+            const fs::path p = FindImage(dir, scenario);
+            if (!p.empty()) {
+                UiTexture t = FileCached(p);
+                if (t) return t;
+            }
+        }
+        return {};
+    });
+}
+
 namespace {
 fs::path ReachArtFile(const std::string& category, const std::string& stem, bool prefix) {
     std::error_code ec;
