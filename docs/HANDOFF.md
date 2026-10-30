@@ -22,6 +22,17 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-31, 10:00 ET) - Self-contained handoff written for Claude (WeabooTyler117 / DeepSeek)
+
+Tyler asked for a handoff he can hand to Claude. Wrote `docs/HANDOFF-FOR-CLAUDE.md`: one self-contained brief covering what
+Noble is, how to build it and verify with captures, the commit table for this session, Tyler's current save state and the
+backups that must not be lost, the open work in priority order (emblem bg/fg picker, armory chamber + shoulder cameras,
+scoreboard, checkpoint continue, in-process transitions, older backlog) with file/line pointers and what has already been
+ruled out, and the traps/house rules (career credits semantics, `data\appearance.json` being rewritten, `Row()` always
+returning true, the relaunch account flags, PowerShell 5.1 limits, and the standing rule to update this log and mirror it).
+
+`docs/HANDOFF.md` stays the detailed chronology; the new file is the short version for a fresh agent.
+
 ## 0. Pick up here (2026-10-31, 09:30 ET) - Career reset for Tyler: Recruit + 1,000,000 granted cR, unlocks to earn (WeabooTyler117 / DeepSeek)
 
 Tyler asked to reset his level but be given money so he can go through the unlocks. Two things came out of it.
