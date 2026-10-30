@@ -105,3 +105,21 @@ Recommendation: try route 1 first (authentic, mode-gated, no RE), keep route 2 a
 - `tags\globals\globals.globals` — engine globals (weapons, damage, camera defaults) exportable to XML.
 - `data\levels\...\scripts\*.hsc` — every level's HaloScript (62 files), including `forge_halo`; the forge scripts are the
   reference for how sandbox mode arranges its camera and editing objects.
+
+
+---
+
+## Atlas export status (2026-10-31)
+
+`tool export-bitmap-dds <abs path>\tags\ui\cui\common\emblems\emblems.bitmap <prefix>` runs but reports
+`rasterizer\invalid / ERROR failed to decompress [0x80070057] / attempting to save directly`, and the only file produced is
+`emblemsinvalid_00_00.dds` (64 KB). Pillow rejects it (`Unimplemented DXGI format 91`), and `export-bitmap-tga` fails to
+decompress the same data. So the shipped `emblems.bitmap` does not carry pixels the kit can decode - the atlas has to come
+from somewhere else:
+
+1. MCC's own emblem images, which Noble already loads (`UiArt::EmblemByName`), composited per the HREK XML transforms; or
+2. the emblem atlases in the MCC packs (`E_002_P_SML` family), already reachable through `UiArt`; or
+3. a different export verb on the tag (`export-bitmap-pfm` untried) once the bitmap group resolves.
+
+The emblem *data* (53 backs, 80 fronts, 160 shapes, transforms, atlas indices) is already captured in
+`tools/emblem/emblem_library.xml`; only the sprite sheet is missing.

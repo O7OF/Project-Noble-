@@ -69,6 +69,17 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-31, 17:45 ET) - Atlas export blocked; emblem data still complete (WeabooTyler117 / DeepSeek)
+
+- `tool.exe export-bitmap-dds <abs>\tags\ui\cui\common\emblems\emblems.bitmap <prefix>` produces
+  `emblemsinvalid_00_00.dds` (64 KB) and logs `rasterizer\invalid` / `ERROR failed to decompress [0x80070057]`. Pillow
+  rejects the file (`Unimplemented DXGI format 91`); `export-bitmap-tga` fails the same way. So the shipped
+  `emblems.bitmap` has no decodable pixels in the kit.
+- The sprite sheet therefore has to come from MCC's packs (Noble already loads them through `UiArt::EmblemByName`) or from
+  a different export verb (`export-bitmap-pfm` untried). Everything else is captured: `tools/emblem/emblem_library.xml` has
+  the 53 backs, 80 fronts, 160 shapes, atlas indices and per-layer transforms.
+- Repo state: `eaf74a1` pushed, tree clean.
+
 ## 0. Pick up here (2026-10-31, 17:15 ET) - HREK playbook: armory lighting explained, variants, and the truth about third person (WeabooTyler117 / DeepSeek)
 
 New document `docs/HREK-PLAYBOOK.md` turns the kit findings into work items. Headlines:
