@@ -833,70 +833,81 @@ void DrawAccountModal(const Ui& ui) {
 float PlayerRow(const Ui& ui, ImVec2 pos, float width, int rankIndex, int emblemIndex, int nameplateIndex,
                 int team, const std::string& serviceTag, const std::string& name, bool dev, bool selected) {
     const float h = 40.0f * ui.s;
-    const float badgeW = 30.0f * ui.s;
+    const float rankW = 29.0f * ui.s;      // square, centred on the row
     const float embW = 30.0f * ui.s;
     const float stripW = team ? 6.0f * ui.s : 0.0f;
-    const float gap = 5.0f * ui.s;
+    const float gap = 4.0f * ui.s;
     float x = pos.x;
 
-    // Rank badge, set apart from the player block the way MCC does it.
-    const ImVec2 r0(x, pos.y + 2.0f * ui.s), r1(x + badgeW, pos.y + h - 2.0f * ui.s);
+    // Rank badge: a square box centred on the row height, so the art never sits high or low.
+    const ImVec2 r0(x, pos.y + (h - rankW) * 0.5f);
+    const ImVec2 r1(r0.x + rankW, r0.y + rankW);
     if (const UiTexture rank = UiArt::RankIcon(rankIndex)) {
         UiArt::DrawContain(ui.dl, rank, r0, r1);
     } else {
         ui.dl->AddRectFilled(r0, r1, IM_COL32(26, 34, 44, 220));
         ui.dl->AddRect(r0, r1, IM_COL32(90, 120, 150, 120), 0.0f, 0, 1.0f);
     }
-    x += badgeW + gap;
+    x += rankW + gap;
 
-    // Emblem tile: a dark framed square with the emblem filling it. It is joined to the nameplate bar (no
-    // gap) and, in a team game type, the team colour is a strip on the tile's right edge - that is the
-    // e + strip + bar unit MCC shows.
+    // Emblem tile + team strip + nameplate bar are one block: the tile is flush with the bar and the block
+    // gets a single frame, with a thin divider between tile and bar (two frames looked like a gap).
+    const ImVec2 blockStart(x, pos.y);
+    const ImVec2 blockEnd(pos.x + width, pos.y + h);
+
     const ImVec2 e0(x, pos.y), e1(x + embW, pos.y + h);
     ui.dl->AddRectFilled(e0, e1, IM_COL32(20, 14, 18, 250));
     if (const UiTexture emblem = UiArt::Emblem(emblemIndex)) {
         UiArt::DrawContain(ui.dl, emblem, ImVec2(e0.x + 2.0f * ui.s, e0.y + 2.0f * ui.s),
                            ImVec2(e1.x - 2.0f * ui.s, e1.y - 2.0f * ui.s));
     }
-    ui.dl->AddRect(e0, e1, IM_COL32(160, 170, 180, 120), 0.0f, 0, 1.0f);
     x += embW;
 
     // Team strip: only when the game type assigns teams (Free for All, the main menu and a lobby with no
-    // team mode show nothing). Flush against the emblem and the bar.
+    // team mode show nothing).
     if (stripW > 0.0f) {
         const ImVec2 s0(x, pos.y), s1(x + stripW, pos.y + h);
         ui.dl->AddRectFilled(s0, s1, team == 1 ? IM_COL32(190, 34, 30, 255) : IM_COL32(36, 62, 170, 255));
-        ui.dl->AddRect(s0, s1, IM_COL32(200, 210, 220, 110), 0.0f, 0, 1.0f);
         x += stripW;
     }
 
-    // Nameplate bar: service tag on the top line, gamertag below. Framed even without plate art.
-    const ImVec2 p0(x, pos.y), p1(pos.x + width, pos.y + h);
+    // Nameplate bar: service tag on the top line, gamertag below.
+    const ImVec2 p0(x, pos.y), p1(blockEnd);
     ui.dl->AddRectFilled(p0, p1, selected ? IM_COL32(120, 34, 14, 240) : IM_COL32(22, 26, 32, 240));
     if (nameplateIndex > 0) {
         if (const UiTexture plate = UiArt::Nameplate(nameplateIndex)) {
-            UiArt::DrawCover(ui.dl, plate, p0, p1, selected ? IM_COL32(255, 215, 195, 245) : IM_COL32(255, 255, 255, 245));
+            // Drawn 8 s to the left and clipped, so the plate's own dark left border does not read as a gap
+            // between the emblem tile and the bar.
+            ui.dl->PushClipRect(p0, p1, true);
+            UiArt::DrawCover(ui.dl, plate, ImVec2(p0.x - 8.0f * ui.s, p0.y), p1,
+                             selected ? IM_COL32(255, 215, 195, 245) : IM_COL32(255, 255, 255, 245));
+            ui.dl->PopClipRect();
             // Dark bands top and bottom so the tag and the name stay readable on the art.
             ui.dl->AddRectFilledMultiColor(p0, p1, IM_COL32(4, 8, 14, 150), IM_COL32(4, 8, 14, 95),
                                            IM_COL32(4, 8, 14, 185), IM_COL32(4, 8, 14, 185));
         }
     }
-    ui.dl->AddRect(p0, p1, IM_COL32(190, 200, 212, 100), 0.0f, 0, 1.0f);
 
+    // One frame around the whole block, plus a divider where the emblem meets the bar.
+    ui.dl->AddRect(blockStart, blockEnd, IM_COL32(190, 200, 212, 110), 0.0f, 0, 1.0f);
+    ui.dl->AddLine(ImVec2(p0.x, pos.y + 1.0f), ImVec2(p0.x, pos.y + h - 1.0f), IM_COL32(10, 12, 16, 220), 1.0f);
+
+    // Service tag, and "[DEV]" beside it in gold text for developer accounts only (no chip, no extra tag
+    // for regular players).
     const float pad = 8.0f * ui.s;
+    const float tagY = pos.y + 3.0f * ui.s;
     const std::string tagText = serviceTag.empty() ? std::string("[117]") : "[" + serviceTag + "]";
-    Text(ui, NobleStyle::SmallFont(), 11.5f, ImVec2(p0.x + pad, p0.y + 3.0f * ui.s), IM_COL32(205, 220, 235, 235), tagText.c_str());
+    Text(ui, NobleStyle::SmallFont(), 11.5f, ImVec2(p0.x + pad, tagY), IM_COL32(205, 220, 235, 235), tagText.c_str());
+    if (dev) {
+        const float tagW = TextWidth(NobleStyle::SmallFont(), 11.5f * ui.s, tagText.c_str());
+        Text(ui, NobleStyle::SmallFont(), 11.5f, ImVec2(p0.x + pad + tagW + 5.0f * ui.s, tagY),
+             IM_COL32(240, 196, 70, 255), "[DEV]");
+    }
 
-    const float devW = dev ? 52.0f * ui.s : 0.0f;
-    ui.dl->PushClipRect(ImVec2(p0.x + pad, p0.y + 13.0f * ui.s), ImVec2(p1.x - pad - devW, p1.y), true);
-    Text(ui, NobleStyle::TitleFont(), 18.0f, ImVec2(p0.x + pad, p0.y + 14.0f * ui.s), kWhite, name.c_str());
+    ui.dl->PushClipRect(ImVec2(p0.x + pad, pos.y + 13.0f * ui.s), ImVec2(p1.x - pad, p1.y), true);
+    Text(ui, NobleStyle::TitleFont(), 16.5f, ImVec2(p0.x + pad, pos.y + 15.0f * ui.s), kWhite, name.c_str());
     ui.dl->PopClipRect();
 
-    if (dev) {
-        const ImVec2 b(p1.x - pad - 46.0f * ui.s, p0.y + 11.0f * ui.s);
-        ui.dl->AddRectFilled(b, ImVec2(b.x + 46.0f * ui.s, b.y + 18.0f * ui.s), IM_COL32(220, 160, 20, 240), 3.0f * ui.s);
-        Text(ui, NobleStyle::SmallFont(), 11.0f, ImVec2(b.x + 10.0f * ui.s, b.y + 3.0f * ui.s), IM_COL32(10, 10, 10, 255), "DEV");
-    }
     return h;
 }
 

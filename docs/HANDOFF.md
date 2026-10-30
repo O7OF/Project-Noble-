@@ -22,7 +22,23 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
-## 0. Pick up here (2026-10-30, 07:40 ET) - Emblems never loaded (pack name case) + final player-row anatomy (WeabooTyler117 / DeepSeek)
+## 0. Pick up here (2026-10-30, 06:55 ET) - Player row polish: DEV tag bracket, centred rank, one frame (WeabooTyler117 / DeepSeek)
+
+Final round on the row Tyler kept circling (MCC reference crops), all in `PlayerRow()`:
+
+- **`[DEV]` is text now**: the gold chip is gone; the tag line reads `[NOBL] [DEV]` with `[DEV]` in gold next to the
+  service tag, and **only for developer accounts** - a regular player's tag line is just `[NOBL]`, nothing else.
+- **Rank badge centred**: it is a square 29 * s box centred on the row height (`DrawContain` inside it), so the art no
+  longer sits high or low.
+- **One frame, no seam**: the emblem tile + optional team strip + nameplate bar are framed once as a block, with a 1 px
+  divider where the tile meets the bar. The plate art is drawn 8 * s to the left and clipped to the bar, because the
+  plate image's own dark left border read as a gap between the tile and the bar.
+- **Player name is smaller**: 18 * s -> 16.5 * s, so the tag line above it has room; the name still clips at the bar.
+
+Build: `cmake --build build --config Release`, 0 errors, 0 warnings. Captured at 1920x1080: rank badge, emblem tile with
+the emblem drawn, and `[NOBL] [DEV]` / `WEABOOTYLER117` on the plate, all in one clean block.
+
+## 0. Pick up here (2026-10-30, 06:40 ET) - Emblems never loaded (pack name case) + final player-row anatomy (WeabooTyler117 / DeepSeek)
 
 ### 1. Bug: every emblem slot was empty, everywhere
 
@@ -56,6 +72,8 @@ Final layout of `PlayerRow()` (shared by MY PARTY and the pre-game roster), left
   joined nameplate bar with `[NOBL]` / `WEABOOTYLER117`.
 
 --
+
+## 0. Pick up here (2026-10-30, 06:30 ET) - MCC-style player rows: rank - emblem - nameplate with tag/name (WeabooTyler117 / DeepSeek)
 
 UI only: `src/ui/FrontEndMenu.cpp`. Follows the 06:40 ET entry, which had the nameplate only as a row background.
 
