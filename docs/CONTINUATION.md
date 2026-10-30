@@ -191,7 +191,8 @@ Menus (this session, all pushed):
 | `2834507` | Server browser: sortable columns + `No password` / `Not started` filters |
 | `a52884f` | Real **BRIGHTNESS** + **FXAA** (measured), dead advanced-graphics rows replaced with honest text, `InputTuning` extraction + 4th test suite, `tools/check-settings-wired.ps1` |
 | `b8f667b` | Service record: mission/map names instead of scenario ids |
-| (this commit) | Pause menu rebuilt (action list + scrollable daily/weekly challenge sidebar, solo/multiplayer header, RESTART MATCH); `-pause-at` test hook + flag forwarding |
+| `a848054` | Pause menu rebuilt (action list + scrollable daily/weekly challenge sidebar, solo/multiplayer header, RESTART MATCH); `-pause-at` test hook + flag forwarding |
+| (this commit) | CONTINUE limited to campaign missions (recording, row and action) |
 | `5f4da08` | Prompts follow the device everywhere; `InputPrompts` button glyphs in the CONTROLLER list |
 | (this commit) | Main menu **Continue** fast path (spec 4.1/4.10) + a status block at the top of the design doc |
 | `a8f412e` | Menu music player (`PauseMusic/ResumeMusic` + `DrawMusicPlayer`) |

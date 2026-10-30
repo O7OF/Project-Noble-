@@ -1226,7 +1226,7 @@ const MainEntry kMainEntries[] = {
 // "Continue: <mode> on <map>" (spec 4.1), built into the main-menu list per frame, above Campaign, only when a
 // match has been started before. Activating it relaunches that match with the same settings.
 const MainEntry kContinueEntry = {
-    "Continue", "Play the last game again with the same map, game type and options.",
+    "Continue", "Start the campaign mission you last played, on the same difficulty and with the same skulls.",
     Screen::Main, true, false
 };
 
@@ -3076,7 +3076,7 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         // The list is built per frame so the developer row can sit above Quit without shifting indices.
         std::vector<const MainEntry*> rows;
         const SettingsData mainSnap = Settings::Get().Snapshot();
-        const bool canContinue = !mainSnap.lastPlayedMap.empty();
+        const bool canContinue = mainSnap.lastPlayedMode == "campaign" && !mainSnap.lastPlayedMap.empty();
         if (canContinue) rows.push_back(&kContinueEntry);
         for (const MainEntry& e : kMainEntries) {
             if (e.quit && AuthClient::Get().IsDeveloper()) rows.push_back(&kDeveloperEntry);
@@ -3112,14 +3112,11 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         const float descY = listY + rowCount * step * ui.s + descGap;
         std::string descLine = desc;
         if (rows[st.mainIndex] == &kContinueEntry) {
-            const std::string mode = mainSnap.lastPlayedMode == "campaign" ? "Campaign"
-                                   : mainSnap.lastPlayedMode == "firefight" ? "Firefight"
-                                   : mainSnap.lastPlayedMode == "forge" ? "Forge" : "Custom Game";
             std::string mapName = mainSnap.lastPlayedMap;
-            for (const MenuMap& m : kMaps) if (m.scenario == mapName) { mapName = m.name; break; }
-            for (const MenuMap& m : kFirefightMaps) if (m.scenario == mapName) { mapName = m.name; break; }
             for (const MenuMap& m : kMissions) if (m.scenario == mapName) { mapName = m.name; break; }
-            descLine = "Continue: " + mode + " on " + mapName + ".";
+            const char* difficulty = kDifficulties[std::clamp(mainSnap.lastPlayedDifficulty, 0, 3)];
+            // Honest about what it does: Noble has no save/checkpoint resume, so the mission starts again.
+            descLine = "Continue the campaign: " + mapName + " on " + difficulty + " (starts the mission again).";
         }
         Text(ui, nullptr, 17.0f, ImVec2(left + 4.0f * ui.s, descY), kDim, descLine.c_str(), left + descWidth);
         if (!modal) {
@@ -3132,7 +3129,7 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
                     choice.play = true;
                     choice.host = false;
                     choice.map = mainSnap.lastPlayedMap;
-                    choice.mode = mainSnap.lastPlayedMode.empty() ? "multiplayer" : mainSnap.lastPlayedMode;
+                    choice.mode = "campaign";   // CONTINUE is campaign-only by design
                     choice.variantPath = mainSnap.lastPlayedVariant;
                     choice.difficulty = mainSnap.lastPlayedDifficulty;
                     choice.skulls = mainSnap.lastPlayedSkulls;
@@ -4093,7 +4090,9 @@ void FrontEndMenu::RenderOverlayImpl(IDXGISwapChain* swapChain, bool clear) {
             if (choice.play) {
                 // Remember what was launched, for the \"Continue\" row on the main menu (spec 4.1). A lobby join
                 // (connectAddress) is not a local game, so it does not overwrite this.
-                if (choice.connectAddress.empty() && !choice.map.empty()) {
+                // CONTINUE is a campaign feature (MCC's Continue = the campaign mission you were on), so only a
+                // campaign launch updates it; Firefight, Forge, multiplayer and lobby joins leave it alone.
+                if (choice.connectAddress.empty() && !choice.map.empty() && choice.mode == "campaign") {
                     SettingsData d = Settings::Get().Snapshot();
                     d.lastPlayedMode = choice.mode;
                     d.lastPlayedMap = choice.map;

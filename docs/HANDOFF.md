@@ -22,6 +22,22 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-31, 00:15 ET) - CONTINUE is campaign-only (WeabooTyler117 / DeepSeek)
+
+Tyler: "continue should only continue on campaign missions only, nothing else".
+
+- **Only campaign launches are remembered now.** The launch choke point records `lastPlayed*` when
+  `choice.mode == "campaign"` (and still skips lobby joins), so finishing a multiplayer/Firefight/Forge game can no longer
+  overwrite the last mission.
+- **The row only exists for campaign**: `canContinue = lastPlayedMode == "campaign" && !lastPlayedMap.empty()`. A player who
+  only plays multiplayer never sees CONTINUE at all.
+- **The action always launches campaign** (`choice.mode = "campaign"`), and the description reads
+  `Continue the campaign: Winter Contingency on Heroic (starts the mission again).` - honest, because Noble has no
+  save/checkpoint resume: the mission restarts from the beginning with the stored difficulty and skulls.
+
+Verified with two seeded settings and a capture of each: `lastPlayedMode: campaign` shows CONTINUE above CAMPAIGN;
+`lastPlayedMode: multiplayer` shows a list starting at CAMPAIGN, no CONTINUE row.
+
 ## 0. Pick up here (2026-10-30, 23:40 ET) - Pause menu rebuilt to the MCC reference (list + challenges sidebar) (WeabooTyler117 / DeepSeek)
 
 Tyler sent three MCC/Halo 4 pause screens and asked for that shape: an action list on the left, a scrollable daily/weekly
