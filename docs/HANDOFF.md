@@ -22,6 +22,40 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-31, 14:00 ET) - Forge netplay: verified both join scenarios, and the join-queue gate map is written down (WeabooTyler117 / DeepSeek)
+
+Follow-up to the 13:10 entry, after Tyler asked to "look for the offset".
+
+### Verified locally, two processes, loopback, after `320998e`
+
+| scenario | host queue | guest requests / aborts | guest result |
+|---|---|---|---|
+| guest joins **before** the host starts (lobby flow) | `mode 1 count 1` | 1 / 0 | `game session started ... loading screen off` |
+| guest joins a **running** Forge match (host in-game 30 s first) | `mode 1 count 1` | 1 / 0 | `game session started ... loading screen off` |
+
+Both pass, so the ordering fix closed the reproduced bug and **no byte patch was required**. A solo Forge host still reaches
+the HUD with zero errors.
+
+### The offset map, for the case a real two-PC run still fails
+
+`docs/FORGE-NETPLAY-OFFSETS.md` documents the whole join-queue state machine in `haloreach.dll` (image base `0x180000000`),
+with exact instructions:
+
+- mode global `+0x2A49308` (27 references, all inside `0x39A8xx..0x39C2xx`), count `+0x2A4930C`, entries `+0x2A49318`
+  (stride `0x588`), step `+0x2A49074`, pointer-valid byte `+0x2A1FD40`, session pointers `+0x2A1FE08/FE10/FE18`, and the
+  session state field `+0x60EF8` which must be exactly 6;
+- **mode setter** at RVA `0x39BEEC` (the only special case: raising mode to 4 while it is 3 is ignored);
+- **dispatcher** at RVA `0x39A8D2` (mode must be 1..4 or the queue is skipped; the processor is called only at step 4);
+- **processor** at RVA `0x39BDCC`, single caller `0x39A92D`, selects its session by mode.
+
+The document lists a patch candidate per symptom (mode stuck at 0, mode stuck at 3, mode outside 1..4, step never reaching
+4, queued but never inserted), and how to re-derive them with dumpbin or the Ghidra project at `ghidra-proj\NobleReach`.
+
+### Next
+
+Real two-PC Forge test with both machines on `320998e`. If it fails, the logs now print `join queue after request: mode N
+count N ... state N`, so one run selects the row in the table above and therefore the exact patch.
+
 ## 0. Pick up here (2026-10-31, 13:10 ET) - Forge netplay: the host was refusing joins while its session was still closed (WeabooTyler117 / DeepSeek)
 
 Tyler: solo works on every mode; custom games, matchmaking and Firefight netplay work; **Forge netplay does not**. He asked

@@ -207,7 +207,8 @@ Menus (this session, all pushed):
 | `6048d9a` | `bonusCredits` (granted cR that does not count toward rank); Tyler's career reset to Recruit with 1,000,000 cR |
 | `f4d247e` | Campaign co-op: the mission start (Command 10) now waits for the lobby guests, so nobody joins mid-cinematic |
 | `571f140` | `tools/coop-test.ps1` + `docs/COOP-TEST-PROTOCOL.md` + `coop/`: two-machine, two-agent co-op testing over the repo |
-| (this commit) | Forge netplay: mission-start hold restricted to campaign (it was aborting forge joins); `-log <file>` per instance |
+| `320998e` | Forge netplay: mission-start hold restricted to campaign (it was aborting forge joins); `-log <file>` per instance |
+| (this commit) | `docs/FORGE-NETPLAY-OFFSETS.md`: join-queue state machine map + patch candidates; both forge join scenarios verified |
 | `5f4da08` | Prompts follow the device everywhere; `InputPrompts` button glyphs in the CONTROLLER list |
 | (this commit) | Main menu **Continue** fast path (spec 4.1/4.10) + a status block at the top of the design doc |
 | `a8f412e` | Menu music player (`PauseMusic/ResumeMusic` + `DrawMusicPlayer`) |
