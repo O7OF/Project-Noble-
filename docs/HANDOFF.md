@@ -69,6 +69,39 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-31, 01:00 ET) - Campaign still ends by itself; guest extract prepared for O7 (WeabooTyler117 / DeepSeek)
+
+Co-op campaign failed again at 19:39. Guest-side evidence (Tyler's log, extract at
+`C:\Users\tyler\Downloads\Noble-campaign-coop-guest-2026-10-30-1940.log.txt`):
+
+| time | event |
+|---|---|
+| 19:39:46.132 | lobby launch received (m10, campaign), session `b3e82185d33714a5`, host 147.124.149.202:11774 |
+| 19:39:46.562 | guest relaunched with `-connect` |
+| 19:39:49.279 | engine launched as guest; relay joined (`MasterServer: joined session ... relay: wss://...`) |
+| 19:39:49.938 | `SEND msg 8 (join-request)`, host answered `msg 4` |
+| **19:39:57.497** | **`game session started at frame 530, loading screen off`** - guest was in the match |
+| **19:40:08.869** | **`Slot 6 - GameResults`** - session ended ~11 s after start |
+| 19:40:10.215 | `CLOSE channel ... reason 14 (state was 5)` |
+| 19:40:11.189 | post-game panel -> quit (user action, after the fact) |
+
+**No `abort` (0x1B/0x1C/0x1D), no `boot_peer`, no join refusal anywhere on the guest.** So the host ended the session (or
+its co-op state check fired on the host). This is *later* than before - the guest now reaches "in game" reliably, then the
+match dies ~11 s in.
+
+New tool: **`tools/extract-coop-log.ps1`** produces this same filtered window (timeline header, packet dumps omitted) for
+either side, so O7 can run it on his host log:
+
+```powershell
+.\tools\extract-coop-log.ps1 -Log build\bin\Release\noble-client.log `
+    -Start "2026-10-30 19:39:40" -End "2026-10-30 19:40:10" -Role host `
+    -Out "$env:USERPROFILE\Downloads\campaign-host.log.txt"
+```
+
+What the host log must answer: whether `abort called ... reason=` fired (27/0x1B players incompatible, 28/0x1C peer
+disconnect, 29/0x1D state sync timeout), whether `boot_peer` ran, what `evaluate_coop_insertion_point` returned, and
+whether the new grace line says `guest engine traffic appeared after N ms` (it should, since the guest was in game).
+
 ## 0. Pick up here (2026-10-31, 00:15 ET) - Campaign loses a 1 s race; grace window made lobby-aware (WeabooTyler117 / DeepSeek)
 
 **Forge works online now** (Tyler). Campaign still fails, and the guest-side log pins the timeline exactly.
