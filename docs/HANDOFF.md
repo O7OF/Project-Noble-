@@ -22,6 +22,22 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-30, 16:15 ET) - Menu music playlist: per-track on/off (WeabooTyler117 / DeepSeek)
+
+Last piece of spec 4.2's audio rows that Noble can do on its own: the "per-song on/off" half of the playlist. (Preview
+was already there - clicking a track switches to it immediately.)
+
+- **`SettingsData::menuMusicDisabled`** (JSON array of track ids). `ReachAudio`'s shuffle pool skips those ids, so
+  `SHUFFLE ALL GAMES` never picks a switched-off song; picking a track directly still plays it.
+- **Settings > Audio > Menu music list**: every row now has an **ON / OFF** switch at its right edge (tooltip explains
+  that OFF only affects the shuffle). The game list shows `Halo: Reach (62, 3 off)` once something in that game is off,
+  and the SHUFFLE ALL GAMES description mentions the rule.
+- Toggling while shuffle is playing **restarts the shuffle** with the new list, so the change is audible at once; the
+  list itself is saved with the rest of the settings when changes are applied (same rule as picking a track).
+
+Not done: song *order* and drag-to-reorder (the row text in the spec asked for "song order"); the shuffle is random, so
+order only matters for a sequential mode that does not exist yet.
+
 ## 0. Pick up here (2026-10-30, 15:40 ET) - Button-layout remap now has tests too (WeabooTyler117 / DeepSeek)
 
 `-test-map-gametypes` runs three suites now (all headless, results in `gametype-selftest.log`):

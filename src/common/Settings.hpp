@@ -50,7 +50,9 @@ struct SettingsData {
     bool masterMute = false;         // silences Noble's own audio (menu music and menu sounds)
     bool muteInBackground = false;   // ... and again whenever Noble is not the active window
     bool inviteNotifications = true;   // show a JOIN toast when a friend invites you
-    std::string menuMusicTrack = "reach:menu"; // ReachAudio::MusicTracks() id, "all" or "off"
+    std::string menuMusicTrack = "reach:menu";
+    // Tracks switched off in the menu-music playlist: "Shuffle all games" skips them (ReachAudio reads this).
+    std::vector<std::string> menuMusicDisabled; // ReachAudio::MusicTracks() id, "all" or "off"
 
     // Gameplay
     bool subtitles = true;         // show cinematic/dialogue subtitles (ReachHost subtitle hook)

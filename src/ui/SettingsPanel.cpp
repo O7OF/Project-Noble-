@@ -1246,6 +1246,29 @@ void SettingsPanel::RenderMusicPicker() {
         MenuSounds::Click();
         ReachAudio::PlayMenuMusic(id);
     };
+    auto isOff = [&](const std::string& id) {
+        return std::find(m_edit.menuMusicDisabled.begin(), m_edit.menuMusicDisabled.end(), id) != m_edit.menuMusicDisabled.end();
+    };
+    auto toggleTrack = [&](const std::string& id) {
+        auto& list = m_edit.menuMusicDisabled;
+        const auto it = std::find(list.begin(), list.end(), id);
+        if (it == list.end()) list.push_back(id); else list.erase(it);
+        MenuSounds::Click();
+        // Shuffle mode is playing already: restart it so a track switched off stops coming up.
+        if (m_edit.menuMusicTrack == "all") ReachAudio::PlayMenuMusic("all");
+    };
+    // A tiny ON/OFF switch drawn at the right edge of a track row.
+    auto trackSwitch = [&](const ReachAudio::TrackInfo& t) {
+        const bool off = isOff(t.id);
+        const float avail = ImGui::GetContentRegionAvail().x;
+        ImGui::SameLine(std::max(0.0f, avail - 44.0f * s));
+        ImGui::PushStyleColor(ImGuiCol_Text, off ? NobleStyle::TextMuted() : NobleStyle::Accent());
+        char label[16];
+        std::snprintf(label, sizeof(label), off ? "OFF" : "ON");
+        if (ImGui::SmallButton(label)) toggleTrack(t.id);
+        ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip(off ? "Switched off: SHUFFLE ALL GAMES skips it." : "On: SHUFFLE ALL GAMES can pick it.");
+    };
 
     ImGui::Dummy(ImVec2(0, 4.0f * s));
     const float total = ImGui::GetContentRegionAvail().x;
@@ -1261,8 +1284,13 @@ void SettingsPanel::RenderMusicPicker() {
     }
     ImGui::Separator();
     for (int i = 0; i < static_cast<int>(games.size()); ++i) {
+        int offCount = 0;
+        for (const ReachAudio::TrackInfo& t : tracks) {
+            if (t.game == games[i] && isOff(t.id)) ++offCount;
+        }
         char label[160];
-        std::snprintf(label, sizeof(label), "%s  (%d)", games[i].c_str(), counts[i]);
+        if (offCount > 0) std::snprintf(label, sizeof(label), "%s  (%d, %d off)", games[i].c_str(), counts[i], offCount);
+        else std::snprintf(label, sizeof(label), "%s  (%d)", games[i].c_str(), counts[i]);
         ImGui::PushID(i);
         const bool open = i == m_musicGame && m_musicSearch[0] == 0;
         if (open) ImGui::PushStyleColor(ImGuiCol_Text, NobleStyle::Accent());
@@ -1298,8 +1326,13 @@ void SettingsPanel::RenderMusicPicker() {
         }
         const bool selected = t.id == m_edit.menuMusicTrack;
         ImGui::PushID(t.id.c_str());
-        if (ImGui::Selectable(t.label.c_str(), selected)) pick(t.id);
+        const float switchW = 48.0f * s;
+        if (ImGui::Selectable(t.label.c_str(), selected, ImGuiSelectableFlags_AllowOverlap,
+                              ImVec2(std::max(60.0f, ImGui::GetContentRegionAvail().x - switchW), 0.0f))) {
+            pick(t.id);
+        }
         if (ImGui::IsItemHovered()) MenuSounds::Hover(ImGui::GetItemID());
+        trackSwitch(t);
         if (selected && m_musicScrollToCurrent) {
             ImGui::SetScrollHereY(0.4f);
             m_musicScrollToCurrent = false;

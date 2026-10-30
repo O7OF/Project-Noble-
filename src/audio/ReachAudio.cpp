@@ -1,5 +1,6 @@
 #include "ReachAudio.hpp"
 #include "common/Logger.hpp"
+#include "common/Settings.hpp"
 
 #include <windows.h>
 #include <objbase.h>
@@ -664,9 +665,17 @@ void MusicThread(std::string id) {
     };
 
     const bool all = id == "all";
+    // "Shuffle all games" honours the playlist: tracks the player switched off in Settings > Audio are skipped.
+    std::vector<std::string> disabled;
+    if (all) disabled = Settings::Get().Snapshot().menuMusicDisabled;
     std::vector<const Track*> pool;
-    if (all) for (const Track& t : s_tracks) pool.push_back(&t);
-    else if (const Track* t = FindTrack(id)) pool.push_back(t);
+    if (all) {
+        for (const Track& t : s_tracks) {
+            if (std::find(disabled.begin(), disabled.end(), t.id) == disabled.end()) pool.push_back(&t);
+        }
+    } else if (const Track* t = FindTrack(id)) {
+        pool.push_back(t);
+    }
     if (pool.empty()) return;
 
     const Track* lastTrack = nullptr;

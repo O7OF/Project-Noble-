@@ -119,6 +119,9 @@ void Settings::Load() {
     Read(j, "muteInBackground", d.muteInBackground);
     Read(j, "inviteNotifications", d.inviteNotifications);
             Read(j, "menuMusicTrack", d.menuMusicTrack);
+    if (j.contains("menuMusicDisabled") && j["menuMusicDisabled"].is_array()) {
+        for (const auto& id : j["menuMusicDisabled"]) if (id.is_string()) d.menuMusicDisabled.push_back(id.get<std::string>());
+    }
             Read(j, "subtitles", d.subtitles);
             Read(j, "campaignSkulls", d.campaignSkulls);
             Read(j, "menuBackground", d.menuBackground);
@@ -233,6 +236,7 @@ bool Settings::Save() {
     j["muteInBackground"] = d.muteInBackground;
     j["inviteNotifications"] = d.inviteNotifications;
         j["menuMusicTrack"] = d.menuMusicTrack;
+        j["menuMusicDisabled"] = d.menuMusicDisabled;
         j["subtitles"] = d.subtitles;
         j["campaignSkulls"] = d.campaignSkulls;
         j["menuBackground"] = d.menuBackground;

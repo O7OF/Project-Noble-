@@ -180,7 +180,8 @@ Menus (this session, all pushed):
 | `89a9509` | `MapNames` display names in the server browser + covered by `-test-map-gametypes` |
 | `2e075a8` | `Settings > SYSTEM` (logs folder, diagnostics to clipboard, settings backup/restore); version 0.8.3 |
 | `1f8d89b` | Master mute + mute in background (`ReachAudio::SetMuted`) |
-| (this commit) | Button-layout remap tests (`PadLayouts::SelfTest`), third suite under `-test-map-gametypes` |
+| `c30659a` | Button-layout remap tests (`PadLayouts::SelfTest`), third suite under `-test-map-gametypes` |
+| (this commit) | Menu music playlist: per-track ON/OFF, honoured by SHUFFLE ALL GAMES |
 | `5f4da08` | Prompts follow the device everywhere; `InputPrompts` button glyphs in the CONTROLLER list |
 | (this commit) | Main menu **Continue** fast path (spec 4.1/4.10) + a status block at the top of the design doc |
 | `a8f412e` | Menu music player (`PauseMusic/ResumeMusic` + `DrawMusicPlayer`) |
