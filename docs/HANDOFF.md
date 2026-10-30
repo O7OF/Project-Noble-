@@ -22,6 +22,16 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-31, 10:30 ET) - Handoff packaged as a Word document and a PDF (WeabooTyler117 / DeepSeek)
+
+Tyler asked for the handoff "wrapped up in a nice doc I can save and provide". The same brief now exists as
+`docs/HANDOFF-FOR-CLAUDE.docx` and `docs/HANDOFF-FOR-CLAUDE.pdf` (four pages, styled: title block, meta table, commit
+table, save-state table, priority-ordered open work, numbered traps, closing note). Copies are in
+`C:\Users\tyler\Downloads\Project-Noble-Handoff-2026-10-30.docx` and `.pdf`. The markdown original stays at
+`docs/HANDOFF-FOR-CLAUDE.md` and is what future agents should read; the PDF is for handing to a person or another model.
+Generated with `python-docx` from a script kept in the session workspace, verified content by reopening the file, and
+inspected pages 1-2 as rendered images.
+
 ## 0. Pick up here (2026-10-31, 10:00 ET) - Self-contained handoff written for Claude (WeabooTyler117 / DeepSeek)
 
 Tyler asked for a handoff he can hand to Claude. Wrote `docs/HANDOFF-FOR-CLAUDE.md`: one self-contained brief covering what
