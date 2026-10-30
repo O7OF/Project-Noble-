@@ -69,6 +69,21 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-31, 19:40 ET) - Command dispatch works but vtable[9] is not a command parser (WeabooTyler117 / DeepSeek)
+
+- `BlamEngine::Active()` now exists (static pointer set in `Initialize`, cleared in `Shutdown`), and a timed test hook
+  `-engine-cmd "<cmd>" -engine-cmd-at <s>` dispatches through `BlamEngine::ExecuteCommand` after N seconds. Verified in a
+  sandbox forge host: `Dispatching command -> 'enter_editor_mode'`, `Command status: 0x0`.
+- **But the status is not meaningful**: `zzz_not_a_command` also returns 0x0, as do `editor_mode 1` and
+  `camera_set_first_person 0`. So vtable[9] accepts any string and reports success - it is not a console/command parser.
+  The `editor_mode` / `enter_editor_mode` / `camera_set_*` names in the DLL are HaloScript builtins, not console commands.
+- Remaining third-person routes, best first: (1) **camera patch** - find the first-person camera position computation for
+  the local player and offset it; client-side, any mode, Ghidra project ready. (2) hook the engine's real console
+  (`c_console`/`process_command`) and drive `editor_mode`; more RE, less certain. (3) Forge menu path - depends on solving
+  the input-device latch first.
+- The `-engine-cmd` hook and `Active()` stay in the build: they are the right plumbing for testing engine commands once a
+  real dispatcher is found.
+
 ## 0. Pick up here (2026-10-31, 19:05 ET) - Third person: button sweep negative, next route is the command dispatcher (WeabooTyler117 / DeepSeek)
 
 - Swept RB/Y/BACK/B/X/LB as 600 ms synthetic pad presses in a sandbox forge session. Measured view change: RB 21.4 %,

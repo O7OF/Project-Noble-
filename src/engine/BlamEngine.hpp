@@ -56,11 +56,16 @@ public:
     // Research hook: forces launch-block +0x0C (the engine class byte) instead of deriving it from the mode.
     // 1 campaign, 3 multiplayer/Megalo, 4 sandbox (Forge editor engine), 5 Firefight. "-engine-mode <n>" on the command
     // line sets it; 0 keeps the normal derivation. Used to test whether the sandbox engine can be launched as a mode.
+    // The live client is created in main.cpp; that is the only place with the engine instance, so it publishes itself
+    // here and any subsystem (UI, tests) can dispatch an engine command through ExecuteCommand().
+    static BlamEngine* Active() { return s_active; }
+
     static void SetEngineModeOverride(int mode) { s_engineModeOverride = mode; }
     static int EngineModeOverride() { return s_engineModeOverride; }
 
 private:
     static int s_engineModeOverride;   // research hook: forces launch-block +0x0C
+    static BlamEngine* s_active;       // the running client's engine, for command dispatch
     // Builds the 0x2BF30-byte match descriptor launch block reversed from host-probe
     std::vector<uint8_t> BuildLaunchBlock(uint32_t mapId, uint32_t gameModeTag, int difficulty, uint64_t skulls,
                                          const std::string& customMvarPath = "", const std::string& customVariantPath = "",

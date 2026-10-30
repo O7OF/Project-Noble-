@@ -217,3 +217,33 @@ Recommended next moves, in order:
 3. **Real binding lookup** - the action table names are known, so map `enter_editor_mode` to its button through the profile's
    control block (`+0x42C`) and press exactly that.
 4. **Camera patch** - offset the first-person camera in `haloreach.dll` (Ghidra project ready); client-side, any mode.
+
+
+## Third-person attempt #3 (engine command dispatch) - the dispatcher is not a command parser
+
+Made `BlamEngine::Active()` reachable from the running client and added a timed hook
+`-engine-cmd "<cmd>" -engine-cmd-at <s>`, which calls `BlamEngine::ExecuteCommand` (the engine's vtable[9]) after N seconds.
+The call path works: `BlamEngine: Dispatching command -> '...'`, `Command status: 0x0`.
+
+But the status is meaningless for this purpose:
+
+| command | status |
+|---|---|
+| `enter_editor_mode` | 0x0 |
+| `editor_mode 1` | 0x0 |
+| `camera_set_first_person 0` | 0x0 |
+| **`zzz_not_a_command`** | **0x0** |
+
+A deliberately bogus command returns the same 0x0, so **vtable[9] is not a console/command parser** - it accepts any string
+and reports success. The engine string table does contain `editor_mode`, `enter_editor_mode`, `exit_editor_mode`,
+`camera_set_first_person`, `camera_set_mode`, but they are HaloScript builtins, not console commands reachable this way.
+
+Remaining routes for third person, in order of expected effort:
+
+1. **Camera patch (most reliable).** Find where the first-person camera position is computed for the local player in
+   `haloreach.dll` and push it back/up. Client-side by nature, works in any mode; a Noble toggle gates whether the client
+   applies it. Ghidra project (`ghidra-proj\NobleReach`) and the offset tooling are ready.
+2. **Hook the engine's real console.** Locate `c_console`/`process_command` in the engine (strings `console`, `error` are
+   nearby) and drive `editor_mode` through it. More RE than route 1, less certain.
+3. **Forge menu path.** If the Forge object menu can be opened (Y in real Forge did not open it under synthetic input), the
+   editor-mode entry may be a menu item; requires the input-device latch problem solved first.

@@ -258,6 +258,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     int hostMaxPlayers = 16;
     int expectedPeers = 0;
     int engineModeOverride = 0;
+    std::string engineCommand;
+    int engineCommandAt = -1;
     std::string connectAddress = "";
     std::string connectSessionId = "";
     std::string connectSessionToken = "";
@@ -305,6 +307,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
                 hostMaxPlayers = _wtoi(argvW[++i]);
             } else if (arg == L"-wait-peers" && i + 1 < numArgs) {
                 expectedPeers = _wtoi(argvW[++i]);
+            } else if (arg == L"-engine-cmd" && i + 1 < numArgs) {
+                engineCommand = WideToNarrow(argvW[++i]);
+            } else if (arg == L"-engine-cmd-at" && i + 1 < numArgs) {
+                engineCommandAt = _wtoi(argvW[++i]);
             } else if (arg == L"-connect" && i + 1 < numArgs) {
                 connectAddress = WideToNarrow(argvW[++i]);
             } else if (arg == L"-session-id" && i + 1 < numArgs) {
@@ -538,6 +544,18 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 
         NOBLE_INFO("Launching Halo: Reach Engine: Target Map='{}', Mode='{}'", launchMap, launchMode);
         blamEngine->LaunchMap(launchMap, launchMode, launchDifficulty, launchSkulls, customMvar, customVariant, "", expectedPeers);
+    }
+
+    if (!engineCommand.empty() && engineCommandAt >= 0) {
+        // Research hook: dispatch one engine command after N seconds (e.g. -engine-cmd "enter_editor_mode" -engine-cmd-at 16)
+        const std::string cmd = engineCommand;
+        const int delayMs = engineCommandAt * 1000;
+        std::thread([cmd, delayMs]() {
+            std::this_thread::sleep_for(std::chrono::milliseconds(delayMs));
+            NOBLE_WARN("main: dispatching engine command '{}' (research hook)", cmd);
+            if (noble::BlamEngine::Active()) noble::BlamEngine::Active()->ExecuteCommand(cmd);
+            else NOBLE_WARN("main: no active engine for command '{}'", cmd);
+        }).detach();
     }
 
     NOBLE_INFO("Authentic Halo: Reach host message loop active. Driving frames...");

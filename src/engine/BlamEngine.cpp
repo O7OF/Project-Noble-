@@ -61,6 +61,7 @@ BlamEngine::~BlamEngine() {
 }
 
 bool BlamEngine::Initialize(const ReachInstallInfo& installInfo, HMODULE hModule, const ReachExports& exports, const EngineHostContext& context) {
+    s_active = this;
     if (m_isInitialized) return true;
 
     m_hModule = hModule;
@@ -282,6 +283,7 @@ uint32_t BlamEngine::ResolveMapId(const std::string& mapName) {
 }
 
 int BlamEngine::s_engineModeOverride = 0;
+BlamEngine* BlamEngine::s_active = nullptr;
 
 std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameModeTag, int difficulty, uint64_t skulls,
                                                    const std::string& customMvarPath, const std::string& customVariantPath,
@@ -991,6 +993,7 @@ void BlamEngine::Render() {
 }
 
 void BlamEngine::Shutdown() {
+    if (s_active == this) s_active = nullptr;
     if (!m_isInitialized) return;
 
     NOBLE_INFO("Shutting down Blam! engine network transport...");
