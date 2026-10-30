@@ -85,8 +85,10 @@ pinned they ended exactly at `actionsY` - 38 * s *under* the strip:
   ("armory-menu-handoff attempt 2026-10-29"), so nothing compiled. The stash's `main.cpp` is older than HEAD (no
   `-wait-peers`, no `UIManager::HandleWndProc`, old `BlamEngine::LaunchMap` signature), so it was resolved to HEAD
   (`git checkout HEAD -- src/main.cpp`). The rest of that stash - the `Relaunch::HandOff` single-window handoff
-  (`Relaunch.cpp/.hpp` + four call sites) - is kept as staged changes and still builds.
-- These menu changes are **not committed**; they sit on top of those staged changes in the working tree.
+  (`Relaunch.cpp/.hpp` + four call sites) - builds and is committed.
+- Both parts are pushed to `origin/main` (O7OF/test-build-01): `32cd0f1` is the `Relaunch::HandOff` change (the rest
+  of the stash, committed on its own so it can be reverted separately) and `8676b1b` is this menu work. The working
+  tree is clean apart from the untracked `tools/armory/fetch_halopedia_icons.py` (an earlier session's icon fetcher).
 - `stash@{0}` itself is still in `git stash list` and can be dropped once Tyler is happy with the build.
 
 --
