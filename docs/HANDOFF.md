@@ -69,6 +69,44 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-31, 22:00 ET) - Pulled O7's server centralisation + campaign-coop netcode (WeabooTyler117 / DeepSeek)
+
+Checked both remotes and pulled.
+
+### Client repo (`O7OF/test-build-01`) - `19207fb`
+
+`chore: remove server folder from client repo (centralized in ServerTestDeploy)`. The whole `server/` tree (including the
+tracked `node_modules`) is gone from the client repo. Pulled cleanly; nothing in the C++ build referenced it (rebuilt
+0 errors / 0 warnings).
+
+**Tooling consequence:** `tools/push-server.ps1` read from `server/`, which no longer exists, so it was retired and replaced
+by **`tools/server-repo.ps1`** - clones `O7OF/ServerTestDeploy` next to the checkout, pulls it, prints branch/head/behind and
+the diagnostics endpoints. Server edits now happen in that clone and are committed/pushed there.
+
+### Server repo (`O7OF/ServerTestDeploy`) - `d2828cc`
+
+`feat(netcode): support Campaign Co-op lobby sync, skulls, smart LAN/WAN relay routing, and guest keys`:
+
+- **Campaign is a first-class matchmaker mode** now (`campaign: minPlayers 1, maxPlayers 4, defaultMap m10`) - previously
+  only multiplayer/firefight were registered.
+- Lobby state and launch data carry **skulls**.
+- Per-guest `lobby_launch` rewrites **`host_ip` to the LAN address** when the guest shares the host's network
+  (`host_lan_ip` + `is_lan` flags), so two PCs on one LAN dial each other directly instead of hairpinning through the WAN.
+- Relay guests are keyed by a real **guest key** (random fallback) instead of an empty peerId, fixing collisions when a
+  guest does not send one.
+
+Our 1.3.0 diagnostics survived the merge (`/api/health`, `/api/relay/stats`, 90 s session tolerance, 240 req/min).
+
+**Client compatibility confirmed:** `MasterServerClient` already parses `host_lan_ip` / `is_lan` (lines 560/561, 594/595,
+685) and `FrontEndMenu` already prefers the LAN endpoint (`1939-1940`, `3914-3915`), so O7's routing change is used
+automatically - no client change needed.
+
+### Why this matters for the reported bugs
+
+Campaign co-op previously had no server-side mode registration and two PCs in one house were routed through the WAN address.
+Both are now handled upstream, which is the most likely reason "Forge did nothing and never connected" in a same-network
+test. Next test should be with this server deployed plus the client at `8c978d4` or later.
+
 ## 0. Pick up here (2026-10-31, 21:20 ET) - Backend 1.3.0: health/relay diagnostics, longer load tolerance (WeabooTyler117 / DeepSeek)
 
 Tyler asked for the server side to be made diagnosable for the Campaign/Forge online failures. Shipped to
