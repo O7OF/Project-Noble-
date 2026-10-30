@@ -2951,7 +2951,7 @@ private:
                         return float4(pow(saturate(c.rgb), gamma_exp), c.a);
                     }
 
-                    // Cover UV calculation preserving image aspect ratio
+                    // Cover UV calculation preserving background image aspect ratio
                     float2 uv = pos.xy * float2(inv_width, inv_height);
                     float2 bgUV = uv;
                     if (screen_aspect > bg_aspect) {
@@ -2963,19 +2963,32 @@ private:
                     }
                     float4 bg = bg_texture.Sample(samp, bgUV);
 
-                    // In the Armory scene in mainmenu_all.map, the void surrounding the pedestal is pitch black (0,0,0).
-                    // The Spartan, visor, and lit pedestal all have non-zero luminance.
+                    // Calculate maximum channel luminance from the engine's linear HDR backbuffer
                     float luma = max(c.r, max(c.g, c.b));
 
-                    // Smoothstep creates a clean anti-aliased edge between geometry and the background
-                    float alpha = smoothstep(0.001f, 0.030f, luma);
+                    // Ambient room fog, SSAO noise, and spotlight haze in mainmenu_all.map
+                    // have luma <= 0.035. Solid geometry (armor, visor, undersuit) has luma >= 0.080.
+                    const float kCutoff = 0.035f;
+                    const float kSolid  = 0.080f;
 
-                    // Apply gamma correction to the Spartan and pedestal so it matches sRGB
-                    float3 spartanRgb = pow(saturate(c.rgb), gamma_exp);
+                    float alpha = smoothstep(kCutoff, kSolid, luma);
 
-                    // Seamless composite: background wallpaper behind, 3D character in front
+                    // Subtract the ambient room fog floor so edge pixels don't introduce black matte fringing
+                    float3 fgClean = max(0.0f, c.rgb - kCutoff) / max(0.0001f, 1.0f - kCutoff);
+                    float3 spartanRgb = pow(saturate(fgClean), gamma_exp);
+
+                    // Composite: background wallpaper where empty, crisp 3D Spartan where geometry exists
                     float3 finalRgb = lerp(bg.rgb, spartanRgb, alpha);
-                    return float4(finalRgb, 1.0f);
+
+                    // For armor effects (such as Blue Flames), add colorful emissive glow onto the background
+                    // instead of letting it darken the background into black soot
+                    float chroma = max(c.b, c.r) - min(c.r, min(c.g, c.b));
+                    if (chroma > 0.02f && alpha < 1.0f) {
+                        float3 emissive = max(0.0f, c.rgb - min(c.r, min(c.g, c.b))) * (1.0f - alpha);
+                        finalRgb += emissive * 0.85f;
+                    }
+
+                    return float4(saturate(finalRgb), 1.0f);
                 }
             )";
 
