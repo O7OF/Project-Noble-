@@ -7,6 +7,7 @@
 #include "InputPrompts.hpp"
 #include "engine/KeyBindings.hpp"
 #include "engine/CameraFov.hpp"
+#include "engine/PadLayouts.hpp"
 #include "network/MasterServerClient.hpp"
 
 #include <windows.h>
@@ -152,12 +153,12 @@ const Callout kReach360[] = {
 };
 
 // Controller picture with straight leader lines to the labels, fitted into `width`.
-void DrawControllerDiagram(float width) {
+void DrawControllerDiagram(float width, int padLayout) {
     UiTexture pad = UiArt::NobleControllerImage();
     if (!pad) pad = UiArt::ControllerImage();
     // Each label keeps its "(RT)"-style suffix for the reader, and the button it names is drawn as a glyph
     // in front of it (2026-10-30).
-    auto splitSuffix = [](const char* label, std::string& text, InputPrompts::Button& button) {
+    auto splitSuffix = [padLayout](const char* label, std::string& text, InputPrompts::Button& button) {
         text = label;
         button = InputPrompts::Button::A;
         const size_t open = text.rfind('(');
@@ -167,6 +168,36 @@ void DrawControllerDiagram(float width) {
         if (text.find("Move / crouch") != std::string::npos) button = InputPrompts::Button::LStick;
         else if (text.find("Look / zoom") != std::string::npos) button = InputPrompts::Button::RStick;
         else if (!InputPrompts::ButtonFromSuffix(suffix.c_str(), button)) return false;
+        // A selected preset moves these actions to other buttons: relabel from the layout table so the diagram
+        // shows what the player will actually press.
+        if (padLayout > 0) {
+            struct Map { const char* key; int action; };
+            static const Map kActions[] = {
+                { "Throw grenade", PadLayouts::Grenades }, { "Use armor ability", PadLayouts::ArmorAbility },
+                { "Fire", PadLayouts::Fire },              { "Melee", PadLayouts::Melee },
+                { "Swap weapons", PadLayouts::SwapWeapons }, { "Switch grenades", PadLayouts::Grenades },
+                { "Action / reload", PadLayouts::ActionReload }, { "Jump", PadLayouts::Jump },
+                { "Look / zoom", PadLayouts::Zoom },
+            };
+            for (const Map& m : kActions) {
+                if (text.find(m.key) == std::string::npos) continue;
+                const PadLayouts::Source src = PadLayouts::SourceFor(padLayout, m.action);
+                switch (src.bit) {
+                case 0x1000: button = InputPrompts::Button::A; break;
+                case 0x2000: button = InputPrompts::Button::B; break;
+                case 0x4000: button = InputPrompts::Button::X; break;
+                case 0x8000: button = InputPrompts::Button::Y; break;
+                case 0x0100: button = InputPrompts::Button::LB; break;
+                case 0x0200: button = InputPrompts::Button::RB; break;
+                case 0x0080: button = InputPrompts::Button::RStick; break;
+                default:
+                    button = src.trigger == 1 ? InputPrompts::Button::LT
+                           : src.trigger == 2 ? InputPrompts::Button::RT : button;
+                    break;
+                }
+                break;
+            }
+        }
         text = text.substr(0, open);
         while (!text.empty() && text.back() == ' ') text.pop_back();
         return true;
@@ -1102,6 +1133,20 @@ void SettingsPanel::RenderController() {
     };
     deadZone("LEFT STICK DEAD ZONE", m_edit.padLeftDeadZone, m_saved.padLeftDeadZone);
     deadZone("RIGHT STICK DEAD ZONE", m_edit.padRightDeadZone, m_saved.padRightDeadZone);
+    Section("LAYOUT");
+    // Halo: Reach's six button layouts (Halopedia / the 360 manual), applied by Noble to the pad state.
+    {
+        const int layout = std::clamp(m_edit.padLayout, 0, static_cast<int>(PadLayouts::Count) - 1);
+        if (Row("BUTTON LAYOUT", PadLayouts::Description(layout),
+                When::Apply, "Default", m_edit.padLayout != m_saved.padLayout)) {
+            if (const int d = CycleValue(PadLayouts::Name(layout), m_edit.padLayout,
+                                         static_cast<int>(PadLayouts::Count))) {
+                m_edit.padLayout = std::clamp(m_edit.padLayout, 0, static_cast<int>(PadLayouts::Count) - 1);
+                MenuSounds::Change();
+            }
+        }
+    }
+
     Section("VIBRATION");
     if (Row("VIBRATION", "Rumble from the game (explosions, vehicles, melee) on Xbox-style controllers.", When::Apply,
             def.padVibration ? "On" : "Off", m_edit.padVibration != m_saved.padVibration)) {
@@ -1112,8 +1157,15 @@ void SettingsPanel::RenderController() {
         SliderValue(m_edit.padVibrationStrength, 0.0f, 1.0f, 0.05f, 1.0f, Percent(m_edit.padVibrationStrength).c_str());
     }
     if (m_search[0] == 0) {
-        Section("HALO: REACH DEFAULT LAYOUT");
-        DrawControllerDiagram(ImGui::GetContentRegionAvail().x);
+        {
+            // Name the layout that is actually in use, so the labels below are not read as "Default" when
+            // Southpaw or Boxer is selected.
+            char title[96];
+            std::snprintf(title, sizeof(title), "HALO: REACH BUTTON LAYOUT - %s",
+                          PadLayouts::Name(std::clamp(m_edit.padLayout, 0, static_cast<int>(PadLayouts::Count) - 1)));
+            Section(title);
+        }
+        DrawControllerDiagram(ImGui::GetContentRegionAvail().x, m_edit.padLayout);
     }
     (void)s;
 }
@@ -1272,6 +1324,7 @@ int SettingsPanel::CountDiff(const SettingsData& a, const SettingsData& b, Cat c
     }
     case Cat::Controller:
         return (a.padLookX != b.padLookX) + (a.padLookY != b.padLookY) + (a.padInvertLook != b.padInvertLook) +
+               (a.padLayout != b.padLayout) +
                f(a.padLeftDeadZone, b.padLeftDeadZone) + f(a.padRightDeadZone, b.padRightDeadZone) +
                (a.padVibration != b.padVibration) + f(a.padVibrationStrength, b.padVibrationStrength);
     case Cat::Online:

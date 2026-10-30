@@ -22,6 +22,47 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-30, 10:20 ET) - Halo: Reach button layouts, pickable and actually applied (WeabooTyler117 / DeepSeek)
+
+Tyler: the CONTROLLER page "has them mentioned but no layout option to pick from. Halopedia has them for Halo Reach".
+The six Reach presets are now a real setting that remaps the pad before the engine sees it.
+
+### 1. The data (`src/engine/PadLayouts.hpp/.cpp`, new)
+
+Transcribed from Halopedia's **Reach:Control schemes** (Xbox 360 manual): Default, Southpaw, Boxer, Green Thumb,
+Bumper Jumper, Recon. Stored as `Source` per action (Jump, Grenades, Action/reload, Swap weapons, Melee, Armor ability,
+Fire, Zoom) where a source is either an XInput button bit or one of the analogue triggers - that is how Southpaw swaps
+fire (RT) and grenades (LT) while Boxer moves melee to LT and grenades to RB.
+
+### 2. Where it is applied
+
+`ReachHost.cpp` -> `FillLocalPad()` (slot 36) already builds the button word and trigger values Noble hands the engine.
+It now calls `PadLayouts::Apply(layout, buttons, lt, rt)` first: every layout-controlled button is read from its
+*physical* source, written back to the button the engine expects, and non-action bits (D-pad, Back, Start, LS) pass
+through untouched. Default is a no-op. Analogue triggers keep their value (a trigger feeding a button becomes a digital
+press over 128, a button feeding a trigger becomes 255).
+
+### 3. The UI
+
+- **Settings > Controller > LAYOUT > BUTTON LAYOUT**: cycles the six presets, `When::Apply`, with the preset's own
+  description in the details column ("Halo: Reach's Bumper Jumper: jump on LB, grenades on A...").
+- The layout diagram below it is now **layout-aware**: the section title reads
+  `HALO: REACH BUTTON LAYOUT - BUMPER JUMPER` and each callout draws the glyph for the button that preset uses
+  (Bumper Jumper shows `A Throw grenade`, `LB Jump`, `X Use armor ability`, ...). `DrawControllerDiagram` takes the
+  layout as a parameter; `PadLayouts::SourceFor(layout, action)` is the lookup.
+- `SettingsData::padLayout` (JSON `padLayout`) persists it; `ChangesIn`/`WithDefaults` count it for the category.
+
+### 4. Checks
+
+- Build: 0 errors, 0 warnings.
+- Captures at 1920x1080: Settings > Controller with Default (`BUTTON LAYOUT  DEFAULT`) and with `padLayout: 4`
+  (`BUMPER JUMPER`, diagram relabelled: A throw grenade, RT fire, RB melee). Main menu still captures cleanly.
+- Test data reverted (padLayout back to 0).
+
+**Not done from the CONTROLLER page yet:** stick layout (Default / Southpaw / Legacy / Legacy Southpaw - Halopedia lists
+them too; Southpaw moves the *movement/look axes*, a separate remap of LX/LY <-> RX/RY), aim acceleration, and
+per-action rebinding. The layout table is the place to add stick layouts.
+
 ## 0. Pick up here (2026-10-30, 09:55 ET) - Review pass over the whole menu work, six fixes (WeabooTyler117 / DeepSeek)
 
 A read-through of every change from `8676b1b` to now, plus a 12-screen regression sweep. Fixed:

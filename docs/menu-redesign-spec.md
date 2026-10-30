@@ -37,6 +37,8 @@ What is **done** from this spec:
   keyboard key boxes) and every prompt follows the last-used device, lobby bar included. CONTROLLER page uses the glyphs.
 - **Menu music**: a now-playing strip on the main menu (prev / play-pause / next / mute / shuffle) over a new
   `ReachAudio::PauseMusic()/ResumeMusic()`.
+- **Controller button layouts**: Reach's six presets (Default, Southpaw, Boxer, Green Thumb, Bumper Jumper, Recon) are
+  in Settings > Controller, applied to the pad state before the engine sees it, and the layout diagram relabels itself.
 - **Menu background**: players can pick Random / Noble / Reach or **any of their own images** (`file:<name>` in
   `data\ui\custom\backgrounds`), preview it in Settings, and **IMPORT** a new one through a file dialog.
 - **Input / account**: account modal rebuilt (one DEV chip, equal tabs and buttons), invite notifications with a JOIN

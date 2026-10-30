@@ -7,6 +7,7 @@
 #include "ui/PauseMenu.hpp"
 #include "career/Career.hpp"
 #include "engine/FrameCapture.hpp"
+#include "engine/PadLayouts.hpp"
 #include "engine/KeyBindings.hpp"
 #include "engine/CameraFov.hpp"
 #include "engine/ReachArmory.hpp"
@@ -1318,10 +1319,14 @@ static void FillLocalPad(uint8_t* st, bool keyboardMouseUsed) {
     if (s_pad.padInvertLook) ry = static_cast<SHORT>(ry == -32768 ? 32767 : -ry);
 
     *reinterpret_cast<uint32_t*>(st + 0x000) = 0;
-    const WORD buttons = static_cast<WORD>(g.wButtons & ~0x0010);   // Start stays Noble's
+    WORD buttons = static_cast<WORD>(g.wButtons & ~0x0010);   // Start stays Noble's
+    uint8_t lt = g.bLeftTrigger, rt = g.bRightTrigger;
+    // Halo: Reach button layout (Default / Southpaw / Boxer / Green Thumb / Bumper Jumper / Recon): permute the
+    // physical buttons into the mapping the engine expects. Default is a no-op.
+    PadLayouts::Apply(s_pad.padLayout, buttons, lt, rt);
     memcpy(st + 0x120, &buttons, sizeof(buttons));
-    st[0x124] = g.bLeftTrigger;
-    st[0x125] = g.bRightTrigger;
+    st[0x124] = lt;
+    st[0x125] = rt;
     memcpy(st + 0x126, &lx, sizeof(SHORT));
     memcpy(st + 0x128, &ly, sizeof(SHORT));
     memcpy(st + 0x12A, &rx, sizeof(SHORT));

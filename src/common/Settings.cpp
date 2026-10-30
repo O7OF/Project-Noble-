@@ -105,6 +105,7 @@ void Settings::Load() {
             Read(j, "padLookX", d.padLookX);
             Read(j, "padLookY", d.padLookY);
             Read(j, "padInvertLook", d.padInvertLook);
+    Read(j, "padLayout", d.padLayout);
             Read(j, "padLeftDeadZone", d.padLeftDeadZone);
             Read(j, "padRightDeadZone", d.padRightDeadZone);
             Read(j, "volumeGame", d.volumeGame);
@@ -213,6 +214,7 @@ bool Settings::Save() {
         j["padLookX"] = d.padLookX;
         j["padLookY"] = d.padLookY;
         j["padInvertLook"] = d.padInvertLook;
+    j["padLayout"] = d.padLayout;
         j["padLeftDeadZone"] = d.padLeftDeadZone;
         j["padRightDeadZone"] = d.padRightDeadZone;
         j["volumeGame"] = d.volumeGame;

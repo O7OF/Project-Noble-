@@ -103,6 +103,7 @@ endif()
 # Source files
 set(SOURCES
     src/main.cpp
+    src/engine/PadLayouts.cpp
     src/host/SteamLocator.cpp
     src/host/OwnershipVerifier.cpp
     src/host/Window.cpp

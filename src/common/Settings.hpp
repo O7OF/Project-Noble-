@@ -33,7 +33,8 @@ struct SettingsData {
     bool padVibration = true;      // controller rumble (host slot 39 -> XInputSetState)
     int padLookX = 19;             // controller look speed 1..19 (profile +0x1B6 = value - 1; 19 = the stock profile)
     int padLookY = 19;             // vertical, profile +0x1B5 (same scale)
-    bool padInvertLook = false;    // Noble flips the right stick's y before the engine sees it
+    bool padInvertLook = false;
+    int padLayout = 0;             // Halo: Reach button layout (engine/PadLayouts.hpp); 0 = Default    // Noble flips the right stick's y before the engine sees it
     float padLeftDeadZone = 0.0f;  // extra radial dead zone Noble applies (0..0.5), on top of the engine's own
     float padRightDeadZone = 0.0f;
     float padVibrationStrength = 1.0f; // 0..1
