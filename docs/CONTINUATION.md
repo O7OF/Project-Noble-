@@ -183,7 +183,8 @@ Menus (this session, all pushed):
 | `c30659a` | Button-layout remap tests (`PadLayouts::SelfTest`), third suite under `-test-map-gametypes` |
 | `ea55d4c` | Menu music playlist: per-track ON/OFF, honoured by SHUFFLE ALL GAMES |
 | `04e6700` | Docs: armory backdrop clear-hook approach ruled out |
-| (this commit) | Docs: all 21 armory scenes probed, none has a backdrop (four attempts recorded) |
+| `45a18b6` | Docs: all 21 armory scenes probed, none has a backdrop |
+| (this commit) | Docs: match launches stall at PostCommand(11) in this environment (reproduces on `a21ebce`) |
 | `5f4da08` | Prompts follow the device everywhere; `InputPrompts` button glyphs in the CONTROLLER list |
 | (this commit) | Main menu **Continue** fast path (spec 4.1/4.10) + a status block at the top of the design doc |
 | `a8f412e` | Menu music player (`PauseMusic/ResumeMusic` + `DrawMusicPlayer`) |

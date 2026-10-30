@@ -22,6 +22,41 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-30, 18:20 ET) - Match launches currently stall at PostCommand(11) - NOT a regression from the UI work (WeabooTyler117 / DeepSeek)
+
+Trying to run the mode/game-type matrix again (Tyler asked for "tests on all modes: every mode with every game type"):
+
+**Symptom:** `noble-client.exe -map 20_sword_slayer -mode multiplayer [-variant ...] [-host -lan]` loads the scenario
+(`FilePathResolver` logs the map path, `LoadProgress` reaches 4.0%), posts the Start event, logs
+`EngineEvent reason=4 message='no game selected'`, posts `Command 11` - and then **no frame is pumped at all** (two
+`FrameTick` lines total), so `-quit-after` can never fire and the process sits there until it is killed. Earlier today
+(07:50-07:53) the same commands pumped frames and ended themselves at `-quit-after`.
+
+**Ruled out:**
+
+- **Not this session's code.** Built and ran `a21ebce` (before every UI change today) with the identical command: the
+  same stall, in the same place, with two `FrameTick` lines. `main` was then rebuilt and re-checked.
+- **Not argument order or hosting flags.** `-quit-after` first and last behave the same; with and without
+  `-host -lan`; with and without `-private -max-players 4`; solo and host.
+- **Not window focus.** `ShowWindow(SW_RESTORE)` + `SetForegroundWindow` on the client's window 9 s after launch did not
+  change anything.
+- **Not a leftover process.** No `noble-client`, `noble-dedicated`, MCC or Halo process was running, and the Application
+  event log has no crash entries for the client.
+- **Not a game update.** `haloreach.dll` is from 2026-05-05 and `appmanifest_976730.acf` from 2026-10-29 21:17; neither
+  changed today.
+- **Menus are unaffected**: the capture harness still renders and exits normally (main menu captured at HEAD during this
+  check).
+
+**What to try next, cheapest first:** (a) restart Steam and attempt one normal MCC launch, then run
+`noble-client.exe -map 20_sword_slayer -mode multiplayer -quit-after 20` again - MCC/Steam session state is the prime
+suspect for "no game selected"; (b) start a match the way a player does (main menu -> CUSTOM GAME -> HOST LOBBY) and see
+whether that path pumps frames - if it does, the CLI path needs the same setup step the menu performs; (c) attach a
+debugger to the stalled process and grab the stack of the engine thread right after `PostCommand(11)` returns; (d) check
+whether `-mode multiplayer` needs an explicit game type/`-launch-index` on this build.
+
+Until then: the three headless suites (`-test-map-gametypes`) still pass, so the game-type guard, map names and button
+layouts are verified; it is only the *in-engine* launch that cannot be exercised right now.
+
 ## 0. Pick up here (2026-10-30, 17:40 ET) - Armory: all 21 menu scenes probed, none has a backdrop (WeabooTyler117 / DeepSeek)
 
 Fourth and last armory attempt for now. `ReachArmory::SetTargetScene()` already maps names to `mainmenu_all.map`'s 21
