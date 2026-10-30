@@ -22,6 +22,40 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-30, 12:05 ET) - Mode/game-type smoke harness, and what a bare launch does (WeabooTyler117 / DeepSeek)
+
+### 1. What a CLI match launch actually does (important for any future test work)
+
+`noble-client.exe -map 20_sword_slayer -mode multiplayer [-host -lan] -quit-after N` **loads the map and game type and
+then waits in the lobby**: `LoadProgress: 5.0%, launch state 11` repeats for as long as you let it run, and that is the
+*host waiting for START GAME*, not a failed load. Three runs verified it with **0 `[error]` lines**:
+
+- solo (`-mode multiplayer`, Slayer variant) - 553 log lines, clean exit at `-quit-after 20`
+- solo with `-menu-capture 2400 -quit-after 70` - clean exit, 47 samples all at 5%/state 11
+- `-host -lan -private -max-players 4 -quit-after 60` - clean exit, 69 samples all at 5%/state 11
+
+So the pass condition for an automated smoke test is "map + game type loaded, no crash, no errors", not "gameplay
+reached". A guest joining a host is the only path that moves past state 9/11 (see the 2026-10-29 entries).
+
+### 2. `tools/test-modes.ps1` (new)
+
+Runs a matrix of mode x map x game type launches through the real client and reports per case:
+`ok` / `ERRORS (n)` / `CRASH` / `HUNG` / `NO LAUNCH`, writing a log slice per run (`test-modes-NN.log`) and an exit code.
+
+- default: 8 cases (Sword Base Slayer + CTF, Boneyard/Spire Invasion, two Firefight variants, a campaign mission, Forge)
+- `-Full`: every multiplayer map x every supported type (uses the same restriction rules as `MapGameTypes`), ~25 minutes
+- `-QuitAfter <s>`: per-run budget
+
+**Known problem, not yet solved:** when the script starts the client with `-quit-after`, the timer did **not** fire in any
+of the runs (all four multiplayer cases sat until the 108 s watchdog and were reported HUNG), although the same flag ends
+a manually started run every time. `FrameCapture::OnFrame` (the thing that honours `-quit-after`) is called from the
+Present hook in `ReachHost.cpp` *and* from `FrontEndMenu`/`PauseMenu`, so the timer should run in a match too - the next
+step is to log `ParseQuitAfter()`'s result once at startup and compare the argv the script produces with a manual
+command line (argument quoting is the prime suspect: `Start-Process -ArgumentList` with an array).
+
+Until that is fixed, run cases by hand with the documented commands and check the log for `[error]` / `FATAL EXCEPTION`;
+that is what the 2026-10-30 11:05 entry's sweep and the three runs above did.
+
 ## 0. Pick up here (2026-10-30, 11:05 ET) - Map/game-type guard with a headless test; armory backdrop investigated (WeabooTyler117 / DeepSeek)
 
 ### 1. Game types are now checked against the map (`src/engine/MapGameTypes.hpp/.cpp`)
