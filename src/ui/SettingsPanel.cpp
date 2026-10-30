@@ -1130,56 +1130,6 @@ void SettingsPanel::RenderController() {
             When::Info, "Default", false, true, Preview::Controller)) {
         InfoValue("DEFAULT");
     }
-    Section("STICKS");
-    auto speed = [&](const char* label, const char* text, int& v, int saved) {
-        if (!Row(label, text, When::Apply, "19", v != saved)) return;
-        float f = static_cast<float>(v);
-        if (SliderValue(f, 1.0f, 19.0f, 1.0f, 19.0f, std::to_string(v).c_str())) v = static_cast<int>(std::lround(f));
-    };
-    speed("LOOK SENSITIVITY", "How fast the right stick turns you left and right (Reach's own setting; 19 is the stock profile's value).", m_edit.padLookX, m_saved.padLookX);
-    speed("VERTICAL SENSITIVITY", "How fast the right stick looks up and down.", m_edit.padLookY, m_saved.padLookY);
-    if (Row("INVERT LOOK", "Pushing the right stick forward looks down.", When::Apply, "Off", m_edit.padInvertLook != m_saved.padInvertLook)) {
-        ToggleValue(m_edit.padInvertLook);
-    }
-    if (Row("STICK LAYOUT", "Default puts movement on the left stick and looking on the right. Southpaw swaps them, for players who aim with the left thumb.",
-            When::Apply, "Default", m_edit.padStickLayout != m_saved.padStickLayout)) {
-        if (const int d = CycleValue(m_edit.padStickLayout == 1 ? "SOUTHPAW" : "DEFAULT", m_edit.padStickLayout, 2)) {
-            m_edit.padStickLayout = (m_edit.padStickLayout + d + 2) % 2;
-            MenuSounds::Change();
-        }
-    }
-    auto deadZone = [&](const char* label, float& v, float saved) {
-        if (!Row(label, "Raise a dead zone if a worn stick drifts. 0 keeps the game's own dead zone.", When::Apply, "Game default",
-                 std::fabs(v - saved) > 1e-4f)) return;
-        float percent = v * 100.0f;
-        const std::string text = percent < 0.5f ? std::string("Game default") : Format("%.0f %%", percent);
-        if (SliderValue(percent, 0.0f, 50.0f, 1.0f, 0.0f, text.c_str())) v = percent / 100.0f;
-    };
-    deadZone("LEFT STICK DEAD ZONE", m_edit.padLeftDeadZone, m_saved.padLeftDeadZone);
-    deadZone("RIGHT STICK DEAD ZONE", m_edit.padRightDeadZone, m_saved.padRightDeadZone);
-    Section("LAYOUT");
-    // Halo: Reach's six button layouts (Halopedia / the 360 manual), applied by Noble to the pad state.
-    {
-        const int layout = std::clamp(m_edit.padLayout, 0, static_cast<int>(PadLayouts::Count) - 1);
-        if (Row("BUTTON LAYOUT", PadLayouts::Description(layout),
-                When::Apply, "Default", m_edit.padLayout != m_saved.padLayout)) {
-            if (const int d = CycleValue(PadLayouts::Name(layout), m_edit.padLayout,
-                                         static_cast<int>(PadLayouts::Count))) {
-                m_edit.padLayout = std::clamp(m_edit.padLayout, 0, static_cast<int>(PadLayouts::Count) - 1);
-                MenuSounds::Change();
-            }
-        }
-    }
-
-    Section("VIBRATION");
-    if (Row("VIBRATION", "Rumble from the game (explosions, vehicles, melee) on Xbox-style controllers.", When::Apply,
-            def.padVibration ? "On" : "Off", m_edit.padVibration != m_saved.padVibration)) {
-        ToggleValue(m_edit.padVibration);
-    }
-    if (Row("VIBRATION STRENGTH", "How strong the rumble is.", When::Apply, "100 %",
-            std::fabs(m_edit.padVibrationStrength - m_saved.padVibrationStrength) > 1e-4f, !m_edit.padVibration)) {
-        SliderValue(m_edit.padVibrationStrength, 0.0f, 1.0f, 0.05f, 1.0f, Percent(m_edit.padVibrationStrength).c_str());
-    }
     // Per-action bindings: click a row, then press the pad button it should use. An override replaces the
     // button layout's source for that action; DELETE puts the layout's own button back.
     Section("BUTTON BINDINGS");
@@ -1269,6 +1219,56 @@ void SettingsPanel::RenderController() {
                 }
             }
         }
+    }
+    Section("STICKS");
+    auto speed = [&](const char* label, const char* text, int& v, int saved) {
+        if (!Row(label, text, When::Apply, "19", v != saved)) return;
+        float f = static_cast<float>(v);
+        if (SliderValue(f, 1.0f, 19.0f, 1.0f, 19.0f, std::to_string(v).c_str())) v = static_cast<int>(std::lround(f));
+    };
+    speed("LOOK SENSITIVITY", "How fast the right stick turns you left and right (Reach's own setting; 19 is the stock profile's value).", m_edit.padLookX, m_saved.padLookX);
+    speed("VERTICAL SENSITIVITY", "How fast the right stick looks up and down.", m_edit.padLookY, m_saved.padLookY);
+    if (Row("INVERT LOOK", "Pushing the right stick forward looks down.", When::Apply, "Off", m_edit.padInvertLook != m_saved.padInvertLook)) {
+        ToggleValue(m_edit.padInvertLook);
+    }
+    if (Row("STICK LAYOUT", "Default puts movement on the left stick and looking on the right. Southpaw swaps them, for players who aim with the left thumb.",
+            When::Apply, "Default", m_edit.padStickLayout != m_saved.padStickLayout)) {
+        if (const int d = CycleValue(m_edit.padStickLayout == 1 ? "SOUTHPAW" : "DEFAULT", m_edit.padStickLayout, 2)) {
+            m_edit.padStickLayout = (m_edit.padStickLayout + d + 2) % 2;
+            MenuSounds::Change();
+        }
+    }
+    auto deadZone = [&](const char* label, float& v, float saved) {
+        if (!Row(label, "Raise a dead zone if a worn stick drifts. 0 keeps the game's own dead zone.", When::Apply, "Game default",
+                 std::fabs(v - saved) > 1e-4f)) return;
+        float percent = v * 100.0f;
+        const std::string text = percent < 0.5f ? std::string("Game default") : Format("%.0f %%", percent);
+        if (SliderValue(percent, 0.0f, 50.0f, 1.0f, 0.0f, text.c_str())) v = percent / 100.0f;
+    };
+    deadZone("LEFT STICK DEAD ZONE", m_edit.padLeftDeadZone, m_saved.padLeftDeadZone);
+    deadZone("RIGHT STICK DEAD ZONE", m_edit.padRightDeadZone, m_saved.padRightDeadZone);
+    Section("LAYOUT");
+    // Halo: Reach's six button layouts (Halopedia / the 360 manual), applied by Noble to the pad state.
+    {
+        const int layout = std::clamp(m_edit.padLayout, 0, static_cast<int>(PadLayouts::Count) - 1);
+        if (Row("BUTTON LAYOUT", PadLayouts::Description(layout),
+                When::Apply, "Default", m_edit.padLayout != m_saved.padLayout)) {
+            if (const int d = CycleValue(PadLayouts::Name(layout), m_edit.padLayout,
+                                         static_cast<int>(PadLayouts::Count))) {
+                m_edit.padLayout = std::clamp(m_edit.padLayout, 0, static_cast<int>(PadLayouts::Count) - 1);
+                MenuSounds::Change();
+            }
+        }
+    }
+
+    Section("VIBRATION");
+    if (Row("VIBRATION", "Rumble from the game (explosions, vehicles, melee) on Xbox-style controllers.", When::Apply,
+            def.padVibration ? "On" : "Off", m_edit.padVibration != m_saved.padVibration)) {
+        ToggleValue(m_edit.padVibration);
+    }
+    if (Row("VIBRATION STRENGTH", "How strong the rumble is.", When::Apply, "100 %",
+            std::fabs(m_edit.padVibrationStrength - m_saved.padVibrationStrength) > 1e-4f, !m_edit.padVibration)) {
+        SliderValue(m_edit.padVibrationStrength, 0.0f, 1.0f, 0.05f, 1.0f, Percent(m_edit.padVibrationStrength).c_str());
     }
     if (m_search[0] == 0) {
         {

@@ -57,8 +57,10 @@ gameplay, so the table rewrite did not disturb anything else.
   **RESET BUTTON BINDINGS** clears them all. Binding a button that another action already uses moves it (one button,
   one action). Analogue triggers (LT/RT) cannot be rebound this way because the engine expects them as analogue values,
   so fire/grenade stay on their triggers unless a preset moves them.
-- The section sits directly above the layout diagram, so it is the first thing on the page; the diagram still shows the
-  *preset* (it is titled with the preset's name).
+- The section sits directly under the CONTROLLER status row, before the sticks, so the bindings are the first thing on
+  the page; the layout diagram below still shows the *preset* (it is titled with the preset's name).
+- Verified with a seeded `padBindings` (`{"melee": 16384, "zoom": 256}`): the list reads `Melee  X (custom)` and
+  `Zoom  LB (custom)` with the changed dots, the rest say `(layout)`, and RESET appears because overrides exist.
 
 ### 2. Slayer on every map, plus the full matrix: 35/35 reach gameplay
 
