@@ -69,6 +69,45 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-31, 23:20 ET) - O7's production log analysed: relay socket churn, not refused joins (WeabooTyler117 / DeepSeek)
+
+O7 sent the backend console log from the failed session. Reading it line by line:
+
+| event | count |
+|---|---:|
+| `[Relay] Host connected` | 26 |
+| `[Relay] Host disconnected` | 26 |
+| `[Master] Host ... re-registered; reusing session` | 11 |
+| `[Relay] Guest ... connected` | 4 |
+| `[Relay] Guest ... disconnected` | 4 |
+| process restarts (`Running 'node server.js'`) | 3 |
+
+So the host was cycling its relay socket **26 times** while only a handful of guest events ever happened, and the instance
+restarted three times inside that window. Nothing in the log says a join was refused - the sockets simply kept dying, which
+matches the client-side symptom ("nothing happened") far better than a policy rejection. Two plausible causes: Render's
+proxy closing idle WebSockets, and the free instance restarting/spinning down (the live `/api/health` showed
+`uptime: 145 s` when checked, i.e. it had just restarted).
+
+Deployment state: `/api/health` on `https://outbreak-z-test-server.onrender.com` reports **version 1.3.0, commit d2828cc**
+(diagnostics live) at the time of this entry.
+
+### Shipped in response (`O7OF/ServerTestDeploy` `4a520d1`)
+
+- **WebSocket heartbeat**: every relay socket is pinged every 25 s; unresponsive ones are terminated and counted
+  (`relayStats.heartbeats`, exposed on `/api/relay/stats`). This is the direct fix for proxy/idle churn.
+- **Timestamped relay logging**: `[Relay 2026-10-30T23:12:48.143Z] Host connected ... (rooms: 1, connections: 1)`, plus
+  counters on the host/guest lines, so the next log can be timed against the players' actions.
+- Local verification with real sockets: host + guest + `lobby_launch` + one binary packet produced
+  `connections=2, binaryPackets=1, controlFrames=1, lobbyLaunches=1, heartbeats=1` and the room listed as
+  `hasHost=true, guests=1`; the log showed the timestamped host connect and the `lobby_launch` line with
+  `map=forge_halo mode=forge variant=00_basic_editing_054.bin`.
+
+### Operational recommendation (not code)
+
+The free Render instance restarts and sleeps. A free uptime pinger (UptimeRobot or cron-job.org) hitting
+`https://outbreak-z-test-server.onrender.com/api/health` every 5 minutes keeps the instance warm and removes the
+cold-start window that produces exactly this churn. Worth doing before the next two-PC test.
+
 ## 0. Pick up here (2026-10-31, 22:00 ET) - Pulled O7's server centralisation + campaign-coop netcode (WeabooTyler117 / DeepSeek)
 
 Checked both remotes and pulled.
