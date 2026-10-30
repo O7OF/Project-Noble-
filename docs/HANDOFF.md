@@ -51,7 +51,9 @@ clipped to two lines. Applies to Campaign / Firefight / Custom Game / Forge.
 
 `UiArt::Nameplate()` (from `dc349a5`) is now the background of the **local player's** row in `DrawParty` (MY PARTY,
 main menu) and in the pre-game lobby roster, with a dark scrim so the name stays readable; the old blue/grey bar is the
-fallback when the plate texture is missing.
+fallback when the plate texture is missing. The plate covers only the **name area** (60 % of the party row, 58 % of a
+roster row) and fades into the flat row colour: stretched over the whole row its own emblem landed under the rank icon
+and the DEV chip sat on the busiest part of the art (Tyler's crop, 2026-10-30).
 **Remote players still show the plain row**: the lobby roster / master advert carry no nameplate id, so showing other
 players' plates needs `nameplateId` added to the roster JSON, `MasterAdvert`, `LobbyPlayer` and `server.js`.
 

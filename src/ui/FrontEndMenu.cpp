@@ -838,16 +838,21 @@ void DrawParty(const Ui& ui, const std::string& playerName, const char* status) 
     Text(ui, NobleStyle::TitleFont(), 17.0f, ImVec2(x2 + 8.0f * ui.s, y + 5.0f * ui.s), kWhite, status);
     Text(ui, NobleStyle::TitleFont(), 17.0f, ImVec2(x + w - 42.0f * ui.s, y + 5.0f * ui.s), kWhite, "1/16");
     y += 28.0f * ui.s;
-    // The nameplate chosen in the Armory is the background of the player's row, the way Reach shows it in
-    // a party. A dark scrim keeps the name readable on bright plates; without one the old blue bar is drawn.
+    // The nameplate chosen in the Armory is the background of the player's row, the way Reach shows it in a
+    // party. It only covers the name area: stretched over the whole row its own emblem lands under the rank
+    // icon on the right (seen 2026-10-30), so the right side stays flat for the rank. A scrim keeps the name
+    // readable on bright plates; without a plate the old blue bar is drawn.
     {
         const auto& prof = UIManager::GetArmorCustomizer().GetProfile();
         const ImVec2 p0(x2, y), p1(x + w, y + 30.0f * ui.s);
         ui.dl->AddRectFilled(p0, p1, IM_COL32(52, 98, 138, 235));
         if (const UiTexture plate = UiArt::Nameplate(prof.nameplateIndex)) {
-            UiArt::DrawCover(ui.dl, plate, p0, p1, IM_COL32(255, 255, 255, 215));
-            ui.dl->AddRectFilledMultiColor(p0, p1, IM_COL32(4, 8, 14, 205), IM_COL32(4, 8, 14, 110),
-                                           IM_COL32(4, 8, 14, 110), IM_COL32(4, 8, 14, 205));
+            const float plateRight = p0.x + (p1.x - p0.x) * 0.60f;
+            UiArt::DrawCover(ui.dl, plate, p0, ImVec2(plateRight, p1.y), IM_COL32(255, 255, 255, 230));
+            // Darken for the name, then fade the plate out into the flat right side so there is no hard seam.
+            ui.dl->AddRectFilledMultiColor(p0, ImVec2(plateRight, p1.y),
+                                           IM_COL32(4, 8, 14, 95), IM_COL32(52, 98, 138, 255),
+                                           IM_COL32(52, 98, 138, 255), IM_COL32(4, 8, 14, 95));
         }
         ui.dl->AddRect(p0, p1, IM_COL32(90, 130, 170, 120), 0.0f, 0, 1.0f);
     }
@@ -2229,8 +2234,15 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         if (isLocalPlayer && hasPlayer) {
             const auto& prof = UIManager::GetArmorCustomizer().GetProfile();
             if (const UiTexture plate = UiArt::Nameplate(prof.nameplateIndex)) {
-                UiArt::DrawCover(ui.dl, plate, pr0, pr1, selected ? IM_COL32(255, 210, 190, 235) : IM_COL32(255, 255, 255, 225));
-                ui.dl->AddRectFilled(pr0, pr1, selected ? IM_COL32(150, 40, 12, 110) : IM_COL32(4, 8, 14, 120));
+                // Name area only, like the party row: the plate's own emblem would land under the service tag.
+                const float plateRight = pr0.x + (pr1.x - pr0.x) * 0.58f;
+                UiArt::DrawCover(ui.dl, plate, pr0, ImVec2(plateRight, pr1.y),
+                                 selected ? IM_COL32(255, 215, 195, 235) : IM_COL32(255, 255, 255, 225));
+                ui.dl->AddRectFilledMultiColor(pr0, ImVec2(plateRight, pr1.y),
+                                               selected ? IM_COL32(150, 40, 12, 150) : IM_COL32(4, 8, 14, 150),
+                                               selected ? IM_COL32(185, 55, 20, 255) : IM_COL32(24, 36, 52, 255),
+                                               selected ? IM_COL32(185, 55, 20, 255) : IM_COL32(24, 36, 52, 255),
+                                               selected ? IM_COL32(150, 40, 12, 150) : IM_COL32(4, 8, 14, 150));
             }
         }
         ui.dl->AddRect(pr0, pr1, IM_COL32(40, 60, 90, 100));
