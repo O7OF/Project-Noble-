@@ -1,0 +1,314 @@
+<?xml version="1.0"?>
+<tag group="scenario_structure_lighting_info" id="levels\ui\mainmenu\mainmenu_000" version="1">
+    <field name="import info checksum" value="386665233" type="long integer"/>
+    <field name="generic light definitions" value="0" type="block"/>
+    <field name="generic light instances" value="0" type="block"/>
+    <field name="screen space light shader override" value="0" type="block"/>
+    <field name="regions" value="0" type="block"/>
+    <field name="material info" value="1" type="block"/>
+    <element index="0" name="0. structure_material_lighting_info_block">
+        <field name="emissive power" value="0" type="real"/>
+        <field name="emissive color" value="0,0,0" type="real rgb color"/>
+        <field name="emissive quality" value="1" type="real"/>
+        <field name="emissive focus" value="0" type="real"/>
+        <field name="flags" value="" type="long flags"/>
+        <field name="attenuation falloff" value="0" type="real"/>
+        <field name="attenuation cutoff" value="0" type="real"/>
+        <field name="bounce ratio" value="1" type="real"/>
+    </element>
+    <field name="instance imposter infos" value="49" type="block"/>
+    <element index="0" name="0. structure_instance_imposter_info_block">
+        <field name="name" value="campaign_act2_midground01__(mainmenu_000_bsp)" type="string id"/>
+        <field name="imposter policy" value="0" type="char integer"/>
+        <field name="parasdd" value=" " type="pad"/>
+        <field name="transition distance" value="0" type="real"/>
+    </element>
+    <element index="1" name="1. structure_instance_imposter_info_block">
+        <field name="name" value="campaign_act2_contrail01__(mainmenu_000_bsp)" type="string id"/>
+        <field name="imposter policy" value="0" type="char integer"/>
+        <field name="parasdd" value=" " type="pad"/>
+        <field name="transition distance" value="0" type="real"/>
+    </element>
+    <element index="2" name="2. structure_instance_imposter_info_block">
+        <field name="name" value="firefight_explosion01__(mainmenu_000_bsp)" type="string id"/>
+        <field name="imposter policy" value="0" type="char integer"/>
+        <field name="parasdd" value=" " type="pad"/>
+        <field name="transition distance" value="0" type="real"/>
+    </element>
+    <element index="3" name="3. structure_instance_imposter_info_block">
+        <field name="name" value="theater_foreground__(mainmenu_000_bsp)" type="string id"/>
+        <field name="imposter policy" value="0" type="char integer"/>
+        <field name="parasdd" value=" " type="pad"/>
+        <field name="transition distance" value="0" type="real"/>
+    </element>
+    <element index="4" name="4. structure_instance_imposter_info_block">
+        <field name="name" value="theater_background__(mainmenu_000_bsp)" type="string id"/>
+        <field name="imposter policy" value="0" type="char integer"/>
+        <field name="parasdd" value=" " type="pad"/>
+        <field name="transition distance" value="0" type="real"/>
+    </element>
+    <element index="5" name="5. structure_instance_imposter_info_block">
+        <field name="name" value="reach_storm_right__(mainmenu_000_bsp)" type="string id"/>
+        <field name="imposter policy" value="0" type="char integer"/>
+        <field name="parasdd" value=" " type="pad"/>
+        <field name="transition distance" value="0" type="real"/>
+    </element>
+    <element index="6" name="6. structure_instance_imposter_info_block">
+        <field name="name" value="firefight_midground__(mainmenu_000_bsp)" type="string id"/>
+        <field name="imposter policy" value="0" type="char integer"/>
+        <field name="parasdd" value=" " type="pad"/>
+        <field name="transition distance" value="0" type="real"/>
+    </element>
+    <element index="7" name="7. structure_instance_imposter_info_block">
+        <field name="name" value="campaign_act1_midground__(mainmenu_000_bsp)" type="string id"/>
+        <field name="imposter policy" value="0" type="char integer"/>
+        <field name="parasdd" value=" " type="pad"/>
+        <field name="transition distance" value="0" type="real"/>
+    </element>
+    <element index="8" name="8. structure_instance_imposter_info_block">
+        <field name="name" value="theater_front__(mainmenu_000_bsp)" type="string id"/>
+        <field name="imposter policy" value="0" type="char integer"/>
+        <field name="parasdd" value=" " type="pad"/>
+        <field name="transition distance" value="0" type="real"/>
+    </element>
+    <element index="9" name="9. structure_instance_imposter_info_block">
+        <field name="name" value="title_front__(mainmenu_000_bsp)" type="string id"/>
+        <field name="imposter policy" value="0" type="char integer"/>
+        <field name="parasdd" value=" " type="pad"/>
+        <field name="transition distance" value="0" type="real"/>
+    </element>
+    <element index="10" name="10. structure_instance_imposter_info_block">
+        <field name="name" value="reach_debris_02__(mainmenu_000_bsp)" type="string id"/>
+        <field name="imposter policy" value="0" type="char integer"/>
+        <field name="parasdd" value=" " type="pad"/>
+        <field name="transition distance" value="0" type="real"/>
+    </element>
+    <element index="11" name="11. structure_instance_imposter_info_block">
+        <field name="name" value="theater_interior__(mainmenu_000_bsp)" type="string id"/>
+        <field name="imposter policy" value="0" type="char integer"/>
+        <field name="parasdd" value=" " type="pad"/>
+        <field name="transition distance" value="0" type="real"/>
+    </element>
+    <element index="12" name="12. structure_instance_imposter_info_block">
+        <field name="name" value="forge_background01__(mainmenu_000_bsp)" type="string id"/>
+        <field name="imposter policy" value="0" type="char integer"/>
+        <field name="parasdd" value=" " type="pad"/>
+        <field name="transition distance" value="0" type="real"/>
+    </element>
+    <element index="13" name="13. structure_instance_imposter_info_block">
+        <field name="name" value="title_midground__(mainmenu_000_bsp)" type="string id"/>
+        <field name="imposter policy" value="0" type="char integer"/>
+        <field name="parasdd" value=" " type="pad"/>
+        <field name="transition distance" value="0" type="real"/>
+    </element>
+    <element index="14" name="14. structure_instance_imposter_info_block">
+        <field name="name" value="custom_background__(mainmenu_000_bsp)" type="string id"/>
+        <field name="imposter policy" value="0" type="char integer"/>
+        <field name="parasdd" value=" " type="pad"/>
+        <field name="transition distance" value="0" type="real"/>
+    </element>
+    <element index="15" name="15. structure_instance_imposter_info_block">
+        <field name="name" value="custom_back__(mainmenu_000_bsp)" type="string id"/>
+        <field name="imposter policy" value="0" type="char integer"/>
+        <field name="parasdd" value=" " type="pad"/>
+        <field name="transition distance" value="0" type="real"/>
+    </element>
+    <element index="16" name="16. structure_instance_imposter_info_block">
+        <field name="name" value="reach_large_moon__(mainmenu_000_bsp)" type="string id"/>
+        <field name="imposter policy" value="0" type="char integer"/>
+        <field name="parasdd" value=" " type="pad"/>
+        <field name="transition distance" value="0" type="real"/>
+    </element>
+    <element index="17" name="17. structure_instance_imposter_info_block">
+        <field name="name" value="reach_debris_01__(mainmenu_000_bsp)" type="string id"/>
+        <field name="imposter policy" value="0" type="char integer"/>
+        <field name="parasdd" value=" " type="pad"/>
+        <field name="transition distance" value="0" type="real"/>
+    </element>
+    <element index="18" name="18. structure_instance_imposter_info_block">
+        <field name="name" value="matchmaking_planet__(mainmenu_000_bsp)" type="string id"/>
+        <field name="imposter policy" value="0" type="char integer"/>
+        <field name="parasdd" value=" " type="pad"/>
+        <field name="transition distance" value="0" type="real"/>
+    </element>
+    <element index="19" name="19. structure_instance_imposter_info_block">
+        <field name="name" value="custom_foreground__(mainmenu_000_bsp)" type="string id"/>
+        <field name="imposter policy" value="0" type="char integer"/>
+        <field name="parasdd" value=" " type="pad"/>
+        <field name="transition distance" value="0" type="real"/>
+    </element>
+    <element index="20" name="20. structure_instance_imposter_info_block">
+        <field name="name" value="campaign_act3_background__(mainmenu_000_bsp)" type="string id"/>
+        <field name="imposter policy" value="0" type="char integer"/>
+        <field name="parasdd" value=" " type="pad"/>
+        <field name="transition distance" value="0" type="real"/>
+    </element>
+    <element index="21" name="21. structure_instance_imposter_info_block">
+        <field name="name" value="campaign_act1_background__(mainmenu_000_bsp)" type="string id"/>
+        <field name="imposter policy" value="0" type="char integer"/>
+        <field name="parasdd" value=" " type="pad"/>
+        <field name="transition distance" value="0" type="real"/>
+    </element>
+    <element index="22" name="22. structure_instance_imposter_info_block">
+        <field name="name" value="matchmaking_planet_illum__(mainmenu_000_bsp)" type="string id"/>
+        <field name="imposter policy" value="0" type="char integer"/>
+        <field name="parasdd" value=" " type="pad"/>
+        <field name="transition distance" value="0" type="real"/>
+    </element>
+    <element index="23" name="23. structure_instance_imposter_info_block">
+        <field name="name" value="forge_foreground01__(mainmenu_000_bsp)" type="string id"/>
+        <field name="imposter policy" value="0" type="char integer"/>
+        <field name="parasdd" value=" " type="pad"/>
+        <field name="transition distance" value="0" type="real"/>
+    </element>
+    <element index="24" name="24. structure_instance_imposter_info_block">
+        <field name="name" value="custom_front__(mainmenu_000_bsp)" type="string id"/>
+        <field name="imposter policy" value="0" type="char integer"/>
+        <field name="parasdd" value=" " type="pad"/>
+        <field name="transition distance" value="0" type="real"/>
+    </element>
+    <element index="25" name="25. structure_instance_imposter_info_block">
+        <field name="name" value="firefight_foreground01__(mainmenu_000_bsp)" type="string id"/>
+        <field name="imposter policy" value="0" type="char integer"/>
+        <field name="parasdd" value=" " type="pad"/>
+        <field name="transition distance" value="0" type="real"/>
+    </element>
+    <element index="26" name="26. structure_instance_imposter_info_block">
+        <field name="name" value="reach_storm_large__(mainmenu_000_bsp)" type="string id"/>
+        <field name="imposter policy" value="0" type="char integer"/>
+        <field name="parasdd" value=" " type="pad"/>
+        <field name="transition distance" value="0" type="real"/>
+    </element>
+    <element index="27" name="27. structure_instance_imposter_info_block">
+        <field name="name" value="campaign_act1_front01__(mainmenu_000_bsp)" type="string id"/>
+        <field name="imposter policy" value="0" type="char integer"/>
+        <field name="parasdd" value=" " type="pad"/>
+        <field name="transition distance" value="0" type="real"/>
+    </element>
+    <element index="28" name="28. structure_instance_imposter_info_block">
+        <field name="name" value="title_back_02__(mainmenu_000_bsp)" type="string id"/>
+        <field name="imposter policy" value="0" type="char integer"/>
+        <field name="parasdd" value=" " type="pad"/>
+        <field name="transition distance" value="0" type="real"/>
+    </element>
+    <element index="29" name="29. structure_instance_imposter_info_block">
+        <field name="name" value="reach_background__(mainmenu_000_bsp)" type="string id"/>
+        <field name="imposter policy" value="0" type="char integer"/>
+        <field name="parasdd" value=" " type="pad"/>
+        <field name="transition distance" value="0" type="real"/>
+    </element>
+    <element index="30" name="30. structure_instance_imposter_info_block">
+        <field name="name" value="reach_vapours__(mainmenu_000_bsp)" type="string id"/>
+        <field name="imposter policy" value="0" type="char integer"/>
+        <field name="parasdd" value=" " type="pad"/>
+        <field name="transition distance" value="0" type="real"/>
+    </element>
+    <element index="31" name="31. structure_instance_imposter_info_block">
+        <field name="name" value="campaign_act3_front__(mainmenu_000_bsp)" type="string id"/>
+        <field name="imposter policy" value="0" type="char integer"/>
+        <field name="parasdd" value=" " type="pad"/>
+        <field name="transition distance" value="0" type="real"/>
+    </element>
+    <element index="32" name="32. structure_instance_imposter_info_block">
+        <field name="name" value="campaign_act2_back_03__(mainmenu_000_bsp)" type="string id"/>
+        <field name="imposter policy" value="0" type="char integer"/>
+        <field name="parasdd" value=" " type="pad"/>
+        <field name="transition distance" value="0" type="real"/>
+    </element>
+    <element index="33" name="33. structure_instance_imposter_info_block">
+        <field name="name" value="campaign_act1_foreground01__(mainmenu_000_bsp)" type="string id"/>
+        <field name="imposter policy" value="0" type="char integer"/>
+        <field name="parasdd" value=" " type="pad"/>
+        <field name="transition distance" value="0" type="real"/>
+    </element>
+    <element index="34" name="34. structure_instance_imposter_info_block">
+        <field name="name" value="campaign_act2_foreground01__(mainmenu_000_bsp)" type="string id"/>
+        <field name="imposter policy" value="0" type="char integer"/>
+        <field name="parasdd" value=" " type="pad"/>
+        <field name="transition distance" value="0" type="real"/>
+    </element>
+    <element index="35" name="35. structure_instance_imposter_info_block">
+        <field name="name" value="campaign_act3_midground__(mainmenu_000_bsp)" type="string id"/>
+        <field name="imposter policy" value="0" type="char integer"/>
+        <field name="parasdd" value=" " type="pad"/>
+        <field name="transition distance" value="0" type="real"/>
+    </element>
+    <element index="36" name="36. structure_instance_imposter_info_block">
+        <field name="name" value="title_back_01__(mainmenu_000_bsp)" type="string id"/>
+        <field name="imposter policy" value="0" type="char integer"/>
+        <field name="parasdd" value=" " type="pad"/>
+        <field name="transition distance" value="0" type="real"/>
+    </element>
+    <element index="37" name="37. structure_instance_imposter_info_block">
+        <field name="name" value="forge_clouds01__(mainmenu_000_bsp)" type="string id"/>
+        <field name="imposter policy" value="0" type="char integer"/>
+        <field name="parasdd" value=" " type="pad"/>
+        <field name="transition distance" value="0" type="real"/>
+    </element>
+    <element index="38" name="38. structure_instance_imposter_info_block">
+        <field name="name" value="campaign_act3_midground01__(mainmenu_000_bsp)" type="string id"/>
+        <field name="imposter policy" value="0" type="char integer"/>
+        <field name="parasdd" value=" " type="pad"/>
+        <field name="transition distance" value="0" type="real"/>
+    </element>
+    <element index="39" name="39. structure_instance_imposter_info_block">
+        <field name="name" value="campaign_act2_front01__(mainmenu_000_bsp)" type="string id"/>
+        <field name="imposter policy" value="0" type="char integer"/>
+        <field name="parasdd" value=" " type="pad"/>
+        <field name="transition distance" value="0" type="real"/>
+    </element>
+    <element index="40" name="40. structure_instance_imposter_info_block">
+        <field name="name" value="campaign_act2_background__(mainmenu_000_bsp)" type="string id"/>
+        <field name="imposter policy" value="0" type="char integer"/>
+        <field name="parasdd" value=" " type="pad"/>
+        <field name="transition distance" value="0" type="real"/>
+    </element>
+    <element index="41" name="41. structure_instance_imposter_info_block">
+        <field name="name" value="forge_back03__(mainmenu_000_bsp)" type="string id"/>
+        <field name="imposter policy" value="0" type="char integer"/>
+        <field name="parasdd" value=" " type="pad"/>
+        <field name="transition distance" value="0" type="real"/>
+    </element>
+    <element index="42" name="42. structure_instance_imposter_info_block">
+        <field name="name" value="campaign_act2_back_02__(mainmenu_000_bsp)" type="string id"/>
+        <field name="imposter policy" value="0" type="char integer"/>
+        <field name="parasdd" value=" " type="pad"/>
+        <field name="transition distance" value="0" type="real"/>
+    </element>
+    <element index="43" name="43. structure_instance_imposter_info_block">
+        <field name="name" value="theater_midground__(mainmenu_000_bsp)" type="string id"/>
+        <field name="imposter policy" value="0" type="char integer"/>
+        <field name="parasdd" value=" " type="pad"/>
+        <field name="transition distance" value="0" type="real"/>
+    </element>
+    <element index="44" name="44. structure_instance_imposter_info_block">
+        <field name="name" value="campaign_act3_foreground__(mainmenu_000_bsp)" type="string id"/>
+        <field name="imposter policy" value="0" type="char integer"/>
+        <field name="parasdd" value=" " type="pad"/>
+        <field name="transition distance" value="0" type="real"/>
+    </element>
+    <element index="45" name="45. structure_instance_imposter_info_block">
+        <field name="name" value="firefight_background01__(mainmenu_000_bsp)" type="string id"/>
+        <field name="imposter policy" value="0" type="char integer"/>
+        <field name="parasdd" value=" " type="pad"/>
+        <field name="transition distance" value="0" type="real"/>
+    </element>
+    <element index="46" name="46. structure_instance_imposter_info_block">
+        <field name="name" value="reach_debris_03__(mainmenu_000_bsp)" type="string id"/>
+        <field name="imposter policy" value="0" type="char integer"/>
+        <field name="parasdd" value=" " type="pad"/>
+        <field name="transition distance" value="0" type="real"/>
+    </element>
+    <element index="47" name="47. structure_instance_imposter_info_block">
+        <field name="name" value="title_background__(mainmenu_000_bsp)" type="string id"/>
+        <field name="imposter policy" value="0" type="char integer"/>
+        <field name="parasdd" value=" " type="pad"/>
+        <field name="transition distance" value="0" type="real"/>
+    </element>
+    <element index="48" name="48. structure_instance_imposter_info_block">
+        <field name="name" value="forge_midground__(mainmenu_000_bsp)" type="string id"/>
+        <field name="imposter policy" value="0" type="char integer"/>
+        <field name="parasdd" value=" " type="pad"/>
+        <field name="transition distance" value="0" type="real"/>
+    </element>
+</tag>

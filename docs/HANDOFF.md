@@ -69,6 +69,26 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-31, 16:35 ET) - Tag export works (absolute paths), and the real emblem data is decoded (WeabooTyler117 / DeepSeek)
+
+- **How to export tags**: run `Foundation.exe` once from the HREK root, answer its "Switch Current Project" dialog with
+  **"Switch my project"** (sets project Omaha, writes `gamestate.txt`, `prefs\Foundation`, `reports\`), then
+  `tool.exe export-tag-to-xml <ABSOLUTE tag path> <out.xml>`. Relative paths always fail with *"Input tag path is not
+  located in the tags directory structure"*; absolute paths work silently. Sapien still exits immediately on the scenario,
+  so GUI editing is not available yet.
+- **Emblems decoded** (`tools/emblem/emblem_library.xml`, 498 KB): blocks `bitmaps=119, shapes=160, front emblems=80,
+  back emblems=53`, each emblem authored as layers with transforms (e.g. `jolly_roger` -> shape `skull`, multiplier 1,
+  scale 0.75). Backgrounds: blank, circle, diamond, plus, square, triangle, vertical_stripe, criss_cross, 8_point_star,
+  star, cowboy_hat, banner, sun, hexagon, chalice... Foregrounds: septagon, bullseye, vortex, halt, spartan, power_icon,
+  delta, music_note, stuck, phoenix, champion, jolly_roger, active_rooster, campfire, radioactive, smiley, frowney,
+  no_camping, sol... Atlas = `tags\ui\cui\common\emblems\emblems.bitmap`, 64 px sprites, antialias sharpen 1.6.
+- **Armory lighting decoded** (`tools/emblem/mainmenu_lighting.xml`, 19 KB): `generic light definitions = 0`,
+  `generic light instances = 0`, `regions = 0`, `material info = 1`, `instance imposter infos = 49`. There are **no generic
+  lights at all** in the main-menu BSP, so the black chamber is a **lightmap** problem in Noble's rebuilt
+  `mainmenu_all.map` (284 MB), not a lights problem. `material info` (emissive power/colour/quality/focus, attenuation
+  falloff) is the only lever inside this tag; the real fix is baking lightmaps (`tool lightmap-farm`) and rebuilding the
+  menu map (`tool build-cache-file-generate-main-menu-layout`).
+
 ## 0. Pick up here (2026-10-31, 15:30 ET) - HREK fully extracted: 62k tags, 39.4 GB, both target tags found (WeabooTyler117 / DeepSeek)
 
 - `HREK.7z` unpacked in place: **62,017 files, 39.4 GB** under `D:\Steam\steamapps\common\HREK\tags` (D: still has

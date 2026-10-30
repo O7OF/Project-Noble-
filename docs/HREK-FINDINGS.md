@@ -135,3 +135,65 @@ path form tried, because the kit's tools resolve tags through the **project/tag 
 project. `TagService.exe` without `/projectroot` starts, finds no project and ends in its crash handler. So the order is:
 `ProjectChooser.exe` (pick "Omaha"/Bulgogi) -> `Foundation.exe` (tag editor) -> then `tool.exe` verbs, `sapien.exe`, and
 `MegaloEdit.exe` all behave. Everything needed is installed; it just needs that one GUI initialisation.
+
+
+---
+
+## The breakthrough: how to export tags (and what the data actually is)
+
+**`tool.exe` needs an ABSOLUTE tag path.** Every relative form (`tags\...`, `globals\...`, forward slashes) answers
+*"Input tag path is not located in the tags directory structure"*; an absolute path inside the kit works and the export is
+silent on success:
+
+```powershell
+cd D:\Steam\steamapps\common\HREK
+.\tool.exe export-tag-to-xml "D:\Steam\steamapps\common\HREK\tags\globals\emblems\global.emblem_library" out.xml
+```
+
+Before that, `Foundation.exe` has to be run once and its **"Switch Current Project"** dialog answered with **"Switch my
+project"** (it sets the project to `Omaha` and writes `gamestate.txt`, `prefs\Foundation\...`, `reports\...`). After that
+the export works. Sapien still exits immediately when handed the scenario, so the GUI tools are not yet usable - the export
+path is enough for data work.
+
+### `global.emblem_library` exported (`tools/emblem/emblem_library.xml`, 498 KB)
+
+```
+blocks: bitmaps=119, shapes=160, front emblems=80, back emblems=53
+bitmap resolution = 64, antialias sharpen = 1.6
+emblem bitmaps -> 'emblems' (tag reference, i.e. tags\ui\cui\common\emblems\emblems.bitmap)
+```
+
+- **53 back emblems** (the backgrounds Tyler described): `blank, circle, diamond, plus, square, triangle,
+  vertical_stripe, horiztonal_stripe, cleft, criss_cross, 8_point_star, star, cowboy_hat, thick_star, banner, 4_diamonds,
+  sun, hexagon, vertical_hexagon, chalice, ...`
+- **80 front emblems** (the foregrounds): `septagon, bullseye, vortex, halt, spartan, power_icon, spartan_league, delta,
+  music_note, stuck, phoenix, champion, jolly_roger, active_rooster, campfire, radioactive, smiley, frowney, no_camping,
+  sol, ...`
+- **160 shapes**, each referencing a bitmap index and a gradient size: `blank, septagon_half, circle, vortex_half,
+  supernova, halt, octagon, spartan_front, spartan_front_negative, crossed_sword, power_icon, atom_path, ...`
+- Each emblem is authored as layers with transforms, e.g. `jolly_roger` -> `layer 0` -> `shape 0 = skull`,
+  `multiplier 0 = 1`, `transform 0` with `scale 0.75,0.75`, `shear 0,0`.
+
+That is a complete, authentic background x foreground system: 53 x 80 combinations rendered from one 119-sprite atlas at
+64 px (with `antialias sharpen`), not MCC's precomposed pairs.
+
+### `mainmenu_000.scenario_structure_lighting_info` exported (`tools/emblem/mainmenu_lighting.xml`, 19 KB)
+
+```
+blocks: generic light definitions = 0
+        generic light instances   = 0
+        screen space light shader override = 0
+        regions = 0
+        material info = 1
+        instance imposter infos = 49
+```
+
+**Zero generic lights in the main-menu BSP.** So the armory's chamber is not lit by generic lights at all - and the Spartan
+is still lit, which means its lighting comes from elsewhere (screen effects / the scenario's own light objects). The black
+chamber therefore points at the **BSP lightmaps**: Noble ships a rebuilt `data\menumaps\mainmenu_all.map` (284 MB) and if
+that build has no baked lightmaps the geometry renders black while objects stay lit. Baking with `tool lightmap-farm` and
+rebuilding (`tool build-cache-file-generate-main-menu-layout`) is the fix; editing the lighting tag cannot help because it
+contains no lights.
+
+The `material info` block is the per-material emissive override (emissive power / colour / quality / focus, attenuation
+falloff) - that is the one lever available in this tag, e.g. making selected armory materials emissive.
