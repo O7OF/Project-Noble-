@@ -22,6 +22,47 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-31, 02:30 ET) - Armory: appearance writes coalesced; the rest of the list triaged (WeabooTyler117 / DeepSeek)
+
+Tyler's list: scoreboard modernisation, armory (background, per-piece camera pan, palette/weapon-throw artefact, emblem
+background/foreground picker), and checkpoint-based campaign continue. What was found and what was done.
+
+### Done: the palette flash / "throws the DMR away" on every armour change
+
+`ArmorCustomizer::SyncToReachArmory()` called `ReachArmory::SetSelection()` on **every** confirmed change, and applying a
+selection makes the engine re-instantiate the Spartan (colour palette resets for a frame, armory idle animation
+restarts - the throw). Changes are now **coalesced**: a write applies immediately only if the previous one is older than
+250 ms, and held arrow keys collapse into a single engine write (per-frame flush in `Render`). This removes the strobing
+while scrolling; one write per settled change is inherent while the engine owns the model.
+
+### Triaged, with the evidence needed to continue
+
+- **Per-piece camera pan.** The scenes exist (`c_helmet`, `c_left_shoulder`, `c_right_shoulder`, `c_chest`, `c_wrist`,
+  `c_utility`, `c_knees`) and `ArmorCustomizer::UpdateArmoryCamera()` already switches to them as the edited slot changes
+  (`m_cameraMode == 2`, the default). But the *framing* code that actually moves a camera (`FramingFor` - zoom + look-at
+  height per slot) only drives **Noble's own OBJ stand-in preview**, not the engine scene, and the 2026-10-30 scene probe
+  showed switching `mainmenu_all.map` scenes changes the lighting but not the view. So the engine's armory camera has to be
+  moved directly: find its position/target globals (the same GLOBALS table `ReachArmory` already walks) and write a lateral
+  offset per slot (left shoulder = -X, right = +X, helmet = up, knees = down). That is the next armory task, and it also
+  fixes left vs right shoulder, which the engine's single `0x13` scene cannot distinguish.
+- **Black background** - see the 01:30 entry: the void is the chamber's own unlit geometry, so the fix is data-side
+  (light or replace it in `mainmenu_all.map`) or a Noble-owned renderer. Code cannot composite behind it.
+- **Emblem background/foreground picker.** Assets are already in Noble: `UiArt::EmblemByName()` resolves MCC pack entries
+  (`E_002_P_SML` style) and the Armory grid draws them. What is missing is the *classification* - which entries are emblem
+  backgrounds (circle, triangle, hexagon...) and which are foregrounds (grunt, flame, letters/numbers) - plus a two-column
+  picker that stores both. Halopedia's MCC emblem list is the reference; the naming in the packs follows
+  `E_<bg>_<fg>_<suffix>` for premade pairs, which has to be confirmed against the pack index.
+- **Scoreboard modernisation.** Reach's scoreboard is drawn by the engine. Modernising it means either restyling the
+  engine's own screen (no handle found) or drawing a Noble scoreboard over it, which needs the per-player rows
+  (name, team, score, kills/deaths) read from the engine - the same data the post-game screen already parses from the
+  results block, so a scoreboard overlay is a data-plumbing job, not a new RE project.
+- **Checkpoint-based continue.** Continue currently relaunches the last campaign mission from its start. Real checkpoint
+  resume needs Reach's save/checkpoint state (written into the profile/save data by the engine); nothing in Noble reads
+  it yet. First step is to locate the checkpoint block in the save data (compare two saves at different points in one
+  mission), then have CONTINUE pass it to the new process.
+
+Verified after the change: armory, main menu and settings all capture with exit code 0; build 0/0.
+
 ## 0. Pick up here (2026-10-31, 01:30 ET) - Armory backdrop: fifth approach tried, and the evidence now points at the chamber's own geometry (WeabooTyler117 / DeepSeek)
 
 Tyler asked again for the armory's black background to be fixed. Fifth attempt, and the first that would have worked if

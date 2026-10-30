@@ -819,6 +819,17 @@ void ArmorCustomizer::UpdateArmoryCamera() const {
     else ReachArmory::SetTargetScene("armory");
 }
 
+
+namespace {
+// Applying the appearance makes the engine re-instantiate the Spartan: the palette flashes back to default and the
+// armory idle animation restarts (which reads as "he threw the DMR away"). Holding an arrow key used to trigger that
+// on every repeat, so changes are coalesced and applied at most every 250 ms.
+ReachArmorySelection s_pendingSelection{};
+bool s_pushPending = false;
+ULONGLONG s_lastChangeTick = 0;
+ULONGLONG s_lastApplyTick = 0;
+} // namespace
+
 void ArmorCustomizer::SyncToReachArmory() const {
     const auto& helmets = GetSpartanHelmets();
     const auto& shoulders = GetSpartanShoulders();
@@ -888,8 +899,17 @@ void ArmorCustomizer::SyncToReachArmory() const {
     sel.secondaryRgb = { SrgbToLinear(sCol.r), SrgbToLinear(sCol.g), SrgbToLinear(sCol.b) };
     sel.visorRgb = { SrgbToLinear(vCol.r), SrgbToLinear(vCol.g), SrgbToLinear(vCol.b) };
 
-    ReachArmory::SetSelection(sel);
-    UpdateArmoryCamera();
+    // Coalesce: apply at once when the previous application is older than 250 ms, otherwise keep it pending and let
+    // the per-frame flush in Render pick it up. Holding an arrow key then costs one engine write, not one per repeat.
+    s_pendingSelection = sel;
+    s_pushPending = true;
+    s_lastChangeTick = GetTickCount64();
+    if (s_lastChangeTick - s_lastApplyTick >= 250) {
+        s_pushPending = false;
+        s_lastApplyTick = s_lastChangeTick;
+        ReachArmory::SetSelection(s_pendingSelection);
+        UpdateArmoryCamera();
+    }
 }
 
 bool ArmorCustomizer::LoadProfile(const std::filesystem::path& path) {
@@ -1375,6 +1395,12 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
         m_syncedInitial = true;
         SyncToReachArmory();
     } else {
+        // Apply a coalesced appearance change once the keys have been quiet for 250 ms.
+        if (s_pushPending && GetTickCount64() - s_lastChangeTick >= 250) {
+            s_pushPending = false;
+            s_lastApplyTick = GetTickCount64();
+            ReachArmory::SetSelection(s_pendingSelection);
+        }
         UpdateArmoryCamera();
     }
 
