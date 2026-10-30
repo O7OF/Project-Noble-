@@ -1424,13 +1424,6 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
     }
 
 
-    auto lockOption = [](PickOption& o, const char* id) {
-        const char* rank = nullptr;
-        if (EliteUnlockRank(id, &rank) == 0 || !rank) return;
-        o.lockRank = rank;
-        o.locked = EliteLocked(id);
-        o.description += std::string(o.description.empty() ? "" : " ") + "Unlocks at " + rank + ".";
-    };
 
     if (m_previewSpecies == PlayerSpecies::Spartan) {
         {
@@ -1494,13 +1487,6 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
                 SaveProfile(m_profilePath);
             }
         }
-        auto lockOption = [](PickOption& o, const char* id) {
-            const char* rank = nullptr;
-            if (EliteUnlockRank(id, &rank) == 0 || !rank) return;
-            o.lockRank = rank;
-            o.locked = EliteLocked(id);
-            o.description += std::string(o.description.empty() ? "" : " ") + "Unlocks at " + rank + ".";
-        };
         SlotRow r{ "ARMOR", "Armor Set", RowKind::List, &m_profile.eliteArmorSet };
         for (const auto& e : kEliteSets) {
             r.options.push_back({ e.name, e.description, 0, e.stringId });
@@ -1535,13 +1521,6 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
     }
 
 
-    auto lockOption = [](PickOption& o, const char* id) {
-        const char* rank = nullptr;
-        if (EliteUnlockRank(id, &rank) == 0 || !rank) return;
-        o.lockRank = rank;
-        o.locked = EliteLocked(id);
-        o.description += std::string(o.description.empty() ? "" : " ") + "Unlocks at " + rank + ".";
-    };
 
     if (m_previewSpecies == PlayerSpecies::Spartan) {
         SlotRow r{ "EFFECTS & VOICE", "Armor Effect", RowKind::List, &m_profile.armorEffectIndex };
@@ -1592,13 +1571,6 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
     // slot's first option (the default piece).
 
 
-    auto lockOption = [](PickOption& o, const char* id) {
-        const char* rank = nullptr;
-        if (EliteUnlockRank(id, &rank) == 0 || !rank) return;
-        o.lockRank = rank;
-        o.locked = EliteLocked(id);
-        o.description += std::string(o.description.empty() ? "" : " ") + "Unlocks at " + rank + ".";
-    };
 
     if (m_previewSpecies == PlayerSpecies::Spartan) {
         bool reset = false;

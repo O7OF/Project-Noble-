@@ -22,6 +22,29 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-30, 05:35 ET) - Build fix after dc349a5: duplicate `lockOption` lambdas (WeabooTyler117 / DeepSeek)
+
+`origin/main` at `dc349a5` ("Elite armors network replication ... social system") **did not compile**:
+
+```
+src/ui/ArmorCustomizer.cpp(1538): error C2086: 'lockOption': redefinition
+src/ui/ArmorCustomizer.cpp(1595): error C2086: 'lockOption': redefinition
+src/ui/ArmorCustomizer.cpp(1497): warning C4456: declaration of 'lockOption' hides previous local declaration
+```
+
+`ArmorCustomizer::Render()` had four copies of the same `auto lockOption = [](PickOption& o, const char* id) {...}`
+helper (lines 1427, 1497, 1538, 1595), landed by that commit: the one at 1497 hides the earlier one and the later two
+are hard redefinitions, so the whole client failed to build. Nothing calls `lockOption` anywhere - the Elite rows use
+`LockEliteOption()` - so all four copies are dead code and were removed.
+
+- `src/ui/ArmorCustomizer.cpp`: the four dead `lockOption` lambdas removed (no other change).
+- Verified: `cmake --build build --config Release` -> `noble-client.exe` + `noble-dedicated.exe`, 0 errors, 0 warnings,
+  and the merged client draws the main menu (captured with `-menu-screen main -menu-capture 90`).
+- **O7OF:** this sits on top of your `dc349a5`, so pull before building. Separately, that commit appended its handoff
+  entry **27 times** to this file (~2,100 duplicate lines); it was left untouched here.
+
+--
+
 ## 0. Pick up here (2026-10-30, 05:05 ET) - Menu pass 2: mod names/descriptions, main menu, account modal, server browser (WeabooTyler117 / DeepSeek)
 
 UI only: `src/ui/FrontEndMenu.cpp`, `src/ui/ServerBrowser.cpp`, `src/ui/UiArt.cpp/.hpp`. Follows the 04:05 ET entry.
