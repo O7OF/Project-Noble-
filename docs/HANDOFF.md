@@ -22,6 +22,38 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-30, 17:05 ET) - Armory backdrop: second approach tested and ruled out (WeabooTyler117 / DeepSeek)
+
+Tried the "paint the wallpaper instead of the engine's black clear" idea the 13:10 entry suggested. **It does not work,
+and the reason is worth writing down before anyone tries it again.**
+
+What was built (then reverted): a `WallpaperPass` (fullscreen triangle sampling `UiArt::MenuBackground()` with cover UVs,
+saving and restoring the context state) plus a MinHook on `ID3D11DeviceContext::ClearRenderTargetView` (vtable index
+50), installed from slot 1 once the swap chain is known, caching the back buffer resource and comparing it against the
+RTV's resource so only the back buffer is intercepted.
+
+Result: the hook **installed cleanly** (`Hook 'd3d11_clear_rtv_armory_backdrop' installed`, and the game ran and was
+captured normally), but the paint branch **never ran** - no "Armory backdrop painted" line in the log, and the capture
+still shows the black chamber. So during an Armory frame the engine never calls `ClearRenderTargetView` on the back
+buffer: it clears once at startup (before the hook exists) and afterwards the chamber's darkness comes from the *scene
+geometry and lighting*, not from a clear we could replace.
+
+### Where that leaves the black background
+
+Three attempts now, all documented:
+
+1. **Luma composite in the gamma pass** (O7, 2026-10-29) - reverted because the Spartan's darkest pixels measure the same
+   0-2/255 as the void, so dark undersuits were eaten.
+2. **Depth-based composite** (this session, 13:10 entry) - correct in principle (empty space is at the far plane), but
+   copying and sampling the engine's depth texture faults inside `d3d11.dll` in this swap chain, MSAA or not.
+3. **Replace the clear** (this entry) - no back-buffer clear to replace.
+
+Ideas left, in order of promise: (a) hook `ID3D11DeviceContext::DrawIndexed`/`Draw` and detect the chamber's final
+full-screen dark pass, painting after it instead - much more invasive; (b) ask the engine to switch the Armory scene's
+camera to one that has a backdrop in `mainmenu_all.map` (the scene table is reachable through `ReachArmory`'s GLOBALS
+work; this is what MCC itself does differently); (c) accept the black and frame it deliberately - a vignette and a
+caption around the model - which is honest and cheap.
+
 ## 0. Pick up here (2026-10-30, 16:15 ET) - Menu music playlist: per-track on/off (WeabooTyler117 / DeepSeek)
 
 Last piece of spec 4.2's audio rows that Noble can do on its own: the "per-song on/off" half of the playlist. (Preview

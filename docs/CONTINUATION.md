@@ -181,7 +181,8 @@ Menus (this session, all pushed):
 | `2e075a8` | `Settings > SYSTEM` (logs folder, diagnostics to clipboard, settings backup/restore); version 0.8.3 |
 | `1f8d89b` | Master mute + mute in background (`ReachAudio::SetMuted`) |
 | `c30659a` | Button-layout remap tests (`PadLayouts::SelfTest`), third suite under `-test-map-gametypes` |
-| (this commit) | Menu music playlist: per-track ON/OFF, honoured by SHUFFLE ALL GAMES |
+| `ea55d4c` | Menu music playlist: per-track ON/OFF, honoured by SHUFFLE ALL GAMES |
+| (this commit) | Docs only: armory backdrop clear-hook approach tested and ruled out (three attempts now recorded) |
 | `5f4da08` | Prompts follow the device everywhere; `InputPrompts` button glyphs in the CONTROLLER list |
 | (this commit) | Main menu **Continue** fast path (spec 4.1/4.10) + a status block at the top of the design doc |
 | `a8f412e` | Menu music player (`PauseMusic/ResumeMusic` + `DrawMusicPlayer`) |
