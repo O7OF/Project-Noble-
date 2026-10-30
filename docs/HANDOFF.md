@@ -22,6 +22,26 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-30, 17:40 ET) - Armory: all 21 menu scenes probed, none has a backdrop (WeabooTyler117 / DeepSeek)
+
+Fourth and last armory attempt for now. `ReachArmory::SetTargetScene()` already maps names to `mainmenu_all.map`'s 21
+scene indexes (`ResolveSceneIndex`), so instead of guessing I probed them: added a temporary `-armory-scene <name>`
+override on the Armory screen, captured `title` (0x00), `campaign` (0x01), `matchmaking` (0x04), `activities` (0x08),
+`theater` (0x07) and `roster` (0x0E), then removed the probe.
+
+**Result: every scene still renders the Spartan inside the same unlit chamber.** The scene only changes the *lighting* a
+little (`roster` is visibly dimmer), never the surroundings: the vista that the main menu shows belongs to those scenes'
+own camera framing, and the Armory's pedestal camera sits in a sealed room in the map geometry. There is nothing to
+point at that puts the character in front of the landscape.
+
+So the black background is a *map/camera* property, not something Noble can composite or clear its way out of with the
+approaches tried so far. Four attempts are now recorded (luma composite, depth composite, replace-the-clear, scene
+switch). The one idea that would actually change it is drawing the 3D character somewhere else entirely - i.e. rendering
+it with Noble's own camera into its own target - which is a project, not a fix.
+
+**Pragmatic suggestion:** ship the black as a deliberate look (vignette + a soft edge behind the model) so the screen
+reads as intentional, and revisit the character renderer only if a future RE pass finds the armory pedestal's lightmap.
+
 ## 0. Pick up here (2026-10-30, 17:05 ET) - Armory backdrop: second approach tested and ruled out (WeabooTyler117 / DeepSeek)
 
 Tried the "paint the wallpaper instead of the engine's black clear" idea the 13:10 entry suggested. **It does not work,
