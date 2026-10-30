@@ -22,6 +22,25 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-30, 09:05 ET) - Continue fast path from the redesign spec, and the spec's status block (WeabooTyler117 / DeepSeek)
+
+Back to the redesign doc (`docs/menu-redesign-spec.md`) for the next Noble-side item: **4.1 main menu / 4.10 "Continue
+last game" fast path**.
+
+- `SettingsData` gains `lastPlayedMode`, `lastPlayedMap`, `lastPlayedVariant`, `lastPlayedDifficulty`, `lastPlayedSkulls`,
+  `lastPlayedMod` (saved, loaded, defaults empty).
+- The single place a match launch is assembled (`RenderOverlayImpl`, the `if (choice.play)` block) now records those
+  fields - unless the choice is a lobby join (`connectAddress` set), which would otherwise overwrite the local game.
+- The main menu builds a **CONTINUE** row above Campaign when `lastPlayedMap` is non-empty (`kContinueEntry`, same
+  per-frame list as the developer row), and its description line reads
+  `Continue: Custom Game on Sword Base.` (map display name, not the scenario). Activating it relaunches the stored
+  match, map, variant, difficulty, skulls and mod. No row appears for a fresh install.
+- Verified with a capture: seeded `lastPlayed*` in `settings.json`, the row renders at the top of the list with the
+  right description, then the seed was reverted.
+
+`docs/menu-redesign-spec.md` now opens with a **status block** for 2026-10-30 (what this session finished, what is left
+in 4.x order), so the next agent can work from the design doc instead of reverse-engineering the handoff log.
+
 ## 0. Pick up here (2026-10-30, 08:40 ET) - Prompts follow the device everywhere, button glyphs in the controller list (WeabooTyler117 / DeepSeek)
 
 Tyler: "if a player uses a controller the options on the bottom of the screen should switch to controller and vice versa"

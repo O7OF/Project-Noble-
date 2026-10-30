@@ -117,6 +117,12 @@ void Settings::Load() {
             Read(j, "campaignSkulls", d.campaignSkulls);
             Read(j, "menuBackground", d.menuBackground);
             Read(j, "playerName", d.playerName);
+    Read(j, "lastPlayedMode", d.lastPlayedMode);
+    Read(j, "lastPlayedMap", d.lastPlayedMap);
+    Read(j, "lastPlayedVariant", d.lastPlayedVariant);
+    Read(j, "lastPlayedDifficulty", d.lastPlayedDifficulty);
+    Read(j, "lastPlayedSkulls", d.lastPlayedSkulls);
+    Read(j, "lastPlayedMod", d.lastPlayedMod);
             Read(j, "serviceTag", d.serviceTag);
             Read(j, "masterServerUrl", d.masterServerUrl);
             if (d.masterServerUrl.empty()) {
@@ -219,6 +225,12 @@ bool Settings::Save() {
         j["campaignSkulls"] = d.campaignSkulls;
         j["menuBackground"] = d.menuBackground;
         j["playerName"] = d.playerName;
+    j["lastPlayedMode"] = d.lastPlayedMode;
+    j["lastPlayedMap"] = d.lastPlayedMap;
+    j["lastPlayedVariant"] = d.lastPlayedVariant;
+    j["lastPlayedDifficulty"] = d.lastPlayedDifficulty;
+    j["lastPlayedSkulls"] = d.lastPlayedSkulls;
+    j["lastPlayedMod"] = d.lastPlayedMod;
         j["serviceTag"] = d.serviceTag;
         j["masterServerUrl"] = d.masterServerUrl;
         j["favorites"] = d.favorites;

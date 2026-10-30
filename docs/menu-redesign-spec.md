@@ -16,6 +16,39 @@ here is still to do. What was built, and how, is in `docs/HANDOFF.md` (11:00-19:
 Settings, Campaign / Firefight setup, ranks, Reach's challenges and commendations, the post-game exit experience and
 Armory v2 (§6 steps 1-8).
 
+**Status (updated 2026-10-30, 09:05 ET) - the menu pass.** Since the 2026-10-28 status below, a whole UI pass landed
+(commits `8676b1b`..HEAD, each with an entry in `docs/HANDOFF.md`; `docs/CONTINUATION.md` is the full map for a new agent).
+What is **done** from this spec:
+
+- **4.1 Main menu**: `Continue: <mode> on <map>` fast path (row above Campaign, remembers mode/map/variant/difficulty/
+  skulls/mod in `settings.json`). Dev accounts get a `DEVELOPER MENU` row above Quit instead of a party-panel button.
+- **4.3 Campaign / Firefight setup**: the right column never overlaps (one layout helper), long workshop descriptions are
+  cleaned and capped to two lines, mod names are clipped, `All Skulls` when 13/13, readable text over map art.
+- **4.4 Custom Game / Forge**: GAME OPTIONS (greyed, "Coming later") and a real PLAYERS cap (4/8/12/16 -> `HOST LOBBY`),
+  so all four setup screens share one structure.
+- **4.5 Server browser**: Back returns to the main menu, headers fit, first server auto-selected, GAME DETAILS shows the
+  map picture (MCC preview, else a mod/player `data/ui/custom/loading/<map>` photo, else a placeholder).
+- **4.6 Armory**: emblems were never loading (MCC pack stores `E_002_P_SML`, not `e_002_p`) - fixed, so the emblem grid
+  and every emblem tile work now.
+- **Identity rows** (spec 4.11 lobby/scoreboard details): MY PARTY and the pre-game lobby draw MCC's row - rank badge,
+  emblem tile, optional team strip, nameplate with `[TAG] [DEV]` on top and the gamertag below. Nameplates/emblems come
+  from the Armory. `MY GAME SESSION` header, empty slots handled.
+- **Section 3 UI kit**: `InputPrompts` is now a real glyph API (A/B/X/Y, LB/RB/LT/RT, D-pad arms, sticks, Start/Back/Menu,
+  keyboard key boxes) and every prompt follows the last-used device, lobby bar included. CONTROLLER page uses the glyphs.
+- **Menu music**: a now-playing strip on the main menu (prev / play-pause / next / mute / shuffle) over a new
+  `ReachAudio::PauseMusic()/ResumeMusic()`.
+- **Input / account**: account modal rebuilt (one DEV chip, equal tabs and buttons), invite notifications with a JOIN
+  toast and a Settings > Online services toggle, service tag taken from the Armory profile everywhere.
+
+**Still to do, in spec order** (all Noble-side unless marked): 3 `TileGrid`/`Modal`/`SearchBox`/`FilterChips` kit pieces
+where a screen still needs them; 4.2 Audio rows (master mute, mute in background, per-song playlist with preview),
+Language, Folders, Communication, Advanced graphics; 4.5 server filters/chips/sortable columns/players + required-mods
+modals; 4.6 Armory thumbnails, rank/cR locks, stances, emblems UI, per-character looks (research spike first); 4.7 rank
+icon in lobby/scoreboard; 4.8 post-game skip with a controller; 4.12 accessibility (text size, colour-blind colours,
+reduce motion), crash report + Open logs folder, settings backup/restore; 4.14-4.16 need networking. Engine-research
+items: skull collection gating, new-scenario modded map launch indexes, post-game player names, controller presets and
+custom mapping (`ReachHost` slot 36).
+
 **Goal in one line:** Noble's menus should work like Reclaimer's (clear three-column layouts, live previews, every
 option explained, fast to use with mouse, keyboard or controller) but look and sound like Halo: Reach (Reach's
 colours, type, icons, art, sounds and music). Reach is a 2010 game; keep its identity, modernise the usability.

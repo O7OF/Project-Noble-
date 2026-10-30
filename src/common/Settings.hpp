@@ -54,6 +54,13 @@ struct SettingsData {
     std::string menuBackground = "random"; // "random", "noble" (own art), "reach" (from the MCC install)
 
     // Player / network
+    // "Continue" fast path (spec 4.1): the last match this player started, so the main menu can offer it.
+    std::string lastPlayedMode;
+    std::string lastPlayedMap;
+    std::string lastPlayedVariant;
+    int lastPlayedDifficulty = 1;
+    unsigned long long lastPlayedSkulls = 0;
+    std::string lastPlayedMod;          // mod folder, empty when the game was vanilla
     std::string playerName = "NobleSix";
     std::string serviceTag = "NOBL";  // Reach service tag: 1-4 letters/digits, upper case (profile +0x1AC)
     std::string masterServerUrl = "https://outbreak-z-test-server.onrender.com"; // empty = LAN only

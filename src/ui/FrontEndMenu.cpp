@@ -1222,6 +1222,13 @@ const MainEntry kMainEntries[] = {
     { "Quit",         "Close Noble.",                                                         Screen::Main, true, true },
 };
 
+// "Continue: <mode> on <map>" (spec 4.1), built into the main-menu list per frame, above Campaign, only when a
+// match has been started before. Activating it relaunches that match with the same settings.
+const MainEntry kContinueEntry = {
+    "Continue", "Play the last game again with the same map, game type and options.",
+    Screen::Main, true, false
+};
+
 // Developer-only row, built into the main-menu list per frame so it sits directly above Quit. The gold
 // DEV badge next to the player name is the only other place developer status is shown.
 const MainEntry kDeveloperEntry = {
@@ -3001,6 +3008,9 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
              "This party is local to this PC.");
         // The list is built per frame so the developer row can sit above Quit without shifting indices.
         std::vector<const MainEntry*> rows;
+        const SettingsData mainSnap = Settings::Get().Snapshot();
+        const bool canContinue = !mainSnap.lastPlayedMap.empty();
+        if (canContinue) rows.push_back(&kContinueEntry);
         for (const MainEntry& e : kMainEntries) {
             if (e.quit && AuthClient::Get().IsDeveloper()) rows.push_back(&kDeveloperEntry);
             rows.push_back(&e);
@@ -3033,13 +3043,34 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         const int hit = DrawList(ui, "main", ImVec2(left, listY), 440.0f * ui.s, items, st.mainIndex, !modal, step);
         ImGui::EndDisabled();
         const float descY = listY + rowCount * step * ui.s + descGap;
-        Text(ui, nullptr, 17.0f, ImVec2(left + 4.0f * ui.s, descY), kDim, desc, left + descWidth);
+        std::string descLine = desc;
+        if (rows[st.mainIndex] == &kContinueEntry) {
+            const std::string mode = mainSnap.lastPlayedMode == "campaign" ? "Campaign"
+                                   : mainSnap.lastPlayedMode == "firefight" ? "Firefight"
+                                   : mainSnap.lastPlayedMode == "forge" ? "Forge" : "Custom Game";
+            std::string mapName = mainSnap.lastPlayedMap;
+            for (const MenuMap& m : kMaps) if (m.scenario == mapName) { mapName = m.name; break; }
+            for (const MenuMap& m : kFirefightMaps) if (m.scenario == mapName) { mapName = m.name; break; }
+            for (const MenuMap& m : kMissions) if (m.scenario == mapName) { mapName = m.name; break; }
+            descLine = "Continue: " + mode + " on " + mapName + ".";
+        }
+        Text(ui, nullptr, 17.0f, ImVec2(left + 4.0f * ui.s, descY), kDim, descLine.c_str(), left + descWidth);
         if (!modal) {
             if (hit >= 0) {
                 const MainEntry* picked = rows[hit];
                 if (picked->quit) {
                     st.confirmQuit = true;
                     st.quitChoice = 1;
+                } else if (picked == &kContinueEntry) {
+                    choice.play = true;
+                    choice.host = false;
+                    choice.map = mainSnap.lastPlayedMap;
+                    choice.mode = mainSnap.lastPlayedMode.empty() ? "multiplayer" : mainSnap.lastPlayedMode;
+                    choice.variantPath = mainSnap.lastPlayedVariant;
+                    choice.difficulty = mainSnap.lastPlayedDifficulty;
+                    choice.skulls = mainSnap.lastPlayedSkulls;
+                    if (!mainSnap.lastPlayedMod.empty()) choice.modFolder = mainSnap.lastPlayedMod;
+                    done = true;
                 } else if (picked == &kDeveloperEntry) {
                     OpenDevMenuModal();
                 } else if (std::string(picked->label) == "Account") {
@@ -3871,6 +3902,18 @@ void FrontEndMenu::RenderOverlayImpl(IDXGISwapChain* swapChain, bool clear) {
             ctx.closed = true;
             ReachAudio::StopMusic();
             if (choice.play) {
+                // Remember what was launched, for the \"Continue\" row on the main menu (spec 4.1). A lobby join
+                // (connectAddress) is not a local game, so it does not overwrite this.
+                if (choice.connectAddress.empty() && !choice.map.empty()) {
+                    SettingsData d = Settings::Get().Snapshot();
+                    d.lastPlayedMode = choice.mode;
+                    d.lastPlayedMap = choice.map;
+                    d.lastPlayedVariant = choice.variantPath;
+                    d.lastPlayedDifficulty = choice.difficulty;
+                    d.lastPlayedSkulls = choice.skulls;
+                    d.lastPlayedMod = choice.modFolder.empty() ? std::string() : choice.modFolder.string();
+                    Settings::Get().Update(d);
+                }
                 std::wstring args = L"-map \"" + ToWide(choice.map) + L"\" -mode \"" + ToWide(choice.mode) + L"\"";
                 args += L" -difficulty " + std::to_wstring(choice.difficulty);
                 if (!choice.variantPath.empty()) args += L" -variant \"" + ToWide(choice.variantPath) + L"\"";
