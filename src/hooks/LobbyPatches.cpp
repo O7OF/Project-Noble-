@@ -136,6 +136,30 @@ static std::string ReachStack() {
     return out.empty() ? std::string("(no haloreach frames)") : out;
 }
 
+// Detour for c_network_session::abort (RVA 0x44EBA0)
+// Centralized engine function called whenever a network session encounters a fatal peer
+// error or incompatibility. Sets [session + 0x90 + 0x30] = reason and invokes virtual teardown
+// method which terminates the game session and throws "GAME ERROR: An error occurred while
+// playing co-op." / "Error hosting co-op" dialog.
+// Suppressing co-op incompatibility reason codes (0x10 <= reason <= 0x25, e.g. 0x1B, 0x1C, 0x1A, 0x19, 0x1E, 0x1F)
+// keeps the simulation running and prevents the host from booting peers or aborting the game.
+typedef void(__fastcall* SessionAbortFn)(void* session, uint32_t reason);
+static SessionAbortFn s_originalSessionAbort = nullptr;
+
+static void __fastcall Hook_SessionAbort(void* session, uint32_t reason) {
+    uintptr_t caller = CallerRva(_ReturnAddress());
+    NOBLE_WARN("LobbyPatches: [{} pid {}] c_network_session::abort called: session=0x{:p}, reason={} (0x{:X}), caller hr+0x{:X}",
+        RefuseRole(), GetCurrentProcessId(), session, reason, reason, caller);
+    if (reason >= 0x10 && reason <= 0x25) {
+        NOBLE_WARN("LobbyPatches: SUPPRESSED session abort reason 0x{:X} from hr+0x{:X} to keep co-op match running!", reason, caller);
+        return;
+    }
+    if (s_originalSessionAbort) {
+        s_originalSessionAbort(session, reason);
+    }
+}
+
+
 typedef void(__fastcall* AcknowledgeJoinRequestFn)(void* thisPtr, void* targetAddr, uint32_t reason);
 static AcknowledgeJoinRequestFn s_originalAcknowledgeJoinRequest = nullptr;
 
@@ -601,6 +625,24 @@ bool LobbyPatches::Apply(HMODULE hReachDll) {
         }
     }
 
+    // 7b. MinHook Detour on c_network_session::abort (RVA 0x44EBA0)
+    // Centralized session abort sink for all co-op incompatibilities
+    std::string_view sigSessionAbort = "48 89 5C 24 08 57 48 83 EC 20 8B FA 48 8B D9 48 83 C1 30";
+    uintptr_t matchSessionAbort = SigScanner::FindPattern(base, size, sigSessionAbort);
+    uintptr_t fnSessionAbort = matchSessionAbort ? matchSessionAbort : (base + 0x44EBA0);
+    if (fnSessionAbort) {
+        static const uint8_t kSessionAbortPrologue[5] = { 0x48, 0x89, 0x5C, 0x24, 0x08 };
+        if (std::memcmp(reinterpret_cast<void*>(fnSessionAbort), kSessionAbortPrologue, 5) == 0) {
+            if (HookManager::InstallHook(reinterpret_cast<void*>(fnSessionAbort),
+                                         reinterpret_cast<void*>(&Hook_SessionAbort),
+                                         reinterpret_cast<void**>(&s_originalSessionAbort),
+                                         "c_network_session::abort")) {
+                patchCount++;
+                NOBLE_INFO("LobbyPatches: Installed MinHook detour on c_network_session::abort at 0x{:X}", fnSessionAbort);
+            }
+        }
+    }
+
     // 8. Co-op and Firefight player limit bypass gates
     // Patches the campaign co-op player cap gate at hr+0x40954A (7E 22 -> EB 22)
     // and Firefight player cap gate at hr+0x40955B (76 11 -> EB 11) to bypass "too many for net coop / firefight".
@@ -609,6 +651,7 @@ bool LobbyPatches::Apply(HMODULE hReachDll) {
             { 0x40954A, 0x7E, 0x22 }, // Campaign co-op player cap check (7E 22 -> EB 22)
             { 0x40955B, 0x76, 0x11 }, // Firefight player cap check (76 11 -> EB 11)
             { 0x411B6E, 0x74, 0x0D }, // Co-op in-progress membership compatibility abort check (74 0D -> EB 0D)
+            { 0x411D71, 0x74, 0x0D }, // Co-op peer disconnect/abort check (74 0D -> EB 0D, bypasses reason 1Ch)
             { 0x397689, 0x75, 0x0A }, // Campaign in-progress join-request gate (75 0A -> EB 0A, bypasses refusal 5)
         };
         for (auto& g : coopGates) {
@@ -625,6 +668,21 @@ bool LobbyPatches::Apply(HMODULE hReachDll) {
                            g.rva, static_cast<int>(at[0]), static_cast<int>(at[1]));
             }
         }
+    }
+
+    // 8b. NOP out cmovz ecx, edx at hr+0x40958B (0F 44 CA -> 90 90 90)
+    // Prevents ecx from being loaded with reason 1Bh (error_players_incompatible_for_network_coop)
+    // when campaign insertion evaluation returns -1.
+    uint8_t* atCmov = reinterpret_cast<uint8_t*>(base + 0x40958B);
+    static const uint8_t kExpectedCmov[3] = { 0x0F, 0x44, 0xCA };
+    if (0x40958B + 3 <= size && std::memcmp(atCmov, kExpectedCmov, 3) == 0) {
+        static const uint8_t kNops[3] = { 0x90, 0x90, 0x90 };
+        if (WriteProtectedMemory(atCmov, kNops, 3)) {
+            patchCount++;
+            NOBLE_INFO("LobbyPatches: NOPed cmovz ecx, edx at hr+0x40958B (0F 44 CA -> 90 90 90)");
+        }
+    } else {
+        NOBLE_WARN("LobbyPatches: cmovz bytes differ at hr+0x40958B; left alone");
     }
 
     s_isApplied = true;
