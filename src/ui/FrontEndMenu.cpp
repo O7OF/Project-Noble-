@@ -735,8 +735,10 @@ void DrawAccountModal(const Ui& ui) {
                                                     IM_COL32(10, 10, 10, 255), "DEV");
                 ImGui::Dummy(ImVec2(50.0f * ui.s, 18.0f * ui.s));
                 ImGui::Dummy(ImVec2(0, 4));
-                ImGui::TextDisabled("Developer account (ID: %d) - the Developer Menu is on the main menu, above Quit.",
-                                    AuthClient::Get().GetUserId());
+                ImGui::PushStyleColor(ImGuiCol_Text, NobleStyle::TextMuted());
+                ImGui::TextWrapped("Developer account (ID: %d). The Developer Menu is on the main menu, above Quit.",
+                                   AuthClient::Get().GetUserId());
+                ImGui::PopStyleColor();
             } else {
                 ImGui::Dummy(ImVec2(0, 4));
                 ImGui::TextDisabled("Standard account (ID: %d)", AuthClient::Get().GetUserId());
@@ -836,7 +838,19 @@ void DrawParty(const Ui& ui, const std::string& playerName, const char* status) 
     Text(ui, NobleStyle::TitleFont(), 17.0f, ImVec2(x2 + 8.0f * ui.s, y + 5.0f * ui.s), kWhite, status);
     Text(ui, NobleStyle::TitleFont(), 17.0f, ImVec2(x + w - 42.0f * ui.s, y + 5.0f * ui.s), kWhite, "1/16");
     y += 28.0f * ui.s;
-    ui.dl->AddRectFilled(ImVec2(x2, y), ImVec2(x + w, y + 30.0f * ui.s), IM_COL32(52, 98, 138, 235));
+    // The nameplate chosen in the Armory is the background of the player's row, the way Reach shows it in
+    // a party. A dark scrim keeps the name readable on bright plates; without one the old blue bar is drawn.
+    {
+        const auto& prof = UIManager::GetArmorCustomizer().GetProfile();
+        const ImVec2 p0(x2, y), p1(x + w, y + 30.0f * ui.s);
+        ui.dl->AddRectFilled(p0, p1, IM_COL32(52, 98, 138, 235));
+        if (const UiTexture plate = UiArt::Nameplate(prof.nameplateIndex)) {
+            UiArt::DrawCover(ui.dl, plate, p0, p1, IM_COL32(255, 255, 255, 215));
+            ui.dl->AddRectFilledMultiColor(p0, p1, IM_COL32(4, 8, 14, 205), IM_COL32(4, 8, 14, 110),
+                                           IM_COL32(4, 8, 14, 110), IM_COL32(4, 8, 14, 205));
+        }
+        ui.dl->AddRect(p0, p1, IM_COL32(90, 130, 170, 120), 0.0f, 0, 1.0f);
+    }
     const ImVec2 e(x2 + 16.0f * ui.s, y + 15.0f * ui.s);
     ui.dl->AddCircleFilled(e, 10.0f * ui.s, IM_COL32(26, 40, 52, 255));
     ui.dl->AddTriangleFilled(ImVec2(e.x - 6 * ui.s, e.y - 2 * ui.s), ImVec2(e.x + 6 * ui.s, e.y - 2 * ui.s), ImVec2(e.x, e.y + 6 * ui.s), kAccent);
@@ -1041,8 +1055,15 @@ float HeroBanner(const Ui& ui, ImVec2 pos, float width, float height, const std:
     if (blurb && *blurb) {
         // Two lines at most: a long workshop blurb is clipped here instead of running over the option rows.
         const float lineH = 17.0f * ui.s * 1.35f;
+        const ImVec2 t0(pos.x, y), t1(pos.x + width, y + lineH * 2.0f);
+        // The description sits over map art, so it gets a soft dark band and a 1 px shadow: plain grey text
+        // on a bright picture was borderline unreadable (Tyler, 2026-10-30).
+        ui.dl->AddRectFilledMultiColor(ImVec2(t0.x, t0.y - 4.0f * ui.s), ImVec2(t1.x, t1.y + 4.0f * ui.s),
+                                       IM_COL32(4, 8, 12, 40), IM_COL32(4, 8, 12, 150),
+                                       IM_COL32(4, 8, 12, 150), IM_COL32(4, 8, 12, 40));
         ui.dl->PushClipRect(ImVec2(pos.x, y), ImVec2(pos.x + width, y + lineH * 2.0f), true);
-        Text(ui, nullptr, 17.0f, ImVec2(pos.x, y), kDim, blurb, pos.x + width);
+        Text(ui, nullptr, 17.0f, ImVec2(pos.x + 1.0f * ui.s, y + 1.0f * ui.s), IM_COL32(0, 0, 0, 210), blurb, pos.x + width);
+        Text(ui, nullptr, 17.0f, ImVec2(pos.x, y), IM_COL32(214, 224, 236, 255), blurb, pos.x + width);
         ui.dl->PopClipRect();
         y += std::min(Font(nullptr)->CalcTextSizeA(17.0f * ui.s, FLT_MAX, width, blurb).y, lineH * 2.0f) + 8.0f * ui.s;
     }
@@ -1096,6 +1117,8 @@ std::string SkullSummary(uint64_t mask) {
     int count = 0;
     for (const Skull& s : kSkulls) if (mask & (1ull << s.bit)) ++count;
     if (count == 0) return "None";
+    // All thirteen on reads as "All Skulls" (Tyler, 2026-10-30).
+    if (count >= kSkullCount) return "All Skulls";
     if (count == 1) {
         for (const Skull& s : kSkulls) if (mask & (1ull << s.bit)) return s.name;
     }
@@ -1430,6 +1453,8 @@ std::vector<MapEntry> ModdedMaps(const std::vector<const ModEntry*>& mods, ModMo
         heading.name = mod->title + "  (" + std::to_string(maps.size()) + ")";
         heading.header = true;
         heading.mod = mod;
+        // A heading has no map of its own; the banner shows the mod's first map picture instead of black.
+        heading.scenario = maps.front().scenario;
         heading.blurb = PlainDescription(mod->description, 180);
         heading.enabled = open.count(OpenKey(mode, *mod)) != 0;
         out.push_back(heading);
@@ -1949,7 +1974,9 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         optRows.push_back({ "MISSION", mapDisplay, false, false, st.isLobbyHost, "Select which campaign mission to play." });
         int skullCount = 0;
         for (int b = 0; b < 64; ++b) if ((st.lobbySkulls >> b) & 1ULL) ++skullCount;
-        optRows.push_back({ "SKULLS", std::to_string(skullCount) + " SKULLS ON", false, false, st.isLobbyHost, "Configure active gameplay skulls." });
+        optRows.push_back({ "SKULLS",
+                            (skullCount >= kSkullCount ? std::string("ALL SKULLS ON") : std::to_string(skullCount) + " SKULLS ON"),
+                            false, false, st.isLobbyHost, "Configure active gameplay skulls." });
         static const char* kDiffs[] = { "EASY", "NORMAL", "HEROIC", "LEGENDARY" };
         optRows.push_back({ "DIFFICULTY", kDiffs[std::clamp(st.lobbyDifficulty, 0, 3)], false, false, st.isLobbyHost, "Set campaign difficulty level." });
         static const char* kScoring[] = { "OFF", "FREE FOR ALL", "TEAM" };
@@ -2189,10 +2216,23 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         const auto& player = hasPlayer ? st.lobbyRoster[idx] : LobbyPlayer{};
         const bool selected = (st.lobbyRosterSelection == static_cast<int>(idx));
 
-        // Background color: Reach orange/red highlight if selected
+        // Background color: Reach orange/red highlight if selected. The local player's row uses the
+        // nameplate from the Armory (remote players' nameplates are not sent by the server yet).
+        const bool isLocalPlayer = player.isHost ? st.isLobbyHost
+                                                 : (!player.username.empty() &&
+                                                    player.username == (AuthClient::Get().IsLoggedIn()
+                                                                        ? AuthClient::Get().GetUsername()
+                                                                        : Settings::Get().Snapshot().playerName));
         const ImU32 rowBg = selected ? IM_COL32(185, 55, 20, 235)
                                      : (player.isHost ? IM_COL32(24, 36, 52, 210) : IM_COL32(14, 20, 30, 190));
         ui.dl->AddRectFilled(pr0, pr1, rowBg);
+        if (isLocalPlayer && hasPlayer) {
+            const auto& prof = UIManager::GetArmorCustomizer().GetProfile();
+            if (const UiTexture plate = UiArt::Nameplate(prof.nameplateIndex)) {
+                UiArt::DrawCover(ui.dl, plate, pr0, pr1, selected ? IM_COL32(255, 210, 190, 235) : IM_COL32(255, 255, 255, 225));
+                ui.dl->AddRectFilled(pr0, pr1, selected ? IM_COL32(150, 40, 12, 110) : IM_COL32(4, 8, 14, 120));
+            }
+        }
         ui.dl->AddRect(pr0, pr1, IM_COL32(40, 60, 90, 100));
 
         ImGui::SetCursorScreenPos(pr0);
@@ -2727,7 +2767,10 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         // so the description can never be drawn on top of "ENTER Select / ESC Quit" (2026-10-30).
         const float descWidth = 430.0f * ui.s;
         const char* desc = rows[st.mainIndex]->description;
-        const float descH = Font(nullptr)->CalcTextSizeA(17.0f * ui.s, FLT_MAX, descWidth, desc).y;
+        // Reserve two lines whatever the selected entry says. The layout used to be measured from the
+        // *selected* description, so a one-line entry and a two-line entry put the list at different
+        // heights and moving the cursor made the whole menu jump (reported 2026-10-30).
+        const float descH = Font(nullptr)->CalcTextSizeA(17.0f * ui.s, FLT_MAX, 0.0f, "Ag").y * 2.0f + 2.0f * ui.s;
         const float descGap = 10.0f * ui.s;
         const float hintTop = ui.size.y - 58.0f * ui.s;
         float listY = ui.size.y * 0.30f + 104.0f * ui.s;
@@ -2846,7 +2889,7 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         const float blurbH = BlurbBlockHeight(ui, pw, blurb);
         const float bannerH = HeroBannerHeight(ui, pw, col.content, rowsH, blurbH, bannerTop);
         const std::string kicker = mod ? "MOD: " + Upper(mod->title) : row && row->header ? std::string("MOD") : std::string("HALO: REACH \xC2\xB7 CAMPAIGN");
-        float y = HeroBanner(ui, ImVec2(px, bannerTop), pw, bannerH, mission ? mission->scenario : "", kicker,
+        float y = HeroBanner(ui, ImVec2(px, bannerTop), pw, bannerH, row ? row->scenario : "", kicker,
                              row ? (row->header ? row->mod->title.c_str() : row->name.c_str()) : "", blurb);
         y += DifficultyTiles(ui, "diff", ImVec2(px, y), pw, st.difficulty, st.focusRow == 1) + 8.0f * ui.s;
         const std::string skullText = SkullSummary(st.skulls);
@@ -3022,7 +3065,7 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         const float bannerH = HeroBannerHeight(ui, pw, col.content, rowsH, blurbH, bannerTop);
         const std::string kicker = mod ? "MOD: " + Upper(mod->title)
                                  : std::string(ff ? "HALO: REACH \xC2\xB7 FIREFIGHT" : forge ? "HALO: REACH \xC2\xB7 FORGE" : "HALO: REACH \xC2\xB7 MULTIPLAYER");
-        float y = HeroBanner(ui, ImVec2(px, bannerTop), pw, bannerH, map ? map->scenario : "", kicker,
+        float y = HeroBanner(ui, ImVec2(px, bannerTop), pw, bannerH, row ? row->scenario : "", kicker,
                              row ? (row->header ? row->mod->title.c_str() : row->name.c_str()) : "", blurb);
         int focusRows = 1;
         if (!forge) {

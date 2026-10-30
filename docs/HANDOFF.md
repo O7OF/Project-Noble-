@@ -22,7 +22,71 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
-## 0. Pick up here (2026-10-30, 05:45 ET) - tools: Halopedia Armory icon fetcher checked in (WeabooTyler117 / DeepSeek)
+## 0. Pick up here (2026-10-30, 06:40 ET) - Menu pass 3: stable main menu, readable map text, nameplates in the party/lobby (WeabooTyler117 / DeepSeek)
+
+UI only: `src/ui/FrontEndMenu.cpp`. Follows the 05:05 ET entry (O7OF's `dc349a5` is merged in).
+
+### 1. Main menu jumped when the description changed length
+
+The layout measured the **selected** entry's description, so a one-line entry and a two-line entry produced
+different `listY`/row step and moving the cursor moved the whole list (Campaign -> Quit shifted vertically).
+`descH` is now a fixed two-line reserve, independent of the selection, so the list never moves; the description is
+still drawn from the same `descY`.
+
+### 2. Text under a map picture was hard to read
+
+`HeroBanner` drew the blurb as plain grey text straight over map art (Tyler's last screenshot). Now the blurb gets a
+soft dark band behind it (transparent at the edges), a 1 px black shadow and brighter text (`214,224,236`), still
+clipped to two lines. Applies to Campaign / Firefight / Custom Game / Forge.
+
+### 3. Skulls
+
+- `SkullSummary()` returns **"All Skulls"** when all 13 are on (was "13 on"), and the pre-game lobby's SKULLS row
+  says **"ALL SKULLS ON"**. Campaign screenshot verified with 13/13 on.
+- Not done: locking skulls until they are found in the campaign, and an "All Skulls" toggle in the skull menu gated on
+  having collected all 13 - both need the campaign's skull-collection data, which Noble does not read yet (engine
+  research). There is nowhere to gate them on today.
+
+### 4. Armory nameplates in the party panel and the pre-game lobby
+
+`UiArt::Nameplate()` (from `dc349a5`) is now the background of the **local player's** row in `DrawParty` (MY PARTY,
+main menu) and in the pre-game lobby roster, with a dark scrim so the name stays readable; the old blue/grey bar is the
+fallback when the plate texture is missing.
+**Remote players still show the plain row**: the lobby roster / master advert carry no nameplate id, so showing other
+players' plates needs `nameplateId` added to the roster JSON, `MasterAdvert`, `LobbyPlayer` and `server.js`.
+
+### 5. Mod headings had a black banner
+
+A mod heading has no scenario, so its banner was empty; `ModdedMaps()` now points the heading at its **first map's
+scenario**, so opening a mod shows that map's picture under "CIVIL UNREST" instead of a black rectangle.
+
+### 6. Account modal
+
+The developer line was a non-wrapping `TextDisabled` and got cut off ("...above Qui"); it is `TextWrapped` now.
+
+### 7. Build and checks
+
+- `cmake --build build --config Release`: `noble-client.exe`, 0 errors, 0 warnings.
+- Captures at 1920x1080: Campaign with **ALL SKULLS** + readable blurb; modded Forge with a map picture and readable
+  description; main menu with the nameplate behind the player row.
+
+### 8. Still open from Tyler's list (2026-10-30 06:10) and what each really needs
+
+- **Invite notifications** - `SocialClient::GetInvites()` already returns `GameInvite{senderUsername, hostIp, hostPort,
+  timestamp}` and there is `PollInvitesAsync()` / `ClearInviteAsync()`, so a global toast ("X is inviting you to a
+  match", JOIN / DISMISS) plus a notifications on/off setting is a UI job. Saying *which* match ("... to a Firefight
+  match") needs a mode/map field added to the invite payload (`SocialClient` + `server.js`).
+- **Menu music player** - `ReachAudio::MusicTracks()`, `PlayMenuMusic(id)`, `StopMusic()`, `SetMusicVolume()` are there;
+  a small now-playing widget (track name, prev/next, mute, shuffle = `PlayMenuMusic("all")`) is a UI job. There is no
+  pause API: "pause" would stop and restart the cue, so it needs a `PauseMusic()`/resume in `ReachAudio` first.
+- **Controller presets / custom mapping / extra buttons** - not a menu change: the pad buttons are remapped inside
+  `ReachHost`'s slot-36 input path, so it needs a mapping table there plus per-action storage in settings.
+- **Modded maps with new scenario names** - `BlamEngine::ResolveMapId()` only knows Reach's own tables and returns 0
+  (which boots the main menu) for anything else; a new map file needs a launch index / map id. Possible partial: a mod
+  map whose *title* contains a Reach map name could launch that base scenario through the VFS (the mod's replacement
+  file is what loads), which would un-grey entries like "BREAKPOINT - (DKF)" but not brand-new maps.
+
+--
 
 `tools/armory/fetch_halopedia_icons.py` was sitting **untracked** in Tyler's tree from the 2026-10-29 Armory art
 session. It is the picture half of the pipeline next to the tracked `fetch_halopedia_armory.py` (which pulls names,
