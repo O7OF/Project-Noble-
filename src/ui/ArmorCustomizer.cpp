@@ -807,8 +807,29 @@ void ArmorCustomizer::SetPreferredSpecies(PlayerSpecies species) {
     SyncToReachArmory();
 }
 
+
 void ArmorCustomizer::UpdateArmoryCamera() const {
     if (!ReachArmory::IsMenuMode()) return;
+    // Test-only: "-armory-scene-index <n>" forces one of the menu map's camera scenes so the per-piece close-ups can
+    // be identified by capture. No effect in normal runs.
+    {
+        static const std::string forced = [] {
+            std::string out;
+            int argc = 0;
+            LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+            for (int i = 1; argv && i + 1 < argc; ++i) {
+                if (_wcsicmp(argv[i], L"-armory-scene-index") == 0) {
+                    for (const wchar_t* c = argv[i + 1]; c && *c; ++c) out.push_back(static_cast<char>(*c));
+                }
+            }
+            if (argv) LocalFree(argv);
+            return out;
+        }();
+        if (!forced.empty()) {
+            ReachArmory::SetTargetScene("index:" + forced);
+            return;
+        }
+    }
     if (m_previewSpecies == PlayerSpecies::Elite) {
         ReachArmory::SetTargetScene("armory_elite");
         return;
@@ -1679,7 +1700,28 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
             if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickRight)) step(1);
         }
     }
+    // "-armory-focus <label>" (test only): start on a named slot so the per-slot camera can be captured.
+    {
+        static bool s_applied = false;
+        if (!s_applied) {
+            s_applied = true;
+            int argc = 0;
+            LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+            std::wstring want;
+            for (int i = 1; argv && i + 1 < argc; ++i) {
+                if (_wcsicmp(argv[i], L"-armory-focus") == 0) want = argv[i + 1];
+            }
+            if (argv) LocalFree(argv);
+            if (!want.empty()) {
+                for (int i = 0; i < rowCount; ++i) {
+                    std::wstring label(rows[i].label, rows[i].label + std::strlen(rows[i].label));
+                    if (label.find(want) != std::wstring::npos) { focus(i); break; }
+                }
+            }
+        }
+    }
     m_focusScene = m_previewSpecies == PlayerSpecies::Spartan ? rows[m_focusedRow].scene : "armory_elite";
+
 
     // ---- Left: grouped slot list.
     {

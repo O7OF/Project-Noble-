@@ -258,6 +258,14 @@ static uint32_t LookupStringId(const std::string& name) {
 // -----------------------------------------------------------------------------
 static int32_t ResolveSceneIndex(const std::string& scene) {
     const std::string s = ToLowerAscii(scene);
+    // "index:<n>" addresses a camera scene by number, so every camera in mainmenu_all.map can be tried without
+    // naming it first (used to map the per-piece close-ups; see the 2026-10-31 handoff entry).
+    if (s.rfind("index:", 0) == 0) {
+        const char* text = s.c_str() + 6;
+        const int parsed = (text[0] == '0' && (text[1] == 'x' || text[1] == 'X')) ? static_cast<int>(std::strtol(text + 2, nullptr, 16))
+                                                                                : static_cast<int>(std::strtol(text, nullptr, 10));
+        return std::clamp(parsed, 0, 0x40);
+    }
     if (s == "title" || s == "start_menu" || s == "main") return 0x00;
     if (s == "campaign" || s == "campaign_act1")          return 0x01;
     if (s == "campaign_act2")                             return 0x02;

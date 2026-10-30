@@ -22,6 +22,53 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-31, 04:45 ET) - Armory cameras mapped by capture; left/right shoulder is impossible on the engine path (WeabooTyler117 / DeepSeek)
+
+Tyler asked to start on the per-piece camera pan. Went at it with captures instead of guesses, and the earlier
+"scene switching doesn't move the camera" conclusion was **wrong** - it came from probing the *menu* scenes.
+
+### What the engine's armory cameras actually do (verified, one capture per index)
+
+Added `-armory-scene-index <n>` (forces a raw camera scene; `ResolveSceneIndex` accepts `index:<n>`) and
+`-armory-focus "<slot>"` (starts with that slot focused), then captured every index:
+
+| index | what it shows |
+|---|---|
+| 0x0A | default reach 3/4 full body |
+| 0x0C | whole body, straighter (c_full_spartan) |
+| **0x0D** | helmet / upper-body close-up |
+| 0x0E | mid body (the roster scene, correctly excluded) |
+| **0x0F** | chest close-up |
+| **0x10** | wrist / forearm |
+| **0x11** | utility (thigh) |
+| **0x12** | knee guards |
+| **0x13** | shoulders / upper torso |
+| **0x14** | colours (torso, slightly further) |
+| 0x15-0x20 | **not the armory at all** - other menu scenes (a Covenant vista, no Spartan) |
+
+So `ArmorCustomizer`'s existing slot scenes are correct and **clicking a slot does pan**: captures focused on Chest, Knee
+Guards and Left Shoulder differ by 36% of pixels in the character panel.
+
+### The one thing that cannot work on the engine path: left vs right shoulder
+
+- The map has **one** shoulder camera (0x13) for both sides, and higher indices leave the armory entirely - there is no
+  second shoulder camera to find.
+- Tried presenting the side by rotating the model (`ReachArmory::SetYawRotation` per slot, ±70 degrees). Measured result:
+  left vs right shoulder captures differ by only **5 %** of pixels, the same as before, and the difference is the animated
+  armour-effect particles. The armory camera evidently rides with the character, so rotating it changes nothing visible.
+  **Removed** rather than left in as a no-op that would also fight the drag-to-turn control.
+
+Conclusion: left/right shoulder distinction needs a camera that can *offset laterally*, which the engine's fixed scenes
+cannot do. Options are (a) Noble's own renderer (`FocusX` already exists in its camera - the `armoryPreview` switch from
+the 04:00 entry), or (b) engine camera globals with a lateral offset - still un-found; the GLOBALS table only exposes the
+scene index (`base + 0x24 * stride`), not a position.
+
+### Left in the tree
+
+- `-armory-scene-index <n>` and `-armory-focus "<slot>"` test hooks (harmless in normal runs, both used above).
+- `ResolveSceneIndex` accepts `index:<n>` so any map camera can be addressed by number.
+- Everything else unchanged; armory still captures normally.
+
 ## 0. Pick up here (2026-10-31, 04:00 ET) - Armory: Noble's own renderer looks good, and it is the way out of the void (WeabooTyler117 / DeepSeek)
 
 Tyler asked which route to take for the armory's black background. The decisive fact: **Noble already has its own

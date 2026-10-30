@@ -197,7 +197,8 @@ Menus (this session, all pushed):
 | `f60a194` | Docs: armory backdrop fifth attempt ruled out; the void is engine geometry, so the fix is data-side (map/tag) |
 | `9308d71` | Armory: coalesce appearance writes (stops the palette/weapon-throw strobe); triage of camera pan, emblems, scoreboard, checkpoint continue |
 | `d136a00` | Relaunch holds the old window until the new one appears (no desktop flash); notes on in-process transitions |
-| (this commit) | `armoryPreview` setting; Noble's own renderer captured and recommended as the armory's way out of the black void |
+| `80eba4a` | `armoryPreview` setting; Noble's own renderer captured and recommended as the armory's way out of the black void |
+| (this commit) | Armory camera map verified by capture (0x0D helmet .. 0x14 colours); `-armory-scene-index` / `-armory-focus` hooks; left/right shoulder shown impossible on the engine path |
 | `5f4da08` | Prompts follow the device everywhere; `InputPrompts` button glyphs in the CONTROLLER list |
 | (this commit) | Main menu **Continue** fast path (spec 4.1/4.10) + a status block at the top of the design doc |
 | `a8f412e` | Menu music player (`PauseMusic/ResumeMusic` + `DrawMusicPlayer`) |
