@@ -37,7 +37,7 @@ std::wstring CurrentGameArgs() {
     return s_currentArgs;
 }
 
-bool Start(const std::wstring& args) {
+bool Start(const std::wstring& args, unsigned long* outPid) {
     // Release all network sockets (UDP 11774 / 11775) and master server advertisements in this
     // process BEFORE spawning the replacement process so the new process can bind port 11774 cleanly.
     // A host launching its lobby's match passes the session on (-session-id): keep it listed.
@@ -84,20 +84,64 @@ bool Start(const std::wstring& args) {
     }
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
+    if (outPid) *outPid = pi.dwProcessId;
     return true;
 }
 
 namespace {
+
+struct WindowSearch {
+    DWORD pid = 0;
+    HWND found = nullptr;
+};
+
 BOOL CALLBACK HideOwnWindow(HWND hwnd, LPARAM pid) {
     DWORD owner = 0;
     GetWindowThreadProcessId(hwnd, &owner);
     if (owner == static_cast<DWORD>(pid) && IsWindowVisible(hwnd)) ShowWindow(hwnd, SW_HIDE);
     return TRUE;
 }
+
+// The new process's first visible top-level window: that is the moment its loading screen is on screen.
+BOOL CALLBACK FindVisibleWindow(HWND hwnd, LPARAM param) {
+    auto* search = reinterpret_cast<WindowSearch*>(param);
+    DWORD owner = 0;
+    GetWindowThreadProcessId(hwnd, &owner);
+    if (owner != search->pid || !IsWindowVisible(hwnd)) return TRUE;
+    RECT rect{};
+    if (!GetClientRect(hwnd, &rect) || rect.right <= 0 || rect.bottom <= 0) return TRUE;
+    search->found = hwnd;
+    return FALSE;   // stop enumerating
+}
+
 } // namespace
 
 bool HandOff(const std::wstring& args) {
-    if (!Start(args)) return false;
+    unsigned long childPid = 0;
+    if (!Start(args, &childPid)) return false;
+
+    // Keep THIS window on screen until the new process has a window of its own, so the switch is a swap rather than
+    // a trip to the desktop (Tyler: "it shows your desktop and then it pops up"). This process keeps rendering its
+    // menu/loading screen while the new one boots; when the new window appears, it is brought to the front and this
+    // one disappears.
+    const ULONGLONG startTick = GetTickCount64();
+    WindowSearch search;
+    search.pid = childPid;
+    bool appeared = false;
+    for (int attempt = 0; attempt < 300; ++attempt) {   // up to 30 s, then give up and swap anyway
+        Sleep(100);
+        search.found = nullptr;
+        EnumWindows(&FindVisibleWindow, reinterpret_cast<LPARAM>(&search));
+        if (search.found) { appeared = true; break; }
+    }
+    if (appeared) {
+        ShowWindow(search.found, SW_SHOWNORMAL);
+        SetForegroundWindow(search.found);
+        NOBLE_INFO("Relaunch: new window up after {} ms; swapping to it", GetTickCount64() - startTick);
+    } else {
+        NOBLE_WARN("Relaunch: the new process did not show a window within 30 s; swapping anyway");
+    }
+
     // The network was already released in Start, so the new process can bind its ports. Hide this window
     // and end now instead of posting WM_CLOSE and waiting for a shutdown that can take seconds (the old
     // process lingered next to the new one).

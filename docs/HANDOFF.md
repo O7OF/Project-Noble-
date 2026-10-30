@@ -22,6 +22,44 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-31, 03:10 ET) - No more desktop flash between menu and match (WeabooTyler117 / DeepSeek)
+
+Tyler: every transition that crosses a loading screen (starting a match, backing out, restart, next campaign mission)
+shows the desktop and then a new window pops up.
+
+### Cause
+
+`Relaunch::HandOff` started the new process and **hid this window immediately**, then terminated. The new process needs
+1.5-15 s to get its window up, and for that whole time there was nothing on screen - the desktop.
+
+### Fixed: the old window stays up until the new one appears
+
+- `Relaunch::Start` now reports the child's PID.
+- `HandOff` waits for the **first visible top-level window owned by that PID** (up to 30 s, 100 ms polling), brings it to
+  the front, and only then hides its own window and ends. The old process keeps rendering its menu/loading screen while
+  the new one boots, so the swap happens between two Noble windows instead of through the desktop.
+- Measured on this machine: `FrontEndMenu: launching match via Relaunch` -> `Relaunch: new window up after 1812 ms;
+  swapping to it` -> `handed off`. So ~1.8 s of menu on screen instead of ~1.8 s of desktop.
+
+### What full seamlessness would need
+
+No process boundary at all, i.e. an **in-process session transition**: end the running match and go back to the menu (or
+straight to the next mission) inside one process. Clues and state:
+
+- `BlamEngine` has `ExecuteCommand(const std::string&)`, which dispatches through the engine's vfunc[9]. **Nothing calls
+  it today** and `BlamEngine` is not part of the running client's path, so using it means wiring an engine-instance
+  handle into reach (or calling vfunc[9] on the instance `ReachHost` already has).
+- The 2026-10-29 notes say the engine cannot switch maps once a match has started (RR also runs every match as its own
+  process), so this is research: dispatch candidate commands mid-match (`game_end`, `game_start`, `map_reload`, `quit`)
+  and watch whether the engine returns to the menu instead of tearing down. A `-exec-at <seconds> <command>` test hook
+  would make that a five-minute experiment per candidate - the same shape as `-pause-at`.
+- Until then the process swap is the mechanism, and it is now a window swap rather than a desktop flash. A loading
+  splash drawn by the child as early as possible would mask the remaining ~1.8 s almost entirely (the child already
+  draws `LoadScreen`, so this is about showing it before the engine initialises, not new art).
+
+Verified: build 0/0; a scripted menu -> match hand-off logged the new-window wait and the swap; the client was closed
+afterwards.
+
 ## 0. Pick up here (2026-10-31, 02:30 ET) - Armory: appearance writes coalesced; the rest of the list triaged (WeabooTyler117 / DeepSeek)
 
 Tyler's list: scoreboard modernisation, armory (background, per-piece camera pan, palette/weapon-throw artefact, emblem

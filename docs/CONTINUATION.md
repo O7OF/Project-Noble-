@@ -195,7 +195,8 @@ Menus (this session, all pushed):
 | `2192054` | CONTINUE limited to campaign missions (recording, row and action) |
 | `53c53f5` | "No limit" is genuinely uncapped (was 120); unfocused 30 FPS throttle is now a setting |
 | `f60a194` | Docs: armory backdrop fifth attempt ruled out; the void is engine geometry, so the fix is data-side (map/tag) |
-| (this commit) | Armory: coalesce appearance writes (stops the palette/weapon-throw strobe); triage of camera pan, emblems, scoreboard, checkpoint continue |
+| `9308d71` | Armory: coalesce appearance writes (stops the palette/weapon-throw strobe); triage of camera pan, emblems, scoreboard, checkpoint continue |
+| (this commit) | Relaunch holds the old window until the new one appears (no desktop flash); notes on in-process transitions |
 | `5f4da08` | Prompts follow the device everywhere; `InputPrompts` button glyphs in the CONTROLLER list |
 | (this commit) | Main menu **Continue** fast path (spec 4.1/4.10) + a status block at the top of the design doc |
 | `a8f412e` | Menu music player (`PauseMusic/ResumeMusic` + `DrawMusicPlayer`) |

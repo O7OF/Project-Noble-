@@ -14,7 +14,8 @@ void SetCurrentGameArgs(const std::wstring& args);
 std::wstring CurrentGameArgs();
 
 // Starts noble-client.exe with these arguments (empty = front-end menu). True if it started.
-bool Start(const std::wstring& args);
+// `outPid` (optional) receives the new process id, so a caller can wait for its window to appear before hiding.
+bool Start(const std::wstring& args, unsigned long* outPid = nullptr);
 
 // Starts noble-client.exe with these arguments and ends THIS process straight away (its windows are hidden
 // first and the log is flushed), so there is never a second Noble client open next to the new one.
