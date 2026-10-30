@@ -167,6 +167,8 @@ Menus (this session, all pushed):
 | `bf9d384` | MCC-style `PlayerRow` (rank / emblem / nameplate with tag+name), `MY GAME SESSION` header, empty lobby slot fix |
 | `8059115` | **Emblems load again**: MCC pack stores `E_002_P_SML`, not `e_002_p` (upper case + `_SML`) - this also fixes O7's Armory emblem grid |
 | `e93076f` | `[DEV]` as text, centred rank badge, one framed block, smaller name |
+| `aea6230` | Custom Game / Forge: GAME OPTIONS + PLAYERS rows, row plates for readability |
+| (this commit) | Menu music player (`PauseMusic/ResumeMusic` + `DrawMusicPlayer`) |
 | `ab4a9f4` | One service tag everywhere (Armory profile wins), `-menu-screen social` |
 | (this commit) | Custom Game / Forge: GAME OPTIONS + PLAYERS rows (lobby cap 4-16 now real), row plates for readability |
 | `f40ae67` | `docs/CONTINUATION.md` (this file) + the identity/invite handoff entry |
@@ -207,9 +209,9 @@ Also: invites carry `{senderUsername, hostIp, hostPort, timestamp}` only. To say
 
 ### 5.2 Menu features still open (UI-only, fully testable)
 
-1. **Menu music player widget** - `ReachAudio::MusicTracks()`, `PlayMenuMusic(id)`, `StopMusic()`, `SetMusicVolume()`
-   exist. Build a small now-playing strip (track name, prev/next, mute, shuffle = `play "all"`). True *pause* needs a
-   `PauseMusic()`/resume in `ReachAudio` (today only stop/restart).
+1. ~~**Menu music player widget**~~ **DONE** (2026-10-30 08:15 entry): `ReachAudio::PauseMusic()/ResumeMusic()/
+   IsMusicPaused()` added and `DrawMusicPlayer()` puts a now-playing strip with prev / play-pause / next / mute /
+   shuffle on the main menu.
 2. **Controller presets + custom mapping + extra buttons** - biggest item. The pad is remapped in `ReachHost.cpp`
    (slot 36 input path), so presets (Default / Southpaw / Boxer / Green Thumb / Bumper Jumper / Recon) are a mapping
    table there plus per-action storage in `SettingsData`; the CONTROLLER settings page already has the diagram and

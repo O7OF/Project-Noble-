@@ -55,6 +55,11 @@ struct TrackInfo {
 // Reach's menu theme.
 void PlayMenuMusic(const std::string& id);
 void StopMusic();
+// Pause / resume the menu music without losing its place (the XAudio2 source voice stops and starts again;
+// queued pieces are kept). Returns false when no music is playing.
+bool PauseMusic();
+void ResumeMusic();
+bool IsMusicPaused();
 void SetMusicVolume(float volume);
 
 std::vector<TrackInfo> MusicTracks();

@@ -97,6 +97,8 @@ std::vector<IXAudio2SourceVoice*> s_sfxVoices;
 Piece s_sfx[static_cast<int>(Sfx::Count)];
 
 std::thread s_musicThread;
+std::atomic<IXAudio2SourceVoice*> s_musicVoice{ nullptr };   // voice of the thread above, for pause/resume
+std::atomic<bool> s_musicPaused{ false };
 std::atomic<bool> s_musicStop{false};
 std::atomic<float> s_musicVolume{1.0f};
 std::string s_musicTrack;
@@ -629,6 +631,7 @@ void MusicThread(std::string id) {
         while (queued() >= 2 && !s_musicStop.load()) tick();
         if (voice && memcmp(&voiceFormat, &clip->format, sizeof(WAVEFORMATEX)) != 0) {
             while (queued() > 0 && !s_musicStop.load()) tick();   // different format: finish, then switch voices
+            s_musicVoice.store(nullptr);
             voice->DestroyVoice();
             voice = nullptr;
             held.clear();
@@ -639,6 +642,7 @@ void MusicThread(std::string id) {
             voiceFormat = clip->format;
             voice->SetVolume(fade * s_musicVolume.load());
             voice->Start();
+            s_musicVoice.store(voice);   // for PauseMusic()/ResumeMusic()
         }
         XAUDIO2_BUFFER b{};
         b.AudioBytes = static_cast<UINT32>(clip->data.size());
@@ -709,8 +713,10 @@ void MusicThread(std::string id) {
             std::this_thread::sleep_for(std::chrono::milliseconds(20));
         }
         voice->Stop();
+        s_musicVoice.store(nullptr);
         voice->DestroyVoice();
     }
+    s_musicPaused.store(false);
 }
 
 } // namespace
@@ -835,6 +841,21 @@ void StopMusic() {
 }
 
 void SetMusicVolume(float volume) { s_musicVolume = std::clamp(volume, 0.0f, 1.0f); }
+
+bool PauseMusic() {
+    IXAudio2SourceVoice* v = s_musicVoice.load();
+    if (!v) return false;
+    v->Stop(0);                 // keeps the buffer queue, so ResumeMusic continues where it stopped
+    s_musicPaused.store(true);
+    return true;
+}
+
+void ResumeMusic() {
+    if (IXAudio2SourceVoice* v = s_musicVoice.load()) v->Start(0);
+    s_musicPaused.store(false);
+}
+
+bool IsMusicPaused() { return s_musicPaused.load(); }
 
 std::vector<TrackInfo> MusicTracks() {
     std::vector<TrackInfo> list;

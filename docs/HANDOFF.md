@@ -22,6 +22,44 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-30, 08:15 ET) - Menu music player: now-playing strip, prev/next, pause, mute, shuffle (WeabooTyler117 / DeepSeek)
+
+Backlog item 3 from the continuation guide, done.
+
+### 1. `ReachAudio` can pause and resume
+
+The music thread owns its own `IXAudio2SourceVoice`, so nothing outside could touch it. It now publishes the voice to
+`s_musicVoice` (cleared on destroy and at thread exit) and exposes:
+
+```cpp
+bool PauseMusic();     // voice->Stop(0): queued pieces are kept
+void ResumeMusic();    // voice->Start(0): continues where it stopped
+bool IsMusicPaused();
+```
+
+That is a real pause, not a stop-and-restart.
+
+### 2. The widget (`DrawMusicPlayer` in `FrontEndMenu.cpp`)
+
+Drawn on the **main menu** only, bottom-right above the `PROJECT NOBLE vX` line (measured 1920x1080: no overlap):
+note glyph + the current track (`GAME · Track`, or `Shuffle · every game`, or `Music off`, plus `(paused)`) and five
+36 x 22 px buttons - **prev**, **play/pause** (shows `>` when paused), **next**, **mute** (`VOL`/`MUT`), **shuffle**
+(`SHF`, highlighted when the track is `all`).
+
+- prev/next walk `ReachAudio::MusicTracks()` and immediately save `menuMusicTrack` through `Settings::Get().Update()`,
+  the same "saved as soon as you change it" rule Settings > Audio uses; the track starts playing at once.
+- play/pause uses the new `PauseMusic`/`ResumeMusic`; pressing play while the track is `off` starts Reach's menu theme.
+- mute flips the music volume between 0 and `SettingsData::volumeMusic` without touching the saved volume.
+- the label is clipped, so a long track name cannot push the buttons.
+
+### 3. Checks
+
+- `cmake --build build --config Release`: 0 errors, 0 warnings.
+- Capture at 1920x1080 of the main menu: `SHUFFLE · EVERY GAME` with the five buttons, sitting above the version line.
+
+Next candidate from the guide's backlog: controller presets / custom mapping (needs `ReachHost` slot-36 work), then the
+three engine-research items (skulls, new-map launch indexes, post-game names).
+
 ## 0. Pick up here (2026-10-30, 07:55 ET) - Custom Game / Forge get the same row block as the other setup screens (WeabooTyler117 / DeepSeek)
 
 Tyler: "fix the custom game screen, it looks nothing like the others such as forge, firefight and campaign". The cause:

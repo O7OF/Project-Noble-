@@ -2762,6 +2762,99 @@ static void DrawSocialScreen(OverlayContext& ctx, const Ui& ui, float left, floa
     DrawHints(ui, { { Prompt::Back, "Back" }, { Prompt::Tabs, "Switch Tab (Q/E)" } });
 }
 
+// Menu music player: a compact now-playing strip (track, prev / play-pause / next, mute, shuffle) in the
+// bottom-right of the main menu. Every action takes effect immediately and is saved to settings.json, the
+// same rule the Settings > Audio page uses for the music track.
+void DrawMusicPlayer(const Ui& ui) {
+    const SettingsData sd = Settings::Get().Snapshot();
+    const std::vector<ReachAudio::TrackInfo> tracks = ReachAudio::MusicTracks();
+    if (tracks.empty()) return;
+
+    static bool s_muted = false;
+    const std::string id = sd.menuMusicTrack;
+    int index = -1;
+    for (size_t i = 0; i < tracks.size(); ++i) {
+        if (tracks[i].id == id) { index = static_cast<int>(i); break; }
+    }
+
+    std::string label;
+    if (id == "all") label = "Shuffle \xC2\xB7 every game";
+    else if (id == "off") label = "Music off";
+    else if (index >= 0) label = tracks[index].game + " \xC2\xB7 " + tracks[index].label;
+    else label = ReachAudio::TrackLabel(id);
+    if (ReachAudio::IsMusicPaused()) label += "   (paused)";
+
+    auto saveTrack = [&](const std::string& next) {
+        SettingsData d = Settings::Get().Snapshot();
+        d.menuMusicTrack = next;
+        Settings::Get().Update(d);
+        ReachAudio::PlayMenuMusic(next);
+    };
+    auto step = [&](int dir) {
+        if (tracks.empty()) return;
+        int from = index >= 0 ? index : 0;
+        from = (from + dir + static_cast<int>(tracks.size())) % static_cast<int>(tracks.size());
+        saveTrack(tracks[from].id);
+    };
+
+    const float w = 470.0f * ui.s, h = 30.0f * ui.s;
+    const ImVec2 p0(ui.size.x - w - 40.0f * ui.s, ui.size.y - 140.0f * ui.s);
+    const ImVec2 p1(p0.x + w, p0.y + h);
+    ui.dl->AddRectFilled(p0, p1, IM_COL32(8, 12, 18, 190));
+    ui.dl->AddRect(p0, p1, IM_COL32(90, 120, 150, 90), 0.0f, 0, 1.0f);
+
+    // A small note glyph, then the track name (clipped if the file names are long).
+    const ImVec2 note(p0.x + 14.0f * ui.s, p0.y + h * 0.5f);
+    ui.dl->AddCircleFilled(ImVec2(note.x - 2.0f * ui.s, note.y + 4.0f * ui.s), 3.5f * ui.s, kAccent);
+    ui.dl->AddLine(ImVec2(note.x + 1.5f * ui.s, note.y + 4.0f * ui.s), ImVec2(note.x + 1.5f * ui.s, note.y - 7.0f * ui.s), kAccent, 1.6f * ui.s);
+    ui.dl->AddLine(ImVec2(note.x + 1.5f * ui.s, note.y - 7.0f * ui.s), ImVec2(note.x + 9.0f * ui.s, note.y - 9.0f * ui.s), kAccent, 1.6f * ui.s);
+
+    const float buttonsW = 186.0f * ui.s;   // five 34 s buttons with 4 s gaps
+    const float textRight = p1.x - buttonsW - 10.0f * ui.s;
+    const std::string shown = Upper(label);
+    ui.dl->PushClipRect(ImVec2(p0.x + 30.0f * ui.s, p0.y), ImVec2(textRight, p1.y), true);
+    Text(ui, NobleStyle::SmallFont(), 12.5f, ImVec2(p0.x + 30.0f * ui.s, p0.y + 8.0f * ui.s),
+         ReachAudio::IsMusicPaused() ? kDim : IM_COL32(205, 220, 235, 235), shown.c_str());
+    ui.dl->PopClipRect();
+
+    const char* glyphs[5] = { "|<<", "||>", ">>|", "VOL", "SHF" };   // prev, play/pause, next, mute, shuffle
+    if (ReachAudio::IsMusicPaused()) glyphs[1] = ">  ";
+    if (s_muted) glyphs[3] = "MUT";
+    float bx = textRight + 6.0f * ui.s;
+    const float bw = 34.0f * ui.s;
+    for (int i = 0; i < 5; ++i) {
+        const ImVec2 a(bx + i * (bw + 4.0f * ui.s), p0.y + 4.0f * ui.s);
+        const ImVec2 b(a.x + bw, p0.y + h - 4.0f * ui.s);
+        ImGui::SetCursorScreenPos(a);
+        ImGui::PushID(3000 + i);
+        const bool pressed = ImGui::InvisibleButton("##music", ImVec2(bw, h - 8.0f * ui.s));
+        const bool hovered = ImGui::IsItemHovered();
+        ImGui::PopID();
+        const bool active = (i == 1 && ReachAudio::IsMusicPaused()) || (i == 3 && s_muted) || (i == 4 && id == "all");
+        ui.dl->AddRectFilled(a, b, active ? IM_COL32(52, 112, 156, 230)
+                                          : (hovered ? IM_COL32(40, 56, 72, 230) : IM_COL32(18, 24, 32, 220)));
+        ui.dl->AddRect(a, b, hovered ? IM_COL32(170, 220, 255, 180) : IM_COL32(80, 110, 140, 90), 0.0f, 0, 1.0f);
+        const float gw = TextWidth(NobleStyle::SmallFont(), 11.0f * ui.s, glyphs[i]);
+        Text(ui, NobleStyle::SmallFont(), 11.0f, ImVec2(a.x + (bw - gw) * 0.5f, a.y + 4.0f * ui.s), kWhite, glyphs[i]);
+        if (!pressed) continue;
+        MenuSounds::Click();
+        switch (i) {
+        case 0: step(-1); break;
+        case 1:
+            if (ReachAudio::IsMusicPaused()) ReachAudio::ResumeMusic();
+            else if (!ReachAudio::PauseMusic() || id == "off") saveTrack(index >= 0 ? tracks[index].id : "reach:menu");
+            break;
+        case 2: step(1); break;
+        case 3:
+            s_muted = !s_muted;
+            ReachAudio::SetMusicVolume(s_muted ? 0.0f : Settings::Get().Snapshot().volumeMusic);
+            break;
+        case 4: saveTrack(id == "all" ? (index >= 0 ? tracks[index].id : "reach:menu") : "all"); break;
+        default: break;
+        }
+    }
+}
+
 // A friend's game invite is shown on every menu screen as a small panel with JOIN / DISMISS, unless the
 // player turned invites off in Settings > Online services. The invite carries the host endpoint, so JOIN is
 // the same relaunch the server browser uses for a direct connect (2026-10-30).
@@ -2985,6 +3078,8 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
             }
             DrawHints(ui, { { Prompt::Accept, "Select" }, { Prompt::Back, "Cancel" } });
         }
+        DrawMusicPlayer(ui);
+
         std::string version(VERSION_STRING);
         const size_t paren = version.find(" (");
         if (paren != std::string::npos) version.resize(paren);
