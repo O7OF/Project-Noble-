@@ -123,3 +123,37 @@ from somewhere else:
 
 The emblem *data* (53 backs, 80 fronts, 160 shapes, transforms, atlas indices) is already captured in
 `tools/emblem/emblem_library.xml`; only the sprite sheet is missing.
+
+
+---
+
+## Sandbox engine (0x04) now launches - and what it means for third person
+
+Re-tested with the current build (research hook `-engine-mode <n>` added to `main.cpp` / `BlamEngine`):
+
+| engine class | result on `forge_halo`, host, 40 s |
+|---|---|
+| `0x03` Megalo (current Forge) | `game session started`, Forge HUD, 0 errors |
+| **`0x04` sandbox** | `c_game_engine Start 0xB30`, launch states 0 -> 11, `game session started`, Forge HUD, 0 errors |
+
+So the earlier "0x04 stalls at launch state 2" is no longer true - the sandbox engine loads and runs. The captured frame is
+**first person**, though: Reach Forge starts you as your Spartan and the third-person **monitor / Editor mode** camera is
+entered in-game.
+
+Where the engine exposes that mode:
+
+- HaloScript has a real `(editor_mode)` query, used across the campaign scripts (`m05`, `m10`, `m20`, `m30`, `m45`, ...) to
+  branch cutscenes and object management.
+- `game_options_strings.multilingual_unicode_string_list` contains *"Forge Traits applied to players in Editor mode."* -
+  so the engine has per-player "Editor mode" with traits, i.e. the third-person monitor is an engine state, not a script
+  trick.
+
+Practical route for the toggle: in a Forge (sandbox) session, trigger the engine's own Editor-mode switch and you get the
+third-person monitor. Two ways to drive it from Noble:
+
+1. **Hotkey that synthesises the bound control** (SendInput) while in Forge mode - host-gated and mode-gated exactly as
+   asked, no engine patch. Needs the default binding for the editor-mode action (profile bindings are at `+0x42C`).
+2. **Call the engine function directly** once located in `haloreach.dll` (the sandbox engine's editor-mode setter), which
+   would be cleaner but needs a Ghidra pass over the sandbox engine's player-control functions.
+
+The `-engine-mode` research hook stays in the build (documented as test-only) so this can be exercised quickly.

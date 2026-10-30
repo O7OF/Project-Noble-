@@ -257,6 +257,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     bool hostPublic = true;
     int hostMaxPlayers = 16;
     int expectedPeers = 0;
+    int engineModeOverride = 0;
     std::string connectAddress = "";
     std::string connectSessionId = "";
     std::string connectSessionToken = "";
@@ -471,7 +472,11 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             }
         }
 
-        blamEngine->LaunchMap(launchMap, launchMode, launchDifficulty, launchSkulls, customMvar, customVariant, connectAddress, expectedPeers);
+        if (engineModeOverride > 0) {
+        noble::BlamEngine::SetEngineModeOverride(engineModeOverride);
+        NOBLE_WARN("main: -engine-mode {} (research hook - forcing launch-block +0x0C)", engineModeOverride);
+    }
+    blamEngine->LaunchMap(launchMap, launchMode, launchDifficulty, launchSkulls, customMvar, customVariant, connectAddress, expectedPeers);
     } else {
         if (launchHost) {
             // Bind UDP port 11774 and start Master Server advertisement + WebSocket Relay BEFORE

@@ -281,6 +281,8 @@ uint32_t BlamEngine::ResolveMapId(const std::string& mapName) {
     return 0;
 }
 
+int BlamEngine::s_engineModeOverride = 0;
+
 std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameModeTag, int difficulty, uint64_t skulls,
                                                    const std::string& customMvarPath, const std::string& customVariantPath,
                                                    const std::string& connectAddress) {
@@ -396,7 +398,13 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
         // multiplayer mode), 5 = Firefight. 0x04 is the special map-editor path, NOT Forge:
         // the engine's mode dispatcher explicitly excludes 0x04 from the normal game-start
         // branch (see haloreach+0xDCCC), so launching Forge with it stalls at launch state 2.
-        block[0x0C] = (isMainMenu || isCampaign) ? 0x01 : (isFirefight ? 0x05 : 0x03);
+        const int overrideMode = BlamEngine::EngineModeOverride();
+        block[0x0C] = static_cast<uint8_t>(overrideMode > 0
+                                               ? overrideMode
+                                               : ((isMainMenu || isCampaign) ? 0x01 : (isFirefight ? 0x05 : 0x03)));
+        if (overrideMode > 0) {
+            NOBLE_WARN("BlamEngine: launch-block +0x0C forced to 0x{:X} by -engine-mode (research hook)", overrideMode);
+        }
         block[0x10] = isMainMenu ? 0xFE : 0xBE;
         block[0x11] = isMainMenu ? 0xFF : 0x00;
         block[0x12] = isMainMenu ? 0xFF : 0x00;

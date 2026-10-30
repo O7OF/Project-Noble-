@@ -69,6 +69,22 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-31, 18:20 ET) - Sandbox engine 0x04 launches now; third person is the Editor-mode monitor (WeabooTyler117 / DeepSeek)
+
+- Added a test-only research hook: `-engine-mode <n>` forces launch-block `+0x0C` (`BlamEngine::SetEngineModeOverride`),
+  logged as a warning so it can never be mistaken for normal behaviour.
+- **The sandbox engine (0x04) no longer stalls.** `forge_halo`, host, class 0x04: `c_game_engine Start 0xB30`, launch
+  state 0 -> 11, `game session started`, Forge HUD, 0 errors, frames pumping (5400 in 40 s). Class 0x03 stays equally
+  healthy. The old "0x04 stalls at launch state 2" note is obsolete.
+- Captured frame in sandbox mode is **first person** - Reach Forge starts you as the Spartan; the third-person
+  **monitor / Editor mode** is entered in-game. Evidence that Editor mode is a real engine state: HaloScript has an
+  `(editor_mode)` query used across m05/m10/m20/m30/m45, and `game_options_strings` ships the line *"Forge Traits applied
+  to players in Editor mode."*
+- Two ways to drive the toggle from Noble: synthesise the bound Editor-mode control (SendInput) while in a Forge session -
+  host- and mode-gated, no patch - or locate the sandbox engine's editor-mode setter in `haloreach.dll` with Ghidra.
+- Next unknown: the default binding for the editor-mode action (profile bindings live at `+0x42C`; the settings UI in
+  `tags\ui` may name the action).
+
 ## 0. Pick up here (2026-10-31, 17:45 ET) - Atlas export blocked; emblem data still complete (WeabooTyler117 / DeepSeek)
 
 - `tool.exe export-bitmap-dds <abs>\tags\ui\cui\common\emblems\emblems.bitmap <prefix>` produces
