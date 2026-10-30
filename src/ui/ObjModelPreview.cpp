@@ -602,7 +602,9 @@ bool ObjModelPreview::Render(ID3D11DeviceContext* context, float rotationRadians
 	context->ClearDepthStencilView(m_depthDsv.Get(), D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
 
 	const float zoom = std::clamp(cam.zoom, 0.30f, 2.8f);
-	const XMVECTOR eye = XMVectorSet(0.0f, 0.06f, -3.2f / zoom, 1.0f);
+	// The camera **strafes** with focusXOffset (eye and focus move together), so the subject actually shifts across the
+	// frame - aiming only the focus barely moved it (6.7% between the two shoulder views, measured 2026-10-31).
+	const XMVECTOR eye = XMVectorSet(cam.focusXOffset, 0.06f, -3.2f / zoom, 1.0f);
 	const XMVECTOR focus = XMVectorSet(cam.focusXOffset, cam.focusYOffset, 0.0f, 1.0f);
 	const XMVECTOR up = XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
 	const XMMATRIX view = XMMatrixLookAtLH(eye, focus, up);

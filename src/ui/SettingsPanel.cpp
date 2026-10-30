@@ -881,6 +881,14 @@ void SettingsPanel::RenderGraphics() {
             When::Apply, "Off", m_edit.fxaa != m_saved.fxaa)) {
         ToggleValue(m_edit.fxaa);
     }
+    Section("ARMORY");
+    if (Row("ARMORY PREVIEW", "Which renderer draws the Spartan in the Armory. Noble's own draws the model on a designed stage with its own lights and a camera that can pan to the part you are editing; Reach's own shows the in-game model in its unlit chamber.",
+            When::Apply, "Noble", m_edit.armoryPreview != m_saved.armoryPreview)) {
+        if (const int d = CycleValue(m_edit.armoryPreview == 1 ? "NOBLE" : "HALO: REACH", m_edit.armoryPreview, 2)) {
+            m_edit.armoryPreview = (m_edit.armoryPreview + d + 2) % 2;
+            MenuSounds::Change();
+        }
+    }
     Section("REACH'S OWN SETTINGS");
     Paragraph("Texture filtering, shadows, motion blur and draw distance are handled inside Halo: Reach itself. Noble has no "
               "handle on them yet, so they are not offered here rather than shown as switches that do nothing. Set them in MCC's "
@@ -1468,7 +1476,8 @@ int SettingsPanel::CountDiff(const SettingsData& a, const SettingsData& b, Cat c
                (a.menuSounds != b.menuSounds) + (a.menuMusicTrack != b.menuMusicTrack);
     case Cat::Game:
         return f(a.fieldOfView, b.fieldOfView) + (a.subtitles != b.subtitles) + (a.menuBackground != b.menuBackground) +
-               f(a.brightness, b.brightness) + (a.fxaa != b.fxaa) + (a.throttleUnfocused != b.throttleUnfocused);
+               f(a.brightness, b.brightness) + (a.fxaa != b.fxaa) + (a.throttleUnfocused != b.throttleUnfocused) +
+               (a.armoryPreview != b.armoryPreview);
     case Cat::Player:
         return (a.playerName != b.playerName) + (a.serviceTag != b.serviceTag);
     case Cat::KeyboardMouse: {

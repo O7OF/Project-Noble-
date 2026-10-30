@@ -22,6 +22,36 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-31, 06:20 ET) - Armory: pan is visible, Noble's renderer is the default, stage tuned (WeabooTyler117 / DeepSeek)
+
+Finishing the armory work from the 05:40 entry.
+
+### The pan now actually pans
+
+`ObjModelPreview::Render` kept the **eye at x=0** and only aimed the focus, so moving `focusX` rotated the view instead of
+strafing it - measured 6.7 % of pixels between the two shoulder views. The eye now strafes with the offset
+(`eye = (focusXOffset, 0.06, -3.2/zoom)`), and the same measurement is **22.8 %**, with the model visibly shifting left for
+the left shoulder and right for the right.
+
+Framing retuned for the new camera (the old vertical offsets were measured against the engine framing and put parts at the
+frame edge): helmet `{1.15, 1.05, 0}`, shoulders `{1.05, 0.85, +-0.55}`, chest `{0.90, 0.45, 0}`, wrist `{0.62, 0.55, -0.45}`,
+utility `{0.95, -0.55, -0.30}`, knees `{0.90, -1.00, 0}`.
+
+### Noble's renderer is the default
+
+- `SettingsData::armoryPreview` now defaults to **1** (Noble), 0 = Reach's engine scene.
+- New row: **Settings > Graphics > ARMORY > ARMORY PREVIEW** cycling `NOBLE` / `HALO: REACH`, with a description that says
+  which does what.
+- The `LOADING ARMORY...` line only appears when the *engine* mode is selected (Noble's renderer is ready immediately).
+- Stage brightened (`#1a2230 -> #0f141e -> #080a0f`, stronger accent floor glow) so it reads as a lit studio rather than a
+  dark rectangle.
+
+Verified by capture: Helmet / Left Shoulder / Right Shoulder / Knee Guards each frame the right part (helmet vs knees differ
+38 %, shoulders differ 23 % side to side), the floor glow sits under the feet, and the Settings row renders.
+
+**Left for a later polish pass:** the stage could use the player's own menu wallpaper (blurred + darkened) as an option,
+and the pan could be eased a little slower. Both are cosmetic; the structure is done.
+
 ## 0. Pick up here (2026-10-31, 05:40 ET) - Armory stage + camera pan wired into Noble's renderer (WeabooTyler117 / DeepSeek)
 
 Per Tyler's "do whatever you recommend": moved the armory onto Noble's own renderer and gave it a stage.

@@ -1198,13 +1198,13 @@ Framing FramingFor(const std::string& scene, int cameraMode, bool elite) {
     // pieces (wrist, utility) follow their side. This is what the engine's single shoulder camera cannot do.
     if (cameraMode == 1 || elite) return { 0.41f, 0.0f, 0.0f };
     if (cameraMode == 0) return { 0.52f, 0.40f, 0.0f };
-    if (scene == "c_helmet") return { 1.50f, 1.70f, 0.0f };
-    if (scene == "c_left_shoulder") return { 1.15f, 1.30f, -0.52f };
-    if (scene == "c_right_shoulder") return { 1.15f, 1.30f, 0.52f };
-    if (scene == "c_chest") return { 0.95f, 0.90f, 0.0f };
-    if (scene == "c_wrist") return { 0.68f, 0.80f, -0.42f };
-    if (scene == "c_utility") return { 1.00f, -0.50f, -0.30f };
-    if (scene == "c_knees") return { 0.95f, -1.05f, 0.0f };
+    if (scene == "c_helmet") return { 1.15f, 1.05f, 0.0f };
+    if (scene == "c_left_shoulder") return { 1.05f, 0.85f, -0.55f };
+    if (scene == "c_right_shoulder") return { 1.05f, 0.85f, 0.55f };
+    if (scene == "c_chest") return { 0.90f, 0.45f, 0.0f };
+    if (scene == "c_wrist") return { 0.62f, 0.55f, -0.45f };
+    if (scene == "c_utility") return { 0.95f, -0.55f, -0.30f };
+    if (scene == "c_knees") return { 0.90f, -1.00f, 0.0f };
     return { 0.41f, 0.0f, 0.0f };
 }
 
@@ -1228,7 +1228,8 @@ void ArmorCustomizer::RenderCharacterPreview(ID3D11Device* device, ID3D11DeviceC
     static const bool menuMapPresent = std::filesystem::exists(ReachHost::Get().GetDataDir() / "menumaps" / "mainmenu_all.map");
     static double sceneWaitStart = -1.0;
     if (sceneWaitStart < 0.0) sceneWaitStart = ImGui::GetTime();
-    const bool waitingForScene = !engineScene && menuMapPresent;
+    // Only a run that *wants* the engine scene waits for it; Noble's renderer is ready immediately.
+    const bool waitingForScene = Settings::Get().Snapshot().armoryPreview == 0 && !engineScene && menuMapPresent;
     if (waitingForScene) {
         const int dots = static_cast<int>(ImGui::GetTime() * 2.0) % 4;
         const std::string msg = std::string("LOADING ARMORY") + std::string(static_cast<size_t>(dots), '.');
@@ -1306,9 +1307,9 @@ void ArmorCustomizer::RenderCharacterPreview(ID3D11Device* device, ID3D11DeviceC
         {
             const ImVec2 st0 = cursorPos;
             const ImVec2 st1(cursorPos.x + width, cursorPos.y + height);
-            const ImU32 topCol = IM_COL32(16, 22, 32, 255);
-            const ImU32 midCol = IM_COL32(11, 15, 23, 255);
-            const ImU32 botCol = IM_COL32(6, 8, 12, 255);
+            const ImU32 topCol = IM_COL32(26, 34, 48, 255);
+            const ImU32 midCol = IM_COL32(15, 20, 30, 255);
+            const ImU32 botCol = IM_COL32(8, 10, 15, 255);
             const float horizon = cursorPos.y + height * 0.72f;
             dl->AddRectFilledMultiColor(st0, ImVec2(st1.x, horizon), topCol, topCol, midCol, midCol);
             dl->AddRectFilledMultiColor(ImVec2(st0.x, horizon), st1, midCol, midCol, botCol, botCol);
@@ -1319,7 +1320,7 @@ void ArmorCustomizer::RenderCharacterPreview(ID3D11Device* device, ID3D11DeviceC
             dl->AddEllipseFilled(ImVec2(cursorPos.x + width * 0.5f, horizon + height * 0.10f),
                                  ImVec2(width * 0.34f, height * 0.075f), glow, 0.0f, 64);
             dl->AddEllipseFilled(ImVec2(cursorPos.x + width * 0.5f, horizon + height * 0.10f),
-                                 ImVec2(width * 0.20f, height * 0.045f), IM_COL32(180, 220, 255, 18), 0.0f, 64);
+                                 ImVec2(width * 0.24f, height * 0.055f), IM_COL32(180, 220, 255, 30), 0.0f, 64);
             // Hairline horizon.
             dl->AddLine(ImVec2(st0.x + width * 0.06f, horizon), ImVec2(st1.x - width * 0.06f, horizon),
                         IM_COL32(140, 185, 220, 40), 1.0f);
