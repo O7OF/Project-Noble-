@@ -396,6 +396,8 @@ void MasterServerClient::DoRegister() {
         {"host_machine_id", advert.hostMachineId.empty() ? "0x484F535400000001" : advert.hostMachineId},
         {"host_username", advert.hostUsername.empty() ? "Host" : advert.hostUsername}, {"player_name", advert.hostUsername.empty() ? "Host" : advert.hostUsername},
         {"host_is_dev", advert.hostIsDev}, {"host_service_tag", advert.hostServiceTag.empty() ? "117" : advert.hostServiceTag},
+        {"host_rank_index", advert.hostRankIndex}, {"host_emblem_id", advert.hostEmblemId},
+        {"host_nameplate_id", advert.hostNameplateId}, {"host_team", advert.hostTeam},
     };
     if (!advert.inProgress) {
         body["roster"] = nlohmann::json::array({
@@ -406,6 +408,8 @@ void MasterServerClient::DoRegister() {
                 {"isHost", true},
                 {"isDev", advert.hostIsDev},
                 {"serviceTag", advert.hostServiceTag.empty() ? "117" : advert.hostServiceTag},
+                {"rankIndex", advert.hostRankIndex}, {"emblemId", advert.hostEmblemId},
+                {"nameplateId", advert.hostNameplateId}, {"team", advert.hostTeam},
                 {"ping", 0}
             }
         });
@@ -599,6 +603,10 @@ LobbyState MasterServerClient::FetchLobbyStateSync(const std::string& sessionId)
                 p.machineId = item.value("machineId", "");
                 p.username = item.value("username", "Spartan");
                 p.serviceTag = item.value("serviceTag", "117");
+            p.rankIndex = item.value("rankIndex", -1);
+            p.emblemId = item.value("emblemId", 0);
+            p.nameplateId = item.value("nameplateId", 0);
+            p.team = item.value("team", 0);
                 p.isHost = item.value("isHost", false);
                 p.isDev = item.value("isDev", false);
                 p.ping = item.value("ping", 0);
@@ -691,6 +699,10 @@ LobbyState MasterServerClient::JoinLobbySync(const std::string& sessionId,
                 p.machineId = item.value("machineId", "");
                 p.username = item.value("username", "Spartan");
                 p.serviceTag = item.value("serviceTag", "117");
+            p.rankIndex = item.value("rankIndex", -1);
+            p.emblemId = item.value("emblemId", 0);
+            p.nameplateId = item.value("nameplateId", 0);
+            p.team = item.value("team", 0);
                 p.isHost = item.value("isHost", false);
                 p.isDev = item.value("isDev", false);
                 p.ping = item.value("ping", 0);

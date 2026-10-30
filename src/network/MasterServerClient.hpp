@@ -20,6 +20,12 @@ struct LobbyPlayer {
     bool isHost = false;
     bool isDev = false;
     int ping = 0;
+    // Identity for the party/lobby row, so other players' rows show their own rank, emblem, nameplate
+    // and team instead of placeholders (2026-10-30). 0 / -1 = not known.
+    int rankIndex = -1;
+    int emblemId = 0;
+    int nameplateId = 0;
+    int team = 0;            // 0 = no team (Free for All / no team mode), 1 = red, 2 = blue
 };
 
 // Snapshot of a pre-game lobby session.
@@ -92,6 +98,11 @@ struct MasterAdvert {
     std::string hostUsername;
     bool hostIsDev = false;
     std::string hostServiceTag = "117";
+    // The host's row identity (same meaning as LobbyPlayer's fields).
+    int hostRankIndex = -1;
+    int hostEmblemId = 0;
+    int hostNameplateId = 0;
+    int hostTeam = 0;
 };
 
 struct MasterJoinInfo {

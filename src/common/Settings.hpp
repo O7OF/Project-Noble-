@@ -43,6 +43,7 @@ struct SettingsData {
     float volumeMusic = 1.0f;
     float volumeOther = 1.0f;
     bool menuSounds = true;
+    bool inviteNotifications = true;   // show a JOIN toast when a friend invites you
     std::string menuMusicTrack = "reach:menu"; // ReachAudio::MusicTracks() id, "all" or "off"
 
     // Gameplay

@@ -1336,6 +1336,13 @@ static void SetupHostLobby(MenuState& st, const std::string& mapScenario, const 
         adv.hostUsername = pName;
         adv.hostIsDev = AuthClient::Get().IsDeveloper();
         adv.hostServiceTag = Settings::Get().Snapshot().serviceTag.empty() ? "117" : Settings::Get().Snapshot().serviceTag;
+        // The host's own row identity, so guests can draw it (rank / emblem / nameplate / team).
+        {
+            const auto& prof = UIManager::GetArmorCustomizer().GetProfile();
+            adv.hostRankIndex = Career::RankIndex(Career::Get().credits);
+            adv.hostEmblemId = prof.emblemIndex;
+            adv.hostNameplateId = prof.nameplateIndex;
+        }
         MasterServerClient::Get().StartAdvertising(adv);
         st.lobbySessionId = MasterServerClient::Get().GetCurrentSessionId();
         st.lobbySessionToken = MasterServerClient::Get().GetCurrentSessionToken();
@@ -1349,6 +1356,12 @@ static void SetupHostLobby(MenuState& st, const std::string& mapScenario, const 
     me.isHost = true;
     me.isDev = AuthClient::Get().IsDeveloper();
     me.ping = 0;
+    {
+        const auto& prof = UIManager::GetArmorCustomizer().GetProfile();
+        me.rankIndex = Career::RankIndex(Career::Get().credits);
+        me.emblemId = prof.emblemIndex;
+        me.nameplateId = prof.nameplateIndex;
+    }
     st.lobbyRoster.push_back(me);
 
     st.screen = Screen::PreGameLobby;
@@ -1858,6 +1871,10 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
                                 p.username = pName;
                                 p.serviceTag = hostTag;
                                 p.isDev = hostDev;
+                                const auto& prof = UIManager::GetArmorCustomizer().GetProfile();
+                                p.rankIndex = Career::RankIndex(Career::Get().credits);
+                                p.emblemId = prof.emblemIndex;
+                                p.nameplateId = prof.nameplateIndex;
                             }
                         }
                     }
@@ -2292,10 +2309,10 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         const auto& ownProf = UIManager::GetArmorCustomizer().GetProfile();
         const int localRank = Career::RankIndex(Career::Get().credits);
         PlayerRow(ui, pr0, partyW,
-                  isLocalPlayer ? localRank : -1,
-                  isLocalPlayer ? ownProf.emblemIndex : 0,
-                  isLocalPlayer ? ownProf.nameplateIndex : 0,
-                  0 /* the roster carries no team yet */,
+                  player.rankIndex >= 0 ? player.rankIndex : (isLocalPlayer ? localRank : -1),
+                  player.emblemId > 0 ? player.emblemId : (isLocalPlayer ? ownProf.emblemIndex : 0),
+                  player.nameplateId > 0 ? player.nameplateId : (isLocalPlayer ? ownProf.nameplateIndex : 0),
+                  player.team,
                   player.serviceTag, player.username, player.isDev, selected);
 
         ImGui::SetCursorScreenPos(pr0);
@@ -2730,6 +2747,82 @@ static void DrawSocialScreen(OverlayContext& ctx, const Ui& ui, float left, floa
         MenuSounds::Back();
     }
     DrawHints(ui, { { Prompt::Back, "Back" }, { Prompt::Tabs, "Switch Tab (Q/E)" } });
+}
+
+// A friend's game invite is shown on every menu screen as a small panel with JOIN / DISMISS, unless the
+// player turned invites off in Settings > Online services. The invite carries the host endpoint, so JOIN is
+// the same relaunch the server browser uses for a direct connect (2026-10-30).
+void DrawInviteToast(const Ui& ui, MenuState& st) {
+    if (st.confirmQuit || s_showAccountModal || s_showDevMenu) return;
+    if (!Settings::Get().Snapshot().inviteNotifications) return;
+    if (!AuthClient::Get().IsLoggedIn()) return;
+
+    static double s_lastPoll = 0.0;
+    const double now = ImGui::GetTime();
+    if (now - s_lastPoll > 4.0) {
+        s_lastPoll = now;
+        SocialClient::Get().PollInvitesAsync();
+    }
+
+    const std::vector<GameInvite> invites = SocialClient::Get().GetInvites();
+    if (invites.empty()) return;
+    const GameInvite* newest = &invites.front();
+    for (const GameInvite& inv : invites) {
+        if (inv.timestamp >= newest->timestamp) newest = &inv;
+    }
+
+    static std::string s_answered;   // "sender|timestamp" already answered this session
+    char key[160];
+    std::snprintf(key, sizeof(key), "%s|%llu", newest->senderUsername.c_str(),
+                  static_cast<unsigned long long>(newest->timestamp));
+    if (s_answered == key) return;
+
+    const float w = 470.0f * ui.s, h = 96.0f * ui.s;
+    const ImVec2 p0(ui.size.x - w - 40.0f * ui.s, ui.size.y - h - 118.0f * ui.s);
+    const ImVec2 p1(p0.x + w, p0.y + h);
+    ui.dl->AddRectFilled(p0, p1, IM_COL32(12, 20, 30, 245));
+    ui.dl->AddRect(p0, p1, IM_COL32(143, 216, 255, 170), 0.0f, 0, 1.2f);
+    ui.dl->AddLine(ImVec2(p0.x, p0.y + 3.0f * ui.s), ImVec2(p1.x, p0.y + 3.0f * ui.s), kAccent, 3.0f * ui.s);
+
+    Text(ui, NobleStyle::SmallFont(), 12.0f, ImVec2(p0.x + 16.0f * ui.s, p0.y + 11.0f * ui.s), kAccent, "GAME INVITE");
+    Text(ui, NobleStyle::TitleFont(), 19.0f, ImVec2(p0.x + 16.0f * ui.s, p0.y + 30.0f * ui.s), kWhite,
+         newest->senderUsername.c_str());
+    const float nameW = TextWidth(NobleStyle::TitleFont(), 19.0f * ui.s, newest->senderUsername.c_str());
+    Text(ui, nullptr, 15.0f, ImVec2(p0.x + 16.0f * ui.s + nameW + 8.0f * ui.s, p0.y + 36.0f * ui.s), kDim,
+         "is inviting you to a match");
+
+    const float bw = 160.0f * ui.s, bh = 30.0f * ui.s;
+    const ImVec2 j0(p0.x + w - bw * 2.0f - 26.0f * ui.s, p1.y - bh - 12.0f * ui.s);
+    const ImVec2 d0(j0.x + bw + 10.0f * ui.s, j0.y);
+    auto button = [&](const char* id, ImVec2 a, const char* label, bool primary) {
+        ImGui::SetCursorScreenPos(a);
+        ImGui::PushID(id);
+        const bool pressed = ImGui::InvisibleButton("##b", ImVec2(bw, bh));
+        const bool hovered = ImGui::IsItemHovered();
+        ImGui::PopID();
+        const ImVec2 b(a.x + bw, a.y + bh);
+        ui.dl->AddRectFilled(a, b, primary ? (hovered ? IM_COL32(76, 150, 200, 255) : IM_COL32(52, 112, 156, 240))
+                                           : (hovered ? IM_COL32(60, 74, 88, 240) : IM_COL32(26, 32, 40, 230)));
+        ui.dl->AddRect(a, b, primary ? IM_COL32(170, 220, 255, hovered ? 220 : 90) : IM_COL32(120, 140, 160, 90));
+        const float tw = TextWidth(NobleStyle::TitleFont(), 16.0f * ui.s, label);
+        Text(ui, NobleStyle::TitleFont(), 16.0f, ImVec2(a.x + (bw - tw) * 0.5f, a.y + 5.0f * ui.s), kWhite, label);
+        if (pressed) MenuSounds::Click();
+        return pressed;
+    };
+
+    if (button("invite_join", j0, "JOIN", true)) {
+        s_answered = key;
+        SocialClient::Get().ClearInviteAsync(newest->senderUsername);
+        SocialClient::Get().RefreshFriendsAsync();
+        NOBLE_INFO("FrontEndMenu: accepting invite from {} ({})", newest->senderUsername, newest->hostIp);
+        const std::wstring args = L"-connect \"" + ToWide(newest->hostIp + ":" + std::to_string(newest->hostPort)) + L"\"";
+        Relaunch::HandOff(args);
+    }
+    if (button("invite_dismiss", d0, "DISMISS", false)) {
+        s_answered = key;
+        SocialClient::Get().ClearInviteAsync(newest->senderUsername);
+        SocialClient::Get().RefreshFriendsAsync();
+    }
 }
 
 void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11DeviceContext* context,
@@ -3322,6 +3415,9 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         break;
     }
     }
+
+    // Friend invites reach the player on any screen (Settings > Online services can turn this off).
+    DrawInviteToast(ui, st);
 
     ImGui::End();
 }

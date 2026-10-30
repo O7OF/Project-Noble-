@@ -1016,6 +1016,12 @@ void SettingsPanel::RenderController() {
 }
 
 void SettingsPanel::RenderOnline() {
+    Section("INVITES");
+    if (Row("INVITE NOTIFICATIONS", "Show a notification with a JOIN button when a friend invites you to a game, on any menu screen. Turn it off to see invites only in the COMMUNITY screen.",
+            When::Apply, "On", m_edit.inviteNotifications != m_saved.inviteNotifications)) {
+        ToggleValue(m_edit.inviteNotifications);
+    }
+
     Section("SERVERS");
     if (!Row("MASTER SERVER", "The list of online games for the GAMES screen. Leave it empty to only see games on your LAN.",
              When::Apply, "Noble's test server", m_edit.masterServerUrl != m_saved.masterServerUrl)) return;
@@ -1166,7 +1172,7 @@ int SettingsPanel::CountDiff(const SettingsData& a, const SettingsData& b, Cat c
                f(a.padLeftDeadZone, b.padLeftDeadZone) + f(a.padRightDeadZone, b.padRightDeadZone) +
                (a.padVibration != b.padVibration) + f(a.padVibrationStrength, b.padVibrationStrength);
     case Cat::Online:
-        return a.masterServerUrl != b.masterServerUrl;
+        return (a.masterServerUrl != b.masterServerUrl) + (a.inviteNotifications != b.inviteNotifications);
     default:
         return 0;
     }
