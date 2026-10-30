@@ -22,7 +22,40 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
-## 0. Pick up here (2026-10-30, 07:05 ET) - MCC-style player rows: rank - emblem - nameplate with tag/name (WeabooTyler117 / DeepSeek)
+## 0. Pick up here (2026-10-30, 07:40 ET) - Emblems never loaded (pack name case) + final player-row anatomy (WeabooTyler117 / DeepSeek)
+
+### 1. Bug: every emblem slot was empty, everywhere
+
+`UiArt::EmblemByName()` asked the MCC pack for the name exactly as `playercustomization.xml` spells it (`e_002_p`),
+but `emblemstexturepack.perm.bin` stores the images in **UPPER CASE and only as the small variant**: `e_002_p` is
+`E_002_P_SML` in the pack (569 of 571 entries end in `_SML`; the only others are `PLATINUMGLOW`, `RANKPLATE`). So the
+lookup missed for all 225 emblems in the catalog and every emblem came out blank - the party/lobby row, and O7OF's
+Armory emblem grid, which uses the same call.
+
+- `src/ui/UiArt.cpp`: `EmblemByName()` upper-cases the name and tries `<NAME>_SML` first, then `<NAME>`.
+- Debug helper for next time: dumping the index is 10 lines of Python - read `emblemstexturepack.perm.bin` in 0x1E0
+  records, magic `0xCDBFA090`, name at `+0x44` (24 bytes), same as `PackIndex()` in `UiArt.cpp`.
+- **Watch out:** `small` is a Windows macro (`#define small char`), so `if (UiTexture small = ...)` fails to compile
+  with a confusing C2628. Use another name.
+
+### 2. Player row anatomy, after Tyler's MCC crops
+
+Final layout of `PlayerRow()` (shared by MY PARTY and the pre-game roster), left to right:
+
+1. **rank badge** (30 * s, 5 * s gap),
+2. **emblem tile**: dark framed square with the emblem filling it, **joined to the bar** (no gap),
+3. **team strip** (6 * s, flush between tile and bar): only when the game type assigns teams - red team 1, blue team 2.
+   The parameter exists (`team`) but both call sites pass `0`: the lobby roster carries no team yet, so nothing is
+   drawn (which is also what MCC shows in the main menu and in Free for All),
+4. **nameplate bar**: plate art, `[TAG]` on the top line, gamertag below, DEV chip inside on the right, 1 px frame.
+
+### 3. Checks
+
+- `cmake --build build --config Release`: 0 errors, 0 warnings.
+- Capture at 1920x1080: MY PARTY row now shows rank badge, the dark emblem tile with the emblem drawn in it, and the
+  joined nameplate bar with `[NOBL]` / `WEABOOTYLER117`.
+
+--
 
 UI only: `src/ui/FrontEndMenu.cpp`. Follows the 06:40 ET entry, which had the nameplate only as a row background.
 

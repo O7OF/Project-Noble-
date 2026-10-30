@@ -831,49 +831,61 @@ void DrawAccountModal(const Ui& ui) {
 // always match. rankIndex/emblemIndex/nameplateIndex may be 0 or negative when the data is not known (a remote
 // player), in which case that piece is drawn as a plain placeholder or left out.
 float PlayerRow(const Ui& ui, ImVec2 pos, float width, int rankIndex, int emblemIndex, int nameplateIndex,
-                const std::string& serviceTag, const std::string& name, bool dev, bool selected) {
+                int team, const std::string& serviceTag, const std::string& name, bool dev, bool selected) {
     const float h = 40.0f * ui.s;
-    const float badge = 30.0f * ui.s;
-    const float emb = 24.0f * ui.s;
+    const float badgeW = 30.0f * ui.s;
+    const float embW = 30.0f * ui.s;
+    const float stripW = team ? 6.0f * ui.s : 0.0f;
     const float gap = 5.0f * ui.s;
+    float x = pos.x;
 
-    // Rank badge
+    // Rank badge, set apart from the player block the way MCC does it.
+    const ImVec2 r0(x, pos.y + 2.0f * ui.s), r1(x + badgeW, pos.y + h - 2.0f * ui.s);
     if (const UiTexture rank = UiArt::RankIcon(rankIndex)) {
-        UiArt::DrawContain(ui.dl, rank, ImVec2(pos.x, pos.y + (h - badge) * 0.5f),
-                           ImVec2(pos.x + badge, pos.y + (h - badge) * 0.5f + badge));
+        UiArt::DrawContain(ui.dl, rank, r0, r1);
     } else {
-        ui.dl->AddRectFilled(ImVec2(pos.x, pos.y + (h - badge) * 0.5f),
-                             ImVec2(pos.x + badge, pos.y + (h - badge) * 0.5f + badge), IM_COL32(26, 34, 44, 220));
-        ui.dl->AddRect(ImVec2(pos.x, pos.y + (h - badge) * 0.5f),
-                       ImVec2(pos.x + badge, pos.y + (h - badge) * 0.5f + badge), IM_COL32(90, 120, 150, 120));
+        ui.dl->AddRectFilled(r0, r1, IM_COL32(26, 34, 44, 220));
+        ui.dl->AddRect(r0, r1, IM_COL32(90, 120, 150, 120), 0.0f, 0, 1.0f);
+    }
+    x += badgeW + gap;
+
+    // Emblem tile: a dark framed square with the emblem filling it. It is joined to the nameplate bar (no
+    // gap) and, in a team game type, the team colour is a strip on the tile's right edge - that is the
+    // e + strip + bar unit MCC shows.
+    const ImVec2 e0(x, pos.y), e1(x + embW, pos.y + h);
+    ui.dl->AddRectFilled(e0, e1, IM_COL32(20, 14, 18, 250));
+    if (const UiTexture emblem = UiArt::Emblem(emblemIndex)) {
+        UiArt::DrawContain(ui.dl, emblem, ImVec2(e0.x + 2.0f * ui.s, e0.y + 2.0f * ui.s),
+                           ImVec2(e1.x - 2.0f * ui.s, e1.y - 2.0f * ui.s));
+    }
+    ui.dl->AddRect(e0, e1, IM_COL32(160, 170, 180, 120), 0.0f, 0, 1.0f);
+    x += embW;
+
+    // Team strip: only when the game type assigns teams (Free for All, the main menu and a lobby with no
+    // team mode show nothing). Flush against the emblem and the bar.
+    if (stripW > 0.0f) {
+        const ImVec2 s0(x, pos.y), s1(x + stripW, pos.y + h);
+        ui.dl->AddRectFilled(s0, s1, team == 1 ? IM_COL32(190, 34, 30, 255) : IM_COL32(36, 62, 170, 255));
+        ui.dl->AddRect(s0, s1, IM_COL32(200, 210, 220, 110), 0.0f, 0, 1.0f);
+        x += stripW;
     }
 
-    // Emblem chip. Left out completely (and the bar takes its space) when MCC has no emblem texture for
-    // this id - a bare placeholder square looked unfinished in the row.
-    const float embX = pos.x + badge + gap;
-    const UiTexture emblem = UiArt::Emblem(emblemIndex);
-    if (emblem) {
-        UiArt::DrawContain(ui.dl, emblem, ImVec2(embX, pos.y + (h - emb) * 0.5f),
-                           ImVec2(embX + emb, pos.y + (h - emb) * 0.5f + emb));
-    }
-
-    // Nameplate bar: service tag on the top line, gamertag on the bottom line
-    const ImVec2 p0(embX + (emblem ? emb + gap : 0.0f), pos.y);
-    const ImVec2 p1(pos.x + width, pos.y + h);
-    ui.dl->AddRectFilled(p0, p1, selected ? IM_COL32(185, 55, 20, 235) : IM_COL32(24, 36, 52, 225));
+    // Nameplate bar: service tag on the top line, gamertag below. Framed even without plate art.
+    const ImVec2 p0(x, pos.y), p1(pos.x + width, pos.y + h);
+    ui.dl->AddRectFilled(p0, p1, selected ? IM_COL32(120, 34, 14, 240) : IM_COL32(22, 26, 32, 240));
     if (nameplateIndex > 0) {
-      if (const UiTexture plate = UiArt::Nameplate(nameplateIndex)) {
-        UiArt::DrawCover(ui.dl, plate, p0, p1, selected ? IM_COL32(255, 215, 195, 240) : IM_COL32(255, 255, 255, 240));
-        // Dark top and bottom bands: the tag and the name sit on top of the art.
-        ui.dl->AddRectFilledMultiColor(p0, p1, IM_COL32(4, 8, 14, 145), IM_COL32(4, 8, 14, 90),
-                                       IM_COL32(4, 8, 14, 175), IM_COL32(4, 8, 14, 175));
-        ui.dl->AddRect(p0, p1, IM_COL32(165, 195, 225, 130), 0.0f, 0, 1.0f);
-      }
+        if (const UiTexture plate = UiArt::Nameplate(nameplateIndex)) {
+            UiArt::DrawCover(ui.dl, plate, p0, p1, selected ? IM_COL32(255, 215, 195, 245) : IM_COL32(255, 255, 255, 245));
+            // Dark bands top and bottom so the tag and the name stay readable on the art.
+            ui.dl->AddRectFilledMultiColor(p0, p1, IM_COL32(4, 8, 14, 150), IM_COL32(4, 8, 14, 95),
+                                           IM_COL32(4, 8, 14, 185), IM_COL32(4, 8, 14, 185));
+        }
     }
+    ui.dl->AddRect(p0, p1, IM_COL32(190, 200, 212, 100), 0.0f, 0, 1.0f);
 
     const float pad = 8.0f * ui.s;
     const std::string tagText = serviceTag.empty() ? std::string("[117]") : "[" + serviceTag + "]";
-    Text(ui, NobleStyle::SmallFont(), 11.5f, ImVec2(p0.x + pad, p0.y + 3.0f * ui.s), IM_COL32(190, 215, 235, 240), tagText.c_str());
+    Text(ui, NobleStyle::SmallFont(), 11.5f, ImVec2(p0.x + pad, p0.y + 3.0f * ui.s), IM_COL32(205, 220, 235, 235), tagText.c_str());
 
     const float devW = dev ? 52.0f * ui.s : 0.0f;
     ui.dl->PushClipRect(ImVec2(p0.x + pad, p0.y + 13.0f * ui.s), ImVec2(p1.x - pad - devW, p1.y), true);
@@ -912,7 +924,8 @@ void DrawParty(const Ui& ui, const std::string& playerName, const char* status) 
             s_rankRead = GetTickCount64();
         }
         y += PlayerRow(ui, ImVec2(x2, y), x + w - x2, s_rank, prof.emblemIndex, prof.nameplateIndex,
-                       sd.serviceTag, playerName, AuthClient::Get().IsDeveloper(), false);
+                       0 /* no team in the main menu */, sd.serviceTag, playerName,
+                       AuthClient::Get().IsDeveloper(), false);
     }
     const float accH = 22.0f * ui.s;
     const ImVec2 accP0(x2, y);
@@ -2271,6 +2284,7 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
                   isLocalPlayer ? localRank : -1,
                   isLocalPlayer ? ownProf.emblemIndex : 0,
                   isLocalPlayer ? ownProf.nameplateIndex : 0,
+                  0 /* the roster carries no team yet */,
                   player.serviceTag, player.username, player.isDev, selected);
 
         ImGui::SetCursorScreenPos(pr0);

@@ -714,7 +714,14 @@ UiTexture Emblem(int id) {
 
 UiTexture EmblemByName(const std::string& image1) {
     if (image1.empty()) return {};
-    return PackImage("emblemstexturepack", image1);
+    // The pack stores MCC's emblem images in UPPER CASE and only as the small variant ("e_002_p" in
+    // playercustomization.xml is "E_002_P_SML" in emblemstexturepack.perm.bin), so an exact lookup never
+    // matched and every emblem slot came out empty (2026-10-30).
+    std::string upper = image1;
+    for (char& c : upper) c = static_cast<char>(::toupper(static_cast<unsigned char>(c)));
+    if (UiTexture sml = PackImage("emblemstexturepack", upper + "_SML")) return sml;   // "small" is a Windows macro
+    if (UiTexture plain = PackImage("emblemstexturepack", upper)) return plain;
+    return {};
 }
 
 } // namespace UiArt
