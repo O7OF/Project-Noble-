@@ -22,6 +22,60 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-31, 11:15 ET) - Campaign co-op: the mission now waits for the guests before it starts (WeabooTyler117 / DeepSeek)
+
+Tyler's report: on every campaign match the host loads in, the guest joins, and the guest sees the opening cutscene **from
+outside the map** (terrain/skybox, plus cutscene effects and subtitles but no framing), then the game raises
+"an error has occurred" and both players are dropped to the main menu. This is the failure that has blocked campaign
+co-op, including 4-player.
+
+### The two log files he attached were not host + guest logs
+
+`Noble-Last-Game-2026-10-30.log.txt` and `.md` are the report and log slice I generated earlier from **his own 17:20 solo
+campaign run** (707 lines, one process, no join requests, ends at `PauseMenu: game over`). No co-op attempt is captured in
+them, so the actual engine error code cannot be read from those files. What is needed: `noble-client.log` from **both**
+machines for the **same** failed attempt.
+
+### Root cause as far as the code and the earlier RE work show it
+
+The symptom is the campaign co-op abort family already documented here (0x1B `error_players_incompatible_for_network_coop`
+= "An error occurred while playing co-op", 0x1C peer disconnect, 0x1D co-op state sync timeout) raised through
+`c_network_session::abort` at `hr+0x44EBA0`. The guest's unbound camera is the giveaway: it entered a session whose
+**opening cinematic had already started**, so no cinematic/cutscene binding existed for it, and the co-op state check then
+killed the session.
+
+The sequencing in `BlamEngine::LaunchMap` was the cause: `c_game_engine Start` -> **1 s** -> `Command 10 (Event: Start)`,
+which is what loads the mission and starts its cinematic -> only *then* the `-wait-peers` barrier -> `Command 11`. The
+barrier added on 2026-10-30 03:25 ("Forge / Campaign Netplay Root Causes") therefore protected the *simulation start* but
+not the **mission start**, so the host was always a cinematic ahead of any guest.
+
+### Fix in this commit (`src/engine/BlamEngine.cpp`)
+
+For campaign and Forge hosts that were launched with guests (`-wait-peers N`, i.e. the lobby roster had N non-host
+players), the peer barrier now runs **before `Command 10`**: the mission does not start until the guests' engine traffic
+is on port 1000, so everyone enters the mission and its cutscene together. Bounded so a host can never hang:
+
+- hard cap 25 s;
+- if **no** guest traffic has arrived after 10 s, it logs that the session is probably only joinable once the mission
+  state advances, and starts anyway (this is the diagnostic that tells us whether the barrier's premise is right);
+- on success it logs how many peers joined before start, then `Command 10`, an 8 s settle for campaign/Forge, then
+  `Command 11` (the old pre-`Command 11` wait now only applies to multiplayer/Firefight).
+
+Solo and multiplayer paths are untouched: with no expected peers `peersToWaitFor` is 0 and the original 1 s / 5 s timing is
+used. Verified: a solo campaign launch still reaches `game session started at frame 432` and captures normally.
+
+### What to test next (needs two machines - cannot be done from this one)
+
+1. Both players on the **same build** of `noble-client.exe` (a mismatched build will fail co-op for its own reasons).
+2. Guest joins the Noble **lobby** before the host starts; host presses START with the guest listed. Watch the host log for
+   `holding the mission start until 1/1 engine peer(s) have joined` and then `beginning the mission with them`.
+3. If it still fails: send both `noble-client.log` files. The lines that decide the next step are `peer wait before start`,
+   `Command 10/11`, `evaluate_coop_insertion_point` (LobbyPatches logs the value), and any
+   `SUPPRESSED session abort` / `abort called ... reason=` lines, which carry the exact 0x1B/0x1C/0x1D code and caller RVA.
+4. If the host log shows `no guest engine traffic after 10 s`, then the session is not joinable before the mission
+   advances, and the next approach is the opposite one: start normally and force the guest's insertion at the first
+   checkpoint (`evaluate_coop_insertion_point` already returns mission start; it needs the checkpoint path).
+
 ## 0. Pick up here (2026-10-31, 10:30 ET) - Handoff packaged as a Word document and a PDF (WeabooTyler117 / DeepSeek)
 
 Tyler asked for the handoff "wrapped up in a nice doc I can save and provide". The same brief now exists as

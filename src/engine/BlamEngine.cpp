@@ -834,6 +834,48 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
         std::thread([this, isOnlineHost, peersToWaitFor, settleLonger]() {
             const int startDelay = isOnlineHost ? 1000 : 300;
             std::this_thread::sleep_for(std::chrono::milliseconds(startDelay));
+
+            // Campaign co-op and Forge: Command 10 (Event: Start) is what loads the mission and starts its opening
+            // cinematic. The host used to post it 1 s after launch, before any guest could possibly have joined, so a
+            // guest arriving a few seconds later entered a session that was already mid-cinematic: its camera had no
+            // cinematic binding (the player saw the world from outside the map), and the engine then aborted the
+            // co-op session (0x1B/0x1C/0x1D -> "An error occurred") and dropped everyone to the menu.
+            // So the peer barrier has to gate the MISSION START, not just Command 11.
+            size_t joinedBeforeStart = 0;
+            if (peersToWaitFor > 0 && settleLonger) {
+                const ULONGLONG start = GetTickCount64();
+                const ULONGLONG deadline = start + 25000;       // hard cap
+                const ULONGLONG giveUpAt = start + 10000;       // no traffic at all -> the session is not joinable yet
+                ULONGLONG lastLog = 0;
+                NOBLE_INFO("BlamEngine: campaign/Forge co-op - holding the mission start until {}/{} engine peer(s) "
+                           "have joined...", joinedBeforeStart, peersToWaitFor);
+                while (GetTickCount64() < deadline) {
+                    joinedBeforeStart = noble::NetworkTransport::Get().GetGamePeerCount();
+                    if (joinedBeforeStart >= static_cast<size_t>(peersToWaitFor)) break;
+                    if (joinedBeforeStart == 0 && GetTickCount64() >= giveUpAt) {
+                        NOBLE_WARN("BlamEngine: no guest engine traffic after 10 s; the session is probably only "
+                                   "joinable once the mission state advances - starting the mission now");
+                        break;
+                    }
+                    const ULONGLONG now = GetTickCount64();
+                    if (lastLog == 0 || now - lastLog >= 5000) {
+                        lastLog = now;
+                        NOBLE_INFO("BlamEngine: peer wait before start: {}/{} engine peer(s) connected",
+                                   joinedBeforeStart, peersToWaitFor);
+                    }
+                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                }
+                joinedBeforeStart = noble::NetworkTransport::Get().GetGamePeerCount();
+                if (joinedBeforeStart >= static_cast<size_t>(peersToWaitFor)) {
+                    NOBLE_INFO("BlamEngine: {} engine peer(s) joined before start; beginning the mission with them",
+                               joinedBeforeStart);
+                } else {
+                    NOBLE_WARN("BlamEngine: only {}/{} engine peer(s) joined before start (gave up after {} ms); "
+                               "beginning the mission anyway", joinedBeforeStart, peersToWaitFor,
+                               GetTickCount64() - start);
+                }
+            }
+
             if (m_engineInstance && m_fnProcessEvent) {
                 NOBLE_INFO("BlamEngine: Posting Command 10 (Event: Start) via vtbl+0x18 after {}ms delay...", startDelay);
                 int32_t status10 = m_fnProcessEvent(m_engineInstance, 10, 0);
@@ -844,7 +886,7 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
                 // from a late join; these modes instead clean the peer out of the membership and
                 // immediately end the mission. When the lobby told us how many guests it launched
                 // with, hold Command 11 until their port-1000 engine traffic arrives.
-                if (peersToWaitFor > 0) {
+                if (peersToWaitFor > 0 && !settleLonger) {
                     const ULONGLONG deadline = GetTickCount64() + 60000;
                     size_t joined = 0;
                     ULONGLONG lastLog = 0;
@@ -874,7 +916,10 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
                                    joined, peersToWaitFor);
                     }
                 } else {
-                    const int simDelay = isOnlineHost ? 5000 : 200;
+                    // Campaign/Forge already waited for its peers before Command 10; a short settle lets the guest
+                    // finish loading the scenario, then simulation starts. Other modes use the classic delays.
+                    const int simDelay = (peersToWaitFor > 0 && settleLonger) ? (settleLonger ? 8000 : 2000)
+                                                                             : (isOnlineHost ? 5000 : 200);
                     std::this_thread::sleep_for(std::chrono::milliseconds(simDelay));
                 }
 
