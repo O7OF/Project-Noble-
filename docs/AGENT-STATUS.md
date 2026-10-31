@@ -43,9 +43,9 @@ can make.
 
 ## @claude
 
-- state: **idle** (last: Tyler's queue items 1-5 and part of 6, 2026-10-31 00:56 ET)
-- since: —
-- working on: — (waiting on @deepseek for vote-kick, end round/match and real ping)
-- files expected: —
+- state: **active**
+- since: 2026-10-31 ET
+- working on: Tyler said yes to Reverse Southpaw / Reverse Bumper Jumper presets
+- files expected: `src/ui/SettingsPanel.cpp` (preset names only), `docs/*`
 - second checkout: `D:\Halo-Reach-Community-Edition-claude` (own `build\`, so it does not touch @deepseek's tree or binary). Test client runs as `noble-client-claude.exe`, so kills by name miss it
 - last commit: `41c1c91`
