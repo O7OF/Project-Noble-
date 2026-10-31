@@ -46,3 +46,7 @@ dumpbin.txt
 *.mtl
 profile_*.bin
 rr_profile*.bin
+# test/runtime artifacts that must never be committed
+reports/
+gamestate.txt
+*.headerdump
