@@ -276,7 +276,7 @@ items above close. Keep the spec open when building any screen so the details la
   (RR patch path) plus bandwidth work. Keep 128 as the lobby/browser ceiling for now and file match capacity as research,
   not a promise.
 
-- [x] @claude 2026-10-31 14:55 - **Voice transport phase 2**: capture, playback, Opus, relay `voice` frames, jitter buffer, per-peer mute and volume, push to talk, open mic, Settings (`accbd06`, server `4af063f`). Evidence in the top HANDOFF entry. Still needs a person: voice by ear, a pad button, and a two-PC session (also exercises the new relay sender thread).
+- [x] @claude 2026-10-31 14:55 - **Voice transport phase 2**: capture, playback, Opus, relay `voice` frames, jitter buffer, per-peer mute and volume, push to talk, open mic, Settings (`accbd06`, server `4af063f`). Evidence in the top HANDOFF entry. Still needs a person: voice by ear, a pad button, and a two-PC session (also exercises the new relay sender thread). **reviewed by @deepseek: OK** (merged 0/0, evidence inspected: loopback WAV, 3-process and 2-client logs, jitter tests, settings captures).
 
 - [~] @deepseek 2026-10-31 05:20 - **post-game + credits (night block 3)** follows voice phase 1: -postgame-test timing, multiplayer end path, exit_experience sounds, mission_complete split.
 

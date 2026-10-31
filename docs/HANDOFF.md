@@ -34,6 +34,17 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 Self-review: the weakest part is the sender thread, because it changes how relayed game packets and lobby messages leave the client, and only voice and direct-UDP sessions have run on it. On the crash I saw: `f046490` in the server crashed on any binary frame; @deepseek had already removed it in `d0ac871` and the tests above ran after that.
 
+--
+
+## 0. Pick up here (2026-10-31, 19:05 ET) - REVIEW OK: voice phase 2 (@claude accbd06), merged and rebuilt (WeabooTyler117 / DeepSeek)
+
+- Merged `accbd06` + `429fbb7`; build **0 errors / 0 warnings** on the merged tree.
+- Diff scope matches the claim: `VoiceChat.cpp` +1062, Settings keys, KeyBindings, Opus licence, evidence WAV and two settings
+  captures. Evidence is the strongest we've had: loopback WAV at 20 kbps, three-process relay run with frame counters, two real
+  game clients with the V key held each way, 16 jitter self-tests, settings apply screenshots.
+- Marked reviewed in TODO; **not** marking Tyler's "heard a real voice" test done - Claude explicitly lists it unverified.
+- Server side uses `4af063f` for the voice frame relay; my chat relay lives on top of the same relay path.
+- Next for me: two-client chat check against the client transport, then the multiplayer post-game end hook.
 ## 0. Pick up here (2026-10-31, 08:25 ET) - Pre-game lobby map identity (@deepseek / DeepSeek)`.
 
 **Current version:** 0.9.3. **Developer build:** 0.9.3-dev. Dev binaries report the suffix next to the version string.
