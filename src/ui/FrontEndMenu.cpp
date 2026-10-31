@@ -882,6 +882,21 @@ void DrawAccountModal(const Ui& ui) {
             }
             ImGui::Separator();
             ImGui::Dummy(ImVec2(0, 8));
+            if (!AuthClient::Get().IsSteamLinked()) {
+                ImGui::TextDisabled("Offline profile. Link Steam for online identity and dev verification.");
+                if (ImGui::Button("LINK STEAM", ImVec2(-1, 34.0f * ui.s))) {
+                    const AuthResult steam = AuthClient::Get().LoginWithSteam();
+                    s_accountStatusMsg = steam.success ? ("Steam linked as " + steam.username) : steam.error;
+                    s_accountStatusError = !steam.success;
+                }
+            } else {
+                ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.4f, 1.0f), "Steam account linked.");
+            }
+            if (!s_accountStatusMsg.empty()) {
+                ImGui::TextColored(s_accountStatusError ? ImVec4(1.0f, 0.4f, 0.4f, 1.0f) : ImVec4(0.4f, 0.9f, 0.4f, 1.0f),
+                                   "%s", s_accountStatusMsg.c_str());
+            }
+            ImGui::Dummy(ImVec2(0, 8));
             const float btnW2 = (ImGui::GetContentRegionAvail().x - 10.0f * ui.s) * 0.5f;
             if (ImGui::Button("LOG OUT", ImVec2(btnW2, 32.0f * ui.s))) {
                 AuthClient::Get().Logout();

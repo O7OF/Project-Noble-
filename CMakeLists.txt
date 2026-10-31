@@ -160,6 +160,7 @@ set(SOURCES
     src/engine/KeyBindings.cpp
     src/career/Career.cpp
     src/network/MasterServerClient.cpp
+    src/network/SteamAuth.cpp
     src/network/NetworkTransport.cpp
     src/network/AuthClient.cpp
     src/network/SocialClient.cpp
