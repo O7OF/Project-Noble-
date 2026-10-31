@@ -38,7 +38,7 @@ overlay (`7cef78c`) and the third-person camera (`97989d1`).
 - [ ] **Emblem backdrop + symbol picker** — ~30 % done; two identity rows, storage and composition remain (`FrontEndMenu.cpp:861`, `:3660`)
 - [ ] **Armory lighting** — unlit black chamber; only route left is data (lighting/material in `mainmenu_all.map`)
 - [ ] **Controller presets + custom mapping** — biggest pure-UI item (6 presets, `SettingsData` storage, diagram already drawn)
-- [ ] **Server browser polish** — map display names instead of `forge_halo`, mod badge
+- [~] @claude 2026-10-30 22:30 - **Server browser polish** — details panel still shows the raw scenario name, vanilla `.map` names get flagged as mods, real mod badge
 - [ ] **Post-game names** — remote players show `Player2`/`Player3` (needs engine player-record name path)
 - [ ] **Skull collection gating** — lock until found, "All Skulls" toggle when 13/13
 - [ ] **Readability pass** — run the capture harness over all 14 screens and fix remaining overlaps
