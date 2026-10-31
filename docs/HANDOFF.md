@@ -24,6 +24,14 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+--
+
+## 0. Pick up here (2026-10-31, 09:35 ET) - Single to-do list added at docs/TODO.md (WeabooTyler117 / DeepSeek)
+
+Tyler asked for the prioritized backlog to live somewhere durable. `docs/TODO.md` now holds the full list (campaign
+co-op follow-ups, menus/UI, engine features, server/netcode, housekeeping) with checkboxes, done markers and the commit
+that closed each item. The handoff stays the chronological log; TODO is the list.
+
 ## 0. Pick up here (2026-10-31, 09:10 ET) - Third person: RR's camera module mapped, implementation not started (WeabooTyler117 / DeepSeek)
 
 Third-person toggle was the third item on the short list. RR has it working (`F5` toggle, `F6` shoulder swap) and its
