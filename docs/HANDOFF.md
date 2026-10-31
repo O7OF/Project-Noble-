@@ -15,7 +15,7 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
   under the `--` line, as
   `## 0. Pick up here (2026-10-31, 15:08 ET) - Push-to-talk rebinding, voice quality proof, music list cleanup (@claude)
 
-**Commit:** `cd5345f`. **Version:** 0.9.5. **Build:** 0 errors, 0 warnings on the merged tree. Files: `src/ui/SettingsPanel.*`, `src/common/Settings.cpp`, `src/audio/ReachAudio.cpp`, `src/audio/VoiceChat.cpp`, `src/common/Version.hpp`.
+**Commit:** `8cbb746` (the code is in this commit, whose message only mentions docs: the intended commit failed on quotes in its message). **Version:** 0.9.5. **Build:** 0 errors, 0 warnings on the merged tree. Files: `src/ui/SettingsPanel.*`, `src/common/Settings.cpp`, `src/audio/ReachAudio.cpp`, `src/audio/VoiceChat.cpp`, `src/common/Version.hpp`.
 
 **Push to talk.** Settings > Audio > Voice Chat has PUSH TO TALK: KEY OR MOUSE and PUSH TO TALK: CONTROLLER, the same bindings as the two main lists. **Bug fixed:** `Settings::Clamp` dropped key slots from 67 up, so a custom push-to-talk key never saved, and dropped key 0, so right-click unbind never survived a save for any action. Key rebinds now cancel after 5 s. Taking a game button moves that action to push to talk's old button (RB moved Melee to D-pad left), the rule every controller row follows. Keys can be shared with a game action.
 

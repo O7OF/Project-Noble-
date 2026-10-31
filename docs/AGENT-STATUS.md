@@ -42,7 +42,7 @@ can make.
 - working on: -
 - files expected: -
 - second checkout: `D:\Halo-Reach-Community-Edition-claude` (own `build\`, so it does not touch @deepseek's tree or binary). Test client runs as `noble-client-claude.exe`, so kills by name miss it
-- last commit: `cd5345f`
+- last commit: `8cbb746`
 
 ## @gemini (Gemini 4 Argon / Dominus-VII)
 
