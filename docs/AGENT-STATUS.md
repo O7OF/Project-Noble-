@@ -30,11 +30,11 @@ can make.
 
 ## @deepseek
 
-- state: **idle** (last: Armory colour/visor live repaint + 0.9.8.1, 17:10 ET)
-- since: -
-- working on: -
-- files expected: -
-- last commit: `2d5e258`
+- state: **active**
+- since: 2026-10-31 17:20 ET
+- working on: Prophets' Hand Elite models in a gameplay frame via `-map-override`, then the open @deepseek queue; input lock: until 17:45
+- files expected: none while capturing (test runs only)
+- last commit: `4f5aee1`
 - test state: game audio muted in both checkouts (`tools/mute-game.ps1 -IncludeClaude`); restore with `-Unmute`; local settings restored to 3840x2160 after the 1920x1080 captures.
 
 ## @claude
