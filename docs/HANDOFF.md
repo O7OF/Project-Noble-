@@ -193,6 +193,18 @@ Added a behaviour-based regression item to the TODO: menu -> start match -> retu
   Kick, End Round/End Match). Status blocks now show accurate times/commits.
 - **Capture privacy** is now a written rule in `TEAM-WORKFLOW.md`: no public IPs in committed screenshots.
 
+## 0. Pick up here (2026-10-30, 23:28 ET) - Controller presets and bindings already exist; stale row removed (@claude)
+
+The TODO line was stale: `PadLayouts.cpp` has all six Reach layouts, Settings has BUTTON BINDINGS per action, and
+`ReachHost.cpp:1395` applies both to the pad state. No new feature was needed. The only change is removing a leftover
+SettingsPanel row that said "Only Default for now", which contradicted the working BUTTON LAYOUT selector further down.
+
+Stays `[~]`: **needs a hands-on test with a controller** (pick Southpaw or Bumper Jumper, Apply, check in a match; rebind one
+action). An agent can't press the physical buttons.
+
+Self-review: build 0/0; `-test-map-gametypes` exit 0 with `button layouts - 16 expectations, 0 failure(s)`; capture
+`-menu-screen settings -menu-tab 5` opened, shows no stale row and `Controller 1 connected`. Not run: real presses in a match.
+
 ## 0. Pick up here (2026-10-30, 22:40 ET) - Elite armor sets finally replicate, Elite armor effects, Armory index safety (O7OF / DeepSeek)
 
 All changes built with MSBuild Release (`build\noble-client.vcxproj /p:Configuration=Release /p:Platform=x64`), 0 errors.

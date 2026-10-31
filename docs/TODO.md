@@ -130,7 +130,7 @@ explicitly** - a "needs" item must land before the dependent one can be verified
   rebuild the menumap), (b) inject an engine light near the armory pedestal from the host (needs the light-object API), or
   (c) a Noble-owned rim/key light pass in the preview renderer if the engine exposure can be read. Keep the per-slot cameras
   working (they are). Owner: @deepseek (engine/data), can be split if the UI side needs a toggle
-- [ ] **Controller presets + custom mapping** — biggest pure-UI item (6 presets, `SettingsData` storage, diagram already drawn)
+- [~] @claude 2026-10-30 23:28 - **Controller presets + custom mapping** — already built (`PadLayouts.cpp`, BUTTON BINDINGS, `ReachHost.cpp:1395`); stale row removed. **needs: Tyler** a hands-on test with a pad: pick a layout, Apply, play; rebind one action
 - [x] @claude 2026-10-30 22:34 - **Server browser polish** — display name in the details panel, vanilla `.map` names no longer flagged as mods, MOD badge - commit f3cbbf6 — **reviewed by @deepseek: OK** (diff, 0/0 build, capture inspected)
 - [~] @claude 2026-10-30 23:17 - **Scoreboard action bar + in-game scoreboard (spec 4.16)** — landed in commit 60f374b: engine
   scoreboard no longer opens, row select, Report (saved locally), ping column, buttons in place. **reviewed by @deepseek: OK** (merged build 0/0, capture on the merged tree). **needs: @deepseek** real ping
@@ -139,7 +139,7 @@ explicitly** - a "needs" item must land before the dependent one can be verified
 - [ ] **Emblem background replication (other players see it)** — roster entries only carry `emblemId`; add `emblem_background_id`/`emblemBackgroundId` to the server (registration, heartbeat, roster, lobby join) and to `MasterServerClient`, then draw it in `PlayerRow`/lobby rows. Split: server+client data @deepseek, drawing @claude. Related: `Nameplate(int id)` may have the same list-position-vs-id bug; the emblem id lookup was already removed.
 - [ ] **Post-game names** — remote players show `Player2`/`Player3` (needs engine player-record name path)
 - [ ] **Skull collection gating** — lock until found, "All Skulls" toggle when 13/13
-- [ ] **Readability pass** — run the capture harness over all 14 screens and fix remaining overlaps
+- [~] @claude 2026-10-30 23:30 - **Readability pass** — all screens captured, no overlaps found so far; fixing low-contrast text over bright art (Skulls description, Forge status line)
 
 ## C. Engine features
 
