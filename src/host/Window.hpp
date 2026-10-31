@@ -36,6 +36,9 @@ public:
     // Left-button presses (WM_LBUTTONDOWN) since the last call. Overlay menus use it so that a click
     // shorter than one frame still counts. Any thread.
     static int TakeLeftClicks();
+    // Characters typed while capture is on, for a text line drawn on a thread that can't read the window's messages.
+    static void SetCharCapture(bool on);
+    static std::wstring TakeTypedChars();
 
 private:
     static LRESULT CALLBACK StaticWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);

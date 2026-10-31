@@ -1361,7 +1361,7 @@ void SettingsPanel::RenderController() {
             const bool custom = m_edit.padBindings.count(key) != 0;
             const char* layoutName = PadLayouts::InputName(PadLayouts::LayoutInput(layout, action));
             const std::string text = action == PadLayouts::TeamChat
-                ? "Can be assigned now, but does nothing until chat exists."
+                ? "Can be assigned, but does nothing yet: a controller can read chat but can't type in it."
                 : "Press A or click, then press the input this action should use. The action on that input takes this one's old input. Wait 5 seconds to cancel; on a keyboard, Esc cancels and Delete puts the preset's input back.";
 
             if (!Row(PadLayouts::ActionName(action), text.c_str(), When::Apply, layoutName, custom)) continue;

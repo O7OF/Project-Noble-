@@ -2,6 +2,9 @@
 #include "common/Logger.hpp"
 
 #include <atomic>
+#include <mutex>
+#include <string>
+#include <atomic>
 
 namespace noble {
 
@@ -123,6 +126,25 @@ std::atomic<int> s_leftClicks{0};
 
 int Window::TakeLeftClicks() { return s_leftClicks.exchange(0); }
 
+namespace {
+std::atomic<bool> s_charCapture{ false };
+std::mutex s_typedMutex;
+std::wstring s_typedChars;
+}
+
+void Window::SetCharCapture(bool on) {
+    std::lock_guard<std::mutex> lock(s_typedMutex);
+    s_typedChars.clear();
+    s_charCapture.store(on);
+}
+
+std::wstring Window::TakeTypedChars() {
+    std::lock_guard<std::mutex> lock(s_typedMutex);
+    std::wstring out;
+    out.swap(s_typedChars);
+    return out;
+}
+
 int Window::TakeWheelNotches() {
     int delta = s_wheelDelta.load();
     for (;;) {
@@ -138,6 +160,12 @@ LRESULT Window::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam
     switch (uMsg) {
         case WM_MOUSEWHEEL: s_wheelDelta.fetch_add(GET_WHEEL_DELTA_WPARAM(wParam)); break;
         case WM_LBUTTONDOWN: s_leftClicks.fetch_add(1); break;
+        case WM_CHAR:
+            if (s_charCapture.load()) {
+                std::lock_guard<std::mutex> lock(s_typedMutex);
+                if (s_typedChars.size() < 256) s_typedChars.push_back(static_cast<wchar_t>(wParam));
+            }
+            break;
         case WM_ENTERSIZEMOVE: s_sizeMove.store(true); ClipCursor(nullptr); break;
         case WM_EXITSIZEMOVE: s_sizeMove.store(false); break;
         case WM_KILLFOCUS: ClipCursor(nullptr); break;

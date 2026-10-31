@@ -37,6 +37,7 @@
 #include "ui/UiArt.hpp"
 #include "audio/ReachAudio.hpp"
 #include "audio/VoiceChat.hpp"
+#include "ui/SocialOverlay.hpp"
 #include "hooks/LobbyPatches.hpp"
 #include "hooks/ForgePatches.hpp"
 #include "hooks/EnginePatches.hpp"
@@ -503,6 +504,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
                 try { if (!p.machineId.empty()) e.machine = std::stoull(p.machineId, nullptr, 0); } catch (...) {}
                 e.local = !me.empty() && _stricmp(p.username.c_str(), me.c_str()) == 0;
                 if (e.local) noble::VoiceChat::SetLocalTeam(p.team);
+                if (e.machine != 0) noble::SocialOverlay::SetPlayerName(e.machine, p.username);
                 rows.push_back(e);
             }
             noble::PauseMenu::SetScoreboardRoster(std::move(rows), st.map, st.mode);
@@ -555,6 +557,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     if (thirdPersonDistance != 100) noble::CameraThirdPerson::SetDistancePercent(thirdPersonDistance);
     if (voiceProbe) noble::ProbeVoiceDevices();
     noble::VoiceChat::Start();   // idle until a relay session exists
+    noble::SocialOverlay::Start();
     if (thirdPerson) noble::CameraThirdPerson::SetEnabled(true);
 
     // Apply 32/64 player lobby expansion detours

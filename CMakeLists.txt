@@ -172,6 +172,7 @@ set(SOURCES
     src/ui/UiPad.cpp
     src/ui/LoadScreen.cpp
     src/ui/PauseMenu.cpp
+    src/ui/SocialOverlay.cpp
     src/ui/ForgeMenu.cpp
     src/ui/FrontEndMenu.cpp
     src/ui/NobleStyle.cpp
@@ -224,6 +225,7 @@ set(HEADERS
     src/ui/MissionLauncher.hpp
     src/ui/LoadScreen.hpp
     src/ui/PauseMenu.hpp
+    src/ui/SocialOverlay.hpp
     src/ui/FrontEndMenu.hpp
     src/network/UPnP.hpp
     src/network/SessionManager.hpp

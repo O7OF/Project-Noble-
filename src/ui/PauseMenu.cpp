@@ -1,3 +1,5 @@
+#include "ForgeMenu.hpp"
+#include "SocialOverlay.hpp"
 #include "PauseMenu.hpp"
 #include "MenuSounds.hpp"
 #include "NobleStyle.hpp"
@@ -1580,6 +1582,7 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading,
   }
 
   const bool open = s_open.load();
+  SocialOverlay::Poll(!open && !loading && !ForgeMenu::IsOpen());
   const bool showFps = Settings::Get().Snapshot().showFps;
   static const bool s_scoreboardTest = wcsstr(GetCommandLineW(), L"-scoreboard-test") != nullptr;
   const int boardVk = KeyBindings::EffectiveKey(20);
@@ -1614,7 +1617,7 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading,
     }
   }
   const bool connectionLost = s_connectionLost;
-  if (!(open || gameOver || loading || showFps || scoreboardHeld || connectionLost || extraOverlay) || !swapChain ||      !ImGui::GetCurrentContext())
+  if (!(open || gameOver || loading || showFps || scoreboardHeld || connectionLost || extraOverlay || SocialOverlay::WantsFrame()) || !swapChain ||      !ImGui::GetCurrentContext())
     return;
 
   DXGI_SWAP_CHAIN_DESC desc{};
@@ -1733,6 +1736,7 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading,
     UiPad::Feed(io);
     ImGui_ImplDX11_NewFrame();
     ImGui::NewFrame();
+    if (SocialOverlay::IsTyping()) io.ClearInputKeys();   // the line takes the keyboard, not the panels below it
     if (showFps) {
       char fpsLabel[32];
       std::snprintf(fpsLabel, sizeof(fpsLabel), "FPS %.0f", io.Framerate);
@@ -1771,6 +1775,7 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading,
       }
     }
     if (extraOverlay) extraOverlay();
+    SocialOverlay::Draw(24.0f, 24.0f, 778.0f);   // chat stays above the motion tracker
     ImGui::Render();
 
     // The DX11 backend saves/restores most pipeline state but not the

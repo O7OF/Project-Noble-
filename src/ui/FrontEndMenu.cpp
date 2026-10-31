@@ -1,5 +1,6 @@
 #include "FrontEndMenu.hpp"
 #include "audio/VoiceChat.hpp"
+#include "SocialOverlay.hpp"
 #include "network/UPnP.hpp"
 #include "network/AuthClient.hpp"
 #include "network/MasterServerClient.hpp"
@@ -2795,7 +2796,7 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
     ui.dl->AddRect(fr0, fr1, panelEdge);
     Text(ui, NobleStyle::TitleFont(), 16.0f, ImVec2(fr0.x + 10.0f * ui.s, fr0.y + 4.0f * ui.s), kWhite, "FRIENDS");
     ui.dl->AddLine(ImVec2(fr0.x, fr0.y + 26.0f * ui.s), ImVec2(fr1.x, fr0.y + 26.0f * ui.s), kRuleLine, 1.0f);
-    const bool friendsPressed = ImGui::IsKeyPressed(ImGuiKey_Y, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false) ||
+    const bool friendsPressed = ImGui::IsKeyPressed(ImGuiKey_F, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false) ||
                                 (ImGui::IsMouseClicked(0) && ImGui::IsMouseHoveringRect(fr0, ImVec2(fr1.x, fr0.y + 26.0f * ui.s), false));
     if (friendsPressed) {
         st.socialPreviousScreen = Screen::PreGameLobby;
@@ -3019,7 +3020,7 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
             Text(ui, nullptr, 15.0f, ImVec2(cardX + 4.0f * ui.s, y), kDim,
                  "Games, challenges, commendations and armor aren't shared by other players yet.", cardX + cardW);
             y += 48.0f * ui.s;
-            BigAction(ui, "lobby_add_friend", ImVec2(cardX, y), cardW, "ADD FRIEND", "Not here yet. Press Y for Friends, then find them by name.", false, false);
+            BigAction(ui, "lobby_add_friend", ImVec2(cardX, y), cardW, "ADD FRIEND", "Not here yet. Open Friends, then find them by name.", false, false);
         }
     }
     for (size_t col = 0; col < columns.size() && !st.lobbyProfileOpen; ++col) {
@@ -3113,7 +3114,7 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         MenuSounds::Back();
     }
 
-    std::vector<HintExtra> extras = { { InputPrompts::Button::Y, "Y", "Friends" } };
+    std::vector<HintExtra> extras = { { InputPrompts::Button::Y, "F", "Friends" } };
     if (!hostEp.empty()) extras.push_back({ InputPrompts::Button::X, "X", "Copy invite" });
     if (rosterOverflows) extras.push_back({ InputPrompts::Button::RT, "PGDN", "Page" });
     if (rosterCount > 0 && !pickerWasOpen) extras.push_back({ InputPrompts::Button::Start, "TAB", st.lobbyProfileOpen ? "Close card" : "Player card" });
@@ -4729,7 +4730,9 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
                     p.isDev = item.value("isDev", false);
                     p.ping = item.value("ping", 0);
                     try {
-                        if (!p.machineId.empty() && std::stoull(p.machineId, nullptr, 0) == NetworkTransport::Get().GetRelayMachineId()) {
+                        const uint64_t machine = p.machineId.empty() ? 0 : std::stoull(p.machineId, nullptr, 0);
+                        if (machine != 0) SocialOverlay::SetPlayerName(machine, p.username);
+                        if (machine != 0 && machine == NetworkTransport::Get().GetRelayMachineId()) {
                             VoiceChat::SetLocalTeam(p.team);
                         }
                     } catch (...) {}
@@ -4823,7 +4826,9 @@ void FrontEndMenu::RenderOverlayImpl(IDXGISwapChain* swapChain, bool clear) {
         ImGui_ImplDX11_NewFrame();
         ImGui_ImplWin32_NewFrame();
         UiPad::Feed(io);
+        SocialOverlay::Poll(ctx.st.screen == Screen::PreGameLobby);
         ImGui::NewFrame();
+        if (SocialOverlay::IsTyping()) io.ClearInputKeys();   // the line takes the keyboard, not the screen under it
         InputPrompts::Update();
     // Master mute / mute in background: Noble's own audio only (menu music and menu sounds). Read twice a second
     // rather than every frame, and applied here so it also covers the pause menu and the fallback draw path.
@@ -4849,6 +4854,7 @@ void FrontEndMenu::RenderOverlayImpl(IDXGISwapChain* swapChain, bool clear) {
         FrontEndChoice choice;
         bool done = false;
         DrawFrontEndContents(ctx, device, context, choice, done);
+        SocialOverlay::Draw(8.0f, 196.0f, 900.0f);   // voice above the title, chat over the Friends panel
 
         ImGui::Render();
 

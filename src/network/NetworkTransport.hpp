@@ -34,7 +34,7 @@ public:
     struct ChatMessage { std::string channel, from, text; };
     using ChatCallback = std::function<void(const ChatMessage&)>;
     void SetChatCallback(ChatCallback cb);
-    bool SendChat(const std::string& channel, const std::string& text);
+    bool SendChat(const std::string& channel, const std::string& text, const std::string& from);
 
     bool IsActive() const { return m_active.load(); }
     bool IsHost() const { return m_isHost; }

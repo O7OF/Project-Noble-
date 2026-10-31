@@ -519,14 +519,14 @@ void NetworkTransport::SetChatCallback(ChatCallback cb) {
     m_chatCb = std::move(cb);
 }
 
-bool NetworkTransport::SendChat(const std::string& channel, const std::string& text) {
-    HINTERNET ws = static_cast<HINTERNET>(m_relayWs.load());
-    if (!ws || text.empty()) return false;
-    nlohmann::json j = {{"type", "chat"}, {"channel", channel}, {"text", text},
-                        {"machineId", std::to_string(GetLocalMachineId())}};
-    const std::string body = j.dump();
-    return WinHttpWebSocketSend(ws, WINHTTP_WEB_SOCKET_UTF8_MESSAGE_BUFFER_TYPE,
-                                const_cast<char*>(body.data()), static_cast<DWORD>(body.size())) == ERROR_SUCCESS;
+// Through the sender thread's queue: WinHTTP allows one send at a time. No machine id here: the server knows this connection's
+// id from the relay URL, and that's what its roster holds (GetLocalMachineId() is 0 in a menu lobby).
+bool NetworkTransport::SendChat(const std::string& channel, const std::string& text, const std::string& from) {
+    if (!m_relayConnected.load() || text.empty()) return false;
+    nlohmann::json j = {{"type", "chat"}, {"channel", channel}, {"text", text}, {"from", from}};
+    std::lock_guard<std::mutex> lock(m_relayMutex);
+    m_relayTextSendQueue.push_back(j.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace));
+    return true;
 }
 
 void NetworkTransport::RelayWorkerThread(std::string relayUrl, std::string sessionId, bool isHost, uint64_t machineId) {

@@ -14,7 +14,11 @@ namespace KeyBindings {
 constexpr int kActionLowerWeapon = 66;
 constexpr int kActionPushToTalk = 67;  // Noble-managed too: voice chat reads it, the engine never sees it
 constexpr int kActionVehicleFirstPerson = 68;
-constexpr int kActionCount = 69;
+constexpr int kActionChatAll = 69;    // Chat lines: Noble-managed like push to talk
+constexpr int kActionChatTeam = 70;
+constexpr int kActionChatParty = 71;
+constexpr int kActionChatOpen = 72;   // reopens the last channel; unbound by default
+constexpr int kActionCount = 73;
 
 int DefaultKey(int action);            // VK code, 0 = unbound
 int EffectiveKey(int action);          // default or the player's override

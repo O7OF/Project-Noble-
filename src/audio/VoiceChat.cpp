@@ -108,6 +108,7 @@ std::thread s_thread;
 std::atomic<bool> s_started{ false };
 std::atomic<bool> s_stop{ false };
 std::atomic<bool> s_transmitting{ false };
+std::atomic<bool> s_pushToTalkBlocked{ false };
 std::atomic<int> s_localTeam{ -1 };
 std::atomic<uint64_t> s_mixPeak{ 0 };
 std::atomic<int> s_testBitrate{ 16 };   // the relay test walks 16, 20, 24 to show the setting reaches a running encoder
@@ -328,7 +329,7 @@ bool PushToTalkHeld(const Config& cfg) {
     DWORD process = 0;
     if (foreground) GetWindowThreadProcessId(foreground, &process);
     if (process != GetCurrentProcessId()) return false;
-    if (ImGui::GetCurrentContext() && ImGui::GetIO().WantTextInput) return false;
+    if (s_pushToTalkBlocked.load() || (ImGui::GetCurrentContext() && ImGui::GetIO().WantTextInput)) return false;
     if (cfg.pttKey > 0 && cfg.pttKey < 256 && (GetAsyncKeyState(cfg.pttKey) & 0x8000) != 0) return true;
     return PadInputHeld(cfg);
 }
@@ -1007,6 +1008,19 @@ bool IsPeerTalking(uint64_t peer) {
 }
 
 bool IsTransmitting() { return s_transmitting.load(); }
+
+std::vector<uint64_t> ActiveTalkers() {
+    std::vector<uint64_t> out;
+    const uint64_t now = NowMs();
+    std::lock_guard<std::mutex> lock(s_mutex);
+    for (const auto& [id, peer] : s_peers) {
+        const auto muted = s_muted.find(id);
+        if (now - peer.lastAudioMs < 250 && (muted == s_muted.end() || !muted->second)) out.push_back(id);
+    }
+    return out;
+}
+
+void SetPushToTalkBlocked(bool blocked) { s_pushToTalkBlocked.store(blocked); }
 
 void SetLocalTeam(int team) { s_localTeam.store(team); }
 

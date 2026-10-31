@@ -1,3 +1,4 @@
+#include "ui/SocialOverlay.hpp"
 #include "ReachHost.hpp"
 #include "ui/LoadScreen.hpp"
 #include "ui/FrontEndMenu.hpp"
@@ -1517,7 +1518,7 @@ static void FillLocalInput(uint8_t* st) {
     // goes to the engine, e.g. to back out of a screen).
     static bool s_escWasDown = false;
     const bool escDown = (GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0;
-    if (escDown && !s_escWasDown && !uiPointer && !PauseMenu::IsGameOver()) {
+    if (escDown && !s_escWasDown && !uiPointer && !PauseMenu::IsGameOver() && !SocialOverlay::OwnsEscape()) {
         if (ForgeMenu::IsOpen()) ForgeMenu::Close();
         else PauseMenu::Toggle();
     }
@@ -1531,8 +1532,8 @@ static void FillLocalInput(uint8_t* st) {
 
     // While the pause menu, post-game panel or custom palette is up the game gets no keys or mouse, and the pointer is free.
     static bool s_holdMouseUntilRelease = false;
-    if (PauseMenu::WantsPointer() || ForgeMenu::WantsPointer()) {
-        InputRelease(hwnd, ForgeMenu::WantsPointer() ? "Forge palette open" : (PauseMenu::IsGameOver() ? "post-game panel open" : "pause menu open"));
+    if (PauseMenu::WantsPointer() || ForgeMenu::WantsPointer() || SocialOverlay::IsTyping()) {
+        InputRelease(hwnd, SocialOverlay::IsTyping() ? "typing in chat" : ForgeMenu::WantsPointer() ? "Forge palette open" : (PauseMenu::IsGameOver() ? "post-game panel open" : "pause menu open"));
         memset(s_keyDownSince, 0, sizeof(s_keyDownSince));
         s_holdMouseUntilRelease = true;
         return;

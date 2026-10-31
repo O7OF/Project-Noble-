@@ -31,6 +31,8 @@ void SetPeerVolume(uint64_t peer, float volume);   // 0..2
 float PeerVolume(uint64_t peer);
 bool IsPeerTalking(uint64_t peer);
 bool IsTransmitting();
+std::vector<uint64_t> ActiveTalkers();          // talking now and not muted by you
+void SetPushToTalkBlocked(bool blocked);        // while the player types in chat, so typing the key doesn't open the mic
 
 // Team channel: the local player's team, -1 while unknown. Filtering by team happens on the receiving client.
 void SetLocalTeam(int team);
