@@ -466,6 +466,22 @@ void Draw(float voiceTop, float chatX, float chatBottom) {
     DrawChat(dl, font, s, chatX, chatBottom);
 }
 
+void DrawPlayerVoiceIcon(ImDrawList* dl, ImVec2 center, float scale, uint64_t machineId, bool local) {
+    const float pulse = 0.72f + 0.28f * static_cast<float>(std::sin(ImGui::GetTime() * 7.0));
+    const int alpha = static_cast<int>(255 * pulse);
+    if (local) {
+        if (s_demo || VoiceChat::IsTransmitting()) DrawMic(dl, center, scale, IM_COL32(143, 216, 255, alpha));
+        return;
+    }
+    if (machineId == 0) return;
+    if (VoiceChat::IsPeerMuted(machineId)) {
+        DrawMic(dl, center, scale, IM_COL32(150, 160, 170, 200));
+        dl->AddLine(ImVec2(center.x - 8.0f * scale, center.y - 8.0f * scale), ImVec2(center.x + 8.0f * scale, center.y + 8.0f * scale), IM_COL32(230, 90, 90, 255), 2.0f * scale);
+        return;
+    }
+    if ((s_demo && machineId % 2 == 1) || VoiceChat::IsPeerTalking(machineId)) DrawMic(dl, center, scale, IM_COL32(120, 214, 150, alpha));
+}
+
 void SetPlayerName(uint64_t machineId, const std::string& name) {
     std::lock_guard<std::mutex> lock(s_mutex);
     s_names[machineId] = Clean(name, 32);

@@ -1,3 +1,4 @@
+#include "audio/VoiceChat.hpp"
 #include "ForgeMenu.hpp"
 #include "SocialOverlay.hpp"
 #include "PauseMenu.hpp"
@@ -667,6 +668,7 @@ static void DrawScoreboardPanel() {
       e.tag = i == 0 ? "A259" : i == 1 ? "B320" : "S052";
       e.rank = 10 + i * 8;
       e.team = 1 + i % 2;
+      e.machine = 1001ULL + static_cast<uint64_t>(i);
       rows.push_back(e);
     }
     {
@@ -721,7 +723,7 @@ static void DrawScoreboardPanel() {
     ImGui::SetNextWindowSize(ImVec2(panelW, panelH), ImGuiCond_Always);
     ImGui::Begin("##scoreboard", nullptr,
                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
-                     ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoBringToFrontOnFocus);
+                     ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavInputs | ImGuiWindowFlags_NoNavFocus);
   }
   dl->AddRectFilled(p0, p1, IM_COL32(8, 14, 22, 232), 6.0f * s);
   dl->AddRect(p0, p1, IM_COL32(70, 120, 165, 200), 6.0f * s, 0, 1.5f * s);
@@ -740,6 +742,35 @@ static void DrawScoreboardPanel() {
   bool selectedIsListed = false;
   for (const auto &r : rows)
     selectedIsListed = selectedIsListed || (!r.local && r.name == s_selected);
+  // Controller: A takes the panel while Back is held. Then the D-pad or stick walks the other players, on the same selection
+  // the mouse uses, and the buttons below act on it.
+  const auto padPressed = [](ImGuiKey dpad, ImGuiKey stick) { return ImGui::IsKeyPressed(dpad) || ImGui::IsKeyPressed(stick); };
+  if (!pointer && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false)) PauseMenu::EnterScoreboardPointer();
+  if (pointer && !s_boardReport.load()) {
+    int column = 0, row = -1;
+    for (int c = 0; c < columnCount; ++c)
+      for (int k = 0; k < static_cast<int>(columnRows[c].size()); ++k)
+        if (!rows[columnRows[c][k]].local && rows[columnRows[c][k]].name == s_selected) { column = c; row = k; }
+    const auto pick = [&](int c, int from, int step) {
+      const std::vector<int> &list = columnRows[c];
+      const int count = static_cast<int>(list.size());
+      for (int k = std::clamp(from, 0, std::max(count - 1, 0)), tries = 0; count > 0 && k >= 0 && k < count && tries <= count; k += step, ++tries) {
+        if (rows[list[k]].local) continue;
+        s_selected = rows[list[k]].name;
+        s_status.clear();
+        selectedIsListed = true;
+        s_boardScroll[c] = std::clamp(s_boardScroll[c], k - std::max(visibleRows - 1, 0), k);
+        MenuSounds::Scroll();
+        return true;
+      }
+      return false;
+    };
+    if (padPressed(ImGuiKey_GamepadDpadDown, ImGuiKey_GamepadLStickDown)) { if (!pick(column, row + 1, 1) && columnCount > 1) pick(1 - column, 0, 1); }
+    if (padPressed(ImGuiKey_GamepadDpadUp, ImGuiKey_GamepadLStickUp) && row > 0) pick(column, row - 1, -1);
+    if (columnCount > 1 && (padPressed(ImGuiKey_GamepadDpadLeft, ImGuiKey_GamepadLStickLeft) || padPressed(ImGuiKey_GamepadDpadRight, ImGuiKey_GamepadLStickRight)))
+      pick(1 - column, std::max(row, 0), 1);
+  }
+
   const float headY = p0.y + 104.0f * s;
   const float listY = headY + 26.0f * s;
   const float columnGap = 12.0f * s;
@@ -810,6 +841,7 @@ static void DrawScoreboardPanel() {
              IM_COL32(143, 216, 255, 200), "YOU");
       dl->PopClipRect();
       Text(dl, ImGui::GetFont(), 17.0f * s, ImVec2(tagX, ty), IM_COL32(200, 210, 220, 255), r.tag.c_str());
+      SocialOverlay::DrawPlayerVoiceIcon(dl, ImVec2(tagX - 18.0f * s, (r0.y + r1.y) * 0.5f), s, r.machine, r.local);
       // Live round trip from the transport. The roster's own figure is a placeholder, and this PC can only measure
       // the peers it talks to, so anyone else shows "-".
       int ping = r.ping;
@@ -843,24 +875,55 @@ static void DrawScoreboardPanel() {
 
   // Hint or status line, then the action bar.
   const ImVec2 barPos(p0.x + 34.0f * s, y + 6.0f * s);
-  const char *line = !pointer ? "Click while holding the key for player actions"
+  const char *line = !pointer ? "Click, or press A on a controller, for player actions"
                      : !s_status.empty() ? s_status.c_str()
-                     : s_selected.empty() ? "Select a player"
+                     : s_selected.empty() ? "Select a player with the mouse or D-pad"
                                           : nullptr;
   std::string selectedLine;
   if (!line) {
-    selectedLine = "Selected: " + s_selected;
+    selectedLine = "Selected: " + s_selected + "     Controller: Y mute   X report   LB mute all   B close";
     line = selectedLine.c_str();
   }
   Text(dl, NobleStyle::SmallFont(), 15.0f * s, barPos, IM_COL32(150, 190, 220, 255), line);
 
   if (pointer) {
-    const ImVec2 button(138.0f * s, 34.0f * s);
-    const float gap = 10.0f * s;
+    const ImVec2 button(126.0f * s, 34.0f * s);
+    const float gap = 8.0f * s;
+    const bool padActive = !s_boardReport.load();
+    const bool padReport = padActive && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceLeft, false);
+    const bool padMute = padActive && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false);
+    const bool padMuteAll = padActive && ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false);
+    const bool padClose = padActive && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false);
+    uint64_t selectedMachine = 0;
+    bool allMuted = true, anyone = false;
+    for (const auto &r : rows) {
+      if (r.local || r.machine == 0) continue;
+      if (r.name == s_selected) selectedMachine = r.machine;
+      anyone = true;
+      allMuted = allMuted && VoiceChat::IsPeerMuted(r.machine);
+    }
+    const bool selectedMuted = selectedMachine != 0 && VoiceChat::IsPeerMuted(selectedMachine);
     ImGui::BeginDisabled(s_boardReport.load());
     ImGui::SetCursorScreenPos(ImVec2(barPos.x, barPos.y + 30.0f * s));
+    ImGui::BeginDisabled(selectedMachine == 0);
+    if ((ImGui::Button(selectedMuted ? "UNMUTE" : "MUTE", button) || padMute) && selectedMachine != 0) {
+      VoiceChat::SetPeerMuted(selectedMachine, !selectedMuted);
+      s_status = std::string(selectedMuted ? "Unmuted " : "Muted ") + s_selected;
+      MenuSounds::Click();
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine(0.0f, gap);
+    ImGui::BeginDisabled(!anyone);
+    if ((ImGui::Button(anyone && allMuted ? "UNMUTE ALL" : "MUTE ALL", button) || padMuteAll) && anyone) {
+      for (const auto &r : rows)
+        if (!r.local && r.machine != 0) VoiceChat::SetPeerMuted(r.machine, !allMuted);
+      s_status = allMuted ? "Unmuted everyone" : "Muted everyone";
+      MenuSounds::Click();
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine(0.0f, gap);
     ImGui::BeginDisabled(s_selected.empty());
-    if (ImGui::Button("REPORT", button)) {
+    if ((ImGui::Button("REPORT", button) || padReport) && !s_selected.empty()) {
       s_reportReason = 0;
       s_boardReport.store(true);
       MenuSounds::Click();
@@ -877,7 +940,7 @@ static void DrawScoreboardPanel() {
       UnavailableButton("END MATCH", button, "Not available yet: the way to end a multiplayer match in Reach's engine isn't known.");
     }
     ImGui::SameLine(p1.x - p0.x - button.x - 34.0f * s);
-    if (ImGui::Button("CLOSE", button)) {
+    if (ImGui::Button("CLOSE", button) || padClose) {
       s_boardPointer.store(false);
       MenuSounds::Back();
     }
@@ -888,7 +951,9 @@ static void DrawScoreboardPanel() {
       static const char *const kReasons[4] = {"Cheating", "Abusive name or chat", "Griefing or team killing", "Something else"};
       ImGui::SetNextWindowFocus();
       CenteredWindow(460.0f * s);
-      ImGui::Begin("##scoreboardreport", nullptr, kPanelFlags);
+      ImGui::Begin("##scoreboardreport", nullptr, kPanelFlags | ImGuiWindowFlags_NoNavInputs | ImGuiWindowFlags_NoNavFocus);
+      if (padPressed(ImGuiKey_GamepadDpadDown, ImGuiKey_GamepadLStickDown)) s_reportReason = (s_reportReason + 1) % 4;
+      if (padPressed(ImGuiKey_GamepadDpadUp, ImGuiKey_GamepadLStickUp)) s_reportReason = (s_reportReason + 3) % 4;
       NobleStyle::Header(("REPORT " + Upper(s_selected)).c_str());
       ImGui::Spacing();
       for (int i = 0; i < 4; ++i)
@@ -899,7 +964,7 @@ static void DrawScoreboardPanel() {
       const float half = (ImGui::GetContentRegionAvail().x - gap) * 0.5f;
       static int s_demoSend = 0;
       const bool demoSend = demo == 5 && !s_reportSending.load() && ++s_demoSend == 240;   // test: send once the dialog is up
-      if (NobleStyle::PrimaryButton("SEND REPORT", ImVec2(half, 38.0f * s)) || demoSend) {
+      if (NobleStyle::PrimaryButton("SEND REPORT", ImVec2(half, 38.0f * s)) || demoSend || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false)) {
         // On its own thread: the request can take seconds and this is the game's render thread.
         s_reportSending.store(true);
         std::string session;
@@ -921,7 +986,7 @@ static void DrawScoreboardPanel() {
         MenuSounds::Click();
       }
       ImGui::SameLine(0.0f, gap);
-      if (ImGui::Button("CANCEL", ImVec2(half, 38.0f * s))) {
+      if (ImGui::Button("CANCEL", ImVec2(half, 38.0f * s)) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)) {
         s_boardReport.store(false);
         MenuSounds::Back();
       }

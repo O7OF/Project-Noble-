@@ -1,5 +1,7 @@
 #pragma once
 
+#include <imgui.h>
+
 #include <cstdint>
 #include <string>
 
@@ -22,6 +24,9 @@ bool WantsFrame();       // something is on screen, so a match that otherwise dr
 bool IsTyping();         // the line is open: the game and menus must take no keys
 bool OwnsEscape();       // Esc is closing the line (or just did), so it must not also open the pause menu
 void Draw(float voiceTop, float chatX, float chatBottom);   // into the current ImGui frame; positions are in 1080p units
+
+// The icon on a player's row: nothing when quiet, a pulsing mic while talking, a crossed-out mic when you've muted them.
+void DrawPlayerVoiceIcon(ImDrawList* dl, ImVec2 center, float scale, uint64_t machineId, bool local);
 
 // Names for the voice panel, from the session roster. The id is the player's machine id.
 void SetPlayerName(uint64_t machineId, const std::string& name);

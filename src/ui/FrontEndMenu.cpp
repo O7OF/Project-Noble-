@@ -3075,6 +3075,11 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
                       player.emblemBackgroundId > 0 ? player.emblemBackgroundId : (local ? ownProf.emblemBackgroundIndex : 0),
                       local ? UIManager::GetArmorCustomizer().EmblemColorsNow() : UiArt::EmblemColors{});
             if (selected) ui.dl->AddRect(s0, s1, kAccent, 0.0f, 0, 1.5f * ui.s);
+            {
+                uint64_t machine = 1000ULL + static_cast<uint64_t>(idx);   // demo rosters have no ids; only real ids ever talk
+                try { if (!player.machineId.empty()) machine = std::stoull(player.machineId, nullptr, 0); } catch (...) {}
+                SocialOverlay::DrawPlayerVoiceIcon(ui.dl, ImVec2(s1.x - 20.0f * ui.s, (s0.y + s1.y) * 0.5f), ui.s, machine, local);
+            }
             char slotId[32];
             std::snprintf(slotId, sizeof(slotId), "##lobby_slot_%d", idx);
             ImGui::SetCursorScreenPos(s0);
