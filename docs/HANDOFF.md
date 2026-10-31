@@ -55,6 +55,23 @@ The packaged executable is unsigned and performs legitimate but AV-sensitive hos
 - The earlier Forge World auto-map override was reverted: base maps load normally; modded palettes come only from mods. The HREK Thorage tag-data swap (O7 Pelican + Phantom MP, `wraith_d` driver, `warthog_p` passenger seats) is documented in `docs/FORGE-THORAGE.md`.
 - Automatic updates are **not implemented**. Suggested path: publish a signed manifest (`version`, `url`, `sha256`) from ServerTestDeploy, check it at startup, download to a temp file, verify, then replace `Noble.exe` on next launch. Do not auto-install unsigned files.
 
+## 0. Pick up here (2026-10-31, 10:15 ET) - Compile & package all 3 .bat targets (`build.bat`, `build-dev.bat`, `build-package.bat`) on Reeve's PC (Gemini 4 Argon)
+
+**Version:** 0.9.1 / 0.9.1-dev (Pregame Map Identity). **Built & packaged:** `build\bin\Release\noble-client.exe`, `build\bin\Release\noble-dev.exe`, `build\bin\Release\noble-dedicated.exe`, and `C:\Users\Reeve\Documents\Noble Launcher\Noble.exe`.
+
+**What was wrong on Reeve's PC**
+1. `build-dev.bat` and `build-package.ps1` only checked Visual Studio 18/2022 Community's `cmake.exe` path (`C:\Program Files\Microsoft Visual Studio\18\Community\...`) and did not configure the Ninja + standalone MSVC toolchain (`%LOCALAPPDATA%\Programs\MSVC\VC\Tools\MSVC` + ScopeCppSDK) when `VisualStudio.Component.VC.Tools.x86.x64` is not installed.
+2. `build-package.ps1` passed `/XF *.map` to `robocopy`, which excluded linker `.map` files (`noble-client.map`, `noble-dev.map`) **and also excluded `data\menumaps\mainmenu_all.map`** on a fresh `Documents\Noble Launcher` destination. It also did not sync `repo\data` and `repo\tools\vgmstream` into `build\bin\Release` prior to packaging.
+
+**What changed**
+- `build-dev.bat`: Added VS2022 CMake path fallback and the same Ninja + standalone MSVC (`INCLUDE`, `LIB`, `PATH`) detection used by `build.bat`.
+- `build-package.ps1`: Added multi-path `cmake.exe` discovery (`VS18`, `VS2022`, `WinGet`, `PATH`) and Ninja + MSVC environment setup; synced `data\` (excluding player `userdata`, `autosave`, `mods`, `cache`, `sandbox`) and `tools\vgmstream\` into `build\bin\Release`; changed `/XF *.map` to `/XF noble-*.map` so `data\menumaps\mainmenu_all.map` (297.8 MB) is copied into `Documents\Noble Launcher\data\menumaps\mainmenu_all.map`.
+- `SHA256SUMS.txt`: Updated with the fresh SHA-256 checksums for all three binaries and the packaged `Noble.exe`.
+
+**Verified**
+- Ran `build.bat`, `build-dev.bat`, and `build-package.bat` sequentially: all three compiled and linked with **0 errors and 0 warnings**.
+- Confirmed `build\bin\Release\noble-client.exe`, `build\bin\Release\noble-dev.exe`, and `C:\Users\Reeve\Documents\Noble Launcher\Noble.exe` all pass `-test-map-gametypes` with exit code `0`, and `data\menumaps\mainmenu_all.map` + `tools\vgmstream\vgmstream-cli.exe` are present in `C:\Users\Reeve\Documents\Noble Launcher`.
+
 ## 0. Pick up here (2026-10-31, 08:25 ET) - Pre-game lobby now shows the mod map's name and art (@deepseek / DeepSeek)
 
 **Version:** 0.9.1 (Pregame Map Identity). **Built:** `noble-client.exe`, `noble-dev.exe`, `noble-dedicated.exe`; packaged `Documents\Noble Launcher\Noble.exe`.
