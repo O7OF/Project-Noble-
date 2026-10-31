@@ -260,7 +260,9 @@ items above close. Keep the spec open when building any screen so the details la
   (RR patch path) plus bandwidth work. Keep 128 as the lobby/browser ceiling for now and file match capacity as research,
   not a promise.
 
-- [~] @deepseek 2026-10-31 05:00 - **voice transport (night block 2)**: WASAPI capture -> 20 ms Opus frames -> relay `voice` message -> jitter buffer -> playback; UI never supplies endpoints/keys.
+- [~] @deepseek 2026-10-31 05:20 - **voice transport (night block 2)** - voice device probe landed (`7e6a2dd`): `-voice-probe` logs 2 capture / 4 playback devices on this PC, module `src/audio/VoiceChat.*`. Next: WASAPI streams + Opus + relay channel: WASAPI capture -> 20 ms Opus frames -> relay `voice` message -> jitter buffer -> playback; UI never supplies endpoints/keys.
+
+- [~] @deepseek 2026-10-31 05:20 - **post-game + credits (night block 3)** follows voice phase 1: -postgame-test timing, multiplayer end path, exit_experience sounds, mission_complete split.
 
 ## I. Armory presentation, audio and data (Tyler, 2026-10-31 00:10)
 
