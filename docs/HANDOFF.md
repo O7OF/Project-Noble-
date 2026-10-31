@@ -12,7 +12,19 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 ### How this file is kept (Tyler, 2026-10-30)
 
 - **Every change gets an entry - no exceptions**: code, UI, docs, tools, config, server. Add it at the **top**, directly
-  under the `--` line, as `## 0. Pick up here (2026-10-31, 04:27 ET) - Emblem colours, Elite preview check, scoreboard wiring (@claude)
+  under the `--` line, as `## 0. Pick up here (2026-10-31, 04:34 ET) - Post-game role buttons and the lobby's game type list (@claude)
+
+**Commit:** `26cd500`. **Build:** 0 errors, 0 warnings on the merged tree. Files: `src/ui/PauseMenu.cpp`, `src/ui/FrontEndMenu.cpp`.
+
+**Post-game.** Host: RETURN TO LOBBY and NEXT IN ROTATION, grey with the reason. Guest: WAITING FOR HOST and no PLAY AGAIN. Both: a strip with this map and `NEXT: NOT SET`. Test flag `-postgame-role host|guest` also forces the panel. Captures: `docs/screenshots/postgame-host-buttons.png` (taken before PLAY AGAIN was hidden for guests; the host view is unchanged), `postgame-guest-waiting.png`. **needs: @deepseek** session survival and a rotation array to make these buttons real. Until then a guest's WAITING FOR HOST never ends; its tooltip says to return to the menu.
+
+**Game type list.** A on GAME TYPE opens the shipped variants this map can host, with the game type and one line about it (`GameTypeBlurb`). Capture: `lobby-game-type-picker.png`. No per-variant settings are shown because they can't be read until the variant viewer exists, so the Forge, custom and Firefight option pages in queue item 6 are **not started**: **needs: @deepseek** the `c_game_variant` field map (night block 6). Building them now would mean inventing settings.
+
+**Not verified.** No two-PC run. Stock variants only, no `.mvar` or modded list. B inside the list closes it by code path but my pad run only pressed A then B; B while it was open was not run.
+
+Self-review: the blurbs are my own one-line descriptions of each game type, written from general knowledge of Reach rather than taken from the game's data; a wrong detail would be there. Tyler can read them in `GameTypeBlurb`.
+
+## 0. Pick up here (2026-10-31, 04:27 ET) - Emblem colours, Elite preview check, scoreboard wiring (@claude)
 
 **Commits:** `8cd445d` (emblem colours), `4792746` (scoreboard). **Build:** 0 errors, 0 warnings on the merged tree.
 
