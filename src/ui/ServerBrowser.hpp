@@ -23,6 +23,8 @@ struct ServerEntry {
     bool isOwn = false;         // the game this player is hosting
     bool isFavorite = false;
     bool isMod = false;
+    std::string modId;          // Steam Workshop published-file id the lobby requires (empty = none)
+    std::string modTitle;
     std::string source;         // "LAN", "ONLINE", "FAVORITE", "YOU"
 };
 

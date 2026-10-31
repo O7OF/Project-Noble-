@@ -6,6 +6,7 @@
 #include "UiArt.hpp"
 #include "common/Logger.hpp"
 #include "common/Settings.hpp"
+#include "ModDownloadPrompt.hpp"
 #include "network/MasterServerClient.hpp"
 #include "network/NetworkTransport.hpp"
 #include "network/SessionManager.hpp"
@@ -149,7 +150,9 @@ void ServerBrowser::RefreshServers() {
             e.variantName = cfg.gametypeName;
             e.isPasswordProtected = !cfg.password.empty();
             e.isOwn = true;
-            e.isMod = IsModdedGame(cfg.mapName, cfg.sessionName);
+            e.isMod = IsModdedGame(cfg.mapName, cfg.sessionName) || !cfg.modId.empty();
+            e.modId = cfg.modId;
+            e.modTitle = cfg.modTitle;
             e.source = "YOU";
             add(e);
         }
@@ -169,7 +172,9 @@ void ServerBrowser::RefreshServers() {
         e.mapName = d.mapName;
         e.variantName = d.gametypeName;
         e.isPasswordProtected = d.isPasswordProtected;
-        e.isMod = IsModdedGame(d.mapName, d.sessionName);
+        e.modId = d.modId;
+        e.modTitle = d.modTitle;
+        e.isMod = IsModdedGame(d.mapName, d.sessionName) || !d.modId.empty();
         e.source = "LAN";
         // Our own beacon heard on the LAN: already listed as "YOU".
         if (sessions.IsHosting() && d.port == sessions.GetHostConfig().port && d.sessionName == sessions.GetHostConfig().sessionName) continue;
@@ -183,8 +188,12 @@ void ServerBrowser::RefreshServers() {
         for (auto& existing : list) {
             if ((existing.hostAddress == m.address || (!m.lanAddress.empty() && existing.hostAddress == m.lanAddress)) && existing.port == m.port) {
                 if (existing.id.empty() && !m.id.empty()) existing.id = m.id;
+                if (existing.modId.empty() && !m.modId.empty()) {
+                    existing.modId = m.modId;
+                    existing.modTitle = m.modTitle;
+                }
                 existing.inProgress = m.inProgress;
-                existing.isMod = existing.isMod || m.isMod;
+                existing.isMod = existing.isMod || m.isMod || !m.modId.empty();
                 mergedWithLan = true;
                 break;
             }
@@ -202,7 +211,9 @@ void ServerBrowser::RefreshServers() {
         e.mapName = m.map;
         e.isPasswordProtected = m.hasPassword;
         e.inProgress = m.inProgress;
-        e.isMod = IsModdedGame(m.map, m.name, m.isMod);
+        e.modId = m.modId;
+        e.modTitle = m.modTitle;
+        e.isMod = IsModdedGame(m.map, m.name, m.isMod) || !m.modId.empty();
         e.source = "ONLINE";
         add(e);
     }
@@ -349,7 +360,7 @@ void ServerBrowser::RenderServerList() {
                 currentPos = (currentPos - 1 + static_cast<int>(visibleIndices.size())) % static_cast<int>(visibleIndices.size());
                 m_selectedServerIndex = visibleIndices[currentPos];
             }
-            if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false)) {
+            if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false) && !ModDownloadPrompt::Get().IsActive()) {
                 if (m_selectedServerIndex >= 0 && m_selectedServerIndex < static_cast<int>(m_servers.size())) {
                     const auto& s = m_servers[m_selectedServerIndex];
                     if (!s.isOwn) {
@@ -591,6 +602,14 @@ void ServerBrowser::RenderServerDetails() {
         ImGui::PopStyleColor();
     }
     if (s.isMod) ImGui::TextColored(ImVec4(0.35f, 0.85f, 0.95f, 1.0f), "Custom map / modded content");
+    if (!s.modId.empty()) {
+        ImGui::TextDisabled("Required Workshop mod:");
+        ImGui::SameLine(100);
+        ImGui::TextWrapped("%s", s.modTitle.empty() ? ("Workshop item " + s.modId).c_str() : s.modTitle.c_str());
+        ImGui::PushStyleColor(ImGuiCol_Text, NobleStyle::TextMuted());
+        ImGui::TextWrapped("Noble checks for it before joining and can download it from Steam.");
+        ImGui::PopStyleColor();
+    }
 
     NobleStyle::SectionGap();
 

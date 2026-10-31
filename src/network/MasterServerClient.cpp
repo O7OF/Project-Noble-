@@ -349,6 +349,8 @@ void MasterServerClient::DoList() {
                 s.inProgress = item.value("in_progress", false);
                 s.hasPassword = item.value("has_password", false);
                 s.isMod = item.value("is_mod", false);
+                s.modId = Str(item, "mod_id", 32);
+                s.modTitle = Str(item, "mod_title", 96);
                 s.isPrivate = item.value("is_private", false);
                 s.lanAddress = Str(item, "lan_address", 64);
                 s.build = Str(item, "build", 32);
@@ -390,7 +392,8 @@ void MasterServerClient::DoRegister() {
     nlohmann::json body = {
         {"name", advert.name}, {"port", advert.port}, {"player_count", advert.playerCount},
         {"max_players", advert.maxPlayers}, {"map", advert.map}, {"mode", advert.mode},
-        {"has_password", advert.hasPassword}, {"is_mod", advert.isMod}, {"is_private", advert.isPrivate}, {"address", advert.address}, {"lan_address", UPnP::Get().GetInternalIP()}, {"build", std::string(VERSION_STRING.substr(0, VERSION_STRING.find(' ')))},
+        {"has_password", advert.hasPassword}, {"is_mod", advert.isMod}, {"mod_id", advert.modId}, {"mod_title", advert.modTitle},
+        {"is_private", advert.isPrivate}, {"address", advert.address}, {"lan_address", UPnP::Get().GetInternalIP()}, {"build", std::string(VERSION_STRING.substr(0, VERSION_STRING.find(' ')))},
         {"variant", advert.variant}, {"difficulty", advert.difficulty}, {"skulls", std::to_string(advert.skulls)}, {"in_progress", advert.inProgress},
         {"host_peer_id", advert.hostPeerId == 0 ? 1ULL : advert.hostPeerId}, {"player_id", advert.hostPeerId == 0 ? 1ULL : advert.hostPeerId},
         {"host_machine_id", advert.hostMachineId.empty() ? "0x484F535400000001" : advert.hostMachineId},
@@ -452,6 +455,11 @@ void MasterServerClient::DoHeartbeat() {
             {"difficulty", m_advert.difficulty},
             {"skulls", std::to_string(m_advert.skulls)}
         };
+        // The match process re-registers the host's session with an advert built in main.cpp, which does
+        // not know the lobby's Workshop mod. Omitting the fields (instead of sending empty strings) keeps
+        // the mod id the pre-game lobby advertised.
+        if (!m_advert.modId.empty()) body["mod_id"] = m_advert.modId;
+        if (!m_advert.modTitle.empty()) body["mod_title"] = m_advert.modTitle;
     }
     if (id.empty() || token.empty()) return;
     const HttpResult r = HttpRequest(Url(), L"PUT", "/api/sessions/heartbeat", body.dump(), token);
@@ -586,6 +594,8 @@ LobbyState MasterServerClient::FetchLobbyStateSync(const std::string& sessionId)
         state.map = j.value("map", "20_sword_slayer");
         state.mode = j.value("mode", "multiplayer");
         state.variant = j.value("variant", "");
+        state.modId = Str(j, "mod_id", 32);
+        state.modTitle = Str(j, "mod_title", 96);
         state.difficulty = j.value("difficulty", 1);
         try { state.skulls = std::stoull(j.value("skulls", "0")); } catch (...) {}
         state.inProgress = j.value("in_progress", false);
@@ -702,6 +712,8 @@ LobbyState MasterServerClient::JoinLobbySync(const std::string& sessionId,
         state.map = j.value("map", "20_sword_slayer");
         state.mode = j.value("mode", "multiplayer");
         state.variant = j.value("variant", "");
+        state.modId = Str(j, "mod_id", 32);
+        state.modTitle = Str(j, "mod_title", 96);
         state.difficulty = j.value("difficulty", 1);
         state.inProgress = j.value("in_progress", false);
 

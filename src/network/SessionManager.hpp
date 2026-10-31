@@ -20,6 +20,9 @@ struct HostConfig {
     std::string gameMode = "Multiplayer";  // "Campaign", "Multiplayer", "Firefight", "Forge"
     std::string mapName = "forge_halo";
     std::string gametypeName = "Slayer";
+    // Steam Workshop mod the host picked for this lobby (published-file id + title). Empty = vanilla.
+    std::string modId;
+    std::string modTitle;
     int maxPlayers = 16;
     uint16_t port = 11774;
     NetworkMode mode = NetworkMode::Local_LAN;
@@ -37,6 +40,8 @@ struct DiscoveredSession {
     int maxPlayers = 16;
     int pingMs = 0;
     bool isPasswordProtected = false;
+    std::string modId;      // Steam Workshop published-file id, empty when vanilla
+    std::string modTitle;
     std::chrono::steady_clock::time_point lastSeen;
 };
 

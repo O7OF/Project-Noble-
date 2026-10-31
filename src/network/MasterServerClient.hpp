@@ -37,6 +37,9 @@ struct LobbyState {
     std::string map;
     std::string mode;
     std::string variant;
+    // Steam Workshop mod the host is using (published-file id). Empty = vanilla / local-only mod.
+    std::string modId;
+    std::string modTitle;
     int difficulty = 1;
     uint64_t skulls = 0;
     bool inProgress = false;
@@ -70,6 +73,8 @@ struct MasterSession {
     bool inProgress = false;
     bool hasPassword = false;
     bool isMod = false;
+    std::string modId;
+    std::string modTitle;
     bool isPrivate = false;
     std::string lanAddress;
     std::string build;
@@ -92,6 +97,10 @@ struct MasterAdvert {
     bool inProgress = false;
     bool hasPassword = false;
     bool isMod = false;
+    // Set when the host's chosen map comes from a Steam Workshop mod; the joiner checks it before
+    // entering the lobby and can download it through Steam.
+    std::string modId;
+    std::string modTitle;
     bool isPrivate = false;
     std::string lanAddress;
     uint64_t hostPeerId = 1;

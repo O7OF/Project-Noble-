@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
 #include <fstream>
 #include <set>
 
@@ -28,6 +29,27 @@ bool ReadJson(const fs::path& path, json& out) {
     if (text.size() >= 3 && static_cast<unsigned char>(text[0]) == 0xEF) text.erase(0, 3);   // UTF-8 BOM
     out = json::parse(text, nullptr, false, true);
     return !out.is_discarded() && out.is_object();
+}
+
+// The Steam published-file id MCC puts in ModInfo.json:
+//   "ModIdentifier": { "HostedModIds": { "SteamWorkshopId": 1234567890 } }
+// Older mod manifests have no ModIdentifier, so the caller may fall back to the folder name.
+std::string HostedWorkshopId(const json& info) {
+    if (!info.contains("ModIdentifier") || !info["ModIdentifier"].is_object()) return {};
+    const json& identifier = info["ModIdentifier"];
+    if (!identifier.contains("HostedModIds") || !identifier["HostedModIds"].is_object()) return {};
+    const json& hosted = identifier["HostedModIds"];
+    if (!hosted.contains("SteamWorkshopId")) return {};
+    const json& id = hosted["SteamWorkshopId"];
+    if (id.is_string()) return id.get<std::string>();
+    if (id.is_number_unsigned()) return std::to_string(id.get<uint64_t>());
+    if (id.is_number_integer() && id.get<int64_t>() > 0) return std::to_string(id.get<int64_t>());
+    return {};
+}
+
+bool AllDigits(const std::string& text) {
+    return !text.empty() && text.size() <= 20 &&
+           std::all_of(text.begin(), text.end(), [](unsigned char c) { return std::isdigit(c) != 0; });
 }
 
 // MCC localised text: { "Neutral": "..." } or a plain string.
@@ -100,6 +122,10 @@ void ScanFolder(const fs::path& root, bool workshop, std::vector<ModEntry>& out)
         ModEntry mod;
         mod.id = dir.path().filename().string();
         mod.folder = dir.path();
+        mod.workshopId = hasInfo ? HostedWorkshopId(info) : std::string();
+        // Workshop folders are named after the published-file id. Some older manifests omit ModIdentifier;
+        // the folder name still identifies the item in that case.
+        if (mod.workshopId.empty() && workshop && AllDigits(mod.id)) mod.workshopId = mod.id;
         mod.title = hasInfo ? Text(info, "Title") : std::string();
         mod.description = hasInfo ? Text(info, "Description") : std::string();
         if (mod.title.empty()) mod.title = workshop ? "Workshop item " + mod.id : mod.id;
@@ -128,6 +154,15 @@ void ScanFolder(const fs::path& root, bool workshop, std::vector<ModEntry>& out)
 }
 
 } // namespace
+
+const ModEntry* FindByWorkshopId(const std::vector<ModEntry>& mods, const std::string& workshopId) {
+    if (workshopId.empty()) return nullptr;
+    for (const ModEntry& mod : mods) {
+        if (!mod.workshopId.empty() && mod.workshopId == workshopId) return &mod;
+        if (mod.id == workshopId) return &mod;
+    }
+    return nullptr;
+}
 
 std::vector<ModEntry> Scan(const fs::path& workshopPath, const fs::path& localModsPath) {
     std::vector<ModEntry> mods;

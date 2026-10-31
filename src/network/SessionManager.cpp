@@ -35,6 +35,14 @@ std::string SanitizeText(const std::string& s, size_t maxLen) {
     return out;
 }
 
+// A beacon is pipe-delimited, so a field that becomes a new token must not contain a pipe.
+std::string BeaconField(const std::string& s, size_t maxLen) {
+    std::string out = SanitizeText(s, maxLen + 8);
+    out.erase(std::remove(out.begin(), out.end(), '|'), out.end());
+    if (out.size() > maxLen) out.resize(maxLen);
+    return out;
+}
+
 } // namespace
 
 SessionManager::SessionManager() = default;
@@ -162,7 +170,8 @@ void SessionManager::BeaconLoop() {
     destAddr.sin_addr.s_addr = INADDR_BROADCAST;
 
     while (!m_stopThreads && m_isHosting) {
-        // Beacon payload: NOBL_BEACON|Name|Mode|Map|Gametype|Players|MaxPlayers|Port|HasPass
+        // Beacon payload: NOBL_BEACON|Name|Mode|Map|Gametype|Players|MaxPlayers|Port|HasPass|ModId|ModTitle
+        // The two mod fields are appended so older clients (which stop after HasPass) still parse the beacon.
         std::ostringstream ss;
         ss << "NOBL_BEACON|" 
            << m_activeConfig.sessionName << "|"
@@ -171,7 +180,9 @@ void SessionManager::BeaconLoop() {
            << m_activeConfig.gametypeName << "|1|"
            << m_activeConfig.maxPlayers << "|"
            << m_activeConfig.port << "|"
-           << (!m_activeConfig.password.empty() ? "1" : "0");
+           << (!m_activeConfig.password.empty() ? "1" : "0") << "|"
+           << BeaconField(m_activeConfig.modId, 24) << "|"
+           << BeaconField(m_activeConfig.modTitle, 96);
 
         std::string payload = ss.str();
         sendto(sock, payload.c_str(), static_cast<int>(payload.length()), 0, 
@@ -249,6 +260,10 @@ void SessionManager::DiscoveryListenerLoop() {
                     session.maxPlayers = maxPlayers;
                     session.port = static_cast<uint16_t>(port);
                     session.isPasswordProtected = (tokens[8] == "1");
+                    if (tokens.size() >= 11) {
+                        session.modId = SanitizeText(tokens[9], 24);
+                        session.modTitle = SanitizeText(tokens[10], 96);
+                    }
                     session.pingMs = 12; // Local LAN base latency
                     session.lastSeen = std::chrono::steady_clock::now();
 
