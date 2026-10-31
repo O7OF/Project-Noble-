@@ -6,6 +6,7 @@
         {
           "name": "PELICAN",
           "tag": "o7of_tags\\vehicles\\pelican_o7\\pelican_mp",
+          "index": 4344,
           "description": "Noble Pelican. Driver seat uses the wraith_d label.",
           "max": 16,
           "price": 0
@@ -13,6 +14,7 @@
         {
           "name": "PHANTOM",
           "tag": "objects\\vehicles\\covenant\\phantom\\phantom_mp",
+          "index": 4832,
           "description": "Covenant Phantom dropship.",
           "max": 16,
           "price": 0

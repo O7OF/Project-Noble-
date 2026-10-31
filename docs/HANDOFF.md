@@ -69,6 +69,44 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+--
+
+--
+
+--
+
+## 0. Pick up here (2026-10-31, 05:30 ET) - Resume point for voice phase 2 (WeabooTyler117 / DeepSeek)
+
+Phase 1 is in (`7e6a2dd`): `src/audio/VoiceChat.*` enumerates devices, `-voice-probe` prints 2 capture / 4 playback on this
+PC. Resume exactly here:
+1. `VoiceChat.cpp`: WASAPI shared-mode capture on the default device (48 kHz mono 16-bit, 20 ms = 960 frames), playback
+   stream with a small ring buffer.
+2. Vendor Opus (BSD-3), encode 960-sample frames at 16/20/24 kbps, decode on receive.
+3. `NetworkTransport`: add a `voice` message type alongside game packets over the existing relay path; the server only
+   relays/rate-limits and never parses audio; UI never supplies endpoints or keys.
+4. Jitter buffer 60-120 ms, per-peer mute/volume, push-to-talk from the binding table.
+5. Evidence: host+guest processes, voice frame log lines, loopback WAV.
+
+Then block 3: post-game panel timing + multiplayer end path, exit_experience sounds, mission_complete credit split.
+## 0. Pick up here (2026-10-31, 05:00 ET) - Block 4 backend done: report, vote-to-kick, end round/match, 128-player cap (WeabooTyler117 / DeepSeek)
+
+Server (`ServerTestDeploy`) now has, all verified locally:
+- `POST /api/reports` -> `data/reports.jsonl` (`b645dbf`).
+- `POST /api/sessions/:id/kick/vote` + `GET .../kick` - majority of non-host players, dedupes, sets `kickPending`; the host
+  client performs the kick (`655fb4d`).
+- `POST /api/sessions/:id/admin/end {kind: round|match, token}` + GET - token-gated to the session host (`65ba17a`).
+- Player cap 16 -> 64 -> **128**, JSON body limit 2 MB; verified with a real 128-entry roster (`48dc168`, `a1196ba`).
+@claude can wire Report / Vote to Kick / End Round / End Match against these; no stubs left.
+Still open in block 4: pad Back suppression and real ping (client side) - moved into block 2/3 work.
+## 0. Pick up here (2026-10-31, 04:30 ET) - Block 1 done: elite pipeline + colour reference (WeabooTyler117 / DeepSeek)
+
+- `docs/reference/elite-slots.md`: `rrpmcg` decoded -> 314 components, elite ranks explicit (spec_ops, space, ultra,
+  zealot, zealot_commander, officer, general + effects legendary_flame/eternal_flame/heart_attack/pestilence/storm/halo_bday).
+- `docs/reference/elite-m10.md`: cache layout (Header 40 KB / Debug 4.17 MB / Resource 1001 MB / Tag 155 MB), header
+  `levels\solo\m10\m10` cache v13; 79 `elite\shaders` and 117 `elite\bitmaps` paths from a chunked whole-file scan;
+  HREK mapping sample: **57/60 bitmaps already stock, 51/60 shaders pack-only** -> the custom rank colour lives in the shader
+  set, which is what we must reproduce. Facts only, no pack assets copied.
+- Commit `e7ab6c9`. Next: read the pack-only shaders for their colour parameters, then block 2 voice transport.
 ## 0. Pick up here (2026-10-31, 02:00 ET) - Look speed: 2.00x is Reach stock, measured (@claude)
 
 Commit `eb757b8`, replacing the look-speed mapping two entries down. Tyler asked for 2.00x = Reach's default, lower slower, higher faster.

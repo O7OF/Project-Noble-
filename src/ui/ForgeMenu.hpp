@@ -18,6 +18,7 @@ public:
         std::string name;
         std::string tag;          // tag path, e.g. objects\vehicles\human\pelican\pelican
         std::string description;
+        int tagIndex = -1;       // map tag index for the engine create call
         int maxAllowed = 16;
         float price = 0.0f;
     };

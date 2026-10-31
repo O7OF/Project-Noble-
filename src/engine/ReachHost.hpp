@@ -17,6 +17,9 @@ public:
 
     static ReachHost& Get();
 
+    // True while an engine UI screen (e.g. the native Forge menu) is up.
+    static bool IsUiScreenActive();
+
     void* GetInterface() { return m_hostObject; }
     void* GetSecondInterface() { return m_secondObject; }
 
