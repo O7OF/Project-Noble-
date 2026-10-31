@@ -501,6 +501,21 @@ void NetworkTransport::StopRelay() {
     NOBLE_INFO("NetworkTransport: Stopped WebSocket packet relay.");
 }
 
+void NetworkTransport::SetChatCallback(ChatCallback cb) {
+    std::lock_guard<std::mutex> lock(m_chatCbMutex);
+    m_chatCb = std::move(cb);
+}
+
+bool NetworkTransport::SendChat(const std::string& channel, const std::string& text) {
+    HINTERNET ws = static_cast<HINTERNET>(m_relayWs.load());
+    if (!ws || text.empty()) return false;
+    nlohmann::json j = {{"type", "chat"}, {"channel", channel}, {"text", text},
+                        {"machineId", std::to_string(GetLocalMachineId())}};
+    const std::string body = j.dump();
+    return WinHttpWebSocketSend(ws, WINHTTP_WEB_SOCKET_UTF8_MESSAGE_BUFFER_TYPE,
+                                const_cast<char*>(body.data()), static_cast<DWORD>(body.size())) == ERROR_SUCCESS;
+}
+
 void NetworkTransport::RelayWorkerThread(std::string relayUrl, std::string sessionId, bool isHost, uint64_t machineId) {
     (void)sessionId;
     (void)isHost;
@@ -560,6 +575,7 @@ void NetworkTransport::RelayWorkerThread(std::string relayUrl, std::string sessi
                 WinHttpSendRequest(hRequest, WINHTTP_NO_ADDITIONAL_HEADERS, 0, nullptr, 0, 0, 0) &&
                 WinHttpReceiveResponse(hRequest, nullptr)) {
                 hWebSocket = WinHttpWebSocketCompleteUpgrade(hRequest, 0);
+        m_relayWs.store(hWebSocket);
             }
             WinHttpCloseHandle(hRequest);
         }
@@ -680,7 +696,15 @@ void NetworkTransport::RelayWorkerThread(std::string relayUrl, std::string sessi
                                 if (cb) {
                                     cb(lMap, lMode, lVar, lDiff, lSkulls, hIp, hPort, sId);
                                 }
-                            } else if (type == "lobby_roster") {
+                            } else if (type == "chat") {
+            ChatMessage m;
+            m.channel = j.value("channel", "all");
+            m.from = j.value("from", "player");
+            m.text = j.value("text", "");
+            ChatCallback cb;
+            { std::lock_guard<std::mutex> lock(m_chatCbMutex); cb = m_chatCb; }
+            if (cb && !m.text.empty()) cb(m);
+        } else if (type == "lobby_roster") {
                                 LobbyRosterCallback cb;
                                 {
                                     std::lock_guard<std::mutex> lock(m_relayMutex);
@@ -735,7 +759,8 @@ void NetworkTransport::RelayWorkerThread(std::string relayUrl, std::string sessi
             m_relaySessionHandle = nullptr;
         }
         if (wsToClose) {
-            WinHttpWebSocketClose(wsToClose, WINHTTP_WEB_SOCKET_SUCCESS_CLOSE_STATUS, nullptr, 0);
+            m_relayWs.store(nullptr);
+        WinHttpWebSocketClose(wsToClose, WINHTTP_WEB_SOCKET_SUCCESS_CLOSE_STATUS, nullptr, 0);
             WinHttpCloseHandle(wsToClose);
         }
         if (hConnect) WinHttpCloseHandle(hConnect);

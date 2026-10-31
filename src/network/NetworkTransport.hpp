@@ -30,6 +30,12 @@ public:
     bool Initialize(bool isHost, const std::string& remoteIp = "", uint16_t remotePort = 11774, uint16_t localPort = 11774);
     void Shutdown();
 
+    // Chat: the relay carries JSON chat frames; the UI owns rendering.
+    struct ChatMessage { std::string channel, from, text; };
+    using ChatCallback = std::function<void(const ChatMessage&)>;
+    void SetChatCallback(ChatCallback cb);
+    bool SendChat(const std::string& channel, const std::string& text);
+
     bool IsActive() const { return m_active.load(); }
     bool IsHost() const { return m_isHost; }
     uint64_t GetLocalMachineId() const { return m_localMachineId; }
@@ -109,6 +115,9 @@ private:
     std::unordered_map<uint16_t, std::deque<QueuedPacket>> m_portQueues;
 
     std::atomic<bool> m_active{ false };
+    std::atomic<void*> m_relayWs{ nullptr };
+    ChatCallback m_chatCb;
+    std::mutex m_chatCbMutex;
     std::atomic<uint64_t> m_lastRemotePacketMs{ 0 };
     bool m_isHost = true;
     SOCKET m_socket = INVALID_SOCKET;
