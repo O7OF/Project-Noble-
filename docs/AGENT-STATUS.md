@@ -31,13 +31,15 @@ can make.
 ## @deepseek
 
 - state: **active**
-- since: 2026-10-30 22:17 ET
-- working on: campaign co-op checks (skulls/difficulty parity + host-disconnect panel done tonight), then CONTINUE
-  checkpoint research; third-person host gate landed, distance tuning parked (follow hook never fires in this path)
-- files expected: `src/engine/CameraThirdPerson.*`, `docs/HANDOFF.md`, `docs/TODO.md`, `docs/AGENT-STATUS.md`
+- since: 2026-10-31 00:45 ET
+- working on: **end-screen credit/XP audio** - extracting Reach's `exit_experience` sounds with HREK `tool.exe`
+  (`counter_loop`, `totals`, `slot_machine` at 70%, `rank_up`), then the campaign credit split (`mission_complete` flag,
+  performance vs completion) and the scoreboard backend endpoints
+- files expected: `src/audio/*`, `data/audio/*`, `src/ui/PauseMenu.cpp`, `src/career/*`, `tools/*`,
+  `docs/HANDOFF.md`, `docs/TODO.md`, `docs/AGENT-STATUS.md`
 - test state: game audio muted in both checkouts (`tools/mute-game.ps1 -IncludeClaude`); restore with `-Unmute`
   (**`src/ui/PauseMenu.cpp` released** - @claude may take the scoreboard action bar)
-- last commit: `a4ea288`
+- last commit: `f782657`
 
 ## @claude
 

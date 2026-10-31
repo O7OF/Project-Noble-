@@ -260,7 +260,7 @@ items above close. Keep the spec open when building any screen so the details la
 - [ ] **Theater setup** — film recording/playback in the engine is the prerequisite; the menu entry stays disabled with
   "Coming later" until then (already in F, restated here because Tyler asked for it explicitly). - research
 
-- [ ] **End-screen credit/XP sound from Reach**: HREK ships the exact exit-experience set at
+- [~] @deepseek 2026-10-31 01:15 - **End-screen credit/XP sound from Reach**: HREK ships the exact exit-experience set at
   `tags\sound\game_sfx\ui\omaha_ui\exit_experience\` - `counter_loop` (the ticking count-up), `totals`, `slot_machine`,
   `rank_up`, `game_completion`, `commendations`, `daily_challenges`, `heat_bonus`, `hopper_bonus`, `invasion_bonus`,
   `time_spent`, `winning_bonus`, `achievements`. Extract with HREK `tool.exe` (sound tag -> sound file), add to Noble's data,
