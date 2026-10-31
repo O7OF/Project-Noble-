@@ -620,6 +620,14 @@ static void UnavailableButton(const char *label, const ImVec2 &size, const char 
 // the session roster with rank badges, service tags and team colours. A click while the key is held frees the pointer for
 // the player actions.
 static void DrawScoreboardPanel() {
+  // Real RTT: the transport already measures per-peer ping (GetPeerPingMs); overlay it on the server roster values, which
+  // are placeholders. Unknown peers keep whatever the server sent.
+  for (auto &row : s_boardRows) {
+    if (row.machine == 0) continue;
+    const int ms = NetworkTransport::Get().GetPeerPingMs(row.machine);
+    if (ms >= 0) row.ping = ms;
+  }
+
   using namespace NobleUi;
   const int demo = ScoreboardDemo();
   const bool pointer = s_boardPointer.load();

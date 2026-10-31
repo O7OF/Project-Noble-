@@ -287,6 +287,12 @@ items above close. Keep the spec open when building any screen so the details la
   content-filter hook, never stores by default); per-player text mute alongside the voice mute state. Split: transport/server
   @deepseek, UI + input @claude.
 
+- [ ] **Voice/chat keybinds (keyboard+mouse and controller)** (Tyler, 2026-10-31): bindable actions for **push-to-talk**,
+  **open chat**, **team chat**, **all chat** and **party chat**, shown in Settings > Controls and in the binding list with
+  defaults T/Y/P for the channels and a pad button for PTT/quick-chat. Must work pre-game, in the lobby and in-match, and the
+  chat binds must not fire while a menu owns input. Shared with the voice transport (PTT) and text chat (channels). -
+  @claude (UI/binding table) + @deepseek (transport hooks)
+
 ## I. Armory presentation, audio and data (Tyler, 2026-10-31 00:10)
 
 - [x] @claude 2026-10-31 00:56 - commit dd37730 - **Armory framing**: Spartan/Elite centered under the horizontal rule below APPEARANCE, head no longer above the HALO: REACH line or beside the nameplate
