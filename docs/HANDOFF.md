@@ -69,6 +69,30 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-31, 04:30 ET) - Traced MCC's results builder; the real player objects are the 0x490-stride array (WeabooTyler117 / DeepSeek)
+
+Tried to read the engine's per-player state directly to see when the remote slot gets a unit. Findings:
+
+- MCC's results builder (`hr+0xF9448`) walks **16 records** from `hr+0x28C82E0` to `hr+0x28C9060`, stride **0xD8**, with the
+  record's present byte at `cursor-0x38`. I probed exactly that range from a debug thread: the values there do **not** match
+  the player fields (`ctrl`/`biped` came back as unrelated bytes), so that region is the *results record* buffer, not the live
+  player state. The probe was reverted; the tree is clean.
+- The interesting part of that function is where it **reads** from: for each player it calls `hr+0x48680` to get an index,
+  then indexes `index * 0x490` into a structure pointed to by `[sessionState + 0x50]` and copies fields from
+  `+0xB0`, `+0xC0`, `+0xD0`, ... `+0x120`, plus bytes at `+0x100`/`+0x101` into result fields `+0x28`/`+0x29`.
+
+So the **live engine player objects are 0x490 bytes each**, reached through a session pointer chain
+(`[hr+0xC17B18]`-indexed global -> object -> `+0x50` -> player array). That chain is the next thing to walk: with the
+player-array pointer resolved, a per-tick dump of each slot's unit/biped field would show whether the host ever creates a
+unit for the remote player, and the `+0x100`/`+0x101` bytes are likely the "present/valid" flags the engine checks.
+
+Local repro and test flags still available:
+
+- `-data-dir <path>` - isolated profile/userdata for a second local instance.
+- `-guest-post-start` - campaign guest posts its own Command 10/11.
+- Prior handoff entries list the five ruled-out causes and the reliable two-process repro (host `player 1 +0x30 = 255`,
+  Category 14 results ~60 s).
+
 ## 0. Pick up here (2026-10-31, 03:55 ET) - Correction: the table I found is NOT confirmed as the HSC builtins (WeabooTyler117 / DeepSeek)
 
 The 03:40 entry over-claims. A wider scan of the same `.rdata` region shows entries whose "names" are UI/localisation
