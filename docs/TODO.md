@@ -243,6 +243,8 @@ items above close. Keep the spec open when building any screen so the details la
 
 - [ ] **Pre-game / Host Game lobby feels off - bring it flush with the other screens** (Tyler, 2026-10-31): apply the shared layout rules (header/rule, margins, panel widths, row height, button sizes, focus colours, controller prompt bar) used by Settings and the Armory; the lobby currently reads as a different design. Cover host and guest views, ready state, slot list, team columns, map/mode header and the start/back prompts. Before/after captures. - @claude
 
+- [~] @deepseek 2026-10-31 03:40 - **Elite pipeline + colour system** (night block 1): tool.exe over the Prophets' Hand `m10.map` -> Elite/rank material tags + shader colour parameters; `rrpmcg` -> slot table; HREK substitutes. Then block 2 voice transport.
+
 ## I. Armory presentation, audio and data (Tyler, 2026-10-31 00:10)
 
 - [x] @claude 2026-10-31 00:56 - commit dd37730 - **Armory framing**: Spartan/Elite centered under the horizontal rule below APPEARANCE, head no longer above the HALO: REACH line or beside the nameplate
