@@ -65,6 +65,21 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+--
+
+## 0. Pick up here (2026-10-31, 00:30 ET) - Controller presets don't work: pad state never reaches ImGui (WeabooTyler117 / DeepSeek)
+
+Tyler confirmed the controller presets do nothing. Root cause found without running anything: `SettingsPanel` already has
+gamepad navigation (`m_keyLeft = … ImGuiKey_GamepadDpadLeft …`, accept on `GamepadFaceDown`) and `CycleValue` uses it, but
+**nothing feeds gamepad state into ImGui**. The DX11 + Win32 backends do not supply gamepad keys, and ReachHost's XInput poll
+only writes the engine pad state (`st[...]`), which ImGui never sees. That is why D-pad/stick/buttons are dead in Settings,
+why the Button Layout row cannot be changed, and why Apply/Discard cannot be triggered from a pad.
+
+Fix plan (mine, next): publish the polled pad (buttons bitmask + both stick axes) from ReachHost and, in the overlay frame
+before `ImGui::NewFrame`, send `io.AddKeyEvent`/`io.AddKeyAnalogEvent` for GamepadDpad*, GamepadFaceUp/Down/Left/Right,
+GamepadStart/Back and GamepadLStick*. Then @claude wires the visible prompts: Y = Apply, X = Discard, preset row cycles and
+the diagram follows the preset.
+
 ## 0. Pick up here (2026-10-31, 00:15 ET) - New backlog: controller UX, armory presentation, audio/data (WeabooTyler117 / DeepSeek)
 
 Tyler's controller playtest list, filed as TODO sections H and I with the @claude / @deepseek split:

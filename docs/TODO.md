@@ -221,6 +221,12 @@ items above close. Keep the spec open when building any screen so the details la
 
 - [ ] **Settings tabs on D-pad / left stick**, not LB/RB; when a value row is focused the stick/D-pad adjusts the value, not the tab
 - [ ] **Apply/Discard controller prompts**: Y = Apply changes, X = Discard changes (icons + key equivalents), replacing the text-only unsaved box
+- [x] (root cause found) **Controller input never reaches ImGui**: `SettingsPanel` already reads
+  `ImGuiKey_GamepadDpadLeft/Right` and `GamepadFaceDown/Right/Up/Left`, but nothing feeds gamepad state to ImGui - the
+  DX11/Win32 backends do not, and ReachHost's XInput poll only writes the engine pad state. So D-pad/stick/buttons do
+  nothing in Settings, presets cannot be changed, and Apply/Discard cannot be triggered. Fix (0deepseek): publish the
+  polled pad (buttons + stick axes) and add `io.AddKeyEvent`/`AddKeyAnalogEvent` for GamepadDpad*, GamepadFace*, Start/Back,
+  GamepadLStick* before `ImGui::NewFrame`; then @claude wires Y=Apply / X=Discard and the preset/diagram row.
 - [ ] **Button layout row must be changeable with a controller** (D-pad/stick left-right does nothing today) and the layout diagram must update per preset
 - [ ] **One "Controller preset" item** (stick + buttons together); remove the separate stick-layout row; presets from `docs/menu-redesign-spec.md` / Halopedia (Default, Southpaw, Boxer, Bumper Jumper, Recon, ...)
 - [ ] **Remap every input**: A/B/X/Y, bumpers, triggers, both sticks (directions + click), D-pad, Start/Back, paddles 1-6; add missing actions: crouch, toggle zoom (default on, still exposed), team chat, scoreboard, push-to-talk (future), etc.
