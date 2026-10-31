@@ -11,7 +11,8 @@ namespace noble {
 namespace KeyBindings {
 
 constexpr int kActionLowerWeapon = 66;
-constexpr int kActionCount = 67;
+constexpr int kActionPushToTalk = 67;  // Noble-managed too: voice chat reads it, the engine never sees it
+constexpr int kActionCount = 68;
 
 int DefaultKey(int action);            // VK code, 0 = unbound
 int EffectiveKey(int action);          // default or the player's override

@@ -67,6 +67,15 @@ struct SettingsData {
     // Tracks switched off in the menu-music playlist: "Shuffle all games" skips them (ReachAudio reads this).
     std::vector<std::string> menuMusicDisabled; // ReachAudio::MusicTracks() id, "all" or "off"
 
+    // Voice chat. Device ids are Windows endpoint ids; empty means the system default.
+    bool voiceEnabled = true;
+    std::string voiceInputDevice;
+    std::string voiceOutputDevice;
+    float voiceVolume = 1.0f;       // 0..2
+    bool voiceOpenMic = false;      // false: push to talk (KeyBindings::kActionPushToTalk, PadLayouts::PushToTalk)
+    int voiceBitrateKbps = 20;      // 16, 20 or 24
+    int voiceChannel = 0;           // 0 all, 1 team, 2 party (same as all until parties exist)
+
     // Gameplay
     bool subtitles = true;         // show cinematic/dialogue subtitles (ReachHost subtitle hook)
     uint64_t campaignSkulls = 0;   // MCC skull bits chosen on the SKULLS screen (launch block +0x48)

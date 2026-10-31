@@ -46,6 +46,9 @@ void Clamp(SettingsData& d) {
     d.volumeGame = std::clamp(d.volumeGame, 0.0f, 1.0f);
     d.volumeMusic = std::clamp(d.volumeMusic, 0.0f, 1.0f);
     d.volumeOther = std::clamp(d.volumeOther, 0.0f, 1.0f);
+    d.voiceVolume = std::clamp(d.voiceVolume, 0.0f, 2.0f);
+    if (d.voiceBitrateKbps != 16 && d.voiceBitrateKbps != 24) d.voiceBitrateKbps = 20;
+    d.voiceChannel = std::clamp(d.voiceChannel, 0, 2);
     if (d.playerName.empty()) d.playerName = "NobleSix";
     if (d.playerName.size() > 15) d.playerName.resize(15);  // Reach gamertags are at most 15 characters
     {
@@ -156,6 +159,13 @@ void Settings::Load() {
     Read(j, "masterMute", d.masterMute);
     Read(j, "muteInBackground", d.muteInBackground);
     Read(j, "inviteNotifications", d.inviteNotifications);
+    Read(j, "voiceEnabled", d.voiceEnabled);
+    Read(j, "voiceInputDevice", d.voiceInputDevice);
+    Read(j, "voiceOutputDevice", d.voiceOutputDevice);
+    Read(j, "voiceVolume", d.voiceVolume);
+    Read(j, "voiceOpenMic", d.voiceOpenMic);
+    Read(j, "voiceBitrateKbps", d.voiceBitrateKbps);
+    Read(j, "voiceChannel", d.voiceChannel);
             Read(j, "menuMusicTrack", d.menuMusicTrack);
     if (j.contains("menuMusicDisabled") && j["menuMusicDisabled"].is_array()) {
         for (const auto& id : j["menuMusicDisabled"]) if (id.is_string()) d.menuMusicDisabled.push_back(id.get<std::string>());
@@ -284,6 +294,13 @@ bool Settings::Save() {
     j["masterMute"] = d.masterMute;
     j["muteInBackground"] = d.muteInBackground;
     j["inviteNotifications"] = d.inviteNotifications;
+    j["voiceEnabled"] = d.voiceEnabled;
+    j["voiceInputDevice"] = d.voiceInputDevice;
+    j["voiceOutputDevice"] = d.voiceOutputDevice;
+    j["voiceVolume"] = d.voiceVolume;
+    j["voiceOpenMic"] = d.voiceOpenMic;
+    j["voiceBitrateKbps"] = d.voiceBitrateKbps;
+    j["voiceChannel"] = d.voiceChannel;
         j["menuMusicTrack"] = d.menuMusicTrack;
         j["menuMusicDisabled"] = d.menuMusicDisabled;
         j["subtitles"] = d.subtitles;

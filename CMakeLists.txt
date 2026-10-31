@@ -68,7 +68,22 @@ FetchContent_Declare(
     GIT_SHALLOW TRUE
 )
 
-FetchContent_MakeAvailable(spdlog nlohmann_json)
+# 5. Opus (voice chat codec, BSD-3: assets/licenses/opus-LICENSE.txt ships with the game)
+FetchContent_Declare(
+    opus
+    GIT_REPOSITORY https://github.com/xiph/opus.git
+    GIT_TAG v1.5.2
+    GIT_SHALLOW TRUE
+)
+set(OPUS_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
+set(OPUS_BUILD_TESTING OFF CACHE BOOL "" FORCE)
+set(OPUS_INSTALL_PKG_CONFIG_MODULE OFF CACHE BOOL "" FORCE)
+set(OPUS_INSTALL_CMAKE_CONFIG_MODULE OFF CACHE BOOL "" FORCE)
+
+FetchContent_MakeAvailable(spdlog nlohmann_json opus)
+if(MSVC)
+    target_compile_options(opus PRIVATE /W0)
+endif()
 
 # Setup MinHook as static library
 FetchContent_GetProperties(minhook)
@@ -256,6 +271,7 @@ target_link_libraries(noble-client PRIVATE
     nlohmann_json::nlohmann_json
     minhook
     imgui
+    opus
     dbghelp
     winhttp
     winmm
@@ -287,7 +303,7 @@ endif()
 target_include_directories(noble-dev PRIVATE src)
 target_link_libraries(noble-dev PRIVATE
     d3d11 dxgi d3dcompiler windowscodecs ole32 comdlg32 ws2_32 iphlpapi
-    spdlog::spdlog nlohmann_json::nlohmann_json minhook imgui
+    spdlog::spdlog nlohmann_json::nlohmann_json minhook imgui opus
     dbghelp winhttp winmm xaudio2 ole32 windowscodecs
 )
 target_link_options(noble-dev PRIVATE /MAP)

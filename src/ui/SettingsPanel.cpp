@@ -1,4 +1,5 @@
 #include "SettingsPanel.hpp"
+#include "audio/VoiceChat.hpp"
 #include "NobleStyle.hpp"
 #include "NobleUi.hpp"
 #include "MenuSounds.hpp"
@@ -929,6 +930,56 @@ void SettingsPanel::RenderAudio() {
         ImGui::Dummy(ImVec2(0, 4));
         Paragraph(("Reach menu audio is off: " + problem).c_str());
     }
+    Section("VOICE CHAT");
+    if (Row("VOICE CHAT", "Hear and talk to other players in online lobbies and matches. When it's on, the microphone stream opens in those sessions, but nothing is sent unless you talk with the settings below. Off closes both streams.",
+            When::Apply, "On", m_edit.voiceEnabled != m_saved.voiceEnabled)) {
+        ToggleValue(m_edit.voiceEnabled);
+    }
+    auto device = [&](const char* label, const char* text, bool capture, std::string& id, const std::string& saved) {
+        const auto devices = VoiceChat::Devices(capture);
+        int index = 0;
+        for (size_t i = 0; i < devices.size(); ++i) if (devices[i].id == id) index = static_cast<int>(i) + 1;
+        const int count = static_cast<int>(devices.size()) + 1;
+        if (Row(label, text, When::Apply, "System default", id != saved)) {
+            const std::string name = index == 0 ? std::string("System default") : devices[static_cast<size_t>(index - 1)].name;
+            if (const int change = CycleValue(name.c_str(), index, count, true)) {
+                index = (index + change + count) % count;
+                id = index == 0 ? std::string() : devices[static_cast<size_t>(index - 1)].id;
+            }
+        }
+    };
+    device("MICROPHONE", "Which input other players hear.", true, m_edit.voiceInputDevice, m_saved.voiceInputDevice);
+    device("VOICE OUTPUT", "Where other players' voices play. It's separate from the game's sound.", false, m_edit.voiceOutputDevice, m_saved.voiceOutputDevice);
+    if (Row("VOICE VOLUME", "How loud other players are. 1.00x is as sent; up to 2.00x. MASTER MUTE silences this too.",
+            When::Apply, "1.00x", std::fabs(m_edit.voiceVolume - m_saved.voiceVolume) > 1e-4f)) {
+        char volumeText[16];
+        std::snprintf(volumeText, sizeof(volumeText), "%.2fx", m_edit.voiceVolume);
+        SliderValue(m_edit.voiceVolume, 0.0f, 2.0f, 0.05f, 1.0f, volumeText);
+    }
+    if (Row("OPEN MIC", "Off: you talk while holding push to talk. On: you also talk whenever your microphone is louder than -40 dB, without a button.",
+            When::Apply, "Off", m_edit.voiceOpenMic != m_saved.voiceOpenMic)) {
+        ToggleValue(m_edit.voiceOpenMic);
+    }
+    if (Row("PUSH TO TALK", "Set the key under KEYBOARD & MOUSE and the controller button under CONTROLLER, as \"Push to talk\".", When::Instant, "", false)) {
+        const int layout = std::clamp(m_edit.padLayout, 0, static_cast<int>(PadLayouts::Count) - 1);
+        const auto keyIt = m_edit.keyOverrides.find(KeyBindings::kActionPushToTalk);
+        const int key = keyIt != m_edit.keyOverrides.end() ? keyIt->second : KeyBindings::DefaultKey(KeyBindings::kActionPushToTalk);
+        const std::string text = KeyBindings::KeyName(key) + " / " + PadLayouts::InputName(PadLayouts::EffectiveInput(layout, PadLayouts::PushToTalk, &m_edit.padBindings));
+        InfoValue(text.c_str());
+    }
+    if (Row("VOICE QUALITY", "16, 20 or 24 kbps. Higher sounds clearer and uses a little more of your upload.",
+            When::Apply, "20 kbps", m_edit.voiceBitrateKbps != m_saved.voiceBitrateKbps)) {
+        static const int kRates[] = { 16, 20, 24 };
+        const int index = m_edit.voiceBitrateKbps == 16 ? 0 : m_edit.voiceBitrateKbps == 24 ? 2 : 1;
+        const std::string name = std::to_string(kRates[index]) + " kbps";
+        if (const int change = CycleValue(name.c_str(), index, 3, false)) m_edit.voiceBitrateKbps = kRates[index + change];
+    }
+    if (Row("TALK TO", "Who hears you. TEAM reaches your own team once your team is known, and everyone until then. PARTY is the same as ALL for now, because Noble has no parties yet.",
+            When::Apply, "All", m_edit.voiceChannel != m_saved.voiceChannel)) {
+        static const char* const kChannels[] = { "All", "Team", "Party" };
+        const int index = std::clamp(m_edit.voiceChannel, 0, 2);
+        if (const int change = CycleValue(kChannels[index], index, 3, true)) m_edit.voiceChannel = (index + change + 3) % 3;
+    }
     Section("MORE");
     if (Row("MASTER MUTE", "Silences Noble's own audio: the menu music and the menu clicks. The volumes below are kept, so turning it back off restores them. (Reach's in-game sound is the engine's own and has its own settings.)",
             When::Instant, "Off", m_edit.masterMute != m_saved.masterMute)) {
@@ -1228,8 +1279,8 @@ void SettingsPanel::RenderController() {
             const std::string value = waiting ? std::string("PRESS AN INPUT...")
                                     : custom ? std::string(effective) + " (custom)"
                                              : std::string(effective) + " (preset)";
-            const std::string text = action == PadLayouts::TeamChat || action == PadLayouts::PushToTalk
-                ? "Can be assigned now, but does nothing until chat and voice exist."
+            const std::string text = action == PadLayouts::TeamChat
+                ? "Can be assigned now, but does nothing until chat exists."
                 : "Press A or click, then press the input this action should use. The action on that input takes this one's old input. Wait 5 seconds to cancel; on a keyboard, Esc cancels and Delete puts the preset's input back.";
 
             if (!Row(PadLayouts::ActionName(action), text.c_str(), When::Apply, layoutName, custom)) continue;
@@ -1519,7 +1570,9 @@ int SettingsPanel::CountDiff(const SettingsData& a, const SettingsData& b, Cat c
     case Cat::Audio:
         return f(a.volumeGame, b.volumeGame) + f(a.volumeMusic, b.volumeMusic) + f(a.volumeOther, b.volumeOther) +
                (a.masterMute != b.masterMute) + (a.muteInBackground != b.muteInBackground) +
-               (a.menuSounds != b.menuSounds) + (a.menuMusicTrack != b.menuMusicTrack);
+               (a.menuSounds != b.menuSounds) + (a.menuMusicTrack != b.menuMusicTrack) +
+               (a.voiceEnabled != b.voiceEnabled) + (a.voiceInputDevice != b.voiceInputDevice) + (a.voiceOutputDevice != b.voiceOutputDevice) +
+               f(a.voiceVolume, b.voiceVolume) + (a.voiceOpenMic != b.voiceOpenMic) + (a.voiceBitrateKbps != b.voiceBitrateKbps) + (a.voiceChannel != b.voiceChannel);
     case Cat::Game:
         return f(a.fieldOfView, b.fieldOfView) + f(a.thirdPersonZoom, b.thirdPersonZoom) +
                f(a.thirdPersonOffsetX, b.thirdPersonOffsetX) + f(a.thirdPersonOffsetY, b.thirdPersonOffsetY) +
@@ -1576,6 +1629,8 @@ SettingsData SettingsPanel::WithDefaults(SettingsData e, Cat c) {
     case Cat::Audio:
         e.volumeGame = d.volumeGame; e.volumeMusic = d.volumeMusic; e.volumeOther = d.volumeOther;
         e.menuSounds = d.menuSounds; e.menuMusicTrack = d.menuMusicTrack;
+        e.voiceEnabled = d.voiceEnabled; e.voiceInputDevice = d.voiceInputDevice; e.voiceOutputDevice = d.voiceOutputDevice;
+        e.voiceVolume = d.voiceVolume; e.voiceOpenMic = d.voiceOpenMic; e.voiceBitrateKbps = d.voiceBitrateKbps; e.voiceChannel = d.voiceChannel;
         break;
     case Cat::Game:
         e.fieldOfView = d.fieldOfView; e.thirdPersonZoom = d.thirdPersonZoom;
