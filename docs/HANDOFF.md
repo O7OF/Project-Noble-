@@ -69,6 +69,28 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-31, 08:05 ET) - RR already ships >4-player co-op; its patch modules are the reference (WeabooTyler117 / DeepSeek)
+
+Tyler pointed at the Reverse Engineering folder: RR runs campaign above 4 and Firefight above 8. Investigated and updated
+`docs/player-count-scaling.md` with the real answer.
+
+- `D:\Reach\haloreach_copy.dll` is **byte-identical** to the Steam DLL (`738DD2D2…0894`), so RR does everything with
+  in-memory patches + host stubs in `D:\Reach\bin\host-probe.exe` (11.7 MB Rust, unstripped).
+- `D:\REACH REVERSE ENGINEER\docs\rr-launch-flow.md` §6 says it outright: *"32/64-player capacity work (m64_*, p64_*,
+  capacity, memberx, census: session membership, simulation views, observer lists, score tables, HUD masks), Campaign up to N
+  players (was 4), Firefight up to N players (was 8)"*.
+- The knobs in `host-probe.exe` are `RR_CAMPAIGN_PLAYERS`, `RR_FF_PLAYERS`, `RR_PB`/`RR_PB64` (moved player block, 64
+  slots), `RR_P64_GROUPS`/`RR_M64_GROUPS`, and profiles `--ff32-profile` / `--m64-profile`; the `ff32` profile string is
+  *"players=32 machine admission=33 machine/player storage=64; AI=128; FF/scoring/spawn repairs, AI guard, upkeep/resync"*.
+- RR's patch modules name exactly the pieces we are missing: `capacity` (`score_list`, `spawn_list`, `hud_players`,
+  `megalo_sets`, `member_wait`, `census_fixes_32`) and `coopx` (`player_list`, `starting_location`, `objects_pool_growth`,
+  `firefight_16`, `metagame_*`). Our launch-block `0xE8` fix is only the "declare session size" half.
+- Patch-site strings RR prints (`+0x39d69a` player base, `+0x420161` machine table, `+0x58075` Firefight zero-initial-player
+  check, `+0xfa6cc`/`+0xfa784` results writers, `FUN_18041f510` observer pass, `FUN_1801f1c8c` megalo message) are leads if
+  we ever implement 8/16.
+
+Also spotted in RR: a **third-person camera toggle (F5, shoulder F6)** — relevant to our open third-person backlog item.
+
 ## 0. Pick up here (2026-10-31, 07:30 ET) - Notes for scaling co-op past 4 players (future, not implemented) (WeabooTyler117 / DeepSeek)
 
 Tyler asked how we would raise the co-op player count later (e.g. 16). Wrote **`docs/player-count-scaling.md`** with the
