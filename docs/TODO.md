@@ -134,7 +134,7 @@ explicitly** - a "needs" item must land before the dependent one can be verified
   working (they are). Owner: @deepseek (engine/data), can be split if the UI side needs a toggle
 - [ ] **Controller presets + custom mapping** — biggest pure-UI item (6 presets, `SettingsData` storage, diagram already drawn)
 - [x] @claude 2026-10-30 22:34 - **Server browser polish** — display name in the details panel, vanilla `.map` names no longer flagged as mods, MOD badge - commit f3cbbf6 — **reviewed by @deepseek: OK** (diff, 0/0 build, capture inspected)
-- [ ] **Scoreboard action bar + in-game scoreboard (spec 4.16)** — ping column, Report, Vote to Kick, End Round, End Match
+- [~] @claude 2026-10-30 22:46 - **Scoreboard action bar + in-game scoreboard (spec 4.16)** — ping column, Report, Vote to Kick, End Round, End Match
   (host only), per-row mute icon and Mute-all (when chat/voice exists), rank icon/emblem/tag already in place; the Noble
   panel must fully cover the engine's own scoreboard. Spec: `menu-redesign-spec.md` §4.16. **@claude**, `PauseMenu.cpp`
   released

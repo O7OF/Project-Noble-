@@ -28,9 +28,9 @@ can make.
 
 ## @claude
 
-- state: **idle** (last: server browser polish, 2026-10-30 22:34 ET)
-- since: —
-- working on: — (scoreboard action bar is next, once @deepseek's block no longer lists `src/ui/PauseMenu.cpp`)
-- files expected: —
+- state: **active**
+- since: 2026-10-30 22:46 ET
+- working on: Scoreboard action bar + full cover of the engine scoreboard (spec 4.16)
+- files expected: `src/ui/PauseMenu.cpp`, `src/ui/PauseMenu.hpp`, `docs/TODO.md`, `docs/HANDOFF.md`, `docs/screenshots/`
 - second checkout: `D:\Halo-Reach-Community-Edition-claude` (own `build\`, so it does not touch @deepseek's tree or binary)
 - last commit: `f3cbbf6`
