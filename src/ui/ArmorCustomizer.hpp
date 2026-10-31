@@ -50,7 +50,8 @@ struct AppearanceProfile {
     int eliteLegsIndex = 0;
     int eliteArmorEffectIndex = 0;
     int nameplateIndex = 1;
-    int emblemIndex = 1;
+    int emblemIndex = 1;            // position in UiArt::GetEmblemCatalog()
+    int emblemBackgroundIndex = 0;  // 0 = none, n = UiArt::GetEmblemBackgrounds()[n - 1]
 
     // Legacy string fields preserved for backward compatibility with existing appearance.json files
     std::string spartanHelmetGroup;

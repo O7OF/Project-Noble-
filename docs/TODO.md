@@ -123,7 +123,7 @@ explicitly** - a "needs" item must land before the dependent one can be verified
 ## B. Menus / UI
 
 - [x] **Scoreboard overlay** — done (`7cef78c`); gap: live K/D/score columns need the engine player-record hook
-- [~] @claude 2026-10-30 23:17 - **Emblem backdrop + symbol picker** — ~30 % done; two identity rows, storage and composition remain (`FrontEndMenu.cpp:861`, `:3660`)
+- [x] @claude 2026-10-30 23:22 - **Emblem backdrop + symbol picker** — real MCC backgrounds, composition, and the shown emblem now matches the picked one - commit 66e64a0. Follow-ups: other players don't see the background (needs: @deepseek server field), emblem colours, check nameplates for the same id bug
 - [ ] **Armory lighting / spotlight** — unlit black chamber. The Armory scene in `mainmenu_all.map` has only faint volumetric
   haze (`HANDOFF.md` ~4922); the model sits in a void. Options, cheapest first: (a) add a real **spotlight** by editing the
   menumap's lighting (HREK: `tags\levels\ui\mainmenu\mainmenu_000.scenario_structure_lighting_info` + lightmap, then

@@ -629,8 +629,7 @@ void DrawCover(ImDrawList* dl, const UiTexture& tex, ImVec2 min, ImVec2 max, ImU
 
 static std::vector<NameplateInfo> s_nameplateCatalog;
 static std::vector<EmblemInfo> s_emblemCatalog;
-static std::vector<EmblemLayer> s_emblemBackdrops;   // image1 of every emblem
-static std::vector<EmblemLayer> s_emblemSymbols;     // image2 of every emblem
+static std::vector<EmblemBackground> s_emblemBackgrounds;
 static bool s_customizationCatalogLoaded = false;
 
 static std::string CleanXmlName(const std::string& raw, const std::string& prefix) {
@@ -685,31 +684,21 @@ static void EnsureCustomizationCatalogs() {
                 std::string idStr = getAttr(line, "id");
                 std::string imgStr = getAttr(line, "image1");
                 std::string nameStr = getAttr(line, "name");
-                if (!idStr.empty() && !imgStr.empty()) {
-                    // image1 is the backdrop layer and image2 the symbol layer of the same emblem; keep both so the Armory
-            // can offer them as background/foreground choices (prototype, 2026-10-31).
-            auto attr = [&line](const char* key) -> std::string {
-                const std::string pattern = std::string(key) + "=\"";
-                const size_t at = line.find(pattern);
-                if (at == std::string::npos) return {};
-                const size_t start = at + pattern.size();
-                const size_t end = line.find('"', start);
-                return end == std::string::npos ? std::string() : line.substr(start, end - start);
-            };
-            const std::string image1 = attr("image1");
-            const std::string image2 = attr("image2");
-            EmblemInfo info;
+                std::string backgroundStr = getAttr(line, "background");
+                if (!backgroundStr.empty()) {
+                    s_emblemBackgrounds.push_back({ backgroundStr, nameStr.empty() ? backgroundStr : CleanXmlName(nameStr, "$EMBLEM_BACK_") });
+                } else if (!idStr.empty() && !imgStr.empty()) {
+                    EmblemInfo info;
                     info.id = std::atoi(idStr.c_str());
                     info.image1 = imgStr;
+                    info.image2 = getAttr(line, "image2");
                     info.name = nameStr.empty() ? ("Emblem " + idStr) : CleanXmlName(nameStr, "$EMBLEM_");
                     s_emblemCatalog.push_back(info);
-            if (!image1.empty()) s_emblemBackdrops.push_back({ image1, info.name });
-            if (!image2.empty()) s_emblemSymbols.push_back({ image2, info.name });
                 }
             }
         }
-        NOBLE_INFO("UiArt: Loaded {} nameplates and {} emblems from playercustomization.xml",
-                   s_nameplateCatalog.size(), s_emblemCatalog.size());
+        NOBLE_INFO("UiArt: Loaded {} nameplates, {} emblems and {} emblem backgrounds from playercustomization.xml",
+                   s_nameplateCatalog.size(), s_emblemCatalog.size(), s_emblemBackgrounds.size());
     }
 
     if (s_nameplateCatalog.empty()) {
@@ -741,9 +730,10 @@ const std::vector<NameplateInfo>& GetNameplateCatalog() {
     return s_nameplateCatalog;
 }
 
-const std::vector<EmblemLayer>& GetEmblemBackdropLayers() { return s_emblemBackdrops; }
-const std::vector<EmblemLayer>& GetEmblemSymbolLayers() { return s_emblemSymbols; }
-UiTexture EmblemLayerTexture(const std::string& image) { return image.empty() ? UiTexture{} : EmblemByName(image); }
+const std::vector<EmblemBackground>& GetEmblemBackgrounds() {
+    EnsureCustomizationCatalogs();
+    return s_emblemBackgrounds;
+}
 
 const std::vector<EmblemInfo>& GetEmblemCatalog() {
     EnsureCustomizationCatalogs();
@@ -778,12 +768,19 @@ UiTexture Nameplate(int id) {
     return FileCached(target);
 }
 
-UiTexture Emblem(int id) {
+void DrawEmblem(ImDrawList* dl, int symbolIndex, int backgroundIndex, ImVec2 min, ImVec2 max, ImU32 tint) {
     EnsureCustomizationCatalogs();
-    for (const auto& item : s_emblemCatalog) {
-        if (item.id == id) return EmblemByName(item.image1);
+    if (backgroundIndex > 0 && static_cast<size_t>(backgroundIndex) <= s_emblemBackgrounds.size()) {
+        // MCC's backgrounds are a mix of black and light grey and Reach colours them. Until players can pick emblem colours,
+        // a dark steel keeps the shape visible and the light symbol readable on all of them.
+        if (const UiTexture back = EmblemByName(s_emblemBackgrounds[static_cast<size_t>(backgroundIndex) - 1].image))
+            DrawContain(dl, back, min, max, (tint & IM_COL32_A_MASK) | IM_COL32(58, 86, 120, 0));
     }
-    return EmblemByName("e_002_p");
+    if (symbolIndex < 0 || static_cast<size_t>(symbolIndex) >= s_emblemCatalog.size()) symbolIndex = 0;
+    if (s_emblemCatalog.empty()) return;
+    const EmblemInfo& symbol = s_emblemCatalog[static_cast<size_t>(symbolIndex)];
+    if (const UiTexture primary = EmblemByName(symbol.image1)) DrawContain(dl, primary, min, max, tint);
+    if (const UiTexture secondary = EmblemByName(symbol.image2)) DrawContain(dl, secondary, min, max, tint);
 }
 
 UiTexture EmblemByName(const std::string& image1) {

@@ -169,6 +169,41 @@ Added a behaviour-based regression item to the TODO: menu -> start match -> retu
   Kick, End Round/End Match). Status blocks now show accurate times/commits.
 - **Capture privacy** is now a written rule in `TEAM-WORKFLOW.md`: no public IPs in committed screenshots.
 
+## 0. Pick up here (2026-10-30, 23:22 ET) - Emblem background picker, and emblems now match what was picked (@claude)
+
+**Correction to the old brief:** `HANDOFF-FOR-CLAUDE.md` §5.1 says MCC has no reusable backdrops. It does:
+`playercustomization.xml` has 105 entries with `background="eb_001"` (ids 500+, `$EMBLEM_BACK_CIRCLE`, ...). The parser skipped
+them because it only kept entries with `image1`. So this uses the real backgrounds instead of the approved prototype that
+mixed layers from different emblems; the prototype's unused layer lists are gone.
+
+- **New Armory row** IDENTITY > Emblem Background: None + 105 shapes, saved as `emblem_background_index` in
+  `appearance.json` (default 0 = none, so existing looks don't change). The Emblem row is the symbol. Tiles preview the
+  whole emblem with the other half as equipped.
+- **Bug fixed, emblem shown was not the one picked:** the Armory stores a list position, but drawing looked it up as an XML
+  id, and most ids don't match their position. Everything now goes through `UiArt::DrawEmblem`, and the id lookup
+  `UiArt::Emblem` is removed so it can't come back. **Visible change:** a saved emblem may now look different from what the
+  nameplate showed before, because it now shows what was actually picked.
+- **Bug fixed, half-drawn emblems:** only `image1` was drawn; both layers are now.
+- Used in the party row, lobby row (local player) and the Armory nameplate.
+
+**Open, not fixed:**
+- **Other players don't see your background:** the roster only carries `emblemId`. Needs a field on the server (@deepseek), then
+  a line in `PlayerRow`'s lobby call.
+- **No emblem colours yet.** Backgrounds get a fixed dark steel tint because MCC's are a mix of black and light grey and a
+  light shape hid the symbol. Black ones stay black, since tinting can't lighten them. Reach's real three-colour picker
+  would need the black layers treated as masks.
+- **Nameplates may have the same list-position vs id bug:** `Nameplate(int id)` is fed the row's position. Not checked.
+
+Self-review:
+- Build 0 errors / 0 warnings on a pull of `9f78b80` plus this diff.
+- Log: `Loaded 531 nameplates, 225 emblems and 105 emblem backgrounds`.
+- `-menu-screen armory -armory-focus "Emblem Background" -menu-capture 120`, plus `Emblem` and `main`, all opened. With
+  `emblem_index` 40 and `emblem_background_index` 3 set by hand in the second checkout's copy of `appearance.json`: picker
+  says Headshot and Plus, and the nameplate and party row show that same skull on that plus. Evidence:
+  `docs/screenshots/emblem-background.png`.
+- Load tested, and the values survived three runs. Not run: clicking a tile (it uses the existing `choose()`), RANDOM, a
+  real lobby row, other resolutions. Tyler's real `appearance.json` was not touched.
+
 ## 0. Pick up here (2026-10-30, 23:17 ET) - Scoreboard replaces the engine's, player actions added (@claude)
 
 Commit `60f374b`. Still `[~]`: parts of it wait on @deepseek (list below).

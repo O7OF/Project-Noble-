@@ -96,6 +96,7 @@ struct EmblemInfo {
     int id = 1;
     std::string name;
     std::string image1;
+    std::string image2;
 };
 
 const std::vector<NameplateInfo>& GetNameplateCatalog();
@@ -104,19 +105,17 @@ const std::vector<EmblemInfo>& GetEmblemCatalog();
 // Nameplate texture for index 1..536
 UiTexture Nameplate(int id);
 
-// Emblem texture for index 1..330
-UiTexture Emblem(int id);
-
-// One of the two art layers an MCC emblem is built from: `image1` (the backdrop shape) and `image2` (the symbol).
-// They are loaded by name, so the Armory prototype can compose any two of them.
-struct EmblemLayer {
-    std::string image;   // e.g. "e_002_p"
-    std::string label;   // the emblem it came from, e.g. "Radioactive"
+// MCC's emblem backgrounds: playercustomization.xml entries with background="eb_001" (circle, diamond, ...).
+struct EmblemBackground {
+    std::string image;   // e.g. "eb_001"
+    std::string name;    // e.g. "Circle"
 };
-const std::vector<EmblemLayer>& GetEmblemBackdropLayers();
-const std::vector<EmblemLayer>& GetEmblemSymbolLayers();
-UiTexture EmblemLayerTexture(const std::string& image);
+const std::vector<EmblemBackground>& GetEmblemBackgrounds();
 UiTexture EmblemByName(const std::string& image1);
+
+// Draws a player's emblem: the background (0 = none, n = GetEmblemBackgrounds()[n - 1]), then both layers of the symbol
+// (symbolIndex = position in GetEmblemCatalog(), which is what the Armory stores; it is not the XML id).
+void DrawEmblem(ImDrawList* dl, int symbolIndex, int backgroundIndex, ImVec2 min, ImVec2 max, ImU32 tint = IM_COL32_WHITE);
 
 // Draws `tex` inside the rectangle, keeping its aspect ratio (centred, nothing cropped).
 void DrawContain(ImDrawList* dl, const UiTexture& tex, ImVec2 min, ImVec2 max, ImU32 tint = IM_COL32_WHITE);
