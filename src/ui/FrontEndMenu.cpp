@@ -1433,6 +1433,7 @@ struct MenuState {
     int lobbyMenuRow = 0;          // Focused row in pre-game options list
     bool lobbyPickerOpen = false;  // The game type list is showing in place of the option rows
     int lobbyPickerRow = 0;
+    bool lobbyProfileOpen = false; // The selected player's card is showing in place of the roster
     bool lobbyReady = true;        // Player ready toggle
     int lobbyRosterSelection = 0;  // Selected player index in party roster
     int lobbyRosterScroll[2] = {}; // First row shown in each roster column (red or all, blue)
@@ -2698,11 +2699,61 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         }
     }
 
+    // The selected player's card: Start or Tab, Back closes it. Only the local player's own numbers are known here.
+    const bool profileWasOpen = st.lobbyProfileOpen;
+    if (rosterCount > 0 && !pickerWasOpen && (ImGui::IsKeyPressed(ImGuiKey_Tab, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadStart, false))) {
+        st.lobbyProfileOpen = !st.lobbyProfileOpen;
+        MenuSounds::Click();
+    }
+    if (rosterCount == 0) st.lobbyProfileOpen = false;
     bool rosterOverflows = false;
     const float teamY = headY + headH;
     const float listY = teamY + teamHeadH;
     const float listH = (slotH + slotGap) * kVisibleRows - slotGap;
-    for (size_t col = 0; col < columns.size(); ++col) {
+    if (st.lobbyProfileOpen) {
+        const LobbyPlayer& player = st.lobbyRoster[st.lobbyRosterSelection];
+        const bool local = isLocal(player);
+        const float cardX = px + slotPad, cardW = pw - slotPad * 2.0f;
+        float y = headY + headH + slotPad;
+        const int rank = player.rankIndex >= 0 ? player.rankIndex : (local ? Career::RankIndex(Career::Get().credits) : -1);
+        PlayerRow(ui, ImVec2(cardX, y), cardW, rank,
+                  player.emblemId > 0 ? player.emblemId : (local ? ownProf.emblemIndex : 0),
+                  player.nameplateId > 0 ? player.nameplateId : (local ? ownProf.nameplateIndex : 0),
+                  player.team, player.serviceTag, player.username, player.isDev, false,
+                  player.emblemBackgroundId > 0 ? player.emblemBackgroundId : (local ? ownProf.emblemBackgroundIndex : 0),
+                  local ? UIManager::GetArmorCustomizer().EmblemColorsNow() : UiArt::EmblemColors{});
+        y += slotH + 14.0f * ui.s;
+        auto statLine = [&](const char* label, const std::string& value) {
+            Text(ui, NobleStyle::SmallFont(), 15.0f, ImVec2(cardX + 4.0f * ui.s, y), kDim, label);
+            const float w = TextWidth(NobleStyle::TitleFont(), 18.0f * ui.s, value.c_str());
+            Text(ui, NobleStyle::TitleFont(), 18.0f, ImVec2(cardX + cardW - w - 4.0f * ui.s, y - 2.0f * ui.s), kWhite, value.c_str());
+            y += 28.0f * ui.s;
+        };
+        const auto& ranks = Career::Ranks();
+        statLine("RANK", rank >= 0 && rank < static_cast<int>(ranks.size()) ? std::string(ranks[rank].name) : std::string("Not shared yet"));
+        if (local) {
+            // Read once per opening: these walk the whole career record.
+            static Career::Record s_record;
+            static int s_challengesDone = 0, s_challengeCount = 0, s_tiers = 0, s_tierMax = 0;
+            if (!profileWasOpen) {
+                s_record = Career::GetRecord();
+                s_challengesDone = s_challengeCount = s_tiers = s_tierMax = 0;
+                for (const auto& c : Career::Challenges()) { ++s_challengeCount; if (c.done) ++s_challengesDone; }
+                for (const auto& c : Career::Commendations()) { if (c.tracked) { s_tiers += c.tier; s_tierMax += 6; } }
+            }
+            statLine("GAMES PLAYED", std::to_string(s_record.totals.gamesPlayed));
+            statLine("KILLS / DEATHS", std::to_string(s_record.totals.kills) + " / " + std::to_string(s_record.totals.deaths));
+            statLine("CHALLENGES DONE NOW", std::to_string(s_challengesDone) + " / " + std::to_string(s_challengeCount));
+            statLine("COMMENDATIONS", s_tierMax > 0 ? std::to_string(s_tiers * 100 / s_tierMax) + "%" : std::string("-"));
+            statLine("ARMORY ITEMS BOUGHT", std::to_string(s_record.totals.armoryOwned.size()));
+        } else {
+            Text(ui, nullptr, 15.0f, ImVec2(cardX + 4.0f * ui.s, y), kDim,
+                 "Games, challenges, commendations and armor aren't shared by other players yet.", cardX + cardW);
+            y += 48.0f * ui.s;
+            BigAction(ui, "lobby_add_friend", ImVec2(cardX, y), cardW, "ADD FRIEND", "Not here yet. Press Y for Friends, then find them by name.", false, false);
+        }
+    }
+    for (size_t col = 0; col < columns.size() && !st.lobbyProfileOpen; ++col) {
         RosterColumn& c = columns[col];
         const bool overflow = c.rows > kVisibleRows;
         rosterOverflows = rosterOverflows || overflow;
@@ -2772,7 +2823,10 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
     }
 
     // Back / Cancel Lobby Handling: the host returns to the setup screen of the mode it came from.
-    if (back && !pickerWasOpen) {
+    if (back && st.lobbyProfileOpen) {
+        st.lobbyProfileOpen = false;
+        MenuSounds::Back();
+    } else if (back && !pickerWasOpen && !profileWasOpen) {
         if (st.isLobbyHost) {
             MasterServerClient::Get().StopAdvertising();
             SessionManager::Get().StopHosting();
@@ -2793,6 +2847,7 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
     std::vector<HintExtra> extras = { { InputPrompts::Button::Y, "Y", "Friends" } };
     if (!hostEp.empty()) extras.push_back({ InputPrompts::Button::X, "X", "Copy invite" });
     if (rosterOverflows) extras.push_back({ InputPrompts::Button::RT, "PGDN", "Page" });
+    if (rosterCount > 0 && !pickerWasOpen) extras.push_back({ InputPrompts::Button::Start, "TAB", st.lobbyProfileOpen ? "Close card" : "Player card" });
     if (pickerWasOpen) DrawHints(ui, { { Prompt::Accept, "Select" }, { Prompt::Back, "Back" } });
     else DrawHints(ui, { { Prompt::Accept, "Select" }, { Prompt::Back, "Back" }, { Prompt::Tabs, "Players" } }, extras);
 }
