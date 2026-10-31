@@ -49,6 +49,11 @@ public:
 
     // Direct peer registration & NAT hole punching
     void AddPeer(uint64_t machineId, const std::string& ip, uint16_t port);
+    void SetRemoteHostLanAddress(const std::string& lanIp, uint16_t port = 0);
+
+    // Real RTT ping measurement (ms) per remote peer machineId (0 = default/host peer, returns -1 if unknown)
+    int GetPeerPingMs(uint64_t machineId = 0) const;
+    std::unordered_map<uint64_t, int> GetAllPeerPingsMs() const;
 
     // Master Server WebSocket packet relay & lobby signaling
     using LobbyLaunchCallback = std::function<void(const std::string& map, const std::string& mode, const std::string& variant, int diff, uint64_t skulls, const std::string& hostIp, uint16_t hostPort, const std::string& sessionId)>;
@@ -110,6 +115,8 @@ private:
     uint16_t m_localPort = 11774;
 
     sockaddr_in m_remoteHostAddr = {};
+    sockaddr_in m_remoteHostLanAddr = {};
+    uint64_t m_lastPunchTick = 0;
     uint64_t m_localMachineId = 0;
     uint64_t m_hostMachineId = 0;
     uint64_t m_sessionId = kNobleSessionId;
@@ -146,6 +153,8 @@ private:
         sockaddr_in addr{};
         uint64_t lastUdpRecvTick = 0;
         uint64_t lastUdpSendTick = 0;
+        uint64_t lastPingSentTick = 0;
+        int rttMs = -1;
         bool directConfirmed = false;
     };
 

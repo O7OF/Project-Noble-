@@ -1301,10 +1301,10 @@ void SettingsPanel::RenderController() {
     }
     Section("STICKS");
     auto speed = [&](const char* label, const char* text, float& v, float saved) {
-        if (!Row(label, text, When::Apply, "10.00x", std::fabs(v - saved) > 1e-4f)) return;
-        SliderValue(v, 1.0f, 10.0f, 0.25f, 10.0f, Format("%.2fx", v).c_str());
+        if (!Row(label, text, When::Apply, "2.00x", std::fabs(v - saved) > 1e-4f)) return;
+        SliderValue(v, 1.0f, 10.0f, 0.25f, 2.0f, Format("%.2fx", v).c_str());
     };
-    speed("HORIZONTAL SENSITIVITY", "How fast the look stick turns you left and right, from 1.00x to 10.00x. Moves in 0.25x steps; click the number to type a value like 2.60. 10.00x is Reach's stock profile. New values for the profile take effect when the next match starts.", m_edit.padLookSpeedX, m_saved.padLookSpeedX);
+    speed("HORIZONTAL SENSITIVITY", "How fast the look stick turns you left and right. 2.00x is Reach's normal speed. Lower is slower, and 1.00x is about half speed; a change below 2.00x applies from the next match. Higher makes partial stick pushes turn faster, but a full push tops out at Reach's own maximum. Moves in 0.25x steps; click the number to type a value like 2.60.", m_edit.padLookSpeedX, m_saved.padLookSpeedX);
     speed("VERTICAL SENSITIVITY", "How fast the look stick looks up and down. Same scale as horizontal.", m_edit.padLookSpeedY, m_saved.padLookSpeedY);
     if (Row("INVERT LOOK", "Pushing the right stick forward looks down.", When::Apply, "Off", m_edit.padInvertLook != m_saved.padInvertLook)) {
         ToggleValue(m_edit.padInvertLook);

@@ -161,7 +161,7 @@ explicitly** - a "needs" item must land before the dependent one can be verified
 - [ ] **Possible pause-menu bug: Esc to resume sometimes reopens the menu** — seen once by @claude, not reproduced. Repro:
   open the pause menu in a match, press Esc to resume, check whether it reopens immediately (likely the engine key state and
   our edge detection disagreeing). Owner: @claude (PauseMenu).
-- [~] @gemini 2026-10-31 01:17 - **Real ping values & WebSocket Relay fragment reassembly / NAT hole-punching** — every scoreboard row shows `-` because the server's ping values are placeholders. Measure RTT in `NetworkTransport` (per-peer, from existing packet traffic + PING/PONG echoes), upgrade WebSocket Relay to 64 KB fragment reassembly + 2ms poll, and pass RTT into roster rows. Owner: @gemini / @deepseek.
+- [x] @gemini 2026-10-31 01:36 - **Real ping values & WebSocket Relay fragment reassembly / NAT hole-punching** — commit bfcc6c7 (`ServerTestDeploy` `8f16061`): `NetworkTransport` measures live per-peer RTT from `PING`/`PONG` and UDP packet exchanges, disables `SIO_UDP_CONNRESET`, reassembles fragmented WebSocket relay frames up to 64 KB with 2 ms poll latency, punches same-LAN guest addresses, and syncs `peer_pings` into roster rows via `DoHeartbeat()` / `FetchLobbyStateSync()`.
 - [ ] **Scoreboard backend actions** — `POST /api/reports` (report endpoint; replaces the local-only `reports.jsonl`),
   vote-to-kick request/vote/result endpoint, and host actions for End Round / End Match. Server + transport @deepseek, then
   @claude un-greys the buttons and wires them.
@@ -186,7 +186,7 @@ explicitly** - a "needs" item must land before the dependent one can be verified
 
 - [x] **Echo host identity in the lobby** — `host_rank_index`, `host_emblem_id`, `host_nameplate_id`, `host_team` now
   stored, echoed in `/api/sessions` and roster, guest identity accepted on join (`b8fb2ad`, client `663cae2`)
-- [~] @gemini 2026-10-31 01:17 - **Invites carry mode/map** — so the toast can say "...inviting you to a Firefight match" (`server/server.js`, `SocialClient::SendInviteAsync`, `GameInvite`)
+- [x] @gemini 2026-10-31 01:36 - **Invites carry mode/map** — commit bfcc6c7 (`ServerTestDeploy` `8f16061`): `SocialClient::SendInviteAsync` and `/api/invites/send` carry `mode`, `map`, and `sessionId` (case-insensitive username matching), and `DrawInviteToast` displays `"is inviting you to a <Mode> match"` and forwards `-session-id` on JOIN.
 - [ ] **Vote-to-kick server endpoint + client UI** (pairs with C)
 
 
@@ -238,7 +238,7 @@ items above close. Keep the spec open when building any screen so the details la
 - [x] @claude 2026-10-31 00:40 - commit dc8731b (real cause: the row dropped its step, for every device) - **Button layout row must be changeable with a controller** (D-pad/stick left-right does nothing today) and the layout diagram must update per preset
 - [x] @claude 2026-10-31 00:40 - commit dc8731b - **One "Controller preset" item** (stick + buttons together); remove the separate stick-layout row; presets from `docs/menu-redesign-spec.md` / Halopedia (Default, Southpaw, Boxer, Bumper Jumper, Recon, ...)
 - [~] @claude 2026-10-31 - commits dc8731b, 83e05e9; paddles work as keyboard/mouse keys sent by a tool like Steam Input; stick movement axes only via presets; **needs: Tyler** real pad test - **Remap every input**: A/B/X/Y, bumpers, triggers, both sticks (directions + click), D-pad, Start/Back, paddles 1-6; add missing actions: crouch, toggle zoom (default on, still exposed), team chat, scoreboard, push-to-talk (future), etc.
-- [~] @claude 2026-10-31 - commit 83e05e9, 1.00x-10.00x per Tyler; linear mapping onto profile 1-19 is an assumption; **needs: Tyler** to feel it in a match - **Look sensitivity baseline**: 19 is the current default; document the scale against Reach's 1-10 and expose horizontal/vertical
+- [~] @claude 2026-10-31 - commit eb757b8, 2.00x = Reach stock, measured; **open:** raising the full-push maximum needs the engine's turn rate found (research); **needs: Tyler** to feel it in a match - **Look sensitivity baseline**: 19 is the current default; document the scale against Reach's 1-10 and expose horizontal/vertical
 - [ ] **(Tyler test) Controller presets** - pick Southpaw or Bumper Jumper, Apply, play a match, rebind one button
 
 ## I. Armory presentation, audio and data (Tyler, 2026-10-31 00:10)
@@ -300,7 +300,7 @@ items above close. Keep the spec open when building any screen so the details la
 ## E. Housekeeping
 
 - [x] **Bump `VERSION_PATCH`** — now `0.8.4` / "0.8.4 (Co-op, Third Person & Menu Cleanup)" (`src/common/Version.hpp`)
-- [ ] **GitHub Actions build artifact** — one-click exe so both PCs always run the same binary
+- [x] @deepseek 2026-10-31 01:34 - **GitHub Actions build artifact** — one-click exe so both PCs always run the same binary — commit 7f19dbc
 - [ ] **Dedupe `docs/HANDOFF.md`** — O7's `dc349a5` appended ~27 identical entries; 245+ entries now
 - [x] **Remove `patch_blam.js`** — O7's scratch rewrite script, superseded by `64dd74f`
 - [ ] **Drop `stash@{0}`** once Tyler agrees (its useful half is already committed as `32cd0f1`)

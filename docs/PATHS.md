@@ -5,6 +5,21 @@ what is *not* in the repo. Verified 2026-10-31.
 
 ## Repositories and checkouts
 
+### Reeve's PC (`C:\Users\Reeve` — `@gemini` + `@deepseek`)
+
+| path | what it is |
+|---|---|
+| `C:\Users\Reeve\Desktop\Halo Reach Community Edition` | **main client checkout on Reeve's PC** (`@gemini` and `@deepseek` work here). Build output in `build\bin\Release` |
+| `C:\Users\Reeve\Documents\deepseek-harness\default-workspace\ServerTestDeploy` | **backend clone on Reeve's PC** (`server.js`, `src/`, deployed to Render at `https://outbreak-z-test-server.onrender.com`) |
+| `C:\Users\Reeve\Desktop\deepseek` | **DeepSeek Harness app** (`DeepSeek Harness.exe` + `DEEPSEEK-PROMPT.txt`) |
+| `C:\Users\Reeve\Documents\deepseek-harness\default-workspace` | **DeepSeek default workspace** (`DEEPSEEK-PROMPT.txt` + `ServerTestDeploy`) |
+| `C:\Program Files (x86)\Steam\steamapps\common\Halo The Master Chief Collection\haloreach` | MCC Halo: Reach install (`haloreach.dll`, `maps\`) |
+| `C:\Program Files (x86)\Steam\steamapps\workshop\content\976730` | Steam Workshop mods on Reeve's PC |
+| `C:\Users\Reeve\Desktop\rea-main` | Reverse Engineer Anything (REA) toolkit |
+| `docs\GEMINI-PROMPT.md` · `docs\DEEPSEEK-PROMPT.md` (`docs\DEEPSEEK-PROMPT.txt`) | Tailored starting briefs & Ninja+MSVC build commands for `@gemini` and `@deepseek` on Reeve's PC |
+
+### Tyler's PC (`D:\` / `C:\Users\tyler` — `@claude` + `@deepseek`)
+
 | path | what it is |
 |---|---|
 | `D:\Halo-Reach-Community-Edition` | **main client checkout** (DeepSeek works here). Build output in `build\bin\Release` |

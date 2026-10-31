@@ -69,6 +69,96 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-31, 02:00 ET) - Look speed: 2.00x is Reach stock, measured (@claude)
+
+Commit `eb757b8`, replacing the look-speed mapping two entries down. Tyler asked for 2.00x = Reach's default, lower slower, higher faster.
+
+**Measured** with `-fake-pad`/`-fake-pad-amount` in Slayer, reading the HUD compass over a 1.5 s hold (`docs/screenshots/look-speed-compass-readings.png`, about +/-2 deg):
+- Profile byte at a 61% push: 0 = 18.5 deg, 8 = 37.5, 12 = 46, 15 = 54.5, 18 = 61. **36 and 72 = about 28: above 18 is slower.**
+- Results: 1.00x 30, 1.50x 46, 2.00x 61; 31% push 7 at 2.00x, 27 at 4.00x; 4.00x at 61% push 172; 2.00x at full push 171.
+
+**Tried and dropped:** mouse-look deltas while device = controller do nothing (4.00x and 10.00x both turned 61), and scaling the stick for slow speeds is far from proportional (half stick gave 8, not 30).
+
+**Limit:** above 2.00x only partial pushes get faster. **A full push tops out at Reach's own 171 deg per 1.5 s, whatever the setting.** Raising that needs the engine's turn rate; a scan for a speed table in `haloreach.dll` and the `cmp 12h` sites I read found nothing. Next idea: the player control look rates in the `matg` tag (HREK). Above about 4.00x most of the stick range is at maximum, so high values feel twitchy rather than faster.
+
+Below 2.00x uses the profile, applied when the profile is built (the row says from the next match; I did not test whether it changes mid-match). Saved 19 and the earlier 10.00 both migrate to 2.00. New keys `padLookRateX/Y`.
+
+Self-review: build 0/0, self-tests pass. Settings run saved `padLookRateX` 1.25 after three steps down from a migrated 19. **Not measured:** vertical (same code, unmeasured), a physical stick, feel.
+
+## 0. Pick up here (2026-10-31, 01:40 ET) - Reeve-PC tailored starting briefs & playbooks for @gemini and @deepseek (Gemini 4 Argon)
+
+Added two machine-tailored starting briefs and continuous-mode playbooks for **Reeve's PC (`C:\Users\Reeve`)**, where `@gemini` (Gemini 4 Argon / `Dominus-VII`) and `@deepseek` (`C:\Users\Reeve\Desktop\deepseek\DeepSeek Harness.exe`) work alongside each other:
+- `docs/GEMINI-PROMPT.md`: Tailored playbook for `@gemini` (`Gemini 4 Argon` / `Dominus-VII`) with Reeve's exact folder paths (`C:\Users\Reeve\Desktop\Halo Reach Community Edition`, `C:\Users\Reeve\Documents\deepseek-harness\default-workspace\ServerTestDeploy`, `C:\Program Files (x86)\Steam\steamapps\common\Halo The Master Chief Collection\haloreach`, `C:\Users\Reeve\Desktop\rea-main`), the direct Ninja+MSVC Release build snippet (0 errors / 0 warnings gate without triggering `build.bat`'s automatic `git pull`), test flags, file ownership split, Cross-Verification Protocol, and 7-step Continuous-Mode Loop.
+- `docs/DEEPSEEK-PROMPT.md` & `docs/DEEPSEEK-PROMPT.txt` (also mirrored to `C:\Users\Reeve\Documents\deepseek-harness\default-workspace\DEEPSEEK-PROMPT.txt` and `C:\Users\Reeve\Desktop\deepseek\DEEPSEEK-PROMPT.txt`): Tailored starting brief for `@deepseek` on Reeve's PC so DeepSeek uses Reeve's paths and Ninja+MSVC toolchain instead of Tyler's `D:\` / VS2022 Community paths.
+- `docs/PATHS.md`: Added Reeve's PC path table alongside Tyler's PC path table, and cloned `O7OF/ServerTestDeploy` to `C:\Users\Reeve\Documents\deepseek-harness\default-workspace\ServerTestDeploy`.
+
+Self-review: Docs-only addition (`docs/GEMINI-PROMPT.md`, `docs/DEEPSEEK-PROMPT.md`, `docs/DEEPSEEK-PROMPT.txt`, `docs/PATHS.md`, `docs/HANDOFF.md`); verified all paths exist on Reeve's PC and `ServerTestDeploy` is cloned in `C:\Users\Reeve\Documents\deepseek-harness\default-workspace\ServerTestDeploy`.
+
+## 0. Pick up here (2026-10-31, 01:36 ET) - Live per-peer RTT ping telemetry, 64 KB WebSocket relay fragment reassembly, LAN hole-punching, rich invites & cross-verification (Gemini 4 Argon)
+
+Client commit `bfcc6c7` (**0.8.7 (RTT Ping Telemetry, 64 KB Relay Reassembly & Rich Invites)**) and backend `O7OF/ServerTestDeploy` commit `8f16061` (**both pushed to GitHub**, including @deepseek's previously local-only Workshop `mod_id` / `mod_title` backend fields and client commit `ff9cc79` + `7f19dbc`).
+
+**What was wrong**
+1. **Placeholder pings & silent UDP ICMP resets:** Roster rows and scoreboard entries displayed `-` or hard-coded `25 ms` because `NetworkTransport` did not measure per-peer RTT, and Windows UDP sockets did not disable `SIO_UDP_CONNRESET`, allowing an unreachable punch packet to raise `WSAECONNRESET` (`10054`) on subsequent `recvfrom` calls.
+2. **WebSocket Relay frame truncation & 15 ms poll latency:** `RelayWorkerThread` used a `4096`-byte stack buffer without handling `WINHTTP_WEB_SOCKET_BINARY_FRAGMENT_BUFFER_TYPE` / `WINHTTP_WEB_SOCKET_UTF8_FRAGMENT_BUFFER_TYPE`, truncating fragmented Blam! replication snapshots or large roster JSON messages, and waited 15 ms per poll cycle.
+3. **Same-LAN hairpin NAT & generic invite toasts:** Guests joining a host behind the same public IP only advertised their external IP in `pending_joins`, and game invites carried only `hostIp`/`hostPort` without `mode`, `map`, or `sessionId`.
+
+**What changed**
+- `src/network/NetworkTransport.hpp` & `src/network/NetworkTransport.cpp`:
+  - Added `lastPingSentTick` and `rttMs` to `PeerRouteState`, plus `GetPeerPingMs(uint64_t machineId = 0)`, `GetAllPeerPingsMs()`, and `SetRemoteHostLanAddress()`. Measures live RTT from `PING`/`PONG` hole-punch probes and active UDP packet exchanges.
+  - Applied `WSAIoctl(..., SIO_UDP_CONNRESET, FALSE)` on socket creation and ignored `WSAECONNRESET` / `WSAECONNREFUSED` in `OnNetRecv`.
+  - Upgraded `RelayWorkerThread` to a `65536`-byte heap buffer with full multi-fragment WebSocket frame reassembly, 2 ms poll interval, burst draining (up to 32 frames/iteration), and 512-packet send/recv queues.
+- `src/network/MasterServerClient.cpp`:
+  - `DoHeartbeat()` sends `peer_pings` (from `NetworkTransport::Get().GetAllPeerPingsMs()`) and punches both `ip` and `lan_ip` from `pending_joins`.
+  - `JoinSessionSync()` and `JoinLobbySync()` send `guest_lan_address` (`UPnP::Get().GetInternalIP()`), live measured ping, and register `SetRemoteHostLanAddress(hostLanIp, hostPort)`.
+  - `FetchLobbyStateSync()` populates `LobbyPlayer::ping` from live `NetworkTransport` RTT measurements.
+- `src/network/SocialClient.hpp`, `src/network/SocialClient.cpp`, `src/ui/FrontEndMenu.cpp`:
+  - Added `mode`, `map`, and `sessionId` to `GameInvite` and `SocialClient::SendInviteAsync`.
+  - Pre-game lobby and Social `INVITE` buttons pass the active lobby mode (`Custom Game`, `Campaign`, `Firefight`, `Forge`), map, and session ID. `DrawInviteToast` now displays `"is inviting you to a <Mode> match"` and passes `-session-id` on JOIN.
+  - `SetLobbyRosterCallback` now preserves `rankIndex`, `emblemId`, `emblemBackgroundId`, `nameplateId`, `team`, and `ping` on real-time WebSocket roster broadcasts.
+- `O7OF/ServerTestDeploy` (`server.js`, commit `8f16061`):
+  - Synced @deepseek's `mod_id` and `mod_title` across `masterPublicSession`, `POST /api/sessions`, `PUT /api/sessions/heartbeat`, `GET /api/sessions/:id/lobby`, and `POST /api/sessions/:id/lobby/join`.
+  - Added `peer_pings` RTT updates in `PUT /api/sessions/heartbeat`, `guest_lan_address` / `lan_ip` in `pendingJoins`, full identity fields in WebSocket `lobby_join`, case-insensitive `COLLATE NOCASE` in `/api/friends/*` and `/api/invites/*`, and `mode`/`map`/`sessionId` in `/api/invites/send`.
+
+**Cross-Verification (`docs/TEAM-WORKFLOW.md`)**
+- **REVIEW OK (@gemini, 2026-10-31 01:36 ET)** on `@claude` commits `960672a`, `83e05e9`, `e2e3771`, `0662bcf` (paddle keys F1-F6, `IsPaddleKey` F5 guard, 1.00x-10.00x look speed, Reverse Southpaw / Reverse Bumper Jumper): diff scope clean, `noble-client.exe` Release build 0 errors / 0 warnings on merged tree, `-test-map-gametypes` (including `PadLayouts::SelfTest` and `InputTuning::SelfTest`) exits 0, screenshots `docs/screenshots/settings-paddles-sensitivity.png` and `docs/screenshots/preset-reverse-bumper-jumper.png` verified.
+- **REVIEW OK (@gemini, 2026-10-31 01:36 ET)** on `@deepseek` commits `ff9cc79` (Workshop mod Download & Join prompt) and `7f19dbc` (GitHub Actions build workflow): diff scope clean, UTF-8 verified in `FrontEndMenu.cpp`, `noble-client.exe` and `noble-dedicated.exe` build 0 errors / 0 warnings on merged tree, `docs/screenshots/mod-required-prompt.png` verified, and pushed both client and `ServerTestDeploy` (`8f16061`) to GitHub.
+
+Self-review: `noble-client.exe` and `noble-dedicated.exe` built with 0 errors and 0 warnings; `-test-map-gametypes` exited 0; `node --check server.js` passed; `git show bfcc6c7 -- src/ui/FrontEndMenu.cpp` verified free of UTF-8 mojibake.
+
+## 0. Pick up here (2026-10-31, 01:34 ET) - GitHub Actions build artifact workflow (@deepseek)
+
+The repo had no CI, so the two PCs could drift on which `noble-client.exe` they ran. Added
+`.github/workflows/build.yml` (commit `7f19dbc`): on every push to `main` and on manual `workflow_dispatch` it
+checks out, configures with CMake + MSVC x64 (`cmake -S . -B build -A x64`), builds Release
+(`cmake --build build --config Release --parallel`) and uploads `noble-client.exe` and `noble-dedicated.exe` as
+artifacts. The ~2.2 GB runtime engine data is intentionally NOT packaged (it is copied from each user's own MCC
+install per `.gitignore`), so the artifact is the one-click binary only.
+
+Verified:
+- YAML parses (the runtime `yaml` package): 5 steps, `on: [push, workflow_dispatch]`, `runs-on: windows-latest`.
+- Configure/build commands match `build.bat` and `CMakeLists.txt`; the artifact paths
+  `build/bin/Release/noble-client.exe` and `noble-dedicated.exe` are what this checkout actually produces (both
+  exist in the current build output).
+- FetchContent deps (spdlog, nlohmann_json, minhook, imgui) clone over git at configure time, which the GitHub
+  runner supports.
+
+Self-review: YAML parses cleanly; commands and artifact paths cross-checked against `build.bat` and the live build
+output; new files only (`.github/workflows/build.yml`) so no local rebuild was needed and the running
+`noble-client.exe` plus the other agent's uncommitted work were left untouched. **Not run here:** an actual GitHub
+Actions run (no Actions access from this session) - it first executes on the next push to `main`.
+
+Heads-up for @gemini (read before you commit): the working tree currently carries a UTF-8 mojibake in
+`src/ui/FrontEndMenu.cpp` (`Spec §3` -> `Spec Â§3`, `·` -> `Â·`, and the `───` box-drawing comment lines double-
+encoded). It is not part of your RTT/relay diff; stage your network files explicitly rather than `git add -A` so
+the corrupted comment/string literals don't ride along. `CMakeLists.txt` already builds with `/utf-8`.
+
+## 0. Pick up here (2026-10-31, 01:22 ET) - Paddle keys now default to F1-F6 (@claude)
+
+Commit `960672a`, replacing the F13-F18 default in the entry below. Saved F13-F18 sets migrate on load; a set the player chose stays. No keyboard action defaults to F1-F6, but **F5 is the third-person toggle** (`PauseMenu.cpp`, read directly with `GetAsyncKeyState`). `ReachHost::IsPaddleKey` makes the toggle ignore F5 while a controller is connected and F5 is a paddle key. **So with a controller connected and default keys, the F5 camera toggle does nothing on the keyboard.** A settings row or rebind for third person (already on @deepseek's list) would remove this trade-off. @deepseek: if you add other direct key reads, check `IsPaddleKey`. `KeyName` now names F1-F24.
+
+Self-review: build 0/0; self-tests pass. Injected F1 bound Jump to Paddle 1 and a saved F13-F18 became F1-F6. Real Slayer match with a controller connected: injected F5 logged no camera toggle as a paddle and logged `controller in use`; with Paddle 5 moved to F20, F5 logged `third person on` then `off`. `docs/screenshots/settings-paddles-sensitivity.png` opened. **Harness trap:** `-menu-capture` closes the client, so too low a frame ends a `-pad-script` run early; that looked like a failed sensitivity save until rerun. **Not run:** a real paddle or Steam Input mapping.
+
 ## 0. Pick up here (2026-10-31, 01:20 ET) - Lobby Workshop mod: Download & Join prompt (@deepseek)
 
 Client commit `ff9cc79`; backend `ServerTestDeploy` commit `dfb2494` (**both local only - this session has no GitHub

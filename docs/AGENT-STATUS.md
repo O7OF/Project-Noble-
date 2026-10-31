@@ -30,32 +30,24 @@ can make.
 
 ## @deepseek
 
-- state: **idle (last: Workshop mod required: Download & Join prompt, 2026-10-31 01:20 ET)**
-- since: 2026-10-31 00:45 ET
-- last item: **Workshop mod required: Download & Join prompt** - host advertises the lobby's Workshop mod, the joiner
-  gets the required-mod popup with DOWNLOAD & JOIN / CANCEL, and Steam subscribes/downloads before the join continues.
-  Backend `ServerTestDeploy` commit `dfb2494` is local only (no GitHub credentials here); Render still runs the old
-  fields until Tyler pushes + redeploys. Side effect: a demo run subscribed to Icecave: The Last Stand (3724674100).
-- files touched: `src/ui/FrontEndMenu.cpp`, `src/ui/ServerBrowser.*`, `src/ui/ModCatalog.*`,
-  `src/ui/ModDownloadPrompt.*`, `src/host/SteamWorkshop.*`, `src/network/MasterServerClient.*`,
-  `src/network/SessionManager.*`, `src/main.cpp`, `src/common/Version.hpp`, `CMakeLists.txt`,
-  `ServerTestDeploy/server.js`, `docs/*`
+- state: **idle (last: GitHub Actions build artifact workflow, 2026-10-31 01:34 ET)**
+- since: 2026-10-31 01:31 ET
+- last commit: `7f19dbc`
 - test state: game audio muted in both checkouts (`tools/mute-game.ps1 -IncludeClaude`); restore with `-Unmute`
-- last commit: `ff9cc79`
 
 ## @claude
 
-- state: **active**
-- since: 2026-10-31 ET
-- working on: Paddle keys default to F1-F6 (Tyler)
-- files expected: `src/common/Settings.*`, `src/engine/ReachHost.*` (pad input), `src/ui/PauseMenu.cpp` (F5 poll line), `docs/*`
+- state: **idle** (last: look speed 2.00x = stock, 2026-10-31)
+- since: —
+- working on: —
+- files expected: —
 - second checkout: `D:\Halo-Reach-Community-Edition-claude` (own `build\`, so it does not touch @deepseek's tree or binary). Test client runs as `noble-client-claude.exe`, so kills by name miss it
-- last commit: `83e05e9`
+- last commit: `eb757b8`
 
 ## @gemini (Gemini 4 Argon / Dominus-VII)
 
-- state: **active**
-- since: 2026-10-31 01:17 ET
-- working on: **Real per-peer RTT ping measurement & WebSocket Relay fragment reassembly / low-latency poll** + **Invites carry mode/map** (`SocialClient`, `NetworkTransport`, `MasterServerClient`, `server/server.js`)
-- files expected: `src/network/NetworkTransport.hpp`, `src/network/NetworkTransport.cpp`, `src/network/MasterServerClient.hpp`, `src/network/MasterServerClient.cpp`, `src/network/SocialClient.hpp`, `src/network/SocialClient.cpp`, `server/server.js`, `docs/TODO.md`, `docs/HANDOFF.md`, `docs/AGENT-STATUS.md`
-- last commit: `e10e674`
+- state: **idle (last: RTT ping telemetry, 64 KB relay reassembly, LAN hole-punching & rich invites, 2026-10-31 01:36 ET)**
+- since: —
+- working on: —
+- files expected: —
+- last commit: `bfcc6c7` (backend `ServerTestDeploy` `8f16061` pushed to GitHub)
