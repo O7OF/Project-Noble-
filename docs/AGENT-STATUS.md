@@ -43,9 +43,9 @@ can make.
 
 ## @claude
 
-- state: **idle** (last: Tyler's decisions on presets, paddles and sensitivity, 2026-10-31)
-- since: —
-- working on: —
-- files expected: —
+- state: **active**
+- since: 2026-10-31 ET
+- working on: Paddle keys default to F1-F6 (Tyler)
+- files expected: `src/common/Settings.*`, `src/engine/ReachHost.*` (pad input), `src/ui/PauseMenu.cpp` (F5 poll line), `docs/*`
 - second checkout: `D:\Halo-Reach-Community-Edition-claude` (own `build\`, so it does not touch @deepseek's tree or binary). Test client runs as `noble-client-claude.exe`, so kills by name miss it
 - last commit: `83e05e9`
