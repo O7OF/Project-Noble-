@@ -37,12 +37,12 @@ can make.
 
 ## @claude
 
-- state: **active**
-- since: 2026-10-31 03:32 ET
-- working on: lobby profile card, pause Controls page (night queue 7-8)
-- files expected: src/ui/FrontEndMenu.cpp, src/ui/ArmorCustomizer.cpp, src/ui/UiArt.cpp, src/ui/PauseMenu.cpp (scoreboard block only), docs/screenshots
+- state: **idle** (last: night queue 1-8 worked through, stopped 04:43 ET, before shift end; see top of HANDOFF)
+- since: -
+- working on: -
+- files expected: -
 - second checkout: `D:\Halo-Reach-Community-Edition-claude` (own `build\`, so it does not touch @deepseek's tree or binary). Test client runs as `noble-client-claude.exe`, so kills by name miss it
-- last commit: `4792746`
+- last commit: `9f2fa2b`
 
 ## @gemini (Gemini 4 Argon / Dominus-VII)
 

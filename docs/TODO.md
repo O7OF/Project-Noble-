@@ -263,6 +263,14 @@ items above close. Keep the spec open when building any screen so the details la
 - [ ] **Roster should carry emblem colours** (`emblem_primary_color`, `emblem_secondary_color`, `emblem_background_color`, indexes 0-29) so other players see them. - needs: @deepseek
 - [ ] **Scoreboard actions have no controller path**: selecting a player and REPORT need the mouse. - @claude
 - [~] @claude 2026-10-31 - live ping wired, commit 4792746; **needs:** a two-process run to see a real value - **Scoreboard real ping**
+- [ ] **First-start question** (spec 4.12): "New to Halo: Reach?" with a short setup; `firstStartDone`. - @claude
+- [ ] **Crash / issue report button** (spec 4.12, approved): bundle the log with player names removed, open logs folder, settings backup and restore. - unowned
+- [ ] **Import/export of key bindings and settings** (spec 4.12). - @claude
+- [ ] **Scoreboard mute icons and Mute all** (spec 4.16). Waits for voice. - @claude, needs: @deepseek voice
+- [ ] **Rotation voting** (spec 4.14): 2-3 options after each game, ties to the host. Waits for rotation. - @deepseek then @claude
+- [ ] **Armory left vs right shoulder camera** (handoff guide 5.2): the map has one shoulder camera; needs a lateral camera offset from engine globals. - @deepseek
+- [ ] **Career deaths look uncounted**: the card shows 62 kills / 0 deaths over 15 games on the test profile. Check the results parsing. - @claude
+- [ ] **Hints and the full-screen panels don't line up**: on Settings and Social the prompt row starts further right than the panel. Cosmetic. - @claude
 - [ ] **RESEARCH: real match capacity beyond 16** (Tyler, 2026-10-31): Reach's network session is 16 players; the UI can
   list 128, but an actual 128-player match needs the `capacity`/`coopx`-class engine work in `docs/player-count-scaling.md`
   (RR patch path) plus bandwidth work. Keep 128 as the lobby/browser ceiling for now and file match capacity as research,

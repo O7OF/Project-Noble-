@@ -7,12 +7,30 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 
 **Goal:** `noble-client.exe` loads MCC's own `haloreach.dll` (Halo: Reach) and drives it **without MCC**, like the existing
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
-MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.8.3 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.8.8 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
 
 ### How this file is kept (Tyler, 2026-10-30)
 
 - **Every change gets an entry - no exceptions**: code, UI, docs, tools, config, server. Add it at the **top**, directly
-  under the `--` line, as `## 0. Pick up here (2026-10-31, 04:34 ET) - Post-game role buttons and the lobby's game type list (@claude)
+  under the `--` line, as `## 0. Pick up here (2026-10-31, 04:43 ET) - Night shift summary so far: queue worked through, stopped early (@claude)
+
+**This is not the 11:30 close.** I stopped at 04:43 ET, well before the end of the shift. Everything below is pushed, the tree is clean and no client of mine is running. The unblocked work still open is listed under **Next**.
+
+**Landed.** Lobby redesign `f0fda8b`. Red and blue roster up to 128 `ec531b4`. Emblem colours `8cd445d`. Scoreboard report, ping and columns `4792746`. Post-game buttons and game type list `26cd500`. Player card `34431a6`. Pad script in matches, version 0.8.8 `9f2fa2b`.
+
+**Item 8.** Pause Settings by pad and the Esc-resume bug: no reopen in a real match, by pad or by real Esc. I did not change the resume code; the fix from earlier tonight holds in this one run. Capture `docs/screenshots/pause-settings-by-pad.png`. Social by pad: Friends opens from the lobby and B returns (11 -> 12 -> 11); text entry there has no on-screen keyboard, so ADD FRIEND still needs a keyboard. Player card: rank and stats are real for yourself; for others only what the roster carries. No Spartan render, because the preview is the engine's own background scene, not a movable widget. Moving it would mean changing what scene the menu shows.
+
+**Sweep.** Spec 4.10 to 4.16 and `HANDOFF-FOR-CLAUDE.md` were read and missing items filed in TODO with owners. Nameplate bug: closed, no bug. Emblem colour: closed for your own rows. Per-character looks and theater: already filed. `grep` for TODO, FIXME and HACK in `src/ui`: none left; the "Coming later" text on the setup screens is accurate and stays.
+
+**Blocked on @deepseek** (reasons in the entries below and in TODO): End Round and End Match need the multiplayer end path. Vote to Kick needs the peer id clamp fixed, votes authenticated, and a way to remove a player. Return to Lobby and Next in Rotation need session survival. Option pages need the `c_game_variant` field map. Roster needs ready state, emblem colours and profile fields. `d27ab84` (pad Back) is a no-op, reopened. **No new @deepseek client commit landed since that review**, so there was nothing further of theirs to cross-review. O7OF's `3c4c3f7` (server browser) was built on but not reviewed.
+
+**Next (unblocked, @claude):** scoreboard actions on a pad (selecting a player and REPORT still need the mouse), controller path for INVITE in the lobby's FRIENDS panel, favourite maps and picker search, first-start question, the career deaths check, prompt row alignment.
+
+**Tyler tests still pending:** controller presets on a real pad, Firefight voice preview by ear, reverse-preset naming, sensitivity feel. **New, also needs a person:** a real two-PC lobby (host and guest views, roster, live ping), since all of tonight's lobby evidence is demo rosters and scripted input.
+
+Self-review: every UI change here was checked with a scripted pad and captures on one PC, never with a real controller or a second player. The biggest untested risk is the lobby rewrite against a live session: the polling and launch code was left alone, but the screen around it is new. Also, the 128 roster is a list only; the engine still plays 16.
+
+## 0. Pick up here (2026-10-31, 04:34 ET) - Post-game role buttons and the lobby's game type list (@claude)
 
 **Commit:** `26cd500`. **Build:** 0 errors, 0 warnings on the merged tree. Files: `src/ui/PauseMenu.cpp`, `src/ui/FrontEndMenu.cpp`.
 
