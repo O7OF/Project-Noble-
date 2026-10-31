@@ -69,7 +69,7 @@ private:
 
     // Filters
     char m_searchQuery[128] = { 0 };
-    int m_modeFilter = 0; // 0 = All, 1 = Campaign, 2 = Multiplayer, 3 = Forge, 4 = Firefight, 5 = Theatre, 6 = Custom
+    int m_modeFilter = 0; // 0 = All, 1 = Multiplayer, 2 = Campaign, 3 = Firefight, 4 = Forge
     bool m_hideFull = false;
     bool m_hideEmpty = false;
     bool m_hidePassworded = false;   // only show games without a password

@@ -4310,7 +4310,7 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
     case Screen::Settings:
     case Screen::Career:
     case Screen::Mods: {
-        const char* title = st.screen == Screen::Servers ? "GAMES" : st.screen == Screen::Settings ? "SETTINGS"
+        const char* title = st.screen == Screen::Servers ? "SERVER BROWSER" : st.screen == Screen::Settings ? "SETTINGS"
                           : st.screen == Screen::Career ? "SERVICE RECORD" : "MODS";
         // These screens use the whole screen, like Settings.
         const bool full = true;

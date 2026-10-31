@@ -189,6 +189,7 @@ public:
     // Live count of logged-in clients from /api/players/online (health endpoint as fallback).
     void RequestOnlineCount();
     int OnlinePlayers() const { return m_onlinePlayers.load(); }
+    int TotalPlayers() const { return m_totalPlayers.load(); }
     int OnlineServers() const { return m_onlineServers.load(); }
     std::vector<MasterSession> Sessions() const;
     std::string Status() const;   // last result / error, for the menu
@@ -221,6 +222,7 @@ private:
     std::string m_status;
     std::vector<MasterSession> m_sessions;
     std::atomic<int> m_onlinePlayers{0};
+    std::atomic<int> m_totalPlayers{0};
     std::atomic<int> m_onlineServers{0};
 
     std::atomic<bool> m_advertising{false};

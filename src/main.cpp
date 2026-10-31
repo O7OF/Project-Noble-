@@ -289,6 +289,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     noble::SessionManager::Get().Initialize();
     const std::string masterUrl = startupSettings.masterServerUrl;  // empty = LAN/direct only
     noble::MasterServerClient::Get().SetUrl(masterUrl);
+    noble::MasterServerClient::Get().RequestOnlineCount();
 
     // Parse command line arguments for direct map and variant launches (e.g. from NobleLauncher or Relaunch)
     std::string launchMap = "";

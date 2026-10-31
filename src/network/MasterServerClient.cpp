@@ -1,6 +1,7 @@
 #include "MasterServerClient.hpp"
 #include "UPnP.hpp"
 #include "NetworkTransport.hpp"
+#include "common/DeviceIdentity.hpp"
 #include "common/Logger.hpp"
 #include "common/Version.hpp"
 
@@ -95,6 +96,10 @@ HttpResult HttpRequest(const std::string& fullUrl,
     }
     if (request) {
         std::wstring headers = L"Content-Type: application/json\r\nAccept: application/json\r\n";
+        const DeviceIdentity& devId = DeviceIdentityStore::Get();
+        if (!devId.deviceId.empty()) {
+            headers += L"X-Device-Id: " + Widen(devId.deviceId) + L"\r\n";
+        }
         if (!sessionToken.empty()) {
             headers += L"X-Session-Token: " + Widen(sessionToken) + L"\r\n";
         }
@@ -314,6 +319,7 @@ void MasterServerClient::WorkerLoop() {
         const bool registered = !m_sessionId.empty();
         m_unregisterRequested = false;
         m_listRequested = false;
+        m_onlineRequested = false;
         lock.unlock();
 
         if (doUnregister) DoUnregister();
@@ -336,7 +342,16 @@ void MasterServerClient::WorkerLoop() {
 }
 
 void MasterServerClient::DoOnline() {
-    HttpResult r = HttpRequest(Url(), L"GET", "/api/players/online", {});
+    const DeviceIdentity& id = DeviceIdentityStore::Get();
+    nlohmann::json presenceBody = {
+        {"deviceId", id.deviceId},
+        {"username", id.playerName},
+        {"serviceTag", id.serviceTag}
+    };
+    HttpResult r = HttpRequest(Url(), L"POST", "/api/presence", presenceBody.dump());
+    if (!r.ok) {
+        r = HttpRequest(Url(), L"GET", "/api/players/online", {});
+    }
     if (!r.ok) {
         // Older deployments do not have the players endpoint; health carries the same counters.
         r = HttpRequest(Url(), L"GET", "/api/health", {});
@@ -345,8 +360,10 @@ void MasterServerClient::DoOnline() {
     try {
         const nlohmann::json j = nlohmann::json::parse(r.body);
         const int online = j.value("online", j.value("activeSessions", 0));
+        const int total = j.value("totalPlayers", j.value("registeredPlayers", 0));
         const int servers = j.value("servers", j.value("masterSessions", 0));
         m_onlinePlayers.store(std::max(0, online));
+        if (total > 0) m_totalPlayers.store(std::max(total, online));
         m_onlineServers.store(std::max(0, servers));
     } catch (...) {
     }
@@ -361,11 +378,14 @@ void MasterServerClient::DoList() {
     }
     std::vector<MasterSession> list;
     int online = -1;
+    int total = -1;
     try {
         const nlohmann::json j = nlohmann::json::parse(r.body);
         const nlohmann::json* items = &j;
         if (j.is_object()) {
             if (j.contains("online")) online = j.value("online", 0);
+            if (j.contains("totalPlayers")) total = j.value("totalPlayers", 0);
+            else if (j.contains("registeredPlayers")) total = j.value("registeredPlayers", 0);
             if (j.contains("sessions") && j["sessions"].is_array()) items = &j["sessions"];
         }
         if (items->is_array()) {
@@ -396,6 +416,7 @@ void MasterServerClient::DoList() {
         return;
     }
     if (online >= 0) m_onlinePlayers.store(std::max(0, online));
+    if (total > 0) m_totalPlayers.store(std::max(total, std::max(0, online)));
     std::lock_guard<std::mutex> lock(m_mutex);
     m_status = std::to_string(list.size()) + " game(s) on the master server";
     m_sessions = std::move(list);

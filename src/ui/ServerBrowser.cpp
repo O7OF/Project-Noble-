@@ -52,27 +52,30 @@ bool IsModdedGame(const std::string& map, const std::string& sessionName, bool a
     return advertised || sessionName.find("[Mod]") != std::string::npos || !MapNames::IsVanilla(map);
 }
 
-// Small filled tag, drawn inline at the cursor; the next item continues on the same line.
-void DrawTag(const char* text, ImU32 fill) {
+// Small filled "MOD" tag, drawn inline at the cursor; the next item continues on the same line.
+void DrawModBadge() {
+    const char* text = "MOD";
     const float paddingX = 5.0f;
     const ImVec2 textSize = ImGui::CalcTextSize(text);
     const ImVec2 p0 = ImGui::GetCursorScreenPos();
     const ImVec2 p1(p0.x + textSize.x + paddingX * 2.0f, p0.y + textSize.y);
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    dl->AddRectFilled(p0, p1, fill, 2.0f);
+    dl->AddRectFilled(p0, p1, IM_COL32(89, 217, 242, 255), 2.0f);
     dl->AddText(ImVec2(p0.x + paddingX, p0.y), IM_COL32(6, 20, 28, 255), text);
     ImGui::Dummy(ImVec2(p1.x - p0.x, textSize.y));
     ImGui::SameLine();
 }
 
-int ModeCategory(const std::string& mode) {
-    const std::string m = Lower(mode);
-    if (m.find("campaign") != std::string::npos) return 1;
-    if (m.find("forge") != std::string::npos || m.find("sandbox") != std::string::npos) return 3;
-    if (m.find("firefight") != std::string::npos) return 4;
-    if (m.find("theat") != std::string::npos) return 5;
-    if (m.find("custom") != std::string::npos) return 6;
-    return 2;
+std::string FormatCountWithCommas(int count) {
+    if (count < 0) count = 0;
+    std::string raw = std::to_string(count);
+    std::string out;
+    const int n = static_cast<int>(raw.size());
+    for (int i = 0; i < n; ++i) {
+        if (i > 0 && ((n - i) % 3) == 0) out.push_back(',');
+        out.push_back(raw[i]);
+    }
+    return out;
 }
 
 void Describe(ServerEntry& e) {
@@ -256,9 +259,9 @@ void ServerBrowser::RefreshServers() {
 
 void ServerBrowser::Render() {
     // Live list: re-read LAN/master results every 2 s, probe the LAN and ask the master server
-    // every 10 s.
+    // every 5 s so server listings, Players Online, and Total Players stay live.
     const double now = ImGui::GetTime();
-    if (now - m_lastMasterRequest > 10.0) {
+    if (now - m_lastMasterRequest > 5.0) {
         m_lastMasterRequest = now;
         SessionManager::Get().TriggerDiscoveryScan();
         MasterServerClient::Get().RequestList();
@@ -293,6 +296,8 @@ void ServerBrowser::Render() {
 void ServerBrowser::RenderFilterBar() {
     SessionManager& sessions = SessionManager::Get();
     const bool hosting = sessions.IsHosting();
+    const ImVec2 filterStartPos = ImGui::GetCursorScreenPos();
+    const float filterRightX = filterStartPos.x + ImGui::GetContentRegionAvail().x;
 
     if (hosting) {
         if (NobleStyle::DangerButton("STOP HOSTING", ImVec2(140, 0))) {
@@ -317,31 +322,22 @@ void ServerBrowser::RenderFilterBar() {
     }
 
     ImGui::Spacing();
-    // Mode tabs, Reach-style: one row, ALL first, then the playlists players actually browse.
-    const char* tabs[] = { "ALL", "CAMPAIGN", "MULTIPLAYER", "FORGE", "FIREFIGHT", "THEATRE", "CUSTOM" };
-    for (int i = 0; i < 7; ++i) {
-        if (i) ImGui::SameLine();
-        const bool active = m_modeFilter == i;
-        ImGui::PushStyleColor(ImGuiCol_Text, active ? NobleStyle::Accent() : NobleStyle::TextMuted());
-        if (ImGui::Button(tabs[i], ImVec2(0, 28))) m_modeFilter = i;
-        ImGui::PopStyleColor();
-    }
+    ImGui::SetNextItemWidth(220);
+    ImGui::InputTextWithHint("##Search", "Search by name or map", m_searchQuery, IM_ARRAYSIZE(m_searchQuery));
     ImGui::SameLine();
-    ImGui::TextColored(NobleStyle::Accent(), "ONLINE %d", MasterServerClient::Get().OnlinePlayers());
-
-    ImGui::Spacing();
-    ImGui::SetNextItemWidth(240);
-    ImGui::InputTextWithHint("##Search", "Search name, map or host", m_searchQuery, IM_ARRAYSIZE(m_searchQuery));
+    const char* modeNames[] = { "All modes", "Multiplayer", "Campaign", "Firefight", "Forge" };
+    ImGui::SetNextItemWidth(140);
+    ImGui::Combo("##ModeCombo", &m_modeFilter, modeNames, IM_ARRAYSIZE(modeNames));
+    ImGui::SameLine();
+    ImGui::Checkbox("Hide full", &m_hideFull);
     ImGui::SameLine();
     ImGui::Checkbox("Hide empty", &m_hideEmpty);
     ImGui::SameLine();
-    ImGui::Checkbox("Hide full", &m_hideFull);
+    ImGui::Checkbox("Favourites only", &m_showOnlyFavorites);
     ImGui::SameLine();
     ImGui::Checkbox("No password", &m_hidePassworded);
     ImGui::SameLine();
     ImGui::Checkbox("Not started", &m_hideInProgress);
-    ImGui::SameLine();
-    ImGui::Checkbox("Favourites", &m_showOnlyFavorites);
 
     // Status line: LAN / master server / UPnP.
     const std::string master = MasterServerClient::Get().Enabled()
@@ -350,6 +346,29 @@ void ServerBrowser::RenderFilterBar() {
     ImGui::TextDisabled("%s   |   %s", master.c_str(), UPnP::Get().GetStatus().c_str());
     if (!m_status.empty()) {
         ImGui::TextColored(NobleStyle::Accent(), "%s", m_status.c_str());
+    }
+
+    // Right-aligned live player counters in the top-right header area (Players Online & Total Players).
+    {
+        int activeInServers = 0;
+        for (const auto& s : m_servers) {
+            if (s.playerCount > 0) activeInServers += s.playerCount;
+        }
+        const int onlineCount = std::max({ MasterServerClient::Get().OnlinePlayers(), activeInServers, 1 });
+        const int totalCount = std::max(MasterServerClient::Get().TotalPlayers(), onlineCount);
+
+        const std::string onlineStr = FormatCountWithCommas(onlineCount) + " Players Online";
+        const std::string totalStr = FormatCountWithCommas(totalCount) + " Total Players";
+
+        ImFont* counterFont = NobleStyle::TitleFont() ? NobleStyle::TitleFont() : ImGui::GetFont();
+        const float fontSize = 26.0f;
+        const ImVec2 onlineSize = counterFont->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, onlineStr.c_str());
+        const ImVec2 totalSize = counterFont->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, totalStr.c_str());
+
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        const ImU32 textCol = IM_COL32(236, 240, 244, 255);
+        dl->AddText(counterFont, fontSize, ImVec2(filterRightX - onlineSize.x, filterStartPos.y - 2.0f), textCol, onlineStr.c_str());
+        dl->AddText(counterFont, fontSize, ImVec2(filterRightX - totalSize.x, filterStartPos.y + 26.0f), textCol, totalStr.c_str());
     }
 }
 
@@ -361,10 +380,11 @@ bool ServerBrowser::PassesFilters(const ServerEntry& s) const {
         const std::string map = Lower(s.mapName + " " + MapNames::Display(s.mapName));
         if (name.find(needle) == std::string::npos && map.find(needle) == std::string::npos) return false;
     }
-    if (m_modeFilter == 1 && s.gameMode != "Multiplayer") return false;
-    if (m_modeFilter == 2 && s.gameMode != "Campaign") return false;
-    if (m_modeFilter == 3 && s.gameMode != "Firefight") return false;
-    if (m_modeFilter == 4 && s.gameMode != "Forge") return false;
+    const std::string modeLower = Lower(s.gameMode);
+    if (m_modeFilter == 1 && modeLower != "multiplayer") return false;
+    if (m_modeFilter == 2 && modeLower != "campaign") return false;
+    if (m_modeFilter == 3 && modeLower != "firefight") return false;
+    if (m_modeFilter == 4 && modeLower != "forge") return false;
     if (m_hideFull && s.maxPlayers > 0 && s.playerCount >= s.maxPlayers) return false;
     if (m_hideEmpty && s.playerCount <= 0) return false;
     if (m_hidePassworded && s.isPasswordProtected) return false;
@@ -415,10 +435,10 @@ void ServerBrowser::RenderServerList() {
             SessionManager::Get().TriggerDiscoveryScan();
         }
         if (ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false)) {
-            m_modeFilter = (m_modeFilter + 6) % 7;
+            m_modeFilter = (m_modeFilter + 4) % 5;
         }
         if (ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false)) {
-            m_modeFilter = (m_modeFilter + 1) % 7;
+            m_modeFilter = (m_modeFilter + 1) % 5;
         }
     }
 
@@ -429,13 +449,13 @@ void ServerBrowser::RenderServerList() {
     if (!ImGui::BeginTable("ServerTable", 7, flags, ImVec2(0, 0))) return;
 
     // Widths include the cell padding and the sort arrow, so no header is elided ("Sour...", "Playe...").
-    ImGui::TableSetupColumn("Source",   ImGuiTableColumnFlags_WidthFixed, 92.0f);
-    ImGui::TableSetupColumn("Server",   ImGuiTableColumnFlags_WidthStretch | ImGuiTableColumnFlags_DefaultSort, 170.0f);
-    ImGui::TableSetupColumn("Mode",     ImGuiTableColumnFlags_WidthFixed, 82.0f);
-    ImGui::TableSetupColumn("Map",      ImGuiTableColumnFlags_WidthFixed, 170.0f);
-    ImGui::TableSetupColumn("Players",  ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_PreferSortDescending, 100.0f);
-    ImGui::TableSetupColumn("Ping",     ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_PreferSortDescending, 62.0f);
-    ImGui::TableSetupColumn("Address",  ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultHide, 150.0f);
+    ImGui::TableSetupColumn("Source",   ImGuiTableColumnFlags_WidthFixed, 86.0f);
+    ImGui::TableSetupColumn("Server",   ImGuiTableColumnFlags_WidthStretch | ImGuiTableColumnFlags_DefaultSort, 200.0f);
+    ImGui::TableSetupColumn("Mode",     ImGuiTableColumnFlags_WidthFixed, 112.0f);
+    ImGui::TableSetupColumn("Map",      ImGuiTableColumnFlags_WidthFixed, 240.0f); // longest stock name plus the MOD badge
+    ImGui::TableSetupColumn("Players",  ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_PreferSortDescending, 98.0f);
+    ImGui::TableSetupColumn("Ping",     ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_PreferSortDescending, 70.0f);
+    ImGui::TableSetupColumn("Address",  ImGuiTableColumnFlags_WidthFixed, 170.0f);
     ImGui::TableSetupScrollFreeze(0, 1);
     ImGui::TableHeadersRow();
 
@@ -509,9 +529,9 @@ void ServerBrowser::RenderServerList() {
         // Column 3: map, by the name players know it by ("Forge World", not "forge_halo"). Modded maps keep
         // their own name and get the MOD badge; hovering shows the raw file name.
         ImGui::TableNextColumn();
-        DrawTag(s.isMod ? "MOD" : "STOCK", s.isMod ? IM_COL32(89, 217, 242, 255) : IM_COL32(120, 140, 158, 255));
+        if (s.isMod) DrawModBadge();
         ImGui::TextUnformatted(MapNames::Display(s.mapName).c_str());
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\n%s", s.mapName.c_str(), s.mapDescription.c_str());
+        if (s.isMod && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", s.mapName.c_str());
 
         // Column 4: players
         ImGui::TableNextColumn();
@@ -539,7 +559,7 @@ void ServerBrowser::RenderServerList() {
         ImGui::TableNextRow();
         ImGui::TableNextColumn();
         ImGui::TableNextColumn();
-        ImGui::TextDisabled("No games match the current filters.");
+        ImGui::TextDisabled("No servers found matching current filters.");
     }
 
     ImGui::EndTable();
@@ -595,8 +615,11 @@ void ServerBrowser::RenderServerDetails() {
     }
 
     ImGui::Spacing();
-    DrawTag(s.isMod ? "MOD" : "STOCK", s.isMod ? IM_COL32(89, 217, 242, 255) : IM_COL32(120, 140, 158, 255));
-    ImGui::TextWrapped("%s", s.name.c_str());
+    const float modsTextW = ImGui::CalcTextSize("Mods: 0").x;
+    const float availW = ImGui::GetContentRegionAvail().x;
+    ImGui::TextUnformatted(s.name.c_str());
+    ImGui::SameLine(std::max(140.0f, availW - modsTextW));
+    ImGui::TextDisabled("Mods: %d", s.isMod ? 1 : 0);
     ImGui::TextDisabled("%s:%u%s", s.hostAddress.c_str(), s.port, s.isOwn ? " (YOU)" : "");
     ImGui::Spacing();
 
@@ -607,9 +630,6 @@ void ServerBrowser::RenderServerDetails() {
     ImGui::TextDisabled("Map:");
     ImGui::SameLine(100);
     ImGui::TextWrapped("%s", MapNames::Display(s.mapName).c_str());
-    ImGui::TextDisabled("Map info:");
-    ImGui::SameLine(100);
-    ImGui::TextWrapped("%s", s.mapDescription.empty() ? "Official Halo: Reach map" : s.mapDescription.c_str());
 
     if (!s.variantName.empty()) {
         ImGui::TextDisabled("Game type:");
@@ -620,10 +640,6 @@ void ServerBrowser::RenderServerDetails() {
     ImGui::TextDisabled("Players:");
     ImGui::SameLine(100);
     ImGui::Text("%d / %d", s.playerCount, s.maxPlayers);
-
-    ImGui::TextDisabled("Build:");
-    ImGui::SameLine(100);
-    ImGui::TextDisabled("%s", s.build.empty() ? "unknown" : s.build.c_str());
 
     ImGui::TextDisabled("Ping:");
     ImGui::SameLine(100);
@@ -643,11 +659,7 @@ void ServerBrowser::RenderServerDetails() {
         ImGui::TextWrapped("Match in progress - joining in progress is allowed.");
         ImGui::PopStyleColor();
     }
-    if (s.isMod) {
-        ImGui::TextColored(ImVec4(0.35f, 0.85f, 0.95f, 1.0f), "%s", s.modDescription.empty() ? "Custom map / modded content" : s.modDescription.c_str());
-    } else {
-        ImGui::TextColored(ImVec4(0.55f, 0.65f, 0.75f, 1.0f), "Official Halo: Reach content");
-    }
+    if (s.isMod) ImGui::TextColored(ImVec4(0.35f, 0.85f, 0.95f, 1.0f), "Custom map / modded content");
     if (!s.modId.empty()) {
         ImGui::TextDisabled("Required Workshop mod:");
         ImGui::SameLine(100);
