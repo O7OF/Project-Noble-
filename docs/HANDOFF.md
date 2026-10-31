@@ -59,6 +59,22 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+--
+
+## 0. Pick up here (2026-10-31, 00:02 ET) - Tooling fixes after @claude's report; controller/ping/backend items filed (WeabooTyler117 / DeepSeek)
+
+From @claude's status report:
+
+- **`tools/test-modes.ps1` no longer kills every `noble-client` by name.** It now has `Get-OurClients`, which filters by the
+  executable path (`-Exe`, default this checkout's `build\bin\Release\noble-client.exe`), so a test run cannot kill the
+  other checkout's match. The remaining by-name `Get-Process noble-client` there is only the read in `Get-OurClients`.
+- **Docs encoding:** the last two garbled spots in `HANDOFF.md` are now plain text (my own note that quoted the broken
+  characters, and the `DrawCycle` line).
+- **Filed in `docs/TODO.md`** from the same report: controller Back still opens Reach's old scoreboard (pad suppression,
+  mine), the possible Esc-to-resume reopen (PauseMenu, @claude, needs a repro), real ping values (transport, mine), the
+  scoreboard backend actions (report endpoint, vote-to-kick, end round/match - server + transport mine, then @claude wires the
+  buttons), and the human controller-preset test (Tyler: Southpaw or Bumper Jumper -> Apply -> play -> rebind one button).
+
 ## 0. Pick up here (2026-10-30, 23:52 ET) - Emblem art fixed: black boxes are gone (BC1 luminance -> alpha) (WeabooTyler117 / DeepSeek)
 
 Tyler's screenshots showed every Emblem and Emblem Background tile as a **white symbol on a black square**, plus blocky

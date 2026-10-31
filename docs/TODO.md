@@ -142,6 +142,23 @@ explicitly** - a "needs" item must land before the dependent one can be verified
 - [ ] **Skull collection gating** — lock until found, "All Skulls" toggle when 13/13
 - [x] @claude 2026-10-30 23:36 - **Readability pass** — 20 views captured at 1080p, no overlaps; fixed low-contrast text on Skulls and the setup-screen status line - commit b0b7cac
 
+
+### Filed from @claude's status report (2026-10-31 00:00 ET)
+
+- [ ] **Controller Back still opens Reach's old scoreboard** — our panel replaces the keyboard scoreboard key, but the pad's
+  Back/Select button still reaches the engine. Suppress the pad button in the input poll (same place as `boardVk`) and feed
+  it to the overlay instead. Owner: @deepseek (ReachHost input poll), UI already handles the panel.
+- [ ] **Possible pause-menu bug: Esc to resume sometimes reopens the menu** — seen once by @claude, not reproduced. Repro:
+  open the pause menu in a match, press Esc to resume, check whether it reopens immediately (likely the engine key state and
+  our edge detection disagreeing). Owner: @claude (PauseMenu).
+- [ ] **Real ping values** — every scoreboard row shows `-` because the server's ping values are placeholders. Measure RTT in
+  `NetworkTransport` (per-peer, from the existing packet traffic) and pass it into the roster rows. Owner: @deepseek.
+- [ ] **Scoreboard backend actions** — `POST /api/reports` (report endpoint; replaces the local-only `reports.jsonl`),
+  vote-to-kick request/vote/result endpoint, and host actions for End Round / End Match. Server + transport @deepseek, then
+  @claude un-greys the buttons and wires them.
+- [ ] **Controller presets need a human test** — logic passes, but Tyler has to pick Southpaw or Bumper Jumper, press Apply,
+  play a match, then rebind one button.
+
 ## C. Engine features
 
 - [x] @deepseek 2026-10-30 23:05 - **Third-person camera works** (`haloreach+0x48A910` check hooked, F5 toggles,

@@ -20,6 +20,18 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+# Only ever stop clients started from this checkout's exe. A by-name kill also killed other agents' and Tyler's matches
+# (reported 2026-10-30): the Claude checkout runs the same binary name from a different path.
+function Get-OurClients {
+    $wanted = $Exe
+    try { $wanted = (Resolve-Path $Exe).Path } catch {}
+    Get-Process noble-client -ErrorAction SilentlyContinue | Where-Object {
+        try { $_.Path -and ($_.Path -ieq $wanted) } catch { $false }
+    }
+}
+
+
 $exeDir = Split-Path -Parent $Exe
 $log = Join-Path $exeDir "noble-client.log"
 $outDir = $PSScriptRoot
@@ -69,7 +81,7 @@ $results = @()
 $index = 0
 foreach ($case in $cases) {
     $index++
-    Get-Process noble-client -ErrorAction SilentlyContinue | ForEach-Object { $_ | Stop-Process -Force; $_.WaitForExit(15000) }
+    Get-OurClients | ForEach-Object { $_ | Stop-Process -Force; $_.WaitForExit(15000) }
     Start-Sleep -Seconds 3
     if (Test-Path $log) { Remove-Item $log -Force }
 
@@ -98,12 +110,12 @@ foreach ($case in $cases) {
         $playUntil = (Get-Date).AddSeconds($PlaySeconds)
         while ((Get-Date) -lt $playUntil) {
             Start-Sleep -Milliseconds 500
-            $child = Get-Process noble-client -ErrorAction SilentlyContinue | Where-Object { $_.Id -ne $parent.Id }
+            $child = Get-OurClients | Where-Object { $_.Id -ne $parent.Id }
             if ($child) { $childRan = $true }
         }
     }
     $seconds = [math]::Round(((Get-Date) - $started).TotalSeconds)
-    Get-Process noble-client -ErrorAction SilentlyContinue | ForEach-Object { $_ | Stop-Process -Force; $_.WaitForExit(15000) }
+    Get-OurClients | ForEach-Object { $_ | Stop-Process -Force; $_.WaitForExit(15000) }
     Start-Sleep -Milliseconds 500
 
     $text = ""
@@ -128,7 +140,7 @@ foreach ($case in $cases) {
     Write-Host ("[{0}/{1}] {2,-42} {3,-24} {4}s" -f $index, $cases.Count, $case.Label, $result, $seconds)
 }
 
-Get-Process noble-client -ErrorAction SilentlyContinue | ForEach-Object { $_ | Stop-Process -Force }
+Get-OurClients | ForEach-Object { $_ | Stop-Process -Force }
 
 Write-Host ""
 $bad = @($results | Where-Object { $_.Result -notlike "ok*" -and $_.Result -notlike "blocked*" })
