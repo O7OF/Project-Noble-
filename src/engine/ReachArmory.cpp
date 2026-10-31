@@ -125,6 +125,10 @@ static std::string s_targetScene = "armory";
 static ReachArmorySelection s_selection;
 static std::atomic<uint64_t> s_selectionGeneration{1};
 static uint64_t s_appliedGeneration = 0;
+// A colour/visor/armour change only updates the records the engine already tracks; the live model keeps its
+// old shader data until the biped is re-instantiated. Set this whenever the visual part of the selection changes
+// so the next apply forces the permutation write + REBUILD even when the piece list is identical.
+static std::atomic<bool> s_previewDirty{false};
 
 static std::mutex s_dataMutex;
 static bool s_stringIdsLoaded = false;
@@ -885,6 +889,7 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx) {
     const uint64_t gen = s_selectionGeneration.load();
     if (gen != s_appliedGeneration) {
         s_appliedGeneration = gen;
+        const bool forceRepaint = s_previewDirty.exchange(false);
 
         std::vector<std::pair<uint32_t, uint32_t>> pairs;
         auto pushPair = [&](const std::string& regionName, const std::string& permName, const char* fallbackPerm = "default") {
@@ -976,8 +981,8 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx) {
             while (pairs.size() < 16) {
                 pairs.push_back(pairs[0]);
             }
-            if (pairs == s_lastPairs && base == s_lastPairsBase) {
-                // Same pieces (a colour, voice or tag change): no rebuild, the colours are written every frame.
+            if (!forceRepaint && pairs == s_lastPairs && base == s_lastPairsBase) {
+                // Same pieces and no colour/visor change: no rebuild, the colours are written every frame.
             } else {
                 s_lastPairs = pairs;
                 s_lastPairsBase = base;
@@ -987,6 +992,10 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx) {
                 }
                 s_bumpAtFrame = frameNow + 2;
                 s_settlePending = false;
+                if (forceRepaint) {
+                    NOBLE_INFO("ReachArmory: preview repaint (primary {} / secondary {} / accent {} / visor {}), rebuilt",
+                               sel.primaryColorIndex, sel.secondaryColorIndex, sel.accentColorIndex, sel.visorColorIndex);
+                }
                 if (showElite) {
                     NOBLE_INFO("ReachArmory: Elite pieces {} / {} / {} / {} / {} / {}, effect {}", sel.eliteHelmet, sel.eliteLeftShoulder,
                                sel.eliteRightShoulder, sel.eliteChest, sel.eliteArms, sel.eliteLegs, sel.eliteArmorEffect);
@@ -1037,6 +1046,7 @@ void ReachArmory::SetMenuMode(bool menuMode) {
         s_lastPairsBase = 0;
         s_bumpAtFrame = 0;
         s_settlePending = false;
+        s_previewDirty.store(false);
     } else {
         s_selectionGeneration.fetch_add(1);
     }
@@ -1057,10 +1067,29 @@ std::string ReachArmory::GetTargetScene() {
 }
 
 void ReachArmory::SetSelection(const ReachArmorySelection& sel) {
+    bool visualChanged = false;
     {
         std::lock_guard<std::mutex> lock(s_sceneMutex);
+        const ReachArmorySelection& prev = s_selection;
+        visualChanged =
+            prev.previewElite != sel.previewElite || prev.isFemale != sel.isFemale ||
+            prev.primaryColorIndex != sel.primaryColorIndex || prev.secondaryColorIndex != sel.secondaryColorIndex ||
+            prev.accentColorIndex != sel.accentColorIndex || prev.visorColorIndex != sel.visorColorIndex ||
+            prev.armorEffectIndex != sel.armorEffectIndex || prev.eliteArmorEffectIndex != sel.eliteArmorEffectIndex ||
+            prev.eliteSuitIndex != sel.eliteSuitIndex ||
+            prev.primaryRgb != sel.primaryRgb || prev.secondaryRgb != sel.secondaryRgb ||
+            prev.accentRgb != sel.accentRgb || prev.visorRgb != sel.visorRgb ||
+            prev.helmet != sel.helmet || prev.chest != sel.chest ||
+            prev.leftShoulder != sel.leftShoulder || prev.rightShoulder != sel.rightShoulder ||
+            prev.hands != sel.hands || prev.wrist != sel.wrist || prev.utility != sel.utility ||
+            prev.knees != sel.knees || prev.armorEffect != sel.armorEffect || prev.visor != sel.visor ||
+            prev.eliteSuit != sel.eliteSuit || prev.eliteHelmet != sel.eliteHelmet ||
+            prev.eliteLeftShoulder != sel.eliteLeftShoulder || prev.eliteRightShoulder != sel.eliteRightShoulder ||
+            prev.eliteChest != sel.eliteChest || prev.eliteArms != sel.eliteArms || prev.eliteLegs != sel.eliteLegs ||
+            prev.eliteArmorEffect != sel.eliteArmorEffect;
         s_selection = sel;
     }
+    if (visualChanged) s_previewDirty.store(true);
     s_selectionGeneration.fetch_add(1);
 }
 

@@ -31,11 +31,11 @@ can make.
 ## @deepseek
 
 - state: **active**
-- since: 2026-10-31 16:45 ET
-- working on: Armory live preview (dirty flag + reapply for colour/visor/armour changes), 0.9.8.1 version bump (0.9.7.1 was superseded by @claude's 0.9.8), then the Prophets' Hand Elite gameplay capture; input lock: until 17:05
-- files expected: src/ui/ArmorCustomizer.*, src/engine/ReachArmory.*, src/common/Version.hpp, docs/HANDOFF.md, docs/TODO.md
-- last commit: `7f19dbc`
-- test state: game audio muted in both checkouts (`tools/mute-game.ps1 -IncludeClaude`); restore with `-Unmute`; local settings temporarily 1920x1080 for captures (restore backup afterwards)
+- since: 2026-10-31 17:20 ET
+- working on: Prophets' Hand Elite models in a gameplay frame via `-map-override`, then the open @deepseek queue; input lock: until 17:45
+- files expected: none while capturing (test runs only)
+- last commit: `4f5aee1`
+- test state: game audio muted in both checkouts (`tools/mute-game.ps1 -IncludeClaude`); restore with `-Unmute`; local settings restored to 3840x2160 after the 1920x1080 captures.
 
 ## @claude
 

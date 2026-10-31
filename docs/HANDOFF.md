@@ -7,13 +7,12 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 
 **Goal:** `noble-client.exe` loads MCC's own `haloreach.dll` (Halo: Reach) and drives it **without MCC**, like the existing
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
-MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.9.1 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.9 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
 
 ### How this file is kept (Tyler, 2026-10-30)
 
 - **Every change gets an entry - no exceptions**: code, UI, docs, tools, config, server. Add it at the **top**, directly
-  under the `--` line, as
-  `## 0. Pick up here (2026-10-31, 17:10 ET) - Community by controller, pause Controls, settings export and import, first start (@claude)
+  under the `--` line, with `## 0. Pick up here (2026-10-31, 17:10 ET) - Community by controller, pause Controls, settings export and import, first start (@claude)
 
 **Commit:** `fba4c6f`. **Version:** 0.9.9. **Build:** 0 errors, 0 warnings on the merged tree. Files: `src/ui/FrontEndMenu.cpp`, `src/ui/PauseMenu.cpp`, `src/ui/SettingsPanel.cpp`, `src/common/Settings.*`, `src/main.cpp`.
 
@@ -30,6 +29,26 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 **My test risk.** One dialog test found the window by the title Save As, which could match another program's dialog and typed a path there. Nothing showed it did. The retest looks only at Noble's own process.
 
 Self-review: the Community list walks tabs and rows as one flat line, simple but slow with many friends. `LOOK SPEED` assumes 2.00x is stock, from the earlier measurement.
+
+**Note for scripts (@claude).** Insert new entries before the first line that *starts* with `## 0. Pick up here`. My script used the first match anywhere, which hit the example in the rule above and split that sentence for several entries, until @deepseek reworded it. The entries themselves are intact.
+
+## 0. Pick up here (<date>, <time> ET) - <what> (<author>)`.
+
+## 0. Pick up here (2026-10-31, 17:10 ET) - Armory colour/visor changes repaint the live model; 0.9.8.1 (@deepseek / DeepSeek)
+
+**Commit:** `2d5e258`. **Version:** 0.9.8.1. **Build:** 0 errors, 0 warnings (Release `noble-client` + `noble-dev`). Files: `src/engine/ReachArmory.cpp`, `src/common/Version.hpp`, `docs/screenshots/armory-live-preview-before.png`, `armory-live-preview-after.png`, `docs/evidence/armory-live-preview.log`.
+
+**The bug.** `ArmorCustomizer` rebuilt the full `ReachArmorySelection` and saved the profile on every field change, but `ReachArmory::SetSelection` only bumped the menu-map GLOBALS permutation rebuild when the piece pairs changed. A colour or visor change left the pairs identical, so `ApplyGlobalsAndPermutations` skipped REBUILD and the live biped kept the shader data it was built with. A later scene/slot change re-instantiated it, which is why the new colour only appeared then.
+
+**Fix.** `SetSelection` now compares the visual half of the selection (palette indices, linear RGB, visor, armour pieces, effects, species) and sets a `s_previewDirty` flag only when it changes. `ApplyGlobalsAndPermutations` consumes that flag and forces the pair write + REBUILD even when the pairs are identical. Voice/service-tag-only changes still take the old no-rebuild path. The 250 ms coalescing is unchanged, so a held arrow key still costs one rebuild per settled step, not one per repeat. `SetMenuMode(false)` clears the flag.
+
+**Evidence.** Same Armory session, no scene/slot reload and no match: Primary White (index 2) -> Orchid (index 19), 1920x1080 captures `docs/screenshots/armory-live-preview-before.png` / `armory-live-preview-after.png`; the armour changed from silver-white to purple in the frame. Each step logged `ReachArmory: preview repaint (primary N ...), rebuilt`; trimmed log in `docs/evidence/armory-live-preview.log`. The Armory auto-saves the profile on each click (existing behaviour); the repaint does not wait for a save button or reload.
+
+**Version note.** Tyler asked for 0.9.7.1, but @claude pushed 0.9.8 (Chat Polish & Diagnostics) while this claim was in flight. 0.9.7.1 would have regressed the build number, so this landed as 0.9.8.1 with `VERSION_REVISION = 1`.
+
+**Not verified.** A visual visor-change capture (the same dirty-flag path covers it; no UI-frame proof yet). Armour-piece changes already rebuilt through the pair comparison and were not re-captured. The Elite preview still stays stock blue when Primary changes - a pre-existing pack-shader limitation, now filed separately; the fix above is proven on the Spartan.
+
+Self-review: forcing a rebuild on every settled colour step reintroduces one engine re-instantiation per step, which the old colour-only path deliberately avoided to stop the palette flash. The 250 ms coalescing keeps it to one per settled key; the alternative was no live colour at all. If Tyler prefers no flash, the next step is to find the pack/armour shader colour constant and write it instead of rebuilding.
 
 ## 0. Pick up here (2026-10-31, 16:39 ET) - Chat feed backing, diagnostics, hints, deaths log, handoff dedupe (@claude)
 
