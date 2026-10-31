@@ -1700,15 +1700,15 @@ static void FillLocalInput(uint8_t* st) {
         s_lowerWasDown = lowerDown;
     }
 
-    // Third-person weapon aim zoom: holding Right Click (or the bound Zoom key) zooms the third-person camera
-    // according to SETTINGS > GAME OPTIONS > CAMERA > THIRD-PERSON ZOOM.
+    // Third-person weapon aim zoom: holding the bound Zoom key (slot 10, default Right Click) zooms the
+    // third-person camera according to SETTINGS > GAME OPTIONS > CAMERA > THIRD-PERSON ZOOM.
+    // Pressing Q must never trigger zoom unless the user explicitly set the Zoom keybind (slot 10) to Q.
     {
-        const int zoomVk = KeyBindings::EffectiveKey(5);
-        const bool rmbDown = st[0x004 + VK_RBUTTON] != 0;
+        const int zoomVk = KeyBindings::EffectiveKey(10);
         const bool boundZoomDown = zoomVk > 0 && zoomVk < 256 && st[0x004 + zoomVk] != 0;
         const bool wantZoom = !uiPointer && !boardDown && !s_holdMouseUntilRelease &&
                               (CameraThirdPerson::IsEnabled() || CameraThirdPerson::EngineWantsThirdPerson()) &&
-                              (rmbDown || boundZoomDown);
+                              boundZoomDown;
         CameraThirdPerson::SetZoomHeld(wantZoom);
     }
 
