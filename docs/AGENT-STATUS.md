@@ -22,8 +22,9 @@ active and what it is touching. It is not a log — it is a *live* board. Keep i
 
 ## @claude
 
-- state: **idle** (no session started yet)
-- since: —
-- working on: —
-- files expected: —
+- state: **active**
+- since: 2026-10-30 22:30 ET
+- working on: Server browser polish. Scoreboard action bar is next, once @deepseek's block no longer lists `src/ui/PauseMenu.cpp`
+- files expected: `src/ui/ServerBrowser.cpp`, `docs/TODO.md`, `docs/AGENT-STATUS.md`, `docs/HANDOFF.md`, `docs/screenshots/`
+- second checkout: `D:\Halo-Reach-Community-Edition-claude` (own `build\`, so it does not touch @deepseek's tree or binary)
 - last commit: —
