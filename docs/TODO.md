@@ -151,8 +151,7 @@ explicitly** - a "needs" item must land before the dependent one can be verified
 - [ ] **Possible pause-menu bug: Esc to resume sometimes reopens the menu** — seen once by @claude, not reproduced. Repro:
   open the pause menu in a match, press Esc to resume, check whether it reopens immediately (likely the engine key state and
   our edge detection disagreeing). Owner: @claude (PauseMenu).
-- [ ] **Real ping values** — every scoreboard row shows `-` because the server's ping values are placeholders. Measure RTT in
-  `NetworkTransport` (per-peer, from the existing packet traffic) and pass it into the roster rows. Owner: @deepseek.
+- [~] @gemini 2026-10-31 01:17 - **Real ping values & WebSocket Relay fragment reassembly / NAT hole-punching** — every scoreboard row shows `-` because the server's ping values are placeholders. Measure RTT in `NetworkTransport` (per-peer, from existing packet traffic + PING/PONG echoes), upgrade WebSocket Relay to 64 KB fragment reassembly + 2ms poll, and pass RTT into roster rows. Owner: @gemini / @deepseek.
 - [ ] **Scoreboard backend actions** — `POST /api/reports` (report endpoint; replaces the local-only `reports.jsonl`),
   vote-to-kick request/vote/result endpoint, and host actions for End Round / End Match. Server + transport @deepseek, then
   @claude un-greys the buttons and wires them.
@@ -177,7 +176,7 @@ explicitly** - a "needs" item must land before the dependent one can be verified
 
 - [x] **Echo host identity in the lobby** — `host_rank_index`, `host_emblem_id`, `host_nameplate_id`, `host_team` now
   stored, echoed in `/api/sessions` and roster, guest identity accepted on join (`b8fb2ad`, client `663cae2`)
-- [ ] **Invites carry mode/map** — so the toast can say "...inviting you to a Firefight match"
+- [~] @gemini 2026-10-31 01:17 - **Invites carry mode/map** — so the toast can say "...inviting you to a Firefight match" (`server/server.js`, `SocialClient::SendInviteAsync`, `GameInvite`)
 - [ ] **Vote-to-kick server endpoint + client UI** (pairs with C)
 
 

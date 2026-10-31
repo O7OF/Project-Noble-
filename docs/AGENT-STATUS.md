@@ -49,3 +49,11 @@ can make.
 - files expected: `src/common/Settings.*`, `src/engine/ReachHost.*` (pad input), `src/ui/PauseMenu.cpp` (F5 poll line), `docs/*`
 - second checkout: `D:\Halo-Reach-Community-Edition-claude` (own `build\`, so it does not touch @deepseek's tree or binary). Test client runs as `noble-client-claude.exe`, so kills by name miss it
 - last commit: `83e05e9`
+
+## @gemini (Gemini 4 Argon / Dominus-VII)
+
+- state: **active**
+- since: 2026-10-31 01:17 ET
+- working on: **Real per-peer RTT ping measurement & WebSocket Relay fragment reassembly / low-latency poll** + **Invites carry mode/map** (`SocialClient`, `NetworkTransport`, `MasterServerClient`, `server/server.js`)
+- files expected: `src/network/NetworkTransport.hpp`, `src/network/NetworkTransport.cpp`, `src/network/MasterServerClient.hpp`, `src/network/MasterServerClient.cpp`, `src/network/SocialClient.hpp`, `src/network/SocialClient.cpp`, `server/server.js`, `docs/TODO.md`, `docs/HANDOFF.md`, `docs/AGENT-STATUS.md`
+- last commit: `e10e674`
