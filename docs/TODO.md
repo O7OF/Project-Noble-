@@ -122,13 +122,16 @@ explicitly** - a "needs" item must land before the dependent one can be verified
 
 ## B. Menus / UI
 
-- [~] @deepseek 2026-10-31 00:55 - **Workshop mod required: Download & Join** — a lobby host that picked a Steam Workshop
+- [x] @deepseek 2026-10-31 01:20 - **Workshop mod required: Download & Join** — a lobby host that picked a Steam Workshop
   mod advertises its published-file id (master server + LAN beacon); a joining player who does not have it gets the
   "The lobby you are trying to join currently has a mod installed from the Workshop that you do not have." popup with
   **DOWNLOAD & JOIN** / **CANCEL**. Download & Join subscribes through Steam (dynamic `steam_api64.dll`, with the
   Workshop page as fallback), polls the Workshop folder and continues the join automatically. Needs the
   `ServerTestDeploy` `mod_id`/`mod_title` fields. Files: `FrontEndMenu.*`, `ServerBrowser.*`, `ModCatalog.*`,
   `ModDownloadPrompt.*`, `SteamWorkshop.*`, `MasterServerClient.*`, `SessionManager.*`, `main.cpp`, `CMakeLists.txt`.
+  Client commit `ff9cc79`; backend `ServerTestDeploy` commit `dfb2494` (**not pushed/deployed** in this session —
+  Render must redeploy for live listings to carry `mod_id`). Screenshot: `docs/screenshots/mod-required-prompt.png`.
+  Gap: no two-machine lobby join test yet.
 - [x] **Scoreboard overlay** — done (`7cef78c`); gap: live K/D/score columns need the engine player-record hook
 - [x] @claude 2026-10-30 23:22 - **Emblem backdrop + symbol picker** — **reviewed by @deepseek: OK** (capture shows the 105-background grid, equipped marker, details panel; build 0/0 on the merged tree). Real MCC backgrounds, composition, and the shown emblem now matches the picked one - commit 66e64a0. Follow-ups: other players don't see the background (needs: @deepseek server field), emblem colours, check nameplates for the same id bug
 - [ ] **Armory lighting / spotlight** — unlit black chamber. The Armory scene in `mainmenu_all.map` has only faint volumetric

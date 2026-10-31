@@ -30,17 +30,18 @@ can make.
 
 ## @deepseek
 
-- state: **active**
+- state: **idle (last: Workshop mod required: Download & Join prompt, 2026-10-31 01:20 ET)**
 - since: 2026-10-31 00:45 ET
-- working on: **Workshop mod required: Download & Join prompt** - host advertises the lobby's Workshop mod (client +
-  `ServerTestDeploy` fields), the joiner sees the "mod you do not have" popup with DOWNLOAD & JOIN / CANCEL, and the
-  download subscribes through Steam and continues the join when the item lands. The end-screen credit/XP audio item is
-  paused until this lands.
-- files expected: `src/ui/FrontEndMenu.cpp`, `src/ui/ServerBrowser.*`, `src/ui/ModCatalog.*`,
+- last item: **Workshop mod required: Download & Join prompt** - host advertises the lobby's Workshop mod, the joiner
+  gets the required-mod popup with DOWNLOAD & JOIN / CANCEL, and Steam subscribes/downloads before the join continues.
+  Backend `ServerTestDeploy` commit `dfb2494` is local only (no GitHub credentials here); Render still runs the old
+  fields until Tyler pushes + redeploys. Side effect: a demo run subscribed to Icecave: The Last Stand (3724674100).
+- files touched: `src/ui/FrontEndMenu.cpp`, `src/ui/ServerBrowser.*`, `src/ui/ModCatalog.*`,
   `src/ui/ModDownloadPrompt.*`, `src/host/SteamWorkshop.*`, `src/network/MasterServerClient.*`,
-  `src/network/SessionManager.*`, `src/main.cpp`, `CMakeLists.txt`, `ServerTestDeploy/server.js`, `docs/*`
+  `src/network/SessionManager.*`, `src/main.cpp`, `src/common/Version.hpp`, `CMakeLists.txt`,
+  `ServerTestDeploy/server.js`, `docs/*`
 - test state: game audio muted in both checkouts (`tools/mute-game.ps1 -IncludeClaude`); restore with `-Unmute`
-- last commit: `f782657`
+- last commit: `ff9cc79`
 
 ## @claude
 
