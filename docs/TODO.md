@@ -293,7 +293,7 @@ items above close. Keep the spec open when building any screen so the details la
   chat binds must not fire while a menu owns input. Shared with the voice transport (PTT) and text chat (channels). -
   @claude (UI/binding table) + @deepseek (transport hooks)
 
-- [ ] **Text chat transport - NOT implemented yet (correction)**: commit `f046490` says "verified" but the relay branch was never actually inserted (`} else if (jsonMsg.type === 'lobby_launch')` did not match the file text, so the replace was a no-op). `tools/chat-relay-test.js` fails with 0 messages delivered. Next session: inspect the real relay handler text, insert the chat branch correctly, re-run the harness and only then mark it done. - @deepseek
+- [x] @deepseek 2026-10-31 18:50 - **Text chat relay (server)** - `ServerTestDeploy` `5d46c13` + cleanup `d0ac871`: `chat` JSON frames handled before the role logic, channels team/all/party (party = lobby group for now), 400-char cap, team chat only to same-team guests+host. `tools/chat-relay-test.js`: team 1/1/0, all 1/1/1 = PASS. Client send/receive + T/Y/P binds next.
 
 ## I. Armory presentation, audio and data (Tyler, 2026-10-31 00:10)
 

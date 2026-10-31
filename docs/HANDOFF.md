@@ -55,6 +55,15 @@ The packaged executable is unsigned and performs legitimate but AV-sensitive hos
 - The earlier Forge World auto-map override was reverted: base maps load normally; modded palettes come only from mods. The HREK Thorage tag-data swap (O7 Pelican + Phantom MP, `wraith_d` driver, `warthog_p` passenger seats) is documented in `docs/FORGE-THORAGE.md`.
 - Automatic updates are **not implemented**. Suggested path: publish a signed manifest (`version`, `url`, `sha256`) from ServerTestDeploy, check it at startup, download to a temp file, verify, then replace `Noble.exe` on next launch. Do not auto-install unsigned files.
 
+--
+
+## 0. Pick up here (2026-10-31, 18:50 ET) - Chat relay works (server) (WeabooTyler117 / DeepSeek)
+
+- `ServerTestDeploy` `5d46c13`, dead-branch cleanup `d0ac871`: chat JSON frames are handled at the top of the relay message
+  handler (before role logic) so guest frames are no longer forwarded raw to the host. Channels team/all/party, 400-char cap,
+  team chat delivered only to same-team guests + host.
+- `tools/chat-relay-test.js` is the regression check: `team host:1 mate:1 enemy:0 | all 1/1/1 = PASS`.
+- Client side next: send/receive `chat` over the relay in NetworkTransport, store + route to UI; T/Y/P binds are filed.
 ## 0. Pick up here (2026-10-31, 13:35 ET) - 3rd-person weapon zoom + camera offsets, lower weapon keybind, in-game armor fix, server browser UI & .bat build fixes (Gemini 4 Argon)
 
 **Version:** 0.9.2 / 0.9.2-dev (Pregame Map Identity). **Built & packaged:** `build\bin\Release\noble-client.exe`, `build\bin\Release\noble-dev.exe`, `build\bin\Release\noble-dedicated.exe`, and `C:\Users\Reeve\Documents\Noble Launcher\Noble.exe`.
