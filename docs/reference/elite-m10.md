@@ -139,3 +139,68 @@
 - `objects\characters\elite\bitmaps\elite_shoulder\elite_minor_shoulder_diffuse`
 - `objects\characters\elite\bitmaps\elite_shoulder\elite_minor_shoulder_zbump`
 
+
+## HREK stock availability (sample from the capped scan)
+
+- shaders: 9 found / 51 missing of 60
+- bitmaps: 57 found / 3 missing of 60
+
+### matched shaders
+- `objects\characters\elite\shaders\elite_chest\elite_general_chest_metal`
+- `objects\characters\elite\shaders\elite_gauntlet\elite_general_gauntlet_metal`
+- `objects\characters\elite\shaders\elite_gauntlet\elite_spec_ops_gauntlet_metal`
+- `objects\characters\elite\shaders\elite_helmet\elite_general_helmet_metal`
+- `objects\characters\elite\shaders\elite_helmet\elite_space_helmet_visor`
+- `objects\characters\elite\shaders\elite_helmet\elite_space_helmet_visor_interior`
+- `objects\characters\elite\shaders\elite_helmet\elite_spec_ops_helmet_metal`
+- `objects\characters\elite\shaders\elite_helmet\elite_storyelite_helmet_metal`
+- `objects\characters\elite\shaders\elite_illum_cards\elite_general_illum_cards`
+
+### matched bitmaps
+- `objects\characters\elite\bitmaps\elite_base\elite_base_lower_diffuse`
+- `objects\characters\elite\bitmaps\elite_base\elite_base_lower_zbump`
+- `objects\characters\elite\bitmaps\elite_base\elite_base_upper_diffuse`
+- `objects\characters\elite\bitmaps\elite_base\elite_base_upper_zbump`
+- `objects\characters\elite\bitmaps\elite_base\elite_bodysuit_diffuse`
+- `objects\characters\elite\bitmaps\elite_base\elite_bodysuit_normal`
+- `objects\characters\elite\bitmaps\elite_base\elite_fp_base_diffuse`
+- `objects\characters\elite\bitmaps\elite_base\elite_fp_base_zbump`
+- `objects\characters\elite\bitmaps\elite_base\elite_head_subsurface`
+- `objects\characters\elite\bitmaps\elite_base\head_diffuse`
+- `objects\characters\elite\bitmaps\elite_chest\elite_general_chest_normal`
+- `objects\characters\elite\bitmaps\elite_chest\elite_minor_chest_diffuse`
+- `objects\characters\elite\bitmaps\elite_chest\elite_minor_chest_zbump`
+- `objects\characters\elite\bitmaps\elite_chest\elite_officer_chest_diffuse`
+- `objects\characters\elite\bitmaps\elite_chest\elite_officer_chest_zbump`
+- `objects\characters\elite\bitmaps\elite_chest\elite_space_chest_diffuse`
+- `objects\characters\elite\bitmaps\elite_chest\elite_space_chest_zbump`
+- `objects\characters\elite\bitmaps\elite_chest\elite_spec_ops_chest_diffuse`
+- `objects\characters\elite\bitmaps\elite_chest\elite_spec_ops_chest_zbump`
+- `objects\characters\elite\bitmaps\elite_chest\elite_ultra_chest_diffuse`
+
+### missing shaders (pack-only)
+- `ects\characters\elite\bitmaps\elite_base\elite_fp_base_zbump`
+- `haracters\elite\bitmaps\elite_thigh\elite_zealot_thigh_zbump`
+- `objects\characters\elite\bitmaps\elite_base\elite_base_lower_diffuse`
+- `objects\characters\elite\bitmaps\elite_base\elite_base_upper_diffuse`
+- `objects\characters\elite\bitmaps\elite_base\elite_fp_base_diffuse`
+- `objects\characters\elite\bitmaps\elite_base\head_material`
+- `objects\characters\elite\bitmaps\elite_chest\elite_minor_chest_diffuse`
+- `objects\characters\elite\bitmaps\elite_chest\elite_officer_chest_diffuse`
+- `objects\characters\elite\bitmaps\elite_chest\elite_space_chest_diffuse`
+- `objects\characters\elite\bitmaps\elite_chest\elite_ultra_chest_diffuse`
+- `objects\characters\elite\bitmaps\elite_chest\elite_zealot_chest_diffuse`
+- `objects\characters\elite\bitmaps\elite_gauntlet\elite_fp_gauntlet_diffuse`
+- `objects\characters\elite\bitmaps\elite_gauntlet\elite_officer_gauntlet_diffuse`
+- `objects\characters\elite\bitmaps\elite_gauntlet\elite_space_gauntlet_diffuse`
+- `objects\characters\elite\bitmaps\elite_gauntlet\elite_spec_ops_gauntlet_diffuse`
+- `objects\characters\elite\bitmaps\elite_gauntlet\elite_ultra_gauntlet_diffuse`
+- `objects\characters\elite\bitmaps\elite_gauntlet\elite_zealot_gauntlet_diffuse`
+- `objects\characters\elite\bitmaps\elite_helmet\elite_minor_helmet_diffuse`
+- `objects\characters\elite\bitmaps\elite_helmet\elite_officer_helmet_diffuse`
+- `objects\characters\elite\bitmaps\elite_helmet\elite_space_helmet_diffuse`
+
+### missing bitmaps (pack-only)
+- `objects\characters\brute\bitmaps\minor_major_armor_bump`
+- `objects\characters\elite\bitmaps\classic\ch_elite_armor_emissive`
+- `objects\characters\elite\bitmaps\classic\ch_elite_honor_armor_01_nm`
