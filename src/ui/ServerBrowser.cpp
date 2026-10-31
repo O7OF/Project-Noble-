@@ -44,6 +44,26 @@ std::string Lower(std::string s) {
     return s;
 }
 
+// A game counts as modded when the host says so, names it "[Mod]", or runs a map Reach does not ship. A ".map" suffix
+// proves nothing: hosts also send stock maps as files ("forge_halo.map").
+bool IsModdedGame(const std::string& map, const std::string& sessionName, bool advertised = false) {
+    return advertised || sessionName.find("[Mod]") != std::string::npos || !MapNames::IsVanilla(map);
+}
+
+// Small filled "MOD" tag, drawn inline at the cursor; the next item continues on the same line.
+void DrawModBadge() {
+    const char* text = "MOD";
+    const float paddingX = 5.0f;
+    const ImVec2 textSize = ImGui::CalcTextSize(text);
+    const ImVec2 p0 = ImGui::GetCursorScreenPos();
+    const ImVec2 p1(p0.x + textSize.x + paddingX * 2.0f, p0.y + textSize.y);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(p0, p1, IM_COL32(89, 217, 242, 255), 2.0f);
+    dl->AddText(ImVec2(p0.x + paddingX, p0.y), IM_COL32(6, 20, 28, 255), text);
+    ImGui::Dummy(ImVec2(p1.x - p0.x, textSize.y));
+    ImGui::SameLine();
+}
+
 // "1.2.3.4:5678" or "1.2.3.4" -> address + port (default 11774). False for empty/bad input.
 bool ParseAddress(const std::string& text, std::string& address, uint16_t& port) {
     std::string t = text;
@@ -129,7 +149,7 @@ void ServerBrowser::RefreshServers() {
             e.variantName = cfg.gametypeName;
             e.isPasswordProtected = !cfg.password.empty();
             e.isOwn = true;
-            e.isMod = (cfg.mapName.find(".map") != std::string::npos || cfg.sessionName.find("[Mod]") != std::string::npos);
+            e.isMod = IsModdedGame(cfg.mapName, cfg.sessionName);
             e.source = "YOU";
             add(e);
         }
@@ -149,7 +169,7 @@ void ServerBrowser::RefreshServers() {
         e.mapName = d.mapName;
         e.variantName = d.gametypeName;
         e.isPasswordProtected = d.isPasswordProtected;
-        e.isMod = (d.sessionName.find("[Mod]") != std::string::npos || d.mapName.find(".map") != std::string::npos);
+        e.isMod = IsModdedGame(d.mapName, d.sessionName);
         e.source = "LAN";
         // Our own beacon heard on the LAN: already listed as "YOU".
         if (sessions.IsHosting() && d.port == sessions.GetHostConfig().port && d.sessionName == sessions.GetHostConfig().sessionName) continue;
@@ -164,6 +184,7 @@ void ServerBrowser::RefreshServers() {
             if ((existing.hostAddress == m.address || (!m.lanAddress.empty() && existing.hostAddress == m.lanAddress)) && existing.port == m.port) {
                 if (existing.id.empty() && !m.id.empty()) existing.id = m.id;
                 existing.inProgress = m.inProgress;
+                existing.isMod = existing.isMod || m.isMod;
                 mergedWithLan = true;
                 break;
             }
@@ -181,7 +202,7 @@ void ServerBrowser::RefreshServers() {
         e.mapName = m.map;
         e.isPasswordProtected = m.hasPassword;
         e.inProgress = m.inProgress;
-        e.isMod = m.isMod || (m.name.find("[Mod]") != std::string::npos);
+        e.isMod = IsModdedGame(m.map, m.name, m.isMod);
         e.source = "ONLINE";
         add(e);
     }
@@ -366,7 +387,7 @@ void ServerBrowser::RenderServerList() {
     ImGui::TableSetupColumn("Source",   ImGuiTableColumnFlags_WidthFixed, 86.0f);
     ImGui::TableSetupColumn("Server",   ImGuiTableColumnFlags_WidthStretch | ImGuiTableColumnFlags_DefaultSort, 200.0f);
     ImGui::TableSetupColumn("Mode",     ImGuiTableColumnFlags_WidthFixed, 112.0f);
-    ImGui::TableSetupColumn("Map",      ImGuiTableColumnFlags_WidthFixed, 140.0f);
+    ImGui::TableSetupColumn("Map",      ImGuiTableColumnFlags_WidthFixed, 240.0f); // longest stock name plus the MOD badge
     ImGui::TableSetupColumn("Players",  ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_PreferSortDescending, 98.0f);
     ImGui::TableSetupColumn("Ping",     ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_PreferSortDescending, 70.0f);
     ImGui::TableSetupColumn("Address",  ImGuiTableColumnFlags_WidthFixed, 170.0f);
@@ -441,15 +462,11 @@ void ServerBrowser::RenderServerList() {
         ImGui::TextUnformatted(s.gameMode.c_str());
 
         // Column 3: map, by the name players know it by ("Forge World", not "forge_halo"). Modded maps keep
-        // their own name and the [Mod] marker.
+        // their own name and get the MOD badge; hovering shows the raw file name.
         ImGui::TableNextColumn();
-        const std::string mapLabel = MapNames::Display(s.mapName);
-        if (s.isMod) {
-            ImGui::TextColored(ImVec4(0.35f, 0.85f, 0.95f, 1.0f), "[Mod] %s", mapLabel.c_str());
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", s.mapName.c_str());
-        } else {
-            ImGui::TextUnformatted(mapLabel.c_str());
-        }
+        if (s.isMod) DrawModBadge();
+        ImGui::TextUnformatted(MapNames::Display(s.mapName).c_str());
+        if (s.isMod && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", s.mapName.c_str());
 
         // Column 4: players
         ImGui::TableNextColumn();
@@ -511,7 +528,9 @@ void ServerBrowser::RenderServerDetails() {
         const ImVec2 p1(p0.x + photoW, p0.y + photoH);
         ImDrawList* dl = ImGui::GetWindowDrawList();
         dl->AddRectFilled(p0, p1, IM_COL32(10, 15, 22, 255));
-        if (const UiTexture photo = UiArt::MapPhoto(s.mapName)) {
+        // Previews are keyed by scenario, so a stock map sent as a file ("forge_halo.map") needs its canonical name.
+        const std::string scenario = MapNames::ScenarioOf(s.mapName);
+        if (const UiTexture photo = UiArt::MapPhoto(scenario.empty() ? s.mapName : scenario)) {
             UiArt::DrawCover(dl, photo, p0, p1);
         } else {
             const char* missing = s.isMod ? "NO PICTURE FROM THIS MOD" : "NO MAP PICTURE";
@@ -541,7 +560,7 @@ void ServerBrowser::RenderServerDetails() {
 
     ImGui::TextDisabled("Map:");
     ImGui::SameLine(100);
-    ImGui::TextUnformatted(s.mapName.c_str());
+    ImGui::TextWrapped("%s", MapNames::Display(s.mapName).c_str());
 
     if (!s.variantName.empty()) {
         ImGui::TextDisabled("Game type:");
