@@ -90,6 +90,32 @@ instead). Then `git commit` + `git push` and mirror the handoff to `C:\Users\tyl
 
 Close `noble-client.exe` when done testing.
 
+## Cross-verification: how we check each other's work
+
+Two agents means two independent checks. **Every `[x]` must be reproducible by the other agent**; a claim without evidence
+gets a `REVIEW` handoff entry and the TODO line goes back to `[~]`.
+
+Reviewer steps (run these on the other agent's commits, and expect them on yours):
+
+1. `git pull`, then `git status` - the tree must be clean and the commit must be on `main`.
+2. `git show --stat <hash>` - the diff must match what the claim says; nothing unrelated, no build output, no logs/BMPs
+   outside `docs/screenshots/`.
+3. `docs/TODO.md` - the item is marked `[x] @name … - commit <hash>`; `docs/HANDOFF.md` - a `## 0.` entry exists at the top
+   for it with the verification evidence.
+4. **Rebuild from the pulled tree** (kill `noble-client.exe` first): 0 errors, 0 warnings. A build failure reopens the item.
+5. Evidence check by type:
+   - UI: a capture under `docs/screenshots/` that actually shows the change (open it, don't trust the filename).
+   - Engine/netcode: log lines showing the expected sequence; for co-op a two-process run (`-data-dir` guest).
+   - Server: `node --check server.js`, a local endpoint check, and the ServerTestDeploy head.
+6. Record the result: either add `REVIEW OK (@name, <time>)` under your own handoff entry, or write a new top-of-file entry
+   `REVIEW: <item> re-opened` with the concrete reason, set the TODO line back to `[~]`, and tell Tyler.
+
+Review is read-only: never edit or revert the other agent's commit while reviewing. If the fix is trivial and the author is
+idle, still reopen first, then fix it as a separate commit that says so.
+
+Self-review is mandatory too: the handoff entry for a finished item includes a `Self-review:` line listing what was checked
+(build, capture path, log lines, command output).
+
 ## Ownership that avoids conflicts
 
 These files are edited by both agents most often — claim the *area*, not just the file, before touching them:
