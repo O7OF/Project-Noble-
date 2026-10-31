@@ -123,7 +123,7 @@ explicitly** - a "needs" item must land before the dependent one can be verified
 ## B. Menus / UI
 
 - [x] **Scoreboard overlay** — done (`7cef78c`); gap: live K/D/score columns need the engine player-record hook
-- [x] @claude 2026-10-30 23:22 - **Emblem backdrop + symbol picker** — real MCC backgrounds, composition, and the shown emblem now matches the picked one - commit 66e64a0. Follow-ups: other players don't see the background (needs: @deepseek server field), emblem colours, check nameplates for the same id bug
+- [x] @claude 2026-10-30 23:22 - **Emblem backdrop + symbol picker** — **reviewed by @deepseek: OK** (capture shows the 105-background grid, equipped marker, details panel; build 0/0 on the merged tree). Real MCC backgrounds, composition, and the shown emblem now matches the picked one - commit 66e64a0. Follow-ups: other players don't see the background (needs: @deepseek server field), emblem colours, check nameplates for the same id bug
 - [ ] **Armory lighting / spotlight** — unlit black chamber. The Armory scene in `mainmenu_all.map` has only faint volumetric
   haze (`HANDOFF.md` ~4922); the model sits in a void. Options, cheapest first: (a) add a real **spotlight** by editing the
   menumap's lighting (HREK: `tags\levels\ui\mainmenu\mainmenu_000.scenario_structure_lighting_info` + lightmap, then
@@ -133,9 +133,10 @@ explicitly** - a "needs" item must land before the dependent one can be verified
 - [ ] **Controller presets + custom mapping** — biggest pure-UI item (6 presets, `SettingsData` storage, diagram already drawn)
 - [x] @claude 2026-10-30 22:34 - **Server browser polish** — display name in the details panel, vanilla `.map` names no longer flagged as mods, MOD badge - commit f3cbbf6 — **reviewed by @deepseek: OK** (diff, 0/0 build, capture inspected)
 - [~] @claude 2026-10-30 23:17 - **Scoreboard action bar + in-game scoreboard (spec 4.16)** — landed in commit 60f374b: engine
-  scoreboard no longer opens, row select, Report (saved locally), ping column, buttons in place. **needs: @deepseek** real ping
+  scoreboard no longer opens, row select, Report (saved locally), ping column, buttons in place. **reviewed by @deepseek: OK** (merged build 0/0, capture on the merged tree). **needs: @deepseek** real ping
   values (the server's are placeholders), vote-to-kick transport, end round / end match actions, report endpoint if wanted.
   Then @claude wires the greyed buttons. Mute icons wait for chat/voice. Controller Back still opens the engine's scoreboard
+- [ ] **Emblem background replication (other players see it)** — roster entries only carry `emblemId`; add `emblem_background_id`/`emblemBackgroundId` to the server (registration, heartbeat, roster, lobby join) and to `MasterServerClient`, then draw it in `PlayerRow`/lobby rows. Split: server+client data @deepseek, drawing @claude. Related: `Nameplate(int id)` may have the same list-position-vs-id bug; the emblem id lookup was already removed.
 - [ ] **Post-game names** — remote players show `Player2`/`Player3` (needs engine player-record name path)
 - [ ] **Skull collection gating** — lock until found, "All Skulls" toggle when 13/13
 - [ ] **Readability pass** — run the capture harness over all 14 screens and fix remaining overlaps

@@ -53,6 +53,30 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+--
+
+## 0. Pick up here (2026-10-30, 23:30 ET) - REVIEW OK: @claude's scoreboard (60f374b) and emblem backgrounds (66e64a0) (WeabooTyler117 / DeepSeek)
+
+**Scoreboard replacement - passes.** Diff scoped to `PauseMenu.cpp` (+257), `ReachHost.cpp` (+14: the scoreboard key is
+taken away from the engine and published to our key mask, a click while held frees the pointer) and one
+`FrontEndMenu.cpp` line. Merged tree builds **0 errors / 0 warnings**, and I re-ran the demo capture on the merged build:
+the Noble panel replaces the engine's scoreboard completely, columns PLAYER/TAG/TEAM/PING, rank icons, local "You",
+Report window and the action row. Gaps recorded in TODO: ping shows "-" (the server's ping values are placeholders - real
+RTT needs transport work), Vote to Kick / End Round / End Match are greyed with "needs the server/host actions", Report
+is saved locally as JSONL until a report endpoint exists, and mute icons wait for chat/voice.
+
+**Emblem background picker - passes.** Its correction is right: `playercustomization.xml` does carry 105 reusable
+backgrounds (`background="eb_001"`, ids 500+) that the old parser skipped because it only kept entries with `image1`. The
+Armory now has IDENTITY > Emblem Background (None + 105, saved as `emblem_background_index`, default 0 so existing looks
+do not change), both layers are drawn, and the "shown emblem is not the one picked" bug is fixed by routing everything
+through `UiArt::DrawEmblem` and deleting the id lookup. Capture `docs/screenshots/emblem-background.png` inspected: grid,
+equipped marker, details panel, live nameplate. Open (recorded in TODO): other players do not see your background yet
+(roster only carries `emblemId` - I will add the field and Claude will draw it), no emblem colour picker yet, and
+`Nameplate(id)` may have the same list-position-vs-id bug.
+
+**Docs encoding.** Claude's docs commit had broken UTF-8 in `HANDOFF.md` (`â€"` sequences); repaired across the docs and
+verified only a legitimate `‹ ›` remains.
+
 ## 0. Pick up here (2026-10-30, 23:20 ET) - Host-disconnect panel, co-op difficulty/skulls verified, third-person host gate (WeabooTyler117 / DeepSeek)
 
 Night-shift progress, three items.
@@ -6770,7 +6794,7 @@ Resolved the host crash/hang that occurred when waiting for non-host clients to 
     2. In `src/ui/PauseMenu.cpp`: Implemented static caching of `s_cachedSwapChain`, `s_cachedBackBuffer`, and `s_cachedRtv`, reusing the render target view each frame instead of recreating/destroying it continuously.
 
 - **CPU Core Pegging & SwapChain Pacing (`src/engine/ReachHost.cpp`):**
-  - **Root Cause:** `HookSwapChainPresent` previously had a tight `do { YieldProcessor(); } while (...)` spin loop when throttling frames, burning 100% of a CPU logical core. Furthermore, when uncapped (`fpsLimit = 0`), the engine free-wheeled at 180â€“200+ FPS even when the window was unfocused in the background.
+  - **Root Cause:** `HookSwapChainPresent` previously had a tight `do { YieldProcessor(); } while (...)` spin loop when throttling frames, burning 100% of a CPU logical core. Furthermore, when uncapped (`fpsLimit = 0`), the engine free-wheeled at 180–200+ FPS even when the window was unfocused in the background.
   - **Resolution:**
     1. Added background/unfocused detection (`GetForegroundWindow() != hwnd`): automatically throttles to 30 FPS when unfocused, preventing heat spikes and DWM hang flags while waiting for friends.
     2. Set a safe default frame cap of 120 FPS when uncapped (`fpsLimit <= 0`) to prevent runaway GPU loops.
@@ -10413,13 +10437,13 @@ Tyler's choices: **original timing** (daily reset 11:00 GMT, weekly reset Monday
 
 - Map and mission lists show a number and MCC's small map preview before each name (`ListItem::thumb/number`,
   rows 40-42 px, as many rows as fit above the hint line).
-- Right side: `HeroBanner` (map picture, dark gradient, accent kicker "HALO: REACH Ã‚Â· CAMPAIGN / FIREFIGHT / MULTIPLAYER /
+- Right side: `HeroBanner` (map picture, dark gradient, accent kicker "HALO: REACH à‚Â· CAMPAIGN / FIREFIGHT / MULTIPLAYER /
   FORGE" or "MOD: <name>", big title, blurb under it), then the options, then `BigAction` buttons anchored above the
-  hint row (fixes START MISSION covering the hints): Campaign/Firefight PLAY SOLO ("<mission> Ã‚Â· <difficulty>",
-  "Hold out alone Ã‚Â· ...") + HOST CO-OP (greyed, "Needs online play"); Custom Game START GAME ("<map> Ã‚Â· <game
+  hint row (fixes START MISSION covering the hints): Campaign/Firefight PLAY SOLO ("<mission> à‚Â· <difficulty>",
+  "Hold out alone à‚Â· ...") + HOST CO-OP (greyed, "Needs online play"); Custom Game START GAME ("<map> à‚Â· <game
   type>") + HOST OR JOIN (server browser); Forge START FORGE. The banner shrinks to fit the screen height.
 - Campaign: the skulls that are on show as small skull icons next to the score multiplier.
-- Firefight: "FIREFIGHT OPTIONS Ã‚Â· DEFAULT" row shown greyed ("Coming later") until Noble can write Firefight variants.
+- Firefight: "FIREFIGHT OPTIONS à‚Â· DEFAULT" row shown greyed ("Coming later") until Noble can write Firefight variants.
 
 ## 0. Pick up here (2026-10-28, 11:15 ET) - Settings redesign (spec steps 1-2)
 
@@ -10615,16 +10639,16 @@ now 70-120 (Tyler's call, 03:45, commit `93681f4`): slider (always clamped, also
 settings file clamp and the help text all say 70-120; CameraFov still guards the engine's own 1-150.
 Tyler's settings were restored after the test (copy in `data\userdata\settings.backup.json`).
 
-## 0a. Latest (2026-10-28, 02:00 ET) â€” FOV hooked up + settings reachable from the pause menu
+## 0a. Latest (2026-10-28, 02:00 ET) — FOV hooked up + settings reachable from the pause menu
 
 **02:00:** Item 3 below is implemented (not yet run in game). Static REA/Ghidra analysis of `haloreach.dll`
 (`docs/fov-findings.md`) shows the game's FOV is a float in degrees at **`haloreach+0xB42C10`** (78.0f in the
-shipped DLL; the engine multiplies it by pi/180 for the camera and only accepts 1â€“150 degrees).
+shipped DLL; the engine multiplies it by pi/180 for the camera and only accepts 1–150 degrees).
 - New `src/engine/CameraFov.{hpp,cpp}`: `SetEngineModule()` from `main.cpp`, `Apply(degrees)` writes the global,
   `Read()` logs what the engine holds, and `Tick()` (called from ReachHost slot 1) applies `Settings::fieldOfView`
   when it changes and re-asserts it every 2 s because the engine refreshes its camera block from the profile.
 - `SETTINGS > VIDEO > FIELD OF VIEW` now reaches the running game on APPLY; the default is 78 (Reach's own value),
-  RESET goes back to 78, and the help text states the 1â€“150 limit.
+  RESET goes back to 78, and the help text states the 1–150 limit.
 - The pause menu has a **SETTINGS** entry: it renders the same `SettingsPanel` in a large window, so FOV, VSync,
   frame cap, mouse, audio and key bindings can be changed mid-match. Esc (or `< BACK`) returns to the pause menu;
   Esc during a key rebind still cancels the rebind only.
@@ -10855,9 +10879,9 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 - All MCC retail installation files remain 100% read-only and unmodified.
 
 
-## 0. Pick up here (23:58 ET) â€” Display Settings & FPS Control + Controller Picture
+## 0. Pick up here (23:58 ET) — Display Settings & FPS Control + Controller Picture
 
-**23:58 (O7OF):** Bumped to version 0.8.1 with FOV/VSync/FPS limit/FPS counter display fully implemented. The FPS counter displays in-game (upper-right, blue text on dark box, toggled via Settings > Display). VSync and frame-cap are applied in the swap-chain Present hook and take effect immediately without restarting. FOV slider stores selections (60â€“120Â°, default 90) but remains **UI-only** until the game camera mapping is verified via profile capture. The preview loads local MCC-derived Spartan/Elite OBJ groups, undersuits, and Elite harness layers; color masks and visor tint work in the preview. In-game armor and color IDs remain unmapped, so preview selections do not change the character yet.
+**23:58 (O7OF):** Bumped to version 0.8.1 with FOV/VSync/FPS limit/FPS counter display fully implemented. The FPS counter displays in-game (upper-right, blue text on dark box, toggled via Settings > Display). VSync and frame-cap are applied in the swap-chain Present hook and take effect immediately without restarting. FOV slider stores selections (60–120Â°, default 90) but remains **UI-only** until the game camera mapping is verified via profile capture. The preview loads local MCC-derived Spartan/Elite OBJ groups, undersuits, and Elite harness layers; color masks and visor tint work in the preview. In-game armor and color IDs remain unmapped, so preview selections do not change the character yet.
 
 **23:45 (upstream):** Controller picture replaced (item 5, built + screenshot-checked). O7OF made a 1600x1000 transparent PNG of an Xbox 360 pad; it is tracked at `assets/ui/noble/controller.png` (original work, OK for the public repo). CMake now also copies `assets\` into `<exe>\data\` after a build (data\ itself stays git-ignored). `UiArt::NobleControllerImage()` loads `controller.png` from `data\ui\custom` then `data\ui\noble`; SettingsPanel uses it with its own callout table (`kReach360`, straight leader lines, left margin sized from the widest label) and falls back to MCC's LARGECONTROLLERFRONT with the old table when the file is missing.
 
@@ -10872,7 +10896,7 @@ Open list, in priority order:
    - Use profile captures (`-capture-profile data/profile-captures`) to identify which bytes control torso, helmet, shoulders, legs, visor color, and suit color
    - Map UI selections to equipment IDs and color indices
    - Test in-game: set armor in settings, launch a game, verify the character reflects the changes
-3. ~~**Map FOV to the game camera and verify it works in-game**~~ (works at match start, 03:40) â€” wired in 0a below (FOV value at
+3. ~~**Map FOV to the game camera and verify it works in-game**~~ (works at match start, 03:40) — wired in 0a below (FOV value at
    `haloreach+0xB42C10`, see `docs/fov-findings.md`); still needs an in-game check that the camera takes the value live
 4. ~~**Controller settings**~~ done 04:30 (native XInput pad, look speed, invert, dead zones, vibration; see section 0). Left: verify with a real pad (vibration, +0x1B7)
 5. ~~**Menu music picker**~~ done 04:30 (two-pane picker with search)
@@ -11204,7 +11228,7 @@ keep it that way). Status:
 | Controller layout (360 and MCC) | âŒ **still to do**: a CONTROLLER tab in SETTINGS showing the MCC default and the original Xbox 360 layouts (controller picture already readable from `controllertexturepack`), and gamepad input itself (XInput into slot 36 +0x120.., Â§6 item 6) |
 Checked against the Halopedia notes: the menu has all 24 MP maps (incl. Noble, Defiant and Anniversary packs), all 10
 Firefight maps and all 11 campaign missions; mission descriptions are Noble's own wording (don't paste the official
-taglines). Not used yet but useful later: the Armory's 30 armour colours (10 bases Ã— 3 shades: Steel/Silver/White,
+taglines). Not used yet but useful later: the Armory's 30 armour colours (10 bases à— 3 shades: Steel/Silver/White,
 Red/Mauve/Salmon, Orange/Coral/Peach, Gold/Yellow/Pale, Sage/Green/Olive, Teal/Aqua/Cyan, Blue/Cobalt/Sapphire,
 Violet/Orchid/Lavender, Crimson/Rubine/Pink, Brown/Tan/Khaki) for the Armor Locker, and the Arena divisions (Onyx, Gold,
 Silver, Bronze, Iron) if a ranked mode is ever added.
@@ -11212,7 +11236,7 @@ Silver, Bronze, Iron) if a ranked mode is ever added.
 **Career reference data (14:45).** Tyler collected the Reach career material from Halopedia and the Bungie.net
 forums; it is now in `docs/career/`: `career-reference.md` (how Reach paid cR, campaign scoring, ranks, commendations,
 challenges, Armory, loadouts, controller layouts, sources) and the data files `ranks_and_pay.json`, `challenges.json`
-(all 18 months Sep 2010 â€“ Feb 2012, 2,103 challenges; no month missing, only 14 days Halopedia itself lacks),
+(all 18 months Sep 2010 – Feb 2012, 2,103 challenges; no month missing, only 14 days Halopedia itself lacks),
 `commendations.json` (45) and `armor.json`. Names and numbers only, no Bungie art (rank/challenge icons must be read
 from the MCC install; Tyler's rank-icon sheet stays local). Open question for Tyler: keep Noble's own cR numbers or
 switch to Reach's measured table (`career-reference.md` Â§1).
@@ -11482,7 +11506,7 @@ them when convenient; Noble no longer reads `profile_1.bin` automatically.
 `haloreach.dll` loads `xaudio2_9redist.dll` by bare name during start-up: Noble keeps `SetDllDirectoryW(<MCC>\MCC\Binaries\Win64)`
 set for the whole run (as RR does), otherwise there is no sound. Audio itself is FMOD inside the DLL.
 
-**Launch state machine** `haloreach+0xC1A114`: 0â€¦10 while launching, 11 = launched (reached ~5 s before the map is on
+**Launch state machine** `haloreach+0xC1A114`: 0…10 while launching, 11 = launched (reached ~5 s before the map is on
 screen; the first slot-10 call marks the game session start). Failure strings table `0x1803A2DCC`
 (17 `no map selected`, 18 `no game selected`, 19 `map load failure`).
 
@@ -11494,9 +11518,9 @@ menu, MP, campaign and Firefight are byte-identical apart from these fields (lay
 | Offset | MP | Campaign | Firefight | Menu |
 |---|---|---|---|---|
 | +0x0C | 3 | 1 | 5 | 1 |
-| +0x10, +0x14, +0x1D5C0 | launch index 190â€“209 | 178â€“189 | 210â€“219 | -2 |
+| +0x10, +0x14, +0x1D5C0 | launch index 190–209 | 178–189 | 210–219 | -2 |
 | +0x28 | 0 | `01 00 11 11` | 0 | 0 |
-| +0x34 | 1 | difficulty 0â€“3 | difficulty 0â€“3 | 1 |
+| +0x34 | 1 | difficulty 0–3 | difficulty 0–3 | 1 |
 | +0x1D334, +0x1D5BC (map id) | MP map id (Sword Base 1000, Boardwalk 1035, ...) | 1035 | 1035 | 1035 |
 | +0x300 game variant (decoded with `haloreach+0x373A0`) | chosen variant (default `slayer_054`) | slayer | **a Firefight variant** (`hr_ff_*.bin`; RR loads `game_variants\<mode>.bin`) | slayer |
 
@@ -11522,17 +11546,17 @@ Launch indices: campaign 178 m05 Noble Actual, 179 m10, 180 m20, 181 m30, 182 m3
 | 23 | load progress | âœ… |
 | 32 / 33 | display settings / quality | 32: size from the window; 33: writes the 16 bytes `0x3F80000000000201, 0x2BF800000` **directly at a1** (as RR) |
 | 34 | **profile**: pointer to a 64 KB block (see Profile below) | âœ… built-in defaults |
-| 36 | **input poll** `(userIndex, u8 state[0x130])`, users 0â€“3 every tick (`haloreach+0x23AE7`) | âœ… |
+| 36 | **input poll** `(userIndex, u8 state[0x130])`, users 0–3 every tick (`haloreach+0x23AE7`) | âœ… |
 | 47 / 48 | user-data folder / file path resolver | âœ… |
 | 51 | feature query `(id, bool* out, u64* extra)`: RR answers from mask FEATURES_ON = 0x6E and zeroes `*extra` | same mask; the engine only asks 1, 2, 5, 6 (all on) |
 | 55 / 56 / 57 | strings: clear / register `(table, id, const char* name, const char* suffix)` / lookup `(table, id, wchar_t* out, cap)` | key = CRC-32/MPEG-2 (poly 0x04C11DB7, init 0xFFFFFFFF, no xorout) of upper-case `name_suffix` (leading `$` skipped); text from `<MCC>\data\ui\Localization\EN_HaloReach.bin` (magic 0x90CE6B7A; u32@0x78 key bytes, keys from 0x80; u32@0x7C string block; NUL-terminated UTF-8 in key order). Lookup returns 0 when unknown so the engine uses the map's own strings |
-| 61â€“67 | text: prepare, glyph, atlas, has_icon, kerning, register_icon, metrics | âœ… `TextAtlas`: 1024Â² pages (â‰¤16), shelf packing, dirty-rect upload in slot 63 |
+| 61–67 | text: prepare, glyph, atlas, has_icon, kerning, register_icon, metrics | âœ… `TextAtlas`: 1024Â² pages (â‰¤16), shelf packing, dirty-rect upload in slot 63 |
 | 88 | identity `(u64* xuid, wchar_t* name, cap, userIndex)` â†’ 1 | âœ… |
 | 116 | controller map `(xuid)`; RR only logs | returns 0, writes nothing |
 | iface2 147 | pointer to a 16-byte session GUID; every other iface2 slot returns 0 (RR does the same) | âœ… |
 
 **Glyph record (slot 62 out, 26 bytes):** ch@0, zero@2..7, atlasX@8, atlasY@0xA, w@0xC, h@0xE, originY@0x10, originX@0x12,
-advance@0x14, -ascent@0x16, page@0x18. Glyph alpha = min((grayÂ·255+32)>>6, 255) from GDI GGO_GRAY8. Icons (0xE000â€“0xE2FF): the
+advance@0x14, -ascent@0x16, page@0x18. Glyph alpha = min((grayÂ·255+32)>>6, 255) from GDI GGO_GRAY8. Icons (0xE000–0xE2FF): the
 engine registers one through slot 66 `(host, ch, size, f32 scale, face, w, h, top, ARGB4444-decoded pixels, pitch)` only when
 slot 64 has_icon returns false (engine path `haloreach+0x1CF4D0` reads `font_package_icon.bin`); store the pixels unchanged,
 originY = top, originX = 0, advance = w, ascent = 0.
@@ -11548,7 +11572,7 @@ Noble's built-in defaults (`ReachHost.cpp`):
 | Range | Content | Effect when missing |
 |---|---|---|
 | +0x1B4..+0x1DF | look/controller settings (sensitivity bytes, dead zones 0.13/0.12, 1.0 multipliers, option bytes) | aim frozen while scoped |
-| +0x42C..+0xA5B | key bindings: 66 Ã— 0x18 `{u32 action, u32 VK, 16 zero bytes}`, MCC default PC layout | no key does anything |
+| +0x42C..+0xA5B | key bindings: 66 à— 0x18 `{u32 action, u32 VK, 16 zero bytes}`, MCC default PC layout | no key does anything |
 | +0xA5C / +0xA60 / +0xA64 | f32 volumes (game / music / other) | no sound |
 Still zero: rest of +0x000..+0x42B and +0xA68..+0xBFF (suspected to hold the HUD brightness/opacity setting).
 
@@ -11561,7 +11585,7 @@ and answers "on" when the SUBTITLES setting is on.
 **MCC UI texture packs** (`<MCC>\Data\UI\texturepacks`, read by `UiArt`): `<name>.perm.bin` = records of 0x1E0 bytes, magic
 0xCDBFA090, name at +0x44, u16 w/h at +0x74/+0x76, u64 size at +0x88, u64 offset into `<name>.temp.bin` at +0x90; data BC1 or
 BC3 (decided by size per 4x4 block). Useful packs: `levelstexturepack` (every Reach map/mission preview, 316x160 and
-668x292 `â€¦LARGE`), `skullstexturepack` (128x128 skull icons), `controllertexturepack` (controller picture, button glyphs),
+668x292 `…LARGE`), `skullstexturepack` (128x128 skull icons), `controllertexturepack` (controller picture, button glyphs),
 `mainmenutexturepack`, `globaluitexturepack`. `loadingtexturepack.perm.bin` (304 MB) has no names: entries
 `{u32 0x5E73CDD7, u32 size, u32 size, u32 0, data}`, padded; 1920x1080 BC1. Reach's 12 campaign scenes are found by a CRC-32
 of their first 4 KB (table in `UiArt.cpp`). `Data\UI\BackgroundVideos\Images\*.png` are only 392x220.
@@ -11589,9 +11613,9 @@ size: it is r8 left over from the conversion loop (always 0xD5A8). Layout read f
 |---|---|
 | +0x0000 u32 | game category (engine mode byte at results +5 mapped to MCC's list) |
 | +0x0008, +0x0010 u64; +0x18, +0x19 u8 | copied from the engine header |
-| +0x0020 | 16 player records Ã— 0x1C8: +0x00 u8 present, +0x08 u64 player id, +0x18/+0x28/+0x2C i32, +0x30 u8, +0x34 i32 score (engine word or dword depending on mode), +0x38.., then appearance/name copy from +0x4C |
-| +0x1CA0 | 16 Ã— 4 bytes team data |
-| +0x1CE0 | 16 per-player stat blocks Ã— 0x5448: +0x000 23 u32 general stats, +0x05C 11 u32, +0x0AC 0x180 u32 medal counts, +0x6AC 0x32 u32, then weapon tables (0x54 weapons, 6 values each) |
+| +0x0020 | 16 player records à— 0x1C8: +0x00 u8 present, +0x08 u64 player id, +0x18/+0x28/+0x2C i32, +0x30 u8, +0x34 i32 score (engine word or dword depending on mode), +0x38.., then appearance/name copy from +0x4C |
+| +0x1CA0 | 16 à— 4 bytes team data |
+| +0x1CE0 | 16 per-player stat blocks à— 0x5448: +0x000 23 u32 general stats, +0x05C 11 u32, +0x0AC 0x180 u32 medal counts, +0x6AC 0x32 u32, then weapon tables (0x54 weapons, 6 values each) |
 | +0x56160 | per-player pairs; +0x5D120/+0x5D124/+0x5D128 u32 and +0x5D130 u64 match totals |
 
 General-stat numbering: `haloreach+0x3B208` maps engine stat n to MCC slot (0â†’0, 1â†’1, nâ†’n+1 for n â‰¥ 2). Assuming Reach
@@ -11639,12 +11663,12 @@ Test option `-end-round-after <seconds>` calls the `mp_round_end` script command
    profile +0x1AC).
 11. **Forge**: the menu launches MP with `00_basic_editing_054.bin`; the map loads, check in game that the Monitor/editor toggle works.
 9. **Career system** (planned with Tyler). Done: `Career` module, 50 ranks (Halopedia table), cR after each match
-   (per-minute pay rising with rank, kills/assists/medals bonus, 1-in-8 random bonus 100â€“3000, 1-in-200 jackpot 7,777;
+   (per-minute pay rising with rank, kills/assists/medals bonus, 1-in-8 random bonus 100–3000, 1-in-200 jackpot 7,777;
    **no daily cap** and up to **90 paid minutes** per match in every mode (Tyler's calls). Pay goes by **base type** =
    the engine game mode BlamEngine launches with (campaign / Firefight / multiplayer incl. Forge), so modded maps and game
    types earn exactly what their stock type earns (`Career::BeginMatch` is called from `BlamEngine::LaunchMap`); all constants at the top of `Career.cpp`, Noble's own numbers), post-game cR breakdown + rank bar.
    Next: confirm stat slots (play a short Slayer with a few kills; `last_game.bin` + the `Career:` log lines), campaign
-   scoring (difficulty + skull multipliers, time bonus, par scores), 45 commendations, challenges (Sep 2010 â€“ Feb 2012
+   scoring (difficulty + skull multipliers, time bonus, par scores), 45 commendations, challenges (Sep 2010 – Feb 2012
    lists) paying cR, a career/service-record screen and rank icon in the menu, Armory with the armor list.
    All the data for this is in `docs/career/` (see Â§0).
 
@@ -11707,7 +11731,7 @@ session registry, matchmaker (8 playlists). DB goes to `server/data/` (git-ignor
 
 ## 8. Rules for this project
 
-- Read-only toward MCC files. Writes go to `build\bin\Release\data\â€¦`.
+- Read-only toward MCC files. Writes go to `build\bin\Release\data\…`.
 - Never commit or publish: RR binaries/data/decompiled code (including `profile_1.bin`, launch blocks, `mainmenu_all.map`),
   Omaha-derived files, `haloreach.dll` or dumps of it (e.g. dumpbin output), crash dumps, logs (they contain a player name/ID).
   The repo is **private** (Tyler, 2026-10-28 15:41; it was public before). GitHub rejects files over 100 MB.
