@@ -1159,9 +1159,13 @@ void SettingsPanel::RenderController() {
         const int layout = std::clamp(m_edit.padLayout, 0, layouts - 1);
         const bool swapped = m_edit.padStickLayout == 1;
         const int preset = layout + (swapped ? layouts : 0);
-        const std::string name = std::string(PadLayouts::Name(layout)) + (swapped ? " + SWAPPED STICKS" : "");
+        // Reach has no layouts called Reverse: these two names are Noble's, for that layout with the sticks swapped.
+        const bool reverse = swapped && (layout == PadLayouts::Southpaw || layout == PadLayouts::BumperJumper);
+        const std::string name = reverse ? std::string("REVERSE ") + PadLayouts::Name(layout)
+                                         : std::string(PadLayouts::Name(layout)) + (swapped ? " + SWAPPED STICKS" : "");
         const std::string text = std::string(PadLayouts::Description(layout)) +
-                                 (swapped ? " Sticks swapped: left stick looks, right stick moves." : " Left stick moves, right stick looks.");
+                                 (swapped ? " Sticks swapped: left stick looks, right stick moves." : " Left stick moves, right stick looks.") +
+                                 (reverse ? " Noble's name for this preset; Reach's own list has no Reverse layouts." : "");
         if (Row("CONTROLLER PRESET", text.c_str(), When::Apply, "Default",
                 m_edit.padLayout != m_saved.padLayout || m_edit.padStickLayout != m_saved.padStickLayout)) {
             if (const int d = CycleValue(name.c_str(), preset, layouts * 2)) {
