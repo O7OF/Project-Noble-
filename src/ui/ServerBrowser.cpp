@@ -51,18 +51,38 @@ bool IsModdedGame(const std::string& map, const std::string& sessionName, bool a
     return advertised || sessionName.find("[Mod]") != std::string::npos || !MapNames::IsVanilla(map);
 }
 
-// Small filled "MOD" tag, drawn inline at the cursor; the next item continues on the same line.
-void DrawModBadge() {
-    const char* text = "MOD";
+// Small filled tag, drawn inline at the cursor; the next item continues on the same line.
+void DrawTag(const char* text, ImU32 fill) {
     const float paddingX = 5.0f;
     const ImVec2 textSize = ImGui::CalcTextSize(text);
     const ImVec2 p0 = ImGui::GetCursorScreenPos();
     const ImVec2 p1(p0.x + textSize.x + paddingX * 2.0f, p0.y + textSize.y);
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    dl->AddRectFilled(p0, p1, IM_COL32(89, 217, 242, 255), 2.0f);
+    dl->AddRectFilled(p0, p1, fill, 2.0f);
     dl->AddText(ImVec2(p0.x + paddingX, p0.y), IM_COL32(6, 20, 28, 255), text);
     ImGui::Dummy(ImVec2(p1.x - p0.x, textSize.y));
     ImGui::SameLine();
+}
+
+int ModeCategory(const std::string& mode) {
+    const std::string m = Lower(mode);
+    if (m.find("campaign") != std::string::npos) return 1;
+    if (m.find("forge") != std::string::npos || m.find("sandbox") != std::string::npos) return 3;
+    if (m.find("firefight") != std::string::npos) return 4;
+    if (m.find("theat") != std::string::npos) return 5;
+    if (m.find("custom") != std::string::npos) return 6;
+    return 2;
+}
+
+void Describe(ServerEntry& e) {
+    const std::string map = MapNames::Display(e.mapName);
+    if (e.isMod) {
+        e.mapDescription = e.modTitle.empty() ? ("Custom map: " + map) : ("Custom map from " + e.modTitle);
+        e.modDescription = e.modTitle.empty() ? std::string("Custom map or modded content") : e.modTitle;
+    } else {
+        e.mapDescription = "Official Halo: Reach map: " + map;
+        e.modDescription.clear();
+    }
 }
 
 // "1.2.3.4:5678" or "1.2.3.4" -> address + port (default 11774). False for empty/bad input.
@@ -125,6 +145,7 @@ void ServerBrowser::RefreshServers() {
         }
         const std::string key = Key(e.hostAddress, e.port);
         e.isFavorite = std::find(settings.favorites.begin(), settings.favorites.end(), key) != settings.favorites.end();
+        Describe(e);
         list.push_back(std::move(e));
     };
 
@@ -238,6 +259,7 @@ void ServerBrowser::Render() {
         m_lastMasterRequest = now;
         SessionManager::Get().TriggerDiscoveryScan();
         MasterServerClient::Get().RequestList();
+        MasterServerClient::Get().RequestOnlineCount();
     }
     if (now - m_lastRefresh > 2.0) {
         m_lastRefresh = now;
@@ -292,22 +314,31 @@ void ServerBrowser::RenderFilterBar() {
     }
 
     ImGui::Spacing();
-    ImGui::SetNextItemWidth(220);
-    ImGui::InputTextWithHint("##Search", "Search by name or map", m_searchQuery, IM_ARRAYSIZE(m_searchQuery));
+    // Mode tabs, Reach-style: one row, ALL first, then the playlists players actually browse.
+    const char* tabs[] = { "ALL", "CAMPAIGN", "MULTIPLAYER", "FORGE", "FIREFIGHT", "THEATRE", "CUSTOM" };
+    for (int i = 0; i < 7; ++i) {
+        if (i) ImGui::SameLine();
+        const bool active = m_modeFilter == i;
+        ImGui::PushStyleColor(ImGuiCol_Text, active ? NobleStyle::Accent() : NobleStyle::TextMuted());
+        if (ImGui::Button(tabs[i], ImVec2(0, 28))) m_modeFilter = i;
+        ImGui::PopStyleColor();
+    }
     ImGui::SameLine();
-    const char* modeNames[] = { "All modes", "Multiplayer", "Campaign", "Firefight", "Forge" };
-    ImGui::SetNextItemWidth(140);
-    ImGui::Combo("##ModeCombo", &m_modeFilter, modeNames, IM_ARRAYSIZE(modeNames));
-    ImGui::SameLine();
-    ImGui::Checkbox("Hide full", &m_hideFull);
+    ImGui::TextColored(NobleStyle::Accent(), "ONLINE %d", MasterServerClient::Get().OnlinePlayers());
+
+    ImGui::Spacing();
+    ImGui::SetNextItemWidth(240);
+    ImGui::InputTextWithHint("##Search", "Search name, map or host", m_searchQuery, IM_ARRAYSIZE(m_searchQuery));
     ImGui::SameLine();
     ImGui::Checkbox("Hide empty", &m_hideEmpty);
     ImGui::SameLine();
-    ImGui::Checkbox("Favourites only", &m_showOnlyFavorites);
+    ImGui::Checkbox("Hide full", &m_hideFull);
     ImGui::SameLine();
     ImGui::Checkbox("No password", &m_hidePassworded);
     ImGui::SameLine();
     ImGui::Checkbox("Not started", &m_hideInProgress);
+    ImGui::SameLine();
+    ImGui::Checkbox("Favourites", &m_showOnlyFavorites);
 
     // Status line: LAN / master server / UPnP.
     const std::string master = MasterServerClient::Get().Enabled()
@@ -381,10 +412,10 @@ void ServerBrowser::RenderServerList() {
             SessionManager::Get().TriggerDiscoveryScan();
         }
         if (ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false)) {
-            m_modeFilter = (m_modeFilter + 4) % 5;
+            m_modeFilter = (m_modeFilter + 6) % 7;
         }
         if (ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false)) {
-            m_modeFilter = (m_modeFilter + 1) % 5;
+            m_modeFilter = (m_modeFilter + 1) % 7;
         }
     }
 
@@ -395,13 +426,13 @@ void ServerBrowser::RenderServerList() {
     if (!ImGui::BeginTable("ServerTable", 7, flags, ImVec2(0, 0))) return;
 
     // Widths include the cell padding and the sort arrow, so no header is elided ("Sour...", "Playe...").
-    ImGui::TableSetupColumn("Source",   ImGuiTableColumnFlags_WidthFixed, 86.0f);
-    ImGui::TableSetupColumn("Server",   ImGuiTableColumnFlags_WidthStretch | ImGuiTableColumnFlags_DefaultSort, 200.0f);
-    ImGui::TableSetupColumn("Mode",     ImGuiTableColumnFlags_WidthFixed, 112.0f);
-    ImGui::TableSetupColumn("Map",      ImGuiTableColumnFlags_WidthFixed, 240.0f); // longest stock name plus the MOD badge
-    ImGui::TableSetupColumn("Players",  ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_PreferSortDescending, 98.0f);
-    ImGui::TableSetupColumn("Ping",     ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_PreferSortDescending, 70.0f);
-    ImGui::TableSetupColumn("Address",  ImGuiTableColumnFlags_WidthFixed, 170.0f);
+    ImGui::TableSetupColumn("Source",   ImGuiTableColumnFlags_WidthFixed, 92.0f);
+    ImGui::TableSetupColumn("Server",   ImGuiTableColumnFlags_WidthStretch | ImGuiTableColumnFlags_DefaultSort, 170.0f);
+    ImGui::TableSetupColumn("Mode",     ImGuiTableColumnFlags_WidthFixed, 82.0f);
+    ImGui::TableSetupColumn("Map",      ImGuiTableColumnFlags_WidthFixed, 170.0f);
+    ImGui::TableSetupColumn("Players",  ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_PreferSortDescending, 100.0f);
+    ImGui::TableSetupColumn("Ping",     ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_PreferSortDescending, 62.0f);
+    ImGui::TableSetupColumn("Address",  ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultHide, 150.0f);
     ImGui::TableSetupScrollFreeze(0, 1);
     ImGui::TableHeadersRow();
 
@@ -475,9 +506,9 @@ void ServerBrowser::RenderServerList() {
         // Column 3: map, by the name players know it by ("Forge World", not "forge_halo"). Modded maps keep
         // their own name and get the MOD badge; hovering shows the raw file name.
         ImGui::TableNextColumn();
-        if (s.isMod) DrawModBadge();
+        DrawTag(s.isMod ? "MOD" : "STOCK", s.isMod ? IM_COL32(89, 217, 242, 255) : IM_COL32(120, 140, 158, 255));
         ImGui::TextUnformatted(MapNames::Display(s.mapName).c_str());
-        if (s.isMod && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", s.mapName.c_str());
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\n%s", s.mapName.c_str(), s.mapDescription.c_str());
 
         // Column 4: players
         ImGui::TableNextColumn();
@@ -505,7 +536,7 @@ void ServerBrowser::RenderServerList() {
         ImGui::TableNextRow();
         ImGui::TableNextColumn();
         ImGui::TableNextColumn();
-        ImGui::TextDisabled("No servers found matching current filters.");
+        ImGui::TextDisabled("No games match the current filters.");
     }
 
     ImGui::EndTable();
@@ -561,6 +592,7 @@ void ServerBrowser::RenderServerDetails() {
     }
 
     ImGui::Spacing();
+    DrawTag(s.isMod ? "MOD" : "STOCK", s.isMod ? IM_COL32(89, 217, 242, 255) : IM_COL32(120, 140, 158, 255));
     ImGui::TextWrapped("%s", s.name.c_str());
     ImGui::TextDisabled("%s:%u%s", s.hostAddress.c_str(), s.port, s.isOwn ? " (YOU)" : "");
     ImGui::Spacing();
@@ -572,6 +604,9 @@ void ServerBrowser::RenderServerDetails() {
     ImGui::TextDisabled("Map:");
     ImGui::SameLine(100);
     ImGui::TextWrapped("%s", MapNames::Display(s.mapName).c_str());
+    ImGui::TextDisabled("Map info:");
+    ImGui::SameLine(100);
+    ImGui::TextWrapped("%s", s.mapDescription.empty() ? "Official Halo: Reach map" : s.mapDescription.c_str());
 
     if (!s.variantName.empty()) {
         ImGui::TextDisabled("Game type:");
@@ -601,7 +636,11 @@ void ServerBrowser::RenderServerDetails() {
         ImGui::TextWrapped("Match in progress - joining in progress is allowed.");
         ImGui::PopStyleColor();
     }
-    if (s.isMod) ImGui::TextColored(ImVec4(0.35f, 0.85f, 0.95f, 1.0f), "Custom map / modded content");
+    if (s.isMod) {
+        ImGui::TextColored(ImVec4(0.35f, 0.85f, 0.95f, 1.0f), "%s", s.modDescription.empty() ? "Custom map / modded content" : s.modDescription.c_str());
+    } else {
+        ImGui::TextColored(ImVec4(0.55f, 0.65f, 0.75f, 1.0f), "Official Halo: Reach content");
+    }
     if (!s.modId.empty()) {
         ImGui::TextDisabled("Required Workshop mod:");
         ImGui::SameLine(100);

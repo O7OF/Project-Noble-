@@ -215,6 +215,14 @@ void MasterServerClient::RequestList() {
     m_wake.notify_all();
 }
 
+void MasterServerClient::RequestOnlineCount() {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (m_url.empty()) return;
+    m_onlineRequested = true;
+    EnsureThread();
+    m_wake.notify_all();
+}
+
 void MasterServerClient::StartAdvertising(const MasterAdvert& advert) {
     std::lock_guard<std::mutex> lock(m_mutex);
     if (m_url.empty()) return;
@@ -295,11 +303,12 @@ void MasterServerClient::WorkerLoop() {
     std::unique_lock<std::mutex> lock(m_mutex);
     while (true) {
         m_wake.wait_for(lock, std::chrono::seconds(1), [this] {
-            return m_stop || m_listRequested || m_unregisterRequested ||
+            return m_stop || m_listRequested || m_onlineRequested || m_unregisterRequested ||
                    (m_advertising && std::chrono::steady_clock::now() >= m_nextHeartbeat);
         });
         const bool doUnregister = m_unregisterRequested;
         const bool doList = m_listRequested;
+        const bool doOnline = m_onlineRequested;
         const bool doHeartbeat = m_advertising && std::chrono::steady_clock::now() >= m_nextHeartbeat;
         const bool stop = m_stop;
         const bool registered = !m_sessionId.empty();
@@ -318,10 +327,28 @@ void MasterServerClient::WorkerLoop() {
             }
         }
         if (doList) DoList();
+        if (doOnline) DoOnline();
 
         lock.lock();
         if (doHeartbeat) m_nextHeartbeat = std::chrono::steady_clock::now() + std::chrono::seconds(3);
         if (stop) break;
+    }
+}
+
+void MasterServerClient::DoOnline() {
+    HttpResult r = HttpRequest(Url(), L"GET", "/api/players/online", {});
+    if (!r.ok) {
+        // Older deployments do not have the players endpoint; health carries the same counters.
+        r = HttpRequest(Url(), L"GET", "/api/health", {});
+    }
+    if (!r.ok) return;
+    try {
+        const nlohmann::json j = nlohmann::json::parse(r.body);
+        const int online = j.value("online", j.value("activeSessions", 0));
+        const int servers = j.value("servers", j.value("masterSessions", 0));
+        m_onlinePlayers.store(std::max(0, online));
+        m_onlineServers.store(std::max(0, servers));
+    } catch (...) {
     }
 }
 
