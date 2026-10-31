@@ -295,7 +295,8 @@ items above close. Keep the spec open when building any screen so the details la
 
 - [~] @deepseek 2026-10-31 05:20 - **post-game + credits (night block 3)** follows voice phase 1: -postgame-test timing, multiplayer end path, exit_experience sounds, mission_complete split.
 
-- [ ] **Text chat: team / all / party in lobbies and in-match** (Tyler, 2026-10-31): keys **T = team**, **Y = everyone**,
+- [x] @claude 2026-10-31 16:13 - **Text chat UI** (`829b98f`): T/Y/P, log, audience, typing line, feed. Open: pad typing, per-player text mute, content filter, team test on two teams.
+- [ ] **(original spec)** Text chat: team / all / party in lobbies and in-match (Tyler, 2026-10-31): keys **T = team**, **Y = everyone**,
   **P = party** (rebindable, shown in the binding list; controller gets quick-chat later). Works in the pre-game lobby, the
   in-game lobby and mid-match; channel tabs/prefix, local echo, timestamps, scrollback with the same virtualised list style as
   the 128-player roster. Transport: a `chat` message type on the existing relay (server relays + rate-limits, length cap,

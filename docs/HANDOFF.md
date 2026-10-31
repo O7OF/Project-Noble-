@@ -7,13 +7,29 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 
 **Goal:** `noble-client.exe` loads MCC's own `haloreach.dll` (Halo: Reach) and drives it **without MCC**, like the existing
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
-MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.5 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.6 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
 
 ### How this file is kept (Tyler, 2026-10-30)
 
 - **Every change gets an entry - no exceptions**: code, UI, docs, tools, config, server. Add it at the **top**, directly
   under the `--` line, as
-  `## 0. Pick up here (2026-10-31, 15:08 ET) - Push-to-talk rebinding, voice quality proof, music list cleanup (@claude)
+  `## 0. Pick up here (2026-10-31, 16:13 ET) - Text chat and who's-talking overlay (@claude)
+
+**Commit:** `829b98f`, server `dcc9c66`. **Version:** 0.9.6. **Build:** 0 errors, 0 warnings on the merged tree. Files: `src/ui/SocialOverlay.*` (new), `src/ui/PauseMenu.cpp`, `src/ui/FrontEndMenu.cpp`, `src/host/Window.*`, `src/engine/KeyBindings.*`, `src/engine/ReachHost.cpp`, `src/network/NetworkTransport.*`, `src/audio/VoiceChat.*`, `src/main.cpp`, `src/ui/SettingsPanel.cpp`.
+
+**Chat.** T team, Y everyone, P party, plus an unbound Open Chat, in Settings > Keyboard & Mouse (slots 69-72; Dominus's vehicle camera holds 68). The header names the audience, the log sits under it, and the line is at the foot; Tab changes channel, PgUp/PgDn scroll 200 kept messages, Esc closes. New messages show 12 s with the line closed. A sent line shows at once and is marked (not delivered) if the server doesn't repeat it within 6 s. Opens in matches, post-game and the pre-game lobby, only in a relay session and never over the pause menu or Forge palette.
+
+**Voice.** Top left, rows for you (TRANSMITTING or OPEN MIC) and each player talking, names from the roster, +N more past 8. Muted players never show. Above the title in menus, at the corner in a match.
+
+**Changed behaviour.** Lobby keyboard Friends is F, because Y is now chat; pad Y is unchanged. `SendChat` (@deepseek's) now queues for the sender thread and omits machineId: it sent 0 from a menu lobby and decimal otherwise, so the server's roster lookup failed and team chat reached everyone. Server prefers the roster name over the client's claim.
+
+**Evidence.** Two real game clients in a match, local server, real keystrokes: `docs/screenshots/chat-real-guest-receives-host.png` (host's message plus the host as a talker), `chat-real-host-receives-guest.png`, `voice-real-you-transmitting.png`. Typing V in the line: guest `sent=0`. Esc closed the line with no pause menu and the cancelled line was never sent (server logged 2 chat lines of 3 typed). Demo captures: `chat-lobby-open.png`, `chat-lobby-feed.png`, `chat-match-open.png` (flags `-social-demo`, `-social-demo-open`).
+
+**Not verified.** Team filtering with players on two teams, party (same as all). Chat in a real pre-game lobby (only demo roster there). PgUp/PgDn and Tab were not pressed in a test. Two PCs. The live server: it may not have this code. Controllers can read but not type. Text mute per player doesn't exist yet; chat messages carry no sender id. Host's name on the roster came out as Spartan-261d while the settings name differs; pre-existing identity behaviour, not investigated.
+
+Self-review: chat text is logged nowhere client-side, so failures show only on screen. `Clean` strips control characters but not abusive words; the content filter is still a separate TODO.
+
+## 0. Pick up here (2026-10-31, 15:08 ET) - Push-to-talk rebinding, voice quality proof, music list cleanup (@claude)
 
 
 **Current version:** 0.9.6. **Developer build:** 0.9.6-dev. Dev binaries report the suffix next to the version string.
