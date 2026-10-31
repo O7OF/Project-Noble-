@@ -21,6 +21,44 @@ overlay (`7cef78c`) and the third-person camera (`97989d1`).
 
 ---
 
+
+## Ownership plan (who is doing what)
+
+Agents may still claim anything unowned, but this is the intended split so we do not collide. **Dependencies are stated
+explicitly** - a "needs" item must land before the dependent one can be verified.
+
+### @deepseek (engine / netcode / server)
+
+| order | item | notes |
+|---|---|---|
+| 1 (now) | **Third-person camera** | experiment matrix on `haloreach+0x48A910` (`-third-person-mode 0/1` vs baseline), then the follow hook `+0x1DCADC`, settings row, F5 rebind, host/mode gate |
+| 2 | **Campaign co-op verification** | skulls + difficulty parity, host-disconnect behaviour, death/respawn/checkpoint semantics (two-process tests with `-data-dir`) |
+| 3 | **Campaign CONTINUE → last checkpoint** | locate the checkpoint block in save data, pass it to the relaunched process |
+| 4 | **Scoreboard live data** | engine player-record hook (0x490-stride objects / results record), expose K/D/score to the UI through a small API; **@claude owns the drawing** |
+| 5 | **Vote-to-kick transport + server** | `ServerTestDeploy` endpoint + client kick message; **@claude draws the button/modal** |
+| 6 | **Invites carry mode/map** | `server.js` invite payload + `SocialClient::SendInviteAsync` + toast text |
+| 7 | **4+ players (later)** | RR `capacity`/`coopx` path in `docs/player-count-scaling.md`; Firefight first |
+| 8 | **Seamless transitions (research)** | single-process map switch; may stay research |
+| 9 | **Housekeeping** | GitHub Actions artifact, handoff dedupe, `stash@{0}` drop (with Tyler's ok) |
+
+### @claude (menus / UI / docs)
+
+| order | item | needs |
+|---|---|---|
+| 1 (now) | **Scoreboard action bar** | ping column, Report modal, Vote to Kick button, End Round / End Match host-only. UI + client-side actions now; wire to my endpoints when they land. **Cover the engine's scoreboard fully** (opaque panel over its layout) |
+| 2 | **Emblem backdrop + symbol picker** | rows, storage, composition (`FrontEndMenu.cpp:861`, `:3660`); ~30 % done |
+| 3 | **Controller presets + custom mapping** | 6 presets, `SettingsData`, existing diagram; mapping code lives in `ReachHost.cpp` - claim it |
+| 4 | **Readability pass** | capture all 14 screens, fix overlaps; commit before/after captures |
+| 5 | **Server browser follow-ups** | live-server rows, LAN/own-host rows, hover tooltip, non-1080p layouts |
+| 6 | **Post-game names (UI half)** | display real names once I expose the engine player-record name path |
+| 7 | **Docs/screenshots upkeep** | keep `PATHS.md`/screenshots current when UI changes |
+
+### Shared rules for dependencies
+
+- If an item needs the other agent's work, leave the TODO line `[~]` with `needs: @other` until the dependency lands, then verify and close it.
+- Never edit `PauseMenu.cpp` (Claude's) or `CameraThirdPerson.*` (mine) without a claim change first.
+- Review pairings: UI work is reviewed by @deepseek (diff + build + screenshot inspected); engine/netcode/server is reviewed by @claude (diff + build + logs; if it cannot run it, it says so and the item stays `[~]`).
+
 ## A. Campaign co-op follow-ups
 
 - [ ] **Verify skulls + difficulty parity** — host launch data carries skulls; confirm the guest actually receives them in-game
@@ -46,7 +84,7 @@ overlay (`7cef78c`) and the third-person camera (`97989d1`).
 
 ## C. Engine features
 
-- [~] @deepseek 2026-10-31 10:55 — **Third-person toggle does NOT work yet.** `CameraThirdPerson` MinHooks
+- [~] @deepseek 2026-10-30 22:17 — **Third-person toggle does NOT work yet.** `CameraThirdPerson` MinHooks
   `haloreach+0x48A910` and answers the check with `true`, and the detour does fire, but a clean gameplay capture still shows
   first person. Earlier "works" claim was a cutscene camera - corrected. Next: determine the check's real semantics (try
   returning `false`, and/or returning `original(...)` combined) and whether the engine needs the follow hook at
