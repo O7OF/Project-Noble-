@@ -1,5 +1,6 @@
 #include "SettingsPanel.hpp"
 #include "audio/VoiceChat.hpp"
+#include "common/Logger.hpp"
 #include "NobleStyle.hpp"
 #include "NobleUi.hpp"
 #include "MenuSounds.hpp"
@@ -1817,7 +1818,7 @@ void SettingsPanel::RenderSystem() {
                ShellExecuteW(nullptr, L"open", exeDir.wstring().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
                s_note = "Opened " + exeDir.string();
            });
-    action("COPY DIAGNOSTICS", "Puts the version, the install path and the last 40 log lines on the clipboard, ready to paste into a report.",
+    action("COPY DIAGNOSTICS", "Puts the version and the last 40 log lines on the clipboard, ready to paste into a report. Your player name and Windows user name are replaced first.",
            "Clipboard", [&] {
                std::string text = std::string("Project Noble ") + version + "\n" + exeDir.string() + "\n";
                std::ifstream log(exeDir / "noble-client.log");
@@ -1830,6 +1831,14 @@ void SettingsPanel::RenderSystem() {
                    text += "\n--- last log lines ---\n";
                    for (const std::string& line : lines) text += line + "\n";
                }
+               const auto scrub = [&text](const std::string& secret, const char* stand) {
+                   if (secret.size() < 2) return;
+                   for (size_t at = text.find(secret); at != std::string::npos; at = text.find(secret, at + std::strlen(stand))) text.replace(at, secret.size(), stand);
+               };
+               scrub(Settings::Get().Snapshot().playerName, "<player>");
+               char windowsUser[256]{};
+               if (GetEnvironmentVariableA("USERNAME", windowsUser, sizeof(windowsUser)) > 0) scrub(windowsUser, "<user>");
+               NOBLE_INFO("SettingsPanel: diagnostics copied, {} bytes", text.size());
                ImGui::SetClipboardText(text.c_str());
                s_note = "Diagnostics copied to the clipboard.";
            });

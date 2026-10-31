@@ -744,8 +744,8 @@ struct HintExtra {
     const char* label;
 };
 
-void DrawHints(const Ui& ui, const std::vector<std::pair<Prompt, const char*>>& hints, const std::vector<HintExtra>& extras = {}) {
-    float x = ui.size.x * 0.075f;
+void DrawHints(const Ui& ui, const std::vector<std::pair<Prompt, const char*>>& hints, const std::vector<HintExtra>& extras = {}, float left = 0.075f) {
+    float x = ui.size.x * left;
     const float y = ui.size.y - 46.0f * ui.s;
     ui.dl->AddLine(ImVec2(x, y - 12.0f * ui.s), ImVec2(ui.size.x * 0.62f, y - 12.0f * ui.s), IM_COL32(255, 255, 255, 50), 1.0f);
     for (const auto& [prompt, label] : hints) {
@@ -3446,7 +3446,7 @@ static void DrawSocialScreen(OverlayContext& ctx, const Ui& ui, float left, floa
         st.focusRow = 0;
         MenuSounds::Back();
     }
-    DrawHints(ui, { { Prompt::Back, "Back" }, { Prompt::Tabs, "Switch Tab (Q/E)" } });
+    DrawHints(ui, { { Prompt::Back, "Back" }, { Prompt::Tabs, "Switch Tab (Q/E)" } }, {}, 0.01875f);   // the full-width panel's edge
 }
 
 // Menu music player: a compact now-playing strip (track, prev / play-pause / next, mute, shuffle) in the
@@ -4360,7 +4360,7 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
             // to drop the player into Custom Game).
             goBack(Screen::Main);
         }
-        DrawHints(ui, { { Prompt::Back, "Back" } });
+        DrawHints(ui, { { Prompt::Back, "Back" } }, {}, 0.01875f);   // the full-width panel's edge
         break;
     }
 

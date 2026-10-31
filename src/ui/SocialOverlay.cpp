@@ -316,14 +316,21 @@ void DrawChat(ImDrawList* dl, ImFont* font, float s, float chatX, float chatBott
             const int end = count - s_scroll;
             lines.assign(s_log.begin(), s_log.begin() + end);
         } else {
-            for (const Line& line : s_log) if (now - line.at < kFeedMs) lines.push_back(line);
+            for (const Line& line : s_log) if (s_demo || now - line.at < kFeedMs) lines.push_back(line);
             if (static_cast<int>(lines.size()) > kFeedLines) lines.erase(lines.begin(), lines.end() - kFeedLines);
         }
     }
     const float x = chatX * s, w = 560.0f * s, pad = 10.0f * s, size = 16.0f * s;
     const float bottom = chatBottom * s;
     if (!s_typing) {
-        if (!lines.empty()) DrawLines(dl, font, x + pad, bottom, bottom - 190.0f * s, w - pad * 2.0f, size, lines, true, now, s);
+        if (!lines.empty()) {
+            // A faint backing, so the feed stays readable over a bright map or a panel with its own text.
+            float total = 0.0f;
+            for (const Line& line : lines) total += font->CalcTextSizeA(size, FLT_MAX, w - pad * 2.0f, LineText(line).c_str()).y + kLineGap * s;
+            total = (std::min)(total, 190.0f * s);
+            dl->AddRectFilled(ImVec2(x, bottom - total - 4.0f * s), ImVec2(x + w, bottom + 4.0f * s), IM_COL32(4, 10, 16, 165), 3.0f * s);
+            DrawLines(dl, font, x + pad, bottom, bottom - 190.0f * s, w - pad * 2.0f, size, lines, !s_demo, now, s);
+        }
         return;
     }
 

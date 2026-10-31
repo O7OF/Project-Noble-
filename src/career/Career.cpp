@@ -738,6 +738,10 @@ void OnGameResults(const uint8_t* record, size_t size) {
         if (row.medals > 2000) row.medals = 0;
         if (row.score < -100000 || row.score > 1000000) row.score = 0;
         if (row.local) {
+            // The stat slots are provisional: this shows whether deaths really land in slot 11.
+            std::string slots;
+            for (size_t k = 0; k < kGeneralStats; ++k) slots += std::to_string(U32(st, k * 4)) + " ";
+            NOBLE_INFO("Career: local general stats 0..{}: {}", kGeneralStats - 1, slots);
             kills = row.kills;
             assists = row.assists;
             deaths = row.deaths;
