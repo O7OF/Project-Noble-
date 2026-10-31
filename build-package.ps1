@@ -2,7 +2,7 @@ param(
     [string]$Destination = (Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'Noble Launcher')
 )
 $ErrorActionPreference = 'Stop'
-$repo = Split-Path -Parent $PSScriptRoot
+$repo = $PSScriptRoot
 $build = Join-Path $repo 'build'
 $cmake = 'C:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe'
 
@@ -17,20 +17,16 @@ Write-Host "== Packaging to $Destination =="
 New-Item -ItemType Directory -Force -Path $Destination | Out-Null
 Copy-Item $exe (Join-Path $Destination 'Noble.exe') -Force
 
-# Runtime data: keep game content and UI, never the player's saves or the huge mod cache.
-$dataDirs = @('menumaps','ui','armor','blocks','loadscreen','maps','game_variants','map_variants','sandbox')
-foreach ($d in $dataDirs) {
-    $src = Join-Path $repo "data\$d"
-    if (Test-Path $src) {
-        $dst = Join-Path $Destination "data\$d"
-        New-Item -ItemType Directory -Force -Path $dst | Out-Null
-        Copy-Item (Join-Path $src '*') $dst -Recurse -Force -ErrorAction SilentlyContinue
-    }
+# Runtime data: copy every content folder except player saves, caches and the huge mod tree.
+$runtimeData = Join-Path $build 'bin\Release\data'
+$excludeDirs = @('mods','userdata','autosave','sandbox','cache')
+$destData = Join-Path $Destination 'data'
+New-Item -ItemType Directory -Force -Path $destData | Out-Null
+Get-ChildItem $runtimeData -Directory | Where-Object { $excludeDirs -notcontains $_.Name } | ForEach-Object {
+    Copy-Item $_.FullName -Destination $destData -Recurse -Force
 }
-foreach ($f in @('forge_palette.json')) {
-    $src = Join-Path $repo "data\$f"
-    if (Test-Path $src) { Copy-Item $src (Join-Path $Destination "data\$f") -Force }
-}
+# Root runtime files: strings, launch blocks, default profile/appearance, palette.
+Get-ChildItem $runtimeData -File | Copy-Item -Destination $destData -Force
 
 # vgmstream is required for the MCC music path; keep it in a tool folder next to the exe.
 $vg = Join-Path $build 'bin\Release\tools\vgmstream'
