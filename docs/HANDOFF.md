@@ -34,6 +34,23 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+--
+
+## 0. Pick up here (2026-10-31, 11:20 ET) - Camera experiment switch; Claude Code verified installed and logged in (WeabooTyler117 / DeepSeek)
+
+- `CameraThirdPerson` now has an experiment switch: `-third-person-mode 0|1` (0 = answer the `haloreach+0x48A910` check
+  with `true`, 1 = answer `false`, both start third-person enabled; the detour logs the original result it saw). The next run
+  matrix is: baseline (no flag), mode 0, mode 1 on the same map with captures at the same frames, so the camera question is
+  settled by comparison instead of a single frame.
+- **Claude Code is set up and working on this PC**: `claude --version` = 2.1.316, `claude doctor` is green (npm-global,
+  bundle present, auto-update success), and a headless round trip (`claude -p "Reply with exactly: OK"`) returned `OK` with
+  exit 0. Its config lives in `C:\Users\tyler\.claude` (credentials updated 22:23).
+- Claude has been launched in this repo (`~/.claude/projects/D--Halo-Reach-Community-Edition`, session at 22:22-22:24) and
+  received the scoreboard prompt, but its history then shows `/rate-limit-options` and `/logout`. Nothing was claimed,
+  committed or pushed: `git log` has no new commits, `docs/AGENT-STATUS.md` still says `@claude idle`, `docs/TODO.md` has no
+  `@claude` claim. So the tool works; the first successful contribution is still pending (likely a usage-limit restart).
+- My working tree had three uncommitted experiment files - committed here, so Claude's clean-tree precondition is now met.
+
 ## 0. Pick up here (2026-10-31, 11:00 ET) - Correction: third person is NOT working; same-PC agent sync added (WeabooTyler117 / DeepSeek)
 
 Two things.

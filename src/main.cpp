@@ -281,6 +281,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     int engineModeOverride = 0;
     bool guestPostStart = false;
     bool thirdPerson = false;
+    int thirdPersonMode = 0;
     std::string engineCommand;
     int engineCommandAt = -1;
     std::string connectAddress = "";
@@ -331,6 +332,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             } else if (arg == L"-wait-peers" && i + 1 < numArgs) {
                 expectedPeers = _wtoi(argvW[++i]);
             } else if (arg == L"-third-person") {
+                thirdPerson = true;
+            } else if (arg == L"-third-person-mode" && i + 1 < numArgs) {
+                thirdPersonMode = _wtoi(argvW[++i]);
                 thirdPerson = true;
             } else if (arg == L"-guest-post-start") {
                 guestPostStart = true;
@@ -470,6 +474,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     // The SETTINGS > VIDEO field-of-view slider writes the engine's own camera FOV global.
     noble::CameraFov::SetEngineModule(loader->GetModuleHandle());
     noble::CameraThirdPerson::Install(loader->GetModuleHandle());
+    if (thirdPersonMode > 0) noble::CameraThirdPerson::SetMode(thirdPersonMode);
     if (thirdPerson) noble::CameraThirdPerson::SetEnabled(true);
 
     // Apply 32/64 player lobby expansion detours

@@ -20,6 +20,7 @@ public:
     static bool Install(HMODULE haloreach);
 
     static void SetEnabled(bool enabled);
+    static void SetMode(int mode);   // experiment switch
     static bool IsEnabled();
     static void Toggle();
 

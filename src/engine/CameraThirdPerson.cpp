@@ -22,17 +22,20 @@ using CameraModeCheckFn = bool(__fastcall*)(int32_t playerIndex);
 CameraModeCheckFn s_original = nullptr;
 
 std::atomic<bool> s_enabled{false};
+std::atomic<int> s_mode{0};   // experiment: 0 = answer true, 1 = answer false, 2 = original(...) | enabled
 std::atomic<bool> s_f5WasDown{false};
 std::atomic<int> s_logCount{0};
 
 bool __fastcall Hook_CameraModeCheck(int32_t playerIndex) {
-    if (s_enabled.load()) {
-        if (s_logCount.fetch_add(1) < 3) {
-            NOBLE_INFO("CameraThirdPerson: camera-mode check for player {} -> third person", playerIndex);
-        }
-        return true;  // let the engine take its third-person camera path for this player
+    const bool orig = s_original ? s_original(playerIndex) : false;
+    if (!s_enabled.load()) return orig;
+    const int mode = s_mode.load();
+    if (s_logCount.fetch_add(1) < 5) {
+        NOBLE_INFO("CameraThirdPerson: camera check fired (player {}, mode {}, original {})", playerIndex, mode, orig);
     }
-    return s_original ? s_original(playerIndex) : false;
+    if (mode == 1) return false;              // experiment: maybe true means "first person"
+    if (mode == 2) return orig || true;       // same as true, kept for completeness
+    return true;
 }
 
 } // namespace
@@ -54,6 +57,11 @@ bool CameraThirdPerson::Install(HMODULE haloreach) {
     }
     NOBLE_INFO("CameraThirdPerson: third-person camera check hooked at haloreach+0x{:X}", kCameraModeCheckRva);
     return true;
+}
+
+void CameraThirdPerson::SetMode(int mode) {
+    s_mode.store(mode);
+    NOBLE_INFO("CameraThirdPerson: experiment mode {}", mode);
 }
 
 void CameraThirdPerson::SetEnabled(bool enabled) {
