@@ -246,6 +246,16 @@ items above close. Keep the spec open when building any screen so the details la
 
 - [x] @deepseek 2026-10-31 04:25 - **Elite pipeline + colour system** (night block 1) - commit e7ab6c9: `docs/reference/elite-slots.md` (314 rrpmcg components, elite ranks) and `docs/reference/elite-m10.md` (cache sections, 79 elite shader + 117 bitmap paths, 57/60 sampled bitmaps already stock vs 51/60 shaders pack-only - the rank look is in the shaders). Next: shader colour parameters.
 
+- [ ] **Large-lobby roster: scrollable player list up to 128** (Tyler, 2026-10-31): the pre-game lobby and the in-game
+  scoreboard must render far more than Reach's 16 rows with scrolling (virtualised rows, sticky header, current player kept
+  in view, controller page-scroll, 16/32/64/128 stress fixtures). - @claude
+- [ ] **Server roster/limits for 128 entries** (Tyler, 2026-10-31): raise `MASTER_MAX_PLAYERS` and the lobby roster caps,
+  make join/heartbeat/roster payloads bounded but 128-safe, and add a synthetic 128-player fixture for the UI tests. - @deepseek
+- [ ] **RESEARCH: real match capacity beyond 16** (Tyler, 2026-10-31): Reach's network session is 16 players; the UI can
+  list 128, but an actual 128-player match needs the `capacity`/`coopx`-class engine work in `docs/player-count-scaling.md`
+  (RR patch path) plus bandwidth work. Keep 128 as the lobby/browser ceiling for now and file match capacity as research,
+  not a promise.
+
 ## I. Armory presentation, audio and data (Tyler, 2026-10-31 00:10)
 
 - [x] @claude 2026-10-31 00:56 - commit dd37730 - **Armory framing**: Spartan/Elite centered under the horizontal rule below APPEARANCE, head no longer above the HALO: REACH line or beside the nameplate
