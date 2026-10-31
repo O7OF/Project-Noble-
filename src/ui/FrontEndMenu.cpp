@@ -832,7 +832,8 @@ void DrawAccountModal(const Ui& ui) {
 // always match. rankIndex/emblemIndex/nameplateIndex may be 0 or negative when the data is not known (a remote
 // player), in which case that piece is drawn as a plain placeholder or left out.
 float PlayerRow(const Ui& ui, ImVec2 pos, float width, int rankIndex, int emblemIndex, int nameplateIndex,
-                int team, const std::string& serviceTag, const std::string& name, bool dev, bool selected) {
+                int team, const std::string& serviceTag, const std::string& name, bool dev, bool selected,
+                int emblemBackground = 0) {
     const float h = 40.0f * ui.s;
     const float rankW = 29.0f * ui.s;      // square, centred on the row
     const float embW = 30.0f * ui.s;
@@ -858,10 +859,8 @@ float PlayerRow(const Ui& ui, ImVec2 pos, float width, int rankIndex, int emblem
 
     const ImVec2 e0(x, pos.y), e1(x + embW, pos.y + h);
     ui.dl->AddRectFilled(e0, e1, IM_COL32(20, 14, 18, 250));
-    if (const UiTexture emblem = UiArt::Emblem(emblemIndex)) {
-        UiArt::DrawContain(ui.dl, emblem, ImVec2(e0.x + 2.0f * ui.s, e0.y + 2.0f * ui.s),
-                           ImVec2(e1.x - 2.0f * ui.s, e1.y - 2.0f * ui.s));
-    }
+    UiArt::DrawEmblem(ui.dl, emblemIndex, emblemBackground, ImVec2(e0.x + 2.0f * ui.s, e0.y + 2.0f * ui.s),
+                      ImVec2(e1.x - 2.0f * ui.s, e1.y - 2.0f * ui.s));
     x += embW;
 
     // Team strip: only when the game type assigns teams (Free for All, the main menu and a lobby with no
@@ -946,7 +945,7 @@ void DrawParty(const Ui& ui, const std::string& playerName, const char* status) 
         }
         y += PlayerRow(ui, ImVec2(x2, y), x + w - x2, s_rank, prof.emblemIndex, prof.nameplateIndex,
                        0 /* no team in the main menu */, PlayerServiceTag(sd), playerName,
-                       AuthClient::Get().IsDeveloper(), false);
+                       AuthClient::Get().IsDeveloper(), false, prof.emblemBackgroundIndex);
     }
     const float accH = 22.0f * ui.s;
     const ImVec2 accP0(x2, y);
@@ -2401,7 +2400,8 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
                   player.emblemId > 0 ? player.emblemId : (isLocalPlayer ? ownProf.emblemIndex : 0),
                   player.nameplateId > 0 ? player.nameplateId : (isLocalPlayer ? ownProf.nameplateIndex : 0),
                   player.team,
-                  player.serviceTag, player.username, player.isDev, selected);
+                  player.serviceTag, player.username, player.isDev, selected,
+                  isLocalPlayer ? ownProf.emblemBackgroundIndex : 0);
 
         ImGui::SetCursorScreenPos(pr0);
         char prBtnId[64];
@@ -3691,16 +3691,8 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
             }
 
             const ImVec2 emb(p0.x + 22.0f * ui.s, p0.y + plateH * 0.5f);
-            UiTexture embTex = UiArt::Emblem(prof.emblemIndex);
-            if (embTex) {
-                const float embR = 15.0f * ui.s;
-                ui.dl->AddImage(embTex.id, ImVec2(emb.x - embR, emb.y - embR), ImVec2(emb.x + embR, emb.y + embR));
-            } else {
-                ui.dl->AddCircleFilled(emb, 13.0f * ui.s, IM_COL32(16, 28, 42, 240));
-                ui.dl->AddTriangleFilled(ImVec2(emb.x - 7 * ui.s, emb.y - 3 * ui.s),
-                                         ImVec2(emb.x + 7 * ui.s, emb.y - 3 * ui.s),
-                                         ImVec2(emb.x, emb.y + 7 * ui.s), kAccent);
-            }
+            const float embR = 15.0f * ui.s;
+            UiArt::DrawEmblem(ui.dl, prof.emblemIndex, prof.emblemBackgroundIndex, ImVec2(emb.x - embR, emb.y - embR), ImVec2(emb.x + embR, emb.y + embR));
 
             const std::string tagLine = "[" + prof.serviceTag + "]";
             Text(ui, NobleStyle::SmallFont(), 14.0f, ImVec2(p0.x + 44.0f * ui.s, p0.y + 4.0f * ui.s), IM_COL32(190, 215, 235, 230), tagLine.c_str());
@@ -3903,7 +3895,12 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
         uint64_t pId = AuthClient::Get().IsLoggedIn() ? static_cast<uint64_t>(AuthClient::Get().GetUserId()) : fallbackId;
         std::string sTag = Settings::Get().Snapshot().serviceTag.empty() ? "117" : Settings::Get().Snapshot().serviceTag;
 
-        LobbyState state = MasterServerClient::Get().JoinLobbySync(s.id, pId, pName, AuthClient::Get().IsDeveloper(), sTag, 11774, s.hostAddress, s.port);
+        LobbyState state = MasterServerClient::Get().JoinLobbySync(
+            s.id, pId, pName, AuthClient::Get().IsDeveloper(), sTag,
+            Career::RankIndex(Career::Get().credits),
+            UIManager::GetArmorCustomizer().GetProfile().emblemIndex,
+            UIManager::GetArmorCustomizer().GetProfile().nameplateIndex, 0,
+            11774, s.hostAddress, s.port);
         if (state.ok) {
             if (!state.sessionId.empty()) ctx.st.lobbySessionId = state.sessionId;
             ctx.st.lobbyRoster = state.roster;
@@ -4139,7 +4136,7 @@ void FrontEndMenu::RenderOverlayImpl(IDXGISwapChain* swapChain, bool clear) {
                 std::wstring args = L"-map \"" + ToWide(choice.map) + L"\" -mode \"" + ToWide(choice.mode) + L"\"";
                 // Forward the test-only capture hooks, so a harness that opened the menu can still photograph the
                 // match (the child is a fresh process with its own command line).
-                for (const wchar_t* flag : { L"-pause-at", L"-scoreboard-at", L"-quit-after" }) {
+                for (const wchar_t* flag : { L"-pause-at", L"-scoreboard-at", L"-scoreboard-demo", L"-quit-after" }) {
                     int argc = 0;
                     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
                     for (int a = 1; argv && a + 1 < argc; ++a) {

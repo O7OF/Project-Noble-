@@ -1,0 +1,71 @@
+NIGHT SHIFT - message for @claude (Tyler is away, little/no interaction until morning)
+
+Pull first, then read the "NIGHT SHIFT" section of docs/TODO.md and docs/AGENT-STATUS.md. This message is the same thing,
+in case the repo is not visible.
+
+GROUND RULES FOR TONIGHT
+- Tyler is away. Do not stop to ask questions. The repo is the coordination channel; docs/TODO.md is the queue and the
+  claim board; docs/AGENT-STATUS.md is the live presence board.
+- Both agents keep working continuously: pull -> check the board -> claim the first unclaimed item in the queue order ->
+  timebox 45-60 minutes -> verify -> handoff entry -> mark done -> review the other agent's latest commit -> refresh
+  mirrors -> repeat.
+- Only stop if: the whole queue is done, or an item needs a decision only Tyler can make (write "BLOCKED (Tyler): <question>"
+  in the TODO line and take the next item), or two consecutive failed attempts at the same item (record both, move on).
+- Never force-push. Never rewrite commits by O7OF or @deepseek. Pull before every commit. Kill noble-client.exe before
+  building. Never commit build output, logs, BMPs (except docs/screenshots/) or public IPs. Leave the tree clean.
+- Server/netcode script changes go to O7OF/ServerTestDeploy only.
+
+MY QUEUE TONIGHT (@deepseek)
+1. Third-person camera: experiment matrix on haloreach+0x48A910 (-third-person-mode 0/1 vs baseline), then the follow hook
+   at +0x1DCADC, settings row, F5 rebind, host/mode gate. It is NOT working yet - a cutscene frame fooled me once.
+2. Campaign co-op verification: skulls/difficulty parity, host disconnect, death/respawn/checkpoint.
+3. Campaign CONTINUE -> last checkpoint (the biggest campaign item).
+4. Scoreboard live K/D API from the engine player-record hook; you draw the columns.
+5. Vote-to-kick transport + ServerTestDeploy endpoint; you draw the button/modal.
+6. Invites carry mode/map.
+7. Host/admin engine actions (kick/ban/end round/restart/shuffle teams/end game -> lobby, spec 4.15) - you draw the panel.
+8. Armory spotlight / chamber lighting (data-first: HREK menumap lighting, or engine light injection).
+9. 4+ players (RR capacity/coopx path), then housekeeping.
+
+YOUR QUEUE TONIGHT (@claude)
+1. Scoreboard action bar + in-game scoreboard (spec 4.16): ping column, Report modal, Vote to Kick, End Round, End Match
+   (host only), per-row mute icon + Mute-all when chat exists, and the Noble panel must FULLY COVER the engine's own
+   scoreboard. PauseMenu.cpp is released for you.
+2. Emblem backdrop + symbol picker.
+3. Controller presets + custom mapping (claim ReachHost.cpp before editing).
+4. Readability pass: capture all 14 screens and fix overlaps.
+5. Server browser follow-ups: live-server rows, LAN/own-host rows, hover tooltip, non-1080p layouts.
+6. Post-game names UI (needs my engine name path; swap to another item if blocked).
+7. Docs/screenshots upkeep, then help with the review queue.
+
+NEW TASKS ADDED FROM THE DESIGN DOC (docs/TODO.md section F - not scheduled, take them when your queue is clear)
+- Armory leftovers: thumbnails, rank/cR locks, stances, randomise, identity row.
+- Input: mouse acceleration/smoothing, separate invert-flight, sensitivity hotkeys, release-cursor key, second key per
+  action; controller aim control/acceleration/stick layout/dead zone.
+- Game options engine research: vehicle + third-person FOV, crosshair options, hide HUD/visor, label fade, viewmodel
+  offsets, advanced graphics.
+- Audio/language/communication: mute in background, per-song music, volume meters, languages, content filters, chat,
+  voice chat, Discord presence.
+- Online/folders/mods: master-server list, player ID copy, folder rows with disk bars, mods manager.
+- Server browser extras: favourites, search, mode chips, filters, VIEW PLAYERS, clickable mod badge -> mod list.
+- Pickers: favourites, OPEN FOLDER/REFRESH, "+N variants", search.
+- Lobby/rotation/voting (spec 4.14) and the game options editor (needs variant read/write).
+- Theater (spec 4.9) stays disabled with "Coming later" - needs engine film recording.
+- The armory "spotlight" is mine (data/engine).
+
+ONE CHECK TYLER ASKED ABOUT (do not chase a false alarm)
+- `git log -S"blamEngine->Shutdown();" -- src/main.cpp` returns only 8213116 (Oct 26), but the menu-to-match crash fix is
+  present: commit 982e32a (Oct 28) made BlamEngine::Shutdown skip the m_fnShutdown/vtable[0] call while the engine thread
+  runs, and main.cpp still calls blamEngine->Shutdown() then TerminateProcess (main.cpp ~line 648). Verify by behaviour
+  instead: launch a match from the menu, return, and check the log ends with "Network and host services shut down; exiting
+  process cleanly." with no ntdll dialog. That regression check is now in docs/TODO.md.
+
+CROSS-REVIEW STAYS MANDATORY
+- Every [x] gets reviewed by the other agent: clean pull, diff scoped to the claim, TODO hash + handoff entry, 0/0 rebuild,
+  evidence by type (UI capture opened and inspected; netcode logs / two-process run; server node --check + endpoint).
+- Missing or wrong evidence -> write a top-of-file "REVIEW: <item> re-opened" handoff entry, put the TODO line back to [~],
+  and tell Tyler in your next summary. Review is read-only; fix in a separate commit.
+
+START NOW
+git pull
+then claim item 1 of your queue in docs/TODO.md and set docs/AGENT-STATUS.md active, commit+push that, and begin.

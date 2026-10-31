@@ -1128,6 +1128,7 @@ static uint64_t __fastcall HostSlot34_ProfileSettings(void* thisPtr, uint64_t a1
 //   +0x11C u32      mouse buttons: L=1, M=2, R=4, X1=8, X2=0x10
 // Index 1 is the split-screen second user: zeroed, as RR does.
 static ULONGLONG s_keyDownSince[256] = {};
+static std::atomic<uint32_t> s_engineKeyMask[8] = {};   // 8 x 32 bits = 256 virtual keys, mirroring the engine pad state
 static bool s_inputCaptured = false;
 static HCURSOR s_savedClassCursor = nullptr;
 static std::atomic<bool> s_slot36Logged{false};
@@ -1332,6 +1333,11 @@ static SyntheticPadPress ParseSyntheticPadPress() {
         press.startedAt = GetTickCount64() + static_cast<ULONGLONG>(press.atMs);
     }
     return press;
+}
+
+bool ReachHost::IsKeyHeld(int vk) {
+    if (vk < 0 || vk > 255) return false;
+    return (s_engineKeyMask[vk >> 5].load() & (1u << (vk & 31))) != 0;
 }
 
 static void FillLocalPad(uint8_t* st, bool keyboardMouseUsed) {
@@ -1570,6 +1576,19 @@ static void FillLocalInput(uint8_t* st) {
     if (!uiPointer) {
         st[0x004 + VK_ESCAPE] = 0; // Esc was ours (pause menu)
     }
+
+    // The scoreboard key is ours too: Noble's panel replaces Reach's own scoreboard, so the engine never sees the key
+    // and never opens its screen. The key still reaches the overlay through s_engineKeyMask (published below). A click
+    // while it is held frees the pointer for the panel's player actions instead of firing a shot.
+    const int boardVk = KeyBindings::EffectiveKey(20);
+    const bool boardDown = !uiPointer && boardVk > 0 && boardVk < 256 && st[0x004 + boardVk] != 0;
+    if (boardDown) {
+        st[0x004 + boardVk] = 0;
+        if (st[0x004 + VK_LBUTTON]) {
+            st[0x004 + VK_LBUTTON] = 0;
+            PauseMenu::EnterScoreboardPointer();
+        }
+    }
     if (s_holdMouseUntilRelease) {
         st[0x004 + VK_LBUTTON] = st[0x004 + VK_RBUTTON] = st[0x004 + VK_MBUTTON] = 0;
     }
@@ -1653,6 +1672,13 @@ static void FillLocalInput(uint8_t* st) {
     }
     *reinterpret_cast<float*>(st + 0x114) = wheel;
 
+    for (int vk = 0; vk < 256; ++vk) {
+        const bool down = st[0x004 + vk] != 0;
+        const uint32_t bit = 1u << (vk & 31);
+        if (down) s_engineKeyMask[vk >> 5].fetch_or(bit);
+        else s_engineKeyMask[vk >> 5].fetch_and(~bit);
+    }
+    if (boardDown) s_engineKeyMask[boardVk >> 5].fetch_or(1u << (boardVk & 31));
     FillLocalPad(st, dx != 0.0f || dy != 0.0f || buttons != 0 || wheel != 0.0f || AnyKeyDown(st));
 }
 

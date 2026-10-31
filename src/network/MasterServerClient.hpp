@@ -150,6 +150,10 @@ public:
                             const std::string& username,
                             bool isDev,
                             const std::string& serviceTag,
+                            int rankIndex,
+                            int emblemId,
+                            int nameplateId,
+                            int team,
                             uint16_t localPort,
                             const std::string& fallbackHostIp = "",
                             uint16_t fallbackHostPort = 11774);

@@ -1139,6 +1139,8 @@ bool ArmorCustomizer::LoadProfile(const std::filesystem::path& path) {
             m_profile.nameplateIndex = j["nameplate_index"].get<int>();
         if (j.contains("emblem_index") && j["emblem_index"].is_number_integer())
             m_profile.emblemIndex = j["emblem_index"].get<int>();
+        if (j.contains("emblem_background_index") && j["emblem_background_index"].is_number_integer())
+            m_profile.emblemBackgroundIndex = j["emblem_background_index"].get<int>();
 
         MigrateFromLegacyFields();
         SyncLegacyFields();
@@ -1265,6 +1267,7 @@ bool ArmorCustomizer::SaveProfile(const std::filesystem::path& path) {
 
         j["nameplate_index"] = m_profile.nameplateIndex;
         j["emblem_index"] = m_profile.emblemIndex;
+        j["emblem_background_index"] = m_profile.emblemBackgroundIndex;
 
         std::error_code ec;
         if (targetPath.has_parent_path()) {
@@ -1627,9 +1630,16 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
         const auto& emblems = UiArt::GetEmblemCatalog();
         SlotRow embRow{ "IDENTITY", "Emblem", RowKind::List, &m_profile.emblemIndex };
         for (const auto& em : emblems) {
-            embRow.options.push_back({ em.name.c_str(), "Halo player identity emblem icon." });
+            embRow.options.push_back({ em.name.c_str(), "The symbol on your emblem." });
         }
         rows.push_back(std::move(embRow));
+
+        SlotRow backRow{ "IDENTITY", "Emblem Background", RowKind::List, &m_profile.emblemBackgroundIndex };
+        backRow.options.push_back({ "None", "No shape behind your emblem's symbol." });
+        for (const auto& back : UiArt::GetEmblemBackgrounds()) {
+            backRow.options.push_back({ back.name.c_str(), "The shape behind your emblem's symbol." });
+        }
+        rows.push_back(std::move(backRow));
 
         rows.push_back({ "IDENTITY", "Service Tag", RowKind::Tag });
     }
@@ -1952,7 +1962,9 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
         const float gw = ImGui::GetContentRegionAvail().x;
         const bool colourGrid = row.kind == RowKind::Colour;
         const bool isNameplate = std::strcmp(row.label, "Nameplate") == 0;
-        const bool isEmblem = std::strcmp(row.label, "Emblem") == 0;
+        const bool isEmblemSymbol = std::strcmp(row.label, "Emblem") == 0;
+        const bool isEmblemBackground = std::strcmp(row.label, "Emblem Background") == 0;
+        const bool isEmblem = isEmblemSymbol || isEmblemBackground;
         const int cols = colourGrid ? 10 : isEmblem ? 4 : isNameplate ? 1 : 2;
         const float cg = 6.0f * s;
         const float tileW = (gw - cg * (cols - 1)) / cols;
@@ -2009,14 +2021,11 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
                              2.0f * s, 0, (isEq || isTry) ? 1.6f * s : 1.0f);
             } else if (isEmblem) {
                 gdl->AddRectFilled(t0, t1, isEq ? IM_COL32(34, 70, 104, 235) : (hov ? IM_COL32(40, 54, 70, 235) : IM_COL32(20, 28, 38, 220)), 2.0f * s);
-                const auto& catalog = UiArt::GetEmblemCatalog();
-                if (static_cast<size_t>(i) < catalog.size()) {
-                    const UiTexture embTex = UiArt::Emblem(catalog[i].id);
-                    if (embTex) {
-                        UiArt::DrawContain(gdl, embTex, ImVec2(t0.x + 4.0f * s, t0.y + 4.0f * s), ImVec2(t1.x - 4.0f * s, t1.y - 4.0f * s),
-                                           (isEq || hov) ? IM_COL32_WHITE : IM_COL32(220, 220, 220, 255));
-                    }
-                }
+                // Each tile shows the whole emblem as it would look: the other half of the pair stays as equipped.
+                const int symbol = isEmblemSymbol ? i : m_profile.emblemIndex;
+                const int background = isEmblemBackground ? i : m_profile.emblemBackgroundIndex;
+                UiArt::DrawEmblem(gdl, symbol, background, ImVec2(t0.x + 4.0f * s, t0.y + 4.0f * s), ImVec2(t1.x - 4.0f * s, t1.y - 4.0f * s),
+                                  (isEq || hov) ? IM_COL32_WHITE : IM_COL32(220, 220, 220, 255));
                 gdl->AddRect(t0, t1, isEq ? kAccentCol : isTry ? IM_COL32(255, 196, 92, 255) : IM_COL32(170, 220, 255, hov ? 140 : 40),
                              2.0f * s, 0, (isEq || isTry) ? 1.6f * s : 1.0f);
             } else if (artGrid) {

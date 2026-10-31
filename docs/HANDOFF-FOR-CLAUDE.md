@@ -5,6 +5,23 @@ you can pick up without reading the (very long) `docs/HANDOFF.md`, which remains
 
 ---
 
+## 0. Current state — read these three files first (2026-10-31)
+
+| file | why |
+|---|---|
+| `docs/START-HERE.md` | one-page orientation: repos, build command, flags, current focus, hard rules |
+| `docs/TODO.md` | the prioritized list **and the claim board** — `- [~] @name ...` means somebody is on it |
+| `docs/TEAM-WORKFLOW.md` | how Claude and DeepSeek share this repo without collisions |
+
+Heads: client `97989d1`, backend `b8fb2ad` (Render). Both green, tree clean.
+
+Landed since the previous version of this brief: campaign co-op fix (`0b83b1c`, launch block `0xE8` player count),
+forge online, backend 1.3.0 (relay heartbeat, `/api/relay/stats`), lobby identity pass-through (`b8fb2ad` + `663cae2`),
+Noble scoreboard overlay (`7cef78c`), third-person camera on F5 (`97989d1`). Evidence screenshots live in
+`docs/screenshots/`.
+
+In progress: third-person distance/shoulder tuning and the settings/host gate. Next unclaimed items are in `TODO.md`.
+
 ## 1. What this is
 
 **Project Noble** is a C++20 Windows client that runs *Halo: Reach* from the MCC install as a **standalone game with its own
@@ -103,6 +120,9 @@ He asked for a **career reset with money**: level back to Recruit, but 1,000,000
 ## 5. Open work, in priority order
 
 ### 5.1 Emblem background / foreground picker (in progress, ~30 % done)
+
+**Superseded 2026-10-30:** done with MCC's real `background="eb_*"` entries; the "no reusable backdrop" claim below is wrong. See the
+top of `docs/HANDOFF.md`.
 
 Tyler wants Reach's emblem editor: pick a **background** shape and a **foreground** symbol.
 

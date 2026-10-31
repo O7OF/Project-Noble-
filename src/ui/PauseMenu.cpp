@@ -12,17 +12,26 @@
 #include "network/NetworkTransport.hpp"
 #include "common/Settings.hpp"
 #include "engine/FrameCapture.hpp"
+#include "engine/ReachHost.hpp"
+#include "engine/CameraThirdPerson.hpp"
+#include "engine/CameraThirdPerson.hpp"
+#include "engine/KeyBindings.hpp"
 #include "host/Window.hpp"
 
 #include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstdio>
+#include <ctime>
 #include <d3d11.h>
 #include <dxgi.h>
+#include <filesystem>
+#include <fstream>
 #include <imgui.h>
 #include <imgui_impl_dx11.h>
 #include <mutex>
+#include <nlohmann/json.hpp>
+#include <shellapi.h>
 #include <string>
 
 namespace noble {
@@ -31,6 +40,9 @@ namespace {
 
 std::atomic<bool> s_open{false};
 std::atomic<bool> s_gameOver{false};
+std::atomic<bool> s_scoreboardShotRequest{false};
+std::atomic<bool> s_boardPointer{false}; // scoreboard actions own the pointer
+std::atomic<bool> s_boardReport{false};  // the Report window is up
 std::atomic<bool> s_showSettings{
     false};               // the SETTINGS page opened from the pause menu
 std::mutex s_renderMutex; // Render (engine thread) vs HoldFrame (main thread)
@@ -145,6 +157,13 @@ bool PauseMenu::IsOpen() { return s_open.load(); }
 void PauseMenu::Toggle() {
   if (s_gameOver.load())
     return; // the post-game panel replaces the pause menu
+  // Esc steps back out of the scoreboard actions instead of opening the pause menu.
+  if (s_boardPointer.load()) {
+    if (!s_boardReport.exchange(false))
+      s_boardPointer.store(false);
+    MenuSounds::Back();
+    return;
+  }
   // Esc on the SETTINGS page goes back to the pause menu instead of resuming.
   // While a key rebind is waiting for a key, Esc belongs to the rebind
   // (SettingsPanel::PollRebind cancels it).
@@ -184,7 +203,33 @@ void PauseMenu::ShowGameOver() {
 
 bool PauseMenu::IsGameOver() { return s_gameOver.load(); }
 
-bool PauseMenu::WantsPointer() { return s_open.load() || s_gameOver.load(); }
+namespace {
+std::mutex s_boardMutex;
+std::vector<PauseMenu::ScoreboardEntry> s_boardRows;
+std::string s_boardMap;
+std::string s_boardMode;
+bool s_boardLogged = false;
+} // namespace
+
+void PauseMenu::SetScoreboardRoster(std::vector<ScoreboardEntry> entries, const std::string& mapName, const std::string& modeName) {
+    std::lock_guard<std::mutex> lock(s_boardMutex);
+    s_boardRows = std::move(entries);
+    s_boardMap = mapName;
+    s_boardMode = modeName;
+    if (!s_boardLogged) {
+        s_boardLogged = true;
+        NOBLE_INFO("PauseMenu: scoreboard roster set ({} player(s), {} on {})", s_boardRows.size(), s_boardMode, s_boardMap);
+    }
+}
+
+bool PauseMenu::WantsPointer() { return s_open.load() || s_gameOver.load() || s_boardPointer.load(); }
+
+void PauseMenu::EnterScoreboardPointer() {
+  if (s_open.load() || s_gameOver.load() || s_boardPointer.exchange(true))
+    return;
+  Window::TakeLeftClicks();
+  NOBLE_INFO("PauseMenu: scoreboard actions opened");
+}
 
 void PauseMenu::SetLoadingMap(const std::string &scenario) {
   std::lock_guard<std::mutex> lock(s_mapMutex);
@@ -494,6 +539,250 @@ void Heading(ImDrawList *dl, ImVec2 pos, float width, float s,
 }
 
 } // namespace
+
+
+// Test option "-scoreboard-demo N": draws the panel with a sample roster as the host, without needing a real session.
+// 1 = as seen while the key is held, 2 = pointer free with a player selected, 3 = the Report window as well.
+static int ScoreboardDemo() {
+  static const int s_demo = [] {
+    int value = 0, argc = 0;
+    LPWSTR *argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+    for (int i = 1; argv && i + 1 < argc; ++i) {
+      if (_wcsicmp(argv[i], L"-scoreboard-demo") == 0)
+        value = _wtoi(argv[i + 1]);
+    }
+    if (argv)
+      LocalFree(argv);
+    return value;
+  }();
+  return s_demo;
+}
+
+// There is no report endpoint on the master server yet, so a report stays on this PC (one JSON object per line).
+static bool SaveReport(const std::string &player, const char *reason, const std::string &map, const std::string &mode) {
+  wchar_t exe[MAX_PATH] = {};
+  GetModuleFileNameW(nullptr, exe, MAX_PATH);
+  const std::filesystem::path file = std::filesystem::path(exe).parent_path() / "data" / "userdata" / "reports.jsonl";
+  std::error_code ec;
+  std::filesystem::create_directories(file.parent_path(), ec);
+  std::ofstream out(file, std::ios::app);
+  if (!out)
+    return false;
+  const nlohmann::json line = {{"time", static_cast<long long>(std::time(nullptr))}, {"player", player}, {"reason", reason}, {"map", map}, {"mode", mode}};
+  out << line.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace) << "\n";
+  return out.good();
+}
+
+// A button that cannot work yet still shows, greyed, and says why when hovered.
+static void UnavailableButton(const char *label, const ImVec2 &size, const char *why) {
+  ImGui::BeginDisabled();
+  ImGui::Button(label, size);
+  ImGui::EndDisabled();
+  if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+    ImGui::SetTooltip("%s", why);
+}
+
+// In-match scoreboard. Noble's panel replaces Reach's own scoreboard (ReachHost keeps the key from the engine) and lists
+// the session roster with rank badges, service tags and team colours. A click while the key is held frees the pointer for
+// the player actions.
+static void DrawScoreboardPanel() {
+  using namespace NobleUi;
+  const int demo = ScoreboardDemo();
+  const bool pointer = s_boardPointer.load();
+  const bool isHost = demo > 0 || (NetworkTransport::Get().IsActive() && NetworkTransport::Get().IsHost());
+  static std::string s_selected;
+  static std::string s_status;
+  static int s_reportReason = 0;
+  ImGuiIO &io = ImGui::GetIO();
+  const float W = io.DisplaySize.x, H = io.DisplaySize.y;
+  const float s = std::clamp(H / 1080.0f, 0.7f, 2.0f);
+
+  std::vector<PauseMenu::ScoreboardEntry> rows;
+  std::string mapName, modeName;
+  {
+    std::lock_guard<std::mutex> lock(s_boardMutex);
+    rows = s_boardRows;
+    mapName = s_boardMap;
+    modeName = s_boardMode;
+  }
+  if (rows.empty()) {
+    PauseMenu::ScoreboardEntry me;
+    me.name = Settings::Get().Snapshot().playerName;
+    me.local = true;
+    me.rank = Career::RankIndex(Career::Get().credits);
+    rows.push_back(me);
+  }
+  if (demo > 0) {
+    rows[0].team = 1;
+    const char *const names[3] = {"Carter", "Kat", "Jorge"};
+    for (int i = 0; i < 3; ++i) {
+      PauseMenu::ScoreboardEntry e;
+      e.name = names[i];
+      e.tag = i == 0 ? "A259" : i == 1 ? "B320" : "S052";
+      e.rank = 10 + i * 8;
+      e.team = 1 + i % 2;
+      rows.push_back(e);
+    }
+    if (mapName.empty()) { mapName = "20_sword_slayer"; modeName = "slayer"; }
+    if (s_selected.empty() && demo >= 2) s_selected = names[0];
+    if (demo == 3 && s_boardPointer.load()) { static bool s_once = false; if (!s_once) { s_once = true; s_boardReport.store(true); } }
+  }
+  std::sort(rows.begin(), rows.end(), [](const PauseMenu::ScoreboardEntry &a,
+                                         const PauseMenu::ScoreboardEntry &b) {
+    if (a.team != b.team) return a.team < b.team;
+    if (a.local != b.local) return a.local;
+    return a.name < b.name;
+  });
+
+  ImDrawList *dl = ImGui::GetBackgroundDrawList();
+  const float panelW = std::min(W * 0.72f, 1150.0f * s);
+  const float rowH = 46.0f * s;
+  const float top = 140.0f * s;
+  const float barH = 86.0f * s; // hint or status line + action buttons
+  const float panelH = 118.0f * s + rowH * static_cast<float>(rows.size()) + 26.0f * s + barH;
+  const ImVec2 p0((W - panelW) * 0.5f, top), p1(p0.x + panelW, top + panelH);
+  if (pointer) {
+    ImGui::SetNextWindowPos(p0, ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(panelW, panelH), ImGuiCond_Always);
+    ImGui::Begin("##scoreboard", nullptr,
+                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
+                     ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoBringToFrontOnFocus);
+  }
+  dl->AddRectFilled(p0, p1, IM_COL32(8, 14, 22, 232), 6.0f * s);
+  dl->AddRect(p0, p1, IM_COL32(70, 120, 165, 200), 6.0f * s, 0, 1.5f * s);
+  dl->AddRectFilled(ImVec2(p0.x, p0.y), ImVec2(p0.x + 6.0f * s, p1.y), kAccent, 6.0f * s);
+
+  Text(dl, NobleStyle::TitleFont(), 34.0f * s, ImVec2(p0.x + 34.0f * s, p0.y + 24.0f * s),
+       IM_COL32(236, 240, 244, 255), "SCOREBOARD");
+  std::string sub = mapName.empty() ? std::string() : Upper(MapNames::Display(mapName));
+  if (!modeName.empty()) sub += (sub.empty() ? "" : "  -  ") + Upper(modeName);
+  Text(dl, NobleStyle::SmallFont(), 15.0f * s, ImVec2(p0.x + 36.0f * s, p0.y + 66.0f * s),
+       IM_COL32(150, 190, 220, 255), sub.c_str());
+
+  float y = p0.y + 104.0f * s;
+  const char *const heads[4] = {"PLAYER", "TAG", "TEAM", "PING"};
+  const float cols[4] = {p0.x + 34.0f * s, p1.x - 280.0f * s, p1.x - 186.0f * s, p1.x - 96.0f * s};
+  for (int c = 0; c < 4; ++c)
+    Text(dl, NobleStyle::SmallFont(), 14.0f * s, ImVec2(cols[c], y), IM_COL32(130, 170, 200, 255), heads[c]);
+  y += 26.0f * s;
+
+  // Index = LobbyPlayer::team: 0 = no team, 1 = red, 2 = blue.
+  static const ImU32 kTeamColors[3] = {IM_COL32(120, 132, 145, 255), IM_COL32(214, 72, 72, 255), IM_COL32(74, 132, 214, 255)};
+  bool selectedIsListed = false;
+  for (const auto &r : rows) {
+    const ImVec2 r0(p0.x + 24.0f * s, y), r1(p1.x - 24.0f * s, y + rowH - 6.0f * s);
+    bool hovered = false;
+    if (pointer && !r.local) {
+      ImGui::SetCursorScreenPos(r0);
+      ImGui::BeginDisabled(s_boardReport.load());
+      if (ImGui::InvisibleButton(r.name.c_str(), ImVec2(r1.x - r0.x, r1.y - r0.y))) {
+        s_selected = r.name;
+        s_status.clear();
+        MenuSounds::Click();
+      }
+      hovered = ImGui::IsItemHovered();
+      ImGui::EndDisabled();
+    }
+    const bool selected = !r.local && r.name == s_selected; // after the click, or a new selection is lost this frame
+    selectedIsListed = selectedIsListed || selected;
+    dl->AddRectFilled(r0, r1, r.local ? IM_COL32(40, 80, 115, 200) : selected ? IM_COL32(70, 120, 165, 170) : hovered ? IM_COL32(255, 255, 255, 34) : IM_COL32(255, 255, 255, 12), 3.0f * s);
+    if (selected)
+      dl->AddRect(r0, r1, IM_COL32(143, 216, 255, 255), 3.0f * s, 0, 1.5f * s);
+    const ImU32 teamCol = kTeamColors[r.team == 1 || r.team == 2 ? r.team : 0];
+    dl->AddRectFilled(r0, ImVec2(r0.x + 4.0f * s, r1.y), teamCol, 3.0f * s);
+
+    float nx = r0.x + 14.0f * s;
+    const UiTexture icon = UiArt::RankIcon(r.rank);
+    const float ty = y + (rowH - 6.0f * s) * 0.5f - 11.0f * s;
+    if (icon) {
+      UiArt::DrawContain(dl, icon, ImVec2(nx, ty - 2.0f * s), ImVec2(nx + 30.0f * s, ty + 26.0f * s));
+      nx += 38.0f * s;
+    }
+    Text(dl, ImGui::GetFont(), 19.0f * s, ImVec2(nx, ty),
+         r.local ? IM_COL32(143, 216, 255, 255) : IM_COL32(236, 240, 244, 255), r.name.c_str());
+    if (r.local)
+      Text(dl, NobleStyle::SmallFont(), 12.0f * s, ImVec2(nx + TextWidth(ImGui::GetFont(), 19.0f * s, r.name.c_str()) + 10.0f * s, ty + 4.0f * s),
+           IM_COL32(143, 216, 255, 200), "YOU");
+    Text(dl, ImGui::GetFont(), 17.0f * s, ImVec2(cols[1], ty), IM_COL32(200, 210, 220, 255), r.tag.c_str());
+    Text(dl, ImGui::GetFont(), 17.0f * s, ImVec2(cols[2], ty), teamCol,
+         r.team == 1 ? "RED" : r.team == 2 ? "BLUE" : "");
+    const std::string ping = r.ping >= 0 ? std::to_string(r.ping) : "-";
+    Text(dl, ImGui::GetFont(), 17.0f * s, ImVec2(cols[3], ty), IM_COL32(200, 210, 220, 255), ping.c_str());
+    y += rowH;
+  }
+  if (!selectedIsListed)
+    s_selected.clear();
+
+  // Hint or status line, then the action bar.
+  const ImVec2 barPos(p0.x + 34.0f * s, y + 6.0f * s);
+  const char *line = !pointer ? "Click while holding the key for player actions"
+                     : !s_status.empty() ? s_status.c_str()
+                     : s_selected.empty() ? "Select a player"
+                                          : nullptr;
+  std::string selectedLine;
+  if (!line) {
+    selectedLine = "Selected: " + s_selected;
+    line = selectedLine.c_str();
+  }
+  Text(dl, NobleStyle::SmallFont(), 15.0f * s, barPos, IM_COL32(150, 190, 220, 255), line);
+
+  if (pointer) {
+    const ImVec2 button(138.0f * s, 34.0f * s);
+    const float gap = 10.0f * s;
+    ImGui::BeginDisabled(s_boardReport.load());
+    ImGui::SetCursorScreenPos(ImVec2(barPos.x, barPos.y + 30.0f * s));
+    ImGui::BeginDisabled(s_selected.empty());
+    if (ImGui::Button("REPORT", button)) {
+      s_reportReason = 0;
+      s_boardReport.store(true);
+      MenuSounds::Click();
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine(0.0f, gap);
+    UnavailableButton("VOTE TO KICK", button, "Not available yet: needs vote-to-kick support on the server.");
+    if (isHost) {
+      ImGui::SameLine(0.0f, gap);
+      UnavailableButton("END ROUND", button, "Not available yet: needs the host's engine actions.");
+      ImGui::SameLine(0.0f, gap);
+      UnavailableButton("END MATCH", button, "Not available yet: needs the host's engine actions.");
+    }
+    ImGui::SameLine(p1.x - p0.x - button.x - 34.0f * s);
+    if (ImGui::Button("CLOSE", button)) {
+      s_boardPointer.store(false);
+      MenuSounds::Back();
+    }
+    ImGui::EndDisabled();
+    ImGui::End();
+
+    if (s_boardReport.load()) {
+      static const char *const kReasons[4] = {"Cheating", "Abusive name or chat", "Griefing or team killing", "Something else"};
+      ImGui::SetNextWindowFocus();
+      CenteredWindow(460.0f * s);
+      ImGui::Begin("##scoreboardreport", nullptr, kPanelFlags);
+      NobleStyle::Header(("REPORT " + Upper(s_selected)).c_str());
+      ImGui::Spacing();
+      for (int i = 0; i < 4; ++i)
+        ImGui::RadioButton(kReasons[i], &s_reportReason, i);
+      ImGui::Spacing();
+      ImGui::TextWrapped("Online reporting isn't available yet, so this report is saved on this PC only.");
+      ImGui::Spacing();
+      const float half = (ImGui::GetContentRegionAvail().x - gap) * 0.5f;
+      if (NobleStyle::PrimaryButton("SAVE REPORT", ImVec2(half, 38.0f * s))) {
+        const bool saved = SaveReport(s_selected, kReasons[s_reportReason], mapName, modeName);
+        NOBLE_INFO("PauseMenu: report saved={}", saved);
+        s_status = saved ? "Report saved on this PC" : "The report could not be saved";
+        s_boardReport.store(false);
+        MenuSounds::Click();
+      }
+      ImGui::SameLine(0.0f, gap);
+      if (ImGui::Button("CANCEL", ImVec2(half, 38.0f * s))) {
+        s_boardReport.store(false);
+        MenuSounds::Back();
+      }
+      ImGui::End();
+    }
+  }
+}
 
 void PauseMenu::DrawGameOver(HWND hwnd) {
   using namespace NobleUi;
@@ -1009,6 +1298,7 @@ void PauseMenu::Render(IDXGISwapChain *swapChain, bool loading) {
   s_lastEngineFrame.store(GetTickCount64());
   std::lock_guard<std::mutex> lock(s_renderMutex);
   RenderImpl(swapChain, loading, false);
+  if (s_scoreboardShotRequest.exchange(false) && swapChain) FrameCapture::SaveNow(swapChain, 888888);
 }
 
 bool PauseMenu::HoldFrame() {
@@ -1048,10 +1338,33 @@ bool PauseMenu::HoldFrame() {
 
 void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading,
                            bool clear) {
+  // F5 edge-toggles the third-person camera (physical key; this runs every engine frame).
+  CameraThirdPerson::PollHotkey((GetAsyncKeyState(VK_F5) & 0x8000) != 0);
   const bool gameOver = s_gameOver.load();
   const bool open = s_open.load();
   const bool showFps = Settings::Get().Snapshot().showFps;
-  if (!(open || gameOver || loading || showFps) || !swapChain ||
+  static const bool s_scoreboardTest = wcsstr(GetCommandLineW(), L"-scoreboard-test") != nullptr;
+  const int boardVk = KeyBindings::EffectiveKey(20);
+  const int demo = ScoreboardDemo();
+  static int s_demoFrames = 0;
+  if (demo >= 2 && !loading && !open && !gameOver && s_demoFrames == 0)
+    EnterScoreboardPointer();
+  // A fresh press of the scoreboard key hands the pointer back to the game.
+  const bool boardPhysical = boardVk > 0 && (GetAsyncKeyState(boardVk) & 0x8000) != 0;
+  static bool s_boardWasDown = false, s_boardWasPointer = false;
+  const bool wasPointer = s_boardPointer.load();
+  if (wasPointer && s_boardWasPointer && boardPhysical && !s_boardWasDown && demo == 0)
+    s_boardPointer.store(false);
+  s_boardWasDown = boardPhysical;
+  s_boardWasPointer = wasPointer;
+  if (gameOver || open || loading) {
+    s_boardPointer.store(false);
+    s_boardReport.store(false);
+  }
+  const bool boardPointer = s_boardPointer.load();
+  const bool scoreboardHeld = !loading && !open && !gameOver &&
+                              (ReachHost::IsKeyHeld(boardVk) || s_scoreboardTest || demo > 0 || boardPointer);
+  if (!(open || gameOver || loading || showFps || scoreboardHeld) || !swapChain ||
       !ImGui::GetCurrentContext())
     return;
 
@@ -1128,7 +1441,8 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading,
     RECT client{};
     GetClientRect(hwnd, &client);
     POINT cursor{};
-    if ((open || gameOver) && GetForegroundWindow() == hwnd &&
+    static bool s_boardWasPointerFrame = false;
+    if ((open || gameOver || boardPointer) && GetForegroundWindow() == hwnd &&
         GetCursorPos(&cursor) && ScreenToClient(hwnd, &cursor) &&
         client.right > 0 && client.bottom > 0) {
       // Window may be resized while the back buffer stays the same size: scale
@@ -1140,7 +1454,21 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading,
       // A click shorter than a frame is seen only as a WM_LBUTTONDOWN; give
       // ImGui a full press + release for it (ImGui spreads queued events over
       // frames).
-      const bool down = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+      bool down = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+      // The click that freed the scoreboard pointer is not a click on the panel: wait for its release.
+      static bool s_boardClickHeld = false;
+      if (boardPointer && !s_boardWasPointerFrame && down)
+        s_boardClickHeld = true;
+      s_boardWasPointerFrame = boardPointer;
+      if (s_boardClickHeld) {
+        if (down) {
+          down = false;
+          Window::TakeLeftClicks();
+        } else {
+          s_boardClickHeld = false;
+          Window::TakeLeftClicks();
+        }
+      }
       if (Window::TakeLeftClicks() > 0 && !down) {
         io.AddMouseButtonEvent(0, true);
         io.AddMouseButtonEvent(0, false);
@@ -1148,6 +1476,7 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading,
         io.AddMouseButtonEvent(0, down);
       }
     } else {
+      s_boardWasPointerFrame = false;
       io.AddMousePosEvent(-FLT_MAX, -FLT_MAX);
       io.AddMouseButtonEvent(0, false);
     }
@@ -1173,6 +1502,22 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading,
         DrawLoading();
       if (open)
         DrawMenu(hwnd);
+      if (scoreboardHeld) {
+        DrawScoreboardPanel();
+        // -scoreboard-demo: one screenshot about 30 s in, so the match is on screen behind the panel, not a loading frame.
+        if (demo > 0 && ++s_demoFrames == 900) {
+          s_scoreboardShotRequest.store(true);
+          NOBLE_INFO("PauseMenu: -scoreboard-demo {} capture requested", demo);
+        }
+        if (s_scoreboardTest) {
+          static bool s_shot = false;
+          if (!s_shot) {
+            s_shot = true;
+            s_scoreboardShotRequest.store(true);
+            NOBLE_INFO("PauseMenu: -scoreboard-test capture requested");
+          }
+        }
+      }
     }
     ImGui::Render();
 

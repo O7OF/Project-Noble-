@@ -17,15 +17,137 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 - **`docs/HANDOFF.md` in this repo is the canonical copy**: it is what gets committed and pushed with the code.
   The export at `C:\Users\tyler\Downloads\HANDOFF (2).md` is a **copy** - overwrite it from this file after every push
   so the two never drift.
+- Entries written during the long **2026-10-30 evening session** may carry approximate HH:MM labels; the git commit
+  timestamp is authoritative if exact ordering matters.
+- Entry stamps are **ET**. A batch of entries written late on 2026-10-30 had been stamped with a UTC-flavoured date
+  (`2026-10-31`, morning times); they were corrected to the real ET date and commit times on 2026-10-30 22:40 ET.
+  If the clock and the heading disagree, the git commit timestamp wins.
 - Never append at the end and never reorder old entries (`append_handoff.js` in the repo root is a leftover one-off
   script from 2026-10-30 that appends to the bottom - do not use it).
 
 --
 
+--
+
+--
+
+--
+
+--
+
+--
+
+--
+
+--
+
+--
+
+--
+
+--
+
+--
+
+--
+
+## 0. Pick up here (2026-10-30, 23:05 ET) - Third person VERIFIED (Firefight), with a real FP-vs-TP capture (WeabooTyler117 / DeepSeek)
+
+The F5 hook works. Verified in **Firefight** (`beachhead`, firefight class), same spot, two runs:
+`docs/screenshots/third-person-vs-first.png` - top is first person (weapon in front, no body), bottom is third person
+(the Spartan's back and shoulder fill the lower left, weapon still visible in hand). The hook log fires
+`camera check fired (player …, mode 0, original false)` as soon as the match starts.
+
+**Why the earlier attempts looked like a failure:** campaign `m10`'s first minutes are a cutscene and a Falcon ride; the
+cinematic/vehicle camera ignores the per-player camera-mode check, so captures at 100-180 s were identical with and without
+the hook. The mistake was judging camera work from a single cutscene frame - corrected in the TODO and handoff.
+
+Tooling added along the way: `-capture-at <seconds,...>` (wall-clock capture points; engine frame rate is variable, so
+frame-number captures were unreliable).
+
+Remaining for this feature (TODO, claimed):
+- pull the camera back: detour `haloreach+0x1DCADC` (RR's follow hook) - call the original, scale `[r9+0x28]`, optional
+  shoulder flip at `[r9+0x14]`; the current view is very close (camera near the shoulder)
+- a settings row + key rebind for the F5 toggle
+- host / game-mode gate (Tyler wants it host- or mode-controlled)
+
+## 0. Pick up here (2026-10-30, 23:15 ET) - Test runs muted with tools/mute-game.ps1 (WeabooTyler117 / DeepSeek)
+
+Tyler asked for the game to be muted before tests. Noble's `masterMute` only silences our own menu audio, so the engine was
+still loud; the engine's real volumes come from the profile, written by `ReachHost` at `volumeGame -> +0xA5C` and
+`volumeOther -> +0xA64`.
+
+- New `tools/mute-game.ps1`: sets `volumeGame`, `volumeMusic`, `volumeOther` to 0 and `masterMute` to true in
+  `build\bin\Release\data\userdata\settings.json` (and, with `-IncludeClaude`, in the Claude checkout too), keeping a
+  `settings.json.before-mute.json` backup. `-Unmute` restores it.
+- Ran it on both checkouts; verified `game 0 / music 0 / other 0 / masterMute True` in each. The rule is now in
+  `TEAM-WORKFLOW.md` and `AGENT-STATUS.md`, so every night-shift test is silent by default.
+
+## 0. Pick up here (2026-10-30, 23:05 ET) - Night shift: queue, armory spotlight, design-spec backlog, message for @claude (WeabooTyler117 / DeepSeek)
+
+Tyler is away until morning. Both agents work continuously without interaction; the protocol and queue are in the
+**"NIGHT SHIFT"** section of `docs/TODO.md`, mirrored in `AGENT-STATUS.md`, and the same text is at
+`docs/CLAUDE-NIGHT-SHIFT.txt` in case Claude cannot see the repo.
+
+- **Queue order** for the night (first unclaimed wins): 1 @deepseek third-person camera, 2 @claude scoreboard action bar +
+  full cover, 3 @deepseek campaign co-op verification, 4 @claude emblem picker, 5 @deepseek scoreboard live K/D API,
+  6 @claude controller presets, 7 @deepseek CONTINUE checkpoint, 8 @claude readability pass, 9 @deepseek vote-to-kick
+  transport/server, 10 @claude server browser follow-ups, 11 @deepseek invites mode/map, 12 @claude post-game names,
+  13 @deepseek 4+ players, 14 @deepseek armory spotlight, 15 @claude docs/reviews, 16 @deepseek host/admin engine actions,
+  17 housekeeping.
+- **Armory spotlight** is now an explicit item (B): the menumap has only faint volumetric haze, so the model sits in a
+  void. Cheapest route first - light the chamber in `mainmenu_all.map` (HREK lighting info + lightmap rebuild) or inject an
+  engine light at the armory pedestal; the per-slot cameras already work.
+- **Design-spec backlog** added as section F (`docs/menu-redesign-spec.md` §4.10-§4.15, §6): armory leftovers, input extras,
+  engine-research game options, audio/language/communication, online/folders/mods, server-browser extras, pickers,
+  rotation/voting, game options editor, theater (stays disabled), "continue last game".
+- **Host/admin controls (spec 4.15)** added as its own item: kick/session-ban/permanent ban, end/restart round, restart match,
+  shuffle teams, end game -> back to the lobby, skip rotation entry. Split: engine/session actions mine, host-only panel
+  Claude's.
+- **Scoreboard item** now includes spec §4.16 extras: per-row mute icon, Mute-all, and the panel must fully cover the
+  engine's scoreboard.
+
+**Shutdown check Tyler asked about**: `git log -S"blamEngine->Shutdown();"` only finds `8213116` (Oct 26) - a false alarm.
+The menu-to-match crash fix is `982e32a` (Oct 28), which made `BlamEngine::Shutdown()` skip the `m_fnShutdown`/vtable[0]
+call while the engine thread runs; `main.cpp` still calls `blamEngine->Shutdown()` then `TerminateProcess` (~line 648).
+Added a behaviour-based regression item to the TODO: menu -> start match -> return, log must end with
+"Network and host services shut down; exiting process cleanly." and no ntdll dialog (repeat as a Direct Connect guest).
+
+## 0. Pick up here (2026-10-30, 22:45 ET) - REVIEW OK: server browser polish (f3cbbf6); agent sync fixes (WeabooTyler117 / DeepSeek)
+
+**Review of @claude's `f3cbbf6` + docs `c53ed7d` - passes.**
+
+- Diff: `ServerBrowser.cpp` only, 33+/14-. `IsModdedGame` now uses the host's advertised flag, a `[Mod]` session name, or a
+  map `MapNames::IsVanilla` does not know; a `.map` suffix alone no longer means mod. `DrawModBadge` draws an inline badge;
+  the Map column was widened. Details panel uses the display name (Forge World) instead of `forge_halo`.
+- Build from the merged tree: **0 errors / 0 warnings**.
+- Capture inspected (`docs/screenshots/server-browser-polish.png`, 1920x1080): six rows, all display names correct
+  (Winter Contingency, Sword Base, Forge World, Anchor 9, My Custom Map), MOD only on the three modded rows, details panel
+  shows "Forge World" with its picture, and the status line/IP is either blacked out or 192.0.2.x test-net addresses.
+- TODO line carries the commit hash and evidence; handoff entry exists. Marked reviewed in `docs/TODO.md`.
+- Not covered by the author (recorded, not blocking): live-server games, LAN/own-host rows, hover tooltip, resolutions other
+  than 1920x1080.
+
+**Review of my `ca6d33a` by @claude**: diff/build only, camera switch not exercised - accepted, third person stays `[~]`.
+
+**Fixes from @claude's report / Tyler's notes**
+
+- **Dates:** my entries had been stamped `2026-10-31` with morning times (a UTC slip). All of my entries now use the real
+  **2026-10-30** date and the actual ET commit times (20:48-22:34), and the "How this file is kept" section says stamps are
+  ET and the commit timestamp wins.
+- **Build path:** already fixed before @claude could (commit `053e79a`) - `START-HERE.md` and `CLAUDE-PROMPT.txt` now use
+  `Common7\IDE\CommonExtensions`; scan reports 0 wrong spellings.
+- **Second checkout:** `D:\Halo-Reach-Community-Edition-claude` had `masterServerUrl = http://127.0.0.1:18099` from the
+  stand-in server; reset to `https://outbreak-z-test-server.onrender.com`. The main checkout's settings/career/appearance
+  were not touched.
+- **PauseMenu.cpp released** in `AGENT-STATUS.md`, so @claude can take the scoreboard action bar (ping, Report, Vote to
+  Kick, End Round/End Match). Status blocks now show accurate times/commits.
+- **Capture privacy** is now a written rule in `TEAM-WORKFLOW.md`: no public IPs in committed screenshots.
+
 ## 0. Pick up here (2026-10-30, 22:40 ET) - Elite armor sets finally replicate, Elite armor effects, Armory index safety (O7OF / DeepSeek)
 
 All changes built with MSBuild Release (`build\noble-client.vcxproj /p:Configuration=Release /p:Platform=x64`), 0 errors.
-Version bumped to **0.8.4 (Elite Armor, Effects & Presets)** in `src/common/Version.hpp`.
+Version bumped to **0.8.4 (Elite Armor, Effects, Presets & Colors)** in `src/common/Version.hpp`.
 
 ### 1. Why equipped Elite sets fell back to Elite Minor (O7OF / DeepSeek)
 The previous `EnginePatches` "fix" was the cause. Reverse-engineered the appearance path in `haloreach.dll`
@@ -138,7 +260,308 @@ now replicates for that player.
 **Still open:** a real two-PC match to confirm the peer sees Honor Guard/mixed pieces on the host, and the pack-model
 `armor_fx` question above.
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+--
+
+## 0. Pick up here (2026-10-30, 23:22 ET) - Emblem background picker, and emblems now match what was picked (@claude)
+
+**Correction to the old brief:** `HANDOFF-FOR-CLAUDE.md` §5.1 says MCC has no reusable backdrops. It does:
+`playercustomization.xml` has 105 entries with `background="eb_001"` (ids 500+, `$EMBLEM_BACK_CIRCLE`, ...). The parser skipped
+them because it only kept entries with `image1`. So this uses the real backgrounds instead of the approved prototype that
+mixed layers from different emblems; the prototype's unused layer lists are gone.
+
+- **New Armory row** IDENTITY > Emblem Background: None + 105 shapes, saved as `emblem_background_index` in
+  `appearance.json` (default 0 = none, so existing looks don't change). The Emblem row is the symbol. Tiles preview the
+  whole emblem with the other half as equipped.
+- **Bug fixed, emblem shown was not the one picked:** the Armory stores a list position, but drawing looked it up as an XML
+  id, and most ids don't match their position. Everything now goes through `UiArt::DrawEmblem`, and the id lookup
+  `UiArt::Emblem` is removed so it can't come back. **Visible change:** a saved emblem may now look different from what the
+  nameplate showed before, because it now shows what was actually picked.
+- **Bug fixed, half-drawn emblems:** only `image1` was drawn; both layers are now.
+- Used in the party row, lobby row (local player) and the Armory nameplate.
+
+**Open, not fixed:**
+- **Other players don't see your background:** the roster only carries `emblemId`. Needs a field on the server (@deepseek), then
+  a line in `PlayerRow`'s lobby call.
+- **No emblem colours yet.** Backgrounds get a fixed dark steel tint because MCC's are a mix of black and light grey and a
+  light shape hid the symbol. Black ones stay black, since tinting can't lighten them. Reach's real three-colour picker
+  would need the black layers treated as masks.
+- **Nameplates may have the same list-position vs id bug:** `Nameplate(int id)` is fed the row's position. Not checked.
+
+Self-review:
+- Build 0 errors / 0 warnings on a pull of `9f78b80` plus this diff.
+- Log: `Loaded 531 nameplates, 225 emblems and 105 emblem backgrounds`.
+- `-menu-screen armory -armory-focus "Emblem Background" -menu-capture 120`, plus `Emblem` and `main`, all opened. With
+  `emblem_index` 40 and `emblem_background_index` 3 set by hand in the second checkout's copy of `appearance.json`: picker
+  says Headshot and Plus, and the nameplate and party row show that same skull on that plus. Evidence:
+  `docs/screenshots/emblem-background.png`.
+- Load tested, and the values survived three runs. Not run: clicking a tile (it uses the existing `choose()`), RANDOM, a
+  real lobby row, other resolutions. Tyler's real `appearance.json` was not touched.
+
+## 0. Pick up here (2026-10-30, 23:17 ET) - Scoreboard replaces the engine's, player actions added (@claude)
+
+Commit `60f374b`. Still `[~]`: parts of it wait on @deepseek (list below).
+
+- **Engine scoreboard gone:** the input poll in `ReachHost.cpp` keeps the scoreboard key (action 20, follows rebinding) from
+  the engine and still reports it to the overlay. Reach's screen never opens, so nothing shows around the panel. The panel
+  was reading `VK_TAB` directly; it now uses the bound key.
+- **Using it:** hold the key to view. Click while holding to free the pointer (the game gets no input, as in the pause
+  menu). Esc, the key again or CLOSE give it back. Esc closes the Report window first.
+- **Report:** saved to `data\userdata\reports.jsonl`, and the window says it stays on this PC, because the server has no
+  report endpoint.
+- **Greyed with a tooltip:** VOTE TO KICK, plus END ROUND and END MATCH for the host only. Nothing is faked.
+- **Ping is `-` for everyone:** guests send a hard-coded 25 (`MasterServerClient.cpp:681`) and the host 0. Real values need
+  a measurement. `ScoreboardEntry::ping` is ready for them.
+- **Team bug fixed:** the panel treated team 0 as RED, but 0 means no team (`LobbyPlayer::team`). Map name is now the
+  display name.
+- **Test flag:** `-scoreboard-demo N` (forwarded by the menu) draws sample rows as host. 1 = as held, 2 = pointer free,
+  3 = Report window. It captures `capture_888888.bmp` at panel frame 900.
+
+**needs: @deepseek:** real ping, vote-to-kick transport, end round / end match actions. Then @claude wires the buttons.
+
+**Open, not fixed:**
+- Controller Back still opens the engine's scoreboard and does not show Noble's panel.
+- Possible existing bug: the log showed `closed` then `opened` in the same millisecond on one Esc from the pause menu.
+  `PauseMenu.cpp:426` closes on Esc and the input poll also toggles, so Esc to resume may sometimes reopen the menu. Seen once.
+- The host only sees itself: the roster is fetched only when `-session-id` is present in `main.cpp`.
+
+**Test traps:**
+- `tools/test-modes.ps1` and the docs' build command kill every `noble-client` by name. That likely killed @claude's matches
+  three times. @claude now tests with a copy named `noble-client-claude.exe`.
+- `SetForegroundWindow` from a script can fail silently, and then input tests prove nothing. Check focus first.
+
+Self-review:
+- Build 0 errors / 0 warnings, on a tree including `34f0553`.
+- Real Sword Base Slayer match at 3840x2160, injected Tab and mouse, `-scoreboard-demo 1`. Log: `scoreboard actions opened`,
+  `report saved=true`, then `opened` for the pause menu on the second Esc. `reports.jsonl` held the Carter / Cheating line.
+- This test caught a real bug the demo captures hid: a clicked row lost its selection the same frame. Fixed before commit.
+- Captures opened: `docs/screenshots/scoreboard-actions.png`, `scoreboard-report.png`. Real gameplay behind, no engine
+  scoreboard, sample rows.
+- Not run: a real multi-player session, the key-again and CLOSE exits, tooltips, other resolutions.
+- Clicking did not fire a shot as far as the frames show (ammo stayed 32), which is not a dedicated test.
+
+Review of @deepseek `34f0553` (third person verified): REVIEW OK (@claude, 23:17). Diff matches the claim, builds 0/0, and
+`third-person-vs-first.png` opened: same Firefight spot, first person vs own Spartan from behind. Not re-run by me; its
+TODO, handoff entry and hash are present. Its follow-hook, settings and gate work stays open.
+
+## 0. Pick up here (2026-10-30, 22:34 ET) - Server browser: display names, correct mod flag, MOD badge (@claude)
+
+The TODO line was partly stale: `89a9509` had already put display names in the list. What was still wrong, all in
+`src/ui/ServerBrowser.cpp` (commit `f3cbbf6`):
+
+- The GAME DETAILS `Map:` row printed the raw scenario name (`forge_halo`). It now shows the display name.
+- Any map name containing `.map` counted as a mod, so a stock `forge_halo.map` got the mod marker. `IsModdedGame()` now
+  uses the host's flag, a `[Mod]` session name, or `!MapNames::IsVanilla()`, for the own-host, LAN and master rows. A LAN
+  row merged with its master entry also keeps the host's mod flag.
+- `forge_halo.map` showed NO MAP PICTURE because previews are keyed by scenario. The panel now passes
+  `MapNames::ScenarioOf()` and falls back to the raw name for unknown maps.
+- `[Mod]` text is now a filled MOD badge. The Map column went from 140 to 240 px, because it was cutting off stock names
+  such as Winter Contingency.
+
+**Second checkout:** @deepseek was active, so this was built and run in `D:\Halo-Reach-Community-Edition-claude`. Its
+`settings.json` has `masterServerUrl` pointed at `http://127.0.0.1:18099`, the mock used for the capture. That is build
+output, not in git, but **reset it before using that build against the real server**. The main checkout's userdata was
+not touched.
+
+**Trap:** the server browser status line prints the PC's public IP. Black it out in any capture you commit; it is blacked
+out in this one.
+
+**Clock:** this PC says 2026-10-30, but recent @deepseek entries and the status board are stamped 2026-10-31 (10:25 to
+11:40 ET) for commits made around 22:15 to 22:30 on the 30th. Use `Get-Date` for stamps.
+
+Self-review:
+- Build from the pulled tree including `a573b6e`: 0 errors, 0 warnings.
+- Capture: `-menu-screen servers -menu-capture 900` against a local mock of `GET /api/sessions`, saved as
+  `docs/screenshots/server-browser-polish.png` and opened. Six rows: `forge_halo.map`, `20_sword_slayer` and `m10_b` have
+  no badge and show Forge World, Sword Base and Winter Contingency; `my_custom_map.map`, a host-flagged `dlc_slayer` and a
+  `[Mod]` session on `ff50_park` have the badge. Details panel shows Forge World with its picture.
+- Not run: real sessions from the live server, the LAN and own-host rows (same helper, no run), and the hover tooltip.
+  Columns were only checked at 1920x1080.
+
+Review of @deepseek `ca6d33a` (`-third-person-mode` experiment): REVIEW OK (@claude, 22:34), diff matches the claim, flag
+is parsed before the host/guest split, builds 0/0. Build and diff only, the switch was not run; it is in-progress work
+and the third-person item stays open.
+--
+
+--
+
+## 0. Pick up here (2026-10-30, 22:34 ET) - Docs: one CMake path, the real Visual Studio layout (WeabooTyler117 / DeepSeek)
+
+Tyler caught the build path being written two ways. `START-HERE.md:24` said
+`...\Community\Common\IDE\CommonExtensions\...` (missing the `7`) and `CLAUDE-PROMPT.txt:25` said
+`...\Community\CommonExtensions\...` (skipping `Common7\IDE`). An agent copying either gets "path not found".
+
+Both now use the real layout:
+`C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe`
+(also made `PATHS.md` line 47 exact instead of using a `…`).
+
+Self-review: `Test-Path` on the corrected path is true; a repo-wide scan of every `cmake.exe` mention in
+`docs\**\*.md` and `docs\**\*.txt` now reports **0 wrong spellings** (5 correct ones in CONTINUATION, the Claude brief,
+PATHS; 2 were fixed). Next agent can run that scan again after any docs edit.
+
+## 0. Pick up here (2026-10-30, 22:30 ET) - Machine map for Claude: docs/PATHS.md; Claude's first claim landed (WeabooTyler117 / DeepSeek)
+
+- Wrote **`docs/PATHS.md`** - the map of everything that is not in the repo, because a fresh agent cannot see my scratch
+  history and would otherwise hunt the disk or guess. It covers: both client checkouts (main + Claude's
+  `D:\Halo-Reach-Community-Edition-claude`), the backend clones, MCC and its `haloreach.dll`, HREK tools + tags, the RR
+  install (`D:\Reach`, `bin\host-probe.exe` symbols, launch blocks), the RE folder and its extracted pseudocode, the
+  **117 MB `haloreach-disasm.txt`** (RVA = `VA - 0x180000000`), the **`hostprobe-symbols.txt`** dump (section-relative
+  values, `.text` base RVA 0x1000), the Ghidra install/project, repo runtime output (logs, captures), `data\userdata`
+  (settings/career/appearance and the traps around them), the Downloads mirrors and the first-run steps for the second
+  checkout (configure, build, `robocopy` the 2.2 GB `data` folder).
+- Linked it from `START-HERE.md`, `CLAUDE-PROMPT.txt` and `TEAM-WORKFLOW.md` ("find it in PATHS.md instead of guessing").
+- **Claude is working**: it pushed `0078f7a` ("docs(todo): claim server browser polish (@claude)"), claimed the server
+  browser item in `TODO.md`, set its `AGENT-STATUS.md` block active with the files it expects, and noted it will take the
+  scoreboard action bar after my `PauseMenu.cpp` claim clears. That is the workflow running exactly as designed.
+
+## 0. Pick up here (2026-10-30, 22:28 ET) - Camera experiment switch; Claude Code verified installed and logged in (WeabooTyler117 / DeepSeek)
+
+- `CameraThirdPerson` now has an experiment switch: `-third-person-mode 0|1` (0 = answer the `haloreach+0x48A910` check
+  with `true`, 1 = answer `false`, both start third-person enabled; the detour logs the original result it saw). The next run
+  matrix is: baseline (no flag), mode 0, mode 1 on the same map with captures at the same frames, so the camera question is
+  settled by comparison instead of a single frame.
+- **Claude Code is set up and working on this PC**: `claude --version` = 2.1.316, `claude doctor` is green (npm-global,
+  bundle present, auto-update success), and a headless round trip (`claude -p "Reply with exactly: OK"`) returned `OK` with
+  exit 0. Its config lives in `C:\Users\tyler\.claude` (credentials updated 22:23).
+- Claude has been launched in this repo (`~/.claude/projects/D--Halo-Reach-Community-Edition`, session at 22:22-22:24) and
+  received the scoreboard prompt, but its history then shows `/rate-limit-options` and `/logout`. Nothing was claimed,
+  committed or pushed: `git log` has no new commits, `docs/AGENT-STATUS.md` still says `@claude idle`, `docs/TODO.md` has no
+  `@claude` claim. So the tool works; the first successful contribution is still pending (likely a usage-limit restart).
+- My working tree had three uncommitted experiment files - committed here, so Claude's clean-tree precondition is now met.
+
+## 0. Pick up here (2026-10-30, 22:17 ET) - Correction: third person is NOT working; same-PC agent sync added (WeabooTyler117 / DeepSeek)
+
+Two things.
+
+**1. The third-person "works" claim was wrong.** Tyler confirmed in game that it still looks first person, and the capture I
+used (`docs/screenshots/third-person.png`) was a **cutscene camera** - the Spartan in frame is a squadmate, not the player.
+The detour does install and fire (`CameraThirdPerson: camera-mode check ... -> third person`), but answering `true` is not
+enough, so the check's real semantics are still unknown. Status corrected in `docs/TODO.md` to `[~] @deepseek`. Next
+experiments: return `false`, return `original(...) | enabled`, and test whether the follow hook at `haloreach+0x1DCADC` is
+also required (RR hooks both). Do not trust a single capture again - verify in a slayer spawn with the player model visible.
+
+**2. Same-PC agent sync, because Claude now runs on this PC** (Claude Code, not a browser):
+
+- **`docs/AGENT-STATUS.md`** - live presence board: each agent keeps one block (`active`/`idle`, current TODO item, files
+  expected). Set it before editing, clear it when stopping. Committed together with the claim.
+- **`docs/CLAUDE-PROMPT.txt`** - the exact session instructions for Claude: read START-HERE / AGENT-STATUS / TODO /
+  TEAM-WORKFLOW / HANDOFF-FOR-CLAUDE / top of HANDOFF, check `git status` is clean, pull, claim one item, build 0/0,
+  verify (capture for UI), handoff entry, mark done, push, leave clean.
+- **`docs/TEAM-WORKFLOW.md`** gained a "Same-PC rules" section: clean tree to start, never build while the other agent has
+  `noble-client.exe` running, builds are sequential, and if both must work simultaneously use a second checkout
+  (`git clone` + copy `build/bin/Release/data`) and announce it in AGENT-STATUS.
+
+## 0. Pick up here (2026-10-30, 22:14 ET) - Housekeeping: version 0.8.4, scratch script removed (WeabooTyler117 / DeepSeek)
+
+- `src/common/Version.hpp`: `VERSION_PATCH` 2 -> 4 and `VERSION_STRING` is now
+  `0.8.4 (Co-op, Third Person & Menu Cleanup)`. It had drifted (patch said 0.8.2 while the string said 0.8.3), which is
+  exactly how two builds ended up looking identical in a bug report.
+- Removed O7's `patch_blam.js` (his scratch rewrite of the Command 11 barrier; the real change is in `64dd74f` and the file
+  was stale against the current `LaunchMap` signature).
+- `docs/TODO.md` housekeeping section updated for both.
+
+## 0. Pick up here (2026-10-30, 22:13 ET) - Claude collaboration setup: START-HERE, TEAM-WORKFLOW, claim board, package (WeabooTyler117 / DeepSeek)
+
+Tyler wants Claude and DeepSeek working the same repo. The repo is now the coordination channel; no direct chat needed.
+
+- **`docs/START-HERE.md`** - one-page orientation: what the project is, both repos and their heads, the exact build
+  command, the CLI/capture flags, current focus, where every doc lives, and the seven hard rules.
+- **`docs/TEAM-WORKFLOW.md`** - the collaboration contract: `docs/TODO.md` is the **claim board** (`- [~] @claude ...`),
+  `docs/HANDOFF.md` is the log; claim -> commit the one-line claim -> work -> mark done with the commit hash; handoff entry
+  format; verification bar per change type; the files that conflict most (`FrontEndMenu.cpp`, `PauseMenu.cpp`,
+  `BlamEngine.cpp`, `main.cpp`, `CMakeLists.txt`, server.js); suggested split (Claude = menus/UI/docs, DeepSeek =
+  engine/netcode/server); and "when tokens run low, the repo is the memory".
+- **`docs/TODO.md`** now opens with the claim-board instructions and marks third-person F5 as done, with the tuning task
+  claimed by `@deepseek`.
+- **`docs/HANDOFF-FOR-CLAUDE.md`** gained a section 0 pointing at the three files above, with current heads and what
+  landed recently.
+- **`docs/screenshots/`** now committed: `scoreboard-overlay.png`, `third-person.png` (capture evidence both features work).
+- **Package for Claude**: `C:\Users\tyler\Downloads\Noble-Claude-Package-2026-10-31.zip` (1.34 MB) containing
+  START-HERE, TODO, TEAM-WORKFLOW, HANDOFF-FOR-CLAUDE, the full HANDOFF log, menu-redesign-spec, the co-op/
+  player-count/COOP-protocol deep dives and the screenshots, plus a README that states the repo heads.
+
+## 0. Pick up here (2026-10-30, 22:12 ET) - Third-person camera works: F5 toggles it (WeabooTyler117 / DeepSeek)
+
+Camera RE finished and shipped.
+
+- RR's `camera::install` (host-probe.exe `0x140196970`) calls its hook helper twice:
+  - `haloreach+0x48A910`, 5-byte window, detour `camera::third_person` (the per-player camera-mode check)
+  - `haloreach+0x1DCADC`, 7-byte window, detour `camera::follow_update` (distance / shoulder tuning; **not** needed for
+    basic third person)
+- Implemented the first hook: `src/engine/CameraThirdPerson.{hpp,cpp}` verifies the prologue
+  (`48 89 5C 24 08 48 89 74 24 10`), MinHooks `haloreach+0x48A910`, and answers the check with `true` while enabled.
+- Controls: `-third-person` starts with it on; **F5** edge-toggles in game (polled from the overlay frame, physical key).
+  The detour only spoofs the check - the engine's own third-person camera does the work.
+- Verified in a solo campaign run (`m10`): `CameraThirdPerson: third-person camera check hooked at haloreach+0x48A910`,
+  then the check fires for the local player and the capture (`capture_10800.bmp`) shows the Spartan from behind instead of
+  first person.
+- Not done yet: distance/shoulder tuning (the `+0x1DCADC` follow hook, factor on `[r9+0x28]`, sign flip at `[r9+0x14]`),
+  a settings row, key rebinding and the host/mode gate. The hook is a single toggle today.
+
+## 0. Pick up here (2026-10-30, 22:04 ET) - Single to-do list added at docs/TODO.md (WeabooTyler117 / DeepSeek)
+
+Tyler asked for the prioritized backlog to live somewhere durable. `docs/TODO.md` now holds the full list (campaign
+co-op follow-ups, menus/UI, engine features, server/netcode, housekeeping) with checkboxes, done markers and the commit
+that closed each item. The handoff stays the chronological log; TODO is the list.
+
+## 0. Pick up here (2026-10-30, 22:01 ET) - Third person: RR's camera module mapped, implementation not started (WeabooTyler117 / DeepSeek)
+
+Third-person toggle was the third item on the short list. RR has it working (`F5` toggle, `F6` shoulder swap) and its
+binary names the exact pieces, so this is a bounded RE job rather than a shot in the dark:
+
+- `host-probe.exe` symbols: `camera::install`, `camera::toggle`, `camera::third_person`, `camera::set_distance`,
+  `camera::swap_shoulder`, `camera::follow_update`, `camera::ORIG_CHECK`, `camera::ORIG_FOLLOW`, plus statics `THIRD`,
+  `DISTANCE`, `LEFT_SHOULDER`.
+- Environment knobs: `RR_THIRD_PERSON`, `RR_LEFT_SHOULDER`.
+- Log strings: `camera: third person <on/off>`, `camera: third person distance <n>`, and the game-rules line
+  *"camera: the host's rules set the camera in this game; the toggle does nothing"* - RR also implements a **host rule** for
+  forced first/third person (strings `forced first person`, `forced third person`).
+- `ORIG_CHECK` / `ORIG_FOLLOW` says the approach is: hook the engine's first-person **check** (to allow third) and the
+  **follow/update** function (to place the camera behind the player), with distance and shoulder offset as tunables.
+
+Next step: reverse `camera::install` in `host-probe.exe` (Rust, unstripped) to recover the two RVAs it hooks in
+`haloreach.dll`, then replicate the hook pair in `src/engine/` (same MinHook pattern as `CameraFov`/`LobbyPatches`) behind a
+settings toggle + key bind, gated on host / mode as Tyler asked. No client change was made for this item.
+
+--
+
+## 0. Pick up here (2026-10-30, 22:00 ET) - Scoreboard overlay: Noble panel over Reach's engine-drawn scoreboard (WeabooTyler117 / DeepSeek)
+
+Shipped the in-match scoreboard overlay.
+
+- `PauseMenu::SetScoreboardRoster(entries, map, mode)` + a panel drawn while the scoreboard key is held (Tab, read through
+  the engine's own key state). Noble-styled: SCOREBOARD header, PLAYER / TAG / TEAM columns, team-colour strip per row,
+  rank icon, service tag, local-player highlight and a YOU badge.
+- Roster source: `main.cpp` fetches the session roster once per match from `-session-id` via
+  `MasterServerClient::FetchLobbyStateSync` on a background thread, so names/ranks/emblems/teams come from the server
+  identity work. Solo/offline falls back to the local player.
+- `ReachHost::IsKeyHeld(vk)` mirrors the engine's own pad/keyboard state (published at the end of the input poll, after the
+  synthetic test presses), so overlays appear exactly when the game does - physical keys and `-scoreboard-at` both work.
+- Capture: `-scoreboard-test` draws the panel and saves `capture_888888.bmp`; `PauseMenu::Render` performs the capture
+  **after** `RenderImpl`, otherwise the frame is black (learned the hard way). Verified: the capture shows the panel with
+  `WEABOOTYLER117`, `YOU` and `RED`.
+
+Known gap: no live K/D/score columns yet - Reach draws those itself and we have not found a live per-player score source
+(the post-game record only exists at the end). Identity/team/rank is live; columns come with the engine player-record hook.
+
+--
+
+## 0. Pick up here (2026-10-30, 21:59 ET) - Lobby identity pass-through: rank / emblem / nameplate / team now survive the server (WeabooTyler117 / DeepSeek)
+
+First item of the short list. The client already sent `host_rank_index`, `host_emblem_id`, `host_nameplate_id`,
+`host_team` on registration and parsed `rankIndex`/`emblemId`/`nameplateId`/`team` from roster rows, but the server dropped
+them, so remote rows kept placeholder badges.
+
+- **Server (`O7OF/ServerTestDeploy` `b8fb2ad`)**: parses and stores the four host identity fields, stamps them onto the
+  host's roster entry (client-supplied roster included), accepts identity updates on heartbeat (keeping the host row in
+  sync), exposes them in `masterPublicSession` for the server browser, and stores guest identity from the lobby join body.
+- **Client (`663cae2`)**: `JoinLobbySync` takes the local identity and sends it in the join body; the FrontEndMenu call
+  site passes `Career::RankIndex(credits)` and the Armory profile's emblem/nameplate indices.
+- Verified against a local server: registration with a deliberately zeroed client roster returns rank 12 / emblem 44 /
+  nameplate 7 / team 1 on the host row, a guest join (30 / 5 / 9 / 2) shows in the lobby roster, and `/api/sessions` exposes
+  `host_rank_index` etc. A real client host against the local server also listed with the new fields.
+
+--
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -185,7 +608,7 @@ now replicates for that player.
 
 --
 
-## 0. Pick up here (2026-10-31, 08:05 ET) - RR already ships >4-player co-op; its patch modules are the reference (WeabooTyler117 / DeepSeek)
+## 0. Pick up here (2026-10-30, 20:54 ET) - RR already ships >4-player co-op; its patch modules are the reference (WeabooTyler117 / DeepSeek)
 
 Tyler pointed at the Reverse Engineering folder: RR runs campaign above 4 and Firefight above 8. Investigated and updated
 `docs/player-count-scaling.md` with the real answer.
@@ -207,7 +630,7 @@ Tyler pointed at the Reverse Engineering folder: RR runs campaign above 4 and Fi
 
 Also spotted in RR: a **third-person camera toggle (F5, shoulder F6)** — relevant to our open third-person backlog item.
 
-## 0. Pick up here (2026-10-31, 07:30 ET) - Notes for scaling co-op past 4 players (future, not implemented) (WeabooTyler117 / DeepSeek)
+## 0. Pick up here (2026-10-30, 20:49 ET) - Notes for scaling co-op past 4 players (future, not implemented) (WeabooTyler117 / DeepSeek)
 
 Tyler asked how we would raise the co-op player count later (e.g. 16). Wrote **`docs/player-count-scaling.md`** with the
 facts we have: the launch block declares players at `0xE8` (byte), it carries **16** player-slot descriptors at
@@ -220,7 +643,7 @@ the campaign HUD, and lockstep determinism/CPU**, not the session or launch bloc
 with `-data-dir` first, then an 8-player spawn fallback + minimal HUD, then 16 with HUD/scoreboard redesign and script
 accommodation. Firefight is the easier target if more-than-4 is ever wanted as a demo.
 
-## 0. Pick up here (2026-10-31, 07:10 ET) - Fix holds for 2 and 3 players; solo unaffected; no-guest edge case recorded (WeabooTyler117 / DeepSeek)
+## 0. Pick up here (2026-10-30, 20:48 ET) - Fix holds for 2 and 3 players; solo unaffected; no-guest edge case recorded (WeabooTyler117 / DeepSeek)
 
 Follow-up verification of the `0xE8` launch-block player count:
 
@@ -238,7 +661,7 @@ pathological case is a host that advertises more players than actually join, whi
 Remaining known work for campaign (unchanged from the backlog): CONTINUE should resume the last checkpoint; the real
 two-PC test with the host running a campaign lobby is the next validation step.
 
-## 0. Pick up here (2026-10-31, 06:45 ET) - CAMPAIGN CO-OP FIXED: the launch block must declare the co-op player count (WeabooTyler117 / DeepSeek)
+## 0. Pick up here (2026-10-30, 06:45 ET) - CAMPAIGN CO-OP FIXED: the launch block must declare the co-op player count (WeabooTyler117 / DeepSeek)
 
 Root cause found in the launch block. `BuildLaunchBlock` hard-coded **`block[0xE8] = 1`** ("1 active local player") for
 every launch, including a campaign host that had a guest in its lobby. The campaign/firefight engine sizes its player list
@@ -277,7 +700,7 @@ first time campaign co-op has survived past 60 s in this project.
   out to stall the mission, gate the declared count on the lobby roster being refreshed at start (it already is) rather
   than on `-wait-peers` alone.
 
-## 0. Pick up here (2026-10-31, 06:10 ET) - Membership before the mission load changes nothing; the campaign engine itself refuses a remote player (WeabooTyler117 / DeepSeek)
+## 0. Pick up here (2026-10-30, 06:10 ET) - Membership before the mission load changes nothing; the campaign engine itself refuses a remote player (WeabooTyler117 / DeepSeek)
 
 Implemented the Command 10 hold properly this time (no new flag: campaign host with a known lobby peer count waits up to
 15 s for `LobbyPatches::GetRemotePlayerAddCount()` before posting Command 10). Verified in the log:
@@ -311,7 +734,7 @@ same map and transport survives with no GameResults), the conclusion is now well
 The Command 10 hold is kept in the engine (it is correct for real co-op lobbies: the host's mission should not load before
 its guests are in the session).
 
-## 0. Pick up here (2026-10-31, 05:45 ET) - KEY DATA POINT: the campaign engine class is what kills co-op, not the netcode (WeabooTyler117 / DeepSeek)
+## 0. Pick up here (2026-10-30, 05:45 ET) - KEY DATA POINT: the campaign engine class is what kills co-op, not the netcode (WeabooTyler117 / DeepSeek)
 
 Ran the campaign map `m10` with **`-engine-mode 3`** (multiplayer/Megalo class) on both host and guest, everything else
 identical to the failing runs:
@@ -342,7 +765,7 @@ hook is not in the tree (reverted).
    block `+0x0C` = 1.
 3. Keep `-engine-mode 3` as a diagnostic: it cleanly separates campaign-engine logic from the shared transport.
 
-## 0. Pick up here (2026-10-31, 05:05 ET) - The TLS player-array chain does not resolve at runtime; launch blocks carry no player count (WeabooTyler117 / DeepSeek)
+## 0. Pick up here (2026-10-30, 05:05 ET) - The TLS player-array chain does not resolve at runtime; launch blocks carry no player count (WeabooTyler117 / DeepSeek)
 
 Followed the 0x490-stride player array described in the 04:30 entry. Implemented the chain exactly as the results builder
 does it - `tls = gs:[0x58][ *(int*)(hr+0xC17B18) ]`, `obj = [tls+0x18]`, `players = [obj+0x50]`, then 8 records at 0x490 -
@@ -367,7 +790,7 @@ Campaign co-op is still not fixed. Remaining approaches, best first:
 3. Try a campaign co-op start through the MCC campaign UI path in-game (if the menu action can be dispatched), rather than
    a direct map launch.
 
-## 0. Pick up here (2026-10-31, 04:30 ET) - Traced MCC's results builder; the real player objects are the 0x490-stride array (WeabooTyler117 / DeepSeek)
+## 0. Pick up here (2026-10-30, 04:30 ET) - Traced MCC's results builder; the real player objects are the 0x490-stride array (WeabooTyler117 / DeepSeek)
 
 Tried to read the engine's per-player state directly to see when the remote slot gets a unit. Findings:
 
@@ -391,7 +814,7 @@ Local repro and test flags still available:
 - Prior handoff entries list the five ruled-out causes and the reliable two-process repro (host `player 1 +0x30 = 255`,
   Category 14 results ~60 s).
 
-## 0. Pick up here (2026-10-31, 03:55 ET) - Correction: the table I found is NOT confirmed as the HSC builtins (WeabooTyler117 / DeepSeek)
+## 0. Pick up here (2026-10-30, 03:55 ET) - Correction: the table I found is NOT confirmed as the HSC builtins (WeabooTyler117 / DeepSeek)
 
 The 03:40 entry over-claims. A wider scan of the same `.rdata` region shows entries whose "names" are UI/localisation
 keys (`chud_campaign_ft_member_1_name`, `prop_campaign_skulls`, `player_rank`), and the fields repeat in a pattern typical
@@ -437,7 +860,7 @@ the engine's HSC builtin registry, and it is not sorted, so the campaign/coop en
 The alternative (finding the campaign player-list global and patching the remote slot's `+0x30` each tick) is still open
 but is a symptom fix; the builtin table is the cleaner route because it is how the real menu starts a co-op session.
 
-## 0. Pick up here (2026-10-31, 03:10 ET) - Campaign spawn investigation: five local configurations, same result (WeabooTyler117 / DeepSeek)
+## 0. Pick up here (2026-10-30, 03:10 ET) - Campaign spawn investigation: five local configurations, same result (WeabooTyler117 / DeepSeek)
 
 Chasing the host-side missing biped. Added two test hooks and ran five configurations:
 
@@ -481,7 +904,7 @@ direct map launch with engine mode 1 never goes through them.
 3. **Test the real two PCs** on `feb059a` - local runs cannot prove the network case, and the two-PC result is still the
    only ground truth we have for the guest's on-screen experience.
 
-## 0. Pick up here (2026-10-31, 02:45 ET) - O7's patch script merged; membership counter now reset per launch (WeabooTyler117 / DeepSeek)
+## 0. Pick up here (2026-10-30, 02:45 ET) - O7's patch script merged; membership counter now reset per launch (WeabooTyler117 / DeepSeek)
 
 - Pulled `11cbef7` (O7 added `patch_blam.js`, the script he used to rewrite the Command 11 barrier) on top of `64dd74f`.
   Merge `8445989`, build 0/0, pushed.
@@ -493,7 +916,7 @@ direct map launch with engine mode 1 never goes through them.
   barrier, membership sync and Command 11 ordering are all confirmed working; the blocker is the host-side campaign
   spawn path for a remote player's unit.
 
-## 0. Pick up here (2026-10-31, 02:20 ET) - O7's membership barrier pulled and tested; the guest biped is still never spawned (WeabooTyler117 / DeepSeek)
+## 0. Pick up here (2026-10-30, 02:20 ET) - O7's membership barrier pulled and tested; the guest biped is still never spawned (WeabooTyler117 / DeepSeek)
 
 Pulled `64dd74f` (O7: gate Command 11 on guest membership sync / msg 27) plus the new `LobbyPatches::GetRemotePlayerAddCount()`.
 Fast-forward, build 0/0, and our campaign grace window and Forge path are intact.
@@ -528,7 +951,7 @@ Test hook left in the build (opt-in, harmless): `-guest-post-start` makes a camp
 logged as `BlamEngine: [GUEST] -guest-post-start enabled ...`. The 10 s settle experiment was reverted; O7's 4 s value is
 back.
 
-## 0. Pick up here (2026-10-31, 01:40 ET) - Both sides' logs aligned: guest was in the match, then a membership update ended it (WeabooTyler117 / DeepSeek)
+## 0. Pick up here (2026-10-30, 01:40 ET) - Both sides' logs aligned: guest was in the match, then a membership update ended it (WeabooTyler117 / DeepSeek)
 
 O7 sent the **server** log for the 19:39 attempt (session `b3e82185d33714a5`). Aligning it with the guest client log
 (`docs/campaign-coop-timeline-2026-10-30.md`, also in Downloads) gives this:
@@ -583,7 +1006,7 @@ The guest log cannot show *why* membership changed. His client log will say whet
     -Out "$env:USERPROFILE\Downloads\campaign-host.log.txt"
 ```
 
-## 0. Pick up here (2026-10-31, 01:00 ET) - Campaign still ends by itself; guest extract prepared for O7 (WeabooTyler117 / DeepSeek)
+## 0. Pick up here (2026-10-30, 01:00 ET) - Campaign still ends by itself; guest extract prepared for O7 (WeabooTyler117 / DeepSeek)
 
 Co-op campaign failed again at 19:39. Guest-side evidence (Tyler's log, extract at
 `C:\Users\tyler\Downloads\Noble-campaign-coop-guest-2026-10-30-1940.log.txt`):
@@ -616,7 +1039,7 @@ What the host log must answer: whether `abort called ... reason=` fired (27/0x1B
 disconnect, 29/0x1D state sync timeout), whether `boot_peer` ran, what `evaluate_coop_insertion_point` returned, and
 whether the new grace line says `guest engine traffic appeared after N ms` (it should, since the guest was in game).
 
-## 0. Pick up here (2026-10-31, 00:15 ET) - Campaign loses a 1 s race; grace window made lobby-aware (WeabooTyler117 / DeepSeek)
+## 0. Pick up here (2026-10-30, 00:15 ET) - Campaign loses a 1 s race; grace window made lobby-aware (WeabooTyler117 / DeepSeek)
 
 **Forge works online now** (Tyler). Campaign still fails, and the guest-side log pins the timeline exactly.
 
@@ -669,7 +1092,7 @@ deliberately.
 climbing continuously (477 s -> 522 s), so the UptimeRobot pinger is keeping the free instance warm. Forge working online
 is consistent with the heartbeat + LAN/WAN routing changes.
 
-## 0. Pick up here (2026-10-31, 23:20 ET) - O7's production log analysed: relay socket churn, not refused joins (WeabooTyler117 / DeepSeek)
+## 0. Pick up here (2026-10-30, 23:20 ET) - O7's production log analysed: relay socket churn, not refused joins (WeabooTyler117 / DeepSeek)
 
 O7 sent the backend console log from the failed session. Reading it line by line:
 
@@ -708,7 +1131,7 @@ The free Render instance restarts and sleeps. A free uptime pinger (UptimeRobot 
 `https://outbreak-z-test-server.onrender.com/api/health` every 5 minutes keeps the instance warm and removes the
 cold-start window that produces exactly this churn. Worth doing before the next two-PC test.
 
-## 0. Pick up here (2026-10-31, 22:00 ET) - Pulled O7's server centralisation + campaign-coop netcode (WeabooTyler117 / DeepSeek)
+## 0. Pick up here (2026-10-30, 22:00 ET) - Pulled O7's server centralisation + campaign-coop netcode (WeabooTyler117 / DeepSeek)
 
 Checked both remotes and pulled.
 
@@ -746,7 +1169,7 @@ Campaign co-op previously had no server-side mode registration and two PCs in on
 Both are now handled upstream, which is the most likely reason "Forge did nothing and never connected" in a same-network
 test. Next test should be with this server deployed plus the client at `8c978d4` or later.
 
-## 0. Pick up here (2026-10-31, 21:20 ET) - Backend 1.3.0: health/relay diagnostics, longer load tolerance (WeabooTyler117 / DeepSeek)
+## 0. Pick up here (2026-10-30, 21:20 ET) - Backend 1.3.0: health/relay diagnostics, longer load tolerance (WeabooTyler117 / DeepSeek)
 
 Tyler asked for the server side to be made diagnosable for the Campaign/Forge online failures. Shipped to
 **O7OF/ServerTestDeploy** as `df33af7` (through `tools/push-server.ps1`).
@@ -778,7 +1201,7 @@ After a failed Campaign/Forge join, open `https://<backend>/api/relay/stats` and
 client log (`NetworkTransport: Initialized HOST ... Session ID:` / `Lobby start broadcast: session='...'`). Add the JSON to
 the report; it splits server-side failure from engine-side failure in one look.
 
-## 0. Pick up here (2026-10-31, 20:45 ET) - Campaign grace wait for invite/direct joins + lobby diagnostics (WeabooTyler117 / DeepSeek)
+## 0. Pick up here (2026-10-30, 20:45 ET) - Campaign grace wait for invite/direct joins + lobby diagnostics (WeabooTyler117 / DeepSeek)
 
 Tyler's latest real test: **O7 hosted campaign, guest still saw only terrain and subtitles during the "cutscene", then an
 error**; and **hosting a Forge lobby "did absolutely nothing" and never connected**.
@@ -813,7 +1236,7 @@ Forge variant, or launched and failed to connect.
 timeout during long Forge loads, a stale lobby roster inflating the peer count, and the single-session rule if both PCs use
 one account.
 
-## 0. Pick up here (2026-10-31, 20:05 ET) - Server/netcode changes now go to O7OF/ServerTestDeploy (WeabooTyler117 / DeepSeek)
+## 0. Pick up here (2026-10-30, 20:05 ET) - Server/netcode changes now go to O7OF/ServerTestDeploy (WeabooTyler117 / DeepSeek)
 
 Tyler: *"any netcode or server script changes need to be pushed to ServerTestDeploy repo"*, and he has access.
 
@@ -832,7 +1255,7 @@ Tyler: *"any netcode or server script changes need to be pushed to ServerTestDep
 
 **Rule from now on: netcode or server-script changes are committed here AND pushed with `tools/push-server.ps1`.**
 
-## 0. Pick up here (2026-10-31, 19:40 ET) - Command dispatch works but vtable[9] is not a command parser (WeabooTyler117 / DeepSeek)
+## 0. Pick up here (2026-10-30, 19:40 ET) - Command dispatch works but vtable[9] is not a command parser (WeabooTyler117 / DeepSeek)
 
 - `BlamEngine::Active()` now exists (static pointer set in `Initialize`, cleared in `Shutdown`), and a timed test hook
   `-engine-cmd "<cmd>" -engine-cmd-at <s>` dispatches through `BlamEngine::ExecuteCommand` after N seconds. Verified in a
@@ -847,7 +1270,7 @@ Tyler: *"any netcode or server script changes need to be pushed to ServerTestDep
 - The `-engine-cmd` hook and `Active()` stay in the build: they are the right plumbing for testing engine commands once a
   real dispatcher is found.
 
-## 0. Pick up here (2026-10-31, 19:05 ET) - Third person: button sweep negative, next route is the command dispatcher (WeabooTyler117 / DeepSeek)
+## 0. Pick up here (2026-10-30, 19:05 ET) - Third person: button sweep negative, next route is the command dispatcher (WeabooTyler117 / DeepSeek)
 
 - Swept RB/Y/BACK/B/X/LB as 600 ms synthetic pad presses in a sandbox forge session. Measured view change: RB 21.4 %,
   Y 10.7 %, BACK 8.1 %, B 1.7 %, X 1.6 %, LB 1.6 %. Inspecting the frames, RB and Y only nudge the **view angle** (same
@@ -862,7 +1285,7 @@ Tyler: *"any netcode or server script changes need to be pushed to ServerTestDep
   (`+0x42C`); (4) offset the first-person camera directly in the engine (Ghidra project is ready).
 - `docs/HREK-PLAYBOOK.md` carries the sweep table and the ordered plan.
 
-## 0. Pick up here (2026-10-31, 18:45 ET) - Third person: synthetic pad hook works, BACK is not the editor toggle (WeabooTyler117 / DeepSeek)
+## 0. Pick up here (2026-10-30, 18:45 ET) - Third person: synthetic pad hook works, BACK is not the editor toggle (WeabooTyler117 / DeepSeek)
 
 - New research hook `-pad-press <hex> -pad-press-at <s> -pad-press-ms <ms>` in `ReachHost::FillLocalPad`: injects one
   synthetic XInput button into the engine pad state and logs it (`synthetic pad press 0x0020 for 300 ms`), so the path is
@@ -875,7 +1298,7 @@ Tyler: *"any netcode or server script changes need to be pushed to ServerTestDep
   `BlamEngine::ExecuteCommand` reachable from the running client and dispatch those directly.
 - `docs/HREK-PLAYBOOK.md` records the negative result and the ordered candidates.
 
-## 0. Pick up here (2026-10-31, 18:20 ET) - Sandbox engine 0x04 launches now; third person is the Editor-mode monitor (WeabooTyler117 / DeepSeek)
+## 0. Pick up here (2026-10-30, 18:20 ET) - Sandbox engine 0x04 launches now; third person is the Editor-mode monitor (WeabooTyler117 / DeepSeek)
 
 - Added a test-only research hook: `-engine-mode <n>` forces launch-block `+0x0C` (`BlamEngine::SetEngineModeOverride`),
   logged as a warning so it can never be mistaken for normal behaviour.
@@ -891,7 +1314,7 @@ Tyler: *"any netcode or server script changes need to be pushed to ServerTestDep
 - Next unknown: the default binding for the editor-mode action (profile bindings live at `+0x42C`; the settings UI in
   `tags\ui` may name the action).
 
-## 0. Pick up here (2026-10-31, 17:45 ET) - Atlas export blocked; emblem data still complete (WeabooTyler117 / DeepSeek)
+## 0. Pick up here (2026-10-30, 17:45 ET) - Atlas export blocked; emblem data still complete (WeabooTyler117 / DeepSeek)
 
 - `tool.exe export-bitmap-dds <abs>\tags\ui\cui\common\emblems\emblems.bitmap <prefix>` produces
   `emblemsinvalid_00_00.dds` (64 KB) and logs `rasterizer\invalid` / `ERROR failed to decompress [0x80070057]`. Pillow
@@ -902,7 +1325,7 @@ Tyler: *"any netcode or server script changes need to be pushed to ServerTestDep
   the 53 backs, 80 fronts, 160 shapes, atlas indices and per-layer transforms.
 - Repo state: `eaf74a1` pushed, tree clean.
 
-## 0. Pick up here (2026-10-31, 17:15 ET) - HREK playbook: armory lighting explained, variants, and the truth about third person (WeabooTyler117 / DeepSeek)
+## 0. Pick up here (2026-10-30, 17:15 ET) - HREK playbook: armory lighting explained, variants, and the truth about third person (WeabooTyler117 / DeepSeek)
 
 New document `docs/HREK-PLAYBOOK.md` turns the kit findings into work items. Headlines:
 
@@ -924,7 +1347,7 @@ New document `docs/HREK-PLAYBOOK.md` turns the kit findings into work items. Hea
   2 stall; (b) a **camera patch** in `haloreach.dll` (push the first-person camera back), which is client-side by nature so
   a host toggle can only gate local application. Recommendation: route (a) first.
 
-## 0. Pick up here (2026-10-31, 16:35 ET) - Tag export works (absolute paths), and the real emblem data is decoded (WeabooTyler117 / DeepSeek)
+## 0. Pick up here (2026-10-30, 16:35 ET) - Tag export works (absolute paths), and the real emblem data is decoded (WeabooTyler117 / DeepSeek)
 
 - **How to export tags**: run `Foundation.exe` once from the HREK root, answer its "Switch Current Project" dialog with
   **"Switch my project"** (sets project Omaha, writes `gamestate.txt`, `prefs\Foundation`, `reports\`), then
@@ -944,7 +1367,7 @@ New document `docs/HREK-PLAYBOOK.md` turns the kit findings into work items. Hea
   falloff) is the only lever inside this tag; the real fix is baking lightmaps (`tool lightmap-farm`) and rebuilding the
   menu map (`tool build-cache-file-generate-main-menu-layout`).
 
-## 0. Pick up here (2026-10-31, 15:30 ET) - HREK fully extracted: 62k tags, 39.4 GB, both target tags found (WeabooTyler117 / DeepSeek)
+## 0. Pick up here (2026-10-30, 15:30 ET) - HREK fully extracted: 62k tags, 39.4 GB, both target tags found (WeabooTyler117 / DeepSeek)
 
 - `HREK.7z` unpacked in place: **62,017 files, 39.4 GB** under `D:\Steam\steamapps\common\HREK\tags` (D: still has
   ~128 GB free).
@@ -968,7 +1391,7 @@ New document `docs/HREK-PLAYBOOK.md` turns the kit findings into work items. Hea
   and ends in its crash handler. So the order is ProjectChooser -> Foundation -> then tool/sapien/MegaloEdit work.
 
 --
-## 0. Pick up here (2026-10-31, 15:10 ET) - HREK torn open: the armory lighting and the real emblem library are in the kit (WeabooTyler117 / DeepSeek)
+## 0. Pick up here (2026-10-30, 15:10 ET) - HREK torn open: the armory lighting and the real emblem library are in the kit (WeabooTyler117 / DeepSeek)
 
 Tyler installed the Halo Reach Editing Kit and asked to "rip apart Foundation". Done; findings in
 `docs/HREK-FINDINGS.md`. The short version:
@@ -993,7 +1416,7 @@ Practical: the tags live inside `HREK.7z`; `HREK (Extract).bat` unpacks them (6.
 project (`ProjectChooser.exe`) plus the tag service. Nothing in MCC's install is touched; rebuilt maps land in HREK and can
 be copied into Noble's `data\menumaps` as a mod.
 
-## 0. Pick up here (2026-10-31, 14:40 ET) - Ghidra project is set up and the forge gate is labelled in it (WeabooTyler117 / DeepSeek)
+## 0. Pick up here (2026-10-30, 14:40 ET) - Ghidra project is set up and the forge gate is labelled in it (WeabooTyler117 / DeepSeek)
 
 Tyler asked to start Ghidra and "set that all up". Done, and made reproducible.
 
@@ -1013,7 +1436,7 @@ Tyler asked to start Ghidra and "set that all up". Done, and made reproducible.
   from scratch.
 - The GUI is running again with the labelled project open (`Ghidra: NobleReach`).
 
-## 0. Pick up here (2026-10-31, 14:00 ET) - Forge netplay: verified both join scenarios, and the join-queue gate map is written down (WeabooTyler117 / DeepSeek)
+## 0. Pick up here (2026-10-30, 14:00 ET) - Forge netplay: verified both join scenarios, and the join-queue gate map is written down (WeabooTyler117 / DeepSeek)
 
 Follow-up to the 13:10 entry, after Tyler asked to "look for the offset".
 
@@ -1047,7 +1470,7 @@ The document lists a patch candidate per symptom (mode stuck at 0, mode stuck at
 Real two-PC Forge test with both machines on `320998e`. If it fails, the logs now print `join queue after request: mode N
 count N ... state N`, so one run selects the row in the table above and therefore the exact patch.
 
-## 0. Pick up here (2026-10-31, 13:10 ET) - Forge netplay: the host was refusing joins while its session was still closed (WeabooTyler117 / DeepSeek)
+## 0. Pick up here (2026-10-30, 13:10 ET) - Forge netplay: the host was refusing joins while its session was still closed (WeabooTyler117 / DeepSeek)
 
 Tyler: solo works on every mode; custom games, matchmaking and Firefight netplay work; **Forge netplay does not**. He asked
 for the offset.
@@ -1094,7 +1517,7 @@ relay). If it still fails there, the next step is the session-state gate itself:
 need a byte patch - the logs now print the exact state (`join queue after request: mode N count N ... state N`) so it can
 be pinned in one run.
 
-## 0. Pick up here (2026-10-31, 12:00 ET) - Two-machine co-op test harness + protocol for a second AI (WeabooTyler117 / DeepSeek)
+## 0. Pick up here (2026-10-30, 12:00 ET) - Two-machine co-op test harness + protocol for a second AI (WeabooTyler117 / DeepSeek)
 
 Tyler asked whether O7's agent (Gemini) and this one could co-work a co-op test: one hosts, the other joins, both record and
 fix. Agents cannot talk to each other directly, so the **repository is the message bus**. Built the missing half.
@@ -1128,7 +1551,7 @@ reach the host's UDP endpoint, or both sides must use the master-server lobby / 
 
 `coop/` holds a README describing every artefact. Full `noble-client.log` files are never committed.
 
-## 0. Pick up here (2026-10-31, 11:15 ET) - Campaign co-op: the mission now waits for the guests before it starts (WeabooTyler117 / DeepSeek)
+## 0. Pick up here (2026-10-30, 11:15 ET) - Campaign co-op: the mission now waits for the guests before it starts (WeabooTyler117 / DeepSeek)
 
 Tyler's report: on every campaign match the host loads in, the guest joins, and the guest sees the opening cutscene **from
 outside the map** (terrain/skybox, plus cutscene effects and subtitles but no framing), then the game raises
@@ -1182,7 +1605,7 @@ used. Verified: a solo campaign launch still reaches `game session started at fr
    advances, and the next approach is the opposite one: start normally and force the guest's insertion at the first
    checkpoint (`evaluate_coop_insertion_point` already returns mission start; it needs the checkpoint path).
 
-## 0. Pick up here (2026-10-31, 10:30 ET) - Handoff packaged as a Word document and a PDF (WeabooTyler117 / DeepSeek)
+## 0. Pick up here (2026-10-30, 10:30 ET) - Handoff packaged as a Word document and a PDF (WeabooTyler117 / DeepSeek)
 
 Tyler asked for the handoff "wrapped up in a nice doc I can save and provide". The same brief now exists as
 `docs/HANDOFF-FOR-CLAUDE.docx` and `docs/HANDOFF-FOR-CLAUDE.pdf` (four pages, styled: title block, meta table, commit
@@ -1192,7 +1615,7 @@ table, save-state table, priority-ordered open work, numbered traps, closing not
 Generated with `python-docx` from a script kept in the session workspace, verified content by reopening the file, and
 inspected pages 1-2 as rendered images.
 
-## 0. Pick up here (2026-10-31, 10:00 ET) - Self-contained handoff written for Claude (WeabooTyler117 / DeepSeek)
+## 0. Pick up here (2026-10-30, 10:00 ET) - Self-contained handoff written for Claude (WeabooTyler117 / DeepSeek)
 
 Tyler asked for a handoff he can hand to Claude. Wrote `docs/HANDOFF-FOR-CLAUDE.md`: one self-contained brief covering what
 Noble is, how to build it and verify with captures, the commit table for this session, Tyler's current save state and the
@@ -1203,7 +1626,7 @@ returning true, the relaunch account flags, PowerShell 5.1 limits, and the stand
 
 `docs/HANDOFF.md` stays the detailed chronology; the new file is the short version for a fresh agent.
 
-## 0. Pick up here (2026-10-31, 09:30 ET) - Career reset for Tyler: Recruit + 1,000,000 granted cR, unlocks to earn (WeabooTyler117 / DeepSeek)
+## 0. Pick up here (2026-10-30, 09:30 ET) - Career reset for Tyler: Recruit + 1,000,000 granted cR, unlocks to earn (WeabooTyler117 / DeepSeek)
 
 Tyler asked to reset his level but be given money so he can go through the unlocks. Two things came out of it.
 
@@ -1229,7 +1652,7 @@ and spending can never demote them.
 - Rank gates still apply: most armour pieces show `LOCKED - <rank>` and need rank as well as cR, which is Reach's own
   design. `armoryUnlockAll: true` is the switch that bypasses gating entirely, if that is wanted for testing.
 
-## 0. Pick up here (2026-10-31, 08:40 ET) - The OBJ preview is gone: the Armory only uses Reach's in-game model (WeabooTyler117 / DeepSeek)
+## 0. Pick up here (2026-10-30, 08:40 ET) - The OBJ preview is gone: the Armory only uses Reach's in-game model (WeabooTyler117 / DeepSeek)
 
 Tyler: "OBJ re-export should not be used at all." Removed, not hidden behind a setting:
 
@@ -1254,7 +1677,7 @@ Both are engine-side now, with no renderer shortcut:
   only carries the scene index at `base + 0x24 * stride`). Per-slot panning otherwise works through the engine's own
   cameras (0x0D helmet, 0x0F chest, 0x10 wrist, 0x11 utility, 0x12 knees, 0x13 shoulders, 0x14 colours).
 
-## 0. Pick up here (2026-10-31, 07:55 ET) - Armory is back on the in-game model: the OBJ re-export is not the right mesh (WeabooTyler117 / DeepSeek)
+## 0. Pick up here (2026-10-30, 07:55 ET) - Armory is back on the in-game model: the OBJ re-export is not the right mesh (WeabooTyler117 / DeepSeek)
 
 Tyler, after seeing the armory on Noble's own renderer: "this is not the right model at all - we need to go back to the
 other model." He is right, and this closes the "one change fixes everything" idea from the 04:00-06:20 entries.
@@ -1279,7 +1702,7 @@ packs. What is not built yet is the UI: two Armory identity rows (background / f
 settings, and the composition drawing (backdrop then symbol) at the two places the emblem is drawn
 (`FrontEndMenu.cpp:861` in `PlayerRow` and `:3660` in the Armory plate).
 
-## 0. Pick up here (2026-10-31, 07:05 ET) - Emblem background/foreground: what MCC actually ships (WeabooTyler117 / DeepSeek)
+## 0. Pick up here (2026-10-30, 07:05 ET) - Emblem background/foreground: what MCC actually ships (WeabooTyler117 / DeepSeek)
 
 Tyler wants Reach's emblem editor: pick a **background** (circle, triangle, hexagon...) and a **foreground** (grunt, flame,
 letters/numbers). Looked at the data before building UI around it.
@@ -1311,7 +1734,7 @@ letters/numbers). Looked at the data before building UI around it.
 Recommendation: try (1) as a visible prototype, keep the composed emblems as the default list, and only then decide whether
 (2) is worth the extraction work.
 
-## 0. Pick up here (2026-10-31, 06:20 ET) - Armory: pan is visible, Noble's renderer is the default, stage tuned (WeabooTyler117 / DeepSeek)
+## 0. Pick up here (2026-10-30, 06:20 ET) - Armory: pan is visible, Noble's renderer is the default, stage tuned (WeabooTyler117 / DeepSeek)
 
 Finishing the armory work from the 05:40 entry.
 
@@ -1341,7 +1764,7 @@ Verified by capture: Helmet / Left Shoulder / Right Shoulder / Knee Guards each 
 **Left for a later polish pass:** the stage could use the player's own menu wallpaper (blurred + darkened) as an option,
 and the pan could be eased a little slower. Both are cosmetic; the structure is done.
 
-## 0. Pick up here (2026-10-31, 05:40 ET) - Armory stage + camera pan wired into Noble's renderer (WeabooTyler117 / DeepSeek)
+## 0. Pick up here (2026-10-30, 05:40 ET) - Armory stage + camera pan wired into Noble's renderer (WeabooTyler117 / DeepSeek)
 
 Per Tyler's "do whatever you recommend": moved the armory onto Noble's own renderer and gave it a stage.
 
@@ -1369,7 +1792,7 @@ Per Tyler's "do whatever you recommend": moved the armory onto Noble's own rende
 - Noble's renderer is the way to get both a designed backdrop and a real lateral pan; its model, lighting (3-point with a
   cyan rim), colour-control textures and armour effects all look good (see `ui-crops/armory_noble.png`).
 
-## 0. Pick up here (2026-10-31, 04:45 ET) - Armory cameras mapped by capture; left/right shoulder is impossible on the engine path (WeabooTyler117 / DeepSeek)
+## 0. Pick up here (2026-10-30, 04:45 ET) - Armory cameras mapped by capture; left/right shoulder is impossible on the engine path (WeabooTyler117 / DeepSeek)
 
 Tyler asked to start on the per-piece camera pan. Went at it with captures instead of guesses, and the earlier
 "scene switching doesn't move the camera" conclusion was **wrong** - it came from probing the *menu* scenes.
@@ -1416,7 +1839,7 @@ scene index (`base + 0x24 * stride`), not a position.
 - `ResolveSceneIndex` accepts `index:<n>` so any map camera can be addressed by number.
 - Everything else unchanged; armory still captures normally.
 
-## 0. Pick up here (2026-10-31, 04:00 ET) - Armory: Noble's own renderer looks good, and it is the way out of the void (WeabooTyler117 / DeepSeek)
+## 0. Pick up here (2026-10-30, 04:00 ET) - Armory: Noble's own renderer looks good, and it is the way out of the void (WeabooTyler117 / DeepSeek)
 
 Tyler asked which route to take for the armory's black background. The decisive fact: **Noble already has its own
 armory renderer** (`ObjModelPreview`, `data/armor/spartans/spartans.obj` + `data/armor/elite/elite.obj`) with
@@ -1452,7 +1875,7 @@ re-render with our lighting. From the capture they are close, and ours exposes m
 - The **stage** itself (gradient/floor/rim) - the render target is transparent today, so nothing is behind the model yet.
 - Feeding `m_focusScene` into the OBJ camera's `focusX` so the pan actually happens (currently only zoom/focusY are eased).
 
-## 0. Pick up here (2026-10-31, 03:10 ET) - No more desktop flash between menu and match (WeabooTyler117 / DeepSeek)
+## 0. Pick up here (2026-10-30, 03:10 ET) - No more desktop flash between menu and match (WeabooTyler117 / DeepSeek)
 
 Tyler: every transition that crosses a loading screen (starting a match, backing out, restart, next campaign mission)
 shows the desktop and then a new window pops up.
@@ -1490,7 +1913,7 @@ straight to the next mission) inside one process. Clues and state:
 Verified: build 0/0; a scripted menu -> match hand-off logged the new-window wait and the swap; the client was closed
 afterwards.
 
-## 0. Pick up here (2026-10-31, 02:30 ET) - Armory: appearance writes coalesced; the rest of the list triaged (WeabooTyler117 / DeepSeek)
+## 0. Pick up here (2026-10-30, 02:30 ET) - Armory: appearance writes coalesced; the rest of the list triaged (WeabooTyler117 / DeepSeek)
 
 Tyler's list: scoreboard modernisation, armory (background, per-piece camera pan, palette/weapon-throw artefact, emblem
 background/foreground picker), and checkpoint-based campaign continue. What was found and what was done.
@@ -1531,7 +1954,7 @@ while scrolling; one write per settled change is inherent while the engine owns 
 
 Verified after the change: armory, main menu and settings all capture with exit code 0; build 0/0.
 
-## 0. Pick up here (2026-10-31, 01:30 ET) - Armory backdrop: fifth approach tried, and the evidence now points at the chamber's own geometry (WeabooTyler117 / DeepSeek)
+## 0. Pick up here (2026-10-30, 01:30 ET) - Armory backdrop: fifth approach tried, and the evidence now points at the chamber's own geometry (WeabooTyler117 / DeepSeek)
 
 Tyler asked again for the armory's black background to be fixed. Fifth attempt, and the first that would have worked if
 the void were empty:
@@ -1566,7 +1989,7 @@ chamber), and painting before the engine's draws (occluded).
 
 Code is reverted to the known-good state (build 0/0, armory captures normally); nothing from this attempt is left in.
 
-## 0. Pick up here (2026-10-31, 00:45 ET) - "No limit" was capped at 120, and 30 FPS whenever unfocused (WeabooTyler117 / DeepSeek)
+## 0. Pick up here (2026-10-30, 00:45 ET) - "No limit" was capped at 120, and 30 FPS whenever unfocused (WeabooTyler117 / DeepSeek)
 
 Tyler: "no limit fps for some reason shows 30 fps?" - two separate hard-coded caps in the Present hook explained it:
 
@@ -1588,7 +2011,7 @@ Note for future test work: a **minimised** window does not present, so neither `
 `Start-Process -WindowStyle Minimized` - the throttle path cannot be photographed that way (D3D simply stops presenting).
 The throttle itself is unchanged behaviour, now behind the new switch.
 
-## 0. Pick up here (2026-10-31, 00:15 ET) - CONTINUE is campaign-only (WeabooTyler117 / DeepSeek)
+## 0. Pick up here (2026-10-30, 00:15 ET) - CONTINUE is campaign-only (WeabooTyler117 / DeepSeek)
 
 Tyler: "continue should only continue on campaign missions only, nothing else".
 
@@ -2536,7 +2959,7 @@ Final layout of `PlayerRow()` (shared by MY PARTY and the pre-game roster), left
 
 --
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -2619,7 +3042,7 @@ bar; their ids are still not in the roster payload (see §4 of the 06:40 entry).
 
 --
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -2738,7 +3161,7 @@ The developer line was a non-wrapping `TextDisabled` and got cut off ("...above 
 
 --
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -2804,7 +3227,7 @@ python tools\armory\fetch_halopedia_icons.py
 
 --
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -2873,7 +3296,7 @@ are hard redefinitions, so the whole client failed to build. Nothing calls `lock
 
 --
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -3014,7 +3437,7 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -3108,7 +3531,7 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -3243,7 +3666,7 @@ pinned they ended exactly at `actionsY` - 38 * s *under* the strip:
 
 --
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -3313,7 +3736,7 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -3407,7 +3830,7 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -3508,7 +3931,7 @@ All changes compiled cleanly with MSBuild Release (`noble-client.exe` and `noble
 
 --
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -3578,7 +4001,7 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -3672,7 +4095,7 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -3765,7 +4188,7 @@ All changes compiled cleanly via MSBuild Release configuration (`noble-client.ex
 
 --
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -3835,7 +4258,7 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -3929,7 +4352,7 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -4054,7 +4477,7 @@ All changes compiled cleanly via MSBuild Release configuration (`noble-client.ex
 
 --
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -4124,7 +4547,7 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -4218,7 +4641,7 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -4306,7 +4729,7 @@ All changes compiled cleanly via MSBuild Release configuration (`noble-client.ex
 
 --
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -4376,7 +4799,7 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -4470,7 +4893,7 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -4543,7 +4966,7 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 --
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -4613,7 +5036,7 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -4707,7 +5130,7 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -4786,7 +5209,7 @@ Sneeze
 
 --
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -4856,7 +5279,7 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -4950,7 +5373,7 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -5057,7 +5480,7 @@ oble-client.exe).
 
 --
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -5127,7 +5550,7 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -5221,7 +5644,7 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -5396,7 +5819,7 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 --
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -5466,7 +5889,7 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -5560,7 +5983,7 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -5657,7 +6080,7 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 --
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -5727,7 +6150,7 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -5821,7 +6244,7 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -5898,7 +6321,7 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 --
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -5968,7 +6391,7 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -6062,7 +6485,7 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -6145,7 +6568,7 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 --
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -6215,7 +6638,7 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -6309,7 +6732,7 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -6456,7 +6879,7 @@ Resolved the host crash/hang that occurred when waiting for non-host clients to 
 
 --
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -6526,7 +6949,7 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -6620,7 +7043,7 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -6806,7 +7229,7 @@ Built and partly tested by Tyler (helmet/wrist id fix and the stray visor fix ar
 
 ---
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -6876,7 +7299,7 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -6970,7 +7393,7 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -7055,7 +7478,7 @@ All changes compiled cleanly via `build.bat` (`noble-client.exe` and `noble-dedi
 
 ---
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -7125,7 +7548,7 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -7219,7 +7642,7 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -7314,7 +7737,7 @@ Compiled cleanly via `build.bat` with **0 errors and 0 warnings**:
 
 ---
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -7384,7 +7807,7 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -7478,7 +7901,7 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -7598,7 +8021,7 @@ All changes compiled cleanly via `build.bat` (`noble-client.exe` and `noble-dedi
 
 ---
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -7668,7 +8091,7 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -7762,7 +8185,7 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -7859,7 +8282,7 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -7929,7 +8352,7 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -8023,7 +8446,7 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -8086,7 +8509,7 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -8156,7 +8579,7 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -8250,7 +8673,7 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -8328,7 +8751,7 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -8398,7 +8821,7 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -8492,7 +8915,7 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -8584,7 +9007,7 @@ All tested by Tyler unless marked.
 
 ---
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -8654,7 +9077,7 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -8748,7 +9171,7 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -8822,7 +9245,7 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -8892,7 +9315,7 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -8986,7 +9409,7 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -9056,7 +9479,7 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -9126,7 +9549,7 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -9220,7 +9643,7 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -9306,7 +9729,7 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -9376,7 +9799,7 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -9470,7 +9893,7 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -9557,7 +9980,7 @@ All committed to `main` branch (commits `60fb4a3`, `14d3852`, `5d50fc2`). Releas
 
 ---
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -9627,7 +10050,7 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -9721,7 +10144,7 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -10307,7 +10730,7 @@ shipped DLL; the engine multiplies it by pi/180 for the camera and only accepts 
 
 ---
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -10377,7 +10800,7 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).
@@ -10471,7 +10894,7 @@ Comprehensive fix for Elite armor synchronization in multiplayer, Elite armor ef
 
 ---
 
-## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
+## 0. Pick up here (2026-10-30, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
 - **Problem:** When 2 PCs attempted to play Campaign co-op over LAN or Internet, the host connected but then an error threw on the 2nd player spawn (stuck at LoadProgress: 5.0% for ~25s until Category 14 mission abort / game over).

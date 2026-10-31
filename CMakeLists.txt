@@ -124,6 +124,7 @@ set(SOURCES
     src/engine/ReachArmory.cpp
     src/engine/ElitePack.cpp
     src/engine/CameraFov.cpp
+    src/engine/CameraThirdPerson.cpp
     src/engine/FrameCapture.cpp
     src/common/Relaunch.cpp
     src/ui/UiArt.cpp
@@ -176,6 +177,7 @@ set(HEADERS
     src/engine/ReachArmory.hpp
     src/engine/ElitePack.hpp
     src/engine/CameraFov.hpp
+    src/engine/CameraThirdPerson.hpp
     src/engine/FrameCapture.hpp
     src/common/Relaunch.hpp
     src/ui/UiArt.hpp

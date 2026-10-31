@@ -146,18 +146,47 @@ void FrameCapture::SaveNow(IDXGISwapChain* swapChain, unsigned long long frame) 
 void FrameCapture::OnFrame(IDXGISwapChain* swapChain, unsigned long long frame) {
     static std::once_flag s_once;
     static std::vector<unsigned long long> s_frames;
+    static std::vector<double> s_times;      // -capture-at <seconds,...> (wall clock, easier than frames at variable fps)
+    static size_t s_nextTime = 0;
     static double s_quitAfter = 0.0;
     static ULONGLONG s_firstFrameTick = 0;
     std::call_once(s_once, [] {
         s_frames = ParseCaptureFrames();
         s_quitAfter = ParseQuitAfter();
         s_firstFrameTick = GetTickCount64();
+        int argc = 0;
+        if (LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc)) {
+            for (int i = 1; i + 1 < argc; ++i) {
+                if (_wcsicmp(argv[i], L"-capture-at") != 0) continue;
+                std::wstring list = argv[i + 1];
+                size_t pos = 0;
+                while (pos < list.size()) {
+                    size_t comma = list.find(L',', pos);
+                    if (comma == std::wstring::npos) comma = list.size();
+                    const double value = wcstod(list.substr(pos, comma - pos).c_str(), nullptr);
+                    if (value > 0.0) s_times.push_back(value);
+                    pos = comma + 1;
+                }
+            }
+            LocalFree(argv);
+        }
+        std::sort(s_times.begin(), s_times.end());
+        if (!s_times.empty()) NOBLE_INFO("FrameCapture: -capture-at {} time point(s) armed", s_times.size());
         if (s_quitAfter > 0.0) NOBLE_INFO("FrameCapture: -quit-after {:.0f} s armed", s_quitAfter);
     });
     if (s_quitAfter > 0.0 && static_cast<double>(GetTickCount64() - s_firstFrameTick) / 1000.0 > s_quitAfter) {
         NOBLE_INFO("FrameCapture: -quit-after {} s reached, exiting test run", s_quitAfter);
         spdlog::default_logger()->flush();
         TerminateProcess(GetCurrentProcess(), 0);
+    }
+    if (swapChain && s_nextTime < s_times.size()) {
+        const double elapsed = static_cast<double>(GetTickCount64() - s_firstFrameTick) / 1000.0;
+        if (elapsed >= s_times[s_nextTime]) {
+            const unsigned long long tag = 900000 + static_cast<unsigned long long>(s_nextTime);
+            NOBLE_INFO("FrameCapture: -capture-at {} s reached, saving capture_{}", s_times[s_nextTime], tag);
+            Capture(swapChain, tag);
+            ++s_nextTime;
+        }
     }
     if (s_frames.empty() || !swapChain) return;
     if (std::binary_search(s_frames.begin(), s_frames.end(), frame)) {

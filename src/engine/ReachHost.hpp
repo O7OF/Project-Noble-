@@ -32,6 +32,10 @@ public:
     const std::filesystem::path& GetMapsDir() const { return m_mapsDir; }
     const std::filesystem::path& GetDataDir() const { return m_dataDir; }
     void SetDisplaySize(uint32_t width, uint32_t height) { m_displayWidth = width; m_displayHeight = height; }
+
+    // True while the engine's own pad/keyboard state has this virtual key down (the same state the game reads, including
+    // synthetic presses from test flags). Used by overlays that must appear exactly when the game shows a screen.
+    static bool IsKeyHeld(int vk);
     uint32_t GetDisplayWidth() const { return m_displayWidth; }
     uint32_t GetDisplayHeight() const { return m_displayHeight; }
 
