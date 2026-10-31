@@ -110,6 +110,7 @@ std::atomic<bool> s_stop{ false };
 std::atomic<bool> s_transmitting{ false };
 std::atomic<int> s_localTeam{ -1 };
 std::atomic<uint64_t> s_mixPeak{ 0 };
+std::atomic<int> s_testBitrate{ 16 };   // the relay test walks 16, 20, 24 to show the setting reaches a running encoder
 Stats s_stats;
 Test s_test;
 
@@ -525,7 +526,7 @@ void VoiceThread() {
     Config cfg, opened;
     if (s_test.active) cfg.enabled = true;   // tests never read the player's settings
     std::vector<uint8_t> packet(kHeaderSize + kMaxPayload);
-    uint64_t lastSent = 0, lastRecv = 0, lastPlayed = 0, lastCaptured = 0, lastRendered = 0;
+    uint64_t lastSent = 0, lastRecv = 0, lastPlayed = 0, lastCaptured = 0, lastRendered = 0, lastBytes = 0;
 
     const auto sendFrame = [&](const uint8_t* payload, int size, uint8_t flags) {
         std::memcpy(packet.data(), "NVOX", 4);
@@ -573,6 +574,7 @@ void VoiceThread() {
         if (now >= nextConfigMs) {
             nextConfigMs = now + 500;
             if (!s_test.active) cfg = ReadConfig();
+            else cfg.bitrateKbps = s_testBitrate.load();
         }
         if (s_wantDevices.load() || now >= nextDevicesMs) {
             nextDevicesMs = now + 10000;
@@ -709,12 +711,12 @@ void VoiceThread() {
             const uint64_t captured = s_stats.captured.load(), rendered = s_stats.rendered.load();
             if (nextStatsMs != 0 && (s_test.active || sent != lastSent || recv != lastRecv)) {
                 const double secs = static_cast<double>(statsEvery) / 1000.0;
-                NOBLE_INFO("VoiceChat: frames/s sent={:.0f} recv={:.0f} played={:.0f} captured={:.0f} rendered={:.0f} | totals late={} concealed={} skipped={} filtered={} underruns={} peak={}",
-                           static_cast<double>(sent - lastSent) / secs, static_cast<double>(recv - lastRecv) / secs, static_cast<double>(played - lastPlayed) / secs,
+                NOBLE_INFO("VoiceChat: frames/s sent={:.0f} bytes/frame={} recv={:.0f} played={:.0f} captured={:.0f} rendered={:.0f} | totals late={} concealed={} skipped={} filtered={} underruns={} peak={}",
+                           static_cast<double>(sent - lastSent) / secs, sent != lastSent ? (s_stats.sentBytes.load() - lastBytes) / (sent - lastSent) : 0, static_cast<double>(recv - lastRecv) / secs, static_cast<double>(played - lastPlayed) / secs,
                            static_cast<double>(captured - lastCaptured) / secs, static_cast<double>(rendered - lastRendered) / secs,
                            s_stats.late.load(), s_stats.concealed.load(), s_stats.skipped.load(), s_stats.filtered.load(), s_stats.underruns.load(), s_mixPeak.exchange(0));
             }
-            lastSent = sent; lastRecv = recv; lastPlayed = played; lastCaptured = captured; lastRendered = rendered;
+            lastBytes = s_stats.sentBytes.load(); lastSent = sent; lastRecv = recv; lastPlayed = played; lastCaptured = captured; lastRendered = rendered;
             nextStatsMs = now + statsEvery;
         }
     }
@@ -937,6 +939,8 @@ int RunRelayTest(const std::string& wavPath) {
             for (const auto& [id, peer] : s_peers) ids.push_back(id);
         }
         for (const uint64_t id : ids) {
+            if (second == total / 3) s_testBitrate.store(20);
+            if (second == total * 2 / 3) s_testBitrate.store(24);
             if (second == total / 3) { VoiceChat::SetPeerVolume(id, 0.5f); NOBLE_INFO("VoiceChat test: peer 0x{:X} to half volume", id); }
             if (second == total * 2 / 3) { VoiceChat::SetPeerMuted(id, true); NOBLE_INFO("VoiceChat test: peer 0x{:X} muted", id); }
         }

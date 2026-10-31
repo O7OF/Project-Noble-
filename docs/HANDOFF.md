@@ -7,13 +7,31 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 
 **Goal:** `noble-client.exe` loads MCC's own `haloreach.dll` (Halo: Reach) and drives it **without MCC**, like the existing
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
-MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.3 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.5 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
 
 ### How this file is kept (Tyler, 2026-10-30)
 
 - **Every change gets an entry - no exceptions**: code, UI, docs, tools, config, server. Add it at the **top**, directly
   under the `--` line, as
-  `## 0. Pick up here (2026-10-31, 14:55 ET) - Voice chat phase 2: capture, Opus, relay, jitter buffer, Settings (@claude)
+  `## 0. Pick up here (2026-10-31, 15:08 ET) - Push-to-talk rebinding, voice quality proof, music list cleanup (@claude)
+
+**Commit:** `cd5345f`. **Version:** 0.9.5. **Build:** 0 errors, 0 warnings on the merged tree. Files: `src/ui/SettingsPanel.*`, `src/common/Settings.cpp`, `src/audio/ReachAudio.cpp`, `src/audio/VoiceChat.cpp`, `src/common/Version.hpp`.
+
+**Push to talk.** Settings > Audio > Voice Chat has PUSH TO TALK: KEY OR MOUSE and PUSH TO TALK: CONTROLLER, the same bindings as the two main lists. **Bug fixed:** `Settings::Clamp` dropped key slots from 67 up, so a custom push-to-talk key never saved, and dropped key 0, so right-click unbind never survived a save for any action. Key rebinds now cancel after 5 s. Taking a game button moves that action to push to talk's old button (RB moved Melee to D-pad left), the rule every controller row follows. Keys can be shared with a game action.
+
+**Evidence.** Real Mouse 4 press saved `"67":5`; scripted pad RB saved `pushtotalk:512` and `melee:4`; `"67":0` kept after Apply. Two real game clients: Mouse 4 on the host gave guest `recv=50 played=50`; V held on the guest afterwards gave `sent=0`. `voiceFrames 616`. Capture: `docs/screenshots/voice-ptt-rebinding.png`.
+
+**Voice quality.** Relay test now steps 16, 20, 24 kbps on a live stream: 58, 63, 71 bytes a frame including the 18-byte header. Applying the row in Settings wasn't driven during a live session; the encoder reads that value every 0.5 s. No one has compared them by ear.
+
+**Music.** Tracks under 40 s dropped (was 45 s, so a few 40-45 s tracks return). Halo: CE was never filtered because its bank has no lengths; `LoadFsb5Seconds` reads them from the FSB5 header. Counts: Reach 58, CE Anniversary 68 (was 95), CE Classic 65 (was 84), Halo 3 43, ODST 72. Log: `60 music tracks under 40 s left out`. Capture: `docs/screenshots/music-list-names.png`.
+
+**Official names: partial, on purpose.** No public list maps these cues to album titles (Halopedia documents albums, not files), and many cues are stems and loops rather than album tracks. So: Reach mission cues keep their mission names, Halo 3 and ODST cues with a level code are named after that level, CE cutscenes after their mission, and everything else is "Action 3", "Score 12". Those labels are not album titles. A real mapping needs someone to listen and match, or a datamined list; add it to the `Name` tables, because ids don't change. The level names for the codes are from general knowledge; the codes match the game's map files. "Cinematic" is inferred from the file names, and ODST files such as `c400m` have no level name. Numbers can shift if the length filter changes.
+
+**Not verified.** A physical controller press sending voice. Renamed music played by ear. ODST and Halo 3 duplicates of the same cues are still listed under each game.
+
+Self-review: the "Score N" names are tidy but tell a player less than `Perilous Full` did, and the file names may have been closer to meaningful titles. If Tyler prefers that, it's a one-line change in `CueKind`.
+
+## 0. Pick up here (2026-10-31, 14:55 ET) - Voice chat phase 2: capture, Opus, relay, jitter buffer, Settings (@claude)
 
 **Commit:** `accbd06`, server `4af063f` (O7OF/ServerTestDeploy). **Version:** 0.9.3. **Build:** 0 errors, 0 warnings on the merged tree. Files: `src/audio/VoiceChat.*`, `src/network/NetworkTransport.*`, `src/common/Settings.*`, `src/engine/KeyBindings.*`, `src/engine/PadLayouts.*`, `src/ui/SettingsPanel.cpp`, `src/ui/FrontEndMenu.cpp`, `src/main.cpp`, `CMakeLists.txt`, `assets/licenses/opus-LICENSE.txt`.
 
@@ -79,7 +97,7 @@ Self-review: the weakest part is the sender thread, because it changes how relay
 - Next for me: two-client chat check against the client transport, then the multiplayer post-game end hook.
 ## 0. Pick up here (2026-10-31, 08:25 ET) - Pre-game lobby map identity (@deepseek / DeepSeek)`.
 
-**Current version:** 0.9.3. **Developer build:** 0.9.3-dev. Dev binaries report the suffix next to the version string.
+**Current version:** 0.9.5. **Developer build:** 0.9.5-dev. Dev binaries report the suffix next to the version string.
 
 **Built and verified:** release `build\bin\Release\noble-client.exe`, developer `build\bin\Release\noble-dev.exe`, dedicated `build\bin\Release\noble-dedicated.exe`, and the packaged `Documents\Noble Launcher\Noble.exe` (full runtime tree; package stayed running in a normal launch test).
 
