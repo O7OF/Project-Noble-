@@ -126,7 +126,7 @@ ServerBrowser::ServerBrowser() {
     }
     const SettingsData s = Settings::Get().Snapshot();
 
-    const std::string masterUrl = s.masterServerUrl.empty() ? "https://outbreak-z-test-server.onrender.com" : s.masterServerUrl;
+    const std::string masterUrl = s.masterServerUrl;  // empty = LAN/direct only
     std::snprintf(m_masterUrl, sizeof(m_masterUrl), "%s", masterUrl.c_str());
     MasterServerClient::Get().SetUrl(masterUrl);
     m_directConnectIp[0] = '\0';
@@ -787,9 +787,9 @@ void ServerBrowser::RenderMasterServerModal() {
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(520, 0));
     if (ImGui::BeginPopupModal("MASTER SERVER", &m_showMasterModal, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::TextWrapped("The master server lists online games. The default uses the Outbreak-Z Render service; clear the address to browse LAN games only.");
+        ImGui::TextWrapped("Optional session registry. Leave empty to browse LAN games and use Direct Connect only.");
         ImGui::SetNextItemWidth(-1);
-        ImGui::InputTextWithHint("##MasterUrl", "https://outbreak-z-test-server.onrender.com", m_masterUrl, IM_ARRAYSIZE(m_masterUrl));
+        ImGui::InputTextWithHint("##MasterUrl", "https://your-registry.example.com (optional)", m_masterUrl, IM_ARRAYSIZE(m_masterUrl));
         NobleStyle::SectionGap();
         if (NobleStyle::PrimaryButton("SAVE", ImVec2(110, 32))) {
             SettingsData d = Settings::Get().Snapshot();

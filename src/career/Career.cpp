@@ -1,4 +1,5 @@
 #include "Career.hpp"
+#include "common/DeviceIdentity.hpp"
 #include "common/Logger.hpp"
 #include "common/Settings.hpp"
 

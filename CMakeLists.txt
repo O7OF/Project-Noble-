@@ -156,6 +156,7 @@ set(SOURCES
     src/ui/NobleUi.cpp
     src/ui/CareerPanel.cpp
     src/common/Settings.cpp
+    src/common/DeviceIdentity.cpp
     src/engine/KeyBindings.cpp
     src/career/Career.cpp
     src/network/MasterServerClient.cpp

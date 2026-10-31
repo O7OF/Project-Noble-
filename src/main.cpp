@@ -287,7 +287,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     // LAN discovery and hosting must already run while the front-end menu is open, so a game
     // hosted from the SERVERS tab (or by someone else on the LAN) shows up in the list.
     noble::SessionManager::Get().Initialize();
-    const std::string masterUrl = startupSettings.masterServerUrl.empty() ? "https://outbreak-z-test-server.onrender.com" : startupSettings.masterServerUrl;
+    const std::string masterUrl = startupSettings.masterServerUrl;  // empty = LAN/direct only
     noble::MasterServerClient::Get().SetUrl(masterUrl);
 
     // Parse command line arguments for direct map and variant launches (e.g. from NobleLauncher or Relaunch)
