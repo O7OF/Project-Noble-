@@ -186,6 +186,10 @@ public:
 
     // Browsing: ask for the list (asynchronously); the result is read with Sessions().
     void RequestList();
+    // Live count of logged-in clients from /api/players/online (health endpoint as fallback).
+    void RequestOnlineCount();
+    int OnlinePlayers() const { return m_onlinePlayers.load(); }
+    int OnlineServers() const { return m_onlineServers.load(); }
     std::vector<MasterSession> Sessions() const;
     std::string Status() const;   // last result / error, for the menu
 
@@ -199,6 +203,7 @@ private:
     void EnsureThread();
     void WorkerLoop();
     void DoList();
+    void DoOnline();
     void DoRegister();
     void DoHeartbeat();
     void DoUnregister();
@@ -209,11 +214,14 @@ private:
     std::thread m_thread;
     bool m_stop = false;
     bool m_listRequested = false;
+    bool m_onlineRequested = false;
     bool m_unregisterRequested = false;
 
     std::string m_url;
     std::string m_status;
     std::vector<MasterSession> m_sessions;
+    std::atomic<int> m_onlinePlayers{0};
+    std::atomic<int> m_onlineServers{0};
 
     std::atomic<bool> m_advertising{false};
     MasterAdvert m_advert;

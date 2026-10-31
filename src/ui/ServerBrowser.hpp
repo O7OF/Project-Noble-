@@ -26,6 +26,8 @@ struct ServerEntry {
     std::string modId;          // Steam Workshop published-file id the lobby requires (empty = none)
     std::string modTitle;
     std::string source;         // "LAN", "ONLINE", "FAVORITE", "YOU"
+    std::string mapDescription; // player-facing map blurb (stock) or mod map blurb
+    std::string modDescription; // host mod title/description when the game is modded
 };
 
 // SERVERS tab of the front-end menu: LAN games (UDP beacons from SessionManager), games listed on
@@ -66,7 +68,7 @@ private:
 
     // Filters
     char m_searchQuery[128] = { 0 };
-    int m_modeFilter = 0; // 0 = All, 1 = Multiplayer, 2 = Campaign, 3 = Firefight, 4 = Forge
+    int m_modeFilter = 0; // 0 = All, 1 = Campaign, 2 = Multiplayer, 3 = Forge, 4 = Firefight, 5 = Theatre, 6 = Custom
     bool m_hideFull = false;
     bool m_hideEmpty = false;
     bool m_hidePassworded = false;   // only show games without a password
