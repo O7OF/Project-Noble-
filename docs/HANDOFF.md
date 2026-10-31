@@ -57,6 +57,29 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+--
+
+## 0. Pick up here (2026-10-30, 23:52 ET) - Emblem art fixed: black boxes are gone (BC1 luminance -> alpha) (WeabooTyler117 / DeepSeek)
+
+Tyler's screenshots showed every Emblem and Emblem Background tile as a **white symbol on a black square**, plus blocky
+equipped previews. Cause: MCC's `emblemstexturepack` art is **BC1 with no alpha**, a white shape on an opaque black field, so
+drawing the texture put the whole square on screen.
+
+- New `UiArt::LoadPackImageKeyed` + a small CPU decoder for BC1/BC3/RGBA: each pixel becomes white with **alpha = luminance**
+  (BC3 multiplies by its alpha), then uploads as RGBA; `EmblemByName` uses it, so every emblem draw (grids, equipped preview,
+  nameplate, roster rows) gets proper transparency for free. Cached per name like the old path.
+- Background tint is now a steel blue at 200 alpha drawn over the tile, instead of the old opaque-ish tint, so black-background
+  shapes stay black and light shapes read as shapes.
+- Verified: `-menu-screen armory -armory-focus "Emblem"` and `... "Emblem Background"` captures show white symbols over the
+  actual shapes (circle, cross, triangle, star, gear...), no rectangles -
+  `docs/screenshots/emblem-symbols-keyed.png` and `docs/screenshots/emblem-backgrounds-keyed.png`.
+- Note for the next person: `-armory-focus "Emblem Background"` must be passed **quoted in one argument**, otherwise it
+  matches the `Emblem` row first (hit that twice tonight).
+
+Remaining on emblems: the real three-colour picker (backgrounds are fixed steel for now), `Nameplate(int id)` may still be
+fed a list position instead of an id, and background replication to other players needs @claude to draw `emblemBackgroundId`
+(data is already on the wire).
+
 ## 0. Pick up here (2026-10-30, 23:45 ET) - Emblem backgrounds now travel with the roster (server `b1656b4`) (WeabooTyler117 / DeepSeek)
 
 @claude's emblem picker stores `emblem_background_index` locally, but only `emblemId` went to the server, so other players

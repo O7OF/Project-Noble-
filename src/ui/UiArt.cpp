@@ -112,6 +112,118 @@ UiTexture CreateTexture(int w, int h, DXGI_FORMAT format, const void* pixels) {
     return out;
 }
 
+
+// ---------------------------------------------------------------------------------------------
+// Emblem art in MCC's packs is white shape on an opaque black square (BC1, no alpha), so drawing it as
+// a textured square put a black box behind every symbol and background. These decode the block formats
+// we can key and turn luminance into alpha, which makes the black field transparent and lets the tint
+// colour the shape. Emblem textures are small, so a CPU decode at load time is cheap (cached per name).
+// ---------------------------------------------------------------------------------------------
+struct Rgba { uint8_t r, g, b, a; };
+
+void DecodeColorBlock(const uint8_t* src, Rgba out[16]) {
+    const uint16_t c0 = static_cast<uint16_t>(src[0] | (src[1] << 8));
+    const uint16_t c1 = static_cast<uint16_t>(src[2] | (src[3] << 8));
+    const uint32_t bits = static_cast<uint32_t>(src[4]) | (static_cast<uint32_t>(src[5]) << 8) |
+                          (static_cast<uint32_t>(src[6]) << 16) | (static_cast<uint32_t>(src[7]) << 24);
+    auto rgb = [](uint16_t c, Rgba& o) {
+        o.r = static_cast<uint8_t>(((c >> 11) & 0x1F) * 255 / 31);
+        o.g = static_cast<uint8_t>(((c >> 5) & 0x3F) * 255 / 63);
+        o.b = static_cast<uint8_t>((c & 0x1F) * 255 / 31);
+        o.a = 255;
+    };
+    Rgba palette[4];
+    rgb(c0, palette[0]);
+    rgb(c1, palette[1]);
+    if (c0 > c1) {
+        palette[2] = { static_cast<uint8_t>((2 * palette[0].r + palette[1].r) / 3),
+                       static_cast<uint8_t>((2 * palette[0].g + palette[1].g) / 3),
+                       static_cast<uint8_t>((2 * palette[0].b + palette[1].b) / 3), 255 };
+        palette[3] = { static_cast<uint8_t>((palette[0].r + 2 * palette[1].r) / 3),
+                       static_cast<uint8_t>((palette[0].g + 2 * palette[1].g) / 3),
+                       static_cast<uint8_t>((palette[0].b + 2 * palette[1].b) / 3), 255 };
+    } else {
+        palette[2] = { static_cast<uint8_t>((palette[0].r + palette[1].r) / 2),
+                       static_cast<uint8_t>((palette[0].g + palette[1].g) / 2),
+                       static_cast<uint8_t>((palette[0].b + palette[1].b) / 2), 255 };
+        palette[3] = { 0, 0, 0, 0 };
+    }
+    for (int i = 0; i < 16; ++i) out[i] = palette[(bits >> (2 * i)) & 3];
+}
+
+void DecodeAlphaBlock(const uint8_t* src, uint8_t out[16]) {
+    const uint8_t a0 = src[0], a1 = src[1];
+    uint8_t palette[8] = { a0, a1 };
+    if (a0 > a1) {
+        for (int i = 0; i < 6; ++i) palette[2 + i] = static_cast<uint8_t>(((6 - i) * a0 + (1 + i) * a1) / 7);
+    } else {
+        for (int i = 0; i < 4; ++i) palette[2 + i] = static_cast<uint8_t>(((4 - i) * a0 + (1 + i) * a1) / 5);
+        palette[6] = 0;
+        palette[7] = 255;
+    }
+    uint64_t bits = 0;
+    for (int i = 0; i < 6; ++i) bits |= static_cast<uint64_t>(src[2 + i]) << (8 * i);
+    for (int i = 0; i < 16; ++i) out[i] = palette[(bits >> (3 * i)) & 7];
+}
+
+UiTexture LoadPackImageKeyed(const std::string& pack, const std::string& name) {
+    const auto& index = PackIndex(pack);
+    auto it = index.find(name);
+    if (it == index.end()) return {};
+    const PackEntry& e = it->second;
+    if (e.size == 0 || e.size > 64ull * 1024 * 1024) return {};
+    std::ifstream in(TexturePackDir() / (pack + ".temp.bin"), std::ios::binary);
+    if (!in) return {};
+    std::vector<uint8_t> data(static_cast<size_t>(e.size));
+    in.seekg(static_cast<std::streamoff>(e.offset));
+    in.read(reinterpret_cast<char*>(data.data()), static_cast<std::streamsize>(data.size()));
+    if (in.gcount() != static_cast<std::streamsize>(data.size())) return {};
+
+    const int w = e.width, h = e.height;
+    const DXGI_FORMAT fmt = BlockFormat(w, h, e.size);
+    std::vector<Rgba> pixels(static_cast<size_t>(w) * h);
+
+    if (fmt == DXGI_FORMAT_BC1_UNORM || fmt == DXGI_FORMAT_BC3_UNORM) {
+        const size_t blockBytes = fmt == DXGI_FORMAT_BC1_UNORM ? 8 : 16;
+        const uint8_t* p = data.data();
+        for (uint64_t by = 0; by < static_cast<uint64_t>((h + 3) / 4); ++by) {
+            for (uint64_t bx = 0; bx < static_cast<uint64_t>((w + 3) / 4); ++bx) {
+                Rgba colors[16];
+                uint8_t alphas[16];
+                for (int i = 0; i < 16; ++i) alphas[i] = 255;
+                if (fmt == DXGI_FORMAT_BC3_UNORM) {
+                    DecodeAlphaBlock(p, alphas);
+                    DecodeColorBlock(p + 8, colors);
+                } else {
+                    DecodeColorBlock(p, colors);
+                }
+                p += blockBytes;
+                for (int py = 0; py < 4; ++py) {
+                    for (int px = 0; px < 4; ++px) {
+                        const int x = static_cast<int>(bx) * 4 + px;
+                        const int y = static_cast<int>(by) * 4 + py;
+                        if (x >= w || y >= h) continue;
+                        const Rgba c = colors[py * 4 + px];
+                        // luminance -> alpha; the shape is white, the field black
+                        const uint8_t luma = std::max({ c.r, c.g, c.b });
+                        const uint8_t a = static_cast<uint8_t>(static_cast<int>(luma) * alphas[py * 4 + px] / 255);
+                        pixels[static_cast<size_t>(y) * w + x] = { 255, 255, 255, a };
+                    }
+                }
+            }
+        }
+    } else if (fmt == DXGI_FORMAT_R8G8B8A8_UNORM) {
+        for (int i = 0; i < w * h; ++i) {
+            const uint8_t* q = data.data() + static_cast<size_t>(i) * 4;
+            const uint8_t luma = std::max({ q[0], q[1], q[2] });
+            pixels[static_cast<size_t>(i)] = { 255, 255, 255, static_cast<uint8_t>(luma * q[3] / 255) };
+        }
+    } else {
+        return CreateTexture(w, h, fmt, data.data());
+    }
+    return CreateTexture(w, h, DXGI_FORMAT_R8G8B8A8_UNORM, pixels.data());
+}
+
 UiTexture LoadPackImage(const std::string& pack, const std::string& name) {
     const auto& index = PackIndex(pack);
     auto it = index.find(name);
@@ -774,13 +886,18 @@ void DrawEmblem(ImDrawList* dl, int symbolIndex, int backgroundIndex, ImVec2 min
         // MCC's backgrounds are a mix of black and light grey and Reach colours them. Until players can pick emblem colours,
         // a dark steel keeps the shape visible and the light symbol readable on all of them.
         if (const UiTexture back = EmblemByName(s_emblemBackgrounds[static_cast<size_t>(backgroundIndex) - 1].image))
-            DrawContain(dl, back, min, max, (tint & IM_COL32_A_MASK) | IM_COL32(58, 86, 120, 0));
+            DrawContain(dl, back, min, max, IM_COL32(91, 117, 148, 200));
     }
     if (symbolIndex < 0 || static_cast<size_t>(symbolIndex) >= s_emblemCatalog.size()) symbolIndex = 0;
     if (s_emblemCatalog.empty()) return;
     const EmblemInfo& symbol = s_emblemCatalog[static_cast<size_t>(symbolIndex)];
     if (const UiTexture primary = EmblemByName(symbol.image1)) DrawContain(dl, primary, min, max, tint);
     if (const UiTexture secondary = EmblemByName(symbol.image2)) DrawContain(dl, secondary, min, max, tint);
+}
+
+UiTexture KeyedPackImage(const std::string& pack, const std::string& name) {
+    std::lock_guard<std::mutex> lock(s_mutex);
+    return Cached("packkeyed:" + pack + ":" + name, [&] { return LoadPackImageKeyed(pack, name); });
 }
 
 UiTexture EmblemByName(const std::string& image1) {
@@ -790,8 +907,8 @@ UiTexture EmblemByName(const std::string& image1) {
     // matched and every emblem slot came out empty (2026-10-30).
     std::string upper = image1;
     for (char& c : upper) c = static_cast<char>(::toupper(static_cast<unsigned char>(c)));
-    if (UiTexture sml = PackImage("emblemstexturepack", upper + "_SML")) return sml;   // "small" is a Windows macro
-    if (UiTexture plain = PackImage("emblemstexturepack", upper)) return plain;
+    if (UiTexture sml = KeyedPackImage("emblemstexturepack", upper + "_SML")) return sml;   // "small" is a Windows macro
+    if (UiTexture plain = KeyedPackImage("emblemstexturepack", upper)) return plain;
     return {};
 }
 
