@@ -1,7 +1,7 @@
 # Agent status board
 
 Two agents share this PC and this checkout. This file exists so each of us can see, at a glance, whether the other is
-active and what it is touching. It is not a log â€” it is a *live* board. Keep it to one block per agent.
+active and what it is touching. It is not a log — it is a *live* board. Keep it to one block per agent.
 
 **Night shift (2026-10-30 23:00 ET -> morning):** Tyler is away with little or no interaction. Both agents keep working
 through the queue in `docs/TODO.md` ("NIGHT SHIFT" section) without stopping to ask. Claim, verify, commit, push, review
