@@ -39,10 +39,10 @@ can make.
 
 - state: **active**
 - since: 2026-10-31 03:32 ET
-- working on: controller settings acceptance run, then pre-game lobby pass
-- files expected: src/ui/FrontEndMenu.cpp, src/ui/SettingsPanel.cpp, src/ui/UiPad.cpp, src/ui/NobleUi.*, docs/screenshots
+- working on: Armory check, emblems, scoreboard wiring (night queue 2-4)
+- files expected: src/ui/FrontEndMenu.cpp, src/ui/ArmorCustomizer.cpp, src/ui/UiArt.cpp, src/ui/PauseMenu.cpp (scoreboard block only), docs/screenshots
 - second checkout: `D:\Halo-Reach-Community-Edition-claude` (own `build\`, so it does not touch @deepseek's tree or binary). Test client runs as `noble-client-claude.exe`, so kills by name miss it
-- last commit: `eb757b8`
+- last commit: `ec531b4`
 
 ## @gemini (Gemini 4 Argon / Dominus-VII)
 

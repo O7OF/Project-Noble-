@@ -12,7 +12,42 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 ### How this file is kept (Tyler, 2026-10-30)
 
 - **Every change gets an entry - no exceptions**: code, UI, docs, tools, config, server. Add it at the **top**, directly
-  under the `--` line, as `## 0. Pick up here (YYYY-MM-DD, HH:MM ET) - <what changed> (<name / GitHub handle>)`, and
+  under the `--` line, as `## 0. Pick up here (2026-10-31, 03:53 ET) - Pre-game lobby pass, 128-player team roster, controller Settings accepted (@claude)
+
+**Commits:** `f0fda8b` (lobby frame and bugs), `ec531b4` (roster columns). **Build:** 0 errors, 0 warnings on the merged tree.
+
+**What was wrong.** The lobby had its own header, orange highlight, type sizes and prompt row, and read as another app. Reading it also turned up real bugs:
+- a mouse pointer resting on a row pulled pad focus back to that row every frame;
+- ImGui's own controller navigation ran under the screen's, so one A could press a second, unseen button (seen as a highlight on COPY INVITE). This affected every front-end screen that reads the pad itself;
+- lobby map and game type cycling skipped the check that stops crashing combinations such as Invasion on Sword Base;
+- host Back always went to Custom Game, whatever the mode;
+- the host's public IP was printed on screen;
+- prompts and rows that did nothing: Start "Menu", X "Prior Game Stats", an unused countdown, co-op SCORING, and arrows on SKULLS.
+
+**What changed** (`src/ui/FrontEndMenu.cpp`). The lobby now uses DrawTitle, the OptionRow look, BigAction, HeroBanner and DrawHints. Blocks have fixed places, so nothing moves between states. Team games list red left and blue right with separate scroll positions and sticky headers; a game without teams is one column, as Tyler asked. Only visible rows are drawn, up to 128. The local player stays pinned in view. LB/RB step through players, LT/RT or PgUp/PgDn page, the wheel scrolls. Read-only rows have no arrows; guests see WAITING FOR HOST. ImGui navigation is off on the screens that read the pad themselves and stays on for Servers, Career, Mods and Social, whose widgets depend on it.
+
+**Test flags:** `-lobby-demo host|guest`, `-lobby-demo-players N`, `-lobby-demo-red N`, `-lobby-demo-ffa 1`, `-lobby-demo-mode campaign|firefight|forge`. No network.
+
+**Verified.** Captures opened: `docs/screenshots/lobby-before.png`, `lobby-after-host-16.png` (taken before the column change), `lobby-after-guest-3.png`, `lobby-after-guest-empty.png`, `lobby-after-campaign-4.png`, `lobby-after-pad-prompts.png`, `roster-128-64-64.png`, `roster-128-red100-blue28-scrolled.png`, `roster-16-no-teams.png`, `roster-guest-6-teams.png`. Scripted pad runs with the pointer resting on a row: focus walked; one A changed READY once and the map one step; Y to Friends and B back (screen 11 -> 12 -> 11); START logged `Lobby start broadcast`; guest B went to the server browser (11 -> 6); main menu into Campaign and Firefight and back. Roster pad run ended on the expected row (Spartan 10). Self-tests pass.
+
+**Controller Settings accepted** with a script standing in for the pad: brightness 1.0 -> 1.02, game volume, preset to Boxer applied with Y; vertical look 2.00 -> 1.75 applied with Y, a further step discarded with X (saved 1.75); B back to the main menu (7 -> 0). Capture `docs/screenshots/settings-pad-preset-prompts.png`. Sensitivity is 1.00x to 10.00x with 2.00x = Reach stock rather than the plain 1-10 first asked for; the profile byte is documented in the 02:00 entry.
+
+**Not verified / open.**
+- No real two-PC lobby and no physical pad. Demo rosters only.
+- The match itself is still limited to 16 by the engine, so 128 is a lobby list only (research item filed).
+- The in-game scoreboard still needs the same columns (TODO stays open for it).
+- READY is local only: nothing sends it to the host. **needs: @deepseek** a roster ready field if it should mean anything.
+- GAME OPTIONS shows DEFAULTS and is not editable until the variant picker (queue item 6).
+- Selecting a player does nothing yet (profile card, queue item 7).
+- Invite buttons in the FRIENDS panel are mouse only; Y opens Social. Social's pad flow is not tested.
+- A lobby's Forge and campaign states were captured for campaign only; Firefight and Forge rows share the code but were not captured.
+- Campaign's 4-slot lobby leaves half the panel empty, by choice, so slots keep their places.
+
+**Review of @deepseek `d27ab84` (pad Back): REOPEN.** Scope and build are fine, but the added line changes nothing: `ReachHost.cpp:1430` already removes Back from `buttons` and nothing sets it again before line 1456. Its comment is also wrong: the overlay gets the scoreboard through the key mask at line 1426, and `GamepadUi` no longer exists. If Tyler still sees Reach's scoreboard on pad Back, the cause is elsewhere. `7e6a2dd` (voice probe): diff scoped, builds; **REVIEW OK** on diff and build, its log evidence not rerun.
+
+Self-review: the lobby is one large function edited by splicing, so I re-read the captures rather than trusting the diff. The riskiest change is turning ImGui navigation off on Main, Campaign, Skulls, Firefight, Custom Game, Forge, Armory and Lobby. I ran the pad through Main, Campaign, Firefight and Lobby; Skulls, Forge and Armory were not exercised this round and a regression there would look like a dead pad on a widget that relied on ImGui navigation.
+
+## 0. Pick up here (YYYY-MM-DD, HH:MM ET) - <what changed> (<name / GitHub handle>)`, and
   say what was wrong, what changed and where, how it was built and verified, and what to look at in game.
 - **`docs/HANDOFF.md` in this repo is the canonical copy**: it is what gets committed and pushed with the code.
   The export at `C:\Users\tyler\Downloads\HANDOFF (2).md` is a **copy** - overwrite it from this file after every push
