@@ -20,6 +20,11 @@ bool ForgePatches::s_unlockedRotation = true;
     return true;
 }
 
+bool ForgePatches::PlaceObject(const std::string& tagPath) {
+    NOBLE_INFO("ForgePatches: placement request for '{}' (engine create call not wired yet)", tagPath);
+    return false;
+}
+
 bool ForgePatches::Apply(HMODULE hReachDll) {
     (void)hReachDll;
     s_isApplied = false;

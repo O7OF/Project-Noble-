@@ -32,6 +32,7 @@ std::atomic<int> s_followLogCount{0};
 std::atomic<int> s_mode{0};   // experiment: 0 = answer true, 1 = answer false, 2 = original(...) | enabled
 std::atomic<bool> s_f5WasDown{false};
 std::atomic<int> s_logCount{0};
+std::atomic<bool> s_engineThirdPerson{false};
 
 // The follow function takes (camera object, int, float x3 vector, void*, void* follow state). We forward everything
 // untouched so the ABI cannot drift, then nudge the distance the original wrote at [state + 0x28].
@@ -121,6 +122,7 @@ void CameraThirdPerson::SetEnabled(bool enabled) {
 }
 
 bool CameraThirdPerson::IsEnabled() { return s_enabled.load(); }
+bool CameraThirdPerson::EngineWantsThirdPerson() { return s_engineThirdPerson.load(); }
 
 void CameraThirdPerson::Toggle() { SetEnabled(!s_enabled.load()); }
 

@@ -46,6 +46,8 @@ public:
     bool ExecuteCommand(const std::string& command);
 
     const std::string& GetCurrentMap() const { return m_currentMap; }
+    const std::string& GetCurrentMode() const { return m_currentMode; }
+    bool IsForgeMode() const { return _stricmp(m_currentMode.c_str(), "forge") == 0 || _stricmp(m_currentMode.c_str(), "sandbox") == 0; }
 
     bool IsInitialized() const { return m_isInitialized; }
     bool IsGameRunning() const { return m_isGameRunning; }
@@ -85,6 +87,7 @@ private:
     bool m_isInitialized = false;
     bool m_isGameRunning = false;
     std::string m_currentMap;
+    std::string m_currentMode;
 
     // VTable function pointers for c_game_engine
     typedef void (*EngineShutdownFn)(void* thisPtr);

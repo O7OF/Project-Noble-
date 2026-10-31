@@ -23,6 +23,8 @@ public:
     static void SetMode(int mode);   // experiment switch
     static void SetDistancePercent(int percent);   // 100 = engine default, >100 pulls the camera back
     static bool IsEnabled();
+    // True when the engine itself is asking for the third-person path (Forge's monitor/editor mode).
+    static bool EngineWantsThirdPerson();
     static void Toggle();
 
     // Called from the input poll: F5 edge-toggles the camera.

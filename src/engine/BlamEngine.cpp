@@ -832,6 +832,7 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
     if (!m_isInitialized || !m_engineInstance) return false;
 
     m_currentMap = mapName;
+    m_currentMode = gameMode;
     m_isGameRunning = true;
 
     NOBLE_INFO("=================================================");

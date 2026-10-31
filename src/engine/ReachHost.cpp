@@ -5,6 +5,7 @@
 #include "common/Logger.hpp"
 #include "hooks/HookManager.hpp"
 #include "ui/PauseMenu.hpp"
+#include "ui/ForgeMenu.hpp"
 #include "career/Career.hpp"
 #include "engine/FrameCapture.hpp"
 #include "engine/PadLayouts.hpp"
@@ -13,6 +14,7 @@
 #include "engine/CameraFov.hpp"
 #include "engine/ReachArmory.hpp"
 #include "engine/ElitePack.hpp"
+#include "vfs/VFS.hpp"
 #include "common/Settings.hpp"
 #include "common/Relaunch.hpp"
 #include "host/Window.hpp"
@@ -22,6 +24,7 @@
 #include <psapi.h>
 #include <intrin.h>
 #include <atomic>
+#include <functional>
 #include <array>
 #include <utility>
 #include <cwctype>
@@ -410,7 +413,11 @@ static uint64_t __fastcall HostSlot1_FrameTick(void* thisPtr, uint64_t a1, uint6
             }
         }
         if (!loading) EndRoundForTest();
-        PauseMenu::Render(swapChain, loading);  // overlays on top, unaffected by gamma
+        ForgeMenu::Tick(loading);
+        std::function<void()> forgeOverlay;
+        if (ForgeMenu::IsOpen() && !PauseMenu::IsOpen() && !PauseMenu::IsGameOver())
+            forgeOverlay = [] { ForgeMenu::DrawOverlay(); };
+        PauseMenu::Render(swapChain, loading, forgeOverlay);  // overlays on top, unaffected by gamma
         if (s_testCaptureRequest.exchange(false)) FrameCapture::SaveNow(swapChain, 777777);
         FrameCapture::OnFrame(swapChain, frames);  // test screenshots (-capture-frames)
     }
@@ -1965,6 +1972,12 @@ static uint64_t __fastcall HostSlot48_FilePathResolver(void* thisPtr, uint64_t a
 
         bool isMainMenu = (inLower.find(L"mainmenu.map") != std::wstring::npos);
 
+        // Let the VFS/mod layer win over the retail map: Slot 48 never went through CreateFileW,
+        // so before this check a `-mod` map override was silently ignored and the retail maps\<name>.map
+        // was always loaded. ResolvePath already prefers the active mod, then user data, then retail.
+        std::wstring vfsPath = VFS::ResolvePath(inStr, GENERIC_READ);
+        bool hasVfsPath = !vfsPath.empty() && vfsPath != inStr && std::filesystem::is_regular_file(vfsPath, ec);
+
         if (auto pack = ElitePack::ResolveFile(inStr)) {
             resolved = *pack;  // the Elite armour pack the engine loads with the match map
         } else if (isMainMenu && std::filesystem::is_regular_file(checkCustomMainMenu, ec)) {
@@ -1977,6 +1990,8 @@ static uint64_t __fastcall HostSlot48_FilePathResolver(void* thisPtr, uint64_t a
             resolved = checkUserArmor;
         } else if (std::filesystem::is_regular_file(checkUserMaps, ec)) {
             resolved = checkUserMaps;
+        } else if (hasVfsPath) {
+            resolved = vfsPath;
         } else if (std::filesystem::is_regular_file(checkMccRelative, ec)) {
             resolved = checkMccRelative;
         } else if (std::filesystem::is_regular_file(checkRetailReach, ec)) {

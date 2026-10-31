@@ -1,6 +1,7 @@
 #pragma once
 
 #include <windows.h>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -53,7 +54,7 @@ public:
 
     // Draws whatever is visible into the swap chain's back buffer. `loading` = the engine hasn't
     // finished launching yet. Engine thread only.
-    static void Render(IDXGISwapChain* swapChain, bool loading);
+    static void Render(IDXGISwapChain* swapChain, bool loading, const std::function<void()>& extraOverlay = {});
 
     // Main thread, called every pass of the message loop. After a match the engine tries to go to its
     // main menu map, which MCC doesn't ship, and stops drawing (no more slot-1 frames) about 7 s after
@@ -62,7 +63,7 @@ public:
     static bool HoldFrame();
 
 private:
-    static void RenderImpl(IDXGISwapChain* swapChain, bool loading, bool clear);
+    static void RenderImpl(IDXGISwapChain* swapChain, bool loading, bool clear, const std::function<void()>& extraOverlay);
     static void DrawMenu(HWND hwnd);
     static void DrawGameOver(HWND hwnd);
     static void DrawLoading();
