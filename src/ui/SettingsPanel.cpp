@@ -1703,7 +1703,7 @@ void SettingsPanel::RenderSystem() {
 
     Section("BACKUPS");
     const bool haveBackup = std::filesystem::is_directory(backups);
-    action("BACK UP SETTINGS", "Copies settings.json and appearance.json into data\\userdata\\backups\\<date-time>, so they can be put back later.",
+    action("BACK UP SETTINGS", "Copies settings.json and appearance.dat into data\\userdata\\backups\\<date-time>, so they can be put back later.",
            haveBackup ? "Backups exist" : "None yet", [&] {
                SYSTEMTIME now{};
                GetLocalTime(&now);
@@ -1713,7 +1713,7 @@ void SettingsPanel::RenderSystem() {
                const std::filesystem::path dir = backups / stamp;
                int copied = 0;
                if (copyFile(userData / "settings.json", dir / "settings.json")) ++copied;
-               if (copyFile(userData / "appearance.json", dir / "appearance.json")) ++copied;
+               if (copyFile(userData / "appearance.dat", dir / "appearance.dat")) ++copied;
                if (copied == 0) {
                    s_note = "Nothing to back up yet.";
                    MenuSounds::Error();
@@ -1735,7 +1735,7 @@ void SettingsPanel::RenderSystem() {
         }
         int restored = 0;
         if (copyFile(newest / "settings.json", userData / "settings.json")) ++restored;
-        if (copyFile(newest / "appearance.json", userData / "appearance.json")) ++restored;
+        if (copyFile(newest / "appearance.dat", userData / "appearance.dat")) ++restored;
         if (restored == 0) {
             s_note = "That backup is empty.";
             MenuSounds::Error();

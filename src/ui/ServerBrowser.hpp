@@ -25,6 +25,7 @@ struct ServerEntry {
     bool isMod = false;
     std::string modId;          // Steam Workshop published-file id the lobby requires (empty = none)
     std::string modTitle;
+    std::string build;          // host build string, to spot version mismatches
     std::string source;         // "LAN", "ONLINE", "FAVORITE", "YOU"
     std::string mapDescription; // player-facing map blurb (stock) or mod map blurb
     std::string modDescription; // host mod title/description when the game is modded

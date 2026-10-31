@@ -3,6 +3,7 @@
 #include "ui/FrontEndMenu.hpp"
 #include "ui/UiArt.hpp"
 #include "common/Logger.hpp"
+#include "common/SaveCodec.hpp"
 #include "hooks/HookManager.hpp"
 #include "ui/PauseMenu.hpp"
 #include "ui/ForgeMenu.hpp"
@@ -893,13 +894,11 @@ static uint32_t VoiceItem(const std::string& id) {
 
 static void ApplyArmoryAppearance(uint8_t* profile) {
     if (!profile) return;
-    const auto appearancePath = ReachHost::Get().GetDataDir() / "appearance.json";
-    std::ifstream file(appearancePath);
-    if (!file) return;
+    const auto appearancePath = ReachHost::Get().GetDataDir() / "appearance.dat";
+    nlohmann::json appearance;
+    if (!SaveCodec::ReadJson(appearancePath, appearance)) return;
 
     try {
-        nlohmann::json appearance;
-        file >> appearance;
         using namespace armory_ids;
         auto num = [](const nlohmann::json& j, const char* key, int lo, int hi, int def) {
             const auto it = j.find(key);

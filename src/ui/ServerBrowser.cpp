@@ -5,6 +5,7 @@
 #include "NobleStyle.hpp"
 #include "UiArt.hpp"
 #include "common/Logger.hpp"
+#include "common/Version.hpp"
 #include "common/Settings.hpp"
 #include "ModDownloadPrompt.hpp"
 #include "network/MasterServerClient.hpp"
@@ -172,6 +173,7 @@ void ServerBrowser::RefreshServers() {
             e.isPasswordProtected = !cfg.password.empty();
             e.isOwn = true;
             e.isMod = IsModdedGame(cfg.mapName, cfg.sessionName) || !cfg.modId.empty();
+            e.build = std::string(VERSION_STRING);
             e.modId = cfg.modId;
             e.modTitle = cfg.modTitle;
             e.source = "YOU";
@@ -235,6 +237,7 @@ void ServerBrowser::RefreshServers() {
         e.modId = m.modId;
         e.modTitle = m.modTitle;
         e.isMod = IsModdedGame(m.map, m.name, m.isMod) || !m.modId.empty();
+        e.build = m.build;
         e.source = "ONLINE";
         add(e);
     }
@@ -617,6 +620,10 @@ void ServerBrowser::RenderServerDetails() {
     ImGui::TextDisabled("Players:");
     ImGui::SameLine(100);
     ImGui::Text("%d / %d", s.playerCount, s.maxPlayers);
+
+    ImGui::TextDisabled("Build:");
+    ImGui::SameLine(100);
+    ImGui::TextDisabled("%s", s.build.empty() ? "unknown" : s.build.c_str());
 
     ImGui::TextDisabled("Ping:");
     ImGui::SameLine(100);

@@ -12,7 +12,49 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 ### How this file is kept (Tyler, 2026-10-30)
 
 - **Every change gets an entry - no exceptions**: code, UI, docs, tools, config, server. Add it at the **top**, directly
-  under the `--` line, as `## 0. Pick up here (2026-10-31, 04:43 ET) - Night shift summary so far: queue worked through, stopped early (@claude)
+  under the `--` line, as `## 0. Pick up here (2026-10-31, 06:25 ET) - Offline identity, encrypted saves, dev/release split, packaged playtest (@O7OF / DeepSeek)
+
+**Current version:** 0.8.8. **Developer build:** 0.8.8-dev. Dev binaries report the suffix next to the version string.
+
+**Built and verified:** release `build\bin\Release\noble-client.exe`, developer `build\bin\Release\noble-dev.exe`, and the packaged `Documents\Noble Launcher\Noble.exe` (full runtime tree; package stayed running in a normal launch test).
+
+### Identity and saves
+
+- Removed the server login/register dependency. `AuthClient` now creates a local identity from the Windows `MachineGuid` + C: volume serial, stored in `data\userdata\identity.json`; display name is editable and does **not** change the device/player ID.
+- Career saves are per device: `data\userdata\<deviceId>\career.dat`.
+- Career progress is encrypted with Windows DPAPI (`src/common/SaveCodec.*`): Notepad cannot read/edit it. Existing `career.json` is migrated once and removed.
+- Appearance is now `data\appearance.dat`, also DPAPI-encrypted. `ArmorCustomizer`, `ReachHost` and `ElitePack` read it through `SaveCodec`; old `appearance.json` locations are migrated. This is tamper deterrence, not server-grade anti-cheat (memory editing remains possible).
+- Removed the account LOG OUT button and the LINK STEAM UI. Steam ticket code remains optional but unused.
+
+### Dev/release separation
+
+- `build-dev.bat` builds the `noble-dev` target into the same `build\bin\Release` folder as the release, as `noble-dev.exe`. No `build-dev\` tree.
+- `NOBLE_DEV_BUILD` is a compile-time definition. Release `AuthClient::IsDeveloper()` always returns false; `noble-dev` always returns true, so the dev menu and `[DEV]` tag cannot appear in release and always appear in dev.
+- `Version.hpp` emits `0.8.8-dev` for the developer target.
+
+### Server browser
+
+- Mode tabs: ALL, CAMPAIGN, MULTIPLAYER, FORGE, FIREFIGHT, THEATRE, CUSTOM.
+- Hide empty / hide full / no password / not started / favourites toggles.
+- `[MOD]` / `[STOCK]` badges, map display name, raw scenario on hover, map/mod description, and the host build string in GAME DETAILS for version-mismatch checks.
+- `/api/browser` on ServerTestDeploy federates the west/east Render registries (peer URL env override, otherwise hostname auto-detection) and returns sessions + online count in one call. Heartbeats are 10 s, browser polling 15 s.
+- `online` counts in-memory Steam sessions; with Steam UI removed it currently reads 0 until a presence heartbeat is added.
+
+### Packaging and cleanup
+
+- `build-package.bat` / `.ps1` builds release and copies the **complete** working runtime tree to `Documents\Noble Launcher` (selective copies crashed at startup). `tools\vgmstream\vgmstream-cli.exe` stays next to the exe in the same layout as the workspace build. Saves and user data remain local.
+- Removed the unused `ObjModel` loader and its CMake entries; deleted the old `build-dev` directory and generated logs/captures.
+
+### Packaging / Defender
+
+The packaged executable is unsigned and performs legitimate but AV-sensitive host work (MinHook detours, loading and hooking MCC's `haloreach.dll`, VFS IAT hooks). Windows Defender quarantined both `noble-client.exe` and the renamed `Noble.exe` as `Trojan:Win32/Bearfoos.A!ml` (ThreatID 2147731250); this matches a machine-learning false positive on game loaders. Do not disable Defender for players. Before public release: code-sign the executable, submit the binary to Microsoft's false-positive portal, and only then offer an exclusion/shortcut. Verify any downloaded build against a published SHA-256; source builds are the trusted path.
+
+### Notes / next
+
+- The earlier Forge World auto-map override was reverted: base maps load normally; modded palettes come only from mods. The HREK Thorage tag-data swap (O7 Pelican + Phantom MP, `wraith_d` driver, `warthog_p` passenger seats) is documented in `docs/FORGE-THORAGE.md`.
+- Automatic updates are **not implemented**. Suggested path: publish a signed manifest (`version`, `url`, `sha256`) from ServerTestDeploy, check it at startup, download to a temp file, verify, then replace `Noble.exe` on next launch. Do not auto-install unsigned files.
+
+## 0. Pick up here (2026-10-31, 04:43 ET) - Night shift summary so far: queue worked through, stopped early (@claude)
 
 **This is not the 11:30 close.** I stopped at 04:43 ET, well before the end of the shift. Everything below is pushed, the tree is clean and no client of mine is running. The unblocked work still open is listed under **Next**.
 

@@ -6,6 +6,7 @@
 #include "UiArt.hpp"
 #include "career/Career.hpp"
 #include "common/Logger.hpp"
+#include "common/SaveCodec.hpp"
 #include "engine/ReachArmory.hpp"
 #include "engine/ReachHost.hpp"
 
@@ -782,36 +783,34 @@ std::filesystem::path ArmorCustomizer::ResolveDefaultProfilePath() {
     }
     std::error_code ec;
     std::filesystem::create_directories(dataDir, ec);
-    return dataDir / "appearance.json";
+    return dataDir / "appearance.dat";
 }
 
 ArmorCustomizer::ArmorCustomizer() {
     m_profilePath = ResolveDefaultProfilePath();
 
-    // If a newer profile was written to <exe_dir>/appearance.json or <exe_dir>/data/sandbox/appearance.json
-    // before path unification, migrate it into <exe_dir>/data/appearance.json and remove the stale duplicates.
-    wchar_t exeBuf[MAX_PATH] = {};
-    if (GetModuleFileNameW(nullptr, exeBuf, MAX_PATH)) {
-        const std::filesystem::path exeDir = std::filesystem::path(exeBuf).parent_path();
-        const std::filesystem::path sandboxPath = exeDir / "data" / "sandbox" / "appearance.json";
-        const std::filesystem::path rootPath    = exeDir / "appearance.json";
-        std::error_code ec;
-        if (std::filesystem::exists(sandboxPath, ec)) {
-            if (!std::filesystem::exists(m_profilePath, ec) ||
-                std::filesystem::last_write_time(sandboxPath, ec) > std::filesystem::last_write_time(m_profilePath, ec)) {
-                std::filesystem::copy_file(sandboxPath, m_profilePath, std::filesystem::copy_options::overwrite_existing, ec);
-            }
-            std::filesystem::remove(sandboxPath, ec);
+    // One-time migration: old plaintext appearance.json (data, sandbox or exe root) -> encrypted appearance.dat.
+    std::error_code ec;
+    bool migrated = false;
+    if (!std::filesystem::exists(m_profilePath, ec)) {
+        std::vector<std::filesystem::path> legacy;
+        legacy.push_back(m_profilePath.parent_path() / "appearance.json");
+        wchar_t exeBuf[MAX_PATH] = {};
+        if (GetModuleFileNameW(nullptr, exeBuf, MAX_PATH)) {
+            const auto exeDir = std::filesystem::path(exeBuf).parent_path();
+            legacy.push_back(exeDir / "data" / "sandbox" / "appearance.json");
+            legacy.push_back(exeDir / "appearance.json");
         }
-        if (std::filesystem::exists(rootPath, ec) && rootPath != m_profilePath) {
-            if (!std::filesystem::exists(m_profilePath, ec)) {
-                std::filesystem::copy_file(rootPath, m_profilePath, std::filesystem::copy_options::overwrite_existing, ec);
+        for (const auto& candidate : legacy) {
+            if (std::filesystem::exists(candidate, ec) && LoadProfile(candidate)) {
+                SaveProfile(m_profilePath);
+                std::filesystem::remove(candidate, ec);
+                migrated = true;
+                break;
             }
-            std::filesystem::remove(rootPath, ec);
         }
     }
-
-    LoadProfile(m_profilePath);
+    if (!migrated) LoadProfile(m_profilePath);
     m_previewSpecies = m_profile.species;
 }
 
@@ -1055,11 +1054,8 @@ bool ArmorCustomizer::LoadProfile(const std::filesystem::path& path) {
     }
 
     try {
-        std::ifstream f(m_profilePath);
-        if (!f.is_open()) return false;
-
         nlohmann::json j;
-        f >> j;
+        if (!SaveCodec::ReadJson(m_profilePath, j)) return false;
 
         if (j.contains("service_tag") && j["service_tag"].is_string())
             m_profile.serviceTag = j["service_tag"].get<std::string>();
@@ -1319,9 +1315,7 @@ bool ArmorCustomizer::SaveProfile(const std::filesystem::path& path) {
         if (targetPath.has_parent_path()) {
             std::filesystem::create_directories(targetPath.parent_path(), ec);
         }
-        std::ofstream f(targetPath);
-        if (!f.is_open()) return false;
-        f << j.dump(2);
+        if (!SaveCodec::WriteJson(targetPath, j)) return false;
         m_dirty = false;
         NOBLE_INFO("ArmorCustomizer: Saved profile to '{}' (PreferredSpecies: {}, EliteSet: {})",
                    targetPath.string(),

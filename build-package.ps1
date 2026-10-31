@@ -28,6 +28,7 @@ if (Test-Path (Join-Path $Destination 'dedicated_data')) {
     Remove-Item (Join-Path $Destination 'dedicated_data') -Recurse -Force -ErrorAction SilentlyContinue
 }
 
+Set-Content (Join-Path $Destination 'play.bat') "@echo off`r`ncd /d `"%~dp0`"`r`nstart `"`" `"Noble.exe`"`r`n"
 Set-Content (Join-Path $Destination 'version.txt') ("Noble playtest build " + (Get-Date -Format 'yyyy-MM-dd HH:mm'))
 Write-Host '== Done =='
 Write-Host "Executable: $(Join-Path $Destination 'Noble.exe')"
