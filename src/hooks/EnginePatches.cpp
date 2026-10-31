@@ -11,32 +11,13 @@ namespace noble {
 bool EnginePatches::s_isApplied = false;
 static uintptr_t s_baseAddress = 0;
 
-struct AppearanceSlotParam {
-    int32_t species; // 0 = Spartan, 1 = Elite
-    int32_t slot;    // Spartan: 0..7, Elite: 0..3
-};
-typedef void(__fastcall* PlayerSetAppearanceSlotFn)(void* player, AppearanceSlotParam* slotParam, uint8_t itemId);
-static PlayerSetAppearanceSlotFn s_originalPlayerSetAppearanceSlot = nullptr;
-
-static void __fastcall Hook_PlayerSetAppearanceSlot(void* player, AppearanceSlotParam* slotParam, uint8_t itemId) {
-    uintptr_t caller = reinterpret_cast<uintptr_t>(_ReturnAddress()) - s_baseAddress;
-    if (caller == 0x2EDD7A) {
-        if (slotParam) {
-            slotParam->species = 1; // Elite
-            slotParam->slot = 0;    // Elite Set slot
-        }
-        NOBLE_INFO("EnginePatches: Elite armor set write intercepted (itemId={}); routed to species=1, slot=0", itemId);
-    } else if (caller == 0x2EDDBB) {
-        if (slotParam) {
-            slotParam->species = 1; // Elite
-            slotParam->slot = 2;    // Elite Armor Effect slot
-        }
-        NOBLE_INFO("EnginePatches: Elite armor effect write intercepted (itemId={}); routed to species=1, slot=2", itemId);
-    }
-    if (s_originalPlayerSetAppearanceSlot) {
-        s_originalPlayerSetAppearanceSlot(player, slotParam, itemId);
-    }
-}
+// Appearance slots (verified against haloreach.dll 0x2C807C / 0x2EDA08, 2026-10-30):
+//   species 0 = Spartan, slots 0..7 = helmet, L shoulder, R shoulder, chest, wrist, utility, knees, ARMOR EFFECT
+//   species 1 = Elite,   slots 0..3 = ARMOR SET, ARMOR EFFECT, voice, unused
+// The profile -> slot copy at 0x2EDA08 already passes the right species/slot for every field. Do NOT rewrite
+// species/slot here: profile +0x8C is the Elite armor SET (slot 7 of the generic appearance record) and
+// profile +0x68 is the Spartan armor EFFECT (Elite slot 0). Swapping them makes an armor effect choose the
+// Elite variant and leaves Elites at Minor (the bug this file used to introduce).
 
 // haloreach.dll has an internal whitespace binary search function at RVA 0x362E8
 // (signature: 33 D2 44 8B C2 44 8D 4A 0B 4B 8D 04 01 48 D1 E8).
@@ -86,25 +67,11 @@ bool EnginePatches::Apply(HMODULE hReachDll) {
     uintptr_t baseAddress = reinterpret_cast<uintptr_t>(hReachDll);
     s_baseAddress = baseAddress;
 
-    // 0. Hook PlayerSetAppearanceSlot at RVA 0x2C8070
-    // Ensures replicated Elite armor set and armor effect are written to proper species/slot
-    // regardless of local caller registers.
-    {
-        uintptr_t slotWriteAddr = baseAddress + 0x2C8070;
-        static const uint8_t kExpectedSlotWritePrologue[5] = { 0x48, 0x89, 0x5C, 0x24, 0x08 };
-        if (std::memcmp(reinterpret_cast<const void*>(slotWriteAddr), kExpectedSlotWritePrologue, sizeof(kExpectedSlotWritePrologue)) == 0) {
-            if (HookManager::InstallHook(
-                reinterpret_cast<void*>(slotWriteAddr),
-                reinterpret_cast<void*>(&Hook_PlayerSetAppearanceSlot),
-                reinterpret_cast<void**>(&s_originalPlayerSetAppearanceSlot),
-                "haloreach_player_set_appearance_slot"
-            )) {
-                NOBLE_INFO("EnginePatches: Hooked PlayerSetAppearanceSlot at 0x{:X} for reliable Elite armor & effect replication.", slotWriteAddr);
-            } else {
-                NOBLE_WARN("EnginePatches: Failed to install PlayerSetAppearanceSlot detour at 0x{:X}.", slotWriteAddr);
-            }
-        }
-    }
+    // 0. No PlayerSetAppearanceSlot detour (0x2C807C) and no 0x2EDD5C rewrite.
+    // The engine's own profile copy already uses the correct species/slot for each field (see the note at
+    // the top of this file). The old detour/rewrite moved the Elite armor SET (profile +0x8C, Spartan slot 7)
+    // into the Elite slot 0, where profile +0x68 (the Spartan armor EFFECT) overwrote it - which is exactly
+    // "Elite always spawns as Minor" and "armor effects pick the Elite variant". Both were removed 2026-10-30.
 
     // 1. Whitespace binary search underflow patch (crashes Spire, SWAT, text formatting with \u0007)
     // Signature: 33 D2 44 8B C2 44 8D 4A 0B 4B 8D 04 01 48 D1 E8
@@ -165,40 +132,14 @@ bool EnginePatches::Apply(HMODULE hReachDll) {
         }
     }
 
-    // 3. Remote Elite armor set and armor effects replication patch (RVA 0x2EDD5C & 0x2C8070)
-    // haloreach.dll at 0x2EDD5C passes species=0 (Spartan) and slot=7 when writing profile[0x8C] (Elite armor set)
-    // to the player object via 0x2C8070. Because 0x2C8070 only allows slot <= 3 for Elites and slot <= 7 for Spartans,
-    // passing slot 7 wrote the value into the Spartan array [player + 0xAD] while leaving [player + 0xAE + 0] (the replicated
-    // Elite armor set) as 0 (Elite Minor) for every other player in the network session.
-    // Patching 0x2EDD5C (89 75 C0 C7 45 C4 07 00 00 00) to (C7 45 C0 01 00 00 00 89 75 C4) sets species=1 (Elite)
-    // and slot=0, allowing 0x2C8070 to populate [player + 0xAE + 0], replicating the equipped Elite armor set to all players.
-    {
-        static const uint8_t kExpectedEliteSetWrite[10] = { 0x89, 0x75, 0xC0, 0xC7, 0x45, 0xC4, 0x07, 0x00, 0x00, 0x00 };
-        static const uint8_t kPatchedEliteSetWrite[10]  = { 0xC7, 0x45, 0xC0, 0x01, 0x00, 0x00, 0x00, 0x89, 0x75, 0xC4 };
-        uint8_t* addr = reinterpret_cast<uint8_t*>(baseAddress + 0x2EDD5C);
-        if (std::memcmp(addr, kExpectedEliteSetWrite, sizeof(kExpectedEliteSetWrite)) == 0) {
-            DWORD oldProt = 0;
-            if (VirtualProtect(addr, sizeof(kPatchedEliteSetWrite), PAGE_EXECUTE_READWRITE, &oldProt)) {
-                std::memcpy(addr, kPatchedEliteSetWrite, sizeof(kPatchedEliteSetWrite));
-                FlushInstructionCache(GetCurrentProcess(), addr, sizeof(kPatchedEliteSetWrite));
-                VirtualProtect(addr, sizeof(kPatchedEliteSetWrite), oldProt, &oldProt);
-                NOBLE_INFO("EnginePatches: Patched Elite armor set replication at RVA 0x2EDD5C (species=1, slot=0). Remote Elites now display equipped set.");
-            } else {
-                NOBLE_WARN("EnginePatches: Failed to VirtualProtect Elite armor set write at RVA 0x2EDD5C.");
-            }
-        } else if (std::memcmp(addr, kPatchedEliteSetWrite, sizeof(kPatchedEliteSetWrite)) == 0) {
-            NOBLE_INFO("EnginePatches: Elite armor set replication at RVA 0x2EDD5C already patched.");
-        } else {
-            NOBLE_WARN("EnginePatches: Unexpected bytes at RVA 0x2EDD5C; Elite armor set replication patch skipped.");
-        }
-    }
-
-    // 4. Elite Armor Effects in-game tag list patch (RVA 0x10580C)
-    // haloreach.dll at 0x10580C attempts to look up Elite armor effects in pmcg list 0x8C (B9 8C 00 00 00).
-    // In retail Reach tags, list 0x8C has 0 entries, causing the engine to skip effect creation on Elites entirely.
-    // Patching 0x10580C to list 0x80 (B9 80 00 00 00) makes Elites query the fully-populated armor effects list
-    // (Flames, Blue Flames, Heart Attack, Pestilence, Inclement Weather, Birthday Party) just like Spartans,
-    // while keeping effect selection cleanly tied to record[0x19] (profile[0x90]).
+    // 3. Elite armor effects: pmcg list 0x8C -> 0x80 (RVA 0x10580C)
+    // The appearance builder (0x1055EC) picks the armor effect for Elites from pmcg list at +0x8C and for
+    // Spartans from the list at +0x80 (record[0x19] / record[0x18] respectively). Both lists hold the same
+    // seven entries in the pack (default_armor, legendary_flame, eternal_flame, heart_attack, pestilence,
+    // storm, halo_bday, all changing region "armor_fx"), but the map's own 0x8C list is empty in retail
+    // match maps, so Elite effects are silently skipped. Pointing the Elite branch at 0x80 gives Elites the
+    // identical effect set and leaves the Elite armor set (record[0x17] / profile +0x8C) completely alone.
+    // Verified bytes at 0x10580C: B9 8C 00 00 00 (mov ecx,0x8C). The 0x80 branch follows at 0x10581B.
     {
         static const uint8_t kExpectedEliteFxList[5] = { 0xB9, 0x8C, 0x00, 0x00, 0x00 };
         static const uint8_t kPatchedEliteFxList[5]  = { 0xB9, 0x80, 0x00, 0x00, 0x00 };

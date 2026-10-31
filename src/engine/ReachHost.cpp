@@ -954,17 +954,29 @@ static void ApplyArmoryAppearance(uint8_t* profile) {
         put(0x50, kWrist + num(sp, "wrist_index", 0, 5, 0));
         put(0x54, kUtility + utility);
         put(0x64, kSpartanMale + num(appearance, "body_type", 0, 1, 0));
-        put(0x68, species == 1 ? elEffect : spEffect);
+        // Keep the two effect fields separate from the equipped character (Tyler 2026-10-30): +0x68 is
+        // the SPARTAN armor effect and +0x90 the ELITE armor effect regardless of the species picked.
+        // The engine copies them to appearance-record bytes +0x18 (Spartan, pmcg list 80) and +0x19
+        // (Elite, pmcg list 8C) - mixing species into +0x68 is what used to make an armor effect pick
+        // the Elite variant. (Verified in haloreach.dll 0x2EDA08 / 0x1055EC.)
+        put(0x68, spEffect);
         put(0x6C, kKnees + num(sp, "knee_guards_index", 0, 3, 0));
         put(0x70, kVisor + num(sp, "visor_color_index", 0, 4, 0));
-        put(0x8C, kEliteSet + num(el, "armor_set", 0, 8, 0));
+        // Armory set indices: 0..7 = MCC's eight Elite sets (194..201), 8 = Honor Guard, 9 = H2A Ranger,
+        // 10 = Counselor. MCC has no set item for 8..10 - those presets are carried by their per-piece
+        // entries in the appearance record (ElitePack) - so the profile set item stays at Minor (194).
+        const int eliteSet = num(el, "armor_set", 0, 10, 0);
+        put(0x8C, kEliteSet + (eliteSet < 8 ? eliteSet : 0));
         put(0x90, elEffect);
         put(0x94, VoiceItem(str(sp, "voice_id")));
         put(0x98, kColor + num(appearance, "primary_color", 0, 29, 1));
         put(0x9C, kColor + num(appearance, "secondary_color", 0, 29, 10));
-        put(0xA0, kColor);
+        // +0xA0 is the third/detail colour ("accent"); Reach has no third picker in the stock Armory, but
+        // the profile field exists (RR: Steel) and the Armory's third colour word follows it.
+        const int accentColor = num(appearance, "accent_color", 0, 29, 14);
+        put(0xA0, kColor + accentColor);
         NOBLE_INFO("ReachHost [Slot 34]: applied Armory appearance ({}, helmet {}, chest {}, effect {}/{}, Elite set {}, colours {}/{})",
-                   species == 0 ? "Spartan" : "Elite", helmet, chest, spEffect, elEffect, num(el, "armor_set", 0, 8, 0),
+                   species == 0 ? "Spartan" : "Elite", helmet, chest, spEffect, elEffect, eliteSet,
                    num(appearance, "primary_color", 0, 29, 1), num(appearance, "secondary_color", 0, 29, 10));
     } catch (const nlohmann::json::exception& e) {
         NOBLE_WARN("ReachHost [Slot 34]: could not read Armory appearance from '{}': {}", appearancePath.string(), e.what());

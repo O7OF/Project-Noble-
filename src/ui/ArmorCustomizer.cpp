@@ -63,6 +63,19 @@ constexpr std::array<ReachColorEntry, 30> kReachColors = {{
     {"Pale",      0.961f, 0.816f, 0.447f},
 }};
 
+// The nearest Reach palette entry to an arbitrary custom colour; the profile only accepts palette item
+// ids, so a custom wheel colour is saved with this index for in-game use.
+int NearestPaletteIndex(float r, float g, float b) {
+    int best = 0;
+    float bestD = FLT_MAX;
+    for (int i = 0; i < static_cast<int>(kReachColors.size()); ++i) {
+        const float dr = r - kReachColors[i].r, dg = g - kReachColors[i].g, db = b - kReachColors[i].b;
+        const float d = dr * dr + dg * dg + db * db;
+        if (d < bestD) { bestD = d; best = i; }
+    }
+    return best;
+}
+
 struct VisorEntry {
     const char* name;
     const char* stringId;
@@ -514,33 +527,57 @@ struct EliteSetSpec {
     const char* name;
     const char* stringId;
     const char* description;
+    // The six piece permutations this preset equips: helmet, left shoulder, right shoulder, chest, arms, legs.
+    // The first kElitePieceSetCount sets are also the first entries of the per-piece lists (so an old
+    // armor-set index is still a piece index); the extra preset sets below are mixes of those entries.
+    const char* pieces[6];
 };
 
-// Verified against mainmenu_all.string_ids.csv IDs 2398, 2421..2426, 12624
-constexpr std::array<EliteSetSpec, 9> kEliteSets = {{
+// Verified against mainmenu_all.string_ids.csv IDs 2398, 2421..2426, 12624. Sets 0..8 are Reach's own
+// harnesses (plus the Honor Guard bonus); 9 and 10 are the two mixed presets (H2A Ranger and Counselor).
+constexpr std::array<EliteSetSpec, 11> kEliteSets = {{
     {"MINOR", "minor",
-     "Standard-issue Sangheili Minor combat harness worn by newly blooded frontline warriors."},
+     "Standard-issue Sangheili Minor combat harness worn by newly blooded frontline warriors.",
+     {"minor", "minor", "minor", "minor", "default", "minor"}},
     {"SPEC OPS", "spec_ops",
-     "Streamlined Special Operations combat harness tuned for active camouflage and silent infiltration."},
+     "Streamlined Special Operations combat harness tuned for active camouflage and silent infiltration.",
+     {"spec_ops", "spec_ops", "spec_ops", "spec_ops", "spec_ops", "spec_ops"}},
     {"RANGER", "space",
-     "Vacuum-sealed Sangheili Ranger exo-atmospheric harness with integrated thruster pack."},
+     "Vacuum-sealed Sangheili Ranger exo-atmospheric harness with integrated thruster pack.",
+     {"space", "space", "space", "space", "space", "space"}},
     {"ULTRA", "ultra",
-     "Command harness of the Sangheili Evocati, featuring high-capacity energy shielding and enclosed helm."},
+     "Command harness of the Sangheili Evocati, featuring high-capacity energy shielding and enclosed helm.",
+     {"ultra", "ultra", "ultra", "ultra", "ultra", "ultra"}},
     {"ZEALOT", "zealot",
-     "Ornate crimson-forged harness of the Ministry of Fervent Intercession's Zealot strike teams."},
+     "Ornate crimson-forged harness of the Ministry of Fervent Intercession's Zealot strike teams.",
+     {"zealot", "zealot", "zealot", "zealot", "zealot", "zealot"}},
     {"GENERAL", "general",
-     "Heavily crested golden battle harness worn by high-ranking Sangheili ground commanders."},
+     "Heavily crested golden battle harness worn by high-ranking Sangheili ground commanders.",
+     {"general", "general", "general", "general", "general", "general"}},
     {"FIELD MARSHAL", "story_elite",
-     "Supreme tactical command harness worn by Sangheili Field Marshals leading Covenant armies."},
+     "Supreme tactical command harness worn by Sangheili Field Marshals leading Covenant armies.",
+     {"story_elite", "story_elite", "story_elite", "story_elite", "story_elite", "story_elite"}},
     {"OFFICER", "officer",
-     "Distinguished Sangheili Officer harness featuring sweeping cranial fins and reinforced pauldrons."},
+     "Distinguished Sangheili Officer harness featuring sweeping cranial fins and reinforced pauldrons.",
+     {"officer", "officer", "officer", "officer", "officer", "officer"}},
     {"HONOR GUARD", "honor_guard",
-     "Ceremonial and protective combat harness of the High Council's elite Honor Guard detachment."},
+     "Ceremonial and protective combat harness of the High Council's elite Honor Guard detachment.",
+     {"honor_guard", "honor_guard", "honor_guard", "honor_guard", "honor_guard", "honor_guard"}},
+    {"H2A RANGER", "h2a_ranger",
+     "Halo 2 Anniversary Ranger harness: H2A Ranger helmet, H2A pauldrons and H2A legs with the Ranger chest and arms.",
+     {"h2a_space_helmet", "h2a_l_shoulder", "h2a_r_shoulder", "space", "space", "h2a_legs"}},
+    {"COUNSELOR", "counselor",
+     "Counselor harness: Council helmet, Schism pauldrons, Honor Guard chest and H2A legs with Minor arms.",
+     {"council", "schism", "schism", "honor_guard", "default", "h2a_legs"}},
 }};
+
+// The first N sets also exist as entries in every per-piece list (indices 0..N-1); the mixed presets
+// after them only reference those entries.
+constexpr int kElitePieceSetCount = 9;
 
 // Per-piece Elite options: the regions and permutations of the Elite model in mainmenu_all.map
 // (render model regions elite_helmet / elite_left_shoulder / elite_right_shoulder / elite_chest / elite_forearms /
-// elite_legs). The first 8 entries of every list follow kEliteSets, so an armor-set index is also a piece index.
+// elite_legs). The first 9 entries of every list follow kEliteSets, so an armor-set index is also a piece index.
 struct ElitePieceSpec {
     const char* name;
     const char* stringId;
@@ -554,9 +591,9 @@ const std::vector<ElitePieceSpec>& GetElitePieces(int piece) {
         std::array<std::vector<ElitePieceSpec>, kElitePieceCount> l;
         static const char* kExtraNote = "Extra Elite piece (from the Elite armour pack); mix it with any set.";
         for (int p = 0; p < kElitePieceCount; ++p) {
-            for (const auto& set : kEliteSets) {
-                const bool minorArms = p == kEliteArms && std::strcmp(set.stringId, "minor") == 0;
-                l[p].push_back({ set.name, minorArms ? "default" : set.stringId, set.description });
+            for (int s = 0; s < kElitePieceSetCount; ++s) {
+                const auto& set = kEliteSets[s];
+                l[p].push_back({ set.name, set.pieces[p], set.description });
             }
         }
         l[kEliteHelmet].push_back({ "COUNCIL", "council", kExtraNote });
@@ -580,6 +617,23 @@ const char* ElitePieceId(int piece, int index) {
     return list[std::clamp(index, 0, static_cast<int>(list.size()) - 1)].stringId;
 }
 
+// Finds the piece-list index of one of a set's pieces (the mixed presets reference the "extra" entries).
+int ElitePieceIndexOf(int piece, const char* id) {
+    const auto& list = GetElitePieces(piece);
+    for (size_t i = 0; i < list.size(); ++i)
+        if (std::strcmp(list[i].stringId, id) == 0) return static_cast<int>(i);
+    return 0;
+}
+
+// Equips a whole preset: every piece row follows the set's own six permutations, not the set index.
+void ApplyEliteSetPieces(AppearanceProfile& profile, int set) {
+    set = std::clamp(set, 0, static_cast<int>(kEliteSets.size()) - 1);
+    int* pieces[kElitePieceCount] = { &profile.eliteHelmetIndex, &profile.eliteLeftShoulderIndex,
+        &profile.eliteRightShoulderIndex, &profile.eliteChestIndex, &profile.eliteArmsIndex, &profile.eliteLegsIndex };
+    for (int p = 0; p < kElitePieceCount; ++p) *pieces[p] = ElitePieceIndexOf(p, kEliteSets[set].pieces[p]);
+    profile.eliteArmorSet = set;
+}
+
 // Elite unlocks (Tyler, 2026-10-28): Elites unlock by rank only (no cR, like Reach), a whole set or extra piece
 // group at once; every piece of an unlocked set can then be mixed freely. Minor (and its "default" arms) is free.
 // Ranks are names from Career::Ranks(). "-armory-unlock-all" unlocks everything (testing).
@@ -591,9 +645,13 @@ constexpr EliteUnlock kEliteUnlocks[] = {
     { "spec_ops", "Corporal" },          { "space", "Sergeant" },              { "officer", "Sergeant Grade 2" },
     { "ultra", "Warrant Officer" },      { "zealot", "Captain" },              { "general", "Major" },
     { "story_elite", "Lt. Colonel" },    { "ossoona", "Major Grade 3" },       { "schism", "Commander Grade 2" },
-    { "combat", "Commander Grade 2" },   { "h2a_space_helmet", "Colonel Grade 1" },
-    { "h2a_l_shoulder", "Colonel Grade 1" }, { "h2a_r_shoulder", "Colonel Grade 1" }, { "h2a_legs", "Colonel Grade 1" },
-    { "council", "Brigadier" },          { "honor_guard", "General" },         { "honor_guard_legs", "General" },
+    { "combat", "Commander Grade 2" },   { "council", "Brigadier" },
+    // 2026-10-30 (Tyler): the H2A Ranger set and its pieces take the General slot Honor Guard used to
+    // hold; Honor Guard moves later and the Counselor preset is the last Elite set to unlock.
+    { "h2a_space_helmet", "General" },   { "h2a_l_shoulder", "General" },
+    { "h2a_r_shoulder", "General" },     { "h2a_legs", "General" },
+    { "h2a_ranger", "General" },         { "honor_guard", "Field Marshall" },  { "honor_guard_legs", "Field Marshall" },
+    { "counselor", "Inheritor" },
 };
 
 // Rank needed for an Elite item: index into Career::Ranks() (0 = from the start) and its name.
@@ -748,7 +806,15 @@ void ArmorCustomizer::SyncLegacyFields() {
     m_profile.kneeGuardsIndex = std::clamp(m_profile.kneeGuardsIndex, 0, static_cast<int>(knees.size()) - 1);
     m_profile.armorEffectIndex = std::clamp(m_profile.armorEffectIndex, 0, static_cast<int>(kArmorEffects.size()) - 1);
     m_profile.firefightVoiceIndex = std::clamp(m_profile.firefightVoiceIndex, 0, static_cast<int>(kFirefightVoices.size()) - 1);
+    m_profile.accentColor = std::clamp(m_profile.accentColor, 0, 29);
     m_profile.eliteArmorSet = std::clamp(m_profile.eliteArmorSet, 0, static_cast<int>(kEliteSets.size()) - 1);
+    // The mixed presets added 2026-10-30 use the extra piece entries; keep stale saves inside their lists.
+    m_profile.eliteHelmetIndex = std::clamp(m_profile.eliteHelmetIndex, 0, static_cast<int>(GetElitePieces(kEliteHelmet).size()) - 1);
+    m_profile.eliteLeftShoulderIndex = std::clamp(m_profile.eliteLeftShoulderIndex, 0, static_cast<int>(GetElitePieces(kEliteLeftShoulder).size()) - 1);
+    m_profile.eliteRightShoulderIndex = std::clamp(m_profile.eliteRightShoulderIndex, 0, static_cast<int>(GetElitePieces(kEliteRightShoulder).size()) - 1);
+    m_profile.eliteChestIndex = std::clamp(m_profile.eliteChestIndex, 0, static_cast<int>(GetElitePieces(kEliteChest).size()) - 1);
+    m_profile.eliteArmsIndex = std::clamp(m_profile.eliteArmsIndex, 0, static_cast<int>(GetElitePieces(kEliteArms).size()) - 1);
+    m_profile.eliteLegsIndex = std::clamp(m_profile.eliteLegsIndex, 0, static_cast<int>(GetElitePieces(kEliteLegs).size()) - 1);
 
     m_profile.spartanHelmetGroup = h.legacyGroup;
     m_profile.spartanChestGroup = chests[m_profile.chestIndex].legacyGroup;
@@ -877,10 +943,16 @@ void ArmorCustomizer::SyncToReachArmory() const {
     const int vcIdx = std::clamp(m_profile.visorColorIndex, 0, static_cast<int>(kVisorColors.size()) - 1);
     const int priIdx = std::clamp(m_profile.primaryColor, 0, 29);
     const int secIdx = std::clamp(m_profile.secondaryColor, 0, 29);
+    const int accIdx = std::clamp(m_profile.accentColor, 0, 29);
 
     const auto& pCol = kReachColors[priIdx];
     const auto& sCol = kReachColors[secIdx];
+    const auto& aCol = kReachColors[accIdx];
     const auto& vCol = kVisorColors[vcIdx];
+    auto colorRgb = [](bool custom, const std::array<float, 3>& rgb, const ReachColorEntry& pal) {
+        const std::array<float, 3> s = custom ? rgb : std::array<float, 3>{pal.r, pal.g, pal.b};
+        return std::array<float, 3>{SrgbToLinear(s[0]), SrgbToLinear(s[1]), SrgbToLinear(s[2])};
+    };
 
     ReachArmorySelection sel;
     sel.isElite = (m_profile.species == PlayerSpecies::Elite);
@@ -888,6 +960,7 @@ void ArmorCustomizer::SyncToReachArmory() const {
     sel.isFemale = (m_profile.bodyType == BodyType::Female);
     sel.primaryColorIndex = priIdx;
     sel.secondaryColorIndex = secIdx;
+    sel.accentColorIndex = accIdx;
     sel.visorColorIndex = vcIdx;
     sel.armorEffectIndex = aeIdx;
     sel.firefightVoiceIndex = fvIdx;
@@ -916,8 +989,9 @@ void ArmorCustomizer::SyncToReachArmory() const {
     sel.eliteArmorEffectIndex = elAeIdx;
     sel.eliteArmorEffect = kArmorEffects[elAeIdx].stringId;
 
-    sel.primaryRgb = { SrgbToLinear(pCol.r), SrgbToLinear(pCol.g), SrgbToLinear(pCol.b) };
-    sel.secondaryRgb = { SrgbToLinear(sCol.r), SrgbToLinear(sCol.g), SrgbToLinear(sCol.b) };
+    sel.primaryRgb = colorRgb(m_profile.primaryCustom, m_profile.primaryCustomRgb, pCol);
+    sel.secondaryRgb = colorRgb(m_profile.secondaryCustom, m_profile.secondaryCustomRgb, sCol);
+    sel.accentRgb = colorRgb(m_profile.accentCustom, m_profile.accentCustomRgb, aCol);
     sel.visorRgb = { SrgbToLinear(vCol.r), SrgbToLinear(vCol.g), SrgbToLinear(vCol.b) };
 
     // Coalesce: apply at once when the previous application is older than 250 ms, otherwise keep it pending and let
@@ -960,6 +1034,18 @@ bool ArmorCustomizer::LoadProfile(const std::filesystem::path& path) {
             m_profile.primaryColor = std::clamp(j["primary_color"].get<int>(), 0, 29);
         if (j.contains("secondary_color") && j["secondary_color"].is_number_integer())
             m_profile.secondaryColor = std::clamp(j["secondary_color"].get<int>(), 0, 29);
+        if (j.contains("accent_color") && j["accent_color"].is_number_integer())
+            m_profile.accentColor = std::clamp(j["accent_color"].get<int>(), 0, 29);
+        auto loadCustom = [&](const char* flag, const char* rgbKey, bool& custom, std::array<float, 3>& rgb) {
+            if (j.contains(flag) && j[flag].is_boolean()) custom = j[flag].get<bool>();
+            if (j.contains(rgbKey) && j[rgbKey].is_array() && j[rgbKey].size() == 3) {
+                for (int i = 0; i < 3; ++i)
+                    if (j[rgbKey][i].is_number()) rgb[i] = std::clamp(j[rgbKey][i].get<float>(), 0.0f, 1.0f);
+            }
+        };
+        loadCustom("primary_custom", "primary_custom_rgb", m_profile.primaryCustom, m_profile.primaryCustomRgb);
+        loadCustom("secondary_custom", "secondary_custom_rgb", m_profile.secondaryCustom, m_profile.secondaryCustomRgb);
+        loadCustom("accent_custom", "accent_custom_rgb", m_profile.accentCustom, m_profile.accentCustomRgb);
 
         if (j.contains("spartan") && j["spartan"].is_object()) {
             const auto& sp = j["spartan"];
@@ -1022,13 +1108,10 @@ bool ArmorCustomizer::LoadProfile(const std::filesystem::path& path) {
         if (j.contains("elite") && j["elite"].is_object()) {
             const auto& el = j["elite"];
             if (el.contains("armor_set") && el["armor_set"].is_number_integer()) {
-                m_profile.eliteArmorSet = std::clamp(el["armor_set"].get<int>(), 0, static_cast<int>(kEliteSets.size()) - 1);
-                m_profile.eliteHelmetIndex = m_profile.eliteArmorSet;
-                m_profile.eliteLeftShoulderIndex = m_profile.eliteArmorSet;
-                m_profile.eliteRightShoulderIndex = m_profile.eliteArmorSet;
-                m_profile.eliteChestIndex = m_profile.eliteArmorSet;
-                m_profile.eliteArmsIndex = m_profile.eliteArmorSet;
-                m_profile.eliteLegsIndex = m_profile.eliteArmorSet;
+                // A preset equips its own six permutations (the mixed presets reference the extra pieces),
+                // then the explicit *_index values below win for looks saved after mixing by hand.
+                ApplyEliteSetPieces(m_profile,
+                    std::clamp(el["armor_set"].get<int>(), 0, static_cast<int>(kEliteSets.size()) - 1));
             }
             auto maxOf = [](int piece) { return static_cast<int>(GetElitePieces(piece).size()) - 1; };
             if (el.contains("helmet_index") && el["helmet_index"].is_number_integer())
@@ -1087,8 +1170,32 @@ bool ArmorCustomizer::SaveProfile(const std::filesystem::path& path) {
         const auto& utilities = GetSpartanUtilities();
         const auto& knees = GetSpartanKneeGuards();
 
-        const auto& h = helmets[m_profile.helmetIndex];
-        const auto& hv = h.variants[m_profile.helmetVariantIndex];
+        // Normalise every index before it is used: an old save (or a palette/piece list that shrank)
+        // used to index these arrays unchecked here, which is an out-of-bounds read and a crash on save.
+        const int helmetIdx = std::clamp(m_profile.helmetIndex, 0, static_cast<int>(helmets.size()) - 1);
+        m_profile.helmetIndex = helmetIdx;
+        const auto& h = helmets[helmetIdx];
+        const int variantIdx = std::clamp(m_profile.helmetVariantIndex, 0, static_cast<int>(h.variants.size()) - 1);
+        m_profile.helmetVariantIndex = variantIdx;
+        const auto& hv = h.variants[variantIdx];
+        m_profile.leftShoulderIndex = std::clamp(m_profile.leftShoulderIndex, 0, static_cast<int>(shoulders.size()) - 1);
+        m_profile.rightShoulderIndex = std::clamp(m_profile.rightShoulderIndex, 0, static_cast<int>(shoulders.size()) - 1);
+        m_profile.chestIndex = std::clamp(m_profile.chestIndex, 0, static_cast<int>(chests.size()) - 1);
+        m_profile.wristIndex = std::clamp(m_profile.wristIndex, 0, static_cast<int>(wrists.size()) - 1);
+        m_profile.utilityIndex = std::clamp(m_profile.utilityIndex, 0, static_cast<int>(utilities.size()) - 1);
+        m_profile.kneeGuardsIndex = std::clamp(m_profile.kneeGuardsIndex, 0, static_cast<int>(knees.size()) - 1);
+        m_profile.visorColorIndex = std::clamp(m_profile.visorColorIndex, 0, static_cast<int>(kVisorColors.size()) - 1);
+        m_profile.armorEffectIndex = std::clamp(m_profile.armorEffectIndex, 0, static_cast<int>(kArmorEffects.size()) - 1);
+        m_profile.firefightVoiceIndex = std::clamp(m_profile.firefightVoiceIndex, 0, static_cast<int>(kFirefightVoices.size()) - 1);
+        m_profile.eliteArmorSet = std::clamp(m_profile.eliteArmorSet, 0, static_cast<int>(kEliteSets.size()) - 1);
+        m_profile.eliteArmorEffectIndex =
+            std::clamp(m_profile.eliteArmorEffectIndex, 0, static_cast<int>(kArmorEffects.size()) - 1);
+        m_profile.eliteHelmetIndex = std::clamp(m_profile.eliteHelmetIndex, 0, static_cast<int>(GetElitePieces(kEliteHelmet).size()) - 1);
+        m_profile.eliteLeftShoulderIndex = std::clamp(m_profile.eliteLeftShoulderIndex, 0, static_cast<int>(GetElitePieces(kEliteLeftShoulder).size()) - 1);
+        m_profile.eliteRightShoulderIndex = std::clamp(m_profile.eliteRightShoulderIndex, 0, static_cast<int>(GetElitePieces(kEliteRightShoulder).size()) - 1);
+        m_profile.eliteChestIndex = std::clamp(m_profile.eliteChestIndex, 0, static_cast<int>(GetElitePieces(kEliteChest).size()) - 1);
+        m_profile.eliteArmsIndex = std::clamp(m_profile.eliteArmsIndex, 0, static_cast<int>(GetElitePieces(kEliteArms).size()) - 1);
+        m_profile.eliteLegsIndex = std::clamp(m_profile.eliteLegsIndex, 0, static_cast<int>(GetElitePieces(kEliteLegs).size()) - 1);
 
         nlohmann::json j;
         j["service_tag"] = m_profile.serviceTag;
@@ -1096,6 +1203,15 @@ bool ArmorCustomizer::SaveProfile(const std::filesystem::path& path) {
         j["body_type"] = static_cast<int>(m_profile.bodyType);
         j["primary_color"] = m_profile.primaryColor;
         j["secondary_color"] = m_profile.secondaryColor;
+        j["accent_color"] = m_profile.accentColor;
+        // Custom picker-wheel colours: the exact RGB the Armory previews, plus the palette index above
+        // (the in-game profile only accepts Reach palette item ids).
+        j["primary_custom"] = m_profile.primaryCustom;
+        j["secondary_custom"] = m_profile.secondaryCustom;
+        j["accent_custom"] = m_profile.accentCustom;
+        j["primary_custom_rgb"] = { m_profile.primaryCustomRgb[0], m_profile.primaryCustomRgb[1], m_profile.primaryCustomRgb[2] };
+        j["secondary_custom_rgb"] = { m_profile.secondaryCustomRgb[0], m_profile.secondaryCustomRgb[1], m_profile.secondaryCustomRgb[2] };
+        j["accent_custom_rgb"] = { m_profile.accentCustomRgb[0], m_profile.accentCustomRgb[1], m_profile.accentCustomRgb[2] };
 
         j["spartan"] = {
             {"helmet", m_profile.spartanHelmetGroup},
@@ -1130,7 +1246,7 @@ bool ArmorCustomizer::SaveProfile(const std::filesystem::path& path) {
 
         j["elite"] = {
             {"armor_set", m_profile.eliteArmorSet},
-            {"armor_set_id", kEliteSets[std::clamp(m_profile.eliteArmorSet, 0, static_cast<int>(kEliteSets.size()) - 1)].stringId},
+            {"armor_set_id", kEliteSets[m_profile.eliteArmorSet].stringId},
             {"helmet_index", m_profile.eliteHelmetIndex},
             {"left_shoulder_index", m_profile.eliteLeftShoulderIndex},
             {"right_shoulder_index", m_profile.eliteRightShoulderIndex},
@@ -1144,7 +1260,7 @@ bool ArmorCustomizer::SaveProfile(const std::filesystem::path& path) {
             {"arms_id", ElitePieceId(kEliteArms, m_profile.eliteArmsIndex)},
             {"legs_id", ElitePieceId(kEliteLegs, m_profile.eliteLegsIndex)},
             {"armor_effect_index", m_profile.eliteArmorEffectIndex},
-            {"armor_effect_id", kArmorEffects[std::clamp(m_profile.eliteArmorEffectIndex, 0, static_cast<int>(kArmorEffects.size()) - 1)].stringId}
+            {"armor_effect_id", kArmorEffects[m_profile.eliteArmorEffectIndex].stringId}
         };
 
         j["nameplate_index"] = m_profile.nameplateIndex;
@@ -1463,12 +1579,15 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
     {
         SlotRow p{ "COLORS", "Primary", RowKind::Colour, &m_profile.primaryColor };
         SlotRow q{ "COLORS", "Secondary", RowKind::Colour, &m_profile.secondaryColor };
+        SlotRow a{ "COLORS", "Accent", RowKind::Colour, &m_profile.accentColor };
         for (const auto& c : kReachColors) {
             p.options.push_back({ c.name, "", ColourU32(c.r, c.g, c.b) });
             q.options.push_back({ c.name, "", ColourU32(c.r, c.g, c.b) });
+            a.options.push_back({ c.name, "", ColourU32(c.r, c.g, c.b) });
         }
         rows.push_back(p);
         rows.push_back(q);
+        rows.push_back(a);
     }
 
 
@@ -1559,6 +1678,11 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
         s_buyRow = -1;
         if (*r.index == value && r.index != &speciesInt && r.index != &bodyInt) return;
         *r.index = value;
+        if (r.kind == RowKind::Colour) {   // a palette choice replaces any custom wheel colour
+            if (r.index == &m_profile.primaryColor) m_profile.primaryCustom = false;
+            else if (r.index == &m_profile.secondaryColor) m_profile.secondaryCustom = false;
+            else if (r.index == &m_profile.accentColor) m_profile.accentCustom = false;
+        }
         if (r.index == &speciesInt) {
             m_profile.species = static_cast<PlayerSpecies>(std::clamp(speciesInt, 0, 1));
             m_previewSpecies = m_profile.species;
@@ -1568,8 +1692,8 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
         } else if (r.index == &m_profile.helmetIndex) {
             m_profile.helmetVariantIndex = 0;   // a new helmet starts on its base variant
         } else if (r.index == &m_profile.eliteArmorSet) {
-            m_profile.eliteHelmetIndex = m_profile.eliteLeftShoulderIndex = m_profile.eliteRightShoulderIndex =
-                m_profile.eliteChestIndex = m_profile.eliteArmsIndex = m_profile.eliteLegsIndex = m_profile.eliteArmorSet;
+            // Each preset equips its own pieces; the mixed presets use the Council/Schism/H2A extras.
+            ApplyEliteSetPieces(m_profile, m_profile.eliteArmorSet);
         }
         m_dirty = true;
         SaveProfile(m_profilePath);
@@ -1689,7 +1813,13 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
             // Current value on the right (a swatch for colours).
             const float vr = p1.x - 8.0f * s;
             if (r.kind == RowKind::Colour && r.index) {
-                const ImU32 c = r.options[std::clamp(*r.index, 0, 29)].swatch;
+                ImU32 c = r.options[std::clamp(*r.index, 0, 29)].swatch;
+                if (r.index == &m_profile.primaryColor && m_profile.primaryCustom)
+                    c = ColourU32(m_profile.primaryCustomRgb[0], m_profile.primaryCustomRgb[1], m_profile.primaryCustomRgb[2]);
+                else if (r.index == &m_profile.secondaryColor && m_profile.secondaryCustom)
+                    c = ColourU32(m_profile.secondaryCustomRgb[0], m_profile.secondaryCustomRgb[1], m_profile.secondaryCustomRgb[2]);
+                else if (r.index == &m_profile.accentColor && m_profile.accentCustom)
+                    c = ColourU32(m_profile.accentCustomRgb[0], m_profile.accentCustomRgb[1], m_profile.accentCustomRgb[2]);
                 ldl->AddRectFilled(ImVec2(vr - 18.0f * s, p0.y + 7.0f * s), ImVec2(vr, p1.y - 7.0f * s), c);
                 ldl->AddRect(ImVec2(vr - 18.0f * s, p0.y + 7.0f * s), ImVec2(vr, p1.y - 7.0f * s), IM_COL32(230, 240, 255, 160));
             } else {
@@ -1733,7 +1863,15 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
     } else if (row.index && !row.options.empty()) {
         const int n = static_cast<int>(row.options.size());
         const int equipped = std::clamp(*row.index, 0, n - 1);
-        // "Equipped: X" and a RANDOM button.
+        // Colour slots -> the custom-wheel fields of the profile (0 primary, 1 secondary, 2 accent).
+        auto colourSlot = [&](int* idx) -> int {
+            if (idx == &m_profile.primaryColor) return 0;
+            if (idx == &m_profile.secondaryColor) return 1;
+            if (idx == &m_profile.accentColor) return 2;
+            return -1;
+        };
+        const bool isColourRow = row.kind == RowKind::Colour;
+        // "Equipped: X" and RANDOM / CUSTOM COLOUR buttons.
         const std::string eq = "EQUIPPED: " + row.options[equipped].name;
         TextAt(dl, smallFont, 15.0f * s, ImVec2(pickX + pad, y + 6.0f * s), kAccentCol, eq.c_str());
         {
@@ -1753,6 +1891,55 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
                     choose(m_focusedRow, open[std::uniform_int_distribution<size_t>(0, open.size() - 1)(rng)]);
                 m_pickerScrollToEquipped = true;
             }
+            if (isColourRow && colourSlot(row.index) >= 0) {
+                const float cw = 160.0f * s;
+                const ImVec2 c0(b0.x - cw - 8.0f * s, y), c1(c0.x + cw, y + bh);
+                ImGui::SetCursorScreenPos(c0);
+                const bool custom = ImGui::InvisibleButton("##custom_colour", ImVec2(cw, bh));
+                const bool chov = ImGui::IsItemHovered();
+                dl->AddRectFilled(c0, c1, chov ? IM_COL32(48, 84, 110, 240) : IM_COL32(22, 38, 52, 235), 2.0f * s);
+                dl->AddRect(c0, c1, IM_COL32(143, 216, 255, chov ? 200 : 90), 2.0f * s);
+                TextAt(dl, smallFont, 13.0f * s,
+                       ImVec2(c0.x + (cw - TextW(smallFont, 13.0f * s, "CUSTOM COLOUR")) * 0.5f, c0.y + 7.0f * s), kWhiteCol,
+                       "CUSTOM COLOUR");
+                if (custom) ImGui::OpenPopup("##custom_colour_popup");
+            }
+        }
+        // Colour wheel for the focused colour slot (Armory preview; the profile keeps the nearest
+        // Reach palette index so the in-game colours remain valid).
+        if (isColourRow && ImGui::BeginPopup("##custom_colour_popup")) {
+            const int slot = colourSlot(row.index);
+            bool* custom = slot == 0 ? &m_profile.primaryCustom
+                         : slot == 1 ? &m_profile.secondaryCustom : &m_profile.accentCustom;
+            std::array<float, 3>* rgb = slot == 0 ? &m_profile.primaryCustomRgb
+                                     : slot == 1 ? &m_profile.secondaryCustomRgb : &m_profile.accentCustomRgb;
+            float col[3] = { (*rgb)[0], (*rgb)[1], (*rgb)[2] };
+            if (!*custom) {
+                const auto& pal = kReachColors[std::clamp(*row.index, 0, 29)];
+                col[0] = pal.r; col[1] = pal.g; col[2] = pal.b;
+            }
+            ImGui::TextUnformatted("CUSTOM COLOUR");
+            ImGui::Dummy(ImVec2(0, 8.0f * s));
+            ImGui::SetNextItemWidth(230.0f * s);
+            if (ImGui::ColorPicker3("##custom_wheel", col,
+                                    ImGuiColorEditFlags_PickerHueWheel | ImGuiColorEditFlags_NoSidePreview |
+                                    ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_DisplayRGB)) {
+                *custom = true;
+                (*rgb) = { col[0], col[1], col[2] };
+                if (row.index) *row.index = NearestPaletteIndex(col[0], col[1], col[2]);
+                SyncToReachArmory();
+                static uint64_t s_lastSave = 0;
+                if (GetTickCount64() - s_lastSave > 600) {
+                    s_lastSave = GetTickCount64();
+                    SaveProfile(m_profilePath);
+                }
+            }
+            if (ImGui::Button("USE PALETTE COLOUR")) {
+                *custom = false;
+                SyncToReachArmory();
+                SaveProfile(m_profilePath);
+            }
+            ImGui::EndPopup();
         }
         y += 40.0f * s;
 
@@ -1953,9 +2140,7 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
                 const AppearanceProfile saved = m_profile;
                 *field = wantValue;
                 if (field == &m_profile.helmetIndex) m_profile.helmetVariantIndex = 0;   // a helmet is tried on with its base
-                if (field == &m_profile.eliteArmorSet)   // an Elite set is tried on whole
-                    m_profile.eliteHelmetIndex = m_profile.eliteLeftShoulderIndex = m_profile.eliteRightShoulderIndex =
-                        m_profile.eliteChestIndex = m_profile.eliteArmsIndex = m_profile.eliteLegsIndex = wantValue;
+                if (field == &m_profile.eliteArmorSet) ApplyEliteSetPieces(m_profile, wantValue);   // try the whole preset
                 SyncToReachArmory();
                 m_profile = saved;
             } else {
