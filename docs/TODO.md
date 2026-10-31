@@ -3,8 +3,12 @@
 Single source of truth for open work. `[x]` = done (with the commit that did it), `[~]` = in progress, `[ ]` = open.
 The chronological log stays in `docs/HANDOFF.md`; this file is just the list.
 
-Last updated: 2026-10-31, after campaign co-op landed (`0b83b1c`), the lobby identity pass-through
-(`b8fb2ad` / `663cae2`) and the scoreboard overlay (`7cef78c`).
+Last updated: 2026-10-31, after campaign co-op (`0b83b1c`), lobby identity (`b8fb2ad` / `663cae2`), the scoreboard
+overlay (`7cef78c`) and the third-person camera (`97989d1`).
+
+**This file is the claim board.** Before starting an item, change its line to
+`- [~] @yourname YYYY-MM-DD HH:MM - what you are doing`, commit and push that single line, then do the work. When done:
+`- [x] @yourname ... - commit <hash>`. See `docs/TEAM-WORKFLOW.md`.
 
 ## Recently done (for context)
 
@@ -39,10 +43,10 @@ Last updated: 2026-10-31, after campaign co-op landed (`0b83b1c`), the lobby ide
 
 ## C. Engine features
 
-- [~] **Third-person toggle** — camera RE done: RR hooks `haloreach+0x48A910` (mode check, 5-byte prologue, detour returns
-  0/1) and `haloreach+0x1DCADC` (follow/camera update, 7-byte prologue, detour scales `+0x28` distance and flips `+0x14`
-  shoulder sign). Implementation: hook the first, add F5 toggle + host/mode gate; the second is only needed for
-  distance/shoulder tuning. Offsets and logic are captured next to this file in the handoff.
+- [x] **Third-person toggle — F5 works** (`97989d1`): `CameraThirdPerson` MinHooks `haloreach+0x48A910` and answers the
+  per-player camera-mode check with `true`; `-third-person` starts enabled. Verified capture in `docs/screenshots/third-person.png`
+- [~] @deepseek 2026-10-31 10:20 — **Third-person tuning**: follow hook at `haloreach+0x1DCADC` (call original, then scale
+  `[r9+0x28]` distance and flip the `[r9+0x14]` shoulder sign), settings row, key rebinding, host/mode gate
 - [ ] **Real solo pause, CHANGE TEAM, vote-to-kick** (transport + roster UI)
 - [ ] **Seamless transitions** — single-process map switch; research-only (RR also relaunches per match)
 

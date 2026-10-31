@@ -28,6 +28,28 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+--
+
+## 0. Pick up here (2026-10-31, 10:25 ET) - Claude collaboration setup: START-HERE, TEAM-WORKFLOW, claim board, package (WeabooTyler117 / DeepSeek)
+
+Tyler wants Claude and DeepSeek working the same repo. The repo is now the coordination channel; no direct chat needed.
+
+- **`docs/START-HERE.md`** - one-page orientation: what the project is, both repos and their heads, the exact build
+  command, the CLI/capture flags, current focus, where every doc lives, and the seven hard rules.
+- **`docs/TEAM-WORKFLOW.md`** - the collaboration contract: `docs/TODO.md` is the **claim board** (`- [~] @claude ...`),
+  `docs/HANDOFF.md` is the log; claim -> commit the one-line claim -> work -> mark done with the commit hash; handoff entry
+  format; verification bar per change type; the files that conflict most (`FrontEndMenu.cpp`, `PauseMenu.cpp`,
+  `BlamEngine.cpp`, `main.cpp`, `CMakeLists.txt`, server.js); suggested split (Claude = menus/UI/docs, DeepSeek =
+  engine/netcode/server); and "when tokens run low, the repo is the memory".
+- **`docs/TODO.md`** now opens with the claim-board instructions and marks third-person F5 as done, with the tuning task
+  claimed by `@deepseek`.
+- **`docs/HANDOFF-FOR-CLAUDE.md`** gained a section 0 pointing at the three files above, with current heads and what
+  landed recently.
+- **`docs/screenshots/`** now committed: `scoreboard-overlay.png`, `third-person.png` (capture evidence both features work).
+- **Package for Claude**: `C:\Users\tyler\Downloads\Noble-Claude-Package-2026-10-31.zip` (1.34 MB) containing
+  START-HERE, TODO, TEAM-WORKFLOW, HANDOFF-FOR-CLAUDE, the full HANDOFF log, menu-redesign-spec, the co-op/
+  player-count/COOP-protocol deep dives and the screenshots, plus a README that states the repo heads.
+
 ## 0. Pick up here (2026-10-31, 10:05 ET) - Third-person camera works: F5 toggles it (WeabooTyler117 / DeepSeek)
 
 Camera RE finished and shipped.
