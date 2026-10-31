@@ -71,6 +71,36 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-31, 00:40 ET) - Controller-first Settings: tabs, Y/X, one preset, remap everything (@claude)
+
+Commit `dc8731b`. TODO section H.
+
+**The filed root cause was only half right.** ImGui's Win32 backend did feed slot 0 in the front-end. What really failed: the Button Layout row called `CycleValue` and dropped the step, so it could not change with any device, even a mouse; the pause menu got no pad at all; and any pad not in slot 0 was ignored. @deepseek's `GamepadUi` (`f782657`, landed while I worked) fixed the pause menu but ran on top of the backend. **`src/ui/UiPad.cpp` replaces it** in a new commit, nothing rewritten: it scans all slots, ignores the pad when Noble isn't in front, and is the only path now (backend gamepad compiled out in `CMakeLists.txt`).
+
+- **Tabs:** left/right adjusts a focused value. It switches tabs only on the tab list (Up from the first row, shown with an outline and `< >`) or on a row with no value. LB/RB no longer switch tabs here; Q/E still do.
+- **Apply/Discard:** box shows Y + ENTER APPLY and X + ESC DISCARD, both clickable. Esc with unsaved changes now discards and stays on the page instead of leaving. Enter applies only from the tab list or a slider row, because other rows use Enter. B always goes back, and unsaved changes stay pending as before.
+- **Preset:** one row, 12 entries (6 Reach layouts, each with sticks normal or swapped), stored in the existing `padLayout` + `padStickLayout`. The diagram sits under it and is now tied to physical inputs, showing what each does. **Changing preset clears custom bindings**: an old saved `Jump = A` left LB unused and doubled A under Bumper Jumper. Tyler's own settings may hold the same leftover.
+- **Remap:** 18 actions to any button, trigger, D-pad direction, stick direction or click. A taken input swaps. New: throw grenade, crouch, scoreboard, pause, 4 D-pad, team chat and push to talk (assignable, no effect yet). Toggle zoom row, default on.
+- **Layout bug fixed:** non-Default presets lost LT throw, and Southpaw's and Boxer's grenade button switched grenades instead of throwing. The self-test expected the wrong thing, so it was corrected too.
+- Controller Back now opens Noble's scoreboard, not Reach's. Pause-menu Esc reopen race removed (`PauseMenu.cpp` no longer also reads Esc); B resumes.
+- **Test flag:** `-pad-script a,down,right,y` presses inputs with no controller, one per 500 ms after 3 s.
+
+**Decisions for Tyler (handoff, not blocking):**
+1. "Reverse Southpaw / Reverse Bumper Jumper" are not added: I could not verify what they are, and swapped-stick entries are named plainly instead.
+2. Stick *movement* axes can't be moved independently of the swap, only used as extra inputs for actions.
+3. Paddles 1-6: XInput does not report them. The row says to assign them in Xbox Accessories or Steam Input. Real support needs a different input API.
+4. Sensitivity 1-19 is the profile byte + 1; how it lines up with Reach's 1-10 is unmeasured, and the row says so. 19 is also the maximum, so stock can only go down.
+
+**Hold-to-zoom is a guess:** it assumes the engine toggles on each press and sends a press on the way down and up. Untested in a match.
+
+Self-review:
+- Build 0 errors / 0 warnings on the tree merged with `caf601a`. `-test-map-gametypes`: button layouts 24 expectations, 0 failures.
+- `-menu-screen settings -pad-script ...`, no keyboard or mouse, comparing `settings.json` before and after (second checkout, restored afterwards): `brightness` 1.0 to 1.02, `volumeGame` 0 to 0.01, `padLayout` 0 to 2, `padLookY` 19 to 18 on Y, a further change discarded by X. `wait,b` returned to the main menu, capture opened.
+- `docs/screenshots/settings-controller-preset.png` opened: Bumper Jumper, Y/X prompts, diagram correct.
+- **Not run:** physical button presses, a preset or rebind in a real match, hold-to-zoom, Settings from the pause menu, the rebind capture itself, other resolutions.
+
+Review of @deepseek `f782657`: its diagnosis overstated (see above), and the file is retired with reason. Not re-opened as a failure; it did reach the pause menu.
+
 ## 0. Pick up here (2026-10-31, 00:25 ET) - Spartan Armory preview ids fixed: CQC/ODST/UA-Base, the chest chain, Chobham/Hard Case/Soft Case (Tyler / DeepSeek)
 
 Tyler's Armory pass found the 3D preview showing a different piece than the name/picture while the in-game item
