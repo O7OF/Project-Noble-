@@ -4,6 +4,7 @@
 #include "ui/UiArt.hpp"
 #include "common/Logger.hpp"
 #include "common/SaveCodec.hpp"
+#include "hooks/EnginePatches.hpp"
 #include "hooks/HookManager.hpp"
 #include "ui/PauseMenu.hpp"
 #include "ui/ForgeMenu.hpp"
@@ -1683,6 +1684,18 @@ static void FillLocalInput(uint8_t* st) {
     }
     if (s_holdMouseUntilRelease) {
         st[0x004 + VK_LBUTTON] = st[0x004 + VK_RBUTTON] = st[0x004 + VK_MBUTTON] = 0;
+    }
+
+    // Lower weapon keybind (SETTINGS > CONTROLS > KEYBOARD & MOUSE > ACTIONS, unbound by default):
+    // rising-edge press queues a one-shot Alert Carry toggle in PlayerControlUpdate.
+    {
+        const int lowerVk = KeyBindings::EffectiveKey(KeyBindings::kActionLowerWeapon);
+        const bool lowerDown = !uiPointer && lowerVk > 0 && lowerVk < 256 && st[0x004 + lowerVk] != 0;
+        static bool s_lowerWasDown = false;
+        if (lowerDown && !s_lowerWasDown) {
+            EnginePatches::RequestLowerWeaponToggle();
+        }
+        s_lowerWasDown = lowerDown;
     }
 
     // Mouse look: delta from the window centre, then recentre (not while a menu owns the pointer).

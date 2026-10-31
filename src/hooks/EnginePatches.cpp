@@ -3,6 +3,7 @@
 #include "SigScanner.hpp"
 #include "common/Logger.hpp"
 #include <psapi.h>
+#include <atomic>
 #include <cstring>
 #include <intrin.h>
 
@@ -44,6 +45,30 @@ static uint8_t __fastcall Hook_IsWhitespace(uint16_t ch) {
         return 0; // Characters below 0x09 are never whitespace; prevents binary search underflow crash
     }
     return s_originalIsWhitespace(ch);
+}
+
+// haloreach+0x5DF80: player_control_update(playerIndex, inputUserIndex, dt1, dt2, outA5, controlOut).
+// At +0x60896..0x60952 the controller Machinima combo sets bit 10 (0x400) in [controlOut + 0x28], which
+// the caller (0x61A38, at +0x625CE) consumes to toggle [player_control_globals + 0x1E3] (Alert Carry / Lower Weapon)
+// and set unit control bit 21 (_unit_control_alert_carry_bit). Because haloreach+0x3C724 never maps any of the
+// 66 PC keyboard slots to abstract buttons 0x10 / 0x19 / 0x1A, keyboard players could never lower their weapon.
+// Hooking 0x5DF80 lets Noble's bindable "Lower weapon" action pulse bit 10 on key press.
+using PlayerControlUpdateFn = void(__fastcall*)(int32_t playerIndex, int32_t inputUserIndex, float a3, float a4, void* a5, void* controlOut);
+static PlayerControlUpdateFn s_originalPlayerControlUpdate = nullptr;
+static std::atomic<bool> s_lowerWeaponTogglePending{false};
+
+void EnginePatches::RequestLowerWeaponToggle() {
+    s_lowerWeaponTogglePending.store(true);
+}
+
+static void __fastcall Hook_PlayerControlUpdate(int32_t playerIndex, int32_t inputUserIndex, float a3, float a4, void* a5, void* controlOut) {
+    if (s_originalPlayerControlUpdate) {
+        s_originalPlayerControlUpdate(playerIndex, inputUserIndex, a3, a4, a5, controlOut);
+    }
+    if (playerIndex == 0 && controlOut != nullptr && s_lowerWeaponTogglePending.exchange(false)) {
+        auto* actionFlags = reinterpret_cast<uint32_t*>(static_cast<uint8_t*>(controlOut) + 0x28);
+        *actionFlags |= (1u << 10);
+    }
 }
 
 bool EnginePatches::Apply(HMODULE hReachDll) {
@@ -169,6 +194,43 @@ bool EnginePatches::Apply(HMODULE hReachDll) {
     // game without this hook (profile item ids, ReachHost slot 34). If an unlock check is still needed, hook the exact
     // RVA after verifying it in a disassembler, check more bytes than a common prologue, and call the original.
     NOBLE_INFO("EnginePatches: IsArmorItemUnlocked hook is off (its signature matched the appearance builder at RVA 0x105BDC).");
+
+    // 4. Lower weapon (Alert Carry) availability & keybind hook (RVAs 0x5D6BA and 0x5DF80)
+    // haloreach+0x5D688 (player_control_machinima_available) checks [game_globals + 0x12] != 3 at RVA 0x5D6BA
+    // (80 79 12 03 74 02: cmp byte ptr [rcx+12h], 3; je 0x5D6C2). Because synthesized launch blocks set
+    // launch_block[4] = 3, [rcx+12h] is 3 in matches and 0x5D688 would return 0, skipping the Alert Carry
+    // toggle at 0x625B7. Patching 74 02 -> 90 90 allows Alert Carry in all in-game sessions, and hooking
+    // player_control_update at RVA 0x5DF80 pulses bit 10 of [controlOut + 0x28] when the bound key is pressed.
+    {
+        static const uint8_t kExpectedMachinimaCheck[6] = { 0x80, 0x79, 0x12, 0x03, 0x74, 0x02 };
+        static const uint8_t kPatchedMachinimaCheck[6]  = { 0x80, 0x79, 0x12, 0x03, 0x90, 0x90 };
+        uint8_t* checkAddr = reinterpret_cast<uint8_t*>(baseAddress + 0x5D6BA);
+        if (std::memcmp(checkAddr, kExpectedMachinimaCheck, sizeof(kExpectedMachinimaCheck)) == 0) {
+            DWORD oldProt = 0;
+            if (VirtualProtect(checkAddr, sizeof(kPatchedMachinimaCheck), PAGE_EXECUTE_READWRITE, &oldProt)) {
+                std::memcpy(checkAddr, kPatchedMachinimaCheck, sizeof(kPatchedMachinimaCheck));
+                FlushInstructionCache(GetCurrentProcess(), checkAddr, sizeof(kPatchedMachinimaCheck));
+                VirtualProtect(checkAddr, sizeof(kPatchedMachinimaCheck), oldProt, &oldProt);
+                NOBLE_INFO("EnginePatches: Enabled in-game Alert Carry (Lower weapon) at RVA 0x5D6BA.");
+            }
+        }
+        static const uint8_t kExpectedControlPrologue[9] = { 0x48, 0x8B, 0xC4, 0x55, 0x53, 0x56, 0x57, 0x41, 0x54 };
+        void* controlTarget = reinterpret_cast<void*>(baseAddress + 0x5DF80);
+        if (std::memcmp(controlTarget, kExpectedControlPrologue, sizeof(kExpectedControlPrologue)) == 0) {
+            if (HookManager::InstallHook(
+                controlTarget,
+                reinterpret_cast<void*>(&Hook_PlayerControlUpdate),
+                reinterpret_cast<void**>(&s_originalPlayerControlUpdate),
+                "haloreach_player_control_update"
+            )) {
+                NOBLE_INFO("EnginePatches: Hooked PlayerControlUpdate at RVA 0x5DF80 for Lower weapon keybind.");
+            } else {
+                NOBLE_WARN("EnginePatches: Could not install PlayerControlUpdate detour at RVA 0x5DF80.");
+            }
+        } else {
+            NOBLE_WARN("EnginePatches: Unexpected prologue at RVA 0x5DF80; Lower weapon keybind hook skipped.");
+        }
+    }
 #if 0
     // 3. Unlock all armor customization items in multiplayer/Forge (RVA 0x2C7DCC)
     uintptr_t isArmorUnlockedAddr = SigScanner::FindPattern(

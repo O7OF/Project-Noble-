@@ -64,7 +64,7 @@ void Clamp(SettingsData& d) {
     d.padLeftDeadZone = std::clamp(d.padLeftDeadZone, 0.0f, 0.5f);
     d.padRightDeadZone = std::clamp(d.padRightDeadZone, 0.0f, 0.5f);
     for (auto it = d.keyOverrides.begin(); it != d.keyOverrides.end();) {
-        if (it->first < 0 || it->first >= 66 || it->second <= 0 || it->second >= 256) it = d.keyOverrides.erase(it);
+        if (it->first < 0 || it->first >= 67 || it->second <= 0 || it->second >= 256) it = d.keyOverrides.erase(it);
         else ++it;
     }
 }
