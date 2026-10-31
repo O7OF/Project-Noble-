@@ -162,7 +162,7 @@ explicitly** - a "needs" item must land before the dependent one can be verified
   open the pause menu in a match, press Esc to resume, check whether it reopens immediately (likely the engine key state and
   our edge detection disagreeing). Owner: @claude (PauseMenu).
 - [x] @gemini 2026-10-31 01:36 - **Real ping values & WebSocket Relay fragment reassembly / NAT hole-punching** — commit bfcc6c7 (`ServerTestDeploy` `8f16061`): `NetworkTransport` measures live per-peer RTT from `PING`/`PONG` and UDP packet exchanges, disables `SIO_UDP_CONNRESET`, reassembles fragmented WebSocket relay frames up to 64 KB with 2 ms poll latency, punches same-LAN guest addresses, and syncs `peer_pings` into roster rows via `DoHeartbeat()` / `FetchLobbyStateSync()`.
-- [~] @deepseek 2026-10-31 04:45 - **Scoreboard backend actions**: report endpoint landed (`ServerTestDeploy` - POST /api/reports -> data/reports.jsonl, verified), vote-to-kick and end-round/end-match next; @claude can wire the Report button to it now.
+- [x] @deepseek 2026-10-31 05:00 - **Scoreboard backend actions** - server endpoints live and verified: report (`b645dbf`), vote-to-kick request/status (`655fb4d`), host-only End Round/End Match token-gated (`65ba17a`), plus 128-player session cap + 2 MB JSON body (`48dc168`, `a1196ba`). @claude can wire the three buttons; pad Back and real ping stay open in section C.
 - [ ] **Scoreboard backend actions** — `POST /api/reports` (report endpoint; replaces the local-only `reports.jsonl`),
   vote-to-kick request/vote/result endpoint, and host actions for End Round / End Match. Server + transport @deepseek, then
   @claude un-greys the buttons and wires them.
@@ -259,6 +259,10 @@ items above close. Keep the spec open when building any screen so the details la
   list 128, but an actual 128-player match needs the `capacity`/`coopx`-class engine work in `docs/player-count-scaling.md`
   (RR patch path) plus bandwidth work. Keep 128 as the lobby/browser ceiling for now and file match capacity as research,
   not a promise.
+
+- [~] @deepseek 2026-10-31 05:20 - **voice transport (night block 2)** - voice device probe landed (`7e6a2dd`): `-voice-probe` logs 2 capture / 4 playback devices on this PC, module `src/audio/VoiceChat.*`. Next: WASAPI streams + Opus + relay channel: WASAPI capture -> 20 ms Opus frames -> relay `voice` message -> jitter buffer -> playback; UI never supplies endpoints/keys.
+
+- [~] @deepseek 2026-10-31 05:20 - **post-game + credits (night block 3)** follows voice phase 1: -postgame-test timing, multiplayer end path, exit_experience sounds, mission_complete split.
 
 ## I. Armory presentation, audio and data (Tyler, 2026-10-31 00:10)
 

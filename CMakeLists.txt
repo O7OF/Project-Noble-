@@ -141,6 +141,7 @@ set(SOURCES
     src/network/UPnP.cpp
     src/network/SessionManager.cpp
     src/audio/VgmAudioHook.cpp
+    src/audio/VoiceChat.cpp
     src/audio/ReachAudio.cpp
     src/ui/ModCatalog.cpp
     src/ui/InputPrompts.cpp
@@ -201,6 +202,7 @@ set(HEADERS
     src/network/UPnP.hpp
     src/network/SessionManager.hpp
     src/audio/VgmAudioHook.hpp
+    src/audio/VoiceChat.hpp
     src/audio/ReachAudio.hpp
     src/ui/ModCatalog.hpp
     src/ui/InputPrompts.hpp

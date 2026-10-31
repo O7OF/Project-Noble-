@@ -36,6 +36,7 @@
 #include "ui/PauseMenu.hpp"
 #include "ui/UiArt.hpp"
 #include "audio/ReachAudio.hpp"
+#include "audio/VoiceChat.hpp"
 #include "hooks/LobbyPatches.hpp"
 #include "hooks/ForgePatches.hpp"
 #include "hooks/EnginePatches.hpp"
@@ -305,6 +306,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     int engineModeOverride = 0;
     bool guestPostStart = false;
     bool thirdPerson = false;
+    bool voiceProbe = false;
     int thirdPersonMode = 0;
     int thirdPersonDistance = 100;
     std::string engineCommand;
@@ -358,6 +360,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
                 expectedPeers = _wtoi(argvW[++i]);
             } else if (arg == L"-third-person") {
                 thirdPerson = true;
+            } else if (arg == L"-voice-probe") {
+                voiceProbe = true;
             } else if (arg == L"-third-person-distance" && i + 1 < numArgs) {
                 thirdPersonDistance = _wtoi(argvW[++i]);
                 thirdPerson = true;
@@ -504,6 +508,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     noble::CameraThirdPerson::Install(loader->GetModuleHandle());
     if (thirdPersonMode > 0) noble::CameraThirdPerson::SetMode(thirdPersonMode);
     if (thirdPersonDistance != 100) noble::CameraThirdPerson::SetDistancePercent(thirdPersonDistance);
+    if (voiceProbe) noble::ProbeVoiceDevices();
     if (thirdPerson) noble::CameraThirdPerson::SetEnabled(true);
 
     // Apply 32/64 player lobby expansion detours
