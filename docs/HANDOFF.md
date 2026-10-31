@@ -22,6 +22,66 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+--
+
+## 0. Pick up here (2026-10-31, 09:10 ET) - Third person: RR's camera module mapped, implementation not started (WeabooTyler117 / DeepSeek)
+
+Third-person toggle was the third item on the short list. RR has it working (`F5` toggle, `F6` shoulder swap) and its
+binary names the exact pieces, so this is a bounded RE job rather than a shot in the dark:
+
+- `host-probe.exe` symbols: `camera::install`, `camera::toggle`, `camera::third_person`, `camera::set_distance`,
+  `camera::swap_shoulder`, `camera::follow_update`, `camera::ORIG_CHECK`, `camera::ORIG_FOLLOW`, plus statics `THIRD`,
+  `DISTANCE`, `LEFT_SHOULDER`.
+- Environment knobs: `RR_THIRD_PERSON`, `RR_LEFT_SHOULDER`.
+- Log strings: `camera: third person <on/off>`, `camera: third person distance <n>`, and the game-rules line
+  *"camera: the host's rules set the camera in this game; the toggle does nothing"* - RR also implements a **host rule** for
+  forced first/third person (strings `forced first person`, `forced third person`).
+- `ORIG_CHECK` / `ORIG_FOLLOW` says the approach is: hook the engine's first-person **check** (to allow third) and the
+  **follow/update** function (to place the camera behind the player), with distance and shoulder offset as tunables.
+
+Next step: reverse `camera::install` in `host-probe.exe` (Rust, unstripped) to recover the two RVAs it hooks in
+`haloreach.dll`, then replicate the hook pair in `src/engine/` (same MinHook pattern as `CameraFov`/`LobbyPatches`) behind a
+settings toggle + key bind, gated on host / mode as Tyler asked. No client change was made for this item.
+
+--
+
+## 0. Pick up here (2026-10-31, 09:00 ET) - Scoreboard overlay: Noble panel over Reach's engine-drawn scoreboard (WeabooTyler117 / DeepSeek)
+
+Shipped the in-match scoreboard overlay.
+
+- `PauseMenu::SetScoreboardRoster(entries, map, mode)` + a panel drawn while the scoreboard key is held (Tab, read through
+  the engine's own key state). Noble-styled: SCOREBOARD header, PLAYER / TAG / TEAM columns, team-colour strip per row,
+  rank icon, service tag, local-player highlight and a YOU badge.
+- Roster source: `main.cpp` fetches the session roster once per match from `-session-id` via
+  `MasterServerClient::FetchLobbyStateSync` on a background thread, so names/ranks/emblems/teams come from the server
+  identity work. Solo/offline falls back to the local player.
+- `ReachHost::IsKeyHeld(vk)` mirrors the engine's own pad/keyboard state (published at the end of the input poll, after the
+  synthetic test presses), so overlays appear exactly when the game does - physical keys and `-scoreboard-at` both work.
+- Capture: `-scoreboard-test` draws the panel and saves `capture_888888.bmp`; `PauseMenu::Render` performs the capture
+  **after** `RenderImpl`, otherwise the frame is black (learned the hard way). Verified: the capture shows the panel with
+  `WEABOOTYLER117`, `YOU` and `RED`.
+
+Known gap: no live K/D/score columns yet - Reach draws those itself and we have not found a live per-player score source
+(the post-game record only exists at the end). Identity/team/rank is live; columns come with the engine player-record hook.
+
+--
+
+## 0. Pick up here (2026-10-31, 08:50 ET) - Lobby identity pass-through: rank / emblem / nameplate / team now survive the server (WeabooTyler117 / DeepSeek)
+
+First item of the short list. The client already sent `host_rank_index`, `host_emblem_id`, `host_nameplate_id`,
+`host_team` on registration and parsed `rankIndex`/`emblemId`/`nameplateId`/`team` from roster rows, but the server dropped
+them, so remote rows kept placeholder badges.
+
+- **Server (`O7OF/ServerTestDeploy` `b8fb2ad`)**: parses and stores the four host identity fields, stamps them onto the
+  host's roster entry (client-supplied roster included), accepts identity updates on heartbeat (keeping the host row in
+  sync), exposes them in `masterPublicSession` for the server browser, and stores guest identity from the lobby join body.
+- **Client (`663cae2`)**: `JoinLobbySync` takes the local identity and sends it in the join body; the FrontEndMenu call
+  site passes `Career::RankIndex(credits)` and the Armory profile's emblem/nameplate indices.
+- Verified against a local server: registration with a deliberately zeroed client roster returns rank 12 / emblem 44 /
+  nameplate 7 / team 1 on the host row, a guest join (30 / 5 / 9 / 2) shows in the lobby roster, and `/api/sessions` exposes
+  `host_rank_index` etc. A real client host against the local server also listed with the new fields.
+
+--
 ## 0. Pick up here (2026-10-31, 18:15 ET) - Fix Co-op Campaign Netplay Desync, Elite Armor & Effects Replication, Armory Visuals & Social Menu (O7OF / Dominus)
 
 ### 1. Co-op Campaign Netplay Desync (Guest 2nd Player Spawn Error)
