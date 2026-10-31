@@ -2523,7 +2523,7 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
                   player.nameplateId > 0 ? player.nameplateId : (isLocalPlayer ? ownProf.nameplateIndex : 0),
                   player.team,
                   player.serviceTag, player.username, player.isDev, selected,
-                  isLocalPlayer ? ownProf.emblemBackgroundIndex : 0);
+                  player.emblemBackgroundId > 0 ? player.emblemBackgroundId : (isLocalPlayer ? ownProf.emblemBackgroundIndex : 0));
 
         ImGui::SetCursorScreenPos(pr0);
         char prBtnId[64];

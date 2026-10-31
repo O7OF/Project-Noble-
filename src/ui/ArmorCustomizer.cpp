@@ -2040,7 +2040,7 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
                 gdl->AddRectFilled(t0, t1, isEq ? IM_COL32(34, 70, 104, 235) : (hov ? IM_COL32(40, 54, 70, 235) : IM_COL32(20, 28, 38, 220)), 2.0f * s);
                 const auto& catalog = UiArt::GetNameplateCatalog();
                 if (static_cast<size_t>(i) < catalog.size()) {
-                    const UiTexture npTex = UiArt::Nameplate(catalog[i].id);
+                    const UiTexture npTex = UiArt::Nameplate(i);
                     if (npTex) {
                         UiArt::DrawContain(gdl, npTex, ImVec2(t0.x + 4.0f * s, t0.y + 4.0f * s), ImVec2(t1.x - 4.0f * s, t1.y - 4.0f * s),
                                            (isEq || hov) ? IM_COL32_WHITE : IM_COL32(220, 220, 220, 255));

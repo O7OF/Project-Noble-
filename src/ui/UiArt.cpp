@@ -876,28 +876,16 @@ const std::vector<EmblemInfo>& GetEmblemCatalog() {
     return s_emblemCatalog;
 }
 
-UiTexture Nameplate(int id) {
+UiTexture Nameplate(int index) {
     EnsureCustomizationCatalogs();
-    const auto& catalog = s_nameplateCatalog;
-    std::string imageName = "PlayerIDNamePlateBase";
-    for (const auto& item : catalog) {
-        if (item.id == id) {
-            imageName = item.image;
-            break;
-        }
-    }
-
+    // The Armory stores a position in this list, not the XML id: most ids don't match their position.
+    const std::string imageName = index >= 0 && static_cast<size_t>(index) < s_nameplateCatalog.size()
+                                      ? s_nameplateCatalog[static_cast<size_t>(index)].image
+                                      : std::string("PlayerIDNamePlateBase");
     const fs::path imgDir = s_mccRoot / "Data" / "UI" / "NamePlates" / "Images";
     fs::path target = imgDir / (imageName + ".png");
     std::error_code ec;
-    if (!fs::exists(target, ec)) {
-        char buf[64];
-        std::snprintf(buf, sizeof(buf), "PlayerIDNamePlate_%03d.png", id);
-        target = imgDir / buf;
-    }
-    if (!fs::exists(target, ec)) {
-        target = imgDir / "PlayerIDNamePlateBase.png";
-    }
+    if (!fs::exists(target, ec)) target = imgDir / "PlayerIDNamePlateBase.png";
     if (!fs::exists(target, ec)) return {};
 
     std::lock_guard<std::mutex> lock(s_mutex);
