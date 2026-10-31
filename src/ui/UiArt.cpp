@@ -525,31 +525,55 @@ UiTexture MenuBackground() {
         NOBLE_WARN("UiArt: menu background '{}' is missing; falling back to the random pool", chosen);
     }
 
-    // 1. The player's own backgrounds always win.
-    std::vector<fs::path> custom = ImagesIn(CustomDir() / "backgrounds");
-    if (!custom.empty()) {
-        s_menuBackground = FileCached(custom[std::uniform_int_distribution<size_t>(0, custom.size() - 1)(s_rng)]);
-        if (s_menuBackground) return s_menuBackground;
-    }
-    // 2./3. Noble's own art and/or Reach's campaign scenes, as the setting asks.
+    // 1. The pool: the player's own backgrounds if there are any, else Noble's art and/or Reach's campaign scenes.
     const std::string mode = Settings::Get().Snapshot().menuBackground;
-    std::vector<fs::path> noble = ImagesIn(NobleDir() / "backgrounds");
     std::vector<std::string> pool;  // "file:<path>" or "scene:<scenario>"
-    if (mode != "reach") for (const auto& p : noble) pool.push_back("file:" + p.string());
-    if (mode != "noble" || pool.empty()) {
-        for (const SceneFingerprint& s : kCampaignScenes) {
-            if (std::string(s.scenario) == "m70_a") continue;  // the epilogue is mostly black space
-            pool.push_back(std::string("scene:") + s.scenario);
+    for (const fs::path& p : ImagesIn(CustomDir() / "backgrounds")) pool.push_back("file:" + p.string());
+    if (pool.empty()) {
+        if (mode != "reach") for (const fs::path& p : ImagesIn(NobleDir() / "backgrounds")) pool.push_back("file:" + p.string());
+        if (mode != "noble" || pool.empty()) {
+            for (const SceneFingerprint& s : kCampaignScenes) {
+                if (std::string(s.scenario) == "m70_a") continue;  // the epilogue is mostly black space
+                pool.push_back(std::string("scene:") + s.scenario);
+            }
         }
     }
-    std::shuffle(pool.begin(), pool.end(), s_rng);
-    for (const std::string& key : pool) {
-        UiTexture t = key.rfind("file:", 0) == 0 ? FileCached(fs::path(key.substr(5))) : SceneCached(key.substr(6));
-        if (t) {
-            s_menuBackground = t;
-            NOBLE_INFO("UiArt: menu background {}", key);
-            break;
+
+    // 2. Deal from a shuffled deck kept between runs: every picture shows once before any repeats. Each run is a new process,
+    // so picking at random every time kept landing on the same few.
+    const fs::path deckFile = s_exeDir / "data" / "userdata" / "menu-background-deck.txt";
+    std::vector<std::string> deck;
+    std::string last;
+    {
+        std::ifstream in(deckFile);
+        std::string line;
+        if (std::getline(in, last)) {
+            while (std::getline(in, line)) {
+                if (std::find(pool.begin(), pool.end(), line) != pool.end()) deck.push_back(line);
+            }
         }
+    }
+    bool shuffled = false;
+    while (!pool.empty()) {
+        if (deck.empty()) {
+            if (shuffled) break;  // a whole deck that won't load: nothing to show
+            shuffled = true;
+            deck = pool;
+            std::shuffle(deck.begin(), deck.end(), s_rng);
+            if (deck.size() > 1 && deck.back() == last) std::swap(deck.front(), deck.back());  // dealt from the back
+        }
+        const std::string key = deck.back();
+        deck.pop_back();
+        const UiTexture t = key.rfind("file:", 0) == 0 ? FileCached(fs::path(key.substr(5))) : SceneCached(key.substr(6));
+        if (!t) continue;
+        s_menuBackground = t;
+        NOBLE_INFO("UiArt: menu background {} ({} left in the deck)", key, deck.size());
+        std::error_code ec;
+        fs::create_directories(deckFile.parent_path(), ec);
+        std::ofstream out(deckFile, std::ios::trunc);
+        out << key << "\n";
+        for (const std::string& remaining : deck) out << remaining << "\n";
+        break;
     }
     return s_menuBackground;
 }

@@ -9,6 +9,7 @@
 #include <nlohmann/json.hpp>
 #include "UIManager.hpp"
 #include "NobleStyle.hpp"
+#include "common/MapNames.hpp"
 #include "SettingsPanel.hpp"
 #include "UiPad.hpp"
 #include "CareerPanel.hpp"
@@ -319,6 +320,8 @@ float BlurbBlockHeight(const Ui& ui, float width, const char* blurb) {
 
 enum class Screen { Main, Campaign, Skulls, Firefight, CustomGame, Forge, Servers, Settings, Armory, Mods, Career, PreGameLobby, Social };
 
+std::string s_lobbyBackdropMap;   // set each frame from the lobby state
+
 // The Armory's presentation. The engine draws the model from a fixed scene camera, so the framing can't be moved there:
 // Noble copies the finished engine frame and redraws it smaller and further right, with the head under the rule and the
 // body centred in the free area. A soft additive key light then lifts the black chamber and lights the model. The per-slot
@@ -436,7 +439,13 @@ void DrawBackdrop(const Ui& ui, Screen screen) {
     const bool needBackdropImage = !ReachArmory::IsSceneReady() || screen == Screen::PreGameLobby;
     if (needBackdropImage) {
         ui.dl->AddRectFilled(o, ui.size, IM_COL32(8, 12, 18, 255));
-        UiTexture bg = UiArt::MenuBackground();
+        // The lobby shows the map that is going to load, when there is a picture of it.
+        UiTexture bg;
+        if (screen == Screen::PreGameLobby && !s_lobbyBackdropMap.empty()) {
+            const std::string scenario = MapNames::ScenarioOf(s_lobbyBackdropMap);
+            bg = UiArt::MapPhoto(scenario.empty() ? s_lobbyBackdropMap : scenario);
+        }
+        if (!bg) bg = UiArt::MenuBackground();
         if (bg) {
             UiArt::DrawCover(ui.dl, bg, o, ui.size, IM_COL32(255, 255, 255, 255));
         }
@@ -3188,6 +3197,7 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
     ui.dl = ImGui::GetWindowDrawList();
     ui.size = vp->Size;
     ui.s = std::max(0.75f, vp->Size.y / 720.0f);
+    s_lobbyBackdropMap = st.lobbyMap;
     DrawBackdrop(ui, st.screen);
     DrawAccountModal(ui);
     DrawDevMenuModal(ui);
