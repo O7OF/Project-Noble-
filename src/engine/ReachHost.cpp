@@ -1270,6 +1270,8 @@ static bool UiCursorActive() {
     return last != 0 && GetTickCount64() - last < 250;
 }
 
+bool ReachHost::IsUiScreenActive() { return UiCursorActive(); }
+
 static void InputRelease(HWND hwnd, const char* reason) {
     if (!s_inputCaptured) return;
     ClipCursor(nullptr);
@@ -1415,6 +1417,11 @@ static void FillLocalPad(uint8_t* st, bool keyboardMouseUsed) {
     s_lastButtons = buttons;
     if ((pressed & 0x0010) && !PauseMenu::IsGameOver()) PauseMenu::Toggle();
     if (!s_padMode) return;
+    // Controller shortcut: D-pad Left opens/closes the custom palette (monitor mode is enforced by Toggle).
+    if ((pressed & 0x0004) && !PauseMenu::IsGameOver()) {
+        ForgeMenu::Toggle();
+        buttons = static_cast<WORD>(buttons & ~0x0004);
+    }
     // The scoreboard button shows Noble's panel, like the key: the engine never opens its own screen.
     if (buttons & 0x0020) {
         const int boardKey = KeyBindings::EffectiveKey(20);
@@ -1484,14 +1491,21 @@ static void FillLocalInput(uint8_t* st) {
     static bool s_escWasDown = false;
     const bool escDown = (GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0;
     if (escDown && !s_escWasDown && !uiPointer && !PauseMenu::IsGameOver()) {
-        PauseMenu::Toggle();
+        if (ForgeMenu::IsOpen()) ForgeMenu::Close();
+        else PauseMenu::Toggle();
     }
     s_escWasDown = escDown;
 
-    // While the pause menu or post-game panel is up the game gets no keys or mouse, and the pointer is free.
+    // Insert opens/closes the custom palette; it never uses the native Forge menu's keys.
+    static bool s_insertWasDown = false;
+    const bool insertDown = (GetAsyncKeyState(VK_INSERT) & 0x8000) != 0;
+    if (insertDown && !s_insertWasDown && !uiPointer && !PauseMenu::IsGameOver()) ForgeMenu::Toggle();
+    s_insertWasDown = insertDown;
+
+    // While the pause menu, post-game panel or custom palette is up the game gets no keys or mouse, and the pointer is free.
     static bool s_holdMouseUntilRelease = false;
-    if (PauseMenu::WantsPointer()) {
-        InputRelease(hwnd, PauseMenu::IsGameOver() ? "post-game panel open" : "pause menu open");
+    if (PauseMenu::WantsPointer() || ForgeMenu::WantsPointer()) {
+        InputRelease(hwnd, ForgeMenu::WantsPointer() ? "Forge palette open" : (PauseMenu::IsGameOver() ? "post-game panel open" : "pause menu open"));
         memset(s_keyDownSince, 0, sizeof(s_keyDownSince));
         s_holdMouseUntilRelease = true;
         return;

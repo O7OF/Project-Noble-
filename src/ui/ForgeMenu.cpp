@@ -5,6 +5,7 @@
 #include "common/Logger.hpp"
 #include "engine/BlamEngine.hpp"
 #include "engine/CameraThirdPerson.hpp"
+#include "engine/ReachHost.hpp"
 
 #include <imgui.h>
 #include <nlohmann/json.hpp>
@@ -52,9 +53,9 @@ void ForgeMenu::AddFallbackTabs() {
     noble.name = "NOBLE";
     noble.items = {
         { "PELICAN", "o7of_tags\\vehicles\\pelican_o7\\pelican_mp",
-          "Noble Pelican. Driver seat uses the wraith_d label.", 16, 0.0f },
+          "Noble Pelican. Driver seat uses the wraith_d label.", 4344, 16, 0.0f },
         { "PHANTOM", "objects\\vehicles\\covenant\\phantom\\phantom_mp",
-          "Covenant Phantom dropship.", 16, 0.0f },
+          "Covenant Phantom dropship.", 4832, 16, 0.0f },
     };
     s_tabs = { noble };
 }
@@ -62,6 +63,7 @@ void ForgeMenu::AddFallbackTabs() {
 void ForgeMenu::Initialize(const std::wstring& dataDir) {
     if (s_initialized) return;
     s_initialized = true;
+    s_open = false;   // never auto-open on a normal launch; -forge-menu-demo is the only exception
     s_demo = HasDemoFlag();
     s_tabs.clear();
 
@@ -77,6 +79,7 @@ void ForgeMenu::Initialize(const std::wstring& dataDir) {
                     item.name = itemJson.value("name", "ITEM");
                     item.tag = itemJson.value("tag", "");
                     item.description = itemJson.value("description", "");
+                    item.tagIndex = itemJson.value("index", -1);
                     item.maxAllowed = itemJson.value("max", 16);
                     item.price = itemJson.value("price", 0.0f);
                     if (!item.tag.empty()) tab.items.push_back(std::move(item));
@@ -107,11 +110,16 @@ void ForgeMenu::Close() {
 bool ForgeMenu::CanOpen() {
     auto* engine = BlamEngine::Active();
     if (!engine || !engine->IsForgeMode()) return false;
-    // Forge starts in player mode (first person). The monitor/editor mode is the engine's own third-person state.
-    return CameraThirdPerson::EngineWantsThirdPerson();
+    // Monitor/editor mode is either the engine's own third-person camera or an engine UI screen
+    // (the native Forge menu is only reachable from monitor mode).
+    return CameraThirdPerson::EngineWantsThirdPerson() || ReachHost::IsUiScreenActive();
 }
 
 void ForgeMenu::Toggle() {
+    static ULONGLONG s_lastToggle = 0;
+    const ULONGLONG now = GetTickCount64();
+    if (now - s_lastToggle < 300) return;   // key repeat / double event guard
+    s_lastToggle = now;
     if (s_tabs.empty()) return;
     if (!s_open && !s_demo && !CanOpen()) {
         NOBLE_INFO("ForgeMenu: open ignored (only available in Forge monitor mode)");
