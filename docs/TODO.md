@@ -269,15 +269,15 @@ items above close. Keep the spec open when building any screen so the details la
   make join/heartbeat/roster payloads bounded but 128-safe, and add a synthetic 128-player fixture for the UI tests. - @deepseek
 - [ ] **Pad Back: `d27ab84` is a no-op** (@claude review 2026-10-31): line 1430 already strips Back, comment names removed `GamepadUi`. If Reach's scoreboard still opens on pad Back the cause is elsewhere. Remove the line or find the real path. - @deepseek
 - [ ] **Lobby READY state** is local only; send it in the roster if it should mean anything. - needs: @deepseek
-- [ ] **Friends panel INVITE and Social screen** need a controller path; Y opens Social, whose pad flow is untested. - @claude
+- [x] @claude 2026-10-31 17:10 - **Community by controller** (`fba4c6f`): every button reachable. Typing fields still need a keyboard; physical pad still to test.
 - [ ] **Vote to kick is blocked** (@claude review 2026-10-31): server clamps peer ids to 1..64 so real voters fail, votes aren't authenticated, and nothing removes a player when a vote passes. Button stays grey until fixed. - @deepseek
 - [ ] **End Round / End Match need the multiplayer end path**: `haloreach+0x7B3EC(-1, 0, 1)` tried twice, timer kept running. Same search as night block 3. Button stays grey until then. - needs: @deepseek
 - [ ] **Roster should carry emblem colours** (`emblem_primary_color`, `emblem_secondary_color`, `emblem_background_color`, indexes 0-29) so other players see them. - needs: @deepseek
 - [x] @claude 2026-10-31 16:29 - **Scoreboard actions on a controller** (`2aea9fa`). Physical pad still to test.
 - [~] @claude 2026-10-31 - live ping wired, commit 4792746; **needs:** a two-process run to see a real value - **Scoreboard real ping**
-- [ ] **First-start question** (spec 4.12): "New to Halo: Reach?" with a short setup; `firstStartDone`. - @claude
+- [x] @claude 2026-10-31 17:10 - **First-start question** (`fba4c6f`). No graphics preset (none exist) or turn test.
 - [ ] **Crash / issue report button** (spec 4.12, approved): bundle the log with player names removed, open logs folder, settings backup and restore. - unowned
-- [ ] **Import/export of key bindings and settings** (spec 4.12). - @claude
+- [x] @claude 2026-10-31 17:10 - **Import/export of settings** (`fba4c6f`). Import dialog itself not run.
 - [x] @claude 2026-10-31 16:29 - **Scoreboard mute icons and Mute all** (`2aea9fa`).
 - [ ] **Rotation voting** (spec 4.14): 2-3 options after each game, ties to the host. Waits for rotation. - @deepseek then @claude
 - [~] @deepseek 2026-10-31 16:45 - **Armory live preview**: colour, visor and armour changes must re-apply the ReachArmory selection immediately (dirty flag + reapply), with 1920x1080 before/after captures and no scene/slot reload; also bump the build to 0.9.8.1 (0.9.7.1 was superseded by @claude's 0.9.8 while this claim was in flight). Files: `src/ui/ArmorCustomizer.*`, `src/engine/ReachArmory.*`, `src/common/Version.hpp`.
@@ -373,7 +373,7 @@ items above close. Keep the spec open when building any screen so the details la
 
 ## G. Match settings, social, voice (plan: `docs/plans/match-settings-and-social-plan.md`)
 
-- [ ] **Pause-menu Controls page** (live remap already applies every frame; this is the UI to change it mid-match) - @claude
+- [x] @claude 2026-10-31 17:10 - **Pause-menu Controls entry** (`fba4c6f`).
 - [ ] **Variant picker** (shipped `game_variants/*.bin` + stock Reach variants; lobby already transports `variant`) - @claude + list from @deepseek
 - [ ] **Lobby player profile card** (rank, emblem, Spartan render, armory %, challenges, commendations; ADD FRIEND row disabled until the friends API exists) - @claude
 - [ ] **Profile summary fields + privacy flags on the server** (roster profile object, `GET /api/sessions/:id/profile/:peerId`) - @deepseek

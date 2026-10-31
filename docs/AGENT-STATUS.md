@@ -39,12 +39,12 @@ can make.
 
 ## @claude
 
-- state: **active**
-- since: 2026-10-31 16:51 ET
-- working on: Friends and Social by controller, pause Controls page, settings import/export, first-start question; input lock: until 17:06
-- files expected: src/ui/FrontEndMenu.cpp, src/ui/PauseMenu.cpp, src/ui/SettingsPanel.*, src/common/Settings.*, src/common/Version.hpp
+- state: **idle** (last: list items 5, 6, 8, 9, 17:10 ET)
+- since: -
+- working on: -
+- files expected: -
 - second checkout: `D:\Halo-Reach-Community-Edition-claude` (own `build\`, so it does not touch @deepseek's tree or binary). Test client runs as `noble-client-claude.exe`, so kills by name miss it
-- last commit: `83edc92`
+- last commit: `fba4c6f`
 
 ## @gemini (Gemini 4 Argon / Dominus-VII)
 

@@ -7,13 +7,31 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 
 **Goal:** `noble-client.exe` loads MCC's own `haloreach.dll` (Halo: Reach) and drives it **without MCC**, like the existing
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
-MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.8.1 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.9.1 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
 
 ### How this file is kept (Tyler, 2026-10-30)
 
 - **Every change gets an entry - no exceptions**: code, UI, docs, tools, config, server. Add it at the **top**, directly
   under the `--` line, as
-  `## 0. Pick up here (2026-10-31, 16:39 ET) - Chat feed backing, diagnostics, hints, deaths log, handoff dedupe (@claude)
+  `## 0. Pick up here (2026-10-31, 17:10 ET) - Community by controller, pause Controls, settings export and import, first start (@claude)
+
+**Commit:** `fba4c6f`. **Version:** 0.9.9. **Build:** 0 errors, 0 warnings on the merged tree. Files: `src/ui/FrontEndMenu.cpp`, `src/ui/PauseMenu.cpp`, `src/ui/SettingsPanel.cpp`, `src/common/Settings.*`, `src/main.cpp`.
+
+**Community by controller.** The flow was untested and didn't work: ImGui's navigation never moved. `padButton` steps D-pad or stick through every button in reading order, A presses, the focused one has an outline. Pad Y from the lobby reaches it (screen 11 -> 12), and INVITE fired by script (log line, `-social-friends-demo`, which sends nothing). Typing fields still need a keyboard. Also stopped printing IP addresses on invites and friend rows.
+
+**Pause CONTROLS.** New entry, opens Settings at Controller or Keyboard & Mouse by last input. Real match by scripted pad: `PauseMenu: controls opened`, `docs/screenshots/pause-controls-page.png`. The Controller tab choice wasn't seen, because the test's real Esc made the keyboard the last input.
+
+**Export and import.** Settings > System, plus `-settings-export <file>` and `-settings-import <file>`. A planted token and server address stayed out of the export. An import file carrying its own token, server and developer flag changed none of them; volume 99 was clamped to 1.0 in the file; a broken file exited 1 and changed nothing. Real save dialog, found on our process only: file written, no token. The import dialog wasn't run.
+
+**First start.** `firstStartDone`; existing settings files count as answered. New player: input, name and tag, look speed. Returning: straight to the menu. Result of a scripted new-player run: `padLookRateX 2.0 -> 2.5, Y 2.5, firstStartDone True`. Rerun from Settings > System (row added, not pressed in a test). No graphics preset step because Noble has none, and no quick turn test. Captures: `first-start-question.png`, `first-start-name.png`, `first-start-look.png`.
+
+**Unexplained once.** In one test run pause Settings opened 3 s after Esc with no script press, with the pointer wherever it was. It did not repeat with the pointer parked in the corner. Hovering moves pause focus, so a stray click on that row would do it, but I have no proof.
+
+**My test risk.** One dialog test found the window by the title Save As, which could match another program's dialog and typed a path there. Nothing showed it did. The retest looks only at Noble's own process.
+
+Self-review: the Community list walks tabs and rows as one flat line, simple but slow with many friends. `LOOK SPEED` assumes 2.00x is stock, from the earlier measurement.
+
+## 0. Pick up here (2026-10-31, 16:39 ET) - Chat feed backing, diagnostics, hints, deaths log, handoff dedupe (@claude)
 
 **Commit:** `83edc92`. **Version:** 0.9.8. **Build:** 0 errors, 0 warnings on the merged tree. Files: `src/ui/SocialOverlay.cpp`, `src/ui/SettingsPanel.cpp`, `src/ui/FrontEndMenu.cpp`, `src/career/Career.cpp`, `docs/HANDOFF.md`.
 
