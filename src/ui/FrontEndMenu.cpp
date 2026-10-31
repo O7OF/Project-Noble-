@@ -1431,6 +1431,8 @@ struct MenuState {
     uint64_t lobbyLaunchSkulls = 0;
     double lastLobbyPoll = 0.0;
     int lobbyMenuRow = 0;          // Focused row in pre-game options list
+    bool lobbyPickerOpen = false;  // The game type list is showing in place of the option rows
+    int lobbyPickerRow = 0;
     bool lobbyReady = true;        // Player ready toggle
     int lobbyRosterSelection = 0;  // Selected player index in party roster
     int lobbyRosterScroll[2] = {}; // First row shown in each roster column (red or all, blue)
@@ -2062,6 +2064,25 @@ static void TakePendingLobbyEvents(MenuState& st) {
     }
 }
 
+// A line about each game type for the lobby's list. Only what the type itself is: a variant's own settings can't be read yet.
+static const char* GameTypeBlurb(const std::string& type) {
+    if (type == "slayer") return "Score points by killing the other players.";
+    if (type == "ctf") return "Take the enemy flag back to your own base.";
+    if (type == "assault") return "Carry the bomb into the enemy base and arm it.";
+    if (type == "territories") return "Capture and hold the areas of the map.";
+    if (type == "koth") return "Hold the hill to score.";
+    if (type == "oddball") return "Hold the skull for as long as you can.";
+    if (type == "juggernaut") return "Kill the Juggernaut to become the Juggernaut.";
+    if (type == "infection") return "The infected hunt the survivors, and every kill turns another.";
+    if (type == "headhunter") return "Collect skulls from kills and bank them at the drop points.";
+    if (type == "stockpile") return "Gather flags and hold them at your base when the timer runs out.";
+    if (type == "invasion") return "Spartans against Elites, fought in phases across the map.";
+    if (type == "race") return "Drive through the checkpoints.";
+    if (type == "rally") return "Reach the rally points before the others.";
+    if (type == "firefight") return "Fight wave after wave of Covenant together.";
+    return "A variant with its own rules.";
+}
+
 static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, float top, FrontEndChoice& choice, bool& done, bool back) {
     MenuState& st = ctx.st;
     TakePendingLobbyEvents(st);
@@ -2274,8 +2295,10 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         st.lobbyMenuRow = (st.lobbyMenuRow + d + totalRows) % totalRows;
         MenuSounds::Scroll();
     };
-    if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickDown)) stepRow(1);
-    if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickUp)) stepRow(-1);
+    if (!st.lobbyPickerOpen) {
+        if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickDown)) stepRow(1);
+        if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickUp)) stepRow(-1);
+    }
 
     // A vanilla map only hosts the game types it was built for (Invasion on Sword Base crashed the engine), so
     // the lobby's cycling skips what the Custom Game screen refuses. Modded lobbies are never restricted.
@@ -2327,8 +2350,10 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         }
     };
 
-    if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickLeft)) cycleOption(-1);
-    if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickRight)) cycleOption(1);
+    if (!st.lobbyPickerOpen) {
+        if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickLeft)) cycleOption(-1);
+        if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickRight)) cycleOption(1);
+    }
 
     auto startMatch = [&]() {
         const std::string variantFileName = st.lobbyVariantPath.empty()
@@ -2373,13 +2398,21 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         done = true;
     };
 
+    bool pickerJustOpened = false;   // the press that opened the list must not also pick from it
     auto triggerAction = [&]() {
         const auto& cur = optRows[st.lobbyMenuRow];
-        if (cur.isStart) startMatch();
-        else cycleOption(1);
+        if (cur.isStart) {
+            startMatch();
+        } else if (cur.label == "GAME TYPE" && cur.editable) {
+            st.lobbyPickerOpen = true;
+            pickerJustOpened = true;
+            MenuSounds::Click();
+        } else {
+            cycleOption(1);
+        }
     };
 
-    if (AcceptPressed()) triggerAction();
+    if (!st.lobbyPickerOpen && AcceptPressed()) triggerAction();
 
     // Option rows. The start button keeps one place whichever mode's list is above it.
     const float rowsY = top + 108.0f * ui.s;
@@ -2387,7 +2420,45 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
     const float startY = rowsY + rowStep * 4.0f + 6.0f * ui.s;
     const bool mouseMoved = ImGui::GetIO().MouseDelta.x != 0.0f || ImGui::GetIO().MouseDelta.y != 0.0f;
     float curY = rowsY;
-    for (int i = 0; i < totalRows; ++i) {
+    const bool pickerWasOpen = st.lobbyPickerOpen;
+    if (st.lobbyPickerOpen) {
+        // The game types this map can host, from the variants that ship with the game. Nothing here is invented: the
+        // settings inside a variant can't be read until the variant viewer exists.
+        const std::vector<MenuVariant>& varList = firefight ? ctx.ffVariants : ctx.variants;
+        std::vector<const MenuVariant*> offered;
+        std::vector<ListItem> items;
+        for (const MenuVariant& v : varList) {
+            if (!comboAllowed(st.lobbyMap, v.path.string())) continue;
+            offered.push_back(&v);
+            items.push_back({ v.label });
+        }
+        if (pickerJustOpened) {
+            st.lobbyPickerRow = 0;
+            for (size_t i = 0; i < offered.size(); ++i) {
+                if (offered[i]->label == st.lobbyVariantName) st.lobbyPickerRow = static_cast<int>(i);
+            }
+        }
+        const int pick = DrawList(ui, "lobby_variants", ImVec2(colX, rowsY), colW - 10.0f * ui.s, items, st.lobbyPickerRow, !pickerJustOpened, 32.0f, 6, false);
+        if (!offered.empty()) {
+            const MenuVariant& shown = *offered[std::clamp(st.lobbyPickerRow, 0, static_cast<int>(offered.size()) - 1)];
+            const std::string type = MapGameTypes::FromVariantStem(shown.path.stem().wstring());
+            const float infoY = rowsY + 32.0f * ui.s * 6.0f + 10.0f * ui.s;
+            Text(ui, NobleStyle::TitleFont(), 18.0f, ImVec2(colX, infoY), kWhite, type.empty() ? "CUSTOM VARIANT" : Upper(MapGameTypes::Name(type)).c_str());
+            Text(ui, nullptr, 15.0f, ImVec2(colX, infoY + 24.0f * ui.s), kDim, GameTypeBlurb(type), colX + colW);
+        }
+        if (pick >= 0 && pick < static_cast<int>(offered.size())) {
+            st.lobbyVariantPath = offered[pick]->path.string();
+            st.lobbyVariantName = offered[pick]->label;
+            MasterServerClient::Get().UpdateLobbyAdvert(st.lobbyMap, st.lobbyMode, st.lobbyVariantName, st.lobbyDifficulty, st.lobbySkulls);
+            st.lobbyPickerOpen = false;
+            MenuSounds::Change();
+        }
+        if (back) {
+            st.lobbyPickerOpen = false;
+            MenuSounds::Back();
+        }
+    }
+    for (int i = 0; i < totalRows && !pickerWasOpen; ++i) {
         const auto& row = optRows[i];
         const bool focused = st.lobbyMenuRow == i;
         if (row.isStart) {
@@ -2439,7 +2510,7 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         BigAction(ui, "lobby_waiting", ImVec2(colX, startY), colW, "WAITING FOR HOST", "The match starts when the host starts it.", true, false);
     }
     // What the focused row does; the start button already says it on its own second line.
-    if (!optRows[st.lobbyMenuRow].isStart) {
+    if (!pickerWasOpen && !optRows[st.lobbyMenuRow].isStart) {
         Text(ui, nullptr, 15.0f, ImVec2(colX, startY + 58.0f * ui.s), kDim, optRows[st.lobbyMenuRow].tooltip.c_str(), colX + colW);
     }
 
@@ -2701,7 +2772,7 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
     }
 
     // Back / Cancel Lobby Handling: the host returns to the setup screen of the mode it came from.
-    if (back) {
+    if (back && !pickerWasOpen) {
         if (st.isLobbyHost) {
             MasterServerClient::Get().StopAdvertising();
             SessionManager::Get().StopHosting();
@@ -2722,7 +2793,8 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
     std::vector<HintExtra> extras = { { InputPrompts::Button::Y, "Y", "Friends" } };
     if (!hostEp.empty()) extras.push_back({ InputPrompts::Button::X, "X", "Copy invite" });
     if (rosterOverflows) extras.push_back({ InputPrompts::Button::RT, "PGDN", "Page" });
-    DrawHints(ui, { { Prompt::Accept, "Select" }, { Prompt::Back, "Back" }, { Prompt::Tabs, "Players" } }, extras);
+    if (pickerWasOpen) DrawHints(ui, { { Prompt::Accept, "Select" }, { Prompt::Back, "Back" } });
+    else DrawHints(ui, { { Prompt::Accept, "Select" }, { Prompt::Back, "Back" }, { Prompt::Tabs, "Players" } }, extras);
 }
 
 static void DrawSocialScreen(OverlayContext& ctx, const Ui& ui, float left, float top,
@@ -4411,7 +4483,7 @@ void FrontEndMenu::RenderOverlayImpl(IDXGISwapChain* swapChain, bool clear) {
                 std::wstring args = L"-map \"" + ToWide(choice.map) + L"\" -mode \"" + ToWide(choice.mode) + L"\"";
                 // Forward the test-only capture hooks, so a harness that opened the menu can still photograph the
                 // match (the child is a fresh process with its own command line).
-                for (const wchar_t* flag : { L"-pause-at", L"-scoreboard-at", L"-scoreboard-demo", L"-scoreboard-demo-players", L"-quit-after", L"-fake-pad", L"-fake-pad-amount", L"-capture-at" }) {
+                for (const wchar_t* flag : { L"-pause-at", L"-scoreboard-at", L"-scoreboard-demo", L"-scoreboard-demo-players", L"-postgame-role", L"-quit-after", L"-fake-pad", L"-fake-pad-amount", L"-capture-at" }) {
                     int argc = 0;
                     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
                     for (int a = 1; argv && a + 1 < argc; ++a) {

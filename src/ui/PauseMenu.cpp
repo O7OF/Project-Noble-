@@ -1357,12 +1357,49 @@ void PauseMenu::DrawGameOver(HWND hwnd) {
     RelaunchAndClose(hwnd, L"", "return to menu");
   overButton |= ImGui::IsItemHovered();
   const std::wstring again = Relaunch::CurrentGameArgs();
-  if (!again.empty()) {
+  // A guest's "again" would reconnect to a host who may have gone; only the host or a local player can start another.
+  const bool guestPlayer = wcsstr(GetCommandLineW(), L"-postgame-role guest") != nullptr ||
+                           (NetworkTransport::Get().IsActive() && !NetworkTransport::Get().IsHost());
+  if (!again.empty() && !guestPlayer) {
     bx -= bw + gap;
     ImGui::SetCursorScreenPos(ImVec2(bx, by));
     if (NobleStyle::PrimaryButton("PLAY AGAIN", ImVec2(bw, bh)))
       RelaunchAndClose(hwnd, again, "play again");
     overButton |= ImGui::IsItemHovered();
+  }
+  // What happens next in a hosted game. A session doesn't survive a match yet (session survival, rotation: @deepseek), so
+  // the host's two choices are grey with the reason and a guest is told plainly what the state is. "-postgame-role
+  // host|guest" shows either one without a second PC.
+  static const int s_roleTest = [] {
+    const wchar_t *const line = GetCommandLineW();
+    return wcsstr(line, L"-postgame-role host") ? 1 : wcsstr(line, L"-postgame-role guest") ? 2 : 0;
+  }();
+  const bool online = NetworkTransport::Get().IsActive();
+  const bool hostRole = s_roleTest == 1 || (s_roleTest == 0 && online && NetworkTransport::Get().IsHost());
+  const bool guestRole = s_roleTest == 2 || (s_roleTest == 0 && online && !NetworkTransport::Get().IsHost());
+  if (hostRole) {
+    bx -= bw + gap;
+    ImGui::SetCursorScreenPos(ImVec2(bx, by));
+    UnavailableButton("NEXT IN ROTATION", ImVec2(bw, bh), "Not available yet: the server has no map rotation for a lobby.");
+    overButton |= ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
+    bx -= bw + gap;
+    ImGui::SetCursorScreenPos(ImVec2(bx, by));
+    UnavailableButton("RETURN TO LOBBY", ImVec2(bw, bh), "Not available yet: a lobby doesn't survive the match, so there is nothing to return to.");
+    overButton |= ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
+  } else if (guestRole) {
+    bx -= bw + gap;
+    ImGui::SetCursorScreenPos(ImVec2(bx, by));
+    UnavailableButton("WAITING FOR HOST", ImVec2(bw, bh), "The host can't bring a lobby back after a match yet, so return to the menu to play again.");
+    overButton |= ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
+  }
+  if (hostRole || guestRole) {
+    std::string current;
+    {
+      std::lock_guard<std::mutex> lock(s_mapMutex);
+      current = s_loadingMap;
+    }
+    const std::string strip = "THIS MAP: " + (current.empty() ? std::string("-") : Upper(MapNames::Display(current))) + "    NEXT: NOT SET";
+    Text(dl, smallFont, 15.0f * s, ImVec2(bx, by - 26.0f * s), kTextDim, strip.c_str());
   }
   if (t < tEnd) {
     Text(dl, smallFont, 16.0f * s, ImVec2(margin, by + bh * 0.5f - 9.0f * s),
@@ -1502,7 +1539,7 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading,
   const bool gameOver = s_gameOver.load();
   // -postgame-test: force the clean GAME OVER panel so its composition over the engine's post-game UI can be captured
   // without playing a match to its score limit.
-  if (!gameOver && wcsstr(GetCommandLineW(), L"-postgame-test")) {
+  if (!gameOver && (wcsstr(GetCommandLineW(), L"-postgame-test") || wcsstr(GetCommandLineW(), L"-postgame-role"))) {
     static int s_postGameTestFrames = 0;
     if (!loading && ++s_postGameTestFrames == 240) {
       NOBLE_INFO("PauseMenu: -postgame-test forcing the game-over panel");
