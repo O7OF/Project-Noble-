@@ -62,6 +62,10 @@ public:
     // here and any subsystem (UI, tests) can dispatch an engine command through ExecuteCommand().
     static BlamEngine* Active() { return s_active; }
 
+    // Dev tool: decode a game-variant .bin with the engine's decoder and write the decoded struct to
+    // <path>.decoded.bin for field mapping.
+    bool DumpGameVariant(const std::string& path);
+
     static void SetEngineModeOverride(int mode) { s_engineModeOverride = mode; }
 
     // Research switch: a guest normally skips PostCommand(10/11) and waits for the host's session sync. Campaign may

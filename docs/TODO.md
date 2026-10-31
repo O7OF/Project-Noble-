@@ -310,6 +310,13 @@ items above close. Keep the spec open when building any screen so the details la
 
 - [x] @deepseek 2026-10-31 18:50 - **Text chat relay (server)** - `ServerTestDeploy` `5d46c13` + cleanup `d0ac871`: `chat` JSON frames handled before the role logic, channels team/all/party (party = lobby group for now), 400-char cap, team chat only to same-team guests+host. `tools/chat-relay-test.js`: team 1/1/0, all 1/1/1 = PASS. Client send/receive + T/Y/P binds next.
 
+- [ ] **Voice activity indicators - who is talking and when you transmit** (Tyler, 2026-10-31): the data already exists
+  in `VoiceChat` (`IsPeerTalking(machineId)`, `IsTransmitting()`), so this is UI: (1) a mic icon on every lobby/roster and
+  scoreboard row that lights/pulses while that peer talks (dimmed when you have them muted), (2) a local "MIC LIVE" /
+  "TRANSMITTING" chip whenever `IsTransmitting()` is true, visible in the pre-game lobby, in-match HUD and post-game, with
+  the PTT key hint, (3) the same indicator on the party/lobby card so you can see who is speaking before the match, (4) muted
+  players never show as talking to you, and open-mic users show a steady dot rather than a chunky pulse. - @claude
+
 ## I. Armory presentation, audio and data (Tyler, 2026-10-31 00:10)
 
 - [x] @claude 2026-10-31 00:56 - commit dd37730 - **Armory framing**: Spartan/Elite centered under the horizontal rule below APPEARANCE, head no longer above the HALO: REACH line or beside the nameplate
