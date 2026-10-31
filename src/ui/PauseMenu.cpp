@@ -784,6 +784,45 @@ static void DrawScoreboardPanel() {
   }
 }
 
+
+// Guest-side connection-lost panel: the host vanished (no packets for a while) but the engine keeps pumping frames, so
+// without this the guest just sits frozen in the mission. Offers the only reliable exit - relaunch the menu process.
+static bool DrawConnectionLostPanel() {
+  using namespace NobleUi;
+  ImGuiIO &io = ImGui::GetIO();
+  const float W = io.DisplaySize.x, H = io.DisplaySize.y;
+  const float s = std::clamp(H / 1080.0f, 0.7f, 2.0f);
+  ImDrawList *dl = ImGui::GetBackgroundDrawList();
+  dl->AddRectFilled(ImVec2(0, 0), ImVec2(W, H), IM_COL32(4, 6, 10, 210));
+  const float panelW = std::min(W * 0.5f, 720.0f * s), panelH = 260.0f * s;
+  const ImVec2 p0((W - panelW) * 0.5f, (H - panelH) * 0.5f), p1(p0.x + panelW, p0.y + panelH);
+  dl->AddRectFilled(p0, p1, IM_COL32(10, 16, 26, 245), 8.0f * s);
+  dl->AddRect(p0, p1, IM_COL32(70, 120, 165, 220), 8.0f * s, 0, 2.0f * s);
+  dl->AddRectFilled(ImVec2(p0.x, p0.y), ImVec2(p0.x + 6.0f * s, p1.y), kAccent, 8.0f * s);
+  Text(dl, NobleStyle::TitleFont(), 34.0f * s, ImVec2(p0.x + 36.0f * s, p0.y + 30.0f * s),
+       IM_COL32(236, 240, 244, 255), "CONNECTION LOST");
+  Text(dl, ImGui::GetFont(), 20.0f * s, ImVec2(p0.x + 38.0f * s, p0.y + 84.0f * s),
+       IM_COL32(200, 210, 220, 255), "The host left the game.");
+  Text(dl, NobleStyle::SmallFont(), 15.0f * s, ImVec2(p0.x + 38.0f * s, p0.y + 116.0f * s),
+       IM_COL32(150, 190, 220, 255), "Campaign co-op cannot continue without the host.");
+
+  ImGui::SetNextWindowPos(ImVec2(p0.x + panelW * 0.5f - 120.0f * s, p0.y + panelH - 78.0f * s));
+  ImGui::SetNextWindowSize(ImVec2(240.0f * s, 52.0f * s));
+  ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(0, 0, 0, 0));
+  ImGui::Begin("##NobleConnectionLost", nullptr,
+               ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBackground);
+  if (ImGui::Button("Return to menu", ImVec2(240.0f * s, 44.0f * s))) {
+    NOBLE_INFO("PauseMenu: connection lost - returning to the menu");
+    ImGui::End();
+    ImGui::PopStyleColor();
+    Relaunch::HandOff(L"");
+    return true;
+  }
+  ImGui::End();
+  ImGui::PopStyleColor();
+  return false;
+}
+
 void PauseMenu::DrawGameOver(HWND hwnd) {
   using namespace NobleUi;
   ImGuiIO &io = ImGui::GetIO();
@@ -1364,8 +1403,19 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading,
   const bool boardPointer = s_boardPointer.load();
   const bool scoreboardHeld = !loading && !open && !gameOver &&
                               (ReachHost::IsKeyHeld(boardVk) || s_scoreboardTest || demo > 0 || boardPointer);
-  if (!(open || gameOver || loading || showFps || scoreboardHeld) || !swapChain ||
-      !ImGui::GetCurrentContext())
+  // Guests: if the host has been silent for a while, the engine keeps pumping frames but the session is dead. Show a panel
+  // instead of freezing in the mission.
+  static bool s_connectionLost = false;
+  const bool guest = NetworkTransport::Get().IsActive() && !NetworkTransport::Get().IsHost();
+  if (!loading && !open && !gameOver && guest && NetworkTransport::Get().SecondsSinceRemotePacket() > 8.0) {
+    if (!s_connectionLost) {
+      s_connectionLost = true;
+      NOBLE_WARN("PauseMenu: host connection lost ({:.1f}s without packets) - showing the connection-lost panel",
+                 NetworkTransport::Get().SecondsSinceRemotePacket());
+    }
+  }
+  const bool connectionLost = s_connectionLost;
+  if (!(open || gameOver || loading || showFps || scoreboardHeld || connectionLost) || !swapChain ||      !ImGui::GetCurrentContext())
     return;
 
   DXGI_SWAP_CHAIN_DESC desc{};
@@ -1502,7 +1552,8 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading,
         DrawLoading();
       if (open)
         DrawMenu(hwnd);
-      if (scoreboardHeld) {
+      if (connectionLost && DrawConnectionLostPanel()) return;
+      if (scoreboardHeld && !connectionLost) {
         DrawScoreboardPanel();
         // -scoreboard-demo: one screenshot about 30 s in, so the match is on screen behind the panel, not a loading frame.
         if (demo > 0 && ++s_demoFrames == 900) {

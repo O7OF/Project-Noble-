@@ -51,6 +51,31 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+--
+
+## 0. Pick up here (2026-10-30, 23:20 ET) - Host-disconnect panel, co-op difficulty/skulls verified, third-person host gate (WeabooTyler117 / DeepSeek)
+
+Night-shift progress, three items.
+
+**1. Host disconnect handling (done).** A guest whose host vanished used to sit frozen in the mission forever (only
+`CLOSE channel reason 16` then repeated `reason 4` in the log, no results, no menu). `NetworkTransport` now tracks
+`m_lastRemotePacketMs` and exposes `SecondsSinceRemotePacket()`; PauseMenu shows a **CONNECTION LOST** panel after 8 s of
+silence with "The host left the game." and a **Return to menu** button that calls `Relaunch::HandOff(L"")`. Verified by
+killing the host mid-campaign: log `PauseMenu: host connection lost (8.0s without packets)` and the capture
+`docs/screenshots/connection-lost.png`. Gap: the engine's own PLAYERS / STARTING GAME strip still shows dimmed behind the
+panel - cosmetic, same class of problem as the scoreboard cover.
+
+**2. Skulls + difficulty parity (verified).** The guest launch args already carry `-difficulty` and `-skulls` from the host's
+launch data (`FrontEndMenu.cpp:4161-4163`). Two-process campaign at Legendary + skull 0x1: both logs
+`Mode: campaign | Difficulty: 3 | Skulls: 0x1`, both in game, **zero GameResults over 170 s**. The in-game effect of an
+individual skull is not visually confirmed; only the data path is.
+
+**3. Third person: host/mode gate + tuning status.** The detour now answers `true` only when offline or host
+(`NetworkTransport::IsHost()`); guests stay first person (Tyler's rule). The follow hook at `haloreach+0x1DCADC` installs
+(prologue `48 8B C4 48 89 58 18 55`) but never fires in the camera path the check enables - no "follow distance scaled"
+line - so distance/shoulder tuning is parked as research; the camera is usable but close. Still open: settings row + key
+rebind.
+
 ## 0. Pick up here (2026-10-30, 23:05 ET) - Third person VERIFIED (Firefight), with a real FP-vs-TP capture (WeabooTyler117 / DeepSeek)
 
 The F5 hook works. Verified in **Firefight** (`beachhead`, firefight class), same spot, two runs:
