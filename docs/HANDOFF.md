@@ -7,7 +7,7 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 
 **Goal:** `noble-client.exe` loads MCC's own `haloreach.dll` (Halo: Reach) and drives it **without MCC**, like the existing
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
-MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.8 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.8.1 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
 
 ### How this file is kept (Tyler, 2026-10-30)
 
@@ -58,7 +58,7 @@ Self-review: chat text is logged nowhere client-side, so failures show only on s
 ## 0. Pick up here (2026-10-31, 15:08 ET) - Push-to-talk rebinding, voice quality proof, music list cleanup (@claude)
 
 
-**Current version:** 0.9.8. **Developer build:** 0.9.8-dev. Dev binaries report the suffix next to the version string.
+**Current version:** 0.9.8.1. **Developer build:** 0.9.8.1-dev. Dev binaries report the suffix next to the version string.
 
 **Commit:** `8cbb746` (the code is in this commit, whose message only mentions docs: the intended commit failed on quotes in its message). **Version:** 0.9.5. **Build:** 0 errors, 0 warnings on the merged tree. Files: `src/ui/SettingsPanel.*`, `src/common/Settings.cpp`, `src/audio/ReachAudio.cpp`, `src/audio/VoiceChat.cpp`, `src/common/Version.hpp`.
 
@@ -154,7 +154,7 @@ Self-review: the weakest part is the sender thread, because it changes how relay
 - Next for me: two-client chat check against the client transport, then the multiplayer post-game end hook.
 ## 0. Pick up here (2026-10-31, 08:25 ET) - Pre-game lobby map identity (@deepseek / DeepSeek)`.
 
-**Current version:** 0.9.8. **Developer build:** 0.9.8-dev. Dev binaries report the suffix next to the version string.
+**Current version:** 0.9.8.1. **Developer build:** 0.9.8.1-dev. Dev binaries report the suffix next to the version string.
 
 
 **Built and verified:** release `build\bin\Release\noble-client.exe`, developer `build\bin\Release\noble-dev.exe`, dedicated `build\bin\Release\noble-dedicated.exe`, and the packaged `Documents\Noble Launcher\Noble.exe` (full runtime tree; package stayed running in a normal launch test).
