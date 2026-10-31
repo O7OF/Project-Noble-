@@ -3903,7 +3903,12 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
         uint64_t pId = AuthClient::Get().IsLoggedIn() ? static_cast<uint64_t>(AuthClient::Get().GetUserId()) : fallbackId;
         std::string sTag = Settings::Get().Snapshot().serviceTag.empty() ? "117" : Settings::Get().Snapshot().serviceTag;
 
-        LobbyState state = MasterServerClient::Get().JoinLobbySync(s.id, pId, pName, AuthClient::Get().IsDeveloper(), sTag, 11774, s.hostAddress, s.port);
+        LobbyState state = MasterServerClient::Get().JoinLobbySync(
+            s.id, pId, pName, AuthClient::Get().IsDeveloper(), sTag,
+            Career::RankIndex(Career::Get().credits),
+            UIManager::GetArmorCustomizer().GetProfile().emblemIndex,
+            UIManager::GetArmorCustomizer().GetProfile().nameplateIndex, 0,
+            11774, s.hostAddress, s.port);
         if (state.ok) {
             if (!state.sessionId.empty()) ctx.st.lobbySessionId = state.sessionId;
             ctx.st.lobbyRoster = state.roster;
