@@ -14,6 +14,7 @@
 #include "engine/InputTuning.hpp"
 #include "engine/KeyBindings.hpp"
 #include "engine/CameraFov.hpp"
+#include "engine/CameraThirdPerson.hpp"
 #include "engine/ReachArmory.hpp"
 #include "engine/ElitePack.hpp"
 #include "vfs/VFS.hpp"
@@ -1295,6 +1296,7 @@ static bool UiCursorActive() {
 bool ReachHost::IsUiScreenActive() { return UiCursorActive(); }
 
 static void InputRelease(HWND hwnd, const char* reason) {
+    CameraThirdPerson::SetZoomHeld(false);
     if (!s_inputCaptured) return;
     ClipCursor(nullptr);
     if (hwnd) {
@@ -1696,6 +1698,18 @@ static void FillLocalInput(uint8_t* st) {
             EnginePatches::RequestLowerWeaponToggle();
         }
         s_lowerWasDown = lowerDown;
+    }
+
+    // Third-person weapon aim zoom: holding Right Click (or the bound Zoom key) zooms the third-person camera
+    // according to SETTINGS > GAME OPTIONS > CAMERA > THIRD-PERSON ZOOM.
+    {
+        const int zoomVk = KeyBindings::EffectiveKey(5);
+        const bool rmbDown = st[0x004 + VK_RBUTTON] != 0;
+        const bool boundZoomDown = zoomVk > 0 && zoomVk < 256 && st[0x004 + zoomVk] != 0;
+        const bool wantZoom = !uiPointer && !boardDown && !s_holdMouseUntilRelease &&
+                              (CameraThirdPerson::IsEnabled() || CameraThirdPerson::EngineWantsThirdPerson()) &&
+                              (rmbDown || boundZoomDown);
+        CameraThirdPerson::SetZoomHeld(wantZoom);
     }
 
     // Mouse look: delta from the window centre, then recentre (not while a menu owns the pointer).

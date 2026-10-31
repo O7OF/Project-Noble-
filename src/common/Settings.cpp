@@ -34,6 +34,7 @@ void Clamp(SettingsData& d) {
     d.width = std::clamp(d.width, 640, 7680);
     d.height = std::clamp(d.height, 360, 4320);
     d.fieldOfView = std::clamp(d.fieldOfView, 70.0f, 120.0f);  // slider range (SETTINGS > VIDEO)
+    d.thirdPersonZoom = std::clamp(d.thirdPersonZoom, 0.10f, 1.00f);
     constexpr int kFpsLimits[] = { 0, 30, 60, 120, 144, 165, 200 };
     if (std::find(std::begin(kFpsLimits), std::end(kFpsLimits), d.fpsLimit) == std::end(kFpsLimits)) {
         d.fpsLimit = 0;
@@ -92,6 +93,7 @@ void Settings::Load() {
             Read(j, "height", d.height);
             Read(j, "borderless", d.borderless);
             Read(j, "fieldOfView", d.fieldOfView);
+            Read(j, "thirdPersonZoom", d.thirdPersonZoom);
             Read(j, "verticalSync", d.verticalSync);
             Read(j, "fpsLimit", d.fpsLimit);
             Read(j, "showFps", d.showFps);
@@ -243,6 +245,7 @@ bool Settings::Save() {
         j["height"] = d.height;
         j["borderless"] = d.borderless;
         j["fieldOfView"] = d.fieldOfView;
+        j["thirdPersonZoom"] = d.thirdPersonZoom;
         j["verticalSync"] = d.verticalSync;
         j["fpsLimit"] = d.fpsLimit;
         j["showFps"] = d.showFps;

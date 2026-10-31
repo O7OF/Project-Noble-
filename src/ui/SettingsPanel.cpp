@@ -946,6 +946,10 @@ void SettingsPanel::RenderGame() {
             When::Apply, "78\xC2\xB0", std::fabs(m_edit.fieldOfView - m_saved.fieldOfView) > 0.01f, false, Preview::Fov)) {
         SliderValue(m_edit.fieldOfView, 70.0f, 120.0f, 1.0f, 78.0f, Format("%.0f\xC2\xB0", m_edit.fieldOfView).c_str());
     }
+    if (Row("THIRD-PERSON ZOOM", "How much the camera zooms in when aiming a weapon with right click in third person (F5). 50 % is the default zoom.",
+            When::Apply, "50 %", std::fabs(m_edit.thirdPersonZoom - m_saved.thirdPersonZoom) > 1e-4f, false)) {
+        SliderValue(m_edit.thirdPersonZoom, 0.10f, 1.00f, 0.05f, 0.50f, Percent(m_edit.thirdPersonZoom).c_str());
+    }
     if (Row("IN-VEHICLE FOV", "A separate field of view while driving or flying. Needs the vehicle camera to be found in the engine first.",
             When::Info, "", false, true)) {
         InfoValue("Not available yet");
@@ -1501,7 +1505,7 @@ int SettingsPanel::CountDiff(const SettingsData& a, const SettingsData& b, Cat c
                (a.masterMute != b.masterMute) + (a.muteInBackground != b.muteInBackground) +
                (a.menuSounds != b.menuSounds) + (a.menuMusicTrack != b.menuMusicTrack);
     case Cat::Game:
-        return f(a.fieldOfView, b.fieldOfView) + (a.subtitles != b.subtitles) + (a.menuBackground != b.menuBackground) +
+        return f(a.fieldOfView, b.fieldOfView) + f(a.thirdPersonZoom, b.thirdPersonZoom) + (a.subtitles != b.subtitles) + (a.menuBackground != b.menuBackground) +
                f(a.brightness, b.brightness) + (a.fxaa != b.fxaa) + (a.throttleUnfocused != b.throttleUnfocused);
     case Cat::Player:
         return (a.playerName != b.playerName) + (a.serviceTag != b.serviceTag);
@@ -1556,7 +1560,7 @@ SettingsData SettingsPanel::WithDefaults(SettingsData e, Cat c) {
         e.menuSounds = d.menuSounds; e.menuMusicTrack = d.menuMusicTrack;
         break;
     case Cat::Game:
-        e.fieldOfView = d.fieldOfView; e.subtitles = d.subtitles; e.menuBackground = d.menuBackground;
+        e.fieldOfView = d.fieldOfView; e.thirdPersonZoom = d.thirdPersonZoom; e.subtitles = d.subtitles; e.menuBackground = d.menuBackground;
         break;
     case Cat::Player:
         e.playerName = d.playerName; e.serviceTag = d.serviceTag;

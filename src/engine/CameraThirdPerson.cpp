@@ -1,11 +1,13 @@
 #include "CameraThirdPerson.hpp"
 
 #include "common/Logger.hpp"
+#include "common/Settings.hpp"
 #include "hooks/HookManager.hpp"
 #include "network/NetworkTransport.hpp"
 
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 
@@ -18,9 +20,11 @@ namespace {
 //   48 89 74 24 10   mov qword ptr [rsp+10h], rsi
 // Reach Renaissance hooks the same function (5-byte patch window) and answers it from its own camera state.
 constexpr uintptr_t kCameraModeCheckRva = 0x48A910;
-// haloreach+0x1DCADC: the camera follow/update Reach Renaissance also hooks (7-byte prologue window there). We call the
-// original and then scale the follow distance field it filled in, which is how RR tunes third-person distance.
+// haloreach+0x1DCADC (c_orbiting_camera::update) and haloreach+0x1E2028 (c_following_camera::update):
+// both take (void* camera, int32_t userIndex, float dt, void* observerCommand) and write the third-person
+// field of view in radians (from haloreach+0xC8640) to [observerCommand + 0x28].
 constexpr uintptr_t kCameraFollowRva = 0x1DCADC;
+constexpr uintptr_t kCameraFollowingUpdateRva = 0x1E2028;
 constexpr uint8_t kExpectedPrologue[9] = {0x48, 0x89, 0x5C, 0x24, 0x08, 0x48, 0x89, 0x74, 0x24};
 
 using CameraModeCheckFn = bool(__fastcall*)(int32_t playerIndex);
@@ -33,25 +37,54 @@ std::atomic<int> s_mode{0};   // experiment: 0 = answer true, 1 = answer false, 
 std::atomic<bool> s_f5WasDown{false};
 std::atomic<int> s_logCount{0};
 std::atomic<bool> s_engineThirdPerson{false};
+std::atomic<bool> s_zoomHeld{false};
+std::atomic<float> s_zoomBlend{0.0f};
 
-// The follow function takes (camera object, int, float x3 vector, void*, void* follow state). We forward everything
-// untouched so the ABI cannot drift, then nudge the distance the original wrote at [state + 0x28].
-using CameraFollowFn = void(__fastcall*)(void*, int32_t, float, float, float, void*, void*);
-CameraFollowFn s_originalFollow = nullptr;
+using CameraUpdateFn = void(__fastcall*)(void* camera, int32_t userIndex, float dt, void* observerCommand);
+CameraUpdateFn s_originalFollow = nullptr;
+CameraUpdateFn s_originalFollowingUpdate = nullptr;
 
-void __fastcall Hook_CameraFollow(void* a1, int32_t a2, float f0, float f1, float f2, void* a4, void* a5) {
-    if (s_originalFollow) s_originalFollow(a1, a2, f0, f1, f2, a4, a5);
-    const int percent = s_distancePercent.load();
-    if (!s_enabled.load() || percent == 100 || !a5) return;
-    auto* distance = reinterpret_cast<float*>(static_cast<uint8_t*>(a5) + 0x28);
-    *distance *= static_cast<float>(percent) / 100.0f;
-    if (s_followLogCount.fetch_add(1) < 3) {
-        NOBLE_INFO("CameraThirdPerson: follow distance scaled {}% -> {:.3f}", percent, *distance);
+void ApplyThirdPersonCameraTuning(float dt, void* observerCommand) {
+    if (!observerCommand) return;
+    const bool active = s_enabled.load() || s_engineThirdPerson.load();
+    const bool wantZoom = active && s_zoomHeld.load();
+    const float step = std::clamp(dt > 0.0f && dt < 0.25f ? dt : (1.0f / 60.0f), 0.001f, 0.1f) * 10.0f;
+    float blend = s_zoomBlend.load();
+    if (wantZoom) {
+        blend = std::min(1.0f, blend + step);
+    } else {
+        blend = std::max(0.0f, blend - step);
     }
+    s_zoomBlend.store(blend);
+
+    if (!active) return;
+    auto* fovRad = reinterpret_cast<float*>(static_cast<uint8_t*>(observerCommand) + 0x28);
+    const int percent = s_distancePercent.load();
+    if (percent != 100) {
+        *fovRad *= static_cast<float>(percent) / 100.0f;
+        if (s_followLogCount.fetch_add(1) < 3) {
+            NOBLE_INFO("CameraThirdPerson: follow FOV scaled {}% -> {:.3f}", percent, *fovRad);
+        }
+    }
+    if (blend > 0.001f) {
+        const float scale = CameraThirdPerson::EffectiveFovScale();
+        *fovRad = std::clamp(*fovRad * scale, 0.15f, 2.5f);
+    }
+}
+
+void __fastcall Hook_CameraFollow(void* camera, int32_t userIndex, float dt, void* observerCommand) {
+    if (s_originalFollow) s_originalFollow(camera, userIndex, dt, observerCommand);
+    ApplyThirdPersonCameraTuning(dt, observerCommand);
+}
+
+void __fastcall Hook_CameraFollowingUpdate(void* camera, int32_t userIndex, float dt, void* observerCommand) {
+    if (s_originalFollowingUpdate) s_originalFollowingUpdate(camera, userIndex, dt, observerCommand);
+    ApplyThirdPersonCameraTuning(dt, observerCommand);
 }
 
 bool __fastcall Hook_CameraModeCheck(int32_t playerIndex) {
     const bool orig = s_original ? s_original(playerIndex) : false;
+    if (playerIndex == 0) s_engineThirdPerson.store(orig);
     if (!s_enabled.load()) return orig;
     // Host/mode gate: online guests do not get the camera unless the session host runs it too (Tyler's rule). Offline and
     // the host always may.
@@ -103,6 +136,18 @@ bool CameraThirdPerson::Install(HMODULE haloreach) {
         NOBLE_WARN("CameraThirdPerson: follow function at haloreach+0x{:X} does not match the expected prologue; "
                    "distance tuning disabled", kCameraFollowRva);
     }
+
+    void* followingUpdateTarget = reinterpret_cast<void*>(base + kCameraFollowingUpdateRva);
+    if (std::memcmp(followingUpdateTarget, kFollowPrologue, sizeof(kFollowPrologue)) == 0) {
+        if (HookManager::InstallHook(followingUpdateTarget, reinterpret_cast<void*>(&Hook_CameraFollowingUpdate),
+                                     reinterpret_cast<void**>(&s_originalFollowingUpdate), "camera_following_update")) {
+            NOBLE_INFO("CameraThirdPerson: following-camera update hook installed at haloreach+0x{:X}", kCameraFollowingUpdateRva);
+        } else {
+            NOBLE_WARN("CameraThirdPerson: could not install following-camera update hook at haloreach+0x{:X}", kCameraFollowingUpdateRva);
+        }
+    } else {
+        NOBLE_WARN("CameraThirdPerson: following-camera update at haloreach+0x{:X} does not match expected prologue", kCameraFollowingUpdateRva);
+    }
     return true;
 }
 
@@ -118,6 +163,10 @@ void CameraThirdPerson::SetMode(int mode) {
 
 void CameraThirdPerson::SetEnabled(bool enabled) {
     const bool before = s_enabled.exchange(enabled);
+    if (!enabled) {
+        s_zoomHeld.store(false);
+        s_zoomBlend.store(0.0f);
+    }
     if (before != enabled) NOBLE_INFO("CameraThirdPerson: third person {}", enabled ? "on" : "off");
 }
 
@@ -129,6 +178,24 @@ void CameraThirdPerson::Toggle() { SetEnabled(!s_enabled.load()); }
 void CameraThirdPerson::PollHotkey(bool f5Down) {
     const bool was = s_f5WasDown.exchange(f5Down);
     if (f5Down && !was) Toggle();
+}
+
+void CameraThirdPerson::SetZoomHeld(bool held) {
+    s_zoomHeld.store(held);
+}
+
+bool CameraThirdPerson::IsZoomHeld() {
+    return s_zoomHeld.load();
+}
+
+float CameraThirdPerson::EffectiveFovScale() {
+    if (!s_enabled.load() && !s_engineThirdPerson.load()) return 1.0f;
+    const float blend = std::clamp(s_zoomBlend.load(), 0.0f, 1.0f);
+    if (blend <= 0.001f) return 1.0f;
+    const float zoomPercent = std::clamp(Settings::Get().Snapshot().thirdPersonZoom, 0.10f, 1.00f);
+    // 50% zoom -> 0.65x FOV, 100% zoom -> 0.30x FOV, 10% zoom -> 0.93x FOV.
+    const float targetScale = 1.0f - (zoomPercent * 0.70f);
+    return std::clamp(1.0f + (targetScale - 1.0f) * blend, 0.25f, 1.0f);
 }
 
 } // namespace noble
