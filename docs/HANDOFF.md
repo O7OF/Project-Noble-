@@ -69,6 +69,15 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-31, 01:40 ET) - Reeve-PC tailored starting briefs & playbooks for @gemini and @deepseek (Gemini 4 Argon)
+
+Added two machine-tailored starting briefs and continuous-mode playbooks for **Reeve's PC (`C:\Users\Reeve`)**, where `@gemini` (Gemini 4 Argon / `Dominus-VII`) and `@deepseek` (`C:\Users\Reeve\Desktop\deepseek\DeepSeek Harness.exe`) work alongside each other:
+- `docs/GEMINI-PROMPT.md`: Tailored playbook for `@gemini` (`Gemini 4 Argon` / `Dominus-VII`) with Reeve's exact folder paths (`C:\Users\Reeve\Desktop\Halo Reach Community Edition`, `C:\Users\Reeve\Documents\deepseek-harness\default-workspace\ServerTestDeploy`, `C:\Program Files (x86)\Steam\steamapps\common\Halo The Master Chief Collection\haloreach`, `C:\Users\Reeve\Desktop\rea-main`), the direct Ninja+MSVC Release build snippet (0 errors / 0 warnings gate without triggering `build.bat`'s automatic `git pull`), test flags, file ownership split, Cross-Verification Protocol, and 7-step Continuous-Mode Loop.
+- `docs/DEEPSEEK-PROMPT.md` & `docs/DEEPSEEK-PROMPT.txt` (also mirrored to `C:\Users\Reeve\Documents\deepseek-harness\default-workspace\DEEPSEEK-PROMPT.txt` and `C:\Users\Reeve\Desktop\deepseek\DEEPSEEK-PROMPT.txt`): Tailored starting brief for `@deepseek` on Reeve's PC so DeepSeek uses Reeve's paths and Ninja+MSVC toolchain instead of Tyler's `D:\` / VS2022 Community paths.
+- `docs/PATHS.md`: Added Reeve's PC path table alongside Tyler's PC path table, and cloned `O7OF/ServerTestDeploy` to `C:\Users\Reeve\Documents\deepseek-harness\default-workspace\ServerTestDeploy`.
+
+Self-review: Docs-only addition (`docs/GEMINI-PROMPT.md`, `docs/DEEPSEEK-PROMPT.md`, `docs/DEEPSEEK-PROMPT.txt`, `docs/PATHS.md`, `docs/HANDOFF.md`); verified all paths exist on Reeve's PC and `ServerTestDeploy` is cloned in `C:\Users\Reeve\Documents\deepseek-harness\default-workspace\ServerTestDeploy`.
+
 ## 0. Pick up here (2026-10-31, 01:36 ET) - Live per-peer RTT ping telemetry, 64 KB WebSocket relay fragment reassembly, LAN hole-punching, rich invites & cross-verification (Gemini 4 Argon)
 
 Client commit `bfcc6c7` (**0.8.7 (RTT Ping Telemetry, 64 KB Relay Reassembly & Rich Invites)**) and backend `O7OF/ServerTestDeploy` commit `8f16061` (**both pushed to GitHub**, including @deepseek's previously local-only Workshop `mod_id` / `mod_title` backend fields and client commit `ff9cc79` + `7f19dbc`).
