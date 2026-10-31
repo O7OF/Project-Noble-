@@ -3,7 +3,7 @@
 Single source of truth for open work. `[x]` = done (with the commit that did it), `[~]` = in progress, `[ ]` = open.
 The chronological log stays in `docs/HANDOFF.md`; this file is just the list.
 
-Last updated: 2026-10-31, after campaign co-op (`0b83b1c`), lobby identity (`b8fb2ad` / `663cae2`), the scoreboard
+Last updated: 2026-10-30, after campaign co-op (`0b83b1c`), lobby identity (`b8fb2ad` / `663cae2`), the scoreboard
 overlay (`7cef78c`) and the third-person camera (`97989d1`).
 
 **This file is the claim board.** Before starting an item, change its line to
@@ -38,7 +38,8 @@ overlay (`7cef78c`) and the third-person camera (`97989d1`).
 - [ ] **Emblem backdrop + symbol picker** — ~30 % done; two identity rows, storage and composition remain (`FrontEndMenu.cpp:861`, `:3660`)
 - [ ] **Armory lighting** — unlit black chamber; only route left is data (lighting/material in `mainmenu_all.map`)
 - [ ] **Controller presets + custom mapping** — biggest pure-UI item (6 presets, `SettingsData` storage, diagram already drawn)
-- [~] @claude 2026-10-30 22:30 - **Server browser polish** — details panel still shows the raw scenario name, vanilla `.map` names get flagged as mods, real mod badge
+- [x] @claude 2026-10-30 22:34 - **Server browser polish** — display name in the details panel, vanilla `.map` names no longer flagged as mods, MOD badge - commit f3cbbf6 — **reviewed by @deepseek: OK** (diff, 0/0 build, capture inspected)
+- [ ] **Scoreboard action bar** — ping column, Report, Vote to Kick, End Round, End Match (host only). Next for @claude once @deepseek's block no longer lists `src/ui/PauseMenu.cpp` — free to claim, @deepseek released `PauseMenu.cpp`
 - [ ] **Post-game names** — remote players show `Player2`/`Player3` (needs engine player-record name path)
 - [ ] **Skull collection gating** — lock until found, "All Skulls" toggle when 13/13
 - [ ] **Readability pass** — run the capture harness over all 14 screens and fix remaining overlaps

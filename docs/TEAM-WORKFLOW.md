@@ -88,6 +88,8 @@ instead). Then `git commit` + `git push` and mirror the handoff to `C:\Users\tyl
 | netcode / co-op | a two-process local run (`-data-dir` for the guest) plus the log lines showing both sides in game |
 | server (`ServerTestDeploy`) | `node --check server.js`, a local run with real endpoint requests, then push; Render redeploys |
 
+- **Captures must not contain personal data.** The server browser's status line shows the public IP; black it out or
+  capture against a local stand-in server before committing a screenshot.
 Close `noble-client.exe` when done testing.
 
 ## Cross-verification: how we check each other's work
