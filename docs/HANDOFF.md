@@ -69,6 +69,45 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-31, 06:45 ET) - CAMPAIGN CO-OP FIXED: the launch block must declare the co-op player count (WeabooTyler117 / DeepSeek)
+
+Root cause found in the launch block. `BuildLaunchBlock` hard-coded **`block[0xE8] = 1`** ("1 active local player") for
+every launch, including a campaign host that had a guest in its lobby. The campaign/firefight engine sizes its player list
+from that field, so it created only the host's player, left the guest's slot at biped `+0x30 = 255`, and then failed the
+mission with Category 14 results ~60 s later. Everything we had blamed before (transport, membership, Command 10/11
+ordering) was fine all along - which is exactly what the engine-class experiment had hinted at.
+
+### Fix
+
+After the block is built in `LaunchMap`, campaign (mode 1) and Firefight (mode 5) hosts now set
+
+```cpp
+int declaredPlayers = 1;
+if (connectAddress.empty() && expectedPeers > 0) declaredPlayers = 1 + expectedPeers;
+launchBlock[0xE8] = declaredPlayers;
+```
+
+and log `BlamEngine: launch block declares N player(s) (0xE8)`. Guests and solo launches keep 1.
+
+### Verified locally (two processes, `m10` campaign, loopback)
+
+| run | declared | outcome |
+|---|---|---|
+| before | 1 | GameResults / Category 14 at ~60 s, `player 1 +0x30 = 255` |
+| after, 90 s | **2** | no GameResults, host + guest both `game session started`, packets flowing |
+| after, **160 s** | **2** | **0 GameResults, 0 aborts on either side**, traffic still flowing (90-114 byte payloads) |
+
+Both clients reached `game session started` ~1 s apart and the simulation stayed alive for the full 160 s window - the
+first time campaign co-op has survived past 60 s in this project.
+
+### Next
+
+- Two-PC test on the real machines with this build: host campaign from the lobby (roster gives `expectedPeers`), guest
+  joins, host starts. Expect the real cutscene and both players in-game.
+- If the host launches a campaign lobby with a guest who then never joins, the engine now expects 2 players; if that turns
+  out to stall the mission, gate the declared count on the lobby roster being refreshed at start (it already is) rather
+  than on `-wait-peers` alone.
+
 ## 0. Pick up here (2026-10-31, 06:10 ET) - Membership before the mission load changes nothing; the campaign engine itself refuses a remote player (WeabooTyler117 / DeepSeek)
 
 Implemented the Command 10 hold properly this time (no new flag: campaign host with a known lobby peer count waits up to
