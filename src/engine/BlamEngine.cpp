@@ -4,6 +4,7 @@
 #include "network/MasterServerClient.hpp"
 #include "ui/LoadScreen.hpp"
 #include "career/Career.hpp"
+#include "vfs/VFS.hpp"
 #include "hooks/HookManager.hpp"
 #include "hooks/LobbyPatches.hpp"
 #include "common/Logger.hpp"

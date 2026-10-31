@@ -33,3 +33,4 @@ the map in one step:
 
 The MCC retail install is not modified by this workflow; its `forge_halo.map` remains the original
 332,328,960-byte file. Rebuilt maps live in HREK and in `data\mods`.
+
