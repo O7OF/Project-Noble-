@@ -69,17 +69,32 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
-## 0. Pick up here (2026-10-31, 03:40 ET) - HaloScript builtin table located; campaign co-op commands are reachable in principle (WeabooTyler117 / DeepSeek)
+## 0. Pick up here (2026-10-31, 03:55 ET) - Correction: the table I found is NOT confirmed as the HSC builtins (WeabooTyler117 / DeepSeek)
 
-Continued the campaign spawn RE. Found the **HaloScript builtin table** in `haloreach.dll`'s `.rdata`, which is the path
-to running `net_set_campaign_insertion_point` / the campaign co-op start actions from our own code.
+The 03:40 entry over-claims. A wider scan of the same `.rdata` region shows entries whose "names" are UI/localisation
+keys (`chud_campaign_ft_member_1_name`, `prop_campaign_skulls`, `player_rank`), and the fields repeat in a pattern typical
+of a string/id table rather than a callable builtin registry. Treat the "HaloScript builtin table" identification as
+**unverified** until one of these is shown:
 
-Table format (verified against three entries): stride **0x28**, entry = `{namePtr, 0, 0x198F2C, handler, 0}` where
-`namePtr` points at the ASCII builtin name in `.rdata`, `0x198F2C` is the shared evaluator wrapper, and the fourth qword
-differs per builtin (e.g. `0x86CBC` for the net/hs entries, `0x1B8930` for `submit_incident_with_cause_campaign_team`).
+- the table base is referenced by code that indexes it with a builtin id, or
+- one of the fourth-qword values (0x86CBC, 0x1B8930) is proven to be a builtin implementation that reads script args.
 
-| builtin (file offset of name) | table entry |
-|---|---|
+No code was changed from that entry beyond docs, so nothing to unwind in the build.
+
+### Where campaign co-op actually stands
+
+- Reliable local repro: two processes, `m10` campaign, guest in game before the host's Command 11; the host's `player 1`
+  slot stays at `+0x30 = 255` (no unit) and Category 14 results fire ~60 s later.
+- Ruled out: Command 11 timing, guest's own Command 10/11, membership sync, profile/userdata sharing, loopback vs LAN.
+- The single most useful missing datum is **O7's host client log for the failed run**. It contains the engine's own reason:
+  `c_network_session::abort called ... reason=NN caller hr+0x...` (our hook logs every abort), plus `boot_peer` and the
+  campaign refusal trace. That tells us whether the engine aborts (and with which code) or ends the mission through the
+  campaign state machine - two very different next steps.
+- Ask: have O7 run
+  `.\tools\extract-coop-log.ps1 -Log build\bin\Release\noble-client.log -Start "<launch time>" -End "<+45 s>" -Role host -Out "$env:USERPROFILE\Downloads\campaign-host.log.txt"`
+  and send that file.
+
+---|---|
 | `hs_make_interactive_scripts_deterministic` (0xA04AD8) | 0xA06828 |
 | `net_set_campaign_insertion_point` (0xA04B08) | 0xA06878 |
 | `submit_incident_with_cause_campaign_team` (0xA04B30) | 0xA068C8 |
