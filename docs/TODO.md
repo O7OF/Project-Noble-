@@ -320,10 +320,7 @@ items above close. Keep the spec open when building any screen so the details la
   the PTT key hint, (3) the same indicator on the party/lobby card so you can see who is speaking before the match, (4) muted
   players never show as talking to you, and open-mic users show a steady dot rather than a chunky pulse. - @claude
 
-- [ ] **Load the Prophets' Hand models by running its maps (no import)** (Tyler, 2026-10-31): the mod is a campaign
-  conversion; its `maps\m10.map` etc. are the actual content. Noble already has a `-mod` path and a writable `data` VFS, so
-  the cheapest route to "elite models we do not have" is an opt-in mod-map loader: point at the Workshop folder, launch a
-  campaign map from there, confirm the elite models/ranks appear. No tag extraction, no asset copying into our repo.
+- [~] @deepseek 2026-10-31 17:35 - **Load the Prophets' Hand models by running its maps (no import)** (Tyler, 2026-10-31): the mod is a campaign conversion; its `maps\m10.map` etc. are the actual content. `-map-override` now loads m10 and Firefight Corvette (VFS mount + game session started); the campaign player is Elite (Elite HUD/arms, safe-room capture `prophets-elite-safe-room.png`). **Still needed: a full 3D Elite model in a gameplay frame**, not just HUD/arms - requires a reliable third-person/freecam view or reaching a live Elite NPC. No tag extraction, no asset copying into our repo.
 - [ ] **Shader / light options** (Tyler, 2026-10-31): expose shader and lighting choice for models in the armory preview and
   optionally per-map: (a) armory light presets (studio key/rim, neutral, dark) on top of the UI key light, (b) shader variant
   choice for elite ranks (stock HREK shader tags: `elite_general_chest`, `elite_minor_chest`, `elite_officer_chest`,
