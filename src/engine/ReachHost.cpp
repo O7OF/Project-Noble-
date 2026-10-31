@@ -1116,6 +1116,7 @@ static uint64_t __fastcall HostSlot34_ProfileSettings(void* thisPtr, uint64_t a1
 //   +0x11C u32      mouse buttons: L=1, M=2, R=4, X1=8, X2=0x10
 // Index 1 is the split-screen second user: zeroed, as RR does.
 static ULONGLONG s_keyDownSince[256] = {};
+static std::atomic<uint32_t> s_engineKeyMask[8] = {};   // 8 x 32 bits = 256 virtual keys, mirroring the engine pad state
 static bool s_inputCaptured = false;
 static HCURSOR s_savedClassCursor = nullptr;
 static std::atomic<bool> s_slot36Logged{false};
@@ -1320,6 +1321,11 @@ static SyntheticPadPress ParseSyntheticPadPress() {
         press.startedAt = GetTickCount64() + static_cast<ULONGLONG>(press.atMs);
     }
     return press;
+}
+
+bool ReachHost::IsKeyHeld(int vk) {
+    if (vk < 0 || vk > 255) return false;
+    return (s_engineKeyMask[vk >> 5].load() & (1u << (vk & 31))) != 0;
 }
 
 static void FillLocalPad(uint8_t* st, bool keyboardMouseUsed) {
@@ -1641,6 +1647,12 @@ static void FillLocalInput(uint8_t* st) {
     }
     *reinterpret_cast<float*>(st + 0x114) = wheel;
 
+    for (int vk = 0; vk < 256; ++vk) {
+        const bool down = st[0x004 + vk] != 0;
+        const uint32_t bit = 1u << (vk & 31);
+        if (down) s_engineKeyMask[vk >> 5].fetch_or(bit);
+        else s_engineKeyMask[vk >> 5].fetch_and(~bit);
+    }
     FillLocalPad(st, dx != 0.0f || dy != 0.0f || buttons != 0 || wheel != 0.0f || AnyKeyDown(st));
 }
 

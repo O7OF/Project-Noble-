@@ -407,6 +407,29 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     if (!customMvar.empty()) args += L" -mvar \"" + toWide(customMvar) + L"\"";
     if (launchSkulls != 0) args += L" -skulls " + std::to_wstring(launchSkulls);
     if (!modFolder.empty()) args += L" -mod \"" + modFolder.wstring() + L"\"";
+
+    // In-match scoreboard overlay data: fetch the session roster once so the panel can show names, ranks,
+    // emblems and teams while the scoreboard key is held.
+    if (!connectSessionId.empty()) {
+        std::thread([connectSessionId]() {
+            noble::LobbyState st = noble::MasterServerClient::Get().FetchLobbyStateSync(connectSessionId);
+            if (!st.ok || st.roster.empty()) return;
+            std::vector<noble::PauseMenu::ScoreboardEntry> rows;
+            const std::string me = noble::Settings::Get().Snapshot().playerName;
+            for (const auto& p : st.roster) {
+                noble::PauseMenu::ScoreboardEntry e;
+                e.name = p.username;
+                e.tag = p.serviceTag;
+                e.rank = p.rankIndex;
+                e.emblem = p.emblemId;
+                e.team = p.team;
+                e.local = !me.empty() && _stricmp(p.username.c_str(), me.c_str()) == 0;
+                rows.push_back(e);
+            }
+            noble::PauseMenu::SetScoreboardRoster(std::move(rows), st.map, st.mode);
+        }).detach();
+    }
+
     if (!connectAddress.empty()) {
         args += L" -connect \"" + toWide(connectAddress) + L"\"";
         if (!connectSessionId.empty()) {

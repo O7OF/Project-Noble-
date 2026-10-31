@@ -12,6 +12,7 @@
 #include "network/NetworkTransport.hpp"
 #include "common/Settings.hpp"
 #include "engine/FrameCapture.hpp"
+#include "engine/ReachHost.hpp"
 #include "host/Window.hpp"
 
 #include <algorithm>
@@ -31,6 +32,7 @@ namespace {
 
 std::atomic<bool> s_open{false};
 std::atomic<bool> s_gameOver{false};
+std::atomic<bool> s_scoreboardShotRequest{false};
 std::atomic<bool> s_showSettings{
     false};               // the SETTINGS page opened from the pause menu
 std::mutex s_renderMutex; // Render (engine thread) vs HoldFrame (main thread)
@@ -183,6 +185,25 @@ void PauseMenu::ShowGameOver() {
 }
 
 bool PauseMenu::IsGameOver() { return s_gameOver.load(); }
+
+namespace {
+std::mutex s_boardMutex;
+std::vector<PauseMenu::ScoreboardEntry> s_boardRows;
+std::string s_boardMap;
+std::string s_boardMode;
+bool s_boardLogged = false;
+} // namespace
+
+void PauseMenu::SetScoreboardRoster(std::vector<ScoreboardEntry> entries, const std::string& mapName, const std::string& modeName) {
+    std::lock_guard<std::mutex> lock(s_boardMutex);
+    s_boardRows = std::move(entries);
+    s_boardMap = mapName;
+    s_boardMode = modeName;
+    if (!s_boardLogged) {
+        s_boardLogged = true;
+        NOBLE_INFO("PauseMenu: scoreboard roster set ({} player(s), {} on {})", s_boardRows.size(), s_boardMode, s_boardMap);
+    }
+}
 
 bool PauseMenu::WantsPointer() { return s_open.load() || s_gameOver.load(); }
 
@@ -494,6 +515,90 @@ void Heading(ImDrawList *dl, ImVec2 pos, float width, float s,
 }
 
 } // namespace
+
+
+// In-match scoreboard overlay. Reach's own scoreboard is engine drawn and cannot be restyled; this panel is drawn over it
+// while the scoreboard key is held and lists the session roster with rank badges, service tags and team colours.
+static void DrawScoreboardPanel() {
+  using namespace NobleUi;
+  ImGuiIO &io = ImGui::GetIO();
+  const float W = io.DisplaySize.x, H = io.DisplaySize.y;
+  const float s = std::clamp(H / 1080.0f, 0.7f, 2.0f);
+
+  std::vector<PauseMenu::ScoreboardEntry> rows;
+  std::string mapName, modeName;
+  {
+    std::lock_guard<std::mutex> lock(s_boardMutex);
+    rows = s_boardRows;
+    mapName = s_boardMap;
+    modeName = s_boardMode;
+  }
+  if (rows.empty()) {
+    PauseMenu::ScoreboardEntry me;
+    me.name = Settings::Get().Snapshot().playerName;
+    me.local = true;
+    me.rank = Career::RankIndex(Career::Get().credits);
+    rows.push_back(me);
+  }
+  std::sort(rows.begin(), rows.end(), [](const PauseMenu::ScoreboardEntry &a,
+                                         const PauseMenu::ScoreboardEntry &b) {
+    if (a.team != b.team) return a.team < b.team;
+    if (a.local != b.local) return a.local;
+    return a.name < b.name;
+  });
+
+  ImDrawList *dl = ImGui::GetBackgroundDrawList();
+  const float panelW = std::min(W * 0.72f, 1150.0f * s);
+  const float rowH = 46.0f * s;
+  const float top = 140.0f * s;
+  const float panelH = 118.0f * s + rowH * static_cast<float>(rows.size()) + 26.0f * s;
+  const ImVec2 p0((W - panelW) * 0.5f, top), p1(p0.x + panelW, top + panelH);
+  dl->AddRectFilled(p0, p1, IM_COL32(8, 14, 22, 232), 6.0f * s);
+  dl->AddRect(p0, p1, IM_COL32(70, 120, 165, 200), 6.0f * s, 0, 1.5f * s);
+  dl->AddRectFilled(ImVec2(p0.x, p0.y), ImVec2(p0.x + 6.0f * s, p1.y), kAccent, 6.0f * s);
+
+  Text(dl, NobleStyle::TitleFont(), 34.0f * s, ImVec2(p0.x + 34.0f * s, p0.y + 24.0f * s),
+       IM_COL32(236, 240, 244, 255), "SCOREBOARD");
+  std::string sub = Upper(mapName.empty() ? "" : mapName);
+  if (!modeName.empty()) sub += (sub.empty() ? "" : "  -  ") + Upper(modeName);
+  Text(dl, NobleStyle::SmallFont(), 15.0f * s, ImVec2(p0.x + 36.0f * s, p0.y + 66.0f * s),
+       IM_COL32(150, 190, 220, 255), sub.c_str());
+
+  float y = p0.y + 104.0f * s;
+  const char *const heads[3] = {"PLAYER", "TAG", "TEAM"};
+  const float cols[3] = {p0.x + 34.0f * s, p1.x - 190.0f * s, p1.x - 96.0f * s};
+  for (int c = 0; c < 3; ++c)
+    Text(dl, NobleStyle::SmallFont(), 14.0f * s, ImVec2(cols[c], y), IM_COL32(130, 170, 200, 255), heads[c]);
+  y += 26.0f * s;
+
+  static const ImU32 kTeamColors[8] = {
+      IM_COL32(214, 72, 72, 255),  IM_COL32(74, 132, 214, 255), IM_COL32(96, 178, 96, 255),
+      IM_COL32(214, 150, 60, 255), IM_COL32(158, 110, 200, 255), IM_COL32(206, 186, 80, 255),
+      IM_COL32(150, 110, 80, 255), IM_COL32(214, 120, 170, 255)};
+  for (const auto &r : rows) {
+    const ImVec2 r0(p0.x + 24.0f * s, y), r1(p1.x - 24.0f * s, y + rowH - 6.0f * s);
+    dl->AddRectFilled(r0, r1, r.local ? IM_COL32(40, 80, 115, 200) : IM_COL32(255, 255, 255, 12), 3.0f * s);
+    const ImU32 teamCol = kTeamColors[static_cast<size_t>(std::clamp(r.team, 0, 7))];
+    dl->AddRectFilled(r0, ImVec2(r0.x + 4.0f * s, r1.y), teamCol, 3.0f * s);
+
+    float nx = r0.x + 14.0f * s;
+    const UiTexture icon = UiArt::RankIcon(r.rank);
+    const float ty = y + (rowH - 6.0f * s) * 0.5f - 11.0f * s;
+    if (icon) {
+      UiArt::DrawContain(dl, icon, ImVec2(nx, ty - 2.0f * s), ImVec2(nx + 30.0f * s, ty + 26.0f * s));
+      nx += 38.0f * s;
+    }
+    Text(dl, ImGui::GetFont(), 19.0f * s, ImVec2(nx, ty),
+         r.local ? IM_COL32(143, 216, 255, 255) : IM_COL32(236, 240, 244, 255), r.name.c_str());
+    if (r.local)
+      Text(dl, NobleStyle::SmallFont(), 12.0f * s, ImVec2(nx + TextWidth(ImGui::GetFont(), 19.0f * s, r.name.c_str()) + 10.0f * s, ty + 4.0f * s),
+           IM_COL32(143, 216, 255, 200), "YOU");
+    Text(dl, ImGui::GetFont(), 17.0f * s, ImVec2(cols[1], ty), IM_COL32(200, 210, 220, 255), r.tag.c_str());
+    Text(dl, ImGui::GetFont(), 17.0f * s, ImVec2(cols[2], ty), teamCol,
+         r.team == 0 ? "RED" : r.team == 1 ? "BLUE" : "");
+    y += rowH;
+  }
+}
 
 void PauseMenu::DrawGameOver(HWND hwnd) {
   using namespace NobleUi;
@@ -1009,6 +1114,7 @@ void PauseMenu::Render(IDXGISwapChain *swapChain, bool loading) {
   s_lastEngineFrame.store(GetTickCount64());
   std::lock_guard<std::mutex> lock(s_renderMutex);
   RenderImpl(swapChain, loading, false);
+  if (s_scoreboardShotRequest.exchange(false) && swapChain) FrameCapture::SaveNow(swapChain, 888888);
 }
 
 bool PauseMenu::HoldFrame() {
@@ -1051,7 +1157,10 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading,
   const bool gameOver = s_gameOver.load();
   const bool open = s_open.load();
   const bool showFps = Settings::Get().Snapshot().showFps;
-  if (!(open || gameOver || loading || showFps) || !swapChain ||
+  static const bool s_scoreboardTest = wcsstr(GetCommandLineW(), L"-scoreboard-test") != nullptr;
+  const bool scoreboardHeld = !loading && !open && !gameOver &&
+                              (ReachHost::IsKeyHeld(VK_TAB) || s_scoreboardTest);
+  if (!(open || gameOver || loading || showFps || scoreboardHeld) || !swapChain ||
       !ImGui::GetCurrentContext())
     return;
 
@@ -1173,6 +1282,17 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading,
         DrawLoading();
       if (open)
         DrawMenu(hwnd);
+      if (scoreboardHeld) {
+        DrawScoreboardPanel();
+        if (s_scoreboardTest) {
+          static bool s_shot = false;
+          if (!s_shot) {
+            s_shot = true;
+            s_scoreboardShotRequest.store(true);
+            NOBLE_INFO("PauseMenu: -scoreboard-test capture requested");
+          }
+        }
+      }
     }
     ImGui::Render();
 

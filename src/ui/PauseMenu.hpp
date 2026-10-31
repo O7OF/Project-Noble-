@@ -2,6 +2,7 @@
 
 #include <windows.h>
 #include <string>
+#include <vector>
 
 struct IDXGISwapChain;
 
@@ -27,6 +28,17 @@ public:
 
     // Post-game panel. Once shown it stays up (the engine has nothing more to play).
     static void ShowGameOver();
+    // In-match scoreboard overlay (drawn while the scoreboard key is held).
+    struct ScoreboardEntry {
+        std::string name;
+        std::string tag;
+        int rank = -1;
+        int emblem = 0;
+        int team = 0;
+        bool local = false;
+    };
+    static void SetScoreboardRoster(std::vector<ScoreboardEntry> entries, const std::string& mapName, const std::string& modeName);
+
     static bool IsGameOver();
 
     // Map shown on the loading screen (internal name, e.g. "20_sword_slayer"). Main thread, before launch.
