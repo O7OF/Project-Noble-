@@ -29,6 +29,8 @@ if (Test-Path (Join-Path $Destination 'dedicated_data')) {
 }
 
 Set-Content (Join-Path $Destination 'play.bat') "@echo off`r`ncd /d `"%~dp0`"`r`nstart `"`" `"Noble.exe`"`r`n"
-Set-Content (Join-Path $Destination 'version.txt') ("Noble playtest build " + (Get-Date -Format 'yyyy-MM-dd HH:mm'))
+$versionMatch = Select-String -Path (Join-Path $repo 'src\common\Version.hpp') -Pattern 'VERSION_STRING = "([0-9]+\.[0-9]+\.[0-9]+) \(([^)]*)\)"'
+$version = if ($versionMatch) { "v" + $versionMatch.Matches[0].Groups[1].Value + " (" + $versionMatch.Matches[0].Groups[2].Value + ")" } else { "dev" }
+Set-Content (Join-Path $Destination 'version.txt') ("Noble " + $version + " playtest build " + (Get-Date -Format 'yyyy-MM-dd HH:mm'))
 Write-Host '== Done =='
 Write-Host "Executable: $(Join-Path $Destination 'Noble.exe')"

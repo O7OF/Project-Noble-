@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <thread>
 #include <chrono>
+#include <cstdlib>
 #include <cstring>
 #include <cwchar>
 #include <fstream>
@@ -848,7 +849,9 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
     // DIAGNOSTIC (temporary): NOBLE_MAP_NAME_OVERRIDE=<name> rewrites the engine's own map-name
     // string for the launch index, so the engine builds maps\<name>.map and maps\info\<name>.mapinfo
     // paths. Used to verify that a modded map file can stand in for a stock map slot.
-    if (const char* mapNameOverride = std::getenv("NOBLE_MAP_NAME_OVERRIDE")) {
+    char* mapNameOverride = nullptr;
+    size_t mapNameOverrideLen = 0;
+    if (_dupenv_s(&mapNameOverride, &mapNameOverrideLen, "NOBLE_MAP_NAME_OVERRIDE") == 0 && mapNameOverride) {
         if (mapNameOverride[0] != '\0' && m_hModule && mapId >= 178 && mapId <= 219) {
             using MapNameFn = const char* (*)(int);
             auto engineMapName = reinterpret_cast<MapNameFn>(reinterpret_cast<uintptr_t>(m_hModule) + 0x38E98);
@@ -863,6 +866,7 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
                 }
             }
         }
+        std::free(mapNameOverride);
     }
 
     uint32_t gameModeTag = 2; // Default multiplayer (Slayer, CTF, Invasion, all Megalo variants)
