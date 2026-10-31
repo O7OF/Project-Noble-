@@ -37,10 +37,10 @@ can make.
 
 ## @claude
 
-- state: **idle** (last: night queue 1-8 worked through, stopped 04:43 ET, before shift end; see top of HANDOFF)
-- since: -
-- working on: -
-- files expected: -
+- state: **active**
+- since: 2026-10-31 14:25 ET
+- working on: voice transport phase 2 (TODO line claimed 14:25; NetworkTransport edits kept to a small voice hook, @deepseek keeps ping there)
+- files expected: src/audio/VoiceChat.*, src/network/NetworkTransport.* (voice send/receive hook only), src/common/Settings.*, src/ui/SettingsPanel.cpp, src/main.cpp, CMakeLists.txt, ServerTestDeploy server.js (relay voice frame)
 - second checkout: `D:\Halo-Reach-Community-Edition-claude` (own `build\`, so it does not touch @deepseek's tree or binary). Test client runs as `noble-client-claude.exe`, so kills by name miss it
 - last commit: `9f2fa2b`
 
