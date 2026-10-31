@@ -90,6 +90,9 @@ instead). Then `git commit` + `git push` and mirror the handoff to `C:\Users\tyl
 
 - **Captures must not contain personal data.** The server browser's status line shows the public IP; black it out or
   capture against a local stand-in server before committing a screenshot.
+- **Mute the game before test runs.** `.\tools\mute-game.ps1 -IncludeClaude` zeroes `volumeGame`/`volumeMusic`/
+  `volumeOther` and sets `masterMute` in both checkouts (the engine takes its volumes from the profile at +0xA5C/
+  +0xA64 rows, so this silences the game, not just Noble's menus). `-Unmute` restores the backup.
 Close `noble-client.exe` when done testing.
 
 ## Cross-verification: how we check each other's work

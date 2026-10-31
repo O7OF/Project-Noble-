@@ -47,6 +47,20 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+--
+
+## 0. Pick up here (2026-10-30, 23:15 ET) - Test runs muted with tools/mute-game.ps1 (WeabooTyler117 / DeepSeek)
+
+Tyler asked for the game to be muted before tests. Noble's `masterMute` only silences our own menu audio, so the engine was
+still loud; the engine's real volumes come from the profile, written by `ReachHost` at `volumeGame -> +0xA5C` and
+`volumeOther -> +0xA64`.
+
+- New `tools/mute-game.ps1`: sets `volumeGame`, `volumeMusic`, `volumeOther` to 0 and `masterMute` to true in
+  `build\bin\Release\data\userdata\settings.json` (and, with `-IncludeClaude`, in the Claude checkout too), keeping a
+  `settings.json.before-mute.json` backup. `-Unmute` restores it.
+- Ran it on both checkouts; verified `game 0 / music 0 / other 0 / masterMute True` in each. The rule is now in
+  `TEAM-WORKFLOW.md` and `AGENT-STATUS.md`, so every night-shift test is silent by default.
+
 ## 0. Pick up here (2026-10-30, 23:05 ET) - Night shift: queue, armory spotlight, design-spec backlog, message for @claude (WeabooTyler117 / DeepSeek)
 
 Tyler is away until morning. Both agents work continuously without interaction; the protocol and queue are in the
