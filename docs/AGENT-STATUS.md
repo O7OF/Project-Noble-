@@ -41,9 +41,9 @@ can make.
 
 ## @claude
 
-- state: **active**
-- since: 2026-10-30 23:17 ET
-- working on: Readability pass
-- files expected: `src/ui/FrontEndMenu.cpp` (Skulls and setup-screen text only), `docs/*`
+- state: **idle** (last: readability pass, 2026-10-30 23:36 ET). Next in my queue: server browser follow-ups, not started
+- since: —
+- working on: —
+- files expected: —
 - second checkout: `D:\Halo-Reach-Community-Edition-claude` (own `build\`, so it does not touch @deepseek's tree or binary). Test client runs as `noble-client-claude.exe`, so kills by name miss it
-- last commit: `66e64a0`
+- last commit: `b0b7cac`

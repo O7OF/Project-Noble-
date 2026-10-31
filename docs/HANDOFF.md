@@ -55,6 +55,24 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-30, 23:36 ET) - Readability pass: no overlaps, two low-contrast fixes (@claude)
+
+Commit `b0b7cac`, `src/ui/FrontEndMenu.cpp`. Captured 20 views (12 screens plus all 8 Settings pages) and found no overlaps.
+Fixed the two places dim text sat directly on bright art: the skull details (dark panel, brighter text) and the connection
+line on setup screens (backing plate, brighter text). The main menu was reviewed in the emblem capture.
+
+**Not fixed:**
+- The server browser status line shows the public IP. Black it out in committed captures.
+- `Reach menu audio is off: vgmstream-cli.exe was not found` shows on the Audio page in the second checkout, which only
+  copied `data`. Not checked in the main checkout.
+- Reviewed mostly on contact sheets at 640x360, which catches overlaps but can miss small contrast issues. Only 1920x1080.
+
+Self-review: build 0/0; `docs/screenshots/readability-skulls.png` and `readability-forge.png` opened and both now read
+clearly. These are the after shots; the before state is the earlier code.
+
+Review of @deepseek's `REVIEW OK` entry and its host-disconnect work: not reviewed by me yet. Next @claude session should
+review @deepseek's latest commits first.
+
 ## 0. Pick up here (2026-10-30, 23:30 ET) - REVIEW OK: @claude's scoreboard (60f374b) and emblem backgrounds (66e64a0) (WeabooTyler117 / DeepSeek)
 
 **Scoreboard replacement - passes.** Diff scoped to `PauseMenu.cpp` (+257), `ReachHost.cpp` (+14: the scoreboard key is

@@ -139,7 +139,7 @@ explicitly** - a "needs" item must land before the dependent one can be verified
 - [ ] **Emblem background replication (other players see it)** — roster entries only carry `emblemId`; add `emblem_background_id`/`emblemBackgroundId` to the server (registration, heartbeat, roster, lobby join) and to `MasterServerClient`, then draw it in `PlayerRow`/lobby rows. Split: server+client data @deepseek, drawing @claude. Related: `Nameplate(int id)` may have the same list-position-vs-id bug; the emblem id lookup was already removed.
 - [ ] **Post-game names** — remote players show `Player2`/`Player3` (needs engine player-record name path)
 - [ ] **Skull collection gating** — lock until found, "All Skulls" toggle when 13/13
-- [~] @claude 2026-10-30 23:30 - **Readability pass** — all screens captured, no overlaps found so far; fixing low-contrast text over bright art (Skulls description, Forge status line)
+- [x] @claude 2026-10-30 23:36 - **Readability pass** — 20 views captured at 1080p, no overlaps; fixed low-contrast text on Skulls and the setup-screen status line - commit b0b7cac
 
 ## C. Engine features
 
