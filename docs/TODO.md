@@ -246,6 +246,10 @@ items above close. Keep the spec open when building any screen so the details la
 
 - [x] @deepseek 2026-10-31 04:25 - **Elite pipeline + colour system** (night block 1) - commit e7ab6c9: `docs/reference/elite-slots.md` (314 rrpmcg components, elite ranks) and `docs/reference/elite-m10.md` (cache sections, 79 elite shader + 117 bitmap paths, 57/60 sampled bitmaps already stock vs 51/60 shaders pack-only - the rank look is in the shaders). Next: shader colour parameters.
 
+- [ ] **Lobby/scoreboard: split teams into two columns** (Tyler, 2026-10-31): RED on the left, BLUE on the right, each
+  column scrolling straight down through its own player list (independent scroll positions, sticky team headers, team
+  colour/dot per row, current player pinned in view). Free-for-all falls back to one column; uneven teams leave the shorter
+  column empty rather than reordering. Stress test at 64/64 and 100/28. - @claude
 - [ ] **Large-lobby roster: scrollable player list up to 128** (Tyler, 2026-10-31): the pre-game lobby and the in-game
   scoreboard must render far more than Reach's 16 rows with scrolling (virtualised rows, sticky header, current player kept
   in view, controller page-scroll, 16/32/64/128 stress fixtures). - @claude
