@@ -7,16 +7,17 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 
 **Goal:** `noble-client.exe` loads MCC's own `haloreach.dll` (Halo: Reach) and drives it **without MCC**, like the existing
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
-MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.8.8 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.1 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
 
 ### How this file is kept (Tyler, 2026-10-30)
 
 - **Every change gets an entry - no exceptions**: code, UI, docs, tools, config, server. Add it at the **top**, directly
-  under the `--` line, as `## 0. Pick up here (2026-10-31, 06:25 ET) - Offline identity, encrypted saves, dev/release split, packaged playtest (@O7OF / DeepSeek)
+  under the `--` line, as
+  `## 0. Pick up here (2026-10-31, 08:25 ET) - Pre-game lobby map identity (@deepseek / DeepSeek)`.
 
-**Current version:** 0.9.0. **Developer build:** 0.9.0-dev. Dev binaries report the suffix next to the version string.
+**Current version:** 0.9.1. **Developer build:** 0.9.1-dev. Dev binaries report the suffix next to the version string.
 
-**Built and verified:** release `build\bin\Release\noble-client.exe`, developer `build\bin\Release\noble-dev.exe`, and the packaged `Documents\Noble Launcher\Noble.exe` (full runtime tree; package stayed running in a normal launch test).
+**Built and verified:** release `build\bin\Release\noble-client.exe`, developer `build\bin\Release\noble-dev.exe`, dedicated `build\bin\Release\noble-dedicated.exe`, and the packaged `Documents\Noble Launcher\Noble.exe` (full runtime tree; package stayed running in a normal launch test).
 
 ### Identity and saves
 
@@ -53,6 +54,24 @@ The packaged executable is unsigned and performs legitimate but AV-sensitive hos
 
 - The earlier Forge World auto-map override was reverted: base maps load normally; modded palettes come only from mods. The HREK Thorage tag-data swap (O7 Pelican + Phantom MP, `wraith_d` driver, `warthog_p` passenger seats) is documented in `docs/FORGE-THORAGE.md`.
 - Automatic updates are **not implemented**. Suggested path: publish a signed manifest (`version`, `url`, `sha256`) from ServerTestDeploy, check it at startup, download to a temp file, verify, then replace `Noble.exe` on next launch. Do not auto-install unsigned files.
+
+## 0. Pick up here (2026-10-31, 08:25 ET) - Pre-game lobby now shows the mod map's name and art (@deepseek / DeepSeek)
+
+**Version:** 0.9.1 (Pregame Map Identity). **Built:** `noble-client.exe`, `noble-dev.exe`, `noble-dedicated.exe`; packaged `Documents\Noble Launcher\Noble.exe`.
+
+**O7OF found.** The picker launched Campaign-to-Forge maps correctly, but the pre-game lobby still resolved only `st.lobbyMap` against the stock Reach tables and drew `UiArt::MapPhoto(st.lobbyMap)`. Because every mod map launches through Boneyard, the MAP row and banner said **BONEYARD** with Boneyard art even though `lobbyMapTitle`, `lobbyMapImage` and `lobbyMapThumb` were already carried through setup. The MAP row also cycled only the stock table, so it could not offer or preserve the mod's own maps.
+
+**O7OF fixed.**
+- `DrawPreGameLobby` now prefers `st.lobbyMapTitle` over the carrier name, passes `st.lobbyMapImage`/`lobbyMapThumb` to `HeroBanner`, and the pre-game backdrop uses `UiArt::ImageFile` for the mod art instead of the stock `MapPhoto`.
+- The MAP/MISSION row now builds its choices from the host's selected mod first (`ModMaps` for campaign/Firefight/multiplayer), then the stock table. Cycling updates `lobbyMap` (carrier), `lobbyMapOverride`, title, image and thumbnail; choosing a stock map clears the override/title/images again. The row value ellipsizes instead of clipping.
+- `-lobby-demo-map <scenario>` (test-only) opens the pre-game lobby on a real installed mod map for screenshots, alongside the existing `-lobby-demo`.
+- The old diagnostic `std::getenv` in `BlamEngine::LaunchMap` is now `_dupenv_s`, so the build is warning-free.
+
+**O7OF changed.** Bumped to 0.9.1; rebuilt release, developer and dedicated targets with **0 errors, 0 warnings**; repackaged Noble Launcher after cleanup while preserving player data; refreshed `SHA256SUMS.txt` for all three binaries and the package; added `docs\screenshots\workshop-pregame-lobby.png`.
+
+**Verified.** `-lobby-demo host -lobby-demo-mode forge -lobby-demo-map m30final` starts on "NIGHTFALL CAMPAIGN TO FORGE" with its own art (`docs\screenshots\workshop-pregame-lobby.png`); cycling the MAP row reached "THE PILLAR OF AUTUMN CAMPAIGN TO FORGE" with Pillar art. A stock choice goes back to the stock name/art. The 0.9.0 picker, loading screen and Workshop prompt remain verified.
+
+**Next.** Guest sync is still the top gap: the lobby advert has no custom-scenario/override field, so a guest still gets Boneyard. Add the custom scenario/carrier/title to `HostConfig`, `MasterAdvert`, `LobbyState` and `ServerTestDeploy`, then resolve the guest's override from its own `ModCatalog`. After that, two-PC test host/guest pre-game names and map changes; Tyler should recheck cycling at 16:9/21:9 and mod-to-stock/stock-to-mod transitions.
 
 ## 0. Pick up here (2026-10-31, 08:02 ET) - Workshop map carriers: Campaign-to-Forge, custom games and Firefight maps now launch from the picker (@deepseek / DeepSeek)
 

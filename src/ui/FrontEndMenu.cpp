@@ -364,6 +364,7 @@ float BlurbBlockHeight(const Ui& ui, float width, const char* blurb) {
 enum class Screen { Main, Campaign, Skulls, Firefight, CustomGame, Forge, Servers, Settings, Armory, Mods, Career, PreGameLobby, Social };
 
 std::string s_lobbyBackdropMap;   // set each frame from the lobby state
+std::filesystem::path s_lobbyBackdropImage; // mod map art for the pre-game backdrop
 
 // The Armory's presentation. The engine draws the model from a fixed scene camera, so the framing can't be moved there:
 // Noble copies the finished engine frame and redraws it smaller and further right, with the head under the rule and the
@@ -484,7 +485,9 @@ void DrawBackdrop(const Ui& ui, Screen screen) {
         ui.dl->AddRectFilled(o, ui.size, IM_COL32(8, 12, 18, 255));
         // The lobby shows the map that is going to load, when there is a picture of it.
         UiTexture bg;
-        if (screen == Screen::PreGameLobby && !s_lobbyBackdropMap.empty()) {
+        if (screen == Screen::PreGameLobby && !s_lobbyBackdropImage.empty()) {
+            bg = UiArt::ImageFile(s_lobbyBackdropImage);
+        } else if (screen == Screen::PreGameLobby && !s_lobbyBackdropMap.empty()) {
             const std::string scenario = MapNames::ScenarioOf(s_lobbyBackdropMap);
             bg = UiArt::MapPhoto(scenario.empty() ? s_lobbyBackdropMap : scenario);
         }
@@ -2401,16 +2404,20 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
     const ImU32 panelEdge = IM_COL32(170, 200, 220, 120);
     const ImU32 kRuleLine = IM_COL32(255, 255, 255, 50);
 
-    // Resolve Map Display Name
-    std::string mapDisplay = st.lobbyMap;
-    for (int i = 0; i < Count(kMaps); ++i) {
-        if (kMaps[i].scenario == st.lobbyMap) { mapDisplay = kMaps[i].name; break; }
-    }
-    for (int i = 0; i < Count(kFirefightMaps); ++i) {
-        if (kFirefightMaps[i].scenario == st.lobbyMap) { mapDisplay = kFirefightMaps[i].name; break; }
-    }
-    for (int i = 0; i < Count(kMissions); ++i) {
-        if (kMissions[i].scenario == st.lobbyMap) { mapDisplay = kMissions[i].name; break; }
+    // Resolve Map Display Name. A mod map uses the title from its map JSON; a stock map uses the
+    // Reach table. Without this the lobby says "Boneyard" for every Campaign-to-Forge selection
+    // because 70_boneyard is only the carrier the engine launches through.
+    std::string mapDisplay = !st.lobbyMapTitle.empty() ? st.lobbyMapTitle : st.lobbyMap;
+    if (st.lobbyMapTitle.empty()) {
+        for (int i = 0; i < Count(kMaps); ++i) {
+            if (kMaps[i].scenario == st.lobbyMap) { mapDisplay = kMaps[i].name; break; }
+        }
+        for (int i = 0; i < Count(kFirefightMaps); ++i) {
+            if (kFirefightMaps[i].scenario == st.lobbyMap) { mapDisplay = kFirefightMaps[i].name; break; }
+        }
+        for (int i = 0; i < Count(kMissions); ++i) {
+            if (kMissions[i].scenario == st.lobbyMap) { mapDisplay = kMissions[i].name; break; }
+        }
     }
 
     const bool campaign = st.lobbyMode == "campaign";
@@ -2486,6 +2493,56 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         return type.empty() || MapGameTypes::Supports(scenario, type);
     };
 
+    // The pre-game map row offers the maps from the host's selected mod first, then the stock
+    // Reach table. A Campaign-to-Forge map keeps its own title and art even though the engine
+    // launches it through 70_boneyard; a stock choice clears the override again.
+    struct LobbyMapChoice {
+        std::string launch;   // scenario the engine launches (the carrier for a mod map)
+        std::string label;    // title to show
+        std::filesystem::path overrideFile;
+        std::filesystem::path image;
+        std::filesystem::path thumb;
+    };
+    const MenuMap* baseMaps = campaign ? kMissions : (firefight ? kFirefightMaps : kMaps);
+    const int baseCount = campaign ? Count(kMissions) : (firefight ? Count(kFirefightMaps) : Count(kMaps));
+    const std::string carrier = campaign ? "m10" : (firefight ? "ff60_icecave" : "70_boneyard");
+    const ModEntry* lobbyMod = nullptr;
+    for (const ModEntry& mod : ctx.mods) {
+        if ((!st.lobbyModFolder.empty() && mod.folder == st.lobbyModFolder) ||
+            (!st.lobbyModId.empty() && !mod.workshopId.empty() && mod.workshopId == st.lobbyModId)) {
+            lobbyMod = &mod;
+            break;
+        }
+    }
+    std::vector<LobbyMapChoice> mapChoices;
+    auto addMapChoice = [&](LobbyMapChoice choice) {
+        for (const LobbyMapChoice& existing : mapChoices) {
+            if (existing.launch == choice.launch && existing.overrideFile == choice.overrideFile &&
+                existing.label == choice.label) {
+                return;
+            }
+        }
+        mapChoices.push_back(std::move(choice));
+    };
+    if (lobbyMod) {
+        const std::vector<ModMap>& listed = campaign ? lobbyMod->campaign
+                                            : firefight ? lobbyMod->firefight
+                                                        : lobbyMod->multiplayer;
+        const std::vector<MapEntry> maps = ModMaps(*lobbyMod, listed, baseMaps, baseCount, carrier);
+        for (const MapEntry& m : maps) {
+            if (m.header || !m.enabled || m.mapOverride.empty()) continue;
+            addMapChoice({ m.launchScenario.empty() ? m.scenario : m.launchScenario, m.name, m.mapOverride,
+                           m.imageLarge.empty() ? m.imageThumbnail : m.imageLarge, m.imageThumbnail });
+        }
+    }
+    if (!st.lobbyMapOverride.empty()) {
+        addMapChoice({ st.lobbyMap, st.lobbyMapTitle.empty() ? st.lobbyMap : st.lobbyMapTitle, st.lobbyMapOverride,
+                       st.lobbyMapImage, st.lobbyMapThumb });
+    }
+    for (int i = 0; i < baseCount; ++i) {
+        addMapChoice({ baseMaps[i].scenario, baseMaps[i].name, {}, {}, {} });
+    }
+
     auto cycleOption = [&](int dir) {
         const auto& row = optRows[st.lobbyMenuRow];
         if (!row.editable || row.isStart) return;
@@ -2493,15 +2550,43 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
             st.lobbyReady = !st.lobbyReady;
             MenuSounds::Change();
         } else if (row.label == "MISSION" || row.label == "MAP") {
-            const MenuMap* baseMaps = campaign ? kMissions : (firefight ? kFirefightMaps : kMaps);
-            const int count = campaign ? Count(kMissions) : (firefight ? Count(kFirefightMaps) : Count(kMaps));
+            if (mapChoices.empty()) return;
+            const int count = static_cast<int>(mapChoices.size());
             int cur = 0;
-            for (int i = 0; i < count; ++i) if (baseMaps[i].scenario == st.lobbyMap) { cur = i; break; }
+            bool found = false;
+            for (int i = 0; i < count; ++i) {
+                if (mapChoices[i].launch == st.lobbyMap && mapChoices[i].overrideFile == st.lobbyMapOverride) {
+                    cur = i;
+                    found = true;
+                    break;
+                }
+            }
+            if (!found && !st.lobbyMapTitle.empty()) {
+                for (int i = 0; i < count; ++i) {
+                    if (mapChoices[i].label == st.lobbyMapTitle) { cur = i; found = true; break; }
+                }
+            }
+            if (!found) {
+                for (int i = 0; i < count; ++i) {
+                    if (mapChoices[i].launch == st.lobbyMap && mapChoices[i].overrideFile.empty()) { cur = i; break; }
+                }
+            }
             for (int tries = 0; tries < count; ++tries) {
                 cur = (cur + dir + count) % count;
-                if (comboAllowed(baseMaps[cur].scenario, st.lobbyVariantPath)) break;
+                const LobbyMapChoice& candidate = mapChoices[cur];
+                if (!candidate.overrideFile.empty() || comboAllowed(candidate.launch, st.lobbyVariantPath)) break;
             }
-            st.lobbyMap = baseMaps[cur].scenario;
+            const LobbyMapChoice& chosen = mapChoices[cur];
+            st.lobbyMap = chosen.launch;
+            st.lobbyMapOverride = chosen.overrideFile;
+            st.lobbyMapTitle = chosen.overrideFile.empty() ? std::string() : chosen.label;
+            st.lobbyMapImage = chosen.image;
+            st.lobbyMapThumb = chosen.thumb;
+            if (lobbyMod && !chosen.overrideFile.empty()) {
+                st.lobbyModFolder = lobbyMod->folder;
+                st.lobbyModId = lobbyMod->workshopId;
+                st.lobbyModTitle = lobbyMod->title;
+            }
             MasterServerClient::Get().UpdateLobbyAdvert(st.lobbyMap, st.lobbyMode, st.lobbyVariantName, st.lobbyDifficulty, st.lobbySkulls);
             MenuSounds::Change();
         } else if (row.label == "GAME TYPE") {
@@ -2681,7 +2766,8 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
             const float rx = vx + vw - aw;
             ui.dl->AddTriangleFilled(ImVec2(rx + aw * 0.35f, cy - ah), ImVec2(rx + aw * 0.35f, cy + ah), ImVec2(rx + aw * 0.7f, cy), focused ? kWhite : kDim);
         }
-        const std::string value = Upper(row.value);
+        const std::string value = Upper(Ellipsize(NobleStyle::TitleFont(), 18.0f * ui.s, row.value,
+                                                   vw - aw * 2.0f - 4.0f * ui.s));
         const float tw = TextWidth(NobleStyle::TitleFont(), 18.0f * ui.s, value.c_str());
         ui.dl->PushClipRect(ImVec2(vx + aw, r0.y), ImVec2(vx + vw - aw, r1.y), true);
         Text(ui, NobleStyle::TitleFont(), 18.0f, ImVec2(std::max(vx + aw, vx + (vw - tw) * 0.5f), r0.y + 6.0f * ui.s), row.editable ? kWhite : kDim, value.c_str());
@@ -2783,7 +2869,8 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
                        : campaign ? std::string("HALO: REACH \xC2\xB7 CAMPAIGN")
                        : forge ? std::string("HALO: REACH \xC2\xB7 FORGE")
                                : "HALO: REACH \xC2\xB7 " + Upper(st.lobbyVariantName.empty() ? "MULTIPLAYER" : st.lobbyVariantName);
-    HeroBanner(ui, ImVec2(px, bannerY), pw, bannerH, st.lobbyMap, kicker, mapDisplay.c_str(), "");
+    const std::filesystem::path bannerImage = st.lobbyMapImage.empty() ? st.lobbyMapThumb : st.lobbyMapImage;
+    HeroBanner(ui, ImVec2(px, bannerY), pw, bannerH, st.lobbyMap, kicker, mapDisplay.c_str(), "", bannerImage);
 
     const float headY = bannerY + bannerH + 8.0f * ui.s;
     const float headH = 28.0f * ui.s;
@@ -3569,6 +3656,7 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
     ui.size = vp->Size;
     ui.s = std::max(0.75f, vp->Size.y / 720.0f);
     s_lobbyBackdropMap = st.lobbyMap;
+    s_lobbyBackdropImage = st.lobbyMapImage.empty() ? st.lobbyMapThumb : st.lobbyMapImage;
     DrawBackdrop(ui, st.screen);
     DrawAccountModal(ui);
     DrawDevMenuModal(ui);
@@ -4346,7 +4434,7 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
     {
         int argc = 0;
         LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
-        std::wstring demo, demoMode;
+        std::wstring demo, demoMode, demoMap;
         int demoPlayers = 1;
         int demoRed = -1;
         bool demoFfa = false;
@@ -4354,6 +4442,7 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
             if (_wcsicmp(argv[i], L"-lobby-demo") == 0) demo = Lower(argv[i + 1]);
             if (_wcsicmp(argv[i], L"-lobby-demo-players") == 0) demoPlayers = std::clamp(_wtoi(argv[i + 1]), 0, 128);
             if (_wcsicmp(argv[i], L"-lobby-demo-mode") == 0) demoMode = Lower(argv[i + 1]);
+            if (_wcsicmp(argv[i], L"-lobby-demo-map") == 0) demoMap = argv[i + 1];
             if (_wcsicmp(argv[i], L"-lobby-demo-red") == 0) demoRed = _wtoi(argv[i + 1]);   // that many red, the rest blue
             if (_wcsicmp(argv[i], L"-lobby-demo-ffa") == 0) demoFfa = _wtoi(argv[i + 1]) != 0;
         }
@@ -4382,6 +4471,49 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
                 }
                 p.team = demoFfa ? 0 : demoRed >= 0 ? (i < demoRed ? 1 : 2) : demoPlayers > 2 ? (i % 2) + 1 : 0;
                 st.lobbyRoster.push_back(p);
+            }
+            if (!demoMap.empty()) {
+                std::string scenario;
+                for (const wchar_t c : demoMap) {
+                    if (c < 128) scenario.push_back(static_cast<char>(::tolower(static_cast<unsigned char>(c))));
+                }
+                const ModEntry* foundMod = nullptr;
+                const ModMap* foundMap = nullptr;
+                int foundKind = -1;
+                for (const ModEntry& mod : ctx.mods) {
+                    for (int kind = 0; kind < 3 && !foundMap; ++kind) {
+                        const std::vector<ModMap>& list = kind == 0 ? mod.campaign
+                                                           : kind == 1 ? mod.firefight
+                                                                       : mod.multiplayer;
+                        for (const ModMap& m : list) {
+                            if (m.scenario == scenario && m.hasMapFile) {
+                                foundMod = &mod;
+                                foundMap = &m;
+                                foundKind = kind;
+                                break;
+                            }
+                        }
+                    }
+                    if (foundMap) break;
+                }
+                if (foundMap) {
+                    st.lobbyMode = foundKind == 0 ? "campaign"
+                                   : foundKind == 1 ? "firefight"
+                                   : demoMode == L"forge" ? "forge" : "multiplayer";
+                    const std::string carrier = foundKind == 0 ? "m10" : foundKind == 1 ? "ff60_icecave" : "70_boneyard";
+                    st.lobbyMap = CarrierForScenario(foundMap->scenario, carrier);
+                    st.lobbyMapOverride = foundMod->folder / "maps" / (foundMap->scenario + ".map");
+                    st.lobbyMapTitle = foundMap->title;
+                    st.lobbyMapImage = foundMap->imageLarge.empty() ? foundMap->imageThumbnail : foundMap->imageLarge;
+                    st.lobbyMapThumb = foundMap->imageThumbnail;
+                    st.lobbyModFolder = foundMod->folder;
+                    st.lobbyModId = foundMod->workshopId;
+                    st.lobbyModTitle = foundMod->title;
+                    NOBLE_INFO("FrontEndMenu: -lobby-demo-map {} -> lobby '{}' via '{}'", scenario,
+                               foundMap->title, st.lobbyMap);
+                } else {
+                    NOBLE_WARN("FrontEndMenu: -lobby-demo-map {} not found in any installed mod", scenario);
+                }
             }
             NOBLE_INFO("FrontEndMenu: -lobby-demo host={} players={} mode={}", st.isLobbyHost, demoPlayers, st.lobbyMode);
         }
