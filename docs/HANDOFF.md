@@ -69,6 +69,40 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-31, 06:10 ET) - Membership before the mission load changes nothing; the campaign engine itself refuses a remote player (WeabooTyler117 / DeepSeek)
+
+Implemented the Command 10 hold properly this time (no new flag: campaign host with a known lobby peer count waits up to
+15 s for `LobbyPatches::GetRemotePlayerAddCount()` before posting Command 10). Verified in the log:
+
+```
+BlamEngine: membership before mission load: 2/1 player(s) in session
+BlamEngine: Posting Command 10 (Event: Start) ...
+BlamEngine: Posting Command 11 ...
+game session started at frame 280
+... 63 s later ...
+Slot 6 - GameResults        (Category 14)
+Career: player 1 ... +0x30 255      <- still no unit for the guest
+```
+
+So even with the guest **already in session membership when the mission loads**, the campaign engine does not create a unit
+for the remote slot, and it still ends the mission ~60 s later. Combined with the previous entry (engine class **3** on the
+same map and transport survives with no GameResults), the conclusion is now well supported:
+
+> The shared transport, join ordering, membership and Command 10/11 timing are all fine. The **campaign engine
+> (launch-block class 1)** refuses to instantiate a remote player's unit and then fails the mission - it is campaign-engine
+> player selection, not netcode.
+
+### Where to look next
+
+- The campaign engine's player-selection/spawn loop. Candidate inputs: the launch block's player-slot regions
+  (0x100-0x2E0, identical between the captured campaign and multiplayer blocks), the session membership's local-player
+  mask, and the `+0x100`/`+0x101` bytes MCC copies into result `+0x28`/`+0x29`.
+- Diagnostic trick that worked and should be reused: run the same test with `-engine-mode 3`. If it survives, the difference
+  is campaign-engine logic; if it fails too, the problem is shared.
+
+The Command 10 hold is kept in the engine (it is correct for real co-op lobbies: the host's mission should not load before
+its guests are in the session).
+
 ## 0. Pick up here (2026-10-31, 05:45 ET) - KEY DATA POINT: the campaign engine class is what kills co-op, not the netcode (WeabooTyler117 / DeepSeek)
 
 Ran the campaign map `m10` with **`-engine-mode 3`** (multiplayer/Megalo class) on both host and guest, everything else

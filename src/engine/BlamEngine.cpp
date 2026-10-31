@@ -961,6 +961,17 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
             }
 
             if (m_engineInstance && m_fnProcessEvent) {
+                if (holdMissionForPeers && peersToWaitFor > 0 && isOnlineHost) {
+                    // Campaign builds its player list when the mission loads (Command 10); the guest's first membership
+                    // message arrives ~150 ms later, so hold the mission load until the lobby's guests are in membership.
+                    const size_t c10Want = static_cast<size_t>(peersToWaitFor);
+                    const ULONGLONG c10Deadline = GetTickCount64() + 15000;
+                    while (GetTickCount64() < c10Deadline && noble::LobbyPatches::GetRemotePlayerAddCount() < c10Want) {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                    }
+                    NOBLE_INFO("BlamEngine: membership before mission load: {}/{} player(s) in session",
+                               noble::LobbyPatches::GetRemotePlayerAddCount(), c10Want);
+                }
                 NOBLE_INFO("BlamEngine: Posting Command 10 (Event: Start) via vtbl+0x18 after {}ms delay...", startDelay);
                 int32_t status10 = m_fnProcessEvent(m_engineInstance, 10, 0);
                 NOBLE_INFO("BlamEngine: PostCommand(10) returned: 0x{:X}", status10);
