@@ -39,10 +39,10 @@ can make.
 
 - state: **active**
 - since: 2026-10-31 03:32 ET
-- working on: scoreboard wiring (night queue 4), input lock: until 04:19
+- working on: match-end UI stubs, variant picker (night queue 5-6)
 - files expected: src/ui/FrontEndMenu.cpp, src/ui/ArmorCustomizer.cpp, src/ui/UiArt.cpp, src/ui/PauseMenu.cpp (scoreboard block only), docs/screenshots
 - second checkout: `D:\Halo-Reach-Community-Edition-claude` (own `build\`, so it does not touch @deepseek's tree or binary). Test client runs as `noble-client-claude.exe`, so kills by name miss it
-- last commit: `ec531b4`
+- last commit: `4792746`
 
 ## @gemini (Gemini 4 Argon / Dominus-VII)
 

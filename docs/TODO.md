@@ -246,11 +246,11 @@ items above close. Keep the spec open when building any screen so the details la
 
 - [x] @deepseek 2026-10-31 04:25 - **Elite pipeline + colour system** (night block 1) - commit e7ab6c9: `docs/reference/elite-slots.md` (314 rrpmcg components, elite ranks) and `docs/reference/elite-m10.md` (cache sections, 79 elite shader + 117 bitmap paths, 57/60 sampled bitmaps already stock vs 51/60 shaders pack-only - the rank look is in the shaders). Next: shader colour parameters.
 
-- [~] @claude 2026-10-31 03:53 - lobby done, commit ec531b4; **in-game scoreboard still open** - **Lobby/scoreboard: split teams into two columns** (Tyler, 2026-10-31): RED on the left, BLUE on the right, each
+- [~] @claude 2026-10-31 03:53 - lobby ec531b4, scoreboard 4792746; captures docs/screenshots/roster-*.png, scoreboard-*.png - **Lobby/scoreboard: split teams into two columns** (Tyler, 2026-10-31): RED on the left, BLUE on the right, each
   column scrolling straight down through its own player list (independent scroll positions, sticky team headers, team
   colour/dot per row, current player pinned in view). Free-for-all falls back to one column; uneven teams leave the shorter
   column empty rather than reordering. Stress test at 64/64 and 100/28. - @claude
-- [~] @claude 2026-10-31 03:53 - lobby done, commit ec531b4; **in-game scoreboard still open**; needs: @deepseek server roster limits - **Large-lobby roster: scrollable player list up to 128** (Tyler, 2026-10-31): the pre-game lobby and the in-game
+- [~] @claude 2026-10-31 03:53 - lobby ec531b4, scoreboard 4792746; **controller page-scroll on the scoreboard open**; needs: @deepseek server roster limits - **Large-lobby roster: scrollable player list up to 128** (Tyler, 2026-10-31): the pre-game lobby and the in-game
   scoreboard must render far more than Reach's 16 rows with scrolling (virtualised rows, sticky header, current player kept
   in view, controller page-scroll, 16/32/64/128 stress fixtures). - @claude
 - [ ] **Server roster/limits for 128 entries** (Tyler, 2026-10-31): raise `MASTER_MAX_PLAYERS` and the lobby roster caps,
@@ -258,6 +258,11 @@ items above close. Keep the spec open when building any screen so the details la
 - [ ] **Pad Back: `d27ab84` is a no-op** (@claude review 2026-10-31): line 1430 already strips Back, comment names removed `GamepadUi`. If Reach's scoreboard still opens on pad Back the cause is elsewhere. Remove the line or find the real path. - @deepseek
 - [ ] **Lobby READY state** is local only; send it in the roster if it should mean anything. - needs: @deepseek
 - [ ] **Friends panel INVITE and Social screen** need a controller path; Y opens Social, whose pad flow is untested. - @claude
+- [ ] **Vote to kick is blocked** (@claude review 2026-10-31): server clamps peer ids to 1..64 so real voters fail, votes aren't authenticated, and nothing removes a player when a vote passes. Button stays grey until fixed. - @deepseek
+- [ ] **End Round / End Match need the multiplayer end path**: `haloreach+0x7B3EC(-1, 0, 1)` tried twice, timer kept running. Same search as night block 3. Button stays grey until then. - needs: @deepseek
+- [ ] **Roster should carry emblem colours** (`emblem_primary_color`, `emblem_secondary_color`, `emblem_background_color`, indexes 0-29) so other players see them. - needs: @deepseek
+- [ ] **Scoreboard actions have no controller path**: selecting a player and REPORT need the mouse. - @claude
+- [~] @claude 2026-10-31 - live ping wired, commit 4792746; **needs:** a two-process run to see a real value - **Scoreboard real ping**
 - [ ] **RESEARCH: real match capacity beyond 16** (Tyler, 2026-10-31): Reach's network session is 16 players; the UI can
   list 128, but an actual 128-player match needs the `capacity`/`coopx`-class engine work in `docs/player-count-scaling.md`
   (RR patch path) plus bandwidth work. Keep 128 as the lobby/browser ceiling for now and file match capacity as research,

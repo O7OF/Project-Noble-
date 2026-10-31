@@ -12,7 +12,29 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 ### How this file is kept (Tyler, 2026-10-30)
 
 - **Every change gets an entry - no exceptions**: code, UI, docs, tools, config, server. Add it at the **top**, directly
-  under the `--` line, as `## 0. Pick up here (2026-10-31, 03:53 ET) - Pre-game lobby pass, 128-player team roster, controller Settings accepted (@claude)
+  under the `--` line, as `## 0. Pick up here (2026-10-31, 04:27 ET) - Emblem colours, Elite preview check, scoreboard wiring (@claude)
+
+**Commits:** `8cd445d` (emblem colours), `4792746` (scoreboard). **Build:** 0 errors, 0 warnings on the merged tree.
+
+**Emblem colours.** Three new Armory rows set primary, secondary and background from Reach's 30 colours, with a preview that tries on the hovered swatch. Saved in `appearance.json` as `emblem_primary_color`, `emblem_secondary_color`, `emblem_background_color`. Shown on the local player's rows. **Not done:** other players see default colours until the roster carries these three values (needs: @deepseek), and the emblem on the in-game model is unchanged. Captures: `docs/screenshots/armory-emblem-colors.png`, `lobby-other-players-emblems.png`.
+
+**Audits and checks.** `UiArt::Nameplate(int)` uses list position with bounds checks: no id bug. Elite pieces already reach the preview: helmet Minor to Spec Ops visibly changes the model (`armory-elite-piece-preview.png`); nothing needed from `docs/reference/elite-slots.md`, which is a character part list. ELITE tab no longer orange. With ImGui navigation off, pad runs through Armory (including B back), Skulls, Forge and Custom Game all worked, which closes the risk flagged in the previous entry.
+
+**Scoreboard.** REPORT posts to `/api/reports` on its own thread and saves locally only if the server can't be reached. PING reads the transport's live round trip. Red and blue columns scroll separately with the local player pinned, and the panel fits the screen; 16 players used to run off the bottom at 1080p. Captures: `scoreboard-16-columns.png`, `scoreboard-128-columns.png`, `scoreboard-report-fallback.png`. Test flags: `-scoreboard-demo 5` (sends a report), `-scoreboard-demo-players N`.
+
+**Verified.** Against a throwaway local copy of the server: its `reports.jsonl` has the record and the log says `report sent=true`; with no server, `sent=false savedLocally=true`. The live server was not touched.
+
+**Not working, on purpose left grey:**
+- **END ROUND / END MATCH.** `haloreach+0x7B3EC(-1, 0, 1)` does not end a multiplayer round. Tried twice in a real Slayer match (pressed during the loadout screen, then about 20 s after the timer started); the timer kept running (9:47, then 9:35 to 9:07). An older entry in this file recorded the same result, so the claim at the `-end-round-after` description is wrong. Stopped after two attempts. **needs: @deepseek** the multiplayer end path (night block 3). The server endpoint alone would change nothing in the match.
+- **VOTE TO KICK.** Two blockers. `/api/sessions/:id/kick/vote` clamps `voter_peer` and `target_peer` to 1..64 with `masterCleanInt`, but real peer ids are user ids or 31-bit machine ids, so a real voter becomes 64 and fails with "Voter not in roster". Votes also aren't authenticated, so a client can claim any voter id. And nothing removes a player when a vote passes. **needs: @deepseek** all three.
+
+**Not verified.** Live ping needs a two-process run and shows "-" in these solo captures. `session_id` was empty in the test report because a local match has no session. The report's `reporter` comes from `playerName`, which account-less runs overwrite with "Bob" (the known settings issue), so reports from such runs carry that name. On a pad the scoreboard's actions still need the mouse: "click while holding" has no controller path (filed).
+
+**Review:** O7OF's `c30915b`/`ed10ad0` (Forge) are outside my claim and were only built on, 0/0.
+
+Self-review: I wired END ROUND and only caught that it did nothing by capturing the timer afterwards; the log line alone looked like success. A scripted edit also dropped line breaks in five places; I repaired all five after the compile error exposed one. The other four were in code that still compiled, so a build alone would not have caught them. I didn't re-read every line of the rewritten scoreboard block beyond the captures.
+
+## 0. Pick up here (2026-10-31, 03:53 ET) - Pre-game lobby pass, 128-player team roster, controller Settings accepted (@claude)
 
 **Commits:** `f0fda8b` (lobby frame and bugs), `ec531b4` (roster columns). **Build:** 0 errors, 0 warnings on the merged tree.
 
@@ -12023,7 +12045,7 @@ Other args: `-variant <path to MCC game variant .bin>`, `-mvar <path>`, `-mouse-
 Test-only args: `-menu-screen <main|campaign|skulls|firefight|custom|forge|servers|settings|armory|mods>` opens that
 front-end screen, `-menu-tab <0-5>` picks the SETTINGS tab (1 = key bindings), `-menu-capture <frames>` saves `capture_<frames>.bmp` of the menu and exits; `-launch-poke 0x48=0x10,...`
 writes u32 values into the launch block (for finding fields by experiment). `-capture-frames 300,3600` saves `capture_<frame>.bmp` next to the exe (and one shot ~120 frames after the
-post-game panel appears); `-quit-after <seconds>` ends the run by itself; `-end-round-after <seconds>` ends the round (reaches the post-game results). Player settings (resolution, borderless, mouse,
+post-game panel appears); `-quit-after <seconds>` ends the run by itself; `-end-round-after <seconds>` calls mp_round_end's work function, which does not end a multiplayer round (2026-10-31). Player settings (resolution, borderless, mouse,
 invert, key overrides, volumes, menu sounds, player name, master-server URL, favourites) are in
 `build\bin\Release\data\userdata\settings.json`, edited from the SETTINGS tab.
 
