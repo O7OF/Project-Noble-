@@ -317,6 +317,16 @@ items above close. Keep the spec open when building any screen so the details la
   the PTT key hint, (3) the same indicator on the party/lobby card so you can see who is speaking before the match, (4) muted
   players never show as talking to you, and open-mic users show a steady dot rather than a chunky pulse. - @claude
 
+- [ ] **Load the Prophets' Hand models by running its maps (no import)** (Tyler, 2026-10-31): the mod is a campaign
+  conversion; its `maps\m10.map` etc. are the actual content. Noble already has a `-mod` path and a writable `data` VFS, so
+  the cheapest route to "elite models we do not have" is an opt-in mod-map loader: point at the Workshop folder, launch a
+  campaign map from there, confirm the elite models/ranks appear. No tag extraction, no asset copying into our repo.
+- [ ] **Shader / light options** (Tyler, 2026-10-31): expose shader and lighting choice for models in the armory preview and
+  optionally per-map: (a) armory light presets (studio key/rim, neutral, dark) on top of the UI key light, (b) shader variant
+  choice for elite ranks (stock HREK shader tags: `elite_general_chest`, `elite_minor_chest`, `elite_officer_chest`,
+  `elite_zealot_*`) driven by the parameter map we extracted (`albedo_c` argb colour, `self_ill` colour, base/change maps),
+  (c) a debug "reload shader/light" hotkey so changes can be seen without a map reload. - @claude (UI) + @deepseek (engine)
+
 ## I. Armory presentation, audio and data (Tyler, 2026-10-31 00:10)
 
 - [x] @claude 2026-10-31 00:56 - commit dd37730 - **Armory framing**: Spartan/Elite centered under the horizontal rule below APPEARANCE, head no longer above the HALO: REACH line or beside the nameplate
