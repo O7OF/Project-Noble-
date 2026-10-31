@@ -1,4 +1,5 @@
 #include "PauseMenu.hpp"
+#include "GamepadUi.hpp"
 #include "MenuSounds.hpp"
 #include "NobleStyle.hpp"
 #include "NobleUi.hpp"
@@ -1532,6 +1533,7 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading,
     }
 
     ImGui_ImplDX11_NewFrame();
+    FeedGamepadToImGui();
     ImGui::NewFrame();
     if (showFps) {
       char fpsLabel[32];

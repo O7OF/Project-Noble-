@@ -1,3 +1,4 @@
+#include "GamepadUi.hpp"
 #include "FrontEndMenu.hpp"
 #include "network/UPnP.hpp"
 #include "network/AuthClient.hpp"
@@ -4068,7 +4069,8 @@ void FrontEndMenu::RenderOverlayImpl(IDXGISwapChain* swapChain, bool clear) {
 
         ImGui_ImplDX11_NewFrame();
         ImGui_ImplWin32_NewFrame();
-        ImGui::NewFrame();
+        FeedGamepadToImGui();
+    ImGui::NewFrame();
         InputPrompts::Update();
     // Master mute / mute in background: Noble's own audio only (menu music and menu sounds). Read twice a second
     // rather than every frame, and applied here so it also covers the pause menu and the fallback draw path.

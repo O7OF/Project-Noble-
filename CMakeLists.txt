@@ -127,6 +127,7 @@ set(SOURCES
     src/engine/CameraThirdPerson.cpp
     src/engine/FrameCapture.cpp
     src/common/Relaunch.cpp
+    src/ui/GamepadUi.cpp
     src/ui/UiArt.cpp
     src/ui/UIManager.cpp
     src/ui/ServerBrowser.cpp
@@ -180,6 +181,7 @@ set(HEADERS
     src/engine/CameraThirdPerson.hpp
     src/engine/FrameCapture.hpp
     src/common/Relaunch.hpp
+    src/ui/GamepadUi.hpp
     src/ui/UiArt.hpp
     src/ui/UIManager.hpp
     src/ui/ServerBrowser.hpp

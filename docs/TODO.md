@@ -221,12 +221,11 @@ items above close. Keep the spec open when building any screen so the details la
 
 - [ ] **Settings tabs on D-pad / left stick**, not LB/RB; when a value row is focused the stick/D-pad adjusts the value, not the tab
 - [ ] **Apply/Discard controller prompts**: Y = Apply changes, X = Discard changes (icons + key equivalents), replacing the text-only unsaved box
-- [x] (root cause found) **Controller input never reaches ImGui**: `SettingsPanel` already reads
-  `ImGuiKey_GamepadDpadLeft/Right` and `GamepadFaceDown/Right/Up/Left`, but nothing feeds gamepad state to ImGui - the
-  DX11/Win32 backends do not, and ReachHost's XInput poll only writes the engine pad state. So D-pad/stick/buttons do
-  nothing in Settings, presets cannot be changed, and Apply/Discard cannot be triggered. Fix (0deepseek): publish the
-  polled pad (buttons + stick axes) and add `io.AddKeyEvent`/`AddKeyAnalogEvent` for GamepadDpad*, GamepadFace*, Start/Back,
-  GamepadLStick* before `ImGui::NewFrame`; then @claude wires Y=Apply / X=Discard and the preset/diagram row.
+- [x] @deepseek 2026-10-31 01:05 - **Controller input now reaches ImGui**: `src/ui/GamepadUi.cpp` reads XInput each frame
+  and feeds `io.AddKeyEvent` for GamepadDpad*, GamepadFaceA/B/X/Y, Start/Back, LB/RB, LT/RT and both stick directions before
+  `ImGui::NewFrame` (called from PauseMenu, FrontEndMenu and UIManager), and sets `NavEnableGamepad`. This is the root fix
+  behind "presets don't work": SettingsPanel's existing gamepad checks were dead. @claude now wires the visible Y=Apply /
+  X=Discard prompts and the preset/diagram row; Tyler retests with a pad.
 - [ ] **Button layout row must be changeable with a controller** (D-pad/stick left-right does nothing today) and the layout diagram must update per preset
 - [ ] **One "Controller preset" item** (stick + buttons together); remove the separate stick-layout row; presets from `docs/menu-redesign-spec.md` / Halopedia (Default, Southpaw, Boxer, Bumper Jumper, Recon, ...)
 - [ ] **Remap every input**: A/B/X/Y, bumpers, triggers, both sticks (directions + click), D-pad, Start/Back, paddles 1-6; add missing actions: crouch, toggle zoom (default on, still exposed), team chat, scoreboard, push-to-talk (future), etc.
@@ -265,8 +264,9 @@ items above close. Keep the spec open when building any screen so the details la
   `tags\sound\game_sfx\ui\omaha_ui\exit_experience\` - `counter_loop` (the ticking count-up), `totals`, `slot_machine`,
   `rank_up`, `game_completion`, `commendations`, `daily_challenges`, `heat_bonus`, `hopper_bonus`, `invasion_bonus`,
   `time_spent`, `winning_bonus`, `achievements`. Extract with HREK `tool.exe` (sound tag -> sound file), add to Noble's data,
-  and play `counter_loop` while the CR/XP counter runs with `totals` at the end (CR and XP are the same currency). Until the
-  assets are extracted, use the current audio cue.
+  and play `counter_loop` while the CR/XP counter runs with `totals` at the end (CR and XP are the same currency).
+  `slot_machine` plays under the counter at about 70% of the counter's volume (Tyler's rule: a tad lower). Until the assets
+  are extracted, use the current audio cue.
 
 ## G. Match settings, social, voice (plan: `docs/plans/match-settings-and-social-plan.md`)
 

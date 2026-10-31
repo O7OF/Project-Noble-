@@ -69,6 +69,23 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+--
+
+## 0. Pick up here (2026-10-31, 01:05 ET) - Controller input now actually reaches ImGui (WeabooTyler117 / DeepSeek)
+
+Tyler said the controller presets do nothing. Cause: `SettingsPanel` already read `ImGuiKey_GamepadDpad*`/`GamepadFace*`,
+but **no backend ever fed gamepad keys to ImGui** - the DX11/Win32 backends don't, and ReachHost's XInput use is only for
+rumble. Every pad check was therefore dead: no tab switching, no preset cycling, no Apply/Discard.
+
+- New `src/ui/GamepadUi.cpp`: reads XInput (1.4, falls back to 9.1.0) each frame and sends `io.AddKeyEvent` for
+  D-pad, A/B/X/Y, Start/Back, LB/RB, LT/RT (trigger threshold 96) and both stick directions (threshold ~0.37), and sets
+  `ImGuiConfigFlags_NavEnableGamepad`. Called before `ImGui::NewFrame` from PauseMenu, FrontEndMenu and UIManager, so every
+  overlay screen gets it, not just Settings.
+- Build 0/0; settings screen capture still renders (no regressions). Physical-pad verification is Tyler's, since this box
+  has no controller attached to the agent.
+- Next for @claude: wire the visible **Y = Apply changes / X = Discard changes** prompts, make the Button Layout row cycle
+  (it already reads the keys), and update the diagram with the preset. The input layer is now there.
+
 ## 0. Pick up here (2026-10-31, 00:45 ET) - Campaign gating refined + found Reach's end-screen credit sounds (WeabooTyler117 / DeepSeek)
 
 - **Campaign gating refined:** quitting a mission pays **no completion bonus** but still pays the **performance bonus**

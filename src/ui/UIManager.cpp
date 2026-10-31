@@ -1,3 +1,4 @@
+#include "GamepadUi.hpp"
 #include "UIManager.hpp"
 #include "InputPrompts.hpp"
 #include "NobleStyle.hpp"
@@ -138,6 +139,7 @@ void UIManager::BeginFrame() {
 
     ImGui_ImplDX11_NewFrame();
     ImGui_ImplWin32_NewFrame();
+    FeedGamepadToImGui();
     ImGui::NewFrame();
     InputPrompts::Update();   // keyboard/mouse or controller prompts
 }
