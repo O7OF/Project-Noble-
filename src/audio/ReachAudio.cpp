@@ -63,6 +63,7 @@ struct Bank {
     std::string tag;                 // cache file prefix ("" for Reach, so earlier cache files stay valid)
     bool checkNames = false;         // .info names match vgmstream's stream names
     std::vector<std::string> names;  // per sub-sound, lower case
+    std::vector<float> seconds;      // per sub-sound, from the .info file; empty for banks without one
 };
 
 struct Piece {
@@ -183,6 +184,11 @@ bool LoadInfo(const fs::path& info, Bank& bank) {
     for (size_t i = 0; i < n; ++i) {
         const char* name = d.data() + i * kInfoRecord + kInfoName;
         bank.names.push_back(Lower(std::string(name, strnlen(name, kInfoRecord - kInfoName))));
+        // +4 is the decoded PCM size and +8 the channel count: 16-bit 48 kHz, checked against vgmstream on 12 music pieces.
+        uint32_t pcmBytes = 0, channels = 0;
+        memcpy(&pcmBytes, d.data() + i * kInfoRecord + 4, 4);
+        memcpy(&channels, d.data() + i * kInfoRecord + 8, 4);
+        bank.seconds.push_back(channels > 0 ? static_cast<float>(pcmBytes) / (48000.0f * 2.0f * static_cast<float>(channels)) : 0.0f);
     }
     bank.checkNames = true;
     return true;
@@ -256,6 +262,9 @@ const Name kHalo1Names[] = {
     { "halo_origwguit", "Halo Theme (Guitar)", 2 },
     { "halo_orig", "Halo Theme", 1 },
 };
+
+constexpr float kShortestMenuTrack = 45.0f;   // seconds; tracks this short or shorter stay out of the menu playlist
+int s_shortTracksDropped = 0;
 
 template <size_t N>
 void NameTrack(Track& t, const std::string& key, const Name (&names)[N]) {
@@ -332,6 +341,20 @@ void AddTracks(int bankIndex, const std::string& game, const std::string& gameId
         }
         t.game = game;
         NameTrack(t, key, names);
+        // Stingers and short cues aren't menu music. Banks without lengths (Halo: CE) keep everything, and so do menu themes.
+        const std::vector<float>& lengths = s_banks[bankIndex].seconds;
+        if (!lengths.empty() && t.sortKey != "0000") {
+            float total = 0.0f;
+            for (const std::vector<Piece>* pieces : { &t.intro, &t.loops, &t.outro }) {
+                for (const Piece& p : *pieces) {
+                    if (static_cast<size_t>(p.index) < lengths.size()) total += lengths[p.index];
+                }
+            }
+            if (total <= kShortestMenuTrack) {
+                ++s_shortTracksDropped;
+                continue;
+            }
+        }
         if (StartsWith(key, "cutscenes\\")) t.label = Halo1Cutscene(key.substr(10));
         if (const int n = ++labels[t.label]; n > 1) t.label += " (" + std::to_string(n) + ")";
         t.id = gameId + ":" + (t.sortKey == "0000" ? std::string("menu") : key);
@@ -730,7 +753,101 @@ void MusicThread(std::string id) {
     s_musicPaused.store(false);
 }
 
+// ---------------------------------------------------------------- Firefight voice previews
+
+// Reach's own preview lines for the Armory: dialog\firefight_preview_dialog\<character>\*.aif in english.fsb.
+std::map<std::string, std::vector<Piece>> s_voiceLines;
+std::map<std::string, size_t> s_voiceNext;   // next line per character, so repeated presses cycle
+std::atomic<uint64_t> s_voiceGeneration{0};  // a newer press stops the line that is playing
+
+void LoadVoicePreviews(const fs::path& reachDir) {
+    Bank bank;
+    bank.fsb = reachDir / "fmod" / "pc" / "english.fsb";
+    bank.tag = "en";
+    std::error_code ec;
+    if (!fs::exists(bank.fsb, ec) || !LoadInfo(reachDir / "fmod" / "pc" / "english.fsb.info", bank)) {
+        NOBLE_INFO("ReachAudio: no Firefight voice previews ({} not found)", bank.fsb.string());
+        return;
+    }
+    const int bankIndex = static_cast<int>(s_banks.size());
+    size_t lines = 0;
+    const std::string marker = "\\firefight_preview_dialog\\";
+    for (size_t i = 0; i < bank.names.size(); ++i) {
+        const size_t at = bank.names[i].find(marker);
+        if (at == std::string::npos) continue;
+        const size_t start = at + marker.size();
+        const size_t slash = bank.names[i].find('\\', start);
+        if (slash == std::string::npos) continue;
+        s_voiceLines[bank.names[i].substr(start, slash - start)].push_back(Piece{ bankIndex, static_cast<int>(i) });
+        ++lines;
+    }
+    bank.names.shrink_to_fit();
+    s_banks.push_back(std::move(bank));
+    NOBLE_INFO("ReachAudio: {} Firefight voice preview lines for {} characters", lines, s_voiceLines.size());
+}
+
+// Waits for the line's decode, plays it once, and stays until it ends or a newer press replaces it.
+void PlayVoiceLine(Piece piece, float volume, uint64_t generation) {
+    Queue(piece, true);
+    for (int waited = 0; waited < 20000; waited += 25) {
+        if (s_voiceGeneration.load() != generation || s_quit) return;
+        {
+            std::lock_guard<std::mutex> lock(s_mutex);
+            if (s_failed.count(piece.Key())) return;
+            if (s_onDisk.count(piece.Key())) break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    }
+    const std::shared_ptr<Clip> clip = LoadWav(CachePath(piece));
+    if (!clip || !s_xaudio || s_voiceGeneration.load() != generation) return;
+    IXAudio2SourceVoice* voice = nullptr;
+    if (FAILED(s_xaudio->CreateSourceVoice(&voice, &clip->format))) return;
+    XAUDIO2_BUFFER buffer{};
+    buffer.AudioBytes = static_cast<UINT32>(clip->data.size());
+    buffer.pAudioData = clip->data.data();
+    buffer.Flags = XAUDIO2_END_OF_STREAM;
+    voice->SetVolume(volume);
+    voice->SubmitSourceBuffer(&buffer);
+    voice->Start();
+    NOBLE_INFO("ReachAudio: voice preview playing ({:.1f} s, volume {:.2f})", clip->Seconds(), volume);
+    for (;;) {
+        XAUDIO2_VOICE_STATE state{};
+        voice->GetState(&state);
+        if (state.BuffersQueued == 0 || s_voiceGeneration.load() != generation || s_quit) break;
+        voice->SetVolume(s_muted.load() ? 0.0f : volume);
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    }
+    voice->Stop();
+    voice->DestroyVoice();
+}
+
 } // namespace
+
+bool PlayVoicePreview(const std::string& voiceId, bool female, float volume) {
+    static const std::map<std::string, std::string> kFolders = {
+        { "cortana", "cortana" }, { "chief", "masterchief" }, { "johnson", "sgt_johnson" }, { "buck", "odst_buck" },
+        { "stacker", "trooper_sgt1" }, { "carter", "spartan1_carter" }, { "kat", "spartan2_kat" }, { "jun", "spartan3_jun" },
+        { "emile", "spartan4_emile" }, { "jorge", "spartan5_jorge" }, { "dot", "auntie_dot" },
+    };
+    const auto folder = kFolders.find(voiceId);
+    const std::string name = folder != kFolders.end() ? folder->second : female ? "spartan6_fem" : "spartan6_male";
+    const auto lines = s_voiceLines.find(name);
+    if (!s_xaudio || lines == s_voiceLines.end() || lines->second.empty()) {
+        NOBLE_INFO("ReachAudio: no voice preview for '{}'", voiceId);
+        return false;
+    }
+    const uint64_t generation = ++s_voiceGeneration;
+    if (s_muted.load() || volume <= 0.0f) {
+        NOBLE_INFO("ReachAudio: voice preview '{}' silent (muted or volume 0)", voiceId);
+        return true;
+    }
+    size_t& next = s_voiceNext[name];
+    const Piece piece = lines->second[next % lines->second.size()];
+    NOBLE_INFO("ReachAudio: voice preview '{}' line {} of {}", name, next % lines->second.size() + 1, lines->second.size());
+    ++next;
+    std::thread(PlayVoiceLine, piece, volume, generation).detach();
+    return true;
+}
 
 void Init(const fs::path& reachDir, const fs::path& cacheDir) {
     if (s_init) return;
@@ -753,6 +870,8 @@ void Init(const fs::path& reachDir, const fs::path& cacheDir) {
     AddInfoBank(mcc / "halo3", "Halo 3", "h3", "h3", false, kHalo3Names);
     AddInfoBank(mcc / "halo3odst", "Halo 3: ODST", "odst", "odst", false, kOdstNames);
     // Halo 2 Anniversary keeps its sound in h2_maps_win64_dx11\sounds_*.dat, a format Noble can't read yet.
+    NOBLE_INFO("ReachAudio: {} music tracks of {} s or less left out of the menu playlist", s_shortTracksDropped, kShortestMenuTrack);
+    LoadVoicePreviews(reachDir);
 
     // Group by game (Reach first, then release order), menu themes first, then by name.
     static const char* const kGameOrder[] = { "reach:", "h1a:", "h1:", "h3:", "odst:" };

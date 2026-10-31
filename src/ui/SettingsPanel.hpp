@@ -19,7 +19,8 @@ namespace noble {
 class SettingsPanel {
 public:
     void Render();
-    bool IsCapturingKey() const { return m_rebindAction >= 0; }  // Esc cancels the rebind, not the screen
+    bool IsCapturingKey() const { return m_rebindAction >= 0 || m_padRebindAction >= 0; }  // Esc cancels the rebind, not the screen
+    bool DiscardOnEscape();                                        // true when Esc was used to throw away unsaved changes
     void SetTab(int tab);                                          // test option -menu-tab (0..6 = category)
 
 private:
@@ -83,13 +84,17 @@ private:
     double m_messageTime = 0.0;
     int m_musicGame = -1;              // game shown in the music picker (-1: the saved track's game)
     int m_padRebindAction = -1;        // action waiting for a button press in the CONTROLLER bindings list
+    double m_padRebindStarted = 0.0;   // waiting too long cancels it: a controller alone has no Esc
+    int m_padRebindFrame = -1;         // the frame it opened on: that A press is not the new binding
     char m_musicSearch[64] = {};
     bool m_musicScrollToCurrent = true;
 
     // Per-frame row state.
     int m_rowCount = 0;           // rows laid out this frame
     int m_lastRowCount = 0;
-    int m_focus = 0;              // focused row (keys / pad)
+    int m_focus = 0;              // focused row (keys / pad); -1 = the tab list, above the first row
+    bool m_valueTookLeftRight = false;  // a focused value row used left/right this frame, so the tabs must not
+    bool m_enterAppliesHere = false;    // the focused row has no use for Enter
     bool m_scrollToFocus = false;
     int m_curRow = -1;
     bool m_rowFocused = false, m_rowHovered = false, m_rowDisabled = false;

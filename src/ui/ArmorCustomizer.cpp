@@ -1,3 +1,5 @@
+#include "audio/ReachAudio.hpp"
+#include "InputPrompts.hpp"
 #include "ArmorCustomizer.hpp"
 #include "common/Settings.hpp"
 #include "NobleStyle.hpp"
@@ -724,6 +726,32 @@ const SpartanItem* FindSpartanItem(const char* slot, const char* id) {
     return nullptr;
 }
 
+// The Armory list ids double as the keys for the MCC item table in ReachHost (the item numbers written to the
+// profile, which are correct). A few hand-written permutation ids do not render the model they are named
+// after - e.g. chest_1 renders UA/Base Security, not HP/Halo. The 3D preview therefore maps the profile id to
+// the permutation id that actually matches the item's picture; the profile/save data keeps the original id.
+// Reported by Tyler in the 2026-10-31 Armory pass (shoulders, chest plates, utilities).
+const char* SpartanPreviewId(const char* id) {
+    struct PreviewId { const char* from; const char* to; };
+    static constexpr PreviewId kMap[] = {
+        // Chest plates (the whole chest_1..chest_13 chain is shifted one model forward, with chest_kurt = ODST).
+        {"chest_1", "chest_3"},        {"chest_2", "chest_4"},        {"chest_3", "chest_5"},
+        {"chest_4", "chest_kurt"},     {"chest_5", "chest_6"},        {"chest_6", "chest_7"},
+        {"chest_7", "chest_8"},        {"chest_8", "chest_9"},        {"chest_9", "chest_10"},
+        {"chest_10", "chest_11"},      {"chest_11", "chest_12"},      {"chest_12", "chest_13"},
+        {"chest_13", "chest_2"},       {"chest_kurt", "chest_1"},
+        // Shoulders: CQC / ODST / UA-Base Security are a 3-cycle.
+        {"left_shoulder_9", "left_shoulder_kurt"},   {"right_shoulder_9", "right_shoulder_kurt"},
+        {"left_shoulder_10", "left_shoulder_9"},     {"right_shoulder_10", "right_shoulder_9"},
+        {"left_shoulder_kurt", "left_shoulder_10"},  {"right_shoulder_kurt", "right_shoulder_10"},
+        // Utilities: Chobham / Hard Case / Soft Case are a 3-cycle.
+        {"utility_1", "utility_2"}, {"utility_2", "utility_5"}, {"utility_5", "utility_1"},
+    };
+    for (const auto& m : kMap)
+        if (std::strcmp(id, m.from) == 0) return m.to;
+    return id;
+}
+
 int RankIndexByName(const char* name) {
     if (!name || !*name) return 0;
     const auto& ranks = Career::Ranks();
@@ -968,11 +996,12 @@ void ArmorCustomizer::SyncToReachArmory() const {
     sel.serviceTag = m_profile.serviceTag;
 
     sel.helmet = hvSpec.stringId;
-    sel.chest = cSpec.stringId;
-    sel.leftShoulder = shoulders[lsIdx].leftStringId;
-    sel.rightShoulder = shoulders[rsIdx].rightStringId;
+    // Preview the permutation that matches the picture; the profile ids (appearance.json) stay untouched.
+    sel.chest = SpartanPreviewId(cSpec.stringId);
+    sel.leftShoulder = SpartanPreviewId(shoulders[lsIdx].leftStringId);
+    sel.rightShoulder = SpartanPreviewId(shoulders[rsIdx].rightStringId);
     sel.wrist = wrists[wIdx].stringId;
-    sel.utility = utilities[uIdx].stringId;
+    sel.utility = SpartanPreviewId(utilities[uIdx].stringId);
     sel.knees = knees[kIdx].stringId;
     sel.hands = cSpec.hasProstheticArm ? "robot" : "default";
     sel.armorEffect = kArmorEffects[aeIdx].stringId;
@@ -2011,7 +2040,7 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
                 gdl->AddRectFilled(t0, t1, isEq ? IM_COL32(34, 70, 104, 235) : (hov ? IM_COL32(40, 54, 70, 235) : IM_COL32(20, 28, 38, 220)), 2.0f * s);
                 const auto& catalog = UiArt::GetNameplateCatalog();
                 if (static_cast<size_t>(i) < catalog.size()) {
-                    const UiTexture npTex = UiArt::Nameplate(catalog[i].id);
+                    const UiTexture npTex = UiArt::Nameplate(i);
                     if (npTex) {
                         UiArt::DrawContain(gdl, npTex, ImVec2(t0.x + 4.0f * s, t0.y + 4.0f * s), ImVec2(t1.x - 4.0f * s, t1.y - 4.0f * s),
                                            (isEq || hov) ? IM_COL32_WHITE : IM_COL32(220, 220, 220, 255));
@@ -2102,6 +2131,21 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
         const char* desc = row.options[shown].description.empty() ? (colourGrid ? "One of Reach's 30 armor colors." : "")
                                                                   : row.options[shown].description.c_str();
         TextAt(dl, bodyFont, 15.0f * s, ImVec2(pickX + pad, iy + 38.0f * s), kDimCol, desc, pickW - pad * 2.0f);
+        // Firefight voices: X (pad or key) plays a sample line for the highlighted character, cycling through its lines.
+        if (std::strcmp(row.label, "Firefight Voice") == 0) {
+            const bool press = !ImGui::GetIO().WantTextInput &&
+                               (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceLeft, false) || ImGui::IsKeyPressed(ImGuiKey_X, false));
+            if (press && shown >= 0 && static_cast<size_t>(shown) < kFirefightVoices.size()) {
+                const SettingsData sound = Settings::Get().Snapshot();
+                ReachAudio::PlayVoicePreview(kFirefightVoices[static_cast<size_t>(shown)].stringId, m_profile.bodyType == BodyType::Female,
+                                             sound.masterMute ? 0.0f : sound.volumeOther);
+            }
+            const float glyph = 20.0f * s;
+            float px = k1.x - pad - 92.0f * s;
+            const float py = k1.y - 30.0f * s;
+            px += InputPrompts::DrawButton(dl, bodyFont, ImVec2(px, py), glyph, InputPrompts::Button::X) + 5.0f * s;
+            TextAt(dl, smallFont, 14.0f * s, ImVec2(px, py + 3.0f * s), IM_COL32(190, 214, 232, 255), "Preview");
+        }
         const std::string count = std::to_string(shown + 1) + " / " + std::to_string(n) +
             (shown == equipped ? "   EQUIPPED"
              : row.options[shown].locked ? std::string("   PREVIEW - unlocks at ") + (row.options[shown].lockRank ? row.options[shown].lockRank : "a higher rank")

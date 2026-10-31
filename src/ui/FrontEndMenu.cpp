@@ -1,4 +1,3 @@
-#include "GamepadUi.hpp"
 #include "FrontEndMenu.hpp"
 #include "network/UPnP.hpp"
 #include "network/AuthClient.hpp"
@@ -10,7 +9,9 @@
 #include <nlohmann/json.hpp>
 #include "UIManager.hpp"
 #include "NobleStyle.hpp"
+#include "common/MapNames.hpp"
 #include "SettingsPanel.hpp"
+#include "UiPad.hpp"
 #include "CareerPanel.hpp"
 #include "MenuSounds.hpp"
 #include "InputPrompts.hpp"
@@ -319,6 +320,116 @@ float BlurbBlockHeight(const Ui& ui, float width, const char* blurb) {
 
 enum class Screen { Main, Campaign, Skulls, Firefight, CustomGame, Forge, Servers, Settings, Armory, Mods, Career, PreGameLobby, Social };
 
+std::string s_lobbyBackdropMap;   // set each frame from the lobby state
+
+// The Armory's presentation. The engine draws the model from a fixed scene camera, so the framing can't be moved there:
+// Noble copies the finished engine frame and redraws it smaller and further right, with the head under the rule and the
+// body centred in the free area. A soft additive key light then lifts the black chamber and lights the model. The per-slot
+// cameras are untouched: this only moves their result.
+namespace ArmoryStage {
+
+ID3D11RenderTargetView* s_frameRtv = nullptr;   // the back buffer holding this frame's engine image; null when there is none
+ID3D11Texture2D* s_copy = nullptr;
+ID3D11ShaderResourceView* s_copySrv = nullptr;
+UINT s_copyW = 0, s_copyH = 0;
+DXGI_FORMAT s_copyFormat = DXGI_FORMAT_UNKNOWN;
+ID3D11BlendState* s_opaque = nullptr;
+ID3D11BlendState* s_additive = nullptr;
+ID3D11DeviceContext* s_context = nullptr;
+
+void UseOpaque(const ImDrawList*, const ImDrawCmd*) {
+    if (s_context) s_context->OMSetBlendState(s_opaque, nullptr, 0xFFFFFFFF);   // the engine's alpha is not coverage
+}
+void UseAdditive(const ImDrawList*, const ImDrawCmd*) {
+    if (s_context) s_context->OMSetBlendState(s_additive, nullptr, 0xFFFFFFFF);
+}
+
+bool Prepare(ID3D11Device* device, ID3D11DeviceContext* context) {
+    if (!s_frameRtv || !device || !context) return false;
+    s_context = context;
+    ID3D11Resource* resource = nullptr;
+    s_frameRtv->GetResource(&resource);
+    ID3D11Texture2D* backBuffer = nullptr;
+    if (resource) resource->QueryInterface(__uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&backBuffer));
+    if (resource) resource->Release();
+    if (!backBuffer) return false;
+    D3D11_TEXTURE2D_DESC desc{};
+    backBuffer->GetDesc(&desc);
+    bool ok = desc.SampleDesc.Count == 1;
+    if (ok && (!s_copy || s_copyW != desc.Width || s_copyH != desc.Height || s_copyFormat != desc.Format)) {
+        if (s_copySrv) { s_copySrv->Release(); s_copySrv = nullptr; }
+        if (s_copy) { s_copy->Release(); s_copy = nullptr; }
+        D3D11_TEXTURE2D_DESC copy = desc;
+        copy.Usage = D3D11_USAGE_DEFAULT;
+        copy.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+        copy.CPUAccessFlags = 0;
+        copy.MiscFlags = 0;
+        copy.MipLevels = 1;
+        copy.ArraySize = 1;
+        ok = SUCCEEDED(device->CreateTexture2D(&copy, nullptr, &s_copy)) && s_copy &&
+             SUCCEEDED(device->CreateShaderResourceView(s_copy, nullptr, &s_copySrv));
+        s_copyW = desc.Width;
+        s_copyH = desc.Height;
+        s_copyFormat = desc.Format;
+    }
+    if (ok && s_copy) context->CopyResource(s_copy, backBuffer);
+    backBuffer->Release();
+    if (!s_opaque) {
+        D3D11_BLEND_DESC blend{};
+        blend.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+        device->CreateBlendState(&blend, &s_opaque);
+        blend.RenderTarget[0].BlendEnable = TRUE;
+        blend.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC_ALPHA;
+        blend.RenderTarget[0].DestBlend = D3D11_BLEND_ONE;
+        blend.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
+        blend.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
+        blend.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ZERO;
+        blend.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
+        device->CreateBlendState(&blend, &s_additive);
+    }
+    return ok && s_copySrv && s_opaque && s_additive;
+}
+
+void Draw(const Ui& ui, ID3D11Device* device, ID3D11DeviceContext* context, float ruleY) {
+    if (!ReachArmory::IsSceneReady() || !Prepare(device, context)) return;
+    const float W = ui.size.x, H = ui.size.y;
+    constexpr float kModelX = 0.656f;   // where the scene cameras put the model across the frame
+    constexpr float kStageX = 0.7425f;  // the middle of the free area right of the picker
+    const float k = std::clamp((H - ruleY) / H, 0.70f, 0.90f);
+    const ImVec2 p0(W * kStageX - W * kModelX * k, ruleY), p1(p0.x + W * k, ruleY + H * k);
+
+    ui.dl->AddRectFilled(ImVec2(0, 0), ui.size, IM_COL32(0, 0, 0, 255));
+    ui.dl->AddCallback(&UseOpaque, nullptr);
+    ui.dl->AddImage(reinterpret_cast<ImTextureID>(s_copySrv), p0, p1);
+    ui.dl->AddCallback(ImDrawCallback_ResetRenderState, nullptr);
+
+    // Key light: a wide soft glow behind the chest and a pool of light where the feet are.
+    ui.dl->AddCallback(&UseAdditive, nullptr);
+    // Stacks of very faint ellipses: each adds one step of blue, some also green or red, so the falloff has no visible rings
+    // and the peak stays low enough not to wash out the armour colours.
+    const auto glow = [&](ImVec2 centre, float radiusX, float radiusY, int rings) {
+        for (int i = 0; i < rings; ++i) {
+            const float t = 1.0f - static_cast<float>(i) / rings;
+            const ImU32 step = IM_COL32(i % 3 == 2 ? 255 : 0, i % 3 != 0 ? 255 : 0, 255, 1);
+            constexpr int kPoints = 48;
+            for (int n = 0; n < kPoints; ++n) {
+                const float a = static_cast<float>(n) / kPoints * 6.2831853f;
+                ui.dl->PathLineTo(ImVec2(centre.x + std::cos(a) * radiusX * t, centre.y + std::sin(a) * radiusY * t));
+            }
+            ui.dl->PathFillConvex(step);
+        }
+    };
+    glow(ImVec2(W * kStageX, p0.y + H * k * 0.42f), H * 0.56f, H * 0.56f, 30);
+    glow(ImVec2(W * kStageX, p0.y + H * k * 0.83f), H * 0.40f, H * 0.07f, 24);
+    ui.dl->AddCallback(ImDrawCallback_ResetRenderState, nullptr);
+
+    // The panels on the left sit on a dark edge, and the picture's left end doesn't show as a seam.
+    ui.dl->AddRectFilledMultiColor(ImVec2(0, 0), ImVec2(W * 0.56f, H), IM_COL32(4, 8, 14, 255), IM_COL32(4, 8, 14, 0),
+                                   IM_COL32(4, 8, 14, 0), IM_COL32(4, 8, 14, 255));
+}
+
+} // namespace ArmoryStage
+
 void DrawBackdrop(const Ui& ui, Screen screen) {
     const ImVec2 o(0, 0);
     // Draw the main menu background image whenever scene isn't ready or on screens where the 2D Reach backdrop
@@ -328,7 +439,13 @@ void DrawBackdrop(const Ui& ui, Screen screen) {
     const bool needBackdropImage = !ReachArmory::IsSceneReady() || screen == Screen::PreGameLobby;
     if (needBackdropImage) {
         ui.dl->AddRectFilled(o, ui.size, IM_COL32(8, 12, 18, 255));
-        UiTexture bg = UiArt::MenuBackground();
+        // The lobby shows the map that is going to load, when there is a picture of it.
+        UiTexture bg;
+        if (screen == Screen::PreGameLobby && !s_lobbyBackdropMap.empty()) {
+            const std::string scenario = MapNames::ScenarioOf(s_lobbyBackdropMap);
+            bg = UiArt::MapPhoto(scenario.empty() ? s_lobbyBackdropMap : scenario);
+        }
+        if (!bg) bg = UiArt::MenuBackground();
         if (bg) {
             UiArt::DrawCover(ui.dl, bg, o, ui.size, IM_COL32(255, 255, 255, 255));
         }
@@ -2406,7 +2523,7 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
                   player.nameplateId > 0 ? player.nameplateId : (isLocalPlayer ? ownProf.nameplateIndex : 0),
                   player.team,
                   player.serviceTag, player.username, player.isDev, selected,
-                  isLocalPlayer ? ownProf.emblemBackgroundIndex : 0);
+                  player.emblemBackgroundId > 0 ? player.emblemBackgroundId : (isLocalPlayer ? ownProf.emblemBackgroundIndex : 0));
 
         ImGui::SetCursorScreenPos(pr0);
         char prBtnId[64];
@@ -3080,6 +3197,7 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
     ui.dl = ImGui::GetWindowDrawList();
     ui.size = vp->Size;
     ui.s = std::max(0.75f, vp->Size.y / 720.0f);
+    s_lobbyBackdropMap = st.lobbyMap;
     DrawBackdrop(ui, st.screen);
     DrawAccountModal(ui);
     DrawDevMenuModal(ui);
@@ -3676,35 +3794,17 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
 
     case Screen::Armory: {
         // MCC Halo: Reach "CUSTOMIZATION / APPEARANCE" header + nameplate + live in-engine 3D Spartan/Elite
+        ArmoryStage::Draw(ui, device, context, top + 64.0f * ui.s);
         Text(ui, NobleStyle::SmallFont(), 15.0f, ImVec2(left, top - 8.0f * ui.s), kAccent, "CUSTOMIZATION");
         Text(ui, NobleStyle::HeroFont(), 44.0f, ImVec2(left, top + 6.0f * ui.s), kWhite, "APPEARANCE");
 
-        // Top-right player nameplate with service tag
+        // Top-right: the same player row as MY PARTY on the main menu.
         {
             const auto& prof = UIManager::GetArmorCustomizer().GetProfile();
-            const float plateW = 280.0f * ui.s;
-            const float plateH = 42.0f * ui.s;
-            const ImVec2 p0(ui.size.x - left - plateW, top + 6.0f * ui.s);
-            const ImVec2 p1(p0.x + plateW, p0.y + plateH);
-
-            UiTexture npTex = UiArt::Nameplate(prof.nameplateIndex);
-            if (npTex) {
-                ui.dl->AddImage(npTex.id, p0, p1);
-                ui.dl->AddRect(p0, p1, IM_COL32(165, 205, 240, 140), 0.0f, 0, 1.0f);
-            } else {
-                ui.dl->AddRectFilledMultiColor(p0, p1,
-                    IM_COL32(36, 58, 82, 230), IM_COL32(82, 112, 142, 210),
-                    IM_COL32(62, 88, 115, 210), IM_COL32(28, 46, 68, 230));
-                ui.dl->AddRect(p0, p1, IM_COL32(165, 205, 240, 180), 0.0f, 0, 1.2f);
-            }
-
-            const ImVec2 emb(p0.x + 22.0f * ui.s, p0.y + plateH * 0.5f);
-            const float embR = 15.0f * ui.s;
-            UiArt::DrawEmblem(ui.dl, prof.emblemIndex, prof.emblemBackgroundIndex, ImVec2(emb.x - embR, emb.y - embR), ImVec2(emb.x + embR, emb.y + embR));
-
-            const std::string tagLine = "[" + prof.serviceTag + "]";
-            Text(ui, NobleStyle::SmallFont(), 14.0f, ImVec2(p0.x + 44.0f * ui.s, p0.y + 4.0f * ui.s), IM_COL32(190, 215, 235, 230), tagLine.c_str());
-            Text(ui, NobleStyle::TitleFont(), 18.0f, ImVec2(p0.x + 44.0f * ui.s, p0.y + 20.0f * ui.s), kWhite, settings.playerName.c_str());
+            const float rowW = 400.0f * ui.s;
+            PlayerRow(ui, ImVec2(ui.size.x - left - rowW, top + 8.0f * ui.s), rowW, Career::RankIndex(Career::Get().credits),
+                      prof.emblemIndex, prof.nameplateIndex, 0, PlayerServiceTag(settings), settings.playerName,
+                      AuthClient::Get().IsDeveloper(), false, prof.emblemBackgroundIndex);
         }
 
         // Thin horizontal rule with active "HALO: REACH" underline
@@ -3768,7 +3868,10 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         }
         ImGui::EndChild();
         ImGui::PopStyleColor();
-        if (back && !ImGui::GetIO().WantTextInput && !ctx.settingsPanel.IsCapturingKey()) {
+        // Esc with unsaved changes discards them (the Settings prompt says so) and stays on the page; B always goes back.
+        const bool escDiscards = ImGui::IsKeyPressed(ImGuiKey_Escape, false) && !ctx.settingsPanel.IsCapturingKey() &&
+                                 !ImGui::GetIO().WantTextInput && ctx.settingsPanel.DiscardOnEscape();
+        if (back && !escDiscards && !ImGui::GetIO().WantTextInput && !ctx.settingsPanel.IsCapturingKey()) {
             // The server browser is a top-level main-menu screen, so Back returns to the main menu (it used
             // to drop the player into Custom Game).
             goBack(Screen::Main);
@@ -4060,6 +4163,7 @@ void FrontEndMenu::RenderOverlayImpl(IDXGISwapChain* swapChain, bool clear) {
         s_last = now;
         io.DeltaTime = dt;
 
+        ArmoryStage::s_frameRtv = clear ? nullptr : rtv;
         FeedEngineThreadInputs(hwnd, io);
         if (clear) {
             // No engine frame underneath: start from the menu's dark backdrop colour.
@@ -4069,8 +4173,8 @@ void FrontEndMenu::RenderOverlayImpl(IDXGISwapChain* swapChain, bool clear) {
 
         ImGui_ImplDX11_NewFrame();
         ImGui_ImplWin32_NewFrame();
-        FeedGamepadToImGui();
-    ImGui::NewFrame();
+        UiPad::Feed(io);
+        ImGui::NewFrame();
         InputPrompts::Update();
     // Master mute / mute in background: Noble's own audio only (menu music and menu sounds). Read twice a second
     // rather than every frame, and applied here so it also covers the pause menu and the fallback draw path.

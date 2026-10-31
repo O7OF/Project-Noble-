@@ -102,8 +102,8 @@ struct EmblemInfo {
 const std::vector<NameplateInfo>& GetNameplateCatalog();
 const std::vector<EmblemInfo>& GetEmblemCatalog();
 
-// Nameplate texture for index 1..536
-UiTexture Nameplate(int id);
+// Nameplate texture for a position in GetNameplateCatalog() (what the Armory stores; not the XML id).
+UiTexture Nameplate(int index);
 
 // MCC's emblem backgrounds: playercustomization.xml entries with background="eb_001" (circle, diamond, ...).
 struct EmblemBackground {

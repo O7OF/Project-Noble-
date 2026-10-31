@@ -1,4 +1,4 @@
-﻿#include "SettingsPanel.hpp"
+#include "SettingsPanel.hpp"
 #include "NobleStyle.hpp"
 #include "NobleUi.hpp"
 #include "MenuSounds.hpp"
@@ -134,88 +134,57 @@ int ConnectedPad() {
     return s_pad;
 }
 
-// Reach (Xbox 360) default controller layout on Noble's controller picture (assets\ui\noble\controller.png,
-// by O7OF), or on MCC's own picture when Noble's isn't there. Listed top to bottom on each side.
+// Noble's controller picture (assets\ui\noble\controller.png, by O7OF), or MCC's own when Noble's isn't there. Each callout
+// is tied to one physical input and says what that input does in the current preset and bindings, so the leader lines stay
+// honest when a preset moves actions around. Listed top to bottom on each side.
 struct Callout {
     float bx, by;
     bool right;
-    const char* label;
+    int input;
+    InputPrompts::Button button;
 };
-const Callout kReach360[] = {
-    { 0.22f, 0.07f, false, "Throw grenade (LT)" },
-    { 0.20f, 0.19f, false, "Use armor ability (LB)" },
-    { 0.39f, 0.50f, false, "Multiplayer scoreboard (Back)" },
-    { 0.20f, 0.53f, false, "Move / crouch (click)" },
-    { 0.35f, 0.74f, false, "Night vision, team chat (D-pad)" },
-    { 0.77f, 0.07f, true, "Fire (RT)" },
-    { 0.81f, 0.19f, true, "Melee (RB)" },
-    { 0.80f, 0.39f, true, "Swap weapons (Y)" },
-    { 0.87f, 0.49f, true, "Switch grenades (B)" },
-    { 0.72f, 0.50f, true, "Action / reload (X)" },
-    { 0.61f, 0.50f, true, "Game menu (Start)" },
-    { 0.79f, 0.60f, true, "Jump (A)" },
-    { 0.64f, 0.76f, true, "Look / zoom (click)" },
+const Callout kCallouts[] = {
+    { 0.22f, 0.07f, false, PadLayouts::InputLT, InputPrompts::Button::LT },
+    { 0.20f, 0.19f, false, 0x0100, InputPrompts::Button::LB },
+    { 0.39f, 0.50f, false, 0x0020, InputPrompts::Button::Back },
+    { 0.20f, 0.53f, false, 0x0040, InputPrompts::Button::LStick },
+    { 0.35f, 0.74f, false, 0x0001, InputPrompts::Button::DpadUp },
+    { 0.77f, 0.07f, true, PadLayouts::InputRT, InputPrompts::Button::RT },
+    { 0.81f, 0.19f, true, 0x0200, InputPrompts::Button::RB },
+    { 0.80f, 0.39f, true, 0x8000, InputPrompts::Button::Y },
+    { 0.87f, 0.49f, true, 0x2000, InputPrompts::Button::B },
+    { 0.72f, 0.50f, true, 0x4000, InputPrompts::Button::X },
+    { 0.61f, 0.50f, true, 0x0010, InputPrompts::Button::Start },
+    { 0.79f, 0.60f, true, 0x1000, InputPrompts::Button::A },
+    { 0.64f, 0.76f, true, 0x0080, InputPrompts::Button::RStick },
 };
 
+// What one physical input does right now ("Fire", "Melee, Zoom"). The stick clicks also say what the stick moves.
+std::string CalloutText(const Callout& c, int layout, bool sticksSwapped, const std::map<std::string, int>& bindings) {
+    std::string text;
+    for (int a = 0; a < PadLayouts::ActionCount; ++a) {
+        if (PadLayouts::EffectiveInput(layout, a, &bindings) != c.input) continue;
+        if (!text.empty()) text += ", ";
+        text += PadLayouts::ActionName(a);
+    }
+    if (c.input == 0x0040 || c.input == 0x0080) {
+        const bool leftStick = c.input == 0x0040;
+        const std::string stick = leftStick != sticksSwapped ? "Move" : "Look";
+        text = text.empty() ? stick : stick + " / " + text;
+    }
+    return text.empty() ? std::string("Unused") : text;
+}
+
 // Controller picture with straight leader lines to the labels, fitted into `width`.
-void DrawControllerDiagram(float width, int padLayout) {
+void DrawControllerDiagram(float width, int layout, bool sticksSwapped, const std::map<std::string, int>& bindings) {
     UiTexture pad = UiArt::NobleControllerImage();
     if (!pad) pad = UiArt::ControllerImage();
-    // Each label keeps its "(RT)"-style suffix for the reader, and the button it names is drawn as a glyph
-    // in front of it (2026-10-30).
-    auto splitSuffix = [padLayout](const char* label, std::string& text, InputPrompts::Button& button) {
-        text = label;
-        button = InputPrompts::Button::A;
-        const size_t open = text.rfind('(');
-        if (open == std::string::npos || text.back() != ')') return false;
-        const std::string suffix = text.substr(open + 1, text.size() - open - 2);
-        // Both "(click)" callouts name a stick click; the label says which one.
-        if (text.find("Move / crouch") != std::string::npos) button = InputPrompts::Button::LStick;
-        else if (text.find("Look / zoom") != std::string::npos) button = InputPrompts::Button::RStick;
-        else if (!InputPrompts::ButtonFromSuffix(suffix.c_str(), button)) return false;
-        // A selected preset moves these actions to other buttons: relabel from the layout table so the diagram
-        // shows what the player will actually press.
-        if (padLayout > 0) {
-            struct Map { const char* key; int action; };
-            static const Map kActions[] = {
-                { "Throw grenade", PadLayouts::Grenades }, { "Use armor ability", PadLayouts::ArmorAbility },
-                { "Fire", PadLayouts::Fire },              { "Melee", PadLayouts::Melee },
-                { "Swap weapons", PadLayouts::SwapWeapons }, { "Switch grenades", PadLayouts::Grenades },
-                { "Action / reload", PadLayouts::ActionReload }, { "Jump", PadLayouts::Jump },
-                { "Look / zoom", PadLayouts::Zoom },
-            };
-            for (const Map& m : kActions) {
-                if (text.find(m.key) == std::string::npos) continue;
-                const PadLayouts::Source src = PadLayouts::SourceFor(padLayout, m.action);
-                switch (src.bit) {
-                case 0x1000: button = InputPrompts::Button::A; break;
-                case 0x2000: button = InputPrompts::Button::B; break;
-                case 0x4000: button = InputPrompts::Button::X; break;
-                case 0x8000: button = InputPrompts::Button::Y; break;
-                case 0x0100: button = InputPrompts::Button::LB; break;
-                case 0x0200: button = InputPrompts::Button::RB; break;
-                case 0x0080: button = InputPrompts::Button::RStick; break;
-                default:
-                    button = src.trigger == 1 ? InputPrompts::Button::LT
-                           : src.trigger == 2 ? InputPrompts::Button::RT : button;
-                    break;
-                }
-                break;
-            }
-        }
-        text = text.substr(0, open);
-        while (!text.empty() && text.back() == ' ') text.pop_back();
-        return true;
-    };
     const float glyphH = ImGui::GetTextLineHeight() * 1.05f;
     float leftWidth = 0.0f, rightWidth = 0.0f;
-    for (const Callout& c : kReach360) {
-        std::string text;
-        InputPrompts::Button button{};
-        const bool hasGlyph = splitSuffix(c.label, text, button);
-        const float glyphW = hasGlyph ? InputPrompts::ButtonWidth(ImGui::GetFont(), glyphH, button) + 6.0f : 0.0f;
+    for (const Callout& c : kCallouts) {
+        const float glyphW = InputPrompts::ButtonWidth(ImGui::GetFont(), glyphH, c.button) + 6.0f;
         float& side = c.right ? rightWidth : leftWidth;
-        side = std::max(side, glyphW + ImGui::CalcTextSize(text.c_str()).x);
+        side = std::max(side, glyphW + ImGui::CalcTextSize(CalloutText(c, layout, sticksSwapped, bindings).c_str()).x);
     }
     const float w = std::clamp(width - leftWidth - rightWidth - 70.0f, 160.0f, 440.0f);
     const float h = pad ? w * pad.height / pad.width : w * 0.62f;
@@ -227,23 +196,18 @@ void DrawControllerDiagram(float width, int padLayout) {
     int leftRow = 0, rightRow = 0;
     const float leftStep = h / 5.0f, rightStep = h / 8.0f;
     const float lh = ImGui::GetTextLineHeight();
-    for (const Callout& c : kReach360) {
+    for (const Callout& c : kCallouts) {
         const ImVec2 btn(padX + c.bx * w, padY + c.by * h);
         const float rowY = c.right ? padY + (rightRow++ + 0.5f) * rightStep - lh * 0.5f
                                    : padY + (leftRow++ + 0.5f) * leftStep - lh * 0.5f;
         const ImVec2 elbow = c.right ? ImVec2(padX + w + 14.0f, rowY + lh * 0.5f) : ImVec2(padX - 10.0f, rowY + lh * 0.5f);
-        std::string text;
-        InputPrompts::Button button{};
-        const bool hasGlyph = splitSuffix(c.label, text, button);
-        const float glyphW = hasGlyph ? InputPrompts::ButtonWidth(ImGui::GetFont(), glyphH, button) + 6.0f : 0.0f;
+        const std::string text = CalloutText(c, layout, sticksSwapped, bindings);
+        const float glyphW = InputPrompts::ButtonWidth(ImGui::GetFont(), glyphH, c.button) + 6.0f;
         const float rowW = glyphW + ImGui::CalcTextSize(text.c_str()).x;
-        const ImVec2 rowPos = c.right ? ImVec2(elbow.x + 8.0f, rowY)
-                                      : ImVec2(elbow.x - 8.0f - rowW, rowY);
+        const ImVec2 rowPos = c.right ? ImVec2(elbow.x + 8.0f, rowY) : ImVec2(elbow.x - 8.0f - rowW, rowY);
         dl->AddLine(btn, elbow, IM_COL32(200, 210, 220, 140), 1.2f);
         dl->AddCircleFilled(btn, 3.0f, kAccent);
-        if (hasGlyph) {
-            InputPrompts::DrawButton(dl, ImGui::GetFont(), ImVec2(rowPos.x, rowY - (glyphH - lh) * 0.5f), glyphH, button);
-        }
+        InputPrompts::DrawButton(dl, ImGui::GetFont(), ImVec2(rowPos.x, rowY - (glyphH - lh) * 0.5f), glyphH, c.button);
         dl->AddText(ImVec2(rowPos.x + glyphW, rowY), kText, text.c_str());
     }
     ImGui::Dummy(ImVec2(leftWidth + 30.0f + w + 22.0f + rightWidth, h + 30.0f));
@@ -289,7 +253,9 @@ void SettingsPanel::Render() {
     SyncBuffers();
 
     // Shared key state for this frame (rows read it; text fields and rebinding take the keys).
-    m_navAllowed = !ImGui::GetIO().WantTextInput && m_rebindAction < 0;
+    m_navAllowed = !ImGui::GetIO().WantTextInput && m_rebindAction < 0 && m_padRebindAction < 0;
+    m_valueTookLeftRight = false;
+    m_enterAppliesHere = m_focus < 0;
     m_keyLeft = m_navAllowed && (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickLeft));
     m_keyRight = m_navAllowed && (ImGui::IsKeyPressed(ImGuiKey_RightArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickRight));
     m_keyAccept = m_navAllowed && (ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false) ||
@@ -297,16 +263,16 @@ void SettingsPanel::Render() {
     if (m_navAllowed) {
         const int rows = std::max(1, m_lastRowCount);
         if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickDown)) {
-            m_focus = (m_focus + 1) % rows; m_scrollToFocus = true; MenuSounds::Scroll();
+            m_focus = m_focus + 1 >= rows ? -1 : m_focus + 1; m_scrollToFocus = true; MenuSounds::Scroll();
         }
         if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickUp)) {
-            m_focus = (m_focus + rows - 1) % rows; m_scrollToFocus = true; MenuSounds::Scroll();
+            m_focus = m_focus < 0 ? rows - 1 : m_focus - 1; m_scrollToFocus = true; MenuSounds::Scroll();
         }
         const int n = static_cast<int>(Cat::Count);
-        if (ImGui::IsKeyPressed(ImGuiKey_Q, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false)) {
+        if (ImGui::IsKeyPressed(ImGuiKey_Q, false)) {
             m_cat = static_cast<Cat>((static_cast<int>(m_cat) + n - 1) % n); m_focus = 0; m_search[0] = 0; MenuSounds::Tab(-1);
         }
-        if (ImGui::IsKeyPressed(ImGuiKey_E, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false)) {
+        if (ImGui::IsKeyPressed(ImGuiKey_E, false)) {
             m_cat = static_cast<Cat>((static_cast<int>(m_cat) + 1) % n); m_focus = 0; m_search[0] = 0; MenuSounds::Tab(1);
         }
         if (TotalChanges() > 0) {
@@ -327,6 +293,32 @@ void SettingsPanel::Render() {
     RenderRows(midW, avail.y);
     ImGui::SameLine(0, gap);
     RenderDetails(rightW, avail.y);
+
+    // Left/right moves between tabs only when nothing on the page wanted it: on the tab list (above the first row) or on
+    // a row without a value. A value row adjusts its value instead. This runs after the rows, which is how it can tell.
+    if (m_navAllowed && !m_valueTookLeftRight && m_search[0] == 0) {
+        const bool left = ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickLeft, false) ||
+                          ImGui::IsKeyPressed(ImGuiKey_LeftArrow, false);
+        const bool right = ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickRight, false) ||
+                           ImGui::IsKeyPressed(ImGuiKey_RightArrow, false);
+        if (left || right) {
+            const int n = static_cast<int>(Cat::Count);
+            m_cat = static_cast<Cat>((static_cast<int>(m_cat) + (right ? 1 : n - 1)) % n);
+            if (m_focus > 0) m_focus = 0;
+            m_scrollToFocus = true;
+            MenuSounds::Tab(right ? 1 : -1);
+        }
+    }
+    if (m_navAllowed && m_enterAppliesHere && TotalChanges() > 0 &&
+        (ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false))) {
+        Apply();
+    }
+}
+
+bool SettingsPanel::DiscardOnEscape() {
+    if (TotalChanges() == 0) return false;
+    Discard();
+    return true;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -335,7 +327,9 @@ void SettingsPanel::Render() {
 
 void SettingsPanel::RenderCategories(float width, float height) {
     const float s = Scale();
-    ImGui::BeginChild("##setcats", ImVec2(width, height), ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar);
+    // The panel does its own controller navigation (see Render); ImGui's would press these buttons a second time.
+    constexpr ImGuiWindowFlags kNoNav = ImGuiWindowFlags_NoNavInputs | ImGuiWindowFlags_NoNavFocus;
+    ImGui::BeginChild("##setcats", ImVec2(width, height), ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar | kNoNav);
     ImDrawList* dl = ImGui::GetWindowDrawList();
 
     ImGui::SetNextItemWidth(width);
@@ -345,8 +339,8 @@ void SettingsPanel::RenderCategories(float width, float height) {
     ImGui::Dummy(ImVec2(0, 4.0f * s));
 
     const int total = TotalChanges();
-    const float boxH = total > 0 ? 132.0f * s : 52.0f * s;
-    ImGui::BeginChild("##setcatlist", ImVec2(width, ImGui::GetContentRegionAvail().y - boxH), ImGuiChildFlags_None);
+    const float boxH = total > 0 ? 142.0f * s : 52.0f * s;
+    ImGui::BeginChild("##setcatlist", ImVec2(width, ImGui::GetContentRegionAvail().y - boxH), ImGuiChildFlags_None, kNoNav);
     for (int i = 0; i < static_cast<int>(Cat::Count); ++i) {
         const CatInfo& ci = kCats[i];
         if (ci.group) SectionHeader(ci.group, width - 8.0f * s);
@@ -358,8 +352,13 @@ void SettingsPanel::RenderCategories(float width, float height) {
         const bool hovered = ImGui::IsItemHovered();
         ImGui::PopID();
         const bool sel = static_cast<int>(m_cat) == i && m_search[0] == 0;
+        if (sel && m_scrollToFocus) ImGui::SetScrollHereY(0.5f);   // the unsaved box can hide the last tabs
         RowBackground(dl, p, ImVec2(p.x + w, p.y + h), sel, hovered);
         ImDrawList* wdl = ImGui::GetWindowDrawList();
+        if (sel && m_focus < 0) {   // keys and pad are on the tab list: left/right switches tabs
+            wdl->AddRect(p, ImVec2(p.x + w, p.y + h), kAccent, 0.0f, 0, 2.0f * s);
+            wdl->AddText(NobleStyle::SmallFont(), 14.0f * s, ImVec2(p.x + w - 34.0f * s, p.y + 18.0f * s), kAccent, "< >");
+        }
         Text(wdl, NobleStyle::TitleFont(), 19.0f * s, ImVec2(p.x + 14.0f * s, p.y + 5.0f * s), sel ? kText : kTextDim, ci.name);
         const std::string summary = Summary(static_cast<Cat>(i));
         Text(wdl, NobleStyle::SmallFont(), 14.0f * s, ImVec2(p.x + 14.0f * s, p.y + 28.0f * s), kTextDim, summary.c_str());
@@ -395,12 +394,23 @@ void SettingsPanel::RenderCategories(float width, float height) {
             first = false;
         }
         Text(dl, NobleStyle::SmallFont(), 14.0f * s, ImVec2(b0.x + 24.0f * s, b0.y + 30.0f * s), kTextDim, where.c_str(), width - 30.0f * s);
-        const float bw = (width - 30.0f * s) * 0.5f;
-        ImGui::SetCursorScreenPos(ImVec2(b0.x + 10.0f * s, b1.y - 44.0f * s));
-        if (NobleStyle::PrimaryButton("APPLY CHANGES", ImVec2(bw, 30.0f * s))) Apply();
-        ImGui::SameLine(0, 10.0f * s);
-        if (ImGui::Button("DISCARD", ImVec2(bw, 30.0f * s))) Discard();
-        Text(dl, NobleStyle::SmallFont(), 13.0f * s, ImVec2(b0.x + 10.0f * s, b1.y - 12.0f * s), kTextDim, "Y apply   X discard");
+        // Controller button and key side by side, both rows clickable.
+        auto action = [&](const char* id, float y, InputPrompts::Button button, const char* key, const char* label) {
+            const ImVec2 r0(b0.x + 10.0f * s, y), r1(b0.x + width - 10.0f * s, y + 32.0f * s);
+            ImGui::SetCursorScreenPos(r0);
+            const bool clicked = ImGui::InvisibleButton(id, ImVec2(r1.x - r0.x, r1.y - r0.y));
+            const bool over = ImGui::IsItemHovered();
+            dl->AddRectFilled(r0, r1, over ? IM_COL32(70, 110, 150, 220) : IM_COL32(30, 44, 58, 220), 2.0f * s);
+            ImFont* font = ImGui::GetFont();
+            const float glyph = 22.0f * s;
+            float x = r0.x + 6.0f * s;
+            x += InputPrompts::DrawButton(dl, font, ImVec2(x, y + 5.0f * s), glyph, button) + 5.0f * s;
+            x += InputPrompts::DrawKey(dl, font, ImVec2(x, y + 5.0f * s), glyph, key) + 9.0f * s;
+            Text(dl, NobleStyle::TitleFont(), 16.0f * s, ImVec2(x, y + 7.0f * s), kText, label);
+            return clicked;
+        };
+        if (action("##apply", b1.y - 72.0f * s, InputPrompts::Button::Y, "ENTER", "APPLY")) Apply();
+        if (action("##discard", b1.y - 37.0f * s, InputPrompts::Button::X, "ESC", "DISCARD")) Discard();
     } else {
         // Greyed when this category already has its default values.
         const bool differs = CountDiff(m_edit, WithDefaults(m_edit, m_cat), m_cat) > 0;
@@ -424,7 +434,8 @@ void SettingsPanel::RenderCategories(float width, float height) {
 
 void SettingsPanel::RenderRows(float width, float height) {
     const float s = Scale();
-    ImGui::BeginChild("##setrows", ImVec2(width, height), ImGuiChildFlags_None);
+    ImGui::BeginChild("##setrows", ImVec2(width, height), ImGuiChildFlags_None, ImGuiWindowFlags_NoNavInputs | ImGuiWindowFlags_NoNavFocus);
+    if (m_focus < 0 && m_scrollToFocus) ImGui::SetScrollY(0.0f);
     m_rowCount = 0;
     m_hover = Details{};
     m_focusDetails = Details{};
@@ -558,6 +569,8 @@ bool SettingsPanel::SliderValue(float& v, float lo, float hi, float step, float 
         MenuSounds::Click();
     }
     const bool valueHovered = !typingHere && ImGui::IsItemHovered() && !m_rowDisabled;
+    if (m_rowFocused) m_enterAppliesHere = true;
+    if (m_rowFocused && !m_rowDisabled) m_valueTookLeftRight = true;
     if (!m_rowDisabled) {
         if (active) {
             m_focus = m_curRow;
@@ -621,6 +634,7 @@ int SettingsPanel::CycleValue(const char* value, int index, int count, bool wrap
     if (ImGui::InvisibleButton("##r", ImVec2(aw, h))) change = 1;
     const bool hr = ImGui::IsItemHovered();
     ImGui::PopID();
+    if (m_rowFocused && !m_rowDisabled) m_valueTookLeftRight = true;
     if (m_rowFocused) {
         if (m_keyLeft) change = -1;
         if (m_keyRight || m_keyAccept) change = 1;
@@ -646,6 +660,7 @@ bool SettingsPanel::ToggleValue(bool& v) {
     const bool hovered = ImGui::IsItemHovered();
     ImGui::PopID();
     bool changed = false;
+    if (m_rowFocused && !m_rowDisabled) m_valueTookLeftRight = true;
     if (!m_rowDisabled && (clicked || (m_rowFocused && (m_keyAccept || m_keyLeft || m_keyRight)))) {
         v = !v;
         changed = true;
@@ -1137,61 +1152,79 @@ void SettingsPanel::RenderController() {
             InfoValue(line.c_str());
         }
     }
-    // Per-action bindings: click a row, then press the pad button it should use. An override replaces the
-    // button layout's source for that action; DELETE puts the layout's own button back.
+    // One preset: Reach's six button layouts, each with the sticks normal or swapped. Stored as padLayout + padStickLayout.
+    Section("CONTROLLER PRESET");
+    {
+        const int layouts = static_cast<int>(PadLayouts::Count);
+        const int layout = std::clamp(m_edit.padLayout, 0, layouts - 1);
+        const bool swapped = m_edit.padStickLayout == 1;
+        const int preset = layout + (swapped ? layouts : 0);
+        // Reach has no layouts called Reverse: these two names are Noble's, for that layout with the sticks swapped.
+        const bool reverse = swapped && (layout == PadLayouts::Southpaw || layout == PadLayouts::BumperJumper);
+        const std::string name = reverse ? std::string("REVERSE ") + PadLayouts::Name(layout)
+                                         : std::string(PadLayouts::Name(layout)) + (swapped ? " + SWAPPED STICKS" : "");
+        const std::string text = std::string(PadLayouts::Description(layout)) +
+                                 (swapped ? " Sticks swapped: left stick looks, right stick moves." : " Left stick moves, right stick looks.") +
+                                 (reverse ? " Noble's name for this preset; Reach's own list has no Reverse layouts." : "");
+        if (Row("CONTROLLER PRESET", text.c_str(), When::Apply, "Default",
+                m_edit.padLayout != m_saved.padLayout || m_edit.padStickLayout != m_saved.padStickLayout)) {
+            if (const int d = CycleValue(name.c_str(), preset, layouts * 2)) {
+                const int next = (preset + d + layouts * 2) % (layouts * 2);
+                m_edit.padLayout = next % layouts;
+                m_edit.padStickLayout = next >= layouts ? 1 : 0;
+                m_edit.padBindings.clear();   // a binding made for the old preset would leave buttons unused or doubled up
+            }
+        }
+        if (m_search[0] == 0) DrawControllerDiagram(ImGui::GetContentRegionAvail().x, layout, swapped, m_edit.padBindings);
+    }
+
+    // Per-action bindings: select a row, press A (or click), then press the input it should use. An override replaces the
+    // preset's input for that action, and whichever action had that input takes the old one.
     Section("BUTTON BINDINGS");
     {
-        // ImGui's gamepad keys are what the Win32 backend updates, so the capture works without polling XInput.
-        struct KeyMap { ImGuiKey key; int bit; };
+        struct KeyMap { ImGuiKey key; int input; };
         static const KeyMap kKeys[] = {
             { ImGuiKey_GamepadFaceDown, 0x1000 }, { ImGuiKey_GamepadFaceRight, 0x2000 },
             { ImGuiKey_GamepadFaceLeft, 0x4000 }, { ImGuiKey_GamepadFaceUp, 0x8000 },
             { ImGuiKey_GamepadL1, 0x0100 },       { ImGuiKey_GamepadR1, 0x0200 },
+            { ImGuiKey_GamepadL2, PadLayouts::InputLT }, { ImGuiKey_GamepadR2, PadLayouts::InputRT },
             { ImGuiKey_GamepadL3, 0x0040 },       { ImGuiKey_GamepadR3, 0x0080 },
+            { ImGuiKey_GamepadDpadUp, 0x0001 },   { ImGuiKey_GamepadDpadDown, 0x0002 },
+            { ImGuiKey_GamepadDpadLeft, 0x0004 }, { ImGuiKey_GamepadDpadRight, 0x0008 },
+            { ImGuiKey_GamepadStart, 0x0010 },    { ImGuiKey_GamepadBack, 0x0020 },
+            { ImGuiKey_GamepadLStickUp, PadLayouts::InputLStickUp },     { ImGuiKey_GamepadLStickDown, PadLayouts::InputLStickDown },
+            { ImGuiKey_GamepadLStickLeft, PadLayouts::InputLStickLeft }, { ImGuiKey_GamepadLStickRight, PadLayouts::InputLStickRight },
+            { ImGuiKey_GamepadRStickUp, PadLayouts::InputRStickUp },     { ImGuiKey_GamepadRStickDown, PadLayouts::InputRStickDown },
+            { ImGuiKey_GamepadRStickLeft, PadLayouts::InputRStickLeft }, { ImGuiKey_GamepadRStickRight, PadLayouts::InputRStickRight },
         };
-        auto bitName = [](int bit) -> const char* {
-            switch (bit) {
-            case 0x1000: return "A";
-            case 0x2000: return "B";
-            case 0x4000: return "X";
-            case 0x8000: return "Y";
-            case 0x0100: return "LB";
-            case 0x0200: return "RB";
-            case 0x0040: return "L STICK";
-            case 0x0080: return "R STICK";
-            default: return "-";
-            }
-        };
+        const int layout = std::clamp(m_edit.padLayout, 0, static_cast<int>(PadLayouts::Count) - 1);
 
         for (int action = 0; action < PadLayouts::ActionCount; ++action) {
             const std::string key = PadLayouts::ActionKey(action);
-            const auto override = m_edit.padBindings.find(key);
-            const bool custom = override != m_edit.padBindings.end() && override->second > 0;
-            const PadLayouts::Source layoutSource =
-                PadLayouts::SourceFor(std::clamp(m_edit.padLayout, 0, static_cast<int>(PadLayouts::Count) - 1), action);
-            const std::string layoutName = layoutSource.bit ? bitName(layoutSource.bit)
-                                                            : (layoutSource.trigger == 1 ? "LT" : "RT");
-            const std::string value = m_padRebindAction == action ? std::string("PRESS A BUTTON...")
-                                    : custom ? std::string(bitName(override->second)) + " (custom)"
-                                             : layoutName + " (layout)";
+            const bool custom = m_edit.padBindings.count(key) != 0;
+            const char* layoutName = PadLayouts::InputName(PadLayouts::LayoutInput(layout, action));
+            const char* effective = PadLayouts::InputName(PadLayouts::EffectiveInput(layout, action, &m_edit.padBindings));
+            const bool waiting = m_padRebindAction == action;
+            const std::string value = waiting ? std::string("PRESS AN INPUT...")
+                                    : custom ? std::string(effective) + " (custom)"
+                                             : std::string(effective) + " (preset)";
+            const std::string text = action == PadLayouts::TeamChat || action == PadLayouts::PushToTalk
+                ? "Can be assigned now, but does nothing until chat and voice exist."
+                : "Press A or click, then press the input this action should use. The action on that input takes this one's old input. Wait 5 seconds to cancel; on a keyboard, Esc cancels and Delete puts the preset's input back.";
 
-            if (!Row(PadLayouts::ActionName(action),
-                     "Click, then press the controller button this action should use. Esc cancels, Delete puts the layout's own button back.",
-                     When::Apply, layoutName.c_str(), custom)) {
-                continue;
-            }
+            if (!Row(PadLayouts::ActionName(action), text.c_str(), When::Apply, layoutName, custom)) continue;
             InfoValue(value.c_str());
             const bool clicked = m_rowHovered && ImGui::IsMouseClicked(0);
-            const bool accepted = m_rowFocused && (ImGui::IsKeyPressed(ImGuiKey_Enter, false) ||
-                                                   ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false));
-            if (clicked || accepted) {
+            if (clicked || (m_rowFocused && m_keyAccept)) {
                 m_padRebindAction = action;
+                m_padRebindStarted = ImGui::GetTime();
+                m_padRebindFrame = ImGui::GetFrameCount();
                 MenuSounds::Click();
             }
-            if (m_padRebindAction != action) continue;
+            if (m_padRebindAction != action || m_padRebindFrame == ImGui::GetFrameCount()) continue;
 
-            // Capturing: the next pad button becomes the binding.
-            if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+            // Capturing: the next input becomes the binding.
+            if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::GetTime() - m_padRebindStarted > 5.0) {
                 m_padRebindAction = -1;
             } else if (ImGui::IsKeyPressed(ImGuiKey_Delete, false) || ImGui::IsKeyPressed(ImGuiKey_Backspace, false)) {
                 m_edit.padBindings.erase(key);
@@ -1200,12 +1233,7 @@ void SettingsPanel::RenderController() {
             } else {
                 for (const KeyMap& map : kKeys) {
                     if (!ImGui::IsKeyPressed(map.key, false)) continue;
-                    // One button, one action: drop any other action that was using it.
-                    for (auto it = m_edit.padBindings.begin(); it != m_edit.padBindings.end();) {
-                        if (it->first != key && it->second == map.bit) it = m_edit.padBindings.erase(it);
-                        else ++it;
-                    }
-                    m_edit.padBindings[key] = map.bit;
+                    PadLayouts::Assign(layout, action, map.input, m_edit.padBindings);
                     m_padRebindAction = -1;
                     MenuSounds::Click();
                     break;
@@ -1213,19 +1241,25 @@ void SettingsPanel::RenderController() {
             }
         }
         if (!m_edit.padBindings.empty()) {
-            if (Row("RESET BUTTON BINDINGS", "Puts every action back on the button its layout gives it.",
-                    When::Apply, "Layout", true)) {
-                InfoValue("Layout");
+            if (Row("RESET BUTTON BINDINGS", "Puts every action back on the input its preset gives it.",
+                    When::Apply, "Preset", true)) {
+                InfoValue("Preset");
                 const bool clicked = m_rowHovered && ImGui::IsMouseClicked(0);
-                const bool accepted = m_rowFocused && (ImGui::IsKeyPressed(ImGuiKey_Enter, false) ||
-                                                       ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false));
-                if (clicked || accepted) {
+                if (clicked || (m_rowFocused && m_keyAccept)) {
                     m_edit.padBindings.clear();
                     m_padRebindAction = -1;
                     MenuSounds::Click();
                 }
             }
         }
+        if (Row("PADDLES 1-6", "Elite and other paddle controllers don't report paddles to Windows' XInput, which is what Noble reads. Assign each paddle to a button in the Xbox Accessories app or Steam Input, and it then works here as that button.",
+                When::Info, "", false, true)) {
+            InfoValue("Set in Xbox Accessories");
+        }
+    }
+    if (Row("TOGGLE ZOOM", "On: press to zoom in, press again to zoom out. Off: zoomed only while you hold the button.", When::Apply,
+            def.padToggleZoom ? "On" : "Off", m_edit.padToggleZoom != m_saved.padToggleZoom)) {
+        ToggleValue(m_edit.padToggleZoom);
     }
     Section("STICKS");
     auto speed = [&](const char* label, const char* text, int& v, int saved) {
@@ -1233,17 +1267,10 @@ void SettingsPanel::RenderController() {
         float f = static_cast<float>(v);
         if (SliderValue(f, 1.0f, 19.0f, 1.0f, 19.0f, std::to_string(v).c_str())) v = static_cast<int>(std::lround(f));
     };
-    speed("LOOK SENSITIVITY", "How fast the right stick turns you left and right (Reach's own setting; 19 is the stock profile's value).", m_edit.padLookX, m_saved.padLookX);
-    speed("VERTICAL SENSITIVITY", "How fast the right stick looks up and down.", m_edit.padLookY, m_saved.padLookY);
+    speed("HORIZONTAL SENSITIVITY", "How fast the right stick turns you left and right. Noble's 1-19 is the value in Reach's profile plus one, and 19 is the stock profile's value. It is not the same scale as the 1-10 in Reach's own menu, and how the two line up has not been measured.", m_edit.padLookX, m_saved.padLookX);
+    speed("VERTICAL SENSITIVITY", "How fast the right stick looks up and down. Same 1-19 scale as horizontal.", m_edit.padLookY, m_saved.padLookY);
     if (Row("INVERT LOOK", "Pushing the right stick forward looks down.", When::Apply, "Off", m_edit.padInvertLook != m_saved.padInvertLook)) {
         ToggleValue(m_edit.padInvertLook);
-    }
-    if (Row("STICK LAYOUT", "Default puts movement on the left stick and looking on the right. Southpaw swaps them, for players who aim with the left thumb.",
-            When::Apply, "Default", m_edit.padStickLayout != m_saved.padStickLayout)) {
-        if (const int d = CycleValue(m_edit.padStickLayout == 1 ? "SOUTHPAW" : "DEFAULT", m_edit.padStickLayout, 2)) {
-            m_edit.padStickLayout = (m_edit.padStickLayout + d + 2) % 2;
-            MenuSounds::Change();
-        }
     }
     auto deadZone = [&](const char* label, float& v, float saved) {
         if (!Row(label, "Raise a dead zone if a worn stick drifts. 0 keeps the game's own dead zone.", When::Apply, "Game default",
@@ -1254,20 +1281,6 @@ void SettingsPanel::RenderController() {
     };
     deadZone("LEFT STICK DEAD ZONE", m_edit.padLeftDeadZone, m_saved.padLeftDeadZone);
     deadZone("RIGHT STICK DEAD ZONE", m_edit.padRightDeadZone, m_saved.padRightDeadZone);
-    Section("LAYOUT");
-    // Halo: Reach's six button layouts (Halopedia / the 360 manual), applied by Noble to the pad state.
-    {
-        const int layout = std::clamp(m_edit.padLayout, 0, static_cast<int>(PadLayouts::Count) - 1);
-        if (Row("BUTTON LAYOUT", PadLayouts::Description(layout),
-                When::Apply, "Default", m_edit.padLayout != m_saved.padLayout)) {
-            if (const int d = CycleValue(PadLayouts::Name(layout), m_edit.padLayout,
-                                         static_cast<int>(PadLayouts::Count))) {
-                m_edit.padLayout = std::clamp(m_edit.padLayout, 0, static_cast<int>(PadLayouts::Count) - 1);
-                MenuSounds::Change();
-            }
-        }
-    }
-
     Section("VIBRATION");
     if (Row("VIBRATION", "Rumble from the game (explosions, vehicles, melee) on Xbox-style controllers.", When::Apply,
             def.padVibration ? "On" : "Off", m_edit.padVibration != m_saved.padVibration)) {
@@ -1277,18 +1290,6 @@ void SettingsPanel::RenderController() {
             std::fabs(m_edit.padVibrationStrength - m_saved.padVibrationStrength) > 1e-4f, !m_edit.padVibration)) {
         SliderValue(m_edit.padVibrationStrength, 0.0f, 1.0f, 0.05f, 1.0f, Percent(m_edit.padVibrationStrength).c_str());
     }
-    if (m_search[0] == 0) {
-        {
-            // Name the layout that is actually in use, so the labels below are not read as "Default" when
-            // Southpaw or Boxer is selected.
-            char title[96];
-            std::snprintf(title, sizeof(title), "HALO: REACH BUTTON LAYOUT - %s",
-                          PadLayouts::Name(std::clamp(m_edit.padLayout, 0, static_cast<int>(PadLayouts::Count) - 1)));
-            Section(title);
-        }
-        DrawControllerDiagram(ImGui::GetContentRegionAvail().x, m_edit.padLayout);
-    }
-
     (void)s;
 }
 
@@ -1482,6 +1483,7 @@ int SettingsPanel::CountDiff(const SettingsData& a, const SettingsData& b, Cat c
     case Cat::Controller:
         return (a.padLookX != b.padLookX) + (a.padLookY != b.padLookY) + (a.padInvertLook != b.padInvertLook) +
                (a.padLayout != b.padLayout) + (a.padStickLayout != b.padStickLayout) + (a.padBindings != b.padBindings) +
+               (a.padToggleZoom != b.padToggleZoom) +
                f(a.padLeftDeadZone, b.padLeftDeadZone) + f(a.padRightDeadZone, b.padRightDeadZone) +
                (a.padVibration != b.padVibration) + f(a.padVibrationStrength, b.padVibrationStrength);
     case Cat::Online:

@@ -44,8 +44,8 @@ can make.
 ## @claude
 
 - state: **active**
-- since: 2026-10-31 00:15 ET
-- working on: Controller-first settings (TODO H), including feeding the pad into ImGui, which TODO H suggested for @deepseek: **I am taking that too so the item is not blocked**
-- files expected: `src/ui/SettingsPanel.*`, `src/engine/PadLayouts.*`, `src/engine/InputTuning.*`, `src/engine/ReachHost.cpp` (pad input), `src/ui/FrontEndMenu.cpp` + `src/ui/PauseMenu.cpp` (ImGui feed only), `src/common/Settings.*`, `CMakeLists.txt`, `docs/*`
+- since: 2026-10-31 ET
+- working on: Tyler: paddle keys (keyboard/mouse as Paddle 1-6) and look sensitivity 1.00x-10.00x
+- files expected: `src/engine/PadLayouts.*`, `src/engine/InputTuning.*`, `src/engine/ReachHost.cpp` (pad input), `src/ui/SettingsPanel.*`, `src/common/Settings.*`, `docs/*`
 - second checkout: `D:\Halo-Reach-Community-Edition-claude` (own `build\`, so it does not touch @deepseek's tree or binary). Test client runs as `noble-client-claude.exe`, so kills by name miss it
-- last commit: `b0b7cac`
+- last commit: `41c1c91`

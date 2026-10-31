@@ -66,6 +66,10 @@ void SetMusicVolume(float volume);
 void SetMuted(bool muted);
 bool IsMuted();
 
+// Plays one of Reach's preview lines for a Firefight voice ("carter", "noble_six", ...), through the same decode cache as the
+// music. Each call moves on to that character's next line and stops the one playing. Silent when muted or at volume 0.
+bool PlayVoicePreview(const std::string& voiceId, bool female, float volume);
+
 std::vector<TrackInfo> MusicTracks();
 std::string TrackLabel(const std::string& id);
 

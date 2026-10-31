@@ -219,38 +219,38 @@ items above close. Keep the spec open when building any screen so the details la
 
 ## H. Controller UX and settings (Tyler, 2026-10-31 00:10) - @claude
 
-- [ ] **Settings tabs on D-pad / left stick**, not LB/RB; when a value row is focused the stick/D-pad adjusts the value, not the tab
-- [ ] **Apply/Discard controller prompts**: Y = Apply changes, X = Discard changes (icons + key equivalents), replacing the text-only unsaved box
+- [x] @claude 2026-10-31 00:40 - commit dc8731b - **Settings tabs on D-pad / left stick**, not LB/RB; when a value row is focused the stick/D-pad adjusts the value, not the tab
+- [x] @claude 2026-10-31 00:40 - commit dc8731b - **Apply/Discard controller prompts**: Y = Apply changes, X = Discard changes (icons + key equivalents), replacing the text-only unsaved box
 - [x] @deepseek 2026-10-31 01:05 - **Controller input now reaches ImGui**: `src/ui/GamepadUi.cpp` reads XInput each frame
   and feeds `io.AddKeyEvent` for GamepadDpad*, GamepadFaceA/B/X/Y, Start/Back, LB/RB, LT/RT and both stick directions before
   `ImGui::NewFrame` (called from PauseMenu, FrontEndMenu and UIManager), and sets `NavEnableGamepad`. This is the root fix
   behind "presets don't work": SettingsPanel's existing gamepad checks were dead. @claude now wires the visible Y=Apply /
   X=Discard prompts and the preset/diagram row; Tyler retests with a pad.
-- [ ] **Button layout row must be changeable with a controller** (D-pad/stick left-right does nothing today) and the layout diagram must update per preset
-- [ ] **One "Controller preset" item** (stick + buttons together); remove the separate stick-layout row; presets from `docs/menu-redesign-spec.md` / Halopedia (Default, Southpaw, Boxer, Bumper Jumper, Recon, ...)
-- [ ] **Remap every input**: A/B/X/Y, bumpers, triggers, both sticks (directions + click), D-pad, Start/Back, paddles 1-6; add missing actions: crouch, toggle zoom (default on, still exposed), team chat, scoreboard, push-to-talk (future), etc.
-- [ ] **Look sensitivity baseline**: 19 is the current default; document the scale against Reach's 1-10 and expose horizontal/vertical
+- [x] @claude 2026-10-31 00:40 - commit dc8731b (real cause: the row dropped its step, for every device) - **Button layout row must be changeable with a controller** (D-pad/stick left-right does nothing today) and the layout diagram must update per preset
+- [x] @claude 2026-10-31 00:40 - commit dc8731b - **One "Controller preset" item** (stick + buttons together); remove the separate stick-layout row; presets from `docs/menu-redesign-spec.md` / Halopedia (Default, Southpaw, Boxer, Bumper Jumper, Recon, ...)
+- [~] @claude 2026-10-31 00:40 - commit dc8731b, all but stick movement axes and physical paddles (XInput does not report paddles; row says to use Xbox Accessories); **needs: Tyler** real pad test - **Remap every input**: A/B/X/Y, bumpers, triggers, both sticks (directions + click), D-pad, Start/Back, paddles 1-6; add missing actions: crouch, toggle zoom (default on, still exposed), team chat, scoreboard, push-to-talk (future), etc.
+- [~] @claude 2026-10-31 00:40 - horizontal/vertical exposed with numbers, scale documented as profile byte + 1; **BLOCKED (Tyler or measurement):** how 1-19 lines up with 1-10 is unmeasured - **Look sensitivity baseline**: 19 is the current default; document the scale against Reach's 1-10 and expose horizontal/vertical
 - [ ] **(Tyler test) Controller presets** - pick Southpaw or Bumper Jumper, Apply, play a match, rebind one button
 
 ## I. Armory presentation, audio and data (Tyler, 2026-10-31 00:10)
 
-- [ ] **Armory framing**: Spartan/Elite centered under the horizontal rule below APPEARANCE, head no longer above the HALO: REACH line or beside the nameplate
-- [ ] **Nameplate in the Armory must match the main menu's look**
-- [ ] **Armory spotlight**: stop the pure-black chamber (UI gradient/key light first; engine/data light if needed)
-- [ ] **Per-slot camera pan** to the body part being edited (verify + smooth transitions)
-- [ ] **Commendation tier check**: temporarily force the first six commendations to steel/bronze/silver/gold/onyx/max to verify art + payout (dev-only, not shipped values)
+- [x] @claude 2026-10-31 00:56 - commit dd37730 - **Armory framing**: Spartan/Elite centered under the horizontal rule below APPEARANCE, head no longer above the HALO: REACH line or beside the nameplate
+- [x] @claude 2026-10-31 00:56 - commit dd37730 - **Nameplate in the Armory must match the main menu's look**
+- [~] @claude 2026-10-31 00:56 - commit dd37730, soft additive UI key light replaces pure black; a real engine/data light stays open for @deepseek - **Armory spotlight**: stop the pure-black chamber (UI gradient/key light first; engine/data light if needed)
+- [~] @claude 2026-10-31 00:56 - pans verified by capture and untouched; transition smoothness is the engine's and not measured - **Per-slot camera pan** to the body part being edited (verify + smooth transitions)
+- [x] @claude 2026-10-31 00:56 - commit 1561e00, run with `-dev-commendation-tiers`; **needs: Tyler** to judge the art - **Commendation tier check**: temporarily force the first six commendations to steel/bronze/silver/gold/onyx/max to verify art + payout (dev-only, not shipped values)
 - [ ] **Campaign completion gating (refined)**: quitting a mission must not award the **completion bonus**, but the
   **performance bonus still pays** (kills/difficulty/time as normal). Server result needs an explicit `mission_complete`
   flag and the credit breakdown split into performance vs completion, so a quit pays only the performance part.
 - [ ] **Post-game slot machine** (Reach's credit slot machine; Halopedia reference) - @deepseek
 - [ ] **Forge / custom-game defaults / Firefight game options** screens (blocked on variant work)
-- [ ] **Menu background art**: shuffle the whole set (repeats today) and prefer the loaded map's art
-- [ ] **Music**: drop tracks <= 45 s from the menu playlist
-- [ ] **Firefight voice packs**: verify working + Armory preview button (X on pad) that plays a sample line per character
+- [x] @claude 2026-10-31 00:56 - commit f1facf3 - **Menu background art**: shuffle the whole set (repeats today) and prefer the loaded map's art
+- [x] @claude 2026-10-31 00:56 - commit ecf8f0e; Halo: CE has no lengths and keeps everything - **Music**: drop tracks <= 45 s from the menu playlist
+- [~] @claude 2026-10-31 00:56 - preview on X landed, commit ecf8f0e; **needs: Tyler** to listen. In-game voice packs not verified - **Firefight voice packs**: verify working + Armory preview button (X on pad) that plays a sample line per character
 
 - [ ] **Emblem colours (real three-colour picker)** — backgrounds are fixed steel today; Reach's real picker needs the
-  black layers treated as masks. Also audit `Nameplate(int id)` for the same list-position-vs-id bug. - @claude
-- [ ] **Controller preset list completeness** — include Reach's reverse variants (Reverse Southpaw, Reverse Bumper Jumper)
+  black layers treated as masks. Nameplate audit done and fixed, commit 41c1c91. - @claude
+- [~] @claude 2026-10-31 00:40 - 6 layouts x normal/swapped sticks = 12; **BLOCKED (Tyler):** I could not verify what Reach calls "Reverse Southpaw / Reverse Bumper Jumper", so they are not invented - **Controller preset list completeness** — include Reach's reverse variants (Reverse Southpaw, Reverse Bumper Jumper)
   and every MCC scheme; the diagram must switch with the preset, and the preset must apply on Y without a relaunch. - @claude
 - [ ] **Game-option surfaces, split up**: Forge map options (budget/permissions), custom-game defaults (a default variant
   shipped with Noble), Firefight options (waves/lives/skulls/time), and per-mode match settings from the variant plan. - @deepseek + @claude UI
