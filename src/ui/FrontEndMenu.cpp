@@ -899,14 +899,7 @@ void DrawAccountModal(const Ui& ui) {
                                    "%s", s_accountStatusMsg.c_str());
             }
             ImGui::Dummy(ImVec2(0, 8));
-            const float btnW2 = (ImGui::GetContentRegionAvail().x - 10.0f * ui.s) * 0.5f;
-            if (ImGui::Button("LOG OUT", ImVec2(btnW2, 32.0f * ui.s))) {
-                AuthClient::Get().Logout();
-                s_accountStatusMsg = "Logged out successfully.";
-                s_accountStatusError = false;
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("CLOSE", ImVec2(btnW2, 32.0f * ui.s))) {
+            if (ImGui::Button("CLOSE", ImVec2(-1, 32.0f * ui.s))) {
                 s_showAccountModal = false;
                 ImGui::CloseCurrentPopup();
             }
