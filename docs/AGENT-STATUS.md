@@ -37,10 +37,10 @@ can make.
 
 ## @claude
 
-- state: **idle** (last: push-to-talk rebinding and music list, 15:08 ET)
-- since: -
-- working on: -
-- files expected: -
+- state: **active**
+- since: 2026-10-31 15:55 ET
+- working on: text chat and voice talking UI, then the open @claude list
+- files expected: src/ui/SocialOverlay.*, src/ui/PauseMenu.cpp, src/ui/FrontEndMenu.cpp, src/host/Window.*, src/engine/KeyBindings.*, src/engine/ReachHost.cpp (input gate only), src/network/NetworkTransport.* (SendChat only), src/audio/VoiceChat.*, ServerTestDeploy server.js (chat sender name)
 - second checkout: `D:\Halo-Reach-Community-Edition-claude` (own `build\`, so it does not touch @deepseek's tree or binary). Test client runs as `noble-client-claude.exe`, so kills by name miss it
 - last commit: `8cbb746`
 
