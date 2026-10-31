@@ -30,6 +30,17 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+--
+
+## 0. Pick up here (2026-10-31, 10:40 ET) - Housekeeping: version 0.8.4, scratch script removed (WeabooTyler117 / DeepSeek)
+
+- `src/common/Version.hpp`: `VERSION_PATCH` 2 -> 4 and `VERSION_STRING` is now
+  `0.8.4 (Co-op, Third Person & Menu Cleanup)`. It had drifted (patch said 0.8.2 while the string said 0.8.3), which is
+  exactly how two builds ended up looking identical in a bug report.
+- Removed O7's `patch_blam.js` (his scratch rewrite of the Command 11 barrier; the real change is in `64dd74f` and the file
+  was stale against the current `LaunchMap` signature).
+- `docs/TODO.md` housekeeping section updated for both.
+
 ## 0. Pick up here (2026-10-31, 10:25 ET) - Claude collaboration setup: START-HERE, TEAM-WORKFLOW, claim board, package (WeabooTyler117 / DeepSeek)
 
 Tyler wants Claude and DeepSeek working the same repo. The repo is now the coordination channel; no direct chat needed.

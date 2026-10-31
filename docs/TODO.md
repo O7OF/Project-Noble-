@@ -59,8 +59,8 @@ overlay (`7cef78c`) and the third-person camera (`97989d1`).
 
 ## E. Housekeeping
 
-- [ ] **Bump `VERSION_PATCH`** — still `0.8.2` in `src/common/Version.hpp`; two builds are currently indistinguishable
+- [x] **Bump `VERSION_PATCH`** — now `0.8.4` / "0.8.4 (Co-op, Third Person & Menu Cleanup)" (`src/common/Version.hpp`)
 - [ ] **GitHub Actions build artifact** — one-click exe so both PCs always run the same binary
 - [ ] **Dedupe `docs/HANDOFF.md`** — O7's `dc349a5` appended ~27 identical entries; 245+ entries now
-- [ ] **Remove `patch_blam.js`** — O7's scratch rewrite script, superseded by `64dd74f`
+- [x] **Remove `patch_blam.js`** — O7's scratch rewrite script, superseded by `64dd74f`
 - [ ] **Drop `stash@{0}`** once Tyler agrees (its useful half is already committed as `32cd0f1`)
