@@ -69,6 +69,19 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-31, 07:30 ET) - Notes for scaling co-op past 4 players (future, not implemented) (WeabooTyler117 / DeepSeek)
+
+Tyler asked how we would raise the co-op player count later (e.g. 16). Wrote **`docs/player-count-scaling.md`** with the
+facts we have: the launch block declares players at `0xE8` (byte), it carries **16** player-slot descriptors at
+`0x100 + slot*0x20`, MCC's results builder walks **16** player records (stride `0xD8`), LobbyPatches already expands
+membership (MP 16..64, co-op 4..16) and patches the "too many for net coop" gates, and the cap compare is
+`cmp edi, [hr+0xD1FD90]` where that global is initialised from a constant block during globals init.
+
+The real blockers above 4 are **scenario spawn points (4 per campaign mission), mission scripts that assume 1-4 players,
+the campaign HUD, and lockstep determinism/CPU**, not the session or launch block. Staged plan: 6-player local experiment
+with `-data-dir` first, then an 8-player spawn fallback + minimal HUD, then 16 with HUD/scoreboard redesign and script
+accommodation. Firefight is the easier target if more-than-4 is ever wanted as a demo.
+
 ## 0. Pick up here (2026-10-31, 07:10 ET) - Fix holds for 2 and 3 players; solo unaffected; no-guest edge case recorded (WeabooTyler117 / DeepSeek)
 
 Follow-up verification of the `0xE8` launch-block player count:
