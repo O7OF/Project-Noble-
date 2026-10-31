@@ -1,3 +1,5 @@
+#include "audio/ReachAudio.hpp"
+#include "InputPrompts.hpp"
 #include "ArmorCustomizer.hpp"
 #include "common/Settings.hpp"
 #include "NobleStyle.hpp"
@@ -2129,6 +2131,21 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
         const char* desc = row.options[shown].description.empty() ? (colourGrid ? "One of Reach's 30 armor colors." : "")
                                                                   : row.options[shown].description.c_str();
         TextAt(dl, bodyFont, 15.0f * s, ImVec2(pickX + pad, iy + 38.0f * s), kDimCol, desc, pickW - pad * 2.0f);
+        // Firefight voices: X (pad or key) plays a sample line for the highlighted character, cycling through its lines.
+        if (std::strcmp(row.label, "Firefight Voice") == 0) {
+            const bool press = !ImGui::GetIO().WantTextInput &&
+                               (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceLeft, false) || ImGui::IsKeyPressed(ImGuiKey_X, false));
+            if (press && shown >= 0 && static_cast<size_t>(shown) < kFirefightVoices.size()) {
+                const SettingsData sound = Settings::Get().Snapshot();
+                ReachAudio::PlayVoicePreview(kFirefightVoices[static_cast<size_t>(shown)].stringId, m_profile.bodyType == BodyType::Female,
+                                             sound.masterMute ? 0.0f : sound.volumeOther);
+            }
+            const float glyph = 20.0f * s;
+            float px = k1.x - pad - 92.0f * s;
+            const float py = k1.y - 30.0f * s;
+            px += InputPrompts::DrawButton(dl, bodyFont, ImVec2(px, py), glyph, InputPrompts::Button::X) + 5.0f * s;
+            TextAt(dl, smallFont, 14.0f * s, ImVec2(px, py + 3.0f * s), IM_COL32(190, 214, 232, 255), "Preview");
+        }
         const std::string count = std::to_string(shown + 1) + " / " + std::to_string(n) +
             (shown == equipped ? "   EQUIPPED"
              : row.options[shown].locked ? std::string("   PREVIEW - unlocks at ") + (row.options[shown].lockRank ? row.options[shown].lockRank : "a higher rank")
