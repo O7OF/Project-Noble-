@@ -5,6 +5,8 @@ directory and one running game.
 READ FIRST, in this order, before touching anything:
 
 1. docs/START-HERE.md          - what the project is, build command, flags, hard rules
+   docs/PATHS.md               - every path on this PC you would otherwise have to guess (MCC, HREK, RR install,
+                                 Ghidra, disassembly, server clone, logs, userdata, the second checkout)
 2. docs/AGENT-STATUS.md        - is DeepSeek active right now, and on what?
 3. docs/TODO.md                - the prioritized list; it is also the claim board
 4. docs/TEAM-WORKFLOW.md       - how we avoid collisions (claims, handoff entries, verification bar)

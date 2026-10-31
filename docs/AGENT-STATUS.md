@@ -15,8 +15,8 @@ active and what it is touching. It is not a log — it is a *live* board. Keep i
 
 - state: **active**
 - since: 2026-10-31 10:55 ET
-- working on: third-person camera re-verification (the F5 hook answers the engine check but the camera did not actually
-  switch in the tested capture — treating it as broken until a clean gameplay capture proves otherwise)
+- working on: third-person camera re-verification (experiment switch `-third-person-mode 0|1` added; matrix next) and the
+  machine map for Claude (`docs/PATHS.md`)
 - files expected: `docs/TODO.md`, `docs/HANDOFF.md`, `src/engine/CameraThirdPerson.*`, `src/ui/PauseMenu.cpp`
 - last commit: `aac831f`
 

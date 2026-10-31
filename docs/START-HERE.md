@@ -60,6 +60,7 @@ In progress / next, in priority order (`docs/TODO.md` has the full list):
 | `docs/HANDOFF.md` | chronological log, newest entry first — **the** history |
 | `docs/HANDOFF-FOR-CLAUDE.md` | the original cold-start brief (traps, house rules, older backlog) |
 | `docs/TEAM-WORKFLOW.md` | how Claude and DeepSeek work on this together without stepping on each other |
+| `docs/PATHS.md` | **machine map** - every path on this PC that is not in the repo (MCC, HREK, RR install, Ghidra project, disassembly, SERVER clone, logs, userdata) |
 | `docs/AGENT-STATUS.md` | **live presence board** - check it first: who is active and which files they are touching |
 | `docs/CLAUDE-PROMPT.txt` | the exact first prompt/instructions for a Claude session on this PC |
 | `docs/menu-redesign-spec.md` | the menu design contract (layout, typography, screens) |

@@ -36,6 +36,23 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+--
+
+## 0. Pick up here (2026-10-31, 11:40 ET) - Machine map for Claude: docs/PATHS.md; Claude's first claim landed (WeabooTyler117 / DeepSeek)
+
+- Wrote **`docs/PATHS.md`** - the map of everything that is not in the repo, because a fresh agent cannot see my scratch
+  history and would otherwise hunt the disk or guess. It covers: both client checkouts (main + Claude's
+  `D:\Halo-Reach-Community-Edition-claude`), the backend clones, MCC and its `haloreach.dll`, HREK tools + tags, the RR
+  install (`D:\Reach`, `bin\host-probe.exe` symbols, launch blocks), the RE folder and its extracted pseudocode, the
+  **117 MB `haloreach-disasm.txt`** (RVA = `VA - 0x180000000`), the **`hostprobe-symbols.txt`** dump (section-relative
+  values, `.text` base RVA 0x1000), the Ghidra install/project, repo runtime output (logs, captures), `data\userdata`
+  (settings/career/appearance and the traps around them), the Downloads mirrors and the first-run steps for the second
+  checkout (configure, build, `robocopy` the 2.2 GB `data` folder).
+- Linked it from `START-HERE.md`, `CLAUDE-PROMPT.txt` and `TEAM-WORKFLOW.md` ("find it in PATHS.md instead of guessing").
+- **Claude is working**: it pushed `0078f7a` ("docs(todo): claim server browser polish (@claude)"), claimed the server
+  browser item in `TODO.md`, set its `AGENT-STATUS.md` block active with the files it expects, and noted it will take the
+  scoreboard action bar after my `PauseMenu.cpp` claim clears. That is the workflow running exactly as designed.
+
 ## 0. Pick up here (2026-10-31, 11:20 ET) - Camera experiment switch; Claude Code verified installed and logged in (WeabooTyler117 / DeepSeek)
 
 - `CameraThirdPerson` now has an experiment switch: `-third-person-mode 0|1` (0 = answer the `haloreach+0x48A910` check

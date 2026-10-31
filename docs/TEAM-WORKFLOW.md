@@ -28,7 +28,10 @@ We share one checkout (`D:\Halo-Reach-Community-Edition`), one `build\` and one 
 | `docs/TODO.md` | *what* is being worked on and *who* has it. This is the claim board. |
 | `docs/HANDOFF.md` | *what happened*, newest entry first, with verification evidence. This is the log. |
 
-Both agents must `git pull` before reading and before starting work.
+Both agents must `git pull` before reading and before starting work. Neither agent can see the other's shell history or
+scratch files, so **`docs/PATHS.md` is the machine map** - if you need a file outside the repo (engine DLL, HREK tools, the
+RR install, Ghidra project, disassembly, server clone, logs, userdata), find it there instead of guessing or searching the
+whole disk.
 
 ## Claiming an item
 
