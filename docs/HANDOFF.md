@@ -57,6 +57,18 @@ The packaged executable is unsigned and performs legitimate but AV-sensitive hos
 
 --
 
+--
+
+## 0. Pick up here (2026-10-31, 18:58 ET) - Clean post-game panel confirmed; it just is not raised at multiplayer end (WeabooTyler117 / DeepSeek)
+
+`-postgame-test` now fires at 900 frames (scene ready) and the capture `docs/screenshots/postgame-clean.png` shows the clean
+panel working: GAME OVER / ONI: SWORD BASE, SCOREBOARD ("No results from this game"), PROGRESS, CREDITS column, and the
+buttons RETURN TO LOBBY / NEXT IN ROTATION / PLAY AGAIN / RETURN TO MENU / QUIT plus "THIS MAP ... NEXT ...".
+
+So the panel itself is fine. The original report ("end match still shows the old scoreboard") is about it never being raised
+for multiplayer: `ShowGameOver()` is only called from `HostSlot6_GameResults` with launch state >= 11, and no other path calls
+it. Next: find the multiplayer end/return path (slot or launch-state transition) and call ShowGameOver there, then re-test a
+real finished match.
 ## 0. Pick up here (2026-10-31, 18:50 ET) - Chat relay works (server) (WeabooTyler117 / DeepSeek)
 
 - `ServerTestDeploy` `5d46c13`, dead-branch cleanup `d0ac871`: chat JSON frames are handled at the top of the relay message

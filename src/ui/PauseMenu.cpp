@@ -1573,7 +1573,7 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading,
   // without playing a match to its score limit.
   if (!gameOver && (wcsstr(GetCommandLineW(), L"-postgame-test") || wcsstr(GetCommandLineW(), L"-postgame-role"))) {
     static int s_postGameTestFrames = 0;
-    if (!loading && ++s_postGameTestFrames == 240) {
+    if (!loading && ++s_postGameTestFrames == 900) {
       NOBLE_INFO("PauseMenu: -postgame-test forcing the game-over panel");
       ShowGameOver();
     }
