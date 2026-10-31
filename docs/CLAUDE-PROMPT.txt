@@ -1,45 +1,51 @@
-You are Claude, working on Project Noble together with another agent (DeepSeek) and the owner (Tyler). Claude is running
-on Tyler's own PC, in the same checkout DeepSeek uses. That changes the rules: we share one working tree, one build
-directory and one running game.
+You are an AI coding agent (@claude, @deepseek, or @gemini / Gemini 4 Argon / Dominus-VII) working on Project Noble together with the other agents and the owner (Tyler). All agents run on the same PC, sharing this repository and game installation.
 
 READ FIRST, in this order, before touching anything:
 
 1. docs/START-HERE.md          - what the project is, build command, flags, hard rules
    docs/PATHS.md               - every path on this PC you would otherwise have to guess (MCC, HREK, RR install,
                                  Ghidra, disassembly, server clone, logs, userdata, the second checkout)
-2. docs/AGENT-STATUS.md        - is DeepSeek active right now, and on what?
-3. docs/TODO.md                - the prioritized list; it is also the claim board
-4. docs/TEAM-WORKFLOW.md       - how we avoid collisions (claims, handoff entries, verification bar)
+2. docs/AGENT-STATUS.md        - which agents are active right now, and on what files?
+3. docs/TODO.md                - the prioritized claim board ([ ] / [~] / [x] + commit hash, priority sections A/B/C/D)
+4. docs/TEAM-WORKFLOW.md       - claim rules, build gate, evidence rules, handoff format, cross-verification protocol,
+                                 and the continuous-mode loop
 5. docs/HANDOFF-FOR-CLAUDE.md  - the long-form brief (design contract, traps, older backlog)
 6. top 2-3 entries of docs/HANDOFF.md - the most recent history
 
-Then do this, every session:
+Then follow this continuous-mode loop, every session:
 
 1. `git status` must be clean. If it is not, STOP and report what is dirty - do not commit or revert another agent's work.
 2. `git pull`
-3. Pick ONE unclaimed item from docs/TODO.md (nothing marked [~]).
-4. Claim it: change that line to `- [~] @claude <YYYY-MM-DD HH:MM> - <what you are doing>`, update docs/AGENT-STATUS.md
-   (your block: state active, current item, files you expect to touch), commit those two edits and push.
-5. Do the work. Build before and after:
-   Get-Process noble-client -ErrorAction SilentlyContinue | Stop-Process -Force
+3. Pick ONE unclaimed item from docs/TODO.md (nothing marked [~] or touching files claimed in docs/AGENT-STATUS.md).
+4. Claim it: change that line to `- [~] @yourname <YYYY-MM-DD HH:MM> - <what you are doing>`, update docs/AGENT-STATUS.md
+   (your block: state active, since timestamp, current item, files you expect to touch), commit those two edits and push.
+5. Implement the change. Build before and after (0 errors / 0 warnings):
+   Get-Process noble-client -ErrorAction SilentlyContinue | Where-Object { $_.Path -like '*\Halo*Reach*Community*Edition\build\*' } | Stop-Process -Force
    & 'C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe' --build build --config Release -- -m
-   Build must be 0 errors / 0 warnings.
-6. Verify. UI changes need a committed capture under docs/screenshots/. Engine/netcode changes need the runtime log lines.
-   If you cannot verify at runtime, do NOT mark the item done - mark it [~] and say exactly what needs checking.
-7. Add a `## 0. Pick up here (YYYY-MM-DD, HH:MM ET) - <what> (@claude)` entry at the TOP of docs/HANDOFF.md.
-8. Mark the TODO line `- [x] @claude ... - commit <hash>`, set your AGENT-STATUS block to idle, commit and push.
-9. Close noble-client.exe if you started it. Leave the tree clean.
+   (On the secondary Ninja+MSVC machine, `cmd /c "echo.| build.bat"` also builds Release with 0 errors / 0 warnings.)
+6. Verify:
+   - UI changes need a committed capture under docs/screenshots/.
+   - Engine/netcode changes need runtime log lines (and a two-process `-data-dir` run for co-op/netplay).
+   - Server changes need `node --check server/server.js` + local endpoint verification + push to `O7OF/ServerTestDeploy`.
+   If you cannot verify at runtime, do NOT mark the item done - keep it [~] and state what needs checking.
+7. Add a `## 0. Pick up here (YYYY-MM-DD, HH:MM ET) - <what> (<Agent Name>)` entry at the TOP of docs/HANDOFF.md
+   (e.g. `(Gemini 4 Argon)` / `(@deepseek)` / `(@claude)`), including a `Self-review:` line.
+8. Mark the TODO line `- [x] @yourname ... - commit <hash>`, set your AGENT-STATUS block to idle, commit and push.
+9. Review the other agent's latest landed commit using the Cross-Verification Protocol in docs/TEAM-WORKFLOW.md
+   (diff scope, TODO hash + handoff entry, 0/0 rebuild, evidence check) and record `REVIEW OK` or `REVIEW: re-opened`.
+10. Close noble-client.exe if you started it. Leave the tree clean. Repeat from step 1 when running in continuous mode.
 
 Hard rules:
 
-- NEVER force-push, never rewrite commits authored by O7OF or by DeepSeek.
+- NEVER force-push, never rewrite commits authored by O7OF, @deepseek, @claude, or @gemini.
+- Never edit a file another active agent has listed in docs/AGENT-STATUS.md.
 - Pull before every commit. Small commits, message `area(scope): summary`, body states how it was verified.
-- Server / netcode script changes go to O7OF/ServerTestDeploy only (clone via `.\tools\server-repo.ps1`, push there),
-  never into this repo.
-- One item at a time. Do not touch files listed in DeepSeek's AGENT-STATUS block while it is active.
+- Server / netcode script changes must be synced to O7OF/ServerTestDeploy (`.\tools\push-server.ps1` / `.\tools\server-repo.ps1`).
 - Never commit build/, *.log, *.bmp (except docs/screenshots/), data/userdata test files, or database.db.
-- Kill noble-client.exe before building - the linker fails on a locked exe.
+- Kill your own noble-client.exe before building - the linker fails on a locked exe.
 - The handoff is the memory: when tokens run low, a fresh session reads START-HERE -> AGENT-STATUS -> TODO -> top of HANDOFF.
 
-Suggested focus when picking work (not binding): menus/UI (emblem picker, controller presets, readability pass,
-post-game names, server-browser polish, scoreboard visual work) and docs. DeepSeek is on engine/netcode/server.
+Suggested focus when picking work (not binding):
+- @claude: menus/UI (emblem picker, controller presets, readability pass, post-game names, server-browser polish, scoreboard UI) and docs.
+- @deepseek: engine/audio/career/camera/co-op (third-person camera, exit_experience audio, campaign checkpoints, player-record hooks).
+- @gemini (Gemini 4 Argon / Dominus-VII): netcode/transport/relay/social/invites (`src/network/*`, `server/server.js`, NAT hole-punching, WebSocket relay, RTT ping telemetry).

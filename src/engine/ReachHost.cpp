@@ -660,8 +660,8 @@ static void WriteDefaultKeyBindings(uint8_t* profile) {
 // taken to be the vertical speed (same range and default as +0x1B6).
 static void WritePadLookSettings(uint8_t* profile) {
     const SettingsData s = Settings::Get().Snapshot();
-    profile[0x1B5] = static_cast<uint8_t>(std::clamp(s.padLookY, 1, 19) - 1);
-    profile[0x1B6] = static_cast<uint8_t>(std::clamp(s.padLookX, 1, 19) - 1);
+    profile[0x1B5] = static_cast<uint8_t>(InputTuning::LookProfileValue(s.padLookSpeedY) - 1);
+    profile[0x1B6] = static_cast<uint8_t>(InputTuning::LookProfileValue(s.padLookSpeedX) - 1);
 }
 
 // Pulse to send for one wheel notch (+1 = up, -1 = down), or 0 to drop it (direction unbound).
@@ -1340,6 +1340,12 @@ bool ReachHost::IsKeyHeld(int vk) {
     return (s_engineKeyMask[vk >> 5].load() & (1u << (vk & 31))) != 0;
 }
 
+// Paddles arrive as keyboard keys or mouse buttons. FillLocalInput takes them out of the keyboard state (so they neither fire a
+// keyboard action nor switch away from the controller) and FillLocalPad reads them as controller inputs. Only while a
+// controller is connected: otherwise those keys are ordinary keys.
+static uint8_t s_paddlesHeld = 0;
+static bool s_padConnected = false;
+
 static void FillLocalPad(uint8_t* st, bool keyboardMouseUsed) {
     static bool s_padMode = false;
     static WORD s_lastButtons = 0;
@@ -1362,13 +1368,15 @@ static void FillLocalPad(uint8_t* st, bool keyboardMouseUsed) {
         }
     }
     if (!connected) {
+        s_padConnected = false;
         if (s_padMode) NOBLE_INFO("ReachHost [Slot 36 - Input]: controller disconnected, back to keyboard and mouse");
         s_padMode = false;
         s_lastButtons = 0;
         return;
     }
     const NobleXInputGamepad& g = state.Gamepad;
-    const bool padUsed = g.wButtons != 0 || g.bLeftTrigger > 40 || g.bRightTrigger > 40 ||
+    s_padConnected = true;
+    const bool padUsed = s_paddlesHeld != 0 || g.wButtons != 0 || g.bLeftTrigger > 40 || g.bRightTrigger > 40 ||
                          std::abs(g.sThumbLX) > 9000 || std::abs(g.sThumbLY) > 9000 ||
                          std::abs(g.sThumbRX) > 9000 || std::abs(g.sThumbRY) > 9000;
     if (padUsed && !s_padMode) {
@@ -1390,7 +1398,7 @@ static void FillLocalPad(uint8_t* st, bool keyboardMouseUsed) {
     // The preset and the player's bindings decide every button, Start and Back included.
     WORD buttons = g.wButtons;
     uint8_t lt = g.bLeftTrigger, rt = g.bRightTrigger;
-    PadLayouts::Apply(s_pad.padLayout, buttons, lt, rt, &s_pad.padBindings, g.sThumbLX, g.sThumbLY, g.sThumbRX, g.sThumbRY);
+    PadLayouts::Apply(s_pad.padLayout, buttons, lt, rt, &s_pad.padBindings, g.sThumbLX, g.sThumbLY, g.sThumbRX, g.sThumbRY, s_paddlesHeld);
     const WORD pressed = static_cast<WORD>(buttons & ~s_lastButtons);
     s_lastButtons = buttons;
     if ((pressed & 0x0010) && !PauseMenu::IsGameOver()) PauseMenu::Toggle();
@@ -1419,6 +1427,9 @@ static void FillLocalPad(uint8_t* st, bool keyboardMouseUsed) {
     InputTuning::ApplyDeadZone(lx, ly, s_pad.padLeftDeadZone);
     InputTuning::ApplyDeadZone(rx, ry, s_pad.padRightDeadZone);
     if (s_pad.padInvertLook) ry = static_cast<SHORT>(ry == -32768 ? 32767 : -ry);
+    // Look speeds between the profile's whole steps (see InputTuning::LookStickScale).
+    rx = static_cast<SHORT>(static_cast<float>(rx) * InputTuning::LookStickScale(s_pad.padLookSpeedX));
+    ry = static_cast<SHORT>(static_cast<float>(ry) * InputTuning::LookStickScale(s_pad.padLookSpeedY));
 
     *reinterpret_cast<uint32_t*>(st + 0x000) = 0;
     memcpy(st + 0x120, &buttons, sizeof(buttons));
@@ -1591,6 +1602,22 @@ static void FillLocalInput(uint8_t* st) {
 
     if (!uiPointer) {
         st[0x004 + VK_ESCAPE] = 0; // Esc was ours (pause menu)
+    }
+
+    {
+        static std::array<int, PadLayouts::kPaddleCount> s_paddleKeys{};
+        static ULONGLONG s_paddleRead = 0;
+        if (GetTickCount64() - s_paddleRead > 500) {
+            s_paddleRead = GetTickCount64();
+            s_paddleKeys = Settings::Get().Snapshot().padPaddleKeys;
+        }
+        s_paddlesHeld = 0;
+        for (int n = 0; s_padConnected && n < PadLayouts::kPaddleCount; ++n) {
+            const int vk = s_paddleKeys[static_cast<size_t>(n)];
+            if (vk <= 0 || vk > 255) continue;
+            if (st[0x004 + vk]) s_paddlesHeld = static_cast<uint8_t>(s_paddlesHeld | (1u << n));
+            st[0x004 + vk] = 0;
+        }
     }
 
     // The scoreboard key is ours too: Noble's panel replaces Reach's own scoreboard, so the engine never sees the key

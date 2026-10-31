@@ -253,7 +253,7 @@ void SettingsPanel::Render() {
     SyncBuffers();
 
     // Shared key state for this frame (rows read it; text fields and rebinding take the keys).
-    m_navAllowed = !ImGui::GetIO().WantTextInput && m_rebindAction < 0 && m_padRebindAction < 0;
+    m_navAllowed = !ImGui::GetIO().WantTextInput && m_rebindAction < 0 && m_padRebindAction < 0 && m_paddleKeyCapture < 0;
     m_valueTookLeftRight = false;
     m_enterAppliesHere = m_focus < 0;
     m_keyLeft = m_navAllowed && (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickLeft));
@@ -1159,9 +1159,13 @@ void SettingsPanel::RenderController() {
         const int layout = std::clamp(m_edit.padLayout, 0, layouts - 1);
         const bool swapped = m_edit.padStickLayout == 1;
         const int preset = layout + (swapped ? layouts : 0);
-        const std::string name = std::string(PadLayouts::Name(layout)) + (swapped ? " + SWAPPED STICKS" : "");
+        // Reach has no layouts called Reverse: these two names are Noble's, for that layout with the sticks swapped.
+        const bool reverse = swapped && (layout == PadLayouts::Southpaw || layout == PadLayouts::BumperJumper);
+        const std::string name = reverse ? std::string("REVERSE ") + PadLayouts::Name(layout)
+                                         : std::string(PadLayouts::Name(layout)) + (swapped ? " + SWAPPED STICKS" : "");
         const std::string text = std::string(PadLayouts::Description(layout)) +
-                                 (swapped ? " Sticks swapped: left stick looks, right stick moves." : " Left stick moves, right stick looks.");
+                                 (swapped ? " Sticks swapped: left stick looks, right stick moves." : " Left stick moves, right stick looks.") +
+                                 (reverse ? " Noble's name for this preset; Reach's own list has no Reverse layouts." : "");
         if (Row("CONTROLLER PRESET", text.c_str(), When::Apply, "Default",
                 m_edit.padLayout != m_saved.padLayout || m_edit.padStickLayout != m_saved.padStickLayout)) {
             if (const int d = CycleValue(name.c_str(), preset, layouts * 2)) {
@@ -1234,6 +1238,14 @@ void SettingsPanel::RenderController() {
                     MenuSounds::Click();
                     break;
                 }
+                // A paddle press arrives as its key. The short wait keeps the click that opened this from counting.
+                for (int n = 0; m_padRebindAction == action && n < PadLayouts::kPaddleCount && ImGui::GetTime() - m_padRebindStarted > 0.25; ++n) {
+                    const int vk = m_edit.padPaddleKeys[static_cast<size_t>(n)];
+                    if (vk <= 0 || (GetAsyncKeyState(vk) & 0x8000) == 0) continue;
+                    PadLayouts::Assign(layout, action, PadLayouts::InputPaddle1 + n, m_edit.padBindings);
+                    m_padRebindAction = -1;
+                    MenuSounds::Click();
+                }
             }
         }
         if (!m_edit.padBindings.empty()) {
@@ -1248,9 +1260,39 @@ void SettingsPanel::RenderController() {
                 }
             }
         }
-        if (Row("PADDLES 1-6", "Elite and other paddle controllers don't report paddles to Windows' XInput, which is what Noble reads. Assign each paddle to a button in the Xbox Accessories app or Steam Input, and it then works here as that button.",
-                When::Info, "", false, true)) {
-            InfoValue("Set in Xbox Accessories");
+    }
+    // Windows' XInput doesn't report paddles, so each one is a keyboard key or mouse button that a tool like Steam Input sends.
+    // Noble then treats that key as the paddle, so it can be picked in the bindings above.
+    Section("PADDLES");
+    for (int n = 0; n < PadLayouts::kPaddleCount; ++n) {
+        const std::string label = "PADDLE " + std::to_string(n + 1) + " KEY";
+        int& vk = m_edit.padPaddleKeys[static_cast<size_t>(n)];
+        const SettingsData defaults;
+        if (!Row(label.c_str(), "Have your controller's software (Steam Input, for example) send this key when the paddle is pressed, then pick the paddle in BUTTON BINDINGS. While a controller is connected this key stops being a keyboard key in game. Press A or click, then press a key, or the middle or a side mouse button. Wait 5 seconds to cancel.",
+                 When::Apply, KeyBindings::KeyName(defaults.padPaddleKeys[static_cast<size_t>(n)]), vk != m_saved.padPaddleKeys[static_cast<size_t>(n)])) {
+            continue;
+        }
+        InfoValue(m_paddleKeyCapture == n ? "PRESS A KEY..." : vk > 0 ? KeyBindings::KeyName(vk).c_str() : "-");
+        if (m_paddleKeyCapture < 0 && ((m_rowHovered && ImGui::IsMouseClicked(0)) || (m_rowFocused && m_keyAccept))) {
+            m_paddleKeyCapture = n;
+            m_paddleKeyStarted = ImGui::GetTime();
+            MenuSounds::Click();
+        } else if (m_paddleKeyCapture == n && ImGui::GetTime() - m_paddleKeyStarted > 0.25) {
+            if (ImGui::GetTime() - m_paddleKeyStarted > 5.0 || (GetAsyncKeyState(VK_ESCAPE) & 0x8000)) {
+                m_paddleKeyCapture = -1;
+                continue;
+            }
+            for (int key = 3; key < 256; ++key) {   // from 3: left and right click stay the menu's and the game's
+                if (key == VK_ESCAPE || key == VK_SHIFT || key == VK_CONTROL || key == VK_MENU) continue;  // use the L/R variants
+                if ((GetAsyncKeyState(key) & 0x8000) == 0) continue;
+                for (int& other : m_edit.padPaddleKeys) {
+                    if (other == key) other = 0;   // one key, one paddle
+                }
+                vk = key;
+                m_paddleKeyCapture = -1;
+                MenuSounds::Click();
+                break;
+            }
         }
     }
     if (Row("TOGGLE ZOOM", "On: press to zoom in, press again to zoom out. Off: zoomed only while you hold the button.", When::Apply,
@@ -1258,13 +1300,12 @@ void SettingsPanel::RenderController() {
         ToggleValue(m_edit.padToggleZoom);
     }
     Section("STICKS");
-    auto speed = [&](const char* label, const char* text, int& v, int saved) {
-        if (!Row(label, text, When::Apply, "19", v != saved)) return;
-        float f = static_cast<float>(v);
-        if (SliderValue(f, 1.0f, 19.0f, 1.0f, 19.0f, std::to_string(v).c_str())) v = static_cast<int>(std::lround(f));
+    auto speed = [&](const char* label, const char* text, float& v, float saved) {
+        if (!Row(label, text, When::Apply, "10.00x", std::fabs(v - saved) > 1e-4f)) return;
+        SliderValue(v, 1.0f, 10.0f, 0.25f, 10.0f, Format("%.2fx", v).c_str());
     };
-    speed("HORIZONTAL SENSITIVITY", "How fast the right stick turns you left and right. Noble's 1-19 is the value in Reach's profile plus one, and 19 is the stock profile's value. It is not the same scale as the 1-10 in Reach's own menu, and how the two line up has not been measured.", m_edit.padLookX, m_saved.padLookX);
-    speed("VERTICAL SENSITIVITY", "How fast the right stick looks up and down. Same 1-19 scale as horizontal.", m_edit.padLookY, m_saved.padLookY);
+    speed("HORIZONTAL SENSITIVITY", "How fast the look stick turns you left and right, from 1.00x to 10.00x. Moves in 0.25x steps; click the number to type a value like 2.60. 10.00x is Reach's stock profile. New values for the profile take effect when the next match starts.", m_edit.padLookSpeedX, m_saved.padLookSpeedX);
+    speed("VERTICAL SENSITIVITY", "How fast the look stick looks up and down. Same scale as horizontal.", m_edit.padLookSpeedY, m_saved.padLookSpeedY);
     if (Row("INVERT LOOK", "Pushing the right stick forward looks down.", When::Apply, "Off", m_edit.padInvertLook != m_saved.padInvertLook)) {
         ToggleValue(m_edit.padInvertLook);
     }
@@ -1477,7 +1518,8 @@ int SettingsPanel::CountDiff(const SettingsData& a, const SettingsData& b, Cat c
         return n;
     }
     case Cat::Controller:
-        return (a.padLookX != b.padLookX) + (a.padLookY != b.padLookY) + (a.padInvertLook != b.padInvertLook) +
+        return f(a.padLookSpeedX, b.padLookSpeedX) + f(a.padLookSpeedY, b.padLookSpeedY) + (a.padInvertLook != b.padInvertLook) +
+               (a.padPaddleKeys != b.padPaddleKeys) +
                (a.padLayout != b.padLayout) + (a.padStickLayout != b.padStickLayout) + (a.padBindings != b.padBindings) +
                (a.padToggleZoom != b.padToggleZoom) +
                f(a.padLeftDeadZone, b.padLeftDeadZone) + f(a.padRightDeadZone, b.padRightDeadZone) +
@@ -1524,7 +1566,8 @@ SettingsData SettingsPanel::WithDefaults(SettingsData e, Cat c) {
         e.wheelUpAction = d.wheelUpAction; e.wheelDownAction = d.wheelDownAction; e.keyOverrides.clear();
         break;
     case Cat::Controller:
-        e.padLookX = d.padLookX; e.padLookY = d.padLookY; e.padInvertLook = d.padInvertLook;
+        e.padLookSpeedX = d.padLookSpeedX; e.padLookSpeedY = d.padLookSpeedY; e.padInvertLook = d.padInvertLook;
+        e.padPaddleKeys = d.padPaddleKeys;
         e.padLeftDeadZone = d.padLeftDeadZone; e.padRightDeadZone = d.padRightDeadZone;
         e.padVibration = d.padVibration; e.padVibrationStrength = d.padVibrationStrength;
         break;

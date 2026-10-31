@@ -986,6 +986,26 @@ std::vector<Commendation> Commendations() {
         k.nextReward = k.tier < 6 ? TierReward(c, k.tier) : 0;
         out.push_back(k);
     }
+    // Test option "-dev-commendation-tiers": shows six commendations at Steel, Bronze, Silver, Gold, Onyx and Max, lit, so the art
+    // and payouts can be checked. Display only: nothing here is saved or paid, and without the option nothing changes.
+    static const bool s_tierCheck = wcsstr(GetCommandLineW(), L"-dev-commendation-tiers") != nullptr;
+    if (s_tierCheck) {
+        static const char* const kCheck[6] = { "Cannon Fodder", "Flawless Cowboy", "Nice Arm", "Small Arms", "Splash Damage", "Demon" };
+        for (size_t i = 0; i < out.size(); ++i) {
+            const CommendationDef& c = kCommendations[i];
+            for (int n = 0; n < 6; ++n) {
+                if (out[i].title != kCheck[n]) continue;
+                const int tier = n + 1;
+                Commendation& k = out[i];
+                k.tracked = true;
+                k.tier = tier;
+                k.value = c.targets[tier - 1];
+                k.prevTarget = c.targets[tier - 1];
+                k.nextTarget = tier < 6 ? c.targets[tier] : 0;
+                k.nextReward = tier < 6 ? TierReward(c, tier) : 0;
+            }
+        }
+    }
     return out;
 }
 

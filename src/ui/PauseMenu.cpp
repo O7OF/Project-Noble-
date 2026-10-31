@@ -1388,6 +1388,16 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading,
   // F5 edge-toggles the third-person camera (physical key; this runs every engine frame).
   CameraThirdPerson::PollHotkey((GetAsyncKeyState(VK_F5) & 0x8000) != 0);
   const bool gameOver = s_gameOver.load();
+  // -postgame-test: force the clean GAME OVER panel so its composition over the engine's post-game UI can be captured
+  // without playing a match to its score limit.
+  if (!gameOver && wcsstr(GetCommandLineW(), L"-postgame-test")) {
+    static int s_postGameTestFrames = 0;
+    if (!loading && ++s_postGameTestFrames == 240) {
+      NOBLE_INFO("PauseMenu: -postgame-test forcing the game-over panel");
+      ShowGameOver();
+    }
+  }
+
   const bool open = s_open.load();
   const bool showFps = Settings::Get().Snapshot().showFps;
   static const bool s_scoreboardTest = wcsstr(GetCommandLineW(), L"-scoreboard-test") != nullptr;
