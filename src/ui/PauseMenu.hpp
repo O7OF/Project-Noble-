@@ -34,17 +34,21 @@ public:
         std::string tag;
         int rank = -1;
         int emblem = 0;
-        int team = 0;
+        int team = 0;           // 0 = no team, 1 = red, 2 = blue (as LobbyPlayer::team)
+        int ping = -1;          // ms, -1 = not measured (drawn as "-")
         bool local = false;
     };
     static void SetScoreboardRoster(std::vector<ScoreboardEntry> entries, const std::string& mapName, const std::string& modeName);
+    // A click while the scoreboard key is held: frees the pointer so the panel's player actions can be used. Esc, the
+    // scoreboard key or CLOSE give the pointer back to the game. Slot 36 input poll.
+    static void EnterScoreboardPointer();
 
     static bool IsGameOver();
 
     // Map shown on the loading screen (internal name, e.g. "20_sword_slayer"). Main thread, before launch.
     static void SetLoadingMap(const std::string& scenario);
 
-    // True while the overlay wants the mouse pointer (pause menu or post-game panel).
+    // True while the overlay wants the mouse pointer (pause menu, post-game panel or scoreboard actions).
     static bool WantsPointer();
 
     // Draws whatever is visible into the swap chain's back buffer. `loading` = the engine hasn't
