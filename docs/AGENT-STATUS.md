@@ -37,10 +37,10 @@ can make.
 
 ## @claude
 
-- state: **idle** (last: look speed 2.00x = stock, 2026-10-31)
-- since: —
-- working on: —
-- files expected: —
+- state: **active**
+- since: 2026-10-31 03:32 ET
+- working on: controller settings acceptance run, then pre-game lobby pass
+- files expected: src/ui/FrontEndMenu.cpp, src/ui/SettingsPanel.cpp, src/ui/UiPad.cpp, src/ui/NobleUi.*, docs/screenshots
 - second checkout: `D:\Halo-Reach-Community-Edition-claude` (own `build\`, so it does not touch @deepseek's tree or binary). Test client runs as `noble-client-claude.exe`, so kills by name miss it
 - last commit: `eb757b8`
 

@@ -241,7 +241,7 @@ items above close. Keep the spec open when building any screen so the details la
 - [~] @claude 2026-10-31 - commit eb757b8, 2.00x = Reach stock, measured; **open:** raising the full-push maximum needs the engine's turn rate found (research); **needs: Tyler** to feel it in a match - **Look sensitivity baseline**: 19 is the current default; document the scale against Reach's 1-10 and expose horizontal/vertical
 - [ ] **(Tyler test) Controller presets** - pick Southpaw or Bumper Jumper, Apply, play a match, rebind one button
 
-- [ ] **Pre-game / Host Game lobby feels off - bring it flush with the other screens** (Tyler, 2026-10-31): apply the shared layout rules (header/rule, margins, panel widths, row height, button sizes, focus colours, controller prompt bar) used by Settings and the Armory; the lobby currently reads as a different design. Cover host and guest views, ready state, slot list, team columns, map/mode header and the start/back prompts. Before/after captures. - @claude
+- [~] @claude 2026-10-31 03:32 - **Pre-game / Host Game lobby feels off - bring it flush with the other screens** (Tyler, 2026-10-31): apply the shared layout rules (header/rule, margins, panel widths, row height, button sizes, focus colours, controller prompt bar) used by Settings and the Armory; the lobby currently reads as a different design. Cover host and guest views, ready state, slot list, team columns, map/mode header and the start/back prompts. Before/after captures. - @claude
 
 ## I. Armory presentation, audio and data (Tyler, 2026-10-31 00:10)
 
