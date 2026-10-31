@@ -180,7 +180,27 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         return fs::absolute("data");
     };
 
+    // Test hook: a second local instance can point at its own userdata so both sides have distinct profiles.
+    std::string dataDirOverride;
+    {
+        int preArgc = 0;
+        if (LPWSTR* preArgv = CommandLineToArgvW(GetCommandLineW(), &preArgc)) {
+            for (int i = 1; i + 1 < preArgc; ++i) {
+                if (std::wstring(preArgv[i]) == L"-data-dir") {
+                    for (const wchar_t* c = preArgv[i + 1]; c && *c; ++c) {
+                        dataDirOverride.push_back(static_cast<char>(*c));
+                    }
+                    break;
+                }
+            }
+            LocalFree(preArgv);
+        }
+    }
     fs::path userStoragePath = FindDataDirectory();
+    if (!dataDirOverride.empty()) {
+        userStoragePath = fs::path(dataDirOverride);
+        NOBLE_INFO("main: user data directory overridden to '{}'", userStoragePath.string());
+    }
     NOBLE_INFO("Resolved authentic Project Noble data directory: {}", userStoragePath.string());
 
     // Initialize Virtual File System (VFS)

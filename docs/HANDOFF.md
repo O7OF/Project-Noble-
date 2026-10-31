@@ -69,6 +69,50 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-31, 03:10 ET) - Campaign spawn investigation: five local configurations, same result (WeabooTyler117 / DeepSeek)
+
+Chasing the host-side missing biped. Added two test hooks and ran five configurations:
+
+| run | configuration | host result |
+|---|---|---|
+| 1 | membership barrier, loopback | `player 1 +0x30 = 255`, Category 14 results ~62 s |
+| 2 | campaign settle 10 s | same, ~59 s |
+| 3 | `-guest-post-start` (guest posts Command 10/11) | same, ~59 s |
+| 4 | guest with its own `data/` (**`-data-dir data-guest`**, separate profile/userdata) | same, ~62 s |
+| 5 | guest connecting to the **LAN IP** (192.168.0.23) instead of 127.0.0.1 | same, ~64 s |
+
+So it is not profile/savegame sharing, not loopback looking "local" to the engine, not Command 11 timing, not the
+guest's own mission-start commands and not membership sync. The host's campaign simulation never gives the remote slot a
+unit; the slot sits at biped index 255 and the engine declares Category 14 ~60 s later.
+
+### Engine strings that frame the problem
+
+Extracted from `haloreach.dll`:
+
+- `start_campaign_coop_new`, `start_campaign_coop_resume`, `net_set_campaign_insertion_point` - the **main menu's**
+  co-op launch actions. Our launcher starts the map directly and never runs them.
+- `network_coop_oos_alert`, `in_campaign_restart_level`, `campaign-insertion-point` - campaign co-op is deterministic
+  lockstep with explicit out-of-sync handling and an insertion point.
+- `error_players_incompatible_for_network_coop`, `error_too_many_players_for_network_coop`,
+  `error_too_many_local_players_for_coop`, `incompatible for net coop`.
+- `game_coop_player_count`, `game_coop_players`, `game_is_cooperative`.
+
+The `start_campaign_coop_*` actions are the strongest lead: they are what the MCC menu executes to create a campaign
+co-op session, and they likely establish the campaign player list / insertion point that the spawn path consumes. A
+direct map launch with engine mode 1 never goes through them.
+
+### What to try next
+
+1. **Reach a real script/console path.** `BlamEngine::ExecuteCommand` (vtable[9]) is not a command parser, but the engine
+   has a HaloScript evaluator and a console command processor; locating either lets us run
+   `net_set_campaign_insertion_point` / the `start_campaign_coop_*` action from the host before the mission starts.
+2. **Find the campaign player-list global.** The host's player structs are initialised by `0x102C10` (size 0x2B0, sets
+   `+0x28 = 0xFF`, `+0x2C = -1`, `+0x30 = 0xFF`); its callers (`0x430A5`, `0x70474`) construct objects, not the player
+   array, so the array is still unfound. Once found, a debug log of every slot's `+0x30` per second would show exactly
+   when the host *should* spawn and what it checks.
+3. **Test the real two PCs** on `feb059a` - local runs cannot prove the network case, and the two-PC result is still the
+   only ground truth we have for the guest's on-screen experience.
+
 ## 0. Pick up here (2026-10-31, 02:45 ET) - O7's patch script merged; membership counter now reset per launch (WeabooTyler117 / DeepSeek)
 
 - Pulled `11cbef7` (O7 added `patch_blam.js`, the script he used to rewrite the Command 11 barrier) on top of `64dd74f`.
