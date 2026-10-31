@@ -950,6 +950,22 @@ void SettingsPanel::RenderGame() {
             When::Apply, "50 %", std::fabs(m_edit.thirdPersonZoom - m_saved.thirdPersonZoom) > 1e-4f, false)) {
         SliderValue(m_edit.thirdPersonZoom, 0.10f, 1.00f, 0.05f, 0.50f, Percent(m_edit.thirdPersonZoom).c_str());
     }
+    const auto horizOffsetText = [](float v) -> std::string {
+        if (std::fabs(v) < 0.005f) return "0 %";
+        return v < 0.0f ? Format("LEFT %.0f %%", std::fabs(v) * 100.0f) : Format("RIGHT %.0f %%", v * 100.0f);
+    };
+    const auto vertOffsetText = [](float v) -> std::string {
+        if (std::fabs(v) < 0.005f) return "0 %";
+        return v < 0.0f ? Format("DOWN %.0f %%", std::fabs(v) * 100.0f) : Format("UP %.0f %%", v * 100.0f);
+    };
+    if (Row("THIRD-PERSON HORIZONTAL OFFSET", "Shifts the third-person camera left or right relative to your character (F5). Negative values move left, positive values move right; 0 % keeps Reach's default.",
+            When::Apply, "0 %", std::fabs(m_edit.thirdPersonOffsetX - m_saved.thirdPersonOffsetX) > 1e-4f, false)) {
+        SliderValue(m_edit.thirdPersonOffsetX, -1.00f, 1.00f, 0.05f, 0.00f, horizOffsetText(m_edit.thirdPersonOffsetX).c_str());
+    }
+    if (Row("THIRD-PERSON VERTICAL OFFSET", "Shifts the third-person camera up or down relative to your character (F5). Negative values move down, positive values move up; 0 % keeps Reach's default.",
+            When::Apply, "0 %", std::fabs(m_edit.thirdPersonOffsetY - m_saved.thirdPersonOffsetY) > 1e-4f, false)) {
+        SliderValue(m_edit.thirdPersonOffsetY, -1.00f, 1.00f, 0.05f, 0.00f, vertOffsetText(m_edit.thirdPersonOffsetY).c_str());
+    }
     if (Row("IN-VEHICLE FOV", "A separate field of view while driving or flying. Needs the vehicle camera to be found in the engine first.",
             When::Info, "", false, true)) {
         InfoValue("Not available yet");
@@ -1505,7 +1521,9 @@ int SettingsPanel::CountDiff(const SettingsData& a, const SettingsData& b, Cat c
                (a.masterMute != b.masterMute) + (a.muteInBackground != b.muteInBackground) +
                (a.menuSounds != b.menuSounds) + (a.menuMusicTrack != b.menuMusicTrack);
     case Cat::Game:
-        return f(a.fieldOfView, b.fieldOfView) + f(a.thirdPersonZoom, b.thirdPersonZoom) + (a.subtitles != b.subtitles) + (a.menuBackground != b.menuBackground) +
+        return f(a.fieldOfView, b.fieldOfView) + f(a.thirdPersonZoom, b.thirdPersonZoom) +
+               f(a.thirdPersonOffsetX, b.thirdPersonOffsetX) + f(a.thirdPersonOffsetY, b.thirdPersonOffsetY) +
+               (a.subtitles != b.subtitles) + (a.menuBackground != b.menuBackground) +
                f(a.brightness, b.brightness) + (a.fxaa != b.fxaa) + (a.throttleUnfocused != b.throttleUnfocused);
     case Cat::Player:
         return (a.playerName != b.playerName) + (a.serviceTag != b.serviceTag);
@@ -1560,7 +1578,9 @@ SettingsData SettingsPanel::WithDefaults(SettingsData e, Cat c) {
         e.menuSounds = d.menuSounds; e.menuMusicTrack = d.menuMusicTrack;
         break;
     case Cat::Game:
-        e.fieldOfView = d.fieldOfView; e.thirdPersonZoom = d.thirdPersonZoom; e.subtitles = d.subtitles; e.menuBackground = d.menuBackground;
+        e.fieldOfView = d.fieldOfView; e.thirdPersonZoom = d.thirdPersonZoom;
+        e.thirdPersonOffsetX = d.thirdPersonOffsetX; e.thirdPersonOffsetY = d.thirdPersonOffsetY;
+        e.subtitles = d.subtitles; e.menuBackground = d.menuBackground;
         break;
     case Cat::Player:
         e.playerName = d.playerName; e.serviceTag = d.serviceTag;

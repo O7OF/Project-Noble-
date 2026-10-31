@@ -58,12 +58,33 @@ void ApplyThirdPersonCameraTuning(float dt, void* observerCommand) {
     s_zoomBlend.store(blend);
 
     if (!active) return;
-    auto* fovRad = reinterpret_cast<float*>(static_cast<uint8_t*>(observerCommand) + 0x28);
+    const SettingsData settings = Settings::Get().Snapshot();
+
+    // s_observer_command layout (verified at haloreach+0x1DE234 and haloreach+0xC9B0C):
+    //   +0x10: float focus_offset[3] (x = forward, y = left [cross(up, forward)], z = up)
+    //   +0x24: float focus_distance (distance behind the focus point)
+    //   +0x28: float field_of_view (horizontal FOV in radians)
+    auto* offsetLeftRight = reinterpret_cast<float*>(static_cast<uint8_t*>(observerCommand) + 0x14);
+    auto* offsetUpDown    = reinterpret_cast<float*>(static_cast<uint8_t*>(observerCommand) + 0x18);
+    auto* focusDistance   = reinterpret_cast<float*>(static_cast<uint8_t*>(observerCommand) + 0x24);
+    auto* fovRad          = reinterpret_cast<float*>(static_cast<uint8_t*>(observerCommand) + 0x28);
+
+    const float offX = std::clamp(settings.thirdPersonOffsetX, -1.0f, 1.0f);
+    const float offY = std::clamp(settings.thirdPersonOffsetY, -1.0f, 1.0f);
+    if (std::fabs(offX) > 1e-4f) {
+        // +0x14 is along camera left (cross(up, forward)), so subtracting offX moves right when offX > 0 and left when offX < 0.
+        *offsetLeftRight -= offX * 0.50f;
+    }
+    if (std::fabs(offY) > 1e-4f) {
+        // +0x18 is along camera up, so adding offY moves up when offY > 0 and down when offY < 0.
+        *offsetUpDown += offY * 0.50f;
+    }
+
     const int percent = s_distancePercent.load();
     if (percent != 100) {
-        *fovRad *= static_cast<float>(percent) / 100.0f;
+        *focusDistance *= static_cast<float>(percent) / 100.0f;
         if (s_followLogCount.fetch_add(1) < 3) {
-            NOBLE_INFO("CameraThirdPerson: follow FOV scaled {}% -> {:.3f}", percent, *fovRad);
+            NOBLE_INFO("CameraThirdPerson: follow distance scaled {}% -> {:.3f}", percent, *focusDistance);
         }
     }
     if (blend > 0.001f) {

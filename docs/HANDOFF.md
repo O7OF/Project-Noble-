@@ -15,7 +15,7 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
   under the `--` line, as
   `## 0. Pick up here (2026-10-31, 08:25 ET) - Pre-game lobby map identity (@deepseek / DeepSeek)`.
 
-**Current version:** 0.9.1. **Developer build:** 0.9.1-dev. Dev binaries report the suffix next to the version string.
+**Current version:** 0.9.2. **Developer build:** 0.9.2-dev. Dev binaries report the suffix next to the version string.
 
 **Built and verified:** release `build\bin\Release\noble-client.exe`, developer `build\bin\Release\noble-dev.exe`, dedicated `build\bin\Release\noble-dedicated.exe`, and the packaged `Documents\Noble Launcher\Noble.exe` (full runtime tree; package stayed running in a normal launch test).
 
@@ -54,6 +54,29 @@ The packaged executable is unsigned and performs legitimate but AV-sensitive hos
 
 - The earlier Forge World auto-map override was reverted: base maps load normally; modded palettes come only from mods. The HREK Thorage tag-data swap (O7 Pelican + Phantom MP, `wraith_d` driver, `warthog_p` passenger seats) is documented in `docs/FORGE-THORAGE.md`.
 - Automatic updates are **not implemented**. Suggested path: publish a signed manifest (`version`, `url`, `sha256`) from ServerTestDeploy, check it at startup, download to a temp file, verify, then replace `Noble.exe` on next launch. Do not auto-install unsigned files.
+
+## 0. Pick up here (2026-10-31, 13:35 ET) - 3rd-person weapon zoom + camera offsets, lower weapon keybind, in-game armor fix, server browser UI & .bat build fixes (Gemini 4 Argon)
+
+**Version:** 0.9.2 / 0.9.2-dev (Pregame Map Identity). **Built & packaged:** `build\bin\Release\noble-client.exe`, `build\bin\Release\noble-dev.exe`, `build\bin\Release\noble-dedicated.exe`, and `C:\Users\Reeve\Documents\Noble Launcher\Noble.exe`.
+
+**What changed**
+1. **3rd-Person Weapon Aim Zoom & Camera Offset Settings (`src/engine/CameraThirdPerson.*`, `src/common/Settings.*`, `src/ui/SettingsPanel.cpp`, `src/engine/ReachHost.cpp`):**
+   - Hooked `c_following_camera::update` (`haloreach+0x1E2028`) and `c_orbiting_camera::update` (`haloreach+0x1DCADC`), which both take `(void* camera, int32_t userIndex, float dt, void* observerCommand)` and write the Blam! `s_observer_command` struct (`focus_offset` at `+0x10..0x18`, `focus_distance` at `+0x24`, and `field_of_view` in radians at `+0x28`).
+   - Holding Right Click (`VK_RBUTTON` or the bound Zoom key) while in third person smoothly interpolates FOV zoom according to **Settings > Game Options > Camera > Third-Person Zoom** (`thirdPersonZoom`, `10 %` to `100 %`, default `50 %`).
+   - Added **Third-Person Horizontal Offset** (`thirdPersonOffsetX`, `LEFT 100 %` to `RIGHT 100 %`, default `0 %`, applied to `s_observer_command::focus_offset.y` at `+0x14`) and **Third-Person Vertical Offset** (`thirdPersonOffsetY`, `DOWN 100 %` to `UP 100 %`, default `0 %`, applied to `s_observer_command::focus_offset.z` at `+0x18`) under **Settings > Game Options > Camera**.
+2. **In-Game Armor Persistence & Descriptor Mapping (`src/engine/ReachHost.cpp`, `src/ui/SettingsPanel.cpp`):**
+   - Fixed `RefreshArmoryAppearance()` checking `last_write_time` on the deleted `data/appearance.json` instead of `data/appearance.dat`, which prevented mid-session armory saves from refreshing in-game.
+   - Fixed `ApplyArmoryAppearance()` to write Spartan Armor Effect (`166..172`) to `profile + 0x68` and Elite Armor Effect (`173..179`) to `profile + 0x90`, swapped Visor indices `3 <-> 4` (`Black` vs `Gold`) to match `haloreach+0x3B2F4`, removed artificial bounds clamps on `utility >= 6`, `helmet >= 64`, `chest >= 235`, and synced `appearance["service_tag"]` to `profile + 0x1AC`.
+3. **Lower Weapon Keybind (`src/engine/KeyBindings.*`, `src/hooks/EnginePatches.*`, `src/engine/ReachHost.cpp`, `src/common/Settings.cpp`):**
+   - Added action `66` (`"Lower weapon"`, `ActionGroup::Actions`, unbound by default) in **Settings > Controls > Keyboard & Mouse > Actions**.
+   - Patched `haloreach+0x5D6BA` (`74 02` -> `90 90`) and hooked `PlayerControlUpdate` (`haloreach+0x5DF80`) to pulse bit 10 (`1u << 10`, Alert Carry toggle) at `[controlOut + 0x28]`.
+4. **Server Browser UI & Live/Total Player Counts (`src/ui/ServerBrowser.*`, `src/ui/FrontEndMenu.cpp`, `src/network/MasterServerClient.*`, `src/main.cpp`, `ServerTestDeploy/server.js`):**
+   - Updated the Server Browser UI (`◇ SERVER BROWSER` header, compact filter bar with `Search by name or map`, `All modes` dropdown, `Hide full`, `Hide empty`, `Favourites only`, `No password`, `Not started`, `Mods: 0` in Game Details, and top-right `<count> Players Online` / `<count> Total Players` counters refreshing every 5 seconds) without modifying any button logic.
+   - Added `registered_players` table and `POST /api/presence` heartbeat on `ServerTestDeploy`.
+5. **Build & Packaging Script Fixes (`CMakeLists.txt`, `build.bat`, `build-dev.bat`, `build-package.bat`, `build-package.ps1`, `.gitattributes`):**
+   - Removed the parallel `POST_BUILD` `cmake -E copy_directory ${CMAKE_CURRENT_SOURCE_DIR}/data` race condition between `noble-client` and `noble-dev` in `CMakeLists.txt` that failed when both targets linked simultaneously (`Error copying directory from ".../data" to ".../build/bin/Release/data"`), replacing it with sequential `robocopy /XO` syncing in `build.bat`, `build-dev.bat`, and `build-package.ps1`.
+   - Forced native Win32 threads (`CMAKE_USE_WIN32_THREADS_INIT=1`, `CMAKE_HAVE_PTHREADS_CREATE=0`) in `CMakeLists.txt` to eliminate `LINK : warning LNK4044: unrecognized option '/lpthreads'; ignored`.
+   - Added `C:\Program Files\CMake\bin` and `C:\Program Files\Git\cmd` auto-detection, eliminated `goto`/label offset jumps in `build.bat` and `build-dev.bat`, enforced `eol=crlf` in `.gitattributes`, and fixed `build-package.ps1` returning `robocopy`'s non-zero `1..3` exit codes.
 
 ## 0. Pick up here (2026-10-31, 10:15 ET) - Compile & package all 3 .bat targets (`build.bat`, `build-dev.bat`, `build-package.bat`) on Reeve's PC (Gemini 4 Argon)
 

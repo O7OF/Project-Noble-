@@ -41,29 +41,35 @@ if ((Test-Path "$env:LOCALAPPDATA\Programs\MSVC\VC\Tools\MSVC") -and -not (Get-C
 if (-not (Test-Path (Join-Path $build 'CMakeCache.txt'))) {
     Write-Host '== Configuring CMake project =='
     if ($useNinjaMsvc) {
-        & $cmake -S $repo -B $build -G 'Ninja' -Wno-dev -DCMAKE_BUILD_TYPE=Release -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY '-DCMAKE_EXE_LINKER_FLAGS=/machine:x64 /MANIFEST:NO' '-DCMAKE_SHARED_LINKER_FLAGS=/machine:x64 /MANIFEST:NO'
+        & $cmake -S $repo -B $build -G 'Ninja' -DCMAKE_BUILD_TYPE=Release '-DCMAKE_EXE_LINKER_FLAGS=/machine:x64 /MANIFEST:NO' '-DCMAKE_SHARED_LINKER_FLAGS=/machine:x64 /MANIFEST:NO'
     } else {
-        & $cmake -S $repo -B $build -A x64 -Wno-dev
+        & $cmake -S $repo -B $build -A x64
     }
     if ($LASTEXITCODE -ne 0) { throw "CMake configure failed ($LASTEXITCODE)" }
 }
 
 Write-Host '== Building release client =='
+Stop-Process -Name 'Noble','noble-client' -Force -ErrorAction SilentlyContinue
 & $cmake --build $build --config Release --target noble-client
 if ($LASTEXITCODE -ne 0) { throw 'noble-client build failed' }
 
 $release = Join-Path $build 'bin\Release'
 if (-not (Test-Path (Join-Path $release 'noble-client.exe'))) { throw 'missing noble-client.exe' }
 
-# Ensure repo data\ and tools\vgmstream\ are synced into build\bin\Release before packaging
+# Ensure repo data\, assets\ and tools\vgmstream\ are synced into build\bin\Release before packaging
 $repoData = Join-Path $repo 'data'
 if (Test-Path $repoData) {
-    & robocopy $repoData (Join-Path $release 'data') /E /XD userdata autosave mods cache sandbox /NFL /NDL /NJH /NJS /NP | Out-Null
+    & robocopy $repoData (Join-Path $release 'data') /E /XO /XD userdata autosave mods cache sandbox /NFL /NDL /NJH /NJS /NP | Out-Null
     if ($LASTEXITCODE -ge 8) { throw "robocopy data failed ($LASTEXITCODE)" }
+}
+$repoAssets = Join-Path $repo 'assets'
+if (Test-Path $repoAssets) {
+    & robocopy $repoAssets (Join-Path $release 'data') /E /XO /NFL /NDL /NJH /NJS /NP | Out-Null
+    if ($LASTEXITCODE -ge 8) { throw "robocopy assets failed ($LASTEXITCODE)" }
 }
 $repoVgm = Join-Path $repo 'tools\vgmstream'
 if (Test-Path $repoVgm) {
-    & robocopy $repoVgm (Join-Path $release 'tools\vgmstream') /E /NFL /NDL /NJH /NJS /NP | Out-Null
+    & robocopy $repoVgm (Join-Path $release 'tools\vgmstream') /E /XO /NFL /NDL /NJH /NJS /NP | Out-Null
     if ($LASTEXITCODE -ge 8) { throw "robocopy vgmstream failed ($LASTEXITCODE)" }
 }
 

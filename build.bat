@@ -7,6 +7,8 @@ echo ===================================================
 echo  Building Halo: Reach Community Edition - Project Noble
 echo ===================================================
 
+set "BUILD_ERR=0"
+
 if /i "%~1"=="clean" (
     echo [*] Cleaning build directory...
     if exist "build" (
@@ -15,7 +17,8 @@ if /i "%~1"=="clean" (
     ) else (
         echo [*] No build directory found.
     )
-    goto :end
+    if "%~1"=="" pause
+    exit /b 0
 )
 
 REM Locate Git and CMake if not present in system PATH
@@ -51,8 +54,11 @@ if %ERRORLEVEL% neq 0 (
 where cmake >nul 2>nul
 if %ERRORLEVEL% neq 0 (
     echo [ERROR] CMake could not be found. Please ensure CMake or Visual Studio C++ tools are installed.
-    set BUILD_ERR=1
-    goto :build_failed
+    echo ===================================================
+    echo  Build failed with error code 1.
+    echo ===================================================
+    if "%~1"=="" pause
+    exit /b 1
 )
 
 echo [1/3] Syncing latest commits from git origin/main...
@@ -97,7 +103,11 @@ set "DO_CONFIG=0"
 if /i "%~1"=="rebuild" (
     echo [*] Rebuild requested. Clearing CMake cache and subbuilds...
     set "DO_CONFIG=1"
-    call :clean_cache
+    if exist "build\CMakeCache.txt" del /f /q "build\CMakeCache.txt" >nul 2>nul
+    if exist "build\CMakeFiles" rd /s /q "build\CMakeFiles" >nul 2>nul
+    for /d %%D in ("build\_deps\*-subbuild") do (
+        if exist "%%D" rd /s /q "%%D" >nul 2>nul
+    )
 )
 
 if not exist "build\CMakeCache.txt" (
@@ -107,15 +117,15 @@ if not exist "build\CMakeCache.txt" (
         findstr /C:"CMAKE_GENERATOR:INTERNAL=Ninja" "build\CMakeCache.txt" >nul 2>nul
         if errorlevel 1 (
             set "DO_CONFIG=1"
-            call :clean_cache
+            if exist "build\CMakeCache.txt" del /f /q "build\CMakeCache.txt" >nul 2>nul
+            if exist "build\CMakeFiles" rd /s /q "build\CMakeFiles" >nul 2>nul
         )
     ) else (
         findstr /C:"CMAKE_GENERATOR:INTERNAL=Visual Studio" "build\CMakeCache.txt" >nul 2>nul
         if errorlevel 1 (
-            echo [!] Generator mismatch detected in build\CMakeCache.txt - expected Visual Studio x64.
-            echo [!] Clearing mismatched cache and subbuild states to avoid conflicts...
             set "DO_CONFIG=1"
-            call :clean_cache
+            if exist "build\CMakeCache.txt" del /f /q "build\CMakeCache.txt" >nul 2>nul
+            if exist "build\CMakeFiles" rd /s /q "build\CMakeFiles" >nul 2>nul
         )
     )
 )
@@ -123,63 +133,50 @@ if not exist "build\CMakeCache.txt" (
 if "%DO_CONFIG%"=="1" (
     if "%USE_NINJA_MSVC%"=="1" (
         echo [2/3] Configuring CMake project for Ninja + MSVC x64...
-        cmake -S . -B build -G "Ninja" -Wno-dev -DCMAKE_BUILD_TYPE=Release -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY -DCMAKE_EXE_LINKER_FLAGS="/machine:x64 /MANIFEST:NO" -DCMAKE_SHARED_LINKER_FLAGS="/machine:x64 /MANIFEST:NO"
+        cmake -S . -B build -G "Ninja" -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXE_LINKER_FLAGS="/machine:x64 /MANIFEST:NO" -DCMAKE_SHARED_LINKER_FLAGS="/machine:x64 /MANIFEST:NO"
     ) else (
         echo [2/3] Configuring CMake project for Visual Studio x64...
-        cmake -S . -B build -A x64 -Wno-dev
+        cmake -S . -B build -A x64
     )
     if !ERRORLEVEL! neq 0 (
-        echo [i] CMake configuration failed. Attempting full cache reset and retry...
-        call :clean_cache
-        if "%USE_NINJA_MSVC%"=="1" (
-            cmake -S . -B build -G "Ninja" -Wno-dev -DCMAKE_BUILD_TYPE=Release -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY -DCMAKE_EXE_LINKER_FLAGS="/machine:x64 /MANIFEST:NO" -DCMAKE_SHARED_LINKER_FLAGS="/machine:x64 /MANIFEST:NO"
-        ) else (
-            cmake -S . -B build -A x64 -Wno-dev
-        )
-        if !ERRORLEVEL! neq 0 (
-            echo [ERROR] CMake configuration failed permanently.
-            set BUILD_ERR=!ERRORLEVEL!
-            goto :build_failed
-        )
+        set "BUILD_ERR=!ERRORLEVEL!"
+        echo ===================================================
+        echo  Build failed with error code !BUILD_ERR!.
+        echo ===================================================
+        if "%~1"=="" pause
+        exit /b !BUILD_ERR!
     )
 ) else (
     echo [2/3] CMake cache verified for x64.
 )
 
 echo [3/3] Building Release configuration...
+taskkill /F /IM noble-client.exe >nul 2>nul
+taskkill /F /IM noble-dev.exe >nul 2>nul
+taskkill /F /IM noble-dedicated.exe >nul 2>nul
 cmake --build build --config Release
 if %ERRORLEVEL% neq 0 (
-    set BUILD_ERR=%ERRORLEVEL%
-    goto :build_failed
+    set "BUILD_ERR=%ERRORLEVEL%"
+    echo ===================================================
+    echo  Build failed with error code !BUILD_ERR!.
+    echo ===================================================
+    if "%~1"=="" pause
+    exit /b !BUILD_ERR!
 )
 
 if exist "data" (
-    robocopy "data" "build\bin\Release\data" /E /XD userdata autosave mods cache sandbox /NFL /NDL /NJH /NJS /NP >nul 2>nul
+    robocopy "data" "build\bin\Release\data" /E /XO /XD userdata autosave mods cache sandbox /NFL /NDL /NJH /NJS /NP >nul 2>nul
+)
+if exist "assets" (
+    robocopy "assets" "build\bin\Release\data" /E /XO /NFL /NDL /NJH /NJS /NP >nul 2>nul
 )
 if exist "tools\vgmstream" (
-    robocopy "tools\vgmstream" "build\bin\Release\tools\vgmstream" /E /NFL /NDL /NJH /NJS /NP >nul 2>nul
+    robocopy "tools\vgmstream" "build\bin\Release\tools\vgmstream" /E /XO /NFL /NDL /NJH /NJS /NP >nul 2>nul
 )
 
 echo ===================================================
 echo  Build succeeded.
 echo  Executable: build\bin\Release\noble-client.exe
 echo ===================================================
-set BUILD_ERR=0
-goto :end
-
-:clean_cache
-if exist "build\CMakeCache.txt" del /f /q "build\CMakeCache.txt" >nul 2>nul
-if exist "build\CMakeFiles" rd /s /q "build\CMakeFiles" >nul 2>nul
-for /d %%D in ("build\_deps\*-subbuild") do (
-    if exist "%%D" rd /s /q "%%D" >nul 2>nul
-)
-exit /b 0
-
-:build_failed
-echo ===================================================
-echo  Build failed with error code %BUILD_ERR%.
-echo ===================================================
-
-:end
 if "%~1"=="" pause
-exit /b %BUILD_ERR%
+exit /b 0

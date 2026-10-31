@@ -1,4 +1,14 @@
 cmake_minimum_required(VERSION 3.20)
+if(WIN32)
+    set(CMAKE_EXE_LINKER_FLAGS_INIT "/machine:x64 /MANIFEST:NO")
+    set(CMAKE_SHARED_LINKER_FLAGS_INIT "/machine:x64 /MANIFEST:NO")
+    set(CMAKE_USE_WIN32_THREADS_INIT 1 CACHE INTERNAL "" FORCE)
+    set(CMAKE_USE_PTHREADS_INIT 0 CACHE INTERNAL "" FORCE)
+    set(CMAKE_HAVE_PTHREADS_CREATE 0 CACHE INTERNAL "" FORCE)
+    set(CMAKE_HAVE_LIBC_PTHREAD 0 CACHE INTERNAL "" FORCE)
+    set(CMAKE_THREAD_LIBS_INIT "" CACHE INTERNAL "" FORCE)
+    set(Threads_FOUND TRUE CACHE INTERNAL "" FORCE)
+endif()
 project(HaloReachCommunityEdition VERSION 0.8.1 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -256,16 +266,9 @@ target_link_libraries(noble-client PRIVATE
 
 target_link_options(noble-client PRIVATE /MAP)
 
-# Copy the repo's data folder next to the exe (skipped when there is none; data\ is git-ignored).
-if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/data)
-    add_custom_command(TARGET noble-client POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-            ${CMAKE_CURRENT_SOURCE_DIR}/data
-            $<TARGET_FILE_DIR:noble-client>/data
-    )
-endif()
-
-# Noble's own art (original work, tracked in assets\) goes into the same data folder.
+# Noble's own art (original work, tracked in assets\) goes into the data folder alongside the exe.
+# Note: bulk runtime data\ is synced sequentially by build.bat / build-dev.bat / build-package.ps1 using robocopy
+# so parallel links of noble-client and noble-dev never race on build/bin/Release/data or overwrite userdata.
 if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/assets)
     add_custom_command(TARGET noble-client POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory
@@ -288,18 +291,6 @@ target_link_libraries(noble-dev PRIVATE
     dbghelp winhttp winmm xaudio2 ole32 windowscodecs
 )
 target_link_options(noble-dev PRIVATE /MAP)
-if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/data)
-    add_custom_command(TARGET noble-dev POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-            ${CMAKE_CURRENT_SOURCE_DIR}/data
-            $<TARGET_FILE_DIR:noble-dev>/data)
-endif()
-if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/assets)
-    add_custom_command(TARGET noble-dev POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-            ${CMAKE_CURRENT_SOURCE_DIR}/assets
-            $<TARGET_FILE_DIR:noble-dev>/data)
-endif()
 
 # -----------------------------------------------------------------------------
 # Headless Dedicated Server Binary (noble-dedicated.exe)

@@ -38,8 +38,11 @@ if %ERRORLEVEL% neq 0 (
 where cmake >nul 2>nul
 if %ERRORLEVEL% neq 0 (
     echo [ERROR] CMake not found.
-    set BUILD_ERR=1
-    goto :failed
+    echo ===================================================
+    echo  Developer build failed with error code 1.
+    echo ===================================================
+    if "%~1"=="" pause
+    exit /b 1
 )
 
 set "HAS_VS_CPP=0"
@@ -95,45 +98,47 @@ if not exist "build\CMakeCache.txt" (
 if "%DO_CONFIG%"=="1" (
     echo [1/2] Configuring build...
     if "%USE_NINJA_MSVC%"=="1" (
-        cmake -S . -B build -G "Ninja" -Wno-dev -DCMAKE_BUILD_TYPE=Release -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY -DCMAKE_EXE_LINKER_FLAGS="/machine:x64 /MANIFEST:NO" -DCMAKE_SHARED_LINKER_FLAGS="/machine:x64 /MANIFEST:NO"
+        cmake -S . -B build -G "Ninja" -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXE_LINKER_FLAGS="/machine:x64 /MANIFEST:NO" -DCMAKE_SHARED_LINKER_FLAGS="/machine:x64 /MANIFEST:NO"
     ) else (
-        cmake -S . -B build -A x64 -Wno-dev
+        cmake -S . -B build -A x64
     )
     if !ERRORLEVEL! neq 0 (
-        set BUILD_ERR=!ERRORLEVEL!
-        goto :failed
+        set "BUILD_ERR=!ERRORLEVEL!"
+        echo ===================================================
+        echo  Developer build failed with error code !BUILD_ERR!.
+        echo ===================================================
+        if "%~1"=="" pause
+        exit /b !BUILD_ERR!
     )
 ) else (
     echo [1/2] CMake cache verified for x64.
 )
 
 echo [2/2] Building noble-dev...
+taskkill /F /IM noble-dev.exe >nul 2>nul
 cmake --build build --config Release --target noble-dev
 if %ERRORLEVEL% neq 0 (
-    set BUILD_ERR=%ERRORLEVEL%
-    goto :failed
+    set "BUILD_ERR=%ERRORLEVEL%"
+    echo ===================================================
+    echo  Developer build failed with error code !BUILD_ERR!.
+    echo ===================================================
+    if "%~1"=="" pause
+    exit /b !BUILD_ERR!
 )
 
 if exist "data" (
-    robocopy "data" "build\bin\Release\data" /E /XD userdata autosave mods cache sandbox /NFL /NDL /NJH /NJS /NP >nul 2>nul
+    robocopy "data" "build\bin\Release\data" /E /XO /XD userdata autosave mods cache sandbox /NFL /NDL /NJH /NJS /NP >nul 2>nul
+)
+if exist "assets" (
+    robocopy "assets" "build\bin\Release\data" /E /XO /NFL /NDL /NJH /NJS /NP >nul 2>nul
 )
 if exist "tools\vgmstream" (
-    robocopy "tools\vgmstream" "build\bin\Release\tools\vgmstream" /E /NFL /NDL /NJH /NJS /NP >nul 2>nul
+    robocopy "tools\vgmstream" "build\bin\Release\tools\vgmstream" /E /XO /NFL /NDL /NJH /NJS /NP >nul 2>nul
 )
 
 echo ===================================================
 echo  Developer build succeeded.
 echo  Executable: build\bin\Release\noble-dev.exe
 echo ===================================================
-set BUILD_ERR=0
-goto :end
-
-:failed
-if not defined BUILD_ERR set BUILD_ERR=1
-echo ===================================================
-echo  Developer build failed with error code %BUILD_ERR%.
-echo ===================================================
-
-:end
 if "%~1"=="" pause
-exit /b %BUILD_ERR%
+exit /b 0
