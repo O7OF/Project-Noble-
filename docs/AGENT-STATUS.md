@@ -30,10 +30,12 @@ can make.
 
 ## @deepseek
 
-- state: **idle (last: GitHub Actions build artifact workflow, 2026-10-31 01:34 ET)**
-- since: 2026-10-31 01:31 ET
+- state: **active**
+- since: 2026-10-31 16:45 ET
+- working on: Armory live preview (dirty flag + reapply for colour/visor/armour changes), 0.9.8.1 version bump (0.9.7.1 was superseded by @claude's 0.9.8), then the Prophets' Hand Elite gameplay capture; input lock: until 17:05
+- files expected: src/ui/ArmorCustomizer.*, src/engine/ReachArmory.*, src/common/Version.hpp, docs/HANDOFF.md, docs/TODO.md
 - last commit: `7f19dbc`
-- test state: game audio muted in both checkouts (`tools/mute-game.ps1 -IncludeClaude`); restore with `-Unmute`
+- test state: game audio muted in both checkouts (`tools/mute-game.ps1 -IncludeClaude`); restore with `-Unmute`; local settings temporarily 1920x1080 for captures (restore backup afterwards)
 
 ## @claude
 
