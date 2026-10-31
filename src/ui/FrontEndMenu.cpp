@@ -882,15 +882,17 @@ void DrawAccountModal(const Ui& ui) {
             }
             ImGui::Separator();
             ImGui::Dummy(ImVec2(0, 8));
-            if (!AuthClient::Get().IsSteamLinked()) {
-                ImGui::TextDisabled("Offline profile. Link Steam for online identity and dev verification.");
-                if (ImGui::Button("LINK STEAM", ImVec2(-1, 34.0f * ui.s))) {
-                    const AuthResult steam = AuthClient::Get().LoginWithSteam();
-                    s_accountStatusMsg = steam.success ? ("Steam linked as " + steam.username) : steam.error;
-                    s_accountStatusError = !steam.success;
+            ImGui::TextUnformatted("Display name");
+            ImGui::SetNextItemWidth(-FLT_MIN);
+            ImGui::InputText("##newname", s_accountUser, sizeof(s_accountUser));
+            if (ImGui::Button("CHANGE NAME", ImVec2(-1, 30.0f * ui.s))) {
+                if (AuthClient::Get().SetPlayerName(s_accountUser)) {
+                    s_accountStatusMsg = "Display name changed. Your player ID is unchanged.";
+                    s_accountStatusError = false;
+                } else {
+                    s_accountStatusMsg = "Enter a name.";
+                    s_accountStatusError = true;
                 }
-            } else {
-                ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.4f, 1.0f), "Steam account linked.");
             }
             if (!s_accountStatusMsg.empty()) {
                 ImGui::TextColored(s_accountStatusError ? ImVec4(1.0f, 0.4f, 0.4f, 1.0f) : ImVec4(0.4f, 0.9f, 0.4f, 1.0f),

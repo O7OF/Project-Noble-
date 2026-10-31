@@ -1,6 +1,4 @@
 cmake_minimum_required(VERSION 3.20)
-option(NOBLE_DEV_BUILD "Build the developer client with devtools enabled by default" OFF)
-
 project(HaloReachCommunityEdition VERSION 0.8.1 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -275,6 +273,33 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/assets)
             ${CMAKE_CURRENT_SOURCE_DIR}/assets
             $<TARGET_FILE_DIR:noble-client>/data
     )
+endif()
+
+# Developer build: same sources, NOBLE_DEV_BUILD, separate executable in the same output directory.
+add_executable(noble-dev WIN32 ${SOURCES} ${HEADERS})
+set_target_properties(noble-dev PROPERTIES OUTPUT_NAME "noble-dev")
+target_compile_definitions(noble-dev PRIVATE NOBLE_DEV_BUILD=1)
+if(MSVC)
+    target_compile_options(noble-dev PRIVATE /W4)
+endif()
+target_include_directories(noble-dev PRIVATE src)
+target_link_libraries(noble-dev PRIVATE
+    d3d11 dxgi d3dcompiler windowscodecs ole32 comdlg32 ws2_32 iphlpapi
+    spdlog::spdlog nlohmann_json::nlohmann_json minhook imgui
+    dbghelp winhttp winmm xaudio2 ole32 windowscodecs
+)
+target_link_options(noble-dev PRIVATE /MAP)
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/data)
+    add_custom_command(TARGET noble-dev POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            ${CMAKE_CURRENT_SOURCE_DIR}/data
+            $<TARGET_FILE_DIR:noble-dev>/data)
+endif()
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/assets)
+    add_custom_command(TARGET noble-dev POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            ${CMAKE_CURRENT_SOURCE_DIR}/assets
+            $<TARGET_FILE_DIR:noble-dev>/data)
 endif()
 
 # -----------------------------------------------------------------------------

@@ -24,6 +24,7 @@ public:
     AuthResult Login(const std::string& username, const std::string& password);
     AuthResult Register(const std::string& username, const std::string& password);
     AuthResult LoginWithSteam();
+    bool SetPlayerName(const std::string& name);
     bool IsSteamLinked() const;
     void Logout();
 

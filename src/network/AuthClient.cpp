@@ -85,6 +85,24 @@ void AuthClient::Logout() {
     Initialize();
 }
 
+bool AuthClient::SetPlayerName(const std::string& name) {
+    const std::string clean = name.empty() ? "" : name.substr(0, 16);
+    if (clean.empty()) return false;
+    DeviceIdentity id = DeviceIdentityStore::Get();
+    id.playerName = clean;
+    DeviceIdentityStore::Save(id);          // deviceId and developer flag are preserved
+    {
+        std::lock_guard<std::mutex> lock(m_authMutex);
+        m_username = clean;
+    }
+    auto s = Settings::Get().Snapshot();
+    s.playerName = clean;
+    s.accountUsername = clean;
+    Settings::Get().Update(s);
+    NOBLE_INFO("AuthClient: display name changed to '{}' (device {} unchanged)", clean, id.deviceId);
+    return true;
+}
+
 AuthResult AuthClient::LoginWithSteam() {
     AuthResult res;
     const auto& id = DeviceIdentityStore::Get();
