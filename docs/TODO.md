@@ -247,6 +247,18 @@ items above close. Keep the spec open when building any screen so the details la
 - [ ] **Music**: drop tracks <= 45 s from the menu playlist
 - [ ] **Firefight voice packs**: verify working + Armory preview button (X on pad) that plays a sample line per character
 
+- [ ] **Emblem colours (real three-colour picker)** — backgrounds are fixed steel today; Reach's real picker needs the
+  black layers treated as masks. Also audit `Nameplate(int id)` for the same list-position-vs-id bug. - @claude
+- [ ] **Controller preset list completeness** — include Reach's reverse variants (Reverse Southpaw, Reverse Bumper Jumper)
+  and every MCC scheme; the diagram must switch with the preset, and the preset must apply on Y without a relaunch. - @claude
+- [ ] **Game-option surfaces, split up**: Forge map options (budget/permissions), custom-game defaults (a default variant
+  shipped with Noble), Firefight options (waves/lives/skulls/time), and per-mode match settings from the variant plan. - @deepseek + @claude UI
+- [ ] **Design-spec + modding-kit audit** — sweep `menu-redesign-spec.md` §4.10/§4.11/§4.16 and the HREK docs for items not
+  yet in this list (voice preview, slot machine, theater entry, forge options were all in the spec) and file anything still
+  missing. Repeat at the end of the night. - either
+- [ ] **Theater setup** — film recording/playback in the engine is the prerequisite; the menu entry stays disabled with
+  "Coming later" until then (already in F, restated here because Tyler asked for it explicitly). - research
+
 ## G. Match settings, social, voice (plan: `docs/plans/match-settings-and-social-plan.md`)
 
 - [ ] **Pause-menu Controls page** (live remap already applies every frame; this is the UI to change it mid-match) - @claude
