@@ -52,14 +52,22 @@ void ApplyMouseCurve(float& dx, float& dy, float acceleration, float smoothing, 
 
 void ResetMouseCurve(float& smoothX, float& smoothY) { smoothX = smoothY = 0.0f; }
 
-int LookProfileValue(float speed) {
-    const float value = 1.0f + (std::clamp(speed, 1.0f, 10.0f) - 1.0f) * 2.0f;
-    return std::clamp(static_cast<int>(std::ceil(value - 0.0001f)), 1, 19);
+int LookProfileByte(float speed) {
+    constexpr float kTurnAtZero = 18.5f, kTurnPerStep = 2.42f, kTurnAtStock = 62.0f;
+    const float wanted = kTurnAtStock * std::clamp(speed, 1.0f, 2.0f) * 0.5f;
+    return std::clamp(static_cast<int>(std::lround((wanted - kTurnAtZero) / kTurnPerStep)), 0, 18);
 }
 
-float LookStickScale(float speed) {
-    const float value = 1.0f + (std::clamp(speed, 1.0f, 10.0f) - 1.0f) * 2.0f;
-    return std::min(1.0f, value / static_cast<float>(LookProfileValue(speed)));
+float LookStickGain(float speed) {
+    return std::clamp(speed, 2.0f, 10.0f) * 0.5f;
+}
+
+int16_t ApplyLookGain(int16_t value, float gain) {
+    constexpr float kEngineDeadZone = 4260.0f;   // the profile's 0.13 of full travel
+    const float magnitude = std::fabs(static_cast<float>(value));
+    if (gain <= 1.0f || magnitude <= kEngineDeadZone) return value;
+    const float boosted = std::min(32767.0f, kEngineDeadZone + (magnitude - kEngineDeadZone) * gain);
+    return static_cast<int16_t>(value < 0 ? -boosted : boosted);
 }
 
 int SelfTest() {
@@ -106,20 +114,19 @@ int SelfTest() {
         expect(lx == 3000 && ly == 4000 && rx == 1000 && ry == 2000, "Southpaw must swap the two sticks");
     }
 
-    // --- Look speed: whole steps need no scaling, 10 is the stock profile, and more speed never comes out slower.
+    // --- Look speed: 2.00 is untouched stock; lower lowers the profile value; higher boosts the stick.
     {
-        expect(LookProfileValue(10.0f) == 19 && LookStickScale(10.0f) == 1.0f, "10.00x must be the stock 19 with a full stick");
-        expect(LookProfileValue(1.0f) == 1, "1.00x must be the lowest profile step");
-        expect(LookProfileValue(2.5f) == 4 && LookStickScale(2.5f) == 1.0f, "2.50x must land on a whole step");
-        expect(LookProfileValue(1.25f) == 2 && std::fabs(LookStickScale(1.25f) - 0.75f) < 0.001f, "1.25x must be step 2 at 3/4 stick");
-        float previous = 0.0f;
-        bool rising = true;
-        for (float s = 1.0f; s <= 10.0f; s += 0.25f) {
-            const float effective = static_cast<float>(LookProfileValue(s)) * LookStickScale(s);
-            rising = rising && effective > previous;
-            previous = effective;
-        }
-        expect(rising, "each 0.25x step must be faster than the last");
+        expect(LookProfileByte(2.0f) == 18 && LookStickGain(2.0f) == 1.0f, "2.00x must be exactly Reach's stock");
+        expect(LookProfileByte(10.0f) == 18, "above 2.00x the profile must stay at stock: higher values turn slower");
+        expect(LookProfileByte(1.0f) == 5, "1.00x must be about half the stock turn");
+        bool falling = true;
+        for (float s = 1.25f; s <= 2.0f; s += 0.25f) falling = falling && LookProfileByte(s) > LookProfileByte(s - 0.25f);
+        expect(falling, "each 0.25x step below 2.00x must change the speed");
+        expect(ApplyLookGain(10000, 1.0f) == 10000, "no gain must leave the stick alone");
+        expect(ApplyLookGain(3000, 5.0f) == 3000, "a resting stick inside the engine's dead zone must not be boosted");
+        expect(ApplyLookGain(10000, 2.0f) > 10000 && ApplyLookGain(-10000, 2.0f) < -10000, "a push must be boosted both ways");
+        expect(ApplyLookGain(32767, 5.0f) == 32767 && ApplyLookGain(-32768, 5.0f) == -32767, "a boost must stay in range");
+        expect(ApplyLookGain(10000, 4.0f) > ApplyLookGain(10000, 2.0f), "more speed must push further");
     }
 
     // --- Mouse curve: both parts disabled by default.

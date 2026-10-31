@@ -112,11 +112,19 @@ void Settings::Load() {
                 int oldX = 0, oldY = 0;
                 Read(j, "padLookX", oldX);
                 Read(j, "padLookY", oldY);
-                if (oldX > 0) d.padLookSpeedX = (static_cast<float>(oldX) + 1.0f) * 0.5f;
-                if (oldY > 0) d.padLookSpeedY = (static_cast<float>(oldY) + 1.0f) * 0.5f;
+                if (oldX > 0) d.padLookSpeedX = (static_cast<float>(oldX) + 1.0f) * 0.1f;
+                if (oldY > 0) d.padLookSpeedY = (static_cast<float>(oldY) + 1.0f) * 0.1f;
             }
-            Read(j, "padLookSpeedX", d.padLookSpeedX);
-            Read(j, "padLookSpeedY", d.padLookSpeedY);
+            // The first 1-10 scale put stock at 10.00; stock is 2.00 now, so those values are scaled to feel the same.
+            {
+                float oldX = 0.0f, oldY = 0.0f;
+                Read(j, "padLookSpeedX", oldX);
+                Read(j, "padLookSpeedY", oldY);
+                if (oldX > 0.0f) d.padLookSpeedX = oldX * 0.2f;
+                if (oldY > 0.0f) d.padLookSpeedY = oldY * 0.2f;
+            }
+            Read(j, "padLookRateX", d.padLookSpeedX);
+            Read(j, "padLookRateY", d.padLookSpeedY);
             Read(j, "padInvertLook", d.padInvertLook);
     Read(j, "padLayout", d.padLayout);
     Read(j, "padStickLayout", d.padStickLayout);
@@ -248,8 +256,8 @@ bool Settings::Save() {
         j["wheelDownAction"] = d.wheelDownAction;
         j["padVibration"] = d.padVibration;
         j["padVibrationStrength"] = d.padVibrationStrength;
-        j["padLookSpeedX"] = d.padLookSpeedX;
-        j["padLookSpeedY"] = d.padLookSpeedY;
+        j["padLookRateX"] = d.padLookSpeedX;
+        j["padLookRateY"] = d.padLookSpeedY;
         j["padInvertLook"] = d.padInvertLook;
     j["padLayout"] = d.padLayout;
     j["padStickLayout"] = d.padStickLayout;

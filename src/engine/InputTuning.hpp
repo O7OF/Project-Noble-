@@ -16,11 +16,14 @@ void ApplyDeadZone(int16_t& x, int16_t& y, float zone);
 // Stick layout: 0 = Default (left moves, right looks), 1 = Southpaw (swapped). Other values do nothing.
 void ApplyStickLayout(int layout, int16_t& leftX, int16_t& leftY, int16_t& rightX, int16_t& rightY);
 
-// Controller look speed, 1.00..10.00. Reach's profile only holds whole steps 1..19, so 10.00 maps to the stock 19 and in-between
-// speeds use the next step up with the stick scaled down to match. `LookProfileValue` is the 1..19 step, `LookStickScale` the
-// scale (1 when the speed lands on a step).
-int LookProfileValue(float speed);
-float LookStickScale(float speed);
+// Controller look speed, 1.00..10.00, with 2.00 = Reach's stock speed. Measured with -fake-pad and the HUD compass:
+//   Below 2.00 uses Reach's profile value, whose turn rate is linear (18.5 deg + 2.42 deg per step over the test). Higher values
+//   than the stock 18 turn slower, and mouse look is ignored while a controller is active, so neither can go above stock.
+//   Above 2.00 the stick is boosted instead: partial pushes turn faster, up to what a full push does at stock.
+int LookProfileByte(float speed);    // 0..18; 18 at 2.00 and above
+float LookStickGain(float speed);    // 1 up to 2.00, then speed / 2
+// Boosts one stick axis by `gain`, leaving the engine's own dead zone alone so a worn stick doesn't start the view moving.
+int16_t ApplyLookGain(int16_t value, float gain);
 
 // Mouse look curve, applied to the per-frame cursor delta (in pixels).
 //   smoothing 0..0.9: exponential average; 0 passes the delta through untouched.

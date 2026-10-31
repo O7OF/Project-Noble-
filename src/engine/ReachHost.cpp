@@ -660,8 +660,8 @@ static void WriteDefaultKeyBindings(uint8_t* profile) {
 // taken to be the vertical speed (same range and default as +0x1B6).
 static void WritePadLookSettings(uint8_t* profile) {
     const SettingsData s = Settings::Get().Snapshot();
-    profile[0x1B5] = static_cast<uint8_t>(InputTuning::LookProfileValue(s.padLookSpeedY) - 1);
-    profile[0x1B6] = static_cast<uint8_t>(InputTuning::LookProfileValue(s.padLookSpeedX) - 1);
+    profile[0x1B5] = static_cast<uint8_t>(InputTuning::LookProfileByte(s.padLookSpeedY));
+    profile[0x1B6] = static_cast<uint8_t>(InputTuning::LookProfileByte(s.padLookSpeedX));
 }
 
 // Pulse to send for one wheel notch (+1 = up, -1 = down), or 0 to drop it (direction unbound).
@@ -1432,9 +1432,9 @@ static void FillLocalPad(uint8_t* st, bool keyboardMouseUsed) {
     InputTuning::ApplyDeadZone(lx, ly, s_pad.padLeftDeadZone);
     InputTuning::ApplyDeadZone(rx, ry, s_pad.padRightDeadZone);
     if (s_pad.padInvertLook) ry = static_cast<SHORT>(ry == -32768 ? 32767 : -ry);
-    // Look speeds between the profile's whole steps (see InputTuning::LookStickScale).
-    rx = static_cast<SHORT>(static_cast<float>(rx) * InputTuning::LookStickScale(s_pad.padLookSpeedX));
-    ry = static_cast<SHORT>(static_cast<float>(ry) * InputTuning::LookStickScale(s_pad.padLookSpeedY));
+    // Look speed above stock (see InputTuning); below stock it is the profile value.
+    rx = InputTuning::ApplyLookGain(rx, InputTuning::LookStickGain(s_pad.padLookSpeedX));
+    ry = InputTuning::ApplyLookGain(ry, InputTuning::LookStickGain(s_pad.padLookSpeedY));
 
     *reinterpret_cast<uint32_t*>(st + 0x000) = 0;
     memcpy(st + 0x120, &buttons, sizeof(buttons));
@@ -1821,8 +1821,19 @@ static bool ReadPad(NobleXInputState& state) {
             memset(&state, 0, sizeof(state));
             state.dwPacketNumber = static_cast<DWORD>(t);
             static const bool s_vertical = wcsstr(GetCommandLineW(), L"-fake-pad-y") != nullptr;
-            if (s_vertical) state.Gamepad.sThumbRY = 20000;
-            else state.Gamepad.sThumbRX = 20000;
+            // Test option "-fake-pad-amount <0..32767>": how far the fake stick is pushed.
+            static const SHORT s_amount = [] {
+                SHORT amount = 20000;
+                int argc = 0;
+                LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+                for (int i = 1; argv && i + 1 < argc; ++i) {
+                    if (_wcsicmp(argv[i], L"-fake-pad-amount") == 0) amount = static_cast<SHORT>(_wtoi(argv[i + 1]));
+                }
+                if (argv) LocalFree(argv);
+                return amount;
+            }();
+            if (s_vertical) state.Gamepad.sThumbRY = s_amount;
+            else state.Gamepad.sThumbRX = s_amount;
             return true;
         }
         if (t >= at && t < at + 1600) { memset(&state, 0, sizeof(state)); return true; }   // let go
