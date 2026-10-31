@@ -32,13 +32,14 @@ can make.
 
 - state: **active**
 - since: 2026-10-31 00:45 ET
-- working on: **end-screen credit/XP audio** - extracting Reach's `exit_experience` sounds with HREK `tool.exe`
-  (`counter_loop`, `totals`, `slot_machine` at 70%, `rank_up`), then the campaign credit split (`mission_complete` flag,
-  performance vs completion) and the scoreboard backend endpoints
-- files expected: `src/audio/*`, `data/audio/*`, `src/ui/PauseMenu.cpp`, `src/career/*`, `tools/*`,
-  `docs/HANDOFF.md`, `docs/TODO.md`, `docs/AGENT-STATUS.md`
+- working on: **Workshop mod required: Download & Join prompt** - host advertises the lobby's Workshop mod (client +
+  `ServerTestDeploy` fields), the joiner sees the "mod you do not have" popup with DOWNLOAD & JOIN / CANCEL, and the
+  download subscribes through Steam and continues the join when the item lands. The end-screen credit/XP audio item is
+  paused until this lands.
+- files expected: `src/ui/FrontEndMenu.cpp`, `src/ui/ServerBrowser.*`, `src/ui/ModCatalog.*`,
+  `src/ui/ModDownloadPrompt.*`, `src/host/SteamWorkshop.*`, `src/network/MasterServerClient.*`,
+  `src/network/SessionManager.*`, `src/main.cpp`, `CMakeLists.txt`, `ServerTestDeploy/server.js`, `docs/*`
 - test state: game audio muted in both checkouts (`tools/mute-game.ps1 -IncludeClaude`); restore with `-Unmute`
-  (**`src/ui/PauseMenu.cpp` released** - @claude may take the scoreboard action bar)
 - last commit: `f782657`
 
 ## @claude
