@@ -32,6 +32,6 @@ can make.
 - state: **active**
 - since: 2026-10-30 22:46 ET
 - working on: Scoreboard action bar + full cover of the engine scoreboard (spec 4.16)
-- files expected: `src/ui/PauseMenu.cpp`, `src/ui/PauseMenu.hpp`, `docs/TODO.md`, `docs/HANDOFF.md`, `docs/screenshots/`
+- files expected: `src/ui/PauseMenu.cpp`, `src/ui/PauseMenu.hpp`, `src/engine/ReachHost.cpp` (input poll only: scoreboard key), `src/ui/FrontEndMenu.cpp` (one line: test flag forwarding), `docs/TODO.md`, `docs/HANDOFF.md`, `docs/screenshots/`
 - second checkout: `D:\Halo-Reach-Community-Edition-claude` (own `build\`, so it does not touch @deepseek's tree or binary)
 - last commit: `f3cbbf6`
