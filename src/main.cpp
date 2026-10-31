@@ -282,6 +282,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     bool guestPostStart = false;
     bool thirdPerson = false;
     int thirdPersonMode = 0;
+    int thirdPersonDistance = 100;
     std::string engineCommand;
     int engineCommandAt = -1;
     std::string connectAddress = "";
@@ -332,6 +333,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             } else if (arg == L"-wait-peers" && i + 1 < numArgs) {
                 expectedPeers = _wtoi(argvW[++i]);
             } else if (arg == L"-third-person") {
+                thirdPerson = true;
+            } else if (arg == L"-third-person-distance" && i + 1 < numArgs) {
+                thirdPersonDistance = _wtoi(argvW[++i]);
                 thirdPerson = true;
             } else if (arg == L"-third-person-mode" && i + 1 < numArgs) {
                 thirdPersonMode = _wtoi(argvW[++i]);
@@ -475,6 +479,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     noble::CameraFov::SetEngineModule(loader->GetModuleHandle());
     noble::CameraThirdPerson::Install(loader->GetModuleHandle());
     if (thirdPersonMode > 0) noble::CameraThirdPerson::SetMode(thirdPersonMode);
+    if (thirdPersonDistance != 100) noble::CameraThirdPerson::SetDistancePercent(thirdPersonDistance);
     if (thirdPerson) noble::CameraThirdPerson::SetEnabled(true);
 
     // Apply 32/64 player lobby expansion detours

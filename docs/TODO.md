@@ -113,10 +113,10 @@ explicitly** - a "needs" item must land before the dependent one can be verified
 
 ## A. Campaign co-op follow-ups
 
-- [ ] **Verify skulls + difficulty parity** — host launch data carries skulls; confirm the guest actually receives them in-game
+- [x] @deepseek 2026-10-30 23:10 - **Skulls + difficulty parity** — the guest launch args already carry `-difficulty`/`-skulls` from the host's launch data; verified with a two-process campaign run at Legendary + skull 0x1: both logs show `Difficulty: 3 | Skulls: 0x1`, both in game, zero GameResults over 170 s. The in-game effect of an individual skull is not visually confirmed (only the data path)
 - [ ] **CONTINUE → resume last checkpoint** — `kContinueEntry` still restarts the mission. Needs the save/checkpoint block located, then passed to the new process. *Biggest campaign item.*
 - [ ] **Co-op death/respawn + checkpoint behaviour** — guest downed, respawn at host checkpoint, mission-fail conditions
-- [ ] **Host disconnect handling** — what the guest sees and whether it returns to the menu cleanly
+- [x] @deepseek 2026-10-30 23:18 - **Host disconnect handling** — the guest used to freeze in the mission. Now `NetworkTransport::SecondsSinceRemotePacket()` feeds a CONNECTION LOST panel (8 s without host packets) with a Return to menu button → `Relaunch::HandOff`; verified by killing the host mid-campaign and capturing the panel (`docs/screenshots/connection-lost.png`). Gap: the engine's own PLAYERS/STARTING GAME strip still shows dimmed behind it
 - [ ] **Rejoin mid-mission** — reconnect to a running campaign session
 - [ ] **4+ players** — RR's `capacity`/`coopx` path documented in `docs/player-count-scaling.md`; Firefight first
 
@@ -148,8 +148,7 @@ explicitly** - a "needs" item must land before the dependent one can be verified
   `-third-person` starts on) - verified in Firefight with a side-by-side capture (`docs/screenshots/third-person-vs-first.png`):
   same spot, first person vs Spartan from behind. Campaign looks unchanged only because the first minutes are cutscene and
   vehicle cameras, which ignore the player camera check. Commit pending with the tuning work below.
-- [~] @deepseek 2026-10-30 23:05 - **Third-person tuning** - pull the camera back (follow hook `haloreach+0x1DCADC`:
-  call original, scale `[r9+0x28]`, optional shoulder sign at `[r9+0x14]`), settings row + key rebind, host/mode gate
+- [~] @deepseek 2026-10-30 23:20 - **Third-person tuning** - host/mode gate landed (guests keep first person); the follow hook at `haloreach+0x1DCADC` installs but is not called in this camera path (no scaled-distance log), so distance tuning is parked as research; still open: settings row + key rebind
 
 - [ ] **Real solo pause, CHANGE TEAM, vote-to-kick** (transport + roster UI)
 - [ ] **Host/admin controls (spec 4.15)** — kick / session-ban / permanent ban (dedicated), end round, restart round, restart

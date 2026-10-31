@@ -41,6 +41,10 @@ public:
     // arrived in this process. Used as the join barrier for campaign co-op / Forge.
     size_t GetGamePeerCount() const;
 
+    // Seconds since the last packet arrived from a remote peer (guest: the host). A guest whose host vanished keeps
+    // getting engine frames but no packets; PauseMenu uses this to show a connection-lost panel instead of freezing.
+    double SecondsSinceRemotePacket() const;
+
     void GetSessionGuid(uint8_t outGuid16[16]) const;
 
     // Direct peer registration & NAT hole punching
@@ -100,6 +104,7 @@ private:
     std::unordered_map<uint16_t, std::deque<QueuedPacket>> m_portQueues;
 
     std::atomic<bool> m_active{ false };
+    std::atomic<uint64_t> m_lastRemotePacketMs{ 0 };
     bool m_isHost = true;
     SOCKET m_socket = INVALID_SOCKET;
     uint16_t m_localPort = 11774;

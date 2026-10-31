@@ -21,6 +21,7 @@ public:
 
     static void SetEnabled(bool enabled);
     static void SetMode(int mode);   // experiment switch
+    static void SetDistancePercent(int percent);   // 100 = engine default, >100 pulls the camera back
     static bool IsEnabled();
     static void Toggle();
 

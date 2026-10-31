@@ -189,6 +189,12 @@ bool NetworkTransport::Initialize(bool isHost, const std::string& remoteIp, uint
     return true;
 }
 
+double NetworkTransport::SecondsSinceRemotePacket() const {
+    const uint64_t last = m_lastRemotePacketMs.load();
+    if (last == 0) return 0.0;
+    return static_cast<double>(GetTickCount64() - last) / 1000.0;
+}
+
 size_t NetworkTransport::GetGamePeerCount() const {
     std::lock_guard<std::mutex> lock(m_mutex);
     return m_gamePeers.size();
@@ -974,6 +980,7 @@ uint64_t NetworkTransport::OnNetRecv(uint8_t* outBuffer, size_t bufferCapacity, 
         *outSenderPeerId = pkt.sender;
     }
 
+    m_lastRemotePacketMs.store(GetTickCount64());
     uint64_t recvNum = ++m_packetsRecv;
     if (recvNum <= kPacketDumpLimit) {
         NOBLE_INFO("NetworkTransport: [{}] RX #{} <- 0x{:X} via {} port {} len={} | {}", m_isHost ? "HOST" : "GUEST",
