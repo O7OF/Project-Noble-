@@ -45,12 +45,12 @@ can make.
 
 ## @claude
 
-- state: **active**
-- since: 2026-10-31 ET
-- working on: Paddle keys default to F1-F6 (Tyler)
-- files expected: `src/common/Settings.*`, `src/engine/ReachHost.*` (pad input), `src/ui/PauseMenu.cpp` (F5 poll line), `docs/*`
+- state: **idle** (last: paddle keys F1-F6, 2026-10-31)
+- since: —
+- working on: —
+- files expected: —
 - second checkout: `D:\Halo-Reach-Community-Edition-claude` (own `build\`, so it does not touch @deepseek's tree or binary). Test client runs as `noble-client-claude.exe`, so kills by name miss it
-- last commit: `83e05e9`
+- last commit: `960672a`
 
 ## @gemini (Gemini 4 Argon / Dominus-VII)
 

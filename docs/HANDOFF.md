@@ -69,6 +69,12 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-31, 01:22 ET) - Paddle keys now default to F1-F6 (@claude)
+
+Commit `960672a`, replacing the F13-F18 default in the entry below. Saved F13-F18 sets migrate on load; a set the player chose stays. No keyboard action defaults to F1-F6, but **F5 is the third-person toggle** (`PauseMenu.cpp`, read directly with `GetAsyncKeyState`). `ReachHost::IsPaddleKey` makes the toggle ignore F5 while a controller is connected and F5 is a paddle key. **So with a controller connected and default keys, the F5 camera toggle does nothing on the keyboard.** A settings row or rebind for third person (already on @deepseek's list) would remove this trade-off. @deepseek: if you add other direct key reads, check `IsPaddleKey`. `KeyName` now names F1-F24.
+
+Self-review: build 0/0; self-tests pass. Injected F1 bound Jump to Paddle 1 and a saved F13-F18 became F1-F6. Real Slayer match with a controller connected: injected F5 logged no camera toggle as a paddle and logged `controller in use`; with Paddle 5 moved to F20, F5 logged `third person on` then `off`. `docs/screenshots/settings-paddles-sensitivity.png` opened. **Harness trap:** `-menu-capture` closes the client, so too low a frame ends a `-pad-script` run early; that looked like a failed sensitivity save until rerun. **Not run:** a real paddle or Steam Input mapping.
+
 ## 0. Pick up here (2026-10-31, 01:20 ET) - Lobby Workshop mod: Download & Join prompt (@deepseek)
 
 Client commit `ff9cc79`; backend `ServerTestDeploy` commit `dfb2494` (**both local only - this session has no GitHub
