@@ -778,6 +778,16 @@ static std::string PmcgEffectName(const std::string& id) {
     return id;   // heart_attack, pestilence
 }
 
+static const char* PermutationForArmorEffect(const std::string& id) {
+    if (id == "flames") return "armor_fx_00";
+    if (id == "blue_flames") return "armor_fx_01";
+    if (id == "heart_attack") return "armor_fx_02";
+    if (id == "pestilence") return "armor_fx_03";
+    if (id == "inclement_weather") return "armor_fx_04";
+    if (id == "birthday_party") return "armor_fx_05";
+    return nullptr;
+}
+
 static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx) {
     const uintptr_t base = s_globalsBase.load();
     const size_t stride  = s_globalsStride.load();
@@ -904,23 +914,18 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx) {
             pushPair("elite_chest",          sel.eliteChest,         "minor");
             pushPair("elite_forearms",       sel.eliteArms,          "default");
             pushPair("elite_legs",           sel.eliteLegs,          "minor");
-            // Elite armor effects (pmcg list 80 / 8c, region armor_fx, permutations armor_fx_00..05, plus legacy armor_effect)
-            const std::string fxName = PmcgEffectName(sel.eliteArmorEffect);
-            const std::vector<PmcgChange>* fxChanges = PmcgItem("80", fxName);
-            if (!fxChanges || fxChanges->empty()) {
-                fxChanges = PmcgItem("8c", fxName);
-            }
-            if (fxChanges && !fxChanges->empty()) {
-                for (const auto& c : *fxChanges) pushPair(c.region, c.permutation, nullptr);
-            }
+            // Elite armor effects (pmcg list 80 / 8c, region armor_fx, permutations armor_fx_00..05)
             if (sel.eliteArmorEffect != "default" && !sel.eliteArmorEffect.empty()) {
-                static const char* const kFxPerms[7] = { "default", "armor_fx_00", "armor_fx_01", "armor_fx_02", "armor_fx_03", "armor_fx_04", "armor_fx_05" };
-                static const char* const kLegacyFxPerms[7] = { "armor_fx_blank", "armor_fx_legendary", "armor_fx_blue", "armor_fx_hearts", "armor_fx_stink", "armor_fx_weather", "armor_fx_bday" };
-                const int fxIdx = (sel.eliteArmorEffectIndex >= 1 && sel.eliteArmorEffectIndex <= 6) ? sel.eliteArmorEffectIndex : 0;
-                if (fxIdx > 0) {
-                    pushPair("armor_fx", kFxPerms[fxIdx], nullptr);
-                    pushPair("armor_effect", kLegacyFxPerms[fxIdx], nullptr);
-                    pushPair("armor_effect", sel.eliteArmorEffect, nullptr);
+                const std::string fxName = PmcgEffectName(sel.eliteArmorEffect);
+                const std::vector<PmcgChange>* fxChanges = PmcgItem("80", fxName);
+                if (!fxChanges || fxChanges->empty()) {
+                    fxChanges = PmcgItem("8c", fxName);
+                }
+                if (fxChanges && !fxChanges->empty()) {
+                    for (const auto& c : *fxChanges) pushPair(c.region, c.permutation, nullptr);
+                } else {
+                    const char* perm = PermutationForArmorEffect(sel.eliteArmorEffect);
+                    if (perm) pushPair("armor_fx", perm, nullptr);
                 }
             }
         } else if (PmcgItem("20", "default") != nullptr) {
