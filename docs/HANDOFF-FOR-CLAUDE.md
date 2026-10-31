@@ -121,6 +121,9 @@ He asked for a **career reset with money**: level back to Recruit, but 1,000,000
 
 ### 5.1 Emblem background / foreground picker (in progress, ~30 % done)
 
+**Superseded 2026-10-30:** done with MCC's real `background="eb_*"` entries; the "no reusable backdrop" claim below is wrong. See the
+top of `docs/HANDOFF.md`.
+
 Tyler wants Reach's emblem editor: pick a **background** shape and a **foreground** symbol.
 
 - Data reality (`D:\Steam\steamapps\common\Halo The Master Chief Collection\Data\UI\playercustomization.xml`): 330

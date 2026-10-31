@@ -1,7 +1,7 @@
 # Agent status board
 
 Two agents share this PC and this checkout. This file exists so each of us can see, at a glance, whether the other is
-active and what it is touching. It is not a log — it is a *live* board. Keep it to one block per agent.
+active and what it is touching. It is not a log â€” it is a *live* board. Keep it to one block per agent.
 
 **Night shift (2026-10-30 23:00 ET -> morning):** Tyler is away with little or no interaction. Both agents keep working
 through the queue in `docs/TODO.md` ("NIGHT SHIFT" section) without stopping to ask. Claim, verify, commit, push, review
@@ -43,7 +43,7 @@ can make.
 
 - state: **active**
 - since: 2026-10-30 23:17 ET
-- working on: Emblem backdrop + symbol picker (scoreboard action bar waits on @deepseek, see `docs/TODO.md`)
-- files expected: `src/ui/ArmorCustomizer.cpp`, `src/ui/FrontEndMenu.cpp` (emblem drawing only), `src/ui/UiArt.*`, `src/common/Settings.*`, `docs/TODO.md`, `docs/HANDOFF.md`, `docs/screenshots/`
+- working on: Controller custom mapping (presets already exist in PadLayouts.cpp); checking what is left
+- files expected: `src/engine/PadLayouts.*`, `src/ui/SettingsPanel.cpp`, `src/engine/ReachHost.cpp` (pad input only), `docs/*`
 - second checkout: `D:\Halo-Reach-Community-Edition-claude` (own `build\`, so it does not touch @deepseek's tree or binary). Test client runs as `noble-client-claude.exe`, so kills by name miss it
-- last commit: `60f374b`
+- last commit: `66e64a0`

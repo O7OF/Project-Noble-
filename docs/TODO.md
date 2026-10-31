@@ -1,4 +1,4 @@
-# Project Noble — to-do list
+# Project Noble â€” to-do list
 
 Single source of truth for open work. `[x]` = done (with the commit that did it), `[~]` = in progress, `[ ]` = open.
 The chronological log stays in `docs/HANDOFF.md`; this file is just the list.
@@ -12,18 +12,18 @@ overlay (`7cef78c`) and the third-person camera (`97989d1`).
 
 ## Recently done (for context)
 
-- [x] **Campaign co-op works** — launch block declares the co-op player count at `0xE8`; 2- and 3-player runs verified (`0b83b1c`)
+- [x] **Campaign co-op works** â€” launch block declares the co-op player count at `0xE8`; 2- and 3-player runs verified (`0b83b1c`)
 - [x] **Forge online works** (relay heartbeat + LAN routing + LobbyPatches sequencing)
-- [x] **Backend 1.3.0** — `/api/health`, `/api/relay/stats`, 25 s relay heartbeat, 90 s sessions (`4a520d1`, `df33af7`)
-- [x] **Lobby identity pass-through** — rank / emblem / nameplate / team survive registration, heartbeat and roster (`b8fb2ad`, `663cae2`)
-- [x] **Scoreboard overlay** — Noble panel over Reach's scoreboard, roster + team + rank (`7cef78c`); live K/D columns still missing
-- [x] **RR >4-player reference captured** — `docs/player-count-scaling.md`
+- [x] **Backend 1.3.0** â€” `/api/health`, `/api/relay/stats`, 25 s relay heartbeat, 90 s sessions (`4a520d1`, `df33af7`)
+- [x] **Lobby identity pass-through** â€” rank / emblem / nameplate / team survive registration, heartbeat and roster (`b8fb2ad`, `663cae2`)
+- [x] **Scoreboard overlay** â€” Noble panel over Reach's scoreboard, roster + team + rank (`7cef78c`); live K/D columns still missing
+- [x] **RR >4-player reference captured** â€” `docs/player-count-scaling.md`
 
 ---
 
 
 
-## NIGHT SHIFT — read this, both agents (Tyler away until morning)
+## NIGHT SHIFT â€” read this, both agents (Tyler away until morning)
 
 Tyler is stepping away for the night and will have **little to no interaction** until morning. Both agents keep working.
 Do not stop to ask; the repo is the coordination channel and this list is the queue.
@@ -85,7 +85,7 @@ explicitly** - a "needs" item must land before the dependent one can be verified
 |---|---|---|
 | 1 (now) | **Third-person camera** | experiment matrix on `haloreach+0x48A910` (`-third-person-mode 0/1` vs baseline), then the follow hook `+0x1DCADC`, settings row, F5 rebind, host/mode gate |
 | 2 | **Campaign co-op verification** | skulls + difficulty parity, host-disconnect behaviour, death/respawn/checkpoint semantics (two-process tests with `-data-dir`) |
-| 3 | **Campaign CONTINUE → last checkpoint** | locate the checkpoint block in save data, pass it to the relaunched process |
+| 3 | **Campaign CONTINUE â†’ last checkpoint** | locate the checkpoint block in save data, pass it to the relaunched process |
 | 4 | **Scoreboard live data** | engine player-record hook (0x490-stride objects / results record), expose K/D/score to the UI through a small API; **@claude owns the drawing** |
 | 5 | **Vote-to-kick transport + server** | `ServerTestDeploy` endpoint + client kick message; **@claude draws the button/modal** |
 | 6 | **Invites carry mode/map** | `server.js` invite payload + `SocialClient::SendInviteAsync` + toast text |
@@ -113,32 +113,32 @@ explicitly** - a "needs" item must land before the dependent one can be verified
 
 ## A. Campaign co-op follow-ups
 
-- [ ] **Verify skulls + difficulty parity** — host launch data carries skulls; confirm the guest actually receives them in-game
-- [ ] **CONTINUE → resume last checkpoint** — `kContinueEntry` still restarts the mission. Needs the save/checkpoint block located, then passed to the new process. *Biggest campaign item.*
-- [ ] **Co-op death/respawn + checkpoint behaviour** — guest downed, respawn at host checkpoint, mission-fail conditions
-- [ ] **Host disconnect handling** — what the guest sees and whether it returns to the menu cleanly
-- [ ] **Rejoin mid-mission** — reconnect to a running campaign session
-- [ ] **4+ players** — RR's `capacity`/`coopx` path documented in `docs/player-count-scaling.md`; Firefight first
+- [ ] **Verify skulls + difficulty parity** â€” host launch data carries skulls; confirm the guest actually receives them in-game
+- [ ] **CONTINUE â†’ resume last checkpoint** â€” `kContinueEntry` still restarts the mission. Needs the save/checkpoint block located, then passed to the new process. *Biggest campaign item.*
+- [ ] **Co-op death/respawn + checkpoint behaviour** â€” guest downed, respawn at host checkpoint, mission-fail conditions
+- [ ] **Host disconnect handling** â€” what the guest sees and whether it returns to the menu cleanly
+- [ ] **Rejoin mid-mission** â€” reconnect to a running campaign session
+- [ ] **4+ players** â€” RR's `capacity`/`coopx` path documented in `docs/player-count-scaling.md`; Firefight first
 
 ## B. Menus / UI
 
-- [x] **Scoreboard overlay** — done (`7cef78c`); gap: live K/D/score columns need the engine player-record hook
-- [~] @claude 2026-10-30 23:17 - **Emblem backdrop + symbol picker** — ~30 % done; two identity rows, storage and composition remain (`FrontEndMenu.cpp:861`, `:3660`)
-- [ ] **Armory lighting / spotlight** — unlit black chamber. The Armory scene in `mainmenu_all.map` has only faint volumetric
+- [x] **Scoreboard overlay** â€” done (`7cef78c`); gap: live K/D/score columns need the engine player-record hook
+- [x] @claude 2026-10-30 23:22 - **Emblem backdrop + symbol picker** â€” real MCC backgrounds, composition, and the shown emblem now matches the picked one - commit 66e64a0. Follow-ups: other players don't see the background (needs: @deepseek server field), emblem colours, check nameplates for the same id bug
+- [ ] **Armory lighting / spotlight** â€” unlit black chamber. The Armory scene in `mainmenu_all.map` has only faint volumetric
   haze (`HANDOFF.md` ~4922); the model sits in a void. Options, cheapest first: (a) add a real **spotlight** by editing the
   menumap's lighting (HREK: `tags\levels\ui\mainmenu\mainmenu_000.scenario_structure_lighting_info` + lightmap, then
   rebuild the menumap), (b) inject an engine light near the armory pedestal from the host (needs the light-object API), or
   (c) a Noble-owned rim/key light pass in the preview renderer if the engine exposure can be read. Keep the per-slot cameras
   working (they are). Owner: @deepseek (engine/data), can be split if the UI side needs a toggle
-- [ ] **Controller presets + custom mapping** — biggest pure-UI item (6 presets, `SettingsData` storage, diagram already drawn)
-- [x] @claude 2026-10-30 22:34 - **Server browser polish** — display name in the details panel, vanilla `.map` names no longer flagged as mods, MOD badge - commit f3cbbf6 — **reviewed by @deepseek: OK** (diff, 0/0 build, capture inspected)
-- [~] @claude 2026-10-30 23:17 - **Scoreboard action bar + in-game scoreboard (spec 4.16)** — landed in commit 60f374b: engine
+- [ ] **Controller presets + custom mapping** â€” biggest pure-UI item (6 presets, `SettingsData` storage, diagram already drawn)
+- [x] @claude 2026-10-30 22:34 - **Server browser polish** â€” display name in the details panel, vanilla `.map` names no longer flagged as mods, MOD badge - commit f3cbbf6 â€” **reviewed by @deepseek: OK** (diff, 0/0 build, capture inspected)
+- [~] @claude 2026-10-30 23:17 - **Scoreboard action bar + in-game scoreboard (spec 4.16)** â€” landed in commit 60f374b: engine
   scoreboard no longer opens, row select, Report (saved locally), ping column, buttons in place. **needs: @deepseek** real ping
   values (the server's are placeholders), vote-to-kick transport, end round / end match actions, report endpoint if wanted.
   Then @claude wires the greyed buttons. Mute icons wait for chat/voice. Controller Back still opens the engine's scoreboard
-- [ ] **Post-game names** — remote players show `Player2`/`Player3` (needs engine player-record name path)
-- [ ] **Skull collection gating** — lock until found, "All Skulls" toggle when 13/13
-- [ ] **Readability pass** — run the capture harness over all 14 screens and fix remaining overlaps
+- [ ] **Post-game names** â€” remote players show `Player2`/`Player3` (needs engine player-record name path)
+- [ ] **Skull collection gating** â€” lock until found, "All Skulls" toggle when 13/13
+- [ ] **Readability pass** â€” run the capture harness over all 14 screens and fix remaining overlaps
 
 ## C. Engine features
 
@@ -150,57 +150,57 @@ explicitly** - a "needs" item must land before the dependent one can be verified
   call original, scale `[r9+0x28]`, optional shoulder sign at `[r9+0x14]`), settings row + key rebind, host/mode gate
 
 - [ ] **Real solo pause, CHANGE TEAM, vote-to-kick** (transport + roster UI)
-- [ ] **Host/admin controls (spec 4.15)** — kick / session-ban / permanent ban (dedicated), end round, restart round, restart
-  match, shuffle teams, end game → back to the lobby with everyone, skip to next rotation entry; actions confirmed and
+- [ ] **Host/admin controls (spec 4.15)** â€” kick / session-ban / permanent ban (dedicated), end round, restart round, restart
+  match, shuffle teams, end game â†’ back to the lobby with everyone, skip to next rotation entry; actions confirmed and
   announced in chat. Split: engine/session actions @deepseek, the host-only panel @claude
-- [ ] **Seamless transitions** — single-process map switch; research-only (RR also relaunches per match)
+- [ ] **Seamless transitions** â€” single-process map switch; research-only (RR also relaunches per match)
 
 ## D. Server / netcode
 
-- [x] **Echo host identity in the lobby** — `host_rank_index`, `host_emblem_id`, `host_nameplate_id`, `host_team` now
+- [x] **Echo host identity in the lobby** â€” `host_rank_index`, `host_emblem_id`, `host_nameplate_id`, `host_team` now
   stored, echoed in `/api/sessions` and roster, guest identity accepted on join (`b8fb2ad`, client `663cae2`)
-- [ ] **Invites carry mode/map** — so the toast can say "...inviting you to a Firefight match"
+- [ ] **Invites carry mode/map** â€” so the toast can say "...inviting you to a Firefight match"
 - [ ] **Vote-to-kick server endpoint + client UI** (pairs with C)
 
 
 ## F. Design-spec backlog (from `docs/menu-redesign-spec.md`, not scheduled yet)
 
-These come from the spec's §4.10-§4.15 and §6 order of work. They are **not claimed**; they enter the queue as the core
+These come from the spec's Â§4.10-Â§4.15 and Â§6 order of work. They are **not claimed**; they enter the queue as the core
 items above close. Keep the spec open when building any screen so the details land with it.
 
-- **Armory leftovers (§4.6/§6.1)** — thumbnails, rank / cR locks, stances, randomise buttons, identity name row; per-character
+- **Armory leftovers (Â§4.6/Â§6.1)** â€” thumbnails, rank / cR locks, stances, randomise buttons, identity name row; per-character
   looks + LOOKS priority needs a research spike (one mod with ODST/Marine players)
-- **Input (§4.10)** — mouse acceleration + smoothing, separate invert-flight, sensitivity hotkeys, release-cursor key, second
+- **Input (Â§4.10)** â€” mouse acceleration + smoothing, separate invert-flight, sensitivity hotkeys, release-cursor key, second
   key per action; controller: aim Modern/Classic, aim acceleration, stick layout, look dead zone, button presets
-- **Game options engine research (§4.10)** — vehicle and third-person FOV, centred/crosshair size, hide HUD/visor, label fade,
+- **Game options engine research (Â§4.10)** â€” vehicle and third-person FOV, centred/crosshair size, hide HUD/visor, label fade,
   viewmodel offsets; advanced graphics (filtering, AA, shadows, motion blur, draw distance, LOD, decals, water, presets)
-- **Audio / language / communication** — mute in background, per-song menu music, volume meters, language + subtitle files,
+- **Audio / language / communication** â€” mute in background, per-song menu music, volume meters, language + subtitle files,
   content filters (chat/name/slur/custom words), game chat on/off, voice chat (devices, push-to-talk), Discord rich presence
-- **Online services / folders / mods** — master-server list + query batch size, player ID + COPY, MCC/cache/download folder
+- **Online services / folders / mods** â€” master-server list + query batch size, player ID + COPY, MCC/cache/download folder
   rows with disk-space bars, mods manager (ON/OFF, folder, delete, totals)
-- **Server browser extras (§4.5/§4.10)** — favourites (star), search by server/host/map/mode/mod, mode chips with counts,
-  filters (hide private, ping limit, not-started), VIEW PLAYERS, clickable mod badge → mod list, "Hosted by", cosmetic mods
-- **Pickers** — favourite maps/game types + FAVORITES tab, OPEN FOLDER / REFRESH, "+N variants", search
-- **Lobby / rotation / voting (§4.14)** — playlist editor (map + game type + options per entry), rotation stored in server
+- **Server browser extras (Â§4.5/Â§4.10)** â€” favourites (star), search by server/host/map/mode/mod, mode chips with counts,
+  filters (hide private, ping limit, not-started), VIEW PLAYERS, clickable mod badge â†’ mod list, "Hosted by", cosmetic mods
+- **Pickers** â€” favourite maps/game types + FAVORITES tab, OPEN FOLDER / REFRESH, "+N variants", search
+- **Lobby / rotation / voting (Â§4.14)** â€” playlist editor (map + game type + options per entry), rotation stored in server
   config, current/next map in browser, after-game vote between 2-3 options ("keep playing"), ties to host; required-mods
   check before joining a modded server
-- **Game options editor (§4.4)** — variant read/write first (`SAVE AS VARIANT`, search every setting, "Unchanged" values)
-- **Theater (§4.9)** — recent games, save film, rename, delete, export MP4; needs engine film recording (keep entry disabled
+- **Game options editor (Â§4.4)** â€” variant read/write first (`SAVE AS VARIANT`, search every setting, "Unchanged" values)
+- **Theater (Â§4.9)** â€” recent games, save film, rename, delete, export MP4; needs engine film recording (keep entry disabled
   with "Coming later")
-- **"Continue last game" fast path** — covered by the checkpoint item in A (CONTINUE currently restarts the mission)
+- **"Continue last game" fast path** â€” covered by the checkpoint item in A (CONTINUE currently restarts the mission)
 
-- [ ] **Regression: menu -> start match -> return must not throw a Windows error** — the clean-shutdown fix is
+- [ ] **Regression: menu -> start match -> return must not throw a Windows error** â€” the clean-shutdown fix is
   `982e32a` (2026-10-28): `BlamEngine::Shutdown()` deliberately does **not** call `m_fnShutdown`/vtable[0] while
   haloreach.dll's engine thread runs, then `main.cpp` calls `blamEngine->Shutdown()` and `TerminateProcess`. A
-  `git log -S"blamEngine->Shutdown();"` search only finds the old `8213116` (Oct 26) because the call itself never moved —
+  `git log -S"blamEngine->Shutdown();"` search only finds the old `8213116` (Oct 26) because the call itself never moved â€”
   the fix was removing the destructor call, so that search is a false alarm. Verify by behaviour: launch a match from the
   menu, return to the menu, and confirm no `ntdll` dialog and `Network and host services shut down; exiting process cleanly.`
   in the log. Repeat for a Direct Connect guest.
 
 ## E. Housekeeping
 
-- [x] **Bump `VERSION_PATCH`** — now `0.8.4` / "0.8.4 (Co-op, Third Person & Menu Cleanup)" (`src/common/Version.hpp`)
-- [ ] **GitHub Actions build artifact** — one-click exe so both PCs always run the same binary
-- [ ] **Dedupe `docs/HANDOFF.md`** — O7's `dc349a5` appended ~27 identical entries; 245+ entries now
-- [x] **Remove `patch_blam.js`** — O7's scratch rewrite script, superseded by `64dd74f`
+- [x] **Bump `VERSION_PATCH`** â€” now `0.8.4` / "0.8.4 (Co-op, Third Person & Menu Cleanup)" (`src/common/Version.hpp`)
+- [ ] **GitHub Actions build artifact** â€” one-click exe so both PCs always run the same binary
+- [ ] **Dedupe `docs/HANDOFF.md`** â€” O7's `dc349a5` appended ~27 identical entries; 245+ entries now
+- [x] **Remove `patch_blam.js`** â€” O7's scratch rewrite script, superseded by `64dd74f`
 - [ ] **Drop `stash@{0}`** once Tyler agrees (its useful half is already committed as `32cd0f1`)
