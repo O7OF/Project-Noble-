@@ -28,6 +28,7 @@ public:
     // A mod folder (Workshop item or data\mods\<name>) whose files the engine reads before MCC's,
     // e.g. <mod>\maps\ff60_icecave.map for haloreach\maps\ff60_icecave.map. Empty = no mod.
     static void SetActiveMod(const fs::path& modFolder);
+    static bool HasActiveMod();
 
 private:
     static bool RawPathExists(const std::wstring& path);

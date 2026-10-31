@@ -4,6 +4,7 @@
 #include "network/MasterServerClient.hpp"
 #include "ui/LoadScreen.hpp"
 #include "career/Career.hpp"
+#include "vfs/VFS.hpp"
 #include "hooks/HookManager.hpp"
 #include "hooks/LobbyPatches.hpp"
 #include "common/Logger.hpp"
@@ -834,6 +835,22 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
     m_currentMap = mapName;
     m_currentMode = gameMode;
     m_isGameRunning = true;
+
+    // Base Forge World must have the working Thorage Pelican/Phantom. Unless the player picked a
+    // different mod, transparently load Noble's patched map when Forge World is selected.
+    const bool forgeLaunch = _stricmp(gameMode.c_str(), "forge") == 0 ||
+                             _stricmp(gameMode.c_str(), "sandbox") == 0;
+    const bool forgeWorld = _stricmp(mapName.c_str(), "forge_halo") == 0;
+    if (forgeLaunch && forgeWorld && !VFS::HasActiveMod()) {
+        std::error_code ec;
+        const std::filesystem::path forgeMod = VFS::GetUserStoragePath() / "mods" / "noble-forge";
+        if (std::filesystem::exists(forgeMod / "maps" / "forge_halo.map", ec)) {
+            VFS::SetActiveMod(forgeMod);
+            NOBLE_INFO("BlamEngine: Forge World auto-map enabled: {}", (forgeMod / "maps" / "forge_halo.map").string());
+        } else {
+            NOBLE_WARN("BlamEngine: Forge World patched map missing at {}", (forgeMod / "maps" / "forge_halo.map").string());
+        }
+    }
 
     NOBLE_INFO("=================================================");
     NOBLE_INFO(" LAUNCHING HALO: REACH MISSION / MAP: {}", mapName);

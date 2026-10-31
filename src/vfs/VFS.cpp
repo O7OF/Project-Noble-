@@ -93,6 +93,8 @@ void VFS::Shutdown() {
     NOBLE_INFO("VFS shutdown complete.");
 }
 
+bool VFS::HasActiveMod() { return !s_activeMod.empty(); }
+
 void VFS::SetActiveMod(const fs::path& modFolder) {
     std::error_code ec;
     s_activeMod = modFolder.empty() ? fs::path() : fs::absolute(modFolder, ec);
