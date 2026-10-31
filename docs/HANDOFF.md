@@ -69,6 +69,37 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-31, 05:45 ET) - KEY DATA POINT: the campaign engine class is what kills co-op, not the netcode (WeabooTyler117 / DeepSeek)
+
+Ran the campaign map `m10` with **`-engine-mode 3`** (multiplayer/Megalo class) on both host and guest, everything else
+identical to the failing runs:
+
+| run | engine class | host | guest | outcome |
+|---|---|---|---|---|
+| normal | 1 (campaign) | session started 20:23:45.112 | 20:23:45.962 | **GameResults / Category 14 at ~60 s, player 1 +0x30 = 255** |
+| forced | **3 (multiplayer)** | session started 20:23:45.112 | 20:23:45.962 | **no GameResults after 70+ s**, traffic continues (msg 27/26/37 flowing) |
+
+With the exact same transport, launch block, map and timing, the session only dies when the **campaign engine**
+(`engine class 1`) is running. That is strong evidence the failure is campaign-engine-specific player validation (it
+expects a spawned biped for every session player and ends the mission when one has none), not a networking or join-ordering
+bug.
+
+Also confirmed in that run: the guest's first membership message (msg 27) arrives **151 ms after** the host posts Command 10
+(host 20:23:38.185, guest send 20:23:38.336), so the campaign engine starts the mission before the guest is in membership -
+consistent with a hypothesis worth testing next: **hold Command 10 itself until membership arrives** (previous attempts only
+held Command 11). I started adding `-wait-membership` for that but the plumbing did not take before this session ended; the
+hook is not in the tree (reverted).
+
+### Next steps
+
+1. Implement the Command 10 hold properly (wait for `LobbyPatches::GetRemotePlayerAddCount() > 0` before posting 10, with
+   a ~15 s cap) and see whether the campaign engine then spawns the guest's biped. The flags in main.cpp must be applied
+   **before** the host/guest split - that has bitten three times.
+2. If that does not help: patch the campaign engine's per-player validation instead of the network layer. The results
+   record field is `+0x30` (255 = no unit) and the failure surfaces as Category 14; the campaign engine class is at launch
+   block `+0x0C` = 1.
+3. Keep `-engine-mode 3` as a diagnostic: it cleanly separates campaign-engine logic from the shared transport.
+
 ## 0. Pick up here (2026-10-31, 05:05 ET) - The TLS player-array chain does not resolve at runtime; launch blocks carry no player count (WeabooTyler117 / DeepSeek)
 
 Followed the 0x490-stride player array described in the 04:30 entry. Implemented the chain exactly as the results builder
