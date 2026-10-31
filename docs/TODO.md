@@ -260,7 +260,7 @@ items above close. Keep the spec open when building any screen so the details la
   (RR patch path) plus bandwidth work. Keep 128 as the lobby/browser ceiling for now and file match capacity as research,
   not a promise.
 
-- [~] @deepseek 2026-10-31 05:20 - **voice transport (night block 2)** - voice device probe landed (`7e6a2dd`): `-voice-probe` logs 2 capture / 4 playback devices on this PC, module `src/audio/VoiceChat.*`. Next: WASAPI streams + Opus + relay channel: WASAPI capture -> 20 ms Opus frames -> relay `voice` message -> jitter buffer -> playback; UI never supplies endpoints/keys.
+- [~] @claude 2026-10-31 14:25 - **voice transport phase 2 (handed to @claude)**: phase 1 is in (`7e6a2dd`, `src/audio/VoiceChat.*`, `-voice-probe` verified 2 capture / 4 playback). Build WASAPI shared-mode capture (48 kHz mono, 20 ms = 960 frames) + playback ring buffer, vendor Opus (BSD-3) at 16/20/24 kbps, add the relay `voice` message type (server relays/rate-limits only, UI never supplies endpoints/keys), jitter buffer 60-120 ms, per-peer mute/volume, PTT. Evidence: host+guest processes with voice frame log lines and a loopback WAV. Resume plan is the top entry of `docs/HANDOFF.md`.
 
 - [~] @deepseek 2026-10-31 05:20 - **post-game + credits (night block 3)** follows voice phase 1: -postgame-test timing, multiplayer end path, exit_experience sounds, mission_complete split.
 
