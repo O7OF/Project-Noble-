@@ -162,6 +162,7 @@ explicitly** - a "needs" item must land before the dependent one can be verified
   open the pause menu in a match, press Esc to resume, check whether it reopens immediately (likely the engine key state and
   our edge detection disagreeing). Owner: @claude (PauseMenu).
 - [x] @gemini 2026-10-31 01:36 - **Real ping values & WebSocket Relay fragment reassembly / NAT hole-punching** — commit bfcc6c7 (`ServerTestDeploy` `8f16061`): `NetworkTransport` measures live per-peer RTT from `PING`/`PONG` and UDP packet exchanges, disables `SIO_UDP_CONNRESET`, reassembles fragmented WebSocket relay frames up to 64 KB with 2 ms poll latency, punches same-LAN guest addresses, and syncs `peer_pings` into roster rows via `DoHeartbeat()` / `FetchLobbyStateSync()`.
+- [~] @deepseek 2026-10-31 04:45 - **Scoreboard backend actions**: report endpoint landed (`ServerTestDeploy` - POST /api/reports -> data/reports.jsonl, verified), vote-to-kick and end-round/end-match next; @claude can wire the Report button to it now.
 - [ ] **Scoreboard backend actions** — `POST /api/reports` (report endpoint; replaces the local-only `reports.jsonl`),
   vote-to-kick request/vote/result endpoint, and host actions for End Round / End Match. Server + transport @deepseek, then
   @claude un-greys the buttons and wires them.
