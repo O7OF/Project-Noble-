@@ -17,6 +17,11 @@ struct ModMap {
     std::string scenario;     // e.g. "ff60_icecave" (the map file name, lower case)
     std::string title;
     std::string description;
+    bool forgeMap = false;    // the map JSON lists the "ForgeMap" flag
+    bool hasMapFile = false;  // maps\<scenario>.map exists in the mod folder (checked once at scan time)
+    // The mod's own art (Images.Large / Thumbnail / LoadingScreen in the map JSON), absolute and
+    // checked to exist. Empty when the mod has no picture for that slot.
+    std::filesystem::path imageLarge, imageThumbnail, imageLoading;
 };
 
 struct ModEntry {

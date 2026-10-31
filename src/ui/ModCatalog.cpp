@@ -82,6 +82,15 @@ bool ReadMap(const fs::path& file, ModMap& map) {
     map.scenario = Lower(scenario);
     map.title = Text(j, "Title");
     map.description = Text(j, "Description");
+    map.forgeMap = false;
+    for (const std::string& flag : StringList(j, "Flags")) {
+        if (Lower(flag) == "forgemap") map.forgeMap = true;
+    }
+    if (j.contains("Images") && j["Images"].is_object()) {
+        map.imageLarge = std::filesystem::path(Text(j["Images"], "Large"));
+        map.imageThumbnail = std::filesystem::path(Text(j["Images"], "Thumbnail"));
+        map.imageLoading = std::filesystem::path(Text(j["Images"], "LoadingScreen"));
+    }
     if (map.title.empty()) map.title = map.scenario;
     return true;
 }
@@ -140,6 +149,29 @@ void ScanFolder(const fs::path& root, bool workshop, std::vector<ModEntry>& out)
         mod.campaign = ReadMaps(dir.path(), campaignList, "campaign");
         mod.firefight = ReadMaps(dir.path(), StringList(contents, "FirefightMaps"), "firefight");
         mod.multiplayer = ReadMaps(dir.path(), StringList(contents, "MultiplayerMaps"), "multiplayer");
+        auto markMapFiles = [&](std::vector<ModMap>& maps) {
+            for (ModMap& m : maps) {
+                m.hasMapFile = fs::is_regular_file(dir.path() / "maps" / (m.scenario + ".map"), ec);
+            }
+        };
+        markMapFiles(mod.campaign);
+        markMapFiles(mod.firefight);
+        markMapFiles(mod.multiplayer);
+        auto markImages = [&](std::vector<ModMap>& maps) {
+            for (ModMap& m : maps) {
+                auto resolve = [&](fs::path& p) {
+                    if (p.empty()) return;
+                    if (p.is_relative()) p = dir.path() / p;
+                    if (!fs::is_regular_file(p, ec)) p.clear();
+                };
+                resolve(m.imageLarge);
+                resolve(m.imageThumbnail);
+                resolve(m.imageLoading);
+            }
+        };
+        markImages(mod.campaign);
+        markImages(mod.firefight);
+        markImages(mod.multiplayer);
         for (const auto& e : fs::directory_iterator(dir.path() / "maps", ec)) {
             if (e.is_regular_file(ec) && Lower(e.path().extension().string()) == ".map") {
                 mod.mapFiles.push_back(Lower(e.path().stem().string()));

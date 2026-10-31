@@ -58,6 +58,10 @@ UiTexture LoadingBackground(const std::string& scenario);
 // Map preview (316x160, or 668x292 when large) from MCC's levels pack; empty if the map has none.
 UiTexture MapPreview(const std::string& scenario, bool large);
 
+// An image file on disk (Workshop mod art: PNG/JPG/BMP/WebP), cached by full path. Empty when the
+// file is missing or cannot be decoded, so callers keep their placeholder.
+UiTexture ImageFile(const std::filesystem::path& path);
+
 // "What does this map look like" for menus that show an arbitrary server's map: MCC's map preview, then a
 // picture the player or a mod supplied as data\ui\custom\loading\<scenario> (or data\ui\noble\loading\...).
 // Empty when there is none (a modded map without a picture), so callers draw a placeholder instead of a

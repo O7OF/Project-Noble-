@@ -30,6 +30,12 @@ public:
     static void SetActiveMod(const fs::path& modFolder);
     static bool HasActiveMod();
 
+    // Serve <mapFile> whenever the engine asks for the stock map's haloreach\maps\<carrierScenario>.map.
+    // The launch index and map id stay the stock map's (the engine selects the stock entry), while the
+    // map data, header and scenario are the mod's. Pass an empty path to clear it.
+    static void SetMapOverride(const std::string& carrierScenario, const fs::path& mapFile);
+    static void ClearMapOverride();
+
 private:
     static bool RawPathExists(const std::wstring& path);
 
@@ -65,6 +71,8 @@ private:
     static fs::path s_userStoragePath;
     static fs::path s_workshopPath;
     static fs::path s_activeMod;
+    static fs::path s_mapOverrideFile;
+    static std::string s_mapOverrideCarrier;   // lower case, no ".map"
     static bool s_isInitialized;
     static std::mutex s_mutex;
 };

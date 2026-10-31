@@ -1,6 +1,7 @@
 #pragma once
 
 #include <windows.h>
+#include <filesystem>
 #include <functional>
 #include <string>
 #include <vector>
@@ -51,6 +52,9 @@ public:
 
     // Map shown on the loading screen (internal name, e.g. "20_sword_slayer"). Main thread, before launch.
     static void SetLoadingMap(const std::string& scenario);
+    // A Workshop/mod map: its own title and pictures instead of the stock carrier's name and art.
+    static void SetLoadingMapInfo(const std::string& title, const std::filesystem::path& image,
+                                  const std::filesystem::path& thumbnail);
 
     // True while the overlay wants the mouse pointer (pause menu, post-game panel or scoreboard actions).
     static bool WantsPointer();

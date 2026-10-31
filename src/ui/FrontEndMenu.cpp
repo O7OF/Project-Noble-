@@ -45,6 +45,7 @@
 #include <cfloat>
 #include <cmath>
 #include <cstdio>
+#include <fstream>
 #include <cwctype>
 #include <string>
 #include <vector>
@@ -267,6 +268,47 @@ float TextWidth(ImFont* font, float px, const char* text) {
 
 void Text(const Ui& ui, ImFont* font, float px, ImVec2 pos, ImU32 col, const char* text, float wrapRight = 0.0f) {
     ui.dl->AddText(Font(font), px * ui.s, pos, col, text, nullptr, wrapRight > pos.x ? wrapRight - pos.x : 0.0f);
+}
+
+// One-line label that fits |width| pixels: cuts at a word boundary and appends "...". Menu rows and the
+// banner title use this instead of running under the next column / off the art.
+std::string Ellipsize(ImFont* font, float px, const std::string& text, float width) {
+    if (width <= 0.0f) return std::string();
+    ImFont* f = Font(font);
+    if (f->CalcTextSizeA(px, FLT_MAX, 0.0f, text.c_str()).x <= width) return text;
+    const std::string dots = "...";
+    const float dotsW = f->CalcTextSizeA(px, FLT_MAX, 0.0f, dots.c_str()).x;
+    size_t lo = 0, hi = text.size();
+    while (lo < hi) {
+        const size_t mid = (lo + hi + 1) / 2;
+        const std::string part = text.substr(0, mid);
+        if (f->CalcTextSizeA(px, FLT_MAX, 0.0f, part.c_str()).x + dotsW <= width) lo = mid;
+        else hi = mid - 1;
+    }
+    std::string cut = text.substr(0, lo);
+    const size_t space = cut.find_last_of(' ');
+    if (space != std::string::npos && space > cut.size() / 2) cut.resize(space);
+    while (!cut.empty() && (cut.back() == ' ' || cut.back() == '\t')) cut.pop_back();
+    return cut + dots;
+}
+
+// Word-aware fit for the one/two-line description under a map picture: keeps whole words, caps at
+// |maxHeight| pixels and ends the last line with "...". Can't overflow into the option rows.
+std::string FitWrapped(ImFont* font, float px, const std::string& text, float width, float maxHeight) {
+    if (text.empty() || width <= 0.0f || maxHeight <= 0.0f) return std::string();
+    ImFont* f = Font(font);
+    std::string body = text;
+    auto heightOf = [&](const std::string& s) { return f->CalcTextSizeA(px, FLT_MAX, width, s.c_str()).y; };
+    if (heightOf(body) <= maxHeight) return body;
+    for (int guard = 0; guard < 4096 && !body.empty(); ++guard) {
+        const size_t space = body.find_last_of(' ');
+        if (space == std::string::npos) break;
+        body.resize(space);
+        while (!body.empty() && (body.back() == ' ' || body.back() == '\t')) body.pop_back();
+        std::string candidate = body + "...";
+        if (heightOf(candidate) <= maxHeight) return candidate;
+    }
+    return Ellipsize(font, px, text, width);
 }
 
 std::string Upper(std::string s) {
@@ -509,6 +551,7 @@ struct ListItem {
     bool header = false;
     bool expanded = false;
     std::string thumb;   // scenario whose small preview is drawn before the label (empty = none)
+    std::filesystem::path image; // a mod map's own thumbnail file (wins over thumb)
     int number = 0;      // shown before the thumbnail when > 0
 };
 
@@ -597,15 +640,17 @@ int DrawList(const Ui& ui, const char* id, ImVec2 pos, float width, const std::v
             // Workshop mod names can be very long ("... (NEW CUSTOM MAP "STAGING GROUND" OUT NOW!)"), so the
             // heading is clipped to its row instead of running into the column on the right.
             ui.dl->PushClipRect(ImVec2(a.x, a.y), ImVec2(b.x - 4.0f * ui.s, b.y), true);
+            const std::string headerLabel = Ellipsize(NobleStyle::TitleFont(), 19.0f * ui.s, Upper(items[i].label),
+                                                       b.x - a.x - 32.0f * ui.s);
             Text(ui, NobleStyle::TitleFont(), 19.0f, ImVec2(a.x + 28.0f * ui.s, a.y + (rh - 19.0f * ui.s) * 0.5f), ac,
-                 Upper(items[i].label).c_str());
+                 headerLabel.c_str());
             ui.dl->PopClipRect();
             ui.dl->AddLine(ImVec2(a.x, b.y - 1.0f), ImVec2(b.x, b.y - 1.0f), IM_COL32(143, 216, 255, 60), 1.0f);
             continue;
         }
         const ImU32 col = !items[i].enabled ? kDisabled : (i == selected ? kWhite : kDim);
         float textX = a.x + (items[0].header ? 28.0f : 9.0f) * ui.s;
-        if (!items[i].thumb.empty() && rh >= 34.0f * ui.s) {
+        if ((!items[i].thumb.empty() || !items[i].image.empty()) && rh >= 34.0f * ui.s) {
             // Number, then the map's small preview (MCC's levels pack), then the name.
             if (items[i].number > 0) {
                 char num[8];
@@ -617,14 +662,20 @@ int DrawList(const Ui& ui, const char* id, ImVec2 pos, float width, const std::v
             const float th = rh - 8.0f * ui.s, tw = th * 316.0f / 160.0f;
             const ImVec2 t0(textX, a.y + 4.0f * ui.s), t1(textX + tw, a.y + 4.0f * ui.s + th);
             ui.dl->AddRectFilled(t0, t1, IM_COL32(14, 20, 26, 220));
-            if (UiTexture tex = UiArt::MapPreview(items[i].thumb, false)) {
+            const UiTexture tex = items[i].image.empty() ? UiArt::MapPreview(items[i].thumb, false)
+                                                          : UiArt::ImageFile(items[i].image);
+            if (tex) {
                 UiArt::DrawCover(ui.dl, tex, t0, t1, items[i].enabled ? IM_COL32_WHITE : IM_COL32(255, 255, 255, 90));
             }
             ui.dl->AddRect(t0, t1, i == selected ? IM_COL32(170, 220, 255, 200) : IM_COL32(255, 255, 255, 40), 0.0f, 0, 1.0f);
             textX += tw + 10.0f * ui.s;
         }
+        const std::string label = Ellipsize(NobleStyle::TitleFont(), 20.0f * ui.s, Upper(items[i].label),
+                                            b.x - textX - 6.0f * ui.s);
+        ui.dl->PushClipRect(ImVec2(textX, a.y), ImVec2(b.x - 2.0f * ui.s, b.y), true);
         Text(ui, NobleStyle::TitleFont(), 20.0f, ImVec2(textX, a.y + (rh - 20.0f * ui.s) * 0.5f), col,
-             Upper(items[i].label).c_str());
+             label.c_str());
+        ui.dl->PopClipRect();
     }
     if (activated >= 0) MenuSounds::Click();
     return activated;
@@ -1252,17 +1303,30 @@ float DrawPreview(const Ui& ui, ImVec2 pos, float width, const std::string& scen
 // Spec §3 HeroBanner: the map picture with a dark gradient, an accent kicker line, the title, and the
 // blurb under the picture. Returns the y below the blurb.
 float HeroBanner(const Ui& ui, ImVec2 pos, float width, float height, const std::string& scenario, const std::string& kicker,
-                 const char* title, const char* blurb) {
+                 const char* title, const char* blurb, const std::filesystem::path& image = {}) {
     const ImVec2 b(pos.x + width, pos.y + height);
     ui.dl->AddRectFilled(pos, b, IM_COL32(14, 20, 26, 230));
-    if (UiTexture tex = UiArt::MapPreview(scenario, true)) UiArt::DrawCover(ui.dl, tex, pos, b);
+    const UiTexture art = image.empty() ? UiArt::MapPreview(scenario, true) : UiArt::ImageFile(image);
+    if (art) UiArt::DrawCover(ui.dl, art, pos, b);
     const float gy = pos.y + height * 0.45f;
     ui.dl->AddRectFilledMultiColor(ImVec2(pos.x, gy), b, IM_COL32(4, 8, 12, 0), IM_COL32(4, 8, 12, 0),
                                    IM_COL32(4, 8, 12, 235), IM_COL32(4, 8, 12, 235));
     ui.dl->AddRect(pos, b, IM_COL32(170, 200, 220, 120), 0.0f, 0, 1.0f);
     const float pad = 16.0f * ui.s;
-    Text(ui, NobleStyle::TitleFont(), 34.0f, ImVec2(pos.x + pad, b.y - pad - 34.0f * ui.s), kWhite, Upper(title).c_str());
-    if (!kicker.empty()) Text(ui, NobleStyle::SmallFont(), 15.0f, ImVec2(pos.x + pad, b.y - pad - 56.0f * ui.s), kAccent, kicker.c_str());
+    // Long mod titles shrink until the whole name fits before falling back to an ellipsis.
+    std::string bannerTitle = Upper(title);
+    float titlePx = 34.0f * ui.s;
+    while (titlePx > 22.0f * ui.s &&
+           TextWidth(NobleStyle::TitleFont(), titlePx, bannerTitle.c_str()) > width - pad * 2.0f) {
+        titlePx -= 2.0f * ui.s;
+    }
+    bannerTitle = Ellipsize(NobleStyle::TitleFont(), titlePx, bannerTitle, width - pad * 2.0f);
+    Text(ui, NobleStyle::TitleFont(), titlePx / ui.s, ImVec2(pos.x + pad, b.y - pad - titlePx), kWhite, bannerTitle.c_str());
+    if (!kicker.empty()) {
+        const std::string bannerKicker = Ellipsize(NobleStyle::SmallFont(), 15.0f * ui.s, kicker, width - pad * 2.0f);
+        Text(ui, NobleStyle::SmallFont(), 15.0f, ImVec2(pos.x + pad, b.y - pad - titlePx - 22.0f * ui.s), kAccent,
+             bannerKicker.c_str());
+    }
     float y = b.y + 8.0f * ui.s;
     if (blurb && *blurb) {
         // Two lines at most: a long workshop blurb is clipped here instead of running over the option rows.
@@ -1273,11 +1337,12 @@ float HeroBanner(const Ui& ui, ImVec2 pos, float width, float height, const std:
         ui.dl->AddRectFilledMultiColor(ImVec2(t0.x, t0.y - 4.0f * ui.s), ImVec2(t1.x, t1.y + 4.0f * ui.s),
                                        IM_COL32(4, 8, 12, 40), IM_COL32(4, 8, 12, 150),
                                        IM_COL32(4, 8, 12, 150), IM_COL32(4, 8, 12, 40));
-        ui.dl->PushClipRect(ImVec2(pos.x, y), ImVec2(pos.x + width, y + lineH * 2.0f), true);
-        Text(ui, nullptr, 17.0f, ImVec2(pos.x + 1.0f * ui.s, y + 1.0f * ui.s), IM_COL32(0, 0, 0, 210), blurb, pos.x + width);
-        Text(ui, nullptr, 17.0f, ImVec2(pos.x, y), IM_COL32(214, 224, 236, 255), blurb, pos.x + width);
+        const std::string fitted = FitWrapped(nullptr, 17.0f * ui.s, blurb, width - 4.0f * ui.s, lineH * 2.0f);
+        ui.dl->PushClipRect(ImVec2(pos.x, y - 2.0f * ui.s), ImVec2(pos.x + width, y + lineH * 2.0f), true);
+        Text(ui, nullptr, 17.0f, ImVec2(pos.x + 1.0f * ui.s, y + 1.0f * ui.s), IM_COL32(0, 0, 0, 210), fitted.c_str(), pos.x + width);
+        Text(ui, nullptr, 17.0f, ImVec2(pos.x, y), IM_COL32(214, 224, 236, 255), fitted.c_str(), pos.x + width);
         ui.dl->PopClipRect();
-        y += std::min(Font(nullptr)->CalcTextSizeA(17.0f * ui.s, FLT_MAX, width, blurb).y, lineH * 2.0f) + 8.0f * ui.s;
+        y += std::min(Font(nullptr)->CalcTextSizeA(17.0f * ui.s, FLT_MAX, width, fitted.c_str()).y, lineH * 2.0f) + 8.0f * ui.s;
     }
     return y;
 }
@@ -1298,9 +1363,14 @@ bool BigAction(const Ui& ui, const char* id, ImVec2 pos, float width, const char
                              : (hovered || focused ? IM_COL32(60, 74, 88, 240) : IM_COL32(30, 38, 46, 230));
     ui.dl->AddRectFilled(pos, b, bg);
     ui.dl->AddRect(pos, b, enabled ? IM_COL32(170, 220, 255, hovered || focused ? 220 : 90) : IM_COL32(255, 255, 255, 30), 0.0f, 0, 1.0f);
-    Text(ui, NobleStyle::TitleFont(), 20.0f, ImVec2(pos.x + 14.0f * ui.s, pos.y + 5.0f * ui.s), enabled ? kWhite : kDisabled, label);
-    if (sub && *sub) Text(ui, NobleStyle::SmallFont(), 14.0f, ImVec2(pos.x + 14.0f * ui.s, pos.y + 29.0f * ui.s),
-                          enabled ? IM_COL32(200, 225, 245, 230) : kDisabled, sub);
+    const std::string actionLabel = Ellipsize(NobleStyle::TitleFont(), 20.0f * ui.s, label, width - 28.0f * ui.s);
+    Text(ui, NobleStyle::TitleFont(), 20.0f, ImVec2(pos.x + 14.0f * ui.s, pos.y + 5.0f * ui.s), enabled ? kWhite : kDisabled,
+         actionLabel.c_str());
+    if (sub && *sub) {
+        const std::string actionSub = Ellipsize(NobleStyle::SmallFont(), 14.0f * ui.s, sub, width - 28.0f * ui.s);
+        Text(ui, NobleStyle::SmallFont(), 14.0f, ImVec2(pos.x + 14.0f * ui.s, pos.y + 29.0f * ui.s),
+             enabled ? IM_COL32(200, 225, 245, 230) : kDisabled, actionSub.c_str());
+    }
     if (hovered) MenuSounds::Hover(ImGui::GetID(id));
     if (pressed) MenuSounds::Click();
     return pressed;
@@ -1420,6 +1490,9 @@ struct MenuState {
     std::string lobbySessionId;
     std::string lobbySessionToken;
     std::string lobbyMap = "20_sword_slayer";
+    std::filesystem::path lobbyMapOverride; // modded .map served in place of the stock lobbyMap
+    std::string lobbyMapTitle;
+    std::filesystem::path lobbyMapImage, lobbyMapThumb;
     std::string lobbyMode = "multiplayer";
     std::string lobbyVariantPath;
     std::string lobbyVariantName = "Slayer";
@@ -1461,9 +1534,15 @@ static void ClearPendingLobbyEvents();
 
 static void SetupHostLobby(MenuState& st, const std::string& mapScenario, const std::string& mode,
                            const std::string& varPath, const std::string& varName, int diff, uint64_t skulls, int maxPlayers,
-                           const ModEntry* mod = nullptr) {
+                           const ModEntry* mod = nullptr, const std::filesystem::path& mapOverride = {},
+                           const std::string& mapTitle = {}, const std::filesystem::path& mapImage = {},
+                           const std::filesystem::path& mapThumb = {}) {
     st.isLobbyHost = true;
     st.lobbyMap = mapScenario;
+    st.lobbyMapOverride = mapOverride;
+    st.lobbyMapTitle = mapTitle;
+    st.lobbyMapImage = mapImage;
+    st.lobbyMapThumb = mapThumb;
     st.lobbyMode = mode;
     st.lobbyVariantPath = varPath;
     st.lobbyVariantName = varName;
@@ -1657,9 +1736,16 @@ void DrawLobbyControls(const Ui& ui, ImVec2 pos, float width, MenuState& st) {
 
 struct MapEntry {
     std::string scenario, name, blurb;
+    // A modded map with a new scenario name is loaded through a stock map the engine already knows:
+    // launchScenario is that stock scenario (its launch index / map id select the match), and
+    // mapOverride is the mod's .map file served in place of the stock maps<launchScenario>.map.
+    std::string launchScenario;
+    std::filesystem::path mapOverride;
+    std::filesystem::path imageThumbnail, imageLarge, imageLoading;
     bool enabled = true;
     const ModEntry* mod = nullptr;
     bool header = false;
+    bool custom = false;
 };
 
 bool KnownScenario(const std::string& scenario, const MenuMap* maps, int count) {
@@ -1667,20 +1753,94 @@ bool KnownScenario(const std::string& scenario, const MenuMap* maps, int count) 
     return false;
 }
 
-std::vector<MapEntry> ModMaps(const ModEntry& mod, const std::vector<ModMap>& listed, const MenuMap* base, int baseCount) {
+// The stock map a modded map with a new scenario is loaded through. The engine picks a map by launch
+// index/map id, so the mod map must carry the scenario map id of a stock map; the stock map's file is
+// then replaced by the mod's .map through VFS::SetMapOverride. Boneyard (map id 1080) is what the
+// campaign-to-Forge conversions and most Forge canvases are built on; Glacier is the Firefight canvas
+// and Winter Contingency the campaign base. A mod built on a different base map can be pointed at it by
+// adding "<scenario>": "<stock scenario>" to data\map_carriers.json (loaded by CarrierForScenario).
+std::string CarrierForScenario(const std::string& scenario, const std::string& fallback) {
+    static std::mutex s_mutex;
+    static bool s_loaded = false;
+    static std::unordered_map<std::string, std::string> s_carriers;
+    std::lock_guard<std::mutex> lock(s_mutex);
+    if (!s_loaded) {
+        s_loaded = true;
+        const std::filesystem::path path = VFS::GetUserStoragePath() / "map_carriers.json";
+        std::ifstream file(path, std::ios::binary);
+        if (file.is_open()) {
+            try {
+                const nlohmann::json j = nlohmann::json::parse(file);
+                if (j.is_object()) {
+                    for (const auto& item : j.items()) {
+                        if (item.value().is_string()) {
+                            std::string key = item.key();
+                            for (char& c : key) c = static_cast<char>(::tolower(static_cast<unsigned char>(c)));
+                            s_carriers[key] = item.value().get<std::string>();
+                        }
+                    }
+                }
+                NOBLE_INFO("FrontEndMenu: {} map carrier override(s) from '{}'", s_carriers.size(), path.string());
+            } catch (const std::exception& e) {
+                NOBLE_WARN("FrontEndMenu: '{}' is not valid map carrier JSON ({})", path.string(), e.what());
+            }
+        }
+    }
+    std::string key = scenario;
+    for (char& c : key) c = static_cast<char>(::tolower(static_cast<unsigned char>(c)));
+    const auto it = s_carriers.find(key);
+    return it != s_carriers.end() ? it->second : fallback;
+}
+
+std::vector<MapEntry> ModMaps(const ModEntry& mod, const std::vector<ModMap>& listed, const MenuMap* base,
+                              int baseCount, const std::string& carrier) {
     std::vector<MapEntry> out;
     for (const ModMap& m : listed) {
         const bool known = KnownScenario(m.scenario, base, baseCount);
-        out.push_back({ m.scenario, m.title,
-                        known ? PlainDescription(m.description, 150)
-                              : "A new map: Noble can only start maps that are in Reach so far.",
-                        known, &mod });
+        if (known) {
+            out.push_back({ m.scenario, m.title, PlainDescription(m.description, 150), {}, {}, {}, {}, {}, true, &mod });
+            continue;
+        }
+        const std::filesystem::path mapFile = mod.folder / "maps" / (m.scenario + ".map");
+        if (!m.hasMapFile) {
+            out.push_back({ m.scenario, m.title,
+                            "This map needs maps\\" + m.scenario + ".map, which the mod does not contain.",
+                            {}, {}, {}, {}, {}, false, &mod, false, true });
+            continue;
+        }
+        MapEntry entry;
+        entry.scenario = m.scenario;
+        entry.name = m.title;
+        entry.launchScenario = CarrierForScenario(m.scenario, carrier);
+        entry.mapOverride = mapFile;
+        entry.imageThumbnail = m.imageThumbnail;
+        entry.imageLarge = m.imageLarge.empty() ? m.imageThumbnail : m.imageLarge;
+        entry.imageLoading = m.imageLoading.empty() ? m.imageLarge : m.imageLoading;
+        entry.enabled = true;
+        entry.mod = &mod;
+        entry.custom = true;
+        entry.blurb = "Custom map \xC2\xB7 loads through " + MapNames::Display(entry.launchScenario) + ".";
+        out.push_back(std::move(entry));
     }
     for (const std::string& file : mod.mapFiles) {
-        if (!KnownScenario(file, base, baseCount)) continue;
+        if (!KnownScenario(file, base, baseCount)) {
+            if (std::any_of(out.begin(), out.end(), [&](const MapEntry& e) { return e.scenario == file; })) continue;
+            const std::filesystem::path mapFile = mod.folder / "maps" / (file + ".map");
+            MapEntry entry;
+            entry.scenario = file;
+            entry.name = MapNames::Display(file);
+            entry.launchScenario = CarrierForScenario(file, carrier);
+            entry.mapOverride = mapFile;
+            entry.enabled = true;
+            entry.mod = &mod;
+            entry.custom = true;
+            entry.blurb = "Custom map \xC2\xB7 loads on " + MapNames::Display(entry.launchScenario);
+            out.push_back(std::move(entry));
+            continue;
+        }
         if (std::any_of(out.begin(), out.end(), [&](const MapEntry& e) { return e.scenario == file; })) continue;
         for (int i = 0; i < baseCount; ++i) {
-            if (file == base[i].scenario) out.push_back({ file, base[i].name, base[i].blurb, true, &mod });
+            if (file == base[i].scenario) out.push_back({ file, base[i].name, base[i].blurb, {}, {}, {}, {}, {}, true, &mod });
         }
     }
     return out;
@@ -1690,12 +1850,12 @@ enum class ModMode { Campaign, Firefight, Multiplayer };
 std::string OpenKey(ModMode mode, const ModEntry& mod) { return std::to_string(static_cast<int>(mode)) + ":" + mod.id; }
 
 std::vector<MapEntry> ModdedMaps(const std::vector<const ModEntry*>& mods, ModMode mode, const MenuMap* base, int baseCount,
-                                 const std::set<std::string>& open) {
+                                 const std::set<std::string>& open, const std::string& carrier) {
     std::vector<MapEntry> out;
     for (const ModEntry* mod : mods) {
         const std::vector<ModMap>& listed = mode == ModMode::Campaign ? mod->campaign
                                           : mode == ModMode::Firefight ? mod->firefight : mod->multiplayer;
-        std::vector<MapEntry> maps = ModMaps(*mod, listed, base, baseCount);
+        std::vector<MapEntry> maps = ModMaps(*mod, listed, base, baseCount, carrier);
         if (maps.empty()) continue;
         MapEntry heading;
         heading.name = mod->title + "  (" + std::to_string(maps.size()) + ")";
@@ -1703,6 +1863,8 @@ std::vector<MapEntry> ModdedMaps(const std::vector<const ModEntry*>& mods, ModMo
         heading.mod = mod;
         // A heading has no map of its own; the banner shows the mod's first map picture instead of black.
         heading.scenario = maps.front().scenario;
+        heading.imageLarge = maps.front().imageLarge;
+        heading.imageThumbnail = maps.front().imageThumbnail;
         heading.blurb = PlainDescription(mod->description, 180);
         heading.enabled = open.count(OpenKey(mode, *mod)) != 0;
         out.push_back(heading);
@@ -1728,7 +1890,8 @@ std::vector<ListItem> ToItems(const std::vector<MapEntry>& list) {
             items.push_back({ m.name, true, true, m.enabled });
         } else {
             ListItem it{ m.name, m.enabled, false, false };
-            it.thumb = m.scenario;
+            if (m.imageThumbnail.empty()) it.thumb = m.scenario;
+            else it.image = m.imageThumbnail;
             it.number = static_cast<int>(std::count_if(items.begin(), items.end(), [](const ListItem& x) { return !x.header; })) + 1;
             items.push_back(it);
         }
@@ -1738,7 +1901,7 @@ std::vector<ListItem> ToItems(const std::vector<MapEntry>& list) {
 
 std::vector<MapEntry> BaseMaps(const MenuMap* maps, int count) {
     std::vector<MapEntry> out;
-    for (int i = 0; i < count; ++i) out.push_back({ maps[i].scenario, maps[i].name, maps[i].blurb, true });
+    for (int i = 0; i < count; ++i) out.push_back({ maps[i].scenario, maps[i].name, maps[i].blurb, {}, {}, {}, {}, {}, true });
     return out;
 }
 
@@ -2178,6 +2341,10 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         choice.play = true;
         choice.host = false;
         choice.map = st.lobbyLaunchMap.empty() ? st.lobbyMap : st.lobbyLaunchMap;
+        choice.mapOverride = st.lobbyMapOverride;
+        choice.mapTitle = st.lobbyMapTitle;
+        choice.mapImage = st.lobbyMapImage;
+        choice.mapThumb = st.lobbyMapThumb;
         choice.mode = st.lobbyLaunchMode.empty() ? st.lobbyMode : st.lobbyLaunchMode;
         choice.variantPath = st.lobbyLaunchVariant;
         choice.difficulty = st.lobbyLaunchDiff;
@@ -2399,6 +2566,10 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
             if (!player.isHost) ++choice.expectedPeers;
         }
         choice.map = st.lobbyMap;
+        choice.mapOverride = st.lobbyMapOverride;
+        choice.mapTitle = st.lobbyMapTitle;
+        choice.mapImage = st.lobbyMapImage;
+        choice.mapThumb = st.lobbyMapThumb;
         choice.mode = st.lobbyMode;
         choice.variantPath = st.lobbyVariantPath;
         choice.difficulty = st.lobbyDifficulty;
@@ -3564,7 +3735,7 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         if (DrawSourceTabs(ui, ImVec2(left + 34.0f * ui.s, top + 70.0f * ui.s), st.campaignSource,
                            static_cast<int>(ctx.campaignMods.size()))) st.focusRow = 0;
         const bool modded = st.campaignSource == 1;
-        const std::vector<MapEntry> missions = modded ? ModdedMaps(ctx.campaignMods, ModMode::Campaign, kMissions, Count(kMissions), st.openMods)
+        const std::vector<MapEntry> missions = modded ? ModdedMaps(ctx.campaignMods, ModMode::Campaign, kMissions, Count(kMissions), st.openMods, "m10")
                                                       : BaseMaps(kMissions, Count(kMissions));
         int& pick = modded ? st.campaignModded : st.mission;
         FixSelection(missions, pick);
@@ -3596,7 +3767,8 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         const float bannerH = HeroBannerHeight(ui, pw, col.content, rowsH, blurbH, bannerTop);
         const std::string kicker = mod ? "MOD: " + Upper(mod->title) : row && row->header ? std::string("MOD") : std::string("HALO: REACH \xC2\xB7 CAMPAIGN");
         float y = HeroBanner(ui, ImVec2(px, bannerTop), pw, bannerH, row ? row->scenario : "", kicker,
-                             row ? (row->header ? row->mod->title.c_str() : row->name.c_str()) : "", blurb);
+                             row ? (row->header ? row->mod->title.c_str() : row->name.c_str()) : "", blurb,
+                             row ? row->imageLarge : std::filesystem::path());
         y += DifficultyTiles(ui, "diff", ImVec2(px, y), pw, st.difficulty, st.focusRow == 1) + 8.0f * ui.s;
         const std::string skullText = SkullSummary(st.skulls);
         if (OptionRow(ui, "skulls", ImVec2(px, y), pw, "SKULLS", skullText.c_str(), st.focusRow == 2)) {
@@ -3619,13 +3791,19 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
                                  (st.focusRow == 3 && AcceptPressed())) && canStart) || (AutoPlayNow() && canStart);
         const char* coopSub = st.lobbyNetMode == 1 ? (st.lobbyPrivacy == 0 ? "Public Online P2P" : "Private Online P2P") : "Local LAN Co-op";
         const bool hostCoop = BigAction(ui, "coop", ImVec2(px + bw + 10.0f * ui.s, actionsY), pw - bw - 10.0f * ui.s, "HOST CO-OP", coopSub, true, canStart);
+        const std::string launchScenario = mission ? (mission->launchScenario.empty() ? mission->scenario : mission->launchScenario) : std::string();
         if (hostCoop) {
-            SetupHostLobby(st, mission->scenario, "campaign", "", "Campaign", st.difficulty, st.skulls, 4, mission->mod);
+            SetupHostLobby(st, launchScenario, "campaign", "", "Campaign", st.difficulty, st.skulls, 4, mission->mod,
+                           mission->mapOverride, mission->name, mission->imageLoading, mission->imageThumbnail);
         } else if (startSolo) {
             choice.play = true;
             choice.host = false;
             choice.mode = "campaign";
-            choice.map = mission->scenario;
+            choice.map = launchScenario;
+            choice.mapOverride = mission->mapOverride;
+            choice.mapTitle = mission->name;
+            choice.mapImage = mission->imageLoading;
+            choice.mapThumb = mission->imageThumbnail;
             choice.difficulty = st.difficulty;
             choice.skulls = st.skulls;
             if (mod) { choice.modFolder = mod->folder; choice.modTitle = mod->title; }
@@ -3742,7 +3920,8 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         }
         const bool modded = source == 1;
         const ModMode modMode = ff ? ModMode::Firefight : ModMode::Multiplayer;
-        const std::vector<MapEntry> maps = modded ? ModdedMaps(modList, modMode, baseMaps, baseCount, st.openMods)
+        const std::string carrier = ff ? "ff60_icecave" : "70_boneyard";
+        const std::vector<MapEntry> maps = modded ? ModdedMaps(modList, modMode, baseMaps, baseCount, st.openMods, carrier)
                                                   : BaseMaps(baseMaps, baseCount);
         int& mapIndex = modded ? (ff ? st.ffModded : forge ? st.forgeModded : st.mpModded) : (ff ? st.ffMap : forge ? st.forgeMap : st.map);
         if (const std::string autoMap = AutoPlayMap(); !autoMap.empty() && !modded) {
@@ -3842,7 +4021,8 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         const std::string kicker = mod ? "MOD: " + Upper(mod->title)
                                  : std::string(ff ? "HALO: REACH \xC2\xB7 FIREFIGHT" : forge ? "HALO: REACH \xC2\xB7 FORGE" : "HALO: REACH \xC2\xB7 MULTIPLAYER");
         float y = HeroBanner(ui, ImVec2(px, bannerTop), pw, bannerH, row ? row->scenario : "", kicker,
-                             row ? (row->header ? row->mod->title.c_str() : row->name.c_str()) : "", blurb);
+                             row ? (row->header ? row->mod->title.c_str() : row->name.c_str()) : "", blurb,
+                             row ? row->imageLarge : std::filesystem::path());
         int focusRows = 1;
         if (!forge) {
             const std::vector<MenuVariant>& list = ff ? ctx.ffVariants : ctx.variants;
@@ -3964,12 +4144,20 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
                 }
             }
             const std::string mode = ff ? "firefight" : (forge ? "forge" : "multiplayer");
-            SetupHostLobby(st, map ? map->scenario : "20_sword_slayer", mode, varPath, varName, ff ? st.difficulty : 1, 0,
-                           ff ? 4 : st.sessionMaxPlayers, map ? map->mod : nullptr);
+            const std::string lobbyScenario = map ? (map->launchScenario.empty() ? map->scenario : map->launchScenario)
+                                                  : std::string("20_sword_slayer");
+            SetupHostLobby(st, lobbyScenario, mode, varPath, varName, ff ? st.difficulty : 1, 0,
+                           ff ? 4 : st.sessionMaxPlayers, map ? map->mod : nullptr, map ? map->mapOverride : std::filesystem::path(),
+                           map ? map->name : std::string(), map ? map->imageLoading : std::filesystem::path(),
+                           map ? map->imageThumbnail : std::filesystem::path());
         } else if (startSolo) {
             choice.play = true;
             choice.host = false;
-            choice.map = map->scenario;
+            choice.map = map->launchScenario.empty() ? map->scenario : map->launchScenario;
+            choice.mapOverride = map->mapOverride;
+            choice.mapTitle = map->name;
+            choice.mapImage = map->imageLoading;
+            choice.mapThumb = map->imageThumbnail;
             if (mod) { choice.modFolder = mod->folder; choice.modTitle = mod->title; }
             if (ff) {
                 choice.mode = "firefight";
@@ -4207,8 +4395,33 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
             if (_wcsicmp(argv[i], L"-mod-prompt-demo") == 0) {
                 ModDownloadPrompt::Get().Show("9999999999", "CUSTOM MAP PACK", {}, true);
             }
+            // Test-only: a real Workshop id, so the Steam Web API picture / download size can be captured.
+            if (_wcsicmp(argv[i], L"-mod-prompt-id") == 0 && i + 1 < argc) {
+                std::string id;
+                for (const wchar_t* c = argv[i + 1]; c && *c; ++c) id.push_back(static_cast<char>(*c));
+                ModDownloadPrompt::Get().Show(id, "Workshop mod", {}, false);
+            }
         }
         if (argv) LocalFree(argv);
+    }
+    // Test-only: "-open-mods" expands every Workshop mod heading, so -auto-play-map / -menu-capture can
+    // reach the modded map rows without a click.
+    {
+        int argc = 0;
+        LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+        bool openAll = false;
+        for (int i = 1; argv && i < argc; ++i) {
+            if (_wcsicmp(argv[i], L"-open-mods") == 0) openAll = true;
+        }
+        if (argv) LocalFree(argv);
+        if (openAll) {
+            for (const ModEntry& mod : ctx.mods) {
+                ctx.st.openMods.insert(OpenKey(ModMode::Campaign, mod));
+                ctx.st.openMods.insert(OpenKey(ModMode::Firefight, mod));
+                ctx.st.openMods.insert(OpenKey(ModMode::Multiplayer, mod));
+            }
+            NOBLE_INFO("FrontEndMenu: -open-mods expanded {} mod heading(s)", ctx.mods.size());
+        }
     }
     ctx.settingsPanel.SetTab(startTab);
     ctx.careerPanel.SetTab(startTab);
@@ -4566,6 +4779,10 @@ void FrontEndMenu::RenderOverlayImpl(IDXGISwapChain* swapChain, bool clear) {
                 if (!choice.variantPath.empty()) args += L" -variant \"" + ToWide(choice.variantPath) + L"\"";
                 if (choice.skulls != 0) args += L" -skulls " + std::to_wstring(choice.skulls);
                 if (!choice.modFolder.empty()) args += L" -mod \"" + choice.modFolder.wstring() + L"\"";
+                if (!choice.mapOverride.empty()) args += L" -map-override \"" + choice.mapOverride.wstring() + L"\"";
+                if (!choice.mapTitle.empty()) args += L" -map-title \"" + ToWide(choice.mapTitle) + L"\"";
+                if (!choice.mapImage.empty()) args += L" -map-image \"" + choice.mapImage.wstring() + L"\"";
+                if (!choice.mapThumb.empty()) args += L" -map-thumb \"" + choice.mapThumb.wstring() + L"\"";
                 if (choice.host) {
                     args += L" -host";
                     if (choice.hostOnline) args += L" -online";

@@ -643,6 +643,12 @@ UiTexture MapPreview(const std::string& scenario, bool large) {
     return {};
 }
 
+UiTexture ImageFile(const std::filesystem::path& path) {
+    if (path.empty()) return {};
+    std::lock_guard<std::mutex> lock(s_mutex);
+    return Cached("file:" + path.string(), [&] { return LoadImageFile(path); });
+}
+
 UiTexture MapPhoto(const std::string& scenario) {
     if (scenario.empty()) return {};
     if (UiTexture preview = MapPreview(scenario, true)) return preview;

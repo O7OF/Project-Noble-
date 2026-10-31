@@ -54,6 +54,37 @@ The packaged executable is unsigned and performs legitimate but AV-sensitive hos
 - The earlier Forge World auto-map override was reverted: base maps load normally; modded palettes come only from mods. The HREK Thorage tag-data swap (O7 Pelican + Phantom MP, `wraith_d` driver, `warthog_p` passenger seats) is documented in `docs/FORGE-THORAGE.md`.
 - Automatic updates are **not implemented**. Suggested path: publish a signed manifest (`version`, `url`, `sha256`) from ServerTestDeploy, check it at startup, download to a temp file, verify, then replace `Noble.exe` on next launch. Do not auto-install unsigned files.
 
+## 0. Pick up here (2026-10-31, 07:40 ET) - Workshop map carriers: Campaign-to-Forge, custom games and Firefight maps now launch from the picker (@deepseek / DeepSeek)
+
+**Version:** 0.8.9 (Workshop Maps & Prompts). **Built and verified:** `build\bin\Release\noble-client.exe`, `noble-dev.exe`, and the packaged `Documents\Noble Launcher\Noble.exe` (picker art, loading screen, Workshop prompt).
+
+**The bug.** The MODDED tabs only enabled a mod map whose scenario name was already a stock Reach map. The whole Campaign-to-Forge mod (22 maps: `m05final` ... `m80final`) therefore showed grey rows reading "A new map: Noble can only start maps that are in Reach so far" and could not be clicked, which is the "can't launch my campaign-to-forge mod maps from the picker" report.
+
+**Why a new scenario is hard.** `BlamEngine::ResolveMapId` only knows the stock table. The engine also selects the map file by launch index/map id, not by a free-form name: loading `m10final.map` as Forge World (map id 3006) reaches 5% and then the engine throws 0xC06D007E inside `haloreach.dll`; the header name is not the blocker (patching it to `forge_halo` still stalls). The scenario tag carries the id the engine actually wants. `scenarios\m10final.scenario` reports `map id = 1080`, i.e. **Boneyard**, and every one of the 22 Campaign-to-Forge scenarios is 1080.
+
+**The fix: serve the mod's .map in place of a stock map whose map id matches.**
+- `src/vfs/VFS.*`: `VFS::SetMapOverride(carrier, mapFile)` / `ClearMapOverride()`. `ResolvePath` answers `haloreach\maps\<carrier>.map` with the mod file before the active mod, user storage or MCC; `-map-override <path>` on the command line sets it, and both the menu relaunch and `Relaunch` args forward it.
+- The launch block, launch index and map info stay the stock carrier's. Boneyard is the carrier for the Campaign-to-Forge/Forge canvases (map id 1080), Glacier (`ff60_icecave`, 7130) for Firefight and Winter Contingency (`m10`, 5010) for campaign. Mode still follows the screen: Forge -> forge, Custom Game -> multiplayer, Firefight -> firefight, Campaign -> campaign.
+- `src/ui/ModCatalog.*`: `ModMap::hasMapFile` (checked once at scan) and `forgeMap` (the JSON `ForgeMap` flag).
+- `src/ui/FrontEndMenu.*`: `MapEntry::launchScenario` / `mapOverride` / `custom`; `ModMaps` now enables every map whose `maps\<scenario>.map` exists, shows "Custom map - loads through Boneyard.", and carries the override through solo, host and relaunch paths. `MapEntry` construction for stock lists passes empty override fields.
+- `data\map_carriers.json`: optional `{ "<mod scenario>": "<stock carrier scenario>" }` for a mod built on a different base (e.g. Forge World 3006, Sword Base 1000). Defaults are Boneyard / Glacier / Winter Contingency.
+- `-open-mods` (test-only) expands every mod heading so `-auto-play-map` / `-menu-capture` can reach the rows.
+
+**Map names and mod art.** The map JSON's `Images.Large / Thumbnail / LoadingScreen` are read into `ModMap` (absolute paths, existence-checked once at scan). `UiArt::ImageFile(path)` decodes a mod PNG/JPG with WIC and caches it, so the picker rows show the mod thumbnails and the banner shows its large art instead of a black box. The launch carries `-map-title`, `-map-image` and `-map-thumb`; main forwards them to `PauseMenu::SetLoadingMapInfo`, which draws the mod's loading-screen picture, the mod title ("NIGHTFALL CAMPAIGN TO FORGE") and the mod thumbnail inset on Noble's loading screen. The post-game "THIS MAP" line uses the same title. Verified with `scratch\forge-picker-images.png` (all 22 rows with their art) and `scratch\mod-loading-screen.png` (Nightfall loading screen).
+
+**Text bounds and smart wrapping.** `Ellipsize` measures the uppercase label (the old order measured mixed case, so lowercase names still ran under the next column) and cuts at a word boundary with "..."; list rows, the mod heading, the banner title and button subtitles use it, and the banner title shrinks from 34 px down to 22 px before it gives up characters. `FitWrapped` limits the description under the map picture to the two lines `BlurbBlockHeight` reserves, so a long mod description cannot run into GAME OPTIONS. Verified with `scratch\picker-text-bounds.png` (rows 01-10, no overflow) and `scratch\header-text-bounds.png`.
+
+**Steam Workshop prompt picture and size.** `ModDownloadPrompt` now starts a detached worker on `Show`: it POSTs to `ISteamRemoteStorage/GetPublishedFileDetails/v1/`, downloads `preview_url` into `data\ui\cache\workshop\<id>.<ext>`, and reads the title and size. Steam returns `file_size: "0"` for this item (and other hcontent_file builds), so when that is zero it also downloads the Workshop page and reads the `File Size` / `detailsStatRight` line. The modal draws the Steam picture at 230 px next to the title and "Download size: 20.644 GB". Verified with `scratch\workshop-prompt-size.png`; the `-mod-prompt-id <id>` test flag opens the real prompt for a capture.
+
+**Verified in game.** `capture_900001.bmp` from the picker relaunch shows Forge with the PLACE OBJECT palette, budget $999999 and the campaign space loaded; a separate Custom Game run shows Slayer on `m20final`; the Icecave Firefight mod still loads `ff60_icecave.map` from its Workshop folder. Picker capture shows all 22 rows enabled under "HALO: REACH CAMPAIGN TO FORGE (22)".
+
+**Known limits.** A guest in a host's lobby gets the carrier map and the mod id, not the custom scenario, so the guest still loads the stock carrier (the lobby advert has no field for the modded scenario yet). The engine's own pause/game UI shows the carrier's name (Boneyard) because that is the map id it launched. A mod map built on a different base needs a `data\map_carriers.json` entry until the scenario id can be read at scan time (the mod's `.scenario` source tags would need a tag-layout parser).
+
+**Commands used.** `cmake --build build --config Release --target noble-client`; run `noble-client.exe -menu-screen forge -menu-tab 1 -open-mods` to see the rows. Test-only override run:
+```
+noble-client.exe -map 70_boneyard -mode forge -variant "<MCC>\haloreach\game_variants\00_basic_editing_054.bin" -mod "<workshop>\3815090293" -map-override "<workshop>\3815090293\maps\m10final.map"
+```
+
 ## 0. Pick up here (2026-10-31, 04:43 ET) - Night shift summary so far: queue worked through, stopped early (@claude)
 
 **This is not the 11:30 close.** I stopped at 04:43 ET, well before the end of the shift. Everything below is pushed, the tree is clean and no client of mine is running. The unblocked work still open is listed under **Next**.

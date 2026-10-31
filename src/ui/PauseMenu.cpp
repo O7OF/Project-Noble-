@@ -57,6 +57,9 @@ std::atomic<ULONGLONG> s_gameOverAt{0};
 std::mutex s_mapMutex;
 std::string s_loadingMap;
 std::string s_loadingMapName;
+std::string s_displayMapName;
+std::filesystem::path s_loadingImage;
+std::filesystem::path s_loadingThumb;
 
 struct MapName {
   const char *scenario;
@@ -245,6 +248,20 @@ void PauseMenu::SetLoadingMap(const std::string &scenario) {
   std::lock_guard<std::mutex> lock(s_mapMutex);
   s_loadingMap = scenario;
   s_loadingMapName = Upper(DisplayName(scenario));
+  s_displayMapName.clear();
+  s_loadingImage.clear();
+  s_loadingThumb.clear();
+}
+
+void PauseMenu::SetLoadingMapInfo(const std::string &title, const std::filesystem::path &image,
+                                  const std::filesystem::path &thumbnail) {
+  std::lock_guard<std::mutex> lock(s_mapMutex);
+  if (!title.empty()) {
+    s_displayMapName = title;
+    s_loadingMapName = Upper(title);
+  }
+  s_loadingImage = image;
+  s_loadingThumb = thumbnail;
 }
 
 void PauseMenu::DrawMenu(HWND hwnd) {
@@ -1393,12 +1410,16 @@ void PauseMenu::DrawGameOver(HWND hwnd) {
     overButton |= ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
   }
   if (hostRole || guestRole) {
-    std::string current;
+    std::string current, display;
     {
       std::lock_guard<std::mutex> lock(s_mapMutex);
       current = s_loadingMap;
+      display = s_displayMapName;
     }
-    const std::string strip = "THIS MAP: " + (current.empty() ? std::string("-") : Upper(MapNames::Display(current))) + "    NEXT: NOT SET";
+    const std::string shownMap = !display.empty() ? Upper(display)
+                                : current.empty() ? std::string("-")
+                                                  : Upper(MapNames::Display(current));
+    const std::string strip = "THIS MAP: " + shownMap + "    NEXT: NOT SET";
     Text(dl, smallFont, 15.0f * s, ImVec2(bx, by - 26.0f * s), kTextDim, strip.c_str());
   }
   if (t < tEnd) {
@@ -1421,16 +1442,19 @@ void PauseMenu::DrawLoading() {
   // bottom-left, a moving bar (the engine's progress callback doesn't report
   // real progress, so the bar only shows that it's working).
   std::string mapName, scenario;
+  std::filesystem::path modImage, modThumb;
   {
     std::lock_guard<std::mutex> lock(s_mapMutex);
     mapName = s_loadingMapName;
     scenario = s_loadingMap;
+    modImage = s_loadingImage;
+    modThumb = s_loadingThumb;
   }
   dl->AddRectFilledMultiColor(ImVec2(0, 0), ImVec2(w, h),
                               IM_COL32(10, 16, 24, 255),
                               IM_COL32(10, 16, 24, 255), IM_COL32(2, 4, 8, 255),
                               IM_COL32(2, 4, 8, 255));
-  const UiTexture scene = UiArt::LoadingBackground(scenario);
+  const UiTexture scene = modImage.empty() ? UiArt::LoadingBackground(scenario) : UiArt::ImageFile(modImage);
   if (scene) {
     UiArt::DrawCover(dl, scene, ImVec2(0, 0), ImVec2(w, h));
     dl->AddRectFilledMultiColor(ImVec2(0, h * 0.55f), ImVec2(w, h),
@@ -1442,7 +1466,7 @@ void PauseMenu::DrawLoading() {
   const bool campaign = scenario.size() >= 3 && scenario[0] == 'm' &&
                         scenario[1] >= '0' && scenario[1] <= '9';
   if (!campaign) {
-    const UiTexture preview = UiArt::MapPreview(scenario, true);
+    const UiTexture preview = modThumb.empty() ? UiArt::MapPreview(scenario, true) : UiArt::ImageFile(modThumb);
     if (preview) {
       const float pw = w * 0.30f, ph = pw * 292.0f / 668.0f;
       const ImVec2 p0(w * 0.93f - pw, h * 0.80f - ph), p1(w * 0.93f, h * 0.80f);

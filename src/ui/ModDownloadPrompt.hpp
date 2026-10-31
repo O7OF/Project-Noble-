@@ -4,9 +4,13 @@
 
 #include <filesystem>
 #include <functional>
+#include <memory>
 #include <string>
 
 namespace noble {
+
+// Steam Web API details (title, download size, preview picture) fetched off the render thread.
+struct WorkshopDetails;
 
 // The "this lobby needs a Workshop mod you do not have" dialog. It is a modal over the menu, so the
 // Server browser never leaves the server list until the player downloads the mod or cancels. DOWNLOAD &
@@ -35,6 +39,8 @@ private:
     // Closes the popup from inside BeginPopupModal and clears the pending callback.
     void Cancel();
     void BeginDownload();
+    // Starts the background Steam Web API request for the item's title, size and preview picture.
+    void StartDetailsFetch();
 
     State m_state = State::Hidden;
     bool m_popupOpened = false;
@@ -45,6 +51,7 @@ private:
     std::filesystem::path m_installedFolder;
     std::function<void(const std::filesystem::path&)> m_onReady;
     SteamWorkshop::Download m_download;
+    std::shared_ptr<WorkshopDetails> m_details;
 };
 
 } // namespace noble
