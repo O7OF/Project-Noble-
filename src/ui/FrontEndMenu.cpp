@@ -1433,6 +1433,7 @@ struct MenuState {
     int lobbyMenuRow = 0;          // Focused row in pre-game options list
     bool lobbyReady = true;        // Player ready toggle
     int lobbyRosterSelection = 0;  // Selected player index in party roster
+    int lobbyRosterScroll[2] = {}; // First row shown in each roster column (red or all, blue)
     // Social screen state
     int socialTab = 0;              // 0 = Friends, 1 = Requests, 2 = Find Players
     char socialSearchBuf[64] = "";
@@ -2522,10 +2523,9 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         MenuSounds::Click();
     }
 
-    // Right column: the map banner, then the session's slots. Sixteen slots are always laid out as two columns
-    // of eight, so a filling lobby never moves anything.
+    // Right column: the map banner, then the session's roster in a panel of fixed size, so a filling lobby never moves anything.
     const float bannerY = top + 96.0f * ui.s;
-    const float bannerH = 112.0f * ui.s;
+    const float bannerH = 92.0f * ui.s;
     std::string kicker = !st.lobbyModTitle.empty() ? "MOD: " + Upper(st.lobbyModTitle)
                        : campaign ? std::string("HALO: REACH \xC2\xB7 CAMPAIGN")
                        : forge ? std::string("HALO: REACH \xC2\xB7 FORGE")
@@ -2537,7 +2537,8 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
     const float slotH = 40.0f * ui.s;
     const float slotGap = 2.0f * ui.s;
     const float slotPad = 6.0f * ui.s;
-    const float panelH = headH + slotPad * 2.0f + (slotH + slotGap) * 8.0f - slotGap;
+    const float teamHeadH = 20.0f * ui.s;
+    const float panelH = headH + teamHeadH + slotPad + (slotH + slotGap) * 8.0f - slotGap;
     ui.dl->AddRectFilled(ImVec2(px, headY), ImVec2(px + pw, headY + panelH), panelFill);
     ui.dl->AddRect(ImVec2(px, headY), ImVec2(px + pw, headY + panelH), panelEdge);
     Text(ui, NobleStyle::TitleFont(), 18.0f, ImVec2(px + 10.0f * ui.s, headY + 4.0f * ui.s), kWhite, "MY GAME SESSION");
@@ -2548,45 +2549,153 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
     ui.dl->AddLine(ImVec2(px, headY + headH), ImVec2(px + pw, headY + headH), kRuleLine, 1.0f);
 
     const int rosterCount = static_cast<int>(st.lobbyRoster.size());
+    const int slotCount = std::clamp(std::max(st.lobbyMaxPlayers, rosterCount), 1, 128);
+    const int openSlots = std::max(0, slotCount - rosterCount);
+    const auto& ownProf = UIManager::GetArmorCustomizer().GetProfile();
+    const std::string localName = AuthClient::Get().IsLoggedIn() ? AuthClient::Get().GetUsername() : Settings::Get().Snapshot().playerName;
+    auto isLocal = [&](const LobbyPlayer& p) {
+        return p.isHost ? st.isLobbyHost : (!p.username.empty() && p.username == localName);
+    };
+
+    // Red on the left and blue on the right, each with its own scroll position; a game without teams is one list.
+    // Only the rows in view are drawn, so a 128-player roster costs the same as a full 16.
+    constexpr int kVisibleRows = 8;
+    struct RosterColumn {
+        const char* title;
+        ImU32 color;
+        std::vector<int> players;
+        int* scroll;
+        float x;
+        float w;
+        int rows;
+    };
+    bool hasTeams = false;
+    for (const LobbyPlayer& p : st.lobbyRoster) hasTeams = hasTeams || p.team != 0;
+    std::vector<RosterColumn> columns;
+    const float teamW = (pw - slotPad * 3.0f) * 0.5f;
+    if (hasTeams) {
+        columns.push_back({ "RED TEAM", IM_COL32(190, 34, 30, 255), {}, &st.lobbyRosterScroll[0], px + slotPad, teamW, 0 });
+        columns.push_back({ "BLUE TEAM", IM_COL32(36, 62, 170, 255), {}, &st.lobbyRosterScroll[1], px + slotPad * 2.0f + teamW, teamW, 0 });
+    } else {
+        columns.push_back({ "PLAYERS", kAccent, {}, &st.lobbyRosterScroll[0], px + slotPad, pw - slotPad * 2.0f, 0 });
+    }
+    for (int i = 0; i < rosterCount; ++i) {
+        columns[hasTeams && st.lobbyRoster[i].team == 2 ? 1 : 0].players.push_back(i);
+    }
+    int openLeft = openSlots;  // shared out, so the two columns together never show more OPEN rows than there are free slots
+    for (size_t col = 0; col < columns.size(); ++col) {
+        RosterColumn& c = columns[col];
+        const int count = static_cast<int>(c.players.size());
+        const int share = col + 1 < columns.size() ? (openLeft + 1) / 2 : openLeft;
+        openLeft -= share;
+        c.rows = hasTeams ? std::max(count, std::min(kVisibleRows, count + share)) : slotCount;
+    }
+
+    // LB/RB step through the players, LT/RT page within the column, the wheel scrolls the column under the pointer.
+    auto keepInView = [&](int rosterIndex) {
+        for (RosterColumn& c : columns) {
+            const auto it = std::find(c.players.begin(), c.players.end(), rosterIndex);
+            if (it == c.players.end()) continue;
+            const int row = static_cast<int>(it - c.players.begin());
+            if (row < *c.scroll) *c.scroll = row;
+            if (row >= *c.scroll + kVisibleRows) *c.scroll = row - kVisibleRows + 1;
+        }
+    };
     if (rosterCount > 0) {
         st.lobbyRosterSelection = std::clamp(st.lobbyRosterSelection, 0, rosterCount - 1);
         const bool prev = ImGui::IsKeyPressed(ImGuiKey_Q, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false);
         const bool next = ImGui::IsKeyPressed(ImGuiKey_E, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false);
         if (prev != next) {
             st.lobbyRosterSelection = (st.lobbyRosterSelection + (next ? 1 : -1) + rosterCount) % rosterCount;
+            keepInView(st.lobbyRosterSelection);
             MenuSounds::Scroll();
+        }
+        const bool pageUp = ImGui::IsKeyPressed(ImGuiKey_PageUp, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadL2, false);
+        const bool pageDown = ImGui::IsKeyPressed(ImGuiKey_PageDown, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadR2, false);
+        if (pageUp != pageDown) {
+            for (RosterColumn& c : columns) {
+                const auto it = std::find(c.players.begin(), c.players.end(), st.lobbyRosterSelection);
+                if (it == c.players.end()) continue;
+                const int row = std::clamp(static_cast<int>(it - c.players.begin()) + (pageDown ? kVisibleRows : -kVisibleRows),
+                                           0, static_cast<int>(c.players.size()) - 1);
+                st.lobbyRosterSelection = c.players[row];
+                *c.scroll += pageDown ? kVisibleRows : -kVisibleRows;
+                keepInView(st.lobbyRosterSelection);
+                MenuSounds::Scroll();
+                break;
+            }
         }
     }
-    const int slotCount = std::clamp(std::max(st.lobbyMaxPlayers, rosterCount), 1, 16);
-    const float slotW = (pw - slotPad * 3.0f) * 0.5f;
-    const auto& ownProf = UIManager::GetArmorCustomizer().GetProfile();
-    const std::string localName = AuthClient::Get().IsLoggedIn() ? AuthClient::Get().GetUsername() : Settings::Get().Snapshot().playerName;
-    for (int idx = 0; idx < slotCount; ++idx) {
-        const ImVec2 s0(px + slotPad + (idx % 16 >= 8 ? slotW + slotPad : 0.0f), headY + headH + slotPad + (idx % 8) * (slotH + slotGap));
-        const ImVec2 s1(s0.x + slotW, s0.y + slotH);
-        if (idx >= rosterCount) {
-            ui.dl->AddRectFilled(s0, s1, IM_COL32(255, 255, 255, 8));
-            ui.dl->AddRect(s0, s1, IM_COL32(255, 255, 255, 24));
-            Text(ui, NobleStyle::SmallFont(), 14.0f, ImVec2(s0.x + 12.0f * ui.s, s0.y + 12.0f * ui.s), kDisabled, "OPEN");
-            continue;
+
+    bool rosterOverflows = false;
+    const float teamY = headY + headH;
+    const float listY = teamY + teamHeadH;
+    const float listH = (slotH + slotGap) * kVisibleRows - slotGap;
+    for (size_t col = 0; col < columns.size(); ++col) {
+        RosterColumn& c = columns[col];
+        const bool overflow = c.rows > kVisibleRows;
+        rosterOverflows = rosterOverflows || overflow;
+        if (overflow && ImGui::IsMouseHoveringRect(ImVec2(c.x, listY), ImVec2(c.x + c.w, listY + listH), false)) {
+            const float wheel = ImGui::GetIO().MouseWheel;
+            if (wheel != 0.0f) *c.scroll -= static_cast<int>(wheel) * 2;
         }
-        const LobbyPlayer& player = st.lobbyRoster[idx];
-        const bool isLocalPlayer = player.isHost ? st.isLobbyHost : (!player.username.empty() && player.username == localName);
-        const bool selected = st.lobbyRosterSelection == idx;
-        PlayerRow(ui, s0, slotW,
-                  player.rankIndex >= 0 ? player.rankIndex : (isLocalPlayer ? Career::RankIndex(Career::Get().credits) : -1),
-                  player.emblemId > 0 ? player.emblemId : (isLocalPlayer ? ownProf.emblemIndex : 0),
-                  player.nameplateId > 0 ? player.nameplateId : (isLocalPlayer ? ownProf.nameplateIndex : 0),
-                  player.team,
-                  player.serviceTag, player.username, player.isDev, selected,
-                  player.emblemBackgroundId > 0 ? player.emblemBackgroundId : (isLocalPlayer ? ownProf.emblemBackgroundIndex : 0));
-        if (selected) ui.dl->AddRect(s0, s1, kAccent, 0.0f, 0, 1.5f * ui.s);
-        char slotId[32];
-        std::snprintf(slotId, sizeof(slotId), "##lobby_slot_%d", idx);
-        ImGui::SetCursorScreenPos(s0);
-        if (ImGui::InvisibleButton(slotId, ImVec2(slotW, slotH))) {
-            st.lobbyRosterSelection = idx;
-            MenuSounds::Scroll();
+        *c.scroll = std::clamp(*c.scroll, 0, std::max(0, c.rows - kVisibleRows));
+
+        // Sticky header: stays put while the rows scroll under it.
+        const float cy = teamY + teamHeadH * 0.5f;
+        ui.dl->AddCircleFilled(ImVec2(c.x + 7.0f * ui.s, cy), 4.5f * ui.s, c.color, 16);
+        Text(ui, NobleStyle::SmallFont(), 14.0f, ImVec2(c.x + 17.0f * ui.s, teamY + 2.0f * ui.s), kWhite, c.title);
+        char range[48];
+        const int shownLast = std::min(*c.scroll + kVisibleRows, c.rows);
+        if (overflow) std::snprintf(range, sizeof(range), "%d-%d of %d", *c.scroll + 1, shownLast, c.rows);
+        else std::snprintf(range, sizeof(range), "%zu", c.players.size());
+        const float rangeW = TextWidth(NobleStyle::SmallFont(), 14.0f * ui.s, range);
+        Text(ui, NobleStyle::SmallFont(), 14.0f, ImVec2(c.x + c.w - rangeW, teamY + 2.0f * ui.s), kDim, range);
+
+        // The local player is never scrolled out of sight: while their row is off screen it takes the last row.
+        int localRow = -1;
+        for (size_t r = 0; r < c.players.size(); ++r) {
+            if (isLocal(st.lobbyRoster[c.players[r]])) { localRow = static_cast<int>(r); break; }
+        }
+        const bool pinLocal = localRow >= 0 && (localRow < *c.scroll || localRow >= *c.scroll + kVisibleRows);
+        const float barW = overflow ? 6.0f * ui.s : 0.0f;
+        const float rowW = c.w - barW;
+        for (int v = 0; v < kVisibleRows && *c.scroll + v < c.rows; ++v) {
+            const int row = (pinLocal && v == kVisibleRows - 1) ? localRow : *c.scroll + v;
+            const ImVec2 s0(c.x, listY + v * (slotH + slotGap));
+            const ImVec2 s1(s0.x + rowW, s0.y + slotH);
+            if (row >= static_cast<int>(c.players.size())) {
+                ui.dl->AddRectFilled(s0, s1, IM_COL32(255, 255, 255, 8));
+                ui.dl->AddRect(s0, s1, IM_COL32(255, 255, 255, 24));
+                Text(ui, NobleStyle::SmallFont(), 14.0f, ImVec2(s0.x + 12.0f * ui.s, s0.y + 12.0f * ui.s), kDisabled, "OPEN");
+                continue;
+            }
+            const int idx = c.players[row];
+            const LobbyPlayer& player = st.lobbyRoster[idx];
+            const bool local = isLocal(player);
+            const bool selected = st.lobbyRosterSelection == idx;
+            PlayerRow(ui, s0, rowW,
+                      player.rankIndex >= 0 ? player.rankIndex : (local ? Career::RankIndex(Career::Get().credits) : -1),
+                      player.emblemId > 0 ? player.emblemId : (local ? ownProf.emblemIndex : 0),
+                      player.nameplateId > 0 ? player.nameplateId : (local ? ownProf.nameplateIndex : 0),
+                      player.team,
+                      player.serviceTag, player.username, player.isDev, selected,
+                      player.emblemBackgroundId > 0 ? player.emblemBackgroundId : (local ? ownProf.emblemBackgroundIndex : 0));
+            if (selected) ui.dl->AddRect(s0, s1, kAccent, 0.0f, 0, 1.5f * ui.s);
+            char slotId[32];
+            std::snprintf(slotId, sizeof(slotId), "##lobby_slot_%d", idx);
+            ImGui::SetCursorScreenPos(s0);
+            if (ImGui::InvisibleButton(slotId, ImVec2(rowW, slotH))) {
+                st.lobbyRosterSelection = idx;
+                MenuSounds::Scroll();
+            }
+        }
+        if (overflow) {
+            const float trackX = c.x + c.w - 3.0f * ui.s;
+            ui.dl->AddRectFilled(ImVec2(trackX, listY), ImVec2(trackX + 3.0f * ui.s, listY + listH), IM_COL32(255, 255, 255, 24));
+            const float thumbH = std::max(listH * kVisibleRows / c.rows, 18.0f * ui.s);
+            const float thumbY = listY + (listH - thumbH) * *c.scroll / std::max(1, c.rows - kVisibleRows);
+            ui.dl->AddRectFilled(ImVec2(trackX, thumbY), ImVec2(trackX + 3.0f * ui.s, thumbY + thumbH), kAccent);
         }
     }
 
@@ -2611,6 +2720,7 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
 
     std::vector<HintExtra> extras = { { InputPrompts::Button::Y, "Y", "Friends" } };
     if (!hostEp.empty()) extras.push_back({ InputPrompts::Button::X, "X", "Copy invite" });
+    if (rosterOverflows) extras.push_back({ InputPrompts::Button::RT, "PGDN", "Page" });
     DrawHints(ui, { { Prompt::Accept, "Select" }, { Prompt::Back, "Back" }, { Prompt::Tabs, "Players" } }, extras);
 }
 
@@ -3905,17 +4015,21 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
         }
         if (argv) LocalFree(argv);
     }
-    // Test-only: "-lobby-demo host|guest [-lobby-demo-players N] [-lobby-demo-mode campaign|firefight|forge]" opens
+    // Test-only: "-lobby-demo host|guest [-lobby-demo-players N] [-lobby-demo-red N] [-lobby-demo-ffa 1] [-lobby-demo-mode campaign|firefight|forge]" opens
     // the pre-game lobby with a made-up roster and no network, so a capture can show every state on one PC.
     {
         int argc = 0;
         LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
         std::wstring demo, demoMode;
         int demoPlayers = 1;
+        int demoRed = -1;
+        bool demoFfa = false;
         for (int i = 1; argv && i + 1 < argc; ++i) {
             if (_wcsicmp(argv[i], L"-lobby-demo") == 0) demo = Lower(argv[i + 1]);
-            if (_wcsicmp(argv[i], L"-lobby-demo-players") == 0) demoPlayers = std::clamp(_wtoi(argv[i + 1]), 0, 16);
+            if (_wcsicmp(argv[i], L"-lobby-demo-players") == 0) demoPlayers = std::clamp(_wtoi(argv[i + 1]), 0, 128);
             if (_wcsicmp(argv[i], L"-lobby-demo-mode") == 0) demoMode = Lower(argv[i + 1]);
+            if (_wcsicmp(argv[i], L"-lobby-demo-red") == 0) demoRed = _wtoi(argv[i + 1]);   // that many red, the rest blue
+            if (_wcsicmp(argv[i], L"-lobby-demo-ffa") == 0) demoFfa = _wtoi(argv[i + 1]) != 0;
         }
         if (argv) LocalFree(argv);
         if (!demo.empty()) {
@@ -3926,6 +4040,7 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
             if (demoMode == L"campaign") { st.lobbyMode = "campaign"; st.lobbyMap = kMissions[0].scenario; st.lobbyMaxPlayers = 4; }
             else if (demoMode == L"firefight") { st.lobbyMode = "firefight"; st.lobbyMap = kFirefightMaps[0].scenario; st.lobbyVariantName = "Firefight"; }
             else if (demoMode == L"forge") { st.lobbyMode = "forge"; }
+            st.lobbyMaxPlayers = std::max(st.lobbyMaxPlayers, demoPlayers);
             if (!st.isLobbyHost && demoPlayers > 0) st.lobbyRosterSelection = demoPlayers > 1 ? 1 : 0;
             for (int i = 0; i < demoPlayers; ++i) {
                 LobbyPlayer p;
@@ -3933,7 +4048,7 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
                 p.isHost = i == 0;
                 p.username = i == 0 ? "Noble Six" : "Spartan " + std::to_string(i + 1);
                 p.serviceTag = "N" + std::to_string(i + 10);
-                p.team = demoPlayers > 2 ? (i % 2) + 1 : 0;
+                p.team = demoFfa ? 0 : demoRed >= 0 ? (i < demoRed ? 1 : 2) : demoPlayers > 2 ? (i % 2) + 1 : 0;
                 st.lobbyRoster.push_back(p);
             }
             NOBLE_INFO("FrontEndMenu: -lobby-demo host={} players={} mode={}", st.isLobbyHost, demoPlayers, st.lobbyMode);
