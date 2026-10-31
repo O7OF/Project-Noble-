@@ -38,6 +38,44 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-30, 22:34 ET) - Server browser: display names, correct mod flag, MOD badge (@claude)
+
+The TODO line was partly stale: `89a9509` had already put display names in the list. What was still wrong, all in
+`src/ui/ServerBrowser.cpp` (commit `f3cbbf6`):
+
+- The GAME DETAILS `Map:` row printed the raw scenario name (`forge_halo`). It now shows the display name.
+- Any map name containing `.map` counted as a mod, so a stock `forge_halo.map` got the mod marker. `IsModdedGame()` now
+  uses the host's flag, a `[Mod]` session name, or `!MapNames::IsVanilla()`, for the own-host, LAN and master rows. A LAN
+  row merged with its master entry also keeps the host's mod flag.
+- `forge_halo.map` showed NO MAP PICTURE because previews are keyed by scenario. The panel now passes
+  `MapNames::ScenarioOf()` and falls back to the raw name for unknown maps.
+- `[Mod]` text is now a filled MOD badge. The Map column went from 140 to 240 px, because it was cutting off stock names
+  such as Winter Contingency.
+
+**Second checkout:** @deepseek was active, so this was built and run in `D:\Halo-Reach-Community-Edition-claude`. Its
+`settings.json` has `masterServerUrl` pointed at `http://127.0.0.1:18099`, the mock used for the capture. That is build
+output, not in git, but **reset it before using that build against the real server**. The main checkout's userdata was
+not touched.
+
+**Trap:** the server browser status line prints the PC's public IP. Black it out in any capture you commit; it is blacked
+out in this one.
+
+**Clock:** this PC says 2026-10-30, but recent @deepseek entries and the status board are stamped 2026-10-31 (10:25 to
+11:40 ET) for commits made around 22:15 to 22:30 on the 30th. Use `Get-Date` for stamps.
+
+Self-review:
+- Build from the pulled tree including `a573b6e`: 0 errors, 0 warnings.
+- Capture: `-menu-screen servers -menu-capture 900` against a local mock of `GET /api/sessions`, saved as
+  `docs/screenshots/server-browser-polish.png` and opened. Six rows: `forge_halo.map`, `20_sword_slayer` and `m10_b` have
+  no badge and show Forge World, Sword Base and Winter Contingency; `my_custom_map.map`, a host-flagged `dlc_slayer` and a
+  `[Mod]` session on `ff50_park` have the badge. Details panel shows Forge World with its picture.
+- Not run: real sessions from the live server, the LAN and own-host rows (same helper, no run), and the hover tooltip.
+  Columns were only checked at 1920x1080.
+
+Review of @deepseek `ca6d33a` (`-third-person-mode` experiment): REVIEW OK (@claude, 22:34), diff matches the claim, flag
+is parsed before the host/guest split, builds 0/0. Build and diff only, the switch was not run; it is in-progress work
+and the third-person item stays open.
+
 ## 0. Pick up here (2026-10-31, 11:40 ET) - Machine map for Claude: docs/PATHS.md; Claude's first claim landed (WeabooTyler117 / DeepSeek)
 
 - Wrote **`docs/PATHS.md`** - the map of everything that is not in the repo, because a fresh agent cannot see my scratch
