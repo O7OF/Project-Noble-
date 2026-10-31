@@ -4411,7 +4411,7 @@ void FrontEndMenu::RenderOverlayImpl(IDXGISwapChain* swapChain, bool clear) {
                 std::wstring args = L"-map \"" + ToWide(choice.map) + L"\" -mode \"" + ToWide(choice.mode) + L"\"";
                 // Forward the test-only capture hooks, so a harness that opened the menu can still photograph the
                 // match (the child is a fresh process with its own command line).
-                for (const wchar_t* flag : { L"-pause-at", L"-scoreboard-at", L"-scoreboard-demo", L"-quit-after", L"-fake-pad", L"-fake-pad-amount", L"-capture-at" }) {
+                for (const wchar_t* flag : { L"-pause-at", L"-scoreboard-at", L"-scoreboard-demo", L"-scoreboard-demo-players", L"-quit-after", L"-fake-pad", L"-fake-pad-amount", L"-capture-at" }) {
                     int argc = 0;
                     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
                     for (int a = 1; argv && a + 1 < argc; ++a) {

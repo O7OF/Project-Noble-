@@ -454,6 +454,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         std::thread([connectSessionId]() {
             noble::LobbyState st = noble::MasterServerClient::Get().FetchLobbyStateSync(connectSessionId);
             if (!st.ok || st.roster.empty()) return;
+            noble::PauseMenu::SetScoreboardSession(connectSessionId);
             std::vector<noble::PauseMenu::ScoreboardEntry> rows;
             const std::string me = noble::Settings::Get().Snapshot().playerName;
             for (const auto& p : st.roster) {
@@ -463,6 +464,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
                 e.rank = p.rankIndex;
                 e.emblem = p.emblemId;
                 e.team = p.team;
+                e.hostPeer = p.isHost;
+                try { if (!p.machineId.empty()) e.machine = std::stoull(p.machineId, nullptr, 0); } catch (...) {}
                 e.local = !me.empty() && _stricmp(p.username.c_str(), me.c_str()) == 0;
                 rows.push_back(e);
             }

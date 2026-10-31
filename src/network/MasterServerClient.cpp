@@ -805,6 +805,16 @@ bool MasterServerClient::LeaveLobbySync(const std::string& sessionId, uint64_t p
     return r.ok;
 }
 
+bool MasterServerClient::SendReportSync(const std::string& sessionId, const std::string& reporter, const std::string& target,
+                                        const std::string& reason, const std::string& map, const std::string& mode) {
+    if (!Enabled()) return false;
+    const nlohmann::json body = {
+        { "session_id", sessionId }, { "reporter", reporter }, { "target", target },
+        { "reason", reason }, { "map", map }, { "mode", mode }
+    };
+    return HttpRequest(Url(), L"POST", "/api/reports", body.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace)).ok;
+}
+
 bool MasterServerClient::LaunchLobbySync(const std::string& sessionId,
                                          const std::string& map,
                                          const std::string& mode,

@@ -170,6 +170,9 @@ public:
                             const std::string& fallbackHostIp = "",
                             uint16_t fallbackHostPort = 11774);
     bool LeaveLobbySync(const std::string& sessionId, uint64_t peerId);
+    // A player report from the scoreboard. True when the server answered; it stores the report for the team to read.
+    bool SendReportSync(const std::string& sessionId, const std::string& reporter, const std::string& target,
+                        const std::string& reason, const std::string& map, const std::string& mode);
     bool LaunchLobbySync(const std::string& sessionId,
                          const std::string& map,
                          const std::string& mode,
