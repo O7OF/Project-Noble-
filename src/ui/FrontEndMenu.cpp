@@ -1,4 +1,3 @@
-#include "GamepadUi.hpp"
 #include "FrontEndMenu.hpp"
 #include "network/UPnP.hpp"
 #include "network/AuthClient.hpp"
@@ -11,6 +10,7 @@
 #include "UIManager.hpp"
 #include "NobleStyle.hpp"
 #include "SettingsPanel.hpp"
+#include "UiPad.hpp"
 #include "CareerPanel.hpp"
 #include "MenuSounds.hpp"
 #include "InputPrompts.hpp"
@@ -3768,7 +3768,10 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         }
         ImGui::EndChild();
         ImGui::PopStyleColor();
-        if (back && !ImGui::GetIO().WantTextInput && !ctx.settingsPanel.IsCapturingKey()) {
+        // Esc with unsaved changes discards them (the Settings prompt says so) and stays on the page; B always goes back.
+        const bool escDiscards = ImGui::IsKeyPressed(ImGuiKey_Escape, false) && !ctx.settingsPanel.IsCapturingKey() &&
+                                 !ImGui::GetIO().WantTextInput && ctx.settingsPanel.DiscardOnEscape();
+        if (back && !escDiscards && !ImGui::GetIO().WantTextInput && !ctx.settingsPanel.IsCapturingKey()) {
             // The server browser is a top-level main-menu screen, so Back returns to the main menu (it used
             // to drop the player into Custom Game).
             goBack(Screen::Main);
@@ -4069,8 +4072,8 @@ void FrontEndMenu::RenderOverlayImpl(IDXGISwapChain* swapChain, bool clear) {
 
         ImGui_ImplDX11_NewFrame();
         ImGui_ImplWin32_NewFrame();
-        FeedGamepadToImGui();
-    ImGui::NewFrame();
+        UiPad::Feed(io);
+        ImGui::NewFrame();
         InputPrompts::Update();
     // Master mute / mute in background: Noble's own audio only (menu music and menu sounds). Read twice a second
     // rather than every frame, and applied here so it also covers the pause menu and the fallback draw path.

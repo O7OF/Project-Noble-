@@ -1379,11 +1379,6 @@ static void FillLocalPad(uint8_t* st, bool keyboardMouseUsed) {
         NOBLE_INFO("ReachHost [Slot 36 - Input]: keyboard and mouse in use");
     }
     // Start opens Noble's pause menu (the engine has none outside MCC), like Esc.
-    const WORD pressed = static_cast<WORD>(g.wButtons & ~s_lastButtons);
-    s_lastButtons = g.wButtons;
-    if ((pressed & 0x0010) && !PauseMenu::IsGameOver()) PauseMenu::Toggle();
-    if (!s_padMode) return;
-
     // Noble's own options: extra radial dead zones (rescaled so the edge still reaches full speed)
     // and look inversion. The engine applies its own dead zones and look speed after this.
     static SettingsData s_pad;
@@ -1391,6 +1386,32 @@ static void FillLocalPad(uint8_t* st, bool keyboardMouseUsed) {
     if (GetTickCount64() - s_padRead > 500) {
         s_padRead = GetTickCount64();
         s_pad = Settings::Get().Snapshot();
+    }
+    // The preset and the player's bindings decide every button, Start and Back included.
+    WORD buttons = g.wButtons;
+    uint8_t lt = g.bLeftTrigger, rt = g.bRightTrigger;
+    PadLayouts::Apply(s_pad.padLayout, buttons, lt, rt, &s_pad.padBindings, g.sThumbLX, g.sThumbLY, g.sThumbRX, g.sThumbRY);
+    const WORD pressed = static_cast<WORD>(buttons & ~s_lastButtons);
+    s_lastButtons = buttons;
+    if ((pressed & 0x0010) && !PauseMenu::IsGameOver()) PauseMenu::Toggle();
+    if (!s_padMode) return;
+    // The scoreboard button shows Noble's panel, like the key: the engine never opens its own screen.
+    if (buttons & 0x0020) {
+        const int boardKey = KeyBindings::EffectiveKey(20);
+        if (boardKey > 0 && boardKey < 256) s_engineKeyMask[boardKey >> 5].fetch_or(1u << (boardKey & 31));
+    }
+    buttons = static_cast<WORD>(buttons & ~(0x0010 | 0x0020));   // Start and the scoreboard stay Noble's
+    // Hold-to-zoom: the engine only toggles, so a short press on the way down and another on the way up.
+    {
+        static bool s_zoomWas = false;
+        static int s_zoomPulse = 0;
+        const bool zoomNow = (buttons & 0x0080) != 0;
+        if (!s_pad.padToggleZoom) {
+            if (zoomNow != s_zoomWas) s_zoomPulse = 2;
+            buttons = static_cast<WORD>(s_zoomPulse > 0 ? (buttons | 0x0080) : (buttons & ~0x0080));
+            if (s_zoomPulse > 0) --s_zoomPulse;
+        }
+        s_zoomWas = zoomNow;
     }
     // The maths lives in engine/InputTuning.cpp so the self-test can prove these settings change the output.
     SHORT lx = g.sThumbLX, ly = g.sThumbLY, rx = g.sThumbRX, ry = g.sThumbRY;
@@ -1400,11 +1421,6 @@ static void FillLocalPad(uint8_t* st, bool keyboardMouseUsed) {
     if (s_pad.padInvertLook) ry = static_cast<SHORT>(ry == -32768 ? 32767 : -ry);
 
     *reinterpret_cast<uint32_t*>(st + 0x000) = 0;
-    WORD buttons = static_cast<WORD>(g.wButtons & ~0x0010);   // Start stays Noble's
-    uint8_t lt = g.bLeftTrigger, rt = g.bRightTrigger;
-    // Halo: Reach button layout (Default / Southpaw / Boxer / Green Thumb / Bumper Jumper / Recon): permute the
-    // physical buttons into the mapping the engine expects. Default is a no-op.
-    PadLayouts::Apply(s_pad.padLayout, buttons, lt, rt, &s_pad.padBindings);
     memcpy(st + 0x120, &buttons, sizeof(buttons));
     st[0x124] = lt;
     st[0x125] = rt;

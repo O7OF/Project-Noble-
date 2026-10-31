@@ -93,6 +93,8 @@ if(NOT imgui_POPULATED)
         ${imgui_SOURCE_DIR}/backends/imgui_impl_win32.cpp
         ${imgui_SOURCE_DIR}/backends/imgui_impl_dx11.cpp
     )
+    # src/ui/UiPad.cpp is the only path from a controller to ImGui (any XInput slot, front-end and pause menu).
+    target_compile_definitions(imgui PRIVATE IMGUI_IMPL_WIN32_DISABLE_GAMEPAD)
     target_include_directories(imgui PUBLIC
         ${imgui_SOURCE_DIR}
         ${imgui_SOURCE_DIR}/backends
@@ -127,7 +129,6 @@ set(SOURCES
     src/engine/CameraThirdPerson.cpp
     src/engine/FrameCapture.cpp
     src/common/Relaunch.cpp
-    src/ui/GamepadUi.cpp
     src/ui/UiArt.cpp
     src/ui/UIManager.cpp
     src/ui/ServerBrowser.cpp
@@ -141,6 +142,7 @@ set(SOURCES
     src/audio/ReachAudio.cpp
     src/ui/ModCatalog.cpp
     src/ui/InputPrompts.cpp
+    src/ui/UiPad.cpp
     src/ui/LoadScreen.cpp
     src/ui/PauseMenu.cpp
     src/ui/FrontEndMenu.cpp
@@ -181,7 +183,6 @@ set(HEADERS
     src/engine/CameraThirdPerson.hpp
     src/engine/FrameCapture.hpp
     src/common/Relaunch.hpp
-    src/ui/GamepadUi.hpp
     src/ui/UiArt.hpp
     src/ui/UIManager.hpp
     src/ui/ServerBrowser.hpp

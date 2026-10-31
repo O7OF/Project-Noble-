@@ -40,8 +40,9 @@ struct SettingsData {
     int padLookY = 19;             // vertical, profile +0x1B5 (same scale)
     bool padInvertLook = false;
     int padLayout = 0;             // Halo: Reach button layout (engine/PadLayouts.hpp); 0 = Default
-    int padStickLayout = 0;        // 0 = Default (left moves, right looks), 1 = Southpaw (swapped)
-    // Per-action controller bindings, overriding the button layout: action key -> XInput button bit.
+    int padStickLayout = 0;        // 0 = Default (left moves, right looks), 1 = swapped. One "preset" row with padLayout
+    bool padToggleZoom = true;     // false: zoom only while the button is held
+    // Per-action controller bindings, overriding the button layout: action key -> input (PadLayouts::InputBit), -1 = none.
     std::map<std::string, int> padBindings;    // Noble flips the right stick's y before the engine sees it
     float padLeftDeadZone = 0.0f;  // extra radial dead zone Noble applies (0..0.5), on top of the engine's own
     float padRightDeadZone = 0.0f;

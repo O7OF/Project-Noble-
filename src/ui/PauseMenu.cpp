@@ -1,10 +1,10 @@
 #include "PauseMenu.hpp"
-#include "GamepadUi.hpp"
 #include "MenuSounds.hpp"
 #include "NobleStyle.hpp"
 #include "NobleUi.hpp"
 #include "SettingsPanel.hpp"
 #include "UiArt.hpp"
+#include "UiPad.hpp"
 #include "audio/ReachAudio.hpp"
 #include "career/Career.hpp"
 #include "common/Logger.hpp"
@@ -169,7 +169,7 @@ void PauseMenu::Toggle() {
   // While a key rebind is waiting for a key, Esc belongs to the rebind
   // (SettingsPanel::PollRebind cancels it).
   if (s_open.load() && s_showSettings.load()) {
-    if (!PauseSettings().IsCapturingKey()) {
+    if (!PauseSettings().IsCapturingKey() && !PauseSettings().DiscardOnEscape()) {
       s_showSettings.store(false);
       MenuSounds::Back();
       NOBLE_INFO("PauseMenu: settings closed");
@@ -424,7 +424,9 @@ void PauseMenu::DrawMenu(HWND hwnd) {
         NOBLE_INFO("PauseMenu: quit requested");
         Close();
         PostMessageW(hwnd, WM_CLOSE, 0, 0);
-    } else if (interactive && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+    } else if (interactive && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)) {
+        // B resumes. Esc is not read here: the input poll already toggles on Esc, and closing here as well reopened the
+        // menu when both saw the same press.
         Close();
     }
 
@@ -462,9 +464,14 @@ void DrawSettingsPage(HWND hwnd) {
       NOBLE_INFO("PauseMenu: settings closed");
     }
     ImGui::SameLine();
-    ImGui::TextDisabled("Changes apply immediately, also in this match. Esc "
-                        "goes back to the pause menu.");
+    ImGui::TextDisabled("Applied changes also reach this match. B goes back to "
+                        "the pause menu.");
     ImGui::Separator();
+    if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) && !PauseSettings().IsCapturingKey() &&
+        !ImGui::GetIO().WantTextInput) {
+      s_showSettings.store(false);
+      MenuSounds::Back();
+    }
     PauseSettings().Render();
   }
   ImGui::End();
@@ -1532,8 +1539,8 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading,
       io.AddMouseButtonEvent(0, false);
     }
 
+    UiPad::Feed(io);
     ImGui_ImplDX11_NewFrame();
-    FeedGamepadToImGui();
     ImGui::NewFrame();
     if (showFps) {
       char fpsLabel[32];

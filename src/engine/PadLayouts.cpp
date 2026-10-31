@@ -13,47 +13,39 @@ namespace {
 // XInput button bits (XINPUT_GAMEPAD_*).
 constexpr uint16_t kA = 0x1000, kB = 0x2000, kX = 0x4000, kY = 0x8000;
 constexpr uint16_t kLB = 0x0100, kRB = 0x0200;
-constexpr uint16_t kRS = 0x0080;
+constexpr uint16_t kLS = 0x0040, kRS = 0x0080;
+constexpr uint16_t kUp = 0x0001, kDown = 0x0002, kLeft = 0x0004, kRight = 0x0008, kStart = 0x0010, kBack = 0x0020;
 
-// Action / Source live in the header now (the CONTROLLER page labels its diagram from them).
-constexpr Source Btn(uint16_t bit) { return Source{ bit, 0 }; }
-constexpr Source Trig(int which) { return Source{ 0, which }; }
-
-// Rows are layouts (see PadLayouts::Layout), columns the actions above. Transcribed from Halopedia's
-// "Reach:Control schemes" tables (Xbox 360 manual); the MCC remaster uses the same six presets.
-constexpr Source kLayouts[Count][ActionCount] = {
-    // Default
-    { Btn(kA), Btn(kB), Btn(kX), Btn(kY), Btn(kRB), Btn(kLB), Trig(2), Btn(kRS) },
-    // Southpaw: fire/grenades swap triggers, melee/armour swap bumpers
-    { Btn(kA), Trig(2), Btn(kX), Btn(kY), Btn(kLB), Btn(kRB), Trig(1), Btn(kRS) },
-    // Boxer: melee on LT, grenades on RB
-    { Btn(kA), Btn(kRB), Btn(kX), Btn(kY), Trig(1), Btn(kLB), Trig(2), Btn(kRS) },
-    // Green Thumb: melee on the right stick click, zoom on RB
-    { Btn(kA), Btn(kB), Btn(kX), Btn(kY), Btn(kRS), Btn(kLB), Trig(2), Btn(kRB) },
-    // Bumper Jumper: jump LB, grenades A, action B, armour X
-    { Btn(kLB), Btn(kA), Btn(kB), Btn(kY), Btn(kRB), Btn(kX), Trig(2), Btn(kRS) },
-    // Recon: Halo 3 style - melee B, grenades X, action RB
-    { Btn(kA), Btn(kX), Btn(kRB), Btn(kY), Btn(kB), Btn(kLB), Trig(2), Btn(kRS) },
+// The actions a layout moves. Rows are layouts (see PadLayouts::Layout), transcribed from Halopedia's "Reach:Control
+// schemes" tables (Xbox 360 manual); the MCC remaster uses the same six presets. The rest never move between layouts.
+constexpr int kLayoutActions = 9;
+constexpr int kLayouts[Count][kLayoutActions] = {
+    //          jump  switch  action  swap  melee    armor  fire     zoom  throw
+    /* Default */      { kA,  kB,      kX,   kY,   kRB,     kLB,   InputRT, kRS,  InputLT },
+    /* Southpaw */     { kA,  kB,      kX,   kY,   kLB,     kRB,   InputLT, kRS,  InputRT },
+    /* Boxer */        { kA,  kB,      kX,   kY,   InputLT, kLB,   InputRT, kRS,  kRB },
+    /* Green Thumb */  { kA,  kB,      kX,   kY,   kRS,     kLB,   InputRT, kRB,  InputLT },
+    /* Bumper Jumper */{ kLB, kA,      kB,   kY,   kRB,     kX,    InputRT, kRS,  InputLT },
+    /* Recon */        { kA,  kX,      kRB,  kY,   kB,      kLB,   InputRT, kRS,  InputLT },
 };
 
-// What the engine expects for each action (the default column, spelled out).
-constexpr Source kDefault[ActionCount] = {
-    Btn(kA), Btn(kB), Btn(kX), Btn(kY), Btn(kRB), Btn(kLB), Trig(2), Btn(kRS)
-};
-
-// Buttons the remap owns; everything else (D-pad, Back, Start, thumb clicks not used above) passes through.
-constexpr uint16_t kOwned = kA | kB | kX | kY | kLB | kRB | kRS;
+// Every button the remap owns.
+constexpr uint16_t kOwned = kA | kB | kX | kY | kLB | kRB | kLS | kRS | kUp | kDown | kLeft | kRight | kStart | kBack;
 
 } // namespace
 
 const char* ActionKey(int action) {
-    static const char* const keys[ActionCount] = { "jump", "grenades", "action", "swap", "melee", "armor", "fire", "zoom" };
+    static const char* const keys[ActionCount] = { "jump", "grenades", "action", "swap", "melee", "armor", "fire", "zoom",
+                                                   "throw", "crouch", "scoreboard", "pause", "dpadup", "dpaddown", "dpadleft", "dpadright",
+                                                   "teamchat", "pushtotalk" };
     return (action >= 0 && action < ActionCount) ? keys[action] : "";
 }
 
 const char* ActionName(int action) {
     static const char* const names[ActionCount] = { "Jump", "Switch grenades", "Action / reload", "Swap weapons",
-                                                    "Melee", "Armor ability", "Fire", "Zoom" };
+                                                    "Melee", "Armor ability", "Fire", "Zoom", "Throw grenade", "Crouch", "Scoreboard",
+                                                    "Pause menu", "D-pad up action", "D-pad down action", "D-pad left action", "D-pad right action",
+                                                    "Team chat", "Push to talk" };
     return (action >= 0 && action < ActionCount) ? names[action] : "";
 }
 
@@ -64,12 +56,69 @@ int ActionFromKey(const std::string& key) {
     return -1;
 }
 
-uint16_t SourceBit(const Source& source) { return source.bit; }
-
-Source SourceFor(int layout, int action) {
+int LayoutInput(int layout, int action) {
     if (layout < 0 || layout >= Count) layout = Default;
-    if (action < 0 || action >= ActionCount) action = Jump;
-    return kLayouts[layout][action];
+    if (action >= 0 && action < kLayoutActions) return kLayouts[layout][action];
+    switch (action) {
+    case Crouch: return kLS;
+    case Scoreboard: return kBack;
+    case Pause: return kStart;
+    case DpadUp: return kUp;
+    case DpadDown: return kDown;
+    case DpadLeft: return kLeft;
+    case DpadRight: return kRight;
+    default: return InputNone;   // team chat, push to talk: nothing assigned until they exist
+    }
+}
+
+int EffectiveInput(int layout, int action, const std::map<std::string, int>* overrides) {
+    if (overrides) {
+        const auto it = overrides->find(ActionKey(action));
+        if (it != overrides->end() && it->second != 0) return it->second > 0 ? it->second : InputNone;
+    }
+    return LayoutInput(layout, action);
+}
+
+const char* InputName(int input) {
+    switch (input) {
+    case kA: return "A";
+    case kB: return "B";
+    case kX: return "X";
+    case kY: return "Y";
+    case kLB: return "LB";
+    case kRB: return "RB";
+    case kLS: return "L STICK CLICK";
+    case kRS: return "R STICK CLICK";
+    case kUp: return "D-PAD UP";
+    case kDown: return "D-PAD DOWN";
+    case kLeft: return "D-PAD LEFT";
+    case kRight: return "D-PAD RIGHT";
+    case kStart: return "START";
+    case kBack: return "BACK";
+    case InputLT: return "LT";
+    case InputRT: return "RT";
+    case InputLStickUp: return "L STICK UP";
+    case InputLStickDown: return "L STICK DOWN";
+    case InputLStickLeft: return "L STICK LEFT";
+    case InputLStickRight: return "L STICK RIGHT";
+    case InputRStickUp: return "R STICK UP";
+    case InputRStickDown: return "R STICK DOWN";
+    case InputRStickLeft: return "R STICK LEFT";
+    case InputRStickRight: return "R STICK RIGHT";
+    default: return "-";
+    }
+}
+
+void Assign(int layout, int action, int input, std::map<std::string, int>& overrides) {
+    const int previous = EffectiveInput(layout, action, &overrides);
+    if (previous == input) return;
+    for (int other = 0; other < ActionCount; ++other) {
+        if (other == action || EffectiveInput(layout, other, &overrides) != input) continue;
+        if (previous == LayoutInput(layout, other)) overrides.erase(ActionKey(other));
+        else overrides[ActionKey(other)] = previous > 0 ? previous : -1;   // -1: deliberately no input
+    }
+    if (input == LayoutInput(layout, action)) overrides.erase(ActionKey(action));
+    else overrides[ActionKey(action)] = input;
 }
 
 const char* Name(int layout) {
@@ -95,44 +144,41 @@ const char* Description(int layout) {
     }
 }
 
-void Apply(int layout, uint16_t& buttons, uint8_t& leftTrigger, uint8_t& rightTrigger) {
-    Apply(layout, buttons, leftTrigger, rightTrigger, nullptr);
-}
-
 void Apply(int layout, uint16_t& buttons, uint8_t& leftTrigger, uint8_t& rightTrigger,
-           const std::map<std::string, int>* overrides) {
+           const std::map<std::string, int>* overrides, int16_t leftX, int16_t leftY, int16_t rightX, int16_t rightY) {
     const bool hasOverrides = overrides != nullptr && !overrides->empty();
     if ((layout <= Default || layout >= Count) && !hasOverrides) return;
     const uint16_t in = buttons;
     const uint8_t inLt = leftTrigger, inRt = rightTrigger;
 
-    auto triggered = [&](int which) { return which == 1 ? inLt > 128 : which == 2 ? inRt > 128 : false; };
-    auto triggerValue = [&](int which) -> uint8_t { return which == 1 ? inLt : which == 2 ? inRt : 0; };
+    // How hard an input is pressed: 0..255. A stick direction counts once it is past about half way.
+    auto level = [&](int input) -> uint8_t {
+        constexpr int kStickOn = 16000;
+        switch (input) {
+        case InputNone: return 0;
+        case InputLT: return inLt;
+        case InputRT: return inRt;
+        case InputLStickUp: return leftY > kStickOn ? 255 : 0;
+        case InputLStickDown: return leftY < -kStickOn ? 255 : 0;
+        case InputLStickLeft: return leftX < -kStickOn ? 255 : 0;
+        case InputLStickRight: return leftX > kStickOn ? 255 : 0;
+        case InputRStickUp: return rightY > kStickOn ? 255 : 0;
+        case InputRStickDown: return rightY < -kStickOn ? 255 : 0;
+        case InputRStickLeft: return rightX < -kStickOn ? 255 : 0;
+        case InputRStickRight: return rightX > kStickOn ? 255 : 0;
+        default: return input > 0 && (in & input) != 0 ? 255 : 0;
+        }
+    };
 
     uint16_t out = static_cast<uint16_t>(in & ~kOwned);
     uint8_t outLt = 0, outRt = 0;
     for (int a = 0; a < ActionCount; ++a) {
-        Source src = (layout > Default && layout < Count) ? kLayouts[layout][a] : kDefault[a];
-        if (hasOverrides) {
-            const auto it = overrides->find(ActionKey(a));
-            if (it != overrides->end() && it->second > 0) src = Source{ static_cast<uint16_t>(it->second), 0 };
-        }
-        const Source& dst = kDefault[a];
-        // Is this action active, and (for analogues) with what value?
-        uint8_t value = 0;
-        if (src.bit) {
-            if (in & src.bit) value = 255;
-        } else {
-            value = triggerValue(src.trigger);
-        }
+        const uint8_t value = level(EffectiveInput(layout, a, overrides));
         if (value == 0) continue;
-        if (dst.bit) {
-            if (value > 128) out |= dst.bit;
-        } else if (dst.trigger == 1) {
-            outLt = std::max<uint8_t>(outLt, value);
-        } else if (dst.trigger == 2) {
-            outRt = std::max<uint8_t>(outRt, value);
-        }
+        const int engine = LayoutInput(Default, a);   // what the engine expects for this action
+        if (engine == InputLT) outLt = std::max(outLt, value);
+        else if (engine == InputRT) outRt = std::max(outRt, value);
+        else if (engine > 0 && value > 128) out = static_cast<uint16_t>(out | engine);
     }
     buttons = out;
     leftTrigger = outLt;
@@ -171,16 +217,14 @@ int SelfTest() {
         { Default, kA, kA, "Default: A stays A" },
         { Boxer, kA, kA, "Boxer: A stays A (jump)" },
         { Recon, kA, kA, "Recon: A stays A (jump)" },
-        // Bumper Jumper turns A into grenades (B) and LB into jump (A).
-        { BumperJumper, kA, kB, "Bumper Jumper: A fires grenades" },
+        // Bumper Jumper turns A into switch grenades (B) and LB into jump (A).
+        { BumperJumper, kA, kB, "Bumper Jumper: A switches grenades" },
         { BumperJumper, kLB, kA, "Bumper Jumper: LB jumps" },
         { BumperJumper, kX, kLB, "Bumper Jumper: X is the armour ability" },
-        // Boxer moves grenades to RB, so RB must come out as the engine's grenade button (B).
-        { Boxer, kRB, kB, "Boxer: RB fires grenades" },
         { Boxer, kX, kX, "Boxer: X stays action/reload" },
-        // Recon (Halo 3 style): B is melee, X is grenades, RB is action/reload.
+        // Recon (Halo 3 style): B is melee, X switches grenades, RB is action/reload.
         { Recon, kB, kRB, "Recon: B is melee" },
-        { Recon, kX, kB, "Recon: X fires grenades" },
+        { Recon, kX, kB, "Recon: X switches grenades" },
         { Recon, kRB, kX, "Recon: RB is action/reload" },
         // Green Thumb: melee on the right stick click, zoom on RB.
         { GreenThumb, kRS, kRB, "Green Thumb: RS click is melee" },
@@ -198,19 +242,29 @@ int SelfTest() {
         }
     }
 
-    // Southpaw swaps the triggers: LT becomes fire (the engine wants fire on RT) and RT becomes grenades (the
-    // engine wants grenades on the B button).
+    // Southpaw swaps the triggers: LT comes out as fire on RT, RT as throw on LT.
     {
         uint8_t lt = 220, rt = 0;
         uint16_t b = 0;
         Apply(Southpaw, b, lt, rt);
-        if (rt < 200 || (b & kB) != 0) { fail("Southpaw: LT should come out as fire on RT"); ++failures; }
+        if (rt < 200 || lt != 0) { fail("Southpaw: LT should come out as fire on RT"); ++failures; }
     }
     {
         uint8_t lt = 0, rt = 230;
         uint16_t b = 0;
         Apply(Southpaw, b, lt, rt);
-        if ((b & kB) == 0) { fail("Southpaw: RT should come out as grenades on B"); ++failures; }
+        if (lt < 200 || rt != 0 || b != 0) { fail("Southpaw: RT should come out as throw on LT"); ++failures; }
+    }
+    // Every layout must keep throw-grenade somewhere (it used to be lost outside Default).
+    for (int layout = Default; layout < Count; ++layout) {
+        if (LayoutInput(layout, ThrowGrenade) == InputNone) { fail("a layout has no throw grenade"); ++failures; }
+    }
+    // Boxer: RB throws, which the engine expects on LT.
+    {
+        uint8_t lt = 0, rt = 0;
+        uint16_t b = kRB;
+        Apply(Boxer, b, lt, rt);
+        if (lt < 200) { fail("Boxer: RB should come out as throw on LT"); ++failures; }
     }
     // Boxer: LT is melee, which the engine expects on RB.
     {
@@ -231,10 +285,39 @@ int SelfTest() {
         }
     }
 
+    // Overrides: a trigger, a D-pad direction and a stick direction can all be bound, and binding swaps the old owner.
+    {
+        std::map<std::string, int> o;
+        Assign(Default, Jump, kB, o);
+        if (EffectiveInput(Default, Grenades, &o) != kA) { fail("Assign: the old owner of B should take A"); ++failures; }
+        uint16_t b = kB;
+        uint8_t lt = 0, rt = 0;
+        Apply(Default, b, lt, rt, &o);
+        if ((b & kA) == 0 || (b & kB) != 0) { fail("Assign: B should now jump and nothing else"); ++failures; }
+        Assign(Default, Jump, kA, o);
+        if (!o.empty()) { fail("Assign: swapping back should leave no overrides"); ++failures; }
+
+        o.clear();
+        Assign(Default, Melee, InputLStickLeft, o);
+        b = 0;
+        Apply(Default, b, lt, rt, &o, -30000, 0, 0, 0);
+        if ((b & kRB) == 0) { fail("Assign: left stick left should melee"); ++failures; }
+
+        o.clear();
+        Assign(Default, Fire, kUp, o);
+        b = kUp;
+        lt = rt = 0;
+        Apply(Default, b, lt, rt, &o);
+        if (rt < 200) { fail("Assign: D-pad up should fire on RT"); ++failures; }
+        b = kStart;
+        lt = rt = 0;
+        Apply(Default, b, lt, rt, &o);
+        if ((b & kStart) == 0) { fail("Start should still pause with overrides on"); ++failures; }
+    }
     std::printf("%s: button layouts - %zu expectations, %d failure(s)\n",
-                failures == 0 ? "PASS" : "FAIL", sizeof(cases) / sizeof(cases[0]) + 3, failures);
+                failures == 0 ? "PASS" : "FAIL", sizeof(cases) / sizeof(cases[0]) + 12, failures);
     if (report) {
-        report << (failures == 0 ? "PASS" : "FAIL") << ": button layouts - " << sizeof(cases) / sizeof(cases[0]) + 3
+        report << (failures == 0 ? "PASS" : "FAIL") << ": button layouts - " << sizeof(cases) / sizeof(cases[0]) + 12
                << " expectations, " << failures << " failure(s)\n";
     }
     return failures;

@@ -112,6 +112,7 @@ void Settings::Load() {
             Read(j, "padInvertLook", d.padInvertLook);
     Read(j, "padLayout", d.padLayout);
     Read(j, "padStickLayout", d.padStickLayout);
+    Read(j, "padToggleZoom", d.padToggleZoom);
     if (j.contains("padBindings") && j["padBindings"].is_object()) {
         for (const auto& [key, value] : j["padBindings"].items()) {
             if (value.is_number_integer()) d.padBindings[key] = value.get<int>();
@@ -237,6 +238,7 @@ bool Settings::Save() {
         j["padInvertLook"] = d.padInvertLook;
     j["padLayout"] = d.padLayout;
     j["padStickLayout"] = d.padStickLayout;
+    j["padToggleZoom"] = d.padToggleZoom;
     if (!d.padBindings.empty()) j["padBindings"] = d.padBindings;
         j["padLeftDeadZone"] = d.padLeftDeadZone;
         j["padRightDeadZone"] = d.padRightDeadZone;
