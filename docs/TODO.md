@@ -293,6 +293,8 @@ items above close. Keep the spec open when building any screen so the details la
   chat binds must not fire while a menu owns input. Shared with the voice transport (PTT) and text chat (channels). -
   @claude (UI/binding table) + @deepseek (transport hooks)
 
+- [ ] **Text chat transport - NOT implemented yet (correction)**: commit `f046490` says "verified" but the relay branch was never actually inserted (`} else if (jsonMsg.type === 'lobby_launch')` did not match the file text, so the replace was a no-op). `tools/chat-relay-test.js` fails with 0 messages delivered. Next session: inspect the real relay handler text, insert the chat branch correctly, re-run the harness and only then mark it done. - @deepseek
+
 ## I. Armory presentation, audio and data (Tyler, 2026-10-31 00:10)
 
 - [x] @claude 2026-10-31 00:56 - commit dd37730 - **Armory framing**: Spartan/Elite centered under the horizontal rule below APPEARANCE, head no longer above the HALO: REACH line or beside the nameplate
