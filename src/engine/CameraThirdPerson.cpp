@@ -32,6 +32,10 @@ constexpr uintptr_t kGetLocalUnitRva = 0x53EF8;
 constexpr uintptr_t kGetObjectMarkersRva = 0x47044C;
 // haloreach+0x472184 (object_get_head_position): fallback that retrieves the world-space position of the unit's head bone node.
 constexpr uintptr_t kGetUnitHeadPosRva = 0x472184;
+// haloreach+0x473DC0 (object_get_ultimate_parent): walks parent_object_index (+0x14) to return the root vehicle datum index.
+constexpr uintptr_t kGetUltimateParentRva = 0x473DC0;
+// haloreach+0x479BB0 (object_update_node_matrices): recomputes an object's simulation node matrices ([obj + 0x17A]) from its current parent.
+constexpr uintptr_t kUpdateObjectNodesRva = 0x479BB0;
 // haloreach+0x1DCADC (c_orbiting_camera::update) and haloreach+0x1E2028 (c_following_camera::update):
 // both take (void* camera, int32_t userIndex, float dt, void* observerCommand) and write the third-person
 // field of view in radians (from haloreach+0xC8640) to [observerCommand + 0x28].
@@ -47,11 +51,15 @@ using GetLocalUnitFn = int32_t(__fastcall*)(int32_t userIndex);
 using GetObjectMarkersFn = int16_t(__fastcall*)(int32_t objectDatumIndex, int32_t markerStringId, void* outMarkers,
                                                 int16_t maxMarkers, uint8_t doNotWalkToParent, uint8_t useRenderNodes);
 using GetUnitHeadPosFn = float*(__fastcall*)(int32_t unitDatumIndex, float* outPos);
+using GetUltimateParentFn = int32_t(__fastcall*)(int32_t objectDatumIndex);
+using UpdateObjectNodesFn = void(__fastcall*)(int32_t objectDatumIndex);
 CameraModeCheckFn s_original = nullptr;
 UnitThirdPersonFn s_origUnitThirdPerson = nullptr;
 GetLocalUnitFn s_getLocalUnit = nullptr;
 GetObjectMarkersFn s_getObjectMarkers = nullptr;
 GetUnitHeadPosFn s_getUnitHeadPos = nullptr;
+GetUltimateParentFn s_getUltimateParent = nullptr;
+UpdateObjectNodesFn s_updateObjectNodes = nullptr;
 
 std::atomic<bool> s_enabled{false};
 std::atomic<bool> s_vehicleFirstPerson{false};
@@ -95,9 +103,14 @@ void __fastcall Hook_FirstPersonUpdate(void* camera, int32_t userIndex, float dt
 
     // When in a vehicle in 1st person, unit_get_camera_position (haloreach+0x48A1C0) places the camera at the
     // vehicle's 3rd-person seat pivot marker instead of the character's head marker (string_id 0xC2).
-    // Query the character's 0xC2 head marker directly on the local player's unit (doNotWalkToParent = 1),
-    // falling back to the character's head bone node (haloreach+0x472184), and apply the user's horizontal/vertical
-    // 1st-person vehicle camera placement offsets.
+    // Furthermore, in object_update (haloreach+0x475E3C), child objects (the seated pilot biped at 0x180476124)
+    // update and store their c_interpolator node matrices (0x18047623E) BEFORE the parent vehicle updates its own
+    // node matrices (0x18047615E) for the current tick T. Consequently, querying useRenderNodes=1 on the child unit
+    // reads tick (T-1) matrices that lag 1 full tick behind the rendered vehicle (phasing backward into the Falcon's
+    // rear passenger seats when flying).
+    // Fix: refresh the pilot unit's simulation node matrices against the parent vehicle's current tick-T matrices,
+    // compute the head's vehicle-local offset in tick-T space, and transform that offset by the vehicle's interpolated
+    // render-frame root matrix (useRenderNodes=1) so the camera remains rigidly locked inside the cockpit at any speed.
     if (inVehicle) {
         const int32_t unitDatum = s_getLocalUnit ? s_getLocalUnit(0) : -1;
         if (unitDatum != -1) {
@@ -105,13 +118,18 @@ void __fastcall Hook_FirstPersonUpdate(void* camera, int32_t userIndex, float dt
             const auto* fwd = reinterpret_cast<const float*>(static_cast<const uint8_t*>(observerCommand) + 0x2C);
             const auto* up  = reinterpret_cast<const float*>(static_cast<const uint8_t*>(observerCommand) + 0x38);
 
-            alignas(16) uint8_t markerBuf[0x80] = {};
+            const int32_t vehicleDatum = s_getUltimateParent ? s_getUltimateParent(unitDatum) : -1;
+            if (vehicleDatum != -1 && vehicleDatum != unitDatum && s_updateObjectNodes) {
+                s_updateObjectNodes(unitDatum);
+            }
+
+            alignas(16) uint8_t unitMarkerTick[0x80] = {};
             float headPos[3] = {pos[0], pos[1], pos[2]};
             bool gotHead = false;
             if (s_getObjectMarkers) {
-                const int16_t count = s_getObjectMarkers(unitDatum, 0xC2, markerBuf, 1, 1, 1);
+                const int16_t count = s_getObjectMarkers(unitDatum, 0xC2, unitMarkerTick, 1, 1, 0);
                 if (count > 0) {
-                    const auto* mp = reinterpret_cast<const float*>(markerBuf + 0x60);
+                    const auto* mp = reinterpret_cast<const float*>(unitMarkerTick + 0x60);
                     headPos[0] = mp[0];
                     headPos[1] = mp[1];
                     headPos[2] = mp[2];
@@ -121,6 +139,38 @@ void __fastcall Hook_FirstPersonUpdate(void* camera, int32_t userIndex, float dt
             if (!gotHead && s_getUnitHeadPos) {
                 s_getUnitHeadPos(unitDatum, headPos);
                 gotHead = true;
+            }
+
+            if (gotHead && vehicleDatum != -1 && vehicleDatum != unitDatum && s_getObjectMarkers) {
+                alignas(16) uint8_t vehMarkerTick[0x80] = {};
+                alignas(16) uint8_t vehMarkerRender[0x80] = {};
+                const int16_t tickCount   = s_getObjectMarkers(vehicleDatum, 0, vehMarkerTick, 1, 1, 0);
+                const int16_t renderCount = s_getObjectMarkers(vehicleDatum, 0, vehMarkerRender, 1, 1, 1);
+                if (tickCount > 0 && renderCount > 0) {
+                    // object_marker layout (haloreach+0x470560):
+                    //   +0x38: real_matrix4x3 world_matrix (+0x38 scale, +0x3C forward[3], +0x48 left[3], +0x54 up[3], +0x60 pos[3])
+                    const auto* vehFwdTick  = reinterpret_cast<const float*>(vehMarkerTick + 0x3C);
+                    const auto* vehLeftTick = reinterpret_cast<const float*>(vehMarkerTick + 0x48);
+                    const auto* vehUpTick   = reinterpret_cast<const float*>(vehMarkerTick + 0x54);
+                    const auto* vehPosTick  = reinterpret_cast<const float*>(vehMarkerTick + 0x60);
+
+                    const auto* vehFwdRender  = reinterpret_cast<const float*>(vehMarkerRender + 0x3C);
+                    const auto* vehLeftRender = reinterpret_cast<const float*>(vehMarkerRender + 0x48);
+                    const auto* vehUpRender   = reinterpret_cast<const float*>(vehMarkerRender + 0x54);
+                    const auto* vehPosRender  = reinterpret_cast<const float*>(vehMarkerRender + 0x60);
+
+                    const float dx = headPos[0] - vehPosTick[0];
+                    const float dy = headPos[1] - vehPosTick[1];
+                    const float dz = headPos[2] - vehPosTick[2];
+
+                    const float localFwd  = dx * vehFwdTick[0]  + dy * vehFwdTick[1]  + dz * vehFwdTick[2];
+                    const float localLeft = dx * vehLeftTick[0] + dy * vehLeftTick[1] + dz * vehLeftTick[2];
+                    const float localUp   = dx * vehUpTick[0]   + dy * vehUpTick[1]   + dz * vehUpTick[2];
+
+                    headPos[0] = vehPosRender[0] + vehFwdRender[0] * localFwd + vehLeftRender[0] * localLeft + vehUpRender[0] * localUp;
+                    headPos[1] = vehPosRender[1] + vehFwdRender[1] * localFwd + vehLeftRender[1] * localLeft + vehUpRender[1] * localUp;
+                    headPos[2] = vehPosRender[2] + vehFwdRender[2] * localFwd + vehLeftRender[2] * localLeft + vehUpRender[2] * localUp;
+                }
             }
 
             const float offX = std::clamp(settings.vehicleFirstPersonOffsetX, -1.0f, 1.0f);
@@ -241,6 +291,8 @@ bool CameraThirdPerson::Install(HMODULE haloreach) {
     s_getLocalUnit = reinterpret_cast<GetLocalUnitFn>(base + kGetLocalUnitRva);
     s_getObjectMarkers = reinterpret_cast<GetObjectMarkersFn>(base + kGetObjectMarkersRva);
     s_getUnitHeadPos = reinterpret_cast<GetUnitHeadPosFn>(base + kGetUnitHeadPosRva);
+    s_getUltimateParent = reinterpret_cast<GetUltimateParentFn>(base + kGetUltimateParentRva);
+    s_updateObjectNodes = reinterpret_cast<UpdateObjectNodesFn>(base + kUpdateObjectNodesRva);
 
     void* target = reinterpret_cast<void*>(base + kCameraModeCheckRva);
     if (std::memcmp(target, kExpectedPrologue, sizeof(kExpectedPrologue)) != 0) {
