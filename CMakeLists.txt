@@ -111,6 +111,7 @@ set(SOURCES
     src/engine/MapGameTypes.cpp
     src/engine/MapGameTypesTest.cpp
     src/host/SteamLocator.cpp
+    src/host/SteamWorkshop.cpp
     src/host/OwnershipVerifier.cpp
     src/host/Window.cpp
     src/host/D3D11Renderer.cpp
@@ -135,6 +136,7 @@ set(SOURCES
     src/ui/ArmorCustomizer.cpp
     src/ui/ObjModel.cpp
     src/ui/WorkshopManager.cpp
+    src/ui/ModDownloadPrompt.cpp
     src/ui/MissionLauncher.cpp
     src/network/UPnP.cpp
     src/network/SessionManager.cpp
@@ -165,6 +167,7 @@ set(HEADERS
     src/common/Types.hpp
     src/common/Version.hpp
     src/host/SteamLocator.hpp
+    src/host/SteamWorkshop.hpp
     src/host/OwnershipVerifier.hpp
     src/host/Window.hpp
     src/host/D3D11Renderer.hpp
@@ -189,6 +192,7 @@ set(HEADERS
     src/ui/ArmorCustomizer.hpp
     src/ui/ObjModel.hpp
     src/ui/WorkshopManager.hpp
+    src/ui/ModDownloadPrompt.hpp
     src/ui/MissionLauncher.hpp
     src/ui/LoadScreen.hpp
     src/ui/PauseMenu.hpp

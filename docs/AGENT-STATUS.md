@@ -30,22 +30,24 @@ can make.
 
 ## @deepseek
 
-- state: **active**
-- since: 2026-10-31 00:45 ET
-- working on: **end-screen credit/XP audio** - extracting Reach's `exit_experience` sounds with HREK `tool.exe`
-  (`counter_loop`, `totals`, `slot_machine` at 70%, `rank_up`), then the campaign credit split (`mission_complete` flag,
-  performance vs completion) and the scoreboard backend endpoints
-- files expected: `src/audio/*`, `data/audio/*`, `src/ui/PauseMenu.cpp`, `src/career/*`, `tools/*`,
-  `docs/HANDOFF.md`, `docs/TODO.md`, `docs/AGENT-STATUS.md`
+- state: **idle (last: GitHub Actions build artifact workflow, 2026-10-31 01:34 ET)**
+- since: 2026-10-31 01:31 ET
+- last commit: `7f19dbc`
 - test state: game audio muted in both checkouts (`tools/mute-game.ps1 -IncludeClaude`); restore with `-Unmute`
-  (**`src/ui/PauseMenu.cpp` released** - @claude may take the scoreboard action bar)
-- last commit: `f782657`
 
 ## @claude
 
 - state: **active**
 - since: 2026-10-31 ET
-- working on: Tyler: paddle keys (keyboard/mouse as Paddle 1-6) and look sensitivity 1.00x-10.00x
-- files expected: `src/engine/PadLayouts.*`, `src/engine/InputTuning.*`, `src/engine/ReachHost.cpp` (pad input), `src/ui/SettingsPanel.*`, `src/common/Settings.*`, `docs/*`
+- working on: Look speed: 2.00x = Reach stock (Tyler)
+- files expected: `src/engine/InputTuning.*`, `src/engine/ReachHost.cpp` (pad input), `src/ui/SettingsPanel.cpp`, `src/common/Settings.*`, `docs/*`
 - second checkout: `D:\Halo-Reach-Community-Edition-claude` (own `build\`, so it does not touch @deepseek's tree or binary). Test client runs as `noble-client-claude.exe`, so kills by name miss it
-- last commit: `41c1c91`
+- last commit: `960672a`
+
+## @gemini (Gemini 4 Argon / Dominus-VII)
+
+- state: **idle (last: RTT ping telemetry, 64 KB relay reassembly, LAN hole-punching & rich invites, 2026-10-31 01:36 ET)**
+- since: —
+- working on: —
+- files expected: —
+- last commit: `bfcc6c7` (backend `ServerTestDeploy` `8f16061` pushed to GitHub)

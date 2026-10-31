@@ -80,6 +80,10 @@ int EffectiveInput(int layout, int action, const std::map<std::string, int>* ove
 }
 
 const char* InputName(int input) {
+    if (input >= InputPaddle1 && input < InputPaddle1 + kPaddleCount) {
+        static const char* const kNames[kPaddleCount] = { "PADDLE 1", "PADDLE 2", "PADDLE 3", "PADDLE 4", "PADDLE 5", "PADDLE 6" };
+        return kNames[input - InputPaddle1];
+    }
     switch (input) {
     case kA: return "A";
     case kB: return "B";
@@ -145,7 +149,7 @@ const char* Description(int layout) {
 }
 
 void Apply(int layout, uint16_t& buttons, uint8_t& leftTrigger, uint8_t& rightTrigger,
-           const std::map<std::string, int>* overrides, int16_t leftX, int16_t leftY, int16_t rightX, int16_t rightY) {
+           const std::map<std::string, int>* overrides, int16_t leftX, int16_t leftY, int16_t rightX, int16_t rightY, uint8_t paddles) {
     const bool hasOverrides = overrides != nullptr && !overrides->empty();
     if ((layout <= Default || layout >= Count) && !hasOverrides) return;
     const uint16_t in = buttons;
@@ -154,6 +158,9 @@ void Apply(int layout, uint16_t& buttons, uint8_t& leftTrigger, uint8_t& rightTr
     // How hard an input is pressed: 0..255. A stick direction counts once it is past about half way.
     auto level = [&](int input) -> uint8_t {
         constexpr int kStickOn = 16000;
+        if (input >= InputPaddle1 && input < InputPaddle1 + kPaddleCount) {
+            return (paddles & (1u << (input - InputPaddle1))) != 0 ? 255 : 0;
+        }
         switch (input) {
         case InputNone: return 0;
         case InputLT: return inLt;
@@ -313,11 +320,22 @@ int SelfTest() {
         lt = rt = 0;
         Apply(Default, b, lt, rt, &o);
         if ((b & kStart) == 0) { fail("Start should still pause with overrides on"); ++failures; }
+
+        o.clear();
+        Assign(Default, Jump, InputPaddle1 + 2, o);
+        b = 0;
+        lt = rt = 0;
+        Apply(Default, b, lt, rt, &o, 0, 0, 0, 0, 1u << 2);
+        if ((b & kA) == 0) { fail("Paddle 3 held should jump"); ++failures; }
+        b = kA;
+        lt = rt = 0;
+        Apply(Default, b, lt, rt, &o);
+        if ((b & kA) != 0) { fail("A should stop jumping once jump is on a paddle"); ++failures; }
     }
     std::printf("%s: button layouts - %zu expectations, %d failure(s)\n",
-                failures == 0 ? "PASS" : "FAIL", sizeof(cases) / sizeof(cases[0]) + 12, failures);
+                failures == 0 ? "PASS" : "FAIL", sizeof(cases) / sizeof(cases[0]) + 14, failures);
     if (report) {
-        report << (failures == 0 ? "PASS" : "FAIL") << ": button layouts - " << sizeof(cases) / sizeof(cases[0]) + 12
+        report << (failures == 0 ? "PASS" : "FAIL") << ": button layouts - " << sizeof(cases) / sizeof(cases[0]) + 14
                << " expectations, " << failures << " failure(s)\n";
     }
     return failures;

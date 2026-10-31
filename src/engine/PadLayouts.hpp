@@ -40,7 +40,10 @@ enum InputBit : int {
     InputLT = 0x010000, InputRT = 0x020000,
     InputLStickUp = 0x040000, InputLStickDown = 0x080000, InputLStickLeft = 0x100000, InputLStickRight = 0x200000,
     InputRStickUp = 0x400000, InputRStickDown = 0x800000, InputRStickLeft = 0x1000000, InputRStickRight = 0x2000000,
+    // Paddles reach Noble as keyboard keys or mouse buttons (SettingsData::padPaddleKeys). InputPaddle1 + n for paddle n.
+    InputPaddle1 = 0x40000001,
 };
+constexpr int kPaddleCount = 6;
 
 // The input one action uses in `layout`, before any player override.
 int LayoutInput(int layout, int action);
@@ -58,11 +61,11 @@ int ActionFromKey(const std::string& key);   // -1 when unknown
 void Assign(int layout, int action, int input, std::map<std::string, int>& overrides);
 
 // Rewrites a raw XInput pad state into the engine's default mapping for this layout and these overrides. `layout` out of
-// range (or Default) without overrides leaves everything untouched. The stick values are only read for overrides bound to a
+// range (or Default) without overrides leaves everything untouched. `paddles` has bit n set while paddle n is held. The stick values are only read for overrides bound to a
 // stick direction; the sticks themselves keep moving and looking.
 void Apply(int layout, uint16_t& buttons, uint8_t& leftTrigger, uint8_t& rightTrigger,
            const std::map<std::string, int>* overrides = nullptr,
-           int16_t leftX = 0, int16_t leftY = 0, int16_t rightX = 0, int16_t rightY = 0);
+           int16_t leftX = 0, int16_t leftY = 0, int16_t rightX = 0, int16_t rightY = 0, uint8_t paddles = 0);
 
 // Display name of a layout ("DEFAULT", "SOUTHPAW", ...). Never null.
 const char* Name(int layout);

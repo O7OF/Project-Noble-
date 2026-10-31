@@ -157,6 +157,7 @@ const char* GroupName(ActionGroup group) {
 }
 
 std::string KeyName(int vk) {
+    if (vk >= VK_F1 && vk <= VK_F24) return "F" + std::to_string(vk - VK_F1 + 1);
     switch (vk) {
     case 0: return "-";
     case VK_LBUTTON: return "Left mouse";

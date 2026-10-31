@@ -59,8 +59,8 @@ void Clamp(SettingsData& d) {
     d.wheelUpAction = std::clamp(d.wheelUpAction, -1, 65);
     d.wheelDownAction = std::clamp(d.wheelDownAction, -1, 65);
     d.padVibrationStrength = std::clamp(d.padVibrationStrength, 0.0f, 1.0f);
-    d.padLookX = std::clamp(d.padLookX, 1, 19);
-    d.padLookY = std::clamp(d.padLookY, 1, 19);
+    d.padLookSpeedX = std::clamp(d.padLookSpeedX, 1.0f, 10.0f);
+    d.padLookSpeedY = std::clamp(d.padLookSpeedY, 1.0f, 10.0f);
     d.padLeftDeadZone = std::clamp(d.padLeftDeadZone, 0.0f, 0.5f);
     d.padRightDeadZone = std::clamp(d.padRightDeadZone, 0.0f, 0.5f);
     for (auto it = d.keyOverrides.begin(); it != d.keyOverrides.end();) {
@@ -107,12 +107,27 @@ void Settings::Load() {
             Read(j, "wheelDownAction", d.wheelDownAction);
             Read(j, "padVibration", d.padVibration);
             Read(j, "padVibrationStrength", d.padVibrationStrength);
-            Read(j, "padLookX", d.padLookX);
-            Read(j, "padLookY", d.padLookY);
+            // Older files saved 1..19; 19 stays the top of the new 1.00..10.00 scale.
+            {
+                int oldX = 0, oldY = 0;
+                Read(j, "padLookX", oldX);
+                Read(j, "padLookY", oldY);
+                if (oldX > 0) d.padLookSpeedX = (static_cast<float>(oldX) + 1.0f) * 0.5f;
+                if (oldY > 0) d.padLookSpeedY = (static_cast<float>(oldY) + 1.0f) * 0.5f;
+            }
+            Read(j, "padLookSpeedX", d.padLookSpeedX);
+            Read(j, "padLookSpeedY", d.padLookSpeedY);
             Read(j, "padInvertLook", d.padInvertLook);
     Read(j, "padLayout", d.padLayout);
     Read(j, "padStickLayout", d.padStickLayout);
     Read(j, "padToggleZoom", d.padToggleZoom);
+    if (j.contains("padPaddleKeys") && j["padPaddleKeys"].is_array() && j["padPaddleKeys"].size() == d.padPaddleKeys.size()) {
+        for (size_t i = 0; i < d.padPaddleKeys.size(); ++i) {
+            if (j["padPaddleKeys"][i].is_number_integer()) d.padPaddleKeys[i] = j["padPaddleKeys"][i].get<int>();
+        }
+        // The first default was F13-F18; move anyone still on it to F1-F6. A set the player chose stays.
+        if (d.padPaddleKeys == std::array<int, 6>{ 0x7C, 0x7D, 0x7E, 0x7F, 0x80, 0x81 }) d.padPaddleKeys = SettingsData{}.padPaddleKeys;
+    }
     if (j.contains("padBindings") && j["padBindings"].is_object()) {
         for (const auto& [key, value] : j["padBindings"].items()) {
             if (value.is_number_integer()) d.padBindings[key] = value.get<int>();
@@ -233,12 +248,13 @@ bool Settings::Save() {
         j["wheelDownAction"] = d.wheelDownAction;
         j["padVibration"] = d.padVibration;
         j["padVibrationStrength"] = d.padVibrationStrength;
-        j["padLookX"] = d.padLookX;
-        j["padLookY"] = d.padLookY;
+        j["padLookSpeedX"] = d.padLookSpeedX;
+        j["padLookSpeedY"] = d.padLookSpeedY;
         j["padInvertLook"] = d.padInvertLook;
     j["padLayout"] = d.padLayout;
     j["padStickLayout"] = d.padStickLayout;
     j["padToggleZoom"] = d.padToggleZoom;
+    j["padPaddleKeys"] = d.padPaddleKeys;
     if (!d.padBindings.empty()) j["padBindings"] = d.padBindings;
         j["padLeftDeadZone"] = d.padLeftDeadZone;
         j["padRightDeadZone"] = d.padRightDeadZone;

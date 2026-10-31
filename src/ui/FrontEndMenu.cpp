@@ -21,6 +21,7 @@
 #include "ArmorCustomizer.hpp"
 #include "WorkshopManager.hpp"
 #include "ModCatalog.hpp"
+#include "ModDownloadPrompt.hpp"
 #include "vfs/VFS.hpp"
 #include "career/Career.hpp"
 #include "common/Logger.hpp"
@@ -673,6 +674,9 @@ int s_hintThisFrame = -1;    // the click being handled this frame
 bool HintClicked(Prompt p) { return s_hintThisFrame == static_cast<int>(p); }
 
 bool AcceptPressed() {
+    // A modal (Account, Developer, or the Workshop-mod gate) owns ENTER/A while it is up; otherwise the
+    // screen behind it would also act on the same press.
+    if (ModDownloadPrompt::Get().IsActive()) return false;
     return ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false) ||
            ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false) || HintClicked(Prompt::Accept);
 }
@@ -1395,6 +1399,10 @@ struct MenuState {
     std::string lobbyMode = "multiplayer";
     std::string lobbyVariantPath;
     std::string lobbyVariantName = "Slayer";
+    // Workshop mod this lobby runs. A guest without it sees the Download & Join prompt before joining.
+    std::string lobbyModId;
+    std::string lobbyModTitle;
+    std::filesystem::path lobbyModFolder;
     int lobbyDifficulty = 1;
     uint64_t lobbySkulls = 0;
     int lobbyMaxPlayers = 16;
@@ -1428,12 +1436,16 @@ struct MenuState {
 static void ClearPendingLobbyEvents();
 
 static void SetupHostLobby(MenuState& st, const std::string& mapScenario, const std::string& mode,
-                           const std::string& varPath, const std::string& varName, int diff, uint64_t skulls, int maxPlayers) {
+                           const std::string& varPath, const std::string& varName, int diff, uint64_t skulls, int maxPlayers,
+                           const ModEntry* mod = nullptr) {
     st.isLobbyHost = true;
     st.lobbyMap = mapScenario;
     st.lobbyMode = mode;
     st.lobbyVariantPath = varPath;
     st.lobbyVariantName = varName;
+    st.lobbyModId = mod ? mod->workshopId : std::string();
+    st.lobbyModTitle = mod ? mod->title : std::string();
+    st.lobbyModFolder = mod ? mod->folder : std::filesystem::path();
     st.lobbyDifficulty = diff;
     st.lobbySkulls = skulls;
     st.lobbyMaxPlayers = maxPlayers;
@@ -1451,6 +1463,8 @@ static void SetupHostLobby(MenuState& st, const std::string& mapScenario, const 
     cfg.gameMode = st.lobbyMode;
     cfg.mapName = st.lobbyMap;
     cfg.gametypeName = st.lobbyVariantName;
+    cfg.modId = st.lobbyModId;
+    cfg.modTitle = st.lobbyModTitle;
     cfg.maxPlayers = st.lobbyMaxPlayers;
     cfg.port = 11774;
     cfg.mode = (st.lobbyNetMode == 1) ? NetworkMode::Online_P2P : NetworkMode::Local_LAN;
@@ -1466,6 +1480,9 @@ static void SetupHostLobby(MenuState& st, const std::string& mapScenario, const 
         adv.variant = st.lobbyVariantName;
         adv.difficulty = st.lobbyDifficulty;
         adv.skulls = st.lobbySkulls;
+        adv.isMod = mod != nullptr || !st.lobbyModTitle.empty();
+        adv.modId = st.lobbyModId;
+        adv.modTitle = st.lobbyModTitle;
         adv.inProgress = false;
         adv.isPrivate = (st.lobbyPrivacy != 0);
         adv.hostPeerId = AuthClient::Get().IsLoggedIn() ? static_cast<uint64_t>(AuthClient::Get().GetUserId()) : 1ULL;
@@ -1762,6 +1779,23 @@ OverlayContext& GetOverlayCtx() {
     return s_ctx;
 }
 
+// Rescans Workshop + data\mods and rebuilds the per-mode lists the setup screens use. Called at menu start
+// and again after the Download & Join prompt installs the lobby's mod.
+static void RefreshModCatalog(OverlayContext& ctx) {
+    ctx.mods = ModCatalog::Scan(VFS::GetWorkshopPath(), VFS::GetUserStoragePath() / "mods");
+    ctx.campaignMods.clear();
+    ctx.ffMods.clear();
+    ctx.mpMods.clear();
+    for (const ModEntry& m : ctx.mods) {
+        auto replaces = [&](const MenuMap* base, int count) {
+            return std::any_of(m.mapFiles.begin(), m.mapFiles.end(),
+                               [&](const std::string& f) { return KnownScenario(f, base, count); });
+        };
+        if (!m.campaign.empty() || replaces(kMissions, Count(kMissions))) ctx.campaignMods.push_back(&m);
+        if (!m.firefight.empty() || replaces(kFirefightMaps, Count(kFirefightMaps))) ctx.ffMods.push_back(&m);
+        if (!m.multiplayer.empty() || replaces(kMaps, Count(kMaps))) ctx.mpMods.push_back(&m);
+    }
+}
 
 // "-auto-play": the capture harness cannot press PLAY LOCAL / HOST LOBBY, so a test run can ask the setup screens
 // to start the selected match by themselves after a couple of seconds. Test-only, no settings involved.
@@ -2107,8 +2141,11 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         choice.variantPath = st.lobbyLaunchVariant;
         choice.difficulty = st.lobbyLaunchDiff;
         choice.skulls = st.lobbyLaunchSkulls;
-        NOBLE_INFO("Guest launching from lobby: map='{}' mode='{}' variant='{}' connect='{}'",
-                   choice.map, choice.mode, choice.variantPath, st.lobbyHostEndpoint);
+        // The lobby's map (and any replacement objects) live in the Workshop mod, so the match reads it first.
+        choice.modFolder = st.lobbyModFolder;
+        choice.modTitle = st.lobbyModTitle;
+        NOBLE_INFO("Guest launching from lobby: map='{}' mode='{}' variant='{}' mod='{}' connect='{}'",
+                   choice.map, choice.mode, choice.variantPath, st.lobbyModId, st.lobbyHostEndpoint);
         choice.connectAddress = st.lobbyHostEndpoint;
         choice.sessionId = st.lobbySessionId;
         if (st.lobbySessionToken.empty()) st.lobbySessionToken = MasterServerClient::Get().GetCurrentSessionToken();
@@ -2371,6 +2408,9 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
                 choice.variantPath = st.lobbyVariantPath;
                 choice.difficulty = st.lobbyDifficulty;
                 choice.skulls = st.lobbySkulls;
+                // The host picked this lobby's map from a mod; the relaunched match must read that mod first.
+                choice.modFolder = st.lobbyModFolder;
+                choice.modTitle = st.lobbyModTitle;
                 done = true;
             } else {
                 st.lobbyReady = !st.lobbyReady;
@@ -2587,10 +2627,14 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
                 if (ImGui::Button("INVITE", ImVec2(invW, invH))) {
                     std::string myIp = UPnP::Get().GetExternalIP();
                     if (myIp.empty() || myIp == "Unknown") myIp = "127.0.0.1";
+                    std::string invMode = "Custom Game";
+                    if (st.lobbyMode == "campaign") invMode = "Campaign";
+                    else if (st.lobbyMode == "firefight") invMode = "Firefight";
+                    else if (st.lobbyMode == "forge") invMode = "Forge";
                     SocialClient::Get().SendInviteAsync(f.username, myIp, 11774, [](bool ok, const std::string& msg) {
                         (void)msg;
                         if (ok) MenuSounds::Click();
-                    });
+                    }, invMode, st.lobbyMap, st.lobbySessionId);
                 }
                 ImGui::PopID();
             } else {
@@ -2866,10 +2910,14 @@ static void DrawSocialScreen(OverlayContext& ctx, const Ui& ui, float left, floa
                 ImGui::PushID(static_cast<int>(i));
 
                 if (ImGui::Button("INVITE", ImVec2(75.0f * ui.s, 24.0f * ui.s))) {
+                    std::string invMode = "Custom Game";
+                    if (st.lobbyMode == "campaign") invMode = "Campaign";
+                    else if (st.lobbyMode == "firefight") invMode = "Firefight";
+                    else if (st.lobbyMode == "forge") invMode = "Forge";
                     SocialClient::Get().SendInviteAsync(f.username, myIp, 11774, [](bool ok, const std::string& msg) {
                         (void)msg;
                         if (ok) MenuSounds::Click();
-                    });
+                    }, invMode, st.lobbyMap, st.lobbySessionId);
                 }
                 ImGui::SameLine();
                 if (!f.endpoint.empty()) {
@@ -3095,7 +3143,7 @@ void DrawMusicPlayer(const Ui& ui) {
 // player turned invites off in Settings > Online services. The invite carries the host endpoint, so JOIN is
 // the same relaunch the server browser uses for a direct connect (2026-10-30).
 void DrawInviteToast(const Ui& ui, MenuState& st) {
-    if (st.confirmQuit || s_showAccountModal || s_showDevMenu) return;
+    if (st.confirmQuit || s_showAccountModal || s_showDevMenu || ModDownloadPrompt::Get().IsActive()) return;
     if (!Settings::Get().Snapshot().inviteNotifications) return;
     if (!AuthClient::Get().IsLoggedIn()) return;
 
@@ -3130,8 +3178,11 @@ void DrawInviteToast(const Ui& ui, MenuState& st) {
     Text(ui, NobleStyle::TitleFont(), 19.0f, ImVec2(p0.x + 16.0f * ui.s, p0.y + 30.0f * ui.s), kWhite,
          newest->senderUsername.c_str());
     const float nameW = TextWidth(NobleStyle::TitleFont(), 19.0f * ui.s, newest->senderUsername.c_str());
+    const std::string inviteDesc = newest->mode.empty()
+                                       ? "is inviting you to a match"
+                                       : ("is inviting you to a " + newest->mode + " match");
     Text(ui, nullptr, 15.0f, ImVec2(p0.x + 16.0f * ui.s + nameW + 8.0f * ui.s, p0.y + 36.0f * ui.s), kDim,
-         "is inviting you to a match");
+         inviteDesc.c_str());
 
     const float bw = 160.0f * ui.s, bh = 30.0f * ui.s;
     const ImVec2 j0(p0.x + w - bw * 2.0f - 26.0f * ui.s, p1.y - bh - 12.0f * ui.s);
@@ -3160,8 +3211,12 @@ void DrawInviteToast(const Ui& ui, MenuState& st) {
             s_answered = key;
             SocialClient::Get().ClearInviteAsync(newest->senderUsername);
             SocialClient::Get().RefreshFriendsAsync();
-            NOBLE_INFO("FrontEndMenu: accepting invite from {} ({})", newest->senderUsername, newest->hostIp);
-            const std::wstring args = L"-connect \"" + ToWide(newest->hostIp + ":" + std::to_string(newest->hostPort)) + L"\"";
+            NOBLE_INFO("FrontEndMenu: accepting invite from {} ({}, mode='{}')",
+                       newest->senderUsername, newest->hostIp, newest->mode);
+            std::wstring args = L"-connect \"" + ToWide(newest->hostIp + ":" + std::to_string(newest->hostPort)) + L"\"";
+            if (!newest->sessionId.empty()) {
+                args += L" -session-id \"" + ToWide(newest->sessionId) + L"\"";
+            }
             Relaunch::HandOff(args);
         }
     }
@@ -3208,8 +3263,9 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
     const float top = ui.size.y * 0.09f;
     const SettingsData settings = Settings::Get().Snapshot();
     s_hintThisFrame = std::exchange(s_hintClicked, -1);
-    const bool back = ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) ||
-                      HintClicked(Prompt::Back);
+    const bool modPromptOpen = ModDownloadPrompt::Get().IsActive();
+    const bool back = !modPromptOpen && (ImGui::IsKeyPressed(ImGuiKey_Escape, false) ||
+                      ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) || HintClicked(Prompt::Back));
     auto goBack = [&](Screen to) {
         st.screen = to;
         st.focusRow = 0;
@@ -3224,7 +3280,7 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
     switch (st.screen) {
     case Screen::Main: {
         // While the quit box or a modal is open nothing behind it reacts to the mouse (no hover, sounds or clicks).
-        const bool modal = st.confirmQuit || s_showAccountModal || s_showDevMenu;
+        const bool modal = st.confirmQuit || s_showAccountModal || s_showDevMenu || modPromptOpen;
         ImGui::BeginDisabled(modal);
         DrawParty(ui, settings.playerName, "In Main Menu Lobby");
         DrawTitle(ui, ImVec2(left, ui.size.y * 0.30f), "MAIN MENU");
@@ -3419,7 +3475,7 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         const char* coopSub = st.lobbyNetMode == 1 ? (st.lobbyPrivacy == 0 ? "Public Online P2P" : "Private Online P2P") : "Local LAN Co-op";
         const bool hostCoop = BigAction(ui, "coop", ImVec2(px + bw + 10.0f * ui.s, actionsY), pw - bw - 10.0f * ui.s, "HOST CO-OP", coopSub, true, canStart);
         if (hostCoop) {
-            SetupHostLobby(st, mission->scenario, "campaign", "", "Campaign", st.difficulty, st.skulls, 4);
+            SetupHostLobby(st, mission->scenario, "campaign", "", "Campaign", st.difficulty, st.skulls, 4, mission->mod);
         } else if (startSolo) {
             choice.play = true;
             choice.host = false;
@@ -3764,7 +3820,7 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
             }
             const std::string mode = ff ? "firefight" : (forge ? "forge" : "multiplayer");
             SetupHostLobby(st, map ? map->scenario : "20_sword_slayer", mode, varPath, varName, ff ? st.difficulty : 1, 0,
-                           ff ? 4 : st.sessionMaxPlayers);
+                           ff ? 4 : st.sessionMaxPlayers, map ? map->mod : nullptr);
         } else if (startSolo) {
             choice.play = true;
             choice.host = false;
@@ -3894,6 +3950,10 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
     // Friend invites reach the player on any screen (Settings > Online services can turn this off).
     DrawInviteToast(ui, st);
 
+    // The Workshop-mod gate sits above every screen: the Server browser stays behind it until the
+    // player downloads the lobby's mod or cancels.
+    ModDownloadPrompt::Get().Render();
+
     ImGui::End();
 }
 
@@ -3927,18 +3987,7 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
     ctx.ffVariants = ScanVariants(reachDir, true);
     ctx.forgeVariant = reachDir / "game_variants" / kForgeVariant;
 
-    ctx.mods = ModCatalog::Scan(VFS::GetWorkshopPath(), VFS::GetUserStoragePath() / "mods");
-    ctx.campaignMods.clear();
-    ctx.ffMods.clear();
-    ctx.mpMods.clear();
-    for (const ModEntry& m : ctx.mods) {
-        auto replaces = [&](const MenuMap* base, int count) {
-            return std::any_of(m.mapFiles.begin(), m.mapFiles.end(), [&](const std::string& f) { return KnownScenario(f, base, count); });
-        };
-        if (!m.campaign.empty() || replaces(kMissions, Count(kMissions))) ctx.campaignMods.push_back(&m);
-        if (!m.firefight.empty() || replaces(kFirefightMaps, Count(kFirefightMaps))) ctx.ffMods.push_back(&m);
-        if (!m.multiplayer.empty() || replaces(kMaps, Count(kMaps))) ctx.mpMods.push_back(&m);
-    }
+    RefreshModCatalog(ctx);
 
     ctx.st = MenuState{};
     ctx.st.variant = FindVariant(ctx.variants, L"slayer_054.bin");
@@ -3956,6 +4005,18 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
             if (std::wstring(argv[i]) == L"-menu-screen") ctx.st.screen = ParseScreenArg(argv[i + 1]);
             if (std::wstring(argv[i]) == L"-menu-capture") ctx.captureFrame = _wtoi64(argv[i + 1]);
             if (std::wstring(argv[i]) == L"-menu-tab") startTab = _wtoi(argv[i + 1]);
+        }
+        if (argv) LocalFree(argv);
+    }
+    // Test-only: open the "Workshop mod required" dialog on a fake missing item so -menu-capture can
+    // photograph it without a second machine hosting a modded lobby.
+    {
+        int argc = 0;
+        LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+        for (int i = 1; argv && i < argc; ++i) {
+            if (_wcsicmp(argv[i], L"-mod-prompt-demo") == 0) {
+                ModDownloadPrompt::Get().Show("9999999999", "CUSTOM MAP PACK", {}, true);
+            }
         }
         if (argv) LocalFree(argv);
     }
@@ -3982,8 +4043,12 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
 
     UIManager::GetArmorCustomizer().SyncToReachArmory();
 
-    // Server Browser Join Pre-Game Lobby Handler
-    UIManager::GetServerBrowser().SetJoinLobbyHandler([&ctx](const ServerEntry& s) {
+    // Server Browser Join Pre-Game Lobby Handler. A lobby whose map comes from a Steam Workshop mod is
+    // checked BEFORE joining: a player without the item gets Download & Join / Cancel, and only starts the
+    // lobby join once the mod is in the Workshop cache. (The old behaviour walked straight into a lobby
+    // whose map the guest could not load.)
+    auto enterLobby = [&ctx](const ServerEntry& s, const std::string& modId, const std::string& modTitle,
+                             const std::filesystem::path& modFolder) {
         ctx.st.isLobbyHost = false;
         ctx.st.lobbySessionId = s.id;
         ctx.st.lobbyHostEndpoint = s.hostAddress + ":" + std::to_string(s.port);
@@ -3991,6 +4056,9 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
         ctx.st.lobbyMode = s.gameMode.empty() ? "multiplayer" : s.gameMode;
         ctx.st.lobbyVariantName = s.variantName.empty() ? "Default" : s.variantName;
         ctx.st.lobbyMaxPlayers = s.maxPlayers;
+        ctx.st.lobbyModId = modId;
+        ctx.st.lobbyModTitle = modTitle;
+        ctx.st.lobbyModFolder = modFolder;
         ctx.st.lobbyRoster.clear();
         ctx.st.lobbyLaunchPending = false;
         {   // a launch or roster left over from an earlier lobby doesn't apply to this one
@@ -3998,6 +4066,8 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
             s_lobbyEvents = PendingLobbyEvents{};
         }
         ctx.st.lastLobbyPoll = ImGui::GetTime();
+        NOBLE_INFO("ServerBrowser join: lobby '{}' ({}:{}) mod='{}' folder='{}'", s.name, s.hostAddress, s.port,
+                   modId, modFolder.string());
 
         std::string pName = AuthClient::Get().IsLoggedIn() ? AuthClient::Get().GetUsername() : Settings::Get().Snapshot().playerName;
         if (pName.empty()) pName = "Guest";
@@ -4021,6 +4091,7 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
             ctx.st.lobbyVariantName = state.variant;
             ctx.st.lobbyDifficulty = state.difficulty;
             ctx.st.lobbySkulls = state.skulls;
+            if (!state.modTitle.empty()) ctx.st.lobbyModTitle = state.modTitle;
             if (state.isLan && !state.hostLanIp.empty()) {
                 ctx.st.lobbyHostEndpoint = state.hostLanIp + ":" + std::to_string(state.hostPort);
             }
@@ -4043,6 +4114,38 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
         }
 
         ctx.st.screen = Screen::PreGameLobby;
+    };
+
+    UIManager::GetServerBrowser().SetJoinLobbyHandler([&ctx, enterLobby](const ServerEntry& s) {
+        std::string modId = s.modId;
+        std::string modTitle = s.modTitle;
+        // The list refreshes every two seconds; if the host picked its mod after the last refresh, ask the
+        // lobby endpoint once before letting the player in.
+        if (modId.empty() && s.isMod && !s.id.empty() && MasterServerClient::Get().Enabled()) {
+            const LobbyState peek = MasterServerClient::Get().FetchLobbyStateSync(s.id);
+            if (peek.ok) {
+                modId = peek.modId;
+                modTitle = peek.modTitle;
+            }
+        }
+
+        std::filesystem::path modFolder;
+        if (!modId.empty()) {
+            if (const ModEntry* installed = ModCatalog::FindByWorkshopId(ctx.mods, modId)) {
+                modFolder = installed->folder;
+                if (modTitle.empty()) modTitle = installed->title;
+            }
+            if (modFolder.empty()) modFolder = SteamWorkshop::FindInstalledFolder(modId);
+            if (modFolder.empty()) {
+                ModDownloadPrompt::Get().Show(modId, modTitle,
+                    [&ctx, s, enterLobby, modId, modTitle](const std::filesystem::path& downloaded) {
+                        RefreshModCatalog(ctx);   // the new item belongs in the setup screens and the Mods list
+                        enterLobby(s, modId, modTitle, downloaded);
+                    });
+                return;
+            }
+        }
+        enterLobby(s, modId, modTitle, modFolder);
     });
 
     // Real-time WebSocket Lobby Callbacks
@@ -4081,6 +4184,11 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
                     p.machineId = item.value("machineId", "");
                     p.username = item.value("username", "Spartan");
                     p.serviceTag = item.value("serviceTag", "117");
+                    p.rankIndex = item.value("rankIndex", -1);
+                    p.emblemId = item.value("emblemId", 0);
+                    p.emblemBackgroundId = item.value("emblemBackgroundId", 0);
+                    p.nameplateId = item.value("nameplateId", 0);
+                    p.team = item.value("team", 0);
                     p.isHost = item.value("isHost", false);
                     p.isDev = item.value("isDev", false);
                     p.ping = item.value("ping", 0);

@@ -327,6 +327,9 @@ void SocialClient::PollInvitesAsync() {
                         inv.senderUsername = item.value("senderUsername", "");
                         inv.hostIp = item.value("hostIp", "");
                         inv.hostPort = static_cast<uint16_t>(item.value("hostPort", 11774));
+                        inv.mode = item.value("mode", "Custom Game");
+                        inv.map = item.value("map", "");
+                        inv.sessionId = item.value("sessionId", "");
                         inv.timestamp = item.value("timestamp", 0ULL);
                         if (!inv.senderUsername.empty() && !inv.hostIp.empty()) {
                             invites.push_back(inv);
@@ -487,20 +490,27 @@ void SocialClient::RemoveFriendAsync(const std::string& targetUsername, std::fun
     }).detach();
 }
 
-void SocialClient::SendInviteAsync(const std::string& targetUsername, const std::string& hostIp, uint16_t hostPort, std::function<void(bool ok, const std::string& message)> callback) {
+void SocialClient::SendInviteAsync(const std::string& targetUsername, const std::string& hostIp, uint16_t hostPort,
+                                   std::function<void(bool ok, const std::string& message)> callback,
+                                   const std::string& mode,
+                                   const std::string& map,
+                                   const std::string& sessionId) {
     const std::string senderUsername = AuthClient::Get().GetUsername();
     if (senderUsername.empty()) {
         if (callback) callback(false, "Must be logged in");
         return;
     }
 
-    std::thread([this, targetUsername, senderUsername, hostIp, hostPort, callback]() {
+    std::thread([this, targetUsername, senderUsername, hostIp, hostPort, mode, map, sessionId, callback]() {
         const std::string url = ResolveMasterUrl();
         nlohmann::json req;
         req["targetUsername"] = targetUsername;
         req["senderUsername"] = senderUsername;
         req["hostIp"] = hostIp;
         req["hostPort"] = hostPort;
+        req["mode"] = mode.empty() ? "Custom Game" : mode;
+        if (!map.empty()) req["map"] = map;
+        if (!sessionId.empty()) req["sessionId"] = sessionId;
         int status = 0;
         std::string res = PostJson(url, "/api/invites/send", req.dump(), status);
         std::string msg = "Invite sent";

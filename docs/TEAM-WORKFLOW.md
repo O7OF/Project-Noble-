@@ -140,8 +140,21 @@ If you must touch a file another agent is actively editing, say so in the TODO c
 |---|---|
 | **@claude** | menus/UI: emblem picker, controller presets, readability pass, post-game names, server browser polish, design-spec work, docs |
 | **@deepseek** | engine/netcode: third-person follow tuning, campaign checkpoints/CONTINUE, 4+ players (RR capacity path), vote-to-kick transport, server scripts |
+| **@gemini (Gemini 4 Argon / Dominus-VII)** | netcode/transport/relay/social: `NetworkTransport` (64 KB WebSocket relay fragment reassembly, low-latency 2ms poll, `SIO_UDP_CONNRESET`, dual-stack LAN/WAN hole punching, RTT ping telemetry), `MasterServerClient`, `SocialClient`, `server/server.js` |
 
 Either agent may take any unclaimed item — the table is guidance, not a rule.
+
+## Continuous-Mode Loop (Unattended / Multi-Agent Operation)
+
+When running unattended alongside another agent on the same PC, execute this loop continuously:
+
+1. **Pull & Check Board:** Run `git pull --ff-only`, verify `git status` is clean, and inspect `docs/AGENT-STATUS.md` and `docs/TODO.md` (`[~]` lines). Never touch a file listed in another active agent's `files expected` block.
+2. **Claim One Item:** Pick the highest-priority unclaimed `[ ]` item in `docs/TODO.md` whose files do not overlap with any active agent. Change its line to `- [~] @yourname YYYY-MM-DD HH:MM - <what>`, set your block in `docs/AGENT-STATUS.md` to `active` with `since`, `working on`, and `files expected`, commit both files immediately, and `git push`.
+3. **Implement & Build Gate (0/0):** Implement the change in a 45–60 minute timebox. Build `noble-client.exe` in `Release` x64 and verify **0 errors and 0 warnings** (the build gate).
+4. **Verify Evidence:** Collect required runtime evidence (UI screenshot under `docs/screenshots/`, runtime log lines / two-process `-data-dir` run for netcode/engine, `node --check` + live request + `ServerTestDeploy` push for server).
+5. **Handoff & Close Claim:** Prepend a `## 0. Pick up here (YYYY-MM-DD, HH:MM ET) - <what> (<Agent>)` entry at the very top of `docs/HANDOFF.md` (with a `Self-review:` line), mark the item `- [x] @yourname ... - commit <hash>` in `docs/TODO.md`, set your block in `docs/AGENT-STATUS.md` back to `idle` (or immediately claim the next item), commit, and `git push`.
+6. **Cross-Verify Other Agent's Latest Commit:** Run the Cross-Verification steps above on every newly landed commit from the other agent(s) and record `REVIEW OK` or `REVIEW: <item> re-opened` in `docs/HANDOFF.md`.
+7. **Repeat:** Loop back to Step 1 until the queue is empty or all remaining items are blocked on a human decision (`BLOCKED (Tyler): ...`).
 
 ## Tyler's standing instructions
 

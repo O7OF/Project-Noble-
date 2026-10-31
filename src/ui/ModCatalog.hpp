@@ -21,6 +21,7 @@ struct ModMap {
 
 struct ModEntry {
     std::string id;           // Workshop id or folder name
+    std::string workshopId;   // Steam published-file id from ModIdentifier.HostedModIds (empty for local-only mods)
     std::string title;
     std::string description;
     std::filesystem::path folder;
@@ -31,6 +32,10 @@ struct ModEntry {
 namespace ModCatalog {
 
 std::vector<ModEntry> Scan(const std::filesystem::path& workshopPath, const std::filesystem::path& localModsPath);
+
+// Finds an installed mod by Steam published-file id, or by its folder name for local mods. nullptr when
+// the player does not have it (the lobby's Download & Join prompt then offers it).
+const ModEntry* FindByWorkshopId(const std::vector<ModEntry>& mods, const std::string& workshopId);
 
 } // namespace ModCatalog
 } // namespace noble

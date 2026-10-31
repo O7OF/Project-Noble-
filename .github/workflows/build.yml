@@ -1,0 +1,38 @@
+# Build the Project Noble client on every push to main and on demand.
+# Produces a one-click noble-client.exe (and noble-dedicated.exe) so both PCs
+# always run the same binary. The ~2.2 GB of runtime engine data is NOT in git
+# (it is copied from each user's own MCC install), so only the executables are
+# uploaded as artifacts.
+
+name: Build
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    name: Build noble-client (Windows x64)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure (CMake + MSVC x64)
+        run: cmake -S . -B build -A x64
+
+      - name: Build Release
+        run: cmake --build build --config Release --parallel
+
+      - name: Upload noble-client.exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: noble-client
+          path: build/bin/Release/noble-client.exe
+
+      - name: Upload noble-dedicated.exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: noble-dedicated
+          path: build/bin/Release/noble-dedicated.exe

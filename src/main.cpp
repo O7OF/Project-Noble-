@@ -8,6 +8,7 @@
 #include "common/Types.hpp"
 #include "common/Version.hpp"
 #include "host/SteamLocator.hpp"
+#include "host/SteamWorkshop.hpp"
 #include "host/OwnershipVerifier.hpp"
 #include "host/Window.hpp"
 #include "host/D3D11Renderer.hpp"
@@ -108,6 +109,27 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         const int layouts = noble::PadLayouts::SelfTest();
         const int tuning = noble::InputTuning::SelfTest();
         return (types == 0 && names == 0 && layouts == 0 && tuning == 0) ? 0 : 1;
+    }
+
+    // Steam Workshop subscription helper: the join prompt starts us as "-steam-subscribe <id> -steam-dll <path>",
+    // we load MCC's steam_api64.dll, ask Steam for the item and exit. This runs before any window, engine or
+    // logger init so it is fast and cannot be blocked by the menu.
+    {
+        int subArgc = 0;
+        LPWSTR* subArgv = CommandLineToArgvW(GetCommandLineW(), &subArgc);
+        std::string workshopId;
+        std::wstring steamApiDll;
+        for (int i = 1; subArgv && i < subArgc; ++i) {
+            if (_wcsicmp(subArgv[i], L"-steam-subscribe") == 0 && i + 1 < subArgc) {
+                for (const wchar_t* c = subArgv[++i]; c && *c; ++c) workshopId.push_back(static_cast<char>(*c));
+            } else if (_wcsicmp(subArgv[i], L"-steam-dll") == 0 && i + 1 < subArgc) {
+                steamApiDll = subArgv[++i];
+            }
+        }
+        if (subArgv) LocalFree(subArgv);
+        if (!workshopId.empty()) {
+            return noble::SteamWorkshop::SubscribeChildMain(workshopId, fs::path(steamApiDll));
+        }
     }
 
     SetUnhandledExceptionFilter(&NobleCrashHandler);

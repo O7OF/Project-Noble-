@@ -36,6 +36,8 @@ public:
     // True while the engine's own pad/keyboard state has this virtual key down (the same state the game reads, including
     // synthetic presses from test flags). Used by overlays that must appear exactly when the game shows a screen.
     static bool IsKeyHeld(int vk);
+    // True while a controller is connected and this key is one of the paddle keys, so it isn't a keyboard key right now.
+    static bool IsPaddleKey(int vk);
     uint32_t GetDisplayWidth() const { return m_displayWidth; }
     uint32_t GetDisplayHeight() const { return m_displayHeight; }
 
