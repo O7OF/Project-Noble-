@@ -281,8 +281,8 @@ items above close. Keep the spec open when building any screen so the details la
 - [x] @claude 2026-10-31 16:29 - **Scoreboard mute icons and Mute all** (`2aea9fa`).
 - [ ] **Rotation voting** (spec 4.14): 2-3 options after each game, ties to the host. Waits for rotation. - @deepseek then @claude
 - [ ] **Armory left vs right shoulder camera** (handoff guide 5.2): the map has one shoulder camera; needs a lateral camera offset from engine globals. - @deepseek
-- [ ] **Career deaths look uncounted**: the card shows 62 kills / 0 deaths over 15 games on the test profile. Check the results parsing. - @claude
-- [ ] **Hints and the full-screen panels don't line up**: on Settings and Social the prompt row starts further right than the panel. Cosmetic. - @claude
+- [~] @claude 2026-10-31 - **Career deaths look uncounted**: 62 kills / 0 deaths on the test profile. Match end now logs every stat slot. **needs:** one match where the player dies, then read `Career: local general stats`.
+- [x] @claude 2026-10-31 16:39 - **Hints line up with the panels** on Settings and Community (`83edc92`).
 - [x] @claude 2026-10-31 15:08 - **Push-to-talk rebinding in Voice Chat** (`8cbb746`): key or mouse and controller rows; save bug fixed. Physical pad press still to test.
 - [x] @claude 2026-10-31 15:08 - **Music list**: under 40 s removed, including Halo: CE (`8cbb746`).
 - [ ] **Album titles for music cues**: most cues are `Action N` or `Score N` because no public cue-to-album list exists. Needs someone to listen and match, or a datamined list. - unowned
@@ -388,6 +388,6 @@ items above close. Keep the spec open when building any screen so the details la
 
 - [x] **Bump `VERSION_PATCH`** — now `0.8.4` / "0.8.4 (Co-op, Third Person & Menu Cleanup)" (`src/common/Version.hpp`)
 - [x] @deepseek 2026-10-31 01:34 - **GitHub Actions build artifact** — one-click exe so both PCs always run the same binary — commit 7f19dbc
-- [ ] **Dedupe `docs/HANDOFF.md`** — O7's `dc349a5` appended ~27 identical entries; 245+ entries now
+- [x] @claude 2026-10-31 16:39 - **Dedupe docs/HANDOFF.md**: 105 exact duplicates removed.
 - [x] **Remove `patch_blam.js`** — O7's scratch rewrite script, superseded by `64dd74f`
 - [ ] **Drop `stash@{0}`** once Tyler agrees (its useful half is already committed as `32cd0f1`)

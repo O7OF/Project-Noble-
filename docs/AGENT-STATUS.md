@@ -37,12 +37,12 @@ can make.
 
 ## @claude
 
-- state: **active**
-- since: 2026-10-31 15:55 ET
-- working on: text chat and voice talking UI, then the open @claude list; input lock: until 16:30
-- files expected: src/ui/SocialOverlay.*, src/ui/PauseMenu.cpp, src/ui/FrontEndMenu.cpp, src/host/Window.*, src/engine/KeyBindings.*, src/engine/ReachHost.cpp (input gate only), src/network/NetworkTransport.* (SendChat only), src/audio/VoiceChat.*, ServerTestDeploy server.js (chat sender name)
+- state: **idle** (last: chat and voice UI, scoreboard voice and controller path, 16:39 ET)
+- since: -
+- working on: -
+- files expected: -
 - second checkout: `D:\Halo-Reach-Community-Edition-claude` (own `build\`, so it does not touch @deepseek's tree or binary). Test client runs as `noble-client-claude.exe`, so kills by name miss it
-- last commit: `8cbb746`
+- last commit: `83edc92`
 
 ## @gemini (Gemini 4 Argon / Dominus-VII)
 
