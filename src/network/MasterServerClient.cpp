@@ -330,7 +330,7 @@ void MasterServerClient::WorkerLoop() {
         if (doOnline) DoOnline();
 
         lock.lock();
-        if (doHeartbeat) m_nextHeartbeat = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+        if (doHeartbeat) m_nextHeartbeat = std::chrono::steady_clock::now() + std::chrono::seconds(10);
         if (stop) break;
     }
 }
@@ -353,16 +353,23 @@ void MasterServerClient::DoOnline() {
 }
 
 void MasterServerClient::DoList() {
-    const HttpResult r = HttpRequest(Url(), L"GET", "/api/sessions", {});
+    HttpResult r = HttpRequest(Url(), L"GET", "/api/browser", {});
+    if (!r.ok) r = HttpRequest(Url(), L"GET", "/api/sessions", {});
     if (!r.ok) {
         SetStatus(r.error);
         return;
     }
     std::vector<MasterSession> list;
+    int online = -1;
     try {
         const nlohmann::json j = nlohmann::json::parse(r.body);
-        if (j.is_array()) {
-            for (const auto& item : j) {
+        const nlohmann::json* items = &j;
+        if (j.is_object()) {
+            if (j.contains("online")) online = j.value("online", 0);
+            if (j.contains("sessions") && j["sessions"].is_array()) items = &j["sessions"];
+        }
+        if (items->is_array()) {
+            for (const auto& item : *items) {
                 if (!item.is_object() || list.size() >= 500) continue;
                 MasterSession s;
                 s.id = Str(item, "id", 64);
@@ -388,6 +395,7 @@ void MasterServerClient::DoList() {
         SetStatus("master server sent an unreadable list");
         return;
     }
+    if (online >= 0) m_onlinePlayers.store(std::max(0, online));
     std::lock_guard<std::mutex> lock(m_mutex);
     m_status = std::to_string(list.size()) + " game(s) on the master server";
     m_sessions = std::move(list);

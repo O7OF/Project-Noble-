@@ -166,9 +166,11 @@ void Settings::Load() {
     Read(j, "lastPlayedMod", d.lastPlayedMod);
             Read(j, "serviceTag", d.serviceTag);
             Read(j, "masterServerUrl", d.masterServerUrl);
-            // Offline-first: the old Render service is opt-in now, not a hidden default. Existing
-            // settings that still carry it are migrated to LAN/direct-connect only.
-            if (d.masterServerUrl == "https://outbreak-z-test-server.onrender.com") d.masterServerUrl.clear();
+            // Free federation: west is the primary registry; it merges the east peer server-side.
+            // Clear this field in Settings to use LAN/direct-connect only.
+            if (d.masterServerUrl.empty() || d.masterServerUrl == "https://outbreak-z-test-server.onrender.com") {
+                d.masterServerUrl = "https://servertestdeploy-jfxb.onrender.com";
+            }
             Read(j, "favorites", d.favorites);
             Read(j, "accountUsername", d.accountUsername);
             Read(j, "accountToken", d.accountToken);
