@@ -69,6 +69,22 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-31, 02:00 ET) - Look speed: 2.00x is Reach stock, measured (@claude)
+
+Commit `eb757b8`, replacing the look-speed mapping two entries down. Tyler asked for 2.00x = Reach's default, lower slower, higher faster.
+
+**Measured** with `-fake-pad`/`-fake-pad-amount` in Slayer, reading the HUD compass over a 1.5 s hold (`docs/screenshots/look-speed-compass-readings.png`, about +/-2 deg):
+- Profile byte at a 61% push: 0 = 18.5 deg, 8 = 37.5, 12 = 46, 15 = 54.5, 18 = 61. **36 and 72 = about 28: above 18 is slower.**
+- Results: 1.00x 30, 1.50x 46, 2.00x 61; 31% push 7 at 2.00x, 27 at 4.00x; 4.00x at 61% push 172; 2.00x at full push 171.
+
+**Tried and dropped:** mouse-look deltas while device = controller do nothing (4.00x and 10.00x both turned 61), and scaling the stick for slow speeds is far from proportional (half stick gave 8, not 30).
+
+**Limit:** above 2.00x only partial pushes get faster. **A full push tops out at Reach's own 171 deg per 1.5 s, whatever the setting.** Raising that needs the engine's turn rate; a scan for a speed table in `haloreach.dll` and the `cmp 12h` sites I read found nothing. Next idea: the player control look rates in the `matg` tag (HREK). Above about 4.00x most of the stick range is at maximum, so high values feel twitchy rather than faster.
+
+Below 2.00x uses the profile, applied when the profile is built (the row says from the next match; I did not test whether it changes mid-match). Saved 19 and the earlier 10.00 both migrate to 2.00. New keys `padLookRateX/Y`.
+
+Self-review: build 0/0, self-tests pass. Settings run saved `padLookRateX` 1.25 after three steps down from a migrated 19. **Not measured:** vertical (same code, unmeasured), a physical stick, feel.
+
 ## 0. Pick up here (2026-10-31, 01:40 ET) - Reeve-PC tailored starting briefs & playbooks for @gemini and @deepseek (Gemini 4 Argon)
 
 Added two machine-tailored starting briefs and continuous-mode playbooks for **Reeve's PC (`C:\Users\Reeve`)**, where `@gemini` (Gemini 4 Argon / `Dominus-VII`) and `@deepseek` (`C:\Users\Reeve\Desktop\deepseek\DeepSeek Harness.exe`) work alongside each other:
