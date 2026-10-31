@@ -240,7 +240,9 @@ items above close. Keep the spec open when building any screen so the details la
 - [ ] **Armory spotlight**: stop the pure-black chamber (UI gradient/key light first; engine/data light if needed)
 - [ ] **Per-slot camera pan** to the body part being edited (verify + smooth transitions)
 - [ ] **Commendation tier check**: temporarily force the first six commendations to steel/bronze/silver/gold/onyx/max to verify art + payout (dev-only, not shipped values)
-- [ ] **Campaign completion gating**: quitting a mission must not award mission completion or the match bonus
+- [ ] **Campaign completion gating (refined)**: quitting a mission must not award the **completion bonus**, but the
+  **performance bonus still pays** (kills/difficulty/time as normal). Server result needs an explicit `mission_complete`
+  flag and the credit breakdown split into performance vs completion, so a quit pays only the performance part.
 - [ ] **Post-game slot machine** (Reach's credit slot machine; Halopedia reference) - @deepseek
 - [ ] **Forge / custom-game defaults / Firefight game options** screens (blocked on variant work)
 - [ ] **Menu background art**: shuffle the whole set (repeats today) and prefer the loaded map's art
@@ -258,6 +260,13 @@ items above close. Keep the spec open when building any screen so the details la
   missing. Repeat at the end of the night. - either
 - [ ] **Theater setup** — film recording/playback in the engine is the prerequisite; the menu entry stays disabled with
   "Coming later" until then (already in F, restated here because Tyler asked for it explicitly). - research
+
+- [ ] **End-screen credit/XP sound from Reach**: HREK ships the exact exit-experience set at
+  `tags\sound\game_sfx\ui\omaha_ui\exit_experience\` - `counter_loop` (the ticking count-up), `totals`, `slot_machine`,
+  `rank_up`, `game_completion`, `commendations`, `daily_challenges`, `heat_bonus`, `hopper_bonus`, `invasion_bonus`,
+  `time_spent`, `winning_bonus`, `achievements`. Extract with HREK `tool.exe` (sound tag -> sound file), add to Noble's data,
+  and play `counter_loop` while the CR/XP counter runs with `totals` at the end (CR and XP are the same currency). Until the
+  assets are extracted, use the current audio cue.
 
 ## G. Match settings, social, voice (plan: `docs/plans/match-settings-and-social-plan.md`)
 

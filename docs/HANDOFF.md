@@ -67,6 +67,20 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+--
+
+## 0. Pick up here (2026-10-31, 00:45 ET) - Campaign gating refined + found Reach's end-screen credit sounds (WeabooTyler117 / DeepSeek)
+
+- **Campaign gating refined:** quitting a mission pays **no completion bonus** but still pays the **performance bonus**
+  (kills/difficulty/time). The result needs a `mission_complete` flag and the credit breakdown split performance vs
+  completion; a quit pays only performance.
+- **End-screen audio found:** HREK has Reach's real exit-experience sounds in
+  `tags\sound\game_sfx\ui\omaha_ui\exit_experience\`: `counter_loop` (the credit tick while the total counts up),
+  `totals`, `slot_machine`, `rank_up`, `game_completion`, `commendations`, `daily_challenges`, `heat_bonus`, `hopper_bonus`,
+  `invasion_bonus`, `time_spent`, `winning_bonus`, `achievements`. Plan: extract with `tool.exe`, ship in Noble's data, play
+  `counter_loop` during the count-up and `totals` at the end; `slot_machine` pairs with the post-game slot machine. CR and XP
+  are the same currency, so one counter and one sound. Fallback until extracted: the current cue.
+
 ## 0. Pick up here (2026-10-31, 00:30 ET) - Controller presets don't work: pad state never reaches ImGui (WeabooTyler117 / DeepSeek)
 
 Tyler confirmed the controller presets do nothing. Root cause found without running anything: `SettingsPanel` already has
