@@ -215,6 +215,21 @@ items above close. Keep the spec open when building any screen so the details la
   menu, return to the menu, and confirm no `ntdll` dialog and `Network and host services shut down; exiting process cleanly.`
   in the log. Repeat for a Direct Connect guest.
 
+
+## G. Match settings, social, voice (plan: `docs/plans/match-settings-and-social-plan.md`)
+
+- [ ] **Pause-menu Controls page** (live remap already applies every frame; this is the UI to change it mid-match) - @claude
+- [ ] **Variant picker** (shipped `game_variants/*.bin` + stock Reach variants; lobby already transports `variant`) - @claude + list from @deepseek
+- [ ] **Lobby player profile card** (rank, emblem, Spartan render, armory %, challenges, commendations; ADD FRIEND row disabled until the friends API exists) - @claude
+- [ ] **Profile summary fields + privacy flags on the server** (roster profile object, `GET /api/sessions/:id/profile/:peerId`) - @deepseek
+- [ ] **Friends subsystem** (requests/accept/list/presence, then join-from-friend + party invites) - @deepseek + @claude
+- [ ] **Variant viewer / RE of `c_game_variant`** (field map from the already-decoded struct) - @deepseek
+- [ ] **Match end -> lobby or playlist rotation** (session survives results; host continue / guest wait; rotation array + next map) - @deepseek + @claude results UI
+- [ ] **Voice chat transport** (WASAPI capture -> Opus -> relay channel -> jitter buffer; then team/proximity and post-game) - @deepseek
+- [ ] **Voice UI** (devices, PTT mode, per-player volume, scoreboard mute icons) - @claude after transport
+- [ ] **Variant editor (subset) + credit eligibility flag** and **server-side credit validation** - @deepseek
+- [ ] Real Reach settings only: the pasted Halo Online list is not Reach; take the actual set from `game_variant_settings` tags + MegaloEdit, not the list
+
 ## E. Housekeeping
 
 - [x] **Bump `VERSION_PATCH`** — now `0.8.4` / "0.8.4 (Co-op, Third Person & Menu Cleanup)" (`src/common/Version.hpp`)

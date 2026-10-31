@@ -61,6 +61,30 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+--
+
+## 0. Pick up here (2026-10-31, 00:20 ET) - Plan for match settings, lobby profiles, voice chat and match-end flow (WeabooTyler117 / DeepSeek)
+
+Tyler dumped a big feature list (in-game controls, lobby profile cards with ADD FRIEND, voice chat, match-end -> lobby or
+rotation, match settings for every mode, credit-farming rules). Wrote `docs/plans/match-settings-and-social-plan.md` and
+pointed the TODO at it (section G). Key findings from the repo before planning:
+
+- **Controls are already live:** `ReachHost` reads bindings every input poll, so a preset/rebind applies on the next frame in
+  every hostable mode; only the UI to change it mid-match is missing (pause menu has no Settings page).
+- **Variants are data, not UI:** `BlamEngine` already decodes a `.bin`/`.mvar` with the engine's `decode(fileBytes, out[0xFC04],
+  status)` (same call RR uses) and the lobby already transports `variant`. There is no writer yet, so the plan is: picker ->
+  read-only viewer -> RE of `c_game_variant` -> editor for the identified fields; `game_variant_settings` tags + MegaloEdit are
+  the real source of allowed settings.
+- **The pasted settings list is Halo Online / Halo 4** (Spartan Charge, Ground Pound, Clamber, loadout tiers, Breakout...),
+  not Reach's engine. Taking it literally would mean building fields Reach cannot honour; plan uses Reach's actual set.
+- **No voice chat exists** (no WASAPI/Opus/relay audio), so it is phased: capture+loopback -> relay channel + jitter buffer ->
+  UI (devices/PTT/mute icons) -> team/proximity -> post-game.
+- **Match end:** sessions currently die with the match process; returning to the same lobby needs the session to survive
+  results, plus a rotation array and results->advance signalling.
+- **Credit farming:** the reward surface is what we restrict, not the feature. Custom games with any modified setting earn
+  nothing; unmodified custom earns reduced; forge nothing; campaign/firefight standard full; server computes credits from the
+  results payload and validates it (variant hash, duration, score caps, per-account hourly caps). Table in the plan.
+
 ## 0. Pick up here (2026-10-31, 00:02 ET) - Tooling fixes after @claude's report; controller/ping/backend items filed (WeabooTyler117 / DeepSeek)
 
 From @claude's status report:
