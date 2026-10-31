@@ -69,8 +69,10 @@ Do not stop to ask; the repo is the coordination channel and this list is the qu
 11. @deepseek - invites mode/map
 12. @claude - post-game names UI (needs @deepseek's name path; swap if blocked)
 13. @deepseek - 4+ players (timebox; RR reference in `docs/player-count-scaling.md`)
-14. @claude - docs/screenshots upkeep, then help with the review queue
-15. Either - housekeeping (CI artifact, handoff dedupe, stash) if a build/verify window frees up
+14. @deepseek - armory spotlight / chamber lighting (data-first, HREK lighting or engine light injection)
+15. @claude - docs/screenshots upkeep, then help with the review queue
+16. @deepseek - host/admin engine actions (kick/ban/end round/restart/shuffle) with @claude's panel
+17. Either - housekeeping (CI artifact, handoff dedupe, stash) if a build/verify window frees up
 
 ## Ownership plan (who is doing what)
 
@@ -124,10 +126,18 @@ explicitly** - a "needs" item must land before the dependent one can be verified
   engine's own scoreboard is still visible behind/around the Noble panel (see `docs/screenshots/third-person.png`) — panel
   needs to cover the engine layout fully or the engine scoreboard must be hidden while ours is up
 - [ ] **Emblem backdrop + symbol picker** — ~30 % done; two identity rows, storage and composition remain (`FrontEndMenu.cpp:861`, `:3660`)
-- [ ] **Armory lighting** — unlit black chamber; only route left is data (lighting/material in `mainmenu_all.map`)
+- [ ] **Armory lighting / spotlight** — unlit black chamber. The Armory scene in `mainmenu_all.map` has only faint volumetric
+  haze (`HANDOFF.md` ~4922); the model sits in a void. Options, cheapest first: (a) add a real **spotlight** by editing the
+  menumap's lighting (HREK: `tags\levels\ui\mainmenu\mainmenu_000.scenario_structure_lighting_info` + lightmap, then
+  rebuild the menumap), (b) inject an engine light near the armory pedestal from the host (needs the light-object API), or
+  (c) a Noble-owned rim/key light pass in the preview renderer if the engine exposure can be read. Keep the per-slot cameras
+  working (they are). Owner: @deepseek (engine/data), can be split if the UI side needs a toggle
 - [ ] **Controller presets + custom mapping** — biggest pure-UI item (6 presets, `SettingsData` storage, diagram already drawn)
 - [x] @claude 2026-10-30 22:34 - **Server browser polish** — display name in the details panel, vanilla `.map` names no longer flagged as mods, MOD badge - commit f3cbbf6 — **reviewed by @deepseek: OK** (diff, 0/0 build, capture inspected)
-- [ ] **Scoreboard action bar** — ping column, Report, Vote to Kick, End Round, End Match (host only). Next for @claude once @deepseek's block no longer lists `src/ui/PauseMenu.cpp` — free to claim, @deepseek released `PauseMenu.cpp`
+- [ ] **Scoreboard action bar + in-game scoreboard (spec 4.16)** — ping column, Report, Vote to Kick, End Round, End Match
+  (host only), per-row mute icon and Mute-all (when chat/voice exists), rank icon/emblem/tag already in place; the Noble
+  panel must fully cover the engine's own scoreboard. Spec: `menu-redesign-spec.md` §4.16. **@claude**, `PauseMenu.cpp`
+  released
 - [ ] **Post-game names** — remote players show `Player2`/`Player3` (needs engine player-record name path)
 - [ ] **Skull collection gating** — lock until found, "All Skulls" toggle when 13/13
 - [ ] **Readability pass** — run the capture harness over all 14 screens and fix remaining overlaps
@@ -140,6 +150,9 @@ explicitly** - a "needs" item must land before the dependent one can be verified
   returning `false`, and/or returning `original(...)` combined) and whether the engine needs the follow hook at
   `haloreach+0x1DCADC` too. Then distance/shoulder tuning, settings row, key rebinding, host/mode gate.
 - [ ] **Real solo pause, CHANGE TEAM, vote-to-kick** (transport + roster UI)
+- [ ] **Host/admin controls (spec 4.15)** — kick / session-ban / permanent ban (dedicated), end round, restart round, restart
+  match, shuffle teams, end game → back to the lobby with everyone, skip to next rotation entry; actions confirmed and
+  announced in chat. Split: engine/session actions @deepseek, the host-only panel @claude
 - [ ] **Seamless transitions** — single-process map switch; research-only (RR also relaunches per match)
 
 ## D. Server / netcode
@@ -148,6 +161,41 @@ explicitly** - a "needs" item must land before the dependent one can be verified
   stored, echoed in `/api/sessions` and roster, guest identity accepted on join (`b8fb2ad`, client `663cae2`)
 - [ ] **Invites carry mode/map** — so the toast can say "...inviting you to a Firefight match"
 - [ ] **Vote-to-kick server endpoint + client UI** (pairs with C)
+
+
+## F. Design-spec backlog (from `docs/menu-redesign-spec.md`, not scheduled yet)
+
+These come from the spec's §4.10-§4.15 and §6 order of work. They are **not claimed**; they enter the queue as the core
+items above close. Keep the spec open when building any screen so the details land with it.
+
+- **Armory leftovers (§4.6/§6.1)** — thumbnails, rank / cR locks, stances, randomise buttons, identity name row; per-character
+  looks + LOOKS priority needs a research spike (one mod with ODST/Marine players)
+- **Input (§4.10)** — mouse acceleration + smoothing, separate invert-flight, sensitivity hotkeys, release-cursor key, second
+  key per action; controller: aim Modern/Classic, aim acceleration, stick layout, look dead zone, button presets
+- **Game options engine research (§4.10)** — vehicle and third-person FOV, centred/crosshair size, hide HUD/visor, label fade,
+  viewmodel offsets; advanced graphics (filtering, AA, shadows, motion blur, draw distance, LOD, decals, water, presets)
+- **Audio / language / communication** — mute in background, per-song menu music, volume meters, language + subtitle files,
+  content filters (chat/name/slur/custom words), game chat on/off, voice chat (devices, push-to-talk), Discord rich presence
+- **Online services / folders / mods** — master-server list + query batch size, player ID + COPY, MCC/cache/download folder
+  rows with disk-space bars, mods manager (ON/OFF, folder, delete, totals)
+- **Server browser extras (§4.5/§4.10)** — favourites (star), search by server/host/map/mode/mod, mode chips with counts,
+  filters (hide private, ping limit, not-started), VIEW PLAYERS, clickable mod badge → mod list, "Hosted by", cosmetic mods
+- **Pickers** — favourite maps/game types + FAVORITES tab, OPEN FOLDER / REFRESH, "+N variants", search
+- **Lobby / rotation / voting (§4.14)** — playlist editor (map + game type + options per entry), rotation stored in server
+  config, current/next map in browser, after-game vote between 2-3 options ("keep playing"), ties to host; required-mods
+  check before joining a modded server
+- **Game options editor (§4.4)** — variant read/write first (`SAVE AS VARIANT`, search every setting, "Unchanged" values)
+- **Theater (§4.9)** — recent games, save film, rename, delete, export MP4; needs engine film recording (keep entry disabled
+  with "Coming later")
+- **"Continue last game" fast path** — covered by the checkpoint item in A (CONTINUE currently restarts the mission)
+
+- [ ] **Regression: menu -> start match -> return must not throw a Windows error** — the clean-shutdown fix is
+  `982e32a` (2026-10-28): `BlamEngine::Shutdown()` deliberately does **not** call `m_fnShutdown`/vtable[0] while
+  haloreach.dll's engine thread runs, then `main.cpp` calls `blamEngine->Shutdown()` and `TerminateProcess`. A
+  `git log -S"blamEngine->Shutdown();"` search only finds the old `8213116` (Oct 26) because the call itself never moved —
+  the fix was removing the destructor call, so that search is a false alarm. Verify by behaviour: launch a match from the
+  menu, return to the menu, and confirm no `ntdll` dialog and `Network and host services shut down; exiting process cleanly.`
+  in the log. Repeat for a Direct Connect guest.
 
 ## E. Housekeeping
 

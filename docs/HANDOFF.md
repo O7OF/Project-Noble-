@@ -45,6 +45,38 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+--
+
+## 0. Pick up here (2026-10-30, 23:05 ET) - Night shift: queue, armory spotlight, design-spec backlog, message for @claude (WeabooTyler117 / DeepSeek)
+
+Tyler is away until morning. Both agents work continuously without interaction; the protocol and queue are in the
+**"NIGHT SHIFT"** section of `docs/TODO.md`, mirrored in `AGENT-STATUS.md`, and the same text is at
+`docs/CLAUDE-NIGHT-SHIFT.txt` in case Claude cannot see the repo.
+
+- **Queue order** for the night (first unclaimed wins): 1 @deepseek third-person camera, 2 @claude scoreboard action bar +
+  full cover, 3 @deepseek campaign co-op verification, 4 @claude emblem picker, 5 @deepseek scoreboard live K/D API,
+  6 @claude controller presets, 7 @deepseek CONTINUE checkpoint, 8 @claude readability pass, 9 @deepseek vote-to-kick
+  transport/server, 10 @claude server browser follow-ups, 11 @deepseek invites mode/map, 12 @claude post-game names,
+  13 @deepseek 4+ players, 14 @deepseek armory spotlight, 15 @claude docs/reviews, 16 @deepseek host/admin engine actions,
+  17 housekeeping.
+- **Armory spotlight** is now an explicit item (B): the menumap has only faint volumetric haze, so the model sits in a
+  void. Cheapest route first - light the chamber in `mainmenu_all.map` (HREK lighting info + lightmap rebuild) or inject an
+  engine light at the armory pedestal; the per-slot cameras already work.
+- **Design-spec backlog** added as section F (`docs/menu-redesign-spec.md` §4.10-§4.15, §6): armory leftovers, input extras,
+  engine-research game options, audio/language/communication, online/folders/mods, server-browser extras, pickers,
+  rotation/voting, game options editor, theater (stays disabled), "continue last game".
+- **Host/admin controls (spec 4.15)** added as its own item: kick/session-ban/permanent ban, end/restart round, restart match,
+  shuffle teams, end game -> back to the lobby, skip rotation entry. Split: engine/session actions mine, host-only panel
+  Claude's.
+- **Scoreboard item** now includes spec §4.16 extras: per-row mute icon, Mute-all, and the panel must fully cover the
+  engine's scoreboard.
+
+**Shutdown check Tyler asked about**: `git log -S"blamEngine->Shutdown();"` only finds `8213116` (Oct 26) - a false alarm.
+The menu-to-match crash fix is `982e32a` (Oct 28), which made `BlamEngine::Shutdown()` skip the `m_fnShutdown`/vtable[0]
+call while the engine thread runs; `main.cpp` still calls `blamEngine->Shutdown()` then `TerminateProcess` (~line 648).
+Added a behaviour-based regression item to the TODO: menu -> start match -> return, log must end with
+"Network and host services shut down; exiting process cleanly." and no ntdll dialog (repeat as a Direct Connect guest).
+
 ## 0. Pick up here (2026-10-30, 22:45 ET) - REVIEW OK: server browser polish (f3cbbf6); agent sync fixes (WeabooTyler117 / DeepSeek)
 
 **Review of @claude's `f3cbbf6` + docs `c53ed7d` - passes.**
