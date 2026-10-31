@@ -273,12 +273,12 @@ items above close. Keep the spec open when building any screen so the details la
 - [ ] **Vote to kick is blocked** (@claude review 2026-10-31): server clamps peer ids to 1..64 so real voters fail, votes aren't authenticated, and nothing removes a player when a vote passes. Button stays grey until fixed. - @deepseek
 - [ ] **End Round / End Match need the multiplayer end path**: `haloreach+0x7B3EC(-1, 0, 1)` tried twice, timer kept running. Same search as night block 3. Button stays grey until then. - needs: @deepseek
 - [ ] **Roster should carry emblem colours** (`emblem_primary_color`, `emblem_secondary_color`, `emblem_background_color`, indexes 0-29) so other players see them. - needs: @deepseek
-- [ ] **Scoreboard actions have no controller path**: selecting a player and REPORT need the mouse. - @claude
+- [x] @claude 2026-10-31 16:29 - **Scoreboard actions on a controller** (`2aea9fa`). Physical pad still to test.
 - [~] @claude 2026-10-31 - live ping wired, commit 4792746; **needs:** a two-process run to see a real value - **Scoreboard real ping**
 - [ ] **First-start question** (spec 4.12): "New to Halo: Reach?" with a short setup; `firstStartDone`. - @claude
 - [ ] **Crash / issue report button** (spec 4.12, approved): bundle the log with player names removed, open logs folder, settings backup and restore. - unowned
 - [ ] **Import/export of key bindings and settings** (spec 4.12). - @claude
-- [ ] **Scoreboard mute icons and Mute all** (spec 4.16). Voice API is ready (``VoiceChat::SetPeerMuted``, ``IsPeerTalking``). - @claude
+- [x] @claude 2026-10-31 16:29 - **Scoreboard mute icons and Mute all** (`2aea9fa`).
 - [ ] **Rotation voting** (spec 4.14): 2-3 options after each game, ties to the host. Waits for rotation. - @deepseek then @claude
 - [ ] **Armory left vs right shoulder camera** (handoff guide 5.2): the map has one shoulder camera; needs a lateral camera offset from engine globals. - @deepseek
 - [ ] **Career deaths look uncounted**: the card shows 62 kills / 0 deaths over 15 games on the test profile. Check the results parsing. - @claude
@@ -303,7 +303,7 @@ items above close. Keep the spec open when building any screen so the details la
   content-filter hook, never stores by default); per-player text mute alongside the voice mute state. Split: transport/server
   @deepseek, UI + input @claude.
 
-- [ ] **Voice/chat keybinds (keyboard+mouse and controller)** (Tyler, 2026-10-31): bindable actions for **push-to-talk**,
+- [x] @claude 2026-10-31 16:29 - **Voice/chat keybinds**: push to talk, open, team, all, party on keyboard and mouse; push to talk on controller. Controller chat waits for pad typing. Spec: (Tyler, 2026-10-31): bindable actions for **push-to-talk**,
   **open chat**, **team chat**, **all chat** and **party chat**, shown in Settings > Controls and in the binding list with
   defaults T/Y/P for the channels and a pad button for PTT/quick-chat. Must work pre-game, in the lobby and in-match, and the
   chat binds must not fire while a menu owns input. Shared with the voice transport (PTT) and text chat (channels). -
@@ -311,7 +311,7 @@ items above close. Keep the spec open when building any screen so the details la
 
 - [x] @deepseek 2026-10-31 18:50 - **Text chat relay (server)** - `ServerTestDeploy` `5d46c13` + cleanup `d0ac871`: `chat` JSON frames handled before the role logic, channels team/all/party (party = lobby group for now), 400-char cap, team chat only to same-team guests+host. `tools/chat-relay-test.js`: team 1/1/0, all 1/1/1 = PASS. Client send/receive + T/Y/P binds next.
 
-- [ ] **Voice activity indicators - who is talking and when you transmit** (Tyler, 2026-10-31): the data already exists
+- [x] @claude 2026-10-31 16:29 - **Voice activity indicators** (`2aea9fa`): talkers panel, your own row, row icons. Open-mic steady dot not possible yet. Spec: (Tyler, 2026-10-31): the data already exists
   in `VoiceChat` (`IsPeerTalking(machineId)`, `IsTransmitting()`), so this is UI: (1) a mic icon on every lobby/roster and
   scoreboard row that lights/pulses while that peer talks (dimmed when you have them muted), (2) a local "MIC LIVE" /
   "TRANSMITTING" chip whenever `IsTransmitting()` is true, visible in the pre-game lobby, in-match HUD and post-game, with

@@ -7,13 +7,25 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 
 **Goal:** `noble-client.exe` loads MCC's own `haloreach.dll` (Halo: Reach) and drives it **without MCC**, like the existing
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
-MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.6 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.7 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
 
 ### How this file is kept (Tyler, 2026-10-30)
 
 - **Every change gets an entry - no exceptions**: code, UI, docs, tools, config, server. Add it at the **top**, directly
   under the `--` line, as
-  `## 0. Pick up here (2026-10-31, 16:13 ET) - Text chat and who's-talking overlay (@claude)
+  `## 0. Pick up here (2026-10-31, 16:29 ET) - Scoreboard and lobby voice icons, mute, controller path (@claude)
+
+**Commit:** `2aea9fa`. **Version:** 0.9.7. **Build:** 0 errors, 0 warnings on the merged tree. Files: `src/ui/PauseMenu.cpp`, `src/ui/SocialOverlay.*`, `src/ui/FrontEndMenu.cpp`.
+
+**Done.** Mic icons on scoreboard and lobby rows (talking, muted). MUTE and MUTE ALL buttons. Controller: A enters with Back held, D-pad or stick selects, Y mute, X report, LB mute all, B close; the report dialog takes D-pad, A, B. Hints on the status line. Page scrolling isn't needed separately: moving the selection scrolls the column.
+
+**Evidence.** Scripted pad in a real match: selection, mute, mute all, unmute all, report open, reason change, cancel, close, each seen in captures. `docs/screenshots/scoreboard-mute-all-by-pad.png`, `scoreboard-report-by-pad.png`, `lobby-voice-icons.png`.
+
+**Not verified.** A physical pad. A pressed in the report dialog (it sends a real report). Open-mic players show the same pulse as talkers, not the steady dot the TODO asks for, because the receiver can't tell which mode a sender uses. Selection is by name, so two players with one name select together.
+
+Self-review: A while holding Back also reaches the game as jump for that one frame.
+
+## 0. Pick up here (2026-10-31, 16:13 ET) - Text chat and who's-talking overlay (@claude)
 
 **Commit:** `829b98f`, server `dcc9c66`. **Version:** 0.9.6. **Build:** 0 errors, 0 warnings on the merged tree. Files: `src/ui/SocialOverlay.*` (new), `src/ui/PauseMenu.cpp`, `src/ui/FrontEndMenu.cpp`, `src/host/Window.*`, `src/engine/KeyBindings.*`, `src/engine/ReachHost.cpp`, `src/network/NetworkTransport.*`, `src/audio/VoiceChat.*`, `src/main.cpp`, `src/ui/SettingsPanel.cpp`.
 
@@ -32,7 +44,7 @@ Self-review: chat text is logged nowhere client-side, so failures show only on s
 ## 0. Pick up here (2026-10-31, 15:08 ET) - Push-to-talk rebinding, voice quality proof, music list cleanup (@claude)
 
 
-**Current version:** 0.9.6. **Developer build:** 0.9.6-dev. Dev binaries report the suffix next to the version string.
+**Current version:** 0.9.7. **Developer build:** 0.9.7-dev. Dev binaries report the suffix next to the version string.
 
 **Commit:** `8cbb746` (the code is in this commit, whose message only mentions docs: the intended commit failed on quotes in its message). **Version:** 0.9.5. **Build:** 0 errors, 0 warnings on the merged tree. Files: `src/ui/SettingsPanel.*`, `src/common/Settings.cpp`, `src/audio/ReachAudio.cpp`, `src/audio/VoiceChat.cpp`, `src/common/Version.hpp`.
 
@@ -128,7 +140,7 @@ Self-review: the weakest part is the sender thread, because it changes how relay
 - Next for me: two-client chat check against the client transport, then the multiplayer post-game end hook.
 ## 0. Pick up here (2026-10-31, 08:25 ET) - Pre-game lobby map identity (@deepseek / DeepSeek)`.
 
-**Current version:** 0.9.6. **Developer build:** 0.9.6-dev. Dev binaries report the suffix next to the version string.
+**Current version:** 0.9.7. **Developer build:** 0.9.7-dev. Dev binaries report the suffix next to the version string.
 
 
 **Built and verified:** release `build\bin\Release\noble-client.exe`, developer `build\bin\Release\noble-dev.exe`, dedicated `build\bin\Release\noble-dedicated.exe`, and the packaged `Documents\Noble Launcher\Noble.exe` (full runtime tree; package stayed running in a normal launch test).
