@@ -1488,8 +1488,11 @@ void DrawLobbyControls(const Ui& ui, ImVec2 pos, float width, MenuState& st) {
         const float w = TextWidth(NobleStyle::SmallFont(), 12.0f * ui.s, line.c_str());
         if (w > avail) continue;
         const float tx = right - w;
+        // Backing plate: this line sits straight on the map art, and dim text vanished over bright maps (Forge World).
+        ui.dl->AddRectFilled(ImVec2(tx - 17.0f * ui.s, pos.y + 2.0f * ui.s), ImVec2(right + 5.0f * ui.s, pos.y + stripH - 2.0f * ui.s),
+                             IM_COL32(8, 14, 22, 190), 2.0f * ui.s);
         ui.dl->AddCircleFilled(ImVec2(tx - 9.0f * ui.s, pos.y + stripH * 0.5f), 3.0f * ui.s, dot);
-        Text(ui, NobleStyle::SmallFont(), 12.0f, ImVec2(tx, pos.y + (stripH - 13.0f * ui.s) * 0.5f), kDim, line.c_str());
+        Text(ui, NobleStyle::SmallFont(), 12.0f, ImVec2(tx, pos.y + (stripH - 13.0f * ui.s) * 0.5f), IM_COL32(205, 218, 230, 255), line.c_str());
         break;
     }
 }
@@ -3372,9 +3375,12 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         const float bs = 170.0f * ui.s;
         if (big) ui.dl->AddImage(big.id, ImVec2(dx + 40.0f * ui.s, dy), ImVec2(dx + 40.0f * ui.s + bs, dy + bs));
         dy += bs + 18.0f * ui.s;
+        // Dark panel behind the text: it sits on the background art, and the dim description was unreadable over it.
+        ui.dl->AddRectFilled(ImVec2(dx - 14.0f * ui.s, dy - 8.0f * ui.s), ImVec2(dx + 314.0f * ui.s, dy + 176.0f * ui.s),
+                             IM_COL32(8, 14, 22, 190), 3.0f * ui.s);
         Text(ui, NobleStyle::HeroFont(), 34.0f, ImVec2(dx, dy), kWhite, sel.name);
         dy += 42.0f * ui.s;
-        Text(ui, nullptr, 17.0f, ImVec2(dx, dy), kDim, sel.description, dx + 300.0f * ui.s);
+        Text(ui, nullptr, 17.0f, ImVec2(dx, dy), IM_COL32(205, 218, 230, 255), sel.description, dx + 300.0f * ui.s);
         dy += 74.0f * ui.s;
         const bool selOn = (st.skulls & (1ull << sel.bit)) != 0;
         Text(ui, nullptr, 17.0f, ImVec2(dx, dy), kWhite, selOn ? "Status: On" : "Status: Off");
@@ -3382,7 +3388,7 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         char mult[64];
         if (sel.multiplier > 1.0f) std::snprintf(mult, sizeof(mult), "Score bonus: +%.1f", sel.multiplier);
         else std::snprintf(mult, sizeof(mult), "No score bonus");
-        Text(ui, nullptr, 17.0f, ImVec2(dx, dy), kDim, mult);
+        Text(ui, nullptr, 17.0f, ImVec2(dx, dy), IM_COL32(205, 218, 230, 255), mult);
 
         const float by = ui.size.y - 104.0f * ui.s;
         ui.dl->AddRectFilledMultiColor(ImVec2(left + 40.0f * ui.s, by), ImVec2(ui.size.x * 0.80f, by + 40.0f * ui.s),
