@@ -45,7 +45,7 @@ can make.
 
 - state: **active**
 - since: 2026-10-31 ET
-- working on: Tyler said yes to Reverse Southpaw / Reverse Bumper Jumper presets
-- files expected: `src/ui/SettingsPanel.cpp` (preset names only), `docs/*`
+- working on: Tyler: paddle keys (keyboard/mouse as Paddle 1-6) and look sensitivity 1.00x-10.00x
+- files expected: `src/engine/PadLayouts.*`, `src/engine/InputTuning.*`, `src/engine/ReachHost.cpp` (pad input), `src/ui/SettingsPanel.*`, `src/common/Settings.*`, `docs/*`
 - second checkout: `D:\Halo-Reach-Community-Edition-claude` (own `build\`, so it does not touch @deepseek's tree or binary). Test client runs as `noble-client-claude.exe`, so kills by name miss it
 - last commit: `41c1c91`
