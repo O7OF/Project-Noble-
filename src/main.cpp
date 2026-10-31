@@ -258,6 +258,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     int hostMaxPlayers = 16;
     int expectedPeers = 0;
     int engineModeOverride = 0;
+    bool guestPostStart = false;
     std::string engineCommand;
     int engineCommandAt = -1;
     std::string connectAddress = "";
@@ -307,6 +308,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
                 hostMaxPlayers = _wtoi(argvW[++i]);
             } else if (arg == L"-wait-peers" && i + 1 < numArgs) {
                 expectedPeers = _wtoi(argvW[++i]);
+            } else if (arg == L"-guest-post-start") {
+                guestPostStart = true;
             } else if (arg == L"-engine-cmd" && i + 1 < numArgs) {
                 engineCommand = WideToNarrow(argvW[++i]);
             } else if (arg == L"-engine-cmd-at" && i + 1 < numArgs) {
@@ -478,7 +481,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             }
         }
 
-        if (engineModeOverride > 0) {
+        if (guestPostStart) noble::BlamEngine::SetGuestPostStart(true);
+    if (engineModeOverride > 0) {
         noble::BlamEngine::SetEngineModeOverride(engineModeOverride);
         NOBLE_WARN("main: -engine-mode {} (research hook - forcing launch-block +0x0C)", engineModeOverride);
     }

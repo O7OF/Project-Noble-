@@ -69,6 +69,41 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-31, 02:20 ET) - O7's membership barrier pulled and tested; the guest biped is still never spawned (WeabooTyler117 / DeepSeek)
+
+Pulled `64dd74f` (O7: gate Command 11 on guest membership sync / msg 27) plus the new `LobbyPatches::GetRemotePlayerAddCount()`.
+Fast-forward, build 0/0, and our campaign grace window and Forge path are intact.
+
+### Local two-process campaign co-op runs (loopback, latest build)
+
+| run | change under test | guest in game | host Command 11 | result |
+|---|---|---|---|---|
+| 1 | O7's membership barrier (4 s settle) | 19:51:10.016 | 19:51:06.700 | GameResults 19:52:11 (~62 s), host: **player 1 +0x30 = 255** |
+| 2 | campaign settle raised to 10 s | 19:53:39.696 | 19:53:42.397 | GameResults 19:54:41 (~59 s), **player 1 +0x30 = 255** |
+| 3 | `-guest-post-start` (guest posts its own Command 10/11) | 19:58:12.675 | 19:58:15.340 | GameResults 19:59:14 (~59 s), **player 1 +0x30 = 255** |
+
+The barrier itself works exactly as designed - the host logs
+`membership wait: 0/1 player(s) in session (engine peers: 1)` -> `RECV msg 27` -> `1/1 remote player(s) joined session
+membership (msg 27); settling ...` -> `Posting Command 11`, and in runs 2-3 the guest is already in its own game session
+*before* the host's Command 11.
+
+### What that rules out
+
+1. **Not a timing race on Command 11** - even with the guest in-game 3-6 s before the host's simulation start, the host's
+   player 1 slot keeps `+0x30 = 255` (no biped) and the mission ends ~59-62 s later with Category 14 results.
+2. **Not the guest missing its own mission-start commands** - `-guest-post-start` posted Command 10 and 11 on the guest
+   (both returned 0x0) and the outcome was identical.
+3. **Membership sync is not the missing piece** - `msg 27` arrives before Command 11 in every run.
+
+So the host's campaign simulation never instantiates a biped for the remote player, regardless of ordering. Next target is
+the host-side campaign spawn path itself: the function that creates player units at mission start (the one that leaves
+`+0x30` at 255 for non-local slots), and what condition it uses to skip network players - likely a check on the player's
+slot kind / "local" flag or on the campaign insertion state.
+
+Test hook left in the build (opt-in, harmless): `-guest-post-start` makes a campaign guest post Command 10/11 itself,
+logged as `BlamEngine: [GUEST] -guest-post-start enabled ...`. The 10 s settle experiment was reverted; O7's 4 s value is
+back.
+
 ## 0. Pick up here (2026-10-31, 01:40 ET) - Both sides' logs aligned: guest was in the match, then a membership update ended it (WeabooTyler117 / DeepSeek)
 
 O7 sent the **server** log for the 19:39 attempt (session `b3e82185d33714a5`). Aligning it with the guest client log

@@ -286,6 +286,7 @@ uint32_t BlamEngine::ResolveMapId(const std::string& mapName) {
 
 int BlamEngine::s_engineModeOverride = 0;
 BlamEngine* BlamEngine::s_active = nullptr;
+bool BlamEngine::s_guestPostStart = false;
 
 std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameModeTag, int difficulty, uint64_t skulls,
                                                    const std::string& customMvarPath, const std::string& customVariantPath,
@@ -890,7 +891,8 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
                                      !noble::MasterServerClient::Get().GetCurrentSessionId().empty();
         const int campaignGraceMs = lobbyRegistered ? 30000 : 9000;
         const bool campaignGraceWait = (gameModeTag == 1) && isOnlineHost && peersToWaitFor == 0;
-        std::thread([this, isOnlineHost, peersToWaitFor, settleLonger, holdMissionForPeers, campaignGraceWait, campaignGraceMs, lobbyRegistered]() {
+        const bool isCampaignMission = (gameModeTag == 1);
+        std::thread([this, isOnlineHost, peersToWaitFor, settleLonger, holdMissionForPeers, campaignGraceWait, campaignGraceMs, lobbyRegistered, isCampaignMission]() {
             const int startDelay = isOnlineHost ? 1000 : 300;
             std::this_thread::sleep_for(std::chrono::milliseconds(startDelay));
 
@@ -976,9 +978,10 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
                     while (GetTickCount64() < deadline) {
                         const size_t playersJoined = LobbyPatches::GetRemotePlayerAddCount();
                         if (playersJoined >= targetPeers) {
+                            const int settleMs = settleLonger ? 4000 : 2000;
                             NOBLE_INFO("BlamEngine: {}/{} remote player(s) joined session membership (msg 27); settling {} ms for world replication",
-                                       playersJoined, targetPeers, settleLonger ? 4000 : 2000);
-                            std::this_thread::sleep_for(std::chrono::milliseconds(settleLonger ? 4000 : 2000));
+                                       playersJoined, targetPeers, settleMs);
+                            std::this_thread::sleep_for(std::chrono::milliseconds(settleMs));
                             break;
                         }
                         const ULONGLONG now = GetTickCount64();
@@ -1004,7 +1007,24 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
             }
         }).detach();
     } else {
-        NOBLE_INFO("BlamEngine: [GUEST] Remote join active - skipping manual PostCommand(10/11); waiting for host session sync.");
+        if (BlamEngine::GuestPostStart() && gameModeTag == 1) {
+            // Research: guest posts its own mission start after the session handshake, which is what creates a local
+            // simulation player. Without it the guest sits in membership with no biped (Career reports +0x30 = 255).
+            NOBLE_INFO("BlamEngine: [GUEST] -guest-post-start enabled - posting Command 10/11 after the session handshake");
+            std::thread([this]() {
+                std::this_thread::sleep_for(std::chrono::milliseconds(7000));
+                if (!m_engineInstance || !m_fnProcessEvent) return;
+                NOBLE_INFO("BlamEngine: [GUEST] Posting Command 10 (guest mission start)");
+                int32_t status10 = m_fnProcessEvent(m_engineInstance, 10, 0);
+                NOBLE_INFO("BlamEngine: [GUEST] PostCommand(10) returned 0x{:X}", status10);
+                std::this_thread::sleep_for(std::chrono::milliseconds(6000));
+                NOBLE_INFO("BlamEngine: [GUEST] Posting Command 11 (guest simulation start)");
+                int32_t status11 = m_fnProcessEvent(m_engineInstance, 11, 0);
+                NOBLE_INFO("BlamEngine: [GUEST] PostCommand(11) returned 0x{:X}", status11);
+            }).detach();
+        } else {
+            NOBLE_INFO("BlamEngine: [GUEST] Remote join active - skipping manual PostCommand(10/11); waiting for host session sync.");
+        }
     }
 
     return true;

@@ -61,10 +61,16 @@ public:
     static BlamEngine* Active() { return s_active; }
 
     static void SetEngineModeOverride(int mode) { s_engineModeOverride = mode; }
+
+    // Research switch: a guest normally skips PostCommand(10/11) and waits for the host's session sync. Campaign may
+    // still need the guest to post them itself to create its own player; "-guest-post-start" enables that for a test.
+    static void SetGuestPostStart(bool value) { s_guestPostStart = value; }
+    static bool GuestPostStart() { return s_guestPostStart; }
     static int EngineModeOverride() { return s_engineModeOverride; }
 
 private:
     static int s_engineModeOverride;   // research hook: forces launch-block +0x0C
+    static bool s_guestPostStart;      // research hook: guest posts its own Command 10/11
     static BlamEngine* s_active;       // the running client's engine, for command dispatch
     // Builds the 0x2BF30-byte match descriptor launch block reversed from host-probe
     std::vector<uint8_t> BuildLaunchBlock(uint32_t mapId, uint32_t gameModeTag, int difficulty, uint64_t skulls,
