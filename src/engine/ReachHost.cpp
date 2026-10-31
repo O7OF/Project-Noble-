@@ -1345,6 +1345,11 @@ bool ReachHost::IsKeyHeld(int vk) {
 // controller is connected: otherwise those keys are ordinary keys.
 static uint8_t s_paddlesHeld = 0;
 static bool s_padConnected = false;
+static std::array<int, PadLayouts::kPaddleCount> s_paddleKeys{};
+
+bool ReachHost::IsPaddleKey(int vk) {
+    return s_padConnected && std::find(s_paddleKeys.begin(), s_paddleKeys.end(), vk) != s_paddleKeys.end();
+}
 
 static void FillLocalPad(uint8_t* st, bool keyboardMouseUsed) {
     static bool s_padMode = false;
@@ -1605,7 +1610,6 @@ static void FillLocalInput(uint8_t* st) {
     }
 
     {
-        static std::array<int, PadLayouts::kPaddleCount> s_paddleKeys{};
         static ULONGLONG s_paddleRead = 0;
         if (GetTickCount64() - s_paddleRead > 500) {
             s_paddleRead = GetTickCount64();

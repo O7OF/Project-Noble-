@@ -125,6 +125,8 @@ void Settings::Load() {
         for (size_t i = 0; i < d.padPaddleKeys.size(); ++i) {
             if (j["padPaddleKeys"][i].is_number_integer()) d.padPaddleKeys[i] = j["padPaddleKeys"][i].get<int>();
         }
+        // The first default was F13-F18; move anyone still on it to F1-F6. A set the player chose stays.
+        if (d.padPaddleKeys == std::array<int, 6>{ 0x7C, 0x7D, 0x7E, 0x7F, 0x80, 0x81 }) d.padPaddleKeys = SettingsData{}.padPaddleKeys;
     }
     if (j.contains("padBindings") && j["padBindings"].is_object()) {
         for (const auto& [key, value] : j["padBindings"].items()) {
