@@ -156,3 +156,4 @@ When running alongside `@gemini`, execute this loop continuously:
 - **Server / netcode script changes belong in `O7OF/ServerTestDeploy`** (`C:\Users\Reeve\Documents\deepseek-harness\default-workspace\ServerTestDeploy`), never in the client repo.
 - **Never commit** `build/`, `*.log`, `*.bmp` (convert captures to PNG in `docs/screenshots/`), `data/userdata/*.json` test files, or `database.db`.
 - **Kill only Reeve's local `noble-client.exe`** before building, and leave `noble-client.exe` closed when done testing.
+

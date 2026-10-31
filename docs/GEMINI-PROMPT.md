@@ -130,3 +130,4 @@ Repeat this loop continuously when working alongside `@deepseek`:
 - **Server changes go to `O7OF/ServerTestDeploy`** (`C:\Users\Reeve\Documents\deepseek-harness\default-workspace\ServerTestDeploy`), never into the client repo.
 - **Never commit** `build/`, `*.log`, `*.bmp` (except PNGs in `docs/screenshots/`), `data/userdata/*.json` test files, or `database.db`.
 - **Always close `noble-client.exe`** (filtered by Reeve's checkout path) when finished testing.
+
