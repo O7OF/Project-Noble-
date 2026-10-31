@@ -134,7 +134,6 @@ set(SOURCES
     src/ui/UIManager.cpp
     src/ui/ServerBrowser.cpp
     src/ui/ArmorCustomizer.cpp
-    src/ui/ObjModel.cpp
     src/ui/WorkshopManager.cpp
     src/ui/ModDownloadPrompt.cpp
     src/ui/MissionLauncher.cpp
@@ -157,6 +156,7 @@ set(SOURCES
     src/ui/CareerPanel.cpp
     src/common/Settings.cpp
     src/common/DeviceIdentity.cpp
+    src/common/SaveCodec.cpp
     src/engine/KeyBindings.cpp
     src/career/Career.cpp
     src/network/MasterServerClient.cpp
@@ -194,7 +194,6 @@ set(HEADERS
     src/ui/UIManager.hpp
     src/ui/ServerBrowser.hpp
     src/ui/ArmorCustomizer.hpp
-    src/ui/ObjModel.hpp
     src/ui/WorkshopManager.hpp
     src/ui/ModDownloadPrompt.hpp
     src/ui/MissionLauncher.hpp

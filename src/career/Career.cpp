@@ -1,5 +1,6 @@
 #include "Career.hpp"
 #include "common/DeviceIdentity.hpp"
+#include "common/SaveCodec.hpp"
 #include "common/Logger.hpp"
 #include "common/Settings.hpp"
 
@@ -227,9 +228,7 @@ uint64_t s_skulls = 0;
 std::chrono::steady_clock::time_point s_matchStart = std::chrono::steady_clock::now();
 
 std::filesystem::path UserDir() {
-    wchar_t path[MAX_PATH] = {};
-    GetModuleFileNameW(nullptr, path, MAX_PATH);
-    return std::filesystem::path(path).parent_path() / "data" / "userdata";
+    return DeviceIdentityStore::UserDir();
 }
 
 std::string Today() {
@@ -246,10 +245,28 @@ void SaveLocked();
 void LoadLocked() {
     if (s_loaded) return;
     s_loaded = true;
-    std::ifstream in(UserDir() / "career.json");
-    if (!in) { SaveLocked(); return; }
+    nlohmann::json j;
+    const auto encryptedPath = UserDir() / "career.dat";
+    const auto legacyPath = UserDir() / "career.json";
+    if (std::filesystem::exists(encryptedPath)) {
+        if (!SaveCodec::ReadJson(encryptedPath, j)) { SaveLocked(); return; }
+    } else if (std::filesystem::exists(legacyPath)) {
+        if (!SaveCodec::ReadJson(legacyPath, j)) { SaveLocked(); return; }
+        SaveLocked();
+        std::error_code removeEc;
+        std::filesystem::remove(legacyPath, removeEc);
+    } else if (std::filesystem::exists(UserDir().parent_path() / "career.json")) {
+        // Pre-device-ID installs kept career.json directly under data\userdata.
+        const auto oldPath = UserDir().parent_path() / "career.json";
+        if (!SaveCodec::ReadJson(oldPath, j)) { SaveLocked(); return; }
+        SaveLocked();
+        std::error_code removeEc;
+        std::filesystem::remove(oldPath, removeEc);
+    } else {
+        SaveLocked();
+        return;
+    }
     try {
-        nlohmann::json j = nlohmann::json::parse(in);
         s_totals.credits = j.value("credits", int64_t{0});
         s_totals.creditsSpent = j.value("creditsSpent", int64_t{0});
         // cR handed to the player outside of play (a reset, or testing the unlock flow). It is spendable but does not
@@ -344,14 +361,12 @@ void SaveLocked() {
     }
     std::error_code ec;
     std::filesystem::create_directories(UserDir(), ec);
-    const auto path = UserDir() / "career.json";
-    const auto tmp = UserDir() / "career.json.tmp";
-    {
-        std::ofstream out(tmp, std::ios::trunc);
-        out << j.dump(2);
+    if (!SaveCodec::WriteJson(UserDir() / "career.dat", j)) {
+        NOBLE_WARN("Career: could not save encrypted career.dat");
+    } else {
+        std::error_code removeEc;
+        std::filesystem::remove(UserDir() / "career.json", removeEc);
     }
-    std::filesystem::rename(tmp, path, ec);
-    if (ec) NOBLE_WARN("Career: could not save career.json ({})", ec.message());
 
     PeerStats localStats;
     localStats.playerName = Settings::Get().Snapshot().playerName;
