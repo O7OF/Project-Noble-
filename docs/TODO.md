@@ -268,6 +268,12 @@ items above close. Keep the spec open when building any screen so the details la
   `slot_machine` plays under the counter at about 70% of the counter's volume (Tyler's rule: a tad lower). Until the assets
   are extracted, use the current audio cue.
 
+- [ ] **Post-game screen shows Reach's old scoreboard for multiplayer** - `ShowGameOver()` is only called from
+  `HostSlot6_GameResults` (launch state >= 11); nothing else raises it. Added a `-postgame-test` harness (forces the panel)
+  but the first capture still showed the map/loading background, so the trigger fires too early or the panel is skipped while
+  loading. Next: trigger after the scene is ready (like `-scoreboard-demo`'s 900 frames), capture, then find the real
+  multiplayer end path and raise the panel there. - @deepseek
+
 ## G. Match settings, social, voice (plan: `docs/plans/match-settings-and-social-plan.md`)
 
 - [ ] **Pause-menu Controls page** (live remap already applies every frame; this is the UI to change it mid-match) - @claude
