@@ -450,6 +450,22 @@ void MergeEliteSets(uint8_t* mapList, uint8_t* packList) {
         ++merged;
         added += static_cast<int>(extra.size() / 12);
     }
+    // Ensure packList + 0x8C (Elite effects) is populated
+    {
+        auto block = [](uint8_t* at, int32_t& count, uint8_t*& items) {
+            uint32_t ptr = 0;
+            std::memcpy(&count, at, 4);
+            std::memcpy(&ptr, at + 4, 4);
+            items = (count > 0 && count < 0x400 && ptr) ? TagAt(ptr) : nullptr;
+            if (!items) count = 0;
+        };
+        int32_t pec = 0;
+        uint8_t* pes = nullptr;
+        block(packList + 0x8C, pec, pes);
+        if (pec <= 0 || !pes) {
+            std::memcpy(packList + 0x8C, mapList + 0x80, 12);
+        }
+    }
     NOBLE_INFO("ElitePack: armour list: the pack's ({} Elite sets) with {} of the map's changes added to {} sets (map has {})",
                packCount, added, merged, mapCount);
 }
@@ -563,6 +579,28 @@ void MergeElitePieces(uint8_t* mapList, uint8_t* packList) {
         NOBLE_INFO("ElitePack: piece list +0x{:X}: map {} selections, pack {}, {} Elite changes added, {} pack-only selections appended",
                    list, mc, pc, listAdded, packOnly.size() / 16);
     }
+    // Ensure Elite armor effects list (+0x8C) is populated in mapList so AppearanceBuilder doesn't exit early.
+    // If packList has entries at +0x8C, copy them to mapList + 0x8C; otherwise copy from mapList + 0x80.
+    {
+        int32_t pec = 0, mec = 0;
+        uint8_t* pes = nullptr;
+        uint8_t* mes = nullptr;
+        block(packList + 0x8C, pec, pes);
+        block(mapList + 0x8C, mec, mes);
+        if (pec > 0 && pes) {
+            std::memcpy(mapList + 0x8C, packList + 0x8C, 12);
+            NOBLE_INFO("ElitePack: Populated mapList Elite armor effects (+0x8C) from packList ({} effects)", pec);
+        } else {
+            int32_t sec = 0;
+            uint8_t* ses = nullptr;
+            block(mapList + 0x80, sec, ses);
+            if (sec > 0 && ses) {
+                std::memcpy(mapList + 0x8C, mapList + 0x80, 12);
+                NOBLE_INFO("ElitePack: Populated mapList Elite armor effects (+0x8C) from mapList Spartan effects (+0x80, {} effects)", sec);
+            }
+        }
+    }
+
     NOBLE_INFO("ElitePack: armour list: the map's, with the pack's Elite pieces: {} selections matched by name, {} only in the map, "
                "{} Elite changes added{} (Elite regions {})", matched, mapOnly, added,
                failed ? " (" + std::to_string(failed) + " failed)" : std::string(), regions);
@@ -1180,12 +1218,12 @@ uint64_t __fastcall BuilderHook(uint8_t* record, uint32_t mode, void* unit, void
     } else {
         effectiveSet = copy[0x17] < 9 ? copy[0x17] : 0;
         for (int k = 0; k < 6; ++k) picks[k] = kSetPieces[effectiveSet][k];
-        eliteEffect = (copy[0x19] >= 1 && copy[0x19] <= 6) ? copy[0x19] : 0xFF;
+        eliteEffect = (copy[0x19] >= 1 && copy[0x19] <= 6) ? copy[0x19] : ((copy[0x18] >= 1 && copy[0x18] <= 6) ? copy[0x18] : 0xFF);
     }
 
     std::memcpy(copy + 0x10, picks, 6);
     copy[0x16] = 0xFF;
-    copy[0x18] = 0xFF;
+    copy[0x18] = eliteEffect;
     copy[0x19] = eliteEffect;
     {   // first-person arms follow the forearms, the first-person body the shoulders (else the Armor Set)
         const int fpSet = effectiveSet < 8 ? effectiveSet : 0;
