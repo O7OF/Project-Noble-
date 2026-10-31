@@ -46,8 +46,8 @@ can make.
 
 ## @gemini (Gemini 4 Argon / Dominus-VII)
 
-- state: **active**
-- since: 2026-10-31 01:17 ET
-- working on: **Real per-peer RTT ping measurement & WebSocket Relay fragment reassembly / low-latency poll** + **Invites carry mode/map** (`SocialClient`, `NetworkTransport`, `MasterServerClient`, `server/server.js`)
-- files expected: `src/network/NetworkTransport.hpp`, `src/network/NetworkTransport.cpp`, `src/network/MasterServerClient.hpp`, `src/network/MasterServerClient.cpp`, `src/network/SocialClient.hpp`, `src/network/SocialClient.cpp`, `server/server.js`, `docs/TODO.md`, `docs/HANDOFF.md`, `docs/AGENT-STATUS.md`
-- last commit: `e10e674`
+- state: **idle (last: RTT ping telemetry, 64 KB relay reassembly, LAN hole-punching & rich invites, 2026-10-31 01:36 ET)**
+- since: —
+- working on: —
+- files expected: —
+- last commit: `bfcc6c7` (backend `ServerTestDeploy` `8f16061` pushed to GitHub)

@@ -69,6 +69,38 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-31, 01:36 ET) - Live per-peer RTT ping telemetry, 64 KB WebSocket relay fragment reassembly, LAN hole-punching, rich invites & cross-verification (Gemini 4 Argon)
+
+Client commit `bfcc6c7` (**0.8.7 (RTT Ping Telemetry, 64 KB Relay Reassembly & Rich Invites)**) and backend `O7OF/ServerTestDeploy` commit `8f16061` (**both pushed to GitHub**, including @deepseek's previously local-only Workshop `mod_id` / `mod_title` backend fields and client commit `ff9cc79` + `7f19dbc`).
+
+**What was wrong**
+1. **Placeholder pings & silent UDP ICMP resets:** Roster rows and scoreboard entries displayed `-` or hard-coded `25 ms` because `NetworkTransport` did not measure per-peer RTT, and Windows UDP sockets did not disable `SIO_UDP_CONNRESET`, allowing an unreachable punch packet to raise `WSAECONNRESET` (`10054`) on subsequent `recvfrom` calls.
+2. **WebSocket Relay frame truncation & 15 ms poll latency:** `RelayWorkerThread` used a `4096`-byte stack buffer without handling `WINHTTP_WEB_SOCKET_BINARY_FRAGMENT_BUFFER_TYPE` / `WINHTTP_WEB_SOCKET_UTF8_FRAGMENT_BUFFER_TYPE`, truncating fragmented Blam! replication snapshots or large roster JSON messages, and waited 15 ms per poll cycle.
+3. **Same-LAN hairpin NAT & generic invite toasts:** Guests joining a host behind the same public IP only advertised their external IP in `pending_joins`, and game invites carried only `hostIp`/`hostPort` without `mode`, `map`, or `sessionId`.
+
+**What changed**
+- `src/network/NetworkTransport.hpp` & `src/network/NetworkTransport.cpp`:
+  - Added `lastPingSentTick` and `rttMs` to `PeerRouteState`, plus `GetPeerPingMs(uint64_t machineId = 0)`, `GetAllPeerPingsMs()`, and `SetRemoteHostLanAddress()`. Measures live RTT from `PING`/`PONG` hole-punch probes and active UDP packet exchanges.
+  - Applied `WSAIoctl(..., SIO_UDP_CONNRESET, FALSE)` on socket creation and ignored `WSAECONNRESET` / `WSAECONNREFUSED` in `OnNetRecv`.
+  - Upgraded `RelayWorkerThread` to a `65536`-byte heap buffer with full multi-fragment WebSocket frame reassembly, 2 ms poll interval, burst draining (up to 32 frames/iteration), and 512-packet send/recv queues.
+- `src/network/MasterServerClient.cpp`:
+  - `DoHeartbeat()` sends `peer_pings` (from `NetworkTransport::Get().GetAllPeerPingsMs()`) and punches both `ip` and `lan_ip` from `pending_joins`.
+  - `JoinSessionSync()` and `JoinLobbySync()` send `guest_lan_address` (`UPnP::Get().GetInternalIP()`), live measured ping, and register `SetRemoteHostLanAddress(hostLanIp, hostPort)`.
+  - `FetchLobbyStateSync()` populates `LobbyPlayer::ping` from live `NetworkTransport` RTT measurements.
+- `src/network/SocialClient.hpp`, `src/network/SocialClient.cpp`, `src/ui/FrontEndMenu.cpp`:
+  - Added `mode`, `map`, and `sessionId` to `GameInvite` and `SocialClient::SendInviteAsync`.
+  - Pre-game lobby and Social `INVITE` buttons pass the active lobby mode (`Custom Game`, `Campaign`, `Firefight`, `Forge`), map, and session ID. `DrawInviteToast` now displays `"is inviting you to a <Mode> match"` and passes `-session-id` on JOIN.
+  - `SetLobbyRosterCallback` now preserves `rankIndex`, `emblemId`, `emblemBackgroundId`, `nameplateId`, `team`, and `ping` on real-time WebSocket roster broadcasts.
+- `O7OF/ServerTestDeploy` (`server.js`, commit `8f16061`):
+  - Synced @deepseek's `mod_id` and `mod_title` across `masterPublicSession`, `POST /api/sessions`, `PUT /api/sessions/heartbeat`, `GET /api/sessions/:id/lobby`, and `POST /api/sessions/:id/lobby/join`.
+  - Added `peer_pings` RTT updates in `PUT /api/sessions/heartbeat`, `guest_lan_address` / `lan_ip` in `pendingJoins`, full identity fields in WebSocket `lobby_join`, case-insensitive `COLLATE NOCASE` in `/api/friends/*` and `/api/invites/*`, and `mode`/`map`/`sessionId` in `/api/invites/send`.
+
+**Cross-Verification (`docs/TEAM-WORKFLOW.md`)**
+- **REVIEW OK (@gemini, 2026-10-31 01:36 ET)** on `@claude` commits `960672a`, `83e05e9`, `e2e3771`, `0662bcf` (paddle keys F1-F6, `IsPaddleKey` F5 guard, 1.00x-10.00x look speed, Reverse Southpaw / Reverse Bumper Jumper): diff scope clean, `noble-client.exe` Release build 0 errors / 0 warnings on merged tree, `-test-map-gametypes` (including `PadLayouts::SelfTest` and `InputTuning::SelfTest`) exits 0, screenshots `docs/screenshots/settings-paddles-sensitivity.png` and `docs/screenshots/preset-reverse-bumper-jumper.png` verified.
+- **REVIEW OK (@gemini, 2026-10-31 01:36 ET)** on `@deepseek` commits `ff9cc79` (Workshop mod Download & Join prompt) and `7f19dbc` (GitHub Actions build workflow): diff scope clean, UTF-8 verified in `FrontEndMenu.cpp`, `noble-client.exe` and `noble-dedicated.exe` build 0 errors / 0 warnings on merged tree, `docs/screenshots/mod-required-prompt.png` verified, and pushed both client and `ServerTestDeploy` (`8f16061`) to GitHub.
+
+Self-review: `noble-client.exe` and `noble-dedicated.exe` built with 0 errors and 0 warnings; `-test-map-gametypes` exited 0; `node --check server.js` passed; `git show bfcc6c7 -- src/ui/FrontEndMenu.cpp` verified free of UTF-8 mojibake.
+
 ## 0. Pick up here (2026-10-31, 01:34 ET) - GitHub Actions build artifact workflow (@deepseek)
 
 The repo had no CI, so the two PCs could drift on which `noble-client.exe` they ran. Added
