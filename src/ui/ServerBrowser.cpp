@@ -350,6 +350,9 @@ void ServerBrowser::RenderFilterBar() {
 
     // Right-aligned live player counters in the top-right header area (Players Online & Total Players).
     {
+        if (MasterServerClient::Get().TotalPlayers() == 0) {
+            MasterServerClient::Get().RequestOnlineCount();
+        }
         int activeInServers = 0;
         for (const auto& s : m_servers) {
             if (s.playerCount > 0) activeInServers += s.playerCount;

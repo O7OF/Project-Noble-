@@ -35,6 +35,10 @@ void Clamp(SettingsData& d) {
     d.width = std::clamp(d.width, 640, 7680);
     d.height = std::clamp(d.height, 360, 4320);
     d.fieldOfView = std::clamp(d.fieldOfView, 70.0f, 120.0f);  // slider range (SETTINGS > VIDEO)
+    d.firstPersonFovMod = std::clamp(d.firstPersonFovMod, -1.20f, 1.20f);
+    d.vehicleFirstPersonFovMod = std::clamp(d.vehicleFirstPersonFovMod, -1.20f, 1.20f);
+    d.vehicleFirstPersonOffsetX = std::clamp(d.vehicleFirstPersonOffsetX, -1.00f, 1.00f);
+    d.vehicleFirstPersonOffsetY = std::clamp(d.vehicleFirstPersonOffsetY, -1.00f, 1.00f);
     d.thirdPersonZoom = std::clamp(d.thirdPersonZoom, 0.10f, 1.00f);
     d.thirdPersonOffsetX = std::clamp(d.thirdPersonOffsetX, -1.00f, 1.00f);
     d.thirdPersonOffsetY = std::clamp(d.thirdPersonOffsetY, -1.00f, 1.00f);
@@ -100,19 +104,23 @@ void Settings::Load() {
             Read(j, "height", d.height);
             Read(j, "borderless", d.borderless);
             Read(j, "fieldOfView", d.fieldOfView);
+            Read(j, "firstPersonFovMod", d.firstPersonFovMod);
+            Read(j, "vehicleFirstPersonFovMod", d.vehicleFirstPersonFovMod);
+            Read(j, "vehicleFirstPersonOffsetX", d.vehicleFirstPersonOffsetX);
+            Read(j, "vehicleFirstPersonOffsetY", d.vehicleFirstPersonOffsetY);
             Read(j, "thirdPersonZoom", d.thirdPersonZoom);
             Read(j, "thirdPersonOffsetX", d.thirdPersonOffsetX);
             Read(j, "thirdPersonOffsetY", d.thirdPersonOffsetY);
             Read(j, "verticalSync", d.verticalSync);
             Read(j, "fpsLimit", d.fpsLimit);
             Read(j, "showFps", d.showFps);
-    Read(j, "throttleUnfocused", d.throttleUnfocused);
-    Read(j, "brightness", d.brightness);
-    Read(j, "fxaa", d.fxaa);
+            Read(j, "throttleUnfocused", d.throttleUnfocused);
+            Read(j, "brightness", d.brightness);
+            Read(j, "fxaa", d.fxaa);
             Read(j, "mouseSensitivity", d.mouseSensitivity);
             Read(j, "mouseSensitivityY", d.mouseSensitivityY);
-    Read(j, "mouseAcceleration", d.mouseAcceleration);
-    Read(j, "mouseSmoothing", d.mouseSmoothing);
+            Read(j, "mouseAcceleration", d.mouseAcceleration);
+            Read(j, "mouseSmoothing", d.mouseSmoothing);
             Read(j, "invertLook", d.invertLook);
             Read(j, "wheelUpAction", d.wheelUpAction);
             Read(j, "wheelDownAction", d.wheelDownAction);
@@ -137,51 +145,51 @@ void Settings::Load() {
             Read(j, "padLookRateX", d.padLookSpeedX);
             Read(j, "padLookRateY", d.padLookSpeedY);
             Read(j, "padInvertLook", d.padInvertLook);
-    Read(j, "padLayout", d.padLayout);
-    Read(j, "padStickLayout", d.padStickLayout);
-    Read(j, "padToggleZoom", d.padToggleZoom);
-    if (j.contains("padPaddleKeys") && j["padPaddleKeys"].is_array() && j["padPaddleKeys"].size() == d.padPaddleKeys.size()) {
-        for (size_t i = 0; i < d.padPaddleKeys.size(); ++i) {
-            if (j["padPaddleKeys"][i].is_number_integer()) d.padPaddleKeys[i] = j["padPaddleKeys"][i].get<int>();
-        }
-        // The first default was F13-F18; move anyone still on it to F1-F6. A set the player chose stays.
-        if (d.padPaddleKeys == std::array<int, 6>{ 0x7C, 0x7D, 0x7E, 0x7F, 0x80, 0x81 }) d.padPaddleKeys = SettingsData{}.padPaddleKeys;
-    }
-    if (j.contains("padBindings") && j["padBindings"].is_object()) {
-        for (const auto& [key, value] : j["padBindings"].items()) {
-            if (value.is_number_integer()) d.padBindings[key] = value.get<int>();
-        }
-    }
+            Read(j, "padLayout", d.padLayout);
+            Read(j, "padStickLayout", d.padStickLayout);
+            Read(j, "padToggleZoom", d.padToggleZoom);
+            if (j.contains("padPaddleKeys") && j["padPaddleKeys"].is_array() && j["padPaddleKeys"].size() == d.padPaddleKeys.size()) {
+                for (size_t i = 0; i < d.padPaddleKeys.size(); ++i) {
+                    if (j["padPaddleKeys"][i].is_number_integer()) d.padPaddleKeys[i] = j["padPaddleKeys"][i].get<int>();
+                }
+                // The first default was F13-F18; move anyone still on it to F1-F6. A set the player chose stays.
+                if (d.padPaddleKeys == std::array<int, 6>{ 0x7C, 0x7D, 0x7E, 0x7F, 0x80, 0x81 }) d.padPaddleKeys = SettingsData{}.padPaddleKeys;
+            }
+            if (j.contains("padBindings") && j["padBindings"].is_object()) {
+                for (const auto& [key, value] : j["padBindings"].items()) {
+                    if (value.is_number_integer()) d.padBindings[key] = value.get<int>();
+                }
+            }
             Read(j, "padLeftDeadZone", d.padLeftDeadZone);
             Read(j, "padRightDeadZone", d.padRightDeadZone);
             Read(j, "volumeGame", d.volumeGame);
             Read(j, "volumeMusic", d.volumeMusic);
             Read(j, "volumeOther", d.volumeOther);
             Read(j, "menuSounds", d.menuSounds);
-    Read(j, "masterMute", d.masterMute);
-    Read(j, "muteInBackground", d.muteInBackground);
-    Read(j, "inviteNotifications", d.inviteNotifications);
-    Read(j, "voiceEnabled", d.voiceEnabled);
-    Read(j, "voiceInputDevice", d.voiceInputDevice);
-    Read(j, "voiceOutputDevice", d.voiceOutputDevice);
-    Read(j, "voiceVolume", d.voiceVolume);
-    Read(j, "voiceOpenMic", d.voiceOpenMic);
-    Read(j, "voiceBitrateKbps", d.voiceBitrateKbps);
-    Read(j, "voiceChannel", d.voiceChannel);
+            Read(j, "masterMute", d.masterMute);
+            Read(j, "muteInBackground", d.muteInBackground);
+            Read(j, "inviteNotifications", d.inviteNotifications);
+            Read(j, "voiceEnabled", d.voiceEnabled);
+            Read(j, "voiceInputDevice", d.voiceInputDevice);
+            Read(j, "voiceOutputDevice", d.voiceOutputDevice);
+            Read(j, "voiceVolume", d.voiceVolume);
+            Read(j, "voiceOpenMic", d.voiceOpenMic);
+            Read(j, "voiceBitrateKbps", d.voiceBitrateKbps);
+            Read(j, "voiceChannel", d.voiceChannel);
             Read(j, "menuMusicTrack", d.menuMusicTrack);
-    if (j.contains("menuMusicDisabled") && j["menuMusicDisabled"].is_array()) {
-        for (const auto& id : j["menuMusicDisabled"]) if (id.is_string()) d.menuMusicDisabled.push_back(id.get<std::string>());
-    }
+            if (j.contains("menuMusicDisabled") && j["menuMusicDisabled"].is_array()) {
+                for (const auto& id : j["menuMusicDisabled"]) if (id.is_string()) d.menuMusicDisabled.push_back(id.get<std::string>());
+            }
             Read(j, "subtitles", d.subtitles);
             Read(j, "campaignSkulls", d.campaignSkulls);
             Read(j, "menuBackground", d.menuBackground);
             Read(j, "playerName", d.playerName);
-    Read(j, "lastPlayedMode", d.lastPlayedMode);
-    Read(j, "lastPlayedMap", d.lastPlayedMap);
-    Read(j, "lastPlayedVariant", d.lastPlayedVariant);
-    Read(j, "lastPlayedDifficulty", d.lastPlayedDifficulty);
-    Read(j, "lastPlayedSkulls", d.lastPlayedSkulls);
-    Read(j, "lastPlayedMod", d.lastPlayedMod);
+            Read(j, "lastPlayedMode", d.lastPlayedMode);
+            Read(j, "lastPlayedMap", d.lastPlayedMap);
+            Read(j, "lastPlayedVariant", d.lastPlayedVariant);
+            Read(j, "lastPlayedDifficulty", d.lastPlayedDifficulty);
+            Read(j, "lastPlayedSkulls", d.lastPlayedSkulls);
+            Read(j, "lastPlayedMod", d.lastPlayedMod);
             Read(j, "serviceTag", d.serviceTag);
             Read(j, "masterServerUrl", d.masterServerUrl);
             // Free federation: west is the primary registry; it merges the east peer server-side.
@@ -261,19 +269,23 @@ bool Settings::Save() {
         j["height"] = d.height;
         j["borderless"] = d.borderless;
         j["fieldOfView"] = d.fieldOfView;
+        j["firstPersonFovMod"] = d.firstPersonFovMod;
+        j["vehicleFirstPersonFovMod"] = d.vehicleFirstPersonFovMod;
+        j["vehicleFirstPersonOffsetX"] = d.vehicleFirstPersonOffsetX;
+        j["vehicleFirstPersonOffsetY"] = d.vehicleFirstPersonOffsetY;
         j["thirdPersonZoom"] = d.thirdPersonZoom;
         j["thirdPersonOffsetX"] = d.thirdPersonOffsetX;
         j["thirdPersonOffsetY"] = d.thirdPersonOffsetY;
         j["verticalSync"] = d.verticalSync;
         j["fpsLimit"] = d.fpsLimit;
         j["showFps"] = d.showFps;
-    j["throttleUnfocused"] = d.throttleUnfocused;
-    j["brightness"] = d.brightness;
-    j["fxaa"] = d.fxaa;
+        j["throttleUnfocused"] = d.throttleUnfocused;
+        j["brightness"] = d.brightness;
+        j["fxaa"] = d.fxaa;
         j["mouseSensitivity"] = d.mouseSensitivity;
         j["mouseSensitivityY"] = d.mouseSensitivityY;
-    j["mouseAcceleration"] = d.mouseAcceleration;
-    j["mouseSmoothing"] = d.mouseSmoothing;
+        j["mouseAcceleration"] = d.mouseAcceleration;
+        j["mouseSmoothing"] = d.mouseSmoothing;
         j["invertLook"] = d.invertLook;
         j["wheelUpAction"] = d.wheelUpAction;
         j["wheelDownAction"] = d.wheelDownAction;
@@ -282,39 +294,39 @@ bool Settings::Save() {
         j["padLookRateX"] = d.padLookSpeedX;
         j["padLookRateY"] = d.padLookSpeedY;
         j["padInvertLook"] = d.padInvertLook;
-    j["padLayout"] = d.padLayout;
-    j["padStickLayout"] = d.padStickLayout;
-    j["padToggleZoom"] = d.padToggleZoom;
-    j["padPaddleKeys"] = d.padPaddleKeys;
-    if (!d.padBindings.empty()) j["padBindings"] = d.padBindings;
+        j["padLayout"] = d.padLayout;
+        j["padStickLayout"] = d.padStickLayout;
+        j["padToggleZoom"] = d.padToggleZoom;
+        j["padPaddleKeys"] = d.padPaddleKeys;
+        if (!d.padBindings.empty()) j["padBindings"] = d.padBindings;
         j["padLeftDeadZone"] = d.padLeftDeadZone;
         j["padRightDeadZone"] = d.padRightDeadZone;
         j["volumeGame"] = d.volumeGame;
         j["volumeMusic"] = d.volumeMusic;
         j["volumeOther"] = d.volumeOther;
         j["menuSounds"] = d.menuSounds;
-    j["masterMute"] = d.masterMute;
-    j["muteInBackground"] = d.muteInBackground;
-    j["inviteNotifications"] = d.inviteNotifications;
-    j["voiceEnabled"] = d.voiceEnabled;
-    j["voiceInputDevice"] = d.voiceInputDevice;
-    j["voiceOutputDevice"] = d.voiceOutputDevice;
-    j["voiceVolume"] = d.voiceVolume;
-    j["voiceOpenMic"] = d.voiceOpenMic;
-    j["voiceBitrateKbps"] = d.voiceBitrateKbps;
-    j["voiceChannel"] = d.voiceChannel;
+        j["masterMute"] = d.masterMute;
+        j["muteInBackground"] = d.muteInBackground;
+        j["inviteNotifications"] = d.inviteNotifications;
+        j["voiceEnabled"] = d.voiceEnabled;
+        j["voiceInputDevice"] = d.voiceInputDevice;
+        j["voiceOutputDevice"] = d.voiceOutputDevice;
+        j["voiceVolume"] = d.voiceVolume;
+        j["voiceOpenMic"] = d.voiceOpenMic;
+        j["voiceBitrateKbps"] = d.voiceBitrateKbps;
+        j["voiceChannel"] = d.voiceChannel;
         j["menuMusicTrack"] = d.menuMusicTrack;
         j["menuMusicDisabled"] = d.menuMusicDisabled;
         j["subtitles"] = d.subtitles;
         j["campaignSkulls"] = d.campaignSkulls;
         j["menuBackground"] = d.menuBackground;
         j["playerName"] = d.playerName;
-    j["lastPlayedMode"] = d.lastPlayedMode;
-    j["lastPlayedMap"] = d.lastPlayedMap;
-    j["lastPlayedVariant"] = d.lastPlayedVariant;
-    j["lastPlayedDifficulty"] = d.lastPlayedDifficulty;
-    j["lastPlayedSkulls"] = d.lastPlayedSkulls;
-    j["lastPlayedMod"] = d.lastPlayedMod;
+        j["lastPlayedMode"] = d.lastPlayedMode;
+        j["lastPlayedMap"] = d.lastPlayedMap;
+        j["lastPlayedVariant"] = d.lastPlayedVariant;
+        j["lastPlayedDifficulty"] = d.lastPlayedDifficulty;
+        j["lastPlayedSkulls"] = d.lastPlayedSkulls;
+        j["lastPlayedMod"] = d.lastPlayedMod;
         j["serviceTag"] = d.serviceTag;
         j["masterServerUrl"] = d.masterServerUrl;
         j["favorites"] = d.favorites;

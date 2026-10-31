@@ -4,19 +4,16 @@
 
 namespace noble {
 
-// Third-person camera toggle for the local player.
+// Third-person camera toggle, vehicle first-person toggle, and camera FOV / offset modifiers for the local player.
 //
-// Reach's camera mode is gated by a small engine function at haloreach+0x48A910 (verified prologue
-// 48 89 5C 24 08 48 89 74 24 10); it takes a player index and answers whether that player's camera may use the
-// third-person path. Reach Renaissance hooks exactly this function (and a follow/camera update at +0x1DCADC for
-// distance and shoulder tuning), so a detour that answers "yes" is enough to let the engine's own third-person
-// camera run.
-//
-// F5 toggles it in game; -third-person starts with it on. The engine's follow camera needs no extra offset for the
-// default distance - the +0x1DCADC hook is only needed if we want to tune distance / swap shoulders later.
+// Reach's camera mode is gated by:
+// - haloreach+0x48A910 (per-player third-person mode check, verified prologue 48 89 5C 24 08 48 89 74 24 10)
+// - haloreach+0xC6948 (unit_should_use_third_person_camera, which forces 3rd person when the unit is seated in a vehicle)
+// - haloreach+0xC6EE8 (c_first_person_camera::update, which writes the 1st-person field_of_view in radians to [observerCommand + 0x28])
+// - haloreach+0x1DCADC / +0x1E2028 (c_orbiting_camera::update / c_following_camera::update for 3rd-person distance, offset, and zoom)
 class CameraThirdPerson {
 public:
-    // Installs the detour on the engine module. Safe to call once after haloreach.dll is loaded.
+    // Installs the detours on the engine module. Safe to call once after haloreach.dll is loaded.
     static bool Install(HMODULE haloreach);
 
     static void SetEnabled(bool enabled);
@@ -27,10 +24,17 @@ public:
     static bool EngineWantsThirdPerson();
     static void Toggle();
 
-    // Called from the input poll: F5 edge-toggles the camera.
+    // Called from the input poll: F5 edge-toggles the third-person camera.
     static void PollHotkey(bool f5Down);
 
-    // Third-person weapon aim zoom (held via right-click in third person).
+    // Vehicle 1st-person camera toggle (bound in SETTINGS > CONTROLS > KEYBOARD & MOUSE, unbound by default).
+    static void SetVehicleFirstPerson(bool enabled);
+    static bool IsVehicleFirstPerson();
+    static void ToggleVehicleFirstPerson();
+    static void PollVehicleFirstPersonHotkey(bool keyDown);
+    static bool IsInVehicle();
+
+    // Third-person weapon aim zoom (held via Zoom keybind in third person).
     static void SetZoomHeld(bool held);
     static bool IsZoomHeld();
     // Current FOV multiplier (1.0 when unzoomed or in first person; < 1.0 while zooming in third person).

@@ -20,17 +20,43 @@ namespace {
 //   48 89 74 24 10   mov qword ptr [rsp+10h], rsi
 // Reach Renaissance hooks the same function (5-byte patch window) and answers it from its own camera state.
 constexpr uintptr_t kCameraModeCheckRva = 0x48A910;
+// haloreach+0xC6948 (unit_should_use_third_person_camera): checks whether a unit should use a 3rd-person camera
+// (returns 1 with *outReason in 1..3 when seated in a vehicle, or calls +0x48A910 when on foot).
+constexpr uintptr_t kUnitThirdPersonRva = 0xC6948;
+// haloreach+0xC6EE8 (c_first_person_camera::update): updates the 1st-person camera (both on foot and in vehicles)
+// and writes the 1st-person horizontal field of view in radians to [observerCommand + 0x28].
+constexpr uintptr_t kFirstPersonUpdateRva = 0xC6EE8;
+// haloreach+0x53EF8 (player_mapping_get_unit_by_output_user): maps output user index (0 = local player) to unit datum index.
+constexpr uintptr_t kGetLocalUnitRva = 0x53EF8;
+// haloreach+0x47044C (object_get_markers_by_string_id): looks up model markers (0xC2 = character head/camera marker) on an object.
+constexpr uintptr_t kGetObjectMarkersRva = 0x47044C;
+// haloreach+0x472184 (object_get_head_position): fallback that retrieves the world-space position of the unit's head bone node.
+constexpr uintptr_t kGetUnitHeadPosRva = 0x472184;
 // haloreach+0x1DCADC (c_orbiting_camera::update) and haloreach+0x1E2028 (c_following_camera::update):
 // both take (void* camera, int32_t userIndex, float dt, void* observerCommand) and write the third-person
 // field of view in radians (from haloreach+0xC8640) to [observerCommand + 0x28].
 constexpr uintptr_t kCameraFollowRva = 0x1DCADC;
 constexpr uintptr_t kCameraFollowingUpdateRva = 0x1E2028;
 constexpr uint8_t kExpectedPrologue[9] = {0x48, 0x89, 0x5C, 0x24, 0x08, 0x48, 0x89, 0x74, 0x24};
+constexpr uint8_t kUnitThirdPersonPrologue[10] = {0x48, 0x89, 0x5C, 0x24, 0x08, 0x48, 0x89, 0x6C, 0x24, 0x10};
+constexpr uint8_t kFirstPersonUpdatePrologue[11] = {0x48, 0x8B, 0xC4, 0x48, 0x89, 0x58, 0x10, 0x48, 0x89, 0x68, 0x18};
 
 using CameraModeCheckFn = bool(__fastcall*)(int32_t playerIndex);
+using UnitThirdPersonFn = int32_t(__fastcall*)(int32_t unitDatumIndex, int32_t* outReason);
+using GetLocalUnitFn = int32_t(__fastcall*)(int32_t userIndex);
+using GetObjectMarkersFn = int16_t(__fastcall*)(int32_t objectDatumIndex, int32_t markerStringId, void* outMarkers,
+                                                int16_t maxMarkers, uint8_t doNotWalkToParent, uint8_t useRenderNodes);
+using GetUnitHeadPosFn = float*(__fastcall*)(int32_t unitDatumIndex, float* outPos);
 CameraModeCheckFn s_original = nullptr;
+UnitThirdPersonFn s_origUnitThirdPerson = nullptr;
+GetLocalUnitFn s_getLocalUnit = nullptr;
+GetObjectMarkersFn s_getObjectMarkers = nullptr;
+GetUnitHeadPosFn s_getUnitHeadPos = nullptr;
 
 std::atomic<bool> s_enabled{false};
+std::atomic<bool> s_vehicleFirstPerson{false};
+std::atomic<bool> s_vehicleFpKeyWasDown{false};
+std::atomic<bool> s_localInVehicle{false};
 std::atomic<int> s_distancePercent{100};   // 100 = engine default; >100 pulls the camera further back
 std::atomic<int> s_followLogCount{0};
 std::atomic<int> s_mode{0};   // experiment: 0 = answer true, 1 = answer false, 2 = original(...) | enabled
@@ -43,6 +69,88 @@ std::atomic<float> s_zoomBlend{0.0f};
 using CameraUpdateFn = void(__fastcall*)(void* camera, int32_t userIndex, float dt, void* observerCommand);
 CameraUpdateFn s_originalFollow = nullptr;
 CameraUpdateFn s_originalFollowingUpdate = nullptr;
+CameraUpdateFn s_origFirstPersonUpdate = nullptr;
+
+int32_t __fastcall Hook_UnitThirdPerson(int32_t unitDatumIndex, int32_t* outReason) {
+    int32_t dummyReason = 0;
+    int32_t* reasonPtr = outReason ? outReason : &dummyReason;
+    const int32_t orig = s_origUnitThirdPerson ? s_origUnitThirdPerson(unitDatumIndex, reasonPtr) : 0;
+    if (s_getLocalUnit && unitDatumIndex != -1 && unitDatumIndex == s_getLocalUnit(0)) {
+        const int32_t reason = *reasonPtr;
+        const bool inVehicle = (reason >= 1 && reason <= 3);
+        s_localInVehicle.store(inVehicle);
+        if (inVehicle && s_vehicleFirstPerson.load()) {
+            *reasonPtr = 0;
+            return 0;
+        }
+    }
+    return orig;
+}
+
+void __fastcall Hook_FirstPersonUpdate(void* camera, int32_t userIndex, float dt, void* observerCommand) {
+    if (s_origFirstPersonUpdate) s_origFirstPersonUpdate(camera, userIndex, dt, observerCommand);
+    if (userIndex != 0 || !observerCommand) return;
+    const SettingsData settings = Settings::Get().Snapshot();
+    const bool inVehicle = s_localInVehicle.load();
+
+    // When in a vehicle in 1st person, unit_get_camera_position (haloreach+0x48A1C0) places the camera at the
+    // vehicle's 3rd-person seat pivot marker instead of the character's head marker (string_id 0xC2).
+    // Query the character's 0xC2 head marker directly on the local player's unit (doNotWalkToParent = 1),
+    // falling back to the character's head bone node (haloreach+0x472184), and apply the user's horizontal/vertical
+    // 1st-person vehicle camera placement offsets.
+    if (inVehicle) {
+        const int32_t unitDatum = s_getLocalUnit ? s_getLocalUnit(0) : -1;
+        if (unitDatum != -1) {
+            auto* pos = reinterpret_cast<float*>(static_cast<uint8_t*>(observerCommand) + 0x04);
+            const auto* fwd = reinterpret_cast<const float*>(static_cast<const uint8_t*>(observerCommand) + 0x2C);
+            const auto* up  = reinterpret_cast<const float*>(static_cast<const uint8_t*>(observerCommand) + 0x38);
+
+            alignas(16) uint8_t markerBuf[0x80] = {};
+            float headPos[3] = {pos[0], pos[1], pos[2]};
+            bool gotHead = false;
+            if (s_getObjectMarkers) {
+                const int16_t count = s_getObjectMarkers(unitDatum, 0xC2, markerBuf, 1, 1, 1);
+                if (count > 0) {
+                    const auto* mp = reinterpret_cast<const float*>(markerBuf + 0x60);
+                    headPos[0] = mp[0];
+                    headPos[1] = mp[1];
+                    headPos[2] = mp[2];
+                    gotHead = true;
+                }
+            }
+            if (!gotHead && s_getUnitHeadPos) {
+                s_getUnitHeadPos(unitDatum, headPos);
+                gotHead = true;
+            }
+
+            const float offX = std::clamp(settings.vehicleFirstPersonOffsetX, -1.0f, 1.0f);
+            const float offY = std::clamp(settings.vehicleFirstPersonOffsetY, -1.0f, 1.0f);
+            // Camera right basis vector in Reach's right-handed world space: right = normalize(cross(forward, up)).
+            float rightX = fwd[1] * up[2] - fwd[2] * up[1];
+            float rightY = fwd[2] * up[0] - fwd[0] * up[2];
+            float rightZ = fwd[0] * up[1] - fwd[1] * up[0];
+            const float rightLen = std::sqrt(rightX * rightX + rightY * rightY + rightZ * rightZ);
+            if (rightLen > 1e-5f) {
+                rightX /= rightLen;
+                rightY /= rightLen;
+                rightZ /= rightLen;
+            }
+
+            pos[0] = headPos[0] + rightX * (offX * 0.50f) + up[0] * (offY * 0.50f);
+            pos[1] = headPos[1] + rightY * (offX * 0.50f) + up[1] * (offY * 0.50f);
+            pos[2] = headPos[2] + rightZ * (offX * 0.50f) + up[2] * (offY * 0.50f);
+        }
+    }
+
+    const float mod = std::clamp(inVehicle ? settings.vehicleFirstPersonFovMod : settings.firstPersonFovMod, -1.20f, 1.20f);
+    if (std::fabs(mod) > 1e-4f) {
+        auto* fovRad = reinterpret_cast<float*>(static_cast<uint8_t*>(observerCommand) + 0x28);
+        // Positive mod (+0% .. +120%) widens FOV out up to 2.20x; negative mod (-0% .. -120%) narrows FOV in down to 1 / 2.20x.
+        const float scale = (mod >= 0.0f) ? (1.0f + mod) : (1.0f / (1.0f - mod));
+        // Clamp within 10 deg .. 145 deg (0.1745329f .. 2.5307274f rad) so Reach's FOV validator (1..150 deg) accepts it.
+        *fovRad = std::clamp(*fovRad * scale, 0.1745329f, 2.5307274f);
+    }
+}
 
 void ApplyThirdPersonCameraTuning(float dt, void* observerCommand) {
     if (!observerCommand) return;
@@ -130,6 +238,10 @@ bool __fastcall Hook_CameraModeCheck(int32_t playerIndex) {
 bool CameraThirdPerson::Install(HMODULE haloreach) {
     const uintptr_t base = reinterpret_cast<uintptr_t>(haloreach);
     if (!base) return false;
+    s_getLocalUnit = reinterpret_cast<GetLocalUnitFn>(base + kGetLocalUnitRva);
+    s_getObjectMarkers = reinterpret_cast<GetObjectMarkersFn>(base + kGetObjectMarkersRva);
+    s_getUnitHeadPos = reinterpret_cast<GetUnitHeadPosFn>(base + kGetUnitHeadPosRva);
+
     void* target = reinterpret_cast<void*>(base + kCameraModeCheckRva);
     if (std::memcmp(target, kExpectedPrologue, sizeof(kExpectedPrologue)) != 0) {
         NOBLE_WARN("CameraThirdPerson: camera check at haloreach+0x{:X} does not match the expected prologue; third "
@@ -143,6 +255,30 @@ bool CameraThirdPerson::Install(HMODULE haloreach) {
         return false;
     }
     NOBLE_INFO("CameraThirdPerson: third-person camera check hooked at haloreach+0x{:X}", kCameraModeCheckRva);
+
+    void* unitTpTarget = reinterpret_cast<void*>(base + kUnitThirdPersonRva);
+    if (std::memcmp(unitTpTarget, kUnitThirdPersonPrologue, sizeof(kUnitThirdPersonPrologue)) == 0) {
+        if (HookManager::InstallHook(unitTpTarget, reinterpret_cast<void*>(&Hook_UnitThirdPerson),
+                                     reinterpret_cast<void**>(&s_origUnitThirdPerson), "unit_third_person")) {
+            NOBLE_INFO("CameraThirdPerson: unit third-person hook installed at haloreach+0x{:X}", kUnitThirdPersonRva);
+        } else {
+            NOBLE_WARN("CameraThirdPerson: could not install unit third-person hook at haloreach+0x{:X}", kUnitThirdPersonRva);
+        }
+    } else {
+        NOBLE_WARN("CameraThirdPerson: unit third-person function at haloreach+0x{:X} does not match expected prologue", kUnitThirdPersonRva);
+    }
+
+    void* fpUpdateTarget = reinterpret_cast<void*>(base + kFirstPersonUpdateRva);
+    if (std::memcmp(fpUpdateTarget, kFirstPersonUpdatePrologue, sizeof(kFirstPersonUpdatePrologue)) == 0) {
+        if (HookManager::InstallHook(fpUpdateTarget, reinterpret_cast<void*>(&Hook_FirstPersonUpdate),
+                                     reinterpret_cast<void**>(&s_origFirstPersonUpdate), "first_person_camera_update")) {
+            NOBLE_INFO("CameraThirdPerson: first-person camera update hook installed at haloreach+0x{:X}", kFirstPersonUpdateRva);
+        } else {
+            NOBLE_WARN("CameraThirdPerson: could not install first-person camera update hook at haloreach+0x{:X}", kFirstPersonUpdateRva);
+        }
+    } else {
+        NOBLE_WARN("CameraThirdPerson: first-person camera update at haloreach+0x{:X} does not match expected prologue", kFirstPersonUpdateRva);
+    }
 
     void* followTarget = reinterpret_cast<void*>(base + kCameraFollowRva);
     constexpr uint8_t kFollowPrologue[8] = {0x48, 0x8B, 0xC4, 0x48, 0x89, 0x58, 0x18, 0x55};
@@ -199,6 +335,32 @@ void CameraThirdPerson::Toggle() { SetEnabled(!s_enabled.load()); }
 void CameraThirdPerson::PollHotkey(bool f5Down) {
     const bool was = s_f5WasDown.exchange(f5Down);
     if (f5Down && !was) Toggle();
+}
+
+void CameraThirdPerson::SetVehicleFirstPerson(bool enabled) {
+    const bool before = s_vehicleFirstPerson.exchange(enabled);
+    if (before != enabled) {
+        NOBLE_INFO("CameraThirdPerson: vehicle first person {}", enabled ? "on" : "off");
+    }
+}
+
+bool CameraThirdPerson::IsVehicleFirstPerson() {
+    return s_vehicleFirstPerson.load();
+}
+
+void CameraThirdPerson::ToggleVehicleFirstPerson() {
+    SetVehicleFirstPerson(!s_vehicleFirstPerson.load());
+}
+
+void CameraThirdPerson::PollVehicleFirstPersonHotkey(bool keyDown) {
+    const bool was = s_vehicleFpKeyWasDown.exchange(keyDown);
+    if (keyDown && !was) {
+        ToggleVehicleFirstPerson();
+    }
+}
+
+bool CameraThirdPerson::IsInVehicle() {
+    return s_localInVehicle.load();
 }
 
 void CameraThirdPerson::SetZoomHeld(bool held) {
