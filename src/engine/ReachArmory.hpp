@@ -17,10 +17,11 @@ struct ReachArmorySelection {
     // Integer indices for in-game profile / appearance table
     int primaryColorIndex = 1;    // 0..29 (Steel)
     int secondaryColorIndex = 10; // 0..29 (Green/Brick)
+    int accentColorIndex = 14;    // 0..29 (Cyan; the third/detail colour)
     int visorColorIndex = 0;      // 0..4
     int armorEffectIndex = 0;     // 0..6
     int firefightVoiceIndex = 0;  // 0..15
-    int eliteSuitIndex = 0;       // 0..7
+    int eliteSuitIndex = 0;       // 0..10 (the Armory's elite set presets)
     std::string serviceTag = "N06";
 
     // Spartan permutation string_id names (matching mainmenu_all.string_ids.csv)
@@ -52,6 +53,7 @@ struct ReachArmorySelection {
     // Linear RGB colors [0..1]
     std::array<float, 3> primaryRgb = { 0.100f, 0.100f, 0.100f };
     std::array<float, 3> secondaryRgb = { 0.100f, 0.100f, 0.100f };
+    std::array<float, 3> accentRgb = { 0.471f, 0.788f, 0.808f };   // third/detail colour (Cyan)
     std::array<float, 3> visorRgb = { 0.69f, 0.25f, 0.02f };
 };
 

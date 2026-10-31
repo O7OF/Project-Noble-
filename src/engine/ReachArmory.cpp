@@ -649,7 +649,7 @@ static void ScanEliteTable() {
 static void WriteColorsAndSuit(const ReachArmorySelection& sel) {
     const uint32_t priArgb = LinearRgbToArgbU32(sel.primaryRgb);
     const uint32_t secArgb = LinearRgbToArgbU32(sel.secondaryRgb);
-    const uint32_t terArgb = 0xFF2FA0CBu;
+    const uint32_t terArgb = LinearRgbToArgbU32(sel.accentRgb);   // third/detail colour (was a fixed cyan)
     const uint32_t visArgb = (sel.visor == "default" || sel.visor.empty())
                            ? 0xFFC7A167u
                            : LinearRgbToArgbU32(sel.visorRgb);

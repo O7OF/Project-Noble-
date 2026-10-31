@@ -2,6 +2,7 @@
 
 
 #include <d3d11.h>
+#include <array>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -26,6 +27,13 @@ struct AppearanceProfile {
     // Color indices (0-29 matching Reach's 30-color palette)
     int primaryColor = 1;    // Steel
     int secondaryColor = 10; // Green
+    int accentColor = 14;    // Cyan (the third / detail colour)
+    // Custom picker wheel (Armory preview). appearance.json stores both the exact RGB and the nearest
+    // Reach palette index, because the in-game profile only accepts palette item ids.
+    bool primaryCustom = false, secondaryCustom = false, accentCustom = false;
+    std::array<float, 3> primaryCustomRgb = {0.349f, 0.349f, 0.349f};
+    std::array<float, 3> secondaryCustomRgb = {0.267f, 0.545f, 0.314f};
+    std::array<float, 3> accentCustomRgb = {0.471f, 0.788f, 0.808f};
 
     // Spartan selections (catalog indices)
     int helmetIndex = 0;         // Mark V [B]
@@ -40,7 +48,8 @@ struct AppearanceProfile {
     int armorEffectIndex = 0;    // None
     int firefightVoiceIndex = 0; // Noble Six
 
-    // Elite selections (0=Minor, 1=Spec Ops, 2=Ranger, 3=Ultra, 4=Zealot, 5=General, 6=Field Marshal, 7=Officer)
+    // Elite selections (0=Minor, 1=Spec Ops, 2=Ranger, 3=Ultra, 4=Zealot, 5=General, 6=Field Marshal,
+    // 7=Officer, 8=Honor Guard, 9=H2A Ranger, 10=Counselor). 8..10 are mixed presets built from pieces.
     int eliteArmorSet = 0;
     int eliteHelmetIndex = 0;
     int eliteLeftShoulderIndex = 0;

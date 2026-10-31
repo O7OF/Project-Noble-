@@ -10,11 +10,13 @@
 #include <algorithm>
 #include <atomic>
 #include <climits>
+#include <intrin.h>
 #include <cstdint>
 #include <cstring>
 #include <cstdio>
 #include <cwctype>
 #include <fstream>
+#include <iterator>
 #include <mutex>
 #include <vector>
 
@@ -1092,10 +1094,13 @@ constexpr uintptr_t kAppearanceBuilder = 0x1055EC;
 constexpr uintptr_t kBuilderCalls[4] = {0x04AC36, 0x0447B0, 0x3B184F, 0x524CD5};
 using BuilderFn = uint64_t(__fastcall*)(uint8_t*, uint32_t, void*, void*);
 
-// RR's set -> pieces table (helmet, left, right, chest, forearms, legs), sets in Armory order.
-constexpr uint8_t kSetPieces[9][6] = {
+// Set -> pieces table (helmet, left, right, chest, forearms, legs), sets in Armory order (the same
+// kEliteSets order as ArmorCustomizer: 0..8 Reach's own + Honor Guard, 9 H2A Ranger, 10 Counselor).
+constexpr uint8_t kSetPieces[11][6] = {
     {3, 3, 3, 0, 0, 2},   {7, 7, 7, 4, 5, 5},   {6, 6, 6, 3, 4, 4},   {9, 9, 9, 5, 7, 7},
     {10, 10, 10, 7, 8, 8}, {1, 1, 1, 1, 1, 0},  {8, 8, 8, 6, 6, 6},   {4, 4, 4, 2, 3, 3},   {2, 2, 2, 8, 2, 10},
+    {11, 11, 11, 3, 4, 9},  // H2A Ranger: h2a helmet/shoulders/legs, Ranger chest (3) and arms (4)
+    {0, 5, 5, 8, 0, 9},     // Counselor: Council helmet, Schism shoulders, Honor Guard chest (8), Minor arms, H2A legs
 };
 
 // Armory piece ids -> the pack's index in that slot's list (from the indices above; extras are best guesses).
@@ -1142,6 +1147,8 @@ std::mutex s_picksMutex;
 uint8_t s_localPicks[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 uint8_t s_localEliteEffect = 0xFF;
 int s_localSet = -1;
+bool s_localSpeciesElite = false;   // appearance.json "species" == 1 (the local player's preferred species)
+std::atomic<int> s_localSettingsIndex{-1};   // settings index the engine last applied the local profile to
 std::filesystem::file_time_type s_picksStamp{};
 std::atomic<int> s_picksLogged{0};
 
@@ -1157,7 +1164,8 @@ void RefreshLocalPicks() {
         nlohmann::json j;
         in >> j;
         const auto& el = j.at("elite");
-        const int set = std::clamp(el.value("armor_set", 0), 0, 8);
+        s_localSpeciesElite = j.value("species", 0) == 1;
+        const int set = std::clamp(el.value("armor_set", 0), 0, static_cast<int>(std::size(kSetPieces)) - 1);
         static const char* kKeys[6] = {"helmet_id", "left_shoulder_id", "right_shoulder_id", "chest_id", "arms_id", "legs_id"};
         for (int k = 0; k < 6; ++k) {
             const int idx = PieceIndex(k, el.value(kKeys[k], std::string()));
@@ -1181,43 +1189,123 @@ void RefreshLocalPicks() {
     }
 }
 
+// ---- Replicated Elite appearance ------------------------------------------------------------
+// The engine's appearance record (player + 0xD8, 0x28 bytes) is also the per-player block it syncs
+// between machines: 0x2C837C(player, block) copies a 0x20-byte block starting at record+0x10 into
+// player+0xE8 and pushes it to the profile manager (0x3A9E4 -> settings +0x310), and 0x2C82F0 hands
+// that block back for the settings sync. Layout, verified in the builder 0x1055EC:
+//   +0x00 flags, +0x04 species, +0x10..+0x16 seven armour-list indices, +0x17 Elite armor set,
+//   +0x18 Spartan armor effect, +0x19 Elite armor effect.
+// For an Elite the seven list indices are the player's SPARTAN pieces and the pack reuses them for the
+// six Elite piece indices (the pack merges Elite-region changes into the same-named selections), with
+// 0xFF in +0x16 as a marker. Writing the marker + pieces into the local player's record makes the
+// engine replicate the sender's own Elite pieces; the receiving machine then no longer has to guess
+// with its own Armory picks (the old behaviour made every Elite look like the local player).
+constexpr int kRecordPieceBase = 0x10;
+constexpr int kRecordEliteSet = 0x17;
+constexpr int kRecordEliteFx = 0x19;
+constexpr uint8_t kElitePiecesMarker = 0xFF;
+constexpr uintptr_t kPlayerRecordOffset = 0xD8;
+
+// Return addresses of the 0x1055EC call sites. Only spawn (0x04AC36) and live change (0x0447B0) pass
+// the local player's own record (player + 0xD8) straight from the player struct; 0x3B184F (another
+// machine's player) and 0x524CD5 (unit copy) pass a network/copy record and must keep its bytes.
+constexpr uintptr_t kBuilderReturnSpawn = 0x04AC3B;
+constexpr uintptr_t kBuilderReturnLive  = 0x0447B5;
+
+constexpr uintptr_t kApplyProfile = 0x2EDA08;   // void(int settingsIndex, uint8_t* player)
+using ApplyProfileFn = void(__fastcall*)(int, uint8_t*);
+using RecordSetFn = void(__fastcall*)(uint8_t*, uint8_t*);
+static ApplyProfileFn s_applyProfileOriginal = nullptr;
+static RecordSetFn s_recordSetOriginal = nullptr;
+constexpr uintptr_t kRecordSet = 0x2C837C;   // void(playerSettings*, uint8_t block[0x20])
+
 BuilderFn s_builder = nullptr;
 
+// Second chance for the settings sync: 0x2C837C(player, block) is the call the engine makes when it
+// pushes a player's appearance block to the profile manager. ApplyProfileHook runs while the map is
+// still loading (before the pack is in), so its push is usually too early; this hook catches the sync
+// afterwards. The settings index recorded by ApplyProfileHook tells the local player's block apart from
+// the other players' blocks, so a remote player's appearance is never overwritten with local picks.
+void __fastcall RecordSetHook(uint8_t* player, uint8_t* block) {
+    const int localIndex = s_localSettingsIndex.load();
+    if (player && block && s_loaded && s_haveActive && localIndex >= 0) {
+        int32_t index = -1;
+        std::memcpy(&index, player + 0x10, sizeof(index));
+        if (index == localIndex) {
+            std::lock_guard<std::mutex> lock(s_picksMutex);
+            RefreshLocalPicks();
+            if (s_localSpeciesElite) {
+                const int set = (s_localSet >= 0 && s_localSet < static_cast<int>(std::size(kSetPieces)))
+                                    ? s_localSet : 0;
+                uint8_t picks[6];
+                for (int k = 0; k < 6; ++k)
+                    picks[k] = s_localPicks[k] != 0xFF ? s_localPicks[k] : kSetPieces[set][k];
+                std::memcpy(block, picks, 6);
+                block[6] = kElitePiecesMarker;
+                if (s_localEliteEffect >= 1 && s_localEliteEffect <= 6) block[9] = s_localEliteEffect;
+                static std::atomic<int> s_synced{0};
+                if (s_synced.fetch_add(1) < 3)
+                    NOBLE_INFO("ElitePack: Elite pieces written to the settings sync block (player index {}):{}", index,
+                               Hex(block, 0x20));
+            }
+        }
+    }
+    if (s_recordSetOriginal) s_recordSetOriginal(player, block);
+}
+
+// 0x2EDA08 (profile -> player copy) is called only for the local player and knows its settings index.
+// The index is what tells the local player's appearance block apart from the other players' blocks in
+// RecordSetHook; the block itself is rewritten there, after the pack has loaded.
+void __fastcall ApplyProfileHook(int settingsIndex, uint8_t* player) {
+    if (s_applyProfileOriginal) s_applyProfileOriginal(settingsIndex, player);
+    if (settingsIndex >= 0 && settingsIndex < 16) s_localSettingsIndex.store(settingsIndex);
+}
+
 uint64_t __fastcall BuilderHook(uint8_t* record, uint32_t mode, void* unit, void* player) {
-    const bool elite = record && mode != 0 && mode != 2 && (mode == 1 || record[4] == 1);
-    // Diagnostic (armour effects on Elites): the appearance record as the engine passes it.
+    const uintptr_t caller = reinterpret_cast<uintptr_t>(_ReturnAddress()) - s_base;
+    const bool localRecord = record && (caller == kBuilderReturnSpawn || caller == kBuilderReturnLive);
+    // Mirrors the builder: mode 0 forces Spartan, mode 1 forces Elite, 2 returns, otherwise record[4].
+    const bool elite = record && mode != 2 && (mode == 1 || (mode != 0 && record[4] == 1));
     static std::atomic<int> s_recordsLogged{0};
     if (record && s_recordsLogged.fetch_add(1) < 6)
-        NOBLE_INFO("ElitePack: appearance record (mode {}, elite {}):{}", mode, elite, Hex(record, 0x28));
+        NOBLE_INFO("ElitePack: appearance record (mode {}, elite {}, local {}):{}", mode, elite, localRecord, Hex(record, 0x28));
     if (!elite || !s_loaded || !s_haveActive) return s_builder(record, mode, unit, player);
+
     alignas(8) uint8_t copy[0x28];
     std::memcpy(copy, record, sizeof(copy));
-    bool isLocal = false;
-    if (player) {
-        int32_t localIndex = -1;
-        std::memcpy(&localIndex, static_cast<const uint8_t*>(player) + 4, 4);
-        isLocal = (localIndex >= 0 && localIndex < 4);
-    }
 
-    uint8_t picks[6];
+    uint8_t picks[6] = {0, 0, 0, 0, 0, 0};
     uint8_t eliteEffect = 0xFF;
-    int effectiveSet = 0;
-    if (isLocal) {
+    int effectiveSet = record[kRecordEliteSet] < 8 ? record[kRecordEliteSet] : 0;
+
+    if (localRecord) {
         std::lock_guard<std::mutex> lock(s_picksMutex);
         RefreshLocalPicks();
-        effectiveSet = (s_localSet >= 0 && s_localSet < 9) ? s_localSet : (copy[0x17] < 9 ? copy[0x17] : 0);
-        for (int k = 0; k < 6; ++k) picks[k] = s_localPicks[k] != 0xFF ? s_localPicks[k] : kSetPieces[effectiveSet][k];
+        if (s_localSet >= 0 && s_localSet < static_cast<int>(std::size(kSetPieces))) effectiveSet = s_localSet;
+        for (int k = 0; k < 6; ++k)
+            picks[k] = s_localPicks[k] != 0xFF ? s_localPicks[k] : kSetPieces[effectiveSet][k];
         eliteEffect = s_localEliteEffect;
+        if (eliteEffect == 0xFF && record[kRecordEliteFx] >= 1 && record[kRecordEliteFx] <= 6)
+            eliteEffect = record[kRecordEliteFx];
+        // Store the sender's picks in the real record: the engine syncs this block to every machine.
+        std::memcpy(record + kRecordPieceBase, picks, 6);
+        record[kRecordPieceBase + 6] = kElitePiecesMarker;
+        if (eliteEffect != 0xFF) record[kRecordEliteFx] = eliteEffect;
+    } else if (record[kRecordPieceBase + 6] == kElitePiecesMarker) {
+        // The record came from its owner (another machine or a unit copy): use their pieces.
+        std::memcpy(picks, record + kRecordPieceBase, 6);
+        eliteEffect = record[kRecordEliteFx];
     } else {
-        effectiveSet = copy[0x17] < 9 ? copy[0x17] : 0;
+        // Old/unmodified record (no marker): fall back to the Elite armor set the engine replicated.
         for (int k = 0; k < 6; ++k) picks[k] = kSetPieces[effectiveSet][k];
-        eliteEffect = (copy[0x19] >= 1 && copy[0x19] <= 6) ? copy[0x19] : ((copy[0x18] >= 1 && copy[0x18] <= 6) ? copy[0x18] : 0xFF);
+        eliteEffect = record[kRecordEliteFx];
     }
+    if (eliteEffect < 1 || eliteEffect > 6) eliteEffect = 0xFF;
 
-    std::memcpy(copy + 0x10, picks, 6);
-    copy[0x16] = 0xFF;
-    copy[0x18] = eliteEffect;
-    copy[0x19] = eliteEffect;
+    std::memcpy(copy + kRecordPieceBase, picks, 6);
+    copy[kRecordPieceBase + 6] = kElitePiecesMarker;
+    if (eliteEffect != 0xFF) copy[kRecordEliteFx] = eliteEffect;
     {   // first-person arms follow the forearms, the first-person body the shoulders (else the Armor Set)
         const int fpSet = effectiveSet < 8 ? effectiveSet : 0;
         const int arms = SetOfPiece(4, picks[4]), body = SetOfPiece(1, picks[1]);
@@ -1225,8 +1313,9 @@ uint64_t __fastcall BuilderHook(uint8_t* record, uint32_t mode, void* unit, void
         ApplyFirstPersonSet(1, body >= 0 ? body : fpSet);
     }
     if (s_picksLogged.fetch_add(1) < 8)
-        NOBLE_INFO("ElitePack: Elite dressed with pieces {} {} {} {} {} {} (mode {}, set byte {}, fx {}, local {})",
-                   picks[0], picks[1], picks[2], picks[3], picks[4], picks[5], mode, copy[0x17], eliteEffect, isLocal);
+        NOBLE_INFO("ElitePack: Elite dressed with pieces {} {} {} {} {} {} (mode {}, set {}, fx {}, local {})",
+                   picks[0], picks[1], picks[2], picks[3], picks[4], picks[5], mode, copy[kRecordEliteSet],
+                   eliteEffect, localRecord);
     return s_builder(copy, mode, unit, player);
 }
 
@@ -1239,6 +1328,13 @@ bool InstallPicks(const std::filesystem::path& dataDir) {
         original = t;
     }
     s_builder = reinterpret_cast<BuilderFn>(original);
+    // The profile -> player copy (local player only, records the settings index).
+    if (!HookManager::InstallHook(At<void*>(kApplyProfile), reinterpret_cast<void*>(&ApplyProfileHook),
+                                  reinterpret_cast<void**>(&s_applyProfileOriginal), "elitepack_apply_profile"))
+        NOBLE_WARN("ElitePack: profile hook (0x{:X}) not installed; other players keep the set only", kApplyProfile);
+    if (!HookManager::InstallHook(At<void*>(kRecordSet), reinterpret_cast<void*>(&RecordSetHook),
+                                  reinterpret_cast<void**>(&s_recordSetOriginal), "elitepack_settings_sync"))
+        NOBLE_WARN("ElitePack: settings-sync hook (0x{:X}) not installed; other players keep the set only", kRecordSet);
     return s_builder != nullptr;
 }
 

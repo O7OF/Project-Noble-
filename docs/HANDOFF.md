@@ -193,6 +193,124 @@ Added a behaviour-based regression item to the TODO: menu -> start match -> retu
   Kick, End Round/End Match). Status blocks now show accurate times/commits.
 - **Capture privacy** is now a written rule in `TEAM-WORKFLOW.md`: no public IPs in committed screenshots.
 
+## 0. Pick up here (2026-10-30, 22:40 ET) - Elite armor sets finally replicate, Elite armor effects, Armory index safety (O7OF / DeepSeek)
+
+All changes built with MSBuild Release (`build\noble-client.vcxproj /p:Configuration=Release /p:Platform=x64`), 0 errors.
+Version bumped to **0.8.4 (Elite Armor, Effects, Presets & Colors)** in `src/common/Version.hpp`.
+
+### 1. Why equipped Elite sets fell back to Elite Minor (O7OF / DeepSeek)
+The previous `EnginePatches` "fix" was the cause. Reverse-engineered the appearance path in `haloreach.dll`
+(SHA-256 `738dd2d2...0894`, image base `0x180000000`) with REA/Ghidra and llvm-objdump:
+- **`0x2EDA08` (profile -> player copy), verified by decompilation:** profile `+0x40/0x44/0x48/0x4C/0x50/0x54/0x6C/+0x8C`
+  go to **Spartan slots 0..7**, and `+0x68/+0x90/+0x94` go to **Elite slots 0..2**. Therefore:
+  **`+0x8C` is the Elite armor set** (Spartan slot 7), **`+0x68` is the Spartan armor effect** (Elite slot 0) and
+  **`+0x90` is the Elite armor effect** (Elite slot 1).
+- **`0x1055EC` (appearance builder) decompilation:** `record+0x10..+0x16` are seven armour-list indices,
+  `record+0x17` is the Elite armor set (pmcg list `+0x74`, applied only when the species is Elite),
+  `record+0x18` the Spartan armor effect (pmcg list `+0x80`) and `record+0x19` the Elite armor effect (pmcg list `+0x8C`).
+  Mode 0/1 force Spartan/Elite; mode 2 returns; otherwise `record[4]` is the species.
+- **The old patch at `0x2EDD5C`** rewrote that copy so profile `+0x8C` went to Elite slot 0. Profile `+0x68` then
+  overwrote the same slot, so `record+0x17` (the Elite set) stayed 0 = **Minor**, and an equipped armor effect
+  (`+0x8C`) was what selected the Elite variant. The `0x2C8070` hook in that file never installed either - the
+  function starts at `0x2C807C`, not `0x2C8070`.
+- **Fixed:** removed the `0x2EDD5C` rewrite and the dead `PlayerSetAppearanceSlot` detour from `src/hooks/EnginePatches.cpp`
+  and documented the real mapping in the file. Verified in game: `-profile-set 8C=C5` (Elite set 3) now gives
+  `record +0x17 = 3` in the builder (before the fix it was 0).
+
+### 2. Elite armor effects (O7OF / DeepSeek)
+- Kept the verified `0x10580C` redirect `B9 8C 00 00 00` -> `B9 80 00 00 00`: the Elite branch of `0x1055EC`
+  looks up the effect in pmcg list `+0x8C`, which is empty in the map, while `+0x80` holds the same seven effects
+  (`default_armor`, `legendary_flame`, `eternal_flame`, `heart_attack`, `pestilence`, `storm`, `halo_bday`;
+  region `armor_fx`, permutations `armor_fx_00..05`). The pack's own `+0x80`/`+0x8C` lists are identical.
+- `src/engine/ReachHost.cpp`: `+0x68` is now always the Spartan effect (it used to be `species == Elite ? elEffect : spEffect`,
+  which mixed the species into the wrong field), `+0x90` always the Elite effect, `+0x8C` the Elite set
+  (indices 0..8; the Armory's Honor Guard is index 8, which has no MCC set item, so the profile stores Minor
+  and Honor Guard comes from the pack's per-piece data).
+
+### 3. Per-piece Elite armor now replicates (Honor Guard, H2A, mixed sets) (O7OF / DeepSeek)
+`src/engine/ElitePack.cpp`:
+- `BuilderHook` now uses the **call site** (`_ReturnAddress()`): `0x04AC3B` spawn and `0x0447B5` live change pass the
+  local player's own record (`player + 0xD8`); `0x3B184F` (another machine's player) and `0x524CD5` (unit copy / hologram)
+  pass a network/copy record. The old `player+4` heuristic reported "local" for other players too and dressed every
+  Elite with the local Armory picks - the reason your armor showed on your screen but not on theirs.
+- The local Elite's record gets the six pack piece indices at `+0x10..+0x15`, the `0xFF` marker at `+0x16` and the
+  Elite effect at `+0x19`. Every other record uses its own marked pieces; an unmarked (old/unmodded) record falls
+  back to the replicated Elite set via `kSetPieces`.
+- The block is pushed into the engine's replicated player settings by rewriting it in the engine's own appearance
+  sync: `ApplyProfileHook` (`0x2EDA08`, the local profile copy) records the player's settings index, and
+  `RecordSetHook` (`0x2C837C`, called by the engine right before it hands the 0x20-byte block to the profile manager
+  `0x3A9E4`) rewrites the block only when `[player+0x10]` equals that index. Remote players' blocks are therefore never
+  overwritten with local picks. Verified in the log: the sync block now carries the marked piece bytes + effect instead
+  of the player's Spartan pieces.
+
+### 4. Armory (O7OF / DeepSeek)
+- `ArmorCustomizer::SaveProfile` now clamps every index before indexing the piece lists (an old/stale save with an
+  out-of-range index was an out-of-bounds read on save), and saves the Elite effect through the clamped index.
+- Verified the Armory's item ids against the profile item maps: all 22 helmets, 46 helmet attachments and 25 chests
+  resolve in `Helmets()` / `Chests()`; the Elite set order matches MCC 194..201 (Minor, SpecOps, Ranger, Ultra, Zealot,
+  General, Field Marshal, Officer).
+
+### 5. Hologram shows Elite effects but the player model does not (finding, open)
+The hologram/decoy is built through the unit-copy call site (`0x524CD5`, logged as `local false`) with the source
+player's record; it now gets the same marked pieces + effect, which proves the effect *data* and pmcg list works.
+The real player's spawn (`0x4AC36`) gets the same effect value, so the remaining difference is the **model tag**:
+the player uses the pack Elite biped (`0x85564635` -> model `0x85584637`), while the decoy can resolve the map's
+stock Elite (`0x89392189`). The next check is whether the pack model carries the `armor_fx` region/permutations
+the effect selection changes (a first instrumentation pass in this session did not get a reliable answer; it is
+removed from the shipped code). If it does not, the fix is to merge the stock Elite's `armor_fx` permutations
+into the pack model at load, or to use the stock model for players with an effect equipped.
+
+### 6. Two more Elite presets and the new unlock ladder (Tyler / DeepSeek)
+- `ArmorCustomizer`'s `EliteSetSpec` now carries the six piece ids of each set, and `ApplyEliteSetPieces` equips them;
+  the set picker, save/load and the hover "try on" all use it instead of copying the set index into every piece. The
+  per-piece lists keep their first 9 entries unchanged, so saved looks and the pack's piece indices do not shift.
+- New presets (end of the Armor Set list), piece rows checked against Tyler's 22:54 screenshots:
+  **H2A RANGER** = RANGER (H2A) helmet `h2a_space_helmet`, H2A pauldrons `h2a_l_shoulder`/`h2a_r_shoulder`, **RANGER**
+  chest and arms `space`, H2A legs `h2a_legs`; **COUNSELOR** = COUNCIL helmet `council`, SCHISM pauldrons `schism`,
+  **HONOR GUARD** chest `honor_guard`, MINOR arms (`default`), H2A legs `h2a_legs`.
+- Unlocks (`kEliteUnlocks`): the H2A Ranger preset *and* its four H2A pieces now unlock at **General** (the slot Honor
+  Guard used to hold); Honor Guard and its robe legs moved to **Field Marshall**; the **Counselor** preset is the last
+  Elite set at **Inheritor**. Individual Council/Schism pieces keep their earlier ranks so they can still be mixed.
+- `ElitePack`: `kSetPieces` grew to 11 rows (H2A Ranger `{11,11,11,3,4,9}`, Counselor `{0,5,5,8,0,9}`) and the
+  set clamp accepts 0..10. `ReachHost` writes 194 (Minor) for presets 8..10 because MCC has no set item for them -
+  the per-piece appearance record carries the look with the Elite pack; a pack-less match shows Minor.
+- Tested in a match with `appearance.json` set to each preset: Counselor -> `Elite dressed with pieces 0 5 5 8 0 9`,
+  sync block `00 05 05 08 00 09 FF 00 00 02 ...`; H2A Ranger -> `Elite dressed with pieces 11 11 11 3 4 9`, sync
+  block starting `0B 0B 0B 03 04 09 FF 00 ...` (the byte before the `FF` marker is the legs index 9).
+- Armory menu captures (`-menu-screen armory -menu-capture 300 -armory-unlock-all`): the Armor Set picker shows all
+  eleven entries (MINOR .. OFFICER, HONOR GUARD, H2A RANGER, COUNSELOR), and the preset rows match the screenshots -
+  H2A Ranger: RANGER (H2A), H2A / H2A, RANGER chest, RANGER arms, H2A legs; Counselor: COUNCIL, SCHISM / SCHISM,
+  HONOR GUARD chest, MINOR arms, H2A legs.
+
+### 7. Colour picker: Primary / Secondary / Accent + custom wheel (Tyler / DeepSeek)
+- **Accent colour added.** `AppearanceProfile` and `ReachArmorySelection` now carry a third colour (`accent_color`,
+  default 14 Cyan). The Armory's COLORS group is **Primary / Secondary / Accent**, all using Reach's authentic 30-colour
+  palette (the same list as MCC's playercustomization.xml, hue-by-hue 3 shades) for both Spartans and Elites.
+- **Preview writes the third colour word.** `WriteColorsAndSuit` used to hard-code the third word to `0xFF2FA0CB`;
+  it now uses the accent (`accentRgb`), so all four 16-byte armour-colour records are {primary, secondary, accent,
+  visor}. The profile also writes `+0xA0 = 202 + accent` (RR documents +0xA0 as the third colour).
+- **Custom colour wheel.** Each colour row now has a **CUSTOM COLOUR** button next to RANDOM; it opens an ImGui
+  hue-wheel picker (`ColorPicker3`, colour-wheel flag). The exact RGB is saved as `primary_custom_rgb` /
+  `secondary_custom_rgb` / `accent_custom_rgb` plus the custom flags, and the Armory previews it. Because the
+  in-game profile only stores Reach palette item ids, the wheel also snaps `primary_color`/`secondary_color`/
+  `accent_color` to the **nearest palette index** for the match; "USE PALETTE COLOUR" clears the custom colour.
+- **Verified:** the Armory's COLORS list shows Primary / Secondary / Accent and the Accent wheel/button; the Elite
+  preview recolours when the primary changes (average of the character region moved from 27,30,37 to 22,20,21 for
+  Ice/White vs Maroon/Sea Foam). The third/accent word is a detail colour - it is visible on Spartan lights/detail
+  surfaces but is subtle on the Elite pack model (the Elite's main plates follow the primary). If the Elite needs a
+  stronger accent the next step is in the pack model's material colour bindings, not the Armory.
+
+**Tested:** build clean; solo Sword Base runs with `-profile-set 27=01,38=01,8C=C5,90=04` reach the builder, write
+the marked block and the settings sync repeats it. The final run picked **Honor Guard (set index 8, Blue Flames)** and
+logged `Elite dressed with pieces 2 2 2 8 2 1 (mode 1, set 0, fx 2, local true)` followed by
+`Elite pieces written to the settings sync block (player index 0): 08 02 02 02 00 FF 01 02 10 00 02 ...` -
+i.e. the six Honor Guard piece indices, the `FF` marker, the (invalid) set byte 0 and effect 2 are what the engine
+now replicates for that player.
+**Still open:** a real two-PC match to confirm the peer sees Honor Guard/mixed pieces on the host, and the pack-model
+`armor_fx` question above.
+
+--
+
 ## 0. Pick up here (2026-10-30, 23:22 ET) - Emblem background picker, and emblems now match what was picked (@claude)
 
 **Correction to the old brief:** `HANDOFF-FOR-CLAUDE.md` §5.1 says MCC has no reusable backdrops. It does:
