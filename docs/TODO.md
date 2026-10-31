@@ -32,7 +32,9 @@ overlay (`7cef78c`) and the third-person camera (`97989d1`).
 
 ## B. Menus / UI
 
-- [x] **Scoreboard overlay** — done (`7cef78c`); gap: live K/D/score columns need the engine player-record hook
+- [x] **Scoreboard overlay** — done (`7cef78c`); gaps: live K/D/score columns need the engine player-record hook, and the
+  engine's own scoreboard is still visible behind/around the Noble panel (see `docs/screenshots/third-person.png`) — panel
+  needs to cover the engine layout fully or the engine scoreboard must be hidden while ours is up
 - [ ] **Emblem backdrop + symbol picker** — ~30 % done; two identity rows, storage and composition remain (`FrontEndMenu.cpp:861`, `:3660`)
 - [ ] **Armory lighting** — unlit black chamber; only route left is data (lighting/material in `mainmenu_all.map`)
 - [ ] **Controller presets + custom mapping** — biggest pure-UI item (6 presets, `SettingsData` storage, diagram already drawn)
