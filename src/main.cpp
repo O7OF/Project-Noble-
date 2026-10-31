@@ -22,6 +22,7 @@
 #include "engine/ReachArmory.hpp"
 #include "engine/ElitePack.hpp"
 #include "ui/UIManager.hpp"
+#include "ui/ForgeMenu.hpp"
 #include "ui/FrontEndMenu.hpp"
 #include "ui/LoadScreen.hpp"
 #include "network/SessionManager.hpp"
@@ -264,6 +265,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 
     // Initialize ImGui UI Manager
     noble::UIManager::Initialize(window->GetHwnd(), renderer->GetDevice(), renderer->GetContext());
+    noble::ForgeMenu::Initialize(userStoragePath.wstring());
     window->SetCustomWndProc([](HWND h, UINT m, WPARAM w, LPARAM l) {
         return noble::UIManager::HandleWndProc(h, m, w, l);
     });

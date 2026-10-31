@@ -147,6 +147,7 @@ set(SOURCES
     src/ui/UiPad.cpp
     src/ui/LoadScreen.cpp
     src/ui/PauseMenu.cpp
+    src/ui/ForgeMenu.cpp
     src/ui/FrontEndMenu.cpp
     src/ui/NobleStyle.cpp
     src/ui/MenuSounds.cpp

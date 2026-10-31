@@ -1339,12 +1339,12 @@ void PauseMenu::DrawLoading() {
     dl->AddRectFilled(ImVec2(x0, b0.y), ImVec2(x1, b1.y), accentCol);
 }
 
-void PauseMenu::Render(IDXGISwapChain *swapChain, bool loading) {
+void PauseMenu::Render(IDXGISwapChain *swapChain, bool loading, const std::function<void()> &extraOverlay) {
   if (swapChain)
     s_swapChain.store(swapChain);
   s_lastEngineFrame.store(GetTickCount64());
   std::lock_guard<std::mutex> lock(s_renderMutex);
-  RenderImpl(swapChain, loading, false);
+  RenderImpl(swapChain, loading, false, extraOverlay);
   if (s_scoreboardShotRequest.exchange(false) && swapChain) FrameCapture::SaveNow(swapChain, 888888);
 }
 
@@ -1370,7 +1370,7 @@ bool PauseMenu::HoldFrame() {
   ++s_holdFrames;
   {
     std::lock_guard<std::mutex> lock(s_renderMutex);
-    RenderImpl(swapChain, false, true);
+    RenderImpl(swapChain, false, true, {});
     // Test runs: one screenshot of the held panel, and -quit-after keeps
     // working (it is normally checked from slot 1, which no longer runs).
     static const bool s_testCapture =
@@ -1384,7 +1384,7 @@ bool PauseMenu::HoldFrame() {
 }
 
 void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading,
-                           bool clear) {
+                           bool clear, const std::function<void()> &extraOverlay) {
   // F5 edge-toggles the third-person camera (physical key; this runs every engine frame).
   // Not while F5 is standing in for a controller paddle.
   CameraThirdPerson::PollHotkey(!ReachHost::IsPaddleKey(VK_F5) && (GetAsyncKeyState(VK_F5) & 0x8000) != 0);
@@ -1434,7 +1434,7 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading,
     }
   }
   const bool connectionLost = s_connectionLost;
-  if (!(open || gameOver || loading || showFps || scoreboardHeld || connectionLost) || !swapChain ||      !ImGui::GetCurrentContext())
+  if (!(open || gameOver || loading || showFps || scoreboardHeld || connectionLost || extraOverlay) || !swapChain ||      !ImGui::GetCurrentContext())
     return;
 
   DXGI_SWAP_CHAIN_DESC desc{};
@@ -1511,7 +1511,7 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading,
     GetClientRect(hwnd, &client);
     POINT cursor{};
     static bool s_boardWasPointerFrame = false;
-    if ((open || gameOver || boardPointer) && GetForegroundWindow() == hwnd &&
+    if ((open || gameOver || boardPointer || extraOverlay) && GetForegroundWindow() == hwnd &&
         GetCursorPos(&cursor) && ScreenToClient(hwnd, &cursor) &&
         client.right > 0 && client.bottom > 0) {
       // Window may be resized while the back buffer stays the same size: scale
@@ -1590,6 +1590,7 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading,
         }
       }
     }
+    if (extraOverlay) extraOverlay();
     ImGui::Render();
 
     // The DX11 backend saves/restores most pipeline state but not the
