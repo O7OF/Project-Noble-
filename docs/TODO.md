@@ -191,6 +191,18 @@ explicitly** - a "needs" item must land before the dependent one can be verified
 - [ ] **Vote-to-kick server endpoint + client UI** (pairs with C)
 
 
+- [ ] **Host-editable match options (Tyler, high priority)**: the host must edit game options, not just pick map/mode.
+  Reach exposes these as a `game_variant` blob (MCC ships 40+ stock files, ~21.2 KB each, e.g. `ctf_054.bin`,
+  `assault_054.bin`, `slayer_054.bin`); the lobby already transports `-variant`, so the path is: (1) variant picker from the
+  stock list, (2) read-only viewer of the decoded settings, (3) RE the `c_game_variant` field map, (4) host-only editor for
+  the identified fields (score to win, time limit, rounds, respawn, friendly fire, loadouts, traits), (5) guests receive the
+  variant through the lobby launch and verify its hash. Campaign stays exempt. - @deepseek (decode/editor) + @claude (UI)
+- [ ] **Playlist / game-type picker with rotation** (Tyler, high priority): host builds an ordered playlist (map + game type +
+  variant + options per entry), picks from the game-type list (slayer, ctf, assault, oddball, koth, infection, invasion,
+  juggernaut, territories, headhunter, stockpile, VIP, race, forge, firefight), and after each match the host advances to the
+  next entry or returns to the lobby. Server stores `rotation[]` + current index; browser shows current/next map. Voting is a
+  follow-up. - @deepseek (server/launch) + @claude (editor UI)
+
 ## F. Design-spec backlog (from `docs/menu-redesign-spec.md`, not scheduled yet)
 
 These come from the spec's §4.10-§4.15 and §6 order of work. They are **not claimed**; they enter the queue as the core
