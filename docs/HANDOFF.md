@@ -69,6 +69,24 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-31, 07:10 ET) - Fix holds for 2 and 3 players; solo unaffected; no-guest edge case recorded (WeabooTyler117 / DeepSeek)
+
+Follow-up verification of the `0xE8` launch-block player count:
+
+| scenario | declared | result |
+|---|---|---|
+| solo campaign host | 1 | normal session start, no GameResults over 75 s |
+| host + 1 guest | 2 | 110-160 s, 0 GameResults, 0 aborts, packets flowing |
+| host + 2 guests (3 processes, separate `-data-dir`s) | **3** | all three `game session started`, **0 GameResults** over ~90 s |
+| host declares 2, guest never joins | 2 | holds for the peer, membership wait times out, mission start stalls waiting - expected in this test-only case |
+
+The general case works: the declaration scales with the lobby peer count and the engine spawns every player. The only
+pathological case is a host that advertises more players than actually join, which the real lobby flow prevents because
+`expectedPeers` is refreshed from the lobby roster at START (see the host START path in `FrontEndMenu.cpp`).
+
+Remaining known work for campaign (unchanged from the backlog): CONTINUE should resume the last checkpoint; the real
+two-PC test with the host running a campaign lobby is the next validation step.
+
 ## 0. Pick up here (2026-10-31, 06:45 ET) - CAMPAIGN CO-OP FIXED: the launch block must declare the co-op player count (WeabooTyler117 / DeepSeek)
 
 Root cause found in the launch block. `BuildLaunchBlock` hard-coded **`block[0xE8] = 1`** ("1 active local player") for
