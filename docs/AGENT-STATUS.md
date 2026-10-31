@@ -37,10 +37,10 @@ can make.
 
 ## @claude
 
-- state: **idle** (last: paddle keys F1-F6, 2026-10-31)
-- since: —
-- working on: —
-- files expected: —
+- state: **active**
+- since: 2026-10-31 ET
+- working on: Look speed: 2.00x = Reach stock (Tyler)
+- files expected: `src/engine/InputTuning.*`, `src/engine/ReachHost.cpp` (pad input), `src/ui/SettingsPanel.cpp`, `src/common/Settings.*`, `docs/*`
 - second checkout: `D:\Halo-Reach-Community-Edition-claude` (own `build\`, so it does not touch @deepseek's tree or binary). Test client runs as `noble-client-claude.exe`, so kills by name miss it
 - last commit: `960672a`
 
