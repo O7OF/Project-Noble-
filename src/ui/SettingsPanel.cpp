@@ -1713,7 +1713,8 @@ void SettingsPanel::RenderSystem() {
                const std::filesystem::path dir = backups / stamp;
                int copied = 0;
                if (copyFile(userData / "settings.json", dir / "settings.json")) ++copied;
-               if (copyFile(userData / "appearance.dat", dir / "appearance.dat")) ++copied;
+               if (copyFile(userData.parent_path() / "appearance.dat", dir / "appearance.dat") ||
+                   copyFile(userData / "appearance.dat", dir / "appearance.dat")) ++copied;
                if (copied == 0) {
                    s_note = "Nothing to back up yet.";
                    MenuSounds::Error();
@@ -1735,7 +1736,7 @@ void SettingsPanel::RenderSystem() {
         }
         int restored = 0;
         if (copyFile(newest / "settings.json", userData / "settings.json")) ++restored;
-        if (copyFile(newest / "appearance.dat", userData / "appearance.dat")) ++restored;
+        if (copyFile(newest / "appearance.dat", userData.parent_path() / "appearance.dat")) ++restored;
         if (restored == 0) {
             s_note = "That backup is empty.";
             MenuSounds::Error();
