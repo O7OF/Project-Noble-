@@ -69,6 +69,17 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+--
+
+## 0. Pick up here (2026-10-31, 04:30 ET) - Block 1 done: elite pipeline + colour reference (WeabooTyler117 / DeepSeek)
+
+- `docs/reference/elite-slots.md`: `rrpmcg` decoded -> 314 components, elite ranks explicit (spec_ops, space, ultra,
+  zealot, zealot_commander, officer, general + effects legendary_flame/eternal_flame/heart_attack/pestilence/storm/halo_bday).
+- `docs/reference/elite-m10.md`: cache layout (Header 40 KB / Debug 4.17 MB / Resource 1001 MB / Tag 155 MB), header
+  `levels\solo\m10\m10` cache v13; 79 `elite\shaders` and 117 `elite\bitmaps` paths from a chunked whole-file scan;
+  HREK mapping sample: **57/60 bitmaps already stock, 51/60 shaders pack-only** -> the custom rank colour lives in the shader
+  set, which is what we must reproduce. Facts only, no pack assets copied.
+- Commit `e7ab6c9`. Next: read the pack-only shaders for their colour parameters, then block 2 voice transport.
 ## 0. Pick up here (2026-10-31, 02:00 ET) - Look speed: 2.00x is Reach stock, measured (@claude)
 
 Commit `eb757b8`, replacing the look-speed mapping two entries down. Tyler asked for 2.00x = Reach's default, lower slower, higher faster.
