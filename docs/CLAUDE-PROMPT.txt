@@ -22,7 +22,7 @@ Then do this, every session:
    (your block: state active, current item, files you expect to touch), commit those two edits and push.
 5. Do the work. Build before and after:
    Get-Process noble-client -ErrorAction SilentlyContinue | Stop-Process -Force
-   & 'C:\Program Files\Microsoft Visual Studio\2022\Community\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe' --build build --config Release -- -m
+   & 'C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe' --build build --config Release -- -m
    Build must be 0 errors / 0 warnings.
 6. Verify. UI changes need a committed capture under docs/screenshots/. Engine/netcode changes need the runtime log lines.
    If you cannot verify at runtime, do NOT mark the item done - mark it [~] and say exactly what needs checking.

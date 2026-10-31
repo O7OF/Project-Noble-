@@ -38,6 +38,22 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+--
+
+## 0. Pick up here (2026-10-31, 11:55 ET) - Docs: one CMake path, the real Visual Studio layout (WeabooTyler117 / DeepSeek)
+
+Tyler caught the build path being written two ways. `START-HERE.md:24` said
+`...\Community\Common\IDE\CommonExtensions\...` (missing the `7`) and `CLAUDE-PROMPT.txt:25` said
+`...\Community\CommonExtensions\...` (skipping `Common7\IDE`). An agent copying either gets "path not found".
+
+Both now use the real layout:
+`C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe`
+(also made `PATHS.md` line 47 exact instead of using a `…`).
+
+Self-review: `Test-Path` on the corrected path is true; a repo-wide scan of every `cmake.exe` mention in
+`docs\**\*.md` and `docs\**\*.txt` now reports **0 wrong spellings** (5 correct ones in CONTINUATION, the Claude brief,
+PATHS; 2 were fixed). Next agent can run that scan again after any docs edit.
+
 ## 0. Pick up here (2026-10-31, 11:40 ET) - Machine map for Claude: docs/PATHS.md; Claude's first claim landed (WeabooTyler117 / DeepSeek)
 
 - Wrote **`docs/PATHS.md`** - the map of everything that is not in the repo, because a fresh agent cannot see my scratch

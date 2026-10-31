@@ -21,7 +21,7 @@ writes a lot of the netcode.
 
 ```powershell
 Get-Process noble-client -ErrorAction SilentlyContinue | Stop-Process -Force
-& 'C:\Program Files\Microsoft Visual Studio\2022\Community\Common\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe' --build build --config Release -- -m
+& 'C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe' --build build --config Release -- -m
 ```
 
 (One command per block, real path above. Never use `build.bat`. Build must be **0 errors / 0 warnings**.)

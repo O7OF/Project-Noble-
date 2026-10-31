@@ -44,7 +44,7 @@ live backend `https://outbreak-z-test-server.onrender.com` (`/api/health`, `/api
 | `D:\Reach` | **Reach Renaissance install**: `bin\host-probe.exe` (the 11.7 MB Rust host, COFF symbols, the camera/capacity/coopx reference), `bin\menu-overlay.exe`, `haloreach_copy.dll` (byte-identical to the Steam DLL), `data\lb_m_c_1.bin` + captured launch blocks, `README.txt`, `VERSION.txt` |
 | `C:\tools\ghidra_12.1.4_PUBLIC` | Ghidra 12.1.4 (`ghidraRun.bat`); 12.2 also present |
 | `C:\Users\tyler\Documents\deepseek-harness\default-workspace\ghidra-proj\NobleReach.gpr` | ready-made Ghidra project with the Forge join-queue gate labelled/commented (program `haloreach-copy.dll`); see `docs/GHIDRA-SETUP.md` |
-| `C:\Program Files\Microsoft Visual Studio\2022\Community\…\CMake\bin\cmake.exe` | the CMake used for every build command in the docs |
+| `C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe` | the CMake used for every build command in the docs |
 
 ## Reverse-engineering material
 
