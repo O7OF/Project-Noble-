@@ -43,6 +43,9 @@ Self-review: the weakest part is the sender thread, because it changes how relay
   captures. Evidence is the strongest we've had: loopback WAV at 20 kbps, three-process relay run with frame counters, two real
   game clients with the V key held each way, 16 jitter self-tests, settings apply screenshots.
 - Marked reviewed in TODO; **not** marking Tyler's "heard a real voice" test done - Claude explicitly lists it unverified.
+- **Independent re-run on the merged build** (`noble-client.exe -voice-test loopback`): 16/20/24 kbps loopback **PASS**,
+  40/46/54-byte frames, SNR 17.9/18.1/18.0 dB, `voice-verify.wav` written (469 KB), jitter tests running. The feature is real
+  on this machine, not just in the author's checkout.
 - Server side uses `4af063f` for the voice frame relay; my chat relay lives on top of the same relay path.
 - Next for me: two-client chat check against the client transport, then the multiplayer post-game end hook.
 ## 0. Pick up here (2026-10-31, 08:25 ET) - Pre-game lobby map identity (@deepseek / DeepSeek)`.
