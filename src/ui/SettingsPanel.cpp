@@ -960,12 +960,24 @@ void SettingsPanel::RenderAudio() {
             When::Apply, "Off", m_edit.voiceOpenMic != m_saved.voiceOpenMic)) {
         ToggleValue(m_edit.voiceOpenMic);
     }
-    if (Row("PUSH TO TALK", "Set the key under KEYBOARD & MOUSE and the controller button under CONTROLLER, as \"Push to talk\".", When::Instant, "", false)) {
+    {
+        // Either one talks. These are the same bindings as the KEYBOARD & MOUSE and CONTROLLER lists.
+        constexpr int kPttKey = KeyBindings::kActionPushToTalk;
+        const auto keyOf = [](const SettingsData& d) {
+            const auto it = d.keyOverrides.find(kPttKey);
+            return it != d.keyOverrides.end() ? it->second : KeyBindings::DefaultKey(kPttKey);
+        };
+        if (Row("PUSH TO TALK: KEY OR MOUSE", "Click (or press Enter), then press any key or mouse button, including side buttons. Esc cancels, right-click unbinds, Delete puts V back. It can share a key with a game action, and then that action talks too.",
+                When::Apply, KeyBindings::KeyName(KeyBindings::DefaultKey(kPttKey)), keyOf(m_edit) != keyOf(m_saved))) {
+            KeyBindValue(kPttKey);
+        }
         const int layout = std::clamp(m_edit.padLayout, 0, static_cast<int>(PadLayouts::Count) - 1);
-        const auto keyIt = m_edit.keyOverrides.find(KeyBindings::kActionPushToTalk);
-        const int key = keyIt != m_edit.keyOverrides.end() ? keyIt->second : KeyBindings::DefaultKey(KeyBindings::kActionPushToTalk);
-        const std::string text = KeyBindings::KeyName(key) + " / " + PadLayouts::InputName(PadLayouts::EffectiveInput(layout, PadLayouts::PushToTalk, &m_edit.padBindings));
-        InfoValue(text.c_str());
+        const bool padChanged = PadLayouts::EffectiveInput(layout, PadLayouts::PushToTalk, &m_edit.padBindings) !=
+                                PadLayouts::EffectiveInput(layout, PadLayouts::PushToTalk, &m_saved.padBindings);
+        if (Row("PUSH TO TALK: CONTROLLER", "Press A or click, then press the button. If a game action already uses it, that action moves to this row's old button. Wait 5 seconds to cancel; on a keyboard, Esc cancels and Delete puts the preset's button back.",
+                When::Apply, PadLayouts::InputName(PadLayouts::LayoutInput(layout, PadLayouts::PushToTalk)), padChanged)) {
+            PadBindValue(PadLayouts::PushToTalk);
+        }
     }
     if (Row("VOICE QUALITY", "16, 20 or 24 kbps. Higher sounds clearer and uses a little more of your upload.",
             When::Apply, "20 kbps", m_edit.voiceBitrateKbps != m_saved.voiceBitrateKbps)) {
@@ -1107,7 +1119,8 @@ void SettingsPanel::PollRebind() {
     if (m_rebindAction < 0) return;
     // Wait a moment so the click that started the rebind isn't taken as the new binding.
     if (ImGui::GetTime() - m_rebindStarted < 0.25) return;
-    if (GetAsyncKeyState(VK_ESCAPE) & 0x8000) {
+    // A controller has no Esc: waiting too long cancels, so someone without a keyboard to hand can't get stuck here.
+    if ((GetAsyncKeyState(VK_ESCAPE) & 0x8000) || ImGui::GetTime() - m_rebindStarted > 5.0) {
         m_rebindAction = -1;
         return;
     }
@@ -1123,8 +1136,37 @@ void SettingsPanel::PollRebind() {
     }
 }
 
-void SettingsPanel::RenderKeyboardMouse() {
+// The value side of a key-binding row. PollRebind takes the press, keyboard or mouse button alike.
+void SettingsPanel::KeyBindValue(int action) {
     const float s = Scale();
+    const int def = KeyBindings::DefaultKey(action);
+    auto it = m_edit.keyOverrides.find(action);
+    const int current = it != m_edit.keyOverrides.end() ? it->second : def;
+    std::string keyText = m_rebindAction == action ? std::string("PRESS A KEY...")
+                        : current == 0 ? std::string("\xE2\x80\x94") : KeyBindings::KeyName(current);
+    const ImVec2 save = ImGui::GetCursorScreenPos();
+    const float bw = std::min(220.0f * s, m_valMax.x - m_valMin.x);
+    const ImVec2 b0(m_valMax.x - bw, m_valMin.y), b1(m_valMax.x, m_valMax.y);
+    ImGui::SetCursorScreenPos(b0);
+    ImGui::PushID(m_curRow);
+    const bool clicked = ImGui::InvisibleButton("##key", ImVec2(bw, b1.y - b0.y), ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
+    const bool hovered = ImGui::IsItemHovered();
+    const bool right = hovered && ImGui::IsMouseReleased(ImGuiMouseButton_Right);
+    ImGui::PopID();
+    if (right) {
+        if (def == 0) m_edit.keyOverrides.erase(action);
+        else m_edit.keyOverrides[action] = 0;
+    } else if ((clicked && !ImGui::IsMouseReleased(ImGuiMouseButton_Right)) || (m_rowFocused && m_keyAccept)) {
+        m_rebindAction = action;
+        m_rebindStarted = ImGui::GetTime();
+        m_focus = m_curRow;
+    }
+    if (m_rowFocused && m_navAllowed && ImGui::IsKeyPressed(ImGuiKey_Delete, false)) m_edit.keyOverrides.erase(action);
+    DrawBox(ImGui::GetWindowDrawList(), b0, b1, keyText.c_str(), hovered, current != def || m_rebindAction == action, false);
+    ImGui::SetCursorScreenPos(save);
+}
+
+void SettingsPanel::RenderKeyboardMouse() {
     Section("MOUSE");
     if (Row("LOOK SENSITIVITY", "How far you turn for each bit of mouse movement. 1.00x is Noble's default.",
             When::Apply, "1.00x", std::fabs(m_edit.mouseSensitivity - m_saved.mouseSensitivity) > 1e-4f)) {
@@ -1185,28 +1227,67 @@ void SettingsPanel::RenderKeyboardMouse() {
             const std::string defText = def ? KeyBindings::KeyName(def) : std::string("-");
             if (!Row(label.c_str(), "Click (or press Enter), then press the key or mouse button you want. Esc cancels, right-click unbinds, Delete puts the default back.",
                      When::Apply, defText, current != saved)) continue;
-            std::string keyText = m_rebindAction == action ? std::string("PRESS A KEY...")
-                                : current == 0 ? std::string("\xE2\x80\x94") : KeyBindings::KeyName(current);
-            const ImVec2 save = ImGui::GetCursorScreenPos();
-            const float bw = std::min(220.0f * s, m_valMax.x - m_valMin.x);
-            const ImVec2 b0(m_valMax.x - bw, m_valMin.y), b1(m_valMax.x, m_valMax.y);
-            ImGui::SetCursorScreenPos(b0);
-            ImGui::PushID(m_curRow);
-            const bool clicked = ImGui::InvisibleButton("##key", ImVec2(bw, b1.y - b0.y), ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
-            const bool hovered = ImGui::IsItemHovered();
-            const bool right = hovered && ImGui::IsMouseReleased(ImGuiMouseButton_Right);
-            ImGui::PopID();
-            if (right) {
-                if (def == 0) m_edit.keyOverrides.erase(action);
-                else m_edit.keyOverrides[action] = 0;
-            } else if ((clicked && !ImGui::IsMouseReleased(ImGuiMouseButton_Right)) || (m_rowFocused && m_keyAccept)) {
-                m_rebindAction = action;
-                m_rebindStarted = ImGui::GetTime();
-                m_focus = m_curRow;
-            }
-            if (m_rowFocused && m_navAllowed && ImGui::IsKeyPressed(ImGuiKey_Delete, false)) m_edit.keyOverrides.erase(action);
-            DrawBox(ImGui::GetWindowDrawList(), b0, b1, keyText.c_str(), hovered, current != def || m_rebindAction == action, false);
-            ImGui::SetCursorScreenPos(save);
+            KeyBindValue(action);
+        }
+    }
+}
+
+// The value side of a controller-binding row, and the capture of the next input once it's waiting for one.
+void SettingsPanel::PadBindValue(int action) {
+    struct KeyMap { ImGuiKey key; int input; };
+    static const KeyMap kKeys[] = {
+        { ImGuiKey_GamepadFaceDown, 0x1000 }, { ImGuiKey_GamepadFaceRight, 0x2000 },
+        { ImGuiKey_GamepadFaceLeft, 0x4000 }, { ImGuiKey_GamepadFaceUp, 0x8000 },
+        { ImGuiKey_GamepadL1, 0x0100 },       { ImGuiKey_GamepadR1, 0x0200 },
+        { ImGuiKey_GamepadL2, PadLayouts::InputLT }, { ImGuiKey_GamepadR2, PadLayouts::InputRT },
+        { ImGuiKey_GamepadL3, 0x0040 },       { ImGuiKey_GamepadR3, 0x0080 },
+        { ImGuiKey_GamepadDpadUp, 0x0001 },   { ImGuiKey_GamepadDpadDown, 0x0002 },
+        { ImGuiKey_GamepadDpadLeft, 0x0004 }, { ImGuiKey_GamepadDpadRight, 0x0008 },
+        { ImGuiKey_GamepadStart, 0x0010 },    { ImGuiKey_GamepadBack, 0x0020 },
+        { ImGuiKey_GamepadLStickUp, PadLayouts::InputLStickUp },     { ImGuiKey_GamepadLStickDown, PadLayouts::InputLStickDown },
+        { ImGuiKey_GamepadLStickLeft, PadLayouts::InputLStickLeft }, { ImGuiKey_GamepadLStickRight, PadLayouts::InputLStickRight },
+        { ImGuiKey_GamepadRStickUp, PadLayouts::InputRStickUp },     { ImGuiKey_GamepadRStickDown, PadLayouts::InputRStickDown },
+        { ImGuiKey_GamepadRStickLeft, PadLayouts::InputRStickLeft }, { ImGuiKey_GamepadRStickRight, PadLayouts::InputRStickRight },
+    };
+    const int layout = std::clamp(m_edit.padLayout, 0, static_cast<int>(PadLayouts::Count) - 1);
+    const std::string key = PadLayouts::ActionKey(action);
+    const bool custom = m_edit.padBindings.count(key) != 0;
+    const char* effective = PadLayouts::InputName(PadLayouts::EffectiveInput(layout, action, &m_edit.padBindings));
+    const std::string value = m_padRebindAction == action ? std::string("PRESS AN INPUT...")
+                            : custom ? std::string(effective) + " (custom)"
+                                     : std::string(effective) + " (preset)";
+    InfoValue(value.c_str());
+    const bool clicked = m_rowHovered && ImGui::IsMouseClicked(0);
+    if (clicked || (m_rowFocused && m_keyAccept)) {
+        m_padRebindAction = action;
+        m_padRebindStarted = ImGui::GetTime();
+        m_padRebindFrame = ImGui::GetFrameCount();
+        MenuSounds::Click();
+    }
+    if (m_padRebindAction != action || m_padRebindFrame == ImGui::GetFrameCount()) return;
+
+    // Capturing: the next input becomes the binding.
+    if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::GetTime() - m_padRebindStarted > 5.0) {
+        m_padRebindAction = -1;
+    } else if (ImGui::IsKeyPressed(ImGuiKey_Delete, false) || ImGui::IsKeyPressed(ImGuiKey_Backspace, false)) {
+        m_edit.padBindings.erase(key);
+        m_padRebindAction = -1;
+        MenuSounds::Click();
+    } else {
+        for (const KeyMap& map : kKeys) {
+            if (!ImGui::IsKeyPressed(map.key, false)) continue;
+            PadLayouts::Assign(layout, action, map.input, m_edit.padBindings);
+            m_padRebindAction = -1;
+            MenuSounds::Click();
+            break;
+        }
+        // A paddle press arrives as its key. The short wait keeps the click that opened this from counting.
+        for (int n = 0; m_padRebindAction == action && n < PadLayouts::kPaddleCount && ImGui::GetTime() - m_padRebindStarted > 0.25; ++n) {
+            const int vk = m_edit.padPaddleKeys[static_cast<size_t>(n)];
+            if (vk <= 0 || (GetAsyncKeyState(vk) & 0x8000) == 0) continue;
+            PadLayouts::Assign(layout, action, PadLayouts::InputPaddle1 + n, m_edit.padBindings);
+            m_padRebindAction = -1;
+            MenuSounds::Click();
         }
     }
 }
@@ -1253,71 +1334,18 @@ void SettingsPanel::RenderController() {
     // preset's input for that action, and whichever action had that input takes the old one.
     Section("BUTTON BINDINGS");
     {
-        struct KeyMap { ImGuiKey key; int input; };
-        static const KeyMap kKeys[] = {
-            { ImGuiKey_GamepadFaceDown, 0x1000 }, { ImGuiKey_GamepadFaceRight, 0x2000 },
-            { ImGuiKey_GamepadFaceLeft, 0x4000 }, { ImGuiKey_GamepadFaceUp, 0x8000 },
-            { ImGuiKey_GamepadL1, 0x0100 },       { ImGuiKey_GamepadR1, 0x0200 },
-            { ImGuiKey_GamepadL2, PadLayouts::InputLT }, { ImGuiKey_GamepadR2, PadLayouts::InputRT },
-            { ImGuiKey_GamepadL3, 0x0040 },       { ImGuiKey_GamepadR3, 0x0080 },
-            { ImGuiKey_GamepadDpadUp, 0x0001 },   { ImGuiKey_GamepadDpadDown, 0x0002 },
-            { ImGuiKey_GamepadDpadLeft, 0x0004 }, { ImGuiKey_GamepadDpadRight, 0x0008 },
-            { ImGuiKey_GamepadStart, 0x0010 },    { ImGuiKey_GamepadBack, 0x0020 },
-            { ImGuiKey_GamepadLStickUp, PadLayouts::InputLStickUp },     { ImGuiKey_GamepadLStickDown, PadLayouts::InputLStickDown },
-            { ImGuiKey_GamepadLStickLeft, PadLayouts::InputLStickLeft }, { ImGuiKey_GamepadLStickRight, PadLayouts::InputLStickRight },
-            { ImGuiKey_GamepadRStickUp, PadLayouts::InputRStickUp },     { ImGuiKey_GamepadRStickDown, PadLayouts::InputRStickDown },
-            { ImGuiKey_GamepadRStickLeft, PadLayouts::InputRStickLeft }, { ImGuiKey_GamepadRStickRight, PadLayouts::InputRStickRight },
-        };
         const int layout = std::clamp(m_edit.padLayout, 0, static_cast<int>(PadLayouts::Count) - 1);
 
         for (int action = 0; action < PadLayouts::ActionCount; ++action) {
             const std::string key = PadLayouts::ActionKey(action);
             const bool custom = m_edit.padBindings.count(key) != 0;
             const char* layoutName = PadLayouts::InputName(PadLayouts::LayoutInput(layout, action));
-            const char* effective = PadLayouts::InputName(PadLayouts::EffectiveInput(layout, action, &m_edit.padBindings));
-            const bool waiting = m_padRebindAction == action;
-            const std::string value = waiting ? std::string("PRESS AN INPUT...")
-                                    : custom ? std::string(effective) + " (custom)"
-                                             : std::string(effective) + " (preset)";
             const std::string text = action == PadLayouts::TeamChat
                 ? "Can be assigned now, but does nothing until chat exists."
                 : "Press A or click, then press the input this action should use. The action on that input takes this one's old input. Wait 5 seconds to cancel; on a keyboard, Esc cancels and Delete puts the preset's input back.";
 
             if (!Row(PadLayouts::ActionName(action), text.c_str(), When::Apply, layoutName, custom)) continue;
-            InfoValue(value.c_str());
-            const bool clicked = m_rowHovered && ImGui::IsMouseClicked(0);
-            if (clicked || (m_rowFocused && m_keyAccept)) {
-                m_padRebindAction = action;
-                m_padRebindStarted = ImGui::GetTime();
-                m_padRebindFrame = ImGui::GetFrameCount();
-                MenuSounds::Click();
-            }
-            if (m_padRebindAction != action || m_padRebindFrame == ImGui::GetFrameCount()) continue;
-
-            // Capturing: the next input becomes the binding.
-            if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::GetTime() - m_padRebindStarted > 5.0) {
-                m_padRebindAction = -1;
-            } else if (ImGui::IsKeyPressed(ImGuiKey_Delete, false) || ImGui::IsKeyPressed(ImGuiKey_Backspace, false)) {
-                m_edit.padBindings.erase(key);
-                m_padRebindAction = -1;
-                MenuSounds::Click();
-            } else {
-                for (const KeyMap& map : kKeys) {
-                    if (!ImGui::IsKeyPressed(map.key, false)) continue;
-                    PadLayouts::Assign(layout, action, map.input, m_edit.padBindings);
-                    m_padRebindAction = -1;
-                    MenuSounds::Click();
-                    break;
-                }
-                // A paddle press arrives as its key. The short wait keeps the click that opened this from counting.
-                for (int n = 0; m_padRebindAction == action && n < PadLayouts::kPaddleCount && ImGui::GetTime() - m_padRebindStarted > 0.25; ++n) {
-                    const int vk = m_edit.padPaddleKeys[static_cast<size_t>(n)];
-                    if (vk <= 0 || (GetAsyncKeyState(vk) & 0x8000) == 0) continue;
-                    PadLayouts::Assign(layout, action, PadLayouts::InputPaddle1 + n, m_edit.padBindings);
-                    m_padRebindAction = -1;
-                    MenuSounds::Click();
-                }
-            }
+            PadBindValue(action);
         }
         if (!m_edit.padBindings.empty()) {
             if (Row("RESET BUTTON BINDINGS", "Puts every action back on the input its preset gives it.",

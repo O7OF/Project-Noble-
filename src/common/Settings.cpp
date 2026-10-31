@@ -1,3 +1,4 @@
+#include "engine/KeyBindings.hpp"
 #include "Settings.hpp"
 #include "Logger.hpp"
 
@@ -70,7 +71,8 @@ void Clamp(SettingsData& d) {
     d.padLeftDeadZone = std::clamp(d.padLeftDeadZone, 0.0f, 0.5f);
     d.padRightDeadZone = std::clamp(d.padRightDeadZone, 0.0f, 0.5f);
     for (auto it = d.keyOverrides.begin(); it != d.keyOverrides.end();) {
-        if (it->first < 0 || it->first >= 67 || it->second <= 0 || it->second >= 256) it = d.keyOverrides.erase(it);
+        // A key of 0 is deliberate: the player unbound that action.
+        if (it->first < 0 || it->first >= KeyBindings::kActionCount || it->second < 0 || it->second >= 256) it = d.keyOverrides.erase(it);
         else ++it;
     }
 }

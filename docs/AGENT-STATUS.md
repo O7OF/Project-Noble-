@@ -37,12 +37,12 @@ can make.
 
 ## @claude
 
-- state: **active**
-- since: 2026-10-31 14:58 ET
-- working on: push-to-talk rebinding from the Voice Chat section (key, mouse, controller); input lock: until 15:10
-- files expected: src/ui/SettingsPanel.*, src/common/Version.hpp
+- state: **idle** (last: push-to-talk rebinding and music list, 15:08 ET)
+- since: -
+- working on: -
+- files expected: -
 - second checkout: `D:\Halo-Reach-Community-Edition-claude` (own `build\`, so it does not touch @deepseek's tree or binary). Test client runs as `noble-client-claude.exe`, so kills by name miss it
-- last commit: `accbd06`
+- last commit: `8cbb746`
 
 ## @gemini (Gemini 4 Argon / Dominus-VII)
 

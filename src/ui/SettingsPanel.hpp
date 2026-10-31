@@ -48,6 +48,8 @@ private:
     void RenderSystem();
     void RenderMusicPicker();
     void PollRebind();
+    void KeyBindValue(int action);   // the value side of a key or mouse binding row
+    void PadBindValue(int action);   // the value side of a controller binding row, and its capture
 
     // Row kit. Row() lays out one row (returns false when the search hides it); the value widget
     // that follows draws into the row's value column and reads the shared key state.

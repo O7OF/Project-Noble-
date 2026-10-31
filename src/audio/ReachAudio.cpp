@@ -218,6 +218,40 @@ bool LoadLst(const fs::path& lst, Bank& bank, std::vector<LstEntry>& entries) {
     return !entries.empty();
 }
 
+// Halo: CE's bank has no .info file, but an FSB5 header holds every sound's sample count. Left empty if it can't be read.
+void LoadFsb5Seconds(Bank& bank) {
+    std::ifstream in(bank.fsb, std::ios::binary);
+    char head[60]{};
+    if (!in.read(head, sizeof(head)) || memcmp(head, "FSB5", 4) != 0) return;
+    int32_t version = 0, count = 0, tableBytes = 0;
+    memcpy(&version, head + 4, 4);
+    memcpy(&count, head + 8, 4);
+    memcpy(&tableBytes, head + 12, 4);
+    if (version != 1 || count <= 0 || tableBytes <= 0 || tableBytes > 64 * 1024 * 1024) return;   // version 0's header is longer
+    std::vector<char> table(static_cast<size_t>(tableBytes));
+    if (!in.read(table.data(), tableBytes)) return;
+    static const int kRates[] = { 4000, 8000, 11000, 11025, 16000, 22050, 24000, 32000, 44100, 48000, 96000 };
+    std::vector<float> seconds;
+    size_t at = 0;
+    for (int i = 0; i < count; ++i) {
+        uint64_t sample = 0;
+        if (at + 8 > table.size()) return;
+        memcpy(&sample, table.data() + at, 8);
+        at += 8;
+        for (bool more = (sample & 1) != 0; more;) {   // optional chunks between the entries
+            uint32_t chunk = 0;
+            if (at + 4 > table.size()) return;
+            memcpy(&chunk, table.data() + at, 4);
+            at += 4 + ((chunk >> 1) & 0xFFFFFF);
+            more = (chunk & 1) != 0;
+        }
+        const uint32_t rate = static_cast<uint32_t>((sample >> 1) & 0xF);
+        if (rate >= std::size(kRates)) return;
+        seconds.push_back(static_cast<float>(sample >> 34) / static_cast<float>(kRates[rate]));
+    }
+    bank.seconds = std::move(seconds);
+}
+
 // Piece role from the folder it sits in.
 enum class Role { Intro, Loop, Outro, Skip, Single };
 
@@ -263,8 +297,40 @@ const Name kHalo1Names[] = {
     { "halo_orig", "Halo Theme", 1 },
 };
 
-constexpr float kShortestMenuTrack = 45.0f;   // seconds; tracks this short or shorter stay out of the menu playlist
+constexpr float kShortestMenuTrack = 40.0f;   // seconds; shorter tracks stay out of the menu playlist
 int s_shortTracksDropped = 0;
+
+// Music tied to a level: its file names start with the level's code, the same code as the game's map file.
+// "010la_music2_1_18.aif" -> "Sierra 117 - Cinematic".
+std::string LevelCueLabel(const std::string& gameId, const std::string& key) {
+    struct Level { const char* code; const char* name; };
+    static const Level kHalo3[] = {
+        { "010", "Sierra 117" }, { "020", "Crow's Nest" }, { "030", "Tsavo Highway" }, { "040", "The Storm" }, { "050", "Floodgate" },
+        { "070", "The Ark" }, { "100", "The Covenant" }, { "110", "Cortana" }, { "120", "Halo" }, { "130", "Epilogue" },
+    };
+    static const Level kOdst[] = {
+        { "c100", "Prepare to Drop" }, { "c200", "Epilogue" }, { "h100", "Mombasa Streets" }, { "l200", "Data Hive" }, { "l300", "Coastal Highway" },
+        { "sc100", "Tayari Plaza" }, { "sc110", "Uplift Reserve" }, { "sc120", "Kizingo Boulevard" }, { "sc130", "ONI Alpha Site" },
+        { "sc140", "NMPD HQ" }, { "sc150", "Kikowani Station" },
+    };
+    if (gameId == "h3") {
+        for (const Level& l : kHalo3) if (StartsWith(key, l.code)) return std::string(l.name) + " - Cinematic";
+    } else if (gameId == "odst") {
+        for (const Level& l : kOdst) if (StartsWith(key, l.code)) return std::string(l.name) + " - Cinematic";
+    }
+    return {};
+}
+
+// Music with no documented album title gets a plain name by the kind of cue its folder says it is, and never a guessed
+// title. Its id is still the cue key, so saved choices keep working if a real title is found later.
+std::string CueKind(const std::string& key) {
+    static const std::pair<const char*, const char*> kKinds[] = {
+        { "action\\", "Action" }, { "tension\\", "Tension" }, { "heroic\\", "Heroic" }, { "poignant\\", "Poignant" },
+        { "firefight\\", "Firefight" }, { "atlas\\firefight\\", "Firefight" },
+    };
+    for (const auto& [prefix, kind] : kKinds) if (StartsWith(key, prefix)) return kind;
+    return "Score";
+}
 
 template <size_t N>
 void NameTrack(Track& t, const std::string& key, const Name (&names)[N]) {
@@ -333,7 +399,7 @@ void AddTracks(int bankIndex, const std::string& game, const std::string& gameId
         else if (role == Role::Outro) t.outro.push_back(piece);
         else t.loops.push_back(piece);
     }
-    std::map<std::string, int> labels;
+    std::map<std::string, int> labels, kindCounts;
     for (auto& [key, t] : cues) {
         if (t.loops.empty()) {
             if (t.intro.empty()) continue;
@@ -350,12 +416,26 @@ void AddTracks(int bankIndex, const std::string& game, const std::string& gameId
                     if (static_cast<size_t>(p.index) < lengths.size()) total += lengths[p.index];
                 }
             }
-            if (total <= kShortestMenuTrack) {
+            if (total < kShortestMenuTrack) {
                 ++s_shortTracksDropped;
                 continue;
             }
         }
-        if (StartsWith(key, "cutscenes\\")) t.label = Halo1Cutscene(key.substr(10));
+        if (StartsWith(key, "cutscenes\\")) {
+            t.label = Halo1Cutscene(key.substr(10));
+        } else if (t.sortKey[0] == '1') {   // no name of its own in the tables above
+            const std::string level = LevelCueLabel(gameId, key);
+            if (!level.empty()) {
+                t.label = level;
+                t.sortKey = "1" + Lower(level);
+            } else {
+                const std::string kind = CueKind(key);
+                char number[8];
+                snprintf(number, sizeof(number), "%03d", ++kindCounts[kind]);
+                t.label = kind + " " + std::to_string(kindCounts[kind]);
+                t.sortKey = "2" + Lower(kind) + number;
+            }
+        }
         if (const int n = ++labels[t.label]; n > 1) t.label += " (" + std::to_string(n) + ")";
         t.id = gameId + ":" + (t.sortKey == "0000" ? std::string("menu") : key);
         s_tracks.push_back(std::move(t));
@@ -392,6 +472,8 @@ void AddHalo1(const fs::path& mccDir) {
         NOBLE_INFO("ReachAudio: no Halo: CE music ({} not found)", bank.fsb.string());
         return;
     }
+    LoadFsb5Seconds(bank);
+    if (bank.seconds.empty()) NOBLE_WARN("ReachAudio: no lengths in {}, so short Halo: CE tracks stay listed", bank.fsb.string());
     s_banks.push_back(std::move(bank));
     const int bankIndex = static_cast<int>(s_banks.size() - 1);
     std::vector<std::pair<int, std::string>> anniversary, classic;
@@ -870,7 +952,7 @@ void Init(const fs::path& reachDir, const fs::path& cacheDir) {
     AddInfoBank(mcc / "halo3", "Halo 3", "h3", "h3", false, kHalo3Names);
     AddInfoBank(mcc / "halo3odst", "Halo 3: ODST", "odst", "odst", false, kOdstNames);
     // Halo 2 Anniversary keeps its sound in h2_maps_win64_dx11\sounds_*.dat, a format Noble can't read yet.
-    NOBLE_INFO("ReachAudio: {} music tracks of {} s or less left out of the menu playlist", s_shortTracksDropped, kShortestMenuTrack);
+    NOBLE_INFO("ReachAudio: {} music tracks under {} s left out of the menu playlist", s_shortTracksDropped, kShortestMenuTrack);
     LoadVoicePreviews(reachDir);
 
     // Group by game (Reach first, then release order), menu themes first, then by name.
