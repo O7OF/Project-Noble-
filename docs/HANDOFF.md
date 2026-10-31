@@ -69,6 +69,37 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-31, 03:40 ET) - HaloScript builtin table located; campaign co-op commands are reachable in principle (WeabooTyler117 / DeepSeek)
+
+Continued the campaign spawn RE. Found the **HaloScript builtin table** in `haloreach.dll`'s `.rdata`, which is the path
+to running `net_set_campaign_insertion_point` / the campaign co-op start actions from our own code.
+
+Table format (verified against three entries): stride **0x28**, entry = `{namePtr, 0, 0x198F2C, handler, 0}` where
+`namePtr` points at the ASCII builtin name in `.rdata`, `0x198F2C` is the shared evaluator wrapper, and the fourth qword
+differs per builtin (e.g. `0x86CBC` for the net/hs entries, `0x1B8930` for `submit_incident_with_cause_campaign_team`).
+
+| builtin (file offset of name) | table entry |
+|---|---|
+| `hs_make_interactive_scripts_deterministic` (0xA04AD8) | 0xA06828 |
+| `net_set_campaign_insertion_point` (0xA04B08) | 0xA06878 |
+| `submit_incident_with_cause_campaign_team` (0xA04B30) | 0xA068C8 |
+
+Other names in the same table: `submit_incident_with_cause_team_and_effect_team`, `auto_graph_enable_list` - i.e. this is
+the engine's HSC builtin registry, and it is not sorted, so the campaign/coop entries need a scan rather than an index.
+
+### What that unlocks (next steps, in order)
+
+1. **Dump the whole table** (scan `.rdata` for 0x28-stride entries whose first qword points into the name section) and
+   list every campaign/co-op/network builtin with its handler index. That gives the exact call targets for
+   `net_set_campaign_insertion_point` and friends.
+2. **Reach the evaluator**: `0x198F2C` looks like the shared dispatcher. If it takes (builtin index, arg count/args), we can
+   call builtins directly from `BlamEngine` - first to set the campaign insertion point, then to compare against a normal
+   menu-driven co-op session.
+3. Only then decide whether the campaign session needs a real co-op start action or just the insertion point/flag.
+
+The alternative (finding the campaign player-list global and patching the remote slot's `+0x30` each tick) is still open
+but is a symptom fix; the builtin table is the cleaner route because it is how the real menu starts a co-op session.
+
 ## 0. Pick up here (2026-10-31, 03:10 ET) - Campaign spawn investigation: five local configurations, same result (WeabooTyler117 / DeepSeek)
 
 Chasing the host-side missing biped. Added two test hooks and ran five configurations:
