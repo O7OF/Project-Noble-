@@ -26,7 +26,8 @@ enum Layout {
     Count
 };
 
-// Team chat and push-to-talk can be assigned, but nothing listens to them until chat and voice exist.
+// Team chat can be assigned, but nothing listens to it until chat exists. Push to talk is read by voice chat and shares
+// D-pad left by default. Neither is ever passed on to the engine.
 enum Action {
     Jump = 0, Grenades, ActionReload, SwapWeapons, Melee, ArmorAbility, Fire, Zoom,
     ThrowGrenade, Crouch, Scoreboard, Pause, DpadUp, DpadDown, DpadLeft, DpadRight, TeamChat, PushToTalk,

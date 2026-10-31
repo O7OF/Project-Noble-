@@ -335,6 +335,7 @@ void NetworkTransport::StartRelay(const std::string& relayUrl, const std::string
     }
     StopRelay();
 
+    m_relayMachineId.store(machineId != 0 ? machineId : (isHost ? kDefaultHostMachineId : 0));
     m_relayStopRequested.store(false);
     {
         std::lock_guard<std::mutex> lock(m_relayMutex);
@@ -343,6 +344,17 @@ void NetworkTransport::StartRelay(const std::string& relayUrl, const std::string
     m_relayActive.store(true);
     m_relayThread = std::thread(&NetworkTransport::RelayWorkerThread, this, relayUrl, sessionId, isHost, machineId);
     NOBLE_INFO("NetworkTransport: Starting WebSocket packet relay thread ({})", relayUrl);
+}
+
+void NetworkTransport::SetVoiceFrameCallback(VoiceFrameCallback cb) {
+    m_voiceFrameCb.store(cb);
+}
+
+void NetworkTransport::SendVoiceFrame(const uint8_t* data, size_t size) {
+    if (!m_relayConnected.load()) return;
+    std::lock_guard<std::mutex> lock(m_relayMutex);
+    while (m_relayVoiceSendQueue.size() >= 10) m_relayVoiceSendQueue.pop_front();   // old speech is worthless
+    m_relayVoiceSendQueue.emplace_back(data, data + size);
 }
 
 void NetworkTransport::SetLobbyLaunchCallback(LobbyLaunchCallback cb) {
@@ -498,6 +510,7 @@ void NetworkTransport::StopRelay() {
     m_relaySendQueue.clear();
     m_relayRecvQueue.clear();
     m_relayTextSendQueue.clear();
+    m_relayVoiceSendQueue.clear();
     NOBLE_INFO("NetworkTransport: Stopped WebSocket packet relay.");
 }
 
@@ -520,6 +533,13 @@ void NetworkTransport::RelayWorkerThread(std::string relayUrl, std::string sessi
     (void)sessionId;
     (void)isHost;
     (void)machineId;
+
+    // The relay stamps voice frames with this id, so the host (whose URL has none) names itself too.
+    if (relayUrl.find("peerId=") == std::string::npos && m_relayMachineId.load() != 0) {
+        char idText[32];
+        std::snprintf(idText, sizeof(idText), "0x%llX", static_cast<unsigned long long>(m_relayMachineId.load()));
+        relayUrl += (relayUrl.find('?') == std::string::npos ? "?peerId=" : "&peerId=") + std::string(idText);
+    }
 
     while (!m_relayStopRequested.load()) {
         std::string httpUrl = relayUrl;
@@ -595,45 +615,49 @@ void NetworkTransport::RelayWorkerThread(std::string relayUrl, std::string sessi
             m_relayWsHandle = hWebSocket;
         }
         m_relayActive.store(true);
+        m_relayConnected.store(true);
         NOBLE_INFO("NetworkTransport: WebSocket relay connected successfully!");
 
         std::vector<uint8_t> recvBuffer(65536);
         std::vector<uint8_t> fragmentBuffer;
         fragmentBuffer.reserve(16384);
 
+        // WinHttpWebSocketReceive blocks until a frame arrives: the socket's receive timeout does not apply to it. Sending
+        // has its own thread so that nothing queued waits for the other side to speak first (found by voice, 2026-10-31).
+        std::atomic<bool> senderStop{ false };
+        std::thread sender([this, hWebSocket, &senderStop] {
+            bool warned = false;
+            const auto sendOne = [&](WINHTTP_WEB_SOCKET_BUFFER_TYPE type, const void* data, size_t size) {
+                const DWORD err = WinHttpWebSocketSend(hWebSocket, type, const_cast<void*>(data), static_cast<DWORD>(size));
+                if (err != NO_ERROR && !warned && !senderStop.load() && !m_relayStopRequested.load()) {
+                    warned = true;
+                    NOBLE_WARN("NetworkTransport: relay send failed ({})", err);
+                }
+            };
+            while (!senderStop.load() && !m_relayStopRequested.load() && m_relayActive.load()) {
+                std::deque<std::string> text;
+                std::deque<std::vector<uint8_t>> packets, voice;
+                {
+                    std::lock_guard<std::mutex> lock(m_relayMutex);
+                    text.swap(m_relayTextSendQueue);
+                    packets.swap(m_relaySendQueue);
+                    voice.swap(m_relayVoiceSendQueue);
+                }
+                for (const auto& message : text) {
+                    if (!message.empty()) sendOne(WINHTTP_WEB_SOCKET_UTF8_MESSAGE_BUFFER_TYPE, message.data(), message.size());
+                }
+                for (const auto& packet : packets) {
+                    if (!packet.empty()) sendOne(WINHTTP_WEB_SOCKET_BINARY_MESSAGE_BUFFER_TYPE, packet.data(), packet.size());
+                }
+                for (const auto& frame : voice) {
+                    sendOne(WINHTTP_WEB_SOCKET_BINARY_MESSAGE_BUFFER_TYPE, frame.data(), frame.size());
+                }
+                if (text.empty() && packets.empty() && voice.empty()) Sleep(1);
+            }
+        });
+
         while (!m_relayStopRequested.load() && m_relayActive.load()) {
-            // 1. Send queued outgoing control text frames and binary packets
-            std::vector<std::string> toSendText;
-            std::vector<std::vector<uint8_t>> toSend;
-            {
-                std::lock_guard<std::mutex> lock(m_relayMutex);
-                while (!m_relayTextSendQueue.empty()) {
-                    toSendText.push_back(std::move(m_relayTextSendQueue.front()));
-                    m_relayTextSendQueue.pop_front();
-                }
-                while (!m_relaySendQueue.empty()) {
-                    toSend.push_back(std::move(m_relaySendQueue.front()));
-                    m_relaySendQueue.pop_front();
-                }
-            }
-
-            for (const auto& text : toSendText) {
-                if (!text.empty()) {
-                    WinHttpWebSocketSend(hWebSocket, WINHTTP_WEB_SOCKET_UTF8_MESSAGE_BUFFER_TYPE,
-                                         const_cast<char*>(text.data()), static_cast<DWORD>(text.size()));
-                }
-            }
-
-            for (const auto& pkt : toSend) {
-                if (!pkt.empty() && m_relayActive.load()) {
-                    WinHttpWebSocketSend(hWebSocket, WINHTTP_WEB_SOCKET_BINARY_MESSAGE_BUFFER_TYPE,
-                                         const_cast<uint8_t*>(pkt.data()), static_cast<DWORD>(pkt.size()));
-                }
-            }
-
-            if (m_relayStopRequested.load() || !m_relayActive.load()) break;
-
-            // 2. Poll for incoming packet (receive timeout ~2ms; drain bursts immediately)
+            // Poll for incoming packets; drain bursts immediately.
             bool receivedAny = false;
             for (int pollIter = 0; pollIter < 32 && !m_relayStopRequested.load() && m_relayActive.load(); ++pollIter) {
                 DWORD bytesRead = 0;
@@ -725,6 +749,9 @@ void NetworkTransport::RelayWorkerThread(std::string relayUrl, std::string sessi
                                 }
                             }
                         } catch (...) {}
+                    } else if (msgLen >= 4 && std::memcmp(msgData, "NVOX", 4) == 0) {
+                        if (const VoiceFrameCallback cb = m_voiceFrameCb.load()) cb(msgData, msgLen);
+                        fragmentBuffer.clear();
                     } else if (msgLen >= sizeof(uint64_t)) {
                         std::vector<uint8_t> pkt(msgData, msgData + msgLen);
                         fragmentBuffer.clear();
@@ -744,11 +771,14 @@ void NetworkTransport::RelayWorkerThread(std::string relayUrl, std::string sessi
             }
 
             if (!m_relayActive.load()) break;
-            if (toSendText.empty() && toSend.empty() && !receivedAny) {
+            if (!receivedAny) {
                 Sleep(1);
             }
         }
 
+        m_relayConnected.store(false);
+        senderStop.store(true);
+        sender.join();
         HINTERNET wsToClose = nullptr;
         HINTERNET sessionToClose = nullptr;
         {

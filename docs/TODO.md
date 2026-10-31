@@ -191,6 +191,18 @@ explicitly** - a "needs" item must land before the dependent one can be verified
 - [ ] **Vote-to-kick server endpoint + client UI** (pairs with C)
 
 
+- [ ] **Host-editable match options (Tyler, high priority)**: the host must edit game options, not just pick map/mode.
+  Reach exposes these as a `game_variant` blob (MCC ships 40+ stock files, ~21.2 KB each, e.g. `ctf_054.bin`,
+  `assault_054.bin`, `slayer_054.bin`); the lobby already transports `-variant`, so the path is: (1) variant picker from the
+  stock list, (2) read-only viewer of the decoded settings, (3) RE the `c_game_variant` field map, (4) host-only editor for
+  the identified fields (score to win, time limit, rounds, respawn, friendly fire, loadouts, traits), (5) guests receive the
+  variant through the lobby launch and verify its hash. Campaign stays exempt. - @deepseek (decode/editor) + @claude (UI)
+- [ ] **Playlist / game-type picker with rotation** (Tyler, high priority): host builds an ordered playlist (map + game type +
+  variant + options per entry), picks from the game-type list (slayer, ctf, assault, oddball, koth, infection, invasion,
+  juggernaut, territories, headhunter, stockpile, VIP, race, forge, firefight), and after each match the host advances to the
+  next entry or returns to the lobby. Server stores `rotation[]` + current index; browser shows current/next map. Voting is a
+  follow-up. - @deepseek (server/launch) + @claude (editor UI)
+
 ## F. Design-spec backlog (from `docs/menu-redesign-spec.md`, not scheduled yet)
 
 These come from the spec's §4.10-§4.15 and §6 order of work. They are **not claimed**; they enter the queue as the core
@@ -266,17 +278,20 @@ items above close. Keep the spec open when building any screen so the details la
 - [ ] **First-start question** (spec 4.12): "New to Halo: Reach?" with a short setup; `firstStartDone`. - @claude
 - [ ] **Crash / issue report button** (spec 4.12, approved): bundle the log with player names removed, open logs folder, settings backup and restore. - unowned
 - [ ] **Import/export of key bindings and settings** (spec 4.12). - @claude
-- [ ] **Scoreboard mute icons and Mute all** (spec 4.16). Waits for voice. - @claude, needs: @deepseek voice
+- [ ] **Scoreboard mute icons and Mute all** (spec 4.16). Voice API is ready (``VoiceChat::SetPeerMuted``, ``IsPeerTalking``). - @claude
 - [ ] **Rotation voting** (spec 4.14): 2-3 options after each game, ties to the host. Waits for rotation. - @deepseek then @claude
 - [ ] **Armory left vs right shoulder camera** (handoff guide 5.2): the map has one shoulder camera; needs a lateral camera offset from engine globals. - @deepseek
 - [ ] **Career deaths look uncounted**: the card shows 62 kills / 0 deaths over 15 games on the test profile. Check the results parsing. - @claude
 - [ ] **Hints and the full-screen panels don't line up**: on Settings and Social the prompt row starts further right than the panel. Cosmetic. - @claude
+- [x] @claude 2026-10-31 15:08 - **Push-to-talk rebinding in Voice Chat** (`8cbb746`): key or mouse and controller rows; save bug fixed. Physical pad press still to test.
+- [x] @claude 2026-10-31 15:08 - **Music list**: under 40 s removed, including Halo: CE (`8cbb746`).
+- [ ] **Album titles for music cues**: most cues are `Action N` or `Score N` because no public cue-to-album list exists. Needs someone to listen and match, or a datamined list. - unowned
 - [ ] **RESEARCH: real match capacity beyond 16** (Tyler, 2026-10-31): Reach's network session is 16 players; the UI can
   list 128, but an actual 128-player match needs the `capacity`/`coopx`-class engine work in `docs/player-count-scaling.md`
   (RR patch path) plus bandwidth work. Keep 128 as the lobby/browser ceiling for now and file match capacity as research,
   not a promise.
 
-- [~] @claude 2026-10-31 14:25 - **voice transport phase 2 (handed to @claude)**: phase 1 is in (`7e6a2dd`, `src/audio/VoiceChat.*`, `-voice-probe` verified 2 capture / 4 playback). Build WASAPI shared-mode capture (48 kHz mono, 20 ms = 960 frames) + playback ring buffer, vendor Opus (BSD-3) at 16/20/24 kbps, add the relay `voice` message type (server relays/rate-limits only, UI never supplies endpoints/keys), jitter buffer 60-120 ms, per-peer mute/volume, PTT. Evidence: host+guest processes with voice frame log lines and a loopback WAV. Resume plan is the top entry of `docs/HANDOFF.md`.
+- [x] @claude 2026-10-31 14:55 - **Voice transport phase 2**: capture, playback, Opus, relay `voice` frames, jitter buffer, per-peer mute and volume, push to talk, open mic, Settings (`accbd06`, server `4af063f`). Evidence in the top HANDOFF entry. Still needs a person: voice by ear, a pad button, and a two-PC session (also exercises the new relay sender thread). **reviewed by @deepseek: OK** (merged 0/0, evidence inspected: loopback WAV, 3-process and 2-client logs, jitter tests, settings captures).
 
 - [~] @deepseek 2026-10-31 05:20 - **post-game + credits (night block 3)** follows voice phase 1: -postgame-test timing, multiplayer end path, exit_experience sounds, mission_complete split.
 
@@ -346,7 +361,7 @@ items above close. Keep the spec open when building any screen so the details la
 - [ ] **Friends subsystem** (requests/accept/list/presence, then join-from-friend + party invites) - @deepseek + @claude
 - [ ] **Variant viewer / RE of `c_game_variant`** (field map from the already-decoded struct) - @deepseek
 - [ ] **Match end -> lobby or playlist rotation** (session survives results; host continue / guest wait; rotation array + next map) - @deepseek + @claude results UI
-- [ ] **Voice chat transport** (WASAPI capture -> Opus -> relay channel -> jitter buffer; then team/proximity and post-game) - @deepseek
+- [x] **Voice chat transport**: done, see the 2026-10-31 @claude line. **Proximity voice** still open.
 - [ ] **Voice UI** (devices, PTT mode, per-player volume, scoreboard mute icons) - @claude after transport
 - [ ] **Variant editor (subset) + credit eligibility flag** and **server-side credit validation** - @deepseek
 - [ ] Real Reach settings only: the pasted Halo Online list is not Reach; take the actual set from `game_variant_settings` tags + MegaloEdit, not the list

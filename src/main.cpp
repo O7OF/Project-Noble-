@@ -157,6 +157,15 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     }
     NOBLE_INFO("Starting {} - {}", noble::APP_NAME, noble::VERSION_STRING);
 
+    // Headless voice tests need no MCC, window or engine.
+    {
+        int voiceTestExit = 0;
+        if (noble::RunVoiceTestIfRequested(voiceTestExit)) {
+            noble::Logger::Shutdown();
+            return voiceTestExit;
+        }
+    }
+
     // 2. Discover Steam MCC installation and verify Reach DLC assets
     auto reachInstall = noble::SteamLocator::LocateAndVerifyReach();
     if (!reachInstall) {
@@ -490,6 +499,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
                 e.hostPeer = p.isHost;
                 try { if (!p.machineId.empty()) e.machine = std::stoull(p.machineId, nullptr, 0); } catch (...) {}
                 e.local = !me.empty() && _stricmp(p.username.c_str(), me.c_str()) == 0;
+                if (e.local) noble::VoiceChat::SetLocalTeam(p.team);
                 rows.push_back(e);
             }
             noble::PauseMenu::SetScoreboardRoster(std::move(rows), st.map, st.mode);
@@ -541,6 +551,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     if (thirdPersonMode > 0) noble::CameraThirdPerson::SetMode(thirdPersonMode);
     if (thirdPersonDistance != 100) noble::CameraThirdPerson::SetDistancePercent(thirdPersonDistance);
     if (voiceProbe) noble::ProbeVoiceDevices();
+    noble::VoiceChat::Start();   // idle until a relay session exists
     if (thirdPerson) noble::CameraThirdPerson::SetEnabled(true);
 
     // Apply 32/64 player lobby expansion detours
@@ -708,6 +719,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     // flush logs, and terminate the process without tearing down live D3D11/ImGui or c_game_engine
     // heap objects under haloreach.dll's running engine/audio threads (fixes the ntdll access violation on exit).
     NOBLE_INFO("Initiating clean host shutdown...");
+    noble::VoiceChat::Shutdown();
     noble::SocialClient::Get().Shutdown();
     noble::MasterServerClient::Get().Shutdown();
     noble::SessionManager::Get().Shutdown();

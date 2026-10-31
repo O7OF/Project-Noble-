@@ -1,4 +1,5 @@
 #include "FrontEndMenu.hpp"
+#include "audio/VoiceChat.hpp"
 #include "network/UPnP.hpp"
 #include "network/AuthClient.hpp"
 #include "network/MasterServerClient.hpp"
@@ -4727,6 +4728,11 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
                     p.isHost = item.value("isHost", false);
                     p.isDev = item.value("isDev", false);
                     p.ping = item.value("ping", 0);
+                    try {
+                        if (!p.machineId.empty() && std::stoull(p.machineId, nullptr, 0) == NetworkTransport::Get().GetRelayMachineId()) {
+                            VoiceChat::SetLocalTeam(p.team);
+                        }
+                    } catch (...) {}
                     updated.push_back(p);
                 }
                 std::lock_guard<std::mutex> lock(s_lobbyEventMutex);

@@ -67,7 +67,8 @@ int LayoutInput(int layout, int action) {
     case DpadDown: return kDown;
     case DpadLeft: return kLeft;
     case DpadRight: return kRight;
-    default: return InputNone;   // team chat, push to talk: nothing assigned until they exist
+    case PushToTalk: return kLeft;   // shared with the engine's D-pad left, which Apply leaves alone
+    default: return InputNone;   // team chat: nothing assigned until it exists
     }
 }
 
@@ -118,6 +119,7 @@ void Assign(int layout, int action, int input, std::map<std::string, int>& overr
     if (previous == input) return;
     for (int other = 0; other < ActionCount; ++other) {
         if (other == action || EffectiveInput(layout, other, &overrides) != input) continue;
+        if (other == PushToTalk) { overrides[ActionKey(other)] = -1; continue; }   // must not double up on a game button
         if (previous == LayoutInput(layout, other)) overrides.erase(ActionKey(other));
         else overrides[ActionKey(other)] = previous > 0 ? previous : -1;   // -1: deliberately no input
     }
@@ -180,6 +182,7 @@ void Apply(int layout, uint16_t& buttons, uint8_t& leftTrigger, uint8_t& rightTr
     uint16_t out = static_cast<uint16_t>(in & ~kOwned);
     uint8_t outLt = 0, outRt = 0;
     for (int a = 0; a < ActionCount; ++a) {
+        if (a == TeamChat || a == PushToTalk) continue;   // Noble's own: the engine never sees these
         const uint8_t value = level(EffectiveInput(layout, a, overrides));
         if (value == 0) continue;
         const int engine = LayoutInput(Default, a);   // what the engine expects for this action

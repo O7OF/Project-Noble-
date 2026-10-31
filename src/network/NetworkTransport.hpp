@@ -74,6 +74,14 @@ public:
     void StartRelay(const std::string& relayUrl, const std::string& sessionId, bool isHost, uint64_t machineId);
     void StopRelay();
 
+    // Voice frames share the relay socket but not the game packets' queues: they're dropped rather than ever delaying a
+    // game packet. The server recognises them by their "NVOX" start. See audio/VoiceChat.cpp for the layout.
+    using VoiceFrameCallback = void(*)(const uint8_t* data, size_t size);
+    void SetVoiceFrameCallback(VoiceFrameCallback cb);
+    void SendVoiceFrame(const uint8_t* data, size_t size);
+    bool IsRelayConnected() const { return m_relayConnected.load(); }
+    uint64_t GetRelayMachineId() const { return m_relayMachineId.load(); }
+
     // Simulation Profiler & Network Telemetry
     struct NetworkProfile {
         uint64_t packetsSent = 0;
@@ -142,6 +150,10 @@ private:
 
     // Relay members
     std::atomic<bool> m_relayActive{ false };
+    std::atomic<bool> m_relayConnected{ false };
+    std::atomic<uint64_t> m_relayMachineId{ 0 };
+    std::atomic<VoiceFrameCallback> m_voiceFrameCb{ nullptr };
+    std::deque<std::vector<uint8_t>> m_relayVoiceSendQueue;
     std::string m_relayUrl;
     std::thread m_relayThread;
     std::mutex m_relayMutex;

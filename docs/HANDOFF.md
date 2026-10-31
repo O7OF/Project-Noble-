@@ -7,15 +7,101 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 
 **Goal:** `noble-client.exe` loads MCC's own `haloreach.dll` (Halo: Reach) and drives it **without MCC**, like the existing
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
-MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.1 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.5 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
 
 ### How this file is kept (Tyler, 2026-10-30)
 
 - **Every change gets an entry - no exceptions**: code, UI, docs, tools, config, server. Add it at the **top**, directly
   under the `--` line, as
-  `## 0. Pick up here (2026-10-31, 08:25 ET) - Pre-game lobby map identity (@deepseek / DeepSeek)`.
+  `## 0. Pick up here (2026-10-31, 15:08 ET) - Push-to-talk rebinding, voice quality proof, music list cleanup (@claude)
 
-**Current version:** 0.9.3. **Developer build:** 0.9.3-dev. Dev binaries report the suffix next to the version string.
+
+**Current version:** 0.9.6. **Developer build:** 0.9.6-dev. Dev binaries report the suffix next to the version string.
+
+**Commit:** `8cbb746` (the code is in this commit, whose message only mentions docs: the intended commit failed on quotes in its message). **Version:** 0.9.5. **Build:** 0 errors, 0 warnings on the merged tree. Files: `src/ui/SettingsPanel.*`, `src/common/Settings.cpp`, `src/audio/ReachAudio.cpp`, `src/audio/VoiceChat.cpp`, `src/common/Version.hpp`.
+
+**Push to talk.** Settings > Audio > Voice Chat has PUSH TO TALK: KEY OR MOUSE and PUSH TO TALK: CONTROLLER, the same bindings as the two main lists. **Bug fixed:** `Settings::Clamp` dropped key slots from 67 up, so a custom push-to-talk key never saved, and dropped key 0, so right-click unbind never survived a save for any action. Key rebinds now cancel after 5 s. Taking a game button moves that action to push to talk's old button (RB moved Melee to D-pad left), the rule every controller row follows. Keys can be shared with a game action.
+
+**Evidence.** Real Mouse 4 press saved `"67":5`; scripted pad RB saved `pushtotalk:512` and `melee:4`; `"67":0` kept after Apply. Two real game clients: Mouse 4 on the host gave guest `recv=50 played=50`; V held on the guest afterwards gave `sent=0`. `voiceFrames 616`. Capture: `docs/screenshots/voice-ptt-rebinding.png`.
+
+**Voice quality.** Relay test now steps 16, 20, 24 kbps on a live stream: 58, 63, 71 bytes a frame including the 18-byte header. Applying the row in Settings wasn't driven during a live session; the encoder reads that value every 0.5 s. No one has compared them by ear.
+
+**Music.** Tracks under 40 s dropped (was 45 s, so a few 40-45 s tracks return). Halo: CE was never filtered because its bank has no lengths; `LoadFsb5Seconds` reads them from the FSB5 header. Counts: Reach 58, CE Anniversary 68 (was 95), CE Classic 65 (was 84), Halo 3 43, ODST 72. Log: `60 music tracks under 40 s left out`. Capture: `docs/screenshots/music-list-names.png`.
+
+**Official names: partial, on purpose.** No public list maps these cues to album titles (Halopedia documents albums, not files), and many cues are stems and loops rather than album tracks. So: Reach mission cues keep their mission names, Halo 3 and ODST cues with a level code are named after that level, CE cutscenes after their mission, and everything else is "Action 3", "Score 12". Those labels are not album titles. A real mapping needs someone to listen and match, or a datamined list; add it to the `Name` tables, because ids don't change. The level names for the codes are from general knowledge; the codes match the game's map files. "Cinematic" is inferred from the file names, and ODST files such as `c400m` have no level name. Numbers can shift if the length filter changes.
+
+**Not verified.** A physical controller press sending voice. Renamed music played by ear. ODST and Halo 3 duplicates of the same cues are still listed under each game.
+
+Self-review: the "Score N" names are tidy but tell a player less than `Perilous Full` did, and the file names may have been closer to meaningful titles. If Tyler prefers that, it's a one-line change in `CueKind`.
+
+## 0. Pick up here (2026-10-31, 14:55 ET) - Voice chat phase 2: capture, Opus, relay, jitter buffer, Settings (@claude)
+
+**Commit:** `accbd06`, server `4af063f` (O7OF/ServerTestDeploy). **Version:** 0.9.3. **Build:** 0 errors, 0 warnings on the merged tree. Files: `src/audio/VoiceChat.*`, `src/network/NetworkTransport.*`, `src/common/Settings.*`, `src/engine/KeyBindings.*`, `src/engine/PadLayouts.*`, `src/ui/SettingsPanel.cpp`, `src/ui/FrontEndMenu.cpp`, `src/main.cpp`, `CMakeLists.txt`, `assets/licenses/opus-LICENSE.txt`.
+
+**What changed.** WASAPI shared-mode capture and playback at 48 kHz mono 16-bit on their own thread, never through XAudio. Opus v1.5.2 at 16/20/24 kbps. Voice frames start `NVOX`, travel on the existing relay socket in their own queue, and are dropped rather than ever delaying a game packet. 60-120 ms jitter buffer with late drop and Opus concealment. `VoiceChat::SetPeerMuted`, `SetPeerVolume` and `IsPeerTalking` are ready for the scoreboard icons. Settings > Audio has a VOICE CHAT section. The microphone stream opens only in a relay session with voice on; nothing is sent unless push to talk is held or open mic is over -40 dB.
+
+**Two things nobody asked for but everything depends on.** (1) `WinHttpWebSocketReceive` blocks until a frame arrives; the 2 ms timeout never applied (measured 5016 ms, ending only at shutdown, error 12017). So anything queued for the relay, including lobby control messages and relayed game packets, waited for the other side to speak first. Sending now has its own thread in `RelayWorkerThread`. **@deepseek:** your chat client (`dcefc34`) goes through this path, so it should no longer stall. (2) `ops/relay` doesn't exist in ServerTestDeploy; the relay is in `server.js`, and it only ever forwarded guest to host and host to guests, so guest-to-guest voice needed a server change.
+
+**Evidence.** Headless, repeatable: `noble-client.exe -log voice.log -voice-test loopback -voice-test-wav out.wav`, and `-voice-test host|guest -voice-test-relay <url> -voice-test-seconds n`. These use a synthetic signal and play silently.
+- Loopback: 40 / 46 / 54 bytes a frame at 16 / 20 / 24 kbps, SNR about 18 dB. WAV: `docs/evidence/voice-loopback-20kbps.wav` (decoded test tone, no one's voice).
+- Three processes through a local relay: `frames/s sent=50 recv=100 played=100 captured=50 rendered=50`, `voiceFrames 2259, voiceDropped 0`, 0 late, 0 underruns; each guest heard the host and the other guest. Peak fell from about 11300 to 5600 at half volume and to 0 on mute.
+- Two real game clients in a session against a local server, real V key held on each in turn: host `sent=46` then guest `recv=50 played=50`; guest `sent=36` then host `recv=39 played=39`. `voiceFrames 1229`, 0 dropped, both clients alive, session stayed open through the map load. A throwaway copy of the server handed out `ws://` because it always says `wss://`.
+- Jitter self test (runs with loopback), 16 checks pass: sequence wrap, reorder, late drop, growth to the 120 ms ceiling, end marker, team filter, oversized and garbage frames, open mic gate. Button layout self test still passes.
+- Settings: `docs/screenshots/voice-settings-pending.png`, `voice-settings-applied.png`. `voiceOpenMic` False before Apply, True after.
+
+**Not verified.** A real voice heard by a person: every audible check used the test tone and silent output, and the microphone stream was opened and counted but never judged. Controller push to talk: no pad button pressed. A match using the relay's game path after the sender change (the local run had direct UDP, `binaryPackets 0`), so the two-PC test matters. The deployed server: `4af063f` is pushed, but I did not confirm a deploy or test against it, and voice only works guest to guest once it's live. The server's rate limit was not triggered in a test.
+
+**Limits.** Lobby and match may be separate processes, so voice can restart between them; map loads inside a process are fine. TALK TO > TEAM is filtered by the receiving client, so a modified client can still hear it, and the host's team is unknown in a match, which means everyone. PARTY equals ALL because Noble has no parties. Per-player mute and volume last one run. Proximity voice and the scoreboard icons are not built. D-pad left is the default pad button and the engine still sees that press; I didn't check what it does in Reach. An older client in the same room would receive voice frames as if they were game packets.
+
+Self-review: the weakest part is the sender thread, because it changes how relayed game packets and lobby messages leave the client, and only voice and direct-UDP sessions have run on it. On the crash I saw: `f046490` in the server crashed on any binary frame; @deepseek had already removed it in `d0ac871` and the tests above ran after that.
+
+--
+
+--
+
+## 0. Pick up here (2026-10-31, 19:20 ET) - Night shift summary: what landed, what is blocked, what is next (WeabooTyler117 / DeepSeek)
+
+**Landed tonight**
+- Elite pipeline + colour reference: `e7ab6c9` (rrpmcg 314 components, elite ranks; m10 79 shader/117 bitmap paths; 57/60
+  bitmaps stock vs 51/60 shaders pack-only).
+- Backend: report `b645dbf`, vote-to-kick `655fb4d`, host End Round/Match `65ba17a`, 128-player cap + JSON limit
+  `48dc168`/`a1196ba`.
+- Pad Back no longer opens Reach's scoreboard: `d27ab84` (physical test pending).
+- Real ping on the scoreboard: `e89c4d7` (transport `GetPeerPingMs`).
+- Chat relay: `5d46c13` + cleanup `d0ac871`, team/all/party with team filtering; harness PASS. Client send/receive:
+  `dcefc34` (build only, two-client check pending).
+- Voice chat (Claude): `accbd06`, independently re-verified here with `-voice-test loopback` PASS at 16/20/24 kbps.
+- Post-game clean panel verified by capture `docs/screenshots/postgame-clean.png`; `-postgame-test` now waits for the scene.
+
+**Blocked / needs information**
+- Multiplayer post-game panel: `ShowGameOver()` is only called from `HostSlot6_GameResults`; the only slot-6 logs we have are
+  campaign co-op from before tonight's fixes. Needs one finished slayer/custom match with logging to decide "condition bug" vs
+  "no multiplayer hook".
+- Client chat two-client check: needs a paired run.
+- Voice: hearing a real person (loopback is verified, human mic is not).
+
+**Next**
+1. Finished-match log -> multiplayer end hook, then `exit_experience` credit sounds + `mission_complete` split.
+2. Chat client two-client check, then T/Y/P binds and Claude's chat UI.
+3. Profile fields + session survival/rotation; variant viewer + credit validation.
+4. Tyler's pending tests: controller presets, real two-person voice, Firefight voice preview, reverse-preset naming,
+   sensitivity baseline.
+## 0. Pick up here (2026-10-31, 19:05 ET) - REVIEW OK: voice phase 2 (@claude accbd06), merged and rebuilt (WeabooTyler117 / DeepSeek)
+
+- Merged `accbd06` + `429fbb7`; build **0 errors / 0 warnings** on the merged tree.
+- Diff scope matches the claim: `VoiceChat.cpp` +1062, Settings keys, KeyBindings, Opus licence, evidence WAV and two settings
+  captures. Evidence is the strongest we've had: loopback WAV at 20 kbps, three-process relay run with frame counters, two real
+  game clients with the V key held each way, 16 jitter self-tests, settings apply screenshots.
+- Marked reviewed in TODO; **not** marking Tyler's "heard a real voice" test done - Claude explicitly lists it unverified.
+- **Independent re-run on the merged build** (`noble-client.exe -voice-test loopback`): 16/20/24 kbps loopback **PASS**,
+  40/46/54-byte frames, SNR 17.9/18.1/18.0 dB, `voice-verify.wav` written (469 KB), jitter tests running. The feature is real
+  on this machine, not just in the author's checkout.
+- Server side uses `4af063f` for the voice frame relay; my chat relay lives on top of the same relay path.
+- Next for me: two-client chat check against the client transport, then the multiplayer post-game end hook.
+## 0. Pick up here (2026-10-31, 08:25 ET) - Pre-game lobby map identity (@deepseek / DeepSeek)`.
+
+**Current version:** 0.9.6. **Developer build:** 0.9.6-dev. Dev binaries report the suffix next to the version string.
+
 
 **Built and verified:** release `build\bin\Release\noble-client.exe`, developer `build\bin\Release\noble-dev.exe`, dedicated `build\bin\Release\noble-dedicated.exe`, and the packaged `Documents\Noble Launcher\Noble.exe` (full runtime tree; package stayed running in a normal launch test).
 
@@ -61,7 +147,7 @@ The packaged executable is unsigned and performs legitimate but AV-sensitive hos
 
 ## 0. Pick up here (2026-10-31, 19:15 ET) - Vehicle 1st-person keybind, 1st-person on-foot & vehicle FOV modifiers (-120% to +120%), 3rd-person Q zoom fix & Server Browser database Total Players count (Gemini 4 Argon)
 
-**Version:** 0.9.3 / 0.9.3-dev (Pregame Map Identity). **Built & packaged:** `build\bin\Release\noble-client.exe`, `build\bin\Release\noble-dev.exe`, `build\bin\Release\noble-dedicated.exe`, and `C:\Users\Reeve\Documents\Noble Launcher\Noble.exe`.
+**Version:** 0.9.6 / 0.9.6-dev (Vehicle 1st-Person Camera & FOV Modifiers). **Built & packaged:** `build\bin\Release\noble-client.exe`, `build\bin\Release\noble-dev.exe`, `build\bin\Release\noble-dedicated.exe`, and `C:\Users\Reeve\Documents\Noble Launcher\Noble.exe`.
 
 **What changed**
 1. **Vehicle 1st-Person Camera Keybind (`src/engine/KeyBindings.*`, `src/engine/CameraThirdPerson.*`, `src/engine/ReachHost.cpp`, `src/common/Settings.cpp`):**
