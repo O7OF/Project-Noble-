@@ -34,8 +34,8 @@ constexpr uintptr_t kGetObjectMarkersRva = 0x47044C;
 constexpr uintptr_t kGetUnitHeadPosRva = 0x472184;
 // haloreach+0x473DC0 (object_get_ultimate_parent): walks parent_object_index (+0x14) to return the root vehicle datum index.
 constexpr uintptr_t kGetUltimateParentRva = 0x473DC0;
-// haloreach+0x479BB0 (object_update_node_matrices): recomputes an object's simulation node matrices ([obj + 0x17A]) from its current parent.
-constexpr uintptr_t kUpdateObjectNodesRva = 0x479BB0;
+// haloreach+0x477D9C (object_recompute_node_matrices): recomputes an object's simulation node matrices ([obj + 0x17A]) from its current parent.
+constexpr uintptr_t kUpdateObjectNodesRva = 0x477D9C;
 // haloreach+0x1DCADC (c_orbiting_camera::update) and haloreach+0x1E2028 (c_following_camera::update):
 // both take (void* camera, int32_t userIndex, float dt, void* observerCommand) and write the third-person
 // field of view in radians (from haloreach+0xC8640) to [observerCommand + 0x28].
@@ -189,6 +189,34 @@ void __fastcall Hook_FirstPersonUpdate(void* camera, int32_t userIndex, float dt
             pos[0] = headPos[0] + rightX * (offX * 0.50f) + up[0] * (offY * 0.50f);
             pos[1] = headPos[1] + rightY * (offX * 0.50f) + up[1] * (offY * 0.50f);
             pos[2] = headPos[2] + rightZ * (offX * 0.50f) + up[2] * (offY * 0.50f);
+
+            // c_first_person_camera::update (haloreach+0xC71B1..0xC71CC) populates:
+            //   +0x88 (float[3] safe_position) with object_get_center_of_mass(vehicleDatum) (e.g. the Falcon's rear passenger cabin),
+            //   +0xA4..0xB4 (unit pill base[3], height, radius) with the pilot unit's un-offset pill, and
+            //   +0x00 (flags) |= 0x1801 (enabling bit 0x800 safe_position collision raycast).
+            // During flight in observer_update_collision (haloreach+0xC8290), if observer_point_in_unit_pill (haloreach+0xC81C0)
+            // finds the cockpit camera outside the stale pill at +0xA4, observer_collision_raycast (haloreach+0xCA2C4) raycasts
+            // from +0x88 (the Falcon's rear cabin) to +0x04 (the cockpit), hitting the Falcon's interior bulkhead and snapping
+            // the camera into the back seats! Fix by centering both safe_position (+0x88) and the unit pill (+0xA4..0xB4) on the
+            // cockpit camera position and clearing flag 0x800.
+            auto* cmdBytes   = static_cast<uint8_t*>(observerCommand);
+            auto* cmdFlags   = reinterpret_cast<uint32_t*>(cmdBytes + 0x00);
+            auto* safePos    = reinterpret_cast<float*>(cmdBytes + 0x88);
+            auto* pillBase   = reinterpret_cast<float*>(cmdBytes + 0xA4);
+            auto* pillHeight = reinterpret_cast<float*>(cmdBytes + 0xB0);
+            auto* pillRadius = reinterpret_cast<float*>(cmdBytes + 0xB4);
+
+            safePos[0] = pos[0];
+            safePos[1] = pos[1];
+            safePos[2] = pos[2];
+
+            if (*pillHeight < 0.5f) *pillHeight = 1.0f;
+            if (*pillRadius < 0.5f) *pillRadius = 0.5f;
+            pillBase[0] = pos[0];
+            pillBase[1] = pos[1];
+            pillBase[2] = pos[2] - 0.5f * (*pillHeight);
+
+            *cmdFlags = (*cmdFlags & ~0x800u) | 0x4000u;
         }
     }
 
