@@ -452,13 +452,6 @@ void MergeEliteSets(uint8_t* mapList, uint8_t* packList) {
     }
     // Ensure packList + 0x8C (Elite effects) is populated
     {
-        auto block = [](uint8_t* at, int32_t& count, uint8_t*& items) {
-            uint32_t ptr = 0;
-            std::memcpy(&count, at, 4);
-            std::memcpy(&ptr, at + 4, 4);
-            items = (count > 0 && count < 0x400 && ptr) ? TagAt(ptr) : nullptr;
-            if (!items) count = 0;
-        };
         int32_t pec = 0;
         uint8_t* pes = nullptr;
         block(packList + 0x8C, pec, pes);
