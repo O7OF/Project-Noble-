@@ -52,6 +52,16 @@ void ApplyMouseCurve(float& dx, float& dy, float acceleration, float smoothing, 
 
 void ResetMouseCurve(float& smoothX, float& smoothY) { smoothX = smoothY = 0.0f; }
 
+int LookProfileValue(float speed) {
+    const float value = 1.0f + (std::clamp(speed, 1.0f, 10.0f) - 1.0f) * 2.0f;
+    return std::clamp(static_cast<int>(std::ceil(value - 0.0001f)), 1, 19);
+}
+
+float LookStickScale(float speed) {
+    const float value = 1.0f + (std::clamp(speed, 1.0f, 10.0f) - 1.0f) * 2.0f;
+    return std::min(1.0f, value / static_cast<float>(LookProfileValue(speed)));
+}
+
 int SelfTest() {
     std::ofstream report("gametype-selftest.log", std::ios::app);
     auto fail = [&report](const char* what) {
@@ -94,6 +104,22 @@ int SelfTest() {
         expect(lx == 1000 && rx == 3000, "Default stick layout must not swap");
         ApplyStickLayout(1, lx, ly, rx, ry);
         expect(lx == 3000 && ly == 4000 && rx == 1000 && ry == 2000, "Southpaw must swap the two sticks");
+    }
+
+    // --- Look speed: whole steps need no scaling, 10 is the stock profile, and more speed never comes out slower.
+    {
+        expect(LookProfileValue(10.0f) == 19 && LookStickScale(10.0f) == 1.0f, "10.00x must be the stock 19 with a full stick");
+        expect(LookProfileValue(1.0f) == 1, "1.00x must be the lowest profile step");
+        expect(LookProfileValue(2.5f) == 4 && LookStickScale(2.5f) == 1.0f, "2.50x must land on a whole step");
+        expect(LookProfileValue(1.25f) == 2 && std::fabs(LookStickScale(1.25f) - 0.75f) < 0.001f, "1.25x must be step 2 at 3/4 stick");
+        float previous = 0.0f;
+        bool rising = true;
+        for (float s = 1.0f; s <= 10.0f; s += 0.25f) {
+            const float effective = static_cast<float>(LookProfileValue(s)) * LookStickScale(s);
+            rising = rising && effective > previous;
+            previous = effective;
+        }
+        expect(rising, "each 0.25x step must be faster than the last");
     }
 
     // --- Mouse curve: both parts disabled by default.

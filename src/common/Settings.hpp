@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <filesystem>
 #include <map>
@@ -36,8 +37,11 @@ struct SettingsData {
     int wheelUpAction = 4;         // action the mouse wheel's up notches trigger (-1 = nothing); 4 = change weapon
     int wheelDownAction = 4;       // same for down notches (engine key 0xAE; up is 0xAF)
     bool padVibration = true;      // controller rumble (host slot 39 -> XInputSetState)
-    int padLookX = 19;             // controller look speed 1..19 (profile +0x1B6 = value - 1; 19 = the stock profile)
-    int padLookY = 19;             // vertical, profile +0x1B5 (same scale)
+    float padLookSpeedX = 10.0f;   // controller look speed 1.00..10.00 (InputTuning maps it; 10 = the stock profile)
+    float padLookSpeedY = 10.0f;   // vertical
+    // Keyboard keys or mouse buttons treated as controller paddles 1-6 (virtual-key codes, 0 = none). Tools like Steam Input
+    // can send a key for each paddle. Default F13-F18, which no keyboard action uses.
+    std::array<int, 6> padPaddleKeys = { 0x7C, 0x7D, 0x7E, 0x7F, 0x80, 0x81 };
     bool padInvertLook = false;
     int padLayout = 0;             // Halo: Reach button layout (engine/PadLayouts.hpp); 0 = Default
     int padStickLayout = 0;        // 0 = Default (left moves, right looks), 1 = swapped. One "preset" row with padLayout
