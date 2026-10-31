@@ -7,15 +7,36 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 
 **Goal:** `noble-client.exe` loads MCC's own `haloreach.dll` (Halo: Reach) and drives it **without MCC**, like the existing
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
-MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.1 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.3 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
 
 ### How this file is kept (Tyler, 2026-10-30)
 
 - **Every change gets an entry - no exceptions**: code, UI, docs, tools, config, server. Add it at the **top**, directly
   under the `--` line, as
-  `## 0. Pick up here (2026-10-31, 08:25 ET) - Pre-game lobby map identity (@deepseek / DeepSeek)`.
+  `## 0. Pick up here (2026-10-31, 14:55 ET) - Voice chat phase 2: capture, Opus, relay, jitter buffer, Settings (@claude)
 
-**Current version:** 0.9.2. **Developer build:** 0.9.2-dev. Dev binaries report the suffix next to the version string.
+**Commit:** `accbd06`, server `4af063f` (O7OF/ServerTestDeploy). **Version:** 0.9.3. **Build:** 0 errors, 0 warnings on the merged tree. Files: `src/audio/VoiceChat.*`, `src/network/NetworkTransport.*`, `src/common/Settings.*`, `src/engine/KeyBindings.*`, `src/engine/PadLayouts.*`, `src/ui/SettingsPanel.cpp`, `src/ui/FrontEndMenu.cpp`, `src/main.cpp`, `CMakeLists.txt`, `assets/licenses/opus-LICENSE.txt`.
+
+**What changed.** WASAPI shared-mode capture and playback at 48 kHz mono 16-bit on their own thread, never through XAudio. Opus v1.5.2 at 16/20/24 kbps. Voice frames start `NVOX`, travel on the existing relay socket in their own queue, and are dropped rather than ever delaying a game packet. 60-120 ms jitter buffer with late drop and Opus concealment. `VoiceChat::SetPeerMuted`, `SetPeerVolume` and `IsPeerTalking` are ready for the scoreboard icons. Settings > Audio has a VOICE CHAT section. The microphone stream opens only in a relay session with voice on; nothing is sent unless push to talk is held or open mic is over -40 dB.
+
+**Two things nobody asked for but everything depends on.** (1) `WinHttpWebSocketReceive` blocks until a frame arrives; the 2 ms timeout never applied (measured 5016 ms, ending only at shutdown, error 12017). So anything queued for the relay, including lobby control messages and relayed game packets, waited for the other side to speak first. Sending now has its own thread in `RelayWorkerThread`. **@deepseek:** your chat client (`dcefc34`) goes through this path, so it should no longer stall. (2) `ops/relay` doesn't exist in ServerTestDeploy; the relay is in `server.js`, and it only ever forwarded guest to host and host to guests, so guest-to-guest voice needed a server change.
+
+**Evidence.** Headless, repeatable: `noble-client.exe -log voice.log -voice-test loopback -voice-test-wav out.wav`, and `-voice-test host|guest -voice-test-relay <url> -voice-test-seconds n`. These use a synthetic signal and play silently.
+- Loopback: 40 / 46 / 54 bytes a frame at 16 / 20 / 24 kbps, SNR about 18 dB. WAV: `docs/evidence/voice-loopback-20kbps.wav` (decoded test tone, no one's voice).
+- Three processes through a local relay: `frames/s sent=50 recv=100 played=100 captured=50 rendered=50`, `voiceFrames 2259, voiceDropped 0`, 0 late, 0 underruns; each guest heard the host and the other guest. Peak fell from about 11300 to 5600 at half volume and to 0 on mute.
+- Two real game clients in a session against a local server, real V key held on each in turn: host `sent=46` then guest `recv=50 played=50`; guest `sent=36` then host `recv=39 played=39`. `voiceFrames 1229`, 0 dropped, both clients alive, session stayed open through the map load. A throwaway copy of the server handed out `ws://` because it always says `wss://`.
+- Jitter self test (runs with loopback), 16 checks pass: sequence wrap, reorder, late drop, growth to the 120 ms ceiling, end marker, team filter, oversized and garbage frames, open mic gate. Button layout self test still passes.
+- Settings: `docs/screenshots/voice-settings-pending.png`, `voice-settings-applied.png`. `voiceOpenMic` False before Apply, True after.
+
+**Not verified.** A real voice heard by a person: every audible check used the test tone and silent output, and the microphone stream was opened and counted but never judged. Controller push to talk: no pad button pressed. A match using the relay's game path after the sender change (the local run had direct UDP, `binaryPackets 0`), so the two-PC test matters. The deployed server: `4af063f` is pushed, but I did not confirm a deploy or test against it, and voice only works guest to guest once it's live. The server's rate limit was not triggered in a test.
+
+**Limits.** Lobby and match may be separate processes, so voice can restart between them; map loads inside a process are fine. TALK TO > TEAM is filtered by the receiving client, so a modified client can still hear it, and the host's team is unknown in a match, which means everyone. PARTY equals ALL because Noble has no parties. Per-player mute and volume last one run. Proximity voice and the scoreboard icons are not built. D-pad left is the default pad button and the engine still sees that press; I didn't check what it does in Reach. An older client in the same room would receive voice frames as if they were game packets.
+
+Self-review: the weakest part is the sender thread, because it changes how relayed game packets and lobby messages leave the client, and only voice and direct-UDP sessions have run on it. On the crash I saw: `f046490` in the server crashed on any binary frame; @deepseek had already removed it in `d0ac871` and the tests above ran after that.
+
+## 0. Pick up here (2026-10-31, 08:25 ET) - Pre-game lobby map identity (@deepseek / DeepSeek)`.
+
+**Current version:** 0.9.3. **Developer build:** 0.9.3-dev. Dev binaries report the suffix next to the version string.
 
 **Built and verified:** release `build\bin\Release\noble-client.exe`, developer `build\bin\Release\noble-dev.exe`, dedicated `build\bin\Release\noble-dedicated.exe`, and the packaged `Documents\Noble Launcher\Noble.exe` (full runtime tree; package stayed running in a normal launch test).
 

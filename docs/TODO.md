@@ -266,7 +266,7 @@ items above close. Keep the spec open when building any screen so the details la
 - [ ] **First-start question** (spec 4.12): "New to Halo: Reach?" with a short setup; `firstStartDone`. - @claude
 - [ ] **Crash / issue report button** (spec 4.12, approved): bundle the log with player names removed, open logs folder, settings backup and restore. - unowned
 - [ ] **Import/export of key bindings and settings** (spec 4.12). - @claude
-- [ ] **Scoreboard mute icons and Mute all** (spec 4.16). Waits for voice. - @claude, needs: @deepseek voice
+- [ ] **Scoreboard mute icons and Mute all** (spec 4.16). Voice API is ready (``VoiceChat::SetPeerMuted``, ``IsPeerTalking``). - @claude
 - [ ] **Rotation voting** (spec 4.14): 2-3 options after each game, ties to the host. Waits for rotation. - @deepseek then @claude
 - [ ] **Armory left vs right shoulder camera** (handoff guide 5.2): the map has one shoulder camera; needs a lateral camera offset from engine globals. - @deepseek
 - [ ] **Career deaths look uncounted**: the card shows 62 kills / 0 deaths over 15 games on the test profile. Check the results parsing. - @claude
@@ -276,7 +276,7 @@ items above close. Keep the spec open when building any screen so the details la
   (RR patch path) plus bandwidth work. Keep 128 as the lobby/browser ceiling for now and file match capacity as research,
   not a promise.
 
-- [~] @claude 2026-10-31 14:25 - **voice transport phase 2 (handed to @claude)**: phase 1 is in (`7e6a2dd`, `src/audio/VoiceChat.*`, `-voice-probe` verified 2 capture / 4 playback). Build WASAPI shared-mode capture (48 kHz mono, 20 ms = 960 frames) + playback ring buffer, vendor Opus (BSD-3) at 16/20/24 kbps, add the relay `voice` message type (server relays/rate-limits only, UI never supplies endpoints/keys), jitter buffer 60-120 ms, per-peer mute/volume, PTT. Evidence: host+guest processes with voice frame log lines and a loopback WAV. Resume plan is the top entry of `docs/HANDOFF.md`.
+- [x] @claude 2026-10-31 14:55 - **Voice transport phase 2**: capture, playback, Opus, relay `voice` frames, jitter buffer, per-peer mute and volume, push to talk, open mic, Settings (`accbd06`, server `4af063f`). Evidence in the top HANDOFF entry. Still needs a person: voice by ear, a pad button, and a two-PC session (also exercises the new relay sender thread).
 
 - [~] @deepseek 2026-10-31 05:20 - **post-game + credits (night block 3)** follows voice phase 1: -postgame-test timing, multiplayer end path, exit_experience sounds, mission_complete split.
 
@@ -346,7 +346,7 @@ items above close. Keep the spec open when building any screen so the details la
 - [ ] **Friends subsystem** (requests/accept/list/presence, then join-from-friend + party invites) - @deepseek + @claude
 - [ ] **Variant viewer / RE of `c_game_variant`** (field map from the already-decoded struct) - @deepseek
 - [ ] **Match end -> lobby or playlist rotation** (session survives results; host continue / guest wait; rotation array + next map) - @deepseek + @claude results UI
-- [ ] **Voice chat transport** (WASAPI capture -> Opus -> relay channel -> jitter buffer; then team/proximity and post-game) - @deepseek
+- [x] **Voice chat transport**: done, see the 2026-10-31 @claude line. **Proximity voice** still open.
 - [ ] **Voice UI** (devices, PTT mode, per-player volume, scoreboard mute icons) - @claude after transport
 - [ ] **Variant editor (subset) + credit eligibility flag** and **server-side credit validation** - @deepseek
 - [ ] Real Reach settings only: the pasted Halo Online list is not Reach; take the actual set from `game_variant_settings` tags + MegaloEdit, not the list
