@@ -29,6 +29,12 @@ public:
 
     // Called from the input poll: F5 edge-toggles the camera.
     static void PollHotkey(bool f5Down);
+
+    // Third-person weapon aim zoom (held via right-click in third person).
+    static void SetZoomHeld(bool held);
+    static bool IsZoomHeld();
+    // Current FOV multiplier (1.0 when unzoomed or in first person; < 1.0 while zooming in third person).
+    static float EffectiveFovScale();
 };
 
 } // namespace noble

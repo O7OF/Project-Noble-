@@ -3,6 +3,8 @@
 #include "ui/FrontEndMenu.hpp"
 #include "ui/UiArt.hpp"
 #include "common/Logger.hpp"
+#include "common/SaveCodec.hpp"
+#include "hooks/EnginePatches.hpp"
 #include "hooks/HookManager.hpp"
 #include "ui/PauseMenu.hpp"
 #include "ui/ForgeMenu.hpp"
@@ -12,6 +14,7 @@
 #include "engine/InputTuning.hpp"
 #include "engine/KeyBindings.hpp"
 #include "engine/CameraFov.hpp"
+#include "engine/CameraThirdPerson.hpp"
 #include "engine/ReachArmory.hpp"
 #include "engine/ElitePack.hpp"
 #include "vfs/VFS.hpp"
@@ -891,15 +894,23 @@ static uint32_t VoiceItem(const std::string& id) {
 }
 } // namespace armory_ids
 
+static std::filesystem::path ResolveAppearanceFilePath() {
+    const auto dataDir = ReachHost::Get().GetDataDir();
+    const auto datPath = dataDir / "appearance.dat";
+    std::error_code ec;
+    if (std::filesystem::exists(datPath, ec)) return datPath;
+    const auto jsonPath = dataDir / "appearance.json";
+    if (std::filesystem::exists(jsonPath, ec)) return jsonPath;
+    return datPath;
+}
+
 static void ApplyArmoryAppearance(uint8_t* profile) {
     if (!profile) return;
-    const auto appearancePath = ReachHost::Get().GetDataDir() / "appearance.json";
-    std::ifstream file(appearancePath);
-    if (!file) return;
+    const auto appearancePath = ResolveAppearanceFilePath();
+    nlohmann::json appearance;
+    if (!SaveCodec::ReadJson(appearancePath, appearance)) return;
 
     try {
-        nlohmann::json appearance;
-        file >> appearance;
         using namespace armory_ids;
         auto num = [](const nlohmann::json& j, const char* key, int lo, int hi, int def) {
             const auto it = j.find(key);
@@ -923,36 +934,40 @@ static void ApplyArmoryAppearance(uint8_t* profile) {
         if (auto it = Helmets().find(str(sp, "helmet_id")); it != Helmets().end()) helmet = it->second;
         uint32_t chest = 126;
         if (auto it = Chests().find(str(sp, "chest_id")); it != Chests().end()) chest = it->second;
-        // Bungie Reach armor effect indices expected by haloreach.dll (0x3B2F4):
-        // 0 = None, 1 = Flames (Legendary), 2 = Blue Flames (Eternal),
-        // 3 = Heart Attack, 4 = Pestilence, 5 = Inclement Weather, 6 = Birthday Party.
-        auto mapArmorEffect = [](int idx, const std::string& id) -> uint32_t {
-            if (id == "flames" || idx == 5) return 1;
-            if (id == "blue_flames" || idx == 6) return 2;
-            if (id == "heart_attack" || idx == 2) return 3;
-            if (id == "pestilence" || idx == 3) return 4;
-            if (id == "inclement_weather" || idx == 4) return 5;
-            if (id == "birthday_party" || idx == 1) return 6;
-            return 0;
+        // haloreach.dll+0x2EDA08 passes profile[+0x68] (Spartan effect) and profile[+0x90] (Elite effect)
+        // through haloreach.dll+0x3B2F4, which expects MCC global item ids kEffect + 0..6 (166..172) and
+        // kEliteEffect + 0..6 (173..179) in Armory order:
+        // 0 = default, 1 = birthday_party, 2 = heart_attack, 3 = pestilence,
+        // 4 = inclement_weather, 5 = flames, 6 = blue_flames.
+        auto armoryEffectOffset = [](int idx, const std::string& id) -> uint32_t {
+            if (id == "birthday_party") return 1;
+            if (id == "heart_attack") return 2;
+            if (id == "pestilence") return 3;
+            if (id == "inclement_weather") return 4;
+            if (id == "flames") return 5;
+            if (id == "blue_flames") return 6;
+            if (id == "default") return 0;
+            return static_cast<uint32_t>(std::clamp(idx, 0, 6));
+        };
+        // haloreach.dll+0x3B2F4 maps MCC visor item ids 157..161 (kVisor + 0..4) as:
+        // 157 (+0) -> 0 (Default), 158 (+1) -> 1 (Silver), 159 (+2) -> 2 (Blue),
+        // 160 (+3) -> 4 (Gold),    161 (+4) -> 3 (Black).
+        // ArmorCustomizer's kVisorColors has index 3 = Black and index 4 = Gold, so swap 3 <-> 4.
+        auto visorOffset = [](int idx, const std::string& id) -> uint32_t {
+            if (id == "silver") return 1;
+            if (id == "blue") return 2;
+            if (id == "gold") return 3;
+            if (id == "black") return 4;
+            if (id == "default") return 0;
+            if (idx == 3) return 4;
+            if (idx == 4) return 3;
+            return static_cast<uint32_t>(std::clamp(idx, 0, 4));
         };
 
-        const uint32_t spEffect = mapArmorEffect(num(sp, "armor_effect_index", 0, 6, 0), str(sp, "armor_effect_id"));
-        const uint32_t elEffect = mapArmorEffect(num(el, "armor_effect_index", 0, 6, 0), str(el, "armor_effect_id"));
-        int utility = num(sp, "utility_index", 0, 6, 0);
-        if (utility >= 6) {
-            NOBLE_WARN("ReachHost [Slot 34]: utility {} isn't in Reach's list; default utility in game", utility);
-            utility = 0;
-        }
-        // GRD helmets (68..71), Season 8 helmets (72..89), or any helmet >= 64 exceed base Reach scenario tag limits
-        // and trigger the bugged haloreach+0x10532a fallback builder which causes an access violation at 0x105597.
-        if (helmet >= 64) {
-            NOBLE_WARN("ReachHost [Slot 34]: helmet {} (GRD/MCC/Season 8) clamped to Mark V [B] in match to avoid engine tag crash", helmet);
-            helmet = 0;
-        }
-        if (chest >= 235) {
-            NOBLE_WARN("ReachHost [Slot 34]: chest {} (Robo-arm) clamped to base chest in match to avoid engine tag crash", chest);
-            chest = 126;
-        }
+        const uint32_t spEffectOff = armoryEffectOffset(num(sp, "armor_effect_index", 0, 6, 0), str(sp, "armor_effect_id"));
+        const uint32_t elEffectOff = armoryEffectOffset(num(el, "armor_effect_index", 0, 6, 0), str(el, "armor_effect_id"));
+        const uint32_t visorOff = visorOffset(num(sp, "visor_color_index", 0, 4, 0), str(sp, "visor_id"));
+        const int utility = num(sp, "utility_index", 0, 6, 0);
 
         put(0x40, helmet);
         put(0x44, kLeftShoulder + num(sp, "left_shoulder_index", 0, 17, 0));
@@ -966,15 +981,15 @@ static void ApplyArmoryAppearance(uint8_t* profile) {
         // The engine copies them to appearance-record bytes +0x18 (Spartan, pmcg list 80) and +0x19
         // (Elite, pmcg list 8C) - mixing species into +0x68 is what used to make an armor effect pick
         // the Elite variant. (Verified in haloreach.dll 0x2EDA08 / 0x1055EC.)
-        put(0x68, spEffect);
+        put(0x68, kEffect + spEffectOff);
         put(0x6C, kKnees + num(sp, "knee_guards_index", 0, 3, 0));
-        put(0x70, kVisor + num(sp, "visor_color_index", 0, 4, 0));
+        put(0x70, kVisor + visorOff);
         // Armory set indices: 0..7 = MCC's eight Elite sets (194..201), 8 = Honor Guard, 9 = H2A Ranger,
         // 10 = Counselor. MCC has no set item for 8..10 - those presets are carried by their per-piece
         // entries in the appearance record (ElitePack) - so the profile set item stays at Minor (194).
         const int eliteSet = num(el, "armor_set", 0, 10, 0);
         put(0x8C, kEliteSet + (eliteSet < 8 ? eliteSet : 0));
-        put(0x90, elEffect);
+        put(0x90, kEliteEffect + elEffectOff);
         put(0x94, VoiceItem(str(sp, "voice_id")));
         put(0x98, kColor + num(appearance, "primary_color", 0, 29, 1));
         put(0x9C, kColor + num(appearance, "secondary_color", 0, 29, 10));
@@ -982,27 +997,35 @@ static void ApplyArmoryAppearance(uint8_t* profile) {
         // the profile field exists (RR: Steel) and the Armory's third colour word follows it.
         const int accentColor = num(appearance, "accent_color", 0, 29, 14);
         put(0xA0, kColor + accentColor);
+        const std::string armoryTag = str(appearance, "service_tag");
+        if (!armoryTag.empty()) {
+            wchar_t serviceTag[4] = {};
+            for (size_t i = 0; i < 4 && i < armoryTag.size(); ++i) {
+                serviceTag[i] = static_cast<wchar_t>(armoryTag[i]);
+            }
+            memcpy(profile + 0x1AC, serviceTag, sizeof(serviceTag));
+        }
         NOBLE_INFO("ReachHost [Slot 34]: applied Armory appearance ({}, helmet {}, chest {}, effect {}/{}, Elite set {}, colours {}/{})",
-                   species == 0 ? "Spartan" : "Elite", helmet, chest, spEffect, elEffect, eliteSet,
+                   species == 0 ? "Spartan" : "Elite", helmet, chest, spEffectOff, elEffectOff, eliteSet,
                    num(appearance, "primary_color", 0, 29, 1), num(appearance, "secondary_color", 0, 29, 10));
     } catch (const nlohmann::json::exception& e) {
         NOBLE_WARN("ReachHost [Slot 34]: could not read Armory appearance from '{}': {}", appearancePath.string(), e.what());
     }
 }
 
-// Re-applies appearance.json when the Armory saves it, so a change made from the menu reaches
+// Re-applies appearance.dat when the Armory saves it, so a change made from the menu reaches
 // the profile without a restart (the game reads the profile again when the player spawns).
-static void RefreshArmoryAppearance(uint8_t* profile) {
+static void RefreshArmoryAppearance(uint8_t* profile, bool force = false) {
     static std::filesystem::file_time_type s_lastWrite{};
     static ULONGLONG s_lastCheck = 0;
     const ULONGLONG now = GetTickCount64();
-    if (now - s_lastCheck < 500) return;
+    if (!force && now - s_lastCheck < 500) return;
     s_lastCheck = now;
     std::error_code ec;
-    const auto path = ReachHost::Get().GetDataDir() / "appearance.json";
+    const auto path = ResolveAppearanceFilePath();
     const auto t = std::filesystem::last_write_time(path, ec);
-    if (ec || t == s_lastWrite) return;
-    s_lastWrite = t;
+    if (!force && (ec || t == s_lastWrite)) return;
+    if (!ec) s_lastWrite = t;
     ApplyArmoryAppearance(profile);
 }
 
@@ -1057,7 +1080,6 @@ static uint64_t __fastcall HostSlot34_ProfileSettings(void* thisPtr, uint64_t a1
                 }
             }
         }
-        RefreshArmoryAppearance(s_hostProfileBuffer);
         // RR host::hit case 0x22: the profile is a zeroed 64 KB block with only the 4-character
         // service tag (UTF-16) written at +0x1AC. The old defaults here (+0x00 = 1, armour colours
         // at +0x18/+0x1C) are not what RR sends, so they are no longer written.
@@ -1066,6 +1088,7 @@ static uint64_t __fastcall HostSlot34_ProfileSettings(void* thisPtr, uint64_t a1
         const std::string tag = Settings::Get().Snapshot().serviceTag;
         for (size_t i = 0; i < 4 && i < tag.size(); ++i) serviceTag[i] = static_cast<wchar_t>(tag[i]);
         memcpy(s_hostProfileBuffer + 0x1AC, serviceTag, sizeof(serviceTag));
+        RefreshArmoryAppearance(s_hostProfileBuffer, true);
         s_hostProfileInitialized = true;
         s_profileBuiltIn = !loaded;
         // Test option "-profile-set <hex offset>=<hex byte>[,...]": patch profile bytes (used to find
@@ -1273,6 +1296,7 @@ static bool UiCursorActive() {
 bool ReachHost::IsUiScreenActive() { return UiCursorActive(); }
 
 static void InputRelease(HWND hwnd, const char* reason) {
+    CameraThirdPerson::SetZoomHeld(false);
     if (!s_inputCaptured) return;
     ClipCursor(nullptr);
     if (hwnd) {
@@ -1662,6 +1686,30 @@ static void FillLocalInput(uint8_t* st) {
     }
     if (s_holdMouseUntilRelease) {
         st[0x004 + VK_LBUTTON] = st[0x004 + VK_RBUTTON] = st[0x004 + VK_MBUTTON] = 0;
+    }
+
+    // Lower weapon keybind (SETTINGS > CONTROLS > KEYBOARD & MOUSE > ACTIONS, unbound by default):
+    // rising-edge press queues a one-shot Alert Carry toggle in PlayerControlUpdate.
+    {
+        const int lowerVk = KeyBindings::EffectiveKey(KeyBindings::kActionLowerWeapon);
+        const bool lowerDown = !uiPointer && lowerVk > 0 && lowerVk < 256 && st[0x004 + lowerVk] != 0;
+        static bool s_lowerWasDown = false;
+        if (lowerDown && !s_lowerWasDown) {
+            EnginePatches::RequestLowerWeaponToggle();
+        }
+        s_lowerWasDown = lowerDown;
+    }
+
+    // Third-person weapon aim zoom: holding Right Click (or the bound Zoom key) zooms the third-person camera
+    // according to SETTINGS > GAME OPTIONS > CAMERA > THIRD-PERSON ZOOM.
+    {
+        const int zoomVk = KeyBindings::EffectiveKey(5);
+        const bool rmbDown = st[0x004 + VK_RBUTTON] != 0;
+        const bool boundZoomDown = zoomVk > 0 && zoomVk < 256 && st[0x004 + zoomVk] != 0;
+        const bool wantZoom = !uiPointer && !boardDown && !s_holdMouseUntilRelease &&
+                              (CameraThirdPerson::IsEnabled() || CameraThirdPerson::EngineWantsThirdPerson()) &&
+                              (rmbDown || boundZoomDown);
+        CameraThirdPerson::SetZoomHeld(wantZoom);
     }
 
     // Mouse look: delta from the window centre, then recentre (not while a menu owns the pointer).

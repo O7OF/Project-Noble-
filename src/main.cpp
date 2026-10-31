@@ -287,8 +287,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     // LAN discovery and hosting must already run while the front-end menu is open, so a game
     // hosted from the SERVERS tab (or by someone else on the LAN) shows up in the list.
     noble::SessionManager::Get().Initialize();
-    const std::string masterUrl = startupSettings.masterServerUrl.empty() ? "https://outbreak-z-test-server.onrender.com" : startupSettings.masterServerUrl;
+    const std::string masterUrl = startupSettings.masterServerUrl;  // empty = LAN/direct only
     noble::MasterServerClient::Get().SetUrl(masterUrl);
+    noble::MasterServerClient::Get().RequestOnlineCount();
 
     // Parse command line arguments for direct map and variant launches (e.g. from NobleLauncher or Relaunch)
     std::string launchMap = "";
@@ -296,6 +297,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     std::string customMvar = "";
     std::string customVariant = "";
     fs::path modFolder;
+    fs::path mapOverride;   // modded .map served in place of the stock launchMap file
+    std::string mapTitle;   // mod map's own title and pictures (loading screen / poster)
+    fs::path mapImage;
+    fs::path mapThumb;
     int launchDifficulty = 1;
     uint64_t launchSkulls = 0;
     bool launchHost = false;
@@ -340,6 +345,14 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
                 customVariant = WideToNarrow(argvW[++i]);
             } else if (arg == L"-mod" && i + 1 < numArgs) {
                 modFolder = fs::path(argvW[++i]);
+            } else if (arg == L"-map-override" && i + 1 < numArgs) {
+                mapOverride = fs::path(argvW[++i]);
+            } else if (arg == L"-map-title" && i + 1 < numArgs) {
+                mapTitle = WideToNarrow(argvW[++i]);
+            } else if (arg == L"-map-image" && i + 1 < numArgs) {
+                mapImage = fs::path(argvW[++i]);
+            } else if (arg == L"-map-thumb" && i + 1 < numArgs) {
+                mapThumb = fs::path(argvW[++i]);
             } else if (arg == L"-skulls" && i + 1 < numArgs) {
                 launchSkulls = _wcstoui64(argvW[++i], nullptr, 0);
             } else if (arg == L"-difficulty" && i + 1 < numArgs) {
@@ -406,6 +419,12 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         NOBLE_INFO("Activating mod folder '{}'", modFolder.string());
         noble::VFS::SetActiveMod(modFolder);
     }
+    if (!mapOverride.empty()) {
+        NOBLE_INFO("Map override: serving '{}' as maps\\{}.map", mapOverride.string(), launchMap);
+        noble::VFS::SetMapOverride(launchMap, mapOverride);
+    } else {
+        noble::VFS::ClearMapOverride();
+    }
 
     // Map-info sandbox. The engine builds its map list by enumerating "haloreach\\maps\\info\\*.*"
     // RELATIVE TO THE WORKING DIRECTORY (root prefix "haloreach\\" at RVA 0x985D28, FindFirstFileW).
@@ -447,6 +466,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     if (!customMvar.empty()) args += L" -mvar \"" + toWide(customMvar) + L"\"";
     if (launchSkulls != 0) args += L" -skulls " + std::to_wstring(launchSkulls);
     if (!modFolder.empty()) args += L" -mod \"" + modFolder.wstring() + L"\"";
+    if (!mapOverride.empty()) args += L" -map-override \"" + mapOverride.wstring() + L"\"";
+    if (!mapTitle.empty()) args += L" -map-title \"" + toWide(mapTitle) + L"\"";
+    if (!mapImage.empty()) args += L" -map-image \"" + mapImage.wstring() + L"\"";
+    if (!mapThumb.empty()) args += L" -map-thumb \"" + mapThumb.wstring() + L"\"";
 
     // In-match scoreboard overlay data: fetch the session roster once so the panel can show names, ranks,
     // emblems and teams while the scoreboard key is held.
@@ -454,6 +477,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         std::thread([connectSessionId]() {
             noble::LobbyState st = noble::MasterServerClient::Get().FetchLobbyStateSync(connectSessionId);
             if (!st.ok || st.roster.empty()) return;
+            noble::PauseMenu::SetScoreboardSession(connectSessionId);
             std::vector<noble::PauseMenu::ScoreboardEntry> rows;
             const std::string me = noble::Settings::Get().Snapshot().playerName;
             for (const auto& p : st.roster) {
@@ -463,6 +487,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
                 e.rank = p.rankIndex;
                 e.emblem = p.emblemId;
                 e.team = p.team;
+                e.hostPeer = p.isHost;
+                try { if (!p.machineId.empty()) e.machine = std::stoull(p.machineId, nullptr, 0); } catch (...) {}
                 e.local = !me.empty() && _stricmp(p.username.c_str(), me.c_str()) == 0;
                 rows.push_back(e);
             }
@@ -489,8 +515,14 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     }
     noble::Relaunch::SetCurrentGameArgs(args);
     noble::PauseMenu::SetLoadingMap(launchMap);
-    noble::UiArt::LoadingBackground(launchMap);
-    noble::UiArt::MapPreview(launchMap, true);
+    if (!mapTitle.empty() || !mapImage.empty() || !mapThumb.empty()) {
+        NOBLE_INFO("Loading screen: mod map '{}' (image '{}')", mapTitle, mapImage.string());
+        noble::PauseMenu::SetLoadingMapInfo(mapTitle, mapImage, mapThumb);
+    }
+    if (!mapImage.empty()) noble::UiArt::ImageFile(mapImage);
+    else noble::UiArt::LoadingBackground(launchMap);
+    if (!mapThumb.empty()) noble::UiArt::ImageFile(mapThumb);
+    else noble::UiArt::MapPreview(launchMap, true);
     }
 
     // 8. Load and bootstrap haloreach.dll directly in process memory

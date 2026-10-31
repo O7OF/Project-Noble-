@@ -5,6 +5,7 @@
 #include "NobleStyle.hpp"
 #include "UiArt.hpp"
 #include "common/Logger.hpp"
+#include "common/Version.hpp"
 #include "common/Settings.hpp"
 #include "ModDownloadPrompt.hpp"
 #include "network/MasterServerClient.hpp"
@@ -65,6 +66,29 @@ void DrawModBadge() {
     ImGui::SameLine();
 }
 
+std::string FormatCountWithCommas(int count) {
+    if (count < 0) count = 0;
+    std::string raw = std::to_string(count);
+    std::string out;
+    const int n = static_cast<int>(raw.size());
+    for (int i = 0; i < n; ++i) {
+        if (i > 0 && ((n - i) % 3) == 0) out.push_back(',');
+        out.push_back(raw[i]);
+    }
+    return out;
+}
+
+void Describe(ServerEntry& e) {
+    const std::string map = MapNames::Display(e.mapName);
+    if (e.isMod) {
+        e.mapDescription = e.modTitle.empty() ? ("Custom map: " + map) : ("Custom map from " + e.modTitle);
+        e.modDescription = e.modTitle.empty() ? std::string("Custom map or modded content") : e.modTitle;
+    } else {
+        e.mapDescription = "Official Halo: Reach map: " + map;
+        e.modDescription.clear();
+    }
+}
+
 // "1.2.3.4:5678" or "1.2.3.4" -> address + port (default 11774). False for empty/bad input.
 bool ParseAddress(const std::string& text, std::string& address, uint16_t& port) {
     std::string t = text;
@@ -106,7 +130,7 @@ ServerBrowser::ServerBrowser() {
     }
     const SettingsData s = Settings::Get().Snapshot();
 
-    const std::string masterUrl = s.masterServerUrl.empty() ? "https://outbreak-z-test-server.onrender.com" : s.masterServerUrl;
+    const std::string masterUrl = s.masterServerUrl;  // empty = LAN/direct only
     std::snprintf(m_masterUrl, sizeof(m_masterUrl), "%s", masterUrl.c_str());
     MasterServerClient::Get().SetUrl(masterUrl);
     m_directConnectIp[0] = '\0';
@@ -125,6 +149,7 @@ void ServerBrowser::RefreshServers() {
         }
         const std::string key = Key(e.hostAddress, e.port);
         e.isFavorite = std::find(settings.favorites.begin(), settings.favorites.end(), key) != settings.favorites.end();
+        Describe(e);
         list.push_back(std::move(e));
     };
 
@@ -151,6 +176,7 @@ void ServerBrowser::RefreshServers() {
             e.isPasswordProtected = !cfg.password.empty();
             e.isOwn = true;
             e.isMod = IsModdedGame(cfg.mapName, cfg.sessionName) || !cfg.modId.empty();
+            e.build = std::string(VERSION_STRING);
             e.modId = cfg.modId;
             e.modTitle = cfg.modTitle;
             e.source = "YOU";
@@ -214,6 +240,7 @@ void ServerBrowser::RefreshServers() {
         e.modId = m.modId;
         e.modTitle = m.modTitle;
         e.isMod = IsModdedGame(m.map, m.name, m.isMod) || !m.modId.empty();
+        e.build = m.build;
         e.source = "ONLINE";
         add(e);
     }
@@ -232,12 +259,13 @@ void ServerBrowser::RefreshServers() {
 
 void ServerBrowser::Render() {
     // Live list: re-read LAN/master results every 2 s, probe the LAN and ask the master server
-    // every 10 s.
+    // every 5 s so server listings, Players Online, and Total Players stay live.
     const double now = ImGui::GetTime();
-    if (now - m_lastMasterRequest > 10.0) {
+    if (now - m_lastMasterRequest > 5.0) {
         m_lastMasterRequest = now;
         SessionManager::Get().TriggerDiscoveryScan();
         MasterServerClient::Get().RequestList();
+        MasterServerClient::Get().RequestOnlineCount();
     }
     if (now - m_lastRefresh > 2.0) {
         m_lastRefresh = now;
@@ -268,6 +296,8 @@ void ServerBrowser::Render() {
 void ServerBrowser::RenderFilterBar() {
     SessionManager& sessions = SessionManager::Get();
     const bool hosting = sessions.IsHosting();
+    const ImVec2 filterStartPos = ImGui::GetCursorScreenPos();
+    const float filterRightX = filterStartPos.x + ImGui::GetContentRegionAvail().x;
 
     if (hosting) {
         if (NobleStyle::DangerButton("STOP HOSTING", ImVec2(140, 0))) {
@@ -317,6 +347,29 @@ void ServerBrowser::RenderFilterBar() {
     if (!m_status.empty()) {
         ImGui::TextColored(NobleStyle::Accent(), "%s", m_status.c_str());
     }
+
+    // Right-aligned live player counters in the top-right header area (Players Online & Total Players).
+    {
+        int activeInServers = 0;
+        for (const auto& s : m_servers) {
+            if (s.playerCount > 0) activeInServers += s.playerCount;
+        }
+        const int onlineCount = std::max({ MasterServerClient::Get().OnlinePlayers(), activeInServers, 1 });
+        const int totalCount = std::max(MasterServerClient::Get().TotalPlayers(), onlineCount);
+
+        const std::string onlineStr = FormatCountWithCommas(onlineCount) + " Players Online";
+        const std::string totalStr = FormatCountWithCommas(totalCount) + " Total Players";
+
+        ImFont* counterFont = NobleStyle::TitleFont() ? NobleStyle::TitleFont() : ImGui::GetFont();
+        const float fontSize = 26.0f;
+        const ImVec2 onlineSize = counterFont->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, onlineStr.c_str());
+        const ImVec2 totalSize = counterFont->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, totalStr.c_str());
+
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        const ImU32 textCol = IM_COL32(236, 240, 244, 255);
+        dl->AddText(counterFont, fontSize, ImVec2(filterRightX - onlineSize.x, filterStartPos.y - 2.0f), textCol, onlineStr.c_str());
+        dl->AddText(counterFont, fontSize, ImVec2(filterRightX - totalSize.x, filterStartPos.y + 26.0f), textCol, totalStr.c_str());
+    }
 }
 
 bool ServerBrowser::PassesFilters(const ServerEntry& s) const {
@@ -327,10 +380,11 @@ bool ServerBrowser::PassesFilters(const ServerEntry& s) const {
         const std::string map = Lower(s.mapName + " " + MapNames::Display(s.mapName));
         if (name.find(needle) == std::string::npos && map.find(needle) == std::string::npos) return false;
     }
-    if (m_modeFilter == 1 && s.gameMode != "Multiplayer") return false;
-    if (m_modeFilter == 2 && s.gameMode != "Campaign") return false;
-    if (m_modeFilter == 3 && s.gameMode != "Firefight") return false;
-    if (m_modeFilter == 4 && s.gameMode != "Forge") return false;
+    const std::string modeLower = Lower(s.gameMode);
+    if (m_modeFilter == 1 && modeLower != "multiplayer") return false;
+    if (m_modeFilter == 2 && modeLower != "campaign") return false;
+    if (m_modeFilter == 3 && modeLower != "firefight") return false;
+    if (m_modeFilter == 4 && modeLower != "forge") return false;
     if (m_hideFull && s.maxPlayers > 0 && s.playerCount >= s.maxPlayers) return false;
     if (m_hideEmpty && s.playerCount <= 0) return false;
     if (m_hidePassworded && s.isPasswordProtected) return false;
@@ -561,7 +615,11 @@ void ServerBrowser::RenderServerDetails() {
     }
 
     ImGui::Spacing();
-    ImGui::TextWrapped("%s", s.name.c_str());
+    const float modsTextW = ImGui::CalcTextSize("Mods: 0").x;
+    const float availW = ImGui::GetContentRegionAvail().x;
+    ImGui::TextUnformatted(s.name.c_str());
+    ImGui::SameLine(std::max(140.0f, availW - modsTextW));
+    ImGui::TextDisabled("Mods: %d", s.isMod ? 1 : 0);
     ImGui::TextDisabled("%s:%u%s", s.hostAddress.c_str(), s.port, s.isOwn ? " (YOU)" : "");
     ImGui::Spacing();
 
@@ -748,9 +806,9 @@ void ServerBrowser::RenderMasterServerModal() {
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(520, 0));
     if (ImGui::BeginPopupModal("MASTER SERVER", &m_showMasterModal, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::TextWrapped("The master server lists online games. The default uses the Outbreak-Z Render service; clear the address to browse LAN games only.");
+        ImGui::TextWrapped("Optional session registry. Leave empty to browse LAN games and use Direct Connect only.");
         ImGui::SetNextItemWidth(-1);
-        ImGui::InputTextWithHint("##MasterUrl", "https://outbreak-z-test-server.onrender.com", m_masterUrl, IM_ARRAYSIZE(m_masterUrl));
+        ImGui::InputTextWithHint("##MasterUrl", "https://your-registry.example.com (optional)", m_masterUrl, IM_ARRAYSIZE(m_masterUrl));
         NobleStyle::SectionGap();
         if (NobleStyle::PrimaryButton("SAVE", ImVec2(110, 32))) {
             SettingsData d = Settings::Get().Snapshot();

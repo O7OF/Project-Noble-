@@ -3,6 +3,7 @@
 #include "common/Logger.hpp"
 
 #include <algorithm>
+#include <cctype>
 
 namespace noble {
 
@@ -14,6 +15,8 @@ fs::path VFS::s_baseMccPath;
 fs::path VFS::s_userStoragePath;
 fs::path VFS::s_workshopPath;
 fs::path VFS::s_activeMod;
+fs::path VFS::s_mapOverrideFile;
+std::string VFS::s_mapOverrideCarrier;
 bool VFS::s_isInitialized = false;
 std::mutex VFS::s_mutex;
 
@@ -93,10 +96,35 @@ void VFS::Shutdown() {
     NOBLE_INFO("VFS shutdown complete.");
 }
 
+bool VFS::HasActiveMod() { return !s_activeMod.empty(); }
+
 void VFS::SetActiveMod(const fs::path& modFolder) {
     std::error_code ec;
     s_activeMod = modFolder.empty() ? fs::path() : fs::absolute(modFolder, ec);
     if (!s_activeMod.empty()) NOBLE_INFO("VFS: mod active, reading its files first: {}", s_activeMod.string());
+}
+
+void VFS::SetMapOverride(const std::string& carrierScenario, const fs::path& mapFile) {
+    std::error_code ec;
+    s_mapOverrideFile = mapFile.empty() ? fs::path() : fs::absolute(mapFile, ec);
+    s_mapOverrideCarrier.clear();
+    for (char c : carrierScenario) {
+        if (c == '/' || c == '\\') break;
+        s_mapOverrideCarrier.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+    }
+    if (s_mapOverrideCarrier.size() > 4 &&
+        s_mapOverrideCarrier.compare(s_mapOverrideCarrier.size() - 4, 4, ".map") == 0) {
+        s_mapOverrideCarrier.resize(s_mapOverrideCarrier.size() - 4);
+    }
+    if (!s_mapOverrideFile.empty() && !s_mapOverrideCarrier.empty()) {
+        NOBLE_INFO("VFS: map override, serving '{}' for haloreach\\maps\\{}.map", s_mapOverrideFile.string(),
+                   s_mapOverrideCarrier);
+    }
+}
+
+void VFS::ClearMapOverride() {
+    s_mapOverrideFile.clear();
+    s_mapOverrideCarrier.clear();
 }
 
 std::wstring VFS::ResolvePath(const std::wstring& requestedPath, DWORD desiredAccess) {
@@ -142,6 +170,23 @@ std::wstring VFS::ResolvePath(const std::wstring& requestedPath, DWORD desiredAc
         }
 
         if (isTargetingMcc) {
+            // 0. A mod map served in place of a stock map (the engine picked the stock map by map id).
+            // This wins over the active mod and user storage so a same-named stock file cannot shadow it.
+            if (!isWriting && !s_mapOverrideFile.empty() && !s_mapOverrideCarrier.empty()) {
+                std::wstring requested = p.wstring();
+                std::transform(requested.begin(), requested.end(), requested.begin(), ::towlower);
+                std::wstring carrier(s_mapOverrideCarrier.begin(), s_mapOverrideCarrier.end());
+                const std::wstring withFolder = L"maps\\" + carrier + L".map";
+                const std::wstring withoutFolder = carrier + L".map";
+                const bool matches =
+                    (requested.size() >= withFolder.size() &&
+                     requested.compare(requested.size() - withFolder.size(), withFolder.size(), withFolder) == 0) ||
+                    requested == withoutFolder;
+                if (matches && RawPathExists(s_mapOverrideFile.wstring())) {
+                    return s_mapOverrideFile.wstring();
+                }
+            }
+
             // 1. If writing, REDIRECT to User Storage! Never write to base MCC.
             if (isWriting) {
                 fs::path redirected = s_userStoragePath / p;

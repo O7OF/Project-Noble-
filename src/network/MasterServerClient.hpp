@@ -170,6 +170,9 @@ public:
                             const std::string& fallbackHostIp = "",
                             uint16_t fallbackHostPort = 11774);
     bool LeaveLobbySync(const std::string& sessionId, uint64_t peerId);
+    // A player report from the scoreboard. True when the server answered; it stores the report for the team to read.
+    bool SendReportSync(const std::string& sessionId, const std::string& reporter, const std::string& target,
+                        const std::string& reason, const std::string& map, const std::string& mode);
     bool LaunchLobbySync(const std::string& sessionId,
                          const std::string& map,
                          const std::string& mode,
@@ -183,6 +186,11 @@ public:
 
     // Browsing: ask for the list (asynchronously); the result is read with Sessions().
     void RequestList();
+    // Live count of logged-in clients from /api/players/online (health endpoint as fallback).
+    void RequestOnlineCount();
+    int OnlinePlayers() const { return m_onlinePlayers.load(); }
+    int TotalPlayers() const { return m_totalPlayers.load(); }
+    int OnlineServers() const { return m_onlineServers.load(); }
     std::vector<MasterSession> Sessions() const;
     std::string Status() const;   // last result / error, for the menu
 
@@ -196,6 +204,7 @@ private:
     void EnsureThread();
     void WorkerLoop();
     void DoList();
+    void DoOnline();
     void DoRegister();
     void DoHeartbeat();
     void DoUnregister();
@@ -206,11 +215,15 @@ private:
     std::thread m_thread;
     bool m_stop = false;
     bool m_listRequested = false;
+    bool m_onlineRequested = false;
     bool m_unregisterRequested = false;
 
     std::string m_url;
     std::string m_status;
     std::vector<MasterSession> m_sessions;
+    std::atomic<int> m_onlinePlayers{0};
+    std::atomic<int> m_totalPlayers{0};
+    std::atomic<int> m_onlineServers{0};
 
     std::atomic<bool> m_advertising{false};
     MasterAdvert m_advert;

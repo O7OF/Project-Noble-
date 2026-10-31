@@ -1,6 +1,7 @@
 #include "MasterServerClient.hpp"
 #include "UPnP.hpp"
 #include "NetworkTransport.hpp"
+#include "common/DeviceIdentity.hpp"
 #include "common/Logger.hpp"
 #include "common/Version.hpp"
 
@@ -95,6 +96,10 @@ HttpResult HttpRequest(const std::string& fullUrl,
     }
     if (request) {
         std::wstring headers = L"Content-Type: application/json\r\nAccept: application/json\r\n";
+        const DeviceIdentity& devId = DeviceIdentityStore::Get();
+        if (!devId.deviceId.empty()) {
+            headers += L"X-Device-Id: " + Widen(devId.deviceId) + L"\r\n";
+        }
         if (!sessionToken.empty()) {
             headers += L"X-Session-Token: " + Widen(sessionToken) + L"\r\n";
         }
@@ -215,6 +220,14 @@ void MasterServerClient::RequestList() {
     m_wake.notify_all();
 }
 
+void MasterServerClient::RequestOnlineCount() {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (m_url.empty()) return;
+    m_onlineRequested = true;
+    EnsureThread();
+    m_wake.notify_all();
+}
+
 void MasterServerClient::StartAdvertising(const MasterAdvert& advert) {
     std::lock_guard<std::mutex> lock(m_mutex);
     if (m_url.empty()) return;
@@ -295,16 +308,18 @@ void MasterServerClient::WorkerLoop() {
     std::unique_lock<std::mutex> lock(m_mutex);
     while (true) {
         m_wake.wait_for(lock, std::chrono::seconds(1), [this] {
-            return m_stop || m_listRequested || m_unregisterRequested ||
+            return m_stop || m_listRequested || m_onlineRequested || m_unregisterRequested ||
                    (m_advertising && std::chrono::steady_clock::now() >= m_nextHeartbeat);
         });
         const bool doUnregister = m_unregisterRequested;
         const bool doList = m_listRequested;
+        const bool doOnline = m_onlineRequested;
         const bool doHeartbeat = m_advertising && std::chrono::steady_clock::now() >= m_nextHeartbeat;
         const bool stop = m_stop;
         const bool registered = !m_sessionId.empty();
         m_unregisterRequested = false;
         m_listRequested = false;
+        m_onlineRequested = false;
         lock.unlock();
 
         if (doUnregister) DoUnregister();
@@ -318,24 +333,63 @@ void MasterServerClient::WorkerLoop() {
             }
         }
         if (doList) DoList();
+        if (doOnline) DoOnline();
 
         lock.lock();
-        if (doHeartbeat) m_nextHeartbeat = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+        if (doHeartbeat) m_nextHeartbeat = std::chrono::steady_clock::now() + std::chrono::seconds(10);
         if (stop) break;
     }
 }
 
+void MasterServerClient::DoOnline() {
+    const DeviceIdentity& id = DeviceIdentityStore::Get();
+    nlohmann::json presenceBody = {
+        {"deviceId", id.deviceId},
+        {"username", id.playerName},
+        {"serviceTag", id.serviceTag}
+    };
+    HttpResult r = HttpRequest(Url(), L"POST", "/api/presence", presenceBody.dump());
+    if (!r.ok) {
+        r = HttpRequest(Url(), L"GET", "/api/players/online", {});
+    }
+    if (!r.ok) {
+        // Older deployments do not have the players endpoint; health carries the same counters.
+        r = HttpRequest(Url(), L"GET", "/api/health", {});
+    }
+    if (!r.ok) return;
+    try {
+        const nlohmann::json j = nlohmann::json::parse(r.body);
+        const int online = j.value("online", j.value("activeSessions", 0));
+        const int total = j.value("totalPlayers", j.value("registeredPlayers", 0));
+        const int servers = j.value("servers", j.value("masterSessions", 0));
+        m_onlinePlayers.store(std::max(0, online));
+        if (total > 0) m_totalPlayers.store(std::max(total, online));
+        m_onlineServers.store(std::max(0, servers));
+    } catch (...) {
+    }
+}
+
 void MasterServerClient::DoList() {
-    const HttpResult r = HttpRequest(Url(), L"GET", "/api/sessions", {});
+    HttpResult r = HttpRequest(Url(), L"GET", "/api/browser", {});
+    if (!r.ok) r = HttpRequest(Url(), L"GET", "/api/sessions", {});
     if (!r.ok) {
         SetStatus(r.error);
         return;
     }
     std::vector<MasterSession> list;
+    int online = -1;
+    int total = -1;
     try {
         const nlohmann::json j = nlohmann::json::parse(r.body);
-        if (j.is_array()) {
-            for (const auto& item : j) {
+        const nlohmann::json* items = &j;
+        if (j.is_object()) {
+            if (j.contains("online")) online = j.value("online", 0);
+            if (j.contains("totalPlayers")) total = j.value("totalPlayers", 0);
+            else if (j.contains("registeredPlayers")) total = j.value("registeredPlayers", 0);
+            if (j.contains("sessions") && j["sessions"].is_array()) items = &j["sessions"];
+        }
+        if (items->is_array()) {
+            for (const auto& item : *items) {
                 if (!item.is_object() || list.size() >= 500) continue;
                 MasterSession s;
                 s.id = Str(item, "id", 64);
@@ -361,6 +415,8 @@ void MasterServerClient::DoList() {
         SetStatus("master server sent an unreadable list");
         return;
     }
+    if (online >= 0) m_onlinePlayers.store(std::max(0, online));
+    if (total > 0) m_totalPlayers.store(std::max(total, std::max(0, online)));
     std::lock_guard<std::mutex> lock(m_mutex);
     m_status = std::to_string(list.size()) + " game(s) on the master server";
     m_sessions = std::move(list);
@@ -803,6 +859,16 @@ bool MasterServerClient::LeaveLobbySync(const std::string& sessionId, uint64_t p
     };
     const HttpResult r = HttpRequest(Url(), L"POST", "/api/sessions/" + sessionId + "/lobby/leave", body.dump());
     return r.ok;
+}
+
+bool MasterServerClient::SendReportSync(const std::string& sessionId, const std::string& reporter, const std::string& target,
+                                        const std::string& reason, const std::string& map, const std::string& mode) {
+    if (!Enabled()) return false;
+    const nlohmann::json body = {
+        { "session_id", sessionId }, { "reporter", reporter }, { "target", target },
+        { "reason", reason }, { "map", map }, { "mode", mode }
+    };
+    return HttpRequest(Url(), L"POST", "/api/reports", body.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace)).ok;
 }
 
 bool MasterServerClient::LaunchLobbySync(const std::string& sessionId,

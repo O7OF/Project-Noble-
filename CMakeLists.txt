@@ -1,4 +1,14 @@
 cmake_minimum_required(VERSION 3.20)
+if(WIN32)
+    set(CMAKE_EXE_LINKER_FLAGS_INIT "/machine:x64 /MANIFEST:NO")
+    set(CMAKE_SHARED_LINKER_FLAGS_INIT "/machine:x64 /MANIFEST:NO")
+    set(CMAKE_USE_WIN32_THREADS_INIT 1 CACHE INTERNAL "" FORCE)
+    set(CMAKE_USE_PTHREADS_INIT 0 CACHE INTERNAL "" FORCE)
+    set(CMAKE_HAVE_PTHREADS_CREATE 0 CACHE INTERNAL "" FORCE)
+    set(CMAKE_HAVE_LIBC_PTHREAD 0 CACHE INTERNAL "" FORCE)
+    set(CMAKE_THREAD_LIBS_INIT "" CACHE INTERNAL "" FORCE)
+    set(Threads_FOUND TRUE CACHE INTERNAL "" FORCE)
+endif()
 project(HaloReachCommunityEdition VERSION 0.8.1 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -134,7 +144,6 @@ set(SOURCES
     src/ui/UIManager.cpp
     src/ui/ServerBrowser.cpp
     src/ui/ArmorCustomizer.cpp
-    src/ui/ObjModel.cpp
     src/ui/WorkshopManager.cpp
     src/ui/ModDownloadPrompt.cpp
     src/ui/MissionLauncher.cpp
@@ -156,9 +165,12 @@ set(SOURCES
     src/ui/NobleUi.cpp
     src/ui/CareerPanel.cpp
     src/common/Settings.cpp
+    src/common/DeviceIdentity.cpp
+    src/common/SaveCodec.cpp
     src/engine/KeyBindings.cpp
     src/career/Career.cpp
     src/network/MasterServerClient.cpp
+    src/network/SteamAuth.cpp
     src/network/NetworkTransport.cpp
     src/network/AuthClient.cpp
     src/network/SocialClient.cpp
@@ -192,7 +204,6 @@ set(HEADERS
     src/ui/UIManager.hpp
     src/ui/ServerBrowser.hpp
     src/ui/ArmorCustomizer.hpp
-    src/ui/ObjModel.hpp
     src/ui/WorkshopManager.hpp
     src/ui/ModDownloadPrompt.hpp
     src/ui/MissionLauncher.hpp
@@ -221,6 +232,9 @@ set(HEADERS
 )
 
 add_executable(noble-client WIN32 ${SOURCES} ${HEADERS})
+if(NOBLE_DEV_BUILD)
+    target_compile_definitions(noble-client PRIVATE NOBLE_DEV_BUILD=1)
+endif()
 if(MSVC)
     target_compile_options(noble-client PRIVATE /W4)
 endif()
@@ -252,16 +266,9 @@ target_link_libraries(noble-client PRIVATE
 
 target_link_options(noble-client PRIVATE /MAP)
 
-# Copy the repo's data folder next to the exe (skipped when there is none; data\ is git-ignored).
-if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/data)
-    add_custom_command(TARGET noble-client POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-            ${CMAKE_CURRENT_SOURCE_DIR}/data
-            $<TARGET_FILE_DIR:noble-client>/data
-    )
-endif()
-
-# Noble's own art (original work, tracked in assets\) goes into the same data folder.
+# Noble's own art (original work, tracked in assets\) goes into the data folder alongside the exe.
+# Note: bulk runtime data\ is synced sequentially by build.bat / build-dev.bat / build-package.ps1 using robocopy
+# so parallel links of noble-client and noble-dev never race on build/bin/Release/data or overwrite userdata.
 if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/assets)
     add_custom_command(TARGET noble-client POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory
@@ -269,6 +276,21 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/assets)
             $<TARGET_FILE_DIR:noble-client>/data
     )
 endif()
+
+# Developer build: same sources, NOBLE_DEV_BUILD, separate executable in the same output directory.
+add_executable(noble-dev WIN32 ${SOURCES} ${HEADERS})
+set_target_properties(noble-dev PROPERTIES OUTPUT_NAME "noble-dev")
+target_compile_definitions(noble-dev PRIVATE NOBLE_DEV_BUILD=1)
+if(MSVC)
+    target_compile_options(noble-dev PRIVATE /W4)
+endif()
+target_include_directories(noble-dev PRIVATE src)
+target_link_libraries(noble-dev PRIVATE
+    d3d11 dxgi d3dcompiler windowscodecs ole32 comdlg32 ws2_32 iphlpapi
+    spdlog::spdlog nlohmann_json::nlohmann_json minhook imgui
+    dbghelp winhttp winmm xaudio2 ole32 windowscodecs
+)
+target_link_options(noble-dev PRIVATE /MAP)
 
 # -----------------------------------------------------------------------------
 # Headless Dedicated Server Binary (noble-dedicated.exe)
@@ -306,6 +328,9 @@ set(DEDICATED_HEADERS
 )
 
 add_executable(noble-dedicated ${DEDICATED_SOURCES} ${DEDICATED_HEADERS})
+if(NOBLE_DEV_BUILD)
+    target_compile_definitions(noble-dedicated PRIVATE NOBLE_DEV_BUILD=1)
+endif()
 if(MSVC)
     target_compile_options(noble-dedicated PRIVATE /W4)
 endif()

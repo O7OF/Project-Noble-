@@ -23,6 +23,9 @@ public:
 
     AuthResult Login(const std::string& username, const std::string& password);
     AuthResult Register(const std::string& username, const std::string& password);
+    AuthResult LoginWithSteam();
+    bool SetPlayerName(const std::string& name);
+    bool IsSteamLinked() const;
     void Logout();
 
     // Re-asks the master server whether this account is a developer (POST /api/dev/check).
@@ -42,6 +45,7 @@ private:
 
     mutable std::mutex m_authMutex;
     bool m_isLoggedIn = false;
+    bool m_steamLinked = false;
     std::atomic<bool> m_isDeveloper{ false };
     std::atomic<bool> m_refreshing{ false };
     std::string m_username;

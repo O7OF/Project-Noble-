@@ -20,6 +20,9 @@ struct SettingsData {
     int height = 720;
     bool borderless = false;       // borderless window covering the monitor
     float fieldOfView = 78.0f;     // horizontal degrees; 78 is Halo: Reach's own default (haloreach+0xB42C10)
+    float thirdPersonZoom = 0.50f; // 0.10..1.00 (10 %..100 %): how much the third-person camera zooms in on right-click aim
+    float thirdPersonOffsetX = 0.0f; // -1.00..1.00: third-person camera horizontal offset (left < 0, right > 0)
+    float thirdPersonOffsetY = 0.0f; // -1.00..1.00: third-person camera vertical offset (down < 0, up > 0)
     bool verticalSync = false;     // Noble default: off (Tyler)
     int fpsLimit = 0;              // 0 = uncapped
     bool showFps = false;

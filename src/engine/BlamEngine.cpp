@@ -4,12 +4,14 @@
 #include "network/MasterServerClient.hpp"
 #include "ui/LoadScreen.hpp"
 #include "career/Career.hpp"
+#include "vfs/VFS.hpp"
 #include "hooks/HookManager.hpp"
 #include "hooks/LobbyPatches.hpp"
 #include "common/Logger.hpp"
 #include <algorithm>
 #include <thread>
 #include <chrono>
+#include <cstdlib>
 #include <cstring>
 #include <cwchar>
 #include <fstream>
@@ -843,6 +845,30 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
     NOBLE_INFO("=================================================");
 
     uint32_t mapId = ResolveMapId(mapName);
+
+    // DIAGNOSTIC (temporary): NOBLE_MAP_NAME_OVERRIDE=<name> rewrites the engine's own map-name
+    // string for the launch index, so the engine builds maps\<name>.map and maps\info\<name>.mapinfo
+    // paths. Used to verify that a modded map file can stand in for a stock map slot.
+    char* mapNameOverride = nullptr;
+    size_t mapNameOverrideLen = 0;
+    if (_dupenv_s(&mapNameOverride, &mapNameOverrideLen, "NOBLE_MAP_NAME_OVERRIDE") == 0 && mapNameOverride) {
+        if (mapNameOverride[0] != '\0' && m_hModule && mapId >= 178 && mapId <= 219) {
+            using MapNameFn = const char* (*)(int);
+            auto engineMapName = reinterpret_cast<MapNameFn>(reinterpret_cast<uintptr_t>(m_hModule) + 0x38E98);
+            const char* existing = engineMapName(static_cast<int>(mapId));
+            if (existing) {
+                const size_t len = std::strlen(mapNameOverride);
+                DWORD oldProtect = 0;
+                if (VirtualProtect(const_cast<char*>(existing), len + 1, PAGE_READWRITE, &oldProtect)) {
+                    std::memcpy(const_cast<char*>(existing), mapNameOverride, len + 1);
+                    VirtualProtect(const_cast<char*>(existing), len + 1, oldProtect, &oldProtect);
+                    NOBLE_WARN("BlamEngine: DIAGNOSTIC map name override for index {} -> '{}'", mapId, mapNameOverride);
+                }
+            }
+        }
+        std::free(mapNameOverride);
+    }
+
     uint32_t gameModeTag = 2; // Default multiplayer (Slayer, CTF, Invasion, all Megalo variants)
     const bool forgeMode = _stricmp(gameMode.c_str(), "forge") == 0 ||
                            _stricmp(gameMode.c_str(), "sandbox") == 0;

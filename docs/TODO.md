@@ -242,19 +242,35 @@ items above close. Keep the spec open when building any screen so the details la
 - [~] @claude 2026-10-31 - commit eb757b8, 2.00x = Reach stock, measured; **open:** raising the full-push maximum needs the engine's turn rate found (research); **needs: Tyler** to feel it in a match - **Look sensitivity baseline**: 19 is the current default; document the scale against Reach's 1-10 and expose horizontal/vertical
 - [ ] **(Tyler test) Controller presets** - pick Southpaw or Bumper Jumper, Apply, play a match, rebind one button
 
-- [~] @claude 2026-10-31 03:32 - **Pre-game / Host Game lobby feels off - bring it flush with the other screens** (Tyler, 2026-10-31): apply the shared layout rules (header/rule, margins, panel widths, row height, button sizes, focus colours, controller prompt bar) used by Settings and the Armory; the lobby currently reads as a different design. Cover host and guest views, ready state, slot list, team columns, map/mode header and the start/back prompts. Before/after captures. - @claude
+- [x] @claude 2026-10-31 03:53 - commits f0fda8b, ec531b4; captures docs/screenshots/lobby-after-*.png and roster-*.png; no two-PC run yet - **Pre-game / Host Game lobby feels off - bring it flush with the other screens** (Tyler, 2026-10-31): apply the shared layout rules (header/rule, margins, panel widths, row height, button sizes, focus colours, controller prompt bar) used by Settings and the Armory; the lobby currently reads as a different design. Cover host and guest views, ready state, slot list, team columns, map/mode header and the start/back prompts. Before/after captures. - @claude
 
 - [x] @deepseek 2026-10-31 04:25 - **Elite pipeline + colour system** (night block 1) - commit e7ab6c9: `docs/reference/elite-slots.md` (314 rrpmcg components, elite ranks) and `docs/reference/elite-m10.md` (cache sections, 79 elite shader + 117 bitmap paths, 57/60 sampled bitmaps already stock vs 51/60 shaders pack-only - the rank look is in the shaders). Next: shader colour parameters.
 
-- [ ] **Lobby/scoreboard: split teams into two columns** (Tyler, 2026-10-31): RED on the left, BLUE on the right, each
+- [~] @claude 2026-10-31 03:53 - lobby ec531b4, scoreboard 4792746; captures docs/screenshots/roster-*.png, scoreboard-*.png - **Lobby/scoreboard: split teams into two columns** (Tyler, 2026-10-31): RED on the left, BLUE on the right, each
   column scrolling straight down through its own player list (independent scroll positions, sticky team headers, team
   colour/dot per row, current player pinned in view). Free-for-all falls back to one column; uneven teams leave the shorter
   column empty rather than reordering. Stress test at 64/64 and 100/28. - @claude
-- [ ] **Large-lobby roster: scrollable player list up to 128** (Tyler, 2026-10-31): the pre-game lobby and the in-game
+- [~] @claude 2026-10-31 03:53 - lobby ec531b4, scoreboard 4792746; **controller page-scroll on the scoreboard open**; needs: @deepseek server roster limits - **Large-lobby roster: scrollable player list up to 128** (Tyler, 2026-10-31): the pre-game lobby and the in-game
   scoreboard must render far more than Reach's 16 rows with scrolling (virtualised rows, sticky header, current player kept
   in view, controller page-scroll, 16/32/64/128 stress fixtures). - @claude
 - [ ] **Server roster/limits for 128 entries** (Tyler, 2026-10-31): raise `MASTER_MAX_PLAYERS` and the lobby roster caps,
   make join/heartbeat/roster payloads bounded but 128-safe, and add a synthetic 128-player fixture for the UI tests. - @deepseek
+- [ ] **Pad Back: `d27ab84` is a no-op** (@claude review 2026-10-31): line 1430 already strips Back, comment names removed `GamepadUi`. If Reach's scoreboard still opens on pad Back the cause is elsewhere. Remove the line or find the real path. - @deepseek
+- [ ] **Lobby READY state** is local only; send it in the roster if it should mean anything. - needs: @deepseek
+- [ ] **Friends panel INVITE and Social screen** need a controller path; Y opens Social, whose pad flow is untested. - @claude
+- [ ] **Vote to kick is blocked** (@claude review 2026-10-31): server clamps peer ids to 1..64 so real voters fail, votes aren't authenticated, and nothing removes a player when a vote passes. Button stays grey until fixed. - @deepseek
+- [ ] **End Round / End Match need the multiplayer end path**: `haloreach+0x7B3EC(-1, 0, 1)` tried twice, timer kept running. Same search as night block 3. Button stays grey until then. - needs: @deepseek
+- [ ] **Roster should carry emblem colours** (`emblem_primary_color`, `emblem_secondary_color`, `emblem_background_color`, indexes 0-29) so other players see them. - needs: @deepseek
+- [ ] **Scoreboard actions have no controller path**: selecting a player and REPORT need the mouse. - @claude
+- [~] @claude 2026-10-31 - live ping wired, commit 4792746; **needs:** a two-process run to see a real value - **Scoreboard real ping**
+- [ ] **First-start question** (spec 4.12): "New to Halo: Reach?" with a short setup; `firstStartDone`. - @claude
+- [ ] **Crash / issue report button** (spec 4.12, approved): bundle the log with player names removed, open logs folder, settings backup and restore. - unowned
+- [ ] **Import/export of key bindings and settings** (spec 4.12). - @claude
+- [ ] **Scoreboard mute icons and Mute all** (spec 4.16). Waits for voice. - @claude, needs: @deepseek voice
+- [ ] **Rotation voting** (spec 4.14): 2-3 options after each game, ties to the host. Waits for rotation. - @deepseek then @claude
+- [ ] **Armory left vs right shoulder camera** (handoff guide 5.2): the map has one shoulder camera; needs a lateral camera offset from engine globals. - @deepseek
+- [ ] **Career deaths look uncounted**: the card shows 62 kills / 0 deaths over 15 games on the test profile. Check the results parsing. - @claude
+- [ ] **Hints and the full-screen panels don't line up**: on Settings and Social the prompt row starts further right than the panel. Cosmetic. - @claude
 - [ ] **RESEARCH: real match capacity beyond 16** (Tyler, 2026-10-31): Reach's network session is 16 players; the UI can
   list 128, but an actual 128-player match needs the `capacity`/`coopx`-class engine work in `docs/player-count-scaling.md`
   (RR patch path) plus bandwidth work. Keep 128 as the lobby/browser ceiling for now and file match capacity as research,

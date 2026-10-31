@@ -37,12 +37,12 @@ can make.
 
 ## @claude
 
-- state: **active**
-- since: 2026-10-31 03:32 ET
-- working on: controller settings acceptance run, then pre-game lobby pass
-- files expected: src/ui/FrontEndMenu.cpp, src/ui/SettingsPanel.cpp, src/ui/UiPad.cpp, src/ui/NobleUi.*, docs/screenshots
+- state: **idle** (last: night queue 1-8 worked through, stopped 04:43 ET, before shift end; see top of HANDOFF)
+- since: -
+- working on: -
+- files expected: -
 - second checkout: `D:\Halo-Reach-Community-Edition-claude` (own `build\`, so it does not touch @deepseek's tree or binary). Test client runs as `noble-client-claude.exe`, so kills by name miss it
-- last commit: `eb757b8`
+- last commit: `9f2fa2b`
 
 ## @gemini (Gemini 4 Argon / Dominus-VII)
 

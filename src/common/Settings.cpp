@@ -34,6 +34,9 @@ void Clamp(SettingsData& d) {
     d.width = std::clamp(d.width, 640, 7680);
     d.height = std::clamp(d.height, 360, 4320);
     d.fieldOfView = std::clamp(d.fieldOfView, 70.0f, 120.0f);  // slider range (SETTINGS > VIDEO)
+    d.thirdPersonZoom = std::clamp(d.thirdPersonZoom, 0.10f, 1.00f);
+    d.thirdPersonOffsetX = std::clamp(d.thirdPersonOffsetX, -1.00f, 1.00f);
+    d.thirdPersonOffsetY = std::clamp(d.thirdPersonOffsetY, -1.00f, 1.00f);
     constexpr int kFpsLimits[] = { 0, 30, 60, 120, 144, 165, 200 };
     if (std::find(std::begin(kFpsLimits), std::end(kFpsLimits), d.fpsLimit) == std::end(kFpsLimits)) {
         d.fpsLimit = 0;
@@ -64,7 +67,7 @@ void Clamp(SettingsData& d) {
     d.padLeftDeadZone = std::clamp(d.padLeftDeadZone, 0.0f, 0.5f);
     d.padRightDeadZone = std::clamp(d.padRightDeadZone, 0.0f, 0.5f);
     for (auto it = d.keyOverrides.begin(); it != d.keyOverrides.end();) {
-        if (it->first < 0 || it->first >= 66 || it->second <= 0 || it->second >= 256) it = d.keyOverrides.erase(it);
+        if (it->first < 0 || it->first >= 67 || it->second <= 0 || it->second >= 256) it = d.keyOverrides.erase(it);
         else ++it;
     }
 }
@@ -92,6 +95,9 @@ void Settings::Load() {
             Read(j, "height", d.height);
             Read(j, "borderless", d.borderless);
             Read(j, "fieldOfView", d.fieldOfView);
+            Read(j, "thirdPersonZoom", d.thirdPersonZoom);
+            Read(j, "thirdPersonOffsetX", d.thirdPersonOffsetX);
+            Read(j, "thirdPersonOffsetY", d.thirdPersonOffsetY);
             Read(j, "verticalSync", d.verticalSync);
             Read(j, "fpsLimit", d.fpsLimit);
             Read(j, "showFps", d.showFps);
@@ -166,8 +172,10 @@ void Settings::Load() {
     Read(j, "lastPlayedMod", d.lastPlayedMod);
             Read(j, "serviceTag", d.serviceTag);
             Read(j, "masterServerUrl", d.masterServerUrl);
-            if (d.masterServerUrl.empty()) {
-                d.masterServerUrl = "https://outbreak-z-test-server.onrender.com";
+            // Free federation: west is the primary registry; it merges the east peer server-side.
+            // Clear this field in Settings to use LAN/direct-connect only.
+            if (d.masterServerUrl.empty() || d.masterServerUrl == "https://outbreak-z-test-server.onrender.com") {
+                d.masterServerUrl = "https://servertestdeploy-jfxb.onrender.com";
             }
             Read(j, "favorites", d.favorites);
             Read(j, "accountUsername", d.accountUsername);
@@ -241,6 +249,9 @@ bool Settings::Save() {
         j["height"] = d.height;
         j["borderless"] = d.borderless;
         j["fieldOfView"] = d.fieldOfView;
+        j["thirdPersonZoom"] = d.thirdPersonZoom;
+        j["thirdPersonOffsetX"] = d.thirdPersonOffsetX;
+        j["thirdPersonOffsetY"] = d.thirdPersonOffsetY;
         j["verticalSync"] = d.verticalSync;
         j["fpsLimit"] = d.fpsLimit;
         j["showFps"] = d.showFps;

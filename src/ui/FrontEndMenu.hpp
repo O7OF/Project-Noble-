@@ -28,6 +28,10 @@ struct FrontEndChoice {
     uint64_t skulls = 0;         // campaign: MCC skull bits (launch block +0x48)
     std::filesystem::path modFolder; // mod chosen for this game (VFS::SetActiveMod), empty = none
     std::string modTitle;
+    std::filesystem::path mapOverride; // modded map served in place of the stock map in `map`
+    std::string mapTitle;              // mod map's title (loading screen, post-game)
+    std::filesystem::path mapImage;    // mod map's loading-screen picture
+    std::filesystem::path mapThumb;    // mod map's preview picture
 };
 
 class FrontEndMenu {

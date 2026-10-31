@@ -643,6 +643,12 @@ UiTexture MapPreview(const std::string& scenario, bool large) {
     return {};
 }
 
+UiTexture ImageFile(const std::filesystem::path& path) {
+    if (path.empty()) return {};
+    std::lock_guard<std::mutex> lock(s_mutex);
+    return Cached("file:" + path.string(), [&] { return LoadImageFile(path); });
+}
+
 UiTexture MapPhoto(const std::string& scenario) {
     if (scenario.empty()) return {};
     if (UiTexture preview = MapPreview(scenario, true)) return preview;
@@ -892,19 +898,17 @@ UiTexture Nameplate(int index) {
     return FileCached(target);
 }
 
-void DrawEmblem(ImDrawList* dl, int symbolIndex, int backgroundIndex, ImVec2 min, ImVec2 max, ImU32 tint) {
+void DrawEmblem(ImDrawList* dl, int symbolIndex, int backgroundIndex, ImVec2 min, ImVec2 max, const EmblemColors& colors) {
     EnsureCustomizationCatalogs();
     if (backgroundIndex > 0 && static_cast<size_t>(backgroundIndex) <= s_emblemBackgrounds.size()) {
-        // MCC's backgrounds are a mix of black and light grey and Reach colours them. Until players can pick emblem colours,
-        // a dark steel keeps the shape visible and the light symbol readable on all of them.
         if (const UiTexture back = EmblemByName(s_emblemBackgrounds[static_cast<size_t>(backgroundIndex) - 1].image))
-            DrawContain(dl, back, min, max, IM_COL32(91, 117, 148, 200));
+            DrawContain(dl, back, min, max, colors.background);
     }
     if (symbolIndex < 0 || static_cast<size_t>(symbolIndex) >= s_emblemCatalog.size()) symbolIndex = 0;
     if (s_emblemCatalog.empty()) return;
     const EmblemInfo& symbol = s_emblemCatalog[static_cast<size_t>(symbolIndex)];
-    if (const UiTexture primary = EmblemByName(symbol.image1)) DrawContain(dl, primary, min, max, tint);
-    if (const UiTexture secondary = EmblemByName(symbol.image2)) DrawContain(dl, secondary, min, max, tint);
+    if (const UiTexture primary = EmblemByName(symbol.image1)) DrawContain(dl, primary, min, max, colors.primary);
+    if (const UiTexture secondary = EmblemByName(symbol.image2)) DrawContain(dl, secondary, min, max, colors.secondary);
 }
 
 UiTexture KeyedPackImage(const std::string& pack, const std::string& name) {

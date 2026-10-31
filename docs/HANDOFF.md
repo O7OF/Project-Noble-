@@ -7,12 +7,250 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 
 **Goal:** `noble-client.exe` loads MCC's own `haloreach.dll` (Halo: Reach) and drives it **without MCC**, like the existing
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
-MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.8.3 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.1 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
 
 ### How this file is kept (Tyler, 2026-10-30)
 
 - **Every change gets an entry - no exceptions**: code, UI, docs, tools, config, server. Add it at the **top**, directly
-  under the `--` line, as `## 0. Pick up here (YYYY-MM-DD, HH:MM ET) - <what changed> (<name / GitHub handle>)`, and
+  under the `--` line, as
+  `## 0. Pick up here (2026-10-31, 08:25 ET) - Pre-game lobby map identity (@deepseek / DeepSeek)`.
+
+**Current version:** 0.9.2. **Developer build:** 0.9.2-dev. Dev binaries report the suffix next to the version string.
+
+**Built and verified:** release `build\bin\Release\noble-client.exe`, developer `build\bin\Release\noble-dev.exe`, dedicated `build\bin\Release\noble-dedicated.exe`, and the packaged `Documents\Noble Launcher\Noble.exe` (full runtime tree; package stayed running in a normal launch test).
+
+### Identity and saves
+
+- Removed the server login/register dependency. `AuthClient` now creates a local identity from the Windows `MachineGuid` + C: volume serial, stored in `data\userdata\identity.json`; display name is editable and does **not** change the device/player ID.
+- Career saves are per device: `data\userdata\<deviceId>\career.dat`.
+- Career progress is encrypted with Windows DPAPI (`src/common/SaveCodec.*`): Notepad cannot read/edit it. Existing `career.json` is migrated once and removed.
+- Appearance is now `data\appearance.dat`, also DPAPI-encrypted. `ArmorCustomizer`, `ReachHost` and `ElitePack` read it through `SaveCodec`; old `appearance.json` locations are migrated. This is tamper deterrence, not server-grade anti-cheat (memory editing remains possible).
+- Removed the account LOG OUT button and the LINK STEAM UI. Steam ticket code remains optional but unused.
+
+### Dev/release separation
+
+- `build-dev.bat` builds the `noble-dev` target into the same `build\bin\Release` folder as the release, as `noble-dev.exe`. No `build-dev\` tree.
+- `NOBLE_DEV_BUILD` is a compile-time definition. Release `AuthClient::IsDeveloper()` always returns false; `noble-dev` always returns true, so the dev menu and `[DEV]` tag cannot appear in release and always appear in dev.
+- `Version.hpp` emits `0.8.8-dev` for the developer target.
+
+### Server browser
+
+- Mode tabs: ALL, CAMPAIGN, MULTIPLAYER, FORGE, FIREFIGHT, THEATRE, CUSTOM.
+- Hide empty / hide full / no password / not started / favourites toggles.
+- `[MOD]` / `[STOCK]` badges, map display name, raw scenario on hover, map/mod description, and the host build string in GAME DETAILS for version-mismatch checks.
+- `/api/browser` on ServerTestDeploy federates the west/east Render registries (peer URL env override, otherwise hostname auto-detection) and returns sessions + online count in one call. Heartbeats are 10 s, browser polling 15 s.
+- `online` counts in-memory Steam sessions; with Steam UI removed it currently reads 0 until a presence heartbeat is added.
+
+### Packaging and cleanup
+
+- `build-package.bat` / `.ps1` builds release and copies the **complete** working runtime tree to `Documents\Noble Launcher` (selective copies crashed at startup). `tools\vgmstream\vgmstream-cli.exe` stays next to the exe in the same layout as the workspace build. Saves and user data remain local.
+- Removed the unused `ObjModel` loader and its CMake entries; deleted the old `build-dev` directory and generated logs/captures.
+
+### Packaging / Defender
+
+The packaged executable is unsigned and performs legitimate but AV-sensitive host work (MinHook detours, loading and hooking MCC's `haloreach.dll`, VFS IAT hooks). Windows Defender quarantined both `noble-client.exe` and the renamed `Noble.exe` as `Trojan:Win32/Bearfoos.A!ml` (ThreatID 2147731250); this matches a machine-learning false positive on game loaders. Do not disable Defender for players. Before public release: code-sign the executable, submit the binary to Microsoft's false-positive portal, and only then offer an exclusion/shortcut. Verify any downloaded build against a published SHA-256; source builds are the trusted path.
+
+### Notes / next
+
+- The earlier Forge World auto-map override was reverted: base maps load normally; modded palettes come only from mods. The HREK Thorage tag-data swap (O7 Pelican + Phantom MP, `wraith_d` driver, `warthog_p` passenger seats) is documented in `docs/FORGE-THORAGE.md`.
+- Automatic updates are **not implemented**. Suggested path: publish a signed manifest (`version`, `url`, `sha256`) from ServerTestDeploy, check it at startup, download to a temp file, verify, then replace `Noble.exe` on next launch. Do not auto-install unsigned files.
+
+## 0. Pick up here (2026-10-31, 13:35 ET) - 3rd-person weapon zoom + camera offsets, lower weapon keybind, in-game armor fix, server browser UI & .bat build fixes (Gemini 4 Argon)
+
+**Version:** 0.9.2 / 0.9.2-dev (Pregame Map Identity). **Built & packaged:** `build\bin\Release\noble-client.exe`, `build\bin\Release\noble-dev.exe`, `build\bin\Release\noble-dedicated.exe`, and `C:\Users\Reeve\Documents\Noble Launcher\Noble.exe`.
+
+**What changed**
+1. **3rd-Person Weapon Aim Zoom & Camera Offset Settings (`src/engine/CameraThirdPerson.*`, `src/common/Settings.*`, `src/ui/SettingsPanel.cpp`, `src/engine/ReachHost.cpp`):**
+   - Hooked `c_following_camera::update` (`haloreach+0x1E2028`) and `c_orbiting_camera::update` (`haloreach+0x1DCADC`), which both take `(void* camera, int32_t userIndex, float dt, void* observerCommand)` and write the Blam! `s_observer_command` struct (`focus_offset` at `+0x10..0x18`, `focus_distance` at `+0x24`, and `field_of_view` in radians at `+0x28`).
+   - Holding Right Click (`VK_RBUTTON` or the bound Zoom key) while in third person smoothly interpolates FOV zoom according to **Settings > Game Options > Camera > Third-Person Zoom** (`thirdPersonZoom`, `10 %` to `100 %`, default `50 %`).
+   - Added **Third-Person Horizontal Offset** (`thirdPersonOffsetX`, `LEFT 100 %` to `RIGHT 100 %`, default `0 %`, applied to `s_observer_command::focus_offset.y` at `+0x14`) and **Third-Person Vertical Offset** (`thirdPersonOffsetY`, `DOWN 100 %` to `UP 100 %`, default `0 %`, applied to `s_observer_command::focus_offset.z` at `+0x18`) under **Settings > Game Options > Camera**.
+2. **In-Game Armor Persistence & Descriptor Mapping (`src/engine/ReachHost.cpp`, `src/ui/SettingsPanel.cpp`):**
+   - Fixed `RefreshArmoryAppearance()` checking `last_write_time` on the deleted `data/appearance.json` instead of `data/appearance.dat`, which prevented mid-session armory saves from refreshing in-game.
+   - Fixed `ApplyArmoryAppearance()` to write Spartan Armor Effect (`166..172`) to `profile + 0x68` and Elite Armor Effect (`173..179`) to `profile + 0x90`, swapped Visor indices `3 <-> 4` (`Black` vs `Gold`) to match `haloreach+0x3B2F4`, removed artificial bounds clamps on `utility >= 6`, `helmet >= 64`, `chest >= 235`, and synced `appearance["service_tag"]` to `profile + 0x1AC`.
+3. **Lower Weapon Keybind (`src/engine/KeyBindings.*`, `src/hooks/EnginePatches.*`, `src/engine/ReachHost.cpp`, `src/common/Settings.cpp`):**
+   - Added action `66` (`"Lower weapon"`, `ActionGroup::Actions`, unbound by default) in **Settings > Controls > Keyboard & Mouse > Actions**.
+   - Patched `haloreach+0x5D6BA` (`74 02` -> `90 90`) and hooked `PlayerControlUpdate` (`haloreach+0x5DF80`) to pulse bit 10 (`1u << 10`, Alert Carry toggle) at `[controlOut + 0x28]`.
+4. **Server Browser UI & Live/Total Player Counts (`src/ui/ServerBrowser.*`, `src/ui/FrontEndMenu.cpp`, `src/network/MasterServerClient.*`, `src/main.cpp`, `ServerTestDeploy/server.js`):**
+   - Updated the Server Browser UI (`◇ SERVER BROWSER` header, compact filter bar with `Search by name or map`, `All modes` dropdown, `Hide full`, `Hide empty`, `Favourites only`, `No password`, `Not started`, `Mods: 0` in Game Details, and top-right `<count> Players Online` / `<count> Total Players` counters refreshing every 5 seconds) without modifying any button logic.
+   - Added `registered_players` table and `POST /api/presence` heartbeat on `ServerTestDeploy`.
+5. **Build & Packaging Script Fixes (`CMakeLists.txt`, `build.bat`, `build-dev.bat`, `build-package.bat`, `build-package.ps1`, `.gitattributes`):**
+   - Removed the parallel `POST_BUILD` `cmake -E copy_directory ${CMAKE_CURRENT_SOURCE_DIR}/data` race condition between `noble-client` and `noble-dev` in `CMakeLists.txt` that failed when both targets linked simultaneously (`Error copying directory from ".../data" to ".../build/bin/Release/data"`), replacing it with sequential `robocopy /XO` syncing in `build.bat`, `build-dev.bat`, and `build-package.ps1`.
+   - Forced native Win32 threads (`CMAKE_USE_WIN32_THREADS_INIT=1`, `CMAKE_HAVE_PTHREADS_CREATE=0`) in `CMakeLists.txt` to eliminate `LINK : warning LNK4044: unrecognized option '/lpthreads'; ignored`.
+   - Added `C:\Program Files\CMake\bin` and `C:\Program Files\Git\cmd` auto-detection, eliminated `goto`/label offset jumps in `build.bat` and `build-dev.bat`, enforced `eol=crlf` in `.gitattributes`, and fixed `build-package.ps1` returning `robocopy`'s non-zero `1..3` exit codes.
+
+## 0. Pick up here (2026-10-31, 10:15 ET) - Compile & package all 3 .bat targets (`build.bat`, `build-dev.bat`, `build-package.bat`) on Reeve's PC (Gemini 4 Argon)
+
+**Version:** 0.9.1 / 0.9.1-dev (Pregame Map Identity). **Built & packaged:** `build\bin\Release\noble-client.exe`, `build\bin\Release\noble-dev.exe`, `build\bin\Release\noble-dedicated.exe`, and `C:\Users\Reeve\Documents\Noble Launcher\Noble.exe`.
+
+**What was wrong on Reeve's PC**
+1. `build-dev.bat` and `build-package.ps1` only checked Visual Studio 18/2022 Community's `cmake.exe` path (`C:\Program Files\Microsoft Visual Studio\18\Community\...`) and did not configure the Ninja + standalone MSVC toolchain (`%LOCALAPPDATA%\Programs\MSVC\VC\Tools\MSVC` + ScopeCppSDK) when `VisualStudio.Component.VC.Tools.x86.x64` is not installed.
+2. `build-package.ps1` passed `/XF *.map` to `robocopy`, which excluded linker `.map` files (`noble-client.map`, `noble-dev.map`) **and also excluded `data\menumaps\mainmenu_all.map`** on a fresh `Documents\Noble Launcher` destination. It also did not sync `repo\data` and `repo\tools\vgmstream` into `build\bin\Release` prior to packaging.
+
+**What changed**
+- `build-dev.bat`: Added VS2022 CMake path fallback and the same Ninja + standalone MSVC (`INCLUDE`, `LIB`, `PATH`) detection used by `build.bat`.
+- `build-package.ps1`: Added multi-path `cmake.exe` discovery (`VS18`, `VS2022`, `WinGet`, `PATH`) and Ninja + MSVC environment setup; synced `data\` (excluding player `userdata`, `autosave`, `mods`, `cache`, `sandbox`) and `tools\vgmstream\` into `build\bin\Release`; changed `/XF *.map` to `/XF noble-*.map` so `data\menumaps\mainmenu_all.map` (297.8 MB) is copied into `Documents\Noble Launcher\data\menumaps\mainmenu_all.map`.
+- `SHA256SUMS.txt`: Updated with the fresh SHA-256 checksums for all three binaries and the packaged `Noble.exe`.
+
+**Verified**
+- Ran `build.bat`, `build-dev.bat`, and `build-package.bat` sequentially: all three compiled and linked with **0 errors and 0 warnings**.
+- Confirmed `build\bin\Release\noble-client.exe`, `build\bin\Release\noble-dev.exe`, and `C:\Users\Reeve\Documents\Noble Launcher\Noble.exe` all pass `-test-map-gametypes` with exit code `0`, and `data\menumaps\mainmenu_all.map` + `tools\vgmstream\vgmstream-cli.exe` are present in `C:\Users\Reeve\Documents\Noble Launcher`.
+
+## 0. Pick up here (2026-10-31, 08:25 ET) - Pre-game lobby now shows the mod map's name and art (@deepseek / DeepSeek)
+
+**Version:** 0.9.1 (Pregame Map Identity). **Built:** `noble-client.exe`, `noble-dev.exe`, `noble-dedicated.exe`; packaged `Documents\Noble Launcher\Noble.exe`.
+
+**O7OF found.** The picker launched Campaign-to-Forge maps correctly, but the pre-game lobby still resolved only `st.lobbyMap` against the stock Reach tables and drew `UiArt::MapPhoto(st.lobbyMap)`. Because every mod map launches through Boneyard, the MAP row and banner said **BONEYARD** with Boneyard art even though `lobbyMapTitle`, `lobbyMapImage` and `lobbyMapThumb` were already carried through setup. The MAP row also cycled only the stock table, so it could not offer or preserve the mod's own maps.
+
+**O7OF fixed.**
+- `DrawPreGameLobby` now prefers `st.lobbyMapTitle` over the carrier name, passes `st.lobbyMapImage`/`lobbyMapThumb` to `HeroBanner`, and the pre-game backdrop uses `UiArt::ImageFile` for the mod art instead of the stock `MapPhoto`.
+- The MAP/MISSION row now builds its choices from the host's selected mod first (`ModMaps` for campaign/Firefight/multiplayer), then the stock table. Cycling updates `lobbyMap` (carrier), `lobbyMapOverride`, title, image and thumbnail; choosing a stock map clears the override/title/images again. The row value ellipsizes instead of clipping.
+- `-lobby-demo-map <scenario>` (test-only) opens the pre-game lobby on a real installed mod map for screenshots, alongside the existing `-lobby-demo`.
+- The old diagnostic `std::getenv` in `BlamEngine::LaunchMap` is now `_dupenv_s`, so the build is warning-free.
+
+**O7OF changed.** Bumped to 0.9.1; rebuilt release, developer and dedicated targets with **0 errors, 0 warnings**; repackaged Noble Launcher after cleanup while preserving player data; refreshed `SHA256SUMS.txt` for all three binaries and the package; added `docs\screenshots\workshop-pregame-lobby.png`.
+
+**Verified.** `-lobby-demo host -lobby-demo-mode forge -lobby-demo-map m30final` starts on "NIGHTFALL CAMPAIGN TO FORGE" with its own art (`docs\screenshots\workshop-pregame-lobby.png`); cycling the MAP row reached "THE PILLAR OF AUTUMN CAMPAIGN TO FORGE" with Pillar art. A stock choice goes back to the stock name/art. The 0.9.0 picker, loading screen and Workshop prompt remain verified.
+
+**Next.** Guest sync is still the top gap: the lobby advert has no custom-scenario/override field, so a guest still gets Boneyard. Add the custom scenario/carrier/title to `HostConfig`, `MasterAdvert`, `LobbyState` and `ServerTestDeploy`, then resolve the guest's override from its own `ModCatalog`. After that, two-PC test host/guest pre-game names and map changes; Tyler should recheck cycling at 16:9/21:9 and mod-to-stock/stock-to-mod transitions.
+
+## 0. Pick up here (2026-10-31, 08:02 ET) - Workshop map carriers: Campaign-to-Forge, custom games and Firefight maps now launch from the picker (@deepseek / DeepSeek)
+
+**Version:** 0.9.0 (Workshop Maps, Art & Prompts). **Built and verified:** `build\bin\Release\noble-client.exe`, `noble-dev.exe`, and the packaged `Documents\Noble Launcher\Noble.exe` (picker art, loading screen, Workshop prompt).
+
+**The bug.** The MODDED tabs only enabled a mod map whose scenario name was already a stock Reach map. The whole Campaign-to-Forge mod (22 maps: `m05final` ... `m80final`) therefore showed grey rows reading "A new map: Noble can only start maps that are in Reach so far" and could not be clicked, which is the "can't launch my campaign-to-forge mod maps from the picker" report.
+
+**Why a new scenario is hard.** `BlamEngine::ResolveMapId` only knows the stock table. The engine also selects the map file by launch index/map id, not by a free-form name: loading `m10final.map` as Forge World (map id 3006) reaches 5% and then the engine throws 0xC06D007E inside `haloreach.dll`; the header name is not the blocker (patching it to `forge_halo` still stalls). The scenario tag carries the id the engine actually wants. `scenarios\m10final.scenario` reports `map id = 1080`, i.e. **Boneyard**, and every one of the 22 Campaign-to-Forge scenarios is 1080.
+
+**The fix: serve the mod's .map in place of a stock map whose map id matches.**
+- `src/vfs/VFS.*`: `VFS::SetMapOverride(carrier, mapFile)` / `ClearMapOverride()`. `ResolvePath` answers `haloreach\maps\<carrier>.map` with the mod file before the active mod, user storage or MCC; `-map-override <path>` on the command line sets it, and both the menu relaunch and `Relaunch` args forward it.
+- The launch block, launch index and map info stay the stock carrier's. Boneyard is the carrier for the Campaign-to-Forge/Forge canvases (map id 1080), Glacier (`ff60_icecave`, 7130) for Firefight and Winter Contingency (`m10`, 5010) for campaign. Mode still follows the screen: Forge -> forge, Custom Game -> multiplayer, Firefight -> firefight, Campaign -> campaign.
+- `src/ui/ModCatalog.*`: `ModMap::hasMapFile` (checked once at scan) and `forgeMap` (the JSON `ForgeMap` flag).
+- `src/ui/FrontEndMenu.*`: `MapEntry::launchScenario` / `mapOverride` / `custom`; `ModMaps` now enables every map whose `maps\<scenario>.map` exists, shows "Custom map - loads through Boneyard.", and carries the override through solo, host and relaunch paths. `MapEntry` construction for stock lists passes empty override fields.
+- `data\map_carriers.json`: optional `{ "<mod scenario>": "<stock carrier scenario>" }` for a mod built on a different base (e.g. Forge World 3006, Sword Base 1000). Defaults are Boneyard / Glacier / Winter Contingency.
+- `-open-mods` (test-only) expands every mod heading so `-auto-play-map` / `-menu-capture` can reach the rows.
+
+**Map names and mod art.** The map JSON's `Images.Large / Thumbnail / LoadingScreen` are read into `ModMap` (absolute paths, existence-checked once at scan). `UiArt::ImageFile(path)` decodes a mod PNG/JPG with WIC and caches it, so the picker rows show the mod thumbnails and the banner shows its large art instead of a black box. The launch carries `-map-title`, `-map-image` and `-map-thumb`; main forwards them to `PauseMenu::SetLoadingMapInfo`, which draws the mod's loading-screen picture, the mod title ("NIGHTFALL CAMPAIGN TO FORGE") and the mod thumbnail inset on Noble's loading screen. The post-game "THIS MAP" line uses the same title. Verified with `docs\screenshots\workshop-mod-picker.png` (all 22 rows with their art) and `docs\screenshots\workshop-mod-loading.png` (Nightfall loading screen).
+
+**Text bounds and smart wrapping.** `Ellipsize` measures the uppercase label (the old order measured mixed case, so lowercase names still ran under the next column) and cuts at a word boundary with "..."; list rows, the mod heading, the banner title and button subtitles use it, and the banner title shrinks from 34 px down to 22 px before it gives up characters. `FitWrapped` limits the description under the map picture to the two lines `BlurbBlockHeight` reserves, so a long mod description cannot run into GAME OPTIONS. Verified with `docs\screenshots\workshop-mod-text-bounds.png` (rows 01-10, no overflow into the banner).
+
+**Steam Workshop prompt picture and size.** `ModDownloadPrompt` now starts a detached worker on `Show`: it POSTs to `ISteamRemoteStorage/GetPublishedFileDetails/v1/`, downloads `preview_url` into `data\ui\cache\workshop\<id>.<ext>`, and reads the title and size. Steam returns `file_size: "0"` for this item (and other hcontent_file builds), so when that is zero it also downloads the Workshop page and reads the `File Size` / `detailsStatRight` line. The modal draws the Steam picture at 230 px next to the title and "Download size: 20.644 GB". Verified with `docs\screenshots\workshop-prompt-size.png`; the `-mod-prompt-id <id>` test flag opens the real prompt for a capture.
+
+**Verified in game.** `docs\screenshots\workshop-mod-forge.png` from the picker relaunch shows Forge with the PLACE OBJECT palette, budget $999999 and the campaign space loaded; `docs\screenshots\workshop-mod-custom-game.png` shows Slayer on `m20final`; the Icecave Firefight mod still loads `ff60_icecave.map` from its Workshop folder. Picker capture shows all 22 rows enabled under "HALO: REACH CAMPAIGN TO FORGE (22)".
+
+**Build, package and cleanup (2026-10-31 08:02 ET).** Bumped to **0.9.0 / 0.9.0-dev**. Clean Release builds of `noble-client` and `noble-dev`: **0 errors, 0 warnings** (the old pre-existing C4996 `std::getenv` in `BlamEngine::LaunchMap` is now `_dupenv_s`). `build-package.ps1` rebuilt `Documents\Noble Launcher` after a package cleanup: all test logs/captures/crash dumps and old binaries removed, while the player's `data\userdata`, `data\autosave`, `data\ui\custom`, `data\mods`, `data\appearance.dat`, `data\map_carriers.json` and `preferences.dat` were preserved. `SHA256SUMS.txt` updated for `noble-client.exe`, `noble-dev.exe`, `Noble.exe`, `HANDOFF.md`, the package scripts and `play.bat`. `scratch\` cut from **0.88 GB to ~55 MB**: kept `scratch\blam-tag-shell` (used by `tools\PokeTag.ps1`) and `scratch\hrek_backup` (the `docs\FORGE-THORAGE.md` backup); removed the old map/XML/log/tool bulk, old scripts and duplicate captures; the six evidence shots now live in `docs\screenshots\workshop-*.png`.
+
+**For Dominus and Tyler - what changed and what is next.**
+
+*Changed:* (1) the picker no longer disables Workshop maps whose scenario is new; every map with `maps\<scenario>.map` launches through a stock carrier (Boneyard 1080 for Forge/MP, Glacier 7130 for Firefight, Winter Contingency 5010 for campaign) with the mod file served by VFS; (2) `data\map_carriers.json` lets a mod built on a different base name its carrier; (3) picker thumbnails, banner art, loading-screen art and the in-game loading title now come from the mod's JSON images/title; (4) list/banner/button text ellipsizes or wraps instead of running under the next column; (5) the Workshop-required dialog shows Steam's preview picture and download size (Campaign-to-Forge: 20.644 GB; Steam returns `file_size: 0`, so the size is read from the Workshop page).
+
+*Dominus - next:*
+- **Guest propagation (highest priority).** The host's lobby advert still carries only the carrier map + mod id. Add the custom scenario/carrier/title to `HostConfig`, `MasterAdvert`, `LobbyState` and `ServerTestDeploy`'s lobby/launch payload, then resolve the guest's `mapOverride`/title/images from its own `ModCatalog`. Without this a guest loads vanilla Boneyard.
+- Verify the host and guest both get the mod's loading title/art and that `-map-override` survives Play Again, lobby rotation and rejoin.
+- Check Firefight and campaign custom maps against their carriers; the current defaults are Glacier and Winter Contingency.
+- Two-PC test a Campaign-to-Forge lobby (Forge and Custom Game) and the Icecave Firefight mod after the carrier change.
+
+*Tyler - next:*
+- Playtest all 22 Campaign-to-Forge maps in Forge and Custom Game; confirm each loading screen shows its own name/art and the map itself loads (not Boneyard).
+- Try a mod built on a different base (Forge World 3006, Sword Base 1000, etc.). If it fails, add its scenario to `data\map_carriers.json` and tell me the base so it can become a default/auto-detected.
+- Check the picker at 16:9 and 21:9, long Workshop titles/descriptions, controller navigation, and the two action buttons for clipping. Report any label that still runs into the next column.
+- Test the Workshop prompt with a mod you do not own (a friend's lobby or the `-mod-prompt-id <id>` flag): image, size, Download & Join. Age-gated/private items may legitimately have no preview/size.
+- Run the packaged `Documents\Noble Launcher\Noble.exe` on a clean folder and confirm Defender does not quarantine it (known ML false positive; hash in `SHA256SUMS.txt`).
+
+**Known limits.** A guest in a host's lobby gets the carrier map and the mod id, not the custom scenario, so the guest still loads the stock carrier (the lobby advert has no field for the modded scenario yet). The engine's own pause/game UI shows the carrier's name (Boneyard) because that is the map id it launched. A mod map built on a different base needs a `data\map_carriers.json` entry until the scenario id can be read at scan time (the mod's `.scenario` source tags would need a tag-layout parser).
+
+**Commands used.** `cmake --build build --config Release --target noble-client`; run `noble-client.exe -menu-screen forge -menu-tab 1 -open-mods` to see the rows. Test-only override run:
+```
+noble-client.exe -map 70_boneyard -mode forge -variant "<MCC>\haloreach\game_variants\00_basic_editing_054.bin" -mod "<workshop>\3815090293" -map-override "<workshop>\3815090293\maps\m10final.map"
+```
+
+## 0. Pick up here (2026-10-31, 04:43 ET) - Night shift summary so far: queue worked through, stopped early (@claude)
+
+**This is not the 11:30 close.** I stopped at 04:43 ET, well before the end of the shift. Everything below is pushed, the tree is clean and no client of mine is running. The unblocked work still open is listed under **Next**.
+
+**Landed.** Lobby redesign `f0fda8b`. Red and blue roster up to 128 `ec531b4`. Emblem colours `8cd445d`. Scoreboard report, ping and columns `4792746`. Post-game buttons and game type list `26cd500`. Player card `34431a6`. Pad script in matches, version 0.8.8 `9f2fa2b`.
+
+**Item 8.** Pause Settings by pad and the Esc-resume bug: no reopen in a real match, by pad or by real Esc. I did not change the resume code; the fix from earlier tonight holds in this one run. Capture `docs/screenshots/pause-settings-by-pad.png`. Social by pad: Friends opens from the lobby and B returns (11 -> 12 -> 11); text entry there has no on-screen keyboard, so ADD FRIEND still needs a keyboard. Player card: rank and stats are real for yourself; for others only what the roster carries. No Spartan render, because the preview is the engine's own background scene, not a movable widget. Moving it would mean changing what scene the menu shows.
+
+**Sweep.** Spec 4.10 to 4.16 and `HANDOFF-FOR-CLAUDE.md` were read and missing items filed in TODO with owners. Nameplate bug: closed, no bug. Emblem colour: closed for your own rows. Per-character looks and theater: already filed. `grep` for TODO, FIXME and HACK in `src/ui`: none left; the "Coming later" text on the setup screens is accurate and stays.
+
+**Blocked on @deepseek** (reasons in the entries below and in TODO): End Round and End Match need the multiplayer end path. Vote to Kick needs the peer id clamp fixed, votes authenticated, and a way to remove a player. Return to Lobby and Next in Rotation need session survival. Option pages need the `c_game_variant` field map. Roster needs ready state, emblem colours and profile fields. `d27ab84` (pad Back) is a no-op, reopened. **No new @deepseek client commit landed since that review**, so there was nothing further of theirs to cross-review. O7OF's `3c4c3f7` (server browser) was built on but not reviewed.
+
+**Next (unblocked, @claude):** scoreboard actions on a pad (selecting a player and REPORT still need the mouse), controller path for INVITE in the lobby's FRIENDS panel, favourite maps and picker search, first-start question, the career deaths check, prompt row alignment.
+
+**Tyler tests still pending:** controller presets on a real pad, Firefight voice preview by ear, reverse-preset naming, sensitivity feel. **New, also needs a person:** a real two-PC lobby (host and guest views, roster, live ping), since all of tonight's lobby evidence is demo rosters and scripted input.
+
+Self-review: every UI change here was checked with a scripted pad and captures on one PC, never with a real controller or a second player. The biggest untested risk is the lobby rewrite against a live session: the polling and launch code was left alone, but the screen around it is new. Also, the 128 roster is a list only; the engine still plays 16.
+
+## 0. Pick up here (2026-10-31, 04:34 ET) - Post-game role buttons and the lobby's game type list (@claude)
+
+**Commit:** `26cd500`. **Build:** 0 errors, 0 warnings on the merged tree. Files: `src/ui/PauseMenu.cpp`, `src/ui/FrontEndMenu.cpp`.
+
+**Post-game.** Host: RETURN TO LOBBY and NEXT IN ROTATION, grey with the reason. Guest: WAITING FOR HOST and no PLAY AGAIN. Both: a strip with this map and `NEXT: NOT SET`. Test flag `-postgame-role host|guest` also forces the panel. Captures: `docs/screenshots/postgame-host-buttons.png` (taken before PLAY AGAIN was hidden for guests; the host view is unchanged), `postgame-guest-waiting.png`. **needs: @deepseek** session survival and a rotation array to make these buttons real. Until then a guest's WAITING FOR HOST never ends; its tooltip says to return to the menu.
+
+**Game type list.** A on GAME TYPE opens the shipped variants this map can host, with the game type and one line about it (`GameTypeBlurb`). Capture: `lobby-game-type-picker.png`. No per-variant settings are shown because they can't be read until the variant viewer exists, so the Forge, custom and Firefight option pages in queue item 6 are **not started**: **needs: @deepseek** the `c_game_variant` field map (night block 6). Building them now would mean inventing settings.
+
+**Not verified.** No two-PC run. Stock variants only, no `.mvar` or modded list. B inside the list closes it by code path but my pad run only pressed A then B; B while it was open was not run.
+
+Self-review: the blurbs are my own one-line descriptions of each game type, written from general knowledge of Reach rather than taken from the game's data; a wrong detail would be there. Tyler can read them in `GameTypeBlurb`.
+
+## 0. Pick up here (2026-10-31, 04:27 ET) - Emblem colours, Elite preview check, scoreboard wiring (@claude)
+
+**Commits:** `8cd445d` (emblem colours), `4792746` (scoreboard). **Build:** 0 errors, 0 warnings on the merged tree.
+
+**Emblem colours.** Three new Armory rows set primary, secondary and background from Reach's 30 colours, with a preview that tries on the hovered swatch. Saved in `appearance.json` as `emblem_primary_color`, `emblem_secondary_color`, `emblem_background_color`. Shown on the local player's rows. **Not done:** other players see default colours until the roster carries these three values (needs: @deepseek), and the emblem on the in-game model is unchanged. Captures: `docs/screenshots/armory-emblem-colors.png`, `lobby-other-players-emblems.png`.
+
+**Audits and checks.** `UiArt::Nameplate(int)` uses list position with bounds checks: no id bug. Elite pieces already reach the preview: helmet Minor to Spec Ops visibly changes the model (`armory-elite-piece-preview.png`); nothing needed from `docs/reference/elite-slots.md`, which is a character part list. ELITE tab no longer orange. With ImGui navigation off, pad runs through Armory (including B back), Skulls, Forge and Custom Game all worked, which closes the risk flagged in the previous entry.
+
+**Scoreboard.** REPORT posts to `/api/reports` on its own thread and saves locally only if the server can't be reached. PING reads the transport's live round trip. Red and blue columns scroll separately with the local player pinned, and the panel fits the screen; 16 players used to run off the bottom at 1080p. Captures: `scoreboard-16-columns.png`, `scoreboard-128-columns.png`, `scoreboard-report-fallback.png`. Test flags: `-scoreboard-demo 5` (sends a report), `-scoreboard-demo-players N`.
+
+**Verified.** Against a throwaway local copy of the server: its `reports.jsonl` has the record and the log says `report sent=true`; with no server, `sent=false savedLocally=true`. The live server was not touched.
+
+**Not working, on purpose left grey:**
+- **END ROUND / END MATCH.** `haloreach+0x7B3EC(-1, 0, 1)` does not end a multiplayer round. Tried twice in a real Slayer match (pressed during the loadout screen, then about 20 s after the timer started); the timer kept running (9:47, then 9:35 to 9:07). An older entry in this file recorded the same result, so the claim at the `-end-round-after` description is wrong. Stopped after two attempts. **needs: @deepseek** the multiplayer end path (night block 3). The server endpoint alone would change nothing in the match.
+- **VOTE TO KICK.** Two blockers. `/api/sessions/:id/kick/vote` clamps `voter_peer` and `target_peer` to 1..64 with `masterCleanInt`, but real peer ids are user ids or 31-bit machine ids, so a real voter becomes 64 and fails with "Voter not in roster". Votes also aren't authenticated, so a client can claim any voter id. And nothing removes a player when a vote passes. **needs: @deepseek** all three.
+
+**Not verified.** Live ping needs a two-process run and shows "-" in these solo captures. `session_id` was empty in the test report because a local match has no session. The report's `reporter` comes from `playerName`, which account-less runs overwrite with "Bob" (the known settings issue), so reports from such runs carry that name. On a pad the scoreboard's actions still need the mouse: "click while holding" has no controller path (filed).
+
+**Review:** O7OF's `c30915b`/`ed10ad0` (Forge) are outside my claim and were only built on, 0/0.
+
+Self-review: I wired END ROUND and only caught that it did nothing by capturing the timer afterwards; the log line alone looked like success. A scripted edit also dropped line breaks in five places; I repaired all five after the compile error exposed one. The other four were in code that still compiled, so a build alone would not have caught them. I didn't re-read every line of the rewritten scoreboard block beyond the captures.
+
+## 0. Pick up here (2026-10-31, 03:53 ET) - Pre-game lobby pass, 128-player team roster, controller Settings accepted (@claude)
+
+**Commits:** `f0fda8b` (lobby frame and bugs), `ec531b4` (roster columns). **Build:** 0 errors, 0 warnings on the merged tree.
+
+**What was wrong.** The lobby had its own header, orange highlight, type sizes and prompt row, and read as another app. Reading it also turned up real bugs:
+- a mouse pointer resting on a row pulled pad focus back to that row every frame;
+- ImGui's own controller navigation ran under the screen's, so one A could press a second, unseen button (seen as a highlight on COPY INVITE). This affected every front-end screen that reads the pad itself;
+- lobby map and game type cycling skipped the check that stops crashing combinations such as Invasion on Sword Base;
+- host Back always went to Custom Game, whatever the mode;
+- the host's public IP was printed on screen;
+- prompts and rows that did nothing: Start "Menu", X "Prior Game Stats", an unused countdown, co-op SCORING, and arrows on SKULLS.
+
+**What changed** (`src/ui/FrontEndMenu.cpp`). The lobby now uses DrawTitle, the OptionRow look, BigAction, HeroBanner and DrawHints. Blocks have fixed places, so nothing moves between states. Team games list red left and blue right with separate scroll positions and sticky headers; a game without teams is one column, as Tyler asked. Only visible rows are drawn, up to 128. The local player stays pinned in view. LB/RB step through players, LT/RT or PgUp/PgDn page, the wheel scrolls. Read-only rows have no arrows; guests see WAITING FOR HOST. ImGui navigation is off on the screens that read the pad themselves and stays on for Servers, Career, Mods and Social, whose widgets depend on it.
+
+**Test flags:** `-lobby-demo host|guest`, `-lobby-demo-players N`, `-lobby-demo-red N`, `-lobby-demo-ffa 1`, `-lobby-demo-mode campaign|firefight|forge`. No network.
+
+**Verified.** Captures opened: `docs/screenshots/lobby-before.png`, `lobby-after-host-16.png` (taken before the column change), `lobby-after-guest-3.png`, `lobby-after-guest-empty.png`, `lobby-after-campaign-4.png`, `lobby-after-pad-prompts.png`, `roster-128-64-64.png`, `roster-128-red100-blue28-scrolled.png`, `roster-16-no-teams.png`, `roster-guest-6-teams.png`. Scripted pad runs with the pointer resting on a row: focus walked; one A changed READY once and the map one step; Y to Friends and B back (screen 11 -> 12 -> 11); START logged `Lobby start broadcast`; guest B went to the server browser (11 -> 6); main menu into Campaign and Firefight and back. Roster pad run ended on the expected row (Spartan 10). Self-tests pass.
+
+**Controller Settings accepted** with a script standing in for the pad: brightness 1.0 -> 1.02, game volume, preset to Boxer applied with Y; vertical look 2.00 -> 1.75 applied with Y, a further step discarded with X (saved 1.75); B back to the main menu (7 -> 0). Capture `docs/screenshots/settings-pad-preset-prompts.png`. Sensitivity is 1.00x to 10.00x with 2.00x = Reach stock rather than the plain 1-10 first asked for; the profile byte is documented in the 02:00 entry.
+
+**Not verified / open.**
+- No real two-PC lobby and no physical pad. Demo rosters only.
+- The match itself is still limited to 16 by the engine, so 128 is a lobby list only (research item filed).
+- The in-game scoreboard still needs the same columns (TODO stays open for it).
+- READY is local only: nothing sends it to the host. **needs: @deepseek** a roster ready field if it should mean anything.
+- GAME OPTIONS shows DEFAULTS and is not editable until the variant picker (queue item 6).
+- Selecting a player does nothing yet (profile card, queue item 7).
+- Invite buttons in the FRIENDS panel are mouse only; Y opens Social. Social's pad flow is not tested.
+- A lobby's Forge and campaign states were captured for campaign only; Firefight and Forge rows share the code but were not captured.
+- Campaign's 4-slot lobby leaves half the panel empty, by choice, so slots keep their places.
+
+**Review of @deepseek `d27ab84` (pad Back): REOPEN.** Scope and build are fine, but the added line changes nothing: `ReachHost.cpp:1430` already removes Back from `buttons` and nothing sets it again before line 1456. Its comment is also wrong: the overlay gets the scoreboard through the key mask at line 1426, and `GamepadUi` no longer exists. If Tyler still sees Reach's scoreboard on pad Back, the cause is elsewhere. `7e6a2dd` (voice probe): diff scoped, builds; **REVIEW OK** on diff and build, its log evidence not rerun.
+
+Self-review: the lobby is one large function edited by splicing, so I re-read the captures rather than trusting the diff. The riskiest change is turning ImGui navigation off on Main, Campaign, Skulls, Firefight, Custom Game, Forge, Armory and Lobby. I ran the pad through Main, Campaign, Firefight and Lobby; Skulls, Forge and Armory were not exercised this round and a regression there would look like a dead pad on a widget that relied on ImGui navigation.
+
+## 0. Pick up here (YYYY-MM-DD, HH:MM ET) - <what changed> (<name / GitHub handle>)`, and
   say what was wrong, what changed and where, how it was built and verified, and what to look at in game.
 - **`docs/HANDOFF.md` in this repo is the canonical copy**: it is what gets committed and pushed with the code.
   The export at `C:\Users\tyler\Downloads\HANDOFF (2).md` is a **copy** - overwrite it from this file after every push
@@ -11988,7 +12226,7 @@ Other args: `-variant <path to MCC game variant .bin>`, `-mvar <path>`, `-mouse-
 Test-only args: `-menu-screen <main|campaign|skulls|firefight|custom|forge|servers|settings|armory|mods>` opens that
 front-end screen, `-menu-tab <0-5>` picks the SETTINGS tab (1 = key bindings), `-menu-capture <frames>` saves `capture_<frames>.bmp` of the menu and exits; `-launch-poke 0x48=0x10,...`
 writes u32 values into the launch block (for finding fields by experiment). `-capture-frames 300,3600` saves `capture_<frame>.bmp` next to the exe (and one shot ~120 frames after the
-post-game panel appears); `-quit-after <seconds>` ends the run by itself; `-end-round-after <seconds>` ends the round (reaches the post-game results). Player settings (resolution, borderless, mouse,
+post-game panel appears); `-quit-after <seconds>` ends the run by itself; `-end-round-after <seconds>` calls mp_round_end's work function, which does not end a multiplayer round (2026-10-31). Player settings (resolution, borderless, mouse,
 invert, key overrides, volumes, menu sounds, player name, master-server URL, favourites) are in
 `build\bin\Release\data\userdata\settings.json`, edited from the SETTINGS tab.
 

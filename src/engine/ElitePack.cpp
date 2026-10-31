@@ -3,6 +3,7 @@
 #include <shellapi.h>
 
 #include "common/Logger.hpp"
+#include "common/SaveCodec.hpp"
 #include "hooks/HookManager.hpp"
 
 #include <nlohmann/json.hpp>
@@ -1158,11 +1159,9 @@ void RefreshLocalPicks() {
     const auto stamp = std::filesystem::last_write_time(s_appearancePath, ec);
     if (ec || stamp == s_picksStamp) return;
     s_picksStamp = stamp;
-    std::ifstream in(s_appearancePath);
-    if (!in) return;
+    nlohmann::json j;
+    if (!SaveCodec::ReadJson(s_appearancePath, j)) return;
     try {
-        nlohmann::json j;
-        in >> j;
         const auto& el = j.at("elite");
         s_localSpeciesElite = j.value("species", 0) == 1;
         const int set = std::clamp(el.value("armor_set", 0), 0, static_cast<int>(std::size(kSetPieces)) - 1);
@@ -1320,7 +1319,7 @@ uint64_t __fastcall BuilderHook(uint8_t* record, uint32_t mode, void* unit, void
 }
 
 bool InstallPicks(const std::filesystem::path& dataDir) {
-    s_appearancePath = dataDir / "appearance.json";
+    s_appearancePath = dataDir / "appearance.dat";
     void* original = nullptr;
     for (uintptr_t site : kBuilderCalls) {
         void* t = RetargetCall(site, kAppearanceBuilder, reinterpret_cast<void*>(&BuilderHook));

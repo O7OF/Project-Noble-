@@ -946,6 +946,26 @@ void SettingsPanel::RenderGame() {
             When::Apply, "78\xC2\xB0", std::fabs(m_edit.fieldOfView - m_saved.fieldOfView) > 0.01f, false, Preview::Fov)) {
         SliderValue(m_edit.fieldOfView, 70.0f, 120.0f, 1.0f, 78.0f, Format("%.0f\xC2\xB0", m_edit.fieldOfView).c_str());
     }
+    if (Row("THIRD-PERSON ZOOM", "How much the camera zooms in when aiming a weapon with right click in third person (F5). 50 % is the default zoom.",
+            When::Apply, "50 %", std::fabs(m_edit.thirdPersonZoom - m_saved.thirdPersonZoom) > 1e-4f, false)) {
+        SliderValue(m_edit.thirdPersonZoom, 0.10f, 1.00f, 0.05f, 0.50f, Percent(m_edit.thirdPersonZoom).c_str());
+    }
+    const auto horizOffsetText = [](float v) -> std::string {
+        if (std::fabs(v) < 0.005f) return "0 %";
+        return v < 0.0f ? Format("LEFT %.0f %%", std::fabs(v) * 100.0f) : Format("RIGHT %.0f %%", v * 100.0f);
+    };
+    const auto vertOffsetText = [](float v) -> std::string {
+        if (std::fabs(v) < 0.005f) return "0 %";
+        return v < 0.0f ? Format("DOWN %.0f %%", std::fabs(v) * 100.0f) : Format("UP %.0f %%", v * 100.0f);
+    };
+    if (Row("THIRD-PERSON HORIZONTAL OFFSET", "Shifts the third-person camera left or right relative to your character (F5). Negative values move left, positive values move right; 0 % keeps Reach's default.",
+            When::Apply, "0 %", std::fabs(m_edit.thirdPersonOffsetX - m_saved.thirdPersonOffsetX) > 1e-4f, false)) {
+        SliderValue(m_edit.thirdPersonOffsetX, -1.00f, 1.00f, 0.05f, 0.00f, horizOffsetText(m_edit.thirdPersonOffsetX).c_str());
+    }
+    if (Row("THIRD-PERSON VERTICAL OFFSET", "Shifts the third-person camera up or down relative to your character (F5). Negative values move down, positive values move up; 0 % keeps Reach's default.",
+            When::Apply, "0 %", std::fabs(m_edit.thirdPersonOffsetY - m_saved.thirdPersonOffsetY) > 1e-4f, false)) {
+        SliderValue(m_edit.thirdPersonOffsetY, -1.00f, 1.00f, 0.05f, 0.00f, vertOffsetText(m_edit.thirdPersonOffsetY).c_str());
+    }
     if (Row("IN-VEHICLE FOV", "A separate field of view while driving or flying. Needs the vehicle camera to be found in the engine first.",
             When::Info, "", false, true)) {
         InfoValue("Not available yet");
@@ -1501,7 +1521,9 @@ int SettingsPanel::CountDiff(const SettingsData& a, const SettingsData& b, Cat c
                (a.masterMute != b.masterMute) + (a.muteInBackground != b.muteInBackground) +
                (a.menuSounds != b.menuSounds) + (a.menuMusicTrack != b.menuMusicTrack);
     case Cat::Game:
-        return f(a.fieldOfView, b.fieldOfView) + (a.subtitles != b.subtitles) + (a.menuBackground != b.menuBackground) +
+        return f(a.fieldOfView, b.fieldOfView) + f(a.thirdPersonZoom, b.thirdPersonZoom) +
+               f(a.thirdPersonOffsetX, b.thirdPersonOffsetX) + f(a.thirdPersonOffsetY, b.thirdPersonOffsetY) +
+               (a.subtitles != b.subtitles) + (a.menuBackground != b.menuBackground) +
                f(a.brightness, b.brightness) + (a.fxaa != b.fxaa) + (a.throttleUnfocused != b.throttleUnfocused);
     case Cat::Player:
         return (a.playerName != b.playerName) + (a.serviceTag != b.serviceTag);
@@ -1556,7 +1578,9 @@ SettingsData SettingsPanel::WithDefaults(SettingsData e, Cat c) {
         e.menuSounds = d.menuSounds; e.menuMusicTrack = d.menuMusicTrack;
         break;
     case Cat::Game:
-        e.fieldOfView = d.fieldOfView; e.subtitles = d.subtitles; e.menuBackground = d.menuBackground;
+        e.fieldOfView = d.fieldOfView; e.thirdPersonZoom = d.thirdPersonZoom;
+        e.thirdPersonOffsetX = d.thirdPersonOffsetX; e.thirdPersonOffsetY = d.thirdPersonOffsetY;
+        e.subtitles = d.subtitles; e.menuBackground = d.menuBackground;
         break;
     case Cat::Player:
         e.playerName = d.playerName; e.serviceTag = d.serviceTag;
@@ -1703,7 +1727,7 @@ void SettingsPanel::RenderSystem() {
 
     Section("BACKUPS");
     const bool haveBackup = std::filesystem::is_directory(backups);
-    action("BACK UP SETTINGS", "Copies settings.json and appearance.json into data\\userdata\\backups\\<date-time>, so they can be put back later.",
+    action("BACK UP SETTINGS", "Copies settings.json and appearance.dat into data\\userdata\\backups\\<date-time>, so they can be put back later.",
            haveBackup ? "Backups exist" : "None yet", [&] {
                SYSTEMTIME now{};
                GetLocalTime(&now);
@@ -1713,7 +1737,8 @@ void SettingsPanel::RenderSystem() {
                const std::filesystem::path dir = backups / stamp;
                int copied = 0;
                if (copyFile(userData / "settings.json", dir / "settings.json")) ++copied;
-               if (copyFile(userData / "appearance.json", dir / "appearance.json")) ++copied;
+               if (copyFile(userData.parent_path() / "appearance.dat", dir / "appearance.dat") ||
+                   copyFile(userData / "appearance.dat", dir / "appearance.dat")) ++copied;
                if (copied == 0) {
                    s_note = "Nothing to back up yet.";
                    MenuSounds::Error();
@@ -1735,7 +1760,7 @@ void SettingsPanel::RenderSystem() {
         }
         int restored = 0;
         if (copyFile(newest / "settings.json", userData / "settings.json")) ++restored;
-        if (copyFile(newest / "appearance.json", userData / "appearance.json")) ++restored;
+        if (copyFile(newest / "appearance.dat", userData.parent_path() / "appearance.dat")) ++restored;
         if (restored == 0) {
             s_note = "That backup is empty.";
             MenuSounds::Error();
