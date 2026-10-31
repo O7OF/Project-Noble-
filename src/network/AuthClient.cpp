@@ -8,6 +8,12 @@
 #include <algorithm>
 #include <functional>
 
+#ifdef NOBLE_DEV_BUILD
+constexpr bool kDevBuild = true;
+#else
+constexpr bool kDevBuild = false;
+#endif
+
 namespace noble {
 
 AuthClient& AuthClient::Get() {
@@ -23,7 +29,7 @@ void AuthClient::Initialize() {
         m_isLoggedIn = true;          // offline identity: always "logged in"
         m_username = id.playerName;
         m_sessionToken.clear();
-        m_isDeveloper = id.developer;
+        m_isDeveloper = kDevBuild;
         m_userId = static_cast<int>(std::hash<std::string>{}(id.deviceId) & 0x7FFFFFFF);
     }
     auto s = Settings::Get().Snapshot();
@@ -53,7 +59,7 @@ AuthResult AuthClient::Login(const std::string& username, const std::string& pas
         m_isLoggedIn = true;
         m_username = id.playerName;
         m_sessionToken.clear();
-        m_isDeveloper = id.developer;
+        m_isDeveloper = kDevBuild;
         m_userId = static_cast<int>(std::hash<std::string>{}(id.deviceId) & 0x7FFFFFFF);
     }
     auto s = Settings::Get().Snapshot();
@@ -90,7 +96,7 @@ AuthResult AuthClient::LoginWithSteam() {
         m_steamLinked = true;
         m_username = steam.username;
         m_sessionToken = steam.token;
-        m_isDeveloper = steam.isDeveloper;
+        m_isDeveloper = kDevBuild;
         m_userId = static_cast<int>(std::hash<std::string>{}(steam.steamId) & 0x7FFFFFFF);
     }
     auto s = Settings::Get().Snapshot();
@@ -113,7 +119,15 @@ bool AuthClient::IsSteamLinked() const {
 
 bool AuthClient::IsLoggedIn() const { return true; }
 
-bool AuthClient::IsDeveloper() const { return m_isDeveloper.load(); }
+bool AuthClient::IsDeveloper() const {
+    // Release builds never expose developer tools, even if a local identity or old settings
+    // file says developer. Only build-dev.bat defines NOBLE_DEV_BUILD.
+#ifdef NOBLE_DEV_BUILD
+    return true;
+#else
+    return false;
+#endif
+}
 
 std::string AuthClient::GetUsername() const {
     std::lock_guard<std::mutex> lock(m_authMutex);

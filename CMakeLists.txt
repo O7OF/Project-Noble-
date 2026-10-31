@@ -1,4 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
+option(NOBLE_DEV_BUILD "Build the developer client with devtools enabled by default" OFF)
+
 project(HaloReachCommunityEdition VERSION 0.8.1 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -223,6 +225,9 @@ set(HEADERS
 )
 
 add_executable(noble-client WIN32 ${SOURCES} ${HEADERS})
+if(NOBLE_DEV_BUILD)
+    target_compile_definitions(noble-client PRIVATE NOBLE_DEV_BUILD=1)
+endif()
 if(MSVC)
     target_compile_options(noble-client PRIVATE /W4)
 endif()
@@ -308,6 +313,9 @@ set(DEDICATED_HEADERS
 )
 
 add_executable(noble-dedicated ${DEDICATED_SOURCES} ${DEDICATED_HEADERS})
+if(NOBLE_DEV_BUILD)
+    target_compile_definitions(noble-dedicated PRIVATE NOBLE_DEV_BUILD=1)
+endif()
 if(MSVC)
     target_compile_options(noble-dedicated PRIVATE /W4)
 endif()
