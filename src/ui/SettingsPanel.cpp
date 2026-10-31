@@ -946,6 +946,18 @@ void SettingsPanel::RenderGame() {
             When::Apply, "78\xC2\xB0", std::fabs(m_edit.fieldOfView - m_saved.fieldOfView) > 0.01f, false, Preview::Fov)) {
         SliderValue(m_edit.fieldOfView, 70.0f, 120.0f, 1.0f, 78.0f, Format("%.0f\xC2\xB0", m_edit.fieldOfView).c_str());
     }
+    const auto fovModText = [](float v) -> std::string {
+        if (std::fabs(v) < 0.005f) return "0 %";
+        return v < 0.0f ? Format("IN %.0f %%", std::fabs(v) * 100.0f) : Format("OUT %.0f %%", v * 100.0f);
+    };
+    if (Row("1ST-PERSON FOV MODIFIER (ON FOOT)", "Scales your 1st-person field of view on foot up to 120 % in (narrower) or 120 % out (wider). 0 % keeps your base Field of View.",
+            When::Apply, "0 %", std::fabs(m_edit.firstPersonFovMod - m_saved.firstPersonFovMod) > 1e-4f, false)) {
+        SliderValue(m_edit.firstPersonFovMod, -1.20f, 1.20f, 0.05f, 0.00f, fovModText(m_edit.firstPersonFovMod).c_str());
+    }
+    if (Row("1ST-PERSON FOV MODIFIER (VEHICLE)", "Scales your 1st-person field of view while in a vehicle up to 120 % in (narrower) or 120 % out (wider). 0 % keeps your base Field of View.",
+            When::Apply, "0 %", std::fabs(m_edit.vehicleFirstPersonFovMod - m_saved.vehicleFirstPersonFovMod) > 1e-4f, false)) {
+        SliderValue(m_edit.vehicleFirstPersonFovMod, -1.20f, 1.20f, 0.05f, 0.00f, fovModText(m_edit.vehicleFirstPersonFovMod).c_str());
+    }
     if (Row("THIRD-PERSON ZOOM", "How much the camera zooms in when aiming a weapon with right click in third person (F5). 50 % is the default zoom.",
             When::Apply, "50 %", std::fabs(m_edit.thirdPersonZoom - m_saved.thirdPersonZoom) > 1e-4f, false)) {
         SliderValue(m_edit.thirdPersonZoom, 0.10f, 1.00f, 0.05f, 0.50f, Percent(m_edit.thirdPersonZoom).c_str());
@@ -958,6 +970,14 @@ void SettingsPanel::RenderGame() {
         if (std::fabs(v) < 0.005f) return "0 %";
         return v < 0.0f ? Format("DOWN %.0f %%", std::fabs(v) * 100.0f) : Format("UP %.0f %%", v * 100.0f);
     };
+    if (Row("1ST-PERSON VEHICLE HORIZONTAL OFFSET", "Shifts the 1st-person vehicle camera left or right relative to your character's head. Negative values move left, positive values move right; 0 % keeps the default head placement.",
+            When::Apply, "0 %", std::fabs(m_edit.vehicleFirstPersonOffsetX - m_saved.vehicleFirstPersonOffsetX) > 1e-4f, false)) {
+        SliderValue(m_edit.vehicleFirstPersonOffsetX, -1.00f, 1.00f, 0.05f, 0.00f, horizOffsetText(m_edit.vehicleFirstPersonOffsetX).c_str());
+    }
+    if (Row("1ST-PERSON VEHICLE VERTICAL OFFSET", "Shifts the 1st-person vehicle camera up or down relative to your character's head. Negative values move down, positive values move up; 0 % keeps the default head placement.",
+            When::Apply, "0 %", std::fabs(m_edit.vehicleFirstPersonOffsetY - m_saved.vehicleFirstPersonOffsetY) > 1e-4f, false)) {
+        SliderValue(m_edit.vehicleFirstPersonOffsetY, -1.00f, 1.00f, 0.05f, 0.00f, vertOffsetText(m_edit.vehicleFirstPersonOffsetY).c_str());
+    }
     if (Row("THIRD-PERSON HORIZONTAL OFFSET", "Shifts the third-person camera left or right relative to your character (F5). Negative values move left, positive values move right; 0 % keeps Reach's default.",
             When::Apply, "0 %", std::fabs(m_edit.thirdPersonOffsetX - m_saved.thirdPersonOffsetX) > 1e-4f, false)) {
         SliderValue(m_edit.thirdPersonOffsetX, -1.00f, 1.00f, 0.05f, 0.00f, horizOffsetText(m_edit.thirdPersonOffsetX).c_str());
@@ -1521,7 +1541,10 @@ int SettingsPanel::CountDiff(const SettingsData& a, const SettingsData& b, Cat c
                (a.masterMute != b.masterMute) + (a.muteInBackground != b.muteInBackground) +
                (a.menuSounds != b.menuSounds) + (a.menuMusicTrack != b.menuMusicTrack);
     case Cat::Game:
-        return f(a.fieldOfView, b.fieldOfView) + f(a.thirdPersonZoom, b.thirdPersonZoom) +
+        return f(a.fieldOfView, b.fieldOfView) + f(a.firstPersonFovMod, b.firstPersonFovMod) +
+               f(a.vehicleFirstPersonFovMod, b.vehicleFirstPersonFovMod) +
+               f(a.vehicleFirstPersonOffsetX, b.vehicleFirstPersonOffsetX) + f(a.vehicleFirstPersonOffsetY, b.vehicleFirstPersonOffsetY) +
+               f(a.thirdPersonZoom, b.thirdPersonZoom) +
                f(a.thirdPersonOffsetX, b.thirdPersonOffsetX) + f(a.thirdPersonOffsetY, b.thirdPersonOffsetY) +
                (a.subtitles != b.subtitles) + (a.menuBackground != b.menuBackground) +
                f(a.brightness, b.brightness) + (a.fxaa != b.fxaa) + (a.throttleUnfocused != b.throttleUnfocused);
@@ -1578,7 +1601,10 @@ SettingsData SettingsPanel::WithDefaults(SettingsData e, Cat c) {
         e.menuSounds = d.menuSounds; e.menuMusicTrack = d.menuMusicTrack;
         break;
     case Cat::Game:
-        e.fieldOfView = d.fieldOfView; e.thirdPersonZoom = d.thirdPersonZoom;
+        e.fieldOfView = d.fieldOfView; e.firstPersonFovMod = d.firstPersonFovMod;
+        e.vehicleFirstPersonFovMod = d.vehicleFirstPersonFovMod;
+        e.vehicleFirstPersonOffsetX = d.vehicleFirstPersonOffsetX; e.vehicleFirstPersonOffsetY = d.vehicleFirstPersonOffsetY;
+        e.thirdPersonZoom = d.thirdPersonZoom;
         e.thirdPersonOffsetX = d.thirdPersonOffsetX; e.thirdPersonOffsetY = d.thirdPersonOffsetY;
         e.subtitles = d.subtitles; e.menuBackground = d.menuBackground;
         break;

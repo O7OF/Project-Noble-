@@ -7,11 +7,13 @@ namespace noble {
 
 // Profile key-binding table (profile +0x42C, 66 entries of 0x18 bytes: {u32 action, u32 VK, 16 zero
 // bytes}). Defaults are MCC's PC layout; players can override single actions in the SETTINGS tab.
-// Slot 66 (kActionLowerWeapon) is a Noble-managed action (unbound by default) handled in ReachHost.
+// Slots 66 (kActionLowerWeapon) and 67 (kActionVehicleFirstPerson) are Noble-managed actions
+// (unbound by default) handled in ReachHost.
 namespace KeyBindings {
 
 constexpr int kActionLowerWeapon = 66;
-constexpr int kActionCount = 67;
+constexpr int kActionVehicleFirstPerson = 67;
+constexpr int kActionCount = 68;
 
 int DefaultKey(int action);            // VK code, 0 = unbound
 int EffectiveKey(int action);          // default or the player's override

@@ -15,7 +15,7 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
   under the `--` line, as
   `## 0. Pick up here (2026-10-31, 08:25 ET) - Pre-game lobby map identity (@deepseek / DeepSeek)`.
 
-**Current version:** 0.9.2. **Developer build:** 0.9.2-dev. Dev binaries report the suffix next to the version string.
+**Current version:** 0.9.3. **Developer build:** 0.9.3-dev. Dev binaries report the suffix next to the version string.
 
 **Built and verified:** release `build\bin\Release\noble-client.exe`, developer `build\bin\Release\noble-dev.exe`, dedicated `build\bin\Release\noble-dedicated.exe`, and the packaged `Documents\Noble Launcher\Noble.exe` (full runtime tree; package stayed running in a normal launch test).
 
@@ -58,6 +58,23 @@ The packaged executable is unsigned and performs legitimate but AV-sensitive hos
 --
 
 --
+
+## 0. Pick up here (2026-10-31, 19:15 ET) - Vehicle 1st-person keybind, 1st-person on-foot & vehicle FOV modifiers (-120% to +120%), 3rd-person Q zoom fix & Server Browser database Total Players count (Gemini 4 Argon)
+
+**Version:** 0.9.3 / 0.9.3-dev (Pregame Map Identity). **Built & packaged:** `build\bin\Release\noble-client.exe`, `build\bin\Release\noble-dev.exe`, `build\bin\Release\noble-dedicated.exe`, and `C:\Users\Reeve\Documents\Noble Launcher\Noble.exe`.
+
+**What changed**
+1. **Vehicle 1st-Person Camera Keybind (`src/engine/KeyBindings.*`, `src/engine/CameraThirdPerson.*`, `src/engine/ReachHost.cpp`, `src/common/Settings.cpp`):**
+   - Added action `67` (`kActionVehicleFirstPerson`, `"Vehicle 1st person"`, unbound by default `0`) to **Settings > Controls > Keyboard & Mouse** under both **Actions** and **Vehicle Controls**.
+   - Hooked `unit_should_use_third_person_camera` (`haloreach+0xC6948`, verified prologue `48 89 5C 24 08 48 89 6C 24 10`) and resolved `player_mapping_get_unit_by_output_user` (`haloreach+0x53EF8`) to detect when the local player's unit is seated in a vehicle (`*outReason` in `1..3`). When toggled on via the keybind, `Hook_UnitThirdPerson` sets `*outReason = 0` and returns `0`, switching `c_game_director` to `c_first_person_camera` inside vehicles.
+   - Resolved `object_get_markers_by_string_id` (`haloreach+0x47044C`) and `object_get_head_position` (`haloreach+0x472184`) so `Hook_FirstPersonUpdate` places `s_observer_command::position` (`[observerCommand + 0x04]`) at the character's `0xC2` head marker while in a vehicle instead of the vehicle's 3rd-person seat pivot marker, and added **1st-Person Vehicle Horizontal Offset** (`vehicleFirstPersonOffsetX`, `LEFT 100 %` to `RIGHT 100 %`, default `0 %`) and **1st-Person Vehicle Vertical Offset** (`vehicleFirstPersonOffsetY`, `DOWN 100 %` to `UP 100 %`, default `0 %`) in **Settings > Game Options > Camera**.
+2. **Separate 1st-Person FOV Modifiers for On Foot & Vehicles (`src/engine/CameraThirdPerson.*`, `src/common/Settings.*`, `src/ui/SettingsPanel.cpp`):**
+   - Added **1st-Person FOV Modifier (On Foot)** (`firstPersonFovMod`, `-1.20` to `+1.20` / `IN 120 %` to `OUT 120 %`, default `0 %`) and **1st-Person FOV Modifier (Vehicle)** (`vehicleFirstPersonFovMod`, `-1.20` to `+1.20` / `IN 120 %` to `OUT 120 %`, default `0 %`) in **Settings > Game Options > Camera**.
+   - Hooked `c_first_person_camera::update` (`haloreach+0xC6EE8`, verified prologue `48 8B C4 48 89 58 10 48 89 68 18`) and scaled `s_observer_command::field_of_view` (`[observerCommand + 0x28]`) by the active on-foot or in-vehicle modifier (`1.0f + mod` when zooming out up to `+120%`, `1.0f / (1.0f - mod)` when zooming in down to `-120%`, clamped safely within Reach's FOV validator bounds).
+3. **3rd-Person `Q` Zoom Trigger Fix (`src/engine/ReachHost.cpp`):**
+   - Fixed 3rd-person weapon zoom polling `KeyBindings::EffectiveKey(5)` (slot 5 = Melee, bound to `Q` in MCC defaults) in addition to `KeyBindings::EffectiveKey(10)` (slot 10 = Zoom). Now only the bound **Zoom** key (slot 10, default Right Click) triggers 3rd-person zoom; pressing `Q` never zooms unless the user explicitly binds **Zoom** to `Q`.
+4. **Server Browser Total Players Database Count (`ServerTestDeploy/server.js`, `ServerTestDeploy/database.db`, `src/network/MasterServerClient.cpp`, `src/ui/ServerBrowser.cpp`):**
+   - Seeded and unioned the SQLite `users` and `registered_players` tables on `ServerTestDeploy` so `totalPlayers` reflects the total number of registered user IDs stored in the database (`6+`), distinct from `online` (active players online).
 
 ## 0. Pick up here (2026-10-31, 18:58 ET) - Clean post-game panel confirmed; it just is not raised at multiplayer end (WeabooTyler117 / DeepSeek)
 
