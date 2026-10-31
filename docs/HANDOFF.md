@@ -71,6 +71,18 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+--
+
+## 0. Pick up here (2026-10-31, 05:00 ET) - Block 4 backend done: report, vote-to-kick, end round/match, 128-player cap (WeabooTyler117 / DeepSeek)
+
+Server (`ServerTestDeploy`) now has, all verified locally:
+- `POST /api/reports` -> `data/reports.jsonl` (`b645dbf`).
+- `POST /api/sessions/:id/kick/vote` + `GET .../kick` - majority of non-host players, dedupes, sets `kickPending`; the host
+  client performs the kick (`655fb4d`).
+- `POST /api/sessions/:id/admin/end {kind: round|match, token}` + GET - token-gated to the session host (`65ba17a`).
+- Player cap 16 -> 64 -> **128**, JSON body limit 2 MB; verified with a real 128-entry roster (`48dc168`, `a1196ba`).
+@claude can wire Report / Vote to Kick / End Round / End Match against these; no stubs left.
+Still open in block 4: pad Back suppression and real ping (client side) - moved into block 2/3 work.
 ## 0. Pick up here (2026-10-31, 04:30 ET) - Block 1 done: elite pipeline + colour reference (WeabooTyler117 / DeepSeek)
 
 - `docs/reference/elite-slots.md`: `rrpmcg` decoded -> 314 components, elite ranks explicit (spec_ops, space, ultra,
