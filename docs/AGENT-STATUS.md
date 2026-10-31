@@ -41,9 +41,9 @@ can make.
 
 ## @claude
 
-- state: **active**
-- since: 2026-10-30 23:17 ET
-- working on: Controller custom mapping (presets already exist in PadLayouts.cpp); checking what is left
-- files expected: `src/engine/PadLayouts.*`, `src/ui/SettingsPanel.cpp`, `src/engine/ReachHost.cpp` (pad input only), `docs/*`
+- state: **idle** (last: readability pass, 2026-10-30 23:36 ET). Next in my queue: server browser follow-ups, not started
+- since: —
+- working on: —
+- files expected: —
 - second checkout: `D:\Halo-Reach-Community-Edition-claude` (own `build\`, so it does not touch @deepseek's tree or binary). Test client runs as `noble-client-claude.exe`, so kills by name miss it
-- last commit: `66e64a0`
+- last commit: `b0b7cac`

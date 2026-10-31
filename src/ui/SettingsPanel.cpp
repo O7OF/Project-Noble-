@@ -1137,10 +1137,6 @@ void SettingsPanel::RenderController() {
             InfoValue(line.c_str());
         }
     }
-    if (Row("BUTTON LAYOUT", "Reach's layouts (Default, Southpaw, Boxer, Green Thumb, Bumper Jumper, Recon). Only Default for now; the others come in a later update.",
-            When::Info, "Default", false, true, Preview::Controller)) {
-        InfoValue("DEFAULT");
-    }
     // Per-action bindings: click a row, then press the pad button it should use. An override replaces the
     // button layout's source for that action; DELETE puts the layout's own button back.
     Section("BUTTON BINDINGS");
