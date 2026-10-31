@@ -20,8 +20,8 @@ can make.
 
 - state: **active**
 - since: 2026-10-30 22:17 ET
-- working on: third-person camera re-verification (experiment matrix with `-third-person-mode 0|1`); reviewing @claude's
-  commits; docs
+- working on: third-person camera **verified working** in Firefight (`docs/screenshots/third-person-vs-first.png`); now
+  tuning the follow distance, settings row and host/mode gate; reviewing @claude's commits; docs
 - files expected: `src/engine/CameraThirdPerson.*`, `docs/HANDOFF.md`, `docs/TODO.md`, `docs/AGENT-STATUS.md`
 - test state: game audio muted in both checkouts (`tools/mute-game.ps1 -IncludeClaude`); restore with `-Unmute`
   (**`src/ui/PauseMenu.cpp` released** - @claude may take the scoreboard action bar)

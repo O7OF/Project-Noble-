@@ -144,11 +144,13 @@ explicitly** - a "needs" item must land before the dependent one can be verified
 
 ## C. Engine features
 
-- [~] @deepseek 2026-10-30 22:17 — **Third-person toggle does NOT work yet.** `CameraThirdPerson` MinHooks
-  `haloreach+0x48A910` and answers the check with `true`, and the detour does fire, but a clean gameplay capture still shows
-  first person. Earlier "works" claim was a cutscene camera - corrected. Next: determine the check's real semantics (try
-  returning `false`, and/or returning `original(...)` combined) and whether the engine needs the follow hook at
-  `haloreach+0x1DCADC` too. Then distance/shoulder tuning, settings row, key rebinding, host/mode gate.
+- [x] @deepseek 2026-10-30 23:05 - **Third-person camera works** (`haloreach+0x48A910` check hooked, F5 toggles,
+  `-third-person` starts on) - verified in Firefight with a side-by-side capture (`docs/screenshots/third-person-vs-first.png`):
+  same spot, first person vs Spartan from behind. Campaign looks unchanged only because the first minutes are cutscene and
+  vehicle cameras, which ignore the player camera check. Commit pending with the tuning work below.
+- [~] @deepseek 2026-10-30 23:05 - **Third-person tuning** - pull the camera back (follow hook `haloreach+0x1DCADC`:
+  call original, scale `[r9+0x28]`, optional shoulder sign at `[r9+0x14]`), settings row + key rebind, host/mode gate
+
 - [ ] **Real solo pause, CHANGE TEAM, vote-to-kick** (transport + roster UI)
 - [ ] **Host/admin controls (spec 4.15)** — kick / session-ban / permanent ban (dedicated), end round, restart round, restart
   match, shuffle teams, end game → back to the lobby with everyone, skip to next rotation entry; actions confirmed and

@@ -49,6 +49,28 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+--
+
+## 0. Pick up here (2026-10-30, 23:05 ET) - Third person VERIFIED (Firefight), with a real FP-vs-TP capture (WeabooTyler117 / DeepSeek)
+
+The F5 hook works. Verified in **Firefight** (`beachhead`, firefight class), same spot, two runs:
+`docs/screenshots/third-person-vs-first.png` - top is first person (weapon in front, no body), bottom is third person
+(the Spartan's back and shoulder fill the lower left, weapon still visible in hand). The hook log fires
+`camera check fired (player …, mode 0, original false)` as soon as the match starts.
+
+**Why the earlier attempts looked like a failure:** campaign `m10`'s first minutes are a cutscene and a Falcon ride; the
+cinematic/vehicle camera ignores the per-player camera-mode check, so captures at 100-180 s were identical with and without
+the hook. The mistake was judging camera work from a single cutscene frame - corrected in the TODO and handoff.
+
+Tooling added along the way: `-capture-at <seconds,...>` (wall-clock capture points; engine frame rate is variable, so
+frame-number captures were unreliable).
+
+Remaining for this feature (TODO, claimed):
+- pull the camera back: detour `haloreach+0x1DCADC` (RR's follow hook) - call the original, scale `[r9+0x28]`, optional
+  shoulder flip at `[r9+0x14]`; the current view is very close (camera near the shoulder)
+- a settings row + key rebind for the F5 toggle
+- host / game-mode gate (Tyler wants it host- or mode-controlled)
+
 ## 0. Pick up here (2026-10-30, 23:15 ET) - Test runs muted with tools/mute-game.ps1 (WeabooTyler117 / DeepSeek)
 
 Tyler asked for the game to be muted before tests. Noble's `masterMute` only silences our own menu audio, so the engine was
