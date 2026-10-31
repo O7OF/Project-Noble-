@@ -22,6 +22,56 @@ overlay (`7cef78c`) and the third-person camera (`97989d1`).
 ---
 
 
+
+## NIGHT SHIFT — read this, both agents (Tyler away until morning)
+
+Tyler is stepping away for the night and will have **little to no interaction** until morning. Both agents keep working.
+Do not stop to ask; the repo is the coordination channel and this list is the queue.
+
+**Operating loop, repeat until the queue is empty**
+
+1. `git pull`. Check `docs/AGENT-STATUS.md` (who is active, which files) and `docs/TODO.md` (`[~]` lines).
+2. Pick the **first unclaimed item in the queue order below** that does not depend on an unfinished item. If your own
+   item is blocked (hardware, another agent's file, missing evidence), leave it `[~]` with `needs:` and take the next one.
+3. Claim it (TODO line `[~] @you <ET time> - what`), update your AGENT-STATUS block (item + files), commit and push.
+4. Work in a timebox of roughly 45-60 minutes. If it is not converging, write down what was tried in the handoff and move
+   on - a half-finished item with notes beats a stalled night.
+5. Verify (build 0/0; capture for UI; two-process run for netcode; `node --check` + endpoint for server), add the handoff
+   entry (with `Self-review:`), mark `[x] @you ... - commit <hash>`, set AGENT-STATUS back to idle, commit and push.
+6. **Review the other agent's latest landed commit** using `docs/TEAM-WORKFLOW.md` (diff, hash+handoff, 0/0 rebuild,
+   evidence inspected). Write `REVIEW OK` or `REVIEW: re-opened` in a handoff entry.
+7. Refresh the Downloads mirrors and, if docs changed materially, rebuild the Claude package.
+8. Go to 1.
+
+**Stop conditions (only these)**
+
+- The whole queue is done, or every remaining item is blocked; then write a `## 0.` handoff entry titled
+  "Night shift summary" listing what landed, what is blocked and why, and leave everything clean.
+- Two consecutive failed attempts at the same item (record both attempts and move on).
+- A change would require Tyler's decision (design choice, deleting his data, spending money) - record it as
+  `BLOCKED (Tyler): <question>` in the TODO line and pick another item.
+
+**Tyler's standing rules still apply:** always update the handoff, server changes only in `ServerTestDeploy`, close
+`noble-client.exe` when done, never force-push, never commit build output or public IPs, leave the tree clean.
+
+**Queue order for tonight**
+
+1. @deepseek - third-person camera matrix + tuning (in progress)
+2. @claude - scoreboard action bar + full cover of the engine panel
+3. @deepseek - campaign co-op verification (skulls/difficulty, disconnect, respawn)
+4. @claude - emblem backdrop + symbol picker
+5. @deepseek - scoreboard live K/D API (engine player-record hook)
+6. @claude - controller presets + custom mapping
+7. @deepseek - campaign CONTINUE checkpoint (may need research; timebox it)
+8. @claude - readability pass (14 screens)
+9. @deepseek - vote-to-kick transport + server endpoint
+10. @claude - server browser follow-ups
+11. @deepseek - invites mode/map
+12. @claude - post-game names UI (needs @deepseek's name path; swap if blocked)
+13. @deepseek - 4+ players (timebox; RR reference in `docs/player-count-scaling.md`)
+14. @claude - docs/screenshots upkeep, then help with the review queue
+15. Either - housekeeping (CI artifact, handoff dedupe, stash) if a build/verify window frees up
+
 ## Ownership plan (who is doing what)
 
 Agents may still claim anything unowned, but this is the intended split so we do not collide. **Dependencies are stated
