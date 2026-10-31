@@ -72,6 +72,7 @@ struct SettingsData {
     std::vector<std::string> menuMusicDisabled; // ReachAudio::MusicTracks() id, "all" or "off"
 
     // Voice chat. Device ids are Windows endpoint ids; empty means the system default.
+    bool firstStartDone = false;    // the first-start question was answered; a settings file from before it counts as answered
     bool voiceEnabled = true;
     std::string voiceInputDevice;
     std::string voiceOutputDevice;
@@ -118,6 +119,10 @@ public:
     void Update(const SettingsData& data);   // replace and save
 
     std::filesystem::path FilePath() const;
+    // Key bindings and preferences to a file and back, for moving them to another PC or sharing them. Account details, the
+    // server address and this PC's audio devices never travel, so a shared file can't leak a login or redirect anyone.
+    bool ExportTo(const std::filesystem::path& file);
+    bool ImportFrom(const std::filesystem::path& file);
 
 private:
     Settings() = default;

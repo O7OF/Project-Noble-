@@ -100,6 +100,7 @@ void Settings::Load() {
     if (in) {
         try {
             const nlohmann::json j = nlohmann::json::parse(in);
+            d.firstStartDone = j.value("firstStartDone", true);
             Read(j, "width", d.width);
             Read(j, "height", d.height);
             Read(j, "borderless", d.borderless);
@@ -308,6 +309,7 @@ bool Settings::Save() {
         j["masterMute"] = d.masterMute;
         j["muteInBackground"] = d.muteInBackground;
         j["inviteNotifications"] = d.inviteNotifications;
+    j["firstStartDone"] = d.firstStartDone;
         j["voiceEnabled"] = d.voiceEnabled;
         j["voiceInputDevice"] = d.voiceInputDevice;
         j["voiceOutputDevice"] = d.voiceOutputDevice;
@@ -361,6 +363,55 @@ bool Settings::Save() {
 SettingsData Settings::Snapshot() const {
     std::lock_guard<std::mutex> lock(m_mutex);
     return m_data;
+}
+
+namespace {
+void DropPrivateKeys(nlohmann::json& j) {
+    for (const char* key : { "accountUsername", "accountToken", "accountUserId", "isDeveloper", "masterServerUrl",
+                             "voiceInputDevice", "voiceOutputDevice", "firstStartDone", "lastPlayedMode", "lastPlayedMap" }) {
+        j.erase(key);
+    }
+}
+} // namespace
+
+bool Settings::ExportTo(const std::filesystem::path& file) {
+    Save();
+    try {
+        std::ifstream in(FilePath());
+        nlohmann::json j = nlohmann::json::parse(in);
+        DropPrivateKeys(j);
+        std::ofstream out(file, std::ios::binary | std::ios::trunc);
+        out << j.dump(2);
+        return static_cast<bool>(out);
+    } catch (...) {
+        return false;
+    }
+}
+
+bool Settings::ImportFrom(const std::filesystem::path& file) {
+    try {
+        std::error_code ec;
+        if (std::filesystem::file_size(file, ec) > 4 * 1024 * 1024 || ec) return false;
+        std::ifstream in(file);
+        nlohmann::json incoming = nlohmann::json::parse(in);
+        if (!incoming.is_object()) return false;
+        DropPrivateKeys(incoming);
+        Save();
+        std::ifstream current(FilePath());
+        nlohmann::json merged = nlohmann::json::parse(current);
+        current.close();
+        merged.update(incoming);
+        {
+            std::ofstream out(FilePath(), std::ios::binary | std::ios::trunc);
+            out << merged.dump(2);
+            if (!out) return false;
+        }
+        Load();   // Load checks every value's type and range
+        Save();   // so the file holds the checked values too
+        return true;
+    } catch (...) {
+        return false;
+    }
 }
 
 void Settings::Update(const SettingsData& data) {

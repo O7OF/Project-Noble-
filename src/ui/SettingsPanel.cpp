@@ -1897,6 +1897,55 @@ void SettingsPanel::RenderSystem() {
         s_note = "Opened " + backups.string();
     });
 
+    Section("MOVE TO ANOTHER PC");
+    const auto pickFile = [](bool save, std::filesystem::path& out) {
+        wchar_t file[MAX_PATH] = L"noble-settings.json";
+        OPENFILENAMEW ofn{};
+        ofn.lStructSize = sizeof(ofn);
+        ofn.hwndOwner = GetActiveWindow();
+        ofn.lpstrFilter = L"Noble settings\0*.json\0All files\0*.*\0";
+        ofn.lpstrFile = file;
+        ofn.nMaxFile = MAX_PATH;
+        ofn.lpstrDefExt = L"json";
+        ofn.Flags = OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR | (save ? OFN_OVERWRITEPROMPT : OFN_FILEMUSTEXIST);
+        if (!(save ? GetSaveFileNameW(&ofn) : GetOpenFileNameW(&ofn))) return false;
+        out = file;
+        return true;
+    };
+    action("EXPORT SETTINGS...", "Saves your key bindings and preferences to a file you choose. Your account, the server address and this PC's audio devices are left out, so it's safe to share.", "Choose a file", [&] {
+        std::filesystem::path file;
+        if (!pickFile(true, file)) return;
+        const bool ok = Settings::Get().ExportTo(file);
+        s_note = ok ? "Exported to " + file.string() : "That file could not be written.";
+        NOBLE_INFO("SettingsPanel: export {}", ok ? "done" : "failed");
+        if (!ok) MenuSounds::Error();
+    });
+    action("IMPORT SETTINGS...", "Loads key bindings and preferences from a file, in place of your current ones. Use BACK UP SETTINGS first to keep them. Your account and server stay as they are.", "Choose a file", [&] {
+        std::filesystem::path file;
+        if (!pickFile(false, file)) return;
+        const bool ok = Settings::Get().ImportFrom(file);
+        NOBLE_INFO("SettingsPanel: import {}", ok ? "done" : "failed");
+        if (!ok) {
+            s_note = "That isn't a settings file Noble can read. Nothing was changed.";
+            MenuSounds::Error();
+            return;
+        }
+        m_saved = Settings::Get().Snapshot();
+        m_edit = m_saved;
+        SyncBuffers();
+        s_note = "Imported " + file.filename().string() + ".";
+    });
+    Section("SETUP");
+    action("RUN FIRST-TIME SETUP", "Shows the first-start questions again the next time you're on the main menu.", "Main menu", [&] {
+        SettingsData d = Settings::Get().Snapshot();
+        d.firstStartDone = false;
+        Settings::Get().Update(d);
+        m_saved = Settings::Get().Snapshot();
+        m_edit = m_saved;
+        SyncBuffers();
+        s_note = "The setup will show on the main menu.";
+    });
+
     if (!s_note.empty()) {
         ImGui::Dummy(ImVec2(0, 8.0f * Scale()));
         ImGui::PushStyleColor(ImGuiCol_Text, NobleStyle::TextMuted());

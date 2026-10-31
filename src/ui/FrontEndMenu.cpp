@@ -3171,6 +3171,31 @@ static void DrawSocialScreen(OverlayContext& ctx, const Ui& ui, float left, floa
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.03f, 0.05f, 0.08f, 0.75f));
     ImGui::BeginChild("##social_panel", ImVec2(panelW, panelH), ImGuiChildFlags_Borders, ImGuiWindowFlags_None);
 
+    // Controller: the D-pad or stick steps through every button on the page in reading order and A presses it. Fields that
+    // need typing are left out; those still need a keyboard.
+    static int s_padFocus = 0;
+    static int s_padTab = -1;
+    if (s_padTab != st.socialTab) { s_padTab = st.socialTab; s_padFocus = 0; }
+    int padCount = 0;
+    const bool padLive = InputPrompts::Current() == InputPrompts::Device::Gamepad;
+    const bool padNext = ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight) ||
+                         ImGui::IsKeyPressed(ImGuiKey_GamepadLStickDown) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickRight);
+    const bool padPrev = ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft) ||
+                         ImGui::IsKeyPressed(ImGuiKey_GamepadLStickUp) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickLeft);
+    const bool padAccept = ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false);
+    if (padNext) { ++s_padFocus; MenuSounds::Scroll(); }
+    if (padPrev) { --s_padFocus; MenuSounds::Scroll(); }
+    const auto padButton = [&](const char* label, const ImVec2& size) {
+        const int me = padCount++;
+        const bool pressed = ImGui::Button(label, size);
+        const bool focused = padLive && me == s_padFocus;
+        if (focused) {
+            ImGui::GetWindowDrawList()->AddRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), kAccent, 2.0f, 0, 2.0f * ui.s);
+            if (padNext || padPrev) ImGui::SetScrollHereY();
+        }
+        return pressed || (focused && padAccept);
+    };
+
     // 1. Game Invites Card (prominent at top if any exist)
     const auto invites = SocialClient::Get().GetInvites();
     if (!invites.empty()) {
@@ -3185,10 +3210,9 @@ static void DrawSocialScreen(OverlayContext& ctx, const Ui& ui, float left, floa
             const auto& inv = invites[i];
             ImGui::PushID(static_cast<int>(500 + i));
             ImGui::Bullet();
-            ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), "%s invited you to join their game! (%s:%u)",
-                               inv.senderUsername.c_str(), inv.hostIp.c_str(), inv.hostPort);
+            ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), "%s invited you to join their game!", inv.senderUsername.c_str());
             ImGui::SameLine();
-            if (ImGui::Button("JOIN GAME", ImVec2(100.0f * ui.s, 24.0f * ui.s))) {
+            if (padButton("JOIN GAME", ImVec2(100.0f * ui.s, 24.0f * ui.s))) {
                 choice.play = true;
                 choice.host = false;
                 choice.connectAddress = inv.hostIp + ":" + std::to_string(inv.hostPort);
@@ -3199,7 +3223,7 @@ static void DrawSocialScreen(OverlayContext& ctx, const Ui& ui, float left, floa
                 MenuSounds::Click();
             }
             ImGui::SameLine();
-            if (ImGui::Button("DISMISS", ImVec2(80.0f * ui.s, 24.0f * ui.s))) {
+            if (padButton("DISMISS", ImVec2(80.0f * ui.s, 24.0f * ui.s))) {
                 SocialClient::Get().ClearInviteAsync(inv.senderUsername);
                 MenuSounds::Back();
             }
@@ -3211,7 +3235,14 @@ static void DrawSocialScreen(OverlayContext& ctx, const Ui& ui, float left, floa
     }
 
     // 2. Navigation Tabs
-    const auto friends = SocialClient::Get().GetFriends();
+    auto friends = SocialClient::Get().GetFriends();
+    static const bool s_friendsDemo = wcsstr(GetCommandLineW(), L"-social-friends-demo") != nullptr;   // test: rows without an account
+    if (s_friendsDemo && friends.empty()) {
+        friends.emplace_back();
+        friends.back().username = "Kat-B320";
+        friends.emplace_back();
+        friends.back().username = "Carter-A259";
+    }
     const auto incoming = SocialClient::Get().GetIncomingRequests();
     const auto outgoing = SocialClient::Get().GetOutgoingRequests();
 
@@ -3254,7 +3285,7 @@ static void DrawSocialScreen(OverlayContext& ctx, const Ui& ui, float left, floa
     ImGui::SameLine();
 
     // Refresh button
-    if (ImGui::Button("REFRESH", ImVec2(100.0f * ui.s, tabH))) {
+    if (padButton("REFRESH", ImVec2(100.0f * ui.s, tabH))) {
         SocialClient::Get().RefreshFriendsAsync();
         SocialClient::Get().PollInvitesAsync();
         MenuSounds::Click();
@@ -3300,7 +3331,7 @@ static void DrawSocialScreen(OverlayContext& ctx, const Ui& ui, float left, floa
                 // Col 0: Name
                 ImGui::TableSetColumnIndex(0);
                 if (!f.endpoint.empty()) {
-                    ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), "%s (%s)", f.username.c_str(), f.endpoint.c_str());
+                    ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), "%s", f.username.c_str());   // never the address: this ends up in screenshots and streams
                 } else {
                     ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), "%s", f.username.c_str());
                 }
@@ -3313,19 +3344,20 @@ static void DrawSocialScreen(OverlayContext& ctx, const Ui& ui, float left, floa
                 ImGui::TableSetColumnIndex(2);
                 ImGui::PushID(static_cast<int>(i));
 
-                if (ImGui::Button("INVITE", ImVec2(75.0f * ui.s, 24.0f * ui.s))) {
+                if (padButton("INVITE", ImVec2(75.0f * ui.s, 24.0f * ui.s))) {
                     std::string invMode = "Custom Game";
                     if (st.lobbyMode == "campaign") invMode = "Campaign";
                     else if (st.lobbyMode == "firefight") invMode = "Firefight";
                     else if (st.lobbyMode == "forge") invMode = "Forge";
-                    SocialClient::Get().SendInviteAsync(f.username, myIp, 11774, [](bool ok, const std::string& msg) {
+                    if (s_friendsDemo) NOBLE_INFO("FrontEndMenu: -social-friends-demo INVITE pressed for {}", f.username);
+                    else SocialClient::Get().SendInviteAsync(f.username, myIp, 11774, [](bool ok, const std::string& msg) {
                         (void)msg;
                         if (ok) MenuSounds::Click();
                     }, invMode, st.lobbyMap, st.lobbySessionId);
                 }
                 ImGui::SameLine();
                 if (!f.endpoint.empty()) {
-                    if (ImGui::Button("JOIN", ImVec2(75.0f * ui.s, 24.0f * ui.s))) {
+                    if (padButton("JOIN", ImVec2(75.0f * ui.s, 24.0f * ui.s))) {
                         choice.play = true;
                         choice.host = false;
                         choice.connectAddress = f.endpoint;
@@ -3334,7 +3366,7 @@ static void DrawSocialScreen(OverlayContext& ctx, const Ui& ui, float left, floa
                     }
                     ImGui::SameLine();
                 }
-                if (ImGui::Button("REMOVE", ImVec2(75.0f * ui.s, 24.0f * ui.s))) {
+                if (padButton("REMOVE", ImVec2(75.0f * ui.s, 24.0f * ui.s)) && !s_friendsDemo) {
                     SocialClient::Get().RemoveFriendAsync(f.username);
                     MenuSounds::Back();
                 }
@@ -3353,12 +3385,12 @@ static void DrawSocialScreen(OverlayContext& ctx, const Ui& ui, float left, floa
                 ImGui::PushID(static_cast<int>(100 + i));
                 ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), "%s wants to be your friend.", req.username.c_str());
                 ImGui::SameLine();
-                if (ImGui::Button("ACCEPT", ImVec2(80.0f * ui.s, 22.0f * ui.s))) {
+                if (padButton("ACCEPT", ImVec2(80.0f * ui.s, 22.0f * ui.s))) {
                     SocialClient::Get().AcceptFriendRequestAsync(req.username);
                     MenuSounds::Click();
                 }
                 ImGui::SameLine();
-                if (ImGui::Button("DECLINE", ImVec2(80.0f * ui.s, 22.0f * ui.s))) {
+                if (padButton("DECLINE", ImVec2(80.0f * ui.s, 22.0f * ui.s))) {
                     SocialClient::Get().RemoveFriendAsync(req.username);
                     MenuSounds::Back();
                 }
@@ -3379,7 +3411,7 @@ static void DrawSocialScreen(OverlayContext& ctx, const Ui& ui, float left, floa
                 ImGui::PushID(static_cast<int>(200 + i));
                 ImGui::TextColored(ImVec4(0.85f, 0.85f, 0.85f, 1.0f), "%s (Pending acceptance)", req.username.c_str());
                 ImGui::SameLine();
-                if (ImGui::Button("CANCEL", ImVec2(80.0f * ui.s, 22.0f * ui.s))) {
+                if (padButton("CANCEL", ImVec2(80.0f * ui.s, 22.0f * ui.s))) {
                     SocialClient::Get().RemoveFriendAsync(req.username);
                     MenuSounds::Back();
                 }
@@ -3419,7 +3451,7 @@ static void DrawSocialScreen(OverlayContext& ctx, const Ui& ui, float left, floa
                 ImGui::PushID(static_cast<int>(300 + i));
                 ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), "%s (ID: %d)", u.username.c_str(), u.id);
                 ImGui::SameLine();
-                if (ImGui::Button("ADD FRIEND", ImVec2(110.0f * ui.s, 22.0f * ui.s))) {
+                if (padButton("ADD FRIEND", ImVec2(110.0f * ui.s, 22.0f * ui.s))) {
                     SocialClient::Get().SendFriendRequestAsync(u.username);
                     MenuSounds::Click();
                 }
@@ -3430,6 +3462,7 @@ static void DrawSocialScreen(OverlayContext& ctx, const Ui& ui, float left, floa
         }
     }
 
+    if (padCount > 0) s_padFocus = (s_padFocus % padCount + padCount) % padCount;
     // Status message feedback
     std::string statusMsg = SocialClient::Get().GetLastStatusMessage();
     if (!statusMsg.empty()) {
@@ -3446,7 +3479,124 @@ static void DrawSocialScreen(OverlayContext& ctx, const Ui& ui, float left, floa
         st.focusRow = 0;
         MenuSounds::Back();
     }
-    DrawHints(ui, { { Prompt::Back, "Back" }, { Prompt::Tabs, "Switch Tab (Q/E)" } }, {}, 0.01875f);   // the full-width panel's edge
+    DrawHints(ui, { { Prompt::Accept, "Select" }, { Prompt::Back, "Back" }, { Prompt::Tabs, "Switch Tab" } }, {}, 0.01875f);   // the full-width panel's edge
+}
+
+// Shown once, the first time Noble starts (spec 4.12). New players get a short setup; anyone else goes straight to the menu.
+// Noble has no graphics presets, so the spec's preset step is left out rather than offering one that does nothing.
+// Returns true while it's up, and then the menu behind it takes no input.
+bool DrawFirstStart(const Ui& ui) {
+    static const bool s_forced = wcsstr(GetCommandLineW(), L"-first-start") != nullptr;
+    static bool s_forcedDone = false;
+    const SettingsData saved = Settings::Get().Snapshot();
+    if (saved.firstStartDone && (!s_forced || s_forcedDone)) return false;
+
+    static int s_step = 0, s_focus = 0;
+    static bool s_controller = false, s_loaded = false;
+    static float s_sensitivity = 1.0f;
+    static char s_name[16] = "", s_tag[5] = "";
+    if (!s_loaded) {
+        s_loaded = true;
+        std::snprintf(s_name, sizeof(s_name), "%s", saved.playerName.c_str());
+        std::snprintf(s_tag, sizeof(s_tag), "%s", saved.serviceTag.c_str());
+    }
+    const auto finish = [&](bool setup) {
+        SettingsData d = Settings::Get().Snapshot();
+        d.firstStartDone = true;
+        if (setup) {
+            if (s_name[0]) d.playerName = s_name;
+            if (s_tag[0]) d.serviceTag = s_tag;
+            if (s_controller) d.padLookSpeedX = d.padLookSpeedY = s_sensitivity;
+            else d.mouseSensitivity = s_sensitivity;
+        }
+        Settings::Get().Update(d);
+        s_forcedDone = true;
+        s_step = 0;
+        s_focus = 0;
+        NOBLE_INFO("FrontEndMenu: first start answered (setup: {})", setup);
+        MenuSounds::Click();
+    };
+
+    ImGuiIO& io = ImGui::GetIO();
+    const float s = ui.s;
+    const ImVec2 size(720.0f * s, 440.0f * s);
+    ImGui::SetNextWindowPos(ImVec2((io.DisplaySize.x - size.x) * 0.5f, (io.DisplaySize.y - size.y) * 0.5f));
+    ImGui::SetNextWindowSize(size);
+    ImGui::SetNextWindowFocus();
+    ImGui::SetNextWindowBgAlpha(0.97f);
+    ImGui::Begin("##firststart", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
+                                          ImGuiWindowFlags_NoNavInputs | ImGuiWindowFlags_NoNavFocus);
+    const bool typing = io.WantTextInput;
+    const bool up = !typing && (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickUp));
+    const bool down = !typing && (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickDown));
+    const bool left = !typing && (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickLeft));
+    const bool right = !typing && (ImGui::IsKeyPressed(ImGuiKey_RightArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickRight));
+    const bool accept = !typing && (ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false));
+    const bool back = !typing && (ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false));
+
+    const auto heading = [&](const char* title, const char* text) {
+        ImGui::Dummy(ImVec2(0, 10.0f * s));
+        ImGui::PushFont(NobleStyle::TitleFont());
+        ImGui::TextUnformatted(title);
+        ImGui::PopFont();
+        ImGui::Dummy(ImVec2(0, 6.0f * s));
+        ImGui::PushStyleColor(ImGuiCol_Text, NobleStyle::TextMuted());
+        ImGui::TextWrapped("%s", text);
+        ImGui::PopStyleColor();
+        ImGui::Dummy(ImVec2(0, 14.0f * s));
+    };
+    int rows = 2;
+    const auto option = [&](int index, const char* label) {
+        const bool focused = s_focus == index;
+        ImGui::PushStyleColor(ImGuiCol_Button, focused ? ImVec4(0.20f, 0.45f, 0.70f, 0.95f) : ImVec4(0.08f, 0.12f, 0.16f, 0.9f));
+        const bool clicked = ImGui::Button(label, ImVec2(ImGui::GetContentRegionAvail().x, 44.0f * s));
+        ImGui::PopStyleColor();
+        return clicked || (accept && focused);
+    };
+    const auto nextStep = [&](int step) { s_step = step; s_focus = 0; MenuSounds::Click(); };
+
+    if (s_step == 0) {
+        heading("NEW TO HALO: REACH?", "This is only asked once. You can run the setup again from Settings > System.");
+        if (option(0, "NEW PLAYER")) nextStep(1);
+        if (option(1, "REGULAR OR RETURNING PLAYER")) finish(false);
+    } else if (s_step == 1) {
+        heading("HOW WILL YOU PLAY?", "Both always work, and Noble switches to whichever you touched last. This picks which look speed to set up next.");
+        const auto choose = [&](bool controller) {
+            s_controller = controller;
+            s_sensitivity = controller ? saved.padLookSpeedX : saved.mouseSensitivity;
+            nextStep(2);
+        };
+        if (option(0, "KEYBOARD AND MOUSE")) choose(false);
+        if (option(1, "CONTROLLER")) choose(true);
+    } else if (s_step == 2) {
+        rows = 1;
+        heading("YOUR NAME", "Shown on scoreboards and in chat. Typing needs a keyboard; on a controller, CONTINUE keeps what's here.");
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.7f);
+        const bool nameDone = ImGui::InputTextWithHint("Name", "Up to 15 characters", s_name, sizeof(s_name), ImGuiInputTextFlags_EnterReturnsTrue);
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.3f);
+        const bool tagDone = ImGui::InputTextWithHint("Service tag", "4 letters or digits", s_tag, sizeof(s_tag), ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CharsUppercase | ImGuiInputTextFlags_CharsNoBlank);
+        ImGui::Dummy(ImVec2(0, 10.0f * s));
+        if (option(0, "CONTINUE") || nameDone || tagDone) nextStep(3);
+    } else {
+        rows = 1;
+        heading("LOOK SPEED", s_controller ? "Left and right change how fast you turn. 2.00x is Reach's own speed." : "Left and right change how far you turn per mouse movement. 1.00x is Noble's default.");
+        const float lo = s_controller ? 1.0f : 0.1f, hi = s_controller ? 10.0f : 5.0f, step = s_controller ? 0.25f : 0.05f;
+        if (left) s_sensitivity = std::clamp(s_sensitivity - step, lo, hi);
+        if (right) s_sensitivity = std::clamp(s_sensitivity + step, lo, hi);
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+        ImGui::SliderFloat("##firststartlook", &s_sensitivity, lo, hi, "%.2fx");
+        ImGui::Dummy(ImVec2(0, 10.0f * s));
+        if (option(0, "FINISH")) finish(true);
+    }
+    if (up) s_focus = (s_focus + rows - 1) % rows;
+    if (down) s_focus = (s_focus + 1) % rows;
+    if (back && s_step > 0) {
+        s_focus = 0;
+        --s_step;
+        MenuSounds::Back();
+    }
+    ImGui::End();
+    return true;
 }
 
 // Menu music player: a compact now-playing strip (track, prev / play-pause / next, mute, shuffle) in the
@@ -3691,7 +3841,9 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
     switch (st.screen) {
     case Screen::Main: {
         // While the quit box or a modal is open nothing behind it reacts to the mouse (no hover, sounds or clicks).
-        const bool modal = st.confirmQuit || s_showAccountModal || s_showDevMenu || modPromptOpen;
+        const bool firstStart = DrawFirstStart(ui);
+        if (firstStart) ImGui::GetIO().ClearInputKeys();
+        const bool modal = firstStart || st.confirmQuit || s_showAccountModal || s_showDevMenu || modPromptOpen;
         ImGui::BeginDisabled(modal);
         DrawParty(ui, settings.playerName, "In Main Menu Lobby");
         DrawTitle(ui, ImVec2(left, ui.size.y * 0.30f), "MAIN MENU");

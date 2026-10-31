@@ -6,6 +6,7 @@
 #include "NobleStyle.hpp"
 #include "NobleUi.hpp"
 #include "SettingsPanel.hpp"
+#include "InputPrompts.hpp"
 #include "UiArt.hpp"
 #include "UiPad.hpp"
 #include "audio/ReachAudio.hpp"
@@ -335,6 +336,7 @@ void PauseMenu::DrawMenu(HWND hwnd) {
         { "RESTART MATCH", canRestart ? "Starts this match again from the beginning." : "Needs the match arguments (only available in a launched match).",
           false, canRestart },
         { "SETTINGS", "Change any setting without leaving the match.", false, true },
+        { "CONTROLS", "Change key, mouse and controller bindings and look speed without leaving the match.", false, true },
         { "LEAVE GAME", "Close this match and go back to the front-end menu.", false, true },
         { "QUIT", "Close Noble and end the match.", true, true },
     };
@@ -445,11 +447,17 @@ void PauseMenu::DrawMenu(HWND hwnd) {
         s_showSettings.store(true);
         NOBLE_INFO("PauseMenu: settings opened from the pause menu");
     } else if (activated == 3) {
+        MenuSounds::Click();
+        Window::TakeLeftClicks();
+        PauseSettings().SetTab(InputPrompts::Current() == InputPrompts::Device::Gamepad ? 5 : 4);   // Controller, or Keyboard & Mouse
+        s_showSettings.store(true);
+        NOBLE_INFO("PauseMenu: controls opened from the pause menu");
+    } else if (activated == 4) {
         // The engine can't switch maps once started, so start a fresh Noble with no -map: that opens the menu.
         MenuSounds::Click();
         Close();
         RelaunchAndClose(hwnd, L"", "leave game");
-    } else if (activated == 4) {
+    } else if (activated == 5) {
         NOBLE_INFO("PauseMenu: quit requested");
         Close();
         PostMessageW(hwnd, WM_CLOSE, 0, 0);

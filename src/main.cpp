@@ -251,6 +251,20 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 
     // Player settings (data\userdata\settings.json): window size, controls, volumes, name, servers.
     noble::Settings::Get().Load();
+    // Headless: move settings to or from a file.
+    {
+        int transferArgc = 0;
+        LPWSTR* transferArgv = CommandLineToArgvW(GetCommandLineW(), &transferArgc);
+        for (int i = 1; transferArgv && i + 1 < transferArgc; ++i) {
+            const bool isExport = _wcsicmp(transferArgv[i], L"-settings-export") == 0;
+            if (!isExport && _wcsicmp(transferArgv[i], L"-settings-import") != 0) continue;
+            const bool ok = isExport ? noble::Settings::Get().ExportTo(transferArgv[i + 1]) : noble::Settings::Get().ImportFrom(transferArgv[i + 1]);
+            NOBLE_INFO("Settings: {} {}", isExport ? "export" : "import", ok ? "done" : "failed");
+            noble::Logger::Shutdown();
+            return ok ? 0 : 1;
+        }
+        if (transferArgv) LocalFree(transferArgv);
+    }
     noble::AuthClient::Get().Initialize();
     noble::SocialClient::Get().Initialize();
     const noble::SettingsData startupSettings = noble::Settings::Get().Snapshot();
