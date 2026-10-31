@@ -280,7 +280,8 @@ items above close. Keep the spec open when building any screen so the details la
 - [ ] **Import/export of key bindings and settings** (spec 4.12). - @claude
 - [x] @claude 2026-10-31 16:29 - **Scoreboard mute icons and Mute all** (`2aea9fa`).
 - [ ] **Rotation voting** (spec 4.14): 2-3 options after each game, ties to the host. Waits for rotation. - @deepseek then @claude
-- [~] @deepseek 2026-10-31 16:45 - **Armory live preview**: colour, visor and armour changes must re-apply the ReachArmory selection immediately (dirty flag + reapply), with 1920x1080 before/after captures and no scene/slot reload; also bump the build to 0.9.8.1 (0.9.7.1 was superseded by @claude's 0.9.8 while this claim was in flight). Files: `src/ui/ArmorCustomizer.*`, `src/engine/ReachArmory.*`, `src/common/Version.hpp`.
+- [x] @deepseek 2026-10-31 17:10 - **Armory live preview** (`2d5e258`): colour/visor/armour changes now set a visual dirty flag and force one menu-map REBUILD after the 250 ms coalescing, so the live model repaints without a scene/slot reload. 1920x1080 White -> Orchid proof (`docs/screenshots/armory-live-preview-*.png`, log in `docs/evidence/`). Version 0.9.8.1 (0.9.7.1 was superseded by @claude's 0.9.8 while this claim was in flight).
+- [ ] **Elite preview colours**: the Elite model stays stock blue when Primary changes; the Spartan path repaints (`2d5e258`), but the pack shader colour needs its own path. - @deepseek
 - [ ] **Armory left vs right shoulder camera** (handoff guide 5.2): the map has one shoulder camera; needs a lateral camera offset from engine globals. - @deepseek
 - [~] @claude 2026-10-31 - **Career deaths look uncounted**: 62 kills / 0 deaths on the test profile. Match end now logs every stat slot. **needs:** one match where the player dies, then read `Career: local general stats`.
 - [x] @claude 2026-10-31 16:39 - **Hints line up with the panels** on Settings and Community (`83edc92`).
