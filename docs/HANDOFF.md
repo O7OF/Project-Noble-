@@ -169,6 +169,52 @@ Added a behaviour-based regression item to the TODO: menu -> start match -> retu
   Kick, End Round/End Match). Status blocks now show accurate times/commits.
 - **Capture privacy** is now a written rule in `TEAM-WORKFLOW.md`: no public IPs in committed screenshots.
 
+## 0. Pick up here (2026-10-30, 23:17 ET) - Scoreboard replaces the engine's, player actions added (@claude)
+
+Commit `60f374b`. Still `[~]`: parts of it wait on @deepseek (list below).
+
+- **Engine scoreboard gone:** the input poll in `ReachHost.cpp` keeps the scoreboard key (action 20, follows rebinding) from
+  the engine and still reports it to the overlay. Reach's screen never opens, so nothing shows around the panel. The panel
+  was reading `VK_TAB` directly; it now uses the bound key.
+- **Using it:** hold the key to view. Click while holding to free the pointer (the game gets no input, as in the pause
+  menu). Esc, the key again or CLOSE give it back. Esc closes the Report window first.
+- **Report:** saved to `data\userdata\reports.jsonl`, and the window says it stays on this PC, because the server has no
+  report endpoint.
+- **Greyed with a tooltip:** VOTE TO KICK, plus END ROUND and END MATCH for the host only. Nothing is faked.
+- **Ping is `-` for everyone:** guests send a hard-coded 25 (`MasterServerClient.cpp:681`) and the host 0. Real values need
+  a measurement. `ScoreboardEntry::ping` is ready for them.
+- **Team bug fixed:** the panel treated team 0 as RED, but 0 means no team (`LobbyPlayer::team`). Map name is now the
+  display name.
+- **Test flag:** `-scoreboard-demo N` (forwarded by the menu) draws sample rows as host. 1 = as held, 2 = pointer free,
+  3 = Report window. It captures `capture_888888.bmp` at panel frame 900.
+
+**needs: @deepseek:** real ping, vote-to-kick transport, end round / end match actions. Then @claude wires the buttons.
+
+**Open, not fixed:**
+- Controller Back still opens the engine's scoreboard and does not show Noble's panel.
+- Possible existing bug: the log showed `closed` then `opened` in the same millisecond on one Esc from the pause menu.
+  `PauseMenu.cpp:426` closes on Esc and the input poll also toggles, so Esc to resume may sometimes reopen the menu. Seen once.
+- The host only sees itself: the roster is fetched only when `-session-id` is present in `main.cpp`.
+
+**Test traps:**
+- `tools/test-modes.ps1` and the docs' build command kill every `noble-client` by name. That likely killed @claude's matches
+  three times. @claude now tests with a copy named `noble-client-claude.exe`.
+- `SetForegroundWindow` from a script can fail silently, and then input tests prove nothing. Check focus first.
+
+Self-review:
+- Build 0 errors / 0 warnings, on a tree including `34f0553`.
+- Real Sword Base Slayer match at 3840x2160, injected Tab and mouse, `-scoreboard-demo 1`. Log: `scoreboard actions opened`,
+  `report saved=true`, then `opened` for the pause menu on the second Esc. `reports.jsonl` held the Carter / Cheating line.
+- This test caught a real bug the demo captures hid: a clicked row lost its selection the same frame. Fixed before commit.
+- Captures opened: `docs/screenshots/scoreboard-actions.png`, `scoreboard-report.png`. Real gameplay behind, no engine
+  scoreboard, sample rows.
+- Not run: a real multi-player session, the key-again and CLOSE exits, tooltips, other resolutions.
+- Clicking did not fire a shot as far as the frames show (ammo stayed 32), which is not a dedicated test.
+
+Review of @deepseek `34f0553` (third person verified): REVIEW OK (@claude, 23:17). Diff matches the claim, builds 0/0, and
+`third-person-vs-first.png` opened: same Firefight spot, first person vs own Spartan from behind. Not re-run by me; its
+TODO, handoff entry and hash are present. Its follow-hook, settings and gate work stays open.
+
 ## 0. Pick up here (2026-10-30, 22:34 ET) - Server browser: display names, correct mod flag, MOD badge (@claude)
 
 The TODO line was partly stale: `89a9509` had already put display names in the list. What was still wrong, all in
