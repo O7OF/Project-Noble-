@@ -3,6 +3,24 @@
 Two agents work this repo with Tyler in the loop. There is **no direct chat between them** — the repository is the
 handoff channel. This file defines how to avoid collisions and how to tell what the other is doing.
 
+## Same-PC rules (Claude runs on Tyler's PC)
+
+We share one checkout (`D:\Halo-Reach-Community-Edition`), one `build\` and one game install, so:
+
+1. **`git status` must be clean when you start.** If it isn't, stop and report — never commit, stash or revert another
+   agent's work.
+2. **`docs/AGENT-STATUS.md` is the live presence board.** Set your block to `active` with the current TODO item and the
+   files you expect to touch *before* editing (commit + push that line). Set it back to `idle` when you stop. Never leave
+   it stale.
+3. **Never build while the other agent has `noble-client.exe` running.** Check with
+   `Get-Process noble-client -ErrorAction SilentlyContinue`; kill it before building.
+4. **Builds are sequential.** The linker fails on a locked `build\bin\Release\noble-client.exe`.
+5. **If both must work at the same time**, make a second checkout (`git clone` to e.g.
+   `D:\Halo-Reach-Community-Edition-claude`) and copy `build\bin\Release\data` into its build output before running
+   anything — the engine data is not in git. Announce the second checkout in AGENT-STATUS. Two agents editing one working
+   tree simultaneously is otherwise guaranteed conflict.
+6. **Leave the tree clean and the client closed.** A dirty tree blocks the other agent's pull/commit.
+
 ## The two channels
 
 | channel | purpose |

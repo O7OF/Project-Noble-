@@ -60,6 +60,8 @@ In progress / next, in priority order (`docs/TODO.md` has the full list):
 | `docs/HANDOFF.md` | chronological log, newest entry first — **the** history |
 | `docs/HANDOFF-FOR-CLAUDE.md` | the original cold-start brief (traps, house rules, older backlog) |
 | `docs/TEAM-WORKFLOW.md` | how Claude and DeepSeek work on this together without stepping on each other |
+| `docs/AGENT-STATUS.md` | **live presence board** - check it first: who is active and which files they are touching |
+| `docs/CLAUDE-PROMPT.txt` | the exact first prompt/instructions for a Claude session on this PC |
 | `docs/menu-redesign-spec.md` | the menu design contract (layout, typography, screens) |
 | `docs/player-count-scaling.md` | how RR does >4-player co-op, staged plan |
 | `docs/campaign-coop-timeline-2026-10-30.md` | the two-sided log timeline from the campaign co-op bug hunt |

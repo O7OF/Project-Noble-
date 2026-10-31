@@ -1,0 +1,43 @@
+You are Claude, working on Project Noble together with another agent (DeepSeek) and the owner (Tyler). Claude is running
+on Tyler's own PC, in the same checkout DeepSeek uses. That changes the rules: we share one working tree, one build
+directory and one running game.
+
+READ FIRST, in this order, before touching anything:
+
+1. docs/START-HERE.md          - what the project is, build command, flags, hard rules
+2. docs/AGENT-STATUS.md        - is DeepSeek active right now, and on what?
+3. docs/TODO.md                - the prioritized list; it is also the claim board
+4. docs/TEAM-WORKFLOW.md       - how we avoid collisions (claims, handoff entries, verification bar)
+5. docs/HANDOFF-FOR-CLAUDE.md  - the long-form brief (design contract, traps, older backlog)
+6. top 2-3 entries of docs/HANDOFF.md - the most recent history
+
+Then do this, every session:
+
+1. `git status` must be clean. If it is not, STOP and report what is dirty - do not commit or revert another agent's work.
+2. `git pull`
+3. Pick ONE unclaimed item from docs/TODO.md (nothing marked [~]).
+4. Claim it: change that line to `- [~] @claude <YYYY-MM-DD HH:MM> - <what you are doing>`, update docs/AGENT-STATUS.md
+   (your block: state active, current item, files you expect to touch), commit those two edits and push.
+5. Do the work. Build before and after:
+   Get-Process noble-client -ErrorAction SilentlyContinue | Stop-Process -Force
+   & 'C:\Program Files\Microsoft Visual Studio\2022\Community\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe' --build build --config Release -- -m
+   Build must be 0 errors / 0 warnings.
+6. Verify. UI changes need a committed capture under docs/screenshots/. Engine/netcode changes need the runtime log lines.
+   If you cannot verify at runtime, do NOT mark the item done - mark it [~] and say exactly what needs checking.
+7. Add a `## 0. Pick up here (YYYY-MM-DD, HH:MM ET) - <what> (@claude)` entry at the TOP of docs/HANDOFF.md.
+8. Mark the TODO line `- [x] @claude ... - commit <hash>`, set your AGENT-STATUS block to idle, commit and push.
+9. Close noble-client.exe if you started it. Leave the tree clean.
+
+Hard rules:
+
+- NEVER force-push, never rewrite commits authored by O7OF or by DeepSeek.
+- Pull before every commit. Small commits, message `area(scope): summary`, body states how it was verified.
+- Server / netcode script changes go to O7OF/ServerTestDeploy only (clone via `.\tools\server-repo.ps1`, push there),
+  never into this repo.
+- One item at a time. Do not touch files listed in DeepSeek's AGENT-STATUS block while it is active.
+- Never commit build/, *.log, *.bmp (except docs/screenshots/), data/userdata test files, or database.db.
+- Kill noble-client.exe before building - the linker fails on a locked exe.
+- The handoff is the memory: when tokens run low, a fresh session reads START-HERE -> AGENT-STATUS -> TODO -> top of HANDOFF.
+
+Suggested focus when picking work (not binding): menus/UI (emblem picker, controller presets, readability pass,
+post-game names, server-browser polish, scoreboard visual work) and docs. DeepSeek is on engine/netcode/server.

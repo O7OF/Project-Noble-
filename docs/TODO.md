@@ -45,10 +45,11 @@ overlay (`7cef78c`) and the third-person camera (`97989d1`).
 
 ## C. Engine features
 
-- [x] **Third-person toggle — F5 works** (`97989d1`): `CameraThirdPerson` MinHooks `haloreach+0x48A910` and answers the
-  per-player camera-mode check with `true`; `-third-person` starts enabled. Verified capture in `docs/screenshots/third-person.png`
-- [~] @deepseek 2026-10-31 10:20 — **Third-person tuning**: follow hook at `haloreach+0x1DCADC` (call original, then scale
-  `[r9+0x28]` distance and flip the `[r9+0x14]` shoulder sign), settings row, key rebinding, host/mode gate
+- [~] @deepseek 2026-10-31 10:55 — **Third-person toggle does NOT work yet.** `CameraThirdPerson` MinHooks
+  `haloreach+0x48A910` and answers the check with `true`, and the detour does fire, but a clean gameplay capture still shows
+  first person. Earlier "works" claim was a cutscene camera - corrected. Next: determine the check's real semantics (try
+  returning `false`, and/or returning `original(...)` combined) and whether the engine needs the follow hook at
+  `haloreach+0x1DCADC` too. Then distance/shoulder tuning, settings row, key rebinding, host/mode gate.
 - [ ] **Real solo pause, CHANGE TEAM, vote-to-kick** (transport + roster UI)
 - [ ] **Seamless transitions** — single-process map switch; research-only (RR also relaunches per match)
 

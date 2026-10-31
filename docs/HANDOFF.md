@@ -32,6 +32,30 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+--
+
+## 0. Pick up here (2026-10-31, 11:00 ET) - Correction: third person is NOT working; same-PC agent sync added (WeabooTyler117 / DeepSeek)
+
+Two things.
+
+**1. The third-person "works" claim was wrong.** Tyler confirmed in game that it still looks first person, and the capture I
+used (`docs/screenshots/third-person.png`) was a **cutscene camera** - the Spartan in frame is a squadmate, not the player.
+The detour does install and fire (`CameraThirdPerson: camera-mode check ... -> third person`), but answering `true` is not
+enough, so the check's real semantics are still unknown. Status corrected in `docs/TODO.md` to `[~] @deepseek`. Next
+experiments: return `false`, return `original(...) | enabled`, and test whether the follow hook at `haloreach+0x1DCADC` is
+also required (RR hooks both). Do not trust a single capture again - verify in a slayer spawn with the player model visible.
+
+**2. Same-PC agent sync, because Claude now runs on this PC** (Claude Code, not a browser):
+
+- **`docs/AGENT-STATUS.md`** - live presence board: each agent keeps one block (`active`/`idle`, current TODO item, files
+  expected). Set it before editing, clear it when stopping. Committed together with the claim.
+- **`docs/CLAUDE-PROMPT.txt`** - the exact session instructions for Claude: read START-HERE / AGENT-STATUS / TODO /
+  TEAM-WORKFLOW / HANDOFF-FOR-CLAUDE / top of HANDOFF, check `git status` is clean, pull, claim one item, build 0/0,
+  verify (capture for UI), handoff entry, mark done, push, leave clean.
+- **`docs/TEAM-WORKFLOW.md`** gained a "Same-PC rules" section: clean tree to start, never build while the other agent has
+  `noble-client.exe` running, builds are sequential, and if both must work simultaneously use a second checkout
+  (`git clone` + copy `build/bin/Release/data`) and announce it in AGENT-STATUS.
+
 ## 0. Pick up here (2026-10-31, 10:40 ET) - Housekeeping: version 0.8.4, scratch script removed (WeabooTyler117 / DeepSeek)
 
 - `src/common/Version.hpp`: `VERSION_PATCH` 2 -> 4 and `VERSION_STRING` is now
