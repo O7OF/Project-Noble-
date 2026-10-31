@@ -13,6 +13,8 @@
 #include "common/Settings.hpp"
 #include "engine/FrameCapture.hpp"
 #include "engine/ReachHost.hpp"
+#include "engine/CameraThirdPerson.hpp"
+#include "engine/CameraThirdPerson.hpp"
 #include "host/Window.hpp"
 
 #include <algorithm>
@@ -1154,6 +1156,8 @@ bool PauseMenu::HoldFrame() {
 
 void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading,
                            bool clear) {
+  // F5 edge-toggles the third-person camera (physical key; this runs every engine frame).
+  CameraThirdPerson::PollHotkey((GetAsyncKeyState(VK_F5) & 0x8000) != 0);
   const bool gameOver = s_gameOver.load();
   const bool open = s_open.load();
   const bool showFps = Settings::Get().Snapshot().showFps;

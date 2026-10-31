@@ -26,6 +26,26 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+--
+
+## 0. Pick up here (2026-10-31, 10:05 ET) - Third-person camera works: F5 toggles it (WeabooTyler117 / DeepSeek)
+
+Camera RE finished and shipped.
+
+- RR's `camera::install` (host-probe.exe `0x140196970`) calls its hook helper twice:
+  - `haloreach+0x48A910`, 5-byte window, detour `camera::third_person` (the per-player camera-mode check)
+  - `haloreach+0x1DCADC`, 7-byte window, detour `camera::follow_update` (distance / shoulder tuning; **not** needed for
+    basic third person)
+- Implemented the first hook: `src/engine/CameraThirdPerson.{hpp,cpp}` verifies the prologue
+  (`48 89 5C 24 08 48 89 74 24 10`), MinHooks `haloreach+0x48A910`, and answers the check with `true` while enabled.
+- Controls: `-third-person` starts with it on; **F5** edge-toggles in game (polled from the overlay frame, physical key).
+  The detour only spoofs the check - the engine's own third-person camera does the work.
+- Verified in a solo campaign run (`m10`): `CameraThirdPerson: third-person camera check hooked at haloreach+0x48A910`,
+  then the check fires for the local player and the capture (`capture_10800.bmp`) shows the Spartan from behind instead of
+  first person.
+- Not done yet: distance/shoulder tuning (the `+0x1DCADC` follow hook, factor on `[r9+0x28]`, sign flip at `[r9+0x14]`),
+  a settings row, key rebinding and the host/mode gate. The hook is a single toggle today.
+
 ## 0. Pick up here (2026-10-31, 09:35 ET) - Single to-do list added at docs/TODO.md (WeabooTyler117 / DeepSeek)
 
 Tyler asked for the prioritized backlog to live somewhere durable. `docs/TODO.md` now holds the full list (campaign

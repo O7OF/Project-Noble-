@@ -17,6 +17,7 @@
 #include "vfs/VFS.hpp"
 #include "engine/BlamEngine.hpp"
 #include "engine/CameraFov.hpp"
+#include "engine/CameraThirdPerson.hpp"
 #include "engine/ReachArmory.hpp"
 #include "engine/ElitePack.hpp"
 #include "ui/UIManager.hpp"
@@ -279,6 +280,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     int expectedPeers = 0;
     int engineModeOverride = 0;
     bool guestPostStart = false;
+    bool thirdPerson = false;
     std::string engineCommand;
     int engineCommandAt = -1;
     std::string connectAddress = "";
@@ -328,6 +330,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
                 hostMaxPlayers = _wtoi(argvW[++i]);
             } else if (arg == L"-wait-peers" && i + 1 < numArgs) {
                 expectedPeers = _wtoi(argvW[++i]);
+            } else if (arg == L"-third-person") {
+                thirdPerson = true;
             } else if (arg == L"-guest-post-start") {
                 guestPostStart = true;
             } else if (arg == L"-engine-cmd" && i + 1 < numArgs) {
@@ -465,6 +469,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 
     // The SETTINGS > VIDEO field-of-view slider writes the engine's own camera FOV global.
     noble::CameraFov::SetEngineModule(loader->GetModuleHandle());
+    noble::CameraThirdPerson::Install(loader->GetModuleHandle());
+    if (thirdPerson) noble::CameraThirdPerson::SetEnabled(true);
 
     // Apply 32/64 player lobby expansion detours
     noble::LobbyPatches::Apply(loader->GetModuleHandle());
@@ -524,7 +530,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             }
         }
 
-        if (guestPostStart) noble::BlamEngine::SetGuestPostStart(true);
+    if (guestPostStart) noble::BlamEngine::SetGuestPostStart(true);
     if (engineModeOverride > 0) {
         noble::BlamEngine::SetEngineModeOverride(engineModeOverride);
         NOBLE_WARN("main: -engine-mode {} (research hook - forcing launch-block +0x0C)", engineModeOverride);
