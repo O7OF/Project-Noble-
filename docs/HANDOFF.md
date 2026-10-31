@@ -63,6 +63,22 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+--
+
+## 0. Pick up here (2026-10-31, 00:15 ET) - New backlog: controller UX, armory presentation, audio/data (WeabooTyler117 / DeepSeek)
+
+Tyler's controller playtest list, filed as TODO sections H and I with the @claude / @deepseek split:
+
+- Settings must be controller-navigable: tabs on D-pad/left stick (not LB/RB), stick adjusts the focused value instead of
+  switching tabs, **Y = Apply / X = Discard** with controller icons, button-layout row actually changeable by pad, layout
+  diagram updates per preset, one combined controller preset (stick + buttons), every input remappable including paddles,
+  missing actions (crouch, toggle-zoom default on, team chat), and a documented 1-10 sensitivity baseline (default 19 today).
+- Armory: center Spartan/Elite under the APPEARANCE rule, match the main-menu nameplate, add the spotlight/key light so the
+  chamber is not pure black, camera pans per body part.
+- Commendations: force the first six to steel/bronze/silver/gold/onyx/max for an art + payout check (dev only).
+- Campaign completion gating (quitting must not count), post-game slot machine, Forge/custom/Firefight options (after variant
+  work), menu-background shuffle + match the loaded map, music <=45 s tracks removed, Firefight voice preview in the Armory.
+
 ## 0. Pick up here (2026-10-31, 00:20 ET) - Plan for match settings, lobby profiles, voice chat and match-end flow (WeabooTyler117 / DeepSeek)
 
 Tyler dumped a big feature list (in-game controls, lobby profile cards with ADD FRIEND, voice chat, match-end -> lobby or

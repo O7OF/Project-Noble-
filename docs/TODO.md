@@ -216,6 +216,31 @@ items above close. Keep the spec open when building any screen so the details la
   in the log. Repeat for a Direct Connect guest.
 
 
+
+## H. Controller UX and settings (Tyler, 2026-10-31 00:10) - @claude
+
+- [ ] **Settings tabs on D-pad / left stick**, not LB/RB; when a value row is focused the stick/D-pad adjusts the value, not the tab
+- [ ] **Apply/Discard controller prompts**: Y = Apply changes, X = Discard changes (icons + key equivalents), replacing the text-only unsaved box
+- [ ] **Button layout row must be changeable with a controller** (D-pad/stick left-right does nothing today) and the layout diagram must update per preset
+- [ ] **One "Controller preset" item** (stick + buttons together); remove the separate stick-layout row; presets from `docs/menu-redesign-spec.md` / Halopedia (Default, Southpaw, Boxer, Bumper Jumper, Recon, ...)
+- [ ] **Remap every input**: A/B/X/Y, bumpers, triggers, both sticks (directions + click), D-pad, Start/Back, paddles 1-6; add missing actions: crouch, toggle zoom (default on, still exposed), team chat, scoreboard, push-to-talk (future), etc.
+- [ ] **Look sensitivity baseline**: 19 is the current default; document the scale against Reach's 1-10 and expose horizontal/vertical
+- [ ] **(Tyler test) Controller presets** - pick Southpaw or Bumper Jumper, Apply, play a match, rebind one button
+
+## I. Armory presentation, audio and data (Tyler, 2026-10-31 00:10)
+
+- [ ] **Armory framing**: Spartan/Elite centered under the horizontal rule below APPEARANCE, head no longer above the HALO: REACH line or beside the nameplate
+- [ ] **Nameplate in the Armory must match the main menu's look**
+- [ ] **Armory spotlight**: stop the pure-black chamber (UI gradient/key light first; engine/data light if needed)
+- [ ] **Per-slot camera pan** to the body part being edited (verify + smooth transitions)
+- [ ] **Commendation tier check**: temporarily force the first six commendations to steel/bronze/silver/gold/onyx/max to verify art + payout (dev-only, not shipped values)
+- [ ] **Campaign completion gating**: quitting a mission must not award mission completion or the match bonus
+- [ ] **Post-game slot machine** (Reach's credit slot machine; Halopedia reference) - @deepseek
+- [ ] **Forge / custom-game defaults / Firefight game options** screens (blocked on variant work)
+- [ ] **Menu background art**: shuffle the whole set (repeats today) and prefer the loaded map's art
+- [ ] **Music**: drop tracks <= 45 s from the menu playlist
+- [ ] **Firefight voice packs**: verify working + Armory preview button (X on pad) that plays a sample line per character
+
 ## G. Match settings, social, voice (plan: `docs/plans/match-settings-and-social-plan.md`)
 
 - [ ] **Pause-menu Controls page** (live remap already applies every frame; this is the UI to change it mid-match) - @claude
