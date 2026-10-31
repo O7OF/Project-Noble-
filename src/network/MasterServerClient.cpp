@@ -453,13 +453,31 @@ void MasterServerClient::DoHeartbeat() {
             {"mode", m_advert.mode},
             {"variant", m_advert.variant},
             {"difficulty", m_advert.difficulty},
-            {"skulls", std::to_string(m_advert.skulls)}
+            {"skulls", std::to_string(m_advert.skulls)},
+            {"host_peer_id", m_advert.hostPeerId},
+            {"host_machine_id", m_advert.hostMachineId},
+            {"host_username", m_advert.hostUsername},
+            {"host_is_dev", m_advert.hostIsDev},
+            {"host_service_tag", m_advert.hostServiceTag},
+            {"host_rank_index", m_advert.hostRankIndex},
+            {"host_emblem_id", m_advert.hostEmblemId},
+            {"host_emblem_background_id", m_advert.hostEmblemBackgroundId},
+            {"host_nameplate_id", m_advert.hostNameplateId},
+            {"host_team", m_advert.hostTeam}
         };
         // The match process re-registers the host's session with an advert built in main.cpp, which does
         // not know the lobby's Workshop mod. Omitting the fields (instead of sending empty strings) keeps
         // the mod id the pre-game lobby advertised.
         if (!m_advert.modId.empty()) body["mod_id"] = m_advert.modId;
         if (!m_advert.modTitle.empty()) body["mod_title"] = m_advert.modTitle;
+    }
+    const auto peerPings = NetworkTransport::Get().GetAllPeerPingsMs();
+    if (!peerPings.empty()) {
+        nlohmann::json pingsObj = nlohmann::json::object();
+        for (const auto& kv : peerPings) {
+            pingsObj[std::to_string(kv.first)] = kv.second;
+        }
+        body["peer_pings"] = std::move(pingsObj);
     }
     if (id.empty() || token.empty()) return;
     const HttpResult r = HttpRequest(Url(), L"PUT", "/api/sessions/heartbeat", body.dump(), token);
@@ -469,12 +487,16 @@ void MasterServerClient::DoHeartbeat() {
             if (j.contains("pending_joins") && j["pending_joins"].is_array()) {
                 for (const auto& pj : j["pending_joins"]) {
                     std::string ip = pj.value("ip", "");
+                    std::string lanIp = pj.value("lan_ip", "");
                     uint16_t port = static_cast<uint16_t>(pj.value("port", 11774));
                     std::string midStr = pj.value("machine_id", "");
                     uint64_t mid = 0;
                     try { mid = std::stoull(midStr); } catch (...) {}
                     if (!ip.empty()) {
                         NetworkTransport::Get().AddPeer(mid, ip, port);
+                    }
+                    if (!lanIp.empty() && lanIp != ip) {
+                        NetworkTransport::Get().AddPeer(0, lanIp, port);
                     }
                 }
             }
@@ -553,7 +575,8 @@ MasterJoinInfo MasterServerClient::JoinSessionSync(const std::string& sessionId,
     nlohmann::json body = {
         { "guest_port", guestPort },
         { "guest_machine_id", std::to_string(guestMachineId) },
-        { "guest_address", UPnP::Get().GetExternalIP() }
+        { "guest_address", UPnP::Get().GetExternalIP() },
+        { "guest_lan_address", UPnP::Get().GetInternalIP() }
     };
     const HttpResult r = HttpRequest(Url(), L"POST", "/api/sessions/" + resolvedId + "/join", body.dump());
     if (!r.ok) {
@@ -569,6 +592,9 @@ MasterJoinInfo MasterServerClient::JoinSessionSync(const std::string& sessionId,
         info.relayUrl = j.value("relay_url", "");
         info.hostLanIp = j.value("host_lan_ip", "");
         info.isLan = j.value("is_lan", false);
+        if (!info.hostLanIp.empty()) {
+            NetworkTransport::Get().SetRemoteHostLanAddress(info.hostLanIp, info.hostPort);
+        }
         NOBLE_INFO("MasterServer: joined session {} (relay: {})", resolvedId, info.relayUrl);
         return info;
     } catch (...) {
@@ -623,6 +649,16 @@ LobbyState MasterServerClient::FetchLobbyStateSync(const std::string& sessionId)
                 p.isHost = item.value("isHost", false);
                 p.isDev = item.value("isDev", false);
                 p.ping = item.value("ping", 0);
+                if (!p.isHost && !p.machineId.empty()) {
+                    try {
+                        uint64_t mid = std::stoull(p.machineId, nullptr, 0);
+                        int livePing = NetworkTransport::Get().GetPeerPingMs(mid);
+                        if (livePing > 0) p.ping = livePing;
+                    } catch (...) {}
+                } else if (p.isHost) {
+                    int liveHostPing = NetworkTransport::Get().GetPeerPingMs(0);
+                    if (liveHostPing > 0 && (p.ping <= 0 || p.ping == 25)) p.ping = liveHostPing;
+                }
                 state.roster.push_back(p);
             }
         }
@@ -680,6 +716,7 @@ LobbyState MasterServerClient::JoinLobbySync(const std::string& sessionId,
     }
     if (resolvedId.empty()) return state;
 
+    const int measuredPing = NetworkTransport::Get().GetPeerPingMs(0);
     nlohmann::json body = {
         { "peer_id", peerId },
         { "player_id", peerId },
@@ -688,12 +725,13 @@ LobbyState MasterServerClient::JoinLobbySync(const std::string& sessionId,
         { "service_tag", serviceTag },
         { "rank_index", rankIndex },
         { "emblem_id", emblemId },
-    { "emblem_background_id", emblemBackgroundId },
+        { "emblem_background_id", emblemBackgroundId },
         { "nameplate_id", nameplateId },
         { "team", team },
         { "machine_id", std::to_string(LobbyMachineId()) },
         { "guest_port", localPort },
-        { "ping", 25 }
+        { "guest_lan_address", UPnP::Get().GetInternalIP() },
+        { "ping", measuredPing > 0 ? measuredPing : 25 }
     };
 
     const HttpResult r = HttpRequest(Url(), L"POST", "/api/sessions/" + resolvedId + "/lobby/join", body.dump());
@@ -707,6 +745,9 @@ LobbyState MasterServerClient::JoinLobbySync(const std::string& sessionId,
         state.hostPort = static_cast<uint16_t>(j.value("host_port", 11774));
         state.hostLanIp = j.value("host_lan_ip", "");
         state.isLan = j.value("is_lan", false);
+        if (!state.hostLanIp.empty()) {
+            NetworkTransport::Get().SetRemoteHostLanAddress(state.hostLanIp, state.hostPort);
+        }
         state.isClosed = j.value("is_closed", false);
         state.closeReason = j.value("close_reason", "");
         state.map = j.value("map", "20_sword_slayer");
@@ -732,6 +773,16 @@ LobbyState MasterServerClient::JoinLobbySync(const std::string& sessionId,
                 p.isHost = item.value("isHost", false);
                 p.isDev = item.value("isDev", false);
                 p.ping = item.value("ping", 0);
+                if (!p.isHost && !p.machineId.empty()) {
+                    try {
+                        uint64_t mid = std::stoull(p.machineId, nullptr, 0);
+                        int livePing = NetworkTransport::Get().GetPeerPingMs(mid);
+                        if (livePing > 0) p.ping = livePing;
+                    } catch (...) {}
+                } else if (p.isHost) {
+                    int liveHostPing = NetworkTransport::Get().GetPeerPingMs(0);
+                    if (liveHostPing > 0 && (p.ping <= 0 || p.ping == 25)) p.ping = liveHostPing;
+                }
                 state.roster.push_back(p);
             }
         }

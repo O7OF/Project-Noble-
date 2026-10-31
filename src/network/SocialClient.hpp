@@ -20,6 +20,9 @@ struct GameInvite {
     std::string senderUsername;
     std::string hostIp;
     uint16_t hostPort = 11774;
+    std::string mode;
+    std::string map;
+    std::string sessionId;
     uint64_t timestamp = 0;
 };
 
@@ -53,7 +56,11 @@ public:
     void RemoveFriendAsync(const std::string& targetUsername, std::function<void(bool ok, const std::string& message)> callback = nullptr);
 
     // Invites
-    void SendInviteAsync(const std::string& targetUsername, const std::string& hostIp, uint16_t hostPort, std::function<void(bool ok, const std::string& message)> callback = nullptr);
+    void SendInviteAsync(const std::string& targetUsername, const std::string& hostIp, uint16_t hostPort,
+                         std::function<void(bool ok, const std::string& message)> callback = nullptr,
+                         const std::string& mode = "Custom Game",
+                         const std::string& map = "",
+                         const std::string& sessionId = "");
     void ClearInviteAsync(const std::string& senderUsername);
 
     // Status message for UI feedback

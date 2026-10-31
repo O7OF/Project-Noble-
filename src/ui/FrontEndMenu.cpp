@@ -2627,10 +2627,14 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
                 if (ImGui::Button("INVITE", ImVec2(invW, invH))) {
                     std::string myIp = UPnP::Get().GetExternalIP();
                     if (myIp.empty() || myIp == "Unknown") myIp = "127.0.0.1";
+                    std::string invMode = "Custom Game";
+                    if (st.lobbyMode == "campaign") invMode = "Campaign";
+                    else if (st.lobbyMode == "firefight") invMode = "Firefight";
+                    else if (st.lobbyMode == "forge") invMode = "Forge";
                     SocialClient::Get().SendInviteAsync(f.username, myIp, 11774, [](bool ok, const std::string& msg) {
                         (void)msg;
                         if (ok) MenuSounds::Click();
-                    });
+                    }, invMode, st.lobbyMap, st.lobbySessionId);
                 }
                 ImGui::PopID();
             } else {
@@ -2906,10 +2910,14 @@ static void DrawSocialScreen(OverlayContext& ctx, const Ui& ui, float left, floa
                 ImGui::PushID(static_cast<int>(i));
 
                 if (ImGui::Button("INVITE", ImVec2(75.0f * ui.s, 24.0f * ui.s))) {
+                    std::string invMode = "Custom Game";
+                    if (st.lobbyMode == "campaign") invMode = "Campaign";
+                    else if (st.lobbyMode == "firefight") invMode = "Firefight";
+                    else if (st.lobbyMode == "forge") invMode = "Forge";
                     SocialClient::Get().SendInviteAsync(f.username, myIp, 11774, [](bool ok, const std::string& msg) {
                         (void)msg;
                         if (ok) MenuSounds::Click();
-                    });
+                    }, invMode, st.lobbyMap, st.lobbySessionId);
                 }
                 ImGui::SameLine();
                 if (!f.endpoint.empty()) {
@@ -3170,8 +3178,11 @@ void DrawInviteToast(const Ui& ui, MenuState& st) {
     Text(ui, NobleStyle::TitleFont(), 19.0f, ImVec2(p0.x + 16.0f * ui.s, p0.y + 30.0f * ui.s), kWhite,
          newest->senderUsername.c_str());
     const float nameW = TextWidth(NobleStyle::TitleFont(), 19.0f * ui.s, newest->senderUsername.c_str());
+    const std::string inviteDesc = newest->mode.empty()
+                                       ? "is inviting you to a match"
+                                       : ("is inviting you to a " + newest->mode + " match");
     Text(ui, nullptr, 15.0f, ImVec2(p0.x + 16.0f * ui.s + nameW + 8.0f * ui.s, p0.y + 36.0f * ui.s), kDim,
-         "is inviting you to a match");
+         inviteDesc.c_str());
 
     const float bw = 160.0f * ui.s, bh = 30.0f * ui.s;
     const ImVec2 j0(p0.x + w - bw * 2.0f - 26.0f * ui.s, p1.y - bh - 12.0f * ui.s);
@@ -3200,8 +3211,12 @@ void DrawInviteToast(const Ui& ui, MenuState& st) {
             s_answered = key;
             SocialClient::Get().ClearInviteAsync(newest->senderUsername);
             SocialClient::Get().RefreshFriendsAsync();
-            NOBLE_INFO("FrontEndMenu: accepting invite from {} ({})", newest->senderUsername, newest->hostIp);
-            const std::wstring args = L"-connect \"" + ToWide(newest->hostIp + ":" + std::to_string(newest->hostPort)) + L"\"";
+            NOBLE_INFO("FrontEndMenu: accepting invite from {} ({}, mode='{}')",
+                       newest->senderUsername, newest->hostIp, newest->mode);
+            std::wstring args = L"-connect \"" + ToWide(newest->hostIp + ":" + std::to_string(newest->hostPort)) + L"\"";
+            if (!newest->sessionId.empty()) {
+                args += L" -session-id \"" + ToWide(newest->sessionId) + L"\"";
+            }
             Relaunch::HandOff(args);
         }
     }
@@ -4169,6 +4184,11 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
                     p.machineId = item.value("machineId", "");
                     p.username = item.value("username", "Spartan");
                     p.serviceTag = item.value("serviceTag", "117");
+                    p.rankIndex = item.value("rankIndex", -1);
+                    p.emblemId = item.value("emblemId", 0);
+                    p.emblemBackgroundId = item.value("emblemBackgroundId", 0);
+                    p.nameplateId = item.value("nameplateId", 0);
+                    p.team = item.value("team", 0);
                     p.isHost = item.value("isHost", false);
                     p.isDev = item.value("isDev", false);
                     p.ping = item.value("ping", 0);
