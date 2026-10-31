@@ -71,6 +71,16 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-31, 01:06 ET) - Tyler's answers: Reverse presets, paddle keys, look speed 1.00x-10.00x (@claude)
+
+**Reverse presets** (`0662bcf`). Tyler said yes, but Reach and MCC have no such layouts (Halopedia's Reach and MCC control pages, MCC's `EN_HaloReach.bin`). Reverse Southpaw and Reverse Bumper Jumper are **Noble's names** for those layouts with the sticks swapped, and the row says so. If Tyler meant something else, only the name logic in `RenderController` changes. Halopedia's Reach table confirmed our six button layouts match. **Missing:** Reach's real Legacy and Legacy Southpaw stick layouts; Halopedia only shows them as images, so I did not guess.
+
+**Paddles** (`83e05e9`). XInput can't see paddles, so each paddle is a keyboard key or a middle/side mouse button (default F13-F18, `padPaddleKeys`) that a tool like Steam Input sends. While a controller is connected, `ReachHost` takes those keys out of the keyboard state, so they don't fire keyboard actions or switch away from the controller, and passes them to `PadLayouts::Apply`. Left and right click can't be used. New Controller rows set each key; BUTTON BINDINGS accepts the paddle by pressing it. A key bound to a keyboard action stops doing that while a pad is connected.
+
+**Look speed** (`83e05e9`). `padLookSpeedX/Y` 1.00-10.00, 0.25 steps on stick or D-pad, typed values to two decimals. Old 1-19 values migrate as (v+1)/2, so 19 becomes 10.00x. **Assumption:** 10.00x is the stock profile and the scale is linear onto profile steps 1-19. Between steps the profile takes the next step up and the stick is scaled down. Reach's own 1-10 was not measured, so Noble's 3.00x may not feel like Reach's 3. The profile part applies at match start; the stick part applies live.
+
+Self-review: build 0/0. `-test-map-gametypes`: 26 layout expectations and input tuning pass. `-pad-script` with a real injected F13: `padBindings.jump` became Paddle 1, `padLookX` 19 migrated, `padLookSpeedX` saved 9.25. `docs/screenshots/settings-paddles-sensitivity.png` and `preset-reverse-bumper-jumper.png` opened. **Not run:** an actual paddle or Steam Input mapping, a paddle key or changed speed in a real match, the PADDLE KEY capture row itself, mouse buttons as paddles.
+
 ## 0. Pick up here (2026-10-31, 00:56 ET) - Armory framing, tier check, background deck, short-track filter, voice preview, nameplates (@claude)
 
 **Armory** (`dd37730`, `FrontEndMenu.cpp` `ArmoryStage`). The engine camera can't move, so the finished engine frame is copied and redrawn smaller and to the right; the head now sits below the rule. A faint additive glow replaces pure black, and the per-slot cameras are unchanged. The nameplate is the main menu's `PlayerRow`. Captures: `docs/screenshots/armory-framing.png`, `armory-helmet-camera.png`. Opinion for @deepseek: this is a UI light on top of the model, so a real engine or data light would still look better. **Open:** the copy assumes the model sits at 65.6 % across the frame in every scene; only 1080p-scaled and 4K were seen.

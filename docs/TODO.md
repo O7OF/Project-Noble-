@@ -228,8 +228,8 @@ items above close. Keep the spec open when building any screen so the details la
   X=Discard prompts and the preset/diagram row; Tyler retests with a pad.
 - [x] @claude 2026-10-31 00:40 - commit dc8731b (real cause: the row dropped its step, for every device) - **Button layout row must be changeable with a controller** (D-pad/stick left-right does nothing today) and the layout diagram must update per preset
 - [x] @claude 2026-10-31 00:40 - commit dc8731b - **One "Controller preset" item** (stick + buttons together); remove the separate stick-layout row; presets from `docs/menu-redesign-spec.md` / Halopedia (Default, Southpaw, Boxer, Bumper Jumper, Recon, ...)
-- [~] @claude 2026-10-31 00:40 - commit dc8731b, all but stick movement axes and physical paddles (XInput does not report paddles; row says to use Xbox Accessories); **needs: Tyler** real pad test - **Remap every input**: A/B/X/Y, bumpers, triggers, both sticks (directions + click), D-pad, Start/Back, paddles 1-6; add missing actions: crouch, toggle zoom (default on, still exposed), team chat, scoreboard, push-to-talk (future), etc.
-- [~] @claude 2026-10-31 00:40 - horizontal/vertical exposed with numbers, scale documented as profile byte + 1; **BLOCKED (Tyler or measurement):** how 1-19 lines up with 1-10 is unmeasured - **Look sensitivity baseline**: 19 is the current default; document the scale against Reach's 1-10 and expose horizontal/vertical
+- [~] @claude 2026-10-31 - commits dc8731b, 83e05e9; paddles work as keyboard/mouse keys sent by a tool like Steam Input; stick movement axes only via presets; **needs: Tyler** real pad test - **Remap every input**: A/B/X/Y, bumpers, triggers, both sticks (directions + click), D-pad, Start/Back, paddles 1-6; add missing actions: crouch, toggle zoom (default on, still exposed), team chat, scoreboard, push-to-talk (future), etc.
+- [~] @claude 2026-10-31 - commit 83e05e9, 1.00x-10.00x per Tyler; linear mapping onto profile 1-19 is an assumption; **needs: Tyler** to feel it in a match - **Look sensitivity baseline**: 19 is the current default; document the scale against Reach's 1-10 and expose horizontal/vertical
 - [ ] **(Tyler test) Controller presets** - pick Southpaw or Bumper Jumper, Apply, play a match, rebind one button
 
 ## I. Armory presentation, audio and data (Tyler, 2026-10-31 00:10)
@@ -250,7 +250,7 @@ items above close. Keep the spec open when building any screen so the details la
 
 - [ ] **Emblem colours (real three-colour picker)** — backgrounds are fixed steel today; Reach's real picker needs the
   black layers treated as masks. Nameplate audit done and fixed, commit 41c1c91. - @claude
-- [~] @claude 2026-10-31 00:40 - 6 layouts x normal/swapped sticks = 12; **BLOCKED (Tyler):** I could not verify what Reach calls "Reverse Southpaw / Reverse Bumper Jumper", so they are not invented - **Controller preset list completeness** — include Reach's reverse variants (Reverse Southpaw, Reverse Bumper Jumper)
+- [~] @claude 2026-10-31 - commit 0662bcf, Reverse Southpaw / Reverse Bumper Jumper added as Noble names (layout + swapped sticks); Reach has none. **Still missing: Reach's real Legacy and Legacy Southpaw stick layouts** (Halopedia shows them only as images) - **Controller preset list completeness** — include Reach's reverse variants (Reverse Southpaw, Reverse Bumper Jumper)
   and every MCC scheme; the diagram must switch with the preset, and the preset must apply on Y without a relaunch. - @claude
 - [ ] **Game-option surfaces, split up**: Forge map options (budget/permissions), custom-game defaults (a default variant
   shipped with Noble), Firefight options (waves/lives/skulls/time), and per-mode match settings from the variant plan. - @deepseek + @claude UI
