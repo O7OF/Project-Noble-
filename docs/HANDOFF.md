@@ -69,6 +69,31 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-31, 05:05 ET) - The TLS player-array chain does not resolve at runtime; launch blocks carry no player count (WeabooTyler117 / DeepSeek)
+
+Followed the 0x490-stride player array described in the 04:30 entry. Implemented the chain exactly as the results builder
+does it - `tls = gs:[0x58][ *(int*)(hr+0xC17B18) ]`, `obj = [tls+0x18]`, `players = [obj+0x50]`, then 8 records at 0x490 -
+with SEH around the reads. Every sample returned "player array not readable", i.e. one of the pointers is null or invalid,
+so the chain as written is wrong. Most likely the `hr+0xC17B18` value is not a raw TLS index for that accessor, or the
+campaign path takes the other branch (`[0x1828B83C8] != 0` -> `[rcx+0x50]` vs `[rcx+0x50]` with a different base).
+
+The probe was reverted; the build is clean and the tree matches `adc36d9`.
+
+Also checked the launch blocks: `lb_m_c_1.bin` (campaign template) and `launch_block_1.bin` (multiplayer) are **identical in
+the player-slot regions** (0x100-0x2E0) and differ only in `+0x0C` (engine class 1 vs 3) and the map id around +0x10, so
+the launch block does not carry a co-op/max-player field we could flip.
+
+### Honest state
+
+Campaign co-op is still not fixed. Remaining approaches, best first:
+
+1. **O7's host client log** (one grep: `c_network_session::abort called ... reason=`) - still the cheapest way to learn
+   whether the engine aborts with 0x1B/0x1C/0x1D or the campaign state machine ends the mission.
+2. Resolve the real player-array pointer properly in Ghidra (follow `hr+0x48680`'s return usage and the static at
+   `0x1828B83C8`), then re-run the probe.
+3. Try a campaign co-op start through the MCC campaign UI path in-game (if the menu action can be dispatched), rather than
+   a direct map launch.
+
 ## 0. Pick up here (2026-10-31, 04:30 ET) - Traced MCC's results builder; the real player objects are the 0x490-stride array (WeabooTyler117 / DeepSeek)
 
 Tried to read the engine's per-player state directly to see when the remote slot gets a unit. Findings:
