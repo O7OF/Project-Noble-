@@ -36,6 +36,35 @@ Self-review: the weakest part is the sender thread, because it changes how relay
 
 --
 
+--
+
+## 0. Pick up here (2026-10-31, 19:20 ET) - Night shift summary: what landed, what is blocked, what is next (WeabooTyler117 / DeepSeek)
+
+**Landed tonight**
+- Elite pipeline + colour reference: `e7ab6c9` (rrpmcg 314 components, elite ranks; m10 79 shader/117 bitmap paths; 57/60
+  bitmaps stock vs 51/60 shaders pack-only).
+- Backend: report `b645dbf`, vote-to-kick `655fb4d`, host End Round/Match `65ba17a`, 128-player cap + JSON limit
+  `48dc168`/`a1196ba`.
+- Pad Back no longer opens Reach's scoreboard: `d27ab84` (physical test pending).
+- Real ping on the scoreboard: `e89c4d7` (transport `GetPeerPingMs`).
+- Chat relay: `5d46c13` + cleanup `d0ac871`, team/all/party with team filtering; harness PASS. Client send/receive:
+  `dcefc34` (build only, two-client check pending).
+- Voice chat (Claude): `accbd06`, independently re-verified here with `-voice-test loopback` PASS at 16/20/24 kbps.
+- Post-game clean panel verified by capture `docs/screenshots/postgame-clean.png`; `-postgame-test` now waits for the scene.
+
+**Blocked / needs information**
+- Multiplayer post-game panel: `ShowGameOver()` is only called from `HostSlot6_GameResults`; the only slot-6 logs we have are
+  campaign co-op from before tonight's fixes. Needs one finished slayer/custom match with logging to decide "condition bug" vs
+  "no multiplayer hook".
+- Client chat two-client check: needs a paired run.
+- Voice: hearing a real person (loopback is verified, human mic is not).
+
+**Next**
+1. Finished-match log -> multiplayer end hook, then `exit_experience` credit sounds + `mission_complete` split.
+2. Chat client two-client check, then T/Y/P binds and Claude's chat UI.
+3. Profile fields + session survival/rotation; variant viewer + credit validation.
+4. Tyler's pending tests: controller presets, real two-person voice, Firefight voice preview, reverse-preset naming,
+   sensitivity baseline.
 ## 0. Pick up here (2026-10-31, 19:05 ET) - REVIEW OK: voice phase 2 (@claude accbd06), merged and rebuilt (WeabooTyler117 / DeepSeek)
 
 - Merged `accbd06` + `429fbb7`; build **0 errors / 0 warnings** on the merged tree.
