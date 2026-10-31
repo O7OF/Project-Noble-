@@ -1086,6 +1086,27 @@ void BlamEngine::Update(float deltaTime) {
 void BlamEngine::Render() {
 }
 
+
+bool BlamEngine::DumpGameVariant(const std::string& path) {
+    std::ifstream in(std::filesystem::path(path), std::ios::binary);
+    if (!in || !m_hModule) { NOBLE_WARN("DumpGameVariant: cannot open {} or engine not loaded", path); return false; }
+    std::vector<uint8_t> file((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    if (file.empty()) return false;
+    std::vector<uint8_t> decoded(0xFC04);
+    char status[64]{};
+    const bool ok = SafeCallGameVariantDecode(m_hModule, file.data(), decoded.data(), status);
+    const std::string outPath = (std::filesystem::current_path() / (std::filesystem::path(path).filename().string() + ".decoded.bin")).string();
+    std::ofstream out(std::filesystem::path(outPath), std::ios::binary);
+    if (out) out.write(reinterpret_cast<const char*>(decoded.data()), static_cast<std::streamsize>(decoded.size()));
+    NOBLE_INFO("DumpGameVariant: {} -> {} (ok={}, status='{}', {} bytes in)", path, outPath, ok, status, file.size());
+    if (ok) {
+        uint32_t first = 0;
+        std::memcpy(&first, decoded.data(), sizeof(first));
+        NOBLE_INFO("DumpGameVariant: first u32 = 0x{:08X}", first);
+    }
+    return ok;
+}
+
 void BlamEngine::Shutdown() {
     if (s_active == this) s_active = nullptr;
     if (!m_isInitialized) return;

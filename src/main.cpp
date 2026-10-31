@@ -321,6 +321,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     bool guestPostStart = false;
     bool thirdPerson = false;
     bool voiceProbe = false;
+    std::string variantDumpPath;
     int thirdPersonMode = 0;
     int thirdPersonDistance = 100;
     std::string engineCommand;
@@ -382,6 +383,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
                 expectedPeers = _wtoi(argvW[++i]);
             } else if (arg == L"-third-person") {
                 thirdPerson = true;
+            } else if (arg == L"-variant-dump" && i + 1 < numArgs) {
+                variantDumpPath = WideToNarrow(argvW[++i]);
             } else if (arg == L"-voice-probe") {
                 voiceProbe = true;
             } else if (arg == L"-third-person-distance" && i + 1 < numArgs) {
@@ -573,6 +576,13 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     if (!blamEngine->Initialize(*reachInstall, loader->GetModuleHandle(), loader->GetExports(), hostContext)) {
         NOBLE_ERROR("Failed to initialize Blam! engine host interfaces.");
         return 1;
+    }
+
+    // Dev tool: decode a game variant with the engine and exit.
+    if (!variantDumpPath.empty()) {
+        const bool ok = blamEngine->DumpGameVariant(variantDumpPath);
+        noble::Logger::Shutdown();
+        TerminateProcess(GetCurrentProcess(), ok ? 0 : 1);
     }
 
     // Elite armour pack (data\armor\<name>.map + .rrreloc, local only): loaded with multiplayer and Firefight maps.
