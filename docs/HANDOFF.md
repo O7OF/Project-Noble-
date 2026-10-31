@@ -73,6 +73,21 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+--
+
+## 0. Pick up here (2026-10-31, 05:30 ET) - Resume point for voice phase 2 (WeabooTyler117 / DeepSeek)
+
+Phase 1 is in (`7e6a2dd`): `src/audio/VoiceChat.*` enumerates devices, `-voice-probe` prints 2 capture / 4 playback on this
+PC. Resume exactly here:
+1. `VoiceChat.cpp`: WASAPI shared-mode capture on the default device (48 kHz mono 16-bit, 20 ms = 960 frames), playback
+   stream with a small ring buffer.
+2. Vendor Opus (BSD-3), encode 960-sample frames at 16/20/24 kbps, decode on receive.
+3. `NetworkTransport`: add a `voice` message type alongside game packets over the existing relay path; the server only
+   relays/rate-limits and never parses audio; UI never supplies endpoints or keys.
+4. Jitter buffer 60-120 ms, per-peer mute/volume, push-to-talk from the binding table.
+5. Evidence: host+guest processes, voice frame log lines, loopback WAV.
+
+Then block 3: post-game panel timing + multiplayer end path, exit_experience sounds, mission_complete credit split.
 ## 0. Pick up here (2026-10-31, 05:00 ET) - Block 4 backend done: report, vote-to-kick, end round/match, 128-player cap (WeabooTyler117 / DeepSeek)
 
 Server (`ServerTestDeploy`) now has, all verified locally:
