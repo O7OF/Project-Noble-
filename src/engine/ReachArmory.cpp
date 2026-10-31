@@ -904,7 +904,7 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx) {
             pushPair("elite_chest",          sel.eliteChest,         "minor");
             pushPair("elite_forearms",       sel.eliteArms,          "default");
             pushPair("elite_legs",           sel.eliteLegs,          "minor");
-            // Elite armor effects (pmcg list 80 / 8c, region armor_fx, permutations armor_fx_00..05)
+            // Elite armor effects (pmcg list 80 / 8c, region armor_fx, permutations armor_fx_00..05, plus legacy armor_effect)
             const std::string fxName = PmcgEffectName(sel.eliteArmorEffect);
             const std::vector<PmcgChange>* fxChanges = PmcgItem("80", fxName);
             if (!fxChanges || fxChanges->empty()) {
@@ -912,10 +912,16 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx) {
             }
             if (fxChanges && !fxChanges->empty()) {
                 for (const auto& c : *fxChanges) pushPair(c.region, c.permutation, nullptr);
-            } else if (sel.eliteArmorEffect != "default" && !sel.eliteArmorEffect.empty()) {
-                static const char* kFxPerms[7] = { "default", "armor_fx_00", "armor_fx_01", "armor_fx_02", "armor_fx_03", "armor_fx_04", "armor_fx_05" };
+            }
+            if (sel.eliteArmorEffect != "default" && !sel.eliteArmorEffect.empty()) {
+                static const char* const kFxPerms[7] = { "default", "armor_fx_00", "armor_fx_01", "armor_fx_02", "armor_fx_03", "armor_fx_04", "armor_fx_05" };
+                static const char* const kLegacyFxPerms[7] = { "armor_fx_blank", "armor_fx_legendary", "armor_fx_blue", "armor_fx_hearts", "armor_fx_stink", "armor_fx_weather", "armor_fx_bday" };
                 const int fxIdx = (sel.eliteArmorEffectIndex >= 1 && sel.eliteArmorEffectIndex <= 6) ? sel.eliteArmorEffectIndex : 0;
-                if (fxIdx > 0) pushPair("armor_fx", kFxPerms[fxIdx], "default");
+                if (fxIdx > 0) {
+                    pushPair("armor_fx", kFxPerms[fxIdx], nullptr);
+                    pushPair("armor_effect", kLegacyFxPerms[fxIdx], nullptr);
+                    pushPair("armor_effect", sel.eliteArmorEffect, nullptr);
+                }
             }
         } else if (PmcgItem("20", "default") != nullptr) {
             // Only the regions the picked items change get a pair. "default" is a real permutation in several
@@ -977,8 +983,8 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx) {
                 s_bumpAtFrame = frameNow + 2;
                 s_settlePending = false;
                 if (showElite) {
-                    NOBLE_INFO("ReachArmory: Elite pieces {} / {} / {} / {} / {} / {}", sel.eliteHelmet, sel.eliteLeftShoulder,
-                               sel.eliteRightShoulder, sel.eliteChest, sel.eliteArms, sel.eliteLegs);
+                    NOBLE_INFO("ReachArmory: Elite pieces {} / {} / {} / {} / {} / {}, effect {}", sel.eliteHelmet, sel.eliteLeftShoulder,
+                               sel.eliteRightShoulder, sel.eliteChest, sel.eliteArms, sel.eliteLegs, sel.eliteArmorEffect);
                 } else {
                     NOBLE_INFO("ReachArmory: Spartan pieces head {}, chest {}, L {}, R {}, wrist {}, utility {}, knees {}, effect {}",
                                sel.helmet, sel.chest, sel.leftShoulder, sel.rightShoulder, sel.wrist, sel.utility, sel.knees,
