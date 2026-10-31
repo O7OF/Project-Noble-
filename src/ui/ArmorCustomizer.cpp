@@ -724,6 +724,32 @@ const SpartanItem* FindSpartanItem(const char* slot, const char* id) {
     return nullptr;
 }
 
+// The Armory list ids double as the keys for the MCC item table in ReachHost (the item numbers written to the
+// profile, which are correct). A few hand-written permutation ids do not render the model they are named
+// after - e.g. chest_1 renders UA/Base Security, not HP/Halo. The 3D preview therefore maps the profile id to
+// the permutation id that actually matches the item's picture; the profile/save data keeps the original id.
+// Reported by Tyler in the 2026-10-31 Armory pass (shoulders, chest plates, utilities).
+const char* SpartanPreviewId(const char* id) {
+    struct PreviewId { const char* from; const char* to; };
+    static constexpr PreviewId kMap[] = {
+        // Chest plates (the whole chest_1..chest_13 chain is shifted one model forward, with chest_kurt = ODST).
+        {"chest_1", "chest_3"},        {"chest_2", "chest_4"},        {"chest_3", "chest_5"},
+        {"chest_4", "chest_kurt"},     {"chest_5", "chest_6"},        {"chest_6", "chest_7"},
+        {"chest_7", "chest_8"},        {"chest_8", "chest_9"},        {"chest_9", "chest_10"},
+        {"chest_10", "chest_11"},      {"chest_11", "chest_12"},      {"chest_12", "chest_13"},
+        {"chest_13", "chest_2"},       {"chest_kurt", "chest_1"},
+        // Shoulders: CQC / ODST / UA-Base Security are a 3-cycle.
+        {"left_shoulder_9", "left_shoulder_kurt"},   {"right_shoulder_9", "right_shoulder_kurt"},
+        {"left_shoulder_10", "left_shoulder_9"},     {"right_shoulder_10", "right_shoulder_9"},
+        {"left_shoulder_kurt", "left_shoulder_10"},  {"right_shoulder_kurt", "right_shoulder_10"},
+        // Utilities: Chobham / Hard Case / Soft Case are a 3-cycle.
+        {"utility_1", "utility_2"}, {"utility_2", "utility_5"}, {"utility_5", "utility_1"},
+    };
+    for (const auto& m : kMap)
+        if (std::strcmp(id, m.from) == 0) return m.to;
+    return id;
+}
+
 int RankIndexByName(const char* name) {
     if (!name || !*name) return 0;
     const auto& ranks = Career::Ranks();
@@ -968,11 +994,12 @@ void ArmorCustomizer::SyncToReachArmory() const {
     sel.serviceTag = m_profile.serviceTag;
 
     sel.helmet = hvSpec.stringId;
-    sel.chest = cSpec.stringId;
-    sel.leftShoulder = shoulders[lsIdx].leftStringId;
-    sel.rightShoulder = shoulders[rsIdx].rightStringId;
+    // Preview the permutation that matches the picture; the profile ids (appearance.json) stay untouched.
+    sel.chest = SpartanPreviewId(cSpec.stringId);
+    sel.leftShoulder = SpartanPreviewId(shoulders[lsIdx].leftStringId);
+    sel.rightShoulder = SpartanPreviewId(shoulders[rsIdx].rightStringId);
     sel.wrist = wrists[wIdx].stringId;
-    sel.utility = utilities[uIdx].stringId;
+    sel.utility = SpartanPreviewId(utilities[uIdx].stringId);
     sel.knees = knees[kIdx].stringId;
     sel.hands = cSpec.hasProstheticArm ? "robot" : "default";
     sel.armorEffect = kArmorEffects[aeIdx].stringId;

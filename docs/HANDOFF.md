@@ -71,6 +71,29 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-31, 00:25 ET) - Spartan Armory preview ids fixed: CQC/ODST/UA-Base, the chest chain, Chobham/Hard Case/Soft Case (Tyler / DeepSeek)
+
+Tyler's Armory pass found the 3D preview showing a different piece than the name/picture while the in-game item
+(the MCC profile number) stayed correct: the hand-written permutation string ids in ArmorCustomizer's lists do not
+all render the model they are named after.
+- Shoulders: CQC rendered ODST, ODST rendered UA/Base Security, UA/Base rendered CQC (3-cycle).
+- Chest plates: `chest_1..chest_13` each rendered the next item's plate, `chest_kurt` (UA/Base Security) rendered
+  ODST, and the rest of the chain followed (HP/Halo -> UA/Base ... UA/Multi-Threat -> Collar/Grenadier [UA]).
+- Utilities: Chobham rendered Soft Case, Hard Case rendered Chobham, Soft Case rendered Hard Case (3-cycle).
+- Fix: added `SpartanPreviewId()` in `ArmorCustomizer.cpp`, a small map from the profile id (also the key for
+  ReachHost's correct MCC item table) to the permutation id whose model matches the item's picture. `SyncToReachArmory`
+  uses it for the chest, both shoulders and the utility only; the saved `appearance.json` ids, the MCC item numbers
+  and the in-game equipment are unchanged, so this is preview-only.
+- Map: chests `chest_1->chest_3, chest_2->chest_4, chest_3->chest_5, chest_4->chest_kurt, chest_5->chest_6,
+  chest_6->chest_7, chest_7->chest_8, chest_8->chest_9, chest_9->chest_10, chest_10->chest_11, chest_11->chest_12,
+  chest_12->chest_13, chest_13->chest_2, chest_kurt->chest_1`; shoulders `9->kurt, 10->9, kurt->10` (both sides);
+  utilities `1->2, 2->5, 5->1`.
+- Built with `build.bat` (0 errors, noble-client + noble-dedicated). The main build dir had a Ninja CMake cache from
+  the merge; build.bat detected the VS generator mismatch, cleaned the cache/subbuilds and rebuilt cleanly.
+- Verified in the Armory with `-armory-focus Chest -armory-unlock-all`: a Collar/Grenadier profile previews the
+  Collar/Grenadier gorget, matching its tile. The rest of the chain is the same id->model mapping Tyler reported.
+
+
 ## 0. Pick up here (2026-10-31, 01:05 ET) - Controller input now actually reaches ImGui (WeabooTyler117 / DeepSeek)
 
 Tyler said the controller presets do nothing. Cause: `SettingsPanel` already read `ImGuiKey_GamepadDpad*`/`GamepadFace*`,
