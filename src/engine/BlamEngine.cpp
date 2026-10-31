@@ -827,6 +827,8 @@ bool BlamEngine::ExecuteCommand(const std::string& command) {
 bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMode, int difficulty, uint64_t skulls,
                            const std::string& customMvarPath, const std::string& customVariantPath,
                            const std::string& connectAddress, int expectedPeers) {
+    // A fresh launch starts with no remote players in membership; the host's Command 11 barrier counts msg 27s.
+    noble::LobbyPatches::ResetRemotePlayerJoined();
     if (!m_isInitialized || !m_engineInstance) return false;
 
     m_currentMap = mapName;

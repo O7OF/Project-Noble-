@@ -69,6 +69,18 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-31, 02:45 ET) - O7's patch script merged; membership counter now reset per launch (WeabooTyler117 / DeepSeek)
+
+- Pulled `11cbef7` (O7 added `patch_blam.js`, the script he used to rewrite the Command 11 barrier) on top of `64dd74f`.
+  Merge `8445989`, build 0/0, pushed.
+- That script also intends to call `LobbyPatches::ResetRemotePlayerJoined()` at the start of `LaunchMap`, but `64dd74f`
+  never added the call, so the msg 27 counter was process-global. Harmless today (each match is a fresh process) but wrong
+  for single-process transitions, so the call is now in `BlamEngine::LaunchMap` with the include.
+- Campaign status unchanged from the 02:20 entry: three local runs (4 s settle, 10 s settle, guest posting its own
+  Command 10/11) all end with the host's `player 1 +0x30 = 255` (no biped) and Category 14 results ~60 s later. The
+  barrier, membership sync and Command 11 ordering are all confirmed working; the blocker is the host-side campaign
+  spawn path for a remote player's unit.
+
 ## 0. Pick up here (2026-10-31, 02:20 ET) - O7's membership barrier pulled and tested; the guest biped is still never spawned (WeabooTyler117 / DeepSeek)
 
 Pulled `64dd74f` (O7: gate Command 11 on guest membership sync / msg 27) plus the new `LobbyPatches::GetRemotePlayerAddCount()`.
