@@ -115,7 +115,13 @@ UiTexture EmblemByName(const std::string& image1);
 
 // Draws a player's emblem: the background (0 = none, n = GetEmblemBackgrounds()[n - 1]), then both layers of the symbol
 // (symbolIndex = position in GetEmblemCatalog(), which is what the Armory stores; it is not the XML id).
-void DrawEmblem(ImDrawList* dl, int symbolIndex, int backgroundIndex, ImVec2 min, ImVec2 max, ImU32 tint = IM_COL32_WHITE);
+// The three emblem layers' colours. Black in MCC's art is already transparent, so a tint colours only the shape.
+struct EmblemColors {
+    ImU32 primary = IM_COL32(216, 216, 216, 255);     // Reach's White
+    ImU32 secondary = IM_COL32(216, 216, 216, 255);
+    ImU32 background = IM_COL32(74, 116, 177, 255);   // Reach's Cobalt
+};
+void DrawEmblem(ImDrawList* dl, int symbolIndex, int backgroundIndex, ImVec2 min, ImVec2 max, const EmblemColors& colors = {});
 
 // Draws `tex` inside the rectangle, keeping its aspect ratio (centred, nothing cropped).
 void DrawContain(ImDrawList* dl, const UiTexture& tex, ImVec2 min, ImVec2 max, ImU32 tint = IM_COL32_WHITE);

@@ -945,6 +945,14 @@ ULONGLONG s_lastChangeTick = 0;
 ULONGLONG s_lastApplyTick = 0;
 } // namespace
 
+UiArt::EmblemColors ArmorCustomizer::EmblemColorsNow() const {
+    auto colour = [](int index) {
+        const auto& c = kReachColors[std::clamp(index, 0, 29)];
+        return ImGui::ColorConvertFloat4ToU32(ImVec4(c.r, c.g, c.b, 1.0f));
+    };
+    return { colour(m_profile.emblemPrimaryColor), colour(m_profile.emblemSecondaryColor), colour(m_profile.emblemBackgroundColor) };
+}
+
 void ArmorCustomizer::SyncToReachArmory() const {
     const auto& helmets = GetSpartanHelmets();
     const auto& shoulders = GetSpartanShoulders();
@@ -1170,6 +1178,12 @@ bool ArmorCustomizer::LoadProfile(const std::filesystem::path& path) {
             m_profile.emblemIndex = j["emblem_index"].get<int>();
         if (j.contains("emblem_background_index") && j["emblem_background_index"].is_number_integer())
             m_profile.emblemBackgroundIndex = j["emblem_background_index"].get<int>();
+        if (j.contains("emblem_primary_color") && j["emblem_primary_color"].is_number_integer())
+            m_profile.emblemPrimaryColor = std::clamp(j["emblem_primary_color"].get<int>(), 0, 29);
+        if (j.contains("emblem_secondary_color") && j["emblem_secondary_color"].is_number_integer())
+            m_profile.emblemSecondaryColor = std::clamp(j["emblem_secondary_color"].get<int>(), 0, 29);
+        if (j.contains("emblem_background_color") && j["emblem_background_color"].is_number_integer())
+            m_profile.emblemBackgroundColor = std::clamp(j["emblem_background_color"].get<int>(), 0, 29);
 
         MigrateFromLegacyFields();
         SyncLegacyFields();
@@ -1297,6 +1311,9 @@ bool ArmorCustomizer::SaveProfile(const std::filesystem::path& path) {
         j["nameplate_index"] = m_profile.nameplateIndex;
         j["emblem_index"] = m_profile.emblemIndex;
         j["emblem_background_index"] = m_profile.emblemBackgroundIndex;
+        j["emblem_primary_color"] = m_profile.emblemPrimaryColor;
+        j["emblem_secondary_color"] = m_profile.emblemSecondaryColor;
+        j["emblem_background_color"] = m_profile.emblemBackgroundColor;
 
         std::error_code ec;
         if (targetPath.has_parent_path()) {
@@ -1670,6 +1687,18 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
         }
         rows.push_back(std::move(backRow));
 
+        struct EmblemColourRow { const char* label; int* index; const char* description; };
+        const EmblemColourRow emblemColours[] = {
+            { "Emblem Primary Color", &m_profile.emblemPrimaryColor, "Colors the symbol's main shape." },
+            { "Emblem Secondary Color", &m_profile.emblemSecondaryColor, "Colors the symbol's second shape, if it has one." },
+            { "Emblem Background Color", &m_profile.emblemBackgroundColor, "Colors the shape behind the symbol." },
+        };
+        for (const EmblemColourRow& e : emblemColours) {
+            SlotRow c{ "IDENTITY", e.label, RowKind::Colour, e.index };
+            for (const auto& pal : kReachColors) c.options.push_back({ pal.name, e.description, ColourU32(pal.r, pal.g, pal.b) });
+            rows.push_back(std::move(c));
+        }
+
         rows.push_back({ "IDENTITY", "Service Tag", RowKind::Tag });
     }
 
@@ -1808,8 +1837,8 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
 
             ImGui::SameLine();
 
-            ImGui::PushStyleColor(ImGuiCol_Button, isElite ? ImVec4(0.65f, 0.30f, 0.15f, 0.85f) : ImVec4(0.10f, 0.14f, 0.18f, 0.6f));
-            ImGui::PushStyleColor(ImGuiCol_Border, isElite ? ImVec4(1.0f, 0.65f, 0.35f, 1.0f) : ImVec4(0.25f, 0.35f, 0.45f, 0.4f));
+            ImGui::PushStyleColor(ImGuiCol_Button, isElite ? ImVec4(0.18f, 0.40f, 0.68f, 0.90f) : ImVec4(0.10f, 0.14f, 0.18f, 0.6f));
+            ImGui::PushStyleColor(ImGuiCol_Border, isElite ? ImVec4(0.56f, 0.85f, 1.0f, 1.0f) : ImVec4(0.25f, 0.35f, 0.45f, 0.4f));
             if (ImGui::Button("ELITE", ImVec2(btnW, btnH))) {
                 SetPreferredSpecies(PlayerSpecies::Elite);
             }
@@ -1939,8 +1968,8 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
                 dl->AddRectFilled(c0, c1, chov ? IM_COL32(48, 84, 110, 240) : IM_COL32(22, 38, 52, 235), 2.0f * s);
                 dl->AddRect(c0, c1, IM_COL32(143, 216, 255, chov ? 200 : 90), 2.0f * s);
                 TextAt(dl, smallFont, 13.0f * s,
-                       ImVec2(c0.x + (cw - TextW(smallFont, 13.0f * s, "CUSTOM COLOUR")) * 0.5f, c0.y + 7.0f * s), kWhiteCol,
-                       "CUSTOM COLOUR");
+                       ImVec2(c0.x + (cw - TextW(smallFont, 13.0f * s, "CUSTOM COLOR")) * 0.5f, c0.y + 7.0f * s), kWhiteCol,
+                       "CUSTOM COLOR");
                 if (custom) ImGui::OpenPopup("##custom_colour_popup");
             }
         }
@@ -1957,7 +1986,7 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
                 const auto& pal = kReachColors[std::clamp(*row.index, 0, 29)];
                 col[0] = pal.r; col[1] = pal.g; col[2] = pal.b;
             }
-            ImGui::TextUnformatted("CUSTOM COLOUR");
+            ImGui::TextUnformatted("CUSTOM COLOR");
             ImGui::Dummy(ImVec2(0, 8.0f * s));
             ImGui::SetNextItemWidth(230.0f * s);
             if (ImGui::ColorPicker3("##custom_wheel", col,
@@ -1973,7 +2002,7 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
                     SaveProfile(m_profilePath);
                 }
             }
-            if (ImGui::Button("USE PALETTE COLOUR")) {
+            if (ImGui::Button("USE PALETTE COLOR")) {
                 *custom = false;
                 SyncToReachArmory();
                 SaveProfile(m_profilePath);
@@ -2053,8 +2082,7 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
                 // Each tile shows the whole emblem as it would look: the other half of the pair stays as equipped.
                 const int symbol = isEmblemSymbol ? i : m_profile.emblemIndex;
                 const int background = isEmblemBackground ? i : m_profile.emblemBackgroundIndex;
-                UiArt::DrawEmblem(gdl, symbol, background, ImVec2(t0.x + 4.0f * s, t0.y + 4.0f * s), ImVec2(t1.x - 4.0f * s, t1.y - 4.0f * s),
-                                  (isEq || hov) ? IM_COL32_WHITE : IM_COL32(220, 220, 220, 255));
+                UiArt::DrawEmblem(gdl, symbol, background, ImVec2(t0.x + 4.0f * s, t0.y + 4.0f * s), ImVec2(t1.x - 4.0f * s, t1.y - 4.0f * s), EmblemColorsNow());
                 gdl->AddRect(t0, t1, isEq ? kAccentCol : isTry ? IM_COL32(255, 196, 92, 255) : IM_COL32(170, 220, 255, hov ? 140 : 40),
                              2.0f * s, 0, (isEq || isTry) ? 1.6f * s : 1.0f);
             } else if (artGrid) {
@@ -2130,7 +2158,20 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
         TextAt(dl, titleFont, 20.0f * s, ImVec2(pickX + pad, iy + 10.0f * s), kWhiteCol, row.options[shown].name.c_str());
         const char* desc = row.options[shown].description.empty() ? (colourGrid ? "One of Reach's 30 armor colors." : "")
                                                                   : row.options[shown].description.c_str();
-        TextAt(dl, bodyFont, 15.0f * s, ImVec2(pickX + pad, iy + 38.0f * s), kDimCol, desc, pickW - pad * 2.0f);
+        const bool emblemColourRow = row.index == &m_profile.emblemPrimaryColor || row.index == &m_profile.emblemSecondaryColor ||
+                                     row.index == &m_profile.emblemBackgroundColor;
+        const float previewSize = 96.0f * s;
+        TextAt(dl, bodyFont, 15.0f * s, ImVec2(pickX + pad, iy + 38.0f * s), kDimCol, desc, pickW - pad * 2.0f - (emblemColourRow ? previewSize + 10.0f * s : 0.0f));
+        if (emblemColourRow) {
+            // The whole emblem with the hovered swatch tried on, so a colour can be judged before it is picked.
+            const int saved = *row.index;
+            *row.index = shown;
+            const ImVec2 p0(k1.x - pad - previewSize, iy + 12.0f * s), p1(p0.x + previewSize, p0.y + previewSize);
+            dl->AddRectFilled(p0, p1, IM_COL32(20, 14, 18, 250));
+            UiArt::DrawEmblem(dl, m_profile.emblemIndex, m_profile.emblemBackgroundIndex, p0, p1, EmblemColorsNow());
+            dl->AddRect(p0, p1, IM_COL32(170, 220, 255, 90));
+            *row.index = saved;
+        }
         // Firefight voices: X (pad or key) plays a sample line for the highlighted character, cycling through its lines.
         if (std::strcmp(row.label, "Firefight Voice") == 0) {
             const bool press = !ImGui::GetIO().WantTextInput &&

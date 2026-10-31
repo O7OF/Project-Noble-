@@ -969,7 +969,7 @@ void DrawAccountModal(const Ui& ui) {
 // player), in which case that piece is drawn as a plain placeholder or left out.
 float PlayerRow(const Ui& ui, ImVec2 pos, float width, int rankIndex, int emblemIndex, int nameplateIndex,
                 int team, const std::string& serviceTag, const std::string& name, bool dev, bool selected,
-                int emblemBackground = 0) {
+                int emblemBackground = 0, const UiArt::EmblemColors& emblemColors = {}) {
     const float h = 40.0f * ui.s;
     const float rankW = 29.0f * ui.s;      // square, centred on the row
     const float embW = 30.0f * ui.s;
@@ -996,7 +996,7 @@ float PlayerRow(const Ui& ui, ImVec2 pos, float width, int rankIndex, int emblem
     const ImVec2 e0(x, pos.y), e1(x + embW, pos.y + h);
     ui.dl->AddRectFilled(e0, e1, IM_COL32(20, 14, 18, 250));
     UiArt::DrawEmblem(ui.dl, emblemIndex, emblemBackground, ImVec2(e0.x + 2.0f * ui.s, e0.y + 2.0f * ui.s),
-                      ImVec2(e1.x - 2.0f * ui.s, e1.y - 2.0f * ui.s));
+                      ImVec2(e1.x - 2.0f * ui.s, e1.y - 2.0f * ui.s), emblemColors);
     x += embW;
 
     // Team strip: only when the game type assigns teams (Free for All, the main menu and a lobby with no
@@ -1081,7 +1081,7 @@ void DrawParty(const Ui& ui, const std::string& playerName, const char* status) 
         }
         y += PlayerRow(ui, ImVec2(x2, y), x + w - x2, s_rank, prof.emblemIndex, prof.nameplateIndex,
                        0 /* no team in the main menu */, PlayerServiceTag(sd), playerName,
-                       AuthClient::Get().IsDeveloper(), false, prof.emblemBackgroundIndex);
+                       AuthClient::Get().IsDeveloper(), false, prof.emblemBackgroundIndex, UIManager::GetArmorCustomizer().EmblemColorsNow());
     }
     const float accH = 22.0f * ui.s;
     const ImVec2 accP0(x2, y);
@@ -2680,7 +2680,8 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
                       player.nameplateId > 0 ? player.nameplateId : (local ? ownProf.nameplateIndex : 0),
                       player.team,
                       player.serviceTag, player.username, player.isDev, selected,
-                      player.emblemBackgroundId > 0 ? player.emblemBackgroundId : (local ? ownProf.emblemBackgroundIndex : 0));
+                      player.emblemBackgroundId > 0 ? player.emblemBackgroundId : (local ? ownProf.emblemBackgroundIndex : 0),
+                      local ? UIManager::GetArmorCustomizer().EmblemColorsNow() : UiArt::EmblemColors{});
             if (selected) ui.dl->AddRect(s0, s1, kAccent, 0.0f, 0, 1.5f * ui.s);
             char slotId[32];
             std::snprintf(slotId, sizeof(slotId), "##lobby_slot_%d", idx);
@@ -3867,7 +3868,7 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
             const float rowW = 400.0f * ui.s;
             PlayerRow(ui, ImVec2(ui.size.x - left - rowW, top + 8.0f * ui.s), rowW, Career::RankIndex(Career::Get().credits),
                       prof.emblemIndex, prof.nameplateIndex, 0, PlayerServiceTag(settings), settings.playerName,
-                      AuthClient::Get().IsDeveloper(), false, prof.emblemBackgroundIndex);
+                      AuthClient::Get().IsDeveloper(), false, prof.emblemBackgroundIndex, UIManager::GetArmorCustomizer().EmblemColorsNow());
         }
 
         // Thin horizontal rule with active "HALO: REACH" underline
@@ -4048,6 +4049,12 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
                 p.isHost = i == 0;
                 p.username = i == 0 ? "Noble Six" : "Spartan " + std::to_string(i + 1);
                 p.serviceTag = "N" + std::to_string(i + 10);
+                if (i > 0) {   // other players carry their own rank, emblem, background and nameplate, as the roster does
+                    p.rankIndex = i % 30;
+                    p.emblemId = (i * 7) % 60 + 1;
+                    p.emblemBackgroundId = (i * 3) % 40 + 1;
+                    p.nameplateId = i % 20 + 1;
+                }
                 p.team = demoFfa ? 0 : demoRed >= 0 ? (i < demoRed ? 1 : 2) : demoPlayers > 2 ? (i % 2) + 1 : 0;
                 st.lobbyRoster.push_back(p);
             }
