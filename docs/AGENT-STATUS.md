@@ -30,16 +30,10 @@ can make.
 
 ## @deepseek
 
-- state: **idle (last: Workshop mod required: Download & Join prompt, 2026-10-31 01:20 ET)**
-- since: 2026-10-31 00:45 ET
-- last item: **Workshop mod required: Download & Join prompt** - host advertises the lobby's Workshop mod, the joiner
-  gets the required-mod popup with DOWNLOAD & JOIN / CANCEL, and Steam subscribes/downloads before the join continues.
-  Backend `ServerTestDeploy` commit `dfb2494` is local only (no GitHub credentials here); Render still runs the old
-  fields until Tyler pushes + redeploys. Side effect: a demo run subscribed to Icecave: The Last Stand (3724674100).
-- files touched: `src/ui/FrontEndMenu.cpp`, `src/ui/ServerBrowser.*`, `src/ui/ModCatalog.*`,
-  `src/ui/ModDownloadPrompt.*`, `src/host/SteamWorkshop.*`, `src/network/MasterServerClient.*`,
-  `src/network/SessionManager.*`, `src/main.cpp`, `src/common/Version.hpp`, `CMakeLists.txt`,
-  `ServerTestDeploy/server.js`, `docs/*`
+- state: **active**
+- since: 2026-10-31 01:31 ET
+- working on: **GitHub Actions build artifact** — add `.github/workflows/build.yml` (one-click exe so both PCs run the same binary)
+- files expected: `.github/workflows/build.yml`, `docs/TODO.md`, `docs/AGENT-STATUS.md`, `docs/HANDOFF.md`
 - test state: game audio muted in both checkouts (`tools/mute-game.ps1 -IncludeClaude`); restore with `-Unmute`
 - last commit: `ff9cc79`
 
