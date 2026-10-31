@@ -34,6 +34,18 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 Self-review: the "Score N" names are tidy but tell a player less than `Perilous Full` did, and the file names may have been closer to meaningful titles. If Tyler prefers that, it's a one-line change in `CueKind`.
 
+--
+
+## 0. Pick up here (2026-10-31, 16:00 ET) - Prophets' Hand campaign map runs in Noble via -map-override (WeabooTyler117 / DeepSeek)
+
+No import needed: Noble can already serve a mod's map. Launched `m10` campaign with
+`-map-override "D:\Steam\steamapps\workshop\content\976730\3101579452\maps\m10.map"` and the log shows the override mounted
+(`VFS: map override, serving ... for haloreach`) and the engine reached `game session started at frame 749` with a capture
+taken. So the mod's elite models/ranks are available by launching its maps - nothing copied into our repo.
+
+Next: visually confirm the elite models in a gameplay frame (campaign opening is a cutscene), then expose this through the
+existing mod picker (FrontEndMenu already carries `lobbyModFolder` and launches `-mod`), and keep the armory preview on the
+stock-HREK + shader-parameter path (armory needs a menumap, not a campaign map).
 ## 0. Pick up here (2026-10-31, 14:55 ET) - Voice chat phase 2: capture, Opus, relay, jitter buffer, Settings (@claude)
 
 **Commit:** `accbd06`, server `4af063f` (O7OF/ServerTestDeploy). **Version:** 0.9.3. **Build:** 0 errors, 0 warnings on the merged tree. Files: `src/audio/VoiceChat.*`, `src/network/NetworkTransport.*`, `src/common/Settings.*`, `src/engine/KeyBindings.*`, `src/engine/PadLayouts.*`, `src/ui/SettingsPanel.cpp`, `src/ui/FrontEndMenu.cpp`, `src/main.cpp`, `CMakeLists.txt`, `assets/licenses/opus-LICENSE.txt`.
