@@ -300,7 +300,7 @@ items above close. Keep the spec open when building any screen so the details la
 ## E. Housekeeping
 
 - [x] **Bump `VERSION_PATCH`** — now `0.8.4` / "0.8.4 (Co-op, Third Person & Menu Cleanup)" (`src/common/Version.hpp`)
-- [~] @deepseek 2026-10-31 01:31 - **GitHub Actions build artifact** — one-click exe so both PCs always run the same binary
+- [x] @deepseek 2026-10-31 01:34 - **GitHub Actions build artifact** — one-click exe so both PCs always run the same binary — commit 7f19dbc
 - [ ] **Dedupe `docs/HANDOFF.md`** — O7's `dc349a5` appended ~27 identical entries; 245+ entries now
 - [x] **Remove `patch_blam.js`** — O7's scratch rewrite script, superseded by `64dd74f`
 - [ ] **Drop `stash@{0}`** once Tyler agrees (its useful half is already committed as `32cd0f1`)

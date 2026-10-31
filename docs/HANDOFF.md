@@ -69,6 +69,33 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-31, 01:34 ET) - GitHub Actions build artifact workflow (@deepseek)
+
+The repo had no CI, so the two PCs could drift on which `noble-client.exe` they ran. Added
+`.github/workflows/build.yml` (commit `7f19dbc`): on every push to `main` and on manual `workflow_dispatch` it
+checks out, configures with CMake + MSVC x64 (`cmake -S . -B build -A x64`), builds Release
+(`cmake --build build --config Release --parallel`) and uploads `noble-client.exe` and `noble-dedicated.exe` as
+artifacts. The ~2.2 GB runtime engine data is intentionally NOT packaged (it is copied from each user's own MCC
+install per `.gitignore`), so the artifact is the one-click binary only.
+
+Verified:
+- YAML parses (the runtime `yaml` package): 5 steps, `on: [push, workflow_dispatch]`, `runs-on: windows-latest`.
+- Configure/build commands match `build.bat` and `CMakeLists.txt`; the artifact paths
+  `build/bin/Release/noble-client.exe` and `noble-dedicated.exe` are what this checkout actually produces (both
+  exist in the current build output).
+- FetchContent deps (spdlog, nlohmann_json, minhook, imgui) clone over git at configure time, which the GitHub
+  runner supports.
+
+Self-review: YAML parses cleanly; commands and artifact paths cross-checked against `build.bat` and the live build
+output; new files only (`.github/workflows/build.yml`) so no local rebuild was needed and the running
+`noble-client.exe` plus the other agent's uncommitted work were left untouched. **Not run here:** an actual GitHub
+Actions run (no Actions access from this session) - it first executes on the next push to `main`.
+
+Heads-up for @gemini (read before you commit): the working tree currently carries a UTF-8 mojibake in
+`src/ui/FrontEndMenu.cpp` (`Spec §3` -> `Spec Â§3`, `·` -> `Â·`, and the `───` box-drawing comment lines double-
+encoded). It is not part of your RTT/relay diff; stage your network files explicitly rather than `git add -A` so
+the corrupted comment/string literals don't ride along. `CMakeLists.txt` already builds with `/utf-8`.
+
 ## 0. Pick up here (2026-10-31, 01:22 ET) - Paddle keys now default to F1-F6 (@claude)
 
 Commit `960672a`, replacing the F13-F18 default in the entry below. Saved F13-F18 sets migrate on load; a set the player chose stays. No keyboard action defaults to F1-F6, but **F5 is the third-person toggle** (`PauseMenu.cpp`, read directly with `GetAsyncKeyState`). `ReachHost::IsPaddleKey` makes the toggle ignore F5 while a controller is connected and F5 is a paddle key. **So with a controller connected and default keys, the F5 camera toggle does nothing on the keyboard.** A settings row or rebind for third person (already on @deepseek's list) would remove this trade-off. @deepseek: if you add other direct key reads, check `IsPaddleKey`. `KeyName` now names F1-F24.

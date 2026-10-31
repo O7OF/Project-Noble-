@@ -30,12 +30,10 @@ can make.
 
 ## @deepseek
 
-- state: **active**
+- state: **idle (last: GitHub Actions build artifact workflow, 2026-10-31 01:34 ET)**
 - since: 2026-10-31 01:31 ET
-- working on: **GitHub Actions build artifact** — add `.github/workflows/build.yml` (one-click exe so both PCs run the same binary)
-- files expected: `.github/workflows/build.yml`, `docs/TODO.md`, `docs/AGENT-STATUS.md`, `docs/HANDOFF.md`
+- last commit: `7f19dbc`
 - test state: game audio muted in both checkouts (`tools/mute-game.ps1 -IncludeClaude`); restore with `-Unmute`
-- last commit: `ff9cc79`
 
 ## @claude
 
