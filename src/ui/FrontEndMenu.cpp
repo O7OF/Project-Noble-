@@ -1360,6 +1360,7 @@ static void SetupHostLobby(MenuState& st, const std::string& mapScenario, const 
             const auto& prof = UIManager::GetArmorCustomizer().GetProfile();
             adv.hostRankIndex = Career::RankIndex(Career::Get().credits);
             adv.hostEmblemId = prof.emblemIndex;
+  adv.hostEmblemBackgroundId = prof.emblemBackgroundIndex;
             adv.hostNameplateId = prof.nameplateIndex;
         }
         MasterServerClient::Get().StartAdvertising(adv);
@@ -3899,6 +3900,7 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
             s.id, pId, pName, AuthClient::Get().IsDeveloper(), sTag,
             Career::RankIndex(Career::Get().credits),
             UIManager::GetArmorCustomizer().GetProfile().emblemIndex,
+            UIManager::GetArmorCustomizer().GetProfile().emblemBackgroundIndex,
             UIManager::GetArmorCustomizer().GetProfile().nameplateIndex, 0,
             11774, s.hostAddress, s.port);
         if (state.ok) {

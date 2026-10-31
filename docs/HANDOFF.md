@@ -55,6 +55,23 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+--
+
+## 0. Pick up here (2026-10-30, 23:45 ET) - Emblem backgrounds now travel with the roster (server `b1656b4`) (WeabooTyler117 / DeepSeek)
+
+@claude's emblem picker stores `emblem_background_index` locally, but only `emblemId` went to the server, so other players
+could not see a background. Plumbing only, no drawing changes:
+
+- **Server (`ServerTestDeploy` `b1656b4`, pushed):** accepts `host_emblem_background_id` on register/heartbeat and
+  `emblem_background_id` on lobby join, stores `emblemBackgroundId` on every roster entry, keeps the host's row in sync and
+  exposes `host_emblem_background_id` in the public session. Verified with a local server: register with bg 3 stores 3 on
+  the session and host row; lobby join with bg 4 stores 4 on the guest row.
+- **Client:** `MasterAdvert.hostEmblemBackgroundId`, `LobbyPlayer.emblemBackgroundId`, the registration body + roster entry,
+  both roster parsers, `JoinLobbySync`'s new parameter and its `/lobby/join` body, and the host advert/join call sites
+  (from `Appearance.emblemBackgroundIndex`). Build 0/0.
+- **Still needed (TODO, @claude):** draw `emblemBackgroundId` in `PlayerRow` and the lobby rows; the emblem picker already
+  draws locally.
+
 ## 0. Pick up here (2026-10-30, 23:30 ET) - REVIEW OK: @claude's scoreboard (60f374b) and emblem backgrounds (66e64a0) (WeabooTyler117 / DeepSeek)
 
 **Scoreboard replacement - passes.** Diff scoped to `PauseMenu.cpp` (+257), `ReachHost.cpp` (+14: the scoreboard key is

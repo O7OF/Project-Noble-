@@ -24,6 +24,7 @@ struct LobbyPlayer {
     // and team instead of placeholders (2026-10-30). 0 / -1 = not known.
     int rankIndex = -1;
     int emblemId = 0;
+    int emblemBackgroundId = 0;   // 0 = none, so other players see it
     int nameplateId = 0;
     int team = 0;            // 0 = no team (Free for All / no team mode), 1 = red, 2 = blue
 };
@@ -101,6 +102,7 @@ struct MasterAdvert {
     // The host's row identity (same meaning as LobbyPlayer's fields).
     int hostRankIndex = -1;
     int hostEmblemId = 0;
+    int hostEmblemBackgroundId = 0;
     int hostNameplateId = 0;
     int hostTeam = 0;
 };
@@ -152,6 +154,7 @@ public:
                             const std::string& serviceTag,
                             int rankIndex,
                             int emblemId,
+                            int emblemBackgroundId, 
                             int nameplateId,
                             int team,
                             uint16_t localPort,

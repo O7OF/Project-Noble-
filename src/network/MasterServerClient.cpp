@@ -397,6 +397,7 @@ void MasterServerClient::DoRegister() {
         {"host_username", advert.hostUsername.empty() ? "Host" : advert.hostUsername}, {"player_name", advert.hostUsername.empty() ? "Host" : advert.hostUsername},
         {"host_is_dev", advert.hostIsDev}, {"host_service_tag", advert.hostServiceTag.empty() ? "117" : advert.hostServiceTag},
         {"host_rank_index", advert.hostRankIndex}, {"host_emblem_id", advert.hostEmblemId},
+      {"host_emblem_background_id", advert.hostEmblemBackgroundId},
         {"host_nameplate_id", advert.hostNameplateId}, {"host_team", advert.hostTeam},
     };
     if (!advert.inProgress) {
@@ -409,6 +410,7 @@ void MasterServerClient::DoRegister() {
                 {"isDev", advert.hostIsDev},
                 {"serviceTag", advert.hostServiceTag.empty() ? "117" : advert.hostServiceTag},
                 {"rankIndex", advert.hostRankIndex}, {"emblemId", advert.hostEmblemId},
+        {"emblemBackgroundId", advert.hostEmblemBackgroundId},
                 {"nameplateId", advert.hostNameplateId}, {"team", advert.hostTeam},
                 {"ping", 0}
             }
@@ -605,6 +607,7 @@ LobbyState MasterServerClient::FetchLobbyStateSync(const std::string& sessionId)
                 p.serviceTag = item.value("serviceTag", "117");
             p.rankIndex = item.value("rankIndex", -1);
             p.emblemId = item.value("emblemId", 0);
+  p.emblemBackgroundId = item.value("emblemBackgroundId", 0);
             p.nameplateId = item.value("nameplateId", 0);
             p.team = item.value("team", 0);
                 p.isHost = item.value("isHost", false);
@@ -635,6 +638,7 @@ LobbyState MasterServerClient::JoinLobbySync(const std::string& sessionId,
                                              const std::string& serviceTag,
                                              int rankIndex,
                                              int emblemId,
+                                             int emblemBackgroundId,
                                              int nameplateId,
                                              int team,
                                              uint16_t localPort,
@@ -674,6 +678,7 @@ LobbyState MasterServerClient::JoinLobbySync(const std::string& sessionId,
         { "service_tag", serviceTag },
         { "rank_index", rankIndex },
         { "emblem_id", emblemId },
+    { "emblem_background_id", emblemBackgroundId },
         { "nameplate_id", nameplateId },
         { "team", team },
         { "machine_id", std::to_string(LobbyMachineId()) },
@@ -709,6 +714,7 @@ LobbyState MasterServerClient::JoinLobbySync(const std::string& sessionId,
                 p.serviceTag = item.value("serviceTag", "117");
             p.rankIndex = item.value("rankIndex", -1);
             p.emblemId = item.value("emblemId", 0);
+  p.emblemBackgroundId = item.value("emblemBackgroundId", 0);
             p.nameplateId = item.value("nameplateId", 0);
             p.team = item.value("team", 0);
                 p.isHost = item.value("isHost", false);
