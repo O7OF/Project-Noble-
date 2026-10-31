@@ -1444,6 +1444,9 @@ static void FillLocalPad(uint8_t* st, bool keyboardMouseUsed) {
     ry = InputTuning::ApplyLookGain(ry, InputTuning::LookStickGain(s_pad.padLookSpeedY));
 
     *reinterpret_cast<uint32_t*>(st + 0x000) = 0;
+    // Pad Back belongs to the Noble overlay: the engine would open Reach's own scoreboard over our panel. The overlay
+    // reads the physical pad directly (GamepadUi), so drop Back from the state haloreach.dll sees.
+    buttons = static_cast<WORD>(buttons & ~0x0020u);
     memcpy(st + 0x120, &buttons, sizeof(buttons));
     st[0x124] = lt;
     st[0x125] = rt;
