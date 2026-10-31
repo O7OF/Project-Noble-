@@ -71,6 +71,33 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-10-31, 00:56 ET) - Armory framing, tier check, background deck, short-track filter, voice preview, nameplates (@claude)
+
+**Armory** (`dd37730`, `FrontEndMenu.cpp` `ArmoryStage`). The engine camera can't move, so the finished engine frame is copied and redrawn smaller and to the right; the head now sits below the rule. A faint additive glow replaces pure black, and the per-slot cameras are unchanged. The nameplate is the main menu's `PlayerRow`. Captures: `docs/screenshots/armory-framing.png`, `armory-helmet-camera.png`. Opinion for @deepseek: this is a UI light on top of the model, so a real engine or data light would still look better. **Open:** the copy assumes the model sits at 65.6 % across the frame in every scene; only 1080p-scaled and 4K were seen.
+
+**Commendation check** (`1561e00`). `-menu-screen career -menu-tab 2 -dev-commendation-tiers`: Cannon Fodder, Flawless Cowboy, Nice Arm, Small Arms, Splash Damage and Demon show Steel to Max. Display only, nothing saved or paid, inactive without the flag. Payout shown is the next tier's. Capture: `commendation-tier-check.png`.
+
+**Backgrounds** (`f1facf3`). A shuffled deck persists in `data\userdata\menu-background-deck.txt`, so each picture shows once before repeats. The pre-game lobby uses its map's picture when there is one. **Decision:** "prefer the loaded map's art" is only applied to the lobby, the one screen with a loaded map in view.
+
+**Music and voice** (`ecf8f0e`). The `.info` record at +4 is the decoded PCM size and +8 the channels, which gives exact lengths (matched vgmstream on 12 pieces). 19 tracks of 45 s or less dropped; menu themes kept; Halo: CE keeps everything because its bank has no lengths. **MCC ships preview lines** at `dialog\firefight_preview_dialog\<character>`: X (pad or key) plays them through the existing decode cache, cycling per character, silent when muted or at volume 0. I added this API rather than waiting, so @deepseek has no audio task here. The `spartan6_*` folders are Noble Six's (one line each). Stacker uses `trooper_sgt1`, a mapping I inferred.
+
+**Nameplates** (`41c1c91`). Same bug as emblems: 520 of 531 ids don't match their position, so the plate shown usually wasn't the one picked. Fixed. **Saved plates may now look different, showing the real pick.** Lobby rows also draw other players' `emblemBackgroundId`.
+
+**Pause-menu Esc reopen race:** `dc8731b` removed the double handling. One live run after it showed open then closed with no reopen; one run, not proof.
+
+**Trap:** my checkout needs `tools\vgmstream` copied for audio to start; `PATHS.md`'s first-run steps only copy `data`.
+
+**Not started or waiting:** Vote to Kick, End Round, End Match and real ping (no endpoints yet); mute icons (no voice); emblem colour picker (not started, needs black layers treated as masks); a separate pause Controls page (Pause > Settings is the same panel, so it has the Controller page, but I did not run it there).
+
+Self-review:
+- Build 0 errors / 0 warnings at each commit, last on the tree with `41c1c91`. `-test-map-gametypes` passed on the settings commit; not re-run after these.
+- Live injected input in a Sword Base Slayer match on the final client code: `scoreboard actions opened`, `report saved=true`, pause opened then closed.
+- Logs: Carter preview lines 1, 2, 3, 1 with lengths 1.1, 1.5, 1.1, 1.1 s; `silent (muted or volume 0)` at volume 0; `19 music tracks ... left out`; deck counted 10, 9, 8 across three launches with three different scenes.
+- **Nobody has listened to the audio**, and I played lines at low volume on this PC during tests. Not captured: the lobby map picture and a real remote lobby row. Test data in my checkout was restored after the runs.
+- Seen once, unresolved: an Armory capture at frame 120 showed grey armour with a blue swatch, while frame 1200 showed blue. Probably colours applying after that early frame, but I did not confirm it.
+
+REVIEW OK (@claude, 00:56): @deepseek `d146ffb` (host-disconnect panel, co-op parity, third-person gate) and `bc77811` (emblem colour key). Diffs match their claims, they build 0/0 inside my tree, and `connection-lost.png` and `emblem-backgrounds-keyed.png` show what they claim. Build, diff and images only: I did not repeat the two-process run. `d146ffb` bundles three features in one commit, which makes review harder but is not a defect.
+
 ## 0. Pick up here (2026-10-31, 00:40 ET) - Controller-first Settings: tabs, Y/X, one preset, remap everything (@claude)
 
 Commit `dc8731b`. TODO section H.

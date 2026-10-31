@@ -234,22 +234,22 @@ items above close. Keep the spec open when building any screen so the details la
 
 ## I. Armory presentation, audio and data (Tyler, 2026-10-31 00:10)
 
-- [~] @claude 2026-10-31 00:42 - **Armory framing**: Spartan/Elite centered under the horizontal rule below APPEARANCE, head no longer above the HALO: REACH line or beside the nameplate
-- [~] @claude 2026-10-31 00:42 - **Nameplate in the Armory must match the main menu's look**
-- [~] @claude 2026-10-31 00:42 - UI overlay first - **Armory spotlight**: stop the pure-black chamber (UI gradient/key light first; engine/data light if needed)
-- [~] @claude 2026-10-31 00:42 - **Per-slot camera pan** to the body part being edited (verify + smooth transitions)
-- [ ] **Commendation tier check**: temporarily force the first six commendations to steel/bronze/silver/gold/onyx/max to verify art + payout (dev-only, not shipped values)
+- [x] @claude 2026-10-31 00:56 - commit dd37730 - **Armory framing**: Spartan/Elite centered under the horizontal rule below APPEARANCE, head no longer above the HALO: REACH line or beside the nameplate
+- [x] @claude 2026-10-31 00:56 - commit dd37730 - **Nameplate in the Armory must match the main menu's look**
+- [~] @claude 2026-10-31 00:56 - commit dd37730, soft additive UI key light replaces pure black; a real engine/data light stays open for @deepseek - **Armory spotlight**: stop the pure-black chamber (UI gradient/key light first; engine/data light if needed)
+- [~] @claude 2026-10-31 00:56 - pans verified by capture and untouched; transition smoothness is the engine's and not measured - **Per-slot camera pan** to the body part being edited (verify + smooth transitions)
+- [x] @claude 2026-10-31 00:56 - commit 1561e00, run with `-dev-commendation-tiers`; **needs: Tyler** to judge the art - **Commendation tier check**: temporarily force the first six commendations to steel/bronze/silver/gold/onyx/max to verify art + payout (dev-only, not shipped values)
 - [ ] **Campaign completion gating (refined)**: quitting a mission must not award the **completion bonus**, but the
   **performance bonus still pays** (kills/difficulty/time as normal). Server result needs an explicit `mission_complete`
   flag and the credit breakdown split into performance vs completion, so a quit pays only the performance part.
 - [ ] **Post-game slot machine** (Reach's credit slot machine; Halopedia reference) - @deepseek
 - [ ] **Forge / custom-game defaults / Firefight game options** screens (blocked on variant work)
-- [ ] **Menu background art**: shuffle the whole set (repeats today) and prefer the loaded map's art
-- [ ] **Music**: drop tracks <= 45 s from the menu playlist
-- [ ] **Firefight voice packs**: verify working + Armory preview button (X on pad) that plays a sample line per character
+- [x] @claude 2026-10-31 00:56 - commit f1facf3 - **Menu background art**: shuffle the whole set (repeats today) and prefer the loaded map's art
+- [x] @claude 2026-10-31 00:56 - commit ecf8f0e; Halo: CE has no lengths and keeps everything - **Music**: drop tracks <= 45 s from the menu playlist
+- [~] @claude 2026-10-31 00:56 - preview on X landed, commit ecf8f0e; **needs: Tyler** to listen. In-game voice packs not verified - **Firefight voice packs**: verify working + Armory preview button (X on pad) that plays a sample line per character
 
 - [ ] **Emblem colours (real three-colour picker)** — backgrounds are fixed steel today; Reach's real picker needs the
-  black layers treated as masks. Also audit `Nameplate(int id)` for the same list-position-vs-id bug. - @claude
+  black layers treated as masks. Nameplate audit done and fixed, commit 41c1c91. - @claude
 - [~] @claude 2026-10-31 00:40 - 6 layouts x normal/swapped sticks = 12; **BLOCKED (Tyler):** I could not verify what Reach calls "Reverse Southpaw / Reverse Bumper Jumper", so they are not invented - **Controller preset list completeness** — include Reach's reverse variants (Reverse Southpaw, Reverse Bumper Jumper)
   and every MCC scheme; the diagram must switch with the preset, and the preset must apply on Y without a relaunch. - @claude
 - [ ] **Game-option surfaces, split up**: Forge map options (budget/permissions), custom-game defaults (a default variant

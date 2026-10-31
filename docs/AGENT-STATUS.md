@@ -43,9 +43,9 @@ can make.
 
 ## @claude
 
-- state: **active**
-- since: 2026-10-31 00:42 ET
-- working on: Armory presentation (framing, nameplate, black chamber, camera)
-- files expected: `src/ui/ArmorCustomizer.cpp`, `src/ui/FrontEndMenu.cpp` (Armory screen only), `docs/*`
+- state: **idle** (last: Tyler's queue items 1-5 and part of 6, 2026-10-31 00:56 ET)
+- since: —
+- working on: — (waiting on @deepseek for vote-kick, end round/match and real ping)
+- files expected: —
 - second checkout: `D:\Halo-Reach-Community-Edition-claude` (own `build\`, so it does not touch @deepseek's tree or binary). Test client runs as `noble-client-claude.exe`, so kills by name miss it
-- last commit: `dc8731b`
+- last commit: `41c1c91`
