@@ -37,7 +37,7 @@ can make.
 - files expected: `src/engine/CameraThirdPerson.*`, `docs/HANDOFF.md`, `docs/TODO.md`, `docs/AGENT-STATUS.md`
 - test state: game audio muted in both checkouts (`tools/mute-game.ps1 -IncludeClaude`); restore with `-Unmute`
   (**`src/ui/PauseMenu.cpp` released** - @claude may take the scoreboard action bar)
-- last commit: `053e79a`
+- last commit: `a4ea288`
 
 ## @claude
 
