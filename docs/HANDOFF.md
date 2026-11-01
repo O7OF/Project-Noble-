@@ -11,7 +11,7 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 ## 0. Pick up here (2026-10-31, 22:00 ET) - Cross-Build Save Migration & Elite Colour Picker Live Sync (@O7OF)
 
-**Version:** 0.9.10.7. **Build:** 0 errors, 0 warnings (Release `noble-client` + `noble-dev` + packaged `Noble.exe`). Files: `src/career/Career.cpp`, `src/common/DeviceIdentity.cpp`, `src/common/DeviceIdentity.hpp`, `src/common/Settings.cpp`, `src/ui/ArmorCustomizer.cpp`, `src/common/Version.hpp`, `build-package.ps1`.
+**Version:** 0.9.10.7. **Build:** 0 errors, 0 warnings (Release `noble-client` + `noble-dev` + packaged `Noble.exe`). Files: `src/career/Career.cpp`, `src/common/DeviceIdentity.cpp`, `src/common/DeviceIdentity.hpp`, `src/common/Settings.cpp`, `src/ui/ArmorCustomizer.cpp`, `src/engine/ReachArmory.cpp`, `src/common/Version.hpp`, `build-package.ps1`.
 
 ### 1. Cross-Build Save Migration & Bidirectional Sync (@O7OF)
 - **Problem:** When playing on the developer build (`noble-dev.exe` in `build\bin\Release\`), user unlocks, rank, credits, purchased armor, appearance customization, and settings were stored in the dev directory (`build\bin\Release\data\userdata\`). When launching the non-dev release build (`Noble.exe` in `Documents\Noble Launcher\`), saves were isolated, meaning players would lose or not see their progress made during dev testing sessions.
@@ -26,12 +26,24 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
   - Spartan ARGB color layout (16 bytes): `[0] = Primary, [1] = Secondary, [2] = Accent, [3] = Visor`.
   - Elite ARGB color layout (16 bytes): `[0] = Base/Rank Skin, [1] = Undersuit/Detail, [2] = Secondary, [3] = Primary`.
 - **Implementation:** Added `s_eliteColorRecords`, `MatchEliteColorPattern()` recognizing the 11 stock Elite rank preset ARGB palettes, and `ScanEliteColorRecordsIn()`.
-- `WriteColorsAndSuit()` updates Elite live records with `{ cur[0], cur[1], secArgb, priArgb }`, immediately syncing the chosen Primary and Secondary colors to the live Elite model without modifying base skin/rank constants.
+- `WriteColorsAndSuit()` updates Elite live records with `{ Primary, undersuit, Secondary, Accent }`, immediately syncing the chosen Primary and Secondary colors to the live Elite model.
 - Quick rescan detects remade Elite bipeds instantly without waiting on Spartan suit records.
 
 ### 3. Build & Packaging Verified (@O7OF)
 - Both `noble-dev.exe` and `noble-client.exe` compiled cleanly with 0 errors via MSVC multi-threaded builder.
 - Packaged release `Noble.exe` updated in `C:\Users\Chey1\Documents\Noble Launcher\`.
+
+## 0. Pick up here (2026-10-31, 21:55 ET) - Elite Primary is now the base colour, not the overlay (@deepseek, from Tyler/O7OF feedback)
+
+**Commit:** `dcba008d`. **Version:** 0.9.10.7. **Build:** 0 errors, 0 warnings (Release `noble-client` + `noble-dev`). Files: `src/engine/ReachArmory.cpp`, `src/common/Version.hpp`.
+
+**The bug.** The Elite ARGB write kept the shader's stock rank colour in `cur[0]` ("base / permutation") and wrote `Pri` to `cur[3]`, the overlay slot. Primary therefore acted as secondary/overlay: White Primary washed the whole model, and changing Secondary appeared to "unblend" it. Palette colours made it obvious; custom wheel values hid it because the overlay was less bright.
+
+**Fix.** Drive the Elite record as `{Primary, undersuit, Secondary, Accent}`: base = Primary, overlay = Secondary, detail = Accent. This is the same assumption the Spartan record already uses.
+
+**Evidence.** White Primary + Blue Secondary now renders a white base with blue detail (`docs/screenshots/armory-elite-primary-base.png`), not the old blue model with a white wash. Tested against the old mapping with the same two colours; the old capture is `noswap` in the working session only (not committed). Appearance restored to Elite / Primary 13 / Secondary 29 / Accent 2 / visor 0.
+
+**Self-review:** the Elite rank's stock base colour is no longer preserved in the preview. That is intended for a player-selected Primary, but if rank-specific base colours are wanted later, add an explicit "rank colour" toggle instead of restoring the old slot mapping.
 
 ## 0. Pick up here (2026-10-31, 21:45 ET) - Armory overlay sheen no longer washes out armour (@deepseek)
 

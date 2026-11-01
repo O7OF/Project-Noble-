@@ -39,6 +39,7 @@ This supersedes the old "Queue order for tonight" below. Claim the line you star
 11. [x] @deepseek 21:10 ET **Headless self-tests fixed** (`e80415c4`): removed the UTF-8 stdout mode that crashed `-test-map-gametypes`; 43 map rules, 280 map/type combinations, 26 layout expectations and input tuning all PASS.
 12. [x] @deepseek 21:20 ET **CI failure-mail burst fixed** (`3fc9450f`): docs-only pushes no longer build; superseded runs cancel. Root cause was CI MSVC `C3493` on `kPeer`/`kPttKey`, fixed by `a02a3622`; latest completed run `0adb2db5` is green.
 13. [x] @deepseek 21:45 ET **Armory overlay sheen** (`5fd1ff5e`): removed the 30-ring additive chest glow that added ~30/255 white/blue over the model and washed out armour colours; kept a small floor pool. Before/after captures in `docs/screenshots/armory-overlay-*.png`.
+14. [x] @deepseek 22:00 ET **Elite Primary was the overlay colour** (`dcba008d`): write base=Primary, overlay=Secondary, detail=Accent. White Primary + Blue Secondary now reads as a white base with blue detail, not a white wash (`armory-elite-primary-base.png`).
 
 ---
 
