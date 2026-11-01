@@ -3585,14 +3585,20 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
             const float wheel = ImGui::GetIO().MouseWheel;
             if (wheel != 0.0f) *c.scroll -= static_cast<int>(wheel) * 2;
         }
-        *c.scroll = std::clamp(*c.scroll, 0, std::max(0, c.rows - kVisibleRows));
+        // The pinned local row takes a slot, so the list scrolls one further or the last player could never be seen.
+        int localAt = -1;
+        for (size_t r = 0; r < c.players.size(); ++r) {
+            if (isLocal(st.lobbyRoster[c.players[r]])) { localAt = static_cast<int>(r); break; }
+        }
+        const int pinRoom = overflow && localAt >= 0 && localAt < c.rows - kVisibleRows ? 1 : 0;
+        *c.scroll = std::clamp(*c.scroll, 0, std::max(0, c.rows - kVisibleRows + pinRoom));
 
         // Sticky header: stays put while the rows scroll under it.
         const float cy = teamY + teamHeadH * 0.5f;
         ui.dl->AddCircleFilled(ImVec2(c.x + 7.0f * ui.s, cy), 4.5f * ui.s, c.color, 16);
         Text(ui, NobleStyle::SmallFont(), 14.0f, ImVec2(c.x + 17.0f * ui.s, teamY + 2.0f * ui.s), kWhite, c.title);
         char range[48];
-        const int shownLast = std::min(*c.scroll + kVisibleRows, c.rows);
+        const int shownLast = std::min(*c.scroll + kVisibleRows, c.rows);   // the pinned row may cover one of these
         if (overflow) std::snprintf(range, sizeof(range), "%d-%d of %d", *c.scroll + 1, shownLast, c.rows);
         else std::snprintf(range, sizeof(range), "%zu", c.players.size());
         const float rangeW = TextWidth(NobleStyle::SmallFont(), 14.0f * ui.s, range);
@@ -3606,7 +3612,7 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         const bool pinLocal = localRow >= 0 && (localRow < *c.scroll || localRow >= *c.scroll + kVisibleRows);
         const float barW = overflow ? 6.0f * ui.s : 0.0f;
         const float rowW = c.w - barW;
-        for (int v = 0; v < kVisibleRows && *c.scroll + v < c.rows; ++v) {
+        for (int v = 0; v < kVisibleRows && (*c.scroll + v < c.rows || (pinLocal && v == kVisibleRows - 1)); ++v) {
             const int row = (pinLocal && v == kVisibleRows - 1) ? localRow : *c.scroll + v;
             const ImVec2 s0(c.x, listY + v * (slotH + slotGap));
             const ImVec2 s1(s0.x + rowW, s0.y + slotH);
@@ -5440,7 +5446,7 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         }
         if (st.screen == Screen::Settings) DrawHints(ui, { { Prompt::Accept, "Select" }, { Prompt::Back, "Back" }, { Prompt::Change, "Change" }, { Prompt::Tabs, "Category" } }, {}, 0.01875f);   // the full-width panel's edge
         else if (st.screen == Screen::Career) DrawHints(ui, { { Prompt::Back, "Back" }, { Prompt::Tabs, "Switch Tab" } }, {}, 0.01875f);
-        else if (st.screen == Screen::Servers) DrawHints(ui, { { Prompt::Accept, "Join" }, { Prompt::Back, "Back" }, { Prompt::Tabs, "Mode Filter" } }, {}, 0.01875f);
+        else if (st.screen == Screen::Servers) DrawHints(ui, { { Prompt::Accept, "Join" }, { Prompt::Back, "Back" }, { Prompt::Tabs, "Mode Filter" }, { Prompt::Change, "Pick Filter" } }, { { InputPrompts::Button::Back, "CLICK", "Toggle Filter" } }, 0.01875f);
         else DrawHints(ui, { { Prompt::Back, "Back" } }, {}, 0.01875f);
         break;
     }

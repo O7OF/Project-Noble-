@@ -345,15 +345,32 @@ void ServerBrowser::RenderFilterBar() {
     ImGui::SetNextItemWidth(140);
     ImGui::Combo("##ModeCombo", &m_modeFilter, modeNames, IM_ARRAYSIZE(modeNames));
     ImGui::SameLine();
-    ImGui::Checkbox("Hide full", &m_hideFull);
+    // Controller: left and right pick a filter, Back turns it on or off.
+    static int s_padFilter = 0;
+    const bool padFree = !ImGui::GetIO().WantTextInput && !m_showDirectConnectModal && !m_showMasterModal;
+    if (padFree && UiPad::Left()) s_padFilter = (s_padFilter + 4) % 5;
+    if (padFree && UiPad::Right()) s_padFilter = (s_padFilter + 1) % 5;
+    const bool padToggle = padFree && ImGui::IsKeyPressed(ImGuiKey_GamepadBack, false);
+    const bool padLive = ImGui::GetIO().BackendFlags & ImGuiBackendFlags_HasGamepad;
+    const auto filterBox = [&](int index, const char* label, bool& value) {
+        ImGui::Checkbox(label, &value);
+        if (padToggle && s_padFilter == index) {
+            value = !value;
+            MenuSounds::Click();
+        }
+        if (padLive && s_padFilter == index) {
+            ImGui::GetWindowDrawList()->AddRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), IM_COL32(143, 216, 255, 255), 0.0f, 0, 2.0f);
+        }
+    };
+    filterBox(0, "Hide full", m_hideFull);
     ImGui::SameLine();
-    ImGui::Checkbox("Hide empty", &m_hideEmpty);
+    filterBox(1, "Hide empty", m_hideEmpty);
     ImGui::SameLine();
-    ImGui::Checkbox("Favourites only", &m_showOnlyFavorites);
+    filterBox(2, "Favourites only", m_showOnlyFavorites);
     ImGui::SameLine();
-    ImGui::Checkbox("No password", &m_hidePassworded);
+    filterBox(3, "No password", m_hidePassworded);
     ImGui::SameLine();
-    ImGui::Checkbox("Not started", &m_hideInProgress);
+    filterBox(4, "Not started", m_hideInProgress);
 
     // Status line: LAN / master server / UPnP.
     const std::string master = MasterServerClient::Get().Enabled()

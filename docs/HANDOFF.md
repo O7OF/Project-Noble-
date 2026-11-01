@@ -7,7 +7,45 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 
 **Goal:** `noble-client.exe` loads MCC's own `haloreach.dll` (Halo: Reach) and drives it **without MCC**, like the existing
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
-MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.16.1 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.16.2 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+
+## 0. Pick up here (2026-11-01, 01:00 ET) - Team roster, rotation countdown, mode cleanup, pad filters (@claude)
+
+**Commits:** `d57fe76`, `fe88e49`. **Server:** `84275bb` (team endpoint). **Version:** 0.9.16.1. **Build:** 0 errors, 0 warnings on the merged tree.
+
+**Team roster.** The host reads the variant's Teams flag (`0x2BC` bit 0, or a mode's rule), deals players red and blue in roster order, and clears them when off, through token-gated `POST /api/sessions/:id/teams`. Tested with simulated members: 1,2,1,2 on, all 0 on a free-for-all type, no-token request refused. Found and fixed: heartbeats reset the host to no team. **This is the lobby's roster only. Nothing here proves the engine puts players on those same teams in the match; that needs two clients.** No way yet for a player to choose a team.
+
+**Rotation countdown.** Playlist option off/15/30/60 s. Post-game moves on by itself, then the lobby counts down and starts; B or Esc cancels; a vote holds it. All tested by log. In the post-game step, guests return when the host does; not tested with a real guest.
+
+**Cleanup.** Save-over asks first, delete needs a second press (own modes and playlists only, not a mod's). Lobby row shows `3 CHANGED` with the rules listed. Firefight has GAME OPTIONS: the editor opens and reads the file; **rules not played on Firefight**, and Firefight's own wave options aren't mapped. Playlist overwrite and delete are built but weren't run; mode versions were.
+
+**Pad and roster.** Server Browser: left and right pick a filter, Back toggles. Roster: pinned local row hid the last player on the last page; fixed. Pad Back and old scoreboard: `ReachHost` already clears the engine's bit and routes to Noble's panel; read in code, not re-run, physical test is Tyler's. Emblem backgrounds already draw on roster rows (demo capture); real other players not checked.
+
+**Not done: measured percentages.** Noble has no read of the player's position, so speed and gravity can't be measured from a script, and damage needs a second player. Needs a position read first.
+
+**Note.** @deepseek's `424a7cd` fixed a Forge crash from a stock binary body in the JSON payload, likely Tyler's report. One scripted `down` was lost in a run, cause unknown; the same script passed next time.
+
+Self-review: dealing by roster order means a player leaving shifts everyone after them. `teamsPushFailed` stays set for the lobby's life. The countdown's starting value assumes ImGui time near 0 at startup.
+
+## 0. Pick up here (2026-11-01, 01:10 ET) - Fix Armory Biped Crash, Disappearance, and Performance Tank (@O7OF)
+
+**Version:** 0.9.16.2. **Build:** noble-client, noble-dev, noble-dedicated, 0 errors, 0 warnings on MSVC Release x64. Files: `src/engine/ReachArmory.cpp`, `src/common/Version.hpp`, `docs/HANDOFF.md`.
+
+**What was actually wrong (Root Cause Analysis):**
+- Tyler reported: "issue with armory its causing a form of character crash the elite and spartan show up in armory for 2 seconds then dissapear and performance tanks fix this".
+- In `src/engine/ReachArmory.cpp`, an exhaustive trace of `noble-client.log` showed:
+  1. **Runaway Color Matching (`MatchEliteColorPattern`):** In a prior commit, `MatchEliteColorPattern` was relaxed to `if (lastPri != 0 && (cur[0] == lastPri || cur[3] == lastPri || cur[3] == lastSec || cur[1] == lastPri))`. When `lastPri` was non-zero, ANY 16-byte block across the process with 0xFF alpha that matched any single word was marked as a color record. In the log, this caused `ScanEliteColorRecords` to find **5,117 color records** across memory!
+  2. **Unchecked `prevColors` Zero-Match in `ScanColorRecordsIn` & `ScanEliteColorRecordsIn`:** Before custom colors were saved, `s_lastColorWords` was initialized to `{0,0,0,0}`. The check `std::memcmp(cur, prevColors, 16) == 0` ran without checking whether `prevColors` was all zeroes, matching thousands of zero-initialized memory blocks.
+  3. **Unchecked `prevSuit` Zero-Match in `ScanSuitRecordsIn`:** In `ScanSuitRecordsIn`, `std::memcmp(f, prevSuit, 16) == 0` ran without checking if `prevSuit` was `{0,0,0,1}` (default lights). Because `{0,0,0,1}` is the identity quaternion and default vector format, it matched thousands of bone matrices, orientation transforms, and collision hulls.
+  4. **The Disappearance at ~2 seconds:** At ~2 seconds (frame 15), the background scanner in `ReachArmory::Tick()` found GLOBALS and executed these scans. Over 5,000 memory locations were stored into `s_colorRecords`, `s_eliteColorRecords`, and `s_suitRecords`.
+  5. `WriteColorsAndSuit()` was then called every frame, running `VirtualProtect` and overwriting over 5,000 addresses per frame! Overwriting bone matrices caused the biped skeleton to collapse and disappear. Running thousands of `VirtualProtect` calls per frame pegged the CPU, dropping frame rate to 0-1 FPS.
+
+**The Fix:**
+1. **Region Cap in `RememberRegion`:** Added `if (s_recordRegions.size() >= 16) return;` to prevent runaway region accumulation.
+2. **Strict Matching in `MatchEliteColorPattern`:** Removed loose single-channel `||` checks. Requires matching all 4 channels of stock rank palettes within 8 units, OR matching BOTH Primary and Secondary strictly (`cur[0] == lastPri && cur[3] == lastSec`).
+3. **Guard `prevColors` in `ScanColorRecordsIn` & `ScanEliteColorRecordsIn`:** Added `hasPrevColors` check ensuring `prevColors` is non-zero and has 0xFF alpha before allowing `memcmp`. Hard-capped records at 16 (in Halo: Reach, live Armory biped only has 6 to 8 records).
+4. **Guard `prevSuit` in `ScanSuitRecordsIn`:** Added `hasPrevSuit` validation ensuring `prevSuit` is finite and has non-zero emissive color components distinct from `{0,0,0,1}` before allowing `memcmp`. Hard-capped records at 16.
+5. **Tight Bounds in `WriteColorsAndSuit`:** Restored `cur[i] >= 0.0f && cur[i] <= 6.0f` sanity validation before modifying suit records in memory.
 
 ## 0. Pick up here (2026-11-01, 00:50 ET) - Fix Multiplayer Player Armor Swapping / Local vs Remote Biped Isolation (@O7OF)
 
@@ -595,7 +633,7 @@ Self-review: chat text is logged nowhere client-side, so failures show only on s
 ## 0. Pick up here (2026-10-31, 15:08 ET) - Push-to-talk rebinding, voice quality proof, music list cleanup (@claude)
 
 
-**Current version:** 0.9.15. **Developer build:** 0.9.15-dev. Dev binaries report the suffix next to the version string.
+**Current version:** 0.9.16.1. **Developer build:** 0.9.16.1-dev. Dev binaries report the suffix next to the version string.
 
 **Commit:** `8cbb746` (the code is in this commit, whose message only mentions docs: the intended commit failed on quotes in its message). **Version:** 0.9.5. **Build:** 0 errors, 0 warnings on the merged tree. Files: `src/ui/SettingsPanel.*`, `src/common/Settings.cpp`, `src/audio/ReachAudio.cpp`, `src/audio/VoiceChat.cpp`, `src/common/Version.hpp`.
 
@@ -691,7 +729,7 @@ Self-review: the weakest part is the sender thread, because it changes how relay
 - Next for me: two-client chat check against the client transport, then the multiplayer post-game end hook.
 ## 0. Pick up here (2026-10-31, 08:25 ET) - Pre-game lobby map identity (@deepseek / DeepSeek)`.
 
-**Current version:** 0.9.15. **Developer build:** 0.9.15-dev. Dev binaries report the suffix next to the version string.
+**Current version:** 0.9.16.1. **Developer build:** 0.9.16.1-dev. Dev binaries report the suffix next to the version string.
 
 
 **Built and verified:** release `build\bin\Release\noble-client.exe`, developer `build\bin\Release\noble-dev.exe`, dedicated `build\bin\Release\noble-dedicated.exe`, and the packaged `Documents\Noble Launcher\Noble.exe` (full runtime tree; package stayed running in a normal launch test).
