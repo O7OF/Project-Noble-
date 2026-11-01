@@ -7,7 +7,7 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 
 **Goal:** `noble-client.exe` loads MCC's own `haloreach.dll` (Halo: Reach) and drives it **without MCC**, like the existing
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
-MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.10 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.10.1 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
 
 ## 0. Pick up here (2026-10-31, 20:25 ET) - Controller menu navigation across Settings and the menus (@claude)
 
@@ -32,6 +32,18 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 **Heads-up.** The Server Browser header prints the public IP, an older behaviour and a risk for screenshots and streams; never commit that capture. `git pull --autostash` conflicted on Version.hpp mid-test; resolved without loss.
 
 Self-review: `-pause-at` didn't open the menu in my run and I didn't look into why; real Esc was used. The post-game outline shows whenever a pad is connected, even for a mouse user. Music rows are redundant with the lists for mouse players.
+
+## 0. Pick up here (2026-10-31, 20:35 ET) - Controller bindings for the three voice channels (@deepseek)
+
+**Commit:** `b009ec79`. **Version:** 0.9.10.1. **Build:** 0 errors, 0 warnings (Release `noble-client` + `noble-dev`). Files: `src/engine/PadLayouts.*`, `src/audio/VoiceChat.cpp`, `src/common/Version.hpp`.
+
+**What changed.** Added `VoiceParty`, `VoiceTeam` and `VoiceGlobal` to PadLayouts, unbound by default. The Settings > Controller BUTTON BINDINGS list iterates every action, so the three rows appear without a SettingsPanel change. `VoiceChat` reads each pad input separately and uses the same party > team > everyone priority as the keyboard binds; the generic pad PUSH TO TALK remains the fallback. The voice actions are skipped by `PadLayouts::Apply`, so they are never written into the engine's pad state.
+
+**Verification.** `-voice-test loopback` still PASS after the change (24 kbps → 20 kbps test sequence, jitter self-tests). `-test-map-gametypes` crashes in this shell with BEX64/0xC0000409 in `ucrtbase.dll` before any output; the same test path was already unusable while adding the visor feature, so I did not use it as evidence. Needs a console run to confirm, or a fix to the test harness.
+
+**Not verified.** Two-client channel routing, a physical pad press, and rebind capture for the new rows. The pad rows are visible in code but no scripted-pad capture was taken.
+
+Self-review: the three pad actions are unbound by default, so existing controller users see no behaviour change. Assigning them to a game button moves that game action, following the existing `Assign` rule for PTT.
 
 ## 0. Pick up here (2026-10-31, 20:25 ET) - Separate party/team/global voice push-to-talk binds (@deepseek)
 
