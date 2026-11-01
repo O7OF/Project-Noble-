@@ -289,6 +289,7 @@ uint32_t BlamEngine::ResolveMapId(const std::string& mapName) {
 int BlamEngine::s_engineModeOverride = 0;
 BlamEngine* BlamEngine::s_active = nullptr;
 bool BlamEngine::s_guestPostStart = false;
+std::optional<VariantFields> BlamEngine::s_variantOverrides;
 
 std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameModeTag, int difficulty, uint64_t skulls,
                                                    const std::string& customMvarPath, const std::string& customVariantPath,
@@ -744,6 +745,18 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
                 std::vector<uint8_t> decoded(0xFC04, 0);
                 alignas(16) uint8_t status[256] = {};
                 if (SafeCallGameVariantDecode(m_hModule, varData.data(), decoded.data(), status)) {
+                    VariantFields fields;
+                    if (fields.Read(decoded.data(), decoded.size())) {
+                        if (s_variantOverrides) {
+                            fields = *s_variantOverrides;
+                            fields.Write(decoded.data(), decoded.size());
+                            NOBLE_INFO("BlamEngine: applied host variant overrides (time {}, score {}, rounds {})",
+                                       fields.timeLimit, fields.scoreToWin, fields.roundsToWin);
+                        }
+                        NOBLE_INFO("BlamEngine: variant time {} score {} rounds {} respawn {} traits {}",
+                                   fields.timeLimit, fields.scoreToWin, fields.roundsToWin,
+                                   fields.respawnTime, fields.traitsDuration);
+                    }
                     memcpy(&block[0x300], decoded.data(), decoded.size());
                     NOBLE_INFO("BlamEngine: Decoded game variant '{}' into launch block (+0x300)", variantPath.string());
                 } else {

@@ -2,10 +2,12 @@
 
 #include "common/Types.hpp"
 #include "ReachHost.hpp"
+#include "VariantFields.hpp"
 #include <windows.h>
 #include <d3d11.h>
 #include <dxgi.h>
 #include <memory>
+#include <optional>
 #include <vector>
 #include <thread>
 #include <chrono>
@@ -66,6 +68,11 @@ public:
     // <path>.decoded.bin for field mapping.
     bool DumpGameVariant(const std::string& path);
 
+    // Host-side option overrides applied to the decoded c_game_variant before it is copied into the launch
+    // block. Only the mapped General/Player Traits/score fields are changed; loadouts stay file-side.
+    static void SetVariantOverrides(const VariantFields& fields) { s_variantOverrides = fields; }
+    static void ClearVariantOverrides() { s_variantOverrides.reset(); }
+
     static void SetEngineModeOverride(int mode) { s_engineModeOverride = mode; }
 
     // Research switch: a guest normally skips PostCommand(10/11) and waits for the host's session sync. Campaign may
@@ -78,6 +85,7 @@ private:
     static int s_engineModeOverride;   // research hook: forces launch-block +0x0C
     static bool s_guestPostStart;      // research hook: guest posts its own Command 10/11
     static BlamEngine* s_active;       // the running client's engine, for command dispatch
+    static std::optional<VariantFields> s_variantOverrides;   // host options applied at launch
     // Builds the 0x2BF30-byte match descriptor launch block reversed from host-probe
     std::vector<uint8_t> BuildLaunchBlock(uint32_t mapId, uint32_t gameModeTag, int difficulty, uint64_t skulls,
                                          const std::string& customMvarPath = "", const std::string& customVariantPath = "",
