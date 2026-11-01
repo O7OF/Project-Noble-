@@ -72,6 +72,9 @@ public:
     // block. Only the mapped General/Player Traits/score fields are changed; loadouts stay file-side.
     static void SetVariantOverrides(const VariantFields& fields) { s_variantOverrides = fields; }
     static void ClearVariantOverrides() { s_variantOverrides.reset(); }
+    // Test/debug path: a comma-separated patch (time=15,score=50) applied after the selected variant is
+    // decoded. Only names present in the patch change; other fields keep the variant's values.
+    static void SetVariantPatch(std::string spec) { s_variantPatch = std::move(spec); }
 
     static void SetEngineModeOverride(int mode) { s_engineModeOverride = mode; }
 
@@ -86,6 +89,7 @@ private:
     static bool s_guestPostStart;      // research hook: guest posts its own Command 10/11
     static BlamEngine* s_active;       // the running client's engine, for command dispatch
     static std::optional<VariantFields> s_variantOverrides;   // host options applied at launch
+    static std::string s_variantPatch;                        // test path: time=15,score=50
     // Builds the 0x2BF30-byte match descriptor launch block reversed from host-probe
     std::vector<uint8_t> BuildLaunchBlock(uint32_t mapId, uint32_t gameModeTag, int difficulty, uint64_t skulls,
                                          const std::string& customMvarPath = "", const std::string& customVariantPath = "",
