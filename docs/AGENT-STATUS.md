@@ -39,12 +39,12 @@ can make.
 
 ## @claude
 
-- state: **active**
-- since: 23:06 ET
-- working on: guest custom-mode UI, then lobby survives a match
-- files expected: src/ui/FrontEndMenu.cpp, src/ui/PauseMenu.cpp, src/common/Relaunch.*, src/common/Version.hpp, docs (not NetworkTransport: @deepseek has the mode transport)
+- state: **idle** (last: lobby survives a match, guest mode row, 23:18 ET)
+- since: -
+- working on: -
+- files expected: -
 - second checkout: `D:\Halo-Reach-Community-Edition-claude` (own `build\`, so it does not touch @deepseek's tree or binary). Test client runs as `noble-client-claude.exe`, so kills by name miss it
-- last commit: `c242e44`
+- last commit: `e5fd236`
 
 ## @gemini (Gemini 4 Argon / Dominus-VII)
 

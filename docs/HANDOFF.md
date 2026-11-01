@@ -7,7 +7,23 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 
 **Goal:** `noble-client.exe` loads MCC's own `haloreach.dll` (Halo: Reach) and drives it **without MCC**, like the existing
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
-MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.13.2 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.14 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+
+## 0. Pick up here (2026-10-31, 23:18 ET) - Lobby survives a match; guest custom-mode row (@claude)
+
+**Commit:** `e5fd236`. **Version:** 0.9.14. **Build:** noble-client, noble-dev, noble-dedicated, 0 errors, 0 warnings on the merged tree.
+
+**Lobby return.** Each match stays its own process, so what lasts is the server's session. Host's post-game RETURN TO LOBBY (pad focus starts there) hands off with `-lobby-return host`. `Relaunch` now keeps the session on that handoff (it was deleting it, the first run's failure). The new menu re-registers the same address and port, so the server keeps the id and roster and clears in_progress. A guest's panel says WAITING FOR HOST, polls every 2 s on a thread, and when in_progress clears hands off with `-lobby-return guest`. Map, mode, variant, mod, cap and privacy carry over. 8 failed polls show HOST LEFT; RETURN TO MENU stays available.
+
+**Guest mode row.** Guests see HOST MODE: ON THIS PC or UNKNOWN (variant name against this PC's list), and a greyed DOWNLOAD MODE row when unknown (`-lobby-demo-unknown-mode`). @deepseek: wire the row to your transport.
+
+**Evidence.** Two processes against a local server (not the live one): same session id before and after, `re-registered; reusing session`, in_progress true then false, one listed session, guest rejoined about 3 s after the host pressed. Captures `lobby-return-*`, `lobby-guest-unknown-mode`.
+
+**Not verified.** That test used `-postgame-test` with `-postgame-role guest`, not a match played to its end with a joined guest, so a real guest's role detection on the panel isn't proven. Two PCs. The roster showed one row because both clients share a player name on this PC and the server merges same names, so roster survival with two names isn't shown. Modded-map return and a host choosing a saved game mode aren't run. A guest that presses RETURN TO MENU leaves the group.
+
+**Next on @deepseek's list, not started:** playlists, rotation, randomized modes, voting; team roster from `0x2BC` bit 0; pad Back and old scoreboard; large-roster scrolling; emblem backgrounds. Jackpot needs a definition first.
+
+Self-review: the guest poll thread is detached and runs until the process ends, fine since it ends at handoff. `-lobby-return host` is matched as text in `Relaunch`. Touched `Relaunch.cpp`, on @deepseek's expected list, with one condition; rebase around it. A host that takes over 90 s to come back loses the session to the server's timeout.
 
 ## 0. Pick up here (2026-10-31, 23:20 ET) - Guest receives the host game-mode body (@deepseek)
 
@@ -496,7 +512,7 @@ Self-review: chat text is logged nowhere client-side, so failures show only on s
 ## 0. Pick up here (2026-10-31, 15:08 ET) - Push-to-talk rebinding, voice quality proof, music list cleanup (@claude)
 
 
-**Current version:** 0.9.13. **Developer build:** 0.9.13-dev. Dev binaries report the suffix next to the version string.
+**Current version:** 0.9.14. **Developer build:** 0.9.14-dev. Dev binaries report the suffix next to the version string.
 
 **Commit:** `8cbb746` (the code is in this commit, whose message only mentions docs: the intended commit failed on quotes in its message). **Version:** 0.9.5. **Build:** 0 errors, 0 warnings on the merged tree. Files: `src/ui/SettingsPanel.*`, `src/common/Settings.cpp`, `src/audio/ReachAudio.cpp`, `src/audio/VoiceChat.cpp`, `src/common/Version.hpp`.
 
@@ -592,7 +608,7 @@ Self-review: the weakest part is the sender thread, because it changes how relay
 - Next for me: two-client chat check against the client transport, then the multiplayer post-game end hook.
 ## 0. Pick up here (2026-10-31, 08:25 ET) - Pre-game lobby map identity (@deepseek / DeepSeek)`.
 
-**Current version:** 0.9.13. **Developer build:** 0.9.13-dev. Dev binaries report the suffix next to the version string.
+**Current version:** 0.9.14. **Developer build:** 0.9.14-dev. Dev binaries report the suffix next to the version string.
 
 
 **Built and verified:** release `build\bin\Release\noble-client.exe`, developer `build\bin\Release\noble-dev.exe`, dedicated `build\bin\Release\noble-dedicated.exe`, and the packaged `Documents\Noble Launcher\Noble.exe` (full runtime tree; package stayed running in a normal launch test).
