@@ -12,6 +12,7 @@ overlay (`7cef78c`) and the third-person camera (`97989d1`).
 
 ## Recently done (for context)
 
+- [x] **NEXT MISSION on the campaign results screen; quieter count sounds** (7d63a7a, 0.9.16.9) - volume by ear and a real mission end still to confirm with Tyler
 - [x] **Lobby joins and campaign co-op restored after regressions** (feb7bff, 0.9.16.5) - proven on one PC only; two-PC retest still pending with Tyler and O7
 - [x] **Campaign co-op works** — launch block declares the co-op player count at `0xE8`; 2- and 3-player runs verified (`0b83b1c`)
 - [x] **Forge online works** (relay heartbeat + LAN routing + LobbyPatches sequencing)

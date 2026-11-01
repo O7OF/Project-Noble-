@@ -9,6 +9,19 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
 MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.16.8 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
 
+## 0. Pick up here (2026-11-01, 03:00 ET) - NEXT MISSION button and quieter results sounds (@claude)
+
+**Version:** 0.9.16.9. **Build:** 0 errors, 0 warnings. File: `src/ui/PauseMenu.cpp`. Commit `7d63a7a`.
+
+- **NEXT MISSION** on the post-game panel, stock campaign only, in campaign order (Noble Actual to Lone Wolf). Solo: starts the next mission straight away with the same difficulty and skulls. Hosted: returns to the lobby with the next mission selected, so guests stay together. Not shown to guests, after Lone Wolf, for mod missions or in other modes. With a playlist, NEXT IN ROTATION keeps that slot.
+- **Results sounds:** `Sfx()` ignored the Other volume slider; it now follows it. Credit count and slot sounds (`kCountSfxVolume`) drop from 70-100% to 25%. Rank-up and completion stay at full level, scaled by the slider.
+
+**Evidence (`-postgame-test`, controller script, real relaunch):** solo m10 Heroic: `next mission requested`, new process `MAP: m20`, `Difficulty: 2`. Hosted m10 Heroic: lobby `host lobby set up: map 'm20' mode 'campaign'`, screen shows ONI: Sword Base, Heroic. Button absent on m70_bonus and multiplayer.
+
+**Not proven:** a real mission played to its end, a joined guest following into the next lobby, and how the new volume sounds by ear (test runs are muted). The button also shows after a mission that ended without being completed, because the panel doesn't know the outcome. Also found, not changed: solo games count as hosted on this panel and show RETURN TO LOBBY.
+
+Self-review: only the panel changed; argument rewriting is limited to the map and its title and pictures. 25% is a judgment call, one constant to change.
+
 ## 0. Pick up here (2026-11-01, 02:40 ET) - Elite Illumination Float Decoupling & Armory UI Optimization (@O7OF)
 
 **Version:** 0.9.16.8. **Build:** noble-client, noble-dev, noble-dedicated, 0 errors, 0 warnings on MSVC Release x64. Files: src/engine/ReachArmory.cpp, src/ui/ArmorCustomizer.cpp, src/common/Version.hpp, docs/HANDOFF.md, docs/AGENT-STATUS.md.

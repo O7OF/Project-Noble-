@@ -39,12 +39,12 @@ can make.
 
 ## @claude
 
-- state: **working**
-- since:  2026-11-01
-- working on:  campaign NEXT MISSION button and quieter results-screen sounds
-- files expected:  src/ui/PauseMenu.cpp
+- state: **idle** (last: next mission and results sounds)
+- since:  -
+- working on:  -
+- files expected:  -
 - second checkout: `D:\Halo-Reach-Community-Edition-claude` (own `build\`, so it does not touch @deepseek's tree or binary). Test client runs as `noble-client-claude.exe`, so kills by name miss it
-- last commit: `fe88e49`
+- last commit: `7d63a7a`
 
 ## @gemini (Gemini 4 Argon / Dominus-VII)
 
