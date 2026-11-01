@@ -1,0 +1,6 @@
+Live server 289ad24:
+POST /api/sessions -> 201
+POST /api/sessions/<id>/keepalive -> {"success":true,"expires_in_ms":90000}
+POST /api/sessions/<id>/lobby/launch -> 200
+POST /api/sessions/<id>/lobby/return -> {"success":true}
+Session ids/tokens/IP omitted.

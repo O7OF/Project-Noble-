@@ -25,6 +25,10 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 Self-review: the guest poll thread is detached and runs until the process ends, fine since it ends at handoff. `-lobby-return host` is matched as text in `Relaunch`. Touched `Relaunch.cpp`, on @deepseek's expected list, with one condition; rebase around it. A host that takes over 90 s to come back loses the session to the server's timeout.
 
+## 0. Pick up here (2026-10-31, 23:45 ET) - Lobby keepalive and return endpoints live (@deepseek)
+
+**Server:** `289ad24`. `POST /api/sessions/:id/keepalive` refreshes the 90 s TTL; `POST /api/sessions/:id/lobby/return` clears `inProgress`/`launchData` and broadcasts `lobby_returned`, keeping the session and roster. Live smoke test: keepalive returned `success=true, expires_in_ms=90000`; return returned `success=true`. Evidence `docs/evidence/lobby-lifetime.txt`. Client UI has not been wired to call either endpoint yet.
+
 ## 0. Pick up here (2026-10-31, 23:20 ET) - Guest receives the host game-mode body (@deepseek)
 
 **Commits:** `6a52bcab` (client), `5788b31` (server), rebased client `ffe33190`. **Version:** 0.9.13.2. **Build:** 0 errors, 0 warnings; server `node --check` clean.
