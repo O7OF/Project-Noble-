@@ -39,7 +39,7 @@ can make.
 
 ## @claude
 
-- state: **active**
+- state: **active** (input lock: until 20:16)
 - since: 19:55 ET
 - working on: priority queue 1, controller menu navigation
 - files expected: src/ui/SettingsPanel.*, src/ui/FrontEndMenu.cpp, src/ui/PauseMenu.cpp, src/ui/UiPad.*, src/ui/UIManager.*, src/common/Version.hpp, docs
