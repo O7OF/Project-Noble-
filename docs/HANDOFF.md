@@ -7,7 +7,21 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 
 **Goal:** `noble-client.exe` loads MCC's own `haloreach.dll` (Halo: Reach) and drives it **without MCC**, like the existing
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
-MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.11 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.12 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+
+## 0. Pick up here (2026-10-31, 21:34 ET) - Game type drop-downs and menu search; team and options findings (@claude)
+
+**Commit:** `0576f84`. **Version:** 0.9.12. **Build:** noble-client, noble-dev, 0 errors, 0 warnings on the merged tree.
+
+**Tyler's asks.** Game types now drop down by mode: press Slayer and its variants open, one mode at a time, starting on the current variant's mode. Mode names are off the rows and the details panel. Firefight has one mode, so it stays a flat list. Search boxes: game type lists (setup screens and lobby), Campaign, Custom Game, Firefight, Forge, Mods. Server Browser and Settings already had one. A search result lands on the real row in the full list, opening its mod if needed. Esc in a box only leaves it; Q, E, F, X no longer fire while typing. Typing needs a keyboard.
+
+**Evidence** (`docs/screenshots/variant-categories-dropdown`, `variant-search`, `map-search`, `mods-search`, `variant-lobby-search-typing`). Pad: heading opened, Juggernaut (MCC) picked, host, start, `Decoded game variant ...hr_ffa_juggernaut_ar_mag_150points_tu.bin`. Keyboard: `flag`, Enter, Down, Enter picked Multi Flag CTF; `spi`, Enter, Enter landed on Spire. Mouse search on Mods filtered `fire`. Lobby typing `fqex` opened nothing.
+
+**Answer to Tyler: choosing Team Slayer does NOT change the pre-game lobby.** The roster splits into red and blue columns only when a player's `team` is non-zero, and the only non-zero values in the client come from the server's roster or the `-lobby-demo` test. No picker code sets it, and `MasterAdvert.hostTeam` is never set from a variant (read from code, not a two-client run). Reach's team/FFA flag is inside the variant rules, so doing this properly needs the field map (item 9). Names alone won't do: the file's name doesn't reliably say team or FFA.
+
+**Not verified.** Search on the MODDED tab pick and Forge, the lobby search picking a row, a guest receiving the variant, physical pad, matches past the loading screen.
+
+Self-review: search boxes are small in the tab row. `DrawSearchBox` ignores its `ui` argument. A mod search matches map and mod titles only, not descriptions. A failed early run of my keyboard test turned out to be too short a wait, not a bug.
 
 ## 0. Pick up here (2026-10-31, 21:24 ET) - Voice-bind row QA and game type picker (@claude)
 
@@ -314,7 +328,7 @@ Self-review: chat text is logged nowhere client-side, so failures show only on s
 ## 0. Pick up here (2026-10-31, 15:08 ET) - Push-to-talk rebinding, voice quality proof, music list cleanup (@claude)
 
 
-**Current version:** 0.9.11. **Developer build:** 0.9.11-dev. Dev binaries report the suffix next to the version string.
+**Current version:** 0.9.12. **Developer build:** 0.9.12-dev. Dev binaries report the suffix next to the version string.
 
 **Commit:** `8cbb746` (the code is in this commit, whose message only mentions docs: the intended commit failed on quotes in its message). **Version:** 0.9.5. **Build:** 0 errors, 0 warnings on the merged tree. Files: `src/ui/SettingsPanel.*`, `src/common/Settings.cpp`, `src/audio/ReachAudio.cpp`, `src/audio/VoiceChat.cpp`, `src/common/Version.hpp`.
 
@@ -410,7 +424,7 @@ Self-review: the weakest part is the sender thread, because it changes how relay
 - Next for me: two-client chat check against the client transport, then the multiplayer post-game end hook.
 ## 0. Pick up here (2026-10-31, 08:25 ET) - Pre-game lobby map identity (@deepseek / DeepSeek)`.
 
-**Current version:** 0.9.11. **Developer build:** 0.9.11-dev. Dev binaries report the suffix next to the version string.
+**Current version:** 0.9.12. **Developer build:** 0.9.12-dev. Dev binaries report the suffix next to the version string.
 
 
 **Built and verified:** release `build\bin\Release\noble-client.exe`, developer `build\bin\Release\noble-dev.exe`, dedicated `build\bin\Release\noble-dedicated.exe`, and the packaged `Documents\Noble Launcher\Noble.exe` (full runtime tree; package stayed running in a normal launch test).
