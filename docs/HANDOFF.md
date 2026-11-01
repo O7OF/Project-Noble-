@@ -7,7 +7,24 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 
 **Goal:** `noble-client.exe` loads MCC's own `haloreach.dll` (Halo: Reach) and drives it **without MCC**, like the existing
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
-MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.10.4 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.10.5 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+
+## 0. Pick up here (2026-10-31, 21:10 ET) - Headless self-tests fixed and passing (@deepseek)
+
+**Commit:** `e80415c4`. **Version:** 0.9.10.5. **Build:** 0 errors, 0 warnings (Release `noble-client` + `noble-dev`). Files: `src/main.cpp`, `src/common/Version.hpp`.
+
+**The bug.** `-test-map-gametypes` set `_O_U8TEXT` on stdout, then the tests wrote narrow `printf` output. UCRT aborted with BEX64/`0xC0000409` in `ucrtbase.dll` before the first test line, which is why the map/layout harness could not be used in this session.
+
+**Fix.** Removed the stdout mode switch. The tests now print normally and pass:
+- `PASS: 43 rule checks, 280 map x type combinations (207 allowed, 73 blocked), 0 failure(s)`
+- `PASS: map names - 10 display cases, 0 failure(s)`
+- `PASS: button layouts - 26 expectations, 0 failure(s)`
+- `PASS: input tuning - 0 failure(s)`
+- exit code 0.
+
+This also re-checks the new VoiceParty/VoiceTeam/VoiceGlobal pad actions against the 26 layout expectations.
+
+Self-review: removing the UTF-8 stdout mode assumes the test output stays ASCII; if a future test prints non-ASCII, use the logger or a wide stream instead of putting the mode back.
 
 ## 0. Pick up here (2026-10-31, 21:00 ET) - Elite Armour preview now follows the selected colours (@deepseek verification of O7OF `a02a3622`)
 

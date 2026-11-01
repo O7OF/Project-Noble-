@@ -35,6 +35,7 @@ This supersedes the old "Queue order for tonight" below. Claim the line you star
 8. [ ] **@claude — Pad Back / old scoreboard**, then large-lobby roster and emblem backgrounds.
 9. [ ] **@deepseek — Variant field map** via `-variant-dump`, to unblock the picker/viewer and host match options.
 10. [ ] **Tyler — human tests:** physical pad menu navigation (Settings row scrolling first), preset/rebind, first-start name typing, settings import dialog, two-client real-talker mute.
+11. [x] @deepseek 21:10 ET **Headless self-tests fixed** (`e80415c4`): removed the UTF-8 stdout mode that crashed `-test-map-gametypes`; 43 map rules, 280 map/type combinations, 26 layout expectations and input tuning all PASS.
 
 ---
 
