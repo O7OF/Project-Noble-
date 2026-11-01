@@ -1,5 +1,6 @@
 #include "engine/KeyBindings.hpp"
 #include "Settings.hpp"
+#include "DeviceIdentity.hpp"
 #include "Logger.hpp"
 
 #include <windows.h>
@@ -93,6 +94,7 @@ std::filesystem::path Settings::FilePath() const {
 }
 
 void Settings::Load() {
+    DeviceIdentityStore::MigrateNewestFile("userdata/settings.json");
     SettingsData d;
     const auto path = FilePath();
     std::ifstream in(path);
@@ -357,6 +359,7 @@ bool Settings::Save() {
         NOBLE_WARN("Settings: could not replace {}: {}", path.string(), ec.message());
         return false;
     }
+    DeviceIdentityStore::MirrorSaveFile("userdata/settings.json");
     return true;
 }
 

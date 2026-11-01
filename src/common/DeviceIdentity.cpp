@@ -2,7 +2,10 @@
 #include "common/Logger.hpp"
 
 #include <windows.h>
+#include <shlobj.h>
 #include <nlohmann/json.hpp>
+
+#pragma comment(lib, "shell32.lib")
 
 #include <algorithm>
 #include <cctype>
@@ -11,6 +14,7 @@
 #include <fstream>
 #include <iomanip>
 #include <sstream>
+#include <vector>
 
 namespace noble {
 namespace {
@@ -61,7 +65,14 @@ std::string DefaultName(const std::string& id) {
     return "Spartan-" + id.substr(0, 4);
 }
 
+std::filesystem::path PrimaryDataDir() {
+    wchar_t exe[MAX_PATH] = {};
+    if (GetModuleFileNameW(nullptr, exe, MAX_PATH) == 0) return std::filesystem::path("data");
+    return std::filesystem::path(exe).parent_path() / "data";
+}
+
 DeviceIdentity LoadOrCreate() {
+    DeviceIdentityStore::MigrateNewestFile("userdata/identity.json");
     const auto path = ExeDataDir() / "identity.json";
     DeviceIdentity id;
     std::ifstream in(path);
@@ -87,6 +98,8 @@ DeviceIdentity LoadOrCreate() {
     };
     std::ofstream out(path, std::ios::trunc);
     out << j.dump(2);
+    out.close();
+    DeviceIdentityStore::MirrorSaveFile("userdata/identity.json");
     return id;
 }
 
@@ -105,6 +118,114 @@ std::filesystem::path UserDir() {
     return ExeDataDir() / Get().deviceId;
 }
 
+std::vector<std::filesystem::path> KnownDataDirs() {
+    std::vector<std::filesystem::path> dirs;
+    auto addDir = [&](const std::filesystem::path& p) {
+        if (p.empty()) return;
+        std::error_code ec;
+        std::filesystem::path norm = p.lexically_normal();
+        for (const auto& existing : dirs) {
+            if (existing == norm) return;
+        }
+        dirs.push_back(norm);
+    };
+
+    addDir(PrimaryDataDir());
+
+    // Documents\Noble Launcher\data
+    wchar_t docs[MAX_PATH] = {};
+    if (SUCCEEDED(SHGetFolderPathW(nullptr, CSIDL_MYDOCUMENTS, nullptr, SHGFP_TYPE_CURRENT, docs))) {
+        addDir(std::filesystem::path(docs) / "Noble Launcher" / "data");
+    }
+
+    // AppData\ProjectNoble\data
+    wchar_t appdata[MAX_PATH] = {};
+    if (SUCCEEDED(SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, SHGFP_TYPE_CURRENT, appdata))) {
+        addDir(std::filesystem::path(appdata) / "ProjectNoble" / "data");
+    }
+
+    // Desktop repo build dir (if running from Documents or elsewhere)
+    wchar_t desktop[MAX_PATH] = {};
+    if (SUCCEEDED(SHGetFolderPathW(nullptr, CSIDL_DESKTOPDIRECTORY, nullptr, SHGFP_TYPE_CURRENT, desktop))) {
+        addDir(std::filesystem::path(desktop) / "Halo Reach Community Edition" / "build" / "bin" / "Release" / "data");
+    }
+
+    return dirs;
+}
+
+bool MigrateNewestFile(const std::filesystem::path& relativeFilePath) {
+    const auto primary = PrimaryDataDir() / relativeFilePath;
+    const auto dirs = KnownDataDirs();
+
+    std::filesystem::path newestPath;
+    std::filesystem::file_time_type newestTime{};
+    bool foundAny = false;
+
+    std::error_code ec;
+    for (const auto& dir : dirs) {
+        const auto cand = dir / relativeFilePath;
+        if (std::filesystem::is_regular_file(cand, ec)) {
+            const auto candTime = std::filesystem::last_write_time(cand, ec);
+            if (!ec) {
+                if (!foundAny || candTime > newestTime) {
+                    newestTime = candTime;
+                    newestPath = cand;
+                    foundAny = true;
+                }
+            }
+        }
+    }
+
+    if (!foundAny) return false;
+
+    // If the primary file already exists and is equal or newer than newestPath, nothing to migrate
+    if (std::filesystem::is_regular_file(primary, ec)) {
+        const auto primaryTime = std::filesystem::last_write_time(primary, ec);
+        if (!ec && primaryTime >= newestTime) {
+            return false;
+        }
+    }
+
+    // Copy newestPath to primary
+    if (newestPath != primary) {
+        if (primary.has_parent_path()) {
+            std::filesystem::create_directories(primary.parent_path(), ec);
+        }
+        std::filesystem::copy_file(newestPath, primary, std::filesystem::copy_options::overwrite_existing, ec);
+        if (!ec) {
+            std::filesystem::last_write_time(primary, newestTime, ec);
+            NOBLE_INFO("DeviceIdentity: Migrated newest '{}' from '{}' to '{}'",
+                       relativeFilePath.string(), newestPath.string(), primary.string());
+            return true;
+        }
+    }
+    return false;
+}
+
+void MirrorSaveFile(const std::filesystem::path& relativeFilePath) {
+    const auto primary = PrimaryDataDir() / relativeFilePath;
+    std::error_code ec;
+    if (!std::filesystem::is_regular_file(primary, ec)) return;
+
+    const auto primaryTime = std::filesystem::last_write_time(primary, ec);
+    const auto dirs = KnownDataDirs();
+
+    for (const auto& dir : dirs) {
+        const auto dest = dir / relativeFilePath;
+        if (dest == primary) continue;
+        // Mirror to dir if the dir exists or parent exists
+        if (std::filesystem::exists(dir, ec)) {
+            if (dest.has_parent_path()) {
+                std::filesystem::create_directories(dest.parent_path(), ec);
+            }
+            std::filesystem::copy_file(primary, dest, std::filesystem::copy_options::overwrite_existing, ec);
+            if (!ec && primaryTime != std::filesystem::file_time_type{}) {
+                std::filesystem::last_write_time(dest, primaryTime, ec);
+            }
+        }
+    }
+}
+
 void Save(const DeviceIdentity& identity) {
     std::error_code ec;
     std::filesystem::create_directories(ExeDataDir(), ec);
@@ -114,6 +235,8 @@ void Save(const DeviceIdentity& identity) {
     };
     std::ofstream out(ExeDataDir() / "identity.json", std::ios::trunc);
     out << j.dump(2);
+    out.close();
+    MirrorSaveFile("userdata/identity.json");
     Mutable() = identity;
 }
 

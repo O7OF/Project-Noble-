@@ -245,6 +245,11 @@ void SaveLocked();
 void LoadLocked() {
     if (s_loaded) return;
     s_loaded = true;
+    const std::string devId = DeviceIdentityStore::Get().deviceId;
+    const std::filesystem::path relDat = std::filesystem::path("userdata") / devId / "career.dat";
+    const std::filesystem::path relJson = std::filesystem::path("userdata") / devId / "career.json";
+    DeviceIdentityStore::MigrateNewestFile(relDat);
+    DeviceIdentityStore::MigrateNewestFile(relJson);
     nlohmann::json j;
     const auto encryptedPath = UserDir() / "career.dat";
     const auto legacyPath = UserDir() / "career.json";
@@ -366,6 +371,9 @@ void SaveLocked() {
     } else {
         std::error_code removeEc;
         std::filesystem::remove(UserDir() / "career.json", removeEc);
+        const std::string devId = DeviceIdentityStore::Get().deviceId;
+        const std::filesystem::path relDat = std::filesystem::path("userdata") / devId / "career.dat";
+        DeviceIdentityStore::MirrorSaveFile(relDat);
     }
 
     PeerStats localStats;

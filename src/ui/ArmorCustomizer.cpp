@@ -1,6 +1,7 @@
 #include "audio/ReachAudio.hpp"
 #include "InputPrompts.hpp"
 #include "ArmorCustomizer.hpp"
+#include "common/DeviceIdentity.hpp"
 #include "common/Settings.hpp"
 #include "NobleStyle.hpp"
 #include "UiArt.hpp"
@@ -799,6 +800,8 @@ std::filesystem::path ArmorCustomizer::ResolveDefaultProfilePath() {
 }
 
 ArmorCustomizer::ArmorCustomizer() {
+    DeviceIdentityStore::MigrateNewestFile("appearance.dat");
+    DeviceIdentityStore::MigrateNewestFile("appearance.json");
     m_profilePath = ResolveDefaultProfilePath();
 
     // One-time migration: old plaintext appearance.json (data, sandbox or exe root) -> encrypted appearance.dat.
@@ -1328,6 +1331,7 @@ bool ArmorCustomizer::SaveProfile(const std::filesystem::path& path) {
             std::filesystem::create_directories(targetPath.parent_path(), ec);
         }
         if (!SaveCodec::WriteJson(targetPath, j)) return false;
+        DeviceIdentityStore::MirrorSaveFile("appearance.dat");
         m_dirty = false;
         NOBLE_INFO("ArmorCustomizer: Saved profile to '{}' (PreferredSpecies: {}, EliteSet: {})",
                    targetPath.string(),

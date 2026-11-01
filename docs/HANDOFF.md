@@ -7,7 +7,31 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 
 **Goal:** `noble-client.exe` loads MCC's own `haloreach.dll` (Halo: Reach) and drives it **without MCC**, like the existing
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
-MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.10.6 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.10.7 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+
+## 0. Pick up here (2026-10-31, 22:00 ET) - Cross-Build Save Migration & Elite Colour Picker Live Sync (@O7OF)
+
+**Version:** 0.9.10.7. **Build:** 0 errors, 0 warnings (Release `noble-client` + `noble-dev` + packaged `Noble.exe`). Files: `src/career/Career.cpp`, `src/common/DeviceIdentity.cpp`, `src/common/DeviceIdentity.hpp`, `src/common/Settings.cpp`, `src/ui/ArmorCustomizer.cpp`, `src/common/Version.hpp`, `build-package.ps1`.
+
+### 1. Cross-Build Save Migration & Bidirectional Sync (@O7OF)
+- **Problem:** When playing on the developer build (`noble-dev.exe` in `build\bin\Release\`), user unlocks, rank, credits, purchased armor, appearance customization, and settings were stored in the dev directory (`build\bin\Release\data\userdata\`). When launching the non-dev release build (`Noble.exe` in `Documents\Noble Launcher\`), saves were isolated, meaning players would lose or not see their progress made during dev testing sessions.
+- **Fix:** Implemented full cross-build save migration and live mirroring in `DeviceIdentityStore`:
+  - `KnownDataDirs()` enumerates all candidate data paths across the system: the active exe data directory (`build\bin\Release\data` or `Documents\Noble Launcher\data`), `%USERPROFILE%\Documents\Noble Launcher\data`, and `%APPDATA%\ProjectNoble\data`.
+  - `MigrateNewestFile(relativeFilePath)`: On process startup, compares timestamps across all candidate paths. If a newer `career.dat`, `appearance.dat`, `settings.json`, or `identity.json` exists in another build's folder, it seamlessly migrates it to the active folder before loading.
+  - `MirrorSaveFile(relativeFilePath)`: Whenever a save occurs (buying armor, earning credits/stats, changing appearance or settings), the updated save is immediately mirrored across all known installation locations.
+  - Added `/XO` (exclude older) to `build-package.ps1` so packaging release builds never clobbers newer save files.
+
+### 2. Elite Armory Color Synchronization (@O7OF)
+- **Reverse Engineering:** From decompilation of `host-probe.exe::write_colors` @ `0x1401b5ad0`:
+  - Spartan ARGB color layout (16 bytes): `[0] = Primary, [1] = Secondary, [2] = Accent, [3] = Visor`.
+  - Elite ARGB color layout (16 bytes): `[0] = Base/Rank Skin, [1] = Undersuit/Detail, [2] = Secondary, [3] = Primary`.
+- **Implementation:** Added `s_eliteColorRecords`, `MatchEliteColorPattern()` recognizing the 11 stock Elite rank preset ARGB palettes, and `ScanEliteColorRecordsIn()`.
+- `WriteColorsAndSuit()` updates Elite live records with `{ cur[0], cur[1], secArgb, priArgb }`, immediately syncing the chosen Primary and Secondary colors to the live Elite model without modifying base skin/rank constants.
+- Quick rescan detects remade Elite bipeds instantly without waiting on Spartan suit records.
+
+### 3. Build & Packaging Verified (@O7OF)
+- Both `noble-dev.exe` and `noble-client.exe` compiled cleanly with 0 errors via MSVC multi-threaded builder.
+- Packaged release `Noble.exe` updated in `C:\Users\Chey1\Documents\Noble Launcher\`.
 
 ## 0. Pick up here (2026-10-31, 21:45 ET) - Armory overlay sheen no longer washes out armour (@deepseek)
 

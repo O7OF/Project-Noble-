@@ -23,5 +23,12 @@ std::filesystem::path UserDir();       // data\userdata\<deviceId>
 void Save(const DeviceIdentity& identity);
 void Reload();
 
+// Cross-build sync & migration helpers:
+// Ensures unlocks, career stats, appearance, and settings are preserved
+// between dev builds and packaged/release builds.
+std::vector<std::filesystem::path> KnownDataDirs();
+bool MigrateNewestFile(const std::filesystem::path& relativeFilePath);
+void MirrorSaveFile(const std::filesystem::path& relativeFilePath);
+
 } // namespace DeviceIdentityStore
 } // namespace noble

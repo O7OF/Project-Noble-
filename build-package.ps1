@@ -78,7 +78,7 @@ New-Item -ItemType Directory -Force -Path $Destination | Out-Null
 # Copy the complete working runtime folder. Selective copies kept missing a startup
 # dependency that only the full build tree had. Exclude linker .map files (noble-*.map)
 # without excluding data\menumaps\mainmenu_all.map.
-& robocopy $release $Destination /E /XF *.log noble-*.map *.bmp *.dmp /NFL /NDL /NJH /NJS /NP
+& robocopy $release $Destination /E /XO /XF *.log noble-*.map *.bmp *.dmp /NFL /NDL /NJH /NJS /NP
 if ($LASTEXITCODE -ge 8) { throw "robocopy failed ($LASTEXITCODE)" }
 
 Copy-Item (Join-Path $Destination 'noble-client.exe') (Join-Path $Destination 'Noble.exe') -Force
