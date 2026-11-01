@@ -13,6 +13,21 @@
 
 namespace noble {
 
+bool NetworkTransport::MaterializeHostVariant(const std::string& name, const std::string& body, std::string& outPath) {
+    if (name.empty() || body.empty()) return false;
+    std::error_code ec;
+    const auto dir = std::filesystem::current_path(ec) / "data" / "host_variants";
+    std::filesystem::create_directories(dir, ec);
+    const auto path = dir / std::filesystem::path(name).filename();
+    std::ofstream out(path, std::ios::binary);
+    if (!out) return false;
+    out.write(body.data(), static_cast<std::streamsize>(body.size()));
+    out.close();
+    if (!out) return false;
+    outPath = path.string();
+    return true;
+}
+
 namespace {
 
 // Diagnostic: hex-dump Blam! payloads so the join handshake (55-byte join request,
@@ -705,18 +720,9 @@ void NetworkTransport::RelayWorkerThread(std::string relayUrl, std::string sessi
                                 std::string lVar = ld.value("variant", "");
                                 std::string lVarBody = ld.value("variant_body", "");
                                 std::string lVarPath = lVar;
-                                if (!lVarBody.empty() && !lVar.empty()) {
-                                    std::error_code ec;
-                                    const auto dir = std::filesystem::current_path(ec) / "data" / "host_variants";
-                                    std::filesystem::create_directories(dir, ec);
-                                    const auto variantPath = dir / std::filesystem::path(lVar).filename();
-                                    std::ofstream out(variantPath, std::ios::binary);
-                                    if (out) {
-                                        out.write(lVarBody.data(), static_cast<std::streamsize>(lVarBody.size()));
-                                        out.close();
-                                        lVarPath = variantPath.string();
-                                        NOBLE_INFO("NetworkTransport: host variant body '{}' saved to {}", lVar, lVarPath);
-                                    }
+                                if (!lVarBody.empty() && !lVar.empty() &&
+                                    MaterializeHostVariant(lVar, lVarBody, lVarPath)) {
+                                    NOBLE_INFO("NetworkTransport: host variant body '{}' saved to {}", lVar, lVarPath);
                                 }
                                 int lDiff = ld.value("difficulty", 1);
                                 uint64_t lSkulls = 0;

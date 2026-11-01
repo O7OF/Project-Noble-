@@ -22,6 +22,10 @@ public:
         return instance;
     }
 
+    // Writes a host-supplied game-mode body under data/host_variants and returns its absolute path.
+    // Used by the lobby_launch handler and by the headless -host-variant-test.
+    static bool MaterializeHostVariant(const std::string& name, const std::string& body, std::string& outPath);
+
     // Fixed session identifier shared by all Project Noble matches
     static constexpr uint64_t kNobleSessionId = 0x48414C4F52454143ULL;     // "HALOREAC"
     // Well-known Machine ID for the lobby host
