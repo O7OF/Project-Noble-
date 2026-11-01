@@ -976,6 +976,16 @@ static void ApplyArmoryAppearance(uint8_t* profile) {
             if (id == "sunfire") return 3;
             if (id == "lime") return 1;
             if (id == "platinum") return 1;
+            if (id == "obsidian") return 4;
+            if (id == "pearl") return 1;
+            if (id == "electric_blue") return 2;
+            if (id == "blood_orange") return 0;
+            if (id == "mint") return 1;
+            if (id == "copper") return 3;
+            if (id == "midnight") return 4;
+            if (id == "magenta") return 2;
+            if (id == "aquamarine") return 2;
+            if (id == "titanium") return 1;
             if (idx == 3) return 4;
             if (idx == 4) return 3;
             return static_cast<uint32_t>(std::clamp(idx, 0, 4));
@@ -983,7 +993,7 @@ static void ApplyArmoryAppearance(uint8_t* profile) {
 
         const uint32_t spEffectOff = armoryEffectOffset(num(sp, "armor_effect_index", 0, 6, 0), str(sp, "armor_effect_id"));
         const uint32_t elEffectOff = armoryEffectOffset(num(el, "armor_effect_index", 0, 6, 0), str(el, "armor_effect_id"));
-        const uint32_t visorOff = visorOffset(num(sp, "visor_color_index", 0, 19, 0), str(sp, "visor_id"));
+        const uint32_t visorOff = visorOffset(num(sp, "visor_color_index", 0, 29, 0), str(sp, "visor_id"));
         const int utility = num(sp, "utility_index", 0, 6, 0);
 
         put(0x40, helmet);
@@ -1014,6 +1024,8 @@ static void ApplyArmoryAppearance(uint8_t* profile) {
         // the profile field exists (RR: Steel) and the Armory's third colour word follows it.
         const int accentColor = num(appearance, "accent_color", 0, 29, 14);
         put(0xA0, kColor + accentColor);
+        const int lightsColor = num(appearance, "lights_color", 0, 29, 10);
+        put(0xA4, kColor + lightsColor);
         const std::string armoryTag = str(appearance, "service_tag");
         if (!armoryTag.empty()) {
             wchar_t serviceTag[4] = {};

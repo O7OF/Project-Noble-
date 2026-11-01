@@ -1148,6 +1148,9 @@ std::mutex s_picksMutex;
 uint8_t s_localPicks[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 uint8_t s_localEliteEffect = 0xFF;
 int s_localSet = -1;
+uint8_t s_localColors[4] = {1, 10, 14, 10};
+uint8_t s_localCustomFlags = 0;
+float s_localCustomRgb[4][3] = {};
 bool s_localSpeciesElite = false;   // appearance.json "species" == 1 (the local player's preferred species)
 std::atomic<int> s_localSettingsIndex{-1};   // settings index the engine last applied the local profile to
 std::filesystem::file_time_type s_picksStamp{};
@@ -1182,8 +1185,32 @@ void RefreshLocalPicks() {
         else if (fxId == "birthday_party" || fxIdx == 1) fxIdx = 6;
         else fxIdx = 0;
         s_localEliteEffect = (fxIdx >= 1 && fxIdx <= 6) ? static_cast<uint8_t>(fxIdx) : 0xFF;
-        NOBLE_INFO("ElitePack: Armory Elite pieces {} {} {} {} {} {} (set {})", s_localPicks[0], s_localPicks[1],
-                   s_localPicks[2], s_localPicks[3], s_localPicks[4], s_localPicks[5], set);
+
+        s_localColors[0] = static_cast<uint8_t>(std::clamp(j.value("primary_color", 1), 0, 29));
+        s_localColors[1] = static_cast<uint8_t>(std::clamp(j.value("secondary_color", 10), 0, 29));
+        s_localColors[2] = static_cast<uint8_t>(std::clamp(j.value("accent_color", 14), 0, 29));
+        s_localColors[3] = static_cast<uint8_t>(std::clamp(j.value("lights_color", 10), 0, 29));
+
+        s_localCustomFlags = 0;
+        if (j.value("primary_custom", false))   s_localCustomFlags |= (1 << 0);
+        if (j.value("secondary_custom", false)) s_localCustomFlags |= (1 << 1);
+        if (j.value("accent_custom", false))    s_localCustomFlags |= (1 << 2);
+        if (j.value("lights_custom", false))    s_localCustomFlags |= (1 << 3);
+
+        auto readRgb = [&](const char* key, float out[3]) {
+            if (j.contains(key) && j[key].is_array() && j[key].size() == 3) {
+                for (int i = 0; i < 3; ++i) out[i] = std::clamp(j[key][i].get<float>(), 0.0f, 1.0f);
+            }
+        };
+        readRgb("primary_custom_rgb", s_localCustomRgb[0]);
+        readRgb("secondary_custom_rgb", s_localCustomRgb[1]);
+        readRgb("accent_custom_rgb", s_localCustomRgb[2]);
+        readRgb("lights_custom_rgb", s_localCustomRgb[3]);
+
+        NOBLE_INFO("ElitePack: Armory Elite pieces {} {} {} {} {} {} (set {}), colors {}/{}/{}/{}",
+                   s_localPicks[0], s_localPicks[1], s_localPicks[2], s_localPicks[3],
+                   s_localPicks[4], s_localPicks[5], set,
+                   s_localColors[0], s_localColors[1], s_localColors[2], s_localColors[3]);
     } catch (...) {
     }
 }
@@ -1242,10 +1269,21 @@ void __fastcall RecordSetHook(uint8_t* player, uint8_t* block) {
                     picks[k] = s_localPicks[k] != 0xFF ? s_localPicks[k] : kSetPieces[set][k];
                 std::memcpy(block, picks, 6);
                 block[6] = kElitePiecesMarker;
+                block[7] = static_cast<uint8_t>(set);
                 if (s_localEliteEffect >= 1 && s_localEliteEffect <= 6) block[9] = s_localEliteEffect;
+                block[10] = s_localColors[0];
+                block[11] = s_localColors[1];
+                block[12] = s_localColors[2];
+                block[13] = s_localColors[3];
+                block[14] = s_localCustomFlags;
+                for (int c = 0; c < 4; ++c) {
+                    block[16 + c * 3 + 0] = static_cast<uint8_t>(std::clamp(std::lround(s_localCustomRgb[c][0] * 255.0f), 0L, 255L));
+                    block[16 + c * 3 + 1] = static_cast<uint8_t>(std::clamp(std::lround(s_localCustomRgb[c][1] * 255.0f), 0L, 255L));
+                    block[16 + c * 3 + 2] = static_cast<uint8_t>(std::clamp(std::lround(s_localCustomRgb[c][2] * 255.0f), 0L, 255L));
+                }
                 static std::atomic<int> s_synced{0};
                 if (s_synced.fetch_add(1) < 3)
-                    NOBLE_INFO("ElitePack: Elite pieces written to the settings sync block (player index {}):{}", index,
+                    NOBLE_INFO("ElitePack: Elite pieces & colors written to settings sync block (player index {}):{}", index,
                                Hex(block, 0x20));
             }
         }
@@ -1276,7 +1314,8 @@ uint64_t __fastcall BuilderHook(uint8_t* record, uint32_t mode, void* unit, void
 
     uint8_t picks[6] = {0, 0, 0, 0, 0, 0};
     uint8_t eliteEffect = 0xFF;
-    int effectiveSet = record[kRecordEliteSet] < 8 ? record[kRecordEliteSet] : 0;
+    int effectiveSet = (record[kRecordEliteSet] < static_cast<int>(std::size(kSetPieces)))
+                           ? record[kRecordEliteSet] : 0;
 
     if (localRecord) {
         std::lock_guard<std::mutex> lock(s_picksMutex);
@@ -1290,10 +1329,18 @@ uint64_t __fastcall BuilderHook(uint8_t* record, uint32_t mode, void* unit, void
         // Store the sender's picks in the real record: the engine syncs this block to every machine.
         std::memcpy(record + kRecordPieceBase, picks, 6);
         record[kRecordPieceBase + 6] = kElitePiecesMarker;
+        record[kRecordEliteSet] = static_cast<uint8_t>(effectiveSet);
         if (eliteEffect != 0xFF) record[kRecordEliteFx] = eliteEffect;
+        record[0x1A] = s_localColors[0];
+        record[0x1B] = s_localColors[1];
+        record[0x1C] = s_localColors[2];
+        record[0x1D] = s_localColors[3];
     } else if (record[kRecordPieceBase + 6] == kElitePiecesMarker) {
         // The record came from its owner (another machine or a unit copy): use their pieces.
         std::memcpy(picks, record + kRecordPieceBase, 6);
+        if (record[kRecordEliteSet] < static_cast<int>(std::size(kSetPieces))) {
+            effectiveSet = record[kRecordEliteSet];
+        }
         eliteEffect = record[kRecordEliteFx];
     } else {
         // Old/unmodified record (no marker): fall back to the Elite armor set the engine replicated.
@@ -1304,6 +1351,7 @@ uint64_t __fastcall BuilderHook(uint8_t* record, uint32_t mode, void* unit, void
 
     std::memcpy(copy + kRecordPieceBase, picks, 6);
     copy[kRecordPieceBase + 6] = kElitePiecesMarker;
+    copy[kRecordEliteSet] = static_cast<uint8_t>(effectiveSet);
     if (eliteEffect != 0xFF) copy[kRecordEliteFx] = eliteEffect;
     {   // first-person arms follow the forearms, the first-person body the shoulders (else the Armor Set)
         const int fpSet = effectiveSet < 8 ? effectiveSet : 0;

@@ -97,10 +97,18 @@ static std::string ToLowerAscii(std::string s) {
     return s;
 }
 
+static float LinearToSrgb(float lin) {
+    if (lin <= 0.0031308f) return lin * 12.92f;
+    return 1.055f * std::pow(std::clamp(lin, 0.0f, 1.0f), 1.0f / 2.4f) - 0.055f;
+}
+
 static uint32_t LinearRgbToArgbU32(const std::array<float, 3>& linRgb) {
-    const uint32_t r = static_cast<uint32_t>(std::clamp(std::lround(linRgb[0] * 255.0f), 0L, 255L));
-    const uint32_t g = static_cast<uint32_t>(std::clamp(std::lround(linRgb[1] * 255.0f), 0L, 255L));
-    const uint32_t b = static_cast<uint32_t>(std::clamp(std::lround(linRgb[2] * 255.0f), 0L, 255L));
+    const float rS = LinearToSrgb(linRgb[0]);
+    const float gS = LinearToSrgb(linRgb[1]);
+    const float bS = LinearToSrgb(linRgb[2]);
+    const uint32_t r = static_cast<uint32_t>(std::clamp(std::lround(rS * 255.0f), 0L, 255L));
+    const uint32_t g = static_cast<uint32_t>(std::clamp(std::lround(gS * 255.0f), 0L, 255L));
+    const uint32_t b = static_cast<uint32_t>(std::clamp(std::lround(bS * 255.0f), 0L, 255L));
     return 0xFF000000u | (r << 16) | (g << 8) | b;
 }
 
@@ -486,8 +494,7 @@ static bool MatchEliteColorPattern(const uint32_t cur[4], uint32_t lastPri, uint
         return false;
     }
 
-    if (lastPri != 0 && (cur[0] == lastPri || cur[3] == lastPri) &&
-        (lastSec == 0 || cur[3] == lastSec || cur[2] == lastSec)) {
+    if (lastPri != 0 && (cur[0] == lastPri || cur[3] == lastPri || cur[3] == lastSec || cur[1] == lastPri)) {
         return true;
     }
 
@@ -576,10 +583,12 @@ static size_t ScanColorRecordsIn(const std::vector<std::pair<uintptr_t, size_t>>
 
 static size_t ScanEliteColorRecordsIn(const std::vector<std::pair<uintptr_t, size_t>>& chunks, bool quiet) {
     uint32_t lastPri = 0, lastSec = 0;
+    uint32_t prevColors[4] = {};
     {
         std::lock_guard<std::mutex> lock(s_dataMutex);
         lastPri = s_lastElitePriArgb;
         lastSec = s_lastEliteSecArgb;
+        std::memcpy(prevColors, s_lastColorWords.data(), sizeof(prevColors));
     }
 
     std::vector<uintptr_t> found;
@@ -593,7 +602,8 @@ static size_t ScanEliteColorRecordsIn(const std::vector<std::pair<uintptr_t, siz
             if (SafeCopyMem(buf.data(), reinterpret_cast<const void*>(base), size)) {
                 for (size_t off = 0; off + 16 <= size; off += 4) {
                     const uint32_t* cur = reinterpret_cast<const uint32_t*>(buf.data() + off);
-                    if (MatchEliteColorPattern(cur, lastPri, lastSec)) {
+                    if (std::memcmp(cur, prevColors, 16) == 0 ||
+                        MatchEliteColorPattern(cur, lastPri, lastSec)) {
                         found.push_back(base + off);
                     }
                 }
@@ -825,7 +835,7 @@ static void WriteColorsAndSuit(const ReachArmorySelection& sel) {
             float cur[4] = {};
             if (!SafeCopyMem(cur, reinterpret_cast<const void*>(suit), sizeof(cur))) return true;
             for (int i = 0; i < 4; ++i) {
-                if (!std::isfinite(cur[i]) || cur[i] < 0.005f || cur[i] > 4.5f) return true;
+                if (!std::isfinite(cur[i]) || cur[i] < -0.1f || cur[i] > 10.0f) return true;
             }
             return !SafeWriteFloats(suit, suitFloats, 4);
         }),
@@ -1036,7 +1046,7 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx) {
     const uint64_t gen = s_selectionGeneration.load();
     if (gen != s_appliedGeneration) {
         s_appliedGeneration = gen;
-        const bool forceRepaint = s_previewDirty.exchange(false);
+        s_previewDirty.store(false);
 
         std::vector<std::pair<uint32_t, uint32_t>> pairs;
         auto pushPair = [&](const std::string& regionName, const std::string& permName, const char* fallbackPerm = "default") {
@@ -1128,8 +1138,9 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx) {
             while (pairs.size() < 16) {
                 pairs.push_back(pairs[0]);
             }
-            if (!forceRepaint && pairs == s_lastPairs && base == s_lastPairsBase) {
-                // Same pieces and no colour/visor change: no rebuild, the colours are written every frame.
+            const bool piecesChanged = (pairs != s_lastPairs || base != s_lastPairsBase);
+            if (!piecesChanged) {
+                // Same pieces: no rebuild needed, colors and lights are written to live memory every frame.
             } else {
                 s_lastPairs = pairs;
                 s_lastPairsBase = base;
@@ -1139,10 +1150,6 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx) {
                 }
                 s_bumpAtFrame = frameNow + 2;
                 s_settlePending = false;
-                if (forceRepaint) {
-                    NOBLE_INFO("ReachArmory: preview repaint (primary {} / secondary {} / accent {} / lights {} / visor {}), rebuilt",
-                               sel.primaryColorIndex, sel.secondaryColorIndex, sel.accentColorIndex, sel.lightsColorIndex, sel.visorColorIndex);
-                }
                 if (showElite) {
                     NOBLE_INFO("ReachArmory: Elite pieces {} / {} / {} / {} / {} / {}, effect {}", sel.eliteHelmet, sel.eliteLeftShoulder,
                                sel.eliteRightShoulder, sel.eliteChest, sel.eliteArms, sel.eliteLegs, sel.eliteArmorEffect);
@@ -1156,14 +1163,25 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx) {
 
         // Also update Elite hlmt permutation table directly if cached
         if (showElite) {
-            const uint32_t elitePermId = LookupStringId(sel.eliteSuit);
+            const std::string* pieceNames[6] = {
+                &sel.eliteHelmet, &sel.eliteChest, &sel.eliteLeftShoulder,
+                &sel.eliteRightShoulder, &sel.eliteArms, &sel.eliteLegs
+            };
             std::lock_guard<std::mutex> lock(s_dataMutex);
-            if (s_eliteScanned && elitePermId != 0) {
+            if (s_eliteScanned) {
                 for (size_t r = 0; r < 6; ++r) {
-                    auto it = s_eliteRegions[r].permsByStringId.find(elitePermId);
-                    if (it != s_eliteRegions[r].permsByStringId.end() && s_eliteRegions[r].permArrayAddr != 0) {
-                        SafeCopyMem(reinterpret_cast<void*>(s_eliteRegions[r].permArrayAddr),
-                                    it->second.bytes, sizeof(ElitePermEntry));
+                    const std::string& pieceName = !pieceNames[r]->empty() ? *pieceNames[r] : sel.eliteSuit;
+                    const uint32_t permId = LookupStringId(pieceName);
+                    if (permId != 0 && s_eliteRegions[r].permArrayAddr != 0) {
+                        auto it = s_eliteRegions[r].permsByStringId.find(permId);
+                        if (it == s_eliteRegions[r].permsByStringId.end()) {
+                            const uint32_t suitId = LookupStringId(sel.eliteSuit);
+                            it = s_eliteRegions[r].permsByStringId.find(suitId);
+                        }
+                        if (it != s_eliteRegions[r].permsByStringId.end()) {
+                            SafeCopyMem(reinterpret_cast<void*>(s_eliteRegions[r].permArrayAddr),
+                                        it->second.bytes, sizeof(ElitePermEntry));
+                        }
                     }
                 }
             }
@@ -1222,20 +1240,12 @@ std::string ReachArmory::GetTargetScene() {
 }
 
 void ReachArmory::SetSelection(const ReachArmorySelection& sel) {
-    bool visualChanged = false;
+    bool pieceChanged = false;
     {
         std::lock_guard<std::mutex> lock(s_sceneMutex);
         const ReachArmorySelection& prev = s_selection;
-        visualChanged =
+        pieceChanged =
             prev.previewElite != sel.previewElite || prev.isFemale != sel.isFemale ||
-            prev.primaryColorIndex != sel.primaryColorIndex || prev.secondaryColorIndex != sel.secondaryColorIndex ||
-            prev.accentColorIndex != sel.accentColorIndex || prev.lightsColorIndex != sel.lightsColorIndex ||
-            prev.visorColorIndex != sel.visorColorIndex ||
-            prev.armorEffectIndex != sel.armorEffectIndex || prev.eliteArmorEffectIndex != sel.eliteArmorEffectIndex ||
-            prev.eliteSuitIndex != sel.eliteSuitIndex ||
-            prev.primaryRgb != sel.primaryRgb || prev.secondaryRgb != sel.secondaryRgb ||
-            prev.accentRgb != sel.accentRgb || prev.lightsRgb != sel.lightsRgb || prev.lightsCustom != sel.lightsCustom ||
-            prev.visorRgb != sel.visorRgb ||
             prev.helmet != sel.helmet || prev.chest != sel.chest ||
             prev.leftShoulder != sel.leftShoulder || prev.rightShoulder != sel.rightShoulder ||
             prev.hands != sel.hands || prev.wrist != sel.wrist || prev.utility != sel.utility ||
@@ -1243,10 +1253,11 @@ void ReachArmory::SetSelection(const ReachArmorySelection& sel) {
             prev.eliteSuit != sel.eliteSuit || prev.eliteHelmet != sel.eliteHelmet ||
             prev.eliteLeftShoulder != sel.eliteLeftShoulder || prev.eliteRightShoulder != sel.eliteRightShoulder ||
             prev.eliteChest != sel.eliteChest || prev.eliteArms != sel.eliteArms || prev.eliteLegs != sel.eliteLegs ||
-            prev.eliteArmorEffect != sel.eliteArmorEffect;
+            prev.eliteArmorEffect != sel.eliteArmorEffect ||
+            prev.eliteSuitIndex != sel.eliteSuitIndex;
         s_selection = sel;
     }
-    if (visualChanged) s_previewDirty.store(true);
+    if (pieceChanged) s_previewDirty.store(true);
     s_selectionGeneration.fetch_add(1);
 }
 

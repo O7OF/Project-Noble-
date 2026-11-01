@@ -87,7 +87,7 @@ struct VisorEntry {
     const char* description;
 };
 
-constexpr std::array<VisorEntry, 20> kVisorColors = {{
+constexpr std::array<VisorEntry, 30> kVisorColors = {{
     {"DEFAULT", "default", 0.85f, 0.53f, 0.14f,
      "Standard-issue solar/laser reflective gold-amber coating applied to MJOLNIR Mk. V visors."},
     {"SILVER",  "silver",  0.78f, 0.83f, 0.90f,
@@ -127,7 +127,27 @@ constexpr std::array<VisorEntry, 20> kVisorColors = {{
     {"LIME",    "lime",    0.42f, 0.92f, 0.18f,
      "High-contrast chartreuse coating for low-visibility jungle deployment."},
     {"PLATINUM","platinum",0.92f, 0.94f, 0.98f,
-     "Pure mirror-finish platinum reflection cutting flash blindness."}
+     "Pure mirror-finish platinum reflection cutting flash blindness."},
+    {"OBSIDIAN", "obsidian", 0.08f, 0.08f, 0.10f,
+     "Polarized deep obsidian stealth coat that conceals optics entirely."},
+    {"PEARL",   "pearl",   0.95f, 0.92f, 0.88f,
+     "Opalescent white-pearl finish with subtle prismatic refractions."},
+    {"ELECTRIC BLUE", "electric_blue", 0.05f, 0.80f, 1.00f,
+     "High-voltage azure mirrored coating optimized for storm environments."},
+    {"BLOOD ORANGE", "blood_orange", 0.95f, 0.22f, 0.05f,
+     "Aggressive deep orange coating with crimson sub-surface illumination."},
+    {"MINT",    "mint",    0.35f, 0.88f, 0.65f,
+     "Polarized spearmint finish tuned for maritime and verdant operations."},
+    {"COPPER",  "copper",  0.85f, 0.45f, 0.25f,
+     "Burnished copper finish favored by long-range scout snipers."},
+    {"MIDNIGHT","midnight",0.05f, 0.08f, 0.25f,
+     "Ultra-dark navy optical shield that eliminates night glint."},
+    {"MAGENTA", "magenta", 0.88f, 0.10f, 0.60f,
+     "High-contrast metallic magenta finish engineered for command presence."},
+    {"AQUAMARINE", "aquamarine", 0.15f, 0.85f, 0.75f,
+     "Brilliant sea-green reflection cutting glare across polar water."},
+    {"TITANIUM","titanium",0.70f, 0.72f, 0.75f,
+     "Matte titanium-grey mirrored layer with military anti-glare specs."}
 }};
 
 struct HelmetVariantSpec {

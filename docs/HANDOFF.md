@@ -9,6 +9,28 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
 MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.14 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
 
+## 0. Pick up here (2026-10-31, 23:40 ET) - Armor Lights, Illumination Shaders & In-Game Replication for Elites & Spartans (@O7OF)
+
+**Version:** 0.9.14.2. **Build:** noble-client, noble-dev, noble-dedicated, 0 errors, 0 warnings on MSVC Release x64.
+
+**1. Elite & Spartan Lights Color Picker & Real-Time Illumination:**
+- Fixed `LinearToSrgb` gamma correction in `LinearRgbToArgbU32` so packed ARGB values preserve full luminance instead of crushing additive illumination card materials into dark/muddy fringe blending.
+- Fixed `s_suitRecords` pruning condition (`cur[i] < -0.1f || cur[i] > 10.0f`) so dark/near-zero channels (black, navy, crimson, etc.) do not wipe suit records.
+- Separated biped model destruction from real-time color adjustments in `ApplyGlobalsAndPermutations`, enabling live 60 FPS slider/picker adjustment of primary, secondary, accent, and lights colors without biped flashing or rebuild stutter.
+- Fixed `ScanEliteColorRecordsIn` so it tests `prevColors` (`std::memcmp(cur, prevColors, 16) == 0`) and broadened `MatchEliteColorPattern` channel matching, ensuring live Elite color records are never dropped when adjusting the 4th lights color picker alone.
+- Fixed direct Elite hlmt permutation table swapper (`s_eliteScanned`) in `ApplyGlobalsAndPermutations` to respect individual equipped piece permutations (`sel.eliteHelmet`, `sel.eliteLeftShoulder`, `sel.eliteRightShoulder`, `sel.eliteChest`, `sel.eliteArms`, `sel.eliteLegs`) instead of overwriting all 6 regions with the base `sel.eliteSuit`.
+
+**2. In-Game Network Replication for Elite Models (Honor Guard, H2A Ranger, Counselor) & Colors:**
+- In `src/engine/ElitePack.cpp`, updated `RefreshLocalPicks()` to read the player's 4 color indices (`primary_color`, `secondary_color`, `accent_color`, `lights_color`) as well as custom RGB picker values (`*_custom`, `*_custom_rgb`) from `appearance.dat`.
+- In `RecordSetHook` (`haloreach.dll + 0x2C837C`), wrote `block[7] = static_cast<uint8_t>(set);` to preserve all 11 sets (0..10, including 8=Honor Guard, 9=H2A Ranger, 10=Counselor) in the 0x20-byte network sync block. Also packed player colors into `block[10..13]` and custom color data into `block[14..27]`.
+- In `BuilderHook` (`haloreach.dll + 0x1055EC`), expanded the set bounds check to `< static_cast<int>(std::size(kSetPieces))` (11 sets), synchronized `record[kRecordEliteSet]` and `copy[kRecordEliteSet]`, and mapped local and remote colors (`record[0x1A..0x1D]` -> `copy[0x1A..0x1D]`), ensuring both local bipeds and remote multiplayer peers spawn with their replicated Elite models, armor pieces, and custom colors intact.
+
+**3. Expanded Spartan Visor Palette (30 Finishes):**
+- Expanded `kVisorColors` in `ArmorCustomizer.cpp` from 20 to 30 authentic finishes, adding OBSIDIAN, PEARL, ELECTRIC BLUE, BLOOD ORANGE, MINT, COPPER, MIDNIGHT, MAGENTA, AQUAMARINE, and TITANIUM.
+- Added corresponding engine profile mappings in `ReachHost.cpp::visorOffset` and updated profile clamps to 0..29.
+
+**4. Host Profile 4th Color Slot:**
+- Added `put(0xA4, kColor + lightsColor)` in `ReachHost.cpp::ApplyArmoryAppearance` so the host profile carries the 4th lights color.
 ## 0. Pick up here (2026-10-31, 23:18 ET) - Lobby survives a match; guest custom-mode row (@claude)
 
 **Commit:** `e5fd236`. **Version:** 0.9.14. **Build:** noble-client, noble-dev, noble-dedicated, 0 errors, 0 warnings on the merged tree.
