@@ -18,7 +18,11 @@ constexpr int kActionChatAll = 69;    // Chat lines: Noble-managed like push to 
 constexpr int kActionChatTeam = 70;
 constexpr int kActionChatParty = 71;
 constexpr int kActionChatOpen = 72;   // reopens the last channel; unbound by default
-constexpr int kActionCount = 73;
+// Voice-chat channel push-to-talk. Separate from kActionPushToTalk, which keeps using the TALK TO setting.
+constexpr int kActionVoiceParty = 73;
+constexpr int kActionVoiceTeam = 74;
+constexpr int kActionVoiceGlobal = 75;
+constexpr int kActionCount = 76;
 
 int DefaultKey(int action);            // VK code, 0 = unbound
 int EffectiveKey(int action);          // default or the player's override

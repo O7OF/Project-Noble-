@@ -58,6 +58,9 @@ struct Config {
     int channel = 0;
     bool masterMute = false;
     int pttKey = 0;
+    int pttPartyKey = 0;
+    int pttTeamKey = 0;
+    int pttGlobalKey = 0;
     int pttPad = 0;
     std::array<int, 6> paddleKeys{};
 };
@@ -323,15 +326,21 @@ bool PadInputHeld(const Config& cfg) {
     return false;
 }
 
-bool PushToTalkHeld(const Config& cfg) {
+// Returns the voice channel the player is holding a key for, or -1. Separate keys win over the generic PTT; when
+// several are held, the narrower channel wins (party > team > everyone).
+int PushToTalkChannel(const Config& cfg, int fallbackChannel) {
     // Only for our own window: the same key typed in another program, or in one of our text boxes, must not open the mic.
     HWND foreground = GetForegroundWindow();
     DWORD process = 0;
     if (foreground) GetWindowThreadProcessId(foreground, &process);
-    if (process != GetCurrentProcessId()) return false;
-    if (s_pushToTalkBlocked.load() || (ImGui::GetCurrentContext() && ImGui::GetIO().WantTextInput)) return false;
-    if (cfg.pttKey > 0 && cfg.pttKey < 256 && (GetAsyncKeyState(cfg.pttKey) & 0x8000) != 0) return true;
-    return PadInputHeld(cfg);
+    if (process != GetCurrentProcessId()) return -1;
+    if (s_pushToTalkBlocked.load() || (ImGui::GetCurrentContext() && ImGui::GetIO().WantTextInput)) return -1;
+    auto held = [](int vk) { return vk > 0 && vk < 256 && (GetAsyncKeyState(vk) & 0x8000) != 0; };
+    if (held(cfg.pttPartyKey)) return 2;
+    if (held(cfg.pttTeamKey)) return 1;
+    if (held(cfg.pttGlobalKey)) return 0;
+    if (held(cfg.pttKey) || PadInputHeld(cfg)) return fallbackChannel;
+    return -1;
 }
 
 Config ReadConfig() {
@@ -346,6 +355,9 @@ Config ReadConfig() {
     c.channel = d.voiceChannel;
     c.masterMute = d.masterMute;
     c.pttKey = KeyBindings::EffectiveKey(KeyBindings::kActionPushToTalk);
+    c.pttPartyKey = KeyBindings::EffectiveKey(KeyBindings::kActionVoiceParty);
+    c.pttTeamKey = KeyBindings::EffectiveKey(KeyBindings::kActionVoiceTeam);
+    c.pttGlobalKey = KeyBindings::EffectiveKey(KeyBindings::kActionVoiceGlobal);
     c.pttPad = PadLayouts::EffectiveInput(d.padLayout, PadLayouts::PushToTalk, &d.padBindings);
     c.paddleKeys = d.padPaddleKeys;
     return c;
@@ -528,14 +540,15 @@ void VoiceThread() {
     if (s_test.active) cfg.enabled = true;   // tests never read the player's settings
     std::vector<uint8_t> packet(kHeaderSize + kMaxPayload);
     uint64_t lastSent = 0, lastRecv = 0, lastPlayed = 0, lastCaptured = 0, lastRendered = 0, lastBytes = 0;
+    int lastChannel = 0;
 
-    const auto sendFrame = [&](const uint8_t* payload, int size, uint8_t flags) {
+    const auto sendFrame = [&](const uint8_t* payload, int size, uint8_t flags, uint8_t channel) {
         std::memcpy(packet.data(), "NVOX", 4);
         const uint64_t id = NetworkTransport::Get().GetRelayMachineId();
         std::memcpy(packet.data() + 4, &id, 8);
         std::memcpy(packet.data() + 12, &seq, 2);
         packet[14] = flags;
-        packet[15] = static_cast<uint8_t>(cfg.channel);
+        packet[15] = channel;
         packet[16] = static_cast<uint8_t>(static_cast<int8_t>(s_localTeam.load()));
         packet[17] = 0;
         if (size > 0) std::memcpy(packet.data() + kHeaderSize, payload, static_cast<size_t>(size));
@@ -546,22 +559,27 @@ void VoiceThread() {
     };
 
     const auto processFrame = [&](const int16_t* pcm) {
-        bool transmit = s_test.active ? s_test.forceTransmit : false;
-        if (!s_test.active) {
-            if (PushToTalkHeld(cfg)) {
-                transmit = true;
-            } else if (cfg.openMic) {
+        int channel = cfg.channel;
+        bool transmit = false;
+        if (s_test.active) {
+            transmit = s_test.forceTransmit;
+        } else {
+            channel = PushToTalkChannel(cfg, cfg.channel);
+            transmit = channel >= 0;
+            if (!transmit && cfg.openMic) {
                 if (FrameLevel(pcm) >= kOpenMicThreshold) hang = kOpenMicHangFrames;
                 else if (hang > 0) --hang;
                 transmit = hang > 0;
+                channel = cfg.channel;
             }
         }
+        if (transmit) lastChannel = channel;
         if (transmit && encoder) {
             uint8_t payload[kMaxPayload];
             const int bytes = opus_encode(encoder, pcm, kFrameSamples, payload, kMaxPayload);
-            if (bytes > 0) sendFrame(payload, bytes, 0);
+            if (bytes > 0) sendFrame(payload, bytes, 0, static_cast<uint8_t>(channel));
         } else if (wasTransmitting) {
-            sendFrame(nullptr, 0, kFlagEnd);
+            sendFrame(nullptr, 0, kFlagEnd, static_cast<uint8_t>(lastChannel));
             opus_encoder_ctl(encoder, OPUS_RESET_STATE);
         }
         wasTransmitting = transmit;

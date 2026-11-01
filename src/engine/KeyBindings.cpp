@@ -21,7 +21,7 @@ const uint8_t kDefaultKeys[kActionCount] = {
     /* 48 */ 'F',        VK_RBUTTON, VK_RBUTTON, 'E',      'G',        'C',        'X',        'F',
     /* 56 */ '3',        'G',      'L',        VK_UP,      VK_DOWN,    'P',        VK_SPACE,   VK_LCONTROL,
     /* 64 */ 0,          0,        0,          'V',        0,          'Y',        'T',        'P',
-    /* 72 */ 0,
+    /* 72 */ 0,          VK_F6,     VK_F7,      VK_F8,
 };
 
 // Slot numbers are MCC's GameAbstractButton order (the enum list in MCC-Win64-Shipping.exe, 66 entries
@@ -57,6 +57,9 @@ const ActionInfo kActions[] = {
     { 6, "Toggle night vision", ActionGroup::Actions },
     { kActionLowerWeapon, "Lower weapon", ActionGroup::Actions },
     { kActionPushToTalk, "Push to talk", ActionGroup::Actions },
+    { kActionVoiceParty, "Voice to party", ActionGroup::Actions },
+    { kActionVoiceTeam, "Voice to team", ActionGroup::Actions },
+    { kActionVoiceGlobal, "Voice to everyone", ActionGroup::Actions },
     { kActionChatAll, "Chat to everyone", ActionGroup::Actions },
     { kActionChatTeam, "Chat to team", ActionGroup::Actions },
     { kActionChatParty, "Chat to party", ActionGroup::Actions },
