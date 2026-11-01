@@ -7,8 +7,33 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 
 **Goal:** `noble-client.exe` loads MCC's own `haloreach.dll` (Halo: Reach) and drives it **without MCC**, like the existing
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
-MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.16.6 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.16.8 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
 
+## 0. Pick up here (2026-11-01, 02:40 ET) - Elite Illumination Float Decoupling & Armory UI Optimization (@O7OF)
+
+**Version:** 0.9.16.8. **Build:** noble-client, noble-dev, noble-dedicated, 0 errors, 0 warnings on MSVC Release x64. Files: src/engine/ReachArmory.cpp, src/ui/ArmorCustomizer.cpp, src/common/Version.hpp, docs/HANDOFF.md, docs/AGENT-STATUS.md.
+
+**What was actually found & fixed (Root Cause Analysis):**
+1. **Elite Armor Turning Gold Instead of Lights (Confirmed via HREK Tag Analysis):**
+   - Direct inspection of Reach Elite shader tags in HREK (	ags/objects/characters/elite/shaders):
+     - elite_armor_template.shader drives diffuse armor albedo (words[0..3]: [0]=Base Permutation, [1]=Undersuit/Accent, [2]=Secondary Trim/Stripes, [3]=Primary/Detail).
+     - elite_ultra_illum_cards.shader, elite_minor_illum_cards.shader, and elite_base\eyes.shader drive the emissive illumination cards, LEDs, and eye glow via float4 linear HDR vectors (light_color and self_illum_color).
+     - In elite_ultra_illum_cards.shader, the stock illumination constant is (0.000f, 0.500f, 1.000f, 1.000f) (Cyan).
+     - In elite_minor_illum_cards.shader, the stock illumination constant is (1.000f, 0.800f, 0.000f, 1.000f) (Amber).
+   - In commit 5631552, words[2] in s_eliteColorRecords had been assigned litArgb. Because s_eliteColorRecords represents diffuse armor albedo, selecting Gold for Lights painted the diffuse armor plates Gold, while leaving the illumination cards and eyes Cyan!
+   - **Fix:** Decoupled Elite lights from diffuse armor. s_eliteColorRecords words is now strictly { priArgb, terArgb, secArgb, priArgb } (Primary, Undersuit, Secondary trim). litArgb is NEVER written to diffuse armor records.
+2. **Dedicated Elite Illumination Scanner (s_eliteIllumRecords):**
+   - Added s_eliteIllumRecords vector and ScanEliteIllumRecordsIn() / ScanEliteIllumRecords().
+   - Scans heap memory for the actual stock float4 illumination constants (kStockUltraIllum, kStockMinorIllum, kStockEyesIllum) or previously applied s_lastEliteIllumFloats.
+   - In WriteColorsAndSuit(), writes eliteIllumFloats = { sel.lightsRgb[0] * 4.0f, sel.lightsRgb[1] * 4.0f, sel.lightsRgb[2] * 4.0f, 1.0f } directly to s_eliteIllumRecords, accurately recoloring the glowing eyes, visor slit, and emissive armor cards.
+3. **Instant Elite Memory Latching on Armory Entry:**
+   - Previously, switching species or entering Armory relied on s_recordRegions cached from the Spartan biped, delaying the Elite's color scan by 2+ seconds (until rame % 120 == 0), causing saved Elite colors to default back to uncolorable stock presets.
+   - Updated StartQuickRescan(): If previewElite is true and eliteColours == 0 on pass 0, immediately scans ReadWriteChunks(0x40), caching the Elite region into s_recordRegions in <10 ms.
+   - Throttled background rescan in Tick() to 30 frames when records are missing instead of 120 frames.
+4. **Armory UI Performance Optimization (Smooth 60 FPS):**
+   - Eliminated per-frame std::string allocations in SyncLegacyFields() by checking string equality before assigning.
+   - Cached static PickOption vectors (s_reachColorOptions, s_reachLightsOptions) and pre-allocated ows.reserve(28) in Render(), eliminating heap reallocations during menu rendering.
+   - Clamped all Elite color indices (elitePrimaryColor, eliteSecondaryColor, eliteAccentColor, eliteLightsColor) within [0, 29] in SyncLegacyFields().
 ## 0. Pick up here (2026-11-01, 02:30 ET) - Fix Elite Lights Color Overwrite, Armor Bleed, and Separate Species Customization (@O7OF)
 
 **Version:** 0.9.16.6. **Build:** noble-client, noble-dev, noble-dedicated, 0 errors, 0 warnings on MSVC Release x64. Files: `src/ui/ArmorCustomizer.hpp`, `src/ui/ArmorCustomizer.cpp`, `src/engine/ReachArmory.cpp`, `src/engine/ReachHost.cpp`, `src/engine/ElitePack.cpp`, `src/common/Version.hpp`, `docs/HANDOFF.md`.

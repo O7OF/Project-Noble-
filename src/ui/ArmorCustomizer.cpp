@@ -888,6 +888,10 @@ void ArmorCustomizer::SyncLegacyFields() {
     m_profile.firefightVoiceIndex = std::clamp(m_profile.firefightVoiceIndex, 0, static_cast<int>(kFirefightVoices.size()) - 1);
     m_profile.accentColor = std::clamp(m_profile.accentColor, 0, 29);
     m_profile.lightsColor = std::clamp(m_profile.lightsColor, 0, 29);
+    m_profile.elitePrimaryColor = std::clamp(m_profile.elitePrimaryColor, 0, 29);
+    m_profile.eliteSecondaryColor = std::clamp(m_profile.eliteSecondaryColor, 0, 29);
+    m_profile.eliteAccentColor = std::clamp(m_profile.eliteAccentColor, 0, 29);
+    m_profile.eliteLightsColor = std::clamp(m_profile.eliteLightsColor, 0, 29);
     m_profile.eliteArmorSet = std::clamp(m_profile.eliteArmorSet, 0, static_cast<int>(kEliteSets.size()) - 1);
     // The mixed presets added 2026-10-30 use the extra piece entries; keep stale saves inside their lists.
     m_profile.eliteHelmetIndex = std::clamp(m_profile.eliteHelmetIndex, 0, static_cast<int>(GetElitePieces(kEliteHelmet).size()) - 1);
@@ -897,12 +901,12 @@ void ArmorCustomizer::SyncLegacyFields() {
     m_profile.eliteArmsIndex = std::clamp(m_profile.eliteArmsIndex, 0, static_cast<int>(GetElitePieces(kEliteArms).size()) - 1);
     m_profile.eliteLegsIndex = std::clamp(m_profile.eliteLegsIndex, 0, static_cast<int>(GetElitePieces(kEliteLegs).size()) - 1);
 
-    m_profile.spartanHelmetGroup = h.legacyGroup;
-    m_profile.spartanChestGroup = chests[m_profile.chestIndex].legacyGroup;
-    m_profile.spartanLeftShoulderGroup = shoulders[m_profile.leftShoulderIndex].legacyLeftGroup;
-    m_profile.spartanRightShoulderGroup = shoulders[m_profile.rightShoulderIndex].legacyRightGroup;
-    m_profile.spartanWristGroup = wrists[m_profile.wristIndex].legacyGroup;
-    m_profile.spartanKneesGroup = knees[m_profile.kneeGuardsIndex].legacyGroup;
+    if (m_profile.spartanHelmetGroup != h.legacyGroup) m_profile.spartanHelmetGroup = h.legacyGroup;
+    if (m_profile.spartanChestGroup != chests[m_profile.chestIndex].legacyGroup) m_profile.spartanChestGroup = chests[m_profile.chestIndex].legacyGroup;
+    if (m_profile.spartanLeftShoulderGroup != shoulders[m_profile.leftShoulderIndex].legacyLeftGroup) m_profile.spartanLeftShoulderGroup = shoulders[m_profile.leftShoulderIndex].legacyLeftGroup;
+    if (m_profile.spartanRightShoulderGroup != shoulders[m_profile.rightShoulderIndex].legacyRightGroup) m_profile.spartanRightShoulderGroup = shoulders[m_profile.rightShoulderIndex].legacyRightGroup;
+    if (m_profile.spartanWristGroup != wrists[m_profile.wristIndex].legacyGroup) m_profile.spartanWristGroup = wrists[m_profile.wristIndex].legacyGroup;
+    if (m_profile.spartanKneesGroup != knees[m_profile.kneeGuardsIndex].legacyGroup) m_profile.spartanKneesGroup = knees[m_profile.kneeGuardsIndex].legacyGroup;
 }
 
 void ArmorCustomizer::MigrateFromLegacyFields() {
@@ -1648,6 +1652,7 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
     int speciesInt = static_cast<int>(m_profile.species);
     int bodyInt = static_cast<int>(m_profile.bodyType);
     std::vector<SlotRow> rows;
+    rows.reserve(28);
     {
         SlotRow r{ "CHARACTER", "Species", RowKind::List, &speciesInt };
         r.options = { { "SPARTAN", "UNSC SPARTAN-III. Used in multiplayer, Forge and custom games." },
@@ -1748,20 +1753,35 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
         int* aIdx = isElite ? &m_profile.eliteAccentColor : &m_profile.accentColor;
         int* lIdx = isElite ? &m_profile.eliteLightsColor : &m_profile.lightsColor;
 
+        static const auto s_reachColorOptions = []() {
+            std::vector<PickOption> opts;
+            opts.reserve(kReachColors.size());
+            for (const auto& c : kReachColors) {
+                opts.push_back({ c.name, "", ColourU32(c.r, c.g, c.b) });
+            }
+            return opts;
+        }();
+        static const auto s_reachLightsOptions = []() {
+            std::vector<PickOption> opts;
+            opts.reserve(kReachColors.size());
+            for (const auto& c : kReachColors) {
+                opts.push_back({ c.name, "Emissive armor lights and illumination color.", ColourU32(c.r, c.g, c.b) });
+            }
+            return opts;
+        }();
+
         SlotRow p{ "COLORS", "Primary", RowKind::Colour, pIdx };
+        p.options = s_reachColorOptions;
         SlotRow q{ "COLORS", "Secondary", RowKind::Colour, sIdx };
+        q.options = s_reachColorOptions;
         SlotRow a{ "COLORS", "Accent", RowKind::Colour, aIdx };
+        a.options = s_reachColorOptions;
         SlotRow l{ "COLORS", "Lights", RowKind::Colour, lIdx };
-        for (const auto& c : kReachColors) {
-            p.options.push_back({ c.name, "", ColourU32(c.r, c.g, c.b) });
-            q.options.push_back({ c.name, "", ColourU32(c.r, c.g, c.b) });
-            a.options.push_back({ c.name, "", ColourU32(c.r, c.g, c.b) });
-            l.options.push_back({ c.name, "Emissive armor lights and illumination color.", ColourU32(c.r, c.g, c.b) });
-        }
-        rows.push_back(p);
-        rows.push_back(q);
-        rows.push_back(a);
-        rows.push_back(l);
+        l.options = s_reachLightsOptions;
+        rows.push_back(std::move(p));
+        rows.push_back(std::move(q));
+        rows.push_back(std::move(a));
+        rows.push_back(std::move(l));
     }
 
 

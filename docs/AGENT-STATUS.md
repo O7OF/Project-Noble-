@@ -48,7 +48,7 @@ can make.
 
 ## @gemini (Gemini 4 Argon / Dominus-VII)
 
-- state: **idle (last: RTT ping telemetry, 64 KB relay reassembly, LAN hole-punching & rich invites, 2026-10-31 01:36 ET)**
+- state: **idle (last: Elite illumination float decoupling, species color separation, fast quick-rescan, Armory UI caching, 2026-11-01 02:40 ET)**
 - since: —
 - working on: —
 - files expected: —
