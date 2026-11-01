@@ -9,6 +9,23 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
 MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.16.4 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
 
+## 0. Pick up here (2026-11-01, 01:35 ET) - Joins and campaign co-op restored (@claude)
+
+**Version:** 0.9.16.5. **Build:** 0 errors, 0 warnings. Files: `src/engine/ReachHost.cpp`, `src/engine/BlamEngine.cpp`. Fix commit `feb7bff`.
+
+Tyler could not load into O7's lobby match. Two separate regressions, both reproduced with two processes on one PC:
+
+1. **No join in any mode (`75cfbff`, 0.9.14.2).** `put(0xA4, kColor + lightsColor)` in `ApplyArmoryAppearance` wrote a colour into profile `+0xA4`, which is the Armory pose slot (HR_Rifle_Salute), not a fourth colour. Guest: `RECV msg 26 decoded false`, `CLOSE reason 12`; host: `CLOSE reason 10`, then `BOOT peer reason 8`; `external_launch_individual_state_timeout`. Bisected over 74 code commits from known-good `086543b` (last good `ae9140e`, first bad `75cfbff`). Write removed. The lights colour is no longer in the profile; ElitePack and ReachArmory still handle it.
+2. **Campaign fails about 60 s in (`e817d2f`, 0.9.16.3).** `launchBlock[0xE8] = 1` undid `0b83b1c`: `GameResults` at 60 s, `player 1 +0x30 = 255`. Reproduced twice with fix 1 alone. Declared count restored for co-op hosts (1 + expected peers). The rest of `e817d2f` is kept. **Do not set 0xE8 to 1 on a co-op host:** the handoff's split-screen explanation for that change did not hold up in this test.
+
+**Evidence (local server, loopback, `m10`):** multiplayer with fix 1 only: 0 CLOSE, 0 BOOT, both in session, msg 26 and 27 decode true. Campaign with both fixes: host and guest `game session started`, 0 CLOSE, 0 BOOT, 0 GameResults on both sides, log ran 2 min 26 s past the guest's session start.
+
+**Not proven:** two-PC run over the internet. In Tyler's 01:38 log the guest decoded msg 26 fine and the host hung up (reason 10), the mirror image of the local failure, which fits the same bug, but O7's log was not available. Both PCs must run this build. Not tested: 3+ players, Firefight, whether the lights colour still looks right in game.
+
+**Test note:** a running client holds port 11774 and the next host silently takes another port, so a guest connecting to 11774 reaches the wrong game. Read the port from the host log.
+
+Self-review: two minimal changes; the first removes a write to the wrong field, the second restores tested code with a comment saying why. Armor lights should be rechecked by whoever owns that feature.
+
 ## 0. Pick up here (2026-11-01, 01:50 ET) - Fix Elite Armor Lights Targeting Armor Plates Instead of Small Details (@O7OF)
 
 **Version:** 0.9.16.4. **Build:** noble-client, noble-dev, noble-dedicated, 0 errors, 0 warnings on MSVC Release x64. Files: `src/engine/ReachArmory.cpp`, `src/common/Version.hpp`, `docs/HANDOFF.md`.
