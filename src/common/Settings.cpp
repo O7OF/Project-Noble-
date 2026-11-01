@@ -55,8 +55,13 @@ void Clamp(SettingsData& d) {
     d.voiceVolume = std::clamp(d.voiceVolume, 0.0f, 2.0f);
     if (d.voiceBitrateKbps != 16 && d.voiceBitrateKbps != 24) d.voiceBitrateKbps = 20;
     d.voiceChannel = std::clamp(d.voiceChannel, 0, 2);
-    if (d.playerName.empty()) d.playerName = "NobleSix";
-    if (d.playerName.size() > 15) d.playerName.resize(15);  // Reach gamertags are at most 15 characters
+    auto trimName = [](std::string& s) {
+        s.erase(s.begin(), std::find_if(s.begin(), s.end(), [](unsigned char ch) { return !std::isspace(ch); }));
+        s.erase(std::find_if(s.rbegin(), s.rend(), [](unsigned char ch) { return !std::isspace(ch); }).base(), s.end());
+    };
+    trimName(d.playerName);
+    if (d.playerName.empty() || d.playerName == "Player") d.playerName = "NobleSix";
+    if (d.playerName.size() > 20) d.playerName.resize(20);
     {
         // Service tag: Reach allows up to 4 characters, letters and digits, shown in upper case.
         std::string tag;

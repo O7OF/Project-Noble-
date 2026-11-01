@@ -229,7 +229,11 @@ void SettingsPanel::SetTab(int tab) {
 }
 
 void SettingsPanel::SyncBuffers() {
-    m_edit.playerName = m_nameBuf;
+    std::string n = m_nameBuf;
+    n.erase(n.begin(), std::find_if(n.begin(), n.end(), [](unsigned char ch) { return !std::isspace(ch); }));
+    n.erase(std::find_if(n.rbegin(), n.rend(), [](unsigned char ch) { return !std::isspace(ch); }).base(), n.end());
+    if (n.size() > 20) n.resize(20);
+    m_edit.playerName = n.empty() ? "NobleSix" : n;
     m_edit.serviceTag = m_tagBuf;
     m_edit.masterServerUrl = m_masterBuf;
 }
@@ -1138,8 +1142,8 @@ void SettingsPanel::RenderPlayer() {
         ImGui::SetCursorScreenPos(save);
         (void)s;
     };
-    textRow("PLAYER NAME", "Your name on scoreboards, in the party box and (later) in chat. Up to 15 characters.",
-            "NobleSix", m_edit.playerName != m_saved.playerName, m_nameBuf, 16, ImGuiInputTextFlags_None);
+    textRow("PLAYER NAME", "Your name on scoreboards, in the party box and (later) in chat. Up to 20 characters.",
+            "NobleSix", m_edit.playerName != m_saved.playerName, m_nameBuf, 21, ImGuiInputTextFlags_None);
     textRow("SERVICE TAG", "Up to 4 letters or digits, shown next to your name in game (Reach's service tag).",
             "NOBL", m_edit.serviceTag != m_saved.serviceTag, m_tagBuf, 5, ImGuiInputTextFlags_CharsUppercase | ImGuiInputTextFlags_CharsNoBlank);
 }

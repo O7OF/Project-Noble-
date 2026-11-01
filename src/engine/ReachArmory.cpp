@@ -490,6 +490,7 @@ static void StartQuickRescan() {
                 ScanSuitRecordsIn(chunks, true);
             } else {
                 ScanEliteColorRecordsIn(chunks, true);
+                ScanSuitRecordsIn(chunks, true);
                 ScanEliteIllumRecordsIn(chunks, true);
             }
 
@@ -930,8 +931,20 @@ static void WriteColorsAndSuit(const ReachArmorySelection& sel) {
     //   [1] = Secondary armor trim / markings (secArgb)
     //   [2] = Emissive armor lights (litArgb - glowing eyes, illumination cards, LEDs)
     //   [3] = Bodysuit / Techsuit / Accent detail or primary diffuse finish (terArgb / priArgb)
+    // Species-dependent 4-color layout:
+    // Spartan (spartan_armor_template / spartan_visor_template):
+    //   [0] = Primary base armor
+    //   [1] = Secondary trim
+    //   [2] = Accent detail
+    //   [3] = Visor reflection tint (with 20 finishes)
+    // Elite (elite_armor_template / elite_ultra_helmet):
+    //   [0] = Primary base armor (priArgb)
+    //   [1] = Secondary armor trim / markings (secArgb)
+    //   [2] = Undersuit / Bodysuit / Accent detail (terArgb)
+    //   [3] = Primary diffuse albedo / base tint (terArgb if accent selected, else priArgb)
+    // Emissive lights (eyes, illumination cards, LEDs) are driven by the float4 suit/illumination records below.
     const std::array<uint32_t, 4> words = sel.previewElite
-        ? std::array<uint32_t, 4>{ priArgb, secArgb, litArgb, (sel.accentColorIndex != 0 ? terArgb : priArgb) }
+        ? std::array<uint32_t, 4>{ priArgb, secArgb, terArgb, (sel.accentColorIndex != 0 ? terArgb : priArgb) }
         : std::array<uint32_t, 4>{ priArgb, secArgb, terArgb, visArgb };
 
     // Self-illumination / emissive suit shader float constant:
@@ -970,18 +983,6 @@ static void WriteColorsAndSuit(const ReachArmorySelection& sel) {
             }),
             s_colorRecords.end()
         );
-
-        s_suitRecords.erase(
-            std::remove_if(s_suitRecords.begin(), s_suitRecords.end(), [&](uintptr_t suit) {
-                float cur[4] = {};
-                if (!SafeCopyMem(cur, reinterpret_cast<const void*>(suit), sizeof(cur))) return true;
-                for (int i = 0; i < 4; ++i) {
-                    if (!std::isfinite(cur[i]) || cur[i] < 0.0f || cur[i] > 6.0f) return true;
-                }
-                return !SafeWriteFloats(suit, suitFloats, 4);
-            }),
-            s_suitRecords.end()
-        );
     } else {
         s_eliteColorRecords.erase(
             std::remove_if(s_eliteColorRecords.begin(), s_eliteColorRecords.end(), [&](uintptr_t rec) {
@@ -1008,6 +1009,19 @@ static void WriteColorsAndSuit(const ReachArmorySelection& sel) {
             s_eliteIllumRecords.end()
         );
     }
+
+    // Write suit shader float4 (emissive armor lights, glowing eye slits, and illumination cards)
+    s_suitRecords.erase(
+        std::remove_if(s_suitRecords.begin(), s_suitRecords.end(), [&](uintptr_t suit) {
+            float cur[4] = {};
+            if (!SafeCopyMem(cur, reinterpret_cast<const void*>(suit), sizeof(cur))) return true;
+            for (int i = 0; i < 4; ++i) {
+                if (!std::isfinite(cur[i]) || cur[i] < 0.0f || cur[i] > 6.0f) return true;
+            }
+            return !SafeWriteFloats(suit, suitFloats, 4);
+        }),
+        s_suitRecords.end()
+    );
 }
 
 // -----------------------------------------------------------------------------
@@ -1193,7 +1207,6 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx) {
         const int32_t prevRemade = s_lastRemade.exchange(remade);
         if (prevRemade != -1 && prevRemade != remade) {
             StartQuickRescan();
-            s_rescanRequested.store(true);
         }
     }
     const uint64_t frameNow = s_frameCounter.load();

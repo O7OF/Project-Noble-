@@ -1257,12 +1257,20 @@ bool ArmorCustomizer::LoadProfile(const std::filesystem::path& path) {
             const auto& el = j["elite"];
             if (el.contains("primary_color") && el["primary_color"].is_number_integer())
                 m_profile.elitePrimaryColor = std::clamp(el["primary_color"].get<int>(), 0, 29);
+            else
+                m_profile.elitePrimaryColor = m_profile.primaryColor;
             if (el.contains("secondary_color") && el["secondary_color"].is_number_integer())
                 m_profile.eliteSecondaryColor = std::clamp(el["secondary_color"].get<int>(), 0, 29);
+            else
+                m_profile.eliteSecondaryColor = m_profile.secondaryColor;
             if (el.contains("accent_color") && el["accent_color"].is_number_integer())
                 m_profile.eliteAccentColor = std::clamp(el["accent_color"].get<int>(), 0, 29);
+            else
+                m_profile.eliteAccentColor = m_profile.accentColor;
             if (el.contains("lights_color") && el["lights_color"].is_number_integer())
                 m_profile.eliteLightsColor = std::clamp(el["lights_color"].get<int>(), 0, 29);
+            else
+                m_profile.eliteLightsColor = m_profile.lightsColor;
 
             auto loadCustomElite = [&](const char* flagKey, const char* rgbKey, bool& flag, std::array<float, 3>& rgb) {
                 if (el.contains(flagKey) && el[flagKey].is_boolean()) flag = el[flagKey].get<bool>();

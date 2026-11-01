@@ -2831,6 +2831,11 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
     // If launch was signaled (via WebSocket or HTTP poll) and we are guest, launch!
     if (!st.isLobbyHost && st.lobbyLaunchPending && !done) {
         choice.play = true;
+        for (size_t p = 0; p < st.lobbyRoster.size(); ++p) {
+            const auto& player = st.lobbyRoster[p];
+            Career::RegisterPlayerName(player.peerId, player.username, player.serviceTag);
+            Career::RegisterPlayerSlot(static_cast<int>(p), player.username, player.serviceTag);
+        }
         choice.host = false;
         choice.map = st.lobbyLaunchMap.empty() ? st.lobbyMap : st.lobbyLaunchMap;
         choice.mapOverride = st.lobbyMapOverride;
@@ -3160,6 +3165,11 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
 
         choice.play = true;
         choice.host = true;
+        for (size_t p = 0; p < st.lobbyRoster.size(); ++p) {
+            const auto& player = st.lobbyRoster[p];
+            Career::RegisterPlayerName(player.peerId, player.username, player.serviceTag);
+            Career::RegisterPlayerSlot(static_cast<int>(p), player.username, player.serviceTag);
+        }
         choice.sessionId = st.lobbySessionId;
         choice.sessionToken = st.lobbySessionToken;
         choice.hostOnline = (st.lobbyNetMode == 1);

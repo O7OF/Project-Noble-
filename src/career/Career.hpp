@@ -194,6 +194,7 @@ bool LoadPeerStats(const std::string& playerName, PeerStats& outStats);
 // Remember a player's name and tag against the player id used in the results record (+0x08),
 // so the post-game scoreboard can name remote players.
 void RegisterPlayerName(uint64_t playerId, const std::string& name, const std::string& tag);
+void RegisterPlayerSlot(int slotIndex, const std::string& name, const std::string& tag);
 
 } // namespace Career
 } // namespace noble

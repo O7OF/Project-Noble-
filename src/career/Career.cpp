@@ -140,7 +140,7 @@ constexpr int kWeeklyCount = 5;
 // (Steel, Bronze, Silver, Gold, Onyx, Max). Noble can only count some of them from what it reads at
 // the end of a game; the others stay at 0 (tracked = false) until headshots, weapon types, enemy
 // classes, multikills, sprees, medals and vehicle kills are decoded from the results record.
-enum class CommendationMetric { None, Assists, Missions, FlawlessMissions, NoDeathGames };
+enum class CommendationMetric { None, Assists, Missions, FlawlessMissions, NoDeathGames, Kills, Medals, Games };
 struct CommendationDef {
     int mode;                 // 0 campaign, 1 Firefight, 2 multiplayer
     const char* key;          // art: data\ui\reach\commendations\<mode>_<key>.png
@@ -153,51 +153,51 @@ struct CommendationDef {
 using CM = CommendationMetric;
 // Requirements, tier counts and cR are Reach's (Halopedia). Heavy Weapon's cR was unknown there, so it uses the averages.
 const CommendationDef kCommendations[] = {
-    { 0, "cannon_fodder", "Cannon Fodder", "Kill any infantry-class enemy in Campaign", CM::None, { 250, 750, 3000, 7000, 12000, 20000 }, { 200, 600, 1200, 2400, 2400, 0 } },
+    { 0, "cannon_fodder", "Cannon Fodder", "Kill any infantry-class enemy in Campaign", CM::Kills, { 250, 750, 3000, 7000, 12000, 20000 }, { 200, 600, 1200, 2400, 2400, 0 } },
     { 0, "demon", "Demon", "Complete a Campaign mission (vanilla Noble Actual and Lone Wolf don't count)", CM::Missions, { 9, 18, 81, 135, 270, 540 }, { 400, 400, 400, 400, 400, 0 } },
     { 0, "flawless_cowboy", "Flawless Cowboy", "Complete a Campaign mission without dying (vanilla Noble Actual and Lone Wolf don't count)", CM::FlawlessMissions, { 5, 10, 25, 50, 150, 300 }, { 450, 450, 900, 1500, 2000, 0 } },
-    { 0, "leadership_element", "Leadership Element", "Kill a leader-class enemy in Campaign", CM::None, { 100, 375, 750, 3000, 6000, 10000 }, { 400, 750, 1250, 2500, 2500, 0 } },
-    { 0, "nice_arm", "Nice Arm", "Kill an enemy with a Frag or Plasma Grenade in Campaign", CM::None, { 50, 250, 500, 4000, 8000, 13000 }, { 200, 750, 1000, 2000, 2000, 0 } },
-    { 0, "pinpoint", "Pinpoint", "Kill an enemy with a headshot in Campaign", CM::None, { 50, 250, 500, 4000, 8000, 20000 }, { 100, 750, 1000, 2000, 2000, 0 } },
-    { 0, "precisely", "Precisely", "Kill an enemy with a precision weapon in Campaign (DMR, Needle Rifle, Focus Rifle, Sniper Rifle)", CM::None, { 250, 750, 4000, 10000, 20000, 32000 }, { 500, 750, 1000, 3000, 3000, 0 } },
-    { 0, "right_of_way", "Right of Way", "Kill an enemy vehicle in Campaign", CM::None, { 50, 200, 1000, 2400, 4800, 7200 }, { 250, 400, 800, 1600, 1600, 0 } },
-    { 0, "small_arms", "Small Arms", "Kill an enemy with a pistol in Campaign (Magnum, Plasma Pistol)", CM::None, { 250, 750, 3000, 6000, 10000, 16000 }, { 250, 375, 750, 1250, 1250, 0 } },
-    { 0, "specops", "SpecOps", "Kill a specialist-class enemy in Campaign", CM::None, { 175, 525, 2100, 6000, 10000, 14000 }, { 200, 600, 1200, 2400, 2400, 0 } },
-    { 0, "splash_damage", "Splash Damage", "Kill an enemy with a heavy weapon in Campaign (Rocket Launcher, Grenade Launcher, Plasma Launcher, Spartan Laser, Concussion Rifle, Fuel Rod Gun, Target Locator)", CM::None, { 100, 375, 750, 1500, 3000, 6000 }, { 200, 750, 1500, 2000, 2000, 0 } },
-    { 0, "standard_issue", "Standard Issue", "Kill an enemy with an automatic weapon in Campaign (Needler, Assault Rifle, Plasma Rifle, Plasma Repeater, Spiker)", CM::None, { 250, 750, 3000, 6000, 10000, 15000 }, { 500, 750, 1000, 3000, 3000, 0 } },
-    { 0, "super_soldier", "Super Soldier", "Earn a spree of any type in Campaign", CM::None, { 25, 175, 500, 2000, 5000, 9000 }, { 200, 700, 1500, 2000, 2000, 0 } },
+    { 0, "leadership_element", "Leadership Element", "Kill a leader-class enemy in Campaign", CM::Kills, { 100, 375, 750, 3000, 6000, 10000 }, { 400, 750, 1250, 2500, 2500, 0 } },
+    { 0, "nice_arm", "Nice Arm", "Kill an enemy with a Frag or Plasma Grenade in Campaign", CM::Kills, { 50, 250, 500, 4000, 8000, 13000 }, { 200, 750, 1000, 2000, 2000, 0 } },
+    { 0, "pinpoint", "Pinpoint", "Kill an enemy with a headshot in Campaign", CM::Kills, { 50, 250, 500, 4000, 8000, 20000 }, { 100, 750, 1000, 2000, 2000, 0 } },
+    { 0, "precisely", "Precisely", "Kill an enemy with a precision weapon in Campaign (DMR, Needle Rifle, Focus Rifle, Sniper Rifle)", CM::Kills, { 250, 750, 4000, 10000, 20000, 32000 }, { 500, 750, 1000, 3000, 3000, 0 } },
+    { 0, "right_of_way", "Right of Way", "Kill an enemy vehicle in Campaign", CM::Kills, { 50, 200, 1000, 2400, 4800, 7200 }, { 250, 400, 800, 1600, 1600, 0 } },
+    { 0, "small_arms", "Small Arms", "Kill an enemy with a pistol in Campaign (Magnum, Plasma Pistol)", CM::Kills, { 250, 750, 3000, 6000, 10000, 16000 }, { 250, 375, 750, 1250, 1250, 0 } },
+    { 0, "specops", "SpecOps", "Kill a specialist-class enemy in Campaign", CM::Kills, { 175, 525, 2100, 6000, 10000, 14000 }, { 200, 600, 1200, 2400, 2400, 0 } },
+    { 0, "splash_damage", "Splash Damage", "Kill an enemy with a heavy weapon in Campaign (Rocket Launcher, Grenade Launcher, Plasma Launcher, Spartan Laser, Concussion Rifle, Fuel Rod Gun, Target Locator)", CM::Kills, { 100, 375, 750, 1500, 3000, 6000 }, { 200, 750, 1500, 2000, 2000, 0 } },
+    { 0, "standard_issue", "Standard Issue", "Kill an enemy with an automatic weapon in Campaign (Needler, Assault Rifle, Plasma Rifle, Plasma Repeater, Spiker)", CM::Kills, { 250, 750, 3000, 6000, 10000, 15000 }, { 500, 750, 1000, 3000, 3000, 0 } },
+    { 0, "super_soldier", "Super Soldier", "Earn a spree of any type in Campaign", CM::Medals, { 25, 175, 500, 2000, 5000, 9000 }, { 200, 700, 1500, 2000, 2000, 0 } },
     { 0, "support_role", "Support Role", "Earn an assist in Campaign", CM::Assists, { 100, 375, 750, 1500, 3000, 6000 }, { 200, 500, 1000, 1500, 1500, 0 } },
-    { 0, "walking_tank", "Walking Tank", "Earn a multikill in Campaign", CM::None, { 25, 175, 500, 2000, 5000, 9000 }, { 200, 700, 1500, 2000, 2000, 0 } },
-    { 0, "war_machine", "War Machine", "Kill an enemy with a vehicle in Campaign", CM::None, { 200, 500, 800, 3200, 6400, 14000 }, { 250, 700, 1400, 2000, 2000, 0 } },
+    { 0, "walking_tank", "Walking Tank", "Earn a multikill in Campaign", CM::Medals, { 25, 175, 500, 2000, 5000, 9000 }, { 200, 700, 1500, 2000, 2000, 0 } },
+    { 0, "war_machine", "War Machine", "Kill an enemy with a vehicle in Campaign", CM::Kills, { 200, 500, 800, 3200, 6400, 14000 }, { 250, 700, 1400, 2000, 2000, 0 } },
     { 1, "backup", "Backup", "Earn an assist in Firefight", CM::Assists, { 50, 250, 750, 1500, 3000, 8000 }, { 300, 750, 1500, 2400, 2400, 0 } },
-    { 1, "dome_inspector", "Dome Inspector", "Kill an enemy with a headshot in Firefight", CM::None, { 50, 250, 500, 4000, 8000, 20000 }, { 150, 425, 1000, 2400, 2400, 0 } },
-    { 1, "get_loud", "Get Loud", "Kill an enemy with a heavy weapon in Firefight (Rocket Launcher, Grenade Launcher, Plasma Launcher, Spartan Laser, Concussion Rifle, Fuel Rod Gun, Target Locator)", CM::None, { 100, 375, 750, 2000, 4000, 8000 }, { 200, 750, 1500, 2000, 2000, 0 } },
-    { 1, "grounded", "Grounded", "Kill an enemy vehicle in Firefight", CM::None, { 50, 200, 400, 2500, 6000, 12000 }, { 250, 400, 800, 1600, 1600, 0 } },
-    { 1, "in_command", "In Command", "Kill a leader-class enemy in Firefight (Elites)", CM::None, { 75, 375, 750, 3000, 6000, 10000 }, { 250, 400, 800, 1600, 1600, 0 } },
-    { 1, "longshot", "Longshot", "Kill an enemy with a precision weapon in Firefight (DMR, Needle Rifle, Focus Rifle, Sniper Rifle)", CM::None, { 250, 750, 4000, 10000, 20000, 32000 }, { 500, 750, 1000, 3000, 3000, 0 } },
-    { 1, "methodical", "Methodical", "Earn a spree of any type in Firefight", CM::None, { 25, 175, 500, 2500, 5000, 10000 }, { 200, 700, 1500, 2000, 2000, 0 } },
-    { 1, "numbers_game", "Numbers Game", "Earn any multikill in Firefight", CM::None, { 25, 175, 500, 2500, 5000, 15000 }, { 200, 700, 1500, 2000, 2000, 0 } },
+    { 1, "dome_inspector", "Dome Inspector", "Kill an enemy with a headshot in Firefight", CM::Kills, { 50, 250, 500, 4000, 8000, 20000 }, { 150, 425, 1000, 2400, 2400, 0 } },
+    { 1, "get_loud", "Get Loud", "Kill an enemy with a heavy weapon in Firefight (Rocket Launcher, Grenade Launcher, Plasma Launcher, Spartan Laser, Concussion Rifle, Fuel Rod Gun, Target Locator)", CM::Kills, { 100, 375, 750, 2000, 4000, 8000 }, { 200, 750, 1500, 2000, 2000, 0 } },
+    { 1, "grounded", "Grounded", "Kill an enemy vehicle in Firefight", CM::Kills, { 50, 200, 400, 2500, 6000, 12000 }, { 250, 400, 800, 1600, 1600, 0 } },
+    { 1, "in_command", "In Command", "Kill a leader-class enemy in Firefight (Elites)", CM::Kills, { 75, 375, 750, 3000, 6000, 10000 }, { 250, 400, 800, 1600, 1600, 0 } },
+    { 1, "longshot", "Longshot", "Kill an enemy with a precision weapon in Firefight (DMR, Needle Rifle, Focus Rifle, Sniper Rifle)", CM::Kills, { 250, 750, 4000, 10000, 20000, 32000 }, { 500, 750, 1000, 3000, 3000, 0 } },
+    { 1, "methodical", "Methodical", "Earn a spree of any type in Firefight", CM::Medals, { 25, 175, 500, 2500, 5000, 10000 }, { 200, 700, 1500, 2000, 2000, 0 } },
+    { 1, "numbers_game", "Numbers Game", "Earn any multikill in Firefight", CM::Medals, { 25, 175, 500, 2500, 5000, 15000 }, { 200, 700, 1500, 2000, 2000, 0 } },
     { 1, "perfectionist", "Perfectionist", "Complete a round without dying in Firefight (counted per game for now)", CM::NoDeathGames, { 50, 250, 500, 2000, 5000, 8000 }, { 250, 1250, 2000, 2000, 2000, 0 } },
-    { 1, "pull_the_pin", "Pull the Pin", "Kill an enemy with a grenade in Firefight", CM::None, { 50, 250, 500, 3000, 5000, 9000 }, { 200, 750, 1000, 2000, 2000, 0 } },
-    { 1, "riflin_through", "Riflin' Through", "Kill an enemy with an automatic weapon in Firefight (Needler, Assault Rifle, Plasma Rifle, Plasma Repeater, Spiker)", CM::None, { 250, 750, 3000, 10000, 20000, 32000 }, { 500, 750, 1000, 2000, 2000, 0 } },
-    { 1, "specialized", "Specialized", "Kill a specialist-class enemy in Firefight (Brutes, Jackals, Skirmishers, Spec-Ops Grunts)", CM::None, { 175, 525, 2000, 6000, 10000, 14000 }, { 200, 600, 1200, 2400, 2400, 0 } },
-    { 1, "target_practice", "Target Practice", "Kill an infantry-class enemy in Firefight (Grunts)", CM::None, { 250, 750, 3000, 7000, 12000, 20000 }, { 200, 600, 2000, 2400, 2400, 0 } },
-    { 1, "trigger_happy", "Trigger Happy", "Kill an enemy with a pistol in Firefight (Magnum, Plasma Pistol)", CM::None, { 250, 750, 3000, 6000, 10000, 16000 }, { 500, 750, 1500, 2000, 2000, 0 } },
-    { 1, "vehicular", "Vehicular", "Kill an enemy with a vehicle or turret in Firefight", CM::None, { 200, 500, 800, 3200, 6400, 14000 }, { 250, 700, 1400, 2000, 2000, 0 } },
-    { 2, "any_spree", "Any Spree", "Earn any type of spree in Multiplayer", CM::None, { 5, 50, 250, 1000, 4000, 10000 }, { 250, 425, 1200, 2400, 2400, 0 } },
+    { 1, "pull_the_pin", "Pull the Pin", "Kill an enemy with a grenade in Firefight", CM::Kills, { 50, 250, 500, 3000, 5000, 9000 }, { 200, 750, 1000, 2000, 2000, 0 } },
+    { 1, "riflin_through", "Riflin' Through", "Kill an enemy with an automatic weapon in Firefight (Needler, Assault Rifle, Plasma Rifle, Plasma Repeater, Spiker)", CM::Kills, { 250, 750, 3000, 10000, 20000, 32000 }, { 500, 750, 1000, 2000, 2000, 0 } },
+    { 1, "specialized", "Specialized", "Kill a specialist-class enemy in Firefight (Brutes, Jackals, Skirmishers, Spec-Ops Grunts)", CM::Kills, { 175, 525, 2000, 6000, 10000, 14000 }, { 200, 600, 1200, 2400, 2400, 0 } },
+    { 1, "target_practice", "Target Practice", "Kill an infantry-class enemy in Firefight (Grunts)", CM::Kills, { 250, 750, 3000, 7000, 12000, 20000 }, { 200, 600, 2000, 2400, 2400, 0 } },
+    { 1, "trigger_happy", "Trigger Happy", "Kill an enemy with a pistol in Firefight (Magnum, Plasma Pistol)", CM::Kills, { 250, 750, 3000, 6000, 10000, 16000 }, { 500, 750, 1500, 2000, 2000, 0 } },
+    { 1, "vehicular", "Vehicular", "Kill an enemy with a vehicle or turret in Firefight", CM::Kills, { 200, 500, 800, 3200, 6400, 14000 }, { 250, 700, 1400, 2000, 2000, 0 } },
+    { 2, "any_spree", "Any Spree", "Earn any type of spree in Multiplayer", CM::Medals, { 5, 50, 250, 1000, 4000, 10000 }, { 250, 425, 1200, 2400, 2400, 0 } },
     { 2, "assistant", "Assistant", "Earn an assist in Multiplayer", CM::Assists, { 50, 250, 1000, 4000, 8000, 20000 }, { 150, 425, 1200, 2400, 2400, 0 } },
-    { 2, "close_quarters", "Close Quarters", "Kill an enemy in close quarters in Multiplayer (Grav Hammer, Energy Sword, Shotgun, Melee)", CM::None, { 50, 125, 400, 1600, 4000, 8000 }, { 150, 375, 1200, 2400, 2400, 0 } },
-    { 2, "crack_shot", "Crack Shot", "Kill an enemy with a precision weapon in Multiplayer (DMR, Needle Rifle, Focus Rifle, Sniper Rifle)", CM::None, { 100, 500, 4000, 10000, 20000, 32000 }, { 300, 1000, 2000, 3000, 3000, 0 } },
-    { 2, "downshift", "Downshift", "Drive a vehicle while your passenger or gunner kills an enemy in Multiplayer", CM::None, { 5, 50, 750, 4000, 8000, 20000 }, { 100, 250, 875, 1200, 1200, 0 } },
-    { 2, "grenadier", "Grenadier", "Kill an enemy with a Frag or Plasma Grenade in Multiplayer", CM::None, { 25, 125, 500, 4000, 8000, 14000 }, { 100, 200, 500, 750, 750, 0 } },
-    { 2, "heavy_weapon", "Heavy Weapon", "Kill an enemy with a heavy weapon in Multiplayer (Rocket Launcher, Grenade Launcher, Plasma Launcher, Spartan Laser, Concussion Rifle, Fuel Rod Gun)", CM::None, { 25, 150, 750, 3000, 7000, 14000 }, { 200, 700, 1000, 2400, 2400, 0 } },
-    { 2, "jack_of_all_trades", "Jack of All Trades", "Perform an incredible feat in Multiplayer (Hijacker, Skyjack, Revenge, Avenger, Yoink, Close Call, Killjoy, ... medals)", CM::None, { 50, 125, 400, 1600, 4800, 9600 }, { 150, 375, 1000, 1600, 1600, 0 } },
-    { 2, "mobile_asset", "Mobile Asset", "Kill an enemy with a vehicle in Multiplayer", CM::None, { 25, 125, 500, 4000, 8000, 14000 }, { 100, 200, 500, 750, 750, 0 } },
-    { 2, "multikill", "Multikill", "Earn any multikill in Multiplayer", CM::None, { 10, 125, 500, 2500, 5000, 15000 }, { 250, 450, 875, 1400, 1400, 0 } },
-    { 2, "one_shot", "One Shot", "Kill an enemy with a headshot in Multiplayer", CM::None, { 50, 250, 1000, 4000, 8000, 20000 }, { 150, 425, 1200, 2400, 2400, 0 } },
-    { 2, "rear_admiral", "Rear Admiral", "Kill an enemy with an assassination in Multiplayer", CM::None, { 5, 25, 100, 1000, 4000, 8000 }, { 300, 500, 750, 1000, 1000, 0 } },
-    { 2, "sidearm", "Sidearm", "Kill an enemy with a pistol in Multiplayer (Pistol, Plasma Pistol)", CM::None, { 50, 250, 1000, 4000, 8000, 10000 }, { 100, 200, 500, 750, 750, 0 } },
-    { 2, "trigger_man", "Trigger Man", "Kill an enemy with an automatic weapon in Multiplayer (Needler, Assault Rifle, Plasma Rifle, Plasma Repeater, Spiker)", CM::None, { 100, 500, 4000, 10000, 20000, 32000 }, { 300, 1000, 2000, 3000, 3000, 0 } },
+    { 2, "close_quarters", "Close Quarters", "Kill an enemy in close quarters in Multiplayer (Grav Hammer, Energy Sword, Shotgun, Melee)", CM::Kills, { 50, 125, 400, 1600, 4000, 8000 }, { 150, 375, 1200, 2400, 2400, 0 } },
+    { 2, "crack_shot", "Crack Shot", "Kill an enemy with a precision weapon in Multiplayer (DMR, Needle Rifle, Focus Rifle, Sniper Rifle)", CM::Kills, { 100, 500, 4000, 10000, 20000, 32000 }, { 300, 1000, 2000, 3000, 3000, 0 } },
+    { 2, "downshift", "Downshift", "Drive a vehicle while your passenger or gunner kills an enemy in Multiplayer", CM::Assists, { 5, 50, 750, 4000, 8000, 20000 }, { 100, 250, 875, 1200, 1200, 0 } },
+    { 2, "grenadier", "Grenadier", "Kill an enemy with a Frag or Plasma Grenade in Multiplayer", CM::Kills, { 25, 125, 500, 4000, 8000, 14000 }, { 100, 200, 500, 750, 750, 0 } },
+    { 2, "heavy_weapon", "Heavy Weapon", "Kill an enemy with a heavy weapon in Multiplayer (Rocket Launcher, Grenade Launcher, Plasma Launcher, Spartan Laser, Concussion Rifle, Fuel Rod Gun)", CM::Kills, { 25, 150, 750, 3000, 7000, 14000 }, { 200, 700, 1000, 2400, 2400, 0 } },
+    { 2, "jack_of_all_trades", "Jack of All Trades", "Perform an incredible feat in Multiplayer (Hijacker, Skyjack, Revenge, Avenger, Yoink, Close Call, Killjoy, ... medals)", CM::Medals, { 50, 125, 400, 1600, 4800, 9600 }, { 150, 375, 1000, 1600, 1600, 0 } },
+    { 2, "mobile_asset", "Mobile Asset", "Kill an enemy with a vehicle in Multiplayer", CM::Kills, { 25, 125, 500, 4000, 8000, 14000 }, { 100, 200, 500, 750, 750, 0 } },
+    { 2, "multikill", "Multikill", "Earn any multikill in Multiplayer", CM::Medals, { 10, 125, 500, 2500, 5000, 15000 }, { 250, 450, 875, 1400, 1400, 0 } },
+    { 2, "one_shot", "One Shot", "Kill an enemy with a headshot in Multiplayer", CM::Kills, { 50, 250, 1000, 4000, 8000, 20000 }, { 150, 425, 1200, 2400, 2400, 0 } },
+    { 2, "rear_admiral", "Rear Admiral", "Kill an enemy with an assassination in Multiplayer", CM::Kills, { 5, 25, 100, 1000, 4000, 8000 }, { 300, 500, 750, 1000, 1000, 0 } },
+    { 2, "sidearm", "Sidearm", "Kill an enemy with a pistol in Multiplayer (Pistol, Plasma Pistol)", CM::Kills, { 50, 250, 1000, 4000, 8000, 10000 }, { 100, 200, 500, 750, 750, 0 } },
+    { 2, "trigger_man", "Trigger Man", "Kill an enemy with an automatic weapon in Multiplayer (Needler, Assault Rifle, Plasma Rifle, Plasma Repeater, Spiker)", CM::Kills, { 100, 500, 4000, 10000, 20000, 32000 }, { 300, 1000, 2000, 3000, 3000, 0 } },
 };
 const char* const kTierNames[7] = { "None", "Steel", "Bronze", "Silver", "Gold", "Onyx", "Max" };
 
@@ -221,6 +221,7 @@ Totals s_totals;
 Extra s_extra;
 Award s_lastAward;
 std::map<uint64_t, std::pair<std::string, std::string>> s_playerNames;   // player id -> (name, tag)
+std::map<int, std::pair<std::string, std::string>> s_playerSlots;        // slot index -> (name, tag)
 BaseType s_type = BaseType::Multiplayer;
 std::string s_map;
 int s_difficulty = 1;
@@ -282,6 +283,14 @@ void LoadLocked() {
             for (const auto& k : j["armoryOwned"]) if (k.is_string()) s_totals.armoryOwned.push_back(k.get<std::string>());
         s_totals.creditsToday = j.value("creditsToday", int64_t{0});
         s_totals.armoryUnlockAll = j.value("armoryUnlockAll", false);
+        if (s_totals.armoryUnlockAll) {
+            for (const auto& it : kCatalogItems) {
+                std::string key = std::string(it.slot) + ":" + it.id;
+                if (std::find(s_totals.armoryOwned.begin(), s_totals.armoryOwned.end(), key) == s_totals.armoryOwned.end()) {
+                    s_totals.armoryOwned.push_back(std::move(key));
+                }
+            }
+        }
         s_totals.day = j.value("day", std::string());
         s_totals.gamesPlayed = j.value("gamesPlayed", int64_t{0});
         s_totals.kills = j.value("kills", int64_t{0});
@@ -548,7 +557,7 @@ int64_t CommendationValue(size_t index) {
 
 // What one finished game adds to a commendation (any difficulty). Noble Actual (m05) is a short
 // intro mission, so it doesn't count as a mission (Tyler: it would be farmed); Lone Wolf does.
-int64_t CommendationAmount(const CommendationDef& c, BaseType type, const std::string& map, int64_t assists, int64_t deaths) {
+int64_t CommendationAmount(const CommendationDef& c, BaseType type, const std::string& map, int64_t kills, int64_t assists, int64_t deaths, int64_t medals) {
     static const BaseType kModeType[3] = { BaseType::Campaign, BaseType::Firefight, BaseType::Multiplayer };
     if (type != kModeType[c.mode]) return 0;
     std::string m = map;
@@ -561,6 +570,9 @@ int64_t CommendationAmount(const CommendationDef& c, BaseType type, const std::s
     case CM::Missions: return countedMission ? 1 : 0;
     case CM::FlawlessMissions: return countedMission && deaths == 0 ? 1 : 0;
     case CM::NoDeathGames: return deaths == 0 ? 1 : 0;
+    case CM::Kills: return kills;
+    case CM::Medals: return medals;
+    case CM::Games: return 1;
     default: return 0;
     }
 }
@@ -730,9 +742,16 @@ void OnGameResults(const uint8_t* record, size_t size) {
         else {
             std::string name = RecordName(pr, 0x4C), tag;
             const auto known = s_playerNames.find(U64(pr, 0x08));
-            if (known != s_playerNames.end()) {
+            if (known != s_playerNames.end() && !known->second.first.empty()) {
                 name = known->second.first;
                 tag = known->second.second;
+            }
+            if (name.empty()) {
+                const auto bySlot = s_playerSlots.find(i);
+                if (bySlot != s_playerSlots.end() && !bySlot->second.first.empty()) {
+                    name = bySlot->second.first;
+                    tag = bySlot->second.second;
+                }
             }
             if (name.empty()) name = "Player " + std::to_string(i + 1);
             row.name = tag.empty() ? name : name + "  [" + tag + "]";
@@ -867,7 +886,7 @@ void OnGameResults(const uint8_t* record, size_t size) {
     // Commendations: count this game, then pay every tier reached since the last match.
     for (size_t i = 0; i < std::size(kCommendations); ++i) {
         const CommendationDef& c = kCommendations[i];
-        const int64_t add = unpaid ? 0 : CommendationAmount(c, s_type, s_map, assists, deaths);
+        const int64_t add = unpaid ? 0 : CommendationAmount(c, s_type, s_map, kills, assists, deaths, medals);
         const int64_t valueBefore = CommendationValue(i);
         if (add > 0) s_extra.commendationCount[CommendationKey(c)] += add;
         const int reached = TierFor(c, CommendationValue(i));
@@ -1125,6 +1144,7 @@ int64_t Balance() {
 bool OwnsArmoryItem(const std::string& key) {
     std::lock_guard<std::mutex> lock(s_mutex);
     LoadLocked();
+    if (s_totals.armoryUnlockAll) return true;
     return std::find(s_totals.armoryOwned.begin(), s_totals.armoryOwned.end(), key) != s_totals.armoryOwned.end();
 }
 
@@ -1155,8 +1175,16 @@ void DevSetArmoryUnlockAll(bool on) {
     std::lock_guard<std::mutex> lock(s_mutex);
     LoadLocked();
     s_totals.armoryUnlockAll = on;
+    if (on) {
+        for (const auto& it : kCatalogItems) {
+            std::string key = std::string(it.slot) + ":" + it.id;
+            if (std::find(s_totals.armoryOwned.begin(), s_totals.armoryOwned.end(), key) == s_totals.armoryOwned.end()) {
+                s_totals.armoryOwned.push_back(std::move(key));
+            }
+        }
+    }
     SaveLocked();
-    NOBLE_INFO("Career [DEV]: Armory unlock-all set to {}", on ? "ON" : "OFF");
+    NOBLE_INFO("Career [DEV]: Armory unlock-all set to {} ({} items tracked)", on ? "ON" : "OFF", s_totals.armoryOwned.size());
 }
 
 void DevGrantMaxCredits() {

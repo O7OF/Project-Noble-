@@ -1186,7 +1186,7 @@ void RefreshLocalPicks() {
         else fxIdx = 0;
         s_localEliteEffect = (fxIdx >= 1 && fxIdx <= 6) ? static_cast<uint8_t>(fxIdx) : 0xFF;
 
-        const bool useElColors = s_localSpeciesElite && el.contains("primary_color");
+        const bool useElColors = el.contains("primary_color");
         const auto& colSrc = useElColors ? el : j;
 
         s_localColors[0] = static_cast<uint8_t>(std::clamp(colSrc.value("primary_color", 1), 0, 29));
