@@ -17,6 +17,8 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 **Evidence.** `-voice-test loopback` at 0.9.10.4: `loopback: PASS`, all five channel-priority checks `ok`, both `voice bind: ... rows exist` checks `ok`, `jitter test: PASS`.
 
+**Independent nav check (same version).** On the merged 0.9.10.4 tree, a scripted pad pressed RB twice and Settings moved from Graphics to Game Options; the footer shows `LB RB Category` and the version string. Capture: `docs/screenshots/nav-independent-settings-category.png`. This re-checks Claude's category-switch fix rather than relying on the original report.
+
 **Still open.** Two-client channel isolation, physical pad press, and rebind capture. The row-existence check does not prove a user can successfully bind a key/button.
 
 Self-review: this checks the tables, not the rendered Settings page. A layout bug could still hide a row after the table is correct.
