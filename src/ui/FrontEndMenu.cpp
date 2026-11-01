@@ -163,6 +163,8 @@ constexpr int Count(const T (&)[N]) { return static_cast<int>(N); }
 struct MenuVariant {
     std::string label;
     std::filesystem::path path;
+    std::string description;   // the file's own text; empty when it only holds a key for a string table Noble can't read
+    std::string type;          // MapGameTypes key from the file name; empty when it can't be told
 };
 
 struct VariantName {
@@ -172,12 +174,12 @@ struct VariantName {
 const VariantName kVariantNames[] = {
     { "slayer_054", "Slayer" }, { "slayer_pro_054", "Slayer Pro" }, { "slayer_classic_054", "Classic Slayer" },
     { "slayer_covy_054", "Elite Slayer" }, { "swat_054", "SWAT" }, { "ctf_054", "Capture the Flag" },
-    { "ctf_1flag_054", "One Flag CTF" }, { "ctf_multiteam_054", "Multi Team CTF" }, { "ctf_neutralflag_054", "Neutral Flag" },
+    { "ctf_1flag_054", "One Flag CTF" }, { "ctf_multiteam_054", "Multi Flag CTF" }, { "ctf_neutralflag_054", "Neutral Flag" },
     { "assault_054", "Assault" }, { "assault_one_bomb_054", "One Bomb" }, { "assault_neutral_bomb_054", "Neutral Bomb" },
     { "headhunter_054", "Headhunter" }, { "headhunter_pro_054", "Headhunter Pro" }, { "infection_054", "Infection" },
     { "infection_safehavens_054", "Safe Havens" }, { "juggernaut_054", "Juggernaut" }, { "koth_054", "King of the Hill" },
     { "koth_crazyking_054", "Crazy King" }, { "oddball_054", "Oddball" }, { "race_054", "Race" }, { "rally_054", "Rally" },
-    { "skeeball_default_054", "Skeeball" }, { "stockpile_054", "Stockpile" }, { "territories_054", "Territories" },
+    { "skeeball_default_054", "Halo Ball" }, { "stockpile_054", "Stockpile" }, { "territories_054", "Territories" },
     { "territories-3plot_054", "3 Plots" }, { "territories-landgrab_054", "Land Grab" }, { "3nvasion_054", "Invasion" },
     { "3nvasion_boneyard_054", "Invasion: Boneyard" }, { "3nvasion_spire_054", "Invasion: Spire" },
     { "3nvasion_dlc_054", "Invasion: Breakpoint" }, { "2nvasion_slayer_054", "Invasion Slayer" },
@@ -207,12 +209,44 @@ std::wstring Lower(std::wstring s) {
     return s;
 }
 
-std::string VariantLabel(const std::wstring& stem) {
+// A shipped variant starts with a _blf header holding its name (UTF-16, offset 0xC0) and description (0x1C0), checked
+// against all 54 files in MCC's game_variants. Only these two strings are read: the rules need the field map.
+struct VariantHeaderText {
+    std::string name;
+    std::string description;
+};
+VariantHeaderText ReadVariantHeaderText(const std::filesystem::path& path) {
+    constexpr size_t kNameAt = 0xC0, kNameChars = 64, kDescriptionAt = 0x1C0, kDescriptionChars = 256;
+    VariantHeaderText out;
+    std::ifstream file(path, std::ios::binary);
+    std::vector<char> data(kDescriptionAt + kDescriptionChars * 2);
+    file.read(data.data(), static_cast<std::streamsize>(data.size()));
+    if (static_cast<size_t>(file.gcount()) < data.size() || std::memcmp(data.data(), "_blf", 4) != 0) return out;
+    const auto read = [&](size_t at, size_t chars) {
+        std::wstring wide;
+        for (size_t i = 0; i < chars; ++i) {
+            const wchar_t c = static_cast<wchar_t>(static_cast<unsigned char>(data[at + i * 2]) | (static_cast<unsigned char>(data[at + i * 2 + 1]) << 8));
+            if (c == 0) break;
+            wide.push_back(c);
+        }
+        char text[1024] = {};
+        WideCharToMultiByte(CP_UTF8, 0, wide.c_str(), static_cast<int>(wide.size()), text, sizeof(text) - 1, nullptr, nullptr);
+        return std::string(text);
+    };
+    out.name = read(kNameAt, kNameChars);
+    out.description = read(kDescriptionAt, kDescriptionChars);
+    if (out.description.find("hr_gvar_") != std::string::npos) out.description.clear();   // a key, not text
+    return out;
+}
+
+// A known file keeps Noble's wording; any other uses the name inside the file, then a tidied file name.
+std::string VariantLabel(const std::wstring& stem, const std::string& nameInFile) {
     const std::wstring lower = Lower(stem);
     for (const VariantName& v : kVariantNames) {
         std::wstring w(v.stem, v.stem + strlen(v.stem));
         if (w == lower) return v.label;
     }
+    if (!nameInFile.empty()) return nameInFile;
     std::string out;
     bool up = true;
     std::wstring s = stem;
@@ -235,7 +269,9 @@ std::vector<MenuVariant> ScanVariants(const std::filesystem::path& reachDir, boo
         if (lower == Lower(kForgeVariant)) continue;
         const bool isFirefightVariant = lower.rfind(L"hr_ff_", 0) == 0;
         if (isFirefightVariant != firefight) continue;
-        list.push_back({ VariantLabel(entry.path().stem().wstring()), entry.path() });
+        const VariantHeaderText text = ReadVariantHeaderText(entry.path());
+        list.push_back({ VariantLabel(entry.path().stem().wstring(), text.name), entry.path(), text.description,
+                         MapGameTypes::FromVariantStem(entry.path().stem().wstring()) });
     }
     std::sort(list.begin(), list.end(), [](const MenuVariant& a, const MenuVariant& b) { return a.label < b.label; });
     return list;
@@ -1518,6 +1554,11 @@ struct MenuState {
     uint64_t lobbyLaunchSkulls = 0;
     double lastLobbyPoll = 0.0;
     int lobbyMenuRow = 0;          // Focused row in pre-game options list
+    bool variantPickerOpen = false;     // Custom Game / Firefight: the full game type list replaces the setup screen
+    int variantPickerRow = 0;
+    bool variantPickerModded = false;
+    std::string variantPickerMap;       // the map it filters for and its display name
+    std::string variantPickerMapName;
     bool lobbyPickerOpen = false;  // The game type list is showing in place of the option rows
     int lobbyPickerRow = 0;
     bool lobbyProfileOpen = false; // The selected player's card is showing in place of the roster
@@ -1558,6 +1599,8 @@ static void SetupHostLobby(MenuState& st, const std::string& mapScenario, const 
     st.lobbyMaxPlayers = maxPlayers;
     st.lobbyLaunchPending = false;
     st.lobbyMenuRow = 0;
+    NOBLE_INFO("FrontEndMenu: host lobby set up: map '{}' mode '{}' game type '{}' file '{}'", mapScenario, mode, varName,
+               std::filesystem::path(varPath).filename().string());
     ClearPendingLobbyEvents();
     st.lastLobbyPoll = ImGui::GetTime();
 
@@ -2261,6 +2304,45 @@ static const char* GameTypeBlurb(const std::string& type) {
     return "A variant with its own rules.";
 }
 
+// The variants a map can host, by mode and then name, so related ones sit together. Rows carry the mode as text.
+struct VariantChoices {
+    std::vector<const MenuVariant*> offered;
+    std::vector<ListItem> items;
+};
+static VariantChoices BuildVariantChoices(const std::vector<MenuVariant>& list, const std::string& scenario, bool unrestricted) {
+    VariantChoices out;
+    for (const MenuVariant& v : list) {
+        if (unrestricted || v.type.empty() || MapGameTypes::Supports(scenario, v.type) || v.type == "firefight") out.offered.push_back(&v);
+    }
+    const auto mode = [](const MenuVariant* v) { return v->type.empty() ? std::string("~") : std::string(MapGameTypes::Name(v->type)); };
+    std::stable_sort(out.offered.begin(), out.offered.end(), [&](const MenuVariant* a, const MenuVariant* b) {
+        const std::string ma = mode(a), mb = mode(b);
+        return ma != mb ? ma < mb : a->label < b->label;
+    });
+    for (const MenuVariant* v : out.offered) {
+        // "Slayer" needn't say it's Slayer; the row names the mode only when the variant's own name doesn't.
+        const std::string typeName = v->type.empty() ? std::string() : MapGameTypes::Name(v->type);
+        const bool same = typeName.empty() || _stricmp(typeName.c_str(), v->label.c_str()) == 0;
+        out.items.push_back({ same ? v->label : v->label + "  \xC2\xB7  " + typeName });
+    }
+    return out;
+}
+
+// Name, mode and description of one variant; the file name and a note about rules too, unless `compact` (the lobby's tight column).
+static void DrawVariantInfo(const Ui& ui, ImVec2 pos, float width, const MenuVariant& v, bool compact = false) {
+    const float right = pos.x + width;
+    Text(ui, NobleStyle::TitleFont(), 24.0f, pos, kWhite, Upper(v.label).c_str());
+    const std::string mode = v.type.empty() ? std::string("CUSTOM VARIANT") : Upper(MapGameTypes::Name(v.type));
+    Text(ui, NobleStyle::TitleFont(), 16.0f, ImVec2(pos.x, pos.y + 30.0f * ui.s), kAccent, mode.c_str());
+    const char* description = v.description.empty() ? GameTypeBlurb(v.type) : v.description.c_str();
+    Text(ui, nullptr, 16.0f, ImVec2(pos.x, pos.y + 54.0f * ui.s), IM_COL32(205, 218, 230, 255), description, right);
+    if (compact) return;
+    const float textH = Font(nullptr)->CalcTextSizeA(16.0f * ui.s, FLT_MAX, width, description).y;
+    const float y = pos.y + 54.0f * ui.s + textH + 10.0f * ui.s;
+    Text(ui, NobleStyle::SmallFont(), 14.0f, ImVec2(pos.x, y), kDim, v.path.filename().string().c_str(), right);
+    Text(ui, NobleStyle::SmallFont(), 14.0f, ImVec2(pos.x, y + 20.0f * ui.s), kDim, "Uses this variant's default rules.", right);
+}
+
 static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, float top, FrontEndChoice& choice, bool& done, bool back) {
     MenuState& st = ctx.st;
     TakePendingLobbyEvents(st);
@@ -2693,13 +2775,9 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         // The game types this map can host, from the variants that ship with the game. Nothing here is invented: the
         // settings inside a variant can't be read until the variant viewer exists.
         const std::vector<MenuVariant>& varList = firefight ? ctx.ffVariants : ctx.variants;
-        std::vector<const MenuVariant*> offered;
-        std::vector<ListItem> items;
-        for (const MenuVariant& v : varList) {
-            if (!comboAllowed(st.lobbyMap, v.path.string())) continue;
-            offered.push_back(&v);
-            items.push_back({ v.label });
-        }
+        const VariantChoices choices = BuildVariantChoices(varList, st.lobbyMap, campaign || firefight || forge || !st.lobbyModFolder.empty());
+        const std::vector<const MenuVariant*>& offered = choices.offered;
+        const std::vector<ListItem>& items = choices.items;
         if (pickerJustOpened) {
             st.lobbyPickerRow = 0;
             for (size_t i = 0; i < offered.size(); ++i) {
@@ -2709,10 +2787,7 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         const int pick = DrawList(ui, "lobby_variants", ImVec2(colX, rowsY), colW - 10.0f * ui.s, items, st.lobbyPickerRow, !pickerJustOpened, 32.0f, 6, false);
         if (!offered.empty()) {
             const MenuVariant& shown = *offered[std::clamp(st.lobbyPickerRow, 0, static_cast<int>(offered.size()) - 1)];
-            const std::string type = MapGameTypes::FromVariantStem(shown.path.stem().wstring());
-            const float infoY = rowsY + 32.0f * ui.s * 6.0f + 10.0f * ui.s;
-            Text(ui, NobleStyle::TitleFont(), 18.0f, ImVec2(colX, infoY), kWhite, type.empty() ? "CUSTOM VARIANT" : Upper(MapGameTypes::Name(type)).c_str());
-            Text(ui, nullptr, 15.0f, ImVec2(colX, infoY + 24.0f * ui.s), kDim, GameTypeBlurb(type), colX + colW);
+            DrawVariantInfo(ui, ImVec2(colX, rowsY + 32.0f * ui.s * 6.0f + 10.0f * ui.s), colW, shown, true);
         }
         if (pick >= 0 && pick < static_cast<int>(offered.size())) {
             st.lobbyVariantPath = offered[pick]->path.string();
@@ -4152,6 +4227,35 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
     case Screen::Forge: {
         const bool ff = st.screen == Screen::Firefight;
         const bool forge = st.screen == Screen::Forge;
+        if (st.variantPickerOpen && !forge) {
+            // The full game type list, in place of the setup screen so nothing behind it reacts to the pad or the mouse.
+            const std::vector<MenuVariant>& list = ff ? ctx.ffVariants : ctx.variants;
+            int& current = ff ? st.ffVariant : st.variant;
+            DrawTitle(ui, ImVec2(left, top), "GAME TYPE", ff ? "FIREFIGHT" : "MULTIPLAYER");
+            Text(ui, nullptr, 17.0f, ImVec2(left + 34.0f * ui.s, top + 70.0f * ui.s), kDim,
+                 st.variantPickerModded ? "Every game type, on a modded map." : ("Game types " + st.variantPickerMapName + " can host.").c_str());
+            const VariantChoices choices = BuildVariantChoices(list, st.variantPickerMap, ff || st.variantPickerModded);
+            const float rowH = 38.0f, listTop = top + 108.0f * ui.s, listW = ui.size.x * 0.40f;
+            const int rows = std::max(4, static_cast<int>((ui.size.y - 74.0f * ui.s - listTop) / (rowH * ui.s)));
+            const int pick = DrawList(ui, "variant_picker", ImVec2(left + 34.0f * ui.s, listTop), listW, choices.items, st.variantPickerRow, true, rowH, rows, true);
+            if (!choices.offered.empty()) {
+                const float infoX = left + 34.0f * ui.s + listW + 40.0f * ui.s;
+                const float infoW = ui.size.x - left - infoX;
+                ui.dl->AddRectFilled(ImVec2(infoX - 16.0f * ui.s, listTop), ImVec2(infoX + infoW + 16.0f * ui.s, listTop + 220.0f * ui.s), IM_COL32(8, 14, 22, 190), 3.0f * ui.s);
+                DrawVariantInfo(ui, ImVec2(infoX, listTop + 14.0f * ui.s), infoW, *choices.offered[std::clamp(st.variantPickerRow, 0, static_cast<int>(choices.offered.size()) - 1)]);
+            }
+            if (pick >= 0 && pick < static_cast<int>(choices.offered.size())) {
+                current = static_cast<int>(choices.offered[pick] - list.data());
+                NOBLE_INFO("FrontEndMenu: game type picked: {} ({})", choices.offered[pick]->label, choices.offered[pick]->path.filename().string());
+                st.variantPickerOpen = false;
+                MenuSounds::Change();
+            } else if (back) {
+                st.variantPickerOpen = false;
+                MenuSounds::Back();
+            }
+            DrawHints(ui, { { Prompt::Accept, "Choose" }, { Prompt::Back, "Back" } });
+            break;
+        }
         DrawTitle(ui, ImVec2(left, top), ff ? "FIREFIGHT" : forge ? "FORGE" : "CUSTOM GAME", ff ? "SURVIVAL" : forge ? "EDIT" : "MULTIPLAYER");
         const MenuMap* baseMaps = ff ? kFirefightMaps : kMaps;
         const int baseCount = ff ? Count(kFirefightMaps) : Count(kMaps);
@@ -4275,6 +4379,25 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
             int& v = ff ? st.ffVariant : st.variant;
             const char* label = list.empty() ? "Default" : list[std::clamp(v, 0, static_cast<int>(list.size()) - 1)].label.c_str();
             const int dv = OptionRow(ui, "variant", ImVec2(px, y), pw, "GAME TYPE", label, st.focusRow == focusRows);
+            // A, or a click on the row's label or value, opens the whole list; the arrows still step through it.
+            const float arrowW = 28.0f * ui.s, valueX = px + pw * 0.48f, rowHeight = 32.0f * ui.s;
+            ImGui::SetCursorScreenPos(ImVec2(px, y));
+            bool openList = ImGui::InvisibleButton("##variant_label", ImVec2(pw * 0.48f, rowHeight));
+            ImGui::SetCursorScreenPos(ImVec2(valueX + arrowW, y));
+            openList = ImGui::InvisibleButton("##variant_value", ImVec2(pw * 0.52f - arrowW * 2.0f, rowHeight)) || openList;
+            if (st.focusRow == focusRows && hit < 0 && AcceptPressed()) openList = true;
+            if (openList && !list.empty()) {
+                const VariantChoices choices = BuildVariantChoices(list, map ? map->scenario : std::string(), modded || ff);
+                st.variantPickerOpen = true;
+                st.variantPickerModded = modded;
+                st.variantPickerMap = map ? map->scenario : std::string();
+                st.variantPickerMapName = map ? map->name : std::string();
+                st.variantPickerRow = 0;
+                for (size_t i = 0; i < choices.offered.size(); ++i) {
+                    if (choices.offered[i] == &list[std::clamp(v, 0, static_cast<int>(list.size()) - 1)]) st.variantPickerRow = static_cast<int>(i);
+                }
+                MenuSounds::Click();
+            }
             if (!list.empty()) {
                 const int count = static_cast<int>(list.size());
                 // Vanilla maps only offer the game types they were built for, so Invasion simply is not in Sword
@@ -4367,7 +4490,10 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         const bool autoPlay = AutoPlayNow();
         const bool startSolo = ((BigAction(ui, "start", ImVec2(px, actionsY), bw, soloLabel, sub.c_str(), true, canStart, st.focusRow == focusRows) ||
                                  (st.focusRow == focusRows && AcceptPressed())) && canStart) || (autoPlay && canStart);
-        const bool startHost = BigAction(ui, "host", ImVec2(px + bw + 10.0f * ui.s, actionsY), pw - bw - 10.0f * ui.s, hostLabel, hostSub, true, canStart);
+        // The host button is one row past the solo one, so a controller can reach it (it used to be mouse-only).
+        const int hostRow = focusRows + 1;
+        const bool startHost = (BigAction(ui, "host", ImVec2(px + bw + 10.0f * ui.s, actionsY), pw - bw - 10.0f * ui.s, hostLabel, hostSub, true, canStart, st.focusRow == hostRow) ||
+                                (st.focusRow == hostRow && AcceptPressed())) && canStart;
 
         if (startHost) {
             std::string varPath, varName;
@@ -4416,7 +4542,7 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
             }
             done = true;
         }
-        if (st.focusRow > 0 && (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || ImGui::IsKeyPressed(ImGuiKey_Tab) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickDown))) st.focusRow = std::min(focusRows, st.focusRow + 1);
+        if (st.focusRow > 0 && (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || ImGui::IsKeyPressed(ImGuiKey_Tab) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickDown))) st.focusRow = std::min(hostRow, st.focusRow + 1);
         if (st.focusRow > 0 && (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickUp))) st.focusRow = std::max(1, st.focusRow - 1);
         if (back) {
             if (st.focusRow > 0) st.focusRow = 0;
