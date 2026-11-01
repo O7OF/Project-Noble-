@@ -218,6 +218,84 @@ int PollHostBackInLobby() {
   return s_state;
 }
 
+// Finds " -name value" in a built command line. Returns false if it is not there; [begin, end) covers the separator,
+// the name and the value (quoted or not).
+bool FindArgSpan(const std::wstring &args, const std::wstring &name, size_t &begin, size_t &end) {
+  for (size_t at = args.find(name); at != std::wstring::npos; at = args.find(name, at + 1)) {
+    const size_t after = at + name.size();
+    if ((at != 0 && args[at - 1] != L' ') || after >= args.size() || args[after] != L' ') continue;
+    size_t value = after + 1;
+    if (value < args.size() && args[value] == L'"') {
+      const size_t close = args.find(L'"', value + 1);
+      end = close == std::wstring::npos ? args.size() : close + 1;
+    } else {
+      const size_t space = args.find(L' ', value);
+      end = space == std::wstring::npos ? args.size() : space;
+    }
+    begin = at != 0 ? at - 1 : 0;
+    return true;
+  }
+  return false;
+}
+
+void RemoveArg(std::wstring &args, const std::wstring &name) {
+  size_t begin = 0, end = 0;
+  if (FindArgSpan(args, name, begin, end)) args.erase(begin, end - begin);
+}
+
+void SetArg(std::wstring &args, const std::wstring &name, const std::wstring &value) {
+  RemoveArg(args, name);
+  if (!args.empty() && args.front() == L' ') args.erase(0, 1);
+  args += (args.empty() ? L"" : L" ") + name + L" \"" + value + L"\"";
+}
+
+// The mission after this one in campaign order, or "" at the end of the campaign or for anything that isn't a stock
+// mission. Missions can be named with a scene suffix ("m10_b").
+std::wstring NextCampaignMission(const std::wstring &game) {
+  static const wchar_t *const kOrder[] = {L"m05", L"m10", L"m20", L"m30", L"m35", L"m45",
+                                          L"m50", L"m52", L"m60", L"m70", L"m70_bonus"};
+  if (_wcsicmp(ArgValue(game, L"-mode").c_str(), L"campaign") != 0) return {};
+  if (!ArgValue(game, L"-mod").empty() || !ArgValue(game, L"-map-override").empty()) return {};
+  std::wstring map = ArgValue(game, L"-map");
+  std::transform(map.begin(), map.end(), map.begin(), [](wchar_t c) { return static_cast<wchar_t>(towlower(c)); });
+  constexpr int kCount = static_cast<int>(sizeof(kOrder) / sizeof(kOrder[0]));
+  int at = -1;
+  for (int i = 0; i < kCount; ++i) if (map == kOrder[i]) at = i;
+  if (at < 0) {
+    for (int i = 0; i < kCount; ++i) if (map.rfind(std::wstring(kOrder[i]) + L"_", 0) == 0) at = i;
+  }
+  return at >= 0 && at + 1 < kCount ? kOrder[at + 1] : L"";
+}
+
+std::wstring MissionTitle(const std::wstring &mission) {
+  char narrow[64] = {};
+  WideCharToMultiByte(CP_UTF8, 0, mission.c_str(), -1, narrow, sizeof(narrow) - 1, nullptr, nullptr);
+  const std::string title = MapNames::Display(narrow);
+  wchar_t wide[128] = {};
+  MultiByteToWideChar(CP_UTF8, 0, title.c_str(), -1, wide, 127);
+  return wide;
+}
+
+// Arguments that start the next mission, or "" if there is none. A hosted game goes back to its lobby with the next
+// mission selected, so guests stay together; a solo game starts it straight away. Difficulty and skulls carry over.
+std::wstring NextMissionArgs(const std::wstring &next, std::wstring lobbyArgs) {
+  if (next.empty()) return {};
+  const std::wstring title = MissionTitle(next);
+  std::wstring game = Relaunch::CurrentGameArgs();
+  if (game.find(L" -host") != std::wstring::npos) {
+    SetArg(lobbyArgs, L"-lobby-map", next);
+    SetArg(lobbyArgs, L"-lobby-map-title", title);
+    RemoveArg(lobbyArgs, L"-lobby-map-image");
+    RemoveArg(lobbyArgs, L"-lobby-map-thumb");
+    return lobbyArgs;
+  }
+  SetArg(game, L"-map", next);
+  SetArg(game, L"-map-title", title);
+  RemoveArg(game, L"-map-image");
+  RemoveArg(game, L"-map-thumb");
+  return game;
+}
+
 void RelaunchAndClose(HWND hwnd, const std::wstring &args, const char *what) {
   NOBLE_INFO("PauseMenu: {} requested", what);
   Relaunch::HandOff(args);  // ends this process; returns only if the new one could not start
@@ -638,9 +716,14 @@ bool IsSlotLine(const Career::AwardLine &l) {
   return l.label == "Random bonus" || l.label == "Jackpot!";
 }
 
+// The credit count and bar sounds repeat several times in a few seconds and sat well above the rest of the UI.
+constexpr float kCountSfxVolume = 0.25f;
+
+// Follows the Other volume slider, like the menu sounds.
 void Sfx(ReachAudio::Sfx sfx, float volume = 1.0f) {
-  if (Settings::Get().Snapshot().menuSounds)
-    ReachAudio::PlaySfx(sfx, volume);
+  const auto settings = Settings::Get().Snapshot();
+  if (settings.menuSounds)
+    ReachAudio::PlaySfx(sfx, volume * settings.volumeOther);
 }
 
 std::string Grouped(long long v) {
@@ -1417,9 +1500,9 @@ void PauseMenu::DrawGameOver(HWND hwnd) {
       if (s_reveal.linesSounded <= i && !s_reveal.skipped) {
         s_reveal.linesSounded = i + 1;
         if (slot)
-          Sfx(ReachAudio::Sfx::SlotMachine);
+          Sfx(ReachAudio::Sfx::SlotMachine, kCountSfxVolume);
         else if (l.credits > 0)
-          Sfx(ReachAudio::Sfx::Totals, 0.7f);
+          Sfx(ReachAudio::Sfx::Totals, kCountSfxVolume);
       }
       const float k =
           std::clamp((t - lt) / (slot ? kSlotRoll : kLineCount), 0.0f, 1.0f);
@@ -1458,7 +1541,7 @@ void PauseMenu::DrawGameOver(HWND hwnd) {
     if (t >= tTotal) {
       if (!s_reveal.totalSounded && !s_reveal.skipped) {
         s_reveal.totalSounded = true;
-        Sfx(ReachAudio::Sfx::Totals);
+        Sfx(ReachAudio::Sfx::Totals, kCountSfxVolume);
       }
       const float k = Ease((t - tTotal) / 0.8f);
       Text(dl, title, 26.0f * s, ImVec2(rightX, ry), kAccent, "CREDITS EARNED");
@@ -1553,13 +1636,16 @@ void PauseMenu::DrawGameOver(HWND hwnd) {
   const bool guestPlayer = wcsstr(GetCommandLineW(), L"-postgame-role guest") != nullptr ||
                            (NetworkTransport::Get().IsActive() && !NetworkTransport::Get().IsHost());
   const bool canPlayAgain = !again.empty() && !guestPlayer;
+  const bool hasPlaylist = wcsstr(GetCommandLineW(), L"-lobby-playlist") != nullptr;
+  const std::wstring nextMission = guestPlayer ? std::wstring() : NextCampaignMission(again);
+  const bool canNextMission = !nextMission.empty();
   // Controller: left and right pick a button, A presses it, and A during the reveal only skips it. The focus starts away
   // from QUIT, so one stray A can never close the game; a host starts on going back to the lobby.
   enum { kPadQuit, kPadMenu, kPadAgain, kPadNext, kPadLobby };
   static int s_padButton = hostRole ? kPadLobby : kPadMenu;
   std::vector<int> padOrder = { kPadQuit, kPadMenu };
   if (canPlayAgain) padOrder.push_back(kPadAgain);
-  if (hostRole && wcsstr(GetCommandLineW(), L"-lobby-playlist")) padOrder.push_back(kPadNext);
+  if ((hostRole && hasPlaylist) || canNextMission) padOrder.push_back(kPadNext);
   if (hostRole) padOrder.push_back(kPadLobby);
   int padAt = 1;
   for (size_t i = 0; i < padOrder.size(); ++i) if (padOrder[i] == s_padButton) padAt = static_cast<int>(i);
@@ -1598,12 +1684,24 @@ void PauseMenu::DrawGameOver(HWND hwnd) {
     padOutline(kPadAgain);
     overButton |= ImGui::IsItemHovered();
   }
+  const auto nextMissionButton = [&] {
+    bx -= bw + gap;
+    ImGui::SetCursorScreenPos(ImVec2(bx, by));
+    if (NobleStyle::PrimaryButton("NEXT MISSION", ImVec2(bw, bh)) || (padPress && s_padButton == kPadNext))
+      RelaunchAndClose(hwnd, NextMissionArgs(nextMission, hostRole ? LobbyReturnArgs(true) : std::wstring()), "next mission");
+    padOutline(kPadNext);
+    overButton |= ImGui::IsItemHovered();
+  };
+  if (canNextMission && !hostRole) nextMissionButton();
   // The host takes everyone back to the lobby: its new process registers the same session again, and guests come back when
   // the server says the match is over. Next in rotation waits for rotation itself.
   if (hostRole) {
+    if (canNextMission && !hasPlaylist) {
+      nextMissionButton();
+    } else {
     bx -= bw + gap;
     ImGui::SetCursorScreenPos(ImVec2(bx, by));
-    if (wcsstr(GetCommandLineW(), L"-lobby-playlist")) {
+    if (hasPlaylist) {
       if (ImGui::Button("NEXT IN ROTATION", ImVec2(bw, bh)) || (padPress && s_padButton == kPadNext))
         RelaunchAndClose(hwnd, LobbyReturnArgs(true, true), "next in rotation");
       padOutline(kPadNext);
@@ -1611,6 +1709,7 @@ void PauseMenu::DrawGameOver(HWND hwnd) {
     } else {
       UnavailableButton("NEXT IN ROTATION", ImVec2(bw, bh), "Pick a playlist on Custom Game to use a rotation.");
       overButton |= ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
+    }
     }
     bx -= bw + gap;
     ImGui::SetCursorScreenPos(ImVec2(bx, by));
@@ -1644,7 +1743,11 @@ void PauseMenu::DrawGameOver(HWND hwnd) {
     const std::string shownMap = !display.empty() ? Upper(display)
                                 : current.empty() ? std::string("-")
                                                   : Upper(MapNames::Display(current));
-    const std::string strip = "THIS MAP: " + shownMap + "    NEXT: NOT SET";
+    char nextName[64] = {};
+    if (canNextMission)
+      WideCharToMultiByte(CP_UTF8, 0, nextMission.c_str(), -1, nextName, sizeof(nextName) - 1, nullptr, nullptr);
+    const std::string strip = "THIS MAP: " + shownMap + "    NEXT: " +
+                              (canNextMission ? Upper(MapNames::Display(nextName)) : std::string("NOT SET"));
     Text(dl, smallFont, 15.0f * s, ImVec2(bx, by - 26.0f * s), kTextDim, strip.c_str());
   }
   // A playlist set to start by itself moves on after a countdown; B or Esc stops it for this match.
