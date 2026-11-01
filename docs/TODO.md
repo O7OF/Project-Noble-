@@ -436,7 +436,7 @@ items above close. Keep the spec open when building any screen so the details la
 
 ### @deepseek
 
-- [~] @deepseek 23:20 ET **Guest custom-mode transport**: host now posts `variant_body` (`6a52bcab` client, `5788b31` server); guest writes it under `data/host_variants` and launches with that path (`ffe33190`). Build 0/0, server `node --check` clean. **Remaining:** two-process host/guest test; materialized JSON path already launches with the right name/timer (`host-mode-materialized.png`).
+- [~] @deepseek 23:20 ET **Guest custom-mode transport**: host now posts `variant_body` (`6a52bcab` client, `5788b31` server); guest writes it under `data/host_variants` and launches with that path (`ffe33190`). Build 0/0, server `node --check` clean. **Remaining:** two-process host/guest client test; server forwarding verified live (`host-mode-server.txt`) and materialized JSON launches with the right name/timer (`host-mode-materialized.png`).
 - [ ] **Lobby session survives results** (server lifecycle + rejoin), so rotation/voting can exist.
 - [ ] **Player counts**: campaign/Firefight up to 16 and multiplayer 16 → 128 are engine-capacity work, not just the 128-entry lobby. Start from `docs/player-count-scaling.md`; expect `capacity`/`coopx` and bandwidth work. 128 lobby is already server-side.
 - [ ] **Prophets' Hand models**: blademaster/council/honor needs the armour-only pack or approved extraction; gameplay NPC proof also blocked by the safe-room camera. Escalate the pack request to O7OF/Tyler.
