@@ -980,9 +980,16 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
     if (gameModeTag != 0) Career::BeginMatch(Career::BaseTypeFromEngineMode(gameModeTag), mapName, difficulty, skulls);
 
     auto launchBlock = BuildLaunchBlock(mapId, gameModeTag, difficulty, skulls, customMvarPath, customVariantPath, connectAddress);
-    // Campaign/Firefight: offset 0xE8 is the local machine player count (1 for PC).
-    // Remote session peers are tracked via membership in the Blam! network session, not 0xE8.
-    launchBlock[0xE8] = 0x01;
+    // Campaign/Firefight co-op: the launch block declares how many players this session has (0xE8).
+    // A host launched with known guests must declare all of them, otherwise the engine only creates the
+    // local player and the co-op state machine fails the mission about 60 s in (GameResults, channel close).
+    // Removed once in e817d2f and re-proven by test; do not reduce this to 1 for a co-op host.
+    if (gameModeTag == 1 || gameModeTag == 5) {
+        int declaredPlayers = 1;
+        if (connectAddress.empty() && expectedPeers > 0) declaredPlayers = 1 + expectedPeers;
+        launchBlock[0xE8] = static_cast<uint8_t>(declaredPlayers);
+        NOBLE_INFO("BlamEngine: launch block declares {} player(s) (0xE8)", declaredPlayers);
+    }
 
     // Request corresponding wireframe loading screen .dots
     LoadScreen::Get().RequestMapDots(mapName, ReachHost::Get().GetDataDir());

@@ -1030,8 +1030,6 @@ static void ApplyArmoryAppearance(uint8_t* profile) {
         // the profile field exists (RR: Steel) and the Armory's third colour word follows it.
         const int accentColor = num(appearance, "accent_color", 0, 29, 14);
         put(0xA0, kColor + accentColor);
-        const int lightsColor = num(appearance, "lights_color", 0, 29, 10);
-        put(0xA4, kColor + lightsColor);
         const std::string armoryTag = str(appearance, "service_tag");
         if (!armoryTag.empty()) {
             wchar_t serviceTag[4] = {};
