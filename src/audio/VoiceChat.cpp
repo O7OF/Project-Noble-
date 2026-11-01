@@ -778,8 +778,8 @@ int RunJitterSelfTest() {
     };
     int16_t out[kFrameSamples];
     const auto tick = [&out] { MixFrame(out, 1.0f); };
-    const auto target = [] { std::lock_guard<std::mutex> lock(s_mutex); return s_peers.count(kPeer) ? s_peers[kPeer].target : 0; };
-    const auto playing = [] { std::lock_guard<std::mutex> lock(s_mutex); return s_peers.count(kPeer) && s_peers[kPeer].playing; };
+    const auto target = [kPeer] { std::lock_guard<std::mutex> lock(s_mutex); return s_peers.count(kPeer) ? s_peers[kPeer].target : 0; };
+    const auto playing = [kPeer] { std::lock_guard<std::mutex> lock(s_mutex); return s_peers.count(kPeer) && s_peers[kPeer].playing; };
 
     // Waits for 60 ms of audio, and crosses the sequence number's wrap on the way.
     uint16_t seq = 65530;

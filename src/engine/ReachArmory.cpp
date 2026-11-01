@@ -151,10 +151,13 @@ static std::array<EliteRegionCache, 6> s_eliteRegions;
 
 // Color records (uint32_t[4] ARGB) & Suit shader records (float[4] linear RGBA)
 static std::vector<uintptr_t> s_colorRecords;
+static std::vector<uintptr_t> s_eliteColorRecords;
 static std::vector<uintptr_t> s_suitRecords;
 static std::array<uint32_t, 4> s_lastColorWords = {
     0xFF585858u, 0xFF595959u, 0xFF2FA0CBu, 0xFFC7A167u
 };
+static uint32_t s_lastElitePriArgb = 0;
+static uint32_t s_lastEliteSecArgb = 0;
 static std::array<float, 4> s_lastSuitFloats = {
     0.9960785f, 0.9921569f, 0.98823535f, 1.0f
 };
@@ -422,9 +425,11 @@ static std::vector<std::pair<uintptr_t, size_t>> RecordRegionChunks() {
 }
 
 static size_t ScanColorRecordsIn(const std::vector<std::pair<uintptr_t, size_t>>& chunks, bool quiet);
+static size_t ScanEliteColorRecordsIn(const std::vector<std::pair<uintptr_t, size_t>>& chunks, bool quiet);
 static size_t ScanSuitRecordsIn(const std::vector<std::pair<uintptr_t, size_t>>& chunks, bool quiet);
 
 static void ScanColorRecords() { ScanColorRecordsIn(ReadWriteChunks(0x40), false); }
+static void ScanEliteColorRecords() { ScanEliteColorRecordsIn(ReadWriteChunks(0x40), false); }
 static void ScanSuitRecords() { ScanSuitRecordsIn(ReadWriteChunks(0x40), false); }
 
 // After the biped is remade: look for its new colour / suit records in the remembered regions every few ms
@@ -432,10 +437,11 @@ static void ScanSuitRecords() { ScanSuitRecordsIn(ReadWriteChunks(0x40), false);
 static void StartQuickRescan() {
     if (s_quickScanning.exchange(true)) return;
     std::thread([]() {
-        size_t colours = 0, suits = 0;
+        size_t colours = 0, eliteColours = 0, suits = 0;
         {
             std::lock_guard<std::mutex> lock(s_dataMutex);
             colours = s_colorRecords.size();
+            eliteColours = s_eliteColorRecords.size();
             suits = s_suitRecords.size();
         }
         const auto start = std::chrono::steady_clock::now();
@@ -443,21 +449,29 @@ static void StartQuickRescan() {
             const auto chunks = RecordRegionChunks();
             if (chunks.empty()) break;
             ScanColorRecordsIn(chunks, true);
+            ScanEliteColorRecordsIn(chunks, true);
             ScanSuitRecordsIn(chunks, true);
-            size_t c = 0, sr = 0;
+            size_t c = 0, ec = 0, sr = 0;
             {
                 std::lock_guard<std::mutex> lock(s_dataMutex);
                 c = s_colorRecords.size();
+                ec = s_eliteColorRecords.size();
                 sr = s_suitRecords.size();
             }
-            // The old biped's records are dropped as they go stale, so "found something new" = a record that
-            // wasn't tracked before; the full scan still runs afterwards and picks up anything missed.
-            if ((c > colours || colours == 0) && (sr > suits || suits == 0) && (c > 0 && sr > 0)) {
+            const bool isElite = ReachArmory::GetSelection().previewElite;
+            bool foundReady = false;
+            if (isElite) {
+                foundReady = (ec > eliteColours || eliteColours == 0) && (ec > 0);
+            } else {
+                foundReady = (c > colours || colours == 0) && (sr > suits || suits == 0) && (c > 0 && sr > 0);
+            }
+            if (foundReady) {
                 const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count();
-                NOBLE_INFO("ReachArmory: rebuilt biped's colour records found in {} ms ({} region chunk(s))", ms, chunks.size());
+                NOBLE_INFO("ReachArmory: rebuilt {} biped's colour records found in {} ms ({} region chunk(s))", isElite ? "Elite" : "Spartan", ms, chunks.size());
                 break;
             }
             colours = std::min(colours, c);
+            eliteColours = std::min(eliteColours, ec);
             suits = std::min(suits, sr);
             if (std::chrono::steady_clock::now() - start > std::chrono::milliseconds(1500)) break;
             std::this_thread::sleep_for(std::chrono::milliseconds(4));
@@ -507,6 +521,91 @@ static size_t ScanColorRecordsIn(const std::vector<std::pair<uintptr_t, size_t>>
             }
         }
         if (!quiet || added) NOBLE_INFO("ReachArmory: Tracked {} live armor color record(s)", s_colorRecords.size());
+    }
+    return added;
+}
+
+static bool MatchEliteColorPattern(const uint32_t cur[4], uint32_t lastPri, uint32_t lastSec) {
+    if ((cur[0] >> 24) != 0xFFu || (cur[1] >> 24) != 0xFFu ||
+        (cur[2] >> 24) != 0xFFu || (cur[3] >> 24) != 0xFFu) {
+        return false;
+    }
+
+    if (lastPri != 0 && cur[3] == lastPri && (lastSec == 0 || cur[2] == lastSec)) {
+        return true;
+    }
+
+    // Reach 11 stock Elite rank preset ARGB palettes (from host-probe.exe scan_elite @ 0x1407B6658)
+    static constexpr uint32_t kStockElitePatterns[11][4] = {
+        { 0xFF231831u, 0xFF2B122Cu, 0xFFEF5046u, 0xFF4D2947u }, // 00
+        { 0xFF1F3E72u, 0xFF222D45u, 0xFFD1660Du, 0xFF5167A9u }, // 01 (Minor Blue)
+        { 0xFFBDE3D6u, 0xFF97B5AAu, 0xFFFF663Bu, 0xFF9EB3ADu }, // 02 (Ultra)
+        { 0xFFF69300u, 0xFFFFD400u, 0xFF1BD687u, 0xFFF47500u }, // 03 (Zealot)
+        { 0xFF361224u, 0xFF2F1434u, 0xFFFF663Bu, 0xFF47162Fu }, // 04 (Spec Ops)
+        { 0xFFEFEFEFu, 0xFF837F6Bu, 0xFFCB5140u, 0xFFC1F1E8u }, // 05
+        { 0xFF361124u, 0xFF141414u, 0xFFCD915Eu, 0xFFABA8B4u }, // 06
+        { 0xFF5E1313u, 0xFF953200u, 0xFF9DB02Cu, 0xFFBC1C17u }, // 07 (Officer)
+        { 0xFF970000u, 0xFF953200u, 0xFF9DB02Cu, 0xFFBC1C17u }, // 08 (Field Marshal)
+        { 0xFF1D161Fu, 0xFF161018u, 0xFF2C684Eu, 0xFF8F2D25u }, // 09 (Honor Guard)
+        { 0xFF753904u, 0xFF741F04u, 0xFF440D0Du, 0xFFE9ED1Au }  // 10 (General)
+    };
+
+    auto chDiff = [](uint32_t a, uint32_t b) {
+        int bd = std::abs(static_cast<int>(a & 0xFF) - static_cast<int>(b & 0xFF));
+        int gd = std::abs(static_cast<int>((a >> 8) & 0xFF) - static_cast<int>((b >> 8) & 0xFF));
+        int rd = std::abs(static_cast<int>((a >> 16) & 0xFF) - static_cast<int>((b >> 16) & 0xFF));
+        return bd <= 8 && gd <= 8 && rd <= 8;
+    };
+
+    for (int p = 0; p < 11; ++p) {
+        if (chDiff(cur[0], kStockElitePatterns[p][0]) &&
+            chDiff(cur[1], kStockElitePatterns[p][1]) &&
+            chDiff(cur[2], kStockElitePatterns[p][2]) &&
+            chDiff(cur[3], kStockElitePatterns[p][3])) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static size_t ScanEliteColorRecordsIn(const std::vector<std::pair<uintptr_t, size_t>>& chunks, bool quiet) {
+    uint32_t lastPri = 0, lastSec = 0;
+    {
+        std::lock_guard<std::mutex> lock(s_dataMutex);
+        lastPri = s_lastElitePriArgb;
+        lastSec = s_lastEliteSecArgb;
+    }
+
+    std::vector<uintptr_t> found;
+    for (const auto& chunk : chunks) {
+        const uintptr_t base = chunk.first;
+        const size_t size = chunk.second;
+        {
+            std::vector<uint8_t> buf(size);
+            const uintptr_t self = reinterpret_cast<uintptr_t>(buf.data());
+            if (base < self + size && self < base + size) continue;
+            if (SafeCopyMem(buf.data(), reinterpret_cast<const void*>(base), size)) {
+                for (size_t off = 0; off + 16 <= size; off += 4) {
+                    const uint32_t* cur = reinterpret_cast<const uint32_t*>(buf.data() + off);
+                    if (MatchEliteColorPattern(cur, lastPri, lastSec)) {
+                        found.push_back(base + off);
+                    }
+                }
+            }
+        }
+    }
+
+    size_t added = 0;
+    if (!found.empty()) {
+        std::lock_guard<std::mutex> lock(s_dataMutex);
+        for (uintptr_t rec : found) {
+            if (std::find(s_eliteColorRecords.begin(), s_eliteColorRecords.end(), rec) == s_eliteColorRecords.end()) {
+                s_eliteColorRecords.push_back(rec);
+                RememberRegion(rec);
+                ++added;
+            }
+        }
+        if (!quiet || added) NOBLE_INFO("ReachArmory: Tracked {} live Elite color record(s)", s_eliteColorRecords.size());
     }
     return added;
 }
@@ -668,6 +767,8 @@ static void WriteColorsAndSuit(const ReachArmorySelection& sel) {
 
     std::lock_guard<std::mutex> lock(s_dataMutex);
     s_lastColorWords = { words[0], words[1], words[2], words[3] };
+    s_lastElitePriArgb = priArgb;
+    s_lastEliteSecArgb = secArgb;
     s_lastSuitFloats = { suitFloats[0], suitFloats[1], suitFloats[2], suitFloats[3] };
 
     s_colorRecords.erase(
@@ -681,6 +782,25 @@ static void WriteColorsAndSuit(const ReachArmorySelection& sel) {
             return !SafeCopyMem(reinterpret_cast<void*>(rec), words, sizeof(words));
         }),
         s_colorRecords.end()
+    );
+
+    s_eliteColorRecords.erase(
+        std::remove_if(s_eliteColorRecords.begin(), s_eliteColorRecords.end(), [&](uintptr_t rec) {
+            uint32_t cur[4] = {};
+            if (!SafeCopyMem(cur, reinterpret_cast<const void*>(rec), sizeof(cur))) return true;
+            if ((cur[0] >> 24) != 0xFFu || (cur[1] >> 24) != 0xFFu ||
+                (cur[2] >> 24) != 0xFFu || (cur[3] >> 24) != 0xFFu) {
+                return true;
+            }
+            // Elite shader ARGB layout (matches host-probe.exe write_colors @ 0x1401b5ad0):
+            // cur[0]: Base / Permutation
+            // cur[1]: Undersuit / Detail
+            // cur[2]: Secondary
+            // cur[3]: Primary
+            const uint32_t eliteWords[4] = { cur[0], cur[1], secArgb, priArgb };
+            return !SafeCopyMem(reinterpret_cast<void*>(rec), eliteWords, sizeof(eliteWords));
+        }),
+        s_eliteColorRecords.end()
     );
 
     s_suitRecords.erase(
@@ -1047,6 +1167,14 @@ void ReachArmory::SetMenuMode(bool menuMode) {
         s_bumpAtFrame = 0;
         s_settlePending = false;
         s_previewDirty.store(false);
+        {
+            std::lock_guard<std::mutex> lock(s_dataMutex);
+            s_colorRecords.clear();
+            s_eliteColorRecords.clear();
+            s_suitRecords.clear();
+            s_lastElitePriArgb = 0;
+            s_lastEliteSecArgb = 0;
+        }
     } else {
         s_selectionGeneration.fetch_add(1);
     }
@@ -1150,6 +1278,7 @@ void ReachArmory::Tick() {
             for (int attempt = 0; s_menuMode.load(); ++attempt) {
                 if (ScanGlobalsTable()) {
                     ScanColorRecords();
+                    ScanEliteColorRecords();
                     ScanSuitRecords();
                     ScanEliteTable();
                     break;
@@ -1165,6 +1294,7 @@ void ReachArmory::Tick() {
             if (s_menuMode.load() && s_globalsBase.load() != 0) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(400));
                 ScanColorRecords();
+                ScanEliteColorRecords();
                 ScanSuitRecords();
                 ScanEliteTable();
             }
@@ -1172,18 +1302,15 @@ void ReachArmory::Tick() {
         }).detach();
     }
 
-    // The Elite's region table only exists once the Elite model has loaded, so while the Elite is
-    // shown and the table hasn't been found, look again about every 2 seconds.
-    if (s_globalsBase.load() != 0 && GetSelection().previewElite && frame % 240 == 0 && !s_scanning.load()) {
-        bool scanned;
+    // The Elite's region table and color records only exist once the Elite model has loaded
+    if (s_globalsBase.load() != 0 && GetSelection().previewElite && frame % 120 == 0 && !s_scanning.load()) {
+        bool needEliteColors = false;
         {
             std::lock_guard<std::mutex> lock(s_dataMutex);
-            scanned = s_eliteScanned;
+            needEliteColors = s_eliteColorRecords.empty();
         }
-        static int eliteTries = 0;
-        if (!scanned && eliteTries < 10) {
-            if (++eliteTries == 10) NOBLE_WARN("ReachArmory: Elite region table still not found after 10 looks; armor sets go through GLOBALS only");
-            s_rescanRequested.store(true);
+        if (needEliteColors) {
+            ScanEliteColorRecords();
         }
     }
 

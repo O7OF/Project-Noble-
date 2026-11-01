@@ -964,7 +964,7 @@ void SettingsPanel::RenderAudio() {
     {
         // Either one talks. These are the same bindings as the KEYBOARD & MOUSE and CONTROLLER lists.
         constexpr int kPttKey = KeyBindings::kActionPushToTalk;
-        const auto keyOf = [](const SettingsData& d) {
+        const auto keyOf = [kPttKey](const SettingsData& d) {
             const auto it = d.keyOverrides.find(kPttKey);
             return it != d.keyOverrides.end() ? it->second : KeyBindings::DefaultKey(kPttKey);
         };
