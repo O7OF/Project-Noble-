@@ -24,6 +24,7 @@
 #include "engine/KeyBindings.hpp"
 #include "host/Window.hpp"
 
+#include <chrono>
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -130,6 +131,86 @@ std::string Upper(std::string s) {
 }
 
 // Starts a new Noble (empty args = front-end menu) and closes this one.
+// One value from a command line built by Relaunch ("-map x -variant \"a b\"").
+std::wstring ArgValue(const std::wstring &args, const wchar_t *name) {
+  std::wstring value;
+  int argc = 0;
+  LPWSTR *argv = CommandLineToArgvW((L"x " + args).c_str(), &argc);
+  for (int i = 1; argv && i + 1 < argc; ++i) {
+    if (_wcsicmp(argv[i], name) == 0) value = argv[i + 1];
+  }
+  if (argv) LocalFree(argv);
+  return value;
+}
+
+// The arguments that bring this match's lobby back in a new process (FrontEndMenu reads the -lobby-* set).
+std::wstring LobbyReturnArgs(bool host) {
+  const std::wstring game = Relaunch::CurrentGameArgs();
+  const auto quoted = [](const std::wstring &value) { return L"\"" + value + L"\""; };
+  std::wstring out = host ? L"-lobby-return host" : L"-lobby-return guest";
+  const auto copy = [&](const wchar_t *from, const wchar_t *to) {
+    const std::wstring value = ArgValue(game, from);
+    if (!value.empty()) out += std::wstring(L" ") + to + L" " + quoted(value);
+  };
+  copy(L"-map", L"-lobby-map");
+  copy(L"-mode", L"-lobby-mode");
+  copy(L"-variant", L"-lobby-variant");
+  copy(L"-difficulty", L"-lobby-difficulty");
+  copy(L"-skulls", L"-lobby-skulls");
+  copy(L"-mod", L"-lobby-mod-folder");
+  copy(L"-map-override", L"-lobby-map-override");
+  copy(L"-map-title", L"-lobby-map-title");
+  copy(L"-map-image", L"-lobby-map-image");
+  copy(L"-map-thumb", L"-lobby-map-thumb");
+  if (host) {
+    copy(L"-max-players", L"-lobby-max-players");
+    out += game.find(L" -lan") != std::wstring::npos ? L" -lobby-net lan" : L" -lobby-net online";
+    out += game.find(L" -private") != std::wstring::npos ? L" -lobby-privacy private" : L" -lobby-privacy public";
+  } else {
+    copy(L"-session-id", L"-lobby-session");
+    copy(L"-connect", L"-lobby-endpoint");
+  }
+  return out;
+}
+
+// For a guest on the post-game panel: 0 still waiting, 1 the host is back in the lobby, 2 the session has gone. The server
+// says the match is running until the host's new process registers again.
+int PollHostBackInLobby() {
+  static std::atomic<int> s_state{0};
+  static bool s_started = false;
+  if (!s_started) {
+    s_started = true;
+    const std::string session = [] {
+      const std::wstring wide = ArgValue(Relaunch::CurrentGameArgs(), L"-session-id");
+      char text[128] = {};
+      WideCharToMultiByte(CP_UTF8, 0, wide.c_str(), -1, text, sizeof(text) - 1, nullptr, nullptr);
+      return std::string(text);
+    }();
+    if (session.empty()) {
+      s_state = 2;
+    } else {
+      std::thread([session] {
+        int missing = 0;
+        while (true) {
+          std::this_thread::sleep_for(std::chrono::seconds(2));
+          const LobbyState state = MasterServerClient::Get().FetchLobbyStateSync(session);
+          if (!state.ok || state.isClosed) {
+            if (++missing >= 8) { s_state = 2; return; }
+            continue;
+          }
+          missing = 0;
+          if (!state.inProgress) {
+            NOBLE_INFO("PauseMenu: the host is back in the lobby");
+            s_state = 1;
+            return;
+          }
+        }
+      }).detach();
+    }
+  }
+  return s_state;
+}
+
 void RelaunchAndClose(HWND hwnd, const std::wstring &args, const char *what) {
   NOBLE_INFO("PauseMenu: {} requested", what);
   Relaunch::HandOff(args);  // ends this process; returns only if the new one could not start
@@ -1447,19 +1528,31 @@ void PauseMenu::DrawGameOver(HWND hwnd) {
   const float by = H - 88.0f * s;
   float bx = W - margin - bw;
   bool overButton = false;
+  // What happens next in a hosted game. "-postgame-role host|guest" shows either one without a second PC.
+  static const int s_roleTest = [] {
+    const wchar_t *const line = GetCommandLineW();
+    return wcsstr(line, L"-postgame-role host") ? 1 : wcsstr(line, L"-postgame-role guest") ? 2 : 0;
+  }();
+  const bool online = NetworkTransport::Get().IsActive();
+  const bool hostRole = s_roleTest == 1 || (s_roleTest == 0 && online && NetworkTransport::Get().IsHost());
+  const bool guestRole = s_roleTest == 2 || (s_roleTest == 0 && online && !NetworkTransport::Get().IsHost());
   const std::wstring again = Relaunch::CurrentGameArgs();
   // A guest's "again" would reconnect to a host who may have gone; only the host or a local player can start another.
   const bool guestPlayer = wcsstr(GetCommandLineW(), L"-postgame-role guest") != nullptr ||
                            (NetworkTransport::Get().IsActive() && !NetworkTransport::Get().IsHost());
   const bool canPlayAgain = !again.empty() && !guestPlayer;
   // Controller: left and right pick a button, A presses it, and A during the reveal only skips it. The focus starts away
-  // from QUIT, so one stray A can never close the game.
-  enum { kPadQuit, kPadMenu, kPadAgain };
-  static int s_padButton = kPadMenu;
-  const int padLast = canPlayAgain ? kPadAgain : kPadMenu;
-  if (UiPad::Left()) s_padButton = std::min(s_padButton + 1, padLast);
-  if (UiPad::Right()) s_padButton = std::max(s_padButton - 1, static_cast<int>(kPadQuit));
-  s_padButton = std::min(s_padButton, padLast);
+  // from QUIT, so one stray A can never close the game; a host starts on going back to the lobby.
+  enum { kPadQuit, kPadMenu, kPadAgain, kPadLobby };
+  static int s_padButton = hostRole ? kPadLobby : kPadMenu;
+  std::vector<int> padOrder = { kPadQuit, kPadMenu };
+  if (canPlayAgain) padOrder.push_back(kPadAgain);
+  if (hostRole) padOrder.push_back(kPadLobby);
+  int padAt = 1;
+  for (size_t i = 0; i < padOrder.size(); ++i) if (padOrder[i] == s_padButton) padAt = static_cast<int>(i);
+  if (UiPad::Left()) padAt = std::min(padAt + 1, static_cast<int>(padOrder.size()) - 1);
+  if (UiPad::Right()) padAt = std::max(padAt - 1, 0);
+  s_padButton = padOrder[padAt];
   const bool padA = ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false);
   // A is jump: a player still pressing it as the panel finishes must not leave the screen, so it arms a second later.
   static double s_padArmedAt = 0.0;
@@ -1492,16 +1585,8 @@ void PauseMenu::DrawGameOver(HWND hwnd) {
     padOutline(kPadAgain);
     overButton |= ImGui::IsItemHovered();
   }
-  // What happens next in a hosted game. A session doesn't survive a match yet (session survival, rotation: @deepseek), so
-  // the host's two choices are grey with the reason and a guest is told plainly what the state is. "-postgame-role
-  // host|guest" shows either one without a second PC.
-  static const int s_roleTest = [] {
-    const wchar_t *const line = GetCommandLineW();
-    return wcsstr(line, L"-postgame-role host") ? 1 : wcsstr(line, L"-postgame-role guest") ? 2 : 0;
-  }();
-  const bool online = NetworkTransport::Get().IsActive();
-  const bool hostRole = s_roleTest == 1 || (s_roleTest == 0 && online && NetworkTransport::Get().IsHost());
-  const bool guestRole = s_roleTest == 2 || (s_roleTest == 0 && online && !NetworkTransport::Get().IsHost());
+  // The host takes everyone back to the lobby: its new process registers the same session again, and guests come back when
+  // the server says the match is over. Next in rotation waits for rotation itself.
   if (hostRole) {
     bx -= bw + gap;
     ImGui::SetCursorScreenPos(ImVec2(bx, by));
@@ -1509,12 +1594,24 @@ void PauseMenu::DrawGameOver(HWND hwnd) {
     overButton |= ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
     bx -= bw + gap;
     ImGui::SetCursorScreenPos(ImVec2(bx, by));
-    UnavailableButton("RETURN TO LOBBY", ImVec2(bw, bh), "Not available yet: a lobby doesn't survive the match, so there is nothing to return to.");
-    overButton |= ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
+    if (NobleStyle::PrimaryButton("RETURN TO LOBBY", ImVec2(bw, bh)) || (padPress && s_padButton == kPadLobby))
+      RelaunchAndClose(hwnd, LobbyReturnArgs(true), "return to lobby");
+    padOutline(kPadLobby);
+    overButton |= ImGui::IsItemHovered();
   } else if (guestRole) {
     bx -= bw + gap;
     ImGui::SetCursorScreenPos(ImVec2(bx, by));
-    UnavailableButton("WAITING FOR HOST", ImVec2(bw, bh), "The host can't bring a lobby back after a match yet, so return to the menu to play again.");
+    const int lobbyState = PollHostBackInLobby();
+    if (lobbyState == 1 && t >= tEnd) {
+      static bool s_leaving = false;
+      if (!s_leaving) {
+        s_leaving = true;
+        RelaunchAndClose(hwnd, LobbyReturnArgs(false), "guest back to lobby");
+      }
+    }
+    UnavailableButton(lobbyState == 2 ? "HOST LEFT" : "WAITING FOR HOST", ImVec2(bw, bh),
+                      lobbyState == 2 ? "The host's lobby closed. Return to the menu to play again."
+                                      : "You'll go back to the lobby as soon as the host does.");
     overButton |= ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
   }
   if (hostRole || guestRole) {

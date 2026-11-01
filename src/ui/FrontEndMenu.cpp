@@ -2659,7 +2659,19 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
     };
     std::vector<LobbyMenuOption> optRows;
     const char* const kReadyTip = "Your own ready state. It isn't sent to the host yet.";
-    const char* const kOptionsTip = "Uses the game type's own settings. Editing arrives with the variant picker.";
+    const char* const kOptionsTip = "Uses the game type's own settings. Edit them from GAME OPTIONS on Custom Game, before hosting.";
+    // A guest: is the host's game type one this PC has? A host's own game mode isn't sent to guests yet (@deepseek's
+    // transport); until it is, say so rather than let the player find out from the match.
+    bool hostModeKnown = st.isLobbyHost || st.lobbyVariantName.empty() || st.lobbyVariantName == "Default";
+    if (!hostModeKnown) {
+        for (const auto* list : { &ctx.variants, &ctx.ffVariants }) {
+            for (const MenuVariant& v : *list) {
+                if (_stricmp(v.label.c_str(), st.lobbyVariantName.c_str()) == 0 || _stricmp(v.path.filename().string().c_str(), st.lobbyVariantName.c_str()) == 0) hostModeKnown = true;
+            }
+        }
+    }
+    const char* const hostModeTip = hostModeKnown ? "You have the game type the host picked."
+                                                  : "The host made this game mode, and this PC doesn't have it. Downloading it from the host is coming.";
 
     if (campaign) {
         optRows.push_back({ "READY", st.lobbyReady ? "READY" : "NOT READY", false, true, kReadyTip });
@@ -2680,13 +2692,15 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         optRows.push_back({ "READY", st.lobbyReady ? "READY" : "NOT READY", false, true, kReadyTip });
         optRows.push_back({ "GAME TYPE", st.lobbyVariantName.empty() ? "NORMAL" : st.lobbyVariantName, false, st.isLobbyHost, "Select Firefight game variant." });
         optRows.push_back({ "MAP", mapDisplay, false, st.isLobbyHost, "Choose which Firefight map to play." });
-        optRows.push_back({ "GAME OPTIONS", "DEFAULTS", false, false, kOptionsTip });
+        if (st.isLobbyHost) optRows.push_back({ "GAME OPTIONS", "DEFAULTS", false, false, kOptionsTip });
+        else optRows.push_back({ "HOST MODE", hostModeKnown ? "ON THIS PC" : "UNKNOWN", false, false, hostModeTip });
         if (st.isLobbyHost) optRows.push_back({ "START FIREFIGHT", "", true, true, "Start the Firefight match." });
     } else { // Custom Game
         optRows.push_back({ "READY", st.lobbyReady ? "READY" : "NOT READY", false, true, kReadyTip });
         optRows.push_back({ "GAME TYPE", st.lobbyVariantName.empty() ? "SLAYER" : st.lobbyVariantName, false, st.isLobbyHost, "Choose game type and rule set." });
         optRows.push_back({ "MAP", mapDisplay, false, st.isLobbyHost, "Choose which map you want to play." });
-        optRows.push_back({ "GAME OPTIONS", "DEFAULTS", false, false, kOptionsTip });
+        if (st.isLobbyHost) optRows.push_back({ "GAME OPTIONS", "DEFAULTS", false, false, kOptionsTip });
+        else optRows.push_back({ "HOST MODE", hostModeKnown ? "ON THIS PC" : "UNKNOWN", false, false, hostModeTip });
         if (st.isLobbyHost) optRows.push_back({ "START GAME", "", true, true, "Start the selected custom game." });
     }
 
@@ -2989,8 +3003,18 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         BigAction(ui, "lobby_waiting", ImVec2(colX, startY), colW, "WAITING FOR HOST", "The match starts when the host starts it.", true, false);
     }
     // What the focused row does; the start button already says it on its own second line.
+    float lobbyTipY = startY + 58.0f * ui.s;
+    if (!hostModeKnown && !pickerWasOpen) {
+        // Greyed until the host can send its mode: a plain row, because nothing can be pressed yet.
+        const ImVec2 d0(colX, lobbyTipY), d1(colX + colW, lobbyTipY + 32.0f * ui.s);
+        ui.dl->AddRectFilled(d0, d1, IM_COL32(8, 12, 18, 150));
+        Text(ui, NobleStyle::TitleFont(), 18.0f, ImVec2(d0.x + 10.0f * ui.s, d0.y + 6.0f * ui.s), kDisabled, "DOWNLOAD MODE");
+        const char* soon = "Coming later";
+        Text(ui, nullptr, 15.0f, ImVec2(d1.x - TextWidth(nullptr, 15.0f * ui.s, soon) - 10.0f * ui.s, d0.y + 7.0f * ui.s), kDisabled, soon);
+        lobbyTipY += 38.0f * ui.s;
+    }
     if (!pickerWasOpen && !optRows[st.lobbyMenuRow].isStart) {
-        Text(ui, nullptr, 15.0f, ImVec2(colX, startY + 58.0f * ui.s), kDim, optRows[st.lobbyMenuRow].tooltip.c_str(), colX + colW);
+        Text(ui, nullptr, 15.0f, ImVec2(colX, lobbyTipY), kDim, optRows[st.lobbyMenuRow].tooltip.c_str(), colX + colW);
     }
 
     // Friends and the invite strip sit at the foot of the left column, above the prompts.
@@ -5038,6 +5062,7 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
             if (demoMode == L"campaign") { st.lobbyMode = "campaign"; st.lobbyMap = kMissions[0].scenario; st.lobbyMaxPlayers = 4; }
             else if (demoMode == L"firefight") { st.lobbyMode = "firefight"; st.lobbyMap = kFirefightMaps[0].scenario; st.lobbyVariantName = "Firefight"; }
             else if (demoMode == L"forge") { st.lobbyMode = "forge"; }
+            if (const wchar_t* line = wcsstr(GetCommandLineW(), L"-lobby-demo-unknown-mode")) { (void)line; st.lobbyVariantName = "Someone's Own Mode"; }
             st.lobbyMaxPlayers = std::max(st.lobbyMaxPlayers, demoPlayers);
             if (!st.isLobbyHost && demoPlayers > 0) st.lobbyRosterSelection = demoPlayers > 1 ? 1 : 0;
             for (int i = 0; i < demoPlayers; ++i) {
@@ -5233,6 +5258,64 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
 
         ctx.st.screen = Screen::PreGameLobby;
     };
+
+    // "-lobby-return": a match that just ended came back to its lobby, in this new process. Each match is its own process, so
+    // the lobby's lasting part is the server's session: the host registers the same address and port again, which keeps
+    // the session id and roster, and guests join it again once the host is back (PauseMenu's post-game panel).
+    {
+        int argc = 0;
+        LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+        std::map<std::wstring, std::wstring> back;
+        for (int i = 1; argv && i + 1 < argc; ++i) {
+            if (_wcsnicmp(argv[i], L"-lobby-", 7) == 0) back[Lower(argv[i])] = argv[i + 1];
+        }
+        if (argv) LocalFree(argv);
+        const auto text = [&](const wchar_t* key) {
+            const auto it = back.find(key);
+            if (it == back.end()) return std::string();
+            char narrow[1024] = {};
+            WideCharToMultiByte(CP_UTF8, 0, it->second.c_str(), -1, narrow, sizeof(narrow) - 1, nullptr, nullptr);
+            return std::string(narrow);
+        };
+        const auto path = [&](const wchar_t* key) {
+            const auto it = back.find(key);
+            return it == back.end() ? std::filesystem::path() : std::filesystem::path(it->second);
+        };
+        const std::string role = text(L"-lobby-return");
+        if (!role.empty()) {
+            const std::filesystem::path modFolder = path(L"-lobby-mod-folder");
+            NOBLE_INFO("FrontEndMenu: back from a match as {} of session '{}'", role, text(L"-lobby-session"));
+            if (role == "host") {
+                const std::filesystem::path variant = path(L"-lobby-variant");
+                std::string varName = text(L"-lobby-variant-name");
+                for (const auto* list : { &ctx.variants, &ctx.ffVariants }) {
+                    for (const MenuVariant& v : *list) if (v.path == variant) varName = v.label;
+                }
+                const ModEntry* mod = nullptr;
+                for (const ModEntry& m : ctx.mods) if (!modFolder.empty() && m.folder == modFolder) mod = &m;
+                ctx.st.lobbyNetMode = text(L"-lobby-net") == "lan" ? 0 : 1;
+                ctx.st.lobbyPrivacy = text(L"-lobby-privacy") == "private" ? 1 : 0;
+                const std::string maxPlayers = text(L"-lobby-max-players");
+                const std::string difficulty = text(L"-lobby-difficulty");
+                const std::string skulls = text(L"-lobby-skulls");
+                SetupHostLobby(ctx.st, text(L"-lobby-map"), text(L"-lobby-mode"), variant.string(), varName,
+                               difficulty.empty() ? 1 : std::atoi(difficulty.c_str()), skulls.empty() ? 0 : std::strtoull(skulls.c_str(), nullptr, 10),
+                               maxPlayers.empty() ? 16 : std::atoi(maxPlayers.c_str()), mod, path(L"-lobby-map-override"), text(L"-lobby-map-title"),
+                               path(L"-lobby-map-image"), path(L"-lobby-map-thumb"));
+            } else {
+                ServerEntry s;
+                s.id = text(L"-lobby-session");
+                const std::string endpoint = text(L"-lobby-endpoint");
+                const size_t colon = endpoint.rfind(':');
+                s.hostAddress = endpoint.substr(0, colon);
+                s.port = static_cast<uint16_t>(colon == std::string::npos ? 11774 : std::atoi(endpoint.c_str() + colon + 1));
+                s.mapName = text(L"-lobby-map");
+                s.gameMode = text(L"-lobby-mode");
+                s.maxPlayers = 16;
+                enterLobby(s, std::string(), std::string(), modFolder);
+            }
+        }
+    }
 
     UIManager::GetServerBrowser().SetJoinLobbyHandler([&ctx, enterLobby](const ServerEntry& s) {
         std::string modId = s.modId;
