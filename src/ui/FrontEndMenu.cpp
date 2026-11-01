@@ -35,6 +35,8 @@
 #include "engine/ReachArmory.hpp"
 #include "engine/MapGameTypes.hpp"
 #include "engine/VariantRules.hpp"
+#include "engine/Playlists.hpp"
+#include <random>
 #include "host/Window.hpp"
 #include "host/D3D11Renderer.hpp"
 
@@ -1587,6 +1589,26 @@ struct MenuState {
     uint64_t lobbyLaunchSkulls = 0;
     double lastLobbyPoll = 0.0;
     int lobbyMenuRow = 0;          // Focused row in pre-game options list
+    // Playlists. -1 = none chosen.
+    std::vector<Playlists::Playlist> playlists;
+    int playlistChoice = -1;
+    int playlistPosition = 0;
+    bool playlistEditOpen = false;
+    Playlists::Playlist playlistEdit;
+    char playlistName[48] = {};
+    int playlistEditRow = 0, playlistEditMap = 0, playlistEditVariant = 0, playlistEditEntry = 0;
+    std::string playlistMessage;
+    // Voting in the lobby.
+    std::string voteId;
+    std::vector<std::string> voteOptions;
+    std::vector<int> voteCounts;
+    int voteMsLeft = 0;
+    int voteRow = 0;
+    int voteCast = -1;
+    int voteRerolls = 0;
+    bool voteWasUp = false;
+    std::vector<Playlists::Entry> voteEntries;   // host only: what each option plays
+    std::string voteMessage;
     bool optionsOpen = false;           // Custom Game: the game options editor replaces the setup screen
     int optionsRow = 0;
     char optionsName[48] = {};
@@ -2478,6 +2500,126 @@ static void DrawVariantInfo(const Ui& ui, ImVec2 pos, float width, const Variant
     Text(ui, NobleStyle::SmallFont(), 14.0f, ImVec2(pos.x, y + 20.0f * ui.s), kDim, "Uses this variant's default rules.", right);
 }
 
+// ---- Playlists ----
+static void RefreshPlaylists(OverlayContext& ctx) {
+    std::vector<std::filesystem::path> folders;
+    for (const ModEntry& mod : ctx.mods) folders.push_back(mod.folder);
+    ctx.st.playlists = Playlists::Scan(folders);
+}
+
+// Every multiplayer map a playlist can name: the stock ones, then each mod's.
+static std::vector<MapEntry> AllMultiplayerMaps(OverlayContext& ctx) {
+    std::vector<MapEntry> maps = BaseMaps(kMaps, Count(kMaps));
+    std::set<std::string> everyMod;
+    for (const ModEntry* mod : ctx.mpMods) everyMod.insert(OpenKey(ModMode::Multiplayer, *mod));
+    for (MapEntry& m : ModdedMaps(ctx.mpMods, ModMode::Multiplayer, kMaps, Count(kMaps), everyMod, "70_boneyard")) {
+        if (!m.header && m.enabled) maps.push_back(std::move(m));
+    }
+    return maps;
+}
+
+// A playlist entry turned into what the lobby needs. False when this PC lacks the map.
+struct ResolvedEntry {
+    MapEntry map;
+    const MenuVariant* variant = nullptr;
+};
+static bool ResolveEntry(OverlayContext& ctx, const Playlists::Entry& entry, bool randomType, ResolvedEntry& out) {
+    bool found = false;
+    for (MapEntry& m : AllMultiplayerMaps(ctx)) {
+        const std::string mod = m.mod ? m.mod->folder.filename().string() : std::string();
+        if (m.scenario == entry.map && mod == entry.mod) { out.map = std::move(m); found = true; break; }
+    }
+    if (!found) return false;
+    std::vector<const MenuVariant*> allowed;
+    out.variant = nullptr;
+    for (const MenuVariant& v : ctx.variants) {
+        if (!entry.mod.empty() || v.type.empty() || MapGameTypes::Supports(entry.map, v.type)) allowed.push_back(&v);
+        if (v.path.filename().string() == entry.variant) out.variant = &v;
+    }
+    static std::mt19937 s_random{ std::random_device{}() };
+    if ((randomType || !out.variant) && !allowed.empty()) out.variant = allowed[s_random() % allowed.size()];
+    return out.variant != nullptr;
+}
+
+static void ApplyEntryToLobby(MenuState& st, const ResolvedEntry& e) {
+    st.lobbyMap = e.map.launchScenario.empty() ? e.map.scenario : e.map.launchScenario;
+    st.lobbyMapOverride = e.map.mapOverride;
+    st.lobbyMapTitle = e.map.name;
+    st.lobbyMapImage = e.map.imageLoading;
+    st.lobbyMapThumb = e.map.imageThumbnail;
+    st.lobbyModId = e.map.mod ? e.map.mod->workshopId : std::string();
+    st.lobbyModTitle = e.map.mod ? e.map.mod->title : std::string();
+    st.lobbyModFolder = e.map.mod ? e.map.mod->folder : std::filesystem::path();
+    st.lobbyVariantPath = e.variant->path.string();
+    st.lobbyVariantName = e.variant->label;
+    MasterServerClient::Get().UpdateLobbyAdvert(st.lobbyMap, st.lobbyMode, st.lobbyVariantName, st.lobbyDifficulty, st.lobbySkulls);
+    NOBLE_INFO("FrontEndMenu: lobby now {} on {}", st.lobbyVariantName, st.lobbyMapTitle);
+}
+
+// Opens a vote with up to three different entries from the active playlist.
+static void StartLobbyVote(OverlayContext& ctx) {
+    MenuState& st = ctx.st;
+    st.voteMessage.clear();
+    if (st.playlistChoice < 0 || st.playlistChoice >= static_cast<int>(st.playlists.size())) return;
+    const Playlists::Playlist& playlist = st.playlists[st.playlistChoice];
+    std::vector<Playlists::Entry> pool = playlist.entries;
+    static std::mt19937 s_random{ std::random_device{}() };
+    std::shuffle(pool.begin(), pool.end(), s_random);
+    st.voteEntries.clear();
+    std::vector<std::string> labels;
+    for (const Playlists::Entry& entry : pool) {
+        if (labels.size() >= 3) break;
+        ResolvedEntry resolved;
+        if (!ResolveEntry(ctx, entry, playlist.randomType, resolved)) continue;
+        Playlists::Entry fixed = entry;
+        fixed.variant = resolved.variant->path.filename().string();   // a random type is settled before anyone votes
+        st.voteEntries.push_back(fixed);
+        labels.push_back(resolved.map.name + " - " + resolved.variant->label);
+    }
+    if (labels.size() < 2) {
+        st.voteMessage = "A vote needs at least 2 playable entries in the playlist.";
+    } else if (!MasterServerClient::Get().StartVoteSync(st.lobbySessionId, labels, 20)) {
+        st.voteMessage = "The server didn't accept the vote. It may need updating.";
+        MenuSounds::Error();
+    } else {
+        NOBLE_INFO("FrontEndMenu: vote opened with {} options", labels.size());
+        st.voteCast = -1;
+        MenuSounds::Click();
+    }
+}
+
+// Host only, when time is up. "None of these" on top draws three new options once; a second time the lobby stays as it is.
+static void FinishLobbyVote(OverlayContext& ctx) {
+    MenuState& st = ctx.st;
+    MasterServerClient::Get().EndVoteSync(st.lobbySessionId);
+    std::vector<int> counts = st.voteCounts;
+    counts.resize(st.voteEntries.size() + 1, 0);
+    const int none = counts.back();
+    const int best = *std::max_element(counts.begin(), counts.end() - 1);
+    st.voteId.clear();
+    if (none > best || best == 0) {
+        NOBLE_INFO("FrontEndMenu: vote closed, none of these ({} votes, reroll {})", none, st.voteRerolls);
+        if (none > best && st.voteRerolls < 1) {
+            ++st.voteRerolls;
+            StartLobbyVote(ctx);
+        } else {
+            st.voteRerolls = 0;
+            st.voteMessage = "No choice won, so the lobby stays as it is.";
+        }
+        return;
+    }
+    std::vector<int> leaders;
+    for (int i = 0; i + 1 < static_cast<int>(counts.size()); ++i) if (counts[i] == best) leaders.push_back(i);
+    static std::mt19937 s_random{ std::random_device{}() };
+    const int winner = leaders[s_random() % leaders.size()];
+    st.voteRerolls = 0;
+    ResolvedEntry resolved;
+    if (ResolveEntry(ctx, st.voteEntries[winner], false, resolved)) {
+        NOBLE_INFO("FrontEndMenu: vote closed, option {} won with {} votes", winner, best);
+        ApplyEntryToLobby(st, resolved);
+    }
+}
+
 static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, float top, FrontEndChoice& choice, bool& done, bool back) {
     MenuState& st = ctx.st;
     TakePendingLobbyEvents(st);
@@ -2542,6 +2684,13 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
                         }
                     }
                 }
+                // A vote: everyone sees it through the session; the host alone closes it and applies the result.
+                if (current.voteId != st.voteId) st.voteCast = -1;
+                st.voteId = current.voteId;
+                st.voteOptions = current.voteOptions;
+                st.voteCounts = current.voteCounts;
+                st.voteMsLeft = current.voteMsLeft;
+                if (st.isLobbyHost && !st.voteId.empty() && st.voteMsLeft <= 0) FinishLobbyVote(ctx);
                 // Launch only while the host's match is running. The server keeps the last launch_data when the host
                 // re-registers the same address and port for its next lobby, so "launch_data present" alone sent a
                 // guest straight into a match that wasn't starting (2026-10-29 review, tested against server.js).
@@ -2660,6 +2809,7 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
     std::vector<LobbyMenuOption> optRows;
     const char* const kReadyTip = "Your own ready state. It isn't sent to the host yet.";
     const char* const kOptionsTip = "Uses the game type's own settings. Edit them from GAME OPTIONS on Custom Game, before hosting.";
+    const bool playlistActive = st.isLobbyHost && st.playlistChoice >= 0 && st.playlistChoice < static_cast<int>(st.playlists.size());
     // A guest: is the host's game type one this PC has? A host's own game mode isn't sent to guests yet (@deepseek's
     // transport); until it is, say so rather than let the player find out from the match.
     bool hostModeKnown = st.isLobbyHost || st.lobbyVariantName.empty() || st.lobbyVariantName == "Default";
@@ -2699,7 +2849,8 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         optRows.push_back({ "READY", st.lobbyReady ? "READY" : "NOT READY", false, true, kReadyTip });
         optRows.push_back({ "GAME TYPE", st.lobbyVariantName.empty() ? "SLAYER" : st.lobbyVariantName, false, st.isLobbyHost, "Choose game type and rule set." });
         optRows.push_back({ "MAP", mapDisplay, false, st.isLobbyHost, "Choose which map you want to play." });
-        if (st.isLobbyHost) optRows.push_back({ "GAME OPTIONS", "DEFAULTS", false, false, kOptionsTip });
+        if (playlistActive) optRows.push_back({ "VOTE", "START", false, false, "Press to let everyone vote on what to play next from this playlist." });
+        else if (st.isLobbyHost) optRows.push_back({ "GAME OPTIONS", "DEFAULTS", false, false, kOptionsTip });
         else optRows.push_back({ "HOST MODE", hostModeKnown ? "ON THIS PC" : "UNKNOWN", false, false, hostModeTip });
         if (st.isLobbyHost) optRows.push_back({ "START GAME", "", true, true, "Start the selected custom game." });
     }
@@ -2913,6 +3064,8 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         const auto& cur = optRows[st.lobbyMenuRow];
         if (cur.isStart) {
             startMatch();
+        } else if (cur.label == "VOTE") {
+            StartLobbyVote(ctx);
         } else if (cur.label == "GAME TYPE" && cur.editable) {
             st.lobbyPickerOpen = true;
             pickerJustOpened = true;
@@ -2931,7 +3084,47 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
     const bool mouseMoved = ImGui::GetIO().MouseDelta.x != 0.0f || ImGui::GetIO().MouseDelta.y != 0.0f;
     float curY = rowsY;
     const bool pickerWasOpen = st.lobbyPickerOpen;
-    if (st.lobbyPickerOpen) {
+    const bool voteUp = !st.voteId.empty();
+    if (voteUp) {
+        // The vote takes the option rows' place for everyone: three choices and "none of these".
+        st.lobbyPickerOpen = true;
+        st.voteWasUp = true;
+        const int choices = static_cast<int>(st.voteOptions.size()) + 1;
+        char head[64];
+        std::snprintf(head, sizeof(head), "VOTE: WHAT'S NEXT?   %d s", std::max(0, (st.voteMsLeft + 999) / 1000));
+        Text(ui, NobleStyle::TitleFont(), 18.0f, ImVec2(colX, rowsY - 26.0f * ui.s), kAccent, head);
+        st.voteRow = std::clamp(st.voteRow, 0, choices - 1);
+        if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || UiPad::Down()) { st.voteRow = (st.voteRow + 1) % choices; MenuSounds::Scroll(); }
+        if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || UiPad::Up()) { st.voteRow = (st.voteRow + choices - 1) % choices; MenuSounds::Scroll(); }
+        int cast = AcceptPressed() ? st.voteRow : -1;
+        for (int i = 0; i < choices; ++i) {
+            const ImVec2 r0(colX, rowsY + i * 40.0f * ui.s), r1(colX + colW, r0.y + 36.0f * ui.s);
+            ImGui::SetCursorScreenPos(r0);
+            ImGui::PushID(i);
+            if (ImGui::InvisibleButton("##vote_option", ImVec2(colW, 36.0f * ui.s))) cast = i;
+            if (ImGui::IsItemHovered() && mouseMoved) st.voteRow = i;
+            ImGui::PopID();
+            ui.dl->AddRectFilled(r0, r1, st.voteCast == i ? IM_COL32(52, 112, 156, 230) : IM_COL32(8, 12, 18, 170));
+            if (st.voteRow == i) ui.dl->AddRect(r0, r1, kAccent, 0.0f, 0, 2.0f * ui.s);
+            const std::string label = i < static_cast<int>(st.voteOptions.size()) ? st.voteOptions[i] : std::string("None of these");
+            Text(ui, NobleStyle::TitleFont(), 17.0f, ImVec2(r0.x + 10.0f * ui.s, r0.y + 8.0f * ui.s), kWhite,
+                 Ellipsize(NobleStyle::TitleFont(), 17.0f * ui.s, Upper(label), colW - 60.0f * ui.s).c_str());
+            const std::string count = std::to_string(i < static_cast<int>(st.voteCounts.size()) ? st.voteCounts[i] : 0);
+            Text(ui, NobleStyle::TitleFont(), 17.0f, ImVec2(r1.x - 26.0f * ui.s, r0.y + 8.0f * ui.s), kAccent, count.c_str());
+        }
+        if (cast >= 0) {
+            st.voteCast = cast;
+            uint64_t peer = 1;
+            if (AuthClient::Get().IsLoggedIn()) peer = static_cast<uint64_t>(AuthClient::Get().GetUserId());
+            else if (!st.isLobbyHost) { peer = MasterServerClient::GetLobbyMachineId() & 0x7FFFFFFFULL; if (peer < 2ULL) peer = 2ULL; }
+            if (!MasterServerClient::Get().CastVoteSync(st.lobbySessionId, peer, cast)) NOBLE_WARN("FrontEndMenu: the vote wasn't accepted");
+            MenuSounds::Click();
+        }
+    } else if (st.voteWasUp) {   // the vote just closed: the normal rows come back
+        st.voteWasUp = false;
+        st.lobbyPickerOpen = false;
+    }
+    if (st.lobbyPickerOpen && !voteUp) {
         // The game types this map can host, from the variants that ship with the game. Nothing here is invented: the
         // settings inside a variant can't be read until the variant viewer exists.
         const std::vector<MenuVariant>& varList = firefight ? ctx.ffVariants : ctx.variants;
@@ -3022,6 +3215,12 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
     if (!pickerWasOpen && !optRows[st.lobbyMenuRow].isStart) {
         Text(ui, nullptr, 15.0f, ImVec2(colX, lobbyTipY), kDim, optRows[st.lobbyMenuRow].tooltip.c_str(), colX + colW);
     }
+    if (playlistActive && !pickerWasOpen) {
+        const Playlists::Playlist& active = st.playlists[st.playlistChoice];
+        const std::string line = "PLAYLIST: " + active.name + (active.shuffle ? "  (shuffled)" : "");
+        Text(ui, NobleStyle::SmallFont(), 15.0f, ImVec2(colX, lobbyTipY + 22.0f * ui.s), kAccent, line.c_str(), colX + colW);
+    }
+    if (!st.voteMessage.empty() && !pickerWasOpen) Text(ui, nullptr, 15.0f, ImVec2(colX, lobbyTipY + 42.0f * ui.s), IM_COL32(255, 190, 120, 255), st.voteMessage.c_str(), colX + colW);
 
     // Friends and the invite strip sit at the foot of the left column, above the prompts.
     const float netH = 44.0f * ui.s;
@@ -4410,6 +4609,94 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
     case Screen::Forge: {
         const bool ff = st.screen == Screen::Firefight;
         const bool forge = st.screen == Screen::Forge;
+        if (st.playlistEditOpen) {
+            // Playlist editor: choose a map and game type, add them, repeat; the list is on the right.
+            DrawTitle(ui, ImVec2(left, top), "PLAYLIST", "MULTIPLAYER");
+            const std::vector<MapEntry> allMaps = AllMultiplayerMaps(ctx);
+            const float px = left + 34.0f * ui.s, pw = ui.size.x * 0.40f;
+            float y = top + 70.0f * ui.s;
+            DrawSearchBox(ui, "##playlist_name", ImVec2(px, y), pw, st.playlistName, sizeof(st.playlistName), "Playlist name");
+            y += 44.0f * ui.s;
+            const bool typing = ImGui::GetIO().WantTextInput;
+            constexpr int kMapRow = 0, kTypeRow = 1, kAddRow = 2, kShuffleRow = 3, kRandomRow = 4, kSaveRow = 5, kRows = 6;
+            if (!typing && (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || UiPad::Down())) { st.playlistEditRow = (st.playlistEditRow + 1) % kRows; MenuSounds::Scroll(); }
+            if (!typing && (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || UiPad::Up())) { st.playlistEditRow = (st.playlistEditRow + kRows - 1) % kRows; MenuSounds::Scroll(); }
+            st.playlistEditMap = allMaps.empty() ? 0 : std::clamp(st.playlistEditMap, 0, static_cast<int>(allMaps.size()) - 1);
+            const MapEntry* editMap = allMaps.empty() ? nullptr : &allMaps[st.playlistEditMap];
+            std::vector<const MenuVariant*> types;
+            for (const MenuVariant& v : ctx.variants) {
+                if (editMap && (editMap->mod || v.type.empty() || MapGameTypes::Supports(editMap->scenario, v.type))) types.push_back(&v);
+            }
+            st.playlistEditVariant = types.empty() ? 0 : std::clamp(st.playlistEditVariant, 0, static_cast<int>(types.size()) - 1);
+            const int mapStep = OptionRow(ui, "pl_map", ImVec2(px, y), pw, "MAP", editMap ? editMap->name.c_str() : "-", !typing && st.playlistEditRow == kMapRow);
+            if (mapStep != 0 && !allMaps.empty()) st.playlistEditMap = (st.playlistEditMap + mapStep + static_cast<int>(allMaps.size())) % static_cast<int>(allMaps.size());
+            y += 36.0f * ui.s;
+            const int typeStep = OptionRow(ui, "pl_type", ImVec2(px, y), pw, "GAME TYPE", types.empty() ? "-" : types[st.playlistEditVariant]->label.c_str(), !typing && st.playlistEditRow == kTypeRow);
+            if (typeStep != 0 && !types.empty()) st.playlistEditVariant = (st.playlistEditVariant + typeStep + static_cast<int>(types.size())) % static_cast<int>(types.size());
+            y += 40.0f * ui.s;
+            const float bw = (pw - 10.0f * ui.s) * 0.5f;
+            bool add = BigAction(ui, "pl_add", ImVec2(px, y), pw, "ADD TO PLAYLIST", "Adds this map and game type", true, editMap != nullptr && !types.empty(), st.playlistEditRow == kAddRow);
+            y += 62.0f * ui.s;
+            const int shuffleStep = OptionRow(ui, "pl_shuffle", ImVec2(px, y), pw, "ORDER", st.playlistEdit.shuffle ? "SHUFFLED" : "IN ORDER", !typing && st.playlistEditRow == kShuffleRow);
+            if (shuffleStep != 0) st.playlistEdit.shuffle = !st.playlistEdit.shuffle;
+            y += 36.0f * ui.s;
+            const int randomStep = OptionRow(ui, "pl_random", ImVec2(px, y), pw, "RANDOM GAME TYPE", st.playlistEdit.randomType ? "ON" : "OFF", !typing && st.playlistEditRow == kRandomRow);
+            if (randomStep != 0) st.playlistEdit.randomType = !st.playlistEdit.randomType;
+            y += 42.0f * ui.s;
+            bool save = BigAction(ui, "pl_save", ImVec2(px, y), bw, "SAVE PLAYLIST", "Then pick it on Custom Game", true, !st.playlistEdit.entries.empty(), st.playlistEditRow == kSaveRow);
+            if (!typing && AcceptPressed()) {
+                if (st.playlistEditRow == kAddRow) add = editMap != nullptr && !types.empty();
+                if (st.playlistEditRow == kSaveRow) save = !st.playlistEdit.entries.empty();
+                if (st.playlistEditRow == kShuffleRow) st.playlistEdit.shuffle = !st.playlistEdit.shuffle;
+                if (st.playlistEditRow == kRandomRow) st.playlistEdit.randomType = !st.playlistEdit.randomType;
+            }
+            if (add) {
+                Playlists::Entry entry;
+                entry.map = editMap->scenario;
+                entry.variant = types[st.playlistEditVariant]->path.filename().string();
+                entry.mod = editMap->mod ? editMap->mod->folder.filename().string() : std::string();
+                st.playlistEdit.entries.push_back(std::move(entry));
+                st.playlistEditEntry = static_cast<int>(st.playlistEdit.entries.size()) - 1;
+                MenuSounds::Click();
+            }
+            // The list so far. Y or a click on a row takes it out again.
+            const float lx = px + pw + 40.0f * ui.s, lw = ui.size.x - left - lx;
+            Text(ui, NobleStyle::TitleFont(), 18.0f, ImVec2(lx, top + 70.0f * ui.s), kAccent, ("ENTRIES (" + std::to_string(st.playlistEdit.entries.size()) + ")").c_str());
+            std::vector<ListItem> rows;
+            for (const Playlists::Entry& entry : st.playlistEdit.entries) {
+                std::string mapName = entry.map, typeName = entry.variant;
+                for (const MapEntry& m : allMaps) if (m.scenario == entry.map) { mapName = m.name; break; }
+                for (const MenuVariant& v : ctx.variants) if (v.path.filename().string() == entry.variant) typeName = v.label;
+                rows.push_back({ mapName + " - " + typeName });
+            }
+            if (rows.empty()) rows.push_back({ "Nothing added yet", false, false });
+            const int gone = DrawList(ui, "playlist_rows", ImVec2(lx, top + 100.0f * ui.s), lw, rows, st.playlistEditEntry, false, 32.0f, 14, true);
+            int removeRow = gone;
+            if (!typing && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false)) removeRow = st.playlistEditEntry;
+            if (removeRow >= 0 && removeRow < static_cast<int>(st.playlistEdit.entries.size())) {
+                st.playlistEdit.entries.erase(st.playlistEdit.entries.begin() + removeRow);
+                MenuSounds::Back();
+            }
+            if (save) {
+                st.playlistEdit.name = st.playlistName;
+                std::filesystem::path savedAs;
+                if (Playlists::Save(st.playlistEdit, savedAs)) {
+                    NOBLE_INFO("FrontEndMenu: playlist saved: '{}' with {} entries", st.playlistEdit.name, st.playlistEdit.entries.size());
+                    RefreshPlaylists(ctx);
+                    st.playlistChoice = -1;
+                    for (size_t i = 0; i < st.playlists.size(); ++i) if (st.playlists[i].file == savedAs) st.playlistChoice = static_cast<int>(i);
+                    st.playlistEditOpen = false;
+                    MenuSounds::Click();
+                } else {
+                    st.playlistMessage = "Give it a name first.";
+                    MenuSounds::Error();
+                }
+            }
+            if (!st.playlistMessage.empty()) Text(ui, nullptr, 16.0f, ImVec2(px + bw + 20.0f * ui.s, y + 8.0f * ui.s), IM_COL32(255, 190, 120, 255), st.playlistMessage.c_str());
+            if (back) { st.playlistEditOpen = false; MenuSounds::Back(); }
+            DrawHints(ui, { { Prompt::Accept, "Select" }, { Prompt::Back, "Back" }, { Prompt::Change, "Change" } }, { { InputPrompts::Button::Y, "CLICK", "Remove Entry" } });
+            break;
+        }
         if (st.optionsOpen) {
             // Game options: General Settings and Player Traits, saved as the player's own named game mode.
             const std::vector<VariantRules::Rule>& rules = VariantRules::Rules();
@@ -4664,7 +4951,7 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         const bool forgeMissing = forge && !std::filesystem::exists(ctx.forgeVariant);
         // Custom Game / Forge get the same row block as Firefight and Campaign: game type, game options and
         // the lobby's player cap, so the column is not banner-then-void (2026-10-30).
-        const float rowsH = (forge ? 0.0f : 36.0f * ui.s) + (!ff ? 72.0f * ui.s : 0.0f) +
+        const float rowsH = (forge ? 0.0f : 36.0f * ui.s) + (!ff ? 72.0f * ui.s : 0.0f) + (!ff && !forge ? 36.0f * ui.s : 0.0f) +
                             (ff ? 30.0f * ui.s + 98.0f * ui.s + 8.0f * ui.s : 0.0f) +
                             (forgeMissing ? 26.0f * ui.s : 0.0f) + (typeConflict.empty() ? 0.0f : 42.0f * ui.s);
         const float bannerTop = top + 96.0f * ui.s;
@@ -4766,6 +5053,25 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
                 ++focusRows;
             }
             y += 36.0f * ui.s;
+            if (!forge) {
+                // PLAYLIST: left and right choose one; A or a click opens the editor, on the chosen one or a new one.
+                const bool chosen = st.playlistChoice >= 0 && st.playlistChoice < static_cast<int>(st.playlists.size());
+                const int count = static_cast<int>(st.playlists.size());
+                const int playlistStep = OptionRow(ui, "playlist", ImVec2(px, y), pw, "PLAYLIST", chosen ? st.playlists[st.playlistChoice].name.c_str() : "NONE", st.focusRow == focusRows);
+                if (playlistStep != 0) st.playlistChoice = ((st.playlistChoice + 1 + playlistStep + count + 1) % (count + 1)) - 1;
+                ImGui::SetCursorScreenPos(ImVec2(px, y));
+                const bool openEditor = ImGui::InvisibleButton("##playlist_open", ImVec2(pw * 0.48f, 32.0f * ui.s));
+                if (openEditor || (st.focusRow == focusRows && hit < 0 && AcceptPressed())) {
+                    st.playlistEdit = chosen ? st.playlists[st.playlistChoice] : Playlists::Playlist{};
+                    std::snprintf(st.playlistName, sizeof(st.playlistName), "%s", chosen ? st.playlistEdit.name.c_str() : "My Playlist");
+                    st.playlistEditRow = 0;
+                    st.playlistMessage.clear();
+                    st.playlistEditOpen = true;
+                    MenuSounds::Click();
+                }
+                ++focusRows;
+                y += 36.0f * ui.s;
+            }
             static const int kCaps[4] = { 4, 8, 12, 16 };
             int capIdx = (st.sessionMaxPlayers <= 4) ? 0 : (st.sessionMaxPlayers <= 8) ? 1 : (st.sessionMaxPlayers <= 12) ? 2 : 3;
             char capText[32];
@@ -4848,6 +5154,13 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
                            ff ? 4 : st.sessionMaxPlayers, map ? map->mod : nullptr, map ? map->mapOverride : std::filesystem::path(),
                            map ? map->name : std::string(), map ? map->imageLoading : std::filesystem::path(),
                            map ? map->imageThumbnail : std::filesystem::path());
+            // A chosen playlist starts the lobby on its first entry.
+            if (!ff && !forge && st.playlistChoice >= 0 && st.playlistChoice < static_cast<int>(st.playlists.size())) {
+                const Playlists::Playlist& playlist = st.playlists[st.playlistChoice];
+                st.playlistPosition = playlist.shuffle ? static_cast<int>(std::random_device{}() % playlist.entries.size()) : 0;
+                ResolvedEntry resolved;
+                if (ResolveEntry(ctx, playlist.entries[st.playlistPosition], playlist.randomType, resolved)) ApplyEntryToLobby(st, resolved);
+            }
         } else if (startSolo) {
             choice.play = true;
             choice.host = false;
@@ -5265,6 +5578,7 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
         ctx.st.screen = Screen::PreGameLobby;
     };
 
+    RefreshPlaylists(ctx);
     // "-lobby-return": a match that just ended came back to its lobby, in this new process. Each match is its own process, so
     // the lobby's lasting part is the server's session: the host registers the same address and port again, which keeps
     // the session id and roster, and guests join it again once the host is back (PauseMenu's post-game panel).
@@ -5308,6 +5622,28 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
                                difficulty.empty() ? 1 : std::atoi(difficulty.c_str()), skulls.empty() ? 0 : std::strtoull(skulls.c_str(), nullptr, 10),
                                maxPlayers.empty() ? 16 : std::atoi(maxPlayers.c_str()), mod, path(L"-lobby-map-override"), text(L"-lobby-map-title"),
                                path(L"-lobby-map-image"), path(L"-lobby-map-thumb"));
+                // The playlist carries on: NEXT IN ROTATION moves to its next entry, RETURN TO LOBBY stays on this one.
+                const std::filesystem::path listFile = path(L"-lobby-playlist");
+                for (size_t i = 0; i < ctx.st.playlists.size(); ++i) {
+                    if (!listFile.empty() && ctx.st.playlists[i].file == listFile) ctx.st.playlistChoice = static_cast<int>(i);
+                }
+                if (ctx.st.playlistChoice >= 0) {
+                    const Playlists::Playlist& playlist = ctx.st.playlists[ctx.st.playlistChoice];
+                    const std::string position = text(L"-lobby-playlist-pos");
+                    int at = position.empty() ? 0 : std::atoi(position.c_str());
+                    if (text(L"-lobby-advance") == "1" && !playlist.entries.empty()) {
+                        const int n = static_cast<int>(playlist.entries.size());
+                        if (playlist.shuffle && n > 1) {
+                            const int was = at;
+                            while (at == was) at = static_cast<int>(std::random_device{}() % n);
+                        } else {
+                            at = (at + 1) % n;
+                        }
+                        ResolvedEntry resolved;
+                        if (ResolveEntry(ctx, playlist.entries[at], playlist.randomType, resolved)) ApplyEntryToLobby(ctx.st, resolved);
+                    }
+                    ctx.st.playlistPosition = at;
+                }
             } else {
                 ServerEntry s;
                 s.id = text(L"-lobby-session");
@@ -5596,6 +5932,11 @@ void FrontEndMenu::RenderOverlayImpl(IDXGISwapChain* swapChain, bool clear) {
                     if (argv) LocalFree(argv);
                 }
                 args += L" -difficulty " + std::to_wstring(choice.difficulty);
+                // The match process only keeps this for the way back: post-game's NEXT IN ROTATION.
+                if (choice.host && ctx.st.playlistChoice >= 0 && ctx.st.playlistChoice < static_cast<int>(ctx.st.playlists.size())) {
+                    args += L" -lobby-playlist \"" + ctx.st.playlists[ctx.st.playlistChoice].file.wstring() + L"\"";
+                    args += L" -lobby-playlist-pos " + std::to_wstring(ctx.st.playlistPosition);
+                }
                 if (!choice.variantPath.empty()) args += L" -variant \"" + ToWide(choice.variantPath) + L"\"";
                 if (choice.skulls != 0) args += L" -skulls " + std::to_wstring(choice.skulls);
                 if (!choice.modFolder.empty()) args += L" -mod \"" + choice.modFolder.wstring() + L"\"";

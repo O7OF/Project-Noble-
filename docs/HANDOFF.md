@@ -7,7 +7,23 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 
 **Goal:** `noble-client.exe` loads MCC's own `haloreach.dll` (Halo: Reach) and drives it **without MCC**, like the existing
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
-MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.14 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.15 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+
+## 0. Pick up here (2026-11-01, 00:13 ET) - Playlists, rotation, voting; Forge as Elite checked (@claude)
+
+**Commit:** `6619bda`. **Version:** 0.9.15. **Build:** 0 errors, 0 warnings on the merged tree. **Server:** vote endpoints pushed to ServerTestDeploy; live deploy not checked, and voting shows a message if the server lacks them.
+
+**Shipped.** PLAYLIST row on Custom Game: left and right choose, A opens the editor (map, game type, add, order, random game type, save). JSON in `data/playlists`, a mod's `playlists` folder is scanned (not tested). A chosen playlist starts the lobby on its first entry. Post-game NEXT IN ROTATION advances; RETURN TO LOBBY stays. Lobby VOTE row: 20 s, up to 3 entries plus None of these. None on top draws three more once; then the lobby stays. A tie is random, no votes changes nothing.
+
+**Evidence.** Local server, pad script, two simulated lobby members over HTTP: both voted none, reroll opened, both voted option 1, `option 1 won with 2 votes`, lobby changed. Non-member and out-of-range votes refused. Rotation: Boneyard entry to `lobby now 3 Plots on Countdown`. Editor saved 3 entries. Run on the pre-merge build; merged build compiled only.
+
+**Not verified.** A real second client voting, guests seeing the vote on screen, shuffle, random type, mod playlists, a guest following a rotation. **Rotation advances the host's lobby only; it doesn't auto-start the match.**
+
+**Forge, Tyler's report.** A crash on launch didn't reproduce. Spartan: direct Forge launches on the 10 maps that finished before I stopped the sweep, plus menu solo, host and one modded map. Elite (appearance copied from the main checkout, then restored): forge_halo and Sword Base ran past 44 s and logged Elite dressed. No Forge code changed. Not tried: Elite through the menu, other Elite maps, the editor monitor mode. The only crash recorded was the main checkout's at 23:28, code 0xC0000409, alongside `host_cli_test.json`, likely @deepseek's headless test; @deepseek please check.
+
+**Stray input.** A lobby closed by itself in a run with no lock while @deepseek was active. Use input locks, and scripts that send keys must target Noble's own window.
+
+Self-review: left the status input-lock line replaced below. ResolveEntry rebuilds the map list on each call. Same-name players merge on the server, so votes from one PC's two clients count once.
 
 ## 0. Pick up here (2026-11-01, 00:15 ET) - Fix Forge Launch Crash & Master Server Variant Safety (@O7OF)
 
@@ -553,7 +569,7 @@ Self-review: chat text is logged nowhere client-side, so failures show only on s
 ## 0. Pick up here (2026-10-31, 15:08 ET) - Push-to-talk rebinding, voice quality proof, music list cleanup (@claude)
 
 
-**Current version:** 0.9.14. **Developer build:** 0.9.14-dev. Dev binaries report the suffix next to the version string.
+**Current version:** 0.9.15. **Developer build:** 0.9.15-dev. Dev binaries report the suffix next to the version string.
 
 **Commit:** `8cbb746` (the code is in this commit, whose message only mentions docs: the intended commit failed on quotes in its message). **Version:** 0.9.5. **Build:** 0 errors, 0 warnings on the merged tree. Files: `src/ui/SettingsPanel.*`, `src/common/Settings.cpp`, `src/audio/ReachAudio.cpp`, `src/audio/VoiceChat.cpp`, `src/common/Version.hpp`.
 
@@ -649,7 +665,7 @@ Self-review: the weakest part is the sender thread, because it changes how relay
 - Next for me: two-client chat check against the client transport, then the multiplayer post-game end hook.
 ## 0. Pick up here (2026-10-31, 08:25 ET) - Pre-game lobby map identity (@deepseek / DeepSeek)`.
 
-**Current version:** 0.9.14. **Developer build:** 0.9.14-dev. Dev binaries report the suffix next to the version string.
+**Current version:** 0.9.15. **Developer build:** 0.9.15-dev. Dev binaries report the suffix next to the version string.
 
 
 **Built and verified:** release `build\bin\Release\noble-client.exe`, developer `build\bin\Release\noble-dev.exe`, dedicated `build\bin\Release\noble-dedicated.exe`, and the packaged `Documents\Noble Launcher\Noble.exe` (full runtime tree; package stayed running in a normal launch test).
