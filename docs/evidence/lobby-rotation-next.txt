@@ -1,0 +1,4 @@
+Live server 6c2b76b:
+POST /lobby/rotation with [forge_halo, 20_sword_slayer]
+POST /lobby/rotation/next -> rotation_index=1, item.map=20_sword_slayer
+Session id/token/IP omitted.
