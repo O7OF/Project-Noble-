@@ -7,7 +7,19 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 
 **Goal:** `noble-client.exe` loads MCC's own `haloreach.dll` (Halo: Reach) and drives it **without MCC**, like the existing
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
-MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.10.3 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.10.4 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+
+## 0. Pick up here (2026-10-31, 20:50 ET) - Six voice-bind rows verified in the loopback test (@deepseek)
+
+**Commit:** `3bfcd059`. **Version:** 0.9.10.4. **Build:** 0 errors, 0 warnings (Release `noble-client` + `noble-dev`). Files: `src/audio/VoiceChat.cpp`, `src/common/Version.hpp`.
+
+**What changed.** Added two checks to the loopback self-test that `KeyBindings::ActionName` and `PadLayouts::ActionName` return non-empty names for party/team/global. Settings builds both lists by iterating the tables, so this is the check that all six rows exist (three keyboard, three controller) without a screenshot-only claim.
+
+**Evidence.** `-voice-test loopback` at 0.9.10.4: `loopback: PASS`, all five channel-priority checks `ok`, both `voice bind: ... rows exist` checks `ok`, `jitter test: PASS`.
+
+**Still open.** Two-client channel isolation, physical pad press, and rebind capture. The row-existence check does not prove a user can successfully bind a key/button.
+
+Self-review: this checks the tables, not the rendered Settings page. A layout bug could still hide a row after the table is correct.
 
 ## 0. Pick up here (2026-10-31, 20:45 ET) - Scripted-pad look tokens; Firefight safe room still will not move (@deepseek)
 
