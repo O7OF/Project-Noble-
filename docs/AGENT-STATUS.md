@@ -30,11 +30,11 @@ can make.
 
 ## @deepseek
 
-- state: **idle** (last: headless self-tests fixed, all PASS, 21:10 ET)
+- state: **idle** (last: CI failure-mail burst fixed, 21:20 ET)
 - since: -
 - working on: -
 - files expected: -
-- last commit: `e80415c4`
+- last commit: `3fc9450f`
 - test state: game audio muted in both checkouts (`tools/mute-game.ps1 -IncludeClaude`); restore with `-Unmute`; local settings 3840x2160. Appearance restored to Elite / Primary 13 / Secondary 29 / Accent 2 / visor 0 via `-pad-script`.
 
 ## @claude

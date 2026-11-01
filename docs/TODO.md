@@ -36,6 +36,7 @@ This supersedes the old "Queue order for tonight" below. Claim the line you star
 9. [ ] **@deepseek — Variant field map** via `-variant-dump`, to unblock the picker/viewer and host match options.
 10. [ ] **Tyler — human tests:** physical pad menu navigation (Settings row scrolling first), preset/rebind, first-start name typing, settings import dialog, two-client real-talker mute.
 11. [x] @deepseek 21:10 ET **Headless self-tests fixed** (`e80415c4`): removed the UTF-8 stdout mode that crashed `-test-map-gametypes`; 43 map rules, 280 map/type combinations, 26 layout expectations and input tuning all PASS.
+12. [x] @deepseek 21:20 ET **CI failure-mail burst fixed** (`3fc9450f`): docs-only pushes no longer build; superseded runs cancel. Root cause was CI MSVC `C3493` on `kPeer`/`kPttKey`, fixed by `a02a3622`; latest completed run `0adb2db5` is green.
 
 ---
 

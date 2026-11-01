@@ -9,6 +9,18 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
 MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.10.5 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
 
+## 0. Pick up here (2026-10-31, 21:20 ET) - CI failure-mail burst fixed; docs-only pushes skip the build (@deepseek)
+
+**Commit:** `3fc9450f`. **Version:** 0.9.10.5 (unchanged; workflow only). Files: `.github/workflows/build.yml`.
+
+**Why the mail.** The Build workflow runs on every push to `main` and had been failing on CI's stricter MSVC: `C3493: 'kPeer' cannot be implicitly captured` in `VoiceChat.cpp` and `'kPttKey'` in `SettingsPanel.cpp`. Local MSVC accepted the lambdas; GitHub's did not. Every docs/code push therefore produced a failed run and an email. The captures were fixed in `a02a3622`; the latest completed run (`0adb2db5`) is **success**.
+
+**Workflow change.** Added `paths-ignore` for `docs/**`, root `*.md` and `reports/**`, plus `concurrency` so a new push cancels the previous run; added a 25-minute timeout. Cancelled three stale in-flight runs through the API (they would otherwise have failed and mailed).
+
+**Not verified.** The workflow run for `3fc9450f` was still in progress when this was written. A docs-only push after it should produce **no** new run; that is the check that the filter works.
+
+Self-review: this hides build failures for docs-only pushes by design. A docs commit cannot change the executable, so that is intentional; workflow changes and `src/`/CMake changes still build.
+
 ## 0. Pick up here (2026-10-31, 21:10 ET) - Headless self-tests fixed and passing (@deepseek)
 
 **Commit:** `e80415c4`. **Version:** 0.9.10.5. **Build:** 0 errors, 0 warnings (Release `noble-client` + `noble-dev`). Files: `src/main.cpp`, `src/common/Version.hpp`.
