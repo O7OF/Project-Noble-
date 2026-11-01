@@ -980,15 +980,9 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
     if (gameModeTag != 0) Career::BeginMatch(Career::BaseTypeFromEngineMode(gameModeTag), mapName, difficulty, skulls);
 
     auto launchBlock = BuildLaunchBlock(mapId, gameModeTag, difficulty, skulls, customMvarPath, customVariantPath, connectAddress);
-    // Campaign/Firefight co-op: the launch block declares how many players this session has (0xE8).
-    // A host launched from a lobby with known guests must declare all of them, otherwise the engine only
-    // creates the local player and the co-op state machine fails the mission after ~60 s.
-    if (gameModeTag == 1 || gameModeTag == 5) {
-        int declaredPlayers = 1;
-        if (connectAddress.empty() && expectedPeers > 0) declaredPlayers = 1 + expectedPeers;
-        launchBlock[0xE8] = static_cast<uint8_t>(declaredPlayers);
-        NOBLE_INFO("BlamEngine: launch block declares {} player(s) (0xE8)", declaredPlayers);
-    }
+    // Campaign/Firefight: offset 0xE8 is the local machine player count (1 for PC).
+    // Remote session peers are tracked via membership in the Blam! network session, not 0xE8.
+    launchBlock[0xE8] = 0x01;
 
     // Request corresponding wireframe loading screen .dots
     LoadScreen::Get().RequestMapDots(mapName, ReachHost::Get().GetDataDir());
@@ -1003,130 +997,39 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
 
     const bool isGuest = !connectAddress.empty();
     if (!isGuest) {
-        // PostCommand(10) and PostCommand(11) via vtbl+0x18 after ~300 ms for host / offline matches.
-        // On a guest connecting to a remote host, posting command 10/11 forces local simulation before
-        // session membership and world replication arrive from the host, causing an unrendered black screen.
-        // If hosting an online match / lobby with network transport active, give remote
-        // clients 4000 ms to establish membership sync before posting Command 10/11.
-        // For solo / offline matches, 300 ms is sufficient.
         const bool isOnlineHost = noble::NetworkTransport::Get().IsActive() && noble::NetworkTransport::Get().IsHost();
         const bool settleLonger = (gameModeTag == 1 || gameModeTag == 3); // campaign co-op / Forge
         const int peersToWaitFor = (isOnlineHost && expectedPeers > 0) ? expectedPeers : 0;
-        const bool holdMissionForPeers = (gameModeTag == 1);   // campaign only; Forge must open its session early
-        // Invite / direct joins carry no lobby peer count. Campaign cinematics still cannot be joined, so without a
-        // count the host holds the mission start briefly for any guest that is already connecting.
-        // A host that has a lobby registered knows players are coming: give them the full cold-start window (lobby launch
-        // event -> process start -> engine load ~7 s -> first engine packet). A bare online host gets a short wait.
-        const bool lobbyRegistered = noble::MasterServerClient::Get().Enabled() &&
-                                     !noble::MasterServerClient::Get().GetCurrentSessionId().empty();
-        const int campaignGraceMs = lobbyRegistered ? 30000 : 9000;
-        const bool campaignGraceWait = (gameModeTag == 1) && isOnlineHost && peersToWaitFor == 0;
-        const bool isCampaignMission = (gameModeTag == 1);
-        std::thread([this, isOnlineHost, peersToWaitFor, settleLonger, holdMissionForPeers, campaignGraceWait, campaignGraceMs, lobbyRegistered, isCampaignMission]() {
-            const int startDelay = isOnlineHost ? 1000 : 300;
+
+        std::thread([this, isOnlineHost, peersToWaitFor, settleLonger, gameModeTag]() {
+            // Post Command 10 (Event: Start) promptly so the engine loads the map tags and opens the game session.
+            const int startDelay = (peersToWaitFor > 0) ? 600 : 300;
             std::this_thread::sleep_for(std::chrono::milliseconds(startDelay));
 
-            // Campaign co-op and Forge: Command 10 (Event: Start) is what loads the mission and starts its opening
-            // cinematic. The host used to post it 1 s after launch, before any guest could possibly have joined, so a
-            // guest arriving a few seconds later entered a session that was already mid-cinematic: its camera had no
-            // cinematic binding (the player saw the world from outside the map), and the engine then aborted the
-            // co-op session (0x1B/0x1C/0x1D -> "An error occurred") and dropped everyone to the menu.
-            // So the peer barrier has to gate the MISSION START, not just Command 11.
-            size_t joinedBeforeStart = 0;
-            if (campaignGraceWait) {
-                // No lobby roster was available (guest invited directly or joined by address). Campaign's opening
-                // cinematic cannot be joined mid-play - a guest that arrives late sees the world from outside the map
-                // and the engine aborts the session - so hold the mission start for up to 12 s while a guest connects.
-                const ULONGLONG graceStart = GetTickCount64();
-                const ULONGLONG graceDeadline = graceStart + static_cast<ULONGLONG>(campaignGraceMs);
-                NOBLE_INFO("BlamEngine: campaign host without a lobby peer count (lobby registered: {}) - holding the "
-                           "mission start for up to {} ms so a joining guest can enter before the cinematic",
-                           lobbyRegistered, campaignGraceMs);
-                while (GetTickCount64() < graceDeadline) {
-                    joinedBeforeStart = noble::NetworkTransport::Get().GetGamePeerCount();
-                    if (joinedBeforeStart > 0) break;
-                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                }
-                if (joinedBeforeStart > 0) {
-                    NOBLE_INFO("BlamEngine: guest engine traffic appeared after {} ms ({} peer(s)); settling 3 s before "
-                               "the mission starts", GetTickCount64() - graceStart, joinedBeforeStart);
-                    std::this_thread::sleep_for(std::chrono::milliseconds(3000));
-                } else {
-                    NOBLE_INFO("BlamEngine: no guest appeared within {} ms; starting the mission", campaignGraceMs);
-                }
-            } else if (peersToWaitFor > 0 && holdMissionForPeers) {
-                const ULONGLONG start = GetTickCount64();
-                const ULONGLONG deadline = start + 25000;       // hard cap
-                const ULONGLONG giveUpAt = start + 10000;       // no traffic at all -> the session is not joinable yet
-                ULONGLONG lastLog = 0;
-                NOBLE_INFO("BlamEngine: campaign co-op - holding the mission start until {}/{} engine peer(s) "
-                           "have joined...", joinedBeforeStart, peersToWaitFor);
-                while (GetTickCount64() < deadline) {
-                    joinedBeforeStart = noble::NetworkTransport::Get().GetGamePeerCount();
-                    if (joinedBeforeStart >= static_cast<size_t>(peersToWaitFor)) break;
-                    if (joinedBeforeStart == 0 && GetTickCount64() >= giveUpAt) {
-                        NOBLE_WARN("BlamEngine: no guest engine traffic after 10 s; the session is probably only "
-                                   "joinable once the mission state advances - starting the mission now");
-                        break;
-                    }
-                    const ULONGLONG now = GetTickCount64();
-                    if (lastLog == 0 || now - lastLog >= 5000) {
-                        lastLog = now;
-                        NOBLE_INFO("BlamEngine: peer wait before start: {}/{} engine peer(s) connected",
-                                   joinedBeforeStart, peersToWaitFor);
-                    }
-                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                }
-                joinedBeforeStart = noble::NetworkTransport::Get().GetGamePeerCount();
-                if (joinedBeforeStart >= static_cast<size_t>(peersToWaitFor)) {
-                    NOBLE_INFO("BlamEngine: {} engine peer(s) joined before start; beginning the mission with them",
-                               joinedBeforeStart);
-                } else {
-                    NOBLE_WARN("BlamEngine: only {}/{} engine peer(s) joined before start (gave up after {} ms); "
-                               "beginning the mission anyway", joinedBeforeStart, peersToWaitFor,
-                               GetTickCount64() - start);
-                }
-            }
-
             if (m_engineInstance && m_fnProcessEvent) {
-                if (holdMissionForPeers && peersToWaitFor > 0 && isOnlineHost) {
-                    // Campaign builds its player list when the mission loads (Command 10); the guest's first membership
-                    // message arrives ~150 ms later, so hold the mission load until the lobby's guests are in membership.
-                    const size_t c10Want = static_cast<size_t>(peersToWaitFor);
-                    const ULONGLONG c10Deadline = GetTickCount64() + 15000;
-                    while (GetTickCount64() < c10Deadline && noble::LobbyPatches::GetRemotePlayerAddCount() < c10Want) {
-                        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                    }
-                    NOBLE_INFO("BlamEngine: membership before mission load: {}/{} player(s) in session",
-                               noble::LobbyPatches::GetRemotePlayerAddCount(), c10Want);
-                }
                 NOBLE_INFO("BlamEngine: Posting Command 10 (Event: Start) via vtbl+0x18 after {}ms delay...", startDelay);
                 int32_t status10 = m_fnProcessEvent(m_engineInstance, 10, 0);
                 NOBLE_INFO("BlamEngine: PostCommand(10) returned: 0x{:X}", status10);
 
-                // Campaign co-op and Forge do not tolerate the host entering simulation before
-                // the guest has completed the engine join handshake. Slayer/Firefight can recover
-                // from a late join; these modes instead clean the peer out of the membership and
-                // immediately end the mission. When the lobby told us how many guests it launched
-                // with, hold Command 11 until their port-1000 engine traffic arrives.
-                const size_t targetPeers = (peersToWaitFor > 0) ? static_cast<size_t>(peersToWaitFor)
-                                         : (joinedBeforeStart > 0 ? 1 : 0);
-                if (targetPeers > 0) {
-                    const ULONGLONG deadline = GetTickCount64() + 60000;
+                // For online co-op / multiplayer with expected peers:
+                // Wait for remote players to connect and join membership BEFORE posting Command 11 (simulation start).
+                if (peersToWaitFor > 0) {
+                    const size_t targetPeers = static_cast<size_t>(peersToWaitFor);
+                    const ULONGLONG deadline = GetTickCount64() + 30000;
                     ULONGLONG lastLog = 0;
                     NOBLE_INFO("BlamEngine: waiting for {} remote player(s) to finish loading and join membership before starting simulation...",
                                targetPeers);
                     while (GetTickCount64() < deadline) {
                         const size_t playersJoined = LobbyPatches::GetRemotePlayerAddCount();
                         if (playersJoined >= targetPeers) {
-                            const int settleMs = settleLonger ? 4000 : 2000;
+                            const int settleMs = settleLonger ? 3000 : 1500;
                             NOBLE_INFO("BlamEngine: {}/{} remote player(s) joined session membership (msg 27); settling {} ms for world replication",
                                        playersJoined, targetPeers, settleMs);
                             std::this_thread::sleep_for(std::chrono::milliseconds(settleMs));
                             break;
                         }
                         const ULONGLONG now = GetTickCount64();
-                        if (lastLog == 0 || now - lastLog >= 5000) {
+                        if (lastLog == 0 || now - lastLog >= 3000) {
                             lastLog = now;
                             NOBLE_INFO("BlamEngine: membership wait: {}/{} player(s) in session (engine peers: {})",
                                        playersJoined, targetPeers, NetworkTransport::Get().GetGamePeerCount());
@@ -1138,7 +1041,7 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
                                    LobbyPatches::GetRemotePlayerAddCount(), targetPeers);
                     }
                 } else {
-                    const int simDelay = isOnlineHost ? 5000 : 200;
+                    const int simDelay = 200;
                     std::this_thread::sleep_for(std::chrono::milliseconds(simDelay));
                 }
 

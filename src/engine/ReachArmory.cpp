@@ -128,7 +128,7 @@ static std::atomic<uint32_t> s_rotationBaseBits{0xFFFFFFFFu};
 static std::atomic<uint32_t> s_lastYawBits{0};
 static std::atomic<int32_t> s_lastTurnStep{-1};
 
-static std::mutex s_sceneMutex;
+static std::recursive_mutex s_sceneMutex;
 static std::string s_targetScene = "armory";
 static ReachArmorySelection s_selection;
 static std::atomic<uint64_t> s_selectionGeneration{1};
@@ -138,7 +138,8 @@ static uint64_t s_appliedGeneration = 0;
 // so the next apply forces the permutation write + REBUILD even when the piece list is identical.
 static std::atomic<bool> s_previewDirty{false};
 
-static std::mutex s_dataMutex;
+static std::recursive_mutex s_dataMutex;
+using ArmoryLock = std::lock_guard<std::recursive_mutex>;
 static bool s_stringIdsLoaded = false;
 static std::unordered_map<std::string, uint32_t> s_stringIds;
 
@@ -188,7 +189,7 @@ static int32_t s_remadeAtBump = 0;
 // Load string_ids from data/menumaps/mainmenu_all.string_ids.csv
 // -----------------------------------------------------------------------------
 static void EnsureStringIdsLoaded() {
-    std::lock_guard<std::mutex> lock(s_dataMutex);
+    ArmoryLock lock(s_dataMutex);
     if (s_stringIdsLoaded) return;
     s_stringIdsLoaded = true;
 
@@ -253,7 +254,7 @@ static void EnsureStringIdsLoaded() {
 // string_id -> name from the csv (for logging), or the hex value.
 static std::string NameOfStringId(uint32_t id) {
     EnsureStringIdsLoaded();
-    std::lock_guard<std::mutex> lock(s_dataMutex);
+    ArmoryLock lock(s_dataMutex);
     for (const auto& kv : s_stringIds)
         if (kv.second == id) return kv.first;
     char buf[16];
@@ -263,7 +264,7 @@ static std::string NameOfStringId(uint32_t id) {
 
 static uint32_t LookupStringId(const std::string& name) {
     EnsureStringIdsLoaded();
-    std::lock_guard<std::mutex> lock(s_dataMutex);
+    ArmoryLock lock(s_dataMutex);
     auto it = s_stringIds.find(ToLowerAscii(name));
     return (it != s_stringIds.end()) ? it->second : 0;
 }
@@ -317,15 +318,23 @@ static std::vector<std::pair<uintptr_t, size_t>> ReadWriteChunks(size_t minSize)
     std::vector<std::pair<uintptr_t, size_t>> chunks;
     uintptr_t addr = 0;
     MEMORY_BASIC_INFORMATION mbi{};
+
+    ULONG_PTR stackLow = 0, stackHigh = 0;
+    GetCurrentThreadStackLimits(&stackLow, &stackHigh);
+
     while (VirtualQuery(reinterpret_cast<LPCVOID>(addr), &mbi, sizeof(mbi)) != 0) {
         const uintptr_t base = reinterpret_cast<uintptr_t>(mbi.BaseAddress);
         const size_t size = mbi.RegionSize;
         const uintptr_t nextAddr = base + size;
         if (mbi.State == MEM_COMMIT && mbi.Type == MEM_PRIVATE && mbi.Protect == PAGE_READWRITE && size >= minSize) {
-            for (size_t off = 0; off < size; off += kChunk) {
-                const size_t len = std::min(size - off, kChunk + kOverlap);
-                chunks.emplace_back(base + off, len);
-                if (off + len >= size) break;
+            if (stackLow != 0 && stackHigh != 0 && base < stackHigh && nextAddr > stackLow) {
+                // Skip thread stack memory
+            } else {
+                for (size_t off = 0; off < size; off += kChunk) {
+                    const size_t len = std::min(size - off, kChunk + kOverlap);
+                    chunks.emplace_back(base + off, len);
+                    if (off + len >= size) break;
+                }
             }
         }
         if (nextAddr <= addr) break;
@@ -401,6 +410,11 @@ static bool ScanGlobalsTable() {
 }
 
 static void RememberRegion(uintptr_t addr) {
+    ULONG_PTR stackLow = 0, stackHigh = 0;
+    GetCurrentThreadStackLimits(&stackLow, &stackHigh);
+    if (stackLow != 0 && stackHigh != 0 && addr >= stackLow && addr < stackHigh) return;
+
+    ArmoryLock lock(s_dataMutex);
     if (s_recordRegions.size() >= 16) return;
     MEMORY_BASIC_INFORMATION mbi{};
     if (VirtualQuery(reinterpret_cast<LPCVOID>(addr), &mbi, sizeof(mbi)) == 0) return;
@@ -415,15 +429,20 @@ static std::vector<std::pair<uintptr_t, size_t>> RecordRegionChunks() {
     constexpr size_t kOverlap = 0x1000;
     std::vector<std::pair<uintptr_t, size_t>> regions;
     {
-        std::lock_guard<std::mutex> lock(s_dataMutex);
+        ArmoryLock lock(s_dataMutex);
         regions = s_recordRegions;
     }
+    ULONG_PTR stackLow = 0, stackHigh = 0;
+    GetCurrentThreadStackLimits(&stackLow, &stackHigh);
+
     std::vector<std::pair<uintptr_t, size_t>> chunks;
     for (const auto& r : regions) {
         MEMORY_BASIC_INFORMATION mbi{};
         if (VirtualQuery(reinterpret_cast<LPCVOID>(r.first), &mbi, sizeof(mbi)) == 0) continue;
         if (mbi.State != MEM_COMMIT || mbi.Protect != PAGE_READWRITE) continue;
+        const uintptr_t base = reinterpret_cast<uintptr_t>(mbi.BaseAddress);
         const size_t size = std::min(r.second, static_cast<size_t>(mbi.RegionSize));
+        if (stackLow != 0 && stackHigh != 0 && base < stackHigh && base + size > stackLow) continue;
         for (size_t off = 0; off < size; off += kChunk) {
             const size_t len = std::min(size - off, kChunk + kOverlap);
             chunks.emplace_back(r.first + off, len);
@@ -448,7 +467,7 @@ static void StartQuickRescan() {
     std::thread([]() {
         size_t colours = 0, eliteColours = 0, suits = 0;
         {
-            std::lock_guard<std::mutex> lock(s_dataMutex);
+            ArmoryLock lock(s_dataMutex);
             colours = s_colorRecords.size();
             eliteColours = s_eliteColorRecords.size();
             suits = s_suitRecords.size();
@@ -462,7 +481,7 @@ static void StartQuickRescan() {
             ScanSuitRecordsIn(chunks, true);
             size_t c = 0, ec = 0, sr = 0;
             {
-                std::lock_guard<std::mutex> lock(s_dataMutex);
+                ArmoryLock lock(s_dataMutex);
                 c = s_colorRecords.size();
                 ec = s_eliteColorRecords.size();
                 sr = s_suitRecords.size();
@@ -539,7 +558,7 @@ static size_t ScanColorRecordsIn(const std::vector<std::pair<uintptr_t, size_t>>
     static constexpr uint32_t kStockColors[4] = { 0xFF585858u, 0xFF595959u, 0xFF2FA0CBu, 0xFFC7A167u };
     uint32_t prevColors[4] = {};
     {
-        std::lock_guard<std::mutex> lock(s_dataMutex);
+        ArmoryLock lock(s_dataMutex);
         std::memcpy(prevColors, s_lastColorWords.data(), sizeof(prevColors));
     }
     const bool hasPrevColors = ((prevColors[0] >> 24) == 0xFFu &&
@@ -561,8 +580,11 @@ static size_t ScanColorRecordsIn(const std::vector<std::pair<uintptr_t, size_t>>
                     const uint32_t* cur = reinterpret_cast<const uint32_t*>(buf.data() + off);
                     if (std::memcmp(cur, kStockColors, 16) == 0 ||
                         (hasPrevColors && std::memcmp(cur, prevColors, 16) == 0)) {
-                        found.push_back(base + off);
-                        if (found.size() >= 16) break;
+                        const uintptr_t recAddr = base + off;
+                        if (recAddr >= 0x10000000ULL && recAddr <= 0x7FFFFFFF0000ULL) {
+                            found.push_back(recAddr);
+                            if (found.size() >= 16) break;
+                        }
                     }
                 }
             }
@@ -572,7 +594,7 @@ static size_t ScanColorRecordsIn(const std::vector<std::pair<uintptr_t, size_t>>
 
     size_t added = 0;
     if (!found.empty()) {
-        std::lock_guard<std::mutex> lock(s_dataMutex);
+        ArmoryLock lock(s_dataMutex);
         for (uintptr_t rec : found) {
             if (s_colorRecords.size() >= 16) break;
             if (std::find(s_colorRecords.begin(), s_colorRecords.end(), rec) == s_colorRecords.end()) {
@@ -590,7 +612,7 @@ static size_t ScanEliteColorRecordsIn(const std::vector<std::pair<uintptr_t, siz
     uint32_t lastPri = 0, lastSec = 0;
     uint32_t prevColors[4] = {};
     {
-        std::lock_guard<std::mutex> lock(s_dataMutex);
+        ArmoryLock lock(s_dataMutex);
         lastPri = s_lastElitePriArgb;
         lastSec = s_lastEliteSecArgb;
         std::memcpy(prevColors, s_lastColorWords.data(), sizeof(prevColors));
@@ -614,8 +636,11 @@ static size_t ScanEliteColorRecordsIn(const std::vector<std::pair<uintptr_t, siz
                     const uint32_t* cur = reinterpret_cast<const uint32_t*>(buf.data() + off);
                     if ((hasPrevColors && std::memcmp(cur, prevColors, 16) == 0) ||
                         MatchEliteColorPattern(cur, lastPri, lastSec)) {
-                        found.push_back(base + off);
-                        if (found.size() >= 16) break;
+                        const uintptr_t recAddr = base + off;
+                        if (recAddr >= 0x10000000ULL && recAddr <= 0x7FFFFFFF0000ULL) {
+                            found.push_back(recAddr);
+                            if (found.size() >= 16) break;
+                        }
                     }
                 }
             }
@@ -625,7 +650,7 @@ static size_t ScanEliteColorRecordsIn(const std::vector<std::pair<uintptr_t, siz
 
     size_t added = 0;
     if (!found.empty()) {
-        std::lock_guard<std::mutex> lock(s_dataMutex);
+        ArmoryLock lock(s_dataMutex);
         for (uintptr_t rec : found) {
             if (s_eliteColorRecords.size() >= 16) break;
             if (std::find(s_eliteColorRecords.begin(), s_eliteColorRecords.end(), rec) == s_eliteColorRecords.end()) {
@@ -644,7 +669,7 @@ static size_t ScanSuitRecordsIn(const std::vector<std::pair<uintptr_t, size_t>>&
     static constexpr float kStockSuit[4] = { 0.9960785f, 0.9921569f, 0.98823535f, 1.0f };
     float prevSuit[4] = {};
     {
-        std::lock_guard<std::mutex> lock(s_dataMutex);
+        ArmoryLock lock(s_dataMutex);
         std::memcpy(prevSuit, s_lastSuitFloats.data(), sizeof(prevSuit));
     }
     // Only match prevSuit if it is distinct from generic quaternions/vectors like (0,0,0,1)
@@ -670,8 +695,11 @@ static size_t ScanSuitRecordsIn(const std::vector<std::pair<uintptr_t, size_t>>&
                     const float* f = reinterpret_cast<const float*>(buf.data() + off);
                     if (std::memcmp(f, kStockSuit, 16) == 0 ||
                         (hasPrevSuit && std::memcmp(f, prevSuit, 16) == 0)) {
-                        found.push_back(base + off);
-                        if (found.size() >= 16) break;
+                        const uintptr_t recAddr = base + off;
+                        if (recAddr >= 0x10000000ULL && recAddr <= 0x7FFFFFFF0000ULL) {
+                            found.push_back(recAddr);
+                            if (found.size() >= 16) break;
+                        }
                     }
                 }
             }
@@ -681,7 +709,7 @@ static size_t ScanSuitRecordsIn(const std::vector<std::pair<uintptr_t, size_t>>&
 
     size_t added = 0;
     if (!found.empty()) {
-        std::lock_guard<std::mutex> lock(s_dataMutex);
+        ArmoryLock lock(s_dataMutex);
         for (uintptr_t rec : found) {
             if (s_suitRecords.size() >= 16) break;
             if (std::find(s_suitRecords.begin(), s_suitRecords.end(), rec) == s_suitRecords.end()) {
@@ -697,7 +725,7 @@ static size_t ScanSuitRecordsIn(const std::vector<std::pair<uintptr_t, size_t>>&
 
 static void ScanEliteTable() {
     {
-        std::lock_guard<std::mutex> lock(s_dataMutex);
+        ArmoryLock lock(s_dataMutex);
         if (s_eliteScanned) return;
     }
 
@@ -773,7 +801,7 @@ static void ScanEliteTable() {
                         }
                     }
                     if (allOk) {
-                        std::lock_guard<std::mutex> lock(s_dataMutex);
+                        ArmoryLock lock(s_dataMutex);
                         s_eliteRegions = std::move(cached);
                         s_eliteScanned = true;
                         NOBLE_INFO("ReachArmory: Found Elite hlmt 6-region table at 0x{:X}", base + off);
@@ -821,7 +849,7 @@ static void WriteColorsAndSuit(const ReachArmorySelection& sel) {
         1.0f
     };
 
-    std::lock_guard<std::mutex> lock(s_dataMutex);
+    ArmoryLock lock(s_dataMutex);
     s_lastColorWords = words;
     s_lastElitePriArgb = priArgb;
     s_lastEliteSecArgb = secArgb;
@@ -891,7 +919,7 @@ static std::unordered_map<std::string, std::vector<PmcgChange>> s_pmcg;   // "<l
 static bool s_pmcgLoaded = false;
 
 static void EnsurePmcgLoaded() {
-    std::lock_guard<std::mutex> lock(s_dataMutex);
+    ArmoryLock lock(s_dataMutex);
     if (s_pmcgLoaded) return;
     s_pmcgLoaded = true;
     std::vector<std::filesystem::path> dirs;
@@ -937,7 +965,7 @@ static void EnsurePmcgLoaded() {
 // "5c" utility, "68" knees, "80" Spartan effects). nullptr = not in the table.
 static const std::vector<PmcgChange>* PmcgItem(const char* list, const std::string& item) {
     EnsurePmcgLoaded();
-    std::lock_guard<std::mutex> lock(s_dataMutex);
+    ArmoryLock lock(s_dataMutex);
     auto it = s_pmcg.find(std::string(list) + ":" + item);
     return it == s_pmcg.end() ? nullptr : &it->second;
 }
@@ -990,7 +1018,7 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx) {
             NOBLE_INFO("ReachArmory: Switched GLOBALS camera scene to 0x{:X} (shows_elite={})", effectiveSceneIdx, wantElite);
         }
         if (speciesChanged) {
-            std::lock_guard<std::mutex> lock(s_dataMutex);
+            ArmoryLock lock(s_dataMutex);
             s_colorRecords.clear();
             s_eliteColorRecords.clear();
             s_suitRecords.clear();
@@ -1190,7 +1218,7 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx) {
                 &sel.eliteHelmet, &sel.eliteChest, &sel.eliteLeftShoulder,
                 &sel.eliteRightShoulder, &sel.eliteArms, &sel.eliteLegs
             };
-            std::lock_guard<std::mutex> lock(s_dataMutex);
+            ArmoryLock lock(s_dataMutex);
             if (s_eliteScanned) {
                 for (size_t r = 0; r < 6; ++r) {
                     const std::string& pieceName = !pieceNames[r]->empty() ? *pieceNames[r] : sel.eliteSuit;
@@ -1236,7 +1264,7 @@ void ReachArmory::SetMenuMode(bool menuMode) {
         s_settlePending = false;
         s_previewDirty.store(false);
         {
-            std::lock_guard<std::mutex> lock(s_dataMutex);
+            ArmoryLock lock(s_dataMutex);
             s_colorRecords.clear();
             s_eliteColorRecords.clear();
             s_suitRecords.clear();
@@ -1253,19 +1281,19 @@ bool ReachArmory::IsMenuMode() {
 }
 
 void ReachArmory::SetTargetScene(const std::string& sceneName) {
-    std::lock_guard<std::mutex> lock(s_sceneMutex);
+    ArmoryLock lock(s_sceneMutex);
     s_targetScene = sceneName;
 }
 
 std::string ReachArmory::GetTargetScene() {
-    std::lock_guard<std::mutex> lock(s_sceneMutex);
+    ArmoryLock lock(s_sceneMutex);
     return s_targetScene;
 }
 
 void ReachArmory::SetSelection(const ReachArmorySelection& sel) {
     bool pieceChanged = false;
     {
-        std::lock_guard<std::mutex> lock(s_sceneMutex);
+        ArmoryLock lock(s_sceneMutex);
         const ReachArmorySelection& prev = s_selection;
         pieceChanged =
             prev.previewElite != sel.previewElite || prev.isFemale != sel.isFemale ||
@@ -1285,7 +1313,7 @@ void ReachArmory::SetSelection(const ReachArmorySelection& sel) {
 }
 
 ReachArmorySelection ReachArmory::GetSelection() {
-    std::lock_guard<std::mutex> lock(s_sceneMutex);
+    ArmoryLock lock(s_sceneMutex);
     return s_selection;
 }
 
@@ -1315,7 +1343,7 @@ bool ReachArmory::IsArmoryScene() {
     if (!s_menuMode.load() || !s_sceneReady.load()) return false;
     std::string scene;
     {
-        std::lock_guard<std::mutex> lock(s_dataMutex);
+        ArmoryLock lock(s_dataMutex);
         scene = s_targetScene;
     }
     const int32_t idx = ResolveSceneIndex(scene);
@@ -1344,7 +1372,12 @@ void ReachArmory::Tick() {
                     ScanEliteColorRecords();
                     ScanSuitRecords();
                     ScanEliteTable();
-                    break;
+                    bool hasRecords = false;
+                    {
+                        ArmoryLock lock(s_dataMutex);
+                        hasRecords = (!s_colorRecords.empty() || !s_eliteColorRecords.empty()) && !s_suitRecords.empty();
+                    }
+                    if (hasRecords) break;
                 }
                 if (!isRescan && (attempt == 4 || attempt % 20 == 19)) {
                     size_t regions = 0, bytes = 0;
@@ -1369,7 +1402,7 @@ void ReachArmory::Tick() {
     if (s_globalsBase.load() != 0 && GetSelection().previewElite && frame % 120 == 0 && !s_scanning.load()) {
         bool needEliteColors = false;
         {
-            std::lock_guard<std::mutex> lock(s_dataMutex);
+            ArmoryLock lock(s_dataMutex);
             needEliteColors = s_eliteColorRecords.empty();
         }
         if (needEliteColors) {

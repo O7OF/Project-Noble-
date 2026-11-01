@@ -7,7 +7,38 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 
 **Goal:** `noble-client.exe` loads MCC's own `haloreach.dll` (Halo: Reach) and drives it **without MCC**, like the existing
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
-MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.16.2 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.16.3 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+
+## 0. Pick up here (2026-11-01, 01:25 ET) - Fix Scanner Memory Corruption Crash (0xC0000005) & Campaign Loading Deadlock (@O7OF)
+
+**Version:** 0.9.16.3. **Build:** noble-client, noble-dev, noble-dedicated, 0 errors, 0 warnings on MSVC Release x64. Files: `src/engine/ReachArmory.cpp`, `src/engine/BlamEngine.cpp`, `src/common/Version.hpp`, `docs/HANDOFF.md`.
+
+**What was actually wrong (Root Cause Analysis):**
+1. **Random Scanner Crash (Access Violation `0xC0000005` in `noble-client.exe`, RVA `0xB062A`):**
+   - Mini-dump analysis of `build/bin/Release/data/sandbox/noble-crash.dmp`:
+     - Exception code `0xC0000005` at address `0x7FF7FB3D062A` (RVA `0xB062A` inside `noble-client.exe`, specifically `ScanColorRecordsIn` at offset `0x1400B062A`).
+     - Register `R12` was loaded with `0x402fc392402fc392` (`2.7463f` IEEE 754) and `RSI` with `0x3f800000402fc392` (`2.7463f` and `1.0f`). These matched the local player's `suitFloats` emissive light parameters!
+     - `ReadWriteChunks(minSize)` in `ReachArmory.cpp` iterated all private committed memory chunks (`MEM_PRIVATE | PAGE_READWRITE`) without checking thread stack boundaries. When `prevSuit` was searched, the scanner matched its own local stack buffer (`prevSuit` on the stack) and stored the stack address into `s_suitRecords`.
+     - In `WriteColorsAndSuit()`, every frame, the engine wrote `suitFloats` into all records in `s_suitRecords`. Writing to the scanner's own stack smashed `found._Myfirst` and `found._Mylast` with float data.
+     - On the next scan iteration, reading `*found.begin()` dereferenced float bits `0x402fc392402fc392`, causing an immediate fatal `0xC0000005` crash.
+     - Furthermore, `s_recordRegions` in `RememberRegion` was mutated without locking `s_dataMutex`, causing a data race with `RecordRegionChunks` in `StartQuickRescan`.
+2. **Campaign Not Loading Correctly (Artificial Hangs & Co-op Deadlock):**
+   - **Co-op Campaign Deadlock:** In `BlamEngine.cpp`, the launch sequence held Command 10 for up to 15 seconds waiting for `LobbyPatches::GetRemotePlayerAddCount() >= targetPeers`. However, in Halo: Reach MCC, `haloreach.dll` **cannot process peer membership (`msg 27`) until Command 10 (Event: Start) has spawned the engine and loaded the campaign mission tags!** Holding Command 10 prevented the session from opening; after 12 seconds `haloreach.dll`'s channel watchdog timed out in state 6 and kicked the peer (`BOOT peer 1 reason 8`). When Command 10 finally fired, the host waited 60 seconds for a booted peer before aborting.
+   - **Solo Campaign 35-Second Hang:** In solo campaign, `BuildLaunchBlock` initialized `NetworkTransport` as host, so `isOnlineHost` became true with `peersToWaitFor == 0`. The old logic entered `campaignGraceWait` and slept up to 30 seconds waiting for non-existent peers, plus an extra 5-second artificial delay before Command 11.
+   - **Launch Block `0xE8` Split-Screen Corruption:** `launchBlock[0xE8]` was overwritten with `1 + expectedPeers` (`2`). In the Blam! engine, offset `0xE8` is `local_player_count` (local controllers on this machine). Setting it to 2 told the engine that local controller 1 was playing split-screen, causing local player initialization to fail because slot 1 was unassigned.
+
+**The Fix:**
+1. **Thread Stack Exclusion in Memory Scanners:**
+   - Implemented `GetCurrentThreadStackLimits(&stackLow, &stackHigh)` to exclude the current thread's stack from `ReadWriteChunks`, `RecordRegionChunks`, and `RememberRegion`.
+   - Added canonical pointer range bounds checks (`rec >= 0x10000000ULL && rec <= 0x7FFFFFFF0000ULL`) before pushing any candidate address to `found` across `ScanColorRecordsIn`, `ScanEliteColorRecordsIn`, and `ScanSuitRecordsIn`.
+   - Replaced `std::mutex` with `std::recursive_mutex` for `s_dataMutex` and `s_sceneMutex` (`using ArmoryLock = std::lock_guard<std::recursive_mutex>`) so `RememberRegion` is fully thread-safe without deadlock risk.
+   - Halted runaway 4GB background scans in `ReachArmory::Tick()` once live biped records are established (`if (hasRecords) break;`).
+2. **Campaign Launch Overhaul:**
+   - Fixed `launchBlock[0xE8] = 0x01;` to ensure local player count is always 1 for PC.
+   - Removed the 15-second pre-Command-10 wait loop completely. Command 10 is dispatched immediately (300 ms for solo, 600 ms for co-op) to load mission tags and open the Blam! network session.
+   - Removed the 30-second `campaignGraceWait` artificial delay.
+   - For co-op campaigns (`peersToWaitFor > 0`), Command 11 (simulation start) is gated on `playersJoined >= targetPeers` with a 3-second world replication settle window.
+   - For solo campaigns (`peersToWaitFor == 0`), Command 11 dispatches after 200 ms, booting campaign missions smoothly in under a second.
 
 ## 0. Pick up here (2026-11-01, 01:00 ET) - Team roster, rotation countdown, mode cleanup, pad filters (@claude)
 
