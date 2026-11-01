@@ -106,7 +106,6 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 
     // Headless test of the map / game-type guard: no MCC, no window, no audio. `-test-map-gametypes`.
     if (std::wstring(pCmdLine ? pCmdLine : L"").find(L"-test-map-gametypes") != std::wstring::npos) {
-        _setmode(_fileno(stdout), _O_U8TEXT);
         const int types = noble::MapGameTypes::SelfTest();
         const int names = noble::MapNames::SelfTest();
         const int layouts = noble::PadLayouts::SelfTest();
