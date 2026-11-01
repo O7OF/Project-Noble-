@@ -545,8 +545,8 @@ static bool MatchEliteColorPattern(const uint32_t cur[4], uint32_t lastPri, uint
         }
     }
 
-    // Both Primary (cur[0]) and Secondary (cur[3]) MUST match if custom colors were previously applied
-    if (lastPri != 0 && lastSec != 0 && cur[0] == lastPri && cur[3] == lastSec) {
+    // Both Primary (cur[0]) and Secondary (cur[2] or cur[3]) MUST match if custom colors were previously applied
+    if (lastPri != 0 && lastSec != 0 && cur[0] == lastPri && (cur[2] == lastSec || cur[3] == lastSec)) {
         return true;
     }
 
@@ -621,7 +621,7 @@ static size_t ScanEliteColorRecordsIn(const std::vector<std::pair<uintptr_t, siz
                                 (prevColors[1] >> 24) == 0xFFu &&
                                 (prevColors[2] >> 24) == 0xFFu &&
                                 (prevColors[3] >> 24) == 0xFFu &&
-                                prevColors[0] != 0 && prevColors[3] != 0);
+                                prevColors[0] != 0 && (prevColors[2] != 0 || prevColors[3] != 0));
 
     std::vector<uintptr_t> found;
     for (const auto& chunk : chunks) {
@@ -834,10 +834,10 @@ static void WriteColorsAndSuit(const ReachArmorySelection& sel) {
     // Elite (elite_armor_template / elite_illum_cards):
     //   [0] = Primary base armor
     //   [1] = Bodysuit / Accent detail
-    //   [2] = Emissive armor lights (Lights color)
-    //   [3] = Secondary armor trim / stripes (Secondary color)
+    //   [2] = Secondary armor trim / stripes (Secondary color)
+    //   [3] = Emissive armor lights (Lights color - focusing small detail lights)
     const std::array<uint32_t, 4> words = sel.previewElite
-        ? std::array<uint32_t, 4>{ priArgb, terArgb, litArgb, secArgb }
+        ? std::array<uint32_t, 4>{ priArgb, terArgb, secArgb, litArgb }
         : std::array<uint32_t, 4>{ priArgb, secArgb, terArgb, visArgb };
 
     // Self-illumination / emissive suit shader float constant:
@@ -1375,7 +1375,9 @@ void ReachArmory::Tick() {
                     bool hasRecords = false;
                     {
                         ArmoryLock lock(s_dataMutex);
-                        hasRecords = (!s_colorRecords.empty() || !s_eliteColorRecords.empty()) && !s_suitRecords.empty();
+                        const bool wantElite = GetSelection().previewElite;
+                        hasRecords = wantElite ? !s_eliteColorRecords.empty()
+                                               : (!s_colorRecords.empty() && !s_suitRecords.empty());
                     }
                     if (hasRecords) break;
                 }

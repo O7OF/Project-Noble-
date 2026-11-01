@@ -7,7 +7,43 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 
 **Goal:** `noble-client.exe` loads MCC's own `haloreach.dll` (Halo: Reach) and drives it **without MCC**, like the existing
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
-MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.16.3 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.16.4 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+
+## 0. Pick up here (2026-11-01, 01:50 ET) - Fix Elite Armor Lights Targeting Armor Plates Instead of Small Details (@O7OF)
+
+**Version:** 0.9.16.4. **Build:** noble-client, noble-dev, noble-dedicated, 0 errors, 0 warnings on MSVC Release x64. Files: `src/engine/ReachArmory.cpp`, `src/common/Version.hpp`, `docs/HANDOFF.md`.
+
+**What was actually wrong (Root Cause Analysis):**
+- Tyler reported: "fix elite armor lights not being able to change colors work but the lights arent changing its changing the armor color instead it should be focusing the small details of the armor those are most likely the armor lights."
+- In `src/engine/ReachArmory.cpp`, `WriteColorsAndSuit()` constructed the Elite's 16-byte ARGB constant buffer record as:
+  `words = { priArgb, terArgb, litArgb, secArgb }`.
+  - Slot `[0]` = Primary Base Armor (`priArgb`)
+  - Slot `[1]` = Bodysuit / Techsuit (`terArgb`)
+  - Slot `[2]` = **Lights Color (`litArgb`)**
+  - Slot `[3]` = **Secondary Armor Color (`secArgb`)**
+- In Reach Blam! shaders (`elite_armor_template.shader`, `elite_minor_chest.shader`), the change-color channel mapping is:
+  - Channel 0 = Base Armor
+  - Channel 1 = Bodysuit
+  - Channel 2 = **Secondary Armor Overlay & Trim Plates**
+  - Channel 3 = **Small Detail Lights / Illumination Nodes & Cards**
+- Because Slot `[2]` and Slot `[3]` were reversed:
+  1. The "Lights" color picker was written directly into Slot `[2]`, which is the secondary armor overlay! Adjusting the Lights color in the Armory changed the broad armor plates instead of the lights.
+  2. The actual small detail lights / glowing illumination nodes on the armor (Channel 3) were bound to the Secondary color picker instead of the Lights picker.
+- Additionally:
+  - `MatchEliteColorPattern()` checked `cur[0] == lastPri && cur[3] == lastSec`. With Secondary moving to Slot `[2]`, it now checks `(cur[2] == lastSec || cur[3] == lastSec)` so live custom color tracking never drops records.
+  - In `ReachArmory::Tick()`, the rescan loop check `hasRecords` previously required `!s_suitRecords.empty()`, causing repeated scan cycles on Elites where suit records were not present.
+
+**The Fix:**
+1. **Correct Slot Mapping in `WriteColorsAndSuit`:**
+   Mapped `words` for Elites to `{ priArgb, terArgb, secArgb, litArgb }`:
+   - Slot `[0]`: Primary base armor (`priArgb`)
+   - Slot `[1]`: Bodysuit / Undersuit (`terArgb`)
+   - Slot `[2]`: Secondary armor trim / overlay (`secArgb`)
+   - Slot `[3]`: Emissive armor lights (`litArgb`) — properly focusing on the small detail lights and illumination cards.
+2. **Robust Color Tracking:**
+   Updated `MatchEliteColorPattern()` to accept Secondary in either `cur[2]` or `cur[3]`.
+3. **Biped Rescan Break:**
+   Updated `hasRecords` in `Tick()` to verify `!s_eliteColorRecords.empty()` when previewing an Elite, preventing redundant background scans.
 
 ## 0. Pick up here (2026-11-01, 01:25 ET) - Fix Scanner Memory Corruption Crash (0xC0000005) & Campaign Loading Deadlock (@O7OF)
 
