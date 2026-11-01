@@ -9,12 +9,25 @@ name: Build
 on:
   push:
     branches: [ main ]
+    # Docs/screenshot-only pushes were starting a full Windows build for every
+    # handoff edit. They cannot change the executable, so skip them.
+    paths-ignore:
+      - 'docs/**'
+      - '*.md'
+      - 'reports/**'
   workflow_dispatch:
+
+# A new push supersedes the previous build; don't leave a queue of stale
+# 15-minute runners (and their failure mail) behind.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build-windows:
     name: Build noble-client (Windows x64)
     runs-on: windows-latest
+    timeout-minutes: 25
     steps:
       - name: Checkout
         uses: actions/checkout@v4
