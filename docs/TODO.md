@@ -12,6 +12,7 @@ overlay (`7cef78c`) and the third-person camera (`97989d1`).
 
 ## Recently done (for context)
 
+- [x] **Lobby joins and campaign co-op restored after regressions** (feb7bff, 0.9.16.5) - proven on one PC only; two-PC retest still pending with Tyler and O7
 - [x] **Campaign co-op works** — launch block declares the co-op player count at `0xE8`; 2- and 3-player runs verified (`0b83b1c`)
 - [x] **Forge online works** (relay heartbeat + LAN routing + LobbyPatches sequencing)
 - [x] **Backend 1.3.0** — `/api/health`, `/api/relay/stats`, 25 s relay heartbeat, 90 s sessions (`4a520d1`, `df33af7`)
