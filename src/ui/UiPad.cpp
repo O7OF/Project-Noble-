@@ -82,6 +82,10 @@ void ApplyToken(const std::string& t, PadState& p) {
     else if (t == "lsdown") p.ly = -32768;
     else if (t == "lsleft") p.lx = -32768;
     else if (t == "lsright") p.lx = 32767;
+    else if (t == "rsup") p.ry = 32767;
+    else if (t == "rsdown") p.ry = -32768;
+    else if (t == "rsleft") p.rx = -32768;
+    else if (t == "rsright") p.rx = 32767;
 }
 
 // The -pad-script steps; empty without the option.
