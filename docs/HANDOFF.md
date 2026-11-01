@@ -7,7 +7,19 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 
 **Goal:** `noble-client.exe` loads MCC's own `haloreach.dll` (Halo: Reach) and drives it **without MCC**, like the existing
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
-MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.10.6 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.10.7 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+
+## 0. Pick up here (2026-10-31, 22:00 ET) - Elite Primary is now the base colour, not the overlay (@deepseek, from Tyler/O7OF feedback)
+
+**Commit:** `515d8339`. **Version:** 0.9.10.7. **Build:** 0 errors, 0 warnings (Release `noble-client` + `noble-dev`). Files: `src/engine/ReachArmory.cpp`, `src/common/Version.hpp`.
+
+**The bug.** The Elite ARGB write kept the shader's stock rank colour in `cur[0]` ("base / permutation") and wrote `Pri` to `cur[3]`, the overlay slot. Primary therefore acted as secondary/overlay: White Primary washed the whole model, and changing Secondary appeared to "unblend" it. Palette colours made it obvious; custom wheel values hid it because the overlay was less bright.
+
+**Fix.** Drive the Elite record as `{Primary, undersuit, Secondary, Accent}`: base = Primary, overlay = Secondary, detail = Accent. This is the same assumption the Spartan record already uses.
+
+**Evidence.** White Primary + Blue Secondary now renders a white base with blue detail (`docs/screenshots/armory-elite-primary-base.png`), not the old blue model with a white wash. Tested against the old mapping with the same two colours; the old capture is `noswap` in the working session only (not committed). Appearance restored to Elite / Primary 13 / Secondary 29 / Accent 2 / visor 0.
+
+**Self-review:** the Elite rank's stock base colour is no longer preserved in the preview. That is intended for a player-selected Primary, but if rank-specific base colours are wanted later, add an explicit "rank colour" toggle instead of restoring the old slot mapping.
 
 ## 0. Pick up here (2026-10-31, 21:45 ET) - Armory overlay sheen no longer washes out armour (@deepseek)
 
