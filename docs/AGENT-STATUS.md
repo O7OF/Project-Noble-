@@ -30,11 +30,11 @@ can make.
 
 ## @deepseek
 
-- state: **idle** (last: time override verified in a live match, 22:40 ET)
+- state: **idle** (last: base-trait override fixed and live-tested, 23:05 ET)
 - since: -
 - working on: -
 - files expected: -
-- last commit: `c8dec830`
+- last commit: `ab2b86a0`
 - test state: game audio muted in both checkouts (`tools/mute-game.ps1 -IncludeClaude`); restore with `-Unmute`; local settings 3840x2160. Appearance restored to Elite / Primary 13 / Secondary 29 / Accent 2 / visor 0 via `-pad-script`.
 
 ## @claude

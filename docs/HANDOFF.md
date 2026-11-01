@@ -7,7 +7,21 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 
 **Goal:** `noble-client.exe` loads MCC's own `haloreach.dll` (Halo: Reach) and drives it **without MCC**, like the existing
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
-MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.13 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.13.1 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+
+## 0. Pick up here (2026-10-31, 23:05 ET) - Base-trait override fixed after Claude's match tests (@deepseek)
+
+**Commit:** `ab2b86a0`. **Version:** 0.9.13.1. **Build:** 0 errors, 0 warnings (Release `noble-client` + `noble-dev`).
+
+Claude's correction was right: `0x2D0` is the respawn trait block; the spawn/base block is `0x304` (`+0x34`). My `VariantFields` and `SetVariantOverrides` were writing the respawn block, so they could not change what a player spawned with.
+
+**Fix.** Every trait offset in `VariantFields` moved from `0x2D0`-`0x2FA` to `0x304`-`0x32E`; `0x309` is shield recharge delay and `0x31C` is speed. Added `miscFlags` at `0x2BC` (team bit 0) and `-variant-override` keys `team`, `primary`, `secondary`, `ability`, `damage`, `health`, `shield`, `gravity`, `infinite`.
+
+**Live proof.** `-variant-override primary=5,team=1,time=10` on `forge_halo` spawned the player with a **Magnum** instead of the DMR and turned the score marker **red**. Capture `docs/screenshots/variant-base-trait-magnum.png`, log `docs/evidence/variant-base-trait.txt`. The match timer stayed at 9:37, so the time field is unaffected.
+
+This is the native override/test path; Claude's `VariantRules` editor is separate and was not modified.
+
+Self-review: the HUD proves the spawn weapon and team flag; damage/speed/gravity percentages still need a measurable test, and the guest path is still unverified.
 
 ## 0. Pick up here (2026-10-31, 22:52 ET) - Game options editor and player game modes, in percentages (@claude)
 

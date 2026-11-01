@@ -1,0 +1,4 @@
+[2026-10-31 22:59:36.822] [info] main: -variant-override 'primary=5,team=1,time=10'
+[2026-10-31 22:59:38.698] [info] BlamEngine: applied variant patch 'primary=5,team=1,time=10' (time 10 score 25 rounds 0)
+[2026-10-31 22:59:38.698] [info] BlamEngine: variant time 10 score 25 rounds 0 respawn 5 traits 5
+[2026-10-31 22:59:47.763] [info] ReachHost [Slot 1 - FrameTick]: game session started at frame 218, loading screen off

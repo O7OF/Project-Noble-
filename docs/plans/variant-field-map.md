@@ -108,7 +108,7 @@ Add a read-only native field reader behind `-variant-inspect` using the offsets 
 
 Confirmed in real matches with game mode files.
 
-- **Base traits are at `0x304`, not `0x2D0`.** `0x2D0` is the respawn trait block; base is the same layout `0x34` later. `0x319` set spawn weapons in a match. HREK's `game_engine_settings` lists both blocks, base first. `VariantFields` and `SetVariantOverrides` still write `0x2D0`-based fields, so they won't change what players spawn with except during respawn traits.
+- **Base traits are at `0x304`, not `0x2D0`.** `0x2D0` is the respawn trait block; base is the same layout `0x34` later. `0x319` set spawn weapons in a match. HREK's `game_engine_settings` lists both blocks, base first. **Fixed in `ab2b86a0` (0.9.13.1):** `VariantFields`/`SetVariantOverrides` now use `0x304`-`0x32E`. Live check: `primary=5` spawned a Magnum and `team=1` turned the score marker red (`docs/screenshots/variant-base-trait-magnum.png`).
 - **`0x309` is shield recharge delay, not movement speed.** Speed is `0x31C`.
 - **Teams:** `0x2BC` bit 0 turned Slayer into a team game on the HUD (red bar). Shipped files agree: team types odd, FFA even. The earlier "no team bit" came from probing the file's team entries, not this flag. Whether the engine fully treats it as teams with several players is untested.
 - **Choices and order are in HREK:** `tags\multiplayer\game_variant_settings\player_traits_template\*.text_value_pair_definition`. Index 0 is unchanged. Grenades 3 = 1 frag (HUD showed 1), shields 1 = 0x, camo 3 = good: all seen in a match.
