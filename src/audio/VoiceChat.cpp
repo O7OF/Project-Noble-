@@ -793,6 +793,16 @@ int RunJitterSelfTest() {
     check("voice channel: everyone beats generic PTT", ChannelFromHeld(false, false, true, true, 1) == 0);
     check("voice channel: generic PTT uses TALK TO", ChannelFromHeld(false, false, false, true, 1) == 1);
     check("voice channel: nothing held is silent", ChannelFromHeld(false, false, false, false, 1) == -1);
+    // The Settings list is generated from these tables; a missing name would hide a row.
+    auto named = [](const char* s) { return s != nullptr && s[0] != '\0'; };
+    check("voice bind: keyboard party/team/global rows exist",
+          named(KeyBindings::ActionName(KeyBindings::kActionVoiceParty)) &&
+          named(KeyBindings::ActionName(KeyBindings::kActionVoiceTeam)) &&
+          named(KeyBindings::ActionName(KeyBindings::kActionVoiceGlobal)));
+    check("voice bind: controller party/team/global rows exist",
+          named(PadLayouts::ActionName(PadLayouts::VoiceParty)) &&
+          named(PadLayouts::ActionName(PadLayouts::VoiceTeam)) &&
+          named(PadLayouts::ActionName(PadLayouts::VoiceGlobal)));
     int error = 0;
     OpusEncoder* encoder = opus_encoder_create(kSampleRate, 1, OPUS_APPLICATION_VOIP, &error);
     if (!encoder) return 1;
