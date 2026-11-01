@@ -39,10 +39,10 @@ can make.
 
 ## @claude
 
-- state: **idle** (last: game type drop-downs and menu search, 21:34 ET)
-- since: -
-- working on: -
-- files expected: -
+- state: **active**
+- since: 21:46 ET
+- working on: variant field map, game options editor, host playlists (Tyler's ask)
+- files expected: src/engine/BlamEngine.cpp, new src/engine/GameVariantEdit.*, src/ui/FrontEndMenu.cpp, src/main.cpp, docs/variant-field-map.md, src/common/Version.hpp, docs
 - second checkout: `D:\Halo-Reach-Community-Edition-claude` (own `build\`, so it does not touch @deepseek's tree or binary). Test client runs as `noble-client-claude.exe`, so kills by name miss it
 - last commit: `0576f84`
 
