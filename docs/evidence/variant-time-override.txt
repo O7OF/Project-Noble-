@@ -1,0 +1,6 @@
+[2026-10-31 22:35:29.521] [info] main: -variant-override 'time=1,score=50'
+[2026-10-31 22:35:31.793] [info] BlamEngine: applied variant patch 'time=1,score=50' (time 1 score 50 rounds 0)
+[2026-10-31 22:35:31.793] [info] BlamEngine: variant time 1 score 50 rounds 0 respawn 5 traits 5
+[2026-10-31 22:35:39.567] [info] ReachHost [Slot 1 - FrameTick]: game session started at frame 386, loading screen off
+[2026-10-31 22:36:49.603] [info] Career: multiplayer on forge_halo took 1.3 min; local player 0 kills 0 assists 0 deaths 0 medals 0; paid 17 cR (today 17), total 17 cR, rank Recruit
+[2026-10-31 22:36:49.603] [info] PauseMenu: game over, showing post-game panel
