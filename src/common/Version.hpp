@@ -7,11 +7,11 @@ namespace noble {
 constexpr int VERSION_MAJOR = 0;
 constexpr int VERSION_MINOR = 9;
 constexpr int VERSION_PATCH = 10;
-constexpr int VERSION_REVISION = 1;
+constexpr int VERSION_REVISION = 2;
 #ifdef NOBLE_DEV_BUILD
-constexpr std::string_view VERSION_STRING = "0.9.10.1-dev (Voice Channel Binds)";
+constexpr std::string_view VERSION_STRING = "0.9.10.2-dev (Voice Channel Binds)";
 #else
-constexpr std::string_view VERSION_STRING = "0.9.10.1 (Voice Channel Binds)";
+constexpr std::string_view VERSION_STRING = "0.9.10.2 (Voice Channel Binds)";
 #endif
 constexpr std::string_view APP_NAME = "Halo: Reach Community Edition";
 

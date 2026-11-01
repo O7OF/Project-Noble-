@@ -331,6 +331,14 @@ bool PadInputHeld(const Config& cfg, int input) {
 
 // Returns the voice channel the player is holding a key for, or -1. Separate keys win over the generic PTT; when
 // several are held, the narrower channel wins (party > team > everyone).
+int ChannelFromHeld(bool party, bool team, bool global, bool generic, int fallbackChannel) {
+    if (party) return 2;
+    if (team) return 1;
+    if (global) return 0;
+    if (generic) return fallbackChannel;
+    return -1;
+}
+
 int PushToTalkChannel(const Config& cfg, int fallbackChannel) {
     // Only for our own window: the same key typed in another program, or in one of our text boxes, must not open the mic.
     HWND foreground = GetForegroundWindow();
@@ -339,11 +347,11 @@ int PushToTalkChannel(const Config& cfg, int fallbackChannel) {
     if (process != GetCurrentProcessId()) return -1;
     if (s_pushToTalkBlocked.load() || (ImGui::GetCurrentContext() && ImGui::GetIO().WantTextInput)) return -1;
     auto held = [](int vk) { return vk > 0 && vk < 256 && (GetAsyncKeyState(vk) & 0x8000) != 0; };
-    if (held(cfg.pttPartyKey) || PadInputHeld(cfg, cfg.pttPartyPad)) return 2;
-    if (held(cfg.pttTeamKey) || PadInputHeld(cfg, cfg.pttTeamPad)) return 1;
-    if (held(cfg.pttGlobalKey) || PadInputHeld(cfg, cfg.pttGlobalPad)) return 0;
-    if (held(cfg.pttKey) || PadInputHeld(cfg, cfg.pttPad)) return fallbackChannel;
-    return -1;
+    const bool party = held(cfg.pttPartyKey) || PadInputHeld(cfg, cfg.pttPartyPad);
+    const bool team = held(cfg.pttTeamKey) || PadInputHeld(cfg, cfg.pttTeamPad);
+    const bool global = held(cfg.pttGlobalKey) || PadInputHeld(cfg, cfg.pttGlobalPad);
+    const bool generic = held(cfg.pttKey) || PadInputHeld(cfg, cfg.pttPad);
+    return ChannelFromHeld(party, team, global, generic, fallbackChannel);
 }
 
 Config ReadConfig() {
@@ -779,6 +787,12 @@ int RunJitterSelfTest() {
         NOBLE_INFO("VoiceChat jitter test: {}: {}", what, ok ? "ok" : "FAILED");
         if (!ok) ++failures;
     };
+    // Channel priority for the separate PTT binds: party > team > everyone, then the TALK TO fallback, then silence.
+    check("voice channel: party wins when several are held", ChannelFromHeld(true, true, true, true, 0) == 2);
+    check("voice channel: team beats everyone", ChannelFromHeld(false, true, true, true, 0) == 1);
+    check("voice channel: everyone beats generic PTT", ChannelFromHeld(false, false, true, true, 1) == 0);
+    check("voice channel: generic PTT uses TALK TO", ChannelFromHeld(false, false, false, true, 1) == 1);
+    check("voice channel: nothing held is silent", ChannelFromHeld(false, false, false, false, 1) == -1);
     int error = 0;
     OpusEncoder* encoder = opus_encoder_create(kSampleRate, 1, OPUS_APPLICATION_VOIP, &error);
     if (!encoder) return 1;
