@@ -54,11 +54,11 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 **Method.** `-variant-dump` decodes a stock `.bin` to the native 0xFC04 `c_game_variant`. I then patched one known field in the file, decoded it again, and diffed the two native blobs. Engine decode accepts the patched files (no SHA-1 recompute needed for the probe).
 
-**Proven:** misc flags `0x2BC`, rounds-to-win `0x2BD`, time limit `0x2BE`, round limit `0x2BF`, sudden death `0x2C0`, grace `0x2C2`; respawn flags/lives/team lives/time/penalties/growth/camera/traits duration `0x2C4`-`0x2CC`; social `0x300`; map flags `0x306`.
+**Proven:** general/respawn `0x2BC`-`0x2CC`; all Player Traits `0x2D0`-`0x2FA` (health, weapons, movement, appearance, sensors); social flags `0x2FC`; map flags `0x300`; base traits start `0x309`; weapon/vehicle sets `0x330`/`0x332`.
 
 **Team/FFA finding.** Patching the file's team flags changes nothing in the native blob. The decoded variant has no editable team/FFA bit; stock Slayer and Team Slayer use the same general layout and differ in the Megalo script. The lobby split must be a host choice or a name/mode heuristic, not a variant field.
 
-**Still open:** player traits, loadouts, scoring, TU1, and a native writer. Do not expose editing until each offset has a round-trip probe and a TU1 check.
+**Still open:** loadouts, scoring, team entries, TU1, and a native writer. Do not expose editing until each offset has a round-trip probe and a TU1 check.
 
 Self-review: these are stock encoding 0x6A offsets from `slayer_054.bin`; a TU1 variant may differ. The probe only changes bytes temporarily outside git.
 

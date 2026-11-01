@@ -1,57 +1,91 @@
-# Variant field map — first proven offsets (2026-10-31)
+# Variant field map — proven native offsets (2026-10-31)
 
-**Status:** started, not complete. Core general/respawn/social fields are mapped; player traits, loadouts, scoring and team-vs-FFA are still open.
+**Status:** General Settings and Player Traits are mapped for stock encoding 0x6A. Loadouts, scoring, Megalo options and TU1 remain open.
 
 ## Method
 
-1. `noble-client -variant-dump <file>` decodes a stock `.bin` through the engine (`decode` at `haloreach+0x373A0`) into a **64,516-byte (0xFC04) native `c_game_variant`**.
-2. The same stock file is parsed at the bit level; one known field is changed (for example, time limit 10 -> 15).
-3. The patched file is decoded again. The engine accepts it without a recomputed SHA-1.
-4. Bytes that differ between the two native blobs are the field's native offset.
+1. `noble-client -variant-dump <file>` decodes a stock `.bin` through the engine into a **64,516-byte (0xFC04) native `c_game_variant`**.
+2. The same file is patched at a known bit offset; the engine decodes the patched file (no SHA-1 recompute needed for the probe).
+3. Bytes that differ between the two native blobs are the field's native offset.
 
-Patch probes used `slayer_054.bin` (encoding 0x6A). Test files were kept outside git.
+Probe file: `slayer_054.bin`, encoding 0x6A. Test files stayed outside git.
 
-## Proven native offsets
+## General Settings
 
-| Native offset | Width | Field | Evidence |
-|---:|---:|---|---|
-| `0x2BC` | byte | misc flags | file flags 7 -> 0; native 14 -> 0 |
-| `0x2BD` | byte | rounds to win | 0 -> 2 |
-| `0x2BE` | byte | time limit (minutes) | 10 -> 15 |
-| `0x2BF` | byte | round limit | 1 -> 3 |
-| `0x2C0` | byte | sudden death time | 1 -> 2 |
-| `0x2C2` | byte | grace period | 0 -> 1 |
-| `0x2C4` | byte | respawn flags | 0 -> 1 (stores 8, not 1) |
-| `0x2C5` | byte | lives per round | 0 -> 3 |
-| `0x2C6` | byte | team lives per round | 0 -> 4 |
-| `0x2C7` | byte | respawn time | 5 -> 7 |
-| `0x2C8` | byte | suicide penalty | 5 -> 6 |
-| `0x2C9` | byte | betrayal penalty | 5 -> 6 |
-| `0x2CA` | byte | respawn growth | 0 -> 2 |
-| `0x2CB` | byte | loadout camera time | 10 -> 5 |
-| `0x2CC` | byte | traits duration | 5 -> 8 |
-| `0x300` | byte | social bitfield | observers bit 0, team-change bits 1-2, social flags bits 3-7 |
-| `0x306` | byte | map flags | `0x00` -> `0x08` for one flag; encoding is not a plain mask |
+| Native | Field | Probe |
+|---:|---|---|
+| `0x2BC` | misc flags | 7 -> 0 |
+| `0x2BD` | rounds to win | 0 -> 2 |
+| `0x2BE` | time limit (minutes) | 10 -> 15 |
+| `0x2BF` | round limit | 1 -> 3 |
+| `0x2C0` | sudden death | 1 -> 2 |
+| `0x2C2` | grace period | 0 -> 1 |
+| `0x2C4` | respawn flags | 0 -> 1 (stores 8) |
+| `0x2C5` | lives per round | 0 -> 3 |
+| `0x2C6` | team lives per round | 0 -> 4 |
+| `0x2C7` | respawn time | 5 -> 7 |
+| `0x2C8` | suicide penalty | 5 -> 6 |
+| `0x2C9` | betrayal penalty | 5 -> 6 |
+| `0x2CA` | respawn growth | 0 -> 2 |
+| `0x2CB` | loadout camera time | 10 -> 5 |
+| `0x2CC` | traits duration | 5 -> 8 |
+| `0x2FC` | social flags | 28 -> 3 (native 7 -> 24) |
+| `0x300` | map flags | 31 -> 1 |
 
-The `0x300` byte combines fields: observers `0x01`, team changes `0x06`, social flags `0xF8` (stock `0x1F` = observers off, team changes 3, flags 28). Treat it as one byte for now.
+## Player Traits (the respawn/base trait block)
+
+| Native | Field | Probe |
+|---:|---|---|
+| `0x2D0` | damage resistance | 0 -> 3 |
+| `0x2D1` | health multiplier | 0 -> 2 |
+| `0x2D2` | health recharge rate | 0 -> 3 |
+| `0x2D3` | shield multiplier | 0 -> 2 |
+| `0x2D4` | shield recharge rate | 0 -> 3 |
+| `0x2D5` | shield recharge delay | 0 -> 2 |
+| `0x2D6` | headshot immunity | 0 -> 1 |
+| `0x2D7` | vampirism | 0 -> 2 |
+| `0x2D8` | assassination immunity | 0 -> 1 |
+| `0x2DC` | weapon damage multiplier | 0 -> 3 |
+| `0x2DD` | melee damage multiplier | 0 -> 3 |
+| `0x2DE` | grenade regeneration | 0 -> 1 |
+| `0x2DF` | weapon pickup | 0 -> 1 |
+| `0x2E0` | grenade count | 0 -> 1 |
+| `0x2E1` | infinite ammo | 0 -> 1 |
+| `0x2E2` | ability drop | 0 -> 1 |
+| `0x2E3` | infinite ability | 0 -> 1 |
+| `0x2E4` | ability usage | 0 -> 1 |
+| `0x2E5` | primary weapon | 253 -> 5 |
+| `0x2E6` | secondary weapon | 253 -> 5 |
+| `0x2E7` | armor ability | 253 -> 0 |
+| `0x2E8` | movement speed | 0 -> 2 |
+| `0x2E9` | gravity | 0 -> 2 |
+| `0x2EA` | vehicle usage | 0 -> 2 |
+| `0x2EB` | unknown movement byte | 0 -> 1 |
+| `0x2F0` | active camo | 0 -> 2 |
+| `0x2F1` | waypoint | 0 -> 1 |
+| `0x2F2` | visible name | 0 -> 1 |
+| `0x2F3` | aura | 0 -> 2 |
+| `0x2F4` | forced color | 0 -> 3 |
+| `0x2F8` | radar state | 0 -> 2 |
+| `0x2F9` | radar range | 0 -> 2 |
+| `0x2FA` | directional damage indicator | 0 -> 1 |
+
+The base-trait block for the map starts at `0x309`; `0x309` is its movement speed byte. Weapon set is `0x330`/`0x331`, vehicle set `0x332`/`0x333`.
 
 ## Team vs free-for-all
 
-Patching the first team's `flags` in the file (4 bits, `1 -> 0` or `1 -> 2`) produced **no change** in the decoded native blob. Team flags and the eight team entries are not preserved in `c_game_variant` as editable fields.
+Patching a team's 4-bit flags in the file changed **nothing** in the decoded native blob. The eight team entries and their flags are not preserved as editable `c_game_variant` fields.
 
-**Consequence:** there is no reliable team/FFA bit in the decoded variant to drive the lobby split. Stock Slayer (FFA) and Team Slayer both decode with the same general layout; their difference is in the Megalo game-type script. The lobby should use an explicit host choice, or a name/mode heuristic, not pretend the variant carries a team flag.
+**Consequence:** there is no reliable team/FFA bit in the decoded variant. Stock Slayer and Team Slayer share the general layout; the difference is in the Megalo game-type script. The lobby split must be an explicit host choice or a name/mode heuristic, not a variant field.
 
-## What still needs mapping
+## Still open
 
-- player traits (health/weapons/movement/appearance/sensors) — fixed 125-bit blocks in the file, stored in several native arrays;
 - loadouts (6 palettes x 5 loadouts) and their native arrays;
-- team entries, scores and score-to-win;
+- team entries, score-to-win and per-mode scoring;
 - Megalo options/triggers, string tables, option toggles;
-- TU1 differences (`encodingVersion 0x6B`);
-- writing back: a native writer must preserve the engine's own layout and any hash/chunk metadata.
+- TU1 (`encodingVersion 0x6B`) differences;
+- a native writer, plus validation by feeding the re-encoded variant back through `decode`.
 
 ## Safe next step
 
-Extend the patch/decode/diff probe to the remaining fixed-size fields, then add a **read-only** native field reader behind `-variant-inspect`. Do not expose editing until each offset has a round-trip probe and a TU1 check. The lobby team split should not depend on this map.
-
-The file-level layout (bit order, block headers, option structure) is documented in the reach-variant-editor project; use it as a reference, not as copied code.
+Add a read-only native field reader behind `-variant-inspect` using the offsets above, then extend the patch/decode/diff probe to loadouts and scoring. Do not expose editing until every offset has a round-trip probe and a TU1 check.
