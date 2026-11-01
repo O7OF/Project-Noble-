@@ -1103,6 +1103,29 @@ void ArmorCustomizer::SyncToReachArmory() const {
     sel.lightsCustom = lgtCust;
     sel.visorRgb = { SrgbToLinear(vCol.r), SrgbToLinear(vCol.g), SrgbToLinear(vCol.b) };
 
+    static auto SelectionsEqual = [](const ReachArmorySelection& a, const ReachArmorySelection& b) -> bool {
+        return a.previewElite == b.previewElite && a.isFemale == b.isFemale &&
+               a.primaryColorIndex == b.primaryColorIndex && a.secondaryColorIndex == b.secondaryColorIndex &&
+               a.accentColorIndex == b.accentColorIndex && a.lightsColorIndex == b.lightsColorIndex &&
+               a.visorColorIndex == b.visorColorIndex && a.armorEffectIndex == b.armorEffectIndex &&
+               a.eliteSuitIndex == b.eliteSuitIndex && a.serviceTag == b.serviceTag &&
+               a.helmet == b.helmet && a.chest == b.chest &&
+               a.leftShoulder == b.leftShoulder && a.rightShoulder == b.rightShoulder &&
+               a.hands == b.hands && a.wrist == b.wrist && a.utility == b.utility &&
+               a.knees == b.knees && a.armorEffect == b.armorEffect && a.visor == b.visor &&
+               a.eliteSuit == b.eliteSuit && a.eliteHelmet == b.eliteHelmet &&
+               a.eliteLeftShoulder == b.eliteLeftShoulder && a.eliteRightShoulder == b.eliteRightShoulder &&
+               a.eliteChest == b.eliteChest && a.eliteArms == b.eliteArms && a.eliteLegs == b.eliteLegs &&
+               a.eliteArmorEffectIndex == b.eliteArmorEffectIndex &&
+               a.primaryRgb == b.primaryRgb && a.secondaryRgb == b.secondaryRgb &&
+               a.accentRgb == b.accentRgb && a.lightsRgb == b.lightsRgb && a.visorRgb == b.visorRgb &&
+               a.lightsCustom == b.lightsCustom;
+    };
+
+    if (SelectionsEqual(s_pendingSelection, sel) && !s_pushPending) {
+        return;
+    }
+
     // Coalesce: apply at once when the previous application is older than 250 ms, otherwise keep it pending and let
     // the per-frame flush in Render pick it up. Holding an arrow key then costs one engine write, not one per repeat.
     s_pendingSelection = sel;

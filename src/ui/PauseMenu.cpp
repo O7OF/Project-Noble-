@@ -280,9 +280,14 @@ void SetArg(std::wstring &args, const std::wstring &name, const std::wstring &va
 std::wstring NextCampaignMission(const std::wstring &game) {
   static const wchar_t *const kOrder[] = {L"m05", L"m10", L"m20", L"m30", L"m35", L"m45",
                                           L"m50", L"m52", L"m60", L"m70", L"m70_bonus"};
-  if (_wcsicmp(ArgValue(game, L"-mode").c_str(), L"campaign") != 0) return {};
+  std::wstring mode = ArgValue(game, L"-mode");
+  if (mode.empty()) mode = ArgValue(GetCommandLineW(), L"-mode");
+  if (mode.empty()) mode = ArgValue(GetCommandLineW(), L"-lobby-mode");
+  if (_wcsicmp(mode.c_str(), L"campaign") != 0 && wcsstr(GetCommandLineW(), L"-campaign") == nullptr && game.find(L"-campaign") == std::wstring::npos) return {};
   if (!ArgValue(game, L"-mod").empty() || !ArgValue(game, L"-map-override").empty()) return {};
   std::wstring map = ArgValue(game, L"-map");
+  if (map.empty()) map = ArgValue(GetCommandLineW(), L"-map");
+  if (map.empty()) map = ArgValue(GetCommandLineW(), L"-lobby-map");
   std::transform(map.begin(), map.end(), map.begin(), [](wchar_t c) { return static_cast<wchar_t>(towlower(c)); });
   constexpr int kCount = static_cast<int>(sizeof(kOrder) / sizeof(kOrder[0]));
   int at = -1;

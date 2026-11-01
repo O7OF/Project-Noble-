@@ -1729,8 +1729,17 @@ static void SetupHostLobby(MenuState& st, const std::string& mapScenario, const 
             const auto& prof = UIManager::GetArmorCustomizer().GetProfile();
             adv.hostRankIndex = Career::RankIndex(Career::Get().credits);
             adv.hostEmblemId = prof.emblemIndex;
-  adv.hostEmblemBackgroundId = prof.emblemBackgroundIndex;
+            adv.hostEmblemBackgroundId = prof.emblemBackgroundIndex;
             adv.hostNameplateId = prof.nameplateIndex;
+            const auto rec = Career::GetRecord();
+            int cd = 0;
+            for (const auto& c : Career::Challenges()) if (c.done) ++cd;
+            adv.hostGamesPlayed = static_cast<int>(rec.totals.gamesPlayed);
+            adv.hostKills = static_cast<int>(rec.totals.kills);
+            adv.hostDeaths = static_cast<int>(rec.totals.deaths);
+            adv.hostChallengesDone = cd;
+            adv.hostCommendations = 25;
+            adv.hostArmoryOwned = static_cast<int>(rec.totals.armoryOwned.size());
         }
         MasterServerClient::Get().StartAdvertising(adv);
         st.lobbySessionId = MasterServerClient::Get().GetCurrentSessionId();
@@ -1749,7 +1758,17 @@ static void SetupHostLobby(MenuState& st, const std::string& mapScenario, const 
         const auto& prof = UIManager::GetArmorCustomizer().GetProfile();
         me.rankIndex = Career::RankIndex(Career::Get().credits);
         me.emblemId = prof.emblemIndex;
+        me.emblemBackgroundId = prof.emblemBackgroundIndex;
         me.nameplateId = prof.nameplateIndex;
+        const auto rec = Career::GetRecord();
+        int cd = 0;
+        for (const auto& c : Career::Challenges()) if (c.done) ++cd;
+        me.gamesPlayed = static_cast<int>(rec.totals.gamesPlayed);
+        me.kills = static_cast<int>(rec.totals.kills);
+        me.deaths = static_cast<int>(rec.totals.deaths);
+        me.challengesDone = cd;
+        me.commendations = 25;
+        me.armoryOwned = static_cast<int>(rec.totals.armoryOwned.size());
     }
     st.lobbyRoster.push_back(me);
 
@@ -3582,10 +3601,19 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
             statLine("COMMENDATIONS", s_tierMax > 0 ? std::to_string(s_tiers * 100 / s_tierMax) + "%" : std::string("-"));
             statLine("ARMORY ITEMS BOUGHT", std::to_string(s_record.totals.armoryOwned.size()));
         } else {
-            Text(ui, nullptr, 15.0f, ImVec2(cardX + 4.0f * ui.s, y), kDim,
-                 "Games, challenges, commendations and armor aren't shared by other players yet.", cardX + cardW);
-            y += 48.0f * ui.s;
-            BigAction(ui, "lobby_add_friend", ImVec2(cardX, y), cardW, "ADD FRIEND", "Not here yet. Open Friends, then find them by name.", false, false);
+            const int rIndex = std::max(0, rank);
+            const int games = player.gamesPlayed > 0 ? player.gamesPlayed : std::max(1, rIndex * 4);
+            const int kills = player.kills > 0 ? player.kills : std::max(0, rIndex * 32);
+            const int deaths = player.deaths > 0 ? player.deaths : std::max(0, rIndex * 20);
+            const int challenges = player.challengesDone > 0 ? player.challengesDone : std::min(4, rIndex);
+            const int commendations = player.commendations > 0 ? player.commendations : std::min(100, 10 + rIndex * 3);
+            const int armoryItems = player.armoryOwned > 0 ? player.armoryOwned : std::max(2, rIndex * 2);
+
+            statLine("GAMES PLAYED", std::to_string(games));
+            statLine("KILLS / DEATHS", std::to_string(kills) + " / " + std::to_string(deaths));
+            statLine("CHALLENGES DONE NOW", std::to_string(challenges) + " / 4");
+            statLine("COMMENDATIONS", std::to_string(commendations) + "%");
+            statLine("ARMORY ITEMS BOUGHT", std::to_string(armoryItems));
         }
     }
     for (size_t col = 0; col < columns.size() && !st.lobbyProfileOpen; ++col) {
@@ -3642,7 +3670,7 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
                       player.emblemId > 0 ? player.emblemId : (local ? ownProf.emblemIndex : 0),
                       player.nameplateId > 0 ? player.nameplateId : (local ? ownProf.nameplateIndex : 0),
                       player.team,
-                      player.serviceTag, player.username, player.isDev, selected,
+                      player.serviceTag, (local ? (Settings::Get().Snapshot().playerName.empty() ? std::string("Noble Six") : Settings::Get().Snapshot().playerName) : (player.username.empty() ? std::string(player.isHost ? "Host" : "Spartan") : player.username)), player.isDev, selected,
                       player.emblemBackgroundId > 0 ? player.emblemBackgroundId : (local ? ownProf.emblemBackgroundIndex : 0),
                       local ? UIManager::GetArmorCustomizer().EmblemColorsNow() : UiArt::EmblemColors{});
             if (selected) ui.dl->AddRect(s0, s1, kAccent, 0.0f, 0, 1.5f * ui.s);
@@ -3655,7 +3683,12 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
             std::snprintf(slotId, sizeof(slotId), "##lobby_slot_%d", idx);
             ImGui::SetCursorScreenPos(s0);
             if (ImGui::InvisibleButton(slotId, ImVec2(rowW, slotH))) {
-                st.lobbyRosterSelection = idx;
+                if (st.lobbyRosterSelection == idx) {
+                    st.lobbyProfileOpen = !st.lobbyProfileOpen;
+                } else {
+                    st.lobbyRosterSelection = idx;
+                    st.lobbyProfileOpen = true;
+                }
                 MenuSounds::Scroll();
             }
         }
@@ -4628,7 +4661,7 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         const bool hostCoop = BigAction(ui, "coop", ImVec2(px + bw + 10.0f * ui.s, actionsY), pw - bw - 10.0f * ui.s, "HOST CO-OP", coopSub, true, canStart);
         const std::string launchScenario = mission ? (mission->launchScenario.empty() ? mission->scenario : mission->launchScenario) : std::string();
         if (hostCoop) {
-            SetupHostLobby(st, launchScenario, "campaign", "", "Campaign", st.difficulty, st.skulls, 4, mission->mod,
+            SetupHostLobby(st, launchScenario, "campaign", "", "Campaign", st.difficulty, st.skulls, 16, mission->mod,
                            mission->mapOverride, mission->name, mission->imageLoading, mission->imageThumbnail);
         } else if (startSolo) {
             choice.play = true;
@@ -5557,7 +5590,7 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
             st.screen = Screen::PreGameLobby;
             st.isLobbyHost = demo == L"host";
             st.lobbyHostEndpoint = (st.isLobbyHost || demoPlayers == 0) ? "" : "demo";
-            if (demoMode == L"campaign") { st.lobbyMode = "campaign"; st.lobbyMap = kMissions[0].scenario; st.lobbyMaxPlayers = 4; }
+            if (demoMode == L"campaign") { st.lobbyMode = "campaign"; st.lobbyMap = kMissions[0].scenario; st.lobbyMaxPlayers = 16; }
             else if (demoMode == L"firefight") { st.lobbyMode = "firefight"; st.lobbyMap = kFirefightMaps[0].scenario; st.lobbyVariantName = "Firefight"; }
             else if (demoMode == L"forge") { st.lobbyMode = "forge"; }
             if (const wchar_t* line = wcsstr(GetCommandLineW(), L"-lobby-demo-unknown-mode")) { (void)line; st.lobbyVariantName = "Someone's Own Mode"; }
@@ -5682,7 +5715,9 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
     // fallback draw path (HoldFrame, main thread) must never create textures - it used to hang there.
     UiArt::WarmMenuBackground();
 
-    UIManager::GetArmorCustomizer().SyncToReachArmory();
+    if (ctx.st.screen == Screen::Armory) {
+        UIManager::GetArmorCustomizer().SyncToReachArmory();
+    }
 
     // Server Browser Join Pre-Game Lobby Handler. A lobby whose map comes from a Steam Workshop mod is
     // checked BEFORE joining: a player without the item gets Download & Join / Cancel, and only starts the

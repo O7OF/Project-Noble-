@@ -161,12 +161,14 @@ static std::array<EliteRegionCache, 6> s_eliteRegions;
 // Color records (uint32_t[4] ARGB) & Suit shader records (float[4] linear RGBA)
 static std::vector<uintptr_t> s_colorRecords;
 static std::vector<uintptr_t> s_eliteColorRecords;
+static std::vector<uintptr_t> s_eliteIllumRecords;
 static std::vector<uintptr_t> s_suitRecords;
 static std::array<uint32_t, 4> s_lastColorWords = {
     0xFF585858u, 0xFF595959u, 0xFF2FA0CBu, 0xFFC7A167u
 };
 static uint32_t s_lastElitePriArgb = 0;
 static uint32_t s_lastEliteSecArgb = 0;
+static std::array<float, 4> s_lastEliteIllumFloats = { 0.0f, 0.5f, 1.0f, 1.0f };
 static std::array<float, 4> s_lastSuitFloats = {
     0.9960785f, 0.9921569f, 0.98823535f, 1.0f
 };
@@ -458,6 +460,8 @@ static size_t ScanSuitRecordsIn(const std::vector<std::pair<uintptr_t, size_t>>&
 
 static void ScanColorRecords() { ScanColorRecordsIn(ReadWriteChunks(0x40), false); }
 static void ScanEliteColorRecords() { ScanEliteColorRecordsIn(ReadWriteChunks(0x40), false); }
+static size_t ScanEliteIllumRecordsIn(const std::vector<std::pair<uintptr_t, size_t>>& chunks, bool quiet);
+static void ScanEliteIllumRecords() { ScanEliteIllumRecordsIn(ReadWriteChunks(0x40), false); }
 static void ScanSuitRecords() { ScanSuitRecordsIn(ReadWriteChunks(0x40), false); }
 
 // After the biped is remade: look for its new colour / suit records in the remembered regions every few ms
@@ -486,6 +490,7 @@ static void StartQuickRescan() {
                 ScanSuitRecordsIn(chunks, true);
             } else {
                 ScanEliteColorRecordsIn(chunks, true);
+                ScanEliteIllumRecordsIn(chunks, true);
             }
 
 
@@ -676,6 +681,82 @@ static size_t ScanEliteColorRecordsIn(const std::vector<std::pair<uintptr_t, siz
     return added;
 }
 
+static size_t ScanEliteIllumRecordsIn(const std::vector<std::pair<uintptr_t, size_t>>& chunks, bool quiet) {
+    // Reach stock Elite illumination float[4] vectors:
+    // Ultra: { 0.000f, 0.500f, 1.000f, 1.000f } (Cyan eyes/visor & chest/shoulder cards)
+    // Minor/Space: { 1.000f, 0.800f, 0.000f, 1.000f } (Golden Amber lights)
+    // Eyes: { 0.000f, 0.000f, 0.500f, 1.000f }
+    static constexpr float kStockUltraIllum[4] = { 0.000f, 0.500f, 1.000f, 1.000f };
+    static constexpr float kStockMinorIllum[4] = { 1.000f, 0.800f, 0.000f, 1.000f };
+    static constexpr float kStockEyesIllum[4]  = { 0.000f, 0.000f, 0.500f, 1.000f };
+
+    float prevIllum[4] = {};
+    {
+        ArmoryLock lock(s_dataMutex);
+        std::memcpy(prevIllum, s_lastEliteIllumFloats.data(), sizeof(prevIllum));
+    }
+    bool hasPrevIllum = false;
+    if (std::isfinite(prevIllum[0]) && std::isfinite(prevIllum[1]) &&
+        std::isfinite(prevIllum[2]) && std::isfinite(prevIllum[3]) &&
+        std::abs(prevIllum[3] - 1.0f) < 0.02f) {
+        if (prevIllum[0] > 0.02f || prevIllum[1] > 0.02f || prevIllum[2] > 0.02f) {
+            hasPrevIllum = true;
+        }
+    }
+
+    std::vector<uintptr_t> found;
+    for (const auto& chunk : chunks) {
+        const uintptr_t base = chunk.first;
+        const size_t size = chunk.second;
+        {
+            std::vector<uint8_t> buf(size);
+            const uintptr_t self = reinterpret_cast<uintptr_t>(buf.data());
+            if (base < self + size && self < base + size) continue;
+            if (SafeCopyMem(buf.data(), reinterpret_cast<const void*>(base), size)) {
+                for (size_t off = 0; off + 16 <= size; off += 4) {
+                    const float* cur = reinterpret_cast<const float*>(buf.data() + off);
+                    auto matchVec = [](const float* a, const float* b, float tol) {
+                        return std::abs(a[0] - b[0]) < tol &&
+                               std::abs(a[1] - b[1]) < tol &&
+                               std::abs(a[2] - b[2]) < tol &&
+                               std::abs(a[3] - b[3]) < tol;
+                    };
+                    bool match = false;
+                    if (matchVec(cur, kStockUltraIllum, 0.02f) ||
+                        matchVec(cur, kStockMinorIllum, 0.02f) ||
+                        matchVec(cur, kStockEyesIllum, 0.02f) ||
+                        (hasPrevIllum && matchVec(cur, prevIllum, 0.02f))) {
+                        match = true;
+                    }
+                    if (match) {
+                        const uintptr_t recAddr = base + off;
+                        if (recAddr >= 0x10000000ULL && recAddr <= 0x7FFFFFFF0000ULL) {
+                            found.push_back(recAddr);
+                            if (found.size() >= 16) break;
+                        }
+                    }
+                }
+            }
+        }
+        if (found.size() >= 16) break;
+    }
+
+    size_t added = 0;
+    if (!found.empty()) {
+        ArmoryLock lock(s_dataMutex);
+        for (uintptr_t rec : found) {
+            if (s_eliteIllumRecords.size() >= 16) break;
+            if (std::find(s_eliteIllumRecords.begin(), s_eliteIllumRecords.end(), rec) == s_eliteIllumRecords.end()) {
+                s_eliteIllumRecords.push_back(rec);
+                RememberRegion(rec);
+                ++added;
+            }
+        }
+        if (!quiet || added) NOBLE_INFO("ReachArmory: Tracked {} live Elite illumination record(s)", s_eliteIllumRecords.size());
+    }
+    return added;
+}
+
 static size_t ScanSuitRecordsIn(const std::vector<std::pair<uintptr_t, size_t>>& chunks, bool quiet) {
     // Stock 16-byte suit float[4] in mainmenu_all.map: { 0.9960785f, 0.9921569f, 0.98823535f, 1.0f }
     static constexpr float kStockSuit[4] = { 0.9960785f, 0.9921569f, 0.98823535f, 1.0f };
@@ -845,12 +926,12 @@ static void WriteColorsAndSuit(const ReachArmorySelection& sel) {
     //   [2] = Accent detail
     //   [3] = Visor reflection tint (with 20 finishes)
     // Elite (elite_armor_template / elite_ultra_helmet):
-    //   [0] = Primary base armor
-    //   [1] = Secondary armor trim / markings
-    //   [2] = Bodysuit / Techsuit / Accent detail
-    //   [3] = Emissive armor lights (Lights color - glowing eyes, illumination cards, LEDs)
+    //   [0] = Primary base armor (priArgb)
+    //   [1] = Secondary armor trim / markings (secArgb)
+    //   [2] = Emissive armor lights (litArgb - glowing eyes, illumination cards, LEDs)
+    //   [3] = Bodysuit / Techsuit / Accent detail or primary diffuse finish (terArgb / priArgb)
     const std::array<uint32_t, 4> words = sel.previewElite
-        ? std::array<uint32_t, 4>{ priArgb, secArgb, terArgb, litArgb }
+        ? std::array<uint32_t, 4>{ priArgb, secArgb, litArgb, (sel.accentColorIndex != 0 ? terArgb : priArgb) }
         : std::array<uint32_t, 4>{ priArgb, secArgb, terArgb, visArgb };
 
     // Self-illumination / emissive suit shader float constant:
@@ -862,11 +943,19 @@ static void WriteColorsAndSuit(const ReachArmorySelection& sel) {
         1.0f
     };
 
+    const float eliteIllumFloats[4] = {
+        sel.lightsRgb[0] * 4.0f,
+        sel.lightsRgb[1] * 4.0f,
+        sel.lightsRgb[2] * 4.0f,
+        1.0f
+    };
+
     ArmoryLock lock(s_dataMutex);
     s_lastColorWords = words;
     s_lastElitePriArgb = priArgb;
     s_lastEliteSecArgb = secArgb;
     s_lastSuitFloats = { suitFloats[0], suitFloats[1], suitFloats[2], suitFloats[3] };
+    s_lastEliteIllumFloats = { eliteIllumFloats[0], eliteIllumFloats[1], eliteIllumFloats[2], eliteIllumFloats[3] };
 
     if (!sel.previewElite) {
         s_colorRecords.erase(
@@ -905,6 +994,18 @@ static void WriteColorsAndSuit(const ReachArmorySelection& sel) {
                 return !SafeCopyMem(reinterpret_cast<void*>(rec), words.data(), sizeof(uint32_t) * 4);
             }),
             s_eliteColorRecords.end()
+        );
+
+        s_eliteIllumRecords.erase(
+            std::remove_if(s_eliteIllumRecords.begin(), s_eliteIllumRecords.end(), [&](uintptr_t rec) {
+                float cur[4] = {};
+                if (!SafeCopyMem(cur, reinterpret_cast<const void*>(rec), sizeof(cur))) return true;
+                for (int i = 0; i < 4; ++i) {
+                    if (!std::isfinite(cur[i]) || cur[i] < 0.0f || cur[i] > 6.0f) return true;
+                }
+                return !SafeWriteFloats(rec, eliteIllumFloats, 4);
+            }),
+            s_eliteIllumRecords.end()
         );
     }
 }
@@ -1036,9 +1137,11 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx) {
             ArmoryLock lock(s_dataMutex);
             s_colorRecords.clear();
             s_eliteColorRecords.clear();
+            s_eliteIllumRecords.clear();
             s_suitRecords.clear();
             s_lastPairs.clear();
             s_lastPairsBase = 0;
+            s_rotationBaseBits.store(0xFFFFFFFFu);
             StartQuickRescan();
         }
     }
@@ -1287,9 +1390,11 @@ void ReachArmory::SetMenuMode(bool menuMode) {
             ArmoryLock lock(s_dataMutex);
             s_colorRecords.clear();
             s_eliteColorRecords.clear();
+            s_eliteIllumRecords.clear();
             s_suitRecords.clear();
             s_lastElitePriArgb = 0;
             s_lastEliteSecArgb = 0;
+            s_lastEliteIllumFloats = { 0.0f, 0.5f, 1.0f, 1.0f };
         }
     } else {
         s_selectionGeneration.fetch_add(1);
@@ -1426,9 +1531,9 @@ void ReachArmory::Tick() {
         bool needEliteColors = false;
         {
             ArmoryLock lock(s_dataMutex);
-            needEliteColors = s_eliteColorRecords.empty();
+            needEliteColors = s_eliteColorRecords.empty() || s_eliteIllumRecords.empty();
         }
-        if (needEliteColors && (frame % 60 == 0)) {
+        if (needEliteColors && (frame % 30 == 0)) {
             StartQuickRescan();
         }
     }

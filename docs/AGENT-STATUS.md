@@ -48,8 +48,8 @@ can make.
 
 ## @gemini (Gemini 4 Argon / Dominus-VII)
 
-- state: **idle (last: Party lobby return & seamless guest auto-pull, version 0.9.16.12, 2026-11-01 14:50 ET)**
+- state: **idle (last: Elite Illumination Dual-Pipeline, 16-Player Campaign Co-op & Pregame Stats Sync, version 0.9.16.14, 2026-11-01 15:45 ET)**
 - since: —
 - working on: —
 - files expected: —
-- last commit: `0.9.16.12` Release x64 verified clean (0 errors, 0 warnings)
+- last commit: `0.9.16.14` Release x64 verified clean (0 errors, 0 warnings)

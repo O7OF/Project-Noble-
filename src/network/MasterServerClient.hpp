@@ -27,6 +27,12 @@ struct LobbyPlayer {
     int emblemBackgroundId = 0;   // 0 = none, so other players see it
     int nameplateId = 0;
     int team = 0;            // 0 = no team (Free for All / no team mode), 1 = red, 2 = blue
+    int gamesPlayed = 0;
+    int kills = 0;
+    int deaths = 0;
+    int challengesDone = 0;
+    int commendations = 0;
+    int armoryOwned = 0;
 };
 
 // Snapshot of a pre-game lobby session.
@@ -119,6 +125,12 @@ struct MasterAdvert {
     int hostEmblemBackgroundId = 0;
     int hostNameplateId = 0;
     int hostTeam = 0;
+    int hostGamesPlayed = 0;
+    int hostKills = 0;
+    int hostDeaths = 0;
+    int hostChallengesDone = 0;
+    int hostCommendations = 0;
+    int hostArmoryOwned = 0;
 };
 
 struct MasterJoinInfo {

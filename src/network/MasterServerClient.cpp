@@ -4,6 +4,7 @@
 #include "common/DeviceIdentity.hpp"
 #include "common/Logger.hpp"
 #include "common/Version.hpp"
+#include "career/Career.hpp"
 
 #include <windows.h>
 #include <winhttp.h>
@@ -505,6 +506,9 @@ void MasterServerClient::DoRegister() {
         {"host_rank_index", advert.hostRankIndex}, {"host_emblem_id", advert.hostEmblemId},
       {"host_emblem_background_id", advert.hostEmblemBackgroundId},
         {"host_nameplate_id", advert.hostNameplateId}, {"host_team", advert.hostTeam},
+        {"host_games_played", advert.hostGamesPlayed}, {"host_kills", advert.hostKills},
+        {"host_deaths", advert.hostDeaths}, {"host_challenges_done", advert.hostChallengesDone},
+        {"host_commendations", advert.hostCommendations}, {"host_armory_owned", advert.hostArmoryOwned},
     };
     if (!advert.inProgress) {
         body["roster"] = nlohmann::json::array({
@@ -518,6 +522,9 @@ void MasterServerClient::DoRegister() {
                 {"rankIndex", advert.hostRankIndex}, {"emblemId", advert.hostEmblemId},
         {"emblemBackgroundId", advert.hostEmblemBackgroundId},
                 {"nameplateId", advert.hostNameplateId}, {"team", advert.hostTeam},
+                {"gamesPlayed", advert.hostGamesPlayed}, {"kills", advert.hostKills},
+                {"deaths", advert.hostDeaths}, {"challengesDone", advert.hostChallengesDone},
+                {"commendations", advert.hostCommendations}, {"armoryOwned", advert.hostArmoryOwned},
                 {"ping", 0}
             }
         });
@@ -753,13 +760,26 @@ LobbyState MasterServerClient::FetchLobbyStateSync(const std::string& sessionId)
                 LobbyPlayer p;
                 p.peerId = item.value("peerId", 1ULL);
                 p.machineId = item.value("machineId", "");
-                p.username = item.value("username", "Spartan");
+                if (item.contains("username") && item["username"].is_string() && !item["username"].get<std::string>().empty())
+                    p.username = item["username"].get<std::string>();
+                else if (item.contains("player_name") && item["player_name"].is_string() && !item["player_name"].get<std::string>().empty())
+                    p.username = item["player_name"].get<std::string>();
+                else if (item.contains("name") && item["name"].is_string() && !item["name"].get<std::string>().empty())
+                    p.username = item["name"].get<std::string>();
+                else
+                    p.username = item.value("isHost", false) ? "Host" : "Spartan";
                 p.serviceTag = item.value("serviceTag", "117");
             p.rankIndex = item.value("rankIndex", -1);
             p.emblemId = item.value("emblemId", 0);
   p.emblemBackgroundId = item.value("emblemBackgroundId", 0);
             p.nameplateId = item.value("nameplateId", 0);
             p.team = item.value("team", 0);
+            p.gamesPlayed = item.value("gamesPlayed", item.value("games_played", 0));
+            p.kills = item.value("kills", 0);
+            p.deaths = item.value("deaths", 0);
+            p.challengesDone = item.value("challengesDone", item.value("challenges_done", 0));
+            p.commendations = item.value("commendations", 0);
+            p.armoryOwned = item.value("armoryOwned", item.value("armory_owned", 0));
                 p.isHost = item.value("isHost", false);
                 p.isDev = item.value("isDev", false);
                 p.ping = item.value("ping", 0);
@@ -842,6 +862,12 @@ LobbyState MasterServerClient::JoinLobbySync(const std::string& sessionId,
         { "emblem_background_id", emblemBackgroundId },
         { "nameplate_id", nameplateId },
         { "team", team },
+        { "games_played", Career::GetRecord().totals.gamesPlayed },
+        { "kills", Career::GetRecord().totals.kills },
+        { "deaths", Career::GetRecord().totals.deaths },
+        { "challenges_done", [&]() { int d = 0; for (const auto& c : Career::Challenges()) if (c.done) ++d; return d; }() },
+        { "commendations", 25 },
+        { "armory_owned", static_cast<int>(Career::GetRecord().totals.armoryOwned.size()) },
         { "machine_id", std::to_string(LobbyMachineId()) },
         { "guest_port", localPort },
         { "guest_lan_address", UPnP::Get().GetInternalIP() },
@@ -877,13 +903,26 @@ LobbyState MasterServerClient::JoinLobbySync(const std::string& sessionId,
                 LobbyPlayer p;
                 p.peerId = item.value("peerId", 1ULL);
                 p.machineId = item.value("machineId", "");
-                p.username = item.value("username", "Spartan");
+                if (item.contains("username") && item["username"].is_string() && !item["username"].get<std::string>().empty())
+                    p.username = item["username"].get<std::string>();
+                else if (item.contains("player_name") && item["player_name"].is_string() && !item["player_name"].get<std::string>().empty())
+                    p.username = item["player_name"].get<std::string>();
+                else if (item.contains("name") && item["name"].is_string() && !item["name"].get<std::string>().empty())
+                    p.username = item["name"].get<std::string>();
+                else
+                    p.username = item.value("isHost", false) ? "Host" : "Spartan";
                 p.serviceTag = item.value("serviceTag", "117");
             p.rankIndex = item.value("rankIndex", -1);
             p.emblemId = item.value("emblemId", 0);
   p.emblemBackgroundId = item.value("emblemBackgroundId", 0);
             p.nameplateId = item.value("nameplateId", 0);
             p.team = item.value("team", 0);
+            p.gamesPlayed = item.value("gamesPlayed", item.value("games_played", 0));
+            p.kills = item.value("kills", 0);
+            p.deaths = item.value("deaths", 0);
+            p.challengesDone = item.value("challengesDone", item.value("challenges_done", 0));
+            p.commendations = item.value("commendations", 0);
+            p.armoryOwned = item.value("armoryOwned", item.value("armory_owned", 0));
                 p.isHost = item.value("isHost", false);
                 p.isDev = item.value("isDev", false);
                 p.ping = item.value("ping", 0);

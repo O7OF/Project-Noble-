@@ -7,9 +7,38 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 
 **Goal:** `noble-client.exe` loads MCC's own `haloreach.dll` (Halo: Reach) and drives it **without MCC**, like the existing
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
-MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.16.8 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.16.14 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
 
-## 0. Pick up here (2026-11-01, 14:50 ET) - Party Lobby Return & Seamless Guest Auto-Pull (0.9.16.12) (@O7OF)
+## 0. Pick up here (2026-11-01, 15:45 ET) - Elite Illumination Dual-Pipeline, 16-Player Campaign Co-op & Pregame Stats Sync (0.9.16.14) (@O7OF)
+
+**Version:** 0.9.16.14. **Build:** noble-client, noble-dev (0 errors, 0 warnings on MSVC Release x64). Files: `src/engine/ReachArmory.cpp`, `src/hooks/LobbyPatches.cpp`, `src/network/MasterServerClient.hpp`, `src/network/MasterServerClient.cpp`, `src/ui/ArmorCustomizer.cpp`, `src/ui/FrontEndMenu.cpp`, `src/ui/PauseMenu.cpp`, `src/common/Version.hpp`, `docs/HANDOFF.md`, `docs/AGENT-STATUS.md`.
+
+**What was actually found & fixed (Root Cause Analysis):**
+1. **Elite Armor Body Turning Gold Instead of Lights (Emissive Channel Mapping & Dual-Pipeline Restoration):**
+   - In stock Halo: Reach Elite shaders (`objects\characters\elite\shaders\elite_armor`), inspection of `kStockElitePatterns[11][4]` revealed:
+     - `words[0]` = Primary base armor albedo
+     - `words[1]` = Secondary armor markings & trim
+     - `words[2]` = Emissive armor lights, eye slit, and glowing detail accents (e.g. Ultra `0xFFFF663B` [bright orange-red], Minor `0xFFD1660D` [amber], Zealot `0xFF1BD687` [cyan-green], Officer `0xFF9DB02C` [yellow-green])
+     - `words[3]` = Primary armor finish / diffuse tint
+   - In prior revisions, `litArgb` had been mistakenly placed into `words[3]`. Because `words[3]` controls diffuse armor finish, choosing Gold for Lights tinted the entire armor plates Gold while leaving `words[2]` (eyes/lights) dark/grey.
+   - Restored dual-pipeline architecture:
+     - `words[0]` = `priArgb` (Primary base armor albedo)
+     - `words[1]` = `secArgb` (Secondary armor markings)
+     - `words[2]` = `litArgb` (Emissive lights / illuminated pieces / glowing eye slits)
+     - `words[3]` = `(sel.accentColorIndex != 0 ? terArgb : priArgb)` (Bodysuit / accent detail or primary diffuse albedo)
+     - Re-integrated `s_eliteIllumRecords` scanner targeting stock float4 illumination constants (`kStockUltraIllum`, `kStockMinorIllum`, `kStockEyesIllum`), writing HDR vector `{ sel.lightsRgb[0] * 4.0f, sel.lightsRgb[1] * 4.0f, sel.lightsRgb[2] * 4.0f, 1.0f }` directly to glowing LEDs and emissive cards.
+2. **Spartan vs Elite Customization Separation & Armory Stability:**
+   - In `ArmorCustomizer.cpp`: Added `SelectionsEqual` check in `SyncToReachArmory` to prevent selection churn and unnecessary profile updates.
+   - In `ReachArmory.cpp`: Replaced false-positive species detection (`effectiveSceneIdx != currentScene`) with `wantElite != curElite` in `ApplyGlobalsAndPermutations`, eliminating character flashing, disappearing, or biped rebuild churn when rotating models or switching slot focus.
+   - Reset `s_rotationBaseBits.store(0xFFFFFFFFu)` on species change for clean rest yaw initialization.
+3. **16-Player Campaign Co-op Expansion:**
+   - In `LobbyPatches.cpp`: Set `s_maxCoopPlayers = 16` and updated `Hook_SetSlotCounts` to clamp Campaign/Firefight public slots to `std::min(expandedCoop, 16)`, allowing up to 16 clients in a campaign match with the host.
+   - In `FrontEndMenu.cpp`: Campaign host lobby max player count expanded to 16.
+4. **Pregame Lobby Career Stats Sync:**
+   - In `MasterServerClient`: Added career stat fields (`gamesPlayed`, `kills`, `deaths`, `challengesDone`, `commendations`, `armoryOwned`) to `LobbyPlayer` and `MasterAdvert`. Serialized on lobby advertise / join and deserialized on state fetch.
+   - In `FrontEndMenu.cpp` -> `DrawPreGameLobby`: Remote player rows display real career stats, and clicking a player toggles their profile card.
+
+## 1. Previous Work: Party Lobby Return & Seamless Guest Auto-Pull (0.9.16.12) (@O7OF)
 
 **Version:** 0.9.16.12. **Build:** noble-client, noble-dev (0 errors, 0 warnings on MSVC Release x64). Files: `src/main.cpp`, `src/ui/FrontEndMenu.cpp`, `src/ui/PauseMenu.cpp`, `src/common/Version.hpp`, `docs/HANDOFF.md`, `docs/AGENT-STATUS.md`.
 

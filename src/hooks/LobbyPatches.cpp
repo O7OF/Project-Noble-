@@ -15,7 +15,7 @@ namespace noble {
 
 bool LobbyPatches::s_isApplied = false;
 uint32_t LobbyPatches::s_maxMultiplayerPlayers = 32; // Default to expanded 32 players
-uint32_t LobbyPatches::s_maxCoopPlayers = 8;         // Default to expanded 8 players for campaign/firefight
+uint32_t LobbyPatches::s_maxCoopPlayers = 16;        // Default to expanded 16 players for campaign/firefight
 
 // Detour for c_network_session_membership::set_slot_counts (?set_slot_counts@c_network_session_membership@@QAAXJJ_N@Z)
 // Discovered from Omaha symbol database: reach_omaha_release_symbols.csv
@@ -24,14 +24,16 @@ static SetSlotCountsFn s_originalSetSlotCounts = nullptr;
 
 static void __fastcall Hook_SetSlotCounts(void* thisPtr, int32_t privateSlots, int32_t publicSlots, bool isRanked) {
     NOBLE_INFO("LobbyPatches: set_slot_counts private={} public={} ranked={}", privateSlots, publicSlots, isRanked);
-    // Only the 16-player multiplayer session is expanded. Campaign co-op (4) and Firefight (4)
-    // use their own membership layouts; forcing them to 8/32 makes the host clean legitimate
-    // peers out of the session (haloreach+0x44FC94 -> boot reason 9), which is fatal for co-op.
     int32_t targetSlots = publicSlots;
-    const int32_t expanded = static_cast<int32_t>(LobbyPatches::GetMaxMultiplayerPlayers());
-    if (publicSlots == 16 && expanded > publicSlots) {
-        targetSlots = expanded;
+    const int32_t expandedMp = static_cast<int32_t>(LobbyPatches::GetMaxMultiplayerPlayers());
+    const int32_t expandedCoop = static_cast<int32_t>(LobbyPatches::GetMaxCoopPlayers());
+    if (publicSlots == 16 && expandedMp > publicSlots) {
+        targetSlots = expandedMp;
         NOBLE_INFO("LobbyPatches: Expanding multiplayer session slot count from {} to {} (private={}, isRanked={})",
+            publicSlots, targetSlots, privateSlots, isRanked);
+    } else if (publicSlots == 4 && expandedCoop > 4) {
+        targetSlots = std::min(expandedCoop, 16);
+        NOBLE_INFO("LobbyPatches: Expanding campaign/firefight session slot count from {} to {} (private={}, isRanked={})",
             publicSlots, targetSlots, privateSlots, isRanked);
     }
 
