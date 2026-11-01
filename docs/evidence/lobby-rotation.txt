@@ -1,0 +1,5 @@
+Live server d147f25:
+POST /api/sessions/<id>/lobby/rotation with two items -> success
+rotation_count=2, first map=forge_halo
+GET /api/sessions/<id> now includes rotation and rotation_index.
+Session id/token/IP omitted.

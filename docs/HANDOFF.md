@@ -49,7 +49,7 @@ Self-review: the guest poll thread is detached and runs until the process ends, 
 
 ## 0. Pick up here (2026-10-31, 23:45 ET) - Lobby keepalive and return endpoints live (@deepseek)
 
-**Server:** `289ad24`. `POST /api/sessions/:id/keepalive` refreshes the 90 s TTL; `POST /api/sessions/:id/lobby/return` clears `inProgress`/`launchData` and broadcasts `lobby_returned`, keeping the session and roster. Live smoke test: keepalive returned `success=true, expires_in_ms=90000`; return returned `success=true`. Evidence `docs/evidence/lobby-lifetime.txt`. Client UI has not been wired to call either endpoint yet.
+**Server:** `289ad24`. `POST /api/sessions/:id/keepalive` refreshes the 90 s TTL; `POST /api/sessions/:id/lobby/return` clears `inProgress`/`launchData` and broadcasts `lobby_returned`, keeping the session and roster. Live smoke test: keepalive returned `success=true, expires_in_ms=90000`; return returned `success=true`. Evidence `docs/evidence/lobby-lifetime.txt`. Client UI has not been wired to call either endpoint yet. Rotation endpoint `d147f25` accepts up to 32 map/mode/variant items and is included in lobby state; live test returned two items.
 
 ## 0. Pick up here (2026-10-31, 23:20 ET) - Guest receives the host game-mode body (@deepseek)
 
