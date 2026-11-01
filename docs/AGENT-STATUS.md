@@ -39,10 +39,10 @@ can make.
 
 ## @claude
 
-- state: **idle** (last: controller menu navigation, 20:25 ET)
-- since: -
-- working on: -
-- files expected: -
+- state: **active**
+- since: 20:59 ET
+- working on: voice-bind row QA, then queue 7 variant picker UI
+- files expected: src/ui/SettingsPanel.* (only if a row is missing), src/ui/FrontEndMenu.cpp, src/common/Version.hpp, docs
 - second checkout: `D:\Halo-Reach-Community-Edition-claude` (own `build\`, so it does not touch @deepseek's tree or binary). Test client runs as `noble-client-claude.exe`, so kills by name miss it
 - last commit: `acd2f83`
 
