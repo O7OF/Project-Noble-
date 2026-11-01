@@ -7,7 +7,23 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 
 **Goal:** `noble-client.exe` loads MCC's own `haloreach.dll` (Halo: Reach) and drives it **without MCC**, like the existing
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
-MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.10.7 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.11 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+
+## 0. Pick up here (2026-10-31, 21:24 ET) - Voice-bind row QA and game type picker (@claude)
+
+**Commit:** `02cf7fe`. **Version:** 0.9.11 (over @deepseek's 0.9.10.7, code kept). **Build:** noble-client, noble-dev, 0 errors, 0 warnings on the merged tree.
+
+**Voice-bind rows (QA on 0.9.10.5 rows, build 0.9.10.7+).** All six present, no SettingsPanel change. Keyboard: VOICE TO PARTY / TEAM / EVERYONE show F6 / F7 / F8. Controller: the same three show unbound (`- (preset)`). Rebinds: Voice to team to F9 saved as `keyOverrides 74:120`; Voice to party to RB saved as `padBindings voiceparty:512`. Both still showed after a restart. Scripted pad and a synthetic key; physical pad remains Tyler's. **Two findings for @deepseek:** (1) Binding an unbound voice row to a button in use unbinds the other action: RB gave `melee:-1`, so melee had no button, with no warning, because the swap hands over the old input and there is none. (2) PADDLE 6 KEY defaults to F6, the same key as Voice to party; the row text says a paddle key stops being a keyboard key while a controller is connected.
+
+**Game type picker.** A or a click on GAME TYPE opens a full-screen list on Custom Game and Firefight, sorted by mode; arrows still step. The lobby's list uses the same rows and details. Shows name, mode, description, file. Only variants the map can host are offered, as before. Scans MCC's `game_variants` only, which is all the menu scanned: 54 files, Forge's excluded from the lists. **Descriptions:** each file holds a name at 0xC0 and a description at 0x1C0 (checked by dumping all 54). Only 4 hold real text (Basic Editing, Invasion, both Escalation Slayers); the rest hold a `hr_gvar_*_desc` key not found in `EN_HaloReach.bin` as text, so those show the existing per-mode sentence, not variant-specific wording. No rules are read or edited. Labels: corrected Halo Ball and Multi Flag CTF to match their files; other labels stay Noble's. **Also fixed:** HOST LOBBY / HOST CO-OP / HOST FORGE were mouse-only; now one row below PLAY.
+
+**Evidence** (`docs/screenshots/variant-*`, `voice-bind-*`). Scripted pad: open, scroll, pick, host, start. Two different variants reached the lobby and the engine: Team Slayer `Decoded game variant ...hr_4v4_team_slayer_dmr_ar_50points_tu.bin`, Juggernaut `...hr_ffa_juggernaut_ar_mag_150points_tu.bin`. Lobby banners also captured for Team Slayer and Classic Slayer. Mouse: click on the row, click King of the Hill, `game type picked: King of the Hill (koth_054.bin)`, and the row and PLAY LOCAL show it.
+
+**Not verified.** Those matches were seen to the loading screen, not played, so the rules in play weren't checked. Picker on the MODDED tab, keyboard arrows and Enter in the list, a guest receiving the variant, and any physical pad. `variant-picker-firefight.png` predates the row wording tidy (it still reads like FIREFIGHT · FIREFIGHT).
+
+**My test mistake.** To avoid the live server I blanked `masterServerUrl`, but `Settings` rewrites blank and the old address to `https://servertestdeploy-jfxb.onrender.com`, so about three host-lobby runs advertised a public lobby under the test profile there until killed. `/api/sessions` afterwards returned an empty list. Later runs used `http://127.0.0.1:9`. Use that for tests. Same rewrite means my earlier "Not Found" on `outbreak-z-test-server` probed the wrong host; that deploy check is still open against `servertestdeploy-jfxb`.
+
+Self-review: the header offsets come from these 54 files, not a format spec, so a user file with another layout could show a wrong name; the read is bounds-checked and a non-`_blf` file falls back to the file name. Two GAME TYPE click areas sit under OptionRow's arrows' row, not tested with a mod list. `BuildVariantChoices` runs per frame while a list is open, which is small but not free.
 
 ## 0. Pick up here (2026-10-31, 22:00 ET) - Cross-Build Save Migration & Elite Colour Picker Live Sync (@O7OF)
 
@@ -298,7 +314,7 @@ Self-review: chat text is logged nowhere client-side, so failures show only on s
 ## 0. Pick up here (2026-10-31, 15:08 ET) - Push-to-talk rebinding, voice quality proof, music list cleanup (@claude)
 
 
-**Current version:** 0.9.10. **Developer build:** 0.9.10-dev. Dev binaries report the suffix next to the version string.
+**Current version:** 0.9.11. **Developer build:** 0.9.11-dev. Dev binaries report the suffix next to the version string.
 
 **Commit:** `8cbb746` (the code is in this commit, whose message only mentions docs: the intended commit failed on quotes in its message). **Version:** 0.9.5. **Build:** 0 errors, 0 warnings on the merged tree. Files: `src/ui/SettingsPanel.*`, `src/common/Settings.cpp`, `src/audio/ReachAudio.cpp`, `src/audio/VoiceChat.cpp`, `src/common/Version.hpp`.
 
@@ -394,7 +410,7 @@ Self-review: the weakest part is the sender thread, because it changes how relay
 - Next for me: two-client chat check against the client transport, then the multiplayer post-game end hook.
 ## 0. Pick up here (2026-10-31, 08:25 ET) - Pre-game lobby map identity (@deepseek / DeepSeek)`.
 
-**Current version:** 0.9.10. **Developer build:** 0.9.10-dev. Dev binaries report the suffix next to the version string.
+**Current version:** 0.9.11. **Developer build:** 0.9.11-dev. Dev binaries report the suffix next to the version string.
 
 
 **Built and verified:** release `build\bin\Release\noble-client.exe`, developer `build\bin\Release\noble-dev.exe`, dedicated `build\bin\Release\noble-dedicated.exe`, and the packaged `Documents\Noble Launcher\Noble.exe` (full runtime tree; package stayed running in a normal launch test).

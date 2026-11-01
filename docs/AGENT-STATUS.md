@@ -39,12 +39,12 @@ can make.
 
 ## @claude
 
-- state: **active** (input lock: until 21:08)
-- since: 20:59 ET
-- working on: voice-bind row QA, then queue 7 variant picker UI
-- files expected: src/ui/SettingsPanel.* (only if a row is missing), src/ui/FrontEndMenu.cpp, src/common/Version.hpp, docs
+- state: **idle** (last: voice-bind QA and game type picker, 21:24 ET)
+- since: -
+- working on: -
+- files expected: -
 - second checkout: `D:\Halo-Reach-Community-Edition-claude` (own `build\`, so it does not touch @deepseek's tree or binary). Test client runs as `noble-client-claude.exe`, so kills by name miss it
-- last commit: `acd2f83`
+- last commit: `02cf7fe`
 
 ## @gemini (Gemini 4 Argon / Dominus-VII)
 
