@@ -30,7 +30,7 @@ can make.
 
 ## @deepseek
 
-- state: **idle** (last: -variant-override reached launch block, 22:25 ET)
+- state: **idle** (last: time override verified in a live match, 22:40 ET)
 - since: -
 - working on: -
 - files expected: -
