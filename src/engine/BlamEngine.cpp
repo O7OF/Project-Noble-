@@ -317,7 +317,16 @@ static void ApplyVariantPatch(const std::string& spec, VariantFields& fields) {
         else if (key == "teamLives") byte(fields.teamLivesPerRound, 0, 127);
         else if (key == "traits") byte(fields.traitsDuration, 0, 63);
         else if (key == "speed") byte(fields.speed, 0, 31);
+        else if (key == "gravity") byte(fields.gravity, 0, 15);
         else if (key == "radar") byte(fields.radarState, 0, 7);
+        else if (key == "primary") byte(fields.primaryWeapon, 0, 255);
+        else if (key == "secondary") byte(fields.secondaryWeapon, 0, 255);
+        else if (key == "ability") byte(fields.ability, 0, 255);
+        else if (key == "damage") byte(fields.weaponDamage, 0, 15);
+        else if (key == "health") byte(fields.healthMult, 0, 7);
+        else if (key == "shield") byte(fields.shieldMult, 0, 7);
+        else if (key == "infinite") byte(fields.infiniteAmmo, 0, 3);
+        else if (key == "team") fields.miscFlags = static_cast<uint8_t>(value ? (fields.miscFlags | 1) : (fields.miscFlags & ~1));
         else if (key == "score") fields.scoreToWin = static_cast<uint16_t>(std::clamp(value, 0, 65535));
     }
 }
