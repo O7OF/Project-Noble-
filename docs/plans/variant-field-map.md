@@ -31,6 +31,7 @@ Probe file: `slayer_054.bin`, encoding 0x6A. Test files stayed outside git.
 | `0x2CC` | traits duration | 5 -> 8 |
 | `0x2FC` | social flags | 28 -> 3 (native 7 -> 24) |
 | `0x300` | map flags | 31 -> 1 |
+| `0xF840` | score to win (uint16) | Slayer 25, Team Slayer 50, Juggernaut 150, CTF 3 |
 
 ## Player Traits (the respawn/base trait block)
 
