@@ -1103,6 +1103,17 @@ bool BlamEngine::DumpGameVariant(const std::string& path) {
         uint32_t first = 0;
         std::memcpy(&first, decoded.data(), sizeof(first));
         NOBLE_INFO("DumpGameVariant: first u32 = 0x{:08X}", first);
+        if (decoded.size() > 0x300) {
+            const auto byte = [&](size_t offset) { return static_cast<unsigned>(decoded[offset]); };
+            NOBLE_INFO("Variant fields: roundsToWin {} time {} roundLimit {} sudden {} grace {}",
+                       byte(0x2BD), byte(0x2BE), byte(0x2BF), byte(0x2C0), byte(0x2C2));
+            NOBLE_INFO("Variant respawn: flags {} lives {} teamLives {} time {} suicide {} betrayal {} growth {} cam {} traits {}",
+                       byte(0x2C4), byte(0x2C5), byte(0x2C6), byte(0x2C7), byte(0x2C8), byte(0x2C9),
+                       byte(0x2CA), byte(0x2CB), byte(0x2CC));
+            NOBLE_INFO("Variant traits: health {} shield {} speed {} gravity {} radar {} weapon {} ability {} mapFlags {} social {}",
+                       byte(0x2D0), byte(0x2D3), byte(0x2E8), byte(0x2E9), byte(0x2F8), byte(0x2E5),
+                       byte(0x2E7), byte(0x300), byte(0x2FC));
+        }
     }
     return ok;
 }
