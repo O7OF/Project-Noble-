@@ -26,6 +26,8 @@ struct Rule {
     int minValue, maxValue;
     const char* unit;        // printed after the number; empty = a plain number
     const std::vector<std::string>* names;   // optional labels: names[value - minValue]
+    int bytes = 1;           // 2 = little-endian 16-bit
+    const std::vector<int>* order = nullptr;  // optional: the values a player steps through, in order
 };
 
 const std::vector<Rule>& Rules();

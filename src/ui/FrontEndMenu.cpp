@@ -4388,12 +4388,21 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
             if (!typing && (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || UiPad::Down())) { st.optionsRow = (st.optionsRow + 1) % rowCount; MenuSounds::Scroll(); }
             if (!typing && (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || UiPad::Up())) { st.optionsRow = (st.optionsRow + rowCount - 1) % rowCount; MenuSounds::Scroll(); }
             const char* group = nullptr;
-            for (int i = 0; i < saveRow; ++i) {
+            // Too many rules for one screen: the list scrolls with the focus, and the buttons stay put below it.
+            constexpr int kVisibleRows = 12;
+            const int focusForWindow = std::min(st.optionsRow, saveRow - 1);
+            const int firstRow = std::clamp(focusForWindow - kVisibleRows / 2, 0, std::max(0, saveRow - kVisibleRows));
+            const int lastRow = std::min(saveRow, firstRow + kVisibleRows);
+            const float wheel = ImGui::GetIO().MouseWheel;
+            if (wheel != 0.0f && st.optionsRow < saveRow) st.optionsRow = std::clamp(st.optionsRow - static_cast<int>(wheel) * 2, 0, saveRow - 1);
+            const float buttonsY = ui.size.y - 74.0f * ui.s - 54.0f * ui.s;
+            for (int i = firstRow; i < lastRow; ++i) {
                 const VariantRules::Rule& rule = rules[i];
+                if (y + 58.0f * ui.s > buttonsY) break;   // never under the buttons
                 if (!group || std::strcmp(group, rule.group) != 0) {
                     group = rule.group;
-                    Text(ui, NobleStyle::TitleFont(), 16.0f, ImVec2(px, y + 4.0f * ui.s), kAccent, Upper(group).c_str());
-                    y += 26.0f * ui.s;
+                    Text(ui, NobleStyle::TitleFont(), 16.0f, ImVec2(px, y + 2.0f * ui.s), kAccent, Upper(group).c_str());
+                    y += 22.0f * ui.s;
                 }
                 const int baseValue = VariantRules::Read(rule, st.optionsDecoded.data());
                 const auto edited = st.optionsValues.find(rule.key);
@@ -4405,20 +4414,30 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
                 else text = std::to_string(value) + rule.unit;
                 const int change = OptionRow(ui, rule.key, ImVec2(px, y), pw, rule.label, text.c_str(), !typing && st.optionsRow == i);
                 if (change != 0) {
-                    const int span = rule.maxValue - rule.minValue + 1;
                     int next = std::clamp(value, rule.minValue, rule.maxValue);
-                    for (int step = 0; step < span; ++step) {
-                        next = next + change > rule.maxValue ? rule.minValue : next + change < rule.minValue ? rule.maxValue : next + change;
-                        if (!rule.names || !(*rule.names)[next - rule.minValue].empty()) break;
+                    if (rule.order) {
+                        const std::vector<int>& order = *rule.order;
+                        const int count = static_cast<int>(order.size());
+                        const auto at = std::find(order.begin(), order.end(), value);
+                        // A base value outside the choices (the game's explicit 100%, say) starts from the nearest end.
+                        const int position = at == order.end() ? (change > 0 ? -1 : 0) : static_cast<int>(at - order.begin());
+                        next = order[(position + change + count) % count];
+                    } else {
+                        const int span = rule.maxValue - rule.minValue + 1;
+                        for (int step = 0; step < span; ++step) {
+                            next = next + change > rule.maxValue ? rule.minValue : next + change < rule.minValue ? rule.maxValue : next + change;
+                            if (!rule.names || !(*rule.names)[next - rule.minValue].empty()) break;
+                        }
                     }
+                    NOBLE_INFO("FrontEndMenu: game option {} -> {}", rule.key, next);
                     st.optionsRow = i;
                     if (next == baseValue) st.optionsValues.erase(rule.key);
                     else st.optionsValues[rule.key] = next;
                 }
                 if (st.optionsRow == i) Text(ui, nullptr, 16.0f, ImVec2(px + pw + 24.0f * ui.s, y + 6.0f * ui.s), kDim, rule.help, ui.size.x - left);
-                y += 34.0f * ui.s;
+                y += 28.0f * ui.s;
             }
-            y += 10.0f * ui.s;
+            y = buttonsY;
             const float bw = (pw - 10.0f * ui.s) * 0.5f;
             bool save = BigAction(ui, "mode_save", ImVec2(px, y), bw, "SAVE GAME MODE", "Adds it to the game type list", true, true, st.optionsRow == saveRow);
             bool reset = BigAction(ui, "mode_reset", ImVec2(px + bw + 10.0f * ui.s, y), bw, "RESET", "Back to the base rules", false, true, st.optionsRow == resetRow);
@@ -4699,6 +4718,9 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
                     st.optionsRow = 0;
                     st.optionsMessage.clear();
                     if (VariantRules::Decode(ctx.reachDir / "game_variants" / st.optionsBase, st.optionsDecoded)) {
+                        std::string read;
+                        for (const VariantRules::Rule& rule : VariantRules::Rules()) read += std::string(rule.key) + "=" + std::to_string(VariantRules::Read(rule, st.optionsDecoded.data())) + " ";
+                        NOBLE_INFO("FrontEndMenu: game options opened on '{}': {}", st.optionsBase, read);
                         st.optionsOpen = true;
                         MenuSounds::Click();
                     } else {
