@@ -21,6 +21,7 @@
 #include "engine/CameraThirdPerson.hpp"
 #include "engine/ReachArmory.hpp"
 #include "engine/ElitePack.hpp"
+#include "engine/VariantFields.hpp"
 #include "ui/UIManager.hpp"
 #include "ui/ForgeMenu.hpp"
 #include "ui/FrontEndMenu.hpp"
@@ -110,7 +111,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         const int names = noble::MapNames::SelfTest();
         const int layouts = noble::PadLayouts::SelfTest();
         const int tuning = noble::InputTuning::SelfTest();
-        return (types == 0 && names == 0 && layouts == 0 && tuning == 0) ? 0 : 1;
+        const bool variantFields = noble::VariantFields::SelfTest();
+        std::printf("%s: variant fields - read/write round trip\n", variantFields ? "PASS" : "FAIL");
+        return (types == 0 && names == 0 && layouts == 0 && tuning == 0 && variantFields) ? 0 : 1;
     }
 
     // Steam Workshop subscription helper: the join prompt starts us as "-steam-subscribe <id> -steam-dll <path>",
