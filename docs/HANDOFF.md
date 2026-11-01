@@ -7,7 +7,7 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 
 **Goal:** `noble-client.exe` loads MCC's own `haloreach.dll` (Halo: Reach) and drives it **without MCC**, like the existing
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
-MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.12.6 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.12.7 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
 
 ## 0. Pick up here (2026-10-31, 22:30 ET) - 4th Color Slot (Lights / Emissive Glow) & Extended Spartan Visors (@O7OF)
 
@@ -50,7 +50,7 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 ## 0. Pick up here (2026-10-31, 22:10 ET) - Variant field map: native offsets and a live logger (@deepseek)
 
-**Commits:** `e78e5f32` (logger), `45df5c47` (score), `b3a93b54` (API), `e8465b55` (launch apply). **Version:** 0.9.12.6. **Build:** 0 errors, 0 warnings (Release `noble-client` + `noble-dev`). **Full table:** `docs/plans/variant-field-map.md`.
+**Commits:** `e78e5f32` (logger), `45df5c47` (score), `b3a93b54` (API), `e8465b55` (launch apply), `c8dec830` (patch CLI). **Version:** 0.9.12.7. **Build:** 0 errors, 0 warnings (Release `noble-client` + `noble-dev`). **Full table:** `docs/plans/variant-field-map.md`.
 
 **Method.** `-variant-dump` decodes a stock `.bin` to the native 0xFC04 `c_game_variant`. I then patched one known field in the file, decoded it again, and diffed the two native blobs. Engine decode accepts the patched files (no SHA-1 recompute needed for the probe).
 
@@ -62,7 +62,7 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 **Loadouts.** Patching loadout fields produced no native diff; they are file/script data, not `c_game_variant` fields. A loadout editor must write the variant file.
 
-**API and apply.** `src/engine/VariantFields.hpp` provides bounds-checked `Read`/`Write` over the mapped offsets with a round-trip self-test (`PASS: variant fields - read/write round trip`). `BlamEngine::SetVariantOverrides` stores a host edit; `LaunchMap` applies it to the decoded variant and logs `applied host variant overrides` before copying into the launch block. This path is built but not yet verified by playing a match.\n\n**TU1 check:** an encoding 0x6B Team Slayer reads time 12 and score 50 at the same offsets, so the mapped General/Player Traits/score fields hold on base and TU1 variants. **Still open:** loadout file writer, team entries, and a native writer. Do not expose editing until each offset has a round-trip probe and a TU1 check.
+**API and apply.** `src/engine/VariantFields.hpp` provides bounds-checked `Read`/`Write` over the mapped offsets with a round-trip self-test (`PASS: variant fields - read/write round trip`). `BlamEngine::SetVariantOverrides` stores a host edit; `LaunchMap` applies it to the decoded variant and logs `applied host variant overrides` before copying into the launch block. This path reached a real launch block: `-variant-override time=15,score=50,rounds=3` on stock Slayer logged effective time 15/score 50/rounds 3 (file 10/25/0) before the block was copied. In-game rules were not observed; the match was stopped at the launch stage.\n\n**TU1 check:** an encoding 0x6B Team Slayer reads time 12 and score 50 at the same offsets, so the mapped General/Player Traits/score fields hold on base and TU1 variants. **Still open:** loadout file writer, team entries, and a native writer. Do not expose editing until each offset has a round-trip probe and a TU1 check.
 
 Self-review: these are stock encoding 0x6A offsets from `slayer_054.bin`; a TU1 variant may differ. The probe only changes bytes temporarily outside git.
 
