@@ -8,6 +8,8 @@
 #include <cstring>
 #include <chrono>
 #include <atomic>
+#include <filesystem>
+#include <fstream>
 
 namespace noble {
 
@@ -701,6 +703,21 @@ void NetworkTransport::RelayWorkerThread(std::string relayUrl, std::string sessi
                                 std::string lMap = ld.value("map", "20_sword_slayer");
                                 std::string lMode = ld.value("mode", "multiplayer");
                                 std::string lVar = ld.value("variant", "");
+                                std::string lVarBody = ld.value("variant_body", "");
+                                std::string lVarPath = lVar;
+                                if (!lVarBody.empty() && !lVar.empty()) {
+                                    std::error_code ec;
+                                    const auto dir = std::filesystem::current_path(ec) / "data" / "host_variants";
+                                    std::filesystem::create_directories(dir, ec);
+                                    const auto variantPath = dir / std::filesystem::path(lVar).filename();
+                                    std::ofstream out(variantPath, std::ios::binary);
+                                    if (out) {
+                                        out.write(lVarBody.data(), static_cast<std::streamsize>(lVarBody.size()));
+                                        out.close();
+                                        lVarPath = variantPath.string();
+                                        NOBLE_INFO("NetworkTransport: host variant body '{}' saved to {}", lVar, lVarPath);
+                                    }
+                                }
                                 int lDiff = ld.value("difficulty", 1);
                                 uint64_t lSkulls = 0;
                                 try { lSkulls = std::stoull(ld.value("skulls", "0")); } catch (...) {}
@@ -718,7 +735,7 @@ void NetworkTransport::RelayWorkerThread(std::string relayUrl, std::string sessi
                                     cb = m_lobbyLaunchCb;
                                 }
                                 if (cb) {
-                                    cb(lMap, lMode, lVar, lDiff, lSkulls, hIp, hPort, sId);
+                                    cb(lMap, lMode, lVarPath, lDiff, lSkulls, hIp, hPort, sId);
                                 }
                             } else if (type == "chat") {
             ChatMessage m;

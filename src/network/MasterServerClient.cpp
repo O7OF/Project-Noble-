@@ -923,7 +923,8 @@ bool MasterServerClient::LaunchLobbySync(const std::string& sessionId,
                                          const std::string& mode,
                                          const std::string& variant,
                                          int difficulty,
-                                         uint64_t skulls) {
+                                         uint64_t skulls,
+                                         const std::string& variantBody) {
     std::string token;
     {
         std::lock_guard<std::mutex> lock(m_mutex);
@@ -936,6 +937,7 @@ bool MasterServerClient::LaunchLobbySync(const std::string& sessionId,
         { "map", map },
         { "mode", mode },
         { "variant", variant },
+        { "variant_body", variantBody },
         { "difficulty", difficulty },
         { "skulls", std::to_string(skulls) }
     };

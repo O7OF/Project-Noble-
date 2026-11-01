@@ -178,7 +178,8 @@ public:
                          const std::string& mode,
                          const std::string& variant,
                          int difficulty,
-                         uint64_t skulls);
+                         uint64_t skulls,
+                         const std::string& variantBody = "");
 
     void UpdateLobbyAdvert(const std::string& map, const std::string& mode, const std::string& variant, int diff, uint64_t skulls);
     std::string GetCurrentSessionId() const;

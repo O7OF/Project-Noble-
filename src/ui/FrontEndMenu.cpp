@@ -2852,7 +2852,12 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
             const LobbyState current = MasterServerClient::Get().FetchLobbyStateSync(st.lobbySessionId);
             if (current.ok && !current.roster.empty()) st.lobbyRoster = current.roster;
         }
-        MasterServerClient::Get().LaunchLobbySync(st.lobbySessionId, st.lobbyMap, st.lobbyMode, variantFileName, st.lobbyDifficulty, st.lobbySkulls);
+        std::string variantBody;
+        if (!st.lobbyVariantPath.empty()) {
+            std::ifstream in(st.lobbyVariantPath, std::ios::binary);
+            if (in) variantBody.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+        }
+        MasterServerClient::Get().LaunchLobbySync(st.lobbySessionId, st.lobbyMap, st.lobbyMode, variantFileName, st.lobbyDifficulty, st.lobbySkulls, variantBody);
         NOBLE_INFO("Lobby start broadcast: session='{}' map='{}' mode='{}' variant='{}' difficulty={} skulls=0x{:X} roster={}",
                    st.lobbySessionId, st.lobbyMap, st.lobbyMode, variantFileName, st.lobbyDifficulty, st.lobbySkulls,
                    st.lobbyRoster.size());
