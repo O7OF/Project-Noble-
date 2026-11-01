@@ -792,12 +792,10 @@ static void WriteColorsAndSuit(const ReachArmorySelection& sel) {
                 (cur[2] >> 24) != 0xFFu || (cur[3] >> 24) != 0xFFu) {
                 return true;
             }
-            // Elite shader ARGB layout (matches host-probe.exe write_colors @ 0x1401b5ad0):
-            // cur[0]: Base / Permutation
-            // cur[1]: Undersuit / Detail
-            // cur[2]: Secondary
-            // cur[3]: Primary
-            const uint32_t eliteWords[4] = { cur[0], cur[1], secArgb, priArgb };
+            // Elite shader ARGB layout (host-probe.exe write_colors @ 0x1401b5ad0). The probe's "base" slot is the
+            // rank's stock colour, not the player's Primary; that made Primary/Secondary tint only the overlay and a
+            // white Primary washed the model. Drive base = Primary, overlay = Secondary, detail = Accent.
+            const uint32_t eliteWords[4] = { priArgb, cur[1], secArgb, terArgb };
             return !SafeCopyMem(reinterpret_cast<void*>(rec), eliteWords, sizeof(eliteWords));
         }),
         s_eliteColorRecords.end()
