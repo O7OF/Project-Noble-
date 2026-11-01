@@ -30,7 +30,7 @@ can make.
 
 ## @deepseek
 
-- state: **idle** (last: CI failure-mail burst fixed, 21:20 ET)
+- state: **idle** (last: Prophets' Hand Armory loader spike, no-go without pack, 21:30 ET)
 - since: -
 - working on: -
 - files expected: -

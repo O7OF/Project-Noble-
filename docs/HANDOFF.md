@@ -9,6 +9,18 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
 MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.10.5 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
 
+## 0. Pick up here (2026-10-31, 21:30 ET) - Prophets' Hand Armory loader spike: no-go without an armour pack (@deepseek)
+
+**Version:** 0.9.10.5 (docs only). **Artifact:** `docs/plans/prophets-hand-armory-loader-spike.md`.
+
+**Result.** Gameplay map override is the working route for the mod's lighting and Elite pieces. The Armory cannot load them from the mod as shipped: Noble's `ElitePack` requires a sidecar-backed armour cache (`rr_elite_pack.map` + `.rrreloc` + `.rrneeds` + `.rrpmcg`, about 96 MB total), while Prophets' Hand ships a 1.22 GB scenario cache with no sidecars. Treating a full scenario as a second menu cache would collide with the menu's globals and lacks relocation data.
+
+**Options.** (1) Ask the mod author/O7OF for an armour-only pack in the existing sidecar format — recommended; (2) approve/extract the tags into a pack ourselves — multi-day RE/asset-pipeline work with redistribution questions; (3) gameplay-only map override, already working; (4) separate Armory lighting presets, since stock menumap lighting does not transfer.
+
+**Decision needed:** O7OF/Tyler — request the armour pack or approve extraction. No code was changed in this spike.
+
+Self-review: this is a no-go for the quick loader, not a claim that the pieces cannot be ported. The recommendation is deliberately the smallest legal/technical step.
+
 ## 0. Pick up here (2026-10-31, 21:20 ET) - CI failure-mail burst fixed; docs-only pushes skip the build (@deepseek)
 
 **Commit:** `3fc9450f`. **Version:** 0.9.10.5 (unchanged; workflow only). Files: `.github/workflows/build.yml`.
