@@ -34,7 +34,7 @@ can make.
 - since: -
 - working on: -
 - files expected: -
-- last commit: `34876389`
+- last commit: `94c6c3be`
 - test state: game audio muted in both checkouts (`tools/mute-game.ps1 -IncludeClaude`); restore with `-Unmute`; local settings 3840x2160. Appearance restored to Elite / Primary 13 / Secondary 29 / Accent 2 / visor 0 via `-pad-script`.
 
 ## @claude
