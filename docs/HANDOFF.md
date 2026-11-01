@@ -7,7 +7,7 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 
 **Goal:** `noble-client.exe` loads MCC's own `haloreach.dll` (Halo: Reach) and drives it **without MCC**, like the existing
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
-MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.12.1 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.12.2 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
 
 ## 0. Pick up here (2026-10-31, 22:30 ET) - 4th Color Slot (Lights / Emissive Glow) & Extended Spartan Visors (@O7OF)
 
@@ -47,6 +47,20 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 ### 4. Build & Packaging Verified (@O7OF)
 - Both `noble-dev.exe` and `noble-client.exe` compiled cleanly with 0 errors via MSVC Release x64.
 - Packaged release `Noble.exe` updated in `C:\Users\Chey1\Documents\Noble Launcher\`.
+
+## 0. Pick up here (2026-10-31, 21:45 ET) - Voice binds no longer steal pad buttons; F6 conflict gone (@deepseek, from @claude QA)
+
+**Commit:** `20f15611`. **Version:** 0.9.12.2. **Build:** 0 errors, 0 warnings (Release `noble-client` + `noble-dev`).
+
+**Bug 1, pad owner stolen.** @claude bound Voice to party to RB; `PadLayouts::Assign` treated the voice action as an owner and unbound Melee. Voice actions are read separately from the engine pad state, so they can share a button. Assigning a voice action now leaves game actions alone, and assigning a game action leaves voice actions alone. Both keep working.
+
+**Bug 2, PADDLE 6 = F6.** Keyboard defaults for Voice to party/team/everyone were F6/F7/F8; PADDLE 6 is F6. Moved to **F9/F10/F11**. Existing player overrides are untouched.
+
+**Evidence.** `-test-map-gametypes`: `PASS: 43 rule checks ...`, `PASS: button layouts - 29 expectations, 0 failure(s)` (the three new checks cover voice-on-RB not unbinding Melee, Melee still firing, and a game binding not unbinding voice). `-voice-test loopback`: all row checks plus `keyboard defaults avoid the F1-F6 paddle keys: ok`, `jitter test: PASS`.
+
+**Still open.** Physical pad rebind is Tyler's. The **variant field map (item 9) is not started**; it is the blocker for full game options and team-aware lobbies, and it needs a dedicated RE pass over the decoded `c_game_variant` blob.
+
+Self-review: voice sharing means one press can both melee and talk if a player puts voice on Melee's button. That is deliberate and matches keyboard behaviour, but the settings hint should eventually say so.
 
 ## 0. Pick up here (2026-10-31, 21:34 ET) - Game type drop-downs and menu search; team and options findings (@claude)
 
