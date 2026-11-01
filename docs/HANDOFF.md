@@ -7,7 +7,19 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 
 **Goal:** `noble-client.exe` loads MCC's own `haloreach.dll` (Halo: Reach) and drives it **without MCC**, like the existing
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
-MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.10.1 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.10.2 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+
+## 0. Pick up here (2026-10-31, 20:40 ET) - Voice channel priority self-test passes (@deepseek)
+
+**Commit:** `2c837e07`. **Version:** 0.9.10.2. **Build:** 0 errors, 0 warnings (Release `noble-client` + `noble-dev`). Files: `src/audio/VoiceChat.cpp`, `src/common/Version.hpp`.
+
+**What changed.** Pulled the separate-PTT priority rule into `ChannelFromHeld` and added five checks to the loopback self-test: party wins when several are held, team beats everyone, everyone beats generic PTT, generic PTT uses TALK TO, nothing held is silent. `PushToTalkChannel` now reads all four keyboard and pad inputs through that rule.
+
+**Evidence.** `noble-client -voice-test loopback` printed `loopback: PASS`, all five `voice channel:` checks `ok`, and `jitter test: PASS`, at version 0.9.10.2. This proves the routing decision, not a two-client audible test.
+
+**Still open.** Two-client channel isolation, a physical pad press, and rebind capture for the six new rows (three keyboard, three pad). Do not mark the voice-channel feature complete until the two-client run.
+
+Self-review: the self-test calls the same pure rule as the live path, so a future UI label can still lie about which channel a key selects; the live `PushToTalkChannel` path is not exercised by the self-test.
 
 ## 0. Pick up here (2026-10-31, 20:25 ET) - Controller menu navigation across Settings and the menus (@claude)
 
