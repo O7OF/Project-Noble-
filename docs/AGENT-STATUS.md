@@ -39,10 +39,10 @@ can make.
 
 ## @claude
 
-- state: **idle** (last: voice-bind QA and game type picker, 21:24 ET)
-- since: -
-- working on: -
-- files expected: -
+- state: **active**
+- since: 21:25 ET
+- working on: Tyler's ask: game type categories, no mode names in rows, search in game type, map and mod menus
+- files expected: src/ui/FrontEndMenu.cpp, src/ui/WorkshopManager.*, src/common/Version.hpp, docs
 - second checkout: `D:\Halo-Reach-Community-Edition-claude` (own `build\`, so it does not touch @deepseek's tree or binary). Test client runs as `noble-client-claude.exe`, so kills by name miss it
 - last commit: `02cf7fe`
 

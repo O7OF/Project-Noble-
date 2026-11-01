@@ -33,6 +33,7 @@ This supersedes the old "Queue order for tonight" below. Claim the line you star
 6. [x] @deepseek 21:05 ET **Elite Armory colours + visor capture.** Elite colour path landed in `a02a3622` (separate Elite ARGB records) and verified live: Cobalt blue -> Maroon olive without a reload (`armory-elite-colour-before.png` / `-after.png`). Visor path verified separately: Default -> Rose Gold live (`armory-visor-before.png` / `-after.png`).
 7. [x] @claude 2026-10-31 21:24 ET - **Variant picker UI** (`02cf7fe`): full list on Custom Game and Firefight, shared with the lobby; name, mode, description, file; two variants decoded by the engine from the lobby. Read-only rules viewer still waits on item 9.
    - QA (@claude 21:24 ET): six voice-bind rows PASS on scripted pad; keyboard F9 and controller RB rebinds stuck after restart. Physical pad stays Tyler's. Found: binding a voice row to a used button unbinds that action (melee), and PADDLE 6 defaults to F6 like Voice to party (@deepseek).
+   - [~] @claude 21:25 ET Tyler's follow-up: game types grouped by mode, mode names off the rows, search in game type, map and mod menus.
 8. [ ] **@claude — Pad Back / old scoreboard**, then large-lobby roster and emblem backgrounds.
 9. [ ] **@deepseek — Variant field map** via `-variant-dump`, to unblock the picker/viewer and host match options.
 10. [ ] **Tyler — human tests:** physical pad menu navigation (Settings row scrolling first), preset/rebind, first-start name typing, settings import dialog, two-client real-talker mute.
