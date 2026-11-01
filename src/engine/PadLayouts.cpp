@@ -117,10 +117,18 @@ const char* InputName(int input) {
 void Assign(int layout, int action, int input, std::map<std::string, int>& overrides) {
     const int previous = EffectiveInput(layout, action, &overrides);
     if (previous == input) return;
+    // Voice actions are read separately from the engine pad state. They can share a button with a game action
+    // without stealing it; forcing one owner here silently unbound Melee when Voice to party took RB.
+    const bool assigningVoice = action == PushToTalk || action == VoiceParty || action == VoiceTeam || action == VoiceGlobal;
+    if (assigningVoice) {
+        if (input == LayoutInput(layout, action)) overrides.erase(ActionKey(action));
+        else overrides[ActionKey(action)] = input;
+        return;
+    }
     for (int other = 0; other < ActionCount; ++other) {
         if (other == action || EffectiveInput(layout, other, &overrides) != input) continue;
         const bool voice = other == PushToTalk || other == VoiceParty || other == VoiceTeam || other == VoiceGlobal;
-        if (voice) { overrides[ActionKey(other)] = -1; continue; }   // must not double up on a game button
+        if (voice) continue;   // voice reads the same button too; do not unbind it when a game action moves in
         if (previous == LayoutInput(layout, other)) overrides.erase(ActionKey(other));
         else overrides[ActionKey(other)] = previous > 0 ? previous : -1;   // -1: deliberately no input
     }
@@ -335,11 +343,26 @@ int SelfTest() {
         lt = rt = 0;
         Apply(Default, b, lt, rt, &o);
         if ((b & kA) != 0) { fail("A should stop jumping once jump is on a paddle"); ++failures; }
+
+        // Voice bindings share a button with the game action instead of stealing it.
+        o.clear();
+        Assign(Default, VoiceParty, kRB, o);
+        if (EffectiveInput(Default, Melee, &o) != kRB) { fail("Assign: Voice to party must not unbind Melee"); ++failures; }
+        b = kRB;
+        lt = rt = 0;
+        Apply(Default, b, lt, rt, &o);
+        if ((b & kRB) == 0) { fail("Assign: Melee must still fire with Voice to party on RB"); ++failures; }
+
+        o.clear();
+        Assign(Default, VoiceParty, kX, o);
+        Assign(Default, Jump, kX, o);
+        if (EffectiveInput(Default, VoiceParty, &o) != kX) { fail("Assign: a game binding must not unbind Voice to party"); ++failures; }
+        if (EffectiveInput(Default, Jump, &o) != kX) { fail("Assign: Jump should still take X"); ++failures; }
     }
     std::printf("%s: button layouts - %zu expectations, %d failure(s)\n",
-                failures == 0 ? "PASS" : "FAIL", sizeof(cases) / sizeof(cases[0]) + 14, failures);
+                failures == 0 ? "PASS" : "FAIL", sizeof(cases) / sizeof(cases[0]) + 17, failures);
     if (report) {
-        report << (failures == 0 ? "PASS" : "FAIL") << ": button layouts - " << sizeof(cases) / sizeof(cases[0]) + 14
+        report << (failures == 0 ? "PASS" : "FAIL") << ": button layouts - " << sizeof(cases) / sizeof(cases[0]) + 17
                << " expectations, " << failures << " failure(s)\n";
     }
     return failures;

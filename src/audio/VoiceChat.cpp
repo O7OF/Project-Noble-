@@ -803,6 +803,10 @@ int RunJitterSelfTest() {
           named(PadLayouts::ActionName(PadLayouts::VoiceParty)) &&
           named(PadLayouts::ActionName(PadLayouts::VoiceTeam)) &&
           named(PadLayouts::ActionName(PadLayouts::VoiceGlobal)));
+    check("voice bind: keyboard defaults avoid the F1-F6 paddle keys",
+          KeyBindings::DefaultKey(KeyBindings::kActionVoiceParty) == VK_F9 &&
+          KeyBindings::DefaultKey(KeyBindings::kActionVoiceTeam) == VK_F10 &&
+          KeyBindings::DefaultKey(KeyBindings::kActionVoiceGlobal) == VK_F11);
     int error = 0;
     OpusEncoder* encoder = opus_encoder_create(kSampleRate, 1, OPUS_APPLICATION_VOIP, &error);
     if (!encoder) return 1;

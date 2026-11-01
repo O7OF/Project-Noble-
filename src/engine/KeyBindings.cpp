@@ -21,7 +21,7 @@ const uint8_t kDefaultKeys[kActionCount] = {
     /* 48 */ 'F',        VK_RBUTTON, VK_RBUTTON, 'E',      'G',        'C',        'X',        'F',
     /* 56 */ '3',        'G',      'L',        VK_UP,      VK_DOWN,    'P',        VK_SPACE,   VK_LCONTROL,
     /* 64 */ 0,          0,        0,          'V',        0,          'Y',        'T',        'P',
-    /* 72 */ 0,          VK_F6,     VK_F7,      VK_F8,
+    /* 72 */ 0,          VK_F9,     VK_F10,     VK_F11,   // voice channels: F1-F6 are the default paddle keys
 };
 
 // Slot numbers are MCC's GameAbstractButton order (the enum list in MCC-Win64-Shipping.exe, 66 entries
