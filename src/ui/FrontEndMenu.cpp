@@ -449,14 +449,14 @@ void Draw(const Ui& ui, ID3D11Device* device, ID3D11DeviceContext* context, floa
     ui.dl->AddImage(reinterpret_cast<ImTextureID>(s_copySrv), p0, p1);
     ui.dl->AddCallback(ImDrawCallback_ResetRenderState, nullptr);
 
-    // Key light: a wide soft glow behind the chest and a pool of light where the feet are.
+    // Floor pool only. The old 30-ring chest glow was additive white/blue over the model and added ~30/255 to
+    // every channel, which desaturated armour colours. The engine already lights the model; keep the atmosphere
+    // below the feet and leave the body untouched.
     ui.dl->AddCallback(&UseAdditive, nullptr);
-    // Stacks of very faint ellipses: each adds one step of blue, some also green or red, so the falloff has no visible rings
-    // and the peak stays low enough not to wash out the armour colours.
     const auto glow = [&](ImVec2 centre, float radiusX, float radiusY, int rings) {
         for (int i = 0; i < rings; ++i) {
             const float t = 1.0f - static_cast<float>(i) / rings;
-            const ImU32 step = IM_COL32(i % 3 == 2 ? 255 : 0, i % 3 != 0 ? 255 : 0, 255, 1);
+            const ImU32 step = IM_COL32(0, i % 2 ? 0 : 40, 255, 1);
             constexpr int kPoints = 48;
             for (int n = 0; n < kPoints; ++n) {
                 const float a = static_cast<float>(n) / kPoints * 6.2831853f;
@@ -465,8 +465,7 @@ void Draw(const Ui& ui, ID3D11Device* device, ID3D11DeviceContext* context, floa
             ui.dl->PathFillConvex(step);
         }
     };
-    glow(ImVec2(W * kStageX, p0.y + H * k * 0.42f), H * 0.56f, H * 0.56f, 30);
-    glow(ImVec2(W * kStageX, p0.y + H * k * 0.83f), H * 0.40f, H * 0.07f, 24);
+    glow(ImVec2(W * kStageX, p0.y + H * k * 0.84f), H * 0.40f, H * 0.055f, 10);
     ui.dl->AddCallback(ImDrawCallback_ResetRenderState, nullptr);
 
     // The panels on the left sit on a dark edge, and the picture's left end doesn't show as a seam.
