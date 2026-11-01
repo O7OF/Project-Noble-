@@ -2867,11 +2867,17 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
             if (current.ok && !current.roster.empty()) st.lobbyRoster = current.roster;
         }
         std::string variantBody;
-        if (!st.lobbyVariantPath.empty()) {
+        if (!st.lobbyVariantPath.empty() && VariantRules::IsPresetFile(st.lobbyVariantPath)) {
             std::ifstream in(st.lobbyVariantPath, std::ios::binary);
             if (in) variantBody.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
         }
-        MasterServerClient::Get().LaunchLobbySync(st.lobbySessionId, st.lobbyMap, st.lobbyMode, variantFileName, st.lobbyDifficulty, st.lobbySkulls, variantBody);
+        try {
+            MasterServerClient::Get().LaunchLobbySync(st.lobbySessionId, st.lobbyMap, st.lobbyMode, variantFileName, st.lobbyDifficulty, st.lobbySkulls, variantBody);
+        } catch (const std::exception& e) {
+            NOBLE_ERROR("FrontEndMenu: LaunchLobbySync exception: {}", e.what());
+        } catch (...) {
+            NOBLE_ERROR("FrontEndMenu: LaunchLobbySync unknown exception");
+        }
         NOBLE_INFO("Lobby start broadcast: session='{}' map='{}' mode='{}' variant='{}' difficulty={} skulls=0x{:X} roster={}",
                    st.lobbySessionId, st.lobbyMap, st.lobbyMode, variantFileName, st.lobbyDifficulty, st.lobbySkulls,
                    st.lobbyRoster.size());
@@ -5517,8 +5523,14 @@ void FrontEndMenu::RenderOverlayImpl(IDXGISwapChain* swapChain, bool clear) {
 
         FrontEndChoice choice;
         bool done = false;
-        DrawFrontEndContents(ctx, device, context, choice, done);
-        SocialOverlay::Draw(8.0f, 196.0f, 900.0f);   // voice above the title, chat over the Friends panel
+        try {
+            DrawFrontEndContents(ctx, device, context, choice, done);
+            SocialOverlay::Draw(8.0f, 196.0f, 900.0f);   // voice above the title, chat over the Friends panel
+        } catch (const std::exception& e) {
+            NOBLE_ERROR("FrontEndMenu: exception in menu loop: {}", e.what());
+        } catch (...) {
+            NOBLE_ERROR("FrontEndMenu: unknown exception in menu loop");
+        }
 
         ImGui::Render();
 

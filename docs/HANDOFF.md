@@ -9,6 +9,21 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
 MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.14 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
 
+## 0. Pick up here (2026-11-01, 00:15 ET) - Fix Forge Launch Crash & Master Server Variant Safety (@O7OF)
+
+**Version:** 0.9.14.3. **Build:** noble-client, noble-dev, noble-dedicated, 0 errors, 0 warnings on MSVC Release x64.
+
+**1. Root Cause Analysis: Forge Launch Crash (Exception 0xE06D7363):**
+- When launching Forge (e.g. Forge World / `00_basic_editing_054.bin`), `DrawPreGameLobby` in `FrontEndMenu.cpp` called `startMatch()`, which read `st.lobbyVariantPath` into `std::string variantBody` via raw binary file read.
+- For stock engine binary variants (`.bin`), this read 21+ KB of raw non-UTF-8 binary data.
+- When passed into `MasterServerClient::LaunchLobbySync(..., variantBody)`, `body.dump()` inside `nlohmann::json` threw a C++ `nlohmann::json::type_error` due to invalid UTF-8 byte sequences.
+- Because `LaunchLobbySync`, `startMatch`, and `HostSlot1_FrameTick` in `ReachHost.cpp` lacked exception guards around `FrontEndMenu::RenderOverlay`, the unhandled C++ exception escaped into `haloreach.dll`'s engine thread, triggering Windows SEH crash `0xE06D7363` and generating minidumps in `data/sandbox/noble-crash.dmp`.
+
+**2. Implemented Fixes:**
+- **Variant Guard in `FrontEndMenu.cpp`:** Updated `startMatch` to check `VariantRules::IsPresetFile(st.lobbyVariantPath)`. Only player-authored `.json` game mode presets are populated into `variantBody`. Shipped stock binary presets (`.bin`) like Forge's `00_basic_editing_054.bin` are already local and bypass the body payload.
+- **UTF-8 Replacement in `MasterServerClient.cpp`:** Changed `body.dump()` to `body.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace)`. Wrapped `LaunchLobbySync` in `try / catch` so network/JSON serialization failures can never propagate or crash the client.
+- **UI & Engine Exception Boundaries:** Wrapped `MasterServerClient::Get().LaunchLobbySync` and `DrawFrontEndContents` in `FrontEndMenu.cpp` in `try / catch` blocks. Wrapped `FrontEndMenu::RenderOverlay(swapChain)` inside `HostSlot1_FrameTick` in `ReachHost.cpp` with a top-level `try / catch` barrier, ensuring that no UI overlay or networking failure can ever crash `haloreach.dll`.
+
 ## 0. Pick up here (2026-10-31, 23:40 ET) - Armor Lights, Illumination Shaders & In-Game Replication for Elites & Spartans (@O7OF)
 
 **Version:** 0.9.14.2. **Build:** noble-client, noble-dev, noble-dedicated, 0 errors, 0 warnings on MSVC Release x64.

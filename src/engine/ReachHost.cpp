@@ -383,7 +383,13 @@ static uint64_t __fastcall HostSlot1_FrameTick(void* thisPtr, uint64_t a1, uint6
             IDXGISwapChain* swapChain = reinterpret_cast<IDXGISwapChain*>(a1);
             InstallPresentSettingsHook(swapChain);
             ExecuteGammaPass(swapChain);
-            FrontEndMenu::RenderOverlay(swapChain);
+            try {
+                FrontEndMenu::RenderOverlay(swapChain);
+            } catch (const std::exception& e) {
+                NOBLE_ERROR("ReachHost [Slot 1]: exception in FrontEndMenu::RenderOverlay: {}", e.what());
+            } catch (...) {
+                NOBLE_ERROR("ReachHost [Slot 1]: unknown exception in FrontEndMenu::RenderOverlay");
+            }
             if (s_testCaptureRequest.exchange(false)) FrameCapture::SaveNow(swapChain, 777777);
             FrameCapture::OnFrame(swapChain, frames);
         }

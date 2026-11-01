@@ -933,17 +933,26 @@ bool MasterServerClient::LaunchLobbySync(const std::string& sessionId,
     }
     if (sessionId.empty() || token.empty() || !Enabled()) return false;
 
-    nlohmann::json body = {
-        { "map", map },
-        { "mode", mode },
-        { "variant", variant },
-        { "variant_body", variantBody },
-        { "difficulty", difficulty },
-        { "skulls", std::to_string(skulls) }
-    };
+    try {
+        nlohmann::json body = {
+            { "map", map },
+            { "mode", mode },
+            { "variant", variant },
+            { "variant_body", variantBody },
+            { "difficulty", difficulty },
+            { "skulls", std::to_string(skulls) }
+        };
 
-    const HttpResult r = HttpRequest(Url(), L"POST", "/api/sessions/" + sessionId + "/lobby/launch", body.dump(), token);
-    return r.ok;
+        const HttpResult r = HttpRequest(Url(), L"POST", "/api/sessions/" + sessionId + "/lobby/launch",
+                                         body.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace), token);
+        return r.ok;
+    } catch (const std::exception& e) {
+        NOBLE_ERROR("MasterServerClient: LaunchLobbySync exception: {}", e.what());
+        return false;
+    } catch (...) {
+        NOBLE_ERROR("MasterServerClient: LaunchLobbySync unknown exception");
+        return false;
+    }
 }
 
 } // namespace noble
