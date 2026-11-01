@@ -6,12 +6,12 @@ namespace noble {
 
 constexpr int VERSION_MAJOR = 0;
 constexpr int VERSION_MINOR = 9;
-constexpr int VERSION_PATCH = 14;
-constexpr int VERSION_REVISION = 2;
+constexpr int VERSION_PATCH = 15;
+constexpr int VERSION_REVISION = 0;
 #ifdef NOBLE_DEV_BUILD
-constexpr std::string_view VERSION_STRING = "0.9.14.2-dev (Armor Illumination & Replication)";
+constexpr std::string_view VERSION_STRING = "0.9.15-dev (Playlists)";
 #else
-constexpr std::string_view VERSION_STRING = "0.9.14.2 (Armor Illumination & Replication)";
+constexpr std::string_view VERSION_STRING = "0.9.15 (Playlists)";
 #endif
 constexpr std::string_view APP_NAME = "Halo: Reach Community Edition";
 

@@ -144,7 +144,7 @@ std::wstring ArgValue(const std::wstring &args, const wchar_t *name) {
 }
 
 // The arguments that bring this match's lobby back in a new process (FrontEndMenu reads the -lobby-* set).
-std::wstring LobbyReturnArgs(bool host) {
+std::wstring LobbyReturnArgs(bool host, bool advance = false) {
   const std::wstring game = Relaunch::CurrentGameArgs();
   const auto quoted = [](const std::wstring &value) { return L"\"" + value + L"\""; };
   std::wstring out = host ? L"-lobby-return host" : L"-lobby-return guest";
@@ -166,6 +166,13 @@ std::wstring LobbyReturnArgs(bool host) {
     copy(L"-max-players", L"-lobby-max-players");
     out += game.find(L" -lan") != std::wstring::npos ? L" -lobby-net lan" : L" -lobby-net online";
     out += game.find(L" -private") != std::wstring::npos ? L" -lobby-privacy private" : L" -lobby-privacy public";
+    // Only the menu that started this match knows the playlist, so it's on this process's own command line.
+    const std::wstring own = GetCommandLineW();
+    const std::wstring list = ArgValue(own, L"-lobby-playlist");
+    if (!list.empty()) {
+      out += L" -lobby-playlist " + quoted(list) + L" -lobby-playlist-pos " + quoted(ArgValue(own, L"-lobby-playlist-pos"));
+      if (advance) out += L" -lobby-advance 1";
+    }
   } else {
     copy(L"-session-id", L"-lobby-session");
     copy(L"-connect", L"-lobby-endpoint");
@@ -1543,10 +1550,11 @@ void PauseMenu::DrawGameOver(HWND hwnd) {
   const bool canPlayAgain = !again.empty() && !guestPlayer;
   // Controller: left and right pick a button, A presses it, and A during the reveal only skips it. The focus starts away
   // from QUIT, so one stray A can never close the game; a host starts on going back to the lobby.
-  enum { kPadQuit, kPadMenu, kPadAgain, kPadLobby };
+  enum { kPadQuit, kPadMenu, kPadAgain, kPadNext, kPadLobby };
   static int s_padButton = hostRole ? kPadLobby : kPadMenu;
   std::vector<int> padOrder = { kPadQuit, kPadMenu };
   if (canPlayAgain) padOrder.push_back(kPadAgain);
+  if (hostRole && wcsstr(GetCommandLineW(), L"-lobby-playlist")) padOrder.push_back(kPadNext);
   if (hostRole) padOrder.push_back(kPadLobby);
   int padAt = 1;
   for (size_t i = 0; i < padOrder.size(); ++i) if (padOrder[i] == s_padButton) padAt = static_cast<int>(i);
@@ -1590,8 +1598,15 @@ void PauseMenu::DrawGameOver(HWND hwnd) {
   if (hostRole) {
     bx -= bw + gap;
     ImGui::SetCursorScreenPos(ImVec2(bx, by));
-    UnavailableButton("NEXT IN ROTATION", ImVec2(bw, bh), "Not available yet: the server has no map rotation for a lobby.");
-    overButton |= ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
+    if (wcsstr(GetCommandLineW(), L"-lobby-playlist")) {
+      if (ImGui::Button("NEXT IN ROTATION", ImVec2(bw, bh)) || (padPress && s_padButton == kPadNext))
+        RelaunchAndClose(hwnd, LobbyReturnArgs(true, true), "next in rotation");
+      padOutline(kPadNext);
+      overButton |= ImGui::IsItemHovered();
+    } else {
+      UnavailableButton("NEXT IN ROTATION", ImVec2(bw, bh), "Pick a playlist on Custom Game to use a rotation.");
+      overButton |= ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
+    }
     bx -= bw + gap;
     ImGui::SetCursorScreenPos(ImVec2(bx, by));
     if (NobleStyle::PrimaryButton("RETURN TO LOBBY", ImVec2(bw, bh)) || (padPress && s_padButton == kPadLobby))

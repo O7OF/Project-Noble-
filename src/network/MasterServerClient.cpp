@@ -736,6 +736,17 @@ LobbyState MasterServerClient::FetchLobbyStateSync(const std::string& sessionId)
         state.isLan = j.value("is_lan", false);
         state.isClosed = j.value("is_closed", false);
         state.closeReason = j.value("close_reason", "");
+        if (j.contains("vote") && j["vote"].is_object()) {
+            const auto& vote = j["vote"];
+            state.voteId = vote.value("id", std::string());
+            state.voteMsLeft = vote.value("ms_left", 0);
+            if (vote.contains("options") && vote["options"].is_array()) {
+                for (const auto& option : vote["options"]) if (option.is_string()) state.voteOptions.push_back(option.get<std::string>());
+            }
+            if (vote.contains("counts") && vote["counts"].is_array()) {
+                for (const auto& count : vote["counts"]) if (count.is_number_integer()) state.voteCounts.push_back(count.get<int>());
+            }
+        }
 
         if (j.contains("roster") && j["roster"].is_array()) {
             for (const auto& item : j["roster"]) {
@@ -916,6 +927,33 @@ bool MasterServerClient::SendReportSync(const std::string& sessionId, const std:
         { "reason", reason }, { "map", map }, { "mode", mode }
     };
     return HttpRequest(Url(), L"POST", "/api/reports", body.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace)).ok;
+}
+
+bool MasterServerClient::StartVoteSync(const std::string& sessionId, const std::vector<std::string>& options, int seconds) {
+    std::string token;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        token = m_sessionToken;
+    }
+    if (sessionId.empty() || token.empty() || !Enabled()) return false;
+    const nlohmann::json body = { { "options", options }, { "seconds", seconds } };
+    return HttpRequest(Url(), L"POST", "/api/sessions/" + sessionId + "/vote/start", body.dump(), token).ok;
+}
+
+bool MasterServerClient::CastVoteSync(const std::string& sessionId, uint64_t peerId, int choice) {
+    if (sessionId.empty() || !Enabled()) return false;
+    const nlohmann::json body = { { "peer_id", peerId }, { "choice", choice } };
+    return HttpRequest(Url(), L"POST", "/api/sessions/" + sessionId + "/vote", body.dump()).ok;
+}
+
+bool MasterServerClient::EndVoteSync(const std::string& sessionId) {
+    std::string token;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        token = m_sessionToken;
+    }
+    if (sessionId.empty() || token.empty() || !Enabled()) return false;
+    return HttpRequest(Url(), L"POST", "/api/sessions/" + sessionId + "/vote/end", "{}", token).ok;
 }
 
 bool MasterServerClient::LaunchLobbySync(const std::string& sessionId,

@@ -58,6 +58,11 @@ struct LobbyState {
     bool isLan = false;
     bool isClosed = false;
     std::string closeReason;
+    // A running vote on what to play next: up to 3 options, then "none of these" as the last count.
+    std::string voteId;
+    std::vector<std::string> voteOptions;
+    std::vector<int> voteCounts;
+    int voteMsLeft = 0;
 };
 
 // One game listed by the master server.
@@ -170,6 +175,10 @@ public:
                             const std::string& fallbackHostIp = "",
                             uint16_t fallbackHostPort = 11774);
     bool LeaveLobbySync(const std::string& sessionId, uint64_t peerId);
+    // Voting: the host opens and closes it with the session token; a lobby member's choice is 0..options-1, or options for none.
+    bool StartVoteSync(const std::string& sessionId, const std::vector<std::string>& options, int seconds);
+    bool CastVoteSync(const std::string& sessionId, uint64_t peerId, int choice);
+    bool EndVoteSync(const std::string& sessionId);
     // A player report from the scoreboard. True when the server answered; it stores the report for the team to read.
     bool SendReportSync(const std::string& sessionId, const std::string& reporter, const std::string& target,
                         const std::string& reason, const std::string& map, const std::string& mode);

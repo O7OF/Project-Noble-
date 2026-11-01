@@ -135,6 +135,7 @@ set(SOURCES
     src/common/MapNames.cpp
     src/engine/MapGameTypes.cpp
     src/engine/VariantRules.cpp
+    src/engine/Playlists.cpp
     src/engine/MapGameTypesTest.cpp
     src/host/SteamLocator.cpp
     src/host/SteamWorkshop.cpp
