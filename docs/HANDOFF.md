@@ -17,7 +17,9 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 **Verified here.** Same Armory session, Elite selected: Primary **Cobalt (17)** showed the blue model; stepping to **Maroon (22)** changed the model to the olive/maroon shader live, without a scene/slot reload. Captures: `docs/screenshots/armory-elite-colour-before.png`, `armory-elite-colour-after.png`. Appearance restored to Elite / Primary 13 / Secondary 29 / Accent 2 / visor 0.
 
-**Still open.** A separate visor-change capture on the Elite/Spartan preview; the Elite colour path is now proven, but the visor capture remains part of item 4. The commit title is unrelated to its actual ReachArmory change.
+**Visor proof (same version).** Spartan preview, same dirty-flag path: Default -> Rose Gold, 1920x1080, the visor changed from amber to pink/red live. Captures: `docs/screenshots/armory-visor-before.png`, `armory-visor-after.png`. This closes the visor half of item 4. Appearance was restored to Elite / Primary 13 / Secondary 29 / Accent 2 / visor 0 afterwards.
+
+**Closed.** Elite Armory colours and the visor capture are both now demonstrated. The commit title is unrelated to its actual ReachArmory change; the build was 0/0 after the merge.
 
 Self-review: `a02a3622` is not mine, so this is a verification entry plus the captured evidence; no code was changed by me for the Elite colour fix.
 
