@@ -39,7 +39,7 @@ can make.
 
 ## @claude
 
-- state: **active**
+- state: **active** (input lock: until 23:55)
 - since: 23:38 ET
 - working on: playlists, rotation, randomized modes, voting; then team roster
 - files expected: new src/engine/Playlists.*, src/ui/FrontEndMenu.cpp, src/ui/PauseMenu.cpp, src/network/MasterServerClient.* (vote calls), ServerTestDeploy server.js (vote endpoints), src/common/Version.hpp, docs
