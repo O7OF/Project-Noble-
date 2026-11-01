@@ -1660,7 +1660,9 @@ static void SetupHostLobby(MenuState& st, const std::string& mapScenario, const 
                            const std::string& varPath, const std::string& varName, int diff, uint64_t skulls, int maxPlayers,
                            const ModEntry* mod = nullptr, const std::filesystem::path& mapOverride = {},
                            const std::string& mapTitle = {}, const std::filesystem::path& mapImage = {},
-                           const std::filesystem::path& mapThumb = {}) {
+                           const std::filesystem::path& mapThumb = {},
+                           const std::string& existingSessionId = {},
+                           const std::string& existingSessionToken = {}) {
     st.isLobbyHost = true;
     st.lobbyMap = mapScenario;
     st.lobbyMapOverride = mapOverride;
@@ -1699,6 +1701,11 @@ static void SetupHostLobby(MenuState& st, const std::string& mapScenario, const 
 
     if (st.lobbyNetMode == 1 && MasterServerClient::Get().Enabled()) {
         MasterAdvert adv;
+        if (!existingSessionId.empty()) {
+            adv.id = existingSessionId;
+            adv.token = existingSessionToken;
+            NOBLE_INFO("FrontEndMenu: Reusing existing session id '{}' for lobby", existingSessionId);
+        }
         adv.name = cfg.sessionName;
         adv.port = cfg.port;
         adv.maxPlayers = cfg.maxPlayers;
@@ -5793,7 +5800,8 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
                 SetupHostLobby(ctx.st, text(L"-lobby-map"), text(L"-lobby-mode"), variant.string(), varName,
                                difficulty.empty() ? 1 : std::atoi(difficulty.c_str()), skulls.empty() ? 0 : std::strtoull(skulls.c_str(), nullptr, 10),
                                maxPlayers.empty() ? 16 : std::atoi(maxPlayers.c_str()), mod, path(L"-lobby-map-override"), text(L"-lobby-map-title"),
-                               path(L"-lobby-map-image"), path(L"-lobby-map-thumb"));
+                               path(L"-lobby-map-image"), path(L"-lobby-map-thumb"),
+                               text(L"-lobby-session"), text(L"-lobby-session-token"));
                 // The playlist carries on: NEXT IN ROTATION moves to its next entry, RETURN TO LOBBY stays on this one.
                 const std::filesystem::path listFile = path(L"-lobby-playlist");
                 for (size_t i = 0; i < ctx.st.playlists.size(); ++i) {

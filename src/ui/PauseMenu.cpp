@@ -15,6 +15,7 @@
 #include "common/MapNames.hpp"
 #include "common/Relaunch.hpp"
 #include "network/MasterServerClient.hpp"
+#include "network/SessionManager.hpp"
 #include "network/NetworkTransport.hpp"
 #include "common/Settings.hpp"
 #include "engine/FrameCapture.hpp"
@@ -149,7 +150,8 @@ std::wstring LobbyReturnArgs(bool host, bool advance = false) {
   const auto quoted = [](const std::wstring &value) { return L"\"" + value + L"\""; };
   std::wstring out = host ? L"-lobby-return host" : L"-lobby-return guest";
   const auto copy = [&](const wchar_t *from, const wchar_t *to) {
-    const std::wstring value = ArgValue(game, from);
+    std::wstring value = ArgValue(game, from);
+    if (value.empty()) value = ArgValue(GetCommandLineW(), from);
     if (!value.empty()) out += std::wstring(L" ") + to + L" " + quoted(value);
   };
   copy(L"-map", L"-lobby-map");
@@ -162,20 +164,26 @@ std::wstring LobbyReturnArgs(bool host, bool advance = false) {
   copy(L"-map-title", L"-lobby-map-title");
   copy(L"-map-image", L"-lobby-map-image");
   copy(L"-map-thumb", L"-lobby-map-thumb");
+
+  // Keep session id and token for both host and guest so the session is preserved!
+  copy(L"-session-id", L"-lobby-session");
+  copy(L"-session-token", L"-lobby-session-token");
+
   if (host) {
     copy(L"-max-players", L"-lobby-max-players");
-    out += game.find(L" -lan") != std::wstring::npos ? L" -lobby-net lan" : L" -lobby-net online";
-    out += game.find(L" -private") != std::wstring::npos ? L" -lobby-privacy private" : L" -lobby-privacy public";
-    // Only the menu that started this match knows the playlist, so it's on this process's own command line.
     const std::wstring own = GetCommandLineW();
+    out += (game.find(L" -lan") != std::wstring::npos || own.find(L" -lan") != std::wstring::npos) ? L" -lobby-net lan" : L" -lobby-net online";
+    out += (game.find(L" -private") != std::wstring::npos || own.find(L" -private") != std::wstring::npos) ? L" -lobby-privacy private" : L" -lobby-privacy public";
+    // Only the menu that started this match knows the playlist, so it's on this process's own command line.
     const std::wstring list = ArgValue(own, L"-lobby-playlist");
     if (!list.empty()) {
       out += L" -lobby-playlist " + quoted(list) + L" -lobby-playlist-pos " + quoted(ArgValue(own, L"-lobby-playlist-pos"));
       if (advance) out += L" -lobby-advance 1";
     }
   } else {
-    copy(L"-session-id", L"-lobby-session");
-    copy(L"-connect", L"-lobby-endpoint");
+    std::wstring endpoint = ArgValue(game, L"-connect");
+    if (endpoint.empty()) endpoint = ArgValue(GetCommandLineW(), L"-connect");
+    if (!endpoint.empty()) out += L" -lobby-endpoint " + quoted(endpoint);
   }
   return out;
 }
@@ -188,26 +196,44 @@ int PollHostBackInLobby() {
   if (!s_started) {
     s_started = true;
     const std::string session = [] {
-      const std::wstring wide = ArgValue(Relaunch::CurrentGameArgs(), L"-session-id");
+      std::wstring wide = ArgValue(Relaunch::CurrentGameArgs(), L"-session-id");
+      if (wide.empty()) wide = ArgValue(GetCommandLineW(), L"-session-id");
       char text[128] = {};
       WideCharToMultiByte(CP_UTF8, 0, wide.c_str(), -1, text, sizeof(text) - 1, nullptr, nullptr);
       return std::string(text);
     }();
     if (session.empty()) {
-      s_state = 2;
+      // In LAN / direct connect mode where no master server session was created:
+      // poll LAN discovery to see when host has returned to lobby
+      std::thread([] {
+        for (int i = 0; i < 25; ++i) {
+          std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+          auto sessions = SessionManager::Get().GetDiscoveredSessions();
+          if (!sessions.empty()) {
+            NOBLE_INFO("PauseMenu: detected host LAN lobby, pulling back to lobby");
+            s_state = 1;
+            return;
+          }
+        }
+        s_state = 2;
+      }).detach();
     } else {
       std::thread([session] {
         int missing = 0;
         while (true) {
-          std::this_thread::sleep_for(std::chrono::seconds(2));
+          std::this_thread::sleep_for(std::chrono::milliseconds(1000));
           const LobbyState state = MasterServerClient::Get().FetchLobbyStateSync(session);
           if (!state.ok || state.isClosed) {
-            if (++missing >= 8) { s_state = 2; return; }
+            if (++missing >= 25) {
+              NOBLE_WARN("PauseMenu: host lobby closed or timed out (missing: {})", missing);
+              s_state = 2;
+              return;
+            }
             continue;
           }
           missing = 0;
           if (!state.inProgress) {
-            NOBLE_INFO("PauseMenu: the host is back in the lobby");
+            NOBLE_INFO("PauseMenu: the host is back in the lobby (session: {})", session);
             s_state = 1;
             return;
           }
@@ -1628,13 +1654,14 @@ void PauseMenu::DrawGameOver(HWND hwnd) {
     const wchar_t *const line = GetCommandLineW();
     return wcsstr(line, L"-postgame-role host") ? 1 : wcsstr(line, L"-postgame-role guest") ? 2 : 0;
   }();
+  const bool isCmdGuest = (wcsstr(GetCommandLineW(), L"-connect") != nullptr || Relaunch::CurrentGameArgs().find(L" -connect") != std::wstring::npos);
+  const bool isCmdHost = (wcsstr(GetCommandLineW(), L"-host") != nullptr || Relaunch::CurrentGameArgs().find(L" -host") != std::wstring::npos);
   const bool online = NetworkTransport::Get().IsActive();
-  const bool hostRole = s_roleTest == 1 || (s_roleTest == 0 && online && NetworkTransport::Get().IsHost());
-  const bool guestRole = s_roleTest == 2 || (s_roleTest == 0 && online && !NetworkTransport::Get().IsHost());
+  const bool guestRole = s_roleTest == 2 || (s_roleTest == 0 && (isCmdGuest || (online && !NetworkTransport::Get().IsHost())));
+  const bool hostRole = s_roleTest == 1 || (s_roleTest == 0 && !guestRole && (isCmdHost || (online && NetworkTransport::Get().IsHost())));
   const std::wstring again = Relaunch::CurrentGameArgs();
   // A guest's "again" would reconnect to a host who may have gone; only the host or a local player can start another.
-  const bool guestPlayer = wcsstr(GetCommandLineW(), L"-postgame-role guest") != nullptr ||
-                           (NetworkTransport::Get().IsActive() && !NetworkTransport::Get().IsHost());
+  const bool guestPlayer = guestRole;
   const bool canPlayAgain = !again.empty() && !guestPlayer;
   const bool hasPlaylist = wcsstr(GetCommandLineW(), L"-lobby-playlist") != nullptr;
   const std::wstring nextMission = guestPlayer ? std::wstring() : NextCampaignMission(again);
@@ -1721,16 +1748,18 @@ void PauseMenu::DrawGameOver(HWND hwnd) {
     bx -= bw + gap;
     ImGui::SetCursorScreenPos(ImVec2(bx, by));
     const int lobbyState = PollHostBackInLobby();
-    if (lobbyState == 1 && t >= tEnd) {
+    if (lobbyState == 1 && (t >= 2.0f || s_reveal.skipped)) {
       static bool s_leaving = false;
       if (!s_leaving) {
         s_leaving = true;
         RelaunchAndClose(hwnd, LobbyReturnArgs(false), "guest back to lobby");
       }
     }
-    UnavailableButton(lobbyState == 2 ? "HOST LEFT" : "WAITING FOR HOST", ImVec2(bw, bh),
-                      lobbyState == 2 ? "The host's lobby closed. Return to the menu to play again."
-                                      : "You'll go back to the lobby as soon as the host does.");
+    const char* guestBtnText = lobbyState == 1 ? "RETURNING TO LOBBY..." : (lobbyState == 2 ? "HOST LEFT" : "WAITING FOR HOST");
+    const char* guestBtnTip = lobbyState == 1 ? "Host is back in lobby; returning now..."
+                                              : (lobbyState == 2 ? "The host's lobby closed. Return to the menu to play again."
+                                                                 : "You'll go back to the lobby as soon as the host does.");
+    UnavailableButton(guestBtnText, ImVec2(bw, bh), guestBtnTip);
     overButton |= ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
   }
   if (hostRole || guestRole) {
@@ -1750,22 +1779,48 @@ void PauseMenu::DrawGameOver(HWND hwnd) {
                               (canNextMission ? Upper(MapNames::Display(nextName)) : std::string("NOT SET"));
     Text(dl, smallFont, 15.0f * s, ImVec2(bx, by - 26.0f * s), kTextDim, strip.c_str());
   }
-  // A playlist set to start by itself moves on after a countdown; B or Esc stops it for this match.
+  // Auto-return / auto-advance countdown for host
   if (hostRole && t >= tEnd) {
     static const int s_autoSeconds = _wtoi(ArgValue(GetCommandLineW(), L"-lobby-playlist-auto").c_str());
-    static double s_autoAt = s_autoSeconds > 0 ? ImGui::GetTime() + s_autoSeconds : 0.0;
-    if (s_autoAt > 0.0 && (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) || ImGui::IsKeyPressed(ImGuiKey_Escape, false))) {
-      s_autoAt = 0.0;
-      NOBLE_INFO("PauseMenu: next-match countdown cancelled");
+    static bool s_autoCancelled = false;
+    static double s_autoAt = 0.0;
+    static bool s_autoInited = false;
+    if (!s_autoInited) {
+      s_autoInited = true;
+      if (s_autoSeconds > 0) {
+        s_autoAt = ImGui::GetTime() + s_autoSeconds;
+      } else {
+        const std::wstring cmd = GetCommandLineW();
+        const std::wstring gameArgs = Relaunch::CurrentGameArgs();
+        const bool isParty = !ArgValue(cmd, L"-session-id").empty() || !ArgValue(gameArgs, L"-session-id").empty() || gameArgs.find(L"-wait-peers") != std::wstring::npos;
+        if (isParty) {
+          s_autoAt = ImGui::GetTime() + 25.0; // 25s auto-pull party back to lobby
+        }
+      }
     }
-    if (s_autoAt > 0.0) {
+    if (s_autoAt > 0.0 && !s_autoCancelled && (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) || ImGui::IsKeyPressed(ImGuiKey_Escape, false))) {
+      s_autoAt = 0.0;
+      s_autoCancelled = true;
+      NOBLE_INFO("PauseMenu: lobby return countdown cancelled by host");
+    }
+    if (s_autoAt > 0.0 && !s_autoCancelled) {
       const int left = std::max(0, static_cast<int>(s_autoAt - ImGui::GetTime() + 0.999));
       char text[64];
-      std::snprintf(text, sizeof(text), "Next match in %d s. B or Esc cancels.", left);
-      Text(dl, smallFont, 16.0f * s, ImVec2(margin, by + bh * 0.5f - 9.0f * s), kTextDim, text);
+      if (s_autoSeconds > 0) {
+        std::snprintf(text, sizeof(text), "Next match in %d s. B or Esc cancels.", left);
+      } else {
+        std::snprintf(text, sizeof(text), "Returning party to lobby in %d s. B or Esc stays.", left);
+      }
+      Text(dl, smallFont, 16.0f * s, ImVec2(margin, by + bh * 0.5f - 9.0f * s), kAmber, text);
       if (ImGui::GetTime() >= s_autoAt) {
         s_autoAt = 0.0;
-        RelaunchAndClose(hwnd, LobbyReturnArgs(true, true), "next in rotation (countdown)");
+        if (s_autoSeconds > 0) {
+          RelaunchAndClose(hwnd, LobbyReturnArgs(true, true), "next in rotation (countdown)");
+        } else if (canNextMission && !hasPlaylist) {
+          RelaunchAndClose(hwnd, NextMissionArgs(nextMission, LobbyReturnArgs(true)), "next mission (countdown)");
+        } else {
+          RelaunchAndClose(hwnd, LobbyReturnArgs(true), "return to lobby (countdown)");
+        }
       }
     }
   }

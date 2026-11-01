@@ -564,6 +564,12 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         else args += L" -private";
         args += L" -max-players " + std::to_wstring(hostMaxPlayers);
         if (expectedPeers > 0) args += L" -wait-peers " + std::to_wstring(expectedPeers);
+        if (!connectSessionId.empty()) {
+            args += L" -session-id \"" + toWide(connectSessionId) + L"\"";
+            if (!connectSessionToken.empty()) {
+                args += L" -session-token \"" + toWide(connectSessionToken) + L"\"";
+            }
+        }
     }
     noble::Relaunch::SetCurrentGameArgs(args);
     noble::PauseMenu::SetLoadingMap(launchMap);

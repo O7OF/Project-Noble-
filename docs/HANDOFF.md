@@ -9,7 +9,31 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
 MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.16.8 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
 
-## 0. Pick up here (2026-11-01, 13:45 ET) - Elite Armor Lights & Armory UI Performance (0.9.16.11) (@O7OF)
+## 0. Pick up here (2026-11-01, 14:50 ET) - Party Lobby Return & Seamless Guest Auto-Pull (0.9.16.12) (@O7OF)
+
+**Version:** 0.9.16.12. **Build:** noble-client, noble-dev (0 errors, 0 warnings on MSVC Release x64). Files: `src/main.cpp`, `src/ui/FrontEndMenu.cpp`, `src/ui/PauseMenu.cpp`, `src/common/Version.hpp`, `docs/HANDOFF.md`, `docs/AGENT-STATUS.md`.
+
+**What was actually found & fixed (Root Cause Analysis):**
+1. **Host Session Abandonment on Match Return:**
+   - In `PauseMenu.cpp` -> `LobbyReturnArgs`: `-session-id` was previously copied ONLY in the `else` (guest) branch (`copy(L"-session-id", L"-lobby-session")`), and `-session-token` was omitted completely. When the host clicked "RETURN TO LOBBY" or finished a mission, `-lobby-session` was omitted from the command line.
+   - In `main.cpp`: When a host launched a match, `-session-id` and `-session-token` were parsed from the initial launch command line but never appended to `noble::Relaunch::SetCurrentGameArgs(args)` for hosts.
+   - In `FrontEndMenu.cpp`: `SetupHostLobby` did not accept existing session ID or token parameters. When returning from a match via `-lobby-return host`, `SetupHostLobby` was called without `adv.id` or `adv.token`, which caused `MasterServerClient::StartAdvertising` to clear `m_sessionId`/`m_sessionToken` and register a brand-new session ID, abandoning the active session.
+2. **Guest Stranded on Game Over Screen ("HOST LEFT"):**
+   - The guest client was polling `FetchLobbyStateSync(session)` for the original session ID. Because the host created an entirely new session ID upon returning to the lobby instead of re-advertising the existing one, the old session was closed / timed out. `missing` reached 8 (~16s), setting `s_state = 2` ("HOST LEFT - The host's lobby closed").
+   - Furthermore, `DrawGameOver` gated the guest return on `t >= tEnd`, forcing guests to wait out long animation timers even if the host had already returned.
+   - On LAN or direct connect (where `-session-id` was absent), `PollHostBackInLobby()` immediately defaulted to `s_state = 2` without checking LAN discovery beacons.
+3. **The Fix:**
+   - In `src/main.cpp`: Added `-session-id` and `-session-token` forwarding to `launchHost` in `Relaunch::SetCurrentGameArgs(args)`.
+   - In `src/ui/FrontEndMenu.cpp`: Extended `SetupHostLobby` to accept `existingSessionId` and `existingSessionToken`. When `-lobby-return host` is processed, `-lobby-session` and `-lobby-session-token` are forwarded directly into `SetupHostLobby`, setting `adv.id` and `adv.token`. `MasterServerClient` preserves the existing session ID and immediately heartbeats `in_progress: false`.
+   - In `src/ui/PauseMenu.cpp`:
+     - `LobbyReturnArgs`: Always copies `-session-id` to `-lobby-session` and `-session-token` to `-lobby-session-token` for both host and guest, inspecting both `CurrentGameArgs()` and `GetCommandLineW()`.
+     - `PollHostBackInLobby()`: Polls every 1s (1000ms). If `session` is present, queries `FetchLobbyStateSync(session)` with a 25s grace window; once `!state.inProgress` is received, immediately sets `s_state = 1`. If `session` is empty (LAN), polls `SessionManager::GetDiscoveredSessions()` for up to 25s; once host LAN beacon is detected, sets `s_state = 1`.
+     - `DrawGameOver`:
+       - Enhanced role detection using both `NetworkTransport` status and command line flags (`-host` / `-connect`).
+       - When `lobbyState == 1`, guest returns immediately after minimum viewing delay (`t >= 2.0f || s_reveal.skipped`) with visual button confirmation `"RETURNING TO LOBBY..."`.
+       - For hosts in a party / network match, added a 25-second auto-pull countdown after match results (`"Returning party to lobby in %d s. B or Esc stays."`), automatically returning the party to the lobby if the host is idle, or returning immediately if the host clicks "RETURN TO LOBBY" or "NEXT MISSION".
+
+## 1. Previous Work: Elite Armor Lights & Armory UI Performance (0.9.16.11) (@O7OF)
 
 **Version:** 0.9.16.11. **Build:** noble-client, noble-dev (0 errors, 0 warnings on MSVC Release x64). Files: `src/engine/ReachArmory.cpp`, `src/ui/ArmorCustomizer.cpp`, `src/ui/FrontEndMenu.cpp`, `src/common/Version.hpp`, `docs/HANDOFF.md`, `docs/AGENT-STATUS.md`.
 
