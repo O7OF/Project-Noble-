@@ -1,3 +1,4 @@
+#include <map>
 #include "FrontEndMenu.hpp"
 #include "audio/VoiceChat.hpp"
 #include "SocialOverlay.hpp"
@@ -33,6 +34,7 @@
 #include "engine/FrameCapture.hpp"
 #include "engine/ReachArmory.hpp"
 #include "engine/MapGameTypes.hpp"
+#include "engine/VariantRules.hpp"
 #include "host/Window.hpp"
 #include "host/D3D11Renderer.hpp"
 
@@ -164,6 +166,7 @@ struct MenuVariant {
     std::string label;
     std::filesystem::path path;
     std::string description;   // the file's own text; empty when it only holds a key for a string table Noble can't read
+    bool custom = false;       // a player-made game mode (a .json preset), listed under its own heading
     std::string type;          // MapGameTypes key from the file name; empty when it can't be told
 };
 
@@ -270,11 +273,40 @@ std::vector<MenuVariant> ScanVariants(const std::filesystem::path& reachDir, boo
         const bool isFirefightVariant = lower.rfind(L"hr_ff_", 0) == 0;
         if (isFirefightVariant != firefight) continue;
         const VariantHeaderText text = ReadVariantHeaderText(entry.path());
-        list.push_back({ VariantLabel(entry.path().stem().wstring(), text.name), entry.path(), text.description,
+        list.push_back({ VariantLabel(entry.path().stem().wstring(), text.name), entry.path(), text.description, false,
                          MapGameTypes::FromVariantStem(entry.path().stem().wstring()) });
+    }
+    // Player-made game modes: this PC's own, and any a mod ships in a game_modes folder for its maps.
+    std::vector<std::filesystem::path> modeFolders = { VariantRules::Directory() };
+    for (const std::filesystem::path& mods : { VFS::GetWorkshopPath(), VFS::GetUserStoragePath() / "mods" }) {
+        for (const auto& mod : std::filesystem::directory_iterator(mods, ec)) modeFolders.push_back(mod.path() / "game_modes");
+        ec.clear();
+    }
+    for (const std::filesystem::path& folder : modeFolders) {
+        for (const auto& entry : std::filesystem::directory_iterator(folder, ec)) {
+            VariantRules::Preset preset;
+            if (!VariantRules::IsPresetFile(entry.path()) || !VariantRules::Load(entry.path(), preset)) continue;
+            const bool baseIsFirefight = Lower(std::filesystem::path(preset.base).wstring()).rfind(L"hr_ff_", 0) == 0;
+            if (baseIsFirefight != firefight || !std::filesystem::is_regular_file(reachDir / "game_variants" / preset.base, ec)) continue;
+            MenuVariant mode;
+            mode.label = preset.name.empty() ? entry.path().stem().string() : preset.name;
+            mode.path = entry.path();
+            mode.description = "Your own rules, starting from " + preset.base + ".";
+            mode.custom = true;
+            mode.type = MapGameTypes::FromVariantStem(std::filesystem::path(preset.base).stem().wstring());
+            list.push_back(std::move(mode));
+        }
+        ec.clear();
     }
     std::sort(list.begin(), list.end(), [](const MenuVariant& a, const MenuVariant& b) { return a.label < b.label; });
     return list;
+}
+
+// The game type a variant path is, also for a player-made game mode (which takes it from its base file).
+std::string VariantPathType(const std::filesystem::path& path) {
+    VariantRules::Preset preset;
+    if (VariantRules::IsPresetFile(path) && VariantRules::Load(path, preset)) return MapGameTypes::FromVariantStem(std::filesystem::path(preset.base).stem().wstring());
+    return MapGameTypes::FromVariantStem(path.stem().wstring());
 }
 
 int FindVariant(const std::vector<MenuVariant>& list, const wchar_t* file) {
@@ -1555,6 +1587,13 @@ struct MenuState {
     uint64_t lobbyLaunchSkulls = 0;
     double lastLobbyPoll = 0.0;
     int lobbyMenuRow = 0;          // Focused row in pre-game options list
+    bool optionsOpen = false;           // Custom Game: the game options editor replaces the setup screen
+    int optionsRow = 0;
+    char optionsName[48] = {};
+    std::string optionsBase;            // base variant file name
+    std::vector<uint8_t> optionsDecoded;   // the base variant's real values
+    std::map<std::string, int> optionsValues;   // only what differs from the base
+    std::string optionsMessage;
     char mapSearch[64] = {};            // the map, mission and mod lists' search text
     int mapSearchRow = 0;
     char variantSearch[64] = {};        // the game type lists' search text
@@ -2351,7 +2390,7 @@ struct VariantChoices {
     std::vector<VariantRow> rows;
     std::vector<ListItem> items;
 };
-static std::string VariantMode(const MenuVariant& v) { return v.type.empty() ? std::string("Other") : std::string(MapGameTypes::Name(v.type)); }
+static std::string VariantMode(const MenuVariant& v) { return v.custom ? std::string("Custom Game Modes") : v.type.empty() ? std::string("Other") : std::string(MapGameTypes::Name(v.type)); }
 
 static VariantChoices BuildVariantChoices(const std::vector<MenuVariant>& list, const std::string& scenario, bool unrestricted,
                                           const std::string& openMode, const char* query) {
@@ -2668,7 +2707,7 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
     // the lobby's cycling skips what the Custom Game screen refuses. Modded lobbies are never restricted.
     auto comboAllowed = [&](const std::string& scenario, const std::string& variantPath) {
         if (campaign || firefight || forge || !st.lobbyModFolder.empty() || variantPath.empty()) return true;
-        const std::string type = MapGameTypes::FromVariantStem(std::filesystem::path(variantPath).stem().wstring());
+        const std::string type = VariantPathType(variantPath);
         return type.empty() || MapGameTypes::Supports(scenario, type);
     };
 
@@ -4336,6 +4375,92 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
     case Screen::Forge: {
         const bool ff = st.screen == Screen::Firefight;
         const bool forge = st.screen == Screen::Forge;
+        if (st.optionsOpen) {
+            // Game options: General Settings and Player Traits, saved as the player's own named game mode.
+            const std::vector<VariantRules::Rule>& rules = VariantRules::Rules();
+            DrawTitle(ui, ImVec2(left, top), "GAME OPTIONS", "MULTIPLAYER");
+            const float px = left + 34.0f * ui.s, pw = ui.size.x * 0.44f;
+            float y = top + 70.0f * ui.s;
+            DrawSearchBox(ui, "##mode_name", ImVec2(px, y), pw, st.optionsName, sizeof(st.optionsName), "Game mode name");
+            y += 40.0f * ui.s;
+            const int saveRow = static_cast<int>(rules.size()), resetRow = saveRow + 1, rowCount = saveRow + 2;
+            const bool typing = ImGui::GetIO().WantTextInput;
+            if (!typing && (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || UiPad::Down())) { st.optionsRow = (st.optionsRow + 1) % rowCount; MenuSounds::Scroll(); }
+            if (!typing && (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || UiPad::Up())) { st.optionsRow = (st.optionsRow + rowCount - 1) % rowCount; MenuSounds::Scroll(); }
+            const char* group = nullptr;
+            for (int i = 0; i < saveRow; ++i) {
+                const VariantRules::Rule& rule = rules[i];
+                if (!group || std::strcmp(group, rule.group) != 0) {
+                    group = rule.group;
+                    Text(ui, NobleStyle::TitleFont(), 16.0f, ImVec2(px, y + 4.0f * ui.s), kAccent, Upper(group).c_str());
+                    y += 26.0f * ui.s;
+                }
+                const int baseValue = VariantRules::Read(rule, st.optionsDecoded.data());
+                const auto edited = st.optionsValues.find(rule.key);
+                int value = edited != st.optionsValues.end() ? edited->second : baseValue;
+                std::string text;
+                const int nameIndex = value - rule.minValue;
+                if (rule.names && nameIndex >= 0 && nameIndex < static_cast<int>(rule.names->size())) text = (*rule.names)[nameIndex];
+                else if (rule.bit >= 0) text = value ? "On" : "Off";
+                else text = std::to_string(value) + rule.unit;
+                const int change = OptionRow(ui, rule.key, ImVec2(px, y), pw, rule.label, text.c_str(), !typing && st.optionsRow == i);
+                if (change != 0) {
+                    const int span = rule.maxValue - rule.minValue + 1;
+                    int next = std::clamp(value, rule.minValue, rule.maxValue);
+                    for (int step = 0; step < span; ++step) {
+                        next = next + change > rule.maxValue ? rule.minValue : next + change < rule.minValue ? rule.maxValue : next + change;
+                        if (!rule.names || !(*rule.names)[next - rule.minValue].empty()) break;
+                    }
+                    st.optionsRow = i;
+                    if (next == baseValue) st.optionsValues.erase(rule.key);
+                    else st.optionsValues[rule.key] = next;
+                }
+                if (st.optionsRow == i) Text(ui, nullptr, 16.0f, ImVec2(px + pw + 24.0f * ui.s, y + 6.0f * ui.s), kDim, rule.help, ui.size.x - left);
+                y += 34.0f * ui.s;
+            }
+            y += 10.0f * ui.s;
+            const float bw = (pw - 10.0f * ui.s) * 0.5f;
+            bool save = BigAction(ui, "mode_save", ImVec2(px, y), bw, "SAVE GAME MODE", "Adds it to the game type list", true, true, st.optionsRow == saveRow);
+            bool reset = BigAction(ui, "mode_reset", ImVec2(px + bw + 10.0f * ui.s, y), bw, "RESET", "Back to the base rules", false, true, st.optionsRow == resetRow);
+            if (!typing && AcceptPressed()) {
+                if (st.optionsRow == saveRow) save = true;
+                if (st.optionsRow == resetRow) reset = true;
+            }
+            if (reset) { st.optionsValues.clear(); MenuSounds::Back(); }
+            if (save) {
+                std::string file;
+                for (const char c : std::string(st.optionsName)) {
+                    if (std::isalnum(static_cast<unsigned char>(c)) || c == ' ' || c == '-' || c == '_') file.push_back(c);
+                }
+                while (!file.empty() && file.back() == ' ') file.pop_back();
+                if (file.empty()) {
+                    st.optionsMessage = "Give it a name first.";
+                    MenuSounds::Error();
+                } else {
+                    VariantRules::Preset preset;
+                    preset.name = st.optionsName;
+                    preset.base = st.optionsBase;
+                    preset.values = st.optionsValues;
+                    const std::filesystem::path path = VariantRules::Directory() / (file + ".json");
+                    if (VariantRules::Save(path, preset)) {
+                        NOBLE_INFO("FrontEndMenu: game mode saved: '{}' on '{}' with {} change(s)", preset.name, preset.base, preset.values.size());
+                        ctx.variants = ScanVariants(ctx.reachDir, false);
+                        for (size_t i = 0; i < ctx.variants.size(); ++i) {
+                            if (ctx.variants[i].path == path) st.variant = static_cast<int>(i);
+                        }
+                        st.optionsOpen = false;
+                        MenuSounds::Click();
+                    } else {
+                        st.optionsMessage = "Couldn't save the game mode.";
+                        MenuSounds::Error();
+                    }
+                }
+            }
+            if (!st.optionsMessage.empty()) Text(ui, nullptr, 16.0f, ImVec2(px + pw + 24.0f * ui.s, y + 8.0f * ui.s), IM_COL32(255, 190, 120, 255), st.optionsMessage.c_str());
+            if (back) { st.optionsOpen = false; MenuSounds::Back(); }
+            DrawHints(ui, { { Prompt::Accept, "Select" }, { Prompt::Back, "Back" }, { Prompt::Change, "Change" } });
+            break;
+        }
         if (st.variantPickerOpen && !forge) {
             // The game type list, in place of the setup screen so nothing behind it reacts to the pad or the mouse.
             const std::vector<MenuVariant>& list = ff ? ctx.ffVariants : ctx.variants;
@@ -4458,7 +4583,7 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
             const std::vector<MenuVariant>& list = ff ? ctx.ffVariants : ctx.variants;
             int& v = ff ? st.ffVariant : st.variant;
             if (!list.empty()) {
-                gameType = MapGameTypes::FromVariantStem(list[std::clamp(v, 0, static_cast<int>(list.size()) - 1)].path.stem().wstring());
+                gameType = list[std::clamp(v, 0, static_cast<int>(list.size()) - 1)].type;
             }
             if (!gameType.empty() && !MapGameTypes::Supports(map->scenario, gameType)) {
                 // Friendly map names for the "pick ..." part of the message.
@@ -4524,7 +4649,7 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
                 // Base's list; modded maps keep every variant (players asked for that, and a mod may bring its own).
                 auto allowed = [&](int index) {
                     if (modded || !map) return true;
-                    const std::string type = MapGameTypes::FromVariantStem(list[index].path.stem().wstring());
+                    const std::string& type = list[index].type;
                     return type.empty() || MapGameTypes::Supports(map->scenario, type);
                 };
                 if (dv) {
@@ -4553,12 +4678,36 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         }
         if (!ff) {
             // Custom Game / Forge: the same row block the other setup screens have, so the column is not
-            // banner-then-void. Game options need Reach variant read/write (spec 4.4), so they are greyed with
-            // the reason; PLAYERS is real and feeds HOST LOBBY / HOST FORGE.
-            ui.dl->AddRectFilled(ImVec2(px, y), ImVec2(px + pw, y + 32.0f * ui.s), IM_COL32(8, 12, 18, 85));
-            Text(ui, NobleStyle::TitleFont(), 18.0f, ImVec2(px + 10.0f * ui.s, y + 4.0f * ui.s), kDisabled, "GAME OPTIONS \xC2\xB7 DEFAULT");
-            const char* later = "Coming later";
-            Text(ui, nullptr, 15.0f, ImVec2(px + pw - TextWidth(nullptr, 15.0f * ui.s, later) - 10.0f * ui.s, y + 6.0f * ui.s), kDisabled, later);
+            // banner-then-void. PLAYERS is real and feeds HOST LOBBY / HOST FORGE.
+            if (forge) {
+                ui.dl->AddRectFilled(ImVec2(px, y), ImVec2(px + pw, y + 32.0f * ui.s), IM_COL32(8, 12, 18, 85));
+                Text(ui, NobleStyle::TitleFont(), 18.0f, ImVec2(px + 10.0f * ui.s, y + 4.0f * ui.s), kDisabled, "GAME OPTIONS \xC2\xB7 DEFAULT");
+                const char* later = "Coming later";
+                Text(ui, nullptr, 15.0f, ImVec2(px + pw - TextWidth(nullptr, 15.0f * ui.s, later) - 10.0f * ui.s, y + 6.0f * ui.s), kDisabled, later);
+            } else {
+                const std::vector<MenuVariant>& list = ctx.variants;
+                const int optionsChange = OptionRow(ui, "game_options", ImVec2(px, y), pw, "GAME OPTIONS", "EDIT", st.focusRow == focusRows);
+                ImGui::SetCursorScreenPos(ImVec2(px, y));
+                const bool clicked = ImGui::InvisibleButton("##game_options_open", ImVec2(pw * 0.48f, 32.0f * ui.s));
+                if ((clicked || optionsChange != 0 || (st.focusRow == focusRows && hit < 0 && AcceptPressed())) && !list.empty()) {
+                    const MenuVariant& current = list[std::clamp(st.variant, 0, static_cast<int>(list.size()) - 1)];
+                    VariantRules::Preset preset;
+                    const bool isMode = current.custom && VariantRules::Load(current.path, preset);
+                    st.optionsBase = isMode ? preset.base : current.path.filename().string();
+                    st.optionsValues = isMode ? preset.values : std::map<std::string, int>{};
+                    std::snprintf(st.optionsName, sizeof(st.optionsName), "%s", (isMode ? current.label : current.label + " Custom").c_str());
+                    st.optionsRow = 0;
+                    st.optionsMessage.clear();
+                    if (VariantRules::Decode(ctx.reachDir / "game_variants" / st.optionsBase, st.optionsDecoded)) {
+                        st.optionsOpen = true;
+                        MenuSounds::Click();
+                    } else {
+                        NOBLE_WARN("FrontEndMenu: could not read variant '{}' for its game options", st.optionsBase);
+                        MenuSounds::Error();
+                    }
+                }
+                ++focusRows;
+            }
             y += 36.0f * ui.s;
             static const int kCaps[4] = { 4, 8, 12, 16 };
             int capIdx = (st.sessionMaxPlayers <= 4) ? 0 : (st.sessionMaxPlayers <= 8) ? 1 : (st.sessionMaxPlayers <= 12) ? 2 : 3;

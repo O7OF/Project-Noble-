@@ -1,4 +1,5 @@
 #include "BlamEngine.hpp"
+#include "engine/VariantRules.hpp"
 #include "ReachHost.hpp"
 #include "network/NetworkTransport.hpp"
 #include "network/MasterServerClient.hpp"
@@ -8,6 +9,7 @@
 #include "hooks/HookManager.hpp"
 #include "hooks/LobbyPatches.hpp"
 #include "common/Logger.hpp"
+#include <optional>
 #include <algorithm>
 #include <thread>
 #include <chrono>
@@ -738,8 +740,21 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
     // (before 2026-10-29 it logged a bogus "No game variant found (looked for '')" on every menu boot).
     if (!isMainMenu && (!isCampaign || (!customVariantPath.empty() && customVariantPath != "Campaign" && customVariantPath != "campaign"))) {
         std::filesystem::path variantPath;
+        std::optional<VariantRules::Preset> gameMode;
         if (!customVariantPath.empty()) {
             variantPath = ResolveVariantFile(customVariantPath);
+            // A player-made game mode: the shipped variant it starts from, plus its changed rules (applied after decoding).
+            if (!variantPath.empty() && VariantRules::IsPresetFile(variantPath)) {
+                VariantRules::Preset loaded;
+                if (VariantRules::Load(variantPath, loaded)) {
+                    gameMode = std::move(loaded);
+                    NOBLE_INFO("BlamEngine: game mode '{}' from '{}' on base '{}', {} rule(s) changed", gameMode->name, variantPath.string(), gameMode->base, gameMode->values.size());
+                    variantPath = ResolveVariantFile(gameMode->base);
+                } else {
+                    NOBLE_WARN("BlamEngine: game mode file '{}' could not be read", variantPath.string());
+                    variantPath.clear();
+                }
+            }
             const std::filesystem::path requestedPath = variantPath;
             // mapId here is the launch index (190..209); the engine's compatibility field is
             // the map-info id (e.g. Boneyard 1080, Spire 1200, Breakpoint 2002).
@@ -791,6 +806,26 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
                         NOBLE_INFO("BlamEngine: variant time {} score {} rounds {} respawn {} traits {}",
                                    fields.timeLimit, fields.scoreToWin, fields.roundsToWin,
                                    fields.respawnTime, fields.traitsDuration);
+                    }
+                    if (gameMode) VariantRules::Apply(*gameMode, decoded.data());
+                    // Test option "-variant-poke 319=5,2BE=2": sets decoded bytes, to find out what an offset does in a real match.
+                    {
+                        int argc = 0;
+                        LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+                        for (int i = 1; argv && i + 1 < argc; ++i) {
+                            if (_wcsicmp(argv[i], L"-variant-poke") != 0) continue;
+                            for (const wchar_t* c = argv[i + 1]; *c;) {
+                                wchar_t* end = nullptr;
+                                const unsigned long offset = wcstoul(c, &end, 16);
+                                if (*end != L'=') break;
+                                const unsigned long value = wcstoul(end + 1, &end, 16);
+                                if (offset < decoded.size()) decoded[offset] = static_cast<uint8_t>(value);
+                                NOBLE_INFO("BlamEngine: -variant-poke {:X} = {:X}", offset, value);
+                                c = *end == L',' ? end + 1 : end;
+                                if (*c == 0 || c == end) break;
+                            }
+                        }
+                        if (argv) LocalFree(argv);
                     }
                     memcpy(&block[0x300], decoded.data(), decoded.size());
                     NOBLE_INFO("BlamEngine: Decoded game variant '{}' into launch block (+0x300)", variantPath.string());
