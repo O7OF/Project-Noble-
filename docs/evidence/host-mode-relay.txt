@@ -1,0 +1,7 @@
+Live relay test:
+- Created a session on the deployed server.
+- Connected a WebSocket as role=guest.
+- Posted /lobby/launch with variant_body.
+- Guest WebSocket received:
+  "{\"name\":\"RELAY TEST\",\"base\":\"slayer_054.bin\",\"rules\":{\"time_limit\":1}}"
+Session id/token/IP omitted.
