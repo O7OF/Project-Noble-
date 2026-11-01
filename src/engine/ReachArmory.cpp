@@ -480,51 +480,6 @@ static void StartQuickRescan() {
     }).detach();
 }
 
-static size_t ScanColorRecordsIn(const std::vector<std::pair<uintptr_t, size_t>>& chunks, bool quiet) {
-    // Stock 16-byte ARGB color pattern in mainmenu_all.map: { 0xFF585858, 0xFF595959, 0xFF2FA0CB, 0xFFC7A167 }
-    static constexpr uint32_t kStockColors[4] = { 0xFF585858u, 0xFF595959u, 0xFF2FA0CBu, 0xFFC7A167u };
-    uint32_t prevColors[4];
-    {
-        std::lock_guard<std::mutex> lock(s_dataMutex);
-        std::memcpy(prevColors, s_lastColorWords.data(), sizeof(prevColors));
-    }
-
-    std::vector<uintptr_t> found;
-    for (const auto& chunk : chunks) {
-        const uintptr_t base = chunk.first;
-        const size_t size = chunk.second;
-        {
-            std::vector<uint8_t> buf(size);
-            {   // never scan our own copy buffer (RR skips its read buffer the same way)
-                const uintptr_t self = reinterpret_cast<uintptr_t>(buf.data());
-                if (base < self + size && self < base + size) continue;
-            }
-            if (SafeCopyMem(buf.data(), reinterpret_cast<const void*>(base), size)) {
-                for (size_t off = 0; off + 16 <= size; off += 4) {
-                    if (std::memcmp(buf.data() + off, kStockColors, 16) == 0 ||
-                        std::memcmp(buf.data() + off, prevColors, 16) == 0) {
-                        found.push_back(base + off);
-                    }
-                }
-            }
-        }
-    }
-
-    size_t added = 0;
-    if (!found.empty()) {
-        std::lock_guard<std::mutex> lock(s_dataMutex);
-        for (uintptr_t rec : found) {
-            if (std::find(s_colorRecords.begin(), s_colorRecords.end(), rec) == s_colorRecords.end()) {
-                s_colorRecords.push_back(rec);
-                RememberRegion(rec);
-                ++added;
-            }
-        }
-        if (!quiet || added) NOBLE_INFO("ReachArmory: Tracked {} live armor color record(s)", s_colorRecords.size());
-    }
-    return added;
-}
-
 static bool MatchEliteColorPattern(const uint32_t cur[4], uint32_t lastPri, uint32_t lastSec) {
     if ((cur[0] >> 24) != 0xFFu || (cur[1] >> 24) != 0xFFu ||
         (cur[2] >> 24) != 0xFFu || (cur[3] >> 24) != 0xFFu) {
@@ -567,6 +522,56 @@ static bool MatchEliteColorPattern(const uint32_t cur[4], uint32_t lastPri, uint
         }
     }
     return false;
+}
+
+static size_t ScanColorRecordsIn(const std::vector<std::pair<uintptr_t, size_t>>& chunks, bool quiet) {
+    // Stock 16-byte ARGB color pattern in mainmenu_all.map: { 0xFF585858, 0xFF595959, 0xFF2FA0CB, 0xFFC7A167 }
+    static constexpr uint32_t kStockColors[4] = { 0xFF585858u, 0xFF595959u, 0xFF2FA0CBu, 0xFFC7A167u };
+    uint32_t prevColors[4];
+    uint32_t lastElitePri = 0, lastEliteSec = 0;
+    {
+        std::lock_guard<std::mutex> lock(s_dataMutex);
+        std::memcpy(prevColors, s_lastColorWords.data(), sizeof(prevColors));
+        lastElitePri = s_lastElitePriArgb;
+        lastEliteSec = s_lastEliteSecArgb;
+    }
+
+    std::vector<uintptr_t> found;
+    for (const auto& chunk : chunks) {
+        const uintptr_t base = chunk.first;
+        const size_t size = chunk.second;
+        {
+            std::vector<uint8_t> buf(size);
+            {   // never scan our own copy buffer (RR skips its read buffer the same way)
+                const uintptr_t self = reinterpret_cast<uintptr_t>(buf.data());
+                if (base < self + size && self < base + size) continue;
+            }
+            if (SafeCopyMem(buf.data(), reinterpret_cast<const void*>(base), size)) {
+                for (size_t off = 0; off + 16 <= size; off += 4) {
+                    const uint32_t* cur = reinterpret_cast<const uint32_t*>(buf.data() + off);
+                    if (std::memcmp(cur, kStockColors, 16) == 0 ||
+                        std::memcmp(cur, prevColors, 16) == 0 ||
+                        MatchEliteColorPattern(cur, lastElitePri, lastEliteSec)) {
+                        found.push_back(base + off);
+                    }
+                }
+            }
+        }
+    }
+
+    size_t added = 0;
+    if (!found.empty()) {
+        std::lock_guard<std::mutex> lock(s_dataMutex);
+        for (uintptr_t rec : found) {
+            if (std::find(s_colorRecords.begin(), s_colorRecords.end(), rec) == s_colorRecords.end()) {
+                s_colorRecords.push_back(rec);
+                RememberRegion(rec);
+                ++added;
+            }
+        }
+        if (!quiet || added) NOBLE_INFO("ReachArmory: Tracked {} live armor color record(s)", s_colorRecords.size());
+    }
+    return added;
 }
 
 static size_t ScanEliteColorRecordsIn(const std::vector<std::pair<uintptr_t, size_t>>& chunks, bool quiet) {
@@ -759,16 +764,32 @@ static void WriteColorsAndSuit(const ReachArmorySelection& sel) {
                            ? 0xFFC7A167u
                            : LinearRgbToArgbU32(sel.visorRgb);
 
-    const uint32_t words[4] = { priArgb, secArgb, terArgb, (sel.lightsCustom ? litArgb : visArgb) };
+    // Species-dependent 4-color layout:
+    // Spartan (spartan_armor_template / spartan_visor_template):
+    //   [0] = Primary base armor
+    //   [1] = Secondary trim
+    //   [2] = Accent detail
+    //   [3] = Visor reflection tint (with 20 finishes)
+    // Elite (elite_armor_template / elite_illum_cards):
+    //   [0] = Primary base armor
+    //   [1] = Bodysuit / Accent detail
+    //   [2] = Emissive armor lights (Lights color)
+    //   [3] = Secondary armor trim / stripes (Secondary color)
+    const std::array<uint32_t, 4> words = sel.previewElite
+        ? std::array<uint32_t, 4>{ priArgb, terArgb, litArgb, secArgb }
+        : std::array<uint32_t, 4>{ priArgb, secArgb, terArgb, visArgb };
+
+    // Self-illumination / emissive suit shader float constant:
+    // Controls the glowing emissive armor lights (status LEDs, illumination cards) on both species
     const float suitFloats[4] = {
-        sel.primaryRgb[0] * 4.0f,
-        sel.primaryRgb[1] * 4.0f,
-        sel.primaryRgb[2] * 4.0f,
+        sel.lightsRgb[0] * 4.0f,
+        sel.lightsRgb[1] * 4.0f,
+        sel.lightsRgb[2] * 4.0f,
         1.0f
     };
 
     std::lock_guard<std::mutex> lock(s_dataMutex);
-    s_lastColorWords = { words[0], words[1], words[2], words[3] };
+    s_lastColorWords = words;
     s_lastElitePriArgb = priArgb;
     s_lastEliteSecArgb = secArgb;
     s_lastSuitFloats = { suitFloats[0], suitFloats[1], suitFloats[2], suitFloats[3] };
@@ -781,7 +802,7 @@ static void WriteColorsAndSuit(const ReachArmorySelection& sel) {
                 (cur[2] >> 24) != 0xFFu || (cur[3] >> 24) != 0xFFu) {
                 return true;
             }
-            return !SafeCopyMem(reinterpret_cast<void*>(rec), words, sizeof(words));
+            return !SafeCopyMem(reinterpret_cast<void*>(rec), words.data(), sizeof(uint32_t) * 4);
         }),
         s_colorRecords.end()
     );
@@ -794,13 +815,7 @@ static void WriteColorsAndSuit(const ReachArmorySelection& sel) {
                 (cur[2] >> 24) != 0xFFu || (cur[3] >> 24) != 0xFFu) {
                 return true;
             }
-            // Elite shader ARGB layout (host-probe.exe write_colors @ 0x1401b5ad0):
-            // [0] = Primary base armor
-            // [1] = Bodysuit / Accent detail
-            // [2] = Emissive armor lights (litArgb)
-            // [3] = Secondary armor trim / stripes (secArgb)
-            const uint32_t eliteWords[4] = { priArgb, terArgb, litArgb, secArgb };
-            return !SafeCopyMem(reinterpret_cast<void*>(rec), eliteWords, sizeof(eliteWords));
+            return !SafeCopyMem(reinterpret_cast<void*>(rec), words.data(), sizeof(uint32_t) * 4);
         }),
         s_eliteColorRecords.end()
     );
@@ -935,10 +950,20 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx) {
 
     const uint32_t wantElite = showElite ? 1u : 0u;
     if (curScene != effectiveSceneIdx || curElite != wantElite || s_lastScene.load() != effectiveSceneIdx) {
+        const bool speciesChanged = (curElite != wantElite);
         SafeWriteU32(base + 0x26 * stride, wantElite);
         SafeWriteU32(base + 0x24 * stride, static_cast<uint32_t>(effectiveSceneIdx));
         if (s_lastScene.exchange(effectiveSceneIdx) != effectiveSceneIdx) {
             NOBLE_INFO("ReachArmory: Switched GLOBALS camera scene to 0x{:X} (shows_elite={})", effectiveSceneIdx, wantElite);
+        }
+        if (speciesChanged) {
+            std::lock_guard<std::mutex> lock(s_dataMutex);
+            s_colorRecords.clear();
+            s_eliteColorRecords.clear();
+            s_suitRecords.clear();
+            s_lastPairs.clear();
+            s_lastPairsBase = 0;
+            StartQuickRescan();
         }
     }
 

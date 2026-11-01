@@ -9,6 +9,61 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
 MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.12.6 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
 
+## 0. Pick up here (2026-10-31, 23:25 ET) - Elite Color Picker, Spartan/Elite Lights & Material Coloring Fixes (@O7OF)
+
+**Version:** 0.9.12.3. **Build:** 0 errors, 0 warnings (MSVC Release `noble-client` + `noble-dev` + `noble-dedicated` + packaged `Noble.exe`). Files: `src/engine/ReachArmory.cpp`, `src/common/Version.hpp`, `docs/HANDOFF.md`.
+
+### 1. Root Cause Analysis: Elite Color Picker & Spartan Lights (@O7OF)
+- **Elite Color Picker Failure Root Cause:**
+  - In `src/engine/ReachArmory.cpp`, `ScanColorRecordsIn` tracks 6 live color records for the active biped in `mainmenu_all.map`.
+  - Previously, `WriteColorsAndSuit` unconditionally wrote the Spartan color layout to `s_colorRecords`:
+    `words = { priArgb, secArgb, terArgb, visArgb }`.
+  - However, Reach's Elite shader architecture (`elite_armor_template.shader` and `elite_minor_illum_cards.shader`) uses an entirely different constant buffer layout:
+    - Slot `[0]` = Primary Base Armor (`priArgb`)
+    - Slot `[1]` = Bodysuit / Accent detail (`terArgb`)
+    - Slot `[2]` = **Emissive Armor Lights** (`litArgb`)
+    - Slot `[3]` = **Secondary Armor Trim / Stripes** (`secArgb`)
+  - Because `s_colorRecords` was unconditionally writing Spartan words:
+    - The Elite's secondary trim (`[3]`) was overwritten with Spartan visor gold (`visArgb` / `0xFFC7A167`).
+    - The Elite's bodysuit (`[1]`) was overwritten with secondary armor color.
+    - The Elite's glowing lights (`[2]`) were overwritten with accent color.
+    - The separate `s_eliteColorRecords` only held 1 record due to strict preset pattern matching, meaning 5 of the 6 Elite body regions were continually overwritten with Spartan values every frame.
+- **Spartan & Elite Lights Failure Root Cause:**
+  - For Spartans, `(sel.lightsCustom ? litArgb : visArgb)` always defaulted to `visArgb` whenever the user picked any palette swatch because swatch selection sets `lightsCustom = false`.
+  - More critically, in Reach Blam! shaders, armor emissive illumination (Spartan status LEDs, Elite illumination cards) is driven by the float HDR multiplier array in `s_suitRecords` (`write_suit @ 0x1400468e0`). The engine previously hardcoded `suitFloats = { sel.primaryRgb * 4.0f, 1.0f }`, tying all armor emissive glow directly to Primary Armor Color rather than the Lights color!
+
+### 2. Implementation & Fixes (@O7OF)
+- **Dynamic Species Word Layout in `WriteColorsAndSuit`:**
+  - `words` now dynamically adapts to the previewed species:
+    - When `sel.previewElite` is `true`: `{ priArgb, terArgb, litArgb, secArgb }`.
+    - When `sel.previewElite` is `false`: `{ priArgb, secArgb, terArgb, visArgb }`.
+  - Both `s_colorRecords` and `s_eliteColorRecords` now write the correct species layout.
+- **True Emissive Lights Driving via `suitFloats`:**
+  - `suitFloats` now passes `{ sel.lightsRgb[0] * 4.0f, sel.lightsRgb[1] * 4.0f, sel.lightsRgb[2] * 4.0f, 1.0f }` to `s_suitRecords`.
+  - Both Spartan status LEDs and Elite illumination cards now glow intensely with the user-selected 4th Lights color with HDR factor 4.0x.
+- **Integrated Elite Pattern Scanner in `ScanColorRecordsIn`:**
+  - `ScanColorRecordsIn` now calls `MatchEliteColorPattern` directly during chunk scanning, guaranteeing all 6 body regions of the Elite (helmet, chest, shoulders, gauntlets, legs) are tracked.
+- **Clean Species Flip Cache Invalidation:**
+  - In `ApplyGlobalsAndPermutations`, switching between Spartan (`curElite == 0`) and Elite (`curElite == 1`) detects the flip, clears stale biped records (`s_colorRecords`, `s_eliteColorRecords`, `s_suitRecords`, `s_lastPairs`), and invokes `StartQuickRescan()`, ensuring immediate rescan and rebind.
+
+### 3. Investigation Findings: Workshop Mod 3101579452 & FPS Arms (@O7OF)
+- **Mod 3101579452 ("The Prophets' Hand"):**
+  - Inspected `C:\Program Files (x86)\Steam\steamapps\workshop\content\976730\3101579452\maps\info\mainmenu.mapinfo` and `render_material_test.mapinfo`.
+  - The published Steam Workshop mod 3101579452 only contains campaign maps (`m10.map`..`m70_bonus.map`) and firefight maps (`cex_ff_halo.map`, `ff_unearthed.map`, `ff30_waterfront.map`, `ff45_corvette.map`). It **does not ship a compiled `mainmenu.map`**.
+  - Located the user's compiled `mainmenu.map` (268 MB) at `C:\Program Files (x86)\Steam\steamapps\common\HREK\maps\mainmenu.map` (and local `data\menumaps\mainmenu.map`).
+- **Elite First-Person (FPS) Arms:**
+  - Located in HREK tags at `C:\Program Files (x86)\Steam\steamapps\common\HREK\tags\`:
+    - `objects\characters\elite\fp\fp.render_model`
+    - `objects\characters\elite\fp_body\fp_body.render_model`
+    - Shaders: `elite_fp_gauntlet.shader`, `elite_fp_skin.shader`, `elite_fp_armor.shader`, `elite_fp_suit.shader`
+    - CC Bitmaps: `elite_fp_base_cc.bitmap`, `elite_fp_gauntlet_cc.bitmap`
+  - Also present in repository: `data\armor\elite\fp\fp.obj` and `data\armor\elite\fp_body\fp_body.obj`.
+
+### 4. Build & Verification (@O7OF)
+- Built with MSVC Release x64 via `build.bat rebuild`: 0 errors, 0 warnings.
+- Executables verified: `build\bin\Release\noble-client.exe`, `noble-dev.exe`, `noble-dedicated.exe`.
+- Packaged `Noble.exe` updated in `C:\Users\Chey1\Documents\Noble Launcher\Noble.exe`.
+
 ## 0. Pick up here (2026-10-31, 22:30 ET) - 4th Color Slot (Lights / Emissive Glow) & Extended Spartan Visors (@O7OF)
 
 **Version:** 0.9.12.1. **Build:** 0 errors, 0 warnings (Release `noble-client` + `noble-dev` + packaged `Noble.exe`). Files: `src/engine/ReachArmory.hpp`, `src/engine/ReachArmory.cpp`, `src/ui/ArmorCustomizer.hpp`, `src/ui/ArmorCustomizer.cpp`, `src/engine/ReachHost.cpp`, `src/common/Version.hpp`.
