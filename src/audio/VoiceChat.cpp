@@ -62,6 +62,9 @@ struct Config {
     int pttTeamKey = 0;
     int pttGlobalKey = 0;
     int pttPad = 0;
+    int pttPartyPad = 0;
+    int pttTeamPad = 0;
+    int pttGlobalPad = 0;
     std::array<int, 6> paddleKeys{};
 };
 
@@ -286,10 +289,10 @@ float FrameLevel(const int16_t* samples) {
 
 using XInputGetStateFn = DWORD(WINAPI*)(DWORD, XINPUT_STATE*);
 
-bool PadInputHeld(const Config& cfg) {
-    if (cfg.pttPad == PadLayouts::InputNone) return false;
-    if (cfg.pttPad >= PadLayouts::InputPaddle1 && cfg.pttPad < PadLayouts::InputPaddle1 + PadLayouts::kPaddleCount) {
-        const int vk = cfg.paddleKeys[static_cast<size_t>(cfg.pttPad - PadLayouts::InputPaddle1)];
+bool PadInputHeld(const Config& cfg, int input) {
+    if (input == PadLayouts::InputNone) return false;
+    if (input >= PadLayouts::InputPaddle1 && input < PadLayouts::InputPaddle1 + PadLayouts::kPaddleCount) {
+        const int vk = cfg.paddleKeys[static_cast<size_t>(input - PadLayouts::InputPaddle1)];
         return vk > 0 && (GetAsyncKeyState(vk) & 0x8000) != 0;
     }
     static XInputGetStateFn s_get = [] {
@@ -307,7 +310,7 @@ bool PadInputHeld(const Config& cfg) {
         if (s_get(slot, &st) != ERROR_SUCCESS) continue;
         const XINPUT_GAMEPAD& g = st.Gamepad;
         bool held = false;
-        switch (cfg.pttPad) {
+        switch (input) {
         case PadLayouts::InputLT: held = g.bLeftTrigger > 128; break;
         case PadLayouts::InputRT: held = g.bRightTrigger > 128; break;
         case PadLayouts::InputLStickUp: held = g.sThumbLY > kStickOn; break;
@@ -318,7 +321,7 @@ bool PadInputHeld(const Config& cfg) {
         case PadLayouts::InputRStickDown: held = g.sThumbRY < -kStickOn; break;
         case PadLayouts::InputRStickLeft: held = g.sThumbRX < -kStickOn; break;
         case PadLayouts::InputRStickRight: held = g.sThumbRX > kStickOn; break;
-        default: held = cfg.pttPad > 0 && (g.wButtons & cfg.pttPad) != 0; break;
+        default: held = input > 0 && (g.wButtons & input) != 0; break;
         }
         return held;
     }
@@ -336,10 +339,10 @@ int PushToTalkChannel(const Config& cfg, int fallbackChannel) {
     if (process != GetCurrentProcessId()) return -1;
     if (s_pushToTalkBlocked.load() || (ImGui::GetCurrentContext() && ImGui::GetIO().WantTextInput)) return -1;
     auto held = [](int vk) { return vk > 0 && vk < 256 && (GetAsyncKeyState(vk) & 0x8000) != 0; };
-    if (held(cfg.pttPartyKey)) return 2;
-    if (held(cfg.pttTeamKey)) return 1;
-    if (held(cfg.pttGlobalKey)) return 0;
-    if (held(cfg.pttKey) || PadInputHeld(cfg)) return fallbackChannel;
+    if (held(cfg.pttPartyKey) || PadInputHeld(cfg, cfg.pttPartyPad)) return 2;
+    if (held(cfg.pttTeamKey) || PadInputHeld(cfg, cfg.pttTeamPad)) return 1;
+    if (held(cfg.pttGlobalKey) || PadInputHeld(cfg, cfg.pttGlobalPad)) return 0;
+    if (held(cfg.pttKey) || PadInputHeld(cfg, cfg.pttPad)) return fallbackChannel;
     return -1;
 }
 
@@ -359,6 +362,9 @@ Config ReadConfig() {
     c.pttTeamKey = KeyBindings::EffectiveKey(KeyBindings::kActionVoiceTeam);
     c.pttGlobalKey = KeyBindings::EffectiveKey(KeyBindings::kActionVoiceGlobal);
     c.pttPad = PadLayouts::EffectiveInput(d.padLayout, PadLayouts::PushToTalk, &d.padBindings);
+    c.pttPartyPad = PadLayouts::EffectiveInput(d.padLayout, PadLayouts::VoiceParty, &d.padBindings);
+    c.pttTeamPad = PadLayouts::EffectiveInput(d.padLayout, PadLayouts::VoiceTeam, &d.padBindings);
+    c.pttGlobalPad = PadLayouts::EffectiveInput(d.padLayout, PadLayouts::VoiceGlobal, &d.padBindings);
     c.paddleKeys = d.padPaddleKeys;
     return c;
 }

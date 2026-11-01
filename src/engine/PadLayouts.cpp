@@ -37,7 +37,7 @@ constexpr uint16_t kOwned = kA | kB | kX | kY | kLB | kRB | kLS | kRS | kUp | kD
 const char* ActionKey(int action) {
     static const char* const keys[ActionCount] = { "jump", "grenades", "action", "swap", "melee", "armor", "fire", "zoom",
                                                    "throw", "crouch", "scoreboard", "pause", "dpadup", "dpaddown", "dpadleft", "dpadright",
-                                                   "teamchat", "pushtotalk" };
+                                                   "teamchat", "pushtotalk", "voiceparty", "voiceteam", "voiceglobal" };
     return (action >= 0 && action < ActionCount) ? keys[action] : "";
 }
 
@@ -45,7 +45,7 @@ const char* ActionName(int action) {
     static const char* const names[ActionCount] = { "Jump", "Switch grenades", "Action / reload", "Swap weapons",
                                                     "Melee", "Armor ability", "Fire", "Zoom", "Throw grenade", "Crouch", "Scoreboard",
                                                     "Pause menu", "D-pad up action", "D-pad down action", "D-pad left action", "D-pad right action",
-                                                    "Team chat", "Push to talk" };
+                                                    "Team chat", "Push to talk", "Voice to party", "Voice to team", "Voice to everyone" };
     return (action >= 0 && action < ActionCount) ? names[action] : "";
 }
 
@@ -119,7 +119,8 @@ void Assign(int layout, int action, int input, std::map<std::string, int>& overr
     if (previous == input) return;
     for (int other = 0; other < ActionCount; ++other) {
         if (other == action || EffectiveInput(layout, other, &overrides) != input) continue;
-        if (other == PushToTalk) { overrides[ActionKey(other)] = -1; continue; }   // must not double up on a game button
+        const bool voice = other == PushToTalk || other == VoiceParty || other == VoiceTeam || other == VoiceGlobal;
+        if (voice) { overrides[ActionKey(other)] = -1; continue; }   // must not double up on a game button
         if (previous == LayoutInput(layout, other)) overrides.erase(ActionKey(other));
         else overrides[ActionKey(other)] = previous > 0 ? previous : -1;   // -1: deliberately no input
     }
@@ -182,7 +183,7 @@ void Apply(int layout, uint16_t& buttons, uint8_t& leftTrigger, uint8_t& rightTr
     uint16_t out = static_cast<uint16_t>(in & ~kOwned);
     uint8_t outLt = 0, outRt = 0;
     for (int a = 0; a < ActionCount; ++a) {
-        if (a == TeamChat || a == PushToTalk) continue;   // Noble's own: the engine never sees these
+        if (a == TeamChat || a == PushToTalk || a == VoiceParty || a == VoiceTeam || a == VoiceGlobal) continue;   // Noble's own
         const uint8_t value = level(EffectiveInput(layout, a, overrides));
         if (value == 0) continue;
         const int engine = LayoutInput(Default, a);   // what the engine expects for this action

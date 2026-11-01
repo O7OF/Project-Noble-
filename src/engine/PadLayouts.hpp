@@ -31,6 +31,7 @@ enum Layout {
 enum Action {
     Jump = 0, Grenades, ActionReload, SwapWeapons, Melee, ArmorAbility, Fire, Zoom,
     ThrowGrenade, Crouch, Scoreboard, Pause, DpadUp, DpadDown, DpadLeft, DpadRight, TeamChat, PushToTalk,
+    VoiceParty, VoiceTeam, VoiceGlobal,
     ActionCount
 };
 
