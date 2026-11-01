@@ -105,6 +105,16 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     UNREFERENCED_PARAMETER(hPrevInstance);
     UNREFERENCED_PARAMETER(pCmdLine);
 
+    // Test-only: prove the relaunch handoff leaves no old process behind.
+    {
+        const std::wstring cmd = pCmdLine ? pCmdLine : L"";
+        if (cmd.find(L"-relaunch-test") != std::wstring::npos &&
+            cmd.find(L"-relaunch-test-child") == std::wstring::npos) {
+            noble::Relaunch::HandOff(L"-relaunch-test-child -quit-after 15");
+            return 0;
+        }
+    }
+
     // Headless test of the map / game-type guard: no MCC, no window, no audio. `-test-map-gametypes`.
     if (std::wstring(pCmdLine ? pCmdLine : L"").find(L"-test-map-gametypes") != std::wstring::npos) {
         const int types = noble::MapGameTypes::SelfTest();
