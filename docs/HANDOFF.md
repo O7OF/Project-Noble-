@@ -62,7 +62,7 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 **Loadouts.** Patching loadout fields produced no native diff; they are file/script data, not `c_game_variant` fields. A loadout editor must write the variant file.
 
-**Still open:** loadout file writer, team entries, TU1, and a native writer. Do not expose editing until each offset has a round-trip probe and a TU1 check.
+**TU1 check:** an encoding 0x6B Team Slayer reads time 12 and score 50 at the same offsets, so the mapped General/Player Traits/score fields hold on base and TU1 variants. **Still open:** loadout file writer, team entries, and a native writer. Do not expose editing until each offset has a round-trip probe and a TU1 check.
 
 Self-review: these are stock encoding 0x6A offsets from `slayer_054.bin`; a TU1 variant may differ. The probe only changes bytes temporarily outside git.
 

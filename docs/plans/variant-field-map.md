@@ -10,6 +10,8 @@
 
 Probe file: `slayer_054.bin`, encoding 0x6A. Test files stayed outside git.
 
+**TU1 check:** `hr_4v4_team_slayer_dmr_ar_50points_tu.bin` is encoding **0x6B**; the same offsets read time 12, respawn 5/5/5, traits defaults and score 50. The mapped General/Player Traits/score fields are therefore valid on base and TU1 variants. Unmapped fields still need a TU1 probe.
+
 ## General Settings
 
 | Native | Field | Probe |
