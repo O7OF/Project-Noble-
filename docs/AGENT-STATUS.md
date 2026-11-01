@@ -39,7 +39,7 @@ can make.
 
 ## @claude
 
-- state: **active**
+- state: **active** (input lock: until 21:08)
 - since: 20:59 ET
 - working on: voice-bind row QA, then queue 7 variant picker UI
 - files expected: src/ui/SettingsPanel.* (only if a row is missing), src/ui/FrontEndMenu.cpp, src/common/Version.hpp, docs
