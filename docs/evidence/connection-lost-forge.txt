@@ -1,0 +1,7 @@
+Reported in a Forge match (not campaign co-op):
+- CONNECTION LOST / "Campaign co-op cannot continue without the host." was wrong for Forge.
+- "Return to menu" did not respond.
+- The match should hold for host migration instead of closing.
+
+Fix (0.9.16.7): panel text is mode-neutral, states it is holding the match for host migration, accepts A/Enter/click,
+and clears automatically when packets resume after a migration. No forced close.

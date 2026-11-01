@@ -1111,20 +1111,25 @@ static bool DrawConnectionLostPanel() {
   Text(dl, NobleStyle::TitleFont(), 34.0f * s, ImVec2(p0.x + 36.0f * s, p0.y + 30.0f * s),
        IM_COL32(236, 240, 244, 255), "CONNECTION LOST");
   Text(dl, ImGui::GetFont(), 20.0f * s, ImVec2(p0.x + 38.0f * s, p0.y + 84.0f * s),
-       IM_COL32(200, 210, 220, 255), "The host left the game.");
+       IM_COL32(200, 210, 220, 255), "The host connection was lost.");
   Text(dl, NobleStyle::SmallFont(), 15.0f * s, ImVec2(p0.x + 38.0f * s, p0.y + 116.0f * s),
-       IM_COL32(150, 190, 220, 255), "Campaign co-op cannot continue without the host.");
+       IM_COL32(150, 190, 220, 255), "Holding the match open for host migration. A / Enter or click returns to the menu.");
 
   ImGui::SetNextWindowPos(ImVec2(p0.x + panelW * 0.5f - 120.0f * s, p0.y + panelH - 78.0f * s));
   ImGui::SetNextWindowSize(ImVec2(240.0f * s, 52.0f * s));
   ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(0, 0, 0, 0));
   ImGui::Begin("##NobleConnectionLost", nullptr,
                ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBackground);
-  if (ImGui::Button("Return to menu", ImVec2(240.0f * s, 44.0f * s))) {
+  const bool activate = ImGui::Button("Return to menu", ImVec2(240.0f * s, 44.0f * s)) ||
+                        ImGui::IsKeyPressed(ImGuiKey_Enter, false) ||
+                        ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false);
+  if (activate) {
     NOBLE_INFO("PauseMenu: connection lost - returning to the menu");
     ImGui::End();
     ImGui::PopStyleColor();
-    Relaunch::HandOff(L"");
+    if (!Relaunch::HandOff(L"")) {
+      NOBLE_ERROR("PauseMenu: relaunch to menu failed; keeping the connection-lost panel");
+    }
     return true;
   }
   ImGui::End();
@@ -1838,12 +1843,16 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading,
   // instead of freezing in the mission.
   static bool s_connectionLost = false;
   const bool guest = NetworkTransport::Get().IsActive() && !NetworkTransport::Get().IsHost();
-  if (!loading && !open && !gameOver && guest && NetworkTransport::Get().SecondsSinceRemotePacket() > 8.0) {
+  const double hostSilence = guest ? NetworkTransport::Get().SecondsSinceRemotePacket() : 0.0;
+  if (!loading && !open && !gameOver && guest && hostSilence > 8.0) {
     if (!s_connectionLost) {
       s_connectionLost = true;
-      NOBLE_WARN("PauseMenu: host connection lost ({:.1f}s without packets) - showing the connection-lost panel",
-                 NetworkTransport::Get().SecondsSinceRemotePacket());
+      NOBLE_WARN("PauseMenu: host connection lost ({:.1f}s without packets) - holding the match for host migration",
+                 hostSilence);
     }
+  } else if (guest && hostSilence < 2.0) {
+    // Packets resumed, e.g. after the engine migrated the host. Drop the panel instead of latching it forever.
+    s_connectionLost = false;
   }
   const bool connectionLost = s_connectionLost;
   if (!(open || gameOver || loading || showFps || scoreboardHeld || connectionLost || extraOverlay || SocialOverlay::WantsFrame()) || !swapChain ||      !ImGui::GetCurrentContext())
