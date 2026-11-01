@@ -31,7 +31,7 @@ Self-review: the guest poll thread is detached and runs until the process ends, 
 
 The host reads `lobbyVariantPath`, posts the file body as `variant_body`, and the server forwards it in `lobby_launch`. The guest writes it to `data/host_variants/<name>` and passes that path to the launch instead of a filename it may not have. Server caps the body at 256 KB.
 
-**Not verified:** the two-process host/guest test with a mode file the guest does not have, and whether the engine accepts the materialized JSON as a `-variant`. This is the next step; do not call guest custom modes fixed yet.
+**Materialized path verified:** a mode JSON in `data/host_variants` launched as a normal `-variant`; the HUD showed the mode name `HOST MODE TEST` and a 1-minute timer, so the engine accepts the transferred file shape. **Still unverified:** the actual two-process host/guest network handoff. Do not call guest custom modes fixed yet.
 
 Self-review: raw JSON is sent (the server strips control characters, which keeps valid JSON); a binary `.bin` body would also survive, but the guest path is only exercised for mode files so far.
 
