@@ -1113,6 +1113,11 @@ bool BlamEngine::DumpGameVariant(const std::string& path) {
             NOBLE_INFO("Variant traits: health {} shield {} speed {} gravity {} radar {} weapon {} ability {} mapFlags {} social {}",
                        byte(0x2D0), byte(0x2D3), byte(0x2E8), byte(0x2E9), byte(0x2F8), byte(0x2E5),
                        byte(0x2E7), byte(0x300), byte(0x2FC));
+            if (decoded.size() > 0xF842) {
+                uint16_t score = 0;
+                std::memcpy(&score, decoded.data() + 0xF840, sizeof(score));
+                NOBLE_INFO("Variant score to win: {}", score);
+            }
         }
     }
     return ok;
