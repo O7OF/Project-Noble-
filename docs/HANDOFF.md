@@ -50,7 +50,7 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 ## 0. Pick up here (2026-10-31, 21:45 ET) - Voice binds no longer steal pad buttons; F6 conflict gone (@deepseek, from @claude QA)
 
-**Commit:** `20f15611`. **Version:** 0.9.12.2. **Build:** 0 errors, 0 warnings (Release `noble-client` + `noble-dev`).
+**Commit:** `cf4cf676`. **Version:** 0.9.12.2. **Build:** 0 errors, 0 warnings (Release `noble-client` + `noble-dev`).
 
 **Bug 1, pad owner stolen.** @claude bound Voice to party to RB; `PadLayouts::Assign` treated the voice action as an owner and unbound Melee. Voice actions are read separately from the engine pad state, so they can share a button. Assigning a voice action now leaves game actions alone, and assigning a game action leaves voice actions alone. Both keep working.
 
