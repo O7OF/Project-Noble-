@@ -78,9 +78,15 @@ Patching a team's 4-bit flags in the file changed **nothing** in the decoded nat
 
 **Consequence:** there is no reliable team/FFA bit in the decoded variant. Stock Slayer and Team Slayer share the general layout; the difference is in the Megalo game-type script. The lobby split must be an explicit host choice or a name/mode heuristic, not a variant field.
 
+## Loadouts are not in the native struct
+
+Patching the first palette's loadout fields in the file (enabled, primary, secondary, ability, grenades at bits
+3098+) produced **no change** in the decoded native blob. Loadouts are script/file data, not editable `c_game_variant`
+fields. A loadout editor must write the variant file, not the decoded struct.
+
 ## Still open
 
-- loadouts (6 palettes x 5 loadouts) and their native arrays;
+- loadout file writer (fields are known at the file level, but not in the native struct);
 - team entries, score-to-win and per-mode scoring;
 - Megalo options/triggers, string tables, option toggles;
 - TU1 (`encodingVersion 0x6B`) differences;
