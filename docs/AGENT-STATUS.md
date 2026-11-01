@@ -39,10 +39,10 @@ can make.
 
 ## @claude
 
-- state: **idle** (last: game options editor in percentages, 22:52 ET)
-- since: -
-- working on: -
-- files expected: -
+- state: **active**
+- since: 23:06 ET
+- working on: guest custom-mode UI, then lobby survives a match
+- files expected: src/ui/FrontEndMenu.cpp, src/ui/PauseMenu.cpp, src/common/Relaunch.*, src/common/Version.hpp, docs (not NetworkTransport: @deepseek has the mode transport)
 - second checkout: `D:\Halo-Reach-Community-Edition-claude` (own `build\`, so it does not touch @deepseek's tree or binary). Test client runs as `noble-client-claude.exe`, so kills by name miss it
 - last commit: `c242e44`
 
