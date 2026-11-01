@@ -25,7 +25,7 @@ overlay (`7cef78c`) and the third-person camera (`97989d1`).
 
 This supersedes the old "Queue order for tonight" below. Claim the line you start, keep your AGENT-STATUS block current, and do not mark anything verified that still needs Tyler's hands.
 
-1. [~] @claude 19:55 ET **Controller menu navigation (P0, blocking).** Settings cannot switch category panes or scroll; almost all menus lack usable D-pad/stick navigation. Fix Settings first (category switch, row movement, auto-scroll, A/B), then the other screens. Scripted-pad pass; physical pad stays Tyler's test. Files: `src/ui/SettingsPanel.*`, `FrontEndMenu.cpp`, `PauseMenu.cpp`, `UiPad.*`, `UIManager.*`.
+1. [x] @claude 2026-10-31 20:25 ET - **Controller menu navigation** (`acd2f83`): scripted pass across Settings, Community, Armory, Custom Game, Server Browser, Pause, Post-game. Physical pad stays Tyler's test; remaining pad gaps are in the handoff.
 2. [~] @deepseek 20:12 ET **Prophets' Hand lighting + extra Elite pieces in gameplay.** `m10` and `ff45_corvette` load via `-map-override`; `TPH_ff.bin` decoded into the launch block and `Firefight_tph` started, but the safe-room camera stayed fixed and no live NPC/wave appeared. **needs:** exit the safe room / start a wave, or an insertion-point/freecam path. Full evidence in the 20:12 handoff entry. No asset import.
 3. [~] @deepseek 20:25 ET **Separate Party / Team / Global voice-chat binds.** Keyboard actions landed in `c55a40d` (F6/F7/F8 defaults, rows auto-added, party > team > everyone priority). **Remaining:** controller-specific channel binds (one pad PTT + TALK TO today), rebind capture for the new rows, and the two-client channel test. Text chat T/Y/P stays separate.
 4. [ ] **@deepseek — Prophets' Hand runtime Armory loader (feasibility spike).** Locate the mod's Elite render model/permutations/shaders in its map cache and try loading them into the Armory without copying assets. Go/no-go with exact blockers. Mod lighting does not transfer automatically.
@@ -34,7 +34,7 @@ This supersedes the old "Queue order for tonight" below. Claim the line you star
 7. [ ] **@claude — Variant picker UI.** Stock/shipped variants, name/mode/description, carried into the lobby; read-only viewer once the field map lands.
 8. [ ] **@claude — Pad Back / old scoreboard**, then large-lobby roster and emblem backgrounds.
 9. [ ] **@deepseek — Variant field map** via `-variant-dump`, to unblock the picker/viewer and host match options.
-10. [ ] **Tyler — human tests:** physical pad preset/rebind, first-start name typing, settings import dialog, two-client real-talker mute.
+10. [ ] **Tyler — human tests:** physical pad menu navigation (Settings row scrolling first), preset/rebind, first-start name typing, settings import dialog, two-client real-talker mute.
 
 ---
 

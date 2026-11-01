@@ -7,7 +7,31 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 
 **Goal:** `noble-client.exe` loads MCC's own `haloreach.dll` (Halo: Reach) and drives it **without MCC**, like the existing
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
-MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.9.2 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.10 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+
+## 0. Pick up here (2026-10-31, 20:25 ET) - Controller menu navigation across Settings and the menus (@claude)
+
+**Commit:** `acd2f83`. **Version:** 0.9.10 (resolved over @deepseek's 0.9.9.1 and 0.9.9.2, keeping their code). **Build:** noble-client, noble-dev and noble-dedicated, 0 errors, 0 warnings on the merged tree.
+
+**What was actually wrong** (reproduced by scripted pad before changing anything):
+- Settings had no LB/RB at all; only keyboard Q/E switched category. Left/right change the value on a value row, and focus starts on a row, so the only pad route to another category was Up past the first row. Nothing said so.
+- Service Record and Mods ignored the D-pad, and Mods couldn't scroll. ImGui's own navigation was enabled on those screens but had no focus to act on.
+- Server Browser moved through the unsorted list while drawing the sorted one, so the highlight jumped, and it never scrolled to the selection.
+- Pause: hovering set focus every frame, so a resting pointer pinned the row against the D-pad. Left stick did nothing there.
+- Post-game had no pad path of its own.
+- Audio's music lists were mouse-only.
+
+**Not reproduced:** row scrolling in Settings already worked under the scripted pad before this change (Controller page, 14 downs). Tyler reported it failing on a real pad. Nothing here explains a difference between real and scripted input, so check that first on the physical test.
+
+**Fix.** `UiPad::Feed` turns ImGui's pad navigation on only while a popup is open, which removes the double-press cause everywhere. `UiPad::Up/Down/Left/Right/PageUp/PageDown/ScrollWindow` are shared. Settings: LB/RB category, triggers 8 rows, right stick scrolls, Back restores defaults, hints, new BROWSE GAME / BROWSE TRACK / TRACK IN SHUFFLE rows. Server Browser: drawn order, scroll, triggers (`-server-browser-demo`). Mods: up/down, triggers, X refresh. Service Record: D-pad, stick, triggers scroll. Pause: moving mouse only, left stick, challenge scroll. Post-game: left/right, A; starts on RETURN TO MENU, never QUIT; A during the reveal only skips, and presses count from 1 s after it ends, because A is jump. Also touches `ServerBrowser.cpp`, `CareerPanel.cpp`, `WorkshopManager.cpp` beyond the listed files.
+
+**Evidence** (scripted pad, 1920x1080, `docs/screenshots/nav-*`): RB twice Graphics to Game Options; LB wraps to System; triggers scroll Controller; A toggled V-sync once; music rows; left stick on System; demo servers land on 18 after 3 downs and 2 triggers (not committed: that screen prints the public IP); Service Record Challenges scrolled; Community INVITE focus; Custom Game and Armory move. Pause in a real match: pointer resting on RESTART MATCH, two D-pad downs reached CONTROLS. Post-game: focus on PLAY AGAIN, then QUIT, then A on RETURN TO MENU logged once. Pad rebind: A then RB bound Team chat to RB and stayed on the page. Keyboard: E, Down, typed search still work.
+
+**Gaps.** No physical pad. COPY INVITE press count wasn't measured because it logs nothing: X fired in the lobby, and the cause is removed by design. Pause > Settings LB/RB and Post-game PLAY AGAIN / QUIT presses not run. Not run: mouse slider drag, sliders typed by value, Forge editor. Server Browser filter checkboxes, Direct Connect, Master Server and top buttons have no pad path (LB/RB mode filter, X refresh, Y favourite do). Mods' Workshop and folder buttons, Settings search and all typing need a mouse or keyboard. The Service Record's tab buttons are LB/RB only.
+
+**Heads-up.** The Server Browser header prints the public IP, an older behaviour and a risk for screenshots and streams; never commit that capture. `git pull --autostash` conflicted on Version.hpp mid-test; resolved without loss.
+
+Self-review: `-pause-at` didn't open the menu in my run and I didn't look into why; real Esc was used. The post-game outline shows whenever a pad is connected, even for a mouse user. Music rows are redundant with the lists for mouse players.
 
 ## 0. Pick up here (2026-10-31, 20:25 ET) - Separate party/team/global voice push-to-talk binds (@deepseek)
 
@@ -123,7 +147,7 @@ Self-review: chat text is logged nowhere client-side, so failures show only on s
 ## 0. Pick up here (2026-10-31, 15:08 ET) - Push-to-talk rebinding, voice quality proof, music list cleanup (@claude)
 
 
-**Current version:** 0.9.8.1. **Developer build:** 0.9.8.1-dev. Dev binaries report the suffix next to the version string.
+**Current version:** 0.9.10. **Developer build:** 0.9.10-dev. Dev binaries report the suffix next to the version string.
 
 **Commit:** `8cbb746` (the code is in this commit, whose message only mentions docs: the intended commit failed on quotes in its message). **Version:** 0.9.5. **Build:** 0 errors, 0 warnings on the merged tree. Files: `src/ui/SettingsPanel.*`, `src/common/Settings.cpp`, `src/audio/ReachAudio.cpp`, `src/audio/VoiceChat.cpp`, `src/common/Version.hpp`.
 
@@ -219,7 +243,7 @@ Self-review: the weakest part is the sender thread, because it changes how relay
 - Next for me: two-client chat check against the client transport, then the multiplayer post-game end hook.
 ## 0. Pick up here (2026-10-31, 08:25 ET) - Pre-game lobby map identity (@deepseek / DeepSeek)`.
 
-**Current version:** 0.9.8.1. **Developer build:** 0.9.8.1-dev. Dev binaries report the suffix next to the version string.
+**Current version:** 0.9.10. **Developer build:** 0.9.10-dev. Dev binaries report the suffix next to the version string.
 
 
 **Built and verified:** release `build\bin\Release\noble-client.exe`, developer `build\bin\Release\noble-dev.exe`, dedicated `build\bin\Release\noble-dedicated.exe`, and the packaged `Documents\Noble Launcher\Noble.exe` (full runtime tree; package stayed running in a normal launch test).

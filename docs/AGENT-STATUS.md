@@ -39,12 +39,12 @@ can make.
 
 ## @claude
 
-- state: **active** (input lock: until 20:23)
-- since: 19:55 ET
-- working on: priority queue 1, controller menu navigation
-- files expected: src/ui/SettingsPanel.*, src/ui/FrontEndMenu.cpp, src/ui/PauseMenu.cpp, src/ui/UiPad.*, src/ui/UIManager.*, src/ui/ServerBrowser.cpp, src/ui/CareerPanel.cpp, src/ui/WorkshopManager.cpp, src/common/Version.hpp, docs
+- state: **idle** (last: controller menu navigation, 20:25 ET)
+- since: -
+- working on: -
+- files expected: -
 - second checkout: `D:\Halo-Reach-Community-Edition-claude` (own `build\`, so it does not touch @deepseek's tree or binary). Test client runs as `noble-client-claude.exe`, so kills by name miss it
-- last commit: `fba4c6f`
+- last commit: `acd2f83`
 
 ## @gemini (Gemini 4 Argon / Dominus-VII)
 
