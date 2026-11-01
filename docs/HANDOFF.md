@@ -7,7 +7,25 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 
 **Goal:** `noble-client.exe` loads MCC's own `haloreach.dll` (Halo: Reach) and drives it **without MCC**, like the existing
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
-MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.12.7 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.13 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+
+## 0. Pick up here (2026-10-31, 22:52 ET) - Game options editor and player game modes, in percentages (@claude)
+
+**Commit:** `c242e44`. **Version:** 0.9.13. **Build:** noble-client, noble-dev, noble-dedicated, 0 errors, 0 warnings on the merged tree. @deepseek and I both worked item 9 in parallel: their map and `VariantFields` are kept; my corrections are in `docs/plans/variant-field-map.md`. **@deepseek, please read those: your override path writes the respawn block, so it won't change spawn traits.**
+
+**How it works.** A game mode is JSON: a shipped base file plus changed rules, applied to the decoded record at launch (`src/engine/VariantRules.*`), so no file encoder is needed. `-variant` accepts it. Values must be in the rule's own list and a file can't name an offset or a path. `-variant-poke` is a test switch.
+
+**Shipped on Custom Game.** GAME OPTIONS with 34 rules: General Settings plus shields and health, weapons and damage, movement, appearance, sensors. Tyler's ask: percent traits read 100% at the game's base and step down to 0% and up to 300%. **They use the game's fixed steps, not any number** (speed 0, 25, 50, 75, 90, 100, 110, 120, 150, 200, 300). Some stop short because the game has nothing further: gravity 50-200, health recharge 0-200, shield recharge 0-200, damage resistance 10-300, shields 0-300. Saved modes sit under a Custom Game Modes heading; reopening edits them. A mod's `game_modes` folder is scanned (not tested with a real mod).
+
+**Evidence.** Pad: edit, save, PLAY LOCAL gave 7:45, the mode's name, a red team bar. TOP mode: overshield, 4+4 grenades, infinite ammo, 59:43. LOW mode: no shields, weapons or radar, timer under 1 minute. VISIBLE mode: camo, 1 grenade. Junk keys and out-of-range values dropped. Captures `game-options-editor`, `game-mode-in-match`, `game-mode-top-values`, `game-mode-low-values`.
+
+**Not verified.** Effects not visible in a screenshot: damage, resistance, speed, gravity and recharge percentages, Rounds, Sudden Death, respawn and lives, Score to Win. The percent labels are the game's, but nothing here measured them. **Guests:** a guest gets a file name it doesn't have, and I'm relying on the engine replicating the host's variant; needs a two-client test. Teams with real players, and the lobby roster still doesn't follow Teams. Those TOP and LOW runs were before the load filter landed; the filter only drops values, and every value in them is in the lists.
+
+**Not built.** Jump height, loadouts (needs a file writer, per @deepseek), per-mode options like Slayer points, map overrides, Firefight and Forge editors. **Playlists, map rotation, randomized game type, voting with a none-of-these choice**: rotation and voting across players need a lobby that survives a match first.
+
+**One unexplained result.** In one editor run Primary and Secondary showed None and Damage showed one step up, though the script pressed no left or right and the values were correct when the editor opened. Later runs with change logging showed only the scripted changes. Possibly a stray key from outside the test; I have no proof. Windows voice typing was also open on screen during one run; not from Noble.
+
+Self-review: saving over an existing name replaces that mode silently. Bottom rows hide below the list until scrolled to. The editor log lines are noisy but useful for now. Used `--autostash` twice against my own note; both conflicted on Version.hpp and lost nothing. Build filters must match `: error`: Opus's CMake notice contains the word error.
 
 ## 0. Pick up here (2026-10-31, 23:25 ET) - Elite Color Picker, Spartan/Elite Lights & Material Coloring Fixes (@O7OF)
 
@@ -454,7 +472,7 @@ Self-review: chat text is logged nowhere client-side, so failures show only on s
 ## 0. Pick up here (2026-10-31, 15:08 ET) - Push-to-talk rebinding, voice quality proof, music list cleanup (@claude)
 
 
-**Current version:** 0.9.12. **Developer build:** 0.9.12-dev. Dev binaries report the suffix next to the version string.
+**Current version:** 0.9.13. **Developer build:** 0.9.13-dev. Dev binaries report the suffix next to the version string.
 
 **Commit:** `8cbb746` (the code is in this commit, whose message only mentions docs: the intended commit failed on quotes in its message). **Version:** 0.9.5. **Build:** 0 errors, 0 warnings on the merged tree. Files: `src/ui/SettingsPanel.*`, `src/common/Settings.cpp`, `src/audio/ReachAudio.cpp`, `src/audio/VoiceChat.cpp`, `src/common/Version.hpp`.
 
@@ -550,7 +568,7 @@ Self-review: the weakest part is the sender thread, because it changes how relay
 - Next for me: two-client chat check against the client transport, then the multiplayer post-game end hook.
 ## 0. Pick up here (2026-10-31, 08:25 ET) - Pre-game lobby map identity (@deepseek / DeepSeek)`.
 
-**Current version:** 0.9.12. **Developer build:** 0.9.12-dev. Dev binaries report the suffix next to the version string.
+**Current version:** 0.9.13. **Developer build:** 0.9.13-dev. Dev binaries report the suffix next to the version string.
 
 
 **Built and verified:** release `build\bin\Release\noble-client.exe`, developer `build\bin\Release\noble-dev.exe`, dedicated `build\bin\Release\noble-dedicated.exe`, and the packaged `Documents\Noble Launcher\Noble.exe` (full runtime tree; package stayed running in a normal launch test).

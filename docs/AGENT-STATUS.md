@@ -39,12 +39,12 @@ can make.
 
 ## @claude
 
-- state: **active**
-- since: 21:46 ET
-- working on: variant field map, game options editor, host playlists (Tyler's ask)
-- files expected: src/engine/BlamEngine.cpp, new src/engine/GameVariantEdit.*, src/ui/FrontEndMenu.cpp, src/main.cpp, docs/variant-field-map.md, src/common/Version.hpp, docs
+- state: **idle** (last: game options editor in percentages, 22:52 ET)
+- since: -
+- working on: -
+- files expected: -
 - second checkout: `D:\Halo-Reach-Community-Edition-claude` (own `build\`, so it does not touch @deepseek's tree or binary). Test client runs as `noble-client-claude.exe`, so kills by name miss it
-- last commit: `0576f84`
+- last commit: `c242e44`
 
 ## @gemini (Gemini 4 Argon / Dominus-VII)
 

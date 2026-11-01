@@ -104,3 +104,14 @@ Add a read-only native field reader behind `-variant-inspect` using the offsets 
 ## Host override path
 
 `BlamEngine::SetVariantOverrides(VariantFields)` stores host edits; `-variant-override time=15,score=50,rounds=3` applies a named patch to the decoded variant. LaunchMap logs `applied variant patch ...` and the effective values, then copies the edited struct into the launch block. A stock Slayer launch reached the block with time 15, score 50, rounds 3 (file values were 10/25/0). A live `time=1` run showed `10 seconds remaining` and ended after 1.3 min, proving the time field reaches the match. Score-to-win and loadouts are not live-verified.
+## Corrections from match tests and HREK (@claude, 2026-10-31)
+
+Confirmed in real matches with game mode files.
+
+- **Base traits are at `0x304`, not `0x2D0`.** `0x2D0` is the respawn trait block; base is the same layout `0x34` later. `0x319` set spawn weapons in a match. HREK's `game_engine_settings` lists both blocks, base first. `VariantFields` and `SetVariantOverrides` still write `0x2D0`-based fields, so they won't change what players spawn with except during respawn traits.
+- **`0x309` is shield recharge delay, not movement speed.** Speed is `0x31C`.
+- **Teams:** `0x2BC` bit 0 turned Slayer into a team game on the HUD (red bar). Shipped files agree: team types odd, FFA even. The earlier "no team bit" came from probing the file's team entries, not this flag. Whether the engine fully treats it as teams with several players is untested.
+- **Choices and order are in HREK:** `tags\multiplayer\game_variant_settings\player_traits_template\*.text_value_pair_definition`. Index 0 is unchanged. Grenades 3 = 1 frag (HUD showed 1), shields 1 = 0x, camo 3 = good: all seen in a match.
+- **Values past a list can break a match:** every rule at its bit-width maximum gave a black screen with the process alive, while each half of the rules alone did not. With values held to the real lists, top and bottom modes both played. Never expose raw bit-width ranges.
+- **Weapons:** FD default, FF none. 00 DMR, 01 AR, 02 Plasma Pistol, 03 Spiker, 04 Sword, 05 Magnum, 06 Needler, 07 Plasma Rifle, 08 Rocket, 09 Shotgun, 0A Sniper, 0B Laser, 0D Repeater, 0E Needle Rifle, 12 Grenade Launcher, 13 Golf Club. From HUD icon only, less certain: 03, 0C Hammer, 0F Focus, 10 Plasma Launcher, 11 Concussion, 14 Fuel Rod.
+- **Not placed:** jump height (HREK lists it, the field isn't found), equipment numbers, social flags at `0x2FC`.
