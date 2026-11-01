@@ -103,4 +103,4 @@ Add a read-only native field reader behind `-variant-inspect` using the offsets 
 `src/engine/VariantFields.hpp` wraps the proven offsets in `VariantFields::Read` / `Write`. It is bounds-checked and has a round-trip self-test (`-test-map-gametypes` prints `variant fields - read/write round trip`). It covers General, respawn, Player Traits and score; loadouts stay file/script-side.
 ## Host override path
 
-`BlamEngine::SetVariantOverrides(VariantFields)` stores host edits. At launch the decoded variant is read, the mapped fields are overwritten, logged (`BlamEngine: applied host variant overrides ...`), and copied into the launch block. This covers General/Player Traits/score without a file writer. Loadouts still need the file path.
+`BlamEngine::SetVariantOverrides(VariantFields)` stores host edits; `-variant-override time=15,score=50,rounds=3` applies a named patch to the decoded variant. LaunchMap logs `applied variant patch ...` and the effective values, then copies the edited struct into the launch block. A stock Slayer launch reached the block with time 15, score 50, rounds 3 (file values were 10/25/0). Loadouts still need the file path.

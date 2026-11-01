@@ -290,6 +290,35 @@ int BlamEngine::s_engineModeOverride = 0;
 BlamEngine* BlamEngine::s_active = nullptr;
 bool BlamEngine::s_guestPostStart = false;
 std::optional<VariantFields> BlamEngine::s_variantOverrides;
+std::string BlamEngine::s_variantPatch;
+
+static void ApplyVariantPatch(const std::string& spec, VariantFields& fields) {
+    size_t start = 0;
+    while (start < spec.size()) {
+        const size_t comma = spec.find(',', start);
+        const std::string item = spec.substr(start, comma == std::string::npos ? std::string::npos : comma - start);
+        start = comma == std::string::npos ? spec.size() : comma + 1;
+        const size_t eq = item.find('=');
+        if (eq == std::string::npos) continue;
+        const std::string key = item.substr(0, eq);
+        const int value = std::atoi(item.c_str() + eq + 1);
+        auto byte = [&](uint8_t& field, int lo, int hi) {
+            field = static_cast<uint8_t>(std::clamp(value, lo, hi));
+        };
+        if (key == "time") byte(fields.timeLimit, 0, 255);
+        else if (key == "rounds") byte(fields.roundsToWin, 0, 15);
+        else if (key == "roundlimit") byte(fields.roundLimit, 0, 31);
+        else if (key == "sudden") byte(fields.suddenDeath, 0, 127);
+        else if (key == "grace") byte(fields.gracePeriod, 0, 31);
+        else if (key == "respawn") byte(fields.respawnTime, 0, 255);
+        else if (key == "lives") byte(fields.livesPerRound, 0, 63);
+        else if (key == "teamLives") byte(fields.teamLivesPerRound, 0, 127);
+        else if (key == "traits") byte(fields.traitsDuration, 0, 63);
+        else if (key == "speed") byte(fields.speed, 0, 31);
+        else if (key == "radar") byte(fields.radarState, 0, 7);
+        else if (key == "score") fields.scoreToWin = static_cast<uint16_t>(std::clamp(value, 0, 65535));
+    }
+}
 
 std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameModeTag, int difficulty, uint64_t skulls,
                                                    const std::string& customMvarPath, const std::string& customVariantPath,
@@ -747,6 +776,12 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
                 if (SafeCallGameVariantDecode(m_hModule, varData.data(), decoded.data(), status)) {
                     VariantFields fields;
                     if (fields.Read(decoded.data(), decoded.size())) {
+                        if (!s_variantPatch.empty()) {
+                            ApplyVariantPatch(s_variantPatch, fields);
+                            fields.Write(decoded.data(), decoded.size());
+                            NOBLE_INFO("BlamEngine: applied variant patch '{}' (time {} score {} rounds {})",
+                                       s_variantPatch, fields.timeLimit, fields.scoreToWin, fields.roundsToWin);
+                        }
                         if (s_variantOverrides) {
                             fields = *s_variantOverrides;
                             fields.Write(decoded.data(), decoded.size());
