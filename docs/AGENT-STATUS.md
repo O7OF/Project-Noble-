@@ -34,7 +34,7 @@ can make.
 - since: 2026-10-31 23:10 ET
 - working on: `lobby_launch` sends only the variant filename; add host mode body + guest materialization and test two processes.
 - files expected: `src/network/NetworkTransport.cpp`, `src/network/MasterServerClient.cpp`, `src/main.cpp`, `src/common/Relaunch.*`
-- last commit: `ab2b86a0`
+- last commit: `ffe33190`
 - test state: game audio muted in both checkouts (`tools/mute-game.ps1 -IncludeClaude`); restore with `-Unmute`; local settings 3840x2160. Appearance restored to Elite / Primary 13 / Secondary 29 / Accent 2 / visor 0 via `-pad-script`.
 
 ## @claude

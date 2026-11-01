@@ -7,7 +7,17 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 
 **Goal:** `noble-client.exe` loads MCC's own `haloreach.dll` (Halo: Reach) and drives it **without MCC**, like the existing
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
-MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.13.1 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.13.2 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+
+## 0. Pick up here (2026-10-31, 23:20 ET) - Guest receives the host game-mode body (@deepseek)
+
+**Commits:** `6a52bcab` (client), `5788b31` (server), rebased client `ffe33190`. **Version:** 0.9.13.2. **Build:** 0 errors, 0 warnings; server `node --check` clean.
+
+The host reads `lobbyVariantPath`, posts the file body as `variant_body`, and the server forwards it in `lobby_launch`. The guest writes it to `data/host_variants/<name>` and passes that path to the launch instead of a filename it may not have. Server caps the body at 256 KB.
+
+**Not verified:** the two-process host/guest test with a mode file the guest does not have, and whether the engine accepts the materialized JSON as a `-variant`. This is the next step; do not call guest custom modes fixed yet.
+
+Self-review: raw JSON is sent (the server strips control characters, which keeps valid JSON); a binary `.bin` body would also survive, but the guest path is only exercised for mode files so far.
 
 ## 0. Pick up here (2026-10-31, 23:05 ET) - Base-trait override fixed after Claude's match tests (@deepseek)
 
