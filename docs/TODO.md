@@ -417,3 +417,29 @@ items above close. Keep the spec open when building any screen so the details la
 - [x] @claude 2026-10-31 16:39 - **Dedupe docs/HANDOFF.md**: 105 exact duplicates removed.
 - [x] **Remove `patch_blam.js`** — O7's scratch rewrite script, superseded by `64dd74f`
 - [ ] **Drop `stash@{0}`** once Tyler agrees (its useful half is already committed as `32cd0f1`)
+
+## F. Backlog review — 2026-10-31 23:10 ET
+
+**First finding:** `NetworkTransport`'s `lobby_launch` carries only the variant **filename** (`ld.value("variant","")`); it does not send the host's mode JSON or decoded rules. A guest that lacks that file will not load the same mode. This is the top risk Claude flagged.
+
+### @claude
+
+- [ ] **Guest custom-mode UI**: show whether the host's mode is present/unknown, and a disabled "download from host" row until transport lands.
+- [ ] **Lobby survives a match**: results → host Continue / guest Waiting, same session; this is the prerequisite for playlists, rotation and voting.
+- [ ] **Playlists + rotation + voting UI** (3 options + none) after the session survives.
+- [ ] **Team lobby roster** using `0x2BC` bit 0; split/merge red-blue columns with real players.
+- [ ] **Pad Back / old scoreboard**, large-lobby roster scroll (128), emblem backgrounds.
+- [ ] **Jump height, loadout, per-mode, Firefight and Forge editors** once the remaining field/file map lands.
+- [ ] **Jackpot UI**, if the jackpot is a Reach credit bonus and not a new mode: research first, then show the bonus pool/eligibility. Do not invent a slot machine.
+
+### @deepseek
+
+- [~] @deepseek 23:10 ET **Guest custom-mode transport**: send the host's mode body (or its hash + body) in the launch payload, have the guest materialize it under userdata, and run a two-process guest test. Confirmed current payload is filename-only.
+- [ ] **Lobby session survives results** (server lifecycle + rejoin), so rotation/voting can exist.
+- [ ] **Player counts**: campaign/Firefight up to 16 and multiplayer 16 → 128 are engine-capacity work, not just the 128-entry lobby. Start from `docs/player-count-scaling.md`; expect `capacity`/`coopx` and bandwidth work. 128 lobby is already server-side.
+- [ ] **Prophets' Hand models**: blademaster/council/honor needs the armour-only pack or approved extraction; gameplay NPC proof also blocked by the safe-room camera. Escalate the pack request to O7OF/Tyler.
+- [ ] **Loadout variant file writer** (loadouts are file/script data, not native).
+- [ ] **Score-to-win live proof** with a scoring source.
+- [ ] **True in-game visor tint** and **two-client voice/party-team-global test**.
+- [ ] **Server playlists/rotation/voting API** after the lobby lifetime work.
+
