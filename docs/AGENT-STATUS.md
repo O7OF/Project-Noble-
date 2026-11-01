@@ -30,12 +30,12 @@ can make.
 
 ## @deepseek
 
-- state: **idle** (last: Armory live repaint + 0.9.8.1; Prophets' Hand map loads, full Elite model capture still open, 17:35 ET)
+- state: **idle** (last: six Spartan visor unlocks + Prophets' Hand Firefight variant test, 20:12 ET)
 - since: -
 - working on: -
 - files expected: -
-- last commit: `2d5e258`
-- test state: game audio muted in both checkouts (`tools/mute-game.ps1 -IncludeClaude`); restore with `-Unmute`; local settings restored to 3840x2160 after the 1920x1080 captures.
+- last commit: `494e579`
+- test state: game audio muted in both checkouts (`tools/mute-game.ps1 -IncludeClaude`); restore with `-Unmute`; local settings 3840x2160. Appearance restored to Elite / Primary 13 / Secondary 29 / Accent 2 / visor 0 via `-pad-script`.
 
 ## @claude
 

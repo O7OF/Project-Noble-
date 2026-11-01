@@ -7,7 +7,23 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 
 **Goal:** `noble-client.exe` loads MCC's own `haloreach.dll` (Halo: Reach) and drives it **without MCC**, like the existing
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
-MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.9 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.9.1 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+
+## 0. Pick up here (2026-10-31, 20:12 ET) - Six new Spartan visor finishes as unlocks; Prophets' Hand Firefight variant test (@deepseek)
+
+**Commit:** `494e579`. **Version:** 0.9.9.1. **Build:** 0 errors, 0 warnings (Release `noble-client` + `noble-dev`). Files: `src/ui/ArmorCustomizer.cpp`, `src/ui/SpartanArmoryCatalog.inc`, `src/engine/ReachHost.cpp`, `docs/career/armory_overrides.json`, `docs/career/spartan_armory_catalog.*`, `tools/armory/build_spartan_catalog.py`.
+
+**Visor unlocks.** Added six finishes to the Spartan visor row: Rose Gold, Emerald, Violet, Ice, Crimson and Onyx (11 total). Rank gates and cR prices live in `armory_overrides.json` and are generated into the catalog, so the existing locked / for-sale / buy / equipped UI works unchanged. The picker uses swatch tiles for the new finishes (the stock five keep their helmet pictures). Saved as `visor_color_index` + `visor_id`; the Armory preview recolours live through the visual dirty flag.
+
+**Evidence.** `-armory-unlock-all` run: all 11 entries; Selected Emerald changed the model's visor from gold to green (`docs/screenshots/armory-visor-unlocks-emerald.png`). A normal run with the current rank shows Silver/Blue/Black locked with their rank text (`armory-visor-unlocks-locked.png`); the same run reset the saved Emerald to Default because the profile had not unlocked it, which is the intended lock rule. Appearance was restored to Elite / Primary 13 / Secondary 29 / Accent 2 / visor 0 with `-pad-script`, without stealing focus.
+
+**In-game limit.** Reach's profile accepts only stock visor item ids 157-161. Until a visor-shader tint override exists, `ReachHost` maps each new finish to the closest stock visor (rose_gold -> gold, emerald/violet -> blue, ice -> silver, crimson -> default, onyx -> black). The Armory colours are real previews, not yet real in-match colours. Do not mark the in-game part done from these captures.
+
+**Prophets' Hand Firefight test.** Launched `ff45_corvette` with its own `haloreach\game_variants\TPH_ff.bin`; the log shows the custom variant decoded into the launch block (`+0x300`) and `Firefight_tph` starting at frame 495. The safe room rendered the Elite HUD and arms, but the camera stayed fixed on the ceiling and mouse look did not move it; no live NPC or wave appeared before the run ended. The map and variant are loading - the remaining blocker is getting out of the safe room / into a wave, or using an insertion point/freecam. This is still `[~]`, not a rendering failure proven.
+
+**Not verified.** True in-match visor colour, the new tiles with helmet art, physical pad, and the full Prophets' Hand Elite model frame.
+
+Self-review: the new visor finishes are Noble-created unlockables with invented rank/credit prices; they are not Reach's original visor list. The catalog is generated, so change `armory_overrides.json` and rerun the tool rather than editing the `.inc` by hand.
 
 ### How this file is kept (Tyler, 2026-10-30)
 
