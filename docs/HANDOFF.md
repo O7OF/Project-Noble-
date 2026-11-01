@@ -11,7 +11,7 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 ## 0. Pick up here (2026-11-01, 00:50 ET) - Fix Multiplayer Player Armor Swapping / Local vs Remote Biped Isolation (@O7OF)
 
-**Version:** 0.9.16.1. **Build:** noble-client, noble-dev, noble-dedicated, 0 errors, 0 warnings on MSVC Release x64. Files: `src/engine/ElitePack.cpp`, `src/common/Version.hpp`, `docs/HANDOFF.md`.
+**Commit:** -82a66. **Version:** 0.9.16.1. **Build:** noble-client, noble-dev, noble-dedicated, 0 errors, 0 warnings on MSVC Release x64. Files: `src/engine/ElitePack.cpp`, `src/common/Version.hpp`, `docs/HANDOFF.md`.
 
 **What was actually wrong (Root Cause Analysis):**
 - Tyler reported: "when tyler joins me he has my armor on and i have his armor on".
