@@ -461,8 +461,12 @@ void UseAdditive(const ImDrawList*, const ImDrawCmd*) {
 }
 
 bool Prepare(ID3D11Device* device, ID3D11DeviceContext* context) {
-    if (!s_frameRtv || !device || !context) return false;
+    if (!device || !context) return false;
     s_context = context;
+    if (!s_frameRtv) {
+        // Reuse existing captured stage if frame is temporarily holding, so character never flashes out
+        return (s_copySrv != nullptr && s_opaque != nullptr && s_additive != nullptr);
+    }
     ID3D11Resource* resource = nullptr;
     s_frameRtv->GetResource(&resource);
     ID3D11Texture2D* backBuffer = nullptr;
@@ -5386,7 +5390,7 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
 
         ImGui::SetCursorScreenPos(ImVec2(left, ruleY + 12.0f * ui.s));
         ImGui::BeginChild("##armory_panel", ImVec2(ui.size.x - left * 1.35f, ui.size.y - (ruleY + 12.0f * ui.s) - 62.0f * ui.s),
-                          ImGuiChildFlags_None, ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollWithMouse);
+                          ImGuiChildFlags_None, ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoScrollbar);
         UIManager::GetArmorCustomizer().Render(device, context);
         ImGui::EndChild();
 

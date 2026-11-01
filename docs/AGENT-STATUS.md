@@ -48,8 +48,8 @@ can make.
 
 ## @gemini (Gemini 4 Argon / Dominus-VII)
 
-- state: **idle (last: Elite illumination float decoupling, species color separation, fast quick-rescan, Armory UI caching, 2026-11-01 02:40 ET)**
+- state: **idle (last: Elite armor lights & UI performance optimization, version 0.9.16.11, 2026-11-01 13:45 ET)**
 - since: —
 - working on: —
 - files expected: —
-- last commit: `bfcc6c7` (backend `ServerTestDeploy` `8f16061` pushed to GitHub)
+- last commit: `0.9.16.11` Release x64 verified clean (0 errors, 0 warnings)

@@ -1156,19 +1156,21 @@ bool ArmorCustomizer::LoadProfile(const std::filesystem::path& path) {
         loadCustom("accent_custom", "accent_custom_rgb", m_profile.accentCustom, m_profile.accentCustomRgb);
         loadCustom("lights_custom", "lights_custom_rgb", m_profile.lightsCustom, m_profile.lightsCustomRgb);
 
-        // Default Elite colors to base colors
-        m_profile.elitePrimaryColor = m_profile.primaryColor;
-        m_profile.eliteSecondaryColor = m_profile.secondaryColor;
-        m_profile.eliteAccentColor = m_profile.accentColor;
-        m_profile.eliteLightsColor = m_profile.lightsColor;
-        m_profile.elitePrimaryCustom = m_profile.primaryCustom;
-        m_profile.eliteSecondaryCustom = m_profile.secondaryCustom;
-        m_profile.eliteAccentCustom = m_profile.accentCustom;
-        m_profile.eliteLightsCustom = m_profile.lightsCustom;
-        m_profile.elitePrimaryCustomRgb = m_profile.primaryCustomRgb;
-        m_profile.eliteSecondaryCustomRgb = m_profile.secondaryCustomRgb;
-        m_profile.eliteAccentCustomRgb = m_profile.accentCustomRgb;
-        m_profile.eliteLightsCustomRgb = m_profile.lightsCustomRgb;
+        // Only seed Elite colors from Spartan if "elite" block is completely missing (legacy profiles)
+        if (!j.contains("elite")) {
+            m_profile.elitePrimaryColor = m_profile.primaryColor;
+            m_profile.eliteSecondaryColor = m_profile.secondaryColor;
+            m_profile.eliteAccentColor = m_profile.accentColor;
+            m_profile.eliteLightsColor = m_profile.lightsColor;
+            m_profile.elitePrimaryCustom = m_profile.primaryCustom;
+            m_profile.eliteSecondaryCustom = m_profile.secondaryCustom;
+            m_profile.eliteAccentCustom = m_profile.accentCustom;
+            m_profile.eliteLightsCustom = m_profile.lightsCustom;
+            m_profile.elitePrimaryCustomRgb = m_profile.primaryCustomRgb;
+            m_profile.eliteSecondaryCustomRgb = m_profile.secondaryCustomRgb;
+            m_profile.eliteAccentCustomRgb = m_profile.accentCustomRgb;
+            m_profile.eliteLightsCustomRgb = m_profile.lightsCustomRgb;
+        }
 
         if (j.contains("spartan") && j["spartan"].is_object()) {
             const auto& sp = j["spartan"];
@@ -1514,9 +1516,9 @@ void ArmorCustomizer::RenderCharacterPreview(ID3D11Device* device, ID3D11DeviceC
     }
 
     if (m_autoRotate) ReachArmory::AddYawRotation(ImGui::GetIO().DeltaTime * 0.45f);
-    ImGui::InvisibleButton("##character_preview_drag", ImVec2(width, height));
+    ImGui::InvisibleButton("##character_preview_drag", ImVec2(width, height), ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
     if (ImGui::IsItemActive() &&
-        (ImGui::IsMouseDragging(ImGuiMouseButton_Left) || ImGui::IsMouseDragging(ImGuiMouseButton_Right))) {
+        (ImGui::IsMouseDragging(ImGuiMouseButton_Left, 0.0f) || ImGui::IsMouseDragging(ImGuiMouseButton_Right, 0.0f))) {
         ReachArmory::AddYawRotation(-ImGui::GetIO().MouseDelta.x * 0.0085f);
     }
     if (ImGui::IsItemHovered()) {
@@ -1811,38 +1813,69 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
     }
 
     {
-        const auto& nameplates = UiArt::GetNameplateCatalog();
+        static const auto s_nameplateOptions = []() {
+            std::vector<PickOption> opts;
+            const auto& nameplates = UiArt::GetNameplateCatalog();
+            opts.reserve(nameplates.size());
+            for (const auto& np : nameplates) {
+                opts.push_back({ np.name.c_str(), "MCC Halo player nameplate banner." });
+            }
+            return opts;
+        }();
         SlotRow npRow{ "IDENTITY", "Nameplate", RowKind::List, &m_profile.nameplateIndex };
-        for (const auto& np : nameplates) {
-            npRow.options.push_back({ np.name.c_str(), "MCC Halo player nameplate banner." });
-        }
+        npRow.options = s_nameplateOptions;
         rows.push_back(std::move(npRow));
 
-        const auto& emblems = UiArt::GetEmblemCatalog();
+        static const auto s_emblemOptions = []() {
+            std::vector<PickOption> opts;
+            const auto& emblems = UiArt::GetEmblemCatalog();
+            opts.reserve(emblems.size());
+            for (const auto& em : emblems) {
+                opts.push_back({ em.name.c_str(), "The symbol on your emblem." });
+            }
+            return opts;
+        }();
         SlotRow embRow{ "IDENTITY", "Emblem", RowKind::List, &m_profile.emblemIndex };
-        for (const auto& em : emblems) {
-            embRow.options.push_back({ em.name.c_str(), "The symbol on your emblem." });
-        }
+        embRow.options = s_emblemOptions;
         rows.push_back(std::move(embRow));
 
+        static const auto s_emblemBackgroundOptions = []() {
+            std::vector<PickOption> opts;
+            const auto& backs = UiArt::GetEmblemBackgrounds();
+            opts.reserve(backs.size() + 1);
+            opts.push_back({ "None", "No shape behind your emblem's symbol." });
+            for (const auto& back : backs) {
+                opts.push_back({ back.name.c_str(), "The shape behind your emblem's symbol." });
+            }
+            return opts;
+        }();
         SlotRow backRow{ "IDENTITY", "Emblem Background", RowKind::List, &m_profile.emblemBackgroundIndex };
-        backRow.options.push_back({ "None", "No shape behind your emblem's symbol." });
-        for (const auto& back : UiArt::GetEmblemBackgrounds()) {
-            backRow.options.push_back({ back.name.c_str(), "The shape behind your emblem's symbol." });
-        }
+        backRow.options = s_emblemBackgroundOptions;
         rows.push_back(std::move(backRow));
 
-        struct EmblemColourRow { const char* label; int* index; const char* description; };
-        const EmblemColourRow emblemColours[] = {
-            { "Emblem Primary Color", &m_profile.emblemPrimaryColor, "Colors the symbol's main shape." },
-            { "Emblem Secondary Color", &m_profile.emblemSecondaryColor, "Colors the symbol's second shape, if it has one." },
-            { "Emblem Background Color", &m_profile.emblemBackgroundColor, "Colors the shape behind the symbol." },
+        static const auto s_emblemColorOptions = [](const char* desc) {
+            std::vector<PickOption> opts;
+            opts.reserve(kReachColors.size());
+            for (const auto& pal : kReachColors) {
+                opts.push_back({ pal.name, desc, ColourU32(pal.r, pal.g, pal.b) });
+            }
+            return opts;
         };
-        for (const EmblemColourRow& e : emblemColours) {
-            SlotRow c{ "IDENTITY", e.label, RowKind::Colour, e.index };
-            for (const auto& pal : kReachColors) c.options.push_back({ pal.name, e.description, ColourU32(pal.r, pal.g, pal.b) });
-            rows.push_back(std::move(c));
-        }
+        static const auto s_embPri = s_emblemColorOptions("Colors the symbol's main shape.");
+        static const auto s_embSec = s_emblemColorOptions("Colors the symbol's second shape, if it has one.");
+        static const auto s_embBack = s_emblemColorOptions("Colors the shape behind the symbol.");
+
+        SlotRow cPri{ "IDENTITY", "Emblem Primary Color", RowKind::Colour, &m_profile.emblemPrimaryColor };
+        cPri.options = s_embPri;
+        rows.push_back(std::move(cPri));
+
+        SlotRow cSec{ "IDENTITY", "Emblem Secondary Color", RowKind::Colour, &m_profile.emblemSecondaryColor };
+        cSec.options = s_embSec;
+        rows.push_back(std::move(cSec));
+
+        SlotRow cBack{ "IDENTITY", "Emblem Background Color", RowKind::Colour, &m_profile.emblemBackgroundColor };
+        cBack.options = s_embBack;
+        rows.push_back(std::move(cBack));
 
         rows.push_back({ "IDENTITY", "Service Tag", RowKind::Tag });
     }
@@ -1915,6 +1948,7 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
         }
         m_dirty = true;
         SaveProfile(m_profilePath);
+        SyncToReachArmory();
     };
     auto focus = [&](int rowIndex) {
         if (m_focusedRow == rowIndex) return;

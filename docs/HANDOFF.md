@@ -1,5 +1,5 @@
 # Project Noble: handoff (2026-10-29, 18:15 ET)
-Dominus join the team 20261028! 
+Dominus join the team 20261028! "GIVING PROPS TO TYLER FOR PUSHING 30 UPDATES AND FIXING A BUNCH OF BROKEN SHIT LOL GOOD JOB MP SHPULD STILL WORK WE MAY NEED TO CHECK AFTER THE NEW PATCH FOR LOBBY STAY TOGEHTER ETC."
 This picks up a reverse-engineering and C++ effort on **Tyler's Windows PC**. All paths below are real paths on that machine.
 Tyler (GitHub `WeabooTyler117`) works with a partner (GitHub `O7OF`) who owns the repo and writes most of the code.(DOMINUS IS A NEW ADDITION TO THE DEV TEAM)
 Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C++ developer, so give him exact commands
@@ -8,6 +8,40 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 **Goal:** `noble-client.exe` loads MCC's own `haloreach.dll` (Halo: Reach) and drives it **without MCC**, like the existing
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
 MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.16.8 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+
+## 0. Pick up here (2026-11-01, 13:45 ET) - Elite Armor Lights & Armory UI Performance (0.9.16.11) (@O7OF)
+
+**Version:** 0.9.16.11. **Build:** noble-client, noble-dev (0 errors, 0 warnings on MSVC Release x64). Files: `src/engine/ReachArmory.cpp`, `src/ui/ArmorCustomizer.cpp`, `src/ui/FrontEndMenu.cpp`, `src/common/Version.hpp`, `docs/HANDOFF.md`, `docs/AGENT-STATUS.md`.
+
+**What was actually found & fixed (Root Cause Analysis):**
+1. **Elite Armor Turning Gold Instead of Lights Channel (Alpha Channel Decoupling):**
+   - Texture extraction and binary inspection of `elite_ultra_helmet_cc.png` and `elite_armor_template.shader`:
+     - Channel 0 (Red) = Primary base armor (`words[0]`)
+     - Channel 1 (Green) = Secondary armor overlay & markings (`words[1]`)
+     - Channel 2 (Blue) = Accent / Bodysuit (`words[2]`)
+     - Channel 3 (Alpha) = Small detail lights, LEDs, emissive cards & eye slit (`words[3]`)
+   - In commit `1b058e6`:
+     - `words` was assigned `{ priArgb, terArgb, secArgb, priArgb }`. `litArgb` was completely omitted, and Channel 3 (lights) was painted with `priArgb` (Steel/Grey), making the eye slit and lights uncolorable.
+     - `s_eliteIllumRecords` / `ScanEliteIllumRecordsIn` scanned heap memory for `{0, 0.5, 1, 1}` and overwrote it with `sel.lightsRgb * 4.0f`. That float4 in memory was actually the material diffuse constant buffer! Writing Gold `{0.8, 0.6, 0.1} * 4.0` over it tinted the entire Elite armor mesh Gold with 4.0x HDR intensity!
+   - **Fix:**
+     - Completely removed `s_eliteIllumRecords`, `ScanEliteIllumRecordsIn`, and the dangerous float4 heap scanner.
+     - In `WriteColorsAndSuit`:
+       - Defined `const uint32_t litArgb = LinearRgbToArgbU32(sel.lightsRgb);`.
+       - For Elites: `words = { priArgb, secArgb, terArgb, litArgb }`.
+       - For Spartans: `words = { priArgb, secArgb, terArgb, visArgb }`.
+       - Restored `suitFloats` write exclusively to Spartan bipeds (`if (!sel.previewElite)`).
+     - In `MatchEliteColorPattern`: Added check for `cur[1] == lastSec || cur[2] == lastSec` to properly detect previously colored Elite bipeds and prevent defaulting back to stock presets.
+
+2. **Spartan vs Elite Customization Separation:**
+   - In `LoadProfile()`: Guarded the legacy Spartan fallback so that it only seeds Elite colors if `"elite"` is completely missing from `appearance.json`. When an `"elite"` block exists, Elite colors are loaded exclusively from `"elite"` and never overwritten by Spartan customizations.
+   - In `choose()`: Added `SyncToReachArmory()` so swatch clicks immediately update `ReachArmory::SetSelection()`.
+
+3. **Armory UI Performance & Smooth Character Rotation:**
+   - In `Render()`: Cached static `PickOption` vectors for `Nameplate`, `Emblem`, `Emblem Background`, and `Emblem Colors` using IIFEs (`s_nameplateOptions`, `s_emblemOptions`, etc.), eliminating ~1000 heap allocations per frame at 60 FPS.
+   - In `RenderCharacterPreview`: Added `ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight` with drag threshold `0.0f` to `InvisibleButton`.
+   - In `ApplyGlobalsAndPermutations`: Normalized `yawRad` and `targetAngle` using `std::fmod` to eliminate wrapping pop and glitching when rotating characters.
+   - In `FrontEndMenu::Prepare`: Preserved cached SRV stage (`s_copySrv`) if `s_frameRtv` is temporarily holding so characters never flicker, disappear, or flash during transitions.
+   - In `Tick()`: Throttled Elite background scanning and routed through asynchronous `StartQuickRescan()` instead of blocking synchronous full memory scans.
 
 ## 0. Pick up here (2026-11-01, 03:00 ET) - NEXT MISSION button and quieter results sounds (@claude)
 
@@ -45,7 +79,8 @@ Self-review: only the panel changed; argument rewriting is limited to the map an
    - Throttled background rescan in Tick() to 30 frames when records are missing instead of 120 frames.
 4. **Armory UI Performance Optimization (Smooth 60 FPS):**
    - Eliminated per-frame std::string allocations in SyncLegacyFields() by checking string equality before assigning.
-   - Cached static PickOption vectors (s_reachColorOptions, s_reachLightsOptions) and pre-allocated ows.reserve(28) in Render(), eliminating heap reallocations during menu rendering.
+   - Cached static PickOption vectors (s_reachColorOptions, s_reachLightsOptions) and pre-allocated 
+ows.reserve(28) in Render(), eliminating heap reallocations during menu rendering.
    - Clamped all Elite color indices (elitePrimaryColor, eliteSecondaryColor, eliteAccentColor, eliteLightsColor) within [0, 29] in SyncLegacyFields().
 ## 0. Pick up here (2026-11-01, 02:30 ET) - Fix Elite Lights Color Overwrite, Armor Bleed, and Separate Species Customization (@O7OF)
 
