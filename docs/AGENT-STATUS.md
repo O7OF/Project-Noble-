@@ -30,11 +30,11 @@ can make.
 
 ## @deepseek
 
-- state: **idle** (last: Prophets' Hand Armory loader spike, no-go without pack, 21:30 ET)
+- state: **idle** (last: Armory overlay sheen fix, 21:45 ET)
 - since: -
 - working on: -
 - files expected: -
-- last commit: `3fc9450f`
+- last commit: `dc4d1be0`
 - test state: game audio muted in both checkouts (`tools/mute-game.ps1 -IncludeClaude`); restore with `-Unmute`; local settings 3840x2160. Appearance restored to Elite / Primary 13 / Secondary 29 / Accent 2 / visor 0 via `-pad-script`.
 
 ## @claude

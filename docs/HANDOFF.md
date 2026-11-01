@@ -7,7 +7,19 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 
 **Goal:** `noble-client.exe` loads MCC's own `haloreach.dll` (Halo: Reach) and drives it **without MCC**, like the existing
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
-MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.10.5 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.10.6 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+
+## 0. Pick up here (2026-10-31, 21:45 ET) - Armory overlay sheen no longer washes out armour (@deepseek)
+
+**Commit:** `dc4d1be0`. **Version:** 0.9.10.6. **Build:** 0 errors, 0 warnings (Release `noble-client` + `noble-dev`). Files: `src/ui/FrontEndMenu.cpp`, `src/common/Version.hpp`.
+
+**The bug.** `ArmoryStage::Draw` stacked 30 additive white/blue ellipses behind/over the model. Each ring added up to 1/255 per channel; at the centre that is roughly +30/255, which desaturated armour colours and produced the white/blue sheen.
+
+**Fix.** Remove the chest glow. Keep only a small blue floor pool below the feet (10 rings, no red/green), so the chamber keeps some atmosphere without an overlay on the body. Captures: `docs/screenshots/armory-overlay-before.png`, `armory-overlay-after.png`.
+
+**Evidence.** Same Elite profile and camera; before has the blue haze and lower colour contrast, after is cleaner and more saturated. This is a visual fix only; no armour data or engine lighting changed.
+
+Self-review: the model is darker with the key light gone. If the chamber now reads too dark, the next step is a real light behind the model or a mask-based rim light, not putting the additive white stack back.
 
 ## 0. Pick up here (2026-10-31, 21:30 ET) - Prophets' Hand Armory loader spike: no-go without an armour pack (@deepseek)
 
