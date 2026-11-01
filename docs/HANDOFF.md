@@ -13,7 +13,7 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 **Commit:** `acd2f83`. **Version:** 0.9.10 (resolved over @deepseek's 0.9.9.1 and 0.9.9.2, keeping their code). **Build:** noble-client, noble-dev and noble-dedicated, 0 errors, 0 warnings on the merged tree.
 
-**What was actually wrong** (reproduced by scripted pad before changing anything):
+**What was actually wrong.** Settings LB/RB and the Service Record D-pad were reproduced by scripted pad before the change; the others come from reading the code, and only their fixed behaviour was tested:
 - Settings had no LB/RB at all; only keyboard Q/E switched category. Left/right change the value on a value row, and focus starts on a row, so the only pad route to another category was Up past the first row. Nothing said so.
 - Service Record and Mods ignored the D-pad, and Mods couldn't scroll. ImGui's own navigation was enabled on those screens but had no focus to act on.
 - Server Browser moved through the unsorted list while drawing the sorted one, so the highlight jumped, and it never scrolled to the selection.
@@ -27,7 +27,7 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 **Evidence** (scripted pad, 1920x1080, `docs/screenshots/nav-*`): RB twice Graphics to Game Options; LB wraps to System; triggers scroll Controller; A toggled V-sync once; music rows; left stick on System; demo servers land on 18 after 3 downs and 2 triggers (not committed: that screen prints the public IP); Service Record Challenges scrolled; Community INVITE focus; Custom Game and Armory move. Pause in a real match: pointer resting on RESTART MATCH, two D-pad downs reached CONTROLS. Post-game: focus on PLAY AGAIN, then QUIT, then A on RETURN TO MENU logged once. Pad rebind: A then RB bound Team chat to RB and stayed on the page. Keyboard: E, Down, typed search still work.
 
-**Gaps.** No physical pad. COPY INVITE press count wasn't measured because it logs nothing: X fired in the lobby, and the cause is removed by design. Pause > Settings LB/RB and Post-game PLAY AGAIN / QUIT presses not run. Not run: mouse slider drag, sliders typed by value, Forge editor. Server Browser filter checkboxes, Direct Connect, Master Server and top buttons have no pad path (LB/RB mode filter, X refresh, Y favourite do). Mods' Workshop and folder buttons, Settings search and all typing need a mouse or keyboard. The Service Record's tab buttons are LB/RB only.
+**Gaps.** No physical pad. COPY INVITE was not verified: the script pressed X in the lobby, but the button logs nothing, so neither the copy nor the press count was checked. The double-press cause is removed by design, untested here. Pause > Settings LB/RB and Post-game PLAY AGAIN / QUIT presses not run. Not run: mouse slider drag, sliders typed by value, Forge editor. Server Browser filter checkboxes, Direct Connect, Master Server and top buttons have no pad path (LB/RB mode filter, X refresh, Y favourite do). Mods' Workshop and folder buttons, Settings search and all typing need a mouse or keyboard. The Service Record's tab buttons are LB/RB only.
 
 **Heads-up.** The Server Browser header prints the public IP, an older behaviour and a risk for screenshots and streams; never commit that capture. `git pull --autostash` conflicted on Version.hpp mid-test; resolved without loss.
 
