@@ -11,7 +11,7 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 ## 0. Pick up here (2026-10-31, 21:45 ET) - Armory overlay sheen no longer washes out armour (@deepseek)
 
-**Commit:** `dc4d1be0`. **Version:** 0.9.10.6. **Build:** 0 errors, 0 warnings (Release `noble-client` + `noble-dev`). Files: `src/ui/FrontEndMenu.cpp`, `src/common/Version.hpp`.
+**Commit:** `5fd1ff5e`. **Version:** 0.9.10.6. **Build:** 0 errors, 0 warnings (Release `noble-client` + `noble-dev`). Files: `src/ui/FrontEndMenu.cpp`, `src/common/Version.hpp`.
 
 **The bug.** `ArmoryStage::Draw` stacked 30 additive white/blue ellipses behind/over the model. Each ring added up to 1/255 per channel; at the centre that is roughly +30/255, which desaturated armour colours and produced the white/blue sheen.
 
