@@ -11,7 +11,7 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 ## 0. Pick up here (2026-10-31, 22:00 ET) - Elite Primary is now the base colour, not the overlay (@deepseek, from Tyler/O7OF feedback)
 
-**Commit:** `515d8339`. **Version:** 0.9.10.7. **Build:** 0 errors, 0 warnings (Release `noble-client` + `noble-dev`). Files: `src/engine/ReachArmory.cpp`, `src/common/Version.hpp`.
+**Commit:** `dcba008d`. **Version:** 0.9.10.7. **Build:** 0 errors, 0 warnings (Release `noble-client` + `noble-dev`). Files: `src/engine/ReachArmory.cpp`, `src/common/Version.hpp`.
 
 **The bug.** The Elite ARGB write kept the shader's stock rank colour in `cur[0]` ("base / permutation") and wrote `Pri` to `cur[3]`, the overlay slot. Primary therefore acted as secondary/overlay: White Primary washed the whole model, and changing Secondary appeared to "unblend" it. Palette colours made it obvious; custom wheel values hid it because the overlay was less bright.
 
