@@ -39,10 +39,10 @@ can make.
 
 ## @claude
 
-- state: **idle** (last: team roster, rotation countdown, mode cleanup, 01:00 ET)
-- since: -
-- working on: -
-- files expected: -
+- state: **working**
+- since:  2026-11-01
+- working on:  campaign NEXT MISSION button and quieter results-screen sounds
+- files expected:  src/ui/PauseMenu.cpp
 - second checkout: `D:\Halo-Reach-Community-Edition-claude` (own `build\`, so it does not touch @deepseek's tree or binary). Test client runs as `noble-client-claude.exe`, so kills by name miss it
 - last commit: `fe88e49`
 
