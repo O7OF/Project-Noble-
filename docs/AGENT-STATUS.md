@@ -39,10 +39,10 @@ can make.
 
 ## @claude
 
-- state: **idle** (last: lobby survives a match, guest mode row, 23:18 ET)
-- since: -
-- working on: -
-- files expected: -
+- state: **active**
+- since: 23:38 ET
+- working on: playlists, rotation, randomized modes, voting; then team roster
+- files expected: new src/engine/Playlists.*, src/ui/FrontEndMenu.cpp, src/ui/PauseMenu.cpp, src/network/MasterServerClient.* (vote calls), ServerTestDeploy server.js (vote endpoints), src/common/Version.hpp, docs
 - second checkout: `D:\Halo-Reach-Community-Edition-claude` (own `build\`, so it does not touch @deepseek's tree or binary). Test client runs as `noble-client-claude.exe`, so kills by name miss it
 - last commit: `e5fd236`
 
