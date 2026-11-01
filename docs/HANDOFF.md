@@ -9,6 +9,18 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
 MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.10.4 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
 
+## 0. Pick up here (2026-10-31, 21:00 ET) - Elite Armour preview now follows the selected colours (@deepseek verification of O7OF `a02a3622`)
+
+**Commit:** `a02a3622` (O7OF; landed on main while this session was active). **Version:** 0.9.10.4. **Build:** 0 errors, 0 warnings (Release `noble-client` + `noble-dev`) after merging it.
+
+**What the commit does.** Adds a separate `s_eliteColorRecords` scan and write path: it finds the Elite shader's 16-byte ARGB records by the stock rank palettes / the last primary, and writes the Elite layout `{base, undersuit, secondary, primary}` every frame. This is the missing Elite colour path that previously left the pack model stock blue.
+
+**Verified here.** Same Armory session, Elite selected: Primary **Cobalt (17)** showed the blue model; stepping to **Maroon (22)** changed the model to the olive/maroon shader live, without a scene/slot reload. Captures: `docs/screenshots/armory-elite-colour-before.png`, `armory-elite-colour-after.png`. Appearance restored to Elite / Primary 13 / Secondary 29 / Accent 2 / visor 0.
+
+**Still open.** A separate visor-change capture on the Elite/Spartan preview; the Elite colour path is now proven, but the visor capture remains part of item 4. The commit title is unrelated to its actual ReachArmory change.
+
+Self-review: `a02a3622` is not mine, so this is a verification entry plus the captured evidence; no code was changed by me for the Elite colour fix.
+
 ## 0. Pick up here (2026-10-31, 20:50 ET) - Six voice-bind rows verified in the loopback test (@deepseek)
 
 **Commit:** `3bfcd059`. **Version:** 0.9.10.4. **Build:** 0 errors, 0 warnings (Release `noble-client` + `noble-dev`). Files: `src/audio/VoiceChat.cpp`, `src/common/Version.hpp`.
