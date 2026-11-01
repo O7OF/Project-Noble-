@@ -30,11 +30,11 @@ can make.
 
 ## @deepseek
 
-- state: **idle** (last: six Spartan visor unlocks + Prophets' Hand Firefight variant test, 20:12 ET)
+- state: **idle** (last: separate party/team/global voice binds, 20:25 ET)
 - since: -
 - working on: -
 - files expected: -
-- last commit: `494e579`
+- last commit: `61c797a`
 - test state: game audio muted in both checkouts (`tools/mute-game.ps1 -IncludeClaude`); restore with `-Unmute`; local settings 3840x2160. Appearance restored to Elite / Primary 13 / Secondary 29 / Accent 2 / visor 0 via `-pad-script`.
 
 ## @claude

@@ -7,7 +7,17 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 
 **Goal:** `noble-client.exe` loads MCC's own `haloreach.dll` (Halo: Reach) and drives it **without MCC**, like the existing
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
-MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.9.1 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.9.2 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+
+## 0. Pick up here (2026-10-31, 20:25 ET) - Separate party/team/global voice push-to-talk binds (@deepseek)
+
+**Commit:** `61c797a`. **Version:** 0.9.9.2. **Build:** 0 errors, 0 warnings (Release `noble-client` + `noble-dev`). Files: `src/engine/KeyBindings.*`, `src/audio/VoiceChat.cpp`, `src/common/Version.hpp`.
+
+**What changed.** Added three Noble actions: **Voice to party**, **Voice to team**, **Voice to everyone** (keyboard defaults F6/F7/F8; user-rebindable). They appear automatically in Settings > Controls > Keyboard & Mouse because the binding list reads `KeyBindings::ActionsIn(ActionGroup::Actions)`. `VoiceChat` reads all four keys every 500 ms; the specific channel key wins over the generic PUSH TO TALK, with priority party > team > everyone. The generic PTT and the TALK TO setting remain the fallback, so existing users are unchanged.
+
+**Not verified.** Two-client channel routing, a real microphone, controller-specific channel binds (the controller still has one PUSH TO TALK plus TALK TO; separate pad channel binds are not implemented), and key-rebind capture for the three new rows. Do not mark the voice-channel feature done until the two-client test.
+
+Self-review: F6-F8 are global defaults and could collide with another program's hotkeys; they are rebindable. PARTY still means ALL at the transport level until Noble has parties. Holding two channel keys picks the narrower channel, which is a rule I chose, not a Reach rule.
 
 ## 0. Pick up here (2026-10-31, 20:12 ET) - Six new Spartan visor finishes as unlocks; Prophets' Hand Firefight variant test (@deepseek)
 
