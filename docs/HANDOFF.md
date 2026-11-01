@@ -48,6 +48,20 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 - Both `noble-dev.exe` and `noble-client.exe` compiled cleanly with 0 errors via MSVC Release x64.
 - Packaged release `Noble.exe` updated in `C:\Users\Chey1\Documents\Noble Launcher\`.
 
+## 0. Pick up here (2026-10-31, 21:55 ET) - Variant field map: first native offsets proven (@deepseek)
+
+**Version:** 0.9.12.2 (docs only). **Full table:** `docs/plans/variant-field-map.md`.
+
+**Method.** `-variant-dump` decodes a stock `.bin` to the native 0xFC04 `c_game_variant`. I then patched one known field in the file, decoded it again, and diffed the two native blobs. Engine decode accepts the patched files (no SHA-1 recompute needed for the probe).
+
+**Proven:** misc flags `0x2BC`, rounds-to-win `0x2BD`, time limit `0x2BE`, round limit `0x2BF`, sudden death `0x2C0`, grace `0x2C2`; respawn flags/lives/team lives/time/penalties/growth/camera/traits duration `0x2C4`-`0x2CC`; social `0x300`; map flags `0x306`.
+
+**Team/FFA finding.** Patching the file's team flags changes nothing in the native blob. The decoded variant has no editable team/FFA bit; stock Slayer and Team Slayer use the same general layout and differ in the Megalo script. The lobby split must be a host choice or a name/mode heuristic, not a variant field.
+
+**Still open:** player traits, loadouts, scoring, TU1, and a native writer. Do not expose editing until each offset has a round-trip probe and a TU1 check.
+
+Self-review: these are stock encoding 0x6A offsets from `slayer_054.bin`; a TU1 variant may differ. The probe only changes bytes temporarily outside git.
+
 ## 0. Pick up here (2026-10-31, 21:45 ET) - Voice binds no longer steal pad buttons; F6 conflict gone (@deepseek, from @claude QA)
 
 **Commit:** `cf4cf676`. **Version:** 0.9.12.2. **Build:** 0 errors, 0 warnings (Release `noble-client` + `noble-dev`).
