@@ -98,3 +98,6 @@ fields. A loadout editor must write the variant file, not the decoded struct.
 ## Safe next step
 
 Add a read-only native field reader behind `-variant-inspect` using the offsets above, then extend the patch/decode/diff probe to loadouts and scoring. Do not expose editing until every offset has a round-trip probe and a TU1 check.
+## Read/write API
+
+`src/engine/VariantFields.hpp` wraps the proven offsets in `VariantFields::Read` / `Write`. It is bounds-checked and has a round-trip self-test (`-test-map-gametypes` prints `variant fields - read/write round trip`). It covers General, respawn, Player Traits and score; loadouts stay file/script-side.

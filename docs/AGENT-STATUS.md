@@ -30,11 +30,11 @@ can make.
 
 ## @deepseek
 
-- state: **idle** (last: variant score field mapped, 22:10 ET)
+- state: **idle** (last: VariantFields read/write API, 22:15 ET)
 - since: -
 - working on: -
 - files expected: -
-- last commit: `45df5c47`
+- last commit: `b3a93b54`
 - test state: game audio muted in both checkouts (`tools/mute-game.ps1 -IncludeClaude`); restore with `-Unmute`; local settings 3840x2160. Appearance restored to Elite / Primary 13 / Secondary 29 / Accent 2 / visor 0 via `-pad-script`.
 
 ## @claude
