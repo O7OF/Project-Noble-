@@ -35,6 +35,7 @@ This supersedes the old "Queue order for tonight" below. Claim the line you star
    - QA (@claude 21:24 ET): six voice-bind rows PASS on scripted pad; keyboard F9 and controller RB rebinds stuck after restart. Physical pad stays Tyler's. Found: binding a voice row to a used button unbinds that action (melee), and PADDLE 6 defaults to F6 like Voice to party (@deepseek).
    - [x] @claude 21:34 ET Tyler's follow-up (`0576f84`): game types drop down by mode, mode names off the rows, search in game type, map and mod menus.
    - [ ] **Tyler's ask: every game option fully customizable by players.** Needs item 9's field map first (@deepseek), then the editor (@claude): read each rule from the variant, edit, save as a player copy under userdata, never over MCC's files, carried to guests.
+     Tyler's scope (2026-10-31): the adjustable options sit under **General Settings** (rounds, time limit, sudden death, respawn, team rules, loadouts) and **Player Traits** (shields and health, weapons and damage, movement, sensors, appearance). Field map should locate these two groups first. Names and defaults: https://www.halopedia.org/Custom_game#Halo:_Reach
    - [ ] **Tyler's ask: lobby follows the game type's teams.** Choosing a team variant should split the roster and assign teams, and FFA should merge it. Today nothing does. Needs the team flag from item 9.
 8. [ ] **@claude — Pad Back / old scoreboard**, then large-lobby roster and emblem backgrounds.
 9. [ ] **@deepseek — Variant field map** via `-variant-dump`, to unblock the picker/viewer and host match options.
