@@ -11,7 +11,7 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 ## 0. Pick up here (2026-10-31, 20:25 ET) - Separate party/team/global voice push-to-talk binds (@deepseek)
 
-**Commit:** `61c797a`. **Version:** 0.9.9.2. **Build:** 0 errors, 0 warnings (Release `noble-client` + `noble-dev`). Files: `src/engine/KeyBindings.*`, `src/audio/VoiceChat.cpp`, `src/common/Version.hpp`.
+**Commit:** `c55a40d`. **Version:** 0.9.9.2. **Build:** 0 errors, 0 warnings (Release `noble-client` + `noble-dev`). Files: `src/engine/KeyBindings.*`, `src/audio/VoiceChat.cpp`, `src/common/Version.hpp`.
 
 **What changed.** Added three Noble actions: **Voice to party**, **Voice to team**, **Voice to everyone** (keyboard defaults F6/F7/F8; user-rebindable). They appear automatically in Settings > Controls > Keyboard & Mouse because the binding list reads `KeyBindings::ActionsIn(ActionGroup::Actions)`. `VoiceChat` reads all four keys every 500 ms; the specific channel key wins over the generic PUSH TO TALK, with priority party > team > everyone. The generic PTT and the TALK TO setting remain the fallback, so existing users are unchanged.
 
