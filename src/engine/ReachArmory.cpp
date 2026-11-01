@@ -401,6 +401,7 @@ static bool ScanGlobalsTable() {
 }
 
 static void RememberRegion(uintptr_t addr) {
+    if (s_recordRegions.size() >= 16) return;
     MEMORY_BASIC_INFORMATION mbi{};
     if (VirtualQuery(reinterpret_cast<LPCVOID>(addr), &mbi, sizeof(mbi)) == 0) return;
     const auto region = std::make_pair(reinterpret_cast<uintptr_t>(mbi.BaseAddress), static_cast<size_t>(mbi.RegionSize));
@@ -494,10 +495,6 @@ static bool MatchEliteColorPattern(const uint32_t cur[4], uint32_t lastPri, uint
         return false;
     }
 
-    if (lastPri != 0 && (cur[0] == lastPri || cur[3] == lastPri || cur[3] == lastSec || cur[1] == lastPri)) {
-        return true;
-    }
-
     // Reach 11 stock Elite rank preset ARGB palettes (from host-probe.exe scan_elite @ 0x1407B6658)
     static constexpr uint32_t kStockElitePatterns[11][4] = {
         { 0xFF231831u, 0xFF2B122Cu, 0xFFEF5046u, 0xFF4D2947u }, // 00
@@ -528,20 +525,28 @@ static bool MatchEliteColorPattern(const uint32_t cur[4], uint32_t lastPri, uint
             return true;
         }
     }
+
+    // Both Primary (cur[0]) and Secondary (cur[3]) MUST match if custom colors were previously applied
+    if (lastPri != 0 && lastSec != 0 && cur[0] == lastPri && cur[3] == lastSec) {
+        return true;
+    }
+
     return false;
 }
 
 static size_t ScanColorRecordsIn(const std::vector<std::pair<uintptr_t, size_t>>& chunks, bool quiet) {
     // Stock 16-byte ARGB color pattern in mainmenu_all.map: { 0xFF585858, 0xFF595959, 0xFF2FA0CB, 0xFFC7A167 }
     static constexpr uint32_t kStockColors[4] = { 0xFF585858u, 0xFF595959u, 0xFF2FA0CBu, 0xFFC7A167u };
-    uint32_t prevColors[4];
-    uint32_t lastElitePri = 0, lastEliteSec = 0;
+    uint32_t prevColors[4] = {};
     {
         std::lock_guard<std::mutex> lock(s_dataMutex);
         std::memcpy(prevColors, s_lastColorWords.data(), sizeof(prevColors));
-        lastElitePri = s_lastElitePriArgb;
-        lastEliteSec = s_lastEliteSecArgb;
     }
+    const bool hasPrevColors = ((prevColors[0] >> 24) == 0xFFu &&
+                                (prevColors[1] >> 24) == 0xFFu &&
+                                (prevColors[2] >> 24) == 0xFFu &&
+                                (prevColors[3] >> 24) == 0xFFu &&
+                                prevColors[0] != 0 && prevColors[1] != 0);
 
     std::vector<uintptr_t> found;
     for (const auto& chunk : chunks) {
@@ -549,27 +554,27 @@ static size_t ScanColorRecordsIn(const std::vector<std::pair<uintptr_t, size_t>>
         const size_t size = chunk.second;
         {
             std::vector<uint8_t> buf(size);
-            {   // never scan our own copy buffer (RR skips its read buffer the same way)
-                const uintptr_t self = reinterpret_cast<uintptr_t>(buf.data());
-                if (base < self + size && self < base + size) continue;
-            }
+            const uintptr_t self = reinterpret_cast<uintptr_t>(buf.data());
+            if (base < self + size && self < base + size) continue;
             if (SafeCopyMem(buf.data(), reinterpret_cast<const void*>(base), size)) {
                 for (size_t off = 0; off + 16 <= size; off += 4) {
                     const uint32_t* cur = reinterpret_cast<const uint32_t*>(buf.data() + off);
                     if (std::memcmp(cur, kStockColors, 16) == 0 ||
-                        std::memcmp(cur, prevColors, 16) == 0 ||
-                        MatchEliteColorPattern(cur, lastElitePri, lastEliteSec)) {
+                        (hasPrevColors && std::memcmp(cur, prevColors, 16) == 0)) {
                         found.push_back(base + off);
+                        if (found.size() >= 16) break;
                     }
                 }
             }
         }
+        if (found.size() >= 16) break;
     }
 
     size_t added = 0;
     if (!found.empty()) {
         std::lock_guard<std::mutex> lock(s_dataMutex);
         for (uintptr_t rec : found) {
+            if (s_colorRecords.size() >= 16) break;
             if (std::find(s_colorRecords.begin(), s_colorRecords.end(), rec) == s_colorRecords.end()) {
                 s_colorRecords.push_back(rec);
                 RememberRegion(rec);
@@ -590,6 +595,11 @@ static size_t ScanEliteColorRecordsIn(const std::vector<std::pair<uintptr_t, siz
         lastSec = s_lastEliteSecArgb;
         std::memcpy(prevColors, s_lastColorWords.data(), sizeof(prevColors));
     }
+    const bool hasPrevColors = ((prevColors[0] >> 24) == 0xFFu &&
+                                (prevColors[1] >> 24) == 0xFFu &&
+                                (prevColors[2] >> 24) == 0xFFu &&
+                                (prevColors[3] >> 24) == 0xFFu &&
+                                prevColors[0] != 0 && prevColors[3] != 0);
 
     std::vector<uintptr_t> found;
     for (const auto& chunk : chunks) {
@@ -602,19 +612,22 @@ static size_t ScanEliteColorRecordsIn(const std::vector<std::pair<uintptr_t, siz
             if (SafeCopyMem(buf.data(), reinterpret_cast<const void*>(base), size)) {
                 for (size_t off = 0; off + 16 <= size; off += 4) {
                     const uint32_t* cur = reinterpret_cast<const uint32_t*>(buf.data() + off);
-                    if (std::memcmp(cur, prevColors, 16) == 0 ||
+                    if ((hasPrevColors && std::memcmp(cur, prevColors, 16) == 0) ||
                         MatchEliteColorPattern(cur, lastPri, lastSec)) {
                         found.push_back(base + off);
+                        if (found.size() >= 16) break;
                     }
                 }
             }
         }
+        if (found.size() >= 16) break;
     }
 
     size_t added = 0;
     if (!found.empty()) {
         std::lock_guard<std::mutex> lock(s_dataMutex);
         for (uintptr_t rec : found) {
+            if (s_eliteColorRecords.size() >= 16) break;
             if (std::find(s_eliteColorRecords.begin(), s_eliteColorRecords.end(), rec) == s_eliteColorRecords.end()) {
                 s_eliteColorRecords.push_back(rec);
                 RememberRegion(rec);
@@ -629,10 +642,19 @@ static size_t ScanEliteColorRecordsIn(const std::vector<std::pair<uintptr_t, siz
 static size_t ScanSuitRecordsIn(const std::vector<std::pair<uintptr_t, size_t>>& chunks, bool quiet) {
     // Stock 16-byte suit float[4] in mainmenu_all.map: { 0.9960785f, 0.9921569f, 0.98823535f, 1.0f }
     static constexpr float kStockSuit[4] = { 0.9960785f, 0.9921569f, 0.98823535f, 1.0f };
-    float prevSuit[4];
+    float prevSuit[4] = {};
     {
         std::lock_guard<std::mutex> lock(s_dataMutex);
         std::memcpy(prevSuit, s_lastSuitFloats.data(), sizeof(prevSuit));
+    }
+    // Only match prevSuit if it is distinct from generic quaternions/vectors like (0,0,0,1)
+    bool hasPrevSuit = false;
+    if (std::isfinite(prevSuit[0]) && std::isfinite(prevSuit[1]) &&
+        std::isfinite(prevSuit[2]) && std::isfinite(prevSuit[3]) &&
+        std::abs(prevSuit[3] - 1.0f) < 0.01f) {
+        if (prevSuit[0] > 0.02f || prevSuit[1] > 0.02f || prevSuit[2] > 0.02f) {
+            hasPrevSuit = true;
+        }
     }
 
     std::vector<uintptr_t> found;
@@ -641,26 +663,27 @@ static size_t ScanSuitRecordsIn(const std::vector<std::pair<uintptr_t, size_t>>&
         const size_t size = chunk.second;
         {
             std::vector<uint8_t> buf(size);
-            {   // never scan our own copy buffer (RR skips its read buffer the same way)
-                const uintptr_t self = reinterpret_cast<uintptr_t>(buf.data());
-                if (base < self + size && self < base + size) continue;
-            }
+            const uintptr_t self = reinterpret_cast<uintptr_t>(buf.data());
+            if (base < self + size && self < base + size) continue;
             if (SafeCopyMem(buf.data(), reinterpret_cast<const void*>(base), size)) {
                 for (size_t off = 0; off + 16 <= size; off += 4) {
                     const float* f = reinterpret_cast<const float*>(buf.data() + off);
                     if (std::memcmp(f, kStockSuit, 16) == 0 ||
-                        std::memcmp(f, prevSuit, 16) == 0) {
+                        (hasPrevSuit && std::memcmp(f, prevSuit, 16) == 0)) {
                         found.push_back(base + off);
+                        if (found.size() >= 16) break;
                     }
                 }
             }
         }
+        if (found.size() >= 16) break;
     }
 
     size_t added = 0;
     if (!found.empty()) {
         std::lock_guard<std::mutex> lock(s_dataMutex);
         for (uintptr_t rec : found) {
+            if (s_suitRecords.size() >= 16) break;
             if (std::find(s_suitRecords.begin(), s_suitRecords.end(), rec) == s_suitRecords.end()) {
                 s_suitRecords.push_back(rec);
                 RememberRegion(rec);
@@ -835,7 +858,7 @@ static void WriteColorsAndSuit(const ReachArmorySelection& sel) {
             float cur[4] = {};
             if (!SafeCopyMem(cur, reinterpret_cast<const void*>(suit), sizeof(cur))) return true;
             for (int i = 0; i < 4; ++i) {
-                if (!std::isfinite(cur[i]) || cur[i] < -0.1f || cur[i] > 10.0f) return true;
+                if (!std::isfinite(cur[i]) || cur[i] < 0.0f || cur[i] > 6.0f) return true;
             }
             return !SafeWriteFloats(suit, suitFloats, 4);
         }),
