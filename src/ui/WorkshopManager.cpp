@@ -178,19 +178,31 @@ void WorkshopManager::Render() {
     if (ImGui::Button("Refresh List")) {
         RefreshMods(m_workshopPath, m_localModsPath);
     }
+    ImGui::SameLine();
+    static char s_search[64] = {};
+    ImGui::SetNextItemWidth(em * 16.0f);
+    ImGui::InputTextWithHint("##modsearch", "Search mods", s_search, sizeof(s_search));
+    const auto matches = [&](const ModItem& mod) {
+        const auto lower = [](std::string s) { for (char& c : s) c = static_cast<char>(::tolower(static_cast<unsigned char>(c))); return s; };
+        return lower(mod.title).find(lower(s_search)) != std::string::npos;
+    };
     ImGui::Spacing();
 
     // Controller: D-pad or stick picks a mod, the triggers jump, X refreshes.
     bool scrollToSelected = false;
     if (!m_mods.empty() && !ImGui::GetIO().WantTextInput) {
-        const int count = static_cast<int>(m_mods.size());
+        std::vector<int> shown;
+        for (int i = 0; i < static_cast<int>(m_mods.size()); ++i) if (matches(m_mods[i])) shown.push_back(i);
+        const int count = static_cast<int>(shown.size());
         int move = 0;
         if (UiPad::Down()) move = 1;
         if (UiPad::Up()) move = -1;
         if (UiPad::PageDown()) move = 8;
         if (UiPad::PageUp()) move = -8;
-        if (move != 0) {
-            m_selectedModIndex = m_selectedModIndex < 0 ? 0 : std::clamp(m_selectedModIndex + move, 0, count - 1);
+        if (move != 0 && count > 0) {
+            int position = -1;
+            for (int k = 0; k < count; ++k) if (shown[k] == m_selectedModIndex) position = k;
+            m_selectedModIndex = shown[position < 0 ? 0 : std::clamp(position + move, 0, count - 1)];
             scrollToSelected = true;
             MenuSounds::Scroll();
         }
@@ -210,6 +222,7 @@ void WorkshopManager::Render() {
 
         for (int i = 0; i < static_cast<int>(m_mods.size()); ++i) {
             const ModItem& mod = m_mods[i];
+            if (!matches(mod)) continue;
             ImGui::PushID(i);   // titles can repeat; the row index keeps every widget ID unique
             ImGui::TableNextRow();
 

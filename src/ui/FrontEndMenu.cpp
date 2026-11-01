@@ -748,8 +748,9 @@ bool DrawSourceTabs(const Ui& ui, ImVec2 pos, int& active, int moddedCount) {
         Text(ui, NobleStyle::TitleFont(), 20.0f, ImVec2(x + 12.0f * ui.s, pos.y + 4.0f * ui.s), on ? kWhite : kDim, text);
         x += w + 6.0f * ui.s;
     }
-    if (ImGui::IsKeyPressed(ImGuiKey_Q, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false)) next = 0;
-    if (ImGui::IsKeyPressed(ImGuiKey_E, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false)) next = 1;
+    const bool typing = ImGui::GetIO().WantTextInput;   // Q and E are letters in a search box
+    if ((!typing && ImGui::IsKeyPressed(ImGuiKey_Q, false)) || ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false)) next = 0;
+    if ((!typing && ImGui::IsKeyPressed(ImGuiKey_E, false)) || ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false)) next = 1;
     if (next == active) return false;
     MenuSounds::Tab(next > active ? 1 : -1);
     active = next;
@@ -1554,6 +1555,10 @@ struct MenuState {
     uint64_t lobbyLaunchSkulls = 0;
     double lastLobbyPoll = 0.0;
     int lobbyMenuRow = 0;          // Focused row in pre-game options list
+    char mapSearch[64] = {};            // the map, mission and mod lists' search text
+    int mapSearchRow = 0;
+    char variantSearch[64] = {};        // the game type lists' search text
+    std::string variantOpenMode;        // the one game type category dropped down
     bool variantPickerOpen = false;     // Custom Game / Firefight: the full game type list replaces the setup screen
     int variantPickerRow = 0;
     bool variantPickerModded = false;
@@ -1893,6 +1898,12 @@ std::vector<MapEntry> ModMaps(const ModEntry& mod, const std::vector<ModMap>& li
     return out;
 }
 
+std::vector<MapEntry> BaseMaps(const MenuMap* maps, int count) {
+    std::vector<MapEntry> out;
+    for (int i = 0; i < count; ++i) out.push_back({ maps[i].scenario, maps[i].name, maps[i].blurb, {}, {}, {}, {}, {}, true });
+    return out;
+}
+
 enum class ModMode { Campaign, Firefight, Multiplayer };
 std::string OpenKey(ModMode mode, const ModEntry& mod) { return std::to_string(static_cast<int>(mode)) + ":" + mod.id; }
 
@@ -1926,6 +1937,36 @@ void ToggleMod(std::set<std::string>& open, ModMode mode, const ModEntry& mod) {
     if (!open.erase(k)) open.insert(k);
 }
 
+bool ContainsNoCase(std::string text, std::string needle) {
+    const auto lower = [](std::string& s) { for (char& c : s) c = static_cast<char>(::tolower(static_cast<unsigned char>(c))); };
+    lower(text);
+    lower(needle);
+    return text.find(needle) != std::string::npos;
+}
+
+// One search box for every list. Returns true when the text changed. Typing needs a keyboard.
+bool DrawSearchBox(const Ui& ui, const char* id, ImVec2 pos, float width, char* text, size_t size, const char* hint) {
+    ImGui::SetCursorScreenPos(pos);
+    ImGui::SetNextItemWidth(width);
+    (void)ui;
+    return ImGui::InputTextWithHint(id, hint, text, size);
+}
+
+// The list to show: normally `ModdedMaps` or the stock maps; while searching, every matching map with no mod headings.
+std::vector<MapEntry> ListedMaps(bool modded, const std::vector<const ModEntry*>& mods, ModMode mode, const MenuMap* base, int baseCount,
+                                 const std::set<std::string>& open, const std::string& carrier, const char* query) {
+    std::set<std::string> everyMod = open;
+    if (query[0] != 0) for (const ModEntry* mod : mods) everyMod.insert(OpenKey(mode, *mod));
+    std::vector<MapEntry> all = modded ? ModdedMaps(mods, mode, base, baseCount, everyMod, carrier) : BaseMaps(base, baseCount);
+    if (query[0] == 0) return all;
+    std::vector<MapEntry> hits;
+    for (MapEntry& m : all) {
+        if (m.header) continue;
+        if (ContainsNoCase(m.name, query) || (m.mod && ContainsNoCase(m.mod->title, query))) hits.push_back(std::move(m));
+    }
+    return hits;
+}
+
 void FixSelection(const std::vector<MapEntry>& list, int& selected) {
     selected = list.empty() ? 0 : std::clamp(selected, 0, static_cast<int>(list.size()) - 1);
 }
@@ -1946,11 +1987,6 @@ std::vector<ListItem> ToItems(const std::vector<MapEntry>& list) {
     return items;
 }
 
-std::vector<MapEntry> BaseMaps(const MenuMap* maps, int count) {
-    std::vector<MapEntry> out;
-    for (int i = 0; i < count; ++i) out.push_back({ maps[i].scenario, maps[i].name, maps[i].blurb, {}, {}, {}, {}, {}, true });
-    return out;
-}
 
 Screen ParseScreenArg(const std::wstring& v) {
     const std::wstring s = Lower(v);
@@ -2304,41 +2340,101 @@ static const char* GameTypeBlurb(const std::string& type) {
     return "A variant with its own rules.";
 }
 
-// The variants a map can host, by mode and then name, so related ones sit together. Rows carry the mode as text.
+// The game types a map can host, grouped by mode. A heading drops down its variants, one mode at a time. Searching
+// shows every match as a plain list, and a single mode (Firefight) needs no headings.
+struct VariantRow {
+    const MenuVariant* variant = nullptr;   // nullptr on a heading
+    std::string mode;
+    std::string type;
+};
 struct VariantChoices {
-    std::vector<const MenuVariant*> offered;
+    std::vector<VariantRow> rows;
     std::vector<ListItem> items;
 };
-static VariantChoices BuildVariantChoices(const std::vector<MenuVariant>& list, const std::string& scenario, bool unrestricted) {
-    VariantChoices out;
+static std::string VariantMode(const MenuVariant& v) { return v.type.empty() ? std::string("Other") : std::string(MapGameTypes::Name(v.type)); }
+
+static VariantChoices BuildVariantChoices(const std::vector<MenuVariant>& list, const std::string& scenario, bool unrestricted,
+                                          const std::string& openMode, const char* query) {
+    std::vector<const MenuVariant*> offered;
     for (const MenuVariant& v : list) {
-        if (unrestricted || v.type.empty() || MapGameTypes::Supports(scenario, v.type) || v.type == "firefight") out.offered.push_back(&v);
+        if (unrestricted || v.type.empty() || MapGameTypes::Supports(scenario, v.type)) offered.push_back(&v);
     }
-    const auto mode = [](const MenuVariant* v) { return v->type.empty() ? std::string("~") : std::string(MapGameTypes::Name(v->type)); };
-    std::stable_sort(out.offered.begin(), out.offered.end(), [&](const MenuVariant* a, const MenuVariant* b) {
-        const std::string ma = mode(a), mb = mode(b);
+    std::stable_sort(offered.begin(), offered.end(), [](const MenuVariant* a, const MenuVariant* b) {
+        const std::string ma = VariantMode(*a), mb = VariantMode(*b);
         return ma != mb ? ma < mb : a->label < b->label;
     });
-    for (const MenuVariant* v : out.offered) {
-        // "Slayer" needn't say it's Slayer; the row names the mode only when the variant's own name doesn't.
-        const std::string typeName = v->type.empty() ? std::string() : MapGameTypes::Name(v->type);
-        const bool same = typeName.empty() || _stricmp(typeName.c_str(), v->label.c_str()) == 0;
-        out.items.push_back({ same ? v->label : v->label + "  \xC2\xB7  " + typeName });
+    VariantChoices out;
+    const bool searching = query[0] != 0;
+    const bool oneMode = !offered.empty() && VariantMode(*offered.front()) == VariantMode(*offered.back());
+    std::string heading;
+    for (const MenuVariant* v : offered) {
+        const std::string mode = VariantMode(*v);
+        if (searching) {
+            if (!ContainsNoCase(v->label, query) && !ContainsNoCase(mode, query)) continue;
+        } else if (!oneMode && mode != heading) {
+            heading = mode;
+            const auto count = std::count_if(offered.begin(), offered.end(), [&](const MenuVariant* o) { return VariantMode(*o) == mode; });
+            out.rows.push_back({ nullptr, mode, v->type });
+            out.items.push_back({ mode + "  (" + std::to_string(count) + ")", true, true, mode == openMode });
+        }
+        if (searching || oneMode || mode == openMode) {
+            out.rows.push_back({ v, mode, v->type });
+            out.items.push_back({ v->label });
+        }
     }
     return out;
 }
 
-// Name, mode and description of one variant; the file name and a note about rules too, unless `compact` (the lobby's tight column).
-static void DrawVariantInfo(const Ui& ui, ImVec2 pos, float width, const MenuVariant& v, bool compact = false) {
+// Opens a game type list on the current variant: its mode dropped down and its row selected.
+static void BeginVariantList(MenuState& st, const std::vector<MenuVariant>& list, const std::string& scenario, bool unrestricted, const MenuVariant* current) {
+    st.variantSearch[0] = 0;
+    st.variantOpenMode = current ? VariantMode(*current) : std::string();
+    st.variantPickerRow = 0;
+    const VariantChoices choices = BuildVariantChoices(list, scenario, unrestricted, st.variantOpenMode, st.variantSearch);
+    for (size_t i = 0; i < choices.rows.size(); ++i) {
+        if (choices.rows[i].variant == current) st.variantPickerRow = static_cast<int>(i);
+    }
+}
+
+// Search box and list. A heading toggles; returns the variant chosen, if any. `shown` gets the selected row.
+static const MenuVariant* DrawVariantList(const Ui& ui, MenuState& st, const std::vector<MenuVariant>& list, const std::string& scenario, bool unrestricted,
+                                          ImVec2 pos, float width, float rowHeight, int rowCount, bool keyboard, VariantRow& shown) {
+    if (DrawSearchBox(ui, "##variant_search", pos, width, st.variantSearch, sizeof(st.variantSearch), "Search game types")) st.variantPickerRow = 0;
+    const ImVec2 listPos(pos.x, pos.y + 40.0f * ui.s);
+    VariantChoices choices = BuildVariantChoices(list, scenario, unrestricted, st.variantOpenMode, st.variantSearch);
+    if (choices.items.empty()) choices.items.push_back({ "No game type matches", false, false });
+    const int hit = DrawList(ui, "variant_list", listPos, width, choices.items, st.variantPickerRow, keyboard && !ImGui::GetIO().WantTextInput, rowHeight, rowCount, true);
+    const MenuVariant* picked = nullptr;
+    if (hit >= 0 && hit < static_cast<int>(choices.rows.size())) {
+        if (choices.rows[hit].variant) {
+            picked = choices.rows[hit].variant;
+        } else {
+            // Rows shift when another mode closes, so the selection follows the heading that was pressed.
+            const std::string mode = choices.rows[hit].mode;
+            st.variantOpenMode = st.variantOpenMode == mode ? std::string() : mode;
+            choices = BuildVariantChoices(list, scenario, unrestricted, st.variantOpenMode, st.variantSearch);
+            for (size_t i = 0; i < choices.rows.size(); ++i) {
+                if (!choices.rows[i].variant && choices.rows[i].mode == mode) st.variantPickerRow = static_cast<int>(i);
+            }
+            MenuSounds::Click();
+        }
+    }
+    shown = choices.rows.empty() ? VariantRow{} : choices.rows[std::clamp(st.variantPickerRow, 0, static_cast<int>(choices.rows.size()) - 1)];
+    return picked;
+}
+
+// Name and description of a list row; the file name and a note about rules too, unless `compact` (the lobby's tight column).
+static void DrawVariantInfo(const Ui& ui, ImVec2 pos, float width, const VariantRow& row, bool compact = false) {
+    if (row.mode.empty()) return;
     const float right = pos.x + width;
-    Text(ui, NobleStyle::TitleFont(), 24.0f, pos, kWhite, Upper(v.label).c_str());
-    const std::string mode = v.type.empty() ? std::string("CUSTOM VARIANT") : Upper(MapGameTypes::Name(v.type));
-    Text(ui, NobleStyle::TitleFont(), 16.0f, ImVec2(pos.x, pos.y + 30.0f * ui.s), kAccent, mode.c_str());
-    const char* description = v.description.empty() ? GameTypeBlurb(v.type) : v.description.c_str();
-    Text(ui, nullptr, 16.0f, ImVec2(pos.x, pos.y + 54.0f * ui.s), IM_COL32(205, 218, 230, 255), description, right);
-    if (compact) return;
+    const MenuVariant* variant = row.variant;
+    Text(ui, NobleStyle::TitleFont(), 24.0f, pos, kWhite, Upper(variant ? variant->label : row.mode).c_str());
+    const char* description = variant && !variant->description.empty() ? variant->description.c_str() : GameTypeBlurb(row.type);
+    Text(ui, nullptr, 16.0f, ImVec2(pos.x, pos.y + 34.0f * ui.s), IM_COL32(205, 218, 230, 255), description, right);
+    if (compact || !variant) return;
+    const MenuVariant& v = *variant;
     const float textH = Font(nullptr)->CalcTextSizeA(16.0f * ui.s, FLT_MAX, width, description).y;
-    const float y = pos.y + 54.0f * ui.s + textH + 10.0f * ui.s;
+    const float y = pos.y + 34.0f * ui.s + textH + 10.0f * ui.s;
     Text(ui, NobleStyle::SmallFont(), 14.0f, ImVec2(pos.x, y), kDim, v.path.filename().string().c_str(), right);
     Text(ui, NobleStyle::SmallFont(), 14.0f, ImVec2(pos.x, y + 20.0f * ui.s), kDim, "Uses this variant's default rules.", right);
 }
@@ -2775,23 +2871,18 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         // The game types this map can host, from the variants that ship with the game. Nothing here is invented: the
         // settings inside a variant can't be read until the variant viewer exists.
         const std::vector<MenuVariant>& varList = firefight ? ctx.ffVariants : ctx.variants;
-        const VariantChoices choices = BuildVariantChoices(varList, st.lobbyMap, campaign || firefight || forge || !st.lobbyModFolder.empty());
-        const std::vector<const MenuVariant*>& offered = choices.offered;
-        const std::vector<ListItem>& items = choices.items;
+        const bool anyMap = campaign || firefight || forge || !st.lobbyModFolder.empty();
         if (pickerJustOpened) {
-            st.lobbyPickerRow = 0;
-            for (size_t i = 0; i < offered.size(); ++i) {
-                if (offered[i]->label == st.lobbyVariantName) st.lobbyPickerRow = static_cast<int>(i);
-            }
+            const MenuVariant* current = nullptr;
+            for (const MenuVariant& v : varList) if (v.label == st.lobbyVariantName) current = &v;
+            BeginVariantList(st, varList, st.lobbyMap, anyMap, current);
         }
-        const int pick = DrawList(ui, "lobby_variants", ImVec2(colX, rowsY), colW - 10.0f * ui.s, items, st.lobbyPickerRow, !pickerJustOpened, 32.0f, 6, false);
-        if (!offered.empty()) {
-            const MenuVariant& shown = *offered[std::clamp(st.lobbyPickerRow, 0, static_cast<int>(offered.size()) - 1)];
-            DrawVariantInfo(ui, ImVec2(colX, rowsY + 32.0f * ui.s * 6.0f + 10.0f * ui.s), colW, shown, true);
-        }
-        if (pick >= 0 && pick < static_cast<int>(offered.size())) {
-            st.lobbyVariantPath = offered[pick]->path.string();
-            st.lobbyVariantName = offered[pick]->label;
+        VariantRow shown;
+        const MenuVariant* picked = DrawVariantList(ui, st, varList, st.lobbyMap, anyMap, ImVec2(colX, rowsY), colW - 10.0f * ui.s, 32.0f, 5, !pickerJustOpened, shown);
+        DrawVariantInfo(ui, ImVec2(colX, rowsY + 40.0f * ui.s + 32.0f * ui.s * 5.0f + 10.0f * ui.s), colW, shown, true);
+        if (picked) {
+            st.lobbyVariantPath = picked->path.string();
+            st.lobbyVariantName = picked->label;
             MasterServerClient::Get().UpdateLobbyAdvert(st.lobbyMap, st.lobbyMode, st.lobbyVariantName, st.lobbyDifficulty, st.lobbySkulls);
             st.lobbyPickerOpen = false;
             MenuSounds::Change();
@@ -2870,7 +2961,8 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
     ui.dl->AddRect(fr0, fr1, panelEdge);
     Text(ui, NobleStyle::TitleFont(), 16.0f, ImVec2(fr0.x + 10.0f * ui.s, fr0.y + 4.0f * ui.s), kWhite, "FRIENDS");
     ui.dl->AddLine(ImVec2(fr0.x, fr0.y + 26.0f * ui.s), ImVec2(fr1.x, fr0.y + 26.0f * ui.s), kRuleLine, 1.0f);
-    const bool friendsPressed = ImGui::IsKeyPressed(ImGuiKey_F, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false) ||
+    const bool lobbyTyping = ImGui::GetIO().WantTextInput;   // these keys are letters in a search box
+    const bool friendsPressed = (!lobbyTyping && ImGui::IsKeyPressed(ImGuiKey_F, false)) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false) ||
                                 (ImGui::IsMouseClicked(0) && ImGui::IsMouseHoveringRect(fr0, ImVec2(fr1.x, fr0.y + 26.0f * ui.s), false));
     if (friendsPressed) {
         st.socialPreviousScreen = Screen::PreGameLobby;
@@ -2930,7 +3022,7 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         ImGui::PushID("btn_copy_inv");
         copyPressed = ImGui::Button("COPY INVITE", ImVec2(cpW, cpH));
         ImGui::PopID();
-        copyPressed = copyPressed || ImGui::IsKeyPressed(ImGuiKey_X, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceLeft, false);
+        copyPressed = copyPressed || (!lobbyTyping && ImGui::IsKeyPressed(ImGuiKey_X, false)) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceLeft, false);
     }
     if (copyPressed) {
         ImGui::SetClipboardText(("/connect " + hostEp).c_str());
@@ -3019,8 +3111,8 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
     };
     if (rosterCount > 0) {
         st.lobbyRosterSelection = std::clamp(st.lobbyRosterSelection, 0, rosterCount - 1);
-        const bool prev = ImGui::IsKeyPressed(ImGuiKey_Q, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false);
-        const bool next = ImGui::IsKeyPressed(ImGuiKey_E, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false);
+        const bool prev = (!lobbyTyping && ImGui::IsKeyPressed(ImGuiKey_Q, false)) || ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false);
+        const bool next = (!lobbyTyping && ImGui::IsKeyPressed(ImGuiKey_E, false)) || ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false);
         if (prev != next) {
             st.lobbyRosterSelection = (st.lobbyRosterSelection + (next ? 1 : -1) + rosterCount) % rosterCount;
             keepInView(st.lobbyRosterSelection);
@@ -3899,11 +3991,13 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
     const SettingsData settings = Settings::Get().Snapshot();
     s_hintThisFrame = std::exchange(s_hintClicked, -1);
     const bool modPromptOpen = ModDownloadPrompt::Get().IsActive();
-    const bool back = !modPromptOpen && (ImGui::IsKeyPressed(ImGuiKey_Escape, false) ||
+    // Esc in a text box only leaves the box.
+    const bool back = !modPromptOpen && !ImGui::GetIO().WantTextInput && (ImGui::IsKeyPressed(ImGuiKey_Escape, false) ||
                       ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) || HintClicked(Prompt::Back));
     auto goBack = [&](Screen to) {
         st.screen = to;
         st.focusRow = 0;
+        st.mapSearch[0] = 0;
         MenuSounds::Back();
     };
     auto saveSkulls = [&] {
@@ -4056,19 +4150,34 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         if (DrawSourceTabs(ui, ImVec2(left + 34.0f * ui.s, top + 70.0f * ui.s), st.campaignSource,
                            static_cast<int>(ctx.campaignMods.size()))) st.focusRow = 0;
         const bool modded = st.campaignSource == 1;
-        const std::vector<MapEntry> missions = modded ? ModdedMaps(ctx.campaignMods, ModMode::Campaign, kMissions, Count(kMissions), st.openMods, "m10")
-                                                      : BaseMaps(kMissions, Count(kMissions));
-        int& pick = modded ? st.campaignModded : st.mission;
+        if (DrawSearchBox(ui, "##mission_search", ImVec2(left + 34.0f * ui.s + 240.0f * ui.s, top + 70.0f * ui.s), 160.0f * ui.s, st.mapSearch, sizeof(st.mapSearch), "Search")) st.mapSearchRow = 0;
+        if (ImGui::IsItemActive()) st.focusRow = 0;
+        const bool searching = st.mapSearch[0] != 0;
+        const std::vector<MapEntry> missions = ListedMaps(modded, ctx.campaignMods, ModMode::Campaign, kMissions, Count(kMissions), st.openMods, "m10", st.mapSearch);
+        int& realPick = modded ? st.campaignModded : st.mission;
+        int& pick = searching ? st.mapSearchRow : realPick;
         FixSelection(missions, pick);
         std::vector<ListItem> items = ToItems(missions);
-        if (missions.empty()) items.push_back({ "No Reach campaign mods installed", false, false });
+        if (missions.empty()) items.push_back({ searching ? "Nothing matches your search" : "No Reach campaign mods installed", false, false });
         const float listY = top + 108.0f * ui.s;
         const float listRow = 42.0f;
         const int listRows = std::max(4, static_cast<int>((ui.size.y - 74.0f * ui.s - listY) / (listRow * ui.s)));
         const int hit = DrawList(ui, "missions", ImVec2(left + 34.0f * ui.s, listY), 400.0f * ui.s, items, pick,
-                                 st.focusRow == 0, listRow, listRows, false);
+                                 st.focusRow == 0 && !ImGui::GetIO().WantTextInput, listRow, listRows, false);
         if (hit >= 0 && !missions.empty() && missions[hit].header) ToggleMod(st.openMods, ModMode::Campaign, *missions[hit].mod);
-        else if (hit >= 0) st.focusRow = 1;
+        else if (hit >= 0) {
+            if (searching) {
+                // Land on the choice in the full list; the search clears on the next frame's list.
+                const MapEntry chosen = missions[hit];
+                if (chosen.mod) st.openMods.insert(OpenKey(ModMode::Campaign, *chosen.mod));
+                const std::vector<MapEntry> full = ListedMaps(modded, ctx.campaignMods, ModMode::Campaign, kMissions, Count(kMissions), st.openMods, "m10", "");
+                for (size_t i = 0; i < full.size(); ++i) {
+                    if (!full[i].header && full[i].scenario == chosen.scenario && full[i].mod == chosen.mod) realPick = static_cast<int>(i);
+                }
+                st.mapSearch[0] = 0;
+            }
+            st.focusRow = 1;
+        }
         FixSelection(missions, pick);
         const MapEntry* row = missions.empty() ? nullptr : &missions[pick];
         const MapEntry* mission = (row && !row->header) ? row : nullptr;
@@ -4228,25 +4337,25 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         const bool ff = st.screen == Screen::Firefight;
         const bool forge = st.screen == Screen::Forge;
         if (st.variantPickerOpen && !forge) {
-            // The full game type list, in place of the setup screen so nothing behind it reacts to the pad or the mouse.
+            // The game type list, in place of the setup screen so nothing behind it reacts to the pad or the mouse.
             const std::vector<MenuVariant>& list = ff ? ctx.ffVariants : ctx.variants;
             int& current = ff ? st.ffVariant : st.variant;
             DrawTitle(ui, ImVec2(left, top), "GAME TYPE", ff ? "FIREFIGHT" : "MULTIPLAYER");
             Text(ui, nullptr, 17.0f, ImVec2(left + 34.0f * ui.s, top + 70.0f * ui.s), kDim,
                  st.variantPickerModded ? "Every game type, on a modded map." : ("Game types " + st.variantPickerMapName + " can host.").c_str());
-            const VariantChoices choices = BuildVariantChoices(list, st.variantPickerMap, ff || st.variantPickerModded);
             const float rowH = 38.0f, listTop = top + 108.0f * ui.s, listW = ui.size.x * 0.40f;
-            const int rows = std::max(4, static_cast<int>((ui.size.y - 74.0f * ui.s - listTop) / (rowH * ui.s)));
-            const int pick = DrawList(ui, "variant_picker", ImVec2(left + 34.0f * ui.s, listTop), listW, choices.items, st.variantPickerRow, true, rowH, rows, true);
-            if (!choices.offered.empty()) {
+            const int rows = std::max(4, static_cast<int>((ui.size.y - 74.0f * ui.s - listTop - 40.0f * ui.s) / (rowH * ui.s)));
+            VariantRow shown;
+            const MenuVariant* picked = DrawVariantList(ui, st, list, st.variantPickerMap, ff || st.variantPickerModded, ImVec2(left + 34.0f * ui.s, listTop), listW, rowH, rows, true, shown);
+            if (!shown.mode.empty()) {
                 const float infoX = left + 34.0f * ui.s + listW + 40.0f * ui.s;
                 const float infoW = ui.size.x - left - infoX;
-                ui.dl->AddRectFilled(ImVec2(infoX - 16.0f * ui.s, listTop), ImVec2(infoX + infoW + 16.0f * ui.s, listTop + 220.0f * ui.s), IM_COL32(8, 14, 22, 190), 3.0f * ui.s);
-                DrawVariantInfo(ui, ImVec2(infoX, listTop + 14.0f * ui.s), infoW, *choices.offered[std::clamp(st.variantPickerRow, 0, static_cast<int>(choices.offered.size()) - 1)]);
+                ui.dl->AddRectFilled(ImVec2(infoX - 16.0f * ui.s, listTop), ImVec2(infoX + infoW + 16.0f * ui.s, listTop + 190.0f * ui.s), IM_COL32(8, 14, 22, 190), 3.0f * ui.s);
+                DrawVariantInfo(ui, ImVec2(infoX, listTop + 14.0f * ui.s), infoW, shown);
             }
-            if (pick >= 0 && pick < static_cast<int>(choices.offered.size())) {
-                current = static_cast<int>(choices.offered[pick] - list.data());
-                NOBLE_INFO("FrontEndMenu: game type picked: {} ({})", choices.offered[pick]->label, choices.offered[pick]->path.filename().string());
+            if (picked) {
+                current = static_cast<int>(picked - list.data());
+                NOBLE_INFO("FrontEndMenu: game type picked: {} ({})", picked->label, picked->path.filename().string());
                 st.variantPickerOpen = false;
                 MenuSounds::Change();
             } else if (back) {
@@ -4271,9 +4380,12 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         const bool modded = source == 1;
         const ModMode modMode = ff ? ModMode::Firefight : ModMode::Multiplayer;
         const std::string carrier = ff ? "ff60_icecave" : "70_boneyard";
-        const std::vector<MapEntry> maps = modded ? ModdedMaps(modList, modMode, baseMaps, baseCount, st.openMods, carrier)
-                                                  : BaseMaps(baseMaps, baseCount);
-        int& mapIndex = modded ? (ff ? st.ffModded : forge ? st.forgeModded : st.mpModded) : (ff ? st.ffMap : forge ? st.forgeMap : st.map);
+        if (DrawSearchBox(ui, "##map_search", ImVec2(left + 34.0f * ui.s + 240.0f * ui.s, top + 70.0f * ui.s), 140.0f * ui.s, st.mapSearch, sizeof(st.mapSearch), "Search")) st.mapSearchRow = 0;
+        if (ImGui::IsItemActive()) st.focusRow = 0;
+        const bool searching = st.mapSearch[0] != 0;
+        const std::vector<MapEntry> maps = ListedMaps(modded, modList, modMode, baseMaps, baseCount, st.openMods, carrier, st.mapSearch);
+        int& realIndex = modded ? (ff ? st.ffModded : forge ? st.forgeModded : st.mpModded) : (ff ? st.ffMap : forge ? st.forgeMap : st.map);
+        int& mapIndex = searching ? st.mapSearchRow : realIndex;
         if (const std::string autoMap = AutoPlayMap(); !autoMap.empty() && !modded) {
             for (size_t i = 0; i < maps.size(); ++i) {
                 if (maps[i].header) continue;
@@ -4282,13 +4394,25 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         }
         FixSelection(maps, mapIndex);
         std::vector<ListItem> items = ToItems(maps);
-        if (maps.empty()) items.push_back({ ff ? "No Reach Firefight mods installed" : "No Reach multiplayer mods installed", false, false });
+        if (maps.empty()) items.push_back({ searching ? "Nothing matches your search" : ff ? "No Reach Firefight mods installed" : "No Reach multiplayer mods installed", false, false });
         const float listRow = 40.0f;
         const int listRows = std::max(4, static_cast<int>((ui.size.y - 74.0f * ui.s - listTop) / (listRow * ui.s)));
         const int hit = DrawList(ui, "maps", ImVec2(left + 34.0f * ui.s, listTop), 380.0f * ui.s, items, mapIndex,
-                                 st.focusRow == 0, listRow, listRows, false);
+                                 st.focusRow == 0 && !ImGui::GetIO().WantTextInput, listRow, listRows, false);
         if (hit >= 0 && !maps.empty() && maps[hit].header) ToggleMod(st.openMods, modMode, *maps[hit].mod);
-        else if (hit >= 0) st.focusRow = 1;
+        else if (hit >= 0) {
+            if (searching) {
+                // Land on the choice in the full list; the search clears on the next frame's list.
+                const MapEntry chosen = maps[hit];
+                if (chosen.mod) st.openMods.insert(OpenKey(modMode, *chosen.mod));
+                const std::vector<MapEntry> full = ListedMaps(modded, modList, modMode, baseMaps, baseCount, st.openMods, carrier, "");
+                for (size_t i = 0; i < full.size(); ++i) {
+                    if (!full[i].header && full[i].scenario == chosen.scenario && full[i].mod == chosen.mod) realIndex = static_cast<int>(i);
+                }
+                st.mapSearch[0] = 0;
+            }
+            st.focusRow = 1;
+        }
         FixSelection(maps, mapIndex);
         const MapEntry* row = maps.empty() ? nullptr : &maps[mapIndex];
         const MapEntry* map = (row && !row->header) ? row : nullptr;
@@ -4387,15 +4511,11 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
             openList = ImGui::InvisibleButton("##variant_value", ImVec2(pw * 0.52f - arrowW * 2.0f, rowHeight)) || openList;
             if (st.focusRow == focusRows && hit < 0 && AcceptPressed()) openList = true;
             if (openList && !list.empty()) {
-                const VariantChoices choices = BuildVariantChoices(list, map ? map->scenario : std::string(), modded || ff);
                 st.variantPickerOpen = true;
                 st.variantPickerModded = modded;
                 st.variantPickerMap = map ? map->scenario : std::string();
                 st.variantPickerMapName = map ? map->name : std::string();
-                st.variantPickerRow = 0;
-                for (size_t i = 0; i < choices.offered.size(); ++i) {
-                    if (choices.offered[i] == &list[std::clamp(v, 0, static_cast<int>(list.size()) - 1)]) st.variantPickerRow = static_cast<int>(i);
-                }
+                BeginVariantList(st, list, st.variantPickerMap, modded || ff, &list[std::clamp(v, 0, static_cast<int>(list.size()) - 1)]);
                 MenuSounds::Click();
             }
             if (!list.empty()) {
