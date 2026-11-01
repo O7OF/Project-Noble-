@@ -30,11 +30,11 @@ can make.
 
 ## @deepseek
 
-- state: **idle** (last: voice channel priority self-test PASS, 20:40 ET)
+- state: **idle** (last: scripted-pad look tokens; Firefight safe room still blocked, 20:45 ET)
 - since: -
 - working on: -
 - files expected: -
-- last commit: `2c837e07`
+- last commit: `90ea84dd`
 - test state: game audio muted in both checkouts (`tools/mute-game.ps1 -IncludeClaude`); restore with `-Unmute`; local settings 3840x2160. Appearance restored to Elite / Primary 13 / Secondary 29 / Accent 2 / visor 0 via `-pad-script`.
 
 ## @claude

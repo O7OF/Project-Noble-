@@ -7,7 +7,17 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 
 **Goal:** `noble-client.exe` loads MCC's own `haloreach.dll` (Halo: Reach) and drives it **without MCC**, like the existing
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
-MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.10.2 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.10.3 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+
+## 0. Pick up here (2026-10-31, 20:45 ET) - Scripted-pad look tokens; Firefight safe room still will not move (@deepseek)
+
+**Commit:** `90ea84dd`. **Version:** 0.9.10.3. **Build:** 0 errors, 0 warnings (Release `noble-client` + `noble-dev`). Files: `src/ui/UiPad.cpp`, `src/common/Version.hpp`.
+
+**What changed.** `-pad-script` gained `rsup`, `rsdown`, `rsleft`, `rsright`, so a scripted run can turn the camera as well as move. Normal input is unchanged.
+
+**Prophets' Hand result.** With `TPH_ff.bin` and `ff45_corvette` overriding, a 40-step warm-up, 180-degree right-stick turn and 40-step forward walk left the player exactly in the safe room; the view and position did not change, and no NPC/wave appeared. The scripted pad is being applied in the menu, but the Firefight camera/input appears to wait on the mouse-look prompt. This is the concrete blocker: scripted controller movement does not leave the safe room. Do not claim the Elite model/lighting proof from this.
+
+Self-review: the right-stick tokens are test-only and might make a future pad-script test move the camera unexpectedly; they are opt-in tokens.
 
 ## 0. Pick up here (2026-10-31, 20:40 ET) - Voice channel priority self-test passes (@deepseek)
 
