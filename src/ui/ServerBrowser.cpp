@@ -1,5 +1,7 @@
 #include <windows.h>
 #include "ServerBrowser.hpp"
+#include "MenuSounds.hpp"
+#include "UiPad.hpp"
 #include "common/MapNames.hpp"
 #include "common/Relaunch.hpp"
 #include "NobleStyle.hpp"
@@ -245,6 +247,20 @@ void ServerBrowser::RefreshServers() {
         add(e);
     }
 
+    // Test option -server-browser-demo: a long list that can't be joined (marked as our own), to check moving and scrolling.
+    static const bool s_demoRows = wcsstr(GetCommandLineW(), L"-server-browser-demo") != nullptr;
+    for (int n = 0; s_demoRows && n < 40; ++n) {
+        ServerEntry demo;
+        char name[32];
+        std::snprintf(name, sizeof(name), "Demo server %02d", 39 - n);   // reversed, so sorting really changes the order
+        demo.name = name;
+        demo.hostAddress = "demo";
+        demo.port = static_cast<decltype(demo.port)>(n + 1);
+        demo.gameMode = "multiplayer";
+        demo.mapName = "20_sword_slayer";
+        demo.isOwn = true;
+        list.push_back(demo);
+    }
     // Keep the selection on the same server if it is still listed.
     std::string selectedKey;
     if (m_selectedServerIndex >= 0 && m_selectedServerIndex < static_cast<int>(m_servers.size())) {
@@ -402,22 +418,10 @@ void ServerBrowser::RenderServerList() {
         if (PassesFilters(m_servers[i])) visibleIndices.push_back(i);
     }
 
-    if (!ImGui::GetIO().WantTextInput) {
-        // Controller D-Pad & Left Stick navigation
+    const bool padFree = !ImGui::GetIO().WantTextInput && !m_showDirectConnectModal && !m_showMasterModal && !ModDownloadPrompt::Get().IsActive();
+    if (padFree) {
         if (!visibleIndices.empty()) {
-            int currentPos = -1;
-            for (size_t k = 0; k < visibleIndices.size(); ++k) {
-                if (visibleIndices[k] == m_selectedServerIndex) { currentPos = static_cast<int>(k); break; }
-            }
-            if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickDown)) {
-                currentPos = (currentPos + 1) % static_cast<int>(visibleIndices.size());
-                m_selectedServerIndex = visibleIndices[currentPos];
-            }
-            if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickUp)) {
-                currentPos = (currentPos - 1 + static_cast<int>(visibleIndices.size())) % static_cast<int>(visibleIndices.size());
-                m_selectedServerIndex = visibleIndices[currentPos];
-            }
-            if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false) && !ModDownloadPrompt::Get().IsActive()) {
+            if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false)) {
                 if (m_selectedServerIndex >= 0 && m_selectedServerIndex < static_cast<int>(m_servers.size())) {
                     const auto& s = m_servers[m_selectedServerIndex];
                     if (!s.isOwn) {
@@ -491,6 +495,27 @@ void ServerBrowser::RenderServerList() {
         });
     }
 
+    // Moves in the order the rows are drawn. It used to follow the unsorted list, so with the table sorted the highlight
+    // jumped around, and nothing scrolled it back into view.
+    bool scrollToSelected = false;
+    if (padFree && !visible.empty()) {
+        const int count = static_cast<int>(visible.size());
+        int position = -1;
+        for (int k = 0; k < count; ++k) {
+            if (static_cast<int>(visible[k] - m_servers.data()) == m_selectedServerIndex) position = k;
+        }
+        int next = position;
+        if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || UiPad::Down()) next = (position + 1) % count;
+        if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || UiPad::Up()) next = (position - 1 + count) % count;
+        if (UiPad::PageDown()) next = std::min(position + 8, count - 1);
+        if (UiPad::PageUp()) next = std::max(position - 8, 0);
+        if (next != position) {
+            m_selectedServerIndex = static_cast<int>(visible[next] - m_servers.data());
+            scrollToSelected = true;
+            MenuSounds::Scroll();
+        }
+    }
+
     int visibleIndex = 0;
     for (const ServerEntry* entry : visible) {
         const ServerEntry& s = *entry;
@@ -500,6 +525,7 @@ void ServerBrowser::RenderServerList() {
         ImGui::TableNextColumn();
 
         const bool selected = (m_selectedServerIndex == i);
+        if (scrollToSelected && selected) ImGui::SetScrollHereY(0.5f);
 
         // Column 0: source tag
         if (s.isOwn) {

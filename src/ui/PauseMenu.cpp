@@ -345,8 +345,8 @@ void PauseMenu::DrawMenu(HWND hwnd) {
     static int s_focus = 0;
     static ULONGLONG s_lastMove = 0;
     const ULONGLONG now = GetTickCount64();
-    const bool up = ImGui::IsKeyPressed(ImGuiKey_UpArrow, true) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp, true);
-    const bool down = ImGui::IsKeyPressed(ImGuiKey_DownArrow, true) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown, true);
+    const bool up = ImGui::IsKeyPressed(ImGuiKey_UpArrow, true) || UiPad::Up();
+    const bool down = ImGui::IsKeyPressed(ImGuiKey_DownArrow, true) || UiPad::Down();
     if (interactive && (up || down) && now - s_lastMove > 120) {
         s_lastMove = now;
         s_focus = (s_focus + (down ? 1 : entryCount - 1)) % entryCount;
@@ -369,7 +369,8 @@ void PauseMenu::DrawMenu(HWND hwnd) {
         }
         if (ImGui::IsItemHovered()) {
             MenuSounds::Hover(ImGui::GetItemID());
-            if (enabled) s_focus = i;
+            // Only a moving mouse takes the focus: a pointer resting here used to pin the row against the D-pad.
+            if (enabled && (ImGui::GetIO().MouseDelta.x != 0.0f || ImGui::GetIO().MouseDelta.y != 0.0f)) s_focus = i;
         }
         ImGui::PopStyleColor();
         // Underline, like the reference screens.
@@ -398,6 +399,7 @@ void PauseMenu::DrawMenu(HWND hwnd) {
     ImGui::PopStyleColor();
     const float sideW = availW - listW - gap;
     ImGui::BeginChild("##pausechallenges", ImVec2(sideW, contentH), ImGuiChildFlags_Borders);
+    if (interactive) UiPad::ScrollWindow(false, true);
     const std::vector<Career::Challenge> challenges = Career::Challenges();
     int shown = 0;
     for (int weekly = 0; weekly <= 1; ++weekly) {
@@ -1445,26 +1447,49 @@ void PauseMenu::DrawGameOver(HWND hwnd) {
   const float by = H - 88.0f * s;
   float bx = W - margin - bw;
   bool overButton = false;
-  ImGui::SetCursorScreenPos(ImVec2(bx, by));
-  if (NobleStyle::DangerButton("QUIT", ImVec2(bw, bh))) {
-    NOBLE_INFO("PauseMenu: quit requested from post-game panel");
-    PostMessageW(hwnd, WM_CLOSE, 0, 0);
-  }
-  overButton |= ImGui::IsItemHovered();
-  bx -= bw + gap;
-  ImGui::SetCursorScreenPos(ImVec2(bx, by));
-  if (ImGui::Button("RETURN TO MENU", ImVec2(bw, bh)))
-    RelaunchAndClose(hwnd, L"", "return to menu");
-  overButton |= ImGui::IsItemHovered();
   const std::wstring again = Relaunch::CurrentGameArgs();
   // A guest's "again" would reconnect to a host who may have gone; only the host or a local player can start another.
   const bool guestPlayer = wcsstr(GetCommandLineW(), L"-postgame-role guest") != nullptr ||
                            (NetworkTransport::Get().IsActive() && !NetworkTransport::Get().IsHost());
-  if (!again.empty() && !guestPlayer) {
+  const bool canPlayAgain = !again.empty() && !guestPlayer;
+  // Controller: left and right pick a button, A presses it, and A during the reveal only skips it. The focus starts away
+  // from QUIT, so one stray A can never close the game.
+  enum { kPadQuit, kPadMenu, kPadAgain };
+  static int s_padButton = kPadMenu;
+  const int padLast = canPlayAgain ? kPadAgain : kPadMenu;
+  if (UiPad::Left()) s_padButton = std::min(s_padButton + 1, padLast);
+  if (UiPad::Right()) s_padButton = std::max(s_padButton - 1, static_cast<int>(kPadQuit));
+  s_padButton = std::min(s_padButton, padLast);
+  const bool padA = ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false);
+  // A is jump: a player still pressing it as the panel finishes must not leave the screen, so it arms a second later.
+  static double s_padArmedAt = 0.0;
+  if (t < tEnd) s_padArmedAt = 0.0;
+  else if (s_padArmedAt == 0.0) s_padArmedAt = ImGui::GetTime() + 1.0;
+  const bool padPress = padA && t >= tEnd && ImGui::GetTime() >= s_padArmedAt;
+  if (padA && t < tEnd) s_reveal.skipped = true;
+  const auto padOutline = [&](int button) {
+    if (s_padButton == button && (ImGui::GetIO().BackendFlags & ImGuiBackendFlags_HasGamepad))
+      ImGui::GetWindowDrawList()->AddRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), IM_COL32(143, 216, 255, 255), 0.0f, 0, 2.0f * s);
+  };
+  ImGui::SetCursorScreenPos(ImVec2(bx, by));
+  if (NobleStyle::DangerButton("QUIT", ImVec2(bw, bh)) || (padPress && s_padButton == kPadQuit)) {
+    NOBLE_INFO("PauseMenu: quit requested from post-game panel");
+    PostMessageW(hwnd, WM_CLOSE, 0, 0);
+  }
+  padOutline(kPadQuit);
+  overButton |= ImGui::IsItemHovered();
+  bx -= bw + gap;
+  ImGui::SetCursorScreenPos(ImVec2(bx, by));
+  if (ImGui::Button("RETURN TO MENU", ImVec2(bw, bh)) || (padPress && s_padButton == kPadMenu))
+    RelaunchAndClose(hwnd, L"", "return to menu");
+  padOutline(kPadMenu);
+  overButton |= ImGui::IsItemHovered();
+  if (canPlayAgain) {
     bx -= bw + gap;
     ImGui::SetCursorScreenPos(ImVec2(bx, by));
-    if (NobleStyle::PrimaryButton("PLAY AGAIN", ImVec2(bw, bh)))
+    if (NobleStyle::PrimaryButton("PLAY AGAIN", ImVec2(bw, bh)) || (padPress && s_padButton == kPadAgain))
       RelaunchAndClose(hwnd, again, "play again");
+    padOutline(kPadAgain);
     overButton |= ImGui::IsItemHovered();
   }
   // What happens next in a hosted game. A session doesn't survive a match yet (session survival, rotation: @deepseek), so

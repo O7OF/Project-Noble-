@@ -8,6 +8,7 @@
 #include "UiArt.hpp"
 #include "common/Version.hpp"
 #include "InputPrompts.hpp"
+#include "UiPad.hpp"
 #include "engine/KeyBindings.hpp"
 #include "engine/CameraFov.hpp"
 #include "engine/PadLayouts.hpp"
@@ -270,12 +271,16 @@ void SettingsPanel::Render() {
         if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickUp)) {
             m_focus = m_focus < 0 ? rows - 1 : m_focus - 1; m_scrollToFocus = true; MenuSounds::Scroll();
         }
-        const int n = static_cast<int>(Cat::Count);
-        if (ImGui::IsKeyPressed(ImGuiKey_Q, false)) {
-            m_cat = static_cast<Cat>((static_cast<int>(m_cat) + n - 1) % n); m_focus = 0; m_search[0] = 0; MenuSounds::Tab(-1);
+        if (UiPad::PageDown() || UiPad::PageUp()) {   // the triggers jump a screenful of rows
+            const int jump = UiPad::PageDown() ? 8 : -8;
+            m_focus = std::clamp(m_focus + jump, 0, rows - 1); m_scrollToFocus = true; MenuSounds::Scroll();
         }
-        if (ImGui::IsKeyPressed(ImGuiKey_E, false)) {
-            m_cat = static_cast<Cat>((static_cast<int>(m_cat) + 1) % n); m_focus = 0; m_search[0] = 0; MenuSounds::Tab(1);
+        const int n = static_cast<int>(Cat::Count);
+        if (ImGui::IsKeyPressed(ImGuiKey_Q, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false)) {
+            m_cat = static_cast<Cat>((static_cast<int>(m_cat) + n - 1) % n); m_focus = 0; m_search[0] = 0; m_scrollToFocus = true; MenuSounds::Tab(-1);
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_E, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false)) {
+            m_cat = static_cast<Cat>((static_cast<int>(m_cat) + 1) % n); m_focus = 0; m_search[0] = 0; m_scrollToFocus = true; MenuSounds::Tab(1);
         }
         if (TotalChanges() > 0) {
             if (ImGui::IsKeyPressed(ImGuiKey_Y, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false)) Apply();
@@ -418,7 +423,9 @@ void SettingsPanel::RenderCategories(float width, float height) {
         const bool differs = CountDiff(m_edit, WithDefaults(m_edit, m_cat), m_cat) > 0;
         ImGui::SetCursorScreenPos(ImVec2(b0.x, b0.y + 8.0f * s));
         ImGui::BeginDisabled(!differs || m_search[0] != 0);
-        if (ImGui::Button("RESTORE DEFAULTS", ImVec2(width, 32.0f * s))) {
+        const bool padRestore = m_navAllowed && differs && m_search[0] == 0 && ImGui::IsKeyPressed(ImGuiKey_GamepadBack, false);
+        const bool pad = InputPrompts::Current() == InputPrompts::Device::Gamepad;
+        if (ImGui::Button(pad ? "RESTORE DEFAULTS (BACK)" : "RESTORE DEFAULTS", ImVec2(width, 32.0f * s)) || padRestore) {
             RestoreDefaults(m_cat);
             MenuSounds::Click();
         }
@@ -438,6 +445,7 @@ void SettingsPanel::RenderRows(float width, float height) {
     const float s = Scale();
     ImGui::BeginChild("##setrows", ImVec2(width, height), ImGuiChildFlags_None, ImGuiWindowFlags_NoNavInputs | ImGuiWindowFlags_NoNavFocus);
     if (m_focus < 0 && m_scrollToFocus) ImGui::SetScrollY(0.0f);
+    UiPad::ScrollWindow(false, false);   // right stick reads ahead of the focused row
     m_rowCount = 0;
     m_hover = Details{};
     m_focusDetails = Details{};
@@ -1514,6 +1522,42 @@ void SettingsPanel::RenderMusicPicker() {
         // Shuffle mode is playing already: restart it so a track switched off stops coming up.
         if (m_edit.menuMusicTrack == "all") ReachAudio::PlayMenuMusic("all");
     };
+    // The lists below are for the mouse. These rows reach the same choices with the D-pad and arrow keys.
+    std::vector<const ReachAudio::TrackInfo*> choices;
+    for (const ReachAudio::TrackInfo& t : tracks) {
+        if (t.game.empty() || (!games.empty() && t.game == games[m_musicGame])) choices.push_back(&t);
+    }
+    if (!games.empty() && Row("BROWSE GAME", "Which game's tracks BROWSE TRACK steps through.", When::Info, "", false)) {
+        const int n = static_cast<int>(games.size());
+        const int change = CycleValue(games[m_musicGame].c_str(), 0, 1, true);
+        if (change != 0) {
+            m_musicGame = (m_musicGame + change + n) % n;
+            m_musicSearch[0] = 0;
+            choices.clear();
+            for (const ReachAudio::TrackInfo& t : tracks) {
+                if (t.game.empty() || t.game == games[m_musicGame]) choices.push_back(&t);
+            }
+        }
+    }
+    int current = -1;
+    for (int i = 0; i < static_cast<int>(choices.size()); ++i) {
+        if (choices[i]->id == m_edit.menuMusicTrack) current = i;
+    }
+    if (!choices.empty() && Row("BROWSE TRACK", "Steps through this game's tracks, plus Shuffle and Off. Each one plays at once.", When::Instant, "", false)) {
+        const std::string shown = current >= 0 ? choices[current]->label : std::string("Press to choose");
+        const int n = static_cast<int>(choices.size());
+        const int change = CycleValue(shown.c_str(), 0, 1, true);
+        if (change != 0) {
+            current = current < 0 ? (change > 0 ? 0 : n - 1) : (current + change + n) % n;
+            pick(choices[current]->id);
+        }
+    }
+    const bool inGameTrack = current >= 0 && !choices[current]->game.empty();
+    if (!choices.empty() && Row("TRACK IN SHUFFLE", "Whether SHUFFLE ALL GAMES can pick the track above.", When::Apply, "On", false, !inGameTrack)) {
+        bool on = inGameTrack && !isOff(choices[current]->id);
+        if (ToggleValue(on) && inGameTrack) toggleTrack(choices[current]->id);
+    }
+
     // A tiny ON/OFF switch drawn at the right edge of a track row.
     auto trackSwitch = [&](const ReachAudio::TrackInfo& t) {
         const bool off = isOff(t.id);

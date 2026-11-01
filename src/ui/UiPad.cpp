@@ -6,6 +6,7 @@
 #include <windows.h>
 #include <shellapi.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -133,7 +134,37 @@ bool ScriptState(PadState& out) {
 
 } // namespace
 
+bool Up() { return ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickUp); }
+bool Down() { return ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickDown); }
+bool Left() { return ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickLeft); }
+bool Right() { return ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickRight); }
+bool PageUp() { return ImGui::IsKeyPressed(ImGuiKey_GamepadL2); }
+bool PageDown() { return ImGui::IsKeyPressed(ImGuiKey_GamepadR2); }
+
+void ScrollWindow(bool arrows, bool triggers) {
+    if (ImGui::GetScrollMaxY() <= 0.0f) return;
+    float delta = 0.0f;
+    const float speed = ImGui::GetFontSize() * 45.0f * ImGui::GetIO().DeltaTime;
+    if (ImGui::IsKeyDown(ImGuiKey_GamepadRStickDown)) delta += speed;
+    if (ImGui::IsKeyDown(ImGuiKey_GamepadRStickUp)) delta -= speed;
+    if (arrows) {
+        if (ImGui::IsKeyDown(ImGuiKey_GamepadDpadDown) || ImGui::IsKeyDown(ImGuiKey_GamepadLStickDown)) delta += speed;
+        if (ImGui::IsKeyDown(ImGuiKey_GamepadDpadUp) || ImGui::IsKeyDown(ImGuiKey_GamepadLStickUp)) delta -= speed;
+    }
+    if (triggers) {
+        const float page = ImGui::GetWindowHeight() * 0.8f;
+        if (PageDown()) delta += page;
+        if (PageUp()) delta -= page;
+    }
+    if (delta != 0.0f) ImGui::SetScrollY(std::clamp(ImGui::GetScrollY() + delta, 0.0f, ImGui::GetScrollMaxY()));
+}
+
 void Feed(ImGuiIO& io) {
+    // Every Noble screen reads the pad itself. ImGui's own pad navigation stays on only inside a popup, whose plain
+    // widgets need it: anywhere else its hidden cursor could press a second button on one A (the lobby's COPY INVITE).
+    if (ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
+    else io.ConfigFlags &= ~ImGuiConfigFlags_NavEnableGamepad;
+
     PadState p;
     bool connected = ScriptState(p);
     if (!connected) connected = ReadPhysical(p) && ProcessInFront();
