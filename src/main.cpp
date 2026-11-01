@@ -339,6 +339,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     bool thirdPerson = false;
     bool voiceProbe = false;
     std::string variantDumpPath;
+    std::string variantPatch;
     int thirdPersonMode = 0;
     int thirdPersonDistance = 100;
     std::string engineCommand;
@@ -402,6 +403,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
                 thirdPerson = true;
             } else if (arg == L"-variant-dump" && i + 1 < numArgs) {
                 variantDumpPath = WideToNarrow(argvW[++i]);
+            } else if (arg == L"-variant-override" && i + 1 < numArgs) {
+                variantPatch = WideToNarrow(argvW[++i]);
             } else if (arg == L"-voice-probe") {
                 voiceProbe = true;
             } else if (arg == L"-third-person-distance" && i + 1 < numArgs) {
@@ -477,6 +480,12 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             NOBLE_ERROR("Map-info sandbox setup failed (copied {} from '{}'). The engine will report 'no map selected'.",
                 copied, mccInfo.string());
         }
+    }
+
+    // Test/debug: apply a comma-separated variant patch after the selected variant is decoded.
+    if (!variantPatch.empty()) {
+        noble::BlamEngine::SetVariantPatch(variantPatch);
+        NOBLE_INFO("main: -variant-override '{}'", variantPatch);
     }
 
     // Remember this launch for the post-game "PLAY AGAIN" button and the loading screen.
