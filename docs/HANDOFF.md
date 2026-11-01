@@ -7,7 +7,39 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 
 **Goal:** `noble-client.exe` loads MCC's own `haloreach.dll` (Halo: Reach) and drives it **without MCC**, like the existing
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
-MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.16.4 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.16.6 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+
+## 0. Pick up here (2026-11-01, 02:30 ET) - Fix Elite Lights Color Overwrite, Armor Bleed, and Separate Species Customization (@O7OF)
+
+**Version:** 0.9.16.6. **Build:** noble-client, noble-dev, noble-dedicated, 0 errors, 0 warnings on MSVC Release x64. Files: `src/ui/ArmorCustomizer.hpp`, `src/ui/ArmorCustomizer.cpp`, `src/engine/ReachArmory.cpp`, `src/engine/ReachHost.cpp`, `src/engine/ElitePack.cpp`, `src/common/Version.hpp`, `docs/HANDOFF.md`.
+
+**What was actually wrong (Root Cause Analysis):**
+1. **Ultra Elite Armor Turning Gold / Lights Not Coloring Details:**
+   - In user screenshot, equipped 'LIGHTS' was Gold, but the entire Ultra Elite armor plating turned Gold while eyes/visor remained uncolored.
+   - `ScanSuitRecordsIn` was matching `kStockSuit` (`0.9960785f, 0.9921569f, 0.98823535f, 1.0f` albedo white). On bright Elite bipeds (like the Ultra Elite), this matched the armor diffuse albedo in memory.
+   - In `WriteColorsAndSuit()`, `s_suitRecords` was unconditionally written for both species: `SafeWriteFloats(suit, suitFloats, 4)` where `suitFloats = sel.lightsRgb * 4.0f`. When Gold was selected for Lights, `suitFloats` overwrote the Ultra Elite's diffuse albedo, turning the entire armor plating Gold!
+   - Furthermore, `s_suitRecords` and `s_colorRecords` are Spartan structures. Elites use `s_eliteColorRecords` where Slot `[2]` is the emissive lights/eyes across all 11 stock Elite palettes (Minor `0xFFD1660D`, Ultra `0xFFFF663B`, Zealot `0xFF1BD687`, Officer `0xFF9DB02C`, Honor Guard `0xFF2C684E`).
+2. **Reversed Slot Mapping in `s_eliteColorRecords`:**
+   - Slot `[2]` in `s_eliteColorRecords` is the glowing lights & eyes, while Slot `[3]` is the secondary trim.
+   - Mapped `words` for Elites to `{ priArgb, terArgb, litArgb, secArgb }`.
+3. **Shared Customization Colors Between Spartan and Elite:**
+   - `AppearanceProfile` previously had only one set of colors (`primaryColor`, `secondaryColor`, `accentColor`, `lightsColor`). Selecting colors on the Elite tab mutated Spartan colors and vice versa.
+   - Added dedicated Elite color fields to `AppearanceProfile`: `elitePrimaryColor`, `eliteSecondaryColor`, `eliteAccentColor`, `eliteLightsColor`, plus custom flags and RGB arrays.
+   - Updated UI row bindings in `ArmorCustomizer.cpp` so clicking or modifying colors on the Elite tab only alters the Elite profile variables.
+   - Updated `LoadProfile` and `SaveProfile` to serialize and deserialize `primary_color`, `secondary_color`, `accent_color`, `lights_color`, `primary_custom`, `lights_custom`, and custom RGB arrays inside `j["elite"]`.
+4. **In-Game Replication & Host Slot 34:**
+   - In `ReachHost.cpp` (Slot 34), when `species == 1`, colors are read from `el` if present, ensuring the host writes the Elite's distinct colors to the engine profile.
+   - In `ElitePack.cpp` (`RefreshLocalPicks()`), when `s_localSpeciesElite` is true and `el` contains colors, `s_localColors` and `s_localCustomRgb` are populated from `el`, ensuring that the local player's Elite appearance and network settings sync block replicate their actual Elite colors and custom RGB to all other players in match.
+
+**The Fix:**
+1. **Isolated Suit Records to Spartan Only:**
+   Wrapped `s_colorRecords` and `s_suitRecords` writes with `if (!sel.previewElite)`. Wrapped `s_eliteColorRecords` write with `if (sel.previewElite)`. This stops `suitFloats` from poisoning Elite armor diffuse albedo.
+2. **Emissive Detail Slot Assignment:**
+   Set `words = sel.previewElite ? std::array<uint32_t, 4>{ priArgb, terArgb, litArgb, secArgb } : std::array<uint32_t, 4>{ priArgb, secArgb, terArgb, visArgb };`.
+3. **Independent Species Color Customization:**
+   Separated Spartan and Elite color state in `AppearanceProfile`, UI rendering, and JSON serialization.
+4. **Network & In-Match Replication:**
+   Updated `ReachHost.cpp` and `ElitePack.cpp` to pull Elite colors from `el` whenever an Elite is played.
 
 ## 0. Pick up here (2026-11-01, 01:50 ET) - Fix Elite Armor Lights Targeting Armor Plates Instead of Small Details (@O7OF)
 

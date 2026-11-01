@@ -1024,12 +1024,22 @@ static void ApplyArmoryAppearance(uint8_t* profile) {
         put(0x8C, kEliteSet + (eliteSet < 8 ? eliteSet : 0));
         put(0x90, kEliteEffect + elEffectOff);
         put(0x94, VoiceItem(str(sp, "voice_id")));
-        put(0x98, kColor + num(appearance, "primary_color", 0, 29, 1));
-        put(0x9C, kColor + num(appearance, "secondary_color", 0, 29, 10));
+        const int primaryColor = (species == 1 && el.contains("primary_color"))
+            ? num(el, "primary_color", 0, 29, 1)
+            : num(appearance, "primary_color", 0, 29, 1);
+        const int secondaryColor = (species == 1 && el.contains("secondary_color"))
+            ? num(el, "secondary_color", 0, 29, 10)
+            : num(appearance, "secondary_color", 0, 29, 10);
+        const int accentColor = (species == 1 && el.contains("accent_color"))
+            ? num(el, "accent_color", 0, 29, 14)
+            : num(appearance, "accent_color", 0, 29, 14);
+
+        put(0x98, kColor + primaryColor);
+        put(0x9C, kColor + secondaryColor);
         // +0xA0 is the third/detail colour ("accent"); Reach has no third picker in the stock Armory, but
         // the profile field exists (RR: Steel) and the Armory's third colour word follows it.
-        const int accentColor = num(appearance, "accent_color", 0, 29, 14);
         put(0xA0, kColor + accentColor);
+
         const std::string armoryTag = str(appearance, "service_tag");
         if (!armoryTag.empty()) {
             wchar_t serviceTag[4] = {};
@@ -1040,7 +1050,7 @@ static void ApplyArmoryAppearance(uint8_t* profile) {
         }
         NOBLE_INFO("ReachHost [Slot 34]: applied Armory appearance ({}, helmet {}, chest {}, effect {}/{}, Elite set {}, colours {}/{})",
                    species == 0 ? "Spartan" : "Elite", helmet, chest, spEffectOff, elEffectOff, eliteSet,
-                   num(appearance, "primary_color", 0, 29, 1), num(appearance, "secondary_color", 0, 29, 10));
+                   primaryColor, secondaryColor);
     } catch (const nlohmann::json::exception& e) {
         NOBLE_WARN("ReachHost [Slot 34]: could not read Armory appearance from '{}': {}", appearancePath.string(), e.what());
     }

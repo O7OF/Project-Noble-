@@ -26,7 +26,7 @@ struct AppearanceProfile {
     PlayerSpecies species = PlayerSpecies::Spartan; // Preferred Species for in-game spawning
     BodyType bodyType = BodyType::Male;
 
-    // Color indices (0-29 matching Reach's 30-color palette)
+    // Spartan Color indices (0-29 matching Reach's 30-color palette)
     int primaryColor = 1;    // Steel
     int secondaryColor = 10; // Green
     int accentColor = 14;    // Cyan (the third / detail colour)
@@ -38,6 +38,17 @@ struct AppearanceProfile {
     std::array<float, 3> secondaryCustomRgb = {0.267f, 0.545f, 0.314f};
     std::array<float, 3> accentCustomRgb = {0.471f, 0.788f, 0.808f};
     std::array<float, 3> lightsCustomRgb = {0.106f, 0.839f, 0.529f};
+
+    // Dedicated Elite Color indices (separate from Spartan customizations)
+    int elitePrimaryColor = 1;    // Steel
+    int eliteSecondaryColor = 10; // Green
+    int eliteAccentColor = 14;    // Cyan
+    int eliteLightsColor = 10;    // 4th slot: lights / illumination colour
+    bool elitePrimaryCustom = false, eliteSecondaryCustom = false, eliteAccentCustom = false, eliteLightsCustom = false;
+    std::array<float, 3> elitePrimaryCustomRgb = {0.349f, 0.349f, 0.349f};
+    std::array<float, 3> eliteSecondaryCustomRgb = {0.267f, 0.545f, 0.314f};
+    std::array<float, 3> eliteAccentCustomRgb = {0.471f, 0.788f, 0.808f};
+    std::array<float, 3> eliteLightsCustomRgb = {0.106f, 0.839f, 0.529f};
 
     // Spartan selections (catalog indices)
     int helmetIndex = 0;         // Mark V [B]

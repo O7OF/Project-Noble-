@@ -1186,20 +1186,23 @@ void RefreshLocalPicks() {
         else fxIdx = 0;
         s_localEliteEffect = (fxIdx >= 1 && fxIdx <= 6) ? static_cast<uint8_t>(fxIdx) : 0xFF;
 
-        s_localColors[0] = static_cast<uint8_t>(std::clamp(j.value("primary_color", 1), 0, 29));
-        s_localColors[1] = static_cast<uint8_t>(std::clamp(j.value("secondary_color", 10), 0, 29));
-        s_localColors[2] = static_cast<uint8_t>(std::clamp(j.value("accent_color", 14), 0, 29));
-        s_localColors[3] = static_cast<uint8_t>(std::clamp(j.value("lights_color", 10), 0, 29));
+        const bool useElColors = s_localSpeciesElite && el.contains("primary_color");
+        const auto& colSrc = useElColors ? el : j;
+
+        s_localColors[0] = static_cast<uint8_t>(std::clamp(colSrc.value("primary_color", 1), 0, 29));
+        s_localColors[1] = static_cast<uint8_t>(std::clamp(colSrc.value("secondary_color", 10), 0, 29));
+        s_localColors[2] = static_cast<uint8_t>(std::clamp(colSrc.value("accent_color", 14), 0, 29));
+        s_localColors[3] = static_cast<uint8_t>(std::clamp(colSrc.value("lights_color", 10), 0, 29));
 
         s_localCustomFlags = 0;
-        if (j.value("primary_custom", false))   s_localCustomFlags |= (1 << 0);
-        if (j.value("secondary_custom", false)) s_localCustomFlags |= (1 << 1);
-        if (j.value("accent_custom", false))    s_localCustomFlags |= (1 << 2);
-        if (j.value("lights_custom", false))    s_localCustomFlags |= (1 << 3);
+        if (colSrc.value("primary_custom", false))   s_localCustomFlags |= (1 << 0);
+        if (colSrc.value("secondary_custom", false)) s_localCustomFlags |= (1 << 1);
+        if (colSrc.value("accent_custom", false))    s_localCustomFlags |= (1 << 2);
+        if (colSrc.value("lights_custom", false))    s_localCustomFlags |= (1 << 3);
 
         auto readRgb = [&](const char* key, float out[3]) {
-            if (j.contains(key) && j[key].is_array() && j[key].size() == 3) {
-                for (int i = 0; i < 3; ++i) out[i] = std::clamp(j[key][i].get<float>(), 0.0f, 1.0f);
+            if (colSrc.contains(key) && colSrc[key].is_array() && colSrc[key].size() == 3) {
+                for (int i = 0; i < 3; ++i) out[i] = std::clamp(colSrc[key][i].get<float>(), 0.0f, 1.0f);
             }
         };
         readRgb("primary_custom_rgb", s_localCustomRgb[0]);

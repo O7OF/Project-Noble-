@@ -1030,10 +1030,11 @@ void ArmorCustomizer::SyncToReachArmory() const {
     const int fvIdx = std::clamp(m_profile.firefightVoiceIndex, 0, static_cast<int>(kFirefightVoices.size()) - 1);
     const int elIdx = std::clamp(m_profile.eliteArmorSet, 0, static_cast<int>(kEliteSets.size()) - 1);
     const int vcIdx = std::clamp(m_profile.visorColorIndex, 0, static_cast<int>(kVisorColors.size()) - 1);
-    const int priIdx = std::clamp(m_profile.primaryColor, 0, 29);
-    const int secIdx = std::clamp(m_profile.secondaryColor, 0, 29);
-    const int accIdx = std::clamp(m_profile.accentColor, 0, 29);
-    const int lgtIdx = std::clamp(m_profile.lightsColor, 0, 29);
+    const bool previewingElite = (m_previewSpecies == PlayerSpecies::Elite);
+    const int priIdx = std::clamp(previewingElite ? m_profile.elitePrimaryColor : m_profile.primaryColor, 0, 29);
+    const int secIdx = std::clamp(previewingElite ? m_profile.eliteSecondaryColor : m_profile.secondaryColor, 0, 29);
+    const int accIdx = std::clamp(previewingElite ? m_profile.eliteAccentColor : m_profile.accentColor, 0, 29);
+    const int lgtIdx = std::clamp(previewingElite ? m_profile.eliteLightsColor : m_profile.lightsColor, 0, 29);
 
     const auto& pCol = kReachColors[priIdx];
     const auto& sCol = kReachColors[secIdx];
@@ -1082,11 +1083,20 @@ void ArmorCustomizer::SyncToReachArmory() const {
     sel.eliteArmorEffectIndex = elAeIdx;
     sel.eliteArmorEffect = kArmorEffects[elAeIdx].stringId;
 
-    sel.primaryRgb = colorRgb(m_profile.primaryCustom, m_profile.primaryCustomRgb, pCol);
-    sel.secondaryRgb = colorRgb(m_profile.secondaryCustom, m_profile.secondaryCustomRgb, sCol);
-    sel.accentRgb = colorRgb(m_profile.accentCustom, m_profile.accentCustomRgb, aCol);
-    sel.lightsRgb = colorRgb(m_profile.lightsCustom, m_profile.lightsCustomRgb, lCol);
-    sel.lightsCustom = m_profile.lightsCustom;
+    const bool priCust = previewingElite ? m_profile.elitePrimaryCustom : m_profile.primaryCustom;
+    const bool secCust = previewingElite ? m_profile.eliteSecondaryCustom : m_profile.secondaryCustom;
+    const bool accCust = previewingElite ? m_profile.eliteAccentCustom : m_profile.accentCustom;
+    const bool lgtCust = previewingElite ? m_profile.eliteLightsCustom : m_profile.lightsCustom;
+    const auto& priRgbArr = previewingElite ? m_profile.elitePrimaryCustomRgb : m_profile.primaryCustomRgb;
+    const auto& secRgbArr = previewingElite ? m_profile.eliteSecondaryCustomRgb : m_profile.secondaryCustomRgb;
+    const auto& accRgbArr = previewingElite ? m_profile.eliteAccentCustomRgb : m_profile.accentCustomRgb;
+    const auto& lgtRgbArr = previewingElite ? m_profile.eliteLightsCustomRgb : m_profile.lightsCustomRgb;
+
+    sel.primaryRgb = colorRgb(priCust, priRgbArr, pCol);
+    sel.secondaryRgb = colorRgb(secCust, secRgbArr, sCol);
+    sel.accentRgb = colorRgb(accCust, accRgbArr, aCol);
+    sel.lightsRgb = colorRgb(lgtCust, lgtRgbArr, lCol);
+    sel.lightsCustom = lgtCust;
     sel.visorRgb = { SrgbToLinear(vCol.r), SrgbToLinear(vCol.g), SrgbToLinear(vCol.b) };
 
     // Coalesce: apply at once when the previous application is older than 250 ms, otherwise keep it pending and let
@@ -1141,6 +1151,20 @@ bool ArmorCustomizer::LoadProfile(const std::filesystem::path& path) {
         loadCustom("secondary_custom", "secondary_custom_rgb", m_profile.secondaryCustom, m_profile.secondaryCustomRgb);
         loadCustom("accent_custom", "accent_custom_rgb", m_profile.accentCustom, m_profile.accentCustomRgb);
         loadCustom("lights_custom", "lights_custom_rgb", m_profile.lightsCustom, m_profile.lightsCustomRgb);
+
+        // Default Elite colors to base colors
+        m_profile.elitePrimaryColor = m_profile.primaryColor;
+        m_profile.eliteSecondaryColor = m_profile.secondaryColor;
+        m_profile.eliteAccentColor = m_profile.accentColor;
+        m_profile.eliteLightsColor = m_profile.lightsColor;
+        m_profile.elitePrimaryCustom = m_profile.primaryCustom;
+        m_profile.eliteSecondaryCustom = m_profile.secondaryCustom;
+        m_profile.eliteAccentCustom = m_profile.accentCustom;
+        m_profile.eliteLightsCustom = m_profile.lightsCustom;
+        m_profile.elitePrimaryCustomRgb = m_profile.primaryCustomRgb;
+        m_profile.eliteSecondaryCustomRgb = m_profile.secondaryCustomRgb;
+        m_profile.eliteAccentCustomRgb = m_profile.accentCustomRgb;
+        m_profile.eliteLightsCustomRgb = m_profile.lightsCustomRgb;
 
         if (j.contains("spartan") && j["spartan"].is_object()) {
             const auto& sp = j["spartan"];
@@ -1202,6 +1226,26 @@ bool ArmorCustomizer::LoadProfile(const std::filesystem::path& path) {
 
         if (j.contains("elite") && j["elite"].is_object()) {
             const auto& el = j["elite"];
+            if (el.contains("primary_color") && el["primary_color"].is_number_integer())
+                m_profile.elitePrimaryColor = std::clamp(el["primary_color"].get<int>(), 0, 29);
+            if (el.contains("secondary_color") && el["secondary_color"].is_number_integer())
+                m_profile.eliteSecondaryColor = std::clamp(el["secondary_color"].get<int>(), 0, 29);
+            if (el.contains("accent_color") && el["accent_color"].is_number_integer())
+                m_profile.eliteAccentColor = std::clamp(el["accent_color"].get<int>(), 0, 29);
+            if (el.contains("lights_color") && el["lights_color"].is_number_integer())
+                m_profile.eliteLightsColor = std::clamp(el["lights_color"].get<int>(), 0, 29);
+
+            auto loadCustomElite = [&](const char* flagKey, const char* rgbKey, bool& flag, std::array<float, 3>& rgb) {
+                if (el.contains(flagKey) && el[flagKey].is_boolean()) flag = el[flagKey].get<bool>();
+                if (el.contains(rgbKey) && el[rgbKey].is_array() && el[rgbKey].size() == 3) {
+                    for (int i = 0; i < 3; ++i)
+                        if (el[rgbKey][i].is_number()) rgb[i] = std::clamp(el[rgbKey][i].get<float>(), 0.0f, 1.0f);
+                }
+            };
+            loadCustomElite("primary_custom", "primary_custom_rgb", m_profile.elitePrimaryCustom, m_profile.elitePrimaryCustomRgb);
+            loadCustomElite("secondary_custom", "secondary_custom_rgb", m_profile.eliteSecondaryCustom, m_profile.eliteSecondaryCustomRgb);
+            loadCustomElite("accent_custom", "accent_custom_rgb", m_profile.eliteAccentCustom, m_profile.eliteAccentCustomRgb);
+            loadCustomElite("lights_custom", "lights_custom_rgb", m_profile.eliteLightsCustom, m_profile.eliteLightsCustomRgb);
             if (el.contains("armor_set") && el["armor_set"].is_number_integer()) {
                 // A preset equips its own six permutations (the mixed presets reference the extra pieces),
                 // then the explicit *_index values below win for looks saved after mixing by hand.
@@ -1351,6 +1395,18 @@ bool ArmorCustomizer::SaveProfile(const std::filesystem::path& path) {
         };
 
         j["elite"] = {
+            {"primary_color", m_profile.elitePrimaryColor},
+            {"secondary_color", m_profile.eliteSecondaryColor},
+            {"accent_color", m_profile.eliteAccentColor},
+            {"lights_color", m_profile.eliteLightsColor},
+            {"primary_custom", m_profile.elitePrimaryCustom},
+            {"secondary_custom", m_profile.eliteSecondaryCustom},
+            {"accent_custom", m_profile.eliteAccentCustom},
+            {"lights_custom", m_profile.eliteLightsCustom},
+            {"primary_custom_rgb", { m_profile.elitePrimaryCustomRgb[0], m_profile.elitePrimaryCustomRgb[1], m_profile.elitePrimaryCustomRgb[2] }},
+            {"secondary_custom_rgb", { m_profile.eliteSecondaryCustomRgb[0], m_profile.eliteSecondaryCustomRgb[1], m_profile.eliteSecondaryCustomRgb[2] }},
+            {"accent_custom_rgb", { m_profile.eliteAccentCustomRgb[0], m_profile.eliteAccentCustomRgb[1], m_profile.eliteAccentCustomRgb[2] }},
+            {"lights_custom_rgb", { m_profile.eliteLightsCustomRgb[0], m_profile.eliteLightsCustomRgb[1], m_profile.eliteLightsCustomRgb[2] }},
             {"armor_set", m_profile.eliteArmorSet},
             {"armor_set_id", kEliteSets[m_profile.eliteArmorSet].stringId},
             {"helmet_index", m_profile.eliteHelmetIndex},
@@ -1686,10 +1742,16 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
         addPiece("Legs", &m_profile.eliteLegsIndex, kEliteLegs);
     }
     {
-        SlotRow p{ "COLORS", "Primary", RowKind::Colour, &m_profile.primaryColor };
-        SlotRow q{ "COLORS", "Secondary", RowKind::Colour, &m_profile.secondaryColor };
-        SlotRow a{ "COLORS", "Accent", RowKind::Colour, &m_profile.accentColor };
-        SlotRow l{ "COLORS", "Lights", RowKind::Colour, &m_profile.lightsColor };
+        const bool isElite = (m_previewSpecies == PlayerSpecies::Elite);
+        int* pIdx = isElite ? &m_profile.elitePrimaryColor : &m_profile.primaryColor;
+        int* sIdx = isElite ? &m_profile.eliteSecondaryColor : &m_profile.secondaryColor;
+        int* aIdx = isElite ? &m_profile.eliteAccentColor : &m_profile.accentColor;
+        int* lIdx = isElite ? &m_profile.eliteLightsColor : &m_profile.lightsColor;
+
+        SlotRow p{ "COLORS", "Primary", RowKind::Colour, pIdx };
+        SlotRow q{ "COLORS", "Secondary", RowKind::Colour, sIdx };
+        SlotRow a{ "COLORS", "Accent", RowKind::Colour, aIdx };
+        SlotRow l{ "COLORS", "Lights", RowKind::Colour, lIdx };
         for (const auto& c : kReachColors) {
             p.options.push_back({ c.name, "", ColourU32(c.r, c.g, c.b) });
             q.options.push_back({ c.name, "", ColourU32(c.r, c.g, c.b) });
@@ -1814,6 +1876,10 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
             else if (r.index == &m_profile.secondaryColor) m_profile.secondaryCustom = false;
             else if (r.index == &m_profile.accentColor) m_profile.accentCustom = false;
             else if (r.index == &m_profile.lightsColor) m_profile.lightsCustom = false;
+            else if (r.index == &m_profile.elitePrimaryColor) m_profile.elitePrimaryCustom = false;
+            else if (r.index == &m_profile.eliteSecondaryColor) m_profile.eliteSecondaryCustom = false;
+            else if (r.index == &m_profile.eliteAccentColor) m_profile.eliteAccentCustom = false;
+            else if (r.index == &m_profile.eliteLightsColor) m_profile.eliteLightsCustom = false;
         }
         if (r.index == &speciesInt) {
             m_profile.species = static_cast<PlayerSpecies>(std::clamp(speciesInt, 0, 1));
@@ -1954,6 +2020,14 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
                     c = ColourU32(m_profile.accentCustomRgb[0], m_profile.accentCustomRgb[1], m_profile.accentCustomRgb[2]);
                 else if (r.index == &m_profile.lightsColor && m_profile.lightsCustom)
                     c = ColourU32(m_profile.lightsCustomRgb[0], m_profile.lightsCustomRgb[1], m_profile.lightsCustomRgb[2]);
+                else if (r.index == &m_profile.elitePrimaryColor && m_profile.elitePrimaryCustom)
+                    c = ColourU32(m_profile.elitePrimaryCustomRgb[0], m_profile.elitePrimaryCustomRgb[1], m_profile.elitePrimaryCustomRgb[2]);
+                else if (r.index == &m_profile.eliteSecondaryColor && m_profile.eliteSecondaryCustom)
+                    c = ColourU32(m_profile.eliteSecondaryCustomRgb[0], m_profile.eliteSecondaryCustomRgb[1], m_profile.eliteSecondaryCustomRgb[2]);
+                else if (r.index == &m_profile.eliteAccentColor && m_profile.eliteAccentCustom)
+                    c = ColourU32(m_profile.eliteAccentCustomRgb[0], m_profile.eliteAccentCustomRgb[1], m_profile.eliteAccentCustomRgb[2]);
+                else if (r.index == &m_profile.eliteLightsColor && m_profile.eliteLightsCustom)
+                    c = ColourU32(m_profile.eliteLightsCustomRgb[0], m_profile.eliteLightsCustomRgb[1], m_profile.eliteLightsCustomRgb[2]);
                 ldl->AddRectFilled(ImVec2(vr - 18.0f * s, p0.y + 7.0f * s), ImVec2(vr, p1.y - 7.0f * s), c);
                 ldl->AddRect(ImVec2(vr - 18.0f * s, p0.y + 7.0f * s), ImVec2(vr, p1.y - 7.0f * s), IM_COL32(230, 240, 255, 160));
             } else {
@@ -1999,10 +2073,10 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
         const int equipped = std::clamp(*row.index, 0, n - 1);
         // Colour slots -> the custom-wheel fields of the profile (0 primary, 1 secondary, 2 accent, 3 lights).
         auto colourSlot = [&](int* idx) -> int {
-            if (idx == &m_profile.primaryColor) return 0;
-            if (idx == &m_profile.secondaryColor) return 1;
-            if (idx == &m_profile.accentColor) return 2;
-            if (idx == &m_profile.lightsColor) return 3;
+            if (idx == &m_profile.primaryColor || idx == &m_profile.elitePrimaryColor) return 0;
+            if (idx == &m_profile.secondaryColor || idx == &m_profile.eliteSecondaryColor) return 1;
+            if (idx == &m_profile.accentColor || idx == &m_profile.eliteAccentColor) return 2;
+            if (idx == &m_profile.lightsColor || idx == &m_profile.eliteLightsColor) return 3;
             return -1;
         };
         const bool isColourRow = row.kind == RowKind::Colour;
@@ -2044,14 +2118,15 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
         // Reach palette index so the in-game colours remain valid).
         if (isColourRow && ImGui::BeginPopup("##custom_colour_popup")) {
             const int slot = colourSlot(row.index);
-            bool* custom = slot == 0 ? &m_profile.primaryCustom
-                         : slot == 1 ? &m_profile.secondaryCustom
-                         : slot == 2 ? &m_profile.accentCustom
-                         : &m_profile.lightsCustom;
-            std::array<float, 3>* rgb = slot == 0 ? &m_profile.primaryCustomRgb
-                                      : slot == 1 ? &m_profile.secondaryCustomRgb
-                                      : slot == 2 ? &m_profile.accentCustomRgb
-                                      : &m_profile.lightsCustomRgb;
+            const bool isElite = (m_previewSpecies == PlayerSpecies::Elite);
+            bool* custom = slot == 0 ? (isElite ? &m_profile.elitePrimaryCustom : &m_profile.primaryCustom)
+                         : slot == 1 ? (isElite ? &m_profile.eliteSecondaryCustom : &m_profile.secondaryCustom)
+                         : slot == 2 ? (isElite ? &m_profile.eliteAccentCustom : &m_profile.accentCustom)
+                         : (isElite ? &m_profile.eliteLightsCustom : &m_profile.lightsCustom);
+            std::array<float, 3>* rgb = slot == 0 ? (isElite ? &m_profile.elitePrimaryCustomRgb : &m_profile.primaryCustomRgb)
+                                      : slot == 1 ? (isElite ? &m_profile.eliteSecondaryCustomRgb : &m_profile.secondaryCustomRgb)
+                                      : slot == 2 ? (isElite ? &m_profile.eliteAccentCustomRgb : &m_profile.accentCustomRgb)
+                                      : (isElite ? &m_profile.eliteLightsCustomRgb : &m_profile.lightsCustomRgb);
             float col[3] = { (*rgb)[0], (*rgb)[1], (*rgb)[2] };
             if (!*custom) {
                 const auto& pal = kReachColors[std::clamp(*row.index, 0, 29)];

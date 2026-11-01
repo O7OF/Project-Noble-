@@ -833,15 +833,15 @@ static void WriteColorsAndSuit(const ReachArmorySelection& sel) {
     //   [3] = Visor reflection tint (with 20 finishes)
     // Elite (elite_armor_template / elite_illum_cards):
     //   [0] = Primary base armor
-    //   [1] = Bodysuit / Accent detail
-    //   [2] = Secondary armor trim / stripes (Secondary color)
-    //   [3] = Emissive armor lights (Lights color - focusing small detail lights)
+    //   [1] = Bodysuit / Techsuit / Accent detail
+    //   [2] = Emissive armor lights (Lights color - glowing eyes, illumination cards, LEDs)
+    //   [3] = Secondary armor trim / stripes (Secondary color)
     const std::array<uint32_t, 4> words = sel.previewElite
-        ? std::array<uint32_t, 4>{ priArgb, terArgb, secArgb, litArgb }
+        ? std::array<uint32_t, 4>{ priArgb, terArgb, litArgb, secArgb }
         : std::array<uint32_t, 4>{ priArgb, secArgb, terArgb, visArgb };
 
     // Self-illumination / emissive suit shader float constant:
-    // Controls the glowing emissive armor lights (status LEDs, illumination cards) on both species
+    // Spartan only: Controls the glowing emissive armor lights (status LEDs, illumination cards)
     const float suitFloats[4] = {
         sel.lightsRgb[0] * 4.0f,
         sel.lightsRgb[1] * 4.0f,
@@ -855,43 +855,45 @@ static void WriteColorsAndSuit(const ReachArmorySelection& sel) {
     s_lastEliteSecArgb = secArgb;
     s_lastSuitFloats = { suitFloats[0], suitFloats[1], suitFloats[2], suitFloats[3] };
 
-    s_colorRecords.erase(
-        std::remove_if(s_colorRecords.begin(), s_colorRecords.end(), [&](uintptr_t rec) {
-            uint32_t cur[4] = {};
-            if (!SafeCopyMem(cur, reinterpret_cast<const void*>(rec), sizeof(cur))) return true;
-            if ((cur[0] >> 24) != 0xFFu || (cur[1] >> 24) != 0xFFu ||
-                (cur[2] >> 24) != 0xFFu || (cur[3] >> 24) != 0xFFu) {
-                return true;
-            }
-            return !SafeCopyMem(reinterpret_cast<void*>(rec), words.data(), sizeof(uint32_t) * 4);
-        }),
-        s_colorRecords.end()
-    );
+    if (!sel.previewElite) {
+        s_colorRecords.erase(
+            std::remove_if(s_colorRecords.begin(), s_colorRecords.end(), [&](uintptr_t rec) {
+                uint32_t cur[4] = {};
+                if (!SafeCopyMem(cur, reinterpret_cast<const void*>(rec), sizeof(cur))) return true;
+                if ((cur[0] >> 24) != 0xFFu || (cur[1] >> 24) != 0xFFu ||
+                    (cur[2] >> 24) != 0xFFu || (cur[3] >> 24) != 0xFFu) {
+                    return true;
+                }
+                return !SafeCopyMem(reinterpret_cast<void*>(rec), words.data(), sizeof(uint32_t) * 4);
+            }),
+            s_colorRecords.end()
+        );
 
-    s_eliteColorRecords.erase(
-        std::remove_if(s_eliteColorRecords.begin(), s_eliteColorRecords.end(), [&](uintptr_t rec) {
-            uint32_t cur[4] = {};
-            if (!SafeCopyMem(cur, reinterpret_cast<const void*>(rec), sizeof(cur))) return true;
-            if ((cur[0] >> 24) != 0xFFu || (cur[1] >> 24) != 0xFFu ||
-                (cur[2] >> 24) != 0xFFu || (cur[3] >> 24) != 0xFFu) {
-                return true;
-            }
-            return !SafeCopyMem(reinterpret_cast<void*>(rec), words.data(), sizeof(uint32_t) * 4);
-        }),
-        s_eliteColorRecords.end()
-    );
-
-    s_suitRecords.erase(
-        std::remove_if(s_suitRecords.begin(), s_suitRecords.end(), [&](uintptr_t suit) {
-            float cur[4] = {};
-            if (!SafeCopyMem(cur, reinterpret_cast<const void*>(suit), sizeof(cur))) return true;
-            for (int i = 0; i < 4; ++i) {
-                if (!std::isfinite(cur[i]) || cur[i] < 0.0f || cur[i] > 6.0f) return true;
-            }
-            return !SafeWriteFloats(suit, suitFloats, 4);
-        }),
-        s_suitRecords.end()
-    );
+        s_suitRecords.erase(
+            std::remove_if(s_suitRecords.begin(), s_suitRecords.end(), [&](uintptr_t suit) {
+                float cur[4] = {};
+                if (!SafeCopyMem(cur, reinterpret_cast<const void*>(suit), sizeof(cur))) return true;
+                for (int i = 0; i < 4; ++i) {
+                    if (!std::isfinite(cur[i]) || cur[i] < 0.0f || cur[i] > 6.0f) return true;
+                }
+                return !SafeWriteFloats(suit, suitFloats, 4);
+            }),
+            s_suitRecords.end()
+        );
+    } else {
+        s_eliteColorRecords.erase(
+            std::remove_if(s_eliteColorRecords.begin(), s_eliteColorRecords.end(), [&](uintptr_t rec) {
+                uint32_t cur[4] = {};
+                if (!SafeCopyMem(cur, reinterpret_cast<const void*>(rec), sizeof(cur))) return true;
+                if ((cur[0] >> 24) != 0xFFu || (cur[1] >> 24) != 0xFFu ||
+                    (cur[2] >> 24) != 0xFFu || (cur[3] >> 24) != 0xFFu) {
+                    return true;
+                }
+                return !SafeCopyMem(reinterpret_cast<void*>(rec), words.data(), sizeof(uint32_t) * 4);
+            }),
+            s_eliteColorRecords.end()
+        );
+    }
 }
 
 // -----------------------------------------------------------------------------
