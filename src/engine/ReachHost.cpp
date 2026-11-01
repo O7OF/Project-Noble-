@@ -967,6 +967,15 @@ static void ApplyArmoryAppearance(uint8_t* profile) {
             if (id == "ice") return 1;
             if (id == "crimson") return 0;
             if (id == "onyx") return 4;
+            if (id == "amber") return 0;
+            if (id == "cyan") return 2;
+            if (id == "ruby") return 0;
+            if (id == "sapphire") return 2;
+            if (id == "amethyst") return 2;
+            if (id == "bronze") return 3;
+            if (id == "sunfire") return 3;
+            if (id == "lime") return 1;
+            if (id == "platinum") return 1;
             if (idx == 3) return 4;
             if (idx == 4) return 3;
             return static_cast<uint32_t>(std::clamp(idx, 0, 4));
@@ -974,7 +983,7 @@ static void ApplyArmoryAppearance(uint8_t* profile) {
 
         const uint32_t spEffectOff = armoryEffectOffset(num(sp, "armor_effect_index", 0, 6, 0), str(sp, "armor_effect_id"));
         const uint32_t elEffectOff = armoryEffectOffset(num(el, "armor_effect_index", 0, 6, 0), str(el, "armor_effect_id"));
-        const uint32_t visorOff = visorOffset(num(sp, "visor_color_index", 0, 4, 0), str(sp, "visor_id"));
+        const uint32_t visorOff = visorOffset(num(sp, "visor_color_index", 0, 19, 0), str(sp, "visor_id"));
         const int utility = num(sp, "utility_index", 0, 6, 0);
 
         put(0x40, helmet);

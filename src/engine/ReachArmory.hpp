@@ -18,6 +18,7 @@ struct ReachArmorySelection {
     int primaryColorIndex = 1;    // 0..29 (Steel)
     int secondaryColorIndex = 10; // 0..29 (Green/Brick)
     int accentColorIndex = 14;    // 0..29 (Cyan; the third/detail colour)
+    int lightsColorIndex = 14;    // 0..29 (4th slot: lights / illumination)
     int visorColorIndex = 0;      // 0..4
     int armorEffectIndex = 0;     // 0..6
     int firefightVoiceIndex = 0;  // 0..15
@@ -54,7 +55,9 @@ struct ReachArmorySelection {
     std::array<float, 3> primaryRgb = { 0.100f, 0.100f, 0.100f };
     std::array<float, 3> secondaryRgb = { 0.100f, 0.100f, 0.100f };
     std::array<float, 3> accentRgb = { 0.471f, 0.788f, 0.808f };   // third/detail colour (Cyan)
+    std::array<float, 3> lightsRgb = { 0.106f, 0.839f, 0.529f };   // 4th slot: lights / illumination
     std::array<float, 3> visorRgb = { 0.69f, 0.25f, 0.02f };
+    bool lightsCustom = false;
 };
 
 class ReachArmory {

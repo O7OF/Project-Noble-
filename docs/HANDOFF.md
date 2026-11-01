@@ -7,7 +7,46 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 
 **Goal:** `noble-client.exe` loads MCC's own `haloreach.dll` (Halo: Reach) and drives it **without MCC**, like the existing
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
-MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.12 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.12.1 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+
+## 0. Pick up here (2026-10-31, 22:30 ET) - 4th Color Slot (Lights / Emissive Glow) & Extended Spartan Visors (@O7OF)
+
+**Version:** 0.9.12.1. **Build:** 0 errors, 0 warnings (Release `noble-client` + `noble-dev` + packaged `Noble.exe`). Files: `src/engine/ReachArmory.hpp`, `src/engine/ReachArmory.cpp`, `src/ui/ArmorCustomizer.hpp`, `src/ui/ArmorCustomizer.cpp`, `src/engine/ReachHost.cpp`, `src/common/Version.hpp`.
+
+### 1. Elite Lights / Emissive Glow Channel & Shader Architecture (@O7OF)
+- **Shader & Memory Analysis:**
+  - In `src/engine/ReachArmory.cpp`, Reach Elite ARGB constant buffer layout (16 bytes = 4 uint32_t words):
+    - `words[0]` = Primary Base Armor (`priArgb`)
+    - `words[1]` = Bodysuit / Accent detail (`terArgb`)
+    - `words[2]` = **Emissive Armor Lights** (`litArgb`)
+    - `words[3]` = Secondary Armor Trim / Stripes (`secArgb`)
+  - Confirmed via stock Elite rank preset ARGB palettes from host-probe: slot `[2]` is always bright emissive (Minor Orange `0xFFD1660D`, Zealot Cyan `0xFF1BD687`, Officer Chartreuse `0xFF9DB02C`, Ultra/SpecOps Orange-Red `0xFFFF663B`).
+  - By writing `{ priArgb, terArgb, litArgb, secArgb }` to Elite color records, the 4th color slot ("Lights") directly drives the glowing emissive nodes on Elite armor (chest, back, helmet).
+  - Also fixed `MatchEliteColorPattern()` to check `(cur[0] == lastPri || cur[3] == lastPri)` so rescans seamlessly track modified Elite color records across biped rebuilds.
+
+### 2. 4th Color Picker Slot in Armory UI (@O7OF)
+- Added 4th color row `Lights` to `ArmorCustomizer.cpp` under `"COLORS"`, supporting both Reach's 30 palette options and custom RGB hue-wheel picking.
+- Profile persistence in `appearance.json`: saves/loads `lights_color`, `lights_custom`, `lights_custom_rgb`.
+- Added swatch rendering and `colourSlot` index mapping (0: primary, 1: secondary, 2: accent, 3: lights).
+- Synchronized with `ReachArmorySelection`: `sel.lightsColorIndex`, `sel.lightsRgb`, `sel.lightsCustom`.
+- On Spartans, slot 4 drives lights / visor reflection (`words[3] = (sel.lightsCustom ? litArgb : visArgb)`).
+
+### 3. Expanded Spartan Visor Palette (@O7OF)
+- Expanded `kVisorColors` in `ArmorCustomizer.cpp` from 11 to 20 visor finishes, adding 9 new finishes:
+  - `AMBER` (deep desert amber, thermal-glare rejection)
+  - `CYAN` (polarized cyan finish for vacuum operations)
+  - `RUBY` (mirrored ruby-red coating with metallic refraction)
+  - `SAPPHIRE` (deep cobalt sapphire dielectric stack)
+  - `AMETHYST` (royal purple finish with laser-dazzle suppression)
+  - `BRONZE` (burnished bronze-copper deposition)
+  - `SUNFIRE` (solar-flare orange with intense luminance)
+  - `LIME` (high-contrast chartreuse coating)
+  - `PLATINUM` (pure mirror-finish platinum reflection)
+- In `ReachHost.cpp`: mapped extended visor IDs cleanly to valid MCC stock visor indices (0..4) in `visorOffset()` so profile packets remain strictly valid, and expanded index clamping range from `0..4` to `0..19`.
+
+### 4. Build & Packaging Verified (@O7OF)
+- Both `noble-dev.exe` and `noble-client.exe` compiled cleanly with 0 errors via MSVC Release x64.
+- Packaged release `Noble.exe` updated in `C:\Users\Chey1\Documents\Noble Launcher\`.
 
 ## 0. Pick up here (2026-10-31, 21:34 ET) - Game type drop-downs and menu search; team and options findings (@claude)
 

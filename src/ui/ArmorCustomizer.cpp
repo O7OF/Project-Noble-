@@ -87,7 +87,7 @@ struct VisorEntry {
     const char* description;
 };
 
-constexpr std::array<VisorEntry, 11> kVisorColors = {{
+constexpr std::array<VisorEntry, 20> kVisorColors = {{
     {"DEFAULT", "default", 0.85f, 0.53f, 0.14f,
      "Standard-issue solar/laser reflective gold-amber coating applied to MJOLNIR Mk. V visors."},
     {"SILVER",  "silver",  0.78f, 0.83f, 0.90f,
@@ -110,6 +110,24 @@ constexpr std::array<VisorEntry, 11> kVisorColors = {{
      "Noble Armory finish: blood-red mirrored coating for command inspections. Unlocks at Colonel."},
     {"ONYX",    "onyx",    0.05f, 0.05f, 0.06f,
      "Noble Armory finish: near-black onyx with a faint silver rim. Unlocks at Inheritor."},
+    {"AMBER",   "amber",   0.95f, 0.48f, 0.08f,
+     "Deep desert amber coating with high thermal-glare rejection."},
+    {"CYAN",    "cyan",    0.08f, 0.85f, 0.92f,
+     "Polarized cyan finish engineered for orbital and EVA vacuum operations."},
+    {"RUBY",    "ruby",    0.92f, 0.12f, 0.28f,
+     "Mirrored ruby-red coating with brilliant metallic crimson refraction."},
+    {"SAPPHIRE","sapphire",0.10f, 0.25f, 0.92f,
+     "Deep cobalt sapphire dielectric stack favored for night ops."},
+    {"AMETHYST","amethyst",0.70f, 0.15f, 0.85f,
+     "Lustrous royal purple finish offering full UV and laser-dazzle suppression."},
+    {"BRONZE",  "bronze",  0.80f, 0.45f, 0.20f,
+     "Burnished bronze-copper deposition worn by frontier command teams."},
+    {"SUNFIRE", "sunfire", 1.00f, 0.35f, 0.02f,
+     "Blazing solar-flare orange coating with intense surface luminance."},
+    {"LIME",    "lime",    0.42f, 0.92f, 0.18f,
+     "High-contrast chartreuse coating for low-visibility jungle deployment."},
+    {"PLATINUM","platinum",0.92f, 0.94f, 0.98f,
+     "Pure mirror-finish platinum reflection cutting flash blindness."}
 }};
 
 struct HelmetVariantSpec {
@@ -849,6 +867,7 @@ void ArmorCustomizer::SyncLegacyFields() {
     m_profile.armorEffectIndex = std::clamp(m_profile.armorEffectIndex, 0, static_cast<int>(kArmorEffects.size()) - 1);
     m_profile.firefightVoiceIndex = std::clamp(m_profile.firefightVoiceIndex, 0, static_cast<int>(kFirefightVoices.size()) - 1);
     m_profile.accentColor = std::clamp(m_profile.accentColor, 0, 29);
+    m_profile.lightsColor = std::clamp(m_profile.lightsColor, 0, 29);
     m_profile.eliteArmorSet = std::clamp(m_profile.eliteArmorSet, 0, static_cast<int>(kEliteSets.size()) - 1);
     // The mixed presets added 2026-10-30 use the extra piece entries; keep stale saves inside their lists.
     m_profile.eliteHelmetIndex = std::clamp(m_profile.eliteHelmetIndex, 0, static_cast<int>(GetElitePieces(kEliteHelmet).size()) - 1);
@@ -994,10 +1013,12 @@ void ArmorCustomizer::SyncToReachArmory() const {
     const int priIdx = std::clamp(m_profile.primaryColor, 0, 29);
     const int secIdx = std::clamp(m_profile.secondaryColor, 0, 29);
     const int accIdx = std::clamp(m_profile.accentColor, 0, 29);
+    const int lgtIdx = std::clamp(m_profile.lightsColor, 0, 29);
 
     const auto& pCol = kReachColors[priIdx];
     const auto& sCol = kReachColors[secIdx];
     const auto& aCol = kReachColors[accIdx];
+    const auto& lCol = kReachColors[lgtIdx];
     const auto& vCol = kVisorColors[vcIdx];
     auto colorRgb = [](bool custom, const std::array<float, 3>& rgb, const ReachColorEntry& pal) {
         const std::array<float, 3> s = custom ? rgb : std::array<float, 3>{pal.r, pal.g, pal.b};
@@ -1011,6 +1032,7 @@ void ArmorCustomizer::SyncToReachArmory() const {
     sel.primaryColorIndex = priIdx;
     sel.secondaryColorIndex = secIdx;
     sel.accentColorIndex = accIdx;
+    sel.lightsColorIndex = lgtIdx;
     sel.visorColorIndex = vcIdx;
     sel.armorEffectIndex = aeIdx;
     sel.firefightVoiceIndex = fvIdx;
@@ -1043,6 +1065,8 @@ void ArmorCustomizer::SyncToReachArmory() const {
     sel.primaryRgb = colorRgb(m_profile.primaryCustom, m_profile.primaryCustomRgb, pCol);
     sel.secondaryRgb = colorRgb(m_profile.secondaryCustom, m_profile.secondaryCustomRgb, sCol);
     sel.accentRgb = colorRgb(m_profile.accentCustom, m_profile.accentCustomRgb, aCol);
+    sel.lightsRgb = colorRgb(m_profile.lightsCustom, m_profile.lightsCustomRgb, lCol);
+    sel.lightsCustom = m_profile.lightsCustom;
     sel.visorRgb = { SrgbToLinear(vCol.r), SrgbToLinear(vCol.g), SrgbToLinear(vCol.b) };
 
     // Coalesce: apply at once when the previous application is older than 250 ms, otherwise keep it pending and let
@@ -1084,6 +1108,8 @@ bool ArmorCustomizer::LoadProfile(const std::filesystem::path& path) {
             m_profile.secondaryColor = std::clamp(j["secondary_color"].get<int>(), 0, 29);
         if (j.contains("accent_color") && j["accent_color"].is_number_integer())
             m_profile.accentColor = std::clamp(j["accent_color"].get<int>(), 0, 29);
+        if (j.contains("lights_color") && j["lights_color"].is_number_integer())
+            m_profile.lightsColor = std::clamp(j["lights_color"].get<int>(), 0, 29);
         auto loadCustom = [&](const char* flag, const char* rgbKey, bool& custom, std::array<float, 3>& rgb) {
             if (j.contains(flag) && j[flag].is_boolean()) custom = j[flag].get<bool>();
             if (j.contains(rgbKey) && j[rgbKey].is_array() && j[rgbKey].size() == 3) {
@@ -1094,6 +1120,7 @@ bool ArmorCustomizer::LoadProfile(const std::filesystem::path& path) {
         loadCustom("primary_custom", "primary_custom_rgb", m_profile.primaryCustom, m_profile.primaryCustomRgb);
         loadCustom("secondary_custom", "secondary_custom_rgb", m_profile.secondaryCustom, m_profile.secondaryCustomRgb);
         loadCustom("accent_custom", "accent_custom_rgb", m_profile.accentCustom, m_profile.accentCustomRgb);
+        loadCustom("lights_custom", "lights_custom_rgb", m_profile.lightsCustom, m_profile.lightsCustomRgb);
 
         if (j.contains("spartan") && j["spartan"].is_object()) {
             const auto& sp = j["spartan"];
@@ -1260,14 +1287,17 @@ bool ArmorCustomizer::SaveProfile(const std::filesystem::path& path) {
         j["primary_color"] = m_profile.primaryColor;
         j["secondary_color"] = m_profile.secondaryColor;
         j["accent_color"] = m_profile.accentColor;
+        j["lights_color"] = m_profile.lightsColor;
         // Custom picker-wheel colours: the exact RGB the Armory previews, plus the palette index above
         // (the in-game profile only accepts Reach palette item ids).
         j["primary_custom"] = m_profile.primaryCustom;
         j["secondary_custom"] = m_profile.secondaryCustom;
         j["accent_custom"] = m_profile.accentCustom;
+        j["lights_custom"] = m_profile.lightsCustom;
         j["primary_custom_rgb"] = { m_profile.primaryCustomRgb[0], m_profile.primaryCustomRgb[1], m_profile.primaryCustomRgb[2] };
         j["secondary_custom_rgb"] = { m_profile.secondaryCustomRgb[0], m_profile.secondaryCustomRgb[1], m_profile.secondaryCustomRgb[2] };
         j["accent_custom_rgb"] = { m_profile.accentCustomRgb[0], m_profile.accentCustomRgb[1], m_profile.accentCustomRgb[2] };
+        j["lights_custom_rgb"] = { m_profile.lightsCustomRgb[0], m_profile.lightsCustomRgb[1], m_profile.lightsCustomRgb[2] };
 
         j["spartan"] = {
             {"helmet", m_profile.spartanHelmetGroup},
@@ -1639,14 +1669,17 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
         SlotRow p{ "COLORS", "Primary", RowKind::Colour, &m_profile.primaryColor };
         SlotRow q{ "COLORS", "Secondary", RowKind::Colour, &m_profile.secondaryColor };
         SlotRow a{ "COLORS", "Accent", RowKind::Colour, &m_profile.accentColor };
+        SlotRow l{ "COLORS", "Lights", RowKind::Colour, &m_profile.lightsColor };
         for (const auto& c : kReachColors) {
             p.options.push_back({ c.name, "", ColourU32(c.r, c.g, c.b) });
             q.options.push_back({ c.name, "", ColourU32(c.r, c.g, c.b) });
             a.options.push_back({ c.name, "", ColourU32(c.r, c.g, c.b) });
+            l.options.push_back({ c.name, "Emissive armor lights and illumination color.", ColourU32(c.r, c.g, c.b) });
         }
         rows.push_back(p);
         rows.push_back(q);
         rows.push_back(a);
+        rows.push_back(l);
     }
 
 
@@ -1760,6 +1793,7 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
             if (r.index == &m_profile.primaryColor) m_profile.primaryCustom = false;
             else if (r.index == &m_profile.secondaryColor) m_profile.secondaryCustom = false;
             else if (r.index == &m_profile.accentColor) m_profile.accentCustom = false;
+            else if (r.index == &m_profile.lightsColor) m_profile.lightsCustom = false;
         }
         if (r.index == &speciesInt) {
             m_profile.species = static_cast<PlayerSpecies>(std::clamp(speciesInt, 0, 1));
@@ -1898,6 +1932,8 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
                     c = ColourU32(m_profile.secondaryCustomRgb[0], m_profile.secondaryCustomRgb[1], m_profile.secondaryCustomRgb[2]);
                 else if (r.index == &m_profile.accentColor && m_profile.accentCustom)
                     c = ColourU32(m_profile.accentCustomRgb[0], m_profile.accentCustomRgb[1], m_profile.accentCustomRgb[2]);
+                else if (r.index == &m_profile.lightsColor && m_profile.lightsCustom)
+                    c = ColourU32(m_profile.lightsCustomRgb[0], m_profile.lightsCustomRgb[1], m_profile.lightsCustomRgb[2]);
                 ldl->AddRectFilled(ImVec2(vr - 18.0f * s, p0.y + 7.0f * s), ImVec2(vr, p1.y - 7.0f * s), c);
                 ldl->AddRect(ImVec2(vr - 18.0f * s, p0.y + 7.0f * s), ImVec2(vr, p1.y - 7.0f * s), IM_COL32(230, 240, 255, 160));
             } else {
@@ -1941,11 +1977,12 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
     } else if (row.index && !row.options.empty()) {
         const int n = static_cast<int>(row.options.size());
         const int equipped = std::clamp(*row.index, 0, n - 1);
-        // Colour slots -> the custom-wheel fields of the profile (0 primary, 1 secondary, 2 accent).
+        // Colour slots -> the custom-wheel fields of the profile (0 primary, 1 secondary, 2 accent, 3 lights).
         auto colourSlot = [&](int* idx) -> int {
             if (idx == &m_profile.primaryColor) return 0;
             if (idx == &m_profile.secondaryColor) return 1;
             if (idx == &m_profile.accentColor) return 2;
+            if (idx == &m_profile.lightsColor) return 3;
             return -1;
         };
         const bool isColourRow = row.kind == RowKind::Colour;
@@ -1988,9 +2025,13 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
         if (isColourRow && ImGui::BeginPopup("##custom_colour_popup")) {
             const int slot = colourSlot(row.index);
             bool* custom = slot == 0 ? &m_profile.primaryCustom
-                         : slot == 1 ? &m_profile.secondaryCustom : &m_profile.accentCustom;
+                         : slot == 1 ? &m_profile.secondaryCustom
+                         : slot == 2 ? &m_profile.accentCustom
+                         : &m_profile.lightsCustom;
             std::array<float, 3>* rgb = slot == 0 ? &m_profile.primaryCustomRgb
-                                     : slot == 1 ? &m_profile.secondaryCustomRgb : &m_profile.accentCustomRgb;
+                                      : slot == 1 ? &m_profile.secondaryCustomRgb
+                                      : slot == 2 ? &m_profile.accentCustomRgb
+                                      : &m_profile.lightsCustomRgb;
             float col[3] = { (*rgb)[0], (*rgb)[1], (*rgb)[2] };
             if (!*custom) {
                 const auto& pal = kReachColors[std::clamp(*row.index, 0, 29)];

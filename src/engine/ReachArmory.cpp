@@ -531,7 +531,8 @@ static bool MatchEliteColorPattern(const uint32_t cur[4], uint32_t lastPri, uint
         return false;
     }
 
-    if (lastPri != 0 && cur[3] == lastPri && (lastSec == 0 || cur[2] == lastSec)) {
+    if (lastPri != 0 && (cur[0] == lastPri || cur[3] == lastPri) &&
+        (lastSec == 0 || cur[3] == lastSec || cur[2] == lastSec)) {
         return true;
     }
 
@@ -753,11 +754,12 @@ static void WriteColorsAndSuit(const ReachArmorySelection& sel) {
     const uint32_t priArgb = LinearRgbToArgbU32(sel.primaryRgb);
     const uint32_t secArgb = LinearRgbToArgbU32(sel.secondaryRgb);
     const uint32_t terArgb = LinearRgbToArgbU32(sel.accentRgb);   // third/detail colour (was a fixed cyan)
+    const uint32_t litArgb = LinearRgbToArgbU32(sel.lightsRgb);   // 4th slot: lights / illumination
     const uint32_t visArgb = (sel.visor == "default" || sel.visor.empty())
                            ? 0xFFC7A167u
                            : LinearRgbToArgbU32(sel.visorRgb);
 
-    const uint32_t words[4] = { priArgb, secArgb, terArgb, visArgb };
+    const uint32_t words[4] = { priArgb, secArgb, terArgb, (sel.lightsCustom ? litArgb : visArgb) };
     const float suitFloats[4] = {
         sel.primaryRgb[0] * 4.0f,
         sel.primaryRgb[1] * 4.0f,
@@ -792,10 +794,12 @@ static void WriteColorsAndSuit(const ReachArmorySelection& sel) {
                 (cur[2] >> 24) != 0xFFu || (cur[3] >> 24) != 0xFFu) {
                 return true;
             }
-            // Elite shader ARGB layout (host-probe.exe write_colors @ 0x1401b5ad0). The probe's "base" slot is the
-            // rank's stock colour, not the player's Primary; that made Primary/Secondary tint only the overlay and a
-            // white Primary washed the model. Drive base = Primary, overlay = Secondary, detail = Accent.
-            const uint32_t eliteWords[4] = { priArgb, cur[1], secArgb, terArgb };
+            // Elite shader ARGB layout (host-probe.exe write_colors @ 0x1401b5ad0):
+            // [0] = Primary base armor
+            // [1] = Bodysuit / Accent detail
+            // [2] = Emissive armor lights (litArgb)
+            // [3] = Secondary armor trim / stripes (secArgb)
+            const uint32_t eliteWords[4] = { priArgb, terArgb, litArgb, secArgb };
             return !SafeCopyMem(reinterpret_cast<void*>(rec), eliteWords, sizeof(eliteWords));
         }),
         s_eliteColorRecords.end()
@@ -1111,8 +1115,8 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx) {
                 s_bumpAtFrame = frameNow + 2;
                 s_settlePending = false;
                 if (forceRepaint) {
-                    NOBLE_INFO("ReachArmory: preview repaint (primary {} / secondary {} / accent {} / visor {}), rebuilt",
-                               sel.primaryColorIndex, sel.secondaryColorIndex, sel.accentColorIndex, sel.visorColorIndex);
+                    NOBLE_INFO("ReachArmory: preview repaint (primary {} / secondary {} / accent {} / lights {} / visor {}), rebuilt",
+                               sel.primaryColorIndex, sel.secondaryColorIndex, sel.accentColorIndex, sel.lightsColorIndex, sel.visorColorIndex);
                 }
                 if (showElite) {
                     NOBLE_INFO("ReachArmory: Elite pieces {} / {} / {} / {} / {} / {}, effect {}", sel.eliteHelmet, sel.eliteLeftShoulder,
@@ -1200,11 +1204,13 @@ void ReachArmory::SetSelection(const ReachArmorySelection& sel) {
         visualChanged =
             prev.previewElite != sel.previewElite || prev.isFemale != sel.isFemale ||
             prev.primaryColorIndex != sel.primaryColorIndex || prev.secondaryColorIndex != sel.secondaryColorIndex ||
-            prev.accentColorIndex != sel.accentColorIndex || prev.visorColorIndex != sel.visorColorIndex ||
+            prev.accentColorIndex != sel.accentColorIndex || prev.lightsColorIndex != sel.lightsColorIndex ||
+            prev.visorColorIndex != sel.visorColorIndex ||
             prev.armorEffectIndex != sel.armorEffectIndex || prev.eliteArmorEffectIndex != sel.eliteArmorEffectIndex ||
             prev.eliteSuitIndex != sel.eliteSuitIndex ||
             prev.primaryRgb != sel.primaryRgb || prev.secondaryRgb != sel.secondaryRgb ||
-            prev.accentRgb != sel.accentRgb || prev.visorRgb != sel.visorRgb ||
+            prev.accentRgb != sel.accentRgb || prev.lightsRgb != sel.lightsRgb || prev.lightsCustom != sel.lightsCustom ||
+            prev.visorRgb != sel.visorRgb ||
             prev.helmet != sel.helmet || prev.chest != sel.chest ||
             prev.leftShoulder != sel.leftShoulder || prev.rightShoulder != sel.rightShoulder ||
             prev.hands != sel.hands || prev.wrist != sel.wrist || prev.utility != sel.utility ||

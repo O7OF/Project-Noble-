@@ -30,12 +30,14 @@ struct AppearanceProfile {
     int primaryColor = 1;    // Steel
     int secondaryColor = 10; // Green
     int accentColor = 14;    // Cyan (the third / detail colour)
+    int lightsColor = 10;    // 4th slot: lights / illumination colour
     // Custom picker wheel (Armory preview). appearance.json stores both the exact RGB and the nearest
     // Reach palette index, because the in-game profile only accepts palette item ids.
-    bool primaryCustom = false, secondaryCustom = false, accentCustom = false;
+    bool primaryCustom = false, secondaryCustom = false, accentCustom = false, lightsCustom = false;
     std::array<float, 3> primaryCustomRgb = {0.349f, 0.349f, 0.349f};
     std::array<float, 3> secondaryCustomRgb = {0.267f, 0.545f, 0.314f};
     std::array<float, 3> accentCustomRgb = {0.471f, 0.788f, 0.808f};
+    std::array<float, 3> lightsCustomRgb = {0.106f, 0.839f, 0.529f};
 
     // Spartan selections (catalog indices)
     int helmetIndex = 0;         // Mark V [B]
