@@ -179,6 +179,9 @@ public:
     bool StartVoteSync(const std::string& sessionId, const std::vector<std::string>& options, int seconds);
     bool CastVoteSync(const std::string& sessionId, uint64_t peerId, int choice);
     bool EndVoteSync(const std::string& sessionId);
+    // The host sets each lobby member's team: 0 none, 1 red, 2 blue. Pairs of peer id and team.
+    bool SetTeamsSync(const std::string& sessionId, const std::vector<std::pair<uint64_t, int>>& teams);
+    void SetAdvertHostTeam(int team);   // the heartbeat carries the host's team, so it has to stay current
     // A player report from the scoreboard. True when the server answered; it stores the report for the team to read.
     bool SendReportSync(const std::string& sessionId, const std::string& reporter, const std::string& target,
                         const std::string& reason, const std::string& map, const std::string& mode);

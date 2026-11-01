@@ -946,6 +946,24 @@ bool MasterServerClient::CastVoteSync(const std::string& sessionId, uint64_t pee
     return HttpRequest(Url(), L"POST", "/api/sessions/" + sessionId + "/vote", body.dump()).ok;
 }
 
+void MasterServerClient::SetAdvertHostTeam(int team) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_advert.hostTeam = team;
+}
+
+bool MasterServerClient::SetTeamsSync(const std::string& sessionId, const std::vector<std::pair<uint64_t, int>>& teams) {
+    std::string token;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        token = m_sessionToken;
+    }
+    if (sessionId.empty() || token.empty() || !Enabled()) return false;
+    nlohmann::json list = nlohmann::json::array();
+    for (const auto& [peer, team] : teams) list.push_back({ { "peer_id", peer }, { "team", team } });
+    const nlohmann::json body = { { "teams", list } };
+    return HttpRequest(Url(), L"POST", "/api/sessions/" + sessionId + "/teams", body.dump(), token).ok;
+}
+
 bool MasterServerClient::EndVoteSync(const std::string& sessionId) {
     std::string token;
     {

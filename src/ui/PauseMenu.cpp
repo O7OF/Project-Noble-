@@ -1642,6 +1642,25 @@ void PauseMenu::DrawGameOver(HWND hwnd) {
     const std::string strip = "THIS MAP: " + shownMap + "    NEXT: NOT SET";
     Text(dl, smallFont, 15.0f * s, ImVec2(bx, by - 26.0f * s), kTextDim, strip.c_str());
   }
+  // A playlist set to start by itself moves on after a countdown; B or Esc stops it for this match.
+  if (hostRole && t >= tEnd) {
+    static const int s_autoSeconds = _wtoi(ArgValue(GetCommandLineW(), L"-lobby-playlist-auto").c_str());
+    static double s_autoAt = s_autoSeconds > 0 ? ImGui::GetTime() + s_autoSeconds : 0.0;
+    if (s_autoAt > 0.0 && (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) || ImGui::IsKeyPressed(ImGuiKey_Escape, false))) {
+      s_autoAt = 0.0;
+      NOBLE_INFO("PauseMenu: next-match countdown cancelled");
+    }
+    if (s_autoAt > 0.0) {
+      const int left = std::max(0, static_cast<int>(s_autoAt - ImGui::GetTime() + 0.999));
+      char text[64];
+      std::snprintf(text, sizeof(text), "Next match in %d s. B or Esc cancels.", left);
+      Text(dl, smallFont, 16.0f * s, ImVec2(margin, by + bh * 0.5f - 9.0f * s), kTextDim, text);
+      if (ImGui::GetTime() >= s_autoAt) {
+        s_autoAt = 0.0;
+        RelaunchAndClose(hwnd, LobbyReturnArgs(true, true), "next in rotation (countdown)");
+      }
+    }
+  }
   if (t < tEnd) {
     Text(dl, smallFont, 16.0f * s, ImVec2(margin, by + bh * 0.5f - 9.0f * s),
          kTextDim, "Enter, Space or click: skip");

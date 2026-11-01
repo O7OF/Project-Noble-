@@ -23,10 +23,12 @@ struct Playlist {
     std::vector<Entry> entries;
     bool shuffle = false;
     bool randomType = false;
+    int autoStart = 0;      // seconds before the next match starts by itself; 0 = the host starts it
     std::filesystem::path file;
 };
 
 std::filesystem::path Directory();
+std::filesystem::path PathFor(const std::string& playlistName);   // empty when the name has nothing usable
 std::vector<Playlist> Scan(const std::vector<std::filesystem::path>& modFolders);
 bool Load(const std::filesystem::path& file, Playlist& out);
 bool Save(const Playlist& playlist, std::filesystem::path& savedAs);

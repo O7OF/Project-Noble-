@@ -1609,6 +1609,15 @@ struct MenuState {
     bool voteWasUp = false;
     std::vector<Playlists::Entry> voteEntries;   // host only: what each option plays
     std::string voteMessage;
+    // What the lobby's variant is, worked out once per variant: teams on or off, and a player-made mode's changed rules.
+    std::string lobbyModeKey;
+    bool lobbyTeamsOn = false;
+    int lobbyModeChanges = 0;
+    std::string lobbyModeSummary;
+    bool teamsPushFailed = false;
+    double autoStartAt = 0.0;           // ImGui time the next rotation match starts; 0 = not counting
+    std::filesystem::path optionsFile;  // the saved mode being edited; empty for a new one
+    std::string confirmAction;          // a save-over or delete waiting for its second press
     bool optionsOpen = false;           // Custom Game: the game options editor replaces the setup screen
     int optionsRow = 0;
     char optionsName[48] = {};
@@ -2500,6 +2509,85 @@ static void DrawVariantInfo(const Ui& ui, ImVec2 pos, float width, const Variant
     Text(ui, NobleStyle::SmallFont(), 14.0f, ImVec2(pos.x, y + 20.0f * ui.s), kDim, "Uses this variant's default rules.", right);
 }
 
+static std::string RuleValueText(const VariantRules::Rule& rule, int value) {
+    const int nameIndex = value - rule.minValue;
+    if (rule.names && nameIndex >= 0 && nameIndex < static_cast<int>(rule.names->size())) return (*rule.names)[nameIndex];
+    if (rule.bit >= 0) return value ? "On" : "Off";
+    return std::to_string(value) + rule.unit;
+}
+
+// Reads the lobby's variant when it changes. The Teams flag is in the decoded record, or in a player-made mode's rules.
+static void RefreshLobbyMode(OverlayContext& ctx) {
+    MenuState& st = ctx.st;
+    if (st.lobbyModeKey == st.lobbyVariantPath && !st.lobbyVariantPath.empty()) return;
+    st.lobbyModeKey = st.lobbyVariantPath;
+    st.lobbyTeamsOn = false;
+    st.lobbyModeChanges = 0;
+    st.lobbyModeSummary.clear();
+    if (st.lobbyVariantPath.empty()) return;
+    const std::filesystem::path path(st.lobbyVariantPath);
+    VariantRules::Preset preset;
+    const bool isMode = VariantRules::IsPresetFile(path) && VariantRules::Load(path, preset);
+    const std::filesystem::path base = isMode ? ctx.reachDir / "game_variants" / preset.base : path;
+    std::vector<uint8_t> decoded;
+    if (!VariantRules::Decode(base, decoded)) return;
+    if (isMode) VariantRules::Apply(preset, decoded.data());
+    for (const VariantRules::Rule& rule : VariantRules::Rules()) {
+        if (std::strcmp(rule.key, "teams") == 0) st.lobbyTeamsOn = VariantRules::Read(rule, decoded.data()) != 0;
+        const auto it = preset.values.find(rule.key);
+        if (isMode && it != preset.values.end()) {
+            ++st.lobbyModeChanges;
+            if (st.lobbyModeChanges <= 5) st.lobbyModeSummary += std::string(st.lobbyModeSummary.empty() ? "" : ", ") + rule.label + " " + RuleValueText(rule, it->second);
+        }
+    }
+    if (st.lobbyModeChanges > 5) st.lobbyModeSummary += " and " + std::to_string(st.lobbyModeChanges - 5) + " more";
+    NOBLE_INFO("FrontEndMenu: lobby game type: teams {}, {} rule(s) changed", st.lobbyTeamsOn ? "on" : "off", st.lobbyModeChanges);
+}
+
+// Host only: everyone on a team while the variant has teams, nobody when it doesn't. Players are dealt in roster order, so a
+// joining player doesn't reshuffle anyone. Empty when the roster already matches.
+static void AssignLobbyTeams(MenuState& st) {
+    std::vector<std::pair<uint64_t, int>> changes;
+    for (size_t i = 0; i < st.lobbyRoster.size(); ++i) {
+        const int want = st.lobbyTeamsOn ? static_cast<int>(i % 2) + 1 : 0;
+        if (st.lobbyRoster[i].team != want) {
+            st.lobbyRoster[i].team = want;
+            changes.emplace_back(st.lobbyRoster[i].peerId, want);
+            if (st.lobbyRoster[i].isHost) MasterServerClient::Get().SetAdvertHostTeam(want);
+        }
+    }
+    if (changes.empty() || st.teamsPushFailed) return;
+    if (MasterServerClient::Get().SetTeamsSync(st.lobbySessionId, changes)) {
+        NOBLE_INFO("FrontEndMenu: teams updated for {} player(s), teams {}", changes.size(), st.lobbyTeamsOn ? "on" : "off");
+    } else {
+        // An older server: the host still sees teams, and this stops asking every poll.
+        st.teamsPushFailed = true;
+        NOBLE_WARN("FrontEndMenu: the server didn't accept the team list");
+    }
+}
+
+// Opens the game options editor on a variant; Custom Game and Firefight share it.
+static void OpenGameOptions(OverlayContext& ctx, const MenuVariant& current) {
+    MenuState& st = ctx.st;
+    VariantRules::Preset preset;
+    const bool isMode = current.custom && VariantRules::Load(current.path, preset);
+    st.optionsBase = isMode ? preset.base : current.path.filename().string();
+    st.optionsValues = isMode ? preset.values : std::map<std::string, int>{};
+    std::snprintf(st.optionsName, sizeof(st.optionsName), "%s", (isMode ? current.label : current.label + " Custom").c_str());
+    st.optionsFile = isMode ? current.path : std::filesystem::path();
+    st.optionsRow = 0;
+    st.optionsMessage.clear();
+    st.confirmAction.clear();
+    if (VariantRules::Decode(ctx.reachDir / "game_variants" / st.optionsBase, st.optionsDecoded)) {
+        NOBLE_INFO("FrontEndMenu: game options opened on '{}'", st.optionsBase);
+        st.optionsOpen = true;
+        MenuSounds::Click();
+    } else {
+        NOBLE_WARN("FrontEndMenu: could not read variant '{}' for its game options", st.optionsBase);
+        MenuSounds::Error();
+    }
+}
+
 // ---- Playlists ----
 static void RefreshPlaylists(OverlayContext& ctx) {
     std::vector<std::filesystem::path> folders;
@@ -2691,6 +2779,10 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
                 st.voteCounts = current.voteCounts;
                 st.voteMsLeft = current.voteMsLeft;
                 if (st.isLobbyHost && !st.voteId.empty() && st.voteMsLeft <= 0) FinishLobbyVote(ctx);
+                if (st.isLobbyHost && !st.lobbyRoster.empty() && st.lobbyMode == "multiplayer") {
+                    RefreshLobbyMode(ctx);
+                    AssignLobbyTeams(st);
+                }
                 // Launch only while the host's match is running. The server keeps the last launch_data when the host
                 // re-registers the same address and port for its next lobby, so "launch_data present" alone sent a
                 // guest straight into a match that wasn't starting (2026-10-29 review, tested against server.js).
@@ -2849,8 +2941,11 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         optRows.push_back({ "READY", st.lobbyReady ? "READY" : "NOT READY", false, true, kReadyTip });
         optRows.push_back({ "GAME TYPE", st.lobbyVariantName.empty() ? "SLAYER" : st.lobbyVariantName, false, st.isLobbyHost, "Choose game type and rule set." });
         optRows.push_back({ "MAP", mapDisplay, false, st.isLobbyHost, "Choose which map you want to play." });
-        if (playlistActive) optRows.push_back({ "VOTE", "START", false, false, "Press to let everyone vote on what to play next from this playlist." });
-        else if (st.isLobbyHost) optRows.push_back({ "GAME OPTIONS", "DEFAULTS", false, false, kOptionsTip });
+        if (st.isLobbyHost) RefreshLobbyMode(ctx);
+        const std::string modeValue = st.lobbyModeChanges > 0 ? std::to_string(st.lobbyModeChanges) + " CHANGED" : std::string("DEFAULTS");
+        const std::string modeTip = st.lobbyModeChanges > 0 ? st.lobbyModeSummary : std::string(kOptionsTip);
+        if (playlistActive) optRows.push_back({ "VOTE", "START", false, false, st.lobbyModeChanges > 0 ? "Vote on what's next. This mode: " + st.lobbyModeSummary : "Press to let everyone vote on what to play next from this playlist." });
+        else if (st.isLobbyHost) optRows.push_back({ "GAME OPTIONS", modeValue, false, false, modeTip });
         else optRows.push_back({ "HOST MODE", hostModeKnown ? "ON THIS PC" : "UNKNOWN", false, false, hostModeTip });
         if (st.isLobbyHost) optRows.push_back({ "START GAME", "", true, true, "Start the selected custom game." });
     }
@@ -3059,6 +3154,21 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         done = true;
     };
 
+    // A rotation that starts by itself. B or Esc stops the countdown for this lobby, and a vote holds it.
+    if (st.autoStartAt > 0.0 && st.isLobbyHost) {
+        if (back) {
+            st.autoStartAt = 0.0;
+            back = false;
+            NOBLE_INFO("FrontEndMenu: next-match countdown cancelled");
+            MenuSounds::Back();
+        } else if (!st.voteId.empty()) {
+            st.autoStartAt += ImGui::GetIO().DeltaTime;
+        } else if (ImGui::GetTime() >= st.autoStartAt) {
+            st.autoStartAt = 0.0;
+            NOBLE_INFO("FrontEndMenu: countdown finished, starting the next match");
+            startMatch();
+        }
+    }
     bool pickerJustOpened = false;   // the press that opened the list must not also pick from it
     auto triggerAction = [&]() {
         const auto& cur = optRows[st.lobbyMenuRow];
@@ -3221,6 +3331,11 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         Text(ui, NobleStyle::SmallFont(), 15.0f, ImVec2(colX, lobbyTipY + 22.0f * ui.s), kAccent, line.c_str(), colX + colW);
     }
     if (!st.voteMessage.empty() && !pickerWasOpen) Text(ui, nullptr, 15.0f, ImVec2(colX, lobbyTipY + 42.0f * ui.s), IM_COL32(255, 190, 120, 255), st.voteMessage.c_str(), colX + colW);
+    if (st.autoStartAt > 0.0 && st.isLobbyHost && !pickerWasOpen) {
+        char countdown[64];
+        std::snprintf(countdown, sizeof(countdown), "Next match in %d s. B or Esc cancels.", std::max(0, static_cast<int>(st.autoStartAt - ImGui::GetTime() + 0.999)));
+        Text(ui, NobleStyle::TitleFont(), 17.0f, ImVec2(colX, lobbyTipY + 62.0f * ui.s), kAccent, countdown);
+    }
 
     // Friends and the invite strip sit at the foot of the left column, above the prompts.
     const float netH = 44.0f * ui.s;
@@ -4618,7 +4733,9 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
             DrawSearchBox(ui, "##playlist_name", ImVec2(px, y), pw, st.playlistName, sizeof(st.playlistName), "Playlist name");
             y += 44.0f * ui.s;
             const bool typing = ImGui::GetIO().WantTextInput;
-            constexpr int kMapRow = 0, kTypeRow = 1, kAddRow = 2, kShuffleRow = 3, kRandomRow = 4, kSaveRow = 5, kRows = 6;
+            const bool canDeleteList = !st.playlistEdit.file.empty() && st.playlistEdit.file.parent_path() == Playlists::Directory();
+            constexpr int kMapRow = 0, kTypeRow = 1, kAddRow = 2, kShuffleRow = 3, kRandomRow = 4, kAutoRow = 5, kSaveRow = 6, kDeleteRow = 7;
+            const int kRows = canDeleteList ? 8 : 7;
             if (!typing && (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || UiPad::Down())) { st.playlistEditRow = (st.playlistEditRow + 1) % kRows; MenuSounds::Scroll(); }
             if (!typing && (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || UiPad::Up())) { st.playlistEditRow = (st.playlistEditRow + kRows - 1) % kRows; MenuSounds::Scroll(); }
             st.playlistEditMap = allMaps.empty() ? 0 : std::clamp(st.playlistEditMap, 0, static_cast<int>(allMaps.size()) - 1);
@@ -4642,8 +4759,32 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
             y += 36.0f * ui.s;
             const int randomStep = OptionRow(ui, "pl_random", ImVec2(px, y), pw, "RANDOM GAME TYPE", st.playlistEdit.randomType ? "ON" : "OFF", !typing && st.playlistEditRow == kRandomRow);
             if (randomStep != 0) st.playlistEdit.randomType = !st.playlistEdit.randomType;
+            y += 36.0f * ui.s;
+            static const int kAutoChoices[] = { 0, 15, 30, 60 };
+            int autoAt = 0;
+            for (int i = 0; i < 4; ++i) if (kAutoChoices[i] == st.playlistEdit.autoStart) autoAt = i;
+            const std::string autoText = st.playlistEdit.autoStart > 0 ? std::to_string(st.playlistEdit.autoStart) + " S" : std::string("OFF");
+            const int autoStep = OptionRow(ui, "pl_auto", ImVec2(px, y), pw, "NEXT MATCH STARTS BY ITSELF", autoText.c_str(), !typing && st.playlistEditRow == kAutoRow);
+            if (autoStep != 0) st.playlistEdit.autoStart = kAutoChoices[(autoAt + autoStep + 4) % 4];
             y += 42.0f * ui.s;
             bool save = BigAction(ui, "pl_save", ImVec2(px, y), bw, "SAVE PLAYLIST", "Then pick it on Custom Game", true, !st.playlistEdit.entries.empty(), st.playlistEditRow == kSaveRow);
+            bool eraseList = canDeleteList && BigAction(ui, "pl_delete", ImVec2(px + bw + 10.0f * ui.s, y), bw, "DELETE", "Removes this playlist", false, true, st.playlistEditRow == kDeleteRow);
+            if (!typing && AcceptPressed() && canDeleteList && st.playlistEditRow == kDeleteRow) eraseList = true;
+            if (eraseList) {
+                if (st.confirmAction != "delete") {
+                    st.confirmAction = "delete";
+                    st.playlistMessage = "Press DELETE again to remove this playlist.";
+                    MenuSounds::Error();
+                } else {
+                    std::error_code removeError;
+                    std::filesystem::remove(st.playlistEdit.file, removeError);
+                    NOBLE_INFO("FrontEndMenu: playlist deleted: {}", st.playlistEdit.file.filename().string());
+                    RefreshPlaylists(ctx);
+                    st.playlistChoice = -1;
+                    st.playlistEditOpen = false;
+                    MenuSounds::Back();
+                }
+            }
             if (!typing && AcceptPressed()) {
                 if (st.playlistEditRow == kAddRow) add = editMap != nullptr && !types.empty();
                 if (st.playlistEditRow == kSaveRow) save = !st.playlistEdit.entries.empty();
@@ -4677,6 +4818,14 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
                 st.playlistEdit.entries.erase(st.playlistEdit.entries.begin() + removeRow);
                 MenuSounds::Back();
             }
+            std::error_code listExistsError;
+            const std::filesystem::path listTarget = Playlists::PathFor(st.playlistName);
+            if (save && !listTarget.empty() && std::filesystem::exists(listTarget, listExistsError) && listTarget != st.playlistEdit.file && st.confirmAction != "replace") {
+                save = false;
+                st.confirmAction = "replace";
+                st.playlistMessage = "A playlist with this name exists. Press SAVE again to replace it.";
+                MenuSounds::Error();
+            }
             if (save) {
                 st.playlistEdit.name = st.playlistName;
                 std::filesystem::path savedAs;
@@ -4705,7 +4854,9 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
             float y = top + 70.0f * ui.s;
             DrawSearchBox(ui, "##mode_name", ImVec2(px, y), pw, st.optionsName, sizeof(st.optionsName), "Game mode name");
             y += 40.0f * ui.s;
-            const int saveRow = static_cast<int>(rules.size()), resetRow = saveRow + 1, rowCount = saveRow + 2;
+            // Only this PC's own saved modes can be deleted; a mod's stay with the mod.
+            const bool canDelete = !st.optionsFile.empty() && st.optionsFile.parent_path() == VariantRules::Directory();
+            const int saveRow = static_cast<int>(rules.size()), resetRow = saveRow + 1, deleteRow = saveRow + 2, rowCount = saveRow + (canDelete ? 3 : 2);
             const bool typing = ImGui::GetIO().WantTextInput;
             if (!typing && (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || UiPad::Down())) { st.optionsRow = (st.optionsRow + 1) % rowCount; MenuSounds::Scroll(); }
             if (!typing && (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || UiPad::Up())) { st.optionsRow = (st.optionsRow + rowCount - 1) % rowCount; MenuSounds::Scroll(); }
@@ -4729,11 +4880,7 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
                 const int baseValue = VariantRules::Read(rule, st.optionsDecoded.data());
                 const auto edited = st.optionsValues.find(rule.key);
                 int value = edited != st.optionsValues.end() ? edited->second : baseValue;
-                std::string text;
-                const int nameIndex = value - rule.minValue;
-                if (rule.names && nameIndex >= 0 && nameIndex < static_cast<int>(rule.names->size())) text = (*rule.names)[nameIndex];
-                else if (rule.bit >= 0) text = value ? "On" : "Off";
-                else text = std::to_string(value) + rule.unit;
+                const std::string text = RuleValueText(rule, value);
                 const int change = OptionRow(ui, rule.key, ImVec2(px, y), pw, rule.label, text.c_str(), !typing && st.optionsRow == i);
                 if (change != 0) {
                     int next = std::clamp(value, rule.minValue, rule.maxValue);
@@ -4760,14 +4907,39 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
                 y += 28.0f * ui.s;
             }
             y = buttonsY;
-            const float bw = (pw - 10.0f * ui.s) * 0.5f;
-            bool save = BigAction(ui, "mode_save", ImVec2(px, y), bw, "SAVE GAME MODE", "Adds it to the game type list", true, true, st.optionsRow == saveRow);
+            const float bw = (pw - 20.0f * ui.s) / 3.0f;
+            bool save = BigAction(ui, "mode_save", ImVec2(px, y), bw, "SAVE", "Adds it to the game type list", true, true, st.optionsRow == saveRow);
             bool reset = BigAction(ui, "mode_reset", ImVec2(px + bw + 10.0f * ui.s, y), bw, "RESET", "Back to the base rules", false, true, st.optionsRow == resetRow);
+            bool erase = canDelete && BigAction(ui, "mode_delete", ImVec2(px + (bw + 10.0f * ui.s) * 2.0f, y), bw, "DELETE", "Removes this saved mode", false, true, st.optionsRow == deleteRow);
             if (!typing && AcceptPressed()) {
                 if (st.optionsRow == saveRow) save = true;
                 if (st.optionsRow == resetRow) reset = true;
+                if (canDelete && st.optionsRow == deleteRow) erase = true;
             }
             if (reset) { st.optionsValues.clear(); MenuSounds::Back(); }
+            const auto reloadModes = [&](const std::filesystem::path& select) {
+                const bool ffScreen = ff;
+                ctx.variants = ScanVariants(ctx.reachDir, false);
+                ctx.ffVariants = ScanVariants(ctx.reachDir, true);
+                int& index = ffScreen ? st.ffVariant : st.variant;
+                const std::vector<MenuVariant>& modes = ffScreen ? ctx.ffVariants : ctx.variants;
+                index = FindVariant(modes, ffScreen ? L"hr_ff_standard_1set.bin" : L"slayer_054.bin");
+                for (size_t i = 0; i < modes.size(); ++i) if (modes[i].path == select) index = static_cast<int>(i);
+            };
+            if (erase) {
+                if (st.confirmAction != "delete") {
+                    st.confirmAction = "delete";
+                    st.optionsMessage = "Press DELETE again to remove this mode for good.";
+                    MenuSounds::Error();
+                } else {
+                    std::error_code removeError;
+                    std::filesystem::remove(st.optionsFile, removeError);
+                    NOBLE_INFO("FrontEndMenu: game mode deleted: {}", st.optionsFile.filename().string());
+                    reloadModes({});
+                    st.optionsOpen = false;
+                    MenuSounds::Back();
+                }
+            }
             if (save) {
                 std::string file;
                 for (const char c : std::string(st.optionsName)) {
@@ -4783,12 +4955,15 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
                     preset.base = st.optionsBase;
                     preset.values = st.optionsValues;
                     const std::filesystem::path path = VariantRules::Directory() / (file + ".json");
-                    if (VariantRules::Save(path, preset)) {
+                    std::error_code existsError;
+                    const bool wouldReplace = std::filesystem::exists(path, existsError) && path != st.optionsFile;
+                    if (wouldReplace && st.confirmAction != "replace") {
+                        st.confirmAction = "replace";
+                        st.optionsMessage = "A mode with this name exists. Press SAVE again to replace it.";
+                        MenuSounds::Error();
+                    } else if (VariantRules::Save(path, preset)) {
                         NOBLE_INFO("FrontEndMenu: game mode saved: '{}' on '{}' with {} change(s)", preset.name, preset.base, preset.values.size());
-                        ctx.variants = ScanVariants(ctx.reachDir, false);
-                        for (size_t i = 0; i < ctx.variants.size(); ++i) {
-                            if (ctx.variants[i].path == path) st.variant = static_cast<int>(i);
-                        }
+                        reloadModes(path);
                         st.optionsOpen = false;
                         MenuSounds::Click();
                     } else {
@@ -5031,24 +5206,7 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
                 ImGui::SetCursorScreenPos(ImVec2(px, y));
                 const bool clicked = ImGui::InvisibleButton("##game_options_open", ImVec2(pw * 0.48f, 32.0f * ui.s));
                 if ((clicked || optionsChange != 0 || (st.focusRow == focusRows && hit < 0 && AcceptPressed())) && !list.empty()) {
-                    const MenuVariant& current = list[std::clamp(st.variant, 0, static_cast<int>(list.size()) - 1)];
-                    VariantRules::Preset preset;
-                    const bool isMode = current.custom && VariantRules::Load(current.path, preset);
-                    st.optionsBase = isMode ? preset.base : current.path.filename().string();
-                    st.optionsValues = isMode ? preset.values : std::map<std::string, int>{};
-                    std::snprintf(st.optionsName, sizeof(st.optionsName), "%s", (isMode ? current.label : current.label + " Custom").c_str());
-                    st.optionsRow = 0;
-                    st.optionsMessage.clear();
-                    if (VariantRules::Decode(ctx.reachDir / "game_variants" / st.optionsBase, st.optionsDecoded)) {
-                        std::string read;
-                        for (const VariantRules::Rule& rule : VariantRules::Rules()) read += std::string(rule.key) + "=" + std::to_string(VariantRules::Read(rule, st.optionsDecoded.data())) + " ";
-                        NOBLE_INFO("FrontEndMenu: game options opened on '{}': {}", st.optionsBase, read);
-                        st.optionsOpen = true;
-                        MenuSounds::Click();
-                    } else {
-                        NOBLE_WARN("FrontEndMenu: could not read variant '{}' for its game options", st.optionsBase);
-                        MenuSounds::Error();
-                    }
+                    OpenGameOptions(ctx, list[std::clamp(st.variant, 0, static_cast<int>(list.size()) - 1)]);
                 }
                 ++focusRows;
             }
@@ -5066,6 +5224,7 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
                     std::snprintf(st.playlistName, sizeof(st.playlistName), "%s", chosen ? st.playlistEdit.name.c_str() : "My Playlist");
                     st.playlistEditRow = 0;
                     st.playlistMessage.clear();
+                    st.confirmAction.clear();
                     st.playlistEditOpen = true;
                     MenuSounds::Click();
                 }
@@ -5085,12 +5244,15 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
             ++focusRows;
         }
         if (ff) {
-            // Spec §4.3: per-game overrides (time limit, lives, skulls) once Noble can write Firefight variants.
-            ui.dl->AddRectFilled(ImVec2(px, y), ImVec2(px + pw, y + 30.0f * ui.s), IM_COL32(8, 12, 18, 85));
-            Text(ui, NobleStyle::TitleFont(), 18.0f, ImVec2(px + 10.0f * ui.s, y + 4.0f * ui.s), kDisabled, "FIREFIGHT OPTIONS \xC2\xB7 DEFAULT");
-            const char* later = "Coming later";
-            Text(ui, nullptr, 15.0f, ImVec2(px + pw - TextWidth(nullptr, 15.0f * ui.s, later) - 10.0f * ui.s, y + 6.0f * ui.s), kDisabled, later);
-            y += 30.0f * ui.s;
+            // The same rules editor as Custom Game. Firefight's own wave and skull options aren't mapped yet.
+            const int ffOptionsChange = OptionRow(ui, "ff_options", ImVec2(px, y), pw, "GAME OPTIONS", "EDIT", st.focusRow == focusRows);
+            ImGui::SetCursorScreenPos(ImVec2(px, y));
+            const bool ffClicked = ImGui::InvisibleButton("##ff_options_open", ImVec2(pw * 0.48f, 30.0f * ui.s));
+            if ((ffClicked || ffOptionsChange != 0 || (st.focusRow == focusRows && hit < 0 && AcceptPressed())) && !ctx.ffVariants.empty()) {
+                OpenGameOptions(ctx, ctx.ffVariants[std::clamp(st.ffVariant, 0, static_cast<int>(ctx.ffVariants.size()) - 1)]);
+            }
+            ++focusRows;
+            y += 36.0f * ui.s;
         }
         if (ff) {
             y += DifficultyTiles(ui, "ffdiff", ImVec2(px, y), pw, st.difficulty, st.focusRow == focusRows) + 8.0f * ui.s;
@@ -5631,6 +5793,7 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
                     const Playlists::Playlist& playlist = ctx.st.playlists[ctx.st.playlistChoice];
                     const std::string position = text(L"-lobby-playlist-pos");
                     int at = position.empty() ? 0 : std::atoi(position.c_str());
+                    if (text(L"-lobby-advance") == "1" && playlist.autoStart > 0) ctx.st.autoStartAt = playlist.autoStart + 2.0;   // ImGui time starts at 0 here
                     if (text(L"-lobby-advance") == "1" && !playlist.entries.empty()) {
                         const int n = static_cast<int>(playlist.entries.size());
                         if (playlist.shuffle && n > 1) {
@@ -5936,6 +6099,7 @@ void FrontEndMenu::RenderOverlayImpl(IDXGISwapChain* swapChain, bool clear) {
                 if (choice.host && ctx.st.playlistChoice >= 0 && ctx.st.playlistChoice < static_cast<int>(ctx.st.playlists.size())) {
                     args += L" -lobby-playlist \"" + ctx.st.playlists[ctx.st.playlistChoice].file.wstring() + L"\"";
                     args += L" -lobby-playlist-pos " + std::to_wstring(ctx.st.playlistPosition);
+                    if (ctx.st.playlists[ctx.st.playlistChoice].autoStart > 0) args += L" -lobby-playlist-auto " + std::to_wstring(ctx.st.playlists[ctx.st.playlistChoice].autoStart);
                 }
                 if (!choice.variantPath.empty()) args += L" -variant \"" + ToWide(choice.variantPath) + L"\"";
                 if (choice.skulls != 0) args += L" -skulls " + std::to_wstring(choice.skulls);

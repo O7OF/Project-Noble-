@@ -28,6 +28,7 @@ bool Load(const std::filesystem::path& file, Playlist& out) {
         playlist.name = j.value("name", file.stem().string());
         playlist.shuffle = j.value("shuffle", false);
         playlist.randomType = j.value("random_type", false);
+        playlist.autoStart = std::clamp(j.value("auto_start", 0), 0, 300);
         playlist.file = file;
         if (j.contains("entries") && j["entries"].is_array()) {
             for (const auto& item : j["entries"]) {
@@ -47,22 +48,27 @@ bool Load(const std::filesystem::path& file, Playlist& out) {
     }
 }
 
-bool Save(const Playlist& playlist, std::filesystem::path& savedAs) {
+std::filesystem::path PathFor(const std::string& playlistName) {
     std::string name;
-    for (const char c : playlist.name) {
+    for (const char c : playlistName) {
         if (std::isalnum(static_cast<unsigned char>(c)) || c == ' ' || c == '-' || c == '_') name.push_back(c);
     }
     while (!name.empty() && name.back() == ' ') name.pop_back();
-    if (name.empty()) return false;
+    return name.empty() ? std::filesystem::path() : Directory() / (name + ".json");
+}
+
+bool Save(const Playlist& playlist, std::filesystem::path& savedAs) {
+    if (PathFor(playlist.name).empty()) return false;
     std::error_code ec;
     std::filesystem::create_directories(Directory(), ec);
     nlohmann::json j;
     j["name"] = playlist.name;
     j["shuffle"] = playlist.shuffle;
     j["random_type"] = playlist.randomType;
+    j["auto_start"] = playlist.autoStart;
     j["entries"] = nlohmann::json::array();
     for (const Entry& e : playlist.entries) j["entries"].push_back({ { "map", e.map }, { "variant", e.variant }, { "mod", e.mod } });
-    savedAs = Directory() / (name + ".json");
+    savedAs = PathFor(playlist.name);
     std::ofstream out(savedAs, std::ios::binary | std::ios::trunc);
     if (!out) return false;
     out << j.dump(2);
