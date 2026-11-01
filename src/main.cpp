@@ -112,8 +112,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         const int layouts = noble::PadLayouts::SelfTest();
         const int tuning = noble::InputTuning::SelfTest();
         const bool variantFields = noble::VariantFields::SelfTest();
+        const bool hostVariant = noble::NetworkTransport::SelfTest();
         std::printf("%s: variant fields - read/write round trip\n", variantFields ? "PASS" : "FAIL");
-        return (types == 0 && names == 0 && layouts == 0 && tuning == 0 && variantFields) ? 0 : 1;
+        std::printf("%s: host variant materialize round trip\n", hostVariant ? "PASS" : "FAIL");
+        return (types == 0 && names == 0 && layouts == 0 && tuning == 0 && variantFields && hostVariant) ? 0 : 1;
     }
 
     // Steam Workshop subscription helper: the join prompt starts us as "-steam-subscribe <id> -steam-dll <path>",

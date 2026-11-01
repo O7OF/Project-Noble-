@@ -28,6 +28,18 @@ bool NetworkTransport::MaterializeHostVariant(const std::string& name, const std
     return true;
 }
 
+bool NetworkTransport::SelfTest() {
+    const std::string body = "{\"name\":\"SELFTEST\",\"base\":\"slayer_054.bin\"}";
+    std::string path;
+    if (!MaterializeHostVariant("_selftest.json", body, path)) return false;
+    std::ifstream in(path, std::ios::binary);
+    const std::string roundtrip((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    in.close();
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+    return roundtrip == body;
+}
+
 namespace {
 
 // Diagnostic: hex-dump Blam! payloads so the join handshake (55-byte join request,
