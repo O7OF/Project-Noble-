@@ -149,7 +149,9 @@ bool HandOff(const std::wstring& args) {
     // process lingered next to the new one).
     EnumWindows(&HideOwnWindow, static_cast<LPARAM>(GetCurrentProcessId()));
     NOBLE_INFO("Relaunch: handed off to the new Noble process; closing this one");
-    Logger::Shutdown();
+    // Do not run Logger::Shutdown() here: it joins/flushes spdlog while the engine's threads are still alive
+    // and can hang, leaving the old server-browser window frozen next to the new match process. The line above
+    // is already flushed (flush_on(info)); terminate immediately.
     TerminateProcess(GetCurrentProcess(), 0);  // not ExitProcess: DLL shutdown under the engine can hang
     return true;  // not reached
 }
