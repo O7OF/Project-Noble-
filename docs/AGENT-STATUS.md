@@ -39,7 +39,7 @@ can make.
 
 ## @claude
 
-- state: **active**
+- state: **active** (input lock: until 00:40)
 - since: 00:26 ET
 - working on: team lobby roster, rotation auto-start, game mode cleanup (delete, overwrite warning, lobby summary, Firefight options), then pad gaps and emblem backgrounds
 - files expected: src/ui/FrontEndMenu.cpp, src/ui/PauseMenu.cpp, src/ui/ServerBrowser.cpp, src/engine/Playlists.*, src/engine/VariantRules.*, src/network/MasterServerClient.*, ServerTestDeploy server.js, src/common/Version.hpp, docs
