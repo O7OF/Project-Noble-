@@ -58,7 +58,13 @@ struct Config {
     int channel = 0;
     bool masterMute = false;
     int pttKey = 0;
+    int pttPartyKey = 0;
+    int pttTeamKey = 0;
+    int pttGlobalKey = 0;
     int pttPad = 0;
+    int pttPartyPad = 0;
+    int pttTeamPad = 0;
+    int pttGlobalPad = 0;
     std::array<int, 6> paddleKeys{};
 };
 
@@ -283,10 +289,10 @@ float FrameLevel(const int16_t* samples) {
 
 using XInputGetStateFn = DWORD(WINAPI*)(DWORD, XINPUT_STATE*);
 
-bool PadInputHeld(const Config& cfg) {
-    if (cfg.pttPad == PadLayouts::InputNone) return false;
-    if (cfg.pttPad >= PadLayouts::InputPaddle1 && cfg.pttPad < PadLayouts::InputPaddle1 + PadLayouts::kPaddleCount) {
-        const int vk = cfg.paddleKeys[static_cast<size_t>(cfg.pttPad - PadLayouts::InputPaddle1)];
+bool PadInputHeld(const Config& cfg, int input) {
+    if (input == PadLayouts::InputNone) return false;
+    if (input >= PadLayouts::InputPaddle1 && input < PadLayouts::InputPaddle1 + PadLayouts::kPaddleCount) {
+        const int vk = cfg.paddleKeys[static_cast<size_t>(input - PadLayouts::InputPaddle1)];
         return vk > 0 && (GetAsyncKeyState(vk) & 0x8000) != 0;
     }
     static XInputGetStateFn s_get = [] {
@@ -304,7 +310,7 @@ bool PadInputHeld(const Config& cfg) {
         if (s_get(slot, &st) != ERROR_SUCCESS) continue;
         const XINPUT_GAMEPAD& g = st.Gamepad;
         bool held = false;
-        switch (cfg.pttPad) {
+        switch (input) {
         case PadLayouts::InputLT: held = g.bLeftTrigger > 128; break;
         case PadLayouts::InputRT: held = g.bRightTrigger > 128; break;
         case PadLayouts::InputLStickUp: held = g.sThumbLY > kStickOn; break;
@@ -315,7 +321,7 @@ bool PadInputHeld(const Config& cfg) {
         case PadLayouts::InputRStickDown: held = g.sThumbRY < -kStickOn; break;
         case PadLayouts::InputRStickLeft: held = g.sThumbRX < -kStickOn; break;
         case PadLayouts::InputRStickRight: held = g.sThumbRX > kStickOn; break;
-        default: held = cfg.pttPad > 0 && (g.wButtons & cfg.pttPad) != 0; break;
+        default: held = input > 0 && (g.wButtons & input) != 0; break;
         }
         return held;
     }
@@ -323,15 +329,29 @@ bool PadInputHeld(const Config& cfg) {
     return false;
 }
 
-bool PushToTalkHeld(const Config& cfg) {
+// Returns the voice channel the player is holding a key for, or -1. Separate keys win over the generic PTT; when
+// several are held, the narrower channel wins (party > team > everyone).
+int ChannelFromHeld(bool party, bool team, bool global, bool generic, int fallbackChannel) {
+    if (party) return 2;
+    if (team) return 1;
+    if (global) return 0;
+    if (generic) return fallbackChannel;
+    return -1;
+}
+
+int PushToTalkChannel(const Config& cfg, int fallbackChannel) {
     // Only for our own window: the same key typed in another program, or in one of our text boxes, must not open the mic.
     HWND foreground = GetForegroundWindow();
     DWORD process = 0;
     if (foreground) GetWindowThreadProcessId(foreground, &process);
-    if (process != GetCurrentProcessId()) return false;
-    if (s_pushToTalkBlocked.load() || (ImGui::GetCurrentContext() && ImGui::GetIO().WantTextInput)) return false;
-    if (cfg.pttKey > 0 && cfg.pttKey < 256 && (GetAsyncKeyState(cfg.pttKey) & 0x8000) != 0) return true;
-    return PadInputHeld(cfg);
+    if (process != GetCurrentProcessId()) return -1;
+    if (s_pushToTalkBlocked.load() || (ImGui::GetCurrentContext() && ImGui::GetIO().WantTextInput)) return -1;
+    auto held = [](int vk) { return vk > 0 && vk < 256 && (GetAsyncKeyState(vk) & 0x8000) != 0; };
+    const bool party = held(cfg.pttPartyKey) || PadInputHeld(cfg, cfg.pttPartyPad);
+    const bool team = held(cfg.pttTeamKey) || PadInputHeld(cfg, cfg.pttTeamPad);
+    const bool global = held(cfg.pttGlobalKey) || PadInputHeld(cfg, cfg.pttGlobalPad);
+    const bool generic = held(cfg.pttKey) || PadInputHeld(cfg, cfg.pttPad);
+    return ChannelFromHeld(party, team, global, generic, fallbackChannel);
 }
 
 Config ReadConfig() {
@@ -346,7 +366,13 @@ Config ReadConfig() {
     c.channel = d.voiceChannel;
     c.masterMute = d.masterMute;
     c.pttKey = KeyBindings::EffectiveKey(KeyBindings::kActionPushToTalk);
+    c.pttPartyKey = KeyBindings::EffectiveKey(KeyBindings::kActionVoiceParty);
+    c.pttTeamKey = KeyBindings::EffectiveKey(KeyBindings::kActionVoiceTeam);
+    c.pttGlobalKey = KeyBindings::EffectiveKey(KeyBindings::kActionVoiceGlobal);
     c.pttPad = PadLayouts::EffectiveInput(d.padLayout, PadLayouts::PushToTalk, &d.padBindings);
+    c.pttPartyPad = PadLayouts::EffectiveInput(d.padLayout, PadLayouts::VoiceParty, &d.padBindings);
+    c.pttTeamPad = PadLayouts::EffectiveInput(d.padLayout, PadLayouts::VoiceTeam, &d.padBindings);
+    c.pttGlobalPad = PadLayouts::EffectiveInput(d.padLayout, PadLayouts::VoiceGlobal, &d.padBindings);
     c.paddleKeys = d.padPaddleKeys;
     return c;
 }
@@ -528,14 +554,15 @@ void VoiceThread() {
     if (s_test.active) cfg.enabled = true;   // tests never read the player's settings
     std::vector<uint8_t> packet(kHeaderSize + kMaxPayload);
     uint64_t lastSent = 0, lastRecv = 0, lastPlayed = 0, lastCaptured = 0, lastRendered = 0, lastBytes = 0;
+    int lastChannel = 0;
 
-    const auto sendFrame = [&](const uint8_t* payload, int size, uint8_t flags) {
+    const auto sendFrame = [&](const uint8_t* payload, int size, uint8_t flags, uint8_t channel) {
         std::memcpy(packet.data(), "NVOX", 4);
         const uint64_t id = NetworkTransport::Get().GetRelayMachineId();
         std::memcpy(packet.data() + 4, &id, 8);
         std::memcpy(packet.data() + 12, &seq, 2);
         packet[14] = flags;
-        packet[15] = static_cast<uint8_t>(cfg.channel);
+        packet[15] = channel;
         packet[16] = static_cast<uint8_t>(static_cast<int8_t>(s_localTeam.load()));
         packet[17] = 0;
         if (size > 0) std::memcpy(packet.data() + kHeaderSize, payload, static_cast<size_t>(size));
@@ -546,22 +573,27 @@ void VoiceThread() {
     };
 
     const auto processFrame = [&](const int16_t* pcm) {
-        bool transmit = s_test.active ? s_test.forceTransmit : false;
-        if (!s_test.active) {
-            if (PushToTalkHeld(cfg)) {
-                transmit = true;
-            } else if (cfg.openMic) {
+        int channel = cfg.channel;
+        bool transmit = false;
+        if (s_test.active) {
+            transmit = s_test.forceTransmit;
+        } else {
+            channel = PushToTalkChannel(cfg, cfg.channel);
+            transmit = channel >= 0;
+            if (!transmit && cfg.openMic) {
                 if (FrameLevel(pcm) >= kOpenMicThreshold) hang = kOpenMicHangFrames;
                 else if (hang > 0) --hang;
                 transmit = hang > 0;
+                channel = cfg.channel;
             }
         }
+        if (transmit) lastChannel = channel;
         if (transmit && encoder) {
             uint8_t payload[kMaxPayload];
             const int bytes = opus_encode(encoder, pcm, kFrameSamples, payload, kMaxPayload);
-            if (bytes > 0) sendFrame(payload, bytes, 0);
+            if (bytes > 0) sendFrame(payload, bytes, 0, static_cast<uint8_t>(channel));
         } else if (wasTransmitting) {
-            sendFrame(nullptr, 0, kFlagEnd);
+            sendFrame(nullptr, 0, kFlagEnd, static_cast<uint8_t>(lastChannel));
             opus_encoder_ctl(encoder, OPUS_RESET_STATE);
         }
         wasTransmitting = transmit;
@@ -755,6 +787,22 @@ int RunJitterSelfTest() {
         NOBLE_INFO("VoiceChat jitter test: {}: {}", what, ok ? "ok" : "FAILED");
         if (!ok) ++failures;
     };
+    // Channel priority for the separate PTT binds: party > team > everyone, then the TALK TO fallback, then silence.
+    check("voice channel: party wins when several are held", ChannelFromHeld(true, true, true, true, 0) == 2);
+    check("voice channel: team beats everyone", ChannelFromHeld(false, true, true, true, 0) == 1);
+    check("voice channel: everyone beats generic PTT", ChannelFromHeld(false, false, true, true, 1) == 0);
+    check("voice channel: generic PTT uses TALK TO", ChannelFromHeld(false, false, false, true, 1) == 1);
+    check("voice channel: nothing held is silent", ChannelFromHeld(false, false, false, false, 1) == -1);
+    // The Settings list is generated from these tables; a missing name would hide a row.
+    auto named = [](const char* s) { return s != nullptr && s[0] != '\0'; };
+    check("voice bind: keyboard party/team/global rows exist",
+          named(KeyBindings::ActionName(KeyBindings::kActionVoiceParty)) &&
+          named(KeyBindings::ActionName(KeyBindings::kActionVoiceTeam)) &&
+          named(KeyBindings::ActionName(KeyBindings::kActionVoiceGlobal)));
+    check("voice bind: controller party/team/global rows exist",
+          named(PadLayouts::ActionName(PadLayouts::VoiceParty)) &&
+          named(PadLayouts::ActionName(PadLayouts::VoiceTeam)) &&
+          named(PadLayouts::ActionName(PadLayouts::VoiceGlobal)));
     int error = 0;
     OpusEncoder* encoder = opus_encoder_create(kSampleRate, 1, OPUS_APPLICATION_VOIP, &error);
     if (!encoder) return 1;

@@ -960,6 +960,13 @@ static void ApplyArmoryAppearance(uint8_t* profile) {
             if (id == "gold") return 3;
             if (id == "black") return 4;
             if (id == "default") return 0;
+            // Noble Armory visor colours have no stock profile item. Until the in-game tint override lands,
+            // use the closest stock visor so the profile stays valid instead of writing item id 162+.
+            if (id == "rose_gold") return 3;
+            if (id == "emerald" || id == "violet") return 2;
+            if (id == "ice") return 1;
+            if (id == "crimson") return 0;
+            if (id == "onyx") return 4;
             if (idx == 3) return 4;
             if (idx == 4) return 3;
             return static_cast<uint32_t>(std::clamp(idx, 0, 4));

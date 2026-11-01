@@ -1,4 +1,5 @@
 #include "CareerPanel.hpp"
+#include "UiPad.hpp"
 #include "NobleStyle.hpp"
 #include "MenuSounds.hpp"
 #include "UiArt.hpp"
@@ -87,6 +88,7 @@ void CareerPanel::Render() {
     }
     ImGui::Separator();
     ImGui::BeginChild("##careerBody", ImVec2(0, 0), ImGuiChildFlags_None);
+    UiPad::ScrollWindow(true, m_tab != 2);   // nothing here is selected; the Commendations tab uses the triggers for its own tabs
     ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(0.27f, 0.62f, 0.86f, 1.0f));   // progress bars in Noble blue
     switch (m_tab) {
     case 0: RenderRecord(); break;

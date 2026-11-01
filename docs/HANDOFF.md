@@ -7,7 +7,103 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 
 **Goal:** `noble-client.exe` loads MCC's own `haloreach.dll` (Halo: Reach) and drives it **without MCC**, like the existing
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
-MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.9 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.10.4 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+
+## 0. Pick up here (2026-10-31, 20:50 ET) - Six voice-bind rows verified in the loopback test (@deepseek)
+
+**Commit:** `3bfcd059`. **Version:** 0.9.10.4. **Build:** 0 errors, 0 warnings (Release `noble-client` + `noble-dev`). Files: `src/audio/VoiceChat.cpp`, `src/common/Version.hpp`.
+
+**What changed.** Added two checks to the loopback self-test that `KeyBindings::ActionName` and `PadLayouts::ActionName` return non-empty names for party/team/global. Settings builds both lists by iterating the tables, so this is the check that all six rows exist (three keyboard, three controller) without a screenshot-only claim.
+
+**Evidence.** `-voice-test loopback` at 0.9.10.4: `loopback: PASS`, all five channel-priority checks `ok`, both `voice bind: ... rows exist` checks `ok`, `jitter test: PASS`.
+
+**Still open.** Two-client channel isolation, physical pad press, and rebind capture. The row-existence check does not prove a user can successfully bind a key/button.
+
+Self-review: this checks the tables, not the rendered Settings page. A layout bug could still hide a row after the table is correct.
+
+## 0. Pick up here (2026-10-31, 20:45 ET) - Scripted-pad look tokens; Firefight safe room still will not move (@deepseek)
+
+**Commit:** `90ea84dd`. **Version:** 0.9.10.3. **Build:** 0 errors, 0 warnings (Release `noble-client` + `noble-dev`). Files: `src/ui/UiPad.cpp`, `src/common/Version.hpp`.
+
+**What changed.** `-pad-script` gained `rsup`, `rsdown`, `rsleft`, `rsright`, so a scripted run can turn the camera as well as move. Normal input is unchanged.
+
+**Prophets' Hand result.** With `TPH_ff.bin` and `ff45_corvette` overriding, a 40-step warm-up, 180-degree right-stick turn and 40-step forward walk left the player exactly in the safe room; the view and position did not change, and no NPC/wave appeared. The scripted pad is being applied in the menu, but the Firefight camera/input appears to wait on the mouse-look prompt. This is the concrete blocker: scripted controller movement does not leave the safe room. Do not claim the Elite model/lighting proof from this.
+
+Self-review: the right-stick tokens are test-only and might make a future pad-script test move the camera unexpectedly; they are opt-in tokens.
+
+## 0. Pick up here (2026-10-31, 20:40 ET) - Voice channel priority self-test passes (@deepseek)
+
+**Commit:** `2c837e07`. **Version:** 0.9.10.2. **Build:** 0 errors, 0 warnings (Release `noble-client` + `noble-dev`). Files: `src/audio/VoiceChat.cpp`, `src/common/Version.hpp`.
+
+**What changed.** Pulled the separate-PTT priority rule into `ChannelFromHeld` and added five checks to the loopback self-test: party wins when several are held, team beats everyone, everyone beats generic PTT, generic PTT uses TALK TO, nothing held is silent. `PushToTalkChannel` now reads all four keyboard and pad inputs through that rule.
+
+**Evidence.** `noble-client -voice-test loopback` printed `loopback: PASS`, all five `voice channel:` checks `ok`, and `jitter test: PASS`, at version 0.9.10.2. This proves the routing decision, not a two-client audible test.
+
+**Still open.** Two-client channel isolation, a physical pad press, and rebind capture for the six new rows (three keyboard, three pad). Do not mark the voice-channel feature complete until the two-client run.
+
+Self-review: the self-test calls the same pure rule as the live path, so a future UI label can still lie about which channel a key selects; the live `PushToTalkChannel` path is not exercised by the self-test.
+
+## 0. Pick up here (2026-10-31, 20:25 ET) - Controller menu navigation across Settings and the menus (@claude)
+
+**Commit:** `acd2f83`. **Version:** 0.9.10 (resolved over @deepseek's 0.9.9.1 and 0.9.9.2, keeping their code). **Build:** noble-client, noble-dev and noble-dedicated, 0 errors, 0 warnings on the merged tree.
+
+**What was actually wrong.** Settings LB/RB and the Service Record D-pad were reproduced by scripted pad before the change; the others come from reading the code, and only their fixed behaviour was tested:
+- Settings had no LB/RB at all; only keyboard Q/E switched category. Left/right change the value on a value row, and focus starts on a row, so the only pad route to another category was Up past the first row. Nothing said so.
+- Service Record and Mods ignored the D-pad, and Mods couldn't scroll. ImGui's own navigation was enabled on those screens but had no focus to act on.
+- Server Browser moved through the unsorted list while drawing the sorted one, so the highlight jumped, and it never scrolled to the selection.
+- Pause: hovering set focus every frame, so a resting pointer pinned the row against the D-pad. Left stick did nothing there.
+- Post-game had no pad path of its own.
+- Audio's music lists were mouse-only.
+
+**Not reproduced:** row scrolling in Settings already worked under the scripted pad before this change (Controller page, 14 downs). Tyler reported it failing on a real pad. Nothing here explains a difference between real and scripted input, so check that first on the physical test.
+
+**Fix.** `UiPad::Feed` turns ImGui's pad navigation on only while a popup is open, which removes the double-press cause everywhere. `UiPad::Up/Down/Left/Right/PageUp/PageDown/ScrollWindow` are shared. Settings: LB/RB category, triggers 8 rows, right stick scrolls, Back restores defaults, hints, new BROWSE GAME / BROWSE TRACK / TRACK IN SHUFFLE rows. Server Browser: drawn order, scroll, triggers (`-server-browser-demo`). Mods: up/down, triggers, X refresh. Service Record: D-pad, stick, triggers scroll. Pause: moving mouse only, left stick, challenge scroll. Post-game: left/right, A; starts on RETURN TO MENU, never QUIT; A during the reveal only skips, and presses count from 1 s after it ends, because A is jump. Also touches `ServerBrowser.cpp`, `CareerPanel.cpp`, `WorkshopManager.cpp` beyond the listed files.
+
+**Evidence** (scripted pad, 1920x1080, `docs/screenshots/nav-*`): RB twice Graphics to Game Options; LB wraps to System; triggers scroll Controller; A toggled V-sync once; music rows; left stick on System; demo servers land on 18 after 3 downs and 2 triggers (not committed: that screen prints the public IP); Service Record Challenges scrolled; Community INVITE focus; Custom Game and Armory move. Pause in a real match: pointer resting on RESTART MATCH, two D-pad downs reached CONTROLS. Post-game: focus on PLAY AGAIN, then QUIT, then A on RETURN TO MENU logged once. Pad rebind: A then RB bound Team chat to RB and stayed on the page. Keyboard: E, Down, typed search still work.
+
+**Gaps.** No physical pad. COPY INVITE was not verified: the script pressed X in the lobby, but the button logs nothing, so neither the copy nor the press count was checked. The double-press cause is removed by design, untested here. Pause > Settings LB/RB and Post-game PLAY AGAIN / QUIT presses not run. Not run: mouse slider drag, sliders typed by value, Forge editor. Server Browser filter checkboxes, Direct Connect, Master Server and top buttons have no pad path (LB/RB mode filter, X refresh, Y favourite do). Mods' Workshop and folder buttons, Settings search and all typing need a mouse or keyboard. The Service Record's tab buttons are LB/RB only.
+
+**Heads-up.** The Server Browser header prints the public IP, an older behaviour and a risk for screenshots and streams; never commit that capture. `git pull --autostash` conflicted on Version.hpp mid-test; resolved without loss.
+
+Self-review: `-pause-at` didn't open the menu in my run and I didn't look into why; real Esc was used. The post-game outline shows whenever a pad is connected, even for a mouse user. Music rows are redundant with the lists for mouse players.
+
+## 0. Pick up here (2026-10-31, 20:35 ET) - Controller bindings for the three voice channels (@deepseek)
+
+**Commit:** `b009ec79`. **Version:** 0.9.10.1. **Build:** 0 errors, 0 warnings (Release `noble-client` + `noble-dev`). Files: `src/engine/PadLayouts.*`, `src/audio/VoiceChat.cpp`, `src/common/Version.hpp`.
+
+**What changed.** Added `VoiceParty`, `VoiceTeam` and `VoiceGlobal` to PadLayouts, unbound by default. The Settings > Controller BUTTON BINDINGS list iterates every action, so the three rows appear without a SettingsPanel change. `VoiceChat` reads each pad input separately and uses the same party > team > everyone priority as the keyboard binds; the generic pad PUSH TO TALK remains the fallback. The voice actions are skipped by `PadLayouts::Apply`, so they are never written into the engine's pad state.
+
+**Verification.** `-voice-test loopback` still PASS after the change (24 kbps → 20 kbps test sequence, jitter self-tests). `-test-map-gametypes` crashes in this shell with BEX64/0xC0000409 in `ucrtbase.dll` before any output; the same test path was already unusable while adding the visor feature, so I did not use it as evidence. Needs a console run to confirm, or a fix to the test harness.
+
+**Not verified.** Two-client channel routing, a physical pad press, and rebind capture for the new rows. The pad rows are visible in code but no scripted-pad capture was taken.
+
+Self-review: the three pad actions are unbound by default, so existing controller users see no behaviour change. Assigning them to a game button moves that game action, following the existing `Assign` rule for PTT.
+
+## 0. Pick up here (2026-10-31, 20:25 ET) - Separate party/team/global voice push-to-talk binds (@deepseek)
+
+**Commit:** `c55a40d`. **Version:** 0.9.9.2. **Build:** 0 errors, 0 warnings (Release `noble-client` + `noble-dev`). Files: `src/engine/KeyBindings.*`, `src/audio/VoiceChat.cpp`, `src/common/Version.hpp`.
+
+**What changed.** Added three Noble actions: **Voice to party**, **Voice to team**, **Voice to everyone** (keyboard defaults F6/F7/F8; user-rebindable). They appear automatically in Settings > Controls > Keyboard & Mouse because the binding list reads `KeyBindings::ActionsIn(ActionGroup::Actions)`. `VoiceChat` reads all four keys every 500 ms; the specific channel key wins over the generic PUSH TO TALK, with priority party > team > everyone. The generic PTT and the TALK TO setting remain the fallback, so existing users are unchanged.
+
+**Not verified.** Two-client channel routing, a real microphone, controller-specific channel binds (the controller still has one PUSH TO TALK plus TALK TO; separate pad channel binds are not implemented), and key-rebind capture for the three new rows. Do not mark the voice-channel feature done until the two-client test.
+
+Self-review: F6-F8 are global defaults and could collide with another program's hotkeys; they are rebindable. PARTY still means ALL at the transport level until Noble has parties. Holding two channel keys picks the narrower channel, which is a rule I chose, not a Reach rule.
+
+## 0. Pick up here (2026-10-31, 20:12 ET) - Six new Spartan visor finishes as unlocks; Prophets' Hand Firefight variant test (@deepseek)
+
+**Commit:** `494e579`. **Version:** 0.9.9.1. **Build:** 0 errors, 0 warnings (Release `noble-client` + `noble-dev`). Files: `src/ui/ArmorCustomizer.cpp`, `src/ui/SpartanArmoryCatalog.inc`, `src/engine/ReachHost.cpp`, `docs/career/armory_overrides.json`, `docs/career/spartan_armory_catalog.*`, `tools/armory/build_spartan_catalog.py`.
+
+**Visor unlocks.** Added six finishes to the Spartan visor row: Rose Gold, Emerald, Violet, Ice, Crimson and Onyx (11 total). Rank gates and cR prices live in `armory_overrides.json` and are generated into the catalog, so the existing locked / for-sale / buy / equipped UI works unchanged. The picker uses swatch tiles for the new finishes (the stock five keep their helmet pictures). Saved as `visor_color_index` + `visor_id`; the Armory preview recolours live through the visual dirty flag.
+
+**Evidence.** `-armory-unlock-all` run: all 11 entries; Selected Emerald changed the model's visor from gold to green (`docs/screenshots/armory-visor-unlocks-emerald.png`). A normal run with the current rank shows Silver/Blue/Black locked with their rank text (`armory-visor-unlocks-locked.png`); the same run reset the saved Emerald to Default because the profile had not unlocked it, which is the intended lock rule. Appearance was restored to Elite / Primary 13 / Secondary 29 / Accent 2 / visor 0 with `-pad-script`, without stealing focus.
+
+**In-game limit.** Reach's profile accepts only stock visor item ids 157-161. Until a visor-shader tint override exists, `ReachHost` maps each new finish to the closest stock visor (rose_gold -> gold, emerald/violet -> blue, ice -> silver, crimson -> default, onyx -> black). The Armory colours are real previews, not yet real in-match colours. Do not mark the in-game part done from these captures.
+
+**Prophets' Hand Firefight test.** Launched `ff45_corvette` with its own `haloreach\game_variants\TPH_ff.bin`; the log shows the custom variant decoded into the launch block (`+0x300`) and `Firefight_tph` starting at frame 495. The safe room rendered the Elite HUD and arms, but the camera stayed fixed on the ceiling and mouse look did not move it; no live NPC or wave appeared before the run ended. The map and variant are loading - the remaining blocker is getting out of the safe room / into a wave, or using an insertion point/freecam. This is still `[~]`, not a rendering failure proven.
+
+**Not verified.** True in-match visor colour, the new tiles with helmet art, physical pad, and the full Prophets' Hand Elite model frame.
+
+Self-review: the new visor finishes are Noble-created unlockables with invented rank/credit prices; they are not Reach's original visor list. The catalog is generated, so change `armory_overrides.json` and rerun the tool rather than editing the `.inc` by hand.
 
 ### How this file is kept (Tyler, 2026-10-30)
 
@@ -97,7 +193,7 @@ Self-review: chat text is logged nowhere client-side, so failures show only on s
 ## 0. Pick up here (2026-10-31, 15:08 ET) - Push-to-talk rebinding, voice quality proof, music list cleanup (@claude)
 
 
-**Current version:** 0.9.8.1. **Developer build:** 0.9.8.1-dev. Dev binaries report the suffix next to the version string.
+**Current version:** 0.9.10. **Developer build:** 0.9.10-dev. Dev binaries report the suffix next to the version string.
 
 **Commit:** `8cbb746` (the code is in this commit, whose message only mentions docs: the intended commit failed on quotes in its message). **Version:** 0.9.5. **Build:** 0 errors, 0 warnings on the merged tree. Files: `src/ui/SettingsPanel.*`, `src/common/Settings.cpp`, `src/audio/ReachAudio.cpp`, `src/audio/VoiceChat.cpp`, `src/common/Version.hpp`.
 
@@ -193,7 +289,7 @@ Self-review: the weakest part is the sender thread, because it changes how relay
 - Next for me: two-client chat check against the client transport, then the multiplayer post-game end hook.
 ## 0. Pick up here (2026-10-31, 08:25 ET) - Pre-game lobby map identity (@deepseek / DeepSeek)`.
 
-**Current version:** 0.9.8.1. **Developer build:** 0.9.8.1-dev. Dev binaries report the suffix next to the version string.
+**Current version:** 0.9.10. **Developer build:** 0.9.10-dev. Dev binaries report the suffix next to the version string.
 
 
 **Built and verified:** release `build\bin\Release\noble-client.exe`, developer `build\bin\Release\noble-dev.exe`, dedicated `build\bin\Release\noble-dedicated.exe`, and the packaged `Documents\Noble Launcher\Noble.exe` (full runtime tree; package stayed running in a normal launch test).

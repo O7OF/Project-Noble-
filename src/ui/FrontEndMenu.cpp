@@ -4512,7 +4512,10 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
             // to drop the player into Custom Game).
             goBack(Screen::Main);
         }
-        DrawHints(ui, { { Prompt::Back, "Back" } }, {}, 0.01875f);   // the full-width panel's edge
+        if (st.screen == Screen::Settings) DrawHints(ui, { { Prompt::Accept, "Select" }, { Prompt::Back, "Back" }, { Prompt::Change, "Change" }, { Prompt::Tabs, "Category" } }, {}, 0.01875f);   // the full-width panel's edge
+        else if (st.screen == Screen::Career) DrawHints(ui, { { Prompt::Back, "Back" }, { Prompt::Tabs, "Switch Tab" } }, {}, 0.01875f);
+        else if (st.screen == Screen::Servers) DrawHints(ui, { { Prompt::Accept, "Join" }, { Prompt::Back, "Back" }, { Prompt::Tabs, "Mode Filter" } }, {}, 0.01875f);
+        else DrawHints(ui, { { Prompt::Back, "Back" } }, {}, 0.01875f);
         break;
     }
 

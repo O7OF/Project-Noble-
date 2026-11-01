@@ -14,5 +14,17 @@ namespace UiPad {
 
 void Feed(ImGuiIO& io);
 
+// The same questions for every custom-drawn list, so D-pad and left stick always agree. They repeat while held.
+bool Up();
+bool Down();
+bool Left();
+bool Right();
+bool PageUp();     // LT
+bool PageDown();   // RT
+
+// Scrolls the current window: right stick always; D-pad and left stick with `arrows` (a page with nothing to select);
+// the triggers by a page with `triggers`. Call between Begin and End of the window that scrolls.
+void ScrollWindow(bool arrows, bool triggers);
+
 } // namespace UiPad
 } // namespace noble

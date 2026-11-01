@@ -86,7 +86,7 @@ struct VisorEntry {
     const char* description;
 };
 
-constexpr std::array<VisorEntry, 5> kVisorColors = {{
+constexpr std::array<VisorEntry, 11> kVisorColors = {{
     {"DEFAULT", "default", 0.85f, 0.53f, 0.14f,
      "Standard-issue solar/laser reflective gold-amber coating applied to MJOLNIR Mk. V visors."},
     {"SILVER",  "silver",  0.78f, 0.83f, 0.90f,
@@ -97,6 +97,18 @@ constexpr std::array<VisorEntry, 5> kVisorColors = {{
      "Polarized obsidian stealth coating that conceals the operator's gaze completely."},
     {"GOLD",    "gold",    0.98f, 0.78f, 0.18f,
      "Pure 24-karat metallic gold deposition reserved for veteran Spartan command personnel."},
+    {"ROSE GOLD", "rose_gold", 0.93f, 0.58f, 0.55f,
+     "Noble Armory finish: warm rose-gold deposition with a copper sheen. Unlocks at Warrant Officer Grade 1."},
+    {"EMERALD", "emerald", 0.10f, 0.65f, 0.38f,
+     "Noble Armory finish: deep emerald optical coat for jungle and boarding actions. Unlocks at Captain."},
+    {"VIOLET",  "violet",  0.55f, 0.25f, 0.85f,
+     "Noble Armory finish: violet dielectric stack with a bright edge flare. Unlocks at Major."},
+    {"ICE",     "ice",     0.55f, 0.85f, 1.00f,
+     "Noble Armory finish: pale ice-blue coating that cuts glare on glassed worlds. Unlocks at Lt. Colonel."},
+    {"CRIMSON", "crimson", 0.85f, 0.12f, 0.18f,
+     "Noble Armory finish: blood-red mirrored coating for command inspections. Unlocks at Colonel."},
+    {"ONYX",    "onyx",    0.05f, 0.05f, 0.06f,
+     "Noble Armory finish: near-black onyx with a faint silver rim. Unlocks at Inheritor."},
 }};
 
 struct HelmetVariantSpec {

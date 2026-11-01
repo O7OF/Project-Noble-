@@ -1,4 +1,6 @@
 #include "WorkshopManager.hpp"
+#include "MenuSounds.hpp"
+#include "UiPad.hpp"
 #include <imgui.h>
 #include <nlohmann/json.hpp>
 #include <windows.h>
@@ -178,6 +180,23 @@ void WorkshopManager::Render() {
     }
     ImGui::Spacing();
 
+    // Controller: D-pad or stick picks a mod, the triggers jump, X refreshes.
+    bool scrollToSelected = false;
+    if (!m_mods.empty() && !ImGui::GetIO().WantTextInput) {
+        const int count = static_cast<int>(m_mods.size());
+        int move = 0;
+        if (UiPad::Down()) move = 1;
+        if (UiPad::Up()) move = -1;
+        if (UiPad::PageDown()) move = 8;
+        if (UiPad::PageUp()) move = -8;
+        if (move != 0) {
+            m_selectedModIndex = m_selectedModIndex < 0 ? 0 : std::clamp(m_selectedModIndex + move, 0, count - 1);
+            scrollToSelected = true;
+            MenuSounds::Scroll();
+        }
+    }
+    if (!ImGui::GetIO().WantTextInput && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceLeft, false)) RefreshMods(m_workshopPath, m_localModsPath);
+
     // Description of the selected mod below the list.
     const float detailHeight = em * 6.5f;
     const ImGuiTableFlags flags = ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_ScrollY;
@@ -198,6 +217,7 @@ void WorkshopManager::Render() {
             if (ImGui::Selectable(mod.title.c_str(), m_selectedModIndex == i, ImGuiSelectableFlags_SpanAllColumns)) {
                 m_selectedModIndex = i;
             }
+            if (scrollToSelected && m_selectedModIndex == i) ImGui::SetScrollHereY(0.5f);
 
             ImGui::TableSetColumnIndex(1);
             if (mod.isFromWorkshop) ImGui::TextColored(ImVec4(0.42f, 0.74f, 0.93f, 1.0f), "Steam Workshop");
