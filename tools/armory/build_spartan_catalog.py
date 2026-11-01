@@ -107,7 +107,7 @@ for i, (name, sid) in enumerate(chests):
 for lst, slot, hs, key, pml in [(wrists, "wrist", "wrist_attachment", "Wrist", "wrist"), (utils, "utility", "utility", "Utility", "utility"),
                                  (knees, "knees", "knee_guards", "Knees", "knees"), (visors, "visor", "visor_color", "Visor", None)]:
     for i, (name, sid) in enumerate(lst):
-        add(slot, i, name, sid, base[key] + i, pml, find_hp(hs, name), ovr=override(slot, name) if slot == "utility" else None)
+        add(slot, i, name, sid, base[key] + i, pml, find_hp(hs, name), ovr=override(slot, name) if slot in ("utility", "visor") else None)
 for i, (name, sid) in enumerate(effects):
     add("armor effect", i, name, sid, base["Effect"] + i, None, find_hp("armor_effects", name), ovr=override("armor_effects", name))
 for i, (name, sid) in enumerate(voices):

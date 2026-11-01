@@ -145,6 +145,44 @@
         "credits": 2500000,
         "note": "Claude's pick 2026-10-29 (Tyler: 'you can decide pricing'); change freely"
       }
+    ],
+    "visor": [
+      {
+        "name": "Rose Gold",
+        "rank": "Warrant Officer Grade 1",
+        "credits": 60000,
+        "note": "Noble Armory unlockable finish, 2026-10-31"
+      },
+      {
+        "name": "Emerald",
+        "rank": "Captain",
+        "credits": 120000,
+        "note": "Noble Armory unlockable finish, 2026-10-31"
+      },
+      {
+        "name": "Violet",
+        "rank": "Major",
+        "credits": 180000,
+        "note": "Noble Armory unlockable finish, 2026-10-31"
+      },
+      {
+        "name": "Ice",
+        "rank": "Lt. Colonel",
+        "credits": 220000,
+        "note": "Noble Armory unlockable finish, 2026-10-31"
+      },
+      {
+        "name": "Crimson",
+        "rank": "Colonel",
+        "credits": 350000,
+        "note": "Noble Armory unlockable finish, 2026-10-31"
+      },
+      {
+        "name": "Onyx",
+        "rank": "Inheritor",
+        "credits": 1000000,
+        "note": "Noble Armory unlockable finish, 2026-10-31"
+      }
     ]
   }
 }
