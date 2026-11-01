@@ -7,7 +7,33 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 
 **Goal:** `noble-client.exe` loads MCC's own `haloreach.dll` (Halo: Reach) and drives it **without MCC**, like the existing
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
-MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.15 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.16.1 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+
+## 0. Pick up here (2026-11-01, 00:50 ET) - Fix Multiplayer Player Armor Swapping / Local vs Remote Biped Isolation (@O7OF)
+
+**Version:** 0.9.16.1. **Build:** noble-client, noble-dev, noble-dedicated, 0 errors, 0 warnings on MSVC Release x64. Files: `src/engine/ElitePack.cpp`, `src/common/Version.hpp`, `docs/HANDOFF.md`.
+
+**What was actually wrong (Root Cause Analysis):**
+- Tyler reported: "when tyler joins me he has my armor on and i have his armor on".
+- In `src/engine/ElitePack.cpp`, `BuilderHook` (`0x1055EC`) checked:
+  `const bool localRecord = record && (caller == kBuilderReturnSpawn || caller == kBuilderReturnLive);`.
+- `kBuilderReturnSpawn` (`0x04AC3B`) is the return address inside `player_spawn` (`0x04A9C8`).
+- In Blam! multiplayer / Forge, `player_spawn` executes on the host for **every player** that spawns into the match (both local machine Player 0 and remote peer Player 1).
+- Because `caller == kBuilderReturnSpawn` was true when Tyler spawned on the host, `localRecord` evaluated to `true` for Tyler.
+- Inside `if (localRecord)`, `BuilderHook` unconditionally read `s_localPicks` (the Host's Counselor pieces) and `s_localSet` (10), and overwrote Tyler's `record` (`record[kRecordEliteSet] = 10` and `record[0x1A..0x1D] = host_colors`), wiping Tyler's General set (6) and colors (29, 13) and dressing Tyler in the Host's armor!
+- On Tyler's PC (the Guest), the identical bug ran in reverse: when the Host spawned, Tyler's `BuilderHook` treated the Host as `localRecord = true` and overwrote the Host with Tyler's local picks and set (General).
+- Additionally, `ApplyFirstPersonSet` ran unconditionally on whoever spawned last, replacing the local player's first-person hands mesh with the remote player's model.
+
+**The Fix:**
+1. **Isolated Local Player Check (`IsLocalPlayerRecord`):**
+   - Implemented an SEH-guarded helper `IsLocalPlayerRecord(const uint8_t* record, uintptr_t caller)` that reads the player datum at `record - kPlayerRecordOffset` (`record - 0xD8`).
+   - Checks Blam!'s internal `_player_is_local_machine_bit` (`player->flags & 0x08 != 0`) and the local machine byte at `player + 0x2DE == 1`.
+   - For remote peers, `localRecord` evaluates to `false`. Their appearance record is never overwritten with local Armory picks or colors, preserving their replicated set, pieces, and colors.
+   - For remote players wearing custom pieces (`record[kRecordPieceBase + 6] == kElitePiecesMarker`), their custom pieces and set are faithfully extracted and built into their 3D biped.
+2. **First-Person Viewmodel Guard:**
+   - Moved `ApplyFirstPersonSet` inside `if (localRecord)`, ensuring that remote player spawns never alter the local player's first-person hands and body viewmodels.
+3. **Settings Sync Block Default Fallback:**
+   - In `RecordSetHook`, added safe fallback if `s_localSettingsIndex.load() < 0` so sync block writes never miss before `ApplyProfileHook` fires.
 
 ## 0. Pick up here (2026-11-01, 00:13 ET) - Playlists, rotation, voting; Forge as Elite checked (@claude)
 

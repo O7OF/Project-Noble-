@@ -1254,7 +1254,12 @@ BuilderFn s_builder = nullptr;
 // afterwards. The settings index recorded by ApplyProfileHook tells the local player's block apart from
 // the other players' blocks, so a remote player's appearance is never overwritten with local picks.
 void __fastcall RecordSetHook(uint8_t* player, uint8_t* block) {
-    const int localIndex = s_localSettingsIndex.load();
+    int localIndex = s_localSettingsIndex.load();
+    if (localIndex < 0) {
+        // Fallback if RecordSetHook fires before ApplyProfileHook records the index:
+        // Client connects with -connect as guest slot (typically 1 or 0), host starts at 0.
+        localIndex = (wcsstr(GetCommandLineW(), L"-connect") != nullptr) ? 1 : 0;
+    }
     if (player && block && s_loaded && s_haveActive && localIndex >= 0) {
         int32_t index = -1;
         std::memcpy(&index, player + 0x10, sizeof(index));
@@ -1282,7 +1287,7 @@ void __fastcall RecordSetHook(uint8_t* player, uint8_t* block) {
                     block[16 + c * 3 + 2] = static_cast<uint8_t>(std::clamp(std::lround(s_localCustomRgb[c][2] * 255.0f), 0L, 255L));
                 }
                 static std::atomic<int> s_synced{0};
-                if (s_synced.fetch_add(1) < 3)
+                if (s_synced.fetch_add(1) < 6)
                     NOBLE_INFO("ElitePack: Elite pieces & colors written to settings sync block (player index {}):{}", index,
                                Hex(block, 0x20));
             }
@@ -1299,14 +1304,36 @@ void __fastcall ApplyProfileHook(int settingsIndex, uint8_t* player) {
     if (settingsIndex >= 0 && settingsIndex < 16) s_localSettingsIndex.store(settingsIndex);
 }
 
+// Inspects the player datum associated with an appearance record to verify if it belongs
+// to the local machine's player. Separate function with no C++ objects with destructors
+// so MSVC allows __try / __except under /EHsc.
+static bool IsLocalPlayerRecord(const uint8_t* record, uintptr_t caller) {
+    if (!record) return false;
+    if (caller == kBuilderReturnLive) return true;
+    if (caller != kBuilderReturnSpawn) return false;
+
+    __try {
+        const uint8_t* p = record - kPlayerRecordOffset;
+        const uint32_t flags = *reinterpret_cast<const uint32_t*>(p + 4);
+        const uint8_t isLocalByte = p[0x2DE];
+        // In Blam! Reach, bit 3 of flags (0x08: _player_is_local_machine_bit) and p[0x2DE] == 1
+        // indicate that this player datum belongs to the local machine.
+        // Remote peers have flags & 0x08 == 0 and p[0x2DE] == 0.
+        return ((flags & 0x08) != 0) || (isLocalByte == 1);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
 uint64_t __fastcall BuilderHook(uint8_t* record, uint32_t mode, void* unit, void* player) {
     const uintptr_t caller = reinterpret_cast<uintptr_t>(_ReturnAddress()) - s_base;
-    const bool localRecord = record && (caller == kBuilderReturnSpawn || caller == kBuilderReturnLive);
+    const bool localRecord = IsLocalPlayerRecord(record, caller);
     // Mirrors the builder: mode 0 forces Spartan, mode 1 forces Elite, 2 returns, otherwise record[4].
     const bool elite = record && mode != 2 && (mode == 1 || (mode != 0 && record[4] == 1));
     static std::atomic<int> s_recordsLogged{0};
-    if (record && s_recordsLogged.fetch_add(1) < 6)
-        NOBLE_INFO("ElitePack: appearance record (mode {}, elite {}, local {}):{}", mode, elite, localRecord, Hex(record, 0x28));
+    if (record && s_recordsLogged.fetch_add(1) < 12)
+        NOBLE_INFO("ElitePack: appearance record (caller 0x{:X}, mode {}, elite {}, local {}):{}",
+                   caller, mode, elite, localRecord, Hex(record, 0x28));
     if (!elite || !s_loaded || !s_haveActive) return s_builder(record, mode, unit, player);
 
     alignas(8) uint8_t copy[0x28];
@@ -1353,13 +1380,15 @@ uint64_t __fastcall BuilderHook(uint8_t* record, uint32_t mode, void* unit, void
     copy[kRecordPieceBase + 6] = kElitePiecesMarker;
     copy[kRecordEliteSet] = static_cast<uint8_t>(effectiveSet);
     if (eliteEffect != 0xFF) copy[kRecordEliteFx] = eliteEffect;
-    {   // first-person arms follow the forearms, the first-person body the shoulders (else the Armor Set)
+    if (localRecord) {
+        // first-person arms follow the forearms, the first-person body the shoulders (else the Armor Set)
+        // ONLY update first-person meshes for the local machine's player!
         const int fpSet = effectiveSet < 8 ? effectiveSet : 0;
         const int arms = SetOfPiece(4, picks[4]), body = SetOfPiece(1, picks[1]);
         ApplyFirstPersonSet(0, arms >= 0 ? arms : fpSet);
         ApplyFirstPersonSet(1, body >= 0 ? body : fpSet);
     }
-    if (s_picksLogged.fetch_add(1) < 8)
+    if (s_picksLogged.fetch_add(1) < 12)
         NOBLE_INFO("ElitePack: Elite dressed with pieces {} {} {} {} {} {} (mode {}, set {}, fx {}, local {})",
                    picks[0], picks[1], picks[2], picks[3], picks[4], picks[5], mode, copy[kRecordEliteSet],
                    eliteEffect, localRecord);
