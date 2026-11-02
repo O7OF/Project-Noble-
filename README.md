@@ -6,11 +6,29 @@
 
 ## Download
 
-Get the latest build from **[Releases](https://github.com/O7OF/Project-Noble-/releases/latest)**.
+<a href="https://github.com/O7OF/Project-Noble-/releases/latest">
+  <img src="docs/download-banner.jpg" width="100%" alt="Download Project Noble for Windows">
+</a>
 
-1. Download `Project-Noble-vX.Y.Z-win64.zip`.
-2. Extract the whole folder somewhere writable, for example `Documents\Project Noble`.
-3. Run `Noble.exe` (or `play.bat`).
+**Click the banner above** (or **[this link](https://github.com/O7OF/Project-Noble-/releases/latest)**). On the page that opens, scroll to **Assets** and click `Project-Noble-vX.Y.Z-win64.zip` (the `.zip` file, not the `.sha256` or "Source code" ones).
+Only download Project Noble from this page. Copies shared anywhere else could be tampered with.
+
+## How to install (3 steps)
+
+**1. Download the zip** from the release page (banner above).
+Your browser saves it to your **Downloads** folder.
+
+**2. Extract the whole folder somewhere you can write to.**
+Right-click the zip, choose **Extract All...**, and pick a folder like `C:\Games\Project Noble` or `Documents\Project Noble`. Keep everything from the zip together.
+
+**3. Open the folder and double-click `Noble.exe`** (or `play.bat`).
+If a blue box says **"Windows protected your PC"**, click **More info**, then **Run anyway**. This appears because Project Noble is a free community project without a paid signing certificate. It only happens the first time.
+
+<p align="center">
+  <img src="docs/windows-warning.svg" width="640" alt="Click More info, then Run anyway">
+</p>
+
+Make sure **Steam** is running first. Noble checks that you own Halo: Reach, then opens the main menu.
 
 ## Features
 
