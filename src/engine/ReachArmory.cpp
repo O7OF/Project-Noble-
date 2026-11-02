@@ -124,6 +124,7 @@ static std::atomic<bool> s_scanning{false};
 static std::atomic<bool> s_rescanRequested{false};
 static std::atomic<uint64_t> s_frameCounter{0};
 static std::atomic<int32_t> s_lastScene{-1};
+static std::atomic<int32_t> s_mainScene{-1};   // camera the menu map opened on; "main" restores this
 static std::atomic<int32_t> s_lastRemade{-1};
 static std::atomic<float> s_yawOffset{0.0f};
 static std::atomic<uint32_t> s_rotationBaseBits{0xFFFFFFFFu};
@@ -1090,7 +1091,7 @@ static const char* PermutationForArmorEffect(const std::string& id) {
     return nullptr;
 }
 
-static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx) {
+static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx, const std::string& targetSceneName) {
     const uintptr_t base = s_globalsBase.load();
     const size_t stride  = s_globalsStride.load();
     if (base == 0 || stride == 0) return;
@@ -1103,14 +1104,30 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx) {
     const bool showElite = sel.previewElite && armoryScene;
 
     // 1. Camera Scene Index at GLOBALS[0x24] and shows_elite at GLOBALS[0x26]
-    const int32_t effectiveSceneIdx = showElite ? 0x0B : targetSceneIdx;
     int32_t curScene = -1;
     SafeReadI32(base + 0x24 * stride, &curScene);
+    static std::atomic<int32_t> s_observedScene{-2};
+    if (curScene != s_observedScene.exchange(curScene)) {
+        NOBLE_INFO("ReachArmory: GLOBALS camera scene is now 0x{:X}", curScene);
+    }
     uint32_t curElite = 0;
     SafeReadU32(base + 0x26 * stride, &curElite);
 
+    // The menu map's opening camera is the one the player sees before the GLOBALS scan succeeds. It is
+    // NOT necessarily 0x00: writing 0x00 about four seconds in is exactly the "main menu jumps to a
+    // sliced/zoomed-out cliff" glitch. Remember whatever scene the map started on and restore that for
+    // Main/start_menu instead of forcing a title camera.
+    if (s_mainScene.load() < 0 && curScene >= 0) {
+        s_mainScene.store(curScene);
+        NOBLE_INFO("ReachArmory: main menu opening camera scene is 0x{:X}", curScene);
+    }
+    const bool mainScene = targetSceneName == "main" || targetSceneName == "start_menu" || targetSceneName == "title";
+    const int32_t mainSceneIdx = s_mainScene.load();
+    int32_t effectiveSceneIdx = showElite ? 0x0B : targetSceneIdx;
+    if (mainScene && mainSceneIdx >= 0) effectiveSceneIdx = mainSceneIdx;
+
     const uint32_t wantElite = showElite ? 1u : 0u;
-    if (curScene != effectiveSceneIdx || curElite != wantElite || s_lastScene.load() != effectiveSceneIdx) {
+    if (curScene != effectiveSceneIdx || curElite != wantElite) {
         const bool speciesChanged = (curElite != wantElite);
         SafeWriteU32(base + 0x26 * stride, wantElite);
         SafeWriteU32(base + 0x24 * stride, static_cast<uint32_t>(effectiveSceneIdx));
@@ -1129,6 +1146,10 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx) {
         }
     }
 
+    // Everything below moves/rebuilds the Armory pedestal and its biped. Applying it while the Main
+    // menu is up made the engine re-instantiate the model a few seconds after startup, which also
+    // reset the menu camera. Those writes are only needed while an Armory scene is actually shown.
+    if (armoryScene) {
     // 2. Pedestal Turn Rotation at GLOBALS[0x27] (0..71 steps of 5 degrees) + haloreach.dll + 0xBE5AD8
     constexpr float kPi = 3.14159265358979323846f;
     constexpr float kTwoPi = 2.0f * kPi;
@@ -1346,6 +1367,7 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx) {
 
     // 5. Write live colors and suit shader constants every frame
     WriteColorsAndSuit(sel);
+    }
 }
 
 } // namespace
@@ -1361,6 +1383,7 @@ void ReachArmory::SetMenuMode(bool menuMode) {
         s_sceneReady.store(false);
         s_globalsBase.store(0);
         s_lastScene.store(-1);
+        s_mainScene.store(-1);
         s_lastRemade.store(-1);
         s_appliedGeneration = 0;
         s_lastPairs.clear();
@@ -1522,7 +1545,7 @@ void ReachArmory::Tick() {
     if (s_globalsBase.load() != 0) {
         const std::string sceneName = GetTargetScene();
         const int32_t sceneIdx = ResolveSceneIndex(sceneName);
-        ApplyGlobalsAndPermutations(sceneIdx);
+        ApplyGlobalsAndPermutations(sceneIdx, sceneName);
     }
 }
 

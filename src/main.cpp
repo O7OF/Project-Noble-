@@ -33,6 +33,7 @@
 #include "network/NetworkTransport.hpp"
 #include "network/UPnP.hpp"
 #include "common/Settings.hpp"
+#include "common/Updater.hpp"
 #include "common/Relaunch.hpp"
 #include "ui/PauseMenu.hpp"
 #include "ui/UiArt.hpp"
@@ -223,8 +224,13 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             };
             for (const auto& cand : candidates) {
                 std::error_code ec;
+                // Release packages carry no loose menu map: it and its string_ids are embedded in
+                // Noble.exe and VFS extracts them on first run. The small JSON/UI files identify the
+                // data folder in those installs.
                 if (fs::exists(cand / "menumaps" / "mainmenu_all.map", ec) ||
-                    fs::exists(cand / "launch_block_1.bin", ec)) {
+                    fs::exists(cand / "launch_block_1.bin", ec) ||
+                    fs::exists(cand / "forge_palette.json", ec) ||
+                    fs::exists(cand / "strings_en.json", ec)) {
                     return fs::absolute(cand);
                 }
             }
@@ -291,6 +297,18 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     // without pixelating it. The match process is launched separately and stays at native resolution.
     const bool showMenu = noble::FrontEndMenu::ShouldShow();
 
+    // Auto-updater: the menu checks the public release repository once per launch. Match processes do
+    // not check (they are short-lived and are relaunched from the menu). "-no-update" is for tests.
+    {
+        wchar_t updaterExe[MAX_PATH] = {};
+        if (GetModuleFileNameW(nullptr, updaterExe, MAX_PATH) > 0) {
+            noble::Updater::Get().Initialize(std::filesystem::path(updaterExe).parent_path());
+        }
+        if (showMenu && wcsstr(GetCommandLineW(), L"-no-update") == nullptr) {
+            noble::Updater::Get().StartCheck();
+        }
+    }
+
     // 6. Create Win32 host window
     auto window = std::make_unique<noble::Window>(L"Halo: Reach Community Edition",
         static_cast<uint32_t>(startupSettings.width), static_cast<uint32_t>(startupSettings.height));
@@ -301,23 +319,33 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     }
 
     // 7. Initialize Direct3D 11 runtime environment.
-    // Menu-only supersampling: the menu scene is static, so 1.5x costs little and gives the Armory a
-    // higher-resolution frame to draw the character from (no 2D upscale, no pixelation). Capped at
-    // 3200x1800 to keep the menu light; the in-match process creates its swap chain at native size.
-    uint32_t renderWidth = window->GetWidth();
-    uint32_t renderHeight = window->GetHeight();
+    // The engine always renders at the display's native resolution (or the window's, if that is
+    // larger), never at a small window size. Windows scales that image down into a window or shows it
+    // 1:1 in borderless full screen, so text, HUD and gameplay stay crisp in both modes and the window
+    // mode can be switched live without ever resizing the engine's swap chain. The menu process also
+    // supersamples 1.5x for the enlarged Armory view. Cap at 3840x2160.
+    MONITORINFO monitorInfo{};
+    monitorInfo.cbSize = sizeof(monitorInfo);
+    const HMONITOR monitor = MonitorFromWindow(window->GetHwnd(), MONITOR_DEFAULTTOPRIMARY);
+    GetMonitorInfoW(monitor, &monitorInfo);
+    const uint32_t monitorWidth = static_cast<uint32_t>(std::max<LONG>(0, monitorInfo.rcMonitor.right - monitorInfo.rcMonitor.left));
+    const uint32_t monitorHeight = static_cast<uint32_t>(std::max<LONG>(0, monitorInfo.rcMonitor.bottom - monitorInfo.rcMonitor.top));
+    constexpr uint32_t kMaxRenderWidth = 3840;
+    constexpr uint32_t kMaxRenderHeight = 2160;
+    uint32_t renderWidth = std::clamp(std::max(window->GetWidth(), monitorWidth), 320u, kMaxRenderWidth);
+    uint32_t renderHeight = std::clamp(std::max(window->GetHeight(), monitorHeight), 240u, kMaxRenderHeight);
     if (showMenu) {
-        constexpr float kMenuSupersample = 1.5f;
-        constexpr uint32_t kMaxMenuWidth = 3200;
-        constexpr uint32_t kMaxMenuHeight = 1800;
-        float scale = kMenuSupersample;
-        scale = std::min(scale, std::min(static_cast<float>(kMaxMenuWidth) / static_cast<float>(renderWidth),
-                                          static_cast<float>(kMaxMenuHeight) / static_cast<float>(renderHeight)));
-        scale = std::max(1.0f, scale);
-        renderWidth = std::max(1u, static_cast<uint32_t>(std::lround(static_cast<float>(renderWidth) * scale)));
-        renderHeight = std::max(1u, static_cast<uint32_t>(std::lround(static_cast<float>(renderHeight) * scale)));
-        NOBLE_INFO("main: menu render resolution {}x{} (window {}x{}, {:.2f}x supersample)", renderWidth, renderHeight,
-                   window->GetWidth(), window->GetHeight(), scale);
+        const float scale = std::min(1.5f, std::min(static_cast<float>(kMaxRenderWidth) / static_cast<float>(renderWidth),
+                                                     static_cast<float>(kMaxRenderHeight) / static_cast<float>(renderHeight)));
+        if (scale > 1.0f) {
+            renderWidth = static_cast<uint32_t>(std::lround(static_cast<float>(renderWidth) * scale));
+            renderHeight = static_cast<uint32_t>(std::lround(static_cast<float>(renderHeight) * scale));
+        }
+        NOBLE_INFO("main: menu render resolution {}x{} (window {}x{}, display {}x{})", renderWidth, renderHeight,
+                   window->GetWidth(), window->GetHeight(), monitorWidth, monitorHeight);
+    } else {
+        NOBLE_INFO("main: match render resolution {}x{} (window {}x{}, display {}x{})", renderWidth, renderHeight,
+                   window->GetWidth(), window->GetHeight(), monitorWidth, monitorHeight);
     }
     auto renderer = std::make_unique<noble::D3D11Renderer>();
     if (!renderer->Initialize(window->GetHwnd(), renderWidth, renderHeight)) {
@@ -377,6 +405,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     int hostMaxPlayers = 16;
     int expectedPeers = 0;
     int engineModeOverride = 0;
+    int liveWindowTestAt = -1;   // test-only: switch to borderless after N seconds
     bool guestPostStart = false;
     bool thirdPerson = false;
     bool voiceProbe = false;
@@ -449,6 +478,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
                 variantPatch = WideToNarrow(argvW[++i]);
             } else if (arg == L"-voice-probe") {
                 voiceProbe = true;
+            } else if (arg == L"-live-window-test" && i + 1 < numArgs) {
+                liveWindowTestAt = _wtoi(argvW[++i]);
             } else if (arg == L"-third-person-distance" && i + 1 < numArgs) {
                 thirdPersonDistance = _wtoi(argvW[++i]);
                 thirdPerson = true;
@@ -781,7 +812,15 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     NOBLE_INFO("Authentic Halo: Reach host message loop active. Driving frames...");
 
     // 11. Native Win32 message pump: Drive frame rendering, wireframe dots, UI overlays, and swap chain Present
+    const ULONGLONG liveWindowStart = GetTickCount64();
+    bool liveWindowSwitched = false;
     while (window->ProcessMessages()) {
+        if (!liveWindowSwitched && liveWindowTestAt >= 0 &&
+            GetTickCount64() - liveWindowStart >= static_cast<ULONGLONG>(liveWindowTestAt) * 1000ull) {
+            liveWindowSwitched = true;
+            window->ApplyWindowSettings(startupSettings.width, startupSettings.height, true);
+            NOBLE_INFO("main: -live-window-test switched to borderless full screen without restarting");
+        }
         blamEngine->Update(0.016f);
 
         // haloreach.dll's engine thread presents (host slot 1). After a match it stops drawing; then the

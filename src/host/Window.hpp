@@ -19,6 +19,11 @@ public:
 
     static Window* Active();
 
+    // Applies a display-mode/window-size change to the live window only. The engine's swap chain is
+    // created at the monitor's resolution, so switching windowed <-> borderless needs no restart and
+    // no swap-chain resize; Windows scales the same crisp image to the new window.
+    void ApplyWindowSettings(uint32_t width, uint32_t height, bool borderless);
+
     HWND GetHwnd() const { return m_hwnd; }
     uint32_t GetWidth() const { return m_width; }
     uint32_t GetHeight() const { return m_height; }

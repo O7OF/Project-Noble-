@@ -7,7 +7,39 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 
 **Goal:** `noble-client.exe` loads MCC's own `haloreach.dll` (Halo: Reach) and drives it **without MCC**, like the existing
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
-MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.16.23 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.16.25 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+
+## 0. Pick up here (2026-11-02, 01:45 ET) - Native-Resolution Rendering, Live Borderless, Crisp Fonts & Custom Menu Backdrops (0.9.16.25) (@deepseek)
+
+**Version:** 0.9.16.25. **Release:** https://github.com/O7OF/Project-Noble-/releases/tag/v0.9.16.25 (asset + .sha256; v0.9.16.24 removed). **Build:** noble-client and noble-dev, MSVC Release x64, 0 errors, 0 warnings.
+
+**What was fixed:**
+1. **All UIs were pixelated (Settings, Career, Server Browser, pause, menus):** the font atlas was rasterised at 18/30/56/15 px and then drawn at 1.5-2.4x in the supersampled back buffer, which stretched every glyph. NobleStyle now sets ImFontConfig::RasterizerDensity = 2.5 for all four fonts (and the fallback), retaining the logical metrics while storing 2.5x denser glyphs. Text is sharp at every UI scale.
+2. **Buttons hovered/reacted at the wrong place:** the Win32 backend queued client-pixel mouse positions after the overlay had laid itself out in back-buffer pixels. RenderOverlayImpl now adds the final scaled mouse position after ImGui_ImplWin32_NewFrame and before NewFrame, so the last event always wins and -FLT_MAX is used when unfocused.
+3. **Crisp windowed and gameplay:** the engine now renders at the display's native resolution (or the window if larger; cap 3840x2160) for both menu and match processes. A 1280x720 window shows a 1920x1080 render downscaled by Windows; borderless is 1:1. Gameplay is no longer rendered at a small window size.
+4. **Live borderless:** Window::ApplyWindowSettings returns: it restyles/resizes the window (borderless = monitor, windowed = work-area-fitted) without touching the engine's swap chain. SETTINGS > GRAPHICS rows are When::Apply and the display applies immediately; no restart. The engine render resolution never changes, so the image stays crisp in both modes.
+5. **Custom menu backgrounds:** every front-end screen except the Armory now draws UiArt::MenuBackground() (the player's own data\ui\custom\backgrounds file first, then Noble/Reach art) instead of the engine map camera. The main menu no longer shows the 3-second camera cut/sliced view. The Armory remains the live 3D model.
+6. **Menu supersampling remains menu-only:** 1.5x render for the menu process (2880x1620 on 1080p) for the enlarged Armory; match processes render at native display resolution.
+
+**Verified visibly:** 10-second windowed main-menu run, then a live windowed -> borderless switch with -live-window-test 6 (same Window::ApplyWindowSettings path as the SETTINGS row), plus a settings-screen run. Screenshots: scratch/live-windowed-1280.png, scratch/live-borderless.png, scratch/live-settings-1280.png. Updater check logs "up to date (local 0.9.16.25, latest 'v0.9.16.25')".
+
+## 0. Pick up here (2026-11-02, 01:20 ET) - In-App Auto-Updater & Public Release Channel (0.9.16.24) (@deepseek)
+
+**Version:** 0.9.16.24. **Release repo:** O7OF/Project-Noble- (now public). **Build:** noble-client and noble-dev (MSVC Release x64, 0 errors, 0 warnings); noble-dedicated unchanged. Files: src/common/Updater.cpp, src/common/Updater.hpp, src/main.cpp, src/ui/FrontEndMenu.cpp, src/common/Version.hpp, CMakeLists.txt, tools/publish-release.ps1, release-notes/v0.9.16.24.md, docs/HANDOFF.md, docs/AGENT-STATUS.md.
+
+**What was built:**
+1. **In-app updater** (Updater): the menu process calls the GitHub Releases API for O7OF/Project-Noble- once per launch (WinHTTP, background thread). It compares the release tag with VERSION_MAJOR/MINOR/PATCH/REVISION, finds the Project-Noble-*.zip asset, and shows an UPDATE AVAILABLE panel under MY PARTY with the version and download size. The player presses DOWNLOAD (never a silent multi-hundred-MB download), then RESTART & INSTALL.
+   - The staged zip is written to %LOCALAPPDATA%\ProjectNoble\updates\<tag>\; a kept zip is reused on the next launch.
+   - Install is a hidden PowerShell helper (%TEMP%\ProjectNobleUpdate\apply_update.ps1) that waits for the client to exit, extracts the zip, robocopies it over the install folder (leaving data\userdata, autosave, cache, settings.json and appearance.dat alone), starts the same exe name, and deletes the staged files. Failures are logged to %TEMP%\ProjectNobleUpdate\apply_update.log.
+   - -no-update skips the check for captures/tests. Match processes never check for updates; only the menu does.
+2. **Release repository**: O7OF/Project-Noble- is public and carries the README, screenshots, release notes and the release asset. tools/publish-release.ps1 builds/stages/zips and creates the GitHub release via the REST API, so future releases are one command: powershell -NoProfile -ExecutionPolicy Bypass -File tools\publish-release.ps1 (-NoUpload produces dist/Project-Noble-vX-win64.zip only; -SkipBuild reuses the current binary).
+3. **Package contents are release-only**: Noble.exe (renamed from noble-client.exe), data\ without userdata, mods, armor, blocks, sandbox, cache, menumaps, loose profiles, developer appearance.dat, *.obj/*.mtl/*.rrpmcg/*.rrreloc/*.rdc/*.map/*.csv/*.bin, plus tools\vgmstream, play.bat, README.txt and version.txt. The menu map and its string_ids are compiled into Noble.exe (src/res/blocks.rc) and VFS extracts them into data\menumaps on first run; nothing loose ships. **noble-dev.exe is never copied into the package or the release repo** (verified in the staged folder and zip).
+4. **Release asset**: Project-Noble-v0.9.16.24-win64.zip plus .sha256, attached to the v0.9.16.24 GitHub release. The release repo README documents install, requirements, features, auto-updates and troubleshooting; screenshots are in docs/screenshots/.
+
+**Verification:**
+- noble-dev and noble-client both built clean after adding the updater.
+- The staged package launched without a loose mainmenu.map: the new data-folder check accepts the packaged JSON/UI files, VFS extracts the embedded map, and the Armory finds its GLOBALS table.
+- noble-dev.exe was absent from the staged folder and zip; data\mods was an empty folder; no .obj/.mtl/.rrpmcg/.map/.csv files were present.
 
 ## 0. Pick up here (2026-11-02, 01:15 ET) - Stable Main Menu Scene, Armory Full-Body Framing, Menu Supersampling, Fixed Window/Borderless Modes & Nameplate Cleanup (0.9.16.23) (@deepseek)
 

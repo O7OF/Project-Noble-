@@ -32,6 +32,7 @@
 #include "common/Relaunch.hpp"
 #include "common/Settings.hpp"
 #include "common/Version.hpp"
+#include "common/Updater.hpp"
 #include "common/DeviceIdentity.hpp"
 #include "engine/FrameCapture.hpp"
 #include "engine/ReachArmory.hpp"
@@ -575,11 +576,11 @@ void Draw(const Ui& ui, ID3D11Device* device, ID3D11DeviceContext* context, floa
 void DrawBackdrop(const Ui& ui, Screen screen) {
     const ImVec2 o = ui.origin;
     const ImVec2 extent(ui.origin.x + ui.size.x, ui.origin.y + ui.size.y);
-    // Draw the main menu background image whenever scene isn't ready or on screens where the 2D Reach backdrop
-    // provides the base visual layer (PreGameLobby, Main menu fallback) to eliminate black void flickers.
-    // In Armory, when the scene is ready, haloreach.dll renders the 3D Spartan/Elite player preview directly into
-    // the DX11 backbuffer, so the preview area must remain transparent in ImGui so the character is not occluded.
-    const bool needBackdropImage = !ReachArmory::IsSceneReady() || screen == Screen::PreGameLobby;
+    // Front-end screens use the selected menu background (the player's own pictures in
+    // data\ui\custom\backgrounds first, then Noble/Reach art). This is the backdrop the player chose;
+    // it also means the main menu never shows the engine map's camera cuts. The Armory is the one
+    // exception: its live 3D Spartan/Elite is drawn straight into the backbuffer and must show through.
+    const bool needBackdropImage = screen != Screen::Armory;
     if (needBackdropImage) {
         ui.dl->AddRectFilled(o, extent, IM_COL32(8, 12, 18, 255));
         // The lobby shows the map that is going to load, when there is a picture of it.
@@ -1218,6 +1219,66 @@ std::string PlayerServiceTag(const SettingsData& sd) {
     const auto& prof = UIManager::GetArmorCustomizer().GetProfile();
     if (!prof.serviceTag.empty()) return prof.serviceTag;
     return sd.serviceTag.empty() ? std::string("117") : sd.serviceTag;
+}
+
+// A compact "update available / downloading / ready" panel under MY PARTY. Only the menu process
+// checks for releases; the button starts the download or hands over to the update script.
+bool DrawUpdateBanner(const Ui& ui) {
+    const Updater::Status st = Updater::Get().Snapshot();
+    if (st.state != Updater::State::Available && st.state != Updater::State::Downloading &&
+        st.state != Updater::State::Ready) {
+        return false;
+    }
+    const float w = 330.0f * ui.s;
+    const float h = 74.0f * ui.s;
+    const float x = ui.origin.x + ui.size.x - w - 40.0f * ui.s;
+    const float y = ui.origin.y + 34.0f * ui.s + 128.0f * ui.s;
+    ImDrawList* dl = ui.dl;
+    dl->AddRectFilled(ImVec2(x, y), ImVec2(x + w, y + h), IM_COL32(8, 16, 26, 236), 3.0f * ui.s);
+    dl->AddRect(ImVec2(x, y), ImVec2(x + w, y + h), IM_COL32(143, 216, 255, 110), 3.0f * ui.s, 0, 1.0f);
+
+    const char* head = st.state == Updater::State::Ready ? "UPDATE READY"
+                     : st.state == Updater::State::Downloading ? "DOWNLOADING UPDATE"
+                     : "UPDATE AVAILABLE";
+    Text(ui, NobleStyle::SmallFont(), 13.0f, ImVec2(x + 12.0f * ui.s, y + 7.0f * ui.s), kAccent, head);
+    Text(ui, NobleStyle::TitleFont(), 18.0f, ImVec2(x + 12.0f * ui.s, y + 22.0f * ui.s), kWhite,
+         st.latestTag.empty() ? "NEW VERSION" : st.latestTag.c_str());
+
+    const ImVec2 b0(x + 12.0f * ui.s, y + h - 30.0f * ui.s);
+    const ImVec2 b1(x + w - 12.0f * ui.s, y + h - 8.0f * ui.s);
+    if (st.state == Updater::State::Downloading) {
+        const float p = std::clamp(st.progress, 0.0f, 1.0f);
+        dl->AddRectFilled(b0, b1, IM_COL32(20, 30, 42, 230), 2.0f * ui.s);
+        dl->AddRectFilled(b0, ImVec2(b0.x + (b1.x - b0.x) * p, b1.y), IM_COL32(0, 120, 170, 230), 2.0f * ui.s);
+        char label[64];
+        std::snprintf(label, sizeof(label), "%.0f%% of %s", p * 100.0f, Updater::FormatBytes(st.assetSize).c_str());
+        Text(ui, NobleStyle::SmallFont(), 13.0f, ImVec2(b0.x + 8.0f * ui.s, b0.y + 3.0f * ui.s), kWhite, label);
+        return false;
+    }
+
+    std::string label = st.state == Updater::State::Ready
+                            ? "RESTART & INSTALL"
+                            : "DOWNLOAD  " + Updater::FormatBytes(st.assetSize);
+    ImGui::SetCursorScreenPos(b0);
+    ImGui::PushID("noble_update_button");
+    const bool clicked = ImGui::InvisibleButton("##update", ImVec2(b1.x - b0.x, b1.y - b0.y));
+    const bool hovered = ImGui::IsItemHovered();
+    ImGui::PopID();
+    dl->AddRectFilled(b0, b1, hovered ? IM_COL32(30, 78, 110, 245) : IM_COL32(18, 46, 68, 235), 2.0f * ui.s);
+    dl->AddRect(b0, b1, hovered ? IM_COL32(180, 235, 255, 220) : IM_COL32(100, 170, 210, 120), 2.0f * ui.s);
+    Text(ui, NobleStyle::SmallFont(), 14.0f,
+         ImVec2(b0.x + ((b1.x - b0.x) - TextWidth(NobleStyle::SmallFont(), 14.0f * ui.s, label.c_str())) * 0.5f, b0.y + 3.0f * ui.s),
+         kWhite, label.c_str());
+    if (clicked) {
+        MenuSounds::Click();
+        if (st.state == Updater::State::Ready) {
+            if (Updater::Get().ApplyAndRestart()) return true;
+            MenuSounds::Back();
+        } else {
+            Updater::Get().StartDownload();
+        }
+    }
+    return false;
 }
 
 void DrawParty(const Ui& ui, const std::string& playerName, const char* status) {
@@ -4558,6 +4619,7 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         const bool modal = firstStart || st.confirmQuit || s_showAccountModal || s_showDevMenu || modPromptOpen;
         ImGui::BeginDisabled(modal);
         DrawParty(ui, settings.playerName, "In Main Menu Lobby");
+        if (DrawUpdateBanner(ui)) done = true;   // update script takes over after this frame
         const float titleY = ui.size.y * 0.16f;
         DrawTitle(ui, ImVec2(left, titleY), "MAIN MENU");
         Text(ui, nullptr, 17.0f, ImVec2(left + 4.0f * ui.s, titleY + 66.0f * ui.s), kDim,
@@ -6206,6 +6268,22 @@ void FrontEndMenu::RenderOverlayImpl(IDXGISwapChain* swapChain, bool clear) {
                     NOBLE_INFO("FrontEndMenu: window client {}x{}, menu back buffer {}x{} ({:.2f}x supersample)",
                                client.right, client.bottom, bbDesc.Width, bbDesc.Height, ArmoryStage::s_windowScale);
                 }
+            }
+        }
+        // The Win32 backend queues client-pixel mouse positions from WM_MOUSEMOVE; this is the last
+        // mouse event before NewFrame, so a back-buffer position wins and hover/click lands on the
+        // control actually under the cursor (window and back buffer are different sizes now).
+        {
+            RECT client{};
+            GetClientRect(hwnd, &client);
+            POINT cursor{};
+            if (GetForegroundWindow() == hwnd && client.right > 0 && client.bottom > 0 &&
+                GetCursorPos(&cursor) && ScreenToClient(hwnd, &cursor)) {
+                const float sx = io.DisplaySize.x / static_cast<float>(client.right);
+                const float sy = io.DisplaySize.y / static_cast<float>(client.bottom);
+                io.AddMousePosEvent(static_cast<float>(cursor.x) * sx, static_cast<float>(cursor.y) * sy);
+            } else {
+                io.AddMousePosEvent(-FLT_MAX, -FLT_MAX);
             }
         }
         UiPad::Feed(io);

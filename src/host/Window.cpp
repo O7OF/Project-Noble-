@@ -29,6 +29,53 @@ Window::~Window() {
     UnregisterClassW(L"HaloReachCE_WindowClass", m_hInstance);
 }
 
+void Window::ApplyWindowSettings(uint32_t width, uint32_t height, bool borderless) {
+    if (!m_hwnd) return;
+    m_borderless = borderless;
+    m_width = width;
+    m_height = height;
+
+    MONITORINFO monitorInfo{};
+    monitorInfo.cbSize = sizeof(monitorInfo);
+    const HMONITOR monitor = MonitorFromWindow(m_hwnd, MONITOR_DEFAULTTOPRIMARY);
+    GetMonitorInfoW(monitor, &monitorInfo);
+    const RECT monitorRect = monitorInfo.rcMonitor;
+    const RECT workRect = monitorInfo.rcWork;
+
+    if (m_borderless) {
+        SetWindowLongPtrW(m_hwnd, GWL_STYLE, WS_POPUP | WS_VISIBLE);
+        const int w = monitorRect.right - monitorRect.left;
+        const int h = monitorRect.bottom - monitorRect.top;
+        SetWindowPos(m_hwnd, HWND_TOP, monitorRect.left, monitorRect.top, w, h,
+                     SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+    } else {
+        const DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
+        RECT rect = { 0, 0, static_cast<LONG>(width), static_cast<LONG>(height) };
+        AdjustWindowRect(&rect, style, FALSE);
+        int winW = rect.right - rect.left;
+        int winH = rect.bottom - rect.top;
+        const int workW = workRect.right - workRect.left;
+        const int workH = workRect.bottom - workRect.top;
+        const int maxClientW = std::max(320, workW - (winW - static_cast<int>(width)));
+        const int maxClientH = std::max(240, workH - (winH - static_cast<int>(height)));
+        if (static_cast<int>(width) > maxClientW || static_cast<int>(height) > maxClientH) {
+            const float scale = std::min(static_cast<float>(maxClientW) / static_cast<float>(width),
+                                         static_cast<float>(maxClientH) / static_cast<float>(height));
+            const int fittedW = std::max(320, static_cast<int>(static_cast<float>(width) * scale));
+            const int fittedH = std::max(240, static_cast<int>(static_cast<float>(height) * scale));
+            rect = { 0, 0, fittedW, fittedH };
+            AdjustWindowRect(&rect, style, FALSE);
+            winW = rect.right - rect.left;
+            winH = rect.bottom - rect.top;
+        }
+        const int posX = workRect.left + (workW - winW) / 2;
+        const int posY = workRect.top + (workH - winH) / 2;
+        SetWindowLongPtrW(m_hwnd, GWL_STYLE, style);
+        SetWindowPos(m_hwnd, HWND_NOTOPMOST, posX, posY, winW, winH, SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+    }
+    SetForegroundWindow(m_hwnd);
+}
+
 bool Window::Create() {
     WNDCLASSEXW wc = { 0 };
     wc.cbSize = sizeof(WNDCLASSEXW);

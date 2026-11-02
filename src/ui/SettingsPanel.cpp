@@ -70,7 +70,7 @@ struct CatInfo {
     const char* footer;  // when this category's changes take effect
 };
 const CatInfo kCats[] = {
-    { "DISPLAY & SOUND", "GRAPHICS", "Window size and display mode take effect the next time Noble starts; everything else when you apply changes." },
+    { "DISPLAY & SOUND", "GRAPHICS", "Window mode and size apply immediately; the game always renders at your display's native resolution, so text, HUD and gameplay stay crisp." },
     { nullptr, "AUDIO", "Volumes take effect when you apply changes; a menu song plays as soon as you pick it." },
     { "GAME", "GAME OPTIONS", "Takes effect when you apply changes, also in a game you return to from the pause menu." },
     { nullptr, "PLAYER", "Saved when you apply changes; shown from the next game you start." },
@@ -857,8 +857,8 @@ void SettingsPanel::RenderGraphics() {
             When::Info, "", false, false, Preview::Gpu)) {
         InfoValue(GpuLine().c_str());
     }
-    if (Row("DISPLAY MODE", "Windowed: a fixed-size window you can move. Borderless full screen: a window that covers the whole display (use it for full screen; the engine can't change resolution while it runs).",
-            When::Restart, def.borderless ? "Borderless" : "Windowed", m_edit.borderless != m_saved.borderless)) {
+    if (Row("DISPLAY MODE", "Windowed: a fixed-size window you can move. Borderless: covers the whole display. Switching applies immediately; the renderer keeps using the display's native resolution.",
+            When::Apply, def.borderless ? "Borderless" : "Windowed", m_edit.borderless != m_saved.borderless)) {
         if (CycleValue(m_edit.borderless ? "BORDERLESS FULL SCREEN" : "WINDOWED", m_edit.borderless ? 1 : 0, 2)) m_edit.borderless = !m_edit.borderless;
     }
     {
@@ -869,8 +869,8 @@ void SettingsPanel::RenderGraphics() {
         if (m_edit.borderless) std::snprintf(label, sizeof(label), "Fills your display");
         else std::snprintf(label, sizeof(label), "%d x %d", m_edit.width, m_edit.height);
         const bool changed = m_edit.width != m_saved.width || m_edit.height != m_saved.height;
-        if (Row("WINDOW SIZE", "Size of the game window in windowed mode. In borderless full screen the window fills your display, so this is greyed out.",
-                When::Restart, "1280 x 720", changed, m_edit.borderless)) {
+        if (Row("WINDOW SIZE", "Size of the game window in windowed mode. Rendering stays at the display's native resolution and is scaled into the window, so it is crisp even at 720p. Borderless fills the display, so this is greyed out.",
+                When::Apply, "1280 x 720", changed, m_edit.borderless)) {
             if (const int d = CycleValue(label, current, n, false)) {
                 current = std::clamp(current + d, 0, n - 1);
                 m_edit.width = kResolutions[current].w;
@@ -1770,13 +1770,15 @@ SettingsData SettingsPanel::WithDefaults(SettingsData e, Cat c) {
 
 void SettingsPanel::Apply() {
     SyncBuffers();
-    // The engine fixes its render resolution when it starts and the swap chain cannot be resized while
-    // it runs (DXGI keeps the engine's views alive), so the display rows stay "when restarting": applying
-    // a new window size / borderless mode live only stretched the old picture. Save it; the next launch
-    // creates both the window and the engine at the new size.
+    // The engine renders at the display's native resolution for the whole session, so changing the
+    // window mode or size only restyles/resizes the window: Windows keeps showing the same crisp image.
+    // No restart and no swap-chain resize are needed.
     const bool displayChanged = m_saved.width != m_edit.width || m_saved.height != m_edit.height ||
                                 m_saved.borderless != m_edit.borderless;
     Settings::Get().Update(m_edit);
+    if (displayChanged) {
+        if (auto* win = Window::Active()) win->ApplyWindowSettings(m_edit.width, m_edit.height, m_edit.borderless);
+    }
     ReachAudio::PlayMenuMusic(m_edit.menuMusicTrack);
     MasterServerClient::Get().SetUrl(m_edit.masterServerUrl);
     // Field of view goes straight into the running engine (haloreach+0xB42C10, degrees); the
@@ -1788,7 +1790,7 @@ void SettingsPanel::Apply() {
     std::snprintf(m_nameBuf, sizeof(m_nameBuf), "%s", m_edit.playerName.c_str());
     std::snprintf(m_tagBuf, sizeof(m_tagBuf), "%s", m_edit.serviceTag.c_str());
     std::snprintf(m_masterBuf, sizeof(m_masterBuf), "%s", m_edit.masterServerUrl.c_str());
-    m_message = displayChanged ? "Saved. Restart the game to apply the display change." : "Saved.";
+    m_message = displayChanged ? "Display updated." : "Saved.";
     m_messageTime = ImGui::GetTime();
     MenuSounds::Click();
 }

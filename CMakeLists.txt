@@ -184,6 +184,7 @@ set(SOURCES
     src/ui/NobleUi.cpp
     src/ui/CareerPanel.cpp
     src/common/Settings.cpp
+    src/common/Updater.cpp
     src/common/DeviceIdentity.cpp
     src/common/SaveCodec.cpp
     src/engine/KeyBindings.cpp
@@ -247,6 +248,7 @@ set(HEADERS
     src/ui/NobleUi.hpp
     src/ui/CareerPanel.hpp
     src/common/Settings.hpp
+    src/common/Updater.hpp
     src/engine/KeyBindings.hpp
     src/career/Career.hpp
     src/network/MasterServerClient.hpp

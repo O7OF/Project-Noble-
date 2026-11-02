@@ -37,12 +37,17 @@ void LoadFonts() {
     // Body font: Bahnschrift (Windows 10+), else Segoe UI, else ImGui's built-in font.
     std::string body = FontPath("bahnschrift.ttf");
     if (body.empty()) body = FontPath("segoeui.ttf");
-    if (!body.empty() && io.Fonts->AddFontFromFileTTF(body.c_str(), 18.0f)) {
-        s_titleFont = io.Fonts->AddFontFromFileTTF(body.c_str(), 30.0f);
-        s_heroFont = io.Fonts->AddFontFromFileTTF(body.c_str(), 56.0f);
-        s_smallFont = io.Fonts->AddFontFromFileTTF(body.c_str(), 15.0f);
+    // The menu renders at up to 1.5x the display and the UI is drawn in back-buffer pixels, so glyphs
+    // are used at up to ~2.4x their logical size. Rasterise the atlas at 2.5x density while keeping the
+    // logical metrics: text stays crisp at every UI scale instead of being stretched from an 18 px atlas.
+    ImFontConfig fontConfig;
+    fontConfig.RasterizerDensity = 2.5f;
+    if (!body.empty() && io.Fonts->AddFontFromFileTTF(body.c_str(), 18.0f, &fontConfig)) {
+        s_titleFont = io.Fonts->AddFontFromFileTTF(body.c_str(), 30.0f, &fontConfig);
+        s_heroFont = io.Fonts->AddFontFromFileTTF(body.c_str(), 56.0f, &fontConfig);
+        s_smallFont = io.Fonts->AddFontFromFileTTF(body.c_str(), 15.0f, &fontConfig);
     } else {
-        io.Fonts->AddFontDefault();
+        io.Fonts->AddFontDefault(&fontConfig);
         s_titleFont = nullptr;
         s_heroFont = nullptr;
         s_smallFont = nullptr;
