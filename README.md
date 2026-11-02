@@ -10,7 +10,7 @@
   <img src="docs/download-banner.jpg" width="100%" alt="Download Project Noble for Windows">
 </a>
 
-**Click the banner above** (or **[this link](https://github.com/O7OF/Project-Noble-/releases/latest)**). On the page that opens, scroll to **Assets** and click `Project-Noble-vX.Y.Z-win64.zip` (the `.zip` file, not the `.sha256` or "Source code" ones).
+**Click the banner above** (or **[this link](https://github.com/O7OF/Project-Noble-/releases/latest)**). On the page that opens, scroll to **Assets** and click `Project-Noble-vX.Y.Z-win64.zip` (the `.zip` file, not the `.sha256` file).
 Only download Project Noble from this page. Copies shared anywhere else could be tampered with.
 
 ## How to install (3 steps)
@@ -28,7 +28,7 @@ If a blue box says **"Windows protected your PC"**, click **More info**, then **
   <img src="docs/windows-warning.svg" width="640" alt="Click More info, then Run anyway">
 </p>
 
-Make sure **Steam** is running first. Noble checks that you own Halo: Reach, then opens the main menu.
+Make sure **Steam** is running before you launch Project Noble.
 
 ## Features
 
@@ -42,7 +42,7 @@ Make sure **Steam** is running first. Noble checks that you own Halo: Reach, the
 - LAN and online lobbies with a built-in **server browser**.
 - Party and lobby roster, team selection, map and game-type voting.
 - Matchmaking-style playlists and custom map/mod support.
-- Voice chat, invite notifications and NAT/UPnP diagnostics.
+- Voice chat, invite notifications and connection diagnostics.
 
 ### Customization
 
