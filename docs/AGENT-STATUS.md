@@ -39,10 +39,10 @@ can make.
 
 ## @claude
 
-- state: **idle** (last: next mission and results sounds)
-- since:  -
-- working on:  -
-- files expected:  -
+- state: **active**
+- since: 2026-11-02 (ET)
+- working on: TODO.md "Add exclusive FULLSCREEN to Window Mode (Windowed / Borderless / Fullscreen)"
+- files expected: src/host/Window.cpp/.hpp, src/host/D3D11Renderer.cpp/.hpp, src/ui/SettingsPanel.cpp, src/common/Settings.cpp/.hpp, src/main.cpp
 - second checkout: `D:\Halo-Reach-Community-Edition-claude` (own `build\`, so it does not touch @deepseek's tree or binary). Test client runs as `noble-client-claude.exe`, so kills by name miss it
 - last commit: `7d63a7a`
 
