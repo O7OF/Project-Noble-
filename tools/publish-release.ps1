@@ -65,12 +65,10 @@ $readme = @(
     '',
     'Run Noble.exe (or play.bat). The client checks this release repository for updates',
     'when the menu opens; an UPDATE AVAILABLE panel appears when a newer build exists.',
-    'The menu map is compiled into Noble.exe and is unpacked on first launch.',
     '',
     'Your settings and appearance live in data\userdata and are never replaced by',
     'an update.',
     '',
-    'Source code and issue tracker: https://github.com/O7OF/test-build-01',
     'Releases: https://github.com/O7OF/Project-Noble-/releases'
 )
 Set-Content -Path (Join-Path $pkg 'README.txt') -Value ($readme -join [Environment]::NewLine) -Encoding UTF8
