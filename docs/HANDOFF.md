@@ -7,7 +7,18 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 
 **Goal:** `noble-client.exe` loads MCC's own `haloreach.dll` (Halo: Reach) and drives it **without MCC**, like the existing
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
-MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.16.29 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.16.30 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+
+## 0. Pick up here (2026-11-02, 03:35 ET) - Visor Colour Fix + Preview (0.9.16.30) (@deepseek)
+
+**Version:** 0.9.16.30. **Release:** https://github.com/O7OF/Project-Noble-/releases/tag/v0.9.16.30. **Build:** noble-client and noble-dev compiled from build-rel.
+
+**Visor fix:**
+1. ArmorCustomizer keeps the equipped finish in m_visorSelection, separate from AppearanceProfile. LoadProfile seeds it, the picker updates it, SyncLegacyFields reapplies it before the rows are drawn, and SyncToReachArmory uses it for the ReachArmorySelection/ARGB write. A transient try-on/profile restore can no longer silently reset the equipped finish to Default.
+2. Try-on now temporarily sets m_visorSelection to the clicked for-sale/locked finish before syncing and restores the equipped value afterwards, so the model previews the colour and the BUY button can equip it. Previously the new override would have blocked that preview.
+3. All 30 finishes keep their normal rank/credit rules; only the selection/preview path changed.
+
+**Verified:** release build leaves noble-client.log at 0 bytes; noble-dev compiled. No test-only visor flag remains in release code.
 
 ## 0. Pick up here (2026-11-02, 03:20 ET) - Visor Colour Fix (0.9.16.29) (@deepseek)
 

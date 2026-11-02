@@ -2588,10 +2588,13 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
             if (wantRow >= 0) {
                 int* field = rows[wantRow].index;
                 const AppearanceProfile saved = m_profile;
+                const int savedVisorSelection = m_visorSelection;
                 *field = wantValue;
+                if (field == &m_profile.visorColorIndex) m_visorSelection = wantValue;
                 if (field == &m_profile.helmetIndex) m_profile.helmetVariantIndex = 0;   // a helmet is tried on with its base
                 if (field == &m_profile.eliteArmorSet) ApplyEliteSetPieces(m_profile, wantValue);   // try the whole preset
                 SyncToReachArmory();
+                m_visorSelection = savedVisorSelection;
                 m_profile = saved;
             } else {
                 SyncToReachArmory();   // back to the equipped look
