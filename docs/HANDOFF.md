@@ -9,6 +9,39 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
 MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.16.16 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
 
+## 0. Pick up here (2026-11-01, 23:25 ET) - Window Maximize/Alt+Enter, Armory Slot Cameras, Spartan Undersuit & Color Scanner Fix, 30 Visor Ranks, Counselor Rank Balancing, Embedded Map & CSVs (0.9.16.20) (@O7OF)
+
+**Version:** 0.9.16.20. **Build:** noble-client, noble-dev, noble-dedicated (0 errors, 0 warnings on MSVC Release x64). Files: `src/host/Window.cpp`, `src/vfs/VFS.cpp`, `src/res/blocks.rc`, `src/engine/ReachArmory.cpp`, `src/ui/SpartanArmoryCatalog.inc`, `src/ui/ArmorCustomizer.cpp`, `src/common/Version.hpp`, `docs/HANDOFF.md`, `docs/AGENT-STATUS.md`.
+
+**What was actually found & fixed (Root Cause Analysis):**
+1. **Window Maximize, Minimize, Resizing & Alt+Enter:**
+   - Restored standard `WS_OVERLAPPEDWINDOW` styles (removed stripping of `WS_THICKFRAME` and `WS_MAXIMIZEBOX`).
+   - Enabled window resizing, titlebar maximize and minimize buttons.
+   - Handled `WM_SYSKEYDOWN` for `VK_RETURN` (Alt+Enter) to seamlessly toggle between maximized (`SW_SHOWMAXIMIZED`) and windowed (`SW_RESTORE`).
+
+2. **Armory Camera Slot Tracking & View Modes:**
+   - Fixed Armory cameras: previously focusing a slot did not update `m_focusScene` or trigger `UpdateArmoryCamera()`, and color/suit rows lacked `.scene` targets.
+   - Now selecting/focusing any slot (Helmet, Chest, Shoulders, Wrist, Utility, Knee Guards, Visor, Colors, Undersuit) immediately pans and zooms the Blam engine 3D Armory camera to focus on that specific body part.
+   - Added interactive view toggle ("Camera: CLOSE-UP | FULL BODY | ARMORY VIEW") via pressing 'C', mouse-wheel zoom, or clicking the camera badge.
+
+3. **Spartan Customization - Undersuit & Color Scanner Fix:**
+   - Renamed "Lights" to "Undersuit" for Spartans (while retaining "Lights" for Elites) to accurately match the visual shader behavior.
+   - Fixed Spartan Primary, Secondary, and Accent colors not applying: previously `ScanColorRecordsIn` relied on an exact 4-dword match against default Steel colors (`0xFF585858, 0xFF595959, 0xFF2FA0CB, 0xFFC7A167`). If the player's profile had custom visor colors (e.g. Blood Orange) or non-default tints loaded, the scan found 0 matches and aborted.
+   - Implemented `MatchSpartanColorRecord` with RGB channel tolerance, fallback checks for non-zero ARGB records with valid alpha, and cached `s_lastSpartanPriArgb`, `s_lastSpartanSecArgb`, and `s_lastSpartanVisArgb` to ensure color mutations always resolve the target memory records.
+
+4. **30 Custom Visor Colors & Balanced Progression Ranks:**
+   - Fully restored and verified custom visor colors in `SpartanArmoryCatalog.inc`.
+   - Populated all 30 visors with authentic names, exact hex colors, and balanced cR costs and rank requirements spanning from Recruit up through Reclaimer.
+   - Set Onyx visor unlock requirement to Reclaimer. Only the Haunted helmet is locked by the ultimate Inheritor rank.
+
+5. **Counselor Elite Helmet Unlock Rank:**
+   - Adjusted Counselor helmet unlock rank to `Eclipse` (5 ranks above Field Marshall / Honor Guard: Field Marshall -> Hero -> Legend -> Mythic -> Noble -> Eclipse), preserving Inheritor exclusivity for the Haunted helmet.
+
+6. **Embedded Mainmenu Map & String IDs (Zero Loose .map/.csv Internals):**
+   - Embedded `mainmenu_all.map` (297 MB) and `mainmenu_all.string_ids.csv` directly into the PE executable binary via `src/res/blocks.rc` as `RCDATA` resources.
+   - `ReachArmory::EnsureStringIdsLoaded()` now parses string IDs directly from `EmbeddedBlocks::GetBlock("mainmenu_all.string_ids.csv")` in memory.
+   - VFS automatically extracts `mainmenu_all.map` into `%APPDATA%/ProjectNoble/menumaps/` on first run if missing, preventing users from needing loose map files in their installation folder while preventing loose asset exposure.
+
 ## 0. Pick up here (2026-11-01, 23:00 ET) - Elite Armory Crash Fix, Master Server Region Dropdown & Multi-Peer Federation, NAT/UPnP Diagnostics, 16p Firefight & 128p Custom/Forge Expansion (0.9.16.19) (@O7OF)
 
 **Version:** 0.9.16.19. **Build:** noble-client, noble-dev, noble-dedicated (0 errors, 0 warnings on MSVC Release x64). Files: `src/engine/ReachArmory.cpp`, `src/ui/ServerBrowser.hpp`, `src/ui/ServerBrowser.cpp`, `src/ui/FrontEndMenu.cpp`, `src/ui/MissionLauncher.cpp`, `src/hooks/LobbyPatches.hpp`, `src/hooks/LobbyPatches.cpp`, `build-package.ps1`, `src/common/Version.hpp`, `docs/HANDOFF.md`, `docs/AGENT-STATUS.md`, and `C:\Users\Chey1\Desktop\ServerTestDeploy\server.js`.

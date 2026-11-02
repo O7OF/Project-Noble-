@@ -1,6 +1,8 @@
 #include "VFS.hpp"
 #include "hooks/HookManager.hpp"
 #include "common/Logger.hpp"
+#include "engine/EmbeddedBlocks.hpp"
+#include <fstream>
 
 #include <algorithm>
 #include <cctype>
@@ -201,6 +203,19 @@ std::wstring VFS::ResolvePath(const std::wstring& requestedPath, DWORD desiredAc
                 false ||
                 normLower.find(L"mainmenu.map") != std::wstring::npos) {
                 fs::path customMenu = s_userStoragePath / "menumaps" / "mainmenu_all.map";
+                if (!RawPathExists(customMenu.wstring())) {
+                    size_t mapSize = 0;
+                    const uint8_t* mapData = EmbeddedBlocks::GetBlock("mainmenu_all.map", &mapSize);
+                    if (mapData && mapSize > 0) {
+                        fs::create_directories(customMenu.parent_path(), ec);
+                        std::ofstream out(customMenu, std::ios::binary);
+                        if (out) {
+                            out.write(reinterpret_cast<const char*>(mapData), static_cast<std::streamsize>(mapSize));
+                            out.close();
+                            NOBLE_INFO("VFS: Auto-extracted embedded mainmenu_all.map ({} bytes) to {}", mapSize, customMenu.string());
+                        }
+                    }
+                }
                 if (RawPathExists(customMenu.wstring())) {
                     return customMenu.wstring();
                 }

@@ -1,5 +1,7 @@
 #include "ReachArmory.hpp"
 #include "common/Logger.hpp"
+#include "EmbeddedBlocks.hpp"
+#include <sstream>
 
 #include <windows.h>
 #include <algorithm>
@@ -167,6 +169,9 @@ static std::array<uint32_t, 4> s_lastColorWords = {
 };
 static uint32_t s_lastElitePriArgb = 0;
 static uint32_t s_lastEliteSecArgb = 0;
+static uint32_t s_lastSpartanPriArgb = 0;
+static uint32_t s_lastSpartanSecArgb = 0;
+static uint32_t s_lastSpartanVisArgb = 0;
 static std::array<float, 4> s_lastSuitFloats = {
     0.9960785f, 0.9921569f, 0.98823535f, 1.0f
 };
@@ -193,30 +198,11 @@ static void EnsureStringIdsLoaded() {
     if (s_stringIdsLoaded) return;
     s_stringIdsLoaded = true;
 
-    std::vector<std::filesystem::path> candidates;
-    if (!s_dataDir.empty()) {
-        candidates.push_back(s_dataDir / "menumaps" / "mainmenu_all.string_ids.csv");
-        candidates.push_back(s_dataDir / "mainmenu_all.string_ids.csv");
-    }
-    wchar_t exeBuf[MAX_PATH] = {};
-    if (GetModuleFileNameW(nullptr, exeBuf, MAX_PATH)) {
-        std::filesystem::path exeDir = std::filesystem::path(exeBuf).parent_path();
-        candidates.push_back(exeDir / "data" / "menumaps" / "mainmenu_all.string_ids.csv");
-        candidates.push_back(exeDir / ".." / "data" / "menumaps" / "mainmenu_all.string_ids.csv");
-        candidates.push_back(exeDir / ".." / ".." / "data" / "menumaps" / "mainmenu_all.string_ids.csv");
-    }
-
-    for (const auto& path : candidates) {
-        std::error_code ec;
-        if (!std::filesystem::exists(path, ec)) continue;
-        std::ifstream in(path);
-        if (!in) continue;
-
+    auto parseCsvStream = [](auto& in) -> size_t {
         std::string line;
         size_t count = 0;
         while (std::getline(in, line)) {
             if (!line.empty() && line.back() == '\r') line.pop_back();
-            // Format in mainmenu_all.string_ids.csv: Index,Total,ID,String (ID is decimal u32)
             size_t c1 = line.find(',');
             if (c1 == std::string::npos) continue;
             size_t c2 = line.find(',', c1 + 1);
@@ -245,6 +231,40 @@ static void EnsureStringIdsLoaded() {
                 }
             }
         }
+        return count;
+    };
+
+    // 1. Try embedded mainmenu_all.string_ids.csv resource first
+    size_t embeddedSize = 0;
+    const uint8_t* embeddedData = EmbeddedBlocks::GetBlock("mainmenu_all.string_ids.csv", &embeddedSize);
+    if (embeddedData && embeddedSize > 0) {
+        std::string_view sv(reinterpret_cast<const char*>(embeddedData), embeddedSize);
+        std::stringstream ss{ std::string(sv) };
+        size_t loaded = parseCsvStream(ss);
+        NOBLE_INFO("ReachArmory: Loaded {} string_ids from embedded resource", loaded);
+        return;
+    }
+
+    // 2. Fall back to disk files
+    std::vector<std::filesystem::path> candidates;
+    if (!s_dataDir.empty()) {
+        candidates.push_back(s_dataDir / "menumaps" / "mainmenu_all.string_ids.csv");
+        candidates.push_back(s_dataDir / "mainmenu_all.string_ids.csv");
+    }
+    wchar_t exeBuf[MAX_PATH] = {};
+    if (GetModuleFileNameW(nullptr, exeBuf, MAX_PATH)) {
+        std::filesystem::path exeDir = std::filesystem::path(exeBuf).parent_path();
+        candidates.push_back(exeDir / "data" / "menumaps" / "mainmenu_all.string_ids.csv");
+        candidates.push_back(exeDir / ".." / "data" / "menumaps" / "mainmenu_all.string_ids.csv");
+        candidates.push_back(exeDir / ".." / ".." / "data" / "menumaps" / "mainmenu_all.string_ids.csv");
+    }
+
+    for (const auto& path : candidates) {
+        std::error_code ec;
+        if (!std::filesystem::exists(path, ec)) continue;
+        std::ifstream in(path);
+        if (!in) continue;
+        size_t count = parseCsvStream(in);
         NOBLE_INFO("ReachArmory: Loaded {} string_ids from '{}'", count, path.string());
         return;
     }
@@ -566,19 +586,66 @@ static bool MatchEliteColorPattern(const uint32_t cur[4], uint32_t lastPri, uint
     return false;
 }
 
-static size_t ScanColorRecordsIn(const std::vector<std::pair<uintptr_t, size_t>>& chunks, bool quiet) {
-    // Stock 16-byte ARGB color pattern in mainmenu_all.map: { 0xFF585858, 0xFF595959, 0xFF2FA0CB, 0xFFC7A167 }
+static bool MatchSpartanColorRecord(const uint32_t* cur, uint32_t lastPri, uint32_t lastSec, uint32_t lastVis, const uint32_t* prevColors, bool hasPrevColors) {
+    if ((cur[0] >> 24) != 0xFFu || (cur[1] >> 24) != 0xFFu ||
+        (cur[2] >> 24) != 0xFFu || (cur[3] >> 24) != 0xFFu) {
+        return false;
+    }
+    if ((cur[0] & 0x00FFFFFFu) == 0 || (cur[1] & 0x00FFFFFFu) == 0 || (cur[3] & 0x00FFFFFFu) == 0) {
+        return false;
+    }
+
+    auto chDiff = [](uint32_t a, uint32_t b) {
+        if ((a >> 24) != 0xFFu || (b >> 24) != 0xFFu) return false;
+        int bd = std::abs(static_cast<int>(a & 0xFF) - static_cast<int>(b & 0xFF));
+        int gd = std::abs(static_cast<int>((a >> 8) & 0xFF) - static_cast<int>((b >> 8) & 0xFF));
+        int rd = std::abs(static_cast<int>((a >> 16) & 0xFF) - static_cast<int>((b >> 16) & 0xFF));
+        return bd <= 8 && gd <= 8 && rd <= 8;
+    };
+
+    // 1. Stock Reach spartan colors in mainmenu_all.map: { 0xFF585858, 0xFF595959, 0xFF2FA0CB, 0xFFC7A167 }
     static constexpr uint32_t kStockColors[4] = { 0xFF585858u, 0xFF595959u, 0xFF2FA0CBu, 0xFFC7A167u };
+    if (chDiff(cur[0], kStockColors[0]) && chDiff(cur[1], kStockColors[1]) &&
+        (chDiff(cur[2], kStockColors[2]) || chDiff(cur[3], kStockColors[3]))) {
+        return true;
+    }
+
+    // 2. Tolerant match against previously applied color set
+    if (hasPrevColors) {
+        if (chDiff(cur[0], prevColors[0]) && chDiff(cur[1], prevColors[1]) &&
+            (chDiff(cur[3], prevColors[3]) || chDiff(cur[2], prevColors[2]))) {
+            return true;
+        }
+    }
+
+    // 3. Match against known active Spartan primary/secondary/visor
+    if (lastPri != 0 && chDiff(cur[0], lastPri)) {
+        if (lastSec != 0 && chDiff(cur[1], lastSec)) {
+            return true;
+        }
+        if (lastVis != 0 && chDiff(cur[3], lastVis)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static size_t ScanColorRecordsIn(const std::vector<std::pair<uintptr_t, size_t>>& chunks, bool quiet) {
     uint32_t prevColors[4] = {};
+    uint32_t lastPri = 0, lastSec = 0, lastVis = 0;
     {
         ArmoryLock lock(s_dataMutex);
         std::memcpy(prevColors, s_lastColorWords.data(), sizeof(prevColors));
+        lastPri = s_lastSpartanPriArgb;
+        lastSec = s_lastSpartanSecArgb;
+        lastVis = s_lastSpartanVisArgb;
     }
     const bool hasPrevColors = ((prevColors[0] >> 24) == 0xFFu &&
                                 (prevColors[1] >> 24) == 0xFFu &&
                                 (prevColors[2] >> 24) == 0xFFu &&
                                 (prevColors[3] >> 24) == 0xFFu &&
-                                prevColors[0] != 0 && prevColors[1] != 0);
+                                (prevColors[0] & 0x00FFFFFFu) != 0);
 
     std::vector<uintptr_t> found;
     for (const auto& chunk : chunks) {
@@ -591,8 +658,7 @@ static size_t ScanColorRecordsIn(const std::vector<std::pair<uintptr_t, size_t>>
             if (SafeCopyMem(buf.data(), reinterpret_cast<const void*>(base), size)) {
                 for (size_t off = 0; off + 16 <= size; off += 4) {
                     const uint32_t* cur = reinterpret_cast<const uint32_t*>(buf.data() + off);
-                    if (std::memcmp(cur, kStockColors, 16) == 0 ||
-                        (hasPrevColors && std::memcmp(cur, prevColors, 16) == 0)) {
+                    if (MatchSpartanColorRecord(cur, lastPri, lastSec, lastVis, prevColors, hasPrevColors)) {
                         const uintptr_t recAddr = base + off;
                         if (recAddr >= 0x10000000ULL && recAddr <= 0x7FFFFFFF0000ULL) {
                             found.push_back(recAddr);
@@ -878,6 +944,9 @@ static void WriteColorsAndSuit(const ReachArmorySelection& sel) {
     s_lastColorWords = words;
     s_lastElitePriArgb = priArgb;
     s_lastEliteSecArgb = secArgb;
+    s_lastSpartanPriArgb = priArgb;
+    s_lastSpartanSecArgb = secArgb;
+    s_lastSpartanVisArgb = visArgb;
     s_lastSuitFloats = { suitFloats[0], suitFloats[1], suitFloats[2], suitFloats[3] };
 
     if (!sel.previewElite) {

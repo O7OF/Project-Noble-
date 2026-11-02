@@ -41,7 +41,7 @@ bool Window::Create() {
     // Fixed-size window: the engine renders at the size chosen in Settings and can't change it once
     // started, so a maximized or dragged-larger window only stretched that picture. For a full-screen
     // picture use WINDOW MODE = BORDERLESS FULL SCREEN, which renders at the monitor's size.
-    DWORD style = WS_OVERLAPPEDWINDOW & ~(WS_THICKFRAME | WS_MAXIMIZEBOX);
+    DWORD style = WS_OVERLAPPEDWINDOW;
     int windowWidth = 0, windowHeight = 0, posX = 0, posY = 0;
     if (m_borderless) {
         // Borderless: a popup window the size of the primary monitor.
@@ -163,6 +163,19 @@ bool Window::InSizeMove() { return s_sizeMove.load(); }
 
 LRESULT Window::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
     switch (uMsg) {
+        case WM_SYSKEYDOWN:
+            if (wParam == VK_RETURN && (lParam & (1 << 29))) {
+                WINDOWPLACEMENT wp = { sizeof(WINDOWPLACEMENT) };
+                if (GetWindowPlacement(hwnd, &wp)) {
+                    if (wp.showCmd == SW_SHOWMAXIMIZED) {
+                        ShowWindow(hwnd, SW_RESTORE);
+                    } else {
+                        ShowWindow(hwnd, SW_MAXIMIZE);
+                    }
+                }
+                return 0;
+            }
+            break;
         case WM_MOUSEWHEEL: s_wheelDelta.fetch_add(GET_WHEEL_DELTA_WPARAM(wParam)); break;
         case WM_LBUTTONDOWN: s_leftClicks.fetch_add(1); break;
         case WM_CHAR:

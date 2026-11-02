@@ -1,4 +1,5 @@
 #include "audio/ReachAudio.hpp"
+#include "MenuSounds.hpp"
 #include "InputPrompts.hpp"
 #include "ArmorCustomizer.hpp"
 #include "common/DeviceIdentity.hpp"
@@ -109,7 +110,7 @@ constexpr std::array<VisorEntry, 30> kVisorColors = {{
     {"CRIMSON", "crimson", 0.85f, 0.12f, 0.18f,
      "Noble Armory finish: blood-red mirrored coating for command inspections. Unlocks at Colonel."},
     {"ONYX",    "onyx",    0.05f, 0.05f, 0.06f,
-     "Noble Armory finish: near-black onyx with a faint silver rim. Unlocks at Inheritor."},
+     "Noble Armory finish: near-black onyx with a faint silver rim. Unlocks at Reclaimer."},
     {"AMBER",   "amber",   0.95f, 0.48f, 0.08f,
      "Deep desert amber coating with high thermal-glare rejection."},
     {"CYAN",    "cyan",    0.08f, 0.85f, 0.92f,
@@ -705,7 +706,7 @@ constexpr EliteUnlock kEliteUnlocks[] = {
     { "h2a_space_helmet", "General" },   { "h2a_l_shoulder", "General" },
     { "h2a_r_shoulder", "General" },     { "h2a_legs", "General" },
     { "h2a_ranger", "General" },         { "honor_guard", "Field Marshall" },  { "honor_guard_legs", "Field Marshall" },
-    { "counselor", "Inheritor" },
+    { "counselor", "Eclipse" },
 };
 
 // Rank needed for an Elite item: index into Career::Ranks() (0 = from the start) and its name.
@@ -1803,14 +1804,27 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
             return opts;
         }();
 
+        static const auto s_reachSpartanUndersuitOptions = []() {
+            std::vector<PickOption> opts;
+            opts.reserve(kReachColors.size());
+            for (const auto& c : kReachColors) {
+                opts.push_back({ c.name, "Techsuit / undersuit accent and illumination color.", ColourU32(c.r, c.g, c.b) });
+            }
+            return opts;
+        }();
+
         SlotRow p{ "COLORS", "Primary", RowKind::Colour, pIdx };
+        p.scene = "c_full_spartan";
         p.options = s_reachColorOptions;
         SlotRow q{ "COLORS", "Secondary", RowKind::Colour, sIdx };
+        q.scene = "c_full_spartan";
         q.options = s_reachColorOptions;
         SlotRow a{ "COLORS", "Accent", RowKind::Colour, aIdx };
+        a.scene = "c_full_spartan";
         a.options = s_reachColorOptions;
-        SlotRow l{ "COLORS", "Lights", RowKind::Colour, lIdx };
-        l.options = s_reachLightsOptions;
+        SlotRow l{ "COLORS", isElite ? "Lights" : "Undersuit", RowKind::Colour, lIdx };
+        l.scene = isElite ? "armory_elite" : "c_full_spartan";
+        l.options = isElite ? s_reachLightsOptions : s_reachSpartanUndersuitOptions;
         rows.push_back(std::move(p));
         rows.push_back(std::move(q));
         rows.push_back(std::move(a));
@@ -1988,14 +2002,21 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
         SyncToReachArmory();
     };
     auto focus = [&](int rowIndex) {
-        if (m_focusedRow == rowIndex) return;
+        if (rowIndex < 0 || rowIndex >= rowCount) return;
         m_focusedRow = rowIndex;
         s_buyRow = -1;
         m_pickerScrollToEquipped = true;
+        m_focusScene = (m_previewSpecies == PlayerSpecies::Spartan) ? rows[rowIndex].scene : "armory_elite";
+        UpdateArmoryCamera();
     };
 
     // Keys / d-pad: up/down picks the slot, left/right steps through its options.
     if (!ImGui::GetIO().WantTextInput) {
+        if (ImGui::IsKeyPressed(ImGuiKey_C)) {
+            m_cameraMode = (m_cameraMode + 1) % 3;
+            UpdateArmoryCamera();
+            MenuSounds::Click();
+        }
         if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickDown)) focus((m_focusedRow + 1) % rowCount);
         if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickUp)) focus((m_focusedRow - 1 + rowCount) % rowCount);
         SlotRow& fr = rows[m_focusedRow];
@@ -2480,10 +2501,22 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
         }
     }
 
-    // ---- Over the model: camera hint.
+    // ---- Over the model: camera toggle badge & controls.
     const char* cam = m_cameraMode == 2 ? "CLOSE-UP" : m_cameraMode == 1 ? "FULL BODY" : "ARMORY VIEW";
-    const std::string hint = std::string("Camera: ") + cam + "   |   Drag or Q/E to turn, wheel to zoom";
-    TextAt(dl, smallFont, 14.0f * s, ImVec2(previewX + 16.0f * s, origin.y + avail.y - 24.0f * s), IM_COL32(200, 214, 228, 220), hint.c_str());
+    const std::string hint = std::string("Camera: ") + cam + "   |   Press C, Click, or Wheel to toggle";
+    const ImVec2 badgePos(previewX + 16.0f * s, origin.y + avail.y - 30.0f * s);
+    const ImVec2 badgeSize(TextW(smallFont, 14.0f * s, hint.c_str()) + 20.0f * s, 24.0f * s);
+    ImGui::SetCursorScreenPos(badgePos);
+    if (ImGui::InvisibleButton("##camera_toggle_btn", badgeSize)) {
+        m_cameraMode = (m_cameraMode + 1) % 3;
+        UpdateArmoryCamera();
+        MenuSounds::Click();
+    }
+    const bool camHover = ImGui::IsItemHovered();
+    dl->AddRectFilled(badgePos, ImVec2(badgePos.x + badgeSize.x, badgePos.y + badgeSize.y),
+                      camHover ? IM_COL32(35, 60, 95, 220) : IM_COL32(18, 30, 48, 180), 4.0f * s);
+    TextAt(dl, smallFont, 14.0f * s, ImVec2(badgePos.x + 10.0f * s, badgePos.y + 4.0f * s),
+           camHover ? IM_COL32(255, 255, 255, 255) : IM_COL32(200, 220, 240, 220), hint.c_str());
 }
 
 } // namespace noble
