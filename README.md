@@ -25,9 +25,16 @@ The client checks this repository when the main menu opens. If a newer release e
 - **Multiplayer** — host or join custom games, Firefight and campaign co-op; LAN discovery, online lobby advertisement, party/lobby roster and NAT/UPnP diagnostics.
 - **Mods & Workshop** — mod catalog, Workshop subscriptions, map previews and per-lobby mod downloads.
 - **Auto-updates** — checks this release repository and installs new builds in place.
-- **Quality-of-life** — controller support, key rebinding, FOV and camera settings, menu music/sounds, subtitles, borderless full screen and a fixed-size window mode.
+- **Native-resolution rendering** — the engine renders at your display's native resolution and scales into the window, so menu text, HUD, subtitles and gameplay stay crisp at 720p windowed and 1080p borderless.
+- **Live display switching** — windowed and borderless full screen apply immediately from SETTINGS > GRAPHICS, with no restart.
+- **Custom menu backgrounds** — your own images in `data\ui\custom\backgrounds` (or Noble/Reach art) are drawn behind the entire front-end instead of the engine map's camera cuts.
+- **Quality-of-life** — controller support, key rebinding, FOV and camera settings, FPS limit, VSync, FXAA, brightness, menu music/sounds and subtitles.
 
 ## Screenshots
+
+| Main menu (borderless) | Settings (windowed) |
+|---|---|
+| ![Main menu](docs/screenshots/main-menu.png) | ![Settings](docs/screenshots/settings.png) |
 
 | Armory — Spartan | Armory — Elite |
 |---|---|
