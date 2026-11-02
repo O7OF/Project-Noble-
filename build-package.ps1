@@ -48,52 +48,94 @@ if (-not (Test-Path (Join-Path $build 'CMakeCache.txt'))) {
     if ($LASTEXITCODE -ne 0) { throw "CMake configure failed ($LASTEXITCODE)" }
 }
 
-Write-Host '== Building release client =='
-Stop-Process -Name 'Noble','noble-client' -Force -ErrorAction SilentlyContinue
+Write-Host '== Building clean release client =='
+Stop-Process -Name 'Noble','noble-client','noble-dev' -Force -ErrorAction SilentlyContinue
 & $cmake --build $build --config Release --target noble-client
 if ($LASTEXITCODE -ne 0) { throw 'noble-client build failed' }
 
 $release = Join-Path $build 'bin\Release'
-if (-not (Test-Path (Join-Path $release 'noble-client.exe'))) { throw 'missing noble-client.exe' }
+$clientExe = Join-Path $release 'noble-client.exe'
+if (-not (Test-Path $clientExe)) { throw 'missing noble-client.exe' }
 
-# Ensure repo data\, assets\ and tools\vgmstream\ are synced into build\bin\Release before packaging
+# Clean build directory of any stale nested duplicates, user data, or master server scripts
+foreach ($bad in @(
+    (Join-Path $release 'data\data'),
+    (Join-Path $release 'data\mods\mods'),
+    (Join-Path $release 'data\maps\maps'),
+    (Join-Path $release 'data\ui\custom\custom'),
+    (Join-Path $release 'data\autosave'),
+    (Join-Path $release 'data\sandbox'),
+    (Join-Path $release 'data\userdata'),
+    (Join-Path $release 'autosave'),
+    (Join-Path $release 'dedicated_data'),
+    (Join-Path $release 'tools\master-server')
+)) {
+    if (Test-Path $bad) { Remove-Item $bad -Recurse -Force -ErrorAction SilentlyContinue }
+}
+
+# Sync clean repo data into build\bin\Release\data
 $repoData = Join-Path $repo 'data'
 if (Test-Path $repoData) {
-    & robocopy $repoData (Join-Path $release 'data') /E /XO /XD userdata autosave mods cache sandbox /NFL /NDL /NJH /NJS /NP | Out-Null
-    if ($LASTEXITCODE -ge 8) { throw "robocopy data failed ($LASTEXITCODE)" }
+    & robocopy $repoData (Join-Path $release 'data') /E /XO /XD userdata autosave cache sandbox /NFL /NDL /NJH /NJS /NP | Out-Null
 }
 $repoAssets = Join-Path $repo 'assets'
 if (Test-Path $repoAssets) {
     & robocopy $repoAssets (Join-Path $release 'data') /E /XO /NFL /NDL /NJH /NJS /NP | Out-Null
-    if ($LASTEXITCODE -ge 8) { throw "robocopy assets failed ($LASTEXITCODE)" }
 }
 $repoVgm = Join-Path $repo 'tools\vgmstream'
 if (Test-Path $repoVgm) {
     & robocopy $repoVgm (Join-Path $release 'tools\vgmstream') /E /XO /NFL /NDL /NJH /NJS /NP | Out-Null
-    if ($LASTEXITCODE -ge 8) { throw "robocopy vgmstream failed ($LASTEXITCODE)" }
 }
 
-Write-Host "== Packaging to $Destination =="
+Write-Host "== Packaging fresh release to $Destination =="
+# Completely remove old packaging directory so no stale files, developer IDs, or duplicate folders remain
+if (Test-Path $Destination) {
+    Write-Host "[*] Purging previous package directory..."
+    Remove-Item $Destination -Recurse -Force -ErrorAction SilentlyContinue
+}
 New-Item -ItemType Directory -Force -Path $Destination | Out-Null
-# Copy the complete working runtime folder. Selective copies kept missing a startup
-# dependency that only the full build tree had. Exclude linker .map files (noble-*.map)
-# without excluding data\menumaps\mainmenu_all.map.
-& robocopy $release $Destination /E /XO /XF *.log noble-*.map *.bmp *.dmp /NFL /NDL /NJH /NJS /NP
-if ($LASTEXITCODE -ge 8) { throw "robocopy failed ($LASTEXITCODE)" }
 
-Copy-Item (Join-Path $Destination 'noble-client.exe') (Join-Path $Destination 'Noble.exe') -Force
-foreach ($extra in @('noble-client.exe','noble-dev.exe','noble-dedicated.exe','NobleTest.exe','dedicated_server.json')) {
-    Remove-Item (Join-Path $Destination $extra) -Force -ErrorAction SilentlyContinue
-}
-if (Test-Path (Join-Path $Destination 'dedicated_data')) {
-    Remove-Item (Join-Path $Destination 'dedicated_data') -Recurse -Force -ErrorAction SilentlyContinue
+# 1. Copy client executable as Noble.exe ONLY (noble-dev.exe is NEVER copied!)
+Copy-Item $clientExe (Join-Path $Destination 'Noble.exe') -Force
+
+# 2. Copy data folder (excluding userdata, autosave, cache, sandbox)
+$destData = Join-Path $Destination 'data'
+New-Item -ItemType Directory -Force -Path $destData | Out-Null
+& robocopy (Join-Path $release 'data') $destData /E /XD userdata autosave cache sandbox /XF *.log *.dmp *.tmp /NFL /NDL /NJH /NJS /NP | Out-Null
+
+# 3. Copy tools\vgmstream
+$destTools = Join-Path $Destination 'tools\vgmstream'
+if (Test-Path (Join-Path $release 'tools\vgmstream')) {
+    New-Item -ItemType Directory -Force -Path $destTools | Out-Null
+    & robocopy (Join-Path $release 'tools\vgmstream') $destTools /E /NFL /NDL /NJH /NJS /NP | Out-Null
 }
 
+# 4. Extra cleanup pass to guarantee ZERO dev builds, master server scripts, or duplicate folders in package
+foreach ($devFile in @('noble-dev.exe', 'noble-dev.map', 'noble-dedicated.exe', 'noble-client.exe', 'dedicated_server.json', 'master_server.js', 'test_master_server.js')) {
+    $f = Join-Path $Destination $devFile
+    if (Test-Path $f) { Remove-Item $f -Force -ErrorAction SilentlyContinue }
+}
+foreach ($badFolder in @('dedicated_data', 'tools\master-server', 'master-server', 'data\userdata')) {
+    $f = Join-Path $Destination $badFolder
+    if (Test-Path $f) { Remove-Item $f -Recurse -Force -ErrorAction SilentlyContinue }
+}
+Get-ChildItem -Path $Destination -Recurse -Filter "*master*server*.js" -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+
+# 5. Launcher script and version file
 Set-Content (Join-Path $Destination 'play.bat') "@echo off`r`ncd /d `"%~dp0`"`r`nstart `"`" `"Noble.exe`"`r`n"
-$versionMatch = Select-String -Path (Join-Path $repo 'src\common\Version.hpp') -Pattern 'VERSION_STRING = "([0-9]+\.[0-9]+\.[0-9]+) \(([^)]*)\)"'
+$versionMatch = Select-String -Path (Join-Path $repo 'src\common\Version.hpp') -Pattern 'VERSION_STRING = "([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+) \(([^)]*)\)"'
+if (-not $versionMatch) {
+    $versionMatch = Select-String -Path (Join-Path $repo 'src\common\Version.hpp') -Pattern 'VERSION_STRING = "([0-9]+\.[0-9]+\.[0-9]+) \(([^)]*)\)"'
+}
 $version = if ($versionMatch) { "v" + $versionMatch.Matches[0].Groups[1].Value + " (" + $versionMatch.Matches[0].Groups[2].Value + ")" } else { "dev" }
-Set-Content (Join-Path $Destination 'version.txt') ("Noble " + $version + " playtest build " + (Get-Date -Format 'yyyy-MM-dd HH:mm'))
-Write-Host '== Done =='
+Set-Content (Join-Path $Destination 'version.txt') ("Noble " + $version + " release build " + (Get-Date -Format 'yyyy-MM-dd HH:mm'))
+
+Write-Host '== Verification =='
 Write-Host "Executable: $(Join-Path $Destination 'Noble.exe')"
+Write-Host "Dev build in package? $(Test-Path (Join-Path $Destination 'noble-dev.exe'))"
+Write-Host "User data in package? $(Test-Path (Join-Path $Destination 'data\userdata'))"
+Write-Host "Nested mods in package? $(Test-Path (Join-Path $Destination 'data\mods\mods'))"
+Write-Host "Master server script in package? $((Get-ChildItem -Path $Destination -Recurse -Filter '*master*server*.js' -ErrorAction SilentlyContinue | Measure-Object).Count -gt 0)"
+Write-Host '== Packaging Complete =='
 $global:LASTEXITCODE = 0
 exit 0

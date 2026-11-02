@@ -5,6 +5,7 @@
 #include "NobleUi.hpp"
 #include "MenuSounds.hpp"
 #include "audio/ReachAudio.hpp"
+#include "audio/ProcessAudio.hpp"
 #include "UiArt.hpp"
 #include "common/Version.hpp"
 #include "InputPrompts.hpp"
@@ -921,7 +922,9 @@ void SettingsPanel::RenderAudio() {
     Section("VOLUME");
     auto volume = [&](const char* label, const char* text, float& v, float saved) {
         if (Row(label, text, When::Apply, "100 %", std::fabs(v - saved) > 1e-4f, false, Preview::Volume)) {
-            SliderValue(v, 0.0f, 1.0f, 0.01f, 1.0f, Percent(v).c_str());
+            if (SliderValue(v, 0.0f, 1.0f, 0.01f, 1.0f, Percent(v).c_str())) {
+                ProcessAudio::ApplyAll(m_edit.volumeGame, m_edit.volumeMusic, m_edit.volumeOther, m_edit.masterMute);
+            }
         }
     };
     volume("GAME", "Gunfire, vehicles, footsteps and everything else in the world.", m_edit.volumeGame, m_saved.volumeGame);
@@ -1008,7 +1011,9 @@ void SettingsPanel::RenderAudio() {
     Section("MORE");
     if (Row("MASTER MUTE", "Silences Noble's own audio: the menu music and the menu clicks. The volumes below are kept, so turning it back off restores them. (Reach's in-game sound is the engine's own and has its own settings.)",
             When::Instant, "Off", m_edit.masterMute != m_saved.masterMute)) {
-        ToggleValue(m_edit.masterMute);
+        if (ToggleValue(m_edit.masterMute)) {
+            ProcessAudio::ApplyAll(m_edit.volumeGame, m_edit.volumeMusic, m_edit.volumeOther, m_edit.masterMute);
+        }
     }
     if (Row("MUTE IN BACKGROUND", "Also silences Noble's audio whenever Noble is not the active window, so alt-tabbing to a video or a call leaves the game quiet.",
             When::Instant, "Off", m_edit.muteInBackground != m_saved.muteInBackground)) {
@@ -1769,6 +1774,7 @@ void SettingsPanel::Apply() {
     // Field of view goes straight into the running engine (haloreach+0xB42C10, degrees); the
     // per-frame CameraFov::Tick keeps it there and picks it up for the next game too.
     CameraFov::Apply(m_edit.fieldOfView);
+    ProcessAudio::ApplyAll(m_edit.volumeGame, m_edit.volumeMusic, m_edit.volumeOther, m_edit.masterMute);
     m_saved = Settings::Get().Snapshot();  // clamped values
     m_edit = m_saved;
     std::snprintf(m_nameBuf, sizeof(m_nameBuf), "%s", m_edit.playerName.c_str());
@@ -1782,8 +1788,9 @@ void SettingsPanel::Apply() {
 void SettingsPanel::Discard() {
     m_loaded = false;          // reload from the saved settings next frame
     m_rebindAction = -1;
-    ReachAudio::PlayMenuMusic(Settings::Get().Snapshot().menuMusicTrack);
-    ReachAudio::SetMusicVolume(Settings::Get().Snapshot().volumeMusic);
+    const auto snap = Settings::Get().Snapshot();
+    ReachAudio::PlayMenuMusic(snap.menuMusicTrack);
+    ProcessAudio::ApplyAll(snap.volumeGame, snap.volumeMusic, snap.volumeOther, snap.masterMute);
     m_message = "Changes discarded.";
     m_messageTime = ImGui::GetTime();
     MenuSounds::Back();

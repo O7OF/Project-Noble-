@@ -44,6 +44,8 @@ public:
     uint32_t GetDisplayWidth() const { return m_displayWidth; }
     uint32_t GetDisplayHeight() const { return m_displayHeight; }
 
+    static void SetRuntimeVolumes(float game, float music, float other);
+
 private:
     struct ID3D11Device* m_device = nullptr;
     struct ID3D11DeviceContext* m_context = nullptr;

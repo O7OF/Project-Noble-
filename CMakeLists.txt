@@ -169,6 +169,7 @@ set(SOURCES
     src/audio/VgmAudioHook.cpp
     src/audio/VoiceChat.cpp
     src/audio/ReachAudio.cpp
+    src/audio/ProcessAudio.cpp
     src/ui/ModCatalog.cpp
     src/ui/InputPrompts.cpp
     src/ui/UiPad.cpp
@@ -234,6 +235,7 @@ set(HEADERS
     src/audio/VgmAudioHook.hpp
     src/audio/VoiceChat.hpp
     src/audio/ReachAudio.hpp
+    src/audio/ProcessAudio.hpp
     src/ui/ModCatalog.hpp
     src/ui/InputPrompts.hpp
     src/ui/NobleStyle.hpp

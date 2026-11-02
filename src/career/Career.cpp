@@ -227,7 +227,7 @@ struct Extra {
     std::map<std::string, int64_t> commendationCount; // "<mode>_<key>" -> count
 };
 
-std::mutex s_mutex;
+std::recursive_mutex s_mutex;
 bool s_loaded = false;
 Totals s_totals;
 Extra s_extra;
@@ -706,7 +706,7 @@ const char* BaseTypeName(BaseType t) {
 }
 
 void BeginMatch(BaseType type, const std::string& map, int difficulty, uint64_t skulls) {
-    std::lock_guard<std::mutex> lock(s_mutex);
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
     s_type = type;
     s_map = map;
     s_difficulty = difficulty;
@@ -740,7 +740,7 @@ void OnGameResults(const uint8_t* record, size_t size) {
     }
     LogRecord(record);
 
-    std::lock_guard<std::mutex> lock(s_mutex);
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
     LoadLocked();
 
     const double minutes =
@@ -980,7 +980,7 @@ void OnGameResults(const uint8_t* record, size_t size) {
 }
 
 Record GetRecord() {
-    std::lock_guard<std::mutex> lock(s_mutex);
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
     LoadLocked();
     Record r;
     r.totals = s_totals;
@@ -996,7 +996,7 @@ Record GetRecord() {
 }
 
 std::vector<Challenge> Challenges() {
-    std::lock_guard<std::mutex> lock(s_mutex);
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
     LoadLocked();
     std::vector<Challenge> out;
     for (const ActiveChallenge& c : ActiveChallenges()) {
@@ -1043,7 +1043,7 @@ std::string ChallengeResetText() {
 }
 
 std::vector<Commendation> Commendations() {
-    std::lock_guard<std::mutex> lock(s_mutex);
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
     LoadLocked();
     std::vector<Commendation> out;
     for (size_t i = 0; i < std::size(kCommendations); ++i) {
@@ -1089,7 +1089,7 @@ const char* CommendationTierName(int tier) {
 }
 
 Award LastAward() {
-    std::lock_guard<std::mutex> lock(s_mutex);
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
     return s_lastAward;
 }
 
@@ -1189,26 +1189,26 @@ bool LoadPeerStats(const std::string& identifier, PeerStats& outStats) {
 }
 
 Totals Get() {
-    std::lock_guard<std::mutex> lock(s_mutex);
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
     LoadLocked();
     return s_totals;
 }
 
 int64_t Balance() {
-    std::lock_guard<std::mutex> lock(s_mutex);
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
     LoadLocked();
     return std::max<int64_t>(0, s_totals.credits - s_totals.creditsSpent + s_totals.bonusCredits);
 }
 
 bool OwnsArmoryItem(const std::string& key) {
-    std::lock_guard<std::mutex> lock(s_mutex);
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
     LoadLocked();
     if (s_totals.armoryUnlockAll) return true;
     return std::find(s_totals.armoryOwned.begin(), s_totals.armoryOwned.end(), key) != s_totals.armoryOwned.end();
 }
 
 bool BuyArmoryItem(const std::string& key, int64_t price) {
-    std::lock_guard<std::mutex> lock(s_mutex);
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
     LoadLocked();
     if (std::find(s_totals.armoryOwned.begin(), s_totals.armoryOwned.end(), key) != s_totals.armoryOwned.end()) return false;
     price = std::max<int64_t>(0, price);
@@ -1225,13 +1225,13 @@ bool BuyArmoryItem(const std::string& key, int64_t price) {
 }
 
 bool ArmoryUnlockAll() {
-    std::lock_guard<std::mutex> lock(s_mutex);
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
     LoadLocked();
     return s_totals.armoryUnlockAll;
 }
 
 void DevSetArmoryUnlockAll(bool on) {
-    std::lock_guard<std::mutex> lock(s_mutex);
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
     LoadLocked();
     s_totals.armoryUnlockAll = on;
     if (on) {
@@ -1247,7 +1247,7 @@ void DevSetArmoryUnlockAll(bool on) {
 }
 
 void DevGrantMaxCredits() {
-    std::lock_guard<std::mutex> lock(s_mutex);
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
     LoadLocked();
     constexpr int64_t kMaxBalance = 999999999;
     s_totals.credits = std::max<int64_t>(s_totals.credits, s_totals.creditsSpent + kMaxBalance);
@@ -1257,7 +1257,7 @@ void DevGrantMaxCredits() {
 }
 
 void DevSetMaxRank() {
-    std::lock_guard<std::mutex> lock(s_mutex);
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
     LoadLocked();
     const int64_t top = Ranks().back().credits;
     s_totals.credits = std::max<int64_t>(s_totals.credits, top);
@@ -1266,7 +1266,7 @@ void DevSetMaxRank() {
 }
 
 void DevResetProgress() {
-    std::lock_guard<std::mutex> lock(s_mutex);
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
     LoadLocked();
     s_totals.credits = 0;
     s_totals.creditsSpent = 0;
@@ -1276,12 +1276,12 @@ void DevResetProgress() {
     NOBLE_INFO("Career [DEV]: progress reset to Recruit");
 }
 void RegisterPlayerName(uint64_t playerId, const std::string& name, const std::string& tag) {
-    std::lock_guard<std::mutex> lock(s_mutex);
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
     s_playerNames[playerId] = { name, tag };
 }
 
 void RegisterPlayerSlot(int slotIndex, const std::string& name, const std::string& tag) {
-    std::lock_guard<std::mutex> lock(s_mutex);
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
     s_playerSlots[slotIndex] = { name, tag };
 }
 } // namespace Career

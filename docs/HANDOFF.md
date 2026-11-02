@@ -9,7 +9,37 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
 MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.16.16 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
 
-## 0. Pick up here (2026-11-01, 20:55 ET) - Live Career Stats Display, Armory Tracking & Stable Device ID Persistence (0.9.16.16) (@O7OF)
+## 0. Pick up here (2026-11-01, 21:28 ET) - Embedded Audio, Realtime WASAPI Volume, Master Server Script Exclusion & Clean Release Packaging (0.9.16.17) (@O7OF)
+
+**Version:** 0.9.16.17. **Build:** noble-client, noble-dev, noble-dedicated (0 errors, 0 warnings on MSVC Release x64). Files: `CMakeLists.txt`, `build-package.ps1`, `src/audio/ProcessAudio.hpp`, `src/audio/ProcessAudio.cpp`, `src/audio/ReachAudio.cpp`, `src/career/Career.cpp`, `src/engine/ReachHost.hpp`, `src/engine/ReachHost.cpp`, `src/main.cpp`, `src/ui/MenuSoundData.inc`, `src/ui/MenuSounds.cpp`, `src/ui/FrontEndMenu.cpp`, `src/ui/SettingsPanel.cpp`, `src/common/Version.hpp`, `docs/HANDOFF.md`, `docs/AGENT-STATUS.md`.
+
+**What was actually found & fixed (Root Cause Analysis):**
+1. **Master Server Script (`master_server.js`) & Local Server Exclusion from Release Build:**
+   - The user runs two production Render server instances (East and West US) with peer registry federation configured to point to each other.
+   - `master_server.js` and `test_master_server.js` were previously located under `tools/master-server` in the build output and were mistakenly copied into the packaging target directory `Documents/Noble Launcher`.
+   - Updated `build-package.ps1` to explicitly purge any `tools/master-server` folder, remove any `*master*server*.js` scripts, and ensure that only `tools/vgmstream` is copied. Verified `Documents/Noble Launcher` contains zero master server files.
+
+2. **Clean Release Package Generation & Duplicate Folder Elimination:**
+   - Previous packaging passes accumulated nested duplicate folders (e.g., `data/data`, `mods/mods/mods`, `maps/maps`, `data/userdata`, `autosave`) in `Documents/Noble Launcher`.
+   - `build-package.ps1` now completely wipes the packaging directory on every run prior to copying, rigorously validates that `noble-dev.exe`, `noble-dedicated.exe`, `data/userdata` (no developer/player ID leakage), and stale subdirectories are never packaged.
+   - Confirmed release package only contains `Noble.exe`, `play.bat`, `version.txt`, and clean `data`/`tools/vgmstream` directories.
+
+3. **Compiled In-Binary UI Sounds (.rdata) & Disk Steal Prevention:**
+   - Converted all 6 UI audio waveforms (`click`, `back`, `scroll`, `change`, `tab`, `error`) into embedded static byte arrays in `src/ui/MenuSoundData.inc` compiled into the executable's `.rdata`.
+   - Refactored `MenuSounds.cpp` to play directly from memory via `PlayEmbedded(..., SND_MEMORY)` with volume scaling and master mute gating, eliminating loose WAV files from disk.
+   - Pre-seeded `ReachAudio`'s sound clips in memory with `LoadWavFromMemory` so no temporary audio files are extracted.
+
+4. **Realtime In-Game Audio Volume & Mute Control Mid-Match:**
+   - Previously, audio volume sliders in `SettingsPanel` only saved values to JSON without altering the process audio session, requiring a match exit/reload to take effect.
+   - Built `ProcessAudio` leveraging Windows Core Audio WASAPI (`ISimpleAudioVolume`) to scale master process volume and mute state instantly on the fly mid-game.
+   - Added `ReachHost::SetRuntimeVolumes` writing directly to profile offsets `+0xA5C`, `+0xA60`, `+0xA64` on settings save.
+   - Fixed mute buttons (master mute & menu music mute) in `FrontEndMenu.cpp` and `SettingsPanel.cpp` to immediately command XAudio2 and WASAPI sessions.
+
+5. **Career Persistence Deadlock & Tracking Fix:**
+   - In `Career.cpp`: `s_mutex` was a non-recursive `std::mutex`. When `BuyArmoryItem` or `LoadLocked` acquired `s_mutex` and invoked `SaveLocked()`, `SaveLocked()` in turn called `Challenges()` and `Commendations()`, which attempted to re-acquire `s_mutex` on the same thread, causing a recursive deadlock or crash.
+   - Converted `s_mutex` to `std::recursive_mutex` with `std::lock_guard<std::recursive_mutex>`, allowing safe nested re-entrance and reliable career/armory stat persistence to `career.dat`.
+
+## 1. Previous Work: Live Career Stats Display, Armory Tracking & Stable Device ID Persistence (0.9.16.16) (@O7OF)
 
 **Version:** 0.9.16.16. **Build:** noble-client, noble-dev, noble-dedicated (0 errors, 0 warnings on MSVC Release x64). Files: `src/career/Career.hpp`, `src/career/Career.cpp`, `src/ui/FrontEndMenu.cpp`, `src/network/MasterServerClient.cpp`, `src/common/Version.hpp`, `docs/HANDOFF.md`, `docs/AGENT-STATUS.md`.
 

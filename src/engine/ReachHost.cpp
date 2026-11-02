@@ -692,6 +692,8 @@ static int WheelPulseSign(bool upNotch) {
 
 // Audio volumes are profile settings too (RR live::audio::set_volume): f32 at +0xA5C (game/master),
 // +0xA60 (music) and +0xA64 (the third volume). A blank profile leaves them at 0.0, i.e. silence.
+static uint8_t s_hostProfileBuffer[0x10000] = { 0 };
+
 static constexpr size_t kVolumeGameOffset = 0xA5C;
 static constexpr size_t kVolumeMusicOffset = 0xA60;
 static constexpr size_t kVolumeOtherOffset = 0xA64;
@@ -701,6 +703,15 @@ static void WriteDefaultVolumes(uint8_t* profile) {
     memcpy(profile + kVolumeGameOffset, &settings.volumeGame, sizeof(float));
     memcpy(profile + kVolumeMusicOffset, &settings.volumeMusic, sizeof(float));
     memcpy(profile + kVolumeOtherOffset, &settings.volumeOther, sizeof(float));
+}
+
+void ReachHost::SetRuntimeVolumes(float game, float music, float other) {
+    const float g = std::clamp(game, 0.0f, 1.0f);
+    const float m = std::clamp(music, 0.0f, 1.0f);
+    const float o = std::clamp(other, 0.0f, 1.0f);
+    memcpy(s_hostProfileBuffer + kVolumeGameOffset, &g, sizeof(float));
+    memcpy(s_hostProfileBuffer + kVolumeMusicOffset, &m, sizeof(float));
+    memcpy(s_hostProfileBuffer + kVolumeOtherOffset, &o, sizeof(float));
 }
 
 // Look / controller settings block (+0x1B4..+0x1DF). Without it zoomed look sensitivity is 0 and
@@ -763,7 +774,6 @@ static std::filesystem::path ProfileCaptureDirArgPath() {
     return captureDir;
 }
 
-static uint8_t s_hostProfileBuffer[0x10000] = { 0 };
 static bool s_hostProfileInitialized = false;
 static bool s_profileBuiltIn = false;   // false when -profile supplied the profile
 static std::vector<std::pair<uint32_t, uint8_t>> s_profilePatches;   // -profile-set test option
@@ -1178,6 +1188,7 @@ static uint64_t __fastcall HostSlot34_ProfileSettings(void* thisPtr, uint64_t a1
             s_lastBindings = now;
             WriteDefaultKeyBindings(s_hostProfileBuffer);
             WritePadLookSettings(s_hostProfileBuffer);
+            WriteDefaultVolumes(s_hostProfileBuffer);
         }
     }
     RefreshArmoryAppearance(s_hostProfileBuffer);

@@ -37,6 +37,7 @@
 #include "ui/PauseMenu.hpp"
 #include "ui/UiArt.hpp"
 #include "audio/ReachAudio.hpp"
+#include "audio/ProcessAudio.hpp"
 #include "audio/VoiceChat.hpp"
 #include "ui/SocialOverlay.hpp"
 #include "hooks/LobbyPatches.hpp"
@@ -317,6 +318,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         // Reach's menu sounds and menu music, decoded from MCC's sound bank into data\userdata\cache\audio.
         noble::ReachAudio::Init(reachInstall->reachDirectory,
                                 std::filesystem::path(exePath).parent_path() / "data" / "userdata" / "cache" / "audio");
+        {
+            const auto& s = noble::Settings::Get().Snapshot();
+            noble::ProcessAudio::ApplyAll(s.volumeGame, s.volumeMusic, s.volumeOther, s.masterMute);
+        }
     }
 
     window->Show(nCmdShow);

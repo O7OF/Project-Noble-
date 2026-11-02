@@ -19,6 +19,7 @@
 #include "MenuSounds.hpp"
 #include "InputPrompts.hpp"
 #include "audio/ReachAudio.hpp"
+#include "audio/ProcessAudio.hpp"
 #include "UiArt.hpp"
 #include "ServerBrowser.hpp"
 #include "ArmorCustomizer.hpp"
@@ -116,6 +117,7 @@ const MenuMap kMissions[] = {
 };
 const char* const kDifficulties[] = { "EASY", "NORMAL", "HEROIC", "LEGENDARY" };
 const float kDifficultyMultiplier[] = { 0.75f, 1.0f, 1.25f, 1.5f };
+static bool s_menuMusicMuted = false;
 
 // Firefight maps (launch index 210-219, as BlamEngine::ResolveMapId maps them).
 const MenuMap kFirefightMaps[] = {
@@ -4279,7 +4281,6 @@ void DrawMusicPlayer(const Ui& ui) {
     static const std::vector<ReachAudio::TrackInfo> tracks = ReachAudio::MusicTracks();
     if (tracks.empty()) return;
 
-    static bool s_muted = false;
     const std::string id = sd.menuMusicTrack;
     int index = -1;
     for (size_t i = 0; i < tracks.size(); ++i) {
@@ -4328,7 +4329,7 @@ void DrawMusicPlayer(const Ui& ui) {
 
     const char* glyphs[5] = { "|<<", "||>", ">>|", "VOL", "SHF" };   // prev, play/pause, next, mute, shuffle
     if (ReachAudio::IsMusicPaused()) glyphs[1] = ">  ";
-    if (s_muted) glyphs[3] = "MUT";
+    if (s_menuMusicMuted) glyphs[3] = "MUT";
     float bx = textRight + 6.0f * ui.s;
     const float bw = 34.0f * ui.s;
     for (int i = 0; i < 5; ++i) {
@@ -4339,7 +4340,7 @@ void DrawMusicPlayer(const Ui& ui) {
         const bool pressed = ImGui::InvisibleButton("##music", ImVec2(bw, h - 8.0f * ui.s));
         const bool hovered = ImGui::IsItemHovered();
         ImGui::PopID();
-        const bool active = (i == 1 && ReachAudio::IsMusicPaused()) || (i == 3 && s_muted) || (i == 4 && id == "all");
+        const bool active = (i == 1 && ReachAudio::IsMusicPaused()) || (i == 3 && s_menuMusicMuted) || (i == 4 && id == "all");
         ui.dl->AddRectFilled(a, b, active ? IM_COL32(52, 112, 156, 230)
                                           : (hovered ? IM_COL32(40, 56, 72, 230) : IM_COL32(18, 24, 32, 220)));
         ui.dl->AddRect(a, b, hovered ? IM_COL32(170, 220, 255, 180) : IM_COL32(80, 110, 140, 90), 0.0f, 0, 1.0f);
@@ -4355,8 +4356,8 @@ void DrawMusicPlayer(const Ui& ui) {
             break;
         case 2: step(1); break;
         case 3:
-            s_muted = !s_muted;
-            ReachAudio::SetMusicVolume(s_muted ? 0.0f : Settings::Get().Snapshot().volumeMusic);
+            s_menuMusicMuted = !s_menuMusicMuted;
+            ReachAudio::SetMuted(s_menuMusicMuted);
             break;
         case 4: saveTrack(id == "all" ? (index >= 0 ? tracks[index].id : "reach:menu") : "all"); break;
         default: break;
@@ -6127,16 +6128,19 @@ void FrontEndMenu::RenderOverlayImpl(IDXGISwapChain* swapChain, bool clear) {
         if (muteNow >= s_nextMuteCheck) {
             s_nextMuteCheck = muteNow + 500;
             const SettingsData audio = Settings::Get().Snapshot();
-            bool muted = audio.masterMute;
+            bool muted = audio.masterMute || s_menuMusicMuted;
+            bool bgMuted = false;
             if (!muted && audio.muteInBackground) {
                 // "Active" means the foreground window belongs to this process: that covers the menu window and
                 // the engine's, without having to know which one is up.
                 const HWND foreground = GetForegroundWindow();
                 DWORD ownerPid = 0;
                 if (foreground) GetWindowThreadProcessId(foreground, &ownerPid);
-                muted = foreground != nullptr && ownerPid != GetCurrentProcessId();
+                bgMuted = foreground != nullptr && ownerPid != GetCurrentProcessId();
+                if (bgMuted) muted = true;
             }
             ReachAudio::SetMuted(muted);
+            ProcessAudio::ApplyVolume(audio.volumeGame, muted);
         }
     }
 

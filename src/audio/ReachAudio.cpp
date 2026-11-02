@@ -1,5 +1,6 @@
 #include "ReachAudio.hpp"
 #include "common/Logger.hpp"
+#include "ui/MenuSoundData.inc"
 #include "common/Settings.hpp"
 
 #include <windows.h>
@@ -558,30 +559,34 @@ std::string StreamName(const fs::path& wav) {
     return {};
 }
 
-std::shared_ptr<Clip> LoadWav(const fs::path& path) {
-    std::ifstream in(path, std::ios::binary);
-    if (!in) return nullptr;
-    std::vector<uint8_t> d((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-    if (d.size() < 12 || memcmp(d.data(), "RIFF", 4) != 0 || memcmp(d.data() + 8, "WAVE", 4) != 0) return nullptr;
+std::shared_ptr<Clip> LoadWavFromMemory(const uint8_t* data, size_t len) {
+    if (!data || len < 12 || memcmp(data, "RIFF", 4) != 0 || memcmp(data + 8, "WAVE", 4) != 0) return nullptr;
     auto clip = std::make_shared<Clip>();
     bool haveFmt = false;
     size_t pos = 12;
-    while (pos + 8 <= d.size()) {
+    while (pos + 8 <= len) {
         uint32_t size = 0;
-        memcpy(&size, d.data() + pos + 4, 4);
-        const uint8_t* body = d.data() + pos + 8;
-        if (pos + 8 + size > d.size()) size = static_cast<uint32_t>(d.size() - pos - 8);
-        if (memcmp(d.data() + pos, "fmt ", 4) == 0 && size >= 16) {
+        memcpy(&size, data + pos + 4, 4);
+        const uint8_t* body = data + pos + 8;
+        if (pos + 8 + size > len) size = static_cast<uint32_t>(len - pos - 8);
+        if (memcmp(data + pos, "fmt ", 4) == 0 && size >= 16) {
             memcpy(&clip->format, body, 16);
             clip->format.cbSize = 0;
             haveFmt = true;
-        } else if (memcmp(d.data() + pos, "data", 4) == 0) {
+        } else if (memcmp(data + pos, "data", 4) == 0) {
             clip->data.assign(body, body + size);
         }
         pos += 8 + size + (size & 1);
     }
     if (!haveFmt || clip->data.empty() || clip->format.wFormatTag != WAVE_FORMAT_PCM) return nullptr;
     return clip;
+}
+
+std::shared_ptr<Clip> LoadWav(const fs::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return nullptr;
+    std::vector<uint8_t> d((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    return LoadWavFromMemory(d.data(), d.size());
 }
 
 // Decodes one sound into the cache (once) and, for UI sounds, keeps it in memory. Worker thread.
@@ -983,6 +988,22 @@ void Init(const fs::path& reachDir, const fs::path& cacheDir) {
         }
         if (s_sfx[i].Valid()) s_sfxKeys.insert(s_sfx[i].Key());
     }
+    // Seed UI sound clips directly from embedded binary data (zero disk I/O, no loose WAV files)
+    if (s_sfx[static_cast<size_t>(Sfx::Accept)].Valid())
+        s_clips[s_sfx[static_cast<size_t>(Sfx::Accept)].Key()] = LoadWavFromMemory(kSoundClick, kSoundClickSize);
+    if (s_sfx[static_cast<size_t>(Sfx::Back)].Valid())
+        s_clips[s_sfx[static_cast<size_t>(Sfx::Back)].Key()] = LoadWavFromMemory(kSoundBack, kSoundBackSize);
+    if (s_sfx[static_cast<size_t>(Sfx::CursorVertical)].Valid())
+        s_clips[s_sfx[static_cast<size_t>(Sfx::CursorVertical)].Key()] = LoadWavFromMemory(kSoundScroll, kSoundScrollSize);
+    if (s_sfx[static_cast<size_t>(Sfx::CursorHorizontal)].Valid())
+        s_clips[s_sfx[static_cast<size_t>(Sfx::CursorHorizontal)].Key()] = LoadWavFromMemory(kSoundChange, kSoundChangeSize);
+    if (s_sfx[static_cast<size_t>(Sfx::BumperLeft)].Valid())
+        s_clips[s_sfx[static_cast<size_t>(Sfx::BumperLeft)].Key()] = LoadWavFromMemory(kSoundTab, kSoundTabSize);
+    if (s_sfx[static_cast<size_t>(Sfx::BumperRight)].Valid())
+        s_clips[s_sfx[static_cast<size_t>(Sfx::BumperRight)].Key()] = LoadWavFromMemory(kSoundTab, kSoundTabSize);
+    if (s_sfx[static_cast<size_t>(Sfx::Error)].Valid())
+        s_clips[s_sfx[static_cast<size_t>(Sfx::Error)].Key()] = LoadWavFromMemory(kSoundError, kSoundErrorSize);
+
     s_worker = std::thread(Worker);
     for (const Piece& p : s_sfx) Queue(p);
     if (const Track* menu = FindTrack("reach:menu")) {   // default menu music, ready before the menu opens
@@ -1053,9 +1074,19 @@ void StopMusic() {
     s_musicTrack.clear();
 }
 
-void SetMusicVolume(float volume) { s_musicVolume = std::clamp(volume, 0.0f, 1.0f); }
+void SetMusicVolume(float volume) {
+    s_musicVolume = std::clamp(volume, 0.0f, 1.0f);
+    if (IXAudio2SourceVoice* v = s_musicVoice.load()) {
+        v->SetVolume(s_muted.load() ? 0.0f : s_musicVolume.load());
+    }
+}
 
-void SetMuted(bool muted) { s_muted.store(muted); }
+void SetMuted(bool muted) {
+    s_muted.store(muted);
+    if (IXAudio2SourceVoice* v = s_musicVoice.load()) {
+        v->SetVolume(muted ? 0.0f : s_musicVolume.load());
+    }
+}
 bool IsMuted() { return s_muted.load(); }
 
 bool PauseMusic() {
