@@ -2,7 +2,7 @@
 
 **Halo: Reach Community Edition** — a standalone Halo: Reach client for *Halo: The Master Chief Collection* on Steam. It loads MCC's own `haloreach.dll`, renders the game, and replaces the front-end with Noble's own menus and customization.
 
-This repository is the **release channel**: every download, changelog and auto-update asset lives here. The source code lives at [O7OF/test-build-01](https://github.com/O7OF/test-build-01).
+This repository is the **release channel**: every download, changelog and auto-update asset lives here.
 
 ![Main menu](docs/screenshots/main-menu.png)
 
