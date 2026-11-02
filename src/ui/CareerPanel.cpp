@@ -17,17 +17,21 @@ namespace noble {
 
 namespace {
 
+// Pixel sizes below were laid out for the fonts at 1x. Text now scales with the display (io.FontGlobalScale,
+// set by FrontEndMenu), so widths, gaps and icons scale with it or the text overflows them at 1440p/4K.
+float U(float px) { return px * ImGui::GetIO().FontGlobalScale; }
+
 const ImVec4 kLabel = ImVec4(0.42f, 0.74f, 0.93f, 1.0f);
 const ImVec4 kSection = ImVec4(0.80f, 0.86f, 0.90f, 1.0f);
 const ImVec4 kDone = ImVec4(0.55f, 0.85f, 0.55f, 1.0f);
 
 void Section(const char* text) {
-    ImGui::Dummy(ImVec2(0, 6));
+    ImGui::Dummy(ImVec2(0, U(6)));
     ImGui::TextColored(kSection, "%s", text);
     const ImVec2 p = ImGui::GetCursorScreenPos();
-    ImGui::GetWindowDrawList()->AddLine(p, ImVec2(p.x + std::min(760.0f, ImGui::GetContentRegionAvail().x), p.y),
+    ImGui::GetWindowDrawList()->AddLine(p, ImVec2(p.x + std::min(U(760.0f), ImGui::GetContentRegionAvail().x), p.y),
                                         IM_COL32(255, 255, 255, 50));
-    ImGui::Dummy(ImVec2(0, 4));
+    ImGui::Dummy(ImVec2(0, U(4)));
 }
 
 // 1234567 -> "1,234,567"
@@ -50,7 +54,7 @@ std::string HoursMinutes(double minutes) {
 
 void Stat(const char* label, const std::string& value) {
     ImGui::TextColored(kLabel, "%s", label);
-    ImGui::SameLine(260.0f);
+    ImGui::SameLine(U(260.0f));
     ImGui::TextUnformatted(value.c_str());
 }
 
@@ -65,7 +69,7 @@ void CareerPanel::Render() {
     static const char* const kTabs[] = { "SERVICE RECORD", "CHALLENGES", "COMMENDATIONS", "RANKS" };
     ImGui::Dummy(ImVec2(0, 2));
     for (int i = 0; i < 4; ++i) {
-        if (i) ImGui::SameLine(0, 26.0f);
+        if (i) ImGui::SameLine(0, U(26.0f));
         const bool sel = m_tab == i;
         ImGui::PushStyleColor(ImGuiCol_Text, sel ? ImVec4(1, 1, 1, 1) : kLabel);
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
@@ -79,7 +83,7 @@ void CareerPanel::Render() {
         ImGui::PopStyleColor(5);
         if (sel) {
             const ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
-            ImGui::GetWindowDrawList()->AddLine(ImVec2(a.x + 6, b.y), ImVec2(b.x - 6, b.y), IM_COL32(143, 216, 255, 255), 2.0f);
+            ImGui::GetWindowDrawList()->AddLine(ImVec2(a.x + U(6), b.y), ImVec2(b.x - U(6), b.y), IM_COL32(143, 216, 255, 255), U(2.0f));
         }
     }
     if (!ImGui::GetIO().WantTextInput) {
@@ -104,9 +108,9 @@ void CareerPanel::RenderRanks() {
     const Career::Totals t = Career::Get();
     const auto& ranks = Career::Ranks();
     const int rank = Career::RankIndex(t.credits);
-    ImGui::Dummy(ImVec2(0, 4));
+    ImGui::Dummy(ImVec2(0, U(4)));
     ImGui::TextDisabled("Earned ranks are bright, the next one is framed. cR needed under each rank.");
-    ImGui::Dummy(ImVec2(0, 6));
+    ImGui::Dummy(ImVec2(0, U(6)));
     // Cell width from the widest name / cR line so neighbours never overlap.
     float widest = 0.0f;
     for (const auto& r : ranks) {
@@ -116,13 +120,13 @@ void CareerPanel::RenderRanks() {
         widest = std::max(widest, ImGui::CalcTextSize(n.c_str()).x);
         widest = std::max(widest, ImGui::CalcTextSize((Grouped(r.credits) + " cR").c_str()).x);
     }
-    const float cell = std::max(118.0f, widest + 18.0f), iconSize = 64.0f;
+    const float cell = std::max(U(118.0f), widest + U(18.0f)), iconSize = U(64.0f);
     const int perRow = std::max(1, static_cast<int>(ImGui::GetContentRegionAvail().x / cell));
     ImDrawList* dl = ImGui::GetWindowDrawList();
     for (int i = 0; i < static_cast<int>(ranks.size()); ++i) {
         if (i % perRow) ImGui::SameLine(0, 0);
         const ImVec2 p = ImGui::GetCursorScreenPos();
-        ImGui::Dummy(ImVec2(cell, cell + 10.0f));
+        ImGui::Dummy(ImVec2(cell, cell + U(10.0f)));
         const bool earned = i <= rank, next = i == rank + 1, current = i == rank;
         const ImU32 tint = earned ? IM_COL32_WHITE : (next ? IM_COL32(255, 255, 255, 200) : IM_COL32(255, 255, 255, 70));
         if (current || next) {
@@ -131,7 +135,7 @@ void CareerPanel::RenderRanks() {
             dl->AddRect(ImVec2(p.x + 4, p.y + 2), ImVec2(p.x + cell - 4, p.y + cell + 6),
                         current ? IM_COL32(143, 216, 255, 220) : IM_COL32(255, 255, 255, 90), 3.0f, 0, 1.2f);
         }
-        const ImVec2 i0(p.x + (cell - iconSize) * 0.5f, p.y + 8.0f);
+        const ImVec2 i0(p.x + (cell - iconSize) * 0.5f, p.y + U(8.0f));
         const UiTexture icon = UiArt::RankIcon(i);
         if (icon) UiArt::DrawContain(dl, icon, i0, ImVec2(i0.x + iconSize, i0.y + iconSize), tint);
         else dl->AddRect(i0, ImVec2(i0.x + iconSize, i0.y + iconSize), IM_COL32(255, 255, 255, earned ? 120 : 40));
@@ -142,9 +146,9 @@ void CareerPanel::RenderRanks() {
         const std::string cr = Grouped(ranks[i].credits) + " cR";
         const ImU32 textCol = earned ? IM_COL32(236, 240, 244, 255) : IM_COL32(150, 160, 170, next ? 230 : 150);
         const ImVec2 nw = ImGui::CalcTextSize(name.c_str());
-        dl->AddText(ImVec2(p.x + (cell - nw.x) * 0.5f, p.y + 8.0f + iconSize + 4.0f), textCol, name.c_str());
+        dl->AddText(ImVec2(p.x + (cell - nw.x) * 0.5f, p.y + U(12.0f) + iconSize), textCol, name.c_str());
         const ImVec2 cw = ImGui::CalcTextSize(cr.c_str());
-        dl->AddText(ImVec2(p.x + (cell - cw.x) * 0.5f, p.y + 8.0f + iconSize + 4.0f + nw.y), IM_COL32(150, 170, 190, earned ? 220 : 120), cr.c_str());
+        dl->AddText(ImVec2(p.x + (cell - cw.x) * 0.5f, p.y + U(12.0f) + iconSize + nw.y), IM_COL32(150, 170, 190, earned ? 220 : 120), cr.c_str());
     }
 }
 
@@ -153,14 +157,14 @@ void CareerPanel::RenderRecord() {
     const auto& ranks = Career::Ranks();
     const int rank = Career::RankIndex(r.totals.credits);
 
-    ImGui::Dummy(ImVec2(0, 4));
+    ImGui::Dummy(ImVec2(0, U(4)));
     // Header: big rank icon (when the player has the rank pictures), rank, cR and progress.
     const UiTexture icon = UiArt::RankIcon(rank);
     if (icon) {
         const ImVec2 p = ImGui::GetCursorScreenPos();
-        UiArt::DrawContain(ImGui::GetWindowDrawList(), icon, p, ImVec2(p.x + 96.0f, p.y + 96.0f));
-        ImGui::Dummy(ImVec2(96.0f, 96.0f));
-        ImGui::SameLine(0, 18.0f);
+        UiArt::DrawContain(ImGui::GetWindowDrawList(), icon, p, ImVec2(p.x + U(96.0f), p.y + U(96.0f)));
+        ImGui::Dummy(ImVec2(U(96.0f), U(96.0f)));
+        ImGui::SameLine(0, U(18.0f));
     }
     ImGui::BeginGroup();
     if (ImFont* f = NobleStyle::TitleFont()) ImGui::PushFont(f);
@@ -172,7 +176,7 @@ void CareerPanel::RenderRecord() {
         const float f = static_cast<float>(r.totals.credits - lo) / static_cast<float>(hi - lo);
         char label[96];
         std::snprintf(label, sizeof(label), "%s / %s cR", Grouped(r.totals.credits).c_str(), Grouped(hi).c_str());
-        ImGui::ProgressBar(f, ImVec2(520, 0), label);
+        ImGui::ProgressBar(f, ImVec2(U(520), 0), label);
         const UiTexture next = UiArt::RankIcon(rank + 1);
         if (next) {
             ImGui::TextDisabled("Next:");
@@ -219,7 +223,7 @@ void CareerPanel::RenderRecord() {
                 // Keep the scenario id available without cluttering the row.
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", map.c_str());
             }
-            ImGui::SameLine(260.0f);
+            ImGui::SameLine(U(260.0f));
             ImGui::Text("Completed on %s", DifficultyName(difficulty));
         }
     }
@@ -231,13 +235,13 @@ void CareerPanel::RenderRecord() {
     }
     const ImGuiTableFlags flags = ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingFixedFit;
     if (ImGui::BeginTable("##history", 7, flags)) {
-        ImGui::TableSetupColumn("DATE", ImGuiTableColumnFlags_WidthFixed, 170);
-        ImGui::TableSetupColumn("MODE", ImGuiTableColumnFlags_WidthFixed, 170);
-        ImGui::TableSetupColumn("MAP", ImGuiTableColumnFlags_WidthFixed, 200);
-        ImGui::TableSetupColumn("TIME", ImGuiTableColumnFlags_WidthFixed, 80);
-        ImGui::TableSetupColumn("K / D / A", ImGuiTableColumnFlags_WidthFixed, 110);
-        ImGui::TableSetupColumn("SCORE", ImGuiTableColumnFlags_WidthFixed, 80);
-        ImGui::TableSetupColumn("CREDITS", ImGuiTableColumnFlags_WidthFixed, 110);
+        ImGui::TableSetupColumn("DATE", ImGuiTableColumnFlags_WidthFixed, U(170));
+        ImGui::TableSetupColumn("MODE", ImGuiTableColumnFlags_WidthFixed, U(170));
+        ImGui::TableSetupColumn("MAP", ImGuiTableColumnFlags_WidthFixed, U(200));
+        ImGui::TableSetupColumn("TIME", ImGuiTableColumnFlags_WidthFixed, U(80));
+        ImGui::TableSetupColumn("K / D / A", ImGuiTableColumnFlags_WidthFixed, U(110));
+        ImGui::TableSetupColumn("SCORE", ImGuiTableColumnFlags_WidthFixed, U(80));
+        ImGui::TableSetupColumn("CREDITS", ImGuiTableColumnFlags_WidthFixed, U(110));
         ImGui::TableHeadersRow();
         for (const Career::MatchSummary& m : r.history) {
             ImGui::TableNextRow();
@@ -352,7 +356,7 @@ void CareerPanel::RenderChallenges() {
     const int columns = avail >= 820.0f * s ? 2 : 1;
     const float gap = 12.0f * s;
     const float cardW = (avail - gap * (columns - 1)) / columns - 1.0f;
-    ImGui::Dummy(ImVec2(0, 4));
+    ImGui::Dummy(ImVec2(0, U(4)));
     ImGui::TextDisabled("Halo: Reach's own challenges. Progress counts from finished games; rewards are paid on the post-game screen.");
     for (int weekly = 0; weekly < 2; ++weekly) {
         int done = 0, count = 0;
@@ -483,7 +487,7 @@ void CareerPanel::RenderCommendations() {
     static const ImU32 kTabModeColour[3] = { IM_COL32(150, 170, 90, 255), IM_COL32(200, 80, 60, 255), IM_COL32(80, 140, 200, 255) };
 
     // Mode tabs (click, or LT / RT on a controller).
-    ImGui::Dummy(ImVec2(0, 4));
+    ImGui::Dummy(ImVec2(0, U(4)));
     if (!ImGui::GetIO().WantTextInput) {
         if (ImGui::IsKeyPressed(ImGuiKey_GamepadL2, false)) { m_commendTab = (m_commendTab + 2) % 3; MenuSounds::Tab(-1); }
         if (ImGui::IsKeyPressed(ImGuiKey_GamepadR2, false)) { m_commendTab = (m_commendTab + 1) % 3; MenuSounds::Tab(1); }
@@ -510,9 +514,9 @@ void CareerPanel::RenderCommendations() {
         if (sel) dl->AddRect(p0, p1, IM_COL32(143, 216, 255, 200), 3.0f * s, 0, 1.0f);
         Text(dl, nullptr, 17.0f * s, ImVec2(p0.x + 18.0f * s, p0.y + h * 0.5f - 9.0f * s), sel ? kText : kTextDim, label);
     }
-    ImGui::Dummy(ImVec2(0, 4));
+    ImGui::Dummy(ImVec2(0, U(4)));
     ImGui::TextDisabled("Each tier (Steel, Bronze, Silver, Gold, Onyx, Max) pays credits once, on the post-game screen. Dimmed ones can't be counted yet.");
-    ImGui::Dummy(ImVec2(0, 4));
+    ImGui::Dummy(ImVec2(0, U(4)));
 
     const float avail = ImGui::GetContentRegionAvail().x;
     const int columns = avail >= 1000.0f * s ? 2 : 1;

@@ -8269,3 +8269,22 @@ session registry, matchmaker (8 playlists). DB goes to `server/data/` (git-ignor
   in the menu (same code path as Alt-Tab plus the geometry refresh).
 - **Build note:** `src/res/blocks.rc` needs the git-ignored `data/profile_1.bin` and `data/menumaps/*`. If the resource step
   fails with RC2135, copy them from `build/bin/Release/data/`.
+
+### 2026-11-02 — Menu UI scales at native 4K (0.9.16.32, @claude)
+- **Cause:** at native 4K the menu back buffer is 3840x2160, so the UI scale (height / 900) should be 2.4. Two problems
+  stopped that. First, the scale was capped at 2.0 (`FrontEndMenu` `ui.s`) and 2.2 (`NobleUi::Scale`), so the menu came out
+  small and did not reach the screen edges. Second, text drawn by plain ImGui widgets (search boxes, descriptions, help lines,
+  inputs, tables) never scaled: it stayed at the fonts' 15-18 px. Until 2026-11-02 Tyler's desktop ran at 1920x1080 (menu
+  buffer 2880x1620, scale 1.8, under both caps), which hid this. Once the display was back at its native 3840x2160, the
+  menu became tiny.
+- **Fix:** both caps raised to 4.0. `FrontEndMenu::RenderOverlay` sets `io.FontGlobalScale = NobleUi::Scale()` before
+  `ImGui::NewFrame()`, so widget text scales like the custom-drawn labels. The atlas is already rasterized at 2.5x density,
+  so the text stays crisp. Fixed pixel widths in `ServerBrowser.cpp` and `CareerPanel.cpp` (buttons, combo widths, table
+  columns, details panel, rank cells, icons) now go through `U(px) = px * io.FontGlobalScale`; without that, the larger text
+  was clipped ("REFF", "GAME DE"). The main-menu list moved from title+76 to title+96 units: it overlapped the "This party
+  is local to this PC." line at +66.
+- **Verified** with 4K captures (`-menu-screen <x> -menu-capture 240`) of main, settings, servers, career and mods; all
+  scale and fill the screen. Mods (`WorkshopManager`) already sized from the font.
+- **Not changed:** the in-match pause menu (`PauseMenu.cpp`, its own `NewFrame`); `FontGlobalScale` is not set there.
+  ImGui style paddings (`FramePadding`, `ItemSpacing`) are not scaled. Not tested at 1440p.
+- **Open:** any other ImGui-widget panel with literal pixel widths needs the same `U()` treatment if it shows clipping.

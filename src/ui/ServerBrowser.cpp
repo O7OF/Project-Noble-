@@ -31,6 +31,10 @@ namespace noble {
 
 namespace {
 
+// Pixel sizes in this file were laid out for the fonts at 1x. Text now scales with the display
+// (io.FontGlobalScale, set by FrontEndMenu), so buttons, columns and panels scale with it.
+float U(float px) { return px * ImGui::GetIO().FontGlobalScale; }
+
 struct MasterRegion {
     const char* label;
     const char* location;
@@ -383,8 +387,8 @@ void ServerBrowser::Render() {
     RenderFilterBar();
     NobleStyle::SectionGap();
 
-    const float detailsWidth = 300.0f;
-    ImGui::BeginChild("##serverlist", ImVec2(-detailsWidth - 12.0f, 0), ImGuiChildFlags_None);
+    const float detailsWidth = U(300.0f);
+    ImGui::BeginChild("##serverlist", ImVec2(-detailsWidth - U(12.0f), 0), ImGuiChildFlags_None);
     RenderServerList();
     ImGui::EndChild();
     ImGui::SameLine();
@@ -403,7 +407,7 @@ void ServerBrowser::RenderFilterBar() {
     const float filterRightX = filterStartPos.x + ImGui::GetContentRegionAvail().x;
 
     if (hosting) {
-        if (NobleStyle::DangerButton("STOP HOSTING", ImVec2(140, 0))) {
+        if (NobleStyle::DangerButton("STOP HOSTING", ImVec2(U(140), 0))) {
             sessions.StopHosting();
             MasterServerClient::Get().StopAdvertising();
             m_status = "Session closed. Stopped hosting.";
@@ -411,9 +415,9 @@ void ServerBrowser::RenderFilterBar() {
         }
     }
     if (hosting) ImGui::SameLine();
-    if (ImGui::Button("DIRECT CONNECT...", ImVec2(160, 0))) m_showDirectConnectModal = true;
+    if (ImGui::Button("DIRECT CONNECT...", ImVec2(U(160), 0))) m_showDirectConnectModal = true;
     ImGui::SameLine();
-    if (ImGui::Button("REFRESH", ImVec2(100, 0))) {
+    if (ImGui::Button("REFRESH", ImVec2(U(100), 0))) {
         m_lastMasterRequest = -100.0;
         m_lastRefresh = -100.0;
         sessions.TriggerDiscoveryScan();
@@ -435,7 +439,7 @@ void ServerBrowser::RenderFilterBar() {
         }
     }
 
-    ImGui::SetNextItemWidth(170);
+    ImGui::SetNextItemWidth(U(170));
     if (ImGui::Combo("##MasterRegionToolbar", &curRegion, regionNames, IM_ARRAYSIZE(regionNames))) {
         std::string chosenUrl = kMasterRegions[curRegion].url;
         SettingsData d = Settings::Get().Snapshot();
@@ -448,7 +452,7 @@ void ServerBrowser::RenderFilterBar() {
         RefreshServers();
     }
     ImGui::SameLine();
-    if (ImGui::Button("REGIONS...", ImVec2(100, 0))) {
+    if (ImGui::Button("REGIONS...", ImVec2(U(100), 0))) {
         m_selectedRegion = curRegion;
 
 
@@ -457,11 +461,11 @@ void ServerBrowser::RenderFilterBar() {
     }
 
     ImGui::Spacing();
-    ImGui::SetNextItemWidth(220);
+    ImGui::SetNextItemWidth(U(220));
     ImGui::InputTextWithHint("##Search", "Search by name or map", m_searchQuery, IM_ARRAYSIZE(m_searchQuery));
     ImGui::SameLine();
     const char* modeNames[] = { "All modes", "Multiplayer", "Campaign", "Firefight", "Forge" };
-    ImGui::SetNextItemWidth(140);
+    ImGui::SetNextItemWidth(U(140));
     ImGui::Combo("##ModeCombo", &m_modeFilter, modeNames, IM_ARRAYSIZE(modeNames));
     ImGui::SameLine();
     // Controller: left and right pick a filter, Back turns it on or off.
@@ -623,13 +627,13 @@ void ServerBrowser::RenderServerList() {
     if (!ImGui::BeginTable("ServerTable", 7, flags, ImVec2(0, 0))) return;
 
     // Widths include the cell padding and the sort arrow, so no header is elided ("Sour...", "Playe...").
-    ImGui::TableSetupColumn("Source",   ImGuiTableColumnFlags_WidthFixed, 86.0f);
-    ImGui::TableSetupColumn("Server",   ImGuiTableColumnFlags_WidthStretch | ImGuiTableColumnFlags_DefaultSort, 200.0f);
-    ImGui::TableSetupColumn("Mode",     ImGuiTableColumnFlags_WidthFixed, 112.0f);
-    ImGui::TableSetupColumn("Map",      ImGuiTableColumnFlags_WidthFixed, 240.0f); // longest stock name plus the MOD badge
-    ImGui::TableSetupColumn("Players",  ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_PreferSortDescending, 98.0f);
-    ImGui::TableSetupColumn("Ping",     ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_PreferSortDescending, 70.0f);
-    ImGui::TableSetupColumn("Address",  ImGuiTableColumnFlags_WidthFixed, 170.0f);
+    ImGui::TableSetupColumn("Source",   ImGuiTableColumnFlags_WidthFixed, U(86.0f));
+    ImGui::TableSetupColumn("Server",   ImGuiTableColumnFlags_WidthStretch | ImGuiTableColumnFlags_DefaultSort, U(200.0f));
+    ImGui::TableSetupColumn("Mode",     ImGuiTableColumnFlags_WidthFixed, U(112.0f));
+    ImGui::TableSetupColumn("Map",      ImGuiTableColumnFlags_WidthFixed, U(240.0f)); // longest stock name plus the MOD badge
+    ImGui::TableSetupColumn("Players",  ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_PreferSortDescending, U(98.0f));
+    ImGui::TableSetupColumn("Ping",     ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_PreferSortDescending, U(70.0f));
+    ImGui::TableSetupColumn("Address",  ImGuiTableColumnFlags_WidthFixed, U(170.0f));
     ImGui::TableSetupScrollFreeze(0, 1);
     ImGui::TableHeadersRow();
 
@@ -820,25 +824,25 @@ void ServerBrowser::RenderServerDetails() {
     ImGui::Spacing();
 
     ImGui::TextDisabled("Mode:");
-    ImGui::SameLine(100);
+    ImGui::SameLine(U(100));
     ImGui::TextUnformatted(s.gameMode.c_str());
 
     ImGui::TextDisabled("Map:");
-    ImGui::SameLine(100);
+    ImGui::SameLine(U(100));
     ImGui::TextWrapped("%s", MapNames::Display(s.mapName).c_str());
 
     if (!s.variantName.empty()) {
         ImGui::TextDisabled("Game type:");
-        ImGui::SameLine(100);
+        ImGui::SameLine(U(100));
         ImGui::TextUnformatted(s.variantName.c_str());
     }
 
     ImGui::TextDisabled("Players:");
-    ImGui::SameLine(100);
+    ImGui::SameLine(U(100));
     ImGui::Text("%d / %d", s.playerCount, s.maxPlayers);
 
     ImGui::TextDisabled("Ping:");
-    ImGui::SameLine(100);
+    ImGui::SameLine(U(100));
     if (s.ping >= 0) {
         const ImVec4 color = s.ping < 60 ? ImVec4(0.35f, 0.85f, 0.45f, 1.0f)
                            : s.ping < 120 ? ImVec4(0.95f, 0.85f, 0.35f, 1.0f)
@@ -858,7 +862,7 @@ void ServerBrowser::RenderServerDetails() {
     if (s.isMod) ImGui::TextColored(ImVec4(0.35f, 0.85f, 0.95f, 1.0f), "Custom map / modded content");
     if (!s.modId.empty()) {
         ImGui::TextDisabled("Required Workshop mod:");
-        ImGui::SameLine(100);
+        ImGui::SameLine(U(100));
         ImGui::TextWrapped("%s", s.modTitle.empty() ? ("Workshop item " + s.modId).c_str() : s.modTitle.c_str());
         ImGui::PushStyleColor(ImGuiCol_Text, NobleStyle::TextMuted());
         ImGui::TextWrapped("Noble checks for it before joining and can download it from Steam.");
@@ -962,13 +966,13 @@ void ServerBrowser::TryJoin(const std::string& address, uint16_t port, bool hasP
 void ServerBrowser::RenderDirectConnectModal() {
     ImGui::OpenPopup("DIRECT CONNECT");
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(420, 0));
+    ImGui::SetNextWindowSize(ImVec2(U(420), 0));
     if (ImGui::BeginPopupModal("DIRECT CONNECT", &m_showDirectConnectModal, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::Text("Address (IP or IP:port)");
-        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 75.0f);
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - U(75.0f));
         ImGui::InputTextWithHint("##Address", "IP or IP:port (e.g. 147.124.149.202:11774)", m_directConnectIp, IM_ARRAYSIZE(m_directConnectIp));
         ImGui::SameLine();
-        if (ImGui::Button("PASTE", ImVec2(65, 0))) {
+        if (ImGui::Button("PASTE", ImVec2(U(65), 0))) {
             if (const char* clip = ImGui::GetClipboardText()) std::snprintf(m_directConnectIp, sizeof(m_directConnectIp), "%s", clip);
         }
         ImGui::Text("Password");
@@ -982,18 +986,18 @@ void ServerBrowser::RenderDirectConnectModal() {
         const bool valid = ParseAddress(m_directConnectIp, address, port);
         if (!valid) ImGui::TextColored(ImVec4(0.95f, 0.4f, 0.4f, 1.0f), "Enter an address such as 192.168.1.20:11774");
         ImGui::BeginDisabled(!valid);
-        if (NobleStyle::PrimaryButton("CONNECT", ImVec2(120, 32))) {
+        if (NobleStyle::PrimaryButton("CONNECT", ImVec2(U(120), U(32)))) {
             TryJoin(address, port, m_directConnectPassword[0] != 0);
             m_showDirectConnectModal = false;
         }
         ImGui::SameLine();
-        if (ImGui::Button("SAVE AS FAVOURITE", ImVec2(170, 32))) {
+        if (ImGui::Button("SAVE AS FAVOURITE", ImVec2(U(170), U(32)))) {
             ToggleFavorite(address, port);
             m_lastRefresh = -100.0;
         }
         ImGui::EndDisabled();
         ImGui::SameLine();
-        if (ImGui::Button("CANCEL", ImVec2(90, 32))) m_showDirectConnectModal = false;
+        if (ImGui::Button("CANCEL", ImVec2(U(90), U(32)))) m_showDirectConnectModal = false;
         ImGui::EndPopup();
     }
 }
@@ -1001,7 +1005,7 @@ void ServerBrowser::RenderDirectConnectModal() {
 void ServerBrowser::RenderMasterServerModal() {
     ImGui::OpenPopup("SELECT MATCHMAKING REGION");
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(480, 0));
+    ImGui::SetNextWindowSize(ImVec2(U(480), 0));
     if (ImGui::BeginPopupModal("SELECT MATCHMAKING REGION", &m_showMasterModal, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::TextWrapped("Select your preferred matchmaking region. Master servers synchronize federated sessions across regions so you can find games worldwide.");
         ImGui::Spacing();
@@ -1021,12 +1025,12 @@ void ServerBrowser::RenderMasterServerModal() {
             if (ImGui::RadioButton(kMasterRegions[i].label, chosenRegion == i)) {
                 chosenRegion = i;
             }
-            ImGui::SameLine(220);
+            ImGui::SameLine(U(220));
             ImGui::TextDisabled("(%s)", kMasterRegions[i].location);
         }
 
         NobleStyle::SectionGap();
-        if (NobleStyle::PrimaryButton("SAVE & APPLY", ImVec2(140, 32))) {
+        if (NobleStyle::PrimaryButton("SAVE & APPLY", ImVec2(U(140), U(32)))) {
             SettingsData d = Settings::Get().Snapshot();
             d.masterServerUrl = kMasterRegions[chosenRegion].url;
             Settings::Get().Update(d);
@@ -1037,7 +1041,7 @@ void ServerBrowser::RenderMasterServerModal() {
             RefreshServers();
         }
         ImGui::SameLine();
-        if (ImGui::Button("CANCEL", ImVec2(100, 32))) m_showMasterModal = false;
+        if (ImGui::Button("CANCEL", ImVec2(U(100), U(32)))) m_showMasterModal = false;
         ImGui::EndPopup();
     }
 }

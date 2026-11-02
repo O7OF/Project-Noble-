@@ -2,6 +2,7 @@
 #include "FrontEndMenu.hpp"
 #include "audio/VoiceChat.hpp"
 #include "SocialOverlay.hpp"
+#include "NobleUi.hpp"
 #include "network/UPnP.hpp"
 #include "network/AuthClient.hpp"
 #include "network/MasterServerClient.hpp"
@@ -4581,7 +4582,7 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
     ui.dl = ImGui::GetWindowDrawList();
     ui.origin = ImVec2(0.0f, 0.0f);
     ui.size = vp->Size;
-    ui.s = std::clamp(vp->Size.y / 900.0f, 0.75f, 2.0f);
+    ui.s = std::clamp(vp->Size.y / 900.0f, 0.75f, 4.0f);   // 4K back buffer = 2.4 (was capped at 2.0)
 
     s_lobbyBackdropMap = st.lobbyMap;
     s_lobbyBackdropImage = st.lobbyMapImage.empty() ? st.lobbyMapThumb : st.lobbyMapImage;
@@ -4648,7 +4649,7 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         const float descH = Font(nullptr)->CalcTextSizeA(17.0f * ui.s, FLT_MAX, 0.0f, "Ag").y * 2.0f + 2.0f * ui.s;
         const float descGap = 10.0f * ui.s;
         const float hintTop = ui.size.y - 54.0f * ui.s;
-        float listY = titleY + 76.0f * ui.s;
+        float listY = titleY + 96.0f * ui.s;   // below the "This party is local" line at +66 (+76 overlapped it)
         float step = 26.0f;                                             // ui.s units
         const float rowCount = static_cast<float>(rows.size());
         auto blockHeight = [&](float s) { return rowCount * s * ui.s + descGap + descH + 8.0f * ui.s; };
@@ -6288,6 +6289,10 @@ void FrontEndMenu::RenderOverlayImpl(IDXGISwapChain* swapChain, bool clear) {
         }
         UiPad::Feed(io);
         SocialOverlay::Poll(ctx.st.screen == Screen::PreGameLobby);
+        // Text drawn by plain ImGui widgets (search boxes, descriptions, help lines, input fields) used the
+        // fonts' fixed 15-18 px and turned tiny on a native 4K back buffer. Scale it like every custom-drawn
+        // label (back-buffer height / 900). Fonts are rasterised at 2.5x density, so this stays crisp.
+        io.FontGlobalScale = NobleUi::Scale();
         ImGui::NewFrame();
         if (SocialOverlay::IsTyping()) io.ClearInputKeys();   // the line takes the keyboard, not the screen under it
         InputPrompts::Update();

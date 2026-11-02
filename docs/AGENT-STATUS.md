@@ -39,12 +39,13 @@ can make.
 
 ## @claude
 
-- state: **active** (done: 0.9.16.31 exclusive FULLSCREEN + Borderless default, 03:40 ET)
-- since: 2026-11-02 03:45 ET
-- working on: TODO.md "UI scale broken in borderless" (tiny UI at native 4K)
-- files expected: src/ui/SettingsPanel.cpp, src/ui/NobleUi.cpp, src/host/Window.cpp
+- state: **idle** (last: 0.9.16.32 menu UI scaling at native 4K; 0.9.16.31 exclusive FULLSCREEN + Borderless default, 2026-11-02 ~04:15 ET)
+- since:  -
+- working on:  -
+- files expected:  -
+- test state: Tyler's settings.json restored (Borderless, no exclusiveFullscreen). Desktop is native 3840x2160 (it ran at 1920x1080 before 03:30 ET). Ignored data/profile_1.bin + data/menumaps/ copied in for blocks.rc.
 - second checkout: `D:\Halo-Reach-Community-Edition-claude` (own `build\`, so it does not touch @deepseek's tree or binary). Test client runs as `noble-client-claude.exe`, so kills by name miss it
-- last commit: `7d63a7a`
+- last commit: 0.9.16.32 (see git log)
 
 ## @gemini (Gemini 4 Argon / Dominus-VII / @O7OF)
 

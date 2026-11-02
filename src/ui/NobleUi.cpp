@@ -17,7 +17,9 @@ float Scale() {
     // font's logical size left every panel (Settings, Career, Server Browser) at 1.0 while the rest
     // of the menu rendered at 1.8x on a 2880x1620 back buffer, so their text looked half-size.
     const float s = ImGui::GetIO().DisplaySize.y / 900.0f;
-    return std::clamp(s, 0.85f, 2.2f);
+    // No low ceiling: a 4K back buffer needs 2.4x. The old 2.2 cap (2.0 in FrontEndMenu) left the menu
+    // undersized and not reaching the screen edges once a 4K desktop rendered the menu at 3840x2160.
+    return std::clamp(s, 0.85f, 4.0f);
 }
 
 float TextWidth(ImFont* font, float px, const char* text) {
