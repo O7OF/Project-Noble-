@@ -31,6 +31,7 @@
 #include "common/Relaunch.hpp"
 #include "common/Settings.hpp"
 #include "common/Version.hpp"
+#include "common/DeviceIdentity.hpp"
 #include "engine/FrameCapture.hpp"
 #include "engine/ReachArmory.hpp"
 #include "engine/MapGameTypes.hpp"
@@ -1734,11 +1735,16 @@ static void SetupHostLobby(MenuState& st, const std::string& mapScenario, const 
             const auto rec = Career::GetRecord();
             int cd = 0;
             for (const auto& c : Career::Challenges()) if (c.done) ++cd;
+            int ct = 0, ctm = 0;
+            for (const auto& c : Career::Commendations()) {
+                if (c.tracked) { ct += c.tier; ctm += 6; }
+            }
+            const int commPct = ctm > 0 ? (ct * 100 / ctm) : 0;
             adv.hostGamesPlayed = static_cast<int>(rec.totals.gamesPlayed);
             adv.hostKills = static_cast<int>(rec.totals.kills);
             adv.hostDeaths = static_cast<int>(rec.totals.deaths);
             adv.hostChallengesDone = cd;
-            adv.hostCommendations = 25;
+            adv.hostCommendations = commPct;
             adv.hostArmoryOwned = static_cast<int>(rec.totals.armoryOwned.size());
         }
         MasterServerClient::Get().StartAdvertising(adv);
@@ -1749,6 +1755,7 @@ static void SetupHostLobby(MenuState& st, const std::string& mapScenario, const 
     st.lobbyRoster.clear();
     LobbyPlayer me;
     me.peerId = AuthClient::Get().IsLoggedIn() ? static_cast<uint64_t>(AuthClient::Get().GetUserId()) : 1ULL;
+    me.machineId = DeviceIdentityStore::Get().deviceId;
     me.username = pName;
     me.serviceTag = PlayerServiceTag(Settings::Get().Snapshot());
     me.isHost = true;
@@ -1763,11 +1770,16 @@ static void SetupHostLobby(MenuState& st, const std::string& mapScenario, const 
         const auto rec = Career::GetRecord();
         int cd = 0;
         for (const auto& c : Career::Challenges()) if (c.done) ++cd;
+        int ct = 0, ctm = 0;
+        for (const auto& c : Career::Commendations()) {
+            if (c.tracked) { ct += c.tier; ctm += 6; }
+        }
+        const int commPct = ctm > 0 ? (ct * 100 / ctm) : 0;
         me.gamesPlayed = static_cast<int>(rec.totals.gamesPlayed);
         me.kills = static_cast<int>(rec.totals.kills);
         me.deaths = static_cast<int>(rec.totals.deaths);
         me.challengesDone = cd;
-        me.commendations = 25;
+        me.commendations = commPct;
         me.armoryOwned = static_cast<int>(rec.totals.armoryOwned.size());
     }
     st.lobbyRoster.push_back(me);
@@ -2791,6 +2803,7 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
                         for (auto& p : st.lobbyRoster) {
                             if (p.isHost) {
                                 p.peerId = hostPId;
+                                p.machineId = DeviceIdentityStore::Get().deviceId;
                                 p.username = pName;
                                 p.serviceTag = hostTag;
                                 p.isDev = hostDev;
@@ -2798,6 +2811,34 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
                                 p.rankIndex = Career::RankIndex(Career::Get().credits);
                                 p.emblemId = prof.emblemIndex;
                                 p.nameplateId = prof.nameplateIndex;
+                                p.emblemBackgroundId = prof.emblemBackgroundIndex;
+                                const auto rec = Career::GetRecord();
+                                p.gamesPlayed = static_cast<int>(rec.totals.gamesPlayed);
+                                p.kills = static_cast<int>(rec.totals.kills);
+                                p.deaths = static_cast<int>(rec.totals.deaths);
+                                int cd = 0;
+                                for (const auto& c : Career::Challenges()) if (c.done) ++cd;
+                                p.challengesDone = cd;
+                                int ct = 0, ctm = 0;
+                                for (const auto& c : Career::Commendations()) {
+                                    if (c.tracked) { ct += c.tier; ctm += 6; }
+                                }
+                                p.commendations = ctm > 0 ? (ct * 100 / ctm) : 0;
+                                p.armoryOwned = static_cast<int>(rec.totals.armoryOwned.size());
+                            } else {
+                                Career::PeerStats peer;
+                                peer.playerId = !p.machineId.empty() ? p.machineId : (!p.username.empty() ? p.username : std::to_string(p.peerId));
+                                peer.playerName = p.username;
+                                peer.serviceTag = p.serviceTag;
+                                peer.rank = p.rankIndex;
+                                peer.gamesPlayed = p.gamesPlayed;
+                                peer.kills = p.kills;
+                                peer.deaths = p.deaths;
+                                peer.challengesDone = p.challengesDone;
+                                peer.commendations = p.commendations;
+                                peer.armoryOwned = p.armoryOwned;
+                                Career::SavePeerStats(peer);
+                                Career::RegisterPlayerName(p.peerId, p.username, p.serviceTag);
                             }
                         }
                     }
@@ -3489,8 +3530,12 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
     const int openSlots = std::max(0, slotCount - rosterCount);
     const auto& ownProf = UIManager::GetArmorCustomizer().GetProfile();
     const std::string localName = AuthClient::Get().IsLoggedIn() ? AuthClient::Get().GetUsername() : Settings::Get().Snapshot().playerName;
+    const std::string localDevId = DeviceIdentityStore::Get().deviceId;
     auto isLocal = [&](const LobbyPlayer& p) {
-        return p.isHost ? st.isLobbyHost : (!p.username.empty() && p.username == localName);
+        if (p.isHost && st.isLobbyHost) return true;
+        if (!localName.empty() && _stricmp(p.username.c_str(), localName.c_str()) == 0) return true;
+        if (!p.machineId.empty() && p.machineId == localDevId) return true;
+        return false;
     };
 
     // Red on the left and blue on the right, each with its own scroll position; a game without teams is one list.
@@ -3596,28 +3641,40 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         const auto& ranks = Career::Ranks();
         statLine("RANK", rank >= 0 && rank < static_cast<int>(ranks.size()) ? std::string(ranks[rank].name) : std::string("Not shared yet"));
         if (local) {
-            // Read once per opening: these walk the whole career record.
-            static Career::Record s_record;
-            static int s_challengesDone = 0, s_challengeCount = 0, s_tiers = 0, s_tierMax = 0;
-            if (!profileWasOpen) {
-                s_record = Career::GetRecord();
-                s_challengesDone = s_challengeCount = s_tiers = s_tierMax = 0;
-                for (const auto& c : Career::Challenges()) { ++s_challengeCount; if (c.done) ++s_challengesDone; }
-                for (const auto& c : Career::Commendations()) { if (c.tracked) { s_tiers += c.tier; s_tierMax += 6; } }
+            const Career::Record rec = Career::GetRecord();
+            int challengesDone = 0, challengeCount = 0, tiers = 0, tierMax = 0;
+            for (const auto& c : Career::Challenges()) {
+                ++challengeCount;
+                if (c.done) ++challengesDone;
             }
-            statLine("GAMES PLAYED", std::to_string(s_record.totals.gamesPlayed));
-            statLine("KILLS / DEATHS", std::to_string(s_record.totals.kills) + " / " + std::to_string(s_record.totals.deaths));
-            statLine("CHALLENGES DONE NOW", std::to_string(s_challengesDone) + " / " + std::to_string(s_challengeCount));
-            statLine("COMMENDATIONS", s_tierMax > 0 ? std::to_string(s_tiers * 100 / s_tierMax) + "%" : std::string("-"));
-            statLine("ARMORY ITEMS BOUGHT", std::to_string(s_record.totals.armoryOwned.size()));
+            for (const auto& c : Career::Commendations()) {
+                if (c.tracked) {
+                    tiers += c.tier;
+                    tierMax += 6;
+                }
+            }
+            statLine("GAMES PLAYED", std::to_string(rec.totals.gamesPlayed));
+            statLine("KILLS / DEATHS", std::to_string(rec.totals.kills) + " / " + std::to_string(rec.totals.deaths));
+            statLine("CHALLENGES DONE NOW", std::to_string(challengesDone) + " / " + std::to_string(challengeCount));
+            statLine("COMMENDATIONS", tierMax > 0 ? std::to_string(tiers * 100 / tierMax) + "%" : std::string("-"));
+            statLine("ARMORY ITEMS BOUGHT", std::to_string(rec.totals.armoryOwned.size()));
         } else {
-            const int rIndex = std::max(0, rank);
-            const int games = player.gamesPlayed > 0 ? player.gamesPlayed : std::max(1, rIndex * 4);
-            const int kills = player.kills > 0 ? player.kills : std::max(0, rIndex * 32);
-            const int deaths = player.deaths > 0 ? player.deaths : std::max(0, rIndex * 20);
-            const int challenges = player.challengesDone > 0 ? player.challengesDone : std::min(4, rIndex);
-            const int commendations = player.commendations > 0 ? player.commendations : std::min(100, 10 + rIndex * 3);
-            const int armoryItems = player.armoryOwned > 0 ? player.armoryOwned : std::max(2, rIndex * 2);
+            int games = player.gamesPlayed;
+            int kills = player.kills;
+            int deaths = player.deaths;
+            int challenges = player.challengesDone;
+            int commendations = player.commendations;
+            int armoryItems = player.armoryOwned;
+
+            Career::PeerStats cached;
+            if (Career::LoadPeerStats(player.machineId, cached) || Career::LoadPeerStats(player.username, cached)) {
+                if (games <= 0) games = static_cast<int>(cached.gamesPlayed);
+                if (kills <= 0) kills = static_cast<int>(cached.kills);
+                if (deaths <= 0) deaths = static_cast<int>(cached.deaths);
+                if (challenges <= 0) challenges = cached.challengesDone;
+                if (commendations <= 0) commendations = cached.commendations;
+                if (armoryItems <= 0) armoryItems = cached.armoryOwned;
+            }
 
             statLine("GAMES PLAYED", std::to_string(games));
             statLine("KILLS / DEATHS", std::to_string(kills) + " / " + std::to_string(deaths));

@@ -866,7 +866,11 @@ LobbyState MasterServerClient::JoinLobbySync(const std::string& sessionId,
         { "kills", Career::GetRecord().totals.kills },
         { "deaths", Career::GetRecord().totals.deaths },
         { "challenges_done", [&]() { int d = 0; for (const auto& c : Career::Challenges()) if (c.done) ++d; return d; }() },
-        { "commendations", 25 },
+        { "commendations", [&]() {
+            int t = 0, tm = 0;
+            for (const auto& c : Career::Commendations()) { if (c.tracked) { t += c.tier; tm += 6; } }
+            return tm > 0 ? (t * 100 / tm) : 0;
+        }() },
         { "armory_owned", static_cast<int>(Career::GetRecord().totals.armoryOwned.size()) },
         { "machine_id", std::to_string(LobbyMachineId()) },
         { "guest_port", localPort },

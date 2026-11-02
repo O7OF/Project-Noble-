@@ -351,6 +351,7 @@ void SaveLocked() {
     nlohmann::json j;
     j["credits"] = s_totals.credits;
     j["creditsSpent"] = s_totals.creditsSpent;
+    j["bonusCredits"] = s_totals.bonusCredits;
     j["armoryOwned"] = s_totals.armoryOwned;
     j["armoryUnlockAll"] = s_totals.armoryUnlockAll;
     j["creditsToday"] = s_totals.creditsToday;
@@ -398,13 +399,28 @@ void SaveLocked() {
     }
 
     PeerStats localStats;
+    localStats.playerId = DeviceIdentityStore::Get().deviceId;
     localStats.playerName = Settings::Get().Snapshot().playerName;
+    const std::string stag = Settings::Get().Snapshot().serviceTag;
+    localStats.serviceTag = stag.empty() ? "117" : stag;
     localStats.credits = s_totals.credits;
     localStats.rank = RankIndex(s_totals.credits);
     localStats.gamesPlayed = s_totals.gamesPlayed;
     localStats.kills = s_totals.kills;
     localStats.deaths = s_totals.deaths;
     localStats.assists = s_totals.assists;
+    int cd = 0;
+    for (const auto& c : Challenges()) if (c.done) ++cd;
+    localStats.challengesDone = cd;
+    int tiers = 0, tierMax = 0;
+    for (const auto& c : Commendations()) {
+        if (c.tracked) {
+            tiers += c.tier;
+            tierMax += 6;
+        }
+    }
+    localStats.commendations = tierMax > 0 ? (tiers * 100 / tierMax) : 0;
+    localStats.armoryOwned = static_cast<int>(s_totals.armoryOwned.size());
     SavePeerStats(localStats);
 }
 
@@ -1079,20 +1095,25 @@ Award LastAward() {
 
 
 void SavePeerStats(const PeerStats& stats) {
-    if (stats.playerName.empty()) return;
-    std::string cleanName;
-    for (char c : stats.playerName) {
-        if (std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '-') cleanName += c;
+    std::string key = stats.playerId;
+    if (key.empty()) {
+        key = DeviceIdentityStore::Get().deviceId;
     }
-    if (cleanName.empty()) cleanName = "unknown";
+    if (key.empty()) {
+        for (char c : stats.playerName) {
+            if (std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '-') key += c;
+        }
+    }
+    if (key.empty()) key = "unknown";
 
     std::error_code ec;
     const auto dir = UserDir() / "players";
     std::filesystem::create_directories(dir, ec);
-    const auto path = dir / (cleanName + ".json");
-    const auto tmp = dir / (cleanName + ".json.tmp");
+    const auto path = dir / (key + ".json");
+    const auto tmp = dir / (key + ".json.tmp");
 
     nlohmann::json j = {
+        {"player_id", key},
         {"player_name", stats.playerName},
         {"service_tag", stats.serviceTag},
         {"credits", stats.credits},
@@ -1100,7 +1121,10 @@ void SavePeerStats(const PeerStats& stats) {
         {"games_played", stats.gamesPlayed},
         {"kills", stats.kills},
         {"deaths", stats.deaths},
-        {"assists", stats.assists}
+        {"assists", stats.assists},
+        {"challenges_done", stats.challengesDone},
+        {"commendations", stats.commendations},
+        {"armory_owned", stats.armoryOwned}
     };
 
     {
@@ -1109,25 +1133,45 @@ void SavePeerStats(const PeerStats& stats) {
     }
     std::filesystem::rename(tmp, path, ec);
     if (!ec) {
-        NOBLE_INFO("Career: saved local peer stats for '{}'", stats.playerName);
+        NOBLE_INFO("Career: saved local peer stats for '{}' ({})", stats.playerName, key);
     }
 }
 
-bool LoadPeerStats(const std::string& playerName, PeerStats& outStats) {
-    if (playerName.empty()) return false;
-    std::string cleanName;
-    for (char c : playerName) {
-        if (std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '-') cleanName += c;
+bool LoadPeerStats(const std::string& identifier, PeerStats& outStats) {
+    if (identifier.empty()) return false;
+    std::string clean;
+    for (char c : identifier) {
+        if (std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '-') clean += c;
     }
-    if (cleanName.empty()) cleanName = "unknown";
+    if (clean.empty()) clean = "unknown";
 
-    const auto path = UserDir() / "players" / (cleanName + ".json");
+    auto path = UserDir() / "players" / (clean + ".json");
+    if (!std::filesystem::exists(path)) {
+        std::error_code ec;
+        for (const auto& entry : std::filesystem::directory_iterator(UserDir() / "players", ec)) {
+            if (entry.path().extension() == ".json") {
+                std::ifstream f(entry.path());
+                if (f) {
+                    try {
+                        nlohmann::json pj;
+                        f >> pj;
+                        if (pj.value("player_name", "") == identifier || pj.value("player_id", "") == identifier) {
+                            path = entry.path();
+                            break;
+                        }
+                    } catch (...) {}
+                }
+            }
+        }
+    }
+
     std::ifstream in(path);
     if (!in) return false;
     try {
         nlohmann::json j;
         in >> j;
-        outStats.playerName = j.value("player_name", playerName);
+        outStats.playerId = j.value("player_id", clean);
+        outStats.playerName = j.value("player_name", identifier);
         outStats.serviceTag = j.value("service_tag", "");
         outStats.credits = j.value("credits", 0LL);
         outStats.rank = j.value("rank", 0);
@@ -1135,6 +1179,9 @@ bool LoadPeerStats(const std::string& playerName, PeerStats& outStats) {
         outStats.kills = j.value("kills", 0LL);
         outStats.deaths = j.value("deaths", 0LL);
         outStats.assists = j.value("assists", 0LL);
+        outStats.challengesDone = j.value("challenges_done", 0);
+        outStats.commendations = j.value("commendations", 0);
+        outStats.armoryOwned = j.value("armory_owned", 0);
         return true;
     } catch (...) {
         return false;

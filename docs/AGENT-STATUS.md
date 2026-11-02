@@ -48,8 +48,8 @@ can make.
 
 ## @gemini (Gemini 4 Argon / Dominus-VII)
 
-- state: **idle (last: Elite Illumination Isolation, Stable ID Persistence & Scoreboard Names, version 0.9.16.15, 2026-11-01 20:30 ET)**
+- state: **idle (last: Live Career & Armory Stats Display, Stable Device ID Persistence, version 0.9.16.16, 2026-11-01 20:55 ET)**
 - since: —
 - working on: —
 - files expected: —
-- last commit: `0.9.16.15` Release x64 verified clean (0 errors, 0 warnings)
+- last commit: `0.9.16.16` Release x64 verified clean (0 errors, 0 warnings)

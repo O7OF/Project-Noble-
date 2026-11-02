@@ -7,9 +7,34 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 
 **Goal:** `noble-client.exe` loads MCC's own `haloreach.dll` (Halo: Reach) and drives it **without MCC**, like the existing
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
-MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.16.15 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.16.16 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
 
-## 0. Pick up here (2026-11-01, 20:30 ET) - Elite Illumination Isolation, Stable ID Persistence & Scoreboard Names (0.9.16.15) (@O7OF)
+## 0. Pick up here (2026-11-01, 20:55 ET) - Live Career Stats Display, Armory Tracking & Stable Device ID Persistence (0.9.16.16) (@O7OF)
+
+**Version:** 0.9.16.16. **Build:** noble-client, noble-dev, noble-dedicated (0 errors, 0 warnings on MSVC Release x64). Files: `src/career/Career.hpp`, `src/career/Career.cpp`, `src/ui/FrontEndMenu.cpp`, `src/network/MasterServerClient.cpp`, `src/common/Version.hpp`, `docs/HANDOFF.md`, `docs/AGENT-STATUS.md`.
+
+**What was actually found & fixed (Root Cause Analysis):**
+1. **Pregame Lobby Player Card Displaying 0 for Career & Armory Stats:**
+   - In `FrontEndMenu.cpp`: The lobby card drawing function previously cached career metrics in a `static Career::Record s_record` guarded with `if (!profileWasOpen)`. When clicking on a player slot, `st.lobbyProfileOpen = true` was set at the end of the previous frame, making `profileWasOpen` already `true` on the next frame. The static block was skipped, leaving `s_record` and challenge/commendation variables as zeroed default structs (`0` games, `0/0` K/D, `0/0` challenges, `-` commendations, and `0` armory items).
+   - Removed the broken static caching guard and now directly query `Career::GetRecord()` live each frame, along with fresh counts for active challenges and commendation tiers.
+   - Enhanced `isLocal` lambda in `FrontEndMenu.cpp` to evaluate host status, case-insensitive player name, and `localDevId` (`DeviceIdentityStore::Get().deviceId`), ensuring the local player's live stats are always shown reliably.
+
+2. **Purchased Armory Items Tracking & Persistence in career.dat:**
+   - Verified local DPAPI-encrypted `career.dat` storage under `data/userdata/<deviceId>/career.dat`.
+   - Fixed missing `j["bonusCredits"]` serialization in `SaveLocked()`.
+   - Updated `armoryOwned` tracking to accurately report all bought items (including multiple purchased helmets).
+   - In `EnterPreGameLobby` and `MasterServerClient`, replaced static fallback `25` with dynamic commendation completion percentage calculated from active commendation tiers.
+
+3. **Stable Device ID Persistence Across Name Changes:**
+   - Updated `struct PeerStats` in `Career.hpp` to include `playerId`, `challengesDone`, `commendations`, and `armoryOwned`.
+   - In `Career.cpp`: Keyed `SavePeerStats` to `stats.playerId` (defaulting to `DeviceIdentityStore::Get().deviceId`), writing `<deviceId>.json`.
+   - Updated `LoadPeerStats` to accept an identifier (device ID or player name) and query by ID first, with a fallback scan for legacy name files. Changing gamertags no longer loses progress or creates duplicate save files.
+   - When remote players' lobby state is received in `FrontEndMenu.cpp`, their stats are locally cached via `SavePeerStats` using their machine ID / peer ID.
+
+4. **Remote Player Lobby Stat Inspection:**
+   - In `FrontEndMenu.cpp`: Remote player card rendering now reads live stats sent through the lobby packet, falling back to local cached `PeerStats` before falling back to defaults.
+
+## 1. Previous Work: Elite Illumination Isolation, Stable ID Persistence & Scoreboard Names (0.9.16.15) (@O7OF)
 
 **Version:** 0.9.16.15. **Build:** noble-client, noble-dev, noble-dedicated (0 errors, 0 warnings on MSVC Release x64). Files: `src/career/Career.hpp`, `src/career/Career.cpp`, `src/engine/ReachArmory.cpp`, `src/engine/ElitePack.cpp`, `src/common/DeviceIdentity.cpp`, `src/common/Settings.cpp`, `src/ui/SettingsPanel.cpp`, `src/ui/ArmorCustomizer.cpp`, `src/ui/FrontEndMenu.cpp`, `src/common/Version.hpp`, `docs/HANDOFF.md`, `docs/AGENT-STATUS.md`.
 

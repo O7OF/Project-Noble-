@@ -179,6 +179,7 @@ void DevResetProgress();
 
 
 struct PeerStats {
+    std::string playerId;
     std::string playerName;
     std::string serviceTag;
     int64_t credits = 0;
@@ -187,9 +188,12 @@ struct PeerStats {
     int64_t kills = 0;
     int64_t deaths = 0;
     int64_t assists = 0;
+    int challengesDone = 0;
+    int commendations = 0;
+    int armoryOwned = 0;
 };
 void SavePeerStats(const PeerStats& stats);
-bool LoadPeerStats(const std::string& playerName, PeerStats& outStats);
+bool LoadPeerStats(const std::string& identifier, PeerStats& outStats);
 
 // Remember a player's name and tag against the player id used in the results record (+0x08),
 // so the post-game scoreboard can name remote players.
