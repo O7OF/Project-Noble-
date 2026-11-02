@@ -517,9 +517,19 @@ void Draw(const Ui& ui, ID3D11Device* device, ID3D11DeviceContext* context, floa
     if (!ReachArmory::IsSceneReady() || !Prepare(device, context)) return;
     const float W = ui.size.x, H = ui.size.y;
     constexpr float kModelX = 0.656f;   // where the scene cameras put the model across the frame
-    constexpr float kStageX = 0.7425f;  // the middle of the free area right of the picker
-    const float k = std::clamp((H - ruleY) / H, 0.70f, 0.90f);
-    const ImVec2 p0(W * kStageX - W * kModelX * k, ruleY), p1(p0.x + W * k, ruleY + H * k);
+    constexpr float kStageX = 0.735f;   // the middle of the free area right of the picker
+
+    // Zoom the character in so the Armory is heroic and prominent, matching Halo: Reach MCC.
+    // Close-Up (mode 2) zooms in close (1.35x), Armory View (mode 0) provides a 1.18x frame,
+    // and Full Body (mode 1) keeps a clean 1.02x scale.
+    const int camMode = UIManager::GetArmorCustomizer().GetCameraMode();
+    const float k = (camMode == 2) ? 1.35f : (camMode == 0) ? 1.18f : 1.02f;
+    const float drawW = W * k;
+    const float drawH = H * k;
+    const float posX = W * kStageX - (W * kModelX * k);
+    const float posY = (camMode == 2) ? (ruleY * 0.45f) : (ruleY * 0.65f);
+    const ImVec2 p0(posX, posY);
+    const ImVec2 p1(posX + drawW, posY + drawH);
 
     ui.dl->AddRectFilled(ImVec2(0, 0), ui.size, IM_COL32(0, 0, 0, 255));
     ui.dl->AddCallback(&UseOpaque, nullptr);
@@ -2241,7 +2251,7 @@ std::string AutoPlayVariantStem() {
 void UpdateSceneForScreen(Screen screen) {
     switch (screen) {
     case Screen::Main:
-        ReachArmory::SetTargetScene("start_menu");
+        ReachArmory::SetTargetScene("main");
         break;
     case Screen::Campaign:
     case Screen::Skulls:

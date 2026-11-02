@@ -48,10 +48,12 @@ if (-not (Test-Path (Join-Path $build 'CMakeCache.txt'))) {
     if ($LASTEXITCODE -ne 0) { throw "CMake configure failed ($LASTEXITCODE)" }
 }
 
-Write-Host '== Building clean release client =='
+Write-Host '== Building clean release client and dev binaries =='
 Stop-Process -Name 'Noble','noble-client','noble-dev' -Force -ErrorAction SilentlyContinue
 & $cmake --build $build --config Release --target noble-client
 if ($LASTEXITCODE -ne 0) { throw 'noble-client build failed' }
+& $cmake --build $build --config Release --target noble-dev
+if ($LASTEXITCODE -ne 0) { throw 'noble-dev build failed' }
 
 $release = Join-Path $build 'bin\Release'
 $clientExe = Join-Path $release 'noble-client.exe'

@@ -108,6 +108,7 @@ public:
 
     void SyncToReachArmory() const;
     void UpdateArmoryCamera() const;
+    int GetCameraMode() const { return m_cameraMode; }
 
     const AppearanceProfile& GetProfile() const { return m_profile; }
     // The saved emblem colours, for rows that show the local player's emblem.

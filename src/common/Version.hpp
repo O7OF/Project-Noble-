@@ -7,11 +7,11 @@ namespace noble {
 constexpr int VERSION_MAJOR = 0;
 constexpr int VERSION_MINOR = 9;
 constexpr int VERSION_PATCH = 16;
-constexpr int VERSION_REVISION = 20;
+constexpr int VERSION_REVISION = 21;
 #ifdef NOBLE_DEV_BUILD
-constexpr std::string_view VERSION_STRING = "0.9.16.20-dev (Window Maximize, Armory Slot Cameras, Spartan Undersuit & Color Fix, 30 Visor Ranks, Embedded Map & CSV)";
+constexpr std::string_view VERSION_STRING = "0.9.16.21-dev (Main Menu & Armory Camera Zoom In, Fullscreen/Maximize Enabled)";
 #else
-constexpr std::string_view VERSION_STRING = "0.9.16.20 (Window Maximize, Armory Slot Cameras, Spartan Undersuit & Color Fix, 30 Visor Ranks, Embedded Map & CSV)";
+constexpr std::string_view VERSION_STRING = "0.9.16.21 (Main Menu & Armory Camera Zoom In, Fullscreen/Maximize Enabled)";
 #endif
 constexpr std::string_view APP_NAME = "Halo: Reach Community Edition";
 

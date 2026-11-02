@@ -9,6 +9,27 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
 MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.16.16 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
 
+## 0. Pick up here (2026-11-01, 23:50 ET) - Main Menu & Armory Camera Zoom In, Fullscreen/Maximize Title Bar Button Enabled, Simultaneous noble-client & noble-dev Release Pipeline (0.9.16.21) (@O7OF)
+
+**Version:** 0.9.16.21. **Build:** noble-client, noble-dev, noble-dedicated (0 errors, 0 warnings on MSVC Release x64). Files: `build-package.ps1`, `src/host/Window.cpp`, `src/engine/ReachArmory.cpp`, `src/ui/ArmorCustomizer.hpp`, `src/ui/FrontEndMenu.cpp`, `src/common/Version.hpp`, `docs/HANDOFF.md`, `docs/AGENT-STATUS.md`.
+
+**What was actually found & fixed (Root Cause Analysis):**
+1. **Title Bar Fullscreen / Maximize Button Being Greyed Out:**
+   - *Root Cause:* In `build-package.ps1`, the build target was previously restricted solely to `--target noble-client`, leaving `noble-dev.exe` stale on version `0.9.16.18-dev` (where `WS_MAXIMIZEBOX` and `WS_THICKFRAME` were still stripped). Furthermore, `Window::HandleMessage` was swallowing `WM_SIZE` by returning 0 without allowing `DefWindowProcW` to update the non-client title bar button state.
+   - *Fix:*
+     - In `src/host/Window.cpp`: Added explicit `SetWindowLongPtrW` forcing `WS_MAXIMIZEBOX | WS_MINIMIZEBOX | WS_THICKFRAME | WS_CAPTION | WS_SYSMENU` and enabled `SC_MAXIMIZE` / `SC_RESTORE` on the Win32 system menu with `SWP_FRAMECHANGED`.
+     - Added `WM_SYSCOMMAND` handling for `SC_MAXIMIZE` (`ShowWindow(hwnd, SW_MAXIMIZE)`) and `SC_RESTORE` (`ShowWindow(hwnd, SW_RESTORE)`).
+     - Forwarded `WM_SIZE` to `DefWindowProcW` so the title bar buttons and window metrics are kept in sync with Windows DWM.
+     - Updated `build-package.ps1` to build both `noble-client` and `noble-dev` simultaneously on every package run.
+
+2. **Main Menu Camera Zoom In:**
+   - *Root Cause:* The main menu scene was mapped to `"start_menu"` (`0x00`), which in `mainmenu_all.map` is the distant title screen camera showing the landscape far out on the horizon with dark margins.
+   - *Fix:* Re-mapped `"main"` to scene `0x01` in `ReachArmory::ResolveSceneIndex` and updated `FrontEndMenu::UpdateSceneForScreen(Screen::Main)` to request `"main"`. The main menu now uses the zoomed-in foreground staging camera up close on the cliff.
+
+3. **Armory 3D Spartan Camera Zoom In & Heroic Framing:**
+   - *Root Cause:* `ArmoryStage::Draw` was artificially shrinking the entire 1920x1080 engine backbuffer by `k = clamp((H - ruleY)/H, 0.70f, 0.90f)` (~75%), letterboxing the Spartan into a tiny sub-rectangle in the corner surrounded by empty black space.
+   - *Fix:* Completely removed the artificial downscaling. Zoomed the character in prominently: Close-Up mode (`m_cameraMode == 2`) now renders at `1.35x` scale focusing on the armor piece/chest/helmet/visor; Armory View (`m_cameraMode == 0`) renders at `1.18x` heroic frame; Full Body (`m_cameraMode == 1`) renders at clean `1.02x` scale head-to-toe. The character fills the right half of the screen natively matching Halo: Reach MCC.
+
 ## 0. Pick up here (2026-11-01, 23:25 ET) - Window Maximize/Alt+Enter, Armory Slot Cameras, Spartan Undersuit & Color Scanner Fix, 30 Visor Ranks, Counselor Rank Balancing, Embedded Map & CSVs (0.9.16.20) (@O7OF)
 
 **Version:** 0.9.16.20. **Build:** noble-client, noble-dev, noble-dedicated (0 errors, 0 warnings on MSVC Release x64). Files: `src/host/Window.cpp`, `src/vfs/VFS.cpp`, `src/res/blocks.rc`, `src/engine/ReachArmory.cpp`, `src/ui/SpartanArmoryCatalog.inc`, `src/ui/ArmorCustomizer.cpp`, `src/common/Version.hpp`, `docs/HANDOFF.md`, `docs/AGENT-STATUS.md`.

@@ -78,6 +78,18 @@ bool Window::Create() {
         return false;
     }
 
+    if (!m_borderless) {
+        // Guarantee maximize box, minimize box, and resizing borders are fully enabled
+        LONG_PTR curStyle = GetWindowLongPtrW(m_hwnd, GWL_STYLE);
+        SetWindowLongPtrW(m_hwnd, GWL_STYLE, curStyle | WS_MAXIMIZEBOX | WS_MINIMIZEBOX | WS_THICKFRAME | WS_CAPTION | WS_SYSMENU);
+        HMENU hMenu = GetSystemMenu(m_hwnd, FALSE);
+        if (hMenu) {
+            EnableMenuItem(hMenu, SC_MAXIMIZE, MF_BYCOMMAND | MF_ENABLED);
+            EnableMenuItem(hMenu, SC_RESTORE, MF_BYCOMMAND | MF_ENABLED);
+        }
+        SetWindowPos(m_hwnd, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
+    }
+
     SendMessageW(m_hwnd, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(wc.hIcon));
     SendMessageW(m_hwnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(wc.hIconSm));
 
@@ -163,6 +175,15 @@ bool Window::InSizeMove() { return s_sizeMove.load(); }
 
 LRESULT Window::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
     switch (uMsg) {
+        case WM_SYSCOMMAND:
+            if ((wParam & 0xFFF0) == SC_MAXIMIZE) {
+                ShowWindow(hwnd, SW_MAXIMIZE);
+                return 0;
+            } else if ((wParam & 0xFFF0) == SC_RESTORE) {
+                ShowWindow(hwnd, SW_RESTORE);
+                return 0;
+            }
+            break;
         case WM_SYSKEYDOWN:
             if (wParam == VK_RETURN && (lParam & (1 << 29))) {
                 WINDOWPLACEMENT wp = { sizeof(WINDOWPLACEMENT) };
@@ -208,6 +229,8 @@ LRESULT Window::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam
         case WM_SIZE:
             m_width = LOWORD(lParam);
             m_height = HIWORD(lParam);
+            break;
+            // DefWindowProcW handles sizing finish
             return 0;
         case WM_SETCURSOR:
             // Hide the arrow over the game area while the window is focused (the engine thread

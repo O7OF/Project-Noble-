@@ -302,8 +302,8 @@ static int32_t ResolveSceneIndex(const std::string& scene) {
                                                                                 : static_cast<int>(std::strtol(text, nullptr, 10));
         return std::clamp(parsed, 0, 0x40);
     }
-    if (s == "title" || s == "start_menu" || s == "main") return 0x00;
-    if (s == "campaign" || s == "campaign_act1")          return 0x01;
+    if (s == "title" || s == "start_menu")                return 0x00;
+    if (s == "main" || s == "campaign" || s == "campaign_act1") return 0x01;
     if (s == "campaign_act2")                             return 0x02;
     if (s == "campaign_act3")                             return 0x03;
     if (s == "matchmaking")                               return 0x04;
