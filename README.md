@@ -50,6 +50,7 @@ Make sure **Steam** is running before you launch Project Noble.
 - Full **Spartan and Elite Armory** with live 3D previews.
 - Helmets, helmet variants, shoulders, chest, wrist, utility, knees, visors and armor effects.
 - Primary, secondary, accent and lights colors, plus custom color wheels.
+- **30 visor finishes** that persist in the Armory and save with your appearance.
 - Emblems, emblem backgrounds, nameplates and service tags.
 - Per-slot close-up cameras and full-body previews.
 
