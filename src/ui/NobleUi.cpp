@@ -13,7 +13,11 @@ ImFont* Font(ImFont* f) { return f ? f : ImGui::GetFont(); }
 }
 
 float Scale() {
-    return std::max(0.75f, ImGui::GetFontSize() / 18.0f);
+    // Scale with the overlay's back-buffer height, like FrontEndMenu's ui.s. Deriving this from the
+    // font's logical size left every panel (Settings, Career, Server Browser) at 1.0 while the rest
+    // of the menu rendered at 1.8x on a 2880x1620 back buffer, so their text looked half-size.
+    const float s = ImGui::GetIO().DisplaySize.y / 900.0f;
+    return std::clamp(s, 0.85f, 2.2f);
 }
 
 float TextWidth(ImFont* font, float px, const char* text) {

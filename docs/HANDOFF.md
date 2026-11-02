@@ -7,7 +7,17 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 
 **Goal:** `noble-client.exe` loads MCC's own `haloreach.dll` (Halo: Reach) and drives it **without MCC**, like the existing
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
-MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.16.25 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.16.26 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+
+## 0. Pick up here (2026-11-02, 02:00 ET) - Readable Scaled Settings/Panels (0.9.16.26) (@deepseek)
+
+**Version:** 0.9.16.26. **Release:** https://github.com/O7OF/Project-Noble-/releases/tag/v0.9.16.26 (asset + .sha256; v0.9.16.25 removed). **Build:** noble-client and noble-dev, MSVC Release x64, 0 errors, 0 warnings.
+
+**Root cause of the tiny Settings/Career/Server Browser text:** NobleUi::Scale() returned ImGui::GetFontSize()/18 = 1.0 while the menu overlay rendered at 1.8x in a 2880x1620 back buffer. Every panel using Scale() (Settings, Career, Server Browser, pause settings) was therefore half the size of the rest of the menu and unreadable.
+
+**Fix:** NobleUi::Scale() now follows the overlay height (DisplaySize.y / 900, clamped 0.85-2.2), the same basis as FrontEndMenu's ui.s. Settings, Career, Server Browser and the pause-menu settings now scale with the menu; the Graphics page was verified at borderless 1920x1080 and is readable.
+
+**Included from 0.9.16.25:** native-resolution rendering for menu and match, live windowed/borderless switching (Window::ApplyWindowSettings), custom menu backgrounds on every front-end screen, 2.5x font raster density, and mouse coordinates fed after the Win32 backend. Release v0.9.16.26 supersedes v0.9.16.25 (deleted).
 
 ## 0. Pick up here (2026-11-02, 01:45 ET) - Native-Resolution Rendering, Live Borderless, Crisp Fonts & Custom Menu Backdrops (0.9.16.25) (@deepseek)
 

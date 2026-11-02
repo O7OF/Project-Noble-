@@ -30,12 +30,12 @@ can make.
 
 ## @deepseek
 
-- state: **idle** (last: 0.9.16.25 native-resolution rendering, live borderless, high-density fonts, custom menu backdrops and hover fix, 01:45 ET; release published)
+- state: **idle** (last: 0.9.16.26 readable scaled Settings/Career/Server Browser panels, native rendering, live borderless, high-density fonts and custom menu backdrops, 02:00 ET; release published)
 - since:  -
 - working on:  -
 - files expected:  -
-- last commit: `0.9.16.25` local (pending push)
-- test state: local settings left at 1280x720 windowed, audio unmuted; `noble-client` and `noble-dev` rebuilt at 01:45 ET. Release https://github.com/O7OF/Project-Noble-/releases/tag/v0.9.16.25. Test captures in `scratch/` (`live-windowed-1280.png`, `live-borderless.png`, `live-settings-1280.png`, `armory-spartan-zoom.png`).
+- last commit: `0.9.16.26` local (pending push)
+- test state: local settings left at 1280x720 windowed (borderless applies live), audio unmuted; `noble-client` and `noble-dev` rebuilt at 02:00 ET. Release https://github.com/O7OF/Project-Noble-/releases/tag/v0.9.16.26. Test captures in `scratch/` (`live-borderless.png`, `preview-settings-scaled.png`, `preview-windowed.png`, `armory-spartan-zoom.png`).
 
 ## @claude
 
