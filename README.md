@@ -40,6 +40,7 @@ Make sure **Steam** is running before you launch Project Noble.
 - **Forge for up to 128 players.**
 - Custom Games, Slayer, objective modes, infection, race, invasion and community game types.
 - LAN and online lobbies with a built-in **server browser**.
+- **Three master regions** — US West, US East and EU West (London) — federated so every region lists games from all three.
 - Party and lobby roster, team selection, map and game-type voting.
 - Matchmaking-style playlists and custom map/mod support.
 - Voice chat, invite notifications and connection diagnostics.
