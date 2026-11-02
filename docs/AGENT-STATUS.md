@@ -30,12 +30,12 @@ can make.
 
 ## @deepseek
 
-- state: **idle** (last: 0.9.16.34 new RR mainmenu_all, remapped Armory GLOBALS for armor, 4K UI/exclusive fullscreen, 05:40 ET; release published)
+- state: **idle** (last: 0.9.16.35 restored Armory map after confirming the new 268 MB menu has no character scene; armor/visor/camera tested, 05:50 ET; release published)
 - since:  -
 - working on:  -
 - files expected:  -
-- last commit: `0.9.16.34` local (pending push)
-- test state: local settings left at 1280x720 windowed (borderless applies live), audio unmuted; `noble-client` and `noble-dev` rebuilt at 05:36 ET. Release https://github.com/O7OF/Project-Noble-/releases/tag/v0.9.16.34. Test captures in `scratch/` (`live-borderless.png`, `preview-settings-scaled.png`, `preview-windowed.png`, `armory-spartan-zoom.png`).
+- last commit: `0.9.16.35` local (pending push)
+- test state: local settings left at 1280x720 windowed (borderless applies live), audio unmuted; `noble-client` and `noble-dev` rebuilt at 05:48 ET. Release https://github.com/O7OF/Project-Noble-/releases/tag/v0.9.16.35. Test captures in `scratch/` (`old-armory-crop.png`, `scene_sweep_sheet.png`, `live-borderless.png`).
 
 ## @claude
 

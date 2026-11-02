@@ -378,6 +378,12 @@ static std::vector<std::pair<uintptr_t, size_t>> ReadWriteChunks(size_t minSize)
 
 static std::atomic<uint64_t> s_globalsMarkerHits{0};
 
+static bool IsNewMenuLayout() {
+    EnsureStringIdsLoaded();
+    ArmoryLock lock(s_dataMutex);
+    return s_stringIds.size() < 32100;   // old map 32,213 names; RR new map 31,978
+}
+
 static int GlobalsSlotFor(uintptr_t base, size_t stride, uint32_t id) {
     if (id == 0) return -1;
     for (size_t i = 0; i < 0x120; ++i) {
@@ -452,6 +458,9 @@ static bool ScanGlobalsTable() {
 
     // Imported mainmenu_all.map (RR's new armory map): no legacy marker, but the table still
     // starts with head/default and has chest at slot 2 plus the flair armour block at 20..40.
+    // Never run this against the legacy map: its skeleton table also matches head/default and
+    // would win before the real marker table appears.
+    if (!IsNewMenuLayout()) return false;
     if (chestId != 0 && flairHeadAId != 0) {
         for (const auto& chunk : ReadWriteChunks(0x100)) {
             const uintptr_t chunkBase = chunk.first;

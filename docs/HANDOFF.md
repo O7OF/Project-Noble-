@@ -7,7 +7,17 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 
 **Goal:** `noble-client.exe` loads MCC's own `haloreach.dll` (Halo: Reach) and drives it **without MCC**, like the existing
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
-MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.16.34 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.16.35 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+
+## 0. Pick up here (2026-11-02, 05:50 ET) - Armory Map Restored (0.9.16.35) (@deepseek)
+
+**Version:** 0.9.16.35. **Release:** https://github.com/O7OF/Project-Noble-/releases/tag/v0.9.16.35. **Build:** noble-client and noble-dev compiled from build-rel.
+
+**Why 0.9.16.34 was reverted:** the imported 268 MB mainmenu map has no Spartan Armory scene. A scene sweep 0xCF-0xE7 rendered star fields; 0xD8 left the game (invalid camera). The 297 MB map is required for the Armory pedestal/character. Restored it as mainmenu_all.map, with its matching 32,213-name CSV.
+
+**Code kept:** structural imported-menu detection is gated by IsNewMenuLayout() (string count < 32,100), so the legacy map uses the marker table and shows the character; dynamic region-slot armor writing remains available for a real new Armory map. The dev-only '-armory-cycle helmet|chest|shoulder|wrist|knees|visor|custom' driver was used to walk 22 helmets, 25 chests, 18 shoulders and the rest.
+
+**Verified:** dev log shows "Loaded 32213 string_ids from loose mainmenu_all CSV", "Found mainmenu_all.map GLOBALS table ... (stride=8)", and the Spartan character is visible; release run leaves noble-client.log at 0 bytes.
 
 ## 0. Pick up here (2026-11-02, 05:40 ET) - New RR Mainmenu + Remapped Armor GLOBALS (0.9.16.34) (@deepseek)
 

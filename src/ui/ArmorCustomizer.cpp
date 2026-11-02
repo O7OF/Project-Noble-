@@ -970,6 +970,31 @@ bool ArmorCustomizer::IsFullBodyCamera() const {
 
 void ArmorCustomizer::UpdateArmoryCamera() const {
     if (!ReachArmory::IsMenuMode()) return;
+#ifdef NOBLE_DEV_BUILD
+    {
+        static const bool sweep = [] {
+            int argc = 0;
+            LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+            bool on = false;
+            for (int i = 1; argv && i < argc; ++i) if (_wcsicmp(argv[i], L"-armory-scene-sweep") == 0) on = true;
+            if (argv) LocalFree(argv);
+            return on;
+        }();
+        if (sweep) {
+            static int step = 0;
+            static uint64_t next = 0;
+            const uint64_t now = GetTickCount64();
+            if (now >= next && step <= 0x18) {
+                const int scene = 0xCF + step;
+                ReachArmory::SetTargetScene("index:" + std::to_string(scene));
+                NOBLE_INFO("ArmorySceneSweep: index 0x{:X} ({}/{})", scene, step + 1, 0x19);
+                ++step;
+                next = now + 4000;
+            }
+            return;
+        }
+    }
+#endif
     // Test-only: "-armory-scene-index <n>" forces one of the menu map's camera scenes so the per-piece close-ups can
     // be identified by capture. No effect in normal runs.
     {
@@ -1696,6 +1721,76 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
             if (argv) LocalFree(argv);
         }
     }
+#ifdef NOBLE_DEV_BUILD
+    // Dev-only catalogue driver: -armory-cycle helmet|chest|shoulder|wrist|knees|visor|custom
+    // walks every entry so the preview rebuild path can be verified in one launch.
+    {
+        static std::string s_cycle;
+        static bool s_parsed = false;
+        if (!s_parsed) {
+            s_parsed = true;
+            int argc = 0;
+            LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+            for (int i = 1; argv && i + 1 < argc; ++i) {
+                if (_wcsicmp(argv[i], L"-armory-cycle") != 0) continue;
+                for (const wchar_t* c = argv[i + 1]; c && *c; ++c) s_cycle.push_back(static_cast<char>(*c));
+            }
+            if (argv) LocalFree(argv);
+        }
+        if (!s_cycle.empty() && ReachArmory::IsSceneReady()) {
+            static int s_index = -1;
+            static uint64_t s_next = 0;
+            const uint64_t now = GetTickCount64();
+            if (s_index < 0 || now >= s_next) {
+                ++s_index;
+                int count = 0;
+                std::string name;
+                if (s_cycle == "helmet") {
+                    const auto& list = GetSpartanHelmets();
+                    count = static_cast<int>(list.size());
+                    if (s_index < count) { m_profile.helmetIndex = s_index; m_profile.helmetVariantIndex = 0; name = list[s_index].name; }
+                } else if (s_cycle == "chest") {
+                    const auto& list = GetSpartanChests();
+                    count = static_cast<int>(list.size());
+                    if (s_index < count) { m_profile.chestIndex = s_index; name = list[s_index].name; }
+                } else if (s_cycle == "shoulder") {
+                    const auto& list = GetSpartanShoulders();
+                    count = static_cast<int>(list.size());
+                    if (s_index < count) { m_profile.leftShoulderIndex = s_index; m_profile.rightShoulderIndex = s_index; name = list[s_index].name; }
+                } else if (s_cycle == "wrist") {
+                    const auto& list = GetSpartanWrists();
+                    count = static_cast<int>(list.size());
+                    if (s_index < count) { m_profile.wristIndex = s_index; name = list[s_index].name; }
+                } else if (s_cycle == "knees") {
+                    const auto& list = GetSpartanKneeGuards();
+                    count = static_cast<int>(list.size());
+                    if (s_index < count) { m_profile.kneeGuardsIndex = s_index; name = list[s_index].name; }
+                } else if (s_cycle == "visor") {
+                    count = static_cast<int>(kVisorColors.size());
+                    if (s_index < count) { m_profile.visorColorIndex = s_index; m_visorSelection = s_index; name = kVisorColors[s_index].name; }
+                } else if (s_cycle == "custom") {
+                    count = 4;
+                    if (s_index < count) {
+                        m_profile.primaryCustom = m_profile.secondaryCustom = false;
+                        m_profile.accentCustom = m_profile.lightsCustom = false;
+                        if (s_index == 0) { m_profile.primaryCustom = true; m_profile.primaryCustomRgb = {0.55f, 0.10f, 0.72f}; name = "custom primary"; }
+                        if (s_index == 1) { m_profile.secondaryCustom = true; m_profile.secondaryCustomRgb = {0.10f, 0.65f, 0.22f}; name = "custom secondary"; }
+                        if (s_index == 2) { m_profile.accentCustom = true; m_profile.accentCustomRgb = {0.95f, 0.45f, 0.05f}; name = "custom accent"; }
+                        if (s_index == 3) { m_profile.lightsCustom = true; m_profile.lightsCustomRgb = {0.10f, 0.40f, 1.00f}; name = "custom lights"; }
+                    }
+                }
+                if (s_index >= count) {
+                    NOBLE_INFO("ArmoryCycle: {} complete ({} entries)", s_cycle, count);
+                    s_cycle.clear();
+                } else {
+                    m_syncedInitial = false;
+                    NOBLE_INFO("ArmoryCycle: {} {}/{} '{}'", s_cycle, s_index + 1, count, name);
+                    s_next = now + 900;
+                }
+            }
+        }
+    }
+#endif
     ValidateNameplate();
     SyncLegacyFields();
 
