@@ -1,10 +1,12 @@
 #include "ui/SocialOverlay.hpp"
 #include "ReachHost.hpp"
+#include "EmbeddedBlocks.hpp"
 #include "ui/LoadScreen.hpp"
 #include "ui/FrontEndMenu.hpp"
 #include "ui/UiArt.hpp"
 #include "common/Logger.hpp"
 #include "common/SaveCodec.hpp"
+#include "common/DeviceIdentity.hpp"
 #include "hooks/EnginePatches.hpp"
 #include "hooks/HookManager.hpp"
 #include "ui/PauseMenu.hpp"
@@ -1119,19 +1121,20 @@ static uint64_t __fastcall HostSlot34_ProfileSettings(void* thisPtr, uint64_t a1
             NOBLE_WARN("ReachHost [Slot 34]: failed to read -profile file; using built-in key bindings");
         }
         if (!loaded) {
+            size_t pSize = 0;
+            const uint8_t* embProfile = EmbeddedBlocks::GetBlock("profile_1.bin", &pSize);
+            if (embProfile && pSize > 0) {
+                size_t toCopy = std::min(pSize, sizeof(s_hostProfileBuffer));
+                std::memcpy(s_hostProfileBuffer, embProfile, toCopy);
+                loaded = true;
+                NOBLE_INFO("ReachHost [Slot 34]: loaded authentic profile from embedded resource 'profile_1.bin' ({} bytes)", pSize);
+            }
+        }
+        if (!loaded) {
             WriteDefaultKeyBindings(s_hostProfileBuffer);
             WriteDefaultVolumes(s_hostProfileBuffer);
             WriteDefaultLookSettings(s_hostProfileBuffer);
             NOBLE_INFO("ReachHost [Slot 34]: using built-in default key bindings, volumes and look settings");
-            std::error_code ec;
-            std::filesystem::path p1 = ReachHost::Get().GetDataDir() / "profile_1.bin";
-            if (!std::filesystem::exists(p1, ec)) {
-                std::ofstream out(p1, std::ios::binary | std::ios::trunc);
-                if (out) {
-                    out.write(reinterpret_cast<const char*>(s_hostProfileBuffer), 0xC00);
-                    NOBLE_INFO("ReachHost [Slot 34]: generated default profile_1.bin");
-                }
-            }
         }
         // RR host::hit case 0x22: the profile is a zeroed 64 KB block with only the 4-character
         // service tag (UTF-16) written at +0x1AC. The old defaults here (+0x00 = 1, armour colours
@@ -2023,9 +2026,21 @@ static uint64_t __fastcall HostSlot47_UserDataFolder(void* thisPtr, uint64_t a1,
         }
 
         auto& host = ReachHost::Get();
-        std::filesystem::path userPath = host.GetDataDir() / "userdata" / ("kind" + std::to_string(kind)) / "HaloReach";
+        const std::string devId = DeviceIdentityStore::Get().deviceId;
+        std::filesystem::path userPath = host.GetDataDir() / "userdata" / devId / "saves" / "HaloReach";
         std::error_code ec;
         std::filesystem::create_directories(userPath, ec);
+
+        // Migrate any legacy kind1/kind2 saves if they exist
+        std::filesystem::path legacyKind = host.GetDataDir() / "userdata" / ("kind" + std::to_string(kind)) / "HaloReach";
+        if (std::filesystem::exists(legacyKind, ec)) {
+            for (const auto& item : std::filesystem::directory_iterator(legacyKind, ec)) {
+                std::filesystem::path dest = userPath / item.path().filename();
+                if (!std::filesystem::exists(dest, ec)) {
+                    std::filesystem::copy(item.path(), dest, std::filesystem::copy_options::recursive | std::filesystem::copy_options::overwrite_existing, ec);
+                }
+            }
+        }
 
         std::filesystem::path absPath = std::filesystem::absolute(userPath, ec);
         if (ec) absPath = userPath;
@@ -3475,15 +3490,21 @@ static uint64_t __fastcall HostSlot88_UserIdentity(void* thisPtr, uint64_t a1, u
         SafeWriteUint64(a1, xuid);
     }
 
-    // Player name from the SETTINGS tab (Reach gamertags are at most 15 characters).
-    static const std::wstring gamerTagW = [] {
-        std::wstring w = Utf8ToWideString(Settings::Get().Snapshot().playerName);
-        if (w.empty()) w = L"NobleSix";
-        if (w.size() > 15) w.resize(15);
-        return w;
-    }();
-    if (a2 > 0x10000 && a3 > gamerTagW.size()) {
-        SafeCopyWideString(reinterpret_cast<wchar_t*>(a2), static_cast<size_t>(a3), gamerTagW.c_str());
+    // Live player name from settings (never blank, default "NobleSix", 1-20 characters)
+    std::string currentName = Settings::Get().Snapshot().playerName;
+    while (!currentName.empty() && std::isspace(static_cast<unsigned char>(currentName.front()))) currentName.erase(currentName.begin());
+    while (!currentName.empty() && std::isspace(static_cast<unsigned char>(currentName.back()))) currentName.pop_back();
+    if (currentName.empty() || currentName == "Player") currentName = "NobleSix";
+    if (currentName.size() > 20) currentName.resize(20);
+
+    std::wstring gamerTagW = Utf8ToWideString(currentName);
+    if (gamerTagW.empty()) gamerTagW = L"NobleSix";
+    if (gamerTagW.size() > 20) gamerTagW.resize(20);
+
+    if (a2 > 0x10000 && a3 > 0) {
+        size_t cap = static_cast<size_t>(a3);
+        if (gamerTagW.size() >= cap) gamerTagW.resize(cap - 1);
+        SafeCopyWideString(reinterpret_cast<wchar_t*>(a2), cap, gamerTagW.c_str());
     }
     return 1;
 }

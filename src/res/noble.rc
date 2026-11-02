@@ -1,0 +1,4 @@
+#include "resource.h"
+#include "blocks.rc"
+
+IDI_NOBLE_ICON ICON "noble.ico"

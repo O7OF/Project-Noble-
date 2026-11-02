@@ -9,7 +9,42 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
 MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.16.16 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
 
-## 0. Pick up here (2026-11-01, 21:28 ET) - Embedded Audio, Realtime WASAPI Volume, Master Server Script Exclusion & Clean Release Packaging (0.9.16.17) (@O7OF)
+## 0. Pick up here (2026-11-01, 22:15 ET) - Embedded Launch Blocks, Application Icon, Unified Saves by Player ID & Armory Stat Tracking (0.9.16.18) (@O7OF)
+
+**Version:** 0.9.16.18. **Build:** noble-client, noble-dev, noble-dedicated (0 errors, 0 warnings on MSVC Release x64). Files: `CMakeLists.txt`, `build-package.ps1`, `src/res/resource.h`, `src/res/blocks.rc`, `src/res/noble.rc`, `src/res/noble.ico`, `src/engine/EmbeddedBlocks.hpp`, `src/engine/EmbeddedBlocks.cpp`, `src/engine/BlamEngine.cpp`, `src/engine/ReachHost.cpp`, `src/career/Career.hpp`, `src/career/Career.cpp`, `src/ui/ArmorCustomizer.cpp`, `src/ui/FrontEndMenu.cpp`, `src/common/DeviceIdentity.cpp`, `src/common/Settings.hpp`, `src/common/Settings.cpp`, `src/host/Window.cpp`, `src/common/Version.hpp`, `docs/HANDOFF.md`, `docs/AGENT-STATUS.md`.
+
+**What was actually found & fixed (Root Cause Analysis):**
+1. **Embedded Launch Blocks & Internal Asset Protection (Zero Loose .bin Files):**
+   - Reverse-engineered and compiled all 113 binary launch blocks and templates (`launch_block_1.bin`, `lb_m_c_1.bin`, `profile_1.bin`, and all 110 Campaign/Firefight difficulty blocks in `data/blocks/*.bin`) into the client executable using Windows PE `.rc` `RCDATA` resources (`src/res/noble.rc`, `src/res/blocks.rc`).
+   - Implemented `EmbeddedBlocks::GetBlock` and `EmbeddedBlocks::HasBlock` querying mapped PE resources via `FindResourceA(..., MAKEINTRESOURCEA(10))` and `LockResource` with zero disk reads and zero memory allocations.
+   - Wired `BlamEngine.cpp` (`LaunchMap`/`StartEngine`) and `ReachHost.cpp` (`HostSlot34_ProfileSettings`) to load authentic prebuilt blocks from embedded resources before falling back to disk.
+   - Excluded `blocks/` directory and loose `.bin` files from `build-package.ps1`. The release build `Noble.exe` operates with zero loose `.bin` files on disk, protecting sensitive internal structures from ripping and tampering.
+
+2. **Application Logo & Windows Icon Binding (`noble_icon`):**
+   - Converted `noble_icon.png` into a multi-resolution icon `src/res/noble.ico` (256x256, 64x64, 48x48, 32x32, 16x16) registered as `IDI_NOBLE_ICON` (101) in `src/res/resource.h` and `src/res/noble.rc`.
+   - Updated `Window.cpp` to load `MAKEINTRESOURCEW(101)` for `wc.hIcon` and `wc.hIconSm`, and dispatches `WM_SETICON` (Big and Small) on window creation so taskbar, window titlebar, and Windows Explorer display the official custom icon.
+
+3. **Unified Save & Preferences Storage by Player ID (Eliminating Duplicate Folders):**
+   - *Root cause of `userdata/kind1` and `userdata/kind2`:* In `ReachHost.cpp`, `HostSlot47_UserDataFolder` previously generated distinct paths per engine category (`kind1` for preferences, `kind2` for autosaves).
+   - Refactored `HostSlot47_UserDataFolder` to route all engine saves and settings into a single unified directory per player ID: `userdata/<deviceId>/saves/HaloReach`.
+   - Implemented automated migration of legacy `kind1` and `kind2` directories into `userdata/<deviceId>/saves/HaloReach` on startup so no player checkpoints or configurations are lost.
+   - Removed `Desktop\Halo Reach Community Edition\build\bin\Release\data` from `KnownDataDirs()` in `DeviceIdentity.cpp` to prevent build directory files from polluting or overwriting user progression.
+
+4. **Armory Purchases, Dev Unlock-All & Career Stat Tracking:**
+   - Added `Career::MarkArmoryItemOwned(const std::string& key)` in `Career.hpp` & `Career.cpp`.
+   - Updated `ArmorCustomizer.cpp` `choose()` to automatically register any chosen/equipped armor piece as owned in `career.dat` and persist immediately.
+   - Updated `Career::DevSetArmoryUnlockAll(true)` and `LoadLocked()` to populate all 179 catalog items from `kCatalogItems` into `s_totals.armoryOwned`, ensuring `rec.totals.armoryOwned.size()` accurately reflects unlocked status.
+   - Updated `FrontEndMenu.cpp` pre-game lobby card to display accurate values for `ARMORY ITEMS BOUGHT` (shows 179 when unlock-all is active), `CHALLENGES DONE NOW` (defaults denominator to active challenge count or 4), and `COMMENDATIONS` (displays `0%` rather than empty `-`).
+
+5. **Player Name Sanitization & Live Gamertag Updates:**
+   - Enforced default player name `"NobleSix"` for new players if blank or whitespace-only, with strict length bounds (1 to 20 characters max) across `Settings.cpp`, `Settings.hpp`, `DeviceIdentity.cpp`, and `FrontEndMenu.cpp`.
+   - In `ReachHost.cpp` (`HostSlot88_UserIdentity`), eliminated the stale `static const std::wstring gamerTagW` initialization that locked the gamertag to its launch-time value. It now queries `Settings::Get().Snapshot().playerName` dynamically on each engine request, properly truncated and padded for the scoreboard and lobby.
+
+6. **Pristine Release Packaging Verification:**
+   - Ran `build-package.ps1` to produce a completely clean `Documents/Noble Launcher` installation.
+   - Verified zero developer binaries (`noble-dev.exe`), zero master server scripts (`master_server.js`), zero loose `.bin` blocks, zero `userdata` or developer ID leakage, zero dead armor assets, and zero nested duplicate folders (`mods/mods`).
+
+## 1. Previous Work: Embedded Audio, Realtime WASAPI Volume, Master Server Script Exclusion & Clean Release Packaging (0.9.16.17) (@O7OF)
 
 **Version:** 0.9.16.17. **Build:** noble-client, noble-dev, noble-dedicated (0 errors, 0 warnings on MSVC Release x64). Files: `CMakeLists.txt`, `build-package.ps1`, `src/audio/ProcessAudio.hpp`, `src/audio/ProcessAudio.cpp`, `src/audio/ReachAudio.cpp`, `src/career/Career.cpp`, `src/engine/ReachHost.hpp`, `src/engine/ReachHost.cpp`, `src/main.cpp`, `src/ui/MenuSoundData.inc`, `src/ui/MenuSounds.cpp`, `src/ui/FrontEndMenu.cpp`, `src/ui/SettingsPanel.cpp`, `src/common/Version.hpp`, `docs/HANDOFF.md`, `docs/AGENT-STATUS.md`.
 

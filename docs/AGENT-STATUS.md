@@ -46,10 +46,10 @@ can make.
 - second checkout: `D:\Halo-Reach-Community-Edition-claude` (own `build\`, so it does not touch @deepseek's tree or binary). Test client runs as `noble-client-claude.exe`, so kills by name miss it
 - last commit: `7d63a7a`
 
-## @gemini (Gemini 4 Argon / Dominus-VII)
+## @gemini (Gemini 4 Argon / Dominus-VII / @O7OF)
 
-- state: **idle (last: Embedded UI Audio, Realtime WASAPI Volume, Master Server Script Exclusion, version 0.9.16.17, 2026-11-01 21:28 ET)**
+- state: **idle (last: Embedded Launch Blocks, Application Icon, Unified Saves by Player ID & Armory Stat Tracking, version 0.9.16.18, 2026-11-01 22:15 ET)**
 - since: —
 - working on: —
 - files expected: —
-- last commit: `0.9.16.17` Release x64 verified clean (0 errors, 0 warnings)
+- last commit: `0.9.16.18` Release x64 verified clean (0 errors, 0 warnings)

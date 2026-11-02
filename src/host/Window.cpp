@@ -27,6 +27,8 @@ bool Window::Create() {
     wc.style = CS_HREDRAW | CS_VREDRAW | CS_OWNDC;
     wc.lpfnWndProc = StaticWndProc;
     wc.hInstance = m_hInstance;
+    wc.hIcon = LoadIconW(m_hInstance, MAKEINTRESOURCEW(101));
+    wc.hIconSm = LoadIconW(m_hInstance, MAKEINTRESOURCEW(101));
     wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
     wc.hbrBackground = reinterpret_cast<HBRUSH>(GetStockObject(BLACK_BRUSH));
     wc.lpszClassName = L"HaloReachCE_WindowClass";
@@ -75,6 +77,9 @@ bool Window::Create() {
         NOBLE_ERROR("Failed to create Win32 host window. Error: {}", GetLastError());
         return false;
     }
+
+    SendMessageW(m_hwnd, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(wc.hIcon));
+    SendMessageW(m_hwnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(wc.hIconSm));
 
     NOBLE_INFO("Win32 host window created successfully ({}x{}). HWND: 0x{:X}", 
         m_width, m_height, reinterpret_cast<uintptr_t>(m_hwnd));

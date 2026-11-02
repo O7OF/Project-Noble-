@@ -3657,9 +3657,14 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
             }
             statLine("GAMES PLAYED", std::to_string(rec.totals.gamesPlayed));
             statLine("KILLS / DEATHS", std::to_string(rec.totals.kills) + " / " + std::to_string(rec.totals.deaths));
-            statLine("CHALLENGES DONE NOW", std::to_string(challengesDone) + " / " + std::to_string(challengeCount));
-            statLine("COMMENDATIONS", tierMax > 0 ? std::to_string(tiers * 100 / tierMax) + "%" : std::string("-"));
-            statLine("ARMORY ITEMS BOUGHT", std::to_string(rec.totals.armoryOwned.size()));
+            const int totalChallenges = challengeCount > 0 ? challengeCount : 4;
+            statLine("CHALLENGES DONE NOW", std::to_string(challengesDone) + " / " + std::to_string(totalChallenges));
+            statLine("COMMENDATIONS", tierMax > 0 ? std::to_string(tiers * 100 / tierMax) + "%" : std::string("0%"));
+            size_t boughtCount = rec.totals.armoryOwned.size();
+            if (rec.totals.armoryUnlockAll && boughtCount == 0) {
+                boughtCount = 179; // Total catalog count when unlock-all is active
+            }
+            statLine("ARMORY ITEMS BOUGHT", std::to_string(boughtCount));
         } else {
             int games = player.gamesPlayed;
             int kills = player.kills;

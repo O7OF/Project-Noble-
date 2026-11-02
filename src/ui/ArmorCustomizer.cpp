@@ -1953,6 +1953,12 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
             return;
         }
         s_buyRow = -1;
+        if (value >= 0 && value < static_cast<int>(r.options.size())) {
+            const auto& opt = r.options[value];
+            if (!opt.buyKey.empty()) {
+                Career::MarkArmoryItemOwned(opt.buyKey);
+            }
+        }
         if (*r.index == value && r.index != &speciesInt && r.index != &bodyInt) return;
         *r.index = value;
         if (r.kind == RowKind::Colour) {   // a palette choice replaces any custom wheel colour

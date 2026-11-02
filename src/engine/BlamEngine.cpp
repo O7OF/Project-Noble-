@@ -1,4 +1,5 @@
 #include "BlamEngine.hpp"
+#include "EmbeddedBlocks.hpp"
 #include "engine/VariantRules.hpp"
 #include "ReachHost.hpp"
 #include "network/NetworkTransport.hpp"
@@ -399,39 +400,62 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
     const bool isForge = (gameModeTag == 3);
     uint32_t effectiveMapId = isMainMenu ? static_cast<uint32_t>(-2) : mapId;
 
+    std::string blockName;
     if (isMainMenu) {
-        // Authentic Reach Main Menu launch block
-        if (std::filesystem::exists(dataRoot / "lb_m_c_1.bin")) {
-            blockPath = dataRoot / "lb_m_c_1.bin";
-        }
+        blockName = "lb_m_c_1.bin";
     } else if (mapId >= 210 && mapId <= 219) {
-        // Firefight
-        blockPath = dataRoot / "blocks" / ("firefight_" + std::to_string(mapId) + "_d" + std::to_string(clampedDiff) + ".bin");
-        if (!std::filesystem::exists(blockPath)) {
-            blockPath = dataRoot / "blocks" / ("firefight_" + std::to_string(mapId) + ".bin");
-        }
+        std::string cand1 = "firefight_" + std::to_string(mapId) + "_d" + std::to_string(clampedDiff) + ".bin";
+        std::string cand2 = "firefight_" + std::to_string(mapId) + ".bin";
+        if (EmbeddedBlocks::HasBlock(cand1)) blockName = cand1;
+        else if (EmbeddedBlocks::HasBlock(cand2)) blockName = cand2;
+        else if (std::filesystem::exists(dataRoot / "blocks" / cand1)) blockPath = dataRoot / "blocks" / cand1;
+        else if (std::filesystem::exists(dataRoot / "blocks" / cand2)) blockPath = dataRoot / "blocks" / cand2;
     } else if (mapId >= 178 && mapId <= 189) {
-        // Campaign
-        blockPath = dataRoot / "blocks" / ("campaign_" + std::to_string(mapId) + "_d" + std::to_string(clampedDiff) + ".bin");
-        if (!std::filesystem::exists(blockPath)) {
-            blockPath = dataRoot / "blocks" / ("campaign_" + std::to_string(mapId) + ".bin");
+        std::string cand1 = "campaign_" + std::to_string(mapId) + "_d" + std::to_string(clampedDiff) + ".bin";
+        std::string cand2 = "campaign_" + std::to_string(mapId) + ".bin";
+        if (EmbeddedBlocks::HasBlock(cand1)) blockName = cand1;
+        else if (EmbeddedBlocks::HasBlock(cand2)) blockName = cand2;
+        else if (std::filesystem::exists(dataRoot / "blocks" / cand1)) blockPath = dataRoot / "blocks" / cand1;
+        else if (std::filesystem::exists(dataRoot / "blocks" / cand2)) blockPath = dataRoot / "blocks" / cand2;
+    }
+
+    if (!blockName.empty()) {
+        size_t embSize = 0;
+        const uint8_t* embData = EmbeddedBlocks::GetBlock(blockName, &embSize);
+        if (embData && embSize > 0) {
+            size_t toCopy = std::min(embSize, static_cast<size_t>(LAUNCH_BLOCK_SIZE));
+            std::memcpy(block.data(), embData, toCopy);
+            loadedPrebuilt = true;
+            NOBLE_INFO("BlamEngine: Loaded authentic pre-built launch block from embedded resource '{}' ({} bytes)", blockName, embSize);
         }
     }
 
-    // Fallback: If prebuilt campaign or firefight block is missing, synthesize from lb_m_c_1.bin template
-    if ((blockPath.empty() || !std::filesystem::exists(blockPath)) && (isCampaign || isFirefight)) {
-        if (std::filesystem::exists(dataRoot / "lb_m_c_1.bin")) {
-            blockPath = dataRoot / "lb_m_c_1.bin";
-            NOBLE_INFO("BlamEngine: Synthesizing launch block from template '{}' for mode {}", blockPath.string(), isCampaign ? "Campaign" : "Firefight");
-        }
-    }
-
-    if (!blockPath.empty() && std::filesystem::exists(blockPath)) {
+    // Fallback: Check disk if embedded resource wasn't used
+    if (!loadedPrebuilt && !blockPath.empty() && std::filesystem::exists(blockPath)) {
         std::ifstream file(blockPath, std::ios::binary);
         if (file) {
             file.read(reinterpret_cast<char*>(block.data()), LAUNCH_BLOCK_SIZE);
             loadedPrebuilt = true;
             NOBLE_INFO("BlamEngine: Loaded authentic pre-built launch block from '{}'", blockPath.string());
+        }
+    }
+
+    // Fallback: Synthesize from lb_m_c_1.bin template if needed
+    if (!loadedPrebuilt && (isCampaign || isFirefight)) {
+        size_t embTmplSize = 0;
+        const uint8_t* embTmpl = EmbeddedBlocks::GetBlock("lb_m_c_1.bin", &embTmplSize);
+        if (embTmpl && embTmplSize > 0) {
+            size_t toCopy = std::min(embTmplSize, static_cast<size_t>(LAUNCH_BLOCK_SIZE));
+            std::memcpy(block.data(), embTmpl, toCopy);
+            loadedPrebuilt = true;
+            NOBLE_INFO("BlamEngine: Synthesizing launch block from embedded 'lb_m_c_1.bin' template for mode {}", isCampaign ? "Campaign" : "Firefight");
+        } else if (std::filesystem::exists(dataRoot / "lb_m_c_1.bin")) {
+            std::ifstream file(dataRoot / "lb_m_c_1.bin", std::ios::binary);
+            if (file) {
+                file.read(reinterpret_cast<char*>(block.data()), LAUNCH_BLOCK_SIZE);
+                loadedPrebuilt = true;
+                NOBLE_INFO("BlamEngine: Synthesizing launch block from disk template for mode {}", isCampaign ? "Campaign" : "Firefight");
+            }
         }
     }
 

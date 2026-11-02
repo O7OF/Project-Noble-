@@ -187,15 +187,18 @@ set(SOURCES
     src/common/DeviceIdentity.cpp
     src/common/SaveCodec.cpp
     src/engine/KeyBindings.cpp
+    src/engine/EmbeddedBlocks.cpp
     src/career/Career.cpp
     src/network/MasterServerClient.cpp
     src/network/SteamAuth.cpp
     src/network/NetworkTransport.cpp
     src/network/AuthClient.cpp
     src/network/SocialClient.cpp
+    src/res/noble.rc
 )
 
 set(HEADERS
+    src/engine/EmbeddedBlocks.hpp
     src/common/Logger.hpp
     src/common/Types.hpp
     src/common/Version.hpp

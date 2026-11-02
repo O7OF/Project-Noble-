@@ -57,7 +57,7 @@ $release = Join-Path $build 'bin\Release'
 $clientExe = Join-Path $release 'noble-client.exe'
 if (-not (Test-Path $clientExe)) { throw 'missing noble-client.exe' }
 
-# Clean build directory of any stale nested duplicates, user data, armor, or master server scripts
+# Clean build directory of any stale nested duplicates, user data, armor, blocks, or master server scripts
 foreach ($bad in @(
     (Join-Path $release 'data\data'),
     (Join-Path $release 'data\mods\mods'),
@@ -67,17 +67,22 @@ foreach ($bad in @(
     (Join-Path $release 'data\sandbox'),
     (Join-Path $release 'data\userdata'),
     (Join-Path $release 'data\armor'),
+    (Join-Path $release 'data\blocks'),
+    (Join-Path $release 'data\launch_block_1.bin'),
+    (Join-Path $release 'data\lb_m_c_1.bin'),
+    (Join-Path $release 'data\profile_1.bin'),
     (Join-Path $release 'autosave'),
+    (Join-Path $release 'userdata'),
     (Join-Path $release 'dedicated_data'),
     (Join-Path $release 'tools\master-server')
 )) {
     if (Test-Path $bad) { Remove-Item $bad -Recurse -Force -ErrorAction SilentlyContinue }
 }
 
-# Sync clean repo data into build\bin\Release\data
+# Sync clean repo data into build\bin\Release\data (excluding loose blocks and templates now compiled in)
 $repoData = Join-Path $repo 'data'
 if (Test-Path $repoData) {
-    & robocopy $repoData (Join-Path $release 'data') /E /XO /XD userdata autosave cache sandbox armor /NFL /NDL /NJH /NJS /NP | Out-Null
+    & robocopy $repoData (Join-Path $release 'data') /E /XO /XD userdata autosave cache sandbox armor blocks /XF launch_block_1.bin lb_m_c_1.bin profile_1.bin *.log *.dmp *.tmp /NFL /NDL /NJH /NJS /NP | Out-Null
 }
 $repoAssets = Join-Path $repo 'assets'
 if (Test-Path $repoAssets) {
@@ -99,10 +104,10 @@ New-Item -ItemType Directory -Force -Path $Destination | Out-Null
 # 1. Copy client executable as Noble.exe ONLY (noble-dev.exe is NEVER copied!)
 Copy-Item $clientExe (Join-Path $Destination 'Noble.exe') -Force
 
-# 2. Copy data folder (excluding userdata, autosave, cache, sandbox, armor)
+# 2. Copy data folder (excluding userdata, autosave, cache, sandbox, armor, blocks, and prebuilt bins)
 $destData = Join-Path $Destination 'data'
 New-Item -ItemType Directory -Force -Path $destData | Out-Null
-& robocopy (Join-Path $release 'data') $destData /E /XD userdata autosave cache sandbox armor /XF *.log *.dmp *.tmp /NFL /NDL /NJH /NJS /NP | Out-Null
+& robocopy (Join-Path $release 'data') $destData /E /XD userdata autosave cache sandbox armor blocks /XF launch_block_1.bin lb_m_c_1.bin profile_1.bin *.log *.dmp *.tmp /NFL /NDL /NJH /NJS /NP | Out-Null
 
 # 3. Copy tools\vgmstream
 $destTools = Join-Path $Destination 'tools\vgmstream'
@@ -112,11 +117,13 @@ if (Test-Path (Join-Path $release 'tools\vgmstream')) {
 }
 
 # 4. Extra cleanup pass to guarantee ZERO dev builds, master server scripts, or duplicate folders in package
-foreach ($devFile in @('noble-dev.exe', 'noble-dev.map', 'noble-dedicated.exe', 'noble-client.exe', 'dedicated_server.json', 'master_server.js', 'test_master_server.js')) {
+foreach ($devFile in @('noble-dev.exe', 'noble-dev.map', 'noble-dedicated.exe', 'noble-client.exe', 'dedicated_server.json', 'master_server.js', 'test_master_server.js', 'launch_block_1.bin', 'lb_m_c_1.bin', 'profile_1.bin')) {
     $f = Join-Path $Destination $devFile
     if (Test-Path $f) { Remove-Item $f -Force -ErrorAction SilentlyContinue }
+    $fData = Join-Path $destData $devFile
+    if (Test-Path $fData) { Remove-Item $fData -Force -ErrorAction SilentlyContinue }
 }
-foreach ($badFolder in @('dedicated_data', 'tools\master-server', 'master-server', 'data\userdata', 'data\armor')) {
+foreach ($badFolder in @('dedicated_data', 'tools\master-server', 'master-server', 'data\userdata', 'data\armor', 'data\blocks', 'userdata')) {
     $f = Join-Path $Destination $badFolder
     if (Test-Path $f) { Remove-Item $f -Recurse -Force -ErrorAction SilentlyContinue }
 }
@@ -136,6 +143,8 @@ Write-Host "Executable: $(Join-Path $Destination 'Noble.exe')"
 Write-Host "Dev build in package? $(Test-Path (Join-Path $Destination 'noble-dev.exe'))"
 Write-Host "User data in package? $(Test-Path (Join-Path $Destination 'data\userdata'))"
 Write-Host "Armor directory in package? $(Test-Path (Join-Path $Destination 'data\armor'))"
+Write-Host "Loose blocks directory in package? $(Test-Path (Join-Path $Destination 'data\blocks'))"
+Write-Host "Loose .bin files in package? $((Get-ChildItem -Path $Destination -Recurse -Filter '*.bin' -ErrorAction SilentlyContinue | Measure-Object).Count -gt 0)"
 Write-Host "Nested mods in package? $(Test-Path (Join-Path $Destination 'data\mods\mods'))"
 Write-Host "Master server script in package? $((Get-ChildItem -Path $Destination -Recurse -Filter '*master*server*.js' -ErrorAction SilentlyContinue | Measure-Object).Count -gt 0)"
 Write-Host '== Packaging Complete =='

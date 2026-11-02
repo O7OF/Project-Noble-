@@ -169,6 +169,8 @@ int64_t Balance();
 bool OwnsArmoryItem(const std::string& key);
 // Spends the cR and marks the item owned; false (nothing spent) if already owned or the balance is too low.
 bool BuyArmoryItem(const std::string& key, int64_t price);
+// Marks an item as owned (e.g. unlocked or equipped) and saves immediately.
+void MarkArmoryItemOwned(const std::string& key);
 
 // Developer tools (only accessible to developer accounts)
 bool ArmoryUnlockAll();

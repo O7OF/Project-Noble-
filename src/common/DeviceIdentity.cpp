@@ -178,13 +178,7 @@ std::vector<std::filesystem::path> KnownDataDirs() {
     addDir(std::filesystem::path(appdata) / "ProjectNoble" / "data");
   }
 
-  // Desktop repo build dir (if running from Documents or elsewhere)
-  wchar_t desktop[MAX_PATH] = {};
-  if (SUCCEEDED(SHGetFolderPathW(nullptr, CSIDL_DESKTOPDIRECTORY, nullptr,
-                                 SHGFP_TYPE_CURRENT, desktop))) {
-    addDir(std::filesystem::path(desktop) / "Halo Reach Community Edition" /
-           "build" / "bin" / "Release" / "data");
-  }
+  // Known data directories are strictly client runtime paths (Documents & AppData)
 
   return dirs;
 }

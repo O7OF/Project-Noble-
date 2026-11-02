@@ -1207,6 +1207,17 @@ bool OwnsArmoryItem(const std::string& key) {
     return std::find(s_totals.armoryOwned.begin(), s_totals.armoryOwned.end(), key) != s_totals.armoryOwned.end();
 }
 
+void MarkArmoryItemOwned(const std::string& key) {
+    if (key.empty()) return;
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
+    LoadLocked();
+    if (std::find(s_totals.armoryOwned.begin(), s_totals.armoryOwned.end(), key) == s_totals.armoryOwned.end()) {
+        s_totals.armoryOwned.push_back(key);
+        SaveLocked();
+        NOBLE_INFO("Career: marked Armory item '{}' owned (total owned: {})", key, s_totals.armoryOwned.size());
+    }
+}
+
 bool BuyArmoryItem(const std::string& key, int64_t price) {
     std::lock_guard<std::recursive_mutex> lock(s_mutex);
     LoadLocked();
