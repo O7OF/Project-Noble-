@@ -25,6 +25,18 @@ namespace Career {
 
 namespace {
 
+struct ArmoryCatalogItem {
+    const char* slot;
+    const char* id;
+    const char* picDir;
+    const char* pic;
+    const char* rank;
+    int64_t credits;
+};
+static constexpr ArmoryCatalogItem kCatalogItems[] = {
+#include "../ui/SpartanArmoryCatalog.inc"
+};
+
 // ---------------------------------------------------------------------------------------------
 // MCC game-results record (0x5D138 bytes), as built by haloreach+0x39128 from the engine's own
 // results at haloreach+0x28B83B0. Offsets confirmed from that function; the meaning of individual
@@ -1219,6 +1231,11 @@ void DevResetProgress() {
 void RegisterPlayerName(uint64_t playerId, const std::string& name, const std::string& tag) {
     std::lock_guard<std::mutex> lock(s_mutex);
     s_playerNames[playerId] = { name, tag };
+}
+
+void RegisterPlayerSlot(int slotIndex, const std::string& name, const std::string& tag) {
+    std::lock_guard<std::mutex> lock(s_mutex);
+    s_playerSlots[slotIndex] = { name, tag };
 }
 } // namespace Career
 } // namespace noble

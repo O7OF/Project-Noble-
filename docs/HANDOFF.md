@@ -7,9 +7,41 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 
 **Goal:** `noble-client.exe` loads MCC's own `haloreach.dll` (Halo: Reach) and drives it **without MCC**, like the existing
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
-MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.16.14 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.16.15 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
 
-## 0. Pick up here (2026-11-01, 15:45 ET) - Elite Illumination Dual-Pipeline, 16-Player Campaign Co-op & Pregame Stats Sync (0.9.16.14) (@O7OF)
+## 0. Pick up here (2026-11-01, 20:30 ET) - Elite Illumination Isolation, Stable ID Persistence & Scoreboard Names (0.9.16.15) (@O7OF)
+
+**Version:** 0.9.16.15. **Build:** noble-client, noble-dev, noble-dedicated (0 errors, 0 warnings on MSVC Release x64). Files: `src/career/Career.hpp`, `src/career/Career.cpp`, `src/engine/ReachArmory.cpp`, `src/engine/ElitePack.cpp`, `src/common/DeviceIdentity.cpp`, `src/common/Settings.cpp`, `src/ui/SettingsPanel.cpp`, `src/ui/ArmorCustomizer.cpp`, `src/ui/FrontEndMenu.cpp`, `src/common/Version.hpp`, `docs/HANDOFF.md`, `docs/AGENT-STATUS.md`.
+
+**What was actually found & fixed (Root Cause Analysis):**
+1. **Elite Armor Body Bleed When Choosing Lights (Isolated Emissive Pipeline):**
+   - In `ReachArmory.cpp`: `words` represents the 4-channel diffuse color block (`s_eliteColorRecords`). In prior revisions `litArgb` had been placed into `words[2]`, causing selecting "Gold" for Lights to literally paint the entire Elite armor plates Gold instead of glowing eye slits/LEDs.
+   - Fixed `words` for Elites to contain `{ priArgb, secArgb, terArgb, (sel.accentColorIndex != 0 ? terArgb : priArgb) }`, completely isolating the diffuse armor plates from lights.
+   - Lights are now driven purely through the float4 emissive pipeline (`s_suitRecords` and `s_eliteIllumRecords`) with HDR multiplier `{ sel.lightsRgb * 4.0f, 1.0f }`.
+   - Updated quick rescan loop in `ReachArmory.cpp` to scan `s_suitRecords` for both Spartans and Elites.
+   - Removed redundant full-process memory rescans on biped rebuilds (`s_rescanRequested`), preventing character flashing/flickering and camera stutter when rotating models or switching slot focus.
+   - In `ElitePack.cpp`: Removed species-check guard (`s_localSpeciesElite`) in `RefreshLocalPicks()`, ensuring Elite colors are always loaded from `el` if `primary_color` exists and never contaminated by Spartan colors.
+   - In `ArmorCustomizer.cpp`: Added fallback in `LoadProfile()` so missing keys in `el` safely default to valid colors instead of leaving them uncolorable.
+
+2. **Armory Purchased Item Count Tracking on Dev Unlock All:**
+   - In `Career.cpp`: `DevSetArmoryUnlockAll(true)` and `LoadLocked()` now populate `s_totals.armoryOwned` with all 179 items from `SpartanArmoryCatalog.inc`, so the Service Record and pre-game lobby stat lines accurately track 179 items owned.
+   - Included `SpartanArmoryCatalog.inc` in `Career.cpp`.
+
+3. **Stable Device ID Persistence Across Name Changes:**
+   - Changed `SavePeerStats` and `LoadPeerStats` in `Career.cpp` to persist by stable ID (`DeviceIdentityStore::Get().deviceId`), so changing gamertags does not reset stats, lose progress, or duplicate save files.
+   - Purged obsolete name-based JSON files (`0xFF90.json`, `O8OF.json`, `TEST1.json`) and recursive nested folders (`data/userdata/kind1`, `data/userdata/kind2`, `players/players`, `results/results`).
+
+4. **Commendation & Challenge Tracking:**
+   - All 45 commendations in `Career.cpp` re-assigned from `CM::None` to active metrics (`CM::Kills`, `CM::Medals`, `CM::Games`).
+   - Extended `CommendationAmount` to take kills, assists, deaths, and medals, allowing commendations to properly advance across matches.
+
+5. **Player Name Validation & Scoreboard Resolution:**
+   - Implemented `RegisterPlayerSlot(int slotIndex, const std::string& name, const std::string& tag)` in `Career.cpp` and `Career.hpp`.
+   - Wired roster registration into `FrontEndMenu.cpp` on both host start and guest launch, mapping both `peerId` and `slotIndex` so scoreboard names always resolve correctly instead of showing "Player N".
+   - Default name for new players set to `"NobleSix"` in `DeviceIdentity.cpp` and `Settings.cpp`.
+   - Player name validation enforced between 1 and 20 characters maximum (trimmed, never blank/whitespace).
+
+## 1. Previous Work: Elite Illumination Dual-Pipeline, 16-Player Campaign Co-op & Pregame Stats Sync (0.9.16.14) (@O7OF)
 
 **Version:** 0.9.16.14. **Build:** noble-client, noble-dev (0 errors, 0 warnings on MSVC Release x64). Files: `src/engine/ReachArmory.cpp`, `src/hooks/LobbyPatches.cpp`, `src/network/MasterServerClient.hpp`, `src/network/MasterServerClient.cpp`, `src/ui/ArmorCustomizer.cpp`, `src/ui/FrontEndMenu.cpp`, `src/ui/PauseMenu.cpp`, `src/common/Version.hpp`, `docs/HANDOFF.md`, `docs/AGENT-STATUS.md`.
 
