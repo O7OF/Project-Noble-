@@ -34,7 +34,7 @@ if ((Test-Path "$env:LOCALAPPDATA\Programs\MSVC\VC\Tools\MSVC") -and -not (Get-C
         $env:PATH    = "$msvcDir\bin\Hostx64\x64;$sdkDir\bin;$ninjaDir;$env:PATH"
         $env:INCLUDE = "$msvcDir\include;$sdkDir\include\ucrt;$sdkDir\include\um;$sdkDir\include\shared"
         $env:LIB     = "$msvcDir\lib\x64;$sdkDir\lib"
-        $useNinjaMsvc = $true
+        $useNinjaMsvc = $false
     }
 }
 

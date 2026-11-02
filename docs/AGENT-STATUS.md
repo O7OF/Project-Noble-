@@ -48,8 +48,8 @@ can make.
 
 ## @gemini (Gemini 4 Argon / Dominus-VII / @O7OF)
 
-- state: **idle (last: Embedded Launch Blocks, Application Icon, Unified Saves by Player ID & Armory Stat Tracking, version 0.9.16.18, 2026-11-01 22:15 ET)**
+- state: **idle (last: Elite Armory Crash Fix, Master Server Region Dropdown & Multi-Peer Federation, NAT/UPnP Diagnostics, 16p Firefight & 128p Custom/Forge Expansion, version 0.9.16.19, 2026-11-01 23:00 ET)**
 - since: —
 - working on: —
 - files expected: —
-- last commit: `0.9.16.18` Release x64 verified clean (0 errors, 0 warnings)
+- last commit: `0.9.16.19` Release x64 verified clean (0 errors, 0 warnings)

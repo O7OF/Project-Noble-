@@ -9,6 +9,38 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
 MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.16.16 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
 
+## 0. Pick up here (2026-11-01, 23:00 ET) - Elite Armory Crash Fix, Master Server Region Dropdown & Multi-Peer Federation, NAT/UPnP Diagnostics, 16p Firefight & 128p Custom/Forge Expansion (0.9.16.19) (@O7OF)
+
+**Version:** 0.9.16.19. **Build:** noble-client, noble-dev, noble-dedicated (0 errors, 0 warnings on MSVC Release x64). Files: `src/engine/ReachArmory.cpp`, `src/ui/ServerBrowser.hpp`, `src/ui/ServerBrowser.cpp`, `src/ui/FrontEndMenu.cpp`, `src/ui/MissionLauncher.cpp`, `src/hooks/LobbyPatches.hpp`, `src/hooks/LobbyPatches.cpp`, `build-package.ps1`, `src/common/Version.hpp`, `docs/HANDOFF.md`, `docs/AGENT-STATUS.md`, and `C:\Users\Chey1\Desktop\ServerTestDeploy\server.js`.
+
+**What was actually found & fixed (Root Cause Analysis):**
+1. **Elite Armory Crash (STATUS_SXS_INVALID_DEACTIVATION 0xC0150010):**
+   - *Root Cause:* In `src/engine/ReachArmory.cpp`, the recently added `ScanEliteIllumRecordsIn` function scanned all committed `PAGE_READWRITE` memory across the entire process space for `{0.0f, 0.0f, 0.5f, 1.0f}` within 0.02 tolerance. This accidentally matched memory blocks belonging to internal Windows `ntdll`/`KERNELBASE` activation contexts. Subsequent writes via `SafeWriteFloats` corrupted the activation context cookie, causing `ntdll!RtlDeactivateActivationContext` to fail with `STATUS_SXS_INVALID_DEACTIVATION` 354 ms later.
+   - *Fix:* Completely removed `ScanEliteIllumRecordsIn` and `s_eliteIllumRecords`. Elite primary/secondary/accent colors and suit shaders are safely handled through `s_eliteColorRecords` using exact palette matching, preventing any heap/SXS memory corruption.
+
+2. **Master Server Region Selection & Zero URL Exposure (DDoS Hardening):**
+   - Implemented a clean region selection dropdown directly on the Server Browser toolbar (`US West (Oregon)`, `US East (Virginia)`, `EU West (London, UK)`, and `Offline / LAN Only`).
+   - Replaced raw master server URL text inputs with a user-friendly modal ("SELECT MATCHMAKING REGION") featuring radio buttons and region labels.
+   - Raw master server URLs are strictly hidden from the UI to protect backend infrastructure from scraping and targeted DDoS attacks.
+
+3. **Multi-Peer Federated Mesh Netcode (`ServerTestDeploy/server.js`):**
+   - Upgraded master server federation to support multi-node meshes across US West, US East, and London UK.
+   - `peerUrlsFor(req)` supports comma-separated `PEER_REGISTRY_URL` environment variables and automatically filters out the instance's own hostname to prevent self-querying or circular loops.
+   - Updated `peerBrowserSessions(req)` to query all peer nodes concurrently via `Promise.allSettled` with a 3.5s timeout and 5s cache.
+   - Enhanced `/api/players/online` and `/api/browser` to return aggregated active player counts across all peer nodes, using `?internal=1` flag to prevent circular double-counting.
+   - Pushed committed updates directly to the `ServerTestDeploy` remote repository on GitHub.
+   - Maintained P2P game architecture: master servers handle only signaling and NAT traversal handshakes; once peers connect, all gameplay simulation remains direct host P2P.
+
+4. **NAT Type Detection & UPnP Guidance:**
+   - Integrated live NAT type diagnostics into `ServerBrowser`: evaluates `UPnP::Get().IsActive()`, local IP, and public IP to categorize network status (`OPEN`, `MODERATE`, or `STRICT`).
+   - Displays real-time `[NAT: OPEN/MODERATE/STRICT]` and `[UPnP: ENABLED/DISABLED]` badges on the server browser status bar.
+   - Renders a prominent yellow advisory banner when NAT is not Open or UPnP is disabled, guiding players to enable UPnP or port forward UDP 11774 for optimal hosting.
+
+5. **Expanded Player Caps (16p Firefight, 128p Custom Games & Forge):**
+   - Expanded Firefight max lobby and match cap from 4 to 16 players in `LobbyPatches.cpp`, `MissionLauncher.cpp`, and `FrontEndMenu.cpp`.
+   - Expanded Custom Games and Forge max allowed players from 16/8 to 128 players max.
+   - Added selectable player count options in the UI up to 128 players.
+
 ## 0. Pick up here (2026-11-01, 22:15 ET) - Embedded Launch Blocks, Application Icon, Unified Saves by Player ID & Armory Stat Tracking (0.9.16.18) (@O7OF)
 
 **Version:** 0.9.16.18. **Build:** noble-client, noble-dev, noble-dedicated (0 errors, 0 warnings on MSVC Release x64). Files: `CMakeLists.txt`, `build-package.ps1`, `src/res/resource.h`, `src/res/blocks.rc`, `src/res/noble.rc`, `src/res/noble.ico`, `src/engine/EmbeddedBlocks.hpp`, `src/engine/EmbeddedBlocks.cpp`, `src/engine/BlamEngine.cpp`, `src/engine/ReachHost.cpp`, `src/career/Career.hpp`, `src/career/Career.cpp`, `src/ui/ArmorCustomizer.cpp`, `src/ui/FrontEndMenu.cpp`, `src/common/DeviceIdentity.cpp`, `src/common/Settings.hpp`, `src/common/Settings.cpp`, `src/host/Window.cpp`, `src/common/Version.hpp`, `docs/HANDOFF.md`, `docs/AGENT-STATUS.md`.

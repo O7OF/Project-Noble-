@@ -1585,7 +1585,8 @@ struct MenuState {
     int lobbyDifficulty = 1;
     uint64_t lobbySkulls = 0;
     int lobbyMaxPlayers = 16;
-    int sessionMaxPlayers = 16;    // players the Custom Game / Forge lobby will allow (4..16)
+    int sessionMaxPlayers = 16;    // players the Custom Game / Forge lobby will allow (4..128)
+    int ffMaxPlayers = 16;         // players the Firefight lobby will allow (4..16)
     std::string lobbyHostEndpoint;
     std::vector<LobbyPlayer> lobbyRoster;
     bool lobbyLaunchPending = false;
@@ -5354,19 +5355,45 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
                 ++focusRows;
                 y += 36.0f * ui.s;
             }
-            static const int kCaps[4] = { 4, 8, 12, 16 };
-            int capIdx = (st.sessionMaxPlayers <= 4) ? 0 : (st.sessionMaxPlayers <= 8) ? 1 : (st.sessionMaxPlayers <= 12) ? 2 : 3;
+            static const int kCaps[] = { 4, 8, 12, 16, 24, 32, 48, 64, 96, 128 };
+            constexpr int kNumCaps = static_cast<int>(sizeof(kCaps) / sizeof(kCaps[0]));
+            int capIdx = 3; // default 16
+            for (int ci = 0; ci < kNumCaps; ++ci) {
+                if (kCaps[ci] >= st.sessionMaxPlayers) {
+                    capIdx = ci;
+                    break;
+                }
+            }
             char capText[32];
             std::snprintf(capText, sizeof(capText), "%d PLAYERS", kCaps[capIdx]);
-            const int dc = OptionRow(ui, "players", ImVec2(px, y), pw, "PLAYERS", capText, st.focusRow == focusRows);
+            const int dc = OptionRow(ui, "players", ImVec2(px, y), pw, "MAX PLAYERS", capText, st.focusRow == focusRows);
             if (dc) {
-                capIdx = (capIdx + dc + 4) % 4;
+                capIdx = (capIdx + dc + kNumCaps) % kNumCaps;
                 st.sessionMaxPlayers = kCaps[capIdx];
             }
             y += 36.0f * ui.s;
             ++focusRows;
         }
         if (ff) {
+            static const int kFfCaps[] = { 4, 8, 12, 16 };
+            constexpr int kNumFfCaps = 4;
+            int ffCapIdx = 3; // default 16
+            for (int ci = 0; ci < kNumFfCaps; ++ci) {
+                if (kFfCaps[ci] >= st.ffMaxPlayers) {
+                    ffCapIdx = ci;
+                    break;
+                }
+            }
+            char ffCapText[32];
+            std::snprintf(ffCapText, sizeof(ffCapText), "%d PLAYERS", kFfCaps[ffCapIdx]);
+            const int dcFf = OptionRow(ui, "ff_players", ImVec2(px, y), pw, "MAX PLAYERS", ffCapText, st.focusRow == focusRows);
+            if (dcFf) {
+                ffCapIdx = (ffCapIdx + dcFf + kNumFfCaps) % kNumFfCaps;
+                st.ffMaxPlayers = kFfCaps[ffCapIdx];
+            }
+            y += 36.0f * ui.s;
+            ++focusRows;
+
             // The same rules editor as Custom Game. Firefight's own wave and skull options aren't mapped yet.
             const int ffOptionsChange = OptionRow(ui, "ff_options", ImVec2(px, y), pw, "GAME OPTIONS", "EDIT", st.focusRow == focusRows);
             ImGui::SetCursorScreenPos(ImVec2(px, y));
@@ -5436,7 +5463,7 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
             const std::string lobbyScenario = map ? (map->launchScenario.empty() ? map->scenario : map->launchScenario)
                                                   : std::string("20_sword_slayer");
             SetupHostLobby(st, lobbyScenario, mode, varPath, varName, ff ? st.difficulty : 1, 0,
-                           ff ? 4 : st.sessionMaxPlayers, map ? map->mod : nullptr, map ? map->mapOverride : std::filesystem::path(),
+                           ff ? st.ffMaxPlayers : st.sessionMaxPlayers, map ? map->mod : nullptr, map ? map->mapOverride : std::filesystem::path(),
                            map ? map->name : std::string(), map ? map->imageLoading : std::filesystem::path(),
                            map ? map->imageThumbnail : std::filesystem::path());
             // A chosen playlist starts the lobby on its first entry.

@@ -14,7 +14,7 @@
 namespace noble {
 
 bool LobbyPatches::s_isApplied = false;
-uint32_t LobbyPatches::s_maxMultiplayerPlayers = 32; // Default to expanded 32 players
+uint32_t LobbyPatches::s_maxMultiplayerPlayers = 128; // Expanded 128 players for Custom Games / Forge
 uint32_t LobbyPatches::s_maxCoopPlayers = 16;        // Default to expanded 16 players for campaign/firefight
 
 // Detour for c_network_session_membership::set_slot_counts (?set_slot_counts@c_network_session_membership@@QAAXJJ_N@Z)
@@ -27,9 +27,9 @@ static void __fastcall Hook_SetSlotCounts(void* thisPtr, int32_t privateSlots, i
     int32_t targetSlots = publicSlots;
     const int32_t expandedMp = static_cast<int32_t>(LobbyPatches::GetMaxMultiplayerPlayers());
     const int32_t expandedCoop = static_cast<int32_t>(LobbyPatches::GetMaxCoopPlayers());
-    if (publicSlots == 16 && expandedMp > publicSlots) {
-        targetSlots = expandedMp;
-        NOBLE_INFO("LobbyPatches: Expanding multiplayer session slot count from {} to {} (private={}, isRanked={})",
+    if ((publicSlots == 16 || publicSlots == 8) && expandedMp > publicSlots) {
+        targetSlots = std::min(expandedMp, 128);
+        NOBLE_INFO("LobbyPatches: Expanding multiplayer/forge session slot count from {} to {} (private={}, isRanked={})",
             publicSlots, targetSlots, privateSlots, isRanked);
     } else if (publicSlots == 4 && expandedCoop > 4) {
         targetSlots = std::min(expandedCoop, 16);
@@ -715,7 +715,7 @@ bool LobbyPatches::Apply(HMODULE hReachDll) {
 }
 
 void LobbyPatches::SetMaxMultiplayerPlayers(uint32_t maxPlayers) {
-    if (maxPlayers > 64) maxPlayers = 64;
+    if (maxPlayers > 128) maxPlayers = 128;
     if (maxPlayers < 16) maxPlayers = 16;
     s_maxMultiplayerPlayers = maxPlayers;
 }

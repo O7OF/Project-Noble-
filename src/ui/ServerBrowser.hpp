@@ -83,7 +83,7 @@ private:
 
     // Master server modal
     bool m_showMasterModal = false;
-    char m_masterUrl[256] = { 0 };
+    int m_selectedRegion = 0;
 };
 
 } // namespace noble

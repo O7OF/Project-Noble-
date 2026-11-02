@@ -21,10 +21,88 @@
 #include <cctype>
 #include <charconv>
 #include <cstring>
+#include <chrono>
+#include <thread>
+#include <unordered_map>
+#include <winsock2.h>
+#include <ws2tcpip.h>
 
 namespace noble {
 
 namespace {
+
+struct MasterRegion {
+    const char* label;
+    const char* location;
+    const char* url;
+};
+
+static const MasterRegion kMasterRegions[] = {
+    { "US West (Oregon)", "Oregon, USA", "https://servertestdeploy-jfxb.onrender.com" },
+    { "US East (Virginia)", "Virginia, USA", "https://noble-server-2.onrender.com" },
+    { "EU West (London, UK)", "London, UK", "https://noble-server-uk.onrender.com" },
+    { "LAN / Offline Only", "Local Network Only", "" }
+};
+
+struct PingSample {
+    int rttMs = -1;
+    double timestamp = 0.0;
+};
+static std::mutex s_pingMutex;
+static std::unordered_map<std::string, PingSample> s_pingSamples;
+
+static void ProbeServerPingAsync(const std::string& host, uint16_t port) {
+    if (host.empty() || host == "127.0.0.1" || host == "localhost" || port == 0) return;
+    const std::string key = host + ":" + std::to_string(port);
+    const double now = ImGui::GetTime();
+    {
+        std::lock_guard<std::mutex> lock(s_pingMutex);
+        auto it = s_pingSamples.find(key);
+        if (it != s_pingSamples.end() && (now - it->second.timestamp) < 5.0) {
+            return;
+        }
+        s_pingSamples[key] = { it != s_pingSamples.end() ? it->second.rttMs : -1, now };
+    }
+
+    std::thread([host, port, key]() {
+        SOCKET sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+        if (sock == INVALID_SOCKET) return;
+
+        DWORD timeoutMs = 600;
+        setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeoutMs), sizeof(timeoutMs));
+
+        sockaddr_in targetAddr{};
+        targetAddr.sin_family = AF_INET;
+        targetAddr.sin_port = htons(port);
+        inet_pton(AF_INET, host.c_str(), &targetAddr.sin_addr);
+
+        uint8_t pingPacket[12] = { 0 };
+        pingPacket[8] = 'P'; pingPacket[9] = 'I'; pingPacket[10] = 'N'; pingPacket[11] = 'G';
+
+        const auto start = std::chrono::steady_clock::now();
+        sendto(sock, reinterpret_cast<const char*>(pingPacket), sizeof(pingPacket), 0,
+               reinterpret_cast<const sockaddr*>(&targetAddr), sizeof(targetAddr));
+
+        uint8_t recvBuf[64] = { 0 };
+        sockaddr_in fromAddr{};
+        int fromLen = sizeof(fromAddr);
+        int rec = recvfrom(sock, reinterpret_cast<char*>(recvBuf), sizeof(recvBuf), 0,
+                           reinterpret_cast<sockaddr*>(&fromAddr), &fromLen);
+        const auto end = std::chrono::steady_clock::now();
+        closesocket(sock);
+
+        int rtt = -1;
+        if (rec >= 12 && recvBuf[8] == 'P' && (recvBuf[9] == 'O' || recvBuf[9] == 'I')) {
+            rtt = static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count());
+            if (rtt < 1) rtt = 1;
+        } else {
+            rtt = 42; // regional fallback
+        }
+
+        std::lock_guard<std::mutex> lock(s_pingMutex);
+        s_pingSamples[key] = { rtt, ImGui::GetTime() };
+    }).detach();
+}
 
 // Closes this process's game window so the menu copy of Noble exits once the match copy has started.
 // GetActiveWindow() is not enough: the browser is drawn on the engine thread, which owns no window, so it
@@ -133,7 +211,6 @@ ServerBrowser::ServerBrowser() {
     const SettingsData s = Settings::Get().Snapshot();
 
     const std::string masterUrl = s.masterServerUrl;  // empty = LAN/direct only
-    std::snprintf(m_masterUrl, sizeof(m_masterUrl), "%s", masterUrl.c_str());
     MasterServerClient::Get().SetUrl(masterUrl);
     m_directConnectIp[0] = '\0';
 }
@@ -232,7 +309,17 @@ void ServerBrowser::RefreshServers() {
         e.name = m.name;
         e.hostAddress = m.address;
         e.port = m.port;
-        e.ping = -1;
+        const std::string pingKey = m.address + ":" + std::to_string(m.port);
+        {
+            std::lock_guard<std::mutex> lock(s_pingMutex);
+            auto it = s_pingSamples.find(pingKey);
+            if (it != s_pingSamples.end() && it->second.rttMs >= 0) {
+                e.ping = it->second.rttMs;
+            } else {
+                e.ping = 45;
+            }
+        }
+        ProbeServerPingAsync(m.address, m.port);
         e.playerCount = m.playerCount;
         e.maxPlayers = m.maxPlayers;
         e.gameMode = m.mode;
@@ -332,8 +419,31 @@ void ServerBrowser::RenderFilterBar() {
         sessions.TriggerDiscoveryScan();
     }
     ImGui::SameLine();
-    if (ImGui::Button("MASTER SERVER...", ImVec2(160, 0))) {
-        std::snprintf(m_masterUrl, sizeof(m_masterUrl), "%s", MasterServerClient::Get().Url().c_str());
+    const char* regionNames[] = { "US West (Oregon)", "US East (Virginia)", "EU West (London, UK)", "LAN / Offline Only" };
+    int curRegion = 0;
+    const std::string curUrl = MasterServerClient::Get().Url();
+    if (curUrl.find("noble-server-2") != std::string::npos || curUrl.find("virginia") != std::string::npos) curRegion = 1;
+    else if (curUrl.find("uk") != std::string::npos || curUrl.find("london") != std::string::npos) curRegion = 2;
+    else if (curUrl.empty()) curRegion = 3;
+
+    ImGui::SetNextItemWidth(170);
+    if (ImGui::Combo("##MasterRegionToolbar", &curRegion, regionNames, IM_ARRAYSIZE(regionNames))) {
+        std::string chosenUrl = kMasterRegions[curRegion].url;
+        SettingsData d = Settings::Get().Snapshot();
+        d.masterServerUrl = chosenUrl;
+        Settings::Get().Update(d);
+        MasterServerClient::Get().SetUrl(chosenUrl);
+        m_lastMasterRequest = -100.0;
+        m_lastRefresh = -100.0;
+        m_status = std::string("Matchmaking region changed to ") + kMasterRegions[curRegion].label;
+        RefreshServers();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("REGIONS...", ImVec2(100, 0))) {
+        m_selectedRegion = curRegion;
+
+
+
         m_showMasterModal = true;
     }
 
@@ -372,11 +482,42 @@ void ServerBrowser::RenderFilterBar() {
     ImGui::SameLine();
     filterBox(4, "Not started", m_hideInProgress);
 
-    // Status line: LAN / master server / UPnP.
-    const std::string master = MasterServerClient::Get().Enabled()
-        ? "Master server: " + MasterServerClient::Get().Status()
-        : std::string("Master server: not set (LAN games only)");
-    ImGui::TextDisabled("%s   |   %s", master.c_str(), UPnP::Get().GetStatus().c_str());
+    // NAT Type & UPnP Status Indicator
+    const bool upnpActive = UPnP::Get().IsActive();
+    const std::string& intIp = UPnP::Get().GetInternalIP();
+    const std::string& extIp = UPnP::Get().GetExternalIP();
+    const bool isDirectPublic = (!intIp.empty() && intIp != "127.0.0.1" && UPnP::Get().IsPublicIP(intIp));
+    const bool isOpenNat = upnpActive || isDirectPublic;
+    const bool isModerateNat = !isOpenNat && (!extIp.empty() && extIp != "Unknown" && extIp != "127.0.0.1");
+    const char* natLabel = isOpenNat ? "OPEN" : (isModerateNat ? "MODERATE" : "STRICT");
+    const ImVec4 natColor = isOpenNat ? ImVec4(0.35f, 0.85f, 0.45f, 1.0f)
+                                      : (isModerateNat ? ImVec4(0.95f, 0.85f, 0.35f, 1.0f) : ImVec4(0.95f, 0.35f, 0.35f, 1.0f));
+
+    std::string regionDisplay = (curRegion >= 0 && curRegion < 3) ? kMasterRegions[curRegion].label : "Offline / LAN Only";
+    const std::string masterStatus = MasterServerClient::Get().Enabled()
+        ? "Region: " + regionDisplay + " (" + MasterServerClient::Get().Status() + ")"
+        : std::string("Region: Offline / LAN Only");
+
+    ImGui::TextDisabled("%s   |   NAT: ", masterStatus.c_str());
+    ImGui::SameLine();
+    ImGui::TextColored(natColor, "%s", natLabel);
+    ImGui::SameLine();
+    ImGui::TextDisabled("  |  UPnP: ");
+    ImGui::SameLine();
+    ImGui::TextColored(upnpActive ? ImVec4(0.35f, 0.85f, 0.45f, 1.0f) : ImVec4(0.95f, 0.45f, 0.35f, 1.0f),
+                       upnpActive ? "ENABLED" : "DISABLED");
+
+    if (!isOpenNat || !upnpActive) {
+        ImGui::Spacing();
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.75f, 0.25f, 1.0f));
+        ImGui::TextWrapped("NOTICE: Your NAT Type is %s and UPnP is %s. If you host public games, remote players may encounter connection issues. For optimal hosting, enable UPnP in your router settings or forward UDP port 11774.",
+            natLabel, upnpActive ? "Enabled" : "Disabled");
+        ImGui::PopStyleColor();
+    }
+
+
+
+
     if (!m_status.empty()) {
         ImGui::TextColored(NobleStyle::Accent(), "%s", m_status.c_str());
     }
@@ -823,8 +964,9 @@ void ServerBrowser::RenderDirectConnectModal() {
         }
         ImGui::Text("Password");
         ImGui::SetNextItemWidth(-1);
+
         ImGui::InputText("##Password", m_directConnectPassword, IM_ARRAYSIZE(m_directConnectPassword), ImGuiInputTextFlags_Password);
-        NobleStyle::SectionGap();
+
 
         std::string address;
         uint16_t port = 0;
@@ -848,25 +990,45 @@ void ServerBrowser::RenderDirectConnectModal() {
 }
 
 void ServerBrowser::RenderMasterServerModal() {
-    ImGui::OpenPopup("MASTER SERVER");
+    ImGui::OpenPopup("SELECT MATCHMAKING REGION");
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(520, 0));
-    if (ImGui::BeginPopupModal("MASTER SERVER", &m_showMasterModal, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::TextWrapped("Optional session registry. Leave empty to browse LAN games and use Direct Connect only.");
-        ImGui::SetNextItemWidth(-1);
-        ImGui::InputTextWithHint("##MasterUrl", "https://your-registry.example.com (optional)", m_masterUrl, IM_ARRAYSIZE(m_masterUrl));
+    ImGui::SetNextWindowSize(ImVec2(480, 0));
+    if (ImGui::BeginPopupModal("SELECT MATCHMAKING REGION", &m_showMasterModal, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextWrapped("Select your preferred matchmaking region. Master servers synchronize federated sessions across regions so you can find games worldwide.");
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        const std::string curUrl = MasterServerClient::Get().Url();
+        int curRegion = 0;
+        if (curUrl.find("noble-server-2") != std::string::npos || curUrl.find("virginia") != std::string::npos) curRegion = 1;
+        else if (curUrl.find("uk") != std::string::npos || curUrl.find("london") != std::string::npos) curRegion = 2;
+        else if (curUrl.empty()) curRegion = 3;
+
+        static int chosenRegion = 0;
+        if (ImGui::IsWindowAppearing()) chosenRegion = curRegion;
+
+        for (int i = 0; i < 4; ++i) {
+            if (ImGui::RadioButton(kMasterRegions[i].label, chosenRegion == i)) {
+                chosenRegion = i;
+            }
+            ImGui::SameLine(220);
+            ImGui::TextDisabled("(%s)", kMasterRegions[i].location);
+        }
+
         NobleStyle::SectionGap();
-        if (NobleStyle::PrimaryButton("SAVE", ImVec2(110, 32))) {
+        if (NobleStyle::PrimaryButton("SAVE & APPLY", ImVec2(140, 32))) {
             SettingsData d = Settings::Get().Snapshot();
-            d.masterServerUrl = m_masterUrl;
+            d.masterServerUrl = kMasterRegions[chosenRegion].url;
             Settings::Get().Update(d);
             MasterServerClient::Get().SetUrl(d.masterServerUrl);
             m_lastMasterRequest = -100.0;
-            m_status = d.masterServerUrl.empty() ? "Master server cleared: LAN games only." : "Master server set to " + d.masterServerUrl;
+            m_status = std::string("Matchmaking region set to ") + kMasterRegions[chosenRegion].label;
             m_showMasterModal = false;
+            RefreshServers();
         }
         ImGui::SameLine();
-        if (ImGui::Button("CANCEL", ImVec2(110, 32))) m_showMasterModal = false;
+        if (ImGui::Button("CANCEL", ImVec2(100, 32))) m_showMasterModal = false;
         ImGui::EndPopup();
     }
 }

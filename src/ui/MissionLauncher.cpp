@@ -184,7 +184,7 @@ void MissionLauncher::RenderCampaignTab(BlamEngine* engine) {
             cfg.gameMode = "Campaign";
             cfg.mapName = sel.internalName;
             cfg.gametypeName = diffs[m_selectedDifficulty];
-            cfg.maxPlayers = 4;
+            cfg.maxPlayers = 16;
             cfg.mode = SessionManager::Get().GetNetworkMode();
             SessionManager::Get().StartHosting(cfg);
 
@@ -263,7 +263,7 @@ void MissionLauncher::RenderMultiplayerTab(BlamEngine* engine) {
             cfg.gameMode = "Multiplayer";
             cfg.mapName = sel.internalName;
             cfg.gametypeName = variants[m_selectedVariantIndex];
-            cfg.maxPlayers = 16;
+            cfg.maxPlayers = 128;
             cfg.mode = SessionManager::Get().GetNetworkMode();
             SessionManager::Get().StartHosting(cfg);
 
@@ -334,7 +334,7 @@ void MissionLauncher::RenderFirefightTab(BlamEngine* engine) {
             cfg.gameMode = "Firefight";
             cfg.mapName = sel.internalName;
             cfg.gametypeName = diffs[m_selectedDifficulty];
-            cfg.maxPlayers = 4;
+            cfg.maxPlayers = 16;
             cfg.mode = SessionManager::Get().GetNetworkMode();
             SessionManager::Get().StartHosting(cfg);
 
@@ -380,7 +380,7 @@ void MissionLauncher::RenderForgeTab(BlamEngine* engine) {
         cfg.gameMode = "Forge";
         cfg.mapName = forgeIds[forgeMapIndex];
         cfg.gametypeName = "Forge";
-        cfg.maxPlayers = 8;
+        cfg.maxPlayers = 128;
         cfg.mode = SessionManager::Get().GetNetworkMode();
         SessionManager::Get().StartHosting(cfg);
 
