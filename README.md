@@ -58,7 +58,7 @@ If an update ever fails, the previous build is still on disk and the helper writ
 ## Notes
 
 - Release zips intentionally do **not** include the development `data\mods` folder. Put your own mods there.
-- The menu map (`data\menumaps\mainmenu_all.map`) is included so a fresh install works without copying files from another installation.
+- The menu map (`data\menumaps\mainmenu.map`) is included so a fresh install works without copying files from another installation.
 - Halo and Halo: Reach are trademarks of Microsoft. This is a community project; no MCC files are redistributed except content the client is allowed to use locally.
 
 ## Links
