@@ -13,3 +13,4 @@ const uint8_t* GetBlock(const std::string& filename, size_t* outSize = nullptr);
 bool HasBlock(const std::string& filename);
 
 } // namespace noble::EmbeddedBlocks
+
