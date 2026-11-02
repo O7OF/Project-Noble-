@@ -8,17 +8,57 @@
 
 namespace noble {
 
+namespace {
+Window* s_activeWindow = nullptr;
+}
+
+Window* Window::Active() { return s_activeWindow; }
+
 Window::Window(const std::wstring& title, uint32_t width, uint32_t height)
     : m_title(title), m_width(width), m_height(height) {
+    s_activeWindow = this;
     m_hInstance = GetModuleHandleW(nullptr);
 }
 
 Window::~Window() {
+    if (s_activeWindow == this) s_activeWindow = nullptr;
     if (m_hwnd) {
         DestroyWindow(m_hwnd);
         m_hwnd = nullptr;
     }
     UnregisterClassW(L"HaloReachCE_WindowClass", m_hInstance);
+}
+
+void Window::ApplyWindowSettings(uint32_t width, uint32_t height, bool borderless) {
+    if (!m_hwnd) return;
+    m_borderless = borderless;
+    m_width = width;
+    m_height = height;
+
+    if (m_borderless) {
+        const int screenW = GetSystemMetrics(SM_CXSCREEN);
+        const int screenH = GetSystemMetrics(SM_CYSCREEN);
+        SetWindowLongPtrW(m_hwnd, GWL_STYLE, WS_POPUP | WS_VISIBLE);
+        SetWindowPos(m_hwnd, HWND_TOP, 0, 0, screenW, screenH, SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+    } else {
+        DWORD style = WS_OVERLAPPEDWINDOW;
+        RECT rc = { 0, 0, static_cast<LONG>(width), static_cast<LONG>(height) };
+        AdjustWindowRect(&rc, style, FALSE);
+        int winW = rc.right - rc.left;
+        int winH = rc.bottom - rc.top;
+        int posX = (GetSystemMetrics(SM_CXSCREEN) - winW) / 2;
+        int posY = (GetSystemMetrics(SM_CYSCREEN) - winH) / 2;
+        if (posX < 0) posX = 0;
+        if (posY < 0) posY = 0;
+
+        SetWindowLongPtrW(m_hwnd, GWL_STYLE, style);
+        HMENU hMenu = GetSystemMenu(m_hwnd, FALSE);
+        if (hMenu) {
+            EnableMenuItem(hMenu, SC_MAXIMIZE, MF_BYCOMMAND | MF_ENABLED);
+            EnableMenuItem(hMenu, SC_RESTORE, MF_BYCOMMAND | MF_ENABLED);
+        }
+        SetWindowPos(m_hwnd, HWND_NOTOPMOST, posX, posY, winW, winH, SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+    }
 }
 
 bool Window::Create() {

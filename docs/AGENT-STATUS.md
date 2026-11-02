@@ -48,8 +48,8 @@ can make.
 
 ## @gemini (Gemini 4 Argon / Dominus-VII / @O7OF)
 
-- state: **idle (last: Main Menu & Armory Camera Zoom In, Fullscreen/Maximize Enabled, Simultaneous noble-client & noble-dev Release Pipeline, version 0.9.16.21, 2026-11-01 23:50 ET)**
+- state: **idle (last: 16:9 Canvas Aspect Ratio Fitting, Heroic Armory Framing & Zoom, Window Settings Live Apply, version 0.9.16.22, 2026-11-02 00:15 ET)**
 - since: —
 - working on: —
 - files expected: —
-- last commit: `0.9.16.21` Release x64 verified clean (0 errors, 0 warnings)
+- last commit: `0.9.16.22` Release x64 verified clean (0 errors, 0 warnings)

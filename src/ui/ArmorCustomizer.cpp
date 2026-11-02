@@ -992,6 +992,38 @@ void ArmorCustomizer::UpdateArmoryCamera() const {
     else ReachArmory::SetTargetScene("armory");
 }
 
+float ArmorCustomizer::GetCurrentScale() const {
+    float baseK = (m_cameraMode == 2) ? 4.10f : (m_cameraMode == 0) ? 2.85f : 2.30f;
+    return baseK * m_userZoom;
+}
+
+float ArmorCustomizer::GetFocusY() const {
+    if (m_cameraMode == 1) return 0.52f + m_panY; // Full Body centered
+    if (m_cameraMode == 0) return 0.48f + m_panY; // Armory View
+    // Close-Up mode (mode 2) frames the focused slot:
+    float slotY = 0.46f;
+    if (!m_lastRowLabel.empty()) {
+        const auto& name = m_lastRowLabel;
+        if (name == "Helmet" || name == "Helmet Variant" || name == "Visor Color") slotY = 0.32f;
+        else if (name == "Left Shoulder" || name == "Right Shoulder") slotY = 0.38f;
+        else if (name == "Chest") slotY = 0.42f;
+        else if (name == "Wrist") slotY = 0.49f;
+        else if (name == "Utility") slotY = 0.58f;
+        else if (name == "Knee Guards") slotY = 0.68f;
+        else slotY = 0.46f;
+    }
+    return slotY + m_panY;
+}
+
+float ArmorCustomizer::GetFocusX() const {
+    if (m_cameraMode != 2) return 0.735f + m_panX;
+    float lateral = 0.0f;
+    if (m_lastRowLabel == "Left Shoulder") lateral = -0.045f;
+    else if (m_lastRowLabel == "Right Shoulder") lateral = 0.045f;
+    else if (m_lastRowLabel == "Wrist") lateral = -0.035f;
+    return 0.735f + lateral + m_panX;
+}
+
 
 namespace {
 // Applying the appearance makes the engine re-instantiate the Spartan: the palette flashes back to default and the
@@ -1548,17 +1580,27 @@ void ArmorCustomizer::RenderCharacterPreview(ID3D11Device* device, ID3D11DeviceC
     }
 
     if (m_autoRotate) ReachArmory::AddYawRotation(ImGui::GetIO().DeltaTime * 0.45f);
-    ImGui::InvisibleButton("##character_preview_drag", ImVec2(width, height), ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
-    if (ImGui::IsItemActive() &&
-        (ImGui::IsMouseDragging(ImGuiMouseButton_Left, 0.0f) || ImGui::IsMouseDragging(ImGuiMouseButton_Right, 0.0f))) {
-        ReachArmory::AddYawRotation(-ImGui::GetIO().MouseDelta.x * 0.0085f);
+    ImGui::InvisibleButton("##character_preview_drag", ImVec2(width, height), ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight | ImGuiButtonFlags_MouseButtonMiddle);
+    if (ImGui::IsItemActive()) {
+        if (ImGui::IsMouseDragging(ImGuiMouseButton_Left, 0.0f)) {
+            ReachArmory::AddYawRotation(-ImGui::GetIO().MouseDelta.x * 0.0085f);
+        }
+        if (ImGui::IsMouseDragging(ImGuiMouseButton_Right, 0.0f)) {
+            m_panX += ImGui::GetIO().MouseDelta.x * 0.0012f;
+            m_panY += ImGui::GetIO().MouseDelta.y * 0.0012f;
+            m_panX = std::clamp(m_panX, -0.30f, 0.30f);
+            m_panY = std::clamp(m_panY, -0.35f, 0.35f);
+        }
+        if (ImGui::IsMouseClicked(ImGuiMouseButton_Middle)) {
+            m_userZoom = 1.0f;
+            m_panX = 0.0f;
+            m_panY = 0.0f;
+        }
     }
     if (ImGui::IsItemHovered()) {
         const float wheel = ImGui::GetIO().MouseWheel;
         if (std::abs(wheel) > 0.01f) {
-            if (wheel > 0.0f) m_cameraMode = 2;
-            else m_cameraMode = (m_cameraMode == 2) ? 1 : 0;
-            UpdateArmoryCamera();
+            m_userZoom = std::clamp(m_userZoom + wheel * 0.12f, 0.65f, 2.60f);
         }
     }
 }
@@ -2004,6 +2046,8 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
     auto focus = [&](int rowIndex) {
         if (rowIndex < 0 || rowIndex >= rowCount) return;
         m_focusedRow = rowIndex;
+        m_lastRowLabel = rows[rowIndex].label;
+        m_lastRowCount = rows.size();
         s_buyRow = -1;
         m_pickerScrollToEquipped = true;
         m_focusScene = (m_previewSpecies == PlayerSpecies::Spartan) ? rows[rowIndex].scene : "armory_elite";
@@ -2014,6 +2058,9 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
     if (!ImGui::GetIO().WantTextInput) {
         if (ImGui::IsKeyPressed(ImGuiKey_C)) {
             m_cameraMode = (m_cameraMode + 1) % 3;
+            m_userZoom = 1.0f;
+            m_panX = 0.0f;
+            m_panY = 0.0f;
             UpdateArmoryCamera();
             MenuSounds::Click();
         }

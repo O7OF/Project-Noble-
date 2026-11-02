@@ -326,6 +326,7 @@ int FindVariant(const std::vector<MenuVariant>& list, const wchar_t* file) {
 // ---------------------------------------------------------------------------------------------
 struct Ui {
     ImDrawList* dl = nullptr;
+    ImVec2 origin = ImVec2(0.0f, 0.0f);
     ImVec2 size;
     float s = 1.0f;
 };
@@ -514,24 +515,24 @@ bool Prepare(ID3D11Device* device, ID3D11DeviceContext* context) {
 }
 
 void Draw(const Ui& ui, ID3D11Device* device, ID3D11DeviceContext* context, float ruleY) {
+    (void)ruleY;
     if (!ReachArmory::IsSceneReady() || !Prepare(device, context)) return;
     const float W = ui.size.x, H = ui.size.y;
     constexpr float kModelX = 0.656f;   // where the scene cameras put the model across the frame
-    constexpr float kStageX = 0.735f;   // the middle of the free area right of the picker
+    constexpr float kModelY = 0.560f;   // where the scene cameras put the model vertically
 
-    // Zoom the character in so the Armory is heroic and prominent, matching Halo: Reach MCC.
-    // Close-Up (mode 2) zooms in close (1.35x), Armory View (mode 0) provides a 1.18x frame,
-    // and Full Body (mode 1) keeps a clean 1.02x scale.
-    const int camMode = UIManager::GetArmorCustomizer().GetCameraMode();
-    const float k = (camMode == 2) ? 1.35f : (camMode == 0) ? 1.18f : 1.02f;
+    const auto& customizer = UIManager::GetArmorCustomizer();
+    const float k = customizer.GetCurrentScale();
+    const float stageX = customizer.GetFocusX();
+    const float stageY = customizer.GetFocusY();
     const float drawW = W * k;
     const float drawH = H * k;
-    const float posX = W * kStageX - (W * kModelX * k);
-    const float posY = (camMode == 2) ? (ruleY * 0.45f) : (ruleY * 0.65f);
+    const float posX = ui.origin.x + (W * stageX) - (W * kModelX * k);
+    const float posY = ui.origin.y + (H * stageY) - (H * kModelY * k);
     const ImVec2 p0(posX, posY);
     const ImVec2 p1(posX + drawW, posY + drawH);
 
-    ui.dl->AddRectFilled(ImVec2(0, 0), ui.size, IM_COL32(0, 0, 0, 255));
+    ui.dl->AddRectFilled(ui.origin, ImVec2(ui.origin.x + ui.size.x, ui.origin.y + ui.size.y), IM_COL32(0, 0, 0, 255));
     ui.dl->AddCallback(&UseOpaque, nullptr);
     ui.dl->AddImage(reinterpret_cast<ImTextureID>(s_copySrv), p0, p1);
     ui.dl->AddCallback(ImDrawCallback_ResetRenderState, nullptr);
@@ -552,25 +553,26 @@ void Draw(const Ui& ui, ID3D11Device* device, ID3D11DeviceContext* context, floa
             ui.dl->PathFillConvex(step);
         }
     };
-    glow(ImVec2(W * kStageX, p0.y + H * k * 0.84f), H * 0.40f, H * 0.055f, 10);
+    glow(ImVec2(ui.origin.x + W * stageX, p0.y + H * k * 0.84f), H * 0.40f, H * 0.055f, 10);
     ui.dl->AddCallback(ImDrawCallback_ResetRenderState, nullptr);
 
     // The panels on the left sit on a dark edge, and the picture's left end doesn't show as a seam.
-    ui.dl->AddRectFilledMultiColor(ImVec2(0, 0), ImVec2(W * 0.56f, H), IM_COL32(4, 8, 14, 255), IM_COL32(4, 8, 14, 0),
+    ui.dl->AddRectFilledMultiColor(ui.origin, ImVec2(ui.origin.x + W * 0.56f, ui.origin.y + H), IM_COL32(4, 8, 14, 255), IM_COL32(4, 8, 14, 0),
                                    IM_COL32(4, 8, 14, 0), IM_COL32(4, 8, 14, 255));
 }
 
 } // namespace ArmoryStage
 
 void DrawBackdrop(const Ui& ui, Screen screen) {
-    const ImVec2 o(0, 0);
+    const ImVec2 o = ui.origin;
+    const ImVec2 extent(ui.origin.x + ui.size.x, ui.origin.y + ui.size.y);
     // Draw the main menu background image whenever scene isn't ready or on screens where the 2D Reach backdrop
     // provides the base visual layer (PreGameLobby, Main menu fallback) to eliminate black void flickers.
     // In Armory, when the scene is ready, haloreach.dll renders the 3D Spartan/Elite player preview directly into
     // the DX11 backbuffer, so the preview area must remain transparent in ImGui so the character is not occluded.
     const bool needBackdropImage = !ReachArmory::IsSceneReady() || screen == Screen::PreGameLobby;
     if (needBackdropImage) {
-        ui.dl->AddRectFilled(o, ui.size, IM_COL32(8, 12, 18, 255));
+        ui.dl->AddRectFilled(o, extent, IM_COL32(8, 12, 18, 255));
         // The lobby shows the map that is going to load, when there is a picture of it.
         UiTexture bg;
         if (screen == Screen::PreGameLobby && !s_lobbyBackdropImage.empty()) {
@@ -581,39 +583,39 @@ void DrawBackdrop(const Ui& ui, Screen screen) {
         }
         if (!bg) bg = UiArt::MenuBackground();
         if (bg) {
-            UiArt::DrawCover(ui.dl, bg, o, ui.size, IM_COL32(255, 255, 255, 255));
+            UiArt::DrawCover(ui.dl, bg, o, extent, IM_COL32(255, 255, 255, 255));
         }
     }
 
     if (screen == Screen::Armory) {
         // In the Armory, provide sleek subtle left-side menu darkening while keeping the 3D Spartan/Elite
         // character preview completely unoccluded on the right side
-        ui.dl->AddRectFilledMultiColor(o, ImVec2(ui.size.x * 0.44f, ui.size.y),
+        ui.dl->AddRectFilledMultiColor(o, ImVec2(ui.origin.x + ui.size.x * 0.44f, extent.y),
                                        IM_COL32(4, 8, 14, 180), IM_COL32(4, 8, 14, 85),
                                        IM_COL32(4, 8, 14, 85), IM_COL32(4, 8, 14, 180));
-        ui.dl->AddRectFilledMultiColor(ImVec2(ui.size.x * 0.44f, 0), ImVec2(ui.size.x * 0.60f, ui.size.y),
+        ui.dl->AddRectFilledMultiColor(ImVec2(ui.origin.x + ui.size.x * 0.44f, ui.origin.y), ImVec2(ui.origin.x + ui.size.x * 0.60f, extent.y),
                                        IM_COL32(4, 8, 14, 85), IM_COL32(4, 8, 14, 0),
                                        IM_COL32(4, 8, 14, 0), IM_COL32(4, 8, 14, 85));
-        ui.dl->AddRectFilledMultiColor(ImVec2(0, ui.size.y * 0.82f), ui.size,
+        ui.dl->AddRectFilledMultiColor(ImVec2(ui.origin.x, ui.origin.y + ui.size.y * 0.82f), extent,
                                        IM_COL32(0, 0, 0, 0), IM_COL32(0, 0, 0, 0),
                                        IM_COL32(0, 0, 0, 160), IM_COL32(0, 0, 0, 160));
     } else if (screen == Screen::PreGameLobby) {
         // Pre-game lobby: subtle left darkening for menu items and bottom vignette matching Halo: Reach 360/MCC
-        ui.dl->AddRectFilledMultiColor(o, ImVec2(ui.size.x * 0.48f, ui.size.y),
+        ui.dl->AddRectFilledMultiColor(o, ImVec2(ui.origin.x + ui.size.x * 0.48f, extent.y),
                                        IM_COL32(0, 0, 0, 175), IM_COL32(0, 0, 0, 60),
                                        IM_COL32(0, 0, 0, 60), IM_COL32(0, 0, 0, 175));
-        ui.dl->AddRectFilledMultiColor(ImVec2(0, ui.size.y * 0.75f), ui.size,
+        ui.dl->AddRectFilledMultiColor(ImVec2(ui.origin.x, ui.origin.y + ui.size.y * 0.75f), extent,
                                        IM_COL32(0, 0, 0, 0), IM_COL32(0, 0, 0, 0),
                                        IM_COL32(0, 0, 0, 185), IM_COL32(0, 0, 0, 185));
     } else {
         // Darken the left half (where the menu list is) and the bottom, like Reach's native menus.
-        ui.dl->AddRectFilledMultiColor(o, ImVec2(ui.size.x * 0.45f, ui.size.y),
+        ui.dl->AddRectFilledMultiColor(o, ImVec2(ui.origin.x + ui.size.x * 0.45f, extent.y),
                                        IM_COL32(0, 0, 0, 190), IM_COL32(0, 0, 0, 105),
                                        IM_COL32(0, 0, 0, 105), IM_COL32(0, 0, 0, 190));
-        ui.dl->AddRectFilledMultiColor(ImVec2(ui.size.x * 0.45f, 0), ImVec2(ui.size.x * 0.78f, ui.size.y),
+        ui.dl->AddRectFilledMultiColor(ImVec2(ui.origin.x + ui.size.x * 0.45f, ui.origin.y), ImVec2(ui.origin.x + ui.size.x * 0.78f, extent.y),
                                        IM_COL32(0, 0, 0, 105), IM_COL32(0, 0, 0, 0),
                                        IM_COL32(0, 0, 0, 0), IM_COL32(0, 0, 0, 105));
-        ui.dl->AddRectFilledMultiColor(ImVec2(0, ui.size.y * 0.72f), ui.size,
+        ui.dl->AddRectFilledMultiColor(ImVec2(ui.origin.x, ui.origin.y + ui.size.y * 0.72f), extent,
                                        IM_COL32(0, 0, 0, 0), IM_COL32(0, 0, 0, 0),
                                        IM_COL32(0, 0, 0, 165), IM_COL32(0, 0, 0, 165));
     }
@@ -832,9 +834,9 @@ struct HintExtra {
 };
 
 void DrawHints(const Ui& ui, const std::vector<std::pair<Prompt, const char*>>& hints, const std::vector<HintExtra>& extras = {}, float left = 0.075f) {
-    float x = ui.size.x * left;
-    const float y = ui.size.y - 46.0f * ui.s;
-    ui.dl->AddLine(ImVec2(x, y - 12.0f * ui.s), ImVec2(ui.size.x * 0.62f, y - 12.0f * ui.s), IM_COL32(255, 255, 255, 50), 1.0f);
+    float x = ui.origin.x + ui.size.x * left;
+    const float y = ui.origin.y + ui.size.y - 46.0f * ui.s;
+    ui.dl->AddLine(ImVec2(x, y - 12.0f * ui.s), ImVec2(ui.origin.x + ui.size.x * 0.62f, y - 12.0f * ui.s), IM_COL32(255, 255, 255, 50), 1.0f);
     for (const auto& [prompt, label] : hints) {
         const float x0 = x;
         x += InputPrompts::Draw(ui.dl, NobleStyle::SmallFont(), ImVec2(x, y), 22.0f * ui.s, prompt) + 7.0f * ui.s;
@@ -1211,8 +1213,8 @@ std::string PlayerServiceTag(const SettingsData& sd) {
 
 void DrawParty(const Ui& ui, const std::string& playerName, const char* status) {
     const float w = 330.0f * ui.s;
-    const float x = ui.size.x - w - 40.0f * ui.s;
-    float y = 34.0f * ui.s;
+    const float x = ui.origin.x + ui.size.x - w - 40.0f * ui.s;
+    float y = ui.origin.y + 34.0f * ui.s;
     ui.dl->AddRectFilled(ImVec2(x, y), ImVec2(x + w * 0.80f, y + 26.0f * ui.s), IM_COL32(0, 0, 0, 200));
     Text(ui, NobleStyle::TitleFont(), 17.0f, ImVec2(x + 8.0f * ui.s, y + 3.0f * ui.s), kWhite, "MY PARTY");
     y += 26.0f * ui.s;
@@ -1816,7 +1818,7 @@ struct RightColumnY {
 
 RightColumnY RightColumnLayout(const Ui& ui) {
     RightColumnY y;
-    const float hints = ui.size.y - 58.0f * ui.s;          // DrawHints' rule sits at size.y - 58 * s
+    const float hints = ui.origin.y + ui.size.y - 58.0f * ui.s;          // DrawHints' rule sits at size.y - 58 * s
     y.actions = hints - 14.0f * ui.s - 50.0f * ui.s;
     y.strip = y.actions - 12.0f * ui.s - LobbyStripHeight(ui);
     y.content = y.strip - 10.0f * ui.s;
@@ -2943,10 +2945,10 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
     // Same frame as the setup screens: DrawTitle at (left, top), the option column under it, the right column
     // at px/pw, DrawHints at the bottom. Every block has a fixed place, so nothing moves between the empty, one
     // player and full states or between host and guest (design pass, 2026-10-31).
-    ui.dl->AddRectFilled(ImVec2(0, 0), ui.size, IM_COL32(4, 8, 12, 110));
+    ui.dl->AddRectFilled(ui.origin, ImVec2(ui.origin.x + ui.size.x, ui.origin.y + ui.size.y), IM_COL32(4, 8, 12, 110));
     const float colX = left + 34.0f * ui.s;
     const float colW = 380.0f * ui.s;
-    const float px = ui.size.x * 0.47f;
+    const float px = ui.origin.x + ui.size.x * 0.47f;
     const float pw = ui.size.x * 0.44f;
     const ImU32 panelFill = IM_COL32(8, 12, 18, 190);
     const ImU32 panelEdge = IM_COL32(170, 200, 220, 120);
@@ -3433,7 +3435,7 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
 
     // Friends and the invite strip sit at the foot of the left column, above the prompts.
     const float netH = 44.0f * ui.s;
-    const float netY = ui.size.y - 58.0f * ui.s - 8.0f * ui.s - netH;
+    const float netY = ui.origin.y + ui.size.y - 58.0f * ui.s - 8.0f * ui.s - netH;
     const float friendRowH = 25.0f * ui.s;
     const float friendsH = 26.0f * ui.s + friendRowH * 4.0f;
     const float friendsY = netY - 8.0f * ui.s - friendsH;
@@ -3822,13 +3824,13 @@ static void DrawSocialScreen(OverlayContext& ctx, const Ui& ui, float left, floa
     (void)top;
     MenuState& st = ctx.st;
 
-    const float px = 32.0f * ui.s;
-    const float py = 88.0f * ui.s;
-    const float panelW = ui.size.x - px * 2.0f;
-    const float panelH = ui.size.y - py - 60.0f * ui.s;
+    const float px = ui.origin.x + 32.0f * ui.s;
+    const float py = ui.origin.y + 88.0f * ui.s;
+    const float panelW = ui.size.x - 64.0f * ui.s;
+    const float panelH = ui.origin.y + ui.size.y - py - 60.0f * ui.s;
 
-    ui.dl->AddRectFilled(ImVec2(0, 0), ui.size, IM_COL32(4, 8, 12, 225));
-    DrawTitle(ui, ImVec2(px, 12.0f * ui.s), "COMMUNITY", "SOCIAL");
+    ui.dl->AddRectFilled(ui.origin, ImVec2(ui.origin.x + ui.size.x, ui.origin.y + ui.size.y), IM_COL32(4, 8, 12, 225));
+    DrawTitle(ui, ImVec2(px, ui.origin.y + 12.0f * ui.s), "COMMUNITY", "SOCIAL");
 
     // Account Status Badge (top right)
     const bool loggedIn = AuthClient::Get().IsLoggedIn();
@@ -3840,8 +3842,8 @@ static void DrawSocialScreen(OverlayContext& ctx, const Ui& ui, float left, floa
         std::snprintf(statBuf, sizeof(statBuf), "OFFLINE - Auth Required");
     }
     const float tagW = TextWidth(NobleStyle::SmallFont(), 13.0f * ui.s, statBuf) + 24.0f * ui.s;
-    const ImVec2 statP0(ui.size.x - px - tagW, 20.0f * ui.s);
-    const ImVec2 statP1(ui.size.x - px, 48.0f * ui.s);
+    const ImVec2 statP0(ui.origin.x + ui.size.x - 32.0f * ui.s - tagW, ui.origin.y + 20.0f * ui.s);
+    const ImVec2 statP1(ui.origin.x + ui.size.x - 32.0f * ui.s, ui.origin.y + 48.0f * ui.s);
     ui.dl->AddRectFilled(statP0, statP1, loggedIn ? IM_COL32(18, 36, 24, 220) : IM_COL32(36, 18, 18, 220), 4.0f * ui.s);
     ui.dl->AddRect(statP0, statP1, loggedIn ? IM_COL32(60, 180, 80, 200) : IM_COL32(180, 60, 60, 200), 4.0f * ui.s);
     Text(ui, NobleStyle::SmallFont(), 13.0f, ImVec2(statP0.x + 12.0f * ui.s, statP0.y + 7.0f * ui.s),
@@ -3849,7 +3851,7 @@ static void DrawSocialScreen(OverlayContext& ctx, const Ui& ui, float left, floa
 
     if (!loggedIn) {
         const float actW = 140.0f * ui.s;
-        ImGui::SetCursorScreenPos(ImVec2(statP0.x - actW - 12.0f * ui.s, 22.0f * ui.s));
+        ImGui::SetCursorScreenPos(ImVec2(statP0.x - actW - 12.0f * ui.s, ui.origin.y + 22.0f * ui.s));
         if (ImGui::Button("LOG IN / REGISTER", ImVec2(actW, 26.0f * ui.s))) {
             OpenAccountModal();
             MenuSounds::Click();
@@ -4209,7 +4211,7 @@ bool DrawFirstStart(const Ui& ui) {
     ImGuiIO& io = ImGui::GetIO();
     const float s = ui.s;
     const ImVec2 size(720.0f * s, 440.0f * s);
-    ImGui::SetNextWindowPos(ImVec2((io.DisplaySize.x - size.x) * 0.5f, (io.DisplaySize.y - size.y) * 0.5f));
+    ImGui::SetNextWindowPos(ImVec2(ui.origin.x + (ui.size.x - size.x) * 0.5f, ui.origin.y + (ui.size.y - size.y) * 0.5f));
     ImGui::SetNextWindowSize(size);
     ImGui::SetNextWindowFocus();
     ImGui::SetNextWindowBgAlpha(0.97f);
@@ -4324,7 +4326,7 @@ void DrawMusicPlayer(const Ui& ui) {
     };
 
     const float w = 470.0f * ui.s, h = 30.0f * ui.s;
-    const ImVec2 p0(ui.size.x - w - 40.0f * ui.s, ui.size.y - 140.0f * ui.s);
+    const ImVec2 p0(ui.origin.x + ui.size.x - w - 40.0f * ui.s, ui.origin.y + ui.size.y - 140.0f * ui.s);
     const ImVec2 p1(p0.x + w, p0.y + h);
     ui.dl->AddRectFilled(p0, p1, IM_COL32(8, 12, 18, 190));
     ui.dl->AddRect(p0, p1, IM_COL32(90, 120, 150, 90), 0.0f, 0, 1.0f);
@@ -4410,7 +4412,7 @@ void DrawInviteToast(const Ui& ui, MenuState& st) {
     if (s_answered == key) return;
 
     const float w = 470.0f * ui.s, h = 96.0f * ui.s;
-    const ImVec2 p0(ui.size.x - w - 40.0f * ui.s, ui.size.y - h - 150.0f * ui.s);
+    const ImVec2 p0(ui.origin.x + ui.size.x - w - 40.0f * ui.s, ui.origin.y + ui.size.y - h - 150.0f * ui.s);
     const ImVec2 p1(p0.x + w, p0.y + h);
     ui.dl->AddRectFilled(p0, p1, IM_COL32(12, 20, 30, 245));
     ui.dl->AddRect(p0, p1, IM_COL32(143, 216, 255, 170), 0.0f, 0, 1.2f);
@@ -4496,10 +4498,32 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
             s_lastScreen = static_cast<int>(st.screen);
         }
     }
+    constexpr float kTargetAspect = 16.0f / 9.0f;
+    float canvasW = vp->Size.x;
+    float canvasH = vp->Size.x / kTargetAspect;
+    if (canvasH > vp->Size.y) {
+        canvasH = vp->Size.y;
+        canvasW = vp->Size.y * kTargetAspect;
+    }
+    const float originX = vp->Pos.x + (vp->Size.x - canvasW) * 0.5f;
+    const float originY = vp->Pos.y + (vp->Size.y - canvasH) * 0.5f;
+
     Ui ui;
     ui.dl = ImGui::GetWindowDrawList();
-    ui.size = vp->Size;
-    ui.s = std::max(0.75f, vp->Size.y / 720.0f);
+    ui.origin = ImVec2(originX, originY);
+    ui.size = ImVec2(canvasW, canvasH);
+    ui.s = std::clamp(canvasH / 860.0f, 0.70f, 2.50f);
+
+    // Pillarbox / letterbox margins if the window is wider or taller than 16:9
+    if (originX > vp->Pos.x) {
+        ui.dl->AddRectFilled(vp->Pos, ImVec2(originX, vp->Pos.y + vp->Size.y), IM_COL32(0, 0, 0, 255));
+        ui.dl->AddRectFilled(ImVec2(originX + canvasW, vp->Pos.y), ImVec2(vp->Pos.x + vp->Size.x, vp->Pos.y + vp->Size.y), IM_COL32(0, 0, 0, 255));
+    }
+    if (originY > vp->Pos.y) {
+        ui.dl->AddRectFilled(vp->Pos, ImVec2(vp->Pos.x + vp->Size.x, originY), IM_COL32(0, 0, 0, 255));
+        ui.dl->AddRectFilled(ImVec2(vp->Pos.x, originY + canvasH), ImVec2(vp->Pos.x + vp->Size.x, vp->Pos.y + vp->Size.y), IM_COL32(0, 0, 0, 255));
+    }
+
     s_lobbyBackdropMap = st.lobbyMap;
     s_lobbyBackdropImage = st.lobbyMapImage.empty() ? st.lobbyMapThumb : st.lobbyMapImage;
     DrawBackdrop(ui, st.screen);
@@ -4508,8 +4532,8 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
 
     UpdateSceneForScreen(st.screen);
 
-    const float left = ui.size.x * 0.075f;
-    const float top = ui.size.y * 0.09f;
+    const float left = ui.origin.x + ui.size.x * 0.075f;
+    const float top = ui.origin.y + ui.size.y * 0.09f;
     const SettingsData settings = Settings::Get().Snapshot();
     s_hintThisFrame = std::exchange(s_hintClicked, -1);
     const bool modPromptOpen = ModDownloadPrompt::Get().IsActive();
@@ -4536,8 +4560,9 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         const bool modal = firstStart || st.confirmQuit || s_showAccountModal || s_showDevMenu || modPromptOpen;
         ImGui::BeginDisabled(modal);
         DrawParty(ui, settings.playerName, "In Main Menu Lobby");
-        DrawTitle(ui, ImVec2(left, ui.size.y * 0.30f), "MAIN MENU");
-        Text(ui, nullptr, 17.0f, ImVec2(left + 4.0f * ui.s, ui.size.y * 0.30f + 66.0f * ui.s), kDim,
+        const float titleY = ui.origin.y + ui.size.y * 0.16f;
+        DrawTitle(ui, ImVec2(left, titleY), "MAIN MENU");
+        Text(ui, nullptr, 17.0f, ImVec2(left + 4.0f * ui.s, titleY + 66.0f * ui.s), kDim,
              "This party is local to this PC.");
         // The list is built per frame so the developer row can sit above Quit without shifting indices.
         std::vector<const MainEntry*> rows;
@@ -4562,15 +4587,15 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         // heights and moving the cursor made the whole menu jump (reported 2026-10-30).
         const float descH = Font(nullptr)->CalcTextSizeA(17.0f * ui.s, FLT_MAX, 0.0f, "Ag").y * 2.0f + 2.0f * ui.s;
         const float descGap = 10.0f * ui.s;
-        const float hintTop = ui.size.y - 58.0f * ui.s;
-        float listY = ui.size.y * 0.30f + 104.0f * ui.s;
+        const float hintTop = ui.origin.y + ui.size.y - 58.0f * ui.s;
+        float listY = titleY + 84.0f * ui.s;
         float step = 27.0f;                                             // ui.s units
         const float rowCount = static_cast<float>(rows.size());
         auto blockHeight = [&](float s) { return rowCount * s * ui.s + descGap + descH + 8.0f * ui.s; };
         if (blockHeight(step) > hintTop - listY) {
             step = std::max(18.0f, (hintTop - listY - descGap - descH - 8.0f * ui.s) / (rowCount * ui.s));
             if (blockHeight(step) > hintTop - listY) {
-                listY = std::max(ui.size.y * 0.22f, hintTop - blockHeight(step));
+                listY = std::max(ui.origin.y + ui.size.y * 0.14f, hintTop - blockHeight(step));
             }
         }
         const int hit = DrawList(ui, "main", ImVec2(left, listY), 440.0f * ui.s, items, st.mainIndex, !modal, step);
@@ -4625,9 +4650,9 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
             DrawHints(ui, { { Prompt::Accept, "Select" }, { Prompt::Back, "Quit" } });
         } else if (st.confirmQuit) {
             // Dim everything and show the question in the middle.
-            ui.dl->AddRectFilled(ImVec2(0, 0), ui.size, IM_COL32(0, 0, 0, 150));
+            ui.dl->AddRectFilled(ui.origin, ImVec2(ui.origin.x + ui.size.x, ui.origin.y + ui.size.y), IM_COL32(0, 0, 0, 150));
             const float bw = 460.0f * ui.s, bh = 190.0f * ui.s;
-            const ImVec2 b0((ui.size.x - bw) * 0.5f, (ui.size.y - bh) * 0.5f);
+            const ImVec2 b0(ui.origin.x + (ui.size.x - bw) * 0.5f, ui.origin.y + (ui.size.y - bh) * 0.5f);
             const ImVec2 b1(b0.x + bw, b0.y + bh);
             ui.dl->AddRectFilled(b0, b1, IM_COL32(12, 20, 30, 245));
             ui.dl->AddRect(b0, b1, IM_COL32(143, 216, 255, 160), 0.0f, 0, 1.2f);
@@ -4662,7 +4687,7 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         char ver[64];
         std::snprintf(ver, sizeof(ver), "PROJECT NOBLE  v%s", version.c_str());
         Text(ui, NobleStyle::SmallFont(), 14.0f,
-             ImVec2(ui.size.x - TextWidth(NobleStyle::SmallFont(), 14.0f * ui.s, ver) - 24.0f * ui.s, ui.size.y - 30.0f * ui.s),
+             ImVec2(ui.origin.x + ui.size.x - TextWidth(NobleStyle::SmallFont(), 14.0f * ui.s, ver) - 24.0f * ui.s, ui.origin.y + ui.size.y - 30.0f * ui.s),
              IM_COL32(200, 210, 220, 110), ver);
         break;
     }
@@ -4820,7 +4845,7 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         }
 
         const Skull& sel = kSkulls[st.skull];
-        const float dx = ui.size.x * 0.60f;
+        const float dx = ui.origin.x + ui.size.x * 0.60f;
         float dy = top + 70.0f * ui.s;
         UiTexture big = UiArt::SkullIcon(sel.icon);
         const float bs = 170.0f * ui.s;
@@ -4841,13 +4866,13 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         else std::snprintf(mult, sizeof(mult), "No score bonus");
         Text(ui, nullptr, 17.0f, ImVec2(dx, dy), IM_COL32(205, 218, 230, 255), mult);
 
-        const float by = ui.size.y - 104.0f * ui.s;
-        ui.dl->AddRectFilledMultiColor(ImVec2(left + 40.0f * ui.s, by), ImVec2(ui.size.x * 0.80f, by + 40.0f * ui.s),
+        const float by = ui.origin.y + ui.size.y - 104.0f * ui.s;
+        ui.dl->AddRectFilledMultiColor(ImVec2(left + 40.0f * ui.s, by), ImVec2(ui.origin.x + ui.size.x * 0.80f, by + 40.0f * ui.s),
                                        IM_COL32(40, 52, 64, 210), IM_COL32(40, 52, 64, 60), IM_COL32(40, 52, 64, 60), IM_COL32(40, 52, 64, 210));
         Text(ui, NobleStyle::TitleFont(), 24.0f, ImVec2(left + 52.0f * ui.s, by + 6.0f * ui.s), kWhite, settings.playerName.c_str());
         char total[64];
         std::snprintf(total, sizeof(total), "x%.2f", ScoreMultiplier(st.difficulty, st.skulls));
-        Text(ui, NobleStyle::TitleFont(), 24.0f, ImVec2(ui.size.x * 0.80f - 90.0f * ui.s, by + 6.0f * ui.s), kWhite, total);
+        Text(ui, NobleStyle::TitleFont(), 24.0f, ImVec2(ui.origin.x + ui.size.x * 0.80f - 90.0f * ui.s, by + 6.0f * ui.s), kWhite, total);
         if (back) goBack(Screen::Campaign);
         DrawHints(ui, { { Prompt::Accept, "Toggle" }, { Prompt::Back, "Back" } });
         break;
@@ -4935,7 +4960,7 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
                 MenuSounds::Click();
             }
             // The list so far. Y or a click on a row takes it out again.
-            const float lx = px + pw + 40.0f * ui.s, lw = ui.size.x - left - lx;
+            const float lx = px + pw + 40.0f * ui.s, lw = (ui.origin.x + ui.size.x * 0.925f) - lx;
             Text(ui, NobleStyle::TitleFont(), 18.0f, ImVec2(lx, top + 70.0f * ui.s), kAccent, ("ENTRIES (" + std::to_string(st.playlistEdit.entries.size()) + ")").c_str());
             std::vector<ListItem> rows;
             for (const Playlists::Entry& entry : st.playlistEdit.entries) {
@@ -5002,7 +5027,7 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
             const int lastRow = std::min(saveRow, firstRow + kVisibleRows);
             const float wheel = ImGui::GetIO().MouseWheel;
             if (wheel != 0.0f && st.optionsRow < saveRow) st.optionsRow = std::clamp(st.optionsRow - static_cast<int>(wheel) * 2, 0, saveRow - 1);
-            const float buttonsY = ui.size.y - 74.0f * ui.s - 54.0f * ui.s;
+            const float buttonsY = ui.origin.y + ui.size.y - 74.0f * ui.s - 54.0f * ui.s;
             for (int i = firstRow; i < lastRow; ++i) {
                 const VariantRules::Rule& rule = rules[i];
                 if (y + 58.0f * ui.s > buttonsY) break;   // never under the buttons
@@ -5037,7 +5062,7 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
                     if (next == baseValue) st.optionsValues.erase(rule.key);
                     else st.optionsValues[rule.key] = next;
                 }
-                if (st.optionsRow == i) Text(ui, nullptr, 16.0f, ImVec2(px + pw + 24.0f * ui.s, y + 6.0f * ui.s), kDim, rule.help, ui.size.x - left);
+                if (st.optionsRow == i) Text(ui, nullptr, 16.0f, ImVec2(px + pw + 24.0f * ui.s, y + 6.0f * ui.s), kDim, rule.help, ui.origin.x + ui.size.x * 0.925f);
                 y += 28.0f * ui.s;
             }
             y = buttonsY;
@@ -5119,12 +5144,12 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
             Text(ui, nullptr, 17.0f, ImVec2(left + 34.0f * ui.s, top + 70.0f * ui.s), kDim,
                  st.variantPickerModded ? "Every game type, on a modded map." : ("Game types " + st.variantPickerMapName + " can host.").c_str());
             const float rowH = 38.0f, listTop = top + 108.0f * ui.s, listW = ui.size.x * 0.40f;
-            const int rows = std::max(4, static_cast<int>((ui.size.y - 74.0f * ui.s - listTop - 40.0f * ui.s) / (rowH * ui.s)));
+            const int rows = std::max(4, static_cast<int>((ui.origin.y + ui.size.y - 74.0f * ui.s - listTop - 40.0f * ui.s) / (rowH * ui.s)));
             VariantRow shown;
             const MenuVariant* picked = DrawVariantList(ui, st, list, st.variantPickerMap, ff || st.variantPickerModded, ImVec2(left + 34.0f * ui.s, listTop), listW, rowH, rows, true, shown);
             if (!shown.mode.empty()) {
                 const float infoX = left + 34.0f * ui.s + listW + 40.0f * ui.s;
-                const float infoW = ui.size.x - left - infoX;
+                const float infoW = (ui.origin.x + ui.size.x * 0.925f) - infoX;
                 ui.dl->AddRectFilled(ImVec2(infoX - 16.0f * ui.s, listTop), ImVec2(infoX + infoW + 16.0f * ui.s, listTop + 190.0f * ui.s), IM_COL32(8, 14, 22, 190), 3.0f * ui.s);
                 DrawVariantInfo(ui, ImVec2(infoX, listTop + 14.0f * ui.s), infoW, shown);
             }
@@ -5171,7 +5196,7 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         std::vector<ListItem> items = ToItems(maps);
         if (maps.empty()) items.push_back({ searching ? "Nothing matches your search" : ff ? "No Reach Firefight mods installed" : "No Reach multiplayer mods installed", false, false });
         const float listRow = 40.0f;
-        const int listRows = std::max(4, static_cast<int>((ui.size.y - 74.0f * ui.s - listTop) / (listRow * ui.s)));
+        const int listRows = std::max(4, static_cast<int>((ui.origin.y + ui.size.y - 74.0f * ui.s - listTop) / (listRow * ui.s)));
         const int hit = DrawList(ui, "maps", ImVec2(left + 34.0f * ui.s, listTop), 380.0f * ui.s, items, mapIndex,
                                  st.focusRow == 0 && !ImGui::GetIO().WantTextInput, listRow, listRows, false);
         if (hit >= 0 && !maps.empty() && maps[hit].header) ToggleMod(st.openMods, modMode, *maps[hit].mod);
@@ -5222,7 +5247,7 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         // Right column, top down: banner, game type row, Firefight options + difficulty; the network strip
         // and the action buttons stay anchored at the bottom (RightColumnLayout), so the strip can never
         // cover the difficulty tiles the way it did before.
-        const float px = ui.size.x * 0.47f, pw = ui.size.x * 0.44f;
+        const float px = ui.origin.x + ui.size.x * 0.47f, pw = ui.size.x * 0.44f;
         const RightColumnY col = RightColumnLayout(ui);
         const float actionsY = col.actions;
         // Game-type safety: a vanilla map only hosts the types it was built for (Invasion on Sword Base used to
@@ -5524,22 +5549,22 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         {
             const auto& prof = UIManager::GetArmorCustomizer().GetProfile();
             const float rowW = 400.0f * ui.s;
-            PlayerRow(ui, ImVec2(ui.size.x - left - rowW, top + 8.0f * ui.s), rowW, Career::RankIndex(Career::Get().credits),
+            PlayerRow(ui, ImVec2(ui.origin.x + ui.size.x * 0.925f - rowW, top + 8.0f * ui.s), rowW, Career::RankIndex(Career::Get().credits),
                       prof.emblemIndex, prof.nameplateIndex, 0, PlayerServiceTag(settings), settings.playerName,
                       AuthClient::Get().IsDeveloper(), false, prof.emblemBackgroundIndex, UIManager::GetArmorCustomizer().EmblemColorsNow());
         }
 
         // Thin horizontal rule with active "HALO: REACH" underline
         const float ruleY = top + 64.0f * ui.s;
-        ui.dl->AddLine(ImVec2(left, ruleY), ImVec2(ui.size.x - left, ruleY), IM_COL32(140, 180, 220, 55), 1.0f);
+        ui.dl->AddLine(ImVec2(left, ruleY), ImVec2(ui.origin.x + ui.size.x * 0.925f, ruleY), IM_COL32(140, 180, 220, 55), 1.0f);
         const char* gameTab = "HALO: REACH";
         const float tabW = TextWidth(NobleStyle::TitleFont(), 18.0f * ui.s, gameTab);
-        const float tabX = ui.size.x * 0.5f - tabW * 0.5f;
+        const float tabX = ui.origin.x + (ui.size.x - tabW) * 0.5f;
         Text(ui, NobleStyle::TitleFont(), 18.0f, ImVec2(tabX, ruleY - 24.0f * ui.s), kWhite, gameTab);
         ui.dl->AddLine(ImVec2(tabX - 8.0f * ui.s, ruleY), ImVec2(tabX + tabW + 8.0f * ui.s, ruleY), kAccent, 2.5f * ui.s);
 
         ImGui::SetCursorScreenPos(ImVec2(left, ruleY + 12.0f * ui.s));
-        ImGui::BeginChild("##armory_panel", ImVec2(ui.size.x - left * 1.35f, ui.size.y - (ruleY + 12.0f * ui.s) - 62.0f * ui.s),
+        ImGui::BeginChild("##armory_panel", ImVec2(ui.size.x * 0.90f, ui.origin.y + ui.size.y - (ruleY + 12.0f * ui.s) - 62.0f * ui.s),
                           ImGuiChildFlags_None, ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoScrollbar);
         UIManager::GetArmorCustomizer().Render(device, context);
         ImGui::EndChild();
@@ -5559,17 +5584,19 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
                           : st.screen == Screen::Career ? "SERVICE RECORD" : "MODS";
         // These screens use the whole screen, like Settings.
         const bool full = true;
-        const float px = full ? 24.0f * ui.s : left;
-        const float py = full ? 86.0f * ui.s : top + 84.0f * ui.s;
+        const float px = full ? ui.origin.x + 24.0f * ui.s : left;
+        const float py = full ? ui.origin.y + 86.0f * ui.s : top + 84.0f * ui.s;
         if (full) {
-            ui.dl->AddRectFilled(ImVec2(0, 0), ui.size, IM_COL32(4, 8, 12, 215));
-            DrawTitle(ui, ImVec2(px, 10.0f * ui.s), title);
+            ui.dl->AddRectFilled(ui.origin, ImVec2(ui.origin.x + ui.size.x, ui.origin.y + ui.size.y), IM_COL32(4, 8, 12, 215));
+            DrawTitle(ui, ImVec2(px, ui.origin.y + 10.0f * ui.s), title);
         } else {
             DrawTitle(ui, ImVec2(left, top), title);
         }
         ImGui::SetCursorScreenPos(ImVec2(px, py));
         ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.03f, 0.05f, 0.07f, full ? 0.60f : 0.82f));
-        ImGui::BeginChild("##panel", ImVec2(ui.size.x - px * 2.0f, ui.size.y - py - 62.0f * ui.s),
+        const float panelW = full ? (ui.size.x - 48.0f * ui.s) : (ui.origin.x + ui.size.x * 0.925f - px);
+        const float panelH = ui.origin.y + ui.size.y - py - 62.0f * ui.s;
+        ImGui::BeginChild("##panel", ImVec2(panelW, panelH),
                           ImGuiChildFlags_Borders, ImGuiWindowFlags_None);
         if (st.screen == Screen::Servers) {
             UIManager::GetServerBrowser().Render();

@@ -1,4 +1,5 @@
 #include "SettingsPanel.hpp"
+#include "host/Window.hpp"
 #include "audio/VoiceChat.hpp"
 #include "common/Logger.hpp"
 #include "NobleStyle.hpp"
@@ -1770,6 +1771,10 @@ SettingsData SettingsPanel::WithDefaults(SettingsData e, Cat c) {
 void SettingsPanel::Apply() {
     SyncBuffers();
     Settings::Get().Update(m_edit);
+    if (auto* win = Window::Active()) {
+        win->ApplyWindowSettings(m_edit.width, m_edit.height, m_edit.borderless);
+    }
+    ReachAudio::PlayMenuMusic(m_edit.menuMusicTrack);
     MasterServerClient::Get().SetUrl(m_edit.masterServerUrl);
     // Field of view goes straight into the running engine (haloreach+0xB42C10, degrees); the
     // per-frame CameraFov::Tick keeps it there and picks it up for the next game too.

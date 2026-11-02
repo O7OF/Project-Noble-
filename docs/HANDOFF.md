@@ -7,7 +7,26 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 
 **Goal:** `noble-client.exe` loads MCC's own `haloreach.dll` (Halo: Reach) and drives it **without MCC**, like the existing
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
-MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.16.16 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.16.22 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+
+## 0. Pick up here (2026-11-02, 00:15 ET) - 16:9 Canvas Aspect Ratio Fitting, Heroic Armory Framing & Zoom, Window Settings Live Apply (0.9.16.22) (@O7OF)
+
+**Version:** 0.9.16.22. **Build:** noble-client, noble-dev, noble-dedicated (0 errors, 0 warnings on MSVC Release x64). Files: `src/host/Window.hpp`, `src/host/Window.cpp`, `src/ui/SettingsPanel.cpp`, `src/ui/ArmorCustomizer.hpp`, `src/ui/ArmorCustomizer.cpp`, `src/ui/FrontEndMenu.cpp`, `src/common/Version.hpp`, `docs/HANDOFF.md`, `docs/AGENT-STATUS.md`.
+
+**What was actually found & fixed (Root Cause Analysis):**
+1. **Window Aspect Ratio & UI Clipping on Maximize:**
+   - *Root Cause:* On maximized windows (e.g. 1920x1040), the aspect ratio is 1.846 instead of authentic 16:9 (1.777), and `ui.s` was computed directly from `vp->Size.y / 720.0f` (1.44x scale). Main Menu started at `ui.size.y * 0.30f + 104.0f * ui.s`, which with 14 rows, description, and hint rows pushed lower entries and prompt text off the bottom of the screen. In addition, setup modals like "New to Halo: Reach?" were off-center.
+   - *Fix:* Enforced authentic 16:9 canvas fitting (`canvasW = vp->Size.y * (16/9)`, centered with `ui.origin = (originX, originY)` and clean pillarbox/letterbox margins). Set robust UI scaling factor `ui.s = clamp(canvasH / 860.0f, 0.70f, 2.50f)`. Adjusted Main Menu header `titleY` to `ui.origin.y + canvasH * 0.16f` and `listY` to `titleY + 84.0f * ui.s`. Centered all modals within `ui.origin` + `ui.size`. The entire menu, all 14 rows, description, and hint bars now fit on screen with plenty of breathing room.
+2. **Armory Camera Zoom & Quality:**
+   - *Root Cause:* In `mainmenu_all.map`, the 3D scene camera places the Spartan far back on the pedestal at `kModelX = 0.656f`, `kModelY = 0.560f`, occupying only ~280 pixels out of 1080 (26% screen height). `ArmoryStage::Draw` was still multiplying by `k = 1.02f` or `1.18f`, leaving the character looking tiny inside a dark void.
+   - *Fix:* Integrated `customizer.GetCurrentScale()`, `GetFocusX()`, and `GetFocusY()`:
+     - **Full Body:** `k = 2.30f * m_userZoom` fills ~85% of stage height from boots to helmet.
+     - **Armory View:** `k = 2.85f * m_userZoom` provides an authentic 3/4 hero view.
+     - **Close-Up:** `k = 4.10f * m_userZoom` frames directly onto the selected armor piece (helmet `0.32f`, chest `0.42f`, knees `0.68f`, etc.).
+     - Enabled mouse wheel zooming (`m_userZoom` clamped 0.65x - 2.60x), right-click mouse drag panning (`m_panX`, `m_panY`), and middle-click reset.
+3. **Live Settings Window Updates:**
+   - *Root Cause:* Changing resolution (width, height) or toggling borderless/windowed mode required restarting the executable because settings changes were only saved to disk without notifying the running `Window`.
+   - *Fix:* Added `Window::Active()` and `Window::ApplyWindowSettings(width, height, borderless)` in `src/host/Window.hpp` & `Window.cpp`. Updated `SettingsPanel::Apply()` to immediately apply window size and borderless mode live via `SetWindowPos` and `SetWindowLongPtrW(GWL_STYLE)`, and apply menu music changes on the fly.
 
 ## 0. Pick up here (2026-11-01, 23:50 ET) - Main Menu & Armory Camera Zoom In, Fullscreen/Maximize Title Bar Button Enabled, Simultaneous noble-client & noble-dev Release Pipeline (0.9.16.21) (@O7OF)
 
