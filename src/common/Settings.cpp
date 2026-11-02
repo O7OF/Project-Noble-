@@ -260,9 +260,11 @@ void Settings::Load() {
     }
 
     Clamp(d);
-    std::lock_guard<std::mutex> lock(m_mutex);
-    m_data = d;
-    m_loaded = true;
+    {
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
+        m_data = d;
+        m_loaded = true;
+    }
     if (!existed) {
         Save();
     }
@@ -271,7 +273,7 @@ void Settings::Load() {
 bool Settings::Save() {
     nlohmann::json j;
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
         const SettingsData& d = m_data;
         j["width"] = d.width;
         j["height"] = d.height;
@@ -369,7 +371,7 @@ bool Settings::Save() {
 }
 
 SettingsData Settings::Snapshot() const {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     return m_data;
 }
 
@@ -424,7 +426,7 @@ bool Settings::ImportFrom(const std::filesystem::path& file) {
 
 void Settings::Update(const SettingsData& data) {
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
         m_data = data;
         Clamp(m_data);
     }

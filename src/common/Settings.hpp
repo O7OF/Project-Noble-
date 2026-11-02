@@ -126,7 +126,7 @@ public:
 
 private:
     Settings() = default;
-    mutable std::mutex m_mutex;
+    mutable std::recursive_mutex m_mutex;
     SettingsData m_data;
     bool m_loaded = false;
 };
