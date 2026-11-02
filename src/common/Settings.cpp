@@ -116,6 +116,8 @@ void Settings::Load() {
             Read(j, "width", d.width);
             Read(j, "height", d.height);
             Read(j, "borderless", d.borderless);
+            Read(j, "exclusiveFullscreen", d.exclusiveFullscreen);
+            if (d.exclusiveFullscreen) d.borderless = true;
             Read(j, "fieldOfView", d.fieldOfView);
             Read(j, "firstPersonFovMod", d.firstPersonFovMod);
             Read(j, "vehicleFirstPersonFovMod", d.vehicleFirstPersonFovMod);
@@ -280,6 +282,7 @@ bool Settings::Save() {
         j["width"] = d.width;
         j["height"] = d.height;
         j["borderless"] = d.borderless;
+        j["exclusiveFullscreen"] = d.exclusiveFullscreen;
         j["fieldOfView"] = d.fieldOfView;
         j["firstPersonFovMod"] = d.firstPersonFovMod;
         j["vehicleFirstPersonFovMod"] = d.vehicleFirstPersonFovMod;

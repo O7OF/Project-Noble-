@@ -22,7 +22,21 @@ public:
     // Applies a display-mode/window-size change to the live window only. The engine's swap chain is
     // created at the monitor's resolution, so switching windowed <-> borderless needs no restart and
     // no swap-chain resize; Windows scales the same crisp image to the new window.
-    void ApplyWindowSettings(uint32_t width, uint32_t height, bool borderless);
+    // exclusiveFullscreen keeps the borderless monitor-sized window and additionally asks the render
+    // thread to take DXGI exclusive full screen (see SyncExclusiveFullscreen in D3D11Renderer).
+    void ApplyWindowSettings(uint32_t width, uint32_t height, bool borderless, bool exclusiveFullscreen = false);
+
+    // DISPLAY MODE = FULLSCREEN chosen. Call before Create() (it also makes the window borderless).
+    void SetExclusiveFullscreen(bool on);
+    // True when the swap chain should be in exclusive full screen right now: the setting is on, Noble is
+    // the active app and the window is not minimized. Alt-Tab / focus loss turns it false. Any thread.
+    static bool WantsExclusiveFullscreen();
+    // Whether the swap chain is in exclusive full screen right now (set by the render thread). Any thread.
+    static bool IsExclusiveFullscreenActive();
+    static void SetExclusiveFullscreenActive(bool on);
+    // Render thread, after leaving exclusive full screen: re-applies the current window geometry on the
+    // window's own thread (DXGI restores the old rect, which is wrong if the mode changed to Windowed).
+    void RequestGeometryRefresh();
 
     HWND GetHwnd() const { return m_hwnd; }
     uint32_t GetWidth() const { return m_width; }
@@ -54,10 +68,14 @@ private:
     std::wstring m_title;
     uint32_t m_width;
     uint32_t m_height;
+    // Last size asked for by Settings (m_width/m_height follow WM_SIZE, i.e. the real client size).
+    uint32_t m_requestedWidth = 0;
+    uint32_t m_requestedHeight = 0;
     HWND m_hwnd = nullptr;
     HINSTANCE m_hInstance = nullptr;
     bool m_shouldClose = false;
     bool m_borderless = false;
+    bool m_exclusiveFullscreen = false;
     MessageCallback m_customWndProc;
 };
 

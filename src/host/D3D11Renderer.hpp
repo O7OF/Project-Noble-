@@ -9,6 +9,12 @@ namespace noble {
 
 using Microsoft::WRL::ComPtr;
 
+// DISPLAY MODE = FULLSCREEN: moves the swap chain in or out of DXGI exclusive full screen so it matches
+// Window::WantsExclusiveFullscreen() (setting on and Noble focused). Call on the render thread right before
+// Present (ReachHost's Present hook does). Entering keeps the desktop mode (resolution and refresh rate). Buffers are not resized: they are already at native resolution and the engine
+// holds references to them. Failures (e.g. DXGI_ERROR_NOT_CURRENTLY_AVAILABLE) are retried every 2 s.
+void SyncExclusiveFullscreen(IDXGISwapChain* swapChain);
+
 class D3D11Renderer {
 public:
     D3D11Renderer();

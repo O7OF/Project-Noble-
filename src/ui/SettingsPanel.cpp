@@ -857,9 +857,20 @@ void SettingsPanel::RenderGraphics() {
             When::Info, "", false, false, Preview::Gpu)) {
         InfoValue(GpuLine().c_str());
     }
-    if (Row("DISPLAY MODE", "Windowed: a fixed-size window you can move. Borderless: covers the whole display. Switching applies immediately; the renderer keeps using the display's native resolution.",
-            When::Apply, def.borderless ? "Borderless" : "Windowed", m_edit.borderless != m_saved.borderless)) {
-        if (CycleValue(m_edit.borderless ? "BORDERLESS FULL SCREEN" : "WINDOWED", m_edit.borderless ? 1 : 0, 2)) m_edit.borderless = !m_edit.borderless;
+    {
+        // 0 = Windowed, 1 = Borderless, 2 = Fullscreen (exclusive; stored as borderless + exclusiveFullscreen).
+        static const char* const kModeNames[] = { "WINDOWED", "BORDERLESS FULL SCREEN", "FULLSCREEN" };
+        static const char* const kModeDefaults[] = { "Windowed", "Borderless", "Fullscreen" };
+        auto modeOf = [](const SettingsData& d) { return d.exclusiveFullscreen ? 2 : (d.borderless ? 1 : 0); };
+        const int mode = modeOf(m_edit);
+        if (Row("DISPLAY MODE", "Windowed: a fixed-size window you can move. Borderless: covers the whole display. Fullscreen: takes over the display (exclusive) for the lowest latency and the display's highest refresh rate; Alt-Tab drops back to the desktop and returning re-enters it. Switching applies immediately; the renderer keeps using the display's native resolution.",
+                When::Apply, kModeDefaults[modeOf(def)], mode != modeOf(m_saved))) {
+            if (const int d = CycleValue(kModeNames[mode], mode, 3)) {
+                const int next = (mode + d + 3) % 3;
+                m_edit.borderless = next >= 1;
+                m_edit.exclusiveFullscreen = next == 2;
+            }
+        }
     }
     {
         int current = 0;
@@ -869,7 +880,7 @@ void SettingsPanel::RenderGraphics() {
         if (m_edit.borderless) std::snprintf(label, sizeof(label), "Fills your display");
         else std::snprintf(label, sizeof(label), "%d x %d", m_edit.width, m_edit.height);
         const bool changed = m_edit.width != m_saved.width || m_edit.height != m_saved.height;
-        if (Row("WINDOW SIZE", "Size of the game window in windowed mode. Rendering stays at the display's native resolution and is scaled into the window, so it is crisp even at 720p. Borderless fills the display, so this is greyed out.",
+        if (Row("WINDOW SIZE", "Size of the game window in windowed mode. Rendering stays at the display's native resolution and is scaled into the window, so it is crisp even at 720p. Borderless and Fullscreen fill the display, so this is greyed out.",
                 When::Apply, "1280 x 720", changed, m_edit.borderless)) {
             if (const int d = CycleValue(label, current, n, false)) {
                 current = std::clamp(current + d, 0, n - 1);
@@ -1668,7 +1679,7 @@ int SettingsPanel::CountDiff(const SettingsData& a, const SettingsData& b, Cat c
     auto f = [](float x, float y) { return std::fabs(x - y) > 1e-4f ? 1 : 0; };
     switch (c) {
     case Cat::Graphics:
-        return (a.width != b.width || a.height != b.height) + (a.borderless != b.borderless) + (a.verticalSync != b.verticalSync) +
+        return (a.width != b.width || a.height != b.height) + (a.borderless != b.borderless || a.exclusiveFullscreen != b.exclusiveFullscreen) + (a.verticalSync != b.verticalSync) +
                (a.fpsLimit != b.fpsLimit) + (a.showFps != b.showFps);
     case Cat::Audio:
         return f(a.volumeGame, b.volumeGame) + f(a.volumeMusic, b.volumeMusic) + f(a.volumeOther, b.volumeOther) +
@@ -1729,7 +1740,7 @@ SettingsData SettingsPanel::WithDefaults(SettingsData e, Cat c) {
     const SettingsData d;
     switch (c) {
     case Cat::Graphics:
-        e.width = d.width; e.height = d.height; e.borderless = d.borderless; e.verticalSync = d.verticalSync;
+        e.width = d.width; e.height = d.height; e.borderless = d.borderless; e.exclusiveFullscreen = d.exclusiveFullscreen; e.verticalSync = d.verticalSync;
         e.fpsLimit = d.fpsLimit; e.showFps = d.showFps;
         break;
     case Cat::Audio:
@@ -1774,10 +1785,11 @@ void SettingsPanel::Apply() {
     // window mode or size only restyles/resizes the window: Windows keeps showing the same crisp image.
     // No restart and no swap-chain resize are needed.
     const bool displayChanged = m_saved.width != m_edit.width || m_saved.height != m_edit.height ||
-                                m_saved.borderless != m_edit.borderless;
+                                m_saved.borderless != m_edit.borderless ||
+                                m_saved.exclusiveFullscreen != m_edit.exclusiveFullscreen;
     Settings::Get().Update(m_edit);
     if (displayChanged) {
-        if (auto* win = Window::Active()) win->ApplyWindowSettings(m_edit.width, m_edit.height, m_edit.borderless);
+        if (auto* win = Window::Active()) win->ApplyWindowSettings(m_edit.width, m_edit.height, m_edit.borderless, m_edit.exclusiveFullscreen);
     }
     ReachAudio::PlayMenuMusic(m_edit.menuMusicTrack);
     MasterServerClient::Get().SetUrl(m_edit.masterServerUrl);
@@ -1811,7 +1823,8 @@ std::string SettingsPanel::Summary(Cat c) const {
     char buf[96];
     switch (c) {
     case Cat::Graphics:
-        if (e.borderless) std::snprintf(buf, sizeof(buf), "Borderless \xC2\xB7 %s", e.fpsLimit ? (std::to_string(e.fpsLimit) + " FPS").c_str() : "No limit");
+        if (e.exclusiveFullscreen) std::snprintf(buf, sizeof(buf), "Fullscreen \xC2\xB7 %s", e.fpsLimit ? (std::to_string(e.fpsLimit) + " FPS").c_str() : "No limit");
+        else if (e.borderless) std::snprintf(buf, sizeof(buf), "Borderless \xC2\xB7 %s", e.fpsLimit ? (std::to_string(e.fpsLimit) + " FPS").c_str() : "No limit");
         else std::snprintf(buf, sizeof(buf), "%d x %d \xC2\xB7 %s", e.width, e.height, e.fpsLimit ? (std::to_string(e.fpsLimit) + " FPS").c_str() : "No limit");
         return buf;
     case Cat::Audio:

@@ -18,7 +18,8 @@ struct SettingsData {
     // Display
     int width = 1280;
     int height = 720;
-    bool borderless = false;       // borderless window covering the monitor
+    bool borderless = true;        // borderless window covering the monitor (default for new installs)
+    bool exclusiveFullscreen = false; // DXGI exclusive full screen; implies borderless, drops out while unfocused
     float fieldOfView = 78.0f;     // horizontal degrees; 78 is Halo: Reach's own default (haloreach+0xB42C10)
     float firstPersonFovMod = 0.0f; // -1.20..1.20 (-120 %..+120 %): 1st-person on-foot FOV modifier (in < 0, out > 0)
     float vehicleFirstPersonFovMod = 0.0f; // -1.20..1.20 (-120 %..+120 %): 1st-person in-vehicle FOV modifier (in < 0, out > 0)

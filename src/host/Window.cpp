@@ -10,14 +10,40 @@ namespace noble {
 
 namespace {
 Window* s_activeWindow = nullptr;
+std::atomic<HWND> s_activeHwnd{ nullptr };
+std::atomic<bool> s_exclusiveFullscreenSetting{ false };
+std::atomic<bool> s_exclusiveFullscreenActive{ false };
+// Posted by the render thread after it leaves exclusive full screen: re-apply the window geometry.
+constexpr UINT kMsgRefreshGeometry = WM_APP + 0x4E;
 }
 
 Window* Window::Active() { return s_activeWindow; }
 
 Window::Window(const std::wstring& title, uint32_t width, uint32_t height)
-    : m_title(title), m_width(width), m_height(height) {
+    : m_title(title), m_width(width), m_height(height), m_requestedWidth(width), m_requestedHeight(height) {
     s_activeWindow = this;
     m_hInstance = GetModuleHandleW(nullptr);
+}
+
+void Window::SetExclusiveFullscreen(bool on) {
+    m_exclusiveFullscreen = on;
+    if (on) m_borderless = true;
+    s_exclusiveFullscreenSetting.store(on);
+}
+
+bool Window::WantsExclusiveFullscreen() {
+    if (!s_exclusiveFullscreenSetting.load()) return false;
+    const HWND hwnd = s_activeHwnd.load();
+    // Only while Noble is the foreground app: Alt-Tab, a click on another monitor or Win+D drops out,
+    // and coming back re-enters. DXGI itself also leaves full screen on focus loss.
+    return hwnd != nullptr && GetForegroundWindow() == hwnd && !IsIconic(hwnd);
+}
+
+bool Window::IsExclusiveFullscreenActive() { return s_exclusiveFullscreenActive.load(); }
+void Window::SetExclusiveFullscreenActive(bool on) { s_exclusiveFullscreenActive.store(on); }
+
+void Window::RequestGeometryRefresh() {
+    if (m_hwnd) PostMessageW(m_hwnd, kMsgRefreshGeometry, 0, 0);
 }
 
 Window::~Window() {
@@ -29,11 +55,20 @@ Window::~Window() {
     UnregisterClassW(L"HaloReachCE_WindowClass", m_hInstance);
 }
 
-void Window::ApplyWindowSettings(uint32_t width, uint32_t height, bool borderless) {
+void Window::ApplyWindowSettings(uint32_t width, uint32_t height, bool borderless, bool exclusiveFullscreen) {
     if (!m_hwnd) return;
-    m_borderless = borderless;
+    m_exclusiveFullscreen = exclusiveFullscreen;
+    m_borderless = borderless || exclusiveFullscreen;
     m_width = width;
     m_height = height;
+    m_requestedWidth = width;
+    m_requestedHeight = height;
+    s_exclusiveFullscreenSetting.store(exclusiveFullscreen);
+
+    // While DXGI owns the window in exclusive full screen, restyling it would fight the swap chain. The
+    // render thread leaves full screen on its next Present (the setting is now off) and then posts
+    // kMsgRefreshGeometry, which lands back here with the new geometry.
+    if (IsExclusiveFullscreenActive()) return;
 
     MONITORINFO monitorInfo{};
     monitorInfo.cbSize = sizeof(monitorInfo);
@@ -162,6 +197,8 @@ bool Window::Create() {
         return false;
     }
 
+    s_activeHwnd.store(m_hwnd);
+
     SendMessageW(m_hwnd, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(wc.hIcon));
     SendMessageW(m_hwnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(wc.hIconSm));
 
@@ -280,7 +317,13 @@ LRESULT Window::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam
             m_shouldClose = true;
             DestroyWindow(hwnd);
             return 0;
+        case kMsgRefreshGeometry:
+            if (!IsExclusiveFullscreenActive()) {
+                ApplyWindowSettings(m_requestedWidth, m_requestedHeight, m_borderless, m_exclusiveFullscreen);
+            }
+            return 0;
         case WM_DESTROY:
+            s_activeHwnd.store(nullptr);
             m_shouldClose = true;
             PostQuitMessage(0);
             return 0;

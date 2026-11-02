@@ -8241,3 +8241,31 @@ session registry, matchmaker (8 playlists). DB goes to `server/data/` (git-ignor
   - All accounts wiped clean and developer privileges reset to default (`is_developer = 0`).
 - **Server Deployment**:
   - Committed and pushed updated server netcode, schema, and reset database to `https://github.com/O7OF/ServerTestDeploy.git` on branch `main`.
+
+### 2026-11-02 — Exclusive FULLSCREEN display mode, Borderless default (0.9.16.31, @claude)
+- **SETTINGS > GRAPHICS > DISPLAY MODE** now cycles Windowed / Borderless full screen / Fullscreen. Fullscreen is DXGI
+  exclusive full screen. It is saved as the new `exclusiveFullscreen` key in `settings.json` and also forces
+  `borderless = true`, so older builds read it as Borderless. It applies live, with no restart.
+- **Borderless is now the default** for new installs and for GRAPHICS > Reset to defaults (`SettingsData::borderless = true`).
+  Existing `settings.json` files keep their saved choice.
+- **How it works:** the window stays the monitor-sized borderless popup. `SyncExclusiveFullscreen()`
+  (`src/host/D3D11Renderer.cpp`) runs at the top of ReachHost's Present hook, on the render thread. It calls
+  `SetFullscreenState` so the swap chain matches `Window::WantsExclusiveFullscreen()`: the setting is on, Noble is the
+  foreground window and the window is not minimized. Alt-Tab or any focus loss leaves fullscreen, and coming back re-enters it.
+  If DXGI drops out on its own, that is detected too. After leaving, the window posts itself `WM_APP+0x4E` to re-apply the
+  Windowed/Borderless geometry on its own thread. A failed enter (e.g. `DXGI_ERROR_NOT_CURRENTLY_AVAILABLE`) retries every 2 s.
+  `Window::ApplyWindowSettings` does not restyle the window while exclusive fullscreen is active; the refresh after leaving
+  applies the new geometry.
+- **Swap chain:** `DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH` was removed. With the flag, entering fullscreen on Tyler's 4K
+  display switched the monitor to the back buffer's size (2560x1600, then 1920x1080 after `ResizeTarget`). Fullscreen now
+  always uses the desktop resolution and refresh rate. `ResizeBuffers` is deliberately **not** called: the buffers are
+  already native size, and the engine and host hold back-buffer references, so the call would fail. Alt+Enter is disabled
+  (`MakeWindowAssociation(DXGI_MWA_NO_ALT_ENTER)`) so it cannot bypass the setting. `D3D11Renderer::Shutdown` leaves
+  fullscreen before the swap chain is released.
+- **Verified** (noble-dev, 3840x2160 primary display): the log shows `Display: exclusive full screen on at the desktop mode
+  (3840x2160, buffers 3840x2160)`. Notepad taking focus logged `left exclusive full screen`, and refocusing re-entered.
+  The display stayed 3840x2160 throughout and after exit.
+- **Not yet tested:** a match process launched from the menu while in Fullscreen; switching Fullscreen to Windowed by hand
+  in the menu (same code path as Alt-Tab plus the geometry refresh).
+- **Build note:** `src/res/blocks.rc` needs the git-ignored `data/profile_1.bin` and `data/menumaps/*`. If the resource step
+  fails with RC2135, copy them from `build/bin/Release/data/`.

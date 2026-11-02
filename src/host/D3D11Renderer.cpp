@@ -1,8 +1,72 @@
 #include "D3D11Renderer.hpp"
 #include "common/Logger.hpp"
+#include "Window.hpp"
 #include <d3d11_4.h>
 
 namespace noble {
+
+void SyncExclusiveFullscreen(IDXGISwapChain* swapChain) {
+    if (!swapChain) return;
+    Window* window = Window::Active();
+    if (!window) return;
+    DXGI_SWAP_CHAIN_DESC desc{};
+    if (FAILED(swapChain->GetDesc(&desc)) || desc.OutputWindow != window->GetHwnd()) return;
+
+    BOOL fullscreen = FALSE;
+    if (FAILED(swapChain->GetFullscreenState(&fullscreen, nullptr))) return;
+
+    // DXGI leaves exclusive full screen by itself when the window loses focus (Alt-Tab). Note it and put
+    // the window back to its normal geometry.
+    if (!fullscreen && Window::IsExclusiveFullscreenActive()) {
+        Window::SetExclusiveFullscreenActive(false);
+        window->RequestGeometryRefresh();
+        NOBLE_INFO("Display: left exclusive full screen (focus lost)");
+    }
+
+    const bool want = Window::WantsExclusiveFullscreen();
+    static bool s_lastWant = false;
+    static ULONGLONG s_nextAttempt = 0;
+    static bool s_failureLogged = false;
+    if (want != s_lastWant) {
+        s_lastWant = want;
+        s_nextAttempt = 0;
+        s_failureLogged = false;
+    }
+    if (want == (fullscreen != FALSE)) return;
+    const ULONGLONG now = GetTickCount64();
+    if (now < s_nextAttempt) return;
+
+    if (!want) {
+        const HRESULT hr = swapChain->SetFullscreenState(FALSE, nullptr);
+        Window::SetExclusiveFullscreenActive(false);
+        window->RequestGeometryRefresh();
+        NOBLE_INFO("Display: left exclusive full screen (0x{:08X})", static_cast<uint32_t>(hr));
+        return;
+    }
+
+    const HRESULT hr = swapChain->SetFullscreenState(TRUE, nullptr);
+    if (FAILED(hr)) {
+        s_nextAttempt = now + 2000;
+        if (!s_failureLogged) {
+            s_failureLogged = true;
+            NOBLE_WARN("Display: exclusive full screen not available yet (0x{:08X}); retrying", static_cast<uint32_t>(hr));
+        }
+        return;
+    }
+    Window::SetExclusiveFullscreenActive(true);
+    // No ALLOW_MODE_SWITCH on the swap chain, so DXGI keeps the desktop mode (resolution and refresh rate).
+    // The process is not DPI aware, so window/monitor sizes it sees can be scaled (a 4K display at 200 %
+    // reads as 1920x1080); the output's own description is in real pixels.
+    DXGI_OUTPUT_DESC outputDesc{};
+    ComPtr<IDXGIOutput> output;
+    if (SUCCEEDED(swapChain->GetContainingOutput(output.GetAddressOf())) && output && SUCCEEDED(output->GetDesc(&outputDesc))) {
+        const RECT& r = outputDesc.DesktopCoordinates;
+        NOBLE_INFO("Display: exclusive full screen on at the desktop mode ({}x{}, buffers {}x{})", r.right - r.left,
+                   r.bottom - r.top, desc.BufferDesc.Width, desc.BufferDesc.Height);
+    } else {
+        NOBLE_INFO("Display: exclusive full screen on at the desktop mode");
+    }
+}
 
 D3D11Renderer::D3D11Renderer() = default;
 
@@ -55,7 +119,9 @@ bool D3D11Renderer::Initialize(HWND hwnd, uint32_t width, uint32_t height) {
     scd.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
     scd.BufferDesc.RefreshRate.Numerator = 60;
     scd.BufferDesc.RefreshRate.Denominator = 1;
-    scd.Flags = DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH;
+    // No DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH: DISPLAY MODE = FULLSCREEN must keep the desktop's resolution
+    // and refresh rate. With the flag, DXGI switched a 4K display to the back buffer's size (2560x1600).
+    scd.Flags = 0;
     // haloreach.dll builds a shader resource view on the backbuffer (rasterizer surface pool 1).
     // Its own swap-chain path uses BufferUsage 0x30 (SHADER_INPUT | RENDER_TARGET_OUTPUT); without
     // SHADER_INPUT, CreateShaderResourceView fails, pool 1 is never initialised, and the engine
@@ -139,6 +205,12 @@ bool D3D11Renderer::Initialize(HWND hwnd, uint32_t width, uint32_t height) {
         NOBLE_INFO("Direct3D 11 multithread protection enabled.");
     }
 
+    // Alt+Enter would toggle exclusive full screen behind the DISPLAY MODE setting's back; the setting owns it.
+    ComPtr<IDXGIFactory> factory;
+    if (SUCCEEDED(m_swapChain->GetParent(IID_PPV_ARGS(factory.GetAddressOf()))) && factory) {
+        factory->MakeWindowAssociation(hwnd, DXGI_MWA_NO_ALT_ENTER);
+    }
+
     if (!CreateRenderTarget()) {
         return false;
     }
@@ -200,6 +272,14 @@ void D3D11Renderer::EndFrame(bool vsync) {
 }
 
 void D3D11Renderer::Shutdown() {
+    // DXGI requires leaving exclusive full screen before the swap chain is released.
+    if (m_swapChain) {
+        BOOL fullscreen = FALSE;
+        if (SUCCEEDED(m_swapChain->GetFullscreenState(&fullscreen, nullptr)) && fullscreen) {
+            m_swapChain->SetFullscreenState(FALSE, nullptr);
+        }
+        Window::SetExclusiveFullscreenActive(false);
+    }
     CleanupRenderTarget();
     m_context.Reset();
     m_swapChain.Reset();

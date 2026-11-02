@@ -24,6 +24,7 @@
 #include "common/Settings.hpp"
 #include "common/Relaunch.hpp"
 #include "host/Window.hpp"
+#include "host/D3D11Renderer.hpp"
 #include "network/NetworkTransport.hpp"
 #include <windows.h>
 #include <shellapi.h>
@@ -304,6 +305,8 @@ static std::atomic<bool> s_presentHookAttempted{false};
 
 static HRESULT STDMETHODCALLTYPE HookSwapChainPresent(IDXGISwapChain* swapChain, UINT syncInterval, UINT flags) {
     (void)syncInterval;
+    // DISPLAY MODE = FULLSCREEN: enter/leave DXGI exclusive full screen on this (the render) thread.
+    SyncExclusiveFullscreen(swapChain);
     const SettingsData settings = Settings::Get().Snapshot();
     const UINT effectiveSyncInterval = settings.verticalSync ? 1u : 0u;
 

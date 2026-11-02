@@ -316,6 +316,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     auto window = std::make_unique<noble::Window>(L"Halo: Reach Community Edition",
         static_cast<uint32_t>(startupSettings.width), static_cast<uint32_t>(startupSettings.height));
     window->SetBorderless(startupSettings.borderless);
+    window->SetExclusiveFullscreen(startupSettings.exclusiveFullscreen);
     if (!window->Create()) {
         NOBLE_ERROR("Failed to create Win32 host window.");
         return 1;
