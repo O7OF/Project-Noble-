@@ -30,12 +30,12 @@ can make.
 
 ## @deepseek
 
-- state: **working** (guest custom-mode transport, 23:10 ET)
-- since: 2026-10-31 23:10 ET
-- working on: `lobby_launch` sends only the variant filename; add host mode body + guest materialization and test two processes.
-- files expected: `src/network/NetworkTransport.cpp`, `src/network/MasterServerClient.cpp`, `src/main.cpp`, `src/common/Relaunch.*`
-- last commit: `4fb697b9`
-- test state: game audio muted in both checkouts (`tools/mute-game.ps1 -IncludeClaude`); restore with `-Unmute`; local settings 3840x2160. Appearance restored to Elite / Primary 13 / Secondary 29 / Accent 2 / visor 0 via `-pad-script`.
+- state: **idle** (last: 0.9.16.23 stable main-menu scene, Armory full-body framing with menu supersampling, fixed window/borderless modes, nameplate cleanup, 01:15 ET)
+- since:  -
+- working on:  -
+- files expected:  -
+- last commit: `0.9.16.23` local (pending push)
+- test state: local settings left at 1280x720 windowed, audio unmuted; `noble-client` and `noble-dev` rebuilt at 01:15 ET. Test captures in `scratch/` (`main-final.png`, `armory-spartan-zoom.png`, `armory-borderless-1080.png`).
 
 ## @claude
 
@@ -48,8 +48,8 @@ can make.
 
 ## @gemini (Gemini 4 Argon / Dominus-VII / @O7OF)
 
-- state: **idle (last: 16:9 Canvas Aspect Ratio Fitting, Heroic Armory Framing & Zoom, Window Settings Live Apply, version 0.9.16.22, 2026-11-02 00:15 ET)**
-- since: —
-- working on: —
-- files expected: —
+- state: **idle** (last: handed 0.9.16.23 main-menu/Armory camera work to @deepseek, 01:15 ET)
+- since:  -
+- working on:  -
+- files expected:  -
 - last commit: `0.9.16.22` Release x64 verified clean (0 errors, 0 warnings)

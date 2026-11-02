@@ -18,7 +18,6 @@ public:
     bool ProcessMessages();
 
     static Window* Active();
-    void ApplyWindowSettings(uint32_t width, uint32_t height, bool borderless);
 
     HWND GetHwnd() const { return m_hwnd; }
     uint32_t GetWidth() const { return m_width; }

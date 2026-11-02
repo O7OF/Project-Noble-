@@ -959,6 +959,12 @@ void ArmorCustomizer::SetPreferredSpecies(PlayerSpecies species) {
 }
 
 
+bool ArmorCustomizer::IsFullBodyCamera() const {
+    if (m_previewSpecies == PlayerSpecies::Elite) return true;   // the Elite scene is a full-body pedestal
+    if (m_cameraMode != 2) return true;                          // ARMORY VIEW and FULL BODY
+    return m_focusScene.empty() || m_focusScene == "c_full_spartan";
+}
+
 void ArmorCustomizer::UpdateArmoryCamera() const {
     if (!ReachArmory::IsMenuMode()) return;
     // Test-only: "-armory-scene-index <n>" forces one of the menu map's camera scenes so the per-piece close-ups can
@@ -992,36 +998,26 @@ void ArmorCustomizer::UpdateArmoryCamera() const {
     else ReachArmory::SetTargetScene("armory");
 }
 
-float ArmorCustomizer::GetCurrentScale() const {
-    float baseK = (m_cameraMode == 2) ? 4.10f : (m_cameraMode == 0) ? 2.85f : 2.30f;
-    return baseK * m_userZoom;
-}
-
-float ArmorCustomizer::GetFocusY() const {
-    if (m_cameraMode == 1) return 0.52f + m_panY; // Full Body centered
-    if (m_cameraMode == 0) return 0.48f + m_panY; // Armory View
-    // Close-Up mode (mode 2) frames the focused slot:
-    float slotY = 0.46f;
-    if (!m_lastRowLabel.empty()) {
-        const auto& name = m_lastRowLabel;
-        if (name == "Helmet" || name == "Helmet Variant" || name == "Visor Color") slotY = 0.32f;
-        else if (name == "Left Shoulder" || name == "Right Shoulder") slotY = 0.38f;
-        else if (name == "Chest") slotY = 0.42f;
-        else if (name == "Wrist") slotY = 0.49f;
-        else if (name == "Utility") slotY = 0.58f;
-        else if (name == "Knee Guards") slotY = 0.68f;
-        else slotY = 0.46f;
+void ArmorCustomizer::ValidateNameplate() {
+    const auto& catalog = UiArt::GetNameplateCatalog();
+    int fallback = 0;
+    bool haveFallback = false;
+    for (size_t i = 0; i < catalog.size(); ++i) {
+        if (!UiArt::NameplateSelectable(static_cast<int>(i))) continue;
+        if (!haveFallback) {
+            fallback = static_cast<int>(i);
+            haveFallback = true;
+        }
+        if (static_cast<int>(i) == m_profile.nameplateIndex) return;   // saved plate is available
     }
-    return slotY + m_panY;
-}
-
-float ArmorCustomizer::GetFocusX() const {
-    if (m_cameraMode != 2) return 0.735f + m_panX;
-    float lateral = 0.0f;
-    if (m_lastRowLabel == "Left Shoulder") lateral = -0.045f;
-    else if (m_lastRowLabel == "Right Shoulder") lateral = 0.045f;
-    else if (m_lastRowLabel == "Wrist") lateral = -0.035f;
-    return 0.735f + lateral + m_panX;
+    const int replacement = haveFallback ? fallback : 0;
+    if (m_profile.nameplateIndex == replacement) return;
+    NOBLE_INFO("ArmorCustomizer: saved nameplate {} is not available in this build; using {} ('{}')",
+               m_profile.nameplateIndex, replacement,
+               (size_t)replacement < catalog.size() ? catalog[(size_t)replacement].name : "Blank");
+    m_profile.nameplateIndex = replacement;
+    m_dirty = true;
+    SaveProfile(m_profilePath);
 }
 
 
@@ -1580,27 +1576,17 @@ void ArmorCustomizer::RenderCharacterPreview(ID3D11Device* device, ID3D11DeviceC
     }
 
     if (m_autoRotate) ReachArmory::AddYawRotation(ImGui::GetIO().DeltaTime * 0.45f);
-    ImGui::InvisibleButton("##character_preview_drag", ImVec2(width, height), ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight | ImGuiButtonFlags_MouseButtonMiddle);
-    if (ImGui::IsItemActive()) {
-        if (ImGui::IsMouseDragging(ImGuiMouseButton_Left, 0.0f)) {
-            ReachArmory::AddYawRotation(-ImGui::GetIO().MouseDelta.x * 0.0085f);
-        }
-        if (ImGui::IsMouseDragging(ImGuiMouseButton_Right, 0.0f)) {
-            m_panX += ImGui::GetIO().MouseDelta.x * 0.0012f;
-            m_panY += ImGui::GetIO().MouseDelta.y * 0.0012f;
-            m_panX = std::clamp(m_panX, -0.30f, 0.30f);
-            m_panY = std::clamp(m_panY, -0.35f, 0.35f);
-        }
-        if (ImGui::IsMouseClicked(ImGuiMouseButton_Middle)) {
-            m_userZoom = 1.0f;
-            m_panX = 0.0f;
-            m_panY = 0.0f;
-        }
+    ImGui::InvisibleButton("##character_preview_drag", ImVec2(width, height), ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
+    if (ImGui::IsItemActive() &&
+        (ImGui::IsMouseDragging(ImGuiMouseButton_Left, 0.0f) || ImGui::IsMouseDragging(ImGuiMouseButton_Right, 0.0f))) {
+        ReachArmory::AddYawRotation(-ImGui::GetIO().MouseDelta.x * 0.0085f);
     }
     if (ImGui::IsItemHovered()) {
         const float wheel = ImGui::GetIO().MouseWheel;
         if (std::abs(wheel) > 0.01f) {
-            m_userZoom = std::clamp(m_userZoom + wheel * 0.12f, 0.65f, 2.60f);
+            if (wheel > 0.0f) m_cameraMode = 2;
+            else m_cameraMode = (m_cameraMode == 2) ? 1 : 0;
+            UpdateArmoryCamera();
         }
     }
 }
@@ -1619,6 +1605,10 @@ struct PickOption {
     bool forSale = false;        // rank reached, not bought yet (Spartan items with a cR price)
     int64_t price = 0;
     std::string buyKey;          // "<slot>:<permutation id>" in career.json
+    // The value stored in the profile when this tile is equipped. -1 = the tile's own position in the
+    // list (every slot except Nameplate). Nameplates use the position in UiArt::GetNameplateCatalog()
+    // so hiding/removing entries can never shift a saved plate.
+    int value = -1;
 };
 
 // Picture, rank lock and price of a Spartan option (from kSpartanItems). Rank not reached -> locked;
@@ -1658,6 +1648,7 @@ struct SlotRow {
     RowKind kind = RowKind::List;
     int* index = nullptr;
     std::vector<PickOption> options;
+    bool catalogIndexed = false;            // option.value is the profile value (Nameplate)
     const char* scene = "c_full_spartan";   // camera close-up while this slot is edited
 };
 
@@ -1676,6 +1667,26 @@ float TextW(ImFont* f, float px, const char* t) {
 } // namespace
 
 void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context) {
+    // Test-only: "-armory-species spartan|elite" shows the other species without saving the profile,
+    // so both 3D previews can be captured with the same appearance.
+    {
+        static bool s_applied = false;
+        if (!s_applied) {
+            s_applied = true;
+            int argc = 0;
+            LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+            for (int i = 1; argv && i + 1 < argc; ++i) {
+                if (_wcsicmp(argv[i], L"-armory-species") != 0) continue;
+                const PlayerSpecies species = (_wcsicmp(argv[i + 1], L"elite") == 0) ? PlayerSpecies::Elite : PlayerSpecies::Spartan;
+                m_profile.species = species;
+                m_previewSpecies = species;
+                m_focusedRow = 0;
+                m_syncedInitial = false;
+            }
+            if (argv) LocalFree(argv);
+        }
+    }
+    ValidateNameplate();
     SyncLegacyFields();
     if (!m_syncedInitial) {
         m_syncedInitial = true;
@@ -1904,13 +1915,30 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
             std::vector<PickOption> opts;
             const auto& nameplates = UiArt::GetNameplateCatalog();
             opts.reserve(nameplates.size());
-            for (const auto& np : nameplates) {
-                opts.push_back({ np.name.c_str(), "MCC Halo player nameplate banner." });
+            for (size_t i = 0; i < nameplates.size(); ++i) {
+                // Retired plates are gone everywhere; developer entitlements only exist in noble-dev.
+                // The option keeps its catalog position so saved profiles and remote players resolve
+                // to the same plate even after entries are hidden.
+                if (!UiArt::NameplateSelectable(static_cast<int>(i))) continue;
+                PickOption o;
+                o.name = nameplates[i].name;
+                o.description = "MCC Halo player nameplate banner.";
+                o.value = static_cast<int>(i);
+                opts.push_back(std::move(o));
             }
+            if (opts.empty()) {   // never leave the slot without a tile the player can equip
+                PickOption o;
+                o.name = "Blank";
+                o.description = "MCC Halo player nameplate banner.";
+                o.value = 0;
+                opts.push_back(std::move(o));
+            }
+            NOBLE_INFO("ArmorCustomizer: {} nameplate(s) offered of {} in the MCC catalog", opts.size(), nameplates.size());
             return opts;
         }();
         SlotRow npRow{ "IDENTITY", "Nameplate", RowKind::List, &m_profile.nameplateIndex };
         npRow.options = s_nameplateOptions;
+        npRow.catalogIndexed = true;
         rows.push_back(std::move(npRow));
 
         static const auto s_emblemOptions = []() {
@@ -1970,6 +1998,24 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
     const int rowCount = static_cast<int>(rows.size());
     m_focusedRow = std::clamp(m_focusedRow, 0, rowCount - 1);
 
+    // List rows normally store the option's position in the profile. The Nameplate row stores the
+    // position in UiArt::GetNameplateCatalog() instead (option.value), because that list is filtered
+    // per build; these two helpers translate between the picker position and the saved value.
+    auto optionPos = [](const SlotRow& r, int stored) -> int {
+        if (r.options.empty()) return 0;
+        if (!r.catalogIndexed) return std::clamp(stored, 0, static_cast<int>(r.options.size()) - 1);
+        for (int i = 0; i < static_cast<int>(r.options.size()); ++i) {
+            if (r.options[static_cast<size_t>(i)].value == stored) return i;
+        }
+        return 0;
+    };
+    auto optionValue = [](const SlotRow& r, int pos) -> int {
+        if (r.options.empty()) return 0;
+        const int clamped = std::clamp(pos, 0, static_cast<int>(r.options.size()) - 1);
+        const int value = r.options[static_cast<size_t>(clamped)].value;
+        return value >= 0 ? value : clamped;
+    };
+
     // Items that are locked or not bought can't stay equipped (e.g. a look saved before the locks): back to the
     // slot's first option (the default piece).
 
@@ -1979,10 +2025,10 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
         bool reset = false;
         for (SlotRow& r : rows) {
             if (!r.index || r.options.empty() || r.index == &speciesInt || r.index == &bodyInt) continue;
-            const int v = std::clamp(*r.index, 0, static_cast<int>(r.options.size()) - 1);
+            const int v = optionPos(r, *r.index);
             if (r.options[v].locked || r.options[v].forSale) {
                 NOBLE_INFO("ArmorCustomizer: {} '{}' isn't unlocked yet; back to '{}'", r.label, r.options[v].name, r.options[0].name);
-                *r.index = 0;
+                *r.index = optionValue(r, 0);
                 if (r.index == &m_profile.helmetIndex) m_profile.helmetVariantIndex = 0;
                 reset = true;
             }
@@ -2015,8 +2061,9 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
                 Career::MarkArmoryItemOwned(opt.buyKey);
             }
         }
-        if (*r.index == value && r.index != &speciesInt && r.index != &bodyInt) return;
-        *r.index = value;
+        const int stored = optionValue(r, value);
+        if (*r.index == stored && r.index != &speciesInt && r.index != &bodyInt) return;
+        *r.index = stored;
         if (r.kind == RowKind::Colour) {   // a palette choice replaces any custom wheel colour
             if (r.index == &m_profile.primaryColor) m_profile.primaryCustom = false;
             else if (r.index == &m_profile.secondaryColor) m_profile.secondaryCustom = false;
@@ -2046,8 +2093,6 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
     auto focus = [&](int rowIndex) {
         if (rowIndex < 0 || rowIndex >= rowCount) return;
         m_focusedRow = rowIndex;
-        m_lastRowLabel = rows[rowIndex].label;
-        m_lastRowCount = rows.size();
         s_buyRow = -1;
         m_pickerScrollToEquipped = true;
         m_focusScene = (m_previewSpecies == PlayerSpecies::Spartan) ? rows[rowIndex].scene : "armory_elite";
@@ -2058,9 +2103,6 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
     if (!ImGui::GetIO().WantTextInput) {
         if (ImGui::IsKeyPressed(ImGuiKey_C)) {
             m_cameraMode = (m_cameraMode + 1) % 3;
-            m_userZoom = 1.0f;
-            m_panX = 0.0f;
-            m_panY = 0.0f;
             UpdateArmoryCamera();
             MenuSounds::Click();
         }
@@ -2071,7 +2113,7 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
             const int n = static_cast<int>(fr.options.size());
             // Steps to the next option that isn't locked.
             auto step = [&](int dir) {
-                int v = *fr.index;
+                int v = optionPos(fr, *fr.index);
                 for (int k = 0; k < n; ++k) {
                     v = (v + dir + n) % n;
                     if (!fr.options[v].locked && !fr.options[v].forSale) { choose(m_focusedRow, v); break; }
@@ -2191,7 +2233,7 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
                 ldl->AddRect(ImVec2(vr - 18.0f * s, p0.y + 7.0f * s), ImVec2(vr, p1.y - 7.0f * s), IM_COL32(230, 240, 255, 160));
             } else {
                 std::string value = r.kind == RowKind::Tag ? m_profile.serviceTag
-                                  : (r.index && !r.options.empty()) ? r.options[std::clamp(*r.index, 0, static_cast<int>(r.options.size()) - 1)].name : "";
+                                  : (r.index && !r.options.empty()) ? r.options[optionPos(r, *r.index)].name : "";
                 const float maxW = listW * 0.48f;
                 while (value.size() > 3 && TextW(smallFont, 14.0f * s, value.c_str()) > maxW) value = value.substr(0, value.size() - 4) + "...";
                 TextAt(ldl, smallFont, 14.0f * s, ImVec2(vr - TextW(smallFont, 14.0f * s, value.c_str()), ty + 2.0f * s),
@@ -2229,7 +2271,7 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
         }
     } else if (row.index && !row.options.empty()) {
         const int n = static_cast<int>(row.options.size());
-        const int equipped = std::clamp(*row.index, 0, n - 1);
+        const int equipped = optionPos(row, *row.index);
         // Colour slots -> the custom-wheel fields of the profile (0 primary, 1 secondary, 2 accent, 3 lights).
         auto colourSlot = [&](int* idx) -> int {
             if (idx == &m_profile.primaryColor || idx == &m_profile.elitePrimaryColor) return 0;
@@ -2372,9 +2414,9 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
                 gdl->AddRect(t0, t1, isEq ? IM_COL32(255, 255, 255, 255) : IM_COL32(255, 255, 255, hov ? 160 : 40), 2.0f * s, 0, isEq ? 2.5f * s : 1.0f);
             } else if (isNameplate) {
                 gdl->AddRectFilled(t0, t1, isEq ? IM_COL32(34, 70, 104, 235) : (hov ? IM_COL32(40, 54, 70, 235) : IM_COL32(20, 28, 38, 220)), 2.0f * s);
-                const auto& catalog = UiArt::GetNameplateCatalog();
-                if (static_cast<size_t>(i) < catalog.size()) {
-                    const UiTexture npTex = UiArt::Nameplate(i);
+                const int plateIndex = row.options[i].value;
+                if (plateIndex >= 0) {
+                    const UiTexture npTex = UiArt::Nameplate(plateIndex);
                     if (npTex) {
                         UiArt::DrawContain(gdl, npTex, ImVec2(t0.x + 4.0f * s, t0.y + 4.0f * s), ImVec2(t1.x - 4.0f * s, t1.y - 4.0f * s),
                                            (isEq || hov) ? IM_COL32_WHITE : IM_COL32(220, 220, 220, 255));

@@ -442,10 +442,10 @@ enum class Screen { Main, Campaign, Skulls, Firefight, CustomGame, Forge, Server
 std::string s_lobbyBackdropMap;   // set each frame from the lobby state
 std::filesystem::path s_lobbyBackdropImage; // mod map art for the pre-game backdrop
 
-// The Armory's presentation. The engine draws the model from a fixed scene camera, so the framing can't be moved there:
-// Noble copies the finished engine frame and redraws it smaller and further right, with the head under the rule and the
-// body centred in the free area. A soft additive key light then lifts the black chamber and lights the model. The per-slot
-// cameras are untouched: this only moves their result.
+// The Armory's presentation. The engine draws the model from a fixed scene camera. Noble copies the finished
+// frame and places it on the right: whole-body cameras are enlarged around the character (the menu renders 1.5x,
+// so this never upscales what the window shows), while per-slot close-ups keep the old fit-under-the-rule
+// placement. A soft additive floor light lifts the black chamber below the model.
 namespace ArmoryStage {
 
 ID3D11RenderTargetView* s_frameRtv = nullptr;   // the back buffer holding this frame's engine image; null when there is none
@@ -456,6 +456,7 @@ DXGI_FORMAT s_copyFormat = DXGI_FORMAT_UNKNOWN;
 ID3D11BlendState* s_opaque = nullptr;
 ID3D11BlendState* s_additive = nullptr;
 ID3D11DeviceContext* s_context = nullptr;
+float s_windowScale = 1.0f;   // back-buffer pixels per window pixel (menu supersampling)
 
 void UseOpaque(const ImDrawList*, const ImDrawCmd*) {
     if (s_context) s_context->OMSetBlendState(s_opaque, nullptr, 0xFFFFFFFF);   // the engine's alpha is not coverage
@@ -515,24 +516,32 @@ bool Prepare(ID3D11Device* device, ID3D11DeviceContext* context) {
 }
 
 void Draw(const Ui& ui, ID3D11Device* device, ID3D11DeviceContext* context, float ruleY) {
-    (void)ruleY;
     if (!ReachArmory::IsSceneReady() || !Prepare(device, context)) return;
     const float W = ui.size.x, H = ui.size.y;
-    constexpr float kModelX = 0.656f;   // where the scene cameras put the model across the frame
-    constexpr float kModelY = 0.560f;   // where the scene cameras put the model vertically
+    constexpr float kStageX = 0.7425f;  // the middle of the free area right of the picker
+    float k = 1.0f;
+    ImVec2 p0;
+    if (UIManager::GetArmorCustomizer().IsFullBodyCamera()) {
+        // Whole-body cameras frame the pedestal, so the character sits small in the middle of the
+        // engine frame. Enlarge that frame around the character until it fills the stage and the
+        // weapon prop below the feet is off-screen. The menu process renders 1.5x its window, so a
+        // 1.5x draw here is still 1:1 source-to-screen (no pixelation); never go past that.
+        const float windowScale = std::max(1.0f, s_windowScale);
+        k = std::min(1.5f, windowScale);
+        constexpr float kFocusX = 0.590f;   // character centre in the engine frame (0x0C / 0x0B)
+        constexpr float kFocusY = 0.505f;
+        const float targetX = ui.origin.x + W * kStageX;
+        const float targetY = ui.origin.y + H * 0.62f;
+        p0 = ImVec2(targetX - W * kFocusX * k, targetY - H * kFocusY * k);
+    } else {
+        // Per-slot close-ups already fill the frame; keep the old whole-frame placement under the rule.
+        constexpr float kModelX = 0.656f;
+        k = std::clamp((H - ruleY) / H, 0.70f, 0.90f);
+        p0 = ImVec2(ui.origin.x + W * kStageX - W * kModelX * k, ruleY);
+    }
+    const ImVec2 p1(p0.x + W * k, p0.y + H * k);
 
-    const auto& customizer = UIManager::GetArmorCustomizer();
-    const float k = customizer.GetCurrentScale();
-    const float stageX = customizer.GetFocusX();
-    const float stageY = customizer.GetFocusY();
-    const float drawW = W * k;
-    const float drawH = H * k;
-    const float posX = ui.origin.x + (W * stageX) - (W * kModelX * k);
-    const float posY = ui.origin.y + (H * stageY) - (H * kModelY * k);
-    const ImVec2 p0(posX, posY);
-    const ImVec2 p1(posX + drawW, posY + drawH);
-
-    ui.dl->AddRectFilled(ui.origin, ImVec2(ui.origin.x + ui.size.x, ui.origin.y + ui.size.y), IM_COL32(0, 0, 0, 255));
+    ui.dl->AddRectFilled(ui.origin, ImVec2(ui.origin.x + W, ui.origin.y + H), IM_COL32(0, 0, 0, 255));
     ui.dl->AddCallback(&UseOpaque, nullptr);
     ui.dl->AddImage(reinterpret_cast<ImTextureID>(s_copySrv), p0, p1);
     ui.dl->AddCallback(ImDrawCallback_ResetRenderState, nullptr);
@@ -553,7 +562,7 @@ void Draw(const Ui& ui, ID3D11Device* device, ID3D11DeviceContext* context, floa
             ui.dl->PathFillConvex(step);
         }
     };
-    glow(ImVec2(ui.origin.x + W * stageX, p0.y + H * k * 0.84f), H * 0.40f, H * 0.055f, 10);
+    glow(ImVec2(ui.origin.x + W * kStageX, p0.y + H * k * 0.84f), H * 0.40f, H * 0.055f, 10);
     ui.dl->AddCallback(ImDrawCallback_ResetRenderState, nullptr);
 
     // The panels on the left sit on a dark edge, and the picture's left end doesn't show as a seam.
@@ -2253,7 +2262,7 @@ std::string AutoPlayVariantStem() {
 void UpdateSceneForScreen(Screen screen) {
     switch (screen) {
     case Screen::Main:
-        ReachArmory::SetTargetScene("main");
+        ReachArmory::SetTargetScene("start_menu");
         break;
     case Screen::Campaign:
     case Screen::Skulls:
@@ -2280,6 +2289,15 @@ void UpdateSceneForScreen(Screen screen) {
 }
 
 void FeedEngineThreadInputs(HWND hwnd, ImGuiIO& io) {
+    // Test-only: "-menu-ignore-input" freezes the menu for screenshots. The window still renders, but
+    // the mouse/keyboard cannot move the selection or cycle the Armory camera while a capture is taken.
+    static const bool s_ignoreInput = wcsstr(GetCommandLineW(), L"-menu-ignore-input") != nullptr;
+    if (s_ignoreInput) {
+        io.AddMousePosEvent(-FLT_MAX, -FLT_MAX);
+        io.AddMouseButtonEvent(0, false);
+        io.AddMouseButtonEvent(1, false);
+        return;
+    }
     RECT client{};
     GetClientRect(hwnd, &client);
     POINT cursor{};
@@ -4498,31 +4516,11 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
             s_lastScreen = static_cast<int>(st.screen);
         }
     }
-    constexpr float kTargetAspect = 16.0f / 9.0f;
-    float canvasW = vp->Size.x;
-    float canvasH = vp->Size.x / kTargetAspect;
-    if (canvasH > vp->Size.y) {
-        canvasH = vp->Size.y;
-        canvasW = vp->Size.y * kTargetAspect;
-    }
-    const float originX = vp->Pos.x + (vp->Size.x - canvasW) * 0.5f;
-    const float originY = vp->Pos.y + (vp->Size.y - canvasH) * 0.5f;
-
     Ui ui;
     ui.dl = ImGui::GetWindowDrawList();
-    ui.origin = ImVec2(originX, originY);
-    ui.size = ImVec2(canvasW, canvasH);
-    ui.s = std::clamp(canvasH / 860.0f, 0.70f, 2.50f);
-
-    // Pillarbox / letterbox margins if the window is wider or taller than 16:9
-    if (originX > vp->Pos.x) {
-        ui.dl->AddRectFilled(vp->Pos, ImVec2(originX, vp->Pos.y + vp->Size.y), IM_COL32(0, 0, 0, 255));
-        ui.dl->AddRectFilled(ImVec2(originX + canvasW, vp->Pos.y), ImVec2(vp->Pos.x + vp->Size.x, vp->Pos.y + vp->Size.y), IM_COL32(0, 0, 0, 255));
-    }
-    if (originY > vp->Pos.y) {
-        ui.dl->AddRectFilled(vp->Pos, ImVec2(vp->Pos.x + vp->Size.x, originY), IM_COL32(0, 0, 0, 255));
-        ui.dl->AddRectFilled(ImVec2(vp->Pos.x, originY + canvasH), ImVec2(vp->Pos.x + vp->Size.x, vp->Pos.y + vp->Size.y), IM_COL32(0, 0, 0, 255));
-    }
+    ui.origin = ImVec2(0.0f, 0.0f);
+    ui.size = vp->Size;
+    ui.s = std::clamp(vp->Size.y / 900.0f, 0.75f, 2.0f);
 
     s_lobbyBackdropMap = st.lobbyMap;
     s_lobbyBackdropImage = st.lobbyMapImage.empty() ? st.lobbyMapThumb : st.lobbyMapImage;
@@ -4532,8 +4530,8 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
 
     UpdateSceneForScreen(st.screen);
 
-    const float left = ui.origin.x + ui.size.x * 0.075f;
-    const float top = ui.origin.y + ui.size.y * 0.09f;
+    const float left = ui.size.x * 0.075f;
+    const float top = ui.size.y * 0.09f;
     const SettingsData settings = Settings::Get().Snapshot();
     s_hintThisFrame = std::exchange(s_hintClicked, -1);
     const bool modPromptOpen = ModDownloadPrompt::Get().IsActive();
@@ -4560,7 +4558,7 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         const bool modal = firstStart || st.confirmQuit || s_showAccountModal || s_showDevMenu || modPromptOpen;
         ImGui::BeginDisabled(modal);
         DrawParty(ui, settings.playerName, "In Main Menu Lobby");
-        const float titleY = ui.origin.y + ui.size.y * 0.16f;
+        const float titleY = ui.size.y * 0.16f;
         DrawTitle(ui, ImVec2(left, titleY), "MAIN MENU");
         Text(ui, nullptr, 17.0f, ImVec2(left + 4.0f * ui.s, titleY + 66.0f * ui.s), kDim,
              "This party is local to this PC.");
@@ -4587,15 +4585,15 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         // heights and moving the cursor made the whole menu jump (reported 2026-10-30).
         const float descH = Font(nullptr)->CalcTextSizeA(17.0f * ui.s, FLT_MAX, 0.0f, "Ag").y * 2.0f + 2.0f * ui.s;
         const float descGap = 10.0f * ui.s;
-        const float hintTop = ui.origin.y + ui.size.y - 58.0f * ui.s;
-        float listY = titleY + 84.0f * ui.s;
-        float step = 27.0f;                                             // ui.s units
+        const float hintTop = ui.size.y - 54.0f * ui.s;
+        float listY = titleY + 76.0f * ui.s;
+        float step = 26.0f;                                             // ui.s units
         const float rowCount = static_cast<float>(rows.size());
         auto blockHeight = [&](float s) { return rowCount * s * ui.s + descGap + descH + 8.0f * ui.s; };
         if (blockHeight(step) > hintTop - listY) {
             step = std::max(18.0f, (hintTop - listY - descGap - descH - 8.0f * ui.s) / (rowCount * ui.s));
             if (blockHeight(step) > hintTop - listY) {
-                listY = std::max(ui.origin.y + ui.size.y * 0.14f, hintTop - blockHeight(step));
+                listY = std::max(ui.size.y * 0.14f, hintTop - blockHeight(step));
             }
         }
         const int hit = DrawList(ui, "main", ImVec2(left, listY), 440.0f * ui.s, items, st.mainIndex, !modal, step);
@@ -5679,6 +5677,10 @@ bool FrontEndMenu::ShouldShow() {
 void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
     OverlayContext& ctx = GetOverlayCtx();
     ctx.reachDir = reachDir;
+    // UiArt::Init() has run by now (main.cpp initialises the art before the window is shown). A plate
+    // retired or hidden in this build must not survive in the saved appearance; do it before the
+    // first PlayerRow draws, so the main menu never shows a plate the Armory would refuse.
+    UIManager::GetArmorCustomizer().ValidateNameplate();
     ctx.variants = ScanVariants(reachDir, false);
     ctx.ffVariants = ScanVariants(reachDir, true);
     ctx.forgeVariant = reachDir / "game_variants" / kForgeVariant;
@@ -6184,6 +6186,28 @@ void FrontEndMenu::RenderOverlayImpl(IDXGISwapChain* swapChain, bool clear) {
 
         ImGui_ImplDX11_NewFrame();
         ImGui_ImplWin32_NewFrame();
+        // ImGui_ImplWin32_NewFrame() overwrites io.DisplaySize with the window's client size. The menu
+        // process renders a larger back buffer than its window (menu supersampling, see main.cpp) and
+        // Windows downscales it; laying the UI out in back-buffer pixels keeps it pixel-aligned and
+        // crisp too. A match process is 1:1. FeedEngineThreadInputs() above already scaled the mouse.
+        io.DisplaySize = ImVec2(static_cast<float>(bbDesc.Width), static_cast<float>(bbDesc.Height));
+        {
+            RECT client{};
+            GetClientRect(hwnd, &client);
+            ArmoryStage::s_windowScale = client.bottom > 0
+                ? static_cast<float>(bbDesc.Height) / static_cast<float>(client.bottom)
+                : 1.0f;
+            static LONG s_lastClientW = -1, s_lastClientH = -1;
+            if (client.right != s_lastClientW || client.bottom != s_lastClientH) {
+                s_lastClientW = client.right;
+                s_lastClientH = client.bottom;
+                if (client.right > 0 && client.bottom > 0 &&
+                    (client.right != static_cast<LONG>(bbDesc.Width) || client.bottom != static_cast<LONG>(bbDesc.Height))) {
+                    NOBLE_INFO("FrontEndMenu: window client {}x{}, menu back buffer {}x{} ({:.2f}x supersample)",
+                               client.right, client.bottom, bbDesc.Width, bbDesc.Height, ArmoryStage::s_windowScale);
+                }
+            }
+        }
         UiPad::Feed(io);
         SocialOverlay::Poll(ctx.st.screen == Screen::PreGameLobby);
         ImGui::NewFrame();

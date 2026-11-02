@@ -1,10 +1,10 @@
 #include "Window.hpp"
 #include "common/Logger.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <mutex>
 #include <string>
-#include <atomic>
 
 namespace noble {
 
@@ -29,38 +29,6 @@ Window::~Window() {
     UnregisterClassW(L"HaloReachCE_WindowClass", m_hInstance);
 }
 
-void Window::ApplyWindowSettings(uint32_t width, uint32_t height, bool borderless) {
-    if (!m_hwnd) return;
-    m_borderless = borderless;
-    m_width = width;
-    m_height = height;
-
-    if (m_borderless) {
-        const int screenW = GetSystemMetrics(SM_CXSCREEN);
-        const int screenH = GetSystemMetrics(SM_CYSCREEN);
-        SetWindowLongPtrW(m_hwnd, GWL_STYLE, WS_POPUP | WS_VISIBLE);
-        SetWindowPos(m_hwnd, HWND_TOP, 0, 0, screenW, screenH, SWP_FRAMECHANGED | SWP_SHOWWINDOW);
-    } else {
-        DWORD style = WS_OVERLAPPEDWINDOW;
-        RECT rc = { 0, 0, static_cast<LONG>(width), static_cast<LONG>(height) };
-        AdjustWindowRect(&rc, style, FALSE);
-        int winW = rc.right - rc.left;
-        int winH = rc.bottom - rc.top;
-        int posX = (GetSystemMetrics(SM_CXSCREEN) - winW) / 2;
-        int posY = (GetSystemMetrics(SM_CYSCREEN) - winH) / 2;
-        if (posX < 0) posX = 0;
-        if (posY < 0) posY = 0;
-
-        SetWindowLongPtrW(m_hwnd, GWL_STYLE, style);
-        HMENU hMenu = GetSystemMenu(m_hwnd, FALSE);
-        if (hMenu) {
-            EnableMenuItem(hMenu, SC_MAXIMIZE, MF_BYCOMMAND | MF_ENABLED);
-            EnableMenuItem(hMenu, SC_RESTORE, MF_BYCOMMAND | MF_ENABLED);
-        }
-        SetWindowPos(m_hwnd, HWND_NOTOPMOST, posX, posY, winW, winH, SWP_FRAMECHANGED | SWP_SHOWWINDOW);
-    }
-}
-
 bool Window::Create() {
     WNDCLASSEXW wc = { 0 };
     wc.cbSize = sizeof(WNDCLASSEXW);
@@ -78,10 +46,11 @@ bool Window::Create() {
         return false;
     }
 
-    // Fixed-size window: the engine renders at the size chosen in Settings and can't change it once
-    // started, so a maximized or dragged-larger window only stretched that picture. For a full-screen
-    // picture use WINDOW MODE = BORDERLESS FULL SCREEN, which renders at the monitor's size.
-    DWORD style = WS_OVERLAPPEDWINDOW;
+    // Fixed-size window: the engine renders at the size chosen in Settings and cannot change that once
+    // it has started, so a maximized or dragged-larger window can only stretch (and pixelate) that picture.
+    // WINDOW MODE = BORDERLESS FULL SCREEN is the full-screen path: it creates the window at the monitor's
+    // size. The menu process additionally supersamples 1.5x and the window downscales that cleanly.
+    DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
     int windowWidth = 0, windowHeight = 0, posX = 0, posY = 0;
     if (m_borderless) {
         // Borderless: a popup window the size of the primary monitor.
@@ -91,14 +60,42 @@ bool Window::Create() {
         windowWidth = static_cast<int>(m_width);
         windowHeight = static_cast<int>(m_height);
     } else {
+        RECT work{};
+        if (!SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0)) {
+            work = { 0, 0, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN) };
+        }
         RECT rc = { 0, 0, static_cast<LONG>(m_width), static_cast<LONG>(m_height) };
         AdjustWindowRect(&rc, style, FALSE);
         windowWidth = rc.right - rc.left;
         windowHeight = rc.bottom - rc.top;
-        posX = (GetSystemMetrics(SM_CXSCREEN) - windowWidth) / 2;
-        posY = (GetSystemMetrics(SM_CYSCREEN) - windowHeight) / 2;
-        if (posX < 0) posX = 0;
-        if (posY < 0) posY = 0;
+
+        // A 1920x1080 client plus its frame is wider/taller than a 1920x1080 desktop. Shrink a window
+        // that would not fit the work area (keeping its aspect), so normal windowed mode always opens
+        // fully on screen and the engine renders at exactly the client size.
+        const int workW = work.right - work.left;
+        const int workH = work.bottom - work.top;
+        const int borderW = windowWidth - static_cast<int>(m_width);
+        const int borderH = windowHeight - static_cast<int>(m_height);
+        const int maxClientW = std::max(320, workW - borderW);
+        const int maxClientH = std::max(240, workH - borderH);
+        if (static_cast<int>(m_width) > maxClientW || static_cast<int>(m_height) > maxClientH) {
+            const float scale = std::min(static_cast<float>(maxClientW) / static_cast<float>(m_width),
+                                         static_cast<float>(maxClientH) / static_cast<float>(m_height));
+            const int fittedW = std::max(320, static_cast<int>(static_cast<float>(m_width) * scale));
+            const int fittedH = std::max(240, static_cast<int>(static_cast<float>(m_height) * scale));
+            NOBLE_INFO("Win32 window: {}x{} does not fit the {}x{} work area; opening at {}x{}",
+                       m_width, m_height, workW, workH, fittedW, fittedH);
+            m_width = static_cast<uint32_t>(fittedW);
+            m_height = static_cast<uint32_t>(fittedH);
+            RECT fitted = { 0, 0, static_cast<LONG>(m_width), static_cast<LONG>(m_height) };
+            AdjustWindowRect(&fitted, style, FALSE);
+            windowWidth = fitted.right - fitted.left;
+            windowHeight = fitted.bottom - fitted.top;
+        }
+        posX = work.left + (workW - windowWidth) / 2;
+        posY = work.top + (workH - windowHeight) / 2;
+        if (posX < work.left) posX = work.left;
+        if (posY < work.top) posY = work.top;
     }
 
     m_hwnd = CreateWindowExW(
@@ -116,18 +113,6 @@ bool Window::Create() {
     if (!m_hwnd) {
         NOBLE_ERROR("Failed to create Win32 host window. Error: {}", GetLastError());
         return false;
-    }
-
-    if (!m_borderless) {
-        // Guarantee maximize box, minimize box, and resizing borders are fully enabled
-        LONG_PTR curStyle = GetWindowLongPtrW(m_hwnd, GWL_STYLE);
-        SetWindowLongPtrW(m_hwnd, GWL_STYLE, curStyle | WS_MAXIMIZEBOX | WS_MINIMIZEBOX | WS_THICKFRAME | WS_CAPTION | WS_SYSMENU);
-        HMENU hMenu = GetSystemMenu(m_hwnd, FALSE);
-        if (hMenu) {
-            EnableMenuItem(hMenu, SC_MAXIMIZE, MF_BYCOMMAND | MF_ENABLED);
-            EnableMenuItem(hMenu, SC_RESTORE, MF_BYCOMMAND | MF_ENABLED);
-        }
-        SetWindowPos(m_hwnd, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
     }
 
     SendMessageW(m_hwnd, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(wc.hIcon));
@@ -214,29 +199,15 @@ int Window::TakeWheelNotches() {
 bool Window::InSizeMove() { return s_sizeMove.load(); }
 
 LRESULT Window::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
+    // Test-only: keep a capture run from reacting to the mouse/keyboard (see "-menu-ignore-input").
+    static const bool s_ignoreInput = wcsstr(GetCommandLineW(), L"-menu-ignore-input") != nullptr;
+    if (s_ignoreInput) {
+        const bool mouse = (uMsg >= WM_MOUSEFIRST && uMsg <= WM_MOUSELAST) || uMsg == WM_MOUSEWHEEL ||
+                           uMsg == WM_MOUSELEAVE || uMsg == WM_SETCURSOR;
+        const bool key = (uMsg >= WM_KEYFIRST && uMsg <= WM_KEYLAST);
+        if (mouse || key) return 0;
+    }
     switch (uMsg) {
-        case WM_SYSCOMMAND:
-            if ((wParam & 0xFFF0) == SC_MAXIMIZE) {
-                ShowWindow(hwnd, SW_MAXIMIZE);
-                return 0;
-            } else if ((wParam & 0xFFF0) == SC_RESTORE) {
-                ShowWindow(hwnd, SW_RESTORE);
-                return 0;
-            }
-            break;
-        case WM_SYSKEYDOWN:
-            if (wParam == VK_RETURN && (lParam & (1 << 29))) {
-                WINDOWPLACEMENT wp = { sizeof(WINDOWPLACEMENT) };
-                if (GetWindowPlacement(hwnd, &wp)) {
-                    if (wp.showCmd == SW_SHOWMAXIMIZED) {
-                        ShowWindow(hwnd, SW_RESTORE);
-                    } else {
-                        ShowWindow(hwnd, SW_MAXIMIZE);
-                    }
-                }
-                return 0;
-            }
-            break;
         case WM_MOUSEWHEEL: s_wheelDelta.fetch_add(GET_WHEEL_DELTA_WPARAM(wParam)); break;
         case WM_LBUTTONDOWN: s_leftClicks.fetch_add(1); break;
         case WM_CHAR:

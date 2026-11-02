@@ -94,7 +94,15 @@ struct NameplateInfo {
     int id = 1;
     std::string name;
     std::string image;
+    // Developer-entitlement plates and retired event plates. They stay in the catalog (a saved profile
+    // or a remote player can still be wearing one), but the Armory only offers selectable entries.
+    bool removed = false;    // never offered anywhere
+    bool devOnly = false;    // offered in noble-dev only
 };
+
+// True when the Armory may offer this position in GetNameplateCatalog(): not removed, and in a
+// release build not a developer-entitlement plate. Nameplate() still resolves any position.
+bool NameplateSelectable(int index);
 
 struct EmblemInfo {
     int id = 1;

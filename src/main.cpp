@@ -46,10 +46,12 @@
 
 #include <windows.h>
 #include <shellapi.h>
-#include <thread>
+#include <algorithm>
 #include <chrono>
-#include <memory>
+#include <cmath>
 #include <filesystem>
+#include <memory>
+#include <thread>
 
 namespace fs = std::filesystem;
 
@@ -284,6 +286,11 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     noble::SocialClient::Get().Initialize();
     const noble::SettingsData startupSettings = noble::Settings::Get().Snapshot();
 
+    // Front-end menu or a direct map launch? Needed before the swap chain is created: the menu process
+    // renders at 1.5x its window (menu-only supersampling) so the Armory can zoom the engine frame
+    // without pixelating it. The match process is launched separately and stays at native resolution.
+    const bool showMenu = noble::FrontEndMenu::ShouldShow();
+
     // 6. Create Win32 host window
     auto window = std::make_unique<noble::Window>(L"Halo: Reach Community Edition",
         static_cast<uint32_t>(startupSettings.width), static_cast<uint32_t>(startupSettings.height));
@@ -293,9 +300,27 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         return 1;
     }
 
-    // 7. Initialize Direct3D 11 runtime environment
+    // 7. Initialize Direct3D 11 runtime environment.
+    // Menu-only supersampling: the menu scene is static, so 1.5x costs little and gives the Armory a
+    // higher-resolution frame to draw the character from (no 2D upscale, no pixelation). Capped at
+    // 3200x1800 to keep the menu light; the in-match process creates its swap chain at native size.
+    uint32_t renderWidth = window->GetWidth();
+    uint32_t renderHeight = window->GetHeight();
+    if (showMenu) {
+        constexpr float kMenuSupersample = 1.5f;
+        constexpr uint32_t kMaxMenuWidth = 3200;
+        constexpr uint32_t kMaxMenuHeight = 1800;
+        float scale = kMenuSupersample;
+        scale = std::min(scale, std::min(static_cast<float>(kMaxMenuWidth) / static_cast<float>(renderWidth),
+                                          static_cast<float>(kMaxMenuHeight) / static_cast<float>(renderHeight)));
+        scale = std::max(1.0f, scale);
+        renderWidth = std::max(1u, static_cast<uint32_t>(std::lround(static_cast<float>(renderWidth) * scale)));
+        renderHeight = std::max(1u, static_cast<uint32_t>(std::lround(static_cast<float>(renderHeight) * scale)));
+        NOBLE_INFO("main: menu render resolution {}x{} (window {}x{}, {:.2f}x supersample)", renderWidth, renderHeight,
+                   window->GetWidth(), window->GetHeight(), scale);
+    }
     auto renderer = std::make_unique<noble::D3D11Renderer>();
-    if (!renderer->Initialize(window->GetHwnd(), window->GetWidth(), window->GetHeight())) {
+    if (!renderer->Initialize(window->GetHwnd(), renderWidth, renderHeight)) {
         NOBLE_ERROR("Failed to initialize Direct3D 11 renderer.");
         return 1;
     }
@@ -325,7 +350,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     }
 
     window->Show(nCmdShow);
-    noble::ReachHost::Get().SetDisplaySize(window->GetWidth(), window->GetHeight());
+    noble::ReachHost::Get().SetDisplaySize(renderWidth, renderHeight);
 
     // LAN discovery and hosting must already run while the front-end menu is open, so a game
     // hosted from the SERVERS tab (or by someone else on the LAN) shows up in the list.
@@ -448,8 +473,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         }
         LocalFree(argvW);
     }
-    // Check if we should launch into the Front-End Menu + 3D Armory (mainmenu_all.map inside haloreach.dll)
-    const bool showMenu = noble::FrontEndMenu::ShouldShow();
+    // Launch the Front-End Menu + 3D Armory (mainmenu_all.map inside haloreach.dll), or the chosen map.
     if (showMenu) {
         noble::ReachArmory::SetMenuMode(true);
         noble::FrontEndMenu::Initialize(reachInstall->reachDirectory);
@@ -621,8 +645,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     hostContext.pDevice = renderer->GetDevice();
     hostContext.pContext = renderer->GetContext();
     hostContext.pSwapChain = renderer->GetSwapChain();
-    hostContext.width = window->GetWidth();
-    hostContext.height = window->GetHeight();
+    hostContext.width = renderWidth;
+    hostContext.height = renderHeight;
 
     if (!blamEngine->Initialize(*reachInstall, loader->GetModuleHandle(), loader->GetExports(), hostContext)) {
         NOBLE_ERROR("Failed to initialize Blam! engine host interfaces.");

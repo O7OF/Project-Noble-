@@ -302,8 +302,11 @@ static int32_t ResolveSceneIndex(const std::string& scene) {
                                                                                 : static_cast<int>(std::strtol(text, nullptr, 10));
         return std::clamp(parsed, 0, 0x40);
     }
-    if (s == "title" || s == "start_menu")                return 0x00;
-    if (s == "main" || s == "campaign" || s == "campaign_act1") return 0x01;
+    // 0x00 is the title-screen cliff the menu map opens on; 0x01 is the New Alexandria campaign
+    // backdrop. The main menu must stay on 0x00: switching to 0x01 a few seconds after startup pans
+    // the camera onto the campaign scene and looks like the menu zooms out and tears (2026-11-02).
+    if (s == "title" || s == "start_menu" || s == "main") return 0x00;
+    if (s == "campaign" || s == "campaign_act1")         return 0x01;
     if (s == "campaign_act2")                             return 0x02;
     if (s == "campaign_act3")                             return 0x03;
     if (s == "matchmaking")                               return 0x04;

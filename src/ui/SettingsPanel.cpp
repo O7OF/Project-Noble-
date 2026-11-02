@@ -1770,10 +1770,13 @@ SettingsData SettingsPanel::WithDefaults(SettingsData e, Cat c) {
 
 void SettingsPanel::Apply() {
     SyncBuffers();
+    // The engine fixes its render resolution when it starts and the swap chain cannot be resized while
+    // it runs (DXGI keeps the engine's views alive), so the display rows stay "when restarting": applying
+    // a new window size / borderless mode live only stretched the old picture. Save it; the next launch
+    // creates both the window and the engine at the new size.
+    const bool displayChanged = m_saved.width != m_edit.width || m_saved.height != m_edit.height ||
+                                m_saved.borderless != m_edit.borderless;
     Settings::Get().Update(m_edit);
-    if (auto* win = Window::Active()) {
-        win->ApplyWindowSettings(m_edit.width, m_edit.height, m_edit.borderless);
-    }
     ReachAudio::PlayMenuMusic(m_edit.menuMusicTrack);
     MasterServerClient::Get().SetUrl(m_edit.masterServerUrl);
     // Field of view goes straight into the running engine (haloreach+0xB42C10, degrees); the
@@ -1785,7 +1788,7 @@ void SettingsPanel::Apply() {
     std::snprintf(m_nameBuf, sizeof(m_nameBuf), "%s", m_edit.playerName.c_str());
     std::snprintf(m_tagBuf, sizeof(m_tagBuf), "%s", m_edit.serviceTag.c_str());
     std::snprintf(m_masterBuf, sizeof(m_masterBuf), "%s", m_edit.masterServerUrl.c_str());
-    m_message = "Saved.";
+    m_message = displayChanged ? "Saved. Restart the game to apply the display change." : "Saved.";
     m_messageTime = ImGui::GetTime();
     MenuSounds::Click();
 }

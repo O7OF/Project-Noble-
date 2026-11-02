@@ -108,10 +108,13 @@ public:
 
     void SyncToReachArmory() const;
     void UpdateArmoryCamera() const;
+    // Puts a saved nameplate back to the first plate this build may offer when the saved one was
+    // retired or is a developer entitlement being loaded by a release build.
+    void ValidateNameplate();
     int GetCameraMode() const { return m_cameraMode; }
-    float GetCurrentScale() const;
-    float GetFocusY() const;
-    float GetFocusX() const;
+    // True while the engine camera is the whole-body view (Armory/Full Body, or the default close-up
+    // mode on the Species/Body rows). The stage enlarges that view; per-slot close-ups stay as they are.
+    bool IsFullBodyCamera() const;
 
     const AppearanceProfile& GetProfile() const { return m_profile; }
     // The saved emblem colours, for rows that show the local player's emblem.
@@ -144,11 +147,6 @@ private:
 
     int m_focusedRow = 0;
     bool m_showColorModal = false;
-    float m_userZoom = 1.0f;
-    float m_panX = 0.0f;
-    float m_panY = 0.0f;
-    std::string m_lastRowLabel;
-    size_t m_lastRowCount = 0;
 };
 
 } // namespace noble

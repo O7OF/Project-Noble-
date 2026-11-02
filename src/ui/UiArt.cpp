@@ -7,6 +7,7 @@
 #include <wincodec.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
@@ -14,6 +15,7 @@
 #include <map>
 #include <mutex>
 #include <random>
+#include <string_view>
 #include <unordered_map>
 
 namespace noble {
@@ -792,6 +794,39 @@ static std::string CleanXmlName(const std::string& raw, const std::string& prefi
     return s;
 }
 
+// Plates that must not be offered at all. Matched on letters/digits only, case-insensitively, so a
+// future XML spelling ("Hispanic_Heritage_2021") still matches the list.
+static bool ListedNameplate(const std::string& name, std::initializer_list<std::string_view> list) {
+    std::string value;
+    value.reserve(name.size());
+    for (const unsigned char c : name) {
+        if (std::isalnum(c)) value.push_back(static_cast<char>(std::tolower(c)));
+    }
+    for (const std::string_view item : list) {
+        std::string wanted;
+        wanted.reserve(item.size());
+        for (const unsigned char c : item) {
+            if (std::isalnum(c)) wanted.push_back(static_cast<char>(std::tolower(c)));
+        }
+        if (value == wanted) return true;
+    }
+    return false;
+}
+
+// Retired event/community plates: removed from every build (Noble 0.9.16.23, Tyler's list).
+static bool IsRetiredNameplate(const std::string& name) {
+    return ListedNameplate(name, { "Unity1", "Unity2", "Bhm", "Hispanicheritage2021", "Apamonth2022",
+                                   "Pulaskis2023", "Disabilitypride2023", "Internationalwomensday2023",
+                                   "Womenshistorymonth2023", "Fist" });
+}
+
+// Developer/insider entitlements: visible and equippable in noble-dev, hidden and unequippable in release.
+static bool IsDeveloperNameplate(const std::string& name) {
+    return ListedNameplate(name, { "Early Mcc Insider", "Mcc Insider Plus", "Community 343 Headhunter Ice",
+                                   "Community Spotlight Fire", "Mcc Insider Pc", "Vsworldwin", "Vsworld",
+                                   "Innercircle", "343 Flag", "343" });
+}
+
 static void EnsureCustomizationCatalogs() {
     if (s_customizationCatalogLoaded) return;
     s_customizationCatalogLoaded = true;
@@ -820,6 +855,8 @@ static void EnsureCustomizationCatalogs() {
                     info.id = std::atoi(idStr.c_str());
                     info.image = imgStr;
                     info.name = nameStr.empty() ? ("Nameplate " + idStr) : CleanXmlName(nameStr, "$NAMEPLATE_");
+                    info.removed = IsRetiredNameplate(info.name);
+                    info.devOnly = IsDeveloperNameplate(info.name);
                     s_nameplateCatalog.push_back(info);
                 }
             } else if (line.find("<Emblem ") != std::string::npos) {
@@ -839,8 +876,13 @@ static void EnsureCustomizationCatalogs() {
                 }
             }
         }
-        NOBLE_INFO("UiArt: Loaded {} nameplates, {} emblems and {} emblem backgrounds from playercustomization.xml",
-                   s_nameplateCatalog.size(), s_emblemCatalog.size(), s_emblemBackgrounds.size());
+        size_t retired = 0, developer = 0;
+        for (const NameplateInfo& np : s_nameplateCatalog) {
+            retired += np.removed ? 1 : 0;
+            developer += np.devOnly ? 1 : 0;
+        }
+        NOBLE_INFO("UiArt: Loaded {} nameplates ({} retired, {} developer-only), {} emblems and {} emblem backgrounds from playercustomization.xml",
+                   s_nameplateCatalog.size(), retired, developer, s_emblemCatalog.size(), s_emblemBackgrounds.size());
     }
 
     if (s_nameplateCatalog.empty()) {
@@ -870,6 +912,17 @@ static void EnsureCustomizationCatalogs() {
 const std::vector<NameplateInfo>& GetNameplateCatalog() {
     EnsureCustomizationCatalogs();
     return s_nameplateCatalog;
+}
+
+bool NameplateSelectable(int index) {
+    EnsureCustomizationCatalogs();
+    if (index < 0 || static_cast<size_t>(index) >= s_nameplateCatalog.size()) return false;
+    const NameplateInfo& np = s_nameplateCatalog[static_cast<size_t>(index)];
+    if (np.removed) return false;
+#ifndef NOBLE_DEV_BUILD
+    if (np.devOnly) return false;
+#endif
+    return true;
 }
 
 const std::vector<EmblemBackground>& GetEmblemBackgrounds() {

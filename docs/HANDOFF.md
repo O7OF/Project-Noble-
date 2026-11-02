@@ -7,7 +7,34 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 
 **Goal:** `noble-client.exe` loads MCC's own `haloreach.dll` (Halo: Reach) and drives it **without MCC**, like the existing
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
-MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.16.22 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.16.23 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+
+## 0. Pick up here (2026-11-02, 01:15 ET) - Stable Main Menu Scene, Armory Full-Body Framing, Menu Supersampling, Fixed Window/Borderless Modes & Nameplate Cleanup (0.9.16.23) (@deepseek)
+
+**Version:** 0.9.16.23. **Build:** `noble-client` and `noble-dev` (MSVC Release x64, 0 errors, 0 warnings); `noble-dedicated` is unchanged. Files: `src/main.cpp`, `src/host/Window.cpp`, `src/host/Window.hpp`, `src/engine/ReachArmory.cpp`, `src/ui/FrontEndMenu.cpp`, `src/ui/ArmorCustomizer.cpp`, `src/ui/ArmorCustomizer.hpp`, `src/ui/UiArt.cpp`, `src/ui/UiArt.hpp`, `src/ui/SettingsPanel.cpp`, `src/common/Version.hpp`, `docs/HANDOFF.md`, `docs/AGENT-STATUS.md`.
+
+**What was actually found & fixed (Root Cause Analysis):**
+1. **Main Menu glitches after ~3 seconds (sliced, zoomed-out background):**
+   - *Root Cause:* `ReachArmory::ResolveSceneIndex("main")` returned `0x01` (the New Alexandria campaign camera). The menu map opens on the title camera `0x00`; once the GLOBALS scan succeeded (about 3–4 s after launch) Noble wrote `0x01` and the engine switched cameras. The user saw the cliff menu turn into a wall of campaign scene views.
+   - *Fix:* `title`, `start_menu` and `main` now all resolve to `0x00`; `UpdateSceneForScreen(Screen::Main)` requests `start_menu`. The menu stays on the title camera for the whole session.
+2. **Armory character far away, then pixelated when zoomed (0.9.16.22 regression):**
+   - *Root Cause:* the engine's whole-body cameras (`0x0C` Spartan, `0x0B` Elite) put the model in the middle of a distant pedestal. 0.9.16.22 compensated with a 2D upscale of the finished engine frame (2.3–4.1x), which magnified source pixels; the floating weapon prop stayed visible at the bottom.
+   - *Fix:* the 2D zoom is gone. `ArmoryStage::Draw` now enlarges **whole-body** cameras 1.5x around the character's focal point (`kFocusX = 0.590`, `kFocusY = 0.505`) and anchors the character centre at 74.25 % across / 62 % down. The Spartan/Elite fill roughly two-thirds of the stage height, the weapon prop under the feet is below the frame, and the character sits entirely in the free area to the right of the picker. Per-slot close-ups (`c_helmet`, `c_chest`, …) keep the old fit-under-the-rule placement.
+   - FOV was investigated as an optical zoom (global `haloreach+0xB42C10`, `camera_set_field_of_view`); the menu camera ignores that gameplay global, so it is not used.
+3. **Menu supersampling (no pixelation, no gameplay cost):**
+   - *Fix:* only the **menu process** now creates its swap chain at 1.5x the window (1280x720 window → 1920x1080; 1920x1080 borderless → 2880x1620), capped at 3200x1800. The 1.5x Armory stage draw is therefore 1:1 with the pixels the window finally shows. The UI is supersampled as well. A match is a separate process (`Relaunch`), sees `-map …`, and creates its swap chain at the native window size, so in-game performance is unchanged. The menu scene is a single static map + one character.
+   - The overlay continues to lay out in back-buffer pixels and scales the mouse from client pixels; this also keeps the UI correct if the client/back-buffer sizes ever differ.
+4. **Windowed and borderless full screen made deterministic:**
+   - Windowed is a fixed-size `WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX` window again: no title-bar maximize/resize, so the engine picture is never stretched or pixelated. A requested client that would not fit the monitor work area (e.g. 1920x1080 on a 1920x1080 desktop) is shrunk, keeping its aspect, and the engine gets the fitted size.
+   - Borderless is `WS_POPUP` at the primary monitor size; engine and swap chain are 1:1 (supersampled menu).
+   - `SETTINGS > GRAPHICS` display rows are saved and applied on the **next launch**; the live `ApplyWindowSettings` path was removed. The engine cannot resize its swap chain while running: `IDXGISwapChain::ResizeBuffers` returns `0x887A0001` (`DXGI_ERROR_INVALID_CALL`) because the engine keeps its views alive. The settings panel now says "Restart the game to apply the display change." This supersedes the 0.9.16.22 "live window apply" claim.
+5. **Nameplate cleanup (Tyler's list):**
+   - Retired plates are no longer offered anywhere: Unity1, Unity2, Bhm, Hispanicheritage2021, Apamonth2022, Pulaskis2023, Disabilitypride2023, Internationalwomensday2023, Womenshistorymonth2023, Fist.
+   - Developer/insider plates are offered and equippable in `noble-dev` only; in release they are hidden and cannot be equipped: Early Mcc Insider, Mcc Insider Plus, Community 343 Headhunter Ice, Community Spotlight Fire, Mcc Insider Pc, Vsworldwin, Vsworld, Innercircle, 343 Flag, 343.
+   - `UiArt::GetNameplateCatalog()` keeps every entry and its position; `NameplateSelectable()` decides what the Armory offers, and the picker stores the original catalog index in `PickOption::value`. Saved appearances and remote players therefore keep pointing at the same plate. A saved plate that is no longer available falls back to Blank at menu start. The MCC catalog has 531 entries: 521 offered in `noble-dev`, 511 in release.
+6. **Test hooks:** `-menu-ignore-input` freezes mouse/keyboard for clean screenshots; `-armory-species spartan|elite` previews either species without saving; `-armory-scene-index <n>` still forces a menu-map camera. `-menu-capture` captures the supersampled menu buffer.
+
+**Notes / verification:** windowed 1280x720 menu renders 1920x1080, borderless 1920x1080 renders 2880x1620, match processes render native. Menu stays on camera `0x00` for >10 s; Spartan and Elite full-body Armory shots at 1280x720 and borderless 1920x1080 show the character head-to-toe with the pedestal weapon out of frame. Release/Dev nameplate counts verified in the log.
 
 ## 0. Pick up here (2026-11-02, 00:15 ET) - 16:9 Canvas Aspect Ratio Fitting, Heroic Armory Framing & Zoom, Window Settings Live Apply (0.9.16.22) (@O7OF)
 
