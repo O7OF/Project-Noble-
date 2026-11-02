@@ -22,6 +22,7 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 
@@ -866,9 +867,11 @@ ArmorCustomizer::ArmorCustomizer() {
     }
     if (!migrated) LoadProfile(m_profilePath);
     m_previewSpecies = m_profile.species;
+
 }
 
 void ArmorCustomizer::SyncLegacyFields() {
+    if (m_visorSelection >= 0) m_profile.visorColorIndex = m_visorSelection;
     const auto& helmets = GetSpartanHelmets();
     const auto& shoulders = GetSpartanShoulders();
     const auto& chests = GetSpartanChests();
@@ -1062,7 +1065,8 @@ void ArmorCustomizer::SyncToReachArmory() const {
     const int aeIdx = std::clamp(m_profile.armorEffectIndex, 0, static_cast<int>(kArmorEffects.size()) - 1);
     const int fvIdx = std::clamp(m_profile.firefightVoiceIndex, 0, static_cast<int>(kFirefightVoices.size()) - 1);
     const int elIdx = std::clamp(m_profile.eliteArmorSet, 0, static_cast<int>(kEliteSets.size()) - 1);
-    const int vcIdx = std::clamp(m_profile.visorColorIndex, 0, static_cast<int>(kVisorColors.size()) - 1);
+    const int visorSource = m_visorSelection >= 0 ? m_visorSelection : m_profile.visorColorIndex;
+    const int vcIdx = std::clamp(visorSource, 0, static_cast<int>(kVisorColors.size()) - 1);
     const bool previewingElite = (m_previewSpecies == PlayerSpecies::Elite);
     const int priIdx = std::clamp(previewingElite ? m_profile.elitePrimaryColor : m_profile.primaryColor, 0, 29);
     const int secIdx = std::clamp(previewingElite ? m_profile.eliteSecondaryColor : m_profile.secondaryColor, 0, 29);
@@ -1170,6 +1174,7 @@ void ArmorCustomizer::SyncToReachArmory() const {
 
 bool ArmorCustomizer::LoadProfile(const std::filesystem::path& path) {
     m_profilePath = path.empty() ? ResolveDefaultProfilePath() : path;
+    m_visorSelection = -1;
     if (!std::filesystem::exists(m_profilePath)) {
         SyncLegacyFields();
         m_previewSpecies = m_profile.species;
@@ -1355,6 +1360,7 @@ bool ArmorCustomizer::LoadProfile(const std::filesystem::path& path) {
 
         MigrateFromLegacyFields();
         SyncLegacyFields();
+        m_visorSelection = m_profile.visorColorIndex;
         m_previewSpecies = m_profile.species;
         SyncToReachArmory();
         NOBLE_INFO("ArmorCustomizer: Loaded profile from '{}' (Tag: {}, PreferredSpecies: {})",
@@ -1364,6 +1370,7 @@ bool ArmorCustomizer::LoadProfile(const std::filesystem::path& path) {
     } catch (const std::exception& e) {
         NOBLE_WARN("ArmorCustomizer: Failed to parse '{}': {}", m_profilePath.string(), e.what());
         SyncLegacyFields();
+        m_visorSelection = m_profile.visorColorIndex;
         m_previewSpecies = m_profile.species;
         SyncToReachArmory();
         return false;
@@ -1688,6 +1695,7 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
     }
     ValidateNameplate();
     SyncLegacyFields();
+
     if (!m_syncedInitial) {
         m_syncedInitial = true;
         SyncToReachArmory();
@@ -2064,6 +2072,7 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
         const int stored = optionValue(r, value);
         if (*r.index == stored && r.index != &speciesInt && r.index != &bodyInt) return;
         *r.index = stored;
+        if (r.index == &m_profile.visorColorIndex) m_visorSelection = stored;
         if (r.kind == RowKind::Colour) {   // a palette choice replaces any custom wheel colour
             if (r.index == &m_profile.primaryColor) m_profile.primaryCustom = false;
             else if (r.index == &m_profile.secondaryColor) m_profile.secondaryCustom = false;

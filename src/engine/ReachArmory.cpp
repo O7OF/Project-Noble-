@@ -951,6 +951,7 @@ static void WriteColorsAndSuit(const ReachArmorySelection& sel) {
     s_lastSpartanPriArgb = priArgb;
     s_lastSpartanSecArgb = secArgb;
     s_lastSpartanVisArgb = visArgb;
+
     s_lastSuitFloats = { suitFloats[0], suitFloats[1], suitFloats[2], suitFloats[3] };
 
     if (!sel.previewElite) {

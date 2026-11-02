@@ -130,6 +130,9 @@ private:
     void MigrateFromLegacyFields();
 
     AppearanceProfile m_profile;
+    // The chosen visor finish. Kept separately from the profile so a transient preview/restore of
+    // m_profile cannot silently reset the equipped colour back to Default (index 0).
+    int m_visorSelection = -1;
     PlayerSpecies m_previewSpecies = PlayerSpecies::Spartan;
     std::filesystem::path m_profilePath;
     bool m_dirty = false;

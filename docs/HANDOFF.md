@@ -7,7 +7,21 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 
 **Goal:** `noble-client.exe` loads MCC's own `haloreach.dll` (Halo: Reach) and drives it **without MCC**, like the existing
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
-MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.16.28 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.16.29 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+
+## 0. Pick up here (2026-11-02, 03:20 ET) - Visor Colour Fix (0.9.16.29) (@deepseek)
+
+**Version:** 0.9.16.29. **Release:** https://github.com/O7OF/Project-Noble-/releases/tag/v0.9.16.29. **Build:** noble-client and noble-dev both compiled from build-rel (MSVC Release x64).
+
+**Root cause / fix:** the Armory selection was rebuilt from AppearanceProfile every frame. Transient profile try-on/restore paths could leave visorColorIndex at 0 (Default), so the model and the equipped swatch silently fell back to gold. ArmorCustomizer now keeps the selected finish in a separate m_visorSelection member:
+1. LoadProfile seeds it from the saved profile.
+2. Choosing a visor finish updates it (and the profile).
+3. SyncLegacyFields reapplies it before the UI reads the rows, so a transient preview restore cannot reset the equipped colour.
+4. SyncToReachArmory uses m_visorSelection for the ReachArmorySelection and visor ARGB write.
+
+All 30 finishes remain rank/credit-gated in the picker; this fixes the equipped colour persistence, not the unlock rules.
+
+**Verified:** release menu run leaves noble-client.log at 0 bytes; dev build compiled. The visor colour is applied through the same WriteColorsAndSuit path as primary/secondary/accent.
 
 ## 0. Pick up here (2026-11-02, 02:50 ET) - Three-Region Server Browser Cluster (0.9.16.28) (@deepseek)
 

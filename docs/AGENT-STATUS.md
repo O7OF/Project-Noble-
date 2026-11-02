@@ -30,11 +30,11 @@ can make.
 
 ## @deepseek
 
-- state: **idle** (last: 0.9.16.28 three-region federated server browser, master URL normalization, crash-only release logs, 02:50 ET; release published)
+- state: **idle** (last: 0.9.16.29 visor colour persistence fix, three-region server browser, crash-only release logs, 03:20 ET; release published)
 - since:  -
 - working on:  -
 - files expected:  -
-- last commit: `0.9.16.28` local (pending push)
+- last commit: `0.9.16.29` local (pending push)
 - test state: local settings left at 1280x720 windowed (borderless applies live), audio unmuted; `noble-client` and `noble-dev` rebuilt at 02:00 ET. Release https://github.com/O7OF/Project-Noble-/releases/tag/v0.9.16.26. Test captures in `scratch/` (`live-borderless.png`, `preview-settings-scaled.png`, `preview-windowed.png`, `armory-spartan-zoom.png`).
 
 ## @claude
