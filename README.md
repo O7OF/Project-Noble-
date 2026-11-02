@@ -102,3 +102,4 @@ Your settings, career, appearance and mods are kept.
 
 - Halo and Halo: Reach are trademarks of Microsoft. This is a free community project.
 - Release builds keep a private crash/error log only; normal play does not write gameplay or diagnostic details.
+
