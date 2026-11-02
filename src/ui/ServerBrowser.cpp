@@ -40,7 +40,7 @@ struct MasterRegion {
 static const MasterRegion kMasterRegions[] = {
     { "US West (Oregon)", "Oregon, USA", "https://servertestdeploy-jfxb.onrender.com" },
     { "US East (Virginia)", "Virginia, USA", "https://noble-server-2.onrender.com" },
-    { "Europe (Frankfurt)", "Frankfurt, Germany", "https://servertestdeploy-1.onrender.com" },
+    { "EU West (London, UK)", "London, UK", "https://servertestdeploy-1.onrender.com" },
     { "LAN / Offline Only", "Local Network Only", "" }
 };
 
@@ -422,9 +422,18 @@ void ServerBrowser::RenderFilterBar() {
     const char* regionNames[] = { "US West (Oregon)", "US East (Virginia)", "EU West (London, UK)", "LAN / Offline Only" };
     int curRegion = 0;
     const std::string curUrl = MasterServerClient::Get().Url();
-    if (curUrl.find("noble-server-2") != std::string::npos || curUrl.find("virginia") != std::string::npos) curRegion = 1;
-    else if (curUrl.find("uk") != std::string::npos || curUrl.find("london") != std::string::npos) curRegion = 2;
-    else if (curUrl.empty()) curRegion = 3;
+    if (curUrl.empty()) {
+        curRegion = 3;
+    } else {
+        // Match the exact registry URL (normalised, no trailing slash) instead of guessing from the
+        // hostname; the UK service is servertestdeploy-1 and contains neither "uk" nor "london".
+        for (int i = 0; i < 3; ++i) {
+            if (curUrl == kMasterRegions[i].url || curUrl.rfind(kMasterRegions[i].url, 0) == 0) {
+                curRegion = i;
+                break;
+            }
+        }
+    }
 
     ImGui::SetNextItemWidth(170);
     if (ImGui::Combo("##MasterRegionToolbar", &curRegion, regionNames, IM_ARRAYSIZE(regionNames))) {

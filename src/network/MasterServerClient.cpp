@@ -15,6 +15,7 @@
 #include <chrono>
 #include <filesystem>
 #include <set>
+#include <utility>
 
 namespace noble {
 
@@ -211,7 +212,13 @@ MasterServerClient::~MasterServerClient() {
 
 void MasterServerClient::SetUrl(const std::string& url) {
     std::lock_guard<std::mutex> lock(m_mutex);
-    m_url = url;
+    // Accept URLs copied from a browser (often with a trailing slash) and normalise before every
+    // request; m_url + "/api/..." with a double slash 404s on Express.
+    std::string normalized = url;
+    while (!normalized.empty() && std::isspace(static_cast<unsigned char>(normalized.front()))) normalized.erase(normalized.begin());
+    while (!normalized.empty() && std::isspace(static_cast<unsigned char>(normalized.back()))) normalized.pop_back();
+    while (!normalized.empty() && normalized.back() == '/') normalized.pop_back();
+    m_url = std::move(normalized);
 }
 
 std::string MasterServerClient::Url() const {

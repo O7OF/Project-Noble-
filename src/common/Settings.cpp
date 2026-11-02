@@ -72,6 +72,11 @@ void Clamp(SettingsData& d) {
         }
         d.serviceTag = tag.empty() ? "NOBL" : tag;
     }
+    trimName(d.masterServerUrl);
+    while (!d.masterServerUrl.empty() && d.masterServerUrl.back() == '/') d.masterServerUrl.pop_back();
+    if (d.masterServerUrl.empty() || d.masterServerUrl == "https://outbreak-z-test-server.onrender.com") {
+        d.masterServerUrl = "https://servertestdeploy-jfxb.onrender.com";
+    }
     if (d.favorites.size() > 50) d.favorites.resize(50);
     d.wheelUpAction = std::clamp(d.wheelUpAction, -1, 65);
     d.wheelDownAction = std::clamp(d.wheelDownAction, -1, 65);
@@ -200,11 +205,8 @@ void Settings::Load() {
             Read(j, "lastPlayedMod", d.lastPlayedMod);
             Read(j, "serviceTag", d.serviceTag);
             Read(j, "masterServerUrl", d.masterServerUrl);
-            // Free federation: west is the primary registry; it merges the east peer server-side.
-            // Clear this field in Settings to use LAN/direct-connect only.
-            if (d.masterServerUrl.empty() || d.masterServerUrl == "https://outbreak-z-test-server.onrender.com") {
-                d.masterServerUrl = "https://servertestdeploy-jfxb.onrender.com";
-            }
+            // Free federation: the West registry merges East and UK server-side. URL cleanup happens
+            // in Clamp() so every entry point (file, UI, command line) is normalised the same way.
             Read(j, "favorites", d.favorites);
             Read(j, "accountUsername", d.accountUsername);
             Read(j, "accountToken", d.accountToken);

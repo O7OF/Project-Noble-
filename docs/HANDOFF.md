@@ -7,7 +7,27 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 
 **Goal:** `noble-client.exe` loads MCC's own `haloreach.dll` (Halo: Reach) and drives it **without MCC**, like the existing
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
-MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.16.27 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.16.28 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+
+## 0. Pick up here (2026-11-02, 02:50 ET) - Three-Region Server Browser Cluster (0.9.16.28) (@deepseek)
+
+**Version:** 0.9.16.28. **Release:** https://github.com/O7OF/Project-Noble-/releases/tag/v0.9.16.28. **Build:** noble-client and noble-dev from build-rel (clean VS 18 x64 tree), 0 errors.
+
+**Server cluster:** US West https://servertestdeploy-jfxb.onrender.com, US East https://noble-server-2.onrender.com, UK https://servertestdeploy-1.onrender.com. All three return 200 on /api/health, /api/sessions and /api/browser. Backend commit db1abb6 deployed to all three; each /api/health reports the other two peers.
+
+**Backend (O7OF/ServerTestDeploy, db1abb6):**
+1. peerUrlsFor() unions PEER_REGISTRY_URL with DEFAULT_KNOWN_NODES instead of replacing the defaults; a partial env can no longer omit the UK node. Three defaults always present.
+2. /api/health now returns cluster.self/nodes/peerCount.
+3. /api/browser returns peerRegistries with each peer URL, reachable, sessions and online counts; peerBrowserSessions caches nodes.
+4. README documents the three regions and the env contract.
+
+**Client (0.9.16.28):**
+1. MasterServerClient::SetUrl trims whitespace and trailing slashes. A URL copied from a browser (https://host/) used to produce https://host//api/... and a 404; that was the UK symptom.
+2. Settings::Clamp normalises masterServerUrl on load/update and maps the retired outbreak host to West.
+3. ServerBrowser region struct now labels the UK endpoint EU West (London, UK); region detection matches the exact normalised registry URL instead of guessing from hostname substrings (servertestdeploy-1 contains neither "uk" nor "london").
+4. Region selector already offers West/East/UK/LAN; any selected node aggregates all three server-side.
+
+**Verified:** backend probe session created on West appears in East and UK /api/browser; each peerRegistries reports the other two reachable. Dev client started on the UK URL with a trailing slash without error; release log stayed 0 bytes.
 
 ## 0. Pick up here (2026-11-02, 02:20 ET) - Crash-Only Redacted Release Log (0.9.16.27) (@deepseek)
 
