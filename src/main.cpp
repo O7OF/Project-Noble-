@@ -69,7 +69,7 @@ static LONG WINAPI NobleCrashHandler(EXCEPTION_POINTERS* pExceptionInfo) {
             GetModuleFileNameW(hMod, modPath, MAX_PATH);
         }
 
-        spdlog::error("FATAL EXCEPTION CAUGHT: Code 0x{:08X} at Address 0x{:X} (Module: {})", 
+        NOBLE_ERROR("FATAL EXCEPTION CAUGHT: Code 0x{:08X} at Address 0x{:X} (Module: {})",
             pExceptionInfo->ExceptionRecord->ExceptionCode,
             faultAddr,
             std::filesystem::path(modPath).string());
@@ -85,10 +85,12 @@ static LONG WINAPI NobleCrashHandler(EXCEPTION_POINTERS* pExceptionInfo) {
                                    reinterpret_cast<LPCWSTR>(frameAddr), &frameMod)) {
                 GetModuleFileNameW(frameMod, frameModPath, MAX_PATH);
             }
-            spdlog::error(" Frame {:02d}: 0x{:X} [{}]", i, frameAddr, std::filesystem::path(frameModPath).filename().string());
+            NOBLE_ERROR(" Frame {:02d}: 0x{:X} [{}]", i, frameAddr, std::filesystem::path(frameModPath).filename().string());
         }
 
-        // Generate crash minidump
+        // Minidumps contain the full process image and are a decompilation aid: development builds
+        // keep them, release builds only leave the redacted crash text in the log.
+#ifdef NOBLE_DEV_BUILD
         HANDLE hDumpFile = CreateFileW(L"noble-crash.dmp", GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
         if (hDumpFile != INVALID_HANDLE_VALUE) {
             MINIDUMP_EXCEPTION_INFORMATION mei{};
@@ -99,6 +101,7 @@ static LONG WINAPI NobleCrashHandler(EXCEPTION_POINTERS* pExceptionInfo) {
             CloseHandle(hDumpFile);
             spdlog::error("Crash minidump written to noble-crash.dmp");
         }
+#endif
     }
     spdlog::default_logger()->flush();
     return EXCEPTION_CONTINUE_SEARCH;

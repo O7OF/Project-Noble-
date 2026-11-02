@@ -7,7 +7,19 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 
 **Goal:** `noble-client.exe` loads MCC's own `haloreach.dll` (Halo: Reach) and drives it **without MCC**, like the existing
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
-MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.16.26 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.16.27 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+
+## 0. Pick up here (2026-11-02, 02:20 ET) - Crash-Only Redacted Release Log (0.9.16.27) (@deepseek)
+
+**Version:** 0.9.16.27. **Release:** https://github.com/O7OF/Project-Noble-/releases/tag/v0.9.16.27. **Build:** noble-client and noble-dev, MSVC Release x64.
+
+**What changed:**
+1. Logger::Init sets the release logger/sinks to spdlog::level::err; info/warn/debug chatter is dropped. A healthy release run leaves noble-client.log at 0 bytes (verified). noble-dev stays at trace.
+2. LogRedacted formats every NOBLE_INFO/WARN/ERROR/DEBUG message and, in release builds, replaces every 0x-prefixed hex token with 0x<redacted>, http(s) URLs with <redacted-url>, and IPv4 addresses with <redacted-ip>. This covers hook RVAs, absolute addresses, string ids, ARGB values, master/relay endpoints and peer IPs. Crash-handler stack/address lines go through the same macro.
+3. Release builds no longer write noble-crash.dmp (minidumps are the process image and a decompilation aid); minidumps are noble-dev only. Release crash text is still written, redacted.
+4. No release endpoint/token detail remains at err level; only the redacted crash/error text a bug report needs.
+
+**Verified:** normal release menu run produced a 0-byte log; dev builds keep full diagnostics. Build 0.9.16.27 packages with the embedded map and no loose map/mod/CSV/OBJ files.
 
 ## 0. Pick up here (2026-11-02, 02:00 ET) - Readable Scaled Settings/Panels (0.9.16.26) (@deepseek)
 
