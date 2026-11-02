@@ -7,7 +7,22 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 
 **Goal:** `noble-client.exe` loads MCC's own `haloreach.dll` (Halo: Reach) and drives it **without MCC**, like the existing
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
-MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.16.30 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.16.33 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+
+## 0. Pick up here (2026-11-02, 04:30 ET) - Armor Fix / Imported Menu String Audit (0.9.16.33) (@deepseek)
+
+**Version:** 0.9.16.33. **Release:** https://github.com/O7OF/Project-Noble-/releases/tag/v0.9.16.33. **Build:** noble-client and noble-dev compiled from build-rel.
+
+**What Tyler's last commits did:** 32d987b added exclusive fullscreen and made borderless the default; fe665fb scaled the menu UI for native 4K. Neither changed ArmorCustomizer/ReachArmory.
+
+**Imported main menu audit:** the new data/menumaps/mainmenu.map (268 MB, 2026-10-31) and mainmenu.string_ids.csv are a different string table from the Armory map:
+- Its rows use the row index as the ID (e.g. kurt=16905) instead of the ids in mainmenu_all (kurt=12519).
+- The runtime table it creates has a different GLOBALS layout: head at 4, chest at 2, armour flair at 24-38, with no old 0x03BB6FED/0x03BAB653 marker. The Armory writes its 16 region/permutation pairs at 0x04.. and expects the marker table, so using this map while resolving ids from either CSV leaves chest/shoulder/attachment pairs unwritten or wrong.
+- A loose new mainmenu.map was therefore being preferred by an experimental ReachHost/VFS change, which broke armour application. That preference was reverted.
+
+**Fix:** the client again uses the known-good mainmenu_all.map/string table (embedded in release, loose for dev) that the Armory permutation data was built against. The Armory finds the marker GLOBALS table (stride 8) and applies head/chest/shoulder/wrist/utility/knees/effect pairs. New-mainmenu support needs a dedicated Armory GLOBALS mapping; do not simply point the Armory at mainmenu.map.
+
+**Verified:** dev run logs "Found mainmenu_all.map GLOBALS table ... (stride=8)" and writes Spartan pieces; release run leaves noble-client.log at 0 bytes.
 
 ## 0. Pick up here (2026-11-02, 03:35 ET) - Visor Colour Fix + Preview (0.9.16.30) (@deepseek)
 

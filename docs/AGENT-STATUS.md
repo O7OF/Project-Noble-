@@ -30,12 +30,12 @@ can make.
 
 ## @deepseek
 
-- state: **idle** (last: 0.9.16.30 visor colour persistence + locked preview fix, three-region server browser, crash-only release logs, 03:35 ET; release published)
+- state: **idle** (last: 0.9.16.33 armour fix after auditing Tyler's imported mainmenu string table; 4K UI/exclusive fullscreen included, 04:30 ET; release published)
 - since:  -
 - working on:  -
 - files expected:  -
-- last commit: `0.9.16.30` local (pending push)
-- test state: local settings left at 1280x720 windowed (borderless applies live), audio unmuted; `noble-client` and `noble-dev` rebuilt at 03:23 ET. Release https://github.com/O7OF/Project-Noble-/releases/tag/v0.9.16.30. Test captures in `scratch/` (`live-borderless.png`, `preview-settings-scaled.png`, `preview-windowed.png`, `armory-spartan-zoom.png`).
+- last commit: `0.9.16.33` local (pending push)
+- test state: local settings left at 1280x720 windowed (borderless applies live), audio unmuted; `noble-client` and `noble-dev` rebuilt at 04:29 ET. Release https://github.com/O7OF/Project-Noble-/releases/tag/v0.9.16.33. Test captures in `scratch/` (`live-borderless.png`, `preview-settings-scaled.png`, `preview-windowed.png`, `armory-spartan-zoom.png`).
 
 ## @claude
 

@@ -1572,11 +1572,14 @@ void ArmorCustomizer::RenderCharacterPreview(ID3D11Device* device, ID3D11DeviceC
 
     // Reach's own Armory scene draws the Spartan - the shipped in-game model. Noble has no stand-in: the OBJ re-exports
     // in data\armor are a different mesh and must not be used (Tyler, 2026-10-31).
-    static const bool menuMapPresent = std::filesystem::exists(ReachHost::Get().GetDataDir() / "menumaps" / "mainmenu_all.map");
+    static const bool menuMapPresent = [] {
+        const auto dir = ReachHost::Get().GetDataDir() / "menumaps";
+        return std::filesystem::exists(dir / "mainmenu.map") || std::filesystem::exists(dir / "mainmenu_all.map");
+    }();
     if (!ReachArmory::IsSceneReady()) {
         const std::string msg = menuMapPresent
             ? std::string("LOADING ARMORY") + std::string(static_cast<size_t>(static_cast<int>(ImGui::GetTime() * 2.0) % 4), '.')
-            : std::string("NO 3D PREVIEW: data\\menumaps\\mainmenu_all.map is missing");
+            : std::string("NO 3D PREVIEW: data\\menumaps\\mainmenu.map is missing");
         const ImVec2 ts = ImGui::CalcTextSize(msg.c_str());
         dl->AddText(ImVec2(cursorPos.x + std::max(0.0f, (width - ts.x) * 0.5f), cursorPos.y + height * 0.45f),
                     IM_COL32(143, 216, 255, 220), msg.c_str());
