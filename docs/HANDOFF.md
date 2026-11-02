@@ -7,7 +7,20 @@ Tyler mostly runs builds, tests, and does the reverse engineering; he is not a C
 
 **Goal:** `noble-client.exe` loads MCC's own `haloreach.dll` (Halo: Reach) and drives it **without MCC**, like the existing
 community project Reach Renaissance (RR, installed at `D:\Reach`) does. Ownership is verified through Steam, nothing in the
-MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.16.33 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+MCC install is modified, and no RR code or data is redistributed. RR is used only as a reference for behaviour. (AGENT IS TO ALWAYS WRITE TO THIS FILE WHEN MODIFYING/MAKING ANY CHANGES TO CODE THIS NEEDS TO BE DETAILED AND THE CHANGES NEED TO BE UNDER THE NAME OF THE PERSON WHO COMMITED SAID CHANGES, ALWAYS UPDATE THE GAMES ACTUAL VERSION CURRENT = 0.9.16.34 THIS NEEDS TO BE CHANGED PER PUSH COMMIT!)
+
+## 0. Pick up here (2026-11-02, 05:40 ET) - New RR Mainmenu + Remapped Armor GLOBALS (0.9.16.34) (@deepseek)
+
+**Version:** 0.9.16.34. **Release:** https://github.com/O7OF/Project-Noble-/releases/tag/v0.9.16.34. **Build:** noble-client and noble-dev compiled from build-rel.
+
+**New map:** data/menumaps/mainmenu_all.map is now RR's new 268,095,488-byte menu map, with the matching 1,366,736-byte string table (removed the old 297 MB pair; kept as mainmenu_all.old.map/.csv). The loose CSV is preferred over the embedded copy so the new table is used in dev; release embeds the same new pair through blocks.rc.
+
+**New GLOBALS layout:** head=4, chest=2, flair_head_a/b/c=24/26/28, flair_chest_a/b/c=30/32/34, flair_left/right_shoulder=36/38, stride 8. The old fixed 0x04,0x06,... writes only hit skeleton slots. ReachArmory now:
+1. Falls back to a structural scan when the legacy 0x03BB6FED/0x03BAB653 marker is absent: finds head/default, requires chest at slot 2 and flair_head_a at 20..40, validates the REMADE counter.
+2. Resolves each armor region ID to its own GLOBALS slot (head/chest/shoulders/flair) and writes the pair there, with left/right_shoulder falling back to flair_left/right_shoulder. Legacy tables still take the fixed 16-pair path.
+3. Logs "Found imported mainmenu GLOBALS table ... (stride=8, flair slot 24)" and writes the Spartan pieces.
+
+**Verified:** dev run loads 31,978 string ids from loose mainmenu_all CSV, finds the imported GLOBALS table and applies head rosenda/chest/etc.; release run leaves noble-client.log at 0 bytes.
 
 ## 0. Pick up here (2026-11-02, 04:30 ET) - Armor Fix / Imported Menu String Audit (0.9.16.33) (@deepseek)
 

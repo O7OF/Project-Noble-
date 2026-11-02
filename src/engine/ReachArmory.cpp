@@ -235,6 +235,15 @@ static void EnsureStringIdsLoaded() {
         return count;
     };
 
+    if (!s_dataDir.empty()) {
+        std::ifstream loose(s_dataDir / "menumaps" / "mainmenu_all.string_ids.csv");
+        if (loose) {
+            const size_t loaded = parseCsvStream(loose);
+            NOBLE_INFO("ReachArmory: Loaded {} string_ids from loose mainmenu_all CSV", loaded);
+            return;
+        }
+    }
+
     // 1. Try embedded mainmenu_all.string_ids.csv resource first
     size_t embeddedSize = 0;
     const uint8_t* embeddedData = EmbeddedBlocks::GetBlock("mainmenu_all.string_ids.csv", &embeddedSize);
@@ -369,6 +378,14 @@ static std::vector<std::pair<uintptr_t, size_t>> ReadWriteChunks(size_t minSize)
 
 static std::atomic<uint64_t> s_globalsMarkerHits{0};
 
+static int GlobalsSlotFor(uintptr_t base, size_t stride, uint32_t id) {
+    if (id == 0) return -1;
+    for (size_t i = 0; i < 0x120; ++i) {
+        uint32_t v = 0;
+        if (SafeReadU32(base + i * stride, &v) && v == id) return static_cast<int>(i);
+    }
+    return -1;
+}
 static bool ScanGlobalsTable() {
     const uintptr_t existing = s_globalsBase.load();
     if (existing != 0) {
@@ -383,6 +400,8 @@ static bool ScanGlobalsTable() {
 
     const uint32_t headId    = LookupStringId("head");
     const uint32_t defaultId = LookupStringId("default");
+    const uint32_t chestId   = LookupStringId("chest");
+    const uint32_t flairHeadAId = LookupStringId("flair_head_a");
     if (headId == 0 || defaultId == 0) return false;
 
     static constexpr size_t kStrides[6] = { 4, 8, 12, 16, 24, 32 };
@@ -426,6 +445,39 @@ static bool ScanGlobalsTable() {
                             return true;
                         }
                     }
+                }
+            }
+        }
+    }
+
+    // Imported mainmenu_all.map (RR's new armory map): no legacy marker, but the table still
+    // starts with head/default and has chest at slot 2 plus the flair armour block at 20..40.
+    if (chestId != 0 && flairHeadAId != 0) {
+        for (const auto& chunk : ReadWriteChunks(0x100)) {
+            const uintptr_t chunkBase = chunk.first;
+            const size_t size = chunk.second;
+            std::vector<uint8_t> buf(size);
+            const uintptr_t self = reinterpret_cast<uintptr_t>(buf.data());
+            if (chunkBase < self + size && self < chunkBase + size) continue;
+            if (!SafeCopyMem(buf.data(), reinterpret_cast<const void*>(chunkBase), size)) continue;
+            for (size_t off = 0; off + 4 <= size; off += 4) {
+                if (*reinterpret_cast<const uint32_t*>(buf.data() + off) != headId) continue;
+                for (size_t stride : kStrides) {
+                    if (off < 0x04 * stride) continue;
+                    const uintptr_t candidate = chunkBase + off - 0x04 * stride;
+                    uint32_t chestRegion = 0;
+                    if (!SafeReadU32(candidate + 0x02 * stride, &chestRegion) || chestRegion != chestId) continue;
+                    const int flairSlot = GlobalsSlotFor(candidate, stride, flairHeadAId);
+                    if (flairSlot < 20 || flairSlot > 40) continue;
+                    int32_t remade = 0;
+                    if (!SafeReadI32(candidate + 0x32 * stride, &remade) || remade < -1 || remade > 500) continue;
+                    s_globalsStride.store(stride);
+                    s_globalsBase.store(candidate);
+                    if (!s_sceneReady.exchange(true)) {
+                        NOBLE_INFO("ReachArmory: Found imported mainmenu GLOBALS table at 0x{:X} (stride={}, flair slot {})",
+                                   candidate, stride, flairSlot);
+                    }
+                    return true;
                 }
             }
         }
@@ -1312,20 +1364,42 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx, const std::strin
             pushPair("armor_effect",   sel.armorEffect,   "default");
         }
 
+        // The imported RR mainmenu_all has a different GLOBALS layout: head at 4, chest at 2,
+        // flair_head/chest at 24..34 and shoulders at 36/38. Resolve each region's own slot instead
+        // of assuming the legacy 0x04, 0x06, ... layout.
+        const bool dynamicLayout = GlobalsSlotFor(base, stride, LookupStringId("flair_head_a")) >= 20;
+        std::vector<std::pair<uint32_t, uint32_t>> writtenPairs;
+        std::vector<uint32_t> writtenSlots;
         if (!pairs.empty()) {
-            while (pairs.size() < 16) {
-                pairs.push_back(pairs[0]);
+            if (dynamicLayout) {
+                for (const auto& pair : pairs) {
+                    int slot = GlobalsSlotFor(base, stride, pair.first);
+                    if (slot < 0) {
+                        const std::string region = NameOfStringId(pair.first);
+                        if (region == "left_shoulder") slot = GlobalsSlotFor(base, stride, LookupStringId("flair_left_shoulder"));
+                        else if (region == "right_shoulder") slot = GlobalsSlotFor(base, stride, LookupStringId("flair_right_shoulder"));
+                        else if (region == "chest") slot = GlobalsSlotFor(base, stride, LookupStringId("flair_chest_a"));
+                    }
+                    if (slot < 0 || std::find(writtenSlots.begin(), writtenSlots.end(), static_cast<uint32_t>(slot)) != writtenSlots.end()) continue;
+                    writtenSlots.push_back(static_cast<uint32_t>(slot));
+                    writtenPairs.emplace_back(pair.first, pair.second);
+                    SafeWriteU32(base + slot * stride, pair.first);
+                    SafeWriteU32(base + (slot + 1) * stride, pair.second);
+                }
+            } else {
+                while (pairs.size() < 16) pairs.push_back(pairs[0]);
+                writtenPairs = pairs;
+                for (size_t i = 0; i < 16; ++i) {
+                    SafeWriteU32(base + (0x04 + i * 2) * stride, writtenPairs[i].first);
+                    SafeWriteU32(base + (0x05 + i * 2) * stride, writtenPairs[i].second);
+                }
             }
-            const bool piecesChanged = (pairs != s_lastPairs || base != s_lastPairsBase);
+            const bool piecesChanged = (writtenPairs != s_lastPairs || base != s_lastPairsBase);
             if (!piecesChanged) {
                 // Same pieces: no rebuild needed, colors and lights are written to live memory every frame.
             } else {
-                s_lastPairs = pairs;
+                s_lastPairs = writtenPairs;
                 s_lastPairsBase = base;
-                for (size_t i = 0; i < 16; ++i) {
-                    SafeWriteU32(base + (0x04 + i * 2) * stride, pairs[i].first);
-                    SafeWriteU32(base + (0x05 + i * 2) * stride, pairs[i].second);
-                }
                 s_bumpAtFrame = frameNow + 2;
                 s_settlePending = false;
                 if (showElite) {
