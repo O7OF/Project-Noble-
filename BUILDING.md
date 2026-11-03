@@ -66,6 +66,12 @@ Use the **Armory-capable** menu map (the one with the Armory scenes and the
 H2A/Council/Schism Elite regions). A different menu map may load, but those
 extra Elite pieces will not have regions to render.
 
+The stock `haloreach\maps\mainmenu.map` loads the front-end but does **not**
+contain the Armory scene: the 3D preview stays on `LOADING ARMORY`. For the
+Armory, compile the menu map with **HREK** (with the Armory scene) and place it
+as `data/menumaps/mainmenu.map` or `data/menumaps/mainmenu_all.map`. It is
+served loose at runtime, so it never has to be embedded in the exe.
+
 The string table (`mainmenu_all.string_ids.csv`) is an extracted dump, not a
 file MCC ships. Supply the matching CSV next to the map; the Armory needs it at
 runtime. Do not redistribute the map or the CSV.

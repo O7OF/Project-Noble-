@@ -1598,13 +1598,19 @@ void ArmorCustomizer::RenderCharacterPreview(ID3D11Device* device, ID3D11DeviceC
     // Reach's own Armory scene draws the Spartan - the shipped in-game model. Noble has no stand-in: the OBJ re-exports
     // in data\armor are a different mesh and must not be used (Tyler, 2026-10-31).
     static const bool menuMapPresent = [] {
-        const auto dir = ReachHost::Get().GetDataDir() / "menumaps";
-        return std::filesystem::exists(dir / "mainmenu.map") || std::filesystem::exists(dir / "mainmenu_all.map");
+        std::error_code ec;
+        return std::filesystem::is_regular_file(ReachHost::Get().GetMapsDir() / "mainmenu.map", ec);
     }();
     if (!ReachArmory::IsSceneReady()) {
-        const std::string msg = menuMapPresent
-            ? std::string("LOADING ARMORY") + std::string(static_cast<size_t>(static_cast<int>(ImGui::GetTime() * 2.0) % 4), '.')
-            : std::string("NO 3D PREVIEW: data\\menumaps\\mainmenu.map is missing");
+        // If the scene still is not ready after a few seconds, the map almost certainly has no Armory
+        // scene: the stock haloreach\maps\mainmenu.map loads the front-end but not the 3D Armory.
+        static const double s_previewStart = ImGui::GetTime();
+        const bool noArmoryScene = menuMapPresent && (ImGui::GetTime() - s_previewStart > 8.0);
+        const std::string msg = !menuMapPresent
+            ? std::string("NO 3D PREVIEW: haloreach\\maps\\mainmenu.map is missing")
+            : noArmoryScene
+                ? std::string("3D PREVIEW: this menu map has no Armory scene. Compile it with HREK (Armory version).")
+                : std::string("LOADING ARMORY") + std::string(static_cast<size_t>(static_cast<int>(ImGui::GetTime() * 2.0) % 4), '.');
         const ImVec2 ts = ImGui::CalcTextSize(msg.c_str());
         dl->AddText(ImVec2(cursorPos.x + std::max(0.0f, (width - ts.x) * 0.5f), cursorPos.y + height * 0.45f),
                     IM_COL32(143, 216, 255, 220), msg.c_str());

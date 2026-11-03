@@ -2118,8 +2118,6 @@ static uint64_t __fastcall HostSlot48_FilePathResolver(void* thisPtr, uint64_t a
         std::filesystem::path resolved;
 
         std::filesystem::path checkUser = host.GetDataDir() / inStr;
-        std::filesystem::path checkUserMenuMap = host.GetDataDir() / "menumaps" / inStr;
-        std::filesystem::path checkCustomMainMenu = host.GetDataDir() / "menumaps" / "mainmenu_all.map";
         std::filesystem::path checkUserArmor = host.GetDataDir() / "armor" / inStr;
         std::filesystem::path checkUserMaps = host.GetDataDir() / "maps" / inStr;
         std::filesystem::path mccRoot = host.GetReachDir().has_parent_path() ? host.GetReachDir().parent_path() : host.GetReachDir();
@@ -2140,12 +2138,11 @@ static uint64_t __fastcall HostSlot48_FilePathResolver(void* thisPtr, uint64_t a
 
         if (auto pack = ElitePack::ResolveFile(inStr)) {
             resolved = *pack;  // the Elite armour pack the engine loads with the match map
-        } else if (isMainMenu && std::filesystem::is_regular_file(checkCustomMainMenu, ec)) {
-            resolved = checkCustomMainMenu;
+        } else if (isMainMenu && std::filesystem::is_regular_file(checkRetailMaps, ec)) {
+            // The main menu only ever comes from the player's own haloreach\maps folder.
+            resolved = checkRetailMaps;
         } else if (std::filesystem::is_regular_file(checkUser, ec)) {
             resolved = checkUser;
-        } else if (std::filesystem::is_regular_file(checkUserMenuMap, ec)) {
-            resolved = checkUserMenuMap;
         } else if (std::filesystem::is_regular_file(checkUserArmor, ec)) {
             resolved = checkUserArmor;
         } else if (std::filesystem::is_regular_file(checkUserMaps, ec)) {
@@ -3622,7 +3619,7 @@ void ReachHost::SetPaths(const std::filesystem::path& reachDir,
     }
     if (!dataDir.empty()) {
         std::error_code ec;
-        if (std::filesystem::exists(dataDir / "menumaps" / "mainmenu_all.map", ec) ||
+        if (std::filesystem::exists(dataDir / "menumaps", ec) ||
             std::filesystem::exists(dataDir / "launch_block_1.bin", ec) ||
             m_dataDir.empty()) {
             m_dataDir = dataDir;

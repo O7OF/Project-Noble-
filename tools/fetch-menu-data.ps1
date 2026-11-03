@@ -60,9 +60,10 @@ if (-not $map) {
     throw 'No mainmenu map found. MCC does not always keep it in haloreach\maps; pass -MapPath with your extracted mainmenu_all.map (the Reach Renaissance extraction folder is a common source).'
 }
 
-$target = Join-Path $dest 'mainmenu_all.map'
+$target = Join-Path $dest 'mainmenu.map'
 if ($map.FullName -ne $target) { Copy-Item $map.FullName $target -Force }
 Write-Host "Menu map: $($map.FullName) -> $target ($([math]::Round($map.Length / 1MB)) MB)"
+Write-Host 'A stock map loads the front-end; the 3D Armory needs an HREK-compiled map with the Armory scene.'
 
 $csvNames = @('mainmenu_all.string_ids.csv')
 foreach ($csvName in $csvNames) {

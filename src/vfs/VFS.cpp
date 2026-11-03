@@ -202,40 +202,8 @@ std::wstring VFS::ResolvePath(const std::wstring& requestedPath, DWORD desiredAc
             }
 
             // 2. If reading:
-            std::wstring normLower = normalized;
-            std::transform(normLower.begin(), normLower.end(), normLower.begin(), ::towlower);
-            if (normLower.find(L"mainmenu.map") != std::wstring::npos) {
-                // Prefer a loose map the builder/user put next to the exe: this is how the project runs
-                // without embedding any game data. Only fall back to user storage / the embedded copy.
-                fs::path localMenu = s_localDataDir.empty() ? fs::path() : (s_localDataDir / "menumaps" / "mainmenu_all.map");
-                fs::path customMenu = s_userStoragePath / "menumaps" / "mainmenu_all.map";
-                if (!localMenu.empty() && RawPathExists(localMenu.wstring())) {
-                    static bool s_loggedLocalMenu = false;
-                    if (!s_loggedLocalMenu) {
-                        s_loggedLocalMenu = true;
-                        NOBLE_INFO("VFS: using loose menu map {}", localMenu.string());
-                    }
-                    return localMenu.wstring();
-                }
-                if (!RawPathExists(customMenu.wstring())) {
-                    size_t mapSize = 0;
-                    const uint8_t* mapData = EmbeddedBlocks::GetBlock("mainmenu_all.map", &mapSize);
-                    if (mapData && mapSize > 0) {
-                        fs::create_directories(customMenu.parent_path(), ec);
-                        std::ofstream out(customMenu, std::ios::binary);
-                        if (out) {
-                            out.write(reinterpret_cast<const char*>(mapData), static_cast<std::streamsize>(mapSize));
-                            out.close();
-                            NOBLE_INFO("VFS: Auto-extracted embedded mainmenu_all.map ({} bytes) to {}", mapSize, customMenu.string());
-                        }
-                    }
-                }
-                if (RawPathExists(customMenu.wstring())) {
-                    return customMenu.wstring();
-                }
-                // No custom/embedded map: let the normal VFS priorities load the stock MCC
-                // haloreach\maps\mainmenu.map from the user's own install.
-            }
+            // The main menu is always the player's own haloreach\maps\mainmenu.map, served by the base
+            // MCC priority below. Noble no longer carries or extracts a custom menu map.
 
             // Priority 0: the mod chosen in the front-end menu.
             if (!s_activeMod.empty()) {
