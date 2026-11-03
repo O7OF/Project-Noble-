@@ -1,3 +1,0 @@
-[2026-10-31 23:19:20.344] [info] BlamEngine: game mode 'HOST MODE TEST' from 'D:\Halo-Reach-Community-Edition\build\bin\Release\data\host_variants\host_mode_test.json' on base 'slayer_054.bin', 2 rule(s) changed
-[2026-10-31 23:19:20.345] [info] BlamEngine: Decoded game variant 'd:/steam\steamapps\common\Halo The Master Chief Collection\haloreach\game_variants\slayer_054.bin' into launch block (+0x300)
-[2026-10-31 23:19:27.778] [info] ReachHost [Slot 1 - FrameTick]: game session started at frame 377, loading screen off

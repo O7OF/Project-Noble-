@@ -1,6 +1,0 @@
-POST /api/sessions -> session created
-POST /api/sessions/<id>/lobby/launch -> 200
-launch_data includes:
-  variant: "test.json"
-  variant_body: "{\"name\":\"TRANSPORT TEST\",\"base\":\"slayer_054.bin\",\"rules\":{\"time_limit\":1}}"
-Host/session identifiers and public IP omitted.

@@ -1,5 +1,0 @@
-Relaunch handoff test, 2026-11-01:
-parent pid 31940 launched with -relaunch-test
-after 6 s: parent_alive=False
-child pid 8540 alive with window "Halo: Reach Community Edition"
-Verdict: the old process terminates; no frozen second EXE.
