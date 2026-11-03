@@ -24,8 +24,8 @@ msbuild build\noble-dev.vcxproj    /p:Configuration=Release /p:Platform=x64
 msbuild build\noble-dedicated.vcxproj /p:Configuration=Release /p:Platform=x64
 ```
 
-Do not use the old `build.bat` from a rolled-back checkout: it runs
-`git pull --ff-only origin main` and will overwrite a local rollback.
+`build.bat` builds the current checkout and does not touch git; pull your
+branch manually first if you want the latest commits.
 
 ## Pull requests
 

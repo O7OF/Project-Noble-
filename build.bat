@@ -61,13 +61,8 @@ if %ERRORLEVEL% neq 0 (
     exit /b 1
 )
 
-echo [1/3] Syncing latest commits from git origin/main...
-git fetch origin main >nul 2>nul
-if %ERRORLEVEL% equ 0 (
-    git pull --ff-only origin main >nul 2>nul
-) else (
-    echo [i] Note: Git remote sync skipped - offline or no remote access. Continuing local build...
-)
+echo [1/3] Building the current checkout (no automatic git pull)...
+echo [i] Pull your branch manually before building if you want the latest commits.
 
 REM Check whether a Visual Studio instance with C++ build tools is installed
 set "HAS_VS_CPP=0"
