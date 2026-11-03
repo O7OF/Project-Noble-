@@ -37,10 +37,10 @@ New-Item -ItemType Directory -Force -Path $pkg | Out-Null
 Copy-Item $exe (Join-Path $pkg 'Noble.exe') -Force
 
 # The menu map and its string_ids are compiled into Noble.exe (src/res/blocks.rc); VFS extracts
-# them into data\menumaps on first run. Do not ship loose maps, CSVs, armour OBJ/RRPMCG exports or
+# them into data\menumaps on first run. Do not ship loose maps, CSVs, armour OBJ/PMGC exports or
 # the development mods folder: they are either embedded or user content.
 $excludeDirs = 'userdata','autosave','cache','sandbox','armor','blocks','mods','menumaps'
-$excludeFiles = 'appearance.dat','appearance.json','settings.json','menu-background-deck.txt','launch_block_1.bin','lb_m_c_1.bin','profile_1.bin','*.log','*.dmp','*.tmp','*.obj','*.mtl','*.rrpmcg','*.rrreloc','*.rdc','*.map','*.csv','*.bin'
+$excludeFiles = 'appearance.dat','appearance.json','settings.json','menu-background-deck.txt','launch_block_1.bin','lb_m_c_1.bin','profile_1.bin','*.log','*.dmp','*.tmp','*.obj','*.mtl','*.PMGC','*.rrreloc','*.rdc','*.map','*.csv','*.bin'
 & robocopy (Join-Path $release 'data') (Join-Path $pkg 'data') /E /XD $excludeDirs /XF $excludeFiles /NFL /NDL /NJH /NJS /NP | Out-Null
 if ($LASTEXITCODE -gt 7) { throw "robocopy data failed ($LASTEXITCODE)" }
 New-Item -ItemType Directory -Force -Path (Join-Path $pkg 'data\mods') | Out-Null

@@ -18,7 +18,7 @@ namespace {
 // haloreach+0x48A910: per-player camera-mode check. Verified prologue (MCC build 2025.08.16):
 //   48 89 5C 24 08   mov qword ptr [rsp+8], rbx
 //   48 89 74 24 10   mov qword ptr [rsp+10h], rsi
-// Reach Renaissance hooks the same function (5-byte patch window) and answers it from its own camera state.
+// the reference host hooks the same function (5-byte patch window) and answers it from its own camera state.
 constexpr uintptr_t kCameraModeCheckRva = 0x48A910;
 // haloreach+0xC6948 (unit_should_use_third_person_camera): checks whether a unit should use a 3rd-person camera
 // (returns 1 with *outReason in 1..3 when seated in a vehicle, or calls +0x48A910 when on foot).

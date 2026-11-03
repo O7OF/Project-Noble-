@@ -8,7 +8,7 @@
 namespace noble {
 
 // The engine's decoded c_game_variant is 0xFC04 bytes. These are the offsets proven by
-// patch -> decode -> native-diff (docs/plans/variant-field-map.md). Only the fields below are mapped;
+// patch -> decode -> native-diff (the notes). Only the fields below are mapped;
 // loadouts are file/script data and are not here.
 struct VariantFields {
     // General

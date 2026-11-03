@@ -10,8 +10,8 @@ engine from a local MCC install. Please read this before opening a PR.
 - Never commit game assets (maps, CSVs, OBJ/MTL, audio, DLLs from MCC) or
   anything that bypasses ownership checks. `data/menumaps`, `data/armor`,
   `data/userdata` and `appearance.dat` are git-ignored on purpose.
-- Check existing issues and docs/HANDOFF.md before starting; the handoff file
-  records the architecture and the current known issues.
+- Check existing issues and pull requests before starting; describe the
+  architecture or known issue you are touching in the PR.
 
 ## Build
 
@@ -30,10 +30,10 @@ branch manually first if you want the latest commits.
 ## Pull requests
 
 1. Fork the repository and create a topic branch from `main`:
-   `feat/<short-name>`, `fix/<short-name>`, `docs/<short-name>`.
+   `feat/<short-name>`, `fix/<short-name>`, `notes/<short-name>`.
 2. Keep the change focused. One feature or fix per PR.
-3. Add a short note to the top of `docs/HANDOFF.md` describing what changed,
-   where, how it was built and how it was tested (the project convention).
+3. In the PR, describe what changed, where, how it was built and how it was
+   tested.
 4. Test it: launch the client, open the Armory, cycle the affected armour /
    colours / visor, and check `noble-client.log` / `noble-dev.log` for errors.
    For engine changes, test at least one multiplayer map.
@@ -46,7 +46,7 @@ branch manually first if you want the latest commits.
 - Prefer RAII and standard containers. Never add a game-asset dependency to a
   header.
 - Keep engine memory access behind the existing `Safe*` helpers.
-- Comments explain *why*, not *what*. Link to the REA/Ghidra address when a
+- Comments explain *why*, not *what*. Name the engine offset or tag when a
   constant comes from the engine.
 - `.editorconfig` covers the basics.
 

@@ -71,7 +71,7 @@ bool Start(const std::wstring& args, unsigned long* outPid) {
         cmd += L" -account-dev " + std::to_wstring(AuthClient::Get().IsDeveloper() ? 1 : 0);
     }
     // Test switches the menu was started with carry on to the match process.
-    for (const wchar_t* sw : { L"-rr-guest-block", L"-armory-unlock-all" }) {
+    for (const wchar_t* sw : { L"--guest-block", L"-armory-unlock-all" }) {
         if (std::wcsstr(GetCommandLineW(), sw) && cmd.find(sw) == std::wstring::npos) cmd += std::wstring(L" ") + sw;
     }
     std::wstring dir = exe;

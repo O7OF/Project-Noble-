@@ -123,8 +123,8 @@ constexpr int64_t kMissionBonus[4] = { 250, 500, 1000, 2000 };
 // Challenges and commendations. Reach's own lists came from Bungie's servers; these are Noble's,
 // built only on what the results record and the launch settings tell us.
 // ---------------------------------------------------------------------------------------------
-// Halo: Reach's own challenges (docs/career/challenges.json, 2010-2012), the ones Noble can track from
-// a finished game (see tools/career/gen_reach_challenges.py, which writes ReachChallenges.inc).
+// Halo: Reach's own challenges (the career data, 2010-2012), the ones Noble can track from
+// a finished game (the career data is compiled into ReachChallenges.inc).
 enum class ChallengeMetric { Kills, Assists, Games, Missions, Score, DailyChallenges, AllDailies };
 struct ReachChallengeDef {
     bool weekly;

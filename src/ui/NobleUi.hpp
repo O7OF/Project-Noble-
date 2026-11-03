@@ -4,7 +4,7 @@
 
 namespace noble {
 
-// Shared building blocks for Noble's menus (docs/menu-redesign-spec.md §3): Reclaimer-style layout
+// Shared building blocks for Noble's menus (the notes Ã‚Â§3): classic layout
 // pieces drawn in Reach's look (steel-blue panels, ice-blue focus, amber only for "unsaved").
 // Everything draws with ImGui draw lists inside the current window; sizes scale with Scale().
 namespace NobleUi {
@@ -34,7 +34,7 @@ void ChangedDot(ImDrawList* dl, ImVec2 center, float scale);
 //   Slider: fill bar with value text and an optional default tick (t and defaultT in 0..1, defaultT < 0 = none).
 void DrawSlider(ImDrawList* dl, ImVec2 min, ImVec2 max, float t, float defaultT, const char* valueText, bool active, bool disabled,
                 float textWidth = 0.0f);
-//   Cycle: ‹ value › with position dots under the value; arrows grey out at the ends when !wraps.
+//   Cycle: Ã¢â‚¬Â¹ value Ã¢â‚¬Âº with position dots under the value; arrows grey out at the ends when !wraps.
 void DrawCycle(ImDrawList* dl, ImVec2 min, ImVec2 max, const char* value, int index, int count, bool wraps,
                bool hoverLeft, bool hoverRight, bool disabled);
 //   Toggle pill ON / OFF.

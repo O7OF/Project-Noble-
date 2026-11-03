@@ -36,7 +36,7 @@ static void SafeCallVariantInit(HMODULE hModule, void* targetBuffer) {
 }
 
 // Game variant decoder inside haloreach.dll (RVA 0x373A0, valid for the supported DLL build).
-// Same call Reach Renaissance's set_game_variant makes: ok = decode(fileBytes, out[0xFC04], &status).
+// Same call the reference host's set_game_variant makes: ok = decode(fileBytes, out[0xFC04], &status).
 static bool SafeCallGameVariantDecode(HMODULE hModule, const void* fileData, void* outVariant, void* outStatus) {
     if (!hModule || !fileData || !outVariant || !outStatus) return false;
     __try {
@@ -90,7 +90,7 @@ bool BlamEngine::Initialize(const ReachInstallInfo& installInfo, HMODULE hModule
         NOBLE_INFO("SetLibrarySettings initialized successfully.");
     }
 
-    // 2. Create Game Engine Interface (CreateDataAccess removed per rr-launch-flow spec)
+    // 2. Create Game Engine Interface (CreateDataAccess removed per the engine-launch-flow spec)
     if (!m_exports.CreateGameEngine) {
         NOBLE_ERROR("CreateGameEngine export not available in haloreach.dll!");
         return false;
@@ -148,7 +148,7 @@ bool BlamEngine::Initialize(const ReachInstallInfo& installInfo, HMODULE hModule
 }
 
 // Multiplayer map table: launch index (written at +0x10/+0x14/+0x1D5C0) and map id
-// (written at +0x1D334/+0x1D5BC). Values match the engine build Reach Renaissance supports
+// (written at +0x1D334/+0x1D5BC). Values match the engine build the reference host supports
 // (its host-probe set_map table); the main menu uses launch index -2 with map id 1035.
 struct ReachMultiplayerMap {
     const char* scenario;
@@ -181,7 +181,7 @@ static const ReachMultiplayerMap kMultiplayerMaps[] = {
 };
 
 static constexpr uint32_t kMainMenuLaunchIndex = static_cast<uint32_t>(-2);
-static constexpr uint32_t kMainMenuMapId = 1035; // menu backdrop map id in RR's captured menu block
+static constexpr uint32_t kMainMenuMapId = 1035; // menu backdrop map id in the engine's captured menu block
 
 static uint32_t MapIdForLaunchIndex(uint32_t launchIndex) {
     if (launchIndex == kMainMenuLaunchIndex) return kMainMenuMapId;
@@ -603,7 +603,7 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
         // Menu and multiplayer ids are known; campaign/firefight keep the previous value until verified.
         uint32_t mapInfoId = MapIdForLaunchIndex(effectiveMapId);
         // Campaign blocks keep the menu/Boardwalk map-variant id (1035) here; the mission itself is
-        // selected by the launch index at +0x10/+0x14/+0x1D5C0 (verified against RR's captured
+        // selected by the launch index at +0x10/+0x14/+0x1D5C0 (verified against the engine's captured
         // campaign blocks, which differ from its MP block only in +0x0C, +0x10/+0x14, +0x28,
         // +0x34 and +0x1D5C0).
         if (isCampaign || isFirefight) mapInfoId = kMainMenuMapId;
@@ -721,7 +721,7 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
     }
 
     if (isCampaign || isFirefight) {
-        // Campaign / Firefight: difficulty only at +0x34 (0 easy .. 3 legendary); +0x38 stays 0 as in RR's blocks.
+        // Campaign / Firefight: difficulty only at +0x34 (0 easy .. 3 legendary); +0x38 stays 0 as in the engine's blocks.
         block[0x34] = static_cast<uint8_t>(clampedDiff);
     } else if (!isMainMenu) {
         // Apply difficulty override
@@ -764,7 +764,7 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
     }
 
     // Game variant at +0x300 (0xFC04 bytes), decoded by the engine's own decoder (RVA 0x373A0),
-    // as Reach Renaissance does. A raw .bin file is NOT the in-memory layout, so never memcpy it.
+    // as the reference host does. A raw .bin file is NOT the in-memory layout, so never memcpy it.
     // Without a variant the engine cannot resolve what to load (it requests "haloreach\maps\.map"
     // and stalls at 4%). Default: MCC's stock slayer_054.bin from the player's own install.
     // NOTE: Authentic pre-built Campaign launch blocks already contain authentic campaign state
@@ -803,7 +803,7 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
             }
         } else if (!isCampaign) {
             // Firefight needs a Firefight game variant (otherwise the engine reports "no game
-            // selected"); RR likewise loads <MCC>\haloreach\game_variants\<mode>.bin for it.
+            // selected"); the engine likewise loads <MCC>\haloreach\game_variants\<mode>.bin for it.
             // Forge needs 00_basic_editing_054.bin for item spawning and editing.
             // Campaign blocks already contain their own mission variant and are left untouched.
             const char* defaultVariant = isFirefight ? "hr_ff_standard_1set.bin"
@@ -871,14 +871,14 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
         }
     }
 
-    // Test switch "-rr-guest-block": lay out a guest's block the way Reach Renaissance does
+    // Test switch "--guest-block": lay out a guest's block the way the reference host does
     // (host-probe.exe host_probe::net::patch_launch_block, "--as-guest", read 2026-10-29): no local players
     // or player descriptors (+0xE8..+0x10F zero, +0x100 = 0xFFFFFFFF, +0x108 = -1), +0x2F0..+0x2FF zero with
     // +0x2F4 = 0xFFFFFFFF, everything from +0x300 on zeroed (no game variant: the host's comes over the
     // session), +0x2BF14 = F3 01, then +0x50 session, +0x58 self, +0x2F8 host. Noble's default guest block sets
     // one local player, a player id at +0xF0 and the decoded variant instead; guests have been stuck at
     // launch state 9 with traffic flowing both ways, so this lets the two layouts be compared.
-    if (isGuest && !isMainMenu && std::wcsstr(GetCommandLineW(), L"-rr-guest-block") != nullptr) {
+    if (isGuest && !isMainMenu && std::wcsstr(GetCommandLineW(), L"--guest-block") != nullptr) {
         const uint64_t self = NetworkTransport::Get().GetLocalMachineId();
         const uint64_t host = NetworkTransport::Get().GetHostMachineId();
         const uint64_t session = NetworkTransport::Get().GetSessionId();
@@ -895,7 +895,7 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
         *reinterpret_cast<uint64_t*>(&block[0x50]) = session;
         *reinterpret_cast<uint64_t*>(&block[0x58]) = self;
         *reinterpret_cast<uint64_t*>(&block[0x2F8]) = host;
-        NOBLE_INFO("BlamEngine: -rr-guest-block: guest block laid out like RR (self 0x{:X}, host 0x{:X}, session 0x{:X})",
+        NOBLE_INFO("BlamEngine: --guest-block: guest block laid out like the engine (self 0x{:X}, host 0x{:X}, session 0x{:X})",
                    self, host, session);
     }
 

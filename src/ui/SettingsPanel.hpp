@@ -7,8 +7,8 @@
 
 namespace noble {
 
-// SETTINGS screen (front-end menu and pause menu), three columns as in docs/menu-redesign-spec.md
-// §4.2: categories on the left (grouped, each with a live summary and an amber dot when it has
+// SETTINGS screen (front-end menu and pause menu), three columns as in the notes
+// Ã‚Â§4.2: categories on the left (grouped, each with a live summary and an amber dot when it has
 // unapplied changes, search box on top, unsaved-changes box or RESTORE DEFAULTS at the bottom),
 // the category's rows in the middle, and a details panel on the right (what the focused or hovered
 // row does, when it takes effect, its default, and a preview where one helps).

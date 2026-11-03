@@ -9,14 +9,14 @@ namespace noble {
 // 78.0f in the shipped image). The engine's camera maths multiplies it by pi/180 and only accepts
 // 1..150 degrees, and its own settings refresh re-applies the per-user block value (78) unless the
 // global was changed from outside - so Noble writes its setting here and re-asserts it periodically.
-// Evidence and addresses: docs/fov-findings.md (REA + Ghidra, read-only analysis of the DLL).
+// Evidence: engine camera/FOV analysis.
 //
 // Apply/Tick/Read run on the engine thread (ReachHost slot 1); SetEngineModule runs once from main.
 class CameraFov {
 public:
     static constexpr float kMinDegrees = 1.0f;    // engine validator: 0.017453292 rad
     static constexpr float kMaxDegrees = 150.0f;  // engine validator: 2.6179938 rad
-    static constexpr uint32_t kFovRva = 0xB42C10; // DAT_180b42c10 in Ghidra
+    static constexpr uint32_t kFovRva = 0xB42C10; // haloreach.dll+0xB42C10
 
     // haloreach.dll base address. Until this is called Apply() is a no-op.
     static void SetEngineModule(HMODULE module);

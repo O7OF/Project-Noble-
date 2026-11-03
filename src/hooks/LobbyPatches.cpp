@@ -104,7 +104,7 @@ static int32_t __fastcall Hook_EvaluateCoopInsertionPoint(void* thisPtr) {
     return result;
 }
 
-// Join / connect refusal tracing. Reach Renaissance's host-probe hooks these two haloreach.dll
+// Join / connect refusal tracing. the reference host-probe hooks these two haloreach.dll
 // functions (RVA 0x425368 "join refused", RVA 0x42459C "connect refused") to log why a host turns a
 // guest away. Log-only: the original always runs. Arg 3 points at {u64 session, u32 reason} for joins
 // and {u32 id, u32 reason} for connects.
@@ -543,7 +543,7 @@ bool LobbyPatches::Apply(HMODULE hReachDll) {
         }
     }
 
-    // 5. Refusal tracing (log-only, same RVAs Reach Renaissance's host-probe uses). Prologue bytes are
+    // 5. Refusal tracing (log-only, same RVAs the reference host-probe uses). Prologue bytes are
     //    checked first so a different haloreach.dll build is left alone.
     {
         s_reachBase = base;
@@ -607,7 +607,7 @@ bool LobbyPatches::Apply(HMODULE hReachDll) {
         }
     }
 
-    // 6. Join-Any patch (Reach Renaissance RR_JOIN_ANY): Turns two join-gate branches into jumps
+    // 6. Join-Any patch (the reference host JOIN_ANY): Turns two join-gate branches into jumps
     // (hr+0x397635 74 5E -> EB 5E, hr+0x397363 74 4D -> EB 4D) so the host accepts any join
     // even while loading or in active match simulation. Enabled by default for all sessions.
     {

@@ -66,7 +66,7 @@ public:
     // Main thread, called every pass of the message loop. After a match the engine tries to go to its
     // main menu map, which MCC doesn't ship, and stops drawing (no more slot-1 frames) about 7 s after
     // the results. From then on Noble draws the post-game panel itself and presents the swap chain,
-    // as RR does (main loop: loadscreen::hold_frame + Present(1, 0)). Returns true when it drew.
+    // as the engine does (main loop: loadscreen::hold_frame + Present(1, 0)). Returns true when it drew.
     static bool HoldFrame();
 
 private:

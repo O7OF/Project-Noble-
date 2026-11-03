@@ -22,7 +22,7 @@
 #include <vector>
 
 // Engine addresses (RVAs in the supported haloreach.dll, SHA-256 738dd2d2...). Found by reading how
-// Reach Renaissance's host loads its Elite pack (docs: claude/elite-pack-notes.md in the project).
+// the reference host loads its Elite pack (the notes).
 //   0x0A38A3  call to the match map loader 0x0141C0 (request: name, extra cache count, extra cache names)
 //   0x031395  call to the extra cache loader 0x031078 inside the cache set loader (first extra list)
 //   0x0AA634  map header slot (index 0xFFFF, name, mode 2), the main map gets it at 0x0A37DC
@@ -297,7 +297,7 @@ std::atomic<bool> s_haveActive{false};
 using RebuildFn = void(__fastcall*)(uint8_t*);
 RebuildFn s_rebuildOriginal = nullptr;
 
-// Keeps the pack Elite's biped, model and render model active after every zone-set switch (RR "rebuild").
+// Keeps the pack Elite's biped, model and render model active after every zone-set switch (the engine "rebuild").
 void __fastcall RebuildHook(uint8_t* state) {
     s_rebuildOriginal(state);
     if (!state || !s_haveActive) return;
@@ -466,7 +466,7 @@ void MergeEliteSets(uint8_t* mapList, uint8_t* packList) {
                packCount, added, merged, mapCount);
 }
 
-// RR's merge: the region ids the pack's Elite sets change are the "Elite" regions. For the 7 Spartan piece
+// the engine's merge: the region ids the pack's Elite sets change are the "Elite" regions. For the 7 Spartan piece
 // lists (+0x20 helmet .. +0x68 knees), every map selection gets the changes to Elite regions from the pack's
 // selection of the same name, so a piece index picks Spartan and Elite pieces alike.
 void MergeElitePieces(uint8_t* mapList, uint8_t* packList) {
@@ -717,7 +717,7 @@ void AfterPackStep(uint8_t* tags, uint8_t* cache) {
     const uint64_t end = a + size;
 
     // The map keeps its own armour list for now (merging the pack's Elite pieces in is the next step).
-    // The pack replaces the armour list (pmcg) with its own. Like RR, the map's list stays the one in use
+    // The pack replaces the armour list (pmcg) with its own. Like the engine, the map's list stays the one in use
     // (its Elite sets also dress the first-person Elite arms) and the pack's Elite piece changes are copied
     // into the map's Spartan piece lists (MergeElitePieces). "-elite-pack-list" keeps the pack's list (test).
     if (s_pmcgIndex >= 0 && tt.Address(s_pmcgIndex) != s_pmcgAddress) {
@@ -1002,7 +1002,7 @@ uint8_t __fastcall CacheStepHook(void* a1, void* a2, uint32_t a3, void* tags, vo
 // cover several ranges of resource indices, one sub-object per range; with the pack loaded, its
 // resources form extra ranges. These methods expect an index inside a single range, so for an index
 // in range k (lo != 0) the call is made on a one-range copy of the interface with the index rebased
-// (index - lo), as RR's resadapt does. Context: +0x10 range table (+0x18 ranges {lo, hi}, +0x20 count),
+// (index - lo), as the engine's resadapt does. Context: +0x10 range table (+0x18 ranges {lo, hi}, +0x20 count),
 // +0x18 sub-object count, +0x20 sub-objects (16 bytes each).
 using ResourceFn = uint64_t(__fastcall*)(uint8_t*, uint64_t, uint64_t, uint64_t);
 
@@ -1088,7 +1088,7 @@ bool InstallAdapters() {
 // appearance record: +0x10..+0x16 the Spartan piece lists (helmet, left shoulder, right shoulder, chest,
 // wrist, utility, knees), +0x17 the Elite set, +0x18 / +0x19 effects. With the pack merged in, the
 // pack's Elite pieces ride on the first six lists (helmet, shoulders, chest, forearms, legs), so for an
-// Elite a copy of the record gets the six piece indices and knees 0xFF (RR elitepicks). The Elite set
+// Elite a copy of the record gets the six piece indices and knees 0xFF (the engine elitepicks). The Elite set
 // byte is kept: the map's Elite set still dresses the first-person arms. Calls: spawn 0x4AC36, live change
 // 0x447B0, another machine's player 0x3B184F, unit copy 0x524CD5.
 constexpr uintptr_t kAppearanceBuilder = 0x1055EC;
@@ -1473,11 +1473,11 @@ void Install(HMODULE engine, const std::filesystem::path& dataDir, const std::st
 
     static const uint8_t kMovEdx1[2] = {0x8B, 0xD2}, kMovEdx2[2] = {0x89, 0xD2}, kNop2[2] = {0x66, 0x90};
     const bool patched = PatchCode(kDeltaTruncation, kMovEdx1, kNop2, 2) || PatchCode(kDeltaTruncation, kMovEdx2, kNop2, 2);
-    // Elite armour slots (RR --elite-armor-slots): the appearance builder 0x1055EC applies only the Elite
+    // Elite armour slots (the engine --elite-armor-slots): the appearance builder 0x1055EC applies only the Elite
     // set list (+0x74) to Elites ("cmp esi,7; sete r15b" at 0x105796). With the pack, Elites take their
     // pieces from the Spartan piece lists (which now carry the pack's Elite changes), so lists 0..7 apply
     // ("cmp esi,8; setb r15b"). Not 8+ (+0x80 Spartan armour effects, +0x8C Elite armour effects, +0x98): with
-    // every list on (RR's "mov r15b,1"), Elites played Heart Attack and Birthday Party at once from leftover bytes.
+    // every list on (the engine's "mov r15b,1"), Elites played Heart Attack and Birthday Party at once from leftover bytes.
     static const uint8_t kSlotCheck[7] = {0x83, 0xFE, 0x07, 0x41, 0x0F, 0x94, 0xC7};
     static const uint8_t kSlotOld[7]   = {0x83, 0xFE, 0x08, 0x41, 0x0F, 0x92, 0xC7};
     static const uint8_t kSlotAll[7]   = {0x83, 0xFE, 0x08, 0x41, 0x0F, 0x95, 0xC7};

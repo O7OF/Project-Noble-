@@ -12,7 +12,7 @@ namespace noble {
 // Player-made game modes: a shipped game variant plus a list of changed rules. Nothing is written into Reach's variant
 // file format. The base file goes through the engine's own decoder and the changes are applied to the decoded record
 // before it goes in the launch block. Guests receive the host's variant through the session.
-// Offsets into the decoded record are in docs/variant-field-map.md. A preset file names rules by key; it can never name
+// Offsets into the decoded record are in the variant notes. A preset file names rules by key; it can never name
 // an offset, and every value is clamped to its rule's range, so a preset from a mod or another player can only set rules.
 namespace VariantRules {
 

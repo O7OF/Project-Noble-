@@ -27,7 +27,7 @@ struct ReachInstallInfo {
 };
 
 #pragma pack(push, 1)
-// Layout confirmed from Reach Renaissance host-probe main (SetLibrarySettings call):
+// Layout confirmed from the reference host host-probe main (SetLibrarySettings call):
 // a zeroed 0x1FE-byte block holding three UTF-16 locale strings, each "en-US",
 // at wchar offsets 0x00, 0x55 and 0xAA (byte offsets 0x000, 0x0AA, 0x154).
 struct ReachLibrarySettings {

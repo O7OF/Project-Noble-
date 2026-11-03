@@ -305,7 +305,7 @@ static uint32_t LookupStringId(const std::string& name) {
 static int32_t ResolveSceneIndex(const std::string& scene) {
     const std::string s = ToLowerAscii(scene);
     // "index:<n>" addresses a camera scene by number, so every camera in mainmenu_all.map can be tried without
-    // naming it first (used to map the per-piece close-ups; see the 2026-10-31 handoff entry).
+    // naming it first (used to map the per-piece close-ups; see the scene notes).
     if (s.rfind("index:", 0) == 0) {
         const char* text = s.c_str() + 6;
         const int parsed = (text[0] == '0' && (text[1] == 'x' || text[1] == 'X')) ? static_cast<int>(std::strtol(text + 2, nullptr, 16))
@@ -344,7 +344,7 @@ static int32_t ResolveSceneIndex(const std::string& scene) {
 // -----------------------------------------------------------------------------
 // Committed private read/write memory, cut into 16 MB pieces that overlap by 4 KB so a
 // record that straddles a cut is still seen whole. Reach keeps its tag data in regions far
-// larger than 512 MB, which the old whole-region copy skipped (RR reads 1 MB at a time).
+// larger than 512 MB, which the old whole-region copy skipped (the engine reads 1 MB at a time).
 static std::vector<std::pair<uintptr_t, size_t>> ReadWriteChunks(size_t minSize) {
     constexpr size_t kChunk = 16u * 1024u * 1024u;
     constexpr size_t kOverlap = 0x1000;
@@ -381,7 +381,7 @@ static std::atomic<uint64_t> s_globalsMarkerHits{0};
 static bool IsNewMenuLayout() {
     EnsureStringIdsLoaded();
     ArmoryLock lock(s_dataMutex);
-    return s_stringIds.size() < 32100;   // old map 32,213 names; RR new map 31,978
+    return s_stringIds.size() < 32100;   // old map 32,213 names; the engine new map 31,978
 }
 
 static int GlobalsSlotFor(uintptr_t base, size_t stride, uint32_t id) {
@@ -417,7 +417,7 @@ static bool ScanGlobalsTable() {
         const size_t size = chunk.second;
         {
             std::vector<uint8_t> buf(size);
-            {   // never scan our own copy buffer (RR skips its read buffer the same way)
+            {   // never scan our own copy buffer (the engine skips its read buffer the same way)
                 const uintptr_t self = reinterpret_cast<uintptr_t>(buf.data());
                 if (base < self + size && self < base + size) continue;
             }
@@ -456,7 +456,7 @@ static bool ScanGlobalsTable() {
         }
     }
 
-    // Imported mainmenu_all.map (RR's new armory map): no legacy marker, but the table still
+    // Imported mainmenu_all.map (the engine's new armory map): no legacy marker, but the table still
     // starts with head/default and has chest at slot 2 plus the flair armour block at 20..40.
     // Never run this against the legacy map: its skeleton table also matches head/default and
     // would win before the real marker table appears.
@@ -893,7 +893,7 @@ static void ScanEliteTable() {
         const size_t size = chunk.second;
         {
             std::vector<uint8_t> buf(size);
-            {   // never scan our own copy buffer (RR skips its read buffer the same way)
+            {   // never scan our own copy buffer (the engine skips its read buffer the same way)
                 const uintptr_t self = reinterpret_cast<uintptr_t>(buf.data());
                 if (base < self + size && self < base + size) continue;
             }
@@ -1070,7 +1070,7 @@ static bool SingleRebuild() {
 // Armory item -> model regions. An Armory item (e.g. helmet "kurt_a") isn't a permutation of the Spartan model:
 // Reach's customization globals (pmcg) turn it into one or more (region, permutation) changes, e.g. kurt_a =
 // head:player_kurt + flair_head_a:kat + flair_head_b:player_adrianna. The menu script takes (region, permutation)
-// pairs, so the items are translated with that table, read from data\armor\*.rrpmcg (pmcg dumped from the
+// pairs, so the items are translated with that table, read from data\armor\*.PMGC (pmcg dumped from the
 // armour pack; not in git). Lines: "L <list offset hex> <count>", "S <item>", "C <region> <permutation> <flags>".
 // -----------------------------------------------------------------------------
 struct PmcgChange {
@@ -1093,7 +1093,7 @@ static void EnsurePmcgLoaded() {
         std::error_code ec;
         if (!std::filesystem::is_directory(dir, ec)) continue;
         for (const auto& entry : std::filesystem::directory_iterator(dir, ec)) {
-            if (entry.path().extension() != ".rrpmcg") continue;
+            if (entry.path().extension() != ".PMGC") continue;
             std::ifstream in(entry.path());
             std::string line, list, item;
             size_t items = 0;
@@ -1121,7 +1121,7 @@ static void EnsurePmcgLoaded() {
             return;
         }
     }
-    NOBLE_WARN("ReachArmory: no data\\armor\\*.rrpmcg; Armory items go to the 3D model by name only (attachments won't show)");
+    NOBLE_WARN("ReachArmory: no data\\armor\\*.PMGC; Armory items go to the 3D model by name only (attachments won't show)");
 }
 
 // The changes for an Armory item in a pmcg list ("20" helmets, "2c"/"38" shoulders, "44" chest, "50" wrist,
@@ -1373,7 +1373,7 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx, const std::strin
             pushPair("armor_effect",   sel.armorEffect,   "default");
         }
 
-        // The imported RR mainmenu_all has a different GLOBALS layout: head at 4, chest at 2,
+        // The imported the engine mainmenu_all has a different GLOBALS layout: head at 4, chest at 2,
         // flair_head/chest at 24..34 and shoulders at 36/38. Resolve each region's own slot instead
         // of assuming the legacy 0x04, 0x06, ... layout.
         const bool dynamicLayout = GlobalsSlotFor(base, stride, LookupStringId("flair_head_a")) >= 20;

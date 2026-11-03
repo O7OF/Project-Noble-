@@ -52,7 +52,7 @@ private:
     void* m_hostObject[64] = { nullptr }; // 0x200 bytes host object
     void* m_secondObject[64] = { nullptr }; // 0x200 bytes second object
     static void* s_vtable[160];
-    static void* s_vtable2[160]; // RR: 160 host::VTABLE2 stubs
+    static void* s_vtable2[160]; // the engine: 160 host::VTABLE2 stubs
     static bool s_vtableInitialized;
     static void InitializeVTable();
 

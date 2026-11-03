@@ -214,7 +214,7 @@ struct SlotDispatcher {
 };
 
 // Secondary interface (returned by slot 10, stored at host[1]) stubs: one per index so the log
-// shows exactly which method the engine calls. RR's VTABLE2 has 160 entries; a shorter table made
+// shows exactly which method the engine calls. the engine's VTABLE2 has 160 entries; a shorter table made
 // calls past index 63 jump to address 0.
 template<size_t Slot>
 struct SlotDispatcher2 {
@@ -229,7 +229,7 @@ struct SlotDispatcher2 {
     }
 };
 
-// iface2 slot 147 (0x93): RR's host::hit2 returns a pointer to a static 16-byte SESSION_GUID
+// iface2 slot 147 (0x93): the engine's host::hit2 returns a pointer to a static 16-byte SESSION_GUID
 // (all zero) for this index and 0 for every other index. Returning 0 here made the engine read
 // the session id from address 0 while loading a map (crash at haloreach+0x7924D).
 alignas(16) static uint8_t s_sessionGuid[16] = { 0 };
@@ -378,7 +378,7 @@ static void InstallPresentSettingsHook(IDXGISwapChain* swapChain) {
 static uint64_t __fastcall HostSlot1_FrameTick(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
     (void)thisPtr; (void)a2; (void)a3; (void)a4;
     // haloreach.dll invokes Slot 1 every frame before Present. a1 = the swap chain it is about to
-    // present (RR host::hit case 1). Our passes draw here, on the engine thread, because the engine
+    // present (the engine host::hit case 1). Our passes draw here, on the engine thread, because the engine
     // owns the immediate context.
     static std::atomic<uint64_t> s_frameCount{0};
     uint64_t frames = ++s_frameCount;
@@ -470,7 +470,7 @@ static uint64_t __fastcall HostSlot2_ResizeBuffers(void* thisPtr, uint64_t a1, u
 }
 
 // Slot 4: Engine logging stream (host_probe case 4)
-// Slot 4 (RR host::hit case 4): a1 = reason code, a2 = const char* message.
+// Slot 4 (the engine host::hit case 4): a1 = reason code, a2 = const char* message.
 // The engine reports session/launch events here, e.g. reason 4 with
 // "external_launch_individual_state_timeout" / "external_launch_overall_timeout".
 static uint64_t __fastcall HostSlot4_LogMessage(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
@@ -519,7 +519,7 @@ static std::atomic<float> s_loadFraction{0.0f};
 // from the engine's own results by haloreach+0x39128) and calls host slot 6 with a pointer to it
 // (a1). a2 isn't a size: it is whatever r8 held after the conversion loop (0xD5A8).
 // Noble shows its post-game panel and hands the record to the career code (cR, stats).
-// Layout notes: docs/HANDOFF.md, "Game results".
+// Layout notes: game results.
 static uint64_t __fastcall HostSlot6_GameResults(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
     (void)thisPtr; (void)a2; (void)a4;
     int launchState = -1;
@@ -588,8 +588,8 @@ static uint64_t __fastcall HostSlot23_LoadProgress(void* thisPtr, uint64_t a1, u
 }
 
 // Slot 32: Display settings fill (host_probe case 0x20)
-// Matches Reach Renaissance host::hit case 0x20: a1 = engine-owned buffer, a2 = its size (0x88 seen).
-// RR zeroes the buffer, writes {width, height} as two u32 at +0x00, quality bytes at +0x08..+0x17
+// Matches the reference host host::hit case 0x20: a1 = engine-owned buffer, a2 = its size (0x88 seen).
+// the engine zeroes the buffer, writes {width, height} as two u32 at +0x00, quality bytes at +0x08..+0x17
 // (01 02 02 02 02 02 01 01 | 00 01 01 01 00 02 00 00), and returns 1.
 // The previous version treated this as an allocation request and returned its own buffer, leaving
 // the engine's settings struct uninitialised.
@@ -610,7 +610,7 @@ static uint64_t __fastcall HostSlot32_DisplaySettings(void* thisPtr, uint64_t a1
 
     uint8_t header[0x18] = {
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,   // width, height (filled below)
-        0x01, 0x02, 0x02, 0x02, 0x02, 0x02, 0x01, 0x01,   // quality settings (RR defaults)
+        0x01, 0x02, 0x02, 0x02, 0x02, 0x02, 0x01, 0x01,   // quality settings (the engine defaults)
         0x00, 0x01, 0x01, 0x01, 0x00, 0x02, 0x00, 0x00
     };
     // Size of Noble's window / swap chain (set by main from the DISPLAY settings).
@@ -625,7 +625,7 @@ static uint64_t __fastcall HostSlot32_DisplaySettings(void* thisPtr, uint64_t a1
 // Slot 33: Display Quality settings handler (host_probe case 0x21)
 static uint64_t __fastcall HostSlot33_DisplayQuality(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
     (void)thisPtr; (void)a2; (void)a3; (void)a4;
-    // RR host::hit case 0x21 writes these 16 bytes straight into the buffer a1 points to. (The old
+    // the engine host::hit case 0x21 writes these 16 bytes straight into the buffer a1 points to. (The old
     // code followed a1 again when the buffer already held a pointer-like value, writing into
     // whatever that value pointed at and leaving the engine's settings uninitialised.)
     const uintptr_t targetPtr = a1;
@@ -661,7 +661,7 @@ static void WriteDefaultKeyBindings(uint8_t* profile) {
     }
     // Entries are {u32 action, u32 key, u32 second key, 12 zero bytes}. The mouse wheel is bound
     // through the second key: the engine turns the wheel pulse at input +0x114 into key 0xAF (up,
-    // +1) or 0xAE (down, -1). RR binds 0xAF to action 4 (change weapon). Tested 2026-10-28:
+    // +1) or 0xAE (down, -1). the engine binds 0xAF to action 4 (change weapon). Tested 2026-10-28:
     // 0xAE as action 4's second key + a -1 pulse switches weapons; 0xB0 does nothing. Only one
     // second key per action works, so when both directions go to the same action only 0xAF is bound
     // and FillLocalInput sends down notches as up (see WheelPulseSign).
@@ -695,7 +695,7 @@ static int WheelPulseSign(bool upNotch) {
     return s.wheelDownAction == s.wheelUpAction ? 1 : -1;
 }
 
-// Audio volumes are profile settings too (RR live::audio::set_volume): f32 at +0xA5C (game/master),
+// Audio volumes are profile settings too (the engine live::audio::set_volume): f32 at +0xA5C (game/master),
 // +0xA60 (music) and +0xA64 (the third volume). A blank profile leaves them at 0.0, i.e. silence.
 static uint8_t s_hostProfileBuffer[0x10000] = { 0 };
 
@@ -720,7 +720,7 @@ void ReachHost::SetRuntimeVolumes(float game, float music, float other) {
 }
 
 // Look / controller settings block (+0x1B4..+0x1DF). Without it zoomed look sensitivity is 0 and
-// the view freezes while scoped (walking still works). RR's live::save_pad_look writes into this
+// the view freezes while scoped (walking still works). the engine's live::save_pad_look writes into this
 // block (+0x1B5, +0x1B7 as u8, +0x1B8 as u32/f32). Values are the stock settings: sensitivity
 // bytes, two dead-zone floats (0.13, 0.12), two 1.0 multipliers, then on/off option bytes.
 static constexpr size_t kLookSettingsOffset = 0x1B4;
@@ -1052,7 +1052,7 @@ static void ApplyArmoryAppearance(uint8_t* profile) {
         put(0x98, kColor + primaryColor);
         put(0x9C, kColor + secondaryColor);
         // +0xA0 is the third/detail colour ("accent"); Reach has no third picker in the stock Armory, but
-        // the profile field exists (RR: Steel) and the Armory's third colour word follows it.
+        // the profile field exists (the engine: Steel) and the Armory's third colour word follows it.
         put(0xA0, kColor + accentColor);
 
         const std::string armoryTag = str(appearance, "service_tag");
@@ -1098,8 +1098,8 @@ static uint64_t __fastcall HostSlot34_ProfileSettings(void* thisPtr, uint64_t a1
         memset(s_hostProfileBuffer, 0, sizeof(s_hostProfileBuffer));
         bool loaded = false;
         try {
-            // Optional: "-profile <file>" loads a captured profile, like RR's --profile.
-            // RR host::load_profile copies at most 0xC00 bytes of it.
+            // Optional: "-profile <file>" loads a captured profile, like the engine's --profile.
+            // the engine host::load_profile copies at most 0xC00 bytes of it.
             const std::wstring path = ProfileArgPath();
             if (!path.empty()) {
                 std::filesystem::path profilePath(path);
@@ -1139,9 +1139,9 @@ static uint64_t __fastcall HostSlot34_ProfileSettings(void* thisPtr, uint64_t a1
             WriteDefaultLookSettings(s_hostProfileBuffer);
             NOBLE_INFO("ReachHost [Slot 34]: using built-in default key bindings, volumes and look settings");
         }
-        // RR host::hit case 0x22: the profile is a zeroed 64 KB block with only the 4-character
+        // the engine host::hit case 0x22: the profile is a zeroed 64 KB block with only the 4-character
         // service tag (UTF-16) written at +0x1AC. The old defaults here (+0x00 = 1, armour colours
-        // at +0x18/+0x1C) are not what RR sends, so they are no longer written.
+        // at +0x18/+0x1C) are not what the engine sends, so they are no longer written.
         // The tag is the player's (SETTINGS > GAMEPLAY > SERVICE TAG, default NOBL), 1-4 characters.
         wchar_t serviceTag[4] = {};
         const std::string tag = Settings::Get().Snapshot().serviceTag;
@@ -1202,21 +1202,21 @@ static uint64_t __fastcall HostSlot34_ProfileSettings(void* thisPtr, uint64_t a1
 
     CaptureProfileSnapshotIfChanged(s_hostProfileBuffer);
 
-    // RR only returns the pointer; it never writes into a1/a2 (the old code copied 0x100 bytes
+    // the engine only returns the pointer; it never writes into a1/a2 (the old code copied 0x100 bytes
     // into whichever argument looked like a pointer).
     return reinterpret_cast<uint64_t>(s_hostProfileBuffer);
 }
 
-// Slot 36: local-user input poll (RR host::hit case 0x24). Called every engine tick.
-// a1 = user index, a2 = 0x130-byte input state the host fills. Layout (from RR's handler):
+// Slot 36: local-user input poll (the engine host::hit case 0x24). Called every engine tick.
+// a1 = user index, a2 = 0x130-byte input state the host fills. Layout (from the engine's handler):
 //   +0x000 u32      1 = a local user is present
 //   +0x004 u8[256]  key state indexed by VK code: 0 = up, 0x80 = pressed (< 500 ms),
-//                   0x81..0xFF = held (repeat counter, as RR computes it)
+//                   0x81..0xFF = held (repeat counter, as the engine computes it)
 //   +0x104 f32 x2   mouse look delta (x, y), already scaled
 //   +0x114 f32      mouse wheel pulse (+1/-1 for 40 ms per notch, see FillLocalInput)
 //   +0x118 f32      1.0
 //   +0x11C u32      mouse buttons: L=1, M=2, R=4, X1=8, X2=0x10
-// Index 1 is the split-screen second user: zeroed, as RR does.
+// Index 1 is the split-screen second user: zeroed, as the engine does.
 static ULONGLONG s_keyDownSince[256] = {};
 static std::atomic<uint32_t> s_engineKeyMask[8] = {};   // 8 x 32 bits = 256 virtual keys, mirroring the engine pad state
 static bool s_inputCaptured = false;
@@ -1224,7 +1224,7 @@ static HCURSOR s_savedClassCursor = nullptr;
 static std::atomic<bool> s_slot36Logged{false};
 
 // Look speed (x, y) and inversion from SETTINGS > CONTROLS, re-read twice a second so changes apply in a
-// running game. RR's default 0.0008 per pixel times the sensitivity; "-mouse-scale <v>" overrides both axes.
+// running game. the engine's default 0.0008 per pixel times the sensitivity; "-mouse-scale <v>" overrides both axes.
 static float InputMouseScaleOverride();
 static void InputLookSettings(float& scaleX, float& scaleY, bool& invert, float& accel, float& smoothing) {
     static ULONGLONG s_next = 0;
@@ -1277,7 +1277,7 @@ static HWND InputFocusedWindow() {
     return (pid == GetCurrentProcessId()) ? fg : nullptr;
 }
 
-// UI cursor (menus such as the class/loadout picker). As in RR's uicursor module, haloreach+0x2D2018
+// UI cursor (menus such as the class/loadout picker). As in the engine's uicursor module, haloreach+0x2D2018
 // runs only while a Reach screen that uses the mouse pointer is up; we hook it and record when it
 // last ran. While it ran within the last 250 ms the pointer is "free": not clipped, not re-centred,
 // the normal arrow is shown, and no mouse-look delta is sent. The engine reads the pointer position
@@ -1335,7 +1335,7 @@ static void EnsureUiCursorHook() {
     if (!reach) return;
     EnsureSubtitleHook(reach);
     uint8_t* target = reinterpret_cast<uint8_t*>(reach) + kUiScreenRva;
-    // Same check RR makes: the function must start with "mov [rsp+18h], rbx" for this build.
+    // Same check the engine makes: the function must start with "mov [rsp+18h], rbx" for this build.
     static const uint8_t kPrologue[5] = { 0x48, 0x89, 0x5C, 0x24, 0x18 };
     uint8_t current[5] = {};
     if (!SafeCopyMemory(current, target, sizeof(current)) || memcmp(current, kPrologue, sizeof(kPrologue)) != 0) {
@@ -1813,7 +1813,7 @@ static void FillLocalInput(uint8_t* st) {
     if (st[0x004 + VK_XBUTTON2]) buttons |= 0x10;
     *reinterpret_cast<uint32_t*>(st + 0x11C) = buttons;
 
-    // Mouse wheel (+0x114, f32), as RR's WheelPulse: each notch becomes a +1/-1 pulse held for 40 ms,
+    // Mouse wheel (+0x114, f32), as the engine's WheelPulse: each notch becomes a +1/-1 pulse held for 40 ms,
     // at most one pulse every 80 ms, up to 3 notches queued (wheel up = +1).
     static int s_wheelPending = 0;
     static int s_pulseSign = 0;
@@ -2209,10 +2209,10 @@ static uint64_t __fastcall HostSlot48_FilePathResolver(void* thisPtr, uint64_t a
 }
 
 // Slot 51: Engine capability query handler (host_probe case 0x33)
-// Slot 51: feature query (RR host::hit case 0x33). a1 = feature id, a2 = bool* answer,
-// a3 = optional u64* that RR clears. RR answers from a bit mask (FEATURES_ON, default 0x6E, the
+// Slot 51: feature query (the engine host::hit case 0x33). a1 = feature id, a2 = bool* answer,
+// a3 = optional u64* that the engine clears. the engine answers from a bit mask (FEATURES_ON, default 0x6E, the
 // value its launcher also passes with --features-on): features 1, 2, 3, 5 and 6 on, the rest off.
-// Noble used to answer "on" for every feature, which turns on features RR leaves off.
+// Noble used to answer "on" for every feature, which turns on features the engine leaves off.
 static constexpr uint32_t kFeaturesOn = 0x6E;
 static uint64_t __fastcall HostSlot51_EngineCapability(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
     (void)thisPtr; (void)a4;
@@ -2357,7 +2357,7 @@ static size_t SafeCopyWideRaw(const wchar_t* src, wchar_t* dst, size_t cap);
 static size_t SafeCopyAnsiRaw(const char* src, char* dst, size_t cap);
 static std::wstring SafeReadWide(const wchar_t* text, size_t maxChars);
 
-// Localised text for the engine (slots 55-57), following RR's strings module:
+// Localised text for the engine (slots 55-57), following the engine's strings module:
 //  * slot 56 register(table, id, const char* name, const char* suffix): the engine names a string
 //    "<name>_<suffix>"; its key is CRC-32/MPEG-2 (poly 0x04C11DB7, init 0xFFFFFFFF, no final xor)
 //    of that name in upper case, without a leading '$';
@@ -2494,7 +2494,7 @@ private:
         return (static_cast<uint64_t>(tableId) << 32) | static_cast<uint64_t>(stringId);
     }
 
-    // CRC-32/MPEG-2 of the upper-cased name, skipping a leading '$' (RR strings::register).
+    // CRC-32/MPEG-2 of the upper-cased name, skipping a leading '$' (the engine strings::register).
     static uint32_t KeyFor(const std::string& name) {
         static const std::array<uint32_t, 256> table = [] {
             std::array<uint32_t, 256> t{};
@@ -2525,7 +2525,7 @@ private:
     std::unordered_map<uint64_t, std::wstring> m_fallback;    // Noble's built-in strings
 };
 
-// Slot 55: strings clear (RR host::hit case 0x37)
+// Slot 55: strings clear (the engine host::hit case 0x37)
 static uint64_t __fastcall HostSlot55_StringsClear(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
     (void)thisPtr; (void)a1; (void)a2; (void)a3; (void)a4;
     StringTable::Get().Clear();
@@ -2562,7 +2562,7 @@ static uint64_t __fastcall HostSlot57_StringLookup(void* thisPtr, uint64_t a1, u
 
 
 // -----------------------------------------------------------------------------
-// Text host slots (61-67). In MCC's PC build the host owns font rendering: Reach Renaissance
+// Text host slots (61-67). In MCC's PC build the host owns font rendering: the reference host
 // installs text::{prepare, glyph, atlas, has_icon, kerning, register_icon, metrics} at
 // slots 0x3D-0x43 (host::new_host @ 0x1400828E0). Signatures below come from those functions'
 // register/stack usage. This is a first, minimal implementation written for Noble:
@@ -2652,7 +2652,7 @@ struct HostFontMetrics {
 
 static HostFontMetrics MeasureFont(const std::wstring& face, uint32_t pointSize, float scale, int weight = FW_NORMAL) {
     HostFontMetrics m;
-    // RR's Atlas::font: pixels = round(size * scale * SIZE_SCALE); the engine passes size as an
+    // the engine's Atlas::font: pixels = round(size * scale * SIZE_SCALE); the engine passes size as an
     // integer (9, 13, 15, 18, 24, 30, 42 seen) and scale as a float (1.0 seen).
     int pixelHeight = static_cast<int>(static_cast<float>(pointSize) * scale + 0.5f);
     if (pixelHeight < 1) pixelHeight = 1;
@@ -2697,12 +2697,12 @@ static uint64_t __fastcall HostSlot61_TextPrepare(void* thisPtr, const wchar_t* 
 }
 
 // -----------------------------------------------------------------------------
-// Font Glyph and Atlas Subsystem (Slots 62-66). Matches Reach Renaissance text::{glyph, atlas, has_icon, kerning, register_icon}.
+// Font Glyph and Atlas Subsystem (Slots 62-66). Matches the reference host text::{glyph, atlas, has_icon, kerning, register_icon}.
 // haloreach.dll queries glyph data (Slot 62) and binds the font texture atlas SRV (Slot 63)
 // to render in-game HUD numbers, weapon bullet counts, clip reserves, and scoreboard text.
 // -----------------------------------------------------------------------------
 #pragma pack(push, 1)
-// Glyph record returned to the engine by slot 62 (26 bytes). Layout checked against RR's
+// Glyph record returned to the engine by slot 62 (26 bytes). Layout checked against the engine's
 // text::Atlas::glyph (host-probe 0x1402869c3..0x140286a0f) and text::register_icon:
 // the atlas X is the top 16 bits of a u64 stored at +0x02, i.e. it lands at +0x08, and the
 // glyph origin is stored y first, then x.
@@ -2732,9 +2732,9 @@ static bool FaceIsBold(const std::wstring& face) {
     return lower.find(L"bold") != std::wstring::npos;
 }
 
-// Text atlas shared by the text slots (62-66). Behaviour follows RR's text::Atlas:
+// Text atlas shared by the text slots (62-66). Behaviour follows the engine's text::Atlas:
 //  * glyphs are rasterised with GDI (GGO_GRAY8_BITMAP) into 1024x1024 RGBA pages, white with
-//    coverage in alpha; when a page is full a new page is started (RR keeps up to 16), so old
+//    coverage in alpha; when a page is full a new page is started (the engine keeps up to 16), so old
 //    glyphs are never overwritten (overwriting them garbled long-running HUD text);
 //  * icons registered by the engine (slot 66) are copied unchanged and keyed by
 //    (face, size, scale, char), like glyphs;
@@ -3080,7 +3080,7 @@ static uint64_t __fastcall HostSlot66_TextRegisterIcon(void* thisPtr, uint64_t c
 
 // -----------------------------------------------------------------------------
 // Gamma post-process pass (fixes dark/purple HUD icons, crosshair, radar, and shield bar)
-// Reach Renaissance executes a post-process gamma pass in Host Slot 1 before Present.
+// the reference host executes a post-process gamma pass in Host Slot 1 before Present.
 // Halo Reach outputs linear HDR backbuffer; without gamma correction, HUD icons and UI
 // elements appear dim, dark navy, or purplish.
 // -----------------------------------------------------------------------------
@@ -3468,10 +3468,10 @@ static uint64_t __fastcall HostSlot67_TextMetrics(void* thisPtr, uint32_t style,
 
 // Slot 88: User identity & Gamertag handler (host_probe case 0x58)
 static uint64_t __fastcall HostSlot88_UserIdentity(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
-    // Matches Reach Renaissance host::hit case 0x58:
+    // Matches the reference host host::hit case 0x58:
     //   a1 = u64* out XUID, a2 = wchar_t* out gamertag, a3 = gamertag capacity (chars), a4 = local user index.
     // Writes straight into a1/a2 (never dereferences their current contents) and returns 1.
-    // Users other than 0 are reported as absent (return 0), as RR does without a second local user.
+    // Users other than 0 are reported as absent (return 0), as the engine does without a second local user.
     (void)thisPtr;
     static std::atomic<bool> s_logged{false};
     const uint32_t userIndex = static_cast<uint32_t>(a4);
@@ -3527,7 +3527,7 @@ static uint64_t __fastcall HostSlot25_UserPrivilege(void* thisPtr, uint64_t xuid
 // Slot 97: colour filter. Every HUD colour goes through here before it reaches the HUD shader:
 // haloreach+0x2DDF3C packs each chud_color_output (A..F) into ARGB and calls slot 97 with
 // (a1 = a mode/filter index from haloreach+0xD1F71C, a2 = ARGB colour), then unpacks the returned
-// ARGB. MCC uses it for its colour filters; RR (host::hit case 0x61) returns the colour unchanged.
+// ARGB. MCC uses it for its colour filters; the engine (host::hit case 0x61) returns the colour unchanged.
 // Noble used to return 1 here, which turned every HUD colour into (0, 0, 1/255, 0): the dark navy HUD.
 static uint64_t __fastcall HostSlot97_ColorFilter(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
     (void)thisPtr; (void)a1; (void)a3; (void)a4;
@@ -3535,7 +3535,7 @@ static uint64_t __fastcall HostSlot97_ColorFilter(void* thisPtr, uint64_t a1, ui
 }
 
 // Slot 116: Controller Mapping (host_probe case 0x74). Called with the player's XUID in a1; the
-// other registers are leftovers (a2 was seen pointing at this function). RR's pad::controller_map
+// other registers are leftovers (a2 was seen pointing at this function). the engine's pad::controller_map
 // only logs its pad layout. The old handler wrote 64 bytes of 0xFF through a2, so it now writes
 // nothing and returns 0.
 static uint64_t __fastcall HostSlot116_ControllerMap(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
@@ -3553,7 +3553,7 @@ void ReachHost::InitializeVTable() {
 
     InitVTableHelper(s_vtable, std::make_index_sequence<160>{});
 
-    // Slots verified from Reach Renaissance (host-probe.exe) decompilation
+    // Slots verified from the reference host (host-probe.exe) decompilation
     s_vtable[0]   = reinterpret_cast<void*>(&HostSlot0_QueryInterface);
     s_vtable[1]   = reinterpret_cast<void*>(&HostSlot1_FrameTick);
     s_vtable[2]   = reinterpret_cast<void*>(&HostSlot2_ResizeBuffers);
@@ -3593,7 +3593,7 @@ void ReachHost::InitializeVTable() {
 
     s_vtableInitialized = true;
     StringTable::Get().Initialize();
-    NOBLE_INFO("ReachHost: 160-slot host vtable and secondary vtable initialized matching Reach Renaissance host.");
+    NOBLE_INFO("ReachHost: 160-slot host vtable and secondary vtable initialized matching the reference host host.");
 }
 
 ReachHost::ReachHost() {

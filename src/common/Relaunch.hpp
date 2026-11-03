@@ -4,7 +4,7 @@
 
 namespace noble {
 
-// The engine can't change map once started (RR also runs every match as its own process), so
+// The engine can't change map once started (the engine also runs every match as its own process), so
 // "return to menu", "play again" and "next mission" start a fresh noble-client.exe and close this one.
 namespace Relaunch {
 

@@ -9,7 +9,7 @@ struct IDXGISwapChain;
 
 namespace noble {
 
-// Client-side Forge object palette. Like Project Reclaimer's forge_menu_ui, this is drawn by Noble
+// Client-side Forge object palette. Like the classic Forge palette, this is drawn by Noble
 // instead of the engine's 16-slot map-variant palette: tabs and items live in data\forge_palette.json,
 // so adding an item never requires rebuilding a map. Placement is routed through ForgePatches.
 class ForgeMenu {

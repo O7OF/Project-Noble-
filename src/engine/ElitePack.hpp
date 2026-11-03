@@ -15,7 +15,7 @@ namespace noble {
 // Later stages: merge the pack's armour list, point the player Elite at the pack's biped, per-piece picks.
 //
 // Files (local only, never committed): <data>\armor\<name>.map and <name>.map.rrreloc
-// (and .rrneeds / .rrpmcg for later stages). The pack is only used in multiplayer and Firefight
+// (and .rrneeds / .PMGC for later stages). The pack is only used in multiplayer and Firefight
 // matches, never in the menu or campaign. "-no-elite-pack" turns it off.
 namespace ElitePack {
 

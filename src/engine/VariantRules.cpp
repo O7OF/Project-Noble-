@@ -31,7 +31,7 @@ bool SafeDecode(HMODULE module, const void* file, void* out, void* status) {
 } // namespace
 
 const std::vector<Rule>& Rules() {
-    // Offsets are from @deepseek's patch, decode and diff map (docs/plans/variant-field-map.md). That map's trait block at
+    // Offsets are from @deepseek's patch, decode and diff map (the notes). That map's trait block at
     // 0x2D0 is the respawn traits; the base traits a player spawns with are the same layout at 0x304, proven in a match.
     // Choices and their order are the game's own, from HREK's multiplayer\game_variant_settings\player_traits_template
     // tags. Index 0 is "unchanged", which is the game's normal value, so percent traits show it as 100%. `order` is what a

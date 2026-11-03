@@ -828,7 +828,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         blamEngine->Update(0.016f);
 
         // haloreach.dll's engine thread presents (host slot 1). After a match it stops drawing; then the
-        // post-game panel is drawn and presented from here (PauseMenu::HoldFrame, as RR does).
+        // post-game panel is drawn and presented from here (PauseMenu::HoldFrame, as the engine does).
         // The front-end menu likewise once the engine drops its menu map (FrontEndMenu::HoldFrame).
         if (!noble::PauseMenu::HoldFrame() && !noble::FrontEndMenu::HoldFrame()) {
             MsgWaitForMultipleObjectsEx(0, nullptr, 10, QS_ALLINPUT, MWMO_ALERTABLE);
