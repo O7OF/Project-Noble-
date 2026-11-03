@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Project Noble releases
+    url: https://github.com/O7OF/Project-Noble-/releases
+    about: Download the latest build before reporting a bug.
+  - name: Questions and design discussion
+    url: https://github.com/O7OF/Project-Noble-/discussions
+    about: Ask questions or discuss ideas here instead of opening an issue.

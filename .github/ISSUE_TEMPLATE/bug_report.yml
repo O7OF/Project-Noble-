@@ -1,0 +1,62 @@
+name: Bug report
+description: Report a crash, visual bug or other problem in the client.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Please download the latest release first.
+        Do not attach game files (maps, CSVs, DLLs) or personal data.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The version shown in the top-right of the main menu.
+      placeholder: "0.9.16.35"
+    validations:
+      required: true
+  - type: dropdown
+    id: target
+    attributes:
+      label: Which build?
+      options:
+        - noble-client (release)
+        - noble-dev
+        - noble-dedicated
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open the Armory
+        2. Select Collar/Grenadier
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What actually happens
+      description: Include the crash message, the screen, and whether the game closed.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log / dump
+      description: Paste the last 30 lines of noble-client.log or noble-dev.log. Attach noble-crash.dmp if it exists.
+      render: text
+  - type: input
+    id: gpu
+    attributes:
+      label: GPU and driver
+      placeholder: "RTX 3060, driver 566.xx"
