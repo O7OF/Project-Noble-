@@ -114,5 +114,7 @@ FIREFIGHT_219_D1_BIN RCDATA "../../data/blocks/firefight_219_d1.bin"
 FIREFIGHT_219_D2_BIN RCDATA "../../data/blocks/firefight_219_d2.bin"
 FIREFIGHT_219_D3_BIN RCDATA "../../data/blocks/firefight_219_d3.bin"
 
+#ifndef NOBLE_NO_MENU_DATA
 MAINMENU_ALL_STRING_IDS_CSV RCDATA "../../data/menumaps/mainmenu_all.string_ids.csv"
 MAINMENU_ALL_MAP RCDATA "../../data/menumaps/mainmenu_all.map"
+#endif

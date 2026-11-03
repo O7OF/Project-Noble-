@@ -257,6 +257,20 @@ set(HEADERS
     src/network/SocialClient.hpp
 )
 
+# The menu map and string table are game data and are never committed. Embed them when the builder has
+# supplied them; otherwise compile without them so a fresh checkout still builds (the client then reads
+# data/menumaps at runtime). This is what lets people build before they own the data.
+set(NOBLE_MENU_DATA_OK TRUE)
+foreach(_menuFile mainmenu_all.map mainmenu_all.string_ids.csv)
+    if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/data/menumaps/${_menuFile}")
+        set(NOBLE_MENU_DATA_OK FALSE)
+    endif()
+endforeach()
+if(NOT NOBLE_MENU_DATA_OK)
+    message(STATUS "Project Noble: menu map/string table missing - building without embedded menu data")
+    set_source_files_properties(src/res/noble.rc PROPERTIES COMPILE_DEFINITIONS "NOBLE_NO_MENU_DATA")
+endif()
+
 add_executable(noble-client WIN32 ${SOURCES} ${HEADERS})
 if(NOBLE_DEV_BUILD)
     target_compile_definitions(noble-client PRIVATE NOBLE_DEV_BUILD=1)

@@ -32,18 +32,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # The menu map/string tables are game data and are never committed. CI only checks that the
-      # three targets compile: give the resource compiler empty placeholders (the artifact is not a
-      # runnable client; contributors build locally with their own MCC data).
-      - name: Provide compile-only data placeholders
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force data/menumaps | Out-Null
-          foreach ($f in 'mainmenu_all.map','mainmenu_all.string_ids.csv','mainmenu_armory.string_ids.csv','mainmenu_armory_elite.string_ids.csv') {
-            $p = "data/menumaps/$f"
-            if (!(Test-Path $p)) { [System.IO.File]::WriteAllBytes($p, [byte[]]@()) }
-          }
-
+      # The menu map/string tables are game data and are never committed. CMake detects the missing
+      # data and compiles without the embedded menu resources, so CI checks that all three targets
+      # build. The artifacts are compile checks, not a runnable client.
       - name: Configure (CMake + MSVC x64)
         run: cmake -S . -B build -A x64
 

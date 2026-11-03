@@ -38,15 +38,37 @@ Outputs:
 
 ## Data files
 
-The release exe embeds the menu map and string tables through
-`src/res/blocks.rc`. To build, those files must exist on disk (they are
-git-ignored and never committed):
+The release exe can embed the menu map and string table through
+`src/res/blocks.rc`. They are game data: git-ignored, never committed, and
+must come from your own MCC install.
 
 - `data/menumaps/mainmenu_all.map`
 - `data/menumaps/mainmenu_all.string_ids.csv`
 
-Extract them from your own MCC install; do not redistribute them. If they are
-missing the resource compiler reports `RC2135`.
+If both files are present CMake embeds them. If they are missing the build
+still succeeds: CMake compiles without the embedded menu data and the client
+reads `data/menumaps` at runtime instead. There is no `RC2135` failure for a
+fresh checkout.
+
+To copy the map from your own install:
+
+```powershell
+.\tools\fetch-menu-data.ps1
+# or point it at an extracted map:
+.\tools\fetch-menu-data.ps1 -MapPath "D:\Reach\data\menumaps\mainmenu_all.map"
+```
+
+The script checks the MCC `haloreach\maps` folder and a Reach Renaissance
+extraction. Not every MCC install keeps the menu map in `haloreach\maps`; if
+yours does not, use `-MapPath` with your extracted `mainmenu_all.map`.
+
+Use the **Armory-capable** menu map (the one with the Armory scenes and the
+H2A/Council/Schism Elite regions). A different menu map may load, but those
+extra Elite pieces will not have regions to render.
+
+The string table (`mainmenu_all.string_ids.csv`) is an extracted dump, not a
+file MCC ships. Supply the matching CSV next to the map; the Armory needs it at
+runtime. Do not redistribute the map or the CSV.
 
 The Armory's optional armour exports live in `data/armor/` and are also
 git-ignored.
