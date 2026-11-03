@@ -333,6 +333,7 @@ set(DEDICATED_SOURCES
     src/hooks/LobbyPatches.cpp
     src/hooks/ForgePatches.cpp
     src/vfs/VFS.cpp
+    src/engine/EmbeddedBlocks.cpp
     src/network/UPnP.cpp
     src/network/SessionManager.cpp
 )
@@ -350,6 +351,7 @@ set(DEDICATED_HEADERS
     src/hooks/LobbyPatches.hpp
     src/hooks/ForgePatches.hpp
     src/vfs/VFS.hpp
+    src/engine/EmbeddedBlocks.hpp
     src/network/UPnP.hpp
     src/network/SessionManager.hpp
 )
