@@ -15,6 +15,7 @@ VFS::GetFileAttributesExW_Fn VFS::s_origGetFileAttributesExW = nullptr;
 
 fs::path VFS::s_baseMccPath;
 fs::path VFS::s_userStoragePath;
+fs::path VFS::s_localDataDir;
 fs::path VFS::s_workshopPath;
 fs::path VFS::s_activeMod;
 fs::path VFS::s_mapOverrideFile;
@@ -67,6 +68,10 @@ bool VFS::Initialize(const ReachInstallInfo& installInfo, const fs::path& userSt
     s_baseMccPath = fs::absolute(installInfo.reachDirectory);
     s_userStoragePath = fs::absolute(userStoragePath);
     s_workshopPath = fs::absolute(installInfo.workshopDirectory);
+    wchar_t exePath[MAX_PATH] = {};
+    if (GetModuleFileNameW(nullptr, exePath, MAX_PATH)) {
+        s_localDataDir = fs::path(exePath).parent_path() / "data";
+    }
 
     // Create user storage subfolders for mods, saves, and logs
     std::error_code ec;
@@ -199,10 +204,19 @@ std::wstring VFS::ResolvePath(const std::wstring& requestedPath, DWORD desiredAc
             // 2. If reading:
             std::wstring normLower = normalized;
             std::transform(normLower.begin(), normLower.end(), normLower.begin(), ::towlower);
-            if (false ||
-                false ||
-                normLower.find(L"mainmenu.map") != std::wstring::npos) {
+            if (normLower.find(L"mainmenu.map") != std::wstring::npos) {
+                // Prefer a loose map the builder/user put next to the exe: this is how the project runs
+                // without embedding any game data. Only fall back to user storage / the embedded copy.
+                fs::path localMenu = s_localDataDir.empty() ? fs::path() : (s_localDataDir / "menumaps" / "mainmenu_all.map");
                 fs::path customMenu = s_userStoragePath / "menumaps" / "mainmenu_all.map";
+                if (!localMenu.empty() && RawPathExists(localMenu.wstring())) {
+                    static bool s_loggedLocalMenu = false;
+                    if (!s_loggedLocalMenu) {
+                        s_loggedLocalMenu = true;
+                        NOBLE_INFO("VFS: using loose menu map {}", localMenu.string());
+                    }
+                    return localMenu.wstring();
+                }
                 if (!RawPathExists(customMenu.wstring())) {
                     size_t mapSize = 0;
                     const uint8_t* mapData = EmbeddedBlocks::GetBlock("mainmenu_all.map", &mapSize);
@@ -219,6 +233,8 @@ std::wstring VFS::ResolvePath(const std::wstring& requestedPath, DWORD desiredAc
                 if (RawPathExists(customMenu.wstring())) {
                     return customMenu.wstring();
                 }
+                // No custom/embedded map: let the normal VFS priorities load the stock MCC
+                // haloreach\maps\mainmenu.map from the user's own install.
             }
 
             // Priority 0: the mod chosen in the front-end menu.

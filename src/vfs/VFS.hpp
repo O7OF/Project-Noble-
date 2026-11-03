@@ -69,6 +69,7 @@ private:
 
     static fs::path s_baseMccPath;
     static fs::path s_userStoragePath;
+    static fs::path s_localDataDir;   // <exe>/data: loose game data a builder/user supplies
     static fs::path s_workshopPath;
     static fs::path s_activeMod;
     static fs::path s_mapOverrideFile;
