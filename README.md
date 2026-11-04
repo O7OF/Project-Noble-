@@ -37,9 +37,6 @@ builds are published on the release repository:
 | Backend, netcode, server scripts | https://github.com/O7OF/ServerTestDeploy | Node/Express + WebSocket relay |
 | Release downloads | https://github.com/O7OF/Project-Noble-/releases | Packaged Windows builds |
 
-**Netcode/server rule:** any server-script or relay change goes to
-`O7OF/ServerTestDeploy`, never to this repository. Use
-`tools/server-repo.ps1` to clone/pull the backend next to this checkout.
 
 ## Build
 
