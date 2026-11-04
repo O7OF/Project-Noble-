@@ -34,7 +34,7 @@ builds are published on the release repository:
 | What | Repo | Notes |
 |---|---|---|
 | Client, engine host, menus | **this repository** | C++20, CMake + Visual Studio |
-| Backend, netcode, server scripts | https://github.com/O7OF/ServerTestDeploy | Node/Express + WebSocket relay |
+| 
 | Release downloads | https://github.com/O7OF/Project-Noble-/releases | Packaged Windows builds |
 
 
