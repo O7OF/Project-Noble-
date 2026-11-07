@@ -38,46 +38,56 @@ Outputs:
 
 ## Data files
 
-The release exe can embed the menu map and string table through
-`src/res/blocks.rc`. They are game data: git-ignored, never committed, and
-must come from your own MCC install.
+A fresh checkout contains everything needed to **compile**:
 
-- `data/menumaps/mainmenu_all.map`
-- `data/menumaps/mainmenu_all.string_ids.csv`
+- `data/profile_1.bin`, `data/launch_block_1.bin`, `data/lb_m_c_1.bin`
+- `data/menumaps/mainmenu_all.string_ids.csv` and the two
+  `mainmenu_armory*.string_ids.csv` tables
+- `data/blocks/*.bin`
+- `src/res/spartan.rrpmcg` (the Spartan item -> region table, always embedded)
 
-If both files are present CMake embeds them. If they are missing the build
-still succeeds: CMake compiles without the embedded menu data and the client
-reads `data/menumaps` at runtime instead. There is no `RC2135` failure for a
-fresh checkout.
+Two large game-data files are **not** in git because GitHub rejects files over
+100 MB. They are distributed as release-zip assets and must be present at
+runtime for the custom Armory:
 
-To copy the map from your own install:
+| file | size | purpose |
+|---|---|---|
+| `data/menumaps/mainmenu_all.map` | ~298 MB | the Armory menu-map mod: pedestal scene and `rr_mark_a`/`rr_mark_b` GLOBALS |
+| `data/armor/rr_elite_pack.map` + `.rrreloc`/`.rrneeds`/`.rremotes`/`.rrpmcg` | ~103 MB | the armour pack: Spartan/Elite models and the piece -> permutation table |
+
+Put them here:
 
 ```powershell
-.\tools\fetch-menu-data.ps1
-# or point it at an extracted map:
-.\tools\fetch-menu-data.ps1 -MapPath "D:\Reach\data\menumaps\mainmenu_all.map"
+# From a Reach Renaissance extraction / the release zip:
+Copy-Item "D:\Reach\data\menumaps\mainmenu_all.map" data\menumaps\ -Force
+Copy-Item "D:\Reach\data\armor\rr_elite_pack.map*"       data\armor\  -Force
 ```
 
-The script checks the MCC `haloreach\maps` folder and a Reach Renaissance
-extraction. Not every MCC install keeps the menu map in `haloreach\maps`; if
-yours does not, use `-MapPath` with your extracted `mainmenu_all.map`.
+The client serves `data\menumaps\mainmenu_all.map` as the engine's
+`haloreach\maps\mainmenu.map` (VFS) and loads the pack as an extra cache.
+Without the map the Armory falls back to the stock MCC menu map (no custom
+pedestal/pieces); without the pack the Armory has no pack models or .rrpmcg.
 
-Use the **Armory-capable** menu map (the one with the Armory scenes and the
-H2A/Council/Schism Elite regions). A different menu map may load, but those
-extra Elite pieces will not have regions to render.
+The pack's own `.rrpmcg` is preferred; `src/res/spartan.rrpmcg` is embedded
+as a fallback. The pack's own string table is read from the map, so the
+`mainmenu_armory*.string_ids.csv` files are only fallbacks.
 
-The stock `haloreach\maps\mainmenu.map` loads the front-end but does **not**
-contain the Armory scene: the 3D preview stays on `LOADING ARMORY`. For the
-Armory, compile the menu map with **HREK** (with the Armory scene) and place it
-as `data/menumaps/mainmenu.map` or `data/menumaps/mainmenu_all.map`. It is
-served loose at runtime, so it never has to be embedded in the exe.
+The stock `haloreach\maps\mainmenu.map` does not contain the modded Armory
+scene; use the Armory-capable `mainmenu_all.map` above.
 
-The string table (`mainmenu_all.string_ids.csv`) is an extracted dump, not a
-file MCC ships. Supply the matching CSV next to the map; the Armory needs it at
-runtime. Do not redistribute the map or the CSV.
+## Package a release zip
 
-The Armory's optional armour exports live in `data/armor/` and are also
-git-ignored.
+GitHub's repository file limit is 100 MB, so the map and pack travel in a
+release-asset zip:
+
+```powershell
+.	ools\make-release-zip.ps1
+# -> %USERPROFILE%\Desktop\Noble-Armory-Pack.zip (Noble.exe + data, incl. the map and pack)
+```
+
+Upload that zip as a GitHub **Release asset** (not a normal repo file). The
+source itself stays small and can be uploaded as the repository or a source
+zip.
 
 ## Run
 
@@ -96,6 +106,8 @@ Useful test switches: `-map <name> -mode multiplayer`, `-menu-screen armory`,
 - **CMake generator mismatch** — delete `build/CMakeCache.txt` and
   `build/CMakeFiles`, then reconfigure.
 - **RC2135: file not found** — a resource in `src/res/blocks.rc` is missing
-  from `data/` (see above).
-- **Black Armory / no character** — the menu map is missing or from a
-  different build; restore the map + matching CSV.
+  from `data/`; the tracked files above should cover a fresh checkout.
+- **Black Armory / no character** — `data\menumaps\mainmenu_all.map` or
+  `data\armor\rr_elite_pack.map` is missing; copy them from the release zip.
+- **Wrong armour pieces** — the pack is present but its `.rrpmcg` does not
+  match the map; use the pair from the same release zip.

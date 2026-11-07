@@ -25,7 +25,10 @@ vgmstream/
 scratch/
 # Ignore user data and large binaries in data/, but keep blocks and json configs
 data/userdata/
-data/menumaps/
+# The menu map (298 MB) is a mod and the armor pack (103 MB) is local-only: both are release-zip
+# assets, not repo files. The small string tables next to the map are source and must be present
+# for a fresh checkout to build/run the Armory.
+data/menumaps/*.map
 data/armor/
 data/sandbox/
 data/autosave/
@@ -49,6 +52,8 @@ dumpbin.txt
 *.obj
 *.mtl
 profile_*.bin
+# The embedded profile is a build input (src/res/blocks.rc), not a user save file.
+!data/profile_1.bin
 rr_profile*.bin
 # test/runtime artifacts that must never be committed
 reports/

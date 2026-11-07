@@ -523,6 +523,20 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     }
 
 
+    // The Armory scene comes from the player's own haloreach\maps\mainmenu.map (the stock MCC menu
+    // map); the armour pack (data\armor\<name>.map) is loaded as an extra cache in the same process
+    // by ElitePack::Install below. No 298 MB custom mainmenu_all.map is needed: ReachArmory reads the
+    // pack's own string table and .rrpmcg for the piece mapping.
+    if (showMenu) {
+        const fs::path pack = noble::ElitePack::FindPackMap(userStoragePath);
+        if (!pack.empty()) {
+            NOBLE_INFO("main: Armory models come from '{}' (loaded as an extra cache with the menu map)", pack.string());
+        } else {
+            NOBLE_INFO("main: no armour pack in '{}'; the Armory 3D preview needs rr_elite_pack.map",
+                       (userStoragePath / "armor").string());
+        }
+    }
+
     if (!modFolder.empty()) {
         NOBLE_INFO("Activating mod folder '{}'", modFolder.string());
         noble::VFS::SetActiveMod(modFolder);
@@ -695,8 +709,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         TerminateProcess(GetCurrentProcess(), ok ? 0 : 1);
     }
 
-    // Elite armour pack (data\armor\<name>.map + .rrreloc, local only): loaded with multiplayer and Firefight maps.
-    if (!showMenu) noble::ElitePack::Install(loader->GetModuleHandle(), userStoragePath, launchMode);
+    // Elite armour pack (data\armor\<name>.map + .rrreloc, local only): loaded as an extra cache with
+    // the match map, and with the Front-End menu map so the Armory can use its player models.
+    noble::ElitePack::Install(loader->GetModuleHandle(), userStoragePath, launchMode);
 
     if (!connectAddress.empty()) {
         launchHost = false; // Guest joining remote match

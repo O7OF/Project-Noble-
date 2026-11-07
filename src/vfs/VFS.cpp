@@ -202,8 +202,18 @@ std::wstring VFS::ResolvePath(const std::wstring& requestedPath, DWORD desiredAc
             }
 
             // 2. If reading:
-            // The main menu is always the player's own haloreach\maps\mainmenu.map, served by the base
-            // MCC priority below. Noble no longer carries or extracts a custom menu map.
+            // The Armory needs a menu map with the Reach pedestal scene and rr_mark_a/rr_mark_b GLOBALS.
+            // If the player copied the mainmenu_all.map mod into data\menumaps, serve it as the engine's
+            // haloreach\maps\mainmenu.map; otherwise fall back to the stock MCC map below.
+            if (!isWriting && !s_userStoragePath.empty() && !p.filename().empty() &&
+                _wcsicmp(p.filename().c_str(), L"mainmenu.map") == 0) {
+                for (const wchar_t* name : { L"mainmenu_all.map", L"mainmenu.map" }) {
+                    const fs::path menuMod = s_userStoragePath / "menumaps" / name;
+                    if (RawPathExists(menuMod.wstring())) {
+                        return menuMod.wstring();
+                    }
+                }
+            }
 
             // Priority 0: the mod chosen in the front-end menu.
             if (!s_activeMod.empty()) {

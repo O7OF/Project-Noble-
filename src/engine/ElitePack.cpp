@@ -12,6 +12,7 @@
 #include <atomic>
 #include <climits>
 #include <intrin.h>
+#include <cctype>
 #include <cstdint>
 #include <cstring>
 #include <cstdio>
@@ -1440,9 +1441,28 @@ std::optional<std::filesystem::path> ResolveFile(const std::wstring& requested) 
 
 bool Loaded() { return s_loaded; }
 
+std::filesystem::path FindPackMap(const std::filesystem::path& dataDir) {
+    std::error_code ec;
+    const auto folder = dataDir / "armor";
+    std::filesystem::path first;
+    for (const auto& e : std::filesystem::directory_iterator(folder, ec)) {
+        if (!e.is_regular_file(ec) || e.path().extension() != ".map") continue;
+        auto sidecar = e.path();
+        sidecar += ".rrreloc";
+        if (!std::filesystem::is_regular_file(sidecar, ec)) continue;
+        std::string name = e.path().filename().string();
+        std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (name.find("elite_pack") != std::string::npos || name.find("armory") != std::string::npos) return e.path();
+        if (first.empty()) first = e.path();
+    }
+    return first;
+}
+
+
 void Install(HMODULE engine, const std::filesystem::path& dataDir, const std::string& mode) {
     if (!engine || s_base) return;
-    if (mode != "multiplayer" && mode != "firefight" && mode != "forge") return;
+    if (mode != "multiplayer" && mode != "firefight" && mode != "forge" &&
+        mode != "mainmenu" && mode != "menu") return;
     if (HasArg(L"-no-elite-pack")) {
         NOBLE_INFO("ElitePack: off (-no-elite-pack)");
         return;
@@ -1452,17 +1472,9 @@ void Install(HMODULE engine, const std::filesystem::path& dataDir, const std::st
     s_keepPackGlobals = HasArg(L"-elite-pack-keep-globals");
     s_keepDeathEffect = HasArg(L"-elite-pack-death-fx");
     s_fpOverride = !HasArg(L"-no-fp-override");
-    // First <name>.map in data\armor that has a .rrreloc sidecar.
-    std::error_code ec;
-    const auto folder = dataDir / "armor";
-    for (const auto& e : std::filesystem::directory_iterator(folder, ec)) {
-        if (!e.is_regular_file(ec) || e.path().extension() != ".map") continue;
-        auto sidecar = e.path();
-        sidecar += ".rrreloc";
-        if (std::filesystem::is_regular_file(sidecar, ec)) { s_packPath = e.path(); break; }
-    }
+    s_packPath = FindPackMap(dataDir);
     if (s_packPath.empty()) {
-        NOBLE_INFO("ElitePack: no pack in {} (players use the map's Elite)", folder.string());
+        NOBLE_INFO("ElitePack: no pack in {} (players use the map's Elite)", (dataDir / "armor").string());
         return;
     }
     auto sidecar = s_packPath;
@@ -1508,7 +1520,10 @@ void Install(HMODULE engine, const std::filesystem::path& dataDir, const std::st
         s_packPath.clear();
         return;
     }
-    if (!InstallPicks(dataDir)) NOBLE_WARN("ElitePack: Armory Elite pieces won't reach the game (calls not redirected)");
+    // The menu/Armory uses ReachArmory's GLOBALS pairs; the appearance-builder hooks are for matches
+    // only (they apply the local profile's indices and would fight the Armory's own selection).
+    const bool menuMode = (mode == "mainmenu" || mode == "menu");
+    if (!menuMode && !InstallPicks(dataDir)) NOBLE_WARN("ElitePack: Armory Elite pieces won't reach the game (calls not redirected)");
     s_ready = true;
     NOBLE_INFO("ElitePack: {} ({} packed pointers to relocate) will load with {} matches",
                s_packPath.string(), s_reloc.offsets.size(), mode);

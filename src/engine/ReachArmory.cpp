@@ -1,4 +1,5 @@
 #include "ReachArmory.hpp"
+#include "ElitePack.hpp"
 #include "common/Logger.hpp"
 #include "EmbeddedBlocks.hpp"
 #include <sstream>
@@ -146,7 +147,69 @@ using ArmoryLock = std::lock_guard<std::recursive_mutex>;
 static bool s_stringIdsLoaded = false;
 static std::unordered_map<std::string, uint32_t> s_stringIds;
 
+// The armour pack map (data\armor\<name>.map + .rrreloc): its own string table and .rrpmcg are the
+// authority for the Armory piece ids. Discovered once per process.
+static std::filesystem::path s_armoryMapPath;
+static bool s_armoryMapChecked = false;
+
 // mainmenu_all.map HS GLOBALS table address and stride (in bytes, from {4, 8, 12, 16, 24, 32})
+enum RrGlobalSlot : size_t {
+    kRrMarkA     = 0x00, // [00 /  0] rr_mark_a      type=8  flags=0 init=-2146886507 (0x03BB6FED)
+    kRrMarkB     = 0x01, // [01 /  1] rr_mark_b      type=8  flags=0 init=-2146558822 (0x03BAB653)
+    kRrSeq       = 0x02, // [02 /  2] rr_seq         type=8  flags=0 init=-2146231137
+    kRrDone      = 0x03, // [03 /  3] rr_done        type=8  flags=0 init=-2145903452
+    kRrR0        = 0x04, // [04 /  4] rr_r0          type=11 flags=0 init=-2145575767
+    kRrP0        = 0x05, // [05 /  5] rr_p0          type=11 flags=0 init=-2145248082
+    kRrR1        = 0x06, // [06 /  6] rr_r1          type=11 flags=0 init=-2144920397
+    kRrP1        = 0x07, // [07 /  7] rr_p1          type=11 flags=0 init=-2144592712
+    kRrR2        = 0x08, // [08 /  8] rr_r2          type=11 flags=0 init=-2144265027
+    kRrP2        = 0x09, // [09 /  9] rr_p2          type=11 flags=0 init=-2143937342
+    kRrR3        = 0x0A, // [0a / 10] rr_r3          type=11 flags=0 init=-2143609657
+    kRrP3        = 0x0B, // [0b / 11] rr_p3          type=11 flags=0 init=-2143281972
+    kRrR4        = 0x0C, // [0c / 12] rr_r4          type=11 flags=0 init=-2142954287
+    kRrP4        = 0x0D, // [0d / 13] rr_p4          type=11 flags=0 init=-2142626602
+    kRrR5        = 0x0E, // [0e / 14] rr_r5          type=11 flags=0 init=-2142298917
+    kRrP5        = 0x0F, // [0f / 15] rr_p5          type=11 flags=0 init=-2141971232
+    kRrR6        = 0x10, // [10 / 16] rr_r6          type=11 flags=0 init=-2141643547
+    kRrP6        = 0x11, // [11 / 17] rr_p6          type=11 flags=0 init=-2141315862
+    kRrR7        = 0x12, // [12 / 18] rr_r7          type=11 flags=0 init=-2140988177
+    kRrP7        = 0x13, // [13 / 19] rr_p7          type=11 flags=0 init=-2140660492
+    kRrR8        = 0x14, // [14 / 20] rr_r8          type=11 flags=0 init=-2140332807
+    kRrP8        = 0x15, // [15 / 21] rr_p8          type=11 flags=0 init=-2140005122
+    kRrR9        = 0x16, // [16 / 22] rr_r9          type=11 flags=0 init=-2139677437
+    kRrP9        = 0x17, // [17 / 23] rr_p9          type=11 flags=0 init=-2139349752
+    kRrR10       = 0x18, // [18 / 24] rr_r10         type=11 flags=0 init=-2139022067
+    kRrP10       = 0x19, // [19 / 25] rr_p10         type=11 flags=0 init=-2138694382
+    kRrR11       = 0x1A, // [1a / 26] rr_r11         type=11 flags=0 init=-2138366697
+    kRrP11       = 0x1B, // [1b / 27] rr_p11         type=11 flags=0 init=-2138039012
+    kRrR12       = 0x1C, // [1c / 28] rr_r12         type=11 flags=0 init=-2137711327
+    kRrP12       = 0x1D, // [1d / 29] rr_p12         type=11 flags=0 init=-2137383642
+    kRrR13       = 0x1E, // [1e / 30] rr_r13         type=11 flags=0 init=-2137055957
+    kRrP13       = 0x1F, // [1f / 31] rr_p13         type=11 flags=0 init=-2136728272
+    kRrR14       = 0x20, // [20 / 32] rr_r14         type=11 flags=0 init=-2136400587
+    kRrP14       = 0x21, // [21 / 33] rr_p14         type=11 flags=0 init=-2136072902
+    kRrR15       = 0x22, // [22 / 34] rr_r15         type=11 flags=0 init=-2135745217
+    kRrP15       = 0x23, // [23 / 35] rr_p15         type=11 flags=0 init=-2135417532
+    kRrScene     = 0x24, // [24 / 36] rr_scene       type=8  flags=0 init=-2135089847
+    kRrSceneDone = 0x25, // [25 / 37] rr_scene_done  type=8  flags=0 init=-2134762162
+    kRrElite     = 0x26, // [26 / 38] rr_elite       type=8  flags=0 init=-2134434477
+    kRrTurn      = 0x27, // [27 / 39] rr_turn        type=8  flags=0 init=-2134106792
+    kRrTurnDone  = 0x28, // [28 / 40] rr_turn_done   type=8  flags=0 init=-2133779107
+    kRrTurnD     = 0x29, // [29 / 41] rr_turn_d      type=8  flags=0 init=-2133451422
+    kRrC         = 0x2A, // [2a / 42] rr_c           type=6  flags=0 init=-2133123737
+    kRrS         = 0x2B, // [2b / 43] rr_s           type=6  flags=0 init=-2132796052
+    kRrSpun      = 0x2C, // [2c / 44] rr_spun        type=8  flags=0 init=-2132468367
+    kRrPose      = 0x2D, // [2d / 45] rr_pose        type=8  flags=0 init=-2132140682
+    kRrPoseDone  = 0x2E, // [2e / 46] rr_pose_done   type=8  flags=0 init=-2131812997
+    kRrSg        = 0x2F, // [2f / 47] rr_sg          type=5  flags=0 init=-2131485312
+    kRrFxn       = 0x30, // [30 / 48] rr_fxn         type=11 flags=0 init=-2131157627
+    kRrFxp       = 0x31, // [31 / 49] rr_fxp         type=11 flags=0 init=-2130829942
+    kRrRemade    = 0x32, // [32 / 50] rr_remade      type=8  flags=0 init=-2130502257
+    kRrCardDone  = 0x33, // [33 / 51] rr_card_done   type=8  flags=0 init=-2130174572
+    kRrSlotCount = 0x34
+};
+static constexpr uint32_t kRrMarkAVal = 0x03BB6FEDu;
+static constexpr uint32_t kRrMarkBVal = 0x03BAB653u;
 static std::atomic<uintptr_t> s_globalsBase{0};
 static std::atomic<size_t> s_globalsStride{12};
 
@@ -190,6 +253,74 @@ static uint64_t s_bumpAtFrame = 0;       // 0 = none
 static bool s_settlePending = false;
 static uint64_t s_settleDeadline = 0;
 static int32_t s_remadeAtBump = 0;
+
+// The pack map that carries the Armory models and the player_model_customization tag.
+static const std::filesystem::path& ArmoryMapPath() {
+    if (!s_armoryMapChecked) {
+        s_armoryMapChecked = true;
+        if (!s_dataDir.empty()) s_armoryMapPath = ElitePack::FindPackMap(s_dataDir);
+    }
+    return s_armoryMapPath;
+}
+
+// Reach cache maps store their string_ids as a NUL-separated table; the numeric id is the string's
+// index. The pack is the authority: the stock mainmenu_all.csv has different ids from ~7,330 on
+// (armor_pieces, elite_helmet, every rr_elite_* piece), so using it leaves the Armory showing the
+// wrong permutation - or none. Read the pack's table so names resolve to the ids that map uses.
+// Header +0x34 is the table offset, +0x38 its size (verified against the RR pack and 45_aftship).
+static bool LoadPackStringIds(const std::filesystem::path& pack) {
+    std::ifstream in(pack, std::ios::binary);
+    if (!in) return false;
+    in.seekg(0, std::ios::end);
+    const std::streamoff fileSize = in.tellg();
+    in.seekg(0, std::ios::beg);
+    uint8_t header[0x40] = {};
+    if (fileSize < 0x40 || !in.read(reinterpret_cast<char*>(header), sizeof(header))) return false;
+
+    uint32_t strBase = 0, strSize = 0;
+    std::memcpy(&strBase, header + 0x34, 4);
+    std::memcpy(&strSize, header + 0x38, 4);
+    if (strBase < 0x1000 || strSize < 0x1000 || strSize > 64u * 1024u * 1024u ||
+        static_cast<uint64_t>(strBase) + strSize > static_cast<uint64_t>(fileSize)) {
+        return false;
+    }
+
+    std::vector<char> table(strSize);
+    in.seekg(static_cast<std::streamoff>(strBase), std::ios::beg);
+    if (!in.read(table.data(), static_cast<std::streamsize>(strSize))) return false;
+    if (table.empty() || table[0] != '\0') return false;
+
+    size_t pos = 0;
+    uint32_t index = 0;
+    size_t loaded = 0;
+    while (pos < table.size()) {
+        size_t end = pos;
+        while (end < table.size() && table[end] != '\0') ++end;
+        if (end > pos && end - pos < 512) {
+            const std::string name(table.data() + pos, end - pos);
+            bool printable = true;
+            for (const char c : name) {
+                const unsigned char u = static_cast<unsigned char>(c);
+                if (u < 0x20 || u > 0x7E) { printable = false; break; }
+            }
+            if (printable) {
+                s_stringIds.emplace(ToLowerAscii(name), index);
+                ++loaded;
+            }
+        }
+        pos = end + 1;
+        ++index;
+    }
+
+    // The Armory cannot work without these; a wrong header offset must not poison every lookup.
+    if (loaded < 1000 || s_stringIds.find("head") == s_stringIds.end() ||
+        s_stringIds.find("default") == s_stringIds.end()) {
+        s_stringIds.clear();
+        return false;
+    }
+    NOBLE_INFO("ReachArmory: Loaded {} string_ids from the armory pack '{}'", loaded, pack.string());
+    return true;
+}
 
 // -----------------------------------------------------------------------------
 // Load string_ids from data/menumaps/mainmenu_all.string_ids.csv
@@ -236,9 +367,18 @@ static void EnsureStringIdsLoaded() {
     };
 
     if (!s_dataDir.empty()) {
+        // 0. The pack's own string table: the ids the Armory map's GLOBALS and permutations use.
+        const std::filesystem::path& pack = ArmoryMapPath();
+        if (!pack.empty() && LoadPackStringIds(pack)) return;
+
         std::ifstream loose(s_dataDir / "menumaps" / "mainmenu_all.string_ids.csv");
         if (loose) {
             const size_t loaded = parseCsvStream(loose);
+            static const char* const kExtraCsvs[] = { "mainmenu_armory.string_ids.csv", "mainmenu_armory_elite.string_ids.csv" };
+            for (const char* extra : kExtraCsvs) {
+                std::ifstream extraIn(s_dataDir / "menumaps" / extra);
+                if (extraIn) parseCsvStream(extraIn);
+            }
             NOBLE_INFO("ReachArmory: Loaded {} string_ids from loose mainmenu_all CSV", loaded);
             return;
         }
@@ -251,6 +391,14 @@ static void EnsureStringIdsLoaded() {
         std::string_view sv(reinterpret_cast<const char*>(embeddedData), embeddedSize);
         std::stringstream ss{ std::string(sv) };
         size_t loaded = parseCsvStream(ss);
+        static const char* const kExtraCsvs[] = { "mainmenu_armory.string_ids.csv", "mainmenu_armory_elite.string_ids.csv" };
+        for (const char* extra : kExtraCsvs) {
+            size_t extraSize = 0;
+            if (const uint8_t* extraData = EmbeddedBlocks::GetBlock(extra, &extraSize); extraData && extraSize > 0) {
+                std::stringstream extraSs{ std::string(reinterpret_cast<const char*>(extraData), extraSize) };
+                parseCsvStream(extraSs);
+            }
+        }
         NOBLE_INFO("ReachArmory: Loaded {} string_ids from embedded resource", loaded);
         return;
     }
@@ -305,7 +453,7 @@ static uint32_t LookupStringId(const std::string& name) {
 static int32_t ResolveSceneIndex(const std::string& scene) {
     const std::string s = ToLowerAscii(scene);
     // "index:<n>" addresses a camera scene by number, so every camera in mainmenu_all.map can be tried without
-    // naming it first (used to map the per-piece close-ups; see the scene notes).
+    // naming it first (used to map the per-piece close-ups; see the 2026-10-31 handoff entry).
     if (s.rfind("index:", 0) == 0) {
         const char* text = s.c_str() + 6;
         const int parsed = (text[0] == '0' && (text[1] == 'x' || text[1] == 'X')) ? static_cast<int>(std::strtol(text + 2, nullptr, 16))
@@ -344,7 +492,7 @@ static int32_t ResolveSceneIndex(const std::string& scene) {
 // -----------------------------------------------------------------------------
 // Committed private read/write memory, cut into 16 MB pieces that overlap by 4 KB so a
 // record that straddles a cut is still seen whole. Reach keeps its tag data in regions far
-// larger than 512 MB, which the old whole-region copy skipped (the engine reads 1 MB at a time).
+// larger than 512 MB, which the old whole-region copy skipped (RR reads 1 MB at a time).
 static std::vector<std::pair<uintptr_t, size_t>> ReadWriteChunks(size_t minSize) {
     constexpr size_t kChunk = 16u * 1024u * 1024u;
     constexpr size_t kOverlap = 0x1000;
@@ -381,7 +529,7 @@ static std::atomic<uint64_t> s_globalsMarkerHits{0};
 static bool IsNewMenuLayout() {
     EnsureStringIdsLoaded();
     ArmoryLock lock(s_dataMutex);
-    return s_stringIds.size() < 32100;   // old map 32,213 names; the engine new map 31,978
+    return s_stringIds.size() < 32100;   // mainmenu_all.string_ids.csv has 32,213 names
 }
 
 static int GlobalsSlotFor(uintptr_t base, size_t stride, uint32_t id) {
@@ -417,14 +565,23 @@ static bool ScanGlobalsTable() {
         const size_t size = chunk.second;
         {
             std::vector<uint8_t> buf(size);
-            {   // never scan our own copy buffer (the engine skips its read buffer the same way)
+            {   // never scan our own copy buffer (RR skips its read buffer the same way)
                 const uintptr_t self = reinterpret_cast<uintptr_t>(buf.data());
                 if (base < self + size && self < base + size) continue;
             }
             if (SafeCopyMem(buf.data(), reinterpret_cast<const void*>(base), size)) {
                 for (size_t off = 0; off + 0xC0 <= size; off += 4) {
                     const uint32_t v0 = *reinterpret_cast<const uint32_t*>(buf.data() + off);
-                    if (v0 != 0x03BB6FEDu) continue;
+                    if (v0 != kRrMarkAVal) continue;
+                    // Skip the scenario hs_syntax_nodes initialization block (0xff82d40: 0x00090008, 0xffffffff,
+                    // 0x0001ad2e, 0x03bb6fed, 0x00000311, 0xbaba0000, 0xbabababa...) where rr_mark_a..rr_card_done
+                    // init expression nodes (-2146886507..-2130174572) sit 5 syntax nodes (120 bytes) apart.
+                    if (off >= 12 && off + 16 <= size &&
+                        *reinterpret_cast<const uint32_t*>(buf.data() + off - 12) == 0x00090008u &&
+                        *reinterpret_cast<const uint32_t*>(buf.data() + off - 8)  == 0xFFFFFFFFu &&
+                        *reinterpret_cast<const uint32_t*>(buf.data() + off + 8)  == 0xBABA0000u) {
+                        continue;
+                    }
                     ++s_globalsMarkerHits;
 
                     for (size_t stride : kStrides) {
@@ -432,7 +589,8 @@ static bool ScanGlobalsTable() {
                         const uint32_t v1 = *reinterpret_cast<const uint32_t*>(buf.data() + off + stride);
                         const uint32_t v4 = *reinterpret_cast<const uint32_t*>(buf.data() + off + stride * 4);
                         const uint32_t v5 = *reinterpret_cast<const uint32_t*>(buf.data() + off + stride * 5);
-                        if (v1 == 0x03BAB653u && (v4 == headId || v5 == defaultId)) {
+                        if (v1 == kRrMarkBVal &&
+                            (v4 == headId || v5 == defaultId || (v4 > 0 && v4 < 0x10000u && v5 > 0 && v5 < 0x10000u))) {
                             const uintptr_t foundBase = base + off;
                             s_globalsStride.store(stride);
                             s_globalsBase.store(foundBase);
@@ -456,7 +614,7 @@ static bool ScanGlobalsTable() {
         }
     }
 
-    // Imported mainmenu_all.map (the engine's new armory map): no legacy marker, but the table still
+    // Imported mainmenu_all.map (RR's new armory map): no legacy marker, but the table still
     // starts with head/default and has chest at slot 2 plus the flair armour block at 20..40.
     // Never run this against the legacy map: its skeleton table also matches head/default and
     // would win before the real marker table appears.
@@ -893,7 +1051,7 @@ static void ScanEliteTable() {
         const size_t size = chunk.second;
         {
             std::vector<uint8_t> buf(size);
-            {   // never scan our own copy buffer (the engine skips its read buffer the same way)
+            {   // never scan our own copy buffer (RR skips its read buffer the same way)
                 const uintptr_t self = reinterpret_cast<uintptr_t>(buf.data());
                 if (base < self + size && self < base + size) continue;
             }
@@ -960,6 +1118,224 @@ static void ScanEliteTable() {
 // -----------------------------------------------------------------------------
 // Write Colors & Suit Shaders (ported from write_colors @ 0x1401b5ad0 & write_suit @ 0x1400468e0)
 // -----------------------------------------------------------------------------
+static void UpdateTagShaderConstantsSEH(bool previewElite,
+                                        const uint32_t words[4],
+                                        const float accentRgb[3],
+                                        const float undersuitRgb[3],
+                                        const float visorRgb[3]) {
+    HMODULE hReach = GetModuleHandleW(L"haloreach.dll");
+    if (!hReach) return;
+    const uintptr_t base = reinterpret_cast<uintptr_t>(hReach);
+    __try {
+        uint8_t* tagTable = *reinterpret_cast<uint8_t* const*>(base + 0xC1A600);
+        if (!tagTable) return;
+        using TagAtFn = uint8_t*(__fastcall*)(uint16_t);
+        auto TagAt = reinterpret_cast<TagAtFn>(base + 0x4E39F20);
+
+        for (int ti = 0; ti < 16384; ++ti) {
+            uint8_t* te = tagTable + static_cast<size_t>(ti) * 0x18;
+            const uint32_t magic = *reinterpret_cast<const uint32_t*>(te + 0x14);
+            if (magic != 0x726D7368u) continue; // 'rmsh'
+            uint8_t* rmsh = TagAt(static_cast<uint16_t>(ti));
+            if (!rmsh) continue;
+            const int32_t spCount = *reinterpret_cast<const int32_t*>(rmsh + 0x1C);
+            const uint32_t spPacked = *reinterpret_cast<const uint32_t*>(rmsh + 0x20);
+            if (spCount <= 0 || spCount > 8 || (spPacked >> 28) != 4u) continue;
+            uint8_t* spBase = tagTable + static_cast<uintptr_t>(spPacked & 0x0FFFFFFFu) * 4u;
+            for (int si = 0; si < spCount; ++si) {
+                uint8_t* sp = spBase + static_cast<size_t>(si) * 0xAC;
+                const int32_t f4Count = *reinterpret_cast<const int32_t*>(sp + 0x1C);
+                const uint32_t f4Packed = *reinterpret_cast<const uint32_t*>(sp + 0x20);
+                if (f4Count <= 0 || f4Count > 64 || (f4Packed >> 28) != 4u) continue;
+                float* f4 = reinterpret_cast<float*>(tagTable + static_cast<uintptr_t>(f4Packed & 0x0FFFFFFFu) * 4u);
+
+                if (!previewElite) {
+                    // 1) spartan_armor (26 float4s, f4[1][0] == 3.0f):
+                    //    f4[22] (+0x160) = self_illum_color (Armor Lights on legs, back, and chest -> Colors > Accent)
+                    if (f4Count == 26 && std::abs(f4[1 * 4 + 0] - 3.0f) < 0.1f && std::abs(f4[23 * 4 + 0] - 1.0f) < 0.1f) {
+                        f4[22 * 4 + 0] = accentRgb[0] * 2.2f;
+                        f4[22 * 4 + 1] = accentRgb[1] * 2.2f;
+                        f4[22 * 4 + 2] = accentRgb[2] * 2.2f;
+                        f4[22 * 4 + 3] = 1.0f;
+                    }
+                    // 2) spartan_rubber_suit (21 float4s, f4[1][0] == 18.0f):
+                    //    f4[2] (+0x20) = albedo_color, f4[9] (+0x90) = material_color_0, f4[10] (+0xA0) = material_color_1
+                    else if (f4Count == 21 && std::abs(f4[1 * 4 + 0] - 18.0f) < 0.1f) {
+                        f4[2 * 4 + 0] = undersuitRgb[0];
+                        f4[2 * 4 + 1] = undersuitRgb[1];
+                        f4[2 * 4 + 2] = undersuitRgb[2];
+                        f4[2 * 4 + 3] = 1.0f;
+                        f4[9 * 4 + 0] = undersuitRgb[0] * 0.85f + 0.05f;
+                        f4[9 * 4 + 1] = undersuitRgb[1] * 0.85f + 0.05f;
+                        f4[9 * 4 + 2] = undersuitRgb[2] * 0.85f + 0.05f;
+                        f4[9 * 4 + 3] = 1.0f;
+                        f4[10 * 4 + 0] = undersuitRgb[0] * 0.45f + 0.02f;
+                        f4[10 * 4 + 1] = undersuitRgb[1] * 0.45f + 0.02f;
+                        f4[10 * 4 + 2] = undersuitRgb[2] * 0.45f + 0.02f;
+                        f4[10 * 4 + 3] = 1.0f;
+                    }
+                    // 3) spartan_helmet_interior_visor (21 float4s, f4[1][0] == 3.0f, f4[8][0] == 1.0f):
+                    //    f4[17] (+0x110) = visor specular/env tint, f4[6] (+0x60) & f4[7] (+0x70) = visor reflection tint
+                    else if (f4Count == 21 && std::abs(f4[1 * 4 + 0] - 3.0f) < 0.1f && std::abs(f4[8 * 4 + 0] - 1.0f) < 0.1f) {
+                        f4[6 * 4 + 0] = visorRgb[0] * 0.85f + 0.15f;
+                        f4[6 * 4 + 1] = visorRgb[1] * 0.85f + 0.15f;
+                        f4[6 * 4 + 2] = visorRgb[2] * 0.85f + 0.15f;
+                        f4[6 * 4 + 3] = 1.0f;
+                        f4[7 * 4 + 0] = visorRgb[0] * 0.70f + 0.30f;
+                        f4[7 * 4 + 1] = visorRgb[1] * 0.70f + 0.30f;
+                        f4[7 * 4 + 2] = visorRgb[2] * 0.70f + 0.30f;
+                        f4[7 * 4 + 3] = 1.0f;
+                        f4[17 * 4 + 0] = visorRgb[0];
+                        f4[17 * 4 + 1] = visorRgb[1];
+                        f4[17 * 4 + 2] = visorRgb[2];
+                        f4[17 * 4 + 3] = 1.0f;
+                    }
+                    // 4) Secondary visor material (24 float4s, f4[1][0] == 10.0f):
+                    //    f4[9] (+0x90) & f4[10] (+0xA0) = visor gold/reflection tint
+                    else if (f4Count == 24 && std::abs(f4[1 * 4 + 0] - 10.0f) < 0.1f) {
+                        f4[9 * 4 + 0] = visorRgb[0];
+                        f4[9 * 4 + 1] = visorRgb[1];
+                        f4[9 * 4 + 2] = visorRgb[2];
+                        f4[9 * 4 + 3] = 1.0f;
+                        f4[10 * 4 + 0] = visorRgb[0] * 0.55f + 0.10f;
+                        f4[10 * 4 + 1] = visorRgb[1] * 0.55f + 0.10f;
+                        f4[10 * 4 + 2] = visorRgb[2] * 0.55f + 0.10f;
+                        f4[10 * 4 + 3] = 1.0f;
+                    }
+                }
+            }
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+    (void)words;
+}
+
+static void SyncArmoryLiveBipedEngineTickSEH(bool previewElite,
+                                             bool isFemale,
+                                             int32_t remadeCounter,
+                                             const float priRgb[3],
+                                             const float secRgb[3],
+                                             const float accRgb[3],
+                                             const float litRgb[3],
+                                             const float visRgb[3],
+                                             int accentColorIndex) {
+    HMODULE hReach = GetModuleHandleW(L"haloreach.dll");
+    if (!hReach) return;
+    const uintptr_t base = reinterpret_cast<uintptr_t>(hReach);
+    __try {
+        const uint32_t tlsIdx = *reinterpret_cast<const uint32_t*>(base + 0xC17B18);
+        const uintptr_t tlsArray = *reinterpret_cast<const uintptr_t*>(__readgsqword(0x58) + static_cast<uintptr_t>(tlsIdx) * 8u);
+        if (!tlsArray) return;
+        uint8_t* objTable = *reinterpret_cast<uint8_t* const*>(tlsArray + 0x10);
+        uint8_t* tagTable = *reinterpret_cast<uint8_t* const*>(base + 0xC1A600);
+        if (!objTable || !tagTable) return;
+
+        using TagAtFn = uint8_t*(__fastcall*)(uint16_t);
+        using SetChangeColorFn = uint8_t(__fastcall*)(uint32_t, int32_t, const float*);
+        using BipedSetGenderFn = void(__fastcall*)(uint32_t, uint8_t);
+        using ApplyModelStatePropFn = void(__fastcall*)(uint32_t, uint16_t);
+
+        auto TagAt = reinterpret_cast<TagAtFn>(base + 0x4E39F20);
+        auto SetChangeColor = reinterpret_cast<SetChangeColorFn>(base + 0x473858);
+        auto BipedSetGender = reinterpret_cast<BipedSetGenderFn>(base + 0x49BB84);
+        auto ApplyModelStateProp = reinterpret_cast<ApplyModelStatePropFn>(base + 0x472C68);
+
+        uint16_t maleProp = 0xFFFFu;
+        uint16_t femaleProp = 0xFFFFu;
+        for (int ti = 0; ti < 16384; ++ti) {
+            uint8_t* te = tagTable + static_cast<size_t>(ti) * 0x18;
+            if (*reinterpret_cast<const uint32_t*>(te + 0x14) == 0x706D6367u) { // 'pmcg'
+                uint8_t* pmcg = TagAt(static_cast<uint16_t>(ti));
+                if (pmcg) {
+                    maleProp = *reinterpret_cast<const uint16_t*>(pmcg + 0x98);
+                    femaleProp = *reinterpret_cast<const uint16_t*>(pmcg + 0xA4);
+                }
+                break;
+            }
+        }
+
+        const float slot0[3] = { priRgb[0], priRgb[1], priRgb[2] };
+        const float slot1[3] = { secRgb[0], secRgb[1], secRgb[2] };
+        const float slot2[3] = {
+            previewElite ? accRgb[0] : litRgb[0],
+            previewElite ? accRgb[1] : litRgb[1],
+            previewElite ? accRgb[2] : litRgb[2]
+        };
+        const float slot3[3] = {
+            previewElite ? (accentColorIndex != 0 ? accRgb[0] : priRgb[0]) : visRgb[0],
+            previewElite ? (accentColorIndex != 0 ? accRgb[1] : priRgb[1]) : visRgb[1],
+            previewElite ? (accentColorIndex != 0 ? accRgb[2] : priRgb[2]) : visRgb[2]
+        };
+        const float* const wantSlots[4] = { slot0, slot1, slot2, slot3 };
+
+        const int32_t maxObjects = std::clamp(*reinterpret_cast<const int32_t*>(objTable + 0x44), 0, 2048);
+        uint8_t* entries = *reinterpret_cast<uint8_t* const*>(objTable + 0x50);
+        if (!entries) return;
+
+        static uint32_t s_lastGenderBipeds[16] = {};
+        static uint8_t s_lastGenderApplied = 0xFFu;
+        static int32_t s_lastGenderRemade = -999999;
+        const uint8_t wantFemale = isFemale ? 1u : 0u;
+        const bool resetGenderCache = (s_lastGenderApplied != wantFemale || s_lastGenderRemade != remadeCounter);
+        if (resetGenderCache) {
+            std::memset(s_lastGenderBipeds, 0, sizeof(s_lastGenderBipeds));
+            s_lastGenderApplied = wantFemale;
+            s_lastGenderRemade = remadeCounter;
+        }
+
+        for (int32_t i = 0; i < maxObjects; ++i) {
+            uint8_t* entry = entries + static_cast<size_t>(i) * 0x18;
+            const uint16_t salt = *reinterpret_cast<const uint16_t*>(entry + 0x00);
+            if (salt == 0) continue;
+            const uint8_t objType = entry[0x04];
+            if (objType != 0) continue; // 0 == biped
+            uint8_t* objPtr = *reinterpret_cast<uint8_t* const*>(entry + 0x10);
+            if (!objPtr) continue;
+            const uint32_t objectDatum = (static_cast<uint32_t>(salt) << 16) | static_cast<uint32_t>(i);
+
+            // 1. Update live biped change_colors (base + active slots 0..3)
+            const int16_t ccSize = *reinterpret_cast<const int16_t*>(objPtr + 0x188);
+            const int16_t ccOffset = *reinterpret_cast<const int16_t*>(objPtr + 0x18A);
+            if (ccSize >= 24 && ccOffset > 0 && ccOffset < 0x2000) {
+                const int32_t slotCount = (ccSize / 12) / 2;
+                float* ccBase = reinterpret_cast<float*>(objPtr + ccOffset);
+                float* ccActive = ccBase + slotCount * 3;
+                const int32_t nSlots = std::min<int32_t>(slotCount, 4);
+                for (int32_t s = 0; s < nSlots; ++s) {
+                    const float* w = wantSlots[s];
+                    float* b = ccBase + s * 3;
+                    float* a = ccActive + s * 3;
+                    if (std::abs(b[0] - w[0]) > 1e-4f || std::abs(b[1] - w[1]) > 1e-4f || std::abs(b[2] - w[2]) > 1e-4f ||
+                        std::abs(a[0] - w[0]) > 1e-4f || std::abs(a[1] - w[1]) > 1e-4f || std::abs(a[2] - w[2]) > 1e-4f) {
+                        b[0] = w[0]; b[1] = w[1]; b[2] = w[2];
+                        a[0] = w[0]; a[1] = w[1]; a[2] = w[2];
+                        SetChangeColor(objectDatum, s, w);
+                    }
+                }
+            }
+
+            // 2. Update Male vs Female body type on Spartan bipeds
+            if (!previewElite) {
+                bool alreadySet = false;
+                int freeSlot = -1;
+                for (int k = 0; k < 16; ++k) {
+                    if (s_lastGenderBipeds[k] == objectDatum) { alreadySet = true; break; }
+                    if (s_lastGenderBipeds[k] == 0 && freeSlot < 0) freeSlot = k;
+                }
+                if (!alreadySet) {
+                    if (freeSlot >= 0) s_lastGenderBipeds[freeSlot] = objectDatum;
+                    BipedSetGender(objectDatum, wantFemale);
+                    const uint16_t prop = isFemale ? femaleProp : maleProp;
+                    if (prop != 0xFFFFu) {
+                        ApplyModelStateProp(objectDatum, prop);
+                    }
+                }
+            }
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+}
+
 static void WriteColorsAndSuit(const ReachArmorySelection& sel) {
     const uint32_t priArgb = LinearRgbToArgbU32(sel.primaryRgb);
     const uint32_t secArgb = LinearRgbToArgbU32(sel.secondaryRgb);
@@ -1013,18 +1389,28 @@ static void WriteColorsAndSuit(const ReachArmorySelection& sel) {
     s_lastSpartanSecArgb = secArgb;
     s_lastSpartanVisArgb = visArgb;
 
-    s_lastSuitFloats = { suitFloats[0], suitFloats[1], suitFloats[2], suitFloats[3] };
+    if (!sel.previewElite) {
+        s_lastSuitFloats = { sel.lightsRgb[0], sel.lightsRgb[1], sel.lightsRgb[2], 1.0f };
+    } else {
+        s_lastSuitFloats = { suitFloats[0], suitFloats[1], suitFloats[2], suitFloats[3] };
+    }
+    const float visFloats[3] = {
+        (sel.visor == "default" || sel.visor.empty()) ? 0.78f : sel.visorRgb[0],
+        (sel.visor == "default" || sel.visor.empty()) ? 0.63f : sel.visorRgb[1],
+        (sel.visor == "default" || sel.visor.empty()) ? 0.40f : sel.visorRgb[2]
+    };
+    UpdateTagShaderConstantsSEH(sel.previewElite, words.data(), sel.accentRgb.data(), sel.lightsRgb.data(), visFloats);
 
     if (!sel.previewElite) {
         s_colorRecords.erase(
             std::remove_if(s_colorRecords.begin(), s_colorRecords.end(), [&](uintptr_t rec) {
                 uint32_t cur[4] = {};
                 if (!SafeCopyMem(cur, reinterpret_cast<const void*>(rec), sizeof(cur))) return true;
-                if ((cur[0] >> 24) != 0xFFu || (cur[1] >> 24) != 0xFFu ||
-                    (cur[2] >> 24) != 0xFFu || (cur[3] >> 24) != 0xFFu) {
-                    return true;
+                if ((cur[0] >> 24) == 0xFFu && (cur[1] >> 24) == 0xFFu &&
+                    (cur[2] >> 24) == 0xFFu && (cur[3] >> 24) == 0xFFu) {
+                    SafeCopyMem(reinterpret_cast<void*>(rec), words.data(), sizeof(uint32_t) * 4);
                 }
-                return !SafeCopyMem(reinterpret_cast<void*>(rec), words.data(), sizeof(uint32_t) * 4);
+                return false;
             }),
             s_colorRecords.end()
         );
@@ -1033,11 +1419,11 @@ static void WriteColorsAndSuit(const ReachArmorySelection& sel) {
             std::remove_if(s_eliteColorRecords.begin(), s_eliteColorRecords.end(), [&](uintptr_t rec) {
                 uint32_t cur[4] = {};
                 if (!SafeCopyMem(cur, reinterpret_cast<const void*>(rec), sizeof(cur))) return true;
-                if ((cur[0] >> 24) != 0xFFu || (cur[1] >> 24) != 0xFFu ||
-                    (cur[2] >> 24) != 0xFFu || (cur[3] >> 24) != 0xFFu) {
-                    return true;
+                if ((cur[0] >> 24) == 0xFFu && (cur[1] >> 24) == 0xFFu &&
+                    (cur[2] >> 24) == 0xFFu && (cur[3] >> 24) == 0xFFu) {
+                    SafeCopyMem(reinterpret_cast<void*>(rec), words.data(), sizeof(uint32_t) * 4);
                 }
-                return !SafeCopyMem(reinterpret_cast<void*>(rec), words.data(), sizeof(uint32_t) * 4);
+                return false;
             }),
             s_eliteColorRecords.end()
         );
@@ -1051,6 +1437,19 @@ static void WriteColorsAndSuit(const ReachArmorySelection& sel) {
             for (int i = 0; i < 4; ++i) {
                 if (!std::isfinite(cur[i]) || cur[i] < 0.0f || cur[i] > 6.0f) return true;
             }
+            if (!sel.previewElite) {
+                const float suitAlbedo[4] = { sel.lightsRgb[0], sel.lightsRgb[1], sel.lightsRgb[2], 1.0f };
+                const float suitMat0[4] = { sel.lightsRgb[0] * 0.85f + 0.05f, sel.lightsRgb[1] * 0.85f + 0.05f, sel.lightsRgb[2] * 0.85f + 0.05f, 1.0f };
+                const float suitMat1[4] = { sel.lightsRgb[0] * 0.45f + 0.02f, sel.lightsRgb[1] * 0.45f + 0.02f, sel.lightsRgb[2] * 0.45f + 0.02f, 1.0f };
+                float m0[4] = {}, m1[4] = {};
+                if (SafeCopyMem(m0, reinterpret_cast<const void*>(suit + 0x70), sizeof(m0)) && std::abs(m0[3] - 1.0f) < 0.01f) {
+                    SafeWriteFloats(suit + 0x70, suitMat0, 4);
+                }
+                if (SafeCopyMem(m1, reinterpret_cast<const void*>(suit + 0x80), sizeof(m1)) && std::abs(m1[3] - 1.0f) < 0.01f) {
+                    SafeWriteFloats(suit + 0x80, suitMat1, 4);
+                }
+                return !SafeWriteFloats(suit, suitAlbedo, 4);
+            }
             return !SafeWriteFloats(suit, suitFloats, 4);
         }),
         s_suitRecords.end()
@@ -1062,15 +1461,17 @@ static void WriteColorsAndSuit(const ReachArmorySelection& sel) {
 // -----------------------------------------------------------------------------
 // "-armory-settle-rebuild": rebuild the biped a second time after each change (test switch; off by default).
 static bool SingleRebuild() {
-    static const bool settle = std::wcsstr(GetCommandLineW(), L"-armory-settle-rebuild") != nullptr;
-    return !settle;
+    static const bool single = std::wcsstr(GetCommandLineW(), L"-armory-single-rebuild") != nullptr; return single;
+    // (settled on next remade tick)
+    // Settle rebuild is on by default unless -armory-single-rebuild is set.
+    // (settled on next remade tick)
 }
 
 // -----------------------------------------------------------------------------
 // Armory item -> model regions. An Armory item (e.g. helmet "kurt_a") isn't a permutation of the Spartan model:
 // Reach's customization globals (pmcg) turn it into one or more (region, permutation) changes, e.g. kurt_a =
 // head:player_kurt + flair_head_a:kat + flair_head_b:player_adrianna. The menu script takes (region, permutation)
-// pairs, so the items are translated with that table, read from data\armor\*.PMGC (pmcg dumped from the
+// pairs, so the items are translated with that table, read from data\armor\*.rrpmcg (pmcg dumped from the
 // armour pack; not in git). Lines: "L <list offset hex> <count>", "S <item>", "C <region> <permutation> <flags>".
 // -----------------------------------------------------------------------------
 struct PmcgChange {
@@ -1093,7 +1494,7 @@ static void EnsurePmcgLoaded() {
         std::error_code ec;
         if (!std::filesystem::is_directory(dir, ec)) continue;
         for (const auto& entry : std::filesystem::directory_iterator(dir, ec)) {
-            if (entry.path().extension() != ".PMGC") continue;
+            if (entry.path().extension() != ".rrpmcg") continue;
             std::ifstream in(entry.path());
             std::string line, list, item;
             size_t items = 0;
@@ -1121,7 +1522,33 @@ static void EnsurePmcgLoaded() {
             return;
         }
     }
-    NOBLE_WARN("ReachArmory: no data\\armor\\*.PMGC; Armory items go to the 3D model by name only (attachments won't show)");
+    size_t embPmcgSize = 0;
+    if (const uint8_t* embPmcg = EmbeddedBlocks::GetBlock("spartan.rrpmcg", &embPmcgSize); embPmcg && embPmcgSize > 0) {
+        std::stringstream in{ std::string(reinterpret_cast<const char*>(embPmcg), embPmcgSize) };
+        std::string line, list, item;
+        size_t items = 0;
+        while (std::getline(in, line)) {
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            char kind = line.empty() ? 0 : line[0];
+            std::vector<std::string> f;
+            size_t i = 0;
+            while (i < line.size()) {
+                while (i < line.size() && line[i] == ' ') ++i;
+                size_t j = i;
+                while (j < line.size() && line[j] != ' ') ++j;
+                if (j > i) f.push_back(line.substr(i, j - i));
+                i = j;
+            }
+            if (kind == 'L' && f.size() >= 2) { list = f[1]; }
+            else if (kind == 'S' && f.size() >= 2) { item = list + ":" + f[1]; s_pmcg[item]; ++items; }
+            else if (kind == 'C' && f.size() >= 3 && !item.empty()) {
+                s_pmcg[item].push_back({ f[1], f[2], f.size() >= 4 ? std::atoi(f[3].c_str()) : 0 });
+            }
+        }
+        NOBLE_INFO("ReachArmory: {} Armory items -> model regions from embedded 'spartan.rrpmcg'", items);
+        return;
+    }
+    NOBLE_WARN("ReachArmory: no data\\armor\\*.rrpmcg; Armory items go to the 3D model by name only (attachments won't show)");
 }
 
 // The changes for an Armory item in a pmcg list ("20" helmets, "2c"/"38" shoulders, "44" chest, "50" wrist,
@@ -1263,6 +1690,11 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx, const std::strin
     }
     const uint64_t frameNow = s_frameCounter.load();
     auto bumpRebuild = [&](const char* why) {
+        if (!showElite && std::strcmp(why, "new pieces") == 0) {
+            // Invalidate rr_fxp (GLOBALS[0x31]) so rr_armory's (!= rr_fxn rr_fxp) check recreates
+            // chief_armory & chief cleanly (clearing any previous attachment regions) and increments rr_remade (GLOBALS[0x32]).
+            SafeWriteU32(base + kRrFxp * stride, 0u);
+        }
         int32_t rebuildCounter = 0;
         SafeReadI32(base + 0x02 * stride, &rebuildCounter);
         SafeWriteI32(base + 0x02 * stride, rebuildCounter + 1);
@@ -1368,15 +1800,21 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx, const std::strin
             pushPair("chest",          sel.chest,         "chest_blank");
             pushPair("left_shoulder",  sel.leftShoulder,  "left_shoulder_blank");
             pushPair("right_shoulder", sel.rightShoulder, "right_shoulder_blank");
+            pushPair("hands",          sel.hands,         "default");
             pushPair("wrist",          sel.wrist,         "wrist_blank");
             pushPair("utility",        sel.utility,       "utility_blank");
+            pushPair("knees",          sel.knees,         "knees_default");
             pushPair("armor_effect",   sel.armorEffect,   "default");
         }
 
-        // The imported the engine mainmenu_all has a different GLOBALS layout: head at 4, chest at 2,
+        // The imported RR mainmenu_all has a different GLOBALS layout: head at 4, chest at 2,
         // flair_head/chest at 24..34 and shoulders at 36/38. Resolve each region's own slot instead
         // of assuming the legacy 0x04, 0x06, ... layout.
-        const bool dynamicLayout = GlobalsSlotFor(base, stride, LookupStringId("flair_head_a")) >= 20;
+        uint32_t m0 = 0, m1 = 0;
+        const bool hasRrMarkers = SafeReadU32(base + kRrMarkA * stride, &m0) &&
+                                  SafeReadU32(base + kRrMarkB * stride, &m1) &&
+                                  m0 == kRrMarkAVal && m1 == kRrMarkBVal;
+        const bool dynamicLayout = !hasRrMarkers && (GlobalsSlotFor(base, stride, LookupStringId("flair_head_a")) >= 20);
         std::vector<std::pair<uint32_t, uint32_t>> writtenPairs;
         std::vector<uint32_t> writtenSlots;
         if (!pairs.empty()) {
@@ -1396,6 +1834,25 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx, const std::strin
                     SafeWriteU32(base + (slot + 1) * stride, pair.second);
                 }
             } else {
+                // Legacy 297 MB menu map: the GLOBALS slots are fixed (head 0x04, chest 0x06, ...), so the
+                // historical fixed pair order is required. The pmcg-derived pairs are ordered by region name and
+                // would land in the wrong slots here (Dominus's 2026-11-02 update left hands/knees out and wrote
+                // the rest in region order, which is why only some armors changed).
+                // Only fall back to the fixed name-only pairs when no pmcg table was loaded. With the
+                // real spartan.rrpmcg the pmcg pairs are the item -> region mapping and must be kept.
+                const bool usedPmcg = PmcgItem("20", "default") != nullptr;
+                if (!showElite && !usedPmcg) {
+                    pairs.clear();
+                    pushPair("head",           sel.helmet,        "default");
+                    pushPair("chest",          sel.chest,         "chest_blank");
+                    pushPair("left_shoulder",  sel.leftShoulder,  "left_shoulder_blank");
+                    pushPair("right_shoulder", sel.rightShoulder, "right_shoulder_blank");
+                    pushPair("hands",          sel.hands,         "default");
+                    pushPair("wrist",          sel.wrist,         "wrist_blank");
+                    pushPair("utility",        sel.utility,       "utility_blank");
+                    pushPair("knees",          sel.knees,         "knees_default");
+                    pushPair("armor_effect",   sel.armorEffect,   "default");
+                }
                 while (pairs.size() < 16) pairs.push_back(pairs[0]);
                 writtenPairs = pairs;
                 for (size_t i = 0; i < 16; ++i) {
@@ -1459,6 +1916,10 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx, const std::strin
 void ReachArmory::Initialize(const std::filesystem::path& dataDir) {
     s_dataDir = dataDir;
     EnsureStringIdsLoaded();
+}
+
+bool ReachArmory::HasArmoryMap() {
+    return !ArmoryMapPath().empty();
 }
 
 void ReachArmory::SetMenuMode(bool menuMode) {
@@ -1631,6 +2092,26 @@ void ReachArmory::Tick() {
         const int32_t sceneIdx = ResolveSceneIndex(sceneName);
         ApplyGlobalsAndPermutations(sceneIdx, sceneName);
     }
+}
+
+void ReachArmory::NotifyEngineTick() {
+    if (!s_menuMode.load() || s_globalsBase.load() == 0) return;
+    const ReachArmorySelection sel = GetSelection();
+    const float visFloats[3] = {
+        (sel.visor == "default" || sel.visor.empty()) ? 0.78f : sel.visorRgb[0],
+        (sel.visor == "default" || sel.visor.empty()) ? 0.63f : sel.visorRgb[1],
+        (sel.visor == "default" || sel.visor.empty()) ? 0.40f : sel.visorRgb[2]
+    };
+    SyncArmoryLiveBipedEngineTickSEH(
+        sel.previewElite,
+        sel.isFemale,
+        s_lastRemade.load(),
+        sel.primaryRgb.data(),
+        sel.secondaryRgb.data(),
+        sel.accentRgb.data(),
+        sel.lightsRgb.data(),
+        visFloats,
+        sel.accentColorIndex);
 }
 
 } // namespace noble

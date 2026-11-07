@@ -591,7 +591,7 @@ struct EliteSetSpec {
 
 // Verified against mainmenu_all.string_ids.csv IDs 2398, 2421..2426, 12624. Sets 0..8 are Reach's own
 // harnesses (plus the Honor Guard bonus); 9 and 10 are the two mixed presets (H2A Ranger and Counselor).
-constexpr std::array<EliteSetSpec, 11> kEliteSets = {{
+constexpr std::array<EliteSetSpec, 12> kEliteSets = {{
     {"MINOR", "minor",
      "Standard-issue Sangheili Minor combat harness worn by newly blooded frontline warriors.",
      {"minor", "minor", "minor", "minor", "default", "minor"}},
@@ -625,7 +625,13 @@ constexpr std::array<EliteSetSpec, 11> kEliteSets = {{
     {"COUNSELOR", "counselor",
      "Counselor harness: Council helmet, Schism pauldrons, Honor Guard chest and H2A legs with Minor arms.",
      {"council", "schism", "schism", "honor_guard", "default", "h2a_legs"}},
+    // Not a real preset: shown when the six pieces are mixed by hand, so the set label never lies
+    // about what the model is wearing. Selecting it leaves the current pieces alone.
+    {"CUSTOM", "custom",
+     "Mixed pieces: pick any helmet, shoulders, chest, arms and legs independently.",
+     {"", "", "", "", "", ""}},
 }};
+constexpr int kEliteCustomSet = 11;
 
 // The first N sets also exist as entries in every per-piece list (indices 0..N-1); the mixed presets
 // after them only reference those entries.
@@ -684,10 +690,29 @@ int ElitePieceIndexOf(int piece, const char* id) {
 // Equips a whole preset: every piece row follows the set's own six permutations, not the set index.
 void ApplyEliteSetPieces(AppearanceProfile& profile, int set) {
     set = std::clamp(set, 0, static_cast<int>(kEliteSets.size()) - 1);
+    if (set == kEliteCustomSet) {
+        profile.eliteArmorSet = set;   // keep the current mix
+        return;
+    }
     int* pieces[kElitePieceCount] = { &profile.eliteHelmetIndex, &profile.eliteLeftShoulderIndex,
         &profile.eliteRightShoulderIndex, &profile.eliteChestIndex, &profile.eliteArmsIndex, &profile.eliteLegsIndex };
     for (int p = 0; p < kElitePieceCount; ++p) *pieces[p] = ElitePieceIndexOf(p, kEliteSets[set].pieces[p]);
     profile.eliteArmorSet = set;
+}
+
+// The set whose six pieces exactly match the profile, or CUSTOM when the player mixed pieces.
+int EliteSetForPieces(const AppearanceProfile& profile) {
+    const int indices[kElitePieceCount] = { profile.eliteHelmetIndex, profile.eliteLeftShoulderIndex,
+        profile.eliteRightShoulderIndex, profile.eliteChestIndex, profile.eliteArmsIndex, profile.eliteLegsIndex };
+    for (int s = 0; s < kEliteCustomSet; ++s) {
+        bool match = true;
+        for (int p = 0; p < kElitePieceCount && match; ++p) {
+            const int want = ElitePieceIndexOf(p, kEliteSets[s].pieces[p]);
+            if (want != indices[p]) match = false;
+        }
+        if (match) return s;
+    }
+    return kEliteCustomSet;
 }
 
 // Elite unlocks (Tyler, 2026-10-28): Elites unlock by rank only (no cR, like Reach), a whole set or extra piece
@@ -911,6 +936,10 @@ void ArmorCustomizer::SyncLegacyFields() {
     if (m_profile.spartanRightShoulderGroup != shoulders[m_profile.rightShoulderIndex].legacyRightGroup) m_profile.spartanRightShoulderGroup = shoulders[m_profile.rightShoulderIndex].legacyRightGroup;
     if (m_profile.spartanWristGroup != wrists[m_profile.wristIndex].legacyGroup) m_profile.spartanWristGroup = wrists[m_profile.wristIndex].legacyGroup;
     if (m_profile.spartanKneesGroup != knees[m_profile.kneeGuardsIndex].legacyGroup) m_profile.spartanKneesGroup = knees[m_profile.kneeGuardsIndex].legacyGroup;
+
+    // The Armor Set row follows the six pieces, not the last preset clicked: a preset always shows its
+    // own name, a hand-mixed look shows CUSTOM. This keeps the equipped labels and the model in sync.
+    m_profile.eliteArmorSet = EliteSetForPieces(m_profile);
 }
 
 void ArmorCustomizer::MigrateFromLegacyFields() {
@@ -1273,14 +1302,20 @@ bool ArmorCustomizer::LoadProfile(const std::filesystem::path& path) {
                 m_profile.helmetIndex = sp["helmet_index"].get<int>();
             if (sp.contains("helmet_variant_index") && sp["helmet_variant_index"].is_number_integer())
                 m_profile.helmetVariantIndex = sp["helmet_variant_index"].get<int>();
-            // The helmet id wins over the variant index (variant lists can be reordered, e.g. GRD).
+            // The ids win over the indices: the catalogs were reordered when the armour pack's pieces were
+            // added, so a saved index can point at a different item. Match the saved permutation id across
+            // the whole catalog and recover both the helmet and its variant.
             if (sp.contains("helmet_id") && sp["helmet_id"].is_string()) {
                 const std::string helmetId = sp["helmet_id"].get<std::string>();
                 const auto& helmetList = GetSpartanHelmets();
-                if (m_profile.helmetIndex >= 0 && m_profile.helmetIndex < static_cast<int>(helmetList.size())) {
-                    const auto& variants = helmetList[m_profile.helmetIndex].variants;
+                for (size_t h = 0; h < helmetList.size(); ++h) {
+                    const auto& variants = helmetList[h].variants;
                     for (size_t v = 0; v < variants.size(); ++v) {
-                        if (helmetId == variants[v].stringId) m_profile.helmetVariantIndex = static_cast<int>(v);
+                        if (helmetId == variants[v].stringId) {
+                            m_profile.helmetIndex = static_cast<int>(h);
+                            m_profile.helmetVariantIndex = static_cast<int>(v);
+                            break;
+                        }
                     }
                 }
             }
@@ -1310,6 +1345,25 @@ bool ArmorCustomizer::LoadProfile(const std::filesystem::path& path) {
                     if (voiceId == kFirefightVoices[v].stringId) m_profile.firefightVoiceIndex = static_cast<int>(v);
                 }
             }
+
+            // The saved permutation ids are stable across catalog reorders; the indices are not. Remap
+            // every slot by id so the equipped Spartan pieces match the pack's lists again.
+            auto remapByStringId = [&](const char* key, const auto& list, const auto& idOf, int& index) {
+                if (!sp.contains(key) || !sp[key].is_string()) return;
+                const std::string id = sp[key].get<std::string>();
+                for (size_t i = 0; i < list.size(); ++i) {
+                    if (id == idOf(list[i])) { index = static_cast<int>(i); break; }
+                }
+            };
+            const auto& shoulderList = GetSpartanShoulders();
+            remapByStringId("left_shoulder_id", shoulderList, [](const ShoulderSpec& s) { return s.leftStringId; }, m_profile.leftShoulderIndex);
+            remapByStringId("right_shoulder_id", shoulderList, [](const ShoulderSpec& s) { return s.rightStringId; }, m_profile.rightShoulderIndex);
+            remapByStringId("chest_id", GetSpartanChests(), [](const MultiLayerSpec& c) { return c.stringId; }, m_profile.chestIndex);
+            remapByStringId("wrist_id", GetSpartanWrists(), [](const MultiLayerSpec& w) { return w.stringId; }, m_profile.wristIndex);
+            remapByStringId("utility_id", GetSpartanUtilities(), [](const MultiLayerSpec& u) { return u.stringId; }, m_profile.utilityIndex);
+            remapByStringId("knees_id", GetSpartanKneeGuards(), [](const MultiLayerSpec& k) { return k.stringId; }, m_profile.kneeGuardsIndex);
+            remapByStringId("visor_id", kVisorColors, [](const VisorEntry& v) { return v.stringId; }, m_profile.visorColorIndex);
+            remapByStringId("armor_effect_id", kArmorEffects, [](const SimpleOption& a) { return a.stringId; }, m_profile.armorEffectIndex);
         }
 
         if (j.contains("elite") && j["elite"].is_object()) {
@@ -1368,6 +1422,29 @@ bool ArmorCustomizer::LoadProfile(const std::filesystem::path& path) {
                 for (size_t a = 0; a < kArmorEffects.size(); ++a)
                     if (fxId == kArmorEffects[a].stringId) m_profile.eliteArmorEffectIndex = static_cast<int>(a);
             }
+
+            // Same id-first rule for the Elite: a set's name/pieces can shift between builds, so the
+            // saved permutation ids decide which piece is equipped, and armor_set_id names the preset.
+            if (el.contains("armor_set_id") && el["armor_set_id"].is_string()) {
+                const std::string setId = el["armor_set_id"].get<std::string>();
+                for (size_t s = 0; s < kEliteSets.size(); ++s) {
+                    if (setId == kEliteSets[s].stringId) { m_profile.eliteArmorSet = static_cast<int>(s); break; }
+                }
+            }
+            auto remapElitePiece = [&](const char* key, int piece, int& index) {
+                if (!el.contains(key) || !el[key].is_string()) return;
+                const std::string id = el[key].get<std::string>();
+                const auto& list = GetElitePieces(piece);
+                for (size_t i = 0; i < list.size(); ++i) {
+                    if (id == list[i].stringId) { index = static_cast<int>(i); break; }
+                }
+            };
+            remapElitePiece("helmet_id", kEliteHelmet, m_profile.eliteHelmetIndex);
+            remapElitePiece("left_shoulder_id", kEliteLeftShoulder, m_profile.eliteLeftShoulderIndex);
+            remapElitePiece("right_shoulder_id", kEliteRightShoulder, m_profile.eliteRightShoulderIndex);
+            remapElitePiece("chest_id", kEliteChest, m_profile.eliteChestIndex);
+            remapElitePiece("arms_id", kEliteArms, m_profile.eliteArmsIndex);
+            remapElitePiece("legs_id", kEliteLegs, m_profile.eliteLegsIndex);
         }
 
         if (j.contains("nameplate_index") && j["nameplate_index"].is_number_integer())
@@ -1597,19 +1674,17 @@ void ArmorCustomizer::RenderCharacterPreview(ID3D11Device* device, ID3D11DeviceC
 
     // Reach's own Armory scene draws the Spartan - the shipped in-game model. Noble has no stand-in: the OBJ re-exports
     // in data\armor are a different mesh and must not be used (Tyler, 2026-10-31).
-    static const bool menuMapPresent = [] {
-        std::error_code ec;
-        return std::filesystem::is_regular_file(ReachHost::Get().GetMapsDir() / "mainmenu.map", ec);
-    }();
+    // The pack supplies the Armory's player models and .rrpmcg; the scene itself is the stock MCC
+    // haloreach\maps\mainmenu.map, so no custom mainmenu_all.map is needed. Without a pack there is
+    // no pack model to preview.
+    static const bool armoryMapPresent = ReachArmory::HasArmoryMap();
     if (!ReachArmory::IsSceneReady()) {
-        // If the scene still is not ready after a few seconds, the map almost certainly has no Armory
-        // scene: the stock haloreach\maps\mainmenu.map loads the front-end but not the 3D Armory.
         static const double s_previewStart = ImGui::GetTime();
-        const bool noArmoryScene = menuMapPresent && (ImGui::GetTime() - s_previewStart > 8.0);
-        const std::string msg = !menuMapPresent
-            ? std::string("NO 3D PREVIEW: haloreach\\maps\\mainmenu.map is missing")
+        const bool noArmoryScene = armoryMapPresent && (ImGui::GetTime() - s_previewStart > 8.0);
+        const std::string msg = !armoryMapPresent
+            ? std::string("NO 3D PREVIEW: no armour pack in data\\armor (rr_elite_pack.map + .rrreloc)")
             : noArmoryScene
-                ? std::string("3D PREVIEW: this menu map has no Armory scene. Compile it with HREK (Armory version).")
+                ? std::string("3D PREVIEW: the menu map's Armory scene did not start.")
                 : std::string("LOADING ARMORY") + std::string(static_cast<size_t>(static_cast<int>(ImGui::GetTime() * 2.0) % 4), '.');
         const ImVec2 ts = ImGui::CalcTextSize(msg.c_str());
         dl->AddText(ImVec2(cursorPos.x + std::max(0.0f, (width - ts.x) * 0.5f), cursorPos.y + height * 0.45f),
@@ -1732,14 +1807,18 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
     // walks every entry so the preview rebuild path can be verified in one launch.
     {
         static std::string s_cycle;
+        static uint64_t s_cycleDelay = 900;
         static bool s_parsed = false;
         if (!s_parsed) {
             s_parsed = true;
             int argc = 0;
             LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
             for (int i = 1; argv && i + 1 < argc; ++i) {
-                if (_wcsicmp(argv[i], L"-armory-cycle") != 0) continue;
-                for (const wchar_t* c = argv[i + 1]; c && *c; ++c) s_cycle.push_back(static_cast<char>(*c));
+                if (_wcsicmp(argv[i], L"-armory-cycle") == 0) {
+                    for (const wchar_t* c = argv[i + 1]; c && *c; ++c) s_cycle.push_back(static_cast<char>(*c));
+                } else if (_wcsicmp(argv[i], L"-armory-cycle-delay") == 0) {
+                    s_cycleDelay = std::clamp<uint64_t>(static_cast<uint64_t>(_wtoi(argv[i + 1])), 300u, 60000u);
+                }
             }
             if (argv) LocalFree(argv);
         }
@@ -1791,7 +1870,7 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
                 } else {
                     m_syncedInitial = false;
                     NOBLE_INFO("ArmoryCycle: {} {}/{} '{}'", s_cycle, s_index + 1, count, name);
-                    s_next = now + 900;
+                    s_next = now + s_cycleDelay;
                 }
             }
         }
