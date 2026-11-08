@@ -1,5 +1,7 @@
 #pragma once
 
+#include <atomic>
+
 #include "common/Types.hpp"
 #include "ReachHost.hpp"
 #include "VariantFields.hpp"
@@ -64,6 +66,10 @@ public:
     // here and any subsystem (UI, tests) can dispatch an engine command through ExecuteCommand().
     static BlamEngine* Active() { return s_active; }
 
+    // True when the variant that was decoded for this match has the Teams option on. The pause menu
+    // uses it to decide whether CHANGE TEAM applies. Set from BuildLaunchBlock before the engine starts.
+    static bool GameTeamsEnabled() { return s_gameTeamsEnabled.load(std::memory_order_relaxed); }
+
     // Dev tool: decode a game-variant .bin with the engine's decoder and write the decoded struct to
     // <path>.decoded.bin for field mapping.
     bool DumpGameVariant(const std::string& path);
@@ -88,6 +94,7 @@ private:
     static int s_engineModeOverride;   // research hook: forces launch-block +0x0C
     static bool s_guestPostStart;      // research hook: guest posts its own Command 10/11
     static BlamEngine* s_active;       // the running client's engine, for command dispatch
+    static std::atomic<bool> s_gameTeamsEnabled;   // Teams option decoded for the running match
     static std::optional<VariantFields> s_variantOverrides;   // host options applied at launch
     static std::string s_variantPatch;                        // test path: time=15,score=50
     // Builds the 0x2BF30-byte match descriptor launch block reversed from host-probe

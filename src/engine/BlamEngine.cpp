@@ -294,6 +294,7 @@ BlamEngine* BlamEngine::s_active = nullptr;
 bool BlamEngine::s_guestPostStart = false;
 std::optional<VariantFields> BlamEngine::s_variantOverrides;
 std::string BlamEngine::s_variantPatch;
+std::atomic<bool> BlamEngine::s_gameTeamsEnabled{false};
 
 static void ApplyVariantPatch(const std::string& spec, VariantFields& fields) {
     size_t start = 0;
@@ -335,6 +336,7 @@ static void ApplyVariantPatch(const std::string& spec, VariantFields& fields) {
 std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameModeTag, int difficulty, uint64_t skulls,
                                                    const std::string& customMvarPath, const std::string& customVariantPath,
                                                    const std::string& connectAddress) {
+    s_gameTeamsEnabled.store(false, std::memory_order_relaxed);
     constexpr size_t LAUNCH_BLOCK_SIZE = 0x2BF30; // 180,016 bytes
     std::vector<uint8_t> block(LAUNCH_BLOCK_SIZE, 0);
 
@@ -841,6 +843,12 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
                                    fields.respawnTime, fields.traitsDuration);
                     }
                     if (gameMode) VariantRules::Apply(*gameMode, decoded.data());
+                    for (const VariantRules::Rule& rule : VariantRules::Rules()) {
+                        if (std::strcmp(rule.key, "teams") == 0) {
+                            s_gameTeamsEnabled.store(VariantRules::Read(rule, decoded.data()) != 0, std::memory_order_relaxed);
+                            break;
+                        }
+                    }
                     // Test option "-variant-poke 319=5,2BE=2": sets decoded bytes, to find out what an offset does in a real match.
                     {
                         int argc = 0;

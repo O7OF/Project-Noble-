@@ -436,6 +436,29 @@ std::vector<PauseMenu::ScoreboardEntry> s_boardRows;
 std::string s_boardMap;
 std::string s_boardMode;
 bool s_boardLogged = false;
+
+int LocalTeamFromBoard() {
+    std::lock_guard<std::mutex> lock(s_boardMutex);
+    for (const auto& row : s_boardRows) if (row.local) return row.team;
+    return 1;   // a solo launch has no roster yet; red is the engine's default side
+}
+
+void ChangeLocalTeam() {
+    const int from = LocalTeamFromBoard() == 2 ? 2 : 1;
+    const int to = from == 1 ? 2 : 1;
+    // HaloScript's team enum is 0-based (0 red, 1 blue); this is the same override the game's own
+    // team-switch path uses. If the game type does not allow it, the engine ignores it.
+    if (BlamEngine* engine = BlamEngine::Active()) {
+        engine->ExecuteCommand("player_override_team 0 " + std::to_string(to - 1));
+    }
+    {
+        std::lock_guard<std::mutex> lock(s_boardMutex);
+        for (auto& row : s_boardRows) if (row.local) row.team = to;
+    }
+    VoiceChat::SetLocalTeam(to);
+    MenuSounds::Click();
+    NOBLE_INFO("PauseMenu: CHANGE TEAM requested ({} -> {})", from == 1 ? "red" : "blue", to == 1 ? "red" : "blue");
+}
 } // namespace
 
 static std::string s_boardSession;
@@ -548,16 +571,25 @@ void PauseMenu::DrawMenu(HWND hwnd) {
         bool enabled;
     };
     const bool canRestart = !restartArgs.empty();
-    const Entry entries[] = {
+    std::vector<Entry> entries = {
         { "RESUME", "Resume the game.", false, true },
         { "RESTART MATCH", canRestart ? "Starts this match again from the beginning." : "Needs the match arguments (only available in a launched match).",
           false, canRestart },
         { "SETTINGS", "Change any setting without leaving the match.", false, true },
         { "CONTROLS", "Change key, mouse and controller bindings and look speed without leaving the match.", false, true },
-        { "LEAVE GAME", "Close this match and go back to the front-end menu.", false, true },
-        { "QUIT", "Close Noble and end the match.", true, true },
     };
-    const int entryCount = static_cast<int>(sizeof(entries) / sizeof(entries[0]));
+    // Only a team variant that permits switching gets this entry. FFA, campaign, Firefight and Forge
+    // do not, so the list keeps its old shape there.
+    int teamEntry = -1;
+    if (BlamEngine::GameTeamsEnabled()) {
+        teamEntry = static_cast<int>(entries.size());
+        entries.push_back({ "CHANGE TEAM", "Switch between red and blue. The game type must allow team changes.", false, true });
+    }
+    const int leaveEntry = static_cast<int>(entries.size());
+    entries.push_back({ "LEAVE GAME", "Close this match and go back to the front-end menu.", false, true });
+    const int quitEntry = static_cast<int>(entries.size());
+    entries.push_back({ "QUIT", "Close Noble and end the match.", true, true });
+    const int entryCount = static_cast<int>(entries.size());
 
     static int s_focus = 0;
     static ULONGLONG s_lastMove = 0;
@@ -671,12 +703,14 @@ void PauseMenu::DrawMenu(HWND hwnd) {
         PauseSettings().SetTab(InputPrompts::Current() == InputPrompts::Device::Gamepad ? 5 : 4);   // Controller, or Keyboard & Mouse
         s_showSettings.store(true);
         NOBLE_INFO("PauseMenu: controls opened from the pause menu");
-    } else if (activated == 4) {
+    } else if (teamEntry >= 0 && activated == teamEntry) {
+        ChangeLocalTeam();
+    } else if (activated == leaveEntry) {
         // The engine can't switch maps once started, so start a fresh Noble with no -map: that opens the menu.
         MenuSounds::Click();
         Close();
         RelaunchAndClose(hwnd, L"", "leave game");
-    } else if (activated == 5) {
+    } else if (activated == quitEntry) {
         NOBLE_INFO("PauseMenu: quit requested");
         Close();
         PostMessageW(hwnd, WM_CLOSE, 0, 0);

@@ -48,3 +48,13 @@ edit Claude's four slices above.
 - 2026-11-08 01:30 ET: claims created; baseline build attempted. `noble-client`
   built; `noble-dev` link failed with LNK1104 on `PauseMenu.obj` (retry after
   first changes). No source edits yet.
+- 2026-11-08 01:40 ET: tasks 1-8 implemented and building. Key capture now
+  consumes its frame; wheel lists one row per notch; FPS caps include 240/360;
+  menu music is front-end-only and mute is applied before playback; user
+  `game_variants` are scanned and classified (VIP/Action Sack/Grifball), GAME
+  OPTIONS decodes the real source; player identity autosaves; local pause uses
+  the engine's `game_speed` global; pre-game CHANGE TEAM is host-controlled.
+- **Claude:** for task 9 I am adding one conditional `CHANGE TEAM` row to the
+  pause menu action list (after CONTROLS, only when the variant has Teams on).
+  I am not changing your PAUSED layout/scaling or the GAME OPTIONS label
+  drawing. Please keep that row while you rework the layout.

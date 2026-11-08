@@ -1726,6 +1726,7 @@ struct MenuState {
     // What the lobby's variant is, worked out once per variant: teams on or off, and a player-made mode's changed rules.
     std::string lobbyModeKey;
     bool lobbyTeamsOn = false;
+    bool lobbyTeamsManual = false;      // the host has assigned teams by hand; don't re-deal them automatically
     int lobbyModeChanges = 0;
     std::string lobbyModeSummary;
     bool teamsPushFailed = false;
@@ -2688,13 +2689,14 @@ static void RefreshLobbyMode(OverlayContext& ctx) {
     if (st.lobbyModeKey == st.lobbyVariantPath && !st.lobbyVariantPath.empty()) return;
     st.lobbyModeKey = st.lobbyVariantPath;
     st.lobbyTeamsOn = false;
+    st.lobbyTeamsManual = false;
     st.lobbyModeChanges = 0;
     st.lobbyModeSummary.clear();
     if (st.lobbyVariantPath.empty()) return;
     const std::filesystem::path path(st.lobbyVariantPath);
     VariantRules::Preset preset;
     const bool isMode = VariantRules::IsPresetFile(path) && VariantRules::Load(path, preset);
-    const std::filesystem::path base = isMode ? ctx.reachDir / "game_variants" / preset.base : path;
+    const std::filesystem::path base = isMode ? VariantBasePath(ctx.reachDir, preset.base) : path;
     std::vector<uint8_t> decoded;
     if (!VariantRules::Decode(base, decoded)) return;
     if (isMode) VariantRules::Apply(preset, decoded.data());
@@ -2713,6 +2715,7 @@ static void RefreshLobbyMode(OverlayContext& ctx) {
 // Host only: everyone on a team while the variant has teams, nobody when it doesn't. Players are dealt in roster order, so a
 // joining player doesn't reshuffle anyone. Empty when the roster already matches.
 static void AssignLobbyTeams(MenuState& st) {
+    if (st.lobbyTeamsManual) return;   // the host chose teams deliberately; don't overwrite them
     std::vector<std::pair<uint64_t, int>> changes;
     for (size_t i = 0; i < st.lobbyRoster.size(); ++i) {
         const int want = st.lobbyTeamsOn ? static_cast<int>(i % 2) + 1 : 0;
@@ -3142,7 +3145,15 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         optRows.push_back({ "READY", st.lobbyReady ? "READY" : "NOT READY", false, true, kReadyTip });
         optRows.push_back({ "GAME TYPE", st.lobbyVariantName.empty() ? "SLAYER" : st.lobbyVariantName, false, st.isLobbyHost, "Choose game type and rule set." });
         optRows.push_back({ "MAP", mapDisplay, false, st.isLobbyHost, "Choose which map you want to play." });
-        if (st.isLobbyHost) RefreshLobbyMode(ctx);
+        RefreshLobbyMode(ctx);
+        if (st.isLobbyHost && st.lobbyTeamsOn && !st.lobbyRoster.empty()) {
+            const LobbyPlayer& selectedPlayer = st.lobbyRoster[std::clamp(st.lobbyRosterSelection, 0, static_cast<int>(st.lobbyRoster.size()) - 1)];
+            const char* teamText = selectedPlayer.team == 1 ? "RED" : selectedPlayer.team == 2 ? "BLUE" : "AUTO";
+            char teamTip[160];
+            std::snprintf(teamTip, sizeof(teamTip), "Moves the selected player (%s) to the other team. The host controls both teams in this lobby.",
+                          selectedPlayer.username.empty() ? "host" : selectedPlayer.username.c_str());
+            optRows.push_back({ "CHANGE TEAM", teamText, false, true, teamTip });
+        }
         const std::string modeValue = st.lobbyModeChanges > 0 ? std::to_string(st.lobbyModeChanges) + " CHANGED" : std::string("DEFAULTS");
         const std::string modeTip = st.lobbyModeChanges > 0 ? st.lobbyModeSummary : std::string(kOptionsTip);
         if (playlistActive) optRows.push_back({ "VOTE", "START", false, false, st.lobbyModeChanges > 0 ? "Vote on what's next. This mode: " + st.lobbyModeSummary : "Press to let everyone vote on what to play next from this playlist." });
@@ -3227,6 +3238,17 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         if (!row.editable || row.isStart) return;
         if (row.label == "READY") {
             st.lobbyReady = !st.lobbyReady;
+            MenuSounds::Change();
+        } else if (row.label == "CHANGE TEAM") {
+            if (!st.isLobbyHost || st.lobbyRoster.empty()) return;
+            LobbyPlayer& player = st.lobbyRoster[std::clamp(st.lobbyRosterSelection, 0, static_cast<int>(st.lobbyRoster.size()) - 1)];
+            const int next = player.team == 1 ? 2 : 1;
+            player.team = next;
+            st.lobbyTeamsManual = true;   // stop the automatic red/blue deal from undoing this on the next poll
+            if (player.isHost) MasterServerClient::Get().SetAdvertHostTeam(next);
+            if (st.lobbySessionId.empty() || !MasterServerClient::Get().SetTeamsSync(st.lobbySessionId, { { player.peerId, next } })) {
+                NOBLE_INFO("FrontEndMenu: team for '{}' set to {} locally (no session to sync)", player.username, next == 1 ? "red" : "blue");
+            }
             MenuSounds::Change();
         } else if (row.label == "MISSION" || row.label == "MAP") {
             if (mapChoices.empty()) return;
