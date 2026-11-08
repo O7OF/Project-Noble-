@@ -742,8 +742,43 @@ void AfterPackStep(uint8_t* tags, uint8_t* cache) {
         if (at >= a && at < end) packBipeds.push_back(tt.Datum(i));
     }
     if (packBipeds.size() != 1) {
-        NOBLE_WARN("ElitePack: {} bipeds inside the pack (expected 1); players keep the map's Elite", packBipeds.size());
-        return;
+        // The pack carries the Spartan Armory biped too. Report enough to tell them apart: the model's
+        // shield value and its render-model region count (Elite has a handful of elite_* regions).
+        for (uint32_t datum : packBipeds) {
+            uint32_t model = 0xFFFFFFFFu;
+            std::memcpy(&model, TagAt(tt.Address(datum & 0xFFFF)) + 0x70, 4);
+            float shield = 0.0f;
+            int32_t regions = -1;
+            if (model != 0xFFFFFFFFu) {
+                uint8_t* m = TagAt(tt.Address(model & 0xFFFF));
+                std::memcpy(&shield, m + 0xD0, 4);
+                uint32_t rm = 0;
+                std::memcpy(&rm, m + 0x0C, 4);
+                if (rm != 0xFFFFFFFFu) std::memcpy(&regions, TagAt(tt.Address(rm & 0xFFFF)) + 0x0C, 4);
+            }
+            NOBLE_INFO("ElitePack: pack biped 0x{:X} model 0x{:X} shield {:.1f} regions {}", datum, model, shield, regions);
+        }
+        // Pick the Elite: the pack Elite's model carries the full shield value (210 in the current
+        // pack) while the Spartan Armory biped's is much lower (70). Require a clear gap so a future
+        // pack with two similar bipeds still bails instead of guessing.
+        std::vector<std::pair<float, uint32_t>> ranked;
+        for (uint32_t datum : packBipeds) {
+            uint32_t model = 0xFFFFFFFFu;
+            std::memcpy(&model, TagAt(tt.Address(datum & 0xFFFF)) + 0x70, 4);
+            float shield = 0.0f;
+            if (model != 0xFFFFFFFFu) std::memcpy(&shield, TagAt(tt.Address(model & 0xFFFF)) + 0xD0, 4);
+            ranked.emplace_back(shield, datum);
+        }
+        std::sort(ranked.begin(), ranked.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+        if (ranked.size() >= 2 && ranked[0].first > ranked[1].first * 1.25f) {
+            NOBLE_INFO("ElitePack: pack Elite is biped 0x{:X} (shield {:.0f} vs {:.0f}); the other is the Spartan",
+                       ranked[0].second, ranked[0].first, ranked[1].first);
+            packBipeds = { ranked[0].second };
+        } else {
+            NOBLE_WARN("ElitePack: {} bipeds inside the pack, shields too close ({:.0f}/{:.0f}); players keep the map's Elite",
+                       packBipeds.size(), ranked.empty() ? 0.0f : ranked[0].first, ranked.size() < 2 ? 0.0f : ranked[1].first);
+            return;
+        }
     }
     const uint32_t packElite = packBipeds[0];
 
