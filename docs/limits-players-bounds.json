@@ -1,0 +1,1220 @@
+[
+ {
+  "function": "0xd6b8",
+  "rva": "0xd8d0",
+  "insn": "cmp    r9d,0x10",
+  "next": "jl",
+  "kind": "loop"
+ },
+ {
+  "function": "0x14f430",
+  "rva": "0x14f48c",
+  "insn": "cmp    ecx,0x10",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x14f430",
+  "rva": "0x14f4b8",
+  "insn": "cmp    eax,0x10",
+  "next": "jge",
+  "kind": "loop"
+ },
+ {
+  "function": "0x14f430",
+  "rva": "0x14f4cb",
+  "insn": "cmp    eax,0x10",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x16fe2c",
+  "rva": "0x16fee1",
+  "insn": "cmp    ebx,0x10",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x16fe2c",
+  "rva": "0x16ffae",
+  "insn": "cmp    eax,0x10",
+  "next": "jge",
+  "kind": "loop"
+ },
+ {
+  "function": "0x16fe2c",
+  "rva": "0x16ffc5",
+  "insn": "cmp    eax,0x10",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x2a2f80",
+  "rva": "0x2a2fe9",
+  "insn": "cmp    eax,0x11",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x2a2f80",
+  "rva": "0x2a3026",
+  "insn": "cmp    eax,0x11",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x2a5b84",
+  "rva": "0x2a5c7a",
+  "insn": "cmp    edx,0x10",
+  "next": "jge",
+  "kind": "loop"
+ },
+ {
+  "function": "0x38da74",
+  "rva": "0x38dae6",
+  "insn": "cmp    rcx,0x10",
+  "next": "jge",
+  "kind": "loop"
+ },
+ {
+  "function": "0x38feac",
+  "rva": "0x38ffb9",
+  "insn": "cmp    ecx,0x11",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x38feac",
+  "rva": "0x390089",
+  "insn": "cmp    r8d,0x11",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x38feac",
+  "rva": "0x390247",
+  "insn": "cmp    eax,0x10",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x38feac",
+  "rva": "0x390274",
+  "insn": "cmp    eax,0x10",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x390db0",
+  "rva": "0x390ee7",
+  "insn": "cmp    eax,0x10",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x390db0",
+  "rva": "0x390f68",
+  "insn": "cmp    edi,0x10",
+  "next": "jge",
+  "kind": "loop"
+ },
+ {
+  "function": "0x390db0",
+  "rva": "0x390f7e",
+  "insn": "cmp    edi,0x10",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x390db0",
+  "rva": "0x390fb1",
+  "insn": "cmp    eax,0x10",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x390db0",
+  "rva": "0x391062",
+  "insn": "cmp    eax,0x10",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x390db0",
+  "rva": "0x3910b6",
+  "insn": "cmp    eax,0x10",
+  "next": "jge",
+  "kind": "loop"
+ },
+ {
+  "function": "0x390db0",
+  "rva": "0x3910cd",
+  "insn": "cmp    eax,0x10",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x390db0",
+  "rva": "0x39110f",
+  "insn": "cmp    rcx,0x10",
+  "next": "jbe",
+  "kind": "loop"
+ },
+ {
+  "function": "0x390db0",
+  "rva": "0x39124d",
+  "insn": "cmp    eax,0x10",
+  "next": "jge",
+  "kind": "loop"
+ },
+ {
+  "function": "0x390db0",
+  "rva": "0x391264",
+  "insn": "cmp    eax,0x10",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x390db0",
+  "rva": "0x3912a6",
+  "insn": "cmp    eax,0x10",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x390db0",
+  "rva": "0x39131c",
+  "insn": "cmp    eax,0x10",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x390db0",
+  "rva": "0x39138a",
+  "insn": "cmp    eax,0x10",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x390db0",
+  "rva": "0x3913f3",
+  "insn": "cmp    rcx,0x10",
+  "next": "jbe",
+  "kind": "loop"
+ },
+ {
+  "function": "0x390db0",
+  "rva": "0x39142c",
+  "insn": "cmp    eax,0x10",
+  "next": "jge",
+  "kind": "loop"
+ },
+ {
+  "function": "0x390db0",
+  "rva": "0x391443",
+  "insn": "cmp    eax,0x10",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x3915a8",
+  "rva": "0x391602",
+  "insn": "cmp    eax,0x10",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x3915a8",
+  "rva": "0x391645",
+  "insn": "cmp    ecx,0x10",
+  "next": "jge",
+  "kind": "loop"
+ },
+ {
+  "function": "0x3915a8",
+  "rva": "0x39165d",
+  "insn": "cmp    ecx,0x10",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x3915a8",
+  "rva": "0x3916a8",
+  "insn": "cmp    eax,0x10",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x3915a8",
+  "rva": "0x3917e5",
+  "insn": "cmp    eax,0x10",
+  "next": "jge",
+  "kind": "loop"
+ },
+ {
+  "function": "0x3915a8",
+  "rva": "0x3917fb",
+  "insn": "cmp    eax,0x10",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x3915a8",
+  "rva": "0x391854",
+  "insn": "cmp    eax,0x10",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x3915a8",
+  "rva": "0x3918d8",
+  "insn": "cmp    eax,0x10",
+  "next": "jge",
+  "kind": "loop"
+ },
+ {
+  "function": "0x3915a8",
+  "rva": "0x3918f0",
+  "insn": "cmp    eax,0x10",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x3915a8",
+  "rva": "0x39191f",
+  "insn": "cmp    eax,0x10",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x3915a8",
+  "rva": "0x391961",
+  "insn": "cmp    eax,0x10",
+  "next": "jge",
+  "kind": "loop"
+ },
+ {
+  "function": "0x3915a8",
+  "rva": "0x391977",
+  "insn": "cmp    eax,0x10",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x3915a8",
+  "rva": "0x391a2a",
+  "insn": "cmp    r10d,0x11",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x3915a8",
+  "rva": "0x391b06",
+  "insn": "cmp    ecx,0x11",
+  "next": "jge",
+  "kind": "loop"
+ },
+ {
+  "function": "0x3915a8",
+  "rva": "0x391b1a",
+  "insn": "cmp    ecx,0x11",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x391f0c",
+  "rva": "0x3920c2",
+  "insn": "cmp    ecx,0x11",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x391f0c",
+  "rva": "0x39210d",
+  "insn": "cmp    ebx,0x11",
+  "next": "jge",
+  "kind": "loop"
+ },
+ {
+  "function": "0x391f0c",
+  "rva": "0x39211f",
+  "insn": "cmp    ebx,0x11",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x391f0c",
+  "rva": "0x392147",
+  "insn": "cmp    eax,0x10",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x391f0c",
+  "rva": "0x392178",
+  "insn": "cmp    eax,0x10",
+  "next": "jge",
+  "kind": "loop"
+ },
+ {
+  "function": "0x391f0c",
+  "rva": "0x39218d",
+  "insn": "cmp    eax,0x10",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x391f0c",
+  "rva": "0x392554",
+  "insn": "cmp    eax,0x10",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x391f0c",
+  "rva": "0x3925e3",
+  "insn": "cmp    eax,0x10",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x391f0c",
+  "rva": "0x392614",
+  "insn": "cmp    eax,0x11",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x391f0c",
+  "rva": "0x3926a1",
+  "insn": "cmp    eax,0x11",
+  "next": "jge",
+  "kind": "loop"
+ },
+ {
+  "function": "0x391f0c",
+  "rva": "0x3926b5",
+  "insn": "cmp    eax,0x11",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x392c90",
+  "rva": "0x392d67",
+  "insn": "cmp    ecx,0x10",
+  "next": "movzx",
+  "kind": "other"
+ },
+ {
+  "function": "0x392c90",
+  "rva": "0x39314b",
+  "insn": "cmp    eax,0x11",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x392c90",
+  "rva": "0x3931e9",
+  "insn": "cmp    eax,0x11",
+  "next": "jge",
+  "kind": "loop"
+ },
+ {
+  "function": "0x392c90",
+  "rva": "0x3931fd",
+  "insn": "cmp    eax,0x11",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x392c90",
+  "rva": "0x393349",
+  "insn": "cmp    eax,0x11",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x392c90",
+  "rva": "0x39340b",
+  "insn": "cmp    eax,0x11",
+  "next": "jge",
+  "kind": "loop"
+ },
+ {
+  "function": "0x392c90",
+  "rva": "0x39341f",
+  "insn": "cmp    eax,0x11",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x392c90",
+  "rva": "0x3934af",
+  "insn": "cmp    eax,0x11",
+  "next": "jge",
+  "kind": "loop"
+ },
+ {
+  "function": "0x392c90",
+  "rva": "0x3934c3",
+  "insn": "cmp    eax,0x11",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x392c90",
+  "rva": "0x393559",
+  "insn": "cmp    eax,0x11",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x392c90",
+  "rva": "0x3935f5",
+  "insn": "cmp    eax,0x11",
+  "next": "jge",
+  "kind": "loop"
+ },
+ {
+  "function": "0x392c90",
+  "rva": "0x393609",
+  "insn": "cmp    eax,0x11",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x3951ac",
+  "rva": "0x395264",
+  "insn": "cmp    eax,0x11",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x3951ac",
+  "rva": "0x395297",
+  "insn": "cmp    edi,0x11",
+  "next": "jge",
+  "kind": "loop"
+ },
+ {
+  "function": "0x3951ac",
+  "rva": "0x3952a7",
+  "insn": "cmp    edi,0x11",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x3951ac",
+  "rva": "0x3953c9",
+  "insn": "cmp    ebp,0x11",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x39563c",
+  "rva": "0x395756",
+  "insn": "cmp    eax,0x11",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x39563c",
+  "rva": "0x39579c",
+  "insn": "cmp    eax,0x11",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x396828",
+  "rva": "0x396905",
+  "insn": "cmp    eax,0x11",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x396828",
+  "rva": "0x3969d2",
+  "insn": "cmp    r10d,0x11",
+  "next": "jge",
+  "kind": "loop"
+ },
+ {
+  "function": "0x396828",
+  "rva": "0x3969e7",
+  "insn": "cmp    r10d,0x11",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x396828",
+  "rva": "0x396aa1",
+  "insn": "cmp    eax,0x11",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x396828",
+  "rva": "0x396b0a",
+  "insn": "cmp    eax,0x11",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x396828",
+  "rva": "0x396bb6",
+  "insn": "cmp    eax,0x11",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x396828",
+  "rva": "0x396c6d",
+  "insn": "cmp    ebx,0x11",
+  "next": "jge",
+  "kind": "loop"
+ },
+ {
+  "function": "0x396828",
+  "rva": "0x396c7f",
+  "insn": "cmp    ebx,0x11",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x3971ac",
+  "rva": "0x39727d",
+  "insn": "cmp    eax,0x11",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x3971ac",
+  "rva": "0x3972b0",
+  "insn": "cmp    eax,0x11",
+  "next": "jge",
+  "kind": "loop"
+ },
+ {
+  "function": "0x3971ac",
+  "rva": "0x3972bf",
+  "insn": "cmp    eax,0x11",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x39816c",
+  "rva": "0x3982ad",
+  "insn": "cmp    edx,0x11",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x39816c",
+  "rva": "0x398351",
+  "insn": "cmp    edx,0x11",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x39bf1c",
+  "rva": "0x39bf9f",
+  "insn": "cmp    eax,0x11",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x39bf1c",
+  "rva": "0x39bfe7",
+  "insn": "cmp    eax,0x11",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x39c6b4",
+  "rva": "0x39c6e6",
+  "insn": "cmp    ebx,0x10",
+  "next": "jl",
+  "kind": "loop"
+ },
+ {
+  "function": "0x39c6b4",
+  "rva": "0x39c701",
+  "insn": "cmp    ebx,0x11",
+  "next": "jl",
+  "kind": "loop"
+ },
+ {
+  "function": "0x39c6b4",
+  "rva": "0x39c769",
+  "insn": "cmp    edx,0x11",
+  "next": "jb",
+  "kind": "loop"
+ },
+ {
+  "function": "0x39c6b4",
+  "rva": "0x39c790",
+  "insn": "cmp    ebp,0x11",
+  "next": "jb",
+  "kind": "loop"
+ },
+ {
+  "function": "0x39cbf0",
+  "rva": "0x39cc14",
+  "insn": "cmp    eax,0x11",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x39cbf0",
+  "rva": "0x39cc4d",
+  "insn": "cmp    r8d,0x11",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x39cd00",
+  "rva": "0x39cd33",
+  "insn": "cmp    r9d,0x11",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x39cd00",
+  "rva": "0x39cd68",
+  "insn": "cmp    r10d,0x11",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x39cd8c",
+  "rva": "0x39ce3b",
+  "insn": "cmp    edx,0x11",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x39cd8c",
+  "rva": "0x39ce9a",
+  "insn": "cmp    ecx,0x11",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x39d59c",
+  "rva": "0x39d5d0",
+  "insn": "cmp    eax,0x10",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x39d59c",
+  "rva": "0x39d608",
+  "insn": "cmp    r8d,0x10",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x39d620",
+  "rva": "0x39d6a9",
+  "insn": "cmp    eax,0x10",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x39dd4c",
+  "rva": "0x39ded8",
+  "insn": "cmp    r12d,0x11",
+  "next": "jl",
+  "kind": "loop"
+ },
+ {
+  "function": "0x39dd4c",
+  "rva": "0x39e228",
+  "insn": "cmp    r13d,0x10",
+  "next": "jl",
+  "kind": "loop"
+ },
+ {
+  "function": "0x39e47c",
+  "rva": "0x39e8a7",
+  "insn": "cmp    edx,0x11",
+  "next": "jl",
+  "kind": "loop"
+ },
+ {
+  "function": "0x39ebf0",
+  "rva": "0x39ec68",
+  "insn": "cmp    ecx,0x11",
+  "next": "jge",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x39ebf0",
+  "rva": "0x39ecdf",
+  "insn": "cmp    ecx,0x11",
+  "next": "jge",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x39ebf0",
+  "rva": "0x39ed4b",
+  "insn": "cmp    eax,0x10",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x39ebf0",
+  "rva": "0x39ed69",
+  "insn": "cmp    eax,0x10",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x39ebf0",
+  "rva": "0x39ed95",
+  "insn": "cmp    ebx,0x11",
+  "next": "jl",
+  "kind": "loop"
+ },
+ {
+  "function": "0x39f02c",
+  "rva": "0x39f0a0",
+  "insn": "cmp    r8d,0x11",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x39f02c",
+  "rva": "0x39f0d4",
+  "insn": "cmp    eax,0x11",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x39f02c",
+  "rva": "0x39f10b",
+  "insn": "cmp    eax,0x11",
+  "next": "jge",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x39f02c",
+  "rva": "0x39f11c",
+  "insn": "cmp    eax,0x11",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x39f02c",
+  "rva": "0x39f13e",
+  "insn": "cmp    eax,0x11",
+  "next": "jge",
+  "kind": "loop"
+ },
+ {
+  "function": "0x39f02c",
+  "rva": "0x39f152",
+  "insn": "cmp    eax,0x11",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x39fb34",
+  "rva": "0x39fc95",
+  "insn": "cmp    eax,0x10",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x3a3224",
+  "rva": "0x3a3447",
+  "insn": "cmp    eax,0x10",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x3a3224",
+  "rva": "0x3a3532",
+  "insn": "cmp    eax,0x10",
+  "next": "jge",
+  "kind": "loop"
+ },
+ {
+  "function": "0x3a3224",
+  "rva": "0x3a354a",
+  "insn": "cmp    eax,0x10",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x3aafa4",
+  "rva": "0x3ab040",
+  "insn": "cmp    eax,0x10",
+  "next": "je",
+  "kind": "other"
+ },
+ {
+  "function": "0x3c0248",
+  "rva": "0x3c0320",
+  "insn": "cmp    ebx,0x11",
+  "next": "jl",
+  "kind": "loop"
+ },
+ {
+  "function": "0x3dc138",
+  "rva": "0x3dc2c7",
+  "insn": "cmp    eax,0x10",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x3dc138",
+  "rva": "0x3dc338",
+  "insn": "cmp    eax,0x10",
+  "next": "jge",
+  "kind": "loop"
+ },
+ {
+  "function": "0x3dc138",
+  "rva": "0x3dc353",
+  "insn": "cmp    eax,0x10",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x3e1ecc",
+  "rva": "0x3e1efe",
+  "insn": "cmp    eax,0x11",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x3e1ecc",
+  "rva": "0x3e1f57",
+  "insn": "cmp    edi,0x11",
+  "next": "jge",
+  "kind": "loop"
+ },
+ {
+  "function": "0x3e1ecc",
+  "rva": "0x3e1f69",
+  "insn": "cmp    edi,0x11",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x3ed3f4",
+  "rva": "0x3ed45d",
+  "insn": "cmp    eax,0x10",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x3ed3f4",
+  "rva": "0x3ed49b",
+  "insn": "cmp    ecx,0x10",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x3ed3f4",
+  "rva": "0x3ed513",
+  "insn": "cmp    eax,0x10",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x3ed3f4",
+  "rva": "0x3ed556",
+  "insn": "cmp    ecx,0x10",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x3ed3f4",
+  "rva": "0x3ed5be",
+  "insn": "cmp    eax,0x11",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x3ed3f4",
+  "rva": "0x3ed64e",
+  "insn": "cmp    eax,0x11",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x400bc4",
+  "rva": "0x400c2c",
+  "insn": "cmp    eax,0x10",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x400bc4",
+  "rva": "0x400d08",
+  "insn": "cmp    eax,0x10",
+  "next": "jge",
+  "kind": "loop"
+ },
+ {
+  "function": "0x400bc4",
+  "rva": "0x400d20",
+  "insn": "cmp    eax,0x10",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x4029e8",
+  "rva": "0x402a26",
+  "insn": "cmp    eax,0x11",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x4029e8",
+  "rva": "0x402a41",
+  "insn": "cmp    eax,0x11",
+  "next": "jge",
+  "kind": "loop"
+ },
+ {
+  "function": "0x4029e8",
+  "rva": "0x402a55",
+  "insn": "cmp    eax,0x11",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x4029e8",
+  "rva": "0x402ab3",
+  "insn": "cmp    eax,0x11",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x4029e8",
+  "rva": "0x402af8",
+  "insn": "cmp    eax,0x11",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x40429c",
+  "rva": "0x4042ca",
+  "insn": "cmp    eax,0x11",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x40429c",
+  "rva": "0x40436f",
+  "insn": "cmp    eax,0x11",
+  "next": "jge",
+  "kind": "loop"
+ },
+ {
+  "function": "0x40429c",
+  "rva": "0x404383",
+  "insn": "cmp    eax,0x11",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x408ddc",
+  "rva": "0x409193",
+  "insn": "cmp    eax,0x11",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x408ddc",
+  "rva": "0x4093f0",
+  "insn": "cmp    eax,0x10",
+  "next": "jge",
+  "kind": "loop"
+ },
+ {
+  "function": "0x408ddc",
+  "rva": "0x409405",
+  "insn": "cmp    eax,0x10",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x40a760",
+  "rva": "0x40aa0a",
+  "insn": "cmp    ecx,0x10",
+  "next": "jl",
+  "kind": "loop"
+ },
+ {
+  "function": "0x41e7c8",
+  "rva": "0x41e9bc",
+  "insn": "cmp    edi,0x11",
+  "next": "jl",
+  "kind": "loop"
+ },
+ {
+  "function": "0x41e7c8",
+  "rva": "0x41eb1e",
+  "insn": "cmp    edi,0x11",
+  "next": "jl",
+  "kind": "loop"
+ },
+ {
+  "function": "0x41e7c8",
+  "rva": "0x41ebcc",
+  "insn": "cmp    eax,0x10",
+  "next": "jne",
+  "kind": "loop"
+ },
+ {
+  "function": "0x41f3c4",
+  "rva": "0x41f4a0",
+  "insn": "cmp    eax,0x10",
+  "next": "je",
+  "kind": "other"
+ },
+ {
+  "function": "0x41f510",
+  "rva": "0x41f57d",
+  "insn": "cmp    ebx,0x11",
+  "next": "jl",
+  "kind": "loop"
+ },
+ {
+  "function": "0x41f510",
+  "rva": "0x41f625",
+  "insn": "cmp    esi,0x10",
+  "next": "jl",
+  "kind": "loop"
+ },
+ {
+  "function": "0x41f510",
+  "rva": "0x41f74d",
+  "insn": "cmp    edx,0x10",
+  "next": "jl",
+  "kind": "loop"
+ },
+ {
+  "function": "0x41f510",
+  "rva": "0x41f78e",
+  "insn": "cmp    edx,0x10",
+  "next": "jl",
+  "kind": "loop"
+ },
+ {
+  "function": "0x41f510",
+  "rva": "0x41f7e2",
+  "insn": "cmp    eax,0x10",
+  "next": "jl",
+  "kind": "loop"
+ },
+ {
+  "function": "0x41f510",
+  "rva": "0x41f969",
+  "insn": "cmp    esi,0x10",
+  "next": "jl",
+  "kind": "loop"
+ },
+ {
+  "function": "0x41f510",
+  "rva": "0x41fa79",
+  "insn": "cmp    ecx,0x10",
+  "next": "jl",
+  "kind": "loop"
+ },
+ {
+  "function": "0x41f510",
+  "rva": "0x41fac1",
+  "insn": "cmp    ecx,0x10",
+  "next": "jl",
+  "kind": "loop"
+ },
+ {
+  "function": "0x41f510",
+  "rva": "0x41fb14",
+  "insn": "cmp    r8d,0x11",
+  "next": "jl",
+  "kind": "loop"
+ },
+ {
+  "function": "0x42008c",
+  "rva": "0x420112",
+  "insn": "cmp    edi,0x11",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x42008c",
+  "rva": "0x42018f",
+  "insn": "cmp    esi,0x11",
+  "next": "jge",
+  "kind": "loop"
+ },
+ {
+  "function": "0x42008c",
+  "rva": "0x4201a2",
+  "insn": "cmp    esi,0x11",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x44e7e8",
+  "rva": "0x44e8eb",
+  "insn": "cmp    eax,0x11",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x44e7e8",
+  "rva": "0x44e922",
+  "insn": "cmp    eax,0x11",
+  "next": "jge",
+  "kind": "loop"
+ },
+ {
+  "function": "0x44e7e8",
+  "rva": "0x44e932",
+  "insn": "cmp    eax,0x11",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x44e7e8",
+  "rva": "0x44e9cb",
+  "insn": "cmp    eax,0x10",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x44e7e8",
+  "rva": "0x44eb41",
+  "insn": "cmp    eax,0x10",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x44fadc",
+  "rva": "0x44ff31",
+  "insn": "cmp    eax,0x11",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x44fadc",
+  "rva": "0x44ff8b",
+  "insn": "cmp    eax,0x11",
+  "next": "jl",
+  "kind": "bit-scan"
+ },
+ {
+  "function": "0x44fadc",
+  "rva": "0x44ffc4",
+  "insn": "cmp    ebx,0x11",
+  "next": "jl",
+  "kind": "loop"
+ }
+]

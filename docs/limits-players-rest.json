@@ -1,0 +1,332 @@
+[
+ [
+  "add@0xd880",
+  "add    r8,0x73",
+  5
+ ],
+ [
+  "sub@0x35c18",
+  "sub    rdx,rax",
+  1
+ ],
+ [
+  "load@0x35c2b",
+  "movzx  ecx,WORD PTR [rdx+rax*1]",
+  2
+ ],
+ [
+  "other@0x9d648",
+  "inc    r10",
+  1
+ ],
+ [
+  "other@0x14f4c9",
+  "inc    eax",
+  1
+ ],
+ [
+  "add@0x16ff21",
+  "add    rax,rdx",
+  8
+ ],
+ [
+  "add@0x16ff66",
+  "add    rax,r11",
+  6
+ ],
+ [
+  "load@0x38dab8",
+  "mov    rax,QWORD PTR [rsi+rcx*8]",
+  2
+ ],
+ [
+  "lea@0x38f53b",
+  "lea    rbp,[rbx+0x30]",
+  2
+ ],
+ [
+  "add@0x390ee4",
+  "add    eax,r14d",
+  1
+ ],
+ [
+  "add@0x391006",
+  "add    rdi,rcx",
+  4
+ ],
+ [
+  "lea@0x3911c1",
+  "lea    rcx,[rbp+0x1d0]",
+  1
+ ],
+ [
+  "add@0x391350",
+  "add    rax,rcx",
+  2
+ ],
+ [
+  "add@0x3913d6",
+  "add    rdx,rsi",
+  1
+ ],
+ [
+  "lea@0x391a85",
+  "lea    r8,[rdx+0x8]",
+  1
+ ],
+ [
+  "lea@0x391b5d",
+  "lea    rbx,[r8+r13*1]",
+  1
+ ],
+ [
+  "lea@0x393112",
+  "lea    r12,[rdi+0x168]",
+  3
+ ],
+ [
+  "lea@0x393376",
+  "lea    r9,[rax+rdi*1]",
+  1
+ ],
+ [
+  "not@0x394c01",
+  "mov    rbx,rcx",
+  1
+ ],
+ [
+  "lea@0x396cab",
+  "lea    rbx,[rsi+0x2248]",
+  3
+ ],
+ [
+  "add@0x397432",
+  "add    rax,rcx",
+  1
+ ],
+ [
+  "load@0x397449",
+  "mov    r10,QWORD PTR [rsp+0x70]",
+  1
+ ],
+ [
+  "not@0x3973e5",
+  "mov    rdi,rcx",
+  1
+ ],
+ [
+  "lea@0x3982ef",
+  "lea    r12,[rdx+r8*1]",
+  1
+ ],
+ [
+  "not@0x39cd0f",
+  "mov    rbx,rdx",
+  1
+ ],
+ [
+  "add@0x39d24f",
+  "add    rbx,rdx",
+  15
+ ],
+ [
+  "add@0x39d297",
+  "add    rax,r13",
+  2
+ ],
+ [
+  "add@0x39d496",
+  "add    rbx,r13",
+  3
+ ],
+ [
+  "not@0x39d64c",
+  "movsxd rdi,DWORD PTR [rcx+r10*4+0x174]",
+  1
+ ],
+ [
+  "add@0x39d8e8",
+  "add    r11,r10",
+  7
+ ],
+ [
+  "add@0x39d91e",
+  "add    r8,rcx",
+  2
+ ],
+ [
+  "add@0x39d95e",
+  "add    r10,rcx",
+  4
+ ],
+ [
+  "add@0x39d988",
+  "add    rdx,rcx",
+  2
+ ],
+ [
+  "other@0x39dd60",
+  "xor    esi,esi",
+  5
+ ],
+ [
+  "lea@0x39ddc7",
+  "lea    rbx,[r14+0x30]",
+  5
+ ],
+ [
+  "lea@0x39def6",
+  "lea    rbx,[r14+0x1714]",
+  22
+ ],
+ [
+  "not@0x39dd6c",
+  "mov    r14,rdx",
+  3
+ ],
+ [
+  "add@0x39e586",
+  "add    r14,rbx",
+  1
+ ],
+ [
+  "lea@0x39e8e3",
+  "lea    r12,[rbx+0x8]",
+  3
+ ],
+ [
+  "not@0x39edce",
+  "mov    DWORD PTR [rcx],eax",
+  1
+ ],
+ [
+  "not@0x39edc3",
+  "mov    rsi,rcx",
+  23
+ ],
+ [
+  "lea@0x39ef92",
+  "lea    rcx,[rsi+0x114]",
+  1
+ ],
+ [
+  "add@0x39f05f",
+  "add    rcx,rax",
+  1
+ ],
+ [
+  "add@0x39f0c7",
+  "add    r11,rbx",
+  2
+ ],
+ [
+  "not@0x39f04b",
+  "mov    rbx,rcx",
+  5
+ ],
+ [
+  "not@0x39f447",
+  "mov    eax,DWORD PTR [rdx]",
+  1
+ ],
+ [
+  "not@0x39f449",
+  "cmp    DWORD PTR [rcx],eax",
+  1
+ ],
+ [
+  "not@0x39f451",
+  "mov    eax,DWORD PTR [rcx]",
+  1
+ ],
+ [
+  "not@0x39f43f",
+  "mov    rbx,rcx",
+  44
+ ],
+ [
+  "lea@0x39f4c9",
+  "lea    rcx,[rbx+0x84]",
+  3
+ ],
+ [
+  "lea@0x39f4d2",
+  "lea    rax,[rdi+0x84]",
+  3
+ ],
+ [
+  "sub@0x39f4ff",
+  "sub    rcx,rax",
+  1
+ ],
+ [
+  "lea@0x39f502",
+  "lea    rdx,[rax+0x8]",
+  1
+ ],
+ [
+  "not@0x39f43c",
+  "mov    rdi,rdx",
+  21
+ ],
+ [
+  "lea@0x39f7e1",
+  "lea    rcx,[rdi+0x114]",
+  1
+ ],
+ [
+  "sub@0x39f7eb",
+  "sub    r8,rdi",
+  1
+ ],
+ [
+  "sub@0x39f80e",
+  "sub    rdx,rsi",
+  1
+ ],
+ [
+  "add@0x39fb69",
+  "add    r9,rcx",
+  1
+ ],
+ [
+  "load@0x3dc27a",
+  "mov    rsi,QWORD PTR [rsp+0x28]",
+  2
+ ],
+ [
+  "add@0x3ed5e3",
+  "add    r11,r13",
+  1
+ ],
+ [
+  "not@0x3f6ff4",
+  "mov    r14,r8",
+  1
+ ],
+ [
+  "sub@0x408178",
+  "sub    rdx,r9",
+  1
+ ],
+ [
+  "add@0x408ed9",
+  "add    r15,0x17b0",
+  4
+ ],
+ [
+  "lea@0x41f592",
+  "lea    rbp,[r13+0x174c]",
+  3
+ ],
+ [
+  "lea@0x41f630",
+  "lea    rbx,[r13+0x1760]",
+  13
+ ],
+ [
+  "not@0x44b1f5",
+  "mov    rbx,rcx",
+  1
+ ]
+]

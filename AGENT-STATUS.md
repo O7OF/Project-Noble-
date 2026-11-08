@@ -577,6 +577,15 @@ the recipe builder or the .nlp format.
   kills/deaths/respawns reuse the same accessors). The site count still differs from the objdump run's 136
   because the capstone .text sweep's function boundaries differ. docs\limits-players-sites.json was not touched.
 
+- 2026-11-08 15:10 ET (DeepSeek): **C12 step 2 review written.** docs\limits-players-review.md classifies the
+  remaining derivation sites from docs\limits-players-rest.json after excluding Claude's six loops (0xD6B8,
+  0x3915A8, 0x392C90, 0x39DD4C, 0x408DDC, 0x41F510). Stock DLL disassembly with capstone, .pdata function
+  ranges, ~30 instructions of context and caller RVAs from an E8 scan. **Totals: 26 A, 17 B, 15 C, 0 D**
+  (58 sites; rest.json has 66 entries, and excluding the six functions by .pdata gives 58 rather than 54 -
+  the difference is boundary attribution around 0x3915A8/0x392C90). A = object field/mask/copy (no change),
+  B = pointer from the 0x158/0xB0 record multiply or a covered site, C = pointer from an argument/returned
+  pointer with the producer named, D = none. Analysis only, no code changes.
+
 ## Ready for Tyler to test (2026-11-08 08:47 ET, DeepSeek build)
 
 Build: `build\bin\Release\noble-dev.exe` (09:14; engine .nlp 09:02) — all three targets build clean; `data\limits\v16.nlp`

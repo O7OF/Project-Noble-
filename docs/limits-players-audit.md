@@ -197,3 +197,45 @@ base and index differently, are listed for hand review.
 fire team / simulation view pools → 32 (PoolResize rules); the 32-bit mask stays as is. Code caves: ~65 × ~30 B
 ≈ 2 KB, so the caves go into a new executable block at the end of `.hkwork`'s raw data or into Noble-allocated
 executable memory with rel32-reachable placement (the `.deltrac` gap is used up).
+
+## Step 1 done, step 2 inventory (Claude, 14:25 ET)
+- **Step 1 committed (`fb1aa73`):** `SlotPatch` redirects the 67 imul sites; two-instance LAN regression passed
+  (both processes patched, guest joined the host's session, played, clean shutdown).
+- **Run 4 total:** 420 accesses / 139 sites. Of the 72 non-imul sites, **6 `add` sites are already covered**
+  (they add an index×record value produced by a patched imul). **66 remain** (`docs/limits-players-rest.json`):
+  add 21, lea 18, argument-passed 15, sub 5, loaded 4, other 3.
+- **Pointer-stepping loops (12 of the 66 sites, in 6 functions):** 0xD6B8, 0x3915A8, 0x392C90, 0x39DD4C,
+  0x408DDC, 0x41F510 walk the slot arrays with `add ptr,0xB0/0x158` up to 16/17 records. These cannot be
+  redirected per access: each needs its loop split (slots 0..15/16 in place, then 16/17..31/32 in the shadow
+  object at obj + delta) via a hook or rewritten function. Claude.
+- **The other 54 sites:** need a per-site review of whether the address depends on a slot index at all
+  (`lea rbx,[r14+0x30]` and similar are object-field pointers that stay valid) or reaches a slot by another
+  shape (`lea r9,[rax+rdi*1]` with a pre-multiplied index, a slot pointer passed in from a caller, …).
+  Tool support: `slot_rewrite.py` chains are in the JSON; review each with objdump around the site.
+- After both: loop bounds `cmp …,0x10/0x11` → 0x20/0x21 in the touched functions, pools → 32, then a
+  three-instance LAN test (Release3 data folder).
+
+## Step 2b/3 findings (Claude, 14:40 ET)
+**The 6 pointer-stepping loop functions** share one shape. Example 0xD6B8: `r8` = player array (+0x73) from
+0x398200, `r9d` = slot counter, mask in `[rsp+0x58]`; per slot `bt mask,r9d` → copy fields into a **16-entry
+stack table** (`rbp-0x80`, 16 × 0x20, filled with `mov r15d,0x10` / `call 0xD540`), then
+`inc r9d / add r8,0xB0 / cmp r9d,0x10 / jl`.
+For 32 each such loop needs: (1) a cave at the pointer step: `add r8,R; cmp r9d,T; jne +; add r8,C; +: cmp r9d,2T`
+(the same C = delta − T·R as the imul caves, so slot T continues in the shadow object), (2) the bound raised,
+(3) any **local 16-entry table grown** (stack frame, like the AI fixes). 0xD6B8's table is probably the player
+list handed to the host API (MCC/Noble), so Noble's host side must accept 32 entries too. Next: do the 6 one by one.
+
+**Bounds pass:** the 97 functions the trace touched contain **174 `cmp reg,0x10/0x11`**
+(`docs/limits-players-bounds.json`): **111 are bit-scans over the 32-bit player mask** (`bt mask,i` then
+`cmp i,0x10`) → raise the 1-byte immediate to 0x20 (mask already 32 bits); **60 are loop bounds** → raise
+after checking each loop's body stays inside redirected accesses; 3 other → review. Patch these as plain
+1-byte .nlp-style edits applied by SlotPatch (with byte checks), only when the 32-player mode is on.
+
+## 54/58-site review result (DeepSeek, 14:25 ET; table in docs/limits-players-review.md)
+**26 A** (object fields, record copies, mask-bit loops) · **17 B** (already covered by the imul caves) ·
+**15 C** (pointer from a caller or out-param; producers named, all reached through covered paths) · **0 D**.
+(58 rather than 54: four sites sit on function boundaries next to 0x3915A8 / 0x392C90 and were kept in.)
+**Conclusion:** no new derivation shapes. Remaining code work for 32 players = the 6 pointer-stepping loop
+functions (cave at the step + bound + grown local tables), the bounds pass (111 bit-scans + 60 loops), the
+pools to 32, and Noble's host-side player list (0xD6B8 hands a 16-entry table to the host API).
+Re-check the 15 C sites only if a caller ever passes a stack copy of a slot record.
