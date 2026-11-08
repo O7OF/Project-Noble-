@@ -991,10 +991,19 @@ void ArmorCustomizer::SetPreferredSpecies(PlayerSpecies species) {
 }
 
 
+namespace {
+// Whole-body camera name for the menu map that is actually loaded. RR's mainmenu_all.map has a dedicated
+// c_full_spartan (0x0C); the stock MCC menu map does not - there 0x0C is a torso close-up and 0x0A
+// ("armory") is the full-body pedestal shot. Picking by map keeps both installs framed correctly.
+const char* FullBodyScene() {
+    return ReachArmory::HasArmoryMap() ? "c_full_spartan" : "armory";
+}
+} // namespace
+
 bool ArmorCustomizer::IsFullBodyCamera() const {
     if (m_previewSpecies == PlayerSpecies::Elite) return true;   // the Elite scene is a full-body pedestal
     if (m_cameraMode != 2) return true;                          // ARMORY VIEW and FULL BODY
-    return m_focusScene.empty() || m_focusScene == "c_full_spartan";
+    return m_focusScene.empty() || m_focusScene == "c_full_spartan" || m_focusScene == "armory";
 }
 
 void ArmorCustomizer::UpdateArmoryCamera() const {
@@ -1050,8 +1059,9 @@ void ArmorCustomizer::UpdateArmoryCamera() const {
     }
     // Camera scenes in mainmenu_all.map: "armory" (Reach's own 3/4 view), "c_full_spartan" (whole body) and
     // the per-slot close-ups ("c_helmet", "c_chest", ...). Mode 2 (default) follows the slot being edited.
-    if (m_cameraMode == 1) ReachArmory::SetTargetScene("c_full_spartan");
-    else if (m_cameraMode == 2) ReachArmory::SetTargetScene(m_focusScene.empty() ? "c_full_spartan" : m_focusScene.c_str());
+    const char* fullBody = FullBodyScene();
+    if (m_cameraMode == 1) ReachArmory::SetTargetScene(fullBody);
+    else if (m_cameraMode == 2) ReachArmory::SetTargetScene(m_focusScene.empty() ? fullBody : m_focusScene.c_str());
     else ReachArmory::SetTargetScene("armory");
 }
 
@@ -1677,15 +1687,18 @@ void ArmorCustomizer::RenderCharacterPreview(ID3D11Device* device, ID3D11DeviceC
     // The pack supplies the Armory's player models and .rrpmcg; the scene itself is the stock MCC
     // haloreach\maps\mainmenu.map, so no custom mainmenu_all.map is needed. Without a pack there is
     // no pack model to preview.
-    static const bool armoryMapPresent = ReachArmory::HasArmoryMap();
     if (!ReachArmory::IsSceneReady()) {
-        static const double s_previewStart = ImGui::GetTime();
-        const bool noArmoryScene = armoryMapPresent && (ImGui::GetTime() - s_previewStart > 8.0);
-        const std::string msg = !armoryMapPresent
-            ? std::string("NO 3D PREVIEW: no armour pack in data\\armor (rr_elite_pack.map + .rrreloc)")
-            : noArmoryScene
-                ? std::string("3D PREVIEW: the menu map's Armory scene did not start.")
-                : std::string("LOADING ARMORY") + std::string(static_cast<size_t>(static_cast<int>(ImGui::GetTime() * 2.0) % 4), '.');
+        // One message, whatever is still loading: the player should never see packaging diagnostics
+        // ("no armour pack", "scene did not start") in the Armory.
+        static const bool s_loggedMissingPack = [] {
+            if (!ReachArmory::HasArmoryMap()) {
+                NOBLE_WARN("Armory: no custom menu map/pack found; using the stock MCC menu scene");
+            }
+            return true;
+        }();
+        (void)s_loggedMissingPack;
+        const std::string msg = std::string("LOADING ARMORY") +
+            std::string(static_cast<size_t>(static_cast<int>(ImGui::GetTime() * 2.0) % 4), '.');
         const ImVec2 ts = ImGui::CalcTextSize(msg.c_str());
         dl->AddText(ImVec2(cursorPos.x + std::max(0.0f, (width - ts.x) * 0.5f), cursorPos.y + height * 0.45f),
                     IM_COL32(143, 216, 255, 220), msg.c_str());
@@ -2288,6 +2301,7 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
         s_buyRow = -1;
         m_pickerScrollToEquipped = true;
         m_focusScene = (m_previewSpecies == PlayerSpecies::Spartan) ? rows[rowIndex].scene : "armory_elite";
+        if (m_previewSpecies == PlayerSpecies::Spartan && m_focusScene == "c_full_spartan") m_focusScene = FullBodyScene();
         UpdateArmoryCamera();
     };
 
@@ -2337,6 +2351,7 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
         }
     }
     m_focusScene = m_previewSpecies == PlayerSpecies::Spartan ? rows[m_focusedRow].scene : "armory_elite";
+    if (m_previewSpecies == PlayerSpecies::Spartan && m_focusScene == "c_full_spartan") m_focusScene = FullBodyScene();
 
 
     // ---- Left: grouped slot list.
