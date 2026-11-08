@@ -68,6 +68,7 @@ const std::vector<Rule>& Rules() {
     static const Names s_range = { "Default", "10 m", "25 m", "75 m", "150 m" };
     static const Names s_abilities = { "Default", "", "None", "Ability 0", "Ability 1", "Ability 2", "Ability 3", "Ability 4", "Ability 5", "Ability 6", "Ability 7" };
     constexpr const char* kGeneral = "General Settings";
+    constexpr const char* kRespawn = "Respawn";
     constexpr const char* kShields = "Shields and Health";
     constexpr const char* kWeapons = "Weapons and Damage";
     constexpr const char* kMove = "Movement";
@@ -79,13 +80,13 @@ const std::vector<Rule>& Rules() {
         { "time_limit", "Time Limit", kGeneral, "Minutes per round. 0 means no limit.", 0x2BE, -1, 0, 60, " min", nullptr },
         { "rounds", "Number of Rounds", kGeneral, "How many rounds the match plays.", 0x2BF, -1, 1, 15, "", nullptr },
         { "sudden_death", "Sudden Death", kGeneral, "Extra seconds when an objective is in play as time runs out. 0 turns it off.", 0x2C0, -1, 0, 120, " s", nullptr },
-        { "respawn_time", "Respawn Time", kGeneral, "Seconds before a player comes back.", 0x2C7, -1, 0, 60, " s", nullptr },
-        { "suicide_penalty", "Suicide Penalty", kGeneral, "Extra seconds after killing yourself.", 0x2C8, -1, 0, 60, " s", nullptr },
-        { "betrayal_penalty", "Betrayal Penalty", kGeneral, "Extra seconds after killing a teammate.", 0x2C9, -1, 0, 60, " s", nullptr },
-        { "lives_per_round", "Lives Per Round", kGeneral, "0 means unlimited.", 0x2C5, -1, 0, 63, "", nullptr },
-        { "team_lives", "Team Lives Per Round", kGeneral, "0 means unlimited.", 0x2C6, -1, 0, 63, "", nullptr },
-        { "respawn_growth", "Respawn Time Growth", kGeneral, "Seconds added to each respawn.", 0x2CA, -1, 0, 15, " s", nullptr },
-        { "traits_duration", "Respawn Traits Duration", kGeneral, "Seconds the respawn traits last.", 0x2CC, -1, 0, 60, " s", nullptr },
+        { "respawn_time", "Respawn Time", kRespawn, "Seconds before a player comes back.", 0x2C7, -1, 0, 60, " s", nullptr },
+        { "suicide_penalty", "Suicide Penalty", kRespawn, "Extra seconds after killing yourself.", 0x2C8, -1, 0, 60, " s", nullptr },
+        { "betrayal_penalty", "Betrayal Penalty", kRespawn, "Extra seconds after killing a teammate.", 0x2C9, -1, 0, 60, " s", nullptr },
+        { "lives_per_round", "Lives Per Round", kRespawn, "0 means unlimited.", 0x2C5, -1, 0, 63, "", nullptr },
+        { "team_lives", "Team Lives Per Round", kRespawn, "0 means unlimited.", 0x2C6, -1, 0, 63, "", nullptr },
+        { "respawn_growth", "Respawn Time Growth", kRespawn, "Seconds added to each respawn.", 0x2CA, -1, 0, 15, " s", nullptr },
+        { "traits_duration", "Respawn Traits Duration", kRespawn, "Seconds the respawn traits last.", 0x2CC, -1, 0, 60, " s", nullptr },
         { "damage_resist", "Damage Resistance", kShields, "How much punishment players take. 100% is the game's normal.", 0x304, -1, 0, 12, "", &s_resist, 1, &s_resistOrder },
         { "health_rate", "Health Recharge Rate", kShields, "How quickly health returns. 100% is the game's normal.", 0x306, -1, 0, 6, "", &s_healthRate, 1, &s_healthRateOrder },
         { "shield_mult", "Shield Multiplier", kShields, "Size of the shield. 100% is the game's normal; 0% removes it.", 0x307, -1, 0, 6, "", &s_shieldSize, 1, &s_shieldSizeOrder },

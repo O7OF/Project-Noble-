@@ -663,10 +663,23 @@ void DrawTitle(const Ui& ui, ImVec2 pos, const char* title, const char* sideLabe
                    ImVec2(c.x - d * 0.45f, c.y), IM_COL32(143, 216, 255, 140), 1.5f * ui.s);
     Text(ui, NobleStyle::HeroFont(), 50.0f, ImVec2(pos.x + d * 2.6f, pos.y), IM_COL32(220, 226, 232, 215), title);
     if (sideLabel) {
+        // Vertical label (SOLO, SURVIVAL, MULTIPLAYER...) in the margin to the left of the title. It used to run down
+        // from pos.x + 2, right beside the tabs and lists that start at pos.x + 34 and the text overlapped their top
+        // rows once the UI scaled up. Each letter is centred in a column as wide as the widest one, which ends a gap
+        // left of pos.x, so nothing at or right of the title's left edge can be under it.
+        const float px = 26.0f * ui.s;
+        float columnW = 0.0f;
+        for (const char* p = sideLabel; *p; ++p) {
+            const char ch[2] = { *p, 0 };
+            columnW = std::max(columnW, TextWidth(NobleStyle::TitleFont(), px, ch));
+        }
+        const float gap = 10.0f * ui.s;
+        const float columnX = std::max(ui.origin.x + 4.0f * ui.s, pos.x - gap - columnW);
         float y = pos.y + 70.0f * ui.s;
         for (const char* p = sideLabel; *p; ++p) {
-            char ch[2] = { *p, 0 };
-            Text(ui, NobleStyle::TitleFont(), 26.0f, ImVec2(pos.x + 2.0f * ui.s, y), IM_COL32(140, 150, 160, 70), ch);
+            const char ch[2] = { *p, 0 };
+            const float w = TextWidth(NobleStyle::TitleFont(), px, ch);
+            Text(ui, NobleStyle::TitleFont(), 26.0f, ImVec2(columnX + (columnW - w) * 0.5f, y), IM_COL32(140, 150, 160, 70), ch);
             y += 24.0f * ui.s;
         }
     }
@@ -1413,7 +1426,9 @@ float DifficultyTiles(const Ui& ui, const char* id, ImVec2 pos, float width, int
     return top + labelH + th;
 }
 
-int OptionRow(const Ui& ui, const char* id, ImVec2 pos, float width, const char* label, const char* value, bool focused) {
+// `note`, when given, follows the value in dim lower-case ("(default)").
+int OptionRow(const Ui& ui, const char* id, ImVec2 pos, float width, const char* label, const char* value, bool focused,
+              const char* note = nullptr) {
     const float h = 32.0f * ui.s;
     int change = 0;
     const ImVec2 b(pos.x + width, pos.y + h);
@@ -1441,8 +1456,12 @@ int OptionRow(const Ui& ui, const char* id, ImVec2 pos, float width, const char*
     const float rx = vx + vw - aw;
     ui.dl->AddTriangleFilled(ImVec2(rx + aw * 0.35f, cy - ah), ImVec2(rx + aw * 0.35f, cy + ah), ImVec2(rx + aw * 0.7f, cy), hr ? kWhite : kDim);
     const std::string v = Upper(value);
-    const float tw = TextWidth(NobleStyle::TitleFont(), 18.0f * ui.s, v.c_str());
-    Text(ui, NobleStyle::TitleFont(), 18.0f, ImVec2(vx + (vw - tw) * 0.5f, pos.y + 6.0f * ui.s), kWhite, v.c_str());
+    const float vtw = TextWidth(NobleStyle::TitleFont(), 18.0f * ui.s, v.c_str());
+    const float gap = note ? 6.0f * ui.s : 0.0f;
+    const float ntw = note ? TextWidth(NobleStyle::SmallFont(), 15.0f * ui.s, note) : 0.0f;
+    const float tx = vx + (vw - (vtw + gap + ntw)) * 0.5f;
+    Text(ui, NobleStyle::TitleFont(), 18.0f, ImVec2(tx, pos.y + 6.0f * ui.s), kWhite, v.c_str());
+    if (note) Text(ui, NobleStyle::SmallFont(), 15.0f, ImVec2(tx + vtw + gap, pos.y + 9.0f * ui.s), kDim, note);
     if (focused) {
         if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickLeft)) change = -1;
         if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickRight)) change = 1;
@@ -1741,6 +1760,12 @@ struct MenuState {
     std::vector<uint8_t> optionsDecoded;   // the base variant's real values
     std::map<std::string, int> optionsValues;   // only what differs from the base
     std::string optionsMessage;
+    char optionsSearch[48] = {};        // filters the list by option name, description or category
+    bool optionsChangedOnly = false;    // list only the options that differ from the base
+    std::set<std::string> optionsOpenGroups;   // folded-open category headers
+    int optionsFirst = 0;               // first list row drawn (the list scrolls with the focus)
+    int optionsLastFocus = -1;          // focus seen last frame: the view only follows the focus when it moves
+    int optionsPresetPick = 0;          // focused preset button
     char mapSearch[64] = {};            // the map, mission and mod lists' search text
     int mapSearchRow = 0;
     char variantSearch[64] = {};        // the game type lists' search text
@@ -2683,6 +2708,83 @@ static std::string RuleValueText(const VariantRules::Rule& rule, int value) {
     return std::to_string(value) + rule.unit;
 }
 
+// GAME OPTIONS: options that are fixed levels rather than numbers. In Reach's trait lists the first choice ("Default",
+// value = the rule's minimum) means "unchanged": the player keeps the game's normal level. `normal` names that level, so
+// the row reads "OFF" or "ALLIES" instead of "DEFAULT"; nullptr keeps the list's own word where the normal level isn't
+// certain. `levels` explains what each level does and is shown with the option's description.
+struct RuleLevels {
+    const char* key;
+    const char* normal;
+    const char* levels;
+};
+
+static const RuleLevels* FindRuleLevels(const char* key) {
+    static const RuleLevels s_levels[] = {
+        { "headshot_immune", "Off", "Off: headshots do their usual extra damage. On: they do no extra damage." },
+        { "assassin_immune", "Off", "Off: players can be assassinated from behind. On: they can't." },
+        { "primary_weapon", "Loadout", "Loadout: the game type's own spawn weapon. None: spawn without one." },
+        { "secondary_weapon", "Loadout", "Loadout: the game type's own second weapon. None: spawn without one." },
+        { "ability", "Loadout", "Loadout: the game type's own armor ability. None: spawn without one." },
+        { "grenade_count", "Loadout", "Loadout: whatever the game type gives. Map Default: the map's own grenades. "
+                                      "Otherwise None, or that many frag and/or plasma grenades at spawn." },
+        { "weapon_pickup", "On", "On: players can pick up and swap weapons. Off: they keep what they spawned with." },
+        { "infinite_ammo", "Off", "Off: normal ammo. On: reserve ammo never runs out, but you still reload. "
+                                  "Bottomless: the magazine never empties, so there are no reloads." },
+        { "ability_usage", nullptr, "Off: armor abilities can't be used. Unlimited: they never run out of energy. "
+                                    "Normal and On both allow them; the game's exact difference between the two isn't confirmed yet." },
+        { "active_camo", "Off", "Off: fully visible. Poor: partly see-through, still easy to spot. Good: very hard to see." },
+        { "waypoint", "Allies", "None: nobody sees a marker over the player. Allies: teammates see it. All: everyone sees it, enemies too." },
+        { "visible_name", "Allies", "None: nobody sees the player's name. Allies: teammates see it. All: everyone sees it, enemies too." },
+        { "tracker_mode", "Normal", "Off: no motion tracker. Friends: it only shows allies. Normal: it shows enemies who move "
+                                    "quickly or fire. All: it shows every enemy, even one standing still." },
+        { "tracker_range", "25 m", nullptr },
+    };
+    for (const RuleLevels& l : s_levels) if (std::strcmp(l.key, key) == 0) return &l;
+    return nullptr;
+}
+
+// The value as the GAME OPTIONS row shows it: numbers for numeric rules (RuleValueText), the level's own name for level
+// rules (with "unchanged" spelled as the game's normal level).
+static std::string OptionValueText(const VariantRules::Rule& rule, int value) {
+    const RuleLevels* levels = FindRuleLevels(rule.key);
+    if (levels && levels->normal && value == rule.minValue && rule.names && !rule.names->empty() && (*rule.names)[0] == "Default")
+        return levels->normal;
+    return RuleValueText(rule, value);
+}
+
+// The option's description plus, for level options, what the levels mean.
+static std::string OptionHelpText(const VariantRules::Rule& rule) {
+    std::string help = rule.help;
+    if (const RuleLevels* levels = FindRuleLevels(rule.key); levels && levels->levels) help += std::string(" ") + levels->levels;
+    return help;
+}
+
+// GAME OPTIONS quick presets: each one replaces the current changes with its own list, which the player can then tweak and
+// SAVE. Values are raw rule values (see the rule tables in VariantRules.cpp: weapons -1 None, 0 DMR, 4 Energy Sword,
+// 5 Magnum, 8 Rocket Launcher, 10 Sniper Rifle; shield_mult 1 = 0%; tracker_mode 1 = Off; grenade_count 2 = None;
+// weapon_pickup 2 = Off; infinite_ammo 2 = On). Only the base traits every player shares can be set, so there is no
+// Infection-style preset: it needs separate zombie traits.
+struct OptionsPreset {
+    const char* name;
+    const char* help;
+    std::vector<std::pair<const char*, int>> values;
+};
+
+static const std::vector<OptionsPreset>& OptionsPresets() {
+    static const std::vector<OptionsPreset> s_presets = {
+        { "CLASSIC", "The base game type's own rules, with nothing changed.", {} },
+        { "SWAT", "No shields, no motion tracker, no grenades. Spawn with a DMR and a Magnum.",
+          { { "shield_mult", 1 }, { "tracker_mode", 1 }, { "grenade_count", 2 }, { "primary_weapon", 0 }, { "secondary_weapon", 5 } } },
+        { "SNIPERS", "Spawn with a Sniper Rifle and a Magnum, infinite ammo, no motion tracker, no grenades.",
+          { { "primary_weapon", 10 }, { "secondary_weapon", 5 }, { "infinite_ammo", 2 }, { "tracker_mode", 1 }, { "grenade_count", 2 } } },
+        { "ROCKETS", "Spawn with a Rocket Launcher and a Magnum, infinite ammo, no grenades.",
+          { { "primary_weapon", 8 }, { "secondary_weapon", 5 }, { "infinite_ammo", 2 }, { "grenade_count", 2 } } },
+        { "SWORDS", "Energy Sword only: no second weapon, no grenades, no weapon pickups.",
+          { { "primary_weapon", 4 }, { "secondary_weapon", -1 }, { "grenade_count", 2 }, { "weapon_pickup", 2 } } },
+    };
+    return s_presets;
+}
+
 // Reads the lobby's variant when it changes. The Teams flag is in the decoded record, or in a player-made mode's rules.
 static void RefreshLobbyMode(OverlayContext& ctx) {
     MenuState& st = ctx.st;
@@ -2745,8 +2847,15 @@ static void OpenGameOptions(OverlayContext& ctx, const MenuVariant& current) {
     st.optionsValues = isMode ? preset.values : std::map<std::string, int>{};
     std::snprintf(st.optionsName, sizeof(st.optionsName), "%s", (isMode ? current.label : current.label + " Custom").c_str());
     st.optionsFile = isMode ? current.path : std::filesystem::path();
-    st.optionsRow = 0;
+    st.optionsRow = 2;   // the first option (row 0 is the presets, row 1 the first category heading)
     st.optionsMessage.clear();
+    st.optionsSearch[0] = 0;
+    st.optionsChangedOnly = false;
+    st.optionsOpenGroups.clear();
+    if (!VariantRules::Rules().empty()) st.optionsOpenGroups.insert(VariantRules::Rules().front().group);   // only the first opens
+    st.optionsFirst = 0;
+    st.optionsLastFocus = -1;
+    st.optionsPresetPick = 0;
     st.confirmAction.clear();
     if (VariantRules::Decode(st.optionsSource, st.optionsDecoded)) {
         NOBLE_INFO("FrontEndMenu: game options opened on '{}'", st.optionsBase);
@@ -4634,7 +4743,8 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
     ui.dl = ImGui::GetWindowDrawList();
     ui.origin = ImVec2(0.0f, 0.0f);
     ui.size = vp->Size;
-    ui.s = std::clamp(vp->Size.y / 900.0f, 0.75f, 4.0f);   // 4K back buffer = 2.4 (was capped at 2.0)
+    // 4K back buffer = 2.4 (was capped at 2.0), times the player's UI SCALE setting (75 - 150 %).
+    ui.s = std::clamp(vp->Size.y / 900.0f, 0.75f, 4.0f) * Settings::UiScale();
 
     s_lobbyBackdropMap = st.lobbyMap;
     s_lobbyBackdropImage = st.lobbyMapImage.empty() ? st.lobbyMapThumb : st.lobbyMapImage;
@@ -5119,41 +5229,275 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
             break;
         }
         if (st.optionsOpen) {
-            // Game options: General Settings and Player Traits, saved as the player's own named game mode.
+            // Game options: every decoded rule, grouped by category, saved as the player's own named game mode.
+            // Categories fold open and closed; a search or "changed only" lists every match under its heading instead.
             const std::vector<VariantRules::Rule>& rules = VariantRules::Rules();
             DrawTitle(ui, ImVec2(left, top), "GAME OPTIONS", "MULTIPLAYER");
             const float px = left + 34.0f * ui.s, pw = ui.size.x * 0.44f;
             float y = top + 70.0f * ui.s;
             DrawSearchBox(ui, "##mode_name", ImVec2(px, y), pw, st.optionsName, sizeof(st.optionsName), "Game mode name");
             y += 40.0f * ui.s;
+            const bool typing = ImGui::GetIO().WantTextInput;
+
+            // Search box (Ctrl+F jumps into it) and the "changed only" switch (X) beside it.
+            const float toggleW = 200.0f * ui.s;
+            if (!typing && ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_F, false)) ImGui::SetKeyboardFocusHere();
+            DrawSearchBox(ui, "##options_search", ImVec2(px, y), pw - toggleW - 10.0f * ui.s, st.optionsSearch, sizeof(st.optionsSearch),
+                          "Search options (Ctrl+F)");
+            {
+                const ImVec2 t0(px + pw - toggleW, y), t1(px + pw, y + ImGui::GetFrameHeight());
+                ImGui::SetCursorScreenPos(t0);
+                bool flip = ImGui::InvisibleButton("##changed_only", ImVec2(toggleW, t1.y - t0.y));
+                const bool hovered = ImGui::IsItemHovered();
+                if (!typing && (ImGui::IsKeyPressed(ImGuiKey_X, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceLeft, false))) flip = true;
+                if (flip) {
+                    st.optionsChangedOnly = !st.optionsChangedOnly;
+                    MenuSounds::Change();
+                }
+                NobleUi::DrawBox(ui.dl, t0, t1, st.optionsChangedOnly ? "CHANGED ONLY: ON" : "CHANGED ONLY: OFF", hovered,
+                                 st.optionsChangedOnly, false);
+            }
+            y += 44.0f * ui.s;
+
+            // The rows of the list: the presets, then each category heading with its options under it.
+            enum class RowKind { Presets, Header, Rule };
+            struct Row { RowKind kind; int index; };   // Header: index into groups; Rule: index into rules
+            struct Group { int start, end, hits, changed; };
+            const std::string query = st.optionsSearch;
+            const bool filtering = !query.empty() || st.optionsChangedOnly;
+            std::vector<Group> groups;
+            std::vector<Row> rows{ { RowKind::Presets, 0 } };
+            for (int g = 0; g < static_cast<int>(rules.size());) {
+                int end = g;
+                while (end < static_cast<int>(rules.size()) && std::strcmp(rules[end].group, rules[g].group) == 0) ++end;
+                const bool groupHit = !query.empty() && ContainsNoCase(rules[g].group, query);
+                Group info{ g, end, 0, 0 };
+                std::vector<int> hits;
+                for (int i = g; i < end; ++i) {
+                    const bool changed = st.optionsValues.count(rules[i].key) != 0;
+                    if (changed) ++info.changed;
+                    if (st.optionsChangedOnly && !changed) continue;
+                    if (!query.empty() && !groupHit && !ContainsNoCase(rules[i].label, query) && !ContainsNoCase(rules[i].help, query)) continue;
+                    hits.push_back(i);
+                }
+                info.hits = static_cast<int>(hits.size());
+                if (!filtering || !hits.empty()) {
+                    rows.push_back({ RowKind::Header, static_cast<int>(groups.size()) });
+                    if (filtering || st.optionsOpenGroups.count(rules[g].group))
+                        for (const int i : hits) rows.push_back({ RowKind::Rule, i });
+                }
+                groups.push_back(info);
+                g = end;
+            }
+
             // Only this PC's own saved modes can be deleted; a mod's stay with the mod.
             const bool canDelete = !st.optionsFile.empty() && st.optionsFile.parent_path() == VariantRules::Directory();
-            const int saveRow = static_cast<int>(rules.size()), resetRow = saveRow + 1, deleteRow = saveRow + 2, rowCount = saveRow + (canDelete ? 3 : 2);
-            const bool typing = ImGui::GetIO().WantTextInput;
+            const int listRows = static_cast<int>(rows.size());
+            const int saveRow = listRows, resetRow = saveRow + 1, deleteRow = saveRow + 2, rowCount = saveRow + (canDelete ? 3 : 2);
+            st.optionsRow = std::clamp(st.optionsRow, 0, rowCount - 1);
             if (!typing && (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || UiPad::Down())) { st.optionsRow = (st.optionsRow + 1) % rowCount; MenuSounds::Scroll(); }
             if (!typing && (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || UiPad::Up())) { st.optionsRow = (st.optionsRow + rowCount - 1) % rowCount; MenuSounds::Scroll(); }
-            const char* group = nullptr;
-            // Too many rules for one screen: the list scrolls with the focus, and the buttons stay put below it.
-            constexpr int kVisibleRows = 12;
-            const int focusForWindow = std::min(st.optionsRow, saveRow - 1);
-            const int firstRow = std::clamp(focusForWindow - kVisibleRows / 2, 0, std::max(0, saveRow - kVisibleRows));
-            const int lastRow = std::min(saveRow, firstRow + kVisibleRows);
-            const float wheel = ImGui::GetIO().MouseWheel;
-            if (wheel != 0.0f && st.optionsRow < saveRow) st.optionsRow = std::clamp(st.optionsRow - static_cast<int>(wheel) * 2, 0, saveRow - 1);
-            const float buttonsY = ui.origin.y + ui.size.y - 74.0f * ui.s - 54.0f * ui.s;
-            for (int i = firstRow; i < lastRow; ++i) {
-                const VariantRules::Rule& rule = rules[i];
-                if (y + 58.0f * ui.s > buttonsY) break;   // never under the buttons
-                if (!group || std::strcmp(group, rule.group) != 0) {
-                    group = rule.group;
-                    Text(ui, NobleStyle::TitleFont(), 16.0f, ImVec2(px, y + 2.0f * ui.s), kAccent, Upper(group).c_str());
-                    y += 22.0f * ui.s;
+
+            // LB / RB (Q / E): previous / next category heading. A folded category opens on arrival.
+            const bool prevGroup = (!typing && ImGui::IsKeyPressed(ImGuiKey_Q, false)) || ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false);
+            const bool nextGroup = (!typing && ImGui::IsKeyPressed(ImGuiKey_E, false)) || ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false);
+            if (prevGroup != nextGroup) {
+                std::vector<int> headers;
+                for (int r = 0; r < listRows; ++r) if (rows[r].kind == RowKind::Header) headers.push_back(r);
+                if (!headers.empty()) {
+                    int current = -1;   // the heading the focus is under (-1 = presets; past the list = the buttons)
+                    for (const int h : headers) if (h <= std::min(st.optionsRow, listRows - 1)) current = h;
+                    int target = -1;
+                    if (nextGroup) {
+                        for (const int h : headers) if (h > current && st.optionsRow < listRows) { target = h; break; }
+                        if (target < 0) target = headers.front();
+                    } else {
+                        if (st.optionsRow >= listRows) target = headers.back();
+                        else if (st.optionsRow != current) target = current;   // inside a category: back to its own heading
+                        if (target < 0) for (const int h : headers) if (h < current) target = h;
+                        if (target < 0) target = headers.back();
+                    }
+                    st.optionsRow = target;
+                    const char* name = rules[groups[rows[target].index].start].group;
+                    if (!filtering && st.optionsOpenGroups.insert(name).second) {
+                        // Opening it adds its options below the heading; the row numbers above stay the same.
+                        st.optionsLastFocus = -1;
+                    }
+                    MenuSounds::Tab(nextGroup ? 1 : -1);
                 }
+            }
+
+            // Presets: a fixed row above the scrolling list.
+            const auto applyPreset = [&](const OptionsPreset& preset) {
+                st.optionsValues.clear();
+                for (const auto& [key, wanted] : preset.values) {
+                    for (const VariantRules::Rule& rule : rules) {
+                        if (std::strcmp(rule.key, key) != 0) continue;
+                        const int value = std::clamp(wanted, rule.minValue, rule.maxValue);
+                        if (value != VariantRules::Read(rule, st.optionsDecoded.data())) st.optionsValues[rule.key] = value;
+                    }
+                }
+                st.confirmAction.clear();
+                st.optionsMessage = std::string(preset.name) + " filled in. Change anything you like, then SAVE.";
+                NOBLE_INFO("FrontEndMenu: game options preset {} ({} change(s))", preset.name, st.optionsValues.size());
+                MenuSounds::Click();
+            };
+            // The focused row's description goes in a box right under that row, wrapped to the list's width: the right-hand
+            // column it used to sit in clipped long text ("How inv...") once the UI scaled up.
+            const float descWrap = pw - 24.0f * ui.s;
+            const auto descHeight = [&](const std::string& text) {
+                return ImGui::GetFont()->CalcTextSizeA(16.0f * ui.s, FLT_MAX, descWrap, text.c_str()).y + 12.0f * ui.s;
+            };
+            const auto drawDesc = [&](float boxTop, const std::string& text) {
+                const float boxBottom = boxTop + descHeight(text) - 4.0f * ui.s;
+                ui.dl->AddRectFilled(ImVec2(px, boxTop), ImVec2(px + pw, boxBottom), IM_COL32(8, 12, 18, 170));
+                ui.dl->AddRectFilled(ImVec2(px, boxTop), ImVec2(px + 2.0f * ui.s, boxBottom), IM_COL32(143, 216, 255, 120));
+                Text(ui, nullptr, 16.0f, ImVec2(px + 12.0f * ui.s, boxTop + 4.0f * ui.s), IM_COL32(200, 212, 224, 255), text.c_str(),
+                     px + 12.0f * ui.s + descWrap);
+            };
+            const std::vector<OptionsPreset>& presets = OptionsPresets();
+            {
+                const float h = 36.0f * ui.s;
+                const bool focused = !typing && st.optionsRow == 0;
+                const int count = static_cast<int>(presets.size());
+                st.optionsPresetPick = std::clamp(st.optionsPresetPick, 0, count - 1);
+                if (focused) {
+                    if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || UiPad::Left()) { st.optionsPresetPick = (st.optionsPresetPick + count - 1) % count; MenuSounds::Scroll(); }
+                    if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) || UiPad::Right()) { st.optionsPresetPick = (st.optionsPresetPick + 1) % count; MenuSounds::Scroll(); }
+                }
+                ui.dl->AddRectFilled(ImVec2(px, y), ImVec2(px + pw, y + h), IM_COL32(8, 12, 18, 85));
+                if (focused) ui.dl->AddRectFilled(ImVec2(px, y), ImVec2(px + 2.0f * ui.s, y + h), kAccent);
+                Text(ui, NobleStyle::TitleFont(), 18.0f, ImVec2(px + 10.0f * ui.s, y + (h - 18.0f * ui.s) * 0.5f), focused ? kWhite : kDim, "PRESETS");
+                const float chipsX = px + 110.0f * ui.s, gapX = 6.0f * ui.s;
+                const float chipW = (px + pw - chipsX - gapX * (count - 1)) / count;
+                for (int i = 0; i < count; ++i) {
+                    const ImVec2 c0(chipsX + i * (chipW + gapX), y + 3.0f * ui.s), c1(c0.x + chipW, y + h - 3.0f * ui.s);
+                    ImGui::SetCursorScreenPos(c0);
+                    ImGui::PushID("options_preset");
+                    ImGui::PushID(i);
+                    const bool clicked = ImGui::InvisibleButton("##p", ImVec2(chipW, c1.y - c0.y));
+                    const bool hovered = ImGui::IsItemHovered();
+                    ImGui::PopID();
+                    ImGui::PopID();
+                    if (hovered) MenuSounds::Hover(ImGui::GetID(presets[i].name));
+                    NobleUi::DrawBox(ui.dl, c0, c1, presets[i].name, hovered, focused && st.optionsPresetPick == i, false);
+                    if (clicked) {
+                        st.optionsRow = 0;
+                        st.optionsPresetPick = i;
+                        applyPreset(presets[i]);
+                    }
+                }
+                if (focused && AcceptPressed()) applyPreset(presets[st.optionsPresetPick]);
+                if (st.optionsRow == 0) {
+                    const std::string help = presets[st.optionsPresetPick].help;
+                    drawDesc(y + h + 4.0f * ui.s, help);
+                    y += descHeight(help);
+                }
+                y += h + 8.0f * ui.s;
+            }
+
+            // The scrolling list: headings and options, between the presets and the buttons.
+            const float buttonsY = ui.origin.y + ui.size.y - 74.0f * ui.s - 54.0f * ui.s;
+            const float listTop = y, listBottom = buttonsY - 8.0f * ui.s;
+            const auto descFor = [&](int r) -> std::string {
+                if (rows[r].kind == RowKind::Rule) return OptionHelpText(rules[rows[r].index]);
+                const Group& group = groups[rows[r].index];
+                const int n = filtering ? group.hits : group.end - group.start;
+                char help[200];
+                std::snprintf(help, sizeof(help), filtering ? "%d option%s in this category match." : "%d option%s. Enter or click to open or close; LB / RB jump between categories.",
+                              n, n == 1 ? "" : "s");
+                return help;
+            };
+            // A row's height includes its description box while it has the focus.
+            const auto rowHeight = [&](int r) {
+                const float base = (rows[r].kind == RowKind::Header ? 30.0f : 28.0f) * ui.s;
+                return r == st.optionsRow ? base + descHeight(descFor(r)) : base;
+            };
+            // The furthest the list can scroll: the last rows exactly fill the area.
+            int maxFirst = listRows;
+            for (float used = 0.0f; maxFirst > 1 && used + rowHeight(maxFirst - 1) <= listBottom - listTop; ) used += rowHeight(--maxFirst);
+            maxFirst = std::max(1, maxFirst);
+            int& first = st.optionsFirst;
+            if (st.optionsRow != st.optionsLastFocus && st.optionsRow >= 1 && st.optionsRow < listRows) {
+                // Follow the focus when it moves (not every frame, so the mouse wheel can look around).
+                if (st.optionsRow < first) first = st.optionsRow;
+                float used = 0.0f;
+                for (int r = first; r <= st.optionsRow; ++r) used += rowHeight(r);
+                while (first < st.optionsRow && used > listBottom - listTop) used -= rowHeight(first++);
+            }
+            st.optionsLastFocus = st.optionsRow;
+            const float wheel = ImGui::GetIO().MouseWheel;
+            if (wheel != 0.0f && ImGui::IsMouseHoveringRect(ImVec2(px, listTop), ImVec2(px + pw, listBottom), false))
+                first -= static_cast<int>(wheel);
+            first = std::clamp(first, 1, maxFirst);
+
+            if (listRows == 1) {
+                Text(ui, nullptr, 17.0f, ImVec2(px + 10.0f * ui.s, y + 6.0f * ui.s), kDim,
+                     st.optionsChangedOnly && query.empty() ? "Nothing is changed from the base rules yet." : "No option matches your search.");
+            }
+            for (int r = first; r < listRows; ++r) {
+                if (y + rowHeight(r) > listBottom + 0.5f) break;   // never under the buttons
+                const bool focused = !typing && st.optionsRow == r;
+                if (rows[r].kind == RowKind::Header) {
+                    const Group& group = groups[rows[r].index];
+                    const char* name = rules[group.start].group;
+                    const bool open = filtering || st.optionsOpenGroups.count(name) != 0;
+                    const float h = 26.0f * ui.s, hy = y + 2.0f * ui.s;
+                    ImGui::SetCursorScreenPos(ImVec2(px, hy));
+                    ImGui::PushID("options_group");
+                    ImGui::PushID(rows[r].index);
+                    const bool clicked = ImGui::InvisibleButton("##g", ImVec2(pw, h));
+                    const bool hovered = ImGui::IsItemHovered();
+                    ImGui::PopID();
+                    ImGui::PopID();
+                    ui.dl->AddRectFilled(ImVec2(px, hy), ImVec2(px + pw, hy + h), focused ? IM_COL32(60, 120, 170, 90) : hovered ? IM_COL32(255, 255, 255, 18) : IM_COL32(8, 12, 18, 60));
+                    ui.dl->AddLine(ImVec2(px, hy + h), ImVec2(px + pw, hy + h), focused ? kAccent : IM_COL32(143, 216, 255, 70), 1.0f);
+                    // Arrow: pointing right when folded, down when open.
+                    const ImVec2 a(px + 14.0f * ui.s, hy + h * 0.5f);
+                    const float ar = 5.0f * ui.s;
+                    if (open) ui.dl->AddTriangleFilled(ImVec2(a.x - ar, a.y - ar * 0.6f), ImVec2(a.x + ar, a.y - ar * 0.6f), ImVec2(a.x, a.y + ar * 0.8f), kAccent);
+                    else ui.dl->AddTriangleFilled(ImVec2(a.x - ar * 0.6f, a.y - ar), ImVec2(a.x - ar * 0.6f, a.y + ar), ImVec2(a.x + ar * 0.8f, a.y), kAccent);
+                    Text(ui, NobleStyle::TitleFont(), 17.0f, ImVec2(px + 28.0f * ui.s, hy + (h - 17.0f * ui.s) * 0.5f), focused ? kWhite : kAccent, Upper(name).c_str());
+                    char count[48];
+                    const int total = group.end - group.start;
+                    if (filtering) std::snprintf(count, sizeof(count), "%d OF %d", group.hits, total);
+                    else std::snprintf(count, sizeof(count), "%d", total);
+                    float cx = px + pw - 10.0f * ui.s - TextWidth(NobleStyle::SmallFont(), 15.0f * ui.s, count);
+                    Text(ui, NobleStyle::SmallFont(), 15.0f, ImVec2(cx, hy + (h - 15.0f * ui.s) * 0.5f), kDim, count);
+                    if (group.changed > 0) {
+                        char changed[32];
+                        std::snprintf(changed, sizeof(changed), "%d CHANGED", group.changed);
+                        cx -= TextWidth(NobleStyle::SmallFont(), 15.0f * ui.s, changed) + 16.0f * ui.s;
+                        Text(ui, NobleStyle::SmallFont(), 15.0f, ImVec2(cx, hy + (h - 15.0f * ui.s) * 0.5f), NobleUi::kAmber, changed);
+                    }
+                    bool toggle = clicked;
+                    if (focused && AcceptPressed()) toggle = true;
+                    if (focused && !filtering && (ImGui::IsKeyPressed(ImGuiKey_RightArrow) || UiPad::Right()) && !open) toggle = true;
+                    if (focused && !filtering && (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || UiPad::Left()) && open) toggle = true;
+                    if (clicked) st.optionsRow = r;
+                    if (toggle && !filtering) {
+                        if (open) st.optionsOpenGroups.erase(name);
+                        else st.optionsOpenGroups.insert(name);
+                        MenuSounds::Change();
+                    }
+                    if (st.optionsRow == r) drawDesc(y + 30.0f * ui.s, descFor(r));
+                    y += rowHeight(r);
+                    continue;
+                }
+                const int i = rows[r].index;
+                const VariantRules::Rule& rule = rules[i];
                 const int baseValue = VariantRules::Read(rule, st.optionsDecoded.data());
                 const auto edited = st.optionsValues.find(rule.key);
                 int value = edited != st.optionsValues.end() ? edited->second : baseValue;
-                const std::string text = RuleValueText(rule, value);
-                const int change = OptionRow(ui, rule.key, ImVec2(px, y), pw, rule.label, text.c_str(), !typing && st.optionsRow == i);
+                // Numbers for numeric options, level names for level options; the base game type's own value is marked.
+                const std::string text = OptionValueText(rule, value);
+                const int change = OptionRow(ui, rule.key, ImVec2(px, y), pw, rule.label, text.c_str(), focused,
+                                             value == baseValue ? "(default)" : nullptr);
+                // Amber dot just after the name of an option that differs from the base rules.
+                if (edited != st.optionsValues.end()) {
+                    const float nameW = TextWidth(NobleStyle::TitleFont(), 18.0f * ui.s, rule.label);
+                    NobleUi::ChangedDot(ui.dl, ImVec2(px + 10.0f * ui.s + nameW + 9.0f * ui.s, y + 16.0f * ui.s), ui.s);
+                }
                 if (change != 0) {
                     int next = std::clamp(value, rule.minValue, rule.maxValue);
                     if (rule.order) {
@@ -5171,12 +5515,14 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
                         }
                     }
                     NOBLE_INFO("FrontEndMenu: game option {} -> {}", rule.key, next);
-                    st.optionsRow = i;
+                    st.optionsRow = r;
+                    st.optionsLastFocus = r;   // a click on a row's arrows must not scroll the list under the mouse
                     if (next == baseValue) st.optionsValues.erase(rule.key);
                     else st.optionsValues[rule.key] = next;
                 }
-                if (st.optionsRow == i) Text(ui, nullptr, 16.0f, ImVec2(px + pw + 24.0f * ui.s, y + 6.0f * ui.s), kDim, rule.help, ui.origin.x + ui.size.x * 0.925f);
-                y += 28.0f * ui.s;
+                // The selected option's description (and what its levels mean), under the row.
+                if (st.optionsRow == r) drawDesc(y + 32.0f * ui.s, descFor(r));
+                y += rowHeight(r);
             }
             y = buttonsY;
             const float bw = (pw - 20.0f * ui.s) / 3.0f;
@@ -5244,9 +5590,12 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
                     }
                 }
             }
-            if (!st.optionsMessage.empty()) Text(ui, nullptr, 16.0f, ImVec2(px + pw + 24.0f * ui.s, y + 8.0f * ui.s), IM_COL32(255, 190, 120, 255), st.optionsMessage.c_str());
+            // Wrapped to the screen's right margin so a long message can't run off the edge either.
+            if (!st.optionsMessage.empty()) Text(ui, nullptr, 16.0f, ImVec2(px + pw + 24.0f * ui.s, y + 8.0f * ui.s), IM_COL32(255, 190, 120, 255),
+                                                 st.optionsMessage.c_str(), ui.origin.x + ui.size.x * 0.925f);
             if (back) { st.optionsOpen = false; MenuSounds::Back(); }
-            DrawHints(ui, { { Prompt::Accept, "Select" }, { Prompt::Back, "Back" }, { Prompt::Change, "Change" } });
+            DrawHints(ui, { { Prompt::Accept, "Select" }, { Prompt::Back, "Back" }, { Prompt::Change, "Change" }, { Prompt::Tabs, "Category" } },
+                      { { InputPrompts::Button::X, "X", "Changed Only" } });
             break;
         }
         if (st.variantPickerOpen && !forge) {

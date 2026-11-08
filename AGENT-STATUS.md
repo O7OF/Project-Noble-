@@ -9,8 +9,21 @@ force-push and never rewrite another agent's commits.
 
 ## Claude Code
 
-Current work (per Tyler): UI Scale slider, in-match PAUSED menu layout/scaling,
-GAME OPTIONS description/value labels, vertical side labels.
+No open claims. Done and committed 2026-11-08 (per Tyler):
+
+- UI Scale slider (SETTINGS > Video, 75-150 %, saved as `uiScale`, applied on APPLY) multiplied into
+  `NobleUi::Scale()`, the front-end `ui.s` and every pause-frame panel. Files: `src/common/Settings.*`,
+  `src/ui/SettingsPanel.cpp`, `src/ui/NobleUi.cpp`, `src/ui/PauseMenu.cpp`, `src/ui/FrontEndMenu.cpp`.
+- In-match PAUSED menu: `FontGlobalScale` set for the match frame, 2.0 cap removed, row labels centred.
+  DeepSeek's CHANGE TEAM row is kept as is.
+- GAME OPTIONS editor: search, collapsible categories (Respawn split out of General), LB/RB jumps, CHANGED ONLY,
+  CHANGED counts and orange dots, presets, "(default)" values, level names and descriptions under the focused row.
+  DeepSeek's one-row wheel step (`first -= static_cast<int>(wheel);`) is kept. Files: `src/ui/FrontEndMenu.cpp`,
+  `src/engine/VariantRules.*`.
+- Vertical side labels (`DrawTitle`) moved into the margin left of the title.
+
+Verified: full three-target build on top of DeepSeek's commits; `-test-map-gametypes` passes. Not yet tested in
+game by Tyler at 3840x2160 / 200 %.
 
 ## DeepSeek
 

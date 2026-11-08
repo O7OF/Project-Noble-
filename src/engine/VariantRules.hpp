@@ -19,7 +19,7 @@ namespace VariantRules {
 struct Rule {
     const char* key;
     const char* label;
-    const char* group;       // "General Settings" or "Player Traits"
+    const char* group;       // category heading in the GAME OPTIONS editor; rules of one group are listed together
     const char* help;
     int offset;              // into the decoded record
     int bit;                 // -1 = the whole byte; otherwise a single on/off bit of it
