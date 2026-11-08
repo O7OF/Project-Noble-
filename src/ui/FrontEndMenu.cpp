@@ -2552,13 +2552,31 @@ static void TakePendingLobbyEvents(MenuState& st) {
             const uint64_t hostPId = AuthClient::Get().IsLoggedIn() ? static_cast<uint64_t>(AuthClient::Get().GetUserId()) : 1ULL;
             const std::string hostTag = Settings::Get().Snapshot().serviceTag.empty() ? "117" : Settings::Get().Snapshot().serviceTag;
             const bool hostDev = AuthClient::Get().IsDeveloper();
+            bool hostFound = false;
             for (auto& p : st.lobbyRoster) {
                 if (p.isHost) {
                     p.peerId = hostPId;
+                    p.machineId = DeviceIdentityStore::Get().deviceId;
                     p.username = pName;
                     p.serviceTag = hostTag;
                     p.isDev = hostDev;
+                    hostFound = true;
                 }
+            }
+            if (!hostFound) {
+                LobbyPlayer hp;
+                hp.peerId = hostPId;
+                hp.machineId = DeviceIdentityStore::Get().deviceId;
+                hp.username = pName;
+                hp.serviceTag = hostTag;
+                hp.isHost = true;
+                hp.isDev = hostDev;
+                const auto& prof = UIManager::GetArmorCustomizer().GetProfile();
+                hp.rankIndex = Career::RankIndex(Career::Get().credits);
+                hp.emblemId = prof.emblemIndex;
+                hp.nameplateId = prof.nameplateIndex;
+                hp.emblemBackgroundId = prof.emblemBackgroundIndex;
+                st.lobbyRoster.insert(st.lobbyRoster.begin(), hp);
             }
         }
     }
@@ -3043,8 +3061,10 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
                         const uint64_t hostPId = AuthClient::Get().IsLoggedIn() ? static_cast<uint64_t>(AuthClient::Get().GetUserId()) : 1ULL;
                         const std::string hostTag = PlayerServiceTag(Settings::Get().Snapshot());
                         const bool hostDev = AuthClient::Get().IsDeveloper();
+                        bool hostFound = false;
                         for (auto& p : st.lobbyRoster) {
                             if (p.isHost) {
+                                hostFound = true;
                                 p.peerId = hostPId;
                                 p.machineId = DeviceIdentityStore::Get().deviceId;
                                 p.username = pName;
@@ -3083,6 +3103,34 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
                                 Career::SavePeerStats(peer);
                                 Career::RegisterPlayerName(p.peerId, p.username, p.serviceTag);
                             }
+                        }
+                        if (!hostFound) {
+                            LobbyPlayer hp;
+                            hp.peerId = hostPId;
+                            hp.machineId = DeviceIdentityStore::Get().deviceId;
+                            hp.username = pName;
+                            hp.serviceTag = hostTag;
+                            hp.isHost = true;
+                            hp.isDev = hostDev;
+                            const auto& prof = UIManager::GetArmorCustomizer().GetProfile();
+                            hp.rankIndex = Career::RankIndex(Career::Get().credits);
+                            hp.emblemId = prof.emblemIndex;
+                            hp.nameplateId = prof.nameplateIndex;
+                            hp.emblemBackgroundId = prof.emblemBackgroundIndex;
+                            const auto rec = Career::GetRecord();
+                            hp.gamesPlayed = static_cast<int>(rec.totals.gamesPlayed);
+                            hp.kills = static_cast<int>(rec.totals.kills);
+                            hp.deaths = static_cast<int>(rec.totals.deaths);
+                            int cd = 0;
+                            for (const auto& c : Career::Challenges()) if (c.done) ++cd;
+                            hp.challengesDone = cd;
+                            int ct = 0, ctm = 0;
+                            for (const auto& c : Career::Commendations()) {
+                                if (c.tracked) { ct += c.tier; ctm += 6; }
+                            }
+                            hp.commendations = ctm > 0 ? (ct * 100 / ctm) : 0;
+                            hp.armoryOwned = static_cast<int>(rec.totals.armoryOwned.size());
+                            st.lobbyRoster.insert(st.lobbyRoster.begin(), hp);
                         }
                     }
                 }
@@ -3793,10 +3841,14 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
     const auto& ownProf = UIManager::GetArmorCustomizer().GetProfile();
     const std::string localName = AuthClient::Get().IsLoggedIn() ? AuthClient::Get().GetUsername() : Settings::Get().Snapshot().playerName;
     const std::string localDevId = DeviceIdentityStore::Get().deviceId;
+    const std::string localLobbyMachineId = std::to_string(MasterServerClient::GetLobbyMachineId());
+    const uint64_t localPeerId = AuthClient::Get().IsLoggedIn() ? static_cast<uint64_t>(AuthClient::Get().GetUserId()) : (MasterServerClient::GetLobbyMachineId() & 0x7FFFFFFFULL);
+
     auto isLocal = [&](const LobbyPlayer& p) {
-        if (p.isHost && st.isLobbyHost) return true;
-        if (!localName.empty() && _stricmp(p.username.c_str(), localName.c_str()) == 0) return true;
-        if (!p.machineId.empty() && p.machineId == localDevId) return true;
+        if (st.isLobbyHost) return p.isHost;
+        if (p.isHost) return false;
+        if (!p.machineId.empty() && (p.machineId == localDevId || p.machineId == localLobbyMachineId)) return true;
+        if (p.peerId != 0 && p.peerId == localPeerId) return true;
         return false;
     };
 
@@ -3831,7 +3883,7 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         const int count = static_cast<int>(c.players.size());
         const int share = col + 1 < columns.size() ? (openLeft + 1) / 2 : openLeft;
         openLeft -= share;
-        c.rows = hasTeams ? std::max(count, std::min(kVisibleRows, count + share)) : slotCount;
+        c.rows = hasTeams ? std::max(count, std::min(kVisibleRows, count + share)) : std::max(count, std::min(kVisibleRows, slotCount));
     }
 
     // LB/RB step through the players, LT/RT page within the column, the wheel scrolls the column under the pointer.

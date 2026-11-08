@@ -11,6 +11,27 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-11-08, 03:30 ET) - Project Noble v0.19.20 Release Build & Pre-Game Lobby Listing Fixes
+
+### Release Overview
+Bumped version to `v0.19.20` incorporating:
+- **Pre-Game Lobby Listing Fixes:**
+  - **Host & Guest Entry Isolation (`ServerTestDeploy/server.js`):** In `/api/sessions/:id/lobby/join` and WS `lobby_join`, the existing guest lookup now strictly guards against matching the host (`!p.isHost`). Guests never overwrite host entries even when running on the same PC or sharing default IDs/names.
+  - **Collision-Free Peer IDs (`server.js`):** Server dynamically assigns unique guest peer IDs starting above host ID (1), preventing lobby player slot collisions.
+  - **Immediate WebSocket Roster Sync (`server.js`):** The relay WebSocket pushes `{ type: 'lobby_roster', roster: session.roster }` immediately upon connection so all joining players receive the current lobby roster without delay.
+  - **Host Leave Safeguard (`server.js`):** `/api/sessions/:id/lobby/leave` and `lobby_leave` guard host retention with `p.isHost || ...`.
+  - **Client Local Player Evaluation (`FrontEndMenu.cpp`):** Host only evaluates host entry as local; guests only evaluate their own entry as local (`isLocal` lambda). Remote guests' names, ranks, emblems, and colors are preserved accurately without being clobbered by local player stats.
+  - **Lobby Roster Overflow / False Scrollbar Fix (`FrontEndMenu.cpp`):** Fixed `c.rows` calculation so lobbies with < 8 players do not generate phantom scrollbars or scroll players off screen.
+  - **Host Auto-Recovery (`FrontEndMenu.cpp`):** Polling and WS event handlers automatically re-insert the local host entry at index 0 if the server payload ever drops it.
+- **Automated Release Packaging in `build.bat`:**
+  - Updated `build.bat` so upon successful compilation it automatically invokes `powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\publish-release.ps1" -SkipBuild`, generating the clean release `.zip` with `mainmenu_all.map` and publishing to GitHub Releases (`O7OF/Project-Noble-`).
+- **Public Packaging Constraints Strictly Preserved:**
+  - Zero dev binaries (`noble-dev*`, `noble-dedicated*`, `*.pdb`).
+  - Zero userdata or personal save files (`appearance.dat`, `career.dat`, `settings.json`, etc.).
+  - Bundled modded `data\menumaps\mainmenu_all.map` and string tables for the 3D Armory.
+
+--
+
 ## 0. Pick up here (2026-11-08, 03:00 ET) - Project Noble v0.19.19 Release Build
 
 ### Release Overview
