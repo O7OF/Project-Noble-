@@ -11,6 +11,19 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-11-08, 04:20 ET) - Project Noble v0.19.21 Release Build
+
+### Release Overview
+Bumped version to `v0.19.21` incorporating:
+- **Auto-Update & Antivirus False-Positive Hardening:**
+  - **Direct Azure Blob Storage Download (`Updater.cpp`):** Switched release asset resolution to use the release asset API endpoint (`Accept: application/octet-stream`), bypassing `github.com` HTTP 504 gateway timeouts and downloading directly from Azure Blob storage.
+  - **WinHTTP Redirect & Timeout Resiliency (`Updater.cpp`):** Configured WinHTTP with automatic cross-domain redirect policies (`WINHTTP_OPTION_REDIRECT_POLICY_ALWAYS`), fallback location traversal, and extended connection timeouts.
+  - **Replaced PowerShell Script with Clean Native Batch (`Updater.cpp`):** Replaced `apply_update.ps1` and hidden `powershell.exe -ExecutionPolicy Bypass` with a lightweight, clean `apply_update.cmd` script utilizing standard Windows utilities (`tasklist`, `tar.exe`, `robocopy`). This completely eliminates AMSI script warnings and resolves Windows Defender heuristic false positives (`Trojan:Win32/Bearfoos.A!ml`).
+  - **Standard Windows PE Version Information (`noble.rc`):** Embedded a complete `VS_VERSION_INFO` resource table into `noble-client.exe` containing company name, product title, file descriptions, legal copyright, and version numbering (`0.19.21.0`), preventing machine-learning heuristics from penalizing anonymous executables.
+- **Verification:** Both `build.bat` and `build-dev.bat` compile with 0 errors.
+
+--
+
 ## 0. Pick up here (2026-11-08, 04:15 ET) - Auto-Updater Reliability & Antivirus False-Positive Mitigation
 
 ### Auto-Update & Antivirus Fixes Overview
