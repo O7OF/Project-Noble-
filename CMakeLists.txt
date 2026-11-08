@@ -395,6 +395,8 @@ set(DEDICATED_HEADERS
 )
 
 add_executable(noble-dedicated ${DEDICATED_SOURCES} ${DEDICATED_HEADERS})
+# Dev diagnostics (pool report, spawn test, MemberTrace) stay out of the dedicated server: it must not ship
+# development features until it hosts real sessions.
 if(NOBLE_DEV_BUILD)
     target_compile_definitions(noble-dedicated PRIVATE NOBLE_DEV_BUILD=1)
 endif()

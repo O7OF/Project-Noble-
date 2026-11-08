@@ -522,6 +522,61 @@ the recipe builder or the .nlp format.
   v16p 6403f044, full d5b0122e; all three boot clean (POOL-REPORT-DONE). data\limits v16/v16p/full .nlp
   rebuilt with defaults and copied to build\bin\Release\data\limits (full.nlp kept there, as Claude asked).
 
+- 2026-11-08 13:24 ET (DeepSeek): **C12 trace run 2 blocked: noble-dedicated cannot host or trace.**
+  The dedicated exe has no MemberTrace (string absent; its vcxproj predates the MemberTrace.cpp addition) and
+  DedicatedServer::Start never pumps the engine or creates a session (UPnP + RCON + a 60 Hz sleep loop only),
+  so no client can join it. A 40 s `-trace-members -limits v16` run logged the banner, engine-limits line and
+  "Dedicated server active!", then exited 0xC0000409 on quit; 0 MEMBER| lines. Trace file got "Run 3
+  (dedicated) - 0 lines" and "Run 3 (client) - not run" sections with the evidence.
+  `slot_rewrite.py` still ran on the existing trace (runs 1-2) using a capstone-generated objdump-style asm
+  (no objdump on the box): **293 traced instructions**, 270 with no memory operand, 23 derivations (add 18,
+  lea 3, other 1, not found 1); regions playersB 67, peersA 114, maskA 28, playersA 82, peersB 2. Wrote
+  docs/limits-players-sites.json. Follow-up for C12: implement headless hosting (engine frame pump + session
+  start) and add MemberTrace.cpp to the configured dedicated project before run 2 can be repeated.
+
+- 2026-11-08 13:40 ET (DeepSeek): **two-instance LAN works; trace capture added.** Host:
+  Release\noble-dev.exe -trace-members -host -lan -private -max-players 8 -map 20_sword_slayer -mode
+  multiplayer. Client: Release2\noble-dev.exe -trace-members -lan -connect 127.0.0.1:11774 -map
+  20_sword_slayer -mode multiplayer. Release2 is a second data folder (assets junctioned, userdata/sandbox
+  copied). The client joined: pool report players 2/16, guest UDP session with the host, both windows in the
+  Slayer match. No mutex/Steam/port block (same Steam identity, both bind 11774/11775 with reuse). The pair
+  stalls after a few minutes of tracing (frames stop, processes stay alive) - restart with
+  tools\lan-two-instance.ps1, then play the client by hand. MEMBER| lines from the first pair are appended to
+  docs\limits-players-trace.txt as Run 3 (host) 2,496 lines and Run 3 (client) 1,170 lines.
+  CMake: noble-dedicated now compiles with NOBLE_DEV_BUILD, so MemberTrace.cpp is live in the dedicated
+  exe (verified: "MemberTrace: tracing" then "0 accesses, 0 distinct instructions" - it still has no engine
+  session; headless hosting remains a TODO). Note the dedicated exits 0xC0000409 on quit.
+  slot_rewrite: with per-function capstone asm and the updated normalizer it parses capstone text; runs 1-2 give
+  293 traced instructions and, after the slot-array filter, **192 accesses whose RVA set matches the objdump
+  run exactly**; my kind@derivation keying gives 36 groups, not the objdump pipeline's 77 sites. On the full
+  trace including run 3 it reports 593 traced instructions. **Incident:** rerunning with --out wrote over
+  docs\limits-players-sites.json; I reconstructed a runs-1-2 file (190 of 192 accesses - two RVAs are outside
+  the capstone .pdata coverage - 36 sites, clearly marked) and ask Claude to re-send the objdump-based file.
+
+- 2026-11-08 13:40 ET (DeepSeek): **dedicated reverted to non-dev; slot tool re-checked; Run 4 pending Tyler.**
+  CMakeLists: noble-dedicated back to `if(NOBLE_DEV_BUILD) ...` (dev features must not ship in the server;
+  MemberTrace stays out until the dedicated hosts real sessions). Reconfigured and rebuilt: noble-dedicated
+  13:33, no "MemberTrace: tracing" string. slot_rewrite.py now filters to the real slot arrays and groups
+  sites; docs\limits-players-sites.json (417 accesses / 136 sites) left untouched. Rerun on my linear
+  capstone asm reproduces **417 slot-record accesses** exactly; my grouping gives 234 sites vs the objdump
+  run's 136 - the difference is capstone .text boundary handling, not trace data (experiments:
+  build\sites-check-linear.json, build\sites-check.json).
+  **Run 4 procedure, when Tyler is free:** run `tools\lan-two-instance.ps1` (host + client, both with
+  -trace-members); Tyler plays the client for a few kills, deaths and respawns, then quits the client first so
+  the host sees it leave. Then append the two logs to docs\limits-players-trace.txt as "Run 4 (host)" and
+  "Run 4 (client)" and rerun
+  `python tools\limits\slot_rewrite.py --asm <objdump> --trace docs\limits-players-trace.txt --out build\sites-run4.json`.
+  The pair stalls after a few minutes of tracing (known); restart the script if the windows freeze.
+
+- 2026-11-08 13:45 ET (DeepSeek): **C12 Run 4 collected.** Tyler played the two-instance LAN pair (13:37:29 host /
+  13:37:41 client, client join-request 13:37:46, players 2/16; client quit 13:40:30, host exited 13:40:42).
+  Appended the session's MEMBER| lines to docs\limits-players-trace.txt: Run 4 (host) 3,232 lines and Run 4
+  (client) 1,969 lines (file now 12,159 MEMBER lines). Reran slot_rewrite (linear capstone asm) to
+  build\sites-run4.json: **417 slot-record accesses / 234 derivation sites** - the access count matches the
+  objdump run exactly, and Run 4 added no new distinct slot instructions (the 417-instruction set is unchanged;
+  kills/deaths/respawns reuse the same accessors). The site count still differs from the objdump run's 136
+  because the capstone .text sweep's function boundaries differ. docs\limits-players-sites.json was not touched.
+
 ## Ready for Tyler to test (2026-11-08 08:47 ET, DeepSeek build)
 
 Build: `build\bin\Release\noble-dev.exe` (09:14; engine .nlp 09:02) — all three targets build clean; `data\limits\v16.nlp`

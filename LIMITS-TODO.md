@@ -110,3 +110,21 @@ What it took (all in Noble's own engine copy; the player's haloreach.dll is unto
   without a crash (past the old ~647-live crash), three runs. Engine patch verified by disassembly (frame
   0xB0E0, caps 0x400 x3). Frame rate at 1,024: ~18 fps (512: ~36 fps) — C7c data. Full report:
   `AI-LIMITS-REPORT-2026-11-08.md`. Test command and PASS/FAIL lines are in `AGENT-STATUS.md`.
+
+## Status board (2026-11-08 13:50 ET, Claude) — full picture in LIMITS-HANDOFF.md "Status at end of 2026-11-08"
+
+| # | Task | State |
+|---|---|---|
+| C7 | AI actors 96 → 1,024 | **Done** (setting AI ACTORS; 973-982 live, 5 min) |
+| C11a | Render states 4,096 → 16,384 (render bank +8 MB) | **Done** (opt-in `-render-states`) |
+| C11b | V16 visible draw list 4,096 | Open (needs Tyler's eyes on 4,096+ visible objects) |
+| C6 | Script threads / references | **Done** (det hs thread 1,024, list object reference 512); script node grows by itself |
+| D6 | Particles profile in settings | **Done** |
+| C8 | Light volumes → profile Full | **Done** (DeepSeek port, reviewed; 5-min plasma + horde) |
+| D3 | Join check `limits_id` | Code done; **needs backend** to store/return the field |
+| C12 | 128 real players | In progress: trace runs 1-3 done (417 accesses / 136 sites); patch design written |
+| C12-1 | Run 4 (deaths/respawns/quit, Tyler plays the client) | **Waiting on Tyler** |
+| C12-2 | Site generator + runtime patcher (Noble-allocated caves) | Next (Claude) |
+| C12-3 | 32-slot test build + two-window check | After C12-2 |
+| C12-4 | Headless dedicated host (real engine session) | Open, needed for 64-128 |
+| — | Scheduler ceiling 16,384 jobs; effect lists 4 × 512 | Known limits, parked |

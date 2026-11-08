@@ -3,6 +3,84 @@
 Written 2026-11-08 by Claude (claude.ai session, for Tyler). Read this before any task in
 `LIMITS-TODO.md`. Claim tasks in `AGENT-STATUS.md` as usual.
 
+## Status at end of 2026-11-08 (read this first)
+
+Updated 13:50 ET by Claude. Everything below this section is the original design; this section is what exists
+now. Last commit: `ce37aa7` (local, not pushed). Uncommitted since then: C12 docs/tools (see below).
+
+### Profiles and engine builds (all built by `tools/limits/make_v16_particles.py`, applied as `.nlp` to the
+player's own stock DLL; the installed `haloreach.dll` is never modified)
+| Profile | Setting label | `.nlp` | What it adds |
+|---|---|---|---|
+| 0 Stock | STOCK | – | nothing |
+| 1 V16 | EXTENDED | `v16.nlp` | GreenKnight V16 (objects 32,767) + Noble extras below |
+| 2 V16p | EXTENDED + PARTICLES | `v16p.nlp` | + GreenKnight particles (pools 8×, 65,535 GPU particles/frame) |
+| 3 Full | FULL (V16 + PARTICLES + LIGHT VOLUMES) | `full.nlp` | + GreenKnight light volumes V4 (5 pools 160 → 65,535), ported by DeepSeek (`lv_port.py`) |
+**Proof nothing else changed:** `--ai-bank-extra 0 --render-extra 0` reproduces GreenKnight's exact V16
+`b8810c3b…` and V16p `47bc0723…`. Default builds: v16 `007a4dac…`, v16p `6403f044…`, full `d5b0122e…`.
+
+### Noble extras in every Extended build
+- **Game-state bank 1 (AI) +6 MB** (`--ai-bank-extra`, operand RVA 0x16155): stock 0x220000 had ~5 KB spare.
+- **Render bank 3 +8 MB** (`--render-extra`, operand RVA 0x1619A): room for 16,384 cached object render states.
+- **Main bank 4** sized from measured use in Full (0x3250000). Use the BANK diagnostic before changing banks.
+- **Three per-actor stack buffers grown:** AI update scheduler 0x70ABBC (96 → 1,024 entries, stack-commit hook),
+  spawn-candidate list 0x76EBF8 (512 → 1,024 + its 0x200 caps), search scratch 0x76E814 (+0x800, caps 0x400,
+  stack-commit hook). Ops: `AI_FRAME_OPS`, `AI_FRAME2_OPS`/`AI_FRAME2_CAP_OPS`, `AI_FRAME3_OPS`/`_CAP_OPS`.
+- **Effect list guard 0x1D4F85:** 4 static lists × 512 at RVA 0x477E700 had no bounds check (crashed FULL in an F6
+  horde); a `.deltrac` cave now drops entries past 511. Emitted only when extras are on.
+
+### Runtime pieces (Noble code)
+- `PoolResize.cpp` (hooks data_array_new 0x12FCC): `-ai-actors N` / SETTINGS > ENGINE > AI ACTORS (96/256/512/1024):
+  actor + prop/prop_ref/prop_search scaled, command scripts, object list header, dynamic firing points, swarm,
+  script threads (det hs thread 1,024, non-det 32, list object reference 512); `-render-states N` (render bank
+  budget). Budgets read from the loaded engine; never grows past the added room.
+- `PoolReport.cpp`: `POOL|…` and **`BANK|n|used|capacity`** (bank table RVA 0x27BF270, stride 0x18F0, +0xA0 cap,
+  +0xA8 used); warns on overflow. `-pool-trace`, `-ai-pools a,b`.
+- Stack-overrun reporter (`gs_failure_report`, Extended): logs `STACK OVERRUN in haloreach+0x…` with frames before a
+  fail-fast (0xC0000409) kills the process. Windows Event Log is the fallback.
+- `SchedulerGuard.cpp`: waits for free jobs; ceiling is 16,384 jobs (a dense 5,000-object grid asks ~74k → crash
+  0x68B21F). Known limit, inline arrays at scheduler body +0x230010/+0x260038/+0x290038; not fixed.
+- `SpawnTest.cpp` (dev): F9 objects, F8 128-body crowd, F7 all squads, **F6 horde**, `-horde N`, `-horde-team`,
+  `-horde-no-teleport`, `-horde-delay`; waits for the real cinematic flag (game-state root +0x130).
+- Join check (D3): hosts send `limits_id` (= `limits::LocalNetworkId()`), joiners refuse a mismatch. **Inert until the
+  private backend stores/returns `limits_id`.**
+- Unwind for Full's relocated LV routines registered at load (`RtlAddFunctionTable`).
+
+### Results (tested)
+| Limit | Stock | Now | Evidence |
+|---|---|---|---|
+| Objects | 2,048 | 32,767 | V16; ~8,800 moving objects before the scheduler ceiling |
+| AI actors | 96 | 1,024 | 973-982 live at wave end, 5 min no crash (`-horde 1000 -horde-team 0 -horde-no-teleport`); ~18-36 fps |
+| Render states | 4,096 | 16,384 | 3,800 objects 5+ min; visible-past-4,096 check still open (V16 draw list, docs/limits-render.md) |
+| Particles | 2,048 | 16,384 pool / 65,535 per frame | V16p |
+| Light volumes | 160 | 65,535 | Full, 5-min plasma Firefight + F6 horde, no crash |
+| Script threads | 320 | 1,024 | pool report |
+| Players | 16 | in progress | see C12 below |
+
+### C12: 128 real players (option 1, chosen by Tyler)
+Keep the engine's own netcode and authority; move player/peer slots ≥ 16 into Noble-owned overflow storage; steps
+32 → 64 → 128; 64+ expected to need a real dedicated host (the current `noble-dedicated` is a stub: no engine session).
+- **Session objects:** 4 static membership objects, RVA 0x2B07418 + k × 0x61668 (ctor 0x3CF864). Inline arrays:
+  peers 17 × 0x158 at +0x60 and +0x2270, players 16 × 0xB0 at +0x1740 and +0x3950; scalar fields (counts, 32-bit
+  mask +0x173C, ids at +0x4464…) do not move.
+- **Trace:** `src/host/MemberTrace.*` (`-trace-members`, dev only; stalls the game after a few minutes, known).
+  Runs 1-3 (menu, Slayer start, two-instance LAN join) → **417 slot-record accesses from 136 address sites**
+  (`docs/limits-players-sites.json`, `tools/limits/slot_rewrite.py`).
+- **Patch design:** overflow blocks at the same 0x61668 stride, so each redirect is `dst += C` with one constant per
+  array; slots 0..15 keep their exact addresses. 65 imul sites generated automatically, ~70 hand-reviewed. Caves
+  live in Noble-allocated executable memory near the engine, patched at load with byte checks (no room left in
+  the DLL). Details: `docs/limits-players-audit.md`, `docs/limits-players.md`.
+- **Test rig (one PC):** `tools\lan-two-instance.ps1` starts a host (build\bin\Release) and a client
+  (build\bin\Release2, second data folder) joined over 127.0.0.1:11774.
+- **Next:** Run 4 (Tyler plays the client: deaths, respawns, quit client first) → generator + runtime patcher →
+  32-slot test build → same two-window check, then extra local instances for slots 17+.
+
+### Other open items
+- C11 part 2: V16's 4,096 visible draw list (needs eyes on 4,096+ visible objects).
+- Scheduler ceiling (16,384 jobs), effect lists capacity (4 × 512 → `.hkwork` if effects go missing).
+- Headless dedicated host (real engine session) for 64-128 players.
+- Backend: store/return `limits_id` so the join check works.
+
 ## Goal
 
 Raise Halo: Reach's engine limits inside Noble so that 64-player lobbies render every player, Forge
