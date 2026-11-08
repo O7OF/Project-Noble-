@@ -1072,7 +1072,7 @@ void SettingsPanel::RenderGame() {
             When::Apply, "0 %", std::fabs(m_edit.vehicleFirstPersonFovMod - m_saved.vehicleFirstPersonFovMod) > 1e-4f, false)) {
         SliderValue(m_edit.vehicleFirstPersonFovMod, -1.20f, 1.20f, 0.05f, 0.00f, fovModText(m_edit.vehicleFirstPersonFovMod).c_str());
     }
-    if (Row("THIRD-PERSON ZOOM", "How much the camera zooms in when aiming a weapon with right click in third person (F5). 50 % is the default zoom.",
+    if (Row("THIRD-PERSON ZOOM", "How much the camera zooms in when aiming a weapon with right click in third person. 50 % is the default zoom.",
             When::Apply, "50 %", std::fabs(m_edit.thirdPersonZoom - m_saved.thirdPersonZoom) > 1e-4f, false)) {
         SliderValue(m_edit.thirdPersonZoom, 0.10f, 1.00f, 0.05f, 0.50f, Percent(m_edit.thirdPersonZoom).c_str());
     }
@@ -1092,11 +1092,11 @@ void SettingsPanel::RenderGame() {
             When::Apply, "0 %", std::fabs(m_edit.vehicleFirstPersonOffsetY - m_saved.vehicleFirstPersonOffsetY) > 1e-4f, false)) {
         SliderValue(m_edit.vehicleFirstPersonOffsetY, -1.00f, 1.00f, 0.05f, 0.00f, vertOffsetText(m_edit.vehicleFirstPersonOffsetY).c_str());
     }
-    if (Row("THIRD-PERSON HORIZONTAL OFFSET", "Shifts the third-person camera left or right relative to your character (F5). Negative values move left, positive values move right; 0 % keeps Reach's default.",
+    if (Row("THIRD-PERSON HORIZONTAL OFFSET", "Shifts the third-person camera left or right relative to your character. Negative values move left, positive values move right; 0 % keeps Reach's default.",
             When::Apply, "0 %", std::fabs(m_edit.thirdPersonOffsetX - m_saved.thirdPersonOffsetX) > 1e-4f, false)) {
         SliderValue(m_edit.thirdPersonOffsetX, -1.00f, 1.00f, 0.05f, 0.00f, horizOffsetText(m_edit.thirdPersonOffsetX).c_str());
     }
-    if (Row("THIRD-PERSON VERTICAL OFFSET", "Shifts the third-person camera up or down relative to your character (F5). Negative values move down, positive values move up; 0 % keeps Reach's default.",
+    if (Row("THIRD-PERSON VERTICAL OFFSET", "Shifts the third-person camera up or down relative to your character. Negative values move down, positive values move up; 0 % keeps Reach's default.",
             When::Apply, "0 %", std::fabs(m_edit.thirdPersonOffsetY - m_saved.thirdPersonOffsetY) > 1e-4f, false)) {
         SliderValue(m_edit.thirdPersonOffsetY, -1.00f, 1.00f, 0.05f, 0.00f, vertOffsetText(m_edit.thirdPersonOffsetY).c_str());
     }

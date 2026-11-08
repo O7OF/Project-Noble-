@@ -50,7 +50,7 @@ struct SettingsData {
     float padLookSpeedX = 2.0f;    // controller look speed 1.00..10.00; 2.00 = Reach's stock speed (see InputTuning)
     float padLookSpeedY = 2.0f;    // vertical
     // Keyboard keys or mouse buttons treated as controller paddles 1-6 (virtual-key codes, 0 = none). Tools like Steam Input
-    // can send a key for each paddle. Default F1-F6, which no keyboard action uses (F5 also toggles third person, see ReachHost).
+    // can send a key for each paddle. Default F1-F6, which no default keyboard action uses.
     std::array<int, 6> padPaddleKeys = { 0x70, 0x71, 0x72, 0x73, 0x74, 0x75 };
     bool padInvertLook = false;
     int padLayout = 0;             // Halo: Reach button layout (engine/PadLayouts.hpp); 0 = Default

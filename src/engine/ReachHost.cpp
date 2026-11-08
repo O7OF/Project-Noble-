@@ -654,10 +654,9 @@ static void WriteDefaultKeyBindings(uint8_t* profile) {
         auto it = settings.keyOverrides.find(static_cast<int>(action));
         const uint32_t vk = static_cast<uint32_t>(it != settings.keyOverrides.end() ? it->second
                                                                                   : KeyBindings::DefaultKey(static_cast<int>(action)));
-        const uint32_t none = 0;
         memcpy(entry + 0, &action, sizeof(action));
         memcpy(entry + 4, &vk, sizeof(vk));
-        memcpy(entry + 8, &none, sizeof(none));
+        memset(entry + 8, 0, 16);
     }
     // Entries are {u32 action, u32 key, u32 second key, 12 zero bytes}. The mouse wheel is bound
     // through the second key: the engine turns the wheel pulse at input +0x114 into key 0xAF (up,
@@ -1124,19 +1123,10 @@ static uint64_t __fastcall HostSlot34_ProfileSettings(void* thisPtr, uint64_t a1
             NOBLE_WARN("ReachHost [Slot 34]: failed to read -profile file; using built-in key bindings");
         }
         if (!loaded) {
-            size_t pSize = 0;
-            const uint8_t* embProfile = EmbeddedBlocks::GetBlock("profile_1.bin", &pSize);
-            if (embProfile && pSize > 0) {
-                size_t toCopy = std::min(pSize, sizeof(s_hostProfileBuffer));
-                std::memcpy(s_hostProfileBuffer, embProfile, toCopy);
-                loaded = true;
-                NOBLE_INFO("ReachHost [Slot 34]: loaded authentic profile from embedded resource 'profile_1.bin' ({} bytes)", pSize);
-            }
-        }
-        if (!loaded) {
             WriteDefaultKeyBindings(s_hostProfileBuffer);
             WriteDefaultVolumes(s_hostProfileBuffer);
             WriteDefaultLookSettings(s_hostProfileBuffer);
+            WritePadLookSettings(s_hostProfileBuffer);
             NOBLE_INFO("ReachHost [Slot 34]: using built-in default key bindings, volumes and look settings");
         }
         // the engine host::hit case 0x22: the profile is a zeroed 64 KB block with only the 4-character
@@ -1437,11 +1427,16 @@ bool ReachHost::IsKeyHeld(int vk) {
 // keyboard action nor switch away from the controller) and FillLocalPad reads them as controller inputs. Only while a
 // controller is connected: otherwise those keys are ordinary keys.
 static uint8_t s_paddlesHeld = 0;
+static uint8_t s_paddleBoundMask = 0;
 static bool s_padConnected = false;
 static std::array<int, PadLayouts::kPaddleCount> s_paddleKeys{};
 
 bool ReachHost::IsPaddleKey(int vk) {
-    return s_padConnected && std::find(s_paddleKeys.begin(), s_paddleKeys.end(), vk) != s_paddleKeys.end();
+    if (!s_padConnected) return false;
+    for (int n = 0; n < PadLayouts::kPaddleCount; ++n) {
+        if ((s_paddleBoundMask & (1u << n)) != 0 && s_paddleKeys[static_cast<size_t>(n)] == vk) return true;
+    }
+    return false;
 }
 
 static void FillLocalPad(uint8_t* st, bool keyboardMouseUsed) {
@@ -1725,10 +1720,20 @@ static void FillLocalInput(uint8_t* st) {
         static ULONGLONG s_paddleRead = 0;
         if (GetTickCount64() - s_paddleRead > 500) {
             s_paddleRead = GetTickCount64();
-            s_paddleKeys = Settings::Get().Snapshot().padPaddleKeys;
+            const SettingsData snap = Settings::Get().Snapshot();
+            s_paddleKeys = snap.padPaddleKeys;
+            uint8_t mask = 0;
+            for (const auto& [actKey, input] : snap.padBindings) {
+                (void)actKey;
+                if (input >= PadLayouts::InputPaddle1 && input < PadLayouts::InputPaddle1 + PadLayouts::kPaddleCount) {
+                    mask = static_cast<uint8_t>(mask | (1u << (input - PadLayouts::InputPaddle1)));
+                }
+            }
+            s_paddleBoundMask = mask;
         }
         s_paddlesHeld = 0;
         for (int n = 0; s_padConnected && n < PadLayouts::kPaddleCount; ++n) {
+            if ((s_paddleBoundMask & (1u << n)) == 0) continue;
             const int vk = s_paddleKeys[static_cast<size_t>(n)];
             if (vk <= 0 || vk > 255) continue;
             if (st[0x004 + vk]) s_paddlesHeld = static_cast<uint8_t>(s_paddlesHeld | (1u << n));
@@ -1762,6 +1767,14 @@ static void FillLocalInput(uint8_t* st) {
             EnginePatches::RequestLowerWeaponToggle();
         }
         s_lowerWasDown = lowerDown;
+    }
+
+    // 3rd-person camera keybind (SETTINGS > CONTROLS > KEYBOARD & MOUSE, unbound by default):
+    // rising-edge press toggles 3rd-person view on foot.
+    {
+        const int tpVk = KeyBindings::EffectiveKey(KeyBindings::kActionThirdPerson);
+        const bool tpDown = !uiPointer && tpVk > 0 && tpVk < 256 && st[0x004 + tpVk] != 0;
+        CameraThirdPerson::PollHotkey(tpDown);
     }
 
     // Vehicle 1st-person camera keybind (SETTINGS > CONTROLS > KEYBOARD & MOUSE, unbound by default):
