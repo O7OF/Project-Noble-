@@ -13,6 +13,7 @@
 #include "host/Window.hpp"
 #include "host/D3D11Renderer.hpp"
 #include "host/Loader.hpp"
+#include "host/EngineLimits.hpp"
 #include "hooks/HookManager.hpp"
 #include "hooks/SigScanner.hpp"
 #include "vfs/VFS.hpp"
@@ -699,8 +700,18 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     }
 
     // 8. Load and bootstrap haloreach.dll directly in process memory
+    // Extended engine limits (LIMITS-HANDOFF.md): with a profile picked, Noble prepares its own patched copy of
+    // Reach's DLL and loads that one; the installed file is never modified. Any mismatch (another DLL build, a
+    // bad or missing patch) falls back to the stock DLL with the reason logged, so the game always starts.
+    const noble::limits::Profile requestedLimits = noble::limits::ProfileFromInt(startupSettings.extendedLimits);
+    const noble::limits::PrepareResult engineDll =
+        noble::limits::PrepareEngineDll(reachInstall->reachDllPath, requestedLimits);
+    NOBLE_INFO("Engine limits: requested {}, active {}, reason {}", noble::limits::ProfileName(requestedLimits),
+               noble::limits::ProfileName(engineDll.active), engineDll.reason.empty() ? "none" : engineDll.reason.c_str());
     auto loader = std::make_unique<noble::Loader>();
-    if (!loader->LoadReachDll(reachInstall->reachDllPath)) {
+    // The second path is the installed DLL: its folder is where the engine's own dependencies (xaudio2, MCC
+    // binaries) are found. Pass both even for a fallback, so the copy never becomes the dependency root.
+    if (!loader->LoadReachDll(engineDll.dllPath, reachInstall->reachDllPath)) {
         NOBLE_ERROR("Failed to load haloreach.dll into process space.");
         return 1;
     }

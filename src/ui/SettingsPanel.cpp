@@ -14,6 +14,7 @@
 #include "engine/KeyBindings.hpp"
 #include "engine/CameraFov.hpp"
 #include "engine/PadLayouts.hpp"
+#include "host/EngineLimits.hpp"
 #include <map>
 #include "network/MasterServerClient.hpp"
 
@@ -89,6 +90,12 @@ const char* WhenText(int when) {
     default: return "Information";
     }
 }
+
+// ENGINE LIMITS values, one per limits::Profile in declaration order (0 = Stock). A new engine-limits profile
+// needs its label here and its entry in EngineLimits; the row below reads nothing else.
+const char* const kEngineLimitLabels[] = { "STOCK", "EXTENDED (V16)" };
+static_assert(std::size(kEngineLimitLabels) == static_cast<size_t>(limits::Profile::V16) + 1,
+              "add an ENGINE LIMITS label for every engine-limits profile");
 
 // The display Noble's window is on, in real pixels (the process is per-monitor DPI aware, see main.cpp).
 void NativeDisplaySize(int& w, int& h) {
@@ -1223,6 +1230,21 @@ void SettingsPanel::RenderGame() {
             }
         }
     }
+    Section("ENGINE");
+    // Extended engine limits (LIMITS-HANDOFF.md): at start-up Noble builds its own patched copy of Reach's
+    // haloreach.dll and loads that; the installed DLL is never touched. The profile changes the game-state
+    // layout, so every player and the server in a match must run the same one. It cannot switch now: by the
+    // time this screen opens the engine is already loaded, hence Next start.
+    {
+        constexpr int count = static_cast<int>(std::size(kEngineLimitLabels));
+        const int current = std::clamp(m_edit.extendedLimits, 0, count - 1);
+        if (Row("ENGINE LIMITS", "Raises the object and render limits. All players in a match must use the same setting. Takes effect after a restart.",
+                When::Restart, kEngineLimitLabels[0], m_edit.extendedLimits != m_saved.extendedLimits)) {
+            if (const int d = CycleValue(kEngineLimitLabels[current], current, count, false)) {
+                m_edit.extendedLimits = std::clamp(current + d, 0, count - 1);
+            }
+        }
+    }
 }
 
 void SettingsPanel::RenderPlayer() {
@@ -1785,6 +1807,7 @@ int SettingsPanel::CountDiff(const SettingsData& a, const SettingsData& b, Cat c
                f(a.thirdPersonZoom, b.thirdPersonZoom) +
                f(a.thirdPersonOffsetX, b.thirdPersonOffsetX) + f(a.thirdPersonOffsetY, b.thirdPersonOffsetY) +
                (a.subtitles != b.subtitles) + (a.menuBackground != b.menuBackground) +
+               (a.extendedLimits != b.extendedLimits) +
                f(a.brightness, b.brightness) + (a.fxaa != b.fxaa) + (a.throttleUnfocused != b.throttleUnfocused);
     case Cat::Player:
         return (a.playerName != b.playerName) + (a.serviceTag != b.serviceTag);
@@ -1848,6 +1871,7 @@ SettingsData SettingsPanel::WithDefaults(SettingsData e, Cat c) {
         e.thirdPersonZoom = d.thirdPersonZoom;
         e.thirdPersonOffsetX = d.thirdPersonOffsetX; e.thirdPersonOffsetY = d.thirdPersonOffsetY;
         e.subtitles = d.subtitles; e.menuBackground = d.menuBackground;
+        e.extendedLimits = d.extendedLimits;
         break;
     case Cat::Player:
         e.playerName = d.playerName; e.serviceTag = d.serviceTag;

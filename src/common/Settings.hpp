@@ -90,6 +90,10 @@ struct SettingsData {
     // Gameplay
     bool subtitles = true;         // show cinematic/dialogue subtitles (ReachHost subtitle hook)
     uint64_t campaignSkulls = 0;   // MCC skull bits chosen on the SKULLS screen (launch block +0x48)
+    // Extended engine limits (LIMITS-HANDOFF.md): the limits::Profile Noble prepares its own patched copy of
+    // haloreach.dll for. 0 = Stock (the installed DLL, untouched), 1 = V16 (object pool 2,048 -> 32,767).
+    // Read once at start-up; every player and the server in a match must use the same value.
+    int extendedLimits = 0;
 
     // Menus
     std::string menuBackground = "random"; // "random", "noble" (own art), "reach" (from the MCC install)

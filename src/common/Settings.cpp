@@ -1,4 +1,5 @@
 #include "engine/KeyBindings.hpp"
+#include "host/EngineLimits.hpp"
 #include "Settings.hpp"
 #include "BuildIdentity.hpp"
 #include "DeviceIdentity.hpp"
@@ -68,6 +69,9 @@ void Clamp(SettingsData& d) {
     d.voiceVolume = std::clamp(d.voiceVolume, 0.0f, 2.0f);
     if (d.voiceBitrateKbps != 16 && d.voiceBitrateKbps != 24) d.voiceBitrateKbps = 20;
     d.voiceChannel = std::clamp(d.voiceChannel, 0, 2);
+    // Engine limits: only profiles EngineLimits knows about are valid; anything else falls back to Stock, so a
+    // settings file from a newer build can never make this one prepare a profile it has no patch for.
+    d.extendedLimits = std::clamp(d.extendedLimits, 0, static_cast<int>(limits::Profile::V16));
     auto trimName = [](std::string& s) {
         s.erase(s.begin(), std::find_if(s.begin(), s.end(), [](unsigned char ch) { return !std::isspace(ch); }));
         s.erase(std::find_if(s.rbegin(), s.rend(), [](unsigned char ch) { return !std::isspace(ch); }).base(), s.end());
@@ -225,6 +229,7 @@ void Settings::Load() {
             }
             Read(j, "subtitles", d.subtitles);
             Read(j, "campaignSkulls", d.campaignSkulls);
+            Read(j, "extendedLimits", d.extendedLimits);
             Read(j, "menuBackground", d.menuBackground);
             Read(j, "playerName", d.playerName);
             Read(j, "lastPlayedMode", d.lastPlayedMode);
@@ -372,6 +377,7 @@ bool Settings::Save() {
         j["menuMusicDisabled"] = d.menuMusicDisabled;
         j["subtitles"] = d.subtitles;
         j["campaignSkulls"] = d.campaignSkulls;
+        j["extendedLimits"] = d.extendedLimits;
         j["menuBackground"] = d.menuBackground;
         j["playerName"] = d.playerName;
         j["lastPlayedMode"] = d.lastPlayedMode;
