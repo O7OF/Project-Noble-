@@ -26,7 +26,7 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
    - Fixed `UpdateTagShaderConstantsSEH()` to use the actual 8-byte `TagTable` entry layout at `*(uint8_t**)(base + 0xC1A600)` and `pointerBases[16]` at `base + 0x4E39F20`.
 
 ### Release packaging rules & `mainmenu_all.map` inclusion (`v0.19.18`)
-- **Public Mod Included in Release Zip:** `data/menumaps/mainmenu_all.map` and `data/menumaps/*.string_ids.csv` are un-ignored in `.gitignore` and packaged directly into `data/menumaps/` inside `Project-Noble-v0.19.18-win64.zip` (`tools/publish-release.ps1` and `build-package.ps1`) so the 3D Armory works out of the box for all players.
+- **Public Mod Bundled in Release Zip Only (Never Pushed to Git):** `data/menumaps/mainmenu_all.map` is 298 MB and ignored by git (`.gitignore` ignores all `*.map` to respect GitHub's file size limit and keep the repository clean). Devs already have the map locally, and the packaging scripts (`tools/publish-release.ps1` and `build-package.ps1`) grab the local `data\menumaps\mainmenu_all.map` and bundle it directly into `Project-Noble-v0.19.18-win64.zip` so end-user release downloads have a fully working 3D Armory out of the box.
 - **Strict Release Hygiene:**
   - **Zero dev binaries/files:** `noble-dev.exe`, `noble-dev.map`, `noble-dedicated.exe`, `noble-client.exe`, `.pdb`, and `tools/master-server` are never included in release packages. Only `Noble.exe` is shipped.
   - **Zero user save/profile/appearance/career files:** `appearance.dat`, `appearance.json`, `career.dat`, `career.json`, `settings.json`, `preferences.dat`, `menu-background-deck.txt`, and `data/userdata/` are strictly excluded from release packages and preserved across auto-updates in `src/common/Updater.cpp`.

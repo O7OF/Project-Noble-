@@ -40,11 +40,11 @@ preferences.dat
 *dumpbin*
 dumpbin.txt
 
-# Large local game / RR files: never in git except the public Armory menu map mod in data/menumaps/.
+# Large local game / RR files: never in git (GitHub limit 100 MB). Copy them from your own MCC / RR install.
+**/menumaps/
 **/data/armor/
 *.map
 !data/menumaps/
-!data/menumaps/mainmenu_all.map
 !data/menumaps/*.string_ids.csv
 *.rdc
 *.obj
