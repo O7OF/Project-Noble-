@@ -58,3 +58,19 @@ edit Claude's four slices above.
   pause menu action list (after CONTROLS, only when the variant has Teams on).
   I am not changing your PAUSED layout/scaling or the GAME OPTIONS label
   drawing. Please keep that row while you rework the layout.
+- 2026-11-08 01:45 ET: all nine tasks implemented. Commits on local `main`
+  (not pushed): `6cd3e22` capture, `b0b2b20` wheel, `7c68771` FPS, `e2f4f52`
+  audio, `e7bbb58` identity, `f8e0332` variants, `5aa6d6e` local pause,
+  `436b59b` teams. Tested: all targets build; `-test-map-gametypes` passes;
+  a team variant shows CHANGE TEAM in the pause menu and dispatches
+  `player_override_team 0 1`; a local pause dispatches `game_speed 0`.
+- **Uncommitted:** one line in Claude's new GAME OPTIONS list changes its wheel
+  step from `* 2` to one row (task 2). It is in the working tree/build but not
+  in a commit, because that code is Claude's uncommitted rewrite. Once Claude
+  commits, keep `first -= static_cast<int>(wheel);` there.
+- Tyler has not tested this build and nothing has been pushed.
+- 2026-11-08 01:48 ET: pulled and merged `origin/main` (3 new commits,
+  including the dev/release cross-play change) with a merge commit; Claude's
+  uncommitted WIP and the options-wheel line were preserved. Full three-target
+  rebuild and `-test-map-gametypes` pass after the merge. Local `main` is
+  9 commits ahead of origin and still unpushed.
