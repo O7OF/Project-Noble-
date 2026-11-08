@@ -11,6 +11,19 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-11-08, 03:00 ET) - Project Noble v0.19.19 Release Build
+
+### Release Overview
+Bumped version to `v0.19.19` incorporating:
+- **UI Scaling & High-DPI Display:** UI Scale slider (75%-150%), resolution picker, in-match pause menu scaling.
+- **Game Options Editor & Custom Variants:** Searchable, collapsible options editor, presets, user `.bin` variant scanning, VIP & Action Sack.
+- **Gameplay Enhancements:** Change Team (pre-game lobby + in-match pause), singleplayer pause freeze, keybind capture isolation.
+- **Audio & Performance:** Menu FPS 60 cap, 240/360 FPS caps, match/menu music transitions, volume applied before sound triggers.
+- **Cross-Play Netcode (`0.19.19-dev` & `0.19.19`):** Full cross-play support between developer builds and release builds on base semver `0.19.19`.
+- **Public Packaging:** Zero dev files, zero saved userdata/appearance/career files, bundled `mainmenu_all.map` for out-of-the-box 3D Armory.
+
+--
+
 ## 0. Pick up here (2026-11-08, 01:30 ET) - Dev build (`-dev`) and Release build Cross-Play & Netcode Synchronization
 
 ### Objective
