@@ -266,6 +266,21 @@ void SettingsPanel::Render() {
     PollRebind();
     SyncBuffers();
 
+    // Identity is saved as soon as it changes, not only on APPLY. That way quitting straight from an
+    // in-match pause menu (or the process being closed) cannot lose a name the player just typed.
+    // Only the two identity fields are taken from the edit copy; unsaved changes elsewhere stay unsaved.
+    if (m_edit.playerName != m_saved.playerName || m_edit.serviceTag != m_saved.serviceTag) {
+        SettingsData d = Settings::Get().Snapshot();
+        d.playerName = m_edit.playerName;
+        d.serviceTag = m_edit.serviceTag;
+        Settings::Get().Update(d);
+        const SettingsData saved = Settings::Get().Snapshot();  // clamped values
+        m_saved.playerName = saved.playerName;
+        m_saved.serviceTag = saved.serviceTag;
+        m_edit.playerName = saved.playerName;
+        m_edit.serviceTag = saved.serviceTag;
+    }
+
     // Shared key state for this frame (rows read it; text fields and rebinding take the keys).
     m_navAllowed = !ImGui::GetIO().WantTextInput && m_rebindAction < 0 && m_padRebindAction < 0 && m_paddleKeyCapture < 0 &&
                    !m_captureEndedThisFrame;
