@@ -11,6 +11,42 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-11-08, 07:10 ET) - Project Noble v0.19.24 Release - Native Forge Palette Replica & Direct Simulation Object Creation
+
+### Summary of Changes in v0.19.24
+- **Zero-Mod Dependency for Campaign AI & Custom Vehicles:**
+  - `SharedTagCache::DiscoverDonorMap` now prioritizes and mounts stock MCC campaign maps (`m20.map` / Sword Base, `m45.map`, `campaign.map`) directly from the local Steam installation. Players are never required to download or install external Steam Workshop mods to spawn AI in Forge.
+  - Memory mapping uses `PAGE_WRITECOPY` and `FILE_MAP_COPY` so in-memory tag patches remain non-destructive and private in RAM without ever modifying MCC files on disk.
+- **Direct Simulation Object Creation (`object_create_from_params` at RVA `0x7311B8`):**
+  - Replaced the restrictive UI monitor check with a direct simulation object creation pipeline (`object_create_from_params`).
+  - Spawns objects directly 3.5m in front of the local player or monitor by querying `player_mapping_get_unit_by_output_user(0)` (RVA `0x53EF8`) and `object_get_head_position` (RVA `0x472184`).
+  - Real-time UI feedback prevents infinite hanging on "pending", reporting `"Object placed successfully!"` or `"Object placement failed."`.
+- **Complete Native Forge Menu Replica (13 Categories):**
+  - Replaced the partial mod menu with a full replica of Halo: Reach's actual Forge menu: **SPAWNS**, **GOALS**, **WEAPONS**, **VEHICLES**, **EQUIPMENT**, **SCENERY**, **BUILDING BLOCKS**, **GADGETS**, **LIGHTS**, **NATURAL**, plus custom **UNSC INFANTRY**, **COVENANT INFANTRY**, and **SPECIAL & BOSSES**.
+- **Flyable Base Pelican (`wraith_d` Driver Seat):**
+  - Removed obsolete mod tags (`phantom_mp` and `pelican_o7`).
+  - Added the authentic base Pelican tag (`objects\vehicles\human\pelican\pelican`).
+  - Dynamically patched the driver seat label in RAM from `pelican_d` (10417) to `wraith_d` (5275) via `SharedTagCache::PatchPelicanSeatLabel`, allowing players to enter the cockpit and fly the dropship directly with Wraith flight controls.
+- **Version Bump & Release Publishing:**
+  - Bumped version to `0.19.24` across `CMakeLists.txt`, `BuildIdentity.hpp`, `Version.hpp`, and `noble.rc`.
+  - Compiled and published `Project-Noble-v0.19.24-win64.zip` to GitHub Releases `https://github.com/O7OF/Project-Noble-/releases/tag/v0.19.24`.
+
+--
+
+## 0. Pick up here (2026-11-08, 06:30 ET) - Project Noble v0.19.23 Release & Simulation Thread Dispatch
+
+### Summary of Changes in v0.19.23
+- **Forge AI & Object Spawning Dispatch System:**
+  - Resolved "Engine create hook pending." issue when placing or spawning Forge items from the custom palette UI or Gamepad FaceDown 'A'.
+  - **Blam! TLS & Simulation Thread Execution:** Direct invocation from the DirectX 11 render thread caused thread-local storage (TLS) access violations (`0xC0000005`) because the Blam! TLS slot at `gs:[58h]` was null on the render thread. Spawn requests are now enqueued via `SharedTagCache::QueueSpawn` and dispatched on `haloreach.dll`'s native 60 Hz simulation thread (`ReachHost::FillLocalInput`).
+  - **SEH Safety Isolation:** Encapsulated calls to engine spawn routines (RVA `0x692C5C`) in `SafeCallForgeSpawn` using `__try / __except` blocks separated from C++ object unwinding scopes.
+  - **Palette Discovery & UI Feedback:** Enhanced palette JSON search paths and UI messaging to display queued status and world entity instantiation.
+- **Version Bump & Release Distribution:**
+  - Version updated to `0.19.23` across `CMakeLists.txt`, `BuildIdentity.hpp`, `Version.hpp`, and `noble.rc`.
+  - Compiled and published `Project-Noble-v0.19.23-win64.zip` to GitHub Releases `https://github.com/O7OF/Project-Noble-/releases/tag/v0.19.23`.
+
+--
+
 ## 0. Pick up here (2026-11-08, 05:00 ET) - Forge AI Battleground & Runtime haloreach.dll AI Spawning Hook
 
 ### Problem Diagnosis & Reverse Engineering
@@ -2143,3 +2179,20 @@ session registry, matchmaker (8 playlists). DB goes to `server/data/` (git-ignor
 - Before overwriting a file, re-read the current version first, and re-check it a minute later (file sync has put stale copies
   back before).
 - Commits, PRs and docs carry only the authors' names (no "generated with" or co-author lines).
+
+## 9. Cross-Map Forge AI Spawning (Approach 1 - Shared Tag Cache)
+
+Implemented in v0.19.22 to allow spawning Campaign AI bipeds and vehicles (from Forge World AI Battleground mod) across **all** multiplayer maps:
+1. **Shared Tag Cache (`noble::SharedTagCache`)**:
+   - Auto-discovers `forge_halo_normal.map` (from Steam Workshop item 2899383598, user storage, or local mods).
+   - Maps the 844 MB donor map file into process virtual memory using Win32 `MapViewOfFile` (zero-copy, demand-paged).
+   - Indexes all 17,707 tag instances, group magics, and file offsets.
+   - Sets slot 2 in `haloreach.dll`'s pointer base table (`kPointerBases` RVA `0x4E39F20`).
+2. **Dynamic Tag Lookup Detour (`tag_get`)**:
+   - Intercepts `haloreach.dll` central tag resolver at static RVA `0x81BE8` (`48 89 5C 24 08 48 89 74 24 10`).
+   - If the active match map does not contain the requested tag datum index, resolves and returns the tag pointer directly from `SharedTagCache`'s mapped memory.
+3. **Forge AI Palette & Object Placement**:
+   - Updated `data/forge_palette.json` with 168 categorized AI variants (UNSC Infantry, Covenant Infantry, Special & Bosses, Vehicles).
+   - Wired `ForgeMenu::SetPlaceHandler` in `main.cpp` to `ForgePatches::PlaceObject`.
+   - Connected `ForgePatches::PlaceObject` to the engine's native Forge spawn call (`0x692C59`) alongside the 6-byte NOP patch at RVA `0x692CB5`.
+

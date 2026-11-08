@@ -1,5 +1,6 @@
 #include "ForgePatches.hpp"
 #include "SigScanner.hpp"
+#include "engine/SharedTagCache.hpp"
 #include "common/Logger.hpp"
 #include <psapi.h>
 
@@ -20,9 +21,10 @@ bool ForgePatches::s_unlockedRotation = true;
     return true;
 }
 
-bool ForgePatches::PlaceObject(const std::string& tagPath) {
-    NOBLE_INFO("ForgePatches: placement request for '{}' (engine create call not wired yet)", tagPath);
-    return false;
+bool ForgePatches::PlaceObject(const std::string& tagPath, int tagIndex) {
+    NOBLE_INFO("ForgePatches: placement request for '{}' (tagIndex: {})", tagPath, tagIndex);
+    SharedTagCache::QueueSpawn(tagIndex >= 0 ? static_cast<uint32_t>(tagIndex) : 0xFFFFFFFF, tagPath);
+    return true;
 }
 
 bool ForgePatches::Apply(HMODULE hReachDll) {
@@ -40,7 +42,45 @@ bool ForgePatches::Apply(HMODULE hReachDll) {
 
     NOBLE_INFO("ForgePatches: Applying haloreach.dll Forge patches (AI spawning)...");
 
-    // 1. Forge AI Biped / Vehicle Spawn Patch (RVA 0x692CB5)
+    // 1. Forge Edit Mode Abort Check (RVA 0x692CA5)
+    // In retail haloreach.dll, when an entity is spawned, the engine checks cmp byte ptr [rax+1], 0
+    // and aborts if the player is not actively holding/grabbing an object in Monitor edit mode
+    // (0F 84 9A 00 00 00: jz +0x9A directly to exit). NOPing this 6-byte jump allows spawning
+    // anytime directly from custom menus or hotkeys!
+    {
+        static const uint8_t kExpectedEditJz[6] = { 0x0F, 0x84, 0x9A, 0x00, 0x00, 0x00 };
+        static const uint8_t kNopPatch[6]       = { 0x90, 0x90, 0x90, 0x90, 0x90, 0x90 };
+        constexpr uintptr_t kStaticEditRva = 0x692CA5;
+
+        uint8_t* patchAddr = nullptr;
+        uint8_t* rvaAddr = reinterpret_cast<uint8_t*>(baseAddress + kStaticEditRva);
+        if (std::memcmp(rvaAddr, kExpectedEditJz, sizeof(kExpectedEditJz)) == 0) {
+            patchAddr = rvaAddr;
+            NOBLE_INFO("ForgePatches: Located Forge edit-mode check at static RVA 0x{:X}.", kStaticEditRva);
+        } else if (std::memcmp(rvaAddr, kNopPatch, sizeof(kNopPatch)) == 0) {
+            NOBLE_INFO("ForgePatches: Forge edit-mode check at RVA 0x{:X} is already patched.", kStaticEditRva);
+        } else {
+            uintptr_t match = SigScanner::FindPattern(
+                baseAddress,
+                modInfo.SizeOfImage,
+                "80 78 01 00 0F 84 9A 00 00 00 33 D2"
+            );
+            if (match != 0) {
+                patchAddr = reinterpret_cast<uint8_t*>(match + 4);
+                NOBLE_INFO("ForgePatches: Located Forge edit-mode check via pattern scan at RVA 0x{:X}.", match - baseAddress + 4);
+            }
+        }
+
+        if (patchAddr) {
+            if (WriteProtectedMemory(patchAddr, kNopPatch, sizeof(kNopPatch))) {
+                NOBLE_INFO("ForgePatches: Successfully patched Forge edit-mode check (jz -> 6x NOP).");
+            } else {
+                NOBLE_ERROR("ForgePatches: Failed to write edit-mode patch at 0x{:p}!", static_cast<void*>(patchAddr));
+            }
+        }
+    }
+
+    // 2. Forge AI Biped / Vehicle Spawn Patch (RVA 0x692CB5)
     // In retail haloreach.dll, when an entity is spawned from the Forge menu, the engine tests
     // [rax] & 1 and aborts with a jump (0F 84 8A 00 00 00: jz +0x8A) directly to the function
     // exit epilogue if the entity is an AI biped/vehicle or non-standard palette object.

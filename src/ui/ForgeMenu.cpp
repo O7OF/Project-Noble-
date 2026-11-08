@@ -6,6 +6,7 @@
 #include "engine/BlamEngine.hpp"
 #include "engine/CameraThirdPerson.hpp"
 #include "engine/ReachHost.hpp"
+#include "engine/SharedTagCache.hpp"
 
 #include <imgui.h>
 #include <nlohmann/json.hpp>
@@ -49,15 +50,15 @@ bool HasDemoFlag() {
 } // namespace
 
 void ForgeMenu::AddFallbackTabs() {
-    Tab noble;
-    noble.name = "NOBLE";
-    noble.items = {
-        { "PELICAN", "o7of_tags\\vehicles\\pelican_o7\\pelican_mp",
-          "Noble Pelican. Driver seat uses the wraith_d label.", 4344, 16, 0.0f },
-        { "PHANTOM", "objects\\vehicles\\covenant\\phantom\\phantom_mp",
-          "Covenant Phantom dropship.", 4832, 16, 0.0f },
+    Tab vehicles;
+    vehicles.name = "VEHICLES";
+    vehicles.items = {
+        { "PELICAN", "objects/vehicles/human/pelican/pelican",
+          "UNSC D77-TC Pelican Dropship. Flyable cockpit with wraith_d driver seat.", -1, 4, 0.0f },
+        { "WARTHOG", "objects/vehicles/human/warthog/warthog",
+          "UNSC M12 Force Application Vehicle.", -1, 16, 0.0f },
     };
-    s_tabs = { noble };
+    s_tabs = { vehicles };
 }
 
 void ForgeMenu::Initialize(const std::wstring& dataDir) {
@@ -67,7 +68,25 @@ void ForgeMenu::Initialize(const std::wstring& dataDir) {
     s_demo = HasDemoFlag();
     s_tabs.clear();
 
-    std::ifstream file(std::filesystem::path(dataDir) / "forge_palette.json", std::ios::binary);
+    std::vector<std::filesystem::path> candidates = {
+        std::filesystem::path(dataDir) / "forge_palette.json",
+        std::filesystem::path(dataDir) / "data" / "forge_palette.json",
+        std::filesystem::path("data") / "forge_palette.json"
+    };
+
+    wchar_t exePath[MAX_PATH] = {};
+    if (GetModuleFileNameW(nullptr, exePath, MAX_PATH)) {
+        candidates.push_back(std::filesystem::path(exePath).parent_path() / "data" / "forge_palette.json");
+    }
+
+    std::ifstream file;
+    for (const auto& candidate : candidates) {
+        file.open(candidate, std::ios::binary);
+        if (file.is_open()) {
+            NOBLE_INFO("ForgeMenu: loading custom palette from '{}'", candidate.string());
+            break;
+        }
+    }
     if (file.is_open()) {
         try {
             const nlohmann::json j = nlohmann::json::parse(file);
@@ -108,11 +127,10 @@ void ForgeMenu::Close() {
 }
 
 bool ForgeMenu::CanOpen() {
+    if (s_demo) return true;
     auto* engine = BlamEngine::Active();
-    if (!engine || !engine->IsForgeMode()) return false;
-    // Monitor/editor mode is either the engine's own third-person camera or an engine UI screen
-    // (the native Forge menu is only reachable from monitor mode).
-    return CameraThirdPerson::EngineWantsThirdPerson() || ReachHost::IsUiScreenActive();
+    if (!engine) return false;
+    return engine->IsForgeMode();
 }
 
 void ForgeMenu::Toggle() {
@@ -122,7 +140,7 @@ void ForgeMenu::Toggle() {
     s_lastToggle = now;
     if (s_tabs.empty()) return;
     if (!s_open && !s_demo && !CanOpen()) {
-        NOBLE_INFO("ForgeMenu: open ignored (only available in Forge monitor mode)");
+        NOBLE_INFO("ForgeMenu: open ignored (only available in Forge mode)");
         return;
     }
     s_open = !s_open;
@@ -152,7 +170,49 @@ void ForgeMenu::Tick(bool loading) {
 }
 
 void ForgeMenu::DrawOverlay() {
-    if (s_open) Draw();
+    if (s_open) {
+        Draw();
+    } else if (CanOpen() && !PauseMenu::IsOpen()) {
+        DrawPromptBadge();
+    }
+}
+
+void ForgeMenu::DrawPromptBadge() {
+    ImGuiIO& io = ImGui::GetIO();
+    const float s = std::clamp(io.DisplaySize.y / 720.0f, 0.8f, 2.0f);
+    const float badgeW = 300.0f * s;
+    const float badgeH = 34.0f * s;
+    const ImVec2 pos(io.DisplaySize.x - badgeW - 24.0f * s, 24.0f * s);
+
+    ImGui::SetNextWindowPos(pos, ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(badgeW, badgeH), ImGuiCond_Always);
+
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.04f, 0.07f, 0.11f, 0.85f));
+    ImGui::PushStyleColor(ImGuiCol_Border, NobleStyle::Accent());
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10.0f * s, 6.0f * s));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
+
+    if (ImGui::Begin("##ForgePromptBadge", nullptr, kPanelFlags)) {
+        ImGui::PushStyleColor(ImGuiCol_Text, NobleStyle::Accent());
+        ImGui::TextUnformatted("AI PALETTE");
+        ImGui::PopStyleColor();
+
+        ImGui::SameLine(0.0f, 8.0f * s);
+        ImGui::PushStyleColor(ImGuiCol_Text, kDim);
+        ImGui::TextUnformatted("[F3 / INSERT / D-PAD \xE2\x97\x80]");
+        ImGui::PopStyleColor();
+
+        ImGui::SetCursorPos(ImVec2(0, 0));
+        if (ImGui::InvisibleButton("##BadgeClick", ImVec2(badgeW, badgeH))) {
+            Toggle();
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+        }
+    }
+    ImGui::End();
+    ImGui::PopStyleVar(2);
+    ImGui::PopStyleColor(2);
 }
 
 void ForgeMenu::Draw() {
@@ -259,16 +319,22 @@ void ForgeMenu::Draw() {
         ImGui::Spacing();
         if (NobleStyle::PrimaryButton("PLACE", ImVec2(180.0f * s, 38.0f * s))) {
             if (s_place) {
-                const bool queued = s_place(item);
-                s_status = queued ? "Placement queued." : "Engine create hook pending.";
+                s_place(item);
+                s_status = "Placing object in world...";
             } else {
                 s_status = "No placement handler installed.";
             }
             s_statusAt = GetTickCount64();
             MenuSounds::Click();
         }
+        const int spawnStatus = SharedTagCache::GetLastSpawnStatus();
+        if (spawnStatus == 1) {
+            s_status = "Object placed successfully!";
+        } else if (spawnStatus == -1) {
+            s_status = "Object placement failed.";
+        }
         if (!s_status.empty() && GetTickCount64() - s_statusAt < 6000) {
-            ImGui::PushStyleColor(ImGuiCol_Text, kDim);
+            ImGui::PushStyleColor(ImGuiCol_Text, spawnStatus == 1 ? NobleStyle::Accent() : (spawnStatus == -1 ? ImVec4(1.0f, 0.4f, 0.4f, 1.0f) : kDim));
             ImGui::TextWrapped("%s", s_status.c_str());
             ImGui::PopStyleColor();
         }
@@ -280,7 +346,7 @@ void ForgeMenu::Draw() {
 
     // Footer hints, controller and mouse.
     ImGui::PushStyleColor(ImGuiCol_Text, kDim);
-    ImGui::TextUnformatted("INSERT close   A place   B close   D-pad navigate   mouse");
+    ImGui::TextUnformatted("INSERT / ESC close   A / ENTER place   B close   D-pad / Arrows navigate   mouse");
     ImGui::PopStyleColor();
 
     // Controller navigation through ImGui's gamepad keys (fed by UiPad).
@@ -296,8 +362,13 @@ void ForgeMenu::Draw() {
         if (navRight) { s_tab = (s_tab + 1) % static_cast<int>(s_tabs.size()); s_item = 0; MenuSounds::Tab(1); }
         if (navLeft) { s_tab = (s_tab + static_cast<int>(s_tabs.size()) - 1) % static_cast<int>(s_tabs.size()); s_item = 0; MenuSounds::Tab(-1); }
     }
-    if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false) && !items.empty() && s_place) {
-        s_status = s_place(items[s_item]) ? "Placement queued." : "Engine create hook pending.";
+    const bool placePressed = (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false) ||
+                               ImGui::IsKeyPressed(ImGuiKey_Enter, false) ||
+                               ImGui::IsKeyPressed(ImGuiKey_Space, false)) &&
+                              !items.empty() && s_place;
+    if (placePressed) {
+        s_place(items[s_item]);
+        s_status = "Placing object in world...";
         s_statusAt = GetTickCount64();
         MenuSounds::Click();
     }

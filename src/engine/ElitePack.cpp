@@ -5,6 +5,7 @@
 #include "common/Logger.hpp"
 #include "common/SaveCodec.hpp"
 #include "hooks/HookManager.hpp"
+#include "engine/SharedTagCache.hpp"
 
 #include <nlohmann/json.hpp>
 
@@ -1031,6 +1032,10 @@ uint8_t __fastcall CacheStepHook(void* a1, void* a2, uint32_t a3, void* tags, vo
     const uint8_t ok = s_cacheStepOriginal(a1, a2, a3, tags, cache, a6);
     if (ours && ok && !TryAfterPackStep(static_cast<uint8_t*>(tags), static_cast<uint8_t*>(cache)))
         NOBLE_ERROR("ElitePack: switching players to the pack's Elite faulted");
+
+    if (tags && ok) {
+        noble::SharedTagCache::InjectScenarioPalette(static_cast<uint8_t*>(tags));
+    }
     return ok;
 }
 

@@ -20,6 +20,7 @@
 #include "engine/CameraThirdPerson.hpp"
 #include "engine/ReachArmory.hpp"
 #include "engine/ElitePack.hpp"
+#include "engine/SharedTagCache.hpp"
 #include "vfs/VFS.hpp"
 #include "common/Settings.hpp"
 #include "common/Relaunch.hpp"
@@ -1553,6 +1554,10 @@ static void FillLocalInput(uint8_t* st) {
     *reinterpret_cast<uint32_t*>(st + 0x000) = 1;
     *reinterpret_cast<float*>(st + 0x118) = 1.0f;
 
+    if (SharedTagCache::HasPendingSpawn()) {
+        SharedTagCache::ProcessPendingSpawn();
+    }
+
     if (ReachArmory::IsMenuMode()) {
         ReachArmory::NotifyEngineTick();
     }
@@ -1589,9 +1594,9 @@ static void FillLocalInput(uint8_t* st) {
     }
     s_escWasDown = escDown;
 
-    // Insert opens/closes the custom palette; it never uses the native Forge menu's keys.
+    // Insert / F3 opens/closes the custom palette; it never uses the native Forge menu's keys.
     static bool s_insertWasDown = false;
-    const bool insertDown = (GetAsyncKeyState(VK_INSERT) & 0x8000) != 0;
+    const bool insertDown = ((GetAsyncKeyState(VK_INSERT) & 0x8000) != 0) || ((GetAsyncKeyState(VK_F3) & 0x8000) != 0);
     if (insertDown && !s_insertWasDown && !uiPointer && !PauseMenu::IsGameOver()) ForgeMenu::Toggle();
     s_insertWasDown = insertDown;
 
