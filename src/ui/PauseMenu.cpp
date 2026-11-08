@@ -994,7 +994,7 @@ static void DrawScoreboardPanel() {
     const bool overflow = count > visibleRows;
     if (overflow && pointer && !s_boardReport.load() &&
         ImGui::IsMouseHoveringRect(ImVec2(cx, listY), ImVec2(cx + columnW, listY + rowH * visibleRows), false) && io.MouseWheel != 0.0f)
-      s_boardScroll[col] -= static_cast<int>(io.MouseWheel) * 2;
+      s_boardScroll[col] -= static_cast<int>(io.MouseWheel);
     s_boardScroll[col] = std::clamp(s_boardScroll[col], 0, std::max(0, count - visibleRows));
     const int scroll = s_boardScroll[col];
     const float tagX = cx + columnW - 190.0f * s;

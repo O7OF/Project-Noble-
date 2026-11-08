@@ -695,7 +695,7 @@ int DrawList(const Ui& ui, const char* id, ImVec2 pos, float width, const std::v
         }
         const ImVec2 area0 = pos, area1(pos.x + width + 14.0f * ui.s, pos.y + maxRows * rh);
         const float wheel = ImGui::GetIO().MouseWheel;
-        if (wheel != 0.0f && ImGui::IsMouseHoveringRect(area0, area1, false)) first -= static_cast<int>(wheel * 3.0f);
+        if (wheel != 0.0f && ImGui::IsMouseHoveringRect(area0, area1, false)) first -= static_cast<int>(wheel);
         first = std::clamp(first, 0, n - maxRows);
         const float trackX = pos.x + width + 6.0f * ui.s, trackH = maxRows * rh;
         ui.dl->AddRectFilled(ImVec2(trackX, pos.y), ImVec2(trackX + 3.0f * ui.s, pos.y + trackH), IM_COL32(255, 255, 255, 25));
@@ -3789,7 +3789,7 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         rosterOverflows = rosterOverflows || overflow;
         if (overflow && ImGui::IsMouseHoveringRect(ImVec2(c.x, listY), ImVec2(c.x + c.w, listY + listH), false)) {
             const float wheel = ImGui::GetIO().MouseWheel;
-            if (wheel != 0.0f) *c.scroll -= static_cast<int>(wheel) * 2;
+            if (wheel != 0.0f) *c.scroll -= static_cast<int>(wheel);
         }
         // The pinned local row takes a slot, so the list scrolls one further or the last player could never be seen.
         int localAt = -1;
