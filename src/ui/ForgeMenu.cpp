@@ -6,6 +6,7 @@
 #include "engine/BlamEngine.hpp"
 #include "engine/CameraThirdPerson.hpp"
 #include "engine/ReachHost.hpp"
+#include "engine/SharedTagCache.hpp"
 
 #include <imgui.h>
 #include <nlohmann/json.hpp>
@@ -49,15 +50,15 @@ bool HasDemoFlag() {
 } // namespace
 
 void ForgeMenu::AddFallbackTabs() {
-    Tab noble;
-    noble.name = "NOBLE";
-    noble.items = {
-        { "PELICAN", "o7of_tags\\vehicles\\pelican_o7\\pelican_mp",
-          "Noble Pelican. Driver seat uses the wraith_d label.", 4344, 16, 0.0f },
-        { "PHANTOM", "objects\\vehicles\\covenant\\phantom\\phantom_mp",
-          "Covenant Phantom dropship.", 4832, 16, 0.0f },
+    Tab vehicles;
+    vehicles.name = "VEHICLES";
+    vehicles.items = {
+        { "PELICAN", "objects/vehicles/human/pelican/pelican",
+          "UNSC D77-TC Pelican Dropship. Flyable cockpit with wraith_d driver seat.", -1, 4, 0.0f },
+        { "WARTHOG", "objects/vehicles/human/warthog/warthog",
+          "UNSC M12 Force Application Vehicle.", -1, 16, 0.0f },
     };
-    s_tabs = { noble };
+    s_tabs = { vehicles };
 }
 
 void ForgeMenu::Initialize(const std::wstring& dataDir) {
@@ -319,15 +320,21 @@ void ForgeMenu::Draw() {
         if (NobleStyle::PrimaryButton("PLACE", ImVec2(180.0f * s, 38.0f * s))) {
             if (s_place) {
                 const bool queued = s_place(item);
-                s_status = queued ? "Placement queued." : "Spawning object in world...";
+                s_status = queued ? "Placement queued..." : "Spawning object in world...";
             } else {
                 s_status = "No placement handler installed.";
             }
             s_statusAt = GetTickCount64();
             MenuSounds::Click();
         }
+        const int spawnStatus = SharedTagCache::GetLastSpawnStatus();
+        if (spawnStatus == 1) {
+            s_status = "Object placed successfully!";
+        } else if (spawnStatus == -1) {
+            s_status = "Object placement failed.";
+        }
         if (!s_status.empty() && GetTickCount64() - s_statusAt < 6000) {
-            ImGui::PushStyleColor(ImGuiCol_Text, kDim);
+            ImGui::PushStyleColor(ImGuiCol_Text, spawnStatus == 1 ? NobleStyle::Accent() : (spawnStatus == -1 ? ImVec4(1.0f, 0.4f, 0.4f, 1.0f) : kDim));
             ImGui::TextWrapped("%s", s_status.c_str());
             ImGui::PopStyleColor();
         }
@@ -356,7 +363,7 @@ void ForgeMenu::Draw() {
         if (navLeft) { s_tab = (s_tab + static_cast<int>(s_tabs.size()) - 1) % static_cast<int>(s_tabs.size()); s_item = 0; MenuSounds::Tab(-1); }
     }
     if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false) && !items.empty() && s_place) {
-        s_status = s_place(items[s_item]) ? "Placement queued." : "Spawning object in world...";
+        s_status = s_place(items[s_item]) ? "Placement queued..." : "Spawning object in world...";
         s_statusAt = GetTickCount64();
         MenuSounds::Click();
     }

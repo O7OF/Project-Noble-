@@ -729,7 +729,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     noble::ForgePatches::Apply(loader->GetModuleHandle());
 
     // Initialize Shared Tag Cache for cross-map AI spawning (Approach 1)
-    noble::SharedTagCache::Initialize(loader->GetModuleHandle(), userStoragePath, reachInstall->workshopDirectory);
+    noble::SharedTagCache::Initialize(loader->GetModuleHandle(), userStoragePath, reachInstall->workshopDirectory, reachInstall->reachDirectory);
 
     // Wire Forge palette placement handler
     noble::ForgeMenu::SetPlaceHandler([](const noble::ForgeMenu::Item& item) -> bool {

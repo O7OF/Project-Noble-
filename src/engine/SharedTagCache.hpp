@@ -21,9 +21,9 @@ struct PaletteItem {
 
 class SharedTagCache {
 public:
-    // Discovers and mounts the donor AI map (forge_halo_normal.map) as a persistent secondary tag heap.
+    // Discovers and mounts the donor AI map (m20.map / forge_halo_normal.map) as a persistent secondary tag heap.
     // Hooks haloreach.dll tag_get (RVA 0x81BE8) so any multiplayer map can seamlessly spawn AI bipeds & vehicles.
-    static bool Initialize(HMODULE hReachDll, const std::filesystem::path& dataDir, const std::filesystem::path& workshopDir);
+    static bool Initialize(HMODULE hReachDll, const std::filesystem::path& dataDir, const std::filesystem::path& workshopDir, const std::filesystem::path& reachDir = {});
     static void Shutdown();
 
     static bool IsMounted() { return s_isMounted; }
@@ -47,14 +47,16 @@ public:
     static void QueueSpawn(uint32_t datumIndex, const std::string& tagPath);
     static bool HasPendingSpawn();
     static bool ProcessPendingSpawn();
+    static int GetLastSpawnStatus(); // 0 = idle/pending, 1 = success, -1 = failed
 
     // Spawns an object from the donor palette into the world
     static bool SpawnObject(uint32_t datumIndex, const std::string& tagPath);
 
 private:
-    static bool DiscoverDonorMap(const std::filesystem::path& dataDir, const std::filesystem::path& workshopDir);
+    static bool DiscoverDonorMap(const std::filesystem::path& dataDir, const std::filesystem::path& workshopDir, const std::filesystem::path& reachDir);
     static bool MountFile(const std::filesystem::path& mapPath);
     static bool ParseDonorTags();
+    static void PatchPelicanSeatLabel();
     static bool InstallHooks(HMODULE hReachDll);
 
     static bool s_isMounted;
