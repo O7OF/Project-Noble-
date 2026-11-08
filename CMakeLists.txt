@@ -149,6 +149,7 @@ set(SOURCES
     src/host/SchedulerGuard.cpp
     src/host/PoolResize.cpp
     src/host/MemberTrace.cpp
+    src/host/SlotPatch.cpp
     src/hooks/SigScanner.cpp
     src/hooks/HookManager.cpp
     src/hooks/LobbyPatches.cpp
@@ -221,6 +222,8 @@ set(HEADERS
     src/host/SchedulerGuard.hpp
     src/host/PoolResize.hpp
     src/host/MemberTrace.hpp
+    src/host/SlotPatch.hpp
+    src/host/SlotPatchTable.inc
     src/hooks/SigScanner.hpp
     src/hooks/HookManager.hpp
     src/hooks/LobbyPatches.hpp
@@ -360,6 +363,7 @@ set(DEDICATED_SOURCES
     src/host/SchedulerGuard.cpp
     src/host/PoolResize.cpp
     src/host/MemberTrace.cpp
+    src/host/SlotPatch.cpp
     src/hooks/SigScanner.cpp
     src/hooks/HookManager.cpp
     src/hooks/LobbyPatches.cpp
@@ -384,6 +388,8 @@ set(DEDICATED_HEADERS
     src/host/SchedulerGuard.hpp
     src/host/PoolResize.hpp
     src/host/MemberTrace.hpp
+    src/host/SlotPatch.hpp
+    src/host/SlotPatchTable.inc
     src/hooks/SigScanner.hpp
     src/hooks/HookManager.hpp
     src/hooks/LobbyPatches.hpp

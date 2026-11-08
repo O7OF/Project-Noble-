@@ -724,3 +724,15 @@ a data_array_new pool; see `docs\limits-ai.md`).
 - Copied `full.nlp` into `build\bin\Release\data\limits\` so Tyler can pick FULL in SETTINGS > ENGINE.
 - Minor: `.deltrac` SizeOfRawData 0x97E5E is not a multiple of FileAlignment (0x200); Windows loaded it fine in the
   5-min test, but round it up to 0x98000 in the builder for safety (DeepSeek).
+
+### 2026-11-08 14:20 ET (Claude): C12 step 1 built — SlotPatch (inert regression build)
+- Run 4 (Tyler playing the client, client quit first) added only 3 accesses: **420 accesses / 139 sites** total.
+- `tools/limits/gen_sites.py` + `gen_caves.py` → `src/host/SlotPatchTable.inc`: **67 imul sites**, all
+  `imul r64,r64,imm32` (7 bytes), 43 peer + 23 player + 1 both; none reads the imul's flags afterwards (checked).
+- **Shadow objects:** 4 × 0x61668 bytes allocated within ±2 GB of the sessions, same stride, so one constant per
+  record size: players `C = delta − 16·0xB0`, peers `C = delta − 17·0x158` (peer array already holds 17).
+- `src/host/SlotPatch.*` (wired in Loader + CMake): `-slot-patch` / NOBLE_SLOT_PATCH=1, Extended only; verifies all 67
+  sites' bytes first (all or nothing), writes caves to near-engine executable memory, patches each site with a
+  `jmp` + 2 NOPs. **Inert while the players pool is 16** (slots ≥ 16 never occur), so this build must behave
+  exactly like before. Not built yet.
+- Remaining C12 sites (add/lea/argument/loaded pointer: ~72) and the 16 → 32 bounds + pool raises come next.
