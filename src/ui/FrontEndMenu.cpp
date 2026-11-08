@@ -2732,7 +2732,13 @@ static const RuleLevels* FindRuleLevels(const char* key) {
                                   "Bottomless: the magazine never empties, so there are no reloads." },
         { "ability_usage", nullptr, "Off: armor abilities can't be used. Unlimited: they never run out of energy. "
                                     "Normal and On both allow them; the game's exact difference between the two isn't confirmed yet." },
-        { "active_camo", "Off", "Off: fully visible. Poor: partly see-through, still easy to spot. Good: very hard to see." },
+        { "active_camo", "Off", "Off: fully visible. Worst: barely see-through. Poor: partly see-through, still easy to spot. "
+                                "Good: very hard to see. Best: almost invisible." },
+        { "shield_vampirism", "Off", "Off: the usual. On: shield damage you deal is added to your own shields." },
+        { "grenade_regen", "Off", "Off: the usual. On: players get new grenades over time. Works in custom games; "
+                                  "Firefight doesn't apply it yet." },
+        { "aura", "None", "None: no glow. Team Color: a glow in the team's main color. Darkened and Pastel: the player's own "
+                          "armor colors, darker or lighter." },
         { "waypoint", "Allies", "None: nobody sees a marker over the player. Allies: teammates see it. All: everyone sees it, enemies too." },
         { "visible_name", "Allies", "None: nobody sees the player's name. Allies: teammates see it. All: everyone sees it, enemies too." },
         { "tracker_mode", "Normal", "Off: no motion tracker. Friends: it only shows allies. Normal: it shows enemies who move "

@@ -47,10 +47,15 @@ const std::vector<Rule>& Rules() {
     static const Order s_resistOrder = { 1, 2, 3, 0, 5, 6, 7, 8 };
     static const Names s_shieldSize = { "100%", "0% (no shields)", "100%", "150%", "200%", "300%", "400%" };
     static const Order s_shieldSizeOrder = { 1, 0, 3, 4, 5 };
-    static const Names s_healthRate = { "100%", "0%", "50%", "90%", "100%", "110%", "200%" };
-    static const Order s_healthRateOrder = { 1, 2, 3, 0, 5, 6 };
-    static const Names s_shieldRate = { "100%", "0%", "10%", "25%", "50%", "75%", "90%", "100%", "110%", "125%", "150%", "200%" };
-    static const Order s_shieldRateOrder = { 1, 2, 3, 4, 5, 6, 0, 8, 9, 10, 11 };
+    // Shield and health recharge: the tags' entries carry their own values, and they don't start at 1. 0 is unchanged,
+    // 1-3 are drain levels the game's menus never offer, and 0% is 4 (shields: 0% 4, 10% 5 ... 200% 14; health: 0% 4,
+    // 50% 5, 90% 6, 100% 7, 110% 8, 200% 9). The lists used to be numbered 1, 2, 3..., which put every choice one to
+    // three steps off. Shield drains are offered (they work in a match); health drains are left out (untested).
+    static const Names s_healthRate = { "100%", "", "", "", "0%", "50%", "90%", "100%", "110%", "200%" };
+    static const Order s_healthRateOrder = { 4, 5, 6, 0, 8, 9 };
+    static const Names s_shieldRate = { "100%", "Depletes fast", "Depletes medium", "Depletes slow", "0%", "10%", "25%", "50%", "75%", "90%",
+                                        "100%", "110%", "125%", "150%", "200%" };
+    static const Order s_shieldRateOrder = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 11, 12, 13, 14 };
     static const Names s_damage = { "100%", "0%", "25%", "50%", "75%", "90%", "100%", "110%", "125%", "150%", "200%", "300%" };
     static const Names s_speed = { "100%", "0%", "25%", "50%", "75%", "90%", "100%", "110%", "120%", "150%", "200%", "300%" };
     static const Order s_stepOrder = { 1, 2, 3, 4, 5, 0, 7, 8, 9, 10, 11 };
@@ -62,7 +67,9 @@ const std::vector<Rule>& Rules() {
     static const Names s_usage = { "Default", "Off", "Normal", "On", "Unlimited" };
     static const Names s_grenades = { "Default", "Map Default", "None", "1 Frag", "2 Frag", "3 Frag", "4 Frag", "1 Plasma", "2 Plasma", "3 Plasma", "4 Plasma",
                                       "1 of Each", "2 of Each", "3 of Each", "4 of Each" };
-    static const Names s_camo = { "Default", "Off", "Poor", "Good" };
+    // HREK's list is Off 1, Poor 3, Good 4; 2 (worst) and 5 (best) are hidden levels that work in a match.
+    static const Names s_camo = { "Default", "Off", "Worst", "Poor", "Good", "Best" };
+    static const Names s_aura = { "Default", "None", "Team Color", "Darkened", "Pastel" };
     static const Names s_who = { "Default", "None", "Allies", "All" };
     static const Names s_tracker = { "Default", "Off", "Friends", "Normal", "All" };
     static const Names s_range = { "Default", "10 m", "25 m", "75 m", "150 m" };
@@ -88,25 +95,29 @@ const std::vector<Rule>& Rules() {
         { "respawn_growth", "Respawn Time Growth", kRespawn, "Seconds added to each respawn.", 0x2CA, -1, 0, 15, " s", nullptr },
         { "traits_duration", "Respawn Traits Duration", kRespawn, "Seconds the respawn traits last.", 0x2CC, -1, 0, 60, " s", nullptr },
         { "damage_resist", "Damage Resistance", kShields, "How much punishment players take. 100% is the game's normal.", 0x304, -1, 0, 12, "", &s_resist, 1, &s_resistOrder },
-        { "health_rate", "Health Recharge Rate", kShields, "How quickly health returns. 100% is the game's normal.", 0x306, -1, 0, 6, "", &s_healthRate, 1, &s_healthRateOrder },
+        { "health_rate", "Health Recharge Rate", kShields, "How quickly health returns. 100% is the game's normal.", 0x306, -1, 0, 9, "", &s_healthRate, 1, &s_healthRateOrder },
         { "shield_mult", "Shield Multiplier", kShields, "Size of the shield. 100% is the game's normal; 0% removes it.", 0x307, -1, 0, 6, "", &s_shieldSize, 1, &s_shieldSizeOrder },
-        { "shield_rate", "Shield Recharge Rate", kShields, "How quickly shields return. 100% is the game's normal.", 0x308, -1, 0, 11, "", &s_shieldRate, 1, &s_shieldRateOrder },
+        { "shield_rate", "Shield Recharge Rate", kShields, "How quickly shields return. 100% is the game's normal. The Depletes levels drain shields over time instead.", 0x308, -1, 0, 14, "", &s_shieldRate, 1, &s_shieldRateOrder },
+        { "overshield_rate", "Overshield Recharge Rate", kShields, "How quickly shields return, or drain, while a player has an overshield. 100% is the game's normal.", 0x309, -1, 0, 14, "", &s_shieldRate, 1, &s_shieldRateOrder },
         { "headshot_immune", "Immune to Headshots", kShields, "Headshots do no extra damage.", 0x30A, -1, 0, 2, "", &s_offOn },
         { "assassin_immune", "Immune to Assassination", kShields, "Players can't be assassinated.", 0x30C, -1, 0, 2, "", &s_offOn },
+        { "shield_vampirism", "Shield Vampirism", kShields, "Damaging an enemy's shields recharges your own.", 0x30B, -1, 0, 2, "", &s_offOn },
         { "weapon_damage", "Damage Modifier", kWeapons, "Damage weapons deal. 100% is the game's normal.", 0x310, -1, 0, 11, "", &s_damage, 1, &s_stepOrder },
         { "melee_damage", "Melee Modifier", kWeapons, "Damage melee deals. 100% is the game's normal.", 0x311, -1, 0, 11, "", &s_damage, 1, &s_stepOrder },
         { "primary_weapon", "Primary Weapon", kWeapons, "What everyone spawns holding.", 0x319, -1, -3, 20, "", &s_weapons },
         { "secondary_weapon", "Secondary Weapon", kWeapons, "The second weapon everyone spawns with.", 0x31A, -1, -3, 20, "", &s_weapons },
         { "ability", "Starting Equipment", kWeapons, "The armor ability players spawn with. Which number is which isn't confirmed yet.", 0x31B, -1, -3, 7, "", &s_abilities },
         { "grenade_count", "Grenade Count", kWeapons, "Grenades at spawn.", 0x314, -1, 0, 14, "", &s_grenades },
+        { "grenade_regen", "Grenade Regeneration", kWeapons, "Players are handed fresh grenades every few seconds.", 0x312, -1, 0, 2, "", &s_offOn },
         { "weapon_pickup", "Weapon Pickup", kWeapons, "Whether weapons can be picked up.", 0x313, -1, 0, 2, "", &s_pickup },
         { "infinite_ammo", "Infinite Ammo", kWeapons, "On keeps reserve ammo full. Bottomless also never reloads.", 0x315, -1, 0, 3, "", &s_ammo },
         { "ability_usage", "Equipment Usage", kWeapons, "Whether armor abilities can be used.", 0x318, -1, 0, 4, "", &s_usage },
         { "speed", "Player Speed", kMove, "How fast players move. 100% is the game's normal.", 0x31C, -1, 0, 11, "", &s_speed, 1, &s_stepOrder },
         { "gravity", "Player Gravity", kMove, "How strongly players fall. 100% is the game's normal.", 0x31D, -1, 0, 5, "", &s_gravity, 1, &s_gravityOrder },
-        { "active_camo", "Active Camo", kLook, "How invisible players are.", 0x324, -1, 0, 3, "", &s_camo },
+        { "active_camo", "Active Camo", kLook, "How invisible players are.", 0x324, -1, 0, 5, "", &s_camo },
         { "waypoint", "Waypoint", kLook, "Who sees a player's marker.", 0x325, -1, 0, 3, "", &s_who },
         { "visible_name", "Visible Name", kLook, "Who sees a player's name.", 0x326, -1, 0, 3, "", &s_who },
+        { "aura", "Aura", kLook, "A glow drawn around each player.", 0x327, -1, 0, 4, "", &s_aura },
         { "tracker_mode", "Motion Tracker Mode", kSense, "When the motion tracker works.", 0x32C, -1, 0, 4, "", &s_tracker },
         { "tracker_range", "Motion Tracker Range", kSense, "How far it sees.", 0x32D, -1, 0, 4, "", &s_range },
     };

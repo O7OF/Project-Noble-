@@ -100,3 +100,11 @@ edit Claude's four slices above.
   down to an offered limit; new installs start there instead of No limit), `src/ui/SettingsPanel.cpp`
   (FRAME-RATE LIMIT default/help text; Graphics reset uses the display rate). Cause: Dominus's log showed the
   uncapped 2880x1620 menu pinning his GPU. Not built yet.
+- 2026-11-08 03:10 ET (Claude, claude.ai session, for Tyler): GAME OPTIONS hidden traits, **uncommitted**.
+  `src/engine/VariantRules.cpp` (trait lists + 4 new rules) and `src/ui/FrontEndMenu.cpp` (RuleLevels help text
+  only). From HREK's player_traits_template tags: shield/health recharge choices carry their own values
+  (0 unchanged, 1-3 hidden drains, 0% = 4), so the old 1,2,3... lists were off by up to three steps; camo is
+  Off 1 / Poor 3 / Good 4 with 2 and 5 hidden. Added: shield depletion levels, Overshield Recharge Rate (0x309,
+  same scale), Worst/Best camo, Shield Vampirism (0x30B), Grenade Regeneration (0x312), Aura (0x327).
+  Suspect, not changed: weapon_pickup's On/Off may be swapped (the tags give pickup and headshot immunity the same
+  label per value, but the code maps them oppositely). Not built yet.
