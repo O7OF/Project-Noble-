@@ -36,14 +36,28 @@ if (Test-Path $pkg) { Remove-Item $pkg -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $pkg | Out-Null
 Copy-Item $exe (Join-Path $pkg 'Noble.exe') -Force
 
-# The menu map and its string_ids are compiled into Noble.exe (src/res/blocks.rc); VFS extracts
-# them into data\menumaps on first run. Do not ship loose maps, CSVs, armour OBJ/PMGC exports or
-# the development mods folder: they are either embedded or user content.
+# Ship data\menumaps\mainmenu_all.map and its string_ids.csv inside the release zip so the 3D Armory
+# works out of the box. Never ship dev builds, userdata, save files, appearance.dat, or career.dat.
 $excludeDirs = 'userdata','autosave','cache','sandbox','armor','blocks','mods','menumaps'
-$excludeFiles = 'appearance.dat','appearance.json','settings.json','menu-background-deck.txt','launch_block_1.bin','lb_m_c_1.bin','profile_1.bin','*.log','*.dmp','*.tmp','*.obj','*.mtl','*.PMGC','*.rrreloc','*.rdc','*.map','*.csv','*.bin'
+$excludeFiles = 'appearance*','career*','settings*','preferences*','*.pncsold','menu-background-deck.txt','launch_block_1.bin','lb_m_c_1.bin','profile_1.bin','*.log','*.dmp','*.tmp','*.bmp','*.obj','*.mtl','*.PMGC','*.rrreloc','*.rdc','*.map','*.csv','*.bin'
 & robocopy (Join-Path $release 'data') (Join-Path $pkg 'data') /E /XD $excludeDirs /XF $excludeFiles /NFL /NDL /NJH /NJS /NP | Out-Null
 if ($LASTEXITCODE -gt 7) { throw "robocopy data failed ($LASTEXITCODE)" }
 New-Item -ItemType Directory -Force -Path (Join-Path $pkg 'data\mods') | Out-Null
+
+# Copy the public Armory menu map mod and its string_id tables into data\menumaps\
+$srcMenuMaps = Join-Path $root 'data\menumaps'
+if (-not (Test-Path (Join-Path $srcMenuMaps 'mainmenu_all.map'))) {
+    $srcMenuMaps = Join-Path $release 'data\menumaps'
+}
+if (-not (Test-Path (Join-Path $srcMenuMaps 'mainmenu_all.map'))) {
+    throw "missing mainmenu_all.map in data\menumaps (required for Armory in release zip)"
+}
+New-Item -ItemType Directory -Force -Path (Join-Path $pkg 'data\menumaps') | Out-Null
+& robocopy $srcMenuMaps (Join-Path $pkg 'data\menumaps') mainmenu_all.map *.string_ids.csv /NFL /NDL /NJH /NJS /NP | Out-Null
+if ($LASTEXITCODE -gt 7) { throw "robocopy menumaps failed ($LASTEXITCODE)" }
+
+# Guarantee zero dev binaries or user save/appearance/career files in the staged release directory
+Get-ChildItem -Path $pkg -Recurse -Include "noble-dev*","noble-dedicated*","noble-client*","*.pdb","appearance*","career*","settings*","preferences*","*.pncsold","menu-background-deck.txt" -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
 
 if (Test-Path (Join-Path $release 'tools\vgmstream')) {
     & robocopy (Join-Path $release 'tools\vgmstream') (Join-Path $pkg 'tools\vgmstream') /E /NFL /NDL /NJH /NJS /NP | Out-Null

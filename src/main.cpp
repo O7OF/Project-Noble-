@@ -523,17 +523,18 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     }
 
 
-    // The Armory scene comes from the player's own haloreach\maps\mainmenu.map (the stock MCC menu
-    // map); the armour pack (data\armor\<name>.map) is loaded as an extra cache in the same process
-    // by ElitePack::Install below. No 298 MB custom mainmenu_all.map is needed: ReachArmory reads the
-    // pack's own string table and .rrpmcg for the piece mapping.
+    // When data\menumaps\mainmenu_all.map is present, VFS serves it as haloreach\maps\mainmenu.map
+    // so the Armory pedestal scene, Spartan/Elite models, and rr_armory HaloScript run natively.
     if (showMenu) {
-        const fs::path pack = noble::ElitePack::FindPackMap(userStoragePath);
-        if (!pack.empty()) {
-            NOBLE_INFO("main: Armory models come from '{}' (loaded as an extra cache with the menu map)", pack.string());
+        if (noble::ReachArmory::HasCustomMenuMap()) {
+            NOBLE_INFO("main: Armory 3D scene served from data\\menumaps\\mainmenu_all.map via VFS");
         } else {
-            NOBLE_INFO("main: no armour pack in '{}'; the Armory 3D preview needs rr_elite_pack.map",
-                       (userStoragePath / "armor").string());
+            const fs::path pack = noble::ElitePack::FindPackMap(userStoragePath);
+            if (!pack.empty()) {
+                NOBLE_INFO("main: Armory models come from '{}' (loaded as an extra cache with the menu map)", pack.string());
+            } else {
+                NOBLE_INFO("main: no mainmenu_all.map or armour pack in '{}'", (userStoragePath / "menumaps").string());
+            }
         }
     }
 
@@ -710,8 +711,11 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     }
 
     // Elite armour pack (data\armor\<name>.map + .rrreloc, local only): loaded as an extra cache with
-    // the match map, and with the Front-End menu map so the Armory can use its player models.
-    noble::ElitePack::Install(loader->GetModuleHandle(), userStoragePath, launchMode);
+    // the match map. When mainmenu_all.map is present, the menu map already has all Spartan and Elite
+    // Armory models and scripts built in, so ElitePack is only needed in matches.
+    if (!showMenu || !noble::ReachArmory::HasCustomMenuMap()) {
+        noble::ElitePack::Install(loader->GetModuleHandle(), userStoragePath, launchMode);
+    }
 
     if (!connectAddress.empty()) {
         launchHost = false; // Guest joining remote match

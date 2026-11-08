@@ -1551,6 +1551,10 @@ static void FillLocalInput(uint8_t* st) {
     *reinterpret_cast<uint32_t*>(st + 0x000) = 1;
     *reinterpret_cast<float*>(st + 0x118) = 1.0f;
 
+    if (ReachArmory::IsMenuMode()) {
+        ReachArmory::NotifyEngineTick();
+    }
+
     static HWND s_lastWindow = nullptr;
     HWND hwnd = InputFocusedWindow();
     if (hwnd && Window::InSizeMove()) {

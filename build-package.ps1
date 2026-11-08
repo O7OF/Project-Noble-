@@ -84,7 +84,7 @@ foreach ($bad in @(
 # Sync clean repo data into build\bin\Release\data (excluding loose blocks and templates now compiled in)
 $repoData = Join-Path $repo 'data'
 if (Test-Path $repoData) {
-    & robocopy $repoData (Join-Path $release 'data') /E /XO /XD userdata autosave cache sandbox armor blocks /XF launch_block_1.bin lb_m_c_1.bin profile_1.bin *.log *.dmp *.tmp /NFL /NDL /NJH /NJS /NP | Out-Null
+    & robocopy $repoData (Join-Path $release 'data') /E /XO /XD userdata autosave cache sandbox armor blocks mods /XF appearance.dat appearance.json career.dat career.json settings.json preferences.dat menu-background-deck.txt launch_block_1.bin lb_m_c_1.bin profile_1.bin *.log *.dmp *.tmp *.obj *.mtl *.PMGC *.rrreloc *.rdc /NFL /NDL /NJH /NJS /NP | Out-Null
 }
 $repoAssets = Join-Path $repo 'assets'
 if (Test-Path $repoAssets) {
@@ -106,10 +106,15 @@ New-Item -ItemType Directory -Force -Path $Destination | Out-Null
 # 1. Copy client executable as Noble.exe ONLY (noble-dev.exe is NEVER copied!)
 Copy-Item $clientExe (Join-Path $Destination 'Noble.exe') -Force
 
-# 2. Copy data folder (excluding userdata, autosave, cache, sandbox, armor, blocks, and prebuilt bins)
+# 2. Copy data folder (including menumaps\mainmenu_all.map, excluding userdata, autosave, cache, sandbox, armor, blocks, and prebuilt bins)
 $destData = Join-Path $Destination 'data'
 New-Item -ItemType Directory -Force -Path $destData | Out-Null
-& robocopy (Join-Path $release 'data') $destData /E /XD userdata autosave cache sandbox armor blocks /XF launch_block_1.bin lb_m_c_1.bin profile_1.bin *.log *.dmp *.tmp /NFL /NDL /NJH /NJS /NP | Out-Null
+& robocopy (Join-Path $release 'data') $destData /E /XD userdata autosave cache sandbox armor blocks mods /XF appearance.dat appearance.json career.dat career.json settings.json preferences.dat menu-background-deck.txt launch_block_1.bin lb_m_c_1.bin profile_1.bin *.log *.dmp *.tmp *.obj *.mtl *.PMGC *.rrreloc *.rdc *.bin /NFL /NDL /NJH /NJS /NP | Out-Null
+New-Item -ItemType Directory -Force -Path (Join-Path $destData 'mods') | Out-Null
+if (Test-Path (Join-Path $repo 'data\menumaps')) {
+    New-Item -ItemType Directory -Force -Path (Join-Path $destData 'menumaps') | Out-Null
+    & robocopy (Join-Path $repo 'data\menumaps') (Join-Path $destData 'menumaps') mainmenu_all.map *.string_ids.csv /NFL /NDL /NJH /NJS /NP | Out-Null
+}
 
 # 3. Copy tools\vgmstream
 $destTools = Join-Path $Destination 'tools\vgmstream'
@@ -118,18 +123,18 @@ if (Test-Path (Join-Path $release 'tools\vgmstream')) {
     & robocopy (Join-Path $release 'tools\vgmstream') $destTools /E /NFL /NDL /NJH /NJS /NP | Out-Null
 }
 
-# 4. Extra cleanup pass to guarantee ZERO dev builds, master server scripts, or duplicate folders in package
-foreach ($devFile in @('noble-dev.exe', 'noble-dev.map', 'noble-dedicated.exe', 'noble-client.exe', 'dedicated_server.json', 'master_server.js', 'test_master_server.js', 'launch_block_1.bin', 'lb_m_c_1.bin', 'profile_1.bin')) {
+# 4. Extra cleanup pass to guarantee ZERO dev builds, save files, appearance/career files, master server scripts, or duplicate folders in package
+foreach ($devFile in @('noble-dev.exe', 'noble-dev.map', 'noble-dedicated.exe', 'noble-client.exe', 'noble-client.map', 'dedicated_server.json', 'master_server.js', 'test_master_server.js', 'launch_block_1.bin', 'lb_m_c_1.bin', 'profile_1.bin', 'appearance.dat', 'appearance.json', 'career.dat', 'career.json', 'settings.json', 'preferences.dat', 'menu-background-deck.txt')) {
     $f = Join-Path $Destination $devFile
     if (Test-Path $f) { Remove-Item $f -Force -ErrorAction SilentlyContinue }
     $fData = Join-Path $destData $devFile
     if (Test-Path $fData) { Remove-Item $fData -Force -ErrorAction SilentlyContinue }
 }
-foreach ($badFolder in @('dedicated_data', 'tools\master-server', 'master-server', 'data\userdata', 'data\armor', 'data\blocks', 'userdata')) {
+foreach ($badFolder in @('dedicated_data', 'tools\master-server', 'master-server', 'data\userdata', 'data\autosave', 'data\cache', 'data\sandbox', 'data\armor', 'data\blocks', 'userdata', 'autosave')) {
     $f = Join-Path $Destination $badFolder
     if (Test-Path $f) { Remove-Item $f -Recurse -Force -ErrorAction SilentlyContinue }
 }
-Get-ChildItem -Path $Destination -Recurse -Filter "*master*server*.js" -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+Get-ChildItem -Path $Destination -Recurse -Include "*master*server*.js","appearance*","career*","settings*","preferences*","*.pncsold","noble-dev*" -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
 
 # 5. Launcher script and version file
 Set-Content (Join-Path $Destination 'play.bat') "@echo off`r`ncd /d `"%~dp0`"`r`nstart `"`" `"Noble.exe`"`r`n"

@@ -11,6 +11,28 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-11-08, 00:00 ET) - 3D Armory Spartan/Elite live preview fixed + v0.19.18 release zip with `mainmenu_all.map`
+
+### Root causes of Spartan pieces not changing in the Armory (`mainmenu_all.map`)
+1. **`ReachArmory::NotifyEngineTick()` was never called:** `NotifyEngineTick()` (which runs `SyncArmoryLiveBipedEngineTickSEH` on the engine thread) was defined in `ReachArmory.cpp` but had zero callers anywhere in the codebase. Wired `ReachArmory::NotifyEngineTick()` into `FillLocalInput()` (`src/engine/ReachHost.cpp`) and `ReachArmory::Tick()` (`src/engine/ReachArmory.cpp`).
+2. **`LoadPackStringIds(pack)` overwrote `mainmenu_all.string_ids.csv`:** When `data/armor/rr_elite_pack.map` existed on disk, `EnsureStringIdsLoaded()` loaded string_ids from the match armor pack instead of `mainmenu_all.string_ids.csv`, causing every Spartan permutation string_id written to `mainmenu_all.map` to resolve to the wrong string in the menu map. Removed `LoadPackStringIds(pack)` so `mainmenu_all.string_ids.csv` (plus `mainmenu_armory*.string_ids.csv`) is always the string_id authority for the menu map.
+3. **`ElitePack::Install` clobbered `mainmenu_all.map` in menu mode:** `src/main.cpp` previously installed `ElitePack` unconditionally, even when `showMenu && ReachArmory::HasCustomMenuMap()` was true, overwriting `mainmenu_all.map`'s own tag/model data. Gated `ElitePack::Install` behind `if (!showMenu || !noble::ReachArmory::HasCustomMenuMap())`.
+4. **Spartan region mapping & `s_livePairs` in `ApplyGlobalsAndPermutations()` (`src/engine/ReachArmory.cpp`):**
+   - Removed the broken `!dynamicLayout` override that overwrote `GLOBALS[0x04..0x15]` with raw item names (`chest_6`, `wrist_4`, `utility_2`) instead of resolving through the `pmcg` table (`spartan.rrpmcg`) into the 14 actual Spartan `hlmt`/`mode` regions in `mainmenu_all.map` (`head`, `body`, `flair_head_a`, `flair_head_b`, `flair_head_c`, `flair_left_shoulder`, `flair_right_shoulder`, `flair_chest_a`, `flair_chest_b`, `arms`, `flair_forearm`, `flair_thigh`, `flair_knees`, `armor_fx`).
+   - Populated `s_livePairs` + `s_livePairsGen` for all 14 Spartan regions, passing `permSid = 0` (`_string_id_empty`) for unused `flair_*`/`armor_fx` regions so `haloreach.dll`'s `object_set_region_permutation` (`RVA 0x4729F4`) writes `0xFF` into `objPtr[0xAC + regIdx]` and hides unequipped attachments.
+5. **Live biped region permutation sync (`SyncArmoryLiveBipedEngineTickSEH`):**
+   - Removed `ApplyModelStateProp` (`base + 0x472C68`), which was resetting all 15 Spartan region permutation slots back to `"default"` every tick.
+   - Added direct `SetRegionPermutation` (`base + 0x4729F4`) calls on the active species' live biped (`isEliteBiped = (bipdIdx == 0x7Eu)`) for 24 ticks after any `s_livePairsGen` or `remadeCounter` change.
+   - Fixed `UpdateTagShaderConstantsSEH()` to use the actual 8-byte `TagTable` entry layout at `*(uint8_t**)(base + 0xC1A600)` and `pointerBases[16]` at `base + 0x4E39F20`.
+
+### Release packaging rules & `mainmenu_all.map` inclusion (`v0.19.18`)
+- **Public Mod Included in Release Zip:** `data/menumaps/mainmenu_all.map` and `data/menumaps/*.string_ids.csv` are un-ignored in `.gitignore` and packaged directly into `data/menumaps/` inside `Project-Noble-v0.19.18-win64.zip` (`tools/publish-release.ps1` and `build-package.ps1`) so the 3D Armory works out of the box for all players.
+- **Strict Release Hygiene:**
+  - **Zero dev binaries/files:** `noble-dev.exe`, `noble-dev.map`, `noble-dedicated.exe`, `noble-client.exe`, `.pdb`, and `tools/master-server` are never included in release packages. Only `Noble.exe` is shipped.
+  - **Zero user save/profile/appearance/career files:** `appearance.dat`, `appearance.json`, `career.dat`, `career.json`, `settings.json`, `preferences.dat`, `menu-background-deck.txt`, and `data/userdata/` are strictly excluded from release packages and preserved across auto-updates in `src/common/Updater.cpp`.
+
+---
+
 ## 0. Pick up here (2026-11-07, 22:00 ET) - Armory actually changes armour now: the map was missing
 
 **Root cause of "armour doesn't change":** `data\menumaps\mainmenu_all.map` was not in the run folder.

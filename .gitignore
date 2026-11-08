@@ -23,12 +23,8 @@ imgui.ini
 bin/vgmstream/
 vgmstream/
 scratch/
-# Ignore user data and large binaries in data/, but keep blocks and json configs
+# Ignore user data and large binaries in data/, but keep blocks, json configs, and the public mainmenu_all.map mod
 data/userdata/
-# The menu map (298 MB) is a mod and the armor pack (103 MB) is local-only: both are release-zip
-# assets, not repo files. The small string tables next to the map are source and must be present
-# for a fresh checkout to build/run the Armory.
-data/menumaps/*.map
 data/armor/
 data/sandbox/
 data/autosave/
@@ -44,10 +40,12 @@ preferences.dat
 *dumpbin*
 dumpbin.txt
 
-# Large local game / RR files: never in git (GitHub limit 100 MB). Copy them from your own MCC / RR install.
-**/menumaps/
+# Large local game / RR files: never in git except the public Armory menu map mod in data/menumaps/.
 **/data/armor/
 *.map
+!data/menumaps/
+!data/menumaps/mainmenu_all.map
+!data/menumaps/*.string_ids.csv
 *.rdc
 *.obj
 *.mtl

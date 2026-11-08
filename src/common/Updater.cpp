@@ -485,7 +485,7 @@ try {
     $root = Get-ChildItem -LiteralPath $stage -Directory | Select-Object -First 1
     if ($root) { $src = $root.FullName }
     Log "copying $src to $InstallDir"
-    & robocopy $src $InstallDir /E /R:3 /W:1 /XD userdata autosave cache /XF settings.json appearance.dat /NFL /NDL /NJH /NJS /NP | Out-Null
+    & robocopy $src $InstallDir /E /R:3 /W:1 /XD userdata autosave cache /XF settings.json appearance.dat appearance.json career.dat career.json preferences.dat /NFL /NDL /NJH /NJS /NP | Out-Null
     Log "robocopy exit $LASTEXITCODE"
 } catch {
     Log "extract/copy failed: $_"

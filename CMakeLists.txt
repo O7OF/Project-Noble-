@@ -9,7 +9,7 @@ if(WIN32)
     set(CMAKE_THREAD_LIBS_INIT "" CACHE INTERNAL "" FORCE)
     set(Threads_FOUND TRUE CACHE INTERNAL "" FORCE)
 endif()
-project(ProjectNoble VERSION 0.19.17 LANGUAGES C CXX)
+project(ProjectNoble VERSION 0.19.18 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -261,7 +261,7 @@ set(HEADERS
 # supplied them; otherwise compile without them so a fresh checkout still builds (the client then reads
 # data/menumaps at runtime). This is what lets people build before they own the data.
 set(NOBLE_MENU_DATA_OK TRUE)
-foreach(_menuFile mainmenu_all.map mainmenu_all.string_ids.csv)
+foreach(_menuFile mainmenu_all.string_ids.csv)
     if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/data/menumaps/${_menuFile}")
         set(NOBLE_MENU_DATA_OK FALSE)
     endif()

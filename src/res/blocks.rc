@@ -116,7 +116,6 @@ FIREFIGHT_219_D3_BIN RCDATA "../../data/blocks/firefight_219_d3.bin"
 
 #ifndef NOBLE_NO_MENU_DATA
 MAINMENU_ALL_STRING_IDS_CSV RCDATA "../../data/menumaps/mainmenu_all.string_ids.csv"
-MAINMENU_ALL_MAP RCDATA "../../data/menumaps/mainmenu_all.map"
 #endif
 
 // Small and always embedded: the Spartan item->region table (data\armor\*.rrpmcg wins when present).

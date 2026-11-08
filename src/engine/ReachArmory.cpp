@@ -248,6 +248,8 @@ static std::atomic<bool> s_quickScanning{false};
 // and the rebuild: REBUILD is bumped a couple of frames after the pairs are written (and, with
 // -armory-settle-rebuild, once more after the biped has been remade).
 static std::vector<std::pair<uint32_t, uint32_t>> s_lastPairs;
+static std::vector<std::pair<uint32_t, uint32_t>> s_livePairs;
+static std::atomic<uint64_t> s_livePairsGen{0};
 static uintptr_t s_lastPairsBase = 0;
 static uint64_t s_bumpAtFrame = 0;       // 0 = none
 static bool s_settlePending = false;
@@ -261,65 +263,6 @@ static const std::filesystem::path& ArmoryMapPath() {
         if (!s_dataDir.empty()) s_armoryMapPath = ElitePack::FindPackMap(s_dataDir);
     }
     return s_armoryMapPath;
-}
-
-// Reach cache maps store their string_ids as a NUL-separated table; the numeric id is the string's
-// index. The pack is the authority: the stock mainmenu_all.csv has different ids from ~7,330 on
-// (armor_pieces, elite_helmet, every rr_elite_* piece), so using it leaves the Armory showing the
-// wrong permutation - or none. Read the pack's table so names resolve to the ids that map uses.
-// Header +0x34 is the table offset, +0x38 its size (verified against the RR pack and 45_aftship).
-static bool LoadPackStringIds(const std::filesystem::path& pack) {
-    std::ifstream in(pack, std::ios::binary);
-    if (!in) return false;
-    in.seekg(0, std::ios::end);
-    const std::streamoff fileSize = in.tellg();
-    in.seekg(0, std::ios::beg);
-    uint8_t header[0x40] = {};
-    if (fileSize < 0x40 || !in.read(reinterpret_cast<char*>(header), sizeof(header))) return false;
-
-    uint32_t strBase = 0, strSize = 0;
-    std::memcpy(&strBase, header + 0x34, 4);
-    std::memcpy(&strSize, header + 0x38, 4);
-    if (strBase < 0x1000 || strSize < 0x1000 || strSize > 64u * 1024u * 1024u ||
-        static_cast<uint64_t>(strBase) + strSize > static_cast<uint64_t>(fileSize)) {
-        return false;
-    }
-
-    std::vector<char> table(strSize);
-    in.seekg(static_cast<std::streamoff>(strBase), std::ios::beg);
-    if (!in.read(table.data(), static_cast<std::streamsize>(strSize))) return false;
-    if (table.empty() || table[0] != '\0') return false;
-
-    size_t pos = 0;
-    uint32_t index = 0;
-    size_t loaded = 0;
-    while (pos < table.size()) {
-        size_t end = pos;
-        while (end < table.size() && table[end] != '\0') ++end;
-        if (end > pos && end - pos < 512) {
-            const std::string name(table.data() + pos, end - pos);
-            bool printable = true;
-            for (const char c : name) {
-                const unsigned char u = static_cast<unsigned char>(c);
-                if (u < 0x20 || u > 0x7E) { printable = false; break; }
-            }
-            if (printable) {
-                s_stringIds.emplace(ToLowerAscii(name), index);
-                ++loaded;
-            }
-        }
-        pos = end + 1;
-        ++index;
-    }
-
-    // The Armory cannot work without these; a wrong header offset must not poison every lookup.
-    if (loaded < 1000 || s_stringIds.find("head") == s_stringIds.end() ||
-        s_stringIds.find("default") == s_stringIds.end()) {
-        s_stringIds.clear();
-        return false;
-    }
-    NOBLE_INFO("ReachArmory: Loaded {} string_ids from the armory pack '{}'", loaded, pack.string());
-    return true;
 }
 
 // -----------------------------------------------------------------------------
@@ -367,10 +310,6 @@ static void EnsureStringIdsLoaded() {
     };
 
     if (!s_dataDir.empty()) {
-        // 0. The pack's own string table: the ids the Armory map's GLOBALS and permutations use.
-        const std::filesystem::path& pack = ArmoryMapPath();
-        if (!pack.empty() && LoadPackStringIds(pack)) return;
-
         std::ifstream loose(s_dataDir / "menumaps" / "mainmenu_all.string_ids.csv");
         if (loose) {
             const size_t loaded = parseCsvStream(loose);
@@ -1137,25 +1076,34 @@ static void UpdateTagShaderConstantsSEH(bool previewElite,
     __try {
         uint8_t* tagTable = *reinterpret_cast<uint8_t* const*>(base + 0xC1A600);
         if (!tagTable) return;
-        using TagAtFn = uint8_t*(__fastcall*)(uint16_t);
-        auto TagAt = reinterpret_cast<TagAtFn>(base + 0x4E39F20);
+        const uint64_t* pointerBases = reinterpret_cast<const uint64_t*>(base + 0x4E39F20);
+        auto unpackPtr = [&](uint32_t packed) -> uint8_t* {
+            return packed ? reinterpret_cast<uint8_t*>(pointerBases[packed >> 28] + static_cast<uint64_t>(packed) * 4u) : nullptr;
+        };
 
-        for (int ti = 0; ti < 16384; ++ti) {
-            uint8_t* te = tagTable + static_cast<size_t>(ti) * 0x18;
-            const uint32_t magic = *reinterpret_cast<const uint32_t*>(te + 0x14);
+        const int32_t tagCount = std::clamp(*reinterpret_cast<const int32_t*>(tagTable + 0x3FFF8), 0, 0x8000);
+        for (int32_t ti = 0; ti < tagCount; ++ti) {
+            uint8_t* te = tagTable + static_cast<size_t>(ti) * 8u;
+            const int16_t groupIdx = *reinterpret_cast<const int16_t*>(te + 0x00);
+            const uint16_t salt = *reinterpret_cast<const uint16_t*>(te + 0x02);
+            if (groupIdx < 0 || groupIdx >= 256 || salt == 0xFFFFu) continue;
+            const uint32_t magic = *reinterpret_cast<const uint32_t*>(tagTable + 0x3FFFC + static_cast<size_t>(groupIdx) * 16u);
             if (magic != 0x726D7368u) continue; // 'rmsh'
-            uint8_t* rmsh = TagAt(static_cast<uint16_t>(ti));
+            const uint32_t rmshPacked = *reinterpret_cast<const uint32_t*>(te + 0x04);
+            uint8_t* rmsh = unpackPtr(rmshPacked);
             if (!rmsh) continue;
             const int32_t spCount = *reinterpret_cast<const int32_t*>(rmsh + 0x1C);
             const uint32_t spPacked = *reinterpret_cast<const uint32_t*>(rmsh + 0x20);
-            if (spCount <= 0 || spCount > 8 || (spPacked >> 28) != 4u) continue;
-            uint8_t* spBase = tagTable + static_cast<uintptr_t>(spPacked & 0x0FFFFFFFu) * 4u;
+            if (spCount <= 0 || spCount > 8 || !spPacked) continue;
+            uint8_t* spBase = unpackPtr(spPacked);
+            if (!spBase) continue;
             for (int si = 0; si < spCount; ++si) {
                 uint8_t* sp = spBase + static_cast<size_t>(si) * 0xAC;
                 const int32_t f4Count = *reinterpret_cast<const int32_t*>(sp + 0x1C);
                 const uint32_t f4Packed = *reinterpret_cast<const uint32_t*>(sp + 0x20);
-                if (f4Count <= 0 || f4Count > 64 || (f4Packed >> 28) != 4u) continue;
-                float* f4 = reinterpret_cast<float*>(tagTable + static_cast<uintptr_t>(f4Packed & 0x0FFFFFFFu) * 4u);
+                if (f4Count <= 0 || f4Count > 64 || !f4Packed) continue;
+                float* f4 = reinterpret_cast<float*>(unpackPtr(f4Packed));
+                if (!f4) continue;
 
                 if (!previewElite) {
                     // 1) spartan_armor (26 float4s, f4[1][0] == 3.0f):
@@ -1226,7 +1174,10 @@ static void SyncArmoryLiveBipedEngineTickSEH(bool previewElite,
                                              const float accRgb[3],
                                              const float litRgb[3],
                                              const float visRgb[3],
-                                             int accentColorIndex) {
+                                             int accentColorIndex,
+                                             const uint32_t* permPairsFlat,
+                                             size_t permPairCount,
+                                             uint64_t permPairsGen) {
     HMODULE hReach = GetModuleHandleW(L"haloreach.dll");
     if (!hReach) return;
     const uintptr_t base = reinterpret_cast<uintptr_t>(hReach);
@@ -1235,32 +1186,15 @@ static void SyncArmoryLiveBipedEngineTickSEH(bool previewElite,
         const uintptr_t tlsArray = *reinterpret_cast<const uintptr_t*>(__readgsqword(0x58) + static_cast<uintptr_t>(tlsIdx) * 8u);
         if (!tlsArray) return;
         uint8_t* objTable = *reinterpret_cast<uint8_t* const*>(tlsArray + 0x10);
-        uint8_t* tagTable = *reinterpret_cast<uint8_t* const*>(base + 0xC1A600);
-        if (!objTable || !tagTable) return;
+        if (!objTable) return;
 
-        using TagAtFn = uint8_t*(__fastcall*)(uint16_t);
         using SetChangeColorFn = uint8_t(__fastcall*)(uint32_t, int32_t, const float*);
         using BipedSetGenderFn = void(__fastcall*)(uint32_t, uint8_t);
-        using ApplyModelStatePropFn = void(__fastcall*)(uint32_t, uint16_t);
+        using SetRegionPermutationFn = uint8_t(__fastcall*)(uint32_t, uint32_t, uint32_t, uint8_t);
 
-        auto TagAt = reinterpret_cast<TagAtFn>(base + 0x4E39F20);
         auto SetChangeColor = reinterpret_cast<SetChangeColorFn>(base + 0x473858);
         auto BipedSetGender = reinterpret_cast<BipedSetGenderFn>(base + 0x49BB84);
-        auto ApplyModelStateProp = reinterpret_cast<ApplyModelStatePropFn>(base + 0x472C68);
-
-        uint16_t maleProp = 0xFFFFu;
-        uint16_t femaleProp = 0xFFFFu;
-        for (int ti = 0; ti < 16384; ++ti) {
-            uint8_t* te = tagTable + static_cast<size_t>(ti) * 0x18;
-            if (*reinterpret_cast<const uint32_t*>(te + 0x14) == 0x706D6367u) { // 'pmcg'
-                uint8_t* pmcg = TagAt(static_cast<uint16_t>(ti));
-                if (pmcg) {
-                    maleProp = *reinterpret_cast<const uint16_t*>(pmcg + 0x98);
-                    femaleProp = *reinterpret_cast<const uint16_t*>(pmcg + 0xA4);
-                }
-                break;
-            }
-        }
+        auto SetRegionPermutation = reinterpret_cast<SetRegionPermutationFn>(base + 0x4729F4);
 
         const float slot0[3] = { priRgb[0], priRgb[1], priRgb[2] };
         const float slot1[3] = { secRgb[0], secRgb[1], secRgb[2] };
@@ -1283,6 +1217,10 @@ static void SyncArmoryLiveBipedEngineTickSEH(bool previewElite,
         static uint32_t s_lastGenderBipeds[16] = {};
         static uint8_t s_lastGenderApplied = 0xFFu;
         static int32_t s_lastGenderRemade = -999999;
+        static uint64_t s_lastPermGen = 0;
+        static int32_t s_lastPermRemade = -999999;
+        static int s_permSyncTicksRemaining = 0;
+
         const uint8_t wantFemale = isFemale ? 1u : 0u;
         const bool resetGenderCache = (s_lastGenderApplied != wantFemale || s_lastGenderRemade != remadeCounter);
         if (resetGenderCache) {
@@ -1290,6 +1228,13 @@ static void SyncArmoryLiveBipedEngineTickSEH(bool previewElite,
             s_lastGenderApplied = wantFemale;
             s_lastGenderRemade = remadeCounter;
         }
+        if (s_lastPermGen != permPairsGen || s_lastPermRemade != remadeCounter) {
+            s_lastPermGen = permPairsGen;
+            s_lastPermRemade = remadeCounter;
+            s_permSyncTicksRemaining = 24;
+        }
+        const bool syncPermsThisTick = (s_permSyncTicksRemaining > 0);
+        if (s_permSyncTicksRemaining > 0) --s_permSyncTicksRemaining;
 
         for (int32_t i = 0; i < maxObjects; ++i) {
             uint8_t* entry = entries + static_cast<size_t>(i) * 0x18;
@@ -1300,6 +1245,20 @@ static void SyncArmoryLiveBipedEngineTickSEH(bool previewElite,
             uint8_t* objPtr = *reinterpret_cast<uint8_t* const*>(entry + 0x10);
             if (!objPtr) continue;
             const uint32_t objectDatum = (static_cast<uint32_t>(salt) << 16) | static_cast<uint32_t>(i);
+            const uint16_t bipdIdx = *reinterpret_cast<const uint16_t*>(objPtr);
+            const bool isEliteBiped = (bipdIdx == 0x7Eu);
+            if (previewElite != isEliteBiped) continue;
+
+            // Apply region permutations directly onto the active species' live bipeds
+            if (syncPermsThisTick && permPairsFlat && permPairCount > 0) {
+                for (size_t p = 0; p < permPairCount; ++p) {
+                    const uint32_t regSid = permPairsFlat[p * 2 + 0];
+                    const uint32_t permSid = permPairsFlat[p * 2 + 1];
+                    if (regSid != 0) {
+                        SetRegionPermutation(objectDatum, regSid, permSid, 1);
+                    }
+                }
+            }
 
             // 1. Update live biped change_colors (base + active slots 0..3)
             const int16_t ccSize = *reinterpret_cast<const int16_t*>(objPtr + 0x188);
@@ -1333,10 +1292,6 @@ static void SyncArmoryLiveBipedEngineTickSEH(bool previewElite,
                 if (!alreadySet) {
                     if (freeSlot >= 0) s_lastGenderBipeds[freeSlot] = objectDatum;
                     BipedSetGender(objectDatum, wantFemale);
-                    const uint16_t prop = isFemale ? femaleProp : maleProp;
-                    if (prop != 0xFFFFu) {
-                        ApplyModelStateProp(objectDatum, prop);
-                    }
                 }
             }
         }
@@ -1495,9 +1450,16 @@ static void EnsurePmcgLoaded() {
     if (s_pmcgLoaded) return;
     s_pmcgLoaded = true;
     std::vector<std::filesystem::path> dirs;
-    if (!s_dataDir.empty()) dirs.push_back(s_dataDir / "armor");
+    if (!s_dataDir.empty()) {
+        dirs.push_back(s_dataDir / "armor");
+        dirs.push_back(s_dataDir / "menumaps");
+    }
     wchar_t exeBuf[MAX_PATH] = {};
-    if (GetModuleFileNameW(nullptr, exeBuf, MAX_PATH)) dirs.push_back(std::filesystem::path(exeBuf).parent_path() / "data" / "armor");
+    if (GetModuleFileNameW(nullptr, exeBuf, MAX_PATH)) {
+        const std::filesystem::path exeDir = std::filesystem::path(exeBuf).parent_path();
+        dirs.push_back(exeDir / "data" / "armor");
+        dirs.push_back(exeDir / "data" / "menumaps");
+    }
     for (const auto& dir : dirs) {
         std::error_code ec;
         if (!std::filesystem::is_directory(dir, ec)) continue;
@@ -1637,6 +1599,7 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx, const std::strin
             s_eliteColorRecords.clear();
             s_suitRecords.clear();
             s_lastPairs.clear();
+            s_livePairs.clear();
             s_lastPairsBase = 0;
             s_rotationBaseBits.store(0xFFFFFFFFu);
             StartQuickRescan();
@@ -1728,6 +1691,7 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx, const std::strin
         s_previewDirty.store(false);
 
         std::vector<std::pair<uint32_t, uint32_t>> pairs;
+        std::vector<std::pair<uint32_t, uint32_t>> livePairs;
         auto pushPair = [&](const std::string& regionName, const std::string& permName, const char* fallbackPerm = "default") {
             const uint32_t regId = LookupStringId(regionName);
             uint32_t permId = LookupPermutationId(permName);
@@ -1743,6 +1707,7 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx, const std::strin
             }
             if (regId != 0 && permId != 0) {
                 pairs.emplace_back(regId, permId);
+                livePairs.emplace_back(regId, permId);
             }
         };
 
@@ -1770,13 +1735,16 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx, const std::strin
                 }
             }
         } else if (PmcgItem("20", "default") != nullptr) {
-            // Only the regions the picked items change get a pair. "default" is a real permutation in several
-            // flair regions (a visor piece on every helmet when it was written for "no attachment"), and the
-            // remade biped starts from its own defaults anyway.
-            static const char* const kRegions[] = { "head", "flair_head_a", "flair_head_b", "flair_head_c",
+            // Resolve each selected Armory item through the player_model_customization_globals (pmcg) table
+            // into the actual Spartan hlmt/mode regions in mainmenu_all.map:
+            //   head, body, flair_head_a..c, flair_left_shoulder, flair_right_shoulder,
+            //   flair_chest_a..b, arms, flair_forearm, flair_thigh, flair_knees, armor_fx.
+            static const char* const kRegions[] = { "head", "body", "flair_head_a", "flair_head_b", "flair_head_c",
                 "flair_left_shoulder", "flair_right_shoulder", "flair_chest_a", "flair_chest_b", "arms",
                 "flair_forearm", "flair_thigh", "flair_knees", "armor_fx" };
             std::unordered_map<std::string, std::string> perm;
+            perm["body"] = sel.isFemale ? "female" : "default";
+            perm["arms"] = sel.isFemale ? "female" : "default";
             auto apply = [&](const char* list, const std::string& item) {
                 const std::vector<PmcgChange>* changes = PmcgItem(list, item);
                 if (!changes) {
@@ -1794,13 +1762,21 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx, const std::strin
             apply("2c", sel.leftShoulder);
             apply("38", sel.rightShoulder);
             apply("44", sel.chest);
+            if (!sel.hands.empty() && sel.hands != "default") {
+                perm["arms"] = sel.hands;
+            }
             apply("50", sel.wrist);
             apply("5c", sel.utility);
             apply("68", sel.knees);
             apply("80", PmcgEffectName(sel.armorEffect));
             for (const char* region : kRegions) {
                 auto it = perm.find(region);
-                if (it != perm.end()) pushPair(region, it->second, nullptr);
+                if (it != perm.end()) {
+                    pushPair(region, it->second, nullptr);
+                } else {
+                    const uint32_t regId = LookupStringId(region);
+                    if (regId != 0) livePairs.emplace_back(regId, 0u);
+                }
             }
         } else {
             // No pmcg table: item names straight in (base helmets that share the model's name only).
@@ -1842,62 +1818,9 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx, const std::strin
                     SafeWriteU32(base + (slot + 1) * stride, pair.second);
                 }
             } else {
-                // Legacy 297 MB menu map: the GLOBALS slots are fixed (head 0x04, chest 0x06, ...), so the
-                // historical fixed pair order is required. The pmcg-derived pairs are ordered by region name and
-                // would land in the wrong slots here (Dominus's 2026-11-02 update left hands/knees out and wrote
-                // the rest in region order, which is why only some armors changed).
-                // Only fall back to the fixed name-only pairs when no pmcg table was loaded. With the
-                // real spartan.rrpmcg the pmcg pairs are the item -> region mapping and must be kept.
-                const bool usedPmcg = PmcgItem("20", "default") != nullptr;
-                if (!showElite) {
-                    // Fixed GLOBALS order on the stock menu map: head 0x04, chest 0x06, L/R shoulder
-                    // 0x08/0x0A, hands 0x0C, wrist 0x0E, utility 0x10, knees 0x12, effect 0x14.
-                    // The pmcg pairs arrive in region-name order (head, flair_head_a..c, ...), which puts
-                    // flair_head_a where chest belongs - every pair then lands in a slot the biped does
-                    // not read and NOTHING changes. Rebuild the pairs in the fixed slot order instead.
-                    // Resolve one item's permutation for the first matching region straight from the pmcg.
-                    auto itemPerm = [&](const char* list, const std::string& item,
-                                        std::initializer_list<const char*> regions) -> uint32_t {
-                        const std::vector<PmcgChange>* changes = PmcgItem(list, item);
-                        if (!changes) return 0;
-                        for (const char* region : regions) {
-                            for (const auto& c : *changes) {
-                                if (c.region != region) continue;
-                                const uint32_t id = LookupPermutationId(c.permutation);
-                                if (id != 0) return id;
-                            }
-                        }
-                        return 0;
-                    };
-                    if (usedPmcg) {
-                        pairs.clear();
-                        auto fixed = [&](const char* region, uint32_t permId, const char* fallback) {
-                            if (permId == 0) permId = LookupStringId(fallback);
-                            const uint32_t regId = LookupStringId(region);
-                            if (regId != 0 && permId != 0) pairs.emplace_back(regId, permId);
-                        };
-                        fixed("head", itemPerm("20", sel.helmet, { "head" }), "default");
-                        fixed("chest", itemPerm("44", sel.chest, { "chest", "flair_chest_a", "flair_chest_b" }), "chest_blank");
-                        fixed("left_shoulder", itemPerm("2c", sel.leftShoulder, { "left_shoulder", "flair_left_shoulder" }), "left_shoulder_blank");
-                        fixed("right_shoulder", itemPerm("38", sel.rightShoulder, { "right_shoulder", "flair_right_shoulder" }), "right_shoulder_blank");
-                        fixed("hands", itemPerm("44", sel.chest, { "arms" }), "default");
-                        fixed("wrist", itemPerm("50", sel.wrist, { "wrist", "flair_forearm" }), "wrist_blank");
-                        fixed("utility", itemPerm("5c", sel.utility, { "utility", "flair_thigh" }), "utility_blank");
-                        fixed("knees", itemPerm("68", sel.knees, { "knees", "flair_knees" }), "knees_default");
-                        fixed("armor_effect", itemPerm("80", PmcgEffectName(sel.armorEffect), { "armor_fx" }), "default");
-                    } else {
-                        pairs.clear();
-                        pushPair("head",           sel.helmet,        "default");
-                        pushPair("chest",          sel.chest,         "chest_blank");
-                        pushPair("left_shoulder",  sel.leftShoulder,  "left_shoulder_blank");
-                        pushPair("right_shoulder", sel.rightShoulder, "right_shoulder_blank");
-                        pushPair("hands",          sel.hands,         "default");
-                        pushPair("wrist",          sel.wrist,         "wrist_blank");
-                        pushPair("utility",        sel.utility,       "utility_blank");
-                        pushPair("knees",          sel.knees,         "knees_default");
-                        pushPair("armor_effect",   sel.armorEffect,   "default");
-                    }
-                }
+                // mainmenu_all.map rr_armory script loops i = 0..15 over GLOBALS[0x04 + i*2] (rr_r{i}) and
+                // GLOBALS[0x05 + i*2] (rr_p{i}), calling (object_set_permutation chief_armory rr_r{i} rr_p{i})
+                // for each pair and scanning rr_r0..rr_r15 for (= rr_r{i} "armor_fx").
                 while (pairs.size() < 16) pairs.push_back(pairs[0]);
                 writtenPairs = pairs;
                 for (size_t i = 0; i < 16; ++i) {
@@ -1909,7 +1832,12 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx, const std::strin
             if (!piecesChanged) {
                 // Same pieces: no rebuild needed, colors and lights are written to live memory every frame.
             } else {
-                s_lastPairs = writtenPairs;
+                {
+                    ArmoryLock lock(s_dataMutex);
+                    s_lastPairs = writtenPairs;
+                    s_livePairs = livePairs;
+                    s_livePairsGen.fetch_add(1);
+                }
                 s_lastPairsBase = base;
                 s_bumpAtFrame = frameNow + 2;
                 s_settlePending = false;
@@ -1964,7 +1892,7 @@ void ReachArmory::Initialize(const std::filesystem::path& dataDir) {
 }
 
 bool ReachArmory::HasArmoryMap() {
-    return !ArmoryMapPath().empty();
+    return HasCustomMenuMap() || !ArmoryMapPath().empty();
 }
 
 bool ReachArmory::HasCustomMenuMap() {
@@ -1990,6 +1918,7 @@ void ReachArmory::SetMenuMode(bool menuMode) {
         s_lastRemade.store(-1);
         s_appliedGeneration = 0;
         s_lastPairs.clear();
+        s_livePairs.clear();
         s_lastPairsBase = 0;
         s_bumpAtFrame = 0;
         s_settlePending = false;
@@ -2149,6 +2078,7 @@ void ReachArmory::Tick() {
         const std::string sceneName = GetTargetScene();
         const int32_t sceneIdx = ResolveSceneIndex(sceneName);
         ApplyGlobalsAndPermutations(sceneIdx, sceneName);
+        NotifyEngineTick();
     }
 }
 
@@ -2160,6 +2090,17 @@ void ReachArmory::NotifyEngineTick() {
         (sel.visor == "default" || sel.visor.empty()) ? 0.63f : sel.visorRgb[1],
         (sel.visor == "default" || sel.visor.empty()) ? 0.40f : sel.visorRgb[2]
     };
+    uint32_t permPairsFlat[32] = {};
+    size_t permPairCount = 0;
+    const uint64_t permPairsGen = s_livePairsGen.load();
+    {
+        ArmoryLock lock(s_dataMutex);
+        permPairCount = std::min<size_t>(s_livePairs.size(), 16u);
+        for (size_t i = 0; i < permPairCount; ++i) {
+            permPairsFlat[i * 2 + 0] = s_livePairs[i].first;
+            permPairsFlat[i * 2 + 1] = s_livePairs[i].second;
+        }
+    }
     SyncArmoryLiveBipedEngineTickSEH(
         sel.previewElite,
         sel.isFemale,
@@ -2169,13 +2110,16 @@ void ReachArmory::NotifyEngineTick() {
         sel.accentRgb.data(),
         sel.lightsRgb.data(),
         visFloats,
-        sel.accentColorIndex);
+        sel.accentColorIndex,
+        permPairsFlat,
+        permPairCount,
+        permPairsGen);
 }
 
 std::vector<std::string> ReachArmory::MissingPermutationsFor(const std::string& list, const std::string& item) {
     std::vector<std::string> missing;
     const std::vector<PmcgChange>* changes = PmcgItem(list.c_str(), item);
-    if (!changes || changes->empty()) {
+    if (!changes) {
         missing.push_back("<item not in pmcg list " + list + ">");
         return missing;
     }
