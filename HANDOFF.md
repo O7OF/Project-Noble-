@@ -75,11 +75,24 @@ hotfix without a redeploy of the client.
 - `CMakeLists.txt` project is `ProjectNoble` 0.19.17; `tools/publish-release.ps1` accepts 3-part
   versions (it required X.Y.Z.W before, which 0.19.17 is not).
 
+### Done and verified (2026-11-07, 21:20 ET)
+1. **Backend pushed** - `ServerTestDeploy` `ed1fafd` is live on all three Render services
+   (`/api/health` reports `nodes` = the other two regions; all three reachable).
+   `PEER_REGISTRY_URL` is linked on all three by the owner; the baked-in defaults are the same list.
+2. **Gate proven in production** - old build register → `403 client_outdated`; `0.19.17` +
+   protocol 2 → `201`; `/api/sessions` shows only the new build. Relay probe: `/ws/relay`
+   → socket hang up, `/ws/relay2` without protocol → `403`, with `protocol=2` → open.
+3. **Release built** - `build.bat` succeeded: `noble-client.exe`, `noble-dev.exe`,
+   `noble-dedicated.exe` (Release x64, 0.19.17 strings confirmed in the binary).
+4. **Published** - `v0.19.17` on `O7OF/Project-Noble-`, latest, assets
+   `Project-Noble-v0.19.17-win64.zip` (30 MB) + `.sha256`:
+   https://github.com/O7OF/Project-Noble-/releases/tag/v0.19.17
+
 ### Still to do
-1. Push `ServerTestDeploy` and confirm Render redeploys all three services; set the env vars above.
-2. Build Release (`build.bat`), smoke-test the menu and a LAN join.
-3. Publish `v0.19.17` to `O7OF/Project-Noble-` (`tools/publish-release.ps1`).
-4. Only the closed-source repo is a remote for this tree; do not re-add the archived repo.
+1. In-game smoke test (menu → host → join on one PC) with `noble-client.exe` and `noble-dev.exe`;
+   the build is verified but the game has not been run.
+2. Only the closed-source repo is a remote for this tree; do not re-add the archived repo.
+
 
 ---
 
