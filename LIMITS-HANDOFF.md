@@ -5,7 +5,7 @@ Written 2026-11-08 by Claude (claude.ai session, for Tyler). Read this before an
 
 ## Status at end of 2026-11-08 (read this first)
 
-Updated 13:50 ET by Claude. Everything below this section is the original design; this section is what exists
+Updated 15:30 ET by Claude. Everything below this section is the original design; this section is what exists
 now. Last commit: `ce37aa7` (local, not pushed). Uncommitted since then: C12 docs/tools (see below).
 
 ### Profiles and engine builds (all built by `tools/limits/make_v16_particles.py`, applied as `.nlp` to the
@@ -72,8 +72,14 @@ Keep the engine's own netcode and authority; move player/peer slots ≥ 16 into 
   the DLL). Details: `docs/limits-players-audit.md`, `docs/limits-players.md`.
 - **Test rig (one PC):** `tools\lan-two-instance.ps1` starts a host (build\bin\Release) and a client
   (build\bin\Release2, second data folder) joined over 127.0.0.1:11774.
-- **Next:** Run 4 (Tyler plays the client: deaths, respawns, quit client first) → generator + runtime patcher →
-  32-slot test build → same two-window check, then extra local instances for slots 17+.
+- **Step 2 (15:30 ET, Claude, written but not built yet):** `-slot-players 32` adds 6 pointer-stepping loop caves
+  (`gen_steps.py` → `SlotStepTable.inc`) and 137 bound/mask edits (`gen_bounds.py` → `SlotBoundsTable.inc`), byte-checked,
+  all or nothing; shadow slots are now built with the engine's record ctors. **Peers stop at 32** (DWORD peer mask).
+  Still open: the fixed 16/17-entry tables (41 bounds kept at 16/17 because of them), nine more `0x1FFFF` peer masks,
+  whole-block copies (A ↔ B, messages) that skip the shadow slots, the network encoding of slot counts/masks, and the
+  players pool itself. Full list and test steps: `docs/limits-players-loops.md`.
+- **Next:** build + the two regression runs in `docs/limits-players-loops.md` (16-player mode, then `-slot-players 32`
+  with 2 players); then block copies + network encoding (the real protocol work), then the tables.
 
 ### Other open items
 - C11 part 2: V16's 4,096 visible draw list (needs eyes on 4,096+ visible objects).

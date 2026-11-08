@@ -586,6 +586,91 @@ the recipe builder or the .nlp format.
   B = pointer from the 0x158/0xB0 record multiply or a covered site, C = pointer from an argument/returned
   pointer with the producer named, D = none. Analysis only, no code changes.
 
+- 2026-11-08 16:12 ET (DeepSeek): **C12 bounds review written.** docs\limits-players-bounds-review.md covers
+  the 60 loop entries of docs\limits-players-bounds.json (174 entries total: 60 loop, 111 bit-scan, 3 other).
+  Each loop body was disassembled from its backward branch and classified by how it reaches slot records:
+  **31 C1 covered** (patched 0x158/0xB0 imul), **5 C2 pointer step** over 0x158/0xB0 records, **16 C3
+  unhandled table/buffer** (0xA0 per-player arrays, 6-byte tables, 0xC/0x180-stride tables, 16-word buffer
+  copies, pointer arrays [rbp+idx*8+0x150] / [rsi+idx*8]), **8 C4 indirect** (mask scan + per-slot helper
+  call). Analysis only, no code changes. The C3 list is the follow-up set before raising the player count.
+
+- 2026-11-08 17:15 ET (DeepSeek): **bounds review updated: C2 correction + C3 table locations.** The 5 C2
+  loops (33, 46, 49, 50, 54) are now marked as needing a step cave and added to Claude's loop list (same
+  detour as the six functions; stepping past record 16/17 lands in the scalar fields at +0x1718 peers /
+  +0x2240 players). Added a table-location column to docs\limits-players-bounds-review.md for the 16 C3 loops:
+  **stack frames** (5, 7: 16 qword pointer array at rbp+0x150 in the 0x390DB0 frame), **session membership
+  object** (8, 10: 16-word name copies at player record +0x78; 31: 16 x 0xC at +0x4440 - constructor
+  0x3CF864), **heap/outer objects** (32: 0x180-stride at +0x18; 38: 6-byte at [r15]+0x34; 45: 0xA0 array at
+  object base; 47: 6-byte at [rsi+8]+0x34; 51-56: one 16 x 0xA0 array at outer object +0xA0; 57: 6-byte at
+  +0x34) and no table for 48 (object fields). Totals unchanged: 31 C1, 5 C2 (loop list), 16 C3, 8 C4.
+  Analysis only.
+
+- 2026-11-08 17:55 ET (DeepSeek): **C3 heap-object allocation analysis added.** docs\limits-players-bounds-review.md
+  now records where the heap/stack C3 tables live and the growth needed for 32 entries: loops 51-56 share one
+  global singleton (pointer at [0x4E0E910], loaded by caller 0x3AAFA4 at 0x3AB007; membership at +0x18, one
+  16 x 0xA0 array at +0xA0 -> +0xA00 for 32), loop 57 is the same object's 6-byte table (+0x60), loop 47 uses
+  the same global family (0x4E0E910/0x4E0E908, +0x60), loop 45 is a vtable-dispatched object (vtable RVA
+  0xA47750, +0xA00), loop 38 is the object at [arg]+0x34 (+0x60), and loop 32 was corrected to a **stack**
+  buffer in caller 0x396828 (r9 = rbp+0x68A0/0x4350; frame +0x1800 for 32). The 0x4E0E910 pointer is in
+  read-only image data and holds a runtime pointer, so the owner is heap/pool-allocated, not in a game-state
+  bank; its constructor store is register-based and still needs an xref hunt. Analysis only.
+
+- 2026-11-08 15:45 ET (DeepSeek): **C3 correction: static .data objects, shadow storage required.**
+  Verified Claude's correction: 0x4E0E910 is writable .data; the initializer at 0x3A9544-0x3A9567 stores
+  lea 0x2C8DFD8 -> 0x4E0E908, lea 0x2C92050 -> 0x4E0E910 (next object 0x2C92B68, size 0xB18), lea 0x2C92B68
+  -> 0x4E0E918. Second writer 0x3A994E stores rdi into 0x4E0E908 (runtime override). So the lobby/player-data
+  tables are static image objects and cannot grow in place - same shadow trick as the session slots
+  (+0xA00 for the 16x0xA0 array, +0x60 for the 6-byte tables, entries >= 16 redirected).
+  Loops 45/38 owners: 45 is vtable-dispatched (vtable RVA 0xA47750, no direct data pointer found; owner not
+  one of the three statics), 38's owner is [arg]+0 (caller 0x3C034C passes its own args; runtime pointer,
+  caller chain above it needed). Added a confirmed cave-site list (0xA0: 0x41F712/0x41F746, 0x41F760/0x41F787,
+  0x41F7BE/0x41F7DB, 0x41F9F0/0x41FA72, 0x41FA9C/0x41FAB6, 0x40A9EF/0x40AA03; 6-byte: 0x41EA78/0x41EB1A,
+  0x41FAE4/0x41FB10, 0x3C0291/0x3C0318) and noted the 21 global readers across 22 functions are the access
+  surface. Analysis only; SlotPatch stays with Claude.
+
+- 2026-11-08 16:30 ET (DeepSeek): **0xA0 table corrected to entry base +0xA8 and cave inventory rewritten.**
+  Verified initializer 0x3CFCC8: 0x3CFE8C lea rbx,[0x2C920F8] (= object+0xA8), call 0xD358 16 times with
+  add rbx,0xA0 (rdi=0x10 at 0x3CFE08); next field +0xAA8; object+0xA0 is the 32-bit entry mask
+  (test [rdi],eax in 0x41F510, rdi=r14+0xA0). Shadow plan recorded: entries 0..15 stay, 16..31 in a Noble
+  shadow at a constant delta built with ctor 0xD358; do not relocate via the globals (self-pointers +
+  teardown 0x91D978). Cave table now lists entry base, field offset, counter register and index arithmetic
+  for loops 51/52/53/55/56/50/45 (0x41F746/0x41F787/0x41F7DB/0x41FA72/0x41FAB6/0x41F617/0xA4230).
+  6-byte tables at object+0x34: no explicit builder found (0x3CFCC8 has no store to 0x2C92084..; no RIP refs;
+  no imul 6 in the 22 reader functions) - only the add-steps 0x41EB1A / 0x41FB10 / 0x3C0318, count 16;
+  likely BSS/lazy. Index/imul scan of the 22 functions: no imul by 0xA0/6, add-steps only. Analysis only.
+
+- 2026-11-08 17:40 ET (DeepSeek): **C3 step-site inventory for SlotPatch added.** 6-byte tables confirmed
+  per-peer: 17 x 6 = 0x66 at +0x34..+0x9A, shadow split 17. Loop 47 object: rsi = 0x2C92050 (from global
+  0x4E0E910 via caller 0x3A9B35), but the table is at [object+8]+0x34 (pointer field set elsewhere, not by
+  0x3CFCC8). Loop 57: [rsp+0x38] is written at 0x41F701 from 3*[rbx-0x14], not confirmed as 0x2C92050 -
+  flagged. Added the 12-site STEPS list in gen_steps.py format (0x41F617/0x41F746/0x41F787/0x41F7DB/0x41F962/
+  0x41FA72/0x41FAB6/0x40AA03/0xA4230 0xA0 x16; 0x41EB1A/0x41FB10/0x3C0318 6-byte x17), with exact bytes,
+  counter-before-step confirmation, bound RVAs and post-loop register use (only 0x41F617's rbx is read after
+  exit; 0x41F962/0x3C0318 exit decoding needs review). Analysis only; SlotPatch stays with Claude.
+
+- 2026-11-08 15:45 ET (DeepSeek): **C3 follow-ups verified.** 0x41F617's rbx is reloaded after the loop
+  (0x41F630 mov rbx,[rsp+0x30]); the earlier 'push [rbx]' was a capstone misdecode - corrected. 0x41FA72/
+  0x41FAB6 are in 0x41F9C4 (caller 0x3C2D7A, rcx = [caller object] at 0x3C2D44); its 0x80-byte copy buffer is
+  caller stack (r9 = caller [rsp+0x50], memset target a caller stack argument). Leaf 0x41FAE0 (0x41FB10) has
+  6 callers: 0x3AB902 and 0x3AC0AB pass the static 0x2C92050 ([0x4E0E910]); 0xF8B96 (r12), 0x3CCD4F ([rcx]),
+  0x3CCECB ([r14]), 0x3CD0CA ([rdi]) pass runtime objects with the same mask+0x2C / 17x6+0x34 layout.
+  0x41F510's stack table at rsp+0x40 (17x6, 0x66 bytes) is accessed at 0x41F5C9/0x41F5D3/0x41F727/0x41F732/
+  0x41F8F2/0x41F8FA (base lea 0x41F53D); moving it to a Noble buffer replaces those six reads. Still unnamed:
+  0x40AA03 (no lea/mov ref to vtable 0xA47750 found), 0xA4230 (0xA411C rcx object), 0x41EB1A (pointer at
+  0x2C92050+8), 0x3C0318 (caller-owned object through 0x3C034C). Analysis only.
+
+- 2026-11-08 16:05 ET (DeepSeek): **0xB18 struct creation/copy analysis (C12 paused, no builds/launches).**
+  The only confirmed instance is the static 0x2C92050, built by 0x3CFCC8 (single caller 0x87D4, static-init
+  thunk); its 16 entries are built at 0x3CFE8C-0x3CFEA6. No 0xB18 allocation or memcpy exists in .text; the
+  only 0xB18 immediate is `add rcx,0xB18` at 0x3E03B1 (constructor 0x3E037C, a sub-object/stride). Entry ctor
+  0xD358 has 7 call sites: static+0xA8 (0x3CFE96), object+0x2C8 (0xD2EB), object base/+0xF78 (0x3E0E62/7E),
+  and stack-local arrays at rsp+0x30/0x40/0xA0 (0x438D9/0x409F46/0x44E86E). The three stack builders have
+  frames 0xA40/0xA50/0xAB0 - enough for the 0xA00 entry array only, not the whole 0xB18. Larger objects that
+  embed the layout: 0x3E037C (+0x708/+0x710/+0xB10, sub-object at +0xB18), 0x3E0E3E (two 16x0xA0 arrays,
+  memset 0x14F0 at +0x488), 0xD2B0 (entries at +0x2C8). 0x3E031C (sub-object init) has 19 callers.
+  Conclusion: no standalone 0xB18 heap/static instances beyond the static one, and no 0xB18 copy routine;
+  shadow targets the static entry array and the larger objects' arrays. Docs only.
+
 ## Ready for Tyler to test (2026-11-08 08:47 ET, DeepSeek build)
 
 Build: `build\bin\Release\noble-dev.exe` (09:14; engine .nlp 09:02) — all three targets build clean; `data\limits\v16.nlp`
@@ -745,3 +830,14 @@ a data_array_new pool; see `docs\limits-ai.md`).
   `jmp` + 2 NOPs. **Inert while the players pool is 16** (slots ≥ 16 never occur), so this build must behave
   exactly like before. Not built yet.
 - Remaining C12 sites (add/lea/argument/loaded pointer: ~72) and the 16 → 32 bounds + pool raises come next.
+
+### 2026-11-08 15:30 ET (Claude): C12 step 2 — loop steps + bounds (written, not built)
+- Written from a claude.ai session without a shell on the PC: **not compiled with MSVC and not run.** Syntax-checked
+  with clang against stub headers only. Generators run against the stock DLL (bytes verified).
+- New: `tools/limits/gen_steps.py` → `src/host/SlotStepTable.inc` (6 step caves), `tools/limits/gen_bounds.py` →
+  `src/host/SlotBoundsTable.inc` (137 edits), `docs/limits-players-loops.md`. Changed: `src/host/SlotPatch.cpp`
+  (`-slot-players 32` / NOBLE_SLOT_PLAYERS=32; shadow records built with ctors 0x16FC60 / 0x3CFA38).
+- Peers are capped at 32 by the DWORD peer mask (not 33). 41 bounds stay at 16/17 because their functions fill fixed
+  tables (list in the doc). Block copies and the network encoding are not handled yet.
+- **Ask (whoever has the shell):** build all three targets, then the two regression runs at the end of
+  `docs/limits-players-loops.md`. Report the SlotPatch log lines and any FATAL RVA.
