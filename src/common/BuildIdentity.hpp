@@ -14,7 +14,12 @@ namespace noble {
 // REQUIRED_BUILD_PREFIX / CLIENT_PROTOCOL in ServerTestDeploy/server.js.
 
 constexpr int kClientProtocol = 2;                 // closed-source wire/API revision
-constexpr std::string_view kBuildTag = "0.19.17";  // prefix of VERSION_STRING
+#ifdef NOBLE_DEV_BUILD
+constexpr std::string_view kBuildTag = "0.19.18-dev";
+#else
+constexpr std::string_view kBuildTag = "0.19.18";  // prefix of VERSION_STRING
+#endif
+constexpr std::string_view kBaseBuildTag = "0.19.18";
 
 // Sent on every master-server request. The cluster refuses requests without a
 // matching build/protocol pair (HTTP 403 client_outdated).
@@ -32,5 +37,19 @@ constexpr std::string_view kMasterUsEast = "https://projectnobleeast.onrender.co
 constexpr std::string_view kMasterUsWest = "https://projectnoblewest.onrender.com";
 constexpr std::string_view kMasterUk     = "https://projectnobleuk.onrender.com";
 constexpr std::string_view kMasterDefault = kMasterUsEast;
+
+inline std::string_view ExtractBaseVersion(std::string_view v) {
+    while (!v.empty() && (v.front() == ' ' || v.front() == '\t')) v.remove_prefix(1);
+    const size_t end = v.find_first_of("- (");
+    if (end != std::string_view::npos) {
+        return v.substr(0, end);
+    }
+    return v;
+}
+
+inline bool AreBuildsCompatible(std::string_view a, std::string_view b) {
+    if (a.empty() || b.empty()) return true;
+    return ExtractBaseVersion(a) == ExtractBaseVersion(b);
+}
 
 } // namespace noble

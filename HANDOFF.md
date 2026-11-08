@@ -11,7 +11,29 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
-## 0. Pick up here (2026-11-08, 00:00 ET) - 3D Armory Spartan/Elite live preview fixed + v0.19.18 release zip with `mainmenu_all.map`
+## 0. Pick up here (2026-11-08, 01:30 ET) - Dev build (`-dev`) and Release build Cross-Play & Netcode Synchronization
+
+### Objective
+Enable developer builds (`noble-dev.exe`, advertising e.g. `0.19.18-dev`) and release builds (`Noble.exe` / `noble-client.exe`, advertising `0.19.18`) to play together seamlessly across server browsing, pre-game lobbies, WebSocket relay, and direct connect as long as their base semantic versions match (`0.19.18`).
+
+### Backend Changes (`C:\Users\Chey1\Desktop\ServerTestDeploy\server.js`)
+- **Base Version Compatibility (`isCompatibleBuild` / `extractBaseVersion`):**
+  - Added `extractBaseVersion(v)` which extracts `X.Y.Z` from strings like `0.19.18-dev`, `0.19.18`, and `0.19.18 (Closed Source)`.
+  - Upgraded `isClosedSourceClient(req, body)` and `sessionVisible(session)` to use `isCompatibleBuild(build, REQUIRED_BUILD_PREFIX)`. This ensures dev builds (`0.19.18-dev`) and release builds (`0.19.18`) pass all closed-source gate checks (`/api/sessions`, `/api/sessions/heartbeat`, `/api/sessions/:id/join`, `/api/sessions/:id/lobby/join`, and `/ws/relay2`) without returning HTTP 403 `client_outdated`.
+  - Expanded `session.build` storage length from 24 to 48 characters to prevent truncation.
+  - Pushed to `https://github.com/O7OF/ServerTestDeploy.git` (`main`, commit `4430cad`).
+
+### Client Changes (`Project Noble Closed Source`)
+- **`src/common/BuildIdentity.hpp`:**
+  - Configured `kBuildTag` to conditionally resolve to `"0.19.18-dev"` when `NOBLE_DEV_BUILD` is defined, and `"0.19.18"` for release builds.
+  - Defined `kBaseBuildTag = "0.19.18"`, `ExtractBaseVersion()`, and `AreBuildsCompatible()`.
+- **`src/ui/ServerBrowser.cpp`:**
+  - `RefreshServers()` marks self-hosted games with `kBuildTag`.
+  - `RenderServerList()` appends a gold `[DEV]` badge to the server name for servers hosted by a dev build (`s.build.find("-dev") != std::string::npos`).
+  - `RenderServerDetails()` renders the host's build string under `Version:` (colored in gold for dev builds) and validates compatibility against `kBuildTag`.
+  - Players on compatible base versions can join pre-game lobbies or matches directly; incompatible base versions display a clear warning.
+- **Pre-Game Lobby (`FrontEndMenu.cpp`):**
+  - Dev accounts/builds continue to display the gold `[DEV]` tag in the lobby roster (`PlayerRow`), while dev hosts and release guests communicate via relay and synchronized launch.
 
 ### Root causes of Spartan pieces not changing in the Armory (`mainmenu_all.map`)
 1. **`ReachArmory::NotifyEngineTick()` was never called:** `NotifyEngineTick()` (which runs `SyncArmoryLiveBipedEngineTickSEH` on the engine thread) was defined in `ReachArmory.cpp` but had zero callers anywhere in the codebase. Wired `ReachArmory::NotifyEngineTick()` into `FillLocalInput()` (`src/engine/ReachHost.cpp`) and `ReachArmory::Tick()` (`src/engine/ReachArmory.cpp`).

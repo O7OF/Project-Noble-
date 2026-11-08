@@ -8,6 +8,7 @@
 #include "UiArt.hpp"
 #include "common/Logger.hpp"
 #include "common/Version.hpp"
+#include "common/BuildIdentity.hpp"
 #include "common/Settings.hpp"
 #include "ModDownloadPrompt.hpp"
 #include "network/MasterServerClient.hpp"
@@ -259,7 +260,7 @@ void ServerBrowser::RefreshServers() {
             e.isPasswordProtected = !cfg.password.empty();
             e.isOwn = true;
             e.isMod = IsModdedGame(cfg.mapName, cfg.sessionName) || !cfg.modId.empty();
-            e.build = std::string(VERSION_STRING);
+            e.build = std::string(kBuildTag);
             e.modId = cfg.modId;
             e.modTitle = cfg.modTitle;
             e.source = "YOU";
@@ -709,8 +710,12 @@ void ServerBrowser::RenderServerList() {
 
         // Column 1: name (selectable across row)
         ImGui::TableNextColumn();
-        char label[128];
-        std::snprintf(label, sizeof(label), "%s##row%d", s.name.c_str(), i);
+        char label[160];
+        if (s.build.find("-dev") != std::string::npos) {
+            std::snprintf(label, sizeof(label), "%s  [DEV]##row%d", s.name.c_str(), i);
+        } else {
+            std::snprintf(label, sizeof(label), "%s##row%d", s.name.c_str(), i);
+        }
         if (ImGui::Selectable(label, selected, ImGuiSelectableFlags_SpanAllColumns)) {
             m_selectedServerIndex = i;
         }
@@ -841,6 +846,22 @@ void ServerBrowser::RenderServerDetails() {
     ImGui::SameLine(U(100));
     ImGui::Text("%d / %d", s.playerCount, s.maxPlayers);
 
+    ImGui::TextDisabled("Version:");
+    ImGui::SameLine(U(100));
+    if (!s.build.empty()) {
+        if (s.build.find("-dev") != std::string::npos) {
+            ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.2f, 1.0f), "%s", s.build.c_str());
+        } else {
+            ImGui::TextUnformatted(s.build.c_str());
+        }
+        if (!noble::AreBuildsCompatible(s.build, noble::kBuildTag)) {
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(0.95f, 0.35f, 0.35f, 1.0f), "(Incompatible)");
+        }
+    } else {
+        ImGui::TextDisabled("-");
+    }
+
     ImGui::TextDisabled("Ping:");
     ImGui::SameLine(U(100));
     if (s.ping >= 0) {
@@ -880,6 +901,13 @@ void ServerBrowser::RenderServerDetails() {
             RefreshServers();
         }
     } else {
+        const bool compatible = s.build.empty() || noble::AreBuildsCompatible(s.build, noble::kBuildTag);
+        if (!compatible) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.35f, 0.35f, 1.0f));
+            ImGui::TextWrapped("Server version (%s) does not match your client base version (%s).",
+                               s.build.c_str(), noble::ExtractBaseVersion(noble::kBuildTag).data());
+            ImGui::PopStyleColor();
+        }
         const char* joinLabel = s.inProgress ? "JOIN IN PROGRESS" : "JOIN PRE-GAME LOBBY";
         if (NobleStyle::PrimaryButton(joinLabel, ImVec2(-1, 38))) {
             if (!s.inProgress && m_joinLobbyHandler) {
