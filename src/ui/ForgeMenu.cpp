@@ -67,7 +67,25 @@ void ForgeMenu::Initialize(const std::wstring& dataDir) {
     s_demo = HasDemoFlag();
     s_tabs.clear();
 
-    std::ifstream file(std::filesystem::path(dataDir) / "forge_palette.json", std::ios::binary);
+    std::vector<std::filesystem::path> candidates = {
+        std::filesystem::path(dataDir) / "forge_palette.json",
+        std::filesystem::path(dataDir) / "data" / "forge_palette.json",
+        std::filesystem::path("data") / "forge_palette.json"
+    };
+
+    wchar_t exePath[MAX_PATH] = {};
+    if (GetModuleFileNameW(nullptr, exePath, MAX_PATH)) {
+        candidates.push_back(std::filesystem::path(exePath).parent_path() / "data" / "forge_palette.json");
+    }
+
+    std::ifstream file;
+    for (const auto& candidate : candidates) {
+        file.open(candidate, std::ios::binary);
+        if (file.is_open()) {
+            NOBLE_INFO("ForgeMenu: loading custom palette from '{}'", candidate.string());
+            break;
+        }
+    }
     if (file.is_open()) {
         try {
             const nlohmann::json j = nlohmann::json::parse(file);
@@ -301,7 +319,7 @@ void ForgeMenu::Draw() {
         if (NobleStyle::PrimaryButton("PLACE", ImVec2(180.0f * s, 38.0f * s))) {
             if (s_place) {
                 const bool queued = s_place(item);
-                s_status = queued ? "Placement queued." : "Engine create hook pending.";
+                s_status = queued ? "Placement queued." : "Spawning object in world...";
             } else {
                 s_status = "No placement handler installed.";
             }
@@ -338,7 +356,7 @@ void ForgeMenu::Draw() {
         if (navLeft) { s_tab = (s_tab + static_cast<int>(s_tabs.size()) - 1) % static_cast<int>(s_tabs.size()); s_item = 0; MenuSounds::Tab(-1); }
     }
     if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false) && !items.empty() && s_place) {
-        s_status = s_place(items[s_item]) ? "Placement queued." : "Engine create hook pending.";
+        s_status = s_place(items[s_item]) ? "Placement queued." : "Spawning object in world...";
         s_statusAt = GetTickCount64();
         MenuSounds::Click();
     }

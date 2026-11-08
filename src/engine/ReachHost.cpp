@@ -20,6 +20,7 @@
 #include "engine/CameraThirdPerson.hpp"
 #include "engine/ReachArmory.hpp"
 #include "engine/ElitePack.hpp"
+#include "engine/SharedTagCache.hpp"
 #include "vfs/VFS.hpp"
 #include "common/Settings.hpp"
 #include "common/Relaunch.hpp"
@@ -1552,6 +1553,10 @@ static void FillLocalPad(uint8_t* st, bool keyboardMouseUsed) {
 static void FillLocalInput(uint8_t* st) {
     *reinterpret_cast<uint32_t*>(st + 0x000) = 1;
     *reinterpret_cast<float*>(st + 0x118) = 1.0f;
+
+    if (SharedTagCache::HasPendingSpawn()) {
+        SharedTagCache::ProcessPendingSpawn();
+    }
 
     if (ReachArmory::IsMenuMode()) {
         ReachArmory::NotifyEngineTick();

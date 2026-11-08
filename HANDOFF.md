@@ -11,6 +11,20 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-11-08, 06:30 ET) - Project Noble v0.19.23 Release & Simulation Thread Dispatch
+
+### Summary of Changes in v0.19.23
+- **Forge AI & Object Spawning Dispatch System:**
+  - Resolved "Engine create hook pending." issue when placing or spawning Forge items from the custom palette UI or Gamepad FaceDown 'A'.
+  - **Blam! TLS & Simulation Thread Execution:** Direct invocation from the DirectX 11 render thread caused thread-local storage (TLS) access violations (`0xC0000005`) because the Blam! TLS slot at `gs:[58h]` was null on the render thread. Spawn requests are now enqueued via `SharedTagCache::QueueSpawn` and dispatched on `haloreach.dll`'s native 60 Hz simulation thread (`ReachHost::FillLocalInput`).
+  - **SEH Safety Isolation:** Encapsulated calls to engine spawn routines (RVA `0x692C5C`) in `SafeCallForgeSpawn` using `__try / __except` blocks separated from C++ object unwinding scopes.
+  - **Palette Discovery & UI Feedback:** Enhanced palette JSON search paths and UI messaging to display queued status and world entity instantiation.
+- **Version Bump & Release Distribution:**
+  - Version updated to `0.19.23` across `CMakeLists.txt`, `BuildIdentity.hpp`, `Version.hpp`, and `noble.rc`.
+  - Compiled and published `Project-Noble-v0.19.23-win64.zip` to GitHub Releases `https://github.com/O7OF/Project-Noble-/releases/tag/v0.19.23`.
+
+--
+
 ## 0. Pick up here (2026-11-08, 05:00 ET) - Forge AI Battleground & Runtime haloreach.dll AI Spawning Hook
 
 ### Problem Diagnosis & Reverse Engineering

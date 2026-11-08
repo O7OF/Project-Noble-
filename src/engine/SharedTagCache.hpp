@@ -37,6 +37,17 @@ public:
     // Injects donor AI sandbox palette entries into the active match scenario tag in RAM
     static bool InjectScenarioPalette(uint8_t* activeTagTableMemory);
 
+    struct SpawnRequest {
+        uint32_t datumIndex = 0xFFFFFFFF;
+        std::string tagPath;
+        bool pending = false;
+    };
+
+    // Queues an object spawn from the donor palette into the simulation thread
+    static void QueueSpawn(uint32_t datumIndex, const std::string& tagPath);
+    static bool HasPendingSpawn();
+    static bool ProcessPendingSpawn();
+
     // Spawns an object from the donor palette into the world
     static bool SpawnObject(uint32_t datumIndex, const std::string& tagPath);
 

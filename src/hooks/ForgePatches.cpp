@@ -23,10 +23,8 @@ bool ForgePatches::s_unlockedRotation = true;
 
 bool ForgePatches::PlaceObject(const std::string& tagPath, int tagIndex) {
     NOBLE_INFO("ForgePatches: placement request for '{}' (tagIndex: {})", tagPath, tagIndex);
-    if (tagIndex >= 0) {
-        return SharedTagCache::SpawnObject(static_cast<uint32_t>(tagIndex), tagPath);
-    }
-    return SharedTagCache::SpawnObject(0xFFFFFFFF, tagPath);
+    SharedTagCache::QueueSpawn(tagIndex >= 0 ? static_cast<uint32_t>(tagIndex) : 0xFFFFFFFF, tagPath);
+    return true;
 }
 
 bool ForgePatches::Apply(HMODULE hReachDll) {

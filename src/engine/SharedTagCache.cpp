@@ -335,26 +335,64 @@ bool SharedTagCache::InjectScenarioPalette(uint8_t* activeTagTableMemory) {
     return true;
 }
 
-bool SharedTagCache::SpawnObject(uint32_t datumIndex, const std::string& tagPath) {
+static std::mutex s_spawnMutex;
+static noble::SharedTagCache::SpawnRequest s_pendingSpawn;
+
+void SharedTagCache::QueueSpawn(uint32_t datumIndex, const std::string& tagPath) {
+    std::lock_guard<std::mutex> lock(s_spawnMutex);
+    s_pendingSpawn.datumIndex = datumIndex;
+    s_pendingSpawn.tagPath = tagPath;
+    s_pendingSpawn.pending = true;
+    NOBLE_INFO("SharedTagCache: Queued spawn request for '{}' (datum: 0x{:X})", tagPath, datumIndex);
+}
+
+bool SharedTagCache::HasPendingSpawn() {
+    return s_pendingSpawn.pending;
+}
+
+static int64_t SafeCallForgeSpawn(void* pFn, uint32_t datum) {
+    __try {
+        using ForgeSpawnFn = int64_t(__fastcall*)(uint32_t, uint32_t, uint32_t, uint32_t);
+        auto fn = reinterpret_cast<ForgeSpawnFn>(pFn);
+        return fn(datum, 0, 0, 0);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return -1;
+    }
+}
+
+bool SharedTagCache::ProcessPendingSpawn() {
+    SpawnRequest req;
+    {
+        std::lock_guard<std::mutex> lock(s_spawnMutex);
+        if (!s_pendingSpawn.pending) return false;
+        req = s_pendingSpawn;
+        s_pendingSpawn.pending = false;
+    }
+
     if (!s_baseAddress) return false;
 
-    NOBLE_INFO("SharedTagCache: Requesting spawn for object datum 0x{:X} ('{}')", datumIndex, tagPath);
+    NOBLE_INFO("SharedTagCache: Processing simulation spawn for '{}' (datum: 0x{:X})", req.tagPath, req.datumIndex);
 
-    // Call the engine's native Forge spawn function at RVA 0x692C5C
-    // Preamble: forge_spawn_object(rcx=objDef, rdx=subType, r8=owner, r9=flags, stackArg=transform)
-    using ForgeSpawnFn = int64_t(__fastcall*)(uint32_t, uint32_t, uint32_t, uint32_t);
-    auto pSpawn = reinterpret_cast<ForgeSpawnFn>(s_baseAddress + 0x692C5C);
-    if (pSpawn) {
-        __try {
-            int64_t result = pSpawn(datumIndex, 0, 0, 0);
-            NOBLE_INFO("SharedTagCache: forge_spawn_object returned 0x{:X}", result);
-            return result >= 0;
-        } __except (EXCEPTION_EXECUTE_HANDLER) {
-            NOBLE_WARN("SharedTagCache: Exception caught during forge_spawn_object call.");
-            return false;
+    uint32_t datum = req.datumIndex;
+    if (datum == 0xFFFFFFFF && !req.tagPath.empty()) {
+        auto it = s_tagPathToDatum.find(req.tagPath);
+        if (it != s_tagPathToDatum.end()) {
+            datum = it->second;
         }
     }
+
+    void* pSpawn = reinterpret_cast<void*>(s_baseAddress + 0x692C5C);
+    if (pSpawn) {
+        int64_t result = SafeCallForgeSpawn(pSpawn, datum);
+        NOBLE_INFO("SharedTagCache: Simulation forge_spawn_object returned 0x{:X}", result);
+        return result >= 0;
+    }
     return false;
+}
+
+bool SharedTagCache::SpawnObject(uint32_t datumIndex, const std::string& tagPath) {
+    QueueSpawn(datumIndex, tagPath);
+    return true;
 }
 
 } // namespace noble
