@@ -24,8 +24,8 @@ public:
     static bool EngineWantsThirdPerson();
     static void Toggle();
 
-    // Called from the input poll: F5 edge-toggles the third-person camera.
-    static void PollHotkey(bool f5Down);
+    // Called from the input poll: edge-toggles the third-person camera (bound in SETTINGS > CONTROLS > KEYBOARD & MOUSE, unbound by default).
+    static void PollHotkey(bool keyDown);
 
     // Vehicle 1st-person camera toggle (bound in SETTINGS > CONTROLS > KEYBOARD & MOUSE, unbound by default).
     static void SetVehicleFirstPerson(bool enabled);

@@ -412,9 +412,9 @@ bool CameraThirdPerson::EngineWantsThirdPerson() { return s_engineThirdPerson.lo
 
 void CameraThirdPerson::Toggle() { SetEnabled(!s_enabled.load()); }
 
-void CameraThirdPerson::PollHotkey(bool f5Down) {
-    const bool was = s_f5WasDown.exchange(f5Down);
-    if (f5Down && !was) Toggle();
+void CameraThirdPerson::PollHotkey(bool keyDown) {
+    const bool was = s_f5WasDown.exchange(keyDown);
+    if (keyDown && !was) Toggle();
 }
 
 void CameraThirdPerson::SetVehicleFirstPerson(bool enabled) {

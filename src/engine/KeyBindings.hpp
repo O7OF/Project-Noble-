@@ -7,7 +7,7 @@ namespace noble {
 
 // Profile key-binding table (profile +0x42C, 66 entries of 0x18 bytes: {u32 action, u32 VK, 16 zero
 // bytes}). Defaults are MCC's PC layout; players can override single actions in the SETTINGS tab.
-// Slots 66 (kActionLowerWeapon), 67 (kActionPushToTalk), and 68 (kActionVehicleFirstPerson) are
+// Slots 66 (kActionLowerWeapon), 67 (kActionPushToTalk), 68 (kActionVehicleFirstPerson), and 76 (kActionThirdPerson) are
 // Noble-managed actions handled in ReachHost / VoiceChat.
 namespace KeyBindings {
 
@@ -22,7 +22,8 @@ constexpr int kActionChatOpen = 72;   // reopens the last channel; unbound by de
 constexpr int kActionVoiceParty = 73;
 constexpr int kActionVoiceTeam = 74;
 constexpr int kActionVoiceGlobal = 75;
-constexpr int kActionCount = 76;
+constexpr int kActionThirdPerson = 76;
+constexpr int kActionCount = 77;
 
 int DefaultKey(int action);            // VK code, 0 = unbound
 int EffectiveKey(int action);          // default or the player's override
