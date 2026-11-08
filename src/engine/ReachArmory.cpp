@@ -1922,6 +1922,19 @@ bool ReachArmory::HasArmoryMap() {
     return !ArmoryMapPath().empty();
 }
 
+bool ReachArmory::HasCustomMenuMap() {
+    if (s_dataDir.empty()) return false;
+    std::error_code ec;
+    const std::filesystem::path candidates[] = {
+        s_dataDir / "menumaps" / "mainmenu_all.map",
+        s_dataDir / "mainmenu_all.map",
+    };
+    for (const auto& path : candidates) {
+        if (std::filesystem::is_regular_file(path, ec)) return true;
+    }
+    return false;
+}
+
 void ReachArmory::SetMenuMode(bool menuMode) {
     s_menuMode.store(menuMode);
     if (!menuMode) {

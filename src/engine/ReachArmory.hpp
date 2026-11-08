@@ -89,6 +89,9 @@ public:
 
     // True when the player has an armour pack map installed (data\armor\*.map + .rrreloc).
     static bool HasArmoryMap();
+    // True only when data\menumaps\mainmenu_all.map (the custom Armory scene) is present. The Elite
+    // pack alone does not change the stock menu map's cameras, so framing must not follow HasArmoryMap.
+    static bool HasCustomMenuMap();
 
     // True when the engine is actively displaying an Armory pedestal/customization scene.
     static bool IsArmoryScene();

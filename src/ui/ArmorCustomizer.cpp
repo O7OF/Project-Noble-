@@ -996,7 +996,7 @@ namespace {
 // c_full_spartan (0x0C); the stock MCC menu map does not - there 0x0C is a torso close-up and 0x0A
 // ("armory") is the full-body pedestal shot. Picking by map keeps both installs framed correctly.
 const char* FullBodyScene() {
-    return ReachArmory::HasArmoryMap() ? "c_full_spartan" : "armory";
+    return ReachArmory::HasCustomMenuMap() ? "c_full_spartan" : "armory";
 }
 } // namespace
 
