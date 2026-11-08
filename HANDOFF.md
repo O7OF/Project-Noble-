@@ -11,6 +11,18 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-11-08, 04:30 ET) - Project Noble v0.19.22 Release Build
+
+### Release Overview
+Bumped version to `v0.19.22` incorporating:
+- **Character Customization & Audio Packaging Fixes:**
+  - **Bundled Armor Permutations & Elite Models (`data\armor`):** Staged and bundled `data\armor` containing `rr_elite_pack.map` and associated metadata (`.rrreloc`, `.rrneeds`, `.rrpmcg`, `.rremotes`) into the release zip (`Project-Noble-v0.19.22-win64.zip`), enabling Spartan and Elite armor customization out of the box.
+  - **Bundled VGMstream Audio Decoder (`tools\vgmstream`):** Staged and bundled `vgmstream-cli.exe` and its shared decoding libraries into `tools\vgmstream` in the release zip, guaranteeing that all custom audio, voice lines, and menu music play out of the box.
+  - **Release Pipeline Hardening (`publish-release.ps1`):** Updated `tools/publish-release.ps1` to automatically locate, verify, and copy `data\armor` and `tools\vgmstream` from root or release folders, maintaining strict exclusion of developer binaries (`noble-dev*`, `noble-dedicated*`, `*.pdb`) and user saves/profile data (`appearance.dat`, `career.dat`, `settings.json`).
+- **Compilation & Verification:** Both `build.bat` and `build-dev.bat` verified with 0 errors.
+
+--
+
 ## 0. Pick up here (2026-11-08, 04:20 ET) - Project Noble v0.19.21 Release Build
 
 ### Release Overview

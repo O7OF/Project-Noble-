@@ -36,13 +36,26 @@ if (Test-Path $pkg) { Remove-Item $pkg -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $pkg | Out-Null
 Copy-Item $exe (Join-Path $pkg 'Noble.exe') -Force
 
-# Ship data\menumaps\mainmenu_all.map and its string_ids.csv inside the release zip so the 3D Armory
-# works out of the box. Never ship dev builds, userdata, save files, appearance.dat, or career.dat.
-$excludeDirs = 'userdata','autosave','cache','sandbox','armor','blocks','mods','menumaps'
-$excludeFiles = 'appearance*','career*','settings*','preferences*','*.pncsold','menu-background-deck.txt','launch_block_1.bin','lb_m_c_1.bin','profile_1.bin','*.log','*.dmp','*.tmp','*.bmp','*.obj','*.mtl','*.PMGC','*.rrreloc','*.rdc','*.map','*.csv','*.bin'
+# Ship data\menumaps\mainmenu_all.map, data\armor, and tools\vgmstream inside the release zip
+# so the 3D Armory and custom audio work out of the box. Never ship dev builds, userdata, save files, appearance.dat, or career.dat.
+$excludeDirs = 'userdata','autosave','cache','sandbox','blocks','mods','menumaps','armor'
+$excludeFiles = 'appearance*','career*','settings*','preferences*','*.pncsold','menu-background-deck.txt','launch_block_1.bin','lb_m_c_1.bin','profile_1.bin','*.log','*.dmp','*.tmp','*.bmp','*.obj','*.mtl','*.PMGC','*.rdc','*.map','*.csv','*.bin'
 & robocopy (Join-Path $release 'data') (Join-Path $pkg 'data') /E /XD $excludeDirs /XF $excludeFiles /NFL /NDL /NJH /NJS /NP | Out-Null
 if ($LASTEXITCODE -gt 7) { throw "robocopy data failed ($LASTEXITCODE)" }
 New-Item -ItemType Directory -Force -Path (Join-Path $pkg 'data\mods') | Out-Null
+
+# Copy the armor folder (rr_elite_pack.map, .rrreloc, etc.) into data\armor\
+$srcArmor = Join-Path $root 'data\armor'
+if (-not (Test-Path (Join-Path $srcArmor 'rr_elite_pack.map'))) {
+    $srcArmor = Join-Path $release 'data\armor'
+}
+if (Test-Path (Join-Path $srcArmor 'rr_elite_pack.map')) {
+    New-Item -ItemType Directory -Force -Path (Join-Path $pkg 'data\armor') | Out-Null
+    & robocopy $srcArmor (Join-Path $pkg 'data\armor') /E /NFL /NDL /NJH /NJS /NP | Out-Null
+    if ($LASTEXITCODE -gt 7) { throw "robocopy armor failed ($LASTEXITCODE)" }
+} else {
+    Write-Warning "data\armor\rr_elite_pack.map was not found to package"
+}
 
 # Copy the public Armory menu map mod and its string_id tables into data\menumaps\
 $srcMenuMaps = Join-Path $root 'data\menumaps'
@@ -59,9 +72,16 @@ if ($LASTEXITCODE -gt 7) { throw "robocopy menumaps failed ($LASTEXITCODE)" }
 # Guarantee zero dev binaries or user save/appearance/career files in the staged release directory
 Get-ChildItem -Path $pkg -Recurse -Include "noble-dev*","noble-dedicated*","noble-client*","*.pdb","appearance*","career*","settings*","preferences*","*.pncsold","menu-background-deck.txt" -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
 
-if (Test-Path (Join-Path $release 'tools\vgmstream')) {
-    & robocopy (Join-Path $release 'tools\vgmstream') (Join-Path $pkg 'tools\vgmstream') /E /NFL /NDL /NJH /NJS /NP | Out-Null
+$srcVgm = Join-Path $root 'tools\vgmstream'
+if (-not (Test-Path (Join-Path $srcVgm 'vgmstream-cli.exe'))) {
+    $srcVgm = Join-Path $release 'tools\vgmstream'
+}
+if (Test-Path (Join-Path $srcVgm 'vgmstream-cli.exe')) {
+    New-Item -ItemType Directory -Force -Path (Join-Path $pkg 'tools\vgmstream') | Out-Null
+    & robocopy $srcVgm (Join-Path $pkg 'tools\vgmstream') /E /NFL /NDL /NJH /NJS /NP | Out-Null
     if ($LASTEXITCODE -gt 7) { throw "robocopy vgmstream failed ($LASTEXITCODE)" }
+} else {
+    Write-Warning "tools\vgmstream\vgmstream-cli.exe was not found to package"
 }
 
 $playLines = @('@echo off', 'cd /d "%~dp0"', 'start "" "Noble.exe"')
