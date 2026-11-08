@@ -1589,9 +1589,9 @@ static void FillLocalInput(uint8_t* st) {
     }
     s_escWasDown = escDown;
 
-    // Insert opens/closes the custom palette; it never uses the native Forge menu's keys.
+    // Insert / F3 opens/closes the custom palette; it never uses the native Forge menu's keys.
     static bool s_insertWasDown = false;
-    const bool insertDown = (GetAsyncKeyState(VK_INSERT) & 0x8000) != 0;
+    const bool insertDown = ((GetAsyncKeyState(VK_INSERT) & 0x8000) != 0) || ((GetAsyncKeyState(VK_F3) & 0x8000) != 0);
     if (insertDown && !s_insertWasDown && !uiPointer && !PauseMenu::IsGameOver()) ForgeMenu::Toggle();
     s_insertWasDown = insertDown;
 

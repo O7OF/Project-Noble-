@@ -47,6 +47,7 @@ public:
 
 private:
     static void Draw();
+    static void DrawPromptBadge();
     static bool CanOpen();
     static void AddFallbackTabs();
     static void ResetSelection();

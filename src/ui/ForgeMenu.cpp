@@ -108,11 +108,10 @@ void ForgeMenu::Close() {
 }
 
 bool ForgeMenu::CanOpen() {
+    if (s_demo) return true;
     auto* engine = BlamEngine::Active();
-    if (!engine || !engine->IsForgeMode()) return false;
-    // Monitor/editor mode is either the engine's own third-person camera or an engine UI screen
-    // (the native Forge menu is only reachable from monitor mode).
-    return CameraThirdPerson::EngineWantsThirdPerson() || ReachHost::IsUiScreenActive();
+    if (!engine) return false;
+    return engine->IsForgeMode();
 }
 
 void ForgeMenu::Toggle() {
@@ -122,7 +121,7 @@ void ForgeMenu::Toggle() {
     s_lastToggle = now;
     if (s_tabs.empty()) return;
     if (!s_open && !s_demo && !CanOpen()) {
-        NOBLE_INFO("ForgeMenu: open ignored (only available in Forge monitor mode)");
+        NOBLE_INFO("ForgeMenu: open ignored (only available in Forge mode)");
         return;
     }
     s_open = !s_open;
@@ -152,7 +151,49 @@ void ForgeMenu::Tick(bool loading) {
 }
 
 void ForgeMenu::DrawOverlay() {
-    if (s_open) Draw();
+    if (s_open) {
+        Draw();
+    } else if (CanOpen() && !PauseMenu::IsOpen()) {
+        DrawPromptBadge();
+    }
+}
+
+void ForgeMenu::DrawPromptBadge() {
+    ImGuiIO& io = ImGui::GetIO();
+    const float s = std::clamp(io.DisplaySize.y / 720.0f, 0.8f, 2.0f);
+    const float badgeW = 300.0f * s;
+    const float badgeH = 34.0f * s;
+    const ImVec2 pos(io.DisplaySize.x - badgeW - 24.0f * s, 24.0f * s);
+
+    ImGui::SetNextWindowPos(pos, ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(badgeW, badgeH), ImGuiCond_Always);
+
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.04f, 0.07f, 0.11f, 0.85f));
+    ImGui::PushStyleColor(ImGuiCol_Border, NobleStyle::Accent());
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10.0f * s, 6.0f * s));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
+
+    if (ImGui::Begin("##ForgePromptBadge", nullptr, kPanelFlags)) {
+        ImGui::PushStyleColor(ImGuiCol_Text, NobleStyle::Accent());
+        ImGui::TextUnformatted("AI PALETTE");
+        ImGui::PopStyleColor();
+
+        ImGui::SameLine(0.0f, 8.0f * s);
+        ImGui::PushStyleColor(ImGuiCol_Text, kDim);
+        ImGui::TextUnformatted("[F3 / INSERT / D-PAD \xE2\x97\x80]");
+        ImGui::PopStyleColor();
+
+        ImGui::SetCursorPos(ImVec2(0, 0));
+        if (ImGui::InvisibleButton("##BadgeClick", ImVec2(badgeW, badgeH))) {
+            Toggle();
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+        }
+    }
+    ImGui::End();
+    ImGui::PopStyleVar(2);
+    ImGui::PopStyleColor(2);
 }
 
 void ForgeMenu::Draw() {

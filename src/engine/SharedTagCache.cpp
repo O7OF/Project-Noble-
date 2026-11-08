@@ -340,10 +340,10 @@ bool SharedTagCache::SpawnObject(uint32_t datumIndex, const std::string& tagPath
 
     NOBLE_INFO("SharedTagCache: Requesting spawn for object datum 0x{:X} ('{}')", datumIndex, tagPath);
 
-    // Call the engine's native Forge spawn function at RVA 0x692C59
+    // Call the engine's native Forge spawn function at RVA 0x692C5C
     // Preamble: forge_spawn_object(rcx=objDef, rdx=subType, r8=owner, r9=flags, stackArg=transform)
     using ForgeSpawnFn = int64_t(__fastcall*)(uint32_t, uint32_t, uint32_t, uint32_t);
-    auto pSpawn = reinterpret_cast<ForgeSpawnFn>(s_baseAddress + 0x692C59);
+    auto pSpawn = reinterpret_cast<ForgeSpawnFn>(s_baseAddress + 0x692C5C);
     if (pSpawn) {
         __try {
             int64_t result = pSpawn(datumIndex, 0, 0, 0);
