@@ -34,16 +34,27 @@ if ((Test-Path "$env:LOCALAPPDATA\Programs\MSVC\VC\Tools\MSVC") -and -not (Get-C
         $env:PATH    = "$msvcDir\bin\Hostx64\x64;$sdkDir\bin;$ninjaDir;$env:PATH"
         $env:INCLUDE = "$msvcDir\include;$sdkDir\include\ucrt;$sdkDir\include\um;$sdkDir\include\shared"
         $env:LIB     = "$msvcDir\lib\x64;$sdkDir\lib"
-        $useNinjaMsvc = $false
+        $useNinjaMsvc = $true
     }
 }
 
-if (-not (Test-Path (Join-Path $build 'CMakeCache.txt'))) {
+$needConfig = -not (Test-Path (Join-Path $build 'CMakeCache.txt'))
+if (-not $needConfig) {
+    if ($useNinjaMsvc -and -not (Test-Path (Join-Path $build 'build.ninja'))) {
+        $needConfig = $true
+    } elseif (-not $useNinjaMsvc -and -not (Test-Path (Join-Path $build 'ALL_BUILD.vcxproj'))) {
+        $needConfig = $true
+    }
+}
+if ($needConfig) {
     Write-Host '== Configuring CMake project =='
+    if (Test-Path (Join-Path $build 'CMakeCache.txt')) { Remove-Item (Join-Path $build 'CMakeCache.txt') -Force -ErrorAction SilentlyContinue }
+    if (Test-Path (Join-Path $build 'CMakeFiles')) { Remove-Item (Join-Path $build 'CMakeFiles') -Recurse -Force -ErrorAction SilentlyContinue }
+    Get-ChildItem -Path (Join-Path $build '_deps') -Filter '*-subbuild' -Directory -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
     if ($useNinjaMsvc) {
-        & $cmake -S $repo -B $build -G 'Ninja' -DCMAKE_BUILD_TYPE=Release '-DCMAKE_EXE_LINKER_FLAGS=/machine:x64 /MANIFEST:NO' '-DCMAKE_SHARED_LINKER_FLAGS=/machine:x64 /MANIFEST:NO'
+        & $cmake -S $repo -B $build -G 'Ninja' -Wno-dev -DCMAKE_BUILD_TYPE=Release '-DCMAKE_EXE_LINKER_FLAGS=/machine:x64 /MANIFEST:NO' '-DCMAKE_SHARED_LINKER_FLAGS=/machine:x64 /MANIFEST:NO'
     } else {
-        & $cmake -S $repo -B $build -A x64
+        & $cmake -S $repo -B $build -A x64 -Wno-dev
     }
     if ($LASTEXITCODE -ne 0) { throw "CMake configure failed ($LASTEXITCODE)" }
 }

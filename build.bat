@@ -94,15 +94,13 @@ if "%HAS_VS_CPP%"=="0" (
     )
 )
 
+call :wait_for_build
+
 set "DO_CONFIG=0"
 if /i "%~1"=="rebuild" (
     echo [*] Rebuild requested. Clearing CMake cache and subbuilds...
     set "DO_CONFIG=1"
-    if exist "build\CMakeCache.txt" del /f /q "build\CMakeCache.txt" >nul 2>nul
-    if exist "build\CMakeFiles" rd /s /q "build\CMakeFiles" >nul 2>nul
-    for /d %%D in ("build\_deps\*-subbuild") do (
-        if exist "%%D" rd /s /q "%%D" >nul 2>nul
-    )
+    call :clean_cache
 )
 
 if not exist "build\CMakeCache.txt" (
@@ -112,15 +110,19 @@ if not exist "build\CMakeCache.txt" (
         findstr /C:"CMAKE_GENERATOR:INTERNAL=Ninja" "build\CMakeCache.txt" >nul 2>nul
         if errorlevel 1 (
             set "DO_CONFIG=1"
-            if exist "build\CMakeCache.txt" del /f /q "build\CMakeCache.txt" >nul 2>nul
-            if exist "build\CMakeFiles" rd /s /q "build\CMakeFiles" >nul 2>nul
+            call :clean_cache
+        ) else if not exist "build\build.ninja" (
+            set "DO_CONFIG=1"
+            call :clean_cache
         )
     ) else (
         findstr /C:"CMAKE_GENERATOR:INTERNAL=Visual Studio" "build\CMakeCache.txt" >nul 2>nul
         if errorlevel 1 (
             set "DO_CONFIG=1"
-            if exist "build\CMakeCache.txt" del /f /q "build\CMakeCache.txt" >nul 2>nul
-            if exist "build\CMakeFiles" rd /s /q "build\CMakeFiles" >nul 2>nul
+            call :clean_cache
+        ) else if not exist "build\ALL_BUILD.vcxproj" (
+            set "DO_CONFIG=1"
+            call :clean_cache
         )
     )
 )
@@ -128,27 +130,43 @@ if not exist "build\CMakeCache.txt" (
 if "%DO_CONFIG%"=="1" (
     if "%USE_NINJA_MSVC%"=="1" (
         echo [2/3] Configuring CMake project for Ninja + MSVC x64...
-        cmake -S . -B build -G "Ninja" -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXE_LINKER_FLAGS="/machine:x64 /MANIFEST:NO" -DCMAKE_SHARED_LINKER_FLAGS="/machine:x64 /MANIFEST:NO"
+        cmake -S . -B build -G "Ninja" -Wno-dev -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXE_LINKER_FLAGS="/machine:x64 /MANIFEST:NO" -DCMAKE_SHARED_LINKER_FLAGS="/machine:x64 /MANIFEST:NO"
     ) else (
         echo [2/3] Configuring CMake project for Visual Studio x64...
-        cmake -S . -B build -A x64
+        cmake -S . -B build -A x64 -Wno-dev
     )
     if !ERRORLEVEL! neq 0 (
-        set "BUILD_ERR=!ERRORLEVEL!"
-        echo ===================================================
-        echo  Build failed with error code !BUILD_ERR!.
-        echo ===================================================
-        if "%~1"=="" pause
-        exit /b !BUILD_ERR!
+        echo [i] CMake configuration failed. Attempting full cache reset and retry...
+        call :clean_cache
+        if "%USE_NINJA_MSVC%"=="1" (
+            cmake -S . -B build -G "Ninja" -Wno-dev -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXE_LINKER_FLAGS="/machine:x64 /MANIFEST:NO" -DCMAKE_SHARED_LINKER_FLAGS="/machine:x64 /MANIFEST:NO"
+        ) else (
+            cmake -S . -B build -A x64 -Wno-dev
+        )
+        if !ERRORLEVEL! neq 0 (
+            set "BUILD_ERR=!ERRORLEVEL!"
+            call :clean_cache
+            echo ===================================================
+            echo  Build failed with error code !BUILD_ERR!.
+            echo ===================================================
+            if "%~1"=="" pause
+            exit /b !BUILD_ERR!
+        )
     )
 ) else (
     echo [2/3] CMake cache verified for x64.
 )
 
+call :wait_for_build
+
 echo [3/3] Building Release configuration...
 taskkill /F /IM noble-client.exe >nul 2>nul
 taskkill /F /IM noble-dev.exe >nul 2>nul
 taskkill /F /IM noble-dedicated.exe >nul 2>nul
+if "%USE_NINJA_MSVC%"=="1" (
+    if exist "build\.ninja_log.recompact" del /f /q "build\.ninja_log.recompact" >nul 2>nul
+    ninja -C build -t recompact >nul 2>nul
+)
 cmake --build build --config Release
 if %ERRORLEVEL% neq 0 (
     set "BUILD_ERR=%ERRORLEVEL%"
@@ -174,4 +192,31 @@ echo  Build succeeded.
 echo  Executable: build\bin\Release\noble-client.exe
 echo ===================================================
 if "%~1"=="" pause
+exit /b 0
+
+:clean_cache
+if exist "build\CMakeCache.txt" del /f /q "build\CMakeCache.txt" >nul 2>nul
+if exist "build\build.ninja" del /f /q "build\build.ninja" >nul 2>nul
+if exist "build\.ninja_deps" del /f /q "build\.ninja_deps" >nul 2>nul
+if exist "build\.ninja_log" del /f /q "build\.ninja_log" >nul 2>nul
+if exist "build\.ninja_log.recompact" del /f /q "build\.ninja_log.recompact" >nul 2>nul
+if exist "build\CMakeFiles" rd /s /q "build\CMakeFiles" >nul 2>nul
+for /d %%D in ("build\_deps\*-subbuild") do (
+    if exist "%%D" rd /s /q "%%D" >nul 2>nul
+)
+exit /b 0
+
+:wait_for_build
+tasklist /FI "IMAGENAME eq cmake.exe" 2>nul | find /I "cmake.exe" >nul 2>nul
+if !ERRORLEVEL! equ 0 (
+    echo [i] Waiting for another active CMake process to finish...
+    timeout /t 2 /nobreak >nul 2>nul
+    goto :wait_for_build
+)
+tasklist /FI "IMAGENAME eq ninja.exe" 2>nul | find /I "ninja.exe" >nul 2>nul
+if !ERRORLEVEL! equ 0 (
+    echo [i] Waiting for another active build to finish...
+    timeout /t 2 /nobreak >nul 2>nul
+    goto :wait_for_build
+)
 exit /b 0
