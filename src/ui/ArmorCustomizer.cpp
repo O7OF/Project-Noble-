@@ -831,6 +831,38 @@ const char* SpartanPreviewId(const char* id) {
     return id;
 }
 
+#ifdef NOBLE_DEV_BUILD
+// "-armory-validate": resolve every catalogue item through the loaded pmcg and report the pieces whose
+// permutation name is missing from the map. Covers all slots in one run instead of eyeballing the tiles.
+void ValidateArmoryCatalog() {
+    static bool done = false;
+    if (done) return;
+    int argc = 0;
+    LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+    bool on = false;
+    for (int i = 1; argv && i < argc; ++i) if (_wcsicmp(argv[i], L"-armory-validate") == 0) on = true;
+    if (argv) LocalFree(argv);
+    if (!on) return;
+    done = true;
+    int checked = 0, bad = 0;
+    auto check = [&](const char* list, const std::string& id) {
+        if (id.empty()) return;
+        ++checked;
+        for (const auto& miss : ReachArmory::MissingPermutationsFor(list, id)) {
+            NOBLE_WARN("ArmoryValidate: [{}] {} -> {}", list, id, miss);
+            ++bad;
+        }
+    };
+    for (const auto& h : GetSpartanHelmets()) for (const auto& v : h.variants) check("20", v.stringId);
+    for (const auto& s : GetSpartanShoulders()) { check("2c", s.leftStringId); check("38", s.rightStringId); }
+    for (const auto& c : GetSpartanChests()) check("44", c.stringId);
+    for (const auto& w : GetSpartanWrists()) check("50", w.stringId);
+    for (const auto& u : GetSpartanUtilities()) check("5c", u.stringId);
+    for (const auto& k : GetSpartanKneeGuards()) check("68", k.stringId);
+    NOBLE_INFO("ArmoryValidate: {} items checked, {} unresolved permutation(s)", checked, bad);
+}
+#endif
+
 int RankIndexByName(const char* name) {
     if (!name || !*name) return 0;
     const auto& ranks = Career::Ranks();
@@ -892,6 +924,9 @@ ArmorCustomizer::ArmorCustomizer() {
     }
     if (!migrated) LoadProfile(m_profilePath);
     m_previewSpecies = m_profile.species;
+#ifdef NOBLE_DEV_BUILD
+    ValidateArmoryCatalog();
+#endif
 
 }
 

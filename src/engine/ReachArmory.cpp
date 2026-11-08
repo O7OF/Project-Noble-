@@ -447,6 +447,14 @@ static uint32_t LookupStringId(const std::string& name) {
     return (it != s_stringIds.end()) ? it->second : 0;
 }
 
+// Item permutations are named differently in the pack's pmcg ("nicole") and the menu map's model
+// regions ("player_nicole"). Resolve both, so a short name never silently drops the piece.
+static uint32_t LookupPermutationId(const std::string& name) {
+    const uint32_t exact = LookupStringId(name);
+    if (exact != 0 || name.empty()) return exact;
+    return LookupStringId("player_" + name);
+}
+
 // -----------------------------------------------------------------------------
 // Scene Index Resolution (ported from host::armory::switch_scene @ 0x1401b3fb0)
 // -----------------------------------------------------------------------------
@@ -1722,14 +1730,7 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx, const std::strin
         std::vector<std::pair<uint32_t, uint32_t>> pairs;
         auto pushPair = [&](const std::string& regionName, const std::string& permName, const char* fallbackPerm = "default") {
             const uint32_t regId = LookupStringId(regionName);
-            uint32_t permId = LookupStringId(permName);
-            // The pack's pmcg uses short item names ("nicole", "malcolm"), while the menu map's model
-            // regions name some permutations "player_<item>" ("player_nicole", "player_malcolm"). Without
-            // this alias those items resolve to 0 and the piece silently keeps the previous model - the
-            // "JFO/ODST/Recon doesn't change" bug. Long/unknown names simply miss again.
-            if (permId == 0 && !permName.empty()) {
-                permId = LookupStringId("player_" + permName);
-            }
+            uint32_t permId = LookupPermutationId(permName);
             static std::vector<std::string> s_warned;   // each missing name is logged once
             if (permId == 0 && !permName.empty() &&
                 std::find(s_warned.begin(), s_warned.end(), permName) == s_warned.end()) {
@@ -2132,6 +2133,21 @@ void ReachArmory::NotifyEngineTick() {
         sel.lightsRgb.data(),
         visFloats,
         sel.accentColorIndex);
+}
+
+std::vector<std::string> ReachArmory::MissingPermutationsFor(const std::string& list, const std::string& item) {
+    std::vector<std::string> missing;
+    const std::vector<PmcgChange>* changes = PmcgItem(list.c_str(), item);
+    if (!changes || changes->empty()) {
+        missing.push_back("<item not in pmcg list " + list + ">");
+        return missing;
+    }
+    for (const auto& change : *changes) {
+        if (LookupPermutationId(change.permutation) == 0) {
+            missing.push_back(change.region + "=" + change.permutation);
+        }
+    }
+    return missing;
 }
 
 } // namespace noble

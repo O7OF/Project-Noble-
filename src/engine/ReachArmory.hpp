@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <vector>
 
 namespace noble {
 
@@ -92,6 +93,10 @@ public:
     // True only when data\menumaps\mainmenu_all.map (the custom Armory scene) is present. The Elite
     // pack alone does not change the stock menu map's cameras, so framing must not follow HasArmoryMap.
     static bool HasCustomMenuMap();
+
+    // Dev tool: the pmcg (region=permutation) names for an Armory item that have no string id in the
+    // loaded map. Empty = every piece the item changes can be resolved. Used by -armory-validate.
+    static std::vector<std::string> MissingPermutationsFor(const std::string& list, const std::string& item);
 
     // True when the engine is actively displaying an Armory pedestal/customization scene.
     static bool IsArmoryScene();
