@@ -1805,12 +1805,14 @@ void SettingsPanel::Apply() {
     if (displayChanged) {
         if (auto* win = Window::Active()) win->ApplyWindowSettings(m_edit.width, m_edit.height, m_edit.borderless, m_edit.exclusiveFullscreen);
     }
+    // Apply the saved volume and mute BEFORE anything can make a sound. The menu music is guarded by
+    // ReachAudio::SetMenuMusicEnabled(), so an apply in a match leaves the game's own audio alone.
+    ProcessAudio::ApplyAll(m_edit.volumeGame, m_edit.volumeMusic, m_edit.volumeOther, m_edit.masterMute);
     ReachAudio::PlayMenuMusic(m_edit.menuMusicTrack);
     MasterServerClient::Get().SetUrl(m_edit.masterServerUrl);
     // Field of view goes straight into the running engine (haloreach+0xB42C10, degrees); the
     // per-frame CameraFov::Tick keeps it there and picks it up for the next game too.
     CameraFov::Apply(m_edit.fieldOfView);
-    ProcessAudio::ApplyAll(m_edit.volumeGame, m_edit.volumeMusic, m_edit.volumeOther, m_edit.masterMute);
     m_saved = Settings::Get().Snapshot();  // clamped values
     m_edit = m_saved;
     std::snprintf(m_nameBuf, sizeof(m_nameBuf), "%s", m_edit.playerName.c_str());
@@ -1825,8 +1827,8 @@ void SettingsPanel::Discard() {
     m_loaded = false;          // reload from the saved settings next frame
     m_rebindAction = -1;
     const auto snap = Settings::Get().Snapshot();
-    ReachAudio::PlayMenuMusic(snap.menuMusicTrack);
     ProcessAudio::ApplyAll(snap.volumeGame, snap.volumeMusic, snap.volumeOther, snap.masterMute);
+    ReachAudio::PlayMenuMusic(snap.menuMusicTrack);
     m_message = "Changes discarded.";
     m_messageTime = ImGui::GetTime();
     MenuSounds::Back();

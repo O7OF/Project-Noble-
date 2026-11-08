@@ -105,6 +105,7 @@ std::atomic<bool> s_musicPaused{ false };
 std::atomic<bool> s_musicStop{false};
 std::atomic<float> s_musicVolume{1.0f};
 std::atomic<bool> s_muted{false};
+std::atomic<bool> s_menuMusicEnabled{true};   // false in a match process: never start the menu theme over the game
 static std::atomic<float> s_sfxVolume{1.0f};
 std::string s_musicTrack;
 
@@ -1057,8 +1058,13 @@ bool PlaySfx(Sfx sfx, float volume) {
     return true;
 }
 
+void SetMenuMusicEnabled(bool enabled) {
+    s_menuMusicEnabled.store(enabled);
+    if (!enabled) StopMusic();
+}
+
 void PlayMenuMusic(const std::string& requested) {
-    if (!s_xaudio) return;
+    if (!s_xaudio || !s_menuMusicEnabled.load()) return;
     const std::string id = Resolve(requested);
     if (id == s_musicTrack && s_musicThread.joinable()) return;
     StopMusic();

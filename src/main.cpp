@@ -375,6 +375,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         // Reach's menu sounds and menu music, decoded from MCC's sound bank into data\userdata\cache\audio.
         noble::ReachAudio::Init(reachInstall->reachDirectory,
                                 std::filesystem::path(exePath).parent_path() / "data" / "userdata" / "cache" / "audio");
+        // Menu music belongs to the front end only. In a match process, keep the player off so an apply
+        // from the pause-menu settings cannot start it over the game's own audio.
+        noble::ReachAudio::SetMenuMusicEnabled(showMenu);
+        if (!showMenu) noble::ReachAudio::StopMusic();
         {
             const auto& s = noble::Settings::Get().Snapshot();
             noble::ProcessAudio::ApplyAll(s.volumeGame, s.volumeMusic, s.volumeOther, s.masterMute);

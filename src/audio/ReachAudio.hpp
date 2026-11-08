@@ -53,6 +53,9 @@ struct TrackInfo {
 // Menu music. "reach:menu" = Reach's menu theme (default), any id from MusicTracks() = that track on
 // repeat, "all" = every track, shuffled, "off" = silence. Old values ("shuffle", piece names) mean
 // Reach's menu theme.
+// Menu music only belongs to the front end. A match process turns the player off before the engine starts,
+// so applying settings mid-match cannot start the menu theme over the game audio.
+void SetMenuMusicEnabled(bool enabled);
 void PlayMenuMusic(const std::string& id);
 void StopMusic();
 // Pause / resume the menu music without losing its place (the XAudio2 source voice stops and starts again;

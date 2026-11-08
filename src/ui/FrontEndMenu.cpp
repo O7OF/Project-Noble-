@@ -5755,6 +5755,7 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
     ctx.st.ffVariant = FindVariant(ctx.ffVariants, L"hr_ff_standard_1set.bin");
     ctx.st.skulls = Settings::Get().Snapshot().campaignSkulls;
 
+    ReachAudio::SetMenuMusicEnabled(true);
     ReachAudio::SetMusicVolume(Settings::Get().Snapshot().volumeMusic);
     ReachAudio::PlayMenuMusic(Settings::Get().Snapshot().menuMusicTrack);
 
