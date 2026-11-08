@@ -57,3 +57,8 @@ rr_profile*.bin
 reports/
 gamestate.txt
 *.headerdump
+
+# Extended engine limit recipes (contain Reach code bytes; local reference only)
+tools/limits/recipes/
+# Generated engine-limit patch files (run tools/limits/build_recipe.py v16)
+data/limits/*.nlp

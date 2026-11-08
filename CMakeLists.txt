@@ -143,6 +143,10 @@ set(SOURCES
     src/host/Window.cpp
     src/host/D3D11Renderer.cpp
     src/host/Loader.cpp
+    src/host/EngineLimits.cpp
+    src/host/PoolReport.cpp
+    src/host/SpawnTest.cpp
+    src/host/SchedulerGuard.cpp
     src/hooks/SigScanner.cpp
     src/hooks/HookManager.cpp
     src/hooks/LobbyPatches.cpp
@@ -209,6 +213,10 @@ set(HEADERS
     src/host/Window.hpp
     src/host/D3D11Renderer.hpp
     src/host/Loader.hpp
+    src/host/EngineLimits.hpp
+    src/host/PoolReport.hpp
+    src/host/SpawnTest.hpp
+    src/host/SchedulerGuard.hpp
     src/hooks/SigScanner.hpp
     src/hooks/HookManager.hpp
     src/hooks/LobbyPatches.hpp
@@ -342,6 +350,10 @@ set(DEDICATED_SOURCES
     src/host/SteamLocator.cpp
     src/host/OwnershipVerifier.cpp
     src/host/Loader.cpp
+    src/host/EngineLimits.cpp
+    src/host/PoolReport.cpp
+    src/host/SpawnTest.cpp
+    src/host/SchedulerGuard.cpp
     src/hooks/SigScanner.cpp
     src/hooks/HookManager.cpp
     src/hooks/LobbyPatches.cpp
@@ -360,6 +372,10 @@ set(DEDICATED_HEADERS
     src/host/SteamLocator.hpp
     src/host/OwnershipVerifier.hpp
     src/host/Loader.hpp
+    src/host/EngineLimits.hpp
+    src/host/PoolReport.hpp
+    src/host/SpawnTest.hpp
+    src/host/SchedulerGuard.hpp
     src/hooks/SigScanner.hpp
     src/hooks/HookManager.hpp
     src/hooks/LobbyPatches.hpp
