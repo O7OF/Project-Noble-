@@ -20,6 +20,7 @@
 #include "common/Settings.hpp"
 #include "engine/FrameCapture.hpp"
 #include "engine/ReachHost.hpp"
+#include "engine/BlamEngine.hpp"
 #include "engine/CameraThirdPerson.hpp"
 #include "engine/CameraThirdPerson.hpp"
 #include "engine/KeyBindings.hpp"
@@ -359,6 +360,22 @@ void DrawSettingsPage(HWND hwnd);
 
 } // namespace
 
+namespace {
+// The engine has no pause API, but it does expose its game_speed console global. Zero freezes the
+// simulation while the render/input thread keeps pumping, which is exactly what a local pause needs.
+// Only used when the session has no remote players; an online match must keep running.
+void SetLocalSimulationPaused(bool paused) {
+  static bool s_applied = false;
+  if (paused == s_applied) return;
+  BlamEngine* engine = BlamEngine::Active();
+  if (!engine) return;
+  if (engine->ExecuteCommand(paused ? "game_speed 0" : "game_speed 1")) {
+    s_applied = paused;
+    NOBLE_INFO("PauseMenu: local simulation {}", paused ? "paused" : "resumed");
+  }
+}
+} // namespace
+
 bool PauseMenu::IsOpen() { return s_open.load(); }
 
 void PauseMenu::Toggle() {
@@ -387,6 +404,7 @@ void PauseMenu::Toggle() {
     Window::TakeLeftClicks(); // forget clicks made in game (shots) before the
                               // menu opened
   s_open.store(nowOpen);
+  if (!nowOpen) SetLocalSimulationPaused(false);
   NOBLE_INFO("PauseMenu: {}", nowOpen ? "opened" : "closed");
 }
 
@@ -394,6 +412,7 @@ void PauseMenu::Close() {
     // (the open-time guard in DrawMenu is a function-local static; it re-arms by re-reading the clock below)
   s_showSettings.store(false);
   if (s_open.exchange(false)) {
+    SetLocalSimulationPaused(false);
     NOBLE_INFO("PauseMenu: closed");
   }
 }
@@ -402,6 +421,7 @@ void PauseMenu::ShowGameOver() {
   if (!s_gameOver.exchange(true)) {
     s_open.store(false);
     s_showSettings.store(false);
+    SetLocalSimulationPaused(false);
     s_gameOverAt.store(GetTickCount64());
     Window::TakeLeftClicks();
     NOBLE_INFO("PauseMenu: game over, showing post-game panel");
@@ -1979,6 +1999,10 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading,
   }
 
   const bool open = s_open.load();
+  // A local match (no remote players) freezes while the menu is up. If a peer joins while it is open,
+  // the next frame resumes it, so online play keeps the old non-pausing behaviour.
+  const size_t peers = NetworkTransport::Get().GetGamePeerCount();
+  SetLocalSimulationPaused(open && !loading && !gameOver && peers == 0);
   SocialOverlay::Poll(!open && !loading && !ForgeMenu::IsOpen());
   const bool showFps = Settings::Get().Snapshot().showFps;
   static const bool s_scoreboardTest = wcsstr(GetCommandLineW(), L"-scoreboard-test") != nullptr;
