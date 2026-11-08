@@ -19,7 +19,9 @@ namespace noble {
 class SettingsPanel {
 public:
     void Render();
-    bool IsCapturingKey() const { return m_rebindAction >= 0 || m_padRebindAction >= 0 || m_paddleKeyCapture >= 0; }  // Esc cancels the rebind, not the screen
+    // Esc cancels the rebind, not the screen. The ended-frame flag keeps the key that finished a capture from
+    // being read as a menu hotkey by the parent panel in the same frame.
+    bool IsCapturingKey() const { return m_rebindAction >= 0 || m_padRebindAction >= 0 || m_paddleKeyCapture >= 0 || m_captureEndedThisFrame; }
     bool DiscardOnEscape();                                        // true when Esc was used to throw away unsaved changes
     void SetTab(int tab);                                          // test option -menu-tab (0..6 = category)
 
@@ -78,6 +80,7 @@ private:
     SettingsData m_saved;
     int m_rebindAction = -1;      // action waiting for a key press
     double m_rebindStarted = 0.0;
+    bool m_captureEndedThisFrame = false;  // a capture consumed its key this frame; keep menu hotkeys off until the next frame
     char m_nameBuf[32] = {};
     char m_tagBuf[8] = {};
     char m_masterBuf[256] = {};

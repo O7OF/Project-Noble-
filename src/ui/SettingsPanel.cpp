@@ -258,11 +258,17 @@ void SettingsPanel::Render() {
         std::snprintf(m_masterBuf, sizeof(m_masterBuf), "%s", m_edit.masterServerUrl.c_str());
         m_loaded = true;
     }
+    m_captureEndedThisFrame = false;
+    // A keyboard/paddle capture reads the raw key state. Clear the frame's key events first, so Q/E/Tab/Esc
+    // cannot also switch categories, close the panel or move focus while the capture is waiting. The controller
+    // capture has to keep its ImGui events: PadBindValue() consumes them itself.
+    if (m_rebindAction >= 0 || m_paddleKeyCapture >= 0) ImGui::GetIO().ClearInputKeys();
     PollRebind();
     SyncBuffers();
 
     // Shared key state for this frame (rows read it; text fields and rebinding take the keys).
-    m_navAllowed = !ImGui::GetIO().WantTextInput && m_rebindAction < 0 && m_padRebindAction < 0 && m_paddleKeyCapture < 0;
+    m_navAllowed = !ImGui::GetIO().WantTextInput && m_rebindAction < 0 && m_padRebindAction < 0 && m_paddleKeyCapture < 0 &&
+                   !m_captureEndedThisFrame;
     m_valueTookLeftRight = false;
     m_enterAppliesHere = m_focus < 0;
     m_keyLeft = m_navAllowed && (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickLeft));
@@ -1172,6 +1178,7 @@ void SettingsPanel::PollRebind() {
     // A controller has no Esc: waiting too long cancels, so someone without a keyboard to hand can't get stuck here.
     if ((GetAsyncKeyState(VK_ESCAPE) & 0x8000) || ImGui::GetTime() - m_rebindStarted > 5.0) {
         m_rebindAction = -1;
+        m_captureEndedThisFrame = true;
         return;
     }
     for (int vk = 1; vk < 256; ++vk) {
@@ -1180,6 +1187,7 @@ void SettingsPanel::PollRebind() {
             if (vk == KeyBindings::DefaultKey(m_rebindAction)) m_edit.keyOverrides.erase(m_rebindAction);
             else m_edit.keyOverrides[m_rebindAction] = vk;
             m_rebindAction = -1;
+            m_captureEndedThisFrame = true;
             MenuSounds::Click();
             return;
         }
@@ -1319,15 +1327,18 @@ void SettingsPanel::PadBindValue(int action) {
     // Capturing: the next input becomes the binding.
     if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::GetTime() - m_padRebindStarted > 5.0) {
         m_padRebindAction = -1;
+        m_captureEndedThisFrame = true;
     } else if (ImGui::IsKeyPressed(ImGuiKey_Delete, false) || ImGui::IsKeyPressed(ImGuiKey_Backspace, false)) {
         m_edit.padBindings.erase(key);
         m_padRebindAction = -1;
+        m_captureEndedThisFrame = true;
         MenuSounds::Click();
     } else {
         for (const KeyMap& map : kKeys) {
             if (!ImGui::IsKeyPressed(map.key, false)) continue;
             PadLayouts::Assign(layout, action, map.input, m_edit.padBindings);
             m_padRebindAction = -1;
+            m_captureEndedThisFrame = true;
             MenuSounds::Click();
             break;
         }
@@ -1337,6 +1348,7 @@ void SettingsPanel::PadBindValue(int action) {
             if (vk <= 0 || (GetAsyncKeyState(vk) & 0x8000) == 0) continue;
             PadLayouts::Assign(layout, action, PadLayouts::InputPaddle1 + n, m_edit.padBindings);
             m_padRebindAction = -1;
+            m_captureEndedThisFrame = true;
             MenuSounds::Click();
         }
     }
@@ -1429,6 +1441,7 @@ void SettingsPanel::RenderController() {
         } else if (m_paddleKeyCapture == n && ImGui::GetTime() - m_paddleKeyStarted > 0.25) {
             if (ImGui::GetTime() - m_paddleKeyStarted > 5.0 || (GetAsyncKeyState(VK_ESCAPE) & 0x8000)) {
                 m_paddleKeyCapture = -1;
+                m_captureEndedThisFrame = true;
                 continue;
             }
             for (int key = 3; key < 256; ++key) {   // from 3: left and right click stay the menu's and the game's
@@ -1439,6 +1452,7 @@ void SettingsPanel::RenderController() {
                 }
                 vk = key;
                 m_paddleKeyCapture = -1;
+                m_captureEndedThisFrame = true;
                 MenuSounds::Click();
                 break;
             }
