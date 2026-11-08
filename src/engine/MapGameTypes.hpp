@@ -26,6 +26,11 @@ namespace MapGameTypes {
 // Returns an empty string when the stem is not recognised.
 std::string FromVariantStem(const std::wstring& stem);
 
+// The same classification for the variant's own display name (the UTF-16 name inside a .bin made in
+// MCC or exported by RVT), for files whose name does not carry the game type. Returns empty when
+// nothing is recognised.
+std::string FromVariantText(const std::string& text);
+
 // Human-readable name of a game-type key ("ctf" -> "CTF"). Falls back to the upper-cased key.
 const char* Name(const std::string& gameType);
 

@@ -38,11 +38,12 @@ const std::array<TypeInfo, 6> kRestricted = { {
 } };
 
 // Types that work on every multiplayer map; listed so `Name` can return a proper label.
-const std::array<std::pair<const char*, const char*>, 12> kUniversal = { {
+const std::array<std::pair<const char*, const char*>, 15> kUniversal = { {
     { "slayer", "Slayer" }, { "ctf", "Capture the Flag" }, { "assault", "Assault" },
     { "territories", "Territories" }, { "koth", "King of the Hill" }, { "oddball", "Oddball" },
     { "juggernaut", "Juggernaut" }, { "infection", "Infection" }, { "headhunter", "Headhunter" },
-    { "stockpile", "Stockpile" }, { "forged", "Forge" }, { "unknown", "Unknown" },
+    { "stockpile", "Stockpile" }, { "vip", "VIP" }, { "action_sack", "Action Sack" },
+    { "grifball", "Grifball" }, { "forged", "Forge" }, { "unknown", "Unknown" },
 } };
 
 bool IsRestricted(const std::string& gameType) {
@@ -59,6 +60,9 @@ std::string FromVariantStem(const std::wstring& stem) {
     // MCC ships them as "3nvasion_*" / "2nvasion_*" (an 'n' where the 'I' glyph would be), so match the tail.
     if (Has(s, L"nvasion")) return "invasion";
     if (Has(s, L"hr_ff_")) return "firefight";
+    if (Has(s, L"vip")) return "vip";
+    if ((Has(s, L"action") && Has(s, L"sack")) || Has(s, L"actionsack")) return "action_sack";
+    if (Has(s, L"grifball")) return "grifball";
     if (Has(s, L"skeeball")) return "skeeball";
     if (Has(s, L"rally")) return "rally";
     if (Has(s, L"race")) return "race";
@@ -75,6 +79,16 @@ std::string FromVariantStem(const std::wstring& stem) {
     if (Has(s, L"stockpile")) return "stockpile";
     if (Has(s, L"basic_editing")) return "forged";  // MCC's Forge game type
     return {};
+}
+
+std::string FromVariantText(const std::string& text) {
+    std::wstring wide;
+    wide.reserve(text.size());
+    for (const unsigned char c : text) {
+        // The header name is UTF-8 from the variant. Type words are ASCII; anything else is a separator.
+        wide.push_back(c < 0x80 ? static_cast<wchar_t>(c) : L' ');
+    }
+    return FromVariantStem(wide);
 }
 
 const char* Name(const std::string& gameType) {

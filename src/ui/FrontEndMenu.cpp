@@ -270,18 +270,41 @@ std::string VariantLabel(const std::wstring& stem, const std::string& nameInFile
     return out;
 }
 
+// The stock MCC folder and Noble's own writable game_variants folder. The engine resolves both
+// (BlamEngine::ResolveVariantFile), so the menu must scan both too.
+static std::filesystem::path VariantBasePath(const std::filesystem::path& reachDir, const std::string& base) {
+    std::error_code ec;
+    const std::filesystem::path name = std::filesystem::path(base).filename();
+    for (const std::filesystem::path& folder : { reachDir / "game_variants", VFS::GetUserStoragePath() / "game_variants" }) {
+        const std::filesystem::path candidate = folder / name;
+        if (std::filesystem::is_regular_file(candidate, ec)) return candidate;
+        ec.clear();
+    }
+    return {};
+}
+
 std::vector<MenuVariant> ScanVariants(const std::filesystem::path& reachDir, bool firefight) {
     std::vector<MenuVariant> list;
     std::error_code ec;
-    for (const auto& entry : std::filesystem::directory_iterator(reachDir / "game_variants", ec)) {
-        if (!entry.is_regular_file(ec) || Lower(entry.path().extension().wstring()) != L".bin") continue;
-        const std::wstring lower = Lower(entry.path().filename().wstring());
-        if (lower == Lower(kForgeVariant)) continue;
-        const bool isFirefightVariant = lower.rfind(L"hr_ff_", 0) == 0;
-        if (isFirefightVariant != firefight) continue;
-        const VariantHeaderText text = ReadVariantHeaderText(entry.path());
-        list.push_back({ VariantLabel(entry.path().stem().wstring(), text.name), entry.path(), text.description, false,
-                         MapGameTypes::FromVariantStem(entry.path().stem().wstring()) });
+    std::set<std::wstring> seen;   // the engine resolves the stock folder first, so it wins a name clash
+    for (const std::filesystem::path& folder : { reachDir / "game_variants", VFS::GetUserStoragePath() / "game_variants" }) {
+        for (const auto& entry : std::filesystem::directory_iterator(folder, ec)) {
+            if (!entry.is_regular_file(ec) || Lower(entry.path().extension().wstring()) != L".bin") continue;
+            const std::wstring lower = Lower(entry.path().filename().wstring());
+            if (lower == Lower(kForgeVariant) || !seen.insert(lower).second) continue;
+            const bool isFirefightVariant = lower.rfind(L"hr_ff_", 0) == 0;
+            if (isFirefightVariant != firefight) continue;
+            const VariantHeaderText text = ReadVariantHeaderText(entry.path());
+            const std::wstring stem = entry.path().stem().wstring();
+            // A player-made .bin often has a generic file name (or an RVT export name), so the name inside
+            // the variant is the better clue. The stem still wins for the shipped MCC files, except that a
+            // VIP / Action Sack / Grifball name is always honoured.
+            std::string type = MapGameTypes::FromVariantStem(stem);
+            const std::string named = MapGameTypes::FromVariantText(text.name);
+            if (!named.empty() && (type.empty() || named == "vip" || named == "action_sack" || named == "grifball")) type = named;
+            list.push_back({ VariantLabel(stem, text.name), entry.path(), text.description, false, type });
+        }
+        ec.clear();
     }
     // Player-made game modes: this PC's own, and any a mod ships in a game_modes folder for its maps.
     std::vector<std::filesystem::path> modeFolders = { VariantRules::Directory() };
@@ -294,7 +317,7 @@ std::vector<MenuVariant> ScanVariants(const std::filesystem::path& reachDir, boo
             VariantRules::Preset preset;
             if (!VariantRules::IsPresetFile(entry.path()) || !VariantRules::Load(entry.path(), preset)) continue;
             const bool baseIsFirefight = Lower(std::filesystem::path(preset.base).wstring()).rfind(L"hr_ff_", 0) == 0;
-            if (baseIsFirefight != firefight || !std::filesystem::is_regular_file(reachDir / "game_variants" / preset.base, ec)) continue;
+            if (baseIsFirefight != firefight || VariantBasePath(reachDir, preset.base).empty()) continue;
             MenuVariant mode;
             mode.label = preset.name.empty() ? entry.path().stem().string() : preset.name;
             mode.path = entry.path();
@@ -1713,6 +1736,7 @@ struct MenuState {
     int optionsRow = 0;
     char optionsName[48] = {};
     std::string optionsBase;            // base variant file name
+    std::filesystem::path optionsSource;   // the .bin the editor decoded (may be the writable game_variants folder)
     std::vector<uint8_t> optionsDecoded;   // the base variant's real values
     std::map<std::string, int> optionsValues;   // only what differs from the base
     std::string optionsMessage;
@@ -2558,7 +2582,12 @@ struct VariantChoices {
     std::vector<VariantRow> rows;
     std::vector<ListItem> items;
 };
-static std::string VariantMode(const MenuVariant& v) { return v.custom ? std::string("Custom Game Modes") : v.type.empty() ? std::string("Other") : std::string(MapGameTypes::Name(v.type)); }
+static std::string VariantMode(const MenuVariant& v) {
+    // Put a player-made mode under the game type it starts from, not in one "custom" heap. VIP and
+    // Action Sack variants therefore get their own headings like the shipped types.
+    if (!v.type.empty()) return MapGameTypes::Name(v.type);
+    return v.custom ? std::string("Custom Game Modes") : std::string("Other");
+}
 
 static VariantChoices BuildVariantChoices(const std::vector<MenuVariant>& list, const std::string& scenario, bool unrestricted,
                                           const std::string& openMode, const char* query) {
@@ -2709,13 +2738,14 @@ static void OpenGameOptions(OverlayContext& ctx, const MenuVariant& current) {
     VariantRules::Preset preset;
     const bool isMode = current.custom && VariantRules::Load(current.path, preset);
     st.optionsBase = isMode ? preset.base : current.path.filename().string();
+    st.optionsSource = isMode ? VariantBasePath(ctx.reachDir, preset.base) : current.path;
     st.optionsValues = isMode ? preset.values : std::map<std::string, int>{};
     std::snprintf(st.optionsName, sizeof(st.optionsName), "%s", (isMode ? current.label : current.label + " Custom").c_str());
     st.optionsFile = isMode ? current.path : std::filesystem::path();
     st.optionsRow = 0;
     st.optionsMessage.clear();
     st.confirmAction.clear();
-    if (VariantRules::Decode(ctx.reachDir / "game_variants" / st.optionsBase, st.optionsDecoded)) {
+    if (VariantRules::Decode(st.optionsSource, st.optionsDecoded)) {
         NOBLE_INFO("FrontEndMenu: game options opened on '{}'", st.optionsBase);
         st.optionsOpen = true;
         MenuSounds::Click();

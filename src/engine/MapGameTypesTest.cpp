@@ -49,6 +49,9 @@ int SelfTest() {
         { "35_island", "infection", true, "Infection everywhere" },
         { "dlc_medium", "headhunter", true, "Headhunter everywhere" },
         { "condemned", "stockpile", true, "Stockpile everywhere" },
+        { "20_sword_slayer", "vip", true, "VIP everywhere" },
+        { "20_sword_slayer", "action_sack", true, "Action Sack everywhere" },
+        { "20_sword_slayer", "grifball", true, "Grifball everywhere" },
         { "trainingpreserve", "firefight", false, "Firefight types are not multiplayer types" },
         { "20_sword_slayer", "", true, "No game type known: never block" },
     };
@@ -83,12 +86,29 @@ int SelfTest() {
         { L"stockpile_054", "stockpile" },    { L"hr_ff_standard_1set", "firefight" },
         { L"race_054", "race" },              { L"00_basic_editing_054", "forged" },
         { L"hr_4v4_team_multiFlag_dmr_ar_3points_tu", "ctf" },
+        { L"vip_054", "vip" },                { L"vip_swordbase_054", "vip" },
+        { L"action_sack_054", "action_sack" },{ L"actionsack_054", "action_sack" },
+        { L"grifball_vanilla_054", "grifball" },
     };
     for (const StemCase& c : stems) {
         const std::string got = FromVariantStem(c.stem);
         if (got != c.type) {
             ++failures;
             out("FAIL  stem expected %s, got '%s'\n", c.type, got.c_str());
+        }
+    }
+
+    // Player-made variants can have arbitrary file names; the display name inside the variant is the clue.
+    struct NameCase { const char* name; const char* type; };
+    const std::vector<NameCase> names = {
+        { "VIP", "vip" }, { "Action Sack", "action_sack" }, { "Grifball", "grifball" },
+        { "Team Slayer", "slayer" }, { "My Weird Mode", "" },
+    };
+    for (const NameCase& c : names) {
+        const std::string got = FromVariantText(c.name);
+        if (got != c.type) {
+            ++failures;
+            out("FAIL  name '%s' expected '%s', got '%s'\n", c.name, c.type, got.c_str());
         }
     }
 
@@ -100,7 +120,8 @@ int SelfTest() {
                                  "cex_damnation", "cex_timberland", "cex_prisoner", "cex_hangemhigh", "cex_headlong",
                                  "forge_halo" };
     const char* const types[] = { "slayer", "ctf", "assault", "territories", "koth", "oddball", "juggernaut",
-                                  "infection", "headhunter", "stockpile", "invasion", "race", "rally", "skeeball" };
+                                  "infection", "headhunter", "stockpile", "invasion", "race", "rally", "skeeball",
+                                  "vip", "action_sack", "grifball" };
     int allowed = 0, blocked = 0;
     for (const char* map : maps) {
         for (const char* type : types) {
