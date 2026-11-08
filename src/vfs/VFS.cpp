@@ -208,12 +208,16 @@ std::wstring VFS::ResolvePath(const std::wstring& requestedPath, DWORD desiredAc
             // so the in-game Forge palette and sandbox natively contain all AI bipeds & vehicles.
             if (!isWriting && !p.filename().empty() &&
                 _wcsicmp(p.filename().c_str(), L"forge_halo.map") == 0) {
-                // Priority A: Check SharedTagCache donor map if already mounted
+                // Priority A: Check SharedTagCache donor map if already mounted AND it is a forge map
                 if (SharedTagCache::IsMounted() && !SharedTagCache::GetDonorMapPath().empty()) {
-                    if (RawPathExists(SharedTagCache::GetDonorMapPath().wstring())) {
-                        NOBLE_INFO("VFS: Serving Forge AI donor map '{}' for haloreach\\maps\\forge_halo.map",
-                                   SharedTagCache::GetDonorMapPath().string());
-                        return SharedTagCache::GetDonorMapPath().wstring();
+                    const std::wstring donorName = SharedTagCache::GetDonorMapPath().filename().wstring();
+                    if (_wcsicmp(donorName.c_str(), L"forge_halo_normal.map") == 0 ||
+                        _wcsicmp(donorName.c_str(), L"forge_halo_legendary.map") == 0) {
+                        if (RawPathExists(SharedTagCache::GetDonorMapPath().wstring())) {
+                            NOBLE_INFO("VFS: Serving Forge AI donor map '{}' for haloreach\\maps\\forge_halo.map",
+                                       SharedTagCache::GetDonorMapPath().string());
+                            return SharedTagCache::GetDonorMapPath().wstring();
+                        }
                     }
                 }
                 // Priority B: Check Steam Workshop (Forge AI Battleground item 2899383598)

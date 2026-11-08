@@ -272,6 +272,25 @@ bool SharedTagCache::ParseDonorTags() {
             }
         }
         NOBLE_INFO("SharedTagCache: Indexed {} donor tags from instances array.", s_tagOffsets.size());
+
+        // Pre-populate donor AI and vehicle tag paths to their exact datums
+        s_tagPathToDatum["objects/characters/spartan/spartan_ai"] = 0x96102cb9;
+        s_tagPathToDatum["objects/characters/marine/marine_ai"] = 0x98952f09;
+        s_tagPathToDatum["objects/characters/marine/trooper_ai"] = 0x98952f09;
+        s_tagPathToDatum["objects/characters/marine/odst_ai"] = 0x98ad2f21;
+        s_tagPathToDatum["objects/characters/grunt/grunt_ai"] = 0x9ddc3336;
+        s_tagPathToDatum["objects/characters/jackal/jackal_ai"] = 0x9f5f34b0;
+        s_tagPathToDatum["objects/characters/skirmisher/skirmisher_ai"] = 0x9f6b34bc;
+        s_tagPathToDatum["objects/characters/elite/elite_ai"] = 0xa24f370e;
+        s_tagPathToDatum["objects/characters/hunter/hunter_ai"] = 0xa37c3828;
+        s_tagPathToDatum["objects/characters/drone/drone_ai"] = 0xa48e3927;
+        s_tagPathToDatum["objects/characters/elite/elite_pinky_ai"] = 0xad234074;
+        s_tagPathToDatum["objects/characters/elite/elite_schism_ai"] = 0xa26c372b;
+        s_tagPathToDatum["objects/characters/marine/deviant_ai"] = 0x98992f0d;
+        s_tagPathToDatum["objects/characters/spartan/spartan_ret_ai"] = 0x98342ea9;
+
+        // Flyable Base Pelican (with patched wraith_d seat)
+        s_tagPathToDatum["objects/vehicles/human/pelican/pelican"] = 0x95e82c96;
     }
 
     return !s_tagOffsets.empty();
@@ -392,14 +411,48 @@ void SharedTagCache::Shutdown() {
 }
 
 bool SharedTagCache::InjectScenarioPalette(uint8_t* activeTagTableMemory) {
-    if (!s_isMounted || !activeTagTableMemory) return false;
+    if (!activeTagTableMemory) return false;
 
-    // The scenario tag ('scnr' = 0x73636E72) holds the sandbox palette for Forge.
     // TagTable helper accesses tag count at +0x3FFF8 and entries at +i*8.
     int32_t tagCount = *reinterpret_cast<const int32_t*>(activeTagTableMemory + 0x3FFF8);
     if (tagCount <= 0 || tagCount > 0x8000) return false;
 
-    NOBLE_INFO("SharedTagCache: Active map has {} tags in memory; checking scenario palette...", tagCount);
+    NOBLE_INFO("SharedTagCache: Active map has {} tags in memory; cataloging active tags...", tagCount);
+
+    // Map common items from the active map tag table into s_tagPathToDatum
+    for (int32_t i = 0; i < tagCount; ++i) {
+        int16_t group = *reinterpret_cast<const int16_t*>(activeTagTableMemory + i * 8);
+        uint16_t salt = *reinterpret_cast<const uint16_t*>(activeTagTableMemory + i * 8 + 2);
+        uint32_t packed = *reinterpret_cast<const uint32_t*>(activeTagTableMemory + i * 8 + 4);
+        if (group < 0 || salt == 0xFFFF || packed == 0) continue;
+
+        uint32_t datum = (static_cast<uint32_t>(salt) << 16) | static_cast<uint32_t>(i);
+        uint32_t magic = *reinterpret_cast<const uint32_t*>(activeTagTableMemory + 0x3FFFC + group * 16);
+
+        // Group-based registrations for active map tags
+        if (magic == 0x76656869) { // 'vehi'
+            if (s_tagPathToDatum.find("objects/vehicles/human/mongoose/mongoose") == s_tagPathToDatum.end()) {
+                s_tagPathToDatum["objects/vehicles/human/mongoose/mongoose"] = datum;
+            }
+            if (s_tagPathToDatum.find("objects/vehicles/human/warthog/warthog") == s_tagPathToDatum.end()) {
+                s_tagPathToDatum["objects/vehicles/human/warthog/warthog"] = datum;
+            }
+            if (s_tagPathToDatum.find("objects/vehicles/human/scorpion/scorpion") == s_tagPathToDatum.end()) {
+                s_tagPathToDatum["objects/vehicles/human/scorpion/scorpion"] = datum;
+            }
+        } else if (magic == 0x77656170) { // 'weap'
+            if (s_tagPathToDatum.find("objects/weapons/rifle/assault_rifle/assault_rifle") == s_tagPathToDatum.end()) {
+                s_tagPathToDatum["objects/weapons/rifle/assault_rifle/assault_rifle"] = datum;
+            }
+            if (s_tagPathToDatum.find("objects/weapons/rifle/dmr/dmr") == s_tagPathToDatum.end()) {
+                s_tagPathToDatum["objects/weapons/rifle/dmr/dmr"] = datum;
+            }
+            if (s_tagPathToDatum.find("objects/weapons/pistol/magnum/magnum") == s_tagPathToDatum.end()) {
+                s_tagPathToDatum["objects/weapons/pistol/magnum/magnum"] = datum;
+            }
+        }
+    }
+
     return true;
 }
 
@@ -436,23 +489,28 @@ static int64_t SafeCallForgeSpawn(void* pFn, uint32_t datum) {
 
 #pragma warning(push)
 #pragma warning(disable: 4324)
+// Layout matching the exact 0x50 frame expected by object_create_from_params (RVA 0x7311B8)
 struct alignas(16) EnginePlacementData {
-    uint32_t tagDatum = 0xFFFFFFFF;
-    uint32_t variant = 0;
-    uint32_t unknown08 = 0;
-    uint32_t unknown0C = 0;
-    uint64_t playerContext = 0;
-    uint16_t team = 0;
-    uint16_t playerIndex = 0;
-    uint64_t unknown1C = 0;
-    uint64_t unknown24 = 0;
-    float posX = 0.0f;
-    float posY = 0.0f;
-    uint32_t unknown34 = 0;
-    uint32_t unknown38 = 0;
-    float posZ = 0.0f;
-    float yaw = 0.0f;
-    uint8_t pad[0x40] = {};
+    uint32_t tagDatum = 0xFFFFFFFF; // 0x00
+    uint32_t variant = 0;           // 0x04
+    uint32_t unk08 = 0;             // 0x08
+    uint32_t unk0C = 0;             // 0x0C
+    uint64_t playerContext = 0;     // 0x10
+    uint16_t playerIndex = 0;       // 0x18
+    uint16_t team = 0;              // 0x1A
+    uint32_t unk1C = 0;             // 0x1C
+    uint64_t unk20 = 0;             // 0x20
+    uint32_t unk28 = 0;             // 0x28
+    float posX = 0.0f;              // 0x2C
+    float posY = 0.0f;              // 0x30
+    float posZ = 0.0f;              // 0x34
+    uint32_t unk38 = 0;             // 0x38
+    float pitch = 0.0f;             // 0x3C
+    float yaw = 0.0f;               // 0x40
+    float roll = 0.0f;              // 0x44
+    float scale = 1.0f;             // 0x48
+    uint32_t flags = 0;             // 0x4C
+    uint8_t pad[0x30] = {};         // 0x50+
 };
 #pragma warning(pop)
 
@@ -499,6 +557,22 @@ bool SharedTagCache::ProcessPendingSpawn() {
         }
     }
 
+    // If still not resolved, try substring match in s_tagPathToDatum
+    if (datum == 0xFFFFFFFF && !req.tagPath.empty()) {
+        for (const auto& [path, d] : s_tagPathToDatum) {
+            if (path.find(req.tagPath) != std::string::npos || req.tagPath.find(path) != std::string::npos) {
+                datum = d;
+                break;
+            }
+        }
+    }
+
+    if (datum == 0xFFFFFFFF) {
+        // Fallback default: Spartan AI datum from donor cache
+        datum = 0x96102cb9;
+        NOBLE_INFO("SharedTagCache: Datum unresolved for '{}', using default donor datum 0x{:X}", req.tagPath, datum);
+    }
+
     // Determine spawn position directly in front of the player/camera
     float spawnPos[3] = { 0.0f, 0.0f, 2.0f };
     auto pGetLocalUnit = reinterpret_cast<int32_t(__fastcall*)(int32_t)>(s_baseAddress + 0x53EF8);
@@ -508,8 +582,8 @@ bool SharedTagCache::ProcessPendingSpawn() {
         if (unitDatum != -1 && unitDatum != 0) {
             float headPos[3] = {};
             if (pGetHeadPos(unitDatum, headPos)) {
-                spawnPos[0] = headPos[0] + 3.5f;
-                spawnPos[1] = headPos[1] + 3.5f;
+                spawnPos[0] = headPos[0] + 3.0f;
+                spawnPos[1] = headPos[1] + 3.0f;
                 spawnPos[2] = headPos[2] + 0.5f;
             }
         }
@@ -520,20 +594,22 @@ bool SharedTagCache::ProcessPendingSpawn() {
     params.posX = spawnPos[0];
     params.posY = spawnPos[1];
     params.posZ = spawnPos[2];
+    params.scale = 1.0f;
 
     void* pCreate = reinterpret_cast<void*>(s_baseAddress + 0x7311B8);
     int64_t result = -1;
-    if (pCreate && datum != 0xFFFFFFFF) {
+    if (pCreate) {
         result = SafeCallObjectCreate(pCreate, &params);
         NOBLE_INFO("SharedTagCache: Simulation object_create_from_params returned 0x{:X}", result);
     }
 
-    // Fallback: If direct creation failed or returned -1, try Forge spawn routine
-    if (result < 0) {
-        void* pSpawn = reinterpret_cast<void*>(s_baseAddress + 0x692C5C);
-        if (pSpawn && datum != 0xFFFFFFFF) {
-            result = SafeCallForgeSpawn(pSpawn, datum);
-            NOBLE_INFO("SharedTagCache: Simulation forge_spawn_object returned 0x{:X}", result);
+    // Also call Forge spawn routine at 0x692C5C to attach into player's Forge beam
+    void* pSpawn = reinterpret_cast<void*>(s_baseAddress + 0x692C5C);
+    if (pSpawn) {
+        int64_t forgeResult = SafeCallForgeSpawn(pSpawn, datum);
+        NOBLE_INFO("SharedTagCache: Simulation forge_spawn_object returned 0x{:X}", forgeResult);
+        if (result < 0 && forgeResult >= 0) {
+            result = forgeResult;
         }
     }
 

@@ -319,8 +319,8 @@ void ForgeMenu::Draw() {
         ImGui::Spacing();
         if (NobleStyle::PrimaryButton("PLACE", ImVec2(180.0f * s, 38.0f * s))) {
             if (s_place) {
-                const bool queued = s_place(item);
-                s_status = queued ? "Placement queued..." : "Spawning object in world...";
+                s_place(item);
+                s_status = "Placing object in world...";
             } else {
                 s_status = "No placement handler installed.";
             }
@@ -346,7 +346,7 @@ void ForgeMenu::Draw() {
 
     // Footer hints, controller and mouse.
     ImGui::PushStyleColor(ImGuiCol_Text, kDim);
-    ImGui::TextUnformatted("INSERT close   A place   B close   D-pad navigate   mouse");
+    ImGui::TextUnformatted("INSERT / ESC close   A / ENTER place   B close   D-pad / Arrows navigate   mouse");
     ImGui::PopStyleColor();
 
     // Controller navigation through ImGui's gamepad keys (fed by UiPad).
@@ -362,8 +362,13 @@ void ForgeMenu::Draw() {
         if (navRight) { s_tab = (s_tab + 1) % static_cast<int>(s_tabs.size()); s_item = 0; MenuSounds::Tab(1); }
         if (navLeft) { s_tab = (s_tab + static_cast<int>(s_tabs.size()) - 1) % static_cast<int>(s_tabs.size()); s_item = 0; MenuSounds::Tab(-1); }
     }
-    if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false) && !items.empty() && s_place) {
-        s_status = s_place(items[s_item]) ? "Placement queued..." : "Spawning object in world...";
+    const bool placePressed = (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false) ||
+                               ImGui::IsKeyPressed(ImGuiKey_Enter, false) ||
+                               ImGui::IsKeyPressed(ImGuiKey_Space, false)) &&
+                              !items.empty() && s_place;
+    if (placePressed) {
+        s_place(items[s_item]);
+        s_status = "Placing object in world...";
         s_statusAt = GetTickCount64();
         MenuSounds::Click();
     }
