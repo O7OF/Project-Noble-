@@ -1723,6 +1723,13 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx, const std::strin
         auto pushPair = [&](const std::string& regionName, const std::string& permName, const char* fallbackPerm = "default") {
             const uint32_t regId = LookupStringId(regionName);
             uint32_t permId = LookupStringId(permName);
+            // The pack's pmcg uses short item names ("nicole", "malcolm"), while the menu map's model
+            // regions name some permutations "player_<item>" ("player_nicole", "player_malcolm"). Without
+            // this alias those items resolve to 0 and the piece silently keeps the previous model - the
+            // "JFO/ODST/Recon doesn't change" bug. Long/unknown names simply miss again.
+            if (permId == 0 && !permName.empty()) {
+                permId = LookupStringId("player_" + permName);
+            }
             static std::vector<std::string> s_warned;   // each missing name is logged once
             if (permId == 0 && !permName.empty() &&
                 std::find(s_warned.begin(), s_warned.end(), permName) == s_warned.end()) {
