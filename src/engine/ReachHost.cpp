@@ -328,6 +328,13 @@ static HRESULT STDMETHODCALLTYPE HookSwapChainPresent(IDXGISwapChain* swapChain,
         // CPU core or trip Windows' unresponsive-app detection. SETTINGS > Graphics can turn this off for streaming.
         targetFps = (targetFps > 0 && targetFps < 30) ? targetFps : 30;
     }
+    // The front-end menu and its 3D Armory gain nothing above 60 FPS. Uncapped (No limit), the 1.5x supersampled
+    // menu held GPUs at 100 % just sitting in it. Cap the menu process at 60, or the player's own limit if that is
+    // lower; matches use the FRAME-RATE LIMIT exactly as set.
+    constexpr int kMenuFpsCap = 60;
+    if (ReachArmory::IsMenuMode() && (targetFps <= 0 || targetFps > kMenuFpsCap)) {
+        targetFps = kMenuFpsCap;
+    }
 
     if (targetFps != previousLimit) {
         previousLimit = targetFps;

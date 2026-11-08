@@ -125,6 +125,9 @@ public:
     void Update(const SettingsData& data);   // replace and save
     // The saved UI size (SettingsData::uiScale), cheap enough to read every frame: no lock, no copy of the settings.
     static float UiScale();
+    // FRAME-RATE LIMIT default: the primary display's refresh rate, rounded down to the nearest offered limit
+    // (60 Hz -> 60, 144 Hz -> 144, 75 Hz -> 60). Used for new installs and by SETTINGS' reset to defaults.
+    static int DefaultFpsLimit();
 
     std::filesystem::path FilePath() const;
     // Key bindings and preferences to a file and back, for moving them to another PC or sharing them. Account details, the

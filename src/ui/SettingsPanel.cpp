@@ -977,8 +977,8 @@ void SettingsPanel::RenderGraphics() {
         int current = n - 1;
         for (int i = 0; i < n; ++i) if (kFpsLimits[i] == m_edit.fpsLimit) current = i;
         const std::string label = m_edit.fpsLimit == 0 ? std::string("NO LIMIT") : std::to_string(m_edit.fpsLimit) + " FPS";
-        if (Row("FRAME-RATE LIMIT", "Highest frame rate Noble draws. No limit means exactly that: no pacing while the window is active. A limit at your display's refresh rate keeps the PC cooler and quieter.",
-                When::Apply, "No limit", m_edit.fpsLimit != m_saved.fpsLimit, false, Preview::FrameLimit)) {
+        if (Row("FRAME-RATE LIMIT", "Highest frame rate Noble draws in a match. No limit means exactly that: no pacing while the window is active. The menu always stays at 60 FPS or below. A limit at your display's refresh rate keeps the PC cooler and quieter.",
+                When::Apply, std::to_string(Settings::DefaultFpsLimit()) + " FPS (display rate)", m_edit.fpsLimit != m_saved.fpsLimit, false, Preview::FrameLimit)) {
             if (const int d = CycleValue(label.c_str(), current, n, false)) m_edit.fpsLimit = kFpsLimits[std::clamp(current + d, 0, n - 1)];
         }
     }
@@ -1832,7 +1832,7 @@ SettingsData SettingsPanel::WithDefaults(SettingsData e, Cat c) {
     switch (c) {
     case Cat::Graphics:
         e.width = d.width; e.height = d.height; e.borderless = d.borderless; e.exclusiveFullscreen = d.exclusiveFullscreen; e.verticalSync = d.verticalSync;
-        e.fpsLimit = d.fpsLimit; e.showFps = d.showFps; e.uiScale = d.uiScale;
+        e.fpsLimit = Settings::DefaultFpsLimit(); e.showFps = d.showFps; e.uiScale = d.uiScale;
         e.fullscreenWidth = d.fullscreenWidth; e.fullscreenHeight = d.fullscreenHeight;
         break;
     case Cat::Audio:

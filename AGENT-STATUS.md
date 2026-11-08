@@ -94,3 +94,9 @@ edit Claude's four slices above.
   RESOLUTION row; header/help text; CountDiff/WithDefaults). Cause: the process was not DPI aware, so
   a 4K display at 200 % read as 1920x1080 and borderless/full screen rendered 1080p. Did not touch the
   UI Scale slider, PAUSED layout, GAME OPTIONS or CHANGE TEAM work. Not built yet: Tyler to build and test.
+- 2026-11-08 02:55 ET (Claude, claude.ai session, for Tyler): menu GPU fix, **uncommitted**.
+  `src/engine/ReachHost.cpp` (Present hook only: menu process capped at 60 FPS, or the player's lower limit,
+  even with No limit), `src/common/Settings.hpp/.cpp` (`Settings::DefaultFpsLimit()` = display refresh rounded
+  down to an offered limit; new installs start there instead of No limit), `src/ui/SettingsPanel.cpp`
+  (FRAME-RATE LIMIT default/help text; Graphics reset uses the display rate). Cause: Dominus's log showed the
+  uncapped 2880x1620 menu pinning his GPU. Not built yet.

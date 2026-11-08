@@ -291,6 +291,11 @@ void Settings::Load() {
         }
     }
 
+    if (!existed) {
+        // New install: pace to the display instead of No limit, which held GPUs at 100 % (players can still pick
+        // No limit in SETTINGS > GRAPHICS).
+        d.fpsLimit = DefaultFpsLimit();
+    }
     Clamp(d);
     {
         std::lock_guard<std::recursive_mutex> lock(m_mutex);
@@ -472,5 +477,19 @@ void Settings::Update(const SettingsData& data) {
 }
 
 float Settings::UiScale() { return g_uiScale.load(std::memory_order_relaxed); }
+
+int Settings::DefaultFpsLimit() {
+    DEVMODEW mode{};
+    mode.dmSize = sizeof(mode);
+    int hz = 0;
+    if (EnumDisplaySettingsW(nullptr, ENUM_CURRENT_SETTINGS, &mode)) hz = static_cast<int>(mode.dmDisplayFrequency);
+    if (hz <= 1) return 60;                          // 0/1 = "hardware default": unknown rate
+    constexpr int kLimits[] = { 30, 60, 120, 144, 165, 200, 240, 360 };  // the capped values of SETTINGS' list
+    int best = 30;
+    for (const int limit : kLimits) {
+        if (limit <= hz + 1) best = limit;           // +1: 59.94 Hz panels report 59
+    }
+    return best;
+}
 
 } // namespace noble
