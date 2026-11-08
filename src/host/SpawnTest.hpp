@@ -8,9 +8,14 @@
 // engine keeps game state in thread-local storage.
 //
 //   F9 in a match            spawn 500 more objects
+//   F7 in a match            place every AI squad the map defines (Firefight/campaign maps; Forge World has
+//                            none). Press again for more; with -ai-actors N the actor pool holds N, stock 96.
+//   F8 in a match            crowd of 128 copies of your Spartan in front of you, on/off (render test for
+//                            128 players; the engine has only 16 player slots, so these are bodies, and
+//                            ones the engine cleans up as corpses are put back twice a second)
 //   -spawn-test <count>      spawn <count> automatically once a match is running
-//   -spawn-max <objects>     stop when this many objects are in use (default 6,000: V16 runs out of
-//                            scheduler jobs near 6,500 moving objects and the engine crashes)
+//   -spawn-max <objects>     stop when this many objects are in use (default 8,000; V16 with the
+//                            scheduler guard tops out near 8,800 moving objects)
 //
 // Progress, refusals and the object pool's live usage go to the log ("SpawnTest: ..."). On Stock,
 // object_new starts refusing near 2,048 objects; with V16 it continues toward 32,767.

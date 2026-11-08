@@ -147,6 +147,7 @@ set(SOURCES
     src/host/PoolReport.cpp
     src/host/SpawnTest.cpp
     src/host/SchedulerGuard.cpp
+    src/host/PoolResize.cpp
     src/hooks/SigScanner.cpp
     src/hooks/HookManager.cpp
     src/hooks/LobbyPatches.cpp
@@ -217,6 +218,7 @@ set(HEADERS
     src/host/PoolReport.hpp
     src/host/SpawnTest.hpp
     src/host/SchedulerGuard.hpp
+    src/host/PoolResize.hpp
     src/hooks/SigScanner.hpp
     src/hooks/HookManager.hpp
     src/hooks/LobbyPatches.hpp
@@ -354,6 +356,7 @@ set(DEDICATED_SOURCES
     src/host/PoolReport.cpp
     src/host/SpawnTest.cpp
     src/host/SchedulerGuard.cpp
+    src/host/PoolResize.cpp
     src/hooks/SigScanner.cpp
     src/hooks/HookManager.cpp
     src/hooks/LobbyPatches.cpp
@@ -376,6 +379,7 @@ set(DEDICATED_HEADERS
     src/host/PoolReport.hpp
     src/host/SpawnTest.hpp
     src/host/SchedulerGuard.hpp
+    src/host/PoolResize.hpp
     src/hooks/SigScanner.hpp
     src/hooks/HookManager.hpp
     src/hooks/LobbyPatches.hpp

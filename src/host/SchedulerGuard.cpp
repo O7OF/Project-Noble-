@@ -23,6 +23,7 @@ constexpr size_t kFreeCount = 0x260038 + 0x30000;
 constexpr size_t kWorkerContext = 0x2900F0;
 constexpr uint32_t kMargin = 64;                 // other threads may take jobs between the check and prepare
 constexpr DWORD kTimeoutMs = 3000;
+constexpr uint32_t kSchedulerJobs = 16384;      // V16 job capacity (and per-call scratch capacity)
 
 // First 0x30 bytes of prepare in the V16 build (the +0x44008 / +0x20000 operands identify the layout).
 const uint8_t kPrepareV16[] = {
@@ -48,7 +49,15 @@ void __fastcall Hook_Prepare(void* context, uint32_t count) {
         auto* owner = manager ? *reinterpret_cast<uint8_t**>(manager + 0x08) : nullptr;
         if (owner) {
             auto* freeCount = reinterpret_cast<volatile int32_t*>(owner + kBody + kFreeCount);
-            if (*freeCount < static_cast<int32_t>(count + kMargin)) {
+            if (count + kMargin > kSchedulerJobs) {
+                // Bigger than the whole scheduler: waiting cannot help, so do not stall the frame for it.
+                const ULONGLONG now = GetTickCount64();
+                if (now - s_lastLog > 5000) {
+                    s_lastLog = now;
+                    NOBLE_ERROR("Scheduler guard: object update wants {} jobs but the scheduler only has {}; too many objects "
+                                "are moving at once (V16 ceiling is about 8,000-8,500)", count, kSchedulerJobs);
+                }
+            } else if (*freeCount < static_cast<int32_t>(count + kMargin)) {
                 const int32_t freeBefore = *freeCount;
                 const ULONGLONG start = GetTickCount64();
                 uint64_t runs = 0;

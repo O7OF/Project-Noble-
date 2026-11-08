@@ -3,6 +3,7 @@
 #include "PoolReport.hpp"
 #include "SpawnTest.hpp"
 #include "SchedulerGuard.hpp"
+#include "PoolResize.hpp"
 #include "common/Logger.hpp"
 
 #include <psapi.h>
@@ -150,6 +151,7 @@ bool Loader::LoadReachDll(const fs::path& dllPath, const fs::path& dependencyDll
     pools::StartReporter(m_baseAddress, m_moduleSize, limits::ProfileName(limits::ActiveProfile()));
     spawn::Install(m_hModule);   // development builds: F9 / -spawn-test object stress test
     scheduler::InstallGuard(m_hModule);   // V16 layout only: wait for free jobs instead of crashing past ~6,500 moving objects
+    pools::InstallResize(m_hModule, limits::ActiveProfile() != limits::Profile::Stock);   // opt-in: -ai-actors N
 
     // Resolve exported engine interfaces
     m_exports.CreateGameEngine = reinterpret_cast<CreateGameEngineFn>(

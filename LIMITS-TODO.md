@@ -52,7 +52,7 @@ Owner key: **C** = Claude, **D** = DeepSeek. Swap tasks by noting it in `AGENT-S
 
 - 2026-11-08: V16 loads in Noble (patched copy + `GetModuleFileNameW` redirect for files next to the DLL),
   pool report shows object 32,767, spawn test reached **6,516 live objects** in Forge World.
-- Ceiling under V16: **~6,500 moving objects**: scheduler jobs (16,384) run out; engine crashes at
+- Ceiling under V16 without the guard: **~6,500 moving objects**: scheduler jobs (16,384) run out; engine crashes at
   haloreach+0x68B21F (free-job queue pop with no empty check).
 
 ## Phase 1b: past the scheduler wall
@@ -60,3 +60,47 @@ Owner key: **C** = Claude, **D** = DeepSeek. Swap tasks by noting it in `AGENT-S
 | # | Owner | Task | Notes |
 |---|---|---|---|
 | C10 | C | Either guard the free-job queue pop (refuse/skip the job when the queue is empty) or raise the scheduler again (16,384 → 65,536 jobs, with the dependency/queue/scratch arrays from `recipes/v16/SCHEDULER.md`). Guard first: it turns a crash into a slowdown. | Crash site: V16 `0x68B20C` (pop) called from `0x68AE1E`; object jobs dispatched from `0x46A5FF`. |
+- 2026-11-08 06:24: with the scheduler guard, **8,819 live objects** (8,750 spawned, 0 refused). Then one object
+  update asked for 73,497 jobs (scheduler holds 16,384, per-call scratch 16,384) and crashed at 0x68B21F.
+  Practical V16 + guard ceiling: **~8,000-8,500 moving objects**. Guard no longer waits on impossible requests.
+- Rendering past ~4,096 visible objects: flicker, and the player's weapon/HUD drops out (V16 visible render
+  list and cached render states are 4,096). Objects still exist; they are skipped for that frame.
+- **Engine player pool is 16** (`players` data array, unchanged by V16). Noble's lobby accepts up to 128,
+  but a match can only create 16 players.
+
+## Phase 1c: rendering and players
+
+| # | Owner | Task | Notes |
+|---|---|---|---|
+| C11 | C | Raise the visible render list / mesh records / cached render states again (4,096 -> 16,384), same method as V16 (`recipes/v16/GUIDE.md` "Visible list and mesh pool", "Render states and packet handles"). | Fixes flicker and the missing weapon/HUD with thousands of objects on screen. |
+| C12 | C | Research the 16-player limit: `players` data array (capacity 16, record 0x490), every per-player static array, network membership/session limits, HUD/scoreboard. Decide with Tyler if 32/64-player matches are in scope. | Big. Lobby patch alone cannot do it. |
+| T2 | Tyler | F10 in a Forge match: 128 Spartan bodies in front of you. Check they all draw without flicker. | Rendering half of the 128-player question. |
+
+
+
+## Phase 3b: AI actors past 96 (2026-11-08, C7 working)
+
+**Result: 256 / 256 actors held for ~4 minutes in Firefight (Unearthed), AI fighting and dying and being
+re-placed with F7, no crash, flat memory (~6.5 GB private), clean exit.** Run: `noble-dev.exe -ai-actors 256`.
+
+What it took (all in Noble's own engine copy; the player's haloreach.dll is untouched):
+1. **AI game-state bank.** The AI pools are carved from game-state bank 1 (stock 0x220000, ~5 KB spare). Raising
+   actors overran into bank 2 (sound) and broke the next pool's header (main-menu crash at 0x134D5 / 0x13850).
+   `make_v16_particles.py` now builds both profiles (`--profile v16|v16p`) with bank 1 +6 MB (`--ai-bank-extra`,
+   operand at RVA 0x16155); checkpoint and total sizes grow with it. `--ai-bank-extra 0` reproduces GreenKnight's
+   exact V16 / V16+particles hashes. PoolResize reads the bank size from the loaded engine and never grows the
+   pools past the added room.
+2. **AI update scheduler (RVA 0x70ABBC).** Lists every live actor in a 96-entry, 12-byte stack array, sorts it,
+   sets each actor's update level. No bounds check: actor 97 tripped the stack cookie (fail-fast 0xC0000409 at
+   0x788A94, invisible to our crash handler). Frame grown 0x568 -> 0x30E8 (1,024 entries); five operands patched
+   (lea rbp, sub rsp, cookie store/load, epilogue lea). Hook `ai_update_stack` commits the stack pages first.
+3. **Diagnostics kept:** `-pool-trace` (every data_array_new with address), `-ai-pools a,b` (resize only these),
+   `gs_failure_report` hook (Extended): logs "STACK OVERRUN in haloreach+0x..." with the call stack before the
+   engine kills the process. Any further 96-sized stack table shows up there.
+
+| # | Owner | Task | Notes |
+|---|---|---|---|
+| C7a | C | Push to 512 and 1,024 actors. | Memory and frame already sized for 1,024. |
+| C7b | C | F7 horde mode: order placed squads out of their vehicles (dropship squads otherwise stay seated), or spawn infantry around the player. | For real fight testing. |
+| C7c | C | Measure frame time at 256+ actors (main game thread is the limit). | |
+| C7d | C | Make the actor count a setting instead of a dev flag once 512/1,024 are proven; include it in the network profile id. | Clients and host must match. |
