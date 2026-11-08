@@ -11,6 +11,23 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-11-08, 04:15 ET) - Auto-Updater Reliability & Antivirus False-Positive Mitigation
+
+### Auto-Update & Antivirus Fixes Overview
+- **Root Causes of Auto-Update Failure:**
+  1. **GitHub Gateway Timeouts on `browser_download_url`:** Requests to `https://github.com/.../releases/download/...` intermittently receive HTTP 504 Gateway Time-out from GitHub front-ends. WinHTTP was querying that URL instead of the asset API endpoint (`https://api.github.com/repos/.../releases/assets/:id` with `Accept: application/octet-stream`), which redirects directly (302) to Microsoft Azure Blob storage (`release-assets.githubusercontent.com`) where the zip actually lives and downloads reliably.
+  2. **WinHTTP Cross-Domain Redirect Handling:** WinHTTP does not follow 302 redirects across different domains by default unless `WINHTTP_OPTION_REDIRECT_POLICY_ALWAYS` is set and manual location query fallback is in place.
+  3. **PowerShell Script Dropping:** The update helper wrote `apply_update.ps1` to `%TEMP%` and invoked `powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden`. Windows Defender AMSI heuristics flag hidden PowerShell processes spawned from unsigned game binaries that execute bypass scripts from `%TEMP%`, triggering false positive alerts (e.g. `Trojan:Win32/Bearfoos.A!ml` and AMSI alerts) or blocking the update process entirely.
+- **Fixes Applied (`src/common/Updater.cpp`):**
+  - **Asset URL Resolution:** Switched to preferring the release asset's API endpoint (`api.github.com/repos/.../releases/assets/:id` with `Accept: application/octet-stream`), which bypasses github.com timeouts and redirects straight to Azure Blob storage.
+  - **WinHTTP Automatic & Manual Redirect Handling:** Enabled `WINHTTP_OPTION_REDIRECT_POLICY_ALWAYS` and extended timeout thresholds (30s send, 300s receive). Added manual `WINHTTP_QUERY_LOCATION` redirect traversal to seamlessly follow cross-host redirects from GitHub to Azure.
+  - **Replaced PowerShell Helper with Native CMD Batch:** Completely replaced `apply_update.ps1` and hidden `powershell.exe -ExecutionPolicy Bypass` with a clean `apply_update.cmd` script using standard Windows utilities (`tasklist`, `tar.exe`, `robocopy`). This completely eliminates PowerShell AMSI inspection and script execution warnings from Defender during updates.
+- **Antivirus / Windows Defender False Positive Hardening (`src/res/noble.rc`):**
+  - Added full `VS_VERSION_INFO` PE resource block to `noble.rc` with complete company name, product name, copyright, version strings (`0.19.20.0`), and standard metadata. Anonymous PE files lacking VersionInfo are heavily penalized by Defender's machine-learning (`!ml`) models.
+  - Microsoft Defender custom scan of the newly compiled binary verified clean with zero detections.
+
+--
+
 ## 0. Pick up here (2026-11-08, 03:30 ET) - Project Noble v0.19.20 Release Build & Pre-Game Lobby Listing Fixes
 
 ### Release Overview

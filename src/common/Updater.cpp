@@ -48,14 +48,18 @@ void CloseHttp(HINTERNET& session, HINTERNET& connect, HINTERNET& request) {
 }
 
 bool OpenHttp(const std::wstring& host, const std::wstring& path, HINTERNET& session, HINTERNET& connect,
-              HINTERNET& request, std::string& error) {
+              HINTERNET& request, std::string& error, const wchar_t* acceptHeader = nullptr) {
     session = WinHttpOpen(kUserAgent, WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME,
                           WINHTTP_NO_PROXY_BYPASS, 0);
     if (!session) {
         error = "WinHttpOpen failed";
         return false;
     }
-    WinHttpSetTimeouts(session, 5000, 5000, 15000, 60000);
+    // Allow automatic redirects across schemes and hosts
+    DWORD redirectPolicy = WINHTTP_OPTION_REDIRECT_POLICY_ALWAYS;
+    WinHttpSetOption(session, WINHTTP_OPTION_REDIRECT_POLICY, &redirectPolicy, sizeof(redirectPolicy));
+
+    WinHttpSetTimeouts(session, 10000, 10000, 30000, 300000);
     connect = WinHttpConnect(session, host.c_str(), INTERNET_DEFAULT_HTTPS_PORT, 0);
     if (!connect) {
         error = "WinHttpConnect failed";
@@ -69,7 +73,12 @@ bool OpenHttp(const std::wstring& host, const std::wstring& path, HINTERNET& ses
         CloseHttp(session, connect, request);
         return false;
     }
-    WinHttpAddRequestHeaders(request, L"Accept: application/vnd.github+json\r\nUser-Agent: ProjectNoble\r\n",
+
+    WinHttpSetOption(request, WINHTTP_OPTION_REDIRECT_POLICY, &redirectPolicy, sizeof(redirectPolicy));
+
+    const wchar_t* defaultHeaders = L"Accept: application/vnd.github+json\r\nUser-Agent: ProjectNoble\r\n";
+    const wchar_t* headersToUse = acceptHeader ? acceptHeader : defaultHeaders;
+    WinHttpAddRequestHeaders(request, headersToUse,
                              static_cast<DWORD>(-1), WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
     if (!WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) ||
         !WinHttpReceiveResponse(request, nullptr)) {
@@ -173,9 +182,28 @@ std::string SafeFilePart(const std::string& name) {
 bool DownloadToFile(const std::wstring& host, const std::wstring& path, const std::filesystem::path& file,
                     uint64_t expectedSize, const std::function<void(uint64_t, uint64_t)>& progress, std::string& error) {
     HINTERNET session = nullptr, connect = nullptr, request = nullptr;
-    if (!OpenHttp(host, path, session, connect, request, error)) return false;
+    const wchar_t* octetHeader = L"Accept: application/octet-stream\r\nUser-Agent: ProjectNoble\r\n";
+    if (!OpenHttp(host, path, session, connect, request, error, octetHeader)) return false;
 
     DWORD status = ResponseStatus(request);
+    // If we received a redirect (e.g. 302 Found) and WinHTTP didn't auto-follow across domain/host, follow manually
+    if (status == 301 || status == 302 || status == 303 || status == 307 || status == 308) {
+        DWORD locLen = 0;
+        WinHttpQueryHeaders(request, WINHTTP_QUERY_LOCATION, WINHTTP_HEADER_NAME_BY_INDEX, nullptr, &locLen, WINHTTP_NO_HEADER_INDEX);
+        if (locLen > 0) {
+            std::wstring loc(locLen / sizeof(wchar_t), L'\0');
+            if (WinHttpQueryHeaders(request, WINHTTP_QUERY_LOCATION, WINHTTP_HEADER_NAME_BY_INDEX, loc.data(), &locLen, WINHTTP_NO_HEADER_INDEX)) {
+                while (!loc.empty() && loc.back() == L'\0') loc.pop_back();
+                std::wstring nextHost, nextPath;
+                if (SplitHttpsUrl(Narrow(loc), nextHost, nextPath)) {
+                    CloseHttp(session, connect, request);
+                    if (!OpenHttp(nextHost, nextPath, session, connect, request, error, octetHeader)) return false;
+                    status = ResponseStatus(request);
+                }
+            }
+        }
+    }
+
     if (status != 200) {
         error = "GitHub returned HTTP " + std::to_string(status);
         CloseHttp(session, connect, request);
@@ -343,7 +371,10 @@ void Updater::CheckThread() {
             if (name.size() < 4 || name.rfind(".zip") != name.size() - 4) continue;
             if (name.find("Project-Noble") == std::string::npos) continue;
             assetName = name;
-            assetUrl = asset.value("browser_download_url", "");
+            // Prefer the API asset URL with application/octet-stream as it redirects directly to
+            // Azure blob storage, avoiding github.com 504 gateway timeouts on browser_download_url.
+            const std::string apiUrl = asset.value("url", "");
+            assetUrl = !apiUrl.empty() ? apiUrl : asset.value("browser_download_url", "");
             assetSize = asset.value("size", 0ull);
             break;
         }
@@ -455,7 +486,7 @@ bool Updater::ApplyAndRestart() {
 
     const std::filesystem::path scriptDir = TempDir() / "ProjectNobleUpdate";
     std::filesystem::create_directories(scriptDir, ec);
-    const std::filesystem::path script = scriptDir / "apply_update.ps1";
+    const std::filesystem::path script = scriptDir / "apply_update.cmd";
     {
         std::ofstream out(script, std::ios::binary | std::ios::trunc);
         if (!out) {
@@ -465,51 +496,48 @@ bool Updater::ApplyAndRestart() {
             m_status.error = "cannot write the update helper script";
             return false;
         }
-        out << R"PS(
-param([int]$TargetPid, [string]$ZipPath, [string]$InstallDir, [string]$ExeName)
-$ErrorActionPreference = 'Continue'
-$logDir = Join-Path $env:TEMP 'ProjectNobleUpdate'
-New-Item -ItemType Directory -Force -Path $logDir | Out-Null
-$log = Join-Path $logDir 'apply_update.log'
-function Log($m) { "$(Get-Date -Format o) $m" | Out-File -LiteralPath $log -Append -Encoding utf8 }
-Log "waiting for process $TargetPid"
-$deadline = (Get-Date).AddSeconds(60)
-while ((Get-Process -Id $TargetPid -ErrorAction SilentlyContinue) -and ((Get-Date) -lt $deadline)) {
-    Start-Sleep -Milliseconds 200
-}
-$stage = Join-Path $logDir ('stage-' + [guid]::NewGuid().ToString('N'))
-New-Item -ItemType Directory -Force -Path $stage | Out-Null
-$src = $stage
-try {
-    Expand-Archive -LiteralPath $ZipPath -DestinationPath $stage -Force
-    $root = Get-ChildItem -LiteralPath $stage -Directory | Select-Object -First 1
-    if ($root) { $src = $root.FullName }
-    Log "copying $src to $InstallDir"
-    & robocopy $src $InstallDir /E /R:3 /W:1 /XD userdata autosave cache /XF settings.json appearance.dat appearance.json career.dat career.json preferences.dat /NFL /NDL /NJH /NJS /NP | Out-Null
-    Log "robocopy exit $LASTEXITCODE"
-} catch {
-    Log "extract/copy failed: $_"
-}
-try {
-    Start-Process -FilePath (Join-Path $InstallDir $ExeName) -WorkingDirectory $InstallDir | Out-Null
-    Log "started $ExeName"
-} catch {
-    Log "start failed: $_"
-}
-Start-Sleep -Seconds 2
-Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue
-Remove-Item -LiteralPath $ZipPath -Force -ErrorAction SilentlyContinue
-Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue
-)PS";
+        out << "@echo off\r\n"
+            << "setlocal EnableDelayedExpansion\r\n"
+            << "set \"TARGET_PID=" << GetCurrentProcessId() << "\"\r\n"
+            << "set \"ZIP_PATH=" << zip.string() << "\"\r\n"
+            << "set \"INSTALL_DIR=" << installDir.string() << "\"\r\n"
+            << "set \"EXE_NAME=" << exeName << "\"\r\n"
+            << "set \"LOG_DIR=%TEMP%\\ProjectNobleUpdate\"\r\n"
+            << "if not exist \"%LOG_DIR%\" mkdir \"%LOG_DIR%\"\r\n"
+            << "set \"LOG=%LOG_DIR%\\apply_update.log\"\r\n"
+            << "echo [%DATE% %TIME%] waiting for process %TARGET_PID% >> \"%LOG%\"\r\n"
+            << ":wait_loop\r\n"
+            << "tasklist /FI \"PID eq %TARGET_PID%\" 2>nul | findstr /I \"%TARGET_PID%\" >nul 2>&1\r\n"
+            << "if %ERRORLEVEL% equ 0 (\r\n"
+            << "    timeout /T 1 /NOBREAK >nul 2>&1\r\n"
+            << "    goto :wait_loop\r\n"
+            << ")\r\n"
+            << "timeout /T 1 /NOBREAK >nul 2>&1\r\n"
+            << "set \"STAGE=%LOG_DIR%\\stage_%RANDOM%_%RANDOM%\"\r\n"
+            << "if exist \"%STAGE%\" rd /S /Q \"%STAGE%\" >nul 2>&1\r\n"
+            << "mkdir \"%STAGE%\"\r\n"
+            << "echo [%DATE% %TIME%] extracting %ZIP_PATH% to %STAGE% >> \"%LOG%\"\r\n"
+            << "tar.exe -xf \"%ZIP_PATH%\" -C \"%STAGE%\" >> \"%LOG%\" 2>&1\r\n"
+            << "set \"SRC=%STAGE%\"\r\n"
+            << "if exist \"%STAGE%\\Project-Noble\" set \"SRC=%STAGE%\\Project-Noble\"\r\n"
+            << "echo [%DATE% %TIME%] copying %SRC% to %INSTALL_DIR% >> \"%LOG%\"\r\n"
+            << "robocopy \"%SRC%\" \"%INSTALL_DIR%\" /E /R:3 /W:1 /XD userdata autosave cache /XF settings.json appearance.dat appearance.json career.dat career.json preferences.dat /NFL /NDL /NJH /NJS /NP >nul 2>&1\r\n"
+            << "echo [%DATE% %TIME%] robocopy exit %ERRORLEVEL% >> \"%LOG%\"\r\n"
+            << "timeout /T 1 /NOBREAK >nul 2>&1\r\n"
+            << "cd /d \"%INSTALL_DIR%\"\r\n"
+            << "start \"\" \"%EXE_NAME%\"\r\n"
+            << "echo [%DATE% %TIME%] started %EXE_NAME% >> \"%LOG%\"\r\n"
+            << "timeout /T 2 /NOBREAK >nul 2>&1\r\n"
+            << "if exist \"%STAGE%\" rd /S /Q \"%STAGE%\" >nul 2>&1\r\n"
+            << "if exist \"%ZIP_PATH%\" del /F /Q \"%ZIP_PATH%\" >nul 2>&1\r\n"
+            << "del /F /Q \"%~f0\" >nul 2>&1\r\n"
+            << "exit /b 0\r\n";
         out.close();
     }
 
-    std::wstring command = L"powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"";
+    std::wstring command = L"cmd.exe /c \"";
     command += script.wstring();
-    command += L"\" -TargetPid " + std::to_wstring(GetCurrentProcessId());
-    command += L" -ZipPath \"" + zip.wstring() + L"\"";
-    command += L" -InstallDir \"" + installDir.wstring() + L"\"";
-    command += L" -ExeName \"" + Widen(exeName) + L"\"";
+    command += L"\"";
     std::vector<wchar_t> mutableCommand(command.begin(), command.end());
     mutableCommand.push_back(L'\0');
 
