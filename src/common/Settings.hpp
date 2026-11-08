@@ -33,6 +33,7 @@ struct SettingsData {
     bool verticalSync = false;     // Noble default: off (Tyler)
     int fpsLimit = 0;              // 0 = uncapped
     bool showFps = false;
+    float uiScale = 1.0f;          // 0.75..1.50: the player's UI size, multiplied on top of the screen-height scale (SETTINGS > VIDEO)
     bool throttleUnfocused = true;   // drop to 30 FPS when Noble is not the active window
     float brightness = 1.0f;    // 0.7..1.4, applied as a gamma exponent by the post-process (1.0 = untouched)
     bool fxaa = false;          // post-process anti-aliasing in Noble's own pass (Noble's device can do this)
@@ -120,6 +121,8 @@ public:
 
     SettingsData Snapshot() const;
     void Update(const SettingsData& data);   // replace and save
+    // The saved UI size (SettingsData::uiScale), cheap enough to read every frame: no lock, no copy of the settings.
+    static float UiScale();
 
     std::filesystem::path FilePath() const;
     // Key bindings and preferences to a file and back, for moving them to another PC or sharing them. Account details, the

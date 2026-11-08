@@ -1,5 +1,6 @@
 #include "NobleUi.hpp"
 #include "NobleStyle.hpp"
+#include "common/Settings.hpp"
 
 #include <algorithm>
 #include <cfloat>
@@ -19,7 +20,8 @@ float Scale() {
     const float s = ImGui::GetIO().DisplaySize.y / 900.0f;
     // No low ceiling: a 4K back buffer needs 2.4x. The old 2.2 cap (2.0 in FrontEndMenu) left the menu
     // undersized and not reaching the screen edges once a 4K desktop rendered the menu at 3840x2160.
-    return std::clamp(s, 0.85f, 4.0f);
+    // The player's UI SCALE setting (75 - 150 %) goes on top of the screen-height scale.
+    return std::clamp(s, 0.85f, 4.0f) * Settings::UiScale();
 }
 
 float TextWidth(ImFont* font, float px, const char* text) {

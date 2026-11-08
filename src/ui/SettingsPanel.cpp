@@ -933,6 +933,10 @@ void SettingsPanel::RenderGraphics() {
             When::Apply, "Off", m_edit.showFps != m_saved.showFps)) {
         ToggleValue(m_edit.showFps);
     }
+    if (Row("UI SCALE", "Size of Noble's menus, text and the in-match pause menu, on top of the automatic scaling for your screen's resolution. 100 % is the normal size; turn it down if menus feel crowded, up if text is hard to read. Takes effect when you apply, no restart.",
+            When::Apply, "100 %", std::fabs(m_edit.uiScale - m_saved.uiScale) > 1e-4f)) {
+        SliderValue(m_edit.uiScale, 0.75f, 1.50f, 0.05f, 1.0f, Percent(m_edit.uiScale).c_str());
+    }
     Section("POST-PROCESSING");
     // These two are real: Noble owns a full-screen pass over the frame the engine drew, so it can brighten it and
     // anti-alias it. Everything below is the engine's own and cannot be changed from here.
@@ -1709,7 +1713,7 @@ int SettingsPanel::CountDiff(const SettingsData& a, const SettingsData& b, Cat c
     switch (c) {
     case Cat::Graphics:
         return (a.width != b.width || a.height != b.height) + (a.borderless != b.borderless || a.exclusiveFullscreen != b.exclusiveFullscreen) + (a.verticalSync != b.verticalSync) +
-               (a.fpsLimit != b.fpsLimit) + (a.showFps != b.showFps);
+               (a.fpsLimit != b.fpsLimit) + (a.showFps != b.showFps) + f(a.uiScale, b.uiScale);
     case Cat::Audio:
         return f(a.volumeGame, b.volumeGame) + f(a.volumeMusic, b.volumeMusic) + f(a.volumeOther, b.volumeOther) +
                (a.masterMute != b.masterMute) + (a.muteInBackground != b.muteInBackground) +
@@ -1770,7 +1774,7 @@ SettingsData SettingsPanel::WithDefaults(SettingsData e, Cat c) {
     switch (c) {
     case Cat::Graphics:
         e.width = d.width; e.height = d.height; e.borderless = d.borderless; e.exclusiveFullscreen = d.exclusiveFullscreen; e.verticalSync = d.verticalSync;
-        e.fpsLimit = d.fpsLimit; e.showFps = d.showFps;
+        e.fpsLimit = d.fpsLimit; e.showFps = d.showFps; e.uiScale = d.uiScale;
         break;
     case Cat::Audio:
         e.volumeGame = d.volumeGame; e.volumeMusic = d.volumeMusic; e.volumeOther = d.volumeOther;

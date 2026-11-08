@@ -536,7 +536,10 @@ void PauseMenu::DrawMenu(HWND hwnd) {
 
     // ImGui works in a logical space (1280x720 here even on a 1920x1080 buffer), so scale from 720 to keep the
     // panel the size the reference screens suggest (about 84% of the width).
-    const float s = std::clamp(io.DisplaySize.y / 720.0f, 0.8f, 2.0f);
+    // No 2.0 cap: a 2160p back buffer needs 3.0, and the cap left the panel at two-thirds size on 4K. Also keep the
+    // 1080-wide panel on screen when the window is narrower than 3:2.
+    // The player's UI SCALE setting applies here too, as long as the panel still fits on screen.
+    const float s = std::clamp(std::min(io.DisplaySize.y / 720.0f * Settings::UiScale(), io.DisplaySize.x * 0.96f / 1080.0f), 0.8f, 4.0f);
     const ImVec2 size(1080.0f * s, 560.0f * s);
     ImGui::SetNextWindowSize(size, ImGuiCond_Always);
     ImGui::SetNextWindowPos(ImVec2((io.DisplaySize.x - size.x) * 0.5f, (io.DisplaySize.y - size.y) * 0.5f),
@@ -605,6 +608,8 @@ void PauseMenu::DrawMenu(HWND hwnd) {
 
     const float rowH = 46.0f * s;
     int activated = -1;
+    // Centre each label in its row (ImGui's default puts it at the top of the tall row).
+    ImGui::PushStyleVar(ImGuiStyleVar_SelectableTextAlign, ImVec2(0.0f, 0.5f));
     for (int i = 0; i < entryCount; ++i) {
         ImGui::PushID(i);
         const bool focused = i == s_focus;
@@ -629,6 +634,7 @@ void PauseMenu::DrawMenu(HWND hwnd) {
                                             focused ? IM_COL32(140, 200, 255, 200) : IM_COL32(90, 105, 120, 120), 1.0f);
         ImGui::PopID();
     }
+    ImGui::PopStyleVar();
     if (interactive && (ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false))) {
         if (entries[s_focus].enabled) activated = s_focus;
     }
@@ -908,7 +914,7 @@ static void DrawScoreboardPanel() {
   static std::atomic<bool> s_reportSending{false};
   ImGuiIO &io = ImGui::GetIO();
   const float W = io.DisplaySize.x, H = io.DisplaySize.y;
-  const float s = std::clamp(H / 1080.0f, 0.7f, 2.0f);
+  const float s = std::clamp(H / 1080.0f, 0.7f, 2.0f) * Settings::UiScale();
 
   std::vector<PauseMenu::ScoreboardEntry> rows;
   std::string mapName, modeName;
@@ -1268,7 +1274,7 @@ static bool DrawConnectionLostPanel() {
   using namespace NobleUi;
   ImGuiIO &io = ImGui::GetIO();
   const float W = io.DisplaySize.x, H = io.DisplaySize.y;
-  const float s = std::clamp(H / 1080.0f, 0.7f, 2.0f);
+  const float s = std::clamp(H / 1080.0f, 0.7f, 2.0f) * Settings::UiScale();
   ImDrawList *dl = ImGui::GetBackgroundDrawList();
   dl->AddRectFilled(ImVec2(0, 0), ImVec2(W, H), IM_COL32(4, 6, 10, 210));
   const float panelW = std::min(W * 0.5f, 720.0f * s), panelH = 260.0f * s;
@@ -1309,7 +1315,7 @@ void PauseMenu::DrawGameOver(HWND hwnd) {
   using namespace NobleUi;
   ImGuiIO &io = ImGui::GetIO();
   const float W = io.DisplaySize.x, H = io.DisplaySize.y;
-  const float s = std::clamp(H / 1080.0f, 0.7f, 2.0f);
+  const float s = std::clamp(H / 1080.0f, 0.7f, 2.0f) * Settings::UiScale();
   const Career::Award a = Career::LastAward();
   const auto &ranks = Career::Ranks();
 
@@ -2190,6 +2196,10 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading,
     }
 
     UiPad::Feed(io);
+    // Plain ImGui text (pause list, challenges, buttons, settings) uses the fonts' fixed 15-18 px. The front-end
+    // menu scales it with the back buffer (FrontEndMenu sets this before its NewFrame); the match frame never did,
+    // so on a 4K back buffer every pause-menu label drew at about half size inside full-size rows.
+    io.FontGlobalScale = NobleUi::Scale();
     ImGui_ImplDX11_NewFrame();
     ImGui::NewFrame();
     if (SocialOverlay::IsTyping()) io.ClearInputKeys();   // the line takes the keyboard, not the panels below it

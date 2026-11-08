@@ -9,12 +9,16 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <atomic>
+#include <cmath>
 #include <fstream>
 #include <iterator>
 
 namespace noble {
 
 namespace {
+
+std::atomic<float> g_uiScale{ 1.0f };   // copy of SettingsData::uiScale for the UI's per-frame reads
 
 std::filesystem::path ExeDir() {
     wchar_t path[MAX_PATH] = {};
@@ -37,6 +41,7 @@ void Clamp(SettingsData& d) {
     d.width = std::clamp(d.width, 640, 7680);
     d.height = std::clamp(d.height, 360, 4320);
     d.fieldOfView = std::clamp(d.fieldOfView, 70.0f, 120.0f);  // slider range (SETTINGS > VIDEO)
+    d.uiScale = std::isfinite(d.uiScale) ? std::clamp(d.uiScale, 0.75f, 1.50f) : 1.0f;
     d.firstPersonFovMod = std::clamp(d.firstPersonFovMod, -1.20f, 1.20f);
     d.vehicleFirstPersonFovMod = std::clamp(d.vehicleFirstPersonFovMod, -1.20f, 1.20f);
     d.vehicleFirstPersonOffsetX = std::clamp(d.vehicleFirstPersonOffsetX, -1.00f, 1.00f);
@@ -142,6 +147,7 @@ void Settings::Load() {
             Read(j, "verticalSync", d.verticalSync);
             Read(j, "fpsLimit", d.fpsLimit);
             Read(j, "showFps", d.showFps);
+            Read(j, "uiScale", d.uiScale);
             Read(j, "throttleUnfocused", d.throttleUnfocused);
             Read(j, "brightness", d.brightness);
             Read(j, "fxaa", d.fxaa);
@@ -282,6 +288,7 @@ void Settings::Load() {
         m_data = d;
         m_loaded = true;
     }
+    g_uiScale.store(d.uiScale);
     if (!existed) {
         Save();
     }
@@ -307,6 +314,7 @@ bool Settings::Save() {
         j["verticalSync"] = d.verticalSync;
         j["fpsLimit"] = d.fpsLimit;
         j["showFps"] = d.showFps;
+        j["uiScale"] = d.uiScale;
         j["throttleUnfocused"] = d.throttleUnfocused;
         j["brightness"] = d.brightness;
         j["fxaa"] = d.fxaa;
@@ -447,8 +455,11 @@ void Settings::Update(const SettingsData& data) {
         std::lock_guard<std::recursive_mutex> lock(m_mutex);
         m_data = data;
         Clamp(m_data);
+        g_uiScale.store(m_data.uiScale);
     }
     Save();
 }
+
+float Settings::UiScale() { return g_uiScale.load(std::memory_order_relaxed); }
 
 } // namespace noble
