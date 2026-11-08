@@ -15,6 +15,7 @@ namespace noble {
 // When a mod is chosen, VFS::SetActiveMod makes the engine read the mod's files before MCC's.
 struct ModMap {
     std::string scenario;     // e.g. "ff60_icecave" (the map file name, lower case)
+    std::string baseScenario; // e.g. "forge_halo" (parent directory from ScenarioFile, lower case)
     std::string title;
     std::string description;
     bool forgeMap = false;    // the map JSON lists the "ForgeMap" flag

@@ -724,6 +724,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     // Apply engine stability and appearance cap patches (unlocks all 200+ armor permutations in haloreach.dll)
     noble::EnginePatches::Apply(loader->GetModuleHandle());
 
+    // Apply Forge engine patches (AI biped/vehicle spawning in Forge, object limits)
+    noble::ForgePatches::Apply(loader->GetModuleHandle());
+
     // 9. Instantiate Blam! Engine & Data Access interfaces
     auto blamEngine = std::make_unique<noble::BlamEngine>();
     noble::EngineHostContext hostContext;

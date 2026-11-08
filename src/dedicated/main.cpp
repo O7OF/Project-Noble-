@@ -52,7 +52,7 @@ int main(int argc, char* argv[]) {
 
     // 4. Lobby & Forge patches disabled per launch configuration
     // noble::LobbyPatches::Apply(loader->GetModuleHandle());
-    // noble::ForgePatches::Apply(loader->GetModuleHandle());
+    noble::ForgePatches::Apply(loader->GetModuleHandle());
 
     // 5. Load configuration and start server
     noble::DedicatedConfig config = noble::DedicatedConfig::LoadFromFile(configFile);

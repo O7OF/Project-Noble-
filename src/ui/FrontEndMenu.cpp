@@ -2089,7 +2089,9 @@ std::string CarrierForScenario(const std::string& scenario, const std::string& f
     std::string key = scenario;
     for (char& c : key) c = static_cast<char>(::tolower(static_cast<unsigned char>(c)));
     const auto it = s_carriers.find(key);
-    return it != s_carriers.end() ? it->second : fallback;
+    if (it != s_carriers.end()) return it->second;
+    if (key.find("forge_halo") != std::string::npos) return "forge_halo";
+    return fallback;
 }
 
 std::vector<MapEntry> ModMaps(const ModEntry& mod, const std::vector<ModMap>& listed, const MenuMap* base,
@@ -2111,7 +2113,8 @@ std::vector<MapEntry> ModMaps(const ModEntry& mod, const std::vector<ModMap>& li
         MapEntry entry;
         entry.scenario = m.scenario;
         entry.name = m.title;
-        entry.launchScenario = CarrierForScenario(m.scenario, carrier);
+        const std::string defaultCarrier = !m.baseScenario.empty() ? m.baseScenario : carrier;
+        entry.launchScenario = CarrierForScenario(m.scenario, defaultCarrier);
         entry.mapOverride = mapFile;
         entry.imageThumbnail = m.imageThumbnail;
         entry.imageLarge = m.imageLarge.empty() ? m.imageThumbnail : m.imageLarge;
@@ -2129,7 +2132,9 @@ std::vector<MapEntry> ModMaps(const ModEntry& mod, const std::vector<ModMap>& li
             MapEntry entry;
             entry.scenario = file;
             entry.name = MapNames::Display(file);
-            entry.launchScenario = CarrierForScenario(file, carrier);
+            std::string fileCarrier = carrier;
+            if (file.find("forge_halo") != std::string::npos) fileCarrier = "forge_halo";
+            entry.launchScenario = CarrierForScenario(file, fileCarrier);
             entry.mapOverride = mapFile;
             entry.enabled = true;
             entry.mod = &mod;
@@ -5699,7 +5704,7 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         }
         const bool modded = source == 1;
         const ModMode modMode = ff ? ModMode::Firefight : ModMode::Multiplayer;
-        const std::string carrier = ff ? "ff60_icecave" : "70_boneyard";
+        const std::string carrier = ff ? "ff60_icecave" : (forge ? "forge_halo" : "70_boneyard");
         if (DrawSearchBox(ui, "##map_search", ImVec2(left + 34.0f * ui.s + 240.0f * ui.s, top + 70.0f * ui.s), 140.0f * ui.s, st.mapSearch, sizeof(st.mapSearch), "Search")) st.mapSearchRow = 0;
         if (ImGui::IsItemActive()) st.focusRow = 0;
         const bool searching = st.mapSearch[0] != 0;

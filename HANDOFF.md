@@ -11,6 +11,37 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-11-08, 05:00 ET) - Forge AI Battleground & Runtime haloreach.dll AI Spawning Hook
+
+### Problem Diagnosis & Reverse Engineering
+- **Mod Target:** "Forge World AI Battleground" (Steam Workshop AppID 976730, Item ID `2899383598`).
+  - Contains maps: `forge_halo_normal.map` and `forge_halo_legendary.map` (`ScenarioFile: levels/multi/forge_halo/forge_halo_normal`).
+  - Includes `modded haloreach.dll (REQUIRED)\haloreach.dll`.
+- **Modded DLL Reverse Engineering Findings:**
+  - Binary diff between base retail `haloreach.dll` (13,229,016 bytes) and the mod author's `haloreach.dll` revealed **exactly one 6-byte modification** in the entire 13 MB DLL:
+    - **File Offset:** `0x6920B5` (RVA `0x692CB5`).
+    - **Original Opcode:** `0F 84 8A 00 00 00` (`jz +0x8A`).
+    - **Modded Opcode:** `90 90 90 90 90 90` (6x NOP).
+  - **Assembly Logic at RVA `0x692C5C`:** The engine's Forge palette object creation handler checks entity flags (`F6 00 01`: `test byte ptr [rax], 1`). In vanilla Reach, AI bipeds (Spartans, Elites, Grunts, Brutes, Hunters, Marines, Drones) and custom vehicles fail this test, jumping straight to the function's exit epilogue (`RET`), permanently aborting the spawn. NOPing this jump bypasses the restriction and lets the engine spawn AI squads and bipeds right through the Forge menu!
+- **Why the Mod Failed in Project Noble:**
+  1. **Carrier Map Mismatch:** The mod's maps (`forge_halo_normal.map` and `forge_halo_legendary.map`) are Forge World variants. `FrontEndMenu.cpp` had hardcoded `carrier = "70_boneyard"` for multiplayer/forge custom maps. Launching `forge_halo_normal` attempted to load Forge World geometry and tags as Boneyard (index 204), causing an instant engine crash/freeze.
+  2. **Unpatched Stock DLL:** In MCC, users had to destructively overwrite their base `haloreach.dll` with the modded file. In Project Noble, we preserve stock MCC files, but `ForgePatches::Apply` was disabled, so the stock DLL rejected AI spawning.
+
+### Fixes Implemented
+1. **Dynamic Runtime In-Memory Patching (`ForgePatches.cpp` & `main.cpp`):**
+   - Implemented `ForgePatches::Apply(HMODULE hReachDll)` to hook `haloreach.dll` at runtime.
+   - Verifies static RVA `0x692CB5` for `0F 84 8A 00 00 00` and replaces with 6x NOPs (`90 90 90 90 90 90`) in protected memory.
+   - Includes fallback IDA-style pattern scanner (`F6 00 01 0F 84 8A 00 00 00 F3 0F 10`) to survive minor game updates.
+   - Detects if a modded DLL is already loaded and skips gracefully.
+   - Hooked in `src/main.cpp` and `src/dedicated/main.cpp`.
+2. **Automated Carrier Detection for Mod Maps (`ModCatalog.cpp`, `FrontEndMenu.cpp`, `data/map_carriers.json`):**
+   - `ModCatalog::ReadMap` now parses `baseScenario` from the parent directory of `ScenarioFile` (`levels/multi/forge_halo/...` -> `forge_halo`).
+   - `CarrierForScenario` automatically recognizes any scenario containing `"forge_halo"` and assigns `"forge_halo"`.
+   - `FrontEndMenu.cpp` in `Screen::Forge` now defaults carrier to `"forge_halo"`.
+   - Added `"forge_halo_normal": "forge_halo"` and `"forge_halo_legendary": "forge_halo"` to `data/map_carriers.json`.
+
+--
+
 ## 0. Pick up here (2026-11-08, 04:30 ET) - Project Noble v0.19.22 Release Build
 
 ### Release Overview

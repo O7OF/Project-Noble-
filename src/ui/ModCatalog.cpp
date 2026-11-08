@@ -75,11 +75,20 @@ std::vector<std::string> StringList(const json& j, const char* key) {
 bool ReadMap(const fs::path& file, ModMap& map) {
     json j;
     if (!ReadJson(file, j)) return false;
-    std::string scenario = j.value("ScenarioFile", std::string());
-    if (scenario.empty()) return false;
-    const size_t slash = scenario.find_last_of("/\\");
-    if (slash != std::string::npos) scenario = scenario.substr(slash + 1);
-    map.scenario = Lower(scenario);
+    std::string fullScenario = j.value("ScenarioFile", std::string());
+    if (fullScenario.empty()) return false;
+    std::string norm = fullScenario;
+    for (char& c : norm) if (c == '\\') c = '/';
+    const size_t slash = norm.find_last_of('/');
+    if (slash != std::string::npos) {
+        map.scenario = Lower(norm.substr(slash + 1));
+        std::string parent = norm.substr(0, slash);
+        const size_t parentSlash = parent.find_last_of('/');
+        if (parentSlash != std::string::npos) parent = parent.substr(parentSlash + 1);
+        map.baseScenario = Lower(parent);
+    } else {
+        map.scenario = Lower(norm);
+    }
     map.title = Text(j, "Title");
     map.description = Text(j, "Description");
     map.forgeMap = false;
