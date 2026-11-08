@@ -7026,12 +7026,8 @@ Release host over 127.0.0.1:11774. Lines below cover the client process up to th
 [2026-11-08 13:16:48.791] [info] MEMBER|0x41F976|playersB|R|2|0x4468-0x4468
 [2026-11-08 13:16:48.791] [info] MEMBER|0x420252|playersB|R|1|0x4470-0x4470
 
-## Run 4 (host) - 3232 MEMBER| lines
-
-Two-instance LAN Slayer on one PC (Sword Base), started with tools\lan-two-instance.ps1. Client join-request
-13:37:46, players 2/16, client quit 13:40:30, host exited 13:40:42. Tyler played the client: deaths,
-respawns and a kill or two during the session.
-
+## Run 4 (host) - Tyler playing the client, 13:37-13:40 ET (client quit first at 13:40:30, host 13:40:42)
+[2026-11-08 13:37:30.652] [warning] MemberTrace: tracing the player/peer slots of the 4 network sessions (slow; dev only). MEMBER| lines every 30 s
 [2026-11-08 13:38:00.654] [info] MEMBER|0xD73F|peersA|R|20|0x60-0x60
 [2026-11-08 13:38:00.654] [info] MEMBER|0xD88D|playersA|R|24|0x17D8-0x1888
 [2026-11-08 13:38:00.654] [info] MEMBER|0xD898|playersA|R|24|0x17B3-0x1863
@@ -10265,11 +10261,8 @@ respawns and a kill or two during the session.
 [2026-11-08 13:40:30.682] [info] MEMBER|0x44EADD|playersA|R|1|0x17D0-0x17D0
 [2026-11-08 13:40:30.682] [info] MEMBER|0x44FF4D|peersA|R|25574|0x17C-0x2D4
 
-## Run 4 (client) - 1969 MEMBER| lines
-
-Same session from the client process (second data folder). Lines end at the client's orderly shutdown
-(Network and host services shut down; exiting process cleanly).
-
+## Run 4 (client)
+[2026-11-08 13:37:42.701] [warning] MemberTrace: tracing the player/peer slots of the 4 network sessions (slow; dev only). MEMBER| lines every 30 s
 [2026-11-08 13:38:12.702] [info] MEMBER|0xD73F|peersA|R|4|0x60-0x60
 [2026-11-08 13:38:12.702] [info] MEMBER|0xD88D|playersA|R|6|0x17D8-0x1888
 [2026-11-08 13:38:12.702] [info] MEMBER|0xD898|playersA|R|6|0x17B3-0x1863

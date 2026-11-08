@@ -158,6 +158,52 @@
    ]
   },
   {
+   "rva": "0x14f4a4",
+   "regions": [
+    "playersA"
+   ],
+   "insn": "mov    rax,QWORD PTR [rcx+r8*1+0x1744]",
+   "kind": "index*record",
+   "chain": [
+    [
+     "0x14f49d",
+     "imul   rcx,rax,0xb0"
+    ]
+   ]
+  },
+  {
+   "rva": "0x14f4e2",
+   "regions": [
+    "playersA"
+   ],
+   "insn": "movsxd rcx,DWORD PTR [rcx+r8*1+0x174c]",
+   "kind": "other",
+   "chain": [
+    [
+     "0x14f4d2",
+     "mov    ecx,eax"
+    ],
+    [
+     "0x14f4c9",
+     "inc    eax"
+    ]
+   ]
+  },
+  {
+   "rva": "0x14f4f3",
+   "regions": [
+    "peersA"
+   ],
+   "insn": "mov    rcx,QWORD PTR [rdx+r8*1+0x180]",
+   "kind": "index*record",
+   "chain": [
+    [
+     "0x14f4ec",
+     "imul   rdx,rcx,0x158"
+    ]
+   ]
+  },
+  {
    "rva": "0x16ff04",
    "regions": [
     "playersA"
@@ -5925,6 +5971,15 @@
   ],
   "other@0x9d648": [
    "0x9d6af"
+  ],
+  "index*record@0x14f49d": [
+   "0x14f4a4"
+  ],
+  "other@0x14f4c9": [
+   "0x14f4e2"
+  ],
+  "index*record@0x14f4ec": [
+   "0x14f4f3"
   ],
   "index*record@0x16fefd": [
    "0x16ff04"
