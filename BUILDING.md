@@ -81,7 +81,7 @@ GitHub's repository file limit is 100 MB, so the map and pack travel in a
 release-asset zip:
 
 ```powershell
-.	ools\make-release-zip.ps1
+.\tools\make-release-zip.ps1
 # -> %USERPROFILE%\Desktop\Noble-Armory-Pack.zip (Noble.exe + data, incl. the map and pack)
 ```
 
