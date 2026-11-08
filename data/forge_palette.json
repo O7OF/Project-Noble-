@@ -1,25 +1,451 @@
-{
-  "tabs": [
-    {
-      "name": "NOBLE",
-      "items": [
-        {
-          "name": "PELICAN",
-          "tag": "o7of_tags\\vehicles\\pelican_o7\\pelican_mp",
-          "index": 4344,
-          "description": "Noble Pelican. Driver seat uses the wraith_d label.",
-          "max": 16,
-          "price": 0
-        },
-        {
-          "name": "PHANTOM",
-          "tag": "objects\\vehicles\\covenant\\phantom\\phantom_mp",
-          "index": 4832,
-          "description": "Covenant Phantom dropship.",
-          "max": 16,
-          "price": 0
-        }
-      ]
-    }
-  ]
+﻿{
+    "tabs":  [
+                 {
+                     "items":  [
+                                   {
+                                       "price":  0,
+                                       "description":  "Spartan AI equipped with Assault Rifle",
+                                       "name":  "Spartan, Assault Rifle",
+                                       "tag":  "objects/characters/spartan/spartan_ai",
+                                       "max":  16
+                                   },
+                                   {
+                                       "price":  0,
+                                       "description":  "Spartan AI equipped with DMR",
+                                       "name":  "Spartan, DMR",
+                                       "tag":  "objects/characters/spartan/spartan_ai",
+                                       "max":  16
+                                   },
+                                   {
+                                       "price":  0,
+                                       "description":  "Spartan AI equipped with Grenade Launcher",
+                                       "name":  "Spartan, Grenade Launcher",
+                                       "tag":  "objects/characters/spartan/spartan_ai",
+                                       "max":  16
+                                   },
+                                   {
+                                       "price":  0,
+                                       "description":  "Spartan AI equipped with Magnum",
+                                       "name":  "Spartan, Magnum",
+                                       "tag":  "objects/characters/spartan/spartan_ai",
+                                       "max":  16
+                                   },
+                                   {
+                                       "price":  0,
+                                       "description":  "Spartan AI equipped with Rocket Launcher",
+                                       "name":  "Spartan, Rocket Launcher",
+                                       "tag":  "objects/characters/spartan/spartan_ai",
+                                       "max":  16
+                                   },
+                                   {
+                                       "price":  0,
+                                       "description":  "Spartan AI equipped with Shotgun",
+                                       "name":  "Spartan, Shotgun",
+                                       "tag":  "objects/characters/spartan/spartan_ai",
+                                       "max":  16
+                                   },
+                                   {
+                                       "price":  0,
+                                       "description":  "Spartan AI equipped with Sniper Rifle",
+                                       "name":  "Spartan, Sniper Rifle",
+                                       "tag":  "objects/characters/spartan/spartan_ai",
+                                       "max":  16
+                                   },
+                                   {
+                                       "price":  0,
+                                       "description":  "Spartan AI equipped with Spartan Laser",
+                                       "name":  "Spartan, Spartan Laser",
+                                       "tag":  "objects/characters/spartan/spartan_ai",
+                                       "max":  16
+                                   },
+                                   {
+                                       "price":  0,
+                                       "description":  "Spartan AI equipped with Energy Sword",
+                                       "name":  "Spartan, Energy Sword",
+                                       "tag":  "objects/characters/spartan/spartan_ai",
+                                       "max":  16
+                                   },
+                                   {
+                                       "price":  0,
+                                       "description":  "Spartan AI equipped with Gravity Hammer",
+                                       "name":  "Spartan, Gravity Hammer",
+                                       "tag":  "objects/characters/spartan/spartan_ai",
+                                       "max":  16
+                                   },
+                                   {
+                                       "price":  0,
+                                       "description":  "Spartan AI equipped with Machine Gun Turret",
+                                       "name":  "Spartan, Machine Gun",
+                                       "tag":  "objects/characters/spartan/spartan_ai",
+                                       "max":  16
+                                   },
+                                   {
+                                       "price":  0,
+                                       "description":  "UNSC Army Trooper equipped with Assault Rifle",
+                                       "name":  "Trooper, Assault Rifle",
+                                       "tag":  "objects/characters/marine/marine_ai",
+                                       "max":  16
+                                   },
+                                   {
+                                       "price":  0,
+                                       "description":  "UNSC Army Trooper equipped with DMR",
+                                       "name":  "Trooper, DMR",
+                                       "tag":  "objects/characters/marine/marine_ai",
+                                       "max":  16
+                                   },
+                                   {
+                                       "price":  0,
+                                       "description":  "UNSC Army Trooper equipped with Shotgun",
+                                       "name":  "Trooper, Shotgun",
+                                       "tag":  "objects/characters/marine/marine_ai",
+                                       "max":  16
+                                   },
+                                   {
+                                       "price":  0,
+                                       "description":  "UNSC Army Trooper equipped with Sniper Rifle",
+                                       "name":  "Trooper, Sniper Rifle",
+                                       "tag":  "objects/characters/marine/marine_ai",
+                                       "max":  16
+                                   },
+                                   {
+                                       "price":  0,
+                                       "description":  "UNSC Army Trooper equipped with Rocket Launcher",
+                                       "name":  "Trooper, Rocket Launcher",
+                                       "tag":  "objects/characters/marine/marine_ai",
+                                       "max":  16
+                                   },
+                                   {
+                                       "price":  0,
+                                       "description":  "Female UNSC Trooper equipped with Assault Rifle",
+                                       "name":  "Trooper Fem, Assault Rifle",
+                                       "tag":  "objects/characters/marine/marine_ai",
+                                       "max":  16
+                                   },
+                                   {
+                                       "price":  0,
+                                       "description":  "Female UNSC Trooper equipped with DMR",
+                                       "name":  "Trooper Fem, DMR",
+                                       "tag":  "objects/characters/marine/marine_ai",
+                                       "max":  16
+                                   },
+                                   {
+                                       "price":  0,
+                                       "description":  "UNSC Trooper Sergeant equipped with Assault Rifle",
+                                       "name":  "Trooper SGT, Assault Rifle",
+                                       "tag":  "objects/characters/marine/marine_ai",
+                                       "max":  16
+                                   },
+                                   {
+                                       "price":  0,
+                                       "description":  "UNSC Trooper Sergeant equipped with Shotgun",
+                                       "name":  "Trooper SGT, Shotgun",
+                                       "tag":  "objects/characters/marine/marine_ai",
+                                       "max":  16
+                                   },
+                                   {
+                                       "price":  0,
+                                       "description":  "ODST Trooper equipped with Assault Rifle",
+                                       "name":  "ODST, Assault Rifle",
+                                       "tag":  "objects/characters/marine/odst_ai",
+                                       "max":  16
+                                   },
+                                   {
+                                       "price":  0,
+                                       "description":  "ODST Trooper equipped with DMR",
+                                       "name":  "ODST, DMR",
+                                       "tag":  "objects/characters/marine/odst_ai",
+                                       "max":  16
+                                   },
+                                   {
+                                       "price":  0,
+                                       "description":  "ODST Trooper equipped with Shotgun",
+                                       "name":  "ODST, Shotgun",
+                                       "tag":  "objects/characters/marine/odst_ai",
+                                       "max":  16
+                                   },
+                                   {
+                                       "price":  0,
+                                       "description":  "ODST Trooper equipped with Sniper Rifle",
+                                       "name":  "ODST, Sniper Rifle",
+                                       "tag":  "objects/characters/marine/odst_ai",
+                                       "max":  16
+                                   },
+                                   {
+                                       "price":  0,
+                                       "description":  "ODST Trooper equipped with Rocket Launcher",
+                                       "name":  "ODST, Rocket Launcher",
+                                       "tag":  "objects/characters/marine/odst_ai",
+                                       "max":  16
+                                   },
+                                   {
+                                       "price":  0,
+                                       "description":  "Jetpack Bullfrog ODST equipped with Assault Rifle",
+                                       "name":  "ODST Jetpack, Assault Rifle",
+                                       "tag":  "objects/characters/marine/odst_jetpack_ai",
+                                       "max":  16
+                                   },
+                                   {
+                                       "price":  0,
+                                       "description":  "Jetpack Bullfrog ODST equipped with DMR",
+                                       "name":  "ODST Jetpack, DMR",
+                                       "tag":  "objects/characters/marine/odst_jetpack_ai",
+                                       "max":  16
+                                   },
+                                   {
+                                       "price":  0,
+                                       "description":  "ONI Military Police Officer",
+                                       "name":  "ONI Officer",
+                                       "tag":  "objects/characters/marine/officer_ai",
+                                       "max":  16
+                                   }
+                               ],
+                     "name":  "UNSC INFANTRY"
+                 },
+                 {
+                     "items":  [
+                                   {
+                                       "price":  0,
+                                       "description":  "Covenant Grunt Minor equipped with Needler",
+                                       "name":  "Grunt Minor, Needler",
+                                       "tag":  "objects/characters/grunt/grunt_ai",
+                                       "max":  16
+                                   },
+                                   {
+                                       "price":  0,
+                                       "description":  "Covenant Grunt Minor equipped with Plasma Pistol",
+                                       "name":  "Grunt Minor, Plasma Pistol",
+                                       "tag":  "objects/characters/grunt/grunt_ai",
+                                       "max":  16
+                                   },
+                                   {
+                                       "price":  0,
+                                       "description":  "Covenant Grunt Major equipped with Needler",
+                                       "name":  "Grunt Major, Needler",
+                                       "tag":  "objects/characters/grunt/grunt_ai",
+                                       "max":  16
+                                   },
+                                   {
+                                       "price":  0,
+                                       "description":  "Covenant Grunt Major equipped with Plasma Pistol",
+                                       "name":  "Grunt Major, Plasma Pistol",
+                                       "tag":  "objects/characters/grunt/grunt_ai",
+                                       "max":  16
+                                   },
+                                   {
+                                       "price":  0,
+                                       "description":  "Covenant Grunt Ultra equipped with Plasma Rifle",
+                                       "name":  "Grunt Ultra, Plasma Rifle",
+                                       "tag":  "objects/characters/grunt/grunt_ai",
+                                       "max":  16
+                                   },
+                                   {
+                                       "price":  0,
+                                       "description":  "Covenant Grunt Heavy equipped with Fuel Rod Cannon",
+                                       "name":  "Grunt Heavy, Fuel Rod",
+                                       "tag":  "objects/characters/grunt/grunt_ai",
+                                       "max":  16
+                                   },
+                                   {
+                                       "price":  0,
+                                       "description":  "Special Operations Grunt",
+                                       "name":  "Grunt Specops, Fuel Rod",
+                                       "tag":  "objects/characters/grunt/grunt_ai",
+                                       "max":  16
+                                   },
+                                   {
+                                       "price":  0,
+                                       "description":  "Covenant Jackal Minor with energy shield and Plasma Pistol",
+                                       "name":  "Jackal Minor, Plasma Pistol",
+                                       "tag":  "objects/characters/jackal/jackal_ai",
+                                       "max":  16
+                                   },
+                                   {
+                                       "price":  0,
+                                       "description":  "Covenant Jackal Major with energy shield and Needler",
+                                       "name":  "Jackal Major, Needler",
+                                       "tag":  "objects/characters/jackal/jackal_ai",
+                                       "max":  16
+                                   },
+                                   {
+                                       "price":  0,
+                                       "description":  "Jackal Sniper equipped with Focus Rifle",
+                                       "name":  "Jackal Sniper, Focus Rifle",
+                                       "tag":  "objects/characters/jackal/jackal_sniper_ai",
+                                       "max":  16
+                                   },
+                                   {
+                                       "price":  0,
+                                       "description":  "Jackal Sniper equipped with Needle Rifle",
+                                       "name":  "Jackal Sniper, Needle Rifle",
+                                       "tag":  "objects/characters/jackal/jackal_sniper_ai",
+                                       "max":  16
+                                   },
+                                   {
+                                       "price":  0,
+                                       "description":  "Covenant Skirmisher Minor scout",
+                                       "name":  "Skirmisher Minor, Needler",
+                                       "tag":  "objects/characters/skirmisher/skirmisher_ai",
+                                       "max":  16
+                                   },
+                                   {
+                                       "price":  0,
+                                       "description":  "Skirmisher Commando with holo-decoy and agility",
+                                       "name":  "Skirmisher Commando, Needler",
+                                       "tag":  "objects/characters/skirmisher/skirmisher_ai",
+                                       "max":  16
+                                   },
+                                   {
+                                       "price":  0,
+                                       "description":  "Skirmisher Champion commander",
+                                       "name":  "Skirmisher Champion, Needle Rifle",
+                                       "tag":  "objects/characters/skirmisher/skirmisher_ai",
+                                       "max":  16
+                                   },
+                                   {
+                                       "price":  0,
+                                       "description":  "Covenant Elite Minor equipped with Plasma Rifle",
+                                       "name":  "Elite Minor, Plasma Rifle",
+                                       "tag":  "objects/characters/elite/elite_ai",
+                                       "max":  16
+                                   },
+                                   {
+                                       "price":  0,
+                                       "description":  "Covenant Elite Officer leading infantry squads",
+                                       "name":  "Elite Officer, Needle Rifle",
+                                       "tag":  "objects/characters/elite/elite_ai",
+                                       "max":  16
+                                   },
+                                   {
+                                       "price":  0,
+                                       "description":  "Heavy armored Elite Ultra with Concussion Rifle",
+                                       "name":  "Elite Ultra, Concussion Rifle",
+                                       "tag":  "objects/characters/elite/elite_ai",
+                                       "max":  16
+                                   },
+                                   {
+                                       "price":  0,
+                                       "description":  "Elite General commander with deadly Energy Sword",
+                                       "name":  "Elite General, Energy Sword",
+                                       "tag":  "objects/characters/elite/elite_ai",
+                                       "max":  16
+                                   },
+                                   {
+                                       "price":  0,
+                                       "description":  "Elite Ranger with Jetpack flight capability",
+                                       "name":  "Elite Jetpack, Focus Rifle",
+                                       "tag":  "objects/characters/elite/elite_ranger_ai",
+                                       "max":  16
+                                   },
+                                   {
+                                       "price":  0,
+                                       "description":  "Special Operations Elite with active camouflage",
+                                       "name":  "Elite Specops, Energy Sword",
+                                       "tag":  "objects/characters/elite/elite_specops_ai",
+                                       "max":  16
+                                   },
+                                   {
+                                       "price":  0,
+                                       "description":  "Fanatical Elite Zealot warrior",
+                                       "name":  "Elite Zealot, Energy Sword",
+                                       "tag":  "objects/characters/elite/elite_zealot_ai",
+                                       "max":  16
+                                   },
+                                   {
+                                       "price":  0,
+                                       "description":  "Highest ranking Covenant ground commander",
+                                       "name":  "Elite Field Marshal, Fuel Rod",
+                                       "tag":  "objects/characters/elite/elite_field_marshal_ai",
+                                       "max":  16
+                                   },
+                                   {
+                                       "price":  0,
+                                       "description":  "Jiralhanae Brute warrior equipped with Spiker",
+                                       "name":  "Brute Minor, Spike Rifle",
+                                       "tag":  "objects/characters/brute/brute_ai",
+                                       "max":  16
+                                   },
+                                   {
+                                       "price":  0,
+                                       "description":  "Brute Captain equipped with crushing Gravity Hammer",
+                                       "name":  "Brute Captain, Gravity Hammer",
+                                       "tag":  "objects/characters/brute/brute_ai",
+                                       "max":  16
+                                   },
+                                   {
+                                       "price":  0,
+                                       "description":  "Brute Chieftain leader with Gravity Hammer and Invulnerability",
+                                       "name":  "Brute Chieftain, Gravity Hammer",
+                                       "tag":  "objects/characters/brute/brute_chieftain_ai",
+                                       "max":  16
+                                   },
+                                   {
+                                       "price":  0,
+                                       "description":  "Yanme\u0027e Drone flying infantry equipped with Needler",
+                                       "name":  "Bugger Minor, Needler",
+                                       "tag":  "objects/characters/drone/drone_ai",
+                                       "max":  16
+                                   },
+                                   {
+                                       "price":  0,
+                                       "description":  "Lekgolo Hunter bonded pair heavy assault tank",
+                                       "name":  "Hunter",
+                                       "tag":  "objects/characters/hunter/hunter_ai",
+                                       "max":  16
+                                   }
+                               ],
+                     "name":  "COVENANT INFANTRY"
+                 },
+                 {
+                     "items":  [
+                                   {
+                                       "price":  0,
+                                       "description":  "Legendary custom pink armored Elite boss with boosted shields",
+                                       "name":  "Pinky, The Pink Elite",
+                                       "tag":  "objects/characters/elite/elite_pinky_ai",
+                                       "max":  8
+                                   },
+                                   {
+                                       "price":  0,
+                                       "description":  "Separatist allied Covenant Elite warriors",
+                                       "name":  "Schism Covenant",
+                                       "tag":  "objects/characters/elite/elite_schism_ai",
+                                       "max":  16
+                                   },
+                                   {
+                                       "price":  0,
+                                       "description":  "Rogue hostile UNSC detachment",
+                                       "name":  "Deviant UNSC",
+                                       "tag":  "objects/characters/marine/deviant_ai",
+                                       "max":  16
+                                   },
+                                   {
+                                       "price":  0,
+                                       "description":  "Elite Spartan operative in prototype armor",
+                                       "name":  "Spartan Ret",
+                                       "tag":  "objects/characters/spartan/spartan_ret_ai",
+                                       "max":  16
+                                   }
+                               ],
+                     "name":  "SPECIAL \u0026 BOSSES"
+                 },
+                 {
+                     "items":  [
+                                   {
+                                       "price":  0,
+                                       "description":  "Flyable Noble Pelican dropship with heavy chin gun and troop bay",
+                                       "name":  "PELICAN",
+                                       "tag":  "o7of_tags/vehicles/pelican_o7/pelican_mp",
+                                       "max":  16
+                                   },
+                                   {
+                                       "price":  0,
+                                       "description":  "Flyable Covenant Phantom dropship with dual heavy plasma turrets",
+                                       "name":  "PHANTOM",
+                                       "tag":  "objects/vehicles/covenant/phantom/phantom_mp",
+                                       "max":  16
+                                   }
+                               ],
+                     "name":  "VEHICLES"
+                 }
+             ]
 }

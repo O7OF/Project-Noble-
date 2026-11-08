@@ -2143,3 +2143,20 @@ session registry, matchmaker (8 playlists). DB goes to `server/data/` (git-ignor
 - Before overwriting a file, re-read the current version first, and re-check it a minute later (file sync has put stale copies
   back before).
 - Commits, PRs and docs carry only the authors' names (no "generated with" or co-author lines).
+
+## 9. Cross-Map Forge AI Spawning (Approach 1 - Shared Tag Cache)
+
+Implemented in v0.19.22 to allow spawning Campaign AI bipeds and vehicles (from Forge World AI Battleground mod) across **all** multiplayer maps:
+1. **Shared Tag Cache (`noble::SharedTagCache`)**:
+   - Auto-discovers `forge_halo_normal.map` (from Steam Workshop item 2899383598, user storage, or local mods).
+   - Maps the 844 MB donor map file into process virtual memory using Win32 `MapViewOfFile` (zero-copy, demand-paged).
+   - Indexes all 17,707 tag instances, group magics, and file offsets.
+   - Sets slot 2 in `haloreach.dll`'s pointer base table (`kPointerBases` RVA `0x4E39F20`).
+2. **Dynamic Tag Lookup Detour (`tag_get`)**:
+   - Intercepts `haloreach.dll` central tag resolver at static RVA `0x81BE8` (`48 89 5C 24 08 48 89 74 24 10`).
+   - If the active match map does not contain the requested tag datum index, resolves and returns the tag pointer directly from `SharedTagCache`'s mapped memory.
+3. **Forge AI Palette & Object Placement**:
+   - Updated `data/forge_palette.json` with 168 categorized AI variants (UNSC Infantry, Covenant Infantry, Special & Bosses, Vehicles).
+   - Wired `ForgeMenu::SetPlaceHandler` in `main.cpp` to `ForgePatches::PlaceObject`.
+   - Connected `ForgePatches::PlaceObject` to the engine's native Forge spawn call (`0x692C59`) alongside the 6-byte NOP patch at RVA `0x692CB5`.
+

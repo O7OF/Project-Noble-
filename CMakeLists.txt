@@ -153,6 +153,7 @@ set(SOURCES
     src/engine/ReachHost.cpp
     src/engine/ReachArmory.cpp
     src/engine/ElitePack.cpp
+    src/engine/SharedTagCache.cpp
     src/engine/CameraFov.cpp
     src/engine/CameraThirdPerson.cpp
     src/engine/FrameCapture.cpp
@@ -219,6 +220,7 @@ set(HEADERS
     src/engine/ReachHost.hpp
     src/engine/ReachArmory.hpp
     src/engine/ElitePack.hpp
+    src/engine/SharedTagCache.hpp
     src/engine/CameraFov.hpp
     src/engine/CameraThirdPerson.hpp
     src/engine/FrameCapture.hpp
@@ -346,6 +348,7 @@ set(DEDICATED_SOURCES
     src/hooks/HookManager.cpp
     src/hooks/LobbyPatches.cpp
     src/hooks/ForgePatches.cpp
+    src/engine/SharedTagCache.cpp
     src/vfs/VFS.cpp
     src/engine/EmbeddedBlocks.cpp
     src/network/UPnP.cpp
@@ -364,6 +367,7 @@ set(DEDICATED_HEADERS
     src/hooks/HookManager.hpp
     src/hooks/LobbyPatches.hpp
     src/hooks/ForgePatches.hpp
+    src/engine/SharedTagCache.hpp
     src/vfs/VFS.hpp
     src/engine/EmbeddedBlocks.hpp
     src/network/UPnP.hpp

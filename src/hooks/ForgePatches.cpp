@@ -1,5 +1,6 @@
 #include "ForgePatches.hpp"
 #include "SigScanner.hpp"
+#include "engine/SharedTagCache.hpp"
 #include "common/Logger.hpp"
 #include <psapi.h>
 
@@ -20,9 +21,12 @@ bool ForgePatches::s_unlockedRotation = true;
     return true;
 }
 
-bool ForgePatches::PlaceObject(const std::string& tagPath) {
-    NOBLE_INFO("ForgePatches: placement request for '{}' (engine create call not wired yet)", tagPath);
-    return false;
+bool ForgePatches::PlaceObject(const std::string& tagPath, int tagIndex) {
+    NOBLE_INFO("ForgePatches: placement request for '{}' (tagIndex: {})", tagPath, tagIndex);
+    if (tagIndex >= 0) {
+        return SharedTagCache::SpawnObject(static_cast<uint32_t>(tagIndex), tagPath);
+    }
+    return SharedTagCache::SpawnObject(0xFFFFFFFF, tagPath);
 }
 
 bool ForgePatches::Apply(HMODULE hReachDll) {

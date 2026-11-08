@@ -21,6 +21,7 @@
 #include "engine/CameraThirdPerson.hpp"
 #include "engine/ReachArmory.hpp"
 #include "engine/ElitePack.hpp"
+#include "engine/SharedTagCache.hpp"
 #include "engine/VariantFields.hpp"
 #include "ui/UIManager.hpp"
 #include "ui/ForgeMenu.hpp"
@@ -726,6 +727,14 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 
     // Apply Forge engine patches (AI biped/vehicle spawning in Forge, object limits)
     noble::ForgePatches::Apply(loader->GetModuleHandle());
+
+    // Initialize Shared Tag Cache for cross-map AI spawning (Approach 1)
+    noble::SharedTagCache::Initialize(loader->GetModuleHandle(), userStoragePath, reachInstall->workshopDirectory);
+
+    // Wire Forge palette placement handler
+    noble::ForgeMenu::SetPlaceHandler([](const noble::ForgeMenu::Item& item) -> bool {
+        return noble::ForgePatches::PlaceObject(item.tag, item.tagIndex);
+    });
 
     // 9. Instantiate Blam! Engine & Data Access interfaces
     auto blamEngine = std::make_unique<noble::BlamEngine>();

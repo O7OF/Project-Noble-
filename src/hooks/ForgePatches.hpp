@@ -13,9 +13,8 @@ public:
 
     static bool IsApplied() { return s_isApplied; }
 
-    // Client-side palette placement: resolves tagPath and asks the engine to create the object.
-    // Returns false until the engine-side create call is wired, so the UI can say so honestly.
-    static bool PlaceObject(const std::string& tagPath);
+    // Client-side palette placement: resolves tagPath / tagIndex and asks the engine to create the object.
+    static bool PlaceObject(const std::string& tagPath, int tagIndex = -1);
     static void SetUnlimitedBudget(bool enabled) { s_unlimitedBudget = enabled; }
     static void SetUnlockedRotation(bool enabled) { s_unlockedRotation = enabled; }
 
