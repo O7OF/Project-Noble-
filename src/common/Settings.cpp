@@ -44,7 +44,7 @@ void Clamp(SettingsData& d) {
     d.thirdPersonZoom = std::clamp(d.thirdPersonZoom, 0.10f, 1.00f);
     d.thirdPersonOffsetX = std::clamp(d.thirdPersonOffsetX, -1.00f, 1.00f);
     d.thirdPersonOffsetY = std::clamp(d.thirdPersonOffsetY, -1.00f, 1.00f);
-    constexpr int kFpsLimits[] = { 0, 30, 60, 120, 144, 165, 200 };
+    constexpr int kFpsLimits[] = { 0, 30, 60, 120, 144, 165, 200, 240, 360 };
     if (std::find(std::begin(kFpsLimits), std::end(kFpsLimits), d.fpsLimit) == std::end(kFpsLimits)) {
         d.fpsLimit = 0;
     }

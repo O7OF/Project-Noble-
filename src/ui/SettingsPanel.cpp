@@ -46,7 +46,7 @@ struct Resolution {
 const Resolution kResolutions[] = {
     {1280, 720}, {1366, 768}, {1600, 900}, {1920, 1080}, {2560, 1080}, {2560, 1440}, {3440, 1440}, {3840, 2160},
 };
-constexpr int kFpsLimits[] = { 30, 60, 120, 144, 165, 200, 0 };
+constexpr int kFpsLimits[] = { 30, 60, 120, 144, 165, 200, 240, 360, 0 };
 const int kWheelActions[] = { 4, 1, 3, 5, 7, 2, 23, 6, 11, 12, 20, -1 };
 
 std::string Upper(std::string s) {
