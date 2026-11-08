@@ -16,8 +16,8 @@ This is the **private, closed-source development tree**. All new work happens
 here and is pushed only here.
 
 The public "Halo: Reach Community Edition" repository
-(`O7OF/Project-Noble-Source-Build`) is **frozen at the 0.9.16.35 open-source
-base**; it no longer receives updates. Do not push to it.
+(`O7OF/Project-Noble-Source-Build`) is **archived at 0.9.16.37**; it no longer
+receives updates. Do not push to it.
 
 There is no public contribution process. Do not open pull requests or issues
 against this repository from outside.
@@ -38,10 +38,26 @@ against this repository from outside.
 | What | Repo | Notes |
 |---|---|---|
 | Closed-source client (this) | `O7OF/Project-Noble-Closed-Source` | Private. All development. |
-| Frozen open-source base | `O7OF/Project-Noble-Source-Build` | Public, archived at 0.9.16.35. |
+| Frozen open-source base | `O7OF/Project-Noble-Source-Build` | Public, archived at 0.9.16.37. |
 
-Packaged builds are distributed through the existing release channel; the
-in-client updater lives in `src/common/Updater.cpp` and still points at it.
+Packaged builds are distributed through the release channel (`O7OF/Project-Noble-`);
+the in-client updater lives in `src/common/Updater.cpp`.
+
+## Master-server cluster
+
+Three federated regions (see `src/common/BuildIdentity.hpp`):
+
+| Region | URL |
+|---|---|
+| US East (Virginia) | https://projectnobleeast.onrender.com |
+| US West (Oregon) | https://projectnoblewest.onrender.com |
+| UK (London) | https://projectnobleuk.onrender.com |
+
+Backend: `C:\Users\Chey1\Desktop\ServerTestDeploy` (private). It enforces a
+**closed-source build gate**: only `0.19.x` clients speaking protocol 2 may
+register, join or relay. Open-source 0.9.16.x builds are refused with
+`403 client_outdated`, are hidden from the browser, and cannot attach to the
+relay (`/ws/relay2`). See `ServerTestDeploy/README.md` for the Render env vars.
 
 ## Build
 

@@ -15,7 +15,7 @@ int main(int argc, char* argv[]) {
     noble::Logger::Init("noble-dedicated.log");
 
     std::cout << "=============================================================\n";
-    std::cout << " Halo: Reach Community Edition - Headless Dedicated Server\n";
+    std::cout << " Project Noble - Headless Dedicated Server (Closed Source)\n";
     std::cout << " Version: " << noble::VERSION_STRING << "\n";
     std::cout << "=============================================================\n";
 

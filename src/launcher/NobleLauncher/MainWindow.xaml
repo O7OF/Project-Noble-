@@ -5,7 +5,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:vm="clr-namespace:NobleLauncher.ViewModels"
         mc:Ignorable="d"
-        Title="Project Noble // Halo Reach Community Edition" 
+        Title="Project Noble // Closed Source" 
         Height="780" Width="1100"
         MinHeight="650" MinWidth="950"
         Background="#0F1318"
@@ -135,7 +135,7 @@
 
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                     <TextBlock Text="PROJECT NOBLE" FontSize="20" FontWeight="Black" Foreground="{StaticResource NobleCyan}" VerticalAlignment="Center" />
-                    <TextBlock Text="// HALO: REACH COMMUNITY EDITION" FontSize="14" FontWeight="Bold" Foreground="{StaticResource TextDim}" VerticalAlignment="Center" Margin="12,0,0,0" />
+                    <TextBlock Text="// PROJECT NOBLE" FontSize="14" FontWeight="Bold" Foreground="{StaticResource TextDim}" VerticalAlignment="Center" Margin="12,0,0,0" />
                 </StackPanel>
 
                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
@@ -510,7 +510,7 @@
                 </Grid.ColumnDefinitions>
 
                 <TextBlock Text="{Binding StatusText}" Foreground="#B0BEC5" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center" />
-                <TextBlock Grid.Column="1" Text="Halo Reach Community Edition // Non-Destructive MCC Wrapper" Foreground="{StaticResource TextDim}" FontSize="11" VerticalAlignment="Center" />
+                <TextBlock Grid.Column="1" Text="Project Noble // Closed Source // Non-Destructive MCC Wrapper" Foreground="{StaticResource TextDim}" FontSize="11" VerticalAlignment="Center" />
             </Grid>
         </Border>
     </Grid>

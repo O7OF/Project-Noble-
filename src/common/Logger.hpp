@@ -105,7 +105,7 @@ public:
 
             spdlog::set_default_logger(logger);
             spdlog::info("=================================================");
-            spdlog::info(" Halo: Reach Community Edition (Project Noble)   ");
+            spdlog::info(" Project Noble (Closed Source)   ");
             spdlog::info("=================================================");
         } catch (const spdlog::spdlog_ex&) {
             // Fallback if log file cannot be created

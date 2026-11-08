@@ -1,7 +1,7 @@
 @echo off
 setlocal enabledelayedexpansion
 cd /d "%~dp0"
-title Halo: Reach Community Edition - Developer Builder
+title Project Noble - Developer Builder
 
 echo ===================================================
 echo  Building Noble - DEVELOPER (noble-dev.exe)

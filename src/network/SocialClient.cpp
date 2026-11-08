@@ -2,6 +2,7 @@
 #include "AuthClient.hpp"
 #include "common/Logger.hpp"
 #include "common/Settings.hpp"
+#include "common/BuildIdentity.hpp"
 
 #include <windows.h>
 #include <winhttp.h>
@@ -30,7 +31,7 @@ std::wstring Widen(const std::string& narrow) {
 std::string ResolveMasterUrl() {
     std::string url = Settings::Get().Snapshot().masterServerUrl;
     if (url.empty()) {
-        url = "https://outbreak-z-test-server.onrender.com";
+        url = std::string(kMasterDefault);
     }
     return url;
 }

@@ -12,7 +12,7 @@ $dist = Join-Path $root 'dist'
 $pkg = Join-Path $dist 'Project-Noble'
 
 function Get-Version {
-    $line = Select-String -Path (Join-Path $root 'src\common\Version.hpp') -Pattern 'VERSION_STRING = "([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)' | Select-Object -First 1
+    $line = Select-String -Path (Join-Path $root 'src\common\Version.hpp') -Pattern 'VERSION_STRING = "([0-9]+\.[0-9]+\.[0-9]+(?:\.[0-9]+)?)' | Select-Object -First 1
     if (-not $line) { throw 'cannot parse the version from src/common/Version.hpp' }
     return $line.Matches[0].Groups[1].Value
 }

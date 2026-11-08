@@ -195,7 +195,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         MessageBoxW(nullptr, 
             L"Could not locate Halo: Reach DLC in any Steam library.\n\n"
             L"Please verify that Halo: The Master Chief Collection with the Halo: Reach DLC is installed on Steam.",
-            L"Halo: Reach Community Edition - Launch Error", 
+            L"Project Noble - Launch Error", 
             MB_ICONERROR | MB_OK);
         return 1;
     }
@@ -313,7 +313,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     }
 
     // 6. Create Win32 host window
-    auto window = std::make_unique<noble::Window>(L"Halo: Reach Community Edition",
+    auto window = std::make_unique<noble::Window>(L"Project Noble",
         static_cast<uint32_t>(startupSettings.width), static_cast<uint32_t>(startupSettings.height));
     window->SetBorderless(startupSettings.borderless);
     window->SetExclusiveFullscreen(startupSettings.exclusiveFullscreen);

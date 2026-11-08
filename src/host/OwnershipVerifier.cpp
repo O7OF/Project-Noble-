@@ -21,7 +21,7 @@ bool OwnershipVerifier::VerifySteamOwnership(ReachInstallInfo& info) {
             L"Steam Ownership Verification Failed:\n\n"
             L"Could not locate Steam manifest for Halo: The Master Chief Collection.\n"
             L"You must legitimately own MCC and the Halo: Reach DLC on Steam to run Project Noble.",
-            L"Halo: Reach Community Edition - Ownership Required",
+            L"Project Noble - Ownership Required",
             MB_ICONERROR | MB_OK);
         return false;
     }

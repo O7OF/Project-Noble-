@@ -1,7 +1,7 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-title Halo: Reach Community Edition - Packager
+title Project Noble - Packager
 
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0build-package.ps1"
 set "PKG_ERR=%ERRORLEVEL%"

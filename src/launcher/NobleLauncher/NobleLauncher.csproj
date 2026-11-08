@@ -9,7 +9,7 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <ApplicationTitle>Project Noble Launcher</ApplicationTitle>
     <Version>0.8.0</Version>
-    <Company>Halo Reach Community Edition</Company>
+    <Company>Project Noble</Company>
   </PropertyGroup>
 
 </Project>

@@ -42,9 +42,9 @@ struct MasterRegion {
 };
 
 static const MasterRegion kMasterRegions[] = {
-    { "US West (Oregon)", "Oregon, USA", "https://servertestdeploy-jfxb.onrender.com" },
-    { "US East (Virginia)", "Virginia, USA", "https://noble-server-2.onrender.com" },
-    { "EU West (London, UK)", "London, UK", "https://servertestdeploy-1.onrender.com" },
+    { "US East (Virginia)", "Virginia, USA", "https://projectnobleeast.onrender.com" },
+    { "US West (Oregon)", "Oregon, USA", "https://projectnoblewest.onrender.com" },
+    { "UK (London)", "London, UK", "https://projectnobleuk.onrender.com" },
     { "LAN / Offline Only", "Local Network Only", "" }
 };
 

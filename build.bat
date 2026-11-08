@@ -1,10 +1,10 @@
 @echo off
 setlocal enabledelayedexpansion
 cd /d "%~dp0"
-title Halo: Reach Community Edition - Builder
+title Project Noble - Builder (Closed Source)
 
 echo ===================================================
-echo  Building Halo: Reach Community Edition - Project Noble
+echo  Building Project Noble - Closed Source
 echo ===================================================
 
 set "BUILD_ERR=0"

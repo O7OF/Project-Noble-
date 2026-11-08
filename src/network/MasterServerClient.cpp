@@ -4,6 +4,7 @@
 #include "common/DeviceIdentity.hpp"
 #include "common/Logger.hpp"
 #include "common/Version.hpp"
+#include "common/BuildIdentity.hpp"
 #include "career/Career.hpp"
 
 #include <windows.h>
@@ -102,6 +103,10 @@ HttpResult HttpRequest(const std::string& fullUrl,
     }
     if (request) {
         std::wstring headers = L"Content-Type: application/json\r\nAccept: application/json\r\n";
+        // Closed-source build identity. The cluster rejects requests that carry the
+        // open-source build (or no build at all) with 403 client_outdated.
+        headers += L"X-Noble-Build: " + Widen(std::string(kBuildTag)) + L"\r\n";
+        headers += L"X-Noble-Protocol: " + Widen(std::to_string(kClientProtocol)) + L"\r\n";
         const DeviceIdentity& devId = DeviceIdentityStore::Get();
         if (!devId.deviceId.empty()) {
             headers += L"X-Device-Id: " + Widen(devId.deviceId) + L"\r\n";
@@ -504,7 +509,7 @@ void MasterServerClient::DoRegister() {
         {"name", advert.name}, {"port", advert.port}, {"player_count", advert.playerCount},
         {"max_players", advert.maxPlayers}, {"map", advert.map}, {"mode", advert.mode},
         {"has_password", advert.hasPassword}, {"is_mod", advert.isMod}, {"mod_id", advert.modId}, {"mod_title", advert.modTitle},
-        {"is_private", advert.isPrivate}, {"address", advert.address}, {"lan_address", UPnP::Get().GetInternalIP()}, {"build", std::string(VERSION_STRING.substr(0, VERSION_STRING.find(' ')))},
+        {"is_private", advert.isPrivate}, {"address", advert.address}, {"lan_address", UPnP::Get().GetInternalIP()}, {"build", std::string(kBuildTag)}, {"protocol", kClientProtocol},
         {"variant", advert.variant}, {"difficulty", advert.difficulty}, {"skulls", std::to_string(advert.skulls)}, {"in_progress", advert.inProgress},
         {"host_peer_id", advert.hostPeerId == 0 ? 1ULL : advert.hostPeerId}, {"player_id", advert.hostPeerId == 0 ? 1ULL : advert.hostPeerId},
         {"host_machine_id", advert.hostMachineId.empty() ? "0x484F535400000001" : advert.hostMachineId},
@@ -562,6 +567,8 @@ void MasterServerClient::DoHeartbeat() {
         token = m_sessionToken;
         body = {
             {"session_id", id},
+            {"build", std::string(kBuildTag)},
+            {"protocol", kClientProtocol},
             {"player_count", m_advert.playerCount},
             {"in_progress", m_advertInProgress},
             {"is_private", m_advert.isPrivate},
@@ -690,6 +697,8 @@ MasterJoinInfo MasterServerClient::JoinSessionSync(const std::string& sessionId,
     }
 
     nlohmann::json body = {
+        { "build", std::string(kBuildTag) },
+        { "protocol", kClientProtocol },
         { "guest_port", guestPort },
         { "guest_machine_id", std::to_string(guestMachineId) },
         { "guest_address", UPnP::Get().GetExternalIP() },
@@ -859,6 +868,8 @@ LobbyState MasterServerClient::JoinLobbySync(const std::string& sessionId,
 
     const int measuredPing = NetworkTransport::Get().GetPeerPingMs(0);
     nlohmann::json body = {
+        { "build", std::string(kBuildTag) },
+        { "protocol", kClientProtocol },
         { "peer_id", peerId },
         { "player_id", peerId },
         { "username", username },

@@ -1,5 +1,6 @@
 #include "engine/KeyBindings.hpp"
 #include "Settings.hpp"
+#include "BuildIdentity.hpp"
 #include "DeviceIdentity.hpp"
 #include "Logger.hpp"
 
@@ -74,8 +75,20 @@ void Clamp(SettingsData& d) {
     }
     trimName(d.masterServerUrl);
     while (!d.masterServerUrl.empty() && d.masterServerUrl.back() == '/') d.masterServerUrl.pop_back();
-    if (d.masterServerUrl.empty() || d.masterServerUrl == "https://outbreak-z-test-server.onrender.com") {
-        d.masterServerUrl = "https://servertestdeploy-jfxb.onrender.com";
+    // Migration: every saved URL from the old shared cluster (or none) moves to the
+    // closed-source US East node. A region the player picked on the new cluster is kept.
+    {
+        static constexpr const char* kLegacyMasterUrls[] = {
+            "https://outbreak-z-test-server.onrender.com",
+            "https://servertestdeploy-jfxb.onrender.com",
+            "https://noble-server-2.onrender.com",
+            "https://servertestdeploy-1.onrender.com",
+        };
+        bool legacy = d.masterServerUrl.empty();
+        for (const char* old : kLegacyMasterUrls) {
+            if (d.masterServerUrl == old) legacy = true;
+        }
+        if (legacy) d.masterServerUrl = std::string(kMasterDefault);
     }
     if (d.favorites.size() > 50) d.favorites.resize(50);
     d.wheelUpAction = std::clamp(d.wheelUpAction, -1, 65);

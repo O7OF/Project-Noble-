@@ -29,7 +29,9 @@ public:
     static bool SelfTest();
 
     // Fixed session identifier shared by all Project Noble matches
-    static constexpr uint64_t kNobleSessionId = 0x48414C4F52454143ULL;     // "HALOREAC"
+    // Closed-source session id ("PNCSLOB1"). Deliberately not the open-source "HALOREAC",
+    // so an old client cannot join a closed-source host even over direct UDP.
+    static constexpr uint64_t kNobleSessionId = 0x504E43534C4F4231ULL;
     // Well-known Machine ID for the lobby host
     static constexpr uint64_t kDefaultHostMachineId = 0x484F535400000001ULL; // "HOST...1"
 

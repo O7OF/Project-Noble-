@@ -8,6 +8,8 @@
 #include <string>
 #include <vector>
 
+#include "BuildIdentity.hpp"
+
 namespace noble {
 
 // Player settings, saved as JSON in <exe folder>\data\userdata\settings.json.
@@ -99,7 +101,7 @@ struct SettingsData {
     std::string lastPlayedMod;          // mod folder, empty when the game was vanilla
     std::string playerName = "NobleSix";
     std::string serviceTag = "NOBL";  // Reach service tag: 1-4 letters/digits, upper case (profile +0x1AC)
-    std::string masterServerUrl = "https://outbreak-z-test-server.onrender.com"; // empty = LAN only
+    std::string masterServerUrl = std::string(kMasterDefault); // empty = LAN only
     std::vector<std::string> favorites;
 
     // Account / Auth

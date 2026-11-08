@@ -1,9 +1,9 @@
 @echo off
-title Halo: Reach Community Edition (Project Noble)
+title Project Noble (Closed Source)
 cd /d "%~dp0"
 
 echo ===================================================
-echo  Launching Halo: Reach Community Edition...
+echo  Launching Project Noble...
 echo ===================================================
 
 if exist "build\bin\Release\noble-client.exe" (

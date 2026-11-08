@@ -228,7 +228,7 @@ void UIManager::Render(BlamEngine* engine) {
             ImGui::TextColored(ImVec4(0.0f, 0.85f, 1.0f, 1.0f), "SYSTEM, NETWORK & GRAPHICS SETTINGS");
             ImGui::Separator();
             ImGui::Spacing();
-            ImGui::Text("Client Host: Project Noble (Halo: Reach Community Edition)");
+            ImGui::Text("Client Host: Project Noble (Closed Source)");
             ImGui::Text("Engine Target: haloreach.dll (Blam! Engine MCC x64)");
             ImGui::Text("Resolution:  1280 x 720 (Hardware Scalable)");
             ImGui::Text("Renderer:    Direct3D 11 (Hardware Acceleration)");
