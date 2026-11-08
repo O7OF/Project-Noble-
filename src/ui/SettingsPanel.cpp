@@ -70,7 +70,7 @@ struct CatInfo {
     const char* footer;  // when this category's changes take effect
 };
 const CatInfo kCats[] = {
-    { "DISPLAY & SOUND", "GRAPHICS", "Window mode and size apply immediately; the game always renders at your display's native resolution, so text, HUD and gameplay stay crisp." },
+    { "DISPLAY & SOUND", "GRAPHICS", "Window mode and size apply immediately. Windowed renders at your display's native resolution; Borderless and Fullscreen use the RESOLUTION you pick (native by default)." },
     { nullptr, "AUDIO", "Volumes take effect when you apply changes; a menu song plays as soon as you pick it." },
     { "GAME", "GAME OPTIONS", "Takes effect when you apply changes, also in a game you return to from the pause menu." },
     { nullptr, "PLAYER", "Saved when you apply changes; shown from the next game you start." },
@@ -87,6 +87,21 @@ const char* WhenText(int when) {
     case 1: return "Saved when you apply changes; takes effect the next time Noble starts";
     case 2: return "Saved and used as soon as you change it";
     default: return "Information";
+    }
+}
+
+// The display Noble's window is on, in real pixels (the process is per-monitor DPI aware, see main.cpp).
+void NativeDisplaySize(int& w, int& h) {
+    w = h = 0;
+    HWND hwnd = nullptr;
+    if (auto* win = Window::Active()) hwnd = win->GetHwnd();
+    MONITORINFO info{};
+    info.cbSize = sizeof(info);
+    const HMONITOR monitor = hwnd ? MonitorFromWindow(hwnd, MONITOR_DEFAULTTOPRIMARY)
+                                  : MonitorFromPoint(POINT{ 0, 0 }, MONITOR_DEFAULTTOPRIMARY);
+    if (monitor && GetMonitorInfoW(monitor, &info)) {
+        w = info.rcMonitor.right - info.rcMonitor.left;
+        h = info.rcMonitor.bottom - info.rcMonitor.top;
     }
 }
 
@@ -884,7 +899,7 @@ void SettingsPanel::RenderGraphics() {
         static const char* const kModeDefaults[] = { "Windowed", "Borderless", "Fullscreen" };
         auto modeOf = [](const SettingsData& d) { return d.exclusiveFullscreen ? 2 : (d.borderless ? 1 : 0); };
         const int mode = modeOf(m_edit);
-        if (Row("DISPLAY MODE", "Windowed: a fixed-size window you can move. Borderless: covers the whole display. Fullscreen: takes over the display (exclusive) for the lowest latency and the display's highest refresh rate; Alt-Tab drops back to the desktop and returning re-enters it. Switching applies immediately; the renderer keeps using the display's native resolution.",
+        if (Row("DISPLAY MODE", "Windowed: a fixed-size window you can move. Borderless: covers the whole display. Fullscreen: takes over the display (exclusive) for the lowest latency and the display's highest refresh rate; Alt-Tab drops back to the desktop and returning re-enters it. Switching applies immediately. Borderless and Fullscreen render at the RESOLUTION below.",
                 When::Apply, kModeDefaults[modeOf(def)], mode != modeOf(m_saved))) {
             if (const int d = CycleValue(kModeNames[mode], mode, 3)) {
                 const int next = (mode + d + 3) % 3;
@@ -893,16 +908,58 @@ void SettingsPanel::RenderGraphics() {
             }
         }
     }
-    {
+    if (m_edit.borderless) {
+        // Borderless and Fullscreen: the window always covers the display; this picks the resolution the game
+        // renders at. DXGI scales it up to the display. Only sizes no larger than the display and of the same
+        // shape are offered, so nothing is stretched; Native is the display's own size and the default.
+        int nativeW = 0, nativeH = 0;
+        NativeDisplaySize(nativeW, nativeH);
+        std::vector<Resolution> options;
+        for (const Resolution& r : kResolutions) {
+            if (nativeW <= 0 || nativeH <= 0) break;   // display unknown: offer Native only
+            if (r.w > nativeW || r.h > nativeH || (r.w == nativeW && r.h == nativeH)) continue;
+            const float aspect = static_cast<float>(r.w) / static_cast<float>(r.h);
+            if (std::fabs(aspect - static_cast<float>(nativeW) / static_cast<float>(nativeH)) > 0.02f) continue;
+            options.push_back(r);
+        }
+        const bool savedIsNative = m_edit.fullscreenWidth <= 0 || m_edit.fullscreenHeight <= 0;
+        int current = -1;
+        for (int i = 0; i < static_cast<int>(options.size()); ++i) {
+            if (!savedIsNative && options[i].w == m_edit.fullscreenWidth && options[i].h == m_edit.fullscreenHeight) current = i;
+        }
+        if (!savedIsNative && current < 0) {
+            // Saved on another display (or a hand-edited size): keep it selectable rather than silently dropping it.
+            options.push_back({ m_edit.fullscreenWidth, m_edit.fullscreenHeight });
+            current = static_cast<int>(options.size()) - 1;
+        }
+        options.push_back({ 0, 0 });                  // Native, last: the largest choice
+        if (current < 0) current = static_cast<int>(options.size()) - 1;
+        const int n = static_cast<int>(options.size());
+        char label[48];
+        if (options[current].w == 0) {
+            if (nativeW > 0) std::snprintf(label, sizeof(label), "Native (%d x %d)", nativeW, nativeH);
+            else std::snprintf(label, sizeof(label), "Native");
+        } else {
+            std::snprintf(label, sizeof(label), "%d x %d", options[current].w, options[current].h);
+        }
+        const bool changed = m_edit.fullscreenWidth != m_saved.fullscreenWidth || m_edit.fullscreenHeight != m_saved.fullscreenHeight;
+        if (Row("RESOLUTION", "Resolution the game renders at in Borderless and Fullscreen. The window still covers the whole display and the picture is scaled up to it, so a lower resolution trades sharpness for frame rate. Native is your display's own size. Used from the next match, and in the menu the next time Noble starts.",
+                When::Restart, "Native", changed)) {
+            if (const int d = CycleValue(label, current, n, false)) {
+                current = std::clamp(current + d, 0, n - 1);
+                m_edit.fullscreenWidth = options[current].w;
+                m_edit.fullscreenHeight = options[current].h;
+            }
+        }
+    } else {
         int current = 0;
         const int n = static_cast<int>(std::size(kResolutions));
         for (int i = 0; i < n; ++i) if (kResolutions[i].w == m_edit.width && kResolutions[i].h == m_edit.height) current = i;
         char label[32];
-        if (m_edit.borderless) std::snprintf(label, sizeof(label), "Fills your display");
-        else std::snprintf(label, sizeof(label), "%d x %d", m_edit.width, m_edit.height);
+        std::snprintf(label, sizeof(label), "%d x %d", m_edit.width, m_edit.height);
         const bool changed = m_edit.width != m_saved.width || m_edit.height != m_saved.height;
-        if (Row("WINDOW SIZE", "Size of the game window in windowed mode. Rendering stays at the display's native resolution and is scaled into the window, so it is crisp even at 720p. Borderless and Fullscreen fill the display, so this is greyed out.",
-                When::Apply, "1280 x 720", changed, m_edit.borderless)) {
+        if (Row("WINDOW SIZE", "Size of the game window in windowed mode, in real screen pixels. Rendering stays at the display's native resolution and is scaled into the window, so it is crisp even at 720p. Borderless and Fullscreen use RESOLUTION instead.",
+                When::Apply, "1280 x 720", changed, false)) {
             if (const int d = CycleValue(label, current, n, false)) {
                 current = std::clamp(current + d, 0, n - 1);
                 m_edit.width = kResolutions[current].w;
@@ -1713,7 +1770,8 @@ int SettingsPanel::CountDiff(const SettingsData& a, const SettingsData& b, Cat c
     switch (c) {
     case Cat::Graphics:
         return (a.width != b.width || a.height != b.height) + (a.borderless != b.borderless || a.exclusiveFullscreen != b.exclusiveFullscreen) + (a.verticalSync != b.verticalSync) +
-               (a.fpsLimit != b.fpsLimit) + (a.showFps != b.showFps) + f(a.uiScale, b.uiScale);
+               (a.fpsLimit != b.fpsLimit) + (a.showFps != b.showFps) + f(a.uiScale, b.uiScale) +
+               (a.fullscreenWidth != b.fullscreenWidth || a.fullscreenHeight != b.fullscreenHeight);
     case Cat::Audio:
         return f(a.volumeGame, b.volumeGame) + f(a.volumeMusic, b.volumeMusic) + f(a.volumeOther, b.volumeOther) +
                (a.masterMute != b.masterMute) + (a.muteInBackground != b.muteInBackground) +
@@ -1775,6 +1833,7 @@ SettingsData SettingsPanel::WithDefaults(SettingsData e, Cat c) {
     case Cat::Graphics:
         e.width = d.width; e.height = d.height; e.borderless = d.borderless; e.exclusiveFullscreen = d.exclusiveFullscreen; e.verticalSync = d.verticalSync;
         e.fpsLimit = d.fpsLimit; e.showFps = d.showFps; e.uiScale = d.uiScale;
+        e.fullscreenWidth = d.fullscreenWidth; e.fullscreenHeight = d.fullscreenHeight;
         break;
     case Cat::Audio:
         e.volumeGame = d.volumeGame; e.volumeMusic = d.volumeMusic; e.volumeOther = d.volumeOther;

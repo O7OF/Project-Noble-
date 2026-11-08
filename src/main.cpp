@@ -107,10 +107,27 @@ static LONG WINAPI NobleCrashHandler(EXCEPTION_POINTERS* pExceptionInfo) {
     return EXCEPTION_CONTINUE_SEARCH;
 }
 
+// Per-monitor DPI awareness (v2). Without it Windows virtualises every size Noble reads: a 4K display at 200 %
+// scaling reports 1920x1080 from GetSystemMetrics/GetMonitorInfo, so borderless and full screen rendered at 1080p
+// and Windows stretched that up to the display. Must run before any window exists. The linker runs with
+// /MANIFEST:NO, so this is set in code rather than in a manifest. SetProcessDpiAwarenessContext is Windows 10
+// 1703+, looked up at run time; older systems fall back to system DPI awareness.
+static void EnableDpiAwareness() {
+    if (HMODULE user32 = GetModuleHandleW(L"user32.dll")) {
+        using SetContextFn = BOOL(WINAPI*)(HANDLE);
+        if (auto setContext = reinterpret_cast<SetContextFn>(GetProcAddress(user32, "SetProcessDpiAwarenessContext"))) {
+            // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 == (DPI_AWARENESS_CONTEXT)-4
+            if (setContext(reinterpret_cast<HANDLE>(static_cast<intptr_t>(-4)))) return;
+        }
+    }
+    SetProcessDPIAware();
+}
+
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine, int nCmdShow) {
     UNREFERENCED_PARAMETER(hInstance);
     UNREFERENCED_PARAMETER(hPrevInstance);
     UNREFERENCED_PARAMETER(pCmdLine);
+    EnableDpiAwareness();
 
     // Test-only: prove the relaunch handoff leaves no old process behind.
     {
@@ -338,6 +355,21 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     constexpr uint32_t kMaxRenderHeight = 2160;
     uint32_t renderWidth = std::clamp(std::max(window->GetWidth(), monitorWidth), 320u, kMaxRenderWidth);
     uint32_t renderHeight = std::clamp(std::max(window->GetHeight(), monitorHeight), 240u, kMaxRenderHeight);
+    // SETTINGS > GRAPHICS > RESOLUTION (borderless and full screen only; 0 x 0 = the display's native size).
+    // The window still covers the display and DXGI scales the picture up to it; a lower resolution trades
+    // sharpness for frame rate. Never above the display's own size, and the engine cannot change it once
+    // started, so it takes effect for the next match and the next menu launch.
+    if (startupSettings.borderless && startupSettings.fullscreenWidth > 0 && startupSettings.fullscreenHeight > 0) {
+        const uint32_t chosenW = static_cast<uint32_t>(startupSettings.fullscreenWidth);
+        const uint32_t chosenH = static_cast<uint32_t>(startupSettings.fullscreenHeight);
+        if (monitorWidth == 0 || monitorHeight == 0 || (chosenW <= monitorWidth && chosenH <= monitorHeight)) {
+            renderWidth = std::clamp(chosenW, 320u, kMaxRenderWidth);
+            renderHeight = std::clamp(chosenH, 240u, kMaxRenderHeight);
+        } else {
+            NOBLE_WARN("main: resolution {}x{} is larger than the display ({}x{}); using the display's size",
+                       chosenW, chosenH, monitorWidth, monitorHeight);
+        }
+    }
     if (showMenu) {
         const float scale = std::min(1.5f, std::min(static_cast<float>(kMaxRenderWidth) / static_cast<float>(renderWidth),
                                                      static_cast<float>(kMaxRenderHeight) / static_cast<float>(renderHeight)));

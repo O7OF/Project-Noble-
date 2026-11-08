@@ -40,6 +40,13 @@ void Read(const nlohmann::json& j, const char* key, T& out) {
 void Clamp(SettingsData& d) {
     d.width = std::clamp(d.width, 640, 7680);
     d.height = std::clamp(d.height, 360, 4320);
+    if (d.fullscreenWidth <= 0 || d.fullscreenHeight <= 0) {
+        d.fullscreenWidth = 0;   // native
+        d.fullscreenHeight = 0;
+    } else {
+        d.fullscreenWidth = std::clamp(d.fullscreenWidth, 640, 7680);
+        d.fullscreenHeight = std::clamp(d.fullscreenHeight, 360, 4320);
+    }
     d.fieldOfView = std::clamp(d.fieldOfView, 70.0f, 120.0f);  // slider range (SETTINGS > VIDEO)
     d.uiScale = std::isfinite(d.uiScale) ? std::clamp(d.uiScale, 0.75f, 1.50f) : 1.0f;
     d.firstPersonFovMod = std::clamp(d.firstPersonFovMod, -1.20f, 1.20f);
@@ -136,6 +143,8 @@ void Settings::Load() {
             Read(j, "borderless", d.borderless);
             Read(j, "exclusiveFullscreen", d.exclusiveFullscreen);
             if (d.exclusiveFullscreen) d.borderless = true;
+            Read(j, "fullscreenWidth", d.fullscreenWidth);
+            Read(j, "fullscreenHeight", d.fullscreenHeight);
             Read(j, "fieldOfView", d.fieldOfView);
             Read(j, "firstPersonFovMod", d.firstPersonFovMod);
             Read(j, "vehicleFirstPersonFovMod", d.vehicleFirstPersonFovMod);
@@ -303,6 +312,8 @@ bool Settings::Save() {
         j["height"] = d.height;
         j["borderless"] = d.borderless;
         j["exclusiveFullscreen"] = d.exclusiveFullscreen;
+        j["fullscreenWidth"] = d.fullscreenWidth;
+        j["fullscreenHeight"] = d.fullscreenHeight;
         j["fieldOfView"] = d.fieldOfView;
         j["firstPersonFovMod"] = d.firstPersonFovMod;
         j["vehicleFirstPersonFovMod"] = d.vehicleFirstPersonFovMod;

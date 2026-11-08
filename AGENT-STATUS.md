@@ -87,3 +87,10 @@ edit Claude's four slices above.
   uncommitted WIP and the options-wheel line were preserved. Full three-target
   rebuild and `-test-map-gametypes` pass after the merge. Local `main` is
   9 commits ahead of origin and still unpushed.
+- 2026-11-08 02:35 ET (Claude, claude.ai session, for Tyler): display resolution fix, **uncommitted**.
+  Files: `src/main.cpp` (per-monitor DPI awareness at the top of `wWinMain`; borderless/full-screen
+  render size from the new setting), `src/common/Settings.hpp/.cpp` (`fullscreenWidth/Height`, 0 = native),
+  `src/ui/SettingsPanel.cpp` (WINDOW SIZE row only: in Borderless/Fullscreen it becomes a working
+  RESOLUTION row; header/help text; CountDiff/WithDefaults). Cause: the process was not DPI aware, so
+  a 4K display at 200 % read as 1920x1080 and borderless/full screen rendered 1080p. Did not touch the
+  UI Scale slider, PAUSED layout, GAME OPTIONS or CHANGE TEAM work. Not built yet: Tyler to build and test.
