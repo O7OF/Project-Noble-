@@ -94,6 +94,10 @@ struct SettingsData {
     // haloreach.dll for. 0 = Stock (the installed DLL, untouched), 1 = V16 (object pool 2,048 -> 32,767).
     // Read once at start-up; every player and the server in a match must use the same value.
     int extendedLimits = 0;
+    // AI actor pool (LIMITS-TODO C7d): 0 = stock 96, otherwise the actor count (256 / 512 / 1024). Only used
+    // with an Extended engine profile; every player and the server in a match must use the same value.
+    // Takes effect after a restart. The -ai-actors / NOBLE_AI_ACTORS dev override still wins.
+    int aiActors = 0;
 
     // Menus
     std::string menuBackground = "random"; // "random", "noble" (own art), "reach" (from the MCC install)

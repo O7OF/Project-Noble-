@@ -35,6 +35,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import build_recipe  # noqa: E402
+import lv_port  # noqa: E402
 
 STOCK_SHA = "738dd2d24ea3aea12e1ee9aa4a61094bf116027d42004c35a19e5048608b0894"
 V16_SHA = "b8810c3b9822f5d6563439fc6b8b16c2def6cd7a6f660dd3775c42edcd0a5f24"
@@ -47,6 +48,12 @@ DELTRAC_RVA, DELTRAC_RAW, DELTRAC_SIZE = 0x0AA51000, 0x00CF3600, 0x00097200
 HKWORK_RVA = 0x0AAE9000
 NEW_BLOCK_RVA = DELTRAC_RVA + DELTRAC_SIZE           # 0x0AAE8200
 NEW_BLOCK_RAW = DELTRAC_RAW + DELTRAC_SIZE           # 0x00D8A800 (V16 end of file)
+# Static append list (four 512-entry lists at RVA 0x477E700, stride 0x1204, count at +0x1200). The append at
+# 0x1D4F85 has no bounds check; a busy F6 horde faults at 0x1D4F96. Patch the count load to jump to a cave
+# that skips the append (0x1D4FA1) when the list is full, otherwise resumes at 0x1D4F8C.
+LIST_SITE = 0x1D4F85
+LIST_CONTINUE = 0x1D4F8C
+LIST_SKIP = 0x1D4FA1
 
 V16_RENDER, V16_MAIN = 0x560000, 0x27D0000
 PARTICLE_RENDER_EXTRA = 0x820000
@@ -66,25 +73,105 @@ AI_FRAME_OPS = [
     (0x70AFA7 - 0xC00, 0x410, AI_FRAME_EXTRA),                  # mov rcx, [rbp+0x410]
     (0x70AFB7 - 0xC00, 0x540, AI_FRAME_EXTRA),                  # lea r11, [rsp+0x540]
 ]
+# Second per-actor stack buffer: function 0x76EBF8 (frame 0x58E0 through __chkstk, buffer rbp-0x40 .. cookie
+# rbp+0x57C0 = 0x5800 bytes) overflowed at ~650 live actors. Double the buffer: rbp/rsp move down by
+# AI_FRAME2_EXTRA, every rbp/rsp displacement above the buffer (cookie, saved xmm6, caller's stack args,
+# epilogue) moves up by the same amount. __chkstk probes the bigger frame itself.
+AI_FRAME2_EXTRA = 0x5800
+# The buffer is a candidate list of 0x2C-byte entries, 512 of them (0x200 * 0x2C = 0x5800 fills it up to the
+# cookie). Three places bound it at 0x200 and must grow with the buffer (1,024 * 0x2C = 0xB000):
+#   RVA 0x76EC6A  mov edi, 0x200    constructor loop count (buffer init)
+#   RVA 0x76EB80  cmp rdi, 0x200    copy cap in the list builder 0x76EAE0
+#   RVA 0x76EA66  cmp esi, 0x200    append cap in the volume search 0x76E814 -> 0x76E628
+AI_FRAME2_CAP_OPS = [
+    (0x76EC6B - 0xC00, 0x200, 0x200),   # mov edi, 0x200   -> 0x400
+    (0x76EB83 - 0xC00, 0x200, 0x200),   # cmp rdi, 0x200   -> 0x400
+    (0x76EA68 - 0xC00, 0x200, 0x200),   # cmp esi, 0x200   -> 0x400
+]
+# Third per-actor stack buffer: function 0x76E814 (frame 0x900, no __chkstk) collects a volume search into a
+# 512-dword scratch at rbp-0x20 (ends at the cookie rbp+0x7E0) and expands object chains into it with an index
+# that is only bounded by the initial search count. Grow the frame by 0x800 so the scratch holds 1,024 dwords;
+# rbp/rsp move down by 0x800 and every rbp+ displacement (cookie, caller's stack args, epilogue) moves with it.
+# 0x900 -> 0x1100 is more than one page and the function has no stack probe, so PoolResize also hooks it to
+# commit the stack pages (see Hook_AiSpawnSearch).
+AI_FRAME3_EXTRA = 0x800
+AI_FRAME3_OPS = [
+    (0x76E829 - 0xC00, -0x838 & 0xFFFFFFFF, -AI_FRAME3_EXTRA),  # lea rbp, [rax-0x838]
+    (0x76E830 - 0xC00, 0x900, AI_FRAME3_EXTRA),                 # sub rsp, 0x900
+    (0x76E845 - 0xC00, 0x7E0, AI_FRAME3_EXTRA),                 # mov [rbp+0x7E0], cookie
+    (0x76E854 - 0xC00, 0x860, AI_FRAME3_EXTRA),                 # mov rax, [rbp+0x860] (stack arg)
+    (0x76E869 - 0xC00, 0x870, AI_FRAME3_EXTRA),                 # mov r14, [rbp+0x870]
+    (0x76EAB4 - 0xC00, 0x7E0, AI_FRAME3_EXTRA),                 # mov rcx, [rbp+0x7E0]
+    (0x76EAC4 - 0xC00, 0x900, AI_FRAME3_EXTRA),                 # lea r11, [rsp+0x900]
+]
+# Its two 0x200 caps (search result count handed to the engine query, and the chain-expansion cap check).
+AI_FRAME3_CAP_OPS = [
+    (0x76E8EF - 0xC00, 0x200, 0x200),   # mov eax, 0x200  -> 0x400 (search result limit)
+    (0x76E925 - 0xC00, 0x200, 0x200),   # mov eax, 0x200  -> 0x400 (cmp bx, ax)
+]
+AI_FRAME2_OPS = [
+    (0x76EC0C - 0xC00, -0x57E0 & 0xFFFFFFFF, -AI_FRAME2_EXTRA),  # lea rbp, [rsp-0x57E0]
+    (0x76EC11 - 0xC00, 0x58E0, AI_FRAME2_EXTRA),                 # mov eax, 0x58E0 (frame size for __chkstk)
+    (0x76EC21 - 0xC00, 0x58D0, AI_FRAME2_EXTRA),                 # movaps [rsp+0x58D0], xmm6
+    (0x76EC32 - 0xC00, 0x57C0, AI_FRAME2_EXTRA),                 # mov [rbp+0x57C0], cookie
+    (0x76EC39 - 0xC00, 0x5848, AI_FRAME2_EXTRA),                 # mov rax, [rbp+0x5848] (stack arg)
+    (0x76EC5F - 0xC00, 0x5850, AI_FRAME2_EXTRA),                 # mov rax, [rbp+0x5850]
+    (0x76EC72 - 0xC00, 0x5858, AI_FRAME2_EXTRA),                 # mov rax, [rbp+0x5858]
+    (0x76ED0D - 0xC00, 0x5840, AI_FRAME2_EXTRA),                 # movss xmm3, [rbp+0x5840]
+    (0x76EE4B - 0xC00, 0x57C0, AI_FRAME2_EXTRA),                 # mov rcx, [rbp+0x57C0]
+    (0x76EE5B - 0xC00, 0x58E0, AI_FRAME2_EXTRA),                 # lea r11, [rsp+0x58E0]
+]
 
 BUF1 = 0x15181000                                    # unchanged
 V16_BUF2, V16_QUEUE = 0x18111020, 0x1B0A1040
 
 
+# Render bank (bank 3) holds `cached object render states` (4,096 x 624 B = 2.5 MB) next to the particle
+# pools. Raising the render states to 8,192 / 16,384 overran it (map-load crashes at 0x6E58E / 0x27B01F), so
+# Noble's builds add RENDER_BANK_EXTRA to it: 0x800000 = room for 16,384 render states (+7.3 MB).
+DEFAULT_RENDER_EXTRA = 0x800000
+
+
+# Light-volume V4 adds these to the stock banks: render 0x370000 -> 0x2DE0000, main 0x490000 -> 0xEF0000.
+LV_RENDER_EXTRA = 0x2DE0000 - 0x370000
+LV_MAIN_EXTRA = 0xEF0000 - 0x490000
+# Profile Full main-bank margin. Measured with the BANK| diagnostic (PoolReport.cpp): all LV pools allocate
+# 51,649,416 bytes of bank 4 at map load and the figure stays flat through a plasma-heavy Firefight wave; the
+# old build left bank 4 at V16's 0x27D0000 and it overran by ~10 MB (crash 0x2C2E0B). Main is now the V4 delta
+# plus this margin: 0x3250000 = 52,887,552 bytes, i.e. ~1.2 MB above the measured usage.
+LV_MAIN_MARGIN = 0x20000
+# V4's normal transparent draw storage, placed at the end of .hkwork by the port.
+LV_TRANSPARENT_RECORDS = 0x2C0000
+LV_TRANSPARENT_INDICES = 0x8000
+
+
 class Layout:
-    def __init__(self, particles: bool, ai_extra: int):
-        if ai_extra % 0x10000:
-            raise ValueError("--ai-bank-extra must be a multiple of 0x10000")
-        self.render = V16_RENDER + (PARTICLE_RENDER_EXTRA if particles else 0)
+    def __init__(self, particles: bool, ai_extra: int, render_extra: int = 0, light_volumes: bool = False):
+        if ai_extra % 0x10000 or render_extra % 0x10000:
+            raise ValueError("--ai-bank-extra / --render-extra must be multiples of 0x10000")
+        self.light_volumes = light_volumes
+        self.render = (V16_RENDER + (PARTICLE_RENDER_EXTRA if particles else 0)
+                       + (LV_RENDER_EXTRA if light_volumes else 0) + render_extra)
+        self.main = V16_MAIN + ((LV_MAIN_EXTRA + LV_MAIN_MARGIN) if light_volumes else 0)
         self.ai_bank = AI_BANK + ai_extra
-        self.checkpoint = self.render + V16_MAIN + 0x260000 + ai_extra   # banks 0-5
-        self.total = self.checkpoint + 2 * V16_MAIN
+        self.checkpoint = self.render + self.main + 0x260000 + ai_extra   # banks 0-5
+        self.total = self.checkpoint + 2 * self.main
         self.buf2 = BUF1 + self.checkpoint + 0x20
         self.queue = self.buf2 + self.checkpoint + 0x20
-        self.image_end = (self.queue + 0x40 + 0xFFF) & ~0xFFF
+        if light_volumes:
+            self.records = (self.queue + 0x40 + 0xFFF) & ~0xFFF
+            # V4 also moves the effect-message queue control block (its stock .data address is too small for the
+            # 0x200C header + 2,048-word bitmap). Give it a 64 KB block of zeroed .hkwork space after the records.
+            self.lv_queue = (self.records + LV_TRANSPARENT_RECORDS + 0xFFF) & ~0xFFF
+            self.indices = (self.lv_queue + 0x10000 + 0xFFF) & ~0xFFF
+            self.image_end = (self.indices + LV_TRANSPARENT_INDICES + 0xFFF) & ~0xFFF
+        else:
+            self.records = self.indices = 0
+            self.image_end = (self.queue + 0x40 + 0xFFF) & ~0xFFF
 
 # Size operands (file offset of the 4-byte value) and their V16 values.
 RENDER_OPS = [0x1559A]
+MAIN_OPS = [0x155A9]              # main bank + its two rollback copies; V16 sets 0x27D0000, Full grows it further
 CHECKPOINT_OPS = [0xB89C, 0x154BB, 0x15F1E, 0x1627D, 0x16568, 0x165C7, 0x165CF, 0x165EB, 0x3499F,
                   0x87649, 0x87B66, 0x87E5A, 0xA47E7, 0x1707DB, 0x170AC9, 0x170D39, 0x171048, 0x1715B4]
 BUFSIZE_OPS = [0xB7FE]                               # checkpoint + 32
@@ -168,8 +255,9 @@ def pe_checksum(img: bytearray, csum_off: int) -> int:
     return (total + len(img)) & 0xFFFFFFFF
 
 
-def build(stock: bytes, recipes: Path, particles: bool = True, ai_extra: int = DEFAULT_AI_BANK_EXTRA) -> bytes:
-    L = Layout(particles, ai_extra)
+def build(stock: bytes, recipes: Path, particles: bool = True, ai_extra: int = DEFAULT_AI_BANK_EXTRA,
+          render_extra: int = DEFAULT_RENDER_EXTRA, light_volumes: bool = False) -> bytes:
+    L = Layout(particles, ai_extra, render_extra, light_volumes)
     if hashlib.sha256(stock).hexdigest() != STOCK_SHA:
         raise ValueError("not the stock haloreach.dll 1.3528.0.0")
     rows, append, meta = build_recipe.load_v16(recipes)
@@ -218,12 +306,59 @@ def build(stock: bytes, recipes: Path, particles: bool = True, ai_extra: int = D
         if NEW_BLOCK_RVA + len(block) > HKWORK_RVA:
             raise ValueError("block does not fit before .hkwork")
 
+    # 3b. Light-volume V4: seven relocated routines + five small blocks in the free .deltrac room, every
+    # relative reference recomputed for the new address (lv_port.build_code), then the 43 functional overwrite
+    # rows. The PE-header, bank-size and snapshot rows are handled here instead (Layout / STATE_BANKS).
+    lv_code = b""
+    if light_volumes:
+        new_lv_base = NEW_BLOCK_RVA + len(block)
+        lv_code, lv_addrs = lv_port.build_code(recipes, new_lv_base, particle=particles)
+        img += lv_code
+        expect32(img, DELTRAC_HDR + 8, DELTRAC_SIZE + len(block), ".deltrac VirtualSize")
+        expect32(img, DELTRAC_HDR + 16, DELTRAC_SIZE + len(block), ".deltrac SizeOfRawData")
+        put32(img, DELTRAC_HDR + 8, DELTRAC_SIZE + len(block) + len(lv_code))
+        put32(img, DELTRAC_HDR + 16, DELTRAC_SIZE + len(block) + len(lv_code))
+        if new_lv_base + len(lv_code) > HKWORK_RVA:
+            raise ValueError(f"light-volume code (0x{len(lv_code):X} B) does not fit before .hkwork")
+        rows_lv = lv_port.lv_rows(recipes / "light_volumes" / "Halo_Reach_Light_Volume_V4_Hex_Guide.md")
+        lv_port.apply_rows(img, rows_lv, lv_addrs, L.records, L.indices, L.lv_queue)
+
+    # 3c. Bound the static list append. The 7-byte count load at 0x1D4F85 becomes a jump to a cave: reload the
+    # count, compare with 0x1FF, skip the append when full, otherwise resume in place. Emitted only when the
+    # AI/render extras are on, so --ai-bank-extra 0 --render-extra 0 still reproduces GreenKnight's exact
+    # V16 (b8810c3b) / V16p (47bc0723) images for the zero-extra proof.
+    guard_bytes = 0
+    if ai_extra > 0 or render_extra > 0:
+        guard_base = NEW_BLOCK_RVA + len(block) + len(lv_code)
+        cave_rva = (guard_base + 0xF) & ~0xF
+        pad = cave_rva - guard_base
+        cave = bytearray(bytes.fromhex("48 63 8A 00 12 00 00"))   # movsxd rcx, [rdx+0x1200]
+        cave += bytes.fromhex("81 F9 FF 01 00 00")                # cmp ecx, 0x1FF
+        jge_at = len(cave); cave += b"\x0F\x8D\x00\x00\x00\x00"
+        jmp_at = len(cave); cave += b"\xE9\x00\x00\x00\x00"
+        struct.pack_into("<i", cave, jge_at + 2, LIST_SKIP - (cave_rva + jge_at + 6))
+        struct.pack_into("<i", cave, jmp_at + 1, LIST_CONTINUE - (cave_rva + jmp_at + 5))
+        site_off = LIST_SITE - TEXT_DELTA
+        if bytes(img[site_off:site_off + 7]) != bytes.fromhex("48 63 8A 00 12 00 00"):
+            raise ValueError(f"list guard site 0x{LIST_SITE:X} does not hold the expected count load")
+        struct.pack_into("<i", img, site_off + 1, cave_rva - (LIST_SITE + 5))
+        img[site_off] = 0xE9
+        img[site_off + 5:site_off + 7] = b"\x90\x90"
+        img += b"\xCC" * pad + cave
+        guard_bytes = pad + len(cave)
+        expect32(img, DELTRAC_HDR + 8, DELTRAC_SIZE + len(block) + len(lv_code), ".deltrac VirtualSize")
+        put32(img, DELTRAC_HDR + 8, DELTRAC_SIZE + len(block) + len(lv_code) + guard_bytes)
+        put32(img, DELTRAC_HDR + 16, DELTRAC_SIZE + len(block) + len(lv_code) + guard_bytes)
+        if cave_rva + len(cave) > HKWORK_RVA:
+            raise ValueError("list guard cave does not fit before .hkwork")
     # 4. Game-state sizes.
     for off in RENDER_OPS:
         expect32(img, off, V16_RENDER, "render bank"); put32(img, off, L.render)
+    for off in MAIN_OPS:
+        expect32(img, off, V16_MAIN, "main bank"); put32(img, off, L.main)
     expect32(img, AI_BANK_OP, AI_BANK, "AI bank size"); put32(img, AI_BANK_OP, L.ai_bank)
     if ai_extra:
-        for off, old, delta in AI_FRAME_OPS:
+        for off, old, delta in AI_FRAME_OPS + AI_FRAME2_OPS + AI_FRAME2_CAP_OPS + AI_FRAME3_OPS + AI_FRAME3_CAP_OPS:
             expect32(img, off, old, "AI update frame"); put32(img, off, old + delta)
     for off in CHECKPOINT_OPS:
         expect32(img, off, V16_CHECKPOINT, "checkpoint size"); put32(img, off, L.checkpoint)
@@ -254,7 +389,7 @@ def build(stock: bytes, recipes: Path, particles: bool = True, ai_extra: int = D
     new_hk = L.image_end - HKWORK_RVA
     put32(img, HKWORK_HDR + 8, new_hk)
     e = u32(img, 0x3C); opt = e + 24
-    put32(img, opt + 4, u32(img, opt + 4) + len(block))          # SizeOfCode
+    put32(img, opt + 4, u32(img, opt + 4) + len(block) + len(lv_code) + guard_bytes)   # SizeOfCode
     put32(img, opt + 12, u32(img, opt + 12) + (new_hk - old_hk))  # SizeOfUninitializedData
     put32(img, opt + 56, L.image_end)                               # SizeOfImage
     put32(img, opt + 64, 0)
@@ -291,15 +426,19 @@ def main() -> int:
     ap.add_argument("stock", type=Path)
     ap.add_argument("--recipes", type=Path, default=HERE / "recipes")
     ap.add_argument("--out-dll", type=Path, default=None)
-    ap.add_argument("--profile", choices=["v16p", "v16"], default="v16p")
+    ap.add_argument("--profile", choices=["v16p", "v16", "full"], default="v16p")
     ap.add_argument("--ai-bank-extra", type=lambda v: int(v, 0), default=DEFAULT_AI_BANK_EXTRA)
+    ap.add_argument("--render-extra", type=lambda v: int(v, 0), default=None,
+                    help="extra render bank bytes (default 0x800000; 0 when --ai-bank-extra is 0)")
     ap.add_argument("--nlp", type=Path, default=None)
     a = ap.parse_args()
-    particles = a.profile == "v16p"
+    particles = a.profile in ("v16p", "full")
+    light_volumes = a.profile == "full"
     nlp = a.nlp or repo / "data" / "limits" / f"{a.profile}.nlp"
-    L = Layout(particles, a.ai_bank_extra)
+    render_extra = a.render_extra if a.render_extra is not None else (DEFAULT_RENDER_EXTRA if a.ai_bank_extra else 0)
+    L = Layout(particles, a.ai_bank_extra, render_extra, light_volumes)
     stock = a.stock.read_bytes()
-    final = build(stock, a.recipes, particles, a.ai_bank_extra)
+    final = build(stock, a.recipes, particles, a.ai_bank_extra, render_extra, light_volumes)
     rows = diff_rows(stock, final[:len(stock)])
     meta = {"stock_len": len(stock), "stock_sha": hashlib.sha256(stock).digest(),
             "out_len": len(final), "out_sha": hashlib.sha256(final).digest(), "append_off": len(stock)}
@@ -307,7 +446,8 @@ def main() -> int:
     build_recipe.validate(rows, append, meta)
     if build_recipe.apply(stock, rows, append) != final:
         raise SystemExit("diff does not round-trip")
-    size = build_recipe.write_nlp(nlp, 2 if particles else 1, rows, append, meta)
+    profile_id = 3 if light_volumes else (2 if particles else 1)
+    size = build_recipe.write_nlp(nlp, profile_id, rows, append, meta)
     print(f"{a.profile}: {len(final):,} bytes, sha256 {hashlib.sha256(final).hexdigest()}")
     print(f"wrote {nlp} ({size:,} bytes, {len(rows)} rows)")
     print(f"render 0x{L.render:X} ai bank 0x{L.ai_bank:X} checkpoint 0x{L.checkpoint:X} total 0x{L.total:X} "

@@ -73,10 +73,26 @@ uintptr_t __fastcall Hook_AiUpdate(uintptr_t a, uintptr_t b, uintptr_t c, uintpt
     return s_aiUpdateOriginal(a, b, c, d);
 }
 
+// The AI spawn-candidate search (0x76E814) also grew its stack frame in the engine build: 0x900 -> 0x1100 bytes
+// for a 1,024-entry scratch array (see AI_FRAME3_OPS in make_v16_particles.py). It has no __chkstk either, so
+// commit the pages before its prologue runs. Only the patched prologue matches (lea rbp,[rax-0x1038]).
+constexpr uintptr_t kAiSpawnSearchRva = 0x76E814;
+const uint8_t kAiSpawnSearchHead[] = { 0x48, 0x8B, 0xC4, 0x48, 0x89, 0x58, 0x10, 0x55, 0x56, 0x57, 0x41, 0x54, 0x41, 0x55,
+                                       0x41, 0x56, 0x41, 0x57, 0x48, 0x8D, 0xA8, 0xC8, 0xEF, 0xFF, 0xFF };   // lea rbp,[rax-0x1038]
+using AiSpawnSearchFn = uintptr_t(__fastcall*)(uintptr_t, uintptr_t, uintptr_t, uintptr_t);
+AiSpawnSearchFn s_aiSpawnSearchOriginal = nullptr;
+
+uintptr_t __fastcall Hook_AiSpawnSearch(uintptr_t a, uintptr_t b, uintptr_t c, uintptr_t d) {
+    CommitStack();
+    return s_aiSpawnSearchOriginal(a, b, c, d);
+}
+
 uint64_t ArrayBytes(int64_t count, uint64_t recordSize) {
     return static_cast<uint64_t>(count) * recordSize + static_cast<uint64_t>((count + 31) / 32) * 4;
 }
 int s_actors = 0;   // 0 = off
+uint64_t s_renderBudget = 0, s_renderSpent = 0;   // added room in render bank 3 (see InstallResize)
+int s_renderStates = 0;   // -render-states N: opt-in only; the game-state bank cannot take it yet (see below)
 std::string s_only;  // -ai-pools a,b,c: resize only these (bisecting crashes); empty = all
 bool s_trace = false;
 
@@ -107,6 +123,19 @@ const Rule kRules[] = {
     { "object list header", [](int32_t stock) { return AtLeast256(stock); } },  // 48
     { "dynamic firing points", [](int32_t stock) { return (std::max)(stock, 64); } },  // 15
     { "swarm", [](int32_t stock) { return (std::max)(stock, 128); } },    // 32
+    // Script engine pools (LIMITS-TODO C6). Capacities seen in the live pool report; big custom maps and
+    // horde scripts run out of script nodes and references first.
+    { "det hs thread", [](int32_t stock) { return (std::max)(stock, 1024); } },        // 320 x 1,324 B
+    { "non-det hs thread", [](int32_t stock) { return (std::max)(stock, 32); } },      // 4 x 1,324 B
+    { "list object reference", [](int32_t stock) { return (std::max)(stock, 512); } }, // 128 x 12 B
+    // "script node" (16,280 x 24 B in the pool report) is not created through data_array_new, so the rule
+    // below is inert for now; it is here for the day that constructor is found. See docs/limits-ai.md (C6).
+    { "script node", [](int32_t stock) { return (std::max)(stock, 32768); } },         // 16,280 x 24 B
+    // C11 runtime half: opt-in with -render-states N (needs -ai-actors too). Before the render bank grew, 16,384 crashed at
+    // haloreach+0x27B01F and 8,192 at haloreach+0x6E58E during map load — the game-state bank has no room for
+    // the 624-byte records beyond the stock 4,096. Noble builds now add 0x800000 to render bank 3 (room for 16,384);
+    // the records are charged to that room (s_renderBudget), not the AI bank.
+    { "cached object render states", [](int32_t stock) { return stock; } },   // -render-states overrides
 };
 
 void* __fastcall Hook_DataArrayNew(const char* name, int32_t count, uint64_t recordSize, int32_t alignBits, void* allocator) {
@@ -114,9 +143,19 @@ void* __fastcall Hook_DataArrayNew(const char* name, int32_t count, uint64_t rec
         for (const Rule& rule : kRules) {
             if (std::strcmp(name, rule.name) != 0) continue;
             if (!Selected(name)) break;
-            int32_t wanted = rule.size(count);
+            // The render-state array is created from the same game-state banks, before the AI pools, so it must
+            // stay inside the AI bank budget (charging 16,384 to it crashed the engine at map load: 0xC0000005).
+            // It is only raised when the actor count leaves room for both; at 1,024 actors the bank is needed
+            // for the actor pools themselves.
+            // Render states live in game-state bank 3 (render), not the AI bank: they are charged to the render
+            // bank's own added room (s_renderBudget), read from the loaded engine at install time.
+            const bool renderStates = std::strcmp(name, "cached object render states") == 0;
+            if (renderStates && s_renderStates <= count) break;
+            int32_t wanted = renderStates ? s_renderStates : rule.size(count);
             if (wanted > count) {
-                const uint64_t left = s_budget > s_spent ? s_budget - s_spent : 0;
+                const uint64_t budget = renderStates ? s_renderBudget : s_budget;
+                const uint64_t spent = renderStates ? s_renderSpent : s_spent;
+                const uint64_t left = budget > spent ? budget - spent : 0;
                 if (ArrayBytes(wanted, recordSize) - ArrayBytes(count, recordSize) > left) {
                     const auto fit = static_cast<int32_t>(count + left / (recordSize + 1));
                     NOBLE_WARN("AI limits: {} {} does not fit the AI memory bank ({} KB left); using {}", name, wanted, left / 1024,
@@ -128,7 +167,7 @@ void* __fastcall Hook_DataArrayNew(const char* name, int32_t count, uint64_t rec
                 NOBLE_INFO("AI limits: {} {} -> {} ({} KB more game-state memory)", name, count, wanted,
                     (static_cast<uint64_t>(wanted - count) * recordSize) / 1024);
                 void* header = s_original(name, wanted, recordSize, alignBits, allocator);
-                if (header) s_spent += ArrayBytes(wanted, recordSize) - ArrayBytes(count, recordSize);
+                if (header) (renderStates ? s_renderSpent : s_spent) += ArrayBytes(wanted, recordSize) - ArrayBytes(count, recordSize);
                 if (!header) {
                     NOBLE_ERROR("AI limits: game-state memory ran out raising '{}' to {}; using {}", name, wanted, count);
                     header = s_original(name, count, recordSize, alignBits, allocator);
@@ -154,6 +193,7 @@ void ReadPoolOptions() {
     wchar_t env[256] = {};
     if (GetEnvironmentVariableW(L"NOBLE_AI_POOLS", env, 256) > 0) s_only = Narrow(env);
     if (GetEnvironmentVariableW(L"NOBLE_POOL_TRACE", env, 256) > 0) s_trace = env[0] == L'1';
+    if (GetEnvironmentVariableW(L"NOBLE_RENDER_STATES", env, 256) > 0) s_renderStates = _wtoi(env);
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
     for (int i = 1; argv && i < argc; ++i) {
@@ -163,6 +203,9 @@ void ReadPoolOptions() {
         } else if (_wcsicmp(argv[i], L"-pool-trace") == 0) {
             s_trace = true;
             SetEnvironmentVariableW(L"NOBLE_POOL_TRACE", L"1");
+        } else if (_wcsicmp(argv[i], L"-render-states") == 0 && i + 1 < argc) {
+            s_renderStates = _wtoi(argv[i + 1]);
+            SetEnvironmentVariableW(L"NOBLE_RENDER_STATES", argv[i + 1]);
         }
     }
     if (argv) LocalFree(argv);
@@ -181,6 +224,8 @@ int ReadActorSetting() {
         }
     }
     if (argv) LocalFree(argv);
+    // No fallback to the settings file here: the dedicated server target has no Settings. The client copies
+    // SETTINGS > ENGINE > AI ACTORS into NOBLE_AI_ACTORS before loading the engine (main.cpp, step 8).
     return value;
 }
 
@@ -194,6 +239,11 @@ void InstallResize(HMODULE engine, bool extendedProfile) {
     if (bigAiFrame && !HookManager::InstallHook(reinterpret_cast<void*>(base + kAiUpdateRva), reinterpret_cast<void*>(&Hook_AiUpdate),
             reinterpret_cast<void**>(&s_aiUpdateOriginal), "ai_update_stack")) {
         NOBLE_ERROR("AI limits: could not hook the AI update scheduler; its 12 KB frame is used without a stack commit");
+    }
+    const bool bigSpawnFrame = std::memcmp(reinterpret_cast<void*>(base + kAiSpawnSearchRva), kAiSpawnSearchHead, sizeof(kAiSpawnSearchHead)) == 0;
+    if (bigSpawnFrame && !HookManager::InstallHook(reinterpret_cast<void*>(base + kAiSpawnSearchRva), reinterpret_cast<void*>(&Hook_AiSpawnSearch),
+            reinterpret_cast<void**>(&s_aiSpawnSearchOriginal), "ai_spawn_search_stack")) {
+        NOBLE_ERROR("AI limits: could not hook the AI spawn search; its 0x1100-byte frame is used without a stack commit");
     }
     s_engineBase = base;
     s_engineEnd = base + 0x20000000;
@@ -221,6 +271,14 @@ void InstallResize(HMODULE engine, bool extendedProfile) {
         return;
     }
     s_budget = aiBank - kStockAiBank - kSafetyMargin;
+    {
+        // Render bank 3 size: `mov edx, <size>` at RVA 0x16199. Noble's builds add 0x800000 to V16 (0x560000) or
+        // V16+particles (0xD80000); any other value means no added room, so -render-states stays off.
+        const auto* renderInsn = reinterpret_cast<const uint8_t*>(base + 0x16199);
+        uint32_t renderBank = 0;
+        if (renderInsn[0] == 0xBA) std::memcpy(&renderBank, renderInsn + 1, 4);
+        if (renderBank == 0x560000 + 0x800000 || renderBank == 0xD80000 + 0x800000) s_renderBudget = 0x800000 - kSafetyMargin;
+    }
     if (!bigAiFrame || !s_aiUpdateOriginal) {
         // Without the bigger frame the scheduler overflows past 96 live actors.
         NOBLE_WARN("AI limits: this engine build lacks the 1,024-actor AI update frame; actor pool stays at 96");
@@ -228,6 +286,10 @@ void InstallResize(HMODULE engine, bool extendedProfile) {
     }
     s_actors = (std::min)(actors, 1024);
     ReadPoolOptions();
+    if (s_renderStates > 0 && s_renderBudget == 0) {
+        NOBLE_WARN("AI limits: -render-states needs the engine build with the bigger render bank; ignored");
+        s_renderStates = 0;
+    }
     if (!HookManager::InstallHook(reinterpret_cast<void*>(base + kDataArrayNewRva), reinterpret_cast<void*>(&Hook_DataArrayNew),
             reinterpret_cast<void**>(&s_original), "ai_pool_resize")) {
         NOBLE_WARN("AI limits: could not hook data_array_new; ignored");

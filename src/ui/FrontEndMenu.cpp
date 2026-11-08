@@ -43,6 +43,7 @@
 #include <random>
 #include "host/Window.hpp"
 #include "host/D3D11Renderer.hpp"
+#include "host/EngineLimits.hpp"
 
 #include <windows.h>
 #include <shellapi.h>
@@ -6545,11 +6546,27 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
     UIManager::GetServerBrowser().SetJoinLobbyHandler([&ctx, enterLobby](const ServerEntry& s) {
         std::string modId = s.modId;
         std::string modTitle = s.modTitle;
-        // The list refreshes every two seconds; if the host picked its mod after the last refresh, ask the
-        // lobby endpoint once before letting the player in.
-        if (modId.empty() && s.isMod && !s.id.empty() && MasterServerClient::Get().Enabled()) {
+        if (!s.id.empty() && MasterServerClient::Get().Enabled()) {
             const LobbyState peek = MasterServerClient::Get().FetchLobbyStateSync(s.id);
-            if (peek.ok) {
+            // Engine limits (D3): host and guests must run the same engine build and AI actor count, or the
+            // match desyncs. Hosts that advertise "limits_id" are checked; older hosts (no field) are let in.
+            const uint32_t mine = noble::limits::LocalNetworkId();
+            if (peek.ok && peek.limitsId >= 0 && static_cast<uint32_t>(peek.limitsId) != mine) {
+                const auto describe = [](uint32_t id) {
+                    const auto profile = noble::limits::ProfileFromInt(static_cast<int>(id >> 24));
+                    const uint32_t actors = id & 0xFFFF;
+                    return std::string(noble::limits::ProfileName(profile)) +
+                        (actors ? ", AI actors " + std::to_string(actors) : std::string());
+                };
+                const std::string msg = "Can't join: this game uses engine limits " + describe(static_cast<uint32_t>(peek.limitsId)) +
+                    "; you have " + describe(mine) + ". Change SETTINGS > ENGINE to match and restart Noble.";
+                NOBLE_WARN("ServerBrowser join refused: {}", msg);
+                UIManager::GetServerBrowser().SetStatus(msg);
+                return;
+            }
+            // The list refreshes every two seconds; if the host picked its mod after the last refresh, use the
+            // lobby endpoint's answer before letting the player in.
+            if (modId.empty() && s.isMod && peek.ok) {
                 modId = peek.modId;
                 modTitle = peek.modTitle;
             }

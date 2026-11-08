@@ -11,7 +11,7 @@
 
 namespace noble::limits {
 
-enum class Profile : uint32_t { Stock = 0, V16 = 1, V16Particles = 2 };
+enum class Profile : uint32_t { Stock = 0, V16 = 1, V16Particles = 2, Full = 3 };
 
 struct PrepareResult {
     std::filesystem::path dllPath;   // what Loader should load (stock path on any fallback)
@@ -24,8 +24,16 @@ PrepareResult PrepareEngineDll(const std::filesystem::path& stockDll, Profile re
 
 Profile ActiveProfile();                  // valid after PrepareEngineDll
 const char* ProfileName(Profile p);       // "Stock", "Extended (V16)", "Extended + Particles"
-uint32_t ProfileNetworkId(Profile p);     // value sent in lobby / server registration
-std::string SaveFolderSuffix(Profile p);  // "" for Stock, "_ext_v16" for V16, "_ext_v16p" for V16Particles
+uint32_t ProfileNetworkId(Profile p, int aiActors = 0);
+// This process's id: active profile + the AI actor count actually applied (NOBLE_AI_ACTORS, Extended only).
+// Hosts advertise it as "limits_id"; joiners refuse a lobby whose id differs (the engines would desync).
+uint32_t LocalNetworkId();   // lobby / server registration; high byte = profile,
+                                                        // low 16 bits = AI actor count (0 = stock 96)
+std::string SaveFolderSuffix(Profile p);  // "" for Stock, "_ext_v16" / "_ext_v16p" / "_ext_full"
+
+// Profile Full only: the light-volume routines copied into .deltrac have no .pdata entries (all section slots are
+// used), so register their RUNTIME_FUNCTIONs at load, reusing the original routines' unwind info.
+void RegisterUnwindTables(void* engineBase);
 Profile ProfileFromInt(int value);        // settings / command line; unknown values map to Stock
 
 // ---- Building blocks (exposed for tests and tools) ---------------------------------------------

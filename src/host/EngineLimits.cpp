@@ -175,16 +175,31 @@ const char* ProfileName(Profile p) {
     switch (p) {
     case Profile::V16: return "Extended (V16)";
     case Profile::V16Particles: return "Extended + Particles";
+    case Profile::Full: return "Full (V16 + particles + light volumes)";
     default: return "Stock";
     }
 }
 
-uint32_t ProfileNetworkId(Profile p) { return static_cast<uint32_t>(p); }
+// The network id of an engine profile: the game-state layout depends both on the patch profile and (with
+// an Extended profile) on the AI actor count, so host and clients have to match on both or they desync.
+// High byte = profile id, low 16 bits = actor count (0 = the stock 96, 1,024 = the experimental value).
+uint32_t ProfileNetworkId(Profile p, int aiActors) {
+    const uint32_t actors = aiActors == 256 || aiActors == 512 || aiActors == 1024 ? static_cast<uint32_t>(aiActors) : 0u;
+    return (static_cast<uint32_t>(p) << 24) | actors;
+}
+
+uint32_t LocalNetworkId() {
+    int actors = 0;
+    wchar_t env[16] = {};
+    if (s_active != Profile::Stock && GetEnvironmentVariableW(L"NOBLE_AI_ACTORS", env, 16) > 0) actors = _wtoi(env);
+    return ProfileNetworkId(s_active, actors);
+}
 
 std::string SaveFolderSuffix(Profile p) {
     switch (p) {
     case Profile::V16: return "_ext_v16";
     case Profile::V16Particles: return "_ext_v16p";
+    case Profile::Full: return "_ext_full";
     default: return "";
     }
 }
@@ -193,9 +208,46 @@ Profile ProfileFromInt(int value) {
     switch (value) {
     case 1: return Profile::V16;
     case 2: return Profile::V16Particles;
+    case 3: return Profile::Full;
     default: return Profile::Stock;
     }
 }
+
+#ifndef NOBLE_LIMITS_CORE_ONLY
+// RtlAddFunctionTable lives in ntdll; winnt.h declares the RUNTIME_FUNCTION layout.
+extern "C" NTSYSAPI BOOLEAN NTAPI RtlAddFunctionTable(PRUNTIME_FUNCTION FunctionTable, DWORD EntryCount, DWORD_PTR BaseAddress);
+
+void RegisterUnwindTables(void* engineBase) {
+    if (s_active != Profile::Full || !engineBase) return;
+    // New code in .deltrac (RVA, end RVA, original UNWIND_INFO RVA). The unwind RVAs are the stock routines'
+    // entries: make_v16_particles.py copies the code unchanged, so the prologues still match.
+    struct LvFunction { uint32_t begin, end, unwind; };
+    static const LvFunction kFunctions[] = {
+        { 0xAAE8460, 0xAAE8976, 0xAA49D8 },   // effect / particle initialization
+        { 0xAAE8980, 0xAAE89FB, 0xA9A878 },   // message queue admission
+        { 0xAAE8A00, 0xAAE8AB7, 0xA9A83C },   // message queue reset
+        { 0xAAE8AC0, 0xAAE8C1B, 0xA9ABF4 },   // message queue relocation callback
+        { 0xAAE8C20, 0xAAE8CE2, 0xA9A880 },   // message queue consumer
+        { 0xAAE8DA0, 0xAAE8E5E, 0xA9ABD8 },   // message queue filtering
+    };
+    const uint8_t* code = static_cast<const uint8_t*>(engineBase);
+    if (code[kFunctions[0].begin] != 0x48 || code[kFunctions[0].begin + 1] != 0x8B ||
+        code[kFunctions[0].begin + 2] != 0xC4) {
+        NOBLE_WARN("Engine limits: light-volume code not found at 0x{:X}; unwind tables not registered",
+                   kFunctions[0].begin);
+        return;
+    }
+    static RUNTIME_FUNCTION table[std::size(kFunctions)] = {};
+    for (size_t i = 0; i < std::size(kFunctions); ++i)
+        table[i] = RUNTIME_FUNCTION{ kFunctions[i].begin, kFunctions[i].end, kFunctions[i].unwind };
+    if (RtlAddFunctionTable(table, static_cast<DWORD>(std::size(kFunctions)), reinterpret_cast<DWORD_PTR>(engineBase)))
+        NOBLE_INFO("Engine limits: registered {} unwind entries for the light-volume routines", std::size(kFunctions));
+    else
+        NOBLE_WARN("Engine limits: RtlAddFunctionTable failed for the light-volume routines");
+}
+#else
+void RegisterUnwindTables(void*) {}
+#endif
 
 // ---------------------------------------------------------------- file helpers / PrepareEngineDll
 namespace {
@@ -215,6 +267,7 @@ const char* ProfileFileStem(Profile p) {
     switch (p) {
     case Profile::V16: return "v16";
     case Profile::V16Particles: return "v16p";
+    case Profile::Full: return "full";
     default: return "";
     }
 }

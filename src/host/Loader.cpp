@@ -4,6 +4,7 @@
 #include "SpawnTest.hpp"
 #include "SchedulerGuard.hpp"
 #include "PoolResize.hpp"
+#include "MemberTrace.hpp"
 #include "common/Logger.hpp"
 
 #include <psapi.h>
@@ -152,6 +153,8 @@ bool Loader::LoadReachDll(const fs::path& dllPath, const fs::path& dependencyDll
     spawn::Install(m_hModule);   // development builds: F9 / -spawn-test object stress test
     scheduler::InstallGuard(m_hModule);   // V16 layout only: wait for free jobs instead of crashing past ~6,500 moving objects
     pools::InstallResize(m_hModule, limits::ActiveProfile() != limits::Profile::Stock);   // opt-in: -ai-actors N
+    limits::RegisterUnwindTables(m_hModule);   // profile Full only: unwind info for the relocated light-volume code
+    membertrace::Install(m_hModule);   // dev only, opt-in -trace-members (C12 slot access map)
 
     // Resolve exported engine interfaces
     m_exports.CreateGameEngine = reinterpret_cast<CreateGameEngineFn>(

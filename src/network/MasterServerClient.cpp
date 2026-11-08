@@ -6,6 +6,7 @@
 #include "common/Version.hpp"
 #include "common/BuildIdentity.hpp"
 #include "career/Career.hpp"
+#include "host/EngineLimits.hpp"
 
 #include <windows.h>
 #include <winhttp.h>
@@ -521,6 +522,7 @@ void MasterServerClient::DoRegister() {
         {"host_games_played", advert.hostGamesPlayed}, {"host_kills", advert.hostKills},
         {"host_deaths", advert.hostDeaths}, {"host_challenges_done", advert.hostChallengesDone},
         {"host_commendations", advert.hostCommendations}, {"host_armory_owned", advert.hostArmoryOwned},
+        {"limits_id", noble::limits::LocalNetworkId()},
     };
     if (!advert.inProgress) {
         body["roster"] = nlohmann::json::array({
@@ -587,7 +589,8 @@ void MasterServerClient::DoHeartbeat() {
             {"host_emblem_id", m_advert.hostEmblemId},
             {"host_emblem_background_id", m_advert.hostEmblemBackgroundId},
             {"host_nameplate_id", m_advert.hostNameplateId},
-            {"host_team", m_advert.hostTeam}
+            {"host_team", m_advert.hostTeam},
+            {"limits_id", noble::limits::LocalNetworkId()}
         };
         // The match process re-registers the host's session with an advert built in main.cpp, which does
         // not know the lobby's Workshop mod. Omitting the fields (instead of sending empty strings) keeps
@@ -759,6 +762,7 @@ LobbyState MasterServerClient::FetchLobbyStateSync(const std::string& sessionId)
         state.isLan = j.value("is_lan", false);
         state.isClosed = j.value("is_closed", false);
         state.closeReason = j.value("close_reason", "");
+        if (j.contains("limits_id") && j["limits_id"].is_number_integer()) state.limitsId = j["limits_id"].get<int64_t>();
         if (j.contains("vote") && j["vote"].is_object()) {
             const auto& vote = j["vote"];
             state.voteId = vote.value("id", std::string());
@@ -912,6 +916,7 @@ LobbyState MasterServerClient::JoinLobbySync(const std::string& sessionId,
         }
         state.isClosed = j.value("is_closed", false);
         state.closeReason = j.value("close_reason", "");
+        if (j.contains("limits_id") && j["limits_id"].is_number_integer()) state.limitsId = j["limits_id"].get<int64_t>();
         state.map = j.value("map", "20_sword_slayer");
         state.mode = j.value("mode", "multiplayer");
         state.variant = j.value("variant", "");

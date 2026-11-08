@@ -116,6 +116,29 @@ std::string Grouped(uint64_t v) {
 } // namespace
 
 #ifndef NOBLE_POOLS_CORE_ONLY
+// Game-state bank table: static array at RVA 0x27BF270, one 0x18F0-byte record per bank (0-7). Each record
+// has +0xA0 = capacity and +0xA8 = bytes handed out by the bump allocator (set in 0x9FF44, bumped in 0xA00FC).
+// Logging these makes a bank overflow visible directly instead of as a later random access violation.
+constexpr uintptr_t kBankTableRva = 0x27BF270;
+constexpr size_t kBankStride = 0x18F0;
+
+void ReportBanks(uintptr_t engineBase, bool verbose) {
+    __try {
+        const uint8_t* entry = reinterpret_cast<const uint8_t*>(engineBase + kBankTableRva);
+        for (int n = 0; n < 8; ++n, entry += kBankStride) {
+            uint64_t capacity = 0, used = 0;
+            std::memcpy(&capacity, entry + 0xA0, 8);
+            std::memcpy(&used, entry + 0xA8, 8);
+            if (capacity == 0) continue;
+            if (verbose) NOBLE_INFO("BANK|{}|{}|{}", n, used, capacity);
+            if (used > capacity)
+                NOBLE_WARN("Game-state bank {} overflowed: {} bytes used of {}", n, used, capacity);
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        if (verbose) NOBLE_WARN("PoolReport: game-state bank table at RVA 0x{:X} is not readable", kBankTableRva);
+    }
+}
+
 // Raw, exception-guarded scan of one memory region. The engine frees and remaps memory while maps load, so
 // a block VirtualQuery called readable can disappear before it is read; __try turns that into "skip the
 // rest of this region" instead of a crash. Kept free of C++ objects (required for __try).
@@ -239,6 +262,8 @@ void StartReporter(uintptr_t engineBase, size_t engineSize, const std::string& p
         using namespace std::chrono_literals;
         if (exitAfter > 0) {
             std::this_thread::sleep_for(std::chrono::seconds(exitAfter));
+            ReportBanks(engineBase, true);   // before the slow scan, so a pre-crash dump still has the banks
+            spdlog::default_logger()->flush();
             const auto pools = Scan(engineBase, engineSize);
             Log(pools, profileName, true);
             NOBLE_INFO("POOL-REPORT-DONE|{}", profileName);
@@ -248,8 +273,13 @@ void StartReporter(uintptr_t engineBase, size_t engineSize, const std::string& p
         }
         std::map<std::string, uint32_t> lastCapacity;
         uint32_t lastObjects = UINT32_MAX - 2, lastActors = UINT32_MAX - 2;
+        bool banksLogged = false;
         std::this_thread::sleep_for(10s);
         for (;;) {
+            // Bank usage first (before the slow scan): verbose on the first pass and after a map/limit change,
+            // otherwise only the overflow warning is emitted.
+            ReportBanks(engineBase, !banksLogged);
+            banksLogged = true;
             const auto pools = Scan(engineBase, engineSize);
             std::map<std::string, uint32_t> capacity;
             for (const auto& p : pools) capacity[p.name] = p.capacity;
@@ -261,6 +291,7 @@ void StartReporter(uintptr_t engineBase, size_t engineSize, const std::string& p
                 lastObjects = objects;
                 lastActors = actors;
             }
+            if (layoutChanged) banksLogged = false;   // a new map/limit set: log the banks again next pass
             std::this_thread::sleep_for(15s);
         }
     }).detach();

@@ -93,8 +93,9 @@ const char* WhenText(int when) {
 
 // ENGINE LIMITS values, one per limits::Profile in declaration order (0 = Stock). A new engine-limits profile
 // needs its label here and its entry in EngineLimits; the row below reads nothing else.
-const char* const kEngineLimitLabels[] = { "STOCK", "EXTENDED (V16)" };
-static_assert(std::size(kEngineLimitLabels) == static_cast<size_t>(limits::Profile::V16) + 1,
+const char* const kEngineLimitLabels[] = { "STOCK", "EXTENDED (V16)", "EXTENDED + PARTICLES",
+                                           "FULL (V16 + PARTICLES + LIGHT VOLUMES)" };
+static_assert(std::size(kEngineLimitLabels) == static_cast<size_t>(limits::Profile::Full) + 1,
               "add an ENGINE LIMITS label for every engine-limits profile");
 
 // The display Noble's window is on, in real pixels (the process is per-monitor DPI aware, see main.cpp).
@@ -1245,6 +1246,25 @@ void SettingsPanel::RenderGame() {
             }
         }
     }
+    // AI actor pool (LIMITS-TODO C7d). The engine build carries the extra AI memory and the bigger stack
+    // frames; this only sizes the pools. Like ENGINE LIMITS it is a network-visible value (ProfileNetworkId)
+    // and needs a restart. 1,024 is marked experimental: the last proved run was 512; 1,024 needs the
+    // 0x76EBF8 buffer fix and the F6/-horde test.
+    {
+        static const char* const kAiActorLabels[] = { "96 (STOCK)", "256", "512", "1024 (EXPERIMENTAL)" };
+        static constexpr int kAiActorValues[] = { 0, 256, 512, 1024 };
+        constexpr int count = static_cast<int>(std::size(kAiActorLabels));
+        int current = 0;
+        for (int i = 0; i < count; ++i) if (kAiActorValues[i] == m_edit.aiActors) current = i;
+        const bool extended = m_edit.extendedLimits != 0;
+        if (Row("AI ACTORS", "How many AI actors the engine can hold (stock 96). Needs ENGINE LIMITS set to Extended; every player and the server must use the same value. Takes effect after a restart. 1,024 is experimental.",
+                When::Restart, kAiActorLabels[0], m_edit.aiActors != m_saved.aiActors, !extended)) {
+            if (const int d = CycleValue(kAiActorLabels[current], current, count, false)) {
+                const int next = std::clamp(current + d, 0, count - 1);
+                m_edit.aiActors = extended ? kAiActorValues[next] : 0;
+            }
+        }
+    }
 }
 
 void SettingsPanel::RenderPlayer() {
@@ -1807,7 +1827,7 @@ int SettingsPanel::CountDiff(const SettingsData& a, const SettingsData& b, Cat c
                f(a.thirdPersonZoom, b.thirdPersonZoom) +
                f(a.thirdPersonOffsetX, b.thirdPersonOffsetX) + f(a.thirdPersonOffsetY, b.thirdPersonOffsetY) +
                (a.subtitles != b.subtitles) + (a.menuBackground != b.menuBackground) +
-               (a.extendedLimits != b.extendedLimits) +
+               (a.extendedLimits != b.extendedLimits) + (a.aiActors != b.aiActors) +
                f(a.brightness, b.brightness) + (a.fxaa != b.fxaa) + (a.throttleUnfocused != b.throttleUnfocused);
     case Cat::Player:
         return (a.playerName != b.playerName) + (a.serviceTag != b.serviceTag);
@@ -1872,6 +1892,7 @@ SettingsData SettingsPanel::WithDefaults(SettingsData e, Cat c) {
         e.thirdPersonOffsetX = d.thirdPersonOffsetX; e.thirdPersonOffsetY = d.thirdPersonOffsetY;
         e.subtitles = d.subtitles; e.menuBackground = d.menuBackground;
         e.extendedLimits = d.extendedLimits;
+        e.aiActors = d.aiActors;
         break;
     case Cat::Player:
         e.playerName = d.playerName; e.serviceTag = d.serviceTag;

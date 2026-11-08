@@ -71,7 +71,10 @@ void Clamp(SettingsData& d) {
     d.voiceChannel = std::clamp(d.voiceChannel, 0, 2);
     // Engine limits: only profiles EngineLimits knows about are valid; anything else falls back to Stock, so a
     // settings file from a newer build can never make this one prepare a profile it has no patch for.
-    d.extendedLimits = std::clamp(d.extendedLimits, 0, static_cast<int>(limits::Profile::V16));
+    d.extendedLimits = std::clamp(d.extendedLimits, 0, static_cast<int>(limits::Profile::Full));
+    // AI actors: the engine profiles are built for these counts (see tools/limits/make_v16_particles.py); any
+    // other value means the stock pool, so a hand-edited file cannot ask for a size no build supports.
+    if (d.aiActors != 256 && d.aiActors != 512 && d.aiActors != 1024) d.aiActors = 0;
     auto trimName = [](std::string& s) {
         s.erase(s.begin(), std::find_if(s.begin(), s.end(), [](unsigned char ch) { return !std::isspace(ch); }));
         s.erase(std::find_if(s.rbegin(), s.rend(), [](unsigned char ch) { return !std::isspace(ch); }).base(), s.end());
@@ -230,6 +233,7 @@ void Settings::Load() {
             Read(j, "subtitles", d.subtitles);
             Read(j, "campaignSkulls", d.campaignSkulls);
             Read(j, "extendedLimits", d.extendedLimits);
+            Read(j, "aiActors", d.aiActors);
             Read(j, "menuBackground", d.menuBackground);
             Read(j, "playerName", d.playerName);
             Read(j, "lastPlayedMode", d.lastPlayedMode);
@@ -378,6 +382,7 @@ bool Settings::Save() {
         j["subtitles"] = d.subtitles;
         j["campaignSkulls"] = d.campaignSkulls;
         j["extendedLimits"] = d.extendedLimits;
+        j["aiActors"] = d.aiActors;
         j["menuBackground"] = d.menuBackground;
         j["playerName"] = d.playerName;
         j["lastPlayedMode"] = d.lastPlayedMode;

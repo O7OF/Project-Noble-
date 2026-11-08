@@ -55,6 +55,8 @@ int main(int argc, char* argv[]) {
     noble::limits::Profile requestedLimits = noble::limits::Profile::Stock;
     if (!limitsArg.empty()) {
         if (_stricmp(limitsArg.c_str(), "v16") == 0) requestedLimits = noble::limits::Profile::V16;
+        else if (_stricmp(limitsArg.c_str(), "v16p") == 0) requestedLimits = noble::limits::Profile::V16Particles;
+        else if (_stricmp(limitsArg.c_str(), "full") == 0) requestedLimits = noble::limits::Profile::Full;
         else if (_stricmp(limitsArg.c_str(), "stock") != 0)
             NOBLE_WARN("Engine limits: unknown -limits '{}', using Stock", limitsArg);
     }

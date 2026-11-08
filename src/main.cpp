@@ -703,11 +703,24 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     // Extended engine limits (LIMITS-HANDOFF.md): with a profile picked, Noble prepares its own patched copy of
     // Reach's DLL and loads that one; the installed file is never modified. Any mismatch (another DLL build, a
     // bad or missing patch) falls back to the stock DLL with the reason logged, so the game always starts.
+    // AI ACTORS (C7d): the pool hook lives in Loader and only sees environment variables, so publish the saved
+    // setting here. SetEnvironmentVariableW in this process is inherited by the relaunched match process.
+    // A value already in the environment (from -ai-actors in the menu process, or inherited by the relaunched
+    // match process) wins, so a command-line override is not replaced by the saved setting.
+    if (startupSettings.aiActors > 0 && startupSettings.extendedLimits != 0 &&
+        GetEnvironmentVariableW(L"NOBLE_AI_ACTORS", nullptr, 0) == 0) {
+        const std::wstring actors = std::to_wstring(startupSettings.aiActors);
+        SetEnvironmentVariableW(L"NOBLE_AI_ACTORS", actors.c_str());
+    }
     const noble::limits::Profile requestedLimits = noble::limits::ProfileFromInt(startupSettings.extendedLimits);
     const noble::limits::PrepareResult engineDll =
         noble::limits::PrepareEngineDll(reachInstall->reachDllPath, requestedLimits);
     NOBLE_INFO("Engine limits: requested {}, active {}, reason {}", noble::limits::ProfileName(requestedLimits),
                noble::limits::ProfileName(engineDll.active), engineDll.reason.empty() ? "none" : engineDll.reason.c_str());
+    // AI ACTORS (C7d) is applied by the pool-resize hook once the game-state exists; log what was asked for.
+    if (startupSettings.aiActors > 0 && engineDll.active != noble::limits::Profile::Stock)
+        NOBLE_INFO("Engine limits: AI actors {} (network id 0x{:08X})", startupSettings.aiActors,
+                   noble::limits::ProfileNetworkId(engineDll.active, startupSettings.aiActors));
     auto loader = std::make_unique<noble::Loader>();
     // The second path is the installed DLL: its folder is where the engine's own dependencies (xaudio2, MCC
     // binaries) are found. Pass both even for a fallback, so the copy never becomes the dependency root.

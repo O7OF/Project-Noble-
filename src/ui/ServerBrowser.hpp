@@ -43,6 +43,7 @@ public:
     void RefreshServers();
 
     using JoinLobbyHandler = std::function<void(const ServerEntry& server)>;
+    void SetStatus(const std::string& status) { m_status = status; }
     void SetJoinLobbyHandler(JoinLobbyHandler handler) { m_joinLobbyHandler = std::move(handler); }
     using DirectJoinHandler = std::function<void(const std::string& map, const std::string& mode, const std::string& address, const std::string& sessionId)>;
     void SetDirectJoinHandler(DirectJoinHandler handler) { m_directJoinHandler = std::move(handler); }

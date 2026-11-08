@@ -63,6 +63,7 @@ struct LobbyState {
     std::string hostLanIp;
     bool isLan = false;
     bool isClosed = false;
+    int64_t limitsId = -1;   // host's engine-limits id (limits::LocalNetworkId); -1 = not advertised (old host)
     std::string closeReason;
     // A running vote on what to play next: up to 3 options, then "none of these" as the last count.
     std::string voteId;
