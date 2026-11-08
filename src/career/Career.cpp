@@ -144,9 +144,20 @@ struct ReachChallengeDef {
 };
 const ReachChallengeDef kReachChallenges[] = {
 #include "ReachChallenges.inc"
+    // Noble's own weekly Firefight challenges (Reach's career data has none). Keep these after the
+    // include so the indices of the generated challenges (used in saved progress keys) don't move.
+    { true, 1, "One Spartan Army", "Kill 1,000 enemies in Firefight this week.", 5000, ChallengeMetric::Kills, 1000, false, -1, false, 0x0ull, "", false, 0 },
+    { true, 1, "Firefight Regular", "Complete 15 Firefight games this week.", 3000, ChallengeMetric::Games, 15, false, -1, false, 0x0ull, "", false, 0 },
+    { true, 1, "Where There's Smoke...", "Kill 500 enemies in Firefight on Heroic or harder.", 4500, ChallengeMetric::Kills, 500, false, 2, false, 0x0ull, "", false, 0 },
+    { true, 1, "A Friend in Need", "Earn 100 assists in Firefight this week.", 2500, ChallengeMetric::Assists, 100, false, -1, false, 0x0ull, "", false, 0 },
+    { true, 1, "Legendary Survivor", "Complete 5 Firefight games on Legendary.", 6000, ChallengeMetric::Games, 5, false, 3, true, 0x0ull, "", false, 0 },
+    { true, 1, "Clean Sweep", "Earn at least 150 kills in a single Firefight game.", 3000, ChallengeMetric::Kills, 150, true, -1, false, 0x0ull, "", false, 0 },
+    { true, 1, "Untouchable", "Complete a Firefight game on Heroic or harder without dying.", 3500, ChallengeMetric::Games, 1, false, 2, false, 0x0ull, "", true, 0 },
+    { true, 1, "Covenant Cleanup", "Kill 2,000 enemies in Firefight this week.", 9000, ChallengeMetric::Kills, 2000, false, -1, false, 0x0ull, "", false, 0 },
 };
-constexpr int kDailyCount = 7;
-constexpr int kWeeklyCount = 5;
+constexpr int kDailyCount = 14;
+constexpr int kWeeklyCount = 7;
+constexpr uint64_t kLasoSkulls = 0x1C00842888ull;   // every skull on (the LASO challenges' mask)
 
 // Halo: Reach's 45 commendations (16 campaign, 15 Firefight, 14 multiplayer) with Reach's tier counts
 // (Steel, Bronze, Silver, Gold, Onyx, Max). Noble can only count some of them from what it reads at
@@ -480,18 +491,28 @@ std::vector<int> PickChallenges(bool weekly, int64_t period, int count) {
         std::swap(pool[i], pool[j]);
     }
     // How many of each mode (campaign, Firefight, multiplayer, any) to take first.
-    const int dailyMix[4] = { 2, 2, 2, 1 };
-    const int weeklyMix[4] = { 2, 0, 2, 1 };
+    // Weeklies: 2 campaign, 2 Firefight, 2 multiplayer, then 1 more from a random one of those three.
+    const int dailyMix[4] = { 4, 4, 4, 2 };
+    int weeklyMix[4] = { 2, 2, 2, 0 };
+    if (weekly) weeklyMix[SplitMix(seed) % 3] += 1;
     const int* mix = weekly ? weeklyMix : dailyMix;
+    auto isLaso = [](int idx) {
+        const ReachChallengeDef& c = kReachChallenges[idx];
+        return (c.skulls & kLasoSkulls) == kLasoSkulls || std::string(c.title).find("LASO") != std::string::npos;
+    };
     std::vector<int> out;
     std::vector<std::string> names;
+    bool haveLaso = false;
     auto take = [&](int idx) {
         if (static_cast<int>(out.size()) >= count) return;
         const std::string name = kReachChallenges[idx].title;
         if (std::find(names.begin(), names.end(), name) != names.end()) return;
         if (std::find(out.begin(), out.end(), idx) != out.end()) return;
+        const bool laso = isLaso(idx);
+        if (laso && haveLaso) return;   // never two LASO missions in one set
         out.push_back(idx);
         names.push_back(name);
+        haveLaso = haveLaso || laso;
     };
     for (int mode = 0; mode < 4; ++mode) {
         int taken = 0;
@@ -507,7 +528,7 @@ std::vector<int> PickChallenges(bool weekly, int64_t period, int count) {
     return out;
 }
 
-// Today's 7 daily challenges and this week's 5 weekly ones.
+// Today's 14 daily challenges and this week's 7 weekly ones.
 std::vector<ActiveChallenge> ActiveChallenges() {
     std::vector<ActiveChallenge> out;
     const std::string dayKey = DailyKey(), weekKey = WeeklyKey();
@@ -533,8 +554,11 @@ struct MatchFacts {
     std::string map;
 };
 int64_t ChallengeAmount(const ReachChallengeDef& c, const MatchFacts& f) {
-    static const BaseType kModeType[3] = { BaseType::Campaign, BaseType::Firefight, BaseType::Multiplayer };
-    if (c.mode < 3 && f.type != kModeType[c.mode]) return 0;
+    // Multiplayer challenges count any non-campaign game: vanilla and modded multiplayer, custom
+    // games, Forge and Firefight. Campaign and Firefight challenges need their own mode.
+    if (c.mode == 0 && f.type != BaseType::Campaign) return 0;
+    if (c.mode == 1 && f.type != BaseType::Firefight) return 0;
+    if (c.mode == 2 && f.type == BaseType::Campaign) return 0;
     if (c.mission && *c.mission) {
         // The map can come as "m10" or as a path ("levels\\solo\\m10\\m10"); compare the last part.
         std::string m = f.map;
