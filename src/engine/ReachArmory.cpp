@@ -1849,17 +1849,54 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx, const std::strin
                 // Only fall back to the fixed name-only pairs when no pmcg table was loaded. With the
                 // real spartan.rrpmcg the pmcg pairs are the item -> region mapping and must be kept.
                 const bool usedPmcg = PmcgItem("20", "default") != nullptr;
-                if (!showElite && !usedPmcg) {
-                    pairs.clear();
-                    pushPair("head",           sel.helmet,        "default");
-                    pushPair("chest",          sel.chest,         "chest_blank");
-                    pushPair("left_shoulder",  sel.leftShoulder,  "left_shoulder_blank");
-                    pushPair("right_shoulder", sel.rightShoulder, "right_shoulder_blank");
-                    pushPair("hands",          sel.hands,         "default");
-                    pushPair("wrist",          sel.wrist,         "wrist_blank");
-                    pushPair("utility",        sel.utility,       "utility_blank");
-                    pushPair("knees",          sel.knees,         "knees_default");
-                    pushPair("armor_effect",   sel.armorEffect,   "default");
+                if (!showElite) {
+                    // Fixed GLOBALS order on the stock menu map: head 0x04, chest 0x06, L/R shoulder
+                    // 0x08/0x0A, hands 0x0C, wrist 0x0E, utility 0x10, knees 0x12, effect 0x14.
+                    // The pmcg pairs arrive in region-name order (head, flair_head_a..c, ...), which puts
+                    // flair_head_a where chest belongs - every pair then lands in a slot the biped does
+                    // not read and NOTHING changes. Rebuild the pairs in the fixed slot order instead.
+                    // Resolve one item's permutation for the first matching region straight from the pmcg.
+                    auto itemPerm = [&](const char* list, const std::string& item,
+                                        std::initializer_list<const char*> regions) -> uint32_t {
+                        const std::vector<PmcgChange>* changes = PmcgItem(list, item);
+                        if (!changes) return 0;
+                        for (const char* region : regions) {
+                            for (const auto& c : *changes) {
+                                if (c.region != region) continue;
+                                const uint32_t id = LookupPermutationId(c.permutation);
+                                if (id != 0) return id;
+                            }
+                        }
+                        return 0;
+                    };
+                    if (usedPmcg) {
+                        pairs.clear();
+                        auto fixed = [&](const char* region, uint32_t permId, const char* fallback) {
+                            if (permId == 0) permId = LookupStringId(fallback);
+                            const uint32_t regId = LookupStringId(region);
+                            if (regId != 0 && permId != 0) pairs.emplace_back(regId, permId);
+                        };
+                        fixed("head", itemPerm("20", sel.helmet, { "head" }), "default");
+                        fixed("chest", itemPerm("44", sel.chest, { "chest", "flair_chest_a", "flair_chest_b" }), "chest_blank");
+                        fixed("left_shoulder", itemPerm("2c", sel.leftShoulder, { "left_shoulder", "flair_left_shoulder" }), "left_shoulder_blank");
+                        fixed("right_shoulder", itemPerm("38", sel.rightShoulder, { "right_shoulder", "flair_right_shoulder" }), "right_shoulder_blank");
+                        fixed("hands", itemPerm("44", sel.chest, { "arms" }), "default");
+                        fixed("wrist", itemPerm("50", sel.wrist, { "wrist", "flair_forearm" }), "wrist_blank");
+                        fixed("utility", itemPerm("5c", sel.utility, { "utility", "flair_thigh" }), "utility_blank");
+                        fixed("knees", itemPerm("68", sel.knees, { "knees", "flair_knees" }), "knees_default");
+                        fixed("armor_effect", itemPerm("80", PmcgEffectName(sel.armorEffect), { "armor_fx" }), "default");
+                    } else {
+                        pairs.clear();
+                        pushPair("head",           sel.helmet,        "default");
+                        pushPair("chest",          sel.chest,         "chest_blank");
+                        pushPair("left_shoulder",  sel.leftShoulder,  "left_shoulder_blank");
+                        pushPair("right_shoulder", sel.rightShoulder, "right_shoulder_blank");
+                        pushPair("hands",          sel.hands,         "default");
+                        pushPair("wrist",          sel.wrist,         "wrist_blank");
+                        pushPair("utility",        sel.utility,       "utility_blank");
+                        pushPair("knees",          sel.knees,         "knees_default");
+                        pushPair("armor_effect",   sel.armorEffect,   "default");
+                    }
                 }
                 while (pairs.size() < 16) pairs.push_back(pairs[0]);
                 writtenPairs = pairs;

@@ -11,6 +11,33 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## 0. Pick up here (2026-11-07, 22:00 ET) - Armory actually changes armour now: the map was missing
+
+**Root cause of "armour doesn't change":** `data\menumaps\mainmenu_all.map` was not in the run folder.
+Without it the client serves the stock MCC `mainmenu.map`, whose menu biped ignores the GLOBALS
+permutation pairs entirely - the Armory wrote the pairs and rebuilt the model every time, and nothing
+changed. The map was on disk at `C:\Users\Chey1\Desktop\ReachRenaissance\data\menumaps\mainmenu_all.map`
+(298 MB) and is now copied to `data\menumaps\` and `build\bin\Release\data\menumaps\`.
+
+With the map installed the GLOBALS table is found (`Found mainmenu_all.map GLOBALS table ... stride=8`)
+and the head permutations apply: Mark V [B], JFO and ODST now render three different helmets
+(captures `map_compare.png`). **The release zip excludes `*.map` (100 MB GitHub limit), so every
+install needs this file copied in by hand** - that is why the packaged build looked broken.
+
+Also fixed on the way:
+- `ElitePack`: the pack now ships the Spartan Armory biped next to the Elite; pick the Elite by its
+  model shield (210 vs 70) instead of requiring a single biped. H2A Ranger renders again.
+- `ReachArmory`: on the legacy (stock-map) layout the pmcg pairs were written in region-name order into
+  fixed slots (head 0x04, chest 0x06...), so `flair_head_a` landed where `chest` belongs. They are now
+  rebuilt in fixed slot order. Irrelevant when the real map is present (dynamic layout), but correct.
+- `player_<name>` alias for short pmcg permutation names (`nicole`, `malcolm`, `jun`).
+- `-armory-validate`: 146 catalogue items checked, only the 5 intentional blank entries unresolved.
+
+Still open: the Armory camera sits right of centre and tight (scene 0x0C full body, 0x0A wider but the
+model is clipped at the screen edge). Needs a camera offset hook, not another scene swap.
+
+---
+
 ## 0. Pick up here (2026-11-07, 20:30 ET) - Closed-source cutover: 0.19.17, three-region cluster, build gate
 
 The open-source repo (`O7OF/Project-Noble-Source-Build`, "Halo: Reach Community Edition") is **archived**.
