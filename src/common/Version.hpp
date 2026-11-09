@@ -8,12 +8,12 @@ namespace noble {
 // open-source 0.9.16.x builds (see BuildIdentity.hpp for the wire identity).
 constexpr int VERSION_MAJOR = 0;
 constexpr int VERSION_MINOR = 19;
-constexpr int VERSION_PATCH = 35;
+constexpr int VERSION_PATCH = 36;
 constexpr int VERSION_REVISION = 0;
 #ifdef NOBLE_DEV_BUILD
-constexpr std::string_view VERSION_STRING = "0.19.35-dev (Closed Source)";
+constexpr std::string_view VERSION_STRING = "0.19.36-dev (Closed Source)";
 #else
-constexpr std::string_view VERSION_STRING = "0.19.35 (Closed Source)";
+constexpr std::string_view VERSION_STRING = "0.19.36 (Closed Source)";
 #endif
 constexpr std::string_view APP_NAME = "Project Noble";
 

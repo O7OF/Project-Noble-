@@ -1231,7 +1231,7 @@ static void SyncArmoryLiveBipedEngineTickSEH(bool previewElite,
         if (s_lastPermGen != permPairsGen || s_lastPermRemade != remadeCounter) {
             s_lastPermGen = permPairsGen;
             s_lastPermRemade = remadeCounter;
-            s_permSyncTicksRemaining = 24;
+            s_permSyncTicksRemaining = 2;
         }
         const bool syncPermsThisTick = (s_permSyncTicksRemaining > 0);
         if (s_permSyncTicksRemaining > 0) --s_permSyncTicksRemaining;
@@ -1362,7 +1362,31 @@ static void WriteColorsAndSuit(const ReachArmorySelection& sel) {
         (sel.visor == "default" || sel.visor.empty()) ? 0.63f : sel.visorRgb[1],
         (sel.visor == "default" || sel.visor.empty()) ? 0.40f : sel.visorRgb[2]
     };
-    UpdateTagShaderConstantsSEH(sel.previewElite, words.data(), sel.accentRgb.data(), sel.lightsRgb.data(), visFloats);
+
+    static std::array<uint32_t, 4> s_prevWords = {};
+    static float s_prevVisFloats[3] = { -1.f, -1.f, -1.f };
+    static float s_prevAccentRgb[3] = { -1.f, -1.f, -1.f };
+    static float s_prevLightsRgb[3] = { -1.f, -1.f, -1.f };
+    static bool s_prevPreviewElite = false;
+    static int32_t s_prevRemadeTagUpdate = -999999;
+    const int32_t currentRemade = s_lastRemade.load();
+
+    const bool colorsDirty = (words != s_prevWords) ||
+                             (sel.previewElite != s_prevPreviewElite) ||
+                             (currentRemade != s_prevRemadeTagUpdate) ||
+                             (std::memcmp(visFloats, s_prevVisFloats, sizeof(visFloats)) != 0) ||
+                             (std::memcmp(sel.accentRgb.data(), s_prevAccentRgb, sizeof(float) * 3) != 0) ||
+                             (std::memcmp(sel.lightsRgb.data(), s_prevLightsRgb, sizeof(float) * 3) != 0);
+
+    if (colorsDirty) {
+        s_prevWords = words;
+        s_prevPreviewElite = sel.previewElite;
+        s_prevRemadeTagUpdate = currentRemade;
+        std::memcpy(s_prevVisFloats, visFloats, sizeof(visFloats));
+        std::memcpy(s_prevAccentRgb, sel.accentRgb.data(), sizeof(float) * 3);
+        std::memcpy(s_prevLightsRgb, sel.lightsRgb.data(), sizeof(float) * 3);
+        UpdateTagShaderConstantsSEH(sel.previewElite, words.data(), sel.accentRgb.data(), sel.lightsRgb.data(), visFloats);
+    }
 
     if (!sel.previewElite) {
         s_colorRecords.erase(
@@ -1424,10 +1448,8 @@ static void WriteColorsAndSuit(const ReachArmorySelection& sel) {
 // -----------------------------------------------------------------------------
 // "-armory-settle-rebuild": rebuild the biped a second time after each change (test switch; off by default).
 static bool SingleRebuild() {
-    static const bool single = std::wcsstr(GetCommandLineW(), L"-armory-single-rebuild") != nullptr; return single;
-    // (settled on next remade tick)
-    // Settle rebuild is on by default unless -armory-single-rebuild is set.
-    // (settled on next remade tick)
+    static const bool settle = std::wcsstr(GetCommandLineW(), L"-armory-settle-rebuild") != nullptr;
+    return !settle;
 }
 
 // -----------------------------------------------------------------------------
@@ -1762,7 +1784,12 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx, const std::strin
             apply("2c", sel.leftShoulder);
             apply("38", sel.rightShoulder);
             apply("44", sel.chest);
-            if (!sel.hands.empty() && sel.hands != "default") {
+            // Prosthetic robotic arm: if the chest piece includes a cybernetic arm or the user has hands set to "robot",
+            // resolve to the actual render model permutation ("kat" for female, "player_john117" for male).
+            // Never assign the raw string "robot" to region "arms" (it causes crash 0xC0000005 at haloreach.dll+0x6950A9).
+            if (sel.hands == "robot") {
+                perm["arms"] = sel.isFemale ? "kat" : "player_john117";
+            } else if (!sel.hands.empty() && sel.hands != "default" && sel.hands != "robot") {
                 perm["arms"] = sel.hands;
             }
             apply("50", sel.wrist);
@@ -1784,7 +1811,7 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx, const std::strin
             pushPair("chest",          sel.chest,         "chest_blank");
             pushPair("left_shoulder",  sel.leftShoulder,  "left_shoulder_blank");
             pushPair("right_shoulder", sel.rightShoulder, "right_shoulder_blank");
-            pushPair("hands",          sel.hands,         "default");
+            pushPair("arms",           (sel.hands == "robot") ? (sel.isFemale ? "kat" : "player_john117") : "default", "default");
             pushPair("wrist",          sel.wrist,         "wrist_blank");
             pushPair("utility",        sel.utility,       "utility_blank");
             pushPair("knees",          sel.knees,         "knees_default");

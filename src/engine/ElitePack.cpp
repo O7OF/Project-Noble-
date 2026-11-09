@@ -1389,8 +1389,7 @@ void __fastcall ApplyProfileHook(int settingsIndex, uint8_t* player) {
 // so MSVC allows __try / __except under /EHsc.
 static bool IsLocalPlayerRecord(const uint8_t* record, uintptr_t caller) {
     if (!record) return false;
-    if (caller == kBuilderReturnLive) return true;
-    if (caller != kBuilderReturnSpawn) return false;
+    if (caller != kBuilderReturnLive && caller != kBuilderReturnSpawn) return false;
 
     __try {
         const uint8_t* p = record - kPlayerRecordOffset;
@@ -1416,6 +1415,9 @@ uint64_t __fastcall BuilderHook(uint8_t* record, uint32_t mode, void* unit, void
                    caller, mode, elite, localRecord, Hex(record, 0x28));
     if (!elite || !s_loaded || !s_haveActive) {
         if (!elite && player && record) {
+            if (localRecord) {
+                record[15] = s_localSpartanVisorIndex;
+            }
             // For Spartan bipeds, ensure player+0x98 (visor) is updated from record[15] if present
             if (record[15] < 30) {
                 *reinterpret_cast<uint8_t*>(reinterpret_cast<uint8_t*>(player) + 0x98) = record[15];
