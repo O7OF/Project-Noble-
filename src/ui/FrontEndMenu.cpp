@@ -1810,6 +1810,8 @@ struct MenuState {
     std::string variantPickerMapName;
     bool lobbyPickerOpen = false;  // The game type list is showing in place of the option rows
     int lobbyPickerRow = 0;
+    bool lobbyTeamPickerOpen = false;  // the CHANGE TEAM dropdown is showing
+    int lobbyTeamPickerRow = 0;
     bool lobbyProfileOpen = false; // The selected player's card is showing in place of the roster
     bool lobbyReady = true;        // Player ready toggle
     int lobbyRosterSelection = 0;  // Selected player index in party roster
@@ -2858,8 +2860,11 @@ static const std::vector<OptionsPreset>& OptionsPresets() {
 // Reads the lobby's variant when it changes. The Teams flag is in the decoded record, or in a player-made mode's rules.
 static void RefreshLobbyMode(OverlayContext& ctx) {
     MenuState& st = ctx.st;
-    if (st.lobbyModeKey == st.lobbyVariantPath && !st.lobbyVariantPath.empty()) return;
-    st.lobbyModeKey = st.lobbyVariantPath;
+    // Key on the mode too: with no variant file chosen the old check re-ran every frame and cleared
+    // lobbyTeamsManual, so the host's chosen team was immediately re-dealt (always back to red or blue).
+    const std::string key = st.lobbyMode + "|" + st.lobbyVariantPath;
+    if (st.lobbyModeKey == key) return;
+    st.lobbyModeKey = key;
     st.lobbyTeamsOn = (st.lobbyMode == "forge"); // Forge lobbies support team dividers by default
     st.lobbyTeamsManual = false;
     st.lobbyModeChanges = 0;
@@ -3430,7 +3435,7 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
                 const LobbyPlayer& selectedPlayer = st.lobbyRoster[std::clamp(st.lobbyRosterSelection, 0, static_cast<int>(st.lobbyRoster.size()) - 1)];
                 const int shownTeam = selectedPlayer.team > 0 ? std::clamp(selectedPlayer.team, 1, teams) : 0;
                 optRows.push_back({ "CHANGE TEAM", shownTeam > 0 ? std::string(TeamStyleFor(shownTeam).shortName) : std::string("AUTO"),
-                                    false, st.isLobbyHost, "Cycles the selected player through the lobby's teams." });
+                                    false, st.isLobbyHost, "Opens the team list: pick a team by name and colour." });
             }
         }
         const std::string forgeOptVal = st.lobbyModeChanges > 0 ? std::to_string(st.lobbyModeChanges) + " CHANGED" : (st.forgeCustomVariant.empty() ? "DEFAULTS" : "CUSTOM");
@@ -3461,8 +3466,8 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
                 const std::string teamText = shownTeam > 0 ? std::string(TeamStyleFor(shownTeam).shortName) : std::string("AUTO");
                 char teamTip[220];
                 std::snprintf(teamTip, sizeof(teamTip),
-                              "Cycles the selected player (%s) through the lobby's teams. The host owns the teams"
-                              " in this lobby.", selectedPlayer.username.empty() ? "host" : selectedPlayer.username.c_str());
+                              "Opens the team list for %s: pick a team by name and colour. The host owns the teams"
+                              " in this lobby.", selectedPlayer.username.empty() ? "the host" : selectedPlayer.username.c_str());
                 optRows.push_back({ "CHANGE TEAM", teamText, false, st.isLobbyHost, teamTip });
             }
         }
@@ -3482,7 +3487,7 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         st.lobbyMenuRow = (st.lobbyMenuRow + d + totalRows) % totalRows;
         MenuSounds::Scroll();
     };
-    if (!st.lobbyPickerOpen) {
+    if (!st.lobbyPickerOpen && !st.lobbyTeamPickerOpen) {
         if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickDown)) stepRow(1);
         if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickUp)) stepRow(-1);
     }
@@ -3558,7 +3563,13 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
             NOBLE_INFO("FrontEndMenu: lobby team count set to {}", st.lobbyTeamCount);
             MenuSounds::Change();
         } else if (row.label == "CHANGE TEAM") {
-            if (!st.isLobbyHost || st.lobbyRoster.empty()) return;
+            // A team is picked from the dropdown, never stepped through with the arrows.
+            st.lobbyTeamPickerOpen = true;
+            if (!st.lobbyRoster.empty()) {
+                const LobbyPlayer& picked = st.lobbyRoster[std::clamp(st.lobbyRosterSelection, 0, static_cast<int>(st.lobbyRoster.size()) - 1)];
+                st.lobbyTeamPickerRow = std::clamp(picked.team, 1, std::clamp(st.lobbyTeamCount, 2, kTeamCount)) - 1;
+            }
+            MenuSounds::Click();
             LobbyPlayer& player = st.lobbyRoster[std::clamp(st.lobbyRosterSelection, 0, static_cast<int>(st.lobbyRoster.size()) - 1)];
             const int teams = std::clamp(st.lobbyTeamCount, 2, kTeamCount);
             const int current = std::clamp(player.team, 0, teams);
@@ -3740,6 +3751,13 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
             st.lobbyPickerOpen = true;
             pickerJustOpened = true;
             MenuSounds::Click();
+        } else if (cur.label == "CHANGE TEAM" && cur.editable) {
+            st.lobbyTeamPickerOpen = true;
+            if (!st.lobbyRoster.empty()) {
+                const LobbyPlayer& picked = st.lobbyRoster[std::clamp(st.lobbyRosterSelection, 0, static_cast<int>(st.lobbyRoster.size()) - 1)];
+                st.lobbyTeamPickerRow = std::clamp(picked.team, 1, std::clamp(st.lobbyTeamCount, 2, kTeamCount)) - 1;
+            }
+            MenuSounds::Click();
         } else {
             cycleOption(1);
         }
@@ -3750,10 +3768,16 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
     // Option rows. The start button keeps one place whichever mode's list is above it.
     const float rowsY = top + 108.0f * ui.s;
     const float rowStep = 36.0f * ui.s;
-    const float startY = rowsY + rowStep * 4.0f + 6.0f * ui.s;
+    // The start button sits under however many option rows this mode has (Campaign, Forge and Custom Game each
+    // have a different count, and the team rows added two more) - a fixed 4-row offset drew it over them.
+    int optionRowCount = 0;
+    for (const auto& r : optRows) { if (!r.isStart) ++optionRowCount; }
+    const float startY = rowsY + rowStep * static_cast<float>(optionRowCount) + 10.0f * ui.s;
     const bool mouseMoved = ImGui::GetIO().MouseDelta.x != 0.0f || ImGui::GetIO().MouseDelta.y != 0.0f;
     float curY = rowsY;
+    float teamRowY = -1.0f;
     const bool pickerWasOpen = st.lobbyPickerOpen;
+    const bool teamPickerWasOpen = st.lobbyTeamPickerOpen;
     const bool voteUp = !st.voteId.empty();
     if (voteUp) {
         // The vote takes the option rows' place for everyone: three choices and "none of these".
@@ -3855,7 +3879,13 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         Text(ui, NobleStyle::TitleFont(), 18.0f, ImVec2(r0.x + 10.0f * ui.s, r0.y + 6.0f * ui.s), focused ? kWhite : kDim, row.label.c_str());
         const float vx = colX + colW * 0.48f, vw = colW * 0.52f, aw = 28.0f * ui.s;
         const float cy = r0.y + h * 0.5f, ah = 6.0f * ui.s;
-        if (row.editable) {
+        const bool teamRow = row.label == "CHANGE TEAM";
+        if (teamRow) {
+            // A dropdown, not a stepper: one chevron on the right.
+            teamRowY = r0.y;
+            const float cx = vx + vw - aw * 0.6f;
+            ui.dl->AddTriangleFilled(ImVec2(cx - ah, cy - ah * 0.35f), ImVec2(cx + ah, cy - ah * 0.35f), ImVec2(cx, cy + ah), focused ? kWhite : kDim);
+        } else if (row.editable) {
             ui.dl->AddTriangleFilled(ImVec2(vx + aw * 0.65f, cy - ah), ImVec2(vx + aw * 0.65f, cy + ah), ImVec2(vx + aw * 0.3f, cy), focused ? kWhite : kDim);
             const float rx = vx + vw - aw;
             ui.dl->AddTriangleFilled(ImVec2(rx + aw * 0.35f, cy - ah), ImVec2(rx + aw * 0.35f, cy + ah), ImVec2(rx + aw * 0.7f, cy), focused ? kWhite : kDim);
@@ -3871,6 +3901,72 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
     if (!st.isLobbyHost) {
         BigAction(ui, "lobby_waiting", ImVec2(colX, startY), colW, "WAITING FOR HOST", "The match starts when the host starts it.", true, false);
     }
+
+    // ---- CHANGE TEAM dropdown: this mode's teams, by name and colour. Enter/click opens it, Up/Down moves,
+    // Enter picks, Back/Esc closes. Never a stepper, and the choice survives the lobby's team re-deal.
+    if (!st.isLobbyHost) st.lobbyTeamPickerOpen = false;
+    if (st.lobbyTeamPickerOpen) {
+        const int teams = std::clamp(st.lobbyTeamCount, 2, kTeamCount);
+        const float pickRowH = 30.0f * ui.s;
+        const float panelH2 = teams * pickRowH + 8.0f * ui.s;
+        const float anchorY = teamRowY >= 0.0f ? teamRowY + 34.0f * ui.s : rowsY;
+        const float dy = std::min(anchorY, top + 540.0f * ui.s - panelH2);
+        const ImVec2 p0(colX, dy), p1(colX + colW, dy + panelH2);
+        ui.dl->AddRectFilled(ImVec2(p0.x + 2.0f * ui.s, p0.y + 3.0f * ui.s), ImVec2(p1.x + 2.0f * ui.s, p1.y + 3.0f * ui.s), IM_COL32(0, 0, 0, 120));
+        ui.dl->AddRectFilled(p0, p1, IM_COL32(6, 10, 16, 248));
+        ui.dl->AddRect(p0, p1, kAccent, 2.0f * ui.s);
+        st.lobbyTeamPickerRow = std::clamp(st.lobbyTeamPickerRow, 0, teams - 1);
+        if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown)) {
+            st.lobbyTeamPickerRow = (st.lobbyTeamPickerRow + 1) % teams;
+            MenuSounds::Scroll();
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp)) {
+            st.lobbyTeamPickerRow = (st.lobbyTeamPickerRow + teams - 1) % teams;
+            MenuSounds::Scroll();
+        }
+        int picked = -1;
+        // Only a press made while the dropdown was already up counts: the same Enter that opened it must not
+        // also pick the highlighted team (that closed it again on the frame it appeared).
+        if (teamPickerWasOpen && AcceptPressed()) picked = st.lobbyTeamPickerRow;
+        const int currentTeam = st.lobbyRoster.empty() ? 0
+            : st.lobbyRoster[std::clamp(st.lobbyRosterSelection, 0, static_cast<int>(st.lobbyRoster.size()) - 1)].team;
+        for (int t = 1; t <= teams; ++t) {
+            const int idx = t - 1;
+            const ImVec2 r0(p0.x + 5.0f * ui.s, p0.y + 4.0f * ui.s + idx * pickRowH);
+            const ImVec2 r1(p1.x - 5.0f * ui.s, r0.y + pickRowH - 2.0f * ui.s);
+            ImGui::SetCursorScreenPos(r0);
+            ImGui::PushID(2000 + t);
+            if (ImGui::InvisibleButton("##team_pick", ImVec2(r1.x - r0.x, r1.y - r0.y))) picked = idx;
+            if (ImGui::IsItemHovered() && mouseMoved) st.lobbyTeamPickerRow = idx;
+            ImGui::PopID();
+            const TeamStyle& style = TeamStyleFor(t);
+            ui.dl->AddRectFilled(r0, r1, idx == st.lobbyTeamPickerRow ? IM_COL32(44, 68, 96, 240) : IM_COL32(12, 18, 26, 220));
+            ui.dl->AddRectFilled(ImVec2(r0.x, r0.y), ImVec2(r0.x + 6.0f * ui.s, r1.y), style.header);
+            Text(ui, NobleStyle::TitleFont(), 17.0f, ImVec2(r0.x + 14.0f * ui.s, r0.y + 4.0f * ui.s), kWhite, style.name);
+            if (t == currentTeam) {
+                const char* equippedTag = "EQUIPPED";
+                const float nw = TextWidth(NobleStyle::SmallFont(), 13.0f * ui.s, equippedTag);
+                Text(ui, NobleStyle::SmallFont(), 13.0f, ImVec2(r1.x - nw - 8.0f * ui.s, r0.y + 7.0f * ui.s), kAccent, equippedTag);
+            }
+        }
+        if (picked >= 0 && !st.lobbyRoster.empty()) {
+            const int team = picked + 1;
+            LobbyPlayer& player = st.lobbyRoster[std::clamp(st.lobbyRosterSelection, 0, static_cast<int>(st.lobbyRoster.size()) - 1)];
+            player.team = team;
+            st.lobbyTeamsManual = true;   // the lobby's automatic deal must not undo a hand-picked team
+            if (player.isHost) MasterServerClient::Get().SetAdvertHostTeam(team);
+            if (!st.lobbySessionId.empty()) {
+                MasterServerClient::Get().SetTeamsSync(st.lobbySessionId, { { player.peerId, team } });
+            }
+            NOBLE_INFO("FrontEndMenu: team for '{}' set to {} ({})", player.username, team, TeamStyleFor(team).shortName);
+            st.lobbyTeamPickerOpen = false;
+            MenuSounds::Change();
+        }
+        if (back) {
+            st.lobbyTeamPickerOpen = false;
+            MenuSounds::Back();
+        }
+    }
     // What the focused row does; the start button already says it on its own second line.
     float lobbyTipY = startY + 58.0f * ui.s;
     if (!hostModeKnown && !pickerWasOpen) {
@@ -3882,7 +3978,7 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         Text(ui, nullptr, 15.0f, ImVec2(d1.x - TextWidth(nullptr, 15.0f * ui.s, soon) - 10.0f * ui.s, d0.y + 7.0f * ui.s), kDisabled, soon);
         lobbyTipY += 38.0f * ui.s;
     }
-    if (!pickerWasOpen && !optRows[st.lobbyMenuRow].isStart) {
+    if (!pickerWasOpen && !st.lobbyTeamPickerOpen && !optRows[st.lobbyMenuRow].isStart) {
         Text(ui, nullptr, 15.0f, ImVec2(colX, lobbyTipY), kDim, optRows[st.lobbyMenuRow].tooltip.c_str(), colX + colW);
     }
     if (playlistActive && !pickerWasOpen) {
@@ -4167,17 +4263,10 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
 
         y += 10.0f * ui.s;
         if ((local || st.isLobbyHost) && st.lobbyTeamsOn) {
-            const int teams = std::clamp(st.lobbyTeamCount, 2, kTeamCount);
-            const int curTeam = std::clamp(player.team, 0, teams);
-            const int targetTeam = curTeam >= teams ? 1 : curTeam + 1;
-            const std::string teamName = std::string("SWITCH TO ") + TeamStyleFor(targetTeam).name;
-            if (ActionButton(ui, "lobby_change_team", ImVec2(cardX, y), cardW, teamName.c_str(), false)) {
-                st.lobbyRoster[st.lobbyRosterSelection].team = targetTeam;
-                st.lobbyTeamsManual = true;   // keep the host's choice from being re-dealt
-                if (player.isHost) MasterServerClient::Get().SetAdvertHostTeam(targetTeam);
-                if (!st.lobbySessionId.empty()) {
-                    MasterServerClient::Get().SetTeamsSync(st.lobbySessionId, { { player.peerId, targetTeam } });
-                }
+            // The same dropdown as the lobby's CHANGE TEAM row: pick the team by name and colour.
+            if (ActionButton(ui, "lobby_change_team", ImVec2(cardX, y), cardW, "CHANGE TEAM", false)) {
+                st.lobbyTeamPickerOpen = true;
+                st.lobbyTeamPickerRow = std::clamp(player.team, 1, std::clamp(st.lobbyTeamCount, 2, kTeamCount)) - 1;
                 MenuSounds::Click();
             }
             y += 36.0f * ui.s;
@@ -4298,7 +4387,9 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
     }
 
     // Back / Cancel Lobby Handling: the host returns to the setup screen of the mode it came from.
-    if (back && st.lobbyProfileOpen) {
+    if (back && teamPickerWasOpen) {
+        // The dropdown already consumed Back this frame.
+    } else if (back && st.lobbyProfileOpen) {
         st.lobbyProfileOpen = false;
         MenuSounds::Back();
     } else if (back && !pickerWasOpen && !profileWasOpen) {
