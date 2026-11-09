@@ -294,7 +294,7 @@ static void ProcessActions(uintptr_t base, const ObjectPool& pool, const PlayerS
         }
 
         // Spawn directly in front of the player
-        const float spawnDist = act.giveToPlayer ? 0.8f : ((act.category == "Vehicles") ? 5.0f : 2.5f);
+        const float spawnDist = act.giveToPlayer ? 0.8f : ((act.category == "Vehicles") ? 5.0f : ((act.category == "Characters") ? 3.0f : 2.5f));
         const float spawnZ    = act.giveToPlayer ? 0.4f : 0.3f;
         const float spawnPos[3] = {
             player.pos[0] + player.fwd[0] * spawnDist,
@@ -311,14 +311,19 @@ static void ProcessActions(uintptr_t base, const ObjectPool& pool, const PlayerS
         }
 
         std::memcpy(placement + 0x1C, spawnPos, sizeof(float) * 3);
-        std::memcpy(placement + 0x28, player.fwd, sizeof(float) * 3);
+        if (act.category == "Characters") {
+            const float faceBack[3] = { -player.fwd[0], -player.fwd[1], 0.0f };
+            std::memcpy(placement + 0x28, faceBack, sizeof(float) * 3);
+        } else {
+            std::memcpy(placement + 0x28, player.fwd, sizeof(float) * 3);
+        }
 
         int32_t handle = s_objectNew ? s_objectNew(placement) : -1;
         if (handle != -1) {
             NOBLE_INFO("DevCheats: s_objectNew created handle 0x{:08X} for '{}' (tag 0x{:08X}) at ({:.1f}, {:.1f}, {:.1f})",
                 handle, act.itemName, static_cast<uint32_t>(tagIndex), spawnPos[0], spawnPos[1], spawnPos[2]);
 
-            if (act.giveToPlayer && act.category != "Vehicles") {
+            if (act.giveToPlayer && act.category != "Vehicles" && act.category != "Characters" && act.category != "Props / Scenery") {
                 if (s_unitAddWeapon && player.unitHandle != -1) {
                     s_unitAddWeapon(player.unitHandle, 0, handle, 0);
                 }
@@ -447,6 +452,21 @@ const std::vector<SpawnCatalogItem>& DevCheats::GetCatalog() {
     return s_catalog;
 }
 
+static void ReadEquippedTagsSEH(const uint8_t* biped, const ObjectPool& pool, int32_t* primary, int32_t* secondary) {
+    __try {
+        const int32_t w0 = *reinterpret_cast<const int32_t*>(biped + 0x2C4);
+        const int32_t w1 = *reinterpret_cast<const int32_t*>(biped + 0x2C8);
+        if (w0 != -1) {
+            const uint8_t* obj = ObjectData(pool, w0);
+            if (obj) *primary = *reinterpret_cast<const int32_t*>(obj);
+        }
+        if (w1 != -1) {
+            const uint8_t* obj = ObjectData(pool, w1);
+            if (obj) *secondary = *reinterpret_cast<const int32_t*>(obj);
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {}
+}
+
 std::vector<SpawnCatalogItem> DevCheats::GetActiveMapItems() {
     std::vector<SpawnCatalogItem> items;
     if (!s_baseAddress) return items;
@@ -454,23 +474,112 @@ std::vector<SpawnCatalogItem> DevCheats::GetActiveMapItems() {
     ObjectPool pool;
     if (!GetObjectPool(s_baseAddress, pool)) return items;
 
+    PlayerState player{};
+    const bool havePlayer = GetLocalPlayer(s_baseAddress, pool, player);
+    int32_t primaryWeapTag = -1;
+    int32_t secondaryWeapTag = -1;
+    if (havePlayer && player.biped) {
+        ReadEquippedTagsSEH(player.biped, pool, &primaryWeapTag, &secondaryWeapTag);
+    }
+
+    auto getFriendlyName = [&](int32_t tag, uint8_t type, int indexInCat) -> std::pair<std::string, std::string> {
+        if (tag == primaryWeapTag && primaryWeapTag != -1) {
+            return { "Equipped Primary Weapon", "Currently held in your primary weapon slot." };
+        }
+        if (tag == secondaryWeapTag && secondaryWeapTag != -1) {
+            return { "Equipped Secondary Weapon", "Currently held in your secondary weapon slot." };
+        }
+
+        // Known tags from engine and donor maps
+        switch (static_cast<uint32_t>(tag)) {
+        case 0x96022DF2: return { "Assault Rifle (MA37)", "Standard UNSC individual combat weapon system." };
+        case 0x95e82c96: return { "Flyable Pelican", "D77-TC dropship (flyable vehicle)." };
+        case 0x96102cb9: return { "Spartan AI Character", "Noble Team / Spartan biped actor." };
+        case 0x98952f09: return { "Marine / Trooper AI", "UNSC Army infantry trooper biped." };
+        case 0x98ad2f21: return { "ODST AI", "Orbital Drop Shock Trooper biped." };
+        case 0x9ddc3336: return { "Grunt AI (Unggoy)", "Covenant infantry biped." };
+        case 0x9f5f34b0: return { "Jackal AI (Kig-Yar)", "Covenant shield scout biped." };
+        case 0x9f6b34bc: return { "Skirmisher AI", "Covenant shock infantry biped." };
+        case 0xa24f370e: return { "Elite AI (Sangheili)", "Covenant warrior biped." };
+        case 0xa37c3828: return { "Hunter AI (Mgalekgolo)", "Heavy armored Covenant pair biped." };
+        case 0xa48e3927: return { "Drone AI (Yanme'e)", "Aerial Covenant swarm biped." };
+        case 0xad234074: return { "Elite Pinky AI", "High-rank Sangheili biped." };
+        case 0xa26c372b: return { "Elite Schism AI", "Spec-Ops Sangheili biped." };
+        case 0x98992f0d: return { "Deviant Marine AI", "Specialist UNSC trooper biped." };
+        case 0x98342ea9: return { "Spartan Ret AI", "Support Spartan biped." };
+        default: break;
+        }
+
+        std::string catName = "Item";
+        if (type == 2) catName = "Weapon";
+        else if (type == 1) catName = "Vehicle";
+        else if (type == 3) catName = "Equipment";
+        else if (type == 0) catName = "Character";
+        else if (type == 6 || type == 10) catName = "Prop";
+
+        char buf[64];
+        snprintf(buf, sizeof(buf), "Active %s #%d [0x%08X]", catName.c_str(), indexInCat, static_cast<unsigned int>(tag));
+        char desc[128];
+        snprintf(desc, sizeof(desc), "Live %s tag found in current match object pool.", catName.c_str());
+        return { std::string(buf), std::string(desc) };
+    };
+
     std::unordered_set<int32_t> seenTags;
+    std::vector<SpawnCatalogItem> weapons;
+    std::vector<SpawnCatalogItem> vehicles;
+    std::vector<SpawnCatalogItem> equipment;
+    std::vector<SpawnCatalogItem> characters;
+    std::vector<SpawnCatalogItem> props;
+
+    int weapCount = 0, vehCount = 0, eqCount = 0, charCount = 0, propCount = 0;
+
     for (int i = 0; i < pool.capacity; ++i) {
         if (!SlotUsed(pool, i)) continue;
-        uint8_t type = pool.records[static_cast<size_t>(i) * 24 + 4];
-        if (type == 1 || type == 2 || type == 3) { // vehicle, weapon, equipment
+        const uint8_t type = pool.records[static_cast<size_t>(i) * 24 + 4];
+        if (type == 0 || type == 1 || type == 2 || type == 3 || type == 6 || type == 10) {
             const uint8_t* obj = *reinterpret_cast<uint8_t* const*>(pool.records + static_cast<size_t>(i) * 24 + 0x10);
             if (!obj) continue;
-            int32_t t = *reinterpret_cast<const int32_t*>(obj);
+            const int32_t t = *reinterpret_cast<const int32_t*>(obj);
             if (t == -1 || seenTags.count(t)) continue;
             seenTags.insert(t);
 
-            std::string cat = (type == 1) ? "Vehicles" : (type == 2) ? "Weapons" : "Equipment";
-            char label[64];
-            snprintf(label, sizeof(label), "Map %s #%d [0x%08X]", cat.c_str(), static_cast<int>(seenTags.size()), static_cast<unsigned int>(t));
-            items.push_back({ label, cat, "", static_cast<uint32_t>(t), "Active map entity in match." });
+            if (type == 2) {
+                weapCount++;
+                auto [name, desc] = getFriendlyName(t, type, weapCount);
+                if (t == primaryWeapTag) {
+                    weapons.insert(weapons.begin(), { name, "Weapons", "", static_cast<uint32_t>(t), desc });
+                } else if (t == secondaryWeapTag) {
+                    auto it = (weapons.empty() || weapons.front().name != "Equipped Primary Weapon") ? weapons.begin() : weapons.begin() + 1;
+                    weapons.insert(it, { name, "Weapons", "", static_cast<uint32_t>(t), desc });
+                } else {
+                    weapons.push_back({ name, "Weapons", "", static_cast<uint32_t>(t), desc });
+                }
+            } else if (type == 1) {
+                vehCount++;
+                auto [name, desc] = getFriendlyName(t, type, vehCount);
+                vehicles.push_back({ name, "Vehicles", "", static_cast<uint32_t>(t), desc });
+            } else if (type == 3) {
+                eqCount++;
+                auto [name, desc] = getFriendlyName(t, type, eqCount);
+                equipment.push_back({ name, "Equipment", "", static_cast<uint32_t>(t), desc });
+            } else if (type == 0) {
+                charCount++;
+                auto [name, desc] = getFriendlyName(t, type, charCount);
+                characters.push_back({ name, "Characters", "", static_cast<uint32_t>(t), desc });
+            } else if (type == 6 || type == 10) {
+                propCount++;
+                auto [name, desc] = getFriendlyName(t, type, propCount);
+                props.push_back({ name, "Props / Scenery", "", static_cast<uint32_t>(t), desc });
+            }
         }
     }
+
+    items.insert(items.end(), weapons.begin(), weapons.end());
+    items.insert(items.end(), vehicles.begin(), vehicles.end());
+    items.insert(items.end(), equipment.begin(), equipment.end());
+    items.insert(items.end(), characters.begin(), characters.end());
+    items.insert(items.end(), props.begin(), props.end());
+
     return items;
 }
 

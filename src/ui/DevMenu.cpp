@@ -294,7 +294,7 @@ void DevMenu::Draw() {
 
             ImGui::Spacing();
 
-            const char* categories[] = { "ALL", "UNSC WEAPONS", "COVENANT WEAPONS", "ARMOR ABILITIES", "VEHICLES", "ACTIVE MAP ITEMS" };
+            const char* categories[] = { "ALL", "WEAPONS", "VEHICLES", "EQUIPMENT", "CHARACTERS", "PROPS / SCENERY" };
             for (int i = 0; i < 6; ++i) {
                 if (i > 0) ImGui::SameLine();
                 const bool selected = (s_categoryFilter == i);
@@ -317,14 +317,14 @@ void DevMenu::Draw() {
 
             ImGui::BeginChild("##SpawnerList", ImVec2(0, -38.0f * s), true);
 
-            std::vector<SpawnCatalogItem> itemsToDisplay;
-            if (s_categoryFilter == 5) {
-                itemsToDisplay = DevCheats::GetActiveMapItems();
-                if (itemsToDisplay.empty()) {
-                    ImGui::TextColored(kDim, "No active map entities indexed yet (start or join a match).");
-                }
-            } else {
-                itemsToDisplay = DevCheats::GetCatalog();
+            std::vector<SpawnCatalogItem> itemsToDisplay = DevCheats::GetActiveMapItems();
+            if (itemsToDisplay.empty()) {
+                ImGui::Spacing();
+                ImGui::TextColored(NobleStyle::Accent(), "No active map entities found.");
+                ImGui::Spacing();
+                ImGui::TextColored(kDim, "Load into Campaign, Firefight, Forge, or Multiplayer to discover and spawn active map items!");
+                ImGui::Spacing();
+                ImGui::TextColored(kBody, "All live weapons, vehicles, equipment, characters, and props in the active mission will appear here automatically for instant Give or Spawn.");
             }
 
             const std::string query(s_searchQuery);
@@ -332,10 +332,11 @@ void DevMenu::Draw() {
             for (size_t i = 0; i < itemsToDisplay.size(); ++i) {
                 const auto& item = itemsToDisplay[i];
 
-                if (s_categoryFilter == 1 && item.category != "UNSC Weapons") continue;
-                if (s_categoryFilter == 2 && item.category != "Covenant Weapons") continue;
-                if (s_categoryFilter == 3 && item.category != "Armor Abilities") continue;
-                if (s_categoryFilter == 4 && item.category != "Vehicles") continue;
+                if (s_categoryFilter == 1 && item.category != "Weapons") continue;
+                if (s_categoryFilter == 2 && item.category != "Vehicles") continue;
+                if (s_categoryFilter == 3 && item.category != "Equipment" && item.category != "Armor Abilities") continue;
+                if (s_categoryFilter == 4 && item.category != "Characters") continue;
+                if (s_categoryFilter == 5 && item.category != "Props / Scenery") continue;
 
                 if (!query.empty()) {
                     if (!CaseInsensitiveContains(item.name, query) &&
@@ -349,12 +350,12 @@ void DevMenu::Draw() {
 
                 ImGui::BeginGroup();
                 ImGui::TextColored(NobleStyle::Accent(), "%s", item.name.c_str());
-                ImGui::SameLine(220.0f * s);
+                ImGui::SameLine(250.0f * s);
                 ImGui::TextColored(kDim, "[%s]", item.category.c_str());
                 ImGui::TextColored(kBody, "%s", item.description.c_str());
                 ImGui::EndGroup();
 
-                const bool canGive = (item.category != "Vehicles");
+                const bool canGive = (item.category == "Weapons" || item.category == "Equipment" || item.category == "Armor Abilities");
                 const float buttonW = canGive ? 90.0f * s : 140.0f * s;
                 const float groupW = canGive ? (190.0f * s) : (145.0f * s);
 
