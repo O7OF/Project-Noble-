@@ -88,3 +88,18 @@ Rule: follow the imul destination until it is overwritten; slot site if a memory
 displacement inside the first record of a slot array, session-relative or block-relative (block = session + 0x30):
 players 0x1740 / 0x3950 (record 0xB0), peers 0x60 / 0x2270 (record 0x158). Check it against the 67 caved sites
 (it should mark them all slot). Listing used: capstone text of the stock DLL (`%TEMP%\stock_text.asm`, not in git).
+
+## C12-L step 3 progress and design blocker (2026-11-09)
+- Done: 0x390DB0 frame growth (32-entry name table, own unwind copy), commit cba2c21. 32-player mode only.
+- #31 (17 x 0xC at block+0x4440): cannot grow in place (session fields at +0x4528..+0x4578 follow it). Needs a cave
+  at each of the ~47 indexed sites (`[base + 3*idx*4 + 0x443C/0x4440/0x4444]` block-relative, `+0x4470` session-relative:
+  0x39000B, 0x3939FD, 0x3955B6, 0x3958F6, 0x39672D, 0x39692D, 0x396BD8, 0x39D0D5, 0x39D517, 0x400016, 0x4003CC, ...;
+  full list from `grep '\*4 + 0x44(3c|40|44|6c|70|74)\]'`) plus the step loops 0x39C78C / 0x39C818. Same kind of
+  sorting job as the 169 imul sites; added to that handoff.
+- **Blocker (#32, 0x396828): stack copies of the membership block.** Its 0x8F00 frame holds a membership copy
+  (halves at [rbp+rcx+4] / [rbp+rcx+0x2214]) and two 0x2550-byte objects with 17 x 0x180 entries that 0x39DD4C fills.
+  The copy only has room for the inline slots, and the imul caves move slots >= 16 by a fixed delta from the STATIC
+  sessions, which is wrong for any copy. Before more tables are grown, decide how copies are handled: (a) hook every
+  block copy/clear (memcpy/memset of 0x4710/0x2210-sized blocks) and give each copy its own shadow, keyed by address;
+  or (b) make the caves base-aware (static sessions -> shadow, anything else -> a per-copy side buffer). Either way it
+  is the "whole-block copies" item, and it gates #32, #38, #45, #47, #51-57 and the network encoding.
