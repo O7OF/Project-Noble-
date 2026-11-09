@@ -1062,6 +1062,9 @@ void SetMenuMusicEnabled(bool enabled) {
     s_menuMusicEnabled.store(enabled);
     if (!enabled) StopMusic();
 }
+bool IsMenuMusicEnabled() {
+    return s_menuMusicEnabled.load();
+}
 
 void PlayMenuMusic(const std::string& requested) {
     if (!s_xaudio || !s_menuMusicEnabled.load()) return;

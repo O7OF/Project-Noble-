@@ -550,9 +550,10 @@ void NetworkTransport::SetChatCallback(ChatCallback cb) {
 
 // Through the sender thread's queue: WinHTTP allows one send at a time. No machine id here: the server knows this connection's
 // id from the relay URL, and that's what its roster holds (GetLocalMachineId() is 0 in a menu lobby).
-bool NetworkTransport::SendChat(const std::string& channel, const std::string& text, const std::string& from) {
+bool NetworkTransport::SendChat(const std::string& channel, const std::string& text, const std::string& from, const std::string& target) {
     if (!m_relayConnected.load() || text.empty()) return false;
     nlohmann::json j = {{"type", "chat"}, {"channel", channel}, {"text", text}, {"from", from}};
+    if (!target.empty()) j["target"] = target;
     std::lock_guard<std::mutex> lock(m_relayMutex);
     m_relayTextSendQueue.push_back(j.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace));
     return true;
@@ -746,6 +747,9 @@ void NetworkTransport::RelayWorkerThread(std::string relayUrl, std::string sessi
                                 }
                                 uint16_t hPort = static_cast<uint16_t>(ld.value("host_port", 11774));
                                 std::string sId = ld.value("session_id", sessionId);
+                                std::string lMapOverride = ld.value("map_override", "");
+                                std::string lModFolder = ld.value("mod_folder", "");
+                                std::string lModId = ld.value("mod_id", "");
 
                                 LobbyLaunchCallback cb;
                                 {
@@ -753,17 +757,18 @@ void NetworkTransport::RelayWorkerThread(std::string relayUrl, std::string sessi
                                     cb = m_lobbyLaunchCb;
                                 }
                                 if (cb) {
-                                    cb(lMap, lMode, lVarPath, lDiff, lSkulls, hIp, hPort, sId);
+                                    cb(lMap, lMode, lVarPath, lDiff, lSkulls, hIp, hPort, sId, lMapOverride, lModFolder, lModId);
                                 }
                             } else if (type == "chat") {
-            ChatMessage m;
-            m.channel = j.value("channel", "all");
-            m.from = j.value("from", "player");
-            m.text = j.value("text", "");
-            ChatCallback cb;
-            { std::lock_guard<std::mutex> lock(m_chatCbMutex); cb = m_chatCb; }
-            if (cb && !m.text.empty()) cb(m);
-        } else if (type == "lobby_roster") {
+                                ChatMessage m;
+                                m.channel = j.value("channel", "all");
+                                m.from = j.value("from", "player");
+                                m.text = j.value("text", "");
+                                m.target = j.value("target", "");
+                                ChatCallback cb;
+                                { std::lock_guard<std::mutex> lock(m_chatCbMutex); cb = m_chatCb; }
+                                if (cb && !m.text.empty()) cb(m);
+                            } else if (type == "lobby_roster") {
                                 LobbyRosterCallback cb;
                                 {
                                     std::lock_guard<std::mutex> lock(m_relayMutex);

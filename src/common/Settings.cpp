@@ -226,6 +226,9 @@ void Settings::Load() {
             Read(j, "voiceOpenMic", d.voiceOpenMic);
             Read(j, "voiceBitrateKbps", d.voiceBitrateKbps);
             Read(j, "voiceChannel", d.voiceChannel);
+            Read(j, "voiceMuteAll", d.voiceMuteAll);
+            Read(j, "voiceOverlayEnabled", d.voiceOverlayEnabled);
+            Read(j, "textChatEnabled", d.textChatEnabled);
             Read(j, "menuMusicTrack", d.menuMusicTrack);
             if (j.contains("menuMusicDisabled") && j["menuMusicDisabled"].is_array()) {
                 for (const auto& id : j["menuMusicDisabled"]) if (id.is_string()) d.menuMusicDisabled.push_back(id.get<std::string>());
@@ -377,6 +380,9 @@ bool Settings::Save() {
         j["voiceOpenMic"] = d.voiceOpenMic;
         j["voiceBitrateKbps"] = d.voiceBitrateKbps;
         j["voiceChannel"] = d.voiceChannel;
+        j["voiceMuteAll"] = d.voiceMuteAll;
+        j["voiceOverlayEnabled"] = d.voiceOverlayEnabled;
+        j["textChatEnabled"] = d.textChatEnabled;
         j["menuMusicTrack"] = d.menuMusicTrack;
         j["menuMusicDisabled"] = d.menuMusicDisabled;
         j["subtitles"] = d.subtitles;

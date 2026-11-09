@@ -39,10 +39,10 @@ public:
     void Shutdown();
 
     // Chat: the relay carries JSON chat frames; the UI owns rendering.
-    struct ChatMessage { std::string channel, from, text; };
+    struct ChatMessage { std::string channel, from, text, target; };
     using ChatCallback = std::function<void(const ChatMessage&)>;
     void SetChatCallback(ChatCallback cb);
-    bool SendChat(const std::string& channel, const std::string& text, const std::string& from);
+    bool SendChat(const std::string& channel, const std::string& text, const std::string& from, const std::string& target = "");
 
     bool IsActive() const { return m_active.load(); }
     bool IsHost() const { return m_isHost; }
@@ -70,7 +70,7 @@ public:
     std::unordered_map<uint64_t, int> GetAllPeerPingsMs() const;
 
     // Master Server WebSocket packet relay & lobby signaling
-    using LobbyLaunchCallback = std::function<void(const std::string& map, const std::string& mode, const std::string& variant, int diff, uint64_t skulls, const std::string& hostIp, uint16_t hostPort, const std::string& sessionId)>;
+    using LobbyLaunchCallback = std::function<void(const std::string& map, const std::string& mode, const std::string& variant, int diff, uint64_t skulls, const std::string& hostIp, uint16_t hostPort, const std::string& sessionId, const std::string& mapOverride, const std::string& modFolder, const std::string& modId)>;
     using LobbyRosterCallback = std::function<void(const std::string& rosterJson)>;
     using LobbyClosedCallback = std::function<void(const std::string& reason)>;
 

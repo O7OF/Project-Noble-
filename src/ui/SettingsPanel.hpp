@@ -26,7 +26,7 @@ public:
     void SetTab(int tab);                                          // test option -menu-tab (0..6 = category)
 
 private:
-    enum class Cat { Graphics, Audio, Game, Player, KeyboardMouse, Controller, Online, System, Count };
+    enum class Cat { Graphics, Audio, Game, Player, KeyboardMouse, Controller, Online, Social, System, Count };
     enum class When { Apply, Restart, Instant, Info };
     enum class Preview { None, Fov, FrameLimit, Volume, Controller, Gpu, Background };
     struct Details {
@@ -47,6 +47,7 @@ private:
     void RenderKeyboardMouse();
     void RenderController();
     void RenderOnline();
+    void RenderSocial();
     void RenderSystem();
     void RenderMusicPicker();
     void PollRebind();
@@ -93,6 +94,7 @@ private:
     int m_paddleKeyCapture = -1;       // paddle whose keyboard key or mouse button is being set
     double m_paddleKeyStarted = 0.0;
     int m_padRebindFrame = -1;         // the frame it opened on: that A press is not the new binding
+    int m_swallowKey = 0;              // key being released so it doesn't trigger menu hotkeys
     char m_musicSearch[64] = {};
     bool m_musicScrollToCurrent = true;
 

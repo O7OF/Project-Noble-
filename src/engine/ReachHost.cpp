@@ -1,4 +1,5 @@
 #include "ui/SocialOverlay.hpp"
+#include "ui/MenuSounds.hpp"
 #include "ReachHost.hpp"
 #include "EmbeddedBlocks.hpp"
 #include "ui/LoadScreen.hpp"
@@ -1492,6 +1493,16 @@ static void FillLocalPad(uint8_t* st, bool keyboardMouseUsed) {
     if ((pressed & 0x0004) && !PauseMenu::IsGameOver()) {
         ForgeMenu::Toggle();
         buttons = static_cast<WORD>(buttons & ~0x0004);
+    }
+    if (ForgeMenu::IsOpen() && !PauseMenu::IsGameOver()) {
+        if (pressed & 0x2000) {
+            ForgeMenu::Close();
+            MenuSounds::Back();
+        }
+        buttons = 0;
+        lt = 0;
+        rt = 0;
+        return;
     }
     // The scoreboard button shows Noble's panel, like the key: the engine never opens its own screen.
     if (buttons & 0x0020) {

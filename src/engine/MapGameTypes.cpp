@@ -38,12 +38,12 @@ const std::array<TypeInfo, 6> kRestricted = { {
 } };
 
 // Types that work on every multiplayer map; listed so `Name` can return a proper label.
-const std::array<std::pair<const char*, const char*>, 15> kUniversal = { {
+const std::array<std::pair<const char*, const char*>, 16> kUniversal = { {
     { "slayer", "Slayer" }, { "ctf", "Capture the Flag" }, { "assault", "Assault" },
     { "territories", "Territories" }, { "koth", "King of the Hill" }, { "oddball", "Oddball" },
     { "juggernaut", "Juggernaut" }, { "infection", "Infection" }, { "headhunter", "Headhunter" },
     { "stockpile", "Stockpile" }, { "vip", "VIP" }, { "action_sack", "Action Sack" },
-    { "grifball", "Grifball" }, { "forged", "Forge" }, { "unknown", "Unknown" },
+    { "plus", "Plus" }, { "grifball", "Grifball" }, { "forged", "Forge" }, { "unknown", "Unknown" },
 } };
 
 bool IsRestricted(const std::string& gameType) {
@@ -60,8 +60,9 @@ std::string FromVariantStem(const std::wstring& stem) {
     // MCC ships them as "3nvasion_*" / "2nvasion_*" (an 'n' where the 'I' glyph would be), so match the tail.
     if (Has(s, L"nvasion")) return "invasion";
     if (Has(s, L"hr_ff_")) return "firefight";
-    if (Has(s, L"vip")) return "vip";
-    if ((Has(s, L"action") && Has(s, L"sack")) || Has(s, L"actionsack")) return "action_sack";
+    if (Has(s, L"plus") || Has(s, L"_tu_") || Has(s, L"zerobloom") || Has(s, L"title update")) return "plus";
+    if (Has(s, L"vip") || Has(s, L"escort") || Has(s, L"bodyguard") || Has(s, L"assassin")) return "vip";
+    if (Has(s, L"action") || Has(s, L"sack") || Has(s, L"fiesta") || Has(s, L"dodgeball") || Has(s, L"speedball") || Has(s, L"hockey") || Has(s, L"baseball") || Has(s, L"haloball") || Has(s, L"sumo")) return "action_sack";
     if (Has(s, L"grifball")) return "grifball";
     if (Has(s, L"skeeball")) return "skeeball";
     if (Has(s, L"rally")) return "rally";

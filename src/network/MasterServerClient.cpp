@@ -824,6 +824,9 @@ LobbyState MasterServerClient::FetchLobbyStateSync(const std::string& sessionId)
             state.launchMode = ld.value("mode", state.mode);
             state.launchVariant = ld.value("variant", state.variant);
             state.launchDifficulty = ld.value("difficulty", state.difficulty);
+            state.launchMapOverride = ld.value("map_override", "");
+            state.launchModFolder = ld.value("mod_folder", "");
+            state.launchModId = ld.value("mod_id", state.modId);
             try { state.launchSkulls = std::stoull(ld.value("skulls", "0")); } catch (...) {}
         }
     } catch (...) {}
@@ -1046,7 +1049,10 @@ bool MasterServerClient::LaunchLobbySync(const std::string& sessionId,
                                          const std::string& variant,
                                          int difficulty,
                                          uint64_t skulls,
-                                         const std::string& variantBody) {
+                                         const std::string& variantBody,
+                                         const std::string& mapOverride,
+                                         const std::string& modFolder,
+                                         const std::string& modId) {
     std::string token;
     {
         std::lock_guard<std::mutex> lock(m_mutex);
@@ -1062,7 +1068,10 @@ bool MasterServerClient::LaunchLobbySync(const std::string& sessionId,
             { "variant", variant },
             { "variant_body", variantBody },
             { "difficulty", difficulty },
-            { "skulls", std::to_string(skulls) }
+            { "skulls", std::to_string(skulls) },
+            { "map_override", mapOverride },
+            { "mod_folder", modFolder },
+            { "mod_id", modId }
         };
 
         const HttpResult r = HttpRequest(Url(), L"POST", "/api/sessions/" + sessionId + "/lobby/launch",

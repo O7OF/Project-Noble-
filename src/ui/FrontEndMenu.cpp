@@ -288,7 +288,16 @@ std::vector<MenuVariant> ScanVariants(const std::filesystem::path& reachDir, boo
     std::vector<MenuVariant> list;
     std::error_code ec;
     std::set<std::wstring> seen;   // the engine resolves the stock folder first, so it wins a name clash
-    for (const std::filesystem::path& folder : { reachDir / "game_variants", VFS::GetUserStoragePath() / "game_variants" }) {
+    std::vector<std::filesystem::path> scanFolders = { reachDir / "game_variants", VFS::GetUserStoragePath() / "game_variants" };
+    wchar_t userProfile[MAX_PATH] = {};
+    if (GetEnvironmentVariableW(L"USERPROFILE", userProfile, MAX_PATH) > 0) {
+        const std::filesystem::path uProf(userProfile);
+        scanFolders.push_back(uProf / "AppData" / "LocalLow" / "MCC" / "Temporary" / "UserContent" / "HaloReach" / "GameType");
+        scanFolders.push_back(uProf / "AppData" / "LocalLow" / "MCC" / "LocalVault" / "UserContent" / "HaloReach" / "GameType");
+        scanFolders.push_back(uProf / "AppData" / "LocalLow" / "MCC" / "LocalVault" / "game_variants");
+        scanFolders.push_back(uProf / "AppData" / "LocalLow" / "MCC" / "Temporary" / "game_variants");
+    }
+    for (const std::filesystem::path& folder : scanFolders) {
         for (const auto& entry : std::filesystem::directory_iterator(folder, ec)) {
             if (!entry.is_regular_file(ec) || Lower(entry.path().extension().wstring()) != L".bin") continue;
             const std::wstring lower = Lower(entry.path().filename().wstring());
@@ -299,10 +308,10 @@ std::vector<MenuVariant> ScanVariants(const std::filesystem::path& reachDir, boo
             const std::wstring stem = entry.path().stem().wstring();
             // A player-made .bin often has a generic file name (or an RVT export name), so the name inside
             // the variant is the better clue. The stem still wins for the shipped MCC files, except that a
-            // VIP / Action Sack / Grifball name is always honoured.
+            // VIP / Action Sack / Grifball / Plus name is always honoured.
             std::string type = MapGameTypes::FromVariantStem(stem);
             const std::string named = MapGameTypes::FromVariantText(text.name);
-            if (!named.empty() && (type.empty() || named == "vip" || named == "action_sack" || named == "grifball")) type = named;
+            if (!named.empty() && (type.empty() || named == "vip" || named == "action_sack" || named == "grifball" || named == "plus")) type = named;
             list.push_back({ VariantLabel(stem, text.name), entry.path(), text.description, false, type });
         }
         ec.clear();
@@ -1722,6 +1731,9 @@ struct MenuState {
     std::string lobbyLaunchVariant;
     int lobbyLaunchDiff = 1;
     uint64_t lobbyLaunchSkulls = 0;
+    std::string lobbyLaunchMapOverride;
+    std::string lobbyLaunchModFolder;
+    std::string lobbyLaunchModId;
     double lastLobbyPoll = 0.0;
     int lobbyMenuRow = 0;          // Focused row in pre-game options list
     // Playlists. -1 = none chosen.
@@ -2438,7 +2450,8 @@ void FeedEngineThreadInputs(HWND hwnd, ImGuiIO& io) {
 
         const int wheel = Window::TakeWheelNotches();
         if (wheel != 0) {
-            io.AddMouseWheelEvent(0.0f, static_cast<float>(wheel));
+            const float dampened = static_cast<float>(std::clamp(wheel, -1, 1));
+            io.AddMouseWheelEvent(0.0f, dampened);
         }
     } else {
         io.AddMousePosEvent(-FLT_MAX, -FLT_MAX);
@@ -2519,6 +2532,7 @@ void FeedEngineThreadInputs(HWND hwnd, ImGuiIO& io) {
 struct PendingLobbyEvents {
     bool launch = false;
     std::string map, mode, variant, hostEndpoint, sessionId, sessionToken;
+    std::string mapOverride, modFolder, modId;
     int difficulty = 1;
     uint64_t skulls = 0;
     bool roster = false;
@@ -2596,6 +2610,9 @@ static void TakePendingLobbyEvents(MenuState& st) {
         st.lobbyLaunchVariant = ev.variant;
         st.lobbyLaunchDiff = ev.difficulty;
         st.lobbyLaunchSkulls = ev.skulls;
+        st.lobbyLaunchMapOverride = ev.mapOverride;
+        st.lobbyLaunchModFolder = ev.modFolder;
+        st.lobbyLaunchModId = ev.modId;
         if (st.lobbyHostEndpoint.empty() && !ev.hostEndpoint.empty()) st.lobbyHostEndpoint = ev.hostEndpoint;
         if (!ev.sessionId.empty()) st.lobbySessionId = ev.sessionId;
         if (!ev.sessionToken.empty()) st.lobbySessionToken = ev.sessionToken;
@@ -3162,6 +3179,9 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
                     st.lobbyLaunchVariant = current.launchVariant;
                     st.lobbyLaunchDiff = current.launchDifficulty;
                     st.lobbyLaunchSkulls = current.launchSkulls;
+                    st.lobbyLaunchMapOverride = current.launchMapOverride;
+                    st.lobbyLaunchModFolder = current.launchModFolder;
+                    st.lobbyLaunchModId = current.launchModId.empty() ? current.modId : current.launchModId;
                 }
             }
         }
@@ -3177,7 +3197,6 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         }
         choice.host = false;
         choice.map = st.lobbyLaunchMap.empty() ? st.lobbyMap : st.lobbyLaunchMap;
-        choice.mapOverride = st.lobbyMapOverride;
         choice.mapTitle = st.lobbyMapTitle;
         choice.mapImage = st.lobbyMapImage;
         choice.mapThumb = st.lobbyMapThumb;
@@ -3185,11 +3204,79 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         choice.variantPath = st.lobbyLaunchVariant;
         choice.difficulty = st.lobbyLaunchDiff;
         choice.skulls = st.lobbyLaunchSkulls;
-        // The lobby's map (and any replacement objects) live in the Workshop mod, so the match reads it first.
-        choice.modFolder = st.lobbyModFolder;
+
+        // Resolve mod and modded map override for guest
+        std::filesystem::path hostMapOverride = !st.lobbyLaunchMapOverride.empty() ?
+            std::filesystem::path(st.lobbyLaunchMapOverride) : st.lobbyMapOverride;
+        std::filesystem::path hostModFolder = !st.lobbyLaunchModFolder.empty() ?
+            std::filesystem::path(st.lobbyLaunchModFolder) : st.lobbyModFolder;
+        std::string hostModId = !st.lobbyLaunchModId.empty() ? st.lobbyLaunchModId : st.lobbyModId;
+
+        if (!hostMapOverride.empty() || !hostModFolder.empty() || !hostModId.empty()) {
+            std::filesystem::path resolvedMap;
+            std::filesystem::path resolvedModFolder = hostModFolder;
+            std::error_code ec;
+
+            if (!hostMapOverride.empty() && std::filesystem::exists(hostMapOverride, ec)) {
+                resolvedMap = hostMapOverride;
+            }
+
+            const std::string wantMapFile = !hostMapOverride.empty() ? hostMapOverride.filename().string() : (choice.map + ".map");
+
+            if (resolvedMap.empty() && !hostModId.empty()) {
+                if (const ModEntry* installed = ModCatalog::FindByWorkshopId(ctx.mods, hostModId)) {
+                    resolvedModFolder = installed->folder;
+                    const auto candidate = installed->folder / "maps" / wantMapFile;
+                    if (std::filesystem::exists(candidate, ec)) resolvedMap = candidate;
+                }
+            }
+
+            if (resolvedMap.empty() && !hostModFolder.empty()) {
+                const std::string folderName = hostModFolder.filename().string();
+                for (const ModEntry& mod : ctx.mods) {
+                    if (_stricmp(mod.folder.filename().string().c_str(), folderName.c_str()) == 0 ||
+                        _stricmp(mod.id.c_str(), folderName.c_str()) == 0) {
+                        resolvedModFolder = mod.folder;
+                        const auto candidate = mod.folder / "maps" / wantMapFile;
+                        if (std::filesystem::exists(candidate, ec)) {
+                            resolvedMap = candidate;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if (resolvedMap.empty()) {
+                for (const ModEntry& mod : ctx.mods) {
+                    const auto candidate = mod.folder / "maps" / wantMapFile;
+                    if (std::filesystem::exists(candidate, ec)) {
+                        resolvedMap = candidate;
+                        resolvedModFolder = mod.folder;
+                        break;
+                    }
+                }
+            }
+
+            if (!resolvedMap.empty()) {
+                choice.mapOverride = resolvedMap;
+                choice.modFolder = resolvedModFolder;
+                st.lobbyMapOverride = resolvedMap;
+                st.lobbyModFolder = resolvedModFolder;
+                NOBLE_INFO("FrontEndMenu: Guest resolved modded map: '{}' (folder: '{}')",
+                           choice.mapOverride.string(), choice.modFolder.string());
+            } else {
+                choice.mapOverride = hostMapOverride;
+                choice.modFolder = resolvedModFolder;
+                NOBLE_WARN("FrontEndMenu: Modded map '{}' (mod: '{}') not found on guest PC",
+                           wantMapFile, hostModId);
+            }
+        } else {
+            choice.mapOverride = st.lobbyMapOverride;
+            choice.modFolder = st.lobbyModFolder;
+        }
         choice.modTitle = st.lobbyModTitle;
-        NOBLE_INFO("Guest launching from lobby: map='{}' mode='{}' variant='{}' mod='{}' connect='{}'",
-                   choice.map, choice.mode, choice.variantPath, st.lobbyModId, st.lobbyHostEndpoint);
+        NOBLE_INFO("Guest launching from lobby: map='{}' mode='{}' mapOverride='{}' mod='{}' connect='{}'",
+                   choice.map, choice.mode, choice.mapOverride.string(), choice.modFolder.string(), st.lobbyHostEndpoint);
         choice.connectAddress = st.lobbyHostEndpoint;
         choice.sessionId = st.lobbySessionId;
         if (st.lobbySessionToken.empty()) st.lobbySessionToken = MasterServerClient::Get().GetCurrentSessionToken();
@@ -3300,9 +3387,10 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         optRows.push_back({ "DIFFICULTY", kDiffs[std::clamp(st.lobbyDifficulty, 0, 3)], false, st.isLobbyHost, "Set campaign difficulty level." });
         if (st.isLobbyHost) optRows.push_back({ "START CO-OP CAMPAIGN", "", true, true, "Start the selected mission." });
     } else if (forge) {
-        optRows.push_back({ "GAME TYPE", "BASIC EDITING", false, false, "Forge always uses Basic Editing." });
+        optRows.push_back({ "GAME TYPE", "BASIC EDITING", false, false, "Forge uses Basic Editing as base." });
         optRows.push_back({ "MAP", mapDisplay, false, st.isLobbyHost, "Choose which map to forge." });
-        optRows.push_back({ "GAME OPTIONS", "DEFAULTS", false, false, kOptionsTip });
+        const std::string forgeOptVal = st.lobbyModeChanges > 0 ? std::to_string(st.lobbyModeChanges) + " CHANGED" : (st.forgeCustomVariant.empty() ? "DEFAULTS" : "CUSTOM");
+        optRows.push_back({ "GAME OPTIONS", forgeOptVal, false, st.isLobbyHost, "Customize player traits, shields, speed, damage, and game options for Forge." });
         if (st.isLobbyHost) optRows.push_back({ "START GAME", "", true, true, "Start the selected Forge session." });
     } else if (firefight) {
         optRows.push_back({ "READY", st.lobbyReady ? "READY" : "NOT READY", false, true, kReadyTip });
@@ -3511,7 +3599,9 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
             if (in) variantBody.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
         }
         try {
-            MasterServerClient::Get().LaunchLobbySync(st.lobbySessionId, st.lobbyMap, st.lobbyMode, variantFileName, st.lobbyDifficulty, st.lobbySkulls, variantBody);
+            MasterServerClient::Get().LaunchLobbySync(st.lobbySessionId, st.lobbyMap, st.lobbyMode, variantFileName,
+                                                      st.lobbyDifficulty, st.lobbySkulls, variantBody,
+                                                      st.lobbyMapOverride.string(), st.lobbyModFolder.string(), st.lobbyModId);
         } catch (const std::exception& e) {
             NOBLE_ERROR("FrontEndMenu: LaunchLobbySync exception: {}", e.what());
         } catch (...) {
@@ -3574,6 +3664,16 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
             startMatch();
         } else if (cur.label == "VOTE") {
             StartLobbyVote(ctx);
+        } else if (cur.label == "GAME OPTIONS" && cur.editable) {
+            if (forge) {
+                MenuVariant forgeMv;
+                forgeMv.path = st.forgeCustomVariant.empty() ? ctx.forgeVariant : st.forgeCustomVariant;
+                forgeMv.label = st.forgeCustomVariant.empty() ? "Basic Editing" : "Forge Custom";
+                forgeMv.custom = !st.forgeCustomVariant.empty();
+                OpenGameOptions(ctx, forgeMv);
+            } else if (!ctx.variants.empty()) {
+                OpenGameOptions(ctx, ctx.variants[std::clamp(st.variant, 0, static_cast<int>(ctx.variants.size()) - 1)]);
+            }
         } else if (cur.label == "GAME TYPE" && cur.editable) {
             st.lobbyPickerOpen = true;
             pickerJustOpened = true;
@@ -4008,6 +4108,24 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
             statLine("COMMENDATIONS", std::to_string(commendations) + "%");
             statLine("ARMORY ITEMS BOUGHT", std::to_string(armoryItems));
         }
+
+        y += 10.0f * ui.s;
+        if (local || st.isLobbyHost) {
+            const int targetTeam = (player.team == 1) ? 2 : 1;
+            const char* teamName = (targetTeam == 1) ? "SWITCH TO RED TEAM" : "SWITCH TO BLUE TEAM";
+            if (ActionButton(ui, "lobby_change_team", ImVec2(cardX, y), cardW, teamName, false)) {
+                st.lobbyRoster[st.lobbyRosterSelection].team = targetTeam;
+                MenuSounds::Click();
+            }
+            y += 36.0f * ui.s;
+        }
+        if (!local && !player.username.empty()) {
+            if (ActionButton(ui, "lobby_dm_player", ImVec2(cardX, y), cardW, "SEND DIRECT MESSAGE", false)) {
+                SocialOverlay::OpenDirectMessage(player.username);
+                MenuSounds::Click();
+            }
+            y += 36.0f * ui.s;
+        }
     }
     for (size_t col = 0; col < columns.size() && !st.lobbyProfileOpen; ++col) {
         RosterColumn& c = columns[col];
@@ -4341,6 +4459,11 @@ static void DrawSocialScreen(OverlayContext& ctx, const Ui& ui, float left, floa
                 ImGui::TableSetColumnIndex(2);
                 ImGui::PushID(static_cast<int>(i));
 
+                if (padButton("MESSAGE", ImVec2(80.0f * ui.s, 24.0f * ui.s))) {
+                    SocialOverlay::OpenDirectMessage(f.username);
+                    MenuSounds::Click();
+                }
+                ImGui::SameLine();
                 if (padButton("INVITE", ImVec2(75.0f * ui.s, 24.0f * ui.s))) {
                     std::string invMode = "Custom Game";
                     if (st.lobbyMode == "campaign") invMode = "Campaign";
@@ -4935,7 +5058,7 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
                 st.quitChoice = 1;
                 MenuSounds::Back();
             }
-            DrawHints(ui, { { Prompt::Accept, "Select" }, { Prompt::Back, "Quit" } });
+            DrawHints(ui, { { Prompt::Accept, "Select" }, { Prompt::Back, "Quit" } }, { { InputPrompts::Button::Y, "Y", "Global Chat" } });
         } else if (st.confirmQuit) {
             // Dim everything and show the question in the middle.
             ui.dl->AddRectFilled(ui.origin, ImVec2(ui.origin.x + ui.size.x, ui.origin.y + ui.size.y), IM_COL32(0, 0, 0, 150));
@@ -6615,8 +6738,9 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
     // These run on the WebSocket relay thread: they only queue the event (see PendingLobbyEvents).
     NetworkTransport::Get().SetLobbyLaunchCallback([](const std::string& lMap, const std::string& lMode,
                                                       const std::string& lVar, int lDiff, uint64_t lSkulls,
-                                                      const std::string& hIp, uint16_t hPort, const std::string& sId) {
-        NOBLE_INFO("FrontEndMenu: Received WebSocket real-time lobby launch event! (map: {}, mode: {})", lMap, lMode);
+                                                      const std::string& hIp, uint16_t hPort, const std::string& sId,
+                                                      const std::string& lMapOverride, const std::string& lModFolder, const std::string& lModId) {
+        NOBLE_INFO("FrontEndMenu: Received WebSocket real-time lobby launch event! (map: {}, mode: {}, mod: {})", lMap, lMode, lModId);
         std::lock_guard<std::mutex> lock(s_lobbyEventMutex);
         if (s_lobbyEvents.launch) return;   // the host's launch can arrive twice
         s_lobbyEvents.launch = true;
@@ -6627,6 +6751,9 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
         s_lobbyEvents.skulls = lSkulls;
         if (!hIp.empty()) s_lobbyEvents.hostEndpoint = hIp + ":" + std::to_string(hPort);
         s_lobbyEvents.sessionId = sId;
+        s_lobbyEvents.mapOverride = lMapOverride;
+        s_lobbyEvents.modFolder = lModFolder;
+        s_lobbyEvents.modId = lModId;
     });
 
     NetworkTransport::Get().SetLobbyClosedCallback([](const std::string& reason) {
@@ -6790,7 +6917,7 @@ void FrontEndMenu::RenderOverlayImpl(IDXGISwapChain* swapChain, bool clear) {
             }
         }
         UiPad::Feed(io);
-        SocialOverlay::Poll(ctx.st.screen == Screen::PreGameLobby);
+        SocialOverlay::Poll(!io.WantTextInput && !ctx.st.confirmQuit);
         // Text drawn by plain ImGui widgets (search boxes, descriptions, help lines, input fields) used the
         // fonts' fixed 15-18 px and turned tiny on a native 4K back buffer. Scale it like every custom-drawn
         // label (back-buffer height / 900). Fonts are rasterised at 2.5x density, so this stays crisp.
@@ -6856,6 +6983,7 @@ void FrontEndMenu::RenderOverlayImpl(IDXGISwapChain* swapChain, bool clear) {
                 NOBLE_INFO("FrontEndMenu: -menu-capture done at frame {} (sceneReadyFrames={}), closing",
                            ctx.totalFrames, ctx.sceneReadyFrames);
                 ctx.closed = true;
+                ReachAudio::SetMenuMusicEnabled(false);
                 ReachAudio::StopMusic();
                 PostMessageW(hwnd, WM_CLOSE, 0, 0);
             }
@@ -6863,6 +6991,7 @@ void FrontEndMenu::RenderOverlayImpl(IDXGISwapChain* swapChain, bool clear) {
 
         if (done && !ctx.closed) {
             ctx.closed = true;
+            ReachAudio::SetMenuMusicEnabled(false);
             ReachAudio::StopMusic();
             if (choice.play) {
                 // Remember what was launched, for the \"Continue\" row on the main menu (spec 4.1). A lobby join

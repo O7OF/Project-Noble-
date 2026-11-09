@@ -60,6 +60,9 @@ struct LobbyState {
     std::string launchVariant;
     int launchDifficulty = 1;
     uint64_t launchSkulls = 0;
+    std::string launchMapOverride;
+    std::string launchModFolder;
+    std::string launchModId;
     std::string hostLanIp;
     bool isLan = false;
     bool isClosed = false;
@@ -204,7 +207,10 @@ public:
                          const std::string& variant,
                          int difficulty,
                          uint64_t skulls,
-                         const std::string& variantBody = "");
+                         const std::string& variantBody = "",
+                         const std::string& mapOverride = "",
+                         const std::string& modFolder = "",
+                         const std::string& modId = "");
 
     void UpdateLobbyAdvert(const std::string& map, const std::string& mode, const std::string& variant, int diff, uint64_t skulls);
     std::string GetCurrentSessionId() const;

@@ -56,6 +56,7 @@ struct TrackInfo {
 // Menu music only belongs to the front end. A match process turns the player off before the engine starts,
 // so applying settings mid-match cannot start the menu theme over the game audio.
 void SetMenuMusicEnabled(bool enabled);
+bool IsMenuMusicEnabled();
 void PlayMenuMusic(const std::string& id);
 void StopMusic();
 // Pause / resume the menu music without losing its place (the XAudio2 source voice stops and starts again;

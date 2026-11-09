@@ -368,6 +368,7 @@ namespace {
 void SetLocalSimulationPaused(bool paused) {
   static bool s_applied = false;
   if (paused == s_applied) return;
+  if (paused && NetworkTransport::Get().GetGamePeerCount() > 0) return;
   BlamEngine* engine = BlamEngine::Active();
   if (!engine) return;
   if (engine->ExecuteCommand(paused ? "game_speed 0" : "game_speed 1")) {
@@ -405,7 +406,7 @@ void PauseMenu::Toggle() {
     Window::TakeLeftClicks(); // forget clicks made in game (shots) before the
                               // menu opened
   s_open.store(nowOpen);
-  if (!nowOpen) SetLocalSimulationPaused(false);
+  SetLocalSimulationPaused(nowOpen);
   NOBLE_INFO("PauseMenu: {}", nowOpen ? "opened" : "closed");
 }
 
@@ -554,6 +555,7 @@ void PauseMenu::DrawMenu(HWND hwnd) {
     NobleStyle::Header(solo ? "PAUSED" : "MENU");
     ImGui::PushStyleColor(ImGuiCol_Text, NobleStyle::TextMuted());
     if (solo) {
+        SetLocalSimulationPaused(true);
         ImGui::TextUnformatted("The game is paused.");
     } else {
         ImGui::Text("The match keeps running for the other %zu player%s.", peers, peers == 1 ? "" : "s");
@@ -582,12 +584,19 @@ void PauseMenu::DrawMenu(HWND hwnd) {
         { "SETTINGS", "Change any setting without leaving the match.", false, true },
         { "CONTROLS", "Change key, mouse and controller bindings and look speed without leaving the match.", false, true },
     };
-    // Only a team variant that permits switching gets this entry. FFA, campaign, Firefight and Forge
-    // do not, so the list keeps its old shape there.
     int teamEntry = -1;
-    if (BlamEngine::GameTeamsEnabled()) {
+    std::string currentMode = s_boardMode;
+    if (currentMode.empty()) {
+        std::wstring wmode = ArgValue(Relaunch::CurrentGameArgs(), L"-mode");
+        if (wmode.empty()) wmode = ArgValue(GetCommandLineW(), L"-mode");
+        char mb[64] = {};
+        WideCharToMultiByte(CP_UTF8, 0, wmode.c_str(), -1, mb, sizeof(mb) - 1, nullptr, nullptr);
+        currentMode = mb;
+    }
+    const bool isMultiOrForge = (currentMode == "multiplayer" || currentMode == "forge" || currentMode.empty());
+    if (BlamEngine::GameTeamsEnabled() || isMultiOrForge) {
         teamEntry = static_cast<int>(entries.size());
-        entries.push_back({ "CHANGE TEAM", "Switch between red and blue. The game type must allow team changes.", false, true });
+        entries.push_back({ "CHANGE TEAM", "Switch between red and blue team.", false, true });
     }
     const int leaveEntry = static_cast<int>(entries.size());
     entries.push_back({ "LEAVE GAME", "Close this match and go back to the front-end menu.", false, true });

@@ -15,6 +15,8 @@
 #include "engine/CameraFov.hpp"
 #include "engine/PadLayouts.hpp"
 #include "host/EngineLimits.hpp"
+#include "common/DeviceIdentity.hpp"
+#include "network/AuthClient.hpp"
 #include <map>
 #include "network/MasterServerClient.hpp"
 
@@ -78,9 +80,10 @@ const CatInfo kCats[] = {
     { "CONTROLS", "KEYBOARD & MOUSE", "Takes effect when you apply changes, also mid-game from the pause menu." },
     { nullptr, "CONTROLLER", "Takes effect when you apply changes, also mid-game from the pause menu." },
     { "ONLINE", "ONLINE SERVICES", "Saved when you apply changes." },
+    { nullptr, "SOCIAL", "Voice chat, text chat, speech modes, and mutes take effect immediately." },
     { "SYSTEM", "SYSTEM", "Diagnostics and backups. These act straight away." },
 };
-static_assert(std::size(kCats) == 8);
+static_assert(std::size(kCats) == 9);
 
 const char* WhenText(int when) {
     switch (when) {
@@ -282,6 +285,14 @@ void SettingsPanel::Render() {
         m_loaded = true;
     }
     m_captureEndedThisFrame = false;
+    if (m_swallowKey > 0) {
+        if ((GetAsyncKeyState(m_swallowKey) & 0x8000) != 0) {
+            m_captureEndedThisFrame = true;
+            ImGui::GetIO().ClearInputKeys();
+        } else {
+            m_swallowKey = 0;
+        }
+    }
     // A keyboard/paddle capture reads the raw key state. Clear the frame's key events first, so Q/E/Tab/Esc
     // cannot also switch categories, close the panel or move focus while the capture is waiting. The controller
     // capture has to keep its ImGui events: PadBindValue() consumes them itself.
@@ -302,6 +313,12 @@ void SettingsPanel::Render() {
         m_saved.serviceTag = saved.serviceTag;
         m_edit.playerName = saved.playerName;
         m_edit.serviceTag = saved.serviceTag;
+
+        DeviceIdentity id = DeviceIdentityStore::Get();
+        id.playerName = saved.playerName;
+        id.serviceTag = saved.serviceTag;
+        DeviceIdentityStore::Save(id);
+        AuthClient::Get().SetPlayerName(saved.playerName);
     }
 
     // Shared key state for this frame (rows read it; text fields and rebinding take the keys).
@@ -537,6 +554,7 @@ void SettingsPanel::RenderCategory(Cat c) {
     case Cat::KeyboardMouse: RenderKeyboardMouse(); break;
     case Cat::Controller: RenderController(); break;
     case Cat::Online: RenderOnline(); break;
+    case Cat::Social: RenderSocial(); break;
     case Cat::System: RenderSystem(); break;
     default: break;
     }
@@ -1304,8 +1322,10 @@ void SettingsPanel::PollRebind() {
         if (GetAsyncKeyState(vk) & 0x8000) {
             if (vk == KeyBindings::DefaultKey(m_rebindAction)) m_edit.keyOverrides.erase(m_rebindAction);
             else m_edit.keyOverrides[m_rebindAction] = vk;
+            m_swallowKey = vk;
             m_rebindAction = -1;
             m_captureEndedThisFrame = true;
+            ImGui::GetIO().ClearInputKeys();
             MenuSounds::Click();
             return;
         }
@@ -1852,6 +1872,12 @@ int SettingsPanel::CountDiff(const SettingsData& a, const SettingsData& b, Cat c
                (a.padVibration != b.padVibration) + f(a.padVibrationStrength, b.padVibrationStrength);
     case Cat::Online:
         return (a.masterServerUrl != b.masterServerUrl) + (a.inviteNotifications != b.inviteNotifications);
+    case Cat::Social:
+        return (a.voiceEnabled != b.voiceEnabled) + (a.voiceOpenMic != b.voiceOpenMic) +
+               (a.voiceVolume != b.voiceVolume) + (a.voiceMuteAll != b.voiceMuteAll) +
+               (a.voiceOverlayEnabled != b.voiceOverlayEnabled) + (a.textChatEnabled != b.textChatEnabled) +
+               (a.voiceInputDevice != b.voiceInputDevice) + (a.voiceOutputDevice != b.voiceOutputDevice) +
+               (a.voiceChannel != b.voiceChannel);
     default:
         return 0;
     }
@@ -1910,6 +1936,17 @@ SettingsData SettingsPanel::WithDefaults(SettingsData e, Cat c) {
     case Cat::Online:
         e.masterServerUrl = d.masterServerUrl;
         break;
+    case Cat::Social:
+        e.voiceEnabled = d.voiceEnabled;
+        e.voiceOpenMic = d.voiceOpenMic;
+        e.voiceVolume = d.voiceVolume;
+        e.voiceMuteAll = d.voiceMuteAll;
+        e.voiceOverlayEnabled = d.voiceOverlayEnabled;
+        e.textChatEnabled = d.textChatEnabled;
+        e.voiceInputDevice = d.voiceInputDevice;
+        e.voiceOutputDevice = d.voiceOutputDevice;
+        e.voiceChannel = d.voiceChannel;
+        break;
     default:
         break;
     }
@@ -1931,7 +1968,11 @@ void SettingsPanel::Apply() {
     // Apply the saved volume and mute BEFORE anything can make a sound. The menu music is guarded by
     // ReachAudio::SetMenuMusicEnabled(), so an apply in a match leaves the game's own audio alone.
     ProcessAudio::ApplyAll(m_edit.volumeGame, m_edit.volumeMusic, m_edit.volumeOther, m_edit.masterMute);
-    ReachAudio::PlayMenuMusic(m_edit.menuMusicTrack);
+    if (!m_edit.masterMute && ReachAudio::IsMenuMusicEnabled()) {
+        ReachAudio::PlayMenuMusic(m_edit.menuMusicTrack);
+    } else {
+        ReachAudio::StopMusic();
+    }
     MasterServerClient::Get().SetUrl(m_edit.masterServerUrl);
     // Field of view goes straight into the running engine (haloreach+0xB42C10, degrees); the
     // per-frame CameraFov::Tick keeps it there and picks it up for the next game too.
@@ -1951,7 +1992,11 @@ void SettingsPanel::Discard() {
     m_rebindAction = -1;
     const auto snap = Settings::Get().Snapshot();
     ProcessAudio::ApplyAll(snap.volumeGame, snap.volumeMusic, snap.volumeOther, snap.masterMute);
-    ReachAudio::PlayMenuMusic(snap.menuMusicTrack);
+    if (!snap.masterMute && ReachAudio::IsMenuMusicEnabled()) {
+        ReachAudio::PlayMenuMusic(snap.menuMusicTrack);
+    } else {
+        ReachAudio::StopMusic();
+    }
     m_message = "Changes discarded.";
     m_messageTime = ImGui::GetTime();
     MenuSounds::Back();
@@ -1987,6 +2032,11 @@ std::string SettingsPanel::Summary(Cat c) const {
     }
     case Cat::Online:
         return e.masterServerUrl.empty() ? std::string("LAN only") : std::string("Master server set");
+    case Cat::Social:
+        std::snprintf(buf, sizeof(buf), "%s \xC2\xB7 %s",
+                      e.voiceMuteAll ? "Voice Muted" : (e.voiceOpenMic ? "Open Mic" : "Push To Talk"),
+                      e.textChatEnabled ? "Chat On" : "Chat Off");
+        return buf;
     case Cat::System:
         return std::string(VERSION_STRING);
     default:
@@ -1994,6 +2044,82 @@ std::string SettingsPanel::Summary(Cat c) const {
     }
 }
 
+void SettingsPanel::RenderSocial() {
+    Section("VOICE CHAT");
+    if (Row("VOICE CHAT", "Hear and talk to other players in online lobbies and matches. When it's on, the microphone stream opens in those sessions, but nothing is sent unless you talk with the settings below. Off closes both streams.",
+            When::Apply, "On", m_edit.voiceEnabled != m_saved.voiceEnabled)) {
+        ToggleValue(m_edit.voiceEnabled);
+    }
+    if (Row("MUTE ALL PLAYERS", "Silences voice chat from all other players in lobbies and active matches.",
+            When::Apply, "Off", m_edit.voiceMuteAll != m_saved.voiceMuteAll)) {
+        ToggleValue(m_edit.voiceMuteAll);
+    }
+    {
+        static const char* const kSpeechModes[] = { "PUSH TO TALK", "AUTO SPEAK (OPEN MIC)" };
+        const int mode = m_edit.voiceOpenMic ? 1 : 0;
+        if (Row("SPEECH MODE", "Push to talk requires holding your push-to-talk key/button to transmit. Auto speak (Open Mic) transmits whenever your microphone detects audio above the threshold.",
+                When::Apply, "Push To Talk", m_edit.voiceOpenMic != m_saved.voiceOpenMic)) {
+            if (const int d = CycleValue(kSpeechModes[mode], mode, 2)) {
+                m_edit.voiceOpenMic = ((mode + d + 2) % 2) == 1;
+            }
+        }
+    }
+    if (Row("VOICE OVERLAY", "Shows an overlay indicator on the screen displaying who is currently speaking.",
+            When::Apply, "On", m_edit.voiceOverlayEnabled != m_saved.voiceOverlayEnabled)) {
+        ToggleValue(m_edit.voiceOverlayEnabled);
+    }
+    if (Row("VOICE VOLUME", "How loud other players are. 1.00x is as sent; up to 2.00x. MASTER MUTE silences this too.",
+            When::Apply, "1.00x", std::fabs(m_edit.voiceVolume - m_saved.voiceVolume) > 1e-4f)) {
+        char volumeText[16];
+        std::snprintf(volumeText, sizeof(volumeText), "%.2fx", m_edit.voiceVolume);
+        SliderValue(m_edit.voiceVolume, 0.0f, 2.0f, 0.05f, 1.0f, volumeText);
+    }
+    {
+        constexpr int kPttKey = KeyBindings::kActionPushToTalk;
+        const auto keyOf = [kPttKey](const SettingsData& d) {
+            const auto it = d.keyOverrides.find(kPttKey);
+            return it != d.keyOverrides.end() ? it->second : KeyBindings::DefaultKey(kPttKey);
+        };
+        if (Row("PUSH TO TALK: KEY OR MOUSE", "Click (or press Enter), then press any key or mouse button, including side buttons. Esc cancels, right-click unbinds, Delete puts V back.",
+                When::Apply, KeyBindings::KeyName(KeyBindings::DefaultKey(kPttKey)), keyOf(m_edit) != keyOf(m_saved))) {
+            KeyBindValue(kPttKey);
+        }
+        const int layout = std::clamp(m_edit.padLayout, 0, static_cast<int>(PadLayouts::Count) - 1);
+        const bool padChanged = PadLayouts::EffectiveInput(layout, PadLayouts::PushToTalk, &m_edit.padBindings) !=
+                                PadLayouts::EffectiveInput(layout, PadLayouts::PushToTalk, &m_saved.padBindings);
+        if (Row("PUSH TO TALK: CONTROLLER", "Press A or click, then press the button to talk.",
+                When::Apply, PadLayouts::InputName(PadLayouts::LayoutInput(layout, PadLayouts::PushToTalk)), padChanged)) {
+            PadBindValue(PadLayouts::PushToTalk);
+        }
+    }
+    if (Row("TALK TO", "Who hears you. TEAM reaches your own team once your team is known, and everyone until then. PARTY is the same as ALL for now.",
+            When::Apply, "All", m_edit.voiceChannel != m_saved.voiceChannel)) {
+        static const char* const kChannels[] = { "All", "Team", "Party" };
+        const int index = std::clamp(m_edit.voiceChannel, 0, 2);
+        if (const int change = CycleValue(kChannels[index], index, 3, true)) m_edit.voiceChannel = (index + change + 3) % 3;
+    }
+    auto device = [&](const char* label, const char* text, bool capture, std::string& id, const std::string& saved) {
+        const auto devices = VoiceChat::Devices(capture);
+        int index = 0;
+        for (size_t i = 0; i < devices.size(); ++i) if (devices[i].id == id) index = static_cast<int>(i) + 1;
+        const int count = static_cast<int>(devices.size()) + 1;
+        if (Row(label, text, When::Apply, "System default", id != saved)) {
+            const std::string name = index == 0 ? std::string("System default") : devices[static_cast<size_t>(index - 1)].name;
+            if (const int change = CycleValue(name.c_str(), index, count, true)) {
+                index = (index + change + count) % count;
+                id = index == 0 ? std::string() : devices[static_cast<size_t>(index - 1)].id;
+            }
+        }
+    };
+    device("MICROPHONE", "Which input other players hear.", true, m_edit.voiceInputDevice, m_saved.voiceInputDevice);
+    device("VOICE OUTPUT", "Where other players' voices play. It's separate from the game's sound.", false, m_edit.voiceOutputDevice, m_saved.voiceOutputDevice);
+
+    Section("TEXT CHAT");
+    if (Row("TEXT CHAT", "Enables the in-game and lobby text chat overlays (press Y or T to talk, /w to whisper).",
+            When::Apply, "On", m_edit.textChatEnabled != m_saved.textChatEnabled)) {
+        ToggleValue(m_edit.textChatEnabled);
+    }
+}
 
 void SettingsPanel::RenderSystem() {
     const std::string version(VERSION_STRING);

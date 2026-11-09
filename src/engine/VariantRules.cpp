@@ -208,7 +208,8 @@ bool Decode(const std::filesystem::path& file, std::vector<uint8_t>& decoded) {
     std::ifstream in(file, std::ios::binary);
     if (!in) return false;
     std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-    if (bytes.size() < 0x5329) return false;
+    if (bytes.size() < 0x80) return false;
+    if (bytes.size() < 0x5329) bytes.resize(0x5329, 0);
     decoded.assign(kDecodedSize, 0);
     alignas(16) uint8_t status[256] = {};
     return SafeDecode(module, bytes.data(), decoded.data(), status);

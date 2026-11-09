@@ -407,8 +407,8 @@ void ForgeMenu::Draw() {
         s_statusAt = GetTickCount64();
         MenuSounds::Click();
     }
-    if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)) Close();
-    if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) Close();
+    if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)) { Close(); MenuSounds::Back(); }
+    if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) { Close(); MenuSounds::Back(); }
 
     ImGui::End();
     ImGui::PopStyleVar(2);

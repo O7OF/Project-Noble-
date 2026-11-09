@@ -60,7 +60,11 @@ void ApplyAll(float gameVolume, float musicVolume, float otherVolume, bool maste
     ApplyVolume(gameVolume, masterMute);
     ReachAudio::SetMusicVolume(musicVolume);
     ReachAudio::SetMuted(masterMute);
-    ReachHost::SetRuntimeVolumes(gameVolume, musicVolume, otherVolume);
+    if (masterMute) {
+        ReachHost::SetRuntimeVolumes(0.0f, 0.0f, 0.0f);
+    } else {
+        ReachHost::SetRuntimeVolumes(gameVolume, musicVolume, otherVolume);
+    }
 }
 
 } // namespace ProcessAudio
