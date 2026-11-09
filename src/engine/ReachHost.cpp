@@ -20,6 +20,7 @@
 #include "engine/KeyBindings.hpp"
 #include "engine/CameraFov.hpp"
 #include "engine/CameraThirdPerson.hpp"
+#include "engine/BlamEngine.hpp"
 #include "engine/ReachArmory.hpp"
 #include "engine/ElitePack.hpp"
 #include "engine/SharedTagCache.hpp"
@@ -413,6 +414,141 @@ static void InstallPresentSettingsHook(IDXGISwapChain* swapChain) {
     }
 }
 
+namespace {
+
+// ---- "-team-probe" research hook -------------------------------------------------------------
+// The team lives in the engine's session/player state, and the engine's game-state root is reached through
+// a *thread-local* slot - so this runs on the engine thread (here) and not on a worker thread, which is why
+// an earlier version always read datum 0xFFFFFFFF / objTable 0.
+struct TeamProbeSnapshot {
+    uint32_t datum = 0xFFFFFFFFu;
+    uintptr_t objTable = 0;
+    uintptr_t object = 0;
+    bool haveUnit = false;
+    bool haveObject = false;
+    bool havePlayer = false;
+    uint8_t bytes[0x200] = {};
+    uint8_t player[0x200] = {};
+};
+
+bool TeamProbeEnabled() {
+    static const bool enabled = [] {
+        int argc = 0;
+        LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+        bool on = false;
+        for (int i = 1; argv && i < argc; ++i) {
+            if (_wcsicmp(argv[i], L"-team-probe") == 0) on = true;
+        }
+        if (argv) LocalFree(argv);
+        return on;
+    }();
+    return enabled;
+}
+
+// No logging and no objects with destructors in here: a function containing __try cannot unwind.
+bool TeamProbeRead(TeamProbeSnapshot* out) {
+    __try {
+        const HMODULE module = GetModuleHandleW(L"haloreach.dll");
+        if (!module) return false;
+        const uintptr_t base = reinterpret_cast<uintptr_t>(module);
+        using GetLocalUnitFn = int32_t(__fastcall*)(int32_t);
+        out->datum = static_cast<uint32_t>(reinterpret_cast<GetLocalUnitFn>(base + 0x53EF8)(0));
+        const uint32_t tlsIdx = *reinterpret_cast<const uint32_t*>(base + 0xC17B18);
+        auto** tls = reinterpret_cast<uint8_t**>(__readgsqword(0x58));
+        if (!tls || !tls[tlsIdx]) return true;
+        out->objTable = reinterpret_cast<uintptr_t>(*reinterpret_cast<uint8_t**>(tls[tlsIdx] + 0x10));
+        if (!out->objTable || out->datum == 0xFFFFFFFFu) return true;
+        out->haveUnit = true;
+        uint8_t* objTable = reinterpret_cast<uint8_t*>(out->objTable);
+        const int32_t maxObjects = *reinterpret_cast<const int32_t*>(objTable + 0x44);
+        uint8_t* entries = *reinterpret_cast<uint8_t**>(objTable + 0x50);
+        const uint32_t index = out->datum & 0xFFFFu;
+        const uint16_t salt = static_cast<uint16_t>(out->datum >> 16);
+        if (!entries || index >= static_cast<uint32_t>(maxObjects < 0 ? 0 : (maxObjects > 4096 ? 4096 : maxObjects))) return true;
+        uint8_t* entry = entries + static_cast<size_t>(index) * 0x18;
+        if (*reinterpret_cast<const uint16_t*>(entry) != salt) return true;
+        uint8_t* object = *reinterpret_cast<uint8_t**>(entry + 0x10);
+        if (!object) return true;
+        out->object = reinterpret_cast<uintptr_t>(object);
+        out->haveObject = true;
+        std::memcpy(out->bytes, object, sizeof(out->bytes));
+
+        // The player datum too: the team belongs to the player, not the biped (the object holds its own team
+        // index for AI/spawn bookkeeping, but the session's choice lives here).
+        uint8_t* root = tls[tlsIdx];
+        uint8_t* header = *reinterpret_cast<uint8_t**>(root + 0x18);
+        if (header && std::strncmp(reinterpret_cast<const char*>(header), "players", 7) == 0) {
+            const int32_t cap = *reinterpret_cast<const int32_t*>(header + 0x2C);
+            uint8_t* records = *reinterpret_cast<uint8_t**>(header + 0x50);
+            const auto* bitmap = reinterpret_cast<const uint32_t*>(header + *reinterpret_cast<const int64_t*>(header + 0x68));
+            if (records && bitmap) {
+                for (int i = 0; i < (cap > 16 ? 16 : cap); ++i) {
+                    if (((bitmap[i >> 5] >> (i & 31)) & 1) == 0) continue;
+                    std::memcpy(out->player, records + static_cast<size_t>(i) * 0x490, sizeof(out->player));
+                    out->havePlayer = true;
+                    break;
+                }
+            }
+        }
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {}
+    return false;
+}
+
+struct TeamProbeState {
+    uint8_t prev[0x200] = {};
+    uint8_t prevPlayer[0x200] = {};
+    bool havePrevPlayer = false;
+    bool havePrev = false;
+    bool haveObject = false;
+    uint64_t foundFrame = 0;
+    uint64_t lastReportFrame = 0;
+    bool reportedNoPlayer = false;
+};
+TeamProbeState g_teamProbe;
+
+void TeamProbeTick(uint64_t frame) {
+    TeamProbeSnapshot snap;
+    if (!TeamProbeRead(&snap)) return;
+    if (!snap.haveObject) {
+        if (frame - g_teamProbe.lastReportFrame > 600) {
+            g_teamProbe.lastReportFrame = frame;
+            NOBLE_INFO("team-probe: no unit yet (frame {}, datum 0x{:08X}, objTable 0x{:X})",
+                       frame, snap.datum, snap.objTable);
+        }
+        return;
+    }
+    if (!g_teamProbe.haveObject) {
+        g_teamProbe.haveObject = true;
+        g_teamProbe.foundFrame = frame;
+        NOBLE_INFO("team-probe: local unit object 0x{:X} (frame {}, datum 0x{:08X})", snap.object, frame, snap.datum);
+    }
+    if (g_teamProbe.havePrevPlayer && snap.havePlayer) {
+        for (size_t off = 0; off < sizeof(snap.player); ++off) {
+            if (snap.player[off] == g_teamProbe.prevPlayer[off]) continue;
+            NOBLE_INFO("team-probe: PLAYER +0x{:04X} 0x{:02X} -> 0x{:02X}",
+                       static_cast<unsigned>(off), g_teamProbe.prevPlayer[off], snap.player[off]);
+        }
+    }
+    std::memcpy(g_teamProbe.prevPlayer, snap.player, sizeof(g_teamProbe.prevPlayer));
+    g_teamProbe.havePrevPlayer = snap.havePlayer;
+    if (!snap.havePlayer && !g_teamProbe.reportedNoPlayer) {
+        g_teamProbe.reportedNoPlayer = true;
+        NOBLE_INFO("team-probe: no players-pool record (object 0x{:X} found)", snap.object);
+    }
+    // The object diff is mostly animation/weapon state; keep it for reference but the player datum is the lead.
+    // Flip the engine's own team override so the team field changes in a known window.
+    const uint64_t since = frame - g_teamProbe.foundFrame;
+    if (since == 360 || since == 1200) {
+        if (BlamEngine* engine = BlamEngine::Active()) engine->ExecuteCommand("player_override_team 0 1");
+    }
+    if (since == 780 || since == 1620) {
+        if (BlamEngine* engine = BlamEngine::Active()) engine->ExecuteCommand("player_override_team 0 0");
+    }
+}
+
+} // namespace
+
 static uint64_t __fastcall HostSlot1_FrameTick(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
     (void)thisPtr; (void)a2; (void)a3; (void)a4;
     if (noble::FrontEndMenu::IsMatchRunning()) {
@@ -487,8 +623,10 @@ static uint64_t __fastcall HostSlot1_FrameTick(void* thisPtr, uint64_t a1, uint6
         if (s_testCaptureRequest.exchange(false)) FrameCapture::SaveNow(swapChain, 777777);
         FrameCapture::OnFrame(swapChain, frames);  // test screenshots (-capture-frames)
     }
+    if (TeamProbeEnabled() && (frames % 60) == 0) TeamProbeTick(frames);
+
     if (frames == 1 || (frames % 300) == 0) {
-        // Engine "external launch" state machine (haloreach+0xC1A114): 0..10 while launching, 11 = launched.
+        // Engine "external launch" state machine (haloreach+C1A114): 0..10 while launching, 11 = launched.
         // State 10 waits for the game session to be ready.
         int launchState = -1;
         if (HMODULE reach = GetModuleHandleW(L"haloreach.dll")) {

@@ -63,6 +63,17 @@ namespace fs = std::filesystem;
 #include <dbghelp.h>
 #pragma comment(lib, "dbghelp.lib")
 
+// Log and dump file names: the dev build keeps its own pair, so a dev session never truncates a player's log.
+#ifdef NOBLE_DEV_BUILD
+static constexpr const wchar_t* kCrashDumpFileName = L"noble-dev-crash.dmp";
+static constexpr const char* kLogFileName = "noble-dev.log";
+#else
+static constexpr const wchar_t* kCrashDumpFileName = L"noble-crash.dmp";
+static constexpr const char* kLogFileName = "noble-client.log";
+#endif
+
+static void WriteCrashDump(EXCEPTION_POINTERS* info);
+
 static LONG WINAPI NobleCrashHandler(EXCEPTION_POINTERS* pExceptionInfo) {
     if (pExceptionInfo && pExceptionInfo->ExceptionRecord) {
         uintptr_t faultAddr = reinterpret_cast<uintptr_t>(pExceptionInfo->ExceptionRecord->ExceptionAddress);
@@ -97,19 +108,36 @@ static LONG WINAPI NobleCrashHandler(EXCEPTION_POINTERS* pExceptionInfo) {
             spdlog::error(" Frame {:02d}: 0x{:X} (+0x{:X}) [{}]", i, frameAddr, frameRva, std::filesystem::path(frameModPath).filename().string());
         }
 
-        HANDLE hDumpFile = CreateFileW(L"noble-crash.dmp", GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-        if (hDumpFile != INVALID_HANDLE_VALUE) {
-            MINIDUMP_EXCEPTION_INFORMATION mei{};
-            mei.ThreadId = GetCurrentThreadId();
-            mei.ExceptionPointers = pExceptionInfo;
-            mei.ClientPointers = FALSE;
-            MiniDumpWriteDump(GetCurrentProcess(), GetCurrentProcessId(), hDumpFile, MiniDumpNormal, &mei, nullptr, nullptr);
-            CloseHandle(hDumpFile);
-            spdlog::error("Crash minidump written to noble-crash.dmp");
-        }
+        WriteCrashDump(pExceptionInfo);
     }
     spdlog::default_logger()->flush();
     return EXCEPTION_CONTINUE_SEARCH;
+}
+
+// Minidump next to the program: "noble-crash.dmp" for the release build, "noble-dev-crash.dmp" for the dev
+// build (its own log, its own dump, so a dev crash never overwrites a player's report).
+static void WriteCrashDump(EXCEPTION_POINTERS* info) {
+    // Next to the executable, never the working directory: a player (or a test) can start the game from
+    // anywhere, and a dump that lands somewhere else is a dump nobody finds.
+    wchar_t exePath[MAX_PATH] = {};
+    GetModuleFileNameW(nullptr, exePath, MAX_PATH);
+    std::filesystem::path dumpPath = std::filesystem::path(exePath).parent_path() / kCrashDumpFileName;
+    const wchar_t* dumpName = dumpPath.c_str();
+    HANDLE hDumpFile = CreateFileW(dumpName, GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (hDumpFile == INVALID_HANDLE_VALUE) {
+        spdlog::error("Crash minidump could not be created ({})", std::filesystem::path(dumpName).string());
+        return;
+    }
+    MINIDUMP_EXCEPTION_INFORMATION mei{};
+    mei.ThreadId = GetCurrentThreadId();
+    mei.ExceptionPointers = info;
+    mei.ClientPointers = FALSE;
+    const MINIDUMP_TYPE type = static_cast<MINIDUMP_TYPE>(MiniDumpNormal | MiniDumpWithIndirectlyReferencedMemory |
+                                                          MiniDumpWithThreadInfo | MiniDumpWithUnloadedModules);
+    const BOOL ok = MiniDumpWriteDump(GetCurrentProcess(), GetCurrentProcessId(), hDumpFile, type,
+                                      info ? &mei : nullptr, nullptr, nullptr);
+    CloseHandle(hDumpFile);
+    spdlog::error("Crash minidump written to {} ({})", std::filesystem::path(dumpName).string(), ok ? "ok" : "MiniDumpWriteDump failed");
 }
 
 // A C++ exception that escapes (or an explicit std::terminate) never reaches NobleCrashHandler: the CRT
@@ -143,6 +171,9 @@ static void NobleTerminateHandler() {
         }
         spdlog::error("  at {:02d}: 0x{:X} (+0x{:X}) [{}]", i, addr, rva, std::filesystem::path(path).filename().string());
     }
+    // The CRT turns an escaping C++ exception into a fail-fast in ucrtbase, so the SEH filter above never runs:
+    // write the minidump here, before TerminateProcess, or this class of crash would only leave a log.
+    WriteCrashDump(nullptr);
     spdlog::default_logger()->flush();
     TerminateProcess(GetCurrentProcess(), 3);
 }
@@ -221,7 +252,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     // "-log <file>" lets a second instance (or an automated test) keep its own log instead of truncating
     // noble-client.log, which basic_file_sink does on every start.
     {
-        std::string logName = "noble-client.log";
+        std::string logName = kLogFileName;
         int argcPre = 0;
         LPWSTR* argvPre = CommandLineToArgvW(GetCommandLineW(), &argcPre);
         for (int i = 1; argvPre && i + 1 < argcPre; ++i) {
@@ -233,9 +264,23 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             }
         }
         if (argvPre) LocalFree(argvPre);
+        // Next to the executable: a launch from any working directory still writes its log beside the exe.
+        if (logName.find(':') == std::string::npos && logName.find('\\') == std::string::npos && logName.find('/') == std::string::npos) {
+            wchar_t exePath[MAX_PATH] = {};
+            GetModuleFileNameW(nullptr, exePath, MAX_PATH);
+            const std::filesystem::path besideExe = std::filesystem::path(exePath).parent_path() / logName;
+            logName = besideExe.string();
+        }
         noble::Logger::Init(logName);
     }
     NOBLE_INFO("Starting {} - {}", noble::APP_NAME, noble::VERSION_STRING);
+
+    // "-crash-test": throw an unhandled C++ exception so the terminate handler's minidump can be verified
+    // (the CRT answers an escaping exception with a fail-fast, which the SEH filter never sees).
+    if (std::wstring(pCmdLine ? pCmdLine : L"").find(L"-crash-test") != std::wstring::npos) {
+        NOBLE_INFO("crash-test: writing a minidump for an unhandled C++ exception");
+        throw std::runtime_error("crash-test: unhandled C++ exception");
+    }
 
     // Headless voice tests need no MCC, window or engine.
     {
@@ -995,6 +1040,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             }
             if (argv) LocalFree(argv);
         }
+
         if (!lobbyTeams.empty()) {
             // The scoreboard's roster-less fallback and voice chat use this: -lobby-teams is in roster order,
             // so entry 0 is the local player of a hosted match.
