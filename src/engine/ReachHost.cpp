@@ -497,12 +497,14 @@ bool TeamProbeRead(TeamProbeSnapshot* out) {
 
 struct TeamProbeState {
     uint8_t prev[0x200] = {};
-    uint8_t prevPlayer[0x200] = {};
-    bool havePrevPlayer = false;
-    bool havePrev = false;
+    uint8_t snapA[0x200] = {};
+    uint8_t snapB[0x200] = {};
+    uint8_t snapC[0x200] = {};
     bool haveObject = false;
     uint64_t foundFrame = 0;
     uint64_t lastReportFrame = 0;
+    int phase = 0;
+    uint64_t phaseFrame = 0;
     bool reportedNoPlayer = false;
 };
 TeamProbeState g_teamProbe;
@@ -523,27 +525,62 @@ void TeamProbeTick(uint64_t frame) {
         g_teamProbe.foundFrame = frame;
         NOBLE_INFO("team-probe: local unit object 0x{:X} (frame {}, datum 0x{:08X})", snap.object, frame, snap.datum);
     }
-    if (g_teamProbe.havePrevPlayer && snap.havePlayer) {
-        for (size_t off = 0; off < sizeof(snap.player); ++off) {
-            if (snap.player[off] == g_teamProbe.prevPlayer[off]) continue;
-            NOBLE_INFO("team-probe: PLAYER +0x{:04X} 0x{:02X} -> 0x{:02X}",
-                       static_cast<unsigned>(off), g_teamProbe.prevPlayer[off], snap.player[off]);
+    if (!snap.havePlayer) {
+        if (!g_teamProbe.reportedNoPlayer) {
+            g_teamProbe.reportedNoPlayer = true;
+            NOBLE_INFO("team-probe: no players-pool record (object 0x{:X} found)", snap.object);
         }
+        return;
     }
-    std::memcpy(g_teamProbe.prevPlayer, snap.player, sizeof(g_teamProbe.prevPlayer));
-    g_teamProbe.havePrevPlayer = snap.havePlayer;
-    if (!snap.havePlayer && !g_teamProbe.reportedNoPlayer) {
-        g_teamProbe.reportedNoPlayer = true;
-        NOBLE_INFO("team-probe: no players-pool record (object 0x{:X} found)", snap.object);
-    }
-    // The object diff is mostly animation/weapon state; keep it for reference but the player datum is the lead.
-    // Flip the engine's own team override so the team field changes in a known window.
-    const uint64_t since = frame - g_teamProbe.foundFrame;
-    if (since == 360 || since == 1200) {
-        if (BlamEngine* engine = BlamEngine::Active()) engine->ExecuteCommand("player_override_team 0 1");
-    }
-    if (since == 780 || since == 1620) {
-        if (BlamEngine* engine = BlamEngine::Active()) engine->ExecuteCommand("player_override_team 0 0");
+    // Three snapshots around the engine's own team switch. The pause menu's CHANGE TEAM does exactly this and
+    // works (it kills the player and respawns them on the new side), so whatever byte moves between a snapshot
+    // taken before the switch and one taken after the respawn is the team field - the per-frame diffs used to
+    // drown that in animation/view noise.
+    const uint64_t sincePhase = frame - g_teamProbe.phaseFrame;
+    switch (g_teamProbe.phase) {
+        case 0:
+            std::memcpy(g_teamProbe.snapA, snap.player, sizeof(g_teamProbe.snapA));
+            g_teamProbe.phase = 1;
+            g_teamProbe.phaseFrame = frame;
+            NOBLE_INFO("team-probe: A captured at frame {} (switching to BLUE in 2 s)", frame);
+            break;
+        case 1:
+            if (sincePhase >= 120) {
+                memcpy(g_teamProbe.snapA, snap.player, sizeof(g_teamProbe.snapA));
+                NOBLE_INFO("team-probe: A fixed at frame {} - switching to BLUE", frame);
+                if (BlamEngine* engine = BlamEngine::Active()) engine->ExecuteCommand("player_override_team 0 1");
+                g_teamProbe.phase = 2;
+                g_teamProbe.phaseFrame = frame;
+            }
+            break;
+        case 2:
+            if (sincePhase >= 420) {
+                memcpy(g_teamProbe.snapB, snap.player, sizeof(g_teamProbe.snapB));
+                for (size_t off = 0; off < sizeof(g_teamProbe.snapB); ++off) {
+                    if (g_teamProbe.snapB[off] == g_teamProbe.snapA[off]) continue;
+                    NOBLE_INFO("team-probe: A->B +0x{:04X} 0x{:02X} -> 0x{:02X}",
+                               static_cast<unsigned>(off), g_teamProbe.snapA[off], g_teamProbe.snapB[off]);
+                }
+                NOBLE_INFO("team-probe: B captured at frame {} - switching back to RED", frame);
+                if (BlamEngine* engine = BlamEngine::Active()) engine->ExecuteCommand("player_override_team 0 0");
+                g_teamProbe.phase = 3;
+                g_teamProbe.phaseFrame = frame;
+            }
+            break;
+        case 3:
+            if (sincePhase >= 420) {
+                memcpy(g_teamProbe.snapC, snap.player, sizeof(g_teamProbe.snapC));
+                for (size_t off = 0; off < sizeof(g_teamProbe.snapC); ++off) {
+                    if (g_teamProbe.snapC[off] == g_teamProbe.snapB[off]) continue;
+                    NOBLE_INFO("team-probe: B->C +0x{:04X} 0x{:02X} -> 0x{:02X}",
+                               static_cast<unsigned>(off), g_teamProbe.snapB[off], g_teamProbe.snapC[off]);
+                }
+                NOBLE_INFO("team-probe: finished (A=red, B=blue, C=red again)");
+                g_teamProbe.phase = 4;
+            }
+            break;
+        default:
+            break;
     }
 }
 

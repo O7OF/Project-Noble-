@@ -1089,7 +1089,7 @@ static void DrawScoreboardPanel() {
     { "GREEN TEAM",  IM_COL32(38, 160, 68, 245),   IM_COL32(28, 120, 52, 150),  IM_COL32(24, 105, 45, 150) },
     { "ORANGE TEAM", IM_COL32(220, 115, 28, 245),  IM_COL32(165, 85, 20, 150),  IM_COL32(145, 75, 18, 150) },
     { "PURPLE TEAM", IM_COL32(150, 48, 195, 245),  IM_COL32(110, 35, 145, 150), IM_COL32(95, 30, 130, 150) },
-    { "GOLD TEAM",   IM_COL32(215, 180, 30, 245),  IM_COL32(160, 135, 22, 150), IM_COL32(140, 118, 18, 150) },
+    { "YELLOW TEAM", IM_COL32(215, 180, 30, 245),  IM_COL32(160, 135, 22, 150), IM_COL32(140, 118, 18, 150) },
     { "BROWN TEAM",  IM_COL32(140, 85, 45, 245),   IM_COL32(105, 62, 32, 150),  IM_COL32(90, 54, 28, 150) },
     { "PINK TEAM",   IM_COL32(225, 80, 150, 245),  IM_COL32(165, 58, 110, 150), IM_COL32(145, 50, 96, 150) }
   };
@@ -1100,6 +1100,7 @@ static void DrawScoreboardPanel() {
   int teamDeaths[2] = { 0, 0 };
   int teamAssists[2] = { 0, 0 };
   int activeTeamIndices[2] = { 0, 1 };
+  int presentTeamCount = 1;   // how many teams the match really has: one team is one column, not red-vs-blue
 
   if (isCoopMode) {
     // Campaign & Firefight: Unified UNSC Team in a single column
@@ -1120,13 +1121,16 @@ static void DrawScoreboardPanel() {
       }
     }
     std::sort(presentTeams.begin(), presentTeams.end());
-    if (presentTeams.size() >= 2) {
+    // Follow the teams that are actually in the match. A solo gold-team session used to be drawn as
+    // "RED TEAM" with the gold row inside it, because the headers were always teams 1 and 2.
+    if (!presentTeams.empty()) {
+      presentTeamCount = static_cast<int>(presentTeams.size());
       activeTeamIndices[0] = presentTeams[0] - 1;
-      activeTeamIndices[1] = presentTeams[1] - 1;
+      activeTeamIndices[1] = presentTeams.size() > 1 ? presentTeams[1] - 1 : presentTeams[0] - 1;
     }
     for (int i = 0; i < static_cast<int>(rows.size()); ++i) {
       const int t = std::clamp(rows[i].team, 1, 8);
-      const int col = (t == (activeTeamIndices[1] + 1)) ? 1 : 0;
+      const int col = (presentTeamCount > 1 && t == (activeTeamIndices[1] + 1)) ? 1 : 0;
       columnRows[col].push_back(i);
       teamScores[col] += rows[i].score;
       teamKills[col] += rows[i].kills;
@@ -1151,7 +1155,7 @@ static void DrawScoreboardPanel() {
     teamAssists[0] = 17; teamAssists[1] = 11;
   }
 
-  const int columnCount = hasTeams ? 2 : 1;
+  const int columnCount = (hasTeams && presentTeamCount > 1) ? 2 : 1;
   const float panelW = std::min(W * 0.96f, 1320.0f * s);
   const float colGap = 10.0f * s;
   const float colW = (panelW - (columnCount - 1) * colGap) / columnCount;
@@ -1501,10 +1505,12 @@ static void DrawScoreboardPanel() {
     std::snprintf(buf, sizeof(buf), "%d", teamScores[0]);
     Text(dl, NobleStyle::TitleFont(), 15.0f * s, ImVec2(pillBoxX + (pillBoxW - TextWidth(NobleStyle::TitleFont(), 15.0f * s, buf)) * 0.5f, footY + 1.0f * s), IM_COL32(255, 255, 255, 255), buf);
 
-    // Team 2 pill
-    dl->AddRectFilled(ImVec2(pillBoxX, footY + pillBoxH + 3.0f * s), ImVec2(pillBoxX + pillBoxW, footY + pillBoxH * 2.0f + 3.0f * s), kTeamStyles[activeTeamIndices[1]].headerCol, 2.0f * s);
-    std::snprintf(buf, sizeof(buf), "%d", teamScores[1]);
-    Text(dl, NobleStyle::TitleFont(), 15.0f * s, ImVec2(pillBoxX + (pillBoxW - TextWidth(NobleStyle::TitleFont(), 15.0f * s, buf)) * 0.5f, footY + pillBoxH + 4.0f * s), IM_COL32(255, 255, 255, 255), buf);
+    // Team 2 pill (only when the match really has a second team)
+    if (columnCount > 1) {
+      dl->AddRectFilled(ImVec2(pillBoxX, footY + pillBoxH + 3.0f * s), ImVec2(pillBoxX + pillBoxW, footY + pillBoxH * 2.0f + 3.0f * s), kTeamStyles[activeTeamIndices[1]].headerCol, 2.0f * s);
+      std::snprintf(buf, sizeof(buf), "%d", teamScores[1]);
+      Text(dl, NobleStyle::TitleFont(), 15.0f * s, ImVec2(pillBoxX + (pillBoxW - TextWidth(NobleStyle::TitleFont(), 15.0f * s, buf)) * 0.5f, footY + pillBoxH + 4.0f * s), IM_COL32(255, 255, 255, 255), buf);
+    }
   }
 
   if (pointer) {
