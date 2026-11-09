@@ -2143,6 +2143,97 @@ void ReachArmory::NotifyEngineTick() {
         permPairsGen);
 }
 
+static void SyncMatchLiveBipedsSEH(uintptr_t base, const float* const wantSlots[4]) {
+    __try {
+        const uint32_t tlsIdx = *reinterpret_cast<const uint32_t*>(base + 0xC17B18);
+        const uintptr_t tlsArray = *reinterpret_cast<const uintptr_t*>(__readgsqword(0x58) + static_cast<uintptr_t>(tlsIdx) * 8u);
+        if (!tlsArray) return;
+        uint8_t* objTable = *reinterpret_cast<uint8_t* const*>(tlsArray + 0x10);
+        if (!objTable) return;
+
+        using SetChangeColorFn = uint8_t(__fastcall*)(uint32_t, int32_t, const float*);
+        auto SetChangeColor = reinterpret_cast<SetChangeColorFn>(base + 0x473858);
+
+        const int32_t maxObjects = std::clamp(*reinterpret_cast<const int32_t*>(objTable + 0x44), 0, 2048);
+        uint8_t* entries = *reinterpret_cast<uint8_t* const*>(objTable + 0x50);
+        if (!entries) return;
+
+        for (int32_t i = 0; i < maxObjects; ++i) {
+            uint8_t* entry = entries + static_cast<size_t>(i) * 0x18;
+            const uint16_t salt = *reinterpret_cast<const uint16_t*>(entry + 0x00);
+            if (salt == 0) continue;
+            const uint8_t objType = entry[0x04];
+            if (objType != 0) continue; // 0 == biped
+            uint8_t* objPtr = *reinterpret_cast<uint8_t* const*>(entry + 0x10);
+            if (!objPtr) continue;
+
+            // Only update local player bipeds! (objPtr + 0x11C contains the controlling player datum)
+            const uint32_t playerDatum = *reinterpret_cast<const uint32_t*>(objPtr + 0x11C);
+            if (playerDatum == 0xFFFFFFFFu) continue;
+
+            const uint32_t objectDatum = (static_cast<uint32_t>(salt) << 16) | static_cast<uint32_t>(i);
+            const int16_t ccSize = *reinterpret_cast<const int16_t*>(objPtr + 0x188);
+            const int16_t ccOffset = *reinterpret_cast<const int16_t*>(objPtr + 0x18A);
+            if (ccSize >= 24 && ccOffset > 0 && ccOffset < 0x2000) {
+                const int32_t slotCount = (ccSize / 12) / 2;
+                float* ccBase = reinterpret_cast<float*>(objPtr + ccOffset);
+                float* ccActive = ccBase + slotCount * 3;
+                const int32_t nSlots = std::min<int32_t>(slotCount, 4);
+                for (int32_t s = 0; s < nSlots; ++s) {
+                    const float* w = wantSlots[s];
+                    float* b = ccBase + s * 3;
+                    float* a = ccActive + s * 3;
+                    if (std::abs(b[0] - w[0]) > 1e-4f || std::abs(b[1] - w[1]) > 1e-4f || std::abs(b[2] - w[2]) > 1e-4f ||
+                        std::abs(a[0] - w[0]) > 1e-4f || std::abs(a[1] - w[1]) > 1e-4f || std::abs(a[2] - w[2]) > 1e-4f) {
+                        b[0] = w[0]; b[1] = w[1]; b[2] = w[2];
+                        a[0] = w[0]; a[1] = w[1]; a[2] = w[2];
+                        SetChangeColor(objectDatum, s, w);
+                    }
+                }
+            }
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+}
+
+void ReachArmory::SyncMatchLiveBipeds() {
+    HMODULE hReach = GetModuleHandleW(L"haloreach.dll");
+    if (!hReach) return;
+    const uintptr_t base = reinterpret_cast<uintptr_t>(hReach);
+
+    // Apply live visor reflection and suit constants to active map shader tags ('rmsh')
+    const ReachArmorySelection sel = GetSelection();
+    const float visFloats[3] = {
+        (sel.visor == "default" || sel.visor.empty()) ? 0.78f : sel.visorRgb[0],
+        (sel.visor == "default" || sel.visor.empty()) ? 0.63f : sel.visorRgb[1],
+        (sel.visor == "default" || sel.visor.empty()) ? 0.40f : sel.visorRgb[2]
+    };
+    const uint32_t priArgb = LinearRgbToArgbU32(sel.primaryRgb);
+    const uint32_t secArgb = LinearRgbToArgbU32(sel.secondaryRgb);
+    const uint32_t terArgb = LinearRgbToArgbU32(sel.accentRgb);
+    const uint32_t visArgb = (sel.visor == "default" || sel.visor.empty())
+                           ? 0xFFC7A167u
+                           : LinearRgbToArgbU32(sel.visorRgb);
+    const std::array<uint32_t, 4> words = sel.previewElite
+        ? std::array<uint32_t, 4>{ priArgb, secArgb, terArgb, (sel.accentColorIndex != 0 ? terArgb : priArgb) }
+        : std::array<uint32_t, 4>{ priArgb, secArgb, terArgb, visArgb };
+
+    static ULONGLONG s_lastTagUpdate = 0;
+    const ULONGLONG now = GetTickCount64();
+    if (now - s_lastTagUpdate > 250) {
+        s_lastTagUpdate = now;
+        UpdateTagShaderConstantsSEH(sel.previewElite, words.data(), sel.accentRgb.data(), sel.lightsRgb.data(), visFloats);
+    }
+
+    const float slot0[3] = { sel.primaryRgb[0], sel.primaryRgb[1], sel.primaryRgb[2] };
+    const float slot1[3] = { sel.secondaryRgb[0], sel.secondaryRgb[1], sel.secondaryRgb[2] };
+    const float slot2[3] = { sel.accentRgb[0], sel.accentRgb[1], sel.accentRgb[2] };
+    const float slot3[3] = { visFloats[0], visFloats[1], visFloats[2] };
+    const float* const wantSlots[4] = { slot0, slot1, slot2, slot3 };
+
+    SyncMatchLiveBipedsSEH(base, wantSlots);
+}
+
 std::vector<std::string> ReachArmory::MissingPermutationsFor(const std::string& list, const std::string& item) {
     std::vector<std::string> missing;
     const std::vector<PmcgChange>* changes = PmcgItem(list.c_str(), item);

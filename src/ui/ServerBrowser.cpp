@@ -611,7 +611,7 @@ void ServerBrowser::RenderServerList() {
                 if (m_selectedServerIndex >= 0 && m_selectedServerIndex < static_cast<int>(m_servers.size())) {
                     const auto& s = m_servers[m_selectedServerIndex];
                     if (!s.isOwn) {
-                        if (!s.inProgress && m_joinLobbyHandler) m_joinLobbyHandler(s);
+                        if (m_joinLobbyHandler) m_joinLobbyHandler(s);
                         else TryJoin(s.hostAddress, s.port, s.isPasswordProtected);
                     }
                 }
@@ -738,7 +738,7 @@ void ServerBrowser::RenderServerList() {
             m_selectedServerIndex = i;
         }
         if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0) && !s.isOwn) {
-            if (!s.inProgress && m_joinLobbyHandler) {
+            if (m_joinLobbyHandler) {
                 m_joinLobbyHandler(s);
             } else {
                 TryJoin(s.hostAddress, s.port, s.isPasswordProtected);
@@ -928,7 +928,7 @@ void ServerBrowser::RenderServerDetails() {
         }
         const char* joinLabel = s.inProgress ? "JOIN IN PROGRESS" : "JOIN PRE-GAME LOBBY";
         if (NobleStyle::PrimaryButton(joinLabel, ImVec2(-1, 38))) {
-            if (!s.inProgress && m_joinLobbyHandler) {
+            if (m_joinLobbyHandler) {
                 m_joinLobbyHandler(s);
             } else {
                 TryJoin(s.hostAddress, s.port, s.isPasswordProtected);

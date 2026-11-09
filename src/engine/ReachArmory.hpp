@@ -84,6 +84,7 @@ public:
     // Called every frame on the engine render thread inside HostSlot1_FrameTick.
     static void Tick();
     static void NotifyEngineTick();
+    static void SyncMatchLiveBipeds();
 
     // True once the Armory map's HS GLOBALS table is active.
     static bool IsSceneReady();

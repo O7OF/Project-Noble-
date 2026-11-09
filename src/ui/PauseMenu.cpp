@@ -1028,30 +1028,89 @@ static void DrawScoreboardPanel() {
     }
   }
 
-  // Sort: by team first, then by score descending, kills descending, deaths ascending
-  std::sort(rows.begin(), rows.end(), [](const PauseMenu::ScoreboardEntry &a, const PauseMenu::ScoreboardEntry &b) {
-    if (a.team != b.team) return a.team < b.team;
+  // Determine mode category: Campaign and Firefight are unified co-op (allied UNSC team)
+  std::string lowerMode = modeName;
+  for (char &c : lowerMode) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  const bool isCoopMode = (lowerMode == "campaign" || lowerMode == "firefight");
+
+  // Sort: by team first (if competitive), then by score descending, kills descending, deaths ascending
+  std::sort(rows.begin(), rows.end(), [isCoopMode](const PauseMenu::ScoreboardEntry &a, const PauseMenu::ScoreboardEntry &b) {
+    if (!isCoopMode && a.team != b.team) return a.team < b.team;
     if (a.score != b.score) return a.score > b.score;
     if (a.kills != b.kills) return a.kills > b.kills;
     return a.deaths < b.deaths;
   });
 
   bool hasTeams = false;
-  for (const auto &r : rows) hasTeams = hasTeams || r.team == 1 || r.team == 2;
+  if (!isCoopMode) {
+    for (const auto &r : rows) hasTeams = hasTeams || r.team > 0;
+  }
+
+  // Multi-team colors and names (supporting all 8 Reach multiplayer teams)
+  struct TeamStyle {
+    const char* name;
+    ImU32 headerCol;
+    ImU32 rowBaseCol;
+    ImU32 rowAltCol;
+  };
+  static const TeamStyle kTeamStyles[8] = {
+    { "RED TEAM",    IM_COL32(195, 42, 42, 245),   IM_COL32(145, 30, 30, 150),  IM_COL32(130, 25, 25, 150) },
+    { "BLUE TEAM",   IM_COL32(38, 92, 185, 245),   IM_COL32(28, 62, 145, 150),  IM_COL32(24, 52, 130, 150) },
+    { "GREEN TEAM",  IM_COL32(38, 160, 68, 245),   IM_COL32(28, 120, 52, 150),  IM_COL32(24, 105, 45, 150) },
+    { "ORANGE TEAM", IM_COL32(220, 115, 28, 245),  IM_COL32(165, 85, 20, 150),  IM_COL32(145, 75, 18, 150) },
+    { "PURPLE TEAM", IM_COL32(150, 48, 195, 245),  IM_COL32(110, 35, 145, 150), IM_COL32(95, 30, 130, 150) },
+    { "GOLD TEAM",   IM_COL32(215, 180, 30, 245),  IM_COL32(160, 135, 22, 150), IM_COL32(140, 118, 18, 150) },
+    { "BROWN TEAM",  IM_COL32(140, 85, 45, 245),   IM_COL32(105, 62, 32, 150),  IM_COL32(90, 54, 28, 150) },
+    { "PINK TEAM",   IM_COL32(225, 80, 150, 245),  IM_COL32(165, 58, 110, 150), IM_COL32(145, 50, 96, 150) }
+  };
 
   std::vector<int> columnRows[2];
   int teamScores[2] = { 0, 0 };
   int teamKills[2] = { 0, 0 };
   int teamDeaths[2] = { 0, 0 };
   int teamAssists[2] = { 0, 0 };
+  int activeTeamIndices[2] = { 0, 1 };
 
-  for (int i = 0; i < static_cast<int>(rows.size()); ++i) {
-    const int col = (hasTeams && rows[i].team == 2) ? 1 : 0;
-    columnRows[col].push_back(i);
-    teamScores[col] += rows[i].score;
-    teamKills[col] += rows[i].kills;
-    teamDeaths[col] += rows[i].deaths;
-    teamAssists[col] += rows[i].assists;
+  if (isCoopMode) {
+    // Campaign & Firefight: Unified UNSC Team in a single column
+    for (int i = 0; i < static_cast<int>(rows.size()); ++i) {
+      columnRows[0].push_back(i);
+      teamScores[0] += rows[i].score;
+      teamKills[0] += rows[i].kills;
+      teamDeaths[0] += rows[i].deaths;
+      teamAssists[0] += rows[i].assists;
+    }
+  } else if (hasTeams) {
+    // Check which teams are active in the match
+    std::vector<int> presentTeams;
+    for (const auto &r : rows) {
+      const int t = std::clamp(r.team, 1, 8);
+      if (std::find(presentTeams.begin(), presentTeams.end(), t) == presentTeams.end()) {
+        presentTeams.push_back(t);
+      }
+    }
+    std::sort(presentTeams.begin(), presentTeams.end());
+    if (presentTeams.size() >= 2) {
+      activeTeamIndices[0] = presentTeams[0] - 1;
+      activeTeamIndices[1] = presentTeams[1] - 1;
+    }
+    for (int i = 0; i < static_cast<int>(rows.size()); ++i) {
+      const int t = std::clamp(rows[i].team, 1, 8);
+      const int col = (t == (activeTeamIndices[1] + 1)) ? 1 : 0;
+      columnRows[col].push_back(i);
+      teamScores[col] += rows[i].score;
+      teamKills[col] += rows[i].kills;
+      teamDeaths[col] += rows[i].deaths;
+      teamAssists[col] += rows[i].assists;
+    }
+  } else {
+    for (int i = 0; i < static_cast<int>(rows.size()); ++i) {
+      columnRows[0].push_back(i);
+      teamScores[0] += rows[i].score;
+      teamKills[0] += rows[i].kills;
+      teamDeaths[0] += rows[i].deaths;
+      teamAssists[0] += rows[i].assists;
+    }
   }
 
   // In demo mode or if scores are unconfigured in real match, align totals with the reference
@@ -1160,25 +1219,26 @@ static void DrawScoreboardPanel() {
     s_boardScroll[col] = std::clamp(s_boardScroll[col], 0, std::max(0, count - visibleRows));
     const int scroll = s_boardScroll[col];
 
-    // 1. Solid Team Header Banner
-    const ImVec2 h0(cx, p0.y);
-    const ImVec2 h1(cx + colW, p0.y + headerH);
-    const ImU32 bannerColor = hasTeams ? kTeamHeaderCol[col] : IM_COL32(36, 68, 102, 245);
-    dl->AddRectFilled(h0, h1, bannerColor, 2.0f * s);
+  // 1. Solid Team Header Banner
+  const ImVec2 h0(cx, p0.y);
+  const ImVec2 h1(cx + colW, p0.y + headerH);
+  const ImU32 bannerColor = isCoopMode ? IM_COL32(32, 64, 105, 250)
+                          : (hasTeams ? kTeamStyles[activeTeamIndices[col]].headerCol : IM_COL32(36, 68, 102, 245));
+  dl->AddRectFilled(h0, h1, bannerColor, 2.0f * s);
 
-    // Subtle bright top accent line
-    dl->AddLine(ImVec2(h0.x, h0.y), ImVec2(h1.x, h0.y), IM_COL32(255, 255, 255, 90), 1.0f * s);
+  // Subtle bright top accent line
+  dl->AddLine(ImVec2(h0.x, h0.y), ImVec2(h1.x, h0.y), IM_COL32(255, 255, 255, 90), 1.0f * s);
 
-    // Left rank / placement badge on banner
-    const int teamRank = (col == 0) ? (teamScores[0] >= teamScores[1] ? 1 : 2) : (teamScores[1] > teamScores[0] ? 1 : 2);
-    char rankStr[8];
-    std::snprintf(rankStr, sizeof(rankStr), "%d", teamRank);
-    const float rankColW = 28.0f * s;
-    Text(dl, NobleStyle::TitleFont(), 20.0f * s, ImVec2(cx + 8.0f * s, p0.y + 7.0f * s), IM_COL32(255, 255, 255, 255), rankStr);
+  // Left rank / placement badge on banner
+  const int teamRank = isCoopMode ? 1 : ((col == 0) ? (teamScores[0] >= teamScores[1] ? 1 : 2) : (teamScores[1] > teamScores[0] ? 1 : 2));
+  char rankStr[8];
+  std::snprintf(rankStr, sizeof(rankStr), "%d", teamRank);
+  const float rankColW = 28.0f * s;
+  Text(dl, NobleStyle::TitleFont(), 20.0f * s, ImVec2(cx + 8.0f * s, p0.y + 7.0f * s), IM_COL32(255, 255, 255, 255), rankStr);
 
-    // Team Name
-    const char* teamTitle = hasTeams ? (col == 0 ? "RED TEAM" : "BLUE TEAM") : "MATCH ROSTER";
-    Text(dl, NobleStyle::TitleFont(), 20.0f * s, ImVec2(cx + rankColW + 6.0f * s, p0.y + 7.0f * s), IM_COL32(255, 255, 255, 255), teamTitle);
+  // Team Name
+  const char* teamTitle = isCoopMode ? "UNSC ALLIES" : (hasTeams ? kTeamStyles[activeTeamIndices[col]].name : "MATCH ROSTER");
+  Text(dl, NobleStyle::TitleFont(), 20.0f * s, ImVec2(cx + rankColW + 6.0f * s, p0.y + 7.0f * s), IM_COL32(255, 255, 255, 255), teamTitle);
 
     // Column positions for stats on the right (matching headers & rows exactly)
     const float pingColW = 48.0f * s;
@@ -1257,8 +1317,9 @@ static void DrawScoreboardPanel() {
       }
 
       const bool selected = (r.name == s_selected);
-      const ImU32 baseBg = (v % 2 == 0) ? (hasTeams ? kTeamRowBaseCol[col] : IM_COL32(24, 38, 54, 150))
-                                        : (hasTeams ? kTeamRowAltCol[col] : IM_COL32(20, 32, 46, 150));
+      const ImU32 baseBg = isCoopMode ? ((v % 2 == 0) ? IM_COL32(24, 42, 65, 160) : IM_COL32(20, 36, 56, 160))
+                         : (hasTeams ? ((v % 2 == 0) ? kTeamStyles[activeTeamIndices[col]].rowBaseCol : kTeamStyles[activeTeamIndices[col]].rowAltCol)
+                                     : ((v % 2 == 0) ? IM_COL32(24, 38, 54, 150) : IM_COL32(20, 32, 46, 150)));
       const ImU32 rowBg = r.local ? IM_COL32(32, 80, 120, 220) : selected ? IM_COL32(65, 115, 165, 190) : hovered ? IM_COL32(255, 255, 255, 38) : baseBg;
 
       dl->AddRectFilled(r0, r1, rowBg);
@@ -1390,20 +1451,28 @@ static void DrawScoreboardPanel() {
   const float wmX = p1.x - wmWidth - 70.0f * s;
   Text(dl, NobleStyle::TitleFont(), 18.0f * s, ImVec2(wmX, footY + 2.0f * s), IM_COL32(200, 220, 240, 240), watermark.c_str());
 
-  // Red & Blue score square pills
-  if (hasTeams) {
+  // Team score square pills (or co-op total score pill)
+  if (isCoopMode) {
+    char buf[32];
+    const float pillBoxW = 48.0f * s;
+    const float pillBoxH = 18.0f * s;
+    const float pillBoxX = p1.x - 78.0f * s;
+    dl->AddRectFilled(ImVec2(pillBoxX, footY), ImVec2(pillBoxX + pillBoxW, footY + pillBoxH), IM_COL32(32, 64, 105, 250), 2.0f * s);
+    std::snprintf(buf, sizeof(buf), "%d", teamScores[0]);
+    Text(dl, NobleStyle::TitleFont(), 15.0f * s, ImVec2(pillBoxX + (pillBoxW - TextWidth(NobleStyle::TitleFont(), 15.0f * s, buf)) * 0.5f, footY + 1.0f * s), IM_COL32(255, 255, 255, 255), buf);
+  } else if (hasTeams) {
     char buf[32];
     const float pillBoxW = 26.0f * s;
     const float pillBoxH = 18.0f * s;
     const float pillBoxX = p1.x - 56.0f * s;
 
-    // Red pill
-    dl->AddRectFilled(ImVec2(pillBoxX, footY), ImVec2(pillBoxX + pillBoxW, footY + pillBoxH), kTeamHeaderCol[0], 2.0f * s);
+    // Team 1 pill
+    dl->AddRectFilled(ImVec2(pillBoxX, footY), ImVec2(pillBoxX + pillBoxW, footY + pillBoxH), kTeamStyles[activeTeamIndices[0]].headerCol, 2.0f * s);
     std::snprintf(buf, sizeof(buf), "%d", teamScores[0]);
     Text(dl, NobleStyle::TitleFont(), 15.0f * s, ImVec2(pillBoxX + (pillBoxW - TextWidth(NobleStyle::TitleFont(), 15.0f * s, buf)) * 0.5f, footY + 1.0f * s), IM_COL32(255, 255, 255, 255), buf);
 
-    // Blue pill
-    dl->AddRectFilled(ImVec2(pillBoxX, footY + pillBoxH + 3.0f * s), ImVec2(pillBoxX + pillBoxW, footY + pillBoxH * 2.0f + 3.0f * s), kTeamHeaderCol[1], 2.0f * s);
+    // Team 2 pill
+    dl->AddRectFilled(ImVec2(pillBoxX, footY + pillBoxH + 3.0f * s), ImVec2(pillBoxX + pillBoxW, footY + pillBoxH * 2.0f + 3.0f * s), kTeamStyles[activeTeamIndices[1]].headerCol, 2.0f * s);
     std::snprintf(buf, sizeof(buf), "%d", teamScores[1]);
     Text(dl, NobleStyle::TitleFont(), 15.0f * s, ImVec2(pillBoxX + (pillBoxW - TextWidth(NobleStyle::TitleFont(), 15.0f * s, buf)) * 0.5f, footY + pillBoxH + 4.0f * s), IM_COL32(255, 255, 255, 255), buf);
   }

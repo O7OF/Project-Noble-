@@ -2838,7 +2838,7 @@ static void RefreshLobbyMode(OverlayContext& ctx) {
     MenuState& st = ctx.st;
     if (st.lobbyModeKey == st.lobbyVariantPath && !st.lobbyVariantPath.empty()) return;
     st.lobbyModeKey = st.lobbyVariantPath;
-    st.lobbyTeamsOn = false;
+    st.lobbyTeamsOn = (st.lobbyMode == "forge"); // Forge lobbies support team dividers by default
     st.lobbyTeamsManual = false;
     st.lobbyModeChanges = 0;
     st.lobbyModeSummary.clear();
@@ -2851,7 +2851,9 @@ static void RefreshLobbyMode(OverlayContext& ctx) {
     if (!VariantRules::Decode(base, decoded)) return;
     if (isMode) VariantRules::Apply(preset, decoded.data());
     for (const VariantRules::Rule& rule : VariantRules::Rules()) {
-        if (std::strcmp(rule.key, "teams") == 0) st.lobbyTeamsOn = VariantRules::Read(rule, decoded.data()) != 0;
+        if (std::strcmp(rule.key, "teams") == 0) {
+            st.lobbyTeamsOn = (VariantRules::Read(rule, decoded.data()) != 0) || (st.lobbyMode == "forge");
+        }
         const auto it = preset.values.find(rule.key);
         if (isMode && it != preset.values.end()) {
             ++st.lobbyModeChanges;
@@ -4111,10 +4113,16 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
 
         y += 10.0f * ui.s;
         if (local || st.isLobbyHost) {
-            const int targetTeam = (player.team == 1) ? 2 : 1;
+            const int curTeam = player.team > 0 ? player.team : 1;
+            const int targetTeam = (curTeam == 1) ? 2 : 1;
             const char* teamName = (targetTeam == 1) ? "SWITCH TO RED TEAM" : "SWITCH TO BLUE TEAM";
             if (ActionButton(ui, "lobby_change_team", ImVec2(cardX, y), cardW, teamName, false)) {
                 st.lobbyRoster[st.lobbyRosterSelection].team = targetTeam;
+                st.lobbyTeamsManual = true;
+                if (player.isHost) MasterServerClient::Get().SetAdvertHostTeam(targetTeam);
+                if (!st.lobbySessionId.empty()) {
+                    MasterServerClient::Get().SetTeamsSync(st.lobbySessionId, { { player.peerId, targetTeam } });
+                }
                 MenuSounds::Click();
             }
             y += 36.0f * ui.s;
@@ -6581,6 +6589,17 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
             if (!state.modTitle.empty()) ctx.st.lobbyModTitle = state.modTitle;
             if (state.isLan && !state.hostLanIp.empty()) {
                 ctx.st.lobbyHostEndpoint = state.hostLanIp + ":" + std::to_string(state.hostPort);
+            }
+            if (state.inProgress || state.launchTriggered) {
+                ctx.st.lobbyLaunchPending = true;
+                ctx.st.lobbyLaunchMap = state.launchMap.empty() ? state.map : state.launchMap;
+                ctx.st.lobbyLaunchMode = state.launchMode.empty() ? state.mode : state.launchMode;
+                ctx.st.lobbyLaunchVariant = state.launchVariant;
+                ctx.st.lobbyLaunchDiff = state.launchDifficulty;
+                ctx.st.lobbyLaunchSkulls = state.launchSkulls;
+                ctx.st.lobbyLaunchMapOverride = state.launchMapOverride;
+                ctx.st.lobbyLaunchModFolder = state.launchModFolder;
+                ctx.st.lobbyLaunchModId = state.launchModId.empty() ? state.modId : state.launchModId;
             }
         } else {
             LobbyPlayer hostP;

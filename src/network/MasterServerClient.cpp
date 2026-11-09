@@ -974,6 +974,19 @@ LobbyState MasterServerClient::JoinLobbySync(const std::string& sessionId,
         if (!relayUrl.empty()) {
             NetworkTransport::Get().StartRelay(relayUrl, resolvedId, false, LobbyMachineId());
         }
+
+        if (j.contains("launch_data") && j["launch_data"].is_object()) {
+            const auto& ld = j["launch_data"];
+            state.launchTriggered = true;
+            state.launchMap = ld.value("map", state.map);
+            state.launchMode = ld.value("mode", state.mode);
+            state.launchVariant = ld.value("variant", state.variant);
+            state.launchDifficulty = ld.value("difficulty", state.difficulty);
+            state.launchMapOverride = ld.value("map_override", "");
+            state.launchModFolder = ld.value("mod_folder", "");
+            state.launchModId = ld.value("mod_id", state.modId);
+            try { state.launchSkulls = std::stoull(ld.value("skulls", "0")); } catch (...) {}
+        }
     } catch (...) {}
 
     return state;

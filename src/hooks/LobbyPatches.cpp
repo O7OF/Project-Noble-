@@ -531,7 +531,7 @@ bool LobbyPatches::Apply(HMODULE hReachDll) {
     // 4b. MinHook Detour on c_network_session::acknowledge_join_request (RVA 0x397914)
     {
         uint8_t* fnAck = reinterpret_cast<uint8_t*>(base + 0x397914);
-        static const uint8_t kAckPrologue[5] = { 0x53, 0x48, 0x83, 0xEC, 0x50 };
+        static const uint8_t kAckPrologue[5] = { 0x40, 0x53, 0x48, 0x83, 0xEC };
         if (0x397914 + 5 <= size && std::memcmp(fnAck, kAckPrologue, 5) == 0) {
             if (HookManager::InstallHook(fnAck,
                                          reinterpret_cast<void*>(&Hook_AcknowledgeJoinRequest),
@@ -706,6 +706,24 @@ bool LobbyPatches::Apply(HMODULE hReachDll) {
         }
     } else {
         NOBLE_WARN("LobbyPatches: cmovz bytes differ at hr+0x40958B; left alone");
+    }
+
+    // 8c. Campaign Join-In-Progress (JIP) Gate Patch at hr+0x409594 (EB CE -> EB 06)
+    // By default, the campaign session evaluation loop at 0x409594 jumps backwards (EB CE) to 0x409564,
+    // which aborts/terminates co-op matches when a new peer joins mid-mission. Jumping forward (EB 06)
+    // to 0x40959C cleanly bypasses the loop abort and proceeds directly to normal peer synchronization!
+    {
+        uint8_t* atJip = reinterpret_cast<uint8_t*>(base + 0x409594);
+        static const uint8_t kExpectedJip[2] = { 0xEB, 0xCE };
+        if (0x409594 + 2 <= size && std::memcmp(atJip, kExpectedJip, 2) == 0) {
+            static const uint8_t kJmpForward[2] = { 0xEB, 0x06 };
+            if (WriteProtectedMemory(atJip, kJmpForward, 2)) {
+                patchCount++;
+                NOBLE_INFO("LobbyPatches: Patched campaign JIP loop gate at hr+0x409594 (EB CE -> EB 06)");
+            }
+        } else {
+            NOBLE_WARN("LobbyPatches: campaign JIP loop gate bytes differ at hr+0x409594; left alone");
+        }
     }
 
     s_isApplied = true;
