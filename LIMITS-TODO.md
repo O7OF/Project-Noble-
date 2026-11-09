@@ -150,3 +150,8 @@ What it took (all in Noble's own engine copy; the player's haloreach.dll is unto
   (main-thread AI, ~50-60 µs/actor/frame at full LOD); no crashes at 1,024. Without teleport, squads spawn at their
   own map positions (player sees few). Horde mode design: dropship squads once per wave with their flight
   scripts, bulk enemies on foot. Open: infantry-only with normal LOD for comparison.
+
+### C12-L status 2026-11-09 01:00 ET
+Steps 1-3 partly done (commits ce932a7 .. 88d67ec, not pushed, not run); 32-player mode is gated behind
+`NOBLE_SLOT_PLAYERS_UNSAFE=1`. Current blockers and the ordered next steps: `LIMITS-HANDOFF.md`, section
+"Status update 2026-11-09". Swarm zombie test parked: `docs/swarm-test-notes.md`.

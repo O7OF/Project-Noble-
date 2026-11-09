@@ -3,7 +3,66 @@
 Written 2026-11-08 by Claude (claude.ai session, for Tyler). Read this before any task in
 `LIMITS-TODO.md`. Claim tasks in `AGENT-STATUS.md` as usual.
 
-## Status at end of 2026-11-08 (read this first)
+## Status update 2026-11-09 01:00 ET (read this first, then the 2026-11-08 section below)
+
+Written by the cloud Claude session for the next agent. Commits below are local, **not pushed**. Nothing in C12-L
+step 3/4 has been run yet.
+
+### How work is split now
+- **Local Claude Code** (terminal in `D:\Project-Noble-Closed-Source`, effort high) owns code edits, tools and
+  `build-dev.bat` builds. No Python on this PC: the `tools/limits/*.py` generators are the source of truth; a
+  scratch Node port reproduces their `.inc` output byte for byte. Disassembly: `%TEMP%\stock_text.asm` (capstone
+  listing of the stock DLL, not in git).
+- **Cloud session** reviews diffs, reads logs, and drives tests on **monitor 1** (monitor 2 is Tyler's).
+  It cannot run commands on the PC and only clicks in terminals.
+- **Do not write a static "sort all imul sites" disassembly scanner.** Two Claude Code attempts and one cloud reply
+  were stopped by Anthropic safeguards at that step. Find untraced sites at runtime instead (trace + guard below).
+
+### C12-L (32 players) progress, 2026-11-09
+| Commit | What |
+|---|---|
+| `ce932a7` | Step 1: last 11 pointer-stepping loops reviewed. Step caves for 0x44BDE3 and 0x44CCEF (read-only walks), bounds 0x44BDEA / 0x44CCF6 raised. 8 loops blocked by their own fixed tables (0x404B4A, 0x41FC64, 0x4314D3, 0x431B1E, 0x44CB51, 0x44CCA1, 0x44CD5F, 0x4509E8); 0x4215AE is not a session array. |
+| `7d9e408` | Step 2 finding: most bounds were already raised by `d107dc0` (101/111 bit-scans, 26/31 C1, 6/8 C4). **169 `imul r,r,0xB0/0x158` sites in 0x380000-0x460000 have no cave** (the trace never ran them), e.g. 0x39D950's 0x39D957 / 0x39D97A. |
+| `cba2c21` | Step 3: 0x390DB0 frame +0x100, its 16-qword name table moved to rbp+0x1F8 (32 entries), own unwind copy (block shared with 0x35B1E4), 0x38DA74 scan to 32. Its loop bounds stay 16 until its 6 uncaved imuls (0x390E85/F13/F44/FF5, 0x391342/3B2) are handled. |
+| `e2aba3f` | 17 x 0xC table at block+0x4440 (#31) cannot grow in place; ~47 indexed sites need caves (list via grep in `docs/limits-players-loops.md`). Whole-block copy problem written up. |
+| `272b096` | Copy/clear scope count: **8 sites + 1 compare** (0x39C4D5, 0x39C4F3, 0x39C71A, 0x39C7C4, 0x396A6F, 0x396A7F, 0x396CBE, 0x16FEA9; memcmp 0x396B3F). Copies with register sizes would not show up. |
+| `f731b9f` | A+B: the 6 static-session copy/clear calls go through a Noble wrapper that mirrors the copy/clear onto the shadow slots 16-31. Non-static source (#1, network-decoded block from 0x391F0C's stack) clears the destination's slots 16-31 and logs (capped at 20). |
+| `c941f23` | 0x396828 analysis: only one imul (0x396AB4, peer 0x158) addresses the stack copies S1/S2 (6 operands, fields +0xAC/+0xB0). No callee gets S1/S2. |
+| `88d67ec` | C: 0x396828 frame 0x8F00 -> 0xC540 (probe size, lea rbp, epilogue, own unwind copy; GS cookie stays frame+0x8EF0). Side areas sideS1 rbp+0x8E00 / sideS2 rbp+0xB010 (0x2210 apart, 15 x 0x158 each). #5/#6 fill all 15 side records (shadow peers or zeros); memcmp extended. Cave at 0x396AB4: idx >= 17 -> rcx = 0x8EA8 + (idx-17)*0x158. **Safety gate:** `-slot-players 32` stays in 16-player mode unless `NOBLE_SLOT_PLAYERS_UNSAFE=1`, and logs the blockers. |
+
+Existing hazard the gate covers: `d107dc0` already raised 0x396AA1 / 0x396B0A to 0x20 (peers 17-31 would have
+written past the stack copies before `88d67ec`).
+
+### Still blocking a real 32-player game
+1. Untraced imul sites (169, incl. 6 in 0x390DB0): runtime route, see Next.
+2. 17 x 0xC table at block+0x4440: cave the ~47 sites (same shadow delta).
+3. Remaining step-3 tables (0x2C92050 16 x 0xA0, 17 x 6 at +0x34, 0x40A760 vtable object, the 8 blocked loops'
+   tables, 17 x 0xC at session +0x61574 and 0x3FFC9C, stacks in 0x41E884 / 0x41F510 / 0x41FBE8, nine 0x1FFFF masks).
+4. Step 4: players / fire team / simulation view pools to 32 (PoolResize), 16 x 0x20 host player list in 0xD6B8
+   (vtable +0xF0; find the receiver), which also unblocks step loop 0xD8C9.
+5. Network encoding of slot counts/masks (protocol work; also #1's network-decoded source block).
+
+### Next (in order)
+1. Smoke test now (one window, solo match, three runs, separate `-log` files): no slot options; `-slot-patch
+   -slot-players 32` without the override (must log blockers and stay 16); same with `NOBLE_SLOT_PLAYERS_UNSAFE=1`
+   (1 player, so slots >= 16 unused: checks the two grown frames and new caves install and don't crash). Ask
+   Claude Code for a `.bat`; the cloud session can run it on monitor 1.
+2. Step 4 (pools + host list), then the block+0x4440 caves.
+3. Dev-only guard in unsafe 32-player mode: log the RVA whenever slot >= 16 reaches an uncaved imul 0xB0/0x158 site
+   in 0x380000-0x460000; extend `-trace-members` to log every site hit; trace sessions through player leave, lobby
+   reset, team change, mid-game join (three-window LAN on one PC). Cave what they find.
+4. Then network encoding, then the three-window 32-slot test.
+
+### Parked: swarm zombie test
+Renette's flood swarm tags are in HREK and build into a test `ff_unearthed.map`; spawning them in Firefight needs
+a new squad (Sapien). Everything is in `docs/swarm-test-notes.md`.
+
+### Rules (unchanged)
+Never modify the installed haloreach.dll; never run `build.bat` (use `build-dev.bat`); never push without Tyler's
+OK; never edit `D:\Project-Noble-ORIGINAL`; never commit `recipes/` or `.nlp`; commit trailers per
+`docs/CLAUDE-CODE-START-C12.md`; no test without asking Tyler.
+
+## Status at end of 2026-11-08 (previous status)
 
 Updated 15:30 ET by Claude. Everything below this section is the original design; this section is what exists
 now. Last commit: `ce37aa7` (local, not pushed). Uncommitted since then: C12 docs/tools (see below).
