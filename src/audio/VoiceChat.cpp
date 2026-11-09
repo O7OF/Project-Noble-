@@ -5,6 +5,7 @@
 #include "common/Settings.hpp"
 #include "engine/KeyBindings.hpp"
 #include "engine/PadLayouts.hpp"
+#include "host/Window.hpp"
 
 #include <Windows.h>
 #include <initguid.h>
@@ -341,10 +342,14 @@ int ChannelFromHeld(bool party, bool team, bool global, bool generic, int fallba
 
 int PushToTalkChannel(const Config& cfg, int fallbackChannel) {
     // Only for our own window: the same key typed in another program, or in one of our text boxes, must not open the mic.
-    HWND foreground = GetForegroundWindow();
-    DWORD process = 0;
-    if (foreground) GetWindowThreadProcessId(foreground, &process);
-    if (process != GetCurrentProcessId()) return -1;
+    // A match hosted in the launcher's container window has the launcher as foreground, which
+    // Window::IsForeground() counts as ours.
+    if (!Window::IsForeground(Window::ActiveHwnd())) {
+        HWND foreground = GetForegroundWindow();
+        DWORD process = 0;
+        if (foreground) GetWindowThreadProcessId(foreground, &process);
+        if (process != GetCurrentProcessId()) return -1;
+    }
     if (s_pushToTalkBlocked.load() || (ImGui::GetCurrentContext() && ImGui::GetIO().WantTextInput)) return -1;
     auto held = [](int vk) { return vk > 0 && vk < 256 && (GetAsyncKeyState(vk) & 0x8000) != 0; };
     const bool party = held(cfg.pttPartyKey) || PadInputHeld(cfg, cfg.pttPartyPad);

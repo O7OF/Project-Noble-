@@ -338,12 +338,20 @@ void RelaunchAndClose(HWND hwnd, const std::wstring &args, const char *what) {
           TerminateProcess(GetCurrentProcess(), 0);
           return;
       } else {
-          // Play again / next mission: preserve container hwnd
+          // PLAY AGAIN / NEXT MISSION: a hosted match cannot start its own successor (the launcher tracks
+          // one match process and would bring its menu back over the new game), so record what to start and
+          // let the launcher window start it once this process is gone.
           std::wstring childArgs = args;
           if (childArgs.find(L"-container-hwnd") == std::wstring::npos) {
               childArgs += L" -container-hwnd " + containerVal;
           }
-          Relaunch::HandOff(childArgs);
+          if (Relaunch::RequestContainerRelaunch(childArgs)) {
+              NOBLE_INFO("PauseMenu: {} in container mode - the launcher window starts the next match", what);
+              TerminateProcess(GetCurrentProcess(), 0);
+          } else {
+              NOBLE_WARN("PauseMenu: {} in container mode - could not hand the relaunch to the launcher", what);
+              PostMessageW(hwnd, WM_CLOSE, 0, 0);
+          }
           return;
       }
   }
@@ -1707,7 +1715,7 @@ void PauseMenu::DrawGameOver(HWND hwnd) {
   // Skip: Enter / Space (fresh press, window in front) or a click away from the
   // buttons.
   bool skipKey = false;
-  if (GetForegroundWindow() == hwnd) {
+  if (Window::IsForeground(hwnd)) {
     const bool down = (GetAsyncKeyState(VK_RETURN) & 0x8000) ||
                       (GetAsyncKeyState(VK_SPACE) & 0x8000);
     skipKey = down && !s_reveal.keyWasDown;
@@ -2511,7 +2519,7 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading,
     GetClientRect(hwnd, &client);
     POINT cursor{};
     static bool s_boardWasPointerFrame = false;
-    if ((open || gameOver || boardPointer || extraOverlay) && GetForegroundWindow() == hwnd &&
+    if ((open || gameOver || boardPointer || extraOverlay) && Window::IsForeground(hwnd) &&
         GetCursorPos(&cursor) && ScreenToClient(hwnd, &cursor) &&
         client.right > 0 && client.bottom > 0) {
       // Window may be resized while the back buffer stays the same size: scale

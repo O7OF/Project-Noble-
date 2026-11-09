@@ -326,7 +326,20 @@ static HRESULT STDMETHODCALLTYPE HookSwapChainPresent(IDXGISwapChain* swapChain,
 
     DXGI_SWAP_CHAIN_DESC scDesc{};
     HWND hwnd = (swapChain && SUCCEEDED(swapChain->GetDesc(&scDesc))) ? scDesc.OutputWindow : nullptr;
-    const bool isFocused = (hwnd == nullptr || GetForegroundWindow() == hwnd);
+    // Container window mode: the launcher window is the foreground one, the match window is a child of it.
+    // IsForeground() accepts the container, so a match in a container is not mistaken for a background
+    // window (which used to throttle it to 30 FPS and made it look like it never had the focus).
+    const bool isFocused = (hwnd == nullptr || noble::Window::IsForeground(hwnd));
+    if (isFocused) {
+        // ...and make that focus real: hand the keyboard focus to the match window at most once a second,
+        // so the match takes it back after the launcher (or an Alt-Tab) had it.
+        static ULONGLONG s_nextFocusRequest = 0;
+        const ULONGLONG focusNow = GetTickCount64();
+        if (focusNow >= s_nextFocusRequest) {
+            s_nextFocusRequest = focusNow + 1000;
+            noble::Window::RequestFocus();
+        }
+    }
 
     // FRAME-RATE LIMIT: 0 means what it says - no pacing at all while the window is active. (It used to be
     // silently capped at 120, which made "No limit" a lie and confused the FPS counter.)
@@ -347,6 +360,16 @@ static HRESULT STDMETHODCALLTYPE HookSwapChainPresent(IDXGISwapChain* swapChain,
     if (targetFps != previousLimit) {
         previousLimit = targetFps;
         nextPresentTicks = now.QuadPart;
+        // One line per limit change, so a "why is my game at 30" report can be answered from the log: it
+        // says whether the window counts as being in front and whether the unfocused throttle is what
+        // capped it (SETTINGS > GRAPHICS > "Cap frame rate in the background").
+        if (targetFps > 0) {
+            NOBLE_INFO("Present: frame limit {} FPS (window {}, background throttle {})", targetFps,
+                       isFocused ? "in front" : "not in front",
+                       settings.throttleUnfocused ? "enabled" : "disabled");
+        } else {
+            NOBLE_INFO("Present: frame limit off (window {})", isFocused ? "in front" : "not in front");
+        }
     }
 
     if (targetFps <= 0) {
@@ -1262,8 +1285,14 @@ static float InputMouseScaleOverride() {
     return s_scale;
 }
 
-// Returns our window if it is the foreground window, else nullptr.
+// Returns our window while the player is in it, else nullptr. In container window mode the engine renders
+// into a WS_CHILD window inside the launcher's top-level window, so the foreground window belongs to the
+// launcher process: ask Window::IsForeground() (which accepts the container as "ours") instead of comparing
+// handles or process IDs, and hand back this process's own window because the mouse maths below
+// (GetClientRect / ClientToScreen / ClipCursor) needs the window the engine is drawing in.
 static HWND InputFocusedWindow() {
+    const HWND own = noble::Window::ActiveHwnd();
+    if (own && noble::Window::IsForeground(own)) return own;
     HWND fg = GetForegroundWindow();
     if (!fg) return nullptr;
     DWORD pid = 0;

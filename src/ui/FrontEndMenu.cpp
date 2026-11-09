@@ -3,6 +3,7 @@
 #include "audio/VoiceChat.hpp"
 #include "SocialOverlay.hpp"
 #include "NobleUi.hpp"
+#include "TeamColors.hpp"
 #include "network/UPnP.hpp"
 #include "network/AuthClient.hpp"
 #include "network/MasterServerClient.hpp"
@@ -377,6 +378,17 @@ float TextWidth(ImFont* font, float px, const char* text) {
     return Font(font)->CalcTextSizeA(px, FLT_MAX, 0.0f, text).x;
 }
 
+// "19620000" -> "19,620,000" (the Armory's credit balance next to the player card).
+std::string NumberWithCommas(int64_t v) {
+    const bool negative = v < 0;
+    std::string d = std::to_string(negative ? -v : v), out;
+    for (size_t i = 0; i < d.size(); ++i) {
+        if (i && (d.size() - i) % 3 == 0) out += ',';
+        out += d[i];
+    }
+    return negative ? "-" + out : out;
+}
+
 void Text(const Ui& ui, ImFont* font, float px, ImVec2 pos, ImU32 col, const char* text, float wrapRight = 0.0f) {
     ui.dl->AddText(Font(font), px * ui.s, pos, col, text, nullptr, wrapRight > pos.x ? wrapRight - pos.x : 0.0f);
 }
@@ -562,11 +574,17 @@ void Draw(const Ui& ui, ID3D11Device* device, ID3D11DeviceContext* context, floa
         // weapon prop below the feet is off-screen. The menu process renders 1.5x its window, so a
         // 1.5x draw here is still 1:1 source-to-screen (no pixelation); never go past that.
         const float windowScale = std::max(1.0f, s_windowScale);
-        k = std::min(1.5f, windowScale);
+        // 1.5x filled the stage but cropped the model: the helmet ran under the player card and the feet
+        // went off the bottom edge. The character is ~0.64 of the engine frame tall (0.18..0.82), so 1.2x
+        // shows all of it with headroom, and still stays under the supersample limit (no pixelation).
+        constexpr float kWholeBodyZoom = 1.12f;
+        k = std::min(kWholeBodyZoom, windowScale);
         constexpr float kFocusX = 0.590f;   // character centre in the engine frame (0x0C / 0x0B)
         constexpr float kFocusY = 0.505f;
         const float targetX = ui.origin.x + W * kStageX;
-        const float targetY = ui.origin.y + H * 0.62f;
+        // The character spans ~0.16..0.81 of the engine frame; at 1.12x centring it at 0.60 puts the helmet
+        // at ~0.21 (clear of the player card, which ends at ~0.16) and the boots at ~0.94.
+        const float targetY = ui.origin.y + H * 0.60f;
         p0 = ImVec2(targetX - W * kFocusX * k, targetY - H * kFocusY * k);
     } else {
         // Per-slot close-ups already fill the frame; keep the old whole-frame placement under the rule.
@@ -1215,7 +1233,7 @@ float PlayerRow(const Ui& ui, ImVec2 pos, float width, int rankIndex, int emblem
     // team mode show nothing).
     if (stripW > 0.0f) {
         const ImVec2 s0(x, pos.y), s1(x + stripW, pos.y + h);
-        ui.dl->AddRectFilled(s0, s1, team == 1 ? IM_COL32(190, 34, 30, 255) : IM_COL32(36, 62, 170, 255));
+        ui.dl->AddRectFilled(s0, s1, TeamStyleFor(team).strip);
         x += stripW;
     }
 
@@ -1759,6 +1777,7 @@ struct MenuState {
     // What the lobby's variant is, worked out once per variant: teams on or off, and a player-made mode's changed rules.
     std::string lobbyModeKey;
     bool lobbyTeamsOn = false;
+    int lobbyTeamCount = 2;             // teams this lobby deals (2..8, Halo: Reach's multi-team modes)
     bool lobbyTeamsManual = false;      // the host has assigned teams by hand; don't re-deal them automatically
     int lobbyModeChanges = 0;
     std::string lobbyModeSummary;
@@ -2435,7 +2454,7 @@ void FeedEngineThreadInputs(HWND hwnd, ImGuiIO& io) {
     RECT client{};
     GetClientRect(hwnd, &client);
     POINT cursor{};
-    const bool focused = (GetForegroundWindow() == hwnd);
+    const bool focused = Window::IsForeground(hwnd);
     if (focused && GetCursorPos(&cursor) && ScreenToClient(hwnd, &cursor) && client.right > 0 && client.bottom > 0) {
         const float sx = io.DisplaySize.x / static_cast<float>(client.right);
         const float sy = io.DisplaySize.y / static_cast<float>(client.bottom);
@@ -2872,8 +2891,9 @@ static void RefreshLobbyMode(OverlayContext& ctx) {
 static void AssignLobbyTeams(MenuState& st) {
     if (st.lobbyTeamsManual) return;   // the host chose teams deliberately; don't overwrite them
     std::vector<std::pair<uint64_t, int>> changes;
+    const int teams = std::clamp(st.lobbyTeamCount, 2, kTeamCount);
     for (size_t i = 0; i < st.lobbyRoster.size(); ++i) {
-        const int want = st.lobbyTeamsOn ? static_cast<int>(i % 2) + 1 : 0;
+        const int want = st.lobbyTeamsOn ? static_cast<int>(i % static_cast<size_t>(teams)) + 1 : 0;
         if (st.lobbyRoster[i].team != want) {
             st.lobbyRoster[i].team = want;
             changes.emplace_back(st.lobbyRoster[i].peerId, want);
@@ -3170,7 +3190,8 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
                 st.voteCounts = current.voteCounts;
                 st.voteMsLeft = current.voteMsLeft;
                 if (st.isLobbyHost && !st.voteId.empty() && st.voteMsLeft <= 0) FinishLobbyVote(ctx);
-                if (st.isLobbyHost && !st.lobbyRoster.empty() && st.lobbyMode == "multiplayer") {
+                if (st.isLobbyHost && !st.lobbyRoster.empty()) {
+                    // Every lobby mode: Forge assigns teams too, and a mode without teams deals 0 (no dividers).
                     RefreshLobbyMode(ctx);
                     AssignLobbyTeams(st);
                 }
@@ -3381,6 +3402,10 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
     const char* const hostModeTip = hostModeKnown ? "You have the game type the host picked."
                                                   : "The host made this game mode, and this PC doesn't have it. Downloading it from the host is coming.";
 
+    // Teams are a property of the game type, whatever the lobby mode: read them before the rows are built so
+    // the roster (and the TEAM COUNT / CHANGE TEAM rows) agree with the mode from the first frame.
+    RefreshLobbyMode(ctx);
+
     if (campaign) {
         optRows.push_back({ "READY", st.lobbyReady ? "READY" : "NOT READY", false, true, kReadyTip });
         optRows.push_back({ "MISSION", mapDisplay, false, st.isLobbyHost, "Select which campaign mission to play." });
@@ -3394,6 +3419,20 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
     } else if (forge) {
         optRows.push_back({ "GAME TYPE", "BASIC EDITING", false, false, "Forge uses Basic Editing as base." });
         optRows.push_back({ "MAP", mapDisplay, false, st.isLobbyHost, "Choose which map to forge." });
+        if (st.lobbyTeamsOn) {
+            const int teams = std::clamp(st.lobbyTeamCount, 2, kTeamCount);
+            char forgeCountTip[200];
+            std::snprintf(forgeCountTip, sizeof(forgeCountTip),
+                          "Forge assigns teams. %d team%s in this lobby; the host deals players across them.", teams,
+                          teams == 1 ? "" : "s");
+            optRows.push_back({ "TEAM COUNT", std::to_string(teams), false, st.isLobbyHost, forgeCountTip });
+            if (!st.lobbyRoster.empty()) {
+                const LobbyPlayer& selectedPlayer = st.lobbyRoster[std::clamp(st.lobbyRosterSelection, 0, static_cast<int>(st.lobbyRoster.size()) - 1)];
+                const int shownTeam = selectedPlayer.team > 0 ? std::clamp(selectedPlayer.team, 1, teams) : 0;
+                optRows.push_back({ "CHANGE TEAM", shownTeam > 0 ? std::string(TeamStyleFor(shownTeam).shortName) : std::string("AUTO"),
+                                    false, st.isLobbyHost, "Cycles the selected player through the lobby's teams." });
+            }
+        }
         const std::string forgeOptVal = st.lobbyModeChanges > 0 ? std::to_string(st.lobbyModeChanges) + " CHANGED" : (st.forgeCustomVariant.empty() ? "DEFAULTS" : "CUSTOM");
         optRows.push_back({ "GAME OPTIONS", forgeOptVal, false, st.isLobbyHost, "Customize player traits, shields, speed, damage, and game options for Forge." });
         if (st.isLobbyHost) optRows.push_back({ "START GAME", "", true, true, "Start the selected Forge session." });
@@ -3408,14 +3447,24 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         optRows.push_back({ "READY", st.lobbyReady ? "READY" : "NOT READY", false, true, kReadyTip });
         optRows.push_back({ "GAME TYPE", st.lobbyVariantName.empty() ? "SLAYER" : st.lobbyVariantName, false, st.isLobbyHost, "Choose game type and rule set." });
         optRows.push_back({ "MAP", mapDisplay, false, st.isLobbyHost, "Choose which map you want to play." });
-        RefreshLobbyMode(ctx);
-        if (st.isLobbyHost && st.lobbyTeamsOn && !st.lobbyRoster.empty()) {
-            const LobbyPlayer& selectedPlayer = st.lobbyRoster[std::clamp(st.lobbyRosterSelection, 0, static_cast<int>(st.lobbyRoster.size()) - 1)];
-            const char* teamText = selectedPlayer.team == 1 ? "RED" : selectedPlayer.team == 2 ? "BLUE" : "AUTO";
-            char teamTip[160];
-            std::snprintf(teamTip, sizeof(teamTip), "Moves the selected player (%s) to the other team. The host controls both teams in this lobby.",
-                          selectedPlayer.username.empty() ? "host" : selectedPlayer.username.c_str());
-            optRows.push_back({ "CHANGE TEAM", teamText, false, true, teamTip });
+        if (st.lobbyTeamsOn) {
+            // Multi-team: the host sets how many teams the lobby deals, and any team can be handed out.
+            const int teams = std::clamp(st.lobbyTeamCount, 2, kTeamCount);
+            char countTip[200];
+            std::snprintf(countTip, sizeof(countTip),
+                          "This game type assigns teams. %d team%s in this lobby; the host deals players across them. "
+                          "Halo: Reach's multi-team modes use up to 8.", teams, teams == 1 ? "" : "s");
+            optRows.push_back({ "TEAM COUNT", std::to_string(teams), false, st.isLobbyHost, countTip });
+            if (!st.lobbyRoster.empty()) {
+                const LobbyPlayer& selectedPlayer = st.lobbyRoster[std::clamp(st.lobbyRosterSelection, 0, static_cast<int>(st.lobbyRoster.size()) - 1)];
+                const int shownTeam = selectedPlayer.team > 0 ? std::clamp(selectedPlayer.team, 1, teams) : 0;
+                const std::string teamText = shownTeam > 0 ? std::string(TeamStyleFor(shownTeam).shortName) : std::string("AUTO");
+                char teamTip[220];
+                std::snprintf(teamTip, sizeof(teamTip),
+                              "Cycles the selected player (%s) through the lobby's teams. The host owns the teams"
+                              " in this lobby.", selectedPlayer.username.empty() ? "host" : selectedPlayer.username.c_str());
+                optRows.push_back({ "CHANGE TEAM", teamText, false, st.isLobbyHost, teamTip });
+            }
         }
         const std::string modeValue = st.lobbyModeChanges > 0 ? std::to_string(st.lobbyModeChanges) + " CHANGED" : std::string("DEFAULTS");
         const std::string modeTip = st.lobbyModeChanges > 0 ? st.lobbyModeSummary : std::string(kOptionsTip);
@@ -3502,15 +3551,23 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         if (row.label == "READY") {
             st.lobbyReady = !st.lobbyReady;
             MenuSounds::Change();
+        } else if (row.label == "TEAM COUNT") {
+            if (!st.isLobbyHost) return;
+            st.lobbyTeamCount = st.lobbyTeamCount >= kTeamCount ? 2 : st.lobbyTeamCount + 1;
+            st.lobbyTeamsManual = false;   // re-deal across the new number of teams
+            NOBLE_INFO("FrontEndMenu: lobby team count set to {}", st.lobbyTeamCount);
+            MenuSounds::Change();
         } else if (row.label == "CHANGE TEAM") {
             if (!st.isLobbyHost || st.lobbyRoster.empty()) return;
             LobbyPlayer& player = st.lobbyRoster[std::clamp(st.lobbyRosterSelection, 0, static_cast<int>(st.lobbyRoster.size()) - 1)];
-            const int next = player.team == 1 ? 2 : 1;
+            const int teams = std::clamp(st.lobbyTeamCount, 2, kTeamCount);
+            const int current = std::clamp(player.team, 0, teams);
+            const int next = current >= teams ? 1 : current + 1;
             player.team = next;
-            st.lobbyTeamsManual = true;   // stop the automatic red/blue deal from undoing this on the next poll
+            st.lobbyTeamsManual = true;   // stop the automatic deal from undoing this on the next poll
             if (player.isHost) MasterServerClient::Get().SetAdvertHostTeam(next);
             if (st.lobbySessionId.empty() || !MasterServerClient::Get().SetTeamsSync(st.lobbySessionId, { { player.peerId, next } })) {
-                NOBLE_INFO("FrontEndMenu: team for '{}' set to {} locally (no session to sync)", player.username, next == 1 ? "red" : "blue");
+                NOBLE_INFO("FrontEndMenu: team for '{}' set to {} locally (no session to sync)", player.username, next);
             }
             MenuSounds::Change();
         } else if (row.label == "MISSION" || row.label == "MAP") {
@@ -3964,49 +4021,49 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         return false;
     };
 
-    // Red on the left and blue on the right, each with its own scroll position; a game without teams is one list.
-    // Only the rows in view are drawn, so a 128-player roster costs the same as a full 16.
+    // One list, in Reach's lobby style: when the game type assigns teams each team gets its own divider bar and
+    // its players underneath, and every team the lobby deals is listed even while it is empty - so a host alone
+    // in the lobby still sees RED / BLUE / ... instead of one undivided row. Without teams it is a plain list.
+    // Only the entries in view are drawn, so a 128-player roster costs the same as a full 16.
     constexpr int kVisibleRows = 8;
-    struct RosterColumn {
-        const char* title;
-        ImU32 color;
-        std::vector<int> players;
-        int* scroll;
-        float x;
-        float w;
-        int rows;
+    struct RosterEntry {
+        enum class Kind { Header, Player, Open } kind;
+        int team = 0;
+        int index = -1;
     };
-    bool hasTeams = false;
-    for (const LobbyPlayer& p : st.lobbyRoster) hasTeams = hasTeams || p.team != 0;
-    std::vector<RosterColumn> columns;
-    const float teamW = (pw - slotPad * 3.0f) * 0.5f;
-    if (hasTeams) {
-        columns.push_back({ "RED TEAM", IM_COL32(190, 34, 30, 255), {}, &st.lobbyRosterScroll[0], px + slotPad, teamW, 0 });
-        columns.push_back({ "BLUE TEAM", IM_COL32(36, 62, 170, 255), {}, &st.lobbyRosterScroll[1], px + slotPad * 2.0f + teamW, teamW, 0 });
-    } else {
-        columns.push_back({ "PLAYERS", kAccent, {}, &st.lobbyRosterScroll[0], px + slotPad, pw - slotPad * 2.0f, 0 });
-    }
-    for (int i = 0; i < rosterCount; ++i) {
-        columns[hasTeams && st.lobbyRoster[i].team == 2 ? 1 : 0].players.push_back(i);
-    }
-    int openLeft = openSlots;  // shared out, so the two columns together never show more OPEN rows than there are free slots
-    for (size_t col = 0; col < columns.size(); ++col) {
-        RosterColumn& c = columns[col];
-        const int count = static_cast<int>(c.players.size());
-        const int share = col + 1 < columns.size() ? (openLeft + 1) / 2 : openLeft;
-        openLeft -= share;
-        c.rows = hasTeams ? std::max(count, std::min(kVisibleRows, count + share)) : std::max(count, std::min(kVisibleRows, slotCount));
-    }
-
-    // LB/RB step through the players, LT/RT page within the column, the wheel scrolls the column under the pointer.
-    auto keepInView = [&](int rosterIndex) {
-        for (RosterColumn& c : columns) {
-            const auto it = std::find(c.players.begin(), c.players.end(), rosterIndex);
-            if (it == c.players.end()) continue;
-            const int row = static_cast<int>(it - c.players.begin());
-            if (row < *c.scroll) *c.scroll = row;
-            if (row >= *c.scroll + kVisibleRows) *c.scroll = row - kVisibleRows + 1;
+    const int lobbyTeams = st.lobbyTeamsOn ? std::clamp(st.lobbyTeamCount, 2, kTeamCount) : 1;
+    std::vector<RosterEntry> entries;
+    if (st.lobbyTeamsOn) {
+        for (int t = 1; t <= lobbyTeams; ++t) {
+            entries.push_back({ RosterEntry::Kind::Header, t, -1 });
+            int members = 0;
+            for (int i = 0; i < rosterCount; ++i) {
+                const int team = st.lobbyRoster[i].team > 0 ? std::clamp(st.lobbyRoster[i].team, 1, lobbyTeams) : 1;
+                if (team != t) continue;
+                entries.push_back({ RosterEntry::Kind::Player, t, i });
+                ++members;
+            }
+            if (members == 0) entries.push_back({ RosterEntry::Kind::Open, t, -1 });
         }
+    } else {
+        for (int i = 0; i < rosterCount; ++i) entries.push_back({ RosterEntry::Kind::Player, 0, i });
+    }
+    // Spare seats at the end, capped so a 128-player lobby does not become a hundred OPEN rows.
+    for (int i = 0, shown = 0; i < openSlots && shown < kVisibleRows; ++i, ++shown) {
+        entries.push_back({ RosterEntry::Kind::Open, 0, -1 });
+    }
+    auto entryOfPlayer = [&](int rosterIndex) {
+        for (size_t e = 0; e < entries.size(); ++e) {
+            if (entries[e].kind == RosterEntry::Kind::Player && entries[e].index == rosterIndex) return static_cast<int>(e);
+        }
+        return -1;
+    };
+    auto keepInView = [&](int rosterIndex) {
+        const int entry = entryOfPlayer(rosterIndex);
+        if (entry < 0) return;
+        int& scroll = st.lobbyRosterScroll[0];
+        if (entry < scroll) scroll = entry;
+        if (entry >= scroll + kVisibleRows) scroll = entry - kVisibleRows + 1;
     };
     if (rosterCount > 0) {
         st.lobbyRosterSelection = std::clamp(st.lobbyRosterSelection, 0, rosterCount - 1);
@@ -4020,17 +4077,11 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         const bool pageUp = ImGui::IsKeyPressed(ImGuiKey_PageUp, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadL2, false);
         const bool pageDown = ImGui::IsKeyPressed(ImGuiKey_PageDown, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadR2, false);
         if (pageUp != pageDown) {
-            for (RosterColumn& c : columns) {
-                const auto it = std::find(c.players.begin(), c.players.end(), st.lobbyRosterSelection);
-                if (it == c.players.end()) continue;
-                const int row = std::clamp(static_cast<int>(it - c.players.begin()) + (pageDown ? kVisibleRows : -kVisibleRows),
-                                           0, static_cast<int>(c.players.size()) - 1);
-                st.lobbyRosterSelection = c.players[row];
-                *c.scroll += pageDown ? kVisibleRows : -kVisibleRows;
-                keepInView(st.lobbyRosterSelection);
-                MenuSounds::Scroll();
-                break;
-            }
+            // Page by players, not by rows: a page may cross a team divider.
+            const int step = pageDown ? kVisibleRows : -kVisibleRows;
+            st.lobbyRosterSelection = std::clamp(st.lobbyRosterSelection + step, 0, rosterCount - 1);
+            keepInView(st.lobbyRosterSelection);
+            MenuSounds::Scroll();
         }
     }
 
@@ -4115,13 +4166,14 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         }
 
         y += 10.0f * ui.s;
-        if (local || st.isLobbyHost) {
-            const int curTeam = player.team > 0 ? player.team : 1;
-            const int targetTeam = (curTeam == 1) ? 2 : 1;
-            const char* teamName = (targetTeam == 1) ? "SWITCH TO RED TEAM" : "SWITCH TO BLUE TEAM";
-            if (ActionButton(ui, "lobby_change_team", ImVec2(cardX, y), cardW, teamName, false)) {
+        if ((local || st.isLobbyHost) && st.lobbyTeamsOn) {
+            const int teams = std::clamp(st.lobbyTeamCount, 2, kTeamCount);
+            const int curTeam = std::clamp(player.team, 0, teams);
+            const int targetTeam = curTeam >= teams ? 1 : curTeam + 1;
+            const std::string teamName = std::string("SWITCH TO ") + TeamStyleFor(targetTeam).name;
+            if (ActionButton(ui, "lobby_change_team", ImVec2(cardX, y), cardW, teamName.c_str(), false)) {
                 st.lobbyRoster[st.lobbyRosterSelection].team = targetTeam;
-                st.lobbyTeamsManual = true;
+                st.lobbyTeamsManual = true;   // keep the host's choice from being re-dealt
                 if (player.isHost) MasterServerClient::Get().SetAdvertHostTeam(targetTeam);
                 if (!st.lobbySessionId.empty()) {
                     MasterServerClient::Get().SetTeamsSync(st.lobbySessionId, { { player.peerId, targetTeam } });
@@ -4138,87 +4190,109 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
             y += 36.0f * ui.s;
         }
     }
-    for (size_t col = 0; col < columns.size() && !st.lobbyProfileOpen; ++col) {
-        RosterColumn& c = columns[col];
-        const bool overflow = c.rows > kVisibleRows;
-        rosterOverflows = rosterOverflows || overflow;
-        if (overflow && ImGui::IsMouseHoveringRect(ImVec2(c.x, listY), ImVec2(c.x + c.w, listY + listH), false)) {
+    if (!st.lobbyProfileOpen) {
+        const float listX = px + slotPad;
+        const float listW = pw - slotPad * 2.0f;
+        const float barW = 6.0f * ui.s;
+        const float rowW = listW - barW;
+        const float headHdr = 24.0f * ui.s;   // a team divider bar
+
+        // Wheel over the list scrolls it (entries, not pixels).
+        int& scroll = st.lobbyRosterScroll[0];
+        if (ImGui::IsMouseHoveringRect(ImVec2(listX, listY), ImVec2(listX + listW, listY + listH), false)) {
             const float wheel = ImGui::GetIO().MouseWheel;
-            if (wheel != 0.0f) *c.scroll -= static_cast<int>(wheel);
+            if (wheel != 0.0f) scroll -= static_cast<int>(wheel);
         }
-        // The pinned local row takes a slot, so the list scrolls one further or the last player could never be seen.
-        int localAt = -1;
-        for (size_t r = 0; r < c.players.size(); ++r) {
-            if (isLocal(st.lobbyRoster[c.players[r]])) { localAt = static_cast<int>(r); break; }
-        }
-        const int pinRoom = overflow && localAt >= 0 && localAt < c.rows - kVisibleRows ? 1 : 0;
-        *c.scroll = std::clamp(*c.scroll, 0, std::max(0, c.rows - kVisibleRows + pinRoom));
+        const int total = static_cast<int>(entries.size());
+        auto entryHeight = [&](const RosterEntry& e) { return e.kind == RosterEntry::Kind::Header ? headHdr : slotH; };
 
-        // Sticky header: stays put while the rows scroll under it.
-        const float cy = teamY + teamHeadH * 0.5f;
-        ui.dl->AddCircleFilled(ImVec2(c.x + 7.0f * ui.s, cy), 4.5f * ui.s, c.color, 16);
-        Text(ui, NobleStyle::SmallFont(), 14.0f, ImVec2(c.x + 17.0f * ui.s, teamY + 2.0f * ui.s), kWhite, c.title);
-        char range[48];
-        const int shownLast = std::min(*c.scroll + kVisibleRows, c.rows);   // the pinned row may cover one of these
-        if (overflow) std::snprintf(range, sizeof(range), "%d-%d of %d", *c.scroll + 1, shownLast, c.rows);
-        else std::snprintf(range, sizeof(range), "%zu", c.players.size());
-        const float rangeW = TextWidth(NobleStyle::SmallFont(), 14.0f * ui.s, range);
-        Text(ui, NobleStyle::SmallFont(), 14.0f, ImVec2(c.x + c.w - rangeW, teamY + 2.0f * ui.s), kDim, range);
-
-        // The local player is never scrolled out of sight: while their row is off screen it takes the last row.
-        int localRow = -1;
-        for (size_t r = 0; r < c.players.size(); ++r) {
-            if (isLocal(st.lobbyRoster[c.players[r]])) { localRow = static_cast<int>(r); break; }
+        // Scroll so the selected player is visible, then clamp to what fits.
+        const int selectedEntry = entryOfPlayer(st.lobbyRosterSelection);
+        if (selectedEntry >= 0) {
+            if (selectedEntry < scroll) scroll = selectedEntry;
+            if (selectedEntry >= scroll + kVisibleRows) scroll = selectedEntry - kVisibleRows + 1;
         }
-        const bool pinLocal = localRow >= 0 && (localRow < *c.scroll || localRow >= *c.scroll + kVisibleRows);
-        const float barW = overflow ? 6.0f * ui.s : 0.0f;
-        const float rowW = c.w - barW;
-        for (int v = 0; v < kVisibleRows && (*c.scroll + v < c.rows || (pinLocal && v == kVisibleRows - 1)); ++v) {
-            const int row = (pinLocal && v == kVisibleRows - 1) ? localRow : *c.scroll + v;
-            const ImVec2 s0(c.x, listY + v * (slotH + slotGap));
-            const ImVec2 s1(s0.x + rowW, s0.y + slotH);
-            if (row >= static_cast<int>(c.players.size())) {
+        scroll = std::clamp(scroll, 0, std::max(0, total - 1));
+        float used = 0.0f;
+        int firstHidden = total;
+        for (int e = scroll; e < total; ++e) {
+            const float h = entryHeight(entries[e]);
+            if (used + h > listH + 0.5f) { firstHidden = e; break; }
+            used += h + slotGap;
+        }
+        if (firstHidden < total) scroll = std::min(scroll, std::max(0, firstHidden - 1));
+        const bool overflow = scroll > 0 || firstHidden < total;
+        rosterOverflows = overflow;
+
+        float y = listY;
+        for (int e = scroll; e < total; ++e) {
+            const RosterEntry& entry = entries[e];
+            const float h = entryHeight(entry);
+            if (y + h > listY + listH + 0.5f) break;
+            const ImVec2 s0(listX, y);
+            const ImVec2 s1(listX + rowW, y + h);
+            if (entry.kind == RosterEntry::Kind::Header) {
+                // Team divider: a colour bar with the team's name and how many players it holds.
+                const TeamStyle& style = TeamStyleFor(entry.team);
+                ui.dl->AddRectFilledMultiColor(s0, s1, style.header, IM_COL32(10, 14, 20, 220),
+                                               IM_COL32(10, 14, 20, 220), style.rowAlt);
+                ui.dl->AddRectFilled(ImVec2(s0.x, s0.y), ImVec2(s0.x + 4.0f * ui.s, s1.y), style.header);
+                int members = 0;
+                for (const LobbyPlayer& p : st.lobbyRoster) {
+                    const int team = p.team > 0 ? std::clamp(p.team, 1, std::max(2, lobbyTeams)) : 1;
+                    if (team == entry.team) ++members;
+                }
+                Text(ui, NobleStyle::SmallFont(), 14.0f, ImVec2(s0.x + 12.0f * ui.s, s0.y + 4.0f * ui.s), kWhite, style.name);
+                const std::string teamCount = std::to_string(members);
+                const float teamCountW = TextWidth(NobleStyle::SmallFont(), 14.0f * ui.s, teamCount.c_str());
+                Text(ui, NobleStyle::SmallFont(), 14.0f, ImVec2(s1.x - teamCountW - 10.0f * ui.s, s0.y + 4.0f * ui.s), IM_COL32(220, 232, 245, 235), teamCount.c_str());
+            } else if (entry.kind == RosterEntry::Kind::Open) {
                 ui.dl->AddRectFilled(s0, s1, IM_COL32(255, 255, 255, 8));
                 ui.dl->AddRect(s0, s1, IM_COL32(255, 255, 255, 24));
                 Text(ui, NobleStyle::SmallFont(), 14.0f, ImVec2(s0.x + 12.0f * ui.s, s0.y + 12.0f * ui.s), kDisabled, "OPEN");
-                continue;
-            }
-            const int idx = c.players[row];
-            const LobbyPlayer& player = st.lobbyRoster[idx];
-            const bool local = isLocal(player);
-            const bool selected = st.lobbyRosterSelection == idx;
-            PlayerRow(ui, s0, rowW,
-                      player.rankIndex >= 0 ? player.rankIndex : (local ? Career::RankIndex(Career::Get().credits) : -1),
-                      player.emblemId > 0 ? player.emblemId : (local ? ownProf.emblemIndex : 0),
-                      player.nameplateId > 0 ? player.nameplateId : (local ? ownProf.nameplateIndex : 0),
-                      player.team,
-                      player.serviceTag, (local ? (Settings::Get().Snapshot().playerName.empty() ? std::string("Noble Six") : Settings::Get().Snapshot().playerName) : (player.username.empty() ? std::string(player.isHost ? "Host" : "Spartan") : player.username)), player.isDev, selected,
-                      player.emblemBackgroundId > 0 ? player.emblemBackgroundId : (local ? ownProf.emblemBackgroundIndex : 0),
-                      local ? UIManager::GetArmorCustomizer().EmblemColorsNow() : UiArt::EmblemColors{});
-            if (selected) ui.dl->AddRect(s0, s1, kAccent, 0.0f, 0, 1.5f * ui.s);
-            {
-                uint64_t machine = 1000ULL + static_cast<uint64_t>(idx);   // demo rosters have no ids; only real ids ever talk
-                try { if (!player.machineId.empty()) machine = std::stoull(player.machineId, nullptr, 0); } catch (...) {}
-                SocialOverlay::DrawPlayerVoiceIcon(ui.dl, ImVec2(s1.x - 20.0f * ui.s, (s0.y + s1.y) * 0.5f), ui.s, machine, local);
-            }
-            char slotId[32];
-            std::snprintf(slotId, sizeof(slotId), "##lobby_slot_%d", idx);
-            ImGui::SetCursorScreenPos(s0);
-            if (ImGui::InvisibleButton(slotId, ImVec2(rowW, slotH))) {
-                if (st.lobbyRosterSelection == idx) {
-                    st.lobbyProfileOpen = !st.lobbyProfileOpen;
-                } else {
-                    st.lobbyRosterSelection = idx;
-                    st.lobbyProfileOpen = true;
+            } else {
+                const int idx = entry.index;
+                const LobbyPlayer& player = st.lobbyRoster[idx];
+                const bool local = isLocal(player);
+                const bool selected = st.lobbyRosterSelection == idx;
+                const int teamForRow = st.lobbyTeamsOn ? (player.team > 0 ? player.team : entry.team) : 0;
+                // The team's row tint behind the row, so the section reads as one block even when a row is selected.
+                ui.dl->AddRectFilled(s0, s1, selected ? IM_COL32(36, 78, 112, 240) : TeamStyleFor(teamForRow).rowBase);
+                PlayerRow(ui, ImVec2(s0.x + 4.0f * ui.s, s0.y), rowW - 4.0f * ui.s,
+                          player.rankIndex >= 0 ? player.rankIndex : (local ? Career::RankIndex(Career::Get().credits) : -1),
+                          player.emblemId > 0 ? player.emblemId : (local ? ownProf.emblemIndex : 0),
+                          player.nameplateId > 0 ? player.nameplateId : (local ? ownProf.nameplateIndex : 0),
+                          teamForRow,
+                          player.serviceTag, (local ? (Settings::Get().Snapshot().playerName.empty() ? std::string("Noble Six") : Settings::Get().Snapshot().playerName) : (player.username.empty() ? std::string(player.isHost ? "Host" : "Spartan") : player.username)), player.isDev, selected,
+                          player.emblemBackgroundId > 0 ? player.emblemBackgroundId : (local ? ownProf.emblemBackgroundIndex : 0),
+                          local ? UIManager::GetArmorCustomizer().EmblemColorsNow() : UiArt::EmblemColors{});
+                if (selected) ui.dl->AddRect(s0, s1, kAccent, 0.0f, 0, 1.5f * ui.s);
+                {
+                    uint64_t machine = 1000ULL + static_cast<uint64_t>(idx);   // demo rosters have no ids; only real ids ever talk
+                    try { if (!player.machineId.empty()) machine = std::stoull(player.machineId, nullptr, 0); } catch (...) {}
+                    SocialOverlay::DrawPlayerVoiceIcon(ui.dl, ImVec2(s1.x - 20.0f * ui.s, (s0.y + s1.y) * 0.5f), ui.s, machine, local);
                 }
-                MenuSounds::Scroll();
+                char slotId[32];
+                std::snprintf(slotId, sizeof(slotId), "##lobby_slot_%d", idx);
+                ImGui::SetCursorScreenPos(s0);
+                if (ImGui::InvisibleButton(slotId, ImVec2(rowW, h))) {
+                    if (st.lobbyRosterSelection == idx) {
+                        st.lobbyProfileOpen = !st.lobbyProfileOpen;
+                    } else {
+                        st.lobbyRosterSelection = idx;
+                        st.lobbyProfileOpen = true;
+                    }
+                    MenuSounds::Scroll();
+                }
             }
+            y += h + slotGap;
         }
         if (overflow) {
-            const float trackX = c.x + c.w - 3.0f * ui.s;
+            const float trackX = listX + listW - 3.0f * ui.s;
             ui.dl->AddRectFilled(ImVec2(trackX, listY), ImVec2(trackX + 3.0f * ui.s, listY + listH), IM_COL32(255, 255, 255, 24));
-            const float thumbH = std::max(listH * kVisibleRows / c.rows, 18.0f * ui.s);
-            const float thumbY = listY + (listH - thumbH) * *c.scroll / std::max(1, c.rows - kVisibleRows);
+            const int shown = std::max(1, std::min(total - scroll, kVisibleRows));
+            const float thumbH = std::max(listH * static_cast<float>(shown) / static_cast<float>(std::max(1, total)), 18.0f * ui.s);
+            const float thumbY = listY + (listH - thumbH) * static_cast<float>(scroll) / static_cast<float>(std::max(1, total - shown));
             ui.dl->AddRectFilled(ImVec2(trackX, thumbY), ImVec2(trackX + 3.0f * ui.s, thumbY + thumbH), kAccent);
         }
     }
@@ -4911,24 +4985,72 @@ void DrawInviteToast(const Ui& ui, MenuState& st) {
     }
 }
 
+// ---- Container window mode: the match is a child process presenting inside this launcher window ----
+namespace {
+
+// Starts a match process inside this launcher window and remembers it. The launcher is the only process
+// that starts matches in container mode (a match cannot replace itself: see Relaunch::HandOff).
+bool StartContainerChild(const std::wstring& args, OverlayContext& ctx) {
+    std::wstring full = args;
+    if (full.find(L"-container-hwnd") == std::wstring::npos) {
+        full += L" -container-hwnd " + std::to_wstring(reinterpret_cast<uintptr_t>(Window::ActiveHwnd()));
+    }
+    HANDLE hChild = nullptr;
+    if (!Relaunch::StartChildMatch(full, reinterpret_cast<void**>(&hChild))) {
+        NOBLE_ERROR("FrontEndMenu: failed to start the match process in the container window");
+        return false;
+    }
+    ctx.hMatchProcess = hChild;
+    ctx.matchRunning = true;
+    FrontEndMenu::SetMatchRunning(true);
+    return true;
+}
+
+// The child match ended. PLAY AGAIN / NEXT MISSION leave a relaunch request behind (see
+// Relaunch::RequestContainerRelaunch): start that successor and stay in the match. Otherwise the menu comes
+// back, and it takes the keyboard focus back from the match window that has just closed.
+void ContainerMatchEnded(OverlayContext& ctx, DWORD exitCode) {
+    if (ctx.hMatchProcess) CloseHandle(reinterpret_cast<HANDLE>(ctx.hMatchProcess));
+    ctx.hMatchProcess = nullptr;
+
+    const std::wstring successor = Relaunch::TakeContainerRelaunch();
+    if (!successor.empty()) {
+        if (StartContainerChild(successor, ctx)) {
+            NOBLE_INFO("FrontEndMenu: container match relaunched (the previous match exited with {})", exitCode);
+            return;
+        }
+        NOBLE_WARN("FrontEndMenu: container relaunch could not be started; restoring the menu");
+    }
+
+    ctx.matchRunning = false;
+    FrontEndMenu::SetMatchRunning(false);
+    // The menu was marked closed when the match started (ctx.closed), and RenderOverlay/HoldFrame both bail
+    // out on it: without this the launcher came back showing the engine's own mainmenu_all map (the
+    // spaceship) instead of Noble's front end.
+    ctx.closed = false;
+    NOBLE_INFO("FrontEndMenu: container child match finished (exit code {}), restoring menu", exitCode);
+    SessionManager::Get().Initialize();
+    MasterServerClient::Get().SetUrl(Settings::Get().Snapshot().masterServerUrl);
+    MasterServerClient::Get().RequestOnlineCount();
+    ReachAudio::SetMenuMusicEnabled(true);
+    ReachAudio::SetMusicVolume(Settings::Get().Snapshot().volumeMusic);
+    ProcessAudio::ApplyAll(Settings::Get().Snapshot().volumeGame, Settings::Get().Snapshot().volumeMusic, Settings::Get().Snapshot().volumeOther, Settings::Get().Snapshot().masterMute);
+    // The match window held the keyboard focus; hand it back to the launcher window (the window's own thread
+    // does the SetFocus: this code runs on the engine thread).
+    Window::RequestFocus();
+}
+
+} // namespace
+
 void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11DeviceContext* context,
                           FrontEndChoice& choice, bool& done) {
     if (ctx.matchRunning && ctx.hMatchProcess) {
         DWORD exitCode = 0;
         if (GetExitCodeProcess(reinterpret_cast<HANDLE>(ctx.hMatchProcess), &exitCode) && exitCode != STILL_ACTIVE) {
-            CloseHandle(reinterpret_cast<HANDLE>(ctx.hMatchProcess));
-            ctx.hMatchProcess = nullptr;
-            ctx.matchRunning = false;
-            FrontEndMenu::SetMatchRunning(false);
-            NOBLE_INFO("FrontEndMenu: container child match finished (exit code {}), restoring menu", exitCode);
-            SessionManager::Get().Initialize();
-            MasterServerClient::Get().SetUrl(Settings::Get().Snapshot().masterServerUrl);
-            MasterServerClient::Get().RequestOnlineCount();
-            ReachAudio::SetMenuMusicEnabled(true);
-            ReachAudio::SetMusicVolume(Settings::Get().Snapshot().volumeMusic);
-            ProcessAudio::ApplyAll(Settings::Get().Snapshot().volumeGame, Settings::Get().Snapshot().volumeMusic, Settings::Get().Snapshot().volumeOther, Settings::Get().Snapshot().masterMute);
-        } else {
-            // Child match process is currently active and presenting in the child window inside this container!
+            ContainerMatchEnded(ctx, exitCode);
+        }
+        if (FrontEndMenu::IsMatchRunning()) {
+            // The child match is presenting in the child window inside this container.
             return;
         }
     }
@@ -6245,11 +6367,18 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         Text(ui, NobleStyle::SmallFont(), 15.0f, ImVec2(left, top - 8.0f * ui.s), kAccent, "CUSTOMIZATION");
         Text(ui, NobleStyle::HeroFont(), 44.0f, ImVec2(left, top + 6.0f * ui.s), kWhite, "APPEARANCE");
 
-        // Top-right: the same player row as MY PARTY on the main menu.
+        // Top-right: the same player row as MY PARTY on the main menu, with the spendable cR balance just
+        // to its left (the Armory is where credits get spent).
         {
             const auto& prof = UIManager::GetArmorCustomizer().GetProfile();
             const float rowW = 400.0f * ui.s;
-            PlayerRow(ui, ImVec2(ui.origin.x + ui.size.x * 0.925f - rowW, top + 8.0f * ui.s), rowW, Career::RankIndex(Career::Get().credits),
+            const ImVec2 cardPos(ui.origin.x + ui.size.x * 0.925f - rowW, top + 8.0f * ui.s);
+            const std::string credits = "CR: " + NumberWithCommas(Career::Balance());
+            const float creditW = TextWidth(NobleStyle::TitleFont(), 18.0f * ui.s, credits.c_str());
+            Text(ui, NobleStyle::TitleFont(), 18.0f,
+                 ImVec2(cardPos.x - 18.0f * ui.s - creditW, cardPos.y + 20.0f * ui.s),
+                 IM_COL32(143, 216, 255, 235), credits.c_str());
+            PlayerRow(ui, cardPos, rowW, Career::RankIndex(Career::Get().credits),
                       prof.emblemIndex, prof.nameplateIndex, 0, PlayerServiceTag(settings), settings.playerName,
                       AuthClient::Get().IsDeveloper(), false, prof.emblemBackgroundIndex, UIManager::GetArmorCustomizer().EmblemColorsNow());
         }
@@ -6365,21 +6494,10 @@ void FrontEndMenu::SetMatchRunning(bool running) {
 
 void FrontEndMenu::CheckMatchStatus() {
     OverlayContext& ctx = GetOverlayCtx();
-    if (ctx.matchRunning && ctx.hMatchProcess) {
-        DWORD exitCode = 0;
-        if (GetExitCodeProcess(reinterpret_cast<HANDLE>(ctx.hMatchProcess), &exitCode) && exitCode != STILL_ACTIVE) {
-            CloseHandle(reinterpret_cast<HANDLE>(ctx.hMatchProcess));
-            ctx.hMatchProcess = nullptr;
-            ctx.matchRunning = false;
-            FrontEndMenu::SetMatchRunning(false);
-            NOBLE_INFO("FrontEndMenu: container child match finished (exit code {}), restoring menu", exitCode);
-            SessionManager::Get().Initialize();
-            MasterServerClient::Get().SetUrl(Settings::Get().Snapshot().masterServerUrl);
-            MasterServerClient::Get().RequestOnlineCount();
-            ReachAudio::SetMenuMusicEnabled(true);
-            ReachAudio::SetMusicVolume(Settings::Get().Snapshot().volumeMusic);
-            ProcessAudio::ApplyAll(Settings::Get().Snapshot().volumeGame, Settings::Get().Snapshot().volumeMusic, Settings::Get().Snapshot().volumeOther, Settings::Get().Snapshot().masterMute);
-        }
+    if (!ctx.matchRunning || !ctx.hMatchProcess) return;
+    DWORD exitCode = 0;
+    if (GetExitCodeProcess(reinterpret_cast<HANDLE>(ctx.hMatchProcess), &exitCode) && exitCode != STILL_ACTIVE) {
+        ContainerMatchEnded(ctx, exitCode);
     }
 }
 
@@ -6405,6 +6523,13 @@ bool FrontEndMenu::ShouldShow() {
 }
 
 void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
+    // A relaunch request is only valid while the match that wrote it is exiting (PLAY AGAIN / NEXT MISSION).
+    // One left over from a killed match must not start a game by surprise.
+    Relaunch::ClearContainerRelaunch();
+    // Publish the saved Armory look for the match process, even when the Armory is never opened this run: a
+    // match reads it to apply wheel colours (palette colours and the visor index come from the appearance
+    // record, so those work without it).
+    UIManager::GetArmorCustomizer().SyncToReachArmory();
     OverlayContext& ctx = GetOverlayCtx();
     ctx.reachDir = reachDir;
     // UiArt::Init() has run by now (main.cpp initialises the art before the window is shown). A plate
@@ -6445,6 +6570,7 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
         std::wstring demo, demoMode, demoMap;
         int demoPlayers = 1;
         int demoRed = -1;
+        int demoTeams = 0;
         bool demoFfa = false;
         for (int i = 1; argv && i + 1 < argc; ++i) {
             if (_wcsicmp(argv[i], L"-lobby-demo") == 0) demo = Lower(argv[i + 1]);
@@ -6452,6 +6578,7 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
             if (_wcsicmp(argv[i], L"-lobby-demo-mode") == 0) demoMode = Lower(argv[i + 1]);
             if (_wcsicmp(argv[i], L"-lobby-demo-map") == 0) demoMap = argv[i + 1];
             if (_wcsicmp(argv[i], L"-lobby-demo-red") == 0) demoRed = _wtoi(argv[i + 1]);   // that many red, the rest blue
+            if (_wcsicmp(argv[i], L"-lobby-demo-teams") == 0) demoTeams = std::clamp(_wtoi(argv[i + 1]), 2, kTeamCount);
             if (_wcsicmp(argv[i], L"-lobby-demo-ffa") == 0) demoFfa = _wtoi(argv[i + 1]) != 0;
         }
         if (argv) LocalFree(argv);
@@ -6464,6 +6591,7 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
             else if (demoMode == L"firefight") { st.lobbyMode = "firefight"; st.lobbyMap = kFirefightMaps[0].scenario; st.lobbyVariantName = "Firefight"; }
             else if (demoMode == L"forge") { st.lobbyMode = "forge"; }
             if (const wchar_t* line = wcsstr(GetCommandLineW(), L"-lobby-demo-unknown-mode")) { (void)line; st.lobbyVariantName = "Someone's Own Mode"; }
+            if (demoTeams > 0) st.lobbyTeamCount = demoTeams;
             st.lobbyMaxPlayers = std::max(st.lobbyMaxPlayers, demoPlayers);
             if (!st.isLobbyHost && demoPlayers > 0) st.lobbyRosterSelection = demoPlayers > 1 ? 1 : 0;
             for (int i = 0; i < demoPlayers; ++i) {
@@ -6478,7 +6606,8 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
                     p.emblemBackgroundId = (i * 3) % 40 + 1;
                     p.nameplateId = i % 20 + 1;
                 }
-                p.team = demoFfa ? 0 : demoRed >= 0 ? (i < demoRed ? 1 : 2) : demoPlayers > 2 ? (i % 2) + 1 : 0;
+                p.team = demoFfa ? 0 : demoTeams > 0 ? (i % demoTeams) + 1
+                       : demoRed >= 0 ? (i < demoRed ? 1 : 2) : demoPlayers > 2 ? (i % 2) + 1 : 0;
                 st.lobbyRoster.push_back(p);
             }
             if (!demoMap.empty()) {
@@ -6979,7 +7108,7 @@ void FrontEndMenu::RenderOverlayImpl(IDXGISwapChain* swapChain, bool clear) {
             RECT client{};
             GetClientRect(hwnd, &client);
             POINT cursor{};
-            if (GetForegroundWindow() == hwnd && client.right > 0 && client.bottom > 0 &&
+            if (Window::IsForeground(hwnd) && client.right > 0 && client.bottom > 0 &&
                 GetCursorPos(&cursor) && ScreenToClient(hwnd, &cursor)) {
                 const float sx = io.DisplaySize.x / static_cast<float>(client.right);
                 const float sy = io.DisplaySize.y / static_cast<float>(client.bottom);
@@ -7010,10 +7139,12 @@ void FrontEndMenu::RenderOverlayImpl(IDXGISwapChain* swapChain, bool clear) {
             if (!muted && audio.muteInBackground) {
                 // "Active" means the foreground window belongs to this process: that covers the menu window and
                 // the engine's, without having to know which one is up.
+                // IsForeground() also counts the launcher window that hosts a container-mode match, so a
+                // match running inside it is not muted as if Noble were in the background.
                 const HWND foreground = GetForegroundWindow();
                 DWORD ownerPid = 0;
                 if (foreground) GetWindowThreadProcessId(foreground, &ownerPid);
-                bgMuted = foreground != nullptr && ownerPid != GetCurrentProcessId();
+                bgMuted = foreground != nullptr && ownerPid != GetCurrentProcessId() && !Window::IsForeground(hwnd);
                 if (bgMuted) muted = true;
             }
             ReachAudio::SetMuted(muted);
@@ -7135,20 +7266,13 @@ void FrontEndMenu::RenderOverlayImpl(IDXGISwapChain* swapChain, bool clear) {
                     if (!choice.sessionId.empty()) args += L" -session-id \"" + ToWide(choice.sessionId) + L"\"";
                     if (!choice.sessionToken.empty()) args += L" -session-token \"" + ToWide(choice.sessionToken) + L"\"";
                 }
-                args += L" -container-hwnd " + std::to_wstring(reinterpret_cast<uintptr_t>(hwnd));
                 NOBLE_INFO("FrontEndMenu: launching match inside container window 0x{:X} ({} {})",
                            reinterpret_cast<uintptr_t>(hwnd), choice.mode, choice.map);
-                HANDLE hChild = nullptr;
-                if (Relaunch::StartChildMatch(args, reinterpret_cast<void**>(&hChild))) {
-                    ctx.hMatchProcess = hChild;
-                    ctx.matchRunning = true;
-                    FrontEndMenu::SetMatchRunning(true);
+                if (StartContainerChild(args, ctx)) {
                     done = false;
                     choice.play = false;
                     ReachAudio::StopMusic();
                     ReachAudio::SetMenuMusicEnabled(false);
-                } else {
-                    NOBLE_ERROR("FrontEndMenu: failed to start match process in container");
                 }
             } else {
                 NOBLE_INFO("FrontEndMenu: quit from menu");

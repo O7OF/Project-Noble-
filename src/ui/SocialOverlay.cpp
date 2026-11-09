@@ -162,6 +162,9 @@ void OnChat(const NetworkTransport::ChatMessage& message) {
 }
 
 bool OurWindowHasFocus() {
+    // Container window mode: the launcher window that hosts a match is the foreground one, not this
+    // process's child window, so ask Window::IsForeground() before falling back to the process check.
+    if (Window::IsForeground(Window::ActiveHwnd())) return true;
     HWND foreground = GetForegroundWindow();
     DWORD process = 0;
     if (foreground) GetWindowThreadProcessId(foreground, &process);

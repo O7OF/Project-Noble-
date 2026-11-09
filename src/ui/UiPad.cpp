@@ -1,6 +1,7 @@
 #include "UiPad.hpp"
 
 #include "common/Logger.hpp"
+#include "host/Window.hpp"
 
 #include <imgui.h>
 #include <windows.h>
@@ -54,7 +55,10 @@ bool ReadPhysical(PadState& out) {
 }
 
 // Only the focused window listens, so a second Noble (or a game in front) doesn't move this menu.
+// In container window mode the foreground window belongs to the launcher process, which
+// Window::IsForeground() counts as ours.
 bool ProcessInFront() {
+    if (Window::IsForeground(Window::ActiveHwnd())) return true;
     DWORD pid = 0;
     GetWindowThreadProcessId(GetForegroundWindow(), &pid);
     return pid == GetCurrentProcessId();

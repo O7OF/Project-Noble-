@@ -19,6 +19,19 @@ public:
 
     static Window* Active();
 
+    // Is this window the one the player is looking at and playing in? True when it is the foreground
+    // window and - in container window mode, where a match runs in a WS_CHILD window inside the
+    // launcher's top-level window - when the foreground window is an ancestor of it. GetForegroundWindow()
+    // never returns a WS_CHILD window, so every focus test has to ask this instead of comparing handles.
+    // Any thread.
+    static bool IsForeground(HWND hwnd);
+    // HWND of the Window this process created, or nullptr before Create(). Any thread.
+    static HWND ActiveHwnd();
+    // Container window mode: ask the window's own thread to take the keyboard focus back from the
+    // launcher's input queue (see EnsureContainerFocus). No-op in a normal top-level window. Any thread;
+    // cheap, but callers should not post it every frame.
+    static void RequestFocus();
+
     // Applies a display-mode/window-size change to the live window only. The engine's swap chain is
     // created at the monitor's resolution, so switching windowed <-> borderless needs no restart and
     // no swap-chain resize; Windows scales the same crisp image to the new window.
@@ -68,6 +81,12 @@ private:
     static LRESULT CALLBACK StaticWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
     LRESULT HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 
+    // Container window mode, window thread: join the launcher's input queue (AttachThreadInput) and take
+    // the keyboard focus into the match window. The launcher keeps being the foreground window.
+    void AttachContainerInput();
+    void EnsureContainerFocus();
+    void DetachContainerInput();
+
     std::wstring m_title;
     uint32_t m_width;
     uint32_t m_height;
@@ -76,6 +95,7 @@ private:
     uint32_t m_requestedHeight = 0;
     HWND m_hwnd = nullptr;
     HWND m_containerParentHwnd = nullptr;
+    bool m_containerInputAttached = false;
     HINSTANCE m_hInstance = nullptr;
     bool m_shouldClose = false;
     bool m_borderless = false;

@@ -112,6 +112,41 @@ static LONG WINAPI NobleCrashHandler(EXCEPTION_POINTERS* pExceptionInfo) {
     return EXCEPTION_CONTINUE_SEARCH;
 }
 
+// A C++ exception that escapes (or an explicit std::terminate) never reaches NobleCrashHandler: the CRT
+// answers it with a fail-fast in ucrtbase (0xC0000409, FAST_FAIL 7), which leaves a bare "noble-client.exe
+// stopped working" in Windows and nothing in our log. This logs the exception's what() and a stack with
+// module RVAs (resolvable through noble-client.map) before the CRT kills the process.
+static void NobleTerminateHandler() {
+    spdlog::error("UNHANDLED C++ EXCEPTION: the process is being terminated");
+    if (std::exception_ptr current = std::current_exception()) {
+        try {
+            std::rethrow_exception(current);
+        } catch (const std::exception& e) {
+            spdlog::error("  what(): {}", e.what());
+        } catch (...) {
+            spdlog::error("  what(): (not a std::exception)");
+        }
+    } else {
+        spdlog::error("  std::terminate() was called without a live exception");
+    }
+    void* frames[24] = {};
+    const USHORT count = CaptureStackBackTrace(1, static_cast<DWORD>(std::size(frames)), frames, nullptr);
+    for (USHORT i = 0; i < count; ++i) {
+        const uintptr_t addr = reinterpret_cast<uintptr_t>(frames[i]);
+        HMODULE mod = nullptr;
+        WCHAR path[MAX_PATH] = L"Unknown";
+        uintptr_t rva = 0;
+        if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                               reinterpret_cast<LPCWSTR>(addr), &mod)) {
+            GetModuleFileNameW(mod, path, MAX_PATH);
+            rva = addr - reinterpret_cast<uintptr_t>(mod);
+        }
+        spdlog::error("  at {:02d}: 0x{:X} (+0x{:X}) [{}]", i, addr, rva, std::filesystem::path(path).filename().string());
+    }
+    spdlog::default_logger()->flush();
+    TerminateProcess(GetCurrentProcess(), 3);
+}
+
 // Per-monitor DPI awareness (v2). Without it Windows virtualises every size Noble reads: a 4K display at 200 %
 // scaling reports 1920x1080 from GetSystemMetrics/GetMonitorInfo, so borderless and full screen rendered at 1080p
 // and Windows stretched that up to the display. Must run before any window exists. The linker runs with
@@ -179,6 +214,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     }
 
     SetUnhandledExceptionFilter(&NobleCrashHandler);
+    std::set_terminate(&NobleTerminateHandler);
     DisableProcessWindowsGhosting();
 
     // 1. Initialize logging

@@ -1036,8 +1036,9 @@ const char* FullBodyScene() {
 } // namespace
 
 bool ArmorCustomizer::IsFullBodyCamera() const {
+    // Species and Body (and any row the map has no dedicated camera for) use the whole-body shot; every other
+    // row uses the map's preset camera for the part being edited. There are no camera modes any more.
     if (m_previewSpecies == PlayerSpecies::Elite) return true;   // the Elite scene is a full-body pedestal
-    if (m_cameraMode != 2) return true;                          // ARMORY VIEW and FULL BODY
     return m_focusScene.empty() || m_focusScene == "c_full_spartan" || m_focusScene == "armory";
 }
 
@@ -1092,12 +1093,9 @@ void ArmorCustomizer::UpdateArmoryCamera() const {
         ReachArmory::SetTargetScene("armory_elite");
         return;
     }
-    // Camera scenes in mainmenu_all.map: "armory" (Reach's own 3/4 view), "c_full_spartan" (whole body) and
-    // the per-slot close-ups ("c_helmet", "c_chest", ...). Mode 2 (default) follows the slot being edited.
-    const char* fullBody = FullBodyScene();
-    if (m_cameraMode == 1) ReachArmory::SetTargetScene(fullBody);
-    else if (m_cameraMode == 2) ReachArmory::SetTargetScene(m_focusScene.empty() ? fullBody : m_focusScene.c_str());
-    else ReachArmory::SetTargetScene("armory");
+    // One rule, no camera modes: the whole body while a character-level row is selected (Species, Body),
+    // and the map's preset camera for the row being edited otherwise ("c_helmet", "c_chest", ...).
+    ReachArmory::SetTargetScene(IsFullBodyCamera() ? FullBodyScene() : m_focusScene.c_str());
 }
 
 void ArmorCustomizer::ValidateNameplate() {
@@ -1232,6 +1230,9 @@ void ArmorCustomizer::SyncToReachArmory() const {
     sel.secondaryRgb = colorRgb(secCust, secRgbArr, sCol);
     sel.accentRgb = colorRgb(accCust, accRgbArr, aCol);
     sel.lightsRgb = colorRgb(lgtCust, lgtRgbArr, lCol);
+    sel.primaryCustom = priCust;
+    sel.secondaryCustom = secCust;
+    sel.accentCustom = accCust;
     sel.lightsCustom = lgtCust;
     sel.visorRgb = { SrgbToLinear(vCol.r), SrgbToLinear(vCol.g), SrgbToLinear(vCol.b) };
 
@@ -1745,14 +1746,7 @@ void ArmorCustomizer::RenderCharacterPreview(ID3D11Device* device, ID3D11DeviceC
         (ImGui::IsMouseDragging(ImGuiMouseButton_Left, 0.0f) || ImGui::IsMouseDragging(ImGuiMouseButton_Right, 0.0f))) {
         ReachArmory::AddYawRotation(-ImGui::GetIO().MouseDelta.x * 0.0085f);
     }
-    if (ImGui::IsItemHovered()) {
-        const float wheel = ImGui::GetIO().MouseWheel;
-        if (std::abs(wheel) > 0.01f) {
-            if (wheel > 0.0f) m_cameraMode = 2;
-            else m_cameraMode = (m_cameraMode == 2) ? 1 : 0;
-            UpdateArmoryCamera();
-        }
-    }
+    // The wheel is left alone here: the camera follows the selected slot and there are no modes to cycle.
 }
 
 namespace {
@@ -1865,7 +1859,7 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
                 if (_wcsicmp(argv[i], L"-armory-cycle") == 0) {
                     for (const wchar_t* c = argv[i + 1]; c && *c; ++c) s_cycle.push_back(static_cast<char>(*c));
                 } else if (_wcsicmp(argv[i], L"-armory-cycle-delay") == 0) {
-                    s_cycleDelay = std::clamp<uint64_t>(static_cast<uint64_t>(_wtoi(argv[i + 1])), 300u, 60000u);
+                    s_cycleDelay = std::clamp<uint64_t>(static_cast<uint64_t>(_wtoi(argv[i + 1])), 30u, 60000u);
                 }
             }
             if (argv) LocalFree(argv);
@@ -2266,8 +2260,15 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
             if (!r.index || r.options.empty() || r.index == &speciesInt || r.index == &bodyInt) continue;
             const int v = optionPos(r, *r.index);
             if (r.options[v].locked || r.options[v].forSale) {
+                const int fallback = optionValue(r, 0);
+                if (*r.index == fallback) continue;   // already fallen back: never reset/save in a loop
                 NOBLE_INFO("ArmorCustomizer: {} '{}' isn't unlocked yet; back to '{}'", r.label, r.options[v].name, r.options[0].name);
-                *r.index = optionValue(r, 0);
+                *r.index = fallback;
+                // SyncLegacyFields() restores the visor from m_visorSelection every frame, so the fallback has to
+                // be recorded there too. Missing that made a rank-locked visor reset (and the whole profile save)
+                // every single frame - which re-applied the player profile ~60x a second and crashed the NVIDIA
+                // shader compiler (0xC0000005 in nvgpucomp64.dll) a few seconds after opening the Armory.
+                if (r.index == &m_profile.visorColorIndex) m_visorSelection = m_profile.visorColorIndex;
                 if (r.index == &m_profile.helmetIndex) m_profile.helmetVariantIndex = 0;
                 reset = true;
             }
@@ -2342,11 +2343,6 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
 
     // Keys / d-pad: up/down picks the slot, left/right steps through its options.
     if (!ImGui::GetIO().WantTextInput) {
-        if (ImGui::IsKeyPressed(ImGuiKey_C)) {
-            m_cameraMode = (m_cameraMode + 1) % 3;
-            UpdateArmoryCamera();
-            MenuSounds::Click();
-        }
         if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickDown)) focus((m_focusedRow + 1) % rowCount);
         if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickUp)) focus((m_focusedRow - 1 + rowCount) % rowCount);
         SlotRow& fr = rows[m_focusedRow];
@@ -2809,15 +2805,22 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
     // ---- Try-on: the 3D scene shows the clicked piece that can't be equipped yet; the saved look is unchanged.
     {
         static int s_shownRow = -1, s_shownValue = -1;
+        static ULONGLONG s_lastRefresh = 0;
         int wantRow = -1, wantValue = -1;
         if (s_buyRow >= 0 && s_buyRow < rowCount && rows[s_buyRow].index && s_buyValue >= 0 &&
             s_buyValue < static_cast<int>(rows[s_buyRow].options.size()) && s_buyValue != *rows[s_buyRow].index) {
             wantRow = s_buyRow;
             wantValue = s_buyValue;
         }
-        if (wantRow != s_shownRow || wantValue != s_shownValue) {
+        // Keep the tried-on piece applied. Any other sync (a save, entering another slot, the coalesced push
+        // flush) can put the equipped look back, which is what made a preview look like it unequipped itself
+        // a moment after the click. Re-asserting it is cheap: SyncToReachArmory() does nothing when the
+        // selection it would push is already the pushed one.
+        const bool refresh = wantRow >= 0 && GetTickCount64() - s_lastRefresh >= 400;
+        if (wantRow != s_shownRow || wantValue != s_shownValue || refresh) {
             s_shownRow = wantRow;
             s_shownValue = wantValue;
+            s_lastRefresh = GetTickCount64();
             if (wantRow >= 0) {
                 int* field = rows[wantRow].index;
                 const AppearanceProfile saved = m_profile;
@@ -2835,22 +2838,15 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
         }
     }
 
-    // ---- Over the model: camera toggle badge & controls.
-    const char* cam = m_cameraMode == 2 ? "CLOSE-UP" : m_cameraMode == 1 ? "FULL BODY" : "ARMORY VIEW";
-    const std::string hint = std::string("Camera: ") + cam + "   |   Press C, Click, or Wheel to toggle";
-    const ImVec2 badgePos(previewX + 16.0f * s, origin.y + avail.y - 30.0f * s);
-    const ImVec2 badgeSize(TextW(smallFont, 14.0f * s, hint.c_str()) + 20.0f * s, 24.0f * s);
-    ImGui::SetCursorScreenPos(badgePos);
-    if (ImGui::InvisibleButton("##camera_toggle_btn", badgeSize)) {
-        m_cameraMode = (m_cameraMode + 1) % 3;
-        UpdateArmoryCamera();
-        MenuSounds::Click();
+    // ---- Over the model: how to turn the character around (every camera, close-ups included).
+    {
+        const std::string hint = "Drag or Q / E to rotate";
+        const ImVec2 badgePos(previewX + 16.0f * s, origin.y + avail.y - 30.0f * s);
+        const ImVec2 badgeSize(TextW(smallFont, 14.0f * s, hint.c_str()) + 20.0f * s, 24.0f * s);
+        dl->AddRectFilled(badgePos, ImVec2(badgePos.x + badgeSize.x, badgePos.y + badgeSize.y), IM_COL32(18, 30, 48, 180), 4.0f * s);
+        TextAt(dl, smallFont, 14.0f * s, ImVec2(badgePos.x + 10.0f * s, badgePos.y + 4.0f * s),
+               IM_COL32(200, 220, 240, 220), hint.c_str());
     }
-    const bool camHover = ImGui::IsItemHovered();
-    dl->AddRectFilled(badgePos, ImVec2(badgePos.x + badgeSize.x, badgePos.y + badgeSize.y),
-                      camHover ? IM_COL32(35, 60, 95, 220) : IM_COL32(18, 30, 48, 180), 4.0f * s);
-    TextAt(dl, smallFont, 14.0f * s, ImVec2(badgePos.x + 10.0f * s, badgePos.y + 4.0f * s),
-           camHover ? IM_COL32(255, 255, 255, 255) : IM_COL32(200, 220, 240, 220), hint.c_str());
 }
 
 } // namespace noble

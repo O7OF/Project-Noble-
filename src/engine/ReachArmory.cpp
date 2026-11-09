@@ -5,6 +5,8 @@
 #include <sstream>
 
 #include <windows.h>
+#include <shellapi.h>
+#include <nlohmann/json.hpp>
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -255,6 +257,11 @@ static uint64_t s_bumpAtFrame = 0;       // 0 = none
 static bool s_settlePending = false;
 static uint64_t s_settleDeadline = 0;
 static int32_t s_remadeAtBump = 0;
+// Frames to let the map script finish recreating the biped before another rebuild may be requested. Rapid
+// Armory changes (spam-clicking helmets, buying one after another) used to stack rebuild requests on top of a
+// rebuild in flight, which crashed the engine; changes that arrive meanwhile are coalesced into one rebuild.
+constexpr uint64_t kRebuildQuietFrames = 12;
+static uint64_t s_rebuildReadyFrame = 0;
 
 // The pack map that carries the Armory models and the player_model_customization tag.
 static const std::filesystem::path& ArmoryMapPath() {
@@ -1581,7 +1588,11 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx, const std::strin
     // The Elite pedestal (scene 0x0B, shows_elite) belongs to the Armory only. Outside the Armory the menu's own
     // scene and the Spartan line-up are used, otherwise the Armory's Elite (and its camera) stayed on screen behind
     // every other menu after leaving the Armory.
-    const bool armoryScene = targetSceneIdx >= 0x0A && targetSceneIdx <= 0x14 && targetSceneIdx != 0x0E;
+    // Whole-body Armory cameras (0x0A..0x14) and the per-slot close-ups ("c_helmet", "c_chest", ...), which
+    // live outside that index range: the pedestal turn / model rotation has to work in all of them, so the
+    // character can be turned around whatever the Armory is zoomed in on.
+    const bool closeUpScene = targetSceneName.rfind("c_", 0) == 0 && targetSceneName != "c_full_spartan";
+    const bool armoryScene = (targetSceneIdx >= 0x0A && targetSceneIdx <= 0x14 && targetSceneIdx != 0x0E) || closeUpScene;
     const bool showElite = sel.previewElite && armoryScene;
 
     // 1. Camera Scene Index at GLOBALS[0x24] and shows_elite at GLOBALS[0x26]
@@ -1640,9 +1651,13 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx, const std::strin
 
     const float yawDeg = yawRad * (180.0f / kPi);
     const int32_t turnStep = ((static_cast<int32_t>(std::lround(yawDeg / 5.0f)) % 72) + 72) % 72;
+    // Written every frame, not only when it changes: the menu map's own armory script re-writes these globals
+    // during its tick, and a value we set once was immediately overwritten again - which is why the character
+    // could not be turned with the per-slot close-up cameras (it only twitched by one frame's delta).
     if (s_lastTurnStep.exchange(turnStep) != turnStep) {
-        SafeWriteI32(base + 0x27 * stride, turnStep);
+        NOBLE_DEBUG("ReachArmory: pedestal turn step {}", turnStep);
     }
+    SafeWriteI32(base + 0x27 * stride, turnStep);
 
     if (HMODULE hReach = GetModuleHandleW(L"haloreach.dll")) {
         const uintptr_t rotAddr = reinterpret_cast<uintptr_t>(hReach) + 0xBE5AD8;
@@ -1666,10 +1681,10 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx, const std::strin
         if (targetAngle > kPi) targetAngle -= kTwoPi;
         uint32_t targetBits = 0;
         std::memcpy(&targetBits, &targetAngle, sizeof(float));
-        if (targetBits != s_lastYawBits.load()) {
-            if (SafeWriteU32(rotAddr, targetBits)) {
-                s_lastYawBits.store(targetBits);
-            }
+        // Same as the pedestal: re-assert the model's yaw every frame so the script cannot snap it back while
+        // a close-up camera is up. The cached bits only avoid the log/no-op bookkeeping.
+        if (SafeWriteU32(rotAddr, targetBits)) {
+            s_lastYawBits.store(targetBits);
         }
     }
 
@@ -1700,15 +1715,23 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx, const std::strin
         bumpRebuild("new pieces");
         s_settlePending = !SingleRebuild();
         s_settleDeadline = frameNow + 45;
+        s_rebuildReadyFrame = frameNow + kRebuildQuietFrames;
     } else if (s_settlePending && (remade != s_remadeAtBump || frameNow >= s_settleDeadline)) {
         // Step 3: once the biped has been remade, remake it once more so it shows the pieces just picked.
         s_settlePending = false;
         bumpRebuild("settle");
+        s_rebuildReadyFrame = frameNow + kRebuildQuietFrames;
     }
 
-    // 4. Write 16 (region_string_id, permutation_string_id) pairs to GLOBALS[0x04..0x23] and trigger rebuild
+    // 4. Write 16 (region_string_id, permutation_string_id) pairs to GLOBALS[0x04..0x23] and trigger rebuild.
+    // One rebuild at a time: a request while the map script is still recreating the biped (see kRebuildQuietFrames,
+    // the pending settle and the script's own REMADE counter) is what made rapid changes crash. The generation is
+    // left unapplied in that case, so every change made meanwhile collapses into a single rebuild of the final look.
+    const bool rebuildSettled = (s_remadeAtBump == 0) || (remade != s_remadeAtBump) || (frameNow >= s_settleDeadline);
+    const bool rebuildInFlight = (s_bumpAtFrame != 0) || s_settlePending ||
+                                 (frameNow < s_rebuildReadyFrame) || !rebuildSettled;
     const uint64_t gen = s_selectionGeneration.load();
-    if (gen != s_appliedGeneration) {
+    if (gen != s_appliedGeneration && !rebuildInFlight) {
         s_appliedGeneration = gen;
         s_previewDirty.store(false);
 
@@ -1868,6 +1891,7 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx, const std::strin
                 s_lastPairsBase = base;
                 s_bumpAtFrame = frameNow + 2;
                 s_settlePending = false;
+                s_rebuildReadyFrame = frameNow + 2 + kRebuildQuietFrames;
                 if (showElite) {
                     NOBLE_INFO("ReachArmory: Elite pieces {} / {} / {} / {} / {} / {}, effect {}", sel.eliteHelmet, sel.eliteLeftShoulder,
                                sel.eliteRightShoulder, sel.eliteChest, sel.eliteArms, sel.eliteLegs, sel.eliteArmorEffect);
@@ -1913,9 +1937,82 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx, const std::strin
 
 } // namespace
 
+namespace {
+// The menu process resolves the Armory selection from the saved appearance (palette or wheel colours,
+// visor, pieces); a match process never runs the Armory, so it learns the look from this file. Without it
+// the in-game material sync used the DEFAULT selection, which is what painted every Spartan's visor amber
+// (and the local suit/armour lights with default colours) no matter what the Armory had equipped.
+std::filesystem::path SelectionFilePath() {
+    return s_dataDir.empty() ? std::filesystem::path() : s_dataDir / "userdata" / "armory-selection.json";
+}
+
+void SaveSelectionFile(const ReachArmorySelection& sel) {
+    const std::filesystem::path path = SelectionFilePath();
+    if (path.empty()) return;
+    std::error_code ec;
+    std::filesystem::create_directories(path.parent_path(), ec);
+    nlohmann::json j;
+    j["visor"] = sel.visor;
+    j["primary"] = sel.primaryRgb;
+    j["secondary"] = sel.secondaryRgb;
+    j["accent"] = sel.accentRgb;
+    j["lights"] = sel.lightsRgb;
+    j["visor_rgb"] = sel.visorRgb;
+    j["custom"] = nlohmann::json::array({ sel.primaryCustom, sel.secondaryCustom, sel.accentCustom, sel.lightsCustom });
+    j["primary_index"] = sel.primaryColorIndex;
+    j["secondary_index"] = sel.secondaryColorIndex;
+    j["accent_index"] = sel.accentColorIndex;
+    j["lights_index"] = sel.lightsColorIndex;
+    j["visor_index"] = sel.visorColorIndex;
+    std::ofstream out(std::filesystem::path(path), std::ios::trunc | std::ios::binary);
+    if (!out) return;
+    out << j.dump();
+}
+
+void LoadSelectionFile(ReachArmorySelection& sel) {
+    const std::filesystem::path path = SelectionFilePath();
+    if (path.empty()) return;
+    std::ifstream in(std::filesystem::path(path), std::ios::binary);
+    if (!in) return;
+    nlohmann::json j;
+    try {
+        in >> j;
+        auto rgb = [&](const char* key, std::array<float, 3>& out) {
+            if (!j.contains(key) || !j[key].is_array() || j[key].size() != 3) return;
+            for (int i = 0; i < 3; ++i) out[i] = std::clamp(j[key][i].get<float>(), 0.0f, 4.0f);
+        };
+        rgb("primary", sel.primaryRgb);
+        rgb("secondary", sel.secondaryRgb);
+        rgb("accent", sel.accentRgb);
+        rgb("lights", sel.lightsRgb);
+        rgb("visor_rgb", sel.visorRgb);
+        if (j.contains("visor") && j["visor"].is_string()) sel.visor = j["visor"].get<std::string>();
+        if (j.contains("custom") && j["custom"].is_array() && j["custom"].size() == 4) {
+            sel.primaryCustom = j["custom"][0].get<bool>();
+            sel.secondaryCustom = j["custom"][1].get<bool>();
+            sel.accentCustom = j["custom"][2].get<bool>();
+            sel.lightsCustom = j["custom"][3].get<bool>();
+        }
+        if (j.contains("primary_index")) sel.primaryColorIndex = j["primary_index"].get<int>();
+        if (j.contains("secondary_index")) sel.secondaryColorIndex = j["secondary_index"].get<int>();
+        if (j.contains("accent_index")) sel.accentColorIndex = j["accent_index"].get<int>();
+        if (j.contains("lights_index")) sel.lightsColorIndex = j["lights_index"].get<int>();
+        if (j.contains("visor_index")) sel.visorColorIndex = j["visor_index"].get<int>();
+        NOBLE_INFO("ReachArmory: loaded the saved Armory colours (visor '{}', custom {}{}{}{})", sel.visor,
+                   sel.primaryCustom, sel.secondaryCustom, sel.accentCustom, sel.lightsCustom);
+    } catch (const nlohmann::json::exception&) {
+        // A truncated or hand-edited file must never take the game down: keep the defaults.
+    }
+}
+} // namespace
+
 void ReachArmory::Initialize(const std::filesystem::path& dataDir) {
     s_dataDir = dataDir;
     EnsureStringIdsLoaded();
+    {
+        ArmoryLock lock(s_sceneMutex);
+        LoadSelectionFile(s_selection);
+    }
 }
 
 bool ReachArmory::HasArmoryMap() {
@@ -1944,6 +2041,7 @@ void ReachArmory::SetMenuMode(bool menuMode) {
         s_mainScene.store(-1);
         s_lastRemade.store(-1);
         s_appliedGeneration = 0;
+        s_rebuildReadyFrame = 0;
         s_lastPairs.clear();
         s_livePairs.clear();
         s_lastPairsBase = 0;
@@ -1997,6 +2095,7 @@ void ReachArmory::SetSelection(const ReachArmorySelection& sel) {
     }
     if (pieceChanged) s_previewDirty.store(true);
     s_selectionGeneration.fetch_add(1);
+    SaveSelectionFile(sel);   // a match process reads this instead of running the Armory
 }
 
 ReachArmorySelection ReachArmory::GetSelection() {
@@ -2143,7 +2242,19 @@ void ReachArmory::NotifyEngineTick() {
         permPairsGen);
 }
 
-static void SyncMatchLiveBipedsSEH(uintptr_t base, const float* const wantSlots[4]) {
+// haloreach+0x53EF8 = player_mapping_get_unit_by_output_user(0): the local player's unit object datum.
+// Resolved once, outside the __try block (a function containing __try may not need object unwinding, and a
+// function-local static with a dynamic initialiser does).
+static uint32_t LocalUnitDatum(uintptr_t base) {
+    static uint32_t s_datum = 0xFFFFFFFFu;
+    if (base && s_datum == 0xFFFFFFFFu) {
+        using GetLocalUnitFn = int32_t(__fastcall*)(int32_t);
+        s_datum = static_cast<uint32_t>(reinterpret_cast<GetLocalUnitFn>(base + 0x53EF8)(0));
+    }
+    return s_datum;
+}
+
+static void SyncMatchLiveBipedsSEH(uintptr_t base, const float* const wantSlots[4], uint32_t localUnitDatum) {
     __try {
         const uint32_t tlsIdx = *reinterpret_cast<const uint32_t*>(base + 0xC17B18);
         const uintptr_t tlsArray = *reinterpret_cast<const uintptr_t*>(__readgsqword(0x58) + static_cast<uintptr_t>(tlsIdx) * 8u);
@@ -2167,11 +2278,12 @@ static void SyncMatchLiveBipedsSEH(uintptr_t base, const float* const wantSlots[
             uint8_t* objPtr = *reinterpret_cast<uint8_t* const*>(entry + 0x10);
             if (!objPtr) continue;
 
-            // Only update local player bipeds! (objPtr + 0x11C contains the controlling player datum)
-            const uint32_t playerDatum = *reinterpret_cast<const uint32_t*>(objPtr + 0x11C);
-            if (playerDatum == 0xFFFFFFFFu) continue;
-
             const uint32_t objectDatum = (static_cast<uint32_t>(salt) << 16) | static_cast<uint32_t>(i);
+            // Only the LOCAL player's own biped (haloreach+0x53EF8 = player_mapping_get_unit_by_output_user(0)).
+            // Every other player's colours are replicated by the engine from that player's appearance record;
+            // writing the local colours onto every player-controlled biped is what made every Spartan in a
+            // match - including everyone else - look like the local player.
+            if (localUnitDatum == 0xFFFFFFFFu || objectDatum != localUnitDatum) continue;
             const int16_t ccSize = *reinterpret_cast<const int16_t*>(objPtr + 0x188);
             const int16_t ccOffset = *reinterpret_cast<const int16_t*>(objPtr + 0x18A);
             if (ccSize >= 24 && ccOffset > 0 && ccOffset < 0x2000) {
@@ -2196,13 +2308,39 @@ static void SyncMatchLiveBipedsSEH(uintptr_t base, const float* const wantSlots[
     }
 }
 
+// Campaign missions put AI Spartans (Noble Team, allied troopers) in the map next to the player. The
+// shader rewrite below is map-wide: every 'rmsh' Spartan material in the loaded map receives the local
+// player's undersuit, armour lights and visor colour, which painted the player's Armory colours onto every
+// NPC Spartan as well. A campaign keeps the stock material constants; there the player's own biped still
+// gets its colours from the profile record the engine applies, exactly as it did before this sync existed.
+static bool CampaignKeepsStockMaterial() {
+    static const bool s_campaign = [] {
+        bool campaign = false;
+        int argc = 0;
+        LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+        for (int i = 1; argv && i + 1 < argc; ++i) {
+            if (_wcsicmp(argv[i], L"-mode") == 0 && _wcsicmp(argv[i + 1], L"campaign") == 0) campaign = true;
+        }
+        if (argv) LocalFree(argv);
+        return campaign;
+    }();
+    return s_campaign;
+}
+
 void ReachArmory::SyncMatchLiveBipeds() {
+    if (CampaignKeepsStockMaterial()) return;
     HMODULE hReach = GetModuleHandleW(L"haloreach.dll");
     if (!hReach) return;
     const uintptr_t base = reinterpret_cast<uintptr_t>(hReach);
 
-    // Apply live visor reflection and suit constants to active map shader tags ('rmsh')
     const ReachArmorySelection sel = GetSelection();
+    // Palette colours (and the 30-visor index) travel in the player's appearance record, and the engine
+    // renders every player's own choice from it - other players' colours and visors included. Only the
+    // Armory's wheel colours need forcing into the map's materials, so leave everything untouched for a
+    // palette look: that is what keeps other Spartans' colours as they chose them.
+    if (!sel.primaryCustom && !sel.secondaryCustom && !sel.accentCustom && !sel.lightsCustom) return;
+
+    // Apply live visor reflection and suit constants to active map shader tags ('rmsh')
     const float visFloats[3] = {
         (sel.visor == "default" || sel.visor.empty()) ? 0.78f : sel.visorRgb[0],
         (sel.visor == "default" || sel.visor.empty()) ? 0.63f : sel.visorRgb[1],
@@ -2231,7 +2369,7 @@ void ReachArmory::SyncMatchLiveBipeds() {
     const float slot3[3] = { visFloats[0], visFloats[1], visFloats[2] };
     const float* const wantSlots[4] = { slot0, slot1, slot2, slot3 };
 
-    SyncMatchLiveBipedsSEH(base, wantSlots);
+    SyncMatchLiveBipedsSEH(base, wantSlots, LocalUnitDatum(base));
 }
 
 std::vector<std::string> ReachArmory::MissingPermutationsFor(const std::string& list, const std::string& item) {
