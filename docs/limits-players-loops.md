@@ -43,7 +43,7 @@ python -I tools/limits/gen_bounds.py "<MCC>\haloreach\haloreach.dll" docs/limits
 | Where | Table | Needed |
 |---|---|---|
 | 0xD6B8 | 16 × 0x20 player list at rbp-0x80, passed to the host interface `[0xC1A100]` vtable +0xF0 | find the receiver (Noble or engine), then a 32-entry list |
-| 0x390DB0 / 0x38DA74 | 16 qword pointers at rbp+0x150 | bigger frame or a Noble buffer |
+| 0x390DB0 / 0x38DA74 | 16 qword pointers at rbp+0x150 | **done (C12-L step 3, 32-player mode):** frame +0x100, table moved to rbp+0x1F8 (32 entries), own unwind copy (block shared with 0x35B1E4), 0x38DAE6 -> 0x20. The 0x390DB0 bounds stay 16 until its 6 untraced imuls (0x390E85/F13/F44/FF5, 0x391342/3B2) are caved |
 | 0x39C6B4 | 17 × 0xC at session +0x4440 | shadow copy (same delta) |
 | ctor 0x3CF864 | 17 × 0xC at session +0x61574 (ctor 0x10062C) | find users, shadow copy |
 | 0x39DD4C ← 0x396828 | 16 × 0x180 in the caller's frame | caller frame +0x1800 |

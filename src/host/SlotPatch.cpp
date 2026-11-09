@@ -55,6 +55,36 @@ const Bound kBounds[] = {
 #include "SlotBoundsTable.inc"
 };
 
+// C12-L step 3, bounds review #5/#7: 0x390DB0 keeps 16 qword player-name pointers at rbp+0x150, directly below a
+// 16-word name buffer and the GS cookie, so the table cannot grow in place. The frame grows by 0x100 (rbp moves
+// with rsp, so every other local keeps its offset and the cookie stays at frame+0x2F0) and the table moves to the
+// new space at rbp+0x1F8 (32 x 8 = 0x100 of the 0x108 free bytes). Its only consumer, 0x38DA74 (called twice from
+// 0x390DB0), scans 32 entries. The loop bounds inside 0x390DB0 stay 16 until its six untraced imul sites are caved.
+const Bound kFrame390[] = {
+    { 0x390DC8, 7, { 0x48, 0x8D, 0xA8, 0xD8, 0xFD, 0xFF, 0xFF }, { 0x48, 0x8D, 0xA8, 0xD8, 0xFC, 0xFF, 0xFF } },  // lea rbp,[rax-0x228] -> -0x328
+    { 0x390DCF, 7, { 0x48, 0x81, 0xEC, 0x00, 0x03, 0x00, 0x00 }, { 0x48, 0x81, 0xEC, 0x00, 0x04, 0x00, 0x00 } },  // sub rsp,0x300 -> 0x400
+    { 0x390EA9, 7, { 0x48, 0x8D, 0x8D, 0x50, 0x01, 0x00, 0x00 }, { 0x48, 0x8D, 0x8D, 0xF8, 0x01, 0x00, 0x00 } },  // lea rcx,[rbp+0x150] (memset)
+    { 0x390EB0, 6, { 0x41, 0xB8, 0x80, 0x00, 0x00, 0x00 }, { 0x41, 0xB8, 0x00, 0x01, 0x00, 0x00 } },              // mov r8d,0x80 -> 0x100
+    { 0x390F55, 8, { 0x48, 0x89, 0x84, 0xF5, 0x50, 0x01, 0x00, 0x00 }, { 0x48, 0x89, 0x84, 0xF5, 0xF8, 0x01, 0x00, 0x00 } },
+    { 0x39107B, 8, { 0x4A, 0x8B, 0x8C, 0xD5, 0x50, 0x01, 0x00, 0x00 }, { 0x4A, 0x8B, 0x8C, 0xD5, 0xF8, 0x01, 0x00, 0x00 } },
+    { 0x391203, 7, { 0x4C, 0x8D, 0x8D, 0x50, 0x01, 0x00, 0x00 }, { 0x4C, 0x8D, 0x8D, 0xF8, 0x01, 0x00, 0x00 } },  // lea r9 -> 0x38DA74
+    { 0x391231, 8, { 0x4C, 0x89, 0xA4, 0xCD, 0x50, 0x01, 0x00, 0x00 }, { 0x4C, 0x89, 0xA4, 0xCD, 0xF8, 0x01, 0x00, 0x00 } },
+    { 0x391332, 8, { 0x4A, 0x8B, 0x94, 0xD5, 0x50, 0x01, 0x00, 0x00 }, { 0x4A, 0x8B, 0x94, 0xD5, 0xF8, 0x01, 0x00, 0x00 } },
+    { 0x3913FB, 7, { 0x4C, 0x8D, 0x8D, 0x50, 0x01, 0x00, 0x00 }, { 0x4C, 0x8D, 0x8D, 0xF8, 0x01, 0x00, 0x00 } },  // lea r9 -> 0x38DA74
+    { 0x39140A, 8, { 0x4A, 0x89, 0xBC, 0xED, 0x50, 0x01, 0x00, 0x00 }, { 0x4A, 0x89, 0xBC, 0xED, 0xF8, 0x01, 0x00, 0x00 } },
+    { 0x391586, 8, { 0x4C, 0x8D, 0x9C, 0x24, 0x00, 0x03, 0x00, 0x00 }, { 0x4C, 0x8D, 0x9C, 0x24, 0x00, 0x04, 0x00, 0x00 } },  // epilogue lea r11,[rsp+0x300]
+    { 0x38DAE6, 4, { 0x48, 0x83, 0xF9, 0x10 }, { 0x48, 0x83, 0xF9, 0x20 } },  // 0x38DA74: cmp rcx,0x10 -> 0x20 (review #5)
+};
+// 0x390DB0's unwind info (shared with 0x35B1E4, so it is copied, not edited): UWOP_ALLOC_LARGE 0x300 and the
+// rbx/rsi/rdi save slots 0x338/0x340/0x348 move by 0x100. GS handler data (cookie at frame+0x2F0) is unchanged.
+constexpr uint32_t kFrame390Begin = 0x390DB0, kFrame390End = 0x3915A7;
+constexpr uint8_t kFrame390Unwind[40] = {
+    0x19, 0x37, 0x0D, 0x00, 0x26, 0x74, 0x69, 0x00, 0x26, 0x64, 0x68, 0x00, 0x26, 0x34, 0x67, 0x00,
+    0x26, 0x01, 0x60, 0x00, 0x18, 0xF0, 0x16, 0xE0, 0x14, 0xD0, 0x12, 0xC0, 0x10, 0x50, 0x00, 0x00,
+    0x0E, 0x37, 0x79, 0x00, 0xF0, 0x02, 0x00, 0x00 };
+constexpr struct { uint8_t at, from, to; } kFrame390UnwindEdits[] = {
+    { 6, 0x69, 0x89 }, { 10, 0x68, 0x88 }, { 14, 0x67, 0x87 }, { 18, 0x60, 0x80 } };
+
 constexpr uintptr_t kSessionsRva = 0x2B07418;   // 4 static session membership objects
 constexpr uintptr_t kSessionStride = 0x61668;
 constexpr int kSessions = 4;
@@ -84,6 +114,56 @@ void* AllocateNear(uintptr_t target, size_t size, DWORD protect) {
         }
     }
     return nullptr;
+}
+
+void WriteCode(uintptr_t at, const void* bytes, size_t n);
+
+// UNWIND_INFO is addressed by a 32-bit RVA from the image base, so a copy has to live above the image, within 4 GB.
+void* AllocateAbove(uintptr_t base, size_t size) {
+    const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(base + reinterpret_cast<const IMAGE_DOS_HEADER*>(base)->e_lfanew);
+    SYSTEM_INFO si{};
+    GetSystemInfo(&si);
+    const uintptr_t step = si.dwAllocationGranularity;
+    const uintptr_t first = (base + nt->OptionalHeader.SizeOfImage + step - 1) & ~(step - 1);
+    for (uintptr_t at = first; at + size - base < 0xFFFF0000ull; at += step)
+        if (void* p = VirtualAlloc(reinterpret_cast<void*>(at), size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE)) return p;
+    return nullptr;
+}
+
+// The loaded engine's own function-table entry for 0x390DB0 (V16/Full carry their own .pdata, so it is looked up,
+// not taken from a stock file offset). nullptr when it is not the expected entry and unwind block.
+RUNTIME_FUNCTION* Frame390Entry(uintptr_t base) {
+    DWORD64 imageBase = 0;
+    auto* rf = RtlLookupFunctionEntry(base + kFrame390Begin, &imageBase, nullptr);
+    if (!rf || imageBase != base || rf->BeginAddress != kFrame390Begin || rf->EndAddress != kFrame390End) return nullptr;
+    if (std::memcmp(reinterpret_cast<void*>(base + rf->UnwindData), kFrame390Unwind, sizeof(kFrame390Unwind)) != 0) return nullptr;
+    return rf;
+}
+
+bool Frame390Matches(uintptr_t base) {
+    for (const Bound& b : kFrame390)
+        if (std::memcmp(reinterpret_cast<void*>(base + b.rva), b.original, b.length) != 0) {
+            NOBLE_WARN("SlotPatch: 0x390DB0 frame code at +0x{:X} does not match", b.rva);
+            return false;
+        }
+    if (!Frame390Entry(base)) { NOBLE_WARN("SlotPatch: 0x390DB0 unwind entry does not match"); return false; }
+    return true;
+}
+
+// Call only after Frame390Matches. The unwind copy goes in first, so a stack walk never sees the grown code with
+// the old frame size (Install runs before the engine's first frame, so 0x390DB0 is not on any stack).
+bool ApplyFrame390(uintptr_t base, void* unwindCopy) {
+    RUNTIME_FUNCTION* rf = Frame390Entry(base);
+    if (!rf || !unwindCopy) return false;
+    auto* u = static_cast<uint8_t*>(unwindCopy);
+    std::memcpy(u, kFrame390Unwind, sizeof(kFrame390Unwind));
+    for (const auto& e : kFrame390UnwindEdits) u[e.at] = e.to;
+    DWORD old = 0;
+    VirtualProtect(u, sizeof(kFrame390Unwind), PAGE_READONLY, &old);
+    const auto rva = static_cast<DWORD>(reinterpret_cast<uintptr_t>(u) - base);
+    WriteCode(reinterpret_cast<uintptr_t>(&rf->UnwindData), &rva, sizeof(rva));
+    for (const Bound& b : kFrame390) WriteCode(base + b.rva, b.patched, b.length);
+    return true;
 }
 
 bool Requested() {
@@ -175,6 +255,7 @@ void Install(HMODULE engine, bool extendedProfile) {
                 players32 = false;
             }
         }
+        if (players32 && !Frame390Matches(base)) players32 = false;
     }
     const uintptr_t sessions = base + kSessionsRva;
     // Shadow objects: same stride as the real ones, so shadow(obj) = obj + delta for all four.
@@ -183,10 +264,12 @@ void Install(HMODULE engine, bool extendedProfile) {
     for (const Site& s : kSites) caveBytes += Rounded(s.caveLength);
     if (players32) for (const Step& s : kSteps) caveBytes += Rounded(s.caveLength);
     auto* caves = static_cast<uint8_t*>(AllocateNear(base, caveBytes, PAGE_READWRITE));
-    if (!shadow || !caves) {
+    void* unwindCopy = players32 ? AllocateAbove(base, sizeof(kFrame390Unwind)) : nullptr;
+    if (!shadow || !caves || (players32 && !unwindCopy)) {
         NOBLE_ERROR("SlotPatch: could not allocate memory near the engine; nothing patched");
         if (shadow) VirtualFree(shadow, 0, MEM_RELEASE);
         if (caves) VirtualFree(caves, 0, MEM_RELEASE);
+        if (unwindCopy) VirtualFree(unwindCopy, 0, MEM_RELEASE);
         return;
     }
     InitShadowRecords(base, shadow, players32);
@@ -223,14 +306,15 @@ void Install(HMODULE engine, bool extendedProfile) {
         cave = stepCaves;
         for (const Step& s : kSteps) { JumpTo(base + s.rva, cave); cave += Rounded(s.caveLength); }
         for (const Bound& b : kBounds) WriteCode(base + b.rva, b.patched, b.length);
+        ApplyFrame390(base, unwindCopy);   // checked above (Frame390Matches); cannot fail here
     }
     FlushInstructionCache(GetCurrentProcess(), reinterpret_cast<void*>(base), 0x1000000);
     NOBLE_INFO("SlotPatch: {} slot address sites redirected (players >= 16, peers >= 17 -> shadow sessions at {:p}, "
                "delta 0x{:X})", std::size(kSites), static_cast<void*>(shadow), static_cast<uint64_t>(delta));
     if (players32)
-        NOBLE_WARN("SlotPatch: 32-player mode (dev): {} step loops, {} loop bounds raised to 32; tables listed in "
-                   "docs/limits-players-loops.md are still 16/17 and the players pool is not raised here",
-                   std::size(kSteps), std::size(kBounds));
+        NOBLE_WARN("SlotPatch: 32-player mode (dev): {} step loops, {} loop bounds raised to 32, 0x390DB0 frame +0x100 "
+                   "(32-entry name table); other tables in docs/limits-players-loops.md are still 16/17 and the "
+                   "players pool is not raised here", std::size(kSteps), std::size(kBounds));
     else
         NOBLE_INFO("SlotPatch: 16-player mode; inert until -slot-players 32");
 }
