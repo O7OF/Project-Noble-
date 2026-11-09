@@ -103,3 +103,37 @@ players 0x1740 / 0x3950 (record 0xB0), peers 0x60 / 0x2270 (record 0x158). Check
   block copy/clear (memcpy/memset of 0x4710/0x2210-sized blocks) and give each copy its own shadow, keyed by address;
   or (b) make the caves base-aware (static sessions -> shadow, anything else -> a per-copy side buffer). Either way it
   is the "whole-block copies" item, and it gates #32, #38, #45, #47, #51-57 and the network encoding.
+
+## Membership block copies/clears: scope count (2026-11-09, plan (b) + copy-site propagation)
+Search: every memcpy (0x794276) / memset (0x78932A) / `rep movs|stos` / inlined movups copy loop whose size is a
+membership block or slot-array size (0x4710 whole block, 0x2210 / 0x220C half, 0x16D8 peer array, 0xB00 player
+array, 0x2550 derived object). `rep stos` in 0x380000-0x460000: all <= 0x22 dwords (none). No inlined copy loops.
+Half-block layout: half A = session+0x38 (block+8), half B = session+0x2248; peers at half+0x28, players at half+0x1708.
+
+| # | Site | Function | What | Source -> destination |
+|---|---|---|---|---|
+| 1 | 0x39C4D5 | 0x39C484 | memcpy 0x4710 (whole block) | caller's block (stack arg of 0x391F0C) -> static session+0x30 |
+| 2 | 0x39C4F3 | 0x39C484 | memset 0x2210 | clears half B of the destination (dst+0x2218) |
+| 3 | 0x39C71A | 0x39C6B4 | memset 0x4710 | membership reset (block) |
+| 4 | 0x39C7C4 | 0x39C7AC | memset 0x220C | half-B reset (block+0x221C) |
+| 5 | 0x396A6F | 0x396828 | memcpy 0x2210 | static half A (session+0x38) -> stack copy S2 (rbp+0x2140) |
+| 6 | 0x396A7F | 0x396828 | memcpy 0x2210 | rbx (half B) -> stack copy S1 (rsp+0x30) |
+| 7 | 0x396CBE | 0x396828 | memcpy 0x2210 | static half A -> static half B, same session |
+| 8 | 0x16FEA9 | 0x16FE2C | memset 0x16D8 | whole peer array clear |
+| c | 0x396B3F | 0x396828 | memcmp (0x794270) 0x2210 | S2 vs S1 change test: must also compare slots 16-31 |
+
+**8 copy/clear sites + 1 compare.** Limits of the search: copies whose size comes from a register or argument are
+not found by immediate; 0x39C484 has one caller (0x3920AC), so it is not a generic copier.
+
+**Flagged (field-by-field fills, no whole-block copy into them):**
+- The SOURCE of #1: 0x391F0C passes a caller-owned block (stack argument [rsp+0xD0]); it is most likely filled by the
+  network decode field by field. That decode is the network-encoding item and needs its own handling.
+- 0x39DD4C fills the two 0x2550 objects in 0x396828's frame per peer (17 x 0x180) after memset; derived layout, not
+  the membership layout (table #32).
+- 0x39FCC3: per-record 0x80-byte copy of one player record into a non-membership buffer (rbx); per-slot, covered by
+  whatever cave serves its imul (0x39FCAE).
+
+**Design snag for base-aware caves:** the imul caves run at `imul dst, idx, R`, where only the index is known; the
+base register is added later, at the memory operand. A range check on the base needs either (1) the base register
+per site (the use instruction after each imul), or (2) moving the redirect from the imul to the memory-use
+instruction. Either way each of the 67 existing sites (and the new ones) needs its base register recorded.
