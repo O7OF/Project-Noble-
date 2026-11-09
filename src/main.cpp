@@ -47,6 +47,7 @@
 #include "hooks/LobbyPatches.hpp"
 #include "hooks/ForgePatches.hpp"
 #include "hooks/EnginePatches.hpp"
+#include <nlohmann/json.hpp>
 
 #include <windows.h>
 #include <shellapi.h>
@@ -755,6 +756,21 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 
     // Initialize Shared Tag Cache for cross-map AI spawning (Approach 1)
     noble::SharedTagCache::Initialize(loader->GetModuleHandle(), userStoragePath, reachInstall->workshopDirectory, reachInstall->reachDirectory);
+
+    // Wire guest-to-host spawn forwarder to prevent duplicate local spawning in multiplayer
+    noble::SharedTagCache::SetSpawnForwarder([](uint32_t datumIndex, const std::string& tagPath) -> bool {
+        if (noble::NetworkTransport::Get().IsActive() && !noble::NetworkTransport::Get().IsHost()) {
+            NOBLE_INFO("SharedTagCache: Forwarding guest spawn request for datum 0x{:X} '{}' to match host.", datumIndex, tagPath);
+            nlohmann::json j = {
+                {"type", "spawn_request"},
+                {"datum", datumIndex},
+                {"tagPath", tagPath}
+            };
+            noble::NetworkTransport::Get().SendLobbyControlJson(j.dump());
+            return true;
+        }
+        return false;
+    });
 
 #if defined(NOBLE_DEV_BUILD)
     // Initialize Developer Cheats & Mod Menu engine hooks (Dev builds only)

@@ -1,6 +1,8 @@
 #include "NetworkTransport.hpp"
 #include <nlohmann/json.hpp>
 #include "common/Logger.hpp"
+#include "engine/SharedTagCache.hpp"
+#include "engine/DevCheats.hpp"
 
 #include <windows.h>
 #include <winhttp.h>
@@ -786,6 +788,25 @@ void NetworkTransport::RelayWorkerThread(std::string relayUrl, std::string sessi
                                 }
                                 if (cb) {
                                     cb(reason);
+                                }
+                            } else if (type == "spawn_request") {
+                                if (m_isHost) {
+                                    uint32_t datum = j.value("datum", 0xFFFFFFFF);
+                                    std::string tagPath = j.value("tagPath", "");
+                                    NOBLE_INFO("NetworkTransport: [HOST] Received guest spawn_request for datum 0x{:X} '{}'", datum, tagPath);
+                                    SharedTagCache::QueueSpawn(datum, tagPath);
+                                }
+                            } else if (type == "dev_spawn") {
+                                if (m_isHost) {
+#if defined(NOBLE_DEV_BUILD)
+                                    std::string name = j.value("name", "");
+                                    std::string cat = j.value("category", "");
+                                    std::string tagPath = j.value("tagPath", "");
+                                    uint32_t tagIndex = j.value("tagIndex", 0xFFFFFFFF);
+                                    bool give = j.value("give", false);
+                                    NOBLE_INFO("NetworkTransport: [HOST] Received guest dev_spawn for '{}' ({})", name, cat);
+                                    DevCheats::QueueItemAction(name, cat, tagPath, tagIndex, give);
+#endif
                                 }
                             }
                         } catch (...) {}

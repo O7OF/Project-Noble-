@@ -442,6 +442,11 @@ bool SharedTagCache::InjectScenarioPalette(uint8_t* activeTagTableMemory) {
 static std::mutex s_spawnMutex;
 static noble::SharedTagCache::SpawnRequest s_pendingSpawn;
 static std::atomic<int> s_lastSpawnStatus{0};
+static noble::SharedTagCache::SpawnForwardFn s_spawnForwarder = nullptr;
+
+void SharedTagCache::SetSpawnForwarder(SpawnForwardFn fn) {
+    s_spawnForwarder = fn;
+}
 
 void SharedTagCache::QueueSpawn(uint32_t datumIndex, const std::string& tagPath) {
     std::lock_guard<std::mutex> lock(s_spawnMutex);
@@ -520,6 +525,14 @@ bool SharedTagCache::ProcessPendingSpawn() {
         return false;
     }
 
+    // In an active multiplayer match, only the host should execute simulation spawns.
+    // If a forwarder callback is registered and accepts the request (e.g. forwarding to host),
+    // skip local execution so the host spawns authoritatively and replicates over the wire.
+    if (s_spawnForwarder && s_spawnForwarder(req.datumIndex, req.tagPath)) {
+        s_lastSpawnStatus.store(1);
+        return true;
+    }
+
     NOBLE_INFO("SharedTagCache: Processing simulation spawn for '{}' (datum: 0x{:X})", req.tagPath, req.datumIndex);
 
     uint32_t datum = req.datumIndex;
@@ -579,20 +592,22 @@ bool SharedTagCache::ProcessPendingSpawn() {
     params.posZ = spawnPos[2];
     params.scale = 1.0f;
 
-    void* pCreate = reinterpret_cast<void*>(s_baseAddress + 0x7311B8);
     int64_t result = -1;
-    if (pCreate) {
-        result = SafeCallObjectCreate(pCreate, &params);
-        NOBLE_INFO("SharedTagCache: Simulation object_create_from_params returned 0x{:X}", result);
-    }
 
-    // Also call Forge spawn routine at 0x692C5C to attach into player's Forge beam
+    // Prefer Forge spawn routine at 0x692C5C to attach directly into player's Forge beam
     void* pSpawn = reinterpret_cast<void*>(s_baseAddress + 0x692C5C);
     if (pSpawn) {
-        int64_t forgeResult = SafeCallForgeSpawn(pSpawn, datum);
-        NOBLE_INFO("SharedTagCache: Simulation forge_spawn_object returned 0x{:X}", forgeResult);
-        if (result < 0 && forgeResult >= 0) {
-            result = forgeResult;
+        result = SafeCallForgeSpawn(pSpawn, datum);
+        NOBLE_INFO("SharedTagCache: Simulation forge_spawn_object returned 0x{:X}", result);
+    }
+
+    // Only if forge_spawn_object failed or is not available (e.g. Campaign/Custom Games), fall back to object_create_from_params.
+    // Crucial: NEVER call both back-to-back, which previously spawned a duplicate/cloned object!
+    if (result < 0) {
+        void* pCreate = reinterpret_cast<void*>(s_baseAddress + 0x7311B8);
+        if (pCreate) {
+            result = SafeCallObjectCreate(pCreate, &params);
+            NOBLE_INFO("SharedTagCache: Simulation object_create_from_params fallback returned 0x{:X}", result);
         }
     }
 

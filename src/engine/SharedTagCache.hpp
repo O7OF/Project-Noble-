@@ -49,6 +49,10 @@ public:
     static bool ProcessPendingSpawn();
     static int GetLastSpawnStatus(); // 0 = idle/pending, 1 = success, -1 = failed
 
+    // Custom forwarding callback (e.g. forwarding guest spawn request to host in multiplayer)
+    using SpawnForwardFn = bool(*)(uint32_t datumIndex, const std::string& tagPath);
+    static void SetSpawnForwarder(SpawnForwardFn fn);
+
     // Spawns an object from the donor palette into the world
     static bool SpawnObject(uint32_t datumIndex, const std::string& tagPath);
 
