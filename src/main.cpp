@@ -860,6 +860,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     noble::ForgePatches::Apply(loader->GetModuleHandle());
 
     // Initialize Shared Tag Cache for cross-map AI spawning (Approach 1)
+    // The donor AI cache mounts a whole campaign map; never the one this launch is about to load, or that map's
+    // load crawls and stalls (ONI: Sword Base = m20, which was also the hard-coded donor).
+    noble::SharedTagCache::SetAvoidMap(launchMap);
     noble::SharedTagCache::Initialize(loader->GetModuleHandle(), userStoragePath, reachInstall->workshopDirectory, reachInstall->reachDirectory);
 
     // Wire guest-to-host spawn forwarder to prevent duplicate local spawning in multiplayer

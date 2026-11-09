@@ -69,6 +69,22 @@ void* SharedTagCache::ResolveTag([[maybe_unused]] uint32_t groupTag, uint32_t da
     return nullptr;
 }
 
+static std::string s_avoidMapStem;   // scenario the running launch is about to load
+
+void SharedTagCache::SetAvoidMap(const std::string& scenarioStem) {
+    s_avoidMapStem.clear();
+    for (const char c : scenarioStem) s_avoidMapStem.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+    if (!s_avoidMapStem.empty()) NOBLE_INFO("SharedTagCache: donor map will avoid '{}'", s_avoidMapStem);
+}
+
+// True when this file is the scenario being launched (m20.map when ONI: Sword Base is loading).
+static bool IsAvoidedDonor(const std::filesystem::path& candidate) {
+    if (s_avoidMapStem.empty()) return false;
+    std::string stem = candidate.stem().string();
+    for (char& c : stem) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return stem == s_avoidMapStem;
+}
+
 bool SharedTagCache::DiscoverDonorMap(const std::filesystem::path& dataDir, [[maybe_unused]] const std::filesystem::path& workshopDir, const std::filesystem::path& reachDir) {
     std::vector<std::filesystem::path> searchCandidates;
 
@@ -89,6 +105,10 @@ bool SharedTagCache::DiscoverDonorMap(const std::filesystem::path& dataDir, [[ma
 
     for (const auto& candidate : searchCandidates) {
         std::error_code ec;
+        if (IsAvoidedDonor(candidate)) {
+            NOBLE_INFO("SharedTagCache: skipping donor candidate '{}' - it is the map being launched", candidate.string());
+            continue;
+        }
         if (std::filesystem::is_regular_file(candidate, ec)) {
             s_donorMapPath = std::filesystem::absolute(candidate, ec);
             NOBLE_INFO("SharedTagCache: Discovered donor AI map at '{}'", s_donorMapPath.string());
@@ -102,7 +122,7 @@ bool SharedTagCache::DiscoverDonorMap(const std::filesystem::path& dataDir, [[ma
         for (const auto& entry : std::filesystem::recursive_directory_iterator(workshopDir, ec)) {
             if (entry.is_regular_file()) {
                 std::string filename = entry.path().filename().string();
-                if (filename == "m20.map") {
+                if (filename == "m20.map" && !IsAvoidedDonor(entry.path())) {
                     s_donorMapPath = std::filesystem::absolute(entry.path(), ec);
                     NOBLE_INFO("SharedTagCache: Discovered donor AI map via scan at '{}'", s_donorMapPath.string());
                     return true;

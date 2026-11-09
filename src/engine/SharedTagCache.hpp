@@ -23,6 +23,10 @@ class SharedTagCache {
 public:
     // Discovers and mounts the donor AI map (m20.map / campaign.map) as a persistent secondary tag heap.
     // Hooks haloreach.dll tag_get (RVA 0x81BE8) so any multiplayer map can seamlessly spawn AI bipeds & vehicles.
+    // "-avoid-map <stem>": never mount this scenario as the donor. The donor cache is a zero-copy view of a whole
+    // campaign map (350 MB for m20); mounting the very map the engine is about to load makes that launch crawl and
+    // stall, which is what happened to ONI: Sword Base (m20 as both mission and donor).
+    static void SetAvoidMap(const std::string& scenarioStem);
     static bool Initialize(HMODULE hReachDll, const std::filesystem::path& dataDir, const std::filesystem::path& workshopDir, const std::filesystem::path& reachDir = {});
     static void Shutdown();
 
