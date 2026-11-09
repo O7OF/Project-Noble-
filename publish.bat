@@ -20,3 +20,4 @@ echo  Release published successfully.
 echo ===================================================
 if "%~1"=="" pause
 exit /b 0
+
