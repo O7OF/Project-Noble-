@@ -49,6 +49,9 @@ public:
     };
     static void SetScoreboardRoster(std::vector<ScoreboardEntry> entries, const std::string& mapName, const std::string& modeName);
     static void SetScoreboardSession(const std::string& sessionId);   // goes with a player report
+    // The local player's own team, from the lobby launch (-lobby-teams): the roster-less fallback row (a
+    // direct launch with no server session) used to hardcode RED and disagreed with the lobby.
+    static void SetLocalTeam(int team);
     // A click while the scoreboard key is held: frees the pointer so the panel's player actions can be used. Esc, the
     // scoreboard key or CLOSE give the pointer back to the game. Slot 36 input poll.
     static void EnterScoreboardPointer();

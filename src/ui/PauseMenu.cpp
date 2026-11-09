@@ -463,11 +463,15 @@ std::string s_boardMap;
 std::string s_boardMode;
 bool s_boardLogged = false;
 
+std::atomic<int> s_localTeam{1};   // from the lobby launch; the engine's own sides start at red
+
 int LocalTeamFromBoard() {
     std::lock_guard<std::mutex> lock(s_boardMutex);
     for (const auto& row : s_boardRows) if (row.local) return row.team;
-    return 1;   // a solo launch has no roster yet; red is the engine's default side
+    return s_localTeam.load();   // a solo launch has no roster yet: use the team the lobby assigned
 }
+
+
 
 void ChangeLocalTeam() {
     const int from = LocalTeamFromBoard() == 2 ? 2 : 1;
@@ -488,6 +492,8 @@ void ChangeLocalTeam() {
 } // namespace
 
 static std::string s_boardSession;
+
+void PauseMenu::SetLocalTeam(int team) { s_localTeam.store(std::clamp(team, 1, 8)); }
 
 void PauseMenu::SetScoreboardSession(const std::string& sessionId) {
   std::lock_guard<std::mutex> lock(s_boardMutex);
@@ -970,7 +976,7 @@ static void DrawScoreboardPanel() {
     me.name = Settings::Get().Snapshot().playerName;
     me.tag = "NOBL";
     me.local = true;
-    me.team = 1;
+    me.team = LocalTeamFromBoard();
     me.rank = Career::RankIndex(Career::Get().credits);
     rows.push_back(me);
   }

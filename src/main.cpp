@@ -996,7 +996,12 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             if (argv) LocalFree(argv);
         }
         if (!lobbyTeams.empty()) {
-            NOBLE_INFO("main: applying {} lobby team assignment(s) to the match", lobbyTeams.size());
+            // The scoreboard's roster-less fallback and voice chat use this: -lobby-teams is in roster order,
+            // so entry 0 is the local player of a hosted match.
+            noble::PauseMenu::SetLocalTeam(lobbyTeams.front());
+            noble::VoiceChat::SetLocalTeam(lobbyTeams.front());
+            NOBLE_INFO("main: applying {} lobby team assignment(s) to the match (local side {})",
+                       lobbyTeams.size(), lobbyTeams.front());
             // Re-issued for three minutes, once every 3 s. The engine only has a team when its session starts
             // (tens of seconds into the load) and its override is a lobby-side request, so a handful of early
             // one-shot commands all landed while the map was still loading and were dropped.
