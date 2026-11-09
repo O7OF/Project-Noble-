@@ -32,7 +32,6 @@ std::vector<PaletteItem> SharedTagCache::s_paletteItems;
 SharedTagCache::TagGetFn SharedTagCache::s_origTagGet = nullptr;
 
 constexpr uintptr_t kStaticTagGetRva = 0x81BE8;
-constexpr uintptr_t kPointerBasesRva = 0x4E39F20;
 
 void* __fastcall SharedTagCache::HookedTagGet([[maybe_unused]] uint32_t groupTag, uint32_t datumIndex) {
     // 1. Check active match map first
@@ -70,30 +69,22 @@ void* SharedTagCache::ResolveTag([[maybe_unused]] uint32_t groupTag, uint32_t da
     return nullptr;
 }
 
-bool SharedTagCache::DiscoverDonorMap(const std::filesystem::path& dataDir, const std::filesystem::path& workshopDir, const std::filesystem::path& reachDir) {
+bool SharedTagCache::DiscoverDonorMap(const std::filesystem::path& dataDir, [[maybe_unused]] const std::filesystem::path& workshopDir, const std::filesystem::path& reachDir) {
     std::vector<std::filesystem::path> searchCandidates;
 
-    // 1. Steam Workshop directory for Forge World AI Battleground mod (ID 2899383598)
-    if (!workshopDir.empty()) {
-        searchCandidates.push_back(workshopDir / "2899383598" / "maps" / "forge_halo_normal.map");
-        searchCandidates.push_back(workshopDir / "2899383598" / "maps" / "forge_halo_legendary.map");
-    }
-
-    // 2. Local mods directory in User Storage
-    if (!dataDir.empty()) {
-        searchCandidates.push_back(dataDir / "mods" / "maps" / "forge_halo_normal.map");
-        searchCandidates.push_back(dataDir / "maps" / "forge_halo_normal.map");
-        searchCandidates.push_back(dataDir / "mods" / "maps" / "forge_halo_legendary.map");
-        searchCandidates.push_back(dataDir / "maps" / "forge_halo_legendary.map");
-    }
-
-    // 3. Native stock Campaign maps from local MCC installation (Zero mod download required!)
+    // 1. Native stock Campaign maps from local MCC installation (Zero mod download required!)
     // m20.map (Sword Base) contains Spartans, Marines, Troopers, ODSTs, Grunts, Jackals, Skirmishers, Elites, Hunters, and the Pelican!
     if (!reachDir.empty()) {
         searchCandidates.push_back(reachDir / "maps" / "m20.map");
         searchCandidates.push_back(reachDir / "maps" / "m45.map");
         searchCandidates.push_back(reachDir / "maps" / "campaign.map");
         searchCandidates.push_back(reachDir / "maps" / "shared.map");
+    }
+
+    // 2. Local mods directory in User Storage (if a custom campaign donor map is placed there)
+    if (!dataDir.empty()) {
+        searchCandidates.push_back(dataDir / "mods" / "maps" / "m20.map");
+        searchCandidates.push_back(dataDir / "maps" / "m20.map");
     }
 
     for (const auto& candidate : searchCandidates) {
@@ -105,13 +96,13 @@ bool SharedTagCache::DiscoverDonorMap(const std::filesystem::path& dataDir, cons
         }
     }
 
-    // 4. Fallback search: scan workshop directory for any forge_halo_normal.map
+    // 3. Fallback search: scan workshop directory for m20.map only
     if (!workshopDir.empty()) {
         std::error_code ec;
         for (const auto& entry : std::filesystem::recursive_directory_iterator(workshopDir, ec)) {
             if (entry.is_regular_file()) {
                 std::string filename = entry.path().filename().string();
-                if (filename == "forge_halo_normal.map" || filename == "forge_halo_legendary.map" || filename == "m20.map") {
+                if (filename == "m20.map") {
                     s_donorMapPath = std::filesystem::absolute(entry.path(), ec);
                     NOBLE_INFO("SharedTagCache: Discovered donor AI map via scan at '{}'", s_donorMapPath.string());
                     return true;
@@ -130,7 +121,7 @@ bool SharedTagCache::MountFile(const std::filesystem::path& mapPath) {
     s_hFile = CreateFileW(
         mapPath.c_str(),
         GENERIC_READ | GENERIC_WRITE,
-        FILE_SHARE_READ,
+        FILE_SHARE_READ | FILE_SHARE_WRITE,
         nullptr,
         OPEN_EXISTING,
         FILE_ATTRIBUTE_NORMAL,
@@ -141,7 +132,7 @@ bool SharedTagCache::MountFile(const std::filesystem::path& mapPath) {
         s_hFile = CreateFileW(
             mapPath.c_str(),
             GENERIC_READ,
-            FILE_SHARE_READ,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
             nullptr,
             OPEN_EXISTING,
             FILE_ATTRIBUTE_NORMAL,
@@ -337,18 +328,6 @@ bool SharedTagCache::InstallHooks(HMODULE hReachDll) {
         }
     }
 
-    // 2. Set base pointer in haloreach.dll kPointerBases table (Slot 2)
-    // Table at haloreach.dll + 0x4E39F20 contains 16 base pointers
-    if (s_mappedView && s_isMounted) {
-        uint64_t* bases = reinterpret_cast<uint64_t*>(s_baseAddress + kPointerBasesRva);
-        DWORD oldProtect = 0;
-        if (VirtualProtect(&bases[2], sizeof(uint64_t), PAGE_READWRITE, &oldProtect)) {
-            bases[2] = reinterpret_cast<uint64_t>(s_mappedView + s_tagIndexFileOffset);
-            VirtualProtect(&bases[2], sizeof(uint64_t), oldProtect, &oldProtect);
-            NOBLE_INFO("SharedTagCache: Registered donor memory base in pointer table slot 2.");
-        }
-    }
-
     return s_hooksInstalled;
 }
 
@@ -365,8 +344,12 @@ void SharedTagCache::PatchPelicanSeatLabel() {
     size_t count = s_fileSize / sizeof(uint32_t);
     for (size_t i = 0; i < count; ++i) {
         if (pDwords[i] == kPelicanD) {
-            pDwords[i] = kWraithD;
-            ++patchCount;
+            DWORD oldProtect = 0;
+            if (VirtualProtect(&pDwords[i], sizeof(uint32_t), PAGE_READWRITE, &oldProtect)) {
+                pDwords[i] = kWraithD;
+                VirtualProtect(&pDwords[i], sizeof(uint32_t), oldProtect, &oldProtect);
+                ++patchCount;
+            }
         }
     }
     if (patchCount > 0) {

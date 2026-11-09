@@ -21,7 +21,7 @@ struct PaletteItem {
 
 class SharedTagCache {
 public:
-    // Discovers and mounts the donor AI map (m20.map / forge_halo_normal.map) as a persistent secondary tag heap.
+    // Discovers and mounts the donor AI map (m20.map / campaign.map) as a persistent secondary tag heap.
     // Hooks haloreach.dll tag_get (RVA 0x81BE8) so any multiplayer map can seamlessly spawn AI bipeds & vehicles.
     static bool Initialize(HMODULE hReachDll, const std::filesystem::path& dataDir, const std::filesystem::path& workshopDir, const std::filesystem::path& reachDir = {});
     static void Shutdown();

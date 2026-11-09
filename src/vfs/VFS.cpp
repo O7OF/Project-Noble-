@@ -2,7 +2,6 @@
 #include "hooks/HookManager.hpp"
 #include "common/Logger.hpp"
 #include "engine/EmbeddedBlocks.hpp"
-#include "engine/SharedTagCache.hpp"
 #include <fstream>
 
 #include <algorithm>
@@ -203,61 +202,6 @@ std::wstring VFS::ResolvePath(const std::wstring& requestedPath, DWORD desiredAc
             }
 
             // 2. If reading:
-            // Forge World AI Battleground redirection:
-            // When forge_halo.map is requested, serve forge_halo_normal.map (or forge_halo_legendary.map)
-            // so the in-game Forge palette and sandbox natively contain all AI bipeds & vehicles.
-            if (!isWriting && !p.filename().empty() &&
-                _wcsicmp(p.filename().c_str(), L"forge_halo.map") == 0) {
-                // Priority A: Check SharedTagCache donor map if already mounted AND it is a forge map
-                if (SharedTagCache::IsMounted() && !SharedTagCache::GetDonorMapPath().empty()) {
-                    const std::wstring donorName = SharedTagCache::GetDonorMapPath().filename().wstring();
-                    if (_wcsicmp(donorName.c_str(), L"forge_halo_normal.map") == 0 ||
-                        _wcsicmp(donorName.c_str(), L"forge_halo_legendary.map") == 0) {
-                        if (RawPathExists(SharedTagCache::GetDonorMapPath().wstring())) {
-                            NOBLE_INFO("VFS: Serving Forge AI donor map '{}' for haloreach\\maps\\forge_halo.map",
-                                       SharedTagCache::GetDonorMapPath().string());
-                            return SharedTagCache::GetDonorMapPath().wstring();
-                        }
-                    }
-                }
-                // Priority B: Check Steam Workshop (Forge AI Battleground item 2899383598)
-                if (!s_workshopPath.empty()) {
-                    for (const wchar_t* name : { L"forge_halo_normal.map", L"forge_halo_legendary.map" }) {
-                        const fs::path wsMap = s_workshopPath / L"2899383598" / L"maps" / name;
-                        if (RawPathExists(wsMap.wstring())) {
-                            NOBLE_INFO("VFS: Serving Forge AI Battleground map '{}' for haloreach\\maps\\forge_halo.map",
-                                       wsMap.string());
-                            return wsMap.wstring();
-                        }
-                    }
-                }
-                // Priority C: Check User Storage
-                if (!s_userStoragePath.empty()) {
-                    for (const wchar_t* name : { L"forge_halo_normal.map", L"forge_halo_legendary.map" }) {
-                        const fs::path userMap = s_userStoragePath / "maps" / name;
-                        if (RawPathExists(userMap.wstring())) {
-                            NOBLE_INFO("VFS: Serving Forge AI map from user storage '{}'", userMap.string());
-                            return userMap.wstring();
-                        }
-                        const fs::path userModMap = s_userStoragePath / "mods" / "maps" / name;
-                        if (RawPathExists(userModMap.wstring())) {
-                            NOBLE_INFO("VFS: Serving Forge AI map from user mods '{}'", userModMap.string());
-                            return userModMap.wstring();
-                        }
-                    }
-                }
-                // Priority D: Check Local Data directory
-                if (!s_localDataDir.empty()) {
-                    for (const wchar_t* name : { L"forge_halo_normal.map", L"forge_halo_legendary.map" }) {
-                        const fs::path localMap = s_localDataDir / "maps" / name;
-                        if (RawPathExists(localMap.wstring())) {
-                            NOBLE_INFO("VFS: Serving Forge AI map from data '{}'", localMap.string());
-                            return localMap.wstring();
-                        }
-                    }
-                }
-            }
-
             // The Armory needs a menu map with the Reach pedestal scene and rr_mark_a/rr_mark_b GLOBALS.
             // If the player copied the mainmenu_all.map mod into data\menumaps, serve it as the engine's
             // haloreach\maps\mainmenu.map; otherwise fall back to the stock MCC map below.
