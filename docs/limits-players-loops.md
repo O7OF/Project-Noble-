@@ -244,3 +244,28 @@ window, but most were scalar fields inside the trace's old coarse regions (peer 
 - Known list 504 (= 420 traced + 65 table sites + 4 reset-loop accesses + 0x2A38C6 + 14 in 0x39DD4C).
 - Rerun `tools\lan-three-instance.ps1` after the build: expected 0 MEMBER-NEW for the same actions. Not covered yet:
   team change (Slayer default is FFA), lobby reset with all clients present, Firefight/other modes.
+
+## #32 is the membership update message (2026-11-09 02:40, analysis only)
+The two 0x2550-byte objects in 0x396828's frame (rbp+0x4350, rbp+0x68A0) are **network message payloads**, not a
+plain table: 0x39DD4C fills one per membership half, 0x3971AC looks up the peer's channel (peer table +0x4470) and
+sends it with 0x3F9620 (size 0x2550). Message table entry at +0x680 (registered by 0x427E8C): min = max size 0x2550,
+encode 0x42675C, decode 0x427140.
+- Payload: +0x14 i16 peer-entry count, +0x16 i16 player-entry count, peer entries at +0x18 (17 x 0x180), player
+  entries at +0x1998 (16 x 0xB8), tail at +0x2518..+0x254F (flags + values).
+- Encoder 0x42675C: both counts **5 bits**; each entry's index 5 bits (peer) / 4 bits (player, decoder reads 4).
+- Decoder 0x427140: reads the counts (5 bits), accepts peer count <= 0x22 and player count <= 0x20, loops that many
+  entries into the 0x2550 buffer. Index checks (peer <= 0x10, player <= 0xF) only clear a validity flag; they do not
+  stop the loop.
+
+**Security finding (stock engine, independent of C12):** a peer can send a peer count up to 31 (5 bits) or a player
+count up to 31, and the decoder writes 31 x 0x180 / 31 x 0xB8 into a buffer sized for 17 / 16 -> heap/buffer
+overwrite past 0x2550 from the network. Fix: a guard that rejects the message when peer count > 17 or player
+count > 16 (stock layout), i.e. tighten 0x4271D9 / 0x4271E8. Applies to every Noble build that accepts network peers.
+
+**For 32 players** (needs a decision):
+- Option A: cap 32-player mode at **31 players / 31 peers**. Wire format unchanged (counts 0..31 fit 5 bits, but the
+  player index is 4 bits -> must widen player index to 5 bits anyway). Grow the payload to 31 x 0x180 + 31 x 0xB8
+  (0x18 + 0x2E80 + 0x1648 + 0x38 = 0x4518), the registered size, the 0x396828 frame objects (2 x +0x1FC8), the
+  decoder limits/index checks, and 0x39DD4C's fill loops; then the consumer of the decoded message.
+- Option B: full 32: also widen both counts to 6 bits (encoder + decoder, protocol change).
+Either way every machine in a session must run the same build (`limits_id` join check).

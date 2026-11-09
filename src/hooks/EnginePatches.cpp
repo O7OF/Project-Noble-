@@ -313,6 +313,47 @@ bool EnginePatches::Apply(HMODULE hReachDll) {
             NOBLE_WARN("EnginePatches: Unexpected prologue at RVA 0x5DF80; Lower weapon keybind hook skipped.");
         }
     }
+    // 5. Membership update message decoder: count bounds (RVAs 0x4271D9 / 0x4271E8). Security fix, every build.
+    // The message (registered at message table +0x680, size 0x2550, encode 0x42675C, decode 0x427140) holds 17 peer
+    // entries (0x180) and 16 player entries (0xB8). The stock decoder reads both counts as 5 bits but only rejects a
+    // peer count above 0x22 and a player count above 0x20, then writes that many entries into the 0x2550 buffer, so a
+    // modified peer could overwrite memory past it. Tighten both limits to the buffer's real capacity (17 / 16); a
+    // larger count takes the decoder's own reject path (0x4275B0: message invalid). Same instruction lengths.
+    //   0x4271D9: 66 83 7F 14 22   cmp word ptr [rdi+0x14], 0x22  ->  0x11
+    //   0x4271E8: cmp ax, r15w (r15 = 0x20, 4 bytes, either encoding)  ->  66 83 F8 10  cmp ax, 0x10
+    // See docs/limits-players-loops.md "#32 is the membership update message". 32-player mode will raise both again.
+    {
+        static const uint8_t kExpectedPeerCount[5] = { 0x66, 0x83, 0x7F, 0x14, 0x22 };
+        static const uint8_t kPatchedPeerCount[5]  = { 0x66, 0x83, 0x7F, 0x14, 0x11 };
+        static const uint8_t kExpectedPlayerCountA[4] = { 0x66, 0x41, 0x3B, 0xC7 };   // cmp ax, r15w (3B /r)
+        static const uint8_t kExpectedPlayerCountB[4] = { 0x66, 0x44, 0x39, 0xF8 };   // cmp ax, r15w (39 /r)
+        static const uint8_t kPatchedPlayerCount[4]  = { 0x66, 0x83, 0xF8, 0x10 };
+        uint8_t* peerAt = reinterpret_cast<uint8_t*>(baseAddress + 0x4271D9);
+        uint8_t* playerAt = reinterpret_cast<uint8_t*>(baseAddress + 0x4271E8);
+        const bool peerStock = std::memcmp(peerAt, kExpectedPeerCount, sizeof(kExpectedPeerCount)) == 0;
+        const bool playerStock = std::memcmp(playerAt, kExpectedPlayerCountA, sizeof(kExpectedPlayerCountA)) == 0 ||
+                                 std::memcmp(playerAt, kExpectedPlayerCountB, sizeof(kExpectedPlayerCountB)) == 0;
+        if (peerStock && playerStock) {   // both or neither
+            DWORD oldProt = 0;
+            if (VirtualProtect(peerAt, 0x13, PAGE_EXECUTE_READWRITE, &oldProt)) {
+                std::memcpy(peerAt, kPatchedPeerCount, sizeof(kPatchedPeerCount));
+                std::memcpy(playerAt, kPatchedPlayerCount, sizeof(kPatchedPlayerCount));
+                FlushInstructionCache(GetCurrentProcess(), peerAt, 0x13);
+                VirtualProtect(peerAt, 0x13, oldProt, &oldProt);
+                NOBLE_INFO("EnginePatches: Membership update decoder now rejects more than 17 peer / 16 player entries "
+                           "(RVAs 0x4271D9 / 0x4271E8; stock allowed 34 / 32 into a 17 / 16 buffer).");
+            } else {
+                NOBLE_WARN("EnginePatches: Failed to VirtualProtect the membership update decoder at RVA 0x4271D9.");
+            }
+        } else if (std::memcmp(peerAt, kPatchedPeerCount, sizeof(kPatchedPeerCount)) == 0 &&
+                   std::memcmp(playerAt, kPatchedPlayerCount, sizeof(kPatchedPlayerCount)) == 0) {
+            NOBLE_INFO("EnginePatches: Membership update decoder bounds already patched.");
+        } else {
+            NOBLE_WARN("EnginePatches: Unexpected bytes in the membership update decoder (RVA 0x4271D9 / 0x4271E8); "
+                       "count bounds patch skipped.");
+        }
+    }
+
 #if 0
     // 3. Unlock all armor customization items in multiplayer/Forge (RVA 0x2C7DCC)
     uintptr_t isArmorUnlockedAddr = SigScanner::FindPattern(
