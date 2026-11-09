@@ -1253,11 +1253,16 @@ static void ApplyArmoryAppearance(uint8_t* profile) {
         // the profile field exists (the engine: Steel) and the Armory's third colour word follows it.
         put(0xA0, kColor + accentColor);
 
+        const std::string settingsTag = Settings::Get().Snapshot().serviceTag;
         const std::string armoryTag = str(appearance, "service_tag");
-        if (!armoryTag.empty()) {
+        const std::string effectiveTag =
+            (!settingsTag.empty() && (armoryTag.empty() || (armoryTag == "N06" && settingsTag != "N06" && settingsTag != "NOBL") || settingsTag != "NOBL"))
+                ? settingsTag
+                : armoryTag;
+        if (!effectiveTag.empty()) {
             wchar_t serviceTag[4] = {};
-            for (size_t i = 0; i < 4 && i < armoryTag.size(); ++i) {
-                serviceTag[i] = static_cast<wchar_t>(armoryTag[i]);
+            for (size_t i = 0; i < 4 && i < effectiveTag.size(); ++i) {
+                serviceTag[i] = static_cast<wchar_t>(effectiveTag[i]);
             }
             memcpy(profile + 0x1AC, serviceTag, sizeof(serviceTag));
         }
@@ -1384,6 +1389,14 @@ static uint64_t __fastcall HostSlot34_ProfileSettings(void* thisPtr, uint64_t a1
             WriteDefaultKeyBindings(s_hostProfileBuffer);
             WritePadLookSettings(s_hostProfileBuffer);
             WriteDefaultVolumes(s_hostProfileBuffer);
+            const std::string liveTag = Settings::Get().Snapshot().serviceTag;
+            if (!liveTag.empty()) {
+                wchar_t serviceTag[4] = {};
+                for (size_t i = 0; i < 4 && i < liveTag.size(); ++i) {
+                    serviceTag[i] = static_cast<wchar_t>(liveTag[i]);
+                }
+                memcpy(s_hostProfileBuffer + 0x1AC, serviceTag, sizeof(serviceTag));
+            }
         }
     }
     RefreshArmoryAppearance(s_hostProfileBuffer);

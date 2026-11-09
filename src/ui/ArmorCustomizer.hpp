@@ -103,6 +103,7 @@ public:
 
     bool LoadProfile(const std::filesystem::path& path);
     bool SaveProfile(const std::filesystem::path& path);
+    void SetServiceTag(const std::string& tag);
     void SetPreferredSpecies(PlayerSpecies species);
     PlayerSpecies GetPreferredSpecies() const { return m_profile.species; }
 

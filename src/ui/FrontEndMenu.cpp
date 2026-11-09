@@ -1282,6 +1282,10 @@ float PlayerRow(const Ui& ui, ImVec2 pos, float width, int rankIndex, int emblem
 // drift (settings said RTRD, the Armory said N06) and the party row disagreed with the Armory (2026-10-30).
 std::string PlayerServiceTag(const SettingsData& sd) {
     const auto& prof = UIManager::GetArmorCustomizer().GetProfile();
+    if (!sd.serviceTag.empty() &&
+        (prof.serviceTag.empty() || (prof.serviceTag == "N06" && sd.serviceTag != "N06" && sd.serviceTag != "NOBL"))) {
+        return sd.serviceTag;
+    }
     if (!prof.serviceTag.empty()) return prof.serviceTag;
     return sd.serviceTag.empty() ? std::string("117") : sd.serviceTag;
 }
@@ -2596,7 +2600,7 @@ static void TakePendingLobbyEvents(MenuState& st) {
             std::string pName = AuthClient::Get().IsLoggedIn() ? AuthClient::Get().GetUsername() : Settings::Get().Snapshot().playerName;
             if (pName.empty()) pName = "Host";
             const uint64_t hostPId = AuthClient::Get().IsLoggedIn() ? static_cast<uint64_t>(AuthClient::Get().GetUserId()) : 1ULL;
-            const std::string hostTag = Settings::Get().Snapshot().serviceTag.empty() ? "117" : Settings::Get().Snapshot().serviceTag;
+            const std::string hostTag = PlayerServiceTag(Settings::Get().Snapshot());
             const bool hostDev = AuthClient::Get().IsDeveloper();
             bool hostFound = false;
             for (auto& p : st.lobbyRoster) {
@@ -4815,6 +4819,17 @@ bool DrawFirstStart(const Ui& ui) {
             else d.mouseSensitivity = s_sensitivity;
         }
         Settings::Get().Update(d);
+        if (setup) {
+            const SettingsData updated = Settings::Get().Snapshot();
+            DeviceIdentity id = DeviceIdentityStore::Get();
+            id.playerName = updated.playerName;
+            id.serviceTag = updated.serviceTag;
+            DeviceIdentityStore::Save(id);
+            AuthClient::Get().SetPlayerName(updated.playerName);
+            if (UIManager::HasArmorCustomizer()) {
+                UIManager::GetArmorCustomizer().SetServiceTag(updated.serviceTag);
+            }
+        }
         s_forcedDone = true;
         s_step = 0;
         s_focus = 0;
@@ -6849,7 +6864,7 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
         uint64_t fallbackId = (MasterServerClient::GetLobbyMachineId() & 0x7FFFFFFFULL);
         if (fallbackId < 2ULL) fallbackId = 2ULL;
         uint64_t pId = AuthClient::Get().IsLoggedIn() ? static_cast<uint64_t>(AuthClient::Get().GetUserId()) : fallbackId;
-        std::string sTag = Settings::Get().Snapshot().serviceTag.empty() ? "117" : Settings::Get().Snapshot().serviceTag;
+        std::string sTag = PlayerServiceTag(Settings::Get().Snapshot());
 
         LobbyState state = MasterServerClient::Get().JoinLobbySync(
             s.id, pId, pName, AuthClient::Get().IsDeveloper(), sTag,

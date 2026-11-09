@@ -38,6 +38,7 @@ public:
     static MissionLauncher& GetMissionLauncher() { return *s_missionLauncher; }
     static ServerBrowser& GetServerBrowser() { return *s_serverBrowser; }
     static ArmorCustomizer& GetArmorCustomizer() { return *s_armorCustomizer; }
+    static bool HasArmorCustomizer() { return s_armorCustomizer != nullptr; }
     static WorkshopManager& GetWorkshopManager() { return *s_workshopManager; }
 
 private:
