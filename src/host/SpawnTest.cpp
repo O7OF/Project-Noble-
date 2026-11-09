@@ -44,6 +44,14 @@ constexpr uintptr_t kCinematicFlagRootOffset = 0x130;
 // Core functions behind the ai_set_* script commands (thunks 0x1A25DC / 0x1A1998 / 0x1A1950): they take the
 // resolved ai handle and the value, e.g. ai_set_team(actor, team).
 constexpr uintptr_t kSetActorTeamRva = 0x6C1C14;
+// Cores behind the script commands ai_force_active (handler 0x1A2400) and ai_force_full_lod (handler 0x1A0CCC).
+// Full LOD sets actor+0x88 = 1 for every actor of the ai value, so the AI update scheduler (0x70ABBC) gives
+// them full updates every frame instead of reduced ones by distance/importance.
+constexpr uintptr_t kAiForceActiveRva = 0x6C1A00;    // (ai value, bool)
+constexpr uintptr_t kAiForceLodRva = 0x70AB58;       // (ai value, lod: 1 = full)
+// object_destroy (handler 0x19A738): destroys the object only if 0x47A854(object) == -1 (not held by a player).
+constexpr uintptr_t kObjectHeldRva = 0x47A854;
+constexpr uintptr_t kObjectDestroyRva = 0x1EB650;
 constexpr uintptr_t kSetActorBlindRva = 0x6BF204;
 constexpr uintptr_t kSetActorDeafRva = 0x6BF0EC;
 constexpr size_t kPlacementSize = 0x1A8;
@@ -63,6 +71,10 @@ using ObjectSetPositionFn = void(__fastcall*)(int32_t object, const float* posit
 using ObjectRefreshFn = void(__fastcall*)(int32_t object);
 using ActorTeleportedFn = void(__fastcall*)(int32_t actor);
 using SetActorTeamFn = void(__fastcall*)(uint32_t actor, int32_t team);
+using AiForceActiveFn = void(__fastcall*)(uint32_t ai, uint8_t active);
+using AiForceLodFn = void(__fastcall*)(uint32_t ai, int32_t lod);
+using ObjectHeldFn = int32_t(__fastcall*)(int32_t object);
+using ObjectDestroyFn = void(__fastcall*)(int32_t object);
 using SetActorFlagFn = void(__fastcall*)(uint32_t actor, uint8_t value);
 
 uintptr_t s_base = 0;
@@ -75,10 +87,18 @@ ObjectSetPositionFn s_objectSetPosition = nullptr;
 ObjectRefreshFn s_objectRefresh = nullptr;
 ActorTeleportedFn s_actorTeleported = nullptr;
 SetActorTeamFn s_setActorTeam = nullptr;
+AiForceActiveFn s_aiForceActive = nullptr;
+AiForceLodFn s_aiForceLod = nullptr;
+ObjectHeldFn s_objectHeld = nullptr;
+int s_hordeSkippedSquads = 0;
+ObjectDestroyFn s_objectDestroy = nullptr;
+std::vector<uint8_t> s_vehicleSquad;   // -horde-infantry: squads seen spawning in a vehicle are never placed again
 SetActorFlagFn s_setActorBlind = nullptr;
 SetActorFlagFn s_setActorDeaf = nullptr;
 int s_hordeTeam = -1;         // -horde-team N: put every placed actor on this team (-1 = leave as placed)
 bool s_hordeNoTeleport = false;   // -horde-no-teleport: leave placed actors where the engine puts them
+bool s_hordeFullLod = false;      // -horde-full-lod: ai_force_active + ai_force_full_lod on every placed squad, sighted
+bool s_hordeInfantry = false;     // -horde-infantry: squads that spawn seated (dropships, vehicles) get their vehicle destroyed and are skipped from then on
 bool s_lastCinematic = false;
 bool s_cinematicKnown = false;   // the game-state root + cinematic flag are readable
 bool s_cinematicFallbackLogged = false;
@@ -365,20 +385,58 @@ void HordeStep() {
                 s_hordePending = freeSlots;
             }
             int created = 0, tried = 0;
+            if (s_hordeInfantry && s_vehicleSquad.size() != static_cast<size_t>(squads)) s_vehicleSquad.assign(static_cast<size_t>(squads), 0);
             while (s_hordePending > 0 && created < kHordeActorsPerStep && tried < squads) {
+                if (s_hordeInfantry && s_vehicleSquad[static_cast<size_t>(s_hordeSquad)]) {
+                    s_hordeSquad = (s_hordeSquad + 1) % squads;
+                    ++tried;
+                    continue;
+                }
                 // Set the team on the squad before placing it, so its actors spawn on one team instead of
                 // only being re-teamed after they exist (ai_set_team accepts the squad ai handle too).
                 if (s_hordeTeam >= 0 && s_setActorTeam) s_setActorTeam(0x20000000u | static_cast<uint32_t>(s_hordeSquad), s_hordeTeam);
                 s_aiPlace(0x20000000u | static_cast<uint32_t>(s_hordeSquad), -1, 0);
+                if (s_hordeFullLod && s_aiForceActive && s_aiForceLod) {
+                    s_aiForceActive(0x20000000u | static_cast<uint32_t>(s_hordeSquad), 1);
+                    s_aiForceLod(0x20000000u | static_cast<uint32_t>(s_hordeSquad), 1);
+                }
+                const int placedSquad = s_hordeSquad;
                 s_hordeSquad = (s_hordeSquad + 1) % squads;
                 ++tried;
+                if (s_hordeInfantry && s_objectHeld && s_objectDestroy) {
+                    // Any new actor of this squad sitting in a seat -> it's a vehicle/dropship squad: destroy the
+                    // vehicles it came in (their riders go with them) and never place it again.
+                    bool seated = false;
+                    for (int i = 0; i < actors.capacity; ++i) {
+                        if (!ActorSlotUsed(actors, i) || ((before[i >> 5] >> (i & 31)) & 1)) continue;
+                        const uint8_t* body = ObjectData(objects, ActorUnit(actors, ActorHandle(actors, i)));
+                        int32_t vehicle = body ? *reinterpret_cast<const int32_t*>(body + 0x14) : -1;
+                        if (vehicle == -1) continue;
+                        seated = true;
+                        for (int depth = 0; depth < 4; ++depth) {   // a turret seat sits on the dropship: use the top object
+                            const uint8_t* v = ObjectData(objects, vehicle);
+                            const int32_t parent = v ? *reinterpret_cast<const int32_t*>(v + 0x14) : -1;
+                            if (parent == -1) break;
+                            vehicle = parent;
+                        }
+                        if (ObjectData(objects, vehicle) && s_objectHeld(vehicle) == -1) s_objectDestroy(vehicle);
+                    }
+                    if (seated) {
+                        s_vehicleSquad[static_cast<size_t>(placedSquad)] = 1;
+                        ++s_hordeSkippedSquads;
+                        // Actors removed with their vehicle free their slots; mark whatever is left as seen.
+                        for (int i = 0; i < actors.capacity; ++i)
+                            if (ActorSlotUsed(actors, i)) before[i >> 5] |= 1u << (i & 31);
+                        continue;
+                    }
+                }
                 for (int i = 0; i < actors.capacity; ++i) {
                     if (!ActorSlotUsed(actors, i) || ((before[i >> 5] >> (i & 31)) & 1)) continue;
                     before[i >> 5] |= 1u << (i & 31);                                  // count each new actor once
                     const int32_t newHandle = ActorHandle(actors, i);
                     if (s_hordeTeam >= 0 && s_setActorTeam) s_setActorTeam(static_cast<uint32_t>(newHandle), s_hordeTeam);
-                    if (s_setActorBlind) s_setActorBlind(static_cast<uint32_t>(newHandle), 1);
-                    if (s_setActorDeaf) s_setActorDeaf(static_cast<uint32_t>(newHandle), 1);
+                    if (s_setActorBlind && !s_hordeFullLod) s_setActorBlind(static_cast<uint32_t>(newHandle), 1);
+                    if (s_setActorDeaf && !s_hordeFullLod) s_setActorDeaf(static_cast<uint32_t>(newHandle), 1);
                     const int k = s_hordeAdded++;
                     const float angle = static_cast<float>(k) * 2.39996f;              // golden-angle spiral
                     const float radius = 10.0f + static_cast<float>(k % 21);
@@ -434,7 +492,8 @@ void HordeStep() {
     if (s_hordePending <= 0 && s_hordeMoving.empty() && s_hordeAdded > 0) {
         int used = 0, cap = 0;
         ActorUsage(used, cap);
-        NOBLE_INFO("SpawnTest: horde wave done | {} placed, {} moved next to you | actors {} / {}", s_hordeAdded, s_hordeMoved, used, cap);
+        NOBLE_INFO("SpawnTest: horde wave done | {} placed, {} moved next to you | actors {} / {}{}", s_hordeAdded, s_hordeMoved, used, cap,
+            s_hordeInfantry ? " | infantry only, " + std::to_string(s_hordeSkippedSquads) + " vehicle squads skipped" : std::string());
         s_hordeAdded = s_hordeMoved = 0;
         s_hordeCapLogged = false;
         s_hordeNoProgressLogged = false;
@@ -634,6 +693,22 @@ void Install(HMODULE engine) {
         static const uint8_t refreshHead[] = { 0x48, 0x89, 0x5C, 0x24, 0x08, 0x48, 0x89, 0x6C, 0x24, 0x10, 0x48, 0x89, 0x74, 0x24, 0x18, 0x57 };
         static const uint8_t teleportedHead[] = { 0x48, 0x83, 0xEC, 0x28, 0x8B, 0x15 };
         static const uint8_t setTeamHead[] = { 0x48, 0x89, 0x5C, 0x24, 0x08, 0x48, 0x89, 0x74, 0x24, 0x10, 0x57, 0x48, 0x83, 0xEC, 0x70, 0x8B, 0xC1 };
+        static const uint8_t forceActiveHead[] = { 0x48, 0x89, 0x5C, 0x24, 0x10, 0x48, 0x89, 0x74, 0x24, 0x18, 0x57, 0x48, 0x83, 0xEC };
+        static const uint8_t forceLodHead[] = { 0x40, 0x53, 0x48, 0x81, 0xEC, 0x90, 0x00, 0x00, 0x00, 0x48, 0x8B, 0x05 };
+        if (head(kAiForceActiveRva, forceActiveHead, sizeof(forceActiveHead)) && head(kAiForceLodRva, forceLodHead, sizeof(forceLodHead))) {
+            s_aiForceActive = reinterpret_cast<AiForceActiveFn>(s_base + kAiForceActiveRva);
+            s_aiForceLod = reinterpret_cast<AiForceLodFn>(s_base + kAiForceLodRva);
+        } else {
+            NOBLE_WARN("SpawnTest: ai_force_active / ai_force_full_lod not found; -horde-full-lod ignored");
+        }
+        static const uint8_t heldHead[] = { 0x48, 0x89, 0x5C, 0x24, 0x08, 0x48, 0x89, 0x74, 0x24, 0x10, 0x48, 0x89, 0x7C, 0x24 };
+        static const uint8_t destroyHead[] = { 0x48, 0x83, 0xEC, 0x28, 0x44, 0x8B, 0xD9, 0x83, 0xF9, 0xFF, 0x74, 0x3A };
+        if (head(kObjectHeldRva, heldHead, sizeof(heldHead)) && head(kObjectDestroyRva, destroyHead, sizeof(destroyHead))) {
+            s_objectHeld = reinterpret_cast<ObjectHeldFn>(s_base + kObjectHeldRva);
+            s_objectDestroy = reinterpret_cast<ObjectDestroyFn>(s_base + kObjectDestroyRva);
+        } else {
+            NOBLE_WARN("SpawnTest: object_destroy not found; -horde-infantry ignored");
+        }
         if (head(kSetActorTeamRva, setTeamHead, sizeof(setTeamHead)))
             s_setActorTeam = reinterpret_cast<SetActorTeamFn>(s_base + kSetActorTeamRva);
         else
@@ -667,36 +742,51 @@ void Install(HMODULE engine) {
         if (GetEnvironmentVariableW(L"NOBLE_HORDE_DELAY", env, 32) > 0) { s_autoDelay = _wtoi(env); s_autoDelayExplicit = true; }
         if (GetEnvironmentVariableW(L"NOBLE_HORDE_TEAM", env, 32) > 0) s_hordeTeam = _wtoi(env);
         if (GetEnvironmentVariableW(L"NOBLE_HORDE_NO_TELEPORT", env, 32) > 0) s_hordeNoTeleport = env[0] == L'1';
+        if (GetEnvironmentVariableW(L"NOBLE_HORDE_FULL_LOD", env, 32) > 0) s_hordeFullLod = env[0] == L'1';
+        if (GetEnvironmentVariableW(L"NOBLE_HORDE_INFANTRY", env, 32) > 0) s_hordeInfantry = env[0] == L'1';
         int argc = 0;
         LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
-        for (int i = 1; argv && i + 1 < argc; ++i) {
-            if (_wcsicmp(argv[i], L"-spawn-test") == 0) {
+        // Read every argument (a flag can be the last one); options that take a value check that one follows.
+        for (int i = 1; argv && i < argc; ++i) {
+            const bool hasValue = i + 1 < argc;
+            if (hasValue && _wcsicmp(argv[i], L"-spawn-test") == 0) {
                 s_autoCount = _wtoi(argv[i + 1]);
                 SetEnvironmentVariableW(L"NOBLE_SPAWN_TEST", argv[i + 1]);
             }
-            if (_wcsicmp(argv[i], L"-spawn-max") == 0) {
+            if (hasValue && _wcsicmp(argv[i], L"-spawn-max") == 0) {
                 s_maxObjects = _wtoi(argv[i + 1]);
                 SetEnvironmentVariableW(L"NOBLE_SPAWN_MAX", argv[i + 1]);
             }
-            if (_wcsicmp(argv[i], L"-horde") == 0) {
+            if (hasValue && _wcsicmp(argv[i], L"-horde") == 0) {
                 s_autoHorde = _wtoi(argv[i + 1]);
                 SetEnvironmentVariableW(L"NOBLE_HORDE", argv[i + 1]);
+            }
+            if (_wcsicmp(argv[i], L"-horde-infantry") == 0) {
+                s_hordeInfantry = true;
+                SetEnvironmentVariableW(L"NOBLE_HORDE_INFANTRY", L"1");   // carried into the relaunched match process
+            }
+            if (_wcsicmp(argv[i], L"-horde-full-lod") == 0) {
+                s_hordeFullLod = true;
+                SetEnvironmentVariableW(L"NOBLE_HORDE_FULL_LOD", L"1");   // carried into the relaunched match process
             }
             if (_wcsicmp(argv[i], L"-horde-no-teleport") == 0) {
                 s_hordeNoTeleport = true;
                 SetEnvironmentVariableW(L"NOBLE_HORDE_NO_TELEPORT", L"1");
             }
-            if (_wcsicmp(argv[i], L"-horde-team") == 0) {
+            if (hasValue && _wcsicmp(argv[i], L"-horde-team") == 0) {
                 s_hordeTeam = _wtoi(argv[i + 1]);
                 SetEnvironmentVariableW(L"NOBLE_HORDE_TEAM", argv[i + 1]);
             }
-            if (_wcsicmp(argv[i], L"-horde-delay") == 0) {
+            if (hasValue && _wcsicmp(argv[i], L"-horde-delay") == 0) {
                 s_autoDelay = _wtoi(argv[i + 1]);
                 s_autoDelayExplicit = true;
                 SetEnvironmentVariableW(L"NOBLE_HORDE_DELAY", argv[i + 1]);
             }
-            if (_wcsicmp(argv[i], L"-mode") == 0 && _wcsicmp(argv[i + 1], L"campaign") == 0) s_campaignMode = true;
+            if (hasValue && _wcsicmp(argv[i], L"-mode") == 0 && _wcsicmp(argv[i + 1], L"campaign") == 0) s_campaignMode = true;
         }
+        if (s_autoHorde > 0 || s_hordeTeam >= 0 || s_hordeNoTeleport || s_hordeFullLod || s_hordeInfantry)
+            NOBLE_INFO("SpawnTest: horde options | team {} | teleport {} | full LOD {} | infantry only {}", s_hordeTeam,
+                s_hordeNoTeleport ? "off" : "on", s_hordeFullLod ? "on" : "off", s_hordeInfantry ? "on" : "off");
         if (argv) LocalFree(argv);
         if (s_maxObjects <= 0) s_maxObjects = 8000;
     }

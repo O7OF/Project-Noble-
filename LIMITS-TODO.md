@@ -128,3 +128,9 @@ What it took (all in Noble's own engine copy; the player's haloreach.dll is unto
 | C12-3 | 32-slot test build + two-window check | After C12-2 |
 | C12-4 | Headless dedicated host (real engine session) | Open, needed for 64-128 |
 | — | Scheduler ceiling 16,384 jobs; effect lists 4 × 512 | Known limits, parked |
+
+## Next session (added 2026-11-08 20:30 ET)
+| # | Task | Notes |
+|---|---|---|
+| C7e | `-horde-full-lod` option for the F6/`-horde` test | Per placed squad call the cores behind the script commands `ai_force_active` and `ai_force_full_lod` (find them in the script command table like ai_set_team / ai_set_blind: name ptr at entry +0x10, handler at +0x28, thunk → core). Overrides the AI update scheduler's LOD (0x70ABBC) so every actor gets full updates. Tip from the community (model/AI modder): 987 actors fully active with no issues; also use the Grunt character's firing-point evaluators (tag-side, not engine). Measure FPS / frame time vs the normal horde. |
+| C12-L | 32 players: 11 pointer-stepping loops, bounds pass, C3 tables, pools, host player list | Start from `LIMITS-HANDOFF.md` status section, `docs/limits-players-audit.md`, `docs/limits-players-bounds-review.md`. |
