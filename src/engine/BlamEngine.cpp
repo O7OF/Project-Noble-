@@ -275,9 +275,11 @@ uint32_t BlamEngine::ResolveMapId(const std::string& mapName) {
     if (lower.find("exodus") != std::string::npos || lower.find("m50") != std::string::npos || lower == "184") return 184;
     if (lower.find("new alexandria") != std::string::npos || lower.find("m52") != std::string::npos || lower == "185") return 185;
     if (lower.find("the package") != std::string::npos || lower.find("m60") != std::string::npos || lower == "186") return 186;
-    if (lower.find("the pillar of autumn") != std::string::npos || lower.find("m70") != std::string::npos || lower == "187") return 187;
-    if (lower.find("epilogue") != std::string::npos || lower.find("m70_a") != std::string::npos || lower == "188") return 188;
+    // The two extra m70 scenes must be tested BEFORE "m70": the substrings overlap ("m70_bonus" contains
+    // "m70"), so Lone Wolf used to resolve to Pillar of Autumn's launch index.
     if (lower.find("lone wolf") != std::string::npos || lower.find("m70_bonus") != std::string::npos || lower == "189") return 189;
+    if (lower.find("epilogue") != std::string::npos || lower.find("m70_a") != std::string::npos || lower == "188") return 188;
+    if (lower.find("the pillar of autumn") != std::string::npos || lower.find("m70") != std::string::npos || lower == "187") return 187;
 
     // Multiplayer / Forge maps (launch index 190-209)
     for (const auto& m : kMultiplayerMaps) {
@@ -773,7 +775,12 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
     // and mission variants at +0x300, and must NOT be overwritten with multiplayer Slayer!
     // The main menu (mainmenu_all.map) never carries a game variant, so it skips this block entirely
     // (before 2026-10-29 it logged a bogus "No game variant found (looked for '')" on every menu boot).
-    if (!isMainMenu && !isCampaign) {
+    // Campaign blocks normally carry the mission's own variant, but a mission launched from the campaign screen
+    // also hands one over ("m20.bin" and friends) and the engine stalls at 4% without it. Decode that one - it
+    // only ever replaces the block's variant with the mission's own, never with a multiplayer mode.
+    const bool campaignVariant = isCampaign && !customVariantPath.empty() &&
+                                 customVariantPath != "Campaign" && customVariantPath != "campaign";
+    if (!isMainMenu && (!isCampaign || campaignVariant)) {
         std::filesystem::path variantPath;
         std::optional<VariantRules::Preset> gameMode;
         if (!customVariantPath.empty()) {
