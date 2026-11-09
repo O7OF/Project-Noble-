@@ -894,9 +894,10 @@ int s_hintThisFrame = -1;    // the click being handled this frame
 bool HintClicked(Prompt p) { return s_hintThisFrame == static_cast<int>(p); }
 
 bool AcceptPressed() {
-    // A modal (Account, Developer, or the Workshop-mod gate) owns ENTER/A while it is up; otherwise the
-    // screen behind it would also act on the same press.
+    // A modal, text input box, or chat line owns ENTER/A while it is up; otherwise typing Enter would
+    // trigger match start or menu actions under it.
     if (ModDownloadPrompt::Get().IsActive()) return false;
+    if (ImGui::GetIO().WantTextInput || SocialOverlay::IsTyping()) return false;
     return ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false) ||
            ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false) || HintClicked(Prompt::Accept);
 }
@@ -2896,6 +2897,11 @@ static void RefreshLobbyMode(OverlayContext& ctx) {
         }
     }
     if (st.lobbyModeChanges > 5) st.lobbyModeSummary += " and " + std::to_string(st.lobbyModeChanges - 5) + " more";
+    // Firefight and Campaign are cooperative modes: teams are strictly disabled.
+    if (st.lobbyMode == "firefight" || st.lobbyMode == "campaign") {
+        st.lobbyTeamsOn = false;
+        st.lobbyTeamCount = 1;
+    }
     NOBLE_INFO("FrontEndMenu: lobby game type: teams {}, {} rule(s) changed", st.lobbyTeamsOn ? "on" : "off", st.lobbyModeChanges);
 }
 
@@ -2903,6 +2909,10 @@ static void RefreshLobbyMode(OverlayContext& ctx) {
 // joining player doesn't reshuffle anyone. Empty when the roster already matches.
 static void AssignLobbyTeams(MenuState& st) {
     if (st.lobbyTeamsManual) return;   // the host chose teams deliberately; don't overwrite them
+    if (st.lobbyMode == "firefight" || st.lobbyMode == "campaign") {
+        st.lobbyTeamsOn = false;
+        st.lobbyTeamCount = 1;
+    }
     std::vector<std::pair<uint64_t, int>> changes;
     const int teams = std::clamp(st.lobbyTeamCount, 2, kTeamCount);
     for (size_t i = 0; i < st.lobbyRoster.size(); ++i) {
@@ -5326,7 +5336,7 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
                 st.quitChoice = 1;
                 MenuSounds::Back();
             }
-            DrawHints(ui, { { Prompt::Accept, "Select" }, { Prompt::Back, "Quit" } }, { { InputPrompts::Button::Y, "Y", "Global Chat" } });
+            DrawHints(ui, { { Prompt::Accept, "Select" }, { Prompt::Back, "Quit" } });
         } else if (st.confirmQuit) {
             // Dim everything and show the question in the middle.
             ui.dl->AddRectFilled(ui.origin, ImVec2(ui.origin.x + ui.size.x, ui.origin.y + ui.size.y), IM_COL32(0, 0, 0, 150));

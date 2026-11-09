@@ -505,89 +505,88 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
                 block[offset + b] = 0xFF;
             }
         }
+    }
 
-        uint64_t localMachineId = NetworkTransport::Get().GetLocalMachineId();
-        uint64_t hostMachineId = NetworkTransport::Get().GetHostMachineId();
+    uint64_t localMachineId = NetworkTransport::Get().GetLocalMachineId();
+    uint64_t hostMachineId = NetworkTransport::Get().GetHostMachineId();
 
-        if (isGuest) {
-            // Guest mode: 1 local active player, target host machine at 0x2F8.
-            // Note: +0xF0..+0xF7 is the 8-byte s_player_identifier copied by haloreach.dll (State 6,
-            // RVA 0xE804) into 0x182A1E94C and sent in join-request. It MUST be unique per client so
-            // c_network_session::can_accept_player_join_request (RVA 0x3973BC -> 0x39D59C) on the Host
-            // does not see it colliding with Host Player 0 (0x000000003F59F3BE) and reject with 0x16.
-            uint64_t guestPlayerId = localMachineId ^ 0x3F59F3BE00000000ULL;
-            if (guestPlayerId == 0 || guestPlayerId == 0x000000003F59F3BEULL) {
-                guestPlayerId = localMachineId | 0x504C520000000001ULL;
-            }
-            block[0] &= ~0x08; // bit 3 cleared for guest
-            *reinterpret_cast<uint64_t*>(&block[0x60]) = 0; // Host machine id is 0 at 0x60 on guest
-            block[0xE8] = 0x01; // 1 active local player
-            *reinterpret_cast<uint64_t*>(&block[0xF0]) = guestPlayerId;
-            *reinterpret_cast<uint64_t*>(&block[0xF8]) = localMachineId; // Local player 0 machine ID
-            // Slot 0 is reserved for remote Host
-            block[0x100] = 0xFF;
-            block[0x101] = 0xFF;
-            block[0x102] = 0xFF;
-            block[0x103] = 0xFF;
-            block[0x104] = 0x00;
-            block[0x108] = 0xFF;
-            block[0x109] = 0xFF;
-            block[0x10A] = 0xFF;
-            block[0x10B] = 0xFF;
-            // Slot 1 is bound to local controller 0 for this Guest
-            block[0x120] = 0x00;
-            block[0x121] = 0x00;
-            block[0x122] = 0x00;
-            block[0x123] = 0x00;
-            block[0x124] = 0x02;
-            block[0x128] = 0x00;
-            block[0x129] = 0x00;
-            block[0x12A] = 0x00;
-            block[0x12B] = 0x00;
-            // Slots 2..15 are unassigned
-            for (size_t s = 2; s < 16; ++s) {
-                size_t off = 0x100 + (s * 0x20);
-                block[off + 0] = 0xFF;
-                block[off + 1] = 0xFF;
-                block[off + 2] = 0xFF;
-                block[off + 3] = 0xFF;
-                block[off + 4] = 0x00;
-                for (size_t b = 8; b < 16; ++b) block[off + b] = 0xFF;
-            }
-            block[0x2F0] = 0x00;
-            *reinterpret_cast<uint32_t*>(&block[0x2F4]) = 0xFFFFFFFF;
-            *reinterpret_cast<uint64_t*>(&block[0x2F8]) = hostMachineId; // uint64 Host Machine ID
-            // Zero variant buffer on guest (0x300 to end) so replicated game and map variants from the host
-            // are received and mounted cleanly without local conflict.
-            // Note: do NOT memset +0x300..+0x2BF30; block is already zero-initialized and +0x1D308 holds c_map_variant.
-            block[0x2BF14] = 0xF3;
-            block[0x2BF15] = 0x01;
-            NOBLE_INFO("BlamEngine: Configured Guest Launch Block targeting host {}:{} (Local: 0x{:X}, Host: 0x{:X}, PlayerId: 0x{:X})",
-                targetHostIp, targetHostPort, localMachineId, hostMachineId, guestPlayerId);
-        } else {
-            // Host mode: 1 local active player, host machine at 0x60 and 0xF8
-            block[0] |= 0x08; // bit 3 set for host
-            *reinterpret_cast<uint64_t*>(&block[0x60]) = localMachineId;
-            block[0xE8] = 0x01; // 1 active local player
-            block[0xF0] = 0xBE;
-            block[0xF1] = 0xF3;
-            block[0xF2] = 'Y';
-            block[0xF3] = '?';
-            *reinterpret_cast<uint64_t*>(&block[0xF8]) = localMachineId;
-            block[0x100] = 0x00;
-            block[0x101] = 0x00;
-            block[0x102] = 0x00;
-            block[0x103] = 0x00;
-            block[0x104] = 0x02;
-            block[0x108] = 0x00;
-            block[0x109] = 0x00;
-            block[0x10A] = 0x00;
-            block[0x10B] = 0x00;
-            block[0x2F0] = 0x01;
-            *reinterpret_cast<uint32_t*>(&block[0x2F4]) = 0;
-            *reinterpret_cast<uint64_t*>(&block[0x2F8]) = 0;
+    if (isGuest) {
+        // Guest mode: 1 local active player, target host machine at 0x2F8.
+        // Note: +0xF0..+0xF7 is the 8-byte s_player_identifier copied by haloreach.dll (State 6,
+        // RVA 0xE804) into 0x182A1E94C and sent in join-request. It MUST be unique per client so
+        // c_network_session::can_accept_player_join_request (RVA 0x3973BC -> 0x39D59C) on the Host
+        // does not see it colliding with Host Player 0 (0x000000003F59F3BE) and reject with 0x16.
+        uint64_t guestPlayerId = localMachineId ^ 0x3F59F3BE00000000ULL;
+        if (guestPlayerId == 0 || guestPlayerId == 0x000000003F59F3BEULL) {
+            guestPlayerId = localMachineId | 0x504C520000000001ULL;
         }
+        block[0] &= ~0x08; // bit 3 cleared for guest
+        *reinterpret_cast<uint64_t*>(&block[0x60]) = 0; // Host machine id is 0 at 0x60 on guest
+        block[0xE8] = 0x01; // 1 active local player
+        *reinterpret_cast<uint64_t*>(&block[0xF0]) = guestPlayerId;
+        *reinterpret_cast<uint64_t*>(&block[0xF8]) = localMachineId; // Local player 0 machine ID
+        // Slot 0 is reserved for remote Host
+        block[0x100] = 0xFF;
+        block[0x101] = 0xFF;
+        block[0x102] = 0xFF;
+        block[0x103] = 0xFF;
+        block[0x104] = 0x00;
+        block[0x108] = 0xFF;
+        block[0x109] = 0xFF;
+        block[0x10A] = 0xFF;
+        block[0x10B] = 0xFF;
+        // Slot 1 is bound to local controller 0 for this Guest
+        block[0x120] = 0x00;
+        block[0x121] = 0x00;
+        block[0x122] = 0x00;
+        block[0x123] = 0x00;
+        block[0x124] = 0x02;
+        block[0x128] = 0x00;
+        block[0x129] = 0x00;
+        block[0x12A] = 0x00;
+        block[0x12B] = 0x00;
+        // Slots 2..15 are unassigned
+        for (size_t s = 2; s < 16; ++s) {
+            size_t off = 0x100 + (s * 0x20);
+            block[off + 0] = 0xFF;
+            block[off + 1] = 0xFF;
+            block[off + 2] = 0xFF;
+            block[off + 3] = 0xFF;
+            block[off + 4] = 0x00;
+            for (size_t b = 8; b < 16; ++b) block[off + b] = 0xFF;
+        }
+        block[0x2F0] = 0x00;
+        *reinterpret_cast<uint32_t*>(&block[0x2F4]) = 0xFFFFFFFF;
+        *reinterpret_cast<uint64_t*>(&block[0x2F8]) = hostMachineId; // uint64 Host Machine ID
+        block[0x2BF14] = 0xF3;
+        block[0x2BF15] = 0x01;
+        NOBLE_INFO("BlamEngine: Configured Guest Launch Block targeting host {}:{} (Local: 0x{:X}, Host: 0x{:X}, PlayerId: 0x{:X})",
+            targetHostIp, targetHostPort, localMachineId, hostMachineId, guestPlayerId);
+    } else {
+        // Host mode: 1 local active player, host machine at 0x60 and 0xF8
+        block[0] |= 0x08; // bit 3 set for host
+        *reinterpret_cast<uint64_t*>(&block[0x60]) = localMachineId;
+        block[0xE8] = 0x01; // 1 active local player
+        block[0xF0] = 0xBE;
+        block[0xF1] = 0xF3;
+        block[0xF2] = 'Y';
+        block[0xF3] = '?';
+        *reinterpret_cast<uint64_t*>(&block[0xF8]) = localMachineId;
+        block[0x100] = 0x00;
+        block[0x101] = 0x00;
+        block[0x102] = 0x00;
+        block[0x103] = 0x00;
+        block[0x104] = 0x02;
+        block[0x108] = 0x00;
+        block[0x109] = 0x00;
+        block[0x10A] = 0x00;
+        block[0x10B] = 0x00;
+        block[0x2F0] = 0x01;
+        *reinterpret_cast<uint32_t*>(&block[0x2F4]) = 0;
+        *reinterpret_cast<uint64_t*>(&block[0x2F8]) = 0;
+    }
 
+    if (!loadedPrebuilt) {
         // Default variant buffer init at offset 0x1D308 (RVA 0x6BFF8)
         if (m_hModule) {
             SafeCallVariantInit(m_hModule, &block[0x1D308]);
@@ -624,8 +623,8 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
 
     // Synchronized Network Session ID at +0x50 and local machine ID at +0x58
     if (!isMainMenu || !loadedPrebuilt) {
-        const uint64_t localMachineId = NetworkTransport::Get().GetLocalMachineId();
-        const uint64_t hostMachineId = NetworkTransport::Get().GetHostMachineId();
+        localMachineId = NetworkTransport::Get().GetLocalMachineId();
+        hostMachineId = NetworkTransport::Get().GetHostMachineId();
         *reinterpret_cast<uint64_t*>(&block[0x50]) = NetworkTransport::Get().GetSessionId();
         *reinterpret_cast<uint64_t*>(&block[0x58]) = localMachineId;
         if (!isMainMenu && loadedPrebuilt) {
@@ -774,7 +773,7 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
     // and mission variants at +0x300, and must NOT be overwritten with multiplayer Slayer!
     // The main menu (mainmenu_all.map) never carries a game variant, so it skips this block entirely
     // (before 2026-10-29 it logged a bogus "No game variant found (looked for '')" on every menu boot).
-    if (!isMainMenu && (!isCampaign || (!customVariantPath.empty() && customVariantPath != "Campaign" && customVariantPath != "campaign"))) {
+    if (!isMainMenu && !isCampaign) {
         std::filesystem::path variantPath;
         std::optional<VariantRules::Preset> gameMode;
         if (!customVariantPath.empty()) {

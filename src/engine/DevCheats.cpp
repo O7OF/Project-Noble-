@@ -784,15 +784,8 @@ void DevCheats::GameTick(int32_t userIndex) {
         }
 
         // 6. Process Item Spawn & Give requests
-        // A team change asks for a death: the engine applies the new team when the player respawns.
-    if (s_suicideRequested.exchange(false)) {
-        const int32_t unit = static_cast<int32_t>(player.unitHandle);
-        if (unit != -1 && unit != 0 && s_origObjectKill) {
-            s_origObjectKill(static_cast<uint32_t>(unit), 0, 0, 0);
-            NOBLE_INFO("DevCheats: local player killed for a team change (unit 0x{:X})", static_cast<uint32_t>(unit));
-        }
-    }
-    ProcessActions(s_baseAddress, pool, player);
+        s_suicideRequested.store(false);
+        ProcessActions(s_baseAddress, pool, player);
     }
 }
 

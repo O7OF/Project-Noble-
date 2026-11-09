@@ -406,6 +406,23 @@ void MasterServerClient::DoOnline() {
         const int online = j.value("online", j.value("activeSessions", 0));
         int total = j.value("totalPlayers", j.value("registeredPlayers", 0));
         const int servers = j.value("servers", j.value("masterSessions", 0));
+
+        // Master server cluster nodes (East, West, UK) register internal accounts for peer federation;
+        // ensure master server infrastructure nodes are never counted as total players.
+        int masterNodeCount = 0;
+        if (j.contains("cluster") && j["cluster"].is_object()) {
+            const auto& cluster = j["cluster"];
+            masterNodeCount = 1 + cluster.value("peerCount", 0);
+            if (cluster.contains("nodes") && cluster["nodes"].is_array()) {
+                masterNodeCount = std::max(masterNodeCount, 1 + static_cast<int>(cluster["nodes"].size()));
+            }
+        } else if (j.contains("peerRegistries") && j["peerRegistries"].is_array()) {
+            masterNodeCount = 1 + static_cast<int>(j["peerRegistries"].size());
+        } else {
+            masterNodeCount = 3;
+        }
+        total = std::max(0, total - masterNodeCount);
+
         m_onlinePlayers.store(std::max(0, online));
         if (total <= 1) {
             const HttpResult lb = HttpRequest(Url(), L"GET", "/api/leaderboard?limit=250", {});
@@ -444,6 +461,17 @@ void MasterServerClient::DoList() {
             if (j.contains("online")) online = j.value("online", 0);
             if (j.contains("totalPlayers")) total = j.value("totalPlayers", 0);
             else if (j.contains("registeredPlayers")) total = j.value("registeredPlayers", 0);
+            if (total >= 0) {
+                int masterNodeCount = 0;
+                if (j.contains("peerRegistries") && j["peerRegistries"].is_array()) {
+                    masterNodeCount = 1 + static_cast<int>(j["peerRegistries"].size());
+                } else if (j.contains("cluster") && j["cluster"].is_object()) {
+                    masterNodeCount = 1 + j["cluster"].value("peerCount", 0);
+                } else {
+                    masterNodeCount = 3;
+                }
+                total = std::max(0, total - masterNodeCount);
+            }
             if (j.contains("sessions") && j["sessions"].is_array()) items = &j["sessions"];
         }
         if (items->is_array()) {

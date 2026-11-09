@@ -483,9 +483,8 @@ void ChangeLocalTeam() {
     if (BlamEngine* engine = BlamEngine::Active()) {
         engine->ExecuteCommand("player_override_team 0 " + std::to_string(to - 1));
     }
-    // Reach kills you on a team change and spawns you with the new team's colours and spawn points; without
-    // this the switch only took effect at your next death (or not at all, e.g. in Forge).
-    DevCheats::RequestLocalSuicide();
+    // Update local scoreboard row and voice chat team without forcibly destroying the player entity
+    // or spawning controllable puppet clones.
     {
         std::lock_guard<std::mutex> lock(s_boardMutex);
         for (auto& row : s_boardRows) if (row.local) row.team = to;
@@ -581,6 +580,7 @@ void PauseMenu::DrawMenu(HWND hwnd) {
 
     const size_t peers = NetworkTransport::Get().GetGamePeerCount();
     const bool solo = peers == 0;
+    const bool isGuest = NetworkTransport::Get().IsActive() && !NetworkTransport::Get().IsHost();
     const std::wstring restartArgs = Relaunch::CurrentGameArgs();
 
     // ImGui works in a logical space (1280x720 here even on a 1920x1080 buffer), so scale from 720 to keep the
@@ -623,10 +623,10 @@ void PauseMenu::DrawMenu(HWND hwnd) {
         bool danger;
         bool enabled;
     };
-    const bool canRestart = !restartArgs.empty();
+    const bool canRestart = !restartArgs.empty() && !isGuest;
     std::vector<Entry> entries = {
         { "RESUME", "Resume the game.", false, true },
-        { "RESTART MATCH", canRestart ? "Starts this match again from the beginning." : "Needs the match arguments (only available in a launched match).",
+        { "RESTART MATCH", canRestart ? "Starts this match again from the beginning." : (isGuest ? "Only the host can restart a multiplayer match." : "Needs the match arguments (only available in a launched match)."),
           false, canRestart },
         { "SETTINGS", "Change any setting without leaving the match.", false, true },
         { "CONTROLS", "Change key, mouse and controller bindings and look speed without leaving the match.", false, true },
@@ -751,6 +751,7 @@ void PauseMenu::DrawMenu(HWND hwnd) {
     if (activated == 0) {
         Close();
     } else if (activated == 1) {
+        if (!canRestart) return;
         MenuSounds::Click();
         Close();
         if (!Relaunch::HandOff(restartArgs)) NOBLE_WARN("PauseMenu: restart failed, the match keeps running");
@@ -956,10 +957,59 @@ static std::set<std::string> s_mutedNames;
 static bool s_muteAllActive = false;
 static bool s_showPlayerModal = false;
 
+struct RawScore {
+  int32_t kills = -1;
+  int32_t assists = -1;
+  int32_t deaths = -1;
+  int32_t score = 0;
+  bool valid = false;
+};
+
+// POD SEH reader to avoid MSVC C2712 (no C++ objects requiring destruction inside __try)
+static void ReadRawScoresSEH(const uint8_t* table, RawScore* outScores, size_t count) {
+  __try {
+    for (size_t i = 0; i < count && i < 16; ++i) {
+      const uint8_t* p = table + 0xFF81 + (i * 0xD8);
+      const int32_t k = *reinterpret_cast<const int32_t*>(p + 0x37);
+      const int32_t a = *reinterpret_cast<const int32_t*>(p + 0x3B);
+      const int32_t d = *reinterpret_cast<const int32_t*>(p + 0x3F);
+      int32_t s = *reinterpret_cast<const int32_t*>(p + 0x33);
+      if (s == 0) s = *reinterpret_cast<const int16_t*>(p + 0x31);
+
+      if (k >= 0 && k < 50000) outScores[i].kills = k;
+      if (a >= 0 && a < 50000) outScores[i].assists = a;
+      if (d >= 0 && d < 50000) outScores[i].deaths = d;
+      if (s >= -100000 && s < 10000000) outScores[i].score = s;
+      outScores[i].valid = true;
+    }
+  } __except (EXCEPTION_EXECUTE_HANDLER) {}
+}
+
+// Polls active game engine results table (haloreach+0x28B83B0, stride 0xD8 at +0xFF81) so that
+// kills, assists, deaths, and scores update live in real time in Firefight, Custom Games, and Forge.
+static void UpdateLiveScoreboard() {
+  HMODULE reach = GetModuleHandleW(L"haloreach.dll");
+  if (!reach) return;
+  const uint8_t* table = reinterpret_cast<const uint8_t*>(reinterpret_cast<uintptr_t>(reach) + 0x28B83B0);
+  RawScore scores[16];
+  ReadRawScoresSEH(table, scores, 16);
+
+  std::lock_guard<std::mutex> lock(s_boardMutex);
+  for (size_t i = 0; i < s_boardRows.size() && i < 16; ++i) {
+    if (!scores[i].valid) continue;
+    auto& row = s_boardRows[i];
+    if (scores[i].kills >= 0) row.kills = scores[i].kills;
+    if (scores[i].assists >= 0) row.assists = scores[i].assists;
+    if (scores[i].deaths >= 0) row.deaths = scores[i].deaths;
+    row.score = scores[i].score;
+  }
+}
+
 // Modernized in-match scoreboard overlay replicating the 2-column layout from Halo: Reach MCC.
 // Supports mouse and gamepad navigation, individual and all-player mute toggles, live ping RTT,
 // team score aggregate bars, emblem / mute icon badges, rank insignias, and player options.
 static void DrawScoreboardPanel() {
+  UpdateLiveScoreboard();
   for (auto &row : s_boardRows) {
     if (row.machine == 0) continue;
     const int ms = NetworkTransport::Get().GetPeerPingMs(row.machine);

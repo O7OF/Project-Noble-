@@ -115,8 +115,10 @@ void VFS::SetMapOverride(const std::string& carrierScenario, const fs::path& map
     std::error_code ec;
     s_mapOverrideFile = mapFile.empty() ? fs::path() : fs::absolute(mapFile, ec);
     s_mapOverrideCarrier.clear();
-    for (char c : carrierScenario) {
-        if (c == '/' || c == '\\') break;
+    std::string base = carrierScenario;
+    const size_t lastSlash = base.find_last_of("/\\");
+    if (lastSlash != std::string::npos) base = base.substr(lastSlash + 1);
+    for (char c : base) {
         s_mapOverrideCarrier.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
     }
     if (s_mapOverrideCarrier.size() > 4 &&
@@ -220,6 +222,12 @@ std::wstring VFS::ResolvePath(const std::wstring& requestedPath, DWORD desiredAc
                 fs::path modFile = s_activeMod / p;
                 if (RawPathExists(modFile.wstring())) {
                     return modFile.wstring();
+                }
+                if (!p.filename().empty()) {
+                    fs::path modMapCandidate = s_activeMod / "maps" / p.filename();
+                    if (RawPathExists(modMapCandidate.wstring())) {
+                        return modMapCandidate.wstring();
+                    }
                 }
             }
 

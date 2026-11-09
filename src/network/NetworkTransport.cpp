@@ -924,7 +924,7 @@ uint64_t NetworkTransport::OnNetSend(uint64_t targetPeerId, const uint8_t* data,
                           reinterpret_cast<const sockaddr*>(&m_remoteHostAddr), sizeof(m_remoteHostAddr));
 
         const uint64_t lastUdpTick = m_lastUdpRecvTick.load();
-        const bool directUdpAlive = (lastUdpTick != 0 && (nowTick - lastUdpTick) < 3000);
+        const bool directUdpAlive = (lastUdpTick != 0 && (nowTick - lastUdpTick) < 15000);
 
         // While direct UDP is not yet confirmed, also probe Host's LAN IP (if known) and 127.0.0.1:<hostPort>.
         if (!directUdpAlive && m_remoteHostAddr.sin_addr.s_addr != 0) {
@@ -943,9 +943,9 @@ uint64_t NetworkTransport::OnNetSend(uint64_t targetPeerId, const uint8_t* data,
             }
         }
 
-        // Periodically send a 12-byte PING every 1000ms while !directUdpAlive (NAT hole punch) or every 2500ms
+        // Periodically send a 12-byte PING every 500ms while !directUdpAlive (NAT hole punch) or every 1500ms
         // while active so the Host echoes PONG and both sides measure live RTT ping.
-        const uint64_t pingInterval = directUdpAlive ? 2500ULL : 1000ULL;
+        const uint64_t pingInterval = directUdpAlive ? 1500ULL : 500ULL;
         if (m_remoteHostAddr.sin_addr.s_addr != 0 && (nowTick - m_lastPunchTick >= pingInterval)) {
             m_lastPunchTick = nowTick;
             {
@@ -970,7 +970,7 @@ uint64_t NetworkTransport::OnNetSend(uint64_t targetPeerId, const uint8_t* data,
         // Fallback to relay if direct UDP not confirmed active
         if (m_relayActive.load() && !directUdpAlive) {
             std::lock_guard<std::mutex> lock(m_relayMutex);
-            if (m_relaySendQueue.size() < 512) {
+            if (m_relaySendQueue.size() < 2048) {
                 m_relaySendQueue.emplace_back(wireData, wireData + totalBytes);
             }
         }
@@ -1013,7 +1013,7 @@ uint64_t NetworkTransport::OnNetSend(uint64_t targetPeerId, const uint8_t* data,
             foundInUdp = true;
             auto& route = m_peerRouteStates[targetPeerId];
             route.lastUdpSendTick = nowTick;
-            directConfirmed = route.directConfirmed && (nowTick - route.lastUdpRecvTick < 3000);
+            directConfirmed = route.directConfirmed && (nowTick - route.lastUdpRecvTick < 15000);
         } else {
             // Target route unknown yet: hold packet (Star-routing) instead of broadcasting (Finding #9, #10)
             auto& q = m_heldPackets[targetPeerId];
@@ -1037,7 +1037,7 @@ uint64_t NetworkTransport::OnNetSend(uint64_t targetPeerId, const uint8_t* data,
     // If direct UDP is not confirmed bidirectional, or peer UDP route is unknown, fallback via relay
     if (m_relayActive.load() && (!foundInUdp || !directConfirmed)) {
         std::lock_guard<std::mutex> lock(m_relayMutex);
-        if (m_relaySendQueue.size() < 512) {
+        if (m_relaySendQueue.size() < 2048) {
             m_relaySendQueue.emplace_back(wireData, wireData + totalBytes);
         }
     }
@@ -1075,7 +1075,7 @@ bool NetworkTransport::QueueWirePacket(const uint8_t* wire, size_t wireLen, bool
     pkt.fromRelay = fromRelay;
     pkt.data.assign(wire + kWireHeaderBytes, wire + wireLen);
     auto& q = m_portQueues[port];
-    if (q.size() >= 512) {
+    if (q.size() >= 2048) {
         q.pop_front();  // never let a port nobody reads grow without bound
     }
     q.push_back(std::move(pkt));
@@ -1093,7 +1093,7 @@ uint64_t NetworkTransport::OnNetRecv(uint8_t* outBuffer, size_t bufferCapacity, 
     // haloreach.dll accepts channel packets up to 0x3000 bytes (hr+0x43BC00); 64 KB = largest UDP datagram, so
     // nothing is truncated (a too-small buffer makes recvfrom fail with WSAEMSGSIZE and lose the datagram).
     static thread_local uint8_t rawBuf[65536];
-    for (int drained = 0; drained < 256; ++drained) {
+    for (int drained = 0; drained < 512; ++drained) {
         sockaddr_in senderAddr = {};
         int senderLen = sizeof(senderAddr);
         const int received = recvfrom(m_socket, reinterpret_cast<char*>(rawBuf), sizeof(rawBuf), 0,

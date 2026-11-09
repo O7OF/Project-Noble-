@@ -31,22 +31,20 @@ constexpr int kFeedLines = 6;
 constexpr int kVoiceRows = 8;
 constexpr float kLineGap = 4.0f;
 
-enum Channel { kAll = 0, kTeam = 1, kParty = 2, kGlobal = 3, kDirect = 4, kChannelCount = 5 };
+enum Channel { kAll = 0, kTeam = 1, kParty = 2, kDirect = 3, kChannelCount = 4 };
 
-const char* const kChannelIds[kChannelCount] = { "all", "team", "party", "global", "dm" };
-const char* const kChannelTags[kChannelCount] = { "ALL", "TEAM", "PARTY", "GLOBAL", "DM" };
+const char* const kChannelIds[kChannelCount] = { "all", "team", "party", "dm" };
+const char* const kChannelTags[kChannelCount] = { "ALL", "TEAM", "PARTY", "DM" };
 const char* const kAudience[kChannelCount] = {
     "Everyone in this session",
     "Your team",
     "Your party",
-    "Global Chat (All Players)",
     "Direct Message (/w <player> <msg>)"
 };
 const ImU32 kChannelColors[kChannelCount] = {
     IM_COL32(236, 242, 248, 255), // All
     IM_COL32(120, 214, 150, 255), // Team
     IM_COL32(196, 162, 255, 255), // Party
-    IM_COL32(255, 210, 80, 255),  // Global (Gold)
     IM_COL32(80, 220, 255, 255)   // DM (Cyan)
 };
 const ImU32 kSystemColor = IM_COL32(255, 196, 120, 255);
@@ -66,7 +64,7 @@ std::deque<Line> s_log;
 std::map<uint64_t, std::string> s_names;
 
 bool s_typing = false;
-int s_channel = kGlobal;
+int s_channel = kAll;
 std::string s_dmTarget;
 std::string s_lastDmSender;
 std::wstring s_input;
@@ -240,10 +238,6 @@ void SendLine() {
             text = rest;
             channel = kDirect;
             s_dmTarget = target;
-        } else if (cmdLower == "g" || cmdLower == "global") {
-            channel = kGlobal;
-            text = rest;
-            if (text.empty()) { s_channel = kGlobal; return; }
         } else if (cmdLower == "all" || cmdLower == "a") {
             channel = kAll;
             text = rest;

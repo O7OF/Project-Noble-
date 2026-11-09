@@ -557,6 +557,7 @@ void ServerBrowser::RenderFilterBar() {
         }
         int activeInServers = 0;
         for (const auto& s : m_servers) {
+            if (s.name.find("Master") != std::string::npos || s.name.find("Relay") != std::string::npos) continue;
             if (s.playerCount > 0) activeInServers += s.playerCount;
         }
         const int onlineCount = std::max({ MasterServerClient::Get().OnlinePlayers(), activeInServers, 1 });
