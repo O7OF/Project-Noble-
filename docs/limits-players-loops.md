@@ -71,3 +71,20 @@ check whether they are peer masks at all). Also 0x408F10 tests only `si` (16 bit
 2. Same pair with `-slot-patch -slot-players 32`: only 2 players exist, so mask bits ≥ 16 are never set and the
    raised bounds and step caves must not change anything either. Log must show `32-player mode (dev): 6 step
    loops, 137 loop bounds raised`. Any crash names the RVA (FATAL / STACK OVERRUN handlers).
+
+## C12-L step 2 blocker: 169 untraced imul sites (2026-11-09, handed to the cloud session / Tyler)
+Most of the bounds are already raised by `d107dc0` (101/111 bit-scans, 26/31 C1, 6/8 C4). The rest wait for step 3
+tables: 0x390DB0 (every loop indexes the 16-qword table at rbp+0x150, cookie right after it) and 0x39C701 (callee
+0x39D0AC indexes the 17 x 0xC table at block+0x4440 by peer).
+
+**Blocker:** the bounds review assumed per-slot helpers are covered by imul caves. They are not always: 0x39D950
+(called per player from 0x39C6B4) has uncaved `imul` at 0x39D957 (0xB0) and 0x39D97A (0x158). In 0x380000-0x460000
+there are **169 `imul r, r, 0xB0|0x158` sites not in `SlotPatchTable.inc`** (430 in the whole DLL); the trace never
+ran those paths. Raising more bounds before they are handled sends slots >= 16 through inline addresses.
+
+Wanted: a sort tool (Python, `tools/limits/`) that marks each of the 169 as slot / not slot, then caves for the slot
+ones in a separate table installed only with `-slot-players 32` (16-player mode must stay exactly step 1).
+Rule: follow the imul destination until it is overwritten; slot site if a memory operand using it has a
+displacement inside the first record of a slot array, session-relative or block-relative (block = session + 0x30):
+players 0x1740 / 0x3950 (record 0xB0), peers 0x60 / 0x2270 (record 0x158). Check it against the 67 caved sites
+(it should mark them all slot). Listing used: capstone text of the stock DLL (`%TEMP%\stock_text.asm`, not in git).
