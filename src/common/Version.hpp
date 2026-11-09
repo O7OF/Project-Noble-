@@ -11,9 +11,9 @@ constexpr int VERSION_MINOR = 19;
 constexpr int VERSION_PATCH = 44;
 constexpr int VERSION_REVISION = 0;
 #ifdef NOBLE_DEV_BUILD
-constexpr std::string_view VERSION_STRING = "0.19.44-dev (Closed Source)";
+constexpr std::string_view VERSION_STRING = "0.19.45-dev (Closed Source)";
 #else
-constexpr std::string_view VERSION_STRING = "0.19.44 (Closed Source)";
+constexpr std::string_view VERSION_STRING = "0.19.45 (Closed Source)";
 #endif
 constexpr std::string_view APP_NAME = "Project Noble";
 

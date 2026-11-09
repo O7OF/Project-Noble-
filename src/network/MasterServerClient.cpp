@@ -578,11 +578,19 @@ void MasterServerClient::DoRegister() {
     }
     try {
         const nlohmann::json j = nlohmann::json::parse(r.body);
-        std::lock_guard<std::mutex> lock(m_mutex);
-        m_sessionId = Str(j, "session_id", 64);
-        m_sessionToken = Str(j, "token", 128);
-        m_status = "your game is listed on the master server";
-        NOBLE_INFO("MasterServer: registered session {}", m_sessionId);
+        std::string sid;
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_sessionId = Str(j, "session_id", 64);
+            m_sessionToken = Str(j, "token", 128);
+            m_status = "your game is listed on the master server";
+            sid = m_sessionId;
+        }
+        NOBLE_INFO("MasterServer: registered session {}", sid);
+        if (j.contains("relay_url") && j["relay_url"].is_string()) {
+            std::string relayUrl = j["relay_url"].get<std::string>();
+            NetworkTransport::Get().StartRelay(relayUrl, sid, true, NetworkTransport::Get().GetLocalMachineId());
+        }
     } catch (...) {
         SetStatus("master server sent an unreadable reply");
     }

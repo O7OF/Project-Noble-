@@ -1062,16 +1062,17 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
                 // Wait for remote players to connect and join membership BEFORE posting Command 11 (simulation start).
                 if (peersToWaitFor > 0) {
                     const size_t targetPeers = static_cast<size_t>(peersToWaitFor);
-                    const ULONGLONG deadline = GetTickCount64() + 30000;
+                    const ULONGLONG deadline = GetTickCount64() + 45000;
                     ULONGLONG lastLog = 0;
                     NOBLE_INFO("BlamEngine: waiting for {} remote player(s) to finish loading and join membership before starting simulation...",
                                targetPeers);
                     while (GetTickCount64() < deadline) {
                         const size_t playersJoined = LobbyPatches::GetRemotePlayerAddCount();
-                        if (playersJoined >= targetPeers) {
+                        const size_t channelPeers = NetworkTransport::Get().GetGamePeerCount();
+                        if (playersJoined >= targetPeers || channelPeers >= targetPeers) {
                             const int settleMs = settleLonger ? 3000 : 1500;
-                            NOBLE_INFO("BlamEngine: {}/{} remote player(s) joined session membership (msg 27); settling {} ms for world replication",
-                                       playersJoined, targetPeers, settleMs);
+                            NOBLE_INFO("BlamEngine: {}/{} remote player(s) in session (membership: {}, engine peers: {}); settling {} ms for world replication",
+                                       std::max(playersJoined, channelPeers), targetPeers, playersJoined, channelPeers, settleMs);
                             std::this_thread::sleep_for(std::chrono::milliseconds(settleMs));
                             break;
                         }
@@ -1079,11 +1080,11 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
                         if (lastLog == 0 || now - lastLog >= 3000) {
                             lastLog = now;
                             NOBLE_INFO("BlamEngine: membership wait: {}/{} player(s) in session (engine peers: {})",
-                                       playersJoined, targetPeers, NetworkTransport::Get().GetGamePeerCount());
+                                       playersJoined, targetPeers, channelPeers);
                         }
                         std::this_thread::sleep_for(std::chrono::milliseconds(100));
                     }
-                    if (LobbyPatches::GetRemotePlayerAddCount() < targetPeers) {
+                    if (LobbyPatches::GetRemotePlayerAddCount() < targetPeers && NetworkTransport::Get().GetGamePeerCount() < targetPeers) {
                         NOBLE_WARN("BlamEngine: membership wait timed out with {}/{} player(s); starting simulation anyway",
                                    LobbyPatches::GetRemotePlayerAddCount(), targetPeers);
                     }
@@ -1098,20 +1099,35 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
             }
         }).detach();
     } else {
-        if (BlamEngine::GuestPostStart() && gameModeTag == 1) {
-            // Research: guest posts its own mission start after the session handshake, which is what creates a local
-            // simulation player. Without it the guest sits in membership with no biped (Career reports +0x30 = 255).
-            NOBLE_INFO("BlamEngine: [GUEST] -guest-post-start enabled - posting Command 10/11 after the session handshake");
+        if (gameModeTag == 1 || BlamEngine::GuestPostStart()) {
+            NOBLE_INFO("BlamEngine: [GUEST Campaign] Starting campaign co-op background sequence (dispatching Command 10/11)...");
             std::thread([this]() {
-                std::this_thread::sleep_for(std::chrono::milliseconds(7000));
+                // Post Command 10 promptly so the engine loads scenario map tags and initializes the network session
+                std::this_thread::sleep_for(std::chrono::milliseconds(500));
                 if (!m_engineInstance || !m_fnProcessEvent) return;
-                NOBLE_INFO("BlamEngine: [GUEST] Posting Command 10 (guest mission start)");
+                NOBLE_INFO("BlamEngine: [GUEST Campaign] Posting Command 10 (Event: Start) via vtbl+0x18...");
                 int32_t status10 = m_fnProcessEvent(m_engineInstance, 10, 0);
-                NOBLE_INFO("BlamEngine: [GUEST] PostCommand(10) returned 0x{:X}", status10);
-                std::this_thread::sleep_for(std::chrono::milliseconds(6000));
-                NOBLE_INFO("BlamEngine: [GUEST] Posting Command 11 (guest simulation start)");
-                int32_t status11 = m_fnProcessEvent(m_engineInstance, 11, 0);
-                NOBLE_INFO("BlamEngine: [GUEST] PostCommand(11) returned 0x{:X}", status11);
+                NOBLE_INFO("BlamEngine: [GUEST Campaign] PostCommand(10) returned 0x{:X}", status10);
+
+                // Wait for map loading to finish before posting Command 11 (simulation start)
+                const ULONGLONG deadline = GetTickCount64() + 30000;
+                while (GetTickCount64() < deadline) {
+                    if (LoadScreen::Get().GetLoadProgress() >= 0.95f) {
+                        NOBLE_INFO("BlamEngine: [GUEST Campaign] Map load reached {:.1f}%; settling for host session sync",
+                                   LoadScreen::Get().GetLoadProgress() * 100.0f);
+                        break;
+                    }
+                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                }
+
+                // Settle a moment for world replication / session sync from host
+                std::this_thread::sleep_for(std::chrono::milliseconds(2500));
+
+                if (m_engineInstance && m_fnProcessEvent) {
+                    NOBLE_INFO("BlamEngine: [GUEST Campaign] Posting Command 11 (Simulation Start) via vtbl+0x18...");
+                    int32_t status11 = m_fnProcessEvent(m_engineInstance, 11, 0);
+                    NOBLE_INFO("BlamEngine: [GUEST Campaign] PostCommand(11) returned 0x{:X}", status11);
+                }
             }).detach();
         } else {
             NOBLE_INFO("BlamEngine: [GUEST] Remote join active - skipping manual PostCommand(10/11); waiting for host session sync.");

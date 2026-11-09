@@ -1009,6 +1009,17 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
                         advert.id = connectSessionId;
                         advert.token = connectSessionToken;
                         advert.inProgress = true;
+
+                        std::string mUrl = noble::MasterServerClient::Get().Url();
+                        if (!mUrl.empty()) {
+                            std::string hostPart = mUrl;
+                            if (hostPart.rfind("https://", 0) == 0) hostPart = hostPart.substr(8);
+                            else if (hostPart.rfind("http://", 0) == 0) hostPart = hostPart.substr(7);
+                            while (!hostPart.empty() && (hostPart.back() == '/' || hostPart.back() == ' ')) hostPart.pop_back();
+                            std::string computedRelayUrl = "wss://" + hostPart + "/ws/relay2?session=" + connectSessionId + "&role=host&protocol=" + std::to_string(noble::kClientProtocol);
+                            noble::NetworkTransport::Get().StartRelay(computedRelayUrl, connectSessionId, true, noble::NetworkTransport::Get().GetLocalMachineId());
+                            NOBLE_INFO("main: Pre-emptively connected host to WebSocket relay: {}", computedRelayUrl);
+                        }
                     }
                     noble::MasterServerClient::Get().StartAdvertising(advert);
                     NOBLE_INFO("main: Advertised hosted match to master server ({}:{}) [Session: '{}']", advert.address, advert.port, connectSessionId.empty() ? "new" : connectSessionId);

@@ -1163,12 +1163,12 @@ uint64_t NetworkTransport::OnNetRecv(uint8_t* outBuffer, size_t bufferCapacity, 
                     uint8_t pong[sizeof(uint64_t) + 4] = { 0 };
                     std::memcpy(pong, &m_localMachineId, sizeof(uint64_t));
                     pong[sizeof(uint64_t)]     = 'P';
-                    pong[sizeof(uint64_t) + 1] = 'I';
+                    pong[sizeof(uint64_t) + 1] = 'O';
                     pong[sizeof(uint64_t) + 2] = 'N';
                     pong[sizeof(uint64_t) + 3] = 'G';
                     sendto(m_socket, reinterpret_cast<const char*>(pong), sizeof(pong), 0,
                            reinterpret_cast<const sockaddr*>(&senderAddr), sizeof(senderAddr));
-                    NOBLE_INFO("NetworkTransport: [HOST] Registered peer 0x{:X} via NAT punch PING from {} (echoed PING)",
+                    NOBLE_INFO("NetworkTransport: [HOST] Registered peer 0x{:X} via NAT punch PING from {} (echoed PONG)",
                                wireSender, addrKey);
                 } else if (!m_isHost) {
                     if (wireSender == m_hostMachineId) {
@@ -1242,7 +1242,7 @@ uint64_t NetworkTransport::OnNetRecv(uint8_t* outBuffer, size_t bufferCapacity, 
             auto wire = std::move(m_relayRecvQueue.front());
             m_relayRecvQueue.pop_front();
             if (wire.size() == sizeof(uint64_t) + 4 &&
-                wire[8] == 'P' && wire[9] == 'I' && wire[10] == 'N' && wire[11] == 'G') {
+                wire[8] == 'P' && (wire[9] == 'I' || wire[9] == 'O') && wire[10] == 'N' && wire[11] == 'G') {
                 continue;
             }
             if (QueueWirePacket(wire.data(), wire.size(), true)) {
