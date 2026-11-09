@@ -1,4 +1,5 @@
 #include "audio/VoiceChat.hpp"
+#include "../engine/DevCheats.hpp"
 #include "ForgeMenu.hpp"
 #include "SocialOverlay.hpp"
 #include "PauseMenu.hpp"
@@ -481,6 +482,9 @@ void ChangeLocalTeam() {
     if (BlamEngine* engine = BlamEngine::Active()) {
         engine->ExecuteCommand("player_override_team 0 " + std::to_string(to - 1));
     }
+    // Reach kills you on a team change and spawns you with the new team's colours and spawn points; without
+    // this the switch only took effect at your next death (or not at all, e.g. in Forge).
+    DevCheats::RequestLocalSuicide();
     {
         std::lock_guard<std::mutex> lock(s_boardMutex);
         for (auto& row : s_boardRows) if (row.local) row.team = to;

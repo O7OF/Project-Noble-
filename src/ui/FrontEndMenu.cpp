@@ -2866,7 +2866,10 @@ static void RefreshLobbyMode(OverlayContext& ctx) {
     const std::string key = st.lobbyMode + "|" + st.lobbyVariantPath;
     if (st.lobbyModeKey == key) return;
     st.lobbyModeKey = key;
-    st.lobbyTeamsOn = (st.lobbyMode == "forge"); // Forge lobbies support team dividers by default
+    st.lobbyTeamsOn = (st.lobbyMode == "forge");
+    // Forge sessions only honour red and blue (the engine ignores the side override there), so the lobby's
+    // team count is pinned to 2 and anyone on a higher team is dealt back onto red/blue.
+    if (st.lobbyMode == "forge") st.lobbyTeamCount = 2; // Forge lobbies support team dividers by default
     st.lobbyTeamsManual = false;
     st.lobbyModeChanges = 0;
     st.lobbyModeSummary.clear();
@@ -3426,12 +3429,9 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         optRows.push_back({ "GAME TYPE", "BASIC EDITING", false, false, "Forge uses Basic Editing as base." });
         optRows.push_back({ "MAP", mapDisplay, false, st.isLobbyHost, "Choose which map to forge." });
         if (st.lobbyTeamsOn) {
-            const int teams = std::clamp(st.lobbyTeamCount, 2, kTeamCount);
-            char forgeCountTip[200];
-            std::snprintf(forgeCountTip, sizeof(forgeCountTip),
-                          "Forge assigns teams. %d team%s in this lobby; the host deals players across them.", teams,
-                          teams == 1 ? "" : "s");
-            optRows.push_back({ "TEAM COUNT", std::to_string(teams), false, st.isLobbyHost, forgeCountTip });
+            // Forge is red/blue only: the engine ignores side overrides in a Forge session, so the lobby must
+            // not offer colours the match cannot show (there is no TEAM COUNT row here for the same reason).
+            constexpr int teams = 2;
             if (!st.lobbyRoster.empty()) {
                 const LobbyPlayer& selectedPlayer = st.lobbyRoster[std::clamp(st.lobbyRosterSelection, 0, static_cast<int>(st.lobbyRoster.size()) - 1)];
                 const int shownTeam = selectedPlayer.team > 0 ? std::clamp(selectedPlayer.team, 1, teams) : 0;

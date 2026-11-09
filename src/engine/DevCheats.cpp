@@ -24,6 +24,7 @@ std::atomic<int32_t> DevCheats::s_localUnitDatum{ -1 };
 std::atomic<int32_t> DevCheats::s_localVehicleDatum{ -1 };
 
 std::atomic<bool> DevCheats::s_godmode{false};
+static std::atomic<bool> s_suicideRequested{false};   // pause menu CHANGE TEAM: die, then respawn on the new side
 std::atomic<bool> DevCheats::s_superJump{false};
 std::atomic<float> DevCheats::s_jumpMultiplier{3.0f};
 std::atomic<bool> DevCheats::s_superSpeed{false};
@@ -368,6 +369,8 @@ static void __fastcall Hook_ObjectKill(uint32_t objectDatum, uint32_t flags, uin
 }
 
 } // namespace
+
+void DevCheats::RequestLocalSuicide() { s_suicideRequested.store(true); }
 
 bool DevCheats::IsGodmode() { return s_godmode.load(); }
 void DevCheats::SetGodmode(bool val) { s_godmode.store(val); }
@@ -781,7 +784,15 @@ void DevCheats::GameTick(int32_t userIndex) {
         }
 
         // 6. Process Item Spawn & Give requests
-        ProcessActions(s_baseAddress, pool, player);
+        // A team change asks for a death: the engine applies the new team when the player respawns.
+    if (s_suicideRequested.exchange(false)) {
+        const int32_t unit = static_cast<int32_t>(player.unitHandle);
+        if (unit != -1 && unit != 0 && s_origObjectKill) {
+            s_origObjectKill(static_cast<uint32_t>(unit), 0, 0, 0);
+            NOBLE_INFO("DevCheats: local player killed for a team change (unit 0x{:X})", static_cast<uint32_t>(unit));
+        }
+    }
+    ProcessActions(s_baseAddress, pool, player);
     }
 }
 
