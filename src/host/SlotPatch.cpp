@@ -3,6 +3,7 @@
 #include "common/Logger.hpp"
 
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <iterator>
@@ -80,7 +81,7 @@ const Bound kFrame390[] = {
 constexpr uint8_t kFrame390Unwind[40] = {
     0x19, 0x37, 0x0D, 0x00, 0x26, 0x74, 0x69, 0x00, 0x26, 0x64, 0x68, 0x00, 0x26, 0x34, 0x67, 0x00,
     0x26, 0x01, 0x60, 0x00, 0x18, 0xF0, 0x16, 0xE0, 0x14, 0xD0, 0x12, 0xC0, 0x10, 0x50, 0x00, 0x00,
-    0x0E, 0x37, 0x79, 0x00, 0xF0, 0x02, 0x00, 0x00 };
+    0xE0, 0x37, 0x79, 0x00, 0xF0, 0x02, 0x00, 0x00 };   // GS handler RVA 0x7937E0
 struct ByteEdit { uint8_t at, from, to; };
 constexpr ByteEdit kFrame390UnwindEdits[] = {
     { 6, 0x69, 0x89 }, { 10, 0x68, 0x88 }, { 14, 0x67, 0x87 }, { 18, 0x60, 0x80 } };
@@ -107,7 +108,7 @@ const Bound kFrame396Context[] = {
 constexpr uint8_t kFrame396Unwind[40] = {
     0x19, 0x3D, 0x0D, 0x00, 0x2C, 0x74, 0xE9, 0x11, 0x2C, 0x64, 0xE8, 0x11, 0x2C, 0x34, 0xE7, 0x11,
     0x2C, 0x01, 0xE0, 0x11, 0x18, 0xF0, 0x16, 0xE0, 0x14, 0xD0, 0x12, 0xC0, 0x10, 0x50, 0x00, 0x00,
-    0x0E, 0x37, 0x79, 0x00, 0xF0, 0x8E, 0x00, 0x00 };
+    0xE0, 0x37, 0x79, 0x00, 0xF0, 0x8E, 0x00, 0x00 };   // GS handler RVA 0x7937E0
 // ALLOC_LARGE 0x11E0 -> 0x18A8 (x8), rbx/rsi/rdi save slots 0x11E7/E8/E9 -> 0x18AF/B0/B1; GS data 0x8EF0 unchanged.
 constexpr ByteEdit kFrame396UnwindEdits[] = {
     { 6, 0xE9, 0xB1 }, { 7, 0x11, 0x18 }, { 10, 0xE8, 0xB0 }, { 11, 0x11, 0x18 },
@@ -387,6 +388,22 @@ RUNTIME_FUNCTION* FrameEntry(uintptr_t base, const FrameGrow& f) {
     return rf;
 }
 
+// Log what the loaded engine really has for a grown frame's function entry (each profile carries its own .pdata).
+void DescribeFrameEntry(uintptr_t base, const FrameGrow& f) {
+    DWORD64 imageBase = 0;
+    const auto* rf = RtlLookupFunctionEntry(base + f.begin, &imageBase, nullptr);
+    if (!rf) {
+        NOBLE_WARN("SlotPatch: unwind entry of +0x{:X} does not match: no function entry found", f.begin);
+        return;
+    }
+    char hex[3 * kUnwindBytes + 1] = {};
+    const auto* u = reinterpret_cast<const uint8_t*>(imageBase + rf->UnwindData);
+    for (size_t i = 0; i < kUnwindBytes; ++i) std::snprintf(hex + 3 * i, 4, "%02X ", u[i]);
+    NOBLE_WARN("SlotPatch: unwind entry of +0x{:X} does not match: found module {} entry +0x{:X}..+0x{:X} (expected "
+               "+0x{:X}..+0x{:X}), unwind +0x{:X}: {}", f.begin, imageBase == base ? "engine" : "other",
+               rf->BeginAddress, rf->EndAddress, f.begin, f.end, rf->UnwindData, hex);
+}
+
 bool BytesMatch(uintptr_t base, const Bound* b, size_t n, const char* what) {
     for (size_t i = 0; i < n; ++i)
         if (std::memcmp(reinterpret_cast<void*>(base + b[i].rva), b[i].original, b[i].length) != 0) {
@@ -397,13 +414,16 @@ bool BytesMatch(uintptr_t base, const Bound* b, size_t n, const char* what) {
 }
 
 bool FramesMatch(uintptr_t base) {
+    bool ok = true;   // check every frame, so one run logs every mismatch
     for (const FrameGrow& f : kFrames) {
-        if (!BytesMatch(base, f.code, f.codeCount, "frame") || !BytesMatch(base, f.context, f.contextCount, "frame")) return false;
+        if (!BytesMatch(base, f.code, f.codeCount, "frame") || !BytesMatch(base, f.context, f.contextCount, "frame")) { ok = false; continue; }
+        bool table = true;
         for (size_t i = 0; i < f.unwindEditCount; ++i)
-            if (f.unwind[f.unwindEdits[i].at] != f.unwindEdits[i].from) return false;   // table self-check
-        if (!FrameEntry(base, f)) { NOBLE_WARN("SlotPatch: unwind entry of +0x{:X} does not match", f.begin); return false; }
+            if (f.unwind[f.unwindEdits[i].at] != f.unwindEdits[i].from) table = false;   // table self-check
+        if (!table) { NOBLE_WARN("SlotPatch: frame table of +0x{:X} is inconsistent", f.begin); ok = false; continue; }
+        if (!FrameEntry(base, f)) { DescribeFrameEntry(base, f); ok = false; }
     }
-    return true;
+    return ok;
 }
 
 // Call only after FramesMatch. Each unwind copy goes in before its code, so a stack walk never sees the grown code
@@ -738,9 +758,15 @@ void Install(HMODULE engine, bool extendedProfile) {
                 players32 = false;
             }
         }
-        if (players32 && !FramesMatch(base)) players32 = false;
-        if (players32 && !CallSitesMatch(base)) players32 = false;
-        if (players32 && !TableSitesMatch(base)) players32 = false;
+        // Run every check (each logs its own mismatch), so one run shows all of them; any failure keeps 16 players.
+        const bool frames = FramesMatch(base);
+        const bool calls = CallSitesMatch(base);
+        const bool table = TableSitesMatch(base);
+        if (players32 && !(frames && calls && table)) {
+            NOBLE_WARN("SlotPatch: 32-player checks: frames {}, call sites {}, peer table sites {}; 32-player mode off",
+                       frames ? "ok" : "FAILED", calls ? "ok" : "FAILED", table ? "ok" : "FAILED");
+            players32 = false;
+        }
     }
     const uintptr_t sessions = base + kSessionsRva;
     // Shadow objects: same stride as the real ones, so shadow(obj) = obj + delta for all four.

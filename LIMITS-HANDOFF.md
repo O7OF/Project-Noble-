@@ -44,7 +44,8 @@ written past the stack copies before `88d67ec`).
 5. Network encoding of slot counts/masks (protocol work; also #1's network-decoded source block).
 
 ### Next (in order)
-1. Smoke test now: `run_slot32_smoke.bat` (`f7f61b4`; ENGINE LIMITS = Extended) — one window, solo match, three runs, separate `-log` files: no slot options; `-slot-patch
+1. ~~Smoke test~~ done 01:45: 32-player mode installs and runs 120 s clean with 1 player after fixing the GS
+   handler byte in both frame tables (`docs/limits-players-loops.md` "Smoke test"). Original plan: `run_slot32_smoke.bat` (`f7f61b4`; ENGINE LIMITS = Extended) — one window, solo match, three runs, separate `-log` files: no slot options; `-slot-patch
    -slot-players 32` without the override (must log blockers and stay 16); same with `NOBLE_SLOT_PLAYERS_UNSAFE=1`
    (1 player, so slots >= 16 unused: checks the two grown frames and new caves install and don't crash). Ask
    Claude Code for a `.bat`; the cloud session can run it on monitor 1.

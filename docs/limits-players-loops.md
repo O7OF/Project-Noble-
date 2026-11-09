@@ -200,3 +200,16 @@ S1 = rsp+0x30 = rbp-0xD0 (copy of half B), S2 = rbp+0x2140 (copy of static half 
 - Cave bytes were checked by compiling the emitter on Linux and disassembling sample caves (objdump).
 - Test: run 3 of `run_slot32_smoke.bat` must log "peer table +0x446C: 47 sites + 2 reset loops caved" and no
   "peer table site ... does not match".
+
+## Smoke test 2026-11-09 01:30-01:45 (one window, Sword Base, ENGINE LIMITS = Full, 120 s each)
+| Run | Options | Result |
+|---|---|---|
+| 1 | none | clean, no SlotPatch lines |
+| 2 | `-slot-patch -slot-players 32` | refused as designed, 16-player mode, 67 step-1 sites, clean |
+| 3 | + `NOBLE_SLOT_PLAYERS_UNSAFE=1` | fell back to 16: `unwind entry of +0x390DB0 does not match` |
+| 3b | same, with the new frame diagnostic | both frame tables had the GS handler RVA typed as 0x79370E (byte 32 `0E`); the engine has **0x7937E0** (a real handler after int3 padding). Call sites and all 49 peer-table sites matched |
+| 3c | same, tables fixed | **32-player mode on**, 120 s clean: 8 steps, 139 bounds, both frames, 6 mirrors, side areas, peer table 47 + 2; pools players / fire team / simulation view / distributed view 16 -> 32; no FATAL, no STACK OVERRUN, no guard hits |
+Note: with the typo the unwind copies would have pointed exception handling at a non-function; the check caught it.
+`FramesMatch` now runs every check and `DescribeFrameEntry` logs the found entry; Install reports frames / call sites /
+peer table sites together. Only 1 player was in the game, so slots >= 16 were never used: this proves install and
+no regressions, not 32 players.
