@@ -1016,6 +1016,40 @@ void ArmorCustomizer::MigrateFromLegacyFields() {
 }
 
 
+namespace {
+std::string SanitizeServiceTag(const std::string& raw) {
+    std::string tag;
+    for (char c : raw) {
+        if (tag.size() == 4) break;
+        if (c >= 'a' && c <= 'z') c = static_cast<char>(c - 'a' + 'A');
+        if ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) tag.push_back(c);
+    }
+    return tag;
+}
+
+bool HasCommandLineServiceTag() {
+    int argc = 0;
+    LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+    bool found = false;
+    for (int i = 1; argv && i + 1 < argc; ++i) {
+        if (_wcsicmp(argv[i], L"-service-tag") == 0) {
+            found = true;
+            break;
+        }
+    }
+    if (argv) LocalFree(argv);
+    return found;
+}
+} // namespace
+
+void ArmorCustomizer::SetServiceTag(const std::string& tag) {
+    const std::string clean = SanitizeServiceTag(tag);
+    if (clean.empty() || m_profile.serviceTag == clean) return;
+    m_profile.serviceTag = clean;
+    m_dirty = true;
+    SaveProfile(m_profilePath);
+}
+
 void ArmorCustomizer::SetPreferredSpecies(PlayerSpecies species) {
     m_profile.species = species;
     m_previewSpecies = species;
@@ -1276,6 +1310,8 @@ bool ArmorCustomizer::LoadProfile(const std::filesystem::path& path) {
     m_profilePath = path.empty() ? ResolveDefaultProfilePath() : path;
     m_visorSelection = -1;
     if (!std::filesystem::exists(m_profilePath)) {
+        const std::string settingsTag = SanitizeServiceTag(Settings::Get().Snapshot().serviceTag);
+        if (!settingsTag.empty()) m_profile.serviceTag = settingsTag;
         SyncLegacyFields();
         m_previewSpecies = m_profile.species;
         SyncToReachArmory();
@@ -1510,7 +1546,52 @@ bool ArmorCustomizer::LoadProfile(const std::filesystem::path& path) {
         SyncLegacyFields();
         m_visorSelection = m_profile.visorColorIndex;
         m_previewSpecies = m_profile.species;
+
+        // Reconcile serviceTag across appearance.dat, settings.json, and identity.json so a tag set in
+        // SETTINGS > PLAYER > SERVICE TAG (or First-Start / CLI) is never overwritten by the stock "N06"
+        // Armory default, and a tag set in the Armory also populates Settings and DeviceIdentity.
+        const std::string armoryTag = SanitizeServiceTag(m_profile.serviceTag);
+        const std::string settingsTag = SanitizeServiceTag(Settings::Get().Snapshot().serviceTag);
+        const bool cliOverride = HasCommandLineServiceTag();
+        std::string resolvedTag = armoryTag;
+        if (cliOverride && !settingsTag.empty()) {
+            resolvedTag = settingsTag;
+        } else if ((armoryTag.empty() || armoryTag == "N06") && !settingsTag.empty() && settingsTag != "N06") {
+            resolvedTag = settingsTag;
+        } else if ((settingsTag.empty() || settingsTag == "NOBL") && !armoryTag.empty() && armoryTag != "N06") {
+            resolvedTag = armoryTag;
+        } else if (!settingsTag.empty() && !armoryTag.empty() && settingsTag != armoryTag) {
+            std::error_code ec1, ec2;
+            const auto settingsTime = std::filesystem::last_write_time(Settings::Get().FilePath(), ec1);
+            const auto armoryTime = std::filesystem::last_write_time(m_profilePath, ec2);
+            if (!ec1 && (ec2 || settingsTime >= armoryTime)) {
+                resolvedTag = settingsTag;
+            } else {
+                resolvedTag = armoryTag;
+            }
+        } else if (resolvedTag.empty()) {
+            resolvedTag = !settingsTag.empty() ? settingsTag : std::string("NOBL");
+        }
+
+        const bool armoryTagChanged = (m_profile.serviceTag != resolvedTag);
+        m_profile.serviceTag = resolvedTag;
         SyncToReachArmory();
+        if (armoryTagChanged && !cliOverride) {
+            SaveProfile(m_profilePath);
+        }
+        if (!cliOverride) {
+            SettingsData sd = Settings::Get().Snapshot();
+            if (sd.serviceTag != resolvedTag) {
+                sd.serviceTag = resolvedTag;
+                Settings::Get().Update(sd);
+            }
+            DeviceIdentity id = DeviceIdentityStore::Get();
+            if (id.serviceTag != resolvedTag) {
+                id.serviceTag = resolvedTag;
+                DeviceIdentityStore::Save(id);
+            }
+        }
+
         NOBLE_INFO("ArmorCustomizer: Loaded profile from '{}' (Tag: {}, PreferredSpecies: {})",
                    m_profilePath.string(), m_profile.serviceTag,
                    m_profile.species == PlayerSpecies::Elite ? "Elite" : "Spartan");
@@ -2503,7 +2584,26 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
         char tagBuf[8] = {};
         std::snprintf(tagBuf, sizeof(tagBuf), "%s", m_profile.serviceTag.c_str());
         if (ImGui::InputText("##service_tag_in", tagBuf, 5, ImGuiInputTextFlags_CharsUppercase | ImGuiInputTextFlags_CharsNoBlank)) {
-            m_profile.serviceTag = tagBuf;
+            const std::string clean = SanitizeServiceTag(tagBuf);
+            m_profile.serviceTag = clean;
+            if (!clean.empty()) {
+                m_dirty = true;
+                SaveProfile(m_profilePath);
+                SettingsData d = Settings::Get().Snapshot();
+                if (d.serviceTag != clean) {
+                    d.serviceTag = clean;
+                    Settings::Get().Update(d);
+                }
+                DeviceIdentity id = DeviceIdentityStore::Get();
+                if (id.serviceTag != clean) {
+                    id.serviceTag = clean;
+                    DeviceIdentityStore::Save(id);
+                }
+            }
+        }
+        if (ImGui::IsItemDeactivated() && m_profile.serviceTag.empty()) {
+            const std::string fallback = SanitizeServiceTag(Settings::Get().Snapshot().serviceTag);
+            m_profile.serviceTag = fallback.empty() ? "NOBL" : fallback;
             m_dirty = true;
             SaveProfile(m_profilePath);
         }
