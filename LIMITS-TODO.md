@@ -134,3 +134,19 @@ What it took (all in Noble's own engine copy; the player's haloreach.dll is unto
 |---|---|---|
 | C7e | `-horde-full-lod` option for the F6/`-horde` test | Per placed squad call the cores behind the script commands `ai_force_active` and `ai_force_full_lod` (find them in the script command table like ai_set_team / ai_set_blind: name ptr at entry +0x10, handler at +0x28, thunk → core). Overrides the AI update scheduler's LOD (0x70ABBC) so every actor gets full updates. Tip from the community (model/AI modder): 987 actors fully active with no issues; also use the Grunt character's firing-point evaluators (tag-side, not engine). Measure FPS / frame time vs the normal horde. |
 | C12-L | 32 players: 11 pointer-stepping loops, bounds pass, C3 tables, pools, host player list | Start from `LIMITS-HANDOFF.md` status section, `docs/limits-players-audit.md`, `docs/limits-players-bounds-review.md`. |
+
+### C7e results (2026-11-08 21:45 ET) — done; stability/perf work parked, back to C12
+- New horde options: `-horde-full-lod` (ai_force_active 0x6C1A00 + ai_force_full_lod core 0x70AB58, actors stay
+  sighted), `-horde-infantry` (destroys the vehicle of any squad that spawns seated via object_destroy
+  0x47A854/0x1EB650, then skips that squad). Fixed: the option loop ignored the **last** argument; startup now
+  logs `SpawnTest: horde options | …`.
+- Unearthed, `-ai-actors 1024 -horde 1000 -horde-team 0 -horde-no-teleport`:
+  | Run | Live actors | FPS |
+  |---|---|---|
+  | normal LOD, dropships (3 runs) | ~700 → ~150 after Phantoms leave | 20-29 → 90-110 |
+  | full LOD, dropships | ~700 → ~145 | 20-25 → ~30 |
+  | **full LOD, infantry only (14 vehicle squads skipped)** | **980-1,020 for 11 min** | **~15.6** |
+- Takeaways: the post-wave "drop" was Phantoms leaving with riders aboard, not deaths. FPS scales with actor count
+  (main-thread AI, ~50-60 µs/actor/frame at full LOD); no crashes at 1,024. Without teleport, squads spawn at their
+  own map positions (player sees few). Horde mode design: dropship squads once per wave with their flight
+  scripts, bulk enemies on foot. Open: infantry-only with normal LOD for comparison.
