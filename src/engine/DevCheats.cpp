@@ -43,12 +43,10 @@ std::vector<SpawnCatalogItem> DevCheats::s_catalog;
 namespace {
 
 // RVAs in haloreach.dll (Tyler's verified offsets)
-constexpr uintptr_t kTickRva            = 0x61A38;   // per-player control tick, game thread
 constexpr uintptr_t kPlacementNewRva    = 0x49CC24;  // object_placement_data_new(placement*, tag, owner, ptr)
 constexpr uintptr_t kObjectNewRva       = 0x46D6E0;  // object_new(placement*) -> object handle or -1
 constexpr uintptr_t kTlsIndexRva        = 0xC17B18;  // TLS slot of the engine's game-state root
-constexpr uintptr_t kObjectSetPositionRva = 0x46CB38;// (object, position*, forward*, up*, 0, false)
-constexpr uintptr_t kObjectRefreshRva   = 0x46C8B4;  // re-links the object to the map after a move
+constexpr uintptr_t kGetLocalUnitRva    = 0x53EF8;   // player_mapping_get_unit_by_output_user(0)
 constexpr uintptr_t kUnitAddWeaponRva   = 0x48F778;  // (unit, slot, weapon, flags)
 constexpr uintptr_t kShieldRestoreRva   = 0x49DD58;  // (unit)
 constexpr uintptr_t kDamageObjectRva    = 0x1ED320;  // object_cause_damage
@@ -56,23 +54,21 @@ constexpr uintptr_t kObjectKillRva      = 0x47CAA8;  // object_kill
 constexpr uintptr_t kTagTableRva        = 0xC1A600;  // loaded tag table root
 constexpr size_t    kPlacementSize      = 0x1A8;
 
-using PlacementNewFn      = void(__fastcall*)(void* placement, int32_t tagIndex, int32_t owner, void* extra);
-using ObjectNewFn         = int32_t(__fastcall*)(void* placement);
-using ObjectSetPositionFn = void(__fastcall*)(int32_t object, const float* position, const float* forward, const float* up, uint64_t, uint8_t);
-using ObjectRefreshFn     = void(__fastcall*)(int32_t object);
-using UnitAddWeaponFn     = void(__fastcall*)(int32_t unit, int16_t slot, int32_t weapon, int16_t flags);
-using ShieldRestoreFn     = void(__fastcall*)(int32_t unit);
-using DamageObjectFn      = void(__fastcall*)(uint32_t, uint32_t, float, void*, void*, void*);
-using ObjectKillFn        = void(__fastcall*)(uint32_t, uint32_t, uint8_t, uint32_t);
+using PlacementNewFn   = void(__fastcall*)(void* placement, int32_t tagIndex, int32_t owner, void* extra);
+using ObjectNewFn      = int32_t(__fastcall*)(void* placement);
+using GetLocalUnitFn   = int32_t(__fastcall*)(int32_t userIndex);
+using UnitAddWeaponFn  = void(__fastcall*)(int32_t unit, int16_t slot, int32_t weapon, int16_t flags);
+using ShieldRestoreFn  = void(__fastcall*)(int32_t unit);
+using DamageObjectFn   = void(__fastcall*)(uint32_t, uint32_t, float, void*, void*, void*);
+using ObjectKillFn     = void(__fastcall*)(uint32_t, uint32_t, uint8_t, uint32_t);
 
-PlacementNewFn      s_placementNew      = nullptr;
-ObjectNewFn         s_objectNew         = nullptr;
-ObjectSetPositionFn s_objectSetPosition = nullptr;
-ObjectRefreshFn     s_objectRefresh     = nullptr;
-UnitAddWeaponFn     s_unitAddWeapon     = nullptr;
-ShieldRestoreFn     s_shieldRestore     = nullptr;
-DamageObjectFn      s_origDamageObject  = nullptr;
-ObjectKillFn        s_origObjectKill    = nullptr;
+PlacementNewFn   s_placementNew     = nullptr;
+ObjectNewFn      s_objectNew        = nullptr;
+GetLocalUnitFn   s_getLocalUnit     = nullptr;
+UnitAddWeaponFn  s_unitAddWeapon    = nullptr;
+ShieldRestoreFn  s_shieldRestore    = nullptr;
+DamageObjectFn   s_origDamageObject = nullptr;
+ObjectKillFn     s_origObjectKill   = nullptr;
 
 struct ObjectPool {
     uint8_t* header = nullptr;
@@ -126,7 +122,7 @@ struct PlayerState {
     float vel[3] = {};
 };
 
-// Tyler's verified player discovery: read game-state root +0x18 (players pool, 0x490-byte records)
+// Robust multi-tier local player discovery (works in Campaign, Firefight, Forge, and Multiplayer)
 bool GetLocalPlayer(uintptr_t base, const ObjectPool& pool, PlayerState& out) {
     if (!base) return false;
     __try {
@@ -135,16 +131,37 @@ bool GetLocalPlayer(uintptr_t base, const ObjectPool& pool, PlayerState& out) {
         if (!tls || !tls[tlsSlot]) return false;
         uint8_t* root = tls[tlsSlot];
 
-        // 1. Check players pool (root + 0x18)
+        // Tier 1: Try s_getLocalUnit(0) (player_mapping_get_unit_by_output_user)
+        if (s_getLocalUnit) {
+            int32_t u = s_getLocalUnit(0);
+            if (u != -1 && u != 0) {
+                uint8_t* body = ObjectData(pool, u);
+                if (body) {
+                    out.unitHandle = u;
+                    out.biped = body;
+                    std::memcpy(out.pos, body + 0x44, sizeof(float) * 3);
+                    std::memcpy(out.fwd, body + 0x50, sizeof(float) * 3);
+                    std::memcpy(out.vel, body + 0x68, sizeof(float) * 3);
+                    int32_t parent = *reinterpret_cast<const int32_t*>(body + 0x14);
+                    if (parent != -1) {
+                        out.vehicleHandle = parent;
+                        out.vehicle = ObjectData(pool, parent);
+                    }
+                    return true;
+                }
+            }
+        }
+
+        // Tier 2: Check players pool (root + 0x18, 0x490-byte records)
         uint8_t* plyHeader = *reinterpret_cast<uint8_t**>(root + 0x18);
-        if (plyHeader && std::strncmp(reinterpret_cast<const char*>(plyHeader), "players", 32) == 0) {
+        if (plyHeader && std::strncmp(reinterpret_cast<const char*>(plyHeader), "players", 7) == 0) {
             const int32_t cap = *reinterpret_cast<const int32_t*>(plyHeader + 0x2C);
             const uint8_t* records = *reinterpret_cast<uint8_t**>(plyHeader + 0x50);
             const auto* bitmap = reinterpret_cast<const uint32_t*>(plyHeader + *reinterpret_cast<const int64_t*>(plyHeader + 0x68));
             for (int i = 0; records && i < cap; ++i) {
                 if (!((bitmap[i >> 5] >> (i & 31)) & 1)) continue;
                 int32_t unitHandle = *reinterpret_cast<const int32_t*>(records + static_cast<size_t>(i) * 0x490 + 0x28);
-                if (unitHandle == -1) continue;
+                if (unitHandle == -1 || unitHandle == 0) continue;
                 uint8_t* body = ObjectData(pool, unitHandle);
                 if (!body) continue;
 
@@ -163,7 +180,7 @@ bool GetLocalPlayer(uintptr_t base, const ObjectPool& pool, PlayerState& out) {
             }
         }
 
-        // 2. Fallback: Search object pool for any placed biped (Tyler's PickReference)
+        // Tier 3: Search object pool for placed bipeds (Noble Six / Spartan)
         for (int i = 0; i < pool.capacity; ++i) {
             if (!SlotUsed(pool, i)) continue;
             uint8_t type = pool.records[static_cast<size_t>(i) * 24 + 4];
@@ -276,11 +293,13 @@ static void ProcessActions(uintptr_t base, const ObjectPool& pool, const PlayerS
             continue;
         }
 
-        const float spawnDist = (act.category == "Vehicles") ? 5.5f : 2.5f;
+        // Spawn directly in front of the player
+        const float spawnDist = act.giveToPlayer ? 0.8f : ((act.category == "Vehicles") ? 5.0f : 2.5f);
+        const float spawnZ    = act.giveToPlayer ? 0.4f : 0.3f;
         const float spawnPos[3] = {
             player.pos[0] + player.fwd[0] * spawnDist,
             player.pos[1] + player.fwd[1] * spawnDist,
-            player.pos[2] + 0.3f
+            player.pos[2] + spawnZ
         };
 
         alignas(16) uint8_t placement[kPlacementSize + 16];
@@ -296,27 +315,14 @@ static void ProcessActions(uintptr_t base, const ObjectPool& pool, const PlayerS
 
         int32_t handle = s_objectNew ? s_objectNew(placement) : -1;
         if (handle != -1) {
-            float up[3] = { 0.0f, 0.0f, 1.0f };
-            if (s_objectSetPosition) {
-                s_objectSetPosition(handle, spawnPos, player.fwd, up, 0, false);
-            }
-            if (s_objectRefresh) {
-                s_objectRefresh(handle);
-            }
+            NOBLE_INFO("DevCheats: s_objectNew created handle 0x{:08X} for '{}' (tag 0x{:08X}) at ({:.1f}, {:.1f}, {:.1f})",
+                handle, act.itemName, static_cast<uint32_t>(tagIndex), spawnPos[0], spawnPos[1], spawnPos[2]);
 
             if (act.giveToPlayer && act.category != "Vehicles") {
                 if (s_unitAddWeapon && player.unitHandle != -1) {
                     s_unitAddWeapon(player.unitHandle, 0, handle, 0);
                 }
-                // Also position at player chest level for guaranteed immediate pickup
-                float handsPos[3] = { player.pos[0], player.pos[1], player.pos[2] + 0.4f };
-                if (s_objectSetPosition) {
-                    s_objectSetPosition(handle, handsPos, player.fwd, up, 0, false);
-                }
-                if (s_objectRefresh) {
-                    s_objectRefresh(handle);
-                }
-                SetStatus("Gave " + act.itemName + " directly into your hands!");
+                SetStatus("Gave " + act.itemName + " to your hands!");
             } else {
                 SetStatus("Spawned " + act.itemName + " in front of you!");
             }
@@ -476,8 +482,7 @@ bool DevCheats::Initialize(HMODULE hReachDll) {
     // Resolve native engine function pointers
     s_placementNew      = reinterpret_cast<PlacementNewFn>(s_baseAddress + kPlacementNewRva);
     s_objectNew         = reinterpret_cast<ObjectNewFn>(s_baseAddress + kObjectNewRva);
-    s_objectSetPosition = reinterpret_cast<ObjectSetPositionFn>(s_baseAddress + kObjectSetPositionRva);
-    s_objectRefresh     = reinterpret_cast<ObjectRefreshFn>(s_baseAddress + kObjectRefreshRva);
+    s_getLocalUnit      = reinterpret_cast<GetLocalUnitFn>(s_baseAddress + kGetLocalUnitRva);
     s_unitAddWeapon     = reinterpret_cast<UnitAddWeaponFn>(s_baseAddress + kUnitAddWeaponRva);
     s_shieldRestore     = reinterpret_cast<ShieldRestoreFn>(s_baseAddress + kShieldRestoreRva);
 
@@ -502,8 +507,8 @@ void DevCheats::Shutdown() {
     s_initialized = false;
 }
 
-void DevCheats::GameTick(int32_t userIndex) {
-    if (userIndex != 0 || !s_initialized || !s_baseAddress) return;
+void DevCheats::GameTick([[maybe_unused]] int32_t userIndex) {
+    if (!s_initialized || !s_baseAddress) return;
 
     ObjectPool pool;
     if (!GetObjectPool(s_baseAddress, pool)) return;
@@ -517,7 +522,7 @@ void DevCheats::GameTick(int32_t userIndex) {
     if (havePlayer && player.biped) {
         // 1. Apply Godmode
         if (s_godmode.load()) {
-            if (s_shieldRestore) {
+            if (s_shieldRestore && player.unitHandle != -1) {
                 s_shieldRestore(player.unitHandle);
                 if (player.vehicleHandle != -1) s_shieldRestore(player.vehicleHandle);
             }
@@ -539,17 +544,33 @@ void DevCheats::GameTick(int32_t userIndex) {
         // 2. Super Jump & Super Speed
         float* vel = reinterpret_cast<float*>(player.biped + 0x68);
         if (s_superSpeed.load() && !s_noclip.load() && !s_freecam.load()) {
-            const float hSpeed = std::hypot(vel[0], vel[1]);
-            if (hSpeed > 0.005f) {
-                const float mult = s_speedMultiplier.load();
-                vel[0] *= mult;
-                vel[1] *= mult;
+            float moveFwd = 0.0f, moveRight = 0.0f;
+            if (GetAsyncKeyState('W') & 0x8000) moveFwd += 1.0f;
+            if (GetAsyncKeyState('S') & 0x8000) moveFwd -= 1.0f;
+            if (GetAsyncKeyState('D') & 0x8000) moveRight += 1.0f;
+            if (GetAsyncKeyState('A') & 0x8000) moveRight -= 1.0f;
+
+            if (moveFwd != 0.0f || moveRight != 0.0f) {
+                float fwdLen = std::hypot(player.fwd[0], player.fwd[1]);
+                if (fwdLen > 0.001f) {
+                    const float fwd[2]   = { player.fwd[0] / fwdLen, player.fwd[1] / fwdLen };
+                    const float right[2] = { fwd[1], -fwd[0] };
+                    const float mult = s_speedMultiplier.load();
+                    const float boost = (mult - 1.0f) * 0.12f;
+
+                    float* pos = reinterpret_cast<float*>(player.biped + 0x44);
+                    pos[0] += (fwd[0] * moveFwd + right[0] * moveRight) * boost;
+                    pos[1] += (fwd[1] * moveFwd + right[1] * moveRight) * boost;
+
+                    vel[0] = (fwd[0] * moveFwd + right[0] * moveRight) * (0.15f * mult);
+                    vel[1] = (fwd[1] * moveFwd + right[1] * moveRight) * (0.15f * mult);
+                }
             }
         }
 
         if (s_superJump.load() && !s_noclip.load() && !s_freecam.load()) {
-            if (vel[2] > 0.015f) {
-                vel[2] = std::max(vel[2], 0.12f * s_jumpMultiplier.load());
+            if ((GetAsyncKeyState(VK_SPACE) & 0x8000) || vel[2] > 0.010f) {
+                vel[2] = (std::max)(vel[2], 0.16f * s_jumpMultiplier.load());
             }
         }
 
@@ -582,14 +603,6 @@ void DevCheats::GameTick(int32_t userIndex) {
             pos[0] += (fwd[0] * moveFwd + right[0] * moveRight) * speed;
             pos[1] += (fwd[1] * moveFwd + right[1] * moveRight) * speed;
             pos[2] += (fwd[2] * moveFwd + moveUp) * speed;
-
-            if (s_objectSetPosition) {
-                float defaultUp[3] = { 0.0f, 0.0f, 1.0f };
-                s_objectSetPosition(player.unitHandle, pos, fwd, defaultUp, 0, false);
-            }
-            if (s_objectRefresh) {
-                s_objectRefresh(player.unitHandle);
-            }
         }
 
         // 4. Freecam Pan: freeze player biped so legs/body do not walk away!
