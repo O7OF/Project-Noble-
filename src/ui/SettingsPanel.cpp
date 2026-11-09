@@ -1023,8 +1023,8 @@ void SettingsPanel::RenderAudio() {
     const SettingsData def;
     Section("VOLUME");
     auto volume = [&](const char* label, const char* text, float& v, float saved) {
-        if (Row(label, text, When::Apply, "100 %", std::fabs(v - saved) > 1e-4f, false, Preview::Volume)) {
-            if (SliderValue(v, 0.0f, 1.0f, 0.01f, 1.0f, Percent(v).c_str())) {
+        if (Row(label, text, When::Apply, "50 %", std::fabs(v - saved) > 1e-4f, false, Preview::Volume)) {
+            if (SliderValue(v, 0.0f, 1.0f, 0.01f, 0.50f, Percent(v).c_str())) {
                 ProcessAudio::ApplyAll(m_edit.volumeGame, m_edit.volumeMusic, m_edit.volumeOther, m_edit.masterMute);
             }
         }

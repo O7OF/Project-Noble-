@@ -1671,6 +1671,7 @@ struct MenuState {
     int ffMap = 0;
     int ffVariant = 0;
     int forgeMap = 19;
+    std::filesystem::path forgeCustomVariant;
     int skull = 0;
     uint64_t skulls = 0;
     int campaignSource = 0;
@@ -5296,7 +5297,7 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
             // Game options: every decoded rule, grouped by category, saved as the player's own named game mode.
             // Categories fold open and closed; a search or "changed only" lists every match under its heading instead.
             const std::vector<VariantRules::Rule>& rules = VariantRules::Rules();
-            DrawTitle(ui, ImVec2(left, top), "GAME OPTIONS", "MULTIPLAYER");
+            DrawTitle(ui, ImVec2(left, top), "GAME OPTIONS", forge ? "FORGE" : (ff ? "FIREFIGHT" : "MULTIPLAYER"));
             const float px = left + 34.0f * ui.s, pw = ui.size.x * 0.44f;
             float y = top + 70.0f * ui.s;
             DrawSearchBox(ui, "##mode_name", ImVec2(px, y), pw, st.optionsName, sizeof(st.optionsName), "Game mode name");
@@ -5600,6 +5601,10 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
             }
             if (reset) { st.optionsValues.clear(); MenuSounds::Back(); }
             const auto reloadModes = [&](const std::filesystem::path& select) {
+                if (forge) {
+                    st.forgeCustomVariant = select;
+                    return;
+                }
                 const bool ffScreen = ff;
                 ctx.variants = ScanVariants(ctx.reachDir, false);
                 ctx.ffVariants = ScanVariants(ctx.reachDir, true);
@@ -5881,10 +5886,18 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
             // Custom Game / Forge: the same row block the other setup screens have, so the column is not
             // banner-then-void. PLAYERS is real and feeds HOST LOBBY / HOST FORGE.
             if (forge) {
-                ui.dl->AddRectFilled(ImVec2(px, y), ImVec2(px + pw, y + 32.0f * ui.s), IM_COL32(8, 12, 18, 85));
-                Text(ui, NobleStyle::TitleFont(), 18.0f, ImVec2(px + 10.0f * ui.s, y + 4.0f * ui.s), kDisabled, "GAME OPTIONS \xC2\xB7 DEFAULT");
-                const char* later = "Coming later";
-                Text(ui, nullptr, 15.0f, ImVec2(px + pw - TextWidth(nullptr, 15.0f * ui.s, later) - 10.0f * ui.s, y + 6.0f * ui.s), kDisabled, later);
+                const char* label = st.forgeCustomVariant.empty() ? "EDIT" : "CUSTOM (EDIT)";
+                const int optionsChange = OptionRow(ui, "forge_options", ImVec2(px, y), pw, "GAME OPTIONS", label, st.focusRow == focusRows);
+                ImGui::SetCursorScreenPos(ImVec2(px, y));
+                const bool clicked = ImGui::InvisibleButton("##forge_options_open", ImVec2(pw * 0.48f, 32.0f * ui.s));
+                if ((clicked || optionsChange != 0 || (st.focusRow == focusRows && hit < 0 && AcceptPressed())) && std::filesystem::exists(ctx.forgeVariant)) {
+                    MenuVariant forgeMv;
+                    forgeMv.path = st.forgeCustomVariant.empty() ? ctx.forgeVariant : st.forgeCustomVariant;
+                    forgeMv.label = st.forgeCustomVariant.empty() ? "Basic Editing" : "Forge Custom";
+                    forgeMv.custom = !st.forgeCustomVariant.empty();
+                    OpenGameOptions(ctx, forgeMv);
+                }
+                ++focusRows;
             } else {
                 const std::vector<MenuVariant>& list = ctx.variants;
                 const int optionsChange = OptionRow(ui, "game_options", ImVec2(px, y), pw, "GAME OPTIONS", "EDIT", st.focusRow == focusRows);
@@ -6010,8 +6023,10 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
                     varName = "Firefight Standard";
                 }
             } else if (forge) {
-                varPath = ctx.forgeVariant.string();
-                varName = "Basic Editing";
+                varPath = (!st.forgeCustomVariant.empty() && std::filesystem::exists(st.forgeCustomVariant))
+                    ? st.forgeCustomVariant.string()
+                    : ctx.forgeVariant.string();
+                varName = st.forgeCustomVariant.empty() ? "Basic Editing" : "Custom Forge";
             } else {
                 if (!ctx.variants.empty()) {
                     varPath = ctx.variants[st.variant].path.string();
@@ -6049,8 +6064,13 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
                 if (!ctx.ffVariants.empty()) choice.variantPath = ctx.ffVariants[st.ffVariant].path.string();
             } else {
                 choice.mode = forge ? "forge" : "multiplayer";
-                if (forge) choice.variantPath = ctx.forgeVariant.string();
-                else if (!ctx.variants.empty()) choice.variantPath = ctx.variants[st.variant].path.string();
+                if (forge) {
+                    choice.variantPath = (!st.forgeCustomVariant.empty() && std::filesystem::exists(st.forgeCustomVariant))
+                        ? st.forgeCustomVariant.string()
+                        : ctx.forgeVariant.string();
+                } else if (!ctx.variants.empty()) {
+                    choice.variantPath = ctx.variants[st.variant].path.string();
+                }
             }
             done = true;
         }

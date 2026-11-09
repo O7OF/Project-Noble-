@@ -103,10 +103,10 @@ std::thread s_musicThread;
 std::atomic<IXAudio2SourceVoice*> s_musicVoice{ nullptr };   // voice of the thread above, for pause/resume
 std::atomic<bool> s_musicPaused{ false };
 std::atomic<bool> s_musicStop{false};
-std::atomic<float> s_musicVolume{1.0f};
+std::atomic<float> s_musicVolume{0.50f};
 std::atomic<bool> s_muted{false};
 std::atomic<bool> s_menuMusicEnabled{true};   // false in a match process: never start the menu theme over the game
-static std::atomic<float> s_sfxVolume{1.0f};
+static std::atomic<float> s_sfxVolume{0.50f};
 std::string s_musicTrack;
 
 // ---------------------------------------------------------------- helpers

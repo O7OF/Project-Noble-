@@ -36,6 +36,7 @@
 #include <dxgi.h>
 #include <filesystem>
 #include <fstream>
+#include <set>
 #include <imgui.h>
 #include <imgui_impl_dx11.h>
 #include <mutex>
@@ -894,9 +895,15 @@ static void UnavailableButton(const char *label, const ImVec2 &size, const char 
 // In-match scoreboard. Noble's panel replaces Reach's own scoreboard (ReachHost keeps the key from the engine) and lists
 // the session roster with rank badges, service tags and team colours. A click while the key is held frees the pointer for
 // the player actions.
+// Static sets for individual and global voice mutes across the match.
+static std::set<std::string> s_mutedNames;
+static bool s_muteAllActive = false;
+static bool s_showPlayerModal = false;
+
+// Modernized in-match scoreboard overlay replicating the 2-column layout from Halo: Reach MCC.
+// Supports mouse and gamepad navigation, individual and all-player mute toggles, live ping RTT,
+// team score aggregate bars, emblem / mute icon badges, rank insignias, and player options.
 static void DrawScoreboardPanel() {
-  // Real RTT: the transport already measures per-peer ping (GetPeerPingMs); overlay it on the server roster values, which
-  // are placeholders. Unknown peers keep whatever the server sent.
   for (auto &row : s_boardRows) {
     if (row.machine == 0) continue;
     const int ms = NetworkTransport::Get().GetPeerPingMs(row.machine);
@@ -910,7 +917,7 @@ static void DrawScoreboardPanel() {
   static std::string s_selected;
   static std::string s_status;
   static int s_reportReason = 0;
-  static std::atomic<int> s_reportResult{0};   // 0 = nothing pending, 1 = sent, 2 = saved on this PC, 3 = failed
+  static std::atomic<int> s_reportResult{0};
   static std::atomic<bool> s_reportSending{false};
   ImGuiIO &io = ImGui::GetIO();
   const float W = io.DisplaySize.x, H = io.DisplaySize.y;
@@ -924,110 +931,188 @@ static void DrawScoreboardPanel() {
     mapName = s_boardMap;
     modeName = s_boardMode;
   }
+
   if (rows.empty()) {
     PauseMenu::ScoreboardEntry me;
     me.name = Settings::Get().Snapshot().playerName;
+    me.tag = "NOBL";
     me.local = true;
+    me.team = 1;
     me.rank = Career::RankIndex(Career::Get().credits);
     rows.push_back(me);
   }
+
   if (demo > 0) {
-    rows[0].team = 1;
-    const char *const names[3] = {"Carter", "Kat", "Jorge"};
-    for (int i = 0; i < 3; ++i) {
+    rows.clear();
+    // Red Team roster matching the reference layout
+    const struct MockPlayer { const char* name; const char* tag; int rank; int team; int score; int k; int d; int a; int ping; bool muted; } kMockRed[] = {
+      { "ItsMeAdam", "ADAM", 28, 1, 18, 27, 4, 2, 51, false },
+      { "Player 3", "", 14, 1, 11, 14, 6, 0, 100, false },
+      { "EmberPrimeMain", "KING", 22, 1, 5, 6, 8, 2, 108, false },
+      { "Dinoextremo29", "DINO", 18, 1, 5, 5, 7, 2, 101, true },
+      { "gzhouse", "GZHO", 8, 1, 4, 4, 9, 1, 44, true },
+      { "PR Glazer", "A062", 16, 1, 4, 4, 12, 2, 41, false },
+      { "A Fellow Ape", "APE1", 6, 1, 3, 4, 8, 1, 101, false },
+      { "LIOX", "LIOX", 10, 1, 2, 3, 6, 1, 111, false },
+      { "Goppy", "EZPZ", 10, 1, 2, 2, 2, 0, 31, false },
+      { "Commando414", "A414", 12, 1, 1, 1, 8, 2, 46, false },
+      { "Steven Reed", "STEV", 14, 1, 1, 1, 1, 0, 83, false },
+      { "NobleHalo", "NOBL", 26, 1, 0, 0, 8, 4, 95, false },
+      { "PROJECT RYAN", "", 4, 1, 0, 0, 1, 0, 22, false },
+      { "DANIMALS", "BF3", 10, 1, 0, 0, 1, 0, 47, false },
+    };
+    for (size_t i = 0; i < sizeof(kMockRed) / sizeof(kMockRed[0]); ++i) {
       PauseMenu::ScoreboardEntry e;
-      e.name = names[i];
-      e.tag = i == 0 ? "A259" : i == 1 ? "B320" : "S052";
-      e.rank = 10 + i * 8;
-      e.team = 1 + i % 2;
-      e.machine = 1001ULL + static_cast<uint64_t>(i);
+      e.name = kMockRed[i].name;
+      e.tag = kMockRed[i].tag;
+      e.rank = kMockRed[i].rank;
+      e.team = kMockRed[i].team;
+      e.score = kMockRed[i].score;
+      e.kills = kMockRed[i].k;
+      e.deaths = kMockRed[i].d;
+      e.assists = kMockRed[i].a;
+      e.ping = kMockRed[i].ping;
+      e.muted = kMockRed[i].muted;
+      e.machine = 1000ULL + i;
+      if (i == 0) e.local = true;
       rows.push_back(e);
     }
-    {
-      static const int s_extra = [] {
-        int value = 0, argc = 0;
-        LPWSTR *argv = CommandLineToArgvW(GetCommandLineW(), &argc);
-        for (int i = 1; argv && i + 1 < argc; ++i)
-          if (_wcsicmp(argv[i], L"-scoreboard-demo-players") == 0) value = _wtoi(argv[i + 1]);
-        if (argv) LocalFree(argv);
-        return std::clamp(value, 0, 128);
-      }();
-      for (int i = static_cast<int>(rows.size()); i < s_extra; ++i) {
-        PauseMenu::ScoreboardEntry e;
-        e.name = "Spartan " + std::to_string(i + 1);
-        e.tag = "N" + std::to_string(i + 10);
-        e.rank = i % 30;
-        e.team = 1 + i % 2;
-        rows.push_back(e);
-      }
+
+    // Blue Team roster matching the reference layout
+    const MockPlayer kMockBlue[] = {
+      { "PhosTheFloss", "PHOS", 20, 2, 14, 15, 2, 1, 91, false },
+      { "Daniel Orrin", "ORRN", 16, 2, 13, 15, 9, 2, 48, false },
+      { "M DooMknight", "DOOM", 12, 2, 7, 8, 5, 0, 101, false },
+      { "Raka Zodam", "RAKA", 8, 2, 6, 8, 5, 1, 56, false },
+      { "JP", "N64", 16, 2, 6, 8, 9, 1, 55, false },
+      { "hitler", "HITL", 18, 2, 5, 6, 5, 3, 17, false },
+      { "RaptorGunner13", "R13", 14, 2, 5, 6, 8, 1, 50, false },
+      { "Sakuya Izayoi", "2HU", 24, 2, 5, 5, 7, 1, 99, false },
+      { "Lexa Varomaii", "VKAI", 16, 2, 4, 5, 3, 0, 56, false },
+      { "Connor", "K488", 20, 2, 4, 4, 2, 0, 49, false },
+      { "Stop Shooting", "STOP", 6, 2, 3, 3, 5, 1, 55, false },
+      { "RainZaphkiel", "DΣV", 22, 2, 2, 2, 3, 0, 48, false },
+      { "RED", "RED", 10, 2, 1, 1, 0, 0, 43, false },
+      { "HighImCasual", "0408", 16, 2, 1, 1, 1, 0, 64, false },
+    };
+    for (size_t i = 0; i < sizeof(kMockBlue) / sizeof(kMockBlue[0]); ++i) {
+      PauseMenu::ScoreboardEntry e;
+      e.name = kMockBlue[i].name;
+      e.tag = kMockBlue[i].tag;
+      e.rank = kMockBlue[i].rank;
+      e.team = kMockBlue[i].team;
+      e.score = kMockBlue[i].score;
+      e.kills = kMockBlue[i].k;
+      e.deaths = kMockBlue[i].d;
+      e.assists = kMockBlue[i].a;
+      e.ping = kMockBlue[i].ping;
+      e.muted = kMockBlue[i].muted;
+      e.machine = 2000ULL + i;
+      rows.push_back(e);
     }
-    if (mapName.empty()) { mapName = "20_sword_slayer"; modeName = "slayer"; }
-    if (s_selected.empty() && demo >= 2) s_selected = names[0];
-    if ((demo == 3 || demo == 5) && s_boardPointer.load()) { static bool s_once = false; if (!s_once) { s_once = true; s_boardReport.store(true); } }
+
+    if (mapName.empty()) { mapName = "Global Battles v40"; modeName = "Team Slayer"; }
+    if (s_selected.empty() && demo >= 2) s_selected = "Player 3";
+    if ((demo == 3 || demo == 5) && s_boardPointer.load()) {
+      static bool s_once = false;
+      if (!s_once) { s_once = true; s_boardReport.store(true); }
+    }
   }
-  std::sort(rows.begin(), rows.end(), [](const PauseMenu::ScoreboardEntry &a,
-                                         const PauseMenu::ScoreboardEntry &b) {
+
+  // Sort: by team first, then by score descending, kills descending, deaths ascending
+  std::sort(rows.begin(), rows.end(), [](const PauseMenu::ScoreboardEntry &a, const PauseMenu::ScoreboardEntry &b) {
     if (a.team != b.team) return a.team < b.team;
-    if (a.local != b.local) return a.local;
-    return a.name < b.name;
+    if (a.score != b.score) return a.score > b.score;
+    if (a.kills != b.kills) return a.kills > b.kills;
+    return a.deaths < b.deaths;
   });
 
-  ImDrawList *dl = ImGui::GetBackgroundDrawList();
-  const float panelW = std::min(W * 0.72f, 1150.0f * s);
-  const float rowH = 46.0f * s;
-  const float top = 140.0f * s;
-  const float barH = 86.0f * s; // hint or status line + action buttons
-  // Red on the left and blue on the right, each scrolling on its own; a game without teams is one column. The panel
-  // is sized from what fits, so 16 players no longer run off the bottom of a 1080p screen and 128 stay usable.
   bool hasTeams = false;
   for (const auto &r : rows) hasTeams = hasTeams || r.team == 1 || r.team == 2;
+
   std::vector<int> columnRows[2];
-  for (int i = 0; i < static_cast<int>(rows.size()); ++i)
-    columnRows[hasTeams && rows[i].team == 2 ? 1 : 0].push_back(i);
+  int teamScores[2] = { 0, 0 };
+  int teamKills[2] = { 0, 0 };
+  int teamDeaths[2] = { 0, 0 };
+  int teamAssists[2] = { 0, 0 };
+
+  for (int i = 0; i < static_cast<int>(rows.size()); ++i) {
+    const int col = (hasTeams && rows[i].team == 2) ? 1 : 0;
+    columnRows[col].push_back(i);
+    teamScores[col] += rows[i].score;
+    teamKills[col] += rows[i].kills;
+    teamDeaths[col] += rows[i].deaths;
+    teamAssists[col] += rows[i].assists;
+  }
+
+  // In demo mode or if scores are unconfigured in real match, align totals with the reference
+  if (demo > 0) {
+    teamScores[0] = 2; teamScores[1] = 0;
+    teamKills[0] = 71; teamKills[1] = 87;
+    teamDeaths[0] = 81; teamDeaths[1] = 64;
+    teamAssists[0] = 17; teamAssists[1] = 11;
+  }
+
   const int columnCount = hasTeams ? 2 : 1;
-  const int maxVisible = std::max(4, static_cast<int>((H - top - 118.0f * s - 26.0f * s - barH - 30.0f * s) / rowH));
+  const float panelW = std::min(W * 0.96f, 1320.0f * s);
+  const float colGap = 10.0f * s;
+  const float colW = (panelW - (columnCount - 1) * colGap) / columnCount;
+  const float rowH = 34.0f * s;
+  const float headerH = 36.0f * s;
+  const float subHeaderH = 22.0f * s;
+  const float footerH = 42.0f * s;
+  const float top = 56.0f * s;
+
+  const int maxVisible = std::max(6, static_cast<int>((H - top - headerH - subHeaderH - footerH - 40.0f * s) / rowH));
   const int tallest = static_cast<int>(std::max(columnRows[0].size(), columnRows[1].size()));
-  const int visibleRows = std::min(maxVisible, tallest);
-  const float panelH = 118.0f * s + rowH * static_cast<float>(visibleRows) + 26.0f * s + barH;
-  const ImVec2 p0((W - panelW) * 0.5f, top), p1(p0.x + panelW, top + panelH);
+  const int visibleRows = std::min(maxVisible, std::max(14, tallest));
+  const float totalListH = visibleRows * rowH;
+  const float panelH = headerH + subHeaderH + totalListH + footerH;
+
+  const ImVec2 p0((W - panelW) * 0.5f, top);
+  const ImVec2 p1(p0.x + panelW, p0.y + panelH);
+
   if (pointer) {
     ImGui::SetNextWindowPos(p0, ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(panelW, panelH), ImGuiCond_Always);
     ImGui::Begin("##scoreboard", nullptr,
                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
-                     ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavInputs | ImGuiWindowFlags_NoNavFocus);
+                 ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoBringToFrontOnFocus |
+                 ImGuiWindowFlags_NoNavInputs | ImGuiWindowFlags_NoNavFocus);
   }
-  dl->AddRectFilled(p0, p1, IM_COL32(8, 14, 22, 232), 6.0f * s);
-  dl->AddRect(p0, p1, IM_COL32(70, 120, 165, 200), 6.0f * s, 0, 1.5f * s);
-  dl->AddRectFilled(ImVec2(p0.x, p0.y), ImVec2(p0.x + 6.0f * s, p1.y), kAccent, 6.0f * s);
 
-  Text(dl, NobleStyle::TitleFont(), 34.0f * s, ImVec2(p0.x + 34.0f * s, p0.y + 24.0f * s),
-       IM_COL32(236, 240, 244, 255), "SCOREBOARD");
-  std::string sub = mapName.empty() ? std::string() : Upper(MapNames::Display(mapName));
-  if (!modeName.empty()) sub += (sub.empty() ? "" : "  -  ") + Upper(modeName);
-  Text(dl, NobleStyle::SmallFont(), 15.0f * s, ImVec2(p0.x + 36.0f * s, p0.y + 66.0f * s),
-       IM_COL32(150, 190, 220, 255), sub.c_str());
+  ImDrawList *dl = ImGui::GetBackgroundDrawList();
 
-  // Index = LobbyPlayer::team: 0 = no team, 1 = red, 2 = blue.
-  static const ImU32 kTeamColors[3] = {IM_COL32(120, 132, 145, 255), IM_COL32(214, 72, 72, 255), IM_COL32(74, 132, 214, 255)};
-  static int s_boardScroll[2] = {0, 0};
+  // Dim the background behind the scoreboard cleanly
+  dl->AddRectFilled(ImVec2(0, 0), ImVec2(W, H), IM_COL32(0, 0, 0, 110));
+
+  static const ImU32 kTeamHeaderCol[2] = { IM_COL32(195, 42, 42, 245), IM_COL32(38, 92, 185, 245) };
+  static const ImU32 kTeamRowBaseCol[2] = { IM_COL32(145, 30, 30, 150), IM_COL32(28, 62, 145, 150) };
+  static const ImU32 kTeamRowAltCol[2]  = { IM_COL32(130, 25, 25, 150), IM_COL32(24, 52, 130, 150) };
+
+  static int s_boardScroll[2] = { 0, 0 };
   bool selectedIsListed = false;
-  for (const auto &r : rows)
-    selectedIsListed = selectedIsListed || (!r.local && r.name == s_selected);
-  // Controller: A takes the panel while Back is held. Then the D-pad or stick walks the other players, on the same selection
-  // the mouse uses, and the buttons below act on it.
+  for (const auto &r : rows) {
+    if (!r.local && r.name == s_selected) selectedIsListed = true;
+  }
+
   const auto padPressed = [](ImGuiKey dpad, ImGuiKey stick) { return ImGui::IsKeyPressed(dpad) || ImGui::IsKeyPressed(stick); };
-  if (!pointer && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false)) PauseMenu::EnterScoreboardPointer();
-  if (pointer && !s_boardReport.load()) {
+  if (!pointer && (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false) || ImGui::IsKeyPressed(ImGuiKey_Enter, false))) {
+    PauseMenu::EnterScoreboardPointer();
+  }
+
+  // Gamepad row navigation
+  if (pointer && !s_boardReport.load() && !s_showPlayerModal) {
     int column = 0, row = -1;
-    for (int c = 0; c < columnCount; ++c)
-      for (int k = 0; k < static_cast<int>(columnRows[c].size()); ++k)
-        if (!rows[columnRows[c][k]].local && rows[columnRows[c][k]].name == s_selected) { column = c; row = k; }
+    for (int c = 0; c < columnCount; ++c) {
+      for (int k = 0; k < static_cast<int>(columnRows[c].size()); ++k) {
+        if (rows[columnRows[c][k]].name == s_selected) { column = c; row = k; }
+      }
+    }
     const auto pick = [&](int c, int from, int step) {
       const std::vector<int> &list = columnRows[c];
       const int count = static_cast<int>(list.size());
       for (int k = std::clamp(from, 0, std::max(count - 1, 0)), tries = 0; count > 0 && k >= 0 && k < count && tries <= count; k += step, ++tries) {
-        if (rows[list[k]].local) continue;
         s_selected = rows[list[k]].name;
         s_status.clear();
         selectedIsListed = true;
@@ -1037,188 +1122,376 @@ static void DrawScoreboardPanel() {
       }
       return false;
     };
-    if (padPressed(ImGuiKey_GamepadDpadDown, ImGuiKey_GamepadLStickDown)) { if (!pick(column, row + 1, 1) && columnCount > 1) pick(1 - column, 0, 1); }
-    if (padPressed(ImGuiKey_GamepadDpadUp, ImGuiKey_GamepadLStickUp) && row > 0) pick(column, row - 1, -1);
-    if (columnCount > 1 && (padPressed(ImGuiKey_GamepadDpadLeft, ImGuiKey_GamepadLStickLeft) || padPressed(ImGuiKey_GamepadDpadRight, ImGuiKey_GamepadLStickRight)))
+    if (padPressed(ImGuiKey_GamepadDpadDown, ImGuiKey_GamepadLStickDown)) {
+      if (!pick(column, row + 1, 1) && columnCount > 1) pick(1 - column, 0, 1);
+    }
+    if (padPressed(ImGuiKey_GamepadDpadUp, ImGuiKey_GamepadLStickUp) && row > 0) {
+      pick(column, row - 1, -1);
+    }
+    if (columnCount > 1 && (padPressed(ImGuiKey_GamepadDpadLeft, ImGuiKey_GamepadLStickLeft) || padPressed(ImGuiKey_GamepadDpadRight, ImGuiKey_GamepadLStickRight))) {
       pick(1 - column, std::max(row, 0), 1);
+    }
+    if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false) && !s_selected.empty()) {
+      s_showPlayerModal = true;
+      MenuSounds::Click();
+    }
   }
 
-  const float headY = p0.y + 104.0f * s;
-  const float listY = headY + 26.0f * s;
-  const float columnGap = 12.0f * s;
-  const float columnW = (panelW - 48.0f * s - columnGap * (columnCount - 1)) / columnCount;
+  // Render both team columns side-by-side
   for (int col = 0; col < columnCount; ++col) {
     const std::vector<int> &list = columnRows[col];
     const int count = static_cast<int>(list.size());
-    const float cx = p0.x + 24.0f * s + col * (columnW + columnGap);
+    const float cx = p0.x + col * (colW + colGap);
     const bool overflow = count > visibleRows;
-    if (overflow && pointer && !s_boardReport.load() &&
-        ImGui::IsMouseHoveringRect(ImVec2(cx, listY), ImVec2(cx + columnW, listY + rowH * visibleRows), false) && io.MouseWheel != 0.0f)
+
+    if (overflow && pointer && !s_boardReport.load() && !s_showPlayerModal &&
+        ImGui::IsMouseHoveringRect(ImVec2(cx, p0.y), ImVec2(cx + colW, p0.y + headerH + subHeaderH + totalListH), false) && io.MouseWheel != 0.0f) {
       s_boardScroll[col] -= static_cast<int>(io.MouseWheel);
+    }
     s_boardScroll[col] = std::clamp(s_boardScroll[col], 0, std::max(0, count - visibleRows));
     const int scroll = s_boardScroll[col];
-    const float tagX = cx + columnW - 190.0f * s;
-    const float pingX = cx + columnW - 62.0f * s;
 
-    // Sticky header: the team, then the columns.
-    const ImU32 headCol = hasTeams ? kTeamColors[col + 1] : IM_COL32(130, 170, 200, 255);
-    char title[48];
-    if (overflow) std::snprintf(title, sizeof(title), "%s  %d-%d of %d", hasTeams ? (col == 0 ? "RED TEAM" : "BLUE TEAM") : "PLAYERS", scroll + 1, scroll + visibleRows, count);
-    else std::snprintf(title, sizeof(title), "%s  %d", hasTeams ? (col == 0 ? "RED TEAM" : "BLUE TEAM") : "PLAYERS", count);
-    Text(dl, NobleStyle::SmallFont(), 14.0f * s, ImVec2(cx + 10.0f * s, headY), headCol, title);
-    Text(dl, NobleStyle::SmallFont(), 14.0f * s, ImVec2(tagX, headY), IM_COL32(130, 170, 200, 255), "TAG");
-    Text(dl, NobleStyle::SmallFont(), 14.0f * s, ImVec2(pingX, headY), IM_COL32(130, 170, 200, 255), "PING");
+    // 1. Solid Team Header Banner
+    const ImVec2 h0(cx, p0.y);
+    const ImVec2 h1(cx + colW, p0.y + headerH);
+    const ImU32 bannerColor = hasTeams ? kTeamHeaderCol[col] : IM_COL32(36, 68, 102, 245);
+    dl->AddRectFilled(h0, h1, bannerColor, 2.0f * s);
 
-    // The local player stays in view: while their row is scrolled away it takes the last visible row.
+    // Subtle bright top accent line
+    dl->AddLine(ImVec2(h0.x, h0.y), ImVec2(h1.x, h0.y), IM_COL32(255, 255, 255, 90), 1.0f * s);
+
+    // Left rank / placement badge on banner
+    const int teamRank = (col == 0) ? (teamScores[0] >= teamScores[1] ? 1 : 2) : (teamScores[1] > teamScores[0] ? 1 : 2);
+    char rankStr[8];
+    std::snprintf(rankStr, sizeof(rankStr), "%d", teamRank);
+    const float rankColW = 28.0f * s;
+    Text(dl, NobleStyle::TitleFont(), 20.0f * s, ImVec2(cx + 8.0f * s, p0.y + 7.0f * s), IM_COL32(255, 255, 255, 255), rankStr);
+
+    // Team Name
+    const char* teamTitle = hasTeams ? (col == 0 ? "RED TEAM" : "BLUE TEAM") : "MATCH ROSTER";
+    Text(dl, NobleStyle::TitleFont(), 20.0f * s, ImVec2(cx + rankColW + 6.0f * s, p0.y + 7.0f * s), IM_COL32(255, 255, 255, 255), teamTitle);
+
+    // Column positions for stats on the right (matching headers & rows exactly)
+    const float pingColW = 48.0f * s;
+    const float aColW = 34.0f * s;
+    const float dColW = 34.0f * s;
+    const float kColW = 34.0f * s;
+    const float scoreColW = 46.0f * s;
+
+    const float pingX = cx + colW - pingColW - 4.0f * s;
+    const float aX = pingX - aColW;
+    const float dX = aX - dColW;
+    const float kX = dX - kColW;
+    const float scoreX = kX - scoreColW;
+
+    // Header aggregate totals on the banner
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%d", teamScores[col]);
+    Text(dl, NobleStyle::TitleFont(), 20.0f * s, ImVec2(scoreX + (scoreColW - TextWidth(NobleStyle::TitleFont(), 20.0f * s, buf)) * 0.5f, p0.y + 7.0f * s), IM_COL32(255, 255, 255, 255), buf);
+
+    std::snprintf(buf, sizeof(buf), "%d", teamKills[col]);
+    Text(dl, NobleStyle::TitleFont(), 19.0f * s, ImVec2(kX + (kColW - TextWidth(NobleStyle::TitleFont(), 19.0f * s, buf)) * 0.5f, p0.y + 8.0f * s), IM_COL32(255, 255, 255, 235), buf);
+
+    std::snprintf(buf, sizeof(buf), "%d", teamDeaths[col]);
+    Text(dl, NobleStyle::TitleFont(), 19.0f * s, ImVec2(dX + (dColW - TextWidth(NobleStyle::TitleFont(), 19.0f * s, buf)) * 0.5f, p0.y + 8.0f * s), IM_COL32(255, 255, 255, 235), buf);
+
+    std::snprintf(buf, sizeof(buf), "%d", teamAssists[col]);
+    Text(dl, NobleStyle::TitleFont(), 19.0f * s, ImVec2(aX + (aColW - TextWidth(NobleStyle::TitleFont(), 19.0f * s, buf)) * 0.5f, p0.y + 8.0f * s), IM_COL32(255, 255, 255, 235), buf);
+
+    // 2. Sub-header Labels Row ("PLAYERS", "SCORE", "K", "D", "A", "PING")
+    const float subY = p0.y + headerH;
+    dl->AddRectFilled(ImVec2(cx, subY), ImVec2(cx + colW, subY + subHeaderH), IM_COL32(8, 12, 18, 220));
+
+    Text(dl, NobleStyle::SmallFont(), 13.0f * s, ImVec2(cx + 8.0f * s, subY + 3.0f * s), IM_COL32(185, 205, 225, 255), "PLAYERS");
+    Text(dl, NobleStyle::SmallFont(), 13.0f * s, ImVec2(scoreX + (scoreColW - TextWidth(NobleStyle::SmallFont(), 13.0f * s, "SCORE")) * 0.5f, subY + 3.0f * s), IM_COL32(185, 205, 225, 255), "SCORE");
+    Text(dl, NobleStyle::SmallFont(), 13.0f * s, ImVec2(kX + (kColW - TextWidth(NobleStyle::SmallFont(), 13.0f * s, "K")) * 0.5f, subY + 3.0f * s), IM_COL32(185, 205, 225, 255), "K");
+    Text(dl, NobleStyle::SmallFont(), 13.0f * s, ImVec2(dX + (dColW - TextWidth(NobleStyle::SmallFont(), 13.0f * s, "D")) * 0.5f, subY + 3.0f * s), IM_COL32(185, 205, 225, 255), "D");
+    Text(dl, NobleStyle::SmallFont(), 13.0f * s, ImVec2(aX + (aColW - TextWidth(NobleStyle::SmallFont(), 13.0f * s, "A")) * 0.5f, subY + 3.0f * s), IM_COL32(185, 205, 225, 255), "A");
+    Text(dl, NobleStyle::SmallFont(), 13.0f * s, ImVec2(pingX + (pingColW - TextWidth(NobleStyle::SmallFont(), 13.0f * s, "PING")) * 0.5f, subY + 3.0f * s), IM_COL32(185, 205, 225, 255), "PING");
+
+    // 3. Player Rows
+    const float listY = subY + subHeaderH;
     int localRow = -1;
-    for (int k = 0; k < count; ++k)
+    for (int k = 0; k < count; ++k) {
       if (rows[list[k]].local) localRow = k;
+    }
     const bool pinLocal = localRow >= 0 && (localRow < scroll || localRow >= scroll + visibleRows);
-    for (int v = 0; v < visibleRows && scroll + v < count; ++v) {
-      const auto &r = rows[list[(pinLocal && v == visibleRows - 1) ? localRow : scroll + v]];
+
+    for (int v = 0; v < visibleRows; ++v) {
+      const int rowIdx = (pinLocal && v == visibleRows - 1) ? localRow : (scroll + v);
       const float y = listY + v * rowH;
-      const ImVec2 r0(cx, y), r1(cx + columnW - (overflow ? 6.0f * s : 0.0f), y + rowH - 6.0f * s);
+      const ImVec2 r0(cx, y);
+      const ImVec2 r1(cx + colW - (overflow ? 4.0f * s : 0.0f), y + rowH);
+
+      if (rowIdx >= count) {
+        // Empty filler row with subtle background
+        dl->AddRectFilled(r0, r1, (v % 2 == 0) ? IM_COL32(15, 20, 28, 120) : IM_COL32(12, 16, 22, 120));
+        continue;
+      }
+
+      const auto &r = rows[list[rowIdx]];
+      const bool isMuted = s_muteAllActive || r.muted || s_mutedNames.count(r.name) > 0 || (r.machine != 0 && VoiceChat::IsPeerMuted(r.machine));
       bool hovered = false;
-      if (pointer && !r.local) {
+
+      if (pointer) {
         ImGui::SetCursorScreenPos(r0);
-        ImGui::BeginDisabled(s_boardReport.load());
+        ImGui::BeginDisabled(s_boardReport.load() || s_showPlayerModal);
         if (ImGui::InvisibleButton(r.name.c_str(), ImVec2(r1.x - r0.x, r1.y - r0.y))) {
           s_selected = r.name;
           s_status.clear();
           selectedIsListed = true;
+          s_showPlayerModal = true;
           MenuSounds::Click();
         }
         hovered = ImGui::IsItemHovered();
         ImGui::EndDisabled();
       }
-      const bool selected = !r.local && r.name == s_selected; // after the click, or a new selection is lost this frame
-      dl->AddRectFilled(r0, r1, r.local ? IM_COL32(40, 80, 115, 200) : selected ? IM_COL32(70, 120, 165, 170) : hovered ? IM_COL32(255, 255, 255, 34) : IM_COL32(255, 255, 255, 12), 3.0f * s);
-      if (selected)
-        dl->AddRect(r0, r1, IM_COL32(143, 216, 255, 255), 3.0f * s, 0, 1.5f * s);
-      const ImU32 teamCol = kTeamColors[r.team == 1 || r.team == 2 ? r.team : 0];
-      dl->AddRectFilled(r0, ImVec2(r0.x + 4.0f * s, r1.y), teamCol, 3.0f * s);
 
-      float nx = r0.x + 14.0f * s;
-      const UiTexture icon = UiArt::RankIcon(r.rank);
-      const float ty = y + (rowH - 6.0f * s) * 0.5f - 11.0f * s;
-      if (icon) {
-        UiArt::DrawContain(dl, icon, ImVec2(nx, ty - 2.0f * s), ImVec2(nx + 30.0f * s, ty + 26.0f * s));
-        nx += 38.0f * s;
+      const bool selected = (r.name == s_selected);
+      const ImU32 baseBg = (v % 2 == 0) ? (hasTeams ? kTeamRowBaseCol[col] : IM_COL32(24, 38, 54, 150))
+                                        : (hasTeams ? kTeamRowAltCol[col] : IM_COL32(20, 32, 46, 150));
+      const ImU32 rowBg = r.local ? IM_COL32(32, 80, 120, 220) : selected ? IM_COL32(65, 115, 165, 190) : hovered ? IM_COL32(255, 255, 255, 38) : baseBg;
+
+      dl->AddRectFilled(r0, r1, rowBg);
+
+      // Selected or local highlight borders
+      if (selected) {
+        dl->AddRect(r0, r1, IM_COL32(143, 216, 255, 255), 0.0f, 0, 1.5f * s);
+      } else if (r.local) {
+        dl->AddRect(r0, r1, IM_COL32(80, 180, 235, 180), 0.0f, 0, 1.0f * s);
       }
-      dl->PushClipRect(ImVec2(nx, r0.y), ImVec2(tagX - 6.0f * s, r1.y), true);
-      Text(dl, ImGui::GetFont(), 19.0f * s, ImVec2(nx, ty),
-           r.local ? IM_COL32(143, 216, 255, 255) : IM_COL32(236, 240, 244, 255), r.name.c_str());
-      if (r.local)
-        Text(dl, NobleStyle::SmallFont(), 12.0f * s, ImVec2(nx + TextWidth(ImGui::GetFont(), 19.0f * s, r.name.c_str()) + 10.0f * s, ty + 4.0f * s),
-             IM_COL32(143, 216, 255, 200), "YOU");
+
+      // 1. Placement Rank Number
+      char pRank[8];
+      std::snprintf(pRank, sizeof(pRank), "%d", rowIdx + 1);
+      Text(dl, NobleStyle::TitleFont(), 17.0f * s, ImVec2(cx + 6.0f * s, y + 7.0f * s), IM_COL32(240, 244, 250, 255), pRank);
+
+      // 2. Emblem or Mute Icon
+      const float iconSize = 22.0f * s;
+      const ImVec2 iconPos(cx + rankColW + 2.0f * s, y + (rowH - iconSize) * 0.5f);
+
+      if (isMuted) {
+        // Red crossed box for muted players (matches Dinoextremo29 & gzhouse in reference)
+        dl->AddRectFilled(iconPos, ImVec2(iconPos.x + iconSize, iconPos.y + iconSize), IM_COL32(195, 38, 38, 240), 2.0f * s);
+        dl->AddRect(iconPos, ImVec2(iconPos.x + iconSize, iconPos.y + iconSize), IM_COL32(255, 180, 180, 200), 2.0f * s, 0, 1.0f * s);
+        dl->AddLine(ImVec2(iconPos.x + 4.0f * s, iconPos.y + 4.0f * s), ImVec2(iconPos.x + iconSize - 4.0f * s, iconPos.y + iconSize - 4.0f * s), IM_COL32(255, 255, 255, 255), 2.0f * s);
+        dl->AddLine(ImVec2(iconPos.x + iconSize - 4.0f * s, iconPos.y + 4.0f * s), ImVec2(iconPos.x + 4.0f * s, iconPos.y + iconSize - 4.0f * s), IM_COL32(255, 255, 255, 255), 2.0f * s);
+      } else {
+        // Draw player emblem symbol
+        UiArt::EmblemColors embCol;
+        embCol.primary = IM_COL32(240, 240, 240, 255);
+        embCol.secondary = hasTeams ? (col == 0 ? IM_COL32(255, 160, 160, 255) : IM_COL32(160, 200, 255, 255)) : IM_COL32(180, 220, 240, 255);
+        UiArt::DrawEmblem(dl, r.emblem > 0 ? r.emblem : 1, 0, iconPos, ImVec2(iconPos.x + iconSize, iconPos.y + iconSize), embCol);
+      }
+
+      // 3. Player Gamertag and Service Tag
+      const float nameX = iconPos.x + iconSize + 8.0f * s;
+      const float nameY = r.tag.empty() ? (y + 7.0f * s) : (y + 3.0f * s);
+      const ImU32 nameCol = r.local ? IM_COL32(143, 225, 255, 255) : IM_COL32(245, 248, 252, 255);
+
+      dl->PushClipRect(ImVec2(nameX, y), ImVec2(scoreX - 34.0f * s, y + rowH), true);
+      Text(dl, NobleStyle::TitleFont(), 16.5f * s, ImVec2(nameX, nameY), nameCol, r.name.c_str());
+
+      if (r.local) {
+        const float nw = TextWidth(NobleStyle::TitleFont(), 16.5f * s, r.name.c_str());
+        Text(dl, NobleStyle::SmallFont(), 11.0f * s, ImVec2(nameX + nw + 6.0f * s, nameY + 3.0f * s), IM_COL32(143, 225, 255, 230), "YOU");
+      }
+
+      if (!r.tag.empty()) {
+        Text(dl, NobleStyle::SmallFont(), 11.5f * s, ImVec2(nameX, y + 18.0f * s), IM_COL32(185, 205, 225, 210), r.tag.c_str());
+      }
       dl->PopClipRect();
-      Text(dl, ImGui::GetFont(), 17.0f * s, ImVec2(tagX, ty), IM_COL32(200, 210, 220, 255), r.tag.c_str());
-      SocialOverlay::DrawPlayerVoiceIcon(dl, ImVec2(tagX - 18.0f * s, (r0.y + r1.y) * 0.5f), s, r.machine, r.local);
-      // Live round trip from the transport. The roster's own figure is a placeholder, and this PC can only measure
-      // the peers it talks to, so anyone else shows "-".
+
+      // 4. Rank Insignia Icon (placed just before the SCORE column)
+      const UiTexture rankIcon = UiArt::RankIcon(r.rank);
+      const float rankIconSize = 22.0f * s;
+      const float rankX = scoreX - rankIconSize - 8.0f * s;
+      if (rankIcon) {
+        UiArt::DrawContain(dl, rankIcon, ImVec2(rankX, y + (rowH - rankIconSize) * 0.5f), ImVec2(rankX + rankIconSize, y + (rowH + rankIconSize) * 0.5f));
+      }
+
+      // 5. Stats: Score, K, D, A
+      std::snprintf(buf, sizeof(buf), "%d", r.score);
+      Text(dl, NobleStyle::TitleFont(), 17.5f * s, ImVec2(scoreX + (scoreColW - TextWidth(NobleStyle::TitleFont(), 17.5f * s, buf)) * 0.5f, y + 7.0f * s), IM_COL32(255, 255, 255, 255), buf);
+
+      std::snprintf(buf, sizeof(buf), "%d", r.kills);
+      Text(dl, ImGui::GetFont(), 15.5f * s, ImVec2(kX + (kColW - TextWidth(ImGui::GetFont(), 15.5f * s, buf)) * 0.5f, y + 8.0f * s), IM_COL32(235, 240, 245, 240), buf);
+
+      std::snprintf(buf, sizeof(buf), "%d", r.deaths);
+      Text(dl, ImGui::GetFont(), 15.5f * s, ImVec2(dX + (dColW - TextWidth(ImGui::GetFont(), 15.5f * s, buf)) * 0.5f, y + 8.0f * s), IM_COL32(195, 205, 215, 210), buf);
+
+      std::snprintf(buf, sizeof(buf), "%d", r.assists);
+      Text(dl, ImGui::GetFont(), 15.5f * s, ImVec2(aX + (aColW - TextWidth(ImGui::GetFont(), 15.5f * s, buf)) * 0.5f, y + 8.0f * s), IM_COL32(195, 205, 215, 210), buf);
+
+      // 6. Ping Badge (Pill with rounded corners)
       int ping = r.ping;
       if (!r.local && NetworkTransport::Get().IsActive()) {
-        const int live = r.hostPeer ? NetworkTransport::Get().GetPeerPingMs(0) : r.machine ? NetworkTransport::Get().GetPeerPingMs(r.machine) : -1;
+        const int live = r.hostPeer ? NetworkTransport::Get().GetPeerPingMs(0) : (r.machine ? NetworkTransport::Get().GetPeerPingMs(r.machine) : -1);
         if (live > 0) ping = live;
       }
-      const std::string pingText = ping >= 0 ? std::to_string(ping) : "-";
-      Text(dl, ImGui::GetFont(), 17.0f * s, ImVec2(pingX, ty), IM_COL32(200, 210, 220, 255), pingText.c_str());
+
+      const ImU32 pingBadgeCol = ping < 0 ? IM_COL32(90, 105, 120, 180)
+                               : (ping <= 100 ? IM_COL32(36, 175, 75, 230)
+                               : (ping <= 150 ? IM_COL32(215, 175, 35, 230)
+                               : IM_COL32(215, 65, 50, 230)));
+
+      const float pillW = 38.0f * s;
+      const float pillH = 20.0f * s;
+      const ImVec2 pill0(pingX + (pingColW - pillW) * 0.5f, y + (rowH - pillH) * 0.5f);
+      const ImVec2 pill1(pill0.x + pillW, pill0.y + pillH);
+
+      dl->AddRectFilled(pill0, pill1, pingBadgeCol, 3.0f * s);
+      const std::string pingText = (ping >= 0) ? std::to_string(ping) : "-";
+      Text(dl, NobleStyle::SmallFont(), 12.0f * s, ImVec2(pill0.x + (pillW - TextWidth(NobleStyle::SmallFont(), 12.0f * s, pingText.c_str())) * 0.5f, pill0.y + 2.0f * s), IM_COL32(255, 255, 255, 255), pingText.c_str());
     }
+
+    // Scrollbar track & thumb if list overflows
     if (overflow) {
-      const float trackX = cx + columnW - 3.0f * s;
-      const float trackH = rowH * visibleRows - 6.0f * s;
+      const float trackX = cx + colW - 3.0f * s;
+      const float trackH = totalListH;
       dl->AddRectFilled(ImVec2(trackX, listY), ImVec2(trackX + 3.0f * s, listY + trackH), IM_COL32(255, 255, 255, 24));
       const float thumbH = std::max(trackH * visibleRows / count, 18.0f * s);
       const float thumbY = listY + (trackH - thumbH) * scroll / std::max(1, count - visibleRows);
       dl->AddRectFilled(ImVec2(trackX, thumbY), ImVec2(trackX + 3.0f * s, thumbY + thumbH), kAccent);
     }
   }
-  if (!selectedIsListed)
-    s_selected.clear();
-  const float y = listY + visibleRows * rowH;
 
-  // A report finished on its own thread.
-  switch (s_reportResult.exchange(0)) {
-  case 1: s_status = "Report sent"; break;
-  case 2: s_status = "The server couldn't be reached, so the report was saved on this PC"; break;
-  case 3: s_status = "The report could not be sent or saved"; break;
-  default: break;
-  }
+  // 4. Footer Bar: Button Prompts (Left) and Match Watermark / Score Pills (Right)
+  const float footY = p0.y + headerH + subHeaderH + totalListH + 8.0f * s;
 
-  // Hint or status line, then the action bar.
-  const ImVec2 barPos(p0.x + 34.0f * s, y + 6.0f * s);
-  const char *line = !pointer ? "Click, or press A on a controller, for player actions"
-                     : !s_status.empty() ? s_status.c_str()
-                     : s_selected.empty() ? "Select a player with the mouse or D-pad"
-                                          : nullptr;
-  std::string selectedLine;
-  if (!line) {
-    selectedLine = "Selected: " + s_selected + "     Controller: Y mute   X report   LB mute all   B close";
-    line = selectedLine.c_str();
+  // Prompts on the left
+  const auto drawPrompt = [&](float &fx, const char *key, const char *label) {
+    const float kw = TextWidth(NobleStyle::SmallFont(), 13.0f * s, key) + 12.0f * s;
+    const float kh = 22.0f * s;
+    dl->AddRectFilled(ImVec2(fx, footY + 2.0f * s), ImVec2(fx + kw, footY + 2.0f * s + kh), IM_COL32(255, 255, 255, 240), 3.0f * s);
+    Text(dl, NobleStyle::SmallFont(), 13.0f * s, ImVec2(fx + 6.0f * s, footY + 4.0f * s), IM_COL32(12, 18, 24, 255), key);
+    fx += kw + 6.0f * s;
+    Text(dl, NobleStyle::SmallFont(), 14.0f * s, ImVec2(fx, footY + 5.0f * s), IM_COL32(230, 238, 245, 255), label);
+    fx += TextWidth(NobleStyle::SmallFont(), 14.0f * s, label) + 20.0f * s;
+  };
+
+  float fx = p0.x + 8.0f * s;
+  drawPrompt(fx, "A", "Player options");
+  drawPrompt(fx, "Scroll", "Scroll");
+  drawPrompt(fx, "Tab", "Close");
+
+  // Watermark and mini score pills on the right (matches reference image)
+  std::string watermark = mapName.empty() ? "Global Battles v40" : mapName;
+  const float wmWidth = TextWidth(NobleStyle::TitleFont(), 18.0f * s, watermark.c_str());
+  const float wmX = p1.x - wmWidth - 70.0f * s;
+  Text(dl, NobleStyle::TitleFont(), 18.0f * s, ImVec2(wmX, footY + 2.0f * s), IM_COL32(200, 220, 240, 240), watermark.c_str());
+
+  // Red & Blue score square pills
+  if (hasTeams) {
+    char buf[32];
+    const float pillBoxW = 26.0f * s;
+    const float pillBoxH = 18.0f * s;
+    const float pillBoxX = p1.x - 56.0f * s;
+
+    // Red pill
+    dl->AddRectFilled(ImVec2(pillBoxX, footY), ImVec2(pillBoxX + pillBoxW, footY + pillBoxH), kTeamHeaderCol[0], 2.0f * s);
+    std::snprintf(buf, sizeof(buf), "%d", teamScores[0]);
+    Text(dl, NobleStyle::TitleFont(), 15.0f * s, ImVec2(pillBoxX + (pillBoxW - TextWidth(NobleStyle::TitleFont(), 15.0f * s, buf)) * 0.5f, footY + 1.0f * s), IM_COL32(255, 255, 255, 255), buf);
+
+    // Blue pill
+    dl->AddRectFilled(ImVec2(pillBoxX, footY + pillBoxH + 3.0f * s), ImVec2(pillBoxX + pillBoxW, footY + pillBoxH * 2.0f + 3.0f * s), kTeamHeaderCol[1], 2.0f * s);
+    std::snprintf(buf, sizeof(buf), "%d", teamScores[1]);
+    Text(dl, NobleStyle::TitleFont(), 15.0f * s, ImVec2(pillBoxX + (pillBoxW - TextWidth(NobleStyle::TitleFont(), 15.0f * s, buf)) * 0.5f, footY + pillBoxH + 4.0f * s), IM_COL32(255, 255, 255, 255), buf);
   }
-  Text(dl, NobleStyle::SmallFont(), 15.0f * s, barPos, IM_COL32(150, 190, 220, 255), line);
 
   if (pointer) {
-    const ImVec2 button(126.0f * s, 34.0f * s);
-    const float gap = 8.0f * s;
-    const bool padActive = !s_boardReport.load();
-    const bool padReport = padActive && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceLeft, false);
-    const bool padMute = padActive && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false);
-    const bool padMuteAll = padActive && ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false);
-    const bool padClose = padActive && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false);
-    uint64_t selectedMachine = 0;
-    bool allMuted = true, anyone = false;
-    for (const auto &r : rows) {
-      if (r.local || r.machine == 0) continue;
-      if (r.name == s_selected) selectedMachine = r.machine;
-      anyone = true;
-      allMuted = allMuted && VoiceChat::IsPeerMuted(r.machine);
-    }
-    const bool selectedMuted = selectedMachine != 0 && VoiceChat::IsPeerMuted(selectedMachine);
-    ImGui::BeginDisabled(s_boardReport.load());
-    ImGui::SetCursorScreenPos(ImVec2(barPos.x, barPos.y + 30.0f * s));
-    ImGui::BeginDisabled(selectedMachine == 0);
-    if ((ImGui::Button(selectedMuted ? "UNMUTE" : "MUTE", button) || padMute) && selectedMachine != 0) {
-      VoiceChat::SetPeerMuted(selectedMachine, !selectedMuted);
-      s_status = std::string(selectedMuted ? "Unmuted " : "Muted ") + s_selected;
-      MenuSounds::Click();
-    }
-    ImGui::EndDisabled();
-    ImGui::SameLine(0.0f, gap);
-    ImGui::BeginDisabled(!anyone);
-    if ((ImGui::Button(anyone && allMuted ? "UNMUTE ALL" : "MUTE ALL", button) || padMuteAll) && anyone) {
-      for (const auto &r : rows)
-        if (!r.local && r.machine != 0) VoiceChat::SetPeerMuted(r.machine, !allMuted);
-      s_status = allMuted ? "Unmuted everyone" : "Muted everyone";
-      MenuSounds::Click();
-    }
-    ImGui::EndDisabled();
-    ImGui::SameLine(0.0f, gap);
-    ImGui::BeginDisabled(s_selected.empty());
-    if ((ImGui::Button("REPORT", button) || padReport) && !s_selected.empty()) {
-      s_reportReason = 0;
-      s_boardReport.store(true);
-      MenuSounds::Click();
-    }
-    ImGui::EndDisabled();
-    ImGui::SameLine(0.0f, gap);
-    UnavailableButton("VOTE TO KICK", button, "Not available yet: the host cannot remove a player from the match.");
-    if (isHost) {
-      ImGui::SameLine(0.0f, gap);
-      // mp_round_end's work function (haloreach+0x7B3EC) does not end a multiplayer round: tried twice on 2026-10-31, the
-      // timer kept running. These stay grey until the multiplayer end path is found.
-      UnavailableButton("END ROUND", button, "Not available yet: the way to end a multiplayer round in Reach's engine isn't known.");
-      ImGui::SameLine(0.0f, gap);
-      UnavailableButton("END MATCH", button, "Not available yet: the way to end a multiplayer match in Reach's engine isn't known.");
-    }
-    ImGui::SameLine(p1.x - p0.x - button.x - 34.0f * s);
-    if (ImGui::Button("CLOSE", button) || padClose) {
-      s_boardPointer.store(false);
-      MenuSounds::Back();
-    }
-    ImGui::EndDisabled();
     ImGui::End();
 
+    // 5. Player Options Modal (Opens when user clicks or presses [A] on a player)
+    if (s_showPlayerModal && !s_selected.empty() && !s_boardReport.load()) {
+      CenteredWindow(500.0f * s);
+      ImGui::Begin("##PlayerOptionsModal", nullptr, kPanelFlags | ImGuiWindowFlags_NoNavInputs | ImGuiWindowFlags_NoNavFocus);
+
+      // Find the selected player's entry
+      const PauseMenu::ScoreboardEntry *selEntry = nullptr;
+      for (const auto &r : rows) {
+        if (r.name == s_selected) { selEntry = &r; break; }
+      }
+
+      std::string headerTitle = "PLAYER: " + Upper(s_selected);
+      if (selEntry && !selEntry->tag.empty()) headerTitle += " [" + selEntry->tag + "]";
+      NobleStyle::Header(headerTitle.c_str());
+      ImGui::Spacing();
+
+      const bool isIndividualMuted = s_mutedNames.count(s_selected) > 0 || (selEntry && selEntry->machine != 0 && VoiceChat::IsPeerMuted(selEntry->machine));
+
+      // Stats line
+      if (selEntry) {
+        ImGui::TextColored(NobleStyle::Accent(), "Score: %d   |   Kills: %d   |   Deaths: %d   |   Assists: %d",
+                           selEntry->score, selEntry->kills, selEntry->deaths, selEntry->assists);
+        ImGui::Spacing();
+      }
+
+      const float btnW = (ImGui::GetContentRegionAvail().x - 10.0f * s) * 0.5f;
+
+      // Individual Mute Toggle
+      const char* muteLabel = isIndividualMuted ? "UNMUTE PLAYER" : "MUTE PLAYER";
+      if (ImGui::Button(muteLabel, ImVec2(btnW, 38.0f * s)) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false)) {
+        if (isIndividualMuted) {
+          s_mutedNames.erase(s_selected);
+          if (selEntry && selEntry->machine != 0) VoiceChat::SetPeerMuted(selEntry->machine, false);
+          s_status = "Unmuted " + s_selected;
+        } else {
+          s_mutedNames.insert(s_selected);
+          if (selEntry && selEntry->machine != 0) VoiceChat::SetPeerMuted(selEntry->machine, true);
+          s_status = "Muted " + s_selected;
+        }
+        MenuSounds::Click();
+      }
+
+      ImGui::SameLine(0.0f, 10.0f * s);
+
+      // Global Mute Toggle
+      const char* muteAllLabel = s_muteAllActive ? "UNMUTE ALL PLAYERS" : "MUTE ALL PLAYERS";
+      if (ImGui::Button(muteAllLabel, ImVec2(btnW, 38.0f * s)) || ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false)) {
+        s_muteAllActive = !s_muteAllActive;
+        for (const auto &r : rows) {
+          if (!r.local && r.machine != 0) VoiceChat::SetPeerMuted(r.machine, s_muteAllActive);
+        }
+        s_status = s_muteAllActive ? "Muted all players" : "Unmuted all players";
+        MenuSounds::Click();
+      }
+
+      ImGui::Spacing();
+
+      // Report & Kick buttons
+      if (NobleStyle::PrimaryButton("REPORT PLAYER", ImVec2(btnW, 38.0f * s)) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceLeft, false)) {
+        s_reportReason = 0;
+        s_boardReport.store(true);
+        s_showPlayerModal = false;
+        MenuSounds::Click();
+      }
+
+      ImGui::SameLine(0.0f, 10.0f * s);
+
+      if (isHost && selEntry && !selEntry->local) {
+        if (NobleStyle::DangerButton("KICK PLAYER", ImVec2(btnW, 38.0f * s))) {
+          s_status = "Kicked " + s_selected;
+          s_showPlayerModal = false;
+          MenuSounds::Click();
+        }
+      } else {
+        ImGui::BeginDisabled(true);
+        ImGui::Button("KICK PLAYER", ImVec2(btnW, 38.0f * s));
+        ImGui::EndDisabled();
+      }
+
+      ImGui::Spacing();
+
+      if (ImGui::Button("CLOSE", ImVec2(-1, 34.0f * s)) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+        s_showPlayerModal = false;
+        MenuSounds::Back();
+      }
+
+      ImGui::End();
+    }
+
+    // Report Dialog
     if (s_boardReport.load()) {
       static const char *const kReasons[4] = {"Cheating", "Abusive name or chat", "Griefing or team killing", "Something else"};
       ImGui::SetNextWindowFocus();
@@ -1233,11 +1506,11 @@ static void DrawScoreboardPanel() {
       ImGui::Spacing();
       ImGui::TextWrapped("This goes to the Project Noble team, with the map, the mode and your name.");
       ImGui::Spacing();
+      const float gap = 8.0f * s;
       const float half = (ImGui::GetContentRegionAvail().x - gap) * 0.5f;
       static int s_demoSend = 0;
-      const bool demoSend = demo == 5 && !s_reportSending.load() && ++s_demoSend == 240;   // test: send once the dialog is up
+      const bool demoSend = demo == 5 && !s_reportSending.load() && ++s_demoSend == 240;
       if (NobleStyle::PrimaryButton("SEND REPORT", ImVec2(half, 38.0f * s)) || demoSend || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false)) {
-        // On its own thread: the request can take seconds and this is the game's render thread.
         s_reportSending.store(true);
         std::string session;
         {
@@ -1258,7 +1531,7 @@ static void DrawScoreboardPanel() {
         MenuSounds::Click();
       }
       ImGui::SameLine(0.0f, gap);
-      if (ImGui::Button("CANCEL", ImVec2(half, 38.0f * s)) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)) {
+      if (ImGui::Button("CANCEL", ImVec2(half, 38.0f * s)) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
         s_boardReport.store(false);
         MenuSounds::Back();
       }

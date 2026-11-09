@@ -388,14 +388,28 @@ void ServerBrowser::Render() {
     RenderFilterBar();
     NobleStyle::SectionGap();
 
-    const float detailsWidth = U(300.0f);
-    ImGui::BeginChild("##serverlist", ImVec2(-detailsWidth - U(12.0f), 0), ImGuiChildFlags_None);
+    const float detailsWidth = U(310.0f);
+    const float promptBarH = U(32.0f);
+    ImGui::BeginChild("##serverlist", ImVec2(-detailsWidth - U(12.0f), -promptBarH), ImGuiChildFlags_None);
+    UiPad::ScrollWindow(false, true);
     RenderServerList();
     ImGui::EndChild();
     ImGui::SameLine();
-    ImGui::BeginChild("##serverdetails", ImVec2(0, 0), ImGuiChildFlags_Borders);
+    ImGui::BeginChild("##serverdetails", ImVec2(0, -promptBarH), ImGuiChildFlags_Borders);
+    UiPad::ScrollWindow(false, true);
     RenderServerDetails();
     ImGui::EndChild();
+
+    // Modern bottom controller / keyboard hints bar
+    ImGui::Spacing();
+    ImGui::PushStyleColor(ImGuiCol_Text, NobleStyle::TextMuted());
+    const bool padConnected = (ImGui::GetIO().BackendFlags & ImGuiBackendFlags_HasGamepad) != 0;
+    if (padConnected) {
+        ImGui::TextUnformatted("[A] Join Match   [Y] Favourite   [X] Refresh   [LB/RB] Filter Mode   [Stick / D-pad] Navigate   [B] Back");
+    } else {
+        ImGui::TextUnformatted("Enter / Double-Click Join   F5 Refresh   Y Favourite   Arrow Keys Navigate   Esc Back");
+    }
+    ImGui::PopStyleColor();
 
     if (m_showDirectConnectModal) RenderDirectConnectModal();
     if (m_showMasterModal) RenderMasterServerModal();
@@ -593,7 +607,7 @@ void ServerBrowser::RenderServerList() {
     const bool padFree = !ImGui::GetIO().WantTextInput && !m_showDirectConnectModal && !m_showMasterModal && !ModDownloadPrompt::Get().IsActive();
     if (padFree) {
         if (!visibleIndices.empty()) {
-            if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false)) {
+            if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false) || ImGui::IsKeyPressed(ImGuiKey_Enter, false)) {
                 if (m_selectedServerIndex >= 0 && m_selectedServerIndex < static_cast<int>(m_servers.size())) {
                     const auto& s = m_servers[m_selectedServerIndex];
                     if (!s.isOwn) {
@@ -602,22 +616,26 @@ void ServerBrowser::RenderServerList() {
                     }
                 }
             }
-            if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false)) {
+            if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false) || ImGui::IsKeyPressed(ImGuiKey_Y, false)) {
                 if (m_selectedServerIndex >= 0 && m_selectedServerIndex < static_cast<int>(m_servers.size())) {
                     ToggleFavorite(m_servers[m_selectedServerIndex].hostAddress, m_servers[m_selectedServerIndex].port);
+                    RefreshServers();
                 }
             }
         }
-        if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceLeft, false)) {
+        if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceLeft, false) || ImGui::IsKeyPressed(ImGuiKey_F5, false)) {
             m_lastMasterRequest = -100.0;
             m_lastRefresh = -100.0;
             SessionManager::Get().TriggerDiscoveryScan();
+            MenuSounds::Click();
         }
         if (ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false)) {
             m_modeFilter = (m_modeFilter + 4) % 5;
+            MenuSounds::Tab(-1);
         }
         if (ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false)) {
             m_modeFilter = (m_modeFilter + 1) % 5;
+            MenuSounds::Tab(1);
         }
     }
 
@@ -677,10 +695,10 @@ void ServerBrowser::RenderServerList() {
             if (static_cast<int>(visible[k] - m_servers.data()) == m_selectedServerIndex) position = k;
         }
         int next = position;
-        if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || UiPad::Down()) next = (position + 1) % count;
-        if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || UiPad::Up()) next = (position - 1 + count) % count;
-        if (UiPad::PageDown()) next = std::min(position + 8, count - 1);
-        if (UiPad::PageUp()) next = std::max(position - 8, 0);
+        if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickDown) || UiPad::Down()) next = (position + 1) % count;
+        if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickUp) || UiPad::Up()) next = (position - 1 + count) % count;
+        if (UiPad::PageDown() || ImGui::IsKeyPressed(ImGuiKey_PageDown)) next = std::min(position + 8, count - 1);
+        if (UiPad::PageUp() || ImGui::IsKeyPressed(ImGuiKey_PageUp)) next = std::max(position - 8, 0);
         if (next != position) {
             m_selectedServerIndex = static_cast<int>(visible[next] - m_servers.data());
             scrollToSelected = true;
@@ -745,8 +763,8 @@ void ServerBrowser::RenderServerList() {
         // Column 5: ping
         ImGui::TableNextColumn();
         if (s.ping >= 0) {
-            const ImVec4 color = s.ping < 60 ? ImVec4(0.35f, 0.85f, 0.45f, 1.0f)
-                               : s.ping < 120 ? ImVec4(0.95f, 0.85f, 0.35f, 1.0f)
+            const ImVec4 color = s.ping <= 100 ? ImVec4(0.35f, 0.85f, 0.45f, 1.0f)
+                               : s.ping <= 150 ? ImVec4(0.95f, 0.85f, 0.35f, 1.0f)
                                               : ImVec4(0.95f, 0.40f, 0.35f, 1.0f);
             ImGui::TextColored(color, "%d", s.ping);
         } else {
@@ -865,8 +883,8 @@ void ServerBrowser::RenderServerDetails() {
     ImGui::TextDisabled("Ping:");
     ImGui::SameLine(U(100));
     if (s.ping >= 0) {
-        const ImVec4 color = s.ping < 60 ? ImVec4(0.35f, 0.85f, 0.45f, 1.0f)
-                           : s.ping < 120 ? ImVec4(0.95f, 0.85f, 0.35f, 1.0f)
+        const ImVec4 color = s.ping <= 100 ? ImVec4(0.35f, 0.85f, 0.45f, 1.0f)
+                           : s.ping <= 150 ? ImVec4(0.95f, 0.85f, 0.35f, 1.0f)
                                           : ImVec4(0.95f, 0.40f, 0.35f, 1.0f);
         ImGui::TextColored(color, "%d ms", s.ping);
     } else {

@@ -37,10 +37,15 @@ public:
         int rank = -1;
         int emblem = 0;
         int team = 0;           // 0 = no team, 1 = red, 2 = blue (as LobbyPlayer::team)
+        int score = 0;
+        int kills = 0;
+        int deaths = 0;
+        int assists = 0;
         int ping = -1;          // ms, -1 = not measured (drawn as "-")
         uint64_t machine = 0;   // key for the transport's live round-trip time
         bool hostPeer = false;
         bool local = false;
+        bool muted = false;
     };
     static void SetScoreboardRoster(std::vector<ScoreboardEntry> entries, const std::string& mapName, const std::string& modeName);
     static void SetScoreboardSession(const std::string& sessionId);   // goes with a player report

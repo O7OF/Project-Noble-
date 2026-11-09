@@ -2,6 +2,7 @@
 #include "NobleStyle.hpp"
 #include "MenuSounds.hpp"
 #include "PauseMenu.hpp"
+#include "UiPad.hpp"
 #include "common/Logger.hpp"
 #include "engine/BlamEngine.hpp"
 #include "engine/CameraThirdPerson.hpp"
@@ -254,7 +255,23 @@ void ForgeMenu::Draw() {
     const float tabW = 150.0f * s;
     const float gap = 12.0f * s;
 
-    // Category list (only the tabs in forge_palette.json: our custom stuff).
+    static const std::vector<Item> kEmpty;
+    const auto& items = s_tabs.empty() ? kEmpty : s_tabs[s_tab].items;
+
+    // Mouse scroll wheel navigation across items
+    const bool menuHovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows);
+    bool selectionMoved = false;
+    if (menuHovered && io.MouseWheel != 0.0f && !items.empty()) {
+        if (io.MouseWheel > 0.0f) {
+            s_item = (s_item + static_cast<int>(items.size()) - 1) % static_cast<int>(items.size());
+        } else {
+            s_item = (s_item + 1) % static_cast<int>(items.size());
+        }
+        selectionMoved = true;
+        MenuSounds::Scroll();
+    }
+
+    // Category list (tabs in forge_palette.json)
     ImGui::BeginChild("##forgecats", ImVec2(tabW, bodyH), ImGuiChildFlags_Borders);
     for (int i = 0; i < static_cast<int>(s_tabs.size()); ++i) {
         ImGui::PushID(100 + i);
@@ -263,6 +280,7 @@ void ForgeMenu::Draw() {
         if (ImGui::Selectable(s_tabs[i].name.c_str(), focused, 0, ImVec2(tabW - 12.0f * s, 30.0f * s))) {
             s_tab = i;
             s_item = 0;
+            selectionMoved = true;
             MenuSounds::Click();
         }
         if (ImGui::IsItemHovered()) MenuSounds::Hover(ImGui::GetItemID());
@@ -275,19 +293,23 @@ void ForgeMenu::Draw() {
     const float listW = 210.0f * s;
     ImGui::BeginGroup();
     ImGui::BeginChild("##forgeitems", ImVec2(listW, bodyH), ImGuiChildFlags_Borders);
-    static const std::vector<Item> kEmpty;
-    const auto& items = s_tabs.empty() ? kEmpty : s_tabs[s_tab].items;
     for (int i = 0; i < static_cast<int>(items.size()); ++i) {
         ImGui::PushID(200 + i);
         const bool focused = i == s_item;
         ImGui::PushStyleColor(ImGuiCol_Text, focused ? NobleStyle::Accent() : kBody);
         if (ImGui::Selectable(items[i].name.c_str(), focused, 0, ImVec2(listW - 12.0f * s, 30.0f * s))) {
             s_item = i;
+            selectionMoved = true;
             MenuSounds::Click();
         }
-        if (ImGui::IsItemHovered()) {
-            MenuSounds::Hover(ImGui::GetItemID());
-            s_item = i;
+        if (ImGui::IsItemHovered() && (std::abs(io.MouseDelta.x) > 0.5f || std::abs(io.MouseDelta.y) > 0.5f)) {
+            if (s_item != i) {
+                s_item = i;
+                MenuSounds::Hover(ImGui::GetItemID());
+            }
+        }
+        if (focused && selectionMoved) {
+            ImGui::SetScrollHereY(0.5f);
         }
         ImGui::PopStyleColor();
         ImGui::PopID();
@@ -346,17 +368,30 @@ void ForgeMenu::Draw() {
 
     // Footer hints, controller and mouse.
     ImGui::PushStyleColor(ImGuiCol_Text, kDim);
-    ImGui::TextUnformatted("INSERT / ESC close   A / ENTER place   B close   D-pad / Arrows navigate   mouse");
+    ImGui::TextUnformatted("INSERT / ESC close   A / ENTER place   B close   Stick / D-pad / Arrows navigate   Wheel scroll");
     ImGui::PopStyleColor();
 
-    // Controller navigation through ImGui's gamepad keys (fed by UiPad).
-    const bool navUp = ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp, true) || ImGui::IsKeyPressed(ImGuiKey_UpArrow, true);
-    const bool navDown = ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown, true) || ImGui::IsKeyPressed(ImGuiKey_DownArrow, true);
-    const bool navLeft = ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft, true) || ImGui::IsKeyPressed(ImGuiKey_LeftArrow, true);
-    const bool navRight = ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight, true) || ImGui::IsKeyPressed(ImGuiKey_RightArrow, true);
+    // Controller navigation through analog stick, D-pad, and bumper keys (UiPad + ImGui)
+    const bool navUp = UiPad::Up() || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp, true) ||
+                       ImGui::IsKeyPressed(ImGuiKey_GamepadLStickUp, true) || ImGui::IsKeyPressed(ImGuiKey_UpArrow, true);
+    const bool navDown = UiPad::Down() || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown, true) ||
+                         ImGui::IsKeyPressed(ImGuiKey_GamepadLStickDown, true) || ImGui::IsKeyPressed(ImGuiKey_DownArrow, true);
+    const bool navLeft = UiPad::Left() || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft, true) ||
+                         ImGui::IsKeyPressed(ImGuiKey_GamepadLStickLeft, true) || ImGui::IsKeyPressed(ImGuiKey_LeftArrow, true) ||
+                         ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false);
+    const bool navRight = UiPad::Right() || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight, true) ||
+                          ImGui::IsKeyPressed(ImGuiKey_GamepadLStickRight, true) || ImGui::IsKeyPressed(ImGuiKey_RightArrow, true) ||
+                          ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false);
+
     if (!items.empty()) {
-        if (navDown) { s_item = (s_item + 1) % static_cast<int>(items.size()); MenuSounds::Scroll(); }
-        if (navUp) { s_item = (s_item + static_cast<int>(items.size()) - 1) % static_cast<int>(items.size()); MenuSounds::Scroll(); }
+        if (navDown) {
+            s_item = (s_item + 1) % static_cast<int>(items.size());
+            MenuSounds::Scroll();
+        }
+        if (navUp) {
+            s_item = (s_item + static_cast<int>(items.size()) - 1) % static_cast<int>(items.size());
+            MenuSounds::Scroll();
+        }
     }
     if (!s_tabs.empty()) {
         if (navRight) { s_tab = (s_tab + 1) % static_cast<int>(s_tabs.size()); s_item = 0; MenuSounds::Tab(1); }
