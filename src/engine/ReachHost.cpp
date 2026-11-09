@@ -978,45 +978,21 @@ static void ApplyArmoryAppearance(uint8_t* profile) {
             if (id == "default") return 0;
             return static_cast<uint32_t>(std::clamp(idx, 0, 6));
         };
-        // haloreach.dll+0x3B2F4 maps MCC visor item ids 157..161 (kVisor + 0..4) as:
-        // 157 (+0) -> 0 (Default), 158 (+1) -> 1 (Silver), 159 (+2) -> 2 (Blue),
-        // 160 (+3) -> 4 (Gold),    161 (+4) -> 3 (Black).
-        // ArmorCustomizer's kVisorColors has index 3 = Black and index 4 = Gold, so swap 3 <-> 4.
+        // haloreach.dll+0x2EDC5E is patched (EnginePatches) to convert kVisor + 0..29 directly to internal
+        // visor indices 0..29 without stock 0..4 clamping, and 0x2C7DCC is patched to allow network replication.
         auto visorOffset = [](int idx, const std::string& id) -> uint32_t {
-            if (id == "silver") return 1;
-            if (id == "blue") return 2;
-            if (id == "gold") return 3;
-            if (id == "black") return 4;
-            if (id == "default") return 0;
-            // Noble Armory visor colours have no stock profile item. Until the in-game tint override lands,
-            // use the closest stock visor so the profile stays valid instead of writing item id 162+.
-            if (id == "rose_gold") return 3;
-            if (id == "emerald" || id == "violet") return 2;
-            if (id == "ice") return 1;
-            if (id == "crimson") return 0;
-            if (id == "onyx") return 4;
-            if (id == "amber") return 0;
-            if (id == "cyan") return 2;
-            if (id == "ruby") return 0;
-            if (id == "sapphire") return 2;
-            if (id == "amethyst") return 2;
-            if (id == "bronze") return 3;
-            if (id == "sunfire") return 3;
-            if (id == "lime") return 1;
-            if (id == "platinum") return 1;
-            if (id == "obsidian") return 4;
-            if (id == "pearl") return 1;
-            if (id == "electric_blue") return 2;
-            if (id == "blood_orange") return 0;
-            if (id == "mint") return 1;
-            if (id == "copper") return 3;
-            if (id == "midnight") return 4;
-            if (id == "magenta") return 2;
-            if (id == "aquamarine") return 2;
-            if (id == "titanium") return 1;
-            if (idx == 3) return 4;
-            if (idx == 4) return 3;
-            return static_cast<uint32_t>(std::clamp(idx, 0, 4));
+            if (idx >= 0 && idx < 30) return static_cast<uint32_t>(idx);
+            static const std::string_view kVisorIds[30] = {
+                "default", "silver", "blue", "black", "gold", "rose_gold",
+                "emerald", "ice", "crimson", "onyx", "violet", "amber",
+                "cyan", "ruby", "sapphire", "amethyst", "bronze", "sunfire",
+                "lime", "platinum", "obsidian", "pearl", "electric_blue", "blood_orange",
+                "mint", "copper", "midnight", "magenta", "aquamarine", "titanium"
+            };
+            for (size_t i = 0; i < 30; ++i) {
+                if (kVisorIds[i] == id) return static_cast<uint32_t>(i);
+            }
+            return 0;
         };
 
         const uint32_t spEffectOff = armoryEffectOffset(num(sp, "armor_effect_index", 0, 6, 0), str(sp, "armor_effect_id"));

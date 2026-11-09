@@ -186,6 +186,88 @@ bool EnginePatches::Apply(HMODULE hReachDll) {
         }
     }
 
+    // 3b. Elite armor effects: force r8b = 1 when applying effect (RVA 0x105837)
+    // At RVA 0x105837, the engine moves dil into r8b (44 8A C7). For Elites, dil is 0 (computed from
+    // record[0] bit 1). When apply_selection (0x105BDC) is called at 0x10585F, it skips applying the
+    // effect tag if r8b (bpl) is 0. Patching 44 8A C7 -> 41 B0 01 (mov r8b, 1) ensures armor effects
+    // always attach and render on Elites as well as Spartans.
+    {
+        static const uint8_t kExpectedEliteFxR8b[3] = { 0x44, 0x8A, 0xC7 };
+        static const uint8_t kPatchedEliteFxR8b[3]  = { 0x41, 0xB0, 0x01 };
+        uint8_t* addr = reinterpret_cast<uint8_t*>(baseAddress + 0x105837);
+        if (std::memcmp(addr, kExpectedEliteFxR8b, sizeof(kExpectedEliteFxR8b)) == 0) {
+            DWORD oldProt = 0;
+            if (VirtualProtect(addr, sizeof(kPatchedEliteFxR8b), PAGE_EXECUTE_READWRITE, &oldProt)) {
+                std::memcpy(addr, kPatchedEliteFxR8b, sizeof(kPatchedEliteFxR8b));
+                FlushInstructionCache(GetCurrentProcess(), addr, sizeof(kPatchedEliteFxR8b));
+                VirtualProtect(addr, sizeof(kPatchedEliteFxR8b), oldProt, &oldProt);
+                NOBLE_INFO("EnginePatches: Patched Elite armor effects r8b flag at RVA 0x105837 (mov r8b, 1).");
+            } else {
+                NOBLE_WARN("EnginePatches: Failed to VirtualProtect Elite armor effects r8b at RVA 0x105837.");
+            }
+        } else if (std::memcmp(addr, kPatchedEliteFxR8b, sizeof(kPatchedEliteFxR8b)) == 0) {
+            NOBLE_INFO("EnginePatches: Elite armor effects r8b at RVA 0x105837 already patched.");
+        } else {
+            NOBLE_WARN("EnginePatches: Unexpected bytes at RVA 0x105837; Elite armor effects r8b patch skipped.");
+        }
+    }
+
+    // 3c. Extended Spartan Visors (30 finishes): bypass 0x3B2F4 translation clamp at RVA 0x2EDC5E
+    // At haloreach+0x2EDC5A, the engine reads profile[+0x70] (MCC item ID) and calls 0x3B2F4.
+    // Stock 0x3B2F4 only maps items 157..161 to 0..4 (returning -1 for anything else).
+    // By replacing 'call 0x3B2F4; mov edx, eax' (7 bytes: E8 91 D6 D4 FF 8B D0) with
+    // 'lea edx, [rcx - 0x9D]; nop' (7 bytes: 8D 91 63 FF FF FF 90), profile items 157..186
+    // are converted directly to indices 0..29 without stock clamping, so player_set_visor (0x2C7F10)
+    // receives and stores all 30 visor indices into [player + 0x98].
+    {
+        static const uint8_t kExpectedVisorCall[7] = { 0xE8, 0x91, 0xD6, 0xD4, 0xFF, 0x8B, 0xD0 };
+        static const uint8_t kPatchedVisorCall[7]  = { 0x8D, 0x91, 0x63, 0xFF, 0xFF, 0xFF, 0x90 };
+        uint8_t* addr = reinterpret_cast<uint8_t*>(baseAddress + 0x2EDC5E);
+        if (std::memcmp(addr, kExpectedVisorCall, sizeof(kExpectedVisorCall)) == 0) {
+            DWORD oldProt = 0;
+            if (VirtualProtect(addr, sizeof(kPatchedVisorCall), PAGE_EXECUTE_READWRITE, &oldProt)) {
+                std::memcpy(addr, kPatchedVisorCall, sizeof(kPatchedVisorCall));
+                FlushInstructionCache(GetCurrentProcess(), addr, sizeof(kPatchedVisorCall));
+                VirtualProtect(addr, sizeof(kPatchedVisorCall), oldProt, &oldProt);
+                NOBLE_INFO("EnginePatches: Patched visor translation at RVA 0x2EDC5E (direct 30-finish mapping).");
+            } else {
+                NOBLE_WARN("EnginePatches: Failed to VirtualProtect visor translation at RVA 0x2EDC5E.");
+            }
+        } else if (std::memcmp(addr, kPatchedVisorCall, sizeof(kPatchedVisorCall)) == 0) {
+            NOBLE_INFO("EnginePatches: Visor translation at RVA 0x2EDC5E already patched.");
+        } else {
+            NOBLE_WARN("EnginePatches: Unexpected bytes at RVA 0x2EDC5E; visor translation patch skipped.");
+        }
+    }
+
+    // 3d. IsArmorItemUnlocked patch at static RVA 0x2C7DCC
+    // In retail Reach, the network appearance sync block builder (0x2C7A8C) calls 0x2C7DCC to check
+    // if items (including visor index at [player+0x98] and Elite armor pieces at [player+0xAE]) are
+    // unlocked. If 0x2C7DCC returns 0, the engine wipes the visor back to 0 (default) and drops custom
+    // pieces before sending them over the network.
+    // Patching 0x2C7DCC to 'mov eax, 1; ret; nop' (7 bytes: B8 01 00 00 00 C3 90) permanently unlocks
+    // all customization items and ensures all 30 visors and all Elite armor sets replicate across network peers.
+    {
+        static const uint8_t kExpectedUnlockPrologue[7] = { 0x48, 0x8B, 0xC4, 0x48, 0x89, 0x58, 0x08 };
+        static const uint8_t kPatchedUnlockPrologue[7]  = { 0xB8, 0x01, 0x00, 0x00, 0x00, 0xC3, 0x90 };
+        uint8_t* addr = reinterpret_cast<uint8_t*>(baseAddress + 0x2C7DCC);
+        if (std::memcmp(addr, kExpectedUnlockPrologue, sizeof(kExpectedUnlockPrologue)) == 0) {
+            DWORD oldProt = 0;
+            if (VirtualProtect(addr, sizeof(kPatchedUnlockPrologue), PAGE_EXECUTE_READWRITE, &oldProt)) {
+                std::memcpy(addr, kPatchedUnlockPrologue, sizeof(kPatchedUnlockPrologue));
+                FlushInstructionCache(GetCurrentProcess(), addr, sizeof(kPatchedUnlockPrologue));
+                VirtualProtect(addr, sizeof(kPatchedUnlockPrologue), oldProt, &oldProt);
+                NOBLE_INFO("EnginePatches: Patched IsArmorItemUnlocked at RVA 0x2C7DCC (mov eax, 1; ret). Full network replication enabled.");
+            } else {
+                NOBLE_WARN("EnginePatches: Failed to VirtualProtect IsArmorItemUnlocked at RVA 0x2C7DCC.");
+            }
+        } else if (std::memcmp(addr, kPatchedUnlockPrologue, sizeof(kPatchedUnlockPrologue)) == 0) {
+            NOBLE_INFO("EnginePatches: IsArmorItemUnlocked at RVA 0x2C7DCC already patched.");
+        } else {
+            NOBLE_WARN("EnginePatches: Unexpected bytes at RVA 0x2C7DCC; IsArmorItemUnlocked patch skipped.");
+        }
+    }
+
     // 3. "IsArmorItemUnlocked" hook: TURNED OFF (Tyler/Claude 2026-10-28).
     // The signature below is a generic function prologue (mov rax,rsp / save rbx,rbp,rsi,rdi / push r14 / sub rsp,20h /
     // xor ebx,ebx / mov bpl,r8b), so FindPattern returned the FIRST function that starts this way: haloreach RVA 0x105BDC,
