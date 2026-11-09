@@ -160,6 +160,21 @@ constexpr CallSite kStackCopySites[] = {
 };
 constexpr CallSite kStackCompareSite = { 0x396B3F, kMemcmpRva, "0x396828 memcmp 0x2210 (S2 vs S1)" };
 
+// C12-L step 4: "simulation distributed view" (16 x 77,240 B) is not made by data_array_new: 0x3D0263 allocates
+// 0x12DBF4 bytes (16 records + array header) from the region allocator 0x387B0 and 0x3D02B2 initialises it with
+// count 16 (0x130B4). 0x387B0 is a bump allocator over a region table (index at RVA 0xC1A630, entries of 0x38 at
+// 0xC1A638: +0 next, +8 end) that rounds to 64 KB and has no clean null return, so the 32-record size is only
+// asked for when the current region keeps kRegionReserve free afterwards; the init then gets count 32.
+constexpr uint32_t kRegionAllocRva = 0x387B0, kArrayInitRva = 0x130B4;
+constexpr CallSite kSimViewAllocSite = { 0x3D0271, kRegionAllocRva, "0x3D0263 simulation distributed view allocation" };
+constexpr CallSite kSimViewInitSite = { 0x3D02B2, kArrayInitRva, "0x3D02B2 simulation distributed view init" };
+// 0x3D0310 records the min/max address and total size of simulation memory; it is passed the 16-record size.
+constexpr uint32_t kSimRangeRva = 0x3D0310;
+constexpr CallSite kSimViewRangeSite = { 0x3D0282, kSimRangeRva, "0x3D0282 simulation memory range" };
+constexpr uint64_t kSimView16Bytes = 0x12DBF4, kSimView32Bytes = 0x74 + 32ull * 0x12DB8;
+constexpr uint64_t kRegionReserve = 16ull << 20;
+constexpr uint32_t kRegionIndexRva = 0xC1A630, kRegionTableRva = 0xC1A638;
+
 constexpr uintptr_t kSessionsRva = 0x2B07418;   // 4 static session membership objects
 constexpr uintptr_t kSessionStride = 0x61668;
 constexpr int kSessions = 4;
@@ -248,6 +263,44 @@ void* __cdecl StackCopyMirror(void* dst, const void* src, size_t n) {
     if (peers) std::memcpy(side, ShadowSlots(ks, *peers), kSidePeerBytes);
     else std::memset(side, 0, kSidePeerBytes);
     return r;
+}
+
+// Simulation distributed view (see kSimViewAllocSite).
+uintptr_t gEngineBase = 0;
+bool gSimView32 = false;
+using RegionAllocFn = void* (__fastcall*)(uint64_t, uint64_t, uint64_t, uint64_t);
+using ArrayInitFn = uint64_t (__fastcall*)(void*, const char*, int32_t, int32_t, int32_t, void*);
+
+void* __fastcall SimViewAlloc(uint64_t a, uint64_t b, uint64_t size, uint64_t flags) {
+    const auto alloc = reinterpret_cast<RegionAllocFn>(gEngineBase + kRegionAllocRva);
+    if (size == kSimView16Bytes) {
+        const int32_t index = *reinterpret_cast<const int32_t*>(gEngineBase + kRegionIndexRva);
+        const auto* region = reinterpret_cast<const uint64_t*>(gEngineBase + kRegionTableRva + static_cast<int64_t>(index) * 0x38);
+        const uint64_t next = region[0], end = region[1];
+        const uint64_t want = (kSimView32Bytes + 0xFFFF) & ~0xFFFFull;
+        if (index >= 0 && index < 16 && end > next && end - next >= want + kRegionReserve) {
+            if (void* p = alloc(a, b, kSimView32Bytes, flags)) {
+                gSimView32 = true;
+                NOBLE_WARN("C12 players: simulation distributed view 16 -> 32 ({} KB more; region {} had {} MB free)",
+                           (kSimView32Bytes - kSimView16Bytes) / 1024, index, (end - next) >> 20);
+                return p;
+            }
+        }
+        NOBLE_ERROR("C12 players: simulation distributed view stays 16 (region {} has {} MB free, needs {} MB + reserve)",
+                    index, end > next ? (end - next) >> 20 : 0, want >> 20);
+    }
+    return alloc(a, b, size, flags);
+}
+
+using SimRangeFn = void (__fastcall*)(int32_t, void*);
+void __fastcall SimViewRange(int32_t size, void* p) {
+    const auto range = reinterpret_cast<SimRangeFn>(gEngineBase + kSimRangeRva);
+    range(gSimView32 && size == static_cast<int32_t>(kSimView16Bytes) ? static_cast<int32_t>(kSimView32Bytes) : size, p);
+}
+
+uint64_t __fastcall SimViewInit(void* array, const char* name, int32_t count, int32_t recordSize, int32_t alignBits, void* allocator) {
+    const auto init = reinterpret_cast<ArrayInitFn>(gEngineBase + kArrayInitRva);
+    return init(array, name, gSimView32 && count == 16 ? 32 : count, recordSize, alignBits, allocator);
 }
 
 // 0x396B3F: S2 vs S1 change test; equal inline copies are also compared on their side areas.
@@ -352,6 +405,7 @@ bool CallSitesMatch(uintptr_t base) {
     for (const CallSite& s : kCopySites) if (!CallMatches(base, s)) return false;
     for (const CallSite& s : kStackCopySites) if (!CallMatches(base, s)) return false;
     if (!CallMatches(base, kStackCompareSite)) return false;
+    for (const CallSite* s : { &kSimViewAllocSite, &kSimViewInitSite, &kSimViewRangeSite }) if (!CallMatches(base, *s)) return false;
     if (std::memcmp(reinterpret_cast<void*>(base + kSideCaveRva), kSideCaveOriginal, sizeof(kSideCaveOriginal)) != 0) {
         NOBLE_WARN("SlotPatch: 0x396AB4 imul does not match");
         return false;
@@ -359,20 +413,27 @@ bool CallSitesMatch(uintptr_t base) {
     return true;
 }
 
-constexpr size_t kStubBytes = 4 * 16 + 48;   // 4 jump stubs + the 0x396AB4 side cave
+constexpr int kStubCount = 7;
+constexpr size_t kCaveAt = kStubCount * 16;
+constexpr size_t kStubBytes = kCaveAt + 48;   // jump stubs + the 0x396AB4 side cave
 
 // Stubs `jmp [rip+0]; dq target` near the engine (0 memcpy mirror, 1 memset mirror, 2 stack copy, 3 stack
-// compare) and the 0x396AB4 cave at +64; then every call site's rel32 points at its stub.
+// compare, 4 sim-view alloc, 5 sim-view init, 6 sim range) and the 0x396AB4 cave after them; then every call
+// site's rel32 points at its stub.
 void ApplyCallSites(uintptr_t base, uint8_t* stubs) {
     gEngineMemcmp = reinterpret_cast<MemcmpFn>(base + kMemcmpRva);
-    const void* targets[4] = { reinterpret_cast<const void*>(&MemcpyMirror), reinterpret_cast<const void*>(&MemsetMirror),
-                               reinterpret_cast<const void*>(&StackCopyMirror), reinterpret_cast<const void*>(&StackCompareMirror) };
-    for (int i = 0; i < 4; ++i) {
+    gEngineBase = base;
+    const void* targets[kStubCount] = {
+        reinterpret_cast<const void*>(&MemcpyMirror), reinterpret_cast<const void*>(&MemsetMirror),
+        reinterpret_cast<const void*>(&StackCopyMirror), reinterpret_cast<const void*>(&StackCompareMirror),
+        reinterpret_cast<const void*>(&SimViewAlloc), reinterpret_cast<const void*>(&SimViewInit),
+        reinterpret_cast<const void*>(&SimViewRange) };
+    for (int i = 0; i < kStubCount; ++i) {
         const uint8_t jmp[6] = { 0xFF, 0x25, 0, 0, 0, 0 };
         std::memcpy(stubs + i * 16, jmp, 6);
         std::memcpy(stubs + i * 16 + 6, &targets[i], 8);
     }
-    uint8_t* cave = stubs + 64;
+    uint8_t* cave = stubs + kCaveAt;
     std::memcpy(cave, kSideCave, sizeof(kSideCave));
     const uintptr_t back = base + kSideCaveRva + sizeof(kSideCaveOriginal);
     for (const uint32_t at : kSideCaveBack)
@@ -388,6 +449,9 @@ void ApplyCallSites(uintptr_t base, uint8_t* stubs) {
     for (const CallSite& s : kCopySites) redirect(s, s.target == kMemcpyRva ? 0 : 1);
     for (const CallSite& s : kStackCopySites) redirect(s, 2);
     redirect(kStackCompareSite, 3);
+    redirect(kSimViewAllocSite, 4);
+    redirect(kSimViewInitSite, 5);
+    redirect(kSimViewRangeSite, 6);
     JumpTo(base + kSideCaveRva, cave);
 }
 
@@ -405,7 +469,14 @@ bool Requested() {
 
 // -slot-players 32 (NOBLE_SLOT_PLAYERS=32): also install the step caves and raise the loop bounds.
 // Dev only until the fixed tables listed in docs/limits-players-loops.md are handled.
-bool Players32Requested() {
+bool UnsafeOverride() {
+    wchar_t unsafe[8] = {};
+    return GetEnvironmentVariableW(L"NOBLE_SLOT_PLAYERS_UNSAFE", unsafe, 8) > 0 && unsafe[0] == L'1';
+}
+
+bool gPlayers32Active = false;
+
+bool ArgPlayers32() {
     wchar_t env[8] = {};
     if (GetEnvironmentVariableW(L"NOBLE_SLOT_PLAYERS", env, 8) > 0 && _wtoi(env) == 32) return true;
     int argc = 0;
@@ -451,6 +522,9 @@ void InitShadowRecords(uintptr_t base, uint8_t* shadow, bool players32) {
 
 } // namespace
 
+bool Players32Requested() { return ArgPlayers32() && UnsafeOverride(); }
+bool Players32Active() { return gPlayers32Active; }
+
 void Install(HMODULE engine, bool extendedProfile) {
     if (!engine || !Requested()) return;
     if (!extendedProfile) {
@@ -464,12 +538,11 @@ void Install(HMODULE engine, bool extendedProfile) {
             return;
         }
     }
-    bool players32 = Players32Requested();
+    bool players32 = ArgPlayers32();
     // Safety gate: 32-player mode is known to be unsafe until the blockers in docs/limits-players-loops.md are
     // fixed (raised bounds already send slots >= 16 through uncaved code). Dev override only.
     if (players32) {
-        wchar_t unsafe[8] = {};
-        if (GetEnvironmentVariableW(L"NOBLE_SLOT_PLAYERS_UNSAFE", unsafe, 8) == 0 || unsafe[0] != L'1') {
+        if (!UnsafeOverride()) {
             NOBLE_WARN("SlotPatch: -slot-players 32 refused: not safe yet (169 untraced imul sites incl. 6 in 0x390DB0, "
                        "the 17 x 0xC table at block+0x4440, remaining step-3 tables, players pool, network encoding). "
                        "Dev override: NOBLE_SLOT_PLAYERS_UNSAFE=1. Staying in 16-player mode");
@@ -555,6 +628,7 @@ void Install(HMODULE engine, bool extendedProfile) {
     FlushInstructionCache(GetCurrentProcess(), reinterpret_cast<void*>(base), 0x1000000);
     NOBLE_INFO("SlotPatch: {} slot address sites redirected (players >= 16, peers >= 17 -> shadow sessions at {:p}, "
                "delta 0x{:X})", std::size(kSites), static_cast<void*>(shadow), static_cast<uint64_t>(delta));
+    gPlayers32Active = players32;
     if (players32)
         NOBLE_WARN("SlotPatch: 32-player mode (dev): {} step loops, {} loop bounds raised to 32, 0x390DB0 frame +0x100 "
                    "(32-entry name table), {} block copy/clear sites mirrored onto the shadow, 0x396828 S1/S2 peer side "

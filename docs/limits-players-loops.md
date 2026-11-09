@@ -158,3 +158,18 @@ S1 = rsp+0x30 = rbp-0xD0 (copy of half B), S2 = rbp+0x2140 (copy of static half 
 - 0x396AB4 cave: idx >= 17 -> rcx = 0x8EA8 + (idx - 17) * 0x158, else the original imul.
 - Frame growth is one table (`kFrames`: 0x390DB0, 0x396828), all byte-, context- and unwind-checked.
 - **Safety gate:** `-slot-players 32` now refuses (and logs the blockers) unless `NOBLE_SLOT_PLAYERS_UNSAFE=1`.
+
+## C12-L step 4: pools and the host player list (2026-11-09, built, not tested)
+- `players` (16 x 1,168), `fire team` (16 x 212), `simulation view data array` (16 x 280): PoolResize raises them to
+  32 at data_array_new only when `slots::Players32Active()` (SlotPatch fully installed). Memory comes from the
+  caller's allocator object, not the AI bank budget; data_array_new returns null when out of room -> stock 16 + error.
+  The hook is installed for this even without -ai-actors (32-player dev override only).
+- `simulation distributed view` (16 x 77,240) is not a data_array_new pool: 0x3D0263 allocates 0x12DBF4 from the
+  region bump allocator 0x387B0, 0x3D0282 records the range (0x3D0310), 0x3D02B2 initialises with count 16. Three
+  call-site wrappers: the 32-record size (0x25B774) is used only if the current region keeps 16 MB free afterwards
+  (no clean null return in 0x387B0); then the range call and the init get the 32 size/count. Logged either way.
+  Open: whatever indexes the views by peer/machine with a 16 bound has not been reviewed.
+- **Host player list (0xD6B8, 16 x 0x20 at rbp-0x80):** handed to host vtable +0xF0 = slot 30 of Noble's own
+  ReachHost (the MCC host replacement at 0xC1A100). Noble does not implement slot 30 (generic SlotDispatcher stub,
+  returns 0). Nothing consumes the list, so it is NOT grown: its bound 0xD8D0 stays 16 (first 16 players listed),
+  which cannot overflow. Grow it only if Noble ever implements slot 30.

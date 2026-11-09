@@ -1,4 +1,5 @@
 #include "PoolResize.hpp"
+#include "SlotPatch.hpp"
 
 #include "common/Logger.hpp"
 #include "hooks/HookManager.hpp"
@@ -138,7 +139,28 @@ const Rule kRules[] = {
     { "cached object render states", [](int32_t stock) { return stock; } },   // -render-states overrides
 };
 
+// C12-L step 4: per-player pools follow the slot arrays to 32 - only once SlotPatch has really installed 32-player
+// mode (the pools are created at game-state init, after SlotPatch::Install). Their memory comes from the engine's
+// own allocator object (not the AI bank budget); data_array_new returns null when it has no room, so fall back to
+// the stock 16 and log it. "simulation distributed view" is not created here (SlotPatch handles it).
+const char* const kPlayerPools[] = { "players", "fire team", "simulation view data array" };
+
 void* __fastcall Hook_DataArrayNew(const char* name, int32_t count, uint64_t recordSize, int32_t alignBits, void* allocator) {
+    if (name && count == 16 && slots::Players32Active()) {
+        for (const char* pool : kPlayerPools) {
+            if (std::strcmp(name, pool) != 0) continue;
+            int32_t made = 32;
+            void* header = s_original(name, made, recordSize, alignBits, allocator);
+            if (header) NOBLE_WARN("C12 players: {} 16 -> 32 ({} KB more)", name, (16 * recordSize) / 1024);
+            else {
+                NOBLE_ERROR("C12 players: no room to raise '{}' to 32; using 16", name);
+                made = count;
+                header = s_original(name, made, recordSize, alignBits, allocator);
+            }
+            Trace(name, made, recordSize, allocator, header);
+            return header;
+        }
+    }
     if (s_actors > 0 && name) {
         for (const Rule& rule : kRules) {
             if (std::strcmp(name, rule.name) != 0) continue;
@@ -253,7 +275,18 @@ void InstallResize(HMODULE engine, bool extendedProfile) {
             reinterpret_cast<void**>(&s_gsOriginal), "gs_failure_report");
 
     const int actors = ReadActorSetting();
-    if (actors <= 96) return;                       // not requested (or not an increase)
+    if (actors <= 96) {                             // AI pools not requested (or not an increase)
+        // C12-L: the per-player pools still need the hook in 32-player mode (dev override only, see SlotPatch).
+        if (extendedProfile && slots::Players32Requested() &&
+            std::memcmp(reinterpret_cast<void*>(base + kDataArrayNewRva), kDataArrayNewHead, sizeof(kDataArrayNewHead)) == 0) {
+            ReadPoolOptions();
+            if (HookManager::InstallHook(reinterpret_cast<void*>(base + kDataArrayNewRva), reinterpret_cast<void*>(&Hook_DataArrayNew),
+                    reinterpret_cast<void**>(&s_original), "ai_pool_resize"))
+                NOBLE_INFO("C12 players: pool hook installed; players / fire team / simulation view data array go to 32 "
+                           "if 32-player mode installs");
+        }
+        return;
+    }
     if (!extendedProfile) {
         NOBLE_WARN("AI limits: -ai-actors needs ENGINE LIMITS set to Extended; ignored on Stock");
         return;
