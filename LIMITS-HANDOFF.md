@@ -35,15 +35,16 @@ written past the stack copies before `88d67ec`).
 
 ### Still blocking a real 32-player game
 1. Untraced imul sites (169, incl. 6 in 0x390DB0): runtime route, see Next.
-2. 17 x 0xC table at block+0x4440: cave the ~47 sites (same shadow delta).
+2. ~~17 x 0xC table at block+0x4440~~: caved 2026-11-09 (47 operands + 2 reset loops, guard counts non-session
+   blocks; see `docs/limits-players-loops.md` "C12-L (c)"). Built: no, tested: no. 0x39C701 still 17.
 3. Remaining step-3 tables (0x2C92050 16 x 0xA0, 17 x 6 at +0x34, 0x40A760 vtable object, the 8 blocked loops'
    tables, 17 x 0xC at session +0x61574 and 0x3FFC9C, stacks in 0x41E884 / 0x41F510 / 0x41FBE8, nine 0x1FFFF masks).
-4. Step 4: players / fire team / simulation view pools to 32 (PoolResize), 16 x 0x20 host player list in 0xD6B8
-   (vtable +0xF0; find the receiver), which also unblocks step loop 0xD8C9.
+4. ~~Step 4~~: pools to 32 done in `a0f039f`; the 0xD6B8 host list stays 16 (Noble's slot 30 is a no-op,
+   nothing reads it). Still open: whatever indexes the 32-record simulation views with a 16 bound.
 5. Network encoding of slot counts/masks (protocol work; also #1's network-decoded source block).
 
 ### Next (in order)
-1. Smoke test now (one window, solo match, three runs, separate `-log` files): no slot options; `-slot-patch
+1. Smoke test now: `run_slot32_smoke.bat` (`f7f61b4`; ENGINE LIMITS = Extended) — one window, solo match, three runs, separate `-log` files: no slot options; `-slot-patch
    -slot-players 32` without the override (must log blockers and stay 16); same with `NOBLE_SLOT_PLAYERS_UNSAFE=1`
    (1 player, so slots >= 16 unused: checks the two grown frames and new caves install and don't crash). Ask
    Claude Code for a `.bat`; the cloud session can run it on monitor 1.

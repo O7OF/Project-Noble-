@@ -227,6 +227,7 @@ set(HEADERS
     src/host/MemberTrace.hpp
     src/host/SlotPatch.hpp
     src/host/SlotPatchTable.inc
+    src/host/SlotTableSites.inc
     src/hooks/SigScanner.hpp
     src/hooks/HookManager.hpp
     src/hooks/LobbyPatches.hpp
@@ -397,6 +398,7 @@ set(DEDICATED_HEADERS
     src/host/MemberTrace.hpp
     src/host/SlotPatch.hpp
     src/host/SlotPatchTable.inc
+    src/host/SlotTableSites.inc
     src/hooks/SigScanner.hpp
     src/hooks/HookManager.hpp
     src/hooks/LobbyPatches.hpp

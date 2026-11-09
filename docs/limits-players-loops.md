@@ -173,3 +173,30 @@ S1 = rsp+0x30 = rbp-0xD0 (copy of half B), S2 = rbp+0x2140 (copy of static half 
   ReachHost (the MCC host replacement at 0xC1A100). Noble does not implement slot 30 (generic SlotDispatcher stub,
   returns 0). Nothing consumes the list, so it is NOT grown: its bound 0xD8D0 stays 16 (first 16 players listed),
   which cannot overflow. Grow it only if Noble ever implements slot 30.
+
+## C12-L (c): peer table at session+0x446C caved (2026-11-09, built: no; tested: no)
+- Table: 17 x 0xC at session+0x446C (= block+0x443C): +0 byte flag, +4 dword (index into a 0x18D0-stride table,
+  -1 = none), +8 dword. Empty entry = {0, -1, -1} (0x39D0AC). Cannot grow in place (session fields at +0x4528..).
+- **47 indexed operands** `[base + idx*4 + disp]`, disp 0x443C/40/44 (block base) or 0x446C/70/74 (session base),
+  all in 0x390001..0x44ABC5. Every index register holds 3 * peer (`lea x,[y+y*2]`, `r13 = rbp*2 + rbp` at
+  0x39D08A, `rax = r13*2 + r13` at 0x404F9A/0x4057C8), checked by hand. Plus two pointer-stepping reset loops:
+  0x39C77C/0x39C78C (0x39C6B4, `lea rsi,[rsi+0xC]; cmp ebp,0x11`) and 0x39C800/0x39C818 (0x39C7AC,
+  `add rcx,0xC; cmp edx,0x11`). No other reference to these offsets in 0x380000-0x460000 (no lea'd pointers).
+- `tools/limits/gen_table44.py build/stock_text.asm src/host/SlotTableSites.inc` (input: the capstone listing,
+  not the DLL; it encodes each operand and checks the length against the next instruction). SlotPatch byte-checks
+  every row against the loaded engine (all or nothing with the rest of 32-player mode).
+- Operand cave (flags preserved with pushfq/popfq): peer < 17 (or -1) -> original; base inside the 4 static
+  sessions -> `lea idx,[idx+K]`, original, `lea idx,[idx-K]` (skipped when the instruction overwrites idx),
+  K = (delta - 204) / 4 -> shadow entry `shadow + 0x446C + (peer-17)*0xC`; base anywhere else -> original at the
+  stock address and a per-site counter (dev guard thread logs new counts every 5 s:
+  `SlotPatch guard: peer table site +0x... reached peer >= 17 on a non-session block`).
+- Step caves: at counter 17 the pointer moves to shadow entry 17 and the loop runs to 32; on a non-session block it
+  ends at 17 like stock (counted).
+- Shadow entries start as {0, -1, -1}; whole-block copies/clears (#1 0x39C4D5, #3 0x39C71A) now mirror the table
+  too (`kArrays` entry with `table = true`, no record ctor).
+- Already raised before this (so unsafe mode walked past the table until now): 0x39CC14 / 0x39CC4D (0x39CBF0 scan).
+- **Still 17:** 0x39C701 (calls 0x39D0AC per peer; its table sites are caved now, review the rest of 0x39D0AC
+  before raising), 0x39C769 / 0x39C7F9 (peer field resets, imul caved). Raise with the next bounds pass.
+- Cave bytes were checked by compiling the emitter on Linux and disassembling sample caves (objdump).
+- Test: run 3 of `run_slot32_smoke.bat` must log "peer table +0x446C: 47 sites + 2 reset loops caved" and no
+  "peer table site ... does not match".
