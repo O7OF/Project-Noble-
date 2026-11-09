@@ -1812,6 +1812,7 @@ struct MenuState {
     int lobbyPickerRow = 0;
     bool lobbyTeamPickerOpen = false;  // the CHANGE TEAM dropdown is showing
     int lobbyTeamPickerRow = 0;
+    double lobbyTeamPickerOpenedAt = 0.0;   // ImGui time it opened: its first frames ignore clicks
     bool lobbyProfileOpen = false; // The selected player's card is showing in place of the roster
     bool lobbyReady = true;        // Player ready toggle
     int lobbyRosterSelection = 0;  // Selected player index in party roster
@@ -3565,6 +3566,7 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         } else if (row.label == "CHANGE TEAM") {
             // A team is picked from the dropdown, never stepped through with the arrows.
             st.lobbyTeamPickerOpen = true;
+            st.lobbyTeamPickerOpenedAt = ImGui::GetTime();
             if (!st.lobbyRoster.empty()) {
                 const LobbyPlayer& picked = st.lobbyRoster[std::clamp(st.lobbyRosterSelection, 0, static_cast<int>(st.lobbyRoster.size()) - 1)];
                 st.lobbyTeamPickerRow = std::clamp(picked.team, 1, std::clamp(st.lobbyTeamCount, 2, kTeamCount)) - 1;
@@ -3753,6 +3755,7 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
             MenuSounds::Click();
         } else if (cur.label == "CHANGE TEAM" && cur.editable) {
             st.lobbyTeamPickerOpen = true;
+            st.lobbyTeamPickerOpenedAt = ImGui::GetTime();
             if (!st.lobbyRoster.empty()) {
                 const LobbyPlayer& picked = st.lobbyRoster[std::clamp(st.lobbyRosterSelection, 0, static_cast<int>(st.lobbyRoster.size()) - 1)];
                 st.lobbyTeamPickerRow = std::clamp(picked.team, 1, std::clamp(st.lobbyTeamCount, 2, kTeamCount)) - 1;
@@ -3861,11 +3864,13 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         const float h = 32.0f * ui.s;
         const ImVec2 r0(colX, curY), r1(colX + colW, curY + h);
         ImGui::SetCursorScreenPos(r0);
-        if (ImGui::InvisibleButton(rowId, ImVec2(colW, h))) {
+        // While the team dropdown is up it owns the mouse: the rows underneath are drawn but inert, so a click
+        // on a team never also hits START GAME / the row below it.
+        if (!st.lobbyTeamPickerOpen && ImGui::InvisibleButton(rowId, ImVec2(colW, h))) {
             st.lobbyMenuRow = i;
             cycleOption(ImGui::GetMousePos().x < colX + colW * 0.48f + 28.0f * ui.s ? -1 : 1);
         }
-        if (ImGui::IsItemHovered() && mouseMoved && !focused) {
+        if (!st.lobbyTeamPickerOpen && ImGui::IsItemHovered() && mouseMoved && !focused) {
             st.lobbyMenuRow = i;
             MenuSounds::Scroll();
         }
@@ -3912,6 +3917,10 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         const float anchorY = teamRowY >= 0.0f ? teamRowY + 34.0f * ui.s : rowsY;
         const float dy = std::min(anchorY, top + 540.0f * ui.s - panelH2);
         const ImVec2 p0(colX, dy), p1(colX + colW, dy + panelH2);
+        // Blocker in front of everything the panel covers (submitted first, so the team rows below win the pointer).
+        ImGui::SetCursorScreenPos(ImVec2(colX - 40.0f * ui.s, rowsY - 40.0f * ui.s));
+        ImGui::InvisibleButton("##team_pick_blocker", ImVec2(colW + 80.0f * ui.s, startY + 60.0f * ui.s - (rowsY - 40.0f * ui.s)));
+        const bool acceptClicks = ImGui::GetTime() - st.lobbyTeamPickerOpenedAt > 0.15;
         ui.dl->AddRectFilled(ImVec2(p0.x + 2.0f * ui.s, p0.y + 3.0f * ui.s), ImVec2(p1.x + 2.0f * ui.s, p1.y + 3.0f * ui.s), IM_COL32(0, 0, 0, 120));
         ui.dl->AddRectFilled(p0, p1, IM_COL32(6, 10, 16, 248));
         ui.dl->AddRect(p0, p1, kAccent, 2.0f * ui.s);
@@ -3927,7 +3936,7 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         int picked = -1;
         // Only a press made while the dropdown was already up counts: the same Enter that opened it must not
         // also pick the highlighted team (that closed it again on the frame it appeared).
-        if (teamPickerWasOpen && AcceptPressed()) picked = st.lobbyTeamPickerRow;
+        if (teamPickerWasOpen && acceptClicks && AcceptPressed()) picked = st.lobbyTeamPickerRow;
         const int currentTeam = st.lobbyRoster.empty() ? 0
             : st.lobbyRoster[std::clamp(st.lobbyRosterSelection, 0, static_cast<int>(st.lobbyRoster.size()) - 1)].team;
         for (int t = 1; t <= teams; ++t) {
@@ -3936,7 +3945,7 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
             const ImVec2 r1(p1.x - 5.0f * ui.s, r0.y + pickRowH - 2.0f * ui.s);
             ImGui::SetCursorScreenPos(r0);
             ImGui::PushID(2000 + t);
-            if (ImGui::InvisibleButton("##team_pick", ImVec2(r1.x - r0.x, r1.y - r0.y))) picked = idx;
+            if (acceptClicks && ImGui::InvisibleButton("##team_pick", ImVec2(r1.x - r0.x, r1.y - r0.y))) picked = idx;
             if (ImGui::IsItemHovered() && mouseMoved) st.lobbyTeamPickerRow = idx;
             ImGui::PopID();
             const TeamStyle& style = TeamStyleFor(t);
@@ -7318,6 +7327,17 @@ void FrontEndMenu::RenderOverlayImpl(IDXGISwapChain* swapChain, bool clear) {
                         }
                     }
                     if (argv) LocalFree(argv);
+                }
+                // The lobby's team assignment: the match applies each player's team in the engine at spawn
+                // (`player_override_team`, 0-based). Without this the engine dealt its own teams and a host who
+                // picked purple was red in the match.
+                if (ctx.st.lobbyTeamsOn && !ctx.st.lobbyRoster.empty()) {
+                    std::wstring teams;
+                    for (const auto& player : ctx.st.lobbyRoster) {
+                        if (!teams.empty()) teams += L",";
+                        teams += std::to_wstring(std::clamp(player.team, 1, kTeamCount));
+                    }
+                    args += L" -lobby-teams \"" + teams + L"\"";
                 }
                 args += L" -difficulty " + std::to_wstring(choice.difficulty);
                 // The match process only keeps this for the way back: post-game's NEXT IN ROTATION.

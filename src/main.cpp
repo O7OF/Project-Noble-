@@ -972,6 +972,42 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 
         NOBLE_INFO("Launching Halo: Reach Engine: Target Map='{}', Mode='{}'", launchMap, launchMode);
         blamEngine->LaunchMap(launchMap, launchMode, launchDifficulty, launchSkulls, customMvar, customVariant, "", expectedPeers);
+
+        // The lobby's teams, from "-lobby-teams "1,2,4"": player index -> team (1..8). The engine deals its own
+        // two teams, so each player's side is overridden in HaloScript once they are in the match
+        // (player_override_team <player index> <0-based team>). Retried a few times: the first attempt can
+        // land before the player unit exists, and the engine re-spawns on round start.
+        std::vector<int> lobbyTeams;
+        {
+            int argc = 0;
+            LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+            for (int i = 1; argv && i + 1 < argc; ++i) {
+                if (_wcsicmp(argv[i], L"-lobby-teams") != 0) continue;
+                std::wstring csv = argv[i + 1];
+                size_t start = 0;
+                while (start <= csv.size()) {
+                    const size_t comma = csv.find(L',', start);
+                    const std::wstring part = csv.substr(start, comma == std::wstring::npos ? std::wstring::npos : comma - start);
+                    if (!part.empty()) lobbyTeams.push_back(std::clamp(_wtoi(part.c_str()), 1, 8));
+                    if (comma == std::wstring::npos) break;
+                    start = comma + 1;
+                }
+            }
+            if (argv) LocalFree(argv);
+        }
+        if (!lobbyTeams.empty()) {
+            NOBLE_INFO("main: applying {} lobby team assignment(s) to the match", lobbyTeams.size());
+            std::thread([teams = lobbyTeams] {
+                for (int waitMs : { 2500, 6000, 14000, 26000 }) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(waitMs));
+                    noble::BlamEngine* engine = noble::BlamEngine::Active();
+                    if (!engine) continue;
+                    for (size_t i = 0; i < teams.size(); ++i) {
+                        engine->ExecuteCommand("player_override_team " + std::to_string(i) + " " + std::to_string(teams[i] - 1));
+                    }
+                }
+            }).detach();
+        }
     }
 
     if (!engineCommand.empty() && engineCommandAt >= 0) {
