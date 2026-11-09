@@ -23,15 +23,15 @@ constexpr uintptr_t kSessionsRva = 0x2B07418;
 constexpr uintptr_t kSessionSize = 0x61668;
 constexpr int kSessions = 4;
 struct Region { uint32_t begin, end; const char* name; };
+// Only the slot records themselves (and the peer table); scalar fields between them (masks, counts, ids at
+// +0x1738..+0x173F, +0x2240..+0x226F, +0x3948..+0x394F, +0x4450..+0x446B) do not move with the slot count, so
+// accesses to them are not recorded.
 constexpr Region kRegions[] = {
-    { 0x0060, 0x173C, "peersA" },    // 17 x 0x158
-    { 0x173C, 0x1740, "maskA" },
-    { 0x1740, 0x226C, "playersA" },  // 16 x 0xB0
-    { 0x226C, 0x2270, "headerB" },
-    { 0x2270, 0x394C, "peersB" },
-    { 0x394C, 0x3950, "maskB" },
-    { 0x3950, 0x4538, "playersB" },
-    { 0x446C, 0x4538, "peerTable" }, // 17 x 0xC (C12-L (c)); listed last so it wins over playersB's tail
+    { 0x0060, 0x1738, "peersA" },    // 17 x 0x158
+    { 0x1740, 0x2240, "playersA" },  // 16 x 0xB0
+    { 0x2270, 0x3948, "peersB" },    // 17 x 0x158
+    { 0x3950, 0x4450, "playersB" },  // 16 x 0xB0
+    { 0x446C, 0x4538, "peerTable" }, // 17 x 0xC (C12-L (c))
 };
 
 // C12-L (d): accesses already reviewed (tools/limits/gen_member_known.py). Any other engine instruction that

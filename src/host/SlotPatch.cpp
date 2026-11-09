@@ -186,19 +186,26 @@ constexpr uint32_t kRegionIndexRva = 0xC1A630, kRegionTableRva = 0xC1A638;
 //   foreign: lock inc [counter]; popfq; <original>; jmp back      (non-session block: left as stock, counted)
 // with K = (delta - 51*4) / 4, so [base + 4*(idx+K) + disp] = shadow entry. Flags are preserved around the checks.
 // Step caves keep the stock bound (17) on a non-session block and run to 32 on a static session.
-struct TableSite { uint32_t rva; uint32_t length; uint8_t original[9]; uint8_t base, index; bool overwritesIndex; };
+// Second form (found by the -trace-members run): `peer + 0x5B0|0x5B4` (bias), `lea rax,[rax+rax*2]`, short access;
+// the lea is patched with the access (pre = 4 bytes) and the cave checks peer + bias before running it.
+struct TableSite { uint32_t rva; uint32_t length; uint8_t original[9]; uint8_t base, index; bool overwritesIndex;
+                   uint16_t bias; uint8_t pre; };
 const TableSite kTableSites[] = {
 #include "SlotTableSites.inc"
 };
-struct TableStep { uint32_t rva; uint8_t original[7]; uint8_t ptr, counter; const char* what; };
+// Pointer-stepping loops over a slot array with a fixed bound: `step ptr, record` + `cmp counter, first`.
+struct TableStep { uint32_t rva; uint32_t length; uint8_t original[9]; uint32_t stepLength; uint8_t ptr, counter;
+                   uint32_t first, record; const char* what; };
 constexpr TableStep kTableSteps[] = {
-    { 0x39C78C, { 0x48, 0x8D, 0x76, 0x0C, 0x83, 0xFD, 0x11 }, 6, 5, "0x39C6B4 reset: lea rsi,[rsi+0xC]; cmp ebp,0x11" },
-    { 0x39C818, { 0x48, 0x83, 0xC1, 0x0C, 0x83, 0xFA, 0x11 }, 1, 2, "0x39C7AC half-B reset: add rcx,0xC; cmp edx,0x11" },
+    { 0x39C78C, 7, { 0x48, 0x8D, 0x76, 0x0C, 0x83, 0xFD, 0x11 }, 4, 6, 5, 17, 0xC, "0x39C6B4 reset: lea rsi,[rsi+0xC]; cmp ebp,0x11" },
+    { 0x39C818, 7, { 0x48, 0x83, 0xC1, 0x0C, 0x83, 0xFA, 0x11 }, 4, 1, 2, 17, 0xC, "0x39C7AC half-B reset: add rcx,0xC; cmp edx,0x11" },
+    // -trace-members 2026-11-09: 0x2A3870 counts matching players over the 16 records 0x398088 returns.
+    { 0x2A38CF, 9, { 0x48, 0x05, 0xB0, 0x00, 0x00, 0x00, 0x83, 0xFA, 0x10 }, 6, 0, 2, 16, 0xB0, "0x2A3870 player count: add rax,0xB0; cmp edx,0x10" },
 };
-constexpr uint32_t kTableRecord = 0xC, kTableFirst = 17;
+constexpr uint32_t kTableFirst = 17;   // first peer that is not in the 17-entry table
 constexpr size_t kTableCaveCount = std::size(kTableSites) + std::size(kTableSteps);
 constexpr size_t kTableCaveStride = 128;
-constexpr size_t kTableCodeBytes = 0x2000;   // caves (RX); the data page after it stays RW
+constexpr size_t kTableCodeBytes = 0x3000;   // caves (RX); the data page after it stays RW
 constexpr size_t kTableAllocBytes = kTableCodeBytes + 0x1000;
 static_assert(kTableCaveCount * kTableCaveStride <= kTableCodeBytes, "table caves do not fit");
 struct TableData { uint64_t lo, hi; volatile uint64_t foreign[kTableCaveCount]; };
@@ -514,8 +521,8 @@ bool TableSitesMatch(uintptr_t base) {
             return false;
         }
     for (const TableStep& s : kTableSteps)
-        if (std::memcmp(reinterpret_cast<void*>(base + s.rva), s.original, sizeof(s.original)) != 0) {
-            NOBLE_WARN("SlotPatch: peer table step at +0x{:X} does not match ({})", s.rva, s.what);
+        if (s.length < 5 || std::memcmp(reinterpret_cast<void*>(base + s.rva), s.original, s.length) != 0) {
+            NOBLE_WARN("SlotPatch: slot step loop at +0x{:X} does not match ({})", s.rva, s.what);
             return false;
         }
     return true;
@@ -535,7 +542,7 @@ struct Emit {
         if ((r & 7) == 4) b(0x24);
         d(v);
     }
-    void cmp64(int r, int8_t v) { b(rex(true, 0, r)); b(0x83); b(static_cast<uint8_t>(0xF8 | (r & 7))); b(static_cast<uint8_t>(v)); }
+    void cmp64(int r, int32_t v) { b(rex(true, 0, r)); b(0x81); b(static_cast<uint8_t>(0xF8 | (r & 7))); d(v); }
     void cmp32(int r, int8_t v) { if (r >= 8) b(0x41); b(0x83); b(static_cast<uint8_t>(0xF8 | (r & 7))); b(static_cast<uint8_t>(v)); }
     uint8_t* jcc8(uint8_t op) { b(op); b(0); return p - 1; }
     void land(uint8_t* at) { *at = static_cast<uint8_t>(p - (at + 1)); }
@@ -546,15 +553,17 @@ struct Emit {
 void BuildOperandCave(uint8_t* at, const TableSite& s, uintptr_t back, int32_t k, volatile uint64_t* counter) {
     Emit e{ at };
     e.b(0x9C);                                   // pushfq
-    e.cmp64(s.index, 3 * kTableFirst);           // idx is 3 * peer
+    // idx is 3 * peer, or peer + bias before the leading lea (pre bytes)
+    e.cmp64(s.index, static_cast<int32_t>(s.pre ? s.bias + kTableFirst : 3 * kTableFirst));
     uint8_t* small = e.jcc8(0x7C);               // jl (also peer -1)
     e.cmpRip(s.base, &gTableData->lo);
     uint8_t* foreign1 = e.jcc8(0x72);            // jb
     e.cmpRip(s.base, &gTableData->hi);
     uint8_t* foreign2 = e.jcc8(0x73);            // jae
     e.b(0x9D);                                   // popfq
+    e.bytes(s.original, s.pre);                  // lea rax,[rax+rax*2] (bias form only)
     e.leaAdd(s.index, k);
-    e.bytes(s.original, s.length);
+    e.bytes(s.original + s.pre, s.length - s.pre);
     if (!s.overwritesIndex) e.leaAdd(s.index, -k);
     e.jmp(back);
     e.land(small);
@@ -569,12 +578,12 @@ void BuildOperandCave(uint8_t* at, const TableSite& s, uintptr_t back, int32_t k
     e.jmp(back);
 }
 
-// Step + bound: at counter == 17 the pointer is the inline entry 17; on a static session move it to the shadow entry
-// 17 and run to 32, on any other block finish at 17 like the stock loop (and count it).
+// Step + bound: at counter == first the pointer is the inline record `first`; on a static session move it to the
+// shadow record `first` and run to 32, on any other block finish at `first` like the stock loop (and count it).
 void BuildStepCave(uint8_t* at, const TableStep& s, uintptr_t back, int32_t c17, volatile uint64_t* counter) {
     Emit e{ at };
-    e.bytes(s.original, 4);                      // the original step
-    e.cmp32(s.counter, static_cast<int8_t>(kTableFirst));
+    e.bytes(s.original, s.stepLength);           // the original step
+    e.cmp32(s.counter, static_cast<int8_t>(s.first));
     uint8_t* notFirst = e.jcc8(0x75);            // jne
     e.cmpRip(s.ptr, &gTableData->lo);
     uint8_t* foreign1 = e.jcc8(0x72);
@@ -587,7 +596,7 @@ void BuildStepCave(uint8_t* at, const TableStep& s, uintptr_t back, int32_t c17,
     e.land(foreign1);
     e.land(foreign2);
     e.lockInc(counter);
-    e.cmp32(s.counter, static_cast<int8_t>(kTableFirst));   // == 17: the loop ends as stock
+    e.cmp32(s.counter, static_cast<int8_t>(s.first));       // == first: the loop ends as stock
     e.jmp(back);
 }
 
@@ -624,14 +633,14 @@ void ApplyTableSites(uintptr_t base, uint8_t* mem, uintptr_t sessions, int64_t d
     gTableData->lo = sessions;
     gTableData->hi = sessions + kSessions * kSessionStride;
     const auto k = static_cast<int32_t>((delta - 3 * kTableFirst * 4) / 4);
-    const auto c17 = static_cast<int32_t>(delta - static_cast<int64_t>(kTableFirst) * kTableRecord);
     size_t i = 0;
     for (const TableSite& s : kTableSites) {
         BuildOperandCave(mem + i * kTableCaveStride, s, base + s.rva + s.length, k, &gTableData->foreign[i]);
         ++i;
     }
     for (const TableStep& s : kTableSteps) {
-        BuildStepCave(mem + i * kTableCaveStride, s, base + s.rva + sizeof(s.original), c17, &gTableData->foreign[i]);
+        const auto c = static_cast<int32_t>(delta - static_cast<int64_t>(s.first) * s.record);
+        BuildStepCave(mem + i * kTableCaveStride, s, base + s.rva + s.length, c, &gTableData->foreign[i]);
         ++i;
     }
     DWORD old = 0;
@@ -639,7 +648,7 @@ void ApplyTableSites(uintptr_t base, uint8_t* mem, uintptr_t sessions, int64_t d
     FlushInstructionCache(GetCurrentProcess(), mem, kTableCodeBytes);
     i = 0;
     for (const TableSite& s : kTableSites) { JumpToN(base + s.rva, mem + i * kTableCaveStride, s.length); ++i; }
-    for (const TableStep& s : kTableSteps) { JumpToN(base + s.rva, mem + i * kTableCaveStride, sizeof(s.original)); ++i; }
+    for (const TableStep& s : kTableSteps) { JumpToN(base + s.rva, mem + i * kTableCaveStride, s.length); ++i; }
     if (HANDLE t = CreateThread(nullptr, 0, &TableGuardThread, nullptr, 0, nullptr)) CloseHandle(t);
 }
 
@@ -839,7 +848,7 @@ void Install(HMODULE engine, bool extendedProfile) {
     if (players32)
         NOBLE_WARN("SlotPatch: 32-player mode (dev): {} step loops, {} loop bounds raised to 32, 0x390DB0 frame +0x100 "
                    "(32-entry name table), {} block copy/clear sites mirrored onto the shadow, 0x396828 S1/S2 peer side "
-                   "areas, peer table +0x446C: {} sites + {} reset loops caved (guard logs non-session blocks); other tables in "
+                   "areas, peer table +0x446C: {} sites caved, {} step loops (guard logs non-session blocks); other tables in "
                    "docs/limits-players-loops.md are still 16/17", std::size(kSteps), std::size(kBounds), std::size(kCopySites),
                    std::size(kTableSites), std::size(kTableSteps));
     else

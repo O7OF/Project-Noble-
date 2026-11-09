@@ -230,3 +230,17 @@ No disassembly scan (stopped by safeguards before): unreviewed sites are found b
 - Each MEMBER-NEW site is reviewed by hand like the peer-table sites: follow the address back to its index, cave it
   if a slot >= 16 can reach it, then add it to the known list.
 - Limit: only paths the runs exercise are found. Repeat with other modes/events until no MEMBER-NEW appears.
+
+## Three-instance trace 2026-11-09 01:58-02:03 (host + 2 clients, 32-player mode, ENGINE LIMITS = Full)
+All three ran ~5 min and exited cleanly; no FATAL / STACK OVERRUN / guard hits. MEMBER-NEW showed ~130-150 per
+window, but most were scalar fields inside the trace's old coarse regions (peer mask +0x173C, counts/ids at
++0x2240..+0x226C and +0x4450..+0x4468). Filtered to real slot records and table entries: **26 accesses**.
+| Accesses | What | Done |
+|---|---|---|
+| 12 (+6 not hit, same form) | peer table read as `peer + 0x5B0` (block) / `+ 0x5B4` (session), `lea rax,[rax+rax*2]`, `[base + rax*4 (+0x30)]` - the table offset folded into the index, so the 0x4440 text search missed them. 18 sites: 0x38F518 0x393B2E 0x395411 0x3961BE 0x396248 0x396EEF 0x3970DC 0x3971CC 0x3C02BE 0x3E2010 0x3E3560 0x3E3717 0x3E380F 0x400119 0x400220 0x403F3D 0x420252 0x44A441 | caved like the 47 (generator form 2): the short access is patched together with its lea (7-9 bytes, nothing branches into the access), the cave checks peer + bias >= bias + 17 before the lea |
+| 1 | 0x2A38C6 in 0x2A3870: counts matching players over the 16 records 0x398088 returns (`add rax,0xB0; cmp edx,0x10`) - would under-count, not overflow | step cave 0x2A38CF: at 16 move to the shadow record 16 and run to 32 on a static session, stock 16 elsewhere |
+| 14 | 0x39E091..0x39E119 in 0x39DD4C: compares player records of blocks A/B by pointer | reviewed, blocked: its bounds stay 16/17 because it fills the fixed 17 x 0x180 tables in 0x396828's frame (#32). No overflow; slots >= 16 not compared until #32 |
+- `-trace-members` regions now cover only the slot records and the table, so scalar fields no longer show as NEW.
+- Known list 504 (= 420 traced + 65 table sites + 4 reset-loop accesses + 0x2A38C6 + 14 in 0x39DD4C).
+- Rerun `tools\lan-three-instance.ps1` after the build: expected 0 MEMBER-NEW for the same actions. Not covered yet:
+  team change (Slayer default is FFA), lobby reset with all clients present, Firefight/other modes.

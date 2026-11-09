@@ -51,7 +51,8 @@ written past the stack copies before `88d67ec`).
    Claude Code for a `.bat`; the cloud session can run it on monitor 1.
 2. Step 4 (pools + host list), then the block+0x4440 caves.
 3. (Replaced 2026-11-09 by the runtime trace: `-trace-members` now logs MEMBER-NEW for any unreviewed slot access, run
-   `tools\lan-three-instance.ps1`; see `docs/limits-players-loops.md` "C12-L (d)". No disassembly scan.) Original: Dev-only guard in unsafe 32-player mode: log the RVA whenever slot >= 16 reaches an uncaved imul 0xB0/0x158 site
+   `tools\lan-three-instance.ps1`; see `docs/limits-players-loops.md` "C12-L (d)". No disassembly scan.) First run 02:03: 26 real
+   accesses -> 18 biased peer-table sites caved, player-count loop 0x2A38CF caved, 0x39DD4C reviewed (blocked by #32). Original: Dev-only guard in unsafe 32-player mode: log the RVA whenever slot >= 16 reaches an uncaved imul 0xB0/0x158 site
    in 0x380000-0x460000; extend `-trace-members` to log every site hit; trace sessions through player leave, lobby
    reset, team change, mid-game join (three-window LAN on one PC). Cave what they find.
 4. Then network encoding, then the three-window 32-slot test.
