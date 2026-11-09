@@ -74,6 +74,13 @@ bool Start(const std::wstring& args, unsigned long* outPid) {
     for (const wchar_t* sw : { L"--guest-block", L"-armory-unlock-all" }) {
         if (std::wcsstr(GetCommandLineW(), sw) && cmd.find(sw) == std::wstring::npos) cmd += std::wstring(L" ") + sw;
     }
+    const wchar_t* pCont = wcsstr(GetCommandLineW(), L"-container-hwnd");
+    if (pCont && cmd.find(L"-container-hwnd") == std::wstring::npos) {
+        wchar_t contBuf[64] = {};
+        if (swscanf_s(pCont, L"-container-hwnd %63s", contBuf, (unsigned)std::size(contBuf)) == 1) {
+            cmd += L" -container-hwnd " + std::wstring(contBuf);
+        }
+    }
     std::wstring dir = exe;
     const size_t slash = dir.find_last_of(L"\\/");
     if (slash != std::wstring::npos) dir.resize(slash);
@@ -86,6 +93,52 @@ bool Start(const std::wstring& args, unsigned long* outPid) {
     }
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
+    if (outPid) *outPid = pi.dwProcessId;
+    return true;
+}
+
+bool StartChildMatch(const std::wstring& args, void** outProcessHandle, unsigned long* outPid) {
+    const bool handsOnSession = (args.find(L"-host") != std::wstring::npos && args.find(L"-session-id") != std::wstring::npos) ||
+                               args.find(L"-lobby-return host") != std::wstring::npos;
+    MasterServerClient::Get().Shutdown(handsOnSession);
+    SessionManager::Get().Shutdown();
+    NetworkTransport::Get().Shutdown();
+
+    wchar_t exe[MAX_PATH] = {};
+    if (!GetModuleFileNameW(nullptr, exe, MAX_PATH)) return false;
+    std::wstring cmd = L"\"" + std::wstring(exe) + L"\"";
+    if (!args.empty()) cmd += L" " + args;
+
+    const SettingsData snap = Settings::Get().Snapshot();
+    const std::string activeName = AuthClient::Get().IsLoggedIn() ? AuthClient::Get().GetUsername() : snap.playerName;
+    if (!activeName.empty() && cmd.find(L"-player-name") == std::wstring::npos) {
+        cmd += L" -player-name \"" + ToWideUtf8(activeName) + L"\"";
+    }
+    if (!snap.serviceTag.empty() && cmd.find(L"-service-tag") == std::wstring::npos) {
+        cmd += L" -service-tag \"" + ToWideUtf8(snap.serviceTag) + L"\"";
+    }
+    if (AuthClient::Get().IsLoggedIn() && cmd.find(L"-account-user") == std::wstring::npos) {
+        cmd += L" -account-user \"" + ToWideUtf8(AuthClient::Get().GetUsername()) + L"\"";
+        cmd += L" -account-token \"" + ToWideUtf8(AuthClient::Get().GetSessionToken()) + L"\"";
+        cmd += L" -user-id " + std::to_wstring(AuthClient::Get().GetUserId());
+        cmd += L" -account-dev " + std::to_wstring(AuthClient::Get().IsDeveloper() ? 1 : 0);
+    }
+    for (const wchar_t* sw : { L"--guest-block", L"-armory-unlock-all" }) {
+        if (std::wcsstr(GetCommandLineW(), sw) && cmd.find(sw) == std::wstring::npos) cmd += std::wstring(L" ") + sw;
+    }
+    std::wstring dir = exe;
+    const size_t slash = dir.find_last_of(L"\\/");
+    if (slash != std::wstring::npos) dir.resize(slash);
+    STARTUPINFOW si{};
+    si.cb = sizeof(si);
+    PROCESS_INFORMATION pi{};
+    if (!CreateProcessW(exe, cmd.data(), nullptr, nullptr, FALSE, 0, nullptr, dir.c_str(), &si, &pi)) {
+        NOBLE_ERROR("Relaunch: could not start container child match (error {})", GetLastError());
+        return false;
+    }
+    CloseHandle(pi.hThread);
+    if (outProcessHandle) *outProcessHandle = pi.hProcess;
+    else CloseHandle(pi.hProcess);
     if (outPid) *outPid = pi.dwProcessId;
     return true;
 }

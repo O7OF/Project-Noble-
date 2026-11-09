@@ -331,6 +331,22 @@ std::wstring NextMissionArgs(const std::wstring &next, std::wstring lobbyArgs) {
 
 void RelaunchAndClose(HWND hwnd, const std::wstring &args, const char *what) {
   NOBLE_INFO("PauseMenu: {} requested", what);
+  std::wstring containerVal = ArgValue(GetCommandLineW(), L"-container-hwnd");
+  if (!containerVal.empty()) {
+      if (args.empty() || args.find(L"-lobby-return") != std::wstring::npos) {
+          NOBLE_INFO("PauseMenu: {} in container mode - ending match to return to container launcher window", what);
+          TerminateProcess(GetCurrentProcess(), 0);
+          return;
+      } else {
+          // Play again / next mission: preserve container hwnd
+          std::wstring childArgs = args;
+          if (childArgs.find(L"-container-hwnd") == std::wstring::npos) {
+              childArgs += L" -container-hwnd " + containerVal;
+          }
+          Relaunch::HandOff(childArgs);
+          return;
+      }
+  }
   Relaunch::HandOff(args);  // ends this process; returns only if the new one could not start
   PostMessageW(hwnd, WM_CLOSE, 0, 0);
 }

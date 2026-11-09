@@ -128,6 +128,40 @@ bool Window::Create() {
         return false;
     }
 
+    // Container Window Mode: if hosted inside a container parent window, create a WS_CHILD window
+    // that fits the container's client area completely, so the user never experiences the window closing
+    // and opening a new one.
+    if (m_containerParentHwnd && IsWindow(m_containerParentHwnd)) {
+        RECT parentRc{};
+        GetClientRect(m_containerParentHwnd, &parentRc);
+        int parentW = parentRc.right - parentRc.left;
+        int parentH = parentRc.bottom - parentRc.top;
+        if (parentW > 0 && parentH > 0) {
+            m_width = static_cast<uint32_t>(parentW);
+            m_height = static_cast<uint32_t>(parentH);
+        }
+        m_hwnd = CreateWindowExW(
+            0,
+            wc.lpszClassName,
+            m_title.c_str(),
+            WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
+            0, 0,
+            static_cast<int>(m_width), static_cast<int>(m_height),
+            m_containerParentHwnd, nullptr,
+            m_hInstance,
+            this
+        );
+        if (!m_hwnd) {
+            NOBLE_ERROR("Failed to create Win32 child window in container parent (error {}).", GetLastError());
+            return false;
+        }
+        s_activeHwnd.store(m_hwnd);
+        SetFocus(m_hwnd);
+        NOBLE_INFO("Win32 container child window created: {}x{} [Parent: 0x{:X}]",
+                   m_width, m_height, reinterpret_cast<uintptr_t>(m_containerParentHwnd));
+        return true;
+    }
+
     // Fixed-size window: the engine renders at the size chosen in Settings and cannot change that once
     // it has started, so a maximized or dragged-larger window can only stretch (and pixelate) that picture.
     // WINDOW MODE = BORDERLESS FULL SCREEN is the full-screen path: it creates the window at the monitor's
@@ -210,8 +244,9 @@ bool Window::Create() {
 
 void Window::Show(int cmdShow) {
     if (m_hwnd) {
-        ShowWindow(m_hwnd, cmdShow);
+        ShowWindow(m_hwnd, m_containerParentHwnd ? SW_SHOW : cmdShow);
         UpdateWindow(m_hwnd);
+        if (m_containerParentHwnd) SetFocus(m_hwnd);
     }
 }
 

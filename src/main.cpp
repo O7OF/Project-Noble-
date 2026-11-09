@@ -68,14 +68,17 @@ static LONG WINAPI NobleCrashHandler(EXCEPTION_POINTERS* pExceptionInfo) {
         uintptr_t faultAddr = reinterpret_cast<uintptr_t>(pExceptionInfo->ExceptionRecord->ExceptionAddress);
         HMODULE hMod = nullptr;
         WCHAR modPath[MAX_PATH] = L"Unknown Module";
+        uintptr_t rva = 0;
         if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
                                reinterpret_cast<LPCWSTR>(faultAddr), &hMod)) {
             GetModuleFileNameW(hMod, modPath, MAX_PATH);
+            rva = faultAddr - reinterpret_cast<uintptr_t>(hMod);
         }
 
-        NOBLE_ERROR("FATAL EXCEPTION CAUGHT: Code 0x{:08X} at Address 0x{:X} (Module: {})",
+        spdlog::error("FATAL EXCEPTION CAUGHT: Code 0x{:08X} at Address 0x{:X} (+0x{:X}) (Module: {})",
             pExceptionInfo->ExceptionRecord->ExceptionCode,
             faultAddr,
+            rva,
             std::filesystem::path(modPath).string());
 
         // Capture call stack
@@ -85,16 +88,15 @@ static LONG WINAPI NobleCrashHandler(EXCEPTION_POINTERS* pExceptionInfo) {
             uintptr_t frameAddr = reinterpret_cast<uintptr_t>(stackFrames[i]);
             HMODULE frameMod = nullptr;
             WCHAR frameModPath[MAX_PATH] = L"Unknown";
+            uintptr_t frameRva = 0;
             if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
                                    reinterpret_cast<LPCWSTR>(frameAddr), &frameMod)) {
                 GetModuleFileNameW(frameMod, frameModPath, MAX_PATH);
+                frameRva = frameAddr - reinterpret_cast<uintptr_t>(frameMod);
             }
-            NOBLE_ERROR(" Frame {:02d}: 0x{:X} [{}]", i, frameAddr, std::filesystem::path(frameModPath).filename().string());
+            spdlog::error(" Frame {:02d}: 0x{:X} (+0x{:X}) [{}]", i, frameAddr, frameRva, std::filesystem::path(frameModPath).filename().string());
         }
 
-        // Minidumps contain the full process image and are a decompilation aid: development builds
-        // keep them, release builds only leave the redacted crash text in the log.
-#ifdef NOBLE_DEV_BUILD
         HANDLE hDumpFile = CreateFileW(L"noble-crash.dmp", GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
         if (hDumpFile != INVALID_HANDLE_VALUE) {
             MINIDUMP_EXCEPTION_INFORMATION mei{};
@@ -105,7 +107,6 @@ static LONG WINAPI NobleCrashHandler(EXCEPTION_POINTERS* pExceptionInfo) {
             CloseHandle(hDumpFile);
             spdlog::error("Crash minidump written to noble-crash.dmp");
         }
-#endif
     }
     spdlog::default_logger()->flush();
     return EXCEPTION_CONTINUE_SEARCH;
@@ -334,8 +335,27 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     }
 
     // 6. Create Win32 host window
+    HWND containerParentHwnd = nullptr;
+    {
+        int numArgsEarly = 0;
+        LPWSTR* argvEarly = CommandLineToArgvW(GetCommandLineW(), &numArgsEarly);
+        if (argvEarly) {
+            for (int i = 1; i + 1 < numArgsEarly; ++i) {
+                if (_wcsicmp(argvEarly[i], L"-container-hwnd") == 0) {
+                    uintptr_t val = std::wcstoull(argvEarly[i + 1], nullptr, 0);
+                    containerParentHwnd = reinterpret_cast<HWND>(val);
+                }
+            }
+            LocalFree(argvEarly);
+        }
+    }
+
     auto window = std::make_unique<noble::Window>(L"Project Noble",
         static_cast<uint32_t>(startupSettings.width), static_cast<uint32_t>(startupSettings.height));
+    if (containerParentHwnd && IsWindow(containerParentHwnd)) {
+        window->SetContainerParent(containerParentHwnd);
+        NOBLE_INFO("main: running in container window mode [Parent HWND: 0x{:X}]", reinterpret_cast<uintptr_t>(containerParentHwnd));
+    }
     window->SetBorderless(startupSettings.borderless);
     window->SetExclusiveFullscreen(startupSettings.exclusiveFullscreen);
     if (!window->Create()) {

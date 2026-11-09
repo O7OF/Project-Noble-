@@ -167,7 +167,7 @@ if "%USE_NINJA_MSVC%"=="1" (
     if exist "build\.ninja_log.recompact" del /f /q "build\.ninja_log.recompact" >nul 2>nul
     ninja -C build -t recompact >nul 2>nul
 )
-cmake --build build --config Release
+cmake --build build --config Release --target noble-client
 if %ERRORLEVEL% neq 0 (
     set "BUILD_ERR=%ERRORLEVEL%"
     echo ===================================================

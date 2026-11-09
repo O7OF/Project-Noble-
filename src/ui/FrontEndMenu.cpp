@@ -2300,6 +2300,8 @@ struct OverlayContext {
     unsigned long long totalFrames = 0;
     unsigned long long sceneReadyFrames = 0;
     bool closed = false;
+    void* hMatchProcess = nullptr;
+    bool matchRunning = false;
 };
 
 // The engine draws the menu scene and calls RenderOverlay from slot 1. MCC ships no Reach menu map,
@@ -4910,6 +4912,24 @@ void DrawInviteToast(const Ui& ui, MenuState& st) {
 
 void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11DeviceContext* context,
                           FrontEndChoice& choice, bool& done) {
+    if (ctx.matchRunning && ctx.hMatchProcess) {
+        DWORD exitCode = 0;
+        if (GetExitCodeProcess(reinterpret_cast<HANDLE>(ctx.hMatchProcess), &exitCode) && exitCode != STILL_ACTIVE) {
+            CloseHandle(reinterpret_cast<HANDLE>(ctx.hMatchProcess));
+            ctx.hMatchProcess = nullptr;
+            ctx.matchRunning = false;
+            NOBLE_INFO("FrontEndMenu: container child match finished (exit code {}), restoring menu", exitCode);
+            SessionManager::Get().Initialize();
+            MasterServerClient::Get().SetUrl(Settings::Get().Snapshot().masterServerUrl);
+            MasterServerClient::Get().RequestOnlineCount();
+            ReachAudio::SetMenuMusicEnabled(true);
+            ReachAudio::SetMusicVolume(Settings::Get().Snapshot().volumeMusic);
+        } else {
+            // Child match process is currently active and presenting in the child window inside this container!
+            return;
+        }
+    }
+
     ImGuiViewport* vp = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(vp->Pos);
     ImGui::SetNextWindowSize(vp->Size);
@@ -7082,13 +7102,24 @@ void FrontEndMenu::RenderOverlayImpl(IDXGISwapChain* swapChain, bool clear) {
                     if (!choice.sessionId.empty()) args += L" -session-id \"" + ToWide(choice.sessionId) + L"\"";
                     if (!choice.sessionToken.empty()) args += L" -session-token \"" + ToWide(choice.sessionToken) + L"\"";
                 }
-                NOBLE_INFO("FrontEndMenu: launching match via Relaunch ({} {})", choice.mode, choice.map);
-                ShowWindow(hwnd, SW_HIDE); UpdateWindow(hwnd);
-                Relaunch::HandOff(args);  // ends this process; returns only if the match could not start
+                args += L" -container-hwnd " + std::to_wstring(reinterpret_cast<uintptr_t>(hwnd));
+                NOBLE_INFO("FrontEndMenu: launching match inside container window 0x{:X} ({} {})",
+                           reinterpret_cast<uintptr_t>(hwnd), choice.mode, choice.map);
+                HANDLE hChild = nullptr;
+                if (Relaunch::StartChildMatch(args, reinterpret_cast<void**>(&hChild))) {
+                    ctx.hMatchProcess = hChild;
+                    ctx.matchRunning = true;
+                    done = false;
+                    choice.play = false;
+                    ReachAudio::StopMusic();
+                    ReachAudio::SetMenuMusicEnabled(false);
+                } else {
+                    NOBLE_ERROR("FrontEndMenu: failed to start match process in container");
+                }
             } else {
                 NOBLE_INFO("FrontEndMenu: quit from menu");
+                PostMessageW(hwnd, WM_CLOSE, 0, 0);
             }
-            PostMessageW(hwnd, WM_CLOSE, 0, 0);
         }
     }
 

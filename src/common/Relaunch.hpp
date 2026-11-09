@@ -17,6 +17,10 @@ std::wstring CurrentGameArgs();
 // `outPid` (optional) receives the new process id, so a caller can wait for its window to appear before hiding.
 bool Start(const std::wstring& args, unsigned long* outPid = nullptr);
 
+// Starts a match as a child of the container window without terminating the container.
+// Returns the child process HANDLE so the container can monitor when the match ends.
+bool StartChildMatch(const std::wstring& args, void** outProcessHandle = nullptr, unsigned long* outPid = nullptr);
+
 // Starts noble-client.exe with these arguments and ends THIS process straight away (its windows are hidden
 // first and the log is flushed), so there is never a second Noble client open next to the new one.
 // Only returns (false) if the new process could not be started; the caller then keeps running.

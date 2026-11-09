@@ -43,6 +43,9 @@ public:
     uint32_t GetHeight() const { return m_height; }
     bool ShouldClose() const { return m_shouldClose; }
 
+    void SetContainerParent(HWND hParent) { m_containerParentHwnd = hParent; }
+    HWND GetContainerParent() const { return m_containerParentHwnd; }
+
     void SetCustomWndProc(MessageCallback callback) { m_customWndProc = callback; }
 
     // Borderless window covering the primary monitor (DISPLAY setting). Call before Create().
@@ -72,6 +75,7 @@ private:
     uint32_t m_requestedWidth = 0;
     uint32_t m_requestedHeight = 0;
     HWND m_hwnd = nullptr;
+    HWND m_containerParentHwnd = nullptr;
     HINSTANCE m_hInstance = nullptr;
     bool m_shouldClose = false;
     bool m_borderless = false;

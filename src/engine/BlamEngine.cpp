@@ -1016,7 +1016,7 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
     // A host launched with known guests must declare all of them, otherwise the engine only creates the
     // local player and the co-op state machine fails the mission about 60 s in (GameResults, channel close).
     // Removed once in e817d2f and re-proven by test; do not reduce this to 1 for a co-op host.
-    if (gameModeTag == 1 || gameModeTag == 5) {
+    if (gameModeTag == 1 || gameModeTag == 1035 || gameModeTag == 5) {
         int declaredPlayers = 1;
         if (connectAddress.empty() && expectedPeers > 0) declaredPlayers = 1 + expectedPeers;
         launchBlock[0xE8] = static_cast<uint8_t>(declaredPlayers);
