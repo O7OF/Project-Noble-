@@ -225,6 +225,7 @@ set(HEADERS
     src/host/SchedulerGuard.hpp
     src/host/PoolResize.hpp
     src/host/MemberTrace.hpp
+    src/host/MemberKnown.inc
     src/host/SlotPatch.hpp
     src/host/SlotPatchTable.inc
     src/host/SlotTableSites.inc
@@ -396,6 +397,7 @@ set(DEDICATED_HEADERS
     src/host/SchedulerGuard.hpp
     src/host/PoolResize.hpp
     src/host/MemberTrace.hpp
+    src/host/MemberKnown.inc
     src/host/SlotPatch.hpp
     src/host/SlotPatchTable.inc
     src/host/SlotTableSites.inc

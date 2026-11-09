@@ -213,3 +213,20 @@ Note: with the typo the unwind copies would have pointed exception handling at a
 `FramesMatch` now runs every check and `DescribeFrameEntry` logs the found entry; Install reports frames / call sites /
 peer table sites together. Only 1 player was in the game, so slots >= 16 were never used: this proves install and
 no regressions, not 32 players.
+
+## C12-L (d): runtime discovery of unreviewed slot paths (2026-11-09, built: no)
+No disassembly scan (stopped by safeguards before): unreviewed sites are found by running the game.
+- `-trace-members` (dev builds) already guard-pages the 4 session objects and records every engine instruction that
+  touches a slot array. It now also covers the peer table (+0x446C..+0x4538, region `peerTable`) and compares each
+  instruction with `src/host/MemberKnown.inc` (471 reviewed accesses: the 420 in `limits-players-sites.json`, the 47
+  peer-table operands, the 4 accesses in the two caved reset loops; `tools/limits/gen_member_known.py`).
+- Any other instruction is logged once within 5 s as `MEMBER-NEW|rva|region|R/W|count|offsets`; the full `MEMBER|`
+  dump every 30 s ends each line with `known` / `NEW`.
+- In 32-player mode the peer-table operands run from caves (outside the engine), so they are not recorded; accesses
+  through caved imul sites still are (the memory access itself stays in engine code).
+- Run: `powershell -ExecutionPolicy Bypass -File tools\lan-three-instance.ps1` (host + 2 clients, all with
+  `-trace-members -slot-patch -slot-players 32`, client 2 joins after 90 s; then team change if the game type has
+  teams, client 1 leaves, host returns to the lobby). Release3 is created on first use (junctions + own device id).
+- Each MEMBER-NEW site is reviewed by hand like the peer-table sites: follow the address back to its index, cave it
+  if a slot >= 16 can reach it, then add it to the known list.
+- Limit: only paths the runs exercise are found. Repeat with other modes/events until no MEMBER-NEW appears.

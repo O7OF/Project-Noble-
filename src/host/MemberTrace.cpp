@@ -3,10 +3,12 @@
 #if defined(NOBLE_DEV_BUILD)
 #include "common/Logger.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <cstdint>
 #include <map>
 #include <mutex>
+#include <set>
 #include <shellapi.h>
 #include <thread>
 #endif
@@ -29,14 +31,22 @@ constexpr Region kRegions[] = {
     { 0x2270, 0x394C, "peersB" },
     { 0x394C, 0x3950, "maskB" },
     { 0x3950, 0x4538, "playersB" },
+    { 0x446C, 0x4538, "peerTable" }, // 17 x 0xC (C12-L (c)); listed last so it wins over playersB's tail
 };
+
+// C12-L (d): accesses already reviewed (tools/limits/gen_member_known.py). Any other engine instruction that
+// touches the slot arrays is a path nobody has checked for slots >= 16 yet: logged once as MEMBER-NEW.
+constexpr uint32_t kKnown[] = {
+#include "MemberKnown.inc"
+};
+bool Known(uint32_t rva) { return std::binary_search(std::begin(kKnown), std::end(kKnown), rva); }
 constexpr uint32_t kTraceEnd = 0x4538;   // everything traced sits in [object, object + 0x4538)
 
 uintptr_t s_engine = 0, s_engineEnd = 0;
 uintptr_t s_pageBegin[kSessions], s_pageEnd[kSessions];
 std::mutex s_mutex;
 struct Key { uint32_t rva; uint16_t region; uint16_t write; bool operator<(const Key& o) const { return rva != o.rva ? rva < o.rva : region != o.region ? region < o.region : write < o.write; } };
-struct Hit { uint64_t count = 0; uint32_t minOffset = UINT32_MAX, maxOffset = 0; };
+struct Hit { uint64_t count = 0; uint32_t minOffset = UINT32_MAX, maxOffset = 0; bool reported = false; };
 std::map<Key, Hit> s_hits;
 thread_local int t_rearm = -1;   // session index whose pages must be re-guarded after the single step
 std::atomic<uint64_t> s_total{ 0 };
@@ -83,12 +93,28 @@ LONG CALLBACK Handler(EXCEPTION_POINTERS* info) {
     return EXCEPTION_CONTINUE_SEARCH;
 }
 
+const char* Kind(uint16_t write) { return write == 1 ? "W" : write == 8 ? "X" : "R"; }
+
+// Every 5 s: each instruction not in kKnown, once, as soon as it is seen (a stalled trace still leaves it in the log).
+void ReportNew() {
+    std::lock_guard<std::mutex> lock(s_mutex);
+    for (auto& [key, hit] : s_hits) {
+        if (hit.reported || Known(key.rva)) continue;
+        hit.reported = true;
+        NOBLE_WARN("MEMBER-NEW|0x{:X}|{}|{}|{}|0x{:X}-0x{:X}", key.rva, kRegions[key.region - 1].name, Kind(key.write),
+            hit.count, hit.minOffset, hit.maxOffset);
+    }
+}
+
 void Dump() {
     std::lock_guard<std::mutex> lock(s_mutex);
-    NOBLE_INFO("MemberTrace: {} accesses, {} distinct instructions", s_total.load(), s_hits.size());
+    std::set<uint32_t> fresh;
+    for (const auto& [key, hit] : s_hits) if (!Known(key.rva)) fresh.insert(key.rva);
+    NOBLE_INFO("MemberTrace: {} accesses, {} distinct instructions, {} not reviewed yet (NEW)", s_total.load(),
+        s_hits.size(), fresh.size());
     for (const auto& [key, hit] : s_hits) {
-        NOBLE_INFO("MEMBER|0x{:X}|{}|{}|{}|0x{:X}-0x{:X}", key.rva, kRegions[key.region - 1].name,
-            key.write == 1 ? "W" : key.write == 8 ? "X" : "R", hit.count, hit.minOffset, hit.maxOffset);
+        NOBLE_INFO("MEMBER|0x{:X}|{}|{}|{}|0x{:X}-0x{:X}|{}", key.rva, kRegions[key.region - 1].name, Kind(key.write),
+            hit.count, hit.minOffset, hit.maxOffset, Known(key.rva) ? "known" : "NEW");
     }
 }
 
@@ -122,13 +148,15 @@ void Install(HMODULE engine) {
     AddVectoredExceptionHandler(1, &Handler);
     for (int k = 0; k < kSessions; ++k) Guard(k);
     std::thread([] {
-        for (;;) {
-            Sleep(30000);
-            Dump();
+        for (int tick = 1;; ++tick) {
+            Sleep(5000);
+            ReportNew();
+            if (tick % 6 == 0) Dump();
         }
     }).detach();
-    NOBLE_WARN("MemberTrace: tracing the player/peer slots of the 4 network sessions (slow; dev only). "
-               "MEMBER| lines every 30 s");
+    NOBLE_WARN("MemberTrace: tracing the player/peer slots and the peer table of the 4 network sessions (slow; dev "
+               "only). MEMBER-NEW| as soon as an unreviewed instruction is seen, all MEMBER| lines every 30 s; {} known",
+               std::size(kKnown));
 #else
     (void)engine;
 #endif
