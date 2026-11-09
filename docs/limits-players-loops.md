@@ -137,3 +137,14 @@ not found by immediate; 0x39C484 has one caller (0x3920AC), so it is not a gener
 base register is added later, at the memory operand. A range check on the base needs either (1) the base register
 per site (the use instruction after each imul), or (2) moving the redirect from the imul to the memory-use
 instruction. Either way each of the 67 existing sites (and the new ones) needs its base register recorded.
+
+## 0x396828 stack copies S1 / S2: sites that address them (2026-11-09, before implementing plan C)
+S1 = rsp+0x30 = rbp-0xD0 (copy of half B), S2 = rbp+0x2140 (copy of static half A); 0x2210 bytes each.
+- Only pointers to S1/S2 handed out: the two memcpy calls (#5 0x396A6F, #6 0x396A7F) and the memcmp (0x396B3F).
+  No other callee receives an S1/S2 pointer.
+- **One imul addresses them: 0x396AB4 `imul rcx, rdx, 0x158` (peer index, NOT caved)**, used by six operands in the
+  same block: 0x396AC2 [rbp+rcx+8] (S1), 0x396AC6 [rbp+rcx+0x2218] (S2), 0x396ACD / 0x396AD5 [rbp+rcx+4] (S1),
+  0x396ADA / 0x396AE5 [rbp+rcx+0x2214] (S2) - peer fields +0xAC/+0xB0 in both copies.
+- Its peer scans 0x396AA1 / 0x396B0A are ALREADY raised to 0x20 in SlotBoundsTable (d107dc0), so in today's
+  32-player mode peers 17..31 would write inline past the 17 peer records of S1/S2 (into the copies' player
+  arrays). 32-player mode must not be switched on before 0x396AB4 gets its side-area cave.
