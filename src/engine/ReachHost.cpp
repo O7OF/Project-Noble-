@@ -21,6 +21,7 @@
 #include "engine/CameraFov.hpp"
 #include "engine/CameraThirdPerson.hpp"
 #include "engine/BlamEngine.hpp"
+#include "engine/DevCheats.hpp"
 #include "engine/ReachArmory.hpp"
 #include "engine/ElitePack.hpp"
 #include "engine/SharedTagCache.hpp"
@@ -428,7 +429,7 @@ struct TeamProbeSnapshot {
     bool haveObject = false;
     bool havePlayer = false;
     uint8_t bytes[0x200] = {};
-    uint8_t player[0x200] = {};
+    uint8_t player[0x490] = {};
 };
 
 bool TeamProbeEnabled() {
@@ -484,7 +485,8 @@ bool TeamProbeRead(TeamProbeSnapshot* out) {
             if (records && bitmap) {
                 for (int i = 0; i < (cap > 16 ? 16 : cap); ++i) {
                     if (((bitmap[i >> 5] >> (i & 31)) & 1) == 0) continue;
-                    std::memcpy(out->player, records + static_cast<size_t>(i) * 0x490, sizeof(out->player));
+                    std::memcpy(out->player, records + static_cast<size_t>(i) * 0x490,
+                                sizeof(out->player) < 0x490 ? sizeof(out->player) : 0x490);
                     out->havePlayer = true;
                     break;
                 }
@@ -497,9 +499,10 @@ bool TeamProbeRead(TeamProbeSnapshot* out) {
 
 struct TeamProbeState {
     uint8_t prev[0x200] = {};
-    uint8_t snapA[0x200] = {};
-    uint8_t snapB[0x200] = {};
-    uint8_t snapC[0x200] = {};
+    uint8_t snapA[0x490] = {};
+    uint8_t snapA2[0x490] = {};
+    uint8_t snapB[0x490] = {};
+    bool noisy[0x490] = {};
     bool haveObject = false;
     uint64_t foundFrame = 0;
     uint64_t lastReportFrame = 0;
@@ -532,51 +535,45 @@ void TeamProbeTick(uint64_t frame) {
         }
         return;
     }
-    // Three snapshots around the engine's own team switch. The pause menu's CHANGE TEAM does exactly this and
-    // works (it kills the player and respawns them on the new side), so whatever byte moves between a snapshot
-    // taken before the switch and one taken after the respawn is the team field - the per-frame diffs used to
-    // drown that in animation/view noise.
+    // Noise-aware diff: sample twice while alive, then switch sides AND kill (a team change only lands on the
+    // respawn in a team game), then compare. Offsets that already moved between the two live samples are
+    // animation/view noise and are not reported; whatever is left is the team field plus respawn state.
     const uint64_t sincePhase = frame - g_teamProbe.phaseFrame;
     switch (g_teamProbe.phase) {
         case 0:
             std::memcpy(g_teamProbe.snapA, snap.player, sizeof(g_teamProbe.snapA));
             g_teamProbe.phase = 1;
             g_teamProbe.phaseFrame = frame;
-            NOBLE_INFO("team-probe: A captured at frame {} (switching to BLUE in 2 s)", frame);
             break;
         case 1:
-            if (sincePhase >= 120) {
-                memcpy(g_teamProbe.snapA, snap.player, sizeof(g_teamProbe.snapA));
-                NOBLE_INFO("team-probe: A fixed at frame {} - switching to BLUE", frame);
+            if (sincePhase >= 90) {
+                std::memcpy(g_teamProbe.snapA2, snap.player, sizeof(g_teamProbe.snapA2));
+                for (size_t off = 0; off < sizeof(g_teamProbe.noisy); ++off) {
+                    g_teamProbe.noisy[off] = snap.player[off] != g_teamProbe.snapA[off];
+                }
+                size_t noisyCount = 0;
+                for (bool n : g_teamProbe.noisy) noisyCount += n ? 1 : 0;
+                NOBLE_INFO("team-probe: baseline at frame {} ({} noisy byte(s) while idle); switching to BLUE and dying",
+                           frame, noisyCount);
                 if (BlamEngine* engine = BlamEngine::Active()) engine->ExecuteCommand("player_override_team 0 1");
+                DevCheats::RequestLocalSuicide();
                 g_teamProbe.phase = 2;
                 g_teamProbe.phaseFrame = frame;
             }
             break;
         case 2:
-            if (sincePhase >= 420) {
-                memcpy(g_teamProbe.snapB, snap.player, sizeof(g_teamProbe.snapB));
+            if (sincePhase >= 600) {   // 10 s: dead, respawned, standing again
+                std::memcpy(g_teamProbe.snapB, snap.player, sizeof(g_teamProbe.snapB));
+                size_t reported = 0;
                 for (size_t off = 0; off < sizeof(g_teamProbe.snapB); ++off) {
-                    if (g_teamProbe.snapB[off] == g_teamProbe.snapA[off]) continue;
-                    NOBLE_INFO("team-probe: A->B +0x{:04X} 0x{:02X} -> 0x{:02X}",
-                               static_cast<unsigned>(off), g_teamProbe.snapA[off], g_teamProbe.snapB[off]);
+                    if (g_teamProbe.snapB[off] == g_teamProbe.snapA2[off]) continue;
+                    if (g_teamProbe.noisy[off]) continue;
+                    NOBLE_INFO("team-probe: TEAM? +0x{:04X} 0x{:02X} -> 0x{:02X}",
+                               static_cast<unsigned>(off), g_teamProbe.snapA2[off], g_teamProbe.snapB[off]);
+                    ++reported;
                 }
-                NOBLE_INFO("team-probe: B captured at frame {} - switching back to RED", frame);
-                if (BlamEngine* engine = BlamEngine::Active()) engine->ExecuteCommand("player_override_team 0 0");
+                NOBLE_INFO("team-probe: after the switch, {} candidate byte(s) changed", reported);
                 g_teamProbe.phase = 3;
-                g_teamProbe.phaseFrame = frame;
-            }
-            break;
-        case 3:
-            if (sincePhase >= 420) {
-                memcpy(g_teamProbe.snapC, snap.player, sizeof(g_teamProbe.snapC));
-                for (size_t off = 0; off < sizeof(g_teamProbe.snapC); ++off) {
-                    if (g_teamProbe.snapC[off] == g_teamProbe.snapB[off]) continue;
-                    NOBLE_INFO("team-probe: B->C +0x{:04X} 0x{:02X} -> 0x{:02X}",
-                               static_cast<unsigned>(off), g_teamProbe.snapB[off], g_teamProbe.snapC[off]);
-                }
-                NOBLE_INFO("team-probe: finished (A=red, B=blue, C=red again)");
-                g_teamProbe.phase = 4;
             }
             break;
         default:

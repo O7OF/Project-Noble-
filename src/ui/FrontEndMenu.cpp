@@ -7331,7 +7331,9 @@ void FrontEndMenu::RenderOverlayImpl(IDXGISwapChain* swapChain, bool clear) {
                 // The lobby's team assignment: the match applies each player's team in the engine at spawn
                 // (`player_override_team`, 0-based). Without this the engine dealt its own teams and a host who
                 // picked purple was red in the match.
-                if (ctx.st.lobbyTeamsOn && !ctx.st.lobbyRoster.empty()) {
+                bool anyTeam = false;
+                for (const auto& player : ctx.st.lobbyRoster) anyTeam = anyTeam || player.team > 0;
+                if (anyTeam && !ctx.st.lobbyRoster.empty()) {
                     std::wstring teams;
                     for (const auto& player : ctx.st.lobbyRoster) {
                         if (!teams.empty()) teams += L",";

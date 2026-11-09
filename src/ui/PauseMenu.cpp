@@ -465,6 +465,7 @@ std::string s_boardMode;
 bool s_boardLogged = false;
 
 std::atomic<int> s_localTeam{1};   // from the lobby launch; the engine's own sides start at red
+std::atomic<bool> s_localTeamFromLobby{false};   // true once -lobby-teams told us the player's side
 
 int LocalTeamFromBoard() {
     std::lock_guard<std::mutex> lock(s_boardMutex);
@@ -497,7 +498,10 @@ void ChangeLocalTeam() {
 
 static std::string s_boardSession;
 
-void PauseMenu::SetLocalTeam(int team) { s_localTeam.store(std::clamp(team, 1, 8)); }
+void PauseMenu::SetLocalTeam(int team) {
+    s_localTeam.store(std::clamp(team, 1, 8));
+    s_localTeamFromLobby.store(true);
+}
 
 void PauseMenu::SetScoreboardSession(const std::string& sessionId) {
   std::lock_guard<std::mutex> lock(s_boardMutex);
@@ -505,6 +509,15 @@ void PauseMenu::SetScoreboardSession(const std::string& sessionId) {
 }
 
 void PauseMenu::SetScoreboardRoster(std::vector<ScoreboardEntry> entries, const std::string& mapName, const std::string& modeName) {
+    // The session roster can lag the lobby's team choice (the push may not have landed yet, or a guest's copy is
+    // stale), and the panel then shows a side the player is not on. The launch's own team wins for our row.
+    if (s_localTeamFromLobby.load()) {
+        for (auto& row : entries) {
+            if (!row.local) continue;
+            row.team = s_localTeam.load();
+            break;
+        }
+    }
     std::lock_guard<std::mutex> lock(s_boardMutex);
     s_boardRows = std::move(entries);
     s_boardMap = mapName;
