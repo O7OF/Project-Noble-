@@ -1,5 +1,6 @@
 #include "CameraThirdPerson.hpp"
 
+#include "DevCheats.hpp"
 #include "common/Logger.hpp"
 #include "common/Settings.hpp"
 #include "hooks/HookManager.hpp"
@@ -98,6 +99,12 @@ int32_t __fastcall Hook_UnitThirdPerson(int32_t unitDatumIndex, int32_t* outReas
 void __fastcall Hook_FirstPersonUpdate(void* camera, int32_t userIndex, float dt, void* observerCommand) {
     if (s_origFirstPersonUpdate) s_origFirstPersonUpdate(camera, userIndex, dt, observerCommand);
     if (userIndex != 0 || !observerCommand) return;
+    if (DevCheats::IsFreecamActive()) {
+        auto* pos = reinterpret_cast<float*>(static_cast<uint8_t*>(observerCommand) + 0x04);
+        const auto* fwd = reinterpret_cast<const float*>(static_cast<const uint8_t*>(observerCommand) + 0x2C);
+        DevCheats::ApplyFreecam(pos, fwd);
+        return;
+    }
     const SettingsData settings = Settings::Get().Snapshot();
     const bool inVehicle = s_localInVehicle.load();
 
@@ -281,11 +288,23 @@ void ApplyThirdPersonCameraTuning(float dt, void* observerCommand) {
 
 void __fastcall Hook_CameraFollow(void* camera, int32_t userIndex, float dt, void* observerCommand) {
     if (s_originalFollow) s_originalFollow(camera, userIndex, dt, observerCommand);
+    if (userIndex == 0 && observerCommand && DevCheats::IsFreecamActive()) {
+        auto* pos = reinterpret_cast<float*>(static_cast<uint8_t*>(observerCommand) + 0x04);
+        const auto* fwd = reinterpret_cast<const float*>(static_cast<const uint8_t*>(observerCommand) + 0x2C);
+        DevCheats::ApplyFreecam(pos, fwd);
+        return;
+    }
     ApplyThirdPersonCameraTuning(dt, observerCommand);
 }
 
 void __fastcall Hook_CameraFollowingUpdate(void* camera, int32_t userIndex, float dt, void* observerCommand) {
     if (s_originalFollowingUpdate) s_originalFollowingUpdate(camera, userIndex, dt, observerCommand);
+    if (userIndex == 0 && observerCommand && DevCheats::IsFreecamActive()) {
+        auto* pos = reinterpret_cast<float*>(static_cast<uint8_t*>(observerCommand) + 0x04);
+        const auto* fwd = reinterpret_cast<const float*>(static_cast<const uint8_t*>(observerCommand) + 0x2C);
+        DevCheats::ApplyFreecam(pos, fwd);
+        return;
+    }
     ApplyThirdPersonCameraTuning(dt, observerCommand);
 }
 

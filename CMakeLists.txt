@@ -9,7 +9,7 @@ if(WIN32)
     set(CMAKE_THREAD_LIBS_INIT "" CACHE INTERNAL "" FORCE)
     set(Threads_FOUND TRUE CACHE INTERNAL "" FORCE)
 endif()
-project(ProjectNoble VERSION 0.19.27 LANGUAGES C CXX)
+project(ProjectNoble VERSION 0.19.28 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -161,6 +161,7 @@ set(SOURCES
     src/engine/ReachArmory.cpp
     src/engine/ElitePack.cpp
     src/engine/SharedTagCache.cpp
+    src/engine/DevCheats.cpp
     src/engine/CameraFov.cpp
     src/engine/CameraThirdPerson.cpp
     src/engine/FrameCapture.cpp
@@ -185,6 +186,7 @@ set(SOURCES
     src/ui/PauseMenu.cpp
     src/ui/SocialOverlay.cpp
     src/ui/ForgeMenu.cpp
+    src/ui/DevMenu.cpp
     src/ui/FrontEndMenu.cpp
     src/ui/NobleStyle.cpp
     src/ui/MenuSounds.cpp
@@ -236,6 +238,7 @@ set(HEADERS
     src/engine/ReachArmory.hpp
     src/engine/ElitePack.hpp
     src/engine/SharedTagCache.hpp
+    src/engine/DevCheats.hpp
     src/engine/CameraFov.hpp
     src/engine/CameraThirdPerson.hpp
     src/engine/FrameCapture.hpp
@@ -250,6 +253,7 @@ set(HEADERS
     src/ui/LoadScreen.hpp
     src/ui/PauseMenu.hpp
     src/ui/SocialOverlay.hpp
+    src/ui/DevMenu.hpp
     src/ui/FrontEndMenu.hpp
     src/network/UPnP.hpp
     src/network/SessionManager.hpp

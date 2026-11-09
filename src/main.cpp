@@ -23,6 +23,7 @@
 #include "engine/ReachArmory.hpp"
 #include "engine/ElitePack.hpp"
 #include "engine/SharedTagCache.hpp"
+#include "engine/DevCheats.hpp"
 #include "engine/VariantFields.hpp"
 #include "ui/UIManager.hpp"
 #include "ui/ForgeMenu.hpp"
@@ -754,6 +755,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 
     // Initialize Shared Tag Cache for cross-map AI spawning (Approach 1)
     noble::SharedTagCache::Initialize(loader->GetModuleHandle(), userStoragePath, reachInstall->workshopDirectory, reachInstall->reachDirectory);
+
+    // Initialize Developer Cheats & Mod Menu engine hooks
+    noble::DevCheats::Initialize(loader->GetModuleHandle());
 
     // Wire Forge palette placement handler
     noble::ForgeMenu::SetPlaceHandler([](const noble::ForgeMenu::Item& item) -> bool {

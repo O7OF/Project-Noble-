@@ -11,6 +11,7 @@
 #include "hooks/HookManager.hpp"
 #include "ui/PauseMenu.hpp"
 #include "ui/ForgeMenu.hpp"
+#include "ui/DevMenu.hpp"
 #include "career/Career.hpp"
 #include "engine/FrameCapture.hpp"
 #include "engine/PadLayouts.hpp"
@@ -21,6 +22,7 @@
 #include "engine/ReachArmory.hpp"
 #include "engine/ElitePack.hpp"
 #include "engine/SharedTagCache.hpp"
+#include "engine/DevCheats.hpp"
 #include "vfs/VFS.hpp"
 #include "common/Settings.hpp"
 #include "common/Relaunch.hpp"
@@ -437,10 +439,16 @@ static uint64_t __fastcall HostSlot1_FrameTick(void* thisPtr, uint64_t a1, uint6
         }
         if (!loading) EndRoundForTest();
         ForgeMenu::Tick(loading);
-        std::function<void()> forgeOverlay;
-        if (ForgeMenu::IsOpen() && !PauseMenu::IsOpen() && !PauseMenu::IsGameOver())
-            forgeOverlay = [] { ForgeMenu::DrawOverlay(); };
-        PauseMenu::Render(swapChain, loading, forgeOverlay);  // overlays on top, unaffected by gamma
+        std::function<void()> overlayFunc;
+        const bool devOpen = DevMenu::IsOpen() && !PauseMenu::IsOpen() && !PauseMenu::IsGameOver();
+        const bool forgeOpen = ForgeMenu::IsOpen() && !PauseMenu::IsOpen() && !PauseMenu::IsGameOver();
+        if (devOpen || forgeOpen) {
+            overlayFunc = [devOpen, forgeOpen] {
+                if (forgeOpen) ForgeMenu::DrawOverlay();
+                if (devOpen) DevMenu::Draw();
+            };
+        }
+        PauseMenu::Render(swapChain, loading, overlayFunc);  // overlays on top, unaffected by gamma
         if (s_testCaptureRequest.exchange(false)) FrameCapture::SaveNow(swapChain, 777777);
         FrameCapture::OnFrame(swapChain, frames);  // test screenshots (-capture-frames)
     }
@@ -1534,6 +1542,9 @@ static void FillLocalInput(uint8_t* st) {
         SharedTagCache::ProcessPendingSpawn();
     }
 
+    // Developer cheats simulation tick (godmode shields, super speed, super jump, noclip, infinite ammo)
+    DevCheats::Tick(1.0f / 60.0f);
+
     if (ReachArmory::IsMenuMode()) {
         ReachArmory::NotifyEngineTick();
     }
@@ -1565,10 +1576,17 @@ static void FillLocalInput(uint8_t* st) {
     static bool s_escWasDown = false;
     const bool escDown = (GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0;
     if (escDown && !s_escWasDown && !uiPointer && !PauseMenu::IsGameOver() && !SocialOverlay::OwnsEscape()) {
-        if (ForgeMenu::IsOpen()) ForgeMenu::Close();
+        if (DevMenu::IsOpen()) DevMenu::Close();
+        else if (ForgeMenu::IsOpen()) ForgeMenu::Close();
         else PauseMenu::Toggle();
     }
     s_escWasDown = escDown;
+
+    // + / Numpad+ opens/closes the developer mod/cheat menu
+    static bool s_plusWasDown = false;
+    const bool plusDown = ((GetAsyncKeyState(VK_OEM_PLUS) & 0x8000) != 0) || ((GetAsyncKeyState(VK_ADD) & 0x8000) != 0);
+    if (plusDown && !s_plusWasDown && !uiPointer && !PauseMenu::IsGameOver()) DevMenu::Toggle();
+    s_plusWasDown = plusDown;
 
     // Insert / F3 opens/closes the custom palette; it never uses the native Forge menu's keys.
     static bool s_insertWasDown = false;
@@ -1576,10 +1594,10 @@ static void FillLocalInput(uint8_t* st) {
     if (insertDown && !s_insertWasDown && !uiPointer && !PauseMenu::IsGameOver()) ForgeMenu::Toggle();
     s_insertWasDown = insertDown;
 
-    // While the pause menu, post-game panel or custom palette is up the game gets no keys or mouse, and the pointer is free.
+    // While the pause menu, post-game panel, dev cheat menu or custom palette is up the game gets no keys or mouse, and the pointer is free.
     static bool s_holdMouseUntilRelease = false;
-    if (PauseMenu::WantsPointer() || ForgeMenu::WantsPointer() || SocialOverlay::IsTyping()) {
-        InputRelease(hwnd, SocialOverlay::IsTyping() ? "typing in chat" : ForgeMenu::WantsPointer() ? "Forge palette open" : (PauseMenu::IsGameOver() ? "post-game panel open" : "pause menu open"));
+    if (PauseMenu::WantsPointer() || DevMenu::WantsPointer() || ForgeMenu::WantsPointer() || SocialOverlay::IsTyping()) {
+        InputRelease(hwnd, SocialOverlay::IsTyping() ? "typing in chat" : DevMenu::WantsPointer() ? "dev cheat menu open" : ForgeMenu::WantsPointer() ? "Forge palette open" : (PauseMenu::IsGameOver() ? "post-game panel open" : "pause menu open"));
         memset(s_keyDownSince, 0, sizeof(s_keyDownSince));
         s_holdMouseUntilRelease = true;
         return;
