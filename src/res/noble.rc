@@ -4,8 +4,8 @@
 IDI_NOBLE_ICON ICON "noble.ico"
 
 VS_VERSION_INFO VERSIONINFO
-FILEVERSION     0,19,45,0
-PRODUCTVERSION  0,19,45,0
+FILEVERSION     0,19,46,0
+PRODUCTVERSION  0,19,46,0
 FILEFLAGSMASK   VS_FFI_FILEFLAGSMASK
 #ifdef _DEBUG
 FILEFLAGS       VS_FF_DEBUG
@@ -22,12 +22,12 @@ BEGIN
         BEGIN
             VALUE "CompanyName",      "Project Noble Team\0"
             VALUE "FileDescription",  "Project Noble Game Client\0"
-            VALUE "FileVersion",      "0.19.45.0\0"
+            VALUE "FileVersion",      "0.19.46.0\0"
             VALUE "InternalName",     "noble-client\0"
             VALUE "LegalCopyright",   "Project Noble Team. Non-commercial community mod.\0"
             VALUE "OriginalFilename", "noble-client.exe\0"
             VALUE "ProductName",      "Project Noble\0"
-            VALUE "ProductVersion",   "0.19.45.0\0"
+            VALUE "ProductVersion",   "0.19.46.0\0"
         END
     END
     BLOCK "VarFileInfo"
