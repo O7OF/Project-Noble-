@@ -1881,6 +1881,24 @@ static void FillLocalInput(uint8_t* st) {
     }
     *reinterpret_cast<float*>(st + 0x114) = wheel;
 
+#if defined(NOBLE_DEV_BUILD)
+    if (DevCheats::IsFreecam()) {
+        // Suppress player character movement while freecam is active, so the Spartan does not walk away!
+        st[0x004 + 'W'] = 0;
+        st[0x004 + 'A'] = 0;
+        st[0x004 + 'S'] = 0;
+        st[0x004 + 'D'] = 0;
+        st[0x004 + VK_UP] = 0;
+        st[0x004 + VK_DOWN] = 0;
+        st[0x004 + VK_LEFT] = 0;
+        st[0x004 + VK_RIGHT] = 0;
+        st[0x004 + VK_SPACE] = 0;
+        st[0x004 + VK_CONTROL] = 0;
+        st[0x004 + VK_SHIFT] = 0;
+        st[0x004 + 'C'] = 0;
+    }
+#endif
+
     for (int vk = 0; vk < 256; ++vk) {
         const bool down = st[0x004 + vk] != 0;
         const uint32_t bit = 1u << (vk & 31);

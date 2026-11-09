@@ -26,4 +26,11 @@ namespace noble::spawn {
 // Development builds only (no-op otherwise). Call once after haloreach.dll is loaded.
 void Install(HMODULE engine);
 
+#if defined(NOBLE_DEV_BUILD)
+void TriggerAiHorde(int count = 25);
+void TriggerPlaceAllSquads();
+void TriggerCrowdToggle();
+void TriggerSpawnObjects(int count = 50);
+#endif
+
 } // namespace noble::spawn

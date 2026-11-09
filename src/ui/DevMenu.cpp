@@ -4,6 +4,7 @@
 
 #include "NobleStyle.hpp"
 #include "engine/DevCheats.hpp"
+#include "host/SpawnTest.hpp"
 #include "common/Logger.hpp"
 
 #include <imgui.h>
@@ -178,7 +179,8 @@ void DevMenu::Draw() {
             if (ImGui::SliderFloat("##FreecamSpeed", &fcs, 5.0f, 50.0f, "Camera Speed: %.0f m/s")) {
                 DevCheats::SetFreecamSpeed(fcs);
             }
-            ImGui::TextColored(kDim, "Freecam Controls: Arrow Keys to move, E = Ascend, Q = Descend, Shift = Boost");
+            ImGui::TextColored(kDim, "Freecam Controls: W/A/S/D = Fly, Space = Ascend, Ctrl/C = Descend, Shift = Boost.");
+            ImGui::TextColored(kGood, "Player character is frozen in place while Freecam is active so your Spartan does not walk away.");
 
             ImGui::EndTabItem();
         }
@@ -251,6 +253,36 @@ void DevMenu::Draw() {
 
         // TAB 3: ITEM & VEHICLE SPAWNER
         if (ImGui::BeginTabItem("ITEM & VEHICLE SPAWNER")) {
+            ImGui::Spacing();
+
+            // Native Blam! AI and squad triggers (Tyler's F6 / F7 / F8 / F9 hooks)
+            ImGui::TextColored(NobleStyle::Accent(), "NATIVE BLAM! AI & SQUAD SPAWNERS (F6 / F7 / F8 / F9):");
+            if (NobleStyle::PrimaryButton("SPAWN AI HORDE (F6)", ImVec2(165.0f * s, 28.0f * s))) {
+                noble::spawn::TriggerAiHorde(25);
+                s_statusMessage = "F6: Queued 25 AI squad actors around you!";
+                s_statusTime = GetTickCount64();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("PLACE ALL SQUADS (F7)", ImVec2(175.0f * s, 28.0f * s))) {
+                noble::spawn::TriggerPlaceAllSquads();
+                s_statusMessage = "F7: Placed all scenario squads!";
+                s_statusTime = GetTickCount64();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("SPARTAN CROWD (F8)", ImVec2(165.0f * s, 28.0f * s))) {
+                noble::spawn::TriggerCrowdToggle();
+                s_statusMessage = "F8: Toggled 128 Spartan crowd!";
+                s_statusTime = GetTickCount64();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("STRESS TEST (F9)", ImVec2(140.0f * s, 28.0f * s))) {
+                noble::spawn::TriggerSpawnObjects(500);
+                s_statusMessage = "F9: Queued 500 objects!";
+                s_statusTime = GetTickCount64();
+            }
+
+            ImGui::Spacing();
+            ImGui::Separator();
             ImGui::Spacing();
 
             ImGui::SetNextItemWidth(320.0f * s);

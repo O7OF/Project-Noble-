@@ -717,4 +717,39 @@ void Install(HMODULE engine) {
 #endif
 }
 
+#if defined(NOBLE_DEV_BUILD)
+void TriggerAiHorde(int count) {
+    if (s_aiPlace && s_unitExitVehicle) {
+        s_hordePending += count;
+        s_hordeCapLogged = false;
+        s_hordeNoProgressLogged = false;
+        NOBLE_INFO("SpawnTest: TriggerAiHorde({}), queued {}", count, s_hordePending);
+    } else {
+        NOBLE_WARN("SpawnTest: TriggerAiHorde failed: ai_place or unit_exit_vehicle not resolved");
+    }
+}
+
+void TriggerPlaceAllSquads() {
+    if (s_aiPlace) {
+        PlaceAllSquads();
+    } else {
+        NOBLE_WARN("SpawnTest: TriggerPlaceAllSquads failed: ai_place not resolved");
+    }
+}
+
+void TriggerCrowdToggle() {
+    s_crowdOn = !s_crowdOn;
+    if (s_crowdOn) {
+        s_refTag = -1;
+        s_crowdHandle[0] = -2;
+    }
+    NOBLE_INFO("SpawnTest: F8 Spartan crowd toggled {}", s_crowdOn ? "ON" : "OFF");
+}
+
+void TriggerSpawnObjects(int count) {
+    s_pending += count;
+    NOBLE_INFO("SpawnTest: TriggerSpawnObjects({}), total queued {}", count, s_pending.load());
+}
+#endif
+
 } // namespace noble::spawn

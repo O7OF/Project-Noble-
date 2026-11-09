@@ -10,6 +10,8 @@
 #include <algorithm>
 #include <mutex>
 #include <unordered_set>
+#include <vector>
+#include <string>
 
 namespace noble {
 
@@ -33,59 +35,157 @@ std::atomic<bool> DevCheats::s_bottomlessClip{false};
 std::atomic<bool> DevCheats::s_infiniteEquipment{false};
 
 float DevCheats::s_freecamPos[3] = { 0.0f, 0.0f, 0.0f };
-float DevCheats::s_lastCamFwd[3] = { 0.0f, 1.0f, 0.0f };
+float DevCheats::s_lastCamFwd[3] = { 1.0f, 0.0f, 0.0f };
 bool DevCheats::s_freecamInit = false;
 
 std::vector<SpawnCatalogItem> DevCheats::s_catalog;
 
 namespace {
-// Engine function types
-using PlacementNewFn = void(__fastcall*)(void* placement, int32_t tagIndex, int32_t owner, void* extra);
-using ObjectNewFn = int32_t(__fastcall*)(void* placement);
-using ObjectSetPositionFn = void(__fastcall*)(int32_t object, const float* position, const float* forward, const float* up, uint64_t, uint8_t);
-using ObjectRefreshFn = void(__fastcall*)(int32_t object);
-using UnitAddWeaponFn = void(__fastcall*)(int32_t unit, int16_t slot, int32_t weapon, int16_t flags);
-using ShieldRestoreFn = void(__fastcall*)(int32_t unit);
-using GetLocalUnitFn = int32_t(__fastcall*)(int32_t);
-using GetUltimateParentFn = int32_t(__fastcall*)(int32_t);
-using DamageObjectFn = void(__fastcall*)(uint32_t, uint32_t, float, void*, void*, void*);
-using ObjectKillFn = void(__fastcall*)(uint32_t, uint32_t, uint8_t, uint32_t);
-using TickFn = uint64_t(__fastcall*)(int32_t, int32_t, int32_t, float, float);
 
-PlacementNewFn s_placementNew = nullptr;
-ObjectNewFn s_objectNew = nullptr;
+// RVAs in haloreach.dll (Tyler's verified offsets)
+constexpr uintptr_t kTickRva            = 0x61A38;   // per-player control tick, game thread
+constexpr uintptr_t kPlacementNewRva    = 0x49CC24;  // object_placement_data_new(placement*, tag, owner, ptr)
+constexpr uintptr_t kObjectNewRva       = 0x46D6E0;  // object_new(placement*) -> object handle or -1
+constexpr uintptr_t kTlsIndexRva        = 0xC17B18;  // TLS slot of the engine's game-state root
+constexpr uintptr_t kObjectSetPositionRva = 0x46CB38;// (object, position*, forward*, up*, 0, false)
+constexpr uintptr_t kObjectRefreshRva   = 0x46C8B4;  // re-links the object to the map after a move
+constexpr uintptr_t kUnitAddWeaponRva   = 0x48F778;  // (unit, slot, weapon, flags)
+constexpr uintptr_t kShieldRestoreRva   = 0x49DD58;  // (unit)
+constexpr uintptr_t kDamageObjectRva    = 0x1ED320;  // object_cause_damage
+constexpr uintptr_t kObjectKillRva      = 0x47CAA8;  // object_kill
+constexpr uintptr_t kTagTableRva        = 0xC1A600;  // loaded tag table root
+constexpr size_t    kPlacementSize      = 0x1A8;
+
+using PlacementNewFn      = void(__fastcall*)(void* placement, int32_t tagIndex, int32_t owner, void* extra);
+using ObjectNewFn         = int32_t(__fastcall*)(void* placement);
+using ObjectSetPositionFn = void(__fastcall*)(int32_t object, const float* position, const float* forward, const float* up, uint64_t, uint8_t);
+using ObjectRefreshFn     = void(__fastcall*)(int32_t object);
+using UnitAddWeaponFn     = void(__fastcall*)(int32_t unit, int16_t slot, int32_t weapon, int16_t flags);
+using ShieldRestoreFn     = void(__fastcall*)(int32_t unit);
+using DamageObjectFn      = void(__fastcall*)(uint32_t, uint32_t, float, void*, void*, void*);
+using ObjectKillFn        = void(__fastcall*)(uint32_t, uint32_t, uint8_t, uint32_t);
+
+PlacementNewFn      s_placementNew      = nullptr;
+ObjectNewFn         s_objectNew         = nullptr;
 ObjectSetPositionFn s_objectSetPosition = nullptr;
-ObjectRefreshFn s_objectRefresh = nullptr;
-UnitAddWeaponFn s_unitAddWeapon = nullptr;
-ShieldRestoreFn s_shieldRestore = nullptr;
-GetLocalUnitFn s_getLocalUnit = nullptr;
-GetUltimateParentFn s_getUltimateParent = nullptr;
-DamageObjectFn s_origDamageObject = nullptr;
-ObjectKillFn s_origObjectKill = nullptr;
-TickFn s_origTick = nullptr;
+ObjectRefreshFn     s_objectRefresh     = nullptr;
+UnitAddWeaponFn     s_unitAddWeapon     = nullptr;
+ShieldRestoreFn     s_shieldRestore     = nullptr;
+DamageObjectFn      s_origDamageObject  = nullptr;
+ObjectKillFn        s_origObjectKill    = nullptr;
 
 struct ObjectPool {
     uint8_t* header = nullptr;
     uint8_t* records = nullptr;
+    const uint32_t* bitmap = nullptr;
     int32_t capacity = 0;
 };
 
 bool GetObjectPool(uintptr_t base, ObjectPool& pool) {
     if (!base) return false;
     __try {
-        const uint32_t tlsSlot = *reinterpret_cast<const uint32_t*>(base + 0xC17B18);
+        const uint32_t tlsSlot = *reinterpret_cast<const uint32_t*>(base + kTlsIndexRva);
         auto** tls = reinterpret_cast<uint8_t**>(__readgsqword(0x58));
         if (!tls || !tls[tlsSlot]) return false;
-        uint8_t* header = *reinterpret_cast<uint8_t**>(tls[tlsSlot] + 0x10);
+        uint8_t* root = tls[tlsSlot];
+
+        uint8_t* header = *reinterpret_cast<uint8_t**>(root + 0x10);
         if (!header || std::strncmp(reinterpret_cast<const char*>(header), "object", 32) != 0) return false;
         if (*reinterpret_cast<const uint32_t*>(header + 0x28) != 0x64407440) return false;
+
         pool.header = header;
         pool.capacity = *reinterpret_cast<const int32_t*>(header + 0x2C);
         pool.records = *reinterpret_cast<uint8_t**>(header + 0x50);
-        return (pool.records != nullptr && pool.capacity > 0);
+        pool.bitmap = reinterpret_cast<const uint32_t*>(header + *reinterpret_cast<const int64_t*>(header + 0x68));
+        return (pool.records != nullptr && pool.capacity > 0 && pool.bitmap != nullptr);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return false;
     }
+}
+
+inline bool SlotUsed(const ObjectPool& pool, int i) {
+    return (pool.bitmap[i >> 5] >> (i & 31)) & 1;
+}
+
+inline uint8_t* ObjectData(const ObjectPool& pool, int32_t handle) {
+    if (handle == -1) return nullptr;
+    const int index = handle & 0xFFFF;
+    if (index >= pool.capacity || !SlotUsed(pool, index)) return nullptr;
+    const uint16_t salt = *reinterpret_cast<const uint16_t*>(pool.records + static_cast<size_t>(index) * 24);
+    if (salt != static_cast<uint16_t>(static_cast<uint32_t>(handle) >> 16)) return nullptr;
+    return *reinterpret_cast<uint8_t**>(pool.records + static_cast<size_t>(index) * 24 + 0x10);
+}
+
+struct PlayerState {
+    int32_t unitHandle = -1;
+    int32_t vehicleHandle = -1;
+    uint8_t* biped = nullptr;
+    uint8_t* vehicle = nullptr;
+    float pos[3] = {};
+    float fwd[3] = {};
+    float vel[3] = {};
+};
+
+// Tyler's verified player discovery: read game-state root +0x18 (players pool, 0x490-byte records)
+bool GetLocalPlayer(uintptr_t base, const ObjectPool& pool, PlayerState& out) {
+    if (!base) return false;
+    __try {
+        const uint32_t tlsSlot = *reinterpret_cast<const uint32_t*>(base + kTlsIndexRva);
+        auto** tls = reinterpret_cast<uint8_t**>(__readgsqword(0x58));
+        if (!tls || !tls[tlsSlot]) return false;
+        uint8_t* root = tls[tlsSlot];
+
+        // 1. Check players pool (root + 0x18)
+        uint8_t* plyHeader = *reinterpret_cast<uint8_t**>(root + 0x18);
+        if (plyHeader && std::strncmp(reinterpret_cast<const char*>(plyHeader), "players", 32) == 0) {
+            const int32_t cap = *reinterpret_cast<const int32_t*>(plyHeader + 0x2C);
+            const uint8_t* records = *reinterpret_cast<uint8_t**>(plyHeader + 0x50);
+            const auto* bitmap = reinterpret_cast<const uint32_t*>(plyHeader + *reinterpret_cast<const int64_t*>(plyHeader + 0x68));
+            for (int i = 0; records && i < cap; ++i) {
+                if (!((bitmap[i >> 5] >> (i & 31)) & 1)) continue;
+                int32_t unitHandle = *reinterpret_cast<const int32_t*>(records + static_cast<size_t>(i) * 0x490 + 0x28);
+                if (unitHandle == -1) continue;
+                uint8_t* body = ObjectData(pool, unitHandle);
+                if (!body) continue;
+
+                out.unitHandle = unitHandle;
+                out.biped = body;
+                std::memcpy(out.pos, body + 0x44, sizeof(float) * 3);
+                std::memcpy(out.fwd, body + 0x50, sizeof(float) * 3);
+                std::memcpy(out.vel, body + 0x68, sizeof(float) * 3);
+
+                int32_t parent = *reinterpret_cast<const int32_t*>(body + 0x14);
+                if (parent != -1) {
+                    out.vehicleHandle = parent;
+                    out.vehicle = ObjectData(pool, parent);
+                }
+                return true;
+            }
+        }
+
+        // 2. Fallback: Search object pool for any placed biped (Tyler's PickReference)
+        for (int i = 0; i < pool.capacity; ++i) {
+            if (!SlotUsed(pool, i)) continue;
+            uint8_t type = pool.records[static_cast<size_t>(i) * 24 + 4];
+            if (type == 0) { // biped
+                uint8_t* body = *reinterpret_cast<uint8_t**>(pool.records + static_cast<size_t>(i) * 24 + 0x10);
+                if (!body) continue;
+                float p[3];
+                std::memcpy(p, body + 0x44, sizeof(p));
+                if (p[0] != 0.0f || p[1] != 0.0f || p[2] != 0.0f) {
+                    uint16_t salt = *reinterpret_cast<const uint16_t*>(pool.records + static_cast<size_t>(i) * 24);
+                    out.unitHandle = static_cast<int32_t>((static_cast<uint32_t>(salt) << 16) | static_cast<uint32_t>(i));
+                    out.biped = body;
+                    std::memcpy(out.pos, p, sizeof(p));
+                    std::memcpy(out.fwd, body + 0x50, sizeof(float) * 3);
+                    std::memcpy(out.vel, body + 0x68, sizeof(float) * 3);
+                    return true;
+                }
+            }
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {}
+
+    return false;
 }
 
 struct QueuedAction {
@@ -107,7 +207,9 @@ void SetStatus(const std::string& msg) {
     NOBLE_INFO("DevCheats: {}", msg);
 }
 
-int32_t ResolveTagIndex(uintptr_t base, const std::string& tagPath, const std::string& category, const ObjectPool& pool) {
+int32_t ResolveTagIndex(uintptr_t base, const std::string& tagPath, const std::string& category, uint32_t tagIndex, const ObjectPool& pool) {
+    if (tagIndex != 0xFFFFFFFF && tagIndex != 0) return static_cast<int32_t>(tagIndex);
+
     // 1. Check SharedTagCache donor map
     for (const auto& item : SharedTagCache::GetDonorPaletteItems()) {
         if (!tagPath.empty() && item.tagPath.find(tagPath) != std::string::npos && item.datumIndex != 0xFFFFFFFF) {
@@ -115,15 +217,32 @@ int32_t ResolveTagIndex(uintptr_t base, const std::string& tagPath, const std::s
         }
     }
 
-    // 2. Scan active map tagTable (haloreach.dll + 0xC1A600)
+    // 2. Scan active object pool for any object of this category (Tyler's PickReference logic)
+    int wantedType = (category == "Vehicles") ? 1 :
+                     (category == "UNSC Weapons" || category == "Covenant Weapons") ? 2 :
+                     (category == "Armor Abilities") ? 3 : -1;
+
+    for (int i = 0; i < pool.capacity; ++i) {
+        if (!SlotUsed(pool, i)) continue;
+        uint8_t type = pool.records[static_cast<size_t>(i) * 24 + 4];
+        if (type == wantedType) {
+            const uint8_t* obj = *reinterpret_cast<uint8_t* const*>(pool.records + static_cast<size_t>(i) * 24 + 0x10);
+            if (obj) {
+                int32_t t = *reinterpret_cast<const int32_t*>(obj);
+                if (t != -1) return t;
+            }
+        }
+    }
+
+    // 3. Scan active map tagTable (haloreach.dll + 0xC1A600)
     __try {
-        uint8_t* tagTable = *reinterpret_cast<uint8_t* const*>(base + 0xC1A600);
+        uint8_t* tagTable = *reinterpret_cast<uint8_t* const*>(base + kTagTableRva);
         if (tagTable) {
             const int32_t tagCount = std::clamp(*reinterpret_cast<const int32_t*>(tagTable + 0x3FFF8), 0, 0x8000);
             uint32_t wantedMagic = 0;
-            if (category == "UNSC Weapons" || category == "Covenant Weapons") wantedMagic = 0x77656170; // 'weap'
-            else if (category == "Vehicles") wantedMagic = 0x76656869; // 'vehi'
-            else if (category == "Armor Abilities") wantedMagic = 0x65716970; // 'eqip'
+            if (wantedType == 2) wantedMagic = 0x77656170; // 'weap'
+            else if (wantedType == 1) wantedMagic = 0x76656869; // 'vehi'
+            else if (wantedType == 3) wantedMagic = 0x65716970; // 'eqip'
 
             for (int32_t ti = 0; ti < tagCount; ++ti) {
                 uint8_t* te = tagTable + static_cast<size_t>(ti) * 8u;
@@ -131,36 +250,17 @@ int32_t ResolveTagIndex(uintptr_t base, const std::string& tagPath, const std::s
                 uint16_t salt = *reinterpret_cast<const uint16_t*>(te + 2);
                 if (groupIdx < 0 || salt == 0xFFFF) continue;
                 uint32_t magic = *reinterpret_cast<const uint32_t*>(tagTable + 0x3FFFC + static_cast<size_t>(groupIdx) * 16u);
-                if (wantedMagic && magic == wantedMagic) {
+                if (magic == wantedMagic) {
                     return static_cast<int32_t>((static_cast<uint32_t>(salt) << 16) | static_cast<uint32_t>(ti));
                 }
             }
         }
     } __except (EXCEPTION_EXECUTE_HANDLER) {}
 
-    // 3. Fallback: scan objects currently placed in the pool
-    int wantedType = -1;
-    if (category == "UNSC Weapons" || category == "Covenant Weapons") wantedType = 2; // weapon
-    else if (category == "Vehicles") wantedType = 1; // vehicle
-    else if (category == "Armor Abilities") wantedType = 3; // equipment
-
-    if (wantedType != -1) {
-        for (int i = 0; i < pool.capacity; ++i) {
-            uint8_t type = pool.records[static_cast<size_t>(i) * 24 + 4];
-            if (type == wantedType) {
-                const uint8_t* obj = *reinterpret_cast<uint8_t* const*>(pool.records + static_cast<size_t>(i) * 24 + 0x10);
-                if (obj) {
-                    int32_t t = *reinterpret_cast<const int32_t*>(obj);
-                    if (t != -1) return t;
-                }
-            }
-        }
-    }
-
     return -1;
 }
 
-static void ProcessActions(uintptr_t base, const ObjectPool& pool, int32_t unitDatum, uint8_t* biped) {
+static void ProcessActions(uintptr_t base, const ObjectPool& pool, const PlayerState& player) {
     std::vector<QueuedAction> actions;
     {
         std::lock_guard<std::mutex> lock(s_actionMutex);
@@ -169,28 +269,21 @@ static void ProcessActions(uintptr_t base, const ObjectPool& pool, int32_t unitD
         s_actionQueue.clear();
     }
 
-    float* bipedPos = reinterpret_cast<float*>(biped + 0x44);
-    const float* bipedFwd = reinterpret_cast<const float*>(biped + 0x50);
-
     for (const auto& act : actions) {
-        int32_t tagIndex = act.tagIndex;
-        if (tagIndex == 0xFFFFFFFF || tagIndex == -1) {
-            tagIndex = ResolveTagIndex(base, act.tagPath, act.category, pool);
-        }
-
-        if (tagIndex == 0xFFFFFFFF || tagIndex == -1) {
-            SetStatus("Tag unavailable in active map: " + act.itemName);
+        int32_t tagIndex = ResolveTagIndex(base, act.tagPath, act.category, act.tagIndex, pool);
+        if (tagIndex == -1 || tagIndex == 0xFFFFFFFF) {
+            SetStatus("Tag unavailable in active match: " + act.itemName);
             continue;
         }
 
         const float spawnDist = (act.category == "Vehicles") ? 5.5f : 2.5f;
         const float spawnPos[3] = {
-            bipedPos[0] + bipedFwd[0] * spawnDist,
-            bipedPos[1] + bipedFwd[1] * spawnDist,
-            bipedPos[2] + 0.3f
+            player.pos[0] + player.fwd[0] * spawnDist,
+            player.pos[1] + player.fwd[1] * spawnDist,
+            player.pos[2] + 0.3f
         };
 
-        alignas(16) uint8_t placement[0x1A8 + 16];
+        alignas(16) uint8_t placement[kPlacementSize + 16];
         std::memset(placement, 0, sizeof(placement));
         if (s_placementNew) {
             s_placementNew(placement, tagIndex, -1, nullptr);
@@ -199,28 +292,36 @@ static void ProcessActions(uintptr_t base, const ObjectPool& pool, int32_t unitD
         }
 
         std::memcpy(placement + 0x1C, spawnPos, sizeof(float) * 3);
-        std::memcpy(placement + 0x28, bipedFwd, sizeof(float) * 3);
+        std::memcpy(placement + 0x28, player.fwd, sizeof(float) * 3);
 
         int32_t handle = s_objectNew ? s_objectNew(placement) : -1;
         if (handle != -1) {
             float up[3] = { 0.0f, 0.0f, 1.0f };
             if (s_objectSetPosition) {
-                s_objectSetPosition(handle, spawnPos, bipedFwd, up, 0, false);
+                s_objectSetPosition(handle, spawnPos, player.fwd, up, 0, false);
             }
             if (s_objectRefresh) {
                 s_objectRefresh(handle);
             }
 
             if (act.giveToPlayer && act.category != "Vehicles") {
-                if (s_unitAddWeapon && unitDatum != -1) {
-                    s_unitAddWeapon(unitDatum, 0, handle, 0);
+                if (s_unitAddWeapon && player.unitHandle != -1) {
+                    s_unitAddWeapon(player.unitHandle, 0, handle, 0);
+                }
+                // Also position at player chest level for guaranteed immediate pickup
+                float handsPos[3] = { player.pos[0], player.pos[1], player.pos[2] + 0.4f };
+                if (s_objectSetPosition) {
+                    s_objectSetPosition(handle, handsPos, player.fwd, up, 0, false);
+                }
+                if (s_objectRefresh) {
+                    s_objectRefresh(handle);
                 }
                 SetStatus("Gave " + act.itemName + " directly into your hands!");
             } else {
                 SetStatus("Spawned " + act.itemName + " in front of you!");
             }
         } else {
-            SetStatus("Engine refused spawn for " + act.itemName);
+            SetStatus("Engine refused spawn for " + act.itemName + " (tag 0x" + std::to_string(tagIndex) + ")");
         }
     }
 }
@@ -253,12 +354,6 @@ static void __fastcall Hook_ObjectKill(uint32_t objectDatum, uint32_t flags, uin
     }
 }
 
-// Hook user_control_tick (RVA 0x61A38)
-static uint64_t __fastcall Hook_UserControlTick(int32_t a, int32_t b, int32_t c, float d, float e) {
-    const uint64_t result = s_origTick ? s_origTick(a, b, c, d, e) : 0;
-    DevCheats::GameTick(a);
-    return result;
-}
 } // namespace
 
 bool DevCheats::IsGodmode() { return s_godmode.load(); }
@@ -329,9 +424,7 @@ uint8_t* DevCheats::GetObjectByDatum(uint32_t datum) {
     if (datum == 0xFFFFFFFF || !s_baseAddress) return nullptr;
     ObjectPool pool;
     if (!GetObjectPool(s_baseAddress, pool)) return nullptr;
-    uint16_t idx = static_cast<uint16_t>(datum & 0xFFFF);
-    if (idx >= pool.capacity) return nullptr;
-    return *reinterpret_cast<uint8_t**>(pool.records + static_cast<size_t>(idx) * 24 + 0x10);
+    return ObjectData(pool, static_cast<int32_t>(datum));
 }
 
 void DevCheats::QueueItemAction(const std::string& name, const std::string& category, const std::string& tagPath, uint32_t tagIndex, bool giveToPlayer) {
@@ -355,9 +448,9 @@ std::vector<SpawnCatalogItem> DevCheats::GetActiveMapItems() {
     ObjectPool pool;
     if (!GetObjectPool(s_baseAddress, pool)) return items;
 
-    // Discover items currently placed in the match
     std::unordered_set<int32_t> seenTags;
     for (int i = 0; i < pool.capacity; ++i) {
+        if (!SlotUsed(pool, i)) continue;
         uint8_t type = pool.records[static_cast<size_t>(i) * 24 + 4];
         if (type == 1 || type == 2 || type == 3) { // vehicle, weapon, equipment
             const uint8_t* obj = *reinterpret_cast<uint8_t* const*>(pool.records + static_cast<size_t>(i) * 24 + 0x10);
@@ -368,8 +461,8 @@ std::vector<SpawnCatalogItem> DevCheats::GetActiveMapItems() {
 
             std::string cat = (type == 1) ? "Vehicles" : (type == 2) ? "Weapons" : "Equipment";
             char label[64];
-            snprintf(label, sizeof(label), "Map %s #%d [0x%08X]", cat.c_str(), static_cast<int>(seenTags.size()), static_cast<uint32_t>(t));
-            items.push_back({ label, cat, "", static_cast<uint32_t>(t), "Active map loaded entity." });
+            snprintf(label, sizeof(label), "Map %s #%d [0x%08X]", cat.c_str(), static_cast<int>(seenTags.size()), static_cast<unsigned int>(t));
+            items.push_back({ label, cat, "", static_cast<uint32_t>(t), "Active map entity in match." });
         }
     }
     return items;
@@ -381,31 +474,20 @@ bool DevCheats::Initialize(HMODULE hReachDll) {
     s_baseAddress = reinterpret_cast<uintptr_t>(hReachDll);
 
     // Resolve native engine function pointers
-    s_placementNew = reinterpret_cast<PlacementNewFn>(s_baseAddress + 0x49CC24);
-    s_objectNew = reinterpret_cast<ObjectNewFn>(s_baseAddress + 0x46D6E0);
-    s_objectSetPosition = reinterpret_cast<ObjectSetPositionFn>(s_baseAddress + 0x46CB38);
-    s_objectRefresh = reinterpret_cast<ObjectRefreshFn>(s_baseAddress + 0x46C8B4);
-    s_unitAddWeapon = reinterpret_cast<UnitAddWeaponFn>(s_baseAddress + 0x48F778);
-    s_shieldRestore = reinterpret_cast<ShieldRestoreFn>(s_baseAddress + 0x49DD58);
-    s_getLocalUnit = reinterpret_cast<GetLocalUnitFn>(s_baseAddress + 0x53EF8);
-    s_getUltimateParent = reinterpret_cast<GetUltimateParentFn>(s_baseAddress + 0x473DC0);
+    s_placementNew      = reinterpret_cast<PlacementNewFn>(s_baseAddress + kPlacementNewRva);
+    s_objectNew         = reinterpret_cast<ObjectNewFn>(s_baseAddress + kObjectNewRva);
+    s_objectSetPosition = reinterpret_cast<ObjectSetPositionFn>(s_baseAddress + kObjectSetPositionRva);
+    s_objectRefresh     = reinterpret_cast<ObjectRefreshFn>(s_baseAddress + kObjectRefreshRva);
+    s_unitAddWeapon     = reinterpret_cast<UnitAddWeaponFn>(s_baseAddress + kUnitAddWeaponRva);
+    s_shieldRestore     = reinterpret_cast<ShieldRestoreFn>(s_baseAddress + kShieldRestoreRva);
 
-    // 1. Hook user_control_tick (RVA 0x61A38) - Game Thread Tick Execution
-    void* tickTarget = reinterpret_cast<void*>(s_baseAddress + 0x61A38);
-    if (HookManager::InstallHook(tickTarget, reinterpret_cast<void*>(&Hook_UserControlTick),
-                                 reinterpret_cast<void**>(&s_origTick), "user_control_tick")) {
-        NOBLE_INFO("DevCheats: Hooked user_control_tick at RVA 0x61A38.");
-    } else {
-        NOBLE_WARN("DevCheats: Hook user_control_tick already present or failed.");
-    }
-
-    // 2. Hook object_cause_damage (RVA 0x1ED320)
-    void* damageTarget = reinterpret_cast<void*>(s_baseAddress + 0x1ED320);
+    // 1. Hook object_cause_damage (RVA 0x1ED320)
+    void* damageTarget = reinterpret_cast<void*>(s_baseAddress + kDamageObjectRva);
     HookManager::InstallHook(damageTarget, reinterpret_cast<void*>(&Hook_DamageObject),
                              reinterpret_cast<void**>(&s_origDamageObject), "object_cause_damage");
 
-    // 3. Hook object_kill (RVA 0x47CAA8)
-    void* killTarget = reinterpret_cast<void*>(s_baseAddress + 0x47CAA8);
+    // 2. Hook object_kill (RVA 0x47CAA8)
+    void* killTarget = reinterpret_cast<void*>(s_baseAddress + kObjectKillRva);
     HookManager::InstallHook(killTarget, reinterpret_cast<void*>(&Hook_ObjectKill),
                              reinterpret_cast<void**>(&s_origObjectKill), "object_kill");
 
@@ -421,183 +503,170 @@ void DevCheats::Shutdown() {
 }
 
 void DevCheats::GameTick(int32_t userIndex) {
-    if (userIndex != 0 || !s_initialized) return;
+    if (userIndex != 0 || !s_initialized || !s_baseAddress) return;
 
-    // 1. Retrieve local player biped & vehicle datum indices on the Game Thread
-    int32_t unitDatum = -1;
-    if (s_getLocalUnit) {
-        unitDatum = s_getLocalUnit(0);
-    }
-    s_localUnitDatum.store(unitDatum);
-
-    int32_t vehDatum = -1;
-    if (s_getUltimateParent && unitDatum != -1 && unitDatum != 0) {
-        vehDatum = s_getUltimateParent(unitDatum);
-        if (vehDatum == unitDatum || vehDatum == 0) vehDatum = -1;
-    }
-    s_localVehicleDatum.store(vehDatum);
-
-    // 2. Resolve object pool
     ObjectPool pool;
     if (!GetObjectPool(s_baseAddress, pool)) return;
 
-    uint8_t* biped = nullptr;
-    if (unitDatum != -1) {
-        int idx = unitDatum & 0xFFFF;
-        if (idx < pool.capacity) {
-            biped = *reinterpret_cast<uint8_t**>(pool.records + static_cast<size_t>(idx) * 24 + 0x10);
-        }
-    }
-    if (!biped) return;
+    PlayerState player{};
+    const bool havePlayer = GetLocalPlayer(s_baseAddress, pool, player);
 
-    // 3. Apply Godmode
-    if (s_godmode.load()) {
-        if (s_shieldRestore) {
-            s_shieldRestore(unitDatum);
-            if (vehDatum != -1) s_shieldRestore(vehDatum);
-        }
-        __try {
-            int16_t healthOffset = *reinterpret_cast<const int16_t*>(biped + 0x186);
-            if (healthOffset > 0 && healthOffset < 0x2000) {
-                uint8_t* healthComp = biped + healthOffset;
-                *reinterpret_cast<float*>(healthComp + 0x10) = 1.0f;
-                *reinterpret_cast<float*>(healthComp + 0x14) = 1.0f;
+    s_localUnitDatum.store(player.unitHandle);
+    s_localVehicleDatum.store(player.vehicleHandle);
+
+    if (havePlayer && player.biped) {
+        // 1. Apply Godmode
+        if (s_godmode.load()) {
+            if (s_shieldRestore) {
+                s_shieldRestore(player.unitHandle);
+                if (player.vehicleHandle != -1) s_shieldRestore(player.vehicleHandle);
             }
-        } __except (EXCEPTION_EXECUTE_HANDLER) {}
-    }
+            __try {
+                // Direct shield & health write
+                *reinterpret_cast<float*>(player.biped + 0xDC) = 1.0f; // shield
+                *reinterpret_cast<float*>(player.biped + 0xE0) = 1.0f; // health
 
-    // 4. Super Jump & Super Speed
-    float* vel = reinterpret_cast<float*>(biped + 0x68);
-    if (s_superSpeed.load() && !s_noclip.load()) {
-        const float hSpeed = std::hypot(vel[0], vel[1]);
-        if (hSpeed > 0.005f) {
-            const float mult = s_speedMultiplier.load();
-            vel[0] *= (1.0f + (mult - 1.0f) * 0.20f);
-            vel[1] *= (1.0f + (mult - 1.0f) * 0.20f);
-        }
-    }
-
-    if (s_superJump.load() && !s_noclip.load()) {
-        if (vel[2] > 0.015f) {
-            vel[2] = std::max(vel[2], 0.12f * s_jumpMultiplier.load());
-        }
-    }
-
-    // 5. Noclip (Ghost Flight)
-    if (s_noclip.load()) {
-        float* pos = reinterpret_cast<float*>(biped + 0x44);
-        const float* fwd = reinterpret_cast<const float*>(biped + 0x50);
-        const float* up  = reinterpret_cast<const float*>(biped + 0x5C);
-
-        vel[0] = 0.0f; vel[1] = 0.0f; vel[2] = 0.0f;
-
-        const float right[3] = {
-            fwd[1] * up[2] - fwd[2] * up[1],
-            fwd[2] * up[0] - fwd[0] * up[2],
-            fwd[0] * up[1] - fwd[1] * up[0]
-        };
-
-        float moveFwd = 0.0f, moveRight = 0.0f, moveUp = 0.0f;
-        if (GetAsyncKeyState('W') & 0x8000) moveFwd += 1.0f;
-        if (GetAsyncKeyState('S') & 0x8000) moveFwd -= 1.0f;
-        if (GetAsyncKeyState('D') & 0x8000) moveRight += 1.0f;
-        if (GetAsyncKeyState('A') & 0x8000) moveRight -= 1.0f;
-        if (GetAsyncKeyState(VK_SPACE) & 0x8000) moveUp += 1.0f;
-        if ((GetAsyncKeyState(VK_CONTROL) & 0x8000) || (GetAsyncKeyState('C') & 0x8000)) moveUp -= 1.0f;
-        if (GetAsyncKeyState(VK_SHIFT) & 0x8000) {
-            moveFwd *= 2.5f; moveRight *= 2.5f; moveUp *= 2.5f;
+                // Health component (if present)
+                int16_t healthOffset = *reinterpret_cast<const int16_t*>(player.biped + 0x186);
+                if (healthOffset > 0 && healthOffset < 0x2000) {
+                    uint8_t* healthComp = player.biped + healthOffset;
+                    *reinterpret_cast<float*>(healthComp + 0x10) = 1.0f;
+                    *reinterpret_cast<float*>(healthComp + 0x14) = 1.0f;
+                }
+            } __except (EXCEPTION_EXECUTE_HANDLER) {}
         }
 
-        const float speed = s_noclipSpeed.load() * (1.0f / 60.0f);
-        pos[0] += (fwd[0] * moveFwd + right[0] * moveRight) * speed;
-        pos[1] += (fwd[1] * moveFwd + right[1] * moveRight) * speed;
-        pos[2] += (fwd[2] * moveFwd + moveUp) * speed;
-    }
-
-    // 6. Freecam Pan
-    if (s_freecam.load()) {
-        float moveFwd = 0.0f, moveRight = 0.0f, moveUp = 0.0f;
-        if (GetAsyncKeyState(VK_UP) & 0x8000) moveFwd += 1.0f;
-        if (GetAsyncKeyState(VK_DOWN) & 0x8000) moveFwd -= 1.0f;
-        if (GetAsyncKeyState(VK_RIGHT) & 0x8000) moveRight += 1.0f;
-        if (GetAsyncKeyState(VK_LEFT) & 0x8000) moveRight -= 1.0f;
-        if ((GetAsyncKeyState(VK_PRIOR) & 0x8000) || (GetAsyncKeyState('E') & 0x8000)) moveUp += 1.0f;
-        if ((GetAsyncKeyState(VK_NEXT) & 0x8000) || (GetAsyncKeyState('Q') & 0x8000)) moveUp -= 1.0f;
-        if (GetAsyncKeyState(VK_SHIFT) & 0x8000) {
-            moveFwd *= 2.5f; moveRight *= 2.5f; moveUp *= 2.5f;
+        // 2. Super Jump & Super Speed
+        float* vel = reinterpret_cast<float*>(player.biped + 0x68);
+        if (s_superSpeed.load() && !s_noclip.load() && !s_freecam.load()) {
+            const float hSpeed = std::hypot(vel[0], vel[1]);
+            if (hSpeed > 0.005f) {
+                const float mult = s_speedMultiplier.load();
+                vel[0] *= mult;
+                vel[1] *= mult;
+            }
         }
 
-        const float speed = s_freecamSpeed.load() * (1.0f / 60.0f);
-        s_freecamPos[0] += (s_lastCamFwd[0] * moveFwd - s_lastCamFwd[1] * moveRight) * speed;
-        s_freecamPos[1] += (s_lastCamFwd[1] * moveFwd + s_lastCamFwd[0] * moveRight) * speed;
-        s_freecamPos[2] += (s_lastCamFwd[2] * moveFwd + moveUp) * speed;
-    }
+        if (s_superJump.load() && !s_noclip.load() && !s_freecam.load()) {
+            if (vel[2] > 0.015f) {
+                vel[2] = std::max(vel[2], 0.12f * s_jumpMultiplier.load());
+            }
+        }
 
-    // 7. Infinite Ammo & Bottomless Clip
-    const bool infAmmo = s_infiniteAmmo.load();
-    const bool bottomless = s_bottomlessClip.load();
-    if (infAmmo || bottomless) {
-        for (int slot = 0; slot < 4; ++slot) {
-            uint32_t wDatum = *reinterpret_cast<const uint32_t*>(biped + 0x350 + slot * 4);
-            if (wDatum != 0xFFFFFFFF && wDatum != 0) {
-                int wIdx = wDatum & 0xFFFF;
-                if (wIdx < pool.capacity) {
-                    uint8_t* weapon = *reinterpret_cast<uint8_t**>(pool.records + static_cast<size_t>(wIdx) * 24 + 0x10);
-                    if (weapon) {
-                        if (infAmmo) *reinterpret_cast<uint32_t*>(weapon + 0x3034) = 999;
-                        if (bottomless) *reinterpret_cast<uint32_t*>(weapon + 0x3030) = 99;
-                        *reinterpret_cast<float*>(weapon + 0x3038) = 1.0f; // battery
-                        *reinterpret_cast<float*>(weapon + 0x303C) = 0.0f; // heat
+        // 3. Noclip (Ghost Flight)
+        if (s_noclip.load()) {
+            float* pos = reinterpret_cast<float*>(player.biped + 0x44);
+            const float* fwd = reinterpret_cast<const float*>(player.biped + 0x50);
+            const float* up  = reinterpret_cast<const float*>(player.biped + 0x5C);
+
+            vel[0] = 0.0f; vel[1] = 0.0f; vel[2] = 0.0f;
+
+            const float right[3] = {
+                fwd[1] * up[2] - fwd[2] * up[1],
+                fwd[2] * up[0] - fwd[0] * up[2],
+                fwd[0] * up[1] - fwd[1] * up[0]
+            };
+
+            float moveFwd = 0.0f, moveRight = 0.0f, moveUp = 0.0f;
+            if (GetAsyncKeyState('W') & 0x8000) moveFwd += 1.0f;
+            if (GetAsyncKeyState('S') & 0x8000) moveFwd -= 1.0f;
+            if (GetAsyncKeyState('D') & 0x8000) moveRight += 1.0f;
+            if (GetAsyncKeyState('A') & 0x8000) moveRight -= 1.0f;
+            if (GetAsyncKeyState(VK_SPACE) & 0x8000) moveUp += 1.0f;
+            if ((GetAsyncKeyState(VK_CONTROL) & 0x8000) || (GetAsyncKeyState('C') & 0x8000)) moveUp -= 1.0f;
+            if (GetAsyncKeyState(VK_SHIFT) & 0x8000) {
+                moveFwd *= 2.5f; moveRight *= 2.5f; moveUp *= 2.5f;
+            }
+
+            const float speed = s_noclipSpeed.load() * (1.0f / 60.0f);
+            pos[0] += (fwd[0] * moveFwd + right[0] * moveRight) * speed;
+            pos[1] += (fwd[1] * moveFwd + right[1] * moveRight) * speed;
+            pos[2] += (fwd[2] * moveFwd + moveUp) * speed;
+
+            if (s_objectSetPosition) {
+                float defaultUp[3] = { 0.0f, 0.0f, 1.0f };
+                s_objectSetPosition(player.unitHandle, pos, fwd, defaultUp, 0, false);
+            }
+            if (s_objectRefresh) {
+                s_objectRefresh(player.unitHandle);
+            }
+        }
+
+        // 4. Freecam Pan: freeze player biped so legs/body do not walk away!
+        if (s_freecam.load()) {
+            vel[0] = 0.0f; vel[1] = 0.0f; vel[2] = 0.0f;
+
+            float moveFwd = 0.0f, moveRight = 0.0f, moveUp = 0.0f;
+            if (GetAsyncKeyState('W') & 0x8000) moveFwd += 1.0f;
+            if (GetAsyncKeyState('S') & 0x8000) moveFwd -= 1.0f;
+            if (GetAsyncKeyState('D') & 0x8000) moveRight += 1.0f;
+            if (GetAsyncKeyState('A') & 0x8000) moveRight -= 1.0f;
+            if (GetAsyncKeyState(VK_SPACE) & 0x8000) moveUp += 1.0f;
+            if ((GetAsyncKeyState(VK_CONTROL) & 0x8000) || (GetAsyncKeyState('C') & 0x8000)) moveUp -= 1.0f;
+            if (GetAsyncKeyState(VK_SHIFT) & 0x8000) {
+                moveFwd *= 2.5f; moveRight *= 2.5f; moveUp *= 2.5f;
+            }
+
+            const float speed = s_freecamSpeed.load() * (1.0f / 60.0f);
+            float fwdLen = std::hypot(s_lastCamFwd[0], s_lastCamFwd[1]);
+            if (fwdLen < 0.001f) fwdLen = 1.0f;
+            const float hFwd[2]   = { s_lastCamFwd[0] / fwdLen, s_lastCamFwd[1] / fwdLen };
+            const float hRight[2] = { hFwd[1], -hFwd[0] };
+
+            s_freecamPos[0] += (hFwd[0] * moveFwd + hRight[0] * moveRight) * speed;
+            s_freecamPos[1] += (hFwd[1] * moveFwd + hRight[1] * moveRight) * speed;
+            s_freecamPos[2] += (s_lastCamFwd[2] * moveFwd + moveUp) * speed;
+        }
+
+        // 5. Infinite Ammo & Bottomless Clip
+        if (s_infiniteAmmo.load() || s_bottomlessClip.load()) {
+            __try {
+                // Weapons inventory in unit record (slots at unit + 0x2C4, active index at +0x2C0)
+                int16_t activeSlot = *reinterpret_cast<const int16_t*>(player.biped + 0x2C0);
+                if (activeSlot >= 0 && activeSlot < 4) {
+                    int32_t weapHandle = *reinterpret_cast<const int32_t*>(player.biped + 0x2C4 + static_cast<size_t>(activeSlot) * 4);
+                    if (weapHandle != -1) {
+                        uint8_t* weap = ObjectData(pool, weapHandle);
+                        if (weap) {
+                            if (s_bottomlessClip.load()) {
+                                *reinterpret_cast<int16_t*>(weap + 0x3030) = 999; // magazine ammo
+                            }
+                            if (s_infiniteAmmo.load()) {
+                                *reinterpret_cast<int16_t*>(weap + 0x3034) = 999; // reserve ammo
+                            }
+                        }
                     }
                 }
-            }
+            } __except (EXCEPTION_EXECUTE_HANDLER) {}
         }
-    }
 
-    // 8. Infinite Equipment Energy
-    if (s_infiniteEquipment.load()) {
-        uint32_t eqDatum = *reinterpret_cast<const uint32_t*>(biped + 0x3E8);
-        if (eqDatum != 0xFFFFFFFF && eqDatum != 0) {
-            int eqIdx = eqDatum & 0xFFFF;
-            if (eqIdx < pool.capacity) {
-                uint8_t* equip = *reinterpret_cast<uint8_t**>(pool.records + static_cast<size_t>(eqIdx) * 24 + 0x10);
-                if (equip) {
-                    *reinterpret_cast<float*>(equip + 0x3030) = 1.0f;
-                    *reinterpret_cast<float*>(equip + 0x3034) = 1.0f;
-                }
-            }
-        }
+        // 6. Process Item Spawn & Give requests
+        ProcessActions(s_baseAddress, pool, player);
     }
-
-    // 9. Process Queued Spawn & Give actions
-    ProcessActions(s_baseAddress, pool, unitDatum, biped);
 }
 
 void DevCheats::BuildCatalog() {
     s_catalog.clear();
 
     // UNSC Weapons
-    s_catalog.push_back({ "Assault Rifle", "UNSC Weapons", "objects/weapons/rifle/assault_rifle/assault_rifle", 0xFFFFFFFF, "Standard issue MA37 automatic rifle." });
-    s_catalog.push_back({ "DMR", "UNSC Weapons", "objects/weapons/rifle/dmr/dmr", 0xFFFFFFFF, "Designated Marksman Rifle (M392)." });
+    s_catalog.push_back({ "Assault Rifle", "UNSC Weapons", "objects/weapons/rifle/assault_rifle/assault_rifle", 0xFFFFFFFF, "MA37 Individual Combat Weapon System." });
+    s_catalog.push_back({ "DMR", "UNSC Weapons", "objects/weapons/rifle/dmr/dmr", 0xFFFFFFFF, "M392 Designated Marksman Rifle." });
     s_catalog.push_back({ "Magnum", "UNSC Weapons", "objects/weapons/pistol/magnum/magnum", 0xFFFFFFFF, "M6G semi-automatic sidearm." });
-    s_catalog.push_back({ "Shotgun", "UNSC Weapons", "objects/weapons/shotgun/shotgun", 0xFFFFFFFF, "M45 Tactical 8-gauge shotgun." });
-    s_catalog.push_back({ "Sniper Rifle", "UNSC Weapons", "objects/weapons/rifle/sniper_rifle/sniper_rifle", 0xFFFFFFFF, "SRS99D Anti-Materiel sniper rifle." });
-    s_catalog.push_back({ "Rocket Launcher", "UNSC Weapons", "objects/weapons/support_high/rocket_launcher/rocket_launcher", 0xFFFFFFFF, "M41 SSR AV/AA twin-tube launcher." });
-    s_catalog.push_back({ "Spartan Laser", "UNSC Weapons", "objects/weapons/support_high/spartan_laser/spartan_laser", 0xFFFFFFFF, "M6 G/GNR directed-energy weapon." });
-    s_catalog.push_back({ "Grenade Launcher", "UNSC Weapons", "objects/weapons/pistol/grenade_launcher/grenade_launcher", 0xFFFFFFFF, "M319 individual explosive launcher." });
-    s_catalog.push_back({ "Target Locator", "UNSC Weapons", "objects/weapons/support_high/target_locator/target_locator", 0xFFFFFFFF, "Orbital bombardment designator." });
-    s_catalog.push_back({ "Machine Gun Turret", "UNSC Weapons", "objects/weapons/turret/machinegun_turret/machinegun_turret", 0xFFFFFFFF, "Detachable AIE-486H heavy turret." });
+    s_catalog.push_back({ "Sniper Rifle", "UNSC Weapons", "objects/weapons/rifle/sniper_rifle/sniper_rifle", 0xFFFFFFFF, "SRS99D Anti-Materiel 14.5mm sniper." });
+    s_catalog.push_back({ "Rocket Launcher", "UNSC Weapons", "objects/weapons/support_high/rocket_launcher/rocket_launcher", 0xFFFFFFFF, "M41 SSR AV/AA twin rocket launcher." });
+    s_catalog.push_back({ "Shotgun", "UNSC Weapons", "objects/weapons/rifle/shotgun/shotgun", 0xFFFFFFFF, "M45 Tactical 8-gauge shotgun." });
+    s_catalog.push_back({ "Grenade Launcher", "UNSC Weapons", "objects/weapons/support_low/grenade_launcher/grenade_launcher", 0xFFFFFFFF, "M319 Individual 40mm launcher." });
+    s_catalog.push_back({ "Spartan Laser", "UNSC Weapons", "objects/weapons/support_high/spartan_laser/spartan_laser", 0xFFFFFFFF, "W/AV M6 G/GNR directed energy beam." });
 
     // Covenant Weapons
-    s_catalog.push_back({ "Plasma Pistol", "Covenant Weapons", "objects/weapons/pistol/plasma_pistol/plasma_pistol", 0xFFFFFFFF, "Type-25 directed energy pistol with EMP." });
-    s_catalog.push_back({ "Plasma Rifle", "Covenant Weapons", "objects/weapons/rifle/plasma_rifle/plasma_rifle", 0xFFFFFFFF, "Type-25 rapid plasma rifle." });
-    s_catalog.push_back({ "Plasma Repeater", "Covenant Weapons", "objects/weapons/rifle/plasma_repeater/plasma_repeater", 0xFFFFFFFF, "Type-51 manual-vent automatic rifle." });
-    s_catalog.push_back({ "Needle Rifle", "Covenant Weapons", "objects/weapons/rifle/needle_rifle/needle_rifle", 0xFFFFFFFF, "Type-31 marksman sub-munitions rifle." });
-    s_catalog.push_back({ "Needler", "Covenant Weapons", "objects/weapons/pistol/needler/needler", 0xFFFFFFFF, "Type-33 tracking crystalline projector." });
-    s_catalog.push_back({ "Energy Sword", "Covenant Weapons", "objects/weapons/melee/energy_sword/energy_sword", 0xFFFFFFFF, "Type-1 plasma melee blade." });
-    s_catalog.push_back({ "Gravity Hammer", "Covenant Weapons", "objects/weapons/melee/gravity_hammer/gravity_hammer", 0xFFFFFFFF, "Type-2 kinetic gravity shock hammer." });
-    s_catalog.push_back({ "Concussion Rifle", "Covenant Weapons", "objects/weapons/support_high/concussion_rifle/concussion_rifle", 0xFFFFFFFF, "Type-50 explosive blast weapon." });
-    s_catalog.push_back({ "Fuel Rod Gun", "Covenant Weapons", "objects/weapons/support_high/fuel_rod_gun/fuel_rod_gun", 0xFFFFFFFF, "Type-33 heavy explosive cannon." });
+    s_catalog.push_back({ "Plasma Pistol", "Covenant Weapons", "objects/weapons/pistol/plasma_pistol/plasma_pistol", 0xFFFFFFFF, "Type-25 Directed Energy Pistol." });
+    s_catalog.push_back({ "Plasma Rifle", "Covenant Weapons", "objects/weapons/rifle/plasma_rifle/plasma_rifle", 0xFFFFFFFF, "Type-25 Directed Energy Rifle." });
+    s_catalog.push_back({ "Needler", "Covenant Weapons", "objects/weapons/pistol/needler/needler", 0xFFFFFFFF, "Type-33 Guided Munitions launcher." });
+    s_catalog.push_back({ "Energy Sword", "Covenant Weapons", "objects/weapons/melee/energy_sword/energy_sword", 0xFFFFFFFF, "Type-1 close combat energy blade." });
+    s_catalog.push_back({ "Gravity Hammer", "Covenant Weapons", "objects/weapons/melee/gravity_hammer/gravity_hammer", 0xFFFFFFFF, "Type-2 Energy Weapon / Fist of Rukt." });
+    s_catalog.push_back({ "Fuel Rod Gun", "Covenant Weapons", "objects/weapons/support_high/flak_cannon/flak_cannon", 0xFFFFFFFF, "Type-33 heavy explosive assault cannon." });
+    s_catalog.push_back({ "Concussion Rifle", "Covenant Weapons", "objects/weapons/support_low/concussion_rifle/concussion_rifle", 0xFFFFFFFF, "Type-50 explosive plasma propellant." });
+    s_catalog.push_back({ "Plasma Repeater", "Covenant Weapons", "objects/weapons/rifle/plasma_repeater/plasma_repeater", 0xFFFFFFFF, "Type-51 manual venting plasma rifle." });
     s_catalog.push_back({ "Plasma Launcher", "Covenant Weapons", "objects/weapons/support_high/plasma_launcher/plasma_launcher", 0xFFFFFFFF, "Type-52 quad tracking launcher." });
     s_catalog.push_back({ "Focus Rifle", "Covenant Weapons", "objects/weapons/rifle/focus_rifle/focus_rifle", 0xFFFFFFFF, "Type-52 continuous beam sniper." });
     s_catalog.push_back({ "Spiker", "Covenant Weapons", "objects/weapons/pistol/spike_rifle/spike_rifle", 0xFFFFFFFF, "Type-25 brutal projectile carbine." });
