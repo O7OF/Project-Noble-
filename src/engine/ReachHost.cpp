@@ -1542,9 +1542,6 @@ static void FillLocalInput(uint8_t* st) {
         SharedTagCache::ProcessPendingSpawn();
     }
 
-    // Developer cheats simulation tick (godmode shields, super speed, super jump, noclip, infinite ammo)
-    DevCheats::Tick(1.0f / 60.0f);
-
     if (ReachArmory::IsMenuMode()) {
         ReachArmory::NotifyEngineTick();
     }
@@ -1582,11 +1579,13 @@ static void FillLocalInput(uint8_t* st) {
     }
     s_escWasDown = escDown;
 
-    // + / Numpad+ opens/closes the developer mod/cheat menu
+#if defined(NOBLE_DEV_BUILD)
+    // + / Numpad+ opens/closes the developer mod/cheat menu (Dev builds only)
     static bool s_plusWasDown = false;
     const bool plusDown = ((GetAsyncKeyState(VK_OEM_PLUS) & 0x8000) != 0) || ((GetAsyncKeyState(VK_ADD) & 0x8000) != 0);
     if (plusDown && !s_plusWasDown && !uiPointer && !PauseMenu::IsGameOver()) DevMenu::Toggle();
     s_plusWasDown = plusDown;
+#endif
 
     // Insert / F3 opens/closes the custom palette; it never uses the native Forge menu's keys.
     static bool s_insertWasDown = false;

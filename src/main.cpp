@@ -756,8 +756,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     // Initialize Shared Tag Cache for cross-map AI spawning (Approach 1)
     noble::SharedTagCache::Initialize(loader->GetModuleHandle(), userStoragePath, reachInstall->workshopDirectory, reachInstall->reachDirectory);
 
-    // Initialize Developer Cheats & Mod Menu engine hooks
+#if defined(NOBLE_DEV_BUILD)
+    // Initialize Developer Cheats & Mod Menu engine hooks (Dev builds only)
     noble::DevCheats::Initialize(loader->GetModuleHandle());
+#endif
 
     // Wire Forge palette placement handler
     noble::ForgeMenu::SetPlaceHandler([](const noble::ForgeMenu::Item& item) -> bool {

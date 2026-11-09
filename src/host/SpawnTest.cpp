@@ -3,6 +3,7 @@
 #if defined(NOBLE_DEV_BUILD)
 #include "common/Logger.hpp"
 #include "hooks/HookManager.hpp"
+#include "engine/DevCheats.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -533,6 +534,7 @@ bool CinematicInProgress() {
 
 uint64_t __fastcall Hook_Tick(int32_t a, int32_t b, int32_t c, float d, float e) {
     const uint64_t result = s_originalTick(a, b, c, d, e);
+    noble::DevCheats::GameTick(a);
     if (!s_firstTick) s_firstTick = GetTickCount64();
     const bool f9 = (GetAsyncKeyState(VK_F9) & 0x8000) != 0 && GetForegroundWindow() != nullptr;
     if (f9 && !s_f9Down) {

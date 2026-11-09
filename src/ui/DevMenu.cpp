@@ -1,4 +1,7 @@
 #include "DevMenu.hpp"
+
+#if defined(NOBLE_DEV_BUILD)
+
 #include "NobleStyle.hpp"
 #include "engine/DevCheats.hpp"
 #include "common/Logger.hpp"
@@ -60,11 +63,10 @@ void DevMenu::Draw() {
     if (!s_open) return;
 
     ImGuiIO& io = ImGui::GetIO();
-    // Dim background slightly behind developer menu
     ImGui::GetBackgroundDrawList()->AddRectFilled(ImVec2(0, 0), io.DisplaySize, IM_COL32(0, 0, 0, 110));
 
     const float s = std::clamp(io.DisplaySize.y / 720.0f, 0.8f, 2.0f);
-    const ImVec2 size(740.0f * s, 540.0f * s);
+    const ImVec2 size(780.0f * s, 560.0f * s);
     const ImVec2 pos((io.DisplaySize.x - size.x) * 0.5f, (io.DisplaySize.y - size.y) * 0.5f);
 
     ImGui::SetNextWindowSize(size, ImGuiCond_FirstUseEver);
@@ -83,10 +85,8 @@ void DevMenu::Draw() {
         return;
     }
 
-    // Keep the Windows arrow visible while menu has pointer
     SetCursor(LoadCursorW(nullptr, IDC_ARROW));
 
-    // Header info
     ImGui::PushFont(NobleStyle::TitleFont());
     ImGui::TextColored(NobleStyle::Accent(), "DEVELOPER CHEAT & MOD MENU");
     ImGui::PopFont();
@@ -97,7 +97,6 @@ void DevMenu::Draw() {
     ImGui::Separator();
     ImGui::Spacing();
 
-    // Tab Bar
     if (ImGui::BeginTabBar("##DevTabs", ImGuiTabBarFlags_None)) {
 
         // TAB 1: PLAYER CHEATS
@@ -106,7 +105,7 @@ void DevMenu::Draw() {
 
             // Godmode
             bool god = DevCheats::IsGodmode();
-            if (ImGui::Checkbox("Godmode (Invulnerability + Instant Shield Regen + Death Immunity)", &god)) {
+            if (ImGui::Checkbox("Godmode (Invulnerability + Instant Shields + Death Immunity)", &god)) {
                 DevCheats::SetGodmode(god);
                 s_statusMessage = god ? "Godmode: ENABLED" : "Godmode: DISABLED";
                 s_statusTime = GetTickCount64();
@@ -189,7 +188,7 @@ void DevMenu::Draw() {
             ImGui::Spacing();
 
             bool infAmmo = DevCheats::IsInfiniteAmmo();
-            if (ImGui::Checkbox("Infinite Reserve Ammo (Always 999 Rounds)", &infAmmo)) {
+            if (ImGui::Checkbox("Infinite Reserve Ammo (Locked at 999)", &infAmmo)) {
                 DevCheats::SetInfiniteAmmo(infAmmo);
                 s_statusMessage = infAmmo ? "Infinite Ammo: ENABLED" : "Infinite Ammo: DISABLED";
                 s_statusTime = GetTickCount64();
@@ -218,25 +217,26 @@ void DevMenu::Draw() {
                 s_statusMessage = infEquip ? "Infinite Equipment: ENABLED" : "Infinite Equipment: DISABLED";
                 s_statusTime = GetTickCount64();
             }
-            ImGui::TextColored(kDim, "Armor abilities (Jetpack, Armor Lock, Sprint, Camo) can be used indefinitely.");
+            ImGui::TextColored(kDim, "Armor abilities (Jetpack, Armor Lock, Sprint, Camo, etc.) never deplete.");
 
             ImGui::Spacing();
             ImGui::Separator();
             ImGui::Spacing();
 
             if (NobleStyle::PrimaryButton("REFILL AMMO & SHIELDS NOW", ImVec2(320.0f * s, 36.0f * s))) {
-                // Instantly refill carried weapons
                 uint32_t unitDatum = DevCheats::GetLocalPlayerUnitDatum();
                 if (unitDatum != 0xFFFFFFFF) {
                     uint8_t* biped = DevCheats::GetObjectByDatum(unitDatum);
                     if (biped) {
                         for (int slot = 0; slot < 4; ++slot) {
-                            uint32_t weaponDatum = *reinterpret_cast<const uint32_t*>(biped + 0x350 + slot * 4);
-                            if (weaponDatum != 0xFFFFFFFF && weaponDatum != 0) {
-                                uint8_t* weapon = DevCheats::GetObjectByDatum(weaponDatum);
+                            uint32_t wDatum = *reinterpret_cast<const uint32_t*>(biped + 0x350 + slot * 4);
+                            if (wDatum != 0xFFFFFFFF && wDatum != 0) {
+                                uint8_t* weapon = DevCheats::GetObjectByDatum(wDatum);
                                 if (weapon) {
                                     *reinterpret_cast<uint32_t*>(weapon + 0x3034) = 999;
                                     *reinterpret_cast<uint32_t*>(weapon + 0x3030) = 99;
+                                    *reinterpret_cast<float*>(weapon + 0x3038) = 1.0f;
+                                    *reinterpret_cast<float*>(weapon + 0x303C) = 0.0f;
                                 }
                             }
                         }
@@ -253,7 +253,6 @@ void DevMenu::Draw() {
         if (ImGui::BeginTabItem("ITEM & VEHICLE SPAWNER")) {
             ImGui::Spacing();
 
-            // Search filter
             ImGui::SetNextItemWidth(320.0f * s);
             ImGui::InputTextWithHint("##SpawnerSearch", "Search weapons, equipment, vehicles...", s_searchQuery, sizeof(s_searchQuery));
             ImGui::SameLine();
@@ -263,9 +262,8 @@ void DevMenu::Draw() {
 
             ImGui::Spacing();
 
-            // Category filter pills
-            const char* categories[] = { "ALL", "UNSC WEAPONS", "COVENANT WEAPONS", "ARMOR ABILITIES", "VEHICLES" };
-            for (int i = 0; i < 5; ++i) {
+            const char* categories[] = { "ALL", "UNSC WEAPONS", "COVENANT WEAPONS", "ARMOR ABILITIES", "VEHICLES", "ACTIVE MAP ITEMS" };
+            for (int i = 0; i < 6; ++i) {
                 if (i > 0) ImGui::SameLine();
                 const bool selected = (s_categoryFilter == i);
                 if (selected) {
@@ -285,22 +283,28 @@ void DevMenu::Draw() {
             ImGui::Separator();
             ImGui::Spacing();
 
-            // Item list table inside scrollable child window
             ImGui::BeginChild("##SpawnerList", ImVec2(0, -38.0f * s), true);
 
-            const auto& catalog = DevCheats::GetCatalog();
+            std::vector<SpawnCatalogItem> itemsToDisplay;
+            if (s_categoryFilter == 5) {
+                itemsToDisplay = DevCheats::GetActiveMapItems();
+                if (itemsToDisplay.empty()) {
+                    ImGui::TextColored(kDim, "No active map entities indexed yet (start or join a match).");
+                }
+            } else {
+                itemsToDisplay = DevCheats::GetCatalog();
+            }
+
             const std::string query(s_searchQuery);
 
-            for (size_t i = 0; i < catalog.size(); ++i) {
-                const auto& item = catalog[i];
+            for (size_t i = 0; i < itemsToDisplay.size(); ++i) {
+                const auto& item = itemsToDisplay[i];
 
-                // Category filtering
                 if (s_categoryFilter == 1 && item.category != "UNSC Weapons") continue;
                 if (s_categoryFilter == 2 && item.category != "Covenant Weapons") continue;
                 if (s_categoryFilter == 3 && item.category != "Armor Abilities") continue;
                 if (s_categoryFilter == 4 && item.category != "Vehicles") continue;
 
-                // Search query filtering
                 if (!query.empty()) {
                     if (!CaseInsensitiveContains(item.name, query) &&
                         !CaseInsensitiveContains(item.category, query) &&
@@ -313,14 +317,28 @@ void DevMenu::Draw() {
 
                 ImGui::BeginGroup();
                 ImGui::TextColored(NobleStyle::Accent(), "%s", item.name.c_str());
-                ImGui::SameLine(180.0f * s);
+                ImGui::SameLine(220.0f * s);
                 ImGui::TextColored(kDim, "[%s]", item.category.c_str());
                 ImGui::TextColored(kBody, "%s", item.description.c_str());
                 ImGui::EndGroup();
 
-                ImGui::SameLine(ImGui::GetWindowWidth() - 150.0f * s);
-                if (NobleStyle::PrimaryButton("SPAWN IN FRONT", ImVec2(135.0f * s, 26.0f * s))) {
-                    DevCheats::SpawnItem(item.tagPath);
+                const bool canGive = (item.category != "Vehicles");
+                const float buttonW = canGive ? 90.0f * s : 140.0f * s;
+                const float groupW = canGive ? (190.0f * s) : (145.0f * s);
+
+                ImGui::SameLine(ImGui::GetWindowWidth() - groupW);
+
+                if (canGive) {
+                    if (NobleStyle::PrimaryButton("GIVE", ImVec2(buttonW, 26.0f * s))) {
+                        DevCheats::QueueItemAction(item.name, item.category, item.tagPath, item.tagIndex, true /* give */);
+                        s_statusMessage = "Gave " + item.name + " directly to player!";
+                        s_statusTime = GetTickCount64();
+                    }
+                    ImGui::SameLine();
+                }
+
+                if (ImGui::Button("SPAWN IN FRONT", ImVec2(canGive ? 90.0f * s : 140.0f * s, 26.0f * s))) {
+                    DevCheats::QueueItemAction(item.name, item.category, item.tagPath, item.tagIndex, false /* spawn */);
                     s_statusMessage = "Spawned " + item.name + " in front of player!";
                     s_statusTime = GetTickCount64();
                 }
@@ -336,7 +354,12 @@ void DevMenu::Draw() {
         ImGui::EndTabBar();
     }
 
-    // Status message at bottom of window
+    std::string lastStat = DevCheats::GetLastStatus();
+    if (!lastStat.empty()) {
+        s_statusMessage = lastStat;
+        s_statusTime = GetTickCount64();
+    }
+
     if (s_statusTime != 0 && (GetTickCount64() - s_statusTime < 4500)) {
         ImGui::Spacing();
         ImGui::TextColored(kGood, ">> %s", s_statusMessage.c_str());
@@ -348,3 +371,5 @@ void DevMenu::Draw() {
 }
 
 } // namespace noble
+
+#endif // defined(NOBLE_DEV_BUILD)
