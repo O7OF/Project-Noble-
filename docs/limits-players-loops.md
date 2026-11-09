@@ -27,8 +27,12 @@ python -I tools/limits/gen_bounds.py "<MCC>\haloreach\haloreach.dll" docs/limits
    ctor 0x3CFA38 (16×) on both copies; zero-filled shadow slots would read as valid id 0. SlotPatch now runs the same
    ctors on the shadow slots (32-player mode). The session ctor also runs 0x10062C over a **17 × 0xC table at
    +0x61574**, a peer table not in the trace list (see tables; not shadowed yet).
-4. **Step loops: 6 installed, 8 blocked, 11 not reviewed** (lists in `gen_steps.py`). Installed:
-   0x391B94 (offset form), 0x39322C, 0x39EC61, 0x39ECD8, 0x408F2E, 0x411986. Blocked because the same loop fills a
+4. **Step loops: 8 installed, 16 blocked, 1 not a session array** (lists in `gen_steps.py`; C12-L step 1 reviewed the
+   last 11 on 2026-11-09). Installed: 0x391B94 (offset form), 0x39322C, 0x39EC61, 0x39ECD8, 0x408F2E, 0x411986,
+   **0x44BDE3, 0x44CCEF** (both read-only walks; bounds 0x44BDEA / 0x44CCF6 raised with them). Newly blocked by their
+   own fixed tables: 0x404B4A (17-dword stack table, 0x90 frame), 0x41FC64 (17 x 6 stack table), 0x4314D3 (0x35-byte
+   output entries), 0x431B1E (16 x 0x3A), 0x44CB51 / 0x44CCA1 / 0x44CD5F (16-entry tables in the 0xA10 struct built by
+   0x44BCE8), 0x4509E8 (4-byte table at rbp+0x990). 0x4215AE is not a session array (0x4E0E908 object, +0xF00). Blocked because the same loop fills a
    fixed table: 0xD8C9, 0x39E212/9, 0x3FFD7F, 0x41E9B5, 0x41F576, 0x41F61E, 0x41F95B.
 5. **Bounds: 137 raised, 41 kept at 16/17.** Kept = every entry in a function that also fills a fixed table
    (0xD6B8, 0x38DA74, 0x390DB0, 0x39C6B4, 0x39DD4C, 0x3C0248, 0x40A760, 0x41E7C8, 0x41F510) and the 3 `other`

@@ -31,6 +31,8 @@ BLOCKED = {
 # (rva, original imm8) for loops reached only through the step caves
 EXTRA = [
     (0x41198D, 0x10),   # 4118C8: cmp r9d,0x10
+    (0x44BDEA, 0x10),   # 44BCE8: cmp r10d,0x10 (step cave 0x44BDE3)
+    (0x44CCF6, 0x10),   # 44C9BC: cmp ecx,0x10 (step cave 0x44CCEF)
 ]
 
 # Other encodings in the step-cave loops: (rva, stock bytes, 32-player bytes, what)
