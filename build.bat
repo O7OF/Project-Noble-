@@ -192,16 +192,6 @@ echo  Build succeeded.
 echo  Executable: build\bin\Release\noble-client.exe
 echo ===================================================
 
-echo ===================================================
-echo  Packaging and publishing release build...
-echo ===================================================
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\publish-release.ps1" -SkipBuild
-if !ERRORLEVEL! neq 0 (
-    echo [!] Warning: publish-release.ps1 finished with code !ERRORLEVEL!.
-) else (
-    echo [i] Release package compiled and pushed successfully.
-)
-
 if "%~1"=="" pause
 exit /b 0
 
