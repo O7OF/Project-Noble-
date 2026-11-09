@@ -148,3 +148,13 @@ S1 = rsp+0x30 = rbp-0xD0 (copy of half B), S2 = rbp+0x2140 (copy of static half 
 - Its peer scans 0x396AA1 / 0x396B0A are ALREADY raised to 0x20 in SlotBoundsTable (d107dc0), so in today's
   32-player mode peers 17..31 would write inline past the 17 peer records of S1/S2 (into the copies' player
   arrays). 32-player mode must not be switched on before 0x396AB4 gets its side-area cave.
+
+## Plan C implemented (2026-11-09, built, not tested)
+- 0x396828 frame 0x8F00 -> 0xC540 (probe size `mov eax`, `lea rbp`, epilogue; own unwind copy: ALLOC_LARGE 0x18A8,
+  save slots 0x18AF/B0/B1; GS cookie offset 0x8EF0 unchanged). sideS1 = rbp+0x8E00, sideS2 = rbp+0xB010 (0x2210
+  apart, 15 x 0x158 each), pushes at rbp+0xC440.
+- #5/#6 -> StackCopyMirror: memcpy, then always writes all 15 side records (source session's shadow peers, else 0).
+- 0x396B3F -> StackCompareMirror: engine memcmp, then the two side areas when the inline copies are equal.
+- 0x396AB4 cave: idx >= 17 -> rcx = 0x8EA8 + (idx - 17) * 0x158, else the original imul.
+- Frame growth is one table (`kFrames`: 0x390DB0, 0x396828), all byte-, context- and unwind-checked.
+- **Safety gate:** `-slot-players 32` now refuses (and logs the blockers) unless `NOBLE_SLOT_PLAYERS_UNSAFE=1`.

@@ -77,13 +77,65 @@ const Bound kFrame390[] = {
 };
 // 0x390DB0's unwind info (shared with 0x35B1E4, so it is copied, not edited): UWOP_ALLOC_LARGE 0x300 and the
 // rbx/rsi/rdi save slots 0x338/0x340/0x348 move by 0x100. GS handler data (cookie at frame+0x2F0) is unchanged.
-constexpr uint32_t kFrame390Begin = 0x390DB0, kFrame390End = 0x3915A7;
 constexpr uint8_t kFrame390Unwind[40] = {
     0x19, 0x37, 0x0D, 0x00, 0x26, 0x74, 0x69, 0x00, 0x26, 0x64, 0x68, 0x00, 0x26, 0x34, 0x67, 0x00,
     0x26, 0x01, 0x60, 0x00, 0x18, 0xF0, 0x16, 0xE0, 0x14, 0xD0, 0x12, 0xC0, 0x10, 0x50, 0x00, 0x00,
     0x0E, 0x37, 0x79, 0x00, 0xF0, 0x02, 0x00, 0x00 };
-constexpr struct { uint8_t at, from, to; } kFrame390UnwindEdits[] = {
+struct ByteEdit { uint8_t at, from, to; };
+constexpr ByteEdit kFrame390UnwindEdits[] = {
     { 6, 0x69, 0x89 }, { 10, 0x68, 0x88 }, { 14, 0x67, 0x87 }, { 18, 0x60, 0x80 } };
+
+// Plan C: 0x396828 builds two stack copies of a membership half (S1 = rsp+0x30 = rbp-0xD0 from static half B,
+// S2 = rbp+0x2140 from static half A, 0x2210 each). Peers 17..31 of both copies get side areas in a grown frame.
+// The six operands at 0x396AC2..0x396AE5 are [rbp+rcx+disp] with disp(S2) - disp(S1) = 0x2210, so the side areas
+// sit 0x2210 apart and one constant serves both: sideS1 = rbp+0x8E00..+0xA228, sideS2 = rbp+0xB010..+0xC438
+// (15 x 0x158 each). Frame 0x8F00 -> 0xC540 (+0x3640); rbp = rsp+0x100 still, so every local keeps its offset, the
+// GS cookie stays at rbp+0x8DF0 (= frame+0x8EF0), and the pushes start at rbp+0xC440 (8 bytes above sideS2's end).
+// The probe size (`mov eax`) feeds both __chkstk and `sub rsp, rax`.
+constexpr uint32_t kSideFromCopy = 0x8ED0;           // side area = copy start + this, for S1 and S2
+constexpr size_t kSidePeerBytes = 15 * 0x158;        // peers 17..31
+const Bound kFrame396[] = {
+    { 0x396840, 7, { 0x48, 0x8D, 0xA8, 0xD8, 0x71, 0xFF, 0xFF }, { 0x48, 0x8D, 0xA8, 0x98, 0x3B, 0xFF, 0xFF } },  // lea rbp,[rax-0x8E28] -> -0xC468
+    { 0x396847, 5, { 0xB8, 0x00, 0x8F, 0x00, 0x00 }, { 0xB8, 0x40, 0xC5, 0x00, 0x00 } },                          // mov eax,0x8F00 -> 0xC540 (probe + sub rsp,rax)
+    { 0x396E20, 8, { 0x4C, 0x8D, 0x9C, 0x24, 0x00, 0x8F, 0x00, 0x00 }, { 0x4C, 0x8D, 0x9C, 0x24, 0x40, 0xC5, 0x00, 0x00 } },  // epilogue lea r11,[rsp+0x8F00]
+};
+// Context bytes that must also match (not changed): the probe call and `sub rsp, rax`.
+const Bound kFrame396Context[] = {
+    { 0x39684C, 5, { 0xE8, 0x7F, 0x5A, 0x4D, 0x00 }, {} },
+    { 0x396851, 3, { 0x48, 0x2B, 0xE0 }, {} },
+};
+constexpr uint8_t kFrame396Unwind[40] = {
+    0x19, 0x3D, 0x0D, 0x00, 0x2C, 0x74, 0xE9, 0x11, 0x2C, 0x64, 0xE8, 0x11, 0x2C, 0x34, 0xE7, 0x11,
+    0x2C, 0x01, 0xE0, 0x11, 0x18, 0xF0, 0x16, 0xE0, 0x14, 0xD0, 0x12, 0xC0, 0x10, 0x50, 0x00, 0x00,
+    0x0E, 0x37, 0x79, 0x00, 0xF0, 0x8E, 0x00, 0x00 };
+// ALLOC_LARGE 0x11E0 -> 0x18A8 (x8), rbx/rsi/rdi save slots 0x11E7/E8/E9 -> 0x18AF/B0/B1; GS data 0x8EF0 unchanged.
+constexpr ByteEdit kFrame396UnwindEdits[] = {
+    { 6, 0xE9, 0xB1 }, { 7, 0x11, 0x18 }, { 10, 0xE8, 0xB0 }, { 11, 0x11, 0x18 },
+    { 14, 0xE7, 0xAF }, { 15, 0x11, 0x18 }, { 18, 0xE0, 0xA8 }, { 19, 0x11, 0x18 } };
+
+struct FrameGrow {
+    uint32_t begin, end;
+    const Bound* code; size_t codeCount;
+    const Bound* context; size_t contextCount;
+    const uint8_t* unwind;                     // 40 bytes
+    const ByteEdit* unwindEdits; size_t unwindEditCount;
+};
+const FrameGrow kFrames[] = {
+    { 0x390DB0, 0x3915A7, kFrame390, std::size(kFrame390), nullptr, 0, kFrame390Unwind, kFrame390UnwindEdits, std::size(kFrame390UnwindEdits) },
+    { 0x396828, 0x396E41, kFrame396, std::size(kFrame396), kFrame396Context, std::size(kFrame396Context), kFrame396Unwind, kFrame396UnwindEdits, std::size(kFrame396UnwindEdits) },
+};
+constexpr size_t kUnwindBytes = 40;
+
+// 0x396AB4 `imul rcx, rdx, 0x158` (peer index; feeds only the six S1/S2 operands): idx >= 17 -> side area.
+//   cmp rdx,0x11 / jae big / imul rcx,rdx,0x158 / jmp back
+//   big: lea rcx,[rdx-0x11] / imul rcx,rcx,0x158 / add rcx,0x8EA8 / jmp back     (0x8EA8 = sideS1 - S1 peer 0)
+constexpr uint32_t kSideCaveRva = 0x396AB4;
+constexpr uint8_t kSideCaveOriginal[7] = { 0x48, 0x69, 0xCA, 0x58, 0x01, 0x00, 0x00 };
+constexpr uint8_t kSideCave[41] = {
+    0x48, 0x83, 0xFA, 0x11, 0x73, 0x0C, 0x48, 0x69, 0xCA, 0x58, 0x01, 0x00, 0x00, 0xE9, 0, 0, 0, 0,
+    0x48, 0x8D, 0x4A, 0xEF, 0x48, 0x69, 0xC9, 0x58, 0x01, 0x00, 0x00, 0x48, 0x81, 0xC1, 0xA8, 0x8E, 0x00, 0x00,
+    0xE9, 0, 0, 0, 0 };
+constexpr uint32_t kSideCaveBack[2] = { 14, 37 };
 
 // Whole-block copies and clears (scope count in docs/limits-players-loops.md). Each `call memcpy/memset` below is
 // redirected to a Noble wrapper that makes the original call and then mirrors it onto the shadow slots when the
@@ -100,6 +152,13 @@ constexpr CallSite kCopySites[] = {
     { 0x396CBE, kMemcpyRva, "#7 0x396828 memcpy 0x2210 (half A -> half B)" },
     { 0x16FEA9, kMemsetRva, "#8 0x16FE2C memset 0x16D8 (peer array)" },
 };
+// Plan C call sites in 0x396828 (own wrappers: they always fill / compare the S1/S2 side areas).
+constexpr uint32_t kMemcmpRva = 0x794270;
+constexpr CallSite kStackCopySites[] = {
+    { 0x396A6F, kMemcpyRva, "#5 0x396828 memcpy 0x2210 (half A -> S2)" },
+    { 0x396A7F, kMemcpyRva, "#6 0x396828 memcpy 0x2210 (half B -> S1)" },
+};
+constexpr CallSite kStackCompareSite = { 0x396B3F, kMemcmpRva, "0x396828 memcmp 0x2210 (S2 vs S1)" };
 
 constexpr uintptr_t kSessionsRva = 0x2B07418;   // 4 static session membership objects
 constexpr uintptr_t kSessionStride = 0x61668;
@@ -176,6 +235,31 @@ void* __cdecl MemsetMirror(void* dst, int value, size_t n) {
     return r;
 }
 
+// #5 / #6: copy a static half into S1/S2, then always fill all 15 side records of that copy: the source session's
+// shadow peers 17..31 when the source half's peer array is a session array, otherwise zeros. The side area is
+// never left uninitialised, so the widened compare below only ever reads written bytes.
+void* __cdecl StackCopyMirror(void* dst, const void* src, size_t n) {
+    void* r = std::memcpy(dst, src, n);
+    uint8_t* side = static_cast<uint8_t*>(dst) + kSideFromCopy;
+    uint32_t os = 0;
+    const int ks = StaticSession(src, os);
+    const Array* peers = nullptr;
+    if (ks >= 0) for (const Array& a : kArrays) if (a.peer && a.offset == os + 0x28) peers = &a;   // half + 0x28
+    if (peers) std::memcpy(side, ShadowSlots(ks, *peers), kSidePeerBytes);
+    else std::memset(side, 0, kSidePeerBytes);
+    return r;
+}
+
+// 0x396B3F: S2 vs S1 change test; equal inline copies are also compared on their side areas.
+using MemcmpFn = int (__cdecl*)(const void*, const void*, size_t);
+MemcmpFn gEngineMemcmp = nullptr;
+int __cdecl StackCompareMirror(const void* a, const void* b, size_t n) {
+    const int r = gEngineMemcmp(a, b, n);
+    if (r != 0) return r;
+    return std::memcmp(static_cast<const uint8_t*>(a) + kSideFromCopy, static_cast<const uint8_t*>(b) + kSideFromCopy,
+                       kSidePeerBytes);
+}
+
 // Memory within +-2 GB of `target`, so rel32 jumps and the imm32 shadow constant reach it.
 void* AllocateNear(uintptr_t target, size_t size, DWORD protect) {
     SYSTEM_INFO si{};
@@ -194,6 +278,7 @@ void* AllocateNear(uintptr_t target, size_t size, DWORD protect) {
 
 void WriteCode(uintptr_t at, const void* bytes, size_t n);
 void Put32(uint8_t* p, int64_t v);
+void JumpTo(uintptr_t at, const uint8_t* cave);
 
 // UNWIND_INFO is addressed by a 32-bit RVA from the image base, so a copy has to live above the image, within 4 GB.
 void* AllocateAbove(uintptr_t base, size_t size) {
@@ -207,76 +292,103 @@ void* AllocateAbove(uintptr_t base, size_t size) {
     return nullptr;
 }
 
-// The loaded engine's own function-table entry for 0x390DB0 (V16/Full carry their own .pdata, so it is looked up,
-// not taken from a stock file offset). nullptr when it is not the expected entry and unwind block.
-RUNTIME_FUNCTION* Frame390Entry(uintptr_t base) {
+// The loaded engine's own function-table entry for a grown frame (V16/Full carry their own .pdata, so it is looked
+// up, not taken from a stock file offset). nullptr when it is not the expected entry and unwind block.
+RUNTIME_FUNCTION* FrameEntry(uintptr_t base, const FrameGrow& f) {
     DWORD64 imageBase = 0;
-    auto* rf = RtlLookupFunctionEntry(base + kFrame390Begin, &imageBase, nullptr);
-    if (!rf || imageBase != base || rf->BeginAddress != kFrame390Begin || rf->EndAddress != kFrame390End) return nullptr;
-    if (std::memcmp(reinterpret_cast<void*>(base + rf->UnwindData), kFrame390Unwind, sizeof(kFrame390Unwind)) != 0) return nullptr;
+    auto* rf = RtlLookupFunctionEntry(base + f.begin, &imageBase, nullptr);
+    if (!rf || imageBase != base || rf->BeginAddress != f.begin || rf->EndAddress != f.end) return nullptr;
+    if (std::memcmp(reinterpret_cast<void*>(base + rf->UnwindData), f.unwind, kUnwindBytes) != 0) return nullptr;
     return rf;
 }
 
-bool Frame390Matches(uintptr_t base) {
-    for (const Bound& b : kFrame390)
-        if (std::memcmp(reinterpret_cast<void*>(base + b.rva), b.original, b.length) != 0) {
-            NOBLE_WARN("SlotPatch: 0x390DB0 frame code at +0x{:X} does not match", b.rva);
+bool BytesMatch(uintptr_t base, const Bound* b, size_t n, const char* what) {
+    for (size_t i = 0; i < n; ++i)
+        if (std::memcmp(reinterpret_cast<void*>(base + b[i].rva), b[i].original, b[i].length) != 0) {
+            NOBLE_WARN("SlotPatch: {} code at +0x{:X} does not match", what, b[i].rva);
             return false;
         }
-    if (!Frame390Entry(base)) { NOBLE_WARN("SlotPatch: 0x390DB0 unwind entry does not match"); return false; }
     return true;
 }
 
-// Call only after Frame390Matches. The unwind copy goes in first, so a stack walk never sees the grown code with
-// the old frame size (Install runs before the engine's first frame, so 0x390DB0 is not on any stack).
-bool ApplyFrame390(uintptr_t base, void* unwindCopy) {
-    RUNTIME_FUNCTION* rf = Frame390Entry(base);
-    if (!rf || !unwindCopy) return false;
-    auto* u = static_cast<uint8_t*>(unwindCopy);
-    std::memcpy(u, kFrame390Unwind, sizeof(kFrame390Unwind));
-    for (const auto& e : kFrame390UnwindEdits) u[e.at] = e.to;
-    DWORD old = 0;
-    VirtualProtect(u, sizeof(kFrame390Unwind), PAGE_READONLY, &old);
-    const auto rva = static_cast<DWORD>(reinterpret_cast<uintptr_t>(u) - base);
-    WriteCode(reinterpret_cast<uintptr_t>(&rf->UnwindData), &rva, sizeof(rva));
-    for (const Bound& b : kFrame390) WriteCode(base + b.rva, b.patched, b.length);
-    return true;
-}
-
-// `call rel32` at the site must reach the stock memcpy/memset.
-bool CopySitesMatch(uintptr_t base) {
-    for (const CallSite& s : kCopySites) {
-        const auto* p = reinterpret_cast<const uint8_t*>(base + s.rva);
-        int32_t rel = 0;
-        std::memcpy(&rel, p + 1, 4);
-        if (p[0] != 0xE8 || s.rva + 5 + rel != s.target) {
-            NOBLE_WARN("SlotPatch: block copy call at +0x{:X} does not match ({})", s.rva, s.what);
-            return false;
-        }
+bool FramesMatch(uintptr_t base) {
+    for (const FrameGrow& f : kFrames) {
+        if (!BytesMatch(base, f.code, f.codeCount, "frame") || !BytesMatch(base, f.context, f.contextCount, "frame")) return false;
+        for (size_t i = 0; i < f.unwindEditCount; ++i)
+            if (f.unwind[f.unwindEdits[i].at] != f.unwindEdits[i].from) return false;   // table self-check
+        if (!FrameEntry(base, f)) { NOBLE_WARN("SlotPatch: unwind entry of +0x{:X} does not match", f.begin); return false; }
     }
     return true;
 }
 
-// Two `jmp [rip+0]; dq target` stubs near the engine, then every site's rel32 points at its stub.
-bool ApplyCopySites(uintptr_t base, uint8_t* stubs) {
-    if (!stubs) return false;
-    const void* targets[2] = { reinterpret_cast<const void*>(&MemcpyMirror), reinterpret_cast<const void*>(&MemsetMirror) };
-    for (int i = 0; i < 2; ++i) {
-        uint8_t* s = stubs + i * 16;
+// Call only after FramesMatch. Each unwind copy goes in before its code, so a stack walk never sees the grown code
+// with the old frame size (Install runs before the engine's first frame, so neither function is on any stack).
+void ApplyFrames(uintptr_t base, uint8_t* unwindCopies) {
+    for (size_t i = 0; i < std::size(kFrames); ++i) {
+        const FrameGrow& f = kFrames[i];
+        RUNTIME_FUNCTION* rf = FrameEntry(base, f);
+        uint8_t* u = unwindCopies + i * 64;
+        std::memcpy(u, f.unwind, kUnwindBytes);
+        for (size_t j = 0; j < f.unwindEditCount; ++j) u[f.unwindEdits[j].at] = f.unwindEdits[j].to;
+        const auto rva = static_cast<DWORD>(reinterpret_cast<uintptr_t>(u) - base);
+        WriteCode(reinterpret_cast<uintptr_t>(&rf->UnwindData), &rva, sizeof(rva));
+        for (size_t j = 0; j < f.codeCount; ++j) WriteCode(base + f.code[j].rva, f.code[j].patched, f.code[j].length);
+    }
+    DWORD old = 0;
+    VirtualProtect(unwindCopies, std::size(kFrames) * 64, PAGE_READONLY, &old);
+}
+
+// `call rel32` at the site must reach the expected engine function.
+bool CallMatches(uintptr_t base, const CallSite& s) {
+    const auto* p = reinterpret_cast<const uint8_t*>(base + s.rva);
+    int32_t rel = 0;
+    std::memcpy(&rel, p + 1, 4);
+    if (p[0] == 0xE8 && s.rva + 5 + rel == s.target) return true;
+    NOBLE_WARN("SlotPatch: call at +0x{:X} does not match ({})", s.rva, s.what);
+    return false;
+}
+
+bool CallSitesMatch(uintptr_t base) {
+    for (const CallSite& s : kCopySites) if (!CallMatches(base, s)) return false;
+    for (const CallSite& s : kStackCopySites) if (!CallMatches(base, s)) return false;
+    if (!CallMatches(base, kStackCompareSite)) return false;
+    if (std::memcmp(reinterpret_cast<void*>(base + kSideCaveRva), kSideCaveOriginal, sizeof(kSideCaveOriginal)) != 0) {
+        NOBLE_WARN("SlotPatch: 0x396AB4 imul does not match");
+        return false;
+    }
+    return true;
+}
+
+constexpr size_t kStubBytes = 4 * 16 + 48;   // 4 jump stubs + the 0x396AB4 side cave
+
+// Stubs `jmp [rip+0]; dq target` near the engine (0 memcpy mirror, 1 memset mirror, 2 stack copy, 3 stack
+// compare) and the 0x396AB4 cave at +64; then every call site's rel32 points at its stub.
+void ApplyCallSites(uintptr_t base, uint8_t* stubs) {
+    gEngineMemcmp = reinterpret_cast<MemcmpFn>(base + kMemcmpRva);
+    const void* targets[4] = { reinterpret_cast<const void*>(&MemcpyMirror), reinterpret_cast<const void*>(&MemsetMirror),
+                               reinterpret_cast<const void*>(&StackCopyMirror), reinterpret_cast<const void*>(&StackCompareMirror) };
+    for (int i = 0; i < 4; ++i) {
         const uint8_t jmp[6] = { 0xFF, 0x25, 0, 0, 0, 0 };
-        std::memcpy(s, jmp, 6);
-        std::memcpy(s + 6, &targets[i], 8);
+        std::memcpy(stubs + i * 16, jmp, 6);
+        std::memcpy(stubs + i * 16 + 6, &targets[i], 8);
     }
+    uint8_t* cave = stubs + 64;
+    std::memcpy(cave, kSideCave, sizeof(kSideCave));
+    const uintptr_t back = base + kSideCaveRva + sizeof(kSideCaveOriginal);
+    for (const uint32_t at : kSideCaveBack)
+        Put32(cave + at, static_cast<int64_t>(back) - reinterpret_cast<intptr_t>(cave + at + 4));
     DWORD old = 0;
-    VirtualProtect(stubs, 32, PAGE_EXECUTE_READ, &old);
-    FlushInstructionCache(GetCurrentProcess(), stubs, 32);
-    for (const CallSite& s : kCopySites) {
-        const uint8_t* stub = stubs + (s.target == kMemcpyRva ? 0 : 16);
+    VirtualProtect(stubs, kStubBytes, PAGE_EXECUTE_READ, &old);
+    FlushInstructionCache(GetCurrentProcess(), stubs, kStubBytes);
+    auto redirect = [&](const CallSite& s, int stub) {
         uint8_t rel[4];
-        Put32(rel, reinterpret_cast<intptr_t>(stub) - static_cast<intptr_t>(base + s.rva + 5));
+        Put32(rel, reinterpret_cast<intptr_t>(stubs + stub * 16) - static_cast<intptr_t>(base + s.rva + 5));
         WriteCode(base + s.rva + 1, rel, 4);
-    }
-    return true;
+    };
+    for (const CallSite& s : kCopySites) redirect(s, s.target == kMemcpyRva ? 0 : 1);
+    for (const CallSite& s : kStackCopySites) redirect(s, 2);
+    redirect(kStackCompareSite, 3);
+    JumpTo(base + kSideCaveRva, cave);
 }
 
 bool Requested() {
@@ -353,6 +465,19 @@ void Install(HMODULE engine, bool extendedProfile) {
         }
     }
     bool players32 = Players32Requested();
+    // Safety gate: 32-player mode is known to be unsafe until the blockers in docs/limits-players-loops.md are
+    // fixed (raised bounds already send slots >= 16 through uncaved code). Dev override only.
+    if (players32) {
+        wchar_t unsafe[8] = {};
+        if (GetEnvironmentVariableW(L"NOBLE_SLOT_PLAYERS_UNSAFE", unsafe, 8) == 0 || unsafe[0] != L'1') {
+            NOBLE_WARN("SlotPatch: -slot-players 32 refused: not safe yet (169 untraced imul sites incl. 6 in 0x390DB0, "
+                       "the 17 x 0xC table at block+0x4440, remaining step-3 tables, players pool, network encoding). "
+                       "Dev override: NOBLE_SLOT_PLAYERS_UNSAFE=1. Staying in 16-player mode");
+            players32 = false;
+        } else {
+            NOBLE_WARN("SlotPatch: NOBLE_SLOT_PLAYERS_UNSAFE=1 - enabling the known-unsafe 32-player mode (dev only)");
+        }
+    }
     if (players32) {
         for (const Step& s : kSteps) {
             if (std::memcmp(reinterpret_cast<void*>(base + s.rva), s.original, sizeof(s.original)) != 0) {
@@ -368,8 +493,8 @@ void Install(HMODULE engine, bool extendedProfile) {
                 players32 = false;
             }
         }
-        if (players32 && !Frame390Matches(base)) players32 = false;
-        if (players32 && !CopySitesMatch(base)) players32 = false;
+        if (players32 && !FramesMatch(base)) players32 = false;
+        if (players32 && !CallSitesMatch(base)) players32 = false;
     }
     const uintptr_t sessions = base + kSessionsRva;
     // Shadow objects: same stride as the real ones, so shadow(obj) = obj + delta for all four.
@@ -378,13 +503,13 @@ void Install(HMODULE engine, bool extendedProfile) {
     for (const Site& s : kSites) caveBytes += Rounded(s.caveLength);
     if (players32) for (const Step& s : kSteps) caveBytes += Rounded(s.caveLength);
     auto* caves = static_cast<uint8_t*>(AllocateNear(base, caveBytes, PAGE_READWRITE));
-    void* unwindCopy = players32 ? AllocateAbove(base, sizeof(kFrame390Unwind)) : nullptr;
-    auto* copyStubs = players32 ? static_cast<uint8_t*>(AllocateNear(base, 32, PAGE_READWRITE)) : nullptr;
-    if (!shadow || !caves || (players32 && (!unwindCopy || !copyStubs))) {
+    auto* unwindCopies = players32 ? static_cast<uint8_t*>(AllocateAbove(base, std::size(kFrames) * 64)) : nullptr;
+    auto* copyStubs = players32 ? static_cast<uint8_t*>(AllocateNear(base, kStubBytes, PAGE_READWRITE)) : nullptr;
+    if (!shadow || !caves || (players32 && (!unwindCopies || !copyStubs))) {
         NOBLE_ERROR("SlotPatch: could not allocate memory near the engine; nothing patched");
         if (shadow) VirtualFree(shadow, 0, MEM_RELEASE);
         if (caves) VirtualFree(caves, 0, MEM_RELEASE);
-        if (unwindCopy) VirtualFree(unwindCopy, 0, MEM_RELEASE);
+        if (unwindCopies) VirtualFree(unwindCopies, 0, MEM_RELEASE);
         if (copyStubs) VirtualFree(copyStubs, 0, MEM_RELEASE);
         return;
     }
@@ -422,17 +547,18 @@ void Install(HMODULE engine, bool extendedProfile) {
         cave = stepCaves;
         for (const Step& s : kSteps) { JumpTo(base + s.rva, cave); cave += Rounded(s.caveLength); }
         for (const Bound& b : kBounds) WriteCode(base + b.rva, b.patched, b.length);
-        ApplyFrame390(base, unwindCopy);   // checked above (Frame390Matches); cannot fail here
         gSessions = sessions;
         gShadow = shadow;
-        ApplyCopySites(base, copyStubs);   // checked above (CopySitesMatch)
+        ApplyFrames(base, unwindCopies);   // checked above (FramesMatch)
+        ApplyCallSites(base, copyStubs);   // checked above (CallSitesMatch); after ApplyFrames: the side areas exist
     }
     FlushInstructionCache(GetCurrentProcess(), reinterpret_cast<void*>(base), 0x1000000);
     NOBLE_INFO("SlotPatch: {} slot address sites redirected (players >= 16, peers >= 17 -> shadow sessions at {:p}, "
                "delta 0x{:X})", std::size(kSites), static_cast<void*>(shadow), static_cast<uint64_t>(delta));
     if (players32)
         NOBLE_WARN("SlotPatch: 32-player mode (dev): {} step loops, {} loop bounds raised to 32, 0x390DB0 frame +0x100 "
-                   "(32-entry name table), {} block copy/clear sites mirrored onto the shadow; other tables in docs/limits-players-loops.md are still 16/17 and the "
+                   "(32-entry name table), {} block copy/clear sites mirrored onto the shadow, 0x396828 S1/S2 peer side "
+                   "areas; other tables in docs/limits-players-loops.md are still 16/17 and the "
                    "players pool is not raised here", std::size(kSteps), std::size(kBounds), std::size(kCopySites));
     else
         NOBLE_INFO("SlotPatch: 16-player mode; inert until -slot-players 32");
