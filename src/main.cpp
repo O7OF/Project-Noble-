@@ -997,14 +997,18 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         }
         if (!lobbyTeams.empty()) {
             NOBLE_INFO("main: applying {} lobby team assignment(s) to the match", lobbyTeams.size());
+            // Re-issued for three minutes, once every 3 s. The engine only has a team when its session starts
+            // (tens of seconds into the load) and its override is a lobby-side request, so a handful of early
+            // one-shot commands all landed while the map was still loading and were dropped.
             std::thread([teams = lobbyTeams] {
-                for (int waitMs : { 2500, 6000, 14000, 26000 }) {
-                    std::this_thread::sleep_for(std::chrono::milliseconds(waitMs));
-                    noble::BlamEngine* engine = noble::BlamEngine::Active();
-                    if (!engine) continue;
-                    for (size_t i = 0; i < teams.size(); ++i) {
-                        engine->ExecuteCommand("player_override_team " + std::to_string(i) + " " + std::to_string(teams[i] - 1));
+                const ULONGLONG start = GetTickCount64();
+                while (GetTickCount64() - start < 180000) {
+                    if (noble::BlamEngine* engine = noble::BlamEngine::Active()) {
+                        for (size_t i = 0; i < teams.size(); ++i) {
+                            engine->ExecuteCommand("player_override_team " + std::to_string(i) + " " + std::to_string(teams[i] - 1));
+                        }
                     }
+                    std::this_thread::sleep_for(std::chrono::milliseconds(3000));
                 }
             }).detach();
         }
