@@ -132,6 +132,12 @@ bool Window::Create() {
     // that fits the container's client area completely, so the user never experiences the window closing
     // and opening a new one.
     if (m_containerParentHwnd && IsWindow(m_containerParentHwnd)) {
+        // Ensure container parent window clips children so its rendering/swapchain cannot paint over child
+        LONG_PTR parentStyle = GetWindowLongPtrW(m_containerParentHwnd, GWL_STYLE);
+        if (!(parentStyle & WS_CLIPCHILDREN)) {
+            SetWindowLongPtrW(m_containerParentHwnd, GWL_STYLE, parentStyle | WS_CLIPCHILDREN | WS_CLIPSIBLINGS);
+        }
+
         RECT parentRc{};
         GetClientRect(m_containerParentHwnd, &parentRc);
         int parentW = parentRc.right - parentRc.left;
@@ -141,7 +147,7 @@ bool Window::Create() {
             m_height = static_cast<uint32_t>(parentH);
         }
         m_hwnd = CreateWindowExW(
-            0,
+            WS_EX_NOPARENTNOTIFY,
             wc.lpszClassName,
             m_title.c_str(),
             WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
@@ -156,6 +162,8 @@ bool Window::Create() {
             return false;
         }
         s_activeHwnd.store(m_hwnd);
+        SetWindowPos(m_hwnd, HWND_TOP, 0, 0, static_cast<int>(m_width), static_cast<int>(m_height), SWP_SHOWWINDOW | SWP_FRAMECHANGED);
+        BringWindowToTop(m_hwnd);
         SetFocus(m_hwnd);
         NOBLE_INFO("Win32 container child window created: {}x{} [Parent: 0x{:X}]",
                    m_width, m_height, reinterpret_cast<uintptr_t>(m_containerParentHwnd));
@@ -166,11 +174,11 @@ bool Window::Create() {
     // it has started, so a maximized or dragged-larger window can only stretch (and pixelate) that picture.
     // WINDOW MODE = BORDERLESS FULL SCREEN is the full-screen path: it creates the window at the monitor's
     // size. The menu process additionally supersamples 1.5x and the window downscales that cleanly.
-    DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
+    DWORD style = (WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_CLIPCHILDREN | WS_CLIPSIBLINGS);
     int windowWidth = 0, windowHeight = 0, posX = 0, posY = 0;
     if (m_borderless) {
         // Borderless: a popup window the size of the primary monitor.
-        style = WS_POPUP;
+        style = (WS_POPUP | WS_CLIPCHILDREN | WS_CLIPSIBLINGS);
         m_width = static_cast<uint32_t>(GetSystemMetrics(SM_CXSCREEN));
         m_height = static_cast<uint32_t>(GetSystemMetrics(SM_CYSCREEN));
         windowWidth = static_cast<int>(m_width);

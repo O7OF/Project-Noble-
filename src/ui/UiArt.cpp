@@ -622,19 +622,21 @@ bool ImportMenuBackgroundImage(const std::filesystem::path& source, std::string&
 UiTexture LoadingBackground(const std::string& scenario) {
     std::lock_guard<std::mutex> lock(s_mutex);
     return Cached("loading:" + scenario, [&]() -> UiTexture {
-    for (const fs::path& dir : { CustomDir() / "loading", NobleDir() / "loading" }) {
-        fs::path p = FindImage(dir, scenario);
-        if (p.empty()) p = FindImage(dir, "default");
-        if (!p.empty()) {
-            UiTexture t = FileCached(p);
-            if (t) return t;
+        for (const fs::path& dir : { CustomDir() / "loading", NobleDir() / "loading" }) {
+            fs::path p = FindImage(dir, scenario);
+            if (p.empty()) p = FindImage(dir, "default");
+            if (!p.empty()) {
+                UiTexture t = FileCached(p);
+                if (t) return t;
+            }
         }
-    }
-    if (UiTexture t = SceneCached(scenario)) return t;
-    // Multiplayer / Firefight: no per-map scene is known, so use a Reach campaign scene; the loading
-    // screen adds the map's preview on top.
-    const SceneFingerprint& pick = kCampaignScenes[std::hash<std::string>{}(scenario) % 10 + 1];
-    return SceneCached(pick.scenario);
+        // 1. If an authentic 1920x1080 loading scene exists (campaign missions), use it
+        if (UiTexture t = SceneCached(scenario)) return t;
+        // 2. Use the map's own authentic high-res level preview (covers all MP, Firefight, and Forge maps)
+        if (UiTexture preview = MapPreview(scenario, true)) return preview;
+        // 3. Fallback to Forge World large image
+        if (UiTexture fw = MapPreview("forge_halo", true)) return fw;
+        return {};
     });
 }
 

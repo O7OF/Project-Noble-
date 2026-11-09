@@ -580,6 +580,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             launchMap = "20_sword_slayer";
             launchMode = "multiplayer";
         }
+        noble::PauseMenu::SetLoadingMap(launchMap);
+        if (!mapTitle.empty() || !mapImage.empty() || !mapThumb.empty()) {
+            noble::PauseMenu::SetLoadingMapInfo(mapTitle, mapImage, mapThumb);
+        }
     }
 
 
@@ -958,6 +962,13 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             window->ApplyWindowSettings(startupSettings.width, startupSettings.height, true);
             NOBLE_INFO("main: -live-window-test switched to borderless full screen without restarting");
         }
+
+        if (noble::FrontEndMenu::IsMatchRunning()) {
+            noble::FrontEndMenu::CheckMatchStatus();
+            MsgWaitForMultipleObjectsEx(0, nullptr, 25, QS_ALLINPUT, MWMO_ALERTABLE);
+            continue;
+        }
+
         blamEngine->Update(0.016f);
 
         // haloreach.dll's engine thread presents (host slot 1). After a match it stops drawing; then the

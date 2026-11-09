@@ -308,6 +308,10 @@ static std::atomic<bool> s_presentHookInstalled{false};
 static std::atomic<bool> s_presentHookAttempted{false};
 
 static HRESULT STDMETHODCALLTYPE HookSwapChainPresent(IDXGISwapChain* swapChain, UINT syncInterval, UINT flags) {
+    if (noble::FrontEndMenu::IsMatchRunning()) {
+        Sleep(25);
+        return S_OK; // Match is running in child container window; discard parent presentation completely
+    }
     (void)syncInterval;
     // DISPLAY MODE = FULLSCREEN: enter/leave DXGI exclusive full screen on this (the render) thread.
     SyncExclusiveFullscreen(swapChain);
@@ -388,6 +392,10 @@ static void InstallPresentSettingsHook(IDXGISwapChain* swapChain) {
 
 static uint64_t __fastcall HostSlot1_FrameTick(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
     (void)thisPtr; (void)a2; (void)a3; (void)a4;
+    if (noble::FrontEndMenu::IsMatchRunning()) {
+        Sleep(25);
+        return 0; // Match is running in child container window; suppress parent engine frame tick
+    }
     // haloreach.dll invokes Slot 1 every frame before Present. a1 = the swap chain it is about to
     // present (the engine host::hit case 1). Our passes draw here, on the engine thread, because the engine
     // owns the immediate context.

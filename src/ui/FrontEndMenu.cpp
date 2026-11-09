@@ -2310,6 +2310,7 @@ struct OverlayContext {
 std::mutex s_overlayMutex;
 std::atomic<IDXGISwapChain*> s_overlaySwapChain{nullptr};
 std::atomic<ULONGLONG> s_lastEngineOverlayFrame{0};
+static std::atomic<bool> s_isMatchRunning{false};
 
 OverlayContext& GetOverlayCtx() {
     static OverlayContext s_ctx;
@@ -4918,12 +4919,14 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
             CloseHandle(reinterpret_cast<HANDLE>(ctx.hMatchProcess));
             ctx.hMatchProcess = nullptr;
             ctx.matchRunning = false;
+            FrontEndMenu::SetMatchRunning(false);
             NOBLE_INFO("FrontEndMenu: container child match finished (exit code {}), restoring menu", exitCode);
             SessionManager::Get().Initialize();
             MasterServerClient::Get().SetUrl(Settings::Get().Snapshot().masterServerUrl);
             MasterServerClient::Get().RequestOnlineCount();
             ReachAudio::SetMenuMusicEnabled(true);
             ReachAudio::SetMusicVolume(Settings::Get().Snapshot().volumeMusic);
+            ProcessAudio::ApplyAll(Settings::Get().Snapshot().volumeGame, Settings::Get().Snapshot().volumeMusic, Settings::Get().Snapshot().volumeOther, Settings::Get().Snapshot().masterMute);
         } else {
             // Child match process is currently active and presenting in the child window inside this container!
             return;
@@ -6352,6 +6355,34 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
 
 } // namespace
 
+bool FrontEndMenu::IsMatchRunning() {
+    return s_isMatchRunning.load();
+}
+
+void FrontEndMenu::SetMatchRunning(bool running) {
+    s_isMatchRunning.store(running);
+}
+
+void FrontEndMenu::CheckMatchStatus() {
+    OverlayContext& ctx = GetOverlayCtx();
+    if (ctx.matchRunning && ctx.hMatchProcess) {
+        DWORD exitCode = 0;
+        if (GetExitCodeProcess(reinterpret_cast<HANDLE>(ctx.hMatchProcess), &exitCode) && exitCode != STILL_ACTIVE) {
+            CloseHandle(reinterpret_cast<HANDLE>(ctx.hMatchProcess));
+            ctx.hMatchProcess = nullptr;
+            ctx.matchRunning = false;
+            FrontEndMenu::SetMatchRunning(false);
+            NOBLE_INFO("FrontEndMenu: container child match finished (exit code {}), restoring menu", exitCode);
+            SessionManager::Get().Initialize();
+            MasterServerClient::Get().SetUrl(Settings::Get().Snapshot().masterServerUrl);
+            MasterServerClient::Get().RequestOnlineCount();
+            ReachAudio::SetMenuMusicEnabled(true);
+            ReachAudio::SetMusicVolume(Settings::Get().Snapshot().volumeMusic);
+            ProcessAudio::ApplyAll(Settings::Get().Snapshot().volumeGame, Settings::Get().Snapshot().volumeMusic, Settings::Get().Snapshot().volumeOther, Settings::Get().Snapshot().masterMute);
+        }
+    }
+}
+
 bool FrontEndMenu::ShouldShow() {
     bool hasMap = false;
     bool menuRequested = false;
@@ -6844,7 +6875,7 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
 }
 
 void FrontEndMenu::RenderOverlay(IDXGISwapChain* swapChain) {
-    if (!swapChain) return;
+    if (!swapChain || IsMatchRunning()) return;
     s_overlaySwapChain.store(swapChain);
     s_lastEngineOverlayFrame.store(GetTickCount64());
     std::lock_guard<std::mutex> lock(s_overlayMutex);
@@ -6852,6 +6883,7 @@ void FrontEndMenu::RenderOverlay(IDXGISwapChain* swapChain) {
 }
 
 bool FrontEndMenu::HoldFrame() {
+    if (IsMatchRunning()) return false;
     OverlayContext& ctx = GetOverlayCtx();
     if (!ctx.initialized || ctx.closed || !ReachArmory::IsMenuMode()) return false;
     const ULONGLONG last = s_lastEngineOverlayFrame.load();
@@ -6872,6 +6904,7 @@ bool FrontEndMenu::HoldFrame() {
 }
 
 void FrontEndMenu::RenderOverlayImpl(IDXGISwapChain* swapChain, bool clear) {
+    if (IsMatchRunning()) return;
     OverlayContext& ctx = GetOverlayCtx();
     if (!ctx.initialized || ctx.closed || !swapChain || !ImGui::GetCurrentContext()) return;
 
@@ -7109,6 +7142,7 @@ void FrontEndMenu::RenderOverlayImpl(IDXGISwapChain* swapChain, bool clear) {
                 if (Relaunch::StartChildMatch(args, reinterpret_cast<void**>(&hChild))) {
                     ctx.hMatchProcess = hChild;
                     ctx.matchRunning = true;
+                    FrontEndMenu::SetMatchRunning(true);
                     done = false;
                     choice.play = false;
                     ReachAudio::StopMusic();

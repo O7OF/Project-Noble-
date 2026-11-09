@@ -5,6 +5,7 @@
 #include "network/NetworkTransport.hpp"
 #include "network/MasterServerClient.hpp"
 #include "ui/LoadScreen.hpp"
+#include "ui/PauseMenu.hpp"
 #include "career/Career.hpp"
 #include "vfs/VFS.hpp"
 #include "hooks/HookManager.hpp"
@@ -253,13 +254,13 @@ uint32_t BlamEngine::ResolveMapId(const std::string& mapName) {
     }
 
     // Firefight Maps (210 - 219)
-    if (lower.find("beachhead") != std::string::npos || lower.find("ff10_prototype") != std::string::npos || lower == "210") return 210;
+    if (lower.find("beachhead") != std::string::npos || lower.find("ff50_park") != std::string::npos || lower == "210") return 210;
     if (lower.find("corvette") != std::string::npos || lower.find("ff45_corvette") != std::string::npos || lower == "211") return 211;
     if (lower.find("courtyard") != std::string::npos || lower.find("ff20_courtyard") != std::string::npos || lower == "212") return 212;
     if (lower.find("glacier") != std::string::npos || lower.find("ff60_icecave") != std::string::npos || lower == "213") return 213;
     if (lower.find("holdout") != std::string::npos || lower.find("ff70_holdout") != std::string::npos || lower == "214") return 214;
-    if (lower.find("outpost") != std::string::npos || lower.find("ff60_airview") != std::string::npos || lower == "215") return 215;
-    if (lower.find("overlook") != std::string::npos || lower.find("ff50_park") != std::string::npos || lower == "216") return 216;
+    if (lower.find("outpost") != std::string::npos || lower.find("ff60_airview") != std::string::npos || lower.find("ff60_ruins") != std::string::npos || lower == "215") return 215;
+    if (lower.find("overlook") != std::string::npos || lower.find("ff10_prototype") != std::string::npos || lower == "216") return 216;
     if (lower.find("waterfront") != std::string::npos || lower.find("ff30_waterfront") != std::string::npos || lower == "217") return 217;
     if (lower.find("unearthed") != std::string::npos || lower.find("ff_unearthed") != std::string::npos || lower == "218") return 218;
     if (lower.find("installation 04") != std::string::npos || lower.find("installation04") != std::string::npos || lower.find("cex_ff_halo") != std::string::npos || lower == "219") return 219;
@@ -960,6 +961,7 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
     m_currentMap = mapName;
     m_currentMode = gameMode;
     m_isGameRunning = true;
+    PauseMenu::SetLoadingMap(mapName);
 
     NOBLE_INFO("=================================================");
     NOBLE_INFO(" LAUNCHING HALO: REACH MISSION / MAP: {}", mapName);

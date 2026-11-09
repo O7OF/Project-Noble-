@@ -2284,6 +2284,9 @@ void PauseMenu::DrawLoading() {
     modImage = s_loadingImage;
     modThumb = s_loadingThumb;
   }
+  if (mapName.empty() && !scenario.empty()) {
+    mapName = Upper(DisplayName(scenario));
+  }
   dl->AddRectFilledMultiColor(ImVec2(0, 0), ImVec2(w, h),
                               IM_COL32(10, 16, 24, 255),
                               IM_COL32(10, 16, 24, 255), IM_COL32(2, 4, 8, 255),
@@ -2291,24 +2294,9 @@ void PauseMenu::DrawLoading() {
   const UiTexture scene = modImage.empty() ? UiArt::LoadingBackground(scenario) : UiArt::ImageFile(modImage);
   if (scene) {
     UiArt::DrawCover(dl, scene, ImVec2(0, 0), ImVec2(w, h));
-    dl->AddRectFilledMultiColor(ImVec2(0, h * 0.55f), ImVec2(w, h),
+    dl->AddRectFilledMultiColor(ImVec2(0, h * 0.50f), ImVec2(w, h),
                                 IM_COL32(0, 0, 0, 0), IM_COL32(0, 0, 0, 0),
-                                IM_COL32(0, 0, 0, 215), IM_COL32(0, 0, 0, 215));
-  }
-  // Multiplayer and Firefight have no per-map scene: show the map's preview as
-  // well.
-  const bool campaign = scenario.size() >= 3 && scenario[0] == 'm' &&
-                        scenario[1] >= '0' && scenario[1] <= '9';
-  if (!campaign) {
-    const UiTexture preview = modThumb.empty() ? UiArt::MapPreview(scenario, true) : UiArt::ImageFile(modThumb);
-    if (preview) {
-      const float pw = w * 0.30f, ph = pw * 292.0f / 668.0f;
-      const ImVec2 p0(w * 0.93f - pw, h * 0.80f - ph), p1(w * 0.93f, h * 0.80f);
-      dl->AddRectFilled(ImVec2(p0.x - 4, p0.y - 4), ImVec2(p1.x + 4, p1.y + 4),
-                        IM_COL32(0, 0, 0, 160));
-      UiArt::DrawCover(dl, preview, p0, p1);
-      dl->AddRect(p0, p1, IM_COL32(170, 200, 220, 140));
-    }
+                                IM_COL32(0, 0, 0, 230), IM_COL32(0, 0, 0, 230));
   }
 
   const ImVec4 accent = NobleStyle::Accent();
@@ -2316,25 +2304,25 @@ void PauseMenu::DrawLoading() {
   const ImU32 mutedCol =
       ImGui::ColorConvertFloat4ToU32(NobleStyle::TextMuted());
 
-  const float left = w * 0.07f;
-  const float base = h * 0.80f;
+  const float left = w * 0.08f;
+  const float base = h * 0.85f;
 
   ImFont *title = NobleStyle::TitleFont();
   ImFont *font = ImGui::GetFont();
   const float titleSize =
-      title ? title->FontSize * 1.4f : ImGui::GetFontSize() * 2.0f;
-  dl->AddText(font, ImGui::GetFontSize(),
-              ImVec2(left, base - titleSize - 26.0f), mutedCol, "LOADING");
+      title ? title->FontSize * 1.5f : ImGui::GetFontSize() * 2.2f;
+  dl->AddText(font, ImGui::GetFontSize() * 1.1f,
+              ImVec2(left, base - titleSize - 28.0f), mutedCol, "LOADING");
   if (!mapName.empty()) {
     dl->AddText(title ? title : font, titleSize,
-                ImVec2(left, base - titleSize - 4.0f),
+                ImVec2(left, base - titleSize - 2.0f),
                 IM_COL32(235, 240, 245, 255), mapName.c_str());
   }
 
-  const float barW = w * 0.30f;
+  const float barW = w * 0.32f;
   const float barH = 4.0f;
-  const ImVec2 b0(left, base + 8.0f);
-  const ImVec2 b1(left + barW, base + 8.0f + barH);
+  const ImVec2 b0(left, base + 12.0f);
+  const ImVec2 b1(left + barW, base + 12.0f + barH);
   dl->AddRectFilled(b0, b1, IM_COL32(255, 255, 255, 30));
   const float t = static_cast<float>(ImGui::GetTime());
   const float seg = barW * 0.25f;
