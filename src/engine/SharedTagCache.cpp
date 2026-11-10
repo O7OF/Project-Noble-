@@ -5,6 +5,7 @@
 #include <psapi.h>
 #include <algorithm>
 #include <fstream>
+#include <set>
 
 namespace noble {
 
@@ -421,6 +422,25 @@ bool SharedTagCache::InjectScenarioPalette(uint8_t* activeTagTableMemory) {
     if (tagCount <= 0 || tagCount > 0x8000) return false;
 
     NOBLE_INFO("SharedTagCache: Active map has {} tags in memory; cataloging active tags...", tagCount);
+
+    // Diagnostic: which tag groups this map actually carries, as four-character codes. It answers questions like
+    // "does this map have multiplayer_object_type_list (the Forge palette's object list)?" without a tag parser.
+    {
+        std::set<std::string> groups;
+        for (int32_t i = 0; i < tagCount; ++i) {
+            const int16_t g = *reinterpret_cast<const int16_t*>(activeTagTableMemory + i * 8);
+            if (g < 0) continue;
+            const uint32_t magic = *reinterpret_cast<const uint32_t*>(activeTagTableMemory + 0x3FFFC + g * 16);
+            char code[5] = { static_cast<char>(magic & 0xFF), static_cast<char>((magic >> 8) & 0xFF),
+                             static_cast<char>((magic >> 16) & 0xFF), static_cast<char>((magic >> 24) & 0xFF), 0 };
+            bool printable = true;
+            for (int k = 0; k < 4; ++k) if (code[k] < 0x20 || code[k] > 0x7E) { printable = false; break; }
+            if (printable) groups.insert(code);
+        }
+        std::string list;
+        for (const std::string& g : groups) { if (!list.empty()) list += ' '; list += g; }
+        NOBLE_INFO("SharedTagCache: {} tag group(s) in this map: {}", groups.size(), list);
+    }
 
     // Map common items from the active map tag table into s_tagPathToDatum
     for (int32_t i = 0; i < tagCount; ++i) {
