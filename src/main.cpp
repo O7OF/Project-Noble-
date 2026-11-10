@@ -701,9 +701,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         if (fs::is_regular_file(infoSrc, infoEc)) {
             std::ifstream infoIn(infoSrc, std::ios::binary);
             std::vector<uint8_t> infoBytes((std::istreambuf_iterator<char>(infoIn)), std::istreambuf_iterator<char>());
-            // Only for a map that really is a multiplayer canvas. Forcing a Firefight canvas to "multiplayer"
-            // makes the engine accept the launch, but it then cannot enter Forge edit mode on it (no Forge menu,
-            // and the session loops), which is the engine telling us the map is Firefight-only after all.
+            // Forcing a Firefight canvas to "multiplayer" gets the launch accepted, but the session it produces has
+            // no Forge palette and loops the round - the engine dies mid-load when the mod's own map is served.
+            // Until the mod-map manifest is fed to the engine the way MCC does it, leave those canvases alone so
+            // they keep running as Firefight (where they work).
             const bool firefightCanvas = infoBytes.size() > 0x44 && infoBytes[0x42] == 0x04;
             if (firefightCanvas) {
                 NOBLE_INFO("main: '{}' is a Firefight canvas; leaving its map info alone (play it as Firefight)", launchMap);
