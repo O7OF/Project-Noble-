@@ -72,6 +72,16 @@ std::vector<std::string> StringList(const json& j, const char* key) {
     return out;
 }
 
+// The Firefight scenarios Reach ships. A mod built on one of these can only be started by the Firefight engine.
+bool IsFirefightScenario(const std::string& baseScenario) {
+    static const char* const kFirefight[] = {
+        "cex_ff_halo", "ff50_park", "ff45_corvette", "ff20_courtyard", "ff60_icecave", "ff70_holdout",
+        "ff60_airview", "ff60_ruins", "ff10_prototype", "ff30_waterfront", "ff_unearthed",
+    };
+    for (const char* name : kFirefight) if (baseScenario == name) return true;
+    return false;
+}
+
 bool ReadMap(const fs::path& file, ModMap& map) {
     json j;
     if (!ReadJson(file, j)) return false;
@@ -158,6 +168,24 @@ void ScanFolder(const fs::path& root, bool workshop, std::vector<ModEntry>& out)
         mod.campaign = ReadMaps(dir.path(), campaignList, "campaign");
         mod.firefight = ReadMaps(dir.path(), StringList(contents, "FirefightMaps"), "firefight");
         mod.multiplayer = ReadMaps(dir.path(), StringList(contents, "MultiplayerMaps"), "multiplayer");
+        // A map is listed by the scenario it is built on, not by the folder the author put its JSON in. Several
+        // AI Battleground mods ship Firefight-canvas maps inside multiplayer (Installation 04 = cex_ff_halo,
+        // Glacier = ff60_icecave); the engine refuses those scenarios in Forge ("map and game incompatible") but
+        // runs them as Firefight, so they belong in the Firefight list.
+        {
+            std::vector<ModMap> moved;
+            for (auto it = mod.multiplayer.begin(); it != mod.multiplayer.end();) {
+                if (IsFirefightScenario(it->baseScenario)) {
+                    NOBLE_INFO("ModCatalog: '{}' is built on Firefight map '{}'; listing it under Firefight",
+                               it->title, it->baseScenario);
+                    moved.push_back(*it);
+                    it = mod.multiplayer.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+            for (ModMap& m : moved) mod.firefight.push_back(std::move(m));
+        }
         auto markMapFiles = [&](std::vector<ModMap>& maps) {
             for (ModMap& m : maps) {
                 m.hasMapFile = fs::is_regular_file(dir.path() / "maps" / (m.scenario + ".map"), ec);
