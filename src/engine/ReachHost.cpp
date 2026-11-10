@@ -271,6 +271,10 @@ static uint64_t __fastcall HostSlot0_QueryInterface(void* thisPtr, uint64_t a1, 
 static void ExecuteGammaPass(IDXGISwapChain* swapChain);
 static void ResetGammaPass();
 static std::atomic<bool> s_sessionStarted{false};
+// Last time the engine pumped a frame; a stall watchdog (main.cpp, NOBLE_STALL_DUMP=1) reads this to dump the
+// thread stacks when the engine stops making progress without crashing.
+std::atomic<uint64_t> s_lastFrameTickMs{0};
+uint64_t ReachHost::GetLastFrameTickMs() { return s_lastFrameTickMs.load(); }
 static std::atomic<bool> s_testCaptureRequest{false};  // -scoreboard-at: screenshot on the next frame  // set on the first slot-10 call (loading screen ends)
 
 // Test option "-end-round-after <seconds>": ends the current round that many seconds after the
@@ -594,6 +598,7 @@ static uint64_t __fastcall HostSlot1_FrameTick(void* thisPtr, uint64_t a1, uint6
     // owns the immediate context.
     static std::atomic<uint64_t> s_frameCount{0};
     uint64_t frames = ++s_frameCount;
+    s_lastFrameTickMs.store(GetTickCount64());
     if (ReachArmory::IsMenuMode()) {
         ReachArmory::Tick();
         if (a1 > 0x10000) {

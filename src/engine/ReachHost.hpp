@@ -19,6 +19,8 @@ public:
 
     // True while an engine UI screen (e.g. the native Forge menu) is up.
     static bool IsUiScreenActive();
+    // GetTickCount64 of the last engine frame (0 until the first), for the stall watchdog.
+    static uint64_t GetLastFrameTickMs();
 
     void* GetInterface() { return m_hostObject; }
     void* GetSecondInterface() { return m_secondObject; }

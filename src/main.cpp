@@ -51,6 +51,7 @@
 
 #include <windows.h>
 #include <shellapi.h>
+#include <tlhelp32.h>
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -221,6 +222,65 @@ VOID WINAPI ExitProcessHook(UINT code) {
     NOBLE_ERROR("ExitProcess({}) requested from haloreach+0x{:X} (caller 0x{:X})", code, callerRva, caller);
     if (auto logger = spdlog::default_logger()) logger->flush();
     if (s_origExitProcess) s_origExitProcess(code);
+}
+
+} // namespace
+
+namespace {
+
+// Walk every thread's stack with dbghelp. Used by the stall watchdog: the engine can stop pumping frames without
+// crashing, and this says exactly which call each thread is parked in (module + RVA, no symbols needed).
+void DumpAllThreadStacks() {
+    NOBLE_ERROR("STALL DUMP: no engine frame for 15 s; dumping thread stacks");
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    if (snap == INVALID_HANDLE_VALUE) return;
+    SymSetOptions(SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS | SYMOPT_LOAD_LINES);
+    SymInitialize(GetCurrentProcess(), nullptr, TRUE);   // TRUE: load the module list, or the stack walk stops after one frame
+    THREADENTRY32 te{};
+    te.dwSize = sizeof(te);
+    if (Thread32First(snap, &te)) {
+        do {
+            if (te.th32OwnerProcessID != GetCurrentProcessId() || te.th32ThreadID == GetCurrentThreadId()) continue;
+            HANDLE th = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE, te.th32ThreadID);
+            if (!th) continue;
+            if (SuspendThread(th) == static_cast<DWORD>(-1)) { CloseHandle(th); continue; }
+            CONTEXT ctx{};
+            ctx.ContextFlags = CONTEXT_FULL;
+            if (GetThreadContext(th, &ctx)) {
+                STACKFRAME64 sf{};
+                sf.AddrPC.Offset = ctx.Rip;
+                sf.AddrPC.Mode = AddrModeFlat;
+                sf.AddrFrame.Offset = ctx.Rbp;
+                sf.AddrFrame.Mode = AddrModeFlat;
+                sf.AddrStack.Offset = ctx.Rsp;
+                sf.AddrStack.Mode = AddrModeFlat;
+                char head[64];
+                std::snprintf(head, sizeof(head), "  thread %lu:", static_cast<unsigned long>(te.th32ThreadID));
+                NOBLE_ERROR("{}", head);
+                for (int i = 0; i < 12; ++i) {
+                    if (!StackWalk64(IMAGE_FILE_MACHINE_AMD64, GetCurrentProcess(), th, &sf, &ctx, nullptr,
+                                     SymFunctionTableAccess64, SymGetModuleBase64, nullptr)) break;
+                    const uintptr_t pc = static_cast<uintptr_t>(sf.AddrPC.Offset);
+                    HMODULE mod = nullptr;
+                    WCHAR path[MAX_PATH] = L"?";
+                    if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                                           reinterpret_cast<LPCWSTR>(pc), &mod)) {
+                        GetModuleFileNameW(mod, path, MAX_PATH);
+                        const std::string moduleName = std::filesystem::path(path).filename().string();
+                        char line[512];
+                        std::snprintf(line, sizeof(line), "    %02d %s +0x%llX", i, moduleName.c_str(),
+                                      static_cast<unsigned long long>(pc - reinterpret_cast<uintptr_t>(mod)));
+                        NOBLE_ERROR("{}", line);
+                    }
+                }
+            }
+            ResumeThread(th);
+            CloseHandle(th);
+        } while (Thread32Next(snap, &te));
+    }
+    SymCleanup(GetCurrentProcess());
+    CloseHandle(snap);
+    if (auto logger = spdlog::default_logger()) logger->flush();
 }
 
 } // namespace
@@ -1202,6 +1262,24 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     // 11. Native Win32 message pump: Drive frame rendering, wireframe dots, UI overlays, and swap chain Present
     const ULONGLONG liveWindowStart = GetTickCount64();
     bool liveWindowSwitched = false;
+    // NOBLE_STALL_DUMP=1: if the engine stops pumping frames for 15 s, dump every thread's stack once.
+    {
+        wchar_t stallEnv[8] = {};
+        if (GetEnvironmentVariableW(L"NOBLE_STALL_DUMP", stallEnv, 8) > 0 && stallEnv[0] != L'0') {
+            std::thread([] {
+                for (int i = 0; i < 300; ++i) {
+                    Sleep(1000);
+                    const uint64_t last = noble::ReachHost::Get().GetLastFrameTickMs();
+                    if (last == 0) continue;
+                    if (GetTickCount64() - last > 15000) {
+                        DumpAllThreadStacks();
+                        return;
+                    }
+                }
+            }).detach();
+        }
+    }
+
     while (window->ProcessMessages()) {
         if (!liveWindowSwitched && liveWindowTestAt >= 0 &&
             GetTickCount64() - liveWindowStart >= static_cast<ULONGLONG>(liveWindowTestAt) * 1000ull) {
