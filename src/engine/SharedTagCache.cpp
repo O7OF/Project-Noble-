@@ -419,7 +419,11 @@ bool SharedTagCache::InjectScenarioPalette(uint8_t* activeTagTableMemory) {
 
     // TagTable helper accesses tag count at +0x3FFF8 and entries at +i*8.
     int32_t tagCount = *reinterpret_cast<const int32_t*>(activeTagTableMemory + 0x3FFF8);
-    if (tagCount <= 0 || tagCount > 0x8000) return false;
+    NOBLE_INFO("SharedTagCache: palette step on tag table 0x{:X}: {} tag(s)", reinterpret_cast<uintptr_t>(activeTagTableMemory), tagCount);
+    if (tagCount <= 0 || tagCount > 0x8000) {
+        NOBLE_WARN("SharedTagCache: palette step skipped (tag count {} out of range)", tagCount);
+        return false;
+    }
 
     NOBLE_INFO("SharedTagCache: Active map has {} tags in memory; cataloging active tags...", tagCount);
 
