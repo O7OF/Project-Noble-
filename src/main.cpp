@@ -701,7 +701,14 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         if (fs::is_regular_file(infoSrc, infoEc)) {
             std::ifstream infoIn(infoSrc, std::ios::binary);
             std::vector<uint8_t> infoBytes((std::istreambuf_iterator<char>(infoIn)), std::istreambuf_iterator<char>());
-            if (infoBytes.size() > 0x44 && (infoBytes[0x42] != 0x00 || (infoBytes[0x43] & 0x40) == 0)) {
+            // Only for a map that really is a multiplayer canvas. Forcing a Firefight canvas to "multiplayer"
+            // makes the engine accept the launch, but it then cannot enter Forge edit mode on it (no Forge menu,
+            // and the session loops), which is the engine telling us the map is Firefight-only after all.
+            const bool firefightCanvas = infoBytes.size() > 0x44 && infoBytes[0x42] == 0x04;
+            if (firefightCanvas) {
+                NOBLE_INFO("main: '{}' is a Firefight canvas; leaving its map info alone (play it as Firefight)", launchMap);
+            }
+            if (!firefightCanvas && infoBytes.size() > 0x44 && (infoBytes[0x42] != 0x00 || (infoBytes[0x43] & 0x40) == 0)) {
                 const uint8_t stockType = infoBytes[0x42];
                 infoBytes[0x42] = 0x00;                                              // multiplayer engine type
                 infoBytes[0x43] = static_cast<uint8_t>(infoBytes[0x43] | 0x40);      // multiplayer map flag
@@ -850,6 +857,34 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         const std::wstring actors = std::to_wstring(startupSettings.aiActors);
         SetEnvironmentVariableW(L"NOBLE_AI_ACTORS", actors.c_str());
     }
+    // A mod may ship its own patched haloreach.dll ("modded haloreach.dll (REQUIRED)"): the AI Battleground mods
+    // do, and that binary carries patches Noble does not apply (e.g. the AI-spawn jump at RVA 0x6920B5). Load it
+    // when it is the same build as the installed one - Noble's hooks are RVA-based, so only that layout is known.
+    fs::path modEngineDll;
+    if (!modFolder.empty()) {
+        std::error_code modEc;
+        std::vector<fs::path> candidates = {
+            modFolder / "modded haloreach.dll (REQUIRED)" / "haloreach.dll",
+            modFolder / "haloreach.dll",
+        };
+        for (const auto& entry : fs::directory_iterator(modFolder, modEc)) {
+            if (entry.is_directory(modEc)) candidates.push_back(entry.path() / "haloreach.dll");
+        }
+        for (const auto& candidate : candidates) {
+            if (fs::is_regular_file(candidate, modEc)) { modEngineDll = candidate; break; }
+        }
+        if (!modEngineDll.empty()) {
+            const auto modSize = fs::file_size(modEngineDll, modEc);
+            const auto stockSize = fs::file_size(reachInstall->reachDllPath, modEc);
+            if (modSize == 0 || modSize != stockSize) {
+                NOBLE_WARN("main: the mod's haloreach.dll ({} bytes) is not the installed build ({} bytes); using Noble's engine",
+                           modSize, stockSize);
+                modEngineDll.clear();
+            } else {
+                NOBLE_INFO("main: loading the mod's own haloreach.dll (same build, mod-patched): '{}'", modEngineDll.string());
+            }
+        }
+    }
     const noble::limits::Profile requestedLimits = noble::limits::ProfileFromInt(startupSettings.extendedLimits);
     const noble::limits::PrepareResult engineDll =
         noble::limits::PrepareEngineDll(reachInstall->reachDllPath, requestedLimits);
@@ -862,7 +897,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     auto loader = std::make_unique<noble::Loader>();
     // The second path is the installed DLL: its folder is where the engine's own dependencies (xaudio2, MCC
     // binaries) are found. Pass both even for a fallback, so the copy never becomes the dependency root.
-    if (!loader->LoadReachDll(engineDll.dllPath, reachInstall->reachDllPath)) {
+    const fs::path engineToLoad = modEngineDll.empty() ? engineDll.dllPath : modEngineDll;
+    if (!loader->LoadReachDll(engineToLoad, reachInstall->reachDllPath)) {
         NOBLE_ERROR("Failed to load haloreach.dll into process space.");
         return 1;
     }
