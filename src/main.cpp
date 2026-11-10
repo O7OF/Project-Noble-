@@ -55,6 +55,7 @@
 #include <chrono>
 #include <cmath>
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <thread>
 
@@ -686,6 +687,35 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     if (!modFolder.empty()) {
         NOBLE_INFO("Activating mod folder '{}'", modFolder.string());
         noble::VFS::SetActiveMod(modFolder);
+    }
+
+    // A mod map built on a Firefight canvas has to be presented to the engine as a multiplayer map — that is what
+    // MCC's own mod loader does. <scenario>.mapinfo carries the map's game-engine type at +0x42 (0x00 multiplayer,
+    // 0x04 Firefight, 0x08 campaign) and its mode flags at +0x43 (0x40 = multiplayer). With the stock file the
+    // engine refuses the launch outright ("map and game incompatible", EngineEvent reason 4); with a patched copy
+    // served from user storage the map loads. Only for Forge/multiplayer launches of a mod.
+    if (!modFolder.empty() && !launchMap.empty() &&
+        _stricmp(launchMode.c_str(), "firefight") != 0 && _stricmp(launchMode.c_str(), "campaign") != 0) {
+        std::error_code infoEc;
+        const fs::path infoSrc = reachInstall->reachDirectory / "maps" / "info" / (launchMap + ".mapinfo");
+        if (fs::is_regular_file(infoSrc, infoEc)) {
+            std::ifstream infoIn(infoSrc, std::ios::binary);
+            std::vector<uint8_t> infoBytes((std::istreambuf_iterator<char>(infoIn)), std::istreambuf_iterator<char>());
+            if (infoBytes.size() > 0x44 && (infoBytes[0x42] != 0x00 || (infoBytes[0x43] & 0x40) == 0)) {
+                const uint8_t stockType = infoBytes[0x42];
+                infoBytes[0x42] = 0x00;                                              // multiplayer engine type
+                infoBytes[0x43] = static_cast<uint8_t>(infoBytes[0x43] | 0x40);      // multiplayer map flag
+                const fs::path infoDst = userStoragePath / "maps" / "info" / (launchMap + ".mapinfo");
+                fs::create_directories(infoDst.parent_path(), infoEc);
+                std::ofstream infoOut(infoDst, std::ios::binary);
+                if (infoOut) {
+                    infoOut.write(reinterpret_cast<const char*>(infoBytes.data()),
+                                  static_cast<std::streamsize>(infoBytes.size()));
+                    NOBLE_INFO("main: map info for '{}' patched to a multiplayer map (was engine type 0x{:02X}): '{}'",
+                               launchMap, stockType, infoDst.string());
+                }
+            }
+        }
     }
     if (!mapOverride.empty()) {
         NOBLE_INFO("Map override: serving '{}' as maps\\{}.map", mapOverride.string(), launchMap);
