@@ -195,6 +195,36 @@ static void EnableDpiAwareness() {
     SetProcessDPIAware();
 }
 
+namespace {
+
+// The engine gives up silently during a world load (no dump, no Windows error event, no clean-shutdown log). Trace
+// whoever calls ExitProcess: the return address says whether the engine decided to quit or the CRT did.
+using ExitProcessFn = VOID(WINAPI*)(UINT);
+ExitProcessFn s_origExitProcess = nullptr;
+
+using PostQuitMessageFn = VOID(WINAPI*)(int);
+PostQuitMessageFn s_origPostQuitMessage = nullptr;
+
+VOID WINAPI PostQuitMessageHook(int code) {
+    const uintptr_t caller = reinterpret_cast<uintptr_t>(_ReturnAddress());
+    const uintptr_t engineBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(L"haloreach.dll"));
+    const uintptr_t callerRva = (engineBase && caller > engineBase) ? caller - engineBase : 0;
+    NOBLE_ERROR("PostQuitMessage({}) requested from haloreach+0x{:X} (caller 0x{:X})", code, callerRva, caller);
+    if (auto logger = spdlog::default_logger()) logger->flush();
+    if (s_origPostQuitMessage) s_origPostQuitMessage(code);
+}
+
+VOID WINAPI ExitProcessHook(UINT code) {
+    const uintptr_t caller = reinterpret_cast<uintptr_t>(_ReturnAddress());
+    const uintptr_t engineBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(L"haloreach.dll"));
+    const uintptr_t callerRva = (engineBase && caller > engineBase) ? caller - engineBase : 0;
+    NOBLE_ERROR("ExitProcess({}) requested from haloreach+0x{:X} (caller 0x{:X})", code, callerRva, caller);
+    if (auto logger = spdlog::default_logger()) logger->flush();
+    if (s_origExitProcess) s_origExitProcess(code);
+}
+
+} // namespace
+
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine, int nCmdShow) {
     UNREFERENCED_PARAMETER(hInstance);
     UNREFERENCED_PARAMETER(hPrevInstance);
@@ -316,6 +346,13 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         NOBLE_ERROR("Failed to initialize MinHook.");
         return 1;
     }
+    // Trace who ends the process: a silent engine exit during a world load leaves no dump and no log line.
+    noble::HookManager::InstallHook(reinterpret_cast<void*>(&ExitProcess),
+                                    reinterpret_cast<void*>(&ExitProcessHook),
+                                    reinterpret_cast<void**>(&s_origExitProcess), "trace_exitprocess");
+    noble::HookManager::InstallHook(reinterpret_cast<void*>(&PostQuitMessage),
+                                    reinterpret_cast<void*>(&PostQuitMessageHook),
+                                    reinterpret_cast<void**>(&s_origPostQuitMessage), "trace_postquit");
 
     // 5. Locate authentic data directory (resolves blocks, menumaps, armor, and userdata)
     auto FindDataDirectory = []() -> fs::path {
