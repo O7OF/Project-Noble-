@@ -105,6 +105,14 @@ bool ReadMap(const fs::path& file, ModMap& map) {
     for (const std::string& flag : StringList(j, "Flags")) {
         if (Lower(flag) == "forgemap") map.forgeMap = true;
     }
+    // The manifest fields that describe Forge support. Kept for the launcher: the engine builds its palette
+    // from the map's own tags, not from this file.
+    if (j.contains("ValidMultiplayerObjectTypes") && j["ValidMultiplayerObjectTypes"].is_array()) {
+        for (const json& v : j["ValidMultiplayerObjectTypes"]) {
+            if (v.is_number_integer() || v.is_number_unsigned()) map.validObjectTypes.push_back(static_cast<uint32_t>(v.get<int>()));
+        }
+    }
+    map.defaultForgeWeapon = j.value("MapDefaultPrimaryWeaponForge", std::string());
     if (j.contains("Images") && j["Images"].is_object()) {
         map.imageLarge = std::filesystem::path(Text(j["Images"], "Large"));
         map.imageThumbnail = std::filesystem::path(Text(j["Images"], "Thumbnail"));
@@ -168,6 +176,17 @@ void ScanFolder(const fs::path& root, bool workshop, std::vector<ModEntry>& out)
         mod.campaign = ReadMaps(dir.path(), campaignList, "campaign");
         mod.firefight = ReadMaps(dir.path(), StringList(contents, "FirefightMaps"), "firefight");
         mod.multiplayer = ReadMaps(dir.path(), StringList(contents, "MultiplayerMaps"), "multiplayer");
+        for (ModMap& m : mod.campaign) m.gameCategory = "campaign";
+        for (ModMap& m : mod.firefight) m.gameCategory = "firefight";
+        for (ModMap& m : mod.multiplayer) m.gameCategory = "multiplayer";
+        for (const std::vector<ModMap>* list : { &mod.campaign, &mod.firefight, &mod.multiplayer }) {
+            for (const ModMap& m : *list) {
+                if (!m.validObjectTypes.empty() || !m.defaultForgeWeapon.empty()) {
+                    NOBLE_INFO("ModCatalog: '{}' [{}] declares {} Forge object type(s), Forge weapon '{}'",
+                               m.title, m.gameCategory, m.validObjectTypes.size(), m.defaultForgeWeapon);
+                }
+            }
+        }
         // A map is listed by the scenario it is built on, not by the folder the author put its JSON in. Several
         // AI Battleground mods ship Firefight-canvas maps inside multiplayer (Installation 04 = cex_ff_halo,
         // Glacier = ff60_icecave); the engine refuses those scenarios in Forge ("map and game incompatible") but
