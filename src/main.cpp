@@ -219,6 +219,68 @@ char __fastcall EngineMainLoopHook() {
     return result;
 }
 
+// The engine's loader/render thread disappears during a failed world load. Trace thread exits that come from
+// engine code so we know which thread died and from which RVA.
+// Timing of the three stages the engine's launch routine runs after its main loop returns
+// (FUN_18000db08: 0xD564 when the loop succeeded, then 0xC8F8 and 0x3873C during teardown). Comparing a working
+// map with the Firefight-canvas mod map shows which stage bails out.
+using StageFn = void(__fastcall*)(void);
+StageFn s_origStage1 = nullptr;
+StageFn s_origStage2 = nullptr;
+StageFn s_origStage3 = nullptr;
+
+void __fastcall Stage1Hook() {
+    const ULONGLONG t0 = GetTickCount64();
+    if (s_origStage1) s_origStage1();
+    NOBLE_WARN("engine stage 0xD564 returned after {} ms", GetTickCount64() - t0);
+    if (auto logger = spdlog::default_logger()) logger->flush();
+}
+void __fastcall Stage2Hook() {
+    const ULONGLONG t0 = GetTickCount64();
+    if (s_origStage2) s_origStage2();
+    NOBLE_WARN("engine stage 0xC8F8 returned after {} ms", GetTickCount64() - t0);
+    if (auto logger = spdlog::default_logger()) logger->flush();
+}
+void __fastcall Stage3Hook() {
+    const ULONGLONG t0 = GetTickCount64();
+    if (s_origStage3) s_origStage3();
+    NOBLE_WARN("engine stage 0x3873C returned after {} ms", GetTickCount64() - t0);
+    if (auto logger = spdlog::default_logger()) logger->flush();
+}
+
+using ExitThreadFn = VOID(WINAPI*)(DWORD);
+ExitThreadFn s_origExitThread = nullptr;
+
+VOID WINAPI ExitThreadHook(DWORD code) {
+    const uintptr_t caller = reinterpret_cast<uintptr_t>(_ReturnAddress());
+    const uintptr_t engineBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(L"haloreach.dll"));
+    if (engineBase && caller > engineBase && caller < engineBase + 0x4EDA000) {
+        char line[256];
+        std::snprintf(line, sizeof(line), "thread %lu exits with code %lu from haloreach+0x%llX",
+                      static_cast<unsigned long>(GetCurrentThreadId()), static_cast<unsigned long>(code),
+                      static_cast<unsigned long long>(caller - engineBase));
+        NOBLE_ERROR("{}", line);
+        if (auto logger = spdlog::default_logger()) logger->flush();
+    }
+    if (s_origExitThread) s_origExitThread(code);
+}
+
+using FreeLibraryAndExitThreadFn = VOID(WINAPI*)(HMODULE, DWORD);
+FreeLibraryAndExitThreadFn s_origFreeLibExitThread = nullptr;
+
+VOID WINAPI FreeLibraryAndExitThreadHook(HMODULE module, DWORD code) {
+    const uintptr_t caller = reinterpret_cast<uintptr_t>(_ReturnAddress());
+    const uintptr_t engineBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(L"haloreach.dll"));
+    char line[256];
+    std::snprintf(line, sizeof(line), "FreeLibraryAndExitThread(0x%llX) thread %lu from haloreach+0x%llX",
+                  static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(module)),
+                  static_cast<unsigned long>(GetCurrentThreadId()),
+                  static_cast<unsigned long long>(engineBase && caller > engineBase ? caller - engineBase : 0));
+    NOBLE_ERROR("{}", line);
+    if (auto logger = spdlog::default_logger()) logger->flush();
+    if (s_origFreeLibExitThread) s_origFreeLibExitThread(module, code);
+}
+
 using PostQuitMessageFn = VOID(WINAPI*)(int);
 PostQuitMessageFn s_origPostQuitMessage = nullptr;
 
@@ -511,6 +573,12 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     noble::HookManager::InstallHook(reinterpret_cast<void*>(&PostQuitMessage),
                                     reinterpret_cast<void*>(&PostQuitMessageHook),
                                     reinterpret_cast<void**>(&s_origPostQuitMessage), "trace_postquit");
+    noble::HookManager::InstallHook(reinterpret_cast<void*>(&ExitThread),
+                                    reinterpret_cast<void*>(&ExitThreadHook),
+                                    reinterpret_cast<void**>(&s_origExitThread), "trace_exitthread");
+    noble::HookManager::InstallHook(reinterpret_cast<void*>(&FreeLibraryAndExitThread),
+                                    reinterpret_cast<void*>(&FreeLibraryAndExitThreadHook),
+                                    reinterpret_cast<void**>(&s_origFreeLibExitThread), "trace_freelibexit");
 
     // 5. Locate authentic data directory (resolves blocks, menumaps, armor, and userdata)
     auto FindDataDirectory = []() -> fs::path {
@@ -1105,6 +1173,15 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     noble::HookManager::InstallHook(reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(loader->GetModuleHandle()) + 0xC390),
                                     reinterpret_cast<void*>(&EngineMainLoopHook),
                                     reinterpret_cast<void**>(&s_origEngineMainLoop), "trace_engine_main_loop");
+    noble::HookManager::InstallHook(reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(loader->GetModuleHandle()) + 0xD564),
+                                    reinterpret_cast<void*>(&Stage1Hook),
+                                    reinterpret_cast<void**>(&s_origStage1), "trace_stage1");
+    noble::HookManager::InstallHook(reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(loader->GetModuleHandle()) + 0xC8F8),
+                                    reinterpret_cast<void*>(&Stage2Hook),
+                                    reinterpret_cast<void**>(&s_origStage2), "trace_stage2");
+    noble::HookManager::InstallHook(reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(loader->GetModuleHandle()) + 0x3873C),
+                                    reinterpret_cast<void*>(&Stage3Hook),
+                                    reinterpret_cast<void**>(&s_origStage3), "trace_stage3");
 
     // Direct all haloreach.dll asset and map file I/O through Virtual File System (VFS)
     noble::VFS::HookTargetModule(loader->GetModuleHandle());
