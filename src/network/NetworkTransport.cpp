@@ -983,6 +983,33 @@ uint64_t NetworkTransport::OnNetSend(uint64_t targetPeerId, const uint8_t* data,
     }
 
     // Host sends traffic:
+    // Periodically send a 12-byte PING every 1500ms to all known peers so Guests echo PONG
+    // and the Host continuously measures accurate 1-RTT live ping for every joined client.
+    if (nowTick - m_lastPunchTick >= 1500ULL) {
+        m_lastPunchTick = nowTick;
+        std::vector<sockaddr_in> pingTargets;
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            pingTargets.reserve(m_peerTable.size());
+            for (const auto& kv : m_peerTable) {
+                pingTargets.push_back(kv.second);
+                m_peerRouteStates[kv.first].lastPingSentTick = nowTick;
+            }
+        }
+        if (!pingTargets.empty()) {
+            uint8_t pingPkt[sizeof(uint64_t) + 4] = { 0 };
+            std::memcpy(pingPkt, &m_localMachineId, sizeof(uint64_t));
+            pingPkt[sizeof(uint64_t)]     = 'P';
+            pingPkt[sizeof(uint64_t) + 1] = 'I';
+            pingPkt[sizeof(uint64_t) + 2] = 'N';
+            pingPkt[sizeof(uint64_t) + 3] = 'G';
+            for (const auto& destAddr : pingTargets) {
+                sendto(m_socket, reinterpret_cast<const char*>(pingPkt), sizeof(pingPkt), 0,
+                       reinterpret_cast<const sockaddr*>(&destAddr), sizeof(destAddr));
+            }
+        }
+    }
+
     // If target is broadcast (0 or ~0ULL), broadcast to all known peers
     if (targetPeerId == 0 || targetPeerId == 0xFFFFFFFFFFFFFFFFULL) {
         std::vector<sockaddr_in> targets;
@@ -1134,6 +1161,7 @@ uint64_t NetworkTransport::OnNetRecv(uint8_t* outBuffer, size_t bufferCapacity, 
             rawBuf[8] == 'P' && (rawBuf[9] == 'I' || rawBuf[9] == 'O') && rawBuf[10] == 'N' && rawBuf[11] == 'G') {
             const bool isPong = (rawBuf[9] == 'O');
             if (wireSender != 0 && wireSender != m_localMachineId) {
+                bool sendHostPingProbe = false;
                 {
                     std::lock_guard<std::mutex> lock(m_mutex);
                     m_peerTable[wireSender] = senderAddr;
@@ -1142,12 +1170,16 @@ uint64_t NetworkTransport::OnNetRecv(uint8_t* outBuffer, size_t bufferCapacity, 
                     route.addr = senderAddr;
                     route.lastUdpRecvTick = now;
                     route.directConfirmed = true;
-                    if (route.lastPingSentTick != 0 && now >= route.lastPingSentTick) {
+                    if (isPong && route.lastPingSentTick != 0 && now >= route.lastPingSentTick) {
                         const int sample = static_cast<int>(std::min<uint64_t>(999, now - route.lastPingSentTick));
                         route.rttMs = (route.rttMs < 0) ? sample : ((route.rttMs * 3 + sample) / 4);
-                    } else if (route.lastUdpSendTick != 0 && now >= route.lastUdpSendTick && (now - route.lastUdpSendTick) < 1000) {
+                    } else if (route.rttMs < 0 && route.lastUdpSendTick != 0 && now >= route.lastUdpSendTick && (now - route.lastUdpSendTick) < 1000) {
                         const int sample = static_cast<int>(now - route.lastUdpSendTick);
-                        route.rttMs = (route.rttMs < 0) ? sample : ((route.rttMs * 3 + sample) / 4);
+                        route.rttMs = sample;
+                    }
+                    if (m_isHost && !isPong && (route.rttMs < 0 || route.lastPingSentTick == 0 || (now - route.lastPingSentTick) >= 1000)) {
+                        route.lastPingSentTick = now;
+                        sendHostPingProbe = true;
                     }
                 }
 
@@ -1155,11 +1187,7 @@ uint64_t NetworkTransport::OnNetRecv(uint8_t* outBuffer, size_t bufferCapacity, 
                 FlushHeldPackets(wireSender, senderAddr);
 
                 if (m_isHost && !isPong) {
-                    // Echo PONG back to Guest over direct UDP, and record when we sent our PING probe
-                    {
-                        std::lock_guard<std::mutex> lock(m_mutex);
-                        m_peerRouteStates[wireSender].lastPingSentTick = now;
-                    }
+                    // Echo PONG back to Guest over direct UDP so Guest measures its RTT
                     uint8_t pong[sizeof(uint64_t) + 4] = { 0 };
                     std::memcpy(pong, &m_localMachineId, sizeof(uint64_t));
                     pong[sizeof(uint64_t)]     = 'P';
@@ -1168,6 +1196,17 @@ uint64_t NetworkTransport::OnNetRecv(uint8_t* outBuffer, size_t bufferCapacity, 
                     pong[sizeof(uint64_t) + 3] = 'G';
                     sendto(m_socket, reinterpret_cast<const char*>(pong), sizeof(pong), 0,
                            reinterpret_cast<const sockaddr*>(&senderAddr), sizeof(senderAddr));
+                    if (sendHostPingProbe) {
+                        // Also send a PING probe to Guest so Guest echoes PONG and Host gets an immediate 1-RTT sample
+                        uint8_t pingPkt[sizeof(uint64_t) + 4] = { 0 };
+                        std::memcpy(pingPkt, &m_localMachineId, sizeof(uint64_t));
+                        pingPkt[sizeof(uint64_t)]     = 'P';
+                        pingPkt[sizeof(uint64_t) + 1] = 'I';
+                        pingPkt[sizeof(uint64_t) + 2] = 'N';
+                        pingPkt[sizeof(uint64_t) + 3] = 'G';
+                        sendto(m_socket, reinterpret_cast<const char*>(pingPkt), sizeof(pingPkt), 0,
+                               reinterpret_cast<const sockaddr*>(&senderAddr), sizeof(senderAddr));
+                    }
                     NOBLE_INFO("NetworkTransport: [HOST] Registered peer 0x{:X} via NAT punch PING from {} (echoed PONG)",
                                wireSender, addrKey);
                 } else if (!m_isHost) {

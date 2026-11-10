@@ -1115,7 +1115,7 @@ static void UpdateTagShaderConstantsSEH(bool previewElite,
                 if (!previewElite) {
                     // 1) spartan_armor (26 float4s, f4[1][0] == 3.0f):
                     //    f4[22] (+0x160) = self_illum_color (Armor Lights on legs, back, and chest -> Colors > Accent)
-                    if (f4Count == 26 && std::abs(f4[1 * 4 + 0] - 3.0f) < 0.1f && std::abs(f4[23 * 4 + 0] - 1.0f) < 0.1f) {
+                    if (accentRgb && f4Count == 26 && std::abs(f4[1 * 4 + 0] - 3.0f) < 0.1f && std::abs(f4[23 * 4 + 0] - 1.0f) < 0.1f) {
                         f4[22 * 4 + 0] = accentRgb[0] * 2.2f;
                         f4[22 * 4 + 1] = accentRgb[1] * 2.2f;
                         f4[22 * 4 + 2] = accentRgb[2] * 2.2f;
@@ -1123,7 +1123,7 @@ static void UpdateTagShaderConstantsSEH(bool previewElite,
                     }
                     // 2) spartan_rubber_suit (21 float4s, f4[1][0] == 18.0f):
                     //    f4[2] (+0x20) = albedo_color, f4[9] (+0x90) = material_color_0, f4[10] (+0xA0) = material_color_1
-                    else if (f4Count == 21 && std::abs(f4[1 * 4 + 0] - 18.0f) < 0.1f) {
+                    else if (undersuitRgb && f4Count == 21 && std::abs(f4[1 * 4 + 0] - 18.0f) < 0.1f) {
                         f4[2 * 4 + 0] = undersuitRgb[0];
                         f4[2 * 4 + 1] = undersuitRgb[1];
                         f4[2 * 4 + 2] = undersuitRgb[2];
@@ -1139,14 +1139,14 @@ static void UpdateTagShaderConstantsSEH(bool previewElite,
                     }
                     // 3) spartan_helmet_interior_visor (21 float4s, f4[1][0] == 3.0f, f4[8][0] == 1.0f):
                     //    f4[17] (+0x110) = visor specular/env tint, f4[6] (+0x60) & f4[7] (+0x70) = visor reflection tint
-                    else if (f4Count == 21 && std::abs(f4[1 * 4 + 0] - 3.0f) < 0.1f && std::abs(f4[8 * 4 + 0] - 1.0f) < 0.1f) {
-                        f4[6 * 4 + 0] = visorRgb[0] * 0.85f + 0.15f;
-                        f4[6 * 4 + 1] = visorRgb[1] * 0.85f + 0.15f;
-                        f4[6 * 4 + 2] = visorRgb[2] * 0.85f + 0.15f;
+                    else if (visorRgb && f4Count == 21 && std::abs(f4[1 * 4 + 0] - 3.0f) < 0.1f && std::abs(f4[8 * 4 + 0] - 1.0f) < 0.1f) {
+                        f4[6 * 4 + 0] = visorRgb[0];
+                        f4[6 * 4 + 1] = visorRgb[1];
+                        f4[6 * 4 + 2] = visorRgb[2];
                         f4[6 * 4 + 3] = 1.0f;
-                        f4[7 * 4 + 0] = visorRgb[0] * 0.70f + 0.30f;
-                        f4[7 * 4 + 1] = visorRgb[1] * 0.70f + 0.30f;
-                        f4[7 * 4 + 2] = visorRgb[2] * 0.70f + 0.30f;
+                        f4[7 * 4 + 0] = visorRgb[0];
+                        f4[7 * 4 + 1] = visorRgb[1];
+                        f4[7 * 4 + 2] = visorRgb[2];
                         f4[7 * 4 + 3] = 1.0f;
                         f4[17 * 4 + 0] = visorRgb[0];
                         f4[17 * 4 + 1] = visorRgb[1];
@@ -1155,14 +1155,14 @@ static void UpdateTagShaderConstantsSEH(bool previewElite,
                     }
                     // 4) Secondary visor material (24 float4s, f4[1][0] == 10.0f):
                     //    f4[9] (+0x90) & f4[10] (+0xA0) = visor gold/reflection tint
-                    else if (f4Count == 24 && std::abs(f4[1 * 4 + 0] - 10.0f) < 0.1f) {
+                    else if (visorRgb && f4Count == 24 && std::abs(f4[1 * 4 + 0] - 10.0f) < 0.1f) {
                         f4[9 * 4 + 0] = visorRgb[0];
                         f4[9 * 4 + 1] = visorRgb[1];
                         f4[9 * 4 + 2] = visorRgb[2];
                         f4[9 * 4 + 3] = 1.0f;
-                        f4[10 * 4 + 0] = visorRgb[0] * 0.55f + 0.10f;
-                        f4[10 * 4 + 1] = visorRgb[1] * 0.55f + 0.10f;
-                        f4[10 * 4 + 2] = visorRgb[2] * 0.55f + 0.10f;
+                        f4[10 * 4 + 0] = visorRgb[0];
+                        f4[10 * 4 + 1] = visorRgb[1];
+                        f4[10 * 4 + 2] = visorRgb[2];
                         f4[10 * 4 + 3] = 1.0f;
                     }
                 }
@@ -2293,6 +2293,7 @@ static void SyncMatchLiveBipedsSEH(uintptr_t base, const float* const wantSlots[
                 const int32_t nSlots = std::min<int32_t>(slotCount, 4);
                 for (int32_t s = 0; s < nSlots; ++s) {
                     const float* w = wantSlots[s];
+                    if (!w) continue;
                     float* b = ccBase + s * 3;
                     float* a = ccActive + s * 3;
                     if (std::abs(b[0] - w[0]) > 1e-4f || std::abs(b[1] - w[1]) > 1e-4f || std::abs(b[2] - w[2]) > 1e-4f ||
@@ -2334,11 +2335,11 @@ void ReachArmory::SyncMatchLiveBipeds() {
     const uintptr_t base = reinterpret_cast<uintptr_t>(hReach);
 
     const ReachArmorySelection sel = GetSelection();
-    // Palette colours (and the 30-visor index) travel in the player's appearance record, and the engine
+    // Palette colours (and stock 0..4 visors) travel in the player's appearance record, and the engine
     // renders every player's own choice from it - other players' colours and visors included. Only the
-    // Armory's wheel colours need forcing into the map's materials, so leave everything untouched for a
-    // palette look: that is what keeps other Spartans' colours as they chose them.
-    if (!sel.primaryCustom && !sel.secondaryCustom && !sel.accentCustom && !sel.lightsCustom) return;
+    // Armory's wheel colours or extended visors (>= 5) need forcing into the local biped's materials.
+    const bool customVisor = (sel.visorColorIndex >= 5);
+    if (!sel.primaryCustom && !sel.secondaryCustom && !sel.accentCustom && !sel.lightsCustom && !customVisor) return;
 
     // Apply live visor reflection and suit constants to active map shader tags ('rmsh')
     const float visFloats[3] = {
@@ -2360,14 +2361,24 @@ void ReachArmory::SyncMatchLiveBipeds() {
     const ULONGLONG now = GetTickCount64();
     if (now - s_lastTagUpdate > 250) {
         s_lastTagUpdate = now;
-        UpdateTagShaderConstantsSEH(sel.previewElite, words.data(), sel.accentRgb.data(), sel.lightsRgb.data(), visFloats);
+        UpdateTagShaderConstantsSEH(
+            sel.previewElite,
+            words.data(),
+            sel.accentCustom ? sel.accentRgb.data() : nullptr,
+            sel.lightsCustom ? sel.lightsRgb.data() : nullptr,
+            customVisor ? visFloats : nullptr);
     }
 
     const float slot0[3] = { sel.primaryRgb[0], sel.primaryRgb[1], sel.primaryRgb[2] };
     const float slot1[3] = { sel.secondaryRgb[0], sel.secondaryRgb[1], sel.secondaryRgb[2] };
     const float slot2[3] = { sel.accentRgb[0], sel.accentRgb[1], sel.accentRgb[2] };
     const float slot3[3] = { visFloats[0], visFloats[1], visFloats[2] };
-    const float* const wantSlots[4] = { slot0, slot1, slot2, slot3 };
+    const float* const wantSlots[4] = {
+        sel.primaryCustom ? slot0 : nullptr,
+        sel.secondaryCustom ? slot1 : nullptr,
+        sel.accentCustom ? slot2 : nullptr,
+        customVisor ? slot3 : nullptr
+    };
 
     SyncMatchLiveBipedsSEH(base, wantSlots, LocalUnitDatum(base));
 }

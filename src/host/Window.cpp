@@ -422,6 +422,11 @@ LRESULT Window::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam
         if (mouse || key) return 0;
     }
     switch (uMsg) {
+        case WM_MOUSEMOVE:
+            if (IsForeground(hwnd) && GetClassLongPtrW(hwnd, GCLP_HCURSOR) == 0) {
+                SetCursor(nullptr);
+            }
+            break;
         case WM_MOUSEWHEEL: s_wheelDelta.fetch_add(GET_WHEEL_DELTA_WPARAM(wParam)); break;
         case WM_LBUTTONDOWN: s_leftClicks.fetch_add(1); break;
         case WM_CHAR:
@@ -478,9 +483,13 @@ LRESULT Window::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam
             // can't do this itself: SetCursor/ShowCursor only work from the window's own thread).
             // ReachHost clears the class cursor while it owns the mouse (mouse look) and restores the
             // arrow while a menu needs the pointer, so hide it only when the class cursor is cleared.
-            if (LOWORD(lParam) == HTCLIENT && IsForeground(hwnd) &&
-                GetClassLongPtrW(hwnd, GCLP_HCURSOR) == 0) {
-                SetCursor(nullptr);
+            if (LOWORD(lParam) == HTCLIENT && IsForeground(hwnd)) {
+                HCURSOR clsCursor = reinterpret_cast<HCURSOR>(GetClassLongPtrW(hwnd, GCLP_HCURSOR));
+                if (!clsCursor) {
+                    SetCursor(nullptr);
+                    return TRUE;
+                }
+                SetCursor(clsCursor);
                 return TRUE;
             }
             break;

@@ -26,7 +26,7 @@ bool UIManager::Initialize(HWND hwnd, ID3D11Device* device, ID3D11DeviceContext*
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
-    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NoMouseCursorChange;
 
     // Controller navigation is drawn per screen; UiPad::Feed turns ImGui's own pad navigation on for popups only.
     io.IniFilename = nullptr;  // don't write imgui.ini next to the exe
@@ -250,6 +250,14 @@ void UIManager::EndFrame() {
 
 LRESULT UIManager::HandleWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
     if (s_isInitialized) {
+        // Mouse position, buttons, wheel, and cursor visibility are fed on the D3D11/engine
+        // thread in back-buffer coordinates. Ignore mouse/cursor messages on the Win32 window
+        // thread so ImGui_ImplWin32_WndProcHandler never queues unscaled client-pixel positions.
+        if ((uMsg >= WM_MOUSEFIRST && uMsg <= WM_MOUSELAST) ||
+            uMsg == WM_NCMOUSEMOVE || uMsg == WM_MOUSELEAVE ||
+            uMsg == WM_NCMOUSELEAVE || uMsg == WM_SETCURSOR) {
+            return 0;
+        }
         if (ImGui_ImplWin32_WndProcHandler(hwnd, uMsg, wParam, lParam)) {
             return 1;
         }

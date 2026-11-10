@@ -401,6 +401,11 @@ void SetLocalSimulationPaused(bool paused) {
     NOBLE_INFO("PauseMenu: local simulation {}", paused ? "paused" : "resumed");
   }
 }
+
+static ULONGLONG s_openedAt = 0;
+static int s_focus = 0;
+static bool s_waitForRelease = true;
+static bool s_confirmRestart = false;
 } // namespace
 
 bool PauseMenu::IsOpen() { return s_open.load(); }
@@ -427,6 +432,10 @@ void PauseMenu::Toggle() {
     return;
   }
   const bool nowOpen = !s_open.load();
+  s_openedAt = nowOpen ? GetTickCount64() : 0;
+  s_focus = 0;
+  s_waitForRelease = true;
+  s_confirmRestart = false;
   if (nowOpen)
     Window::TakeLeftClicks(); // forget clicks made in game (shots) before the
                               // menu opened
@@ -436,7 +445,10 @@ void PauseMenu::Toggle() {
 }
 
 void PauseMenu::Close() {
-    // (the open-time guard in DrawMenu is a function-local static; it re-arms by re-reading the clock below)
+  s_openedAt = 0;
+  s_focus = 0;
+  s_waitForRelease = true;
+  s_confirmRestart = false;
   s_showSettings.store(false);
   if (s_open.exchange(false)) {
     SetLocalSimulationPaused(false);
@@ -570,13 +582,17 @@ void PauseMenu::DrawMenu(HWND hwnd) {
     // A held game pauses; a match with other players in it must not - MCC reaches the same conclusion and just shows
     // the menu. Noble cannot stop the engine's simulation itself (no pause command has been found), so the header
     // says which of the two this is instead of pretending.
-    static ULONGLONG s_openedAt = 0;
     if (s_openedAt == 0) s_openedAt = GetTickCount64();
-    const bool interactive = GetTickCount64() - s_openedAt > 250;   // ignore the opening frames
-    if (!interactive) {
-        static bool s_resetOnClose = false;
-        (void)s_resetOnClose;
+    const bool timeReady = (GetTickCount64() - s_openedAt) > 250; // ignore the opening frames
+    if (s_waitForRelease && timeReady) {
+        const bool anyHeld = ImGui::IsMouseDown(0) ||
+                             (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0 ||
+                             ImGui::IsKeyDown(ImGuiKey_Enter) ||
+                             ImGui::IsKeyDown(ImGuiKey_KeypadEnter) ||
+                             ImGui::IsKeyDown(ImGuiKey_GamepadFaceDown);
+        if (!anyHeld) s_waitForRelease = false;
     }
+    const bool interactive = timeReady && !s_waitForRelease;
 
     const size_t peers = NetworkTransport::Get().GetGamePeerCount();
     const bool solo = peers == 0;
@@ -626,8 +642,12 @@ void PauseMenu::DrawMenu(HWND hwnd) {
     const bool canRestart = !restartArgs.empty() && !isGuest;
     std::vector<Entry> entries = {
         { "RESUME", "Resume the game.", false, true },
-        { "RESTART MATCH", canRestart ? "Starts this match again from the beginning." : (isGuest ? "Only the host can restart a multiplayer match." : "Needs the match arguments (only available in a launched match)."),
-          false, canRestart },
+        { s_confirmRestart ? "CONFIRM RESTART?" : "RESTART MATCH",
+          canRestart ? (s_confirmRestart ? "Select again to confirm restarting the match from the beginning."
+                                         : "Starts this match again from the beginning.")
+                     : (isGuest ? "Only the host can restart a multiplayer match."
+                                : "Needs the match arguments (only available in a launched match)."),
+          s_confirmRestart, canRestart },
         { "SETTINGS", "Change any setting without leaving the match.", false, true },
         { "CONTROLS", "Change key, mouse and controller bindings and look speed without leaving the match.", false, true },
     };
@@ -651,7 +671,6 @@ void PauseMenu::DrawMenu(HWND hwnd) {
     entries.push_back({ "QUIT", "Close Noble and end the match.", true, true });
     const int entryCount = static_cast<int>(entries.size());
 
-    static int s_focus = 0;
     static ULONGLONG s_lastMove = 0;
     const ULONGLONG now = GetTickCount64();
     const bool up = ImGui::IsKeyPressed(ImGuiKey_UpArrow, true) || UiPad::Up();
@@ -659,9 +678,11 @@ void PauseMenu::DrawMenu(HWND hwnd) {
     if (interactive && (up || down) && now - s_lastMove > 120) {
         s_lastMove = now;
         s_focus = (s_focus + (down ? 1 : entryCount - 1)) % entryCount;
+        if (s_focus != 1) s_confirmRestart = false;
         MenuSounds::Scroll();
     }
     s_focus = std::clamp(s_focus, 0, entryCount - 1);
+    if (s_focus != 1) s_confirmRestart = false;
 
     const float rowH = 46.0f * s;
     int activated = -1;
@@ -674,14 +695,17 @@ void PauseMenu::DrawMenu(HWND hwnd) {
         ImGui::PushStyleColor(ImGuiCol_Text, enabled ? (focused ? NobleStyle::Accent() : ImVec4(0.86f, 0.90f, 0.94f, 1.0f))
                                                      : NobleStyle::TextMuted());
         if (ImGui::Selectable(entries[i].label, focused, ImGuiSelectableFlags_None,
-                              ImVec2(listW, rowH + 6.0f * s)) && enabled) {
+                              ImVec2(listW, rowH + 6.0f * s)) && enabled && interactive) {
             s_focus = i;
             activated = i;
         }
         if (ImGui::IsItemHovered()) {
             MenuSounds::Hover(ImGui::GetItemID());
             // Only a moving mouse takes the focus: a pointer resting here used to pin the row against the D-pad.
-            if (enabled && (ImGui::GetIO().MouseDelta.x != 0.0f || ImGui::GetIO().MouseDelta.y != 0.0f)) s_focus = i;
+            if (interactive && enabled && (ImGui::GetIO().MouseDelta.x != 0.0f || ImGui::GetIO().MouseDelta.y != 0.0f)) {
+                s_focus = i;
+                if (s_focus != 1) s_confirmRestart = false;
+            }
         }
         ImGui::PopStyleColor();
         // Underline, like the reference screens.
@@ -753,9 +777,13 @@ void PauseMenu::DrawMenu(HWND hwnd) {
     } else if (activated == 1) {
         if (!canRestart) return;
         MenuSounds::Click();
-        Close();
-        if (!Relaunch::HandOff(restartArgs)) NOBLE_WARN("PauseMenu: restart failed, the match keeps running");
-        else NOBLE_INFO("PauseMenu: restarting the match");
+        if (!s_confirmRestart) {
+            s_confirmRestart = true;
+        } else {
+            Close();
+            if (!Relaunch::HandOff(restartArgs)) NOBLE_WARN("PauseMenu: restart failed, the match keeps running");
+            else NOBLE_INFO("PauseMenu: restarting the match");
+        }
     } else if (activated == 2) {
         MenuSounds::Click();
         Window::TakeLeftClicks();
@@ -958,50 +986,267 @@ static bool s_muteAllActive = false;
 static bool s_showPlayerModal = false;
 
 struct RawScore {
-  int32_t kills = -1;
-  int32_t assists = -1;
-  int32_t deaths = -1;
+  wchar_t name[17] = {};
+  wchar_t tag[6] = {};
+  int32_t team = -1;
+  int32_t kills = 0;
+  int32_t assists = 0;
+  int32_t deaths = 0;
   int32_t score = 0;
+  bool local = false;
   bool valid = false;
 };
 
-// POD SEH reader to avoid MSVC C2712 (no C++ objects requiring destruction inside __try)
-static void ReadRawScoresSEH(const uint8_t* table, RawScore* outScores, size_t count) {
+// POD SEH reader to avoid MSVC C2712 (no C++ objects requiring destruction inside __try).
+// Reads haloreach.dll's g_game_results structure (haloreach+0x28B83B0):
+//   - Player entries (16 slots, stride 0xD8) at base + 0xFEF8:
+//       +0x00 (u8): player_valid
+//       +0x10 (wchar_t[16]): player_name
+//       +0x62 (i8): team_index (0..7)
+//       +0x6C (wchar_t[5]): service_tag
+//       +0xBA (i16): live player score (base + 0xFFB2 + slot * 0xD8)
+//   - Live in_game_statistics array (16 slots, stride 0x708) at base + 0x10E50:
+//       Each stat is a 15-bit uint16_t bitfield at base + 0x10E50 + slot * 0x708 + stat_id * 2
+//       (bits 0..14 hold the value, read via raw & 0x7FFFu):
+//       stat_id 6 = in_round_score, 7 = in_game_total_score, 8 = kills, 9 = assists, 10 = deaths.
+//   - Also reads the TLS players datum array (tlsBase + 0x18, stride 0x490) for player
+//     presence, local-player flag (_player_is_local_machine_bit = 0x08), name, team (+0xAD),
+//     and service tag (+0x10C), plus TLS game_engine_globals (tlsBase + 0x20, +0x3270 + slot * 8)
+//     for live round/total score.
+static void ReadRawScoresSEH(const uint8_t* reachBase, RawScore* outScores, size_t count) {
   __try {
+    const uint8_t* table = reachBase + 0x28B83B0;
     for (size_t i = 0; i < count && i < 16; ++i) {
-      const uint8_t* p = table + 0xFF81 + (i * 0xD8);
-      const int32_t k = *reinterpret_cast<const int32_t*>(p + 0x37);
-      const int32_t a = *reinterpret_cast<const int32_t*>(p + 0x3B);
-      const int32_t d = *reinterpret_cast<const int32_t*>(p + 0x3F);
-      int32_t s = *reinterpret_cast<const int32_t*>(p + 0x33);
-      if (s == 0) s = *reinterpret_cast<const int16_t*>(p + 0x31);
+      const uint8_t* p = table + 0xFEF8 + (i * 0xD8);
+      if (p[0] != 0) {
+        outScores[i].valid = true;
+        const wchar_t* wname = reinterpret_cast<const wchar_t*>(p + 0x10);
+        for (size_t c = 0; c < 16 && wname[c] != 0; ++c) outScores[i].name[c] = wname[c];
+        outScores[i].name[16] = 0;
+        const int8_t rawTeam = *reinterpret_cast<const int8_t*>(p + 0x62);
+        outScores[i].team = (rawTeam >= 0 && rawTeam < 8) ? (rawTeam + 1) : 0;
+        const wchar_t* wtag = reinterpret_cast<const wchar_t*>(p + 0x6C);
+        for (size_t c = 0; c < 5 && wtag[c] != 0; ++c) outScores[i].tag[c] = wtag[c];
+        outScores[i].tag[5] = 0;
+      }
 
-      if (k >= 0 && k < 50000) outScores[i].kills = k;
-      if (a >= 0 && a < 50000) outScores[i].assists = a;
-      if (d >= 0 && d < 50000) outScores[i].deaths = d;
-      if (s >= -100000 && s < 10000000) outScores[i].score = s;
-      outScores[i].valid = true;
+      const uint8_t* statsBase = table + 0x10E50 + (i * 0x708);
+      auto readStat = [statsBase](size_t statId) -> int32_t {
+        const uint16_t raw = *reinterpret_cast<const uint16_t*>(statsBase + statId * 2);
+        if (raw == 0xFFFFu) return 0;
+        return static_cast<int32_t>(raw & 0x7FFFu);
+      };
+
+      const int32_t k = readStat(8);
+      const int32_t a = readStat(9);
+      const int32_t d = readStat(10);
+      const int32_t roundScore = readStat(6);
+      const int32_t totalScore = readStat(7);
+      const int16_t liveScore16 = *reinterpret_cast<const int16_t*>(p + 0xBA);
+
+      outScores[i].kills = (k >= 0 && k < 32768) ? k : 0;
+      outScores[i].assists = (a >= 0 && a < 32768) ? a : 0;
+      outScores[i].deaths = (d >= 0 && d < 32768) ? d : 0;
+      if (liveScore16 != 0) {
+        outScores[i].score = liveScore16;
+      } else if (totalScore != 0) {
+        outScores[i].score = totalScore;
+      } else {
+        outScores[i].score = roundScore;
+      }
+    }
+
+    // Supplement with live TLS players datum array (stride 0x490) and TLS game_engine_globals
+    // score array so player identity, local flag, team, and score are always populated in real time.
+    const uint32_t tlsIdx = *reinterpret_cast<const uint32_t*>(reachBase + 0xC17B18);
+    if (tlsIdx < 64) {
+      const uintptr_t tlsVec = __readgsqword(0x58);
+      if (tlsVec) {
+        const uintptr_t tlsBase = *reinterpret_cast<const uintptr_t*>(tlsVec + static_cast<uintptr_t>(tlsIdx) * 8);
+        if (tlsBase) {
+          const uint8_t* playersTable = *reinterpret_cast<const uint8_t* const*>(tlsBase + 0x18);
+          if (playersTable) {
+            const int32_t maxP = *reinterpret_cast<const int32_t*>(playersTable + 0x44);
+            const uint8_t* entries = *reinterpret_cast<const uint8_t* const*>(playersTable + 0x50);
+            if (entries && maxP > 0 && maxP <= 16) {
+              for (int32_t i = 0; i < maxP && static_cast<size_t>(i) < count; ++i) {
+                const uint8_t* entry = entries + static_cast<size_t>(i) * 0x490;
+                const uint16_t salt = *reinterpret_cast<const uint16_t*>(entry);
+                if (salt == 0) continue;
+                const uint32_t flags = *reinterpret_cast<const uint32_t*>(entry + 0x04);
+                if ((flags & 0x01u) != 0) continue; // skip _player_left_game_bit
+                const wchar_t* wname = reinterpret_cast<const wchar_t*>(entry + 0xB0);
+                if (wname[0] == 0) continue;
+                outScores[i].valid = true;
+                if (outScores[i].name[0] == 0) {
+                  for (size_t c = 0; c < 16 && wname[c] != 0; ++c) outScores[i].name[c] = wname[c];
+                  outScores[i].name[16] = 0;
+                }
+                if (outScores[i].tag[0] == 0) {
+                  const wchar_t* wtag = reinterpret_cast<const wchar_t*>(entry + 0x10C);
+                  for (size_t c = 0; c < 5 && wtag[c] != 0; ++c) outScores[i].tag[c] = wtag[c];
+                  outScores[i].tag[5] = 0;
+                }
+                if (outScores[i].team <= 0) {
+                  int8_t rawTeam = *reinterpret_cast<const int8_t*>(entry + 0xAD);
+                  if (rawTeam < 0 || rawTeam >= 8) {
+                    rawTeam = *reinterpret_cast<const int8_t*>(entry + 0x102);
+                  }
+                  outScores[i].team = (rawTeam >= 0 && rawTeam < 8) ? (rawTeam + 1) : 0;
+                }
+                if ((flags & 0x08u) != 0) {
+                  outScores[i].local = true;
+                }
+              }
+            }
+          }
+
+          // Live score fallback from TLS game_engine_globals (+0x3270 + slot * 8)
+          const uint8_t* geGlobals = *reinterpret_cast<const uint8_t* const*>(tlsBase + 0x20);
+          if (geGlobals) {
+            for (size_t i = 0; i < count && i < 16; ++i) {
+              if (outScores[i].score == 0) {
+                const int16_t geTotalScore = *reinterpret_cast<const int16_t*>(geGlobals + 0x3272 + i * 8);
+                const int16_t geRoundScore = *reinterpret_cast<const int16_t*>(geGlobals + 0x3270 + i * 8);
+                if (geTotalScore != 0) {
+                  outScores[i].score = geTotalScore;
+                } else if (geRoundScore != 0) {
+                  outScores[i].score = geRoundScore;
+                }
+              }
+            }
+          }
+        }
+      }
     }
   } __except (EXCEPTION_EXECUTE_HANDLER) {}
 }
 
-// Polls active game engine results table (haloreach+0x28B83B0, stride 0xD8 at +0xFF81) so that
-// kills, assists, deaths, and scores update live in real time in Firefight, Custom Games, and Forge.
+static std::string WideToUtf8Short(const wchar_t* w) {
+  if (!w || w[0] == 0) return {};
+  char buf[64] = {};
+  WideCharToMultiByte(CP_UTF8, 0, w, -1, buf, static_cast<int>(sizeof(buf) - 1), nullptr, nullptr);
+  return buf;
+}
+
+// Polls active game engine results table (haloreach+0x28B83B0) and TLS players table so that
+// player roster, kills, assists, deaths, scores, and ping update live in real time across
+// Firefight, Custom Games, Campaign, and Forge.
 static void UpdateLiveScoreboard() {
   HMODULE reach = GetModuleHandleW(L"haloreach.dll");
   if (!reach) return;
-  const uint8_t* table = reinterpret_cast<const uint8_t*>(reinterpret_cast<uintptr_t>(reach) + 0x28B83B0);
-  RawScore scores[16];
-  ReadRawScoresSEH(table, scores, 16);
+  const uint8_t* reachBase = reinterpret_cast<const uint8_t*>(reach);
+  RawScore scores[16] = {};
+  ReadRawScoresSEH(reachBase, scores, 16);
+
+  const SettingsData snap = Settings::Get().Snapshot();
+  const int localRank = Career::RankIndex(Career::Get().credits);
+  const bool netActive = NetworkTransport::Get().IsActive();
+  const bool netHost = netActive && NetworkTransport::Get().IsHost();
+  const int fallbackPing = netActive ? NetworkTransport::Get().GetPeerPingMs(0) : -1;
+  std::vector<int> peerPingList;
+  if (netActive) {
+    const auto peerPingMap = NetworkTransport::Get().GetAllPeerPingsMs();
+    peerPingList.reserve(peerPingMap.size());
+    for (const auto& kv : peerPingMap) {
+      if (kv.second >= 0) {
+        peerPingList.push_back(kv.second);
+      }
+    }
+  }
 
   std::lock_guard<std::mutex> lock(s_boardMutex);
-  for (size_t i = 0; i < s_boardRows.size() && i < 16; ++i) {
-    if (!scores[i].valid) continue;
-    auto& row = s_boardRows[i];
-    if (scores[i].kills >= 0) row.kills = scores[i].kills;
-    if (scores[i].assists >= 0) row.assists = scores[i].assists;
-    if (scores[i].deaths >= 0) row.deaths = scores[i].deaths;
-    row.score = scores[i].score;
+  bool anyValid = false;
+  bool anyTlsLocal = false;
+  for (size_t i = 0; i < 16; ++i) {
+    if (scores[i].valid && scores[i].name[0] != 0) {
+      anyValid = true;
+      if (scores[i].local) {
+        anyTlsLocal = true;
+      }
+    }
+  }
+
+  if (anyValid) {
+    for (size_t i = 0; i < 16; ++i) {
+      if (!scores[i].valid || scores[i].name[0] == 0) continue;
+      const std::string nameUtf8 = WideToUtf8Short(scores[i].name);
+      const std::string tagUtf8 = WideToUtf8Short(scores[i].tag);
+      if (nameUtf8.empty()) continue;
+      const bool isLocalPlayer = scores[i].local ||
+                                 (!anyTlsLocal && (_stricmp(nameUtf8.c_str(), snap.playerName.c_str()) == 0));
+
+      PauseMenu::ScoreboardEntry* matched = nullptr;
+      for (auto& existing : s_boardRows) {
+        if (_stricmp(existing.name.c_str(), nameUtf8.c_str()) == 0) {
+          matched = &existing;
+          break;
+        }
+      }
+      if (!matched && i < s_boardRows.size() && s_boardRows[i].name.empty()) {
+        matched = &s_boardRows[i];
+        matched->name = nameUtf8;
+      }
+      if (!matched) {
+        PauseMenu::ScoreboardEntry entry;
+        entry.name = nameUtf8;
+        entry.local = isLocalPlayer;
+        entry.tag = entry.local && !snap.serviceTag.empty() ? snap.serviceTag : tagUtf8;
+        entry.team = scores[i].team >= 0 ? scores[i].team : 1;
+        entry.rank = entry.local ? localRank : 0;
+        entry.ping = entry.local ? 0 : (fallbackPing > 0 ? fallbackPing : 0);
+        s_boardRows.push_back(entry);
+        matched = &s_boardRows.back();
+      }
+
+      matched->local = isLocalPlayer;
+      if (matched->local && !snap.serviceTag.empty()) {
+        matched->tag = snap.serviceTag;
+      } else if (!tagUtf8.empty()) {
+        matched->tag = tagUtf8;
+      }
+      if (scores[i].team >= 0) {
+        matched->team = scores[i].team;
+      }
+      if (matched->local && matched->rank <= 0) {
+        matched->rank = localRank;
+      }
+      matched->kills = scores[i].kills;
+      matched->assists = scores[i].assists;
+      matched->deaths = scores[i].deaths;
+      matched->score = scores[i].score;
+    }
+  } else {
+    // Fallback if player names aren't in g_game_results yet: update by slot index
+    for (size_t i = 0; i < s_boardRows.size() && i < 16; ++i) {
+      auto& row = s_boardRows[i];
+      row.kills = scores[i].kills;
+      row.assists = scores[i].assists;
+      row.deaths = scores[i].deaths;
+      row.score = scores[i].score;
+    }
+  }
+
+  size_t peerPingCursor = 0;
+  for (auto& row : s_boardRows) {
+    if (row.local) {
+      row.ping = (netActive && !netHost && fallbackPing > 0) ? fallbackPing : 0;
+    } else if (netActive) {
+      int ms = -1;
+      if (row.machine != 0) {
+        ms = NetworkTransport::Get().GetPeerPingMs(row.machine);
+      }
+      if (ms < 0 && netHost && !peerPingList.empty()) {
+        ms = peerPingList[peerPingCursor % peerPingList.size()];
+        ++peerPingCursor;
+      }
+      if (ms < 0) {
+        ms = fallbackPing;
+      }
+      row.ping = (ms >= 0) ? ms : 0;
+    } else if (row.ping < 0) {
+      row.ping = 0;
+    }
   }
 }
 
@@ -1010,11 +1255,6 @@ static void UpdateLiveScoreboard() {
 // team score aggregate bars, emblem / mute icon badges, rank insignias, and player options.
 static void DrawScoreboardPanel() {
   UpdateLiveScoreboard();
-  for (auto &row : s_boardRows) {
-    if (row.machine == 0) continue;
-    const int ms = NetworkTransport::Get().GetPeerPingMs(row.machine);
-    if (ms >= 0) row.ping = ms;
-  }
 
   using namespace NobleUi;
   const int demo = ScoreboardDemo();
@@ -1039,12 +1279,14 @@ static void DrawScoreboardPanel() {
   }
 
   if (rows.empty()) {
+    const SettingsData snap = Settings::Get().Snapshot();
     PauseMenu::ScoreboardEntry me;
-    me.name = Settings::Get().Snapshot().playerName;
-    me.tag = "NOBL";
+    me.name = snap.playerName;
+    me.tag = snap.serviceTag.empty() ? "NOBL" : snap.serviceTag;
     me.local = true;
     me.team = LocalTeamFromBoard();
     me.rank = Career::RankIndex(Career::Get().credits);
+    me.ping = 0;
     rows.push_back(me);
   }
 
@@ -1498,8 +1740,9 @@ static void DrawScoreboardPanel() {
       int ping = r.ping;
       if (!r.local && NetworkTransport::Get().IsActive()) {
         const int live = r.hostPeer ? NetworkTransport::Get().GetPeerPingMs(0) : (r.machine ? NetworkTransport::Get().GetPeerPingMs(r.machine) : -1);
-        if (live > 0) ping = live;
+        if (live >= 0) ping = live;
       }
+      if (ping < 0) ping = 0;
 
       const ImU32 pingBadgeCol = ping < 0 ? IM_COL32(90, 105, 120, 180)
                                : (ping <= 100 ? IM_COL32(36, 175, 75, 230)

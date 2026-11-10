@@ -1253,8 +1253,8 @@ void ArmorCustomizer::SyncToReachArmory() const {
 
     const bool priCust = previewingElite ? m_profile.elitePrimaryCustom : m_profile.primaryCustom;
     const bool secCust = previewingElite ? m_profile.eliteSecondaryCustom : m_profile.secondaryCustom;
-    const bool accCust = previewingElite ? m_profile.eliteAccentCustom : m_profile.accentCustom;
-    const bool lgtCust = previewingElite ? m_profile.eliteLightsCustom : m_profile.lightsCustom;
+    const bool accCust = false;
+    const bool lgtCust = false;
     const auto& priRgbArr = previewingElite ? m_profile.elitePrimaryCustomRgb : m_profile.primaryCustomRgb;
     const auto& secRgbArr = previewingElite ? m_profile.eliteSecondaryCustomRgb : m_profile.secondaryCustomRgb;
     const auto& accRgbArr = previewingElite ? m_profile.eliteAccentCustomRgb : m_profile.accentCustomRgb;
@@ -2151,31 +2151,12 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
         const bool isElite = (m_previewSpecies == PlayerSpecies::Elite);
         int* pIdx = isElite ? &m_profile.elitePrimaryColor : &m_profile.primaryColor;
         int* sIdx = isElite ? &m_profile.eliteSecondaryColor : &m_profile.secondaryColor;
-        int* aIdx = isElite ? &m_profile.eliteAccentColor : &m_profile.accentColor;
-        int* lIdx = isElite ? &m_profile.eliteLightsColor : &m_profile.lightsColor;
 
         static const auto s_reachColorOptions = []() {
             std::vector<PickOption> opts;
             opts.reserve(kReachColors.size());
             for (const auto& c : kReachColors) {
                 opts.push_back({ c.name, "", ColourU32(c.r, c.g, c.b) });
-            }
-            return opts;
-        }();
-        static const auto s_reachLightsOptions = []() {
-            std::vector<PickOption> opts;
-            opts.reserve(kReachColors.size());
-            for (const auto& c : kReachColors) {
-                opts.push_back({ c.name, "Emissive armor lights and illumination color.", ColourU32(c.r, c.g, c.b) });
-            }
-            return opts;
-        }();
-
-        static const auto s_reachSpartanUndersuitOptions = []() {
-            std::vector<PickOption> opts;
-            opts.reserve(kReachColors.size());
-            for (const auto& c : kReachColors) {
-                opts.push_back({ c.name, "Techsuit / undersuit accent and illumination color.", ColourU32(c.r, c.g, c.b) });
             }
             return opts;
         }();
@@ -2186,16 +2167,8 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
         SlotRow q{ "COLORS", "Secondary", RowKind::Colour, sIdx };
         q.scene = "c_full_spartan";
         q.options = s_reachColorOptions;
-        SlotRow a{ "COLORS", "Accent", RowKind::Colour, aIdx };
-        a.scene = "c_full_spartan";
-        a.options = s_reachColorOptions;
-        SlotRow l{ "COLORS", isElite ? "Lights" : "Undersuit", RowKind::Colour, lIdx };
-        l.scene = isElite ? "armory_elite" : "c_full_spartan";
-        l.options = isElite ? s_reachLightsOptions : s_reachSpartanUndersuitOptions;
         rows.push_back(std::move(p));
         rows.push_back(std::move(q));
-        rows.push_back(std::move(a));
-        rows.push_back(std::move(l));
     }
 
 

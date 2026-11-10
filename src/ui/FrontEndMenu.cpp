@@ -7195,7 +7195,6 @@ void FrontEndMenu::RenderOverlayImpl(IDXGISwapChain* swapChain, bool clear) {
         io.DeltaTime = dt;
 
         ArmoryStage::s_frameRtv = clear ? nullptr : rtv;
-        FeedEngineThreadInputs(hwnd, io);
         if (clear) {
             // No engine frame underneath: start from the menu's dark backdrop colour.
             const float black[4] = { 0.02f, 0.03f, 0.05f, 1.0f };
@@ -7203,11 +7202,9 @@ void FrontEndMenu::RenderOverlayImpl(IDXGISwapChain* swapChain, bool clear) {
         }
 
         ImGui_ImplDX11_NewFrame();
-        ImGui_ImplWin32_NewFrame();
-        // ImGui_ImplWin32_NewFrame() overwrites io.DisplaySize with the window's client size. The menu
-        // process renders a larger back buffer than its window (menu supersampling, see main.cpp) and
-        // Windows downscales it; laying the UI out in back-buffer pixels keeps it pixel-aligned and
-        // crisp too. A match process is 1:1. FeedEngineThreadInputs() above already scaled the mouse.
+        // Do not call ImGui_ImplWin32_NewFrame() here: it overwrites io.DisplaySize with the unscaled
+        // window client rect and queues an unscaled client-space mouse position via ImGui_ImplWin32_UpdateMouseData,
+        // which causes the cursor/hover position to flicker upward when supersampling (1.5x) is active.
         io.DisplaySize = ImVec2(static_cast<float>(bbDesc.Width), static_cast<float>(bbDesc.Height));
         {
             RECT client{};
@@ -7226,22 +7223,7 @@ void FrontEndMenu::RenderOverlayImpl(IDXGISwapChain* swapChain, bool clear) {
                 }
             }
         }
-        // The Win32 backend queues client-pixel mouse positions from WM_MOUSEMOVE; this is the last
-        // mouse event before NewFrame, so a back-buffer position wins and hover/click lands on the
-        // control actually under the cursor (window and back buffer are different sizes now).
-        {
-            RECT client{};
-            GetClientRect(hwnd, &client);
-            POINT cursor{};
-            if (Window::IsForeground(hwnd) && client.right > 0 && client.bottom > 0 &&
-                GetCursorPos(&cursor) && ScreenToClient(hwnd, &cursor)) {
-                const float sx = io.DisplaySize.x / static_cast<float>(client.right);
-                const float sy = io.DisplaySize.y / static_cast<float>(client.bottom);
-                io.AddMousePosEvent(static_cast<float>(cursor.x) * sx, static_cast<float>(cursor.y) * sy);
-            } else {
-                io.AddMousePosEvent(-FLT_MAX, -FLT_MAX);
-            }
-        }
+        FeedEngineThreadInputs(hwnd, io);
         UiPad::Feed(io);
         SocialOverlay::Poll(!io.WantTextInput && !ctx.st.confirmQuit);
         // Text drawn by plain ImGui widgets (search boxes, descriptions, help lines, input fields) used the

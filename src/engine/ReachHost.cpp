@@ -1206,8 +1206,10 @@ static void ApplyArmoryAppearance(uint8_t* profile) {
         };
         // haloreach.dll+0x2EDC5E is patched (EnginePatches) to convert kVisor + 0..29 directly to internal
         // visor indices 0..29 without stock 0..4 clamping, and 0x2C7DCC is patched to allow network replication.
+        // Note: in haloreach.dll's internal pmcg visor table (see 0x393CC / 0x3B2F4), internal index 3 is Gold
+        // and internal index 4 is Black, whereas the Armory UI catalog has 3 = "black" and 4 = "gold".
         auto visorOffset = [](int idx, const std::string& id) -> uint32_t {
-            if (idx >= 0 && idx < 30) return static_cast<uint32_t>(idx);
+            int uiIdx = -1;
             static const std::string_view kVisorIds[30] = {
                 "default", "silver", "blue", "black", "gold", "rose_gold",
                 "emerald", "ice", "crimson", "onyx", "violet", "amber",
@@ -1215,10 +1217,16 @@ static void ApplyArmoryAppearance(uint8_t* profile) {
                 "lime", "platinum", "obsidian", "pearl", "electric_blue", "blood_orange",
                 "mint", "copper", "midnight", "magenta", "aquamarine", "titanium"
             };
-            for (size_t i = 0; i < 30; ++i) {
-                if (kVisorIds[i] == id) return static_cast<uint32_t>(i);
+            if (!id.empty()) {
+                for (size_t i = 0; i < 30; ++i) {
+                    if (kVisorIds[i] == id) { uiIdx = static_cast<int>(i); break; }
+                }
             }
-            return 0;
+            if (uiIdx < 0 && idx >= 0 && idx < 30) uiIdx = idx;
+            if (uiIdx < 0) return 0;
+            if (uiIdx == 3) return 4; // UI 3 ("black") -> engine pmcg visor 4 (Black)
+            if (uiIdx == 4) return 3; // UI 4 ("gold")  -> engine pmcg visor 3 (Gold)
+            return static_cast<uint32_t>(uiIdx);
         };
 
         const uint32_t spEffectOff = armoryEffectOffset(num(sp, "armor_effect_index", 0, 6, 0), str(sp, "armor_effect_id"));
@@ -1508,7 +1516,35 @@ static std::atomic<ULONGLONG> s_uiScreenLastTick{0};
 
 static uint64_t __fastcall UiScreenHook(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
     s_uiScreenLastTick.store(GetTickCount64(), std::memory_order_relaxed);
+    if (HMODULE reach = GetModuleHandleW(L"haloreach.dll")) {
+        auto* w = reinterpret_cast<uint32_t*>(reinterpret_cast<uint8_t*>(reach) + 0xB43A90);
+        auto* h = reinterpret_cast<uint32_t*>(reinterpret_cast<uint8_t*>(reach) + 0xB43A94);
+        if (*w == 0 || *h == 0) {
+            *w = 1920;
+            *h = 1080;
+        }
+    }
     return s_origUiScreen(a1, a2, a3, a4);
+}
+
+// In container mode (-container-hwnd), haloreach.dll's g_hwnd (haloreach+0xC1A188) is a WS_CHILD
+// window inside the launcher's top-level window. haloreach.dll's UI cursor & list-widget hit-test
+// routines (0x1802D219E, 0x180305D96, 0x18034E7F6) call USER32!GetForegroundWindow via IAT
+// (haloreach+0x91E4B0) and compare it directly against g_hwnd; when g_hwnd is a child window,
+// GetForegroundWindow() returns the parent top-level window, causing the comparison to fail and
+// zeroing the UI mouse cursor to (-1, -1) on the loadout screen!
+static HWND WINAPI EngineGetForegroundWindow() {
+    if (HMODULE reach = GetModuleHandleW(L"haloreach.dll")) {
+        HWND engineHwnd = *reinterpret_cast<HWND*>(reinterpret_cast<uint8_t*>(reach) + 0xC1A188);
+        if (engineHwnd && noble::Window::IsForeground(engineHwnd)) {
+            return engineHwnd;
+        }
+    }
+    const HWND own = noble::Window::ActiveHwnd();
+    if (own && noble::Window::IsForeground(own)) {
+        return own;
+    }
+    return ::GetForegroundWindow();
 }
 
 // Subtitles. Before drawing cinematic/dialogue subtitles the engine asks haloreach+0xD5244
@@ -1553,6 +1589,21 @@ static void EnsureUiCursorHook() {
     HMODULE reach = GetModuleHandleW(L"haloreach.dll");
     if (!reach) return;
     EnsureSubtitleHook(reach);
+    {
+        auto* iatSlot = reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(reach) + 0x91E4B0);
+        DWORD oldProt = 0;
+        if (VirtualProtect(iatSlot, sizeof(void*), PAGE_READWRITE, &oldProt)) {
+            *iatSlot = reinterpret_cast<void*>(&EngineGetForegroundWindow);
+            VirtualProtect(iatSlot, sizeof(void*), oldProt, &oldProt);
+            NOBLE_INFO("ReachHost [UI cursor]: GetForegroundWindow IAT redirected for child-window hit-testing");
+        }
+        auto* w = reinterpret_cast<uint32_t*>(reinterpret_cast<uint8_t*>(reach) + 0xB43A90);
+        auto* h = reinterpret_cast<uint32_t*>(reinterpret_cast<uint8_t*>(reach) + 0xB43A94);
+        if (*w == 0 || *h == 0) {
+            *w = 1920;
+            *h = 1080;
+        }
+    }
     uint8_t* target = reinterpret_cast<uint8_t*>(reach) + kUiScreenRva;
     // Same check the engine makes: the function must start with "mov [rsp+18h], rbx" for this build.
     static const uint8_t kPrologue[5] = { 0x48, 0x89, 0x5C, 0x24, 0x18 };
@@ -1581,6 +1632,9 @@ static void InputRelease(HWND hwnd, const char* reason) {
     if (hwnd) {
         HCURSOR arrow = s_savedClassCursor ? s_savedClassCursor : LoadCursorW(nullptr, IDC_ARROW);
         SetClassLongPtrW(hwnd, GCLP_HCURSOR, reinterpret_cast<LONG_PTR>(arrow));
+        if (HWND parent = GetParent(hwnd)) {
+            SetClassLongPtrW(parent, GCLP_HCURSOR, reinterpret_cast<LONG_PTR>(arrow));
+        }
     }
     s_inputCaptured = false;
     NOBLE_INFO("ReachHost [Slot 36 - Input]: {}, mouse released", reason);
@@ -1873,6 +1927,9 @@ static void FillLocalInput(uint8_t* st) {
             HCURSOR cls = reinterpret_cast<HCURSOR>(GetClassLongPtrW(hwnd, GCLP_HCURSOR));
             if (cls) s_savedClassCursor = cls;
             SetClassLongPtrW(hwnd, GCLP_HCURSOR, 0); // hide the arrow over our window
+            if (HWND parent = GetParent(hwnd)) {
+                SetClassLongPtrW(parent, GCLP_HCURSOR, 0);
+            }
             s_inputCaptured = true;
             firstCapturedFrame = true;
             {
@@ -2081,6 +2138,22 @@ static void FillLocalInput(uint8_t* st) {
     if (st[0x004 + VK_XBUTTON1]) buttons |= 0x08;
     if (st[0x004 + VK_XBUTTON2]) buttons |= 0x10;
     *reinterpret_cast<uint32_t*>(st + 0x11C) = buttons;
+
+    // When an in-engine UI screen (such as the match loadout selection screen) is active, hovering a
+    // row moves the engine's list focus to that row, and left-clicking inside the game client area
+    // pulses VK_RETURN on the rising edge so clicking a loadout immediately selects it.
+    {
+        static bool s_uiWasLDown = false;
+        const bool lDown = (st[0x004 + VK_LBUTTON] != 0);
+        if (uiPointer && !PauseMenu::IsOpen() && !PauseMenu::IsGameOver() && lDown && !s_uiWasLDown) {
+            POINT pt{};
+            RECT rc{};
+            if (GetCursorPos(&pt) && ScreenToClient(hwnd, &pt) && GetClientRect(hwnd, &rc) && PtInRect(&rc, pt)) {
+                st[0x004 + VK_RETURN] = 0x80;
+            }
+        }
+        s_uiWasLDown = uiPointer && lDown;
+    }
 
     // Mouse wheel (+0x114, f32), as the engine's WheelPulse: each notch becomes a +1/-1 pulse held for 40 ms,
     // at most one pulse every 80 ms, up to 3 notches queued (wheel up = +1).
