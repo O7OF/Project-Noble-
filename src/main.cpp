@@ -205,14 +205,14 @@ ExitProcessFn s_origExitProcess = nullptr;
 
 // The engine's own main loop (haloreach+0xC390, called from its launcher thread). When it returns, the frame pump
 // stops and the client sits idle with no error - so log the verdict and how long it ran.
-using EngineMainLoopFn = char(__fastcall*)(void);
+using EngineMainLoopFn = char(__fastcall*)(uint64_t, uint64_t, uint64_t, uint64_t);
 EngineMainLoopFn s_origEngineMainLoop = nullptr;
 ULONGLONG s_engineLoopStart = 0;
 
-char __fastcall EngineMainLoopHook() {
+char __fastcall EngineMainLoopHook(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
     s_engineLoopStart = GetTickCount64();
     NOBLE_WARN("engine main loop entered (haloreach+0xC390)");
-    const char result = s_origEngineMainLoop ? s_origEngineMainLoop() : 0;
+    const char result = s_origEngineMainLoop ? s_origEngineMainLoop(a1, a2, a3, a4) : 0;
     NOBLE_ERROR("engine main loop returned {} after {} ms", static_cast<int>(result),
                 GetTickCount64() - s_engineLoopStart);
     if (auto logger = spdlog::default_logger()) logger->flush();
@@ -224,28 +224,33 @@ char __fastcall EngineMainLoopHook() {
 // Timing of the three stages the engine's launch routine runs after its main loop returns
 // (FUN_18000db08: 0xD564 when the loop succeeded, then 0xC8F8 and 0x3873C during teardown). Comparing a working
 // map with the Firefight-canvas mod map shows which stage bails out.
-using StageFn = void(__fastcall*)(void);
+// All four x64 register parameters (rcx, rdx, r8, r9) must be preserved across GetTickCount64(): 0x3873C takes
+// the memory stage index in edx and is also called during map loading (haloreach+0x305B6).
+using StageFn = uint64_t(__fastcall*)(uint64_t, uint64_t, uint64_t, uint64_t);
 StageFn s_origStage1 = nullptr;
 StageFn s_origStage2 = nullptr;
 StageFn s_origStage3 = nullptr;
 
-void __fastcall Stage1Hook() {
+uint64_t __fastcall Stage1Hook(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
     const ULONGLONG t0 = GetTickCount64();
-    if (s_origStage1) s_origStage1();
+    const uint64_t res = s_origStage1 ? s_origStage1(a1, a2, a3, a4) : 0;
     NOBLE_WARN("engine stage 0xD564 returned after {} ms", GetTickCount64() - t0);
     if (auto logger = spdlog::default_logger()) logger->flush();
+    return res;
 }
-void __fastcall Stage2Hook() {
+uint64_t __fastcall Stage2Hook(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
     const ULONGLONG t0 = GetTickCount64();
-    if (s_origStage2) s_origStage2();
+    const uint64_t res = s_origStage2 ? s_origStage2(a1, a2, a3, a4) : 0;
     NOBLE_WARN("engine stage 0xC8F8 returned after {} ms", GetTickCount64() - t0);
     if (auto logger = spdlog::default_logger()) logger->flush();
+    return res;
 }
-void __fastcall Stage3Hook() {
+uint64_t __fastcall Stage3Hook(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
     const ULONGLONG t0 = GetTickCount64();
-    if (s_origStage3) s_origStage3();
-    NOBLE_WARN("engine stage 0x3873C returned after {} ms", GetTickCount64() - t0);
+    const uint64_t res = s_origStage3 ? s_origStage3(a1, a2, a3, a4) : 0;
+    NOBLE_WARN("engine stage 0x3873C(stage={}) returned after {} ms", static_cast<int32_t>(a2), GetTickCount64() - t0);
     if (auto logger = spdlog::default_logger()) logger->flush();
+    return res;
 }
 
 using ExitThreadFn = VOID(WINAPI*)(DWORD);
@@ -371,6 +376,7 @@ PRUNTIME_FUNCTION LookupRuntimeFunction(const UnwindImage& image, uintptr_t pc) 
 
 // Print up to 32 frames of a suspended thread, unwinding through the manually mapped engine.
 int WalkThread(HANDLE thread, CONTEXT ctx, const UnwindImage& engine) {
+    UNREFERENCED_PARAMETER(thread);
     int shown = 0;
     for (int i = 0; i < 28; ++i) {
         const uintptr_t pc = static_cast<uintptr_t>(ctx.Rip);
@@ -530,6 +536,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     // (the CRT answers an escaping exception with a fail-fast, which the SEH filter never sees).
     if (std::wstring(pCmdLine ? pCmdLine : L"").find(L"-crash-test") != std::wstring::npos) {
         NOBLE_INFO("crash-test: writing a minidump for an unhandled C++ exception");
+#pragma warning(suppress : 4297)
         throw std::runtime_error("crash-test: unhandled C++ exception");
     }
 
