@@ -1020,6 +1020,13 @@ bool TryBeforePackStep(uint8_t* tags) {
 }
 
 uint8_t __fastcall CacheStepHook(void* a1, void* a2, uint32_t a3, void* tags, void* cache, void* a6) {
+    // Diagnostic: does this map load take the same cache step as a multiplayer canvas? (First few calls only.)
+    static std::atomic<int> s_stepLog{0};
+    if (s_stepLog.fetch_add(1) < 6) {
+        NOBLE_INFO("ElitePack: cache step call {} (a1 0x{:X}, a2 0x{:X}, a3 {}, tags 0x{:X}, cache 0x{:X})",
+                   s_stepLog.load(), reinterpret_cast<uintptr_t>(a1), reinterpret_cast<uintptr_t>(a2), a3,
+                   reinterpret_cast<uintptr_t>(tags), reinterpret_cast<uintptr_t>(cache));
+    }
     bool ours = false;
     if (cache && s_relocPending) {
         if (!TryRelocate(static_cast<uint8_t*>(cache))) {
