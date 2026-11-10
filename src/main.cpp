@@ -203,6 +203,22 @@ namespace {
 using ExitProcessFn = VOID(WINAPI*)(UINT);
 ExitProcessFn s_origExitProcess = nullptr;
 
+// The engine's own main loop (haloreach+0xC390, called from its launcher thread). When it returns, the frame pump
+// stops and the client sits idle with no error - so log the verdict and how long it ran.
+using EngineMainLoopFn = char(__fastcall*)(void);
+EngineMainLoopFn s_origEngineMainLoop = nullptr;
+ULONGLONG s_engineLoopStart = 0;
+
+char __fastcall EngineMainLoopHook() {
+    s_engineLoopStart = GetTickCount64();
+    NOBLE_WARN("engine main loop entered (haloreach+0xC390)");
+    const char result = s_origEngineMainLoop ? s_origEngineMainLoop() : 0;
+    NOBLE_ERROR("engine main loop returned {} after {} ms", static_cast<int>(result),
+                GetTickCount64() - s_engineLoopStart);
+    if (auto logger = spdlog::default_logger()) logger->flush();
+    return result;
+}
+
 using PostQuitMessageFn = VOID(WINAPI*)(int);
 PostQuitMessageFn s_origPostQuitMessage = nullptr;
 
@@ -228,14 +244,119 @@ VOID WINAPI ExitProcessHook(UINT code) {
 
 namespace {
 
-// Walk every thread's stack with dbghelp. Used by the stall watchdog: the engine can stop pumping frames without
-// crashing, and this says exactly which call each thread is parked in (module + RVA, no symbols needed).
+// A small in-process unwind engine. haloreach.dll is mapped by Noble's own loader, so dbghelp has no unwind data
+// for it and StackWalk64 stops at the first frame. Windows' unwinder only needs the image's .pdata and base, so we
+// parse those ourselves and step the context with RtlVirtualUnwind - enough to print a real engine call chain.
+struct UnwindImage {
+    uint8_t* base = nullptr;
+    uint32_t size = 0;
+    PRUNTIME_FUNCTION pdata = nullptr;
+    size_t pdataCount = 0;
+};
+
+UnwindImage FindUnwindImage(HMODULE module) {
+    UnwindImage image{};
+    if (!module) return image;
+    auto* base = reinterpret_cast<uint8_t*>(module);
+    auto* dos = reinterpret_cast<IMAGE_DOS_HEADER*>(base);
+    if (dos->e_magic != IMAGE_DOS_SIGNATURE) return image;
+    auto* nt = reinterpret_cast<IMAGE_NT_HEADERS64*>(base + dos->e_lfanew);
+    if (nt->Signature != IMAGE_NT_SIGNATURE) return image;
+    const auto& entry = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXCEPTION];
+    image.base = base;
+    image.size = nt->OptionalHeader.SizeOfImage;
+    image.pdata = reinterpret_cast<PRUNTIME_FUNCTION>(base + entry.VirtualAddress);
+    image.pdataCount = entry.Size / sizeof(RUNTIME_FUNCTION);
+    return image;
+}
+
+// One image per module, parsed on first use (cached): the unwinder has to step out of ntdll and into our own code too.
+UnwindImage ImageForModule(HMODULE module) {
+    static std::mutex s_mutex;
+    static std::unordered_map<HMODULE, UnwindImage> s_cache;
+    std::lock_guard<std::mutex> lock(s_mutex);
+    const auto it = s_cache.find(module);
+    if (it != s_cache.end()) return it->second;
+    UnwindImage image = FindUnwindImage(module);
+    s_cache.emplace(module, image);
+    return image;
+}
+
+UnwindImage ImageForPc(uintptr_t pc, HMODULE* outModule) {
+    HMODULE module = nullptr;
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                            reinterpret_cast<LPCWSTR>(pc), &module)) {
+        if (outModule) *outModule = nullptr;
+        return UnwindImage{};
+    }
+    if (outModule) *outModule = module;
+    return ImageForModule(module);
+}
+
+PRUNTIME_FUNCTION LookupRuntimeFunction(const UnwindImage& image, uintptr_t pc) {
+    if (!image.base || !image.pdata || pc < reinterpret_cast<uintptr_t>(image.base)) return nullptr;
+    const uint32_t rva = static_cast<uint32_t>(pc - reinterpret_cast<uintptr_t>(image.base));
+    size_t lo = 0, hi = image.pdataCount;
+    while (lo < hi) {
+        const size_t mid = (lo + hi) / 2;
+        const PRUNTIME_FUNCTION rf = &image.pdata[mid];
+        if (rva < rf->BeginAddress) { hi = mid; continue; }
+        if (rva >= rf->EndAddress) { lo = mid + 1; continue; }
+        return rf;
+    }
+    return nullptr;
+}
+
+// Print up to 32 frames of a suspended thread, unwinding through the manually mapped engine.
+int WalkThread(HANDLE thread, CONTEXT ctx, const UnwindImage& engine) {
+    int shown = 0;
+    for (int i = 0; i < 28; ++i) {
+        const uintptr_t pc = static_cast<uintptr_t>(ctx.Rip);
+        HMODULE mod = nullptr;
+        const UnwindImage image = ImageForPc(pc, &mod);
+        uintptr_t moduleBase = reinterpret_cast<uintptr_t>(mod);
+        std::string name = "?";
+        if (mod) {
+            WCHAR path[MAX_PATH] = L"?";
+            GetModuleFileNameW(mod, path, MAX_PATH);
+            name = std::filesystem::path(path).filename().string();
+        }
+        const bool inEngine = engine.base && pc >= reinterpret_cast<uintptr_t>(engine.base) &&
+                             pc < reinterpret_cast<uintptr_t>(engine.base) + engine.size;
+        char line[512];
+        std::snprintf(line, sizeof(line), "    %02d %s +0x%llX", i, inEngine ? "haloreach.dll" : name.c_str(),
+                      static_cast<unsigned long long>(inEngine ? pc - reinterpret_cast<uintptr_t>(engine.base)
+                                                               : (moduleBase ? pc - moduleBase : pc)));
+        NOBLE_ERROR("{}", line);
+        ++shown;
+        if (!moduleBase) break;
+
+        PRUNTIME_FUNCTION rf = LookupRuntimeFunction(image, pc);
+        if (rf) {
+            DWORD64 establisher = 0;
+            PVOID handlerData = nullptr;
+            KNONVOLATILE_CONTEXT_POINTERS pointers{};
+            RtlVirtualUnwind(UNW_FLAG_NHANDLER, static_cast<DWORD64>(moduleBase), static_cast<DWORD64>(pc), rf, &ctx,
+                             &handlerData, &establisher, &pointers);
+        } else {
+            // Leaf function: no unwind entry, so the caller is the return address on the stack.
+            if (!ctx.Rsp) break;
+            ctx.Rip = *reinterpret_cast<const DWORD64*>(ctx.Rsp);
+            ctx.Rsp += 8;
+            if (!ctx.Rip) break;
+        }
+    }
+    return shown;
+}
+
+// Walk every thread's stack. Used by the stall watchdog: the engine can stop pumping frames without crashing, and
+// this says exactly which call each thread is parked in (module + RVA, no symbols needed).
 void DumpAllThreadStacks() {
     NOBLE_ERROR("STALL DUMP: no engine frame for 15 s; dumping thread stacks");
     HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
     if (snap == INVALID_HANDLE_VALUE) return;
-    SymSetOptions(SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS | SYMOPT_LOAD_LINES);
-    SymInitialize(GetCurrentProcess(), nullptr, TRUE);   // TRUE: load the module list, or the stack walk stops after one frame
+    const UnwindImage engine = ImageForModule(GetModuleHandleW(L"haloreach.dll"));
+    NOBLE_ERROR("  engine .pdata entries: {}", engine.pdataCount);
     THREADENTRY32 te{};
     te.dwSize = sizeof(te);
     if (Thread32First(snap, &te)) {
@@ -247,38 +368,15 @@ void DumpAllThreadStacks() {
             CONTEXT ctx{};
             ctx.ContextFlags = CONTEXT_FULL;
             if (GetThreadContext(th, &ctx)) {
-                STACKFRAME64 sf{};
-                sf.AddrPC.Offset = ctx.Rip;
-                sf.AddrPC.Mode = AddrModeFlat;
-                sf.AddrFrame.Offset = ctx.Rbp;
-                sf.AddrFrame.Mode = AddrModeFlat;
-                sf.AddrStack.Offset = ctx.Rsp;
-                sf.AddrStack.Mode = AddrModeFlat;
                 char head[64];
                 std::snprintf(head, sizeof(head), "  thread %lu:", static_cast<unsigned long>(te.th32ThreadID));
                 NOBLE_ERROR("{}", head);
-                for (int i = 0; i < 12; ++i) {
-                    if (!StackWalk64(IMAGE_FILE_MACHINE_AMD64, GetCurrentProcess(), th, &sf, &ctx, nullptr,
-                                     SymFunctionTableAccess64, SymGetModuleBase64, nullptr)) break;
-                    const uintptr_t pc = static_cast<uintptr_t>(sf.AddrPC.Offset);
-                    HMODULE mod = nullptr;
-                    WCHAR path[MAX_PATH] = L"?";
-                    if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                                           reinterpret_cast<LPCWSTR>(pc), &mod)) {
-                        GetModuleFileNameW(mod, path, MAX_PATH);
-                        const std::string moduleName = std::filesystem::path(path).filename().string();
-                        char line[512];
-                        std::snprintf(line, sizeof(line), "    %02d %s +0x%llX", i, moduleName.c_str(),
-                                      static_cast<unsigned long long>(pc - reinterpret_cast<uintptr_t>(mod)));
-                        NOBLE_ERROR("{}", line);
-                    }
-                }
+                WalkThread(th, ctx, engine);
             }
             ResumeThread(th);
             CloseHandle(th);
         } while (Thread32Next(snap, &te));
     }
-    SymCleanup(GetCurrentProcess());
     CloseHandle(snap);
     if (auto logger = spdlog::default_logger()) logger->flush();
 }
@@ -1002,6 +1100,11 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         NOBLE_ERROR("Failed to load haloreach.dll into process space.");
         return 1;
     }
+
+    // Watch the engine's own main loop: if it returns, the frame pump stops and the client sits idle.
+    noble::HookManager::InstallHook(reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(loader->GetModuleHandle()) + 0xC390),
+                                    reinterpret_cast<void*>(&EngineMainLoopHook),
+                                    reinterpret_cast<void**>(&s_origEngineMainLoop), "trace_engine_main_loop");
 
     // Direct all haloreach.dll asset and map file I/O through Virtual File System (VFS)
     noble::VFS::HookTargetModule(loader->GetModuleHandle());
