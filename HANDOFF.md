@@ -1,3 +1,7 @@
+> **2026-11-09 08:00 ET: latest handoff for community content (megapack custom games, FORGE MAPS tab, Spectre,
+> Pelican, ReachVariantTool, mod permissions) is `docs/HANDOFF-CONTENT-2026-11-09.md`. 32-player work:
+> `LIMITS-HANDOFF.md`. Flood swarm: `docs/swarm-test-notes.md`.**
+
 # Project Noble: handoff (2026-10-29, 03:45 ET)
 Dominus join the team 20261028! -
 This picks up a reverse-engineering and C++ effort on **Tyler's Windows PC**. All paths below are real paths on that machine.

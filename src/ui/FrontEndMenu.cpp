@@ -1,4 +1,5 @@
 #include <map>
+#include <functional>
 #include "FrontEndMenu.hpp"
 #include "audio/VoiceChat.hpp"
 #include "SocialOverlay.hpp"
@@ -34,6 +35,7 @@
 #include "common/Settings.hpp"
 #include "common/Version.hpp"
 #include "common/Updater.hpp"
+#include "common/BuildIdentity.hpp"
 #include "common/DeviceIdentity.hpp"
 #include "engine/FrameCapture.hpp"
 #include "engine/ReachArmory.hpp"
@@ -354,6 +356,133 @@ int FindVariant(const std::vector<MenuVariant>& list, const wchar_t* file) {
         if (Lower(list[i].path.filename().wstring()) == Lower(file)) return static_cast<int>(i);
     }
     return 0;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Forge maps (map variants, .mvar): Noble's data\map_variants (the Halo Customs megapack lives there) and the
+// folders MCC itself saves Forge maps to. A Forge map is a layout laid over a stock map; the engine reads it from
+// the launch block (BlamEngine, "-mvar").
+// ---------------------------------------------------------------------------------------------
+struct ForgeMap {
+    std::string title, description, creator;
+    std::string scenario;   // the stock map it is built on
+    std::string group;      // list heading, from the pack's file name prefixes ("INF ", "BTB ", ...)
+    std::filesystem::path path;
+};
+
+// A map variant's base map id -> scenario. The ids are BlamEngine's kMultiplayerMaps ones.
+const char* ScenarioForMapId(int32_t id) {
+    struct Id { int32_t id; const char* scenario; };
+    static const Id kIds[] = {
+        { 1035, "50_panopticon" }, { 1080, "70_boneyard" }, { 1020, "45_launch_station" }, { 1055, "30_settlement" },
+        { 1150, "52_ivory_tower" }, { 1200, "35_island" }, { 1000, "20_sword_slayer" }, { 1040, "45_aftship" },
+        { 2001, "dlc_slayer" }, { 2002, "dlc_invasion" }, { 2004, "dlc_medium" }, { 1500, "condemned" },
+        { 1510, "trainingpreserve" }, { 10020, "cex_beaver_creek" }, { 10010, "cex_damnation" }, { 10030, "cex_timberland" },
+        { 10070, "cex_prisoner" }, { 10060, "cex_hangemhigh" }, { 10050, "cex_headlong" }, { 3006, "forge_halo" },
+    };
+    for (const Id& m : kIds) if (m.id == id) return m.scenario;
+    return nullptr;
+}
+
+// The pack names its files "<prefix> <title>": the prefix becomes the heading and is dropped from the title.
+struct ForgeGroup { const char* prefix; const char* group; bool strip; };
+const ForgeGroup kForgeGroups[] = {
+    { "btb", "Big Team", true }, { "inf", "Infection", true }, { "inv", "Invasion", true },
+    { "mini", "Minigames", true }, { "race", "Race", true }, { "slyr", "Slayer", true },
+    { "obst", "Obstacle Courses", true }, { "misc", "Other", true },
+    { "hot pursuit", "Hot Pursuit", false }, { "cops & robbers", "Cops & Robbers", false },
+};
+
+// True when `text` starts with `prefix` (case-insensitive) followed by a space, ':', '-' or the end.
+bool StartsWithWord(const std::string& text, const char* prefix) {
+    const size_t n = std::strlen(prefix);
+    if (text.size() < n) return false;
+    for (size_t i = 0; i < n; ++i) {
+        if (::tolower(static_cast<unsigned char>(text[i])) != prefix[i]) return false;
+    }
+    return text.size() == n || text[n] == ' ' || text[n] == ':' || text[n] == '-';
+}
+
+std::string StripForgePrefix(const std::string& text, const char* prefix) {
+    size_t at = std::strlen(prefix);
+    while (at < text.size() && (text[at] == ' ' || text[at] == ':' || text[at] == '-')) ++at;
+    return at < text.size() ? text.substr(at) : text;
+}
+
+// Only a PC-format map variant: "_blf", "chdr" at 0x30 and the "mvar" body at 0x2F0, at least 0x7329 bytes (what
+// BlamEngine hands parse_map_variant). Xbox 360 exports (a compressed "_cmp" body, big-endian header text) are
+// skipped: re-save them in ReachVariantTool. Header layout checked against the megapack's PC files (2026-11-09):
+// creator 0x88 (ASCII), base map id 0x6C (int32), title 0xC0 and description 0x1C0 (UTF-16 LE).
+bool ReadForgeMap(const std::filesystem::path& path, ForgeMap& out) {
+    constexpr size_t kSize = 0x7329;
+    std::ifstream file(path, std::ios::binary);
+    std::vector<unsigned char> d(kSize);
+    file.read(reinterpret_cast<char*>(d.data()), static_cast<std::streamsize>(d.size()));
+    if (static_cast<size_t>(file.gcount()) < kSize) return false;
+    if (std::memcmp(d.data(), "_blf", 4) != 0 || std::memcmp(d.data() + 0x30, "chdr", 4) != 0 ||
+        std::memcmp(d.data() + 0x2F0, "mvar", 4) != 0) return false;
+    if (d[0xC0] == 0 && d[0xC1] != 0) return false;   // big-endian title: an Xbox 360 export
+    int32_t mapId = 0;
+    std::memcpy(&mapId, d.data() + 0x6C, sizeof(mapId));
+    const char* scenario = ScenarioForMapId(mapId);
+    if (!scenario) return false;
+    const auto utf16 = [&](size_t at, size_t chars) {
+        std::wstring wide;
+        for (size_t i = 0; i < chars; ++i) {
+            const wchar_t c = static_cast<wchar_t>(d[at + i * 2] | (d[at + i * 2 + 1] << 8));
+            if (c == 0) break;
+            wide.push_back(c);
+        }
+        char text[1024] = {};
+        WideCharToMultiByte(CP_UTF8, 0, wide.c_str(), static_cast<int>(wide.size()), text, sizeof(text) - 1, nullptr, nullptr);
+        return std::string(text);
+    };
+    out = {};
+    out.path = path;
+    out.scenario = scenario;
+    out.title = utf16(0xC0, 64);
+    out.description = utf16(0x1C0, 128);
+    for (size_t i = 0x88; i < 0x98 && d[i] >= 0x20 && d[i] < 0x7F; ++i) out.creator.push_back(static_cast<char>(d[i]));
+    if (out.title.empty() || out.title[0] == '$') out.title = path.stem().string();   // a string key, not a title
+    if (out.description.rfind("$", 0) == 0) out.description.clear();
+    const std::string stem = path.stem().string();
+    out.group = "Unsorted";   // no pack prefix (e.g. a player's own saved map)
+    for (const ForgeGroup& g : kForgeGroups) {
+        if (!StartsWithWord(stem, g.prefix)) continue;
+        out.group = g.group;
+        if (g.strip && StartsWithWord(out.title, g.prefix)) out.title = StripForgePrefix(out.title, g.prefix);
+        break;
+    }
+    return true;
+}
+
+std::vector<ForgeMap> ScanForgeMaps() {
+    std::vector<ForgeMap> list;
+    std::vector<std::filesystem::path> folders = { VFS::GetUserStoragePath() / "map_variants" };
+    wchar_t userProfile[MAX_PATH] = {};
+    if (GetEnvironmentVariableW(L"USERPROFILE", userProfile, MAX_PATH) > 0) {
+        const std::filesystem::path uProf(userProfile);
+        folders.push_back(uProf / "AppData" / "LocalLow" / "MCC" / "Temporary" / "UserContent" / "HaloReach" / "Map");
+        folders.push_back(uProf / "AppData" / "LocalLow" / "MCC" / "LocalVault" / "UserContent" / "HaloReach" / "Map");
+    }
+    std::set<std::wstring> seen;
+    std::error_code ec;
+    int skipped = 0;
+    for (const std::filesystem::path& folder : folders) {
+        for (const auto& entry : std::filesystem::directory_iterator(folder, ec)) {
+            if (!entry.is_regular_file(ec) || Lower(entry.path().extension().wstring()) != L".mvar") continue;
+            if (!seen.insert(Lower(entry.path().filename().wstring())).second) continue;
+            ForgeMap map;
+            if (ReadForgeMap(entry.path(), map)) list.push_back(std::move(map));
+            else ++skipped;
+        }
+        ec.clear();
+    }
+    std::sort(list.begin(), list.end(), [](const ForgeMap& a, const ForgeMap& b) {
+        return a.group != b.group ? a.group < b.group : a.title < b.title;
+    });
+    NOBLE_INFO("FrontEndMenu: {} Forge map(s) listed, {} skipped (not a PC-format map variant)", list.size(), skipped);
+    return list;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -831,13 +960,18 @@ int DrawList(const Ui& ui, const char* id, ImVec2 pos, float width, const std::v
     return activated;
 }
 
-bool DrawSourceTabs(const Ui& ui, ImVec2 pos, int& active, int moddedCount) {
-    const char* labels[2] = { "VANILLA", "MODDED" };
+// `forgeCount` >= 0 adds a third tab, FORGE MAPS (Custom Game and Forge). `tabsEnd` gets the x just past the last tab,
+// so a search box can sit after them.
+bool DrawSourceTabs(const Ui& ui, ImVec2 pos, int& active, int moddedCount, int forgeCount = -1, float* tabsEnd = nullptr) {
+    const char* labels[3] = { "VANILLA", "MODDED", "FORGE MAPS" };
+    const int tabs = forgeCount >= 0 ? 3 : 2;
+    if (active >= tabs) active = 0;
     int next = active;
     float x = pos.x;
-    for (int i = 0; i < 2; ++i) {
+    for (int i = 0; i < tabs; ++i) {
         char text[32];
         if (i == 1) std::snprintf(text, sizeof(text), "%s (%d)", labels[i], moddedCount);
+        else if (i == 2) std::snprintf(text, sizeof(text), "%s (%d)", labels[i], forgeCount);
         else std::snprintf(text, sizeof(text), "%s", labels[i]);
         const float w = TextWidth(NobleStyle::TitleFont(), 20.0f * ui.s, text) + 24.0f * ui.s;
         const float h = 30.0f * ui.s;
@@ -858,9 +992,10 @@ bool DrawSourceTabs(const Ui& ui, ImVec2 pos, int& active, int moddedCount) {
         Text(ui, NobleStyle::TitleFont(), 20.0f, ImVec2(x + 12.0f * ui.s, pos.y + 4.0f * ui.s), on ? kWhite : kDim, text);
         x += w + 6.0f * ui.s;
     }
+    if (tabsEnd) *tabsEnd = x;
     const bool typing = ImGui::GetIO().WantTextInput;   // Q and E are letters in a search box
-    if ((!typing && ImGui::IsKeyPressed(ImGuiKey_Q, false)) || ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false)) next = 0;
-    if ((!typing && ImGui::IsKeyPressed(ImGuiKey_E, false)) || ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false)) next = 1;
+    if ((!typing && ImGui::IsKeyPressed(ImGuiKey_Q, false)) || ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false)) next = std::max(0, active - 1);
+    if ((!typing && ImGui::IsKeyPressed(ImGuiKey_E, false)) || ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false)) next = std::min(tabs - 1, active + 1);
     if (next == active) return false;
     MenuSounds::Tab(next > active ? 1 : -1);
     active = next;
@@ -1437,8 +1572,9 @@ float DifficultyTiles(const Ui& ui, const char* id, ImVec2 pos, float width, int
 }
 
 // `note`, when given, follows the value in dim lower-case ("(default)").
+// `arrows` false: a row that only opens something (the Skulls screen): no arrows, the value is centred in the whole value area.
 int OptionRow(const Ui& ui, const char* id, ImVec2 pos, float width, const char* label, const char* value, bool focused,
-              const char* note = nullptr) {
+              const char* note = nullptr, bool arrows = true) {
     const float h = 32.0f * ui.s;
     int change = 0;
     const ImVec2 b(pos.x + width, pos.y + h);
@@ -1453,18 +1589,20 @@ int OptionRow(const Ui& ui, const char* id, ImVec2 pos, float width, const char*
     const float vx = pos.x + width * 0.48f;
     const float vw = width * 0.52f;
     const float aw = 28.0f * ui.s;
-    ImGui::PushID(id);
-    ImGui::SetCursorScreenPos(ImVec2(vx, pos.y));
-    if (ImGui::InvisibleButton("##l", ImVec2(aw, h))) change = -1;
-    const bool hl = ImGui::IsItemHovered();
-    ImGui::SetCursorScreenPos(ImVec2(vx + vw - aw, pos.y));
-    if (ImGui::InvisibleButton("##r", ImVec2(aw, h))) change = 1;
-    const bool hr = ImGui::IsItemHovered();
-    ImGui::PopID();
-    const float cy = pos.y + h * 0.5f, ah = 6.0f * ui.s;
-    ui.dl->AddTriangleFilled(ImVec2(vx + aw * 0.65f, cy - ah), ImVec2(vx + aw * 0.65f, cy + ah), ImVec2(vx + aw * 0.3f, cy), hl ? kWhite : kDim);
-    const float rx = vx + vw - aw;
-    ui.dl->AddTriangleFilled(ImVec2(rx + aw * 0.35f, cy - ah), ImVec2(rx + aw * 0.35f, cy + ah), ImVec2(rx + aw * 0.7f, cy), hr ? kWhite : kDim);
+    if (arrows) {
+        ImGui::PushID(id);
+        ImGui::SetCursorScreenPos(ImVec2(vx, pos.y));
+        if (ImGui::InvisibleButton("##l", ImVec2(aw, h))) change = -1;
+        const bool hl = ImGui::IsItemHovered();
+        ImGui::SetCursorScreenPos(ImVec2(vx + vw - aw, pos.y));
+        if (ImGui::InvisibleButton("##r", ImVec2(aw, h))) change = 1;
+        const bool hr = ImGui::IsItemHovered();
+        ImGui::PopID();
+        const float cy = pos.y + h * 0.5f, ah = 6.0f * ui.s;
+        ui.dl->AddTriangleFilled(ImVec2(vx + aw * 0.65f, cy - ah), ImVec2(vx + aw * 0.65f, cy + ah), ImVec2(vx + aw * 0.3f, cy), hl ? kWhite : kDim);
+        const float rx = vx + vw - aw;
+        ui.dl->AddTriangleFilled(ImVec2(rx + aw * 0.35f, cy - ah), ImVec2(rx + aw * 0.35f, cy + ah), ImVec2(rx + aw * 0.7f, cy), hr ? kWhite : kDim);
+    }
     const std::string v = Upper(value);
     const float vtw = TextWidth(NobleStyle::TitleFont(), 18.0f * ui.s, v.c_str());
     const float gap = note ? 6.0f * ui.s : 0.0f;
@@ -1477,6 +1615,168 @@ int OptionRow(const Ui& ui, const char* id, ImVec2 pos, float width, const char*
         if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickRight)) change = 1;
     }
     if (change) MenuSounds::Change();
+    return change;
+}
+
+// A choice list (PickerRow) is open: set while one is drawn, read at the start of the next frame so Back and the up/down keys
+// act on the list instead of the screen under it.
+bool s_pickerOpenNow = false;
+bool s_pickerBlocksNav = false;
+
+// The mark of a row whose middle can be clicked: a plate and underline when the mouse is over it (or its list is open) and
+// a hand cursor. No caret or chevron. (`value` and `down` are kept for the callers.)
+void DrawMiddleHint(const Ui& ui, ImVec2 pos, float width, const char* value, bool hovered, bool open, bool down) {
+    const float h = 32.0f * ui.s, aw = 28.0f * ui.s;
+    const float vx = pos.x + width * 0.48f, vw = width * 0.52f;
+    if (hovered) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    // The highlight covers the whole value section (arrows included), so the player sees where the box is.
+    const bool inSection = ImGui::IsMouseHoveringRect(pos, ImVec2(pos.x + width, pos.y + h));   // the whole row, label included
+    if (inSection || hovered || open) {
+        ui.dl->AddRectFilled(ImVec2(vx, pos.y + 2.0f * ui.s), ImVec2(vx + vw, pos.y + h - 2.0f * ui.s),
+                             IM_COL32(143, 216, 255, open ? 40 : 28), 2.0f * ui.s);
+        ui.dl->AddRectFilled(ImVec2(vx, pos.y + h - 3.0f * ui.s), ImVec2(vx + vw, pos.y + h - 1.0f * ui.s),
+                             IM_COL32(143, 216, 255, open ? 200 : 140));
+    }
+    (void)aw;
+    (void)value;
+    (void)down;
+}
+
+// An OptionRow whose middle also opens something when clicked, with the hint drawn. Returns the arrows' change (-1, 0, 1);
+// `clicked` is set when the middle was clicked.
+int ClickRow(const Ui& ui, const char* id, ImVec2 pos, float width, const char* label, const char* value, bool focused,
+             bool* clicked, bool down = false) {
+    const int change = OptionRow(ui, id, pos, width, label, value, focused, nullptr, false);
+    ImGui::PushID(id);
+    ImGui::SetCursorScreenPos(ImVec2(pos.x + width * 0.48f, pos.y));
+    const bool hit = ImGui::InvisibleButton("##mid", ImVec2(width * 0.52f, 32.0f * ui.s));
+    DrawMiddleHint(ui, pos, width, value, ImGui::IsItemHovered(), false, down);
+    ImGui::PopID();
+    if (hit) MenuSounds::Click();
+    if (clicked) *clicked = hit;
+    return change;
+}
+
+// An OptionRow whose middle can also be clicked: it opens a list of every choice, so a player picks one directly instead of
+// stepping the arrows through them all. The middle shows that it is clickable: a plate and underline on hover, a hand
+// cursor and a small drop-down caret after the value. `fill` runs only while the list is open: it fills the choice texts and
+// the index of the current one. Returns the arrows' change (-1, 0, 1) like OptionRow; `picked` gets the chosen index on the
+// frame a choice is clicked, else -1. `openNow` (the row's Accept key, say) opens the list too.
+int PickerRow(const Ui& ui, const char* id, ImVec2 pos, float width, const char* label, const char* value, bool focused,
+              const std::function<void(std::vector<std::string>&, int&)>& fill, int* picked, bool openNow = false,
+              const char* note = nullptr, bool labelOpens = true) {
+    if (picked) *picked = -1;
+    ImGui::PushID(id);
+    const bool wasOpen = ImGui::IsPopupOpen("##pickpopup");
+    ImGui::PopID();
+    // No side arrows: the whole value section is the button (the left and right keys still step the value).
+    int change = OptionRow(ui, id, pos, width, label, value, focused, note, false);
+    if (wasOpen) change = 0;   // the list is open: left/right must not also step the value behind it
+    const float h = 32.0f * ui.s;
+    const float vx = pos.x + width * 0.48f, vw = width * 0.52f;
+    ImGui::PushID(id);
+    ImGui::SetCursorScreenPos(ImVec2(vx, pos.y));
+    bool clicked = ImGui::InvisibleButton("##pick", ImVec2(vw, h));
+    const bool hovered = ImGui::IsItemHovered();
+    if (hovered) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    if (labelOpens) {
+        // A click on the label opens the list too: the whole row is the button.
+        ImGui::SetCursorScreenPos(pos);
+        if (ImGui::InvisibleButton("##picklabel", ImVec2(width * 0.48f, h))) clicked = true;
+        if (ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    }
+    if (clicked || (openNow && !wasOpen)) {
+        ImGui::OpenPopup("##pickpopup");
+        MenuSounds::Click();
+    }
+    const bool open = ImGui::IsPopupOpen("##pickpopup");
+    if (open) s_pickerOpenNow = true;
+    const bool inSection = ImGui::IsMouseHoveringRect(pos, ImVec2(pos.x + width, pos.y + h));   // the whole row, label included
+    if (inSection || hovered || open) {
+        ui.dl->AddRectFilled(ImVec2(vx, pos.y + 2.0f * ui.s), ImVec2(vx + vw, pos.y + h - 2.0f * ui.s),
+                             IM_COL32(143, 216, 255, open ? 40 : 28), 2.0f * ui.s);
+        ui.dl->AddRectFilled(ImVec2(vx, pos.y + h - 3.0f * ui.s), ImVec2(vx + vw, pos.y + h - 1.0f * ui.s),
+                             IM_COL32(143, 216, 255, open ? 200 : 140));
+    }
+    if (open && fill) {
+        std::vector<std::string> choices;
+        int current = -1;
+        fill(choices, current);
+        const float rowH = 30.0f * ui.s;
+        const int count = static_cast<int>(choices.size());
+        // Fit the room on screen: below the row, or above it when there is more space there; the list scrolls (mouse
+        // wheel or its scrollbar) when the choices don't all fit. The bottom keeps clear of the key hints.
+        const float wanted = count * rowH + 8.0f * ui.s;
+        const float below = ui.origin.y + ui.size.y - 84.0f * ui.s - (pos.y + h);
+        const float above = pos.y - (ui.origin.y + 8.0f * ui.s);
+        const bool openUp = wanted > below && above > below;
+        const float listH = std::max(rowH * 2.0f, std::min(wanted, openUp ? above : below));
+        ImGui::SetNextWindowPos(ImVec2(vx, openUp ? pos.y - listH : pos.y + h));
+        ImGui::SetNextWindowSize(ImVec2(vw, listH));
+        ImGui::PushStyleColor(ImGuiCol_PopupBg, IM_COL32(10, 16, 24, 248));
+        ImGui::PushStyleColor(ImGuiCol_Border, IM_COL32(143, 216, 255, 150));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 4.0f * ui.s));
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0.0f, 0.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+        static ImGuiID s_scrolledFor = 0;
+        const ImGuiID popupId = ImGui::GetID("##pickpopup");
+        if (ImGui::BeginPopup("##pickpopup", ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoSavedSettings)) {
+            ImDrawList* pd = ImGui::GetWindowDrawList();
+            const bool firstFrame = s_scrolledFor != popupId;
+            // Keyboard and pad: up/down move the cursor, Accept picks it, Back (Esc / B) closes the list and nothing else.
+            // Ignored on the frame the list opens, so the press that opened it doesn't also pick.
+            static int s_cursor = 0;
+            if (firstFrame) s_cursor = std::max(0, current);
+            bool cursorMoved = false;
+            bool acceptKey = false;
+            if (wasOpen && count > 0) {
+                if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickDown)) {
+                    s_cursor = (s_cursor + 1) % count;
+                    cursorMoved = true;
+                }
+                if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickUp)) {
+                    s_cursor = (s_cursor + count - 1) % count;
+                    cursorMoved = true;
+                }
+                acceptKey = ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false);
+                if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)) {
+                    ImGui::CloseCurrentPopup();
+                    MenuSounds::Back();
+                }
+                if (cursorMoved) MenuSounds::Scroll();
+            }
+            const ImVec2 mouseDelta = ImGui::GetIO().MouseDelta;
+            for (int i = 0; i < count; ++i) {
+                ImGui::PushID(i);
+                const ImVec2 p = ImGui::GetCursorScreenPos();
+                bool chosen = ImGui::InvisibleButton("##c", ImVec2(vw, rowH));
+                const bool over = ImGui::IsItemHovered();
+                if (over && (mouseDelta.x != 0.0f || mouseDelta.y != 0.0f)) s_cursor = i;
+                if (acceptKey && i == s_cursor) chosen = true;
+                if ((firstFrame && i == current) || (cursorMoved && i == s_cursor)) ImGui::SetScrollHereY(0.5f);
+                if (i == current) pd->AddRectFilled(p, ImVec2(p.x + vw, p.y + rowH), IM_COL32(60, 120, 170, 110));
+                if (i == s_cursor) pd->AddRectFilled(p, ImVec2(p.x + vw, p.y + rowH), IM_COL32(143, 216, 255, 40));
+                if (i == current) pd->AddRectFilled(p, ImVec2(p.x + 2.0f * ui.s, p.y + rowH), kAccent);
+                const std::string text = Upper(choices[i].c_str());
+                const float tw = TextWidth(NobleStyle::TitleFont(), 18.0f * ui.s, text.c_str());
+                pd->AddText(NobleStyle::TitleFont(), 18.0f * ui.s, ImVec2(p.x + (vw - tw) * 0.5f, p.y + 5.0f * ui.s),
+                            i == current || i == s_cursor ? kWhite : kDim, text.c_str());
+                ImGui::PopID();
+                if (chosen) {
+                    if (picked) *picked = i;
+                    MenuSounds::Change();
+                    ImGui::CloseCurrentPopup();
+                }
+            }
+            s_scrolledFor = popupId;
+            ImGui::EndPopup();
+        } else {
+            s_scrolledFor = 0;
+        }
+        ImGui::PopStyleVar(3);
+        ImGui::PopStyleColor(2);
+    }
+    ImGui::PopID();
     return change;
 }
 
@@ -1548,18 +1848,21 @@ float HeroBanner(const Ui& ui, ImVec2 pos, float width, float height, const std:
     if (blurb && *blurb) {
         // Two lines at most: a long workshop blurb is clipped here instead of running over the option rows.
         const float lineH = 17.0f * ui.s * 1.35f;
-        const ImVec2 t0(pos.x, y), t1(pos.x + width, y + lineH * 2.0f);
+        const std::string fitted = FitWrapped(nullptr, 17.0f * ui.s, blurb, width - 4.0f * ui.s, lineH * 2.0f);
+        // The text's own height: the band and the clip stop there, because the rows below start 8 px under it. (The band
+        // used to be two full 1.35-spaced lines, about 8 px taller than the space reserved, so it ran into the Game Type row.)
+        const float usedH = std::min(Font(nullptr)->CalcTextSizeA(17.0f * ui.s, FLT_MAX, width, fitted.c_str()).y, lineH * 2.0f);
+        const ImVec2 t0(pos.x, y), t1(pos.x + width, y + usedH);
         // The description sits over map art, so it gets a soft dark band and a 1 px shadow: plain grey text
         // on a bright picture was borderline unreadable (Tyler, 2026-10-30).
-        ui.dl->AddRectFilledMultiColor(ImVec2(t0.x, t0.y - 4.0f * ui.s), ImVec2(t1.x, t1.y + 4.0f * ui.s),
+        ui.dl->AddRectFilledMultiColor(ImVec2(t0.x, t0.y - 4.0f * ui.s), ImVec2(t1.x, t1.y + 3.0f * ui.s),
                                        IM_COL32(4, 8, 12, 40), IM_COL32(4, 8, 12, 150),
                                        IM_COL32(4, 8, 12, 150), IM_COL32(4, 8, 12, 40));
-        const std::string fitted = FitWrapped(nullptr, 17.0f * ui.s, blurb, width - 4.0f * ui.s, lineH * 2.0f);
-        ui.dl->PushClipRect(ImVec2(pos.x, y - 2.0f * ui.s), ImVec2(pos.x + width, y + lineH * 2.0f), true);
+        ui.dl->PushClipRect(ImVec2(pos.x, y - 2.0f * ui.s), ImVec2(pos.x + width, y + usedH + 2.0f * ui.s), true);
         Text(ui, nullptr, 17.0f, ImVec2(pos.x + 1.0f * ui.s, y + 1.0f * ui.s), IM_COL32(0, 0, 0, 210), fitted.c_str(), pos.x + width);
         Text(ui, nullptr, 17.0f, ImVec2(pos.x, y), IM_COL32(214, 224, 236, 255), fitted.c_str(), pos.x + width);
         ui.dl->PopClipRect();
-        y += std::min(Font(nullptr)->CalcTextSizeA(17.0f * ui.s, FLT_MAX, width, fitted.c_str()).y, lineH * 2.0f) + 8.0f * ui.s;
+        y += usedH + 8.0f * ui.s;
     }
     return y;
 }
@@ -1615,7 +1918,7 @@ float SkullStrip(const Ui& ui, ImVec2 pos, float size, uint64_t mask, int maxIco
 std::string SkullSummary(uint64_t mask) {
     int count = 0;
     for (const Skull& s : kSkulls) if (mask & (1ull << s.bit)) ++count;
-    if (count == 0) return "None";
+    if (count == 0) return "0";
     // All thirteen on reads as "All Skulls" (Tyler, 2026-10-30).
     if (count >= kSkullCount) return "All Skulls";
     if (count == 1) {
@@ -1692,6 +1995,8 @@ struct MenuState {
     int ffModded = 0;
     int mpModded = 0;
     int forgeModded = 0;
+    int mpForgeMap = 0;      // row in the FORGE MAPS tab
+    int forgeForgeMap = 0;
     int lobbyNetMode = 1;       // 0 = Local (LAN), 1 = Online (P2P)
     int lobbyPrivacy = 0;       // 0 = Public (Master Server), 1 = Private (Direct Connect)
     bool confirmQuit = false;   // "Quit Project Noble?" box on the main menu (Esc or QUIT)
@@ -1709,6 +2014,7 @@ struct MenuState {
     std::string lobbySessionToken;
     std::string lobbyMap = "20_sword_slayer";
     std::filesystem::path lobbyMapOverride; // modded .map served in place of the stock lobbyMap
+    std::filesystem::path lobbyMapVariant;  // Forge map (.mvar) laid over lobbyMap; empty for the plain map
     std::string lobbyMapTitle;
     std::filesystem::path lobbyMapImage, lobbyMapThumb;
     std::string lobbyMode = "multiplayer";
@@ -1727,6 +2033,7 @@ struct MenuState {
     std::vector<LobbyPlayer> lobbyRoster;
     bool lobbyLaunchPending = false;
     std::string lobbyLaunchMap;
+    std::string lobbyLaunchMapVariant;   // host's Forge map file name
     std::string lobbyLaunchMode;
     std::string lobbyLaunchVariant;
     int lobbyLaunchDiff = 1;
@@ -1817,6 +2124,7 @@ static void SetupHostLobby(MenuState& st, const std::string& mapScenario, const 
     st.isLobbyHost = true;
     st.lobbyMap = mapScenario;
     st.lobbyMapOverride = mapOverride;
+    st.lobbyMapVariant.clear();   // the Custom Game / Forge screen sets it after this for a Forge map
     st.lobbyMapTitle = mapTitle;
     st.lobbyMapImage = mapImage;
     st.lobbyMapThumb = mapThumb;
@@ -2060,6 +2368,8 @@ struct MapEntry {
     const ModEntry* mod = nullptr;
     bool header = false;
     bool custom = false;
+    std::filesystem::path mvar;   // Forge map laid over `scenario`
+    std::string forgeGroup;       // Forge map heading this row is under (also set on the heading)
 };
 
 bool KnownScenario(const std::string& scenario, const MenuMap* maps, int count) {
@@ -2114,7 +2424,13 @@ std::vector<MapEntry> ModMaps(const ModEntry& mod, const std::vector<ModMap>& li
     for (const ModMap& m : listed) {
         const bool known = KnownScenario(m.scenario, base, baseCount);
         if (known) {
-            out.push_back({ m.scenario, m.title, PlainDescription(m.description, 150), {}, {}, {}, {}, {}, true, &mod });
+            // A mission on a stock map slot (the mod replaces that map's file) still has its own pictures:
+            // the menu art and the loading screen come from the mission's JSON, not from the stock map.
+            MapEntry stock{ m.scenario, m.title, PlainDescription(m.description, 150), {}, {}, {}, {}, {}, true, &mod };
+            stock.imageThumbnail = m.imageThumbnail;
+            stock.imageLarge = m.imageLarge.empty() ? m.imageThumbnail : m.imageLarge;
+            stock.imageLoading = m.imageLoading.empty() ? stock.imageLarge : m.imageLoading;
+            out.push_back(std::move(stock));
             continue;
         }
         const std::filesystem::path mapFile = mod.folder / "maps" / (m.scenario + ".map");
@@ -2127,7 +2443,14 @@ std::vector<MapEntry> ModMaps(const ModEntry& mod, const std::vector<ModMap>& li
         MapEntry entry;
         entry.scenario = m.scenario;
         entry.name = m.title;
-        const std::string defaultCarrier = !m.baseScenario.empty() ? m.baseScenario : carrier;
+        // The map JSON's parent folder is only a usable carrier when it is a map the engine knows (a stock
+        // scenario, or a Forge World canvas). A name such as "trepanation" has no map id, and launching it
+        // starts the main menu instead of the map, so those use the mode's default carrier (or the
+        // data\map_carriers.json entry for the map).
+        const bool baseUsable = !m.baseScenario.empty() &&
+                                (KnownScenario(m.baseScenario, base, baseCount) ||
+                                 m.baseScenario.find("forge_halo") != std::string::npos);
+        const std::string defaultCarrier = baseUsable ? m.baseScenario : carrier;
         entry.launchScenario = CarrierForScenario(m.scenario, defaultCarrier);
         entry.mapOverride = mapFile;
         entry.imageThumbnail = m.imageThumbnail;
@@ -2238,6 +2561,51 @@ void FixSelection(const std::vector<MapEntry>& list, int& selected) {
     selected = list.empty() ? 0 : std::clamp(selected, 0, static_cast<int>(list.size()) - 1);
 }
 
+std::string ForgeOpenKey(const std::string& group) { return "forge:" + group; }
+
+// The FORGE MAPS tab: a heading per group that drops down its maps, like the mod headings; while searching, every
+// match (title, heading or creator) with no headings.
+std::vector<MapEntry> ForgeMapEntries(const std::vector<ForgeMap>& forgeMaps, const std::set<std::string>& open, const char* query) {
+    const auto row = [](const ForgeMap& m) {
+        MapEntry e;
+        e.scenario = m.scenario;
+        e.name = m.title;
+        const std::string by = m.creator.empty() ? std::string() : " by " + m.creator;
+        e.blurb = !m.description.empty() ? PlainDescription(m.description, 150) + " (Forge map" + by + ")"
+                                         : "Forge map" + by + " on " + MapNames::Display(m.scenario) + ".";
+        e.mvar = m.path;
+        e.forgeGroup = m.group;
+        return e;
+    };
+    std::vector<MapEntry> out;
+    if (query[0] != 0) {
+        for (const ForgeMap& m : forgeMaps) {
+            if (ContainsNoCase(m.title, query) || ContainsNoCase(m.group, query) || ContainsNoCase(m.creator, query)) out.push_back(row(m));
+        }
+        return out;
+    }
+    for (size_t i = 0; i < forgeMaps.size();) {
+        size_t end = i;
+        while (end < forgeMaps.size() && forgeMaps[end].group == forgeMaps[i].group) ++end;
+        MapEntry heading;
+        heading.name = forgeMaps[i].group + "  (" + std::to_string(end - i) + ")";
+        heading.header = true;
+        heading.scenario = forgeMaps[i].scenario;
+        heading.forgeGroup = forgeMaps[i].group;
+        heading.blurb = "Community Forge maps. From the Halo Customs MCC Megapack and your own saved Forge maps.";
+        heading.enabled = open.count(ForgeOpenKey(forgeMaps[i].group)) != 0;
+        out.push_back(heading);
+        if (heading.enabled) for (size_t k = i; k < end; ++k) out.push_back(row(forgeMaps[k]));
+        i = end;
+    }
+    return out;
+}
+
+void ToggleForgeGroup(std::set<std::string>& open, const std::string& group) {
+    const std::string k = ForgeOpenKey(group);
+    if (!open.erase(k)) open.insert(k);
+}
+
 std::vector<ListItem> ToItems(const std::vector<MapEntry>& list) {
     std::vector<ListItem> items;
     for (const MapEntry& m : list) {
@@ -2287,6 +2655,7 @@ struct OverlayContext {
     std::filesystem::path reachDir;
     std::vector<MenuVariant> variants;
     std::vector<MenuVariant> ffVariants;
+    std::vector<ForgeMap> forgeMaps;
     std::filesystem::path forgeVariant;
     std::vector<ModEntry> mods;
     std::vector<const ModEntry*> campaignMods;
@@ -2959,6 +3328,7 @@ static bool ResolveEntry(OverlayContext& ctx, const Playlists::Entry& entry, boo
 static void ApplyEntryToLobby(MenuState& st, const ResolvedEntry& e) {
     st.lobbyMap = e.map.launchScenario.empty() ? e.map.scenario : e.map.launchScenario;
     st.lobbyMapOverride = e.map.mapOverride;
+    st.lobbyMapVariant = e.map.mvar;
     st.lobbyMapTitle = e.map.name;
     st.lobbyMapImage = e.map.imageLoading;
     st.lobbyMapThumb = e.map.imageThumbnail;
@@ -3180,6 +3550,7 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
                     st.lobbyLaunchDiff = current.launchDifficulty;
                     st.lobbyLaunchSkulls = current.launchSkulls;
                     st.lobbyLaunchMapOverride = current.launchMapOverride;
+                    st.lobbyLaunchMapVariant = current.launchMapVariant;
                     st.lobbyLaunchModFolder = current.launchModFolder;
                     st.lobbyLaunchModId = current.launchModId.empty() ? current.modId : current.launchModId;
                 }
@@ -3275,6 +3646,17 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
             choice.modFolder = st.lobbyModFolder;
         }
         choice.modTitle = st.lobbyModTitle;
+        // The host's Forge map arrives as a file name; use this PC's copy (Noble ships the megapack's maps).
+        choice.mapVariant.clear();
+        if (!st.lobbyLaunchMapVariant.empty()) {
+            const std::filesystem::path want = std::filesystem::path(st.lobbyLaunchMapVariant).filename();
+            for (const ForgeMap& fm : ctx.forgeMaps) {
+                if (_wcsicmp(fm.path.filename().c_str(), want.c_str()) == 0) { choice.mapVariant = fm.path; break; }
+            }
+            if (choice.mapVariant.empty()) {
+                NOBLE_WARN("FrontEndMenu: host's Forge map '{}' isn't on this PC; launching the plain map", want.string());
+            }
+        }
         NOBLE_INFO("Guest launching from lobby: map='{}' mode='{}' mapOverride='{}' mod='{}' connect='{}'",
                    choice.map, choice.mode, choice.mapOverride.string(), choice.modFolder.string(), st.lobbyHostEndpoint);
         choice.connectAddress = st.lobbyHostEndpoint;
@@ -3450,6 +3832,7 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         std::filesystem::path overrideFile;
         std::filesystem::path image;
         std::filesystem::path thumb;
+        std::filesystem::path mvar;   // Forge map laid over `launch`
     };
     const MenuMap* baseMaps = campaign ? kMissions : (firefight ? kFirefightMaps : kMaps);
     const int baseCount = campaign ? Count(kMissions) : (firefight ? Count(kFirefightMaps) : Count(kMaps));
@@ -3487,6 +3870,10 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         addMapChoice({ st.lobbyMap, st.lobbyMapTitle.empty() ? st.lobbyMap : st.lobbyMapTitle, st.lobbyMapOverride,
                        st.lobbyMapImage, st.lobbyMapThumb });
     }
+    if (!st.lobbyMapVariant.empty()) {   // the lobby's Forge map stays one of the choices after cycling away
+        addMapChoice({ st.lobbyMap, st.lobbyMapTitle.empty() ? st.lobbyMapVariant.stem().string() : st.lobbyMapTitle, {},
+                       st.lobbyMapImage, st.lobbyMapThumb, st.lobbyMapVariant });
+    }
     for (int i = 0; i < baseCount; ++i) {
         addMapChoice({ baseMaps[i].scenario, baseMaps[i].name, {}, {}, {} });
     }
@@ -3514,7 +3901,8 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
             int cur = 0;
             bool found = false;
             for (int i = 0; i < count; ++i) {
-                if (mapChoices[i].launch == st.lobbyMap && mapChoices[i].overrideFile == st.lobbyMapOverride) {
+                if (mapChoices[i].launch == st.lobbyMap && mapChoices[i].overrideFile == st.lobbyMapOverride &&
+                    mapChoices[i].mvar == st.lobbyMapVariant) {
                     cur = i;
                     found = true;
                     break;
@@ -3527,7 +3915,7 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
             }
             if (!found) {
                 for (int i = 0; i < count; ++i) {
-                    if (mapChoices[i].launch == st.lobbyMap && mapChoices[i].overrideFile.empty()) { cur = i; break; }
+                    if (mapChoices[i].launch == st.lobbyMap && mapChoices[i].overrideFile.empty() && mapChoices[i].mvar.empty()) { cur = i; break; }
                 }
             }
             for (int tries = 0; tries < count; ++tries) {
@@ -3538,7 +3926,8 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
             const LobbyMapChoice& chosen = mapChoices[cur];
             st.lobbyMap = chosen.launch;
             st.lobbyMapOverride = chosen.overrideFile;
-            st.lobbyMapTitle = chosen.overrideFile.empty() ? std::string() : chosen.label;
+            st.lobbyMapVariant = chosen.mvar;
+            st.lobbyMapTitle = chosen.overrideFile.empty() && chosen.mvar.empty() ? std::string() : chosen.label;
             st.lobbyMapImage = chosen.image;
             st.lobbyMapThumb = chosen.thumb;
             if (lobbyMod && !chosen.overrideFile.empty()) {
@@ -3601,7 +3990,8 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         try {
             MasterServerClient::Get().LaunchLobbySync(st.lobbySessionId, st.lobbyMap, st.lobbyMode, variantFileName,
                                                       st.lobbyDifficulty, st.lobbySkulls, variantBody,
-                                                      st.lobbyMapOverride.string(), st.lobbyModFolder.string(), st.lobbyModId);
+                                                      st.lobbyMapOverride.string(), st.lobbyModFolder.string(), st.lobbyModId,
+                                                      st.lobbyMapVariant.filename().string());
         } catch (const std::exception& e) {
             NOBLE_ERROR("FrontEndMenu: LaunchLobbySync exception: {}", e.what());
         } catch (...) {
@@ -3629,6 +4019,7 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         }
         choice.map = st.lobbyMap;
         choice.mapOverride = st.lobbyMapOverride;
+        choice.mapVariant = st.lobbyMapVariant;
         choice.mapTitle = st.lobbyMapTitle;
         choice.mapImage = st.lobbyMapImage;
         choice.mapThumb = st.lobbyMapThumb;
@@ -4947,8 +5338,10 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
     const SettingsData settings = Settings::Get().Snapshot();
     s_hintThisFrame = std::exchange(s_hintClicked, -1);
     const bool modPromptOpen = ModDownloadPrompt::Get().IsActive();
+    // A choice list that was open last frame owns Back and the up/down keys this frame.
+    s_pickerBlocksNav = std::exchange(s_pickerOpenNow, false);
     // Esc in a text box only leaves the box.
-    const bool back = !modPromptOpen && !ImGui::GetIO().WantTextInput && (ImGui::IsKeyPressed(ImGuiKey_Escape, false) ||
+    const bool back = !modPromptOpen && !s_pickerBlocksNav && !ImGui::GetIO().WantTextInput && (ImGui::IsKeyPressed(ImGuiKey_Escape, false) ||
                       ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) || HintClicked(Prompt::Back));
     auto goBack = [&](Screen to) {
         st.screen = to;
@@ -5159,11 +5552,19 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
                              row ? row->imageLarge : std::filesystem::path());
         y += DifficultyTiles(ui, "diff", ImVec2(px, y), pw, st.difficulty, st.focusRow == 1) + 8.0f * ui.s;
         const std::string skullText = SkullSummary(st.skulls);
-        if (OptionRow(ui, "skulls", ImVec2(px, y), pw, "SKULLS", skullText.c_str(), st.focusRow == 2)) {
+        // No arrows: the row only opens the Skulls screen, so the whole row is the button. A highlight and a hand cursor
+        // show that it can be clicked.
+        if (OptionRow(ui, "skulls", ImVec2(px, y), pw, "SKULLS", skullText.c_str(), st.focusRow == 2, nullptr, false)) {
             st.screen = Screen::Skulls;
         }
         ImGui::SetCursorScreenPos(ImVec2(px, y));
-        if (ImGui::InvisibleButton("##skullrow", ImVec2(pw * 0.46f, 32.0f * ui.s))) st.screen = Screen::Skulls;
+        if (ImGui::InvisibleButton("##skullrow", ImVec2(pw, 32.0f * ui.s))) st.screen = Screen::Skulls;
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+            ui.dl->AddRectFilled(ImVec2(px + pw * 0.48f, y + 2.0f * ui.s), ImVec2(px + pw, y + 30.0f * ui.s),
+                                 IM_COL32(143, 216, 255, 28), 2.0f * ui.s);
+            ui.dl->AddRectFilled(ImVec2(px + pw * 0.48f, y + 29.0f * ui.s), ImVec2(px + pw, y + 31.0f * ui.s), IM_COL32(143, 216, 255, 140));
+        }
         y += 36.0f * ui.s;
         const float stripW = SkullStrip(ui, ImVec2(px + 10.0f * ui.s, y + 2.0f * ui.s), 20.0f * ui.s, st.skulls, 13);
         char mult[64];
@@ -5197,8 +5598,8 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
             if (mod) { choice.modFolder = mod->folder; choice.modTitle = mod->title; }
             done = true;
         }
-        if (st.focusRow > 0 && (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || ImGui::IsKeyPressed(ImGuiKey_Tab) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickDown))) st.focusRow = std::min(3, st.focusRow + 1);
-        if (st.focusRow > 0 && (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickUp))) st.focusRow = std::max(1, st.focusRow - 1);
+        if (!s_pickerBlocksNav && st.focusRow > 0 && (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || ImGui::IsKeyPressed(ImGuiKey_Tab) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickDown))) st.focusRow = std::min(3, st.focusRow + 1);
+        if (!s_pickerBlocksNav && st.focusRow > 0 && (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickUp))) st.focusRow = std::max(1, st.focusRow - 1);
         if (st.focusRow == 2 && AcceptPressed()) st.screen = Screen::Skulls;
         if (back) {
             if (st.focusRow > 0) st.focusRow = 0;
@@ -5679,16 +6080,38 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
                 int value = edited != st.optionsValues.end() ? edited->second : baseValue;
                 // Numbers for numeric options, level names for level options; the base game type's own value is marked.
                 const std::string text = OptionValueText(rule, value);
-                const int change = OptionRow(ui, rule.key, ImVec2(px, y), pw, rule.label, text.c_str(), focused,
-                                             value == baseValue ? "(default)" : nullptr);
+                // Options with a handful of choices open a list when the value is clicked; a wide numeric range keeps the arrows.
+                std::vector<int> pickValues;
+                int pickedChoice = -1;
+                const bool listable = rule.order || (rule.maxValue - rule.minValue + 1) <= 40;
+                const auto fillChoices = [&](std::vector<std::string>& choices, int& current) {
+                    if (rule.order) {
+                        for (int v : *rule.order) pickValues.push_back(v);
+                    } else {
+                        for (int v = rule.minValue; v <= rule.maxValue; ++v) {
+                            if (!rule.names || !(*rule.names)[v - rule.minValue].empty()) pickValues.push_back(v);
+                        }
+                    }
+                    for (size_t n = 0; n < pickValues.size(); ++n) {
+                        choices.push_back(OptionValueText(rule, pickValues[n]));
+                        if (pickValues[n] == value) current = static_cast<int>(n);
+                    }
+                };
+                const int change = listable
+                    ? PickerRow(ui, rule.key, ImVec2(px, y), pw, rule.label, text.c_str(), focused, fillChoices, &pickedChoice, false,
+                                value == baseValue ? "(default)" : nullptr)
+                    : OptionRow(ui, rule.key, ImVec2(px, y), pw, rule.label, text.c_str(), focused,
+                                value == baseValue ? "(default)" : nullptr);
                 // Amber dot just after the name of an option that differs from the base rules.
                 if (edited != st.optionsValues.end()) {
                     const float nameW = TextWidth(NobleStyle::TitleFont(), 18.0f * ui.s, rule.label);
                     NobleUi::ChangedDot(ui.dl, ImVec2(px + 10.0f * ui.s + nameW + 9.0f * ui.s, y + 16.0f * ui.s), ui.s);
                 }
-                if (change != 0) {
+                if (change != 0 || pickedChoice >= 0) {
                     int next = std::clamp(value, rule.minValue, rule.maxValue);
-                    if (rule.order) {
+                    if (pickedChoice >= 0 && pickedChoice < static_cast<int>(pickValues.size())) {
+                        next = pickValues[pickedChoice];
+                    } else if (rule.order) {
                         const std::vector<int>& order = *rule.order;
                         const int count = static_cast<int>(order.size());
                         const auto at = std::find(order.begin(), order.end(), value);
@@ -5731,6 +6154,7 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
                 const bool ffScreen = ff;
                 ctx.variants = ScanVariants(ctx.reachDir, false);
                 ctx.ffVariants = ScanVariants(ctx.reachDir, true);
+                ctx.forgeMaps = ScanForgeMaps();
                 int& index = ffScreen ? st.ffVariant : st.variant;
                 const std::vector<MenuVariant>& modes = ffScreen ? ctx.ffVariants : ctx.variants;
                 index = FindVariant(modes, ffScreen ? L"hr_ff_standard_1set.bin" : L"slayer_054.bin");
@@ -5825,22 +6249,29 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         const std::vector<const ModEntry*>& modList = ff ? ctx.ffMods : ctx.mpMods;
         int& source = ff ? st.ffSource : forge ? st.forgeSource : st.mpSource;
         float listTop = top + 96.0f * ui.s;
+        float tabsEnd = 0.0f;
         {
-            if (DrawSourceTabs(ui, ImVec2(left + 34.0f * ui.s, top + 70.0f * ui.s), source, static_cast<int>(modList.size()))) {
+            if (DrawSourceTabs(ui, ImVec2(left + 34.0f * ui.s, top + 70.0f * ui.s), source, static_cast<int>(modList.size()),
+                               ff ? -1 : static_cast<int>(ctx.forgeMaps.size()), &tabsEnd)) {
                 st.focusRow = 0;
             }
             listTop = top + 108.0f * ui.s;
         }
         const bool modded = source == 1;
+        const bool forgeTab = source == 2 && !ff;   // Forge maps: stock maps under a community layout, so no mod
         const ModMode modMode = ff ? ModMode::Firefight : ModMode::Multiplayer;
         const std::string carrier = ff ? "ff60_icecave" : (forge ? "forge_halo" : "70_boneyard");
-        if (DrawSearchBox(ui, "##map_search", ImVec2(left + 34.0f * ui.s + 240.0f * ui.s, top + 70.0f * ui.s), 140.0f * ui.s, st.mapSearch, sizeof(st.mapSearch), "Search")) st.mapSearchRow = 0;
+        // After the last tab: with the FORGE MAPS tab the old fixed spot sat on top of it.
+        const float searchX = std::max(left + 34.0f * ui.s + 240.0f * ui.s, tabsEnd + 10.0f * ui.s);
+        if (DrawSearchBox(ui, "##map_search", ImVec2(searchX, top + 70.0f * ui.s), 140.0f * ui.s, st.mapSearch, sizeof(st.mapSearch), "Search")) st.mapSearchRow = 0;
         if (ImGui::IsItemActive()) st.focusRow = 0;
         const bool searching = st.mapSearch[0] != 0;
-        const std::vector<MapEntry> maps = ListedMaps(modded, modList, modMode, baseMaps, baseCount, st.openMods, carrier, st.mapSearch);
-        int& realIndex = modded ? (ff ? st.ffModded : forge ? st.forgeModded : st.mpModded) : (ff ? st.ffMap : forge ? st.forgeMap : st.map);
+        const std::vector<MapEntry> maps = forgeTab ? ForgeMapEntries(ctx.forgeMaps, st.openMods, st.mapSearch)
+                                                    : ListedMaps(modded, modList, modMode, baseMaps, baseCount, st.openMods, carrier, st.mapSearch);
+        int& realIndex = forgeTab ? (forge ? st.forgeForgeMap : st.mpForgeMap)
+                       : modded ? (ff ? st.ffModded : forge ? st.forgeModded : st.mpModded) : (ff ? st.ffMap : forge ? st.forgeMap : st.map);
         int& mapIndex = searching ? st.mapSearchRow : realIndex;
-        if (const std::string autoMap = AutoPlayMap(); !autoMap.empty() && !modded) {
+        if (const std::string autoMap = AutoPlayMap(); !autoMap.empty() && source == 0) {
             for (size_t i = 0; i < maps.size(); ++i) {
                 if (maps[i].header) continue;
                 if (maps[i].scenario == autoMap) { mapIndex = static_cast<int>(i); break; }
@@ -5848,20 +6279,24 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         }
         FixSelection(maps, mapIndex);
         std::vector<ListItem> items = ToItems(maps);
-        if (maps.empty()) items.push_back({ searching ? "Nothing matches your search" : ff ? "No Reach Firefight mods installed" : "No Reach multiplayer mods installed", false, false });
+        if (maps.empty()) items.push_back({ searching ? "Nothing matches your search" : forgeTab ? "No Forge maps in data\\map_variants" : ff ? "No Reach Firefight mods installed" : "No Reach multiplayer mods installed", false, false });
         const float listRow = 40.0f;
         const int listRows = std::max(4, static_cast<int>((ui.origin.y + ui.size.y - 74.0f * ui.s - listTop) / (listRow * ui.s)));
         const int hit = DrawList(ui, "maps", ImVec2(left + 34.0f * ui.s, listTop), 380.0f * ui.s, items, mapIndex,
                                  st.focusRow == 0 && !ImGui::GetIO().WantTextInput, listRow, listRows, false);
-        if (hit >= 0 && !maps.empty() && maps[hit].header) ToggleMod(st.openMods, modMode, *maps[hit].mod);
-        else if (hit >= 0) {
+        if (hit >= 0 && !maps.empty() && maps[hit].header) {
+            if (maps[hit].mod) ToggleMod(st.openMods, modMode, *maps[hit].mod);
+            else if (!maps[hit].forgeGroup.empty()) ToggleForgeGroup(st.openMods, maps[hit].forgeGroup);
+        } else if (hit >= 0) {
             if (searching) {
                 // Land on the choice in the full list; the search clears on the next frame's list.
                 const MapEntry chosen = maps[hit];
                 if (chosen.mod) st.openMods.insert(OpenKey(modMode, *chosen.mod));
-                const std::vector<MapEntry> full = ListedMaps(modded, modList, modMode, baseMaps, baseCount, st.openMods, carrier, "");
+                if (!chosen.forgeGroup.empty()) st.openMods.insert(ForgeOpenKey(chosen.forgeGroup));
+                const std::vector<MapEntry> full = forgeTab ? ForgeMapEntries(ctx.forgeMaps, st.openMods, "")
+                                                            : ListedMaps(modded, modList, modMode, baseMaps, baseCount, st.openMods, carrier, "");
                 for (size_t i = 0; i < full.size(); ++i) {
-                    if (!full[i].header && full[i].scenario == chosen.scenario && full[i].mod == chosen.mod) realIndex = static_cast<int>(i);
+                    if (!full[i].header && full[i].scenario == chosen.scenario && full[i].mod == chosen.mod && full[i].mvar == chosen.mvar) realIndex = static_cast<int>(i);
                 }
                 st.mapSearch[0] = 0;
             }
@@ -5947,22 +6382,24 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         const float blurbH = BlurbBlockHeight(ui, pw, blurb);
         const float bannerH = HeroBannerHeight(ui, pw, col.content, rowsH, blurbH, bannerTop);
         const std::string kicker = mod ? "MOD: " + Upper(mod->title)
+                                 : forgeTab ? "FORGE MAP \xC2\xB7 " + Upper(MapNames::Display(row ? row->scenario : std::string("forge_halo")))
                                  : std::string(ff ? "HALO: REACH \xC2\xB7 FIREFIGHT" : forge ? "HALO: REACH \xC2\xB7 FORGE" : "HALO: REACH \xC2\xB7 MULTIPLAYER");
         float y = HeroBanner(ui, ImVec2(px, bannerTop), pw, bannerH, row ? row->scenario : "", kicker,
-                             row ? (row->header ? row->mod->title.c_str() : row->name.c_str()) : "", blurb,
+                             row ? (row->header ? (row->mod ? row->mod->title.c_str() : row->forgeGroup.c_str()) : row->name.c_str()) : "", blurb,
                              row ? row->imageLarge : std::filesystem::path());
         int focusRows = 1;
         if (!forge) {
             const std::vector<MenuVariant>& list = ff ? ctx.ffVariants : ctx.variants;
             int& v = ff ? st.ffVariant : st.variant;
             const char* label = list.empty() ? "Default" : list[std::clamp(v, 0, static_cast<int>(list.size()) - 1)].label.c_str();
-            const int dv = OptionRow(ui, "variant", ImVec2(px, y), pw, "GAME TYPE", label, st.focusRow == focusRows);
+            const int dv = OptionRow(ui, "variant", ImVec2(px, y), pw, "GAME TYPE", label, st.focusRow == focusRows, nullptr, false);
             // A, or a click on the row's label or value, opens the whole list; the arrows still step through it.
-            const float arrowW = 28.0f * ui.s, valueX = px + pw * 0.48f, rowHeight = 32.0f * ui.s;
+            const float valueX = px + pw * 0.48f, rowHeight = 32.0f * ui.s;
             ImGui::SetCursorScreenPos(ImVec2(px, y));
             bool openList = ImGui::InvisibleButton("##variant_label", ImVec2(pw * 0.48f, rowHeight));
-            ImGui::SetCursorScreenPos(ImVec2(valueX + arrowW, y));
-            openList = ImGui::InvisibleButton("##variant_value", ImVec2(pw * 0.52f - arrowW * 2.0f, rowHeight)) || openList;
+            ImGui::SetCursorScreenPos(ImVec2(valueX, y));
+            openList = ImGui::InvisibleButton("##variant_value", ImVec2(pw * 0.52f, rowHeight)) || openList;
+            DrawMiddleHint(ui, ImVec2(px, y), pw, label, ImGui::IsItemHovered(), false, true);
             if (st.focusRow == focusRows && hit < 0 && AcceptPressed()) openList = true;
             if (openList && !list.empty()) {
                 st.variantPickerOpen = true;
@@ -6010,9 +6447,10 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
             // banner-then-void. PLAYERS is real and feeds HOST LOBBY / HOST FORGE.
             if (forge) {
                 const char* label = st.forgeCustomVariant.empty() ? "EDIT" : "CUSTOM (EDIT)";
-                const int optionsChange = OptionRow(ui, "forge_options", ImVec2(px, y), pw, "GAME OPTIONS", label, st.focusRow == focusRows);
+                bool middleClicked = false;
+                const int optionsChange = ClickRow(ui, "forge_options", ImVec2(px, y), pw, "GAME OPTIONS", label, st.focusRow == focusRows, &middleClicked);
                 ImGui::SetCursorScreenPos(ImVec2(px, y));
-                const bool clicked = ImGui::InvisibleButton("##forge_options_open", ImVec2(pw * 0.48f, 32.0f * ui.s));
+                const bool clicked = ImGui::InvisibleButton("##forge_options_open", ImVec2(pw * 0.48f, 32.0f * ui.s)) || middleClicked;
                 if ((clicked || optionsChange != 0 || (st.focusRow == focusRows && hit < 0 && AcceptPressed())) && std::filesystem::exists(ctx.forgeVariant)) {
                     MenuVariant forgeMv;
                     forgeMv.path = st.forgeCustomVariant.empty() ? ctx.forgeVariant : st.forgeCustomVariant;
@@ -6023,9 +6461,10 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
                 ++focusRows;
             } else {
                 const std::vector<MenuVariant>& list = ctx.variants;
-                const int optionsChange = OptionRow(ui, "game_options", ImVec2(px, y), pw, "GAME OPTIONS", "EDIT", st.focusRow == focusRows);
+                bool middleClicked = false;
+                const int optionsChange = ClickRow(ui, "game_options", ImVec2(px, y), pw, "GAME OPTIONS", "EDIT", st.focusRow == focusRows, &middleClicked);
                 ImGui::SetCursorScreenPos(ImVec2(px, y));
-                const bool clicked = ImGui::InvisibleButton("##game_options_open", ImVec2(pw * 0.48f, 32.0f * ui.s));
+                const bool clicked = ImGui::InvisibleButton("##game_options_open", ImVec2(pw * 0.48f, 32.0f * ui.s)) || middleClicked;
                 if ((clicked || optionsChange != 0 || (st.focusRow == focusRows && hit < 0 && AcceptPressed())) && !list.empty()) {
                     OpenGameOptions(ctx, list[std::clamp(st.variant, 0, static_cast<int>(list.size()) - 1)]);
                 }
@@ -6036,8 +6475,15 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
                 // PLAYLIST: left and right choose one; A or a click opens the editor, on the chosen one or a new one.
                 const bool chosen = st.playlistChoice >= 0 && st.playlistChoice < static_cast<int>(st.playlists.size());
                 const int count = static_cast<int>(st.playlists.size());
-                const int playlistStep = OptionRow(ui, "playlist", ImVec2(px, y), pw, "PLAYLIST", chosen ? st.playlists[st.playlistChoice].name.c_str() : "NONE", st.focusRow == focusRows);
+                int playlistPicked = -1;
+                const int playlistStep = PickerRow(ui, "playlist", ImVec2(px, y), pw, "PLAYLIST", chosen ? st.playlists[st.playlistChoice].name.c_str() : "NONE", st.focusRow == focusRows,
+                                                   [&](std::vector<std::string>& choices, int& current) {
+                                                       choices.push_back("None");
+                                                       for (const auto& playlist : st.playlists) choices.push_back(playlist.name);
+                                                       current = chosen ? st.playlistChoice + 1 : 0;
+                                                   }, &playlistPicked, false, nullptr, false);
                 if (playlistStep != 0) st.playlistChoice = ((st.playlistChoice + 1 + playlistStep + count + 1) % (count + 1)) - 1;
+                else if (playlistPicked >= 0) st.playlistChoice = playlistPicked - 1;
                 ImGui::SetCursorScreenPos(ImVec2(px, y));
                 const bool openEditor = ImGui::InvisibleButton("##playlist_open", ImVec2(pw * 0.48f, 32.0f * ui.s));
                 if (openEditor || (st.focusRow == focusRows && hit < 0 && AcceptPressed())) {
@@ -6063,10 +6509,17 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
             }
             char capText[32];
             std::snprintf(capText, sizeof(capText), "%d PLAYERS", kCaps[capIdx]);
-            const int dc = OptionRow(ui, "players", ImVec2(px, y), pw, "MAX PLAYERS", capText, st.focusRow == focusRows);
+            int capPicked = -1;
+            const int dc = PickerRow(ui, "players", ImVec2(px, y), pw, "MAX PLAYERS", capText, st.focusRow == focusRows,
+                                     [&](std::vector<std::string>& choices, int& current) {
+                                         for (int ci = 0; ci < kNumCaps; ++ci) choices.push_back(std::to_string(kCaps[ci]) + " PLAYERS");
+                                         current = capIdx;
+                                     }, &capPicked, st.focusRow == focusRows && hit < 0 && AcceptPressed());
             if (dc) {
                 capIdx = (capIdx + dc + kNumCaps) % kNumCaps;
                 st.sessionMaxPlayers = kCaps[capIdx];
+            } else if (capPicked >= 0) {
+                st.sessionMaxPlayers = kCaps[capPicked];
             }
             y += 36.0f * ui.s;
             ++focusRows;
@@ -6083,18 +6536,26 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
             }
             char ffCapText[32];
             std::snprintf(ffCapText, sizeof(ffCapText), "%d PLAYERS", kFfCaps[ffCapIdx]);
-            const int dcFf = OptionRow(ui, "ff_players", ImVec2(px, y), pw, "MAX PLAYERS", ffCapText, st.focusRow == focusRows);
+            int ffCapPicked = -1;
+            const int dcFf = PickerRow(ui, "ff_players", ImVec2(px, y), pw, "MAX PLAYERS", ffCapText, st.focusRow == focusRows,
+                                       [&](std::vector<std::string>& choices, int& current) {
+                                           for (int ci = 0; ci < kNumFfCaps; ++ci) choices.push_back(std::to_string(kFfCaps[ci]) + " PLAYERS");
+                                           current = ffCapIdx;
+                                       }, &ffCapPicked, st.focusRow == focusRows && hit < 0 && AcceptPressed());
             if (dcFf) {
                 ffCapIdx = (ffCapIdx + dcFf + kNumFfCaps) % kNumFfCaps;
                 st.ffMaxPlayers = kFfCaps[ffCapIdx];
+            } else if (ffCapPicked >= 0) {
+                st.ffMaxPlayers = kFfCaps[ffCapPicked];
             }
             y += 36.0f * ui.s;
             ++focusRows;
 
             // The same rules editor as Custom Game. Firefight's own wave and skull options aren't mapped yet.
-            const int ffOptionsChange = OptionRow(ui, "ff_options", ImVec2(px, y), pw, "GAME OPTIONS", "EDIT", st.focusRow == focusRows);
+            bool ffMiddleClicked = false;
+            const int ffOptionsChange = ClickRow(ui, "ff_options", ImVec2(px, y), pw, "GAME OPTIONS", "EDIT", st.focusRow == focusRows, &ffMiddleClicked);
             ImGui::SetCursorScreenPos(ImVec2(px, y));
-            const bool ffClicked = ImGui::InvisibleButton("##ff_options_open", ImVec2(pw * 0.48f, 30.0f * ui.s));
+            const bool ffClicked = ImGui::InvisibleButton("##ff_options_open", ImVec2(pw * 0.48f, 30.0f * ui.s)) || ffMiddleClicked;
             if ((ffClicked || ffOptionsChange != 0 || (st.focusRow == focusRows && hit < 0 && AcceptPressed())) && !ctx.ffVariants.empty()) {
                 OpenGameOptions(ctx, ctx.ffVariants[std::clamp(st.ffVariant, 0, static_cast<int>(ctx.ffVariants.size()) - 1)]);
             }
@@ -6165,6 +6626,10 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
                            ff ? st.ffMaxPlayers : st.sessionMaxPlayers, map ? map->mod : nullptr, map ? map->mapOverride : std::filesystem::path(),
                            map ? map->name : std::string(), map ? map->imageLoading : std::filesystem::path(),
                            map ? map->imageThumbnail : std::filesystem::path());
+            if (map && !map->mvar.empty()) {
+                st.lobbyMapVariant = map->mvar;
+                NOBLE_INFO("FrontEndMenu: lobby Forge map '{}' ({})", map->name, map->mvar.filename().string());
+            }
             // A chosen playlist starts the lobby on its first entry.
             if (!ff && !forge && st.playlistChoice >= 0 && st.playlistChoice < static_cast<int>(st.playlists.size())) {
                 const Playlists::Playlist& playlist = st.playlists[st.playlistChoice];
@@ -6180,6 +6645,7 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
             choice.mapTitle = map->name;
             choice.mapImage = map->imageLoading;
             choice.mapThumb = map->imageThumbnail;
+            choice.mapVariant = map->mvar;
             if (mod) { choice.modFolder = mod->folder; choice.modTitle = mod->title; }
             if (ff) {
                 choice.mode = "firefight";
@@ -6197,14 +6663,15 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
             }
             done = true;
         }
-        if (st.focusRow > 0 && (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || ImGui::IsKeyPressed(ImGuiKey_Tab) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickDown))) st.focusRow = std::min(hostRow, st.focusRow + 1);
-        if (st.focusRow > 0 && (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickUp))) st.focusRow = std::max(1, st.focusRow - 1);
+        if (!s_pickerBlocksNav && st.focusRow > 0 && (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || ImGui::IsKeyPressed(ImGuiKey_Tab) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickDown))) st.focusRow = std::min(hostRow, st.focusRow + 1);
+        if (!s_pickerBlocksNav && st.focusRow > 0 && (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickUp))) st.focusRow = std::max(1, st.focusRow - 1);
         if (back) {
             if (st.focusRow > 0) st.focusRow = 0;
             else goBack(Screen::Main);
         }
-        if (forge) DrawHints(ui, { { Prompt::Accept, "Select" }, { Prompt::Back, "Back" }, { Prompt::Tabs, "Vanilla / Modded" } });
-        else DrawHints(ui, { { Prompt::Accept, "Select" }, { Prompt::Back, "Back" }, { Prompt::Change, "Change" }, { Prompt::Tabs, "Vanilla / Modded" } });
+        const char* tabsHint = ff ? "Vanilla / Modded" : "Vanilla / Modded / Forge Maps";
+        if (forge) DrawHints(ui, { { Prompt::Accept, "Select" }, { Prompt::Back, "Back" }, { Prompt::Tabs, tabsHint } });
+        else DrawHints(ui, { { Prompt::Accept, "Select" }, { Prompt::Back, "Back" }, { Prompt::Change, "Change" }, { Prompt::Tabs, tabsHint } });
         break;
     }
 
@@ -6269,6 +6736,7 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
                           ImGuiChildFlags_Borders, ImGuiWindowFlags_None);
         if (st.screen == Screen::Servers) {
             UIManager::GetServerBrowser().Render();
+            if (UIManager::GetServerBrowser().ConsumeCloseForUpdate()) done = true;   // update script takes over
         } else if (st.screen == Screen::Settings) {
             ctx.settingsPanel.Render();
         } else if (st.screen == Screen::Career) {
@@ -6324,6 +6792,13 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
 
 } // namespace
 
+std::string FrontEndMenu::StockBlurb(const std::string& scenario) {
+    for (const MenuMap& m : kMissions) if (scenario == m.scenario) return m.blurb;
+    for (const MenuMap& m : kMaps) if (scenario == m.scenario) return m.blurb;
+    for (const MenuMap& m : kFirefightMaps) if (scenario == m.scenario) return m.blurb;
+    return {};
+}
+
 bool FrontEndMenu::ShouldShow() {
     bool hasMap = false;
     bool menuRequested = false;
@@ -6354,6 +6829,7 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
     UIManager::GetArmorCustomizer().ValidateNameplate();
     ctx.variants = ScanVariants(reachDir, false);
     ctx.ffVariants = ScanVariants(reachDir, true);
+    ctx.forgeMaps = ScanForgeMaps();
     ctx.forgeVariant = reachDir / "game_variants" / kForgeVariant;
 
     RefreshModCatalog(ctx);
@@ -6687,6 +7163,13 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
     }
 
     UIManager::GetServerBrowser().SetJoinLobbyHandler([&ctx, enterLobby](const ServerEntry& s) {
+        // Version gate (belt and braces: the browser already refuses mismatched builds).
+        if (!s.build.empty() && !noble::AreBuildsCompatible(s.build, noble::kBuildTag)) {
+            UIManager::GetServerBrowser().SetStatus("Can't join: version mismatch (host " +
+                std::string(noble::ExtractBaseVersion(s.build)) + ", you " +
+                std::string(noble::ExtractBaseVersion(noble::kBuildTag)) + ").");
+            return;
+        }
         std::string modId = s.modId;
         std::string modTitle = s.modTitle;
         if (!s.id.empty() && MasterServerClient::Get().Enabled()) {
@@ -7036,6 +7519,7 @@ void FrontEndMenu::RenderOverlayImpl(IDXGISwapChain* swapChain, bool clear) {
                 if (choice.skulls != 0) args += L" -skulls " + std::to_wstring(choice.skulls);
                 if (!choice.modFolder.empty()) args += L" -mod \"" + choice.modFolder.wstring() + L"\"";
                 if (!choice.mapOverride.empty()) args += L" -map-override \"" + choice.mapOverride.wstring() + L"\"";
+                if (!choice.mapVariant.empty()) args += L" -mvar \"" + choice.mapVariant.wstring() + L"\"";
                 if (!choice.mapTitle.empty()) args += L" -map-title \"" + ToWide(choice.mapTitle) + L"\"";
                 if (!choice.mapImage.empty()) args += L" -map-image \"" + choice.mapImage.wstring() + L"\"";
                 if (!choice.mapThumb.empty()) args += L" -map-thumb \"" + choice.mapThumb.wstring() + L"\"";

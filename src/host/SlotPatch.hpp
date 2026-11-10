@@ -1,6 +1,7 @@
 #pragma once
 
 #include <windows.h>
+#include <cstdint>
 
 // C12 (more than 16 real players), step 1: redirects every traced player/peer slot address calculation in
 // the engine's network session code so that slots past the original arrays (players >= 16, peers >= 17) land in
@@ -16,4 +17,7 @@ bool Players32Requested();
 
 // 32-player mode is installed (every check passed and every patch is in). Pools may only grow when this is true.
 bool Players32Active();
+
+// Dev diagnostics: peer record `peer` of the static session object `session` (shadow object for peers >= 17).
+uint8_t* PeerRecord(uint8_t* session, int32_t peer);
 }

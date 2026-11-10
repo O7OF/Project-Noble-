@@ -5,6 +5,21 @@ listed, build after each task, and leave test steps for Tyler. Nothing is pushed
 
 Owner key: **C** = Claude, **D** = DeepSeek. Swap tasks by noting it in `AGENT-STATUS.md`.
 
+
+## C12-L next steps (2026-11-10 01:00 ET, Claude Fable 5.2) - read first
+
+1. Build + `overnight_quick_high.bat`: tests batch 1 (register-held loop bounds 0x392E12 / 0x409898 / 0x4139E5 in SlotPatch.cpp). Pass = guest's local peer 17 reaches state >= 6 and sends msg 35.
+2. Batch 2 from `docs/limits-players-regbounds.md`: 0x39C922, 0x404E7C (count also passed to a callee / local array), 0x39BABA, 0x40938C, 0x4160F0 (need a cave each), then review the ~35 unreviewed rows.
+3. Uncaved join-path sites in 0x391F0C (0x3920F4, 0x39215D, 0x392571, 0x392631) and 0x395DE8 (0x395E2F, 0x395E6B, 0x395E85).
+4. Failed-join cleanup on the host (a failed guest stays in the list; second guest landed in 18/17).
+5. Leftovers: 16/17 tables, 32-player self-test of the membership message, second smaller buffer check, real >16 test, remove debug traces / hardware watch.
+6. When the join works end to end: re-read every 32-player file (SlotPatch.cpp, SlotMessage.*, Slot*.inc, LobbyPatches.cpp traces) as a final review.
+
+## Priorities (Tyler, 2026-11-09 10:20 ET) - read first
+1. **Multiplayer to 128 players** (C12-L; status in `LIMITS-HANDOFF.md`, `docs/limits-players-loops.md`; next blocker #32 = membership update message, 5-bit counts/indices).
+2. **Multiplayer optimization** (smooth netcode, no lag, hit registration) and **bug finding**.
+3. Later: swarm / 1,000-actor performance (`docs/swarm-test-notes.md`), Pelican + Spectre in Forge (`docs/pelican.md`), ReachVariantTool uses (`docs/HANDOFF-CONTENT-2026-11-09.md` section 3).
+Overnight 2026-11-09: Claude builds with build-dev.bat and runs one-PC tests itself (Tyler approved); summary in `docs/OVERNIGHT-2026-11-09.md`.
 ## Phase 1: V16 (objects 32,767, 64-player rendering), behind a setting
 
 | # | Owner | Task | Files | Depends on | Done when |

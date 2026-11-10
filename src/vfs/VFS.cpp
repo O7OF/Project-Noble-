@@ -221,6 +221,14 @@ std::wstring VFS::ResolvePath(const std::wstring& requestedPath, DWORD desiredAc
                 if (RawPathExists(modFile.wstring())) {
                     return modFile.wstring();
                 }
+                // MCC mods keep their sound banks and game types under "<mod>\haloreach\" (for example
+                // haloreach\fmod\pc\sfx.fsb, haloreach\game_variants\*.bin) while their maps sit directly in
+                // "<mod>\maps". The engine asks for "haloreach\fmod\pc\sfx.fsb", which was reduced to
+                // "fmod\pc\sfx.fsb" above, so look under the mod's own haloreach folder as well.
+                fs::path modHaloReachFile = s_activeMod / "haloreach" / p;
+                if (RawPathExists(modHaloReachFile.wstring())) {
+                    return modHaloReachFile.wstring();
+                }
             }
 
             // Priority A: Check user storage (custom downloaded mods / custom variants)

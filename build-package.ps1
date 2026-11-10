@@ -122,6 +122,15 @@ $destData = Join-Path $Destination 'data'
 New-Item -ItemType Directory -Force -Path $destData | Out-Null
 & robocopy (Join-Path $release 'data') $destData /E /XD userdata autosave cache sandbox armor blocks mods /XF appearance.dat appearance.json career.dat career.json settings.json preferences.dat menu-background-deck.txt launch_block_1.bin lb_m_c_1.bin profile_1.bin *.log *.dmp *.tmp *.obj *.mtl *.PMGC *.rrreloc *.rdc *.bin /NFL /NDL /NJH /NJS /NP | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $destData 'mods') | Out-Null
+# Community game types and Forge maps (Halo Customs megapack, tools\megapack\import-megapack.ps1). The copy above drops
+# every *.bin (launch blocks), and the Release folder's game_variants also holds the tester's own saved variants, so
+# ship the repo's curated folders instead.
+foreach ($variants in @('game_variants', 'map_variants')) {
+    $repoVariants = Join-Path $repo "data\$variants"
+    if (Test-Path $repoVariants) {
+        & robocopy $repoVariants (Join-Path $destData $variants) *.bin *.mvar /PURGE /NFL /NDL /NJH /NJS /NP | Out-Null
+    }
+}
 if (Test-Path (Join-Path $repo 'data\menumaps')) {
     New-Item -ItemType Directory -Force -Path (Join-Path $destData 'menumaps') | Out-Null
     & robocopy (Join-Path $repo 'data\menumaps') (Join-Path $destData 'menumaps') mainmenu_all.map *.string_ids.csv /NFL /NDL /NJH /NJS /NP | Out-Null

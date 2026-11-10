@@ -1159,7 +1159,7 @@ void SettingsPanel::RenderGame() {
             When::Apply, "0 %", std::fabs(m_edit.vehicleFirstPersonFovMod - m_saved.vehicleFirstPersonFovMod) > 1e-4f, false)) {
         SliderValue(m_edit.vehicleFirstPersonFovMod, -1.20f, 1.20f, 0.05f, 0.00f, fovModText(m_edit.vehicleFirstPersonFovMod).c_str());
     }
-    if (Row("THIRD-PERSON ZOOM", "How much the camera zooms in when aiming a weapon with right click in third person. 50 % is the default zoom.",
+    if (Row("THIRD-PERSON ZOOM", "How much the camera zooms in when aiming a weapon with right click in third person. 50 % is the default zoom. Mods that bring their own third-person camera (for example ODST-based ones) can apply this to the weapon zoom instead of the camera distance; if a mod's zoom feels wrong, change this setting.",
             When::Apply, "50 %", std::fabs(m_edit.thirdPersonZoom - m_saved.thirdPersonZoom) > 1e-4f, false)) {
         SliderValue(m_edit.thirdPersonZoom, 0.10f, 1.00f, 0.05f, 0.50f, Percent(m_edit.thirdPersonZoom).c_str());
     }

@@ -61,6 +61,7 @@ struct LobbyState {
     int launchDifficulty = 1;
     uint64_t launchSkulls = 0;
     std::string launchMapOverride;
+    std::string launchMapVariant;   // Forge map (.mvar) file name; empty for the plain map
     std::string launchModFolder;
     std::string launchModId;
     std::string hostLanIp;
@@ -210,7 +211,8 @@ public:
                          const std::string& variantBody = "",
                          const std::string& mapOverride = "",
                          const std::string& modFolder = "",
-                         const std::string& modId = "");
+                         const std::string& modId = "",
+                         const std::string& mapVariant = "");
 
     void UpdateLobbyAdvert(const std::string& map, const std::string& mode, const std::string& variant, int diff, uint64_t skulls);
     std::string GetCurrentSessionId() const;

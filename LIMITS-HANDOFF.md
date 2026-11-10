@@ -3,6 +3,143 @@
 Written 2026-11-08 by Claude (claude.ai session, for Tyler). Read this before any task in
 `LIMITS-TODO.md`. Claim tasks in `AGENT-STATUS.md` as usual.
 
+## Status update 2026-11-09 overnight (Claude, Tyler asleep; read first)
+- **2026-11-10 00:45 (static review, no test): next blocker found on paper.** Guest waits for its own peer state >= 6
+  (0x3903C7) and has 4. The host promotes 5 -> 6 in 0x392DB0, whose peer scans use a register bound
+  **0x392E12 `lea r13d,[rbx+0x11]` = 17, unpatched**; gen_bounds.py only raised `cmp reg, imm` bounds. A whole class of
+  register-held 16/17 bounds was missed (9 near-certain, ~35 to review). List, evidence and fix bytes:
+  `docs/limits-players-regbounds.md`. Do these as one batch, then one high-slot test.
+- **2026-11-10 01:00: batch 1 written, NOT built / tested.** `kPeerMasks32` in SlotPatch.cpp + 3 register bounds
+  (0x392E12 host join scans, 0x409898, 0x4139E5). Next: `overnight_quick_high.bat` (build + 2-minute high-slot test);
+  pass = guest log shows local peer 17 record state >= 6 and `SEND msg 35`, host `RECV msg 27/35`. Five more
+  register bounds need a cave or a bigger local first (0x39C922, 0x404E7C, 0x39BABA, 0x40938C, 0x4160F0), ~35 unreviewed:
+  same doc. `SlotMemberCaves.inc` was changed 00:10 by the previous session after its last build (not reviewed here).
+- **2026-11-10 00:44 test: batch 1 WORKS.** Host: p17 5 -> 6, guest: session state 2 -> 4, local peer 17 state 6, sends msg 22 /
+  35 / 27 (first time a slot-17 guest got this far). Second guest (peer 18) the same.
+  **New blocker: both guests crash ~40 ms later** in 0x3FF588(parameter at session +0x60A60, 16-byte value, local peer),
+  called from 0x3907B4: it copies a 17 x 16-byte session parameter (0x110) to the stack and writes entry [peer]. Peer 17
+  hits the stack cookie (STACK OVERRUN +0x3FF666), peer 18 the saved registers (AV at 0).
+  **Stopgap written 02:10, NOT built / tested:** MinHook `peer_param_set_17` in SlotPatch.cpp skips the write for peer >= 17
+  (32-player mode only, head bytes checked). Real fix: grow that parameter to 32 entries (storage, the 0x110 stack copies
+  in 0x3FF588 and its getters, and its network encoding). Find the other users of that parameter before trusting it.
+  Also fixed: `overnight_quick_high.bat` used `>/dev/null` (exited before the test); now `>nul`.
+- **2026-11-10 02:10 test (stopgap in): no crash, guest joins, then the host's match ends again.** Host gets msg 22 / 35 / 27,
+  p17 -> 7, then four msg 32 (encoder 0x427B70 / decoder 0x427BDC: 64-bit id + 2-bit user index = "peer drops its user n").
+  The msg 32 handler at **0x42AB43** reads the peer player table `[session + (peer*0x56 + user)*4 + 0x1A4]` with an uncaved
+  imul: for peer 17 it read inline memory (0), so it removed **player 0 (the host)**: pmask 0x10001 -> 0x10000, game over
+  reason 0, guest drops back to its own session. Same class as the 22:13 fix, different site.
+  **Written 02:30, NOT built / tested:** 3 caves appended by hand to `SlotMemberCaves.inc` (0x42AB43, plus 0x394C38 /
+  0x394D8A which read the local peer's entry). `tools/limits/gen_member_caves.py` does not know them yet: add them there
+  before regenerating. Still uncaved on this path: 0x395E2F / 0x395E6B / 0x395E85 (0x395DE8, read-only), 0x39CB0C, and the
+  17 bounds in 0x39C6B4 (0x39C701 / 0x39C769 / 0x39C790) and 0x39C8DC (0x39CAF7 / 0x39CB69 / 0x39CB7D).
+  Next test pass = host pmask stays 0x10001 after msg 32, guest stays in session state 4+ and loads the map.
+- **2026-11-10 02:17 test (3 caves in; log: 106 sites redirected): host's player 0 SURVIVES, match keeps running, no crash.**
+  Host: msg 22 / 35 / 27 + four msg 32, then pmask 0x10001 -> 0x00001 (it removed the *guest's* player 16, as asked) and
+  p17 -> 8. Guest then gets msg 26 (1 peer, 2 players), `membership consume` returns 0 and it resets to its own session
+  (local peer 1, CLOSE reason 14); host CLOSE reason 10. **Open question = why the guest sends msg 32 at all.**
+  A normal-slot guest (ovn-client1.log) sends 22, 35, 27, **33** (136 bytes) and never 32. The high-slot guest sends 27 then
+  four 32 (one per user 0..3) and no 33. Sender: 0x394BD8 (per-user update, called from 0x390D07 in the loop that ends
+  ~0x390D87) -> remove-local-user code around 0x394D74 (host states remove directly at 0x394E03, a guest sends the
+  message from 0x394E0A). So on the guest the local peer's 4-entry player table (peer +0x144; `[session + (peer*0x56 +
+  user)*4 + 0x1A4]`) or the players it points to look wrong for peer 17. Check next, on paper first: (1) does the
+  membership consumer 0x39E47C / the message extension fill the shadow peer's player table (if it stays 0 or -1 the guest
+  drops its users); (2) every other reader of that table in 0x390xxx-0x395xxx (regex `\*4 \+ 0x1a4\]` and the `imul ..,0x56`
+  before it) against SlotMemberCaves.inc; (3) the stopgap: the skipped 17-entry parameter (session +0x60A60) might be what
+  the guest compares. A guest-side dev log of the 4 table entries for the local peer right before 0x394BD8 would settle it.
+- **2026-11-10 02:55 (new session, on paper): cause of the guest's four msg 32 FOUND; fix written, NOT built / tested.**
+  It is lead (2). The drop sender 0x394D48 has one caller, 0x38F77B, inside the per-frame local-user reconcile (function
+  around 0x38F4xx, loop 0x38F67E..0x38F7E0 over the 4 local users). That function reads the LOCAL peer's player table from the
+  membership base: `[rbp + (peer*0x56 + user)*4 + 0x174]`, rbp = session + 0x30, peer = `[rbp + 0x4434]`. Same table as
+  `+ 0x1A4` from the session base, so the `+ 0x1a4` search never showed it. Its imuls **0x38F6E0, 0x38F723, 0x38F993** had no
+  cave. For local peer 17 the read lands in inline memory (membership + 0x184C + 4*user = inside player 1's record, all 0),
+  so every user "owns player 0": user 0 fails the id compare at 0x38F708 (player 0 is the host) and users 1..3 are not signed
+  in but "have a player" -> 0x394D48 for each = four msg 32. A normal-slot guest reads its real entry (user 0 = own player,
+  id matches; users 1..3 = -1) and falls through to 0x38F816 -> 0x390A04 -> 0x394BD8 = msg 33. Leads (1) and (3) are not
+  needed to explain it: `member_consume` already showed pmask 0x10001 / local peer 17 on the guest, and 0x394D48 does not
+  look at the stopgap parameter.
+  **Written:** 4 caves appended to `SlotMemberCaves.inc` (the three above + 0x38F9A7 `imul rcx,rax,0xb0`, the player record
+  read right after 0x38F993). `gen_member_caves.py` now lists them and the three 02:30 hand-added ones (SITES matches the
+  .inc again; original bytes of the four new rows are assembled by hand from the listing, not read from the DLL - the load-time
+  byte check will refuse the whole 32-player mode if one is wrong: look for that in the log first). Site count 106 -> 110.
+  **Next test** (`overnight_quick_high.bat`): pass = guest sends 22 / 35 / 27 / **33** and no 32, host pmask stays 0x10001, guest
+  stays in session state 4+ and loads the map. Still uncaved readers of this table, not on tonight's path (review before
+  trusting): 0x395E6B (0x395DE8), 0x39752A, 0x39FD40 (`and [..], 0` = a write), 0x44B24C; and the 0x158-form ones not yet
+  checked against the tables: 0x392631, 0x39FB62, 0x3ED5DC, 0x4091AD, 0x409492. The peer_param_set_17 stopgap is still in.
+- **#32 membership update message implemented** (`src/host/SlotMessage.*`, `SlotMessageTable.inc` from
+  `tools/limits/gen_message.py`; design + site list `docs/limits-players-message.md`). Builds. 0x396828 frame 0xC540 -> 0x10CC0.
+- **10:51 LAN test PASSED with #32 on:** host sent message 26 at 0xA300 bytes, both clients decoded it, session ran normally.
+  `NOBLE_SLOT_MSG_OFF=1` run (10:48) also joined. High-slot test mode added (`NOBLE_SLOT_HIGH=1`), see next item.
+- **First 3-instance LAN test (10:39) FAILED the join (not reproduced since):** host received the join requests but never sent message 26 (membership
+  update), so the clients never entered the session (no crash; all exited 0). Earlier runs (02:03 trace, 16-player mode) send 26
+  right after the channel reaches state 4. Diagnosing: `NOBLE_SLOT_MSG_OFF=1` (leaves the #32 group out, frame still 0x10CC0) and
+  producer logging (`SlotPatch: membership producer #n`). Tests: `overnight_lan3.bat`, `overnight_lan3_msgoff.bat` ->
+  `tools\overnight-lan3.ps1` (logs `<tag>-host.log` / `-client1` / `-client2`, summary `build\overnight-lan3-<tag>.txt`).
+- **High-slot test (11:01, `overnight_lan3_high.bat`, `NOBLE_SLOT_HIGH=1`): join FAILS, root cause narrowed.** The
+  decoder fix (0x4273B0 owning-peer check <= 16 -> <= 31) is in and the client decodes every message 26. Host log: producer #1
+  2 peers / 1 player, #2 2 peers / **2** players (guest player at slot 16 added), #3 **16 ms later** 2 peers / **1** player
+  (player 16 removed again, no boot). The guest sees its player gone, leaves (msg 7), closes its channel to the host (reason 14,
+  0x3F8A7F: channel no longer referenced by any session) and the rejoin is refused (reason 3). So the host removes a high slot
+  player by itself. **Lead:** the player add/remove helpers use `add`-form slot addresses that have no shadow cave:
+  0x39D8A8 player_add (`imul r8,rdi,0x158` 0x39D917 -> `[peer+0x174+slot*4]` write), 0x39D950 player_remove
+  (0x39D97A), 0x39D7F8 remove wrapper (0x39D808 / 0x39D817), 0x39D620 add/update (peer-player table `imul r10,r14,0x56`
+  0x39D63F + `[block+0x174]`), 0x39CA04..0x39CA75 (peer removal). With peer 17 these read/write inline memory past the 17
+  peers (inside playersA), so a stale/garbage player index is found and removed. Sites file lists them as `add@0x39D8E8`,
+  `add@0x39D91E`, `add@0x39D95E`, `add@0x39D988`, `not@0x39D64C`; none is in SlotPatchTable.inc. Next: cave these (and the
+  other `add@` / `not@` / `imul 0x56` peer-player-table sites, from the sites JSON - not a new static scan), rebuild, rerun
+  `overnight_lan3_high.bat`, then `overnight_lan3_hightrace.bat` for MEMBER-NEW sites.
+- 17-bit peer masks (`0x1FFFF`, list in docs/limits-players-loops.md) still unpatched; several sit in the same membership code
+  (0x39D1A3, 0x39F1B2, 0x39F203, 0x44C3AA) and will matter for peer 17+ next.
+- **Evening 2026-11-09 (with Tyler): two fixes in, join still fails, root cause moved.**
+  1. `src/host/SlotMemberCaves.inc` (`tools/limits/gen_member_caves.py`, 11 hand-reviewed caves in the player add/remove
+     helpers 0x39D620 / 0x39D7F8 / 0x39D8A8 / 0x39D950 / 0x39C8DC; two dword-index `imul 0x56` sites use the new Site
+     `scaleShift` = 2). Result: the host keeps the guest's player at slot 16 (producer #1: 2 peers, 2 players).
+  2. `kPeerMasks32` in SlotPatch.cpp: the nine 17-bit `0x1FFFF` peer masks -> 0xFFFFFFFF and 0x408F10 `test si,si` ->
+     `test esi,esi` (32-player mode only, byte-checked). No visible change in the join.
+  - `overnight_lan3_hightrace.bat`: guest 0 MEMBER-NEW (no unreviewed slot-array access); host NEW sites all at slot 0.
+  - **Real cause now:** in high-slot mode the host's running match ends ~10 ms after it receives the join request (game
+    results written, post-game panel), before the membership update is even built. The guest then waits for a match
+    that no longer exists and aborts after ~16 s (msg 10, reason 14). Normal-slot runs (Nov 8 13:15/13:22/15:22/15:25,
+    Nov 9 01:58/10:39/10:48) all joined mid-match with the match still running - join-in-progress works; only a joiner
+    in peer 17 / player 16 ends the match. Results stack: hr+0xF95E2 <- 0x7DA5D <- 0x57978 (game unload) <- 0x5753A <-
+    0x34411 (main loop). Likely the in-game side (simulation world / per-peer views, the 0x18D0-stride observer arrays,
+    in-game player tables) cannot take peer 17 / player 16 and the engine unloads the game. Next: hook the decision
+    (log why the main loop unloads: game_finish / simulation abort reason) and fix those tables.
+- **Later the same evening (21:10-21:42): the match-ending cause traced to its source; not fixed yet.**
+  New dev traces in `LobbyPatches.cpp`: `game_finish` (0x59330), `game_over` (0x7BA58, logs the reason),
+  `team_count` (0x133320, logs changes + dumps the game player datum array), and in high-slot mode a hardware write
+  watch (Dr0) on game player 0's flags. Findings, in order:
+  1. Game over reason 0 = "no teams with players" (0x7A61C). Team count drops from 1 to 0 at the join request.
+  2. Game player array holds 32 (datum size 0x490). Only player 0 (the host) exists; at the join its flags go
+     0x8 -> 0x2 ("left") at 0x527A5 / 0x527BC (0x52514 player-left), called from 0x418FF8 <- 0x3A4879 (decoder
+     0x3A4648 of simulation event type 9, "game player event") <- 0x3C40D6 <- 0x3AB370.
+  3. The type-9 events are built by 0x3AB05D -> **0x41F510**, which syncs session players into the game player table
+     (16 x 0xA0 in the 0x4E0E910 singleton, 17 x 6 peer stack tables, bounds kept at 16 - the open "fixed tables" item
+     in docs/limits-players-loops.md). With the joiner at peer 17 / player 16 this sync emits a "left" event for the
+     host's player 0. **Fix needed: 32-player support in 0x41F510 (and 0x40A760): grow the singleton table to 32 x 0xA0,
+     the stack tables to 32, raise its bounds and cave its session-player accesses.**
+  - Kept in SlotPatch.cpp `kPeerMasks32` (all byte-checked, 32-player mode only): 0x1333A9 team count 15 -> 31, and the
+    type-9 event player index 4 -> 5 bits (encoder 0x3C7CE0: 0x3C7D03/08/0C/16/23; decoder 0x3A46FE, bound 0x3A4735).
+    Both are needed once a slot-16 player is really in a match; neither alone stops the match ending.
+- **22:13 - host side FIXED: the host's match now keeps running when a slot-16 player joins.** Root cause (hardware
+  watch on the session's player 0 id): shadow peers 17..31 started with their player-slot table (peer record +0x144, 4
+  dwords) zeroed instead of -1, so peer 17 "owned" player 0; the add path 0x39D620 removed the host's player and wrote the
+  joiner over slot 0 (0x39D8F0). Fix: `ResetShadowPeerPlayerTables` in SlotPatch.cpp (startup, mirrored clears, and
+  copies from non-session blocks). The 41F510 "fixed table" theory above was a symptom, not the cause.
+  **Next blocker (guest side):** the guest receives msg 26 + 34 but never answers with msg 35 and aborts after 16 s
+  (reason 14). In normal-slot joins the guest sends 35 right after 26. Likely the guest cannot find its own peer 17 /
+  player 16 in the decoded membership (local peer/player lookup, client-side shadow tables). Next: trace the guest's
+  consumer path after msg 26 (hardware watch / logs on the guest like the host ones).
+- **22:45-23:15 (Claude running the tests; windows now open on the non-primary monitor via NOBLE_WINDOW_SECONDARY=1,
+  set by tools\overnight-lan3.ps1, handled in src/host/Window.cpp).** Guest side: new dev trace `member_consume`
+  (0x39E47C) shows the guest applies the update correctly: peermask 0x20001, player mask 0x10001, **local peer 17**.
+  So the guest knows itself. It then never starts the normal follow-up (a working guest sends 25 time-sync, 22
+  peer-establish, 35, 27, 33 within 20 ms of 26+34) and aborts after 16 s. 0x411F38 ("local players known") is not
+  even reached (trace `local_players` never fires); its 16-player loop was widened anyway (0x411F76/0x411FDE + cave
+  0x411F8E). Next: find what drives the guest from "membership received" to "establish peers" (look for a check on the
+  local peer index or a 17-entry per-peer table on the guest, e.g. the 17 x 0xC peer table / observer arrays).
+- How to tell a LAN run really joined: host log has `SEND msg 26` and `RECV msg 27/35`; a run that only shows msgs 8/22/25 did
+  not join (each instance just starts its own match).
+
 ## Status update 2026-11-09 01:00 ET (read this first, then the 2026-11-08 section below)
 
 Written by the cloud Claude session for the next agent. Commits below are local, **not pushed**. Nothing in C12-L

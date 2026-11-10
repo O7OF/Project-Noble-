@@ -32,12 +32,16 @@ struct FrontEndChoice {
     std::string mapTitle;              // mod map's title (loading screen, post-game)
     std::filesystem::path mapImage;    // mod map's loading-screen picture
     std::filesystem::path mapThumb;    // mod map's preview picture
+    std::filesystem::path mapVariant;  // Forge map (.mvar) laid over `map`, empty for the plain map
 };
 
 class FrontEndMenu {
 public:
     // True when the command line asks for the menu: no -map, or -map/-mode mainmenu/menu.
     static bool ShouldShow();
+
+    // The one-line blurb the menu shows for a stock map or mission (e.g. "m20"); empty when it has none.
+    static std::string StockBlurb(const std::string& scenario);
 
     // Initializes the front-end menu state for in-engine overlay rendering over mainmenu_all.map.
     static void Initialize(const std::filesystem::path& reachDir);

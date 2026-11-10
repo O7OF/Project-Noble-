@@ -60,6 +60,8 @@ public:
     // A Workshop/mod map: its own title and pictures instead of the stock carrier's name and art.
     static void SetLoadingMapInfo(const std::string& title, const std::filesystem::path& image,
                                   const std::filesystem::path& thumbnail);
+    // The mod map's own description, drawn under the progress bar. Safe from any thread.
+    static void SetLoadingMapDescription(const std::string& description);
 
     // True while the overlay wants the mouse pointer (pause menu, post-game panel or scoreboard actions).
     static bool WantsPointer();

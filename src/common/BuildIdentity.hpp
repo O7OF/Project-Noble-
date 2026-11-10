@@ -52,4 +52,30 @@ inline bool AreBuildsCompatible(std::string_view a, std::string_view b) {
     return ExtractBaseVersion(a) == ExtractBaseVersion(b);
 }
 
+// Orders two builds by their numeric base version ("0.19.34-dev" -> 0.19.34).
+// Returns -1 when `mine` is older than `theirs`, 0 when equal (or either is unknown),
+// +1 when `mine` is newer.
+inline int CompareBuilds(std::string_view mine, std::string_view theirs) {
+    if (mine.empty() || theirs.empty()) return 0;
+    const auto parse = [](std::string_view v, int (&out)[5]) {
+        v = ExtractBaseVersion(v);
+        if (!v.empty() && (v.front() == 'v' || v.front() == 'V')) v.remove_prefix(1);
+        for (int& n : out) n = 0;
+        int idx = 0;
+        for (char ch : v) {
+            if (ch == '.') { if (++idx >= 5) break; }
+            else if (ch >= '0' && ch <= '9') out[idx] = out[idx] * 10 + (ch - '0');
+            else break;
+        }
+    };
+    int a[5], b[5];
+    parse(mine, a);
+    parse(theirs, b);
+    for (int i = 0; i < 5; ++i) {
+        if (a[i] < b[i]) return -1;
+        if (a[i] > b[i]) return 1;
+    }
+    return 0;
+}
+
 } // namespace noble

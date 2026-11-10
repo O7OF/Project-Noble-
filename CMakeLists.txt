@@ -146,10 +146,12 @@ set(SOURCES
     src/host/EngineLimits.cpp
     src/host/PoolReport.cpp
     src/host/SpawnTest.cpp
+    src/engine/PelicanControls.cpp
     src/host/SchedulerGuard.cpp
     src/host/PoolResize.cpp
     src/host/MemberTrace.cpp
     src/host/SlotPatch.cpp
+    src/host/SlotMessage.cpp
     src/hooks/SigScanner.cpp
     src/hooks/HookManager.cpp
     src/hooks/LobbyPatches.cpp
@@ -222,11 +224,13 @@ set(HEADERS
     src/host/EngineLimits.hpp
     src/host/PoolReport.hpp
     src/host/SpawnTest.hpp
+    src/engine/PelicanControls.hpp
     src/host/SchedulerGuard.hpp
     src/host/PoolResize.hpp
     src/host/MemberTrace.hpp
     src/host/MemberKnown.inc
     src/host/SlotPatch.hpp
+    src/host/SlotMessage.hpp
     src/host/SlotPatchTable.inc
     src/host/SlotTableSites.inc
     src/hooks/SigScanner.hpp
@@ -368,10 +372,12 @@ set(DEDICATED_SOURCES
     src/host/EngineLimits.cpp
     src/host/PoolReport.cpp
     src/host/SpawnTest.cpp
+    src/engine/PelicanControls.cpp
     src/host/SchedulerGuard.cpp
     src/host/PoolResize.cpp
     src/host/MemberTrace.cpp
     src/host/SlotPatch.cpp
+    src/host/SlotMessage.cpp
     src/hooks/SigScanner.cpp
     src/hooks/HookManager.cpp
     src/hooks/LobbyPatches.cpp
@@ -394,11 +400,13 @@ set(DEDICATED_HEADERS
     src/host/EngineLimits.hpp
     src/host/PoolReport.hpp
     src/host/SpawnTest.hpp
+    src/engine/PelicanControls.hpp
     src/host/SchedulerGuard.hpp
     src/host/PoolResize.hpp
     src/host/MemberTrace.hpp
     src/host/MemberKnown.inc
     src/host/SlotPatch.hpp
+    src/host/SlotMessage.hpp
     src/host/SlotPatchTable.inc
     src/host/SlotTableSites.inc
     src/hooks/SigScanner.hpp

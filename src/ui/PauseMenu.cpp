@@ -50,6 +50,9 @@ namespace noble {
 namespace {
 
 std::atomic<bool> s_open{false};
+// The challenge list shown on the pause menu is built once when the menu opens and then every two seconds,
+// not on every frame (building it takes the career lock and may read the career file).
+std::atomic<bool> s_challengesStale{true};
 std::atomic<bool> s_gameOver{false};
 std::atomic<bool> s_scoreboardShotRequest{false};
 std::atomic<bool> s_boardPointer{false}; // scoreboard actions own the pointer
@@ -68,6 +71,7 @@ std::string s_loadingMapName;
 std::string s_displayMapName;
 std::filesystem::path s_loadingImage;
 std::filesystem::path s_loadingThumb;
+std::string s_loadingDescription;   // mod map blurb for the loading screen (plain text)
 
 struct MapName {
   const char *scenario;
@@ -406,6 +410,8 @@ void PauseMenu::Toggle() {
     Window::TakeLeftClicks(); // forget clicks made in game (shots) before the
                               // menu opened
   s_open.store(nowOpen);
+  if (nowOpen)
+    s_challengesStale.store(true);
   SetLocalSimulationPaused(nowOpen);
   NOBLE_INFO("PauseMenu: {}", nowOpen ? "opened" : "closed");
 }
@@ -497,6 +503,10 @@ void PauseMenu::SetLoadingMap(const std::string &scenario) {
   s_displayMapName.clear();
   s_loadingImage.clear();
   s_loadingThumb.clear();
+  s_loadingDescription.clear();
+  // Read the career file and build today's challenge list now, off the render thread, so the first time the
+  // pause menu opens it does not stall on that work.
+  std::thread([] { (void)Career::Challenges(); }).detach();
 }
 
 void PauseMenu::SetLoadingMapInfo(const std::string &title, const std::filesystem::path &image,
@@ -508,6 +518,40 @@ void PauseMenu::SetLoadingMapInfo(const std::string &title, const std::filesyste
   }
   s_loadingImage = image;
   s_loadingThumb = thumbnail;
+}
+
+void PauseMenu::SetLoadingMapDescription(const std::string &description) {
+  // Workshop text is written for a Steam page: drop [tags], collapse whitespace, cap the length.
+  std::string out;
+  bool pendingSpace = false;
+  constexpr size_t kMax = 260;
+  for (size_t i = 0; i < description.size() && out.size() < kMax; ++i) {
+    const char c = description[i];
+    if (c == '[') {
+      const size_t close = description.find(']', i + 1);
+      if (close != std::string::npos && close - i <= 40) {
+        i = close;
+        pendingSpace = !out.empty();
+        continue;
+      }
+    }
+    if (c == '\r' || c == '\n' || c == '\t' || c == ' ') {
+      pendingSpace = !out.empty();
+      continue;
+    }
+    if (pendingSpace) {
+      out.push_back(' ');
+      pendingSpace = false;
+    }
+    out.push_back(c);
+  }
+  if (out.size() >= kMax) {
+    const size_t cut = out.find_last_of(' ');
+    if (cut != std::string::npos && cut > kMax / 2) out.resize(cut);
+    out += "...";
+  }
+  std::lock_guard<std::mutex> lock(s_mapMutex);
+  s_loadingDescription = out;
 }
 
 void PauseMenu::DrawMenu(HWND hwnd) {
@@ -665,7 +709,16 @@ void PauseMenu::DrawMenu(HWND hwnd) {
     const float sideW = availW - listW - gap;
     ImGui::BeginChild("##pausechallenges", ImVec2(sideW, contentH), ImGuiChildFlags_Borders);
     if (interactive) UiPad::ScrollWindow(false, true);
-    const std::vector<Career::Challenge> challenges = Career::Challenges();
+    static std::vector<Career::Challenge> s_cachedChallenges;
+    static ULONGLONG s_cachedChallengesAt = 0;
+    {
+      const ULONGLONG tick = GetTickCount64();
+      if (s_challengesStale.exchange(false) || tick - s_cachedChallengesAt > 2000) {
+        s_cachedChallenges = Career::Challenges();
+        s_cachedChallengesAt = tick;
+      }
+    }
+    const std::vector<Career::Challenge> &challenges = s_cachedChallenges;
     int shown = 0;
     for (int weekly = 0; weekly <= 1; ++weekly) {
         bool heading = false;
@@ -2192,12 +2245,14 @@ void PauseMenu::DrawLoading() {
   // real progress, so the bar only shows that it's working).
   std::string mapName, scenario;
   std::filesystem::path modImage, modThumb;
+  std::string description;
   {
     std::lock_guard<std::mutex> lock(s_mapMutex);
     mapName = s_loadingMapName;
     scenario = s_loadingMap;
     modImage = s_loadingImage;
     modThumb = s_loadingThumb;
+    description = s_loadingDescription;
   }
   dl->AddRectFilledMultiColor(ImVec2(0, 0), ImVec2(w, h),
                               IM_COL32(10, 16, 24, 255),
@@ -2238,18 +2293,23 @@ void PauseMenu::DrawLoading() {
   ImFont *font = ImGui::GetFont();
   const float titleSize =
       title ? title->FontSize * 1.4f : ImGui::GetFontSize() * 2.0f;
-  dl->AddText(font, ImGui::GetFontSize(),
-              ImVec2(left, base - titleSize - 26.0f), mutedCol, "LOADING");
+  // Spacing follows the screen height and the font sizes, so the label never
+  // lands on the map name at 1440p/4K.
+  const float uiScale = h / 1080.0f > 1.0f ? h / 1080.0f : 1.0f;
+  const float labelSize = ImGui::GetFontSize();
+  const float titleTop = base - titleSize - 4.0f * uiScale;
+  dl->AddText(font, labelSize,
+              ImVec2(left, titleTop - labelSize - 8.0f * uiScale), mutedCol,
+              "LOADING");
   if (!mapName.empty()) {
-    dl->AddText(title ? title : font, titleSize,
-                ImVec2(left, base - titleSize - 4.0f),
+    dl->AddText(title ? title : font, titleSize, ImVec2(left, titleTop),
                 IM_COL32(235, 240, 245, 255), mapName.c_str());
   }
 
   const float barW = w * 0.30f;
-  const float barH = 4.0f;
-  const ImVec2 b0(left, base + 8.0f);
-  const ImVec2 b1(left + barW, base + 8.0f + barH);
+  const float barH = 4.0f * uiScale;
+  const ImVec2 b0(left, base + 8.0f * uiScale);
+  const ImVec2 b1(left + barW, base + 8.0f * uiScale + barH);
   dl->AddRectFilled(b0, b1, IM_COL32(255, 255, 255, 30));
   const float t = static_cast<float>(ImGui::GetTime());
   const float seg = barW * 0.25f;
@@ -2258,6 +2318,17 @@ void PauseMenu::DrawLoading() {
   const float x1 = b0.x + ((pos + seg) > barW ? barW : (pos + seg));
   if (x1 > x0)
     dl->AddRectFilled(ImVec2(x0, b0.y), ImVec2(x1, b1.y), accentCol);
+
+  // The mod map's own description under the bar, wrapped to the bar's width plus a little.
+  if (!description.empty()) {
+    const float textSize = ImGui::GetFontSize();
+    const float wrap = w * 0.40f;
+    const ImVec2 at(left + 1.0f * uiScale, b1.y + 14.0f * uiScale);
+    dl->AddText(font, textSize, ImVec2(at.x + 1.0f, at.y + 1.0f),
+                IM_COL32(0, 0, 0, 200), description.c_str(), nullptr, wrap);
+    dl->AddText(font, textSize, at, IM_COL32(205, 215, 225, 235),
+                description.c_str(), nullptr, wrap);
+  }
 }
 
 void PauseMenu::Render(IDXGISwapChain *swapChain, bool loading, const std::function<void()> &extraOverlay) {

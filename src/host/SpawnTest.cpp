@@ -4,6 +4,7 @@
 #include "common/Logger.hpp"
 #include "hooks/HookManager.hpp"
 #include "engine/DevCheats.hpp"
+#include "engine/PelicanControls.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -29,7 +30,7 @@ constexpr uintptr_t kObjectNewRva = 0x46D6E0;      // object_new(placement*) -> 
 constexpr uintptr_t kTlsIndexRva = 0xC17B18;       // TLS slot of the engine's game-state root
 constexpr uintptr_t kAiPlaceRva = 0x6C2B10;        // ai_place(ai value, count (-1 = all), flag); bounds-checks squads
 constexpr uintptr_t kScenarioRva = 0xC1A230;       // global: current scenario; +0x398 = squad count
-// F6 horde: put placed actors on foot around the player (same calls the ai_teleport script command makes).
+// Numpad 6 horde: put placed actors on foot around the player (same calls the ai_teleport script command makes).
 constexpr uintptr_t kUnitExitVehicleRva = 0x4F9A74;   // unit_exit_vehicle(unit, mode 0 = normal)
 constexpr uintptr_t kObjectSetPositionRva = 0x46CB38; // (object, position*, forward*, up*, 0, false)
 constexpr uintptr_t kObjectRefreshRva = 0x46C8B4;     // re-links the object to the map after a move
@@ -102,8 +103,8 @@ bool s_hordeInfantry = false;     // -horde-infantry: squads that spawn seated (
 bool s_lastCinematic = false;
 bool s_cinematicKnown = false;   // the game-state root + cinematic flag are readable
 bool s_cinematicFallbackLogged = false;
-bool s_f6Down = false;
-ULONGLONG s_lastF6 = 0, s_lastHordeStep = 0;
+bool s_np6Down = false;
+ULONGLONG s_lastNp6 = 0, s_lastHordeStep = 0;
 int s_hordePending = 0;       // actors still to add
 int s_hordeSquad = 0;         // next squad to place (round robin)
 int s_hordeAdded = 0, s_hordeMoved = 0;
@@ -113,17 +114,17 @@ bool s_hordeNoSquadsLogged = false;       // "this map has no squads" warning, o
 bool s_hordeNoProgressLogged = false;     // "all squads produced nothing" line, once per queue
 struct HordeActor { int32_t actor; ULONGLONG since; bool exitAsked; float pos[3]; };
 std::vector<HordeActor> s_hordeMoving;
-std::atomic<int> s_aiPlaceRequests{ 0 };   // F7: place every squad in the map
-bool s_f7Down = false;
-ULONGLONG s_lastF7 = 0;
+std::atomic<int> s_aiPlaceRequests{ 0 };   // Numpad 7: place every squad in the map
+bool s_np7Down = false;
+ULONGLONG s_lastNp7 = 0;
 
 std::atomic<int> s_pending{ 0 };
-// F8: a crowd of 128 copies of the player's biped (128-player render test), kept alive: the engine treats
+// Numpad 8: a crowd of 128 copies of the player's biped (128-player render test), kept alive: the engine treats
 // bodies without a player as corpses and cleans them up, so missing ones are put back twice a second.
 constexpr int kCrowd = 128;
 bool s_crowdOn = false;
-bool s_f8Down = false;
-ULONGLONG s_lastF8 = 0, s_lastCrowdCheck = 0;
+bool s_np8Down = false;
+ULONGLONG s_lastNp8 = 0, s_lastCrowdCheck = 0;
 int32_t s_bipedTag = -1;
 float s_refForward[2] = { 1.0f, 0.0f };
 int32_t s_crowdHandle[kCrowd];
@@ -141,7 +142,7 @@ bool s_campaignMode = false;  // launch mode is campaign: missions open with cut
 int s_maxObjects = 8000;
 ULONGLONG s_firstTick = 0;
 bool s_autoQueued = false;
-bool s_f9Down = false;
+bool s_np9Down = false;
 int s_spawned = 0, s_refused = 0, s_refusedInARow = 0;
 int32_t s_refTag = -1;
 float s_refPos[3] = {};
@@ -267,12 +268,12 @@ void MaintainCrowd(const ObjectPool& pool) {
         if (s_crowdHandle[k] != -1) { ++placed; if (!first) ++s_crowdRespawns; }
     }
     if (placed > 0 && alive == 0) {
-        NOBLE_INFO("SpawnTest: crowd of {} Spartan bodies in front of you (F8 again to remove) | object pool {} / {}",
+        NOBLE_INFO("SpawnTest: crowd of {} Spartan bodies in front of you (Numpad 8 again to remove) | object pool {} / {}",
             placed, UsedSlots(pool), pool.capacity);
     }
 }
 
-// Actor pool (game-state root +0x08) usage, for the F7 log line.
+// Actor pool (game-state root +0x08) usage, for the Numpad 7 log line.
 bool ActorUsage(int& used, int& capacity) {
     const uint32_t tlsIndex = *reinterpret_cast<const uint32_t*>(s_base + kTlsIndexRva);
     auto** tls = reinterpret_cast<uint8_t**>(__readgsqword(0x58));
@@ -500,7 +501,7 @@ void HordeStep() {
     }
 }
 
-// F7: places every squad defined in the map (Firefight and campaign maps have them; Forge World has none).
+// Numpad 7: places every squad defined in the map (Firefight and campaign maps have them; Forge World has none).
 void PlaceAllSquads() {
     const uint8_t* scenario = *reinterpret_cast<uint8_t* const*>(s_base + kScenarioRva);
     if (!scenario) return;
@@ -508,12 +509,12 @@ void PlaceAllSquads() {
     int before = 0, after = 0, capacity = 0;
     ActorUsage(before, capacity);
     if (squads <= 0) {
-        NOBLE_WARN("SpawnTest: this map has no AI squads (Forge World has none); use a Firefight or campaign map for F7");
+        NOBLE_WARN("SpawnTest: this map has no AI squads (Forge World has none); use a Firefight or campaign map for Numpad 7");
         return;
     }
     for (int32_t i = 0; i < squads; ++i) s_aiPlace(0x20000000u | static_cast<uint32_t>(i), -1, 0);
     ActorUsage(after, capacity);
-    NOBLE_INFO("SpawnTest: F7 placed all {} squads | actors {} -> {} / {}", squads, before, after, capacity);
+    NOBLE_INFO("SpawnTest: Numpad 7 placed all {} squads | actors {} -> {} / {}", squads, before, after, capacity);
 }
 
 void SpawnBatch() {
@@ -523,7 +524,7 @@ void SpawnBatch() {
     if (s_crowdOn && s_crowdHandle[0] == -2) StartCrowd();
     if (s_crowdOn) {
         if (s_bipedTag == -1) {
-            NOBLE_WARN("SpawnTest: no placed Spartan found to copy; F8 needs you in the match as a Spartan");
+            NOBLE_WARN("SpawnTest: no placed Spartan found to copy; Numpad 8 needs you in the match as a Spartan");
             s_crowdOn = false;
         } else if (GetTickCount64() - s_lastCrowdCheck > 500) {
             s_lastCrowdCheck = GetTickCount64();
@@ -594,40 +595,41 @@ bool CinematicInProgress() {
 uint64_t __fastcall Hook_Tick(int32_t a, int32_t b, int32_t c, float d, float e) {
     const uint64_t result = s_originalTick(a, b, c, d, e);
     noble::DevCheats::GameTick(a);
+    noble::pelican::GameTick(s_base);
     if (!s_firstTick) s_firstTick = GetTickCount64();
-    const bool f9 = (GetAsyncKeyState(VK_F9) & 0x8000) != 0 && GetForegroundWindow() != nullptr;
-    if (f9 && !s_f9Down) {
+    const bool np9 = (GetAsyncKeyState(VK_NUMPAD9) & 0x8000) != 0 && GetForegroundWindow() != nullptr;
+    if (np9 && !s_np9Down) {
         s_pending += 500;
-        NOBLE_INFO("SpawnTest: F9, queued 500 objects");
+        NOBLE_INFO("SpawnTest: Numpad 9, queued 500 objects");
     }
-    s_f9Down = f9;
-    const bool f8 = (GetAsyncKeyState(VK_F8) & 0x8000) != 0 && GetForegroundWindow() != nullptr;
-    if (f8 && !s_f8Down && GetTickCount64() - s_lastF8 > 600) {   // one press = one toggle
-        s_lastF8 = GetTickCount64();
+    s_np9Down = np9;
+    const bool np8 = (GetAsyncKeyState(VK_NUMPAD8) & 0x8000) != 0 && GetForegroundWindow() != nullptr;
+    if (np8 && !s_np8Down && GetTickCount64() - s_lastNp8 > 600) {   // one press = one toggle
+        s_lastNp8 = GetTickCount64();
         s_crowdOn = !s_crowdOn;
         if (s_crowdOn) {
             s_refTag = -1;            // re-read the player's position and facing now
             s_crowdHandle[0] = -2;    // marks "lay out on next batch"
         }
-        NOBLE_INFO("SpawnTest: F8, crowd of {} Spartan bodies {}", kCrowd, s_crowdOn ? "on" : "off (bodies will be cleaned up by the engine)");
+        NOBLE_INFO("SpawnTest: Numpad 8, crowd of {} Spartan bodies {}", kCrowd, s_crowdOn ? "on" : "off (bodies will be cleaned up by the engine)");
         if (!s_crowdOn) NOBLE_INFO("SpawnTest: crowd was kept alive with {} respawns", s_crowdRespawns);
     }
-    s_f8Down = f8;
-    const bool f7 = (GetAsyncKeyState(VK_F7) & 0x8000) != 0 && GetForegroundWindow() != nullptr;
-    if (f7 && !s_f7Down && GetTickCount64() - s_lastF7 > 600) {
-        s_lastF7 = GetTickCount64();
+    s_np8Down = np8;
+    const bool np7 = (GetAsyncKeyState(VK_NUMPAD7) & 0x8000) != 0 && GetForegroundWindow() != nullptr;
+    if (np7 && !s_np7Down && GetTickCount64() - s_lastNp7 > 600) {
+        s_lastNp7 = GetTickCount64();
         if (s_aiPlace) PlaceAllSquads();
     }
-    s_f7Down = f7;
-    const bool f6 = (GetAsyncKeyState(VK_F6) & 0x8000) != 0 && GetForegroundWindow() != nullptr;
-    if (f6 && !s_f6Down && GetTickCount64() - s_lastF6 > 600 && s_aiPlace && s_unitExitVehicle) {
-        s_lastF6 = GetTickCount64();
+    s_np7Down = np7;
+    const bool np6 = (GetAsyncKeyState(VK_NUMPAD6) & 0x8000) != 0 && GetForegroundWindow() != nullptr;
+    if (np6 && !s_np6Down && GetTickCount64() - s_lastNp6 > 600 && s_aiPlace && s_unitExitVehicle) {
+        s_lastNp6 = GetTickCount64();
         s_hordePending += 100;
         s_hordeCapLogged = false;
         s_hordeNoProgressLogged = false;
-        NOBLE_INFO("SpawnTest: F6, horde +100 actors around you ({} queued)", s_hordePending);
+        NOBLE_INFO("SpawnTest: Numpad 6, horde +100 actors around you ({} queued)", s_hordePending);
     }
-    s_f6Down = f6;
+    s_np6Down = np6;
     // Wait for actual gameplay: the game-state cinematic flag is set by the engine's own cinematic_start /
     // cinematic_stop and is true for the whole of any cutscene, whatever its length. Placing actors during one
     // stalls the game for seconds per frame and the mission scripts clean them up afterwards.
@@ -797,7 +799,7 @@ void Install(HMODULE engine) {
     }
     if (s_autoHorde > 0 && (!s_aiPlace || !s_unitExitVehicle))
         NOBLE_WARN("SpawnTest: -horde needs ai_place, unit_exit_vehicle and the teleport calls, which this build does not have; horde disabled");
-    NOBLE_INFO("SpawnTest: auto-spawns wait for gameplay ({}){}; F9 = 500 objects, F8 = crowd of 128 Spartans on/off, F7 = place every AI squad, F6 = horde +100 actors around you; stops at {} objects{}",
+    NOBLE_INFO("SpawnTest: auto-spawns wait for gameplay ({}){}; keys need Num Lock on: Numpad 9 = 500 objects, Numpad 8 = crowd of 128 Spartans on/off, Numpad 7 = place every AI squad, Numpad 6 = horde +100 actors around you; stops at {} objects{}",
         "game-state cinematic flag, timer fallback",
         s_autoDelayExplicit ? ", override -horde-delay " + std::to_string(s_autoDelay) : "", s_maxObjects,
         (s_autoCount > 0 ? ", -spawn-test " + std::to_string(s_autoCount) : std::string()) +
@@ -833,7 +835,7 @@ void TriggerCrowdToggle() {
         s_refTag = -1;
         s_crowdHandle[0] = -2;
     }
-    NOBLE_INFO("SpawnTest: F8 Spartan crowd toggled {}", s_crowdOn ? "ON" : "OFF");
+    NOBLE_INFO("SpawnTest: Numpad 8 Spartan crowd toggled {}", s_crowdOn ? "ON" : "OFF");
 }
 
 void TriggerSpawnObjects(int count) {

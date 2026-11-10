@@ -2,6 +2,7 @@
 #include "HookManager.hpp"
 #include "SigScanner.hpp"
 #include "common/Logger.hpp"
+#include "host/SlotPatch.hpp"
 #include <psapi.h>
 #include <vector>
 #include <string>
@@ -378,6 +379,316 @@ static void __fastcall Hook_NetLog(const char* fmt, uintptr_t a1, uintptr_t a2, 
     if (s_originalNetLog) s_originalNetLog(fmt, a1, a2, a3);
 }
 
+// Game finish (hr+0x59330, sets game globals +0x1EAB8 "game finished"; the main loop then writes the results and
+// unloads the match). Callers: 0x355EC, 0x7BACB, 0x18D123, 0x1B084C, 0x3A4092 (network session command switch).
+// 2026-11-09: with a joiner in peer 17 / player 16 (NOBLE_SLOT_HIGH) the host's running match ends ~10 ms after the
+// join request. Logs who finishes the game (first 20).
+typedef void(__fastcall* GameFinishFn)();
+static GameFinishFn s_originalGameFinish = nullptr;
+static std::atomic<int> s_gameFinishLogCount{0};
+static void __fastcall Hook_GameFinish() {
+    if (s_gameFinishLogCount.fetch_add(1) < 20) {
+        NOBLE_WARN("LobbyPatches: [{} pid {}] GAME FINISH requested by hr+0x{:X} stack: {}", RefuseRole(), GetCurrentProcessId(),
+                   CallerRva(_ReturnAddress()), ReachStack());
+    }
+    if (s_originalGameFinish) s_originalGameFinish();
+}
+
+// Game over with reason (hr+0x7BA58, (reason) -> 0x59330). Called from the game engine's end-of-game check
+// (0x7B4xx..0x7B7B4: r15 = 7, 8 score limit, 9, 0xA, ...). Logs the reason code (first 20).
+typedef void(__fastcall* GameOverFn)(int32_t reason);
+static GameOverFn s_originalGameOver = nullptr;
+static std::atomic<int> s_gameOverLogCount{0};
+static void __fastcall Hook_GameOver(int32_t reason) {
+    if (s_gameOverLogCount.fetch_add(1) < 20) {
+        NOBLE_WARN("LobbyPatches: [{} pid {}] GAME OVER reason {} (0x{:X}) from hr+0x{:X}", RefuseRole(), GetCurrentProcessId(),
+                   reason, reason, CallerRva(_ReturnAddress()));
+    }
+    if (s_originalGameOver) s_originalGameOver(reason);
+}
+
+// Team count for the game-over check (hr+0x133320(out last player?, out teams alive, out teams with players)). Called
+// every tick by 0x7A61C; logs the outputs whenever they change (first 40 changes) to see why the check ends the match.
+// Dumps the game's player datum array (TLS block [hr+0xC17B18] + 0x18; size at +0x20, data at +0x50, as the iterator
+// 0x1381C reads it): header dwords +0x20..+0x5F, then per slot: salt (i16 +0), flags (+4), team (i8 +0xAD).
+static uintptr_t s_player0Flags = 0;
+static void DumpGamePlayers(char* out, size_t cap) {
+    out[0] = 0;
+    __try {
+        const uint32_t tlsIndex = *reinterpret_cast<const uint32_t*>(s_reachBase + 0xC17B18);
+        const auto tlsArray = static_cast<uintptr_t>(__readgsqword(0x58));
+        const uintptr_t block = *reinterpret_cast<const uintptr_t*>(tlsArray + tlsIndex * 8);
+        const uintptr_t arr = *reinterpret_cast<const uintptr_t*>(block + 0x18);
+        if (!arr) { std::snprintf(out, cap, "no array"); return; }
+        size_t n = 0;
+        n += std::snprintf(out + n, cap - n, "hdr");
+        for (int o = 0x20; o < 0x60 && n < cap; o += 4)
+            n += std::snprintf(out + n, cap - n, " %08X", *reinterpret_cast<const uint32_t*>(arr + o));
+        const uint64_t size = *reinterpret_cast<const uint64_t*>(arr + 0x20);
+        const uintptr_t data = *reinterpret_cast<const uintptr_t*>(arr + 0x50);
+        if (!data || size < 0x80 || size > 0x4000) return;
+        s_player0Flags = data + 4;
+        for (int i = 0; i < 20 && n + 40 < cap; ++i) {
+            const uintptr_t d = data + i * size;
+            n += std::snprintf(out + n, cap - n, " | %d:%04X f%08X t%d", i, *reinterpret_cast<const uint16_t*>(d),
+                               *reinterpret_cast<const uint32_t*>(d + 4), *reinterpret_cast<const int8_t*>(d + 0xAD));
+        }
+    } __except (1) {
+        std::snprintf(out, cap, "read fault");
+    }
+}
+
+// Hardware write watch on game player 0's flags (+4): at the high-slot join the host's own player goes from flags 0x8
+// to 0x2 ("left"), the team count drops to 0 and the match ends. Dr0 on the game thread, logged by a vectored handler.
+static std::atomic<int> s_watchHits{0};
+static uintptr_t s_sessionP0Id = 0;   // session player 0 identifier (+0x1744), Dr1
+static std::atomic<int> s_sessionWatchHits{0};
+static LONG CALLBACK WatchHandler(EXCEPTION_POINTERS* info) {
+    if (info->ExceptionRecord->ExceptionCode != STATUS_SINGLE_STEP) return EXCEPTION_CONTINUE_SEARCH;
+    CONTEXT* c = info->ContextRecord;
+    if (c->Dr6 & 2) {
+        c->Dr6 = 0;
+        static uint64_t lastId = 0;
+        const uint64_t id = s_sessionP0Id ? *reinterpret_cast<const uint64_t*>(s_sessionP0Id) : 0;
+        if (id != lastId && s_sessionWatchHits.fetch_add(1) < 12) {
+            NOBLE_WARN("LobbyPatches: [{} pid {}] SESSION PLAYER0 ID WRITE -> {:016X} at hr+0x{:X} rcx {:#x} rdx {:#x} r8 {:#x} stack: {}",
+                       RefuseRole(), GetCurrentProcessId(), id, CallerRva(reinterpret_cast<void*>(c->Rip)), c->Rcx, c->Rdx, c->R8, ReachStack());
+        }
+        lastId = id;
+        return EXCEPTION_CONTINUE_EXECUTION;
+    }
+    if (!(c->Dr6 & 1)) return EXCEPTION_CONTINUE_SEARCH;
+    c->Dr6 = 0;
+    static uint32_t lastValue = 0x8;
+    const uint32_t value = s_player0Flags ? *reinterpret_cast<const uint32_t*>(s_player0Flags) : 0;
+    const bool changed = value != lastValue;
+    lastValue = value;
+    if (changed && s_watchHits.fetch_add(1) < 12) {
+        NOBLE_WARN("LobbyPatches: [{} pid {}] PLAYER0 FLAGS WRITE -> 0x{:X} at hr+0x{:X} stack: {}", RefuseRole(), GetCurrentProcessId(),
+                   value, CallerRva(reinterpret_cast<void*>(c->Rip)), ReachStack());
+    }
+    return EXCEPTION_CONTINUE_EXECUTION;
+}
+static DWORD WINAPI ArmWatchThread(void* param) {
+    const DWORD tid = static_cast<DWORD>(reinterpret_cast<uintptr_t>(param));
+    HANDLE th = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_SET_CONTEXT, FALSE, tid);
+    if (!th) return 0;
+    bool ok = false;
+    if (SuspendThread(th) != static_cast<DWORD>(-1)) {
+        CONTEXT c = {};
+        c.ContextFlags = CONTEXT_DEBUG_REGISTERS;
+        if (GetThreadContext(th, &c)) {
+            c.Dr0 = s_player0Flags;
+            c.Dr7 = (c.Dr7 & ~0xF0003ull) | 1ull | (1ull << 16) | (3ull << 18);   // L0, write, 4 bytes
+            if (s_sessionP0Id) {
+                c.Dr1 = s_sessionP0Id;
+                c.Dr7 = (c.Dr7 & ~0xF0000Cull) | 4ull | (1ull << 20) | (2ull << 22);   // L1, write, 8 bytes
+            }
+            ok = SetThreadContext(th, &c) != FALSE;
+        }
+        ResumeThread(th);
+    }
+    CloseHandle(th);
+    // Logged after the resume: the game thread may hold the logger lock while it is suspended.
+    NOBLE_WARN("LobbyPatches: player 0 flags watch {} at {:#x} (thread {})", ok ? "armed" : "FAILED", s_player0Flags, tid);
+    return 0;
+}
+static void ArmPlayer0Watch() {
+    static bool armed = false;
+    if (armed || !s_player0Flags) return;
+    armed = true;
+    AddVectoredExceptionHandler(1, &WatchHandler);
+    if (HANDLE t = CreateThread(nullptr, 0, &ArmWatchThread, reinterpret_cast<void*>(static_cast<uintptr_t>(GetCurrentThreadId())), 0, nullptr))
+        CloseHandle(t);
+}
+
+typedef void(__fastcall* TeamCountFn)(int32_t* a1, int32_t* alive, int32_t* teams);
+static TeamCountFn s_originalTeamCount = nullptr;
+static std::atomic<int> s_teamCountLogCount{0};
+static void __fastcall Hook_TeamCount(int32_t* a1, int32_t* alive, int32_t* teams) {
+    if (s_originalTeamCount) s_originalTeamCount(a1, alive, teams);
+    static int32_t lastA = -99, lastAlive = -99, lastTeams = -99;
+    const int32_t a = a1 ? *a1 : -98, al = alive ? *alive : -98, tm = teams ? *teams : -98;
+    if ((a != lastA || al != lastAlive || tm != lastTeams) && s_teamCountLogCount.fetch_add(1) < 40) {
+        NOBLE_WARN("LobbyPatches: [{} pid {}] team count: a1 {} alive {} teams {} (caller hr+0x{:X})", RefuseRole(),
+                   GetCurrentProcessId(), a, al, tm, CallerRva(_ReturnAddress()));
+        char dump[1024];
+        DumpGamePlayers(dump, sizeof(dump));
+        NOBLE_WARN("LobbyPatches: game players: {}", dump);
+    }
+    lastA = a; lastAlive = al; lastTeams = tm;
+    static int highMode = -1;   // NOBLE_SLOT_HIGH, read once
+    if (highMode < 0) {
+        wchar_t high[4] = {};
+        highMode = (GetEnvironmentVariableW(L"NOBLE_SLOT_HIGH", high, 4) > 0 && high[0] == L'1') ? 1 : 0;
+    }
+    if (highMode == 1 && s_player0Flags && s_sessionP0Id) ArmPlayer0Watch();   // once both addresses are known
+}
+
+// Session -> game player sync (hr+0x41F510(singleton, int* count, ?, records 0xB8 each)): compares the 16-entry
+// game player table in the 0x4E0E910 singleton (+0xA0 mask, entries 0xA0 from +0xA8) with the session players
+// (session = singleton+0x18; players 0xB0 from +0x1740, mask +0x173C) and appends events (+0 index, +4 id, +0xC type:
+// 0 left, 1 moved, 2 ?, 3 joined, 4 changed). 2026-11-09: at a high-slot join it emits "left" for the host's player 0.
+// Logs player 0's fields on both sides whenever they change, and every event it emits (first 60 lines).
+typedef void(__fastcall* PlayerSyncFn)(uint8_t* singleton, int32_t* count, void* a3, uint8_t* records);
+static PlayerSyncFn s_originalPlayerSync = nullptr;
+static std::atomic<int> s_playerSyncLogCount{0};
+static void __fastcall Hook_PlayerSync(uint8_t* singleton, int32_t* count, void* a3, uint8_t* records) {
+    const int32_t before = count ? *count : 0;
+    char state[400] = {};
+    if (singleton) {
+        const uint8_t* s = *reinterpret_cast<uint8_t* const*>(singleton + 0x18);
+        const uint8_t* e = singleton + 0xA8;
+        if (s && !s_sessionP0Id) s_sessionP0Id = reinterpret_cast<uintptr_t>(s) + 0x1744;
+        if (s) {
+            std::snprintf(state, sizeof(state),
+                "session pmask %08X peermask %08X p0 id %016llX peer %d +10 %d +1C %d | table mask %08X e0 id %016llX flag %u "
+                "addr %02X%02X%02X%02X%02X%02X +1C %d",
+                *reinterpret_cast<const uint32_t*>(s + 0x173C), *reinterpret_cast<const uint32_t*>(s + 0x5C),
+                static_cast<unsigned long long>(*reinterpret_cast<const uint64_t*>(s + 0x1744)), *reinterpret_cast<const int32_t*>(s + 0x174C),
+                *reinterpret_cast<const int32_t*>(s + 0x1750), *reinterpret_cast<const int32_t*>(s + 0x175C),
+                *reinterpret_cast<const uint32_t*>(singleton + 0xA0), static_cast<unsigned long long>(*reinterpret_cast<const uint64_t*>(e)),
+                e[8], e[0x10], e[0x11], e[0x12], e[0x13], e[0x14], e[0x15], *reinterpret_cast<const int32_t*>(e + 0x1C));
+        }
+    }
+    static std::string last;
+    if (last != state && s_playerSyncLogCount.fetch_add(1) < 60) {
+        NOBLE_WARN("LobbyPatches: [{} pid {}] player sync in: {}", RefuseRole(), GetCurrentProcessId(), state);
+        last = state;
+    }
+    if (s_originalPlayerSync) s_originalPlayerSync(singleton, count, a3, records);
+    const int32_t after = count ? *count : 0;
+    for (int32_t k = before; records && k < after && k < before + 8; ++k) {
+        const uint8_t* r = records + static_cast<size_t>(k) * 0xB8;
+        if (s_playerSyncLogCount.fetch_add(1) < 60)
+            NOBLE_WARN("LobbyPatches: [{} pid {}] player sync event: index {} id {:016X} type {} +1C {}", RefuseRole(), GetCurrentProcessId(),
+                       *reinterpret_cast<const int32_t*>(r), *reinterpret_cast<const uint64_t*>(r + 4),
+                       *reinterpret_cast<const int32_t*>(r + 0xC), *reinterpret_cast<const int32_t*>(r + 0x1C));
+    }
+}
+
+// Membership consumer (hr+0x39E47C(block, payload); block = session + 0x30): applies a decoded membership update
+// (message 26). 2026-11-09 high-slot test: the guest receives 26 + 34 but never answers with 35. Logs the payload
+// counts and the session state before / after (peer mask +0x5C, player mask +0x173C, local peer +0x4464, +0x4468),
+// first 20 calls.
+typedef uint64_t(__fastcall* MemberConsumeFn)(uint8_t* block, uint8_t* payload);
+static MemberConsumeFn s_originalMemberConsume = nullptr;
+static std::atomic<int> s_memberConsumeLogCount{0};
+static uint64_t __fastcall Hook_MemberConsume(uint8_t* block, uint8_t* payload) {
+    const bool log = s_memberConsumeLogCount.fetch_add(1) < 20;
+    auto state = [](const uint8_t* b) {
+        const uint8_t* s = b - 0x30;
+        char buf[160];
+        std::snprintf(buf, sizeof(buf), "peermask %08X pmask %08X local peer %d +4468 %d +4434 %d",
+                      *reinterpret_cast<const uint32_t*>(s + 0x5C), *reinterpret_cast<const uint32_t*>(s + 0x173C),
+                      *reinterpret_cast<const int32_t*>(s + 0x4464), *reinterpret_cast<const int32_t*>(s + 0x4468),
+                      *reinterpret_cast<const int32_t*>(s + 0x4434));
+        return std::string(buf);
+    };
+    std::string before = (log && block) ? state(block) : std::string();
+    const uint64_t r = s_originalMemberConsume ? s_originalMemberConsume(block, payload) : 0;
+    if (log && block) {
+        NOBLE_WARN("LobbyPatches: [{} pid {}] membership consume (payload {} peers {} players) ret {} | before: {} | after: {}",
+                   RefuseRole(), GetCurrentProcessId(), payload ? *reinterpret_cast<const int16_t*>(payload + 0x14) : -1,
+                   payload ? *reinterpret_cast<const int16_t*>(payload + 0x16) : -1, r, before, state(block));
+    }
+    return r;
+}
+
+// Guest join gate (hr+0x411F38(join state) -> bool: the local peer's players are all known to the session; on true
+// 0x4114E5 goes on with 0x412014). Logs the result and the state flags (+0x58) whenever they change (first 30).
+typedef bool(__fastcall* LocalPlayersFn)(uint8_t* state);
+static LocalPlayersFn s_originalLocalPlayers = nullptr;
+static std::atomic<int> s_localPlayersLogCount{0};
+static bool __fastcall Hook_LocalPlayers(uint8_t* state) {
+    const bool r = s_originalLocalPlayers ? s_originalLocalPlayers(state) : false;
+    static int last = -1;
+    static uint32_t lastFlags = 0;
+    const uint32_t flags = state ? *reinterpret_cast<const uint32_t*>(state + 0x58) : 0;
+    if ((static_cast<int>(r) != last || flags != lastFlags) && s_localPlayersLogCount.fetch_add(1) < 30) {
+        uint32_t pmask = 0; int32_t local = -9;
+        if (state) {
+            const uint8_t* session = *reinterpret_cast<uint8_t* const*>(*reinterpret_cast<uint8_t* const*>(state + 0x30) + 0xD0);
+            if (session) { pmask = *reinterpret_cast<const uint32_t*>(session + 0x173C); local = *reinterpret_cast<const int32_t*>(session + 0x4464); }
+        }
+        NOBLE_WARN("LobbyPatches: [{} pid {}] local players check -> {} (flags {:08X}, session pmask {:08X}, local peer {})", RefuseRole(),
+                   GetCurrentProcessId(), r, flags, pmask, local);
+    }
+    last = r; lastFlags = flags;
+    return r;
+}
+
+// Guest "joined" step (hr+0x397048(session)): when the session state (+0x60EF8) is a joining/joined one, the local
+// peer (+0x4464) record's state must be 8 before the guest goes on (time sync, peer-establish, ...). 2026-11-09:
+// with the local peer in slot 17 the guest never goes on. Logs session state, local peer and its record state
+// (shadow record for peers >= 17) whenever they change (first 30).
+typedef void(__fastcall* GuestStepFn)(uint8_t* session);
+static GuestStepFn s_originalGuestStep = nullptr;
+static std::atomic<int> s_guestStepLogCount{0};
+static void __fastcall Hook_GuestStep(uint8_t* session) {
+    if (session) {
+        const int32_t state = *reinterpret_cast<const int32_t*>(session + 0x60EF8);
+        const int32_t local = *reinterpret_cast<const int32_t*>(session + 0x4464);
+        const int32_t f38 = *reinterpret_cast<const int32_t*>(session + 0x38);
+        const int32_t f58 = *reinterpret_cast<const int32_t*>(session + 0x58);
+        const uint8_t* rec = noble::slots::PeerRecord(session, local);
+        const int32_t peerState = rec ? *reinterpret_cast<const int32_t*>(rec + 0x8) : -99;
+        static int32_t last[5] = { -100, -100, -100, -100, -100 };
+        const int32_t now[5] = { state, local, f38, f58, peerState };
+        if (std::memcmp(last, now, sizeof(now)) != 0 && s_guestStepLogCount.fetch_add(1) < 30) {
+            NOBLE_WARN("LobbyPatches: [{} pid {}] guest step: session state {} local peer {} +38 {} +58 {} local peer record state {}",
+                       RefuseRole(), GetCurrentProcessId(), state, local, f38, f58, peerState);
+        }
+        std::memcpy(last, now, sizeof(now));
+    }
+    if (s_originalGuestStep) s_originalGuestStep(session);
+}
+
+// Session update (hr+0x393830(session), every frame; dispatches on the session state +0x60EF8). Logs state,
+// local peer, local peer record state (+8; shadow record for >= 17), host peer (+0x40) and the peer / player
+// masks whenever they change (first 40), to see where a slot-17 guest stops.
+typedef void(__fastcall* SessionUpdateFn)(uint8_t* session);
+static SessionUpdateFn s_originalSessionUpdate = nullptr;
+static std::atomic<int> s_sessionUpdateLogCount{0};
+static void __fastcall Hook_SessionUpdate(uint8_t* session) {
+    if (s_originalSessionUpdate) s_originalSessionUpdate(session);
+    if (!session) return;
+    const int32_t state = *reinterpret_cast<const int32_t*>(session + 0x60EF8);
+    if (state == 0) return;
+    const int32_t local = *reinterpret_cast<const int32_t*>(session + 0x4464);
+    const uint8_t* rec = noble::slots::PeerRecord(session, local);
+    // Record state (+8) of every peer in the mask, folded into one value for change detection.
+    const uint32_t peerMask = *reinterpret_cast<const uint32_t*>(session + 0x5C);
+    char peers[160] = {};
+    size_t pn = 0;
+    int32_t peerStates = 0;
+    for (int32_t i = 0; i < 32 && pn + 12 < sizeof(peers); ++i) {
+        if (!(peerMask & (1u << i))) continue;
+        const uint8_t* pr = noble::slots::PeerRecord(session, i);
+        const int32_t ps = pr ? *reinterpret_cast<const int32_t*>(pr + 0x8) : -99;
+        peerStates = peerStates * 31 + ps + i;
+        pn += static_cast<size_t>(std::snprintf(peers + pn, sizeof(peers) - pn, " p%d:%d", i, ps));
+    }
+    const int32_t now[8] = { state, local, rec ? *reinterpret_cast<const int32_t*>(rec + 0x8) : -99,
+                             *reinterpret_cast<const int32_t*>(session + 0x40), *reinterpret_cast<const int32_t*>(session + 0x5C),
+                             *reinterpret_cast<const int32_t*>(session + 0x173C), *reinterpret_cast<const int32_t*>(session + 0x614CC),
+                             peerStates };
+    static uint8_t* seen[4] = {};
+    static int32_t lastBy[4][8] = {};
+    int slot = 0;
+    while (slot < 4 && seen[slot] && seen[slot] != session) ++slot;
+    if (slot == 4) return;
+    const bool fresh = seen[slot] == nullptr;
+    seen[slot] = session;
+    int32_t* last = lastBy[slot];
+    if ((fresh || std::memcmp(last, now, sizeof(now)) != 0) && s_sessionUpdateLogCount.fetch_add(1) < 80) {
+        NOBLE_WARN("LobbyPatches: [{} pid {}] session {} state {} local peer {} (record state {}) +40 {} peermask {:08X} pmask {:08X} +614CC {} | peer states:{}",
+                   RefuseRole(), GetCurrentProcessId(), static_cast<void*>(session), now[0], now[1], now[2], now[3],
+                   static_cast<uint32_t>(now[4]), static_cast<uint32_t>(now[5]), now[6], peers);
+    }
+    std::memcpy(last, now, sizeof(now));
+}
+
 // Channel close (hr+0x43B98C, close(channel, reason); the only writer of state 2). 13:26 test: the host's
 // channel to the guest goes 3 (connecting) -> 2 (closed) every ~2 s and never reaches 4. Logs why.
 typedef uint64_t(__fastcall* CloseChannelFn)(void* channel, int32_t reason);
@@ -566,6 +877,22 @@ bool LobbyPatches::Apply(HMODULE hReachDll) {
                   reinterpret_cast<void**>(&s_originalBootPeer), "boot_peer" },
                 { 0x3AFFB4, { 0x48, 0x8B, 0xC4, 0x48, 0x89 }, reinterpret_cast<void*>(&Hook_NetLog),
                   reinterpret_cast<void**>(&s_originalNetLog), "game_net_log" },
+                { 0x393830, { 0x48, 0x8B, 0xC4, 0x48, 0x89 }, reinterpret_cast<void*>(&Hook_SessionUpdate),
+                  reinterpret_cast<void**>(&s_originalSessionUpdate), "session_update" },
+                { 0x397048, { 0x40, 0x53, 0x48, 0x83, 0xEC }, reinterpret_cast<void*>(&Hook_GuestStep),
+                  reinterpret_cast<void**>(&s_originalGuestStep), "guest_step" },
+                { 0x411F38, { 0x48, 0x8B, 0xC4, 0x48, 0x89 }, reinterpret_cast<void*>(&Hook_LocalPlayers),
+                  reinterpret_cast<void**>(&s_originalLocalPlayers), "local_players" },
+                { 0x39E47C, { 0x48, 0x89, 0x5C, 0x24, 0x18 }, reinterpret_cast<void*>(&Hook_MemberConsume),
+                  reinterpret_cast<void**>(&s_originalMemberConsume), "member_consume" },
+                { 0x41F510, { 0x48, 0x89, 0x5C, 0x24, 0x18 }, reinterpret_cast<void*>(&Hook_PlayerSync),
+                  reinterpret_cast<void**>(&s_originalPlayerSync), "player_sync" },
+                { 0x133320, { 0x4C, 0x8B, 0xDC, 0x49, 0x89 }, reinterpret_cast<void*>(&Hook_TeamCount),
+                  reinterpret_cast<void**>(&s_originalTeamCount), "team_count" },
+                { 0x7BA58, { 0x48, 0x89, 0x5C, 0x24, 0x08 }, reinterpret_cast<void*>(&Hook_GameOver),
+                  reinterpret_cast<void**>(&s_originalGameOver), "game_over" },
+                { 0x59330, { 0x48, 0x83, 0xEC, 0x28, 0x8B }, reinterpret_cast<void*>(&Hook_GameFinish),
+                  reinterpret_cast<void**>(&s_originalGameFinish), "game_finish" },
                 { 0x43B98C, { 0x48, 0x89, 0x5C, 0x24, 0x18 }, reinterpret_cast<void*>(&Hook_CloseChannel),
                   reinterpret_cast<void**>(&s_originalCloseChannel), "close_channel" },
                 { 0x43BAE8, { 0x48, 0x89, 0x5C, 0x24, 0x18 }, reinterpret_cast<void*>(&Hook_ChannelReceive),

@@ -39,6 +39,7 @@
 #include "common/Updater.hpp"
 #include "common/Relaunch.hpp"
 #include "ui/PauseMenu.hpp"
+#include "ui/ModCatalog.hpp"
 #include "ui/UiArt.hpp"
 #include "audio/ReachAudio.hpp"
 #include "audio/ProcessAudio.hpp"
@@ -694,7 +695,31 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     if (!mapTitle.empty() || !mapImage.empty() || !mapThumb.empty()) {
         NOBLE_INFO("Loading screen: mod map '{}' (image '{}')", mapTitle, mapImage.string());
         noble::PauseMenu::SetLoadingMapInfo(mapTitle, mapImage, mapThumb);
+        // The mod map's description: found in the mod's own JSON on a background thread, so
+        // the launch does not wait for the scan.
+        if (!modFolder.empty() && !mapTitle.empty()) {
+            std::thread([folder = modFolder, title = mapTitle] {
+                try {
+                    const fs::path parent = folder.parent_path();
+                    const auto mods = noble::ModCatalog::Scan(parent, parent);
+                    for (const auto &mod : mods) {
+                        std::error_code ec;
+                        if (!fs::equivalent(mod.folder, folder, ec)) continue;
+                        for (const auto *list : {&mod.campaign, &mod.firefight, &mod.multiplayer})
+                            for (const auto &m : *list)
+                                if (m.title == title && !m.description.empty()) {
+                                    noble::PauseMenu::SetLoadingMapDescription(m.description);
+                                    return;
+                                }
+                        return;
+                    }
+                } catch (...) {
+                }
+            }).detach();
+        }
     }
+    // A stock map or mission: the same one-line blurb the menu shows for it.
+    if (modFolder.empty()) noble::PauseMenu::SetLoadingMapDescription(noble::FrontEndMenu::StockBlurb(launchMap));
     if (!mapImage.empty()) noble::UiArt::ImageFile(mapImage);
     else noble::UiArt::LoadingBackground(launchMap);
     if (!mapThumb.empty()) noble::UiArt::ImageFile(mapThumb);
@@ -817,9 +842,14 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         const uint16_t guestPort = noble::NetworkTransport::Get().GetLocalPort();
         if (!relayUrl.empty()) {
             noble::NetworkTransport::Get().StartRelay(relayUrl, connectSessionId.empty() ? "HALOREAC" : connectSessionId, false, guestMachineId);
+        } else if (!noble::MasterServerClient::Get().Enabled()) {
+            NOBLE_WARN("main: [GUEST] master server not enabled (SETTINGS > ONLINE); joining by direct UDP only, no relay");
         } else if (noble::MasterServerClient::Get().Enabled()) {
             const noble::MasterJoinInfo joinInfo = noble::MasterServerClient::Get().JoinSessionSync(
                 connectSessionId, guestMachineId, guestPort, tip, tport);
+            // Why the relay did or did not start (direct UDP alone fails when the host is behind CGNAT).
+            NOBLE_INFO("main: [GUEST] master server join for session '{}': ok={}, relay_url={}, error='{}'",
+                       connectSessionId, joinInfo.ok, joinInfo.relayUrl.empty() ? "(none)" : joinInfo.relayUrl, joinInfo.error);
             if (joinInfo.ok && !joinInfo.relayUrl.empty()) {
                 noble::NetworkTransport::Get().StartRelay(
                     joinInfo.relayUrl,

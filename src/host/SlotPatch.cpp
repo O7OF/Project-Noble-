@@ -1,6 +1,8 @@
 #include "SlotPatch.hpp"
+#include "SlotMessage.hpp"
 
 #include "common/Logger.hpp"
+#include "hooks/HookManager.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -22,6 +24,7 @@ struct Site {
     uint32_t backAt1, backAt2;   // rel32 of the two `jmp back`
     uint32_t record;       // 0xB0 player, 0x158 peer
     uint32_t threshold;    // first slot that does not exist in the original object
+    uint32_t scaleShift;   // 0: C = delta - threshold*record; 2: dword-index sites (peer*0x56 + slot), C = (delta >> 2) - threshold*record
 };
 
 // Pointer-stepping loops (`add ptr, R` -> cave that moves ptr into the shadow object at the threshold slot).
@@ -46,6 +49,8 @@ struct Bound {
 
 const Site kSites[] = {
 #include "SlotPatchTable.inc"
+// Player add / remove helpers (high-slot join failure 2026-11-09): hand-reviewed `add@` / `not@` sites.
+#include "SlotMemberCaves.inc"
 };
 
 const Step kSteps[] = {
@@ -54,6 +59,53 @@ const Step kSteps[] = {
 
 const Bound kBounds[] = {
 #include "SlotBoundsTable.inc"
+};
+
+// 17-bit peer masks (`0x1FFFF`) in the session / membership code -> all 32 peer bits in 32-player mode (same as
+// 0x391B4A in SlotBoundsTable.inc). List from docs/limits-players-loops.md; each one checked by hand: the mask only
+// limits a peer bitmask (DWORD) to the 17 stock peer slots. Plus 0x408F10, which tested only `si` (16 bits) of a
+// 32-bit player bitmask.
+const Bound kPeerMasks32[] = {
+    { 0x39D1A3, 5, { 0xA9, 0xFF, 0xFF, 0x01, 0x00 }, { 0xA9, 0xFF, 0xFF, 0xFF, 0xFF } },                     // test eax,0x1ffff
+    { 0x39F1B2, 7, { 0x41, 0xF7, 0xC2, 0xFF, 0xFF, 0x01, 0x00 }, { 0x41, 0xF7, 0xC2, 0xFF, 0xFF, 0xFF, 0xFF } }, // test r10d,0x1ffff
+    { 0x39F203, 5, { 0x25, 0xFF, 0xFF, 0x01, 0x00 }, { 0x25, 0xFF, 0xFF, 0xFF, 0xFF } },                     // and eax,0x1ffff
+    { 0x3C196F, 7, { 0x41, 0x81, 0xE1, 0xFF, 0xFF, 0x01, 0x00 }, { 0x41, 0x81, 0xE1, 0xFF, 0xFF, 0xFF, 0xFF } }, // and r9d,0x1ffff
+    { 0x3C1F68, 5, { 0xB9, 0xFF, 0xFF, 0x01, 0x00 }, { 0xB9, 0xFF, 0xFF, 0xFF, 0xFF } },                     // mov ecx,0x1ffff
+    { 0x4037B1, 6, { 0x81, 0xE3, 0xFF, 0xFF, 0x01, 0x00 }, { 0x81, 0xE3, 0xFF, 0xFF, 0xFF, 0xFF } },         // and ebx,0x1ffff
+    { 0x4053FB, 5, { 0x25, 0xFF, 0xFF, 0x01, 0x00 }, { 0x25, 0xFF, 0xFF, 0xFF, 0xFF } },                     // and eax,0x1ffff
+    { 0x414395, 6, { 0xC7, 0x03, 0xFF, 0xFF, 0x01, 0x00 }, { 0xC7, 0x03, 0xFF, 0xFF, 0xFF, 0xFF } },         // mov dword [rbx],0x1ffff
+    { 0x44C3AA, 5, { 0xA9, 0xFF, 0xFF, 0x01, 0x00 }, { 0xA9, 0xFF, 0xFF, 0xFF, 0xFF } },                     // test eax,0x1ffff
+    { 0x408F10, 3, { 0x66, 0x85, 0xF6 }, { 0x85, 0xF6, 0x90 } },                                             // test si,si -> test esi,esi; nop
+    // Game-over check (2026-11-09 high-slot test): 0x133320 counts the teams that have players (bit per team in r15d / esi,
+    // both 32-bit) and skips team > 15. In FFA every player is its own team, so a player in slot 16 was not counted, the
+    // check at 0x7A61C saw 1 team < 2 and ended the match with reason 0 the moment the guest joined. Count teams 0..31.
+    { 0x1333A9, 3, { 0x83, 0xFD, 0x0F }, { 0x83, 0xFD, 0x1F } },                                             // cmp ebp,0xf -> 0x1f
+    // Game player event (simulation event type 9; encoder 0x3C7CE0 from 0x3AB0F4, decoder 0x3A4648 via 0x3C40D1): the
+    // game player index went on the wire in 4 bits and the encoder ORs it in unmasked, so player 16 decoded as player 0.
+    // The "player joined" event for the slot-16 guest then hit the host's own player 0 (flags 0x8 -> 0x2, "left"; found
+    // with a hardware watch, 2026-11-09), the team count dropped to 0 and the match ended. Index -> 5 bits, bound -> 31.
+    { 0x3C7D03, 3, { 0x83, 0xF8, 0x04 }, { 0x83, 0xF8, 0x05 } },                                             // cmp eax,0x4 (room left)
+    { 0x3C7D08, 4, { 0x83, 0x43, 0x24, 0x04 }, { 0x83, 0x43, 0x24, 0x05 } },                                 // add [rbx+0x24],0x4
+    { 0x3C7D0C, 3, { 0x8D, 0x41, 0x04 }, { 0x8D, 0x41, 0x05 } },                                             // lea eax,[rcx+0x4]
+    { 0x3C7D16, 4, { 0x48, 0xC1, 0xE0, 0x04 }, { 0x48, 0xC1, 0xE0, 0x05 } },                                 // shl rax,0x4
+    { 0x3C7D23, 6, { 0x41, 0xB8, 0x04, 0x00, 0x00, 0x00 }, { 0x41, 0xB8, 0x05, 0x00, 0x00, 0x00 } },         // mov r8d,0x4
+    { 0x3A46FE, 5, { 0x41, 0x8D, 0x54, 0x24, 0x03 }, { 0x41, 0x8D, 0x54, 0x24, 0x04 } },                     // lea edx,[r12+0x3] (read 4 bits)
+    { 0x3A4735, 4, { 0x83, 0x7D, 0x00, 0x0F }, { 0x83, 0x7D, 0x00, 0x1F } },                                 // cmp [rbp],0xf -> 0x1f
+    // 0x411F38 counts the local peer's players before the guest goes on with the join; it scanned players 0..15 only,
+    // so a guest whose player is in slot 16 never saw its own player and aborted the join after 16 s. Imul caved in
+    // SlotMemberCaves.inc (0x411F8E).
+    { 0x411F76, 3, { 0x83, 0xF8, 0x10 }, { 0x83, 0xF8, 0x20 } },                                             // cmp eax,0x10 -> 0x20
+    { 0x411FDE, 3, { 0x83, 0xF8, 0x10 }, { 0x83, 0xF8, 0x20 } },                                             // cmp eax,0x10 -> 0x20
+    // Loop bounds kept in a register (2026-11-10, docs/limits-players-regbounds.md): gen_bounds.py only raised
+    // `cmp reg, imm` bounds, so these scans still stopped at peer 16 / player 15.
+    // 0x392DB0 (host join processing): nine peer-mask scans use r13d = 17. The host never promoted a peer in slot 17
+    // from state 5 to 6 (0x392F84), so the guest waited at its gate 0x3903C7 (own peer state >= 6) and aborted after
+    // 16 s. Every imul in the scans is caved (0x392EF9, 0x392F43, 0x392F56, 0x3930A5); r13 is reloaded at 0x39313F.
+    { 0x392E12, 4, { 0x44, 0x8D, 0x6B, 0x11 }, { 0x44, 0x8D, 0x6B, 0x20 } },                                 // lea r13d,[rbx+0x11] (rbx = 0)
+    // 0x409898: player-mask scans (block +0x170C), r14d = 16 (rdi = -1); imuls 0x4099B3 / 0x4099C2 are caved.
+    { 0x409898, 4, { 0x44, 0x8D, 0x77, 0x11 }, { 0x44, 0x8D, 0x77, 0x21 } },                                 // lea r14d,[rdi+0x11] (rdi = -1)
+    // 0x4139E5: peer-mask scans (session +0x5C) against a peer bitmask in ebx, r12d = 17 (rsi = 1); no indexing.
+    { 0x4139E5, 4, { 0x44, 0x8D, 0x66, 0x10 }, { 0x44, 0x8D, 0x66, 0x1F } },                                 // lea r12d,[rsi+0x10] (rsi = 1)
 };
 
 // C12-L step 3, bounds review #5/#7: 0x390DB0 keeps 16 qword player-name pointers at rbp+0x150, directly below a
@@ -96,9 +148,9 @@ constexpr ByteEdit kFrame390UnwindEdits[] = {
 constexpr uint32_t kSideFromCopy = 0x8ED0;           // side area = copy start + this, for S1 and S2
 constexpr size_t kSidePeerBytes = 15 * 0x158;        // peers 17..31
 const Bound kFrame396[] = {
-    { 0x396840, 7, { 0x48, 0x8D, 0xA8, 0xD8, 0x71, 0xFF, 0xFF }, { 0x48, 0x8D, 0xA8, 0x98, 0x3B, 0xFF, 0xFF } },  // lea rbp,[rax-0x8E28] -> -0xC468
-    { 0x396847, 5, { 0xB8, 0x00, 0x8F, 0x00, 0x00 }, { 0xB8, 0x40, 0xC5, 0x00, 0x00 } },                          // mov eax,0x8F00 -> 0xC540 (probe + sub rsp,rax)
-    { 0x396E20, 8, { 0x4C, 0x8D, 0x9C, 0x24, 0x00, 0x8F, 0x00, 0x00 }, { 0x4C, 0x8D, 0x9C, 0x24, 0x40, 0xC5, 0x00, 0x00 } },  // epilogue lea r11,[rsp+0x8F00]
+    { 0x396840, 7, { 0x48, 0x8D, 0xA8, 0xD8, 0x71, 0xFF, 0xFF }, { 0x48, 0x8D, 0xA8, 0x18, 0xF4, 0xFE, 0xFF } },  // lea rbp,[rax-0x8E28] -> -0x10BE8
+    { 0x396847, 5, { 0xB8, 0x00, 0x8F, 0x00, 0x00 }, { 0xB8, 0xC0, 0x0C, 0x01, 0x00 } },                          // mov eax,0x8F00 -> 0x10CC0 (probe + sub rsp,rax)
+    { 0x396E20, 8, { 0x4C, 0x8D, 0x9C, 0x24, 0x00, 0x8F, 0x00, 0x00 }, { 0x4C, 0x8D, 0x9C, 0x24, 0xC0, 0x0C, 0x01, 0x00 } },  // epilogue lea r11,[rsp+0x8F00] -> 0x10CC0
 };
 // Context bytes that must also match (not changed): the probe call and `sub rsp, rax`.
 const Bound kFrame396Context[] = {
@@ -109,10 +161,12 @@ constexpr uint8_t kFrame396Unwind[40] = {
     0x19, 0x3D, 0x0D, 0x00, 0x2C, 0x74, 0xE9, 0x11, 0x2C, 0x64, 0xE8, 0x11, 0x2C, 0x34, 0xE7, 0x11,
     0x2C, 0x01, 0xE0, 0x11, 0x18, 0xF0, 0x16, 0xE0, 0x14, 0xD0, 0x12, 0xC0, 0x10, 0x50, 0x00, 0x00,
     0xE0, 0x37, 0x79, 0x00, 0xF0, 0x8E, 0x00, 0x00 };   // GS handler RVA 0x7937E0
-// ALLOC_LARGE 0x11E0 -> 0x18A8 (x8), rbx/rsi/rdi save slots 0x11E7/E8/E9 -> 0x18AF/B0/B1; GS data 0x8EF0 unchanged.
+// #32 (docs/limits-players-message.md): frame 0x10CC0 = plan C 0xC540 + the two membership payload extensions
+// (rbp+0xC450..+0xE650, rbp+0xE9A0..+0x10BA0; pushes start at rbp+0x10BC0). ALLOC_LARGE 0x11E0 -> 0x2198 (x8), rbx/rsi/rdi
+// save slots 0x11E7/E8/E9 -> 0x219F/A0/A1; GS data 0x8EF0 unchanged (cookie stays at rbp+0x8DF0).
 constexpr ByteEdit kFrame396UnwindEdits[] = {
-    { 6, 0xE9, 0xB1 }, { 7, 0x11, 0x18 }, { 10, 0xE8, 0xB0 }, { 11, 0x11, 0x18 },
-    { 14, 0xE7, 0xAF }, { 15, 0x11, 0x18 }, { 18, 0xE0, 0xA8 }, { 19, 0x11, 0x18 } };
+    { 6, 0xE9, 0xA1 }, { 7, 0x11, 0x21 }, { 10, 0xE8, 0xA0 }, { 11, 0x11, 0x21 },
+    { 14, 0xE7, 0x9F }, { 15, 0x11, 0x21 }, { 18, 0xE0, 0x98 }, { 19, 0x11, 0x21 } };
 
 struct FrameGrow {
     uint32_t begin, end;
@@ -251,11 +305,29 @@ template <typename F> void ForCoveredArrays(uint32_t offset, size_t n, F f) {
         if (a.offset >= offset && a.offset + static_cast<size_t>(a.firstShadowSlot) * a.record <= offset + n) f(a);
 }
 
+// A free peer's player-slot table (peer record +0x144, 4 dwords, count +0x140) must read -1 ("no player"): the add
+// path 0x39D620 takes a non -1 entry as the player that peer already owns, compares its id with the joiner's and on a
+// mismatch removes it. Inline peers get -1 from the remove path 0x39D0AC; shadow peers start zeroed (ctor + clears), so
+// before 2026-11-09 the first peer in slot 17 "owned" player 0: the host's player was removed and the joiner written
+// over it (found with a hardware watch on the session's player 0 id).
+constexpr uint32_t kPeerPlayerCount = 0x140, kPeerPlayerSlots = 0x144, kPeerPlayerSlotCount = 4;
+void ResetShadowPeerPlayerTables(uint8_t* records, const Array& a) {
+    if (!a.peer || a.table) return;
+    for (uint32_t j = 0; j < kSlots32 - a.firstShadowSlot; ++j) {
+        uint8_t* r = records + static_cast<size_t>(j) * a.record;
+        std::memset(r + kPeerPlayerCount, 0, 4);
+        std::memset(r + kPeerPlayerSlots, 0xFF, kPeerPlayerSlotCount * 4);
+    }
+}
+
 void MirrorClear(void* dst, int value, size_t n) {
     uint32_t o = 0;
     const int k = StaticSession(dst, o);
     if (k < 0) return;
-    ForCoveredArrays(o, n, [&](const Array& a) { std::memset(ShadowSlots(k, a), value, ShadowBytes(a)); });
+    ForCoveredArrays(o, n, [&](const Array& a) {
+        std::memset(ShadowSlots(k, a), value, ShadowBytes(a));
+        if (value == 0) ResetShadowPeerPlayerTables(ShadowSlots(k, a), a);
+    });
 }
 
 void MirrorCopy(void* dst, const void* src, size_t n) {
@@ -269,7 +341,7 @@ void MirrorCopy(void* dst, const void* src, size_t n) {
         const Array* sa = nullptr;
         for (const Array& b : kArrays) if (b.offset == from && b.record == a.record) sa = &b;
         if (ks >= 0 && sa) std::memmove(ShadowSlots(kd, a), ShadowSlots(ks, *sa), ShadowBytes(a));
-        else { std::memset(ShadowSlots(kd, a), 0, ShadowBytes(a)); cleared = true; }
+        else { std::memset(ShadowSlots(kd, a), 0, ShadowBytes(a)); ResetShadowPeerPlayerTables(ShadowSlots(kd, a), a); cleared = true; }
     });
     // Network-decoded blocks (#1) carry no shadow slots yet: drop slots 16..31 rather than keep stale players.
     static LONG logged = 0;
@@ -672,6 +744,7 @@ bool UnsafeOverride() {
 }
 
 bool gPlayers32Active = false;
+bool gMessageOn = true;
 
 bool ArgPlayers32() {
     wchar_t env[8] = {};
@@ -717,14 +790,42 @@ void InitShadowRecords(uintptr_t base, uint8_t* shadow, bool players32) {
                 if (a.table) { std::memset(r, 0, 4); std::memset(r + 4, 0xFF, 8); continue; }
                 (a.peer ? peerCtor : playerCtor)(r);
             }
+            if (count) ResetShadowPeerPlayerTables(object + a.offset, a);
         }
     }
+}
+
+// 0x3FF588 (parameter object, 16-byte value, peer index): sets one entry of a session parameter that holds 17 x 16
+// bytes (session +0x60A60; the guest sets its own entry from 0x3907B4 right after the join). It copies the 0x110-byte
+// value to a stack buffer and writes entry [index]: index 17 overwrote the stack cookie (STACK OVERRUN at +0x3FF666,
+// 2026-11-10 00:44 test), index 18 the saved registers (crash at address 0). Until that parameter is grown to 32
+// entries (it is also sent over the network), peers >= 17 skip the write. Stopgap, 32-player mode only.
+typedef void(__fastcall* PeerParamSetFn)(void* parameter, const void* value, int peer);
+PeerParamSetFn s_originalPeerParamSet = nullptr;
+void __fastcall Hook_PeerParamSet(void* parameter, const void* value, int peer) {
+    if (peer >= 17) {
+        static int logged = 0;
+        if (logged < 5) { ++logged; NOBLE_WARN("SlotPatch: 17-entry session parameter {} not set for peer {} (stopgap)", parameter, peer); }
+        return;
+    }
+    s_originalPeerParamSet(parameter, value, peer);
 }
 
 } // namespace
 
 bool Players32Requested() { return ArgPlayers32() && UnsafeOverride(); }
 bool Players32Active() { return gPlayers32Active; }
+
+// Dev diagnostics: address of peer record `peer` (0x158 each from session + 0x60) of the static session that
+// contains `session`, in the shadow object for peers >= 17. nullptr if 32-player mode is off or out of range.
+uint8_t* PeerRecord(uint8_t* session, int32_t peer) {
+    if (peer < 0 || peer >= 32 || !session) return nullptr;
+    if (peer < 17) return session + 0x60 + static_cast<size_t>(peer) * 0x158;
+    uint32_t o = 0;
+    const int k = StaticSession(session, o);
+    if (k < 0 || o != 0 || !gShadow) return nullptr;
+    return gShadow + static_cast<size_t>(k) * kSessionStride + 0x60 + static_cast<size_t>(peer - 17) * 0x158;
+}
 
 void Install(HMODULE engine, bool extendedProfile) {
     if (!engine || !Requested()) return;
@@ -760,6 +861,13 @@ void Install(HMODULE engine, bool extendedProfile) {
                 break;
             }
         }
+        for (const Bound& b : kPeerMasks32) {
+            if (!players32) break;
+            if (std::memcmp(reinterpret_cast<void*>(base + b.rva), b.original, b.length) != 0) {
+                NOBLE_WARN("SlotPatch: peer mask at +0x{:X} does not match; 32-player mode off", b.rva);
+                players32 = false;
+            }
+        }
         for (const Bound& b : kBounds) {
             if (!players32) break;
             if (std::memcmp(reinterpret_cast<void*>(base + b.rva), b.original, b.length) != 0) {
@@ -771,9 +879,15 @@ void Install(HMODULE engine, bool extendedProfile) {
         const bool frames = FramesMatch(base);
         const bool calls = CallSitesMatch(base);
         const bool table = TableSitesMatch(base);
-        if (players32 && !(frames && calls && table)) {
-            NOBLE_WARN("SlotPatch: 32-player checks: frames {}, call sites {}, peer table sites {}; 32-player mode off",
-                       frames ? "ok" : "FAILED", calls ? "ok" : "FAILED", table ? "ok" : "FAILED");
+        // NOBLE_SLOT_MSG_OFF=1 (diagnostics): leave the #32 message group out (the 0x396828 frame still grows).
+        wchar_t msgOff[4] = {};
+        const bool msgOn = !(GetEnvironmentVariableW(L"NOBLE_SLOT_MSG_OFF", msgOff, 4) > 0 && msgOff[0] == L'1');
+        gMessageOn = msgOn;
+        const bool msg = !msgOn || message::Match(base);
+        if (players32 && !(frames && calls && table && msg)) {
+            NOBLE_WARN("SlotPatch: 32-player checks: frames {}, call sites {}, peer table sites {}, membership message {}; "
+                       "32-player mode off", frames ? "ok" : "FAILED", calls ? "ok" : "FAILED", table ? "ok" : "FAILED",
+                       msg ? "ok" : "FAILED");
             players32 = false;
         }
     }
@@ -808,7 +922,8 @@ void Install(HMODULE engine, bool extendedProfile) {
     uint8_t* cave = caves;
     for (const Site& s : kSites) {
         std::memcpy(cave, s.cave, s.caveLength);
-        Put32(cave + s.constantAt, delta - static_cast<int64_t>(s.threshold) * s.record);
+        const int64_t scaled = s.scaleShift ? delta / (int64_t{ 1 } << s.scaleShift) : delta;   // delta % 4 == 0 (checked)
+        Put32(cave + s.constantAt, scaled - static_cast<int64_t>(s.threshold) * s.record);
         const uintptr_t back = base + s.rva + sizeof(s.original);
         Put32(cave + s.backAt1, static_cast<int64_t>(back) - reinterpret_cast<intptr_t>(cave + s.backAt1 + 4));
         Put32(cave + s.backAt2, static_cast<int64_t>(back) - reinterpret_cast<intptr_t>(cave + s.backAt2 + 4));
@@ -835,11 +950,24 @@ void Install(HMODULE engine, bool extendedProfile) {
         cave = stepCaves;
         for (const Step& s : kSteps) { JumpTo(base + s.rva, cave); cave += Rounded(s.caveLength); }
         for (const Bound& b : kBounds) WriteCode(base + b.rva, b.patched, b.length);
+        for (const Bound& b : kPeerMasks32) WriteCode(base + b.rva, b.patched, b.length);
+        static const uint8_t kPeerParamSetHead[] = { 0x48, 0x89, 0x5C, 0x24, 0x10, 0x48, 0x89, 0x74, 0x24, 0x20 };
+        if (std::memcmp(reinterpret_cast<void*>(base + 0x3FF588), kPeerParamSetHead, sizeof(kPeerParamSetHead)) != 0 ||
+            !HookManager::InstallHook(reinterpret_cast<void*>(base + 0x3FF588), reinterpret_cast<void*>(&Hook_PeerParamSet),
+                                      reinterpret_cast<void**>(&s_originalPeerParamSet), "peer_param_set_17")) {
+            NOBLE_WARN("SlotPatch: peer parameter guard (+0x3FF588) not installed; a peer in slot 17+ will crash when it sets its entry");
+        }
+        NOBLE_INFO("SlotPatch: {} peer / team masks widened to 32 (17-bit peer masks, 0x408F10, game-over team count, game player event index 4->5 bits, register-held loop bounds)", std::size(kPeerMasks32));
         gSessions = sessions;
         gShadow = shadow;
         ApplyFrames(base, unwindCopies);   // checked above (FramesMatch)
         ApplyCallSites(base, copyStubs);   // checked above (CallSitesMatch); after ApplyFrames: the side areas exist
         ApplyTableSites(base, tableCaves, sessions, delta);   // checked above (TableSitesMatch)
+        if (!gMessageOn) NOBLE_WARN("SlotPatch: NOBLE_SLOT_MSG_OFF=1 - membership message (#32) patches left out");
+        else if (!message::Apply(base, delta))   // checked above (message::Match); after ApplyFrames: the payload extensions exist
+            NOBLE_ERROR("SlotPatch: membership message patches not installed; 32-player sessions will desync past 16 players");
+        wchar_t high[4] = {};
+        if (GetEnvironmentVariableW(L"NOBLE_SLOT_HIGH", high, 4) > 0 && high[0] == L'1') message::ApplyHighSlotTest(base);
     }
     FlushInstructionCache(GetCurrentProcess(), reinterpret_cast<void*>(base), 0x1000000);
     NOBLE_INFO("SlotPatch: {} slot address sites redirected (players >= 16, peers >= 17 -> shadow sessions at {:p}, "

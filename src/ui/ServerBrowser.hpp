@@ -50,6 +50,10 @@ public:
 
     const std::vector<ServerEntry>& GetServers() const { return m_servers; }
 
+    // True once after the player chose "RESTART TO UPDATE" here; the front end then closes so the
+    // update script can replace the install.
+    bool ConsumeCloseForUpdate() { const bool r = m_closeForUpdate; m_closeForUpdate = false; return r; }
+
 private:
     void RenderFilterBar();
     void RenderServerList();
@@ -57,6 +61,9 @@ private:
     void RenderDirectConnectModal();
     void RenderMasterServerModal();
     void TryJoin(const std::string& address, uint16_t port, bool hasPassword);
+    // Version gate: returns true (and sets the status line) when this client may not join `s`.
+    bool JoinBlockedByVersion(const ServerEntry& s);
+    void AttemptJoin(const ServerEntry& s);
     bool PassesFilters(const ServerEntry& s) const;
     void ToggleFavorite(const std::string& address, uint16_t port);
 
@@ -67,6 +74,7 @@ private:
     double m_lastRefresh = -100.0;
     double m_lastMasterRequest = -100.0;
     std::string m_status;
+    bool m_closeForUpdate = false;
 
     // Filters
     char m_searchQuery[128] = { 0 };

@@ -9,6 +9,7 @@
 #include "common/Logger.hpp"
 #include "common/Version.hpp"
 #include "common/BuildIdentity.hpp"
+#include "common/Updater.hpp"
 #include "common/Settings.hpp"
 #include "ModDownloadPrompt.hpp"
 #include "network/MasterServerClient.hpp"
@@ -610,10 +611,7 @@ void ServerBrowser::RenderServerList() {
             if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false) || ImGui::IsKeyPressed(ImGuiKey_Enter, false)) {
                 if (m_selectedServerIndex >= 0 && m_selectedServerIndex < static_cast<int>(m_servers.size())) {
                     const auto& s = m_servers[m_selectedServerIndex];
-                    if (!s.isOwn) {
-                        if (!s.inProgress && m_joinLobbyHandler) m_joinLobbyHandler(s);
-                        else TryJoin(s.hostAddress, s.port, s.isPasswordProtected);
-                    }
+                    if (!s.isOwn) AttemptJoin(s);
                 }
             }
             if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false) || ImGui::IsKeyPressed(ImGuiKey_Y, false)) {
@@ -738,11 +736,7 @@ void ServerBrowser::RenderServerList() {
             m_selectedServerIndex = i;
         }
         if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0) && !s.isOwn) {
-            if (!s.inProgress && m_joinLobbyHandler) {
-                m_joinLobbyHandler(s);
-            } else {
-                TryJoin(s.hostAddress, s.port, s.isPasswordProtected);
-            }
+            AttemptJoin(s);
         }
 
         // Column 2: mode
@@ -921,17 +915,52 @@ void ServerBrowser::RenderServerDetails() {
     } else {
         const bool compatible = s.build.empty() || noble::AreBuildsCompatible(s.build, noble::kBuildTag);
         if (!compatible) {
+            const int rel = noble::CompareBuilds(noble::kBuildTag, s.build);   // -1: you are older than the host
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.35f, 0.35f, 1.0f));
-            ImGui::TextWrapped("Server version (%s) does not match your client base version (%s).",
-                               s.build.c_str(), noble::ExtractBaseVersion(noble::kBuildTag).data());
+            ImGui::TextWrapped("VERSION MISMATCH: this game runs %s and you have %s. You can't join it.",
+                               std::string(noble::ExtractBaseVersion(s.build)).c_str(),
+                               std::string(noble::ExtractBaseVersion(noble::kBuildTag)).c_str());
             ImGui::PopStyleColor();
-        }
-        const char* joinLabel = s.inProgress ? "JOIN IN PROGRESS" : "JOIN PRE-GAME LOBBY";
-        if (NobleStyle::PrimaryButton(joinLabel, ImVec2(-1, 38))) {
-            if (!s.inProgress && m_joinLobbyHandler) {
-                m_joinLobbyHandler(s);
+            if (rel < 0) {
+                // Older client: offer the update.
+                Updater& up = Updater::Get();
+                if (up.IsInitialized()) {
+                    const Updater::Status us = up.Snapshot();
+                    if (us.state == Updater::State::Idle || us.state == Updater::State::UpToDate ||
+                        us.state == Updater::State::Error) {
+                        if (us.state == Updater::State::Error && !us.error.empty()) {
+                            ImGui::TextDisabled("Update check failed: %s", us.error.c_str());
+                        }
+                        if (NobleStyle::PrimaryButton("CHECK FOR UPDATE", ImVec2(-1, 38))) {
+                            up.StartCheck();
+                        }
+                    } else if (us.state == Updater::State::Checking) {
+                        ImGui::TextDisabled("Checking for an update...");
+                    } else if (us.state == Updater::State::Available) {
+                        const std::string lbl = "DOWNLOAD UPDATE  " + Updater::FormatBytes(us.assetSize);
+                        if (NobleStyle::PrimaryButton(lbl.c_str(), ImVec2(-1, 38))) {
+                            up.StartDownload();
+                        }
+                    } else if (us.state == Updater::State::Downloading) {
+                        ImGui::ProgressBar(us.progress, ImVec2(-1, 22));
+                    } else if (us.state == Updater::State::Ready) {
+                        if (NobleStyle::PrimaryButton("RESTART TO UPDATE", ImVec2(-1, 38))) {
+                            if (up.ApplyAndRestart()) m_closeForUpdate = true;
+                        }
+                    }
+                } else {
+                    ImGui::TextDisabled("Update the game from the main menu to join this match.");
+                }
             } else {
-                TryJoin(s.hostAddress, s.port, s.isPasswordProtected);
+                ImGui::TextDisabled("This host is on an older version. Ask them to update.");
+            }
+            ImGui::BeginDisabled();
+            NobleStyle::PrimaryButton("JOIN BLOCKED (VERSION)", ImVec2(-1, 38));
+            ImGui::EndDisabled();
+        } else {
+            const char* joinLabel = s.inProgress ? "JOIN IN PROGRESS" : "JOIN PRE-GAME LOBBY";
+            if (NobleStyle::PrimaryButton(joinLabel, ImVec2(-1, 38))) {
+                AttemptJoin(s);
             }
         }
     }
@@ -968,9 +997,30 @@ void ServerBrowser::ToggleFavorite(const std::string& address, uint16_t port) {
     Settings::Get().Update(d);
 }
 
+bool ServerBrowser::JoinBlockedByVersion(const ServerEntry& s) {
+    if (s.build.empty() || noble::AreBuildsCompatible(s.build, noble::kBuildTag)) return false;
+    const int rel = noble::CompareBuilds(noble::kBuildTag, s.build);
+    m_status = rel < 0
+        ? "Can't join: the host runs " + std::string(noble::ExtractBaseVersion(s.build)) + " and you have " +
+              std::string(noble::ExtractBaseVersion(noble::kBuildTag)) + ". Select the game and download the update."
+        : "Can't join: the host is on an older version (" + std::string(noble::ExtractBaseVersion(s.build)) +
+              "; you have " + std::string(noble::ExtractBaseVersion(noble::kBuildTag)) + ").";
+    NOBLE_WARN("ServerBrowser join refused (version): {}", m_status);
+    return true;
+}
+
+void ServerBrowser::AttemptJoin(const ServerEntry& s) {
+    if (JoinBlockedByVersion(s)) return;
+    if (!s.inProgress && m_joinLobbyHandler) m_joinLobbyHandler(s);
+    else TryJoin(s.hostAddress, s.port, s.isPasswordProtected);
+}
+
 void ServerBrowser::TryJoin(const std::string& address, uint16_t port, bool hasPassword) {
     (void)hasPassword;
     const std::string key = Key(address, port);
+    for (const auto& known : m_servers) {
+        if (known.hostAddress == address && known.port == port && JoinBlockedByVersion(known)) return;
+    }
 
     std::string map = "20_sword_slayer";
     std::string mode = "multiplayer";

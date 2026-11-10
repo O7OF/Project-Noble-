@@ -7,10 +7,10 @@
 // The work runs on the engine's game thread from a hook on its per-player tick (0x61A38), because the
 // engine keeps game state in thread-local storage.
 //
-//   F9 in a match            spawn 500 more objects
-//   F7 in a match            place every AI squad the map defines (Firefight/campaign maps; Forge World has
+//   Numpad 9 in a match      spawn 500 more objects
+//   Numpad 7 in a match      place every AI squad the map defines (Firefight/campaign maps; Forge World has
 //                            none). Press again for more; with -ai-actors N the actor pool holds N, stock 96.
-//   F8 in a match            crowd of 128 copies of your Spartan in front of you, on/off (render test for
+//   Numpad 8 in a match      crowd of 128 copies of your Spartan in front of you, on/off (render test for
 //                            128 players; the engine has only 16 player slots, so these are bodies, and
 //                            ones the engine cleans up as corpses are put back twice a second)
 //   -spawn-test <count>      spawn <count> automatically once a match is running

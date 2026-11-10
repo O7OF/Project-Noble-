@@ -115,6 +115,9 @@ std::atomic<bool> s_started{ false };
 std::atomic<bool> s_stop{ false };
 std::atomic<bool> s_transmitting{ false };
 std::atomic<bool> s_pushToTalkBlocked{ false };
+// Set while a talk key is held with no voice session open (a solo run), so the overlay can say why nothing happens.
+std::atomic<int> s_noSessionKind{ 0 };               // 1: no session, 2: voice is off in Settings
+std::atomic<uint64_t> s_noSessionUntilMs{ 0 };
 std::atomic<int> s_localTeam{ -1 };
 std::atomic<uint64_t> s_mixPeak{ 0 };
 std::atomic<int> s_testBitrate{ 16 };   // the relay test walks 16, 20, 24 to show the setting reaches a running encoder
@@ -637,7 +640,17 @@ void VoiceThread() {
             toneClockStart = mixClockStart = now;
             toneFrames = mixFrames = 0;
         }
-        if (!sessionOpen) continue;
+        if (!sessionOpen) {
+            static uint64_t s_nextHintPollMs = 0;
+            if (!s_test.active && now >= s_nextHintPollMs) {
+                s_nextHintPollMs = now + 50;
+                if (PushToTalkChannel(cfg, cfg.channel) >= 0) {
+                    s_noSessionKind.store(cfg.enabled ? 1 : 2);
+                    s_noSessionUntilMs.store(now + 2500);
+                }
+            }
+            continue;
+        }
 
         if (cfg.input != opened.input && captureStream.Open()) captureStream.Close();
         if (cfg.output != opened.output && renderStream.Open()) renderStream.Close();
@@ -1060,6 +1073,8 @@ bool IsPeerTalking(uint64_t peer) {
 }
 
 bool IsTransmitting() { return s_transmitting.load(); }
+
+int NoSessionHint() { return NowMs() < s_noSessionUntilMs.load() ? s_noSessionKind.load() : 0; }
 
 std::vector<uint64_t> ActiveTalkers() {
     std::vector<uint64_t> out;

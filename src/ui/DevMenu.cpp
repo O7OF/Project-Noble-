@@ -255,29 +255,29 @@ void DevMenu::Draw() {
         if (ImGui::BeginTabItem("ITEM & VEHICLE SPAWNER")) {
             ImGui::Spacing();
 
-            // Native Blam! AI and squad triggers (Tyler's F6 / F7 / F8 / F9 hooks)
-            ImGui::TextColored(NobleStyle::Accent(), "NATIVE BLAM! AI & SQUAD SPAWNERS (F6 / F7 / F8 / F9):");
-            if (NobleStyle::PrimaryButton("SPAWN AI HORDE (F6)", ImVec2(165.0f * s, 28.0f * s))) {
+            // Native Blam! AI and squad triggers (Tyler's Numpad 6 / 7 / 8 / 9 hooks, formerly F6-F9)
+            ImGui::TextColored(NobleStyle::Accent(), "NATIVE BLAM! AI & SQUAD SPAWNERS (NUMPAD 6 / 7 / 8 / 9, NUM LOCK ON):");
+            if (NobleStyle::PrimaryButton("SPAWN AI HORDE (NUMPAD 6)", ImVec2(215.0f * s, 28.0f * s))) {
                 noble::spawn::TriggerAiHorde(25);
-                s_statusMessage = "F6: Queued 25 AI squad actors around you!";
+                s_statusMessage = "Numpad 6: Queued 25 AI squad actors around you!";
                 s_statusTime = GetTickCount64();
             }
             ImGui::SameLine();
-            if (ImGui::Button("PLACE ALL SQUADS (F7)", ImVec2(175.0f * s, 28.0f * s))) {
+            if (ImGui::Button("PLACE ALL SQUADS (NUMPAD 7)", ImVec2(225.0f * s, 28.0f * s))) {
                 noble::spawn::TriggerPlaceAllSquads();
-                s_statusMessage = "F7: Placed all scenario squads!";
+                s_statusMessage = "Numpad 7: Placed all scenario squads!";
                 s_statusTime = GetTickCount64();
             }
             ImGui::SameLine();
-            if (ImGui::Button("SPARTAN CROWD (F8)", ImVec2(165.0f * s, 28.0f * s))) {
+            if (ImGui::Button("SPARTAN CROWD (NUMPAD 8)", ImVec2(215.0f * s, 28.0f * s))) {
                 noble::spawn::TriggerCrowdToggle();
-                s_statusMessage = "F8: Toggled 128 Spartan crowd!";
+                s_statusMessage = "Numpad 8: Toggled 128 Spartan crowd!";
                 s_statusTime = GetTickCount64();
             }
             ImGui::SameLine();
-            if (ImGui::Button("STRESS TEST (F9)", ImVec2(140.0f * s, 28.0f * s))) {
+            if (ImGui::Button("STRESS TEST (NUMPAD 9)", ImVec2(190.0f * s, 28.0f * s))) {
                 noble::spawn::TriggerSpawnObjects(500);
-                s_statusMessage = "F9: Queued 500 objects!";
+                s_statusMessage = "Numpad 9: Queued 500 objects!";
                 s_statusTime = GetTickCount64();
             }
 

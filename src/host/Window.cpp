@@ -15,6 +15,27 @@ std::atomic<bool> s_exclusiveFullscreenSetting{ false };
 std::atomic<bool> s_exclusiveFullscreenActive{ false };
 // Posted by the render thread after it leaves exclusive full screen: re-apply the window geometry.
 constexpr UINT kMsgRefreshGeometry = WM_APP + 0x4E;
+
+// Dev/test: NOBLE_WINDOW_SECONDARY=1 opens the window on the first non-primary monitor (LAN test scripts, so the
+// test windows stay off the monitor the user is working on). Returns false when there is no such monitor.
+BOOL CALLBACK FindSecondaryMonitor(HMONITOR monitor, HDC, LPRECT, LPARAM param) {
+    MONITORINFO info{};
+    info.cbSize = sizeof(info);
+    if (GetMonitorInfoW(monitor, &info) && !(info.dwFlags & MONITORINFOF_PRIMARY)) {
+        *reinterpret_cast<MONITORINFO*>(param) = info;
+        return FALSE;
+    }
+    return TRUE;
+}
+bool SecondaryMonitor(MONITORINFO& out) {
+    wchar_t env[4] = {};
+    if (GetEnvironmentVariableW(L"NOBLE_WINDOW_SECONDARY", env, 4) == 0 || env[0] != L'1') return false;
+    MONITORINFO info{};
+    EnumDisplayMonitors(nullptr, nullptr, &FindSecondaryMonitor, reinterpret_cast<LPARAM>(&info));
+    if (info.cbSize == 0) return false;
+    out = info;
+    return true;
+}
 }
 
 Window* Window::Active() { return s_activeWindow; }
@@ -178,6 +199,22 @@ bool Window::Create() {
         posY = work.top + (workH - windowHeight) / 2;
         if (posX < work.left) posX = work.left;
         if (posY < work.top) posY = work.top;
+    }
+
+    if (MONITORINFO second{}; SecondaryMonitor(second)) {
+        if (m_borderless) {
+            m_width = static_cast<uint32_t>(second.rcMonitor.right - second.rcMonitor.left);
+            m_height = static_cast<uint32_t>(second.rcMonitor.bottom - second.rcMonitor.top);
+            windowWidth = static_cast<int>(m_width);
+            windowHeight = static_cast<int>(m_height);
+            posX = second.rcMonitor.left;
+            posY = second.rcMonitor.top;
+        } else {
+            const RECT& w = second.rcWork;
+            posX = std::max<int>(w.left, w.left + ((w.right - w.left) - windowWidth) / 2);
+            posY = std::max<int>(w.top, w.top + ((w.bottom - w.top) - windowHeight) / 2);
+        }
+        NOBLE_INFO("Win32 window: NOBLE_WINDOW_SECONDARY - opening on the non-primary monitor at {},{}", posX, posY);
     }
 
     m_hwnd = CreateWindowExW(

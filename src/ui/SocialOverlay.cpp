@@ -345,11 +345,17 @@ void DrawVoice(ImDrawList* dl, ImFont* font, float s, float top) {
             names.push_back(it != s_names.end() && !it->second.empty() ? it->second : "Player");
         }
     }
-    if (!local && names.empty()) return;
+    const int hint = (local || !names.empty()) ? 0 : VoiceChat::NoSessionHint();
+    if (!local && names.empty() && hint == 0) return;
 
     const double time = ImGui::GetTime();
     const float x = 24.0f * s, w = 300.0f * s, h = 30.0f * s, gap = 4.0f * s;
     float y = top * s;
+    if (hint != 0) {
+        // A talk key was held but there is nobody to talk to (no relay session) or voice is switched off.
+        DrawVoiceRow(dl, font, x, y, w, h, s, "VOICE CHAT", hint == 2 ? "OFF IN SETTINGS" : "NO SESSION", true, time);
+        return;
+    }
     if (local) {
         const SettingsData d = Settings::Get().Snapshot();
         char note[64];
@@ -563,7 +569,7 @@ void Poll(bool allowOpen) {
             if (Pressed(keys[i]) && allowed && !s_typing) OpenLine(s_channels[i] < 0 ? s_channel : s_channels[i], keys[i]);
         }
     }
-    s_wantsFrame = s_typing || recent || s_demo || VoiceChat::IsTransmitting() || !VoiceChat::ActiveTalkers().empty();
+    s_wantsFrame = s_typing || recent || s_demo || VoiceChat::IsTransmitting() || !VoiceChat::ActiveTalkers().empty() || VoiceChat::NoSessionHint() != 0;
 }
 
 void OpenChannel(int channel) {
