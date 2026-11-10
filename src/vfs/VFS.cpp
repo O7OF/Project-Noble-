@@ -228,6 +228,21 @@ std::wstring VFS::ResolvePath(const std::wstring& requestedPath, DWORD desiredAc
                     if (RawPathExists(modMapCandidate.wstring())) {
                         return modMapCandidate.wstring();
                     }
+                    // MCC mods ship their maps with a difficulty suffix ("forge_halo_normal.map",
+                    // "cex_ff_halo_legendary.map") while the engine asks for "<scenario>.map", so the mod's map
+                    // was never served and every mod ran on MCC's stock map. Serve the mod's own file here.
+                    // Only for the map file itself: "forge_halo.mapinfo" shares the stem and must keep its own file.
+                    const std::wstring ext = p.extension().wstring();
+                    const std::wstring stem = p.stem().wstring();
+                    for (const wchar_t* suffix : { L"_normal", L"_legendary", L"_heroic", L"_easy" }) {
+                        if (_wcsicmp(ext.c_str(), L".map") != 0) break;
+                        fs::path suffixed = s_activeMod / "maps" / (stem + suffix + L".map");
+                        if (RawPathExists(suffixed.wstring())) {
+                            NOBLE_INFO("VFS: serving the mod's map '{}' for haloreach\\maps\\{}",
+                                       suffixed.filename().string(), p.filename().string());
+                            return suffixed.wstring();
+                        }
+                    }
                 }
             }
 
