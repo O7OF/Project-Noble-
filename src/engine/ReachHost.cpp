@@ -702,7 +702,13 @@ static uint64_t __fastcall HostSlot4_LogMessage(void* thisPtr, uint64_t a1, uint
     if (a2 > 0x10000) {
         SafeCopyAnsiString(buf, sizeof(buf), reinterpret_cast<const char*>(a2));
     }
-    NOBLE_WARN("ReachHost [Slot 4 - EngineEvent]: reason={} message='{}'", a1, buf);
+    // Where in the engine this event came from: a return address (module RVA) turns every engine-side refusal
+    // into a Ghidra lookup. Reason 4 is the map/game compatibility answer.
+    const auto caller = reinterpret_cast<uintptr_t>(_ReturnAddress());
+    const HMODULE callerModule = GetModuleHandleW(L"haloreach.dll");
+    const uintptr_t engineBase = reinterpret_cast<uintptr_t>(callerModule);
+    const uintptr_t callerRva = (callerModule && caller > engineBase) ? caller - engineBase : 0;
+    NOBLE_WARN("ReachHost [Slot 4 - EngineEvent]: reason={} message='{}' from haloreach+0x{:X}", a1, buf, callerRva);
     if (a1 == 4 && NetworkTransport::Get().IsActive() && !NetworkTransport::Get().IsHost() && !s_sessionStarted.load()) {
         if (std::strstr(buf, "timeout") != nullptr) {
             NOBLE_ERROR("ReachHost [Slot 4 - EngineEvent]: Remote session join timed out ('{}'); returning to main menu.", buf);
