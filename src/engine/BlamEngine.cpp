@@ -398,24 +398,24 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
         targetOctets[3] = static_cast<uint8_t>(to3);
     }
 
-    // Campaign missions: launch index 178 (m05) .. 189 (m70_bonus).
-    const bool isCampaign = (mapId >= 178 && mapId <= 189) || (gameModeTag == 1);
-    // Firefight maps: launch index 210 .. 219.
-    const bool isFirefight = (mapId >= 210 && mapId <= 219) || (gameModeTag == 1035);
+    // The mode tag decides, not the map's number: a Forge launch on a Firefight scenario is still Forge, and
+    // keying these off the map range made it load the Firefight block and HUD.
+    const bool isCampaign = (gameModeTag == 1);
+    const bool isFirefight = (gameModeTag == 1035);
     const bool isForge = (gameModeTag == 3);
     uint32_t effectiveMapId = isMainMenu ? static_cast<uint32_t>(-2) : mapId;
 
     std::string blockName;
     if (isMainMenu) {
         blockName = "lb_m_c_1.bin";
-    } else if (mapId >= 210 && mapId <= 219) {
+    } else if (gameModeTag == 1035) {
         std::string cand1 = "firefight_" + std::to_string(mapId) + "_d" + std::to_string(clampedDiff) + ".bin";
         std::string cand2 = "firefight_" + std::to_string(mapId) + ".bin";
         if (EmbeddedBlocks::HasBlock(cand1)) blockName = cand1;
         else if (EmbeddedBlocks::HasBlock(cand2)) blockName = cand2;
         else if (std::filesystem::exists(dataRoot / "blocks" / cand1)) blockPath = dataRoot / "blocks" / cand1;
         else if (std::filesystem::exists(dataRoot / "blocks" / cand2)) blockPath = dataRoot / "blocks" / cand2;
-    } else if (mapId >= 178 && mapId <= 189) {
+    } else if (gameModeTag == 1) {
         std::string cand1 = "campaign_" + std::to_string(mapId) + "_d" + std::to_string(clampedDiff) + ".bin";
         std::string cand2 = "campaign_" + std::to_string(mapId) + ".bin";
         if (EmbeddedBlocks::HasBlock(cand1)) blockName = cand1;
@@ -1004,11 +1004,14 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
     uint32_t gameModeTag = 2; // Default multiplayer (Slayer, CTF, Invasion, all Megalo variants)
     const bool forgeMode = _stricmp(gameMode.c_str(), "forge") == 0 ||
                            _stricmp(gameMode.c_str(), "sandbox") == 0;
-    if ((mapId >= 210 && mapId <= 219) || _stricmp(gameMode.c_str(), "firefight") == 0) {
-        gameModeTag = 1035; // 0x40B Firefight
-    } else if (forgeMode) {
+    // An explicitly requested Forge wins over the map's own mode. Firefight scenarios (Installation 04 =
+    // cex_ff_halo, Glacier = ff60_icecave) are the bases of several Forge AI mods, and testing the map range
+    // first forced them into Firefight no matter what was asked for.
+    if (forgeMode) {
         // Forge is a multiplayer Megalo mode, not the special map-editor engine (0x04).
         gameModeTag = 3;
+    } else if ((mapId >= 210 && mapId <= 219) || _stricmp(gameMode.c_str(), "firefight") == 0) {
+        gameModeTag = 1035; // 0x40B Firefight
     } else if ((mapId >= 178 && mapId <= 189) || _stricmp(gameMode.c_str(), "campaign") == 0) {
         gameModeTag = 1;    // Campaign
     } else if (mapId == static_cast<uint32_t>(-2) || mapId == 0 ||
