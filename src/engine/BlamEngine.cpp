@@ -610,7 +610,10 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
         // selected by the launch index at +0x10/+0x14/+0x1D5C0 (verified against the engine's captured
         // campaign blocks, which differ from its MP block only in +0x0C, +0x10/+0x14, +0x28,
         // +0x34 and +0x1D5C0).
-        if (isCampaign || isFirefight) mapInfoId = kMainMenuMapId;
+        // Applies to a Firefight canvas launched in Forge too: MapIdForLaunchIndex() has no entry for 210..219,
+        // so the block would carry a game-mode tag as its map id and the engine answers 'map and game
+        // incompatible' (the capture convention is to keep the menu map-variant id here).
+        if (isCampaign || isFirefight || (mapId >= 210 && mapId <= 219)) mapInfoId = kMainMenuMapId;
         if (mapInfoId == 0) mapInfoId = gameModeTag;
         if (isCampaign) {
             block[0x28] = 0x01;
@@ -712,8 +715,11 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
 
     if (!isMainMenu) {
         uint32_t mapInfoId = MapIdForLaunchIndex(effectiveMapId);
-        if (isCampaign || isFirefight) mapInfoId = kMainMenuMapId;
-        if (mapInfoId == 0) mapInfoId = gameModeTag;
+        // Firefight canvases keep the menu/Boardwalk map-variant id and are selected by their launch index (as the
+        // captured Firefight blocks do). Applies in Forge too: MapIdForLaunchIndex() is 0 for 210..219, so the
+        // block would otherwise carry a game-mode tag as its map id and the engine answers 'map and game
+        // incompatible'.
+        if (isCampaign || isFirefight || (mapId >= 210 && mapId <= 219)) mapInfoId = kMainMenuMapId;
         if (isCampaign) {
             block[0x28] = 0x01;
             block[0x29] = 0x00;

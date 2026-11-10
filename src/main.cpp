@@ -705,7 +705,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             // no Forge palette and loops the round - the engine dies mid-load when the mod's own map is served.
             // Until the mod-map manifest is fed to the engine the way MCC does it, leave those canvases alone so
             // they keep running as Firefight (where they work).
-            const bool firefightCanvas = infoBytes.size() > 0x44 && infoBytes[0x42] == 0x04;
+            wchar_t forceEnv[8] = {};
+            const bool forceMp = GetEnvironmentVariableW(L"NOBLE_MOD_FORCE_MP", forceEnv, 8) > 0 && forceEnv[0] != L'0';
+            const bool firefightCanvas = !forceMp && infoBytes.size() > 0x44 && infoBytes[0x42] == 0x04;
             if (firefightCanvas) {
                 NOBLE_INFO("main: '{}' is a Firefight canvas; leaving its map info alone (play it as Firefight)", launchMap);
             }
