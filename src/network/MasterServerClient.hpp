@@ -38,6 +38,7 @@ struct LobbyPlayer {
 // Snapshot of a pre-game lobby session.
 struct LobbyState {
     bool ok = false;
+    int httpStatus = 0;   // 0 when the request never completed; otherwise the server's status code
     std::string sessionId;
     std::string name;
     std::string map;
