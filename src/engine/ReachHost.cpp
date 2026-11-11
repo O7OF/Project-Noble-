@@ -702,6 +702,37 @@ static uint64_t __fastcall HostSlot1_FrameTick(void* thisPtr, uint64_t a1, uint6
     }
     // Launch/map state machine (haloreach+0xC1A114 launch state, +0xC1A118 map state). The engine's state machine
     // (FUN_180034818) prints _map_state_* names; logging both values per tick shows where a launch stops.
+    // SEH-guarded read for the flag probe below.
+    auto SafeReadPtr = [](uintptr_t address, void* out, size_t size) -> bool {
+        __try {
+            std::memcpy(out, reinterpret_cast<const void*>(address), size);
+            return true;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {}
+        return false;
+    };
+
+    // "Game running" flag (TLS block +0x48, byte +0x1EAB8). The engine's main loop finishes the game and tears the
+    // session down when it is 0, so logging every change says exactly when a co-op match is declared over.
+    if (frames % 10 == 0) {
+        int running = -2;
+        uintptr_t block = 0;
+        const uint32_t tlsIndex = *reinterpret_cast<const uint32_t*>(
+            reinterpret_cast<uintptr_t>(GetModuleHandleW(L"haloreach.dll")) + 0xC17B18);
+        const auto tlsArray = static_cast<uintptr_t>(__readgsqword(0x58));
+        if (tlsArray && tlsIndex < 128) {
+            block = *reinterpret_cast<const uintptr_t*>(tlsArray + tlsIndex * 8);
+        }
+        if (block && SafeReadPtr(block + 0x48, &block, sizeof(block)) && block) {
+            int8_t flag = 0;
+            if (SafeReadPtr(block + 0x1EAB8, &flag, sizeof(flag))) running = flag;
+        }
+        static int s_lastRunning = -2;
+        if (running != s_lastRunning) {
+            s_lastRunning = running;
+            NOBLE_WARN("ReachHost: game-running flag is now {} at frame {}", running, static_cast<uint64_t>(frames));
+        }
+    }
+
     if (frames == 1 || (frames % 60) == 0) {
         int launchState = -1;
         int mapState = -1;
