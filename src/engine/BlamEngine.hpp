@@ -69,6 +69,10 @@ public:
     // two snapshots can be diffed around a Forge placement.
     bool DumpLiveMapVariant(const std::filesystem::path& dir, int index);
 
+    // -mvar-live-dump: snapshot on a timer from the engine thread (slot 1), where the TLS state is valid.
+    static void ConfigureLiveDump(std::filesystem::path dir, int seconds);
+    void TickLiveDump();
+
     const std::string& GetCurrentMap() const { return m_currentMap; }
     const std::string& GetCurrentMode() const { return m_currentMode; }
     bool IsForgeMode() const { return _stricmp(m_currentMode.c_str(), "forge") == 0 || _stricmp(m_currentMode.c_str(), "sandbox") == 0; }

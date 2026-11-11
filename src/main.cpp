@@ -1839,17 +1839,8 @@ int mvarLiveDumpEvery = 0;        // dev: dump the live variant struct/state eve
     }
 
     if (mvarLiveDumpEvery > 0) {
-        std::thread([mvarLiveDumpEvery] {
-            int index = 0;
-            for (;;) {
-                std::this_thread::sleep_for(std::chrono::seconds(mvarLiveDumpEvery));
-                if (!noble::BlamEngine::Active()) continue;
-                const std::filesystem::path out =
-                    noble::ReachHost::Get().GetDataDir() / "mvar_live";
-                const bool ok = noble::BlamEngine::Active()->DumpLiveMapVariant(out, ++index);
-                NOBLE_WARN("main: -mvar-live-dump snapshot {} -> {} ('{}')", index, ok ? 1 : 0, out.string());
-            }
-        }).detach();
+        // The snapshot needs the engine thread's TLS state, so it runs from slot 1 rather than a worker thread.
+        noble::BlamEngine::ConfigureLiveDump(noble::ReachHost::Get().GetDataDir() / "mvar_live", mvarLiveDumpEvery);
     }
 
     if (mvarDumpEvery > 0) {

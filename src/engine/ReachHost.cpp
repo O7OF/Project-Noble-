@@ -625,6 +625,7 @@ static uint64_t __fastcall HostSlot1_FrameTick(void* thisPtr, uint64_t a1, uint6
     static std::atomic<uint64_t> s_frameCount{0};
     uint64_t frames = ++s_frameCount;
     s_lastFrameTickMs.store(GetTickCount64());
+    if (noble::BlamEngine::Active()) noble::BlamEngine::Active()->TickLiveDump();
     if (ReachArmory::IsMenuMode()) {
         ReachArmory::Tick();
         if (a1 > 0x10000) {

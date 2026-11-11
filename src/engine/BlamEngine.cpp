@@ -330,6 +330,39 @@ bool BlamEngine::TrySerializeLiveMapVariant(std::vector<uint8_t>& outChunk) {
     return true;
 }
 
+namespace {
+std::mutex s_liveDumpMutex;
+std::filesystem::path s_liveDumpDir;
+int s_liveDumpSeconds = 0;
+int s_liveDumpIndex = 0;
+uint64_t s_liveDumpNextMs = 0;
+} // namespace
+
+void BlamEngine::ConfigureLiveDump(std::filesystem::path dir, int seconds) {
+    std::lock_guard<std::mutex> lock(s_liveDumpMutex);
+    s_liveDumpDir = std::move(dir);
+    s_liveDumpSeconds = seconds;
+    s_liveDumpIndex = 0;
+    s_liveDumpNextMs = GetTickCount64() + static_cast<uint64_t>(seconds) * 1000;
+    if (seconds > 0) NOBLE_INFO("BlamEngine: live variant dumps every {}s into '{}'", seconds, s_liveDumpDir.string());
+}
+
+void BlamEngine::TickLiveDump() {
+    std::filesystem::path dir;
+    int index = 0;
+    {
+        std::lock_guard<std::mutex> lock(s_liveDumpMutex);
+        if (s_liveDumpSeconds <= 0) return;
+        const uint64_t now = GetTickCount64();
+        if (now < s_liveDumpNextMs) return;
+        s_liveDumpNextMs = now + static_cast<uint64_t>(s_liveDumpSeconds) * 1000;
+        dir = s_liveDumpDir;
+        index = ++s_liveDumpIndex;
+    }
+    const bool ok = DumpLiveMapVariant(dir, index);
+    NOBLE_WARN("BlamEngine: live dump {} -> {} ('{}')", index, ok ? 1 : 0, dir.string());
+}
+
 bool BlamEngine::DumpLiveMapVariant(const std::filesystem::path& dir, int index) {
     if (!m_hModule) return false;
     DWORD tlsIndex = 0;
