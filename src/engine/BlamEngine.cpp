@@ -440,12 +440,10 @@ bool BlamEngine::TriggerMapVariantSave() {
         s_variantCandidateCount = 0;
     }
     s_armVariantCapture.store(true, std::memory_order_relaxed);
-    // 0x156788 is the engine's save task: it checks the game state and then drives the save. If placements are
-    // committed anywhere, it happens on the way through here.
-    const bool taskOk = CallMapVariantSaveTask(m_hModule);
+    // Calling the task and then the routine made the routine fault (the task had already started it), so only the
+    // routine is invoked here.
     const bool ok = CallMapVariantSave(m_hModule);
     s_armVariantCapture.store(false, std::memory_order_relaxed);
-    NOBLE_INFO("BlamEngine: save task {} / save routine {}", taskOk ? "ran" : "faulted", ok ? "ran" : "faulted");
 
     void* candidates[kMaxVariantCandidates] = {};
     int count = 0;

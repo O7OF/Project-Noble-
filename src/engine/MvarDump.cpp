@@ -1,8 +1,13 @@
 #include "MvarDump.hpp"
 #include "common/Logger.hpp"
 #include "hooks/HookManager.hpp"
+#include "mvar/MapVariantLibrary.hpp"
+#include "mvar/MapVariant.hpp"
 
 #include <map>
+#include <set>
+#include <functional>
+#include <cstdio>
 
 #include <windows.h>
 #include <cstring>
@@ -64,6 +69,36 @@ static void WriteCaptureFile(HANDLE hFile, const void* buffer, DWORD nBytes, BOO
     const bool container = nBytes >= 4 && std::memcmp(first, "_blf", 4) == 0;
     NOBLE_INFO("MvarWrite: +{} byte(s) to '{}' (ok={}, starts '_blf'={}) total capture '{}'", nBytes, path, ok ? 1 : 0,
                container ? 1 : 0, capture);
+
+    // If the engine's own save produced a complete container, adopt it into Noble's library. That is the path that
+    // carries Forge edits: the game writes its commit, and the file shows up in the maps menu without a restart.
+    static std::set<std::string> s_adopted;
+    std::error_code sizeEc;
+    if (std::filesystem::file_size(capture, sizeEc) >= 0x7329 && !sizeEc) {
+        std::ifstream in(capture, std::ios::binary);
+        std::vector<uint8_t> bytes(0x7329);
+        in.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+        if (in.gcount() == static_cast<std::streamsize>(bytes.size()) &&
+            std::memcmp(bytes.data(), "_blf", 4) == 0 && std::memcmp(bytes.data() + 0x2F0, "mvar", 4) == 0) {
+            const noble::mvar::MapVariant variant = noble::mvar::ReadMapVariantBytes(bytes, "capture");
+            if (variant.valid) {
+                const std::string key = std::to_string(variant.header.mapId) + ":" + std::to_string(bytes.size()) + ":" +
+                                        std::to_string(std::hash<std::string>{}(std::string(
+                                            reinterpret_cast<const char*>(bytes.data() + 0x2F0), 0x100)));
+                if (s_adopted.insert(key).second) {
+                    std::error_code ec2;
+                    const std::filesystem::path library = std::filesystem::path("data") / "map_variants";
+                    std::filesystem::create_directories(library, ec2);
+                    char name[64] = {};
+                    std::snprintf(name, sizeof(name), "captured_%08X.mvar", variant.header.mapId);
+                    const std::filesystem::path adopted = library / name;
+                    std::ofstream(library / name, std::ios::binary | std::ios::trunc)
+                        .write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+                    NOBLE_INFO("MvarWrite: adopted the engine's save as '{}'", adopted.string());
+                }
+            }
+        }
+    }
 }
 
 static void CaptureWrite(HANDLE hFile, LPCVOID lpBuffer, DWORD nBytes, BOOL ok) {
