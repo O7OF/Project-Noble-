@@ -1302,7 +1302,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     // do, and that binary carries patches Noble does not apply (e.g. the AI-spawn jump at RVA 0x6920B5). Load it
     // when it is the same build as the installed one - Noble's hooks are RVA-based, so only that layout is known.
     fs::path modEngineDll;
-    if (!modFolder.empty()) {
+    // -no-mod-dll: run the mod's map on Noble's own engine build (control for diagnosing mod-DLL-specific failures).
+    const bool skipModDll = std::wstring(GetCommandLineW()).find(L"-no-mod-dll") != std::wstring::npos;
+    if (skipModDll && !modFolder.empty()) NOBLE_WARN("main: -no-mod-dll, using Noble's engine even if the mod ships one");
+    if (!skipModDll && !modFolder.empty()) {
         std::error_code modEc;
         std::vector<fs::path> candidates = {
             modFolder / "modded haloreach.dll (REQUIRED)" / "haloreach.dll",
