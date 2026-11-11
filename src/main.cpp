@@ -24,6 +24,7 @@
 #include "engine/ElitePack.hpp"
 #include "engine/SharedTagCache.hpp"
 #include "engine/DevCheats.hpp"
+#include "engine/MvarDump.hpp"
 #include "engine/VariantFields.hpp"
 #include "ui/UIManager.hpp"
 #include "ui/ForgeMenu.hpp"
@@ -1034,6 +1035,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     std::string engineCommand;
     int engineCommandAt = -1;
     int forgeSaveAt = -1;   // dev: run the Forge "save map variant" path N seconds into the match
+    std::vector<int> mvarDumpTimes;   // dev: memory dumps of the loaded map variant at these seconds
     std::string connectAddress = "";
     std::string connectSessionId = "";
     std::string connectSessionToken = "";
@@ -1105,6 +1107,16 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             } else if (arg == L"-third-person-mode" && i + 1 < numArgs) {
                 thirdPersonMode = _wtoi(argvW[++i]);
                 thirdPerson = true;
+            } else if (arg == L"-mvar-dump-at") {
+                const std::wstring spec = argvW[++i];
+                size_t from = 0;
+                while (from <= spec.size()) {
+                    const size_t comma = spec.find(L',', from);
+                    const std::wstring piece = spec.substr(from, comma == std::wstring::npos ? std::wstring::npos : comma - from);
+                    if (!piece.empty()) mvarDumpTimes.push_back(_wtoi(piece.c_str()));
+                    if (comma == std::wstring::npos) break;
+                    from = comma + 1;
+                }
             } else if (arg == L"-forge-save-at") {
                 forgeSaveAt = _wtoi(argvW[++i]);
             } else if (arg == L"-guest-post-start") {
@@ -1713,6 +1725,22 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             NOBLE_WARN("main: dispatching engine command '{}' (research hook)", cmd);
             if (noble::BlamEngine::Active()) noble::BlamEngine::Active()->ExecuteCommand(cmd);
             else NOBLE_WARN("main: no active engine for command '{}'", cmd);
+        }).detach();
+    }
+
+    if (!mvarDumpTimes.empty()) {
+        std::thread([times = mvarDumpTimes] {
+            int previous = 0;
+            for (const int at : times) {
+                const int wait = at > previous ? at - previous : 0;
+                previous = at;
+                std::this_thread::sleep_for(std::chrono::seconds(wait));
+                NOBLE_WARN("main: -mvar-dump-at {} - scanning memory for loaded map variants", at);
+                const std::filesystem::path out =
+                    noble::ReachHost::Get().GetDataDir() / "mvar_dump" / std::to_string(at);
+                const int found = noble::DumpMapVariantCandidates(out);
+                NOBLE_WARN("main: -mvar-dump-at {} found {} candidate(s) in '{}'", at, found, out.string());
+            }
         }).detach();
     }
 

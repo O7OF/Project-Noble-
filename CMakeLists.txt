@@ -162,6 +162,7 @@ set(SOURCES
     src/engine/ReachHost.cpp
     src/engine/ReachArmory.cpp
     src/engine/ElitePack.cpp
+    src/engine/MvarDump.cpp
     src/engine/SharedTagCache.cpp
     src/engine/DevCheats.cpp
     src/engine/CameraFov.cpp
