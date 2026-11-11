@@ -39,6 +39,13 @@ public:
     // NOBLE_MAP_READ_TRACE=1: log every read from a .map handle (offset + size). The last line before an engine
     // launch routine unwinds says which part of the map it gave up on.
     static void InstallMapReadTrace();
+
+    // Write a multiplayer-flavoured copy of <scenario>.mapinfo into user storage (VFS serves it first), so a mod
+    // map built on a Firefight canvas can be launched through the multiplayer/Forge engine.
+    static bool EnsureMultiplayerMapInfo(const std::string& scenario);
+
+    // True when MCC ships <scenario> as a Firefight map (its map info says so).
+    static bool IsFirefightCanvas(const std::string& scenario);
     static std::unordered_map<HANDLE, std::wstring> s_mapHandles;
     static std::mutex s_mapHandleMutex;
 

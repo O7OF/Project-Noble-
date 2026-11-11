@@ -1025,6 +1025,22 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
         gameModeTag = 0;    // Main Menu
     }
 
+    // A mod map built on a Firefight canvas is a Forge map in Reach terms: its world is only loaded by the Forge
+    // engine. Launched as Firefight or Slayer it loads and reports the session as running, but renders a black screen.
+    // MCC plays these mods in Forge for the same reason. Do this before the map info is presented, since the type
+    // written there follows the engine mode.
+    if (noble::VFS::HasActiveMod() && gameModeTag != 3 && noble::VFS::IsFirefightCanvas(mapName)) {
+        NOBLE_WARN("BlamEngine: '{}' is a mod map on a Firefight canvas; launching it through the Forge engine", mapName);
+        gameModeTag = 3;
+    }
+
+    // A mod map built on a Firefight canvas has to be presented to the engine as a multiplayer map, whichever way the
+    // launch came in (command line or the pre-game lobby): the engine reads the type from
+    // mapsinfo<scenario>.mapinfo before the map loads and refuses a Firefight entry for a multiplayer launch.
+    if (noble::VFS::HasActiveMod() && (gameModeTag == 3 || gameModeTag == 2)) {
+        noble::VFS::EnsureMultiplayerMapInfo(mapName);
+    }
+
     // Career pays by base type, so modded maps/variants earn exactly what their stock type earns.
     if (gameModeTag != 0) Career::BeginMatch(Career::BaseTypeFromEngineMode(gameModeTag), mapName, difficulty, skulls);
 

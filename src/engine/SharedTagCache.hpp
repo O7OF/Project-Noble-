@@ -33,6 +33,8 @@ public:
     // Diagnostic: find the scenario ('scnr') tag in the engine's live tag index and print its record plus any field
     // that resolves as a pointer (NOBLE_SCENARIO_DUMP=3). Call after a map load.
     static void DumpScenarioTag(const char* when);
+    static void DumpScenarioTable(uint8_t* table, const char* when);
+    static void DumpScenarioFromLastTable(const char* when);
 
     static bool IsMounted() { return s_isMounted; }
     static const std::filesystem::path& GetDonorMapPath() { return s_donorMapPath; }
@@ -75,6 +77,7 @@ private:
     static bool s_hooksInstalled;
     static HMODULE s_hReachDll;
     static uintptr_t s_baseAddress;
+    static uint8_t* s_lastTagTable;   // tag table seen at the last palette step, for the first-frame scenario probe
     static std::filesystem::path s_donorMapPath;
 
     // Win32 Memory-Mapped File Handles

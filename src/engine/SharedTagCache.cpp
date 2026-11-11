@@ -480,8 +480,113 @@ void SharedTagCache::Shutdown() {
     NOBLE_INFO("SharedTagCache: Shutdown complete.");
 }
 
+uint8_t* SharedTagCache::s_lastTagTable = nullptr;
+
+// Dump the scenario tag from a live tag table: entry record plus every candidate data pointer. Shared by the palette
+// step and the first-frame probe (the tag data is still zeroes during the palette step, so the later one matters).
+void SharedTagCache::DumpScenarioTable(uint8_t* table, const char* when) {
+    if (!table) {
+        NOBLE_WARN("scenario dump ({}): no tag table", when);
+        return;
+    }
+    static const auto readMem = [](uintptr_t ptr, void* out, size_t size) -> bool {
+        __try {
+            std::memcpy(out, reinterpret_cast<const void*>(ptr), size);
+            return true;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {}
+        return false;
+    };
+    const int32_t count = *reinterpret_cast<const int32_t*>(table + 0x3FFF8);
+    const uintptr_t bases[3] = {
+        *reinterpret_cast<const uintptr_t*>(s_baseAddress + 0xB87E90),
+        *reinterpret_cast<const uintptr_t*>(s_baseAddress + 0xC1A618),
+        *reinterpret_cast<const uintptr_t*>(s_baseAddress + 0xB87E88),
+    };
+    for (int32_t i = 0; i < count; ++i) {
+        const int16_t g = *reinterpret_cast<const int16_t*>(table + i * 8);
+        if (g < 0) continue;
+        const uint32_t magic = *reinterpret_cast<const uint32_t*>(table + 0x3FFFC + g * 16);
+        if (magic != 0x726E6373 && magic != 0x73636E72) continue;   // 'scnr'
+        const uint16_t salt = *reinterpret_cast<const uint16_t*>(table + i * 8 + 2);
+        const uint32_t packed = *reinterpret_cast<const uint32_t*>(table + i * 8 + 4);
+        NOBLE_WARN("scenario dump ({}): table index {} salt 0x{:X} packed 0x{:08X}", when, i, salt, packed);
+
+        // The engine reserves 2 GB (VirtualAlloc in its launch routine) and keeps the ends in these globals. If they
+        // are zero or unbacked, the engine never got its tag arena - which is itself a reason for a load to fail.
+        {
+            const uintptr_t g1 = *reinterpret_cast<const uintptr_t*>(s_baseAddress + 0xB87E90);
+            const uintptr_t g2 = *reinterpret_cast<const uintptr_t*>(s_baseAddress + 0xB87E88);
+            const uintptr_t g3 = *reinterpret_cast<const uintptr_t*>(s_baseAddress + 0xC1A618);
+            const uintptr_t g4 = *reinterpret_cast<const uintptr_t*>(s_baseAddress + 0xC1A620);
+            NOBLE_WARN("  arena globals: B87E90=0x{:X} B87E88=0x{:X} C1A618=0x{:X} C1A620=0x{:X}", g1, g2, g3, g4);
+        }
+
+        // Which parts of the engine's 2 GB reservation are actually committed? The tag data has to live in one of
+        // these ranges, so this tells us what a candidate base can be.
+        {
+            uintptr_t cur = bases[0];
+            int shown = 0;
+            while (cur && shown < 8 && cur < bases[0] + 0x80000000ull) {
+                MEMORY_BASIC_INFORMATION mbi{};
+                if (VirtualQuery(reinterpret_cast<LPCVOID>(cur), &mbi, sizeof(mbi)) == 0) break;
+                const uintptr_t start = reinterpret_cast<uintptr_t>(mbi.BaseAddress);
+                if (mbi.State == MEM_COMMIT) {
+                    char range[160];
+                    std::snprintf(range, sizeof(range), "  committed 0x%llX + 0x%llX",
+                                  static_cast<unsigned long long>(start),
+                                  static_cast<unsigned long long>(mbi.RegionSize));
+                    NOBLE_WARN("{}", range);
+                    ++shown;
+                }
+                const uintptr_t next = start + mbi.RegionSize;
+                if (next <= cur) break;
+                cur = next;
+            }
+            NOBLE_WARN("  reservation 0x{:X}..0x{:X}", bases[0], bases[0] + 0x80000000ull);
+        }
+
+        // Candidate data pointers: three bases x four offset interpretations, plus the tag index header itself.
+        const uintptr_t offsets[4] = {
+            static_cast<uintptr_t>(packed) << 2,
+            static_cast<uintptr_t>(packed & 0x0FFFFFFFu) << 2,
+            static_cast<uintptr_t>(packed & 0x07FFFFFFu) << 2,
+            static_cast<uintptr_t>(packed),
+        };
+        uintptr_t header = 0;
+        if (!readMem(s_baseAddress + 0xC1A230, &header, sizeof(header))) header = 0;
+        uintptr_t extraBases[3] = { header, 0, 0 };
+        if (header) {
+            if (!readMem(header + 0x00, &extraBases[1], sizeof(uintptr_t))) extraBases[1] = 0;
+            if (!readMem(header + 0x08, &extraBases[2], sizeof(uintptr_t))) extraBases[2] = 0;
+        }
+        // The working formula on both stock maps is (packed & 0x07FFFFFF) << 2 added to the tag data base. Dump the
+        // first 0x100 bytes from it so the scenario struct can be compared between map types.
+        if (bases[0]) {
+            const uintptr_t ptr = bases[0] + offsets[2];
+            uint8_t bytes[0x100] = {};
+            if (readMem(ptr, bytes, sizeof(bytes))) {
+                for (int row = 0; row < 4; ++row) {
+                    char hex[0x40 * 3 + 8] = {};
+                    for (int k = 0; k < 0x40; ++k) std::snprintf(hex + k * 3, 4, " %02X", bytes[row * 0x40 + k]);
+                    char line[512];
+                    std::snprintf(line, sizeof(line), "  SCEN[%02X]%s", row * 0x40, hex);
+                    NOBLE_WARN("{}", line);
+                }
+            } else {
+                NOBLE_WARN("  SCEN: read faulted at 0x{:X}", ptr);
+            }
+        }
+        break;
+    }
+}
+
+void SharedTagCache::DumpScenarioFromLastTable(const char* when) { DumpScenarioTable(s_lastTagTable, when); }
+
 bool SharedTagCache::InjectScenarioPalette(uint8_t* activeTagTableMemory) {
     if (!activeTagTableMemory) return false;
+
+    // Keep the table pointer: the scenario tag's data is only loaded later, so it is dumped again on the first frame.
+    s_lastTagTable = activeTagTableMemory;
 
     // TagTable helper accesses tag count at +0x3FFF8 and entries at +i*8.
     int32_t tagCount = *reinterpret_cast<const int32_t*>(activeTagTableMemory + 0x3FFF8);
@@ -547,6 +652,7 @@ bool SharedTagCache::InjectScenarioPalette(uint8_t* activeTagTableMemory) {
         wchar_t dumpEnv[8] = {};
         if (GetEnvironmentVariableW(L"NOBLE_SCENARIO_DUMP", dumpEnv, 8) > 0 && dumpEnv[0] != L'0') {
             for (int32_t i = 0; i < tagCount; ++i) {
+                (void)0;
                 const int16_t g = *reinterpret_cast<const int16_t*>(activeTagTableMemory + i * 8);
                 if (g < 0) continue;
                 const uint32_t magic = *reinterpret_cast<const uint32_t*>(activeTagTableMemory + 0x3FFFC + g * 16);
@@ -556,12 +662,18 @@ bool SharedTagCache::InjectScenarioPalette(uint8_t* activeTagTableMemory) {
                 char head[160];
                 std::snprintf(head, sizeof(head), "scenario tag: index %d salt 0x%X packed 0x%08X", i, salt, packed);
                 NOBLE_WARN("{}", head);
-                const uintptr_t bases[2] = {
+                const uintptr_t bases[4] = {
                     *reinterpret_cast<const uintptr_t*>(s_baseAddress + 0xB87E90),
                     *reinterpret_cast<const uintptr_t*>(s_baseAddress + 0xB87E88),
+                    *reinterpret_cast<const uintptr_t*>(s_baseAddress + 0xC1A618),
+                    *reinterpret_cast<const uintptr_t*>(s_baseAddress + 0xC1A620),
                 };
-                for (int b = 0; b < 2; ++b) {
-                    const uintptr_t ptr = bases[b] + (static_cast<uintptr_t>(packed) << 2);
+                // The tag table stores the data offset in 4-byte units in the low 28 bits (the high nibble is the
+                // section selector), so the address is base + (packed & 0x0FFFFFFF) * 4.
+                const uintptr_t offset = static_cast<uintptr_t>(packed & 0x0FFFFFFFu) << 2;
+                for (int b = 0; b < 4; ++b) {
+                    if (!bases[b]) continue;
+                    const uintptr_t ptr = bases[b] + offset;
                     uint8_t bytes[0x40] = {};
                     if (!kReadScenario(ptr, bytes)) {
                         NOBLE_WARN("scenario base[{}]=0x{:X}: read faulted", b, bases[b]);
@@ -577,6 +689,18 @@ bool SharedTagCache::InjectScenarioPalette(uint8_t* activeTagTableMemory) {
                 }
                 break;
             }
+        }
+    }
+
+    // The scenario tag's data is still zeroes during the palette step; dump it again a couple of seconds later, when
+    // the load has actually filled it in.
+    {
+        wchar_t dumpEnv[8] = {};
+        if (GetEnvironmentVariableW(L"NOBLE_SCENARIO_DUMP", dumpEnv, 8) > 0 && dumpEnv[0] == L'1') {
+            std::thread([] {
+                Sleep(9000);
+                DumpScenarioFromLastTable("9 s after palette step");
+            }).detach();
         }
     }
 
