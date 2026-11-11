@@ -4,6 +4,7 @@
 #include "common/Logger.hpp"
 
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 
 namespace noble {
@@ -19,7 +20,7 @@ int32_t __fastcall HookObjectNew(void* placement) {
 
     BlamEngine* engine = BlamEngine::Active();
     if (!engine || !engine->IsForgeMode()) return result;
-    if (s_logged > 200) return result;
+    if (s_logged > 5000) return result;
 
     __try {
         const int32_t tag = *reinterpret_cast<const int32_t*>(placement);
@@ -28,8 +29,18 @@ int32_t __fastcall HookObjectNew(void* placement) {
         std::memcpy(position, static_cast<const uint8_t*>(placement) + 0x1C, sizeof(position));
         std::memcpy(facing, static_cast<const uint8_t*>(placement) + 0x28, sizeof(facing));
         ++s_logged;
-        NOBLE_INFO("ForgeCapture: object_new tag={} pos=({:.2f},{:.2f},{:.2f}) facing=({:.2f},{:.2f},{:.2f}) -> {}",
-                   tag, position[0], position[1], position[2], facing[0], facing[1], facing[2], result);
+        // The editor recreates its ghost/preview object every frame with the same tag and position; only a tag change
+        // is a real new placement, and only then is the raw placement struct worth dumping.
+        static int32_t s_lastTag = 0;
+        if (tag != s_lastTag) {
+            s_lastTag = tag;
+            char hex[0x80 * 2 + 1] = {};
+            const uint8_t* bytes = static_cast<const uint8_t*>(placement);
+            for (int i = 0; i < 0x80; ++i) std::snprintf(hex + i * 2, 3, "%02x", bytes[i]);
+            NOBLE_INFO("ForgeCapture: #{} object_new tag={} pos=({:.2f},{:.2f},{:.2f}) facing=({:.2f},{:.2f},{:.2f}) -> {}",
+                       s_logged, tag, position[0], position[1], position[2], facing[0], facing[1], facing[2], result);
+            NOBLE_INFO("ForgeCapture: #{} bytes {}", s_logged, hex);
+        }
     } __except (EXCEPTION_EXECUTE_HANDLER) {
     }
     return result;
