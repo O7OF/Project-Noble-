@@ -34,12 +34,26 @@ SharedTagCache::TagGetFn SharedTagCache::s_origTagGet = nullptr;
 
 constexpr uintptr_t kStaticTagGetRva = 0x81BE8;
 
+// NOBLE_TAG_MISS_TRACE=1: log the first tag lookups that find nothing, in the active map or in the donor. A map
+// that fails to load usually misses a specific tag, and this names the datum and group it asked for.
+static std::atomic<int> s_tagMissLogged{0};
+
 void* __fastcall SharedTagCache::HookedTagGet([[maybe_unused]] uint32_t groupTag, uint32_t datumIndex) {
     // 1. Check active match map first
     if (s_origTagGet) {
         void* result = s_origTagGet(groupTag, datumIndex);
         if (result != nullptr) {
             return result;
+        }
+    }
+    {
+        wchar_t traceEnv[8] = {};
+        static const bool traceMisses = GetEnvironmentVariableW(L"NOBLE_TAG_MISS_TRACE", traceEnv, 8) > 0 &&
+                                        traceEnv[0] != L'0';
+        if (traceMisses && s_tagMissLogged.fetch_add(1) < 60) {
+            char line[128];
+            std::snprintf(line, sizeof(line), "tag_get miss: group 0x%X datum 0x%08X", groupTag, datumIndex);
+            NOBLE_WARN("{}", line);
         }
     }
 
@@ -395,6 +409,58 @@ bool SharedTagCache::Initialize(HMODULE hReachDll, const std::filesystem::path& 
     return s_isMounted;
 }
 
+
+// Probe for the scenario tag's data (NOBLE_SCENARIO_DUMP=3). Called after the map load, when the tag index is live.
+void SharedTagCache::DumpScenarioTag(const char* when) {
+    static const auto readMem = [](uintptr_t ptr, void* out, size_t size) -> bool {
+        __try {
+            std::memcpy(out, reinterpret_cast<const void*>(ptr), size);
+            return true;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {}
+        return false;
+    };
+    uintptr_t header = 0;
+    if (!readMem(s_baseAddress + 0xC1A230, &header, sizeof(header)) || !header) {
+        NOBLE_WARN("scenario dump ({}): tag index header not readable", when);
+        return;
+    }
+    int32_t count = 0;
+    uint32_t baseOffset = 0;
+    if (!readMem(header + 0x430, &count, sizeof(count)) || !readMem(header + 0x434, &baseOffset, sizeof(baseOffset))) {
+        NOBLE_WARN("scenario dump ({}): header fields not readable", when);
+        return;
+    }
+    const uint32_t selector = baseOffset >> 28;
+    uintptr_t tablePtr = 0;
+    if (!readMem(s_baseAddress + 0x4E39F20 + selector * 8, &tablePtr, sizeof(tablePtr)) || !tablePtr) {
+        NOBLE_WARN("scenario dump ({}): tag index base[{}] not readable", when, selector);
+        return;
+    }
+    NOBLE_WARN("scenario dump ({}): header 0x{:X} count {} baseOffset 0x{:X} selector {} table 0x{:X}", when, header,
+               count, baseOffset, selector, tablePtr);
+    for (int32_t i = 0; i < count; ++i) {
+        uint32_t fields[6] = {};
+        const uintptr_t entry = tablePtr + (static_cast<uint64_t>(baseOffset) + static_cast<uint64_t>(i) * 6) * 4;
+        if (!readMem(entry, fields, sizeof(fields))) continue;
+        if (fields[0] != 0x726E6373 && fields[0] != 0x73636E72) continue;   // 'scnr'
+        char line[256];
+        std::snprintf(line, sizeof(line), "scenario entry %d: %08X %08X %08X %08X %08X %08X", i, fields[0], fields[1],
+                      fields[2], fields[3], fields[4], fields[5]);
+        NOBLE_WARN("scenario dump ({}): {}", when, line);
+        for (int k = 0; k < 6; ++k) {
+            const uint64_t v = fields[k];
+            if (v < 0x10000) continue;
+            uint8_t bytes[16] = {};
+            if (readMem(static_cast<uintptr_t>(v), bytes, sizeof(bytes))) {
+                char hex[64];
+                for (int n = 0; n < 16; ++n) std::snprintf(hex + n * 3, 4, " %02X", bytes[n]);
+                NOBLE_WARN("scenario dump ({}):   field[{}]=0x{:X} as pointer:{}", when, k, v, hex);
+            }
+        }
+        break;
+    }
+}
+
 void SharedTagCache::Shutdown() {
     if (s_mappedView) {
         UnmapViewOfFile(s_mappedView);
@@ -426,6 +492,93 @@ bool SharedTagCache::InjectScenarioPalette(uint8_t* activeTagTableMemory) {
     }
 
     NOBLE_INFO("SharedTagCache: Active map has {} tags in memory; cataloging active tags...", tagCount);
+
+    // Diagnostic helper: reads 0x40 bytes at ptr, SEH-guarded (a file-scope function has no unwinding objects).
+    static const auto kReadMemory = [](uintptr_t ptr, void* out, size_t size) -> bool {
+        __try {
+            std::memcpy(out, reinterpret_cast<const void*>(ptr), size);
+            return true;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {}
+        return false;
+    };
+    static const auto kReadScenario = [](uintptr_t ptr, uint8_t* out) -> bool {
+        return kReadMemory(ptr, out, 0x40);
+    };
+
+    // Diagnostic (NOBLE_SCENARIO_DUMP=2): walk the engine's tag index (header at haloreach+0xC1A230, count +0x430,
+    // base +0x434, 24-byte entries) and print the scenario entry's whole record, so the data pointer field can be
+    // identified instead of guessed.
+    {
+        wchar_t dumpEnv[8] = {};
+        if (GetEnvironmentVariableW(L"NOBLE_SCENARIO_DUMP", dumpEnv, 8) > 0 && dumpEnv[0] == L'2') {
+            uintptr_t header = 0;
+            if (!kReadMemory(s_baseAddress + 0xC1A230, &header, sizeof(header)) || !header) {
+                NOBLE_WARN("tag index: header pointer not readable");
+            } else {
+            int32_t count = 0;
+            uint32_t baseOffset = 0;
+            if (!kReadMemory(header + 0x430, &count, sizeof(count)) ||
+                !kReadMemory(header + 0x434, &baseOffset, sizeof(baseOffset))) {
+                NOBLE_WARN("tag index: header fields not readable");
+                count = 0;
+            }
+            NOBLE_WARN("tag index: header 0x{:X} count {} baseOffset 0x{:X}", header, count, baseOffset);
+            for (int32_t i = 0; i < count && i < 40000; ++i) {
+                const uintptr_t entry = header + baseOffset + static_cast<uintptr_t>(i) * 24;
+                uint32_t fields[6] = {};
+                if (!kReadScenario(entry, reinterpret_cast<uint8_t*>(fields))) continue;
+                const uint32_t group = fields[0];
+                if (group != 0x726E6373 && group != 0x73636E72) continue;   // 'scnr'
+                char line[512];
+                std::snprintf(line, sizeof(line),
+                              "scenario index entry %d: %08X %08X %08X %08X %08X %08X", i, fields[0], fields[1],
+                              fields[2], fields[3], fields[4], fields[5]);
+                NOBLE_WARN("{}", line);
+                break;
+            }
+            }
+        }
+    }
+
+    // Diagnostic (NOBLE_SCENARIO_DUMP=1): find the scenario tag (group 'scnr') in the active tag table and print the
+    // first bytes of its data. Comparing a multiplayer map with a Firefight-canvas mod map shows the game-engine
+    // type field the engine checks when it decides whether to create a game engine.
+    {
+        wchar_t dumpEnv[8] = {};
+        if (GetEnvironmentVariableW(L"NOBLE_SCENARIO_DUMP", dumpEnv, 8) > 0 && dumpEnv[0] != L'0') {
+            for (int32_t i = 0; i < tagCount; ++i) {
+                const int16_t g = *reinterpret_cast<const int16_t*>(activeTagTableMemory + i * 8);
+                if (g < 0) continue;
+                const uint32_t magic = *reinterpret_cast<const uint32_t*>(activeTagTableMemory + 0x3FFFC + g * 16);
+                if (magic != 0x726E6373 && magic != 0x73636E72) continue;   // 'scnr' either byte order
+                const uint16_t salt = *reinterpret_cast<const uint16_t*>(activeTagTableMemory + i * 8 + 2);
+                const uint32_t packed = *reinterpret_cast<const uint32_t*>(activeTagTableMemory + i * 8 + 4);
+                char head[160];
+                std::snprintf(head, sizeof(head), "scenario tag: index %d salt 0x%X packed 0x%08X", i, salt, packed);
+                NOBLE_WARN("{}", head);
+                const uintptr_t bases[2] = {
+                    *reinterpret_cast<const uintptr_t*>(s_baseAddress + 0xB87E90),
+                    *reinterpret_cast<const uintptr_t*>(s_baseAddress + 0xB87E88),
+                };
+                for (int b = 0; b < 2; ++b) {
+                    const uintptr_t ptr = bases[b] + (static_cast<uintptr_t>(packed) << 2);
+                    uint8_t bytes[0x40] = {};
+                    if (!kReadScenario(ptr, bytes)) {
+                        NOBLE_WARN("scenario base[{}]=0x{:X}: read faulted", b, bases[b]);
+                        continue;
+                    }
+                    char hex[0x40 * 3 + 8] = {};
+                    for (int k = 0; k < 0x40; ++k) std::snprintf(hex + k * 3, 4, " %02X", bytes[k]);
+                    char line[512];
+                    std::snprintf(line, sizeof(line), "scenario base[%d]=0x%llX ptr=0x%llX:%s", b,
+                                  static_cast<unsigned long long>(bases[b]),
+                                  static_cast<unsigned long long>(ptr), hex);
+                    NOBLE_WARN("{}", line);
+                }
+                break;
+            }
+        }
+    }
 
     // Diagnostic: which tag groups this map actually carries, as four-character codes. It answers questions like
     // "does this map have multiplayer_object_type_list (the Forge palette's object list)?" without a tag parser.

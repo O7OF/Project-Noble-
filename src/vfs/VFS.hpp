@@ -36,6 +36,12 @@ public:
     static void SetMapOverride(const std::string& carrierScenario, const fs::path& mapFile);
     static void ClearMapOverride();
 
+    // NOBLE_MAP_READ_TRACE=1: log every read from a .map handle (offset + size). The last line before an engine
+    // launch routine unwinds says which part of the map it gave up on.
+    static void InstallMapReadTrace();
+    static std::unordered_map<HANDLE, std::wstring> s_mapHandles;
+    static std::mutex s_mapHandleMutex;
+
 private:
     static bool RawPathExists(const std::wstring& path);
 
