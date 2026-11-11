@@ -21,6 +21,19 @@ namespace {
 std::mutex s_mutex;
 std::wstring s_currentArgs;
 
+// main.cpp writes running\<pid>.flag beside the exe at start and removes it on a clean exit; a flag left behind
+// makes the next start warn "did not exit cleanly". A hand-off to the next Noble process is a clean exit, but it
+// ends with TerminateProcess below and never reached main.cpp's removal, so every join / PLAY AGAIN left a flag
+// and a false warning (2026-11-10). Same path as main.cpp's OwnRunFlag().
+void RemoveOwnRunFlag() {
+    wchar_t exe[MAX_PATH] = {};
+    if (!GetModuleFileNameW(nullptr, exe, MAX_PATH)) return;
+    std::error_code ec;
+    std::filesystem::remove(std::filesystem::path(exe).parent_path() / L"running" /
+                                (std::to_wstring(GetCurrentProcessId()) + L".flag"),
+                            ec);
+}
+
 std::wstring ToWideUtf8(const std::string& s) {
     if (s.empty()) return L"";
     const int len = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
@@ -255,6 +268,7 @@ bool HandOff(const std::wstring& args) {
             return false;
         }
         NOBLE_INFO("Relaunch: container match relaunch handed to the launcher window; closing this match");
+        RemoveOwnRunFlag();
         TerminateProcess(GetCurrentProcess(), 0);
         return true;  // not reached
     }
@@ -292,6 +306,7 @@ bool HandOff(const std::wstring& args) {
     // Do not run Logger::Shutdown() here: it joins/flushes spdlog while the engine's threads are still alive
     // and can hang, leaving the old server-browser window frozen next to the new match process. The line above
     // is already flushed (flush_on(info)); terminate immediately.
+    RemoveOwnRunFlag();
     TerminateProcess(GetCurrentProcess(), 0);  // not ExitProcess: DLL shutdown under the engine can hang
     return true;  // not reached
 }

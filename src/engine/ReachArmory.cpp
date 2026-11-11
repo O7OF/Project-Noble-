@@ -297,6 +297,30 @@ static int32_t s_remadeAtBump = 0;
 // rebuild in flight, which crashed the engine; changes that arrive meanwhile are coalesced into one rebuild.
 constexpr uint64_t kRebuildQuietFrames = 12;
 static uint64_t s_rebuildReadyFrame = 0;
+// Spartan / Elite switch wait (2026-11-10). The species (GLOBALS shows_elite + camera) used to flip on every press
+// while the new species' pieces were only written once no rebuild was in flight, so during fast switching the menu
+// script rebuilt the newly shown character with the other species' (region, permutation) pairs: wrong helmet /
+// Elite pieces for several seconds, one DMR drop per rebuild. The flip now waits until the selection's species has
+// been stable for kSpeciesSettleMs and no rebuild is running, then the camera, shows_elite and that species' pairs
+// are written in the same frame (one rebuild). While it waits, the character on screen keeps the look it has.
+constexpr uint64_t kSpeciesSettleMs = 350;
+static std::atomic<uint64_t> s_speciesChangeMs{0};    // GetTickCount64 of the last selection whose species changed
+static std::atomic<bool> s_speciesDeferred{false};    // a species flip is waiting (read by Tick / NotifyEngineTick)
+static uint64_t s_speciesWaitStartMs = 0;              // first frame of the current wait (for the log line)
+// Last selection applied to the species on screen. Guarded by s_sceneMutex: written by Tick (render thread) and
+// read by NotifyEngineTick, which ReachHost also calls from the engine's input callback.
+static ReachArmorySelection s_shownSelection;
+static bool s_haveShownSelection = false;
+// What each species' character was last built with (index 0 = Spartan, 1 = Elite). The menu map keeps the hidden
+// species' character, so switching back to a species whose pieces did not change needs no rebuild: the forced
+// rebuild on every species switch was the flicker (pose reset) and the DMR drop seen in Tyler's 21:00 video.
+static std::vector<std::pair<uint32_t, uint32_t>> s_builtPairs[2];
+static std::vector<std::pair<uint32_t, uint32_t>> s_builtLivePairs[2];
+static uintptr_t s_builtBase[2] = { 0, 0 };
+// Tick's colour-record retry gives up after a few tries per species shown (the records are rarely found and each
+// try is a quick rescan); a species switch or a rebuild starts a new budget.
+constexpr int kRecordRetryBudget = 3;
+static std::atomic<int> s_recordRetriesLeft{kRecordRetryBudget};
 
 // The pack map that carries the Armory models and the player_model_customization tag.
 static const std::filesystem::path& ArmoryMapPath() {
@@ -798,11 +822,12 @@ static std::vector<std::pair<uintptr_t, size_t>> RecordRegionChunks() {
 
 static size_t ScanColorRecordsIn(const std::vector<std::pair<uintptr_t, size_t>>& chunks, bool quiet);
 static size_t ScanEliteColorRecordsIn(const std::vector<std::pair<uintptr_t, size_t>>& chunks, bool quiet);
-static size_t ScanSuitRecordsIn(const std::vector<std::pair<uintptr_t, size_t>>& chunks, bool quiet);
+// Kept for reference/diagnostics; no longer called since Noble stopped painting the undersuit (2026-11-10).
+[[maybe_unused]] static size_t ScanSuitRecordsIn(const std::vector<std::pair<uintptr_t, size_t>>& chunks, bool quiet);
 
 static void ScanColorRecords() { ScanColorRecordsIn(ReadWriteChunks(0x40), false); }
 static void ScanEliteColorRecords() { ScanEliteColorRecordsIn(ReadWriteChunks(0x40), false); }
-static void ScanSuitRecords() { ScanSuitRecordsIn(ReadWriteChunks(0x40), false); }
+[[maybe_unused]] static void ScanSuitRecords() { ScanSuitRecordsIn(ReadWriteChunks(0x40), false); }
 
 // After the biped is remade: look for its new colour / suit records in the remembered regions every few ms
 // (up to ~1.5 s) so they get Noble's colours before the old full scan would have found them.
@@ -828,12 +853,11 @@ static void StartQuickRescan() {
                 chunks = ReadWriteChunks(0x40);
             }
             if (chunks.empty()) break;
+            // Suit shader records are no longer scanned: Noble does not paint the undersuit any more.
             if (!isElite) {
                 ScanColorRecordsIn(chunks, true);
-                ScanSuitRecordsIn(chunks, true);
             } else {
                 ScanEliteColorRecordsIn(chunks, true);
-                ScanSuitRecordsIn(chunks, true);
             }
 
 
@@ -850,7 +874,7 @@ static void StartQuickRescan() {
             if (isElite) {
                 foundReady = (ec > eliteColours || eliteColours == 0) && (ec > 0);
             } else {
-                foundReady = (c > colours || colours == 0) && (sr > suits || suits == 0) && (c > 0 && sr > 0);
+                foundReady = (c > colours || colours == 0) && (c > 0);
             }
             if (foundReady) {
                 const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count();
@@ -1078,7 +1102,7 @@ static size_t ScanEliteColorRecordsIn(const std::vector<std::pair<uintptr_t, siz
     return added;
 }
 
-static size_t ScanSuitRecordsIn(const std::vector<std::pair<uintptr_t, size_t>>& chunks, bool quiet) {
+[[maybe_unused]] static size_t ScanSuitRecordsIn(const std::vector<std::pair<uintptr_t, size_t>>& chunks, bool quiet) {
     // Stock 16-byte suit float[4] in mainmenu_all.map: { 0.9960785f, 0.9921569f, 0.98823535f, 1.0f }
     static constexpr float kStockSuit[4] = { 0.9960785f, 0.9921569f, 0.98823535f, 1.0f };
     float prevSuit[4] = {};
@@ -1366,11 +1390,11 @@ static void SyncArmoryLiveBipedEngineTickSEH(bool previewElite,
 
         const float slot0[3] = { priRgb[0], priRgb[1], priRgb[2] };
         const float slot1[3] = { secRgb[0], secRgb[1], secRgb[2] };
-        const float slot2[3] = {
-            previewElite ? accRgb[0] : litRgb[0],
-            previewElite ? accRgb[1] : litRgb[1],
-            previewElite ? accRgb[2] : litRgb[2]
-        };
+        // Change colour 2 is the third/detail ("accent") colour for both species. Matches take it from the
+        // profile's +0xA0 accent colour (ReachHost ApplyArmoryAppearance, SyncMatchLiveBipeds); the Armory used
+        // the hidden "lights" colour for the Spartan here, so the preview did not match the game (2026-11-10).
+        (void)litRgb;
+        const float slot2[3] = { accRgb[0], accRgb[1], accRgb[2] };
         const float slot3[3] = {
             previewElite ? (accentColorIndex != 0 ? accRgb[0] : priRgb[0]) : visRgb[0],
             previewElite ? (accentColorIndex != 0 ? accRgb[1] : priRgb[1]) : visRgb[1],
@@ -1553,7 +1577,9 @@ static void WriteColorsAndSuit(const ReachArmorySelection& sel) {
         std::memcpy(s_prevVisFloats, visFloats, sizeof(visFloats));
         std::memcpy(s_prevAccentRgb, sel.accentRgb.data(), sizeof(float) * 3);
         std::memcpy(s_prevLightsRgb, sel.lightsRgb.data(), sizeof(float) * 3);
-        UpdateTagShaderConstantsSEH(sel.previewElite, words.data(), sel.accentRgb.data(), sel.lightsRgb.data(), visFloats);
+        // undersuitRgb = nullptr: Reach never lets players colour the undersuit and the Armory has no control for
+        // it; Noble used to paint it with the hidden "lights" colour, which made it change (2026-11-10).
+        UpdateTagShaderConstantsSEH(sel.previewElite, words.data(), sel.accentRgb.data(), nullptr, visFloats);
     }
 
     {
@@ -1594,31 +1620,11 @@ static void WriteColorsAndSuit(const ReachArmorySelection& sel) {
         );
     }
 
-    // Write suit shader float4 (emissive armor lights, glowing eye slits, and illumination cards)
-    s_suitRecords.erase(
-        std::remove_if(s_suitRecords.begin(), s_suitRecords.end(), [&](uintptr_t suit) {
-            float cur[4] = {};
-            if (!SafeCopyMem(cur, reinterpret_cast<const void*>(suit), sizeof(cur))) return true;
-            for (int i = 0; i < 4; ++i) {
-                if (!std::isfinite(cur[i]) || cur[i] < 0.0f || cur[i] > 6.0f) return true;
-            }
-            if (!sel.previewElite) {
-                const float suitAlbedo[4] = { sel.lightsRgb[0], sel.lightsRgb[1], sel.lightsRgb[2], 1.0f };
-                const float suitMat0[4] = { sel.lightsRgb[0] * 0.85f + 0.05f, sel.lightsRgb[1] * 0.85f + 0.05f, sel.lightsRgb[2] * 0.85f + 0.05f, 1.0f };
-                const float suitMat1[4] = { sel.lightsRgb[0] * 0.45f + 0.02f, sel.lightsRgb[1] * 0.45f + 0.02f, sel.lightsRgb[2] * 0.45f + 0.02f, 1.0f };
-                float m0[4] = {}, m1[4] = {};
-                if (SafeCopyMem(m0, reinterpret_cast<const void*>(suit + 0x70), sizeof(m0)) && std::abs(m0[3] - 1.0f) < 0.01f) {
-                    SafeWriteFloats(suit + 0x70, suitMat0, 4);
-                }
-                if (SafeCopyMem(m1, reinterpret_cast<const void*>(suit + 0x80), sizeof(m1)) && std::abs(m1[3] - 1.0f) < 0.01f) {
-                    SafeWriteFloats(suit + 0x80, suitMat1, 4);
-                }
-                return !SafeWriteFloats(suit, suitAlbedo, 4);
-            }
-            return !SafeWriteFloats(suit, suitFloats, 4);
-        }),
-        s_suitRecords.end()
-    );
+    // Suit shader records (undersuit / suit float4s) are no longer written. They were found by a byte pattern that
+    // does not tell Spartan and Elite apart; the Elite path wrote its lights x4 into every one, and the Spartan path
+    // also wrote 0x70/0x80 bytes past each match. That changed the Spartan's undersuit after an Elite visit and was
+    // a blind write into memory Noble had not verified. The undersuit stays Reach's own.
+    s_suitRecords.clear();
 }
 
 // -----------------------------------------------------------------------------
@@ -1790,7 +1796,30 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx, const std::strin
     if (mainScene && mainSceneIdx >= 0) effectiveSceneIdx = mainSceneIdx;
 
     const uint32_t wantElite = showElite ? 1u : 0u;
-    if (curScene != effectiveSceneIdx || curElite != wantElite) {
+
+    // Species switch wait (see kSpeciesSettleMs). Only inside the Armory: leaving it switches back at once.
+    // rebuildBusy mirrors rebuildInFlight below (pairs written / settle pending / quiet frames / REMADE not yet moved).
+    const uint64_t frameEarly = s_frameCounter.load();
+    int32_t remadeEarly = 0;
+    SafeReadI32(base + 0x32 * stride, &remadeEarly);
+    const bool rebuildBusy = (s_bumpAtFrame != 0) || s_settlePending || (frameEarly < s_rebuildReadyFrame) ||
+                             (s_remadeAtBump != 0 && remadeEarly == s_remadeAtBump && frameEarly < s_settleDeadline);
+    const uint64_t nowMs = GetTickCount64();
+    const bool speciesFlipWanted = armoryScene && (curElite != wantElite);
+    const bool speciesDeferred = speciesFlipWanted &&
+                                 (nowMs - s_speciesChangeMs.load() < kSpeciesSettleMs || rebuildBusy);
+    s_speciesDeferred.store(speciesDeferred);
+    if (speciesDeferred) {
+        if (s_speciesWaitStartMs == 0) s_speciesWaitStartMs = nowMs;
+    } else if (s_speciesWaitStartMs != 0) {
+        if (speciesFlipWanted) {
+            NOBLE_INFO("ReachArmory: species switch to {} applied after a {} ms wait", wantElite ? "Elite" : "Spartan",
+                       nowMs - s_speciesWaitStartMs);
+        }
+        s_speciesWaitStartMs = 0;
+    }
+
+    if (!speciesDeferred && (curScene != effectiveSceneIdx || curElite != wantElite)) {
         const bool speciesChanged = (curElite != wantElite);
         SafeWriteU32(base + 0x26 * stride, wantElite);
         SafeWriteU32(base + 0x24 * stride, static_cast<uint32_t>(effectiveSceneIdx));
@@ -1802,10 +1831,16 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx, const std::strin
             s_colorRecords.clear();
             s_eliteColorRecords.clear();
             s_suitRecords.clear();
-            s_lastPairs.clear();
-            s_livePairs.clear();
-            s_lastPairsBase = 0;
+            // The character of this species is still in the scene: compare the next pairs with what it was
+            // last built with, so an unchanged look is not rebuilt. Its live pairs are re-applied for a couple
+            // of ticks (NotifyEngineTick) in case the map script re-created it on the flip.
+            const int sp = wantElite ? 1 : 0;
+            s_lastPairs = s_builtPairs[sp];
+            s_lastPairsBase = s_builtBase[sp];
+            s_livePairs = s_builtLivePairs[sp];
+            s_livePairsGen.fetch_add(1);
             s_rotationBaseBits.store(0xFFFFFFFFu);
+            s_recordRetriesLeft.store(kRecordRetryBudget);
             StartQuickRescan();
         }
     }
@@ -1902,7 +1937,8 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx, const std::strin
     const bool rebuildInFlight = (s_bumpAtFrame != 0) || s_settlePending ||
                                  (frameNow < s_rebuildReadyFrame) || !rebuildSettled;
     const uint64_t gen = s_selectionGeneration.load();
-    if (gen != s_appliedGeneration && !rebuildInFlight) {
+    // While a species switch waits, nothing is applied: the pairs must go in together with the flip.
+    if (gen != s_appliedGeneration && !rebuildInFlight && !speciesDeferred) {
         s_appliedGeneration = gen;
         s_previewDirty.store(false);
 
@@ -2058,8 +2094,13 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx, const std::strin
                     s_lastPairs = writtenPairs;
                     s_livePairs = livePairs;
                     s_livePairsGen.fetch_add(1);
+                    const int sp = showElite ? 1 : 0;
+                    s_builtPairs[sp] = writtenPairs;
+                    s_builtLivePairs[sp] = livePairs;
+                    s_builtBase[sp] = base;
                 }
                 s_lastPairsBase = base;
+                s_recordRetriesLeft.store(kRecordRetryBudget);
                 s_bumpAtFrame = frameNow + 2;
                 s_settlePending = false;
                 s_rebuildReadyFrame = frameNow + 2 + kRebuildQuietFrames;
@@ -2101,8 +2142,25 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx, const std::strin
         }
     }
 
-    // 5. Write live colors and suit shader constants every frame
-    WriteColorsAndSuit(sel);
+    // 5. Write live colors and suit shader constants every frame - for the species actually on screen. During a
+    // species wait the selection already names the other species; its colours must not go onto this character.
+    if (!speciesDeferred) {
+        {
+            ArmoryLock lock(s_sceneMutex);
+            s_shownSelection = sel;
+            s_haveShownSelection = true;
+        }
+        WriteColorsAndSuit(sel);
+    } else {
+        ReachArmorySelection shown;
+        bool haveShown = false;
+        {
+            ArmoryLock lock(s_sceneMutex);
+            haveShown = s_haveShownSelection;
+            if (haveShown) shown = s_shownSelection;
+        }
+        if (haveShown) WriteColorsAndSuit(shown);
+    }
     }
 }
 
@@ -2221,6 +2279,18 @@ void ReachArmory::SetMenuMode(bool menuMode) {
         s_previewDirty.store(false);
         s_eliteRecordsSeen.store(false);
         s_lastFullRescanMs.store(0);
+        s_speciesDeferred.store(false);
+        s_speciesWaitStartMs = 0;
+        for (int sp = 0; sp < 2; ++sp) {
+            s_builtPairs[sp].clear();
+            s_builtLivePairs[sp].clear();
+            s_builtBase[sp] = 0;
+        }
+        s_recordRetriesLeft.store(kRecordRetryBudget);
+        {
+            ArmoryLock lock(s_sceneMutex);
+            s_haveShownSelection = false;
+        }
         {
             ArmoryLock lock(s_dataMutex);
             s_colorRecords.clear();
@@ -2253,6 +2323,7 @@ void ReachArmory::SetSelection(const ReachArmorySelection& sel) {
     {
         ArmoryLock lock(s_sceneMutex);
         const ReachArmorySelection& prev = s_selection;
+        if (prev.previewElite != sel.previewElite) s_speciesChangeMs.store(GetTickCount64());
         pieceChanged =
             prev.previewElite != sel.previewElite || prev.isFemale != sel.isFemale ||
             prev.helmet != sel.helmet || prev.chest != sel.chest ||
@@ -2341,14 +2412,13 @@ void ReachArmory::Tick() {
                 if (ScanGlobalsTable()) {
                     ScanColorRecords();
                     ScanEliteColorRecords();
-                    ScanSuitRecords();
                     ScanEliteTable();
                     bool hasRecords = false;
                     {
                         ArmoryLock lock(s_dataMutex);
                         const bool wantElite = GetSelection().previewElite;
                         hasRecords = wantElite ? !s_eliteColorRecords.empty()
-                                               : (!s_colorRecords.empty() && !s_suitRecords.empty());
+                                               : !s_colorRecords.empty();
                     }
                     if (hasRecords) break;
                     if (++recordRounds >= 2) {
@@ -2369,7 +2439,6 @@ void ReachArmory::Tick() {
                 std::this_thread::sleep_for(std::chrono::milliseconds(400));
                 ScanColorRecords();
                 ScanEliteColorRecords();
-                ScanSuitRecords();
                 ScanEliteTable();
             }
           } catch (const std::exception& e) {
@@ -2382,18 +2451,19 @@ void ReachArmory::Tick() {
     // Slow retry while an Armory scene is up and the shown species' colour records are still missing (the
     // safety net the menu scanner's endless loop used to provide). Every kRecordRetryIntervalMs, not every
     // 30 frames; the quick rescan itself limits full-memory scans.
-    if (s_globalsBase.load() != 0 && !s_scanning.load() && !s_quickScanning.load()) {
+    if (s_globalsBase.load() != 0 && !s_scanning.load() && !s_quickScanning.load() && !s_speciesDeferred.load()) {
         const int32_t idx = ResolveSceneIndex(GetTargetScene());
         const bool armoryShown = (idx >= 0x0A && idx <= 0x14 && idx != 0x0E);
         const bool wantElite = GetSelection().previewElite;
         bool missing = false;
         {
             ArmoryLock lock(s_dataMutex);
-            missing = wantElite ? s_eliteColorRecords.empty() : (s_colorRecords.empty() || s_suitRecords.empty());
+            missing = wantElite ? s_eliteColorRecords.empty() : s_colorRecords.empty();
         }
         const uint64_t now = GetTickCount64();
-        if (armoryShown && missing && now - s_lastRetryMs.load() >= kRecordRetryIntervalMs) {
+        if (armoryShown && missing && s_recordRetriesLeft.load() > 0 && now - s_lastRetryMs.load() >= kRecordRetryIntervalMs) {
             s_lastRetryMs.store(now);
+            s_recordRetriesLeft.fetch_sub(1);
             StartQuickRescan();
         }
     }
@@ -2409,7 +2479,17 @@ void ReachArmory::Tick() {
 
 void ReachArmory::NotifyEngineTick() {
     if (!s_menuMode.load() || s_globalsBase.load() == 0) return;
-    const ReachArmorySelection sel = GetSelection();
+    // During a species wait keep syncing the character on screen with its own selection, not the one it is waiting for.
+    ReachArmorySelection sel;
+    bool useShown = false;
+    if (s_speciesDeferred.load()) {
+        ArmoryLock lock(s_sceneMutex);
+        if (s_haveShownSelection) {
+            sel = s_shownSelection;
+            useShown = true;
+        }
+    }
+    if (!useShown) sel = GetSelection();
     const float visFloats[3] = {
         (sel.visor == "default" || sel.visor.empty()) ? 0.78f : sel.visorRgb[0],
         (sel.visor == "default" || sel.visor.empty()) ? 0.63f : sel.visorRgb[1],
@@ -2564,7 +2644,7 @@ void ReachArmory::SyncMatchLiveBipeds() {
             sel.previewElite,
             words.data(),
             sel.accentCustom ? sel.accentRgb.data() : nullptr,
-            sel.lightsCustom ? sel.lightsRgb.data() : nullptr,
+            nullptr,   // undersuit: never painted (see WriteColorsAndSuit)
             customVisor ? visFloats : nullptr);
     }
 
