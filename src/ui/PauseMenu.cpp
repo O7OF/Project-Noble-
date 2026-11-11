@@ -1,6 +1,7 @@
 #include "audio/VoiceChat.hpp"
 #include "../engine/DevCheats.hpp"
 #include "ForgeMenu.hpp"
+#include "FrontEndMenu.hpp"
 #include "SocialOverlay.hpp"
 #include "PauseMenu.hpp"
 #include "MenuSounds.hpp"
@@ -478,6 +479,14 @@ static char s_saveVariantName[64] = "My Forge Map";
 // is exactly what BlamEngine's parse_map_variant takes on the way in. Noble asks for the save with the engine's own
 // "save_map" command, waits for the new file, and copies it into data\map_variants so it appears in the maps menu
 // under the map it was built on.
+// Forge: save the map being edited as a map variant.
+//
+// The engine owns the map data; its Forge save writes a map variant into the player's profile
+// (<userdata>/<id>/saves/HaloReach/autosave/asq*.map) in the same BLF/"mvar" container MCC's .mvar files use, which
+// is exactly what BlamEngine's parse_map_variant takes on the way in. Noble asks for that save with the engine's own
+// "save_map" command, waits for the file on a background thread (waiting here froze the render thread for seconds),
+// and stores it as JSON: {"version","name","base_map","mode","data"} with the variant base64-encoded - the same idea
+// as Project Reclaimer's Halo 3 map files, so a saved map is one small readable file that can be shared.
 std::filesystem::path PauseMenu::SaveForgeMapVariant(const std::string& name) {
     namespace fs = std::filesystem;
     std::error_code ec;
@@ -494,78 +503,95 @@ std::filesystem::path PauseMenu::SaveForgeMapVariant(const std::string& name) {
         return {};
     }
 
-    // What is already there, so the file this save writes can be told apart from older ones.
     std::set<std::wstring> before;
     for (const auto& entry : fs::directory_iterator(autosaveDir, ec)) {
         if (entry.is_regular_file(ec)) before.insert(entry.path().filename().wstring());
     }
 
-    if (BlamEngine::Active()) {
-        NOBLE_INFO("PauseMenu: asking the engine to save the Forge map (save_map)");
-        BlamEngine::Active()->ExecuteCommand("save_map");
-    } else {
+    if (!BlamEngine::Active()) {
         NOBLE_WARN("PauseMenu: no engine instance; cannot issue save_map");
         return {};
     }
+    NOBLE_INFO("PauseMenu: asking the engine to save the Forge map (save_map)");
+    BlamEngine::Active()->ExecuteCommand("save_map");
 
-    // The save completes on the engine thread; give it a few seconds and take whatever new file appears.
-    fs::path written;
-    const ULONGLONG deadline = GetTickCount64() + 8000;
-    while (GetTickCount64() < deadline && written.empty()) {
-        Sleep(200);
-        for (const auto& entry : fs::directory_iterator(autosaveDir, ec)) {
-            if (!entry.is_regular_file(ec)) continue;
-            const std::wstring name = entry.path().filename().wstring();
-            if (before.count(name)) continue;
-            std::wstring ext = entry.path().extension().wstring();
-            for (wchar_t& c : ext) c = static_cast<wchar_t>(::towlower(c));
-            if (ext != L".map") continue;
-            const auto size = fs::file_size(entry.path(), ec);
-            if (size < 0x7329) continue;   // still being written (the engine leaves a .temp behind first)
-            written = entry.path();
-            break;
-        }
-    }
-    if (written.empty()) {
-        NOBLE_WARN("PauseMenu: the engine did not write a map variant in '{}' (save_map might need the Forge save UI)",
-                   autosaveDir.string());
-        return {};
-    }
-
-    // Copy it where the maps menu scans: data<user storage>map_variants, named after the moment it was saved.
-    const fs::path outDir = dataDir / "map_variants";
-    fs::create_directories(outDir, ec);
-    std::string safe = name;
+    std::string safe = name.empty() ? std::string("Forge Map") : name;
     for (char& c : safe) if (static_cast<unsigned char>(c) < 0x20 || std::strchr("\\/:*?\"<>|", c)) c = '_';
-    if (safe.empty()) safe = "Forge Map";
-    const fs::path out = outDir / (safe + ".mvar");
-    fs::copy_file(written, out, fs::copy_options::overwrite_existing, ec);
-    if (ec) {
-        NOBLE_WARN("PauseMenu: could not copy '{}' to '{}' ({})", written.string(), out.string(), ec.message());
-        return {};
-    }
-    // The name the player typed is the variant's title as the maps menu shows it: +0xC0, UTF-16, 64 characters.
-    {
-        std::vector<unsigned char> bytes;
-        {
-            std::ifstream in(out, std::ios::binary);
-            bytes.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+
+    // Off the render thread: poll for the engine's file, then write the JSON.
+    std::thread([autosaveDir, before, safe, dataDir]() {
+        std::error_code ec2;
+        std::filesystem::path written;
+        const ULONGLONG deadline = GetTickCount64() + 8000;
+        while (GetTickCount64() < deadline && written.empty()) {
+            Sleep(200);
+            for (const auto& entry : std::filesystem::directory_iterator(autosaveDir, ec2)) {
+                if (!entry.is_regular_file(ec2)) continue;
+                if (before.count(entry.path().filename().wstring())) continue;
+                std::wstring ext = entry.path().extension().wstring();
+                for (wchar_t& c : ext) c = static_cast<wchar_t>(::towlower(c));
+                if (ext != L".map") continue;
+                if (std::filesystem::file_size(entry.path(), ec2) < 0x7329) continue;
+                written = entry.path();
+                break;
+            }
         }
-        if (bytes.size() > 0xC0 + 128) {
+        if (written.empty()) {
+            NOBLE_WARN("PauseMenu: the engine wrote no map variant in '{}' (save_map needs the engine's own save UI; "
+                       "it leaves a zero-byte .temp behind)", autosaveDir.string());
+            return;
+        }
+
+        std::ifstream in(written, std::ios::binary);
+        std::vector<unsigned char> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        if (bytes.size() < 0x7329) {
+            NOBLE_WARN("PauseMenu: the engine's map variant '{}' is too short ({} bytes)", written.string(), bytes.size());
+            return;
+        }
+        // The name becomes the variant's title where the maps menu reads it (+0xC0, UTF-16, 64 characters).
+        {
             const std::wstring wide(safe.begin(), safe.end());
             std::memset(bytes.data() + 0xC0, 0, 128);
             for (size_t i = 0; i < wide.size() && i < 63; ++i) {
                 bytes[0xC0 + i * 2] = static_cast<unsigned char>(wide[i] & 0xFF);
                 bytes[0xC0 + i * 2 + 1] = static_cast<unsigned char>((wide[i] >> 8) & 0xFF);
             }
-            std::ofstream outFile(out, std::ios::binary | std::ios::trunc);
-            outFile.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
         }
-    }
-    NOBLE_INFO("PauseMenu: Forge map variant '{}' saved as '{}' (from '{}')", safe, out.string(), written.string());
-    return out;
-}
+        int32_t baseMapId = 0;
+        std::memcpy(&baseMapId, bytes.data() + 0x6C, sizeof(baseMapId));
 
+        // Base64 keeps the file plain JSON (no binary payload in it).
+        static const char* kAlphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        std::string encoded;
+        encoded.reserve((bytes.size() + 2) / 3 * 4);
+        for (size_t i = 0; i < bytes.size(); i += 3) {
+            const uint32_t b0 = bytes[i];
+            const uint32_t b1 = i + 1 < bytes.size() ? bytes[i + 1] : 0;
+            const uint32_t b2 = i + 2 < bytes.size() ? bytes[i + 2] : 0;
+            const uint32_t triple = (b0 << 16) | (b1 << 8) | b2;
+            encoded.push_back(kAlphabet[(triple >> 18) & 0x3F]);
+            encoded.push_back(kAlphabet[(triple >> 12) & 0x3F]);
+            encoded.push_back(i + 1 < bytes.size() ? kAlphabet[(triple >> 6) & 0x3F] : '=');
+            encoded.push_back(i + 2 < bytes.size() ? kAlphabet[triple & 0x3F] : '=');
+        }
+
+        const std::filesystem::path variants = dataDir / "map_variants";
+        std::filesystem::create_directories(variants, ec2);
+        const std::filesystem::path out = variants / (safe + ".json");
+        std::ofstream file(out, std::ios::binary | std::ios::trunc);
+        file << "{\n  \"version\": 1,\n  \"name\": \"" << safe << "\",\n  \"base_map_id\": " << baseMapId
+             << ",\n  \"mode\": \"forge\",\n  \"data\": \"" << encoded << "\"\n}\n";
+        file.close();
+        if (!file) {
+            NOBLE_WARN("PauseMenu: could not write '{}'", out.string());
+            return;
+        }
+        NOBLE_INFO("PauseMenu: Forge map variant '{}' saved to '{}' ({} bytes of variant, {} base64)", safe,
+                   out.string(), bytes.size(), encoded.size());
+        FrontEndMenu::InvalidateForgeMaps();
+    }).detach();
+    return std::filesystem::path("(saving)");
+}
 bool PauseMenu::IsOpen() { return s_open.load(); }
 
 void PauseMenu::Toggle() {

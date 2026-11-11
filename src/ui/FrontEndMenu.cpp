@@ -457,6 +457,57 @@ bool ReadForgeMap(const std::filesystem::path& path, ForgeMap& out) {
     return true;
 }
 
+// A map variant saved by Noble is JSON: {"version","name","base_map_id","mode","data":"<base64>"} where data is the
+// variant in the engine's own BLF/"mvar" container. Unpack it into <stem>.mvar next to the JSON (the form the engine
+// mounts through "-mvar"), reusing the file when it is already current.
+bool UnpackJsonForgeMap(const std::filesystem::path& jsonPath, std::filesystem::path& outMvar) {
+    std::error_code ec;
+    std::ifstream file(jsonPath, std::ios::binary);
+    if (!file) return false;
+    nlohmann::json j;
+    try {
+        j = nlohmann::json::parse(file);
+    } catch (...) {
+        return false;
+    }
+    const std::string encoded = j.value("data", std::string());
+    if (encoded.empty()) return false;
+
+    static const auto value = [](char c) -> int {
+        if (c >= 'A' && c <= 'Z') return c - 'A';
+        if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+        if (c >= '0' && c <= '9') return c - '0' + 52;
+        if (c == '+') return 62;
+        if (c == '/') return 63;
+        return -1;
+    };
+    std::vector<unsigned char> bytes;
+    bytes.reserve(encoded.size() / 4 * 3 + 3);
+    uint32_t buffer = 0;
+    int bits = 0;
+    for (char c : encoded) {
+        const int v = value(c);
+        if (v < 0) continue;
+        buffer = (buffer << 6) | static_cast<uint32_t>(v);
+        bits += 6;
+        if (bits >= 8) {
+            bits -= 8;
+            bytes.push_back(static_cast<unsigned char>((buffer >> bits) & 0xFF));
+        }
+    }
+    if (bytes.size() < 0x7329) return false;
+
+    outMvar = jsonPath;
+    outMvar.replace_extension(L".mvar");
+    bool current = std::filesystem::exists(outMvar, ec) &&
+                   std::filesystem::file_size(outMvar, ec) == bytes.size() &&
+                   std::filesystem::last_write_time(outMvar, ec) >= std::filesystem::last_write_time(jsonPath, ec);
+    if (current) return true;
+    std::ofstream out(outMvar, std::ios::binary | std::ios::trunc);
+    out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+    return static_cast<bool>(out);
+}
+
 std::vector<ForgeMap> ScanForgeMaps() {
     std::vector<ForgeMap> list;
     std::vector<std::filesystem::path> folders = { VFS::GetUserStoragePath() / "map_variants" };
@@ -477,11 +528,25 @@ std::vector<ForgeMap> ScanForgeMaps() {
     int skipped = 0;
     for (const std::filesystem::path& folder : folders) {
         for (const auto& entry : std::filesystem::directory_iterator(folder, ec)) {
-            if (!entry.is_regular_file(ec) || Lower(entry.path().extension().wstring()) != L".mvar") continue;
-            if (!seen.insert(Lower(entry.path().filename().wstring())).second) continue;
+            if (!entry.is_regular_file(ec)) continue;
+            const std::wstring ext = Lower(entry.path().extension().wstring());
+            if (ext != L".mvar" && ext != L".json") continue;
+            if (!seen.insert(Lower(entry.path().stem().wstring())).second) continue;
+            std::filesystem::path variantFile = entry.path();
+            // A saved map variant is JSON (base64 payload + name + base map): unpack it next to itself as the .mvar the
+            // engine mounts, and read the metadata from that.
+            if (ext == L".json") {
+                std::filesystem::path unpacked;
+                if (!UnpackJsonForgeMap(entry.path(), unpacked)) { ++skipped; continue; }
+                variantFile = unpacked;
+            }
             ForgeMap map;
-            if (ReadForgeMap(entry.path(), map)) list.push_back(std::move(map));
-            else ++skipped;
+            if (ReadForgeMap(variantFile, map)) {
+                map.path = variantFile;   // the engine gets the .mvar; the JSON stays the source of truth
+                list.push_back(std::move(map));
+            } else {
+                ++skipped;
+            }
         }
         ec.clear();
     }
@@ -2775,6 +2840,7 @@ OverlayContext& GetOverlayCtx() {
     static OverlayContext s_ctx;
     return s_ctx;
 }
+
 
 // Rescans Workshop + data\mods and rebuilds the per-mode lists the setup screens use. Called at menu start
 // and again after the Download & Join prompt installs the lobby's mod.
@@ -7360,6 +7426,13 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
 }
 
 } // namespace
+// A Forge map saved during a match is not in the list yet: the scan is cached, so drop it.
+void FrontEndMenu::InvalidateForgeMaps() {
+    OverlayContext& ctx = GetOverlayCtx();
+    ctx.forgeMapsScanned = false;
+    ctx.forgeMaps.clear();
+}
+
 
 std::string FrontEndMenu::StockBlurb(const std::string& scenario) {
     for (const MenuMap& m : kMissions) if (scenario == m.scenario) return m.blurb;

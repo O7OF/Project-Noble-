@@ -43,6 +43,9 @@ public:
     // The one-line blurb the menu shows for a stock map or mission (e.g. "m20"); empty when it has none.
     static std::string StockBlurb(const std::string& scenario);
 
+    // The Forge map list is scanned once; a map saved during a match must show up without restarting Noble.
+    static void InvalidateForgeMaps();
+
     // Initializes the front-end menu state for in-engine overlay rendering over mainmenu_all.map.
     static void Initialize(const std::filesystem::path& reachDir);
 
