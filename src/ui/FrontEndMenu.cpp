@@ -5814,6 +5814,7 @@ void ContainerMatchEnded(OverlayContext& ctx, DWORD exitCode) {
         NOBLE_ERROR("FrontEndMenu: the match process ended with the Windows error status 0x{:08X}", exitCode);
     }
     NOBLE_INFO("FrontEndMenu: container child match finished (exit code {}), restoring menu", exitCode);
+    FrontEndMenu::InvalidateForgeMaps();   // a variant saved in Forge must show up without restarting Noble
     SessionManager::Get().Initialize();
     MasterServerClient::Get().SetUrl(Settings::Get().Snapshot().masterServerUrl);
 
@@ -5934,6 +5935,8 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         if (static_cast<int>(st.screen) != s_lastScreen) {
             NOBLE_INFO("FrontEndMenu: screen {} -> {}", s_lastScreen, static_cast<int>(st.screen));
             s_lastScreen = static_cast<int>(st.screen);
+            // Variants saved in a match (or another menu) must be visible the moment the maps screen is entered.
+            FrontEndMenu::InvalidateForgeMaps();
         }
     }
     Ui ui;

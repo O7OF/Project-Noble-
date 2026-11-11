@@ -209,6 +209,28 @@ void* CallGetVariantSource(HMODULE module) {
     return source;
 }
 
+bool CallVariantInit(HMODULE module, void* variant) {
+    __try {
+        typedef void (*InitFn)(void*);
+        auto pInit = reinterpret_cast<InitFn>(reinterpret_cast<uintptr_t>(module) + 0x6BFF8);
+        pInit(variant);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+    return true;
+}
+
+bool CallVariantCopy(HMODULE module, void* dst, void* src, long long mode) {
+    __try {
+        typedef void (*CopyFn)(void*, void*, long long, void*);
+        auto pCopy = reinterpret_cast<CopyFn>(reinterpret_cast<uintptr_t>(module) + 0x6C290);
+        pCopy(dst, src, mode, nullptr);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+    return true;
+}
+
 bool CallMapVariantSerialize(HMODULE module, void* out, void* variant) {
     __try {
         typedef void (*SerializeFn)(void*, void*);
@@ -255,9 +277,16 @@ bool BlamEngine::TrySerializeLiveMapVariant(std::vector<uint8_t>& outChunk) {
     if (!ReadEngineState(tlsBlock, engineState) || !engineState) return false;
 
     void* variant = static_cast<uint8_t*>(engineState) + 0x110F0;
+    // What the engine's own save does before serializing: initialise a map-variant struct and copy the live one into
+    // it. The copy is where the session state is committed, so serializing the raw pointer misses recent edits.
+    std::vector<uint8_t> committed(0x20000, 0);
+    void* source = variant;
+    if (CallVariantInit(m_hModule, committed.data()) && CallVariantCopy(m_hModule, committed.data(), variant, 1)) {
+        source = committed.data();
+    }
     std::vector<uint8_t> chunk(0x7028, 0);
-    if (!CallMapVariantSerialize(m_hModule, chunk.data(), variant)) {
-        NOBLE_WARN("BlamEngine: serializing the live variant at {:p} faulted", variant);
+    if (!CallMapVariantSerialize(m_hModule, chunk.data(), source)) {
+        NOBLE_WARN("BlamEngine: serializing the live variant at {:p} faulted", source);
         return false;
     }
 
