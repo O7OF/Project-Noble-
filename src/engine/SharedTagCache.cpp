@@ -559,31 +559,22 @@ void SharedTagCache::DumpScenarioTable(uint8_t* table, const char* when) {
             if (!readMem(header + 0x00, &extraBases[1], sizeof(uintptr_t))) extraBases[1] = 0;
             if (!readMem(header + 0x08, &extraBases[2], sizeof(uintptr_t))) extraBases[2] = 0;
         }
-        for (int b = 0; b < 3; ++b) {
-            if (!bases[b]) continue;
-            for (int o = 0; o < 4; ++o) {
-                const uintptr_t ptr = bases[b] + offsets[o];
-                uint8_t bytes[0x20] = {};
-                if (!readMem(ptr, bytes, sizeof(bytes))) continue;
-                char hex[0x20 * 3 + 8] = {};
-                for (int k = 0; k < 0x20; ++k) std::snprintf(hex + k * 3, 4, " %02X", bytes[k]);
-                char line[400];
-                std::snprintf(line, sizeof(line), "  base[%d]+off[%d] ptr=0x%llX:%s", b, o,
-                              static_cast<unsigned long long>(ptr), hex);
-                NOBLE_WARN("{}", line);
+        // The working formula on both stock maps is (packed & 0x07FFFFFF) << 2 added to the tag data base. Dump the
+        // first 0x100 bytes from it so the scenario struct can be compared between map types.
+        if (bases[0]) {
+            const uintptr_t ptr = bases[0] + offsets[2];
+            uint8_t bytes[0x100] = {};
+            if (readMem(ptr, bytes, sizeof(bytes))) {
+                for (int row = 0; row < 4; ++row) {
+                    char hex[0x40 * 3 + 8] = {};
+                    for (int k = 0; k < 0x40; ++k) std::snprintf(hex + k * 3, 4, " %02X", bytes[row * 0x40 + k]);
+                    char line[512];
+                    std::snprintf(line, sizeof(line), "  SCEN[%02X]%s", row * 0x40, hex);
+                    NOBLE_WARN("{}", line);
+                }
+            } else {
+                NOBLE_WARN("  SCEN: read faulted at 0x{:X}", ptr);
             }
-        }
-        for (int b = 0; b < 3; ++b) {
-            if (!extraBases[b]) continue;
-            const uintptr_t ptr = extraBases[b] + offsets[1];
-            uint8_t bytes[0x20] = {};
-            if (!readMem(ptr, bytes, sizeof(bytes))) continue;
-            char hex[0x20 * 3 + 8] = {};
-            for (int k = 0; k < 0x20; ++k) std::snprintf(hex + k * 3, 4, " %02X", bytes[k]);
-            char line[400];
-            std::snprintf(line, sizeof(line), "  headerBase[%d]=0x%llX ptr=0x%llX:%s", b,
-                          static_cast<unsigned long long>(extraBases[b]), static_cast<unsigned long long>(ptr), hex);
-            NOBLE_WARN("{}", line);
         }
         break;
     }
