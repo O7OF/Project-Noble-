@@ -15,6 +15,57 @@ MCC install is modified, and no RR code or data is redistributed. RR is used onl
 
 --
 
+## O7OF Changes for game version patch 0.19.37 (2026-11-09, 09:00 ET) - Project Noble v0.19.37 Release
+
+**All of this session's work, in one place.** Release notes: `release-notes/v0.19.37.md`.
+
+### Single-window (container) launcher
+- `Window::IsForeground(hwnd)` / `ActiveHwnd()` / `RequestFocus()` added (`host/Window.*`): a `WS_CHILD` match window is
+  "in front" whenever the launcher is; `AttachThreadInput` + `SetFocus` move real keyboard focus into the match, 1 Hz watchdog.
+  Replaced every `GetForegroundWindow() == hwnd` and process-id focus test (ReachHost present hook + `InputFocusedWindow`,
+  PauseMenu skip/pointer, FrontEndMenu mouse feed + mute-in-background, VoiceChat PTT, SocialOverlay, UiPad).
+- `FrontEndMenu`: menu overlay was never re-opened after a match (`ctx.closed`); `ContainerMatchEnded()` restores it, hands the
+  keyboard back and publishes the credits/roster state. `StartContainerChild()` is the one match launcher.
+- `Relaunch::RequestContainerRelaunch/TakeContainerRelaunch/ClearContainerRelaunch`: PLAY AGAIN / NEXT MISSION hand the successor's
+  arguments to the launcher instead of spawning an unsupervised grandchild; `HandOff` no longer waits 30 s for a top-level window.
+- Hosted children skip exclusive full screen and never restyle themselves (`ApplyWindowSettings` early-out).
+
+### Crashes
+- `UiArt` mutex is recursive (launch of a multiplayer/custom map died with 0xE06D7363 from `LoadingBackground → MapPreview →
+  PackImage` re-locking it).
+- Armory rank-locked visor reset loop stopped (fed ~60 profile applies/second into the NVIDIA shader compiler; 0xC0000005 in
+  `nvgpucomp64.dll`). The fallback is stored in `m_visorSelection` too and an already-fallen-back row is skipped.
+- Armory biped rebuilds serialised (`kRebuildQuietFrames`, `s_rebuildReadyFrame`, REMADE gate) — spam-buying helmets crashed it.
+- `std::set_terminate` handler logs `what()` + a 24-frame RVA stack: unhandled C++ exceptions fail-fast in ucrtbase and the SEH
+  handler never sees them.
+
+### Armory
+- No camera modes: full body for Species/Body/Elite, the map's preset close-up per slot; rotation re-written every frame so it
+  works in the close-ups; drag + Q/E everywhere.
+- `ArmoryStage`: whole-body zoom 1.20 → 1.12 and centre 0.565 → 0.60 of screen height (helmet clears the player card).
+- `CR: <balance>` next to the player card (`NumberWithCommas`).
+- Tried-on pieces are re-asserted while active (`ArmorCustomizer::Render`) — the "preview un-equips itself" bug.
+- `ReachArmorySelection` gained `primaryCustom/secondaryCustom/accentCustom`; the resolved selection is persisted to
+  `data\userdata\armory-selection.json` by the menu and loaded by a match process (`ReachArmory::Initialize`).
+- Campaign keeps stock Spartan materials (no map-wide recolour of AI Spartans); the colour sync only touches the local biped and
+  only for wheel colours, so other players keep their own palette colours and visor.
+- GRD/AKIS: Eclipse rank, 777,777 cR, attachments 7,777 cR; developer-only gating reverted.
+
+### Pre-game lobby (Custom Games + Forge)
+- New `ui/TeamColors.hpp`: Reach's eight teams (Red, Blue, Green, Orange, Purple, Gold, Brown, Pink) shared by lobby dividers
+  and player rows.
+- Roster is one list of entries (team header / player / OPEN) with team-coloured divider bars — shown even alone — replacing the
+  fixed red/blue columns. Paging, wheel scroll, selection and the player card still work.
+- `MenuState::lobbyTeamCount` (2..8), TEAM COUNT + CHANGE TEAM options (Custom Game and Forge), "SWITCH TO <TEAM>" on the card;
+  `AssignLobbyTeams` deals across N teams; `RefreshLobbyMode` now runs for every lobby mode (Forge had no teams at all).
+- Test hooks: `-lobby-demo-teams N`.
+
+### Release
+- Version 0.19.36 → **0.19.37** (`CMakeLists.txt`, `Version.hpp`, `BuildIdentity.hpp`, `noble.rc`); release notes file; packaged
+  `dist/Project-Noble-v0.19.37-win64.zip`.
+
+---
+
 ## 0. Pick up here (2026-11-08, 07:10 ET) - Project Noble v0.19.24 Release - Native Forge Palette Replica & Direct Simulation Object Creation
 
 ### Summary of Changes in v0.19.24

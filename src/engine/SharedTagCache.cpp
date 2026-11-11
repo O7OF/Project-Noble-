@@ -5,6 +5,7 @@
 #include <psapi.h>
 #include <algorithm>
 #include <fstream>
+#include <set>
 
 namespace noble {
 
@@ -69,6 +70,22 @@ void* SharedTagCache::ResolveTag([[maybe_unused]] uint32_t groupTag, uint32_t da
     return nullptr;
 }
 
+static std::string s_avoidMapStem;   // scenario the running launch is about to load
+
+void SharedTagCache::SetAvoidMap(const std::string& scenarioStem) {
+    s_avoidMapStem.clear();
+    for (const char c : scenarioStem) s_avoidMapStem.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+    if (!s_avoidMapStem.empty()) NOBLE_INFO("SharedTagCache: donor map will avoid '{}'", s_avoidMapStem);
+}
+
+// True when this file is the scenario being launched (m20.map when ONI: Sword Base is loading).
+static bool IsAvoidedDonor(const std::filesystem::path& candidate) {
+    if (s_avoidMapStem.empty()) return false;
+    std::string stem = candidate.stem().string();
+    for (char& c : stem) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return stem == s_avoidMapStem;
+}
+
 bool SharedTagCache::DiscoverDonorMap(const std::filesystem::path& dataDir, [[maybe_unused]] const std::filesystem::path& workshopDir, const std::filesystem::path& reachDir) {
     std::vector<std::filesystem::path> searchCandidates;
 
@@ -89,6 +106,10 @@ bool SharedTagCache::DiscoverDonorMap(const std::filesystem::path& dataDir, [[ma
 
     for (const auto& candidate : searchCandidates) {
         std::error_code ec;
+        if (IsAvoidedDonor(candidate)) {
+            NOBLE_INFO("SharedTagCache: skipping donor candidate '{}' - it is the map being launched", candidate.string());
+            continue;
+        }
         if (std::filesystem::is_regular_file(candidate, ec)) {
             s_donorMapPath = std::filesystem::absolute(candidate, ec);
             NOBLE_INFO("SharedTagCache: Discovered donor AI map at '{}'", s_donorMapPath.string());
@@ -102,7 +123,7 @@ bool SharedTagCache::DiscoverDonorMap(const std::filesystem::path& dataDir, [[ma
         for (const auto& entry : std::filesystem::recursive_directory_iterator(workshopDir, ec)) {
             if (entry.is_regular_file()) {
                 std::string filename = entry.path().filename().string();
-                if (filename == "m20.map") {
+                if (filename == "m20.map" && !IsAvoidedDonor(entry.path())) {
                     s_donorMapPath = std::filesystem::absolute(entry.path(), ec);
                     NOBLE_INFO("SharedTagCache: Discovered donor AI map via scan at '{}'", s_donorMapPath.string());
                     return true;
@@ -398,9 +419,32 @@ bool SharedTagCache::InjectScenarioPalette(uint8_t* activeTagTableMemory) {
 
     // TagTable helper accesses tag count at +0x3FFF8 and entries at +i*8.
     int32_t tagCount = *reinterpret_cast<const int32_t*>(activeTagTableMemory + 0x3FFF8);
-    if (tagCount <= 0 || tagCount > 0x8000) return false;
+    NOBLE_INFO("SharedTagCache: palette step on tag table 0x{:X}: {} tag(s)", reinterpret_cast<uintptr_t>(activeTagTableMemory), tagCount);
+    if (tagCount <= 0 || tagCount > 0x8000) {
+        NOBLE_WARN("SharedTagCache: palette step skipped (tag count {} out of range)", tagCount);
+        return false;
+    }
 
     NOBLE_INFO("SharedTagCache: Active map has {} tags in memory; cataloging active tags...", tagCount);
+
+    // Diagnostic: which tag groups this map actually carries, as four-character codes. It answers questions like
+    // "does this map have multiplayer_object_type_list (the Forge palette's object list)?" without a tag parser.
+    {
+        std::set<std::string> groups;
+        for (int32_t i = 0; i < tagCount; ++i) {
+            const int16_t g = *reinterpret_cast<const int16_t*>(activeTagTableMemory + i * 8);
+            if (g < 0) continue;
+            const uint32_t magic = *reinterpret_cast<const uint32_t*>(activeTagTableMemory + 0x3FFFC + g * 16);
+            char code[5] = { static_cast<char>(magic & 0xFF), static_cast<char>((magic >> 8) & 0xFF),
+                             static_cast<char>((magic >> 16) & 0xFF), static_cast<char>((magic >> 24) & 0xFF), 0 };
+            bool printable = true;
+            for (int k = 0; k < 4; ++k) if (code[k] < 0x20 || code[k] > 0x7E) { printable = false; break; }
+            if (printable) groups.insert(code);
+        }
+        std::string list;
+        for (const std::string& g : groups) { if (!list.empty()) list += ' '; list += g; }
+        NOBLE_INFO("SharedTagCache: {} tag group(s) in this map: {}", groups.size(), list);
+    }
 
     // Map common items from the active map tag table into s_tagPathToDatum
     for (int32_t i = 0; i < tagCount; ++i) {
@@ -442,6 +486,11 @@ bool SharedTagCache::InjectScenarioPalette(uint8_t* activeTagTableMemory) {
 static std::mutex s_spawnMutex;
 static noble::SharedTagCache::SpawnRequest s_pendingSpawn;
 static std::atomic<int> s_lastSpawnStatus{0};
+static noble::SharedTagCache::SpawnForwardFn s_spawnForwarder = nullptr;
+
+void SharedTagCache::SetSpawnForwarder(SpawnForwardFn fn) {
+    s_spawnForwarder = fn;
+}
 
 void SharedTagCache::QueueSpawn(uint32_t datumIndex, const std::string& tagPath) {
     std::lock_guard<std::mutex> lock(s_spawnMutex);
@@ -520,6 +569,14 @@ bool SharedTagCache::ProcessPendingSpawn() {
         return false;
     }
 
+    // In an active multiplayer match, only the host should execute simulation spawns.
+    // If a forwarder callback is registered and accepts the request (e.g. forwarding to host),
+    // skip local execution so the host spawns authoritatively and replicates over the wire.
+    if (s_spawnForwarder && s_spawnForwarder(req.datumIndex, req.tagPath)) {
+        s_lastSpawnStatus.store(1);
+        return true;
+    }
+
     NOBLE_INFO("SharedTagCache: Processing simulation spawn for '{}' (datum: 0x{:X})", req.tagPath, req.datumIndex);
 
     uint32_t datum = req.datumIndex;
@@ -579,20 +636,22 @@ bool SharedTagCache::ProcessPendingSpawn() {
     params.posZ = spawnPos[2];
     params.scale = 1.0f;
 
-    void* pCreate = reinterpret_cast<void*>(s_baseAddress + 0x7311B8);
     int64_t result = -1;
-    if (pCreate) {
-        result = SafeCallObjectCreate(pCreate, &params);
-        NOBLE_INFO("SharedTagCache: Simulation object_create_from_params returned 0x{:X}", result);
-    }
 
-    // Also call Forge spawn routine at 0x692C5C to attach into player's Forge beam
+    // Prefer Forge spawn routine at 0x692C5C to attach directly into player's Forge beam
     void* pSpawn = reinterpret_cast<void*>(s_baseAddress + 0x692C5C);
     if (pSpawn) {
-        int64_t forgeResult = SafeCallForgeSpawn(pSpawn, datum);
-        NOBLE_INFO("SharedTagCache: Simulation forge_spawn_object returned 0x{:X}", forgeResult);
-        if (result < 0 && forgeResult >= 0) {
-            result = forgeResult;
+        result = SafeCallForgeSpawn(pSpawn, datum);
+        NOBLE_INFO("SharedTagCache: Simulation forge_spawn_object returned 0x{:X}", result);
+    }
+
+    // Only if forge_spawn_object failed or is not available (e.g. Campaign/Custom Games), fall back to object_create_from_params.
+    // Crucial: NEVER call both back-to-back, which previously spawned a duplicate/cloned object!
+    if (result < 0) {
+        void* pCreate = reinterpret_cast<void*>(s_baseAddress + 0x7311B8);
+        if (pCreate) {
+            result = SafeCallObjectCreate(pCreate, &params);
+            NOBLE_INFO("SharedTagCache: Simulation object_create_from_params fallback returned 0x{:X}", result);
         }
     }
 

@@ -103,6 +103,7 @@ public:
 
     bool LoadProfile(const std::filesystem::path& path);
     bool SaveProfile(const std::filesystem::path& path);
+    void SetServiceTag(const std::string& tag);
     void SetPreferredSpecies(PlayerSpecies species);
     PlayerSpecies GetPreferredSpecies() const { return m_profile.species; }
 
@@ -111,7 +112,6 @@ public:
     // Puts a saved nameplate back to the first plate this build may offer when the saved one was
     // retired or is a developer entitlement being loaded by a release build.
     void ValidateNameplate();
-    int GetCameraMode() const { return m_cameraMode; }
     // True while the engine camera is the whole-body view (Armory/Full Body, or the default close-up
     // mode on the Species/Body rows). The stage enlarges that view; per-slot close-ups stay as they are.
     bool IsFullBodyCamera() const;
@@ -138,10 +138,8 @@ private:
     bool m_dirty = false;
     mutable bool m_syncedInitial = false;
 
-    // 0 = Standard Armory 3/4 view ("armory"), 1 = Full Body ("c_full_spartan"), 2 = close-up of the slot being edited
-    // ("c_helmet", ...; default, Armory v2). The mouse wheel over the model switches between them.
-    int m_cameraMode = 2;
-    std::string m_focusScene = "c_full_spartan";   // close-up scene for the focused slot
+    // Camera scene for the focused slot ("c_helmet", "c_chest", ...; whole body for Species/Body).
+    std::string m_focusScene = "c_full_spartan";
     bool m_pickerScrollToEquipped = true;
 
     std::string m_spartanObjError, m_eliteObjError;

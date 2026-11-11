@@ -58,6 +58,12 @@ struct ReachArmorySelection {
     std::array<float, 3> accentRgb = { 0.471f, 0.788f, 0.808f };   // third/detail colour (Cyan)
     std::array<float, 3> lightsRgb = { 0.106f, 0.839f, 0.529f };   // 4th slot: lights / illumination
     std::array<float, 3> visorRgb = { 0.69f, 0.25f, 0.02f };
+    // True when the colour was picked on the wheel instead of from Reach's 30-colour palette. Only those
+    // colours have to be forced onto the game (see SyncMatchLiveBipeds); palette colours travel in the
+    // player's appearance record and the engine already renders every player's own choice.
+    bool primaryCustom = false;
+    bool secondaryCustom = false;
+    bool accentCustom = false;
     bool lightsCustom = false;
 };
 
@@ -84,6 +90,7 @@ public:
     // Called every frame on the engine render thread inside HostSlot1_FrameTick.
     static void Tick();
     static void NotifyEngineTick();
+    static void SyncMatchLiveBipeds();
 
     // True once the Armory map's HS GLOBALS table is active.
     static bool IsSceneReady();

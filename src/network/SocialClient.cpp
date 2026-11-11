@@ -3,6 +3,7 @@
 #include "common/Logger.hpp"
 #include "common/Settings.hpp"
 #include "common/BuildIdentity.hpp"
+#include "common/DeviceIdentity.hpp"
 
 #include <windows.h>
 #include <winhttp.h>
@@ -127,6 +128,26 @@ static std::filesystem::path FriendsFilePath() {
     return std::filesystem::path(exe).parent_path() / "data" / "userdata" / "friends.json";
 }
 
+void SocialClient::SaveFriendsLocked() {
+    std::error_code ec;
+    auto path = FriendsFilePath();
+    std::filesystem::create_directories(path.parent_path(), ec);
+    std::ofstream file(path, std::ios::trunc);
+    if (file) {
+        nlohmann::json arr = nlohmann::json::array();
+        for (const auto& e : m_friends) {
+            nlohmann::json item;
+            item["username"] = e.username;
+            item["status"] = e.status;
+            item["dir"] = e.direction;
+            item["endpoint"] = e.endpoint;
+            arr.push_back(item);
+        }
+        file << arr.dump(2);
+    }
+    DeviceIdentityStore::MirrorSaveFile("userdata/friends.json");
+}
+
 SocialClient::~SocialClient() {
     Shutdown();
 }
@@ -134,6 +155,9 @@ SocialClient::~SocialClient() {
 void SocialClient::Initialize() {
     if (m_running) return;
     m_running = true;
+
+    // Migrate friends.json if a newer file exists in AppData or userdata
+    DeviceIdentityStore::MigrateNewestFile("userdata/friends.json");
 
     // Load locally persisted friends
     {
@@ -199,27 +223,7 @@ void SocialClient::AddFriendDirect(const std::string& nameOrEndpoint) {
             }
         }
         m_friends.push_back(f);
-    }
-
-    // Save locally
-    {
-        std::error_code ec;
-        auto path = FriendsFilePath();
-        std::filesystem::create_directories(path.parent_path(), ec);
-        std::ofstream file(path, std::ios::trunc);
-        if (file) {
-            nlohmann::json arr = nlohmann::json::array();
-            std::lock_guard<std::mutex> lock(m_mutex);
-            for (const auto& e : m_friends) {
-                nlohmann::json item;
-                item["username"] = e.username;
-                item["status"] = e.status;
-                item["dir"] = e.direction;
-                item["endpoint"] = e.endpoint;
-                arr.push_back(item);
-            }
-            file << arr.dump(2);
-        }
+        SaveFriendsLocked();
     }
 
     SetStatusMessage("Added friend '" + clean + "' to your friends list");
@@ -298,9 +302,26 @@ void SocialClient::RefreshFriendsAsync() {
                         }
                     }
                     std::lock_guard<std::mutex> lock(m_mutex);
-                    m_friends = std::move(accepted);
+                    // Preserve all locally added friends when syncing from backend
+                    std::vector<FriendEntry> merged = std::move(accepted);
+                    for (const auto& local : m_friends) {
+                        if (local.direction == "local") {
+                            bool alreadyInMerged = false;
+                            for (const auto& m : merged) {
+                                if (_stricmp(m.username.c_str(), local.username.c_str()) == 0) {
+                                    alreadyInMerged = true;
+                                    break;
+                                }
+                            }
+                            if (!alreadyInMerged) {
+                                merged.push_back(local);
+                            }
+                        }
+                    }
+                    m_friends = std::move(merged);
                     m_incomingRequests = std::move(incoming);
                     m_outgoingRequests = std::move(outgoing);
+                    SaveFriendsLocked();
                 }
             } catch (...) {}
         }
@@ -432,32 +453,13 @@ void SocialClient::AcceptFriendRequestAsync(const std::string& senderUsername, s
 }
 
 void SocialClient::RemoveFriendAsync(const std::string& targetUsername, std::function<void(bool ok, const std::string& message)> callback) {
-    // Remove locally first
+    // Remove locally first and persist immediately
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         m_friends.erase(std::remove_if(m_friends.begin(), m_friends.end(), [&](const FriendEntry& e) {
             return _stricmp(e.username.c_str(), targetUsername.c_str()) == 0;
         }), m_friends.end());
-    }
-
-    // Save locally
-    {
-        std::error_code ec;
-        auto path = FriendsFilePath();
-        std::ofstream file(path, std::ios::trunc);
-        if (file) {
-            nlohmann::json arr = nlohmann::json::array();
-            std::lock_guard<std::mutex> lock(m_mutex);
-            for (const auto& e : m_friends) {
-                nlohmann::json item;
-                item["username"] = e.username;
-                item["status"] = e.status;
-                item["dir"] = e.direction;
-                item["endpoint"] = e.endpoint;
-                arr.push_back(item);
-            }
-            file << arr.dump(2);
-        }
+        SaveFriendsLocked();
     }
 
     const int userId = AuthClient::Get().GetUserId();

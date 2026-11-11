@@ -36,9 +36,88 @@ bool SecondaryMonitor(MONITORINFO& out) {
     out = info;
     return true;
 }
+// Posted by RequestFocus(): the window's own thread takes the keyboard focus back from the container
+// window it is hosted in (see EnsureContainerFocus).
+constexpr UINT kMsgEnsureFocus = WM_APP + 0x4F;
+
+// Container window mode: this process's window is a WS_CHILD of the launcher's top-level window instead
+// of a top-level window of its own. Set once, in Create().
+std::atomic<bool> s_containerMode{false};
+
+// The top-level window at the root of hwnd's parent chain (hwnd itself for an ordinary window).
+HWND RootWindowOf(HWND hwnd) { return hwnd ? GetAncestor(hwnd, GA_ROOT) : nullptr; }
 }
 
 Window* Window::Active() { return s_activeWindow; }
+
+HWND Window::ActiveHwnd() { return s_activeHwnd.load(); }
+
+bool Window::IsForeground(HWND hwnd) {
+    if (!hwnd) return false;
+    const HWND foreground = GetForegroundWindow();
+    if (!foreground) return false;
+    if (foreground == hwnd) return true;
+    // Container window mode: the match renders into a WS_CHILD window inside the launcher's top-level
+    // window, and Windows only ever reports a top-level window as the foreground one. That child is still
+    // "in front" whenever the launcher is, so accept any foreground window it is a descendant of. IsChild
+    // walks the window tree, which is shared by every process on the desktop (mouse clicks reach the child
+    // by position, and the launcher forwards nothing), so this is exactly the container case.
+    return IsChild(foreground, hwnd) != FALSE;
+}
+
+void Window::RequestFocus() {
+    const HWND hwnd = s_activeHwnd.load();
+    if (hwnd) PostMessageW(hwnd, kMsgEnsureFocus, 0, 0);
+}
+
+void Window::AttachContainerInput() {
+    if (m_containerInputAttached || !m_hwnd || !m_containerParentHwnd) return;
+    m_containerInputAttached = true;
+    const DWORD ownThread = GetCurrentThreadId();
+    const DWORD containerThread = GetWindowThreadProcessId(RootWindowOf(m_containerParentHwnd), nullptr);
+    if (containerThread == 0 || containerThread == ownThread) return;
+    // A thread can only give the focus to a window on its own input queue, and the window Windows makes
+    // foreground - the launcher's - belongs to the launcher's thread. Joining the two queues lets this child
+    // be the focused window of the shared queue, so keys, the mouse wheel and cursor confinement follow it
+    // again, exactly as they did when a match owned a top-level window. The foreground window stays the
+    // launcher, which is why focus tests use IsForeground() and not GetForegroundWindow().
+    if (AttachThreadInput(ownThread, containerThread, TRUE)) {
+        NOBLE_INFO("Win32 container child window: input queue attached to the launcher (threads {} and {})",
+                   ownThread, containerThread);
+    } else {
+        m_containerInputAttached = false;   // retried by the next EnsureContainerFocus
+        NOBLE_WARN("Win32 container child window: AttachThreadInput to the launcher failed (error {}); "
+                   "keyboard focus stays with the launcher", GetLastError());
+    }
+}
+
+void Window::EnsureContainerFocus() {
+    if (!IsForeground(m_hwnd)) return;   // the user is in another app: never steal the focus
+    AttachContainerInput();
+    if (GetFocus() == m_hwnd) return;
+    SetFocus(m_hwnd);
+    static ULONGLONG s_lastLog = 0;   // the focus can be lost and retaken repeatedly: log at most every 5 s
+    if (GetTickCount64() < s_lastLog + 5000) return;
+    s_lastLog = GetTickCount64();
+    if (GetFocus() == m_hwnd) {
+        NOBLE_INFO("Win32 container child window: keyboard focus taken from the launcher");
+    } else {
+        NOBLE_WARN("Win32 container child window: SetFocus failed (error {}); input is still polled directly",
+                   GetLastError());
+    }
+}
+
+void Window::DetachContainerInput() {
+    if (!m_containerInputAttached) return;
+    m_containerInputAttached = false;
+    if (!m_containerParentHwnd) return;
+    const DWORD ownThread = GetCurrentThreadId();
+    const DWORD containerThread = GetWindowThreadProcessId(RootWindowOf(m_containerParentHwnd), nullptr);
+    if (containerThread != 0 && containerThread != ownThread) {
+        AttachThreadInput(ownThread, containerThread, FALSE);
+        NOBLE_INFO("Win32 container child window: input queue detached from the launcher");
+    }
+}
 
 Window::Window(const std::wstring& title, uint32_t width, uint32_t height)
     : m_title(title), m_width(width), m_height(height), m_requestedWidth(width), m_requestedHeight(height) {
@@ -54,10 +133,12 @@ void Window::SetExclusiveFullscreen(bool on) {
 
 bool Window::WantsExclusiveFullscreen() {
     if (!s_exclusiveFullscreenSetting.load()) return false;
+    // A hosted child window cannot own the display: container window mode is always borderless.
+    if (s_containerMode.load()) return false;
     const HWND hwnd = s_activeHwnd.load();
     // Only while Noble is the foreground app: Alt-Tab, a click on another monitor or Win+D drops out,
     // and coming back re-enters. DXGI itself also leaves full screen on focus loss.
-    return hwnd != nullptr && GetForegroundWindow() == hwnd && !IsIconic(hwnd);
+    return hwnd != nullptr && Window::IsForeground(hwnd) && !IsIconic(hwnd);
 }
 
 bool Window::IsExclusiveFullscreenActive() { return s_exclusiveFullscreenActive.load(); }
@@ -69,6 +150,7 @@ void Window::RequestGeometryRefresh() {
 
 Window::~Window() {
     if (s_activeWindow == this) s_activeWindow = nullptr;
+    DetachContainerInput();
     if (m_hwnd) {
         DestroyWindow(m_hwnd);
         m_hwnd = nullptr;
@@ -85,6 +167,10 @@ void Window::ApplyWindowSettings(uint32_t width, uint32_t height, bool borderles
     m_requestedWidth = width;
     m_requestedHeight = height;
     s_exclusiveFullscreenSetting.store(exclusiveFullscreen);
+
+    // Container window mode: the launcher owns the window (and the display mode), and this window is a
+    // child that fills its client area. Restyling it here would rip it out of the container.
+    if (m_containerParentHwnd) return;
 
     // While DXGI owns the window in exclusive full screen, restyling it would fight the swap chain. The
     // render thread leaves full screen on its next Present (the setting is now off) and then posts
@@ -149,15 +235,58 @@ bool Window::Create() {
         return false;
     }
 
+    // Container Window Mode: if hosted inside a container parent window, create a WS_CHILD window
+    // that fits the container's client area completely, so the user never experiences the window closing
+    // and opening a new one.
+    if (m_containerParentHwnd && IsWindow(m_containerParentHwnd)) {
+        // Ensure container parent window clips children so its rendering/swapchain cannot paint over child
+        LONG_PTR parentStyle = GetWindowLongPtrW(m_containerParentHwnd, GWL_STYLE);
+        if (!(parentStyle & WS_CLIPCHILDREN)) {
+            SetWindowLongPtrW(m_containerParentHwnd, GWL_STYLE, parentStyle | WS_CLIPCHILDREN | WS_CLIPSIBLINGS);
+        }
+
+        RECT parentRc{};
+        GetClientRect(m_containerParentHwnd, &parentRc);
+        int parentW = parentRc.right - parentRc.left;
+        int parentH = parentRc.bottom - parentRc.top;
+        if (parentW > 0 && parentH > 0) {
+            m_width = static_cast<uint32_t>(parentW);
+            m_height = static_cast<uint32_t>(parentH);
+        }
+        m_hwnd = CreateWindowExW(
+            WS_EX_NOPARENTNOTIFY,
+            wc.lpszClassName,
+            m_title.c_str(),
+            WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
+            0, 0,
+            static_cast<int>(m_width), static_cast<int>(m_height),
+            m_containerParentHwnd, nullptr,
+            m_hInstance,
+            this
+        );
+        if (!m_hwnd) {
+            NOBLE_ERROR("Failed to create Win32 child window in container parent (error {}).", GetLastError());
+            return false;
+        }
+        s_activeHwnd.store(m_hwnd);
+        s_containerMode.store(true);
+        SetWindowPos(m_hwnd, HWND_TOP, 0, 0, static_cast<int>(m_width), static_cast<int>(m_height), SWP_SHOWWINDOW | SWP_FRAMECHANGED);
+        BringWindowToTop(m_hwnd);
+        EnsureContainerFocus();
+        NOBLE_INFO("Win32 container child window created: {}x{} [Parent: 0x{:X}]",
+                   m_width, m_height, reinterpret_cast<uintptr_t>(m_containerParentHwnd));
+        return true;
+    }
+
     // Fixed-size window: the engine renders at the size chosen in Settings and cannot change that once
     // it has started, so a maximized or dragged-larger window can only stretch (and pixelate) that picture.
     // WINDOW MODE = BORDERLESS FULL SCREEN is the full-screen path: it creates the window at the monitor's
     // size. The menu process additionally supersamples 1.5x and the window downscales that cleanly.
-    DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
+    DWORD style = (WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_CLIPCHILDREN | WS_CLIPSIBLINGS);
     int windowWidth = 0, windowHeight = 0, posX = 0, posY = 0;
     if (m_borderless) {
         // Borderless: a popup window the size of the primary monitor.
-        style = WS_POPUP;
+        style = (WS_POPUP | WS_CLIPCHILDREN | WS_CLIPSIBLINGS);
         m_width = static_cast<uint32_t>(GetSystemMetrics(SM_CXSCREEN));
         m_height = static_cast<uint32_t>(GetSystemMetrics(SM_CYSCREEN));
         windowWidth = static_cast<int>(m_width);
@@ -247,8 +376,9 @@ bool Window::Create() {
 
 void Window::Show(int cmdShow) {
     if (m_hwnd) {
-        ShowWindow(m_hwnd, cmdShow);
+        ShowWindow(m_hwnd, m_containerParentHwnd ? SW_SHOW : cmdShow);
         UpdateWindow(m_hwnd);
+        if (m_containerParentHwnd) EnsureContainerFocus();
     }
 }
 
@@ -329,6 +459,11 @@ LRESULT Window::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam
         if (mouse || key) return 0;
     }
     switch (uMsg) {
+        case WM_MOUSEMOVE:
+            if (IsForeground(hwnd) && GetClassLongPtrW(hwnd, GCLP_HCURSOR) == 0) {
+                SetCursor(nullptr);
+            }
+            break;
         case WM_MOUSEWHEEL: s_wheelDelta.fetch_add(GET_WHEEL_DELTA_WPARAM(wParam)); break;
         case WM_LBUTTONDOWN: s_leftClicks.fetch_add(1); break;
         case WM_CHAR:
@@ -359,7 +494,17 @@ LRESULT Window::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam
                 ApplyWindowSettings(m_requestedWidth, m_requestedHeight, m_borderless, m_exclusiveFullscreen);
             }
             return 0;
+        case kMsgEnsureFocus:
+            // Handled on the window's own thread, which is the only one that can set the focus.
+            if (m_containerParentHwnd) {
+                EnsureContainerFocus();
+            } else {
+                SetForegroundWindow(m_hwnd);
+                SetFocus(m_hwnd);
+            }
+            return 0;
         case WM_DESTROY:
+            DetachContainerInput();
             s_activeHwnd.store(nullptr);
             m_shouldClose = true;
             PostQuitMessage(0);
@@ -375,9 +520,13 @@ LRESULT Window::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam
             // can't do this itself: SetCursor/ShowCursor only work from the window's own thread).
             // ReachHost clears the class cursor while it owns the mouse (mouse look) and restores the
             // arrow while a menu needs the pointer, so hide it only when the class cursor is cleared.
-            if (LOWORD(lParam) == HTCLIENT && GetForegroundWindow() == hwnd &&
-                GetClassLongPtrW(hwnd, GCLP_HCURSOR) == 0) {
-                SetCursor(nullptr);
+            if (LOWORD(lParam) == HTCLIENT && IsForeground(hwnd)) {
+                HCURSOR clsCursor = reinterpret_cast<HCURSOR>(GetClassLongPtrW(hwnd, GCLP_HCURSOR));
+                if (!clsCursor) {
+                    SetCursor(nullptr);
+                    return TRUE;
+                }
+                SetCursor(clsCursor);
                 return TRUE;
             }
             break;

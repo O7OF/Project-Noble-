@@ -167,7 +167,7 @@ if "%USE_NINJA_MSVC%"=="1" (
     if exist "build\.ninja_log.recompact" del /f /q "build\.ninja_log.recompact" >nul 2>nul
     ninja -C build -t recompact >nul 2>nul
 )
-cmake --build build --config Release
+cmake --build build --config Release --target noble-client
 if %ERRORLEVEL% neq 0 (
     set "BUILD_ERR=%ERRORLEVEL%"
     echo ===================================================
@@ -191,16 +191,6 @@ echo ===================================================
 echo  Build succeeded.
 echo  Executable: build\bin\Release\noble-client.exe
 echo ===================================================
-
-echo ===================================================
-echo  Packaging and publishing release build...
-echo ===================================================
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\publish-release.ps1" -SkipBuild
-if !ERRORLEVEL! neq 0 (
-    echo [!] Warning: publish-release.ps1 finished with code !ERRORLEVEL!.
-) else (
-    echo [i] Release package compiled and pushed successfully.
-)
 
 if "%~1"=="" pause
 exit /b 0

@@ -8,7 +8,11 @@
 
 #include <windows.h>
 #include <cwchar>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <mutex>
+#include <string>
 
 namespace noble {
 namespace Relaunch {
@@ -24,6 +28,37 @@ std::wstring ToWideUtf8(const std::string& s) {
     std::wstring w(static_cast<size_t>(len - 1), L'\0');
     MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, w.data(), len);
     return w;
+}
+
+// Container window mode: the successor match's arguments wait here for the launcher window, next to the
+// executable (the engine moves the working directory to data\sandbox, so a relative path would not do).
+std::wstring ContainerRelaunchPath() {
+    wchar_t exe[MAX_PATH] = {};
+    if (!GetModuleFileNameW(nullptr, exe, MAX_PATH)) return L"";
+    std::wstring dir = exe;
+    const size_t slash = dir.find_last_of(L"\\/");
+    if (slash == std::wstring::npos) return L"";
+    dir.resize(slash);
+    return dir + L"\\data\\userdata\\container-relaunch.txt";
+}
+
+// Removes "-name value" (quoted or not) from a command-line string.
+std::wstring RemoveArgValue(const std::wstring& args, const wchar_t* name) {
+    const size_t at = args.find(name);
+    if (at == std::wstring::npos) return args;
+    size_t end = at + wcslen(name);
+    while (end < args.size() && args[end] == L' ') ++end;
+    if (end < args.size() && args[end] == L'"') {
+        ++end;
+        while (end < args.size() && args[end] != L'"') ++end;
+        if (end < args.size()) ++end;
+    } else {
+        while (end < args.size() && args[end] != L' ') ++end;
+    }
+    std::wstring out = args.substr(0, at);
+    while (end < args.size() && args[end] == L' ') ++end;
+    out += args.substr(end);
+    return out;
 }
 } // namespace
 
@@ -74,6 +109,13 @@ bool Start(const std::wstring& args, unsigned long* outPid) {
     for (const wchar_t* sw : { L"--guest-block", L"-armory-unlock-all" }) {
         if (std::wcsstr(GetCommandLineW(), sw) && cmd.find(sw) == std::wstring::npos) cmd += std::wstring(L" ") + sw;
     }
+    const wchar_t* pCont = wcsstr(GetCommandLineW(), L"-container-hwnd");
+    if (pCont && cmd.find(L"-container-hwnd") == std::wstring::npos) {
+        wchar_t contBuf[64] = {};
+        if (swscanf_s(pCont, L"-container-hwnd %63s", contBuf, (unsigned)std::size(contBuf)) == 1) {
+            cmd += L" -container-hwnd " + std::wstring(contBuf);
+        }
+    }
     std::wstring dir = exe;
     const size_t slash = dir.find_last_of(L"\\/");
     if (slash != std::wstring::npos) dir.resize(slash);
@@ -86,6 +128,52 @@ bool Start(const std::wstring& args, unsigned long* outPid) {
     }
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
+    if (outPid) *outPid = pi.dwProcessId;
+    return true;
+}
+
+bool StartChildMatch(const std::wstring& args, void** outProcessHandle, unsigned long* outPid) {
+    const bool handsOnSession = (args.find(L"-host") != std::wstring::npos && args.find(L"-session-id") != std::wstring::npos) ||
+                               args.find(L"-lobby-return host") != std::wstring::npos;
+    MasterServerClient::Get().Shutdown(handsOnSession);
+    SessionManager::Get().Shutdown();
+    NetworkTransport::Get().Shutdown();
+
+    wchar_t exe[MAX_PATH] = {};
+    if (!GetModuleFileNameW(nullptr, exe, MAX_PATH)) return false;
+    std::wstring cmd = L"\"" + std::wstring(exe) + L"\"";
+    if (!args.empty()) cmd += L" " + args;
+
+    const SettingsData snap = Settings::Get().Snapshot();
+    const std::string activeName = AuthClient::Get().IsLoggedIn() ? AuthClient::Get().GetUsername() : snap.playerName;
+    if (!activeName.empty() && cmd.find(L"-player-name") == std::wstring::npos) {
+        cmd += L" -player-name \"" + ToWideUtf8(activeName) + L"\"";
+    }
+    if (!snap.serviceTag.empty() && cmd.find(L"-service-tag") == std::wstring::npos) {
+        cmd += L" -service-tag \"" + ToWideUtf8(snap.serviceTag) + L"\"";
+    }
+    if (AuthClient::Get().IsLoggedIn() && cmd.find(L"-account-user") == std::wstring::npos) {
+        cmd += L" -account-user \"" + ToWideUtf8(AuthClient::Get().GetUsername()) + L"\"";
+        cmd += L" -account-token \"" + ToWideUtf8(AuthClient::Get().GetSessionToken()) + L"\"";
+        cmd += L" -user-id " + std::to_wstring(AuthClient::Get().GetUserId());
+        cmd += L" -account-dev " + std::to_wstring(AuthClient::Get().IsDeveloper() ? 1 : 0);
+    }
+    for (const wchar_t* sw : { L"--guest-block", L"-armory-unlock-all" }) {
+        if (std::wcsstr(GetCommandLineW(), sw) && cmd.find(sw) == std::wstring::npos) cmd += std::wstring(L" ") + sw;
+    }
+    std::wstring dir = exe;
+    const size_t slash = dir.find_last_of(L"\\/");
+    if (slash != std::wstring::npos) dir.resize(slash);
+    STARTUPINFOW si{};
+    si.cb = sizeof(si);
+    PROCESS_INFORMATION pi{};
+    if (!CreateProcessW(exe, cmd.data(), nullptr, nullptr, FALSE, 0, nullptr, dir.c_str(), &si, &pi)) {
+        NOBLE_ERROR("Relaunch: could not start container child match (error {})", GetLastError());
+        return false;
+    }
+    CloseHandle(pi.hThread);
+    if (outProcessHandle) *outProcessHandle = pi.hProcess;
+    else CloseHandle(pi.hProcess);
     if (outPid) *outPid = pi.dwProcessId;
     return true;
 }
@@ -118,7 +206,59 @@ BOOL CALLBACK FindVisibleWindow(HWND hwnd, LPARAM param) {
 
 } // namespace
 
+bool RequestContainerRelaunch(const std::wstring& args) {
+    const std::wstring path = ContainerRelaunchPath();
+    if (path.empty() || args.empty()) return false;
+    // The launcher adds its own -container-hwnd, so the request carries only the match's arguments.
+    const std::wstring clean = RemoveArgValue(args, L"-container-hwnd");
+    const int len = WideCharToMultiByte(CP_UTF8, 0, clean.c_str(), -1, nullptr, 0, nullptr, nullptr);
+    if (len <= 1) return false;
+    std::string utf8(static_cast<size_t>(len - 1), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, clean.c_str(), -1, utf8.data(), len, nullptr, nullptr);
+    std::error_code ec;
+    std::filesystem::create_directories(std::filesystem::path(path).parent_path(), ec);
+    std::ofstream out(std::filesystem::path(path), std::ios::binary | std::ios::trunc);
+    if (!out) return false;
+    out.write(utf8.data(), static_cast<std::streamsize>(utf8.size()));
+    out.flush();
+    return static_cast<bool>(out);
+}
+
+std::wstring TakeContainerRelaunch() {
+    const std::wstring path = ContainerRelaunchPath();
+    if (path.empty()) return L"";
+    std::ifstream in(std::filesystem::path(path), std::ios::binary);
+    if (!in) return L"";
+    const std::string utf8((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    in.close();
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+    return ToWideUtf8(utf8);
+}
+
+void ClearContainerRelaunch() {
+    const std::wstring path = ContainerRelaunchPath();
+    if (path.empty()) return;
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+}
+
 bool HandOff(const std::wstring& args) {
+    // Container window mode: the successor match has to run inside the launcher's window, and only the
+    // launcher may start it - it is the process that keeps track of the running match. Hand the arguments
+    // over instead of spawning a second Noble this process cannot supervise (the launcher used to see this
+    // process exit and bring its menu back over the top of the new game), and never wait for a top-level
+    // window, which a hosted child does not have (that used to be a 30 s stall on PLAY AGAIN).
+    if (args.find(L"-container-hwnd") != std::wstring::npos) {
+        if (!RequestContainerRelaunch(args)) {
+            NOBLE_ERROR("Relaunch: container match relaunch could not be handed to the launcher window");
+            return false;
+        }
+        NOBLE_INFO("Relaunch: container match relaunch handed to the launcher window; closing this match");
+        TerminateProcess(GetCurrentProcess(), 0);
+        return true;  // not reached
+    }
+
     unsigned long childPid = 0;
     if (!Start(args, &childPid)) return false;
 

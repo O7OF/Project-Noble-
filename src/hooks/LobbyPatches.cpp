@@ -842,7 +842,7 @@ bool LobbyPatches::Apply(HMODULE hReachDll) {
     // 4b. MinHook Detour on c_network_session::acknowledge_join_request (RVA 0x397914)
     {
         uint8_t* fnAck = reinterpret_cast<uint8_t*>(base + 0x397914);
-        static const uint8_t kAckPrologue[5] = { 0x53, 0x48, 0x83, 0xEC, 0x50 };
+        static const uint8_t kAckPrologue[5] = { 0x40, 0x53, 0x48, 0x83, 0xEC };
         if (0x397914 + 5 <= size && std::memcmp(fnAck, kAckPrologue, 5) == 0) {
             if (HookManager::InstallHook(fnAck,
                                          reinterpret_cast<void*>(&Hook_AcknowledgeJoinRequest),

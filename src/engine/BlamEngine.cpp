@@ -5,6 +5,7 @@
 #include "network/NetworkTransport.hpp"
 #include "network/MasterServerClient.hpp"
 #include "ui/LoadScreen.hpp"
+#include "ui/PauseMenu.hpp"
 #include "career/Career.hpp"
 #include "vfs/VFS.hpp"
 #include "hooks/HookManager.hpp"
@@ -253,13 +254,13 @@ uint32_t BlamEngine::ResolveMapId(const std::string& mapName) {
     }
 
     // Firefight Maps (210 - 219)
-    if (lower.find("beachhead") != std::string::npos || lower.find("ff10_prototype") != std::string::npos || lower == "210") return 210;
+    if (lower.find("beachhead") != std::string::npos || lower.find("ff50_park") != std::string::npos || lower == "210") return 210;
     if (lower.find("corvette") != std::string::npos || lower.find("ff45_corvette") != std::string::npos || lower == "211") return 211;
     if (lower.find("courtyard") != std::string::npos || lower.find("ff20_courtyard") != std::string::npos || lower == "212") return 212;
     if (lower.find("glacier") != std::string::npos || lower.find("ff60_icecave") != std::string::npos || lower == "213") return 213;
     if (lower.find("holdout") != std::string::npos || lower.find("ff70_holdout") != std::string::npos || lower == "214") return 214;
-    if (lower.find("outpost") != std::string::npos || lower.find("ff60_airview") != std::string::npos || lower == "215") return 215;
-    if (lower.find("overlook") != std::string::npos || lower.find("ff50_park") != std::string::npos || lower == "216") return 216;
+    if (lower.find("outpost") != std::string::npos || lower.find("ff60_airview") != std::string::npos || lower.find("ff60_ruins") != std::string::npos || lower == "215") return 215;
+    if (lower.find("overlook") != std::string::npos || lower.find("ff10_prototype") != std::string::npos || lower == "216") return 216;
     if (lower.find("waterfront") != std::string::npos || lower.find("ff30_waterfront") != std::string::npos || lower == "217") return 217;
     if (lower.find("unearthed") != std::string::npos || lower.find("ff_unearthed") != std::string::npos || lower == "218") return 218;
     if (lower.find("installation 04") != std::string::npos || lower.find("installation04") != std::string::npos || lower.find("cex_ff_halo") != std::string::npos || lower == "219") return 219;
@@ -274,9 +275,11 @@ uint32_t BlamEngine::ResolveMapId(const std::string& mapName) {
     if (lower.find("exodus") != std::string::npos || lower.find("m50") != std::string::npos || lower == "184") return 184;
     if (lower.find("new alexandria") != std::string::npos || lower.find("m52") != std::string::npos || lower == "185") return 185;
     if (lower.find("the package") != std::string::npos || lower.find("m60") != std::string::npos || lower == "186") return 186;
-    if (lower.find("the pillar of autumn") != std::string::npos || lower.find("m70") != std::string::npos || lower == "187") return 187;
-    if (lower.find("epilogue") != std::string::npos || lower.find("m70_a") != std::string::npos || lower == "188") return 188;
+    // The two extra m70 scenes must be tested BEFORE "m70": the substrings overlap ("m70_bonus" contains
+    // "m70"), so Lone Wolf used to resolve to Pillar of Autumn's launch index.
     if (lower.find("lone wolf") != std::string::npos || lower.find("m70_bonus") != std::string::npos || lower == "189") return 189;
+    if (lower.find("epilogue") != std::string::npos || lower.find("m70_a") != std::string::npos || lower == "188") return 188;
+    if (lower.find("the pillar of autumn") != std::string::npos || lower.find("m70") != std::string::npos || lower == "187") return 187;
 
     // Multiplayer / Forge maps (launch index 190-209)
     for (const auto& m : kMultiplayerMaps) {
@@ -395,24 +398,24 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
         targetOctets[3] = static_cast<uint8_t>(to3);
     }
 
-    // Campaign missions: launch index 178 (m05) .. 189 (m70_bonus).
-    const bool isCampaign = (mapId >= 178 && mapId <= 189) || (gameModeTag == 1);
-    // Firefight maps: launch index 210 .. 219.
-    const bool isFirefight = (mapId >= 210 && mapId <= 219) || (gameModeTag == 1035);
+    // The mode tag decides, not the map's number: a Forge launch on a Firefight scenario is still Forge, and
+    // keying these off the map range made it load the Firefight block and HUD.
+    const bool isCampaign = (gameModeTag == 1);
+    const bool isFirefight = (gameModeTag == 1035);
     const bool isForge = (gameModeTag == 3);
     uint32_t effectiveMapId = isMainMenu ? static_cast<uint32_t>(-2) : mapId;
 
     std::string blockName;
     if (isMainMenu) {
         blockName = "lb_m_c_1.bin";
-    } else if (mapId >= 210 && mapId <= 219) {
+    } else if (gameModeTag == 1035) {
         std::string cand1 = "firefight_" + std::to_string(mapId) + "_d" + std::to_string(clampedDiff) + ".bin";
         std::string cand2 = "firefight_" + std::to_string(mapId) + ".bin";
         if (EmbeddedBlocks::HasBlock(cand1)) blockName = cand1;
         else if (EmbeddedBlocks::HasBlock(cand2)) blockName = cand2;
         else if (std::filesystem::exists(dataRoot / "blocks" / cand1)) blockPath = dataRoot / "blocks" / cand1;
         else if (std::filesystem::exists(dataRoot / "blocks" / cand2)) blockPath = dataRoot / "blocks" / cand2;
-    } else if (mapId >= 178 && mapId <= 189) {
+    } else if (gameModeTag == 1) {
         std::string cand1 = "campaign_" + std::to_string(mapId) + "_d" + std::to_string(clampedDiff) + ".bin";
         std::string cand2 = "campaign_" + std::to_string(mapId) + ".bin";
         if (EmbeddedBlocks::HasBlock(cand1)) blockName = cand1;
@@ -504,89 +507,88 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
                 block[offset + b] = 0xFF;
             }
         }
+    }
 
-        uint64_t localMachineId = NetworkTransport::Get().GetLocalMachineId();
-        uint64_t hostMachineId = NetworkTransport::Get().GetHostMachineId();
+    uint64_t localMachineId = NetworkTransport::Get().GetLocalMachineId();
+    uint64_t hostMachineId = NetworkTransport::Get().GetHostMachineId();
 
-        if (isGuest) {
-            // Guest mode: 1 local active player, target host machine at 0x2F8.
-            // Note: +0xF0..+0xF7 is the 8-byte s_player_identifier copied by haloreach.dll (State 6,
-            // RVA 0xE804) into 0x182A1E94C and sent in join-request. It MUST be unique per client so
-            // c_network_session::can_accept_player_join_request (RVA 0x3973BC -> 0x39D59C) on the Host
-            // does not see it colliding with Host Player 0 (0x000000003F59F3BE) and reject with 0x16.
-            uint64_t guestPlayerId = localMachineId ^ 0x3F59F3BE00000000ULL;
-            if (guestPlayerId == 0 || guestPlayerId == 0x000000003F59F3BEULL) {
-                guestPlayerId = localMachineId | 0x504C520000000001ULL;
-            }
-            block[0] &= ~0x08; // bit 3 cleared for guest
-            *reinterpret_cast<uint64_t*>(&block[0x60]) = 0; // Host machine id is 0 at 0x60 on guest
-            block[0xE8] = 0x01; // 1 active local player
-            *reinterpret_cast<uint64_t*>(&block[0xF0]) = guestPlayerId;
-            *reinterpret_cast<uint64_t*>(&block[0xF8]) = localMachineId; // Local player 0 machine ID
-            // Slot 0 is reserved for remote Host
-            block[0x100] = 0xFF;
-            block[0x101] = 0xFF;
-            block[0x102] = 0xFF;
-            block[0x103] = 0xFF;
-            block[0x104] = 0x00;
-            block[0x108] = 0xFF;
-            block[0x109] = 0xFF;
-            block[0x10A] = 0xFF;
-            block[0x10B] = 0xFF;
-            // Slot 1 is bound to local controller 0 for this Guest
-            block[0x120] = 0x00;
-            block[0x121] = 0x00;
-            block[0x122] = 0x00;
-            block[0x123] = 0x00;
-            block[0x124] = 0x02;
-            block[0x128] = 0x00;
-            block[0x129] = 0x00;
-            block[0x12A] = 0x00;
-            block[0x12B] = 0x00;
-            // Slots 2..15 are unassigned
-            for (size_t s = 2; s < 16; ++s) {
-                size_t off = 0x100 + (s * 0x20);
-                block[off + 0] = 0xFF;
-                block[off + 1] = 0xFF;
-                block[off + 2] = 0xFF;
-                block[off + 3] = 0xFF;
-                block[off + 4] = 0x00;
-                for (size_t b = 8; b < 16; ++b) block[off + b] = 0xFF;
-            }
-            block[0x2F0] = 0x00;
-            *reinterpret_cast<uint32_t*>(&block[0x2F4]) = 0xFFFFFFFF;
-            *reinterpret_cast<uint64_t*>(&block[0x2F8]) = hostMachineId; // uint64 Host Machine ID
-            // Zero variant buffer on guest (0x300 to end) so replicated game and map variants from the host
-            // are received and mounted cleanly without local conflict.
-            // Note: do NOT memset +0x300..+0x2BF30; block is already zero-initialized and +0x1D308 holds c_map_variant.
-            block[0x2BF14] = 0xF3;
-            block[0x2BF15] = 0x01;
-            NOBLE_INFO("BlamEngine: Configured Guest Launch Block targeting host {}:{} (Local: 0x{:X}, Host: 0x{:X}, PlayerId: 0x{:X})",
-                targetHostIp, targetHostPort, localMachineId, hostMachineId, guestPlayerId);
-        } else {
-            // Host mode: 1 local active player, host machine at 0x60 and 0xF8
-            block[0] |= 0x08; // bit 3 set for host
-            *reinterpret_cast<uint64_t*>(&block[0x60]) = localMachineId;
-            block[0xE8] = 0x01; // 1 active local player
-            block[0xF0] = 0xBE;
-            block[0xF1] = 0xF3;
-            block[0xF2] = 'Y';
-            block[0xF3] = '?';
-            *reinterpret_cast<uint64_t*>(&block[0xF8]) = localMachineId;
-            block[0x100] = 0x00;
-            block[0x101] = 0x00;
-            block[0x102] = 0x00;
-            block[0x103] = 0x00;
-            block[0x104] = 0x02;
-            block[0x108] = 0x00;
-            block[0x109] = 0x00;
-            block[0x10A] = 0x00;
-            block[0x10B] = 0x00;
-            block[0x2F0] = 0x01;
-            *reinterpret_cast<uint32_t*>(&block[0x2F4]) = 0;
-            *reinterpret_cast<uint64_t*>(&block[0x2F8]) = 0;
+    if (isGuest) {
+        // Guest mode: 1 local active player, target host machine at 0x2F8.
+        // Note: +0xF0..+0xF7 is the 8-byte s_player_identifier copied by haloreach.dll (State 6,
+        // RVA 0xE804) into 0x182A1E94C and sent in join-request. It MUST be unique per client so
+        // c_network_session::can_accept_player_join_request (RVA 0x3973BC -> 0x39D59C) on the Host
+        // does not see it colliding with Host Player 0 (0x000000003F59F3BE) and reject with 0x16.
+        uint64_t guestPlayerId = localMachineId ^ 0x3F59F3BE00000000ULL;
+        if (guestPlayerId == 0 || guestPlayerId == 0x000000003F59F3BEULL) {
+            guestPlayerId = localMachineId | 0x504C520000000001ULL;
         }
+        block[0] &= ~0x08; // bit 3 cleared for guest
+        *reinterpret_cast<uint64_t*>(&block[0x60]) = 0; // Host machine id is 0 at 0x60 on guest
+        block[0xE8] = 0x01; // 1 active local player
+        *reinterpret_cast<uint64_t*>(&block[0xF0]) = guestPlayerId;
+        *reinterpret_cast<uint64_t*>(&block[0xF8]) = localMachineId; // Local player 0 machine ID
+        // Slot 0 is reserved for remote Host
+        block[0x100] = 0xFF;
+        block[0x101] = 0xFF;
+        block[0x102] = 0xFF;
+        block[0x103] = 0xFF;
+        block[0x104] = 0x00;
+        block[0x108] = 0xFF;
+        block[0x109] = 0xFF;
+        block[0x10A] = 0xFF;
+        block[0x10B] = 0xFF;
+        // Slot 1 is bound to local controller 0 for this Guest
+        block[0x120] = 0x00;
+        block[0x121] = 0x00;
+        block[0x122] = 0x00;
+        block[0x123] = 0x00;
+        block[0x124] = 0x02;
+        block[0x128] = 0x00;
+        block[0x129] = 0x00;
+        block[0x12A] = 0x00;
+        block[0x12B] = 0x00;
+        // Slots 2..15 are unassigned
+        for (size_t s = 2; s < 16; ++s) {
+            size_t off = 0x100 + (s * 0x20);
+            block[off + 0] = 0xFF;
+            block[off + 1] = 0xFF;
+            block[off + 2] = 0xFF;
+            block[off + 3] = 0xFF;
+            block[off + 4] = 0x00;
+            for (size_t b = 8; b < 16; ++b) block[off + b] = 0xFF;
+        }
+        block[0x2F0] = 0x00;
+        *reinterpret_cast<uint32_t*>(&block[0x2F4]) = 0xFFFFFFFF;
+        *reinterpret_cast<uint64_t*>(&block[0x2F8]) = hostMachineId; // uint64 Host Machine ID
+        block[0x2BF14] = 0xF3;
+        block[0x2BF15] = 0x01;
+        NOBLE_INFO("BlamEngine: Configured Guest Launch Block targeting host {}:{} (Local: 0x{:X}, Host: 0x{:X}, PlayerId: 0x{:X})",
+            targetHostIp, targetHostPort, localMachineId, hostMachineId, guestPlayerId);
+    } else {
+        // Host mode: 1 local active player, host machine at 0x60 and 0xF8
+        block[0] |= 0x08; // bit 3 set for host
+        *reinterpret_cast<uint64_t*>(&block[0x60]) = localMachineId;
+        block[0xE8] = 0x01; // 1 active local player
+        block[0xF0] = 0xBE;
+        block[0xF1] = 0xF3;
+        block[0xF2] = 'Y';
+        block[0xF3] = '?';
+        *reinterpret_cast<uint64_t*>(&block[0xF8]) = localMachineId;
+        block[0x100] = 0x00;
+        block[0x101] = 0x00;
+        block[0x102] = 0x00;
+        block[0x103] = 0x00;
+        block[0x104] = 0x02;
+        block[0x108] = 0x00;
+        block[0x109] = 0x00;
+        block[0x10A] = 0x00;
+        block[0x10B] = 0x00;
+        block[0x2F0] = 0x01;
+        *reinterpret_cast<uint32_t*>(&block[0x2F4]) = 0;
+        *reinterpret_cast<uint64_t*>(&block[0x2F8]) = 0;
+    }
 
+    if (!loadedPrebuilt) {
         // Default variant buffer init at offset 0x1D308 (RVA 0x6BFF8)
         if (m_hModule) {
             SafeCallVariantInit(m_hModule, &block[0x1D308]);
@@ -608,7 +610,10 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
         // selected by the launch index at +0x10/+0x14/+0x1D5C0 (verified against the engine's captured
         // campaign blocks, which differ from its MP block only in +0x0C, +0x10/+0x14, +0x28,
         // +0x34 and +0x1D5C0).
-        if (isCampaign || isFirefight) mapInfoId = kMainMenuMapId;
+        // Applies to a Firefight canvas launched in Forge too: MapIdForLaunchIndex() has no entry for 210..219,
+        // so the block would carry a game-mode tag as its map id and the engine answers 'map and game
+        // incompatible' (the capture convention is to keep the menu map-variant id here).
+        if (isCampaign || isFirefight || (mapId >= 210 && mapId <= 219)) mapInfoId = kMainMenuMapId;
         if (mapInfoId == 0) mapInfoId = gameModeTag;
         if (isCampaign) {
             block[0x28] = 0x01;
@@ -623,8 +628,8 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
 
     // Synchronized Network Session ID at +0x50 and local machine ID at +0x58
     if (!isMainMenu || !loadedPrebuilt) {
-        const uint64_t localMachineId = NetworkTransport::Get().GetLocalMachineId();
-        const uint64_t hostMachineId = NetworkTransport::Get().GetHostMachineId();
+        localMachineId = NetworkTransport::Get().GetLocalMachineId();
+        hostMachineId = NetworkTransport::Get().GetHostMachineId();
         *reinterpret_cast<uint64_t*>(&block[0x50]) = NetworkTransport::Get().GetSessionId();
         *reinterpret_cast<uint64_t*>(&block[0x58]) = localMachineId;
         if (!isMainMenu && loadedPrebuilt) {
@@ -710,8 +715,11 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
 
     if (!isMainMenu) {
         uint32_t mapInfoId = MapIdForLaunchIndex(effectiveMapId);
-        if (isCampaign || isFirefight) mapInfoId = kMainMenuMapId;
-        if (mapInfoId == 0) mapInfoId = gameModeTag;
+        // Firefight canvases keep the menu/Boardwalk map-variant id and are selected by their launch index (as the
+        // captured Firefight blocks do). Applies in Forge too: MapIdForLaunchIndex() is 0 for 210..219, so the
+        // block would otherwise carry a game-mode tag as its map id and the engine answers 'map and game
+        // incompatible'.
+        if (isCampaign || isFirefight || (mapId >= 210 && mapId <= 219)) mapInfoId = kMainMenuMapId;
         if (isCampaign) {
             block[0x28] = 0x01;
             block[0x29] = 0x00;
@@ -773,7 +781,12 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
     // and mission variants at +0x300, and must NOT be overwritten with multiplayer Slayer!
     // The main menu (mainmenu_all.map) never carries a game variant, so it skips this block entirely
     // (before 2026-10-29 it logged a bogus "No game variant found (looked for '')" on every menu boot).
-    if (!isMainMenu && (!isCampaign || (!customVariantPath.empty() && customVariantPath != "Campaign" && customVariantPath != "campaign"))) {
+    // Campaign blocks normally carry the mission's own variant, but a mission launched from the campaign screen
+    // also hands one over ("m20.bin" and friends) and the engine stalls at 4% without it. Decode that one - it
+    // only ever replaces the block's variant with the mission's own, never with a multiplayer mode.
+    const bool campaignVariant = isCampaign && !customVariantPath.empty() &&
+                                 customVariantPath != "Campaign" && customVariantPath != "campaign";
+    if (!isMainMenu && (!isCampaign || campaignVariant)) {
         std::filesystem::path variantPath;
         std::optional<VariantRules::Preset> gameMode;
         if (!customVariantPath.empty()) {
@@ -960,6 +973,7 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
     m_currentMap = mapName;
     m_currentMode = gameMode;
     m_isGameRunning = true;
+    PauseMenu::SetLoadingMap(mapName);
 
     NOBLE_INFO("=================================================");
     NOBLE_INFO(" LAUNCHING HALO: REACH MISSION / MAP: {}", mapName);
@@ -996,11 +1010,14 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
     uint32_t gameModeTag = 2; // Default multiplayer (Slayer, CTF, Invasion, all Megalo variants)
     const bool forgeMode = _stricmp(gameMode.c_str(), "forge") == 0 ||
                            _stricmp(gameMode.c_str(), "sandbox") == 0;
-    if ((mapId >= 210 && mapId <= 219) || _stricmp(gameMode.c_str(), "firefight") == 0) {
-        gameModeTag = 1035; // 0x40B Firefight
-    } else if (forgeMode) {
+    // An explicitly requested Forge wins over the map's own mode. Firefight scenarios (Installation 04 =
+    // cex_ff_halo, Glacier = ff60_icecave) are the bases of several Forge AI mods, and testing the map range
+    // first forced them into Firefight no matter what was asked for.
+    if (forgeMode) {
         // Forge is a multiplayer Megalo mode, not the special map-editor engine (0x04).
         gameModeTag = 3;
+    } else if ((mapId >= 210 && mapId <= 219) || _stricmp(gameMode.c_str(), "firefight") == 0) {
+        gameModeTag = 1035; // 0x40B Firefight
     } else if ((mapId >= 178 && mapId <= 189) || _stricmp(gameMode.c_str(), "campaign") == 0) {
         gameModeTag = 1;    // Campaign
     } else if (mapId == static_cast<uint32_t>(-2) || mapId == 0 ||
@@ -1016,7 +1033,7 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
     // A host launched with known guests must declare all of them, otherwise the engine only creates the
     // local player and the co-op state machine fails the mission about 60 s in (GameResults, channel close).
     // Removed once in e817d2f and re-proven by test; do not reduce this to 1 for a co-op host.
-    if (gameModeTag == 1 || gameModeTag == 5) {
+    if (gameModeTag == 1 || gameModeTag == 1035 || gameModeTag == 5) {
         int declaredPlayers = 1;
         if (connectAddress.empty() && expectedPeers > 0) declaredPlayers = 1 + expectedPeers;
         launchBlock[0xE8] = static_cast<uint8_t>(declaredPlayers);
@@ -1054,16 +1071,17 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
                 // Wait for remote players to connect and join membership BEFORE posting Command 11 (simulation start).
                 if (peersToWaitFor > 0) {
                     const size_t targetPeers = static_cast<size_t>(peersToWaitFor);
-                    const ULONGLONG deadline = GetTickCount64() + 30000;
+                    const ULONGLONG deadline = GetTickCount64() + 45000;
                     ULONGLONG lastLog = 0;
                     NOBLE_INFO("BlamEngine: waiting for {} remote player(s) to finish loading and join membership before starting simulation...",
                                targetPeers);
                     while (GetTickCount64() < deadline) {
                         const size_t playersJoined = LobbyPatches::GetRemotePlayerAddCount();
-                        if (playersJoined >= targetPeers) {
+                        const size_t channelPeers = NetworkTransport::Get().GetGamePeerCount();
+                        if (playersJoined >= targetPeers || channelPeers >= targetPeers) {
                             const int settleMs = settleLonger ? 3000 : 1500;
-                            NOBLE_INFO("BlamEngine: {}/{} remote player(s) joined session membership (msg 27); settling {} ms for world replication",
-                                       playersJoined, targetPeers, settleMs);
+                            NOBLE_INFO("BlamEngine: {}/{} remote player(s) in session (membership: {}, engine peers: {}); settling {} ms for world replication",
+                                       std::max(playersJoined, channelPeers), targetPeers, playersJoined, channelPeers, settleMs);
                             std::this_thread::sleep_for(std::chrono::milliseconds(settleMs));
                             break;
                         }
@@ -1071,11 +1089,11 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
                         if (lastLog == 0 || now - lastLog >= 3000) {
                             lastLog = now;
                             NOBLE_INFO("BlamEngine: membership wait: {}/{} player(s) in session (engine peers: {})",
-                                       playersJoined, targetPeers, NetworkTransport::Get().GetGamePeerCount());
+                                       playersJoined, targetPeers, channelPeers);
                         }
                         std::this_thread::sleep_for(std::chrono::milliseconds(100));
                     }
-                    if (LobbyPatches::GetRemotePlayerAddCount() < targetPeers) {
+                    if (LobbyPatches::GetRemotePlayerAddCount() < targetPeers && NetworkTransport::Get().GetGamePeerCount() < targetPeers) {
                         NOBLE_WARN("BlamEngine: membership wait timed out with {}/{} player(s); starting simulation anyway",
                                    LobbyPatches::GetRemotePlayerAddCount(), targetPeers);
                     }
@@ -1090,20 +1108,35 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
             }
         }).detach();
     } else {
-        if (BlamEngine::GuestPostStart() && gameModeTag == 1) {
-            // Research: guest posts its own mission start after the session handshake, which is what creates a local
-            // simulation player. Without it the guest sits in membership with no biped (Career reports +0x30 = 255).
-            NOBLE_INFO("BlamEngine: [GUEST] -guest-post-start enabled - posting Command 10/11 after the session handshake");
+        if (gameModeTag == 1 || BlamEngine::GuestPostStart()) {
+            NOBLE_INFO("BlamEngine: [GUEST Campaign] Starting campaign co-op background sequence (dispatching Command 10/11)...");
             std::thread([this]() {
-                std::this_thread::sleep_for(std::chrono::milliseconds(7000));
+                // Post Command 10 promptly so the engine loads scenario map tags and initializes the network session
+                std::this_thread::sleep_for(std::chrono::milliseconds(500));
                 if (!m_engineInstance || !m_fnProcessEvent) return;
-                NOBLE_INFO("BlamEngine: [GUEST] Posting Command 10 (guest mission start)");
+                NOBLE_INFO("BlamEngine: [GUEST Campaign] Posting Command 10 (Event: Start) via vtbl+0x18...");
                 int32_t status10 = m_fnProcessEvent(m_engineInstance, 10, 0);
-                NOBLE_INFO("BlamEngine: [GUEST] PostCommand(10) returned 0x{:X}", status10);
-                std::this_thread::sleep_for(std::chrono::milliseconds(6000));
-                NOBLE_INFO("BlamEngine: [GUEST] Posting Command 11 (guest simulation start)");
-                int32_t status11 = m_fnProcessEvent(m_engineInstance, 11, 0);
-                NOBLE_INFO("BlamEngine: [GUEST] PostCommand(11) returned 0x{:X}", status11);
+                NOBLE_INFO("BlamEngine: [GUEST Campaign] PostCommand(10) returned 0x{:X}", status10);
+
+                // Wait for map loading to finish before posting Command 11 (simulation start)
+                const ULONGLONG deadline = GetTickCount64() + 30000;
+                while (GetTickCount64() < deadline) {
+                    if (LoadScreen::Get().GetLoadProgress() >= 0.95f) {
+                        NOBLE_INFO("BlamEngine: [GUEST Campaign] Map load reached {:.1f}%; settling for host session sync",
+                                   LoadScreen::Get().GetLoadProgress() * 100.0f);
+                        break;
+                    }
+                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                }
+
+                // Settle a moment for world replication / session sync from host
+                std::this_thread::sleep_for(std::chrono::milliseconds(2500));
+
+                if (m_engineInstance && m_fnProcessEvent) {
+                    NOBLE_INFO("BlamEngine: [GUEST Campaign] Posting Command 11 (Simulation Start) via vtbl+0x18...");
+                    int32_t status11 = m_fnProcessEvent(m_engineInstance, 11, 0);
+                    NOBLE_INFO("BlamEngine: [GUEST Campaign] PostCommand(11) returned 0x{:X}", status11);
+                }
             }).detach();
         } else {
             NOBLE_INFO("BlamEngine: [GUEST] Remote join active - skipping manual PostCommand(10/11); waiting for host session sync.");

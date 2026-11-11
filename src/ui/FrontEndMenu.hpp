@@ -58,6 +58,11 @@ public:
     // Standalone loop fallback.
     static FrontEndChoice Run(Window& window, D3D11Renderer& renderer, const std::filesystem::path& reachDir);
 
+    // True while a child match is running inside the container window.
+    static bool IsMatchRunning();
+    static void SetMatchRunning(bool running);
+    static void CheckMatchStatus();
+
 private:
     static void RenderOverlayImpl(IDXGISwapChain* swapChain, bool clear);
 };

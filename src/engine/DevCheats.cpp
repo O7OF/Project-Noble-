@@ -5,6 +5,8 @@
 #include "SharedTagCache.hpp"
 #include "hooks/HookManager.hpp"
 #include "common/Logger.hpp"
+#include "network/NetworkTransport.hpp"
+#include <nlohmann/json.hpp>
 
 #include <cmath>
 #include <algorithm>
@@ -22,6 +24,7 @@ std::atomic<int32_t> DevCheats::s_localUnitDatum{ -1 };
 std::atomic<int32_t> DevCheats::s_localVehicleDatum{ -1 };
 
 std::atomic<bool> DevCheats::s_godmode{false};
+static std::atomic<bool> s_suicideRequested{false};   // pause menu CHANGE TEAM: die, then respawn on the new side
 std::atomic<bool> DevCheats::s_superJump{false};
 std::atomic<float> DevCheats::s_jumpMultiplier{3.0f};
 std::atomic<bool> DevCheats::s_superSpeed{false};
@@ -367,6 +370,8 @@ static void __fastcall Hook_ObjectKill(uint32_t objectDatum, uint32_t flags, uin
 
 } // namespace
 
+void DevCheats::RequestLocalSuicide() { s_suicideRequested.store(true); }
+
 bool DevCheats::IsGodmode() { return s_godmode.load(); }
 void DevCheats::SetGodmode(bool val) { s_godmode.store(val); }
 
@@ -439,6 +444,21 @@ uint8_t* DevCheats::GetObjectByDatum(uint32_t datum) {
 }
 
 void DevCheats::QueueItemAction(const std::string& name, const std::string& category, const std::string& tagPath, uint32_t tagIndex, bool giveToPlayer) {
+    if (NetworkTransport::Get().IsActive() && !NetworkTransport::Get().IsHost()) {
+        NOBLE_INFO("DevCheats: Guest in multiplayer forwarding spawn request for '{}' ({}) to match host.", name, category);
+        nlohmann::json j = {
+            {"type", "dev_spawn"},
+            {"name", name},
+            {"category", category},
+            {"tagPath", tagPath},
+            {"tagIndex", tagIndex},
+            {"give", giveToPlayer}
+        };
+        NetworkTransport::Get().SendLobbyControlJson(j.dump());
+        SetStatus("Forwarded spawn request for " + name + " to host.");
+        return;
+    }
+
     std::lock_guard<std::mutex> lock(s_actionMutex);
     s_actionQueue.push_back({ name, category, tagPath, tagIndex, giveToPlayer });
 }
@@ -616,8 +636,9 @@ void DevCheats::Shutdown() {
     s_initialized = false;
 }
 
-void DevCheats::GameTick([[maybe_unused]] int32_t userIndex) {
+void DevCheats::GameTick(int32_t userIndex) {
     if (!s_initialized || !s_baseAddress) return;
+    if (userIndex != 0) return; // Process cheats and spawns only once per simulation frame for local player 0
 
     ObjectPool pool;
     if (!GetObjectPool(s_baseAddress, pool)) return;
@@ -763,6 +784,7 @@ void DevCheats::GameTick([[maybe_unused]] int32_t userIndex) {
         }
 
         // 6. Process Item Spawn & Give requests
+        s_suicideRequested.store(false);
         ProcessActions(s_baseAddress, pool, player);
     }
 }

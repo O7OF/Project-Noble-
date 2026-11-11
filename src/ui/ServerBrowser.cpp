@@ -558,6 +558,7 @@ void ServerBrowser::RenderFilterBar() {
         }
         int activeInServers = 0;
         for (const auto& s : m_servers) {
+            if (s.name.find("Master") != std::string::npos || s.name.find("Relay") != std::string::npos) continue;
             if (s.playerCount > 0) activeInServers += s.playerCount;
         }
         const int onlineCount = std::max({ MasterServerClient::Get().OnlinePlayers(), activeInServers, 1 });
@@ -1011,7 +1012,7 @@ bool ServerBrowser::JoinBlockedByVersion(const ServerEntry& s) {
 
 void ServerBrowser::AttemptJoin(const ServerEntry& s) {
     if (JoinBlockedByVersion(s)) return;
-    if (!s.inProgress && m_joinLobbyHandler) m_joinLobbyHandler(s);
+    if (m_joinLobbyHandler) m_joinLobbyHandler(s);
     else TryJoin(s.hostAddress, s.port, s.isPasswordProtected);
 }
 

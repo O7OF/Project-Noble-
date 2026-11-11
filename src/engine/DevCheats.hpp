@@ -33,6 +33,10 @@ public:
     // Cheat toggles
     static bool IsGodmode();
     static void SetGodmode(bool val);
+    // Kills the local player on the engine thread (next GameTick). The pause menu's CHANGE TEAM uses it so a
+    // team switch behaves like Reach's: you die and respawn on the new side, instead of walking around with the
+    // old team's colours until the next death.
+    static void RequestLocalSuicide();
 
     static bool IsSuperJump();
     static void SetSuperJump(bool val);
@@ -125,6 +129,7 @@ public:
     static constexpr bool IsFreecamActive() { return false; }
     static void ApplyFreecam(float*, const float*) {}
     static constexpr bool IsGodmode() { return false; }
+    static void RequestLocalSuicide() {}
     static void SetGodmode(bool) {}
     static constexpr bool IsSuperJump() { return false; }
     static void SetSuperJump(bool) {}

@@ -594,6 +594,7 @@ bool CinematicInProgress() {
 
 uint64_t __fastcall Hook_Tick(int32_t a, int32_t b, int32_t c, float d, float e) {
     const uint64_t result = s_originalTick(a, b, c, d, e);
+    if (a != 0) return result; // Process Noble ticks, hotkeys and spawner steps only once per frame (player 0)
     noble::DevCheats::GameTick(a);
     noble::pelican::GameTick(s_base);
     if (!s_firstTick) s_firstTick = GetTickCount64();

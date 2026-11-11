@@ -1,4 +1,5 @@
 #include "audio/VoiceChat.hpp"
+#include "../engine/DevCheats.hpp"
 #include "ForgeMenu.hpp"
 #include "SocialOverlay.hpp"
 #include "PauseMenu.hpp"
@@ -335,6 +336,30 @@ std::wstring NextMissionArgs(const std::wstring &next, std::wstring lobbyArgs) {
 
 void RelaunchAndClose(HWND hwnd, const std::wstring &args, const char *what) {
   NOBLE_INFO("PauseMenu: {} requested", what);
+  std::wstring containerVal = ArgValue(GetCommandLineW(), L"-container-hwnd");
+  if (!containerVal.empty()) {
+      if (args.empty() || args.find(L"-lobby-return") != std::wstring::npos) {
+          NOBLE_INFO("PauseMenu: {} in container mode - ending match to return to container launcher window", what);
+          TerminateProcess(GetCurrentProcess(), 0);
+          return;
+      } else {
+          // PLAY AGAIN / NEXT MISSION: a hosted match cannot start its own successor (the launcher tracks
+          // one match process and would bring its menu back over the new game), so record what to start and
+          // let the launcher window start it once this process is gone.
+          std::wstring childArgs = args;
+          if (childArgs.find(L"-container-hwnd") == std::wstring::npos) {
+              childArgs += L" -container-hwnd " + containerVal;
+          }
+          if (Relaunch::RequestContainerRelaunch(childArgs)) {
+              NOBLE_INFO("PauseMenu: {} in container mode - the launcher window starts the next match", what);
+              TerminateProcess(GetCurrentProcess(), 0);
+          } else {
+              NOBLE_WARN("PauseMenu: {} in container mode - could not hand the relaunch to the launcher", what);
+              PostMessageW(hwnd, WM_CLOSE, 0, 0);
+          }
+          return;
+      }
+  }
   Relaunch::HandOff(args);  // ends this process; returns only if the new one could not start
   PostMessageW(hwnd, WM_CLOSE, 0, 0);
 }
@@ -380,6 +405,11 @@ void SetLocalSimulationPaused(bool paused) {
     NOBLE_INFO("PauseMenu: local simulation {}", paused ? "paused" : "resumed");
   }
 }
+
+static ULONGLONG s_openedAt = 0;
+static int s_focus = 0;
+static bool s_waitForRelease = true;
+static bool s_confirmRestart = false;
 } // namespace
 
 bool PauseMenu::IsOpen() { return s_open.load(); }
@@ -406,6 +436,10 @@ void PauseMenu::Toggle() {
     return;
   }
   const bool nowOpen = !s_open.load();
+  s_openedAt = nowOpen ? GetTickCount64() : 0;
+  s_focus = 0;
+  s_waitForRelease = true;
+  s_confirmRestart = false;
   if (nowOpen)
     Window::TakeLeftClicks(); // forget clicks made in game (shots) before the
                               // menu opened
@@ -417,7 +451,10 @@ void PauseMenu::Toggle() {
 }
 
 void PauseMenu::Close() {
-    // (the open-time guard in DrawMenu is a function-local static; it re-arms by re-reading the clock below)
+  s_openedAt = 0;
+  s_focus = 0;
+  s_waitForRelease = true;
+  s_confirmRestart = false;
   s_showSettings.store(false);
   if (s_open.exchange(false)) {
     SetLocalSimulationPaused(false);
@@ -445,11 +482,16 @@ std::string s_boardMap;
 std::string s_boardMode;
 bool s_boardLogged = false;
 
+std::atomic<int> s_localTeam{1};   // from the lobby launch; the engine's own sides start at red
+std::atomic<bool> s_localTeamFromLobby{false};   // true once -lobby-teams told us the player's side
+
 int LocalTeamFromBoard() {
     std::lock_guard<std::mutex> lock(s_boardMutex);
     for (const auto& row : s_boardRows) if (row.local) return row.team;
-    return 1;   // a solo launch has no roster yet; red is the engine's default side
+    return s_localTeam.load();   // a solo launch has no roster yet: use the team the lobby assigned
 }
+
+
 
 void ChangeLocalTeam() {
     const int from = LocalTeamFromBoard() == 2 ? 2 : 1;
@@ -459,6 +501,8 @@ void ChangeLocalTeam() {
     if (BlamEngine* engine = BlamEngine::Active()) {
         engine->ExecuteCommand("player_override_team 0 " + std::to_string(to - 1));
     }
+    // Update local scoreboard row and voice chat team without forcibly destroying the player entity
+    // or spawning controllable puppet clones.
     {
         std::lock_guard<std::mutex> lock(s_boardMutex);
         for (auto& row : s_boardRows) if (row.local) row.team = to;
@@ -471,12 +515,26 @@ void ChangeLocalTeam() {
 
 static std::string s_boardSession;
 
+void PauseMenu::SetLocalTeam(int team) {
+    s_localTeam.store(std::clamp(team, 1, 8));
+    s_localTeamFromLobby.store(true);
+}
+
 void PauseMenu::SetScoreboardSession(const std::string& sessionId) {
   std::lock_guard<std::mutex> lock(s_boardMutex);
   s_boardSession = sessionId;
 }
 
 void PauseMenu::SetScoreboardRoster(std::vector<ScoreboardEntry> entries, const std::string& mapName, const std::string& modeName) {
+    // The session roster can lag the lobby's team choice (the push may not have landed yet, or a guest's copy is
+    // stale), and the panel then shows a side the player is not on. The launch's own team wins for our row.
+    if (s_localTeamFromLobby.load()) {
+        for (auto& row : entries) {
+            if (!row.local) continue;
+            row.team = s_localTeam.load();
+            break;
+        }
+    }
     std::lock_guard<std::mutex> lock(s_boardMutex);
     s_boardRows = std::move(entries);
     s_boardMap = mapName;
@@ -568,16 +626,21 @@ void PauseMenu::DrawMenu(HWND hwnd) {
     // A held game pauses; a match with other players in it must not - MCC reaches the same conclusion and just shows
     // the menu. Noble cannot stop the engine's simulation itself (no pause command has been found), so the header
     // says which of the two this is instead of pretending.
-    static ULONGLONG s_openedAt = 0;
     if (s_openedAt == 0) s_openedAt = GetTickCount64();
-    const bool interactive = GetTickCount64() - s_openedAt > 250;   // ignore the opening frames
-    if (!interactive) {
-        static bool s_resetOnClose = false;
-        (void)s_resetOnClose;
+    const bool timeReady = (GetTickCount64() - s_openedAt) > 250; // ignore the opening frames
+    if (s_waitForRelease && timeReady) {
+        const bool anyHeld = ImGui::IsMouseDown(0) ||
+                             (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0 ||
+                             ImGui::IsKeyDown(ImGuiKey_Enter) ||
+                             ImGui::IsKeyDown(ImGuiKey_KeypadEnter) ||
+                             ImGui::IsKeyDown(ImGuiKey_GamepadFaceDown);
+        if (!anyHeld) s_waitForRelease = false;
     }
+    const bool interactive = timeReady && !s_waitForRelease;
 
     const size_t peers = NetworkTransport::Get().GetGamePeerCount();
     const bool solo = peers == 0;
+    const bool isGuest = NetworkTransport::Get().IsActive() && !NetworkTransport::Get().IsHost();
     const std::wstring restartArgs = Relaunch::CurrentGameArgs();
 
     // ImGui works in a logical space (1280x720 here even on a 1920x1080 buffer), so scale from 720 to keep the
@@ -620,11 +683,15 @@ void PauseMenu::DrawMenu(HWND hwnd) {
         bool danger;
         bool enabled;
     };
-    const bool canRestart = !restartArgs.empty();
+    const bool canRestart = !restartArgs.empty() && !isGuest;
     std::vector<Entry> entries = {
         { "RESUME", "Resume the game.", false, true },
-        { "RESTART MATCH", canRestart ? "Starts this match again from the beginning." : "Needs the match arguments (only available in a launched match).",
-          false, canRestart },
+        { s_confirmRestart ? "CONFIRM RESTART?" : "RESTART MATCH",
+          canRestart ? (s_confirmRestart ? "Select again to confirm restarting the match from the beginning."
+                                         : "Starts this match again from the beginning.")
+                     : (isGuest ? "Only the host can restart a multiplayer match."
+                                : "Needs the match arguments (only available in a launched match)."),
+          s_confirmRestart, canRestart },
         { "SETTINGS", "Change any setting without leaving the match.", false, true },
         { "CONTROLS", "Change key, mouse and controller bindings and look speed without leaving the match.", false, true },
     };
@@ -648,7 +715,6 @@ void PauseMenu::DrawMenu(HWND hwnd) {
     entries.push_back({ "QUIT", "Close Noble and end the match.", true, true });
     const int entryCount = static_cast<int>(entries.size());
 
-    static int s_focus = 0;
     static ULONGLONG s_lastMove = 0;
     const ULONGLONG now = GetTickCount64();
     const bool up = ImGui::IsKeyPressed(ImGuiKey_UpArrow, true) || UiPad::Up();
@@ -656,9 +722,11 @@ void PauseMenu::DrawMenu(HWND hwnd) {
     if (interactive && (up || down) && now - s_lastMove > 120) {
         s_lastMove = now;
         s_focus = (s_focus + (down ? 1 : entryCount - 1)) % entryCount;
+        if (s_focus != 1) s_confirmRestart = false;
         MenuSounds::Scroll();
     }
     s_focus = std::clamp(s_focus, 0, entryCount - 1);
+    if (s_focus != 1) s_confirmRestart = false;
 
     const float rowH = 46.0f * s;
     int activated = -1;
@@ -671,14 +739,17 @@ void PauseMenu::DrawMenu(HWND hwnd) {
         ImGui::PushStyleColor(ImGuiCol_Text, enabled ? (focused ? NobleStyle::Accent() : ImVec4(0.86f, 0.90f, 0.94f, 1.0f))
                                                      : NobleStyle::TextMuted());
         if (ImGui::Selectable(entries[i].label, focused, ImGuiSelectableFlags_None,
-                              ImVec2(listW, rowH + 6.0f * s)) && enabled) {
+                              ImVec2(listW, rowH + 6.0f * s)) && enabled && interactive) {
             s_focus = i;
             activated = i;
         }
         if (ImGui::IsItemHovered()) {
             MenuSounds::Hover(ImGui::GetItemID());
             // Only a moving mouse takes the focus: a pointer resting here used to pin the row against the D-pad.
-            if (enabled && (ImGui::GetIO().MouseDelta.x != 0.0f || ImGui::GetIO().MouseDelta.y != 0.0f)) s_focus = i;
+            if (interactive && enabled && (ImGui::GetIO().MouseDelta.x != 0.0f || ImGui::GetIO().MouseDelta.y != 0.0f)) {
+                s_focus = i;
+                if (s_focus != 1) s_confirmRestart = false;
+            }
         }
         ImGui::PopStyleColor();
         // Underline, like the reference screens.
@@ -757,10 +828,15 @@ void PauseMenu::DrawMenu(HWND hwnd) {
     if (activated == 0) {
         Close();
     } else if (activated == 1) {
+        if (!canRestart) return;
         MenuSounds::Click();
-        Close();
-        if (!Relaunch::HandOff(restartArgs)) NOBLE_WARN("PauseMenu: restart failed, the match keeps running");
-        else NOBLE_INFO("PauseMenu: restarting the match");
+        if (!s_confirmRestart) {
+            s_confirmRestart = true;
+        } else {
+            Close();
+            if (!Relaunch::HandOff(restartArgs)) NOBLE_WARN("PauseMenu: restart failed, the match keeps running");
+            else NOBLE_INFO("PauseMenu: restarting the match");
+        }
     } else if (activated == 2) {
         MenuSounds::Click();
         Window::TakeLeftClicks();
@@ -962,15 +1038,276 @@ static std::set<std::string> s_mutedNames;
 static bool s_muteAllActive = false;
 static bool s_showPlayerModal = false;
 
+struct RawScore {
+  wchar_t name[17] = {};
+  wchar_t tag[6] = {};
+  int32_t team = -1;
+  int32_t kills = 0;
+  int32_t assists = 0;
+  int32_t deaths = 0;
+  int32_t score = 0;
+  bool local = false;
+  bool valid = false;
+};
+
+// POD SEH reader to avoid MSVC C2712 (no C++ objects requiring destruction inside __try).
+// Reads haloreach.dll's g_game_results structure (haloreach+0x28B83B0):
+//   - Player entries (16 slots, stride 0xD8) at base + 0xFEF8:
+//       +0x00 (u8): player_valid
+//       +0x10 (wchar_t[16]): player_name
+//       +0x62 (i8): team_index (0..7)
+//       +0x6C (wchar_t[5]): service_tag
+//       +0xBA (i16): live player score (base + 0xFFB2 + slot * 0xD8)
+//   - Live in_game_statistics array (16 slots, stride 0x708) at base + 0x10E50:
+//       Each stat is a 15-bit uint16_t bitfield at base + 0x10E50 + slot * 0x708 + stat_id * 2
+//       (bits 0..14 hold the value, read via raw & 0x7FFFu):
+//       stat_id 6 = in_round_score, 7 = in_game_total_score, 8 = kills, 9 = assists, 10 = deaths.
+//   - Also reads the TLS players datum array (tlsBase + 0x18, stride 0x490) for player
+//     presence, local-player flag (_player_is_local_machine_bit = 0x08), name, team (+0xAD),
+//     and service tag (+0x10C), plus TLS game_engine_globals (tlsBase + 0x20, +0x3270 + slot * 8)
+//     for live round/total score.
+static void ReadRawScoresSEH(const uint8_t* reachBase, RawScore* outScores, size_t count) {
+  __try {
+    const uint8_t* table = reachBase + 0x28B83B0;
+    for (size_t i = 0; i < count && i < 16; ++i) {
+      const uint8_t* p = table + 0xFEF8 + (i * 0xD8);
+      if (p[0] != 0) {
+        outScores[i].valid = true;
+        const wchar_t* wname = reinterpret_cast<const wchar_t*>(p + 0x10);
+        for (size_t c = 0; c < 16 && wname[c] != 0; ++c) outScores[i].name[c] = wname[c];
+        outScores[i].name[16] = 0;
+        const int8_t rawTeam = *reinterpret_cast<const int8_t*>(p + 0x62);
+        outScores[i].team = (rawTeam >= 0 && rawTeam < 8) ? (rawTeam + 1) : 0;
+        const wchar_t* wtag = reinterpret_cast<const wchar_t*>(p + 0x6C);
+        for (size_t c = 0; c < 5 && wtag[c] != 0; ++c) outScores[i].tag[c] = wtag[c];
+        outScores[i].tag[5] = 0;
+      }
+
+      const uint8_t* statsBase = table + 0x10E50 + (i * 0x708);
+      auto readStat = [statsBase](size_t statId) -> int32_t {
+        const uint16_t raw = *reinterpret_cast<const uint16_t*>(statsBase + statId * 2);
+        if (raw == 0xFFFFu) return 0;
+        return static_cast<int32_t>(raw & 0x7FFFu);
+      };
+
+      const int32_t k = readStat(8);
+      const int32_t a = readStat(9);
+      const int32_t d = readStat(10);
+      const int32_t roundScore = readStat(6);
+      const int32_t totalScore = readStat(7);
+      const int16_t liveScore16 = *reinterpret_cast<const int16_t*>(p + 0xBA);
+
+      outScores[i].kills = (k >= 0 && k < 32768) ? k : 0;
+      outScores[i].assists = (a >= 0 && a < 32768) ? a : 0;
+      outScores[i].deaths = (d >= 0 && d < 32768) ? d : 0;
+      if (liveScore16 != 0) {
+        outScores[i].score = liveScore16;
+      } else if (totalScore != 0) {
+        outScores[i].score = totalScore;
+      } else {
+        outScores[i].score = roundScore;
+      }
+    }
+
+    // Supplement with live TLS players datum array (stride 0x490) and TLS game_engine_globals
+    // score array so player identity, local flag, team, and score are always populated in real time.
+    const uint32_t tlsIdx = *reinterpret_cast<const uint32_t*>(reachBase + 0xC17B18);
+    if (tlsIdx < 64) {
+      const uintptr_t tlsVec = __readgsqword(0x58);
+      if (tlsVec) {
+        const uintptr_t tlsBase = *reinterpret_cast<const uintptr_t*>(tlsVec + static_cast<uintptr_t>(tlsIdx) * 8);
+        if (tlsBase) {
+          const uint8_t* playersTable = *reinterpret_cast<const uint8_t* const*>(tlsBase + 0x18);
+          if (playersTable) {
+            const int32_t maxP = *reinterpret_cast<const int32_t*>(playersTable + 0x44);
+            const uint8_t* entries = *reinterpret_cast<const uint8_t* const*>(playersTable + 0x50);
+            if (entries && maxP > 0 && maxP <= 16) {
+              for (int32_t i = 0; i < maxP && static_cast<size_t>(i) < count; ++i) {
+                const uint8_t* entry = entries + static_cast<size_t>(i) * 0x490;
+                const uint16_t salt = *reinterpret_cast<const uint16_t*>(entry);
+                if (salt == 0) continue;
+                const uint32_t flags = *reinterpret_cast<const uint32_t*>(entry + 0x04);
+                if ((flags & 0x01u) != 0) continue; // skip _player_left_game_bit
+                const wchar_t* wname = reinterpret_cast<const wchar_t*>(entry + 0xB0);
+                if (wname[0] == 0) continue;
+                outScores[i].valid = true;
+                if (outScores[i].name[0] == 0) {
+                  for (size_t c = 0; c < 16 && wname[c] != 0; ++c) outScores[i].name[c] = wname[c];
+                  outScores[i].name[16] = 0;
+                }
+                if (outScores[i].tag[0] == 0) {
+                  const wchar_t* wtag = reinterpret_cast<const wchar_t*>(entry + 0x10C);
+                  for (size_t c = 0; c < 5 && wtag[c] != 0; ++c) outScores[i].tag[c] = wtag[c];
+                  outScores[i].tag[5] = 0;
+                }
+                if (outScores[i].team <= 0) {
+                  int8_t rawTeam = *reinterpret_cast<const int8_t*>(entry + 0xAD);
+                  if (rawTeam < 0 || rawTeam >= 8) {
+                    rawTeam = *reinterpret_cast<const int8_t*>(entry + 0x102);
+                  }
+                  outScores[i].team = (rawTeam >= 0 && rawTeam < 8) ? (rawTeam + 1) : 0;
+                }
+                if ((flags & 0x08u) != 0) {
+                  outScores[i].local = true;
+                }
+              }
+            }
+          }
+
+          // Live score fallback from TLS game_engine_globals (+0x3270 + slot * 8)
+          const uint8_t* geGlobals = *reinterpret_cast<const uint8_t* const*>(tlsBase + 0x20);
+          if (geGlobals) {
+            for (size_t i = 0; i < count && i < 16; ++i) {
+              if (outScores[i].score == 0) {
+                const int16_t geTotalScore = *reinterpret_cast<const int16_t*>(geGlobals + 0x3272 + i * 8);
+                const int16_t geRoundScore = *reinterpret_cast<const int16_t*>(geGlobals + 0x3270 + i * 8);
+                if (geTotalScore != 0) {
+                  outScores[i].score = geTotalScore;
+                } else if (geRoundScore != 0) {
+                  outScores[i].score = geRoundScore;
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  } __except (EXCEPTION_EXECUTE_HANDLER) {}
+}
+
+static std::string WideToUtf8Short(const wchar_t* w) {
+  if (!w || w[0] == 0) return {};
+  char buf[64] = {};
+  WideCharToMultiByte(CP_UTF8, 0, w, -1, buf, static_cast<int>(sizeof(buf) - 1), nullptr, nullptr);
+  return buf;
+}
+
+// Polls active game engine results table (haloreach+0x28B83B0) and TLS players table so that
+// player roster, kills, assists, deaths, scores, and ping update live in real time across
+// Firefight, Custom Games, Campaign, and Forge.
+static void UpdateLiveScoreboard() {
+  HMODULE reach = GetModuleHandleW(L"haloreach.dll");
+  if (!reach) return;
+  const uint8_t* reachBase = reinterpret_cast<const uint8_t*>(reach);
+  RawScore scores[16] = {};
+  ReadRawScoresSEH(reachBase, scores, 16);
+
+  const SettingsData snap = Settings::Get().Snapshot();
+  const int localRank = Career::RankIndex(Career::Get().credits);
+  const bool netActive = NetworkTransport::Get().IsActive();
+  const bool netHost = netActive && NetworkTransport::Get().IsHost();
+  const int fallbackPing = netActive ? NetworkTransport::Get().GetPeerPingMs(0) : -1;
+  std::vector<int> peerPingList;
+  if (netActive) {
+    const auto peerPingMap = NetworkTransport::Get().GetAllPeerPingsMs();
+    peerPingList.reserve(peerPingMap.size());
+    for (const auto& kv : peerPingMap) {
+      if (kv.second >= 0) {
+        peerPingList.push_back(kv.second);
+      }
+    }
+  }
+
+  std::lock_guard<std::mutex> lock(s_boardMutex);
+  bool anyValid = false;
+  bool anyTlsLocal = false;
+  for (size_t i = 0; i < 16; ++i) {
+    if (scores[i].valid && scores[i].name[0] != 0) {
+      anyValid = true;
+      if (scores[i].local) {
+        anyTlsLocal = true;
+      }
+    }
+  }
+
+  if (anyValid) {
+    for (size_t i = 0; i < 16; ++i) {
+      if (!scores[i].valid || scores[i].name[0] == 0) continue;
+      const std::string nameUtf8 = WideToUtf8Short(scores[i].name);
+      const std::string tagUtf8 = WideToUtf8Short(scores[i].tag);
+      if (nameUtf8.empty()) continue;
+      const bool isLocalPlayer = scores[i].local ||
+                                 (!anyTlsLocal && (_stricmp(nameUtf8.c_str(), snap.playerName.c_str()) == 0));
+
+      PauseMenu::ScoreboardEntry* matched = nullptr;
+      for (auto& existing : s_boardRows) {
+        if (_stricmp(existing.name.c_str(), nameUtf8.c_str()) == 0) {
+          matched = &existing;
+          break;
+        }
+      }
+      if (!matched && i < s_boardRows.size() && s_boardRows[i].name.empty()) {
+        matched = &s_boardRows[i];
+        matched->name = nameUtf8;
+      }
+      if (!matched) {
+        PauseMenu::ScoreboardEntry entry;
+        entry.name = nameUtf8;
+        entry.local = isLocalPlayer;
+        entry.tag = entry.local && !snap.serviceTag.empty() ? snap.serviceTag : tagUtf8;
+        entry.team = scores[i].team >= 0 ? scores[i].team : 1;
+        entry.rank = entry.local ? localRank : 0;
+        entry.ping = entry.local ? 0 : (fallbackPing > 0 ? fallbackPing : 0);
+        s_boardRows.push_back(entry);
+        matched = &s_boardRows.back();
+      }
+
+      matched->local = isLocalPlayer;
+      if (matched->local && !snap.serviceTag.empty()) {
+        matched->tag = snap.serviceTag;
+      } else if (!tagUtf8.empty()) {
+        matched->tag = tagUtf8;
+      }
+      if (scores[i].team >= 0) {
+        matched->team = scores[i].team;
+      }
+      if (matched->local && matched->rank <= 0) {
+        matched->rank = localRank;
+      }
+      matched->kills = scores[i].kills;
+      matched->assists = scores[i].assists;
+      matched->deaths = scores[i].deaths;
+      matched->score = scores[i].score;
+    }
+  } else {
+    // Fallback if player names aren't in g_game_results yet: update by slot index
+    for (size_t i = 0; i < s_boardRows.size() && i < 16; ++i) {
+      auto& row = s_boardRows[i];
+      row.kills = scores[i].kills;
+      row.assists = scores[i].assists;
+      row.deaths = scores[i].deaths;
+      row.score = scores[i].score;
+    }
+  }
+
+  size_t peerPingCursor = 0;
+  for (auto& row : s_boardRows) {
+    if (row.local) {
+      row.ping = (netActive && !netHost && fallbackPing > 0) ? fallbackPing : 0;
+    } else if (netActive) {
+      int ms = -1;
+      if (row.machine != 0) {
+        ms = NetworkTransport::Get().GetPeerPingMs(row.machine);
+      }
+      if (ms < 0 && netHost && !peerPingList.empty()) {
+        ms = peerPingList[peerPingCursor % peerPingList.size()];
+        ++peerPingCursor;
+      }
+      if (ms < 0) {
+        ms = fallbackPing;
+      }
+      row.ping = (ms >= 0) ? ms : 0;
+    } else if (row.ping < 0) {
+      row.ping = 0;
+    }
+  }
+}
+
 // Modernized in-match scoreboard overlay replicating the 2-column layout from Halo: Reach MCC.
 // Supports mouse and gamepad navigation, individual and all-player mute toggles, live ping RTT,
 // team score aggregate bars, emblem / mute icon badges, rank insignias, and player options.
 static void DrawScoreboardPanel() {
-  for (auto &row : s_boardRows) {
-    if (row.machine == 0) continue;
-    const int ms = NetworkTransport::Get().GetPeerPingMs(row.machine);
-    if (ms >= 0) row.ping = ms;
-  }
+  UpdateLiveScoreboard();
 
   using namespace NobleUi;
   const int demo = ScoreboardDemo();
@@ -995,12 +1332,14 @@ static void DrawScoreboardPanel() {
   }
 
   if (rows.empty()) {
+    const SettingsData snap = Settings::Get().Snapshot();
     PauseMenu::ScoreboardEntry me;
-    me.name = Settings::Get().Snapshot().playerName;
-    me.tag = "NOBL";
+    me.name = snap.playerName;
+    me.tag = snap.serviceTag.empty() ? "NOBL" : snap.serviceTag;
     me.local = true;
-    me.team = 1;
+    me.team = LocalTeamFromBoard();
     me.rank = Career::RankIndex(Career::Get().credits);
+    me.ping = 0;
     rows.push_back(me);
   }
 
@@ -1081,30 +1420,93 @@ static void DrawScoreboardPanel() {
     }
   }
 
-  // Sort: by team first, then by score descending, kills descending, deaths ascending
-  std::sort(rows.begin(), rows.end(), [](const PauseMenu::ScoreboardEntry &a, const PauseMenu::ScoreboardEntry &b) {
-    if (a.team != b.team) return a.team < b.team;
+  // Determine mode category: Campaign and Firefight are unified co-op (allied UNSC team)
+  std::string lowerMode = modeName;
+  for (char &c : lowerMode) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  const bool isCoopMode = (lowerMode == "campaign" || lowerMode == "firefight");
+
+  // Sort: by team first (if competitive), then by score descending, kills descending, deaths ascending
+  std::sort(rows.begin(), rows.end(), [isCoopMode](const PauseMenu::ScoreboardEntry &a, const PauseMenu::ScoreboardEntry &b) {
+    if (!isCoopMode && a.team != b.team) return a.team < b.team;
     if (a.score != b.score) return a.score > b.score;
     if (a.kills != b.kills) return a.kills > b.kills;
     return a.deaths < b.deaths;
   });
 
   bool hasTeams = false;
-  for (const auto &r : rows) hasTeams = hasTeams || r.team == 1 || r.team == 2;
+  if (!isCoopMode) {
+    for (const auto &r : rows) hasTeams = hasTeams || r.team > 0;
+  }
+
+  // Multi-team colors and names (supporting all 8 Reach multiplayer teams)
+  struct TeamStyle {
+    const char* name;
+    ImU32 headerCol;
+    ImU32 rowBaseCol;
+    ImU32 rowAltCol;
+  };
+  static const TeamStyle kTeamStyles[8] = {
+    { "RED TEAM",    IM_COL32(195, 42, 42, 245),   IM_COL32(145, 30, 30, 150),  IM_COL32(130, 25, 25, 150) },
+    { "BLUE TEAM",   IM_COL32(38, 92, 185, 245),   IM_COL32(28, 62, 145, 150),  IM_COL32(24, 52, 130, 150) },
+    { "GREEN TEAM",  IM_COL32(38, 160, 68, 245),   IM_COL32(28, 120, 52, 150),  IM_COL32(24, 105, 45, 150) },
+    { "ORANGE TEAM", IM_COL32(220, 115, 28, 245),  IM_COL32(165, 85, 20, 150),  IM_COL32(145, 75, 18, 150) },
+    { "PURPLE TEAM", IM_COL32(150, 48, 195, 245),  IM_COL32(110, 35, 145, 150), IM_COL32(95, 30, 130, 150) },
+    { "YELLOW TEAM", IM_COL32(215, 180, 30, 245),  IM_COL32(160, 135, 22, 150), IM_COL32(140, 118, 18, 150) },
+    { "BROWN TEAM",  IM_COL32(140, 85, 45, 245),   IM_COL32(105, 62, 32, 150),  IM_COL32(90, 54, 28, 150) },
+    { "PINK TEAM",   IM_COL32(225, 80, 150, 245),  IM_COL32(165, 58, 110, 150), IM_COL32(145, 50, 96, 150) }
+  };
 
   std::vector<int> columnRows[2];
   int teamScores[2] = { 0, 0 };
   int teamKills[2] = { 0, 0 };
   int teamDeaths[2] = { 0, 0 };
   int teamAssists[2] = { 0, 0 };
+  int activeTeamIndices[2] = { 0, 1 };
+  int presentTeamCount = 1;   // how many teams the match really has: one team is one column, not red-vs-blue
 
-  for (int i = 0; i < static_cast<int>(rows.size()); ++i) {
-    const int col = (hasTeams && rows[i].team == 2) ? 1 : 0;
-    columnRows[col].push_back(i);
-    teamScores[col] += rows[i].score;
-    teamKills[col] += rows[i].kills;
-    teamDeaths[col] += rows[i].deaths;
-    teamAssists[col] += rows[i].assists;
+  if (isCoopMode) {
+    // Campaign & Firefight: Unified UNSC Team in a single column
+    for (int i = 0; i < static_cast<int>(rows.size()); ++i) {
+      columnRows[0].push_back(i);
+      teamScores[0] += rows[i].score;
+      teamKills[0] += rows[i].kills;
+      teamDeaths[0] += rows[i].deaths;
+      teamAssists[0] += rows[i].assists;
+    }
+  } else if (hasTeams) {
+    // Check which teams are active in the match
+    std::vector<int> presentTeams;
+    for (const auto &r : rows) {
+      const int t = std::clamp(r.team, 1, 8);
+      if (std::find(presentTeams.begin(), presentTeams.end(), t) == presentTeams.end()) {
+        presentTeams.push_back(t);
+      }
+    }
+    std::sort(presentTeams.begin(), presentTeams.end());
+    // Follow the teams that are actually in the match. A solo gold-team session used to be drawn as
+    // "RED TEAM" with the gold row inside it, because the headers were always teams 1 and 2.
+    if (!presentTeams.empty()) {
+      presentTeamCount = static_cast<int>(presentTeams.size());
+      activeTeamIndices[0] = presentTeams[0] - 1;
+      activeTeamIndices[1] = presentTeams.size() > 1 ? presentTeams[1] - 1 : presentTeams[0] - 1;
+    }
+    for (int i = 0; i < static_cast<int>(rows.size()); ++i) {
+      const int t = std::clamp(rows[i].team, 1, 8);
+      const int col = (presentTeamCount > 1 && t == (activeTeamIndices[1] + 1)) ? 1 : 0;
+      columnRows[col].push_back(i);
+      teamScores[col] += rows[i].score;
+      teamKills[col] += rows[i].kills;
+      teamDeaths[col] += rows[i].deaths;
+      teamAssists[col] += rows[i].assists;
+    }
+  } else {
+    for (int i = 0; i < static_cast<int>(rows.size()); ++i) {
+      columnRows[0].push_back(i);
+      teamScores[0] += rows[i].score;
+      teamKills[0] += rows[i].kills;
+      teamDeaths[0] += rows[i].deaths;
+      teamAssists[0] += rows[i].assists;
+    }
   }
 
   // In demo mode or if scores are unconfigured in real match, align totals with the reference
@@ -1115,7 +1517,7 @@ static void DrawScoreboardPanel() {
     teamAssists[0] = 17; teamAssists[1] = 11;
   }
 
-  const int columnCount = hasTeams ? 2 : 1;
+  const int columnCount = (hasTeams && presentTeamCount > 1) ? 2 : 1;
   const float panelW = std::min(W * 0.96f, 1320.0f * s);
   const float colGap = 10.0f * s;
   const float colW = (panelW - (columnCount - 1) * colGap) / columnCount;
@@ -1213,25 +1615,26 @@ static void DrawScoreboardPanel() {
     s_boardScroll[col] = std::clamp(s_boardScroll[col], 0, std::max(0, count - visibleRows));
     const int scroll = s_boardScroll[col];
 
-    // 1. Solid Team Header Banner
-    const ImVec2 h0(cx, p0.y);
-    const ImVec2 h1(cx + colW, p0.y + headerH);
-    const ImU32 bannerColor = hasTeams ? kTeamHeaderCol[col] : IM_COL32(36, 68, 102, 245);
-    dl->AddRectFilled(h0, h1, bannerColor, 2.0f * s);
+  // 1. Solid Team Header Banner
+  const ImVec2 h0(cx, p0.y);
+  const ImVec2 h1(cx + colW, p0.y + headerH);
+  const ImU32 bannerColor = isCoopMode ? IM_COL32(32, 64, 105, 250)
+                          : (hasTeams ? kTeamStyles[activeTeamIndices[col]].headerCol : IM_COL32(36, 68, 102, 245));
+  dl->AddRectFilled(h0, h1, bannerColor, 2.0f * s);
 
-    // Subtle bright top accent line
-    dl->AddLine(ImVec2(h0.x, h0.y), ImVec2(h1.x, h0.y), IM_COL32(255, 255, 255, 90), 1.0f * s);
+  // Subtle bright top accent line
+  dl->AddLine(ImVec2(h0.x, h0.y), ImVec2(h1.x, h0.y), IM_COL32(255, 255, 255, 90), 1.0f * s);
 
-    // Left rank / placement badge on banner
-    const int teamRank = (col == 0) ? (teamScores[0] >= teamScores[1] ? 1 : 2) : (teamScores[1] > teamScores[0] ? 1 : 2);
-    char rankStr[8];
-    std::snprintf(rankStr, sizeof(rankStr), "%d", teamRank);
-    const float rankColW = 28.0f * s;
-    Text(dl, NobleStyle::TitleFont(), 20.0f * s, ImVec2(cx + 8.0f * s, p0.y + 7.0f * s), IM_COL32(255, 255, 255, 255), rankStr);
+  // Left rank / placement badge on banner
+  const int teamRank = isCoopMode ? 1 : ((col == 0) ? (teamScores[0] >= teamScores[1] ? 1 : 2) : (teamScores[1] > teamScores[0] ? 1 : 2));
+  char rankStr[8];
+  std::snprintf(rankStr, sizeof(rankStr), "%d", teamRank);
+  const float rankColW = 28.0f * s;
+  Text(dl, NobleStyle::TitleFont(), 20.0f * s, ImVec2(cx + 8.0f * s, p0.y + 7.0f * s), IM_COL32(255, 255, 255, 255), rankStr);
 
-    // Team Name
-    const char* teamTitle = hasTeams ? (col == 0 ? "RED TEAM" : "BLUE TEAM") : "MATCH ROSTER";
-    Text(dl, NobleStyle::TitleFont(), 20.0f * s, ImVec2(cx + rankColW + 6.0f * s, p0.y + 7.0f * s), IM_COL32(255, 255, 255, 255), teamTitle);
+  // Team Name
+  const char* teamTitle = isCoopMode ? "UNSC ALLIES" : (hasTeams ? kTeamStyles[activeTeamIndices[col]].name : "MATCH ROSTER");
+  Text(dl, NobleStyle::TitleFont(), 20.0f * s, ImVec2(cx + rankColW + 6.0f * s, p0.y + 7.0f * s), IM_COL32(255, 255, 255, 255), teamTitle);
 
     // Column positions for stats on the right (matching headers & rows exactly)
     const float pingColW = 48.0f * s;
@@ -1310,8 +1713,9 @@ static void DrawScoreboardPanel() {
       }
 
       const bool selected = (r.name == s_selected);
-      const ImU32 baseBg = (v % 2 == 0) ? (hasTeams ? kTeamRowBaseCol[col] : IM_COL32(24, 38, 54, 150))
-                                        : (hasTeams ? kTeamRowAltCol[col] : IM_COL32(20, 32, 46, 150));
+      const ImU32 baseBg = isCoopMode ? ((v % 2 == 0) ? IM_COL32(24, 42, 65, 160) : IM_COL32(20, 36, 56, 160))
+                         : (hasTeams ? ((v % 2 == 0) ? kTeamStyles[activeTeamIndices[col]].rowBaseCol : kTeamStyles[activeTeamIndices[col]].rowAltCol)
+                                     : ((v % 2 == 0) ? IM_COL32(24, 38, 54, 150) : IM_COL32(20, 32, 46, 150)));
       const ImU32 rowBg = r.local ? IM_COL32(32, 80, 120, 220) : selected ? IM_COL32(65, 115, 165, 190) : hovered ? IM_COL32(255, 255, 255, 38) : baseBg;
 
       dl->AddRectFilled(r0, r1, rowBg);
@@ -1389,8 +1793,9 @@ static void DrawScoreboardPanel() {
       int ping = r.ping;
       if (!r.local && NetworkTransport::Get().IsActive()) {
         const int live = r.hostPeer ? NetworkTransport::Get().GetPeerPingMs(0) : (r.machine ? NetworkTransport::Get().GetPeerPingMs(r.machine) : -1);
-        if (live > 0) ping = live;
+        if (live >= 0) ping = live;
       }
+      if (ping < 0) ping = 0;
 
       const ImU32 pingBadgeCol = ping < 0 ? IM_COL32(90, 105, 120, 180)
                                : (ping <= 100 ? IM_COL32(36, 175, 75, 230)
@@ -1443,22 +1848,32 @@ static void DrawScoreboardPanel() {
   const float wmX = p1.x - wmWidth - 70.0f * s;
   Text(dl, NobleStyle::TitleFont(), 18.0f * s, ImVec2(wmX, footY + 2.0f * s), IM_COL32(200, 220, 240, 240), watermark.c_str());
 
-  // Red & Blue score square pills
-  if (hasTeams) {
+  // Team score square pills (or co-op total score pill)
+  if (isCoopMode) {
+    char buf[32];
+    const float pillBoxW = 48.0f * s;
+    const float pillBoxH = 18.0f * s;
+    const float pillBoxX = p1.x - 78.0f * s;
+    dl->AddRectFilled(ImVec2(pillBoxX, footY), ImVec2(pillBoxX + pillBoxW, footY + pillBoxH), IM_COL32(32, 64, 105, 250), 2.0f * s);
+    std::snprintf(buf, sizeof(buf), "%d", teamScores[0]);
+    Text(dl, NobleStyle::TitleFont(), 15.0f * s, ImVec2(pillBoxX + (pillBoxW - TextWidth(NobleStyle::TitleFont(), 15.0f * s, buf)) * 0.5f, footY + 1.0f * s), IM_COL32(255, 255, 255, 255), buf);
+  } else if (hasTeams) {
     char buf[32];
     const float pillBoxW = 26.0f * s;
     const float pillBoxH = 18.0f * s;
     const float pillBoxX = p1.x - 56.0f * s;
 
-    // Red pill
-    dl->AddRectFilled(ImVec2(pillBoxX, footY), ImVec2(pillBoxX + pillBoxW, footY + pillBoxH), kTeamHeaderCol[0], 2.0f * s);
+    // Team 1 pill
+    dl->AddRectFilled(ImVec2(pillBoxX, footY), ImVec2(pillBoxX + pillBoxW, footY + pillBoxH), kTeamStyles[activeTeamIndices[0]].headerCol, 2.0f * s);
     std::snprintf(buf, sizeof(buf), "%d", teamScores[0]);
     Text(dl, NobleStyle::TitleFont(), 15.0f * s, ImVec2(pillBoxX + (pillBoxW - TextWidth(NobleStyle::TitleFont(), 15.0f * s, buf)) * 0.5f, footY + 1.0f * s), IM_COL32(255, 255, 255, 255), buf);
 
-    // Blue pill
-    dl->AddRectFilled(ImVec2(pillBoxX, footY + pillBoxH + 3.0f * s), ImVec2(pillBoxX + pillBoxW, footY + pillBoxH * 2.0f + 3.0f * s), kTeamHeaderCol[1], 2.0f * s);
-    std::snprintf(buf, sizeof(buf), "%d", teamScores[1]);
-    Text(dl, NobleStyle::TitleFont(), 15.0f * s, ImVec2(pillBoxX + (pillBoxW - TextWidth(NobleStyle::TitleFont(), 15.0f * s, buf)) * 0.5f, footY + pillBoxH + 4.0f * s), IM_COL32(255, 255, 255, 255), buf);
+    // Team 2 pill (only when the match really has a second team)
+    if (columnCount > 1) {
+      dl->AddRectFilled(ImVec2(pillBoxX, footY + pillBoxH + 3.0f * s), ImVec2(pillBoxX + pillBoxW, footY + pillBoxH * 2.0f + 3.0f * s), kTeamStyles[activeTeamIndices[1]].headerCol, 2.0f * s);
+      std::snprintf(buf, sizeof(buf), "%d", teamScores[1]);
+      Text(dl, NobleStyle::TitleFont(), 15.0f * s, ImVec2(pillBoxX + (pillBoxW - TextWidth(NobleStyle::TitleFont(), 15.0f * s, buf)) * 0.5f, footY + pillBoxH + 4.0f * s), IM_COL32(255, 255, 255, 255), buf);
+    }
   }
 
   if (pointer) {
@@ -1675,7 +2090,7 @@ void PauseMenu::DrawGameOver(HWND hwnd) {
   // Skip: Enter / Space (fresh press, window in front) or a click away from the
   // buttons.
   bool skipKey = false;
-  if (GetForegroundWindow() == hwnd) {
+  if (Window::IsForeground(hwnd)) {
     const bool down = (GetAsyncKeyState(VK_RETURN) & 0x8000) ||
                       (GetAsyncKeyState(VK_SPACE) & 0x8000);
     skipKey = down && !s_reveal.keyWasDown;
@@ -2254,6 +2669,9 @@ void PauseMenu::DrawLoading() {
     modThumb = s_loadingThumb;
     description = s_loadingDescription;
   }
+  if (mapName.empty() && !scenario.empty()) {
+    mapName = Upper(DisplayName(scenario));
+  }
   dl->AddRectFilledMultiColor(ImVec2(0, 0), ImVec2(w, h),
                               IM_COL32(10, 16, 24, 255),
                               IM_COL32(10, 16, 24, 255), IM_COL32(2, 4, 8, 255),
@@ -2261,24 +2679,9 @@ void PauseMenu::DrawLoading() {
   const UiTexture scene = modImage.empty() ? UiArt::LoadingBackground(scenario) : UiArt::ImageFile(modImage);
   if (scene) {
     UiArt::DrawCover(dl, scene, ImVec2(0, 0), ImVec2(w, h));
-    dl->AddRectFilledMultiColor(ImVec2(0, h * 0.55f), ImVec2(w, h),
+    dl->AddRectFilledMultiColor(ImVec2(0, h * 0.50f), ImVec2(w, h),
                                 IM_COL32(0, 0, 0, 0), IM_COL32(0, 0, 0, 0),
-                                IM_COL32(0, 0, 0, 215), IM_COL32(0, 0, 0, 215));
-  }
-  // Multiplayer and Firefight have no per-map scene: show the map's preview as
-  // well.
-  const bool campaign = scenario.size() >= 3 && scenario[0] == 'm' &&
-                        scenario[1] >= '0' && scenario[1] <= '9';
-  if (!campaign) {
-    const UiTexture preview = modThumb.empty() ? UiArt::MapPreview(scenario, true) : UiArt::ImageFile(modThumb);
-    if (preview) {
-      const float pw = w * 0.30f, ph = pw * 292.0f / 668.0f;
-      const ImVec2 p0(w * 0.93f - pw, h * 0.80f - ph), p1(w * 0.93f, h * 0.80f);
-      dl->AddRectFilled(ImVec2(p0.x - 4, p0.y - 4), ImVec2(p1.x + 4, p1.y + 4),
-                        IM_COL32(0, 0, 0, 160));
-      UiArt::DrawCover(dl, preview, p0, p1);
-      dl->AddRect(p0, p1, IM_COL32(170, 200, 220, 140));
-    }
+                                IM_COL32(0, 0, 0, 230), IM_COL32(0, 0, 0, 230));
   }
 
   const ImVec4 accent = NobleStyle::Accent();
@@ -2286,8 +2689,8 @@ void PauseMenu::DrawLoading() {
   const ImU32 mutedCol =
       ImGui::ColorConvertFloat4ToU32(NobleStyle::TextMuted());
 
-  const float left = w * 0.07f;
-  const float base = h * 0.80f;
+  const float left = w * 0.08f;
+  const float base = h * 0.85f;
 
   ImFont *title = NobleStyle::TitleFont();
   ImFont *font = ImGui::GetFont();
@@ -2509,7 +2912,7 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading,
     GetClientRect(hwnd, &client);
     POINT cursor{};
     static bool s_boardWasPointerFrame = false;
-    if ((open || gameOver || boardPointer || extraOverlay) && GetForegroundWindow() == hwnd &&
+    if ((open || gameOver || boardPointer || extraOverlay) && Window::IsForeground(hwnd) &&
         GetCursorPos(&cursor) && ScreenToClient(hwnd, &cursor) &&
         client.right > 0 && client.bottom > 0) {
       // Window may be resized while the back buffer stays the same size: scale

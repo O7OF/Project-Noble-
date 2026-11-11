@@ -20,6 +20,11 @@ struct ModMap {
     std::string description;
     bool forgeMap = false;    // the map JSON lists the "ForgeMap" flag
     bool hasMapFile = false;  // maps\<scenario>.map exists in the mod folder (checked once at scan time)
+    // The rest of MCC's map manifest, kept so the launcher can act on it (the engine never reads these JSONs;
+    // MCC does, and uses them for a map's category and Forge palette). See ModCatalog::Scan.
+    std::vector<uint32_t> validObjectTypes;   // "ValidMultiplayerObjectTypes": objects a Forge palette offers
+    std::string defaultForgeWeapon;           // "MapDefaultPrimaryWeaponForge"
+    std::string gameCategory;                 // "campaign" / "firefight" / "multiplayer", from the JSON folder
     // The mod's own art (Images.Large / Thumbnail / LoadingScreen in the map JSON), absolute and
     // checked to exist. Empty when the mod has no picture for that slot.
     std::filesystem::path imageLarge, imageThumbnail, imageLoading;

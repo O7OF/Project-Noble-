@@ -25,7 +25,11 @@ namespace fs = std::filesystem;
 
 namespace {
 
-std::mutex s_mutex;
+// Recursive on purpose: these helpers call one another (LoadingBackground -> MapPreview -> PackImage,
+// MenuBackground -> FileCached, ...), and a plain std::mutex made the second lock on the same thread throw
+// std::system_error("resource deadlock would occur"), which left the process with an uncaught C++ exception
+// (0xE06D7363) the moment a non-campaign map asked for its preview picture.
+std::recursive_mutex s_mutex;
 ID3D11Device* s_device = nullptr;
 fs::path s_mccRoot;
 fs::path s_exeDir;
@@ -479,7 +483,7 @@ bool s_menuBackgroundChosen = false;
 } // namespace
 
 void Init(ID3D11Device* device, const fs::path& mccRoot, const fs::path& exeDir) {
-    std::lock_guard<std::mutex> lock(s_mutex);
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
     s_device = device;
     if (s_device) s_device->AddRef();
     s_mccRoot = mccRoot;
@@ -491,7 +495,7 @@ void Init(ID3D11Device* device, const fs::path& mccRoot, const fs::path& exeDir)
 }
 
 void Shutdown() {
-    std::lock_guard<std::mutex> lock(s_mutex);
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
     for (ID3D11ShaderResourceView* v : s_views) v->Release();
     s_views.clear();
     s_cache.clear();
@@ -503,12 +507,12 @@ void Shutdown() {
 }
 
 UiTexture PackImage(const std::string& pack, const std::string& name) {
-    std::lock_guard<std::mutex> lock(s_mutex);
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
     return Cached("pack:" + pack + ":" + name, [&] { return LoadPackImage(pack, name); });
 }
 
 UiTexture MenuBackground() {
-    std::lock_guard<std::mutex> lock(s_mutex);
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
     if (s_menuBackgroundChosen) return s_menuBackground;
     s_menuBackgroundChosen = true;
 
@@ -620,21 +624,23 @@ bool ImportMenuBackgroundImage(const std::filesystem::path& source, std::string&
 }
 
 UiTexture LoadingBackground(const std::string& scenario) {
-    std::lock_guard<std::mutex> lock(s_mutex);
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
     return Cached("loading:" + scenario, [&]() -> UiTexture {
-    for (const fs::path& dir : { CustomDir() / "loading", NobleDir() / "loading" }) {
-        fs::path p = FindImage(dir, scenario);
-        if (p.empty()) p = FindImage(dir, "default");
-        if (!p.empty()) {
-            UiTexture t = FileCached(p);
-            if (t) return t;
+        for (const fs::path& dir : { CustomDir() / "loading", NobleDir() / "loading" }) {
+            fs::path p = FindImage(dir, scenario);
+            if (p.empty()) p = FindImage(dir, "default");
+            if (!p.empty()) {
+                UiTexture t = FileCached(p);
+                if (t) return t;
+            }
         }
-    }
-    if (UiTexture t = SceneCached(scenario)) return t;
-    // Multiplayer / Firefight: no per-map scene is known, so use a Reach campaign scene; the loading
-    // screen adds the map's preview on top.
-    const SceneFingerprint& pick = kCampaignScenes[std::hash<std::string>{}(scenario) % 10 + 1];
-    return SceneCached(pick.scenario);
+        // 1. If an authentic 1920x1080 loading scene exists (campaign missions), use it
+        if (UiTexture t = SceneCached(scenario)) return t;
+        // 2. Use the map's own authentic high-res level preview (covers all MP, Firefight, and Forge maps)
+        if (UiTexture preview = MapPreview(scenario, true)) return preview;
+        // 3. Fallback to Forge World large image
+        if (UiTexture fw = MapPreview("forge_halo", true)) return fw;
+        return {};
     });
 }
 
@@ -647,7 +653,7 @@ UiTexture MapPreview(const std::string& scenario, bool large) {
 
 UiTexture ImageFile(const std::filesystem::path& path) {
     if (path.empty()) return {};
-    std::lock_guard<std::mutex> lock(s_mutex);
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
     return Cached("file:" + path.string(), [&] { return LoadImageFile(path); });
 }
 
@@ -656,7 +662,7 @@ UiTexture MapPhoto(const std::string& scenario) {
     if (UiTexture preview = MapPreview(scenario, true)) return preview;
     // A mod (or the player) can supply a picture for a map MCC does not know: the same file name the
     // loading screen uses. No scene fallback here - that would show a different map.
-    std::lock_guard<std::mutex> lock(s_mutex);
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
     return Cached("mapphoto:" + scenario, [&]() -> UiTexture {
         for (const fs::path& dir : { CustomDir() / "loading", NobleDir() / "loading" }) {
             const fs::path p = FindImage(dir, scenario);
@@ -695,7 +701,7 @@ UiTexture ReachArtLocked(const std::string& category, const std::string& stem) {
 } // namespace
 
 UiTexture ReachArt(const std::string& category, const std::string& stem) {
-    std::lock_guard<std::mutex> lock(s_mutex);
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
     return ReachArtLocked(category, stem);
 }
 
@@ -704,7 +710,7 @@ UiTexture RankIcon(int rankIndex) {
     char stem[8];
     std::snprintf(stem, sizeof(stem), "%02d", rankIndex);
     const std::string key = stem;
-    std::lock_guard<std::mutex> lock(s_mutex);
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
     return Cached("rank:" + key, [&] {
         const fs::path p = ReachArtFile("ranks", key + "_", true);
         return p.empty() ? UiTexture{} : LoadImageFile(p);
@@ -714,7 +720,7 @@ UiTexture RankIcon(int rankIndex) {
 UiTexture DifficultyIcon(int difficulty) {
     static const char* const kNames[4] = { "easy", "normal", "heroic", "legendary" };
     if (difficulty < 0 || difficulty > 3) return {};
-    std::lock_guard<std::mutex> lock(s_mutex);
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
     return ReachArtLocked("difficulty", kNames[difficulty]);
 }
 
@@ -733,7 +739,7 @@ UiTexture SkullIcon(const std::string& iconName) {
 }
 
 UiTexture NobleControllerImage() {
-    std::lock_guard<std::mutex> lock(s_mutex);
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
     return Cached("noble:controller", [&]() -> UiTexture {
         for (const fs::path& dir : { CustomDir(), NobleDir() }) {
             const fs::path p = FindImage(dir, "controller");
@@ -947,7 +953,7 @@ UiTexture Nameplate(int index) {
     if (!fs::exists(target, ec)) target = imgDir / "PlayerIDNamePlateBase.png";
     if (!fs::exists(target, ec)) return {};
 
-    std::lock_guard<std::mutex> lock(s_mutex);
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
     return FileCached(target);
 }
 
@@ -965,7 +971,7 @@ void DrawEmblem(ImDrawList* dl, int symbolIndex, int backgroundIndex, ImVec2 min
 }
 
 UiTexture KeyedPackImage(const std::string& pack, const std::string& name) {
-    std::lock_guard<std::mutex> lock(s_mutex);
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
     return Cached("packkeyed:" + pack + ":" + name, [&] { return LoadPackImageKeyed(pack, name); });
 }
 

@@ -406,6 +406,23 @@ void MasterServerClient::DoOnline() {
         const int online = j.value("online", j.value("activeSessions", 0));
         int total = j.value("totalPlayers", j.value("registeredPlayers", 0));
         const int servers = j.value("servers", j.value("masterSessions", 0));
+
+        // Master server cluster nodes (East, West, UK) register internal accounts for peer federation;
+        // ensure master server infrastructure nodes are never counted as total players.
+        int masterNodeCount = 0;
+        if (j.contains("cluster") && j["cluster"].is_object()) {
+            const auto& cluster = j["cluster"];
+            masterNodeCount = 1 + cluster.value("peerCount", 0);
+            if (cluster.contains("nodes") && cluster["nodes"].is_array()) {
+                masterNodeCount = std::max(masterNodeCount, 1 + static_cast<int>(cluster["nodes"].size()));
+            }
+        } else if (j.contains("peerRegistries") && j["peerRegistries"].is_array()) {
+            masterNodeCount = 1 + static_cast<int>(j["peerRegistries"].size());
+        } else {
+            masterNodeCount = 3;
+        }
+        total = std::max(0, total - masterNodeCount);
+
         m_onlinePlayers.store(std::max(0, online));
         if (total <= 1) {
             const HttpResult lb = HttpRequest(Url(), L"GET", "/api/leaderboard?limit=250", {});
@@ -444,6 +461,17 @@ void MasterServerClient::DoList() {
             if (j.contains("online")) online = j.value("online", 0);
             if (j.contains("totalPlayers")) total = j.value("totalPlayers", 0);
             else if (j.contains("registeredPlayers")) total = j.value("registeredPlayers", 0);
+            if (total >= 0) {
+                int masterNodeCount = 0;
+                if (j.contains("peerRegistries") && j["peerRegistries"].is_array()) {
+                    masterNodeCount = 1 + static_cast<int>(j["peerRegistries"].size());
+                } else if (j.contains("cluster") && j["cluster"].is_object()) {
+                    masterNodeCount = 1 + j["cluster"].value("peerCount", 0);
+                } else {
+                    masterNodeCount = 3;
+                }
+                total = std::max(0, total - masterNodeCount);
+            }
             if (j.contains("sessions") && j["sessions"].is_array()) items = &j["sessions"];
         }
         if (items->is_array()) {
@@ -550,11 +578,19 @@ void MasterServerClient::DoRegister() {
     }
     try {
         const nlohmann::json j = nlohmann::json::parse(r.body);
-        std::lock_guard<std::mutex> lock(m_mutex);
-        m_sessionId = Str(j, "session_id", 64);
-        m_sessionToken = Str(j, "token", 128);
-        m_status = "your game is listed on the master server";
-        NOBLE_INFO("MasterServer: registered session {}", m_sessionId);
+        std::string sid;
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_sessionId = Str(j, "session_id", 64);
+            m_sessionToken = Str(j, "token", 128);
+            m_status = "your game is listed on the master server";
+            sid = m_sessionId;
+        }
+        NOBLE_INFO("MasterServer: registered session {}", sid);
+        if (j.contains("relay_url") && j["relay_url"].is_string()) {
+            std::string relayUrl = j["relay_url"].get<std::string>();
+            NetworkTransport::Get().StartRelay(relayUrl, sid, true, NetworkTransport::Get().GetLocalMachineId());
+        }
     } catch (...) {
         SetStatus("master server sent an unreadable reply");
     }
@@ -974,6 +1010,19 @@ LobbyState MasterServerClient::JoinLobbySync(const std::string& sessionId,
         std::string relayUrl = j.value("relay_url", "");
         if (!relayUrl.empty()) {
             NetworkTransport::Get().StartRelay(relayUrl, resolvedId, false, LobbyMachineId());
+        }
+
+        if (j.contains("launch_data") && j["launch_data"].is_object()) {
+            const auto& ld = j["launch_data"];
+            state.launchTriggered = true;
+            state.launchMap = ld.value("map", state.map);
+            state.launchMode = ld.value("mode", state.mode);
+            state.launchVariant = ld.value("variant", state.variant);
+            state.launchDifficulty = ld.value("difficulty", state.difficulty);
+            state.launchMapOverride = ld.value("map_override", "");
+            state.launchModFolder = ld.value("mod_folder", "");
+            state.launchModId = ld.value("mod_id", state.modId);
+            try { state.launchSkulls = std::stoull(ld.value("skulls", "0")); } catch (...) {}
         }
     } catch (...) {}
 

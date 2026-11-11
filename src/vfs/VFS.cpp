@@ -115,8 +115,10 @@ void VFS::SetMapOverride(const std::string& carrierScenario, const fs::path& map
     std::error_code ec;
     s_mapOverrideFile = mapFile.empty() ? fs::path() : fs::absolute(mapFile, ec);
     s_mapOverrideCarrier.clear();
-    for (char c : carrierScenario) {
-        if (c == '/' || c == '\\') break;
+    std::string base = carrierScenario;
+    const size_t lastSlash = base.find_last_of("/\\");
+    if (lastSlash != std::string::npos) base = base.substr(lastSlash + 1);
+    for (char c : base) {
         s_mapOverrideCarrier.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
     }
     if (s_mapOverrideCarrier.size() > 4 &&
@@ -228,6 +230,27 @@ std::wstring VFS::ResolvePath(const std::wstring& requestedPath, DWORD desiredAc
                 fs::path modHaloReachFile = s_activeMod / "haloreach" / p;
                 if (RawPathExists(modHaloReachFile.wstring())) {
                     return modHaloReachFile.wstring();
+                }
+                if (!p.filename().empty()) {
+                    fs::path modMapCandidate = s_activeMod / "maps" / p.filename();
+                    if (RawPathExists(modMapCandidate.wstring())) {
+                        return modMapCandidate.wstring();
+                    }
+                    // MCC mods ship their maps with a difficulty suffix ("forge_halo_normal.map",
+                    // "cex_ff_halo_legendary.map") while the engine asks for "<scenario>.map", so the mod's map
+                    // was never served and every mod ran on MCC's stock map. Serve the mod's own file here.
+                    // Only for the map file itself: "forge_halo.mapinfo" shares the stem and must keep its own file.
+                    const std::wstring ext = p.extension().wstring();
+                    const std::wstring stem = p.stem().wstring();
+                    for (const wchar_t* suffix : { L"_normal", L"_legendary", L"_heroic", L"_easy" }) {
+                        if (_wcsicmp(ext.c_str(), L".map") != 0) break;
+                        fs::path suffixed = s_activeMod / "maps" / (stem + suffix + L".map");
+                        if (RawPathExists(suffixed.wstring())) {
+                            NOBLE_INFO("VFS: serving the mod's map '{}' for haloreach\\maps\\{}",
+                                       suffixed.filename().string(), p.filename().string());
+                            return suffixed.wstring();
+                        }
+                    }
                 }
             }
 

@@ -71,6 +71,8 @@ private:
     SocialClient() = default;
     ~SocialClient();
 
+    void SaveFriendsLocked();
+
     mutable std::mutex m_mutex;
     std::vector<FriendEntry> m_friends;
     std::vector<FriendEntry> m_incomingRequests;

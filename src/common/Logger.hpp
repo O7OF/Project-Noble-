@@ -88,7 +88,7 @@ public:
 #ifdef NOBLE_DEV_BUILD
             constexpr spdlog::level::level_enum level = spdlog::level::trace;
 #else
-            constexpr spdlog::level::level_enum level = spdlog::level::err;
+            constexpr spdlog::level::level_enum level = spdlog::level::info;
 #endif
             auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
             console_sink->set_level(level);

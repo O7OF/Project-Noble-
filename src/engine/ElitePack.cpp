@@ -1020,6 +1020,13 @@ bool TryBeforePackStep(uint8_t* tags) {
 }
 
 uint8_t __fastcall CacheStepHook(void* a1, void* a2, uint32_t a3, void* tags, void* cache, void* a6) {
+    // Diagnostic: does this map load take the same cache step as a multiplayer canvas? (First few calls only.)
+    static std::atomic<int> s_stepLog{0};
+    if (s_stepLog.fetch_add(1) < 6) {
+        NOBLE_INFO("ElitePack: cache step call {} (a1 0x{:X}, a2 0x{:X}, a3 {}, tags 0x{:X}, cache 0x{:X})",
+                   s_stepLog.load(), reinterpret_cast<uintptr_t>(a1), reinterpret_cast<uintptr_t>(a2), a3,
+                   reinterpret_cast<uintptr_t>(tags), reinterpret_cast<uintptr_t>(cache));
+    }
     bool ours = false;
     if (cache && s_relocPending) {
         if (!TryRelocate(static_cast<uint8_t*>(cache))) {
@@ -1256,7 +1263,16 @@ void RefreshLocalPicks() {
 
         if (j.contains("spartan") && j["spartan"].is_object()) {
             const auto& sp = j["spartan"];
-            s_localSpartanVisorIndex = static_cast<uint8_t>(std::clamp(sp.value("visor_color_index", 0), 0, 29));
+            int uiVisorIdx = std::clamp(sp.value("visor_color_index", 0), 0, 29);
+            const std::string visorId = sp.value("visor_id", std::string());
+            if (visorId == "black") uiVisorIdx = 3;
+            else if (visorId == "gold") uiVisorIdx = 4;
+            // In haloreach.dll's internal visor table (see 0x393CC / 0x3B2F4), engine visor 3 is Gold
+            // and engine visor 4 is Black, whereas the Armory UI catalog has 3 = Black and 4 = Gold.
+            int engineVisorIdx = uiVisorIdx;
+            if (uiVisorIdx == 3) engineVisorIdx = 4;
+            else if (uiVisorIdx == 4) engineVisorIdx = 3;
+            s_localSpartanVisorIndex = static_cast<uint8_t>(engineVisorIdx);
             s_localSpartanVisorCustom = sp.value("visor_custom", false);
             if (sp.contains("visor_custom_rgb") && sp["visor_custom_rgb"].is_array() && sp["visor_custom_rgb"].size() == 3) {
                 for (int i = 0; i < 3; ++i) s_localSpartanVisorRgb[i] = std::clamp(sp["visor_custom_rgb"][i].get<float>(), 0.0f, 1.0f);
@@ -1389,8 +1405,7 @@ void __fastcall ApplyProfileHook(int settingsIndex, uint8_t* player) {
 // so MSVC allows __try / __except under /EHsc.
 static bool IsLocalPlayerRecord(const uint8_t* record, uintptr_t caller) {
     if (!record) return false;
-    if (caller == kBuilderReturnLive) return true;
-    if (caller != kBuilderReturnSpawn) return false;
+    if (caller != kBuilderReturnLive && caller != kBuilderReturnSpawn) return false;
 
     __try {
         const uint8_t* p = record - kPlayerRecordOffset;
@@ -1416,6 +1431,9 @@ uint64_t __fastcall BuilderHook(uint8_t* record, uint32_t mode, void* unit, void
                    caller, mode, elite, localRecord, Hex(record, 0x28));
     if (!elite || !s_loaded || !s_haveActive) {
         if (!elite && player && record) {
+            if (localRecord) {
+                record[15] = s_localSpartanVisorIndex;
+            }
             // For Spartan bipeds, ensure player+0x98 (visor) is updated from record[15] if present
             if (record[15] < 30) {
                 *reinterpret_cast<uint8_t*>(reinterpret_cast<uint8_t*>(player) + 0x98) = record[15];

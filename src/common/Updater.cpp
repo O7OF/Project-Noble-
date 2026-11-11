@@ -354,6 +354,10 @@ void Updater::CheckThread() {
     const std::array<int, 4> latest = ParseVersion(tag);
     const std::array<int, 4> current = CurrentVersion();
     if (tag.empty() || latest <= current) {
+        // Already on (or ahead of) the latest release: drop any cached update zips so a stale download
+        // left behind by an earlier session is never offered again.
+        std::error_code cleanupEc;
+        std::filesystem::remove_all(LocalAppData() / "ProjectNoble" / "updates", cleanupEc);
         std::lock_guard<std::mutex> lock(m_mutex);
         m_status.state = State::UpToDate;
         m_status.latestTag = tag;

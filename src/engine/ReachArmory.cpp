@@ -1,10 +1,14 @@
 #include "ReachArmory.hpp"
 #include "ElitePack.hpp"
 #include "common/Logger.hpp"
+#include "ui/FrontEndMenu.hpp"
 #include "EmbeddedBlocks.hpp"
 #include <sstream>
 
 #include <windows.h>
+#include <shellapi.h>
+#include <tlhelp32.h>
+#include <nlohmann/json.hpp>
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -18,6 +22,7 @@
 #include <filesystem>
 #include <fstream>
 #include <mutex>
+#include <new>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -243,6 +248,38 @@ static std::array<float, 4> s_lastSuitFloats = {
 // regions, so after a rebuild only these are searched (a few ms) instead of all memory (the white flash).
 static std::vector<std::pair<uintptr_t, size_t>> s_recordRegions;
 static std::atomic<bool> s_quickScanning{false};
+// Full-memory scans are expensive (the menu process holds ~7 GB; one full pass copies all of it). Rapid Spartan /
+// Elite switching used to start one on every switch to the Elite while the menu scanner kept repeating its own full
+// scans, which pinned the CPU, lagged the menu and ended in a std::bad_alloc on the scanner thread (2026-11-10 20:02).
+// The quick rescans now search the remembered regions and fall back to a full scan at most once per this interval.
+constexpr uint64_t kFullRescanIntervalMs = 10000;
+static std::atomic<uint64_t> s_lastFullRescanMs{0};
+static std::atomic<bool> s_eliteRecordsSeen{false};   // Elite colour records were found at least once this menu session
+static std::atomic<uint64_t> s_lastRetryMs{0};        // Tick's slow retry while the Armory is missing records
+constexpr uint64_t kRecordRetryIntervalMs = 3000;
+
+static bool FullRescanAllowedNow() {
+    const uint64_t now = GetTickCount64();
+    uint64_t last = s_lastFullRescanMs.load();
+    if (last != 0 && now - last < kFullRescanIntervalMs) return false;
+    return s_lastFullRescanMs.compare_exchange_strong(last, now);
+}
+
+// Copy buffer for one scan chunk. A failed allocation skips that chunk instead of ending Noble: an uncaught
+// std::bad_alloc on a detached scanner thread called std::terminate (2026-11-10 20:02:31). Logged, because a
+// failure here can also mean a corrupted chunk size, which should stay visible.
+static bool AllocScanBuffer(std::vector<uint8_t>& buf, size_t size) {
+    try {
+        buf.resize(size);
+        return true;
+    } catch (const std::bad_alloc&) {
+        static std::atomic<int> s_logged{0};
+        if (s_logged.fetch_add(1) < 5) {
+            NOBLE_WARN("ReachArmory: could not allocate a {} KB scan buffer; skipping that memory chunk", size >> 10);
+        }
+        return false;
+    }
+}
 
 // Last permutation pairs written (unchanged pairs = no rebuild, so colour-only changes don't rebuild the biped),
 // and the rebuild: REBUILD is bumped a couple of frames after the pairs are written (and, with
@@ -255,6 +292,11 @@ static uint64_t s_bumpAtFrame = 0;       // 0 = none
 static bool s_settlePending = false;
 static uint64_t s_settleDeadline = 0;
 static int32_t s_remadeAtBump = 0;
+// Frames to let the map script finish recreating the biped before another rebuild may be requested. Rapid
+// Armory changes (spam-clicking helmets, buying one after another) used to stack rebuild requests on top of a
+// rebuild in flight, which crashed the engine; changes that arrive meanwhile are coalesced into one rebuild.
+constexpr uint64_t kRebuildQuietFrames = 12;
+static uint64_t s_rebuildReadyFrame = 0;
 
 // The pack map that carries the Armory models and the player_model_customization tag.
 static const std::filesystem::path& ArmoryMapPath() {
@@ -435,6 +477,120 @@ static int32_t ResolveSceneIndex(const std::string& scene) {
 }
 
 // -----------------------------------------------------------------------------
+// Thread stacks. The record scanners search this process's read/write memory for patterns that look like the
+// Armory's colour and suit records, and the apply code then WRITES colours into every record it found. The
+// patterns (four 0xFFrrggbb words, or four floats in 0..6) also appear in the local arrays the apply code and
+// the scanners build on their own stacks, and the scanners used to skip only the stack of the thread they ran
+// on. A record "found" on another thread's stack, or on a stack that was freed and reused, got colour floats
+// written over live data (the crash dump showed a scan loop's vector pointer replaced by float values).
+// Every thread's stack is now excluded, from the scan and from the write.
+// -----------------------------------------------------------------------------
+using StackRanges = std::vector<std::pair<uintptr_t, uintptr_t>>;
+
+static bool SafeReadPtr(uintptr_t addr, uintptr_t* out) {
+    if (addr <= 0x10000 || !out) return false;
+    __try {
+        *out = *reinterpret_cast<const uintptr_t*>(addr);
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+struct NobleThreadBasicInfo {
+    LONG exitStatus;
+    PVOID tebBaseAddress;
+    PVOID clientIdProcess;
+    PVOID clientIdThread;
+    ULONG_PTR affinityMask;
+    LONG priority;
+    LONG basePriority;
+};
+
+static StackRanges CollectThreadStackRangesNow() {
+    StackRanges out;
+    ULONG_PTR ownLow = 0, ownHigh = 0;
+    GetCurrentThreadStackLimits(&ownLow, &ownHigh);
+    if (ownLow != 0 && ownHigh != 0) out.emplace_back(ownLow, ownHigh);
+
+    using NtQueryThreadFn = LONG(NTAPI*)(HANDLE, ULONG, PVOID, ULONG, PULONG);
+    static const NtQueryThreadFn ntQueryThread = reinterpret_cast<NtQueryThreadFn>(
+        GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtQueryInformationThread"));
+    if (!ntQueryThread) return out;
+
+    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    if (snapshot == INVALID_HANDLE_VALUE) return out;
+    const DWORD pid = GetCurrentProcessId();
+    THREADENTRY32 entry{};
+    entry.dwSize = sizeof(entry);
+    if (Thread32First(snapshot, &entry)) {
+        do {
+            if (entry.th32OwnerProcessID != pid) continue;
+            HANDLE thread = OpenThread(THREAD_QUERY_INFORMATION, FALSE, entry.th32ThreadID);
+            if (!thread) continue;
+            NobleThreadBasicInfo info{};
+            if (ntQueryThread(thread, 0 /* ThreadBasicInformation */, &info, sizeof(info), nullptr) >= 0 &&
+                info.tebBaseAddress) {
+                // x64 TEB: NT_TIB.StackBase at +0x08, DeallocationStack (the lowest address of the stack
+                // reservation) at +0x1478.
+                uintptr_t stackBase = 0, deallocation = 0;
+                const uintptr_t teb = reinterpret_cast<uintptr_t>(info.tebBaseAddress);
+                if (SafeReadPtr(teb + 0x08, &stackBase) && SafeReadPtr(teb + 0x1478, &deallocation) &&
+                    deallocation != 0 && deallocation < stackBase) {
+                    out.emplace_back(deallocation, stackBase);
+                }
+            }
+            CloseHandle(thread);
+        } while (Thread32Next(snapshot, &entry));
+    }
+    CloseHandle(snapshot);
+    return out;
+}
+
+// maxAgeMs 0 = look now (the scanners); larger = reuse a recent answer (the per-frame apply code).
+static StackRanges ThreadStackRanges(ULONGLONG maxAgeMs) {
+    static std::mutex s_stackMutex;
+    static StackRanges s_cached;
+    static ULONGLONG s_cachedAt = 0;
+    std::lock_guard<std::mutex> lock(s_stackMutex);
+    const ULONGLONG now = GetTickCount64();
+    if (maxAgeMs == 0 || s_cached.empty() || now - s_cachedAt > maxAgeMs) {
+        s_cached = CollectThreadStackRangesNow();
+        s_cachedAt = now;
+    }
+    return s_cached;
+}
+
+static bool AddrInStack(const StackRanges& stacks, uintptr_t addr) {
+    for (const auto& r : stacks) {
+        if (addr >= r.first && addr < r.second) return true;
+    }
+    return false;
+}
+
+static bool RangeOverlapsStack(const StackRanges& stacks, uintptr_t begin, uintptr_t end) {
+    for (const auto& r : stacks) {
+        if (begin < r.second && end > r.first) return true;
+    }
+    return false;
+}
+
+// Drops candidate record addresses that sit inside a thread stack.
+static void DropStackAddresses(std::vector<uintptr_t>& addrs, const char* what) {
+    if (addrs.empty()) return;
+    const StackRanges stacks = ThreadStackRanges(0);
+    const size_t before = addrs.size();
+    addrs.erase(std::remove_if(addrs.begin(), addrs.end(), [&](uintptr_t a) { return AddrInStack(stacks, a); }),
+                addrs.end());
+    if (addrs.size() != before) {
+        static std::atomic<int> s_logged{0};
+        if (s_logged.fetch_add(1) < 10) {
+            NOBLE_WARN("ReachArmory: ignored {} {} record candidate(s) found inside a thread stack", before - addrs.size(), what);
+        }
+    }
+}
+
+// -----------------------------------------------------------------------------
 // Memory Scanners (ported from host::armory::scan, find_all, scan_suit, scan_elite)
 // -----------------------------------------------------------------------------
 // Committed private read/write memory, cut into 16 MB pieces that overlap by 4 KB so a
@@ -447,16 +603,15 @@ static std::vector<std::pair<uintptr_t, size_t>> ReadWriteChunks(size_t minSize)
     uintptr_t addr = 0;
     MEMORY_BASIC_INFORMATION mbi{};
 
-    ULONG_PTR stackLow = 0, stackHigh = 0;
-    GetCurrentThreadStackLimits(&stackLow, &stackHigh);
+    const StackRanges stacks = ThreadStackRanges(0);
 
     while (VirtualQuery(reinterpret_cast<LPCVOID>(addr), &mbi, sizeof(mbi)) != 0) {
         const uintptr_t base = reinterpret_cast<uintptr_t>(mbi.BaseAddress);
         const size_t size = mbi.RegionSize;
         const uintptr_t nextAddr = base + size;
         if (mbi.State == MEM_COMMIT && mbi.Type == MEM_PRIVATE && mbi.Protect == PAGE_READWRITE && size >= minSize) {
-            if (stackLow != 0 && stackHigh != 0 && base < stackHigh && nextAddr > stackLow) {
-                // Skip thread stack memory
+            if (RangeOverlapsStack(stacks, base, nextAddr)) {
+                // Skip thread stack memory (every thread's, not only this one's)
             } else {
                 for (size_t off = 0; off < size; off += kChunk) {
                     const size_t len = std::min(size - off, kChunk + kOverlap);
@@ -511,7 +666,8 @@ static bool ScanGlobalsTable() {
         const uintptr_t base = chunk.first;
         const size_t size = chunk.second;
         {
-            std::vector<uint8_t> buf(size);
+            std::vector<uint8_t> buf;
+            if (!AllocScanBuffer(buf, size)) continue;
             {   // never scan our own copy buffer (RR skips its read buffer the same way)
                 const uintptr_t self = reinterpret_cast<uintptr_t>(buf.data());
                 if (base < self + size && self < base + size) continue;
@@ -570,7 +726,8 @@ static bool ScanGlobalsTable() {
         for (const auto& chunk : ReadWriteChunks(0x100)) {
             const uintptr_t chunkBase = chunk.first;
             const size_t size = chunk.second;
-            std::vector<uint8_t> buf(size);
+            std::vector<uint8_t> buf;
+            if (!AllocScanBuffer(buf, size)) continue;
             const uintptr_t self = reinterpret_cast<uintptr_t>(buf.data());
             if (chunkBase < self + size && self < chunkBase + size) continue;
             if (!SafeCopyMem(buf.data(), reinterpret_cast<const void*>(chunkBase), size)) continue;
@@ -600,9 +757,7 @@ static bool ScanGlobalsTable() {
 }
 
 static void RememberRegion(uintptr_t addr) {
-    ULONG_PTR stackLow = 0, stackHigh = 0;
-    GetCurrentThreadStackLimits(&stackLow, &stackHigh);
-    if (stackLow != 0 && stackHigh != 0 && addr >= stackLow && addr < stackHigh) return;
+    if (AddrInStack(ThreadStackRanges(1000), addr)) return;
 
     ArmoryLock lock(s_dataMutex);
     if (s_recordRegions.size() >= 16) return;
@@ -622,8 +777,7 @@ static std::vector<std::pair<uintptr_t, size_t>> RecordRegionChunks() {
         ArmoryLock lock(s_dataMutex);
         regions = s_recordRegions;
     }
-    ULONG_PTR stackLow = 0, stackHigh = 0;
-    GetCurrentThreadStackLimits(&stackLow, &stackHigh);
+    const StackRanges stacks = ThreadStackRanges(1000);
 
     std::vector<std::pair<uintptr_t, size_t>> chunks;
     for (const auto& r : regions) {
@@ -632,7 +786,7 @@ static std::vector<std::pair<uintptr_t, size_t>> RecordRegionChunks() {
         if (mbi.State != MEM_COMMIT || mbi.Protect != PAGE_READWRITE) continue;
         const uintptr_t base = reinterpret_cast<uintptr_t>(mbi.BaseAddress);
         const size_t size = std::min(r.second, static_cast<size_t>(mbi.RegionSize));
-        if (stackLow != 0 && stackHigh != 0 && base < stackHigh && base + size > stackLow) continue;
+        if (RangeOverlapsStack(stacks, base, base + size)) continue;
         for (size_t off = 0; off < size; off += kChunk) {
             const size_t len = std::min(size - off, kChunk + kOverlap);
             chunks.emplace_back(r.first + off, len);
@@ -655,6 +809,7 @@ static void ScanSuitRecords() { ScanSuitRecordsIn(ReadWriteChunks(0x40), false);
 static void StartQuickRescan() {
     if (s_quickScanning.exchange(true)) return;
     std::thread([]() {
+      try {
         size_t colours = 0, eliteColours = 0, suits = 0;
         {
             ArmoryLock lock(s_dataMutex);
@@ -667,7 +822,9 @@ static void StartQuickRescan() {
             auto chunks = RecordRegionChunks();
             const bool isElite = ReachArmory::GetSelection().previewElite;
 
-            if (chunks.empty() || (isElite && eliteColours == 0 && pass == 0)) {
+            // Full scan only when nothing is remembered yet, or for the Elite until its records were found once,
+            // and never more than once per kFullRescanIntervalMs (it used to run on every switch to the Elite).
+            if ((chunks.empty() || (isElite && !s_eliteRecordsSeen.load() && pass == 0)) && FullRescanAllowedNow()) {
                 chunks = ReadWriteChunks(0x40);
             }
             if (chunks.empty()) break;
@@ -688,6 +845,7 @@ static void StartQuickRescan() {
                 sr = s_suitRecords.size();
             }
 
+            if (ec > 0) s_eliteRecordsSeen.store(true);
             bool foundReady = false;
             if (isElite) {
                 foundReady = (ec > eliteColours || eliteColours == 0) && (ec > 0);
@@ -705,6 +863,9 @@ static void StartQuickRescan() {
             if (std::chrono::steady_clock::now() - start > std::chrono::milliseconds(1500)) break;
             std::this_thread::sleep_for(std::chrono::milliseconds(4));
         }
+      } catch (const std::exception& e) {
+        NOBLE_ERROR("ReachArmory: quick colour rescan stopped: {}", e.what());
+      }
         s_quickScanning.store(false);
     }).detach();
 }
@@ -822,7 +983,8 @@ static size_t ScanColorRecordsIn(const std::vector<std::pair<uintptr_t, size_t>>
         const uintptr_t base = chunk.first;
         const size_t size = chunk.second;
         {
-            std::vector<uint8_t> buf(size);
+            std::vector<uint8_t> buf;
+            if (!AllocScanBuffer(buf, size)) continue;
             const uintptr_t self = reinterpret_cast<uintptr_t>(buf.data());
             if (base < self + size && self < base + size) continue;
             if (SafeCopyMem(buf.data(), reinterpret_cast<const void*>(base), size)) {
@@ -841,6 +1003,7 @@ static size_t ScanColorRecordsIn(const std::vector<std::pair<uintptr_t, size_t>>
         if (found.size() >= 16) break;
     }
 
+    DropStackAddresses(found, "armor color");
     size_t added = 0;
     if (!found.empty()) {
         ArmoryLock lock(s_dataMutex);
@@ -877,7 +1040,8 @@ static size_t ScanEliteColorRecordsIn(const std::vector<std::pair<uintptr_t, siz
         const uintptr_t base = chunk.first;
         const size_t size = chunk.second;
         {
-            std::vector<uint8_t> buf(size);
+            std::vector<uint8_t> buf;
+            if (!AllocScanBuffer(buf, size)) continue;
             const uintptr_t self = reinterpret_cast<uintptr_t>(buf.data());
             if (base < self + size && self < base + size) continue;
             if (SafeCopyMem(buf.data(), reinterpret_cast<const void*>(base), size)) {
@@ -897,6 +1061,7 @@ static size_t ScanEliteColorRecordsIn(const std::vector<std::pair<uintptr_t, siz
         if (found.size() >= 16) break;
     }
 
+    DropStackAddresses(found, "Elite color");
     size_t added = 0;
     if (!found.empty()) {
         ArmoryLock lock(s_dataMutex);
@@ -936,7 +1101,8 @@ static size_t ScanSuitRecordsIn(const std::vector<std::pair<uintptr_t, size_t>>&
         const uintptr_t base = chunk.first;
         const size_t size = chunk.second;
         {
-            std::vector<uint8_t> buf(size);
+            std::vector<uint8_t> buf;
+            if (!AllocScanBuffer(buf, size)) continue;
             const uintptr_t self = reinterpret_cast<uintptr_t>(buf.data());
             if (base < self + size && self < base + size) continue;
             if (SafeCopyMem(buf.data(), reinterpret_cast<const void*>(base), size)) {
@@ -956,6 +1122,7 @@ static size_t ScanSuitRecordsIn(const std::vector<std::pair<uintptr_t, size_t>>&
         if (found.size() >= 16) break;
     }
 
+    DropStackAddresses(found, "suit shader");
     size_t added = 0;
     if (!found.empty()) {
         ArmoryLock lock(s_dataMutex);
@@ -997,7 +1164,8 @@ static void ScanEliteTable() {
         const uintptr_t base = chunk.first;
         const size_t size = chunk.second;
         {
-            std::vector<uint8_t> buf(size);
+            std::vector<uint8_t> buf;
+            if (!AllocScanBuffer(buf, size)) continue;
             {   // never scan our own copy buffer (RR skips its read buffer the same way)
                 const uintptr_t self = reinterpret_cast<uintptr_t>(buf.data());
                 if (base < self + size && self < base + size) continue;
@@ -1108,7 +1276,7 @@ static void UpdateTagShaderConstantsSEH(bool previewElite,
                 if (!previewElite) {
                     // 1) spartan_armor (26 float4s, f4[1][0] == 3.0f):
                     //    f4[22] (+0x160) = self_illum_color (Armor Lights on legs, back, and chest -> Colors > Accent)
-                    if (f4Count == 26 && std::abs(f4[1 * 4 + 0] - 3.0f) < 0.1f && std::abs(f4[23 * 4 + 0] - 1.0f) < 0.1f) {
+                    if (accentRgb && f4Count == 26 && std::abs(f4[1 * 4 + 0] - 3.0f) < 0.1f && std::abs(f4[23 * 4 + 0] - 1.0f) < 0.1f) {
                         f4[22 * 4 + 0] = accentRgb[0] * 2.2f;
                         f4[22 * 4 + 1] = accentRgb[1] * 2.2f;
                         f4[22 * 4 + 2] = accentRgb[2] * 2.2f;
@@ -1116,7 +1284,7 @@ static void UpdateTagShaderConstantsSEH(bool previewElite,
                     }
                     // 2) spartan_rubber_suit (21 float4s, f4[1][0] == 18.0f):
                     //    f4[2] (+0x20) = albedo_color, f4[9] (+0x90) = material_color_0, f4[10] (+0xA0) = material_color_1
-                    else if (f4Count == 21 && std::abs(f4[1 * 4 + 0] - 18.0f) < 0.1f) {
+                    else if (undersuitRgb && f4Count == 21 && std::abs(f4[1 * 4 + 0] - 18.0f) < 0.1f) {
                         f4[2 * 4 + 0] = undersuitRgb[0];
                         f4[2 * 4 + 1] = undersuitRgb[1];
                         f4[2 * 4 + 2] = undersuitRgb[2];
@@ -1132,14 +1300,14 @@ static void UpdateTagShaderConstantsSEH(bool previewElite,
                     }
                     // 3) spartan_helmet_interior_visor (21 float4s, f4[1][0] == 3.0f, f4[8][0] == 1.0f):
                     //    f4[17] (+0x110) = visor specular/env tint, f4[6] (+0x60) & f4[7] (+0x70) = visor reflection tint
-                    else if (f4Count == 21 && std::abs(f4[1 * 4 + 0] - 3.0f) < 0.1f && std::abs(f4[8 * 4 + 0] - 1.0f) < 0.1f) {
-                        f4[6 * 4 + 0] = visorRgb[0] * 0.85f + 0.15f;
-                        f4[6 * 4 + 1] = visorRgb[1] * 0.85f + 0.15f;
-                        f4[6 * 4 + 2] = visorRgb[2] * 0.85f + 0.15f;
+                    else if (visorRgb && f4Count == 21 && std::abs(f4[1 * 4 + 0] - 3.0f) < 0.1f && std::abs(f4[8 * 4 + 0] - 1.0f) < 0.1f) {
+                        f4[6 * 4 + 0] = visorRgb[0];
+                        f4[6 * 4 + 1] = visorRgb[1];
+                        f4[6 * 4 + 2] = visorRgb[2];
                         f4[6 * 4 + 3] = 1.0f;
-                        f4[7 * 4 + 0] = visorRgb[0] * 0.70f + 0.30f;
-                        f4[7 * 4 + 1] = visorRgb[1] * 0.70f + 0.30f;
-                        f4[7 * 4 + 2] = visorRgb[2] * 0.70f + 0.30f;
+                        f4[7 * 4 + 0] = visorRgb[0];
+                        f4[7 * 4 + 1] = visorRgb[1];
+                        f4[7 * 4 + 2] = visorRgb[2];
                         f4[7 * 4 + 3] = 1.0f;
                         f4[17 * 4 + 0] = visorRgb[0];
                         f4[17 * 4 + 1] = visorRgb[1];
@@ -1148,14 +1316,14 @@ static void UpdateTagShaderConstantsSEH(bool previewElite,
                     }
                     // 4) Secondary visor material (24 float4s, f4[1][0] == 10.0f):
                     //    f4[9] (+0x90) & f4[10] (+0xA0) = visor gold/reflection tint
-                    else if (f4Count == 24 && std::abs(f4[1 * 4 + 0] - 10.0f) < 0.1f) {
+                    else if (visorRgb && f4Count == 24 && std::abs(f4[1 * 4 + 0] - 10.0f) < 0.1f) {
                         f4[9 * 4 + 0] = visorRgb[0];
                         f4[9 * 4 + 1] = visorRgb[1];
                         f4[9 * 4 + 2] = visorRgb[2];
                         f4[9 * 4 + 3] = 1.0f;
-                        f4[10 * 4 + 0] = visorRgb[0] * 0.55f + 0.10f;
-                        f4[10 * 4 + 1] = visorRgb[1] * 0.55f + 0.10f;
-                        f4[10 * 4 + 2] = visorRgb[2] * 0.55f + 0.10f;
+                        f4[10 * 4 + 0] = visorRgb[0];
+                        f4[10 * 4 + 1] = visorRgb[1];
+                        f4[10 * 4 + 2] = visorRgb[2];
                         f4[10 * 4 + 3] = 1.0f;
                     }
                 }
@@ -1231,7 +1399,7 @@ static void SyncArmoryLiveBipedEngineTickSEH(bool previewElite,
         if (s_lastPermGen != permPairsGen || s_lastPermRemade != remadeCounter) {
             s_lastPermGen = permPairsGen;
             s_lastPermRemade = remadeCounter;
-            s_permSyncTicksRemaining = 24;
+            s_permSyncTicksRemaining = 2;
         }
         const bool syncPermsThisTick = (s_permSyncTicksRemaining > 0);
         if (s_permSyncTicksRemaining > 0) --s_permSyncTicksRemaining;
@@ -1362,7 +1530,41 @@ static void WriteColorsAndSuit(const ReachArmorySelection& sel) {
         (sel.visor == "default" || sel.visor.empty()) ? 0.63f : sel.visorRgb[1],
         (sel.visor == "default" || sel.visor.empty()) ? 0.40f : sel.visorRgb[2]
     };
-    UpdateTagShaderConstantsSEH(sel.previewElite, words.data(), sel.accentRgb.data(), sel.lightsRgb.data(), visFloats);
+
+    static std::array<uint32_t, 4> s_prevWords = {};
+    static float s_prevVisFloats[3] = { -1.f, -1.f, -1.f };
+    static float s_prevAccentRgb[3] = { -1.f, -1.f, -1.f };
+    static float s_prevLightsRgb[3] = { -1.f, -1.f, -1.f };
+    static bool s_prevPreviewElite = false;
+    static int32_t s_prevRemadeTagUpdate = -999999;
+    const int32_t currentRemade = s_lastRemade.load();
+
+    const bool colorsDirty = (words != s_prevWords) ||
+                             (sel.previewElite != s_prevPreviewElite) ||
+                             (currentRemade != s_prevRemadeTagUpdate) ||
+                             (std::memcmp(visFloats, s_prevVisFloats, sizeof(visFloats)) != 0) ||
+                             (std::memcmp(sel.accentRgb.data(), s_prevAccentRgb, sizeof(float) * 3) != 0) ||
+                             (std::memcmp(sel.lightsRgb.data(), s_prevLightsRgb, sizeof(float) * 3) != 0);
+
+    if (colorsDirty) {
+        s_prevWords = words;
+        s_prevPreviewElite = sel.previewElite;
+        s_prevRemadeTagUpdate = currentRemade;
+        std::memcpy(s_prevVisFloats, visFloats, sizeof(visFloats));
+        std::memcpy(s_prevAccentRgb, sel.accentRgb.data(), sizeof(float) * 3);
+        std::memcpy(s_prevLightsRgb, sel.lightsRgb.data(), sizeof(float) * 3);
+        UpdateTagShaderConstantsSEH(sel.previewElite, words.data(), sel.accentRgb.data(), sel.lightsRgb.data(), visFloats);
+    }
+
+    {
+        // Never write into a thread stack, even if a stale record address now points into one.
+        const StackRanges stacks = ThreadStackRanges(1000);
+        const auto inStack = [&](uintptr_t a) { return AddrInStack(stacks, a); };
+        s_colorRecords.erase(std::remove_if(s_colorRecords.begin(), s_colorRecords.end(), inStack), s_colorRecords.end());
+        s_eliteColorRecords.erase(std::remove_if(s_eliteColorRecords.begin(), s_eliteColorRecords.end(), inStack),
+                                  s_eliteColorRecords.end());
+        s_suitRecords.erase(std::remove_if(s_suitRecords.begin(), s_suitRecords.end(), inStack), s_suitRecords.end());
+    }
 
     if (!sel.previewElite) {
         s_colorRecords.erase(
@@ -1424,10 +1626,8 @@ static void WriteColorsAndSuit(const ReachArmorySelection& sel) {
 // -----------------------------------------------------------------------------
 // "-armory-settle-rebuild": rebuild the biped a second time after each change (test switch; off by default).
 static bool SingleRebuild() {
-    static const bool single = std::wcsstr(GetCommandLineW(), L"-armory-single-rebuild") != nullptr; return single;
-    // (settled on next remade tick)
-    // Settle rebuild is on by default unless -armory-single-rebuild is set.
-    // (settled on next remade tick)
+    static const bool settle = std::wcsstr(GetCommandLineW(), L"-armory-settle-rebuild") != nullptr;
+    return !settle;
 }
 
 // -----------------------------------------------------------------------------
@@ -1559,7 +1759,11 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx, const std::strin
     // The Elite pedestal (scene 0x0B, shows_elite) belongs to the Armory only. Outside the Armory the menu's own
     // scene and the Spartan line-up are used, otherwise the Armory's Elite (and its camera) stayed on screen behind
     // every other menu after leaving the Armory.
-    const bool armoryScene = targetSceneIdx >= 0x0A && targetSceneIdx <= 0x14 && targetSceneIdx != 0x0E;
+    // Whole-body Armory cameras (0x0A..0x14) and the per-slot close-ups ("c_helmet", "c_chest", ...), which
+    // live outside that index range: the pedestal turn / model rotation has to work in all of them, so the
+    // character can be turned around whatever the Armory is zoomed in on.
+    const bool closeUpScene = targetSceneName.rfind("c_", 0) == 0 && targetSceneName != "c_full_spartan";
+    const bool armoryScene = (targetSceneIdx >= 0x0A && targetSceneIdx <= 0x14 && targetSceneIdx != 0x0E) || closeUpScene;
     const bool showElite = sel.previewElite && armoryScene;
 
     // 1. Camera Scene Index at GLOBALS[0x24] and shows_elite at GLOBALS[0x26]
@@ -1618,9 +1822,13 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx, const std::strin
 
     const float yawDeg = yawRad * (180.0f / kPi);
     const int32_t turnStep = ((static_cast<int32_t>(std::lround(yawDeg / 5.0f)) % 72) + 72) % 72;
+    // Written every frame, not only when it changes: the menu map's own armory script re-writes these globals
+    // during its tick, and a value we set once was immediately overwritten again - which is why the character
+    // could not be turned with the per-slot close-up cameras (it only twitched by one frame's delta).
     if (s_lastTurnStep.exchange(turnStep) != turnStep) {
-        SafeWriteI32(base + 0x27 * stride, turnStep);
+        NOBLE_DEBUG("ReachArmory: pedestal turn step {}", turnStep);
     }
+    SafeWriteI32(base + 0x27 * stride, turnStep);
 
     if (HMODULE hReach = GetModuleHandleW(L"haloreach.dll")) {
         const uintptr_t rotAddr = reinterpret_cast<uintptr_t>(hReach) + 0xBE5AD8;
@@ -1644,10 +1852,10 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx, const std::strin
         if (targetAngle > kPi) targetAngle -= kTwoPi;
         uint32_t targetBits = 0;
         std::memcpy(&targetBits, &targetAngle, sizeof(float));
-        if (targetBits != s_lastYawBits.load()) {
-            if (SafeWriteU32(rotAddr, targetBits)) {
-                s_lastYawBits.store(targetBits);
-            }
+        // Same as the pedestal: re-assert the model's yaw every frame so the script cannot snap it back while
+        // a close-up camera is up. The cached bits only avoid the log/no-op bookkeeping.
+        if (SafeWriteU32(rotAddr, targetBits)) {
+            s_lastYawBits.store(targetBits);
         }
     }
 
@@ -1678,15 +1886,23 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx, const std::strin
         bumpRebuild("new pieces");
         s_settlePending = !SingleRebuild();
         s_settleDeadline = frameNow + 45;
+        s_rebuildReadyFrame = frameNow + kRebuildQuietFrames;
     } else if (s_settlePending && (remade != s_remadeAtBump || frameNow >= s_settleDeadline)) {
         // Step 3: once the biped has been remade, remake it once more so it shows the pieces just picked.
         s_settlePending = false;
         bumpRebuild("settle");
+        s_rebuildReadyFrame = frameNow + kRebuildQuietFrames;
     }
 
-    // 4. Write 16 (region_string_id, permutation_string_id) pairs to GLOBALS[0x04..0x23] and trigger rebuild
+    // 4. Write 16 (region_string_id, permutation_string_id) pairs to GLOBALS[0x04..0x23] and trigger rebuild.
+    // One rebuild at a time: a request while the map script is still recreating the biped (see kRebuildQuietFrames,
+    // the pending settle and the script's own REMADE counter) is what made rapid changes crash. The generation is
+    // left unapplied in that case, so every change made meanwhile collapses into a single rebuild of the final look.
+    const bool rebuildSettled = (s_remadeAtBump == 0) || (remade != s_remadeAtBump) || (frameNow >= s_settleDeadline);
+    const bool rebuildInFlight = (s_bumpAtFrame != 0) || s_settlePending ||
+                                 (frameNow < s_rebuildReadyFrame) || !rebuildSettled;
     const uint64_t gen = s_selectionGeneration.load();
-    if (gen != s_appliedGeneration) {
+    if (gen != s_appliedGeneration && !rebuildInFlight) {
         s_appliedGeneration = gen;
         s_previewDirty.store(false);
 
@@ -1762,7 +1978,12 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx, const std::strin
             apply("2c", sel.leftShoulder);
             apply("38", sel.rightShoulder);
             apply("44", sel.chest);
-            if (!sel.hands.empty() && sel.hands != "default") {
+            // Prosthetic robotic arm: if the chest piece includes a cybernetic arm or the user has hands set to "robot",
+            // resolve to the actual render model permutation ("kat" for female, "player_john117" for male).
+            // Never assign the raw string "robot" to region "arms" (it causes crash 0xC0000005 at haloreach.dll+0x6950A9).
+            if (sel.hands == "robot") {
+                perm["arms"] = sel.isFemale ? "kat" : "player_john117";
+            } else if (!sel.hands.empty() && sel.hands != "default" && sel.hands != "robot") {
                 perm["arms"] = sel.hands;
             }
             apply("50", sel.wrist);
@@ -1784,7 +2005,7 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx, const std::strin
             pushPair("chest",          sel.chest,         "chest_blank");
             pushPair("left_shoulder",  sel.leftShoulder,  "left_shoulder_blank");
             pushPair("right_shoulder", sel.rightShoulder, "right_shoulder_blank");
-            pushPair("hands",          sel.hands,         "default");
+            pushPair("arms",           (sel.hands == "robot") ? (sel.isFemale ? "kat" : "player_john117") : "default", "default");
             pushPair("wrist",          sel.wrist,         "wrist_blank");
             pushPair("utility",        sel.utility,       "utility_blank");
             pushPair("knees",          sel.knees,         "knees_default");
@@ -1841,6 +2062,7 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx, const std::strin
                 s_lastPairsBase = base;
                 s_bumpAtFrame = frameNow + 2;
                 s_settlePending = false;
+                s_rebuildReadyFrame = frameNow + 2 + kRebuildQuietFrames;
                 if (showElite) {
                     NOBLE_INFO("ReachArmory: Elite pieces {} / {} / {} / {} / {} / {}, effect {}", sel.eliteHelmet, sel.eliteLeftShoulder,
                                sel.eliteRightShoulder, sel.eliteChest, sel.eliteArms, sel.eliteLegs, sel.eliteArmorEffect);
@@ -1886,9 +2108,82 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx, const std::strin
 
 } // namespace
 
+namespace {
+// The menu process resolves the Armory selection from the saved appearance (palette or wheel colours,
+// visor, pieces); a match process never runs the Armory, so it learns the look from this file. Without it
+// the in-game material sync used the DEFAULT selection, which is what painted every Spartan's visor amber
+// (and the local suit/armour lights with default colours) no matter what the Armory had equipped.
+std::filesystem::path SelectionFilePath() {
+    return s_dataDir.empty() ? std::filesystem::path() : s_dataDir / "userdata" / "armory-selection.json";
+}
+
+void SaveSelectionFile(const ReachArmorySelection& sel) {
+    const std::filesystem::path path = SelectionFilePath();
+    if (path.empty()) return;
+    std::error_code ec;
+    std::filesystem::create_directories(path.parent_path(), ec);
+    nlohmann::json j;
+    j["visor"] = sel.visor;
+    j["primary"] = sel.primaryRgb;
+    j["secondary"] = sel.secondaryRgb;
+    j["accent"] = sel.accentRgb;
+    j["lights"] = sel.lightsRgb;
+    j["visor_rgb"] = sel.visorRgb;
+    j["custom"] = nlohmann::json::array({ sel.primaryCustom, sel.secondaryCustom, sel.accentCustom, sel.lightsCustom });
+    j["primary_index"] = sel.primaryColorIndex;
+    j["secondary_index"] = sel.secondaryColorIndex;
+    j["accent_index"] = sel.accentColorIndex;
+    j["lights_index"] = sel.lightsColorIndex;
+    j["visor_index"] = sel.visorColorIndex;
+    std::ofstream out(std::filesystem::path(path), std::ios::trunc | std::ios::binary);
+    if (!out) return;
+    out << j.dump();
+}
+
+void LoadSelectionFile(ReachArmorySelection& sel) {
+    const std::filesystem::path path = SelectionFilePath();
+    if (path.empty()) return;
+    std::ifstream in(std::filesystem::path(path), std::ios::binary);
+    if (!in) return;
+    nlohmann::json j;
+    try {
+        in >> j;
+        auto rgb = [&](const char* key, std::array<float, 3>& out) {
+            if (!j.contains(key) || !j[key].is_array() || j[key].size() != 3) return;
+            for (int i = 0; i < 3; ++i) out[i] = std::clamp(j[key][i].get<float>(), 0.0f, 4.0f);
+        };
+        rgb("primary", sel.primaryRgb);
+        rgb("secondary", sel.secondaryRgb);
+        rgb("accent", sel.accentRgb);
+        rgb("lights", sel.lightsRgb);
+        rgb("visor_rgb", sel.visorRgb);
+        if (j.contains("visor") && j["visor"].is_string()) sel.visor = j["visor"].get<std::string>();
+        if (j.contains("custom") && j["custom"].is_array() && j["custom"].size() == 4) {
+            sel.primaryCustom = j["custom"][0].get<bool>();
+            sel.secondaryCustom = j["custom"][1].get<bool>();
+            sel.accentCustom = j["custom"][2].get<bool>();
+            sel.lightsCustom = j["custom"][3].get<bool>();
+        }
+        if (j.contains("primary_index")) sel.primaryColorIndex = j["primary_index"].get<int>();
+        if (j.contains("secondary_index")) sel.secondaryColorIndex = j["secondary_index"].get<int>();
+        if (j.contains("accent_index")) sel.accentColorIndex = j["accent_index"].get<int>();
+        if (j.contains("lights_index")) sel.lightsColorIndex = j["lights_index"].get<int>();
+        if (j.contains("visor_index")) sel.visorColorIndex = j["visor_index"].get<int>();
+        NOBLE_INFO("ReachArmory: loaded the saved Armory colours (visor '{}', custom {}{}{}{})", sel.visor,
+                   sel.primaryCustom, sel.secondaryCustom, sel.accentCustom, sel.lightsCustom);
+    } catch (const nlohmann::json::exception&) {
+        // A truncated or hand-edited file must never take the game down: keep the defaults.
+    }
+}
+} // namespace
+
 void ReachArmory::Initialize(const std::filesystem::path& dataDir) {
     s_dataDir = dataDir;
     EnsureStringIdsLoaded();
+    {
+        ArmoryLock lock(s_sceneMutex);
+        LoadSelectionFile(s_selection);
+    }
 }
 
 bool ReachArmory::HasArmoryMap() {
@@ -1917,12 +2212,15 @@ void ReachArmory::SetMenuMode(bool menuMode) {
         s_mainScene.store(-1);
         s_lastRemade.store(-1);
         s_appliedGeneration = 0;
+        s_rebuildReadyFrame = 0;
         s_lastPairs.clear();
         s_livePairs.clear();
         s_lastPairsBase = 0;
         s_bumpAtFrame = 0;
         s_settlePending = false;
         s_previewDirty.store(false);
+        s_eliteRecordsSeen.store(false);
+        s_lastFullRescanMs.store(0);
         {
             ArmoryLock lock(s_dataMutex);
             s_colorRecords.clear();
@@ -1970,6 +2268,7 @@ void ReachArmory::SetSelection(const ReachArmorySelection& sel) {
     }
     if (pieceChanged) s_previewDirty.store(true);
     s_selectionGeneration.fetch_add(1);
+    SaveSelectionFile(sel);   // a match process reads this instead of running the Armory
 }
 
 ReachArmorySelection ReachArmory::GetSelection() {
@@ -2021,12 +2320,24 @@ void ReachArmory::Tick() {
     if ((s_globalsBase.load() == 0 || s_rescanRequested.load()) && frame >= 15 && !s_scanning.exchange(true)) {
         const bool isRescan = s_rescanRequested.exchange(false);
         std::thread([isRescan]() {
+          try {
             if (!isRescan) {
                 NOBLE_INFO("ReachArmory: Scanning process memory for mainmenu_all.map GLOBALS table...");
             }
             // The menu map can take a while to finish loading, so keep looking while the menu is up
             // (every 250 ms for the first 10 s, then once a second) instead of giving up after 10 s.
+            // Once the GLOBALS table is found, the full colour-record scans run for a limited number of rounds:
+            // a species switch clears the records, so "until the records exist" kept this thread repeating full
+            // ~7 GB scans for as long as the player switched (CPU 30-70 %, menu lag, then std::bad_alloc). Records
+            // still missing after that are left to the quick rescans (rebuilds, species switches, Tick's retry).
+            int recordRounds = 0;
             for (int attempt = 0; s_menuMode.load(); ++attempt) {
+                // A match runs in its own process while this menu process waits. Re-scanning ~2.5 GB of this
+                // process's memory every second then only competes with the match for CPU and memory, so wait.
+                while (s_menuMode.load() && noble::FrontEndMenu::IsMatchRunning()) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(250));
+                }
+                if (!s_menuMode.load()) break;
                 if (ScanGlobalsTable()) {
                     ScanColorRecords();
                     ScanEliteColorRecords();
@@ -2040,6 +2351,11 @@ void ReachArmory::Tick() {
                                                : (!s_colorRecords.empty() && !s_suitRecords.empty());
                     }
                     if (hasRecords) break;
+                    if (++recordRounds >= 2) {
+                        NOBLE_INFO("ReachArmory: colour records not all found after {} full scans; the Armory's quick rescans take over",
+                                   recordRounds);
+                        break;
+                    }
                 }
                 if (!isRescan && (attempt == 4 || attempt % 20 == 19)) {
                     size_t regions = 0, bytes = 0;
@@ -2056,19 +2372,28 @@ void ReachArmory::Tick() {
                 ScanSuitRecords();
                 ScanEliteTable();
             }
+          } catch (const std::exception& e) {
+            NOBLE_ERROR("ReachArmory: memory scanner stopped: {}", e.what());
+          }
             s_scanning.store(false);
         }).detach();
     }
 
-    // The Elite's region table and color records exist once the Elite model has loaded.
-    // Trigger background rescan asynchronously without blocking the render thread.
-    if (s_globalsBase.load() != 0 && GetSelection().previewElite && !s_scanning.load()) {
-        bool needEliteColors = false;
+    // Slow retry while an Armory scene is up and the shown species' colour records are still missing (the
+    // safety net the menu scanner's endless loop used to provide). Every kRecordRetryIntervalMs, not every
+    // 30 frames; the quick rescan itself limits full-memory scans.
+    if (s_globalsBase.load() != 0 && !s_scanning.load() && !s_quickScanning.load()) {
+        const int32_t idx = ResolveSceneIndex(GetTargetScene());
+        const bool armoryShown = (idx >= 0x0A && idx <= 0x14 && idx != 0x0E);
+        const bool wantElite = GetSelection().previewElite;
+        bool missing = false;
         {
             ArmoryLock lock(s_dataMutex);
-            needEliteColors = s_eliteColorRecords.empty();
+            missing = wantElite ? s_eliteColorRecords.empty() : (s_colorRecords.empty() || s_suitRecords.empty());
         }
-        if (needEliteColors && (frame % 30 == 0)) {
+        const uint64_t now = GetTickCount64();
+        if (armoryShown && missing && now - s_lastRetryMs.load() >= kRecordRetryIntervalMs) {
+            s_lastRetryMs.store(now);
             StartQuickRescan();
         }
     }
@@ -2114,6 +2439,147 @@ void ReachArmory::NotifyEngineTick() {
         permPairsFlat,
         permPairCount,
         permPairsGen);
+}
+
+// haloreach+0x53EF8 = player_mapping_get_unit_by_output_user(0): the local player's unit object datum.
+// Resolved once, outside the __try block (a function containing __try may not need object unwinding, and a
+// function-local static with a dynamic initialiser does).
+static uint32_t LocalUnitDatum(uintptr_t base) {
+    static uint32_t s_datum = 0xFFFFFFFFu;
+    if (base && s_datum == 0xFFFFFFFFu) {
+        using GetLocalUnitFn = int32_t(__fastcall*)(int32_t);
+        s_datum = static_cast<uint32_t>(reinterpret_cast<GetLocalUnitFn>(base + 0x53EF8)(0));
+    }
+    return s_datum;
+}
+
+static void SyncMatchLiveBipedsSEH(uintptr_t base, const float* const wantSlots[4], uint32_t localUnitDatum) {
+    __try {
+        const uint32_t tlsIdx = *reinterpret_cast<const uint32_t*>(base + 0xC17B18);
+        const uintptr_t tlsArray = *reinterpret_cast<const uintptr_t*>(__readgsqword(0x58) + static_cast<uintptr_t>(tlsIdx) * 8u);
+        if (!tlsArray) return;
+        uint8_t* objTable = *reinterpret_cast<uint8_t* const*>(tlsArray + 0x10);
+        if (!objTable) return;
+
+        using SetChangeColorFn = uint8_t(__fastcall*)(uint32_t, int32_t, const float*);
+        auto SetChangeColor = reinterpret_cast<SetChangeColorFn>(base + 0x473858);
+
+        const int32_t maxObjects = std::clamp(*reinterpret_cast<const int32_t*>(objTable + 0x44), 0, 2048);
+        uint8_t* entries = *reinterpret_cast<uint8_t* const*>(objTable + 0x50);
+        if (!entries) return;
+
+        for (int32_t i = 0; i < maxObjects; ++i) {
+            uint8_t* entry = entries + static_cast<size_t>(i) * 0x18;
+            const uint16_t salt = *reinterpret_cast<const uint16_t*>(entry + 0x00);
+            if (salt == 0) continue;
+            const uint8_t objType = entry[0x04];
+            if (objType != 0) continue; // 0 == biped
+            uint8_t* objPtr = *reinterpret_cast<uint8_t* const*>(entry + 0x10);
+            if (!objPtr) continue;
+
+            const uint32_t objectDatum = (static_cast<uint32_t>(salt) << 16) | static_cast<uint32_t>(i);
+            // Only the LOCAL player's own biped (haloreach+0x53EF8 = player_mapping_get_unit_by_output_user(0)).
+            // Every other player's colours are replicated by the engine from that player's appearance record;
+            // writing the local colours onto every player-controlled biped is what made every Spartan in a
+            // match - including everyone else - look like the local player.
+            if (localUnitDatum == 0xFFFFFFFFu || objectDatum != localUnitDatum) continue;
+            const int16_t ccSize = *reinterpret_cast<const int16_t*>(objPtr + 0x188);
+            const int16_t ccOffset = *reinterpret_cast<const int16_t*>(objPtr + 0x18A);
+            if (ccSize >= 24 && ccOffset > 0 && ccOffset < 0x2000) {
+                const int32_t slotCount = (ccSize / 12) / 2;
+                float* ccBase = reinterpret_cast<float*>(objPtr + ccOffset);
+                float* ccActive = ccBase + slotCount * 3;
+                const int32_t nSlots = std::min<int32_t>(slotCount, 4);
+                for (int32_t s = 0; s < nSlots; ++s) {
+                    const float* w = wantSlots[s];
+                    if (!w) continue;
+                    float* b = ccBase + s * 3;
+                    float* a = ccActive + s * 3;
+                    if (std::abs(b[0] - w[0]) > 1e-4f || std::abs(b[1] - w[1]) > 1e-4f || std::abs(b[2] - w[2]) > 1e-4f ||
+                        std::abs(a[0] - w[0]) > 1e-4f || std::abs(a[1] - w[1]) > 1e-4f || std::abs(a[2] - w[2]) > 1e-4f) {
+                        b[0] = w[0]; b[1] = w[1]; b[2] = w[2];
+                        a[0] = w[0]; a[1] = w[1]; a[2] = w[2];
+                        SetChangeColor(objectDatum, s, w);
+                    }
+                }
+            }
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+}
+
+// Campaign missions put AI Spartans (Noble Team, allied troopers) in the map next to the player. The
+// shader rewrite below is map-wide: every 'rmsh' Spartan material in the loaded map receives the local
+// player's undersuit, armour lights and visor colour, which painted the player's Armory colours onto every
+// NPC Spartan as well. A campaign keeps the stock material constants; there the player's own biped still
+// gets its colours from the profile record the engine applies, exactly as it did before this sync existed.
+static bool CampaignKeepsStockMaterial() {
+    static const bool s_campaign = [] {
+        bool campaign = false;
+        int argc = 0;
+        LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+        for (int i = 1; argv && i + 1 < argc; ++i) {
+            if (_wcsicmp(argv[i], L"-mode") == 0 && _wcsicmp(argv[i + 1], L"campaign") == 0) campaign = true;
+        }
+        if (argv) LocalFree(argv);
+        return campaign;
+    }();
+    return s_campaign;
+}
+
+void ReachArmory::SyncMatchLiveBipeds() {
+    if (CampaignKeepsStockMaterial()) return;
+    HMODULE hReach = GetModuleHandleW(L"haloreach.dll");
+    if (!hReach) return;
+    const uintptr_t base = reinterpret_cast<uintptr_t>(hReach);
+
+    const ReachArmorySelection sel = GetSelection();
+    // Palette colours (and stock 0..4 visors) travel in the player's appearance record, and the engine
+    // renders every player's own choice from it - other players' colours and visors included. Only the
+    // Armory's wheel colours or extended visors (>= 5) need forcing into the local biped's materials.
+    const bool customVisor = (sel.visorColorIndex >= 5);
+    if (!sel.primaryCustom && !sel.secondaryCustom && !sel.accentCustom && !sel.lightsCustom && !customVisor) return;
+
+    // Apply live visor reflection and suit constants to active map shader tags ('rmsh')
+    const float visFloats[3] = {
+        (sel.visor == "default" || sel.visor.empty()) ? 0.78f : sel.visorRgb[0],
+        (sel.visor == "default" || sel.visor.empty()) ? 0.63f : sel.visorRgb[1],
+        (sel.visor == "default" || sel.visor.empty()) ? 0.40f : sel.visorRgb[2]
+    };
+    const uint32_t priArgb = LinearRgbToArgbU32(sel.primaryRgb);
+    const uint32_t secArgb = LinearRgbToArgbU32(sel.secondaryRgb);
+    const uint32_t terArgb = LinearRgbToArgbU32(sel.accentRgb);
+    const uint32_t visArgb = (sel.visor == "default" || sel.visor.empty())
+                           ? 0xFFC7A167u
+                           : LinearRgbToArgbU32(sel.visorRgb);
+    const std::array<uint32_t, 4> words = sel.previewElite
+        ? std::array<uint32_t, 4>{ priArgb, secArgb, terArgb, (sel.accentColorIndex != 0 ? terArgb : priArgb) }
+        : std::array<uint32_t, 4>{ priArgb, secArgb, terArgb, visArgb };
+
+    static ULONGLONG s_lastTagUpdate = 0;
+    const ULONGLONG now = GetTickCount64();
+    if (now - s_lastTagUpdate > 250) {
+        s_lastTagUpdate = now;
+        UpdateTagShaderConstantsSEH(
+            sel.previewElite,
+            words.data(),
+            sel.accentCustom ? sel.accentRgb.data() : nullptr,
+            sel.lightsCustom ? sel.lightsRgb.data() : nullptr,
+            customVisor ? visFloats : nullptr);
+    }
+
+    const float slot0[3] = { sel.primaryRgb[0], sel.primaryRgb[1], sel.primaryRgb[2] };
+    const float slot1[3] = { sel.secondaryRgb[0], sel.secondaryRgb[1], sel.secondaryRgb[2] };
+    const float slot2[3] = { sel.accentRgb[0], sel.accentRgb[1], sel.accentRgb[2] };
+    const float slot3[3] = { visFloats[0], visFloats[1], visFloats[2] };
+    const float* const wantSlots[4] = {
+        sel.primaryCustom ? slot0 : nullptr,
+        sel.secondaryCustom ? slot1 : nullptr,
+        sel.accentCustom ? slot2 : nullptr,
+        customVisor ? slot3 : nullptr
+    };
+
+    SyncMatchLiveBipedsSEH(base, wantSlots, LocalUnitDatum(base));
 }
 
 std::vector<std::string> ReachArmory::MissingPermutationsFor(const std::string& list, const std::string& item) {

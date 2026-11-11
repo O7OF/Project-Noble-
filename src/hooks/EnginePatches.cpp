@@ -2,6 +2,7 @@
 #include "HookManager.hpp"
 #include "SigScanner.hpp"
 #include "common/Logger.hpp"
+#include "network/NetworkTransport.hpp"
 #include <psapi.h>
 #include <atomic>
 #include <cstring>
@@ -56,6 +57,26 @@ static uint8_t __fastcall Hook_IsWhitespace(uint16_t ch) {
 using PlayerControlUpdateFn = void(__fastcall*)(int32_t playerIndex, int32_t inputUserIndex, float a3, float a4, void* a5, void* controlOut);
 static PlayerControlUpdateFn s_originalPlayerControlUpdate = nullptr;
 static std::atomic<bool> s_lowerWeaponTogglePending{false};
+
+// ai_place (RVA 0x6C2B10): places an AI squad from scenario definitions.
+// In multiplayer mods with AI, scenario scripts execute on both the host and clients.
+// The host's entity replication layer serializes and sends created AI bipeds to the guest.
+// If the guest also runs ai_place locally, two copies of every AI unit exist on the client (a clone!).
+// Suppressing ai_place on non-host clients ensures AI is only spawned by the authoritative host.
+using AiPlaceFn = void(__fastcall*)(uint32_t aiValue, int32_t count, int32_t flag);
+static AiPlaceFn s_originalAiPlace = nullptr;
+
+static void __fastcall Hook_AiPlace(uint32_t aiValue, int32_t count, int32_t flag) {
+    if (NetworkTransport::Get().IsActive() && !NetworkTransport::Get().IsHost()) {
+        NOBLE_DEBUG("EnginePatches: Suppressed client-side ai_place(0x{:08X}, {}, {}) to prevent duplicate AI clones.",
+                    aiValue, count, flag);
+        return;
+    }
+
+    if (s_originalAiPlace) {
+        s_originalAiPlace(aiValue, count, flag);
+    }
+}
 
 void EnginePatches::RequestLowerWeaponToggle() {
     s_lowerWeaponTogglePending.store(true);
@@ -383,6 +404,42 @@ bool EnginePatches::Apply(HMODULE hReachDll) {
         NOBLE_WARN("EnginePatches: Could not locate IsArmorItemUnlocked in haloreach.dll.");
     }
 #endif
+
+    // 5. Hook ai_place (RVA 0x6C2B10) to suppress client-side AI script spawning in multiplayer.
+    // In retail Reach, scenario scripts run on both host and client. In multiplayer mods with AI,
+    // both host and guest execute (ai_place squad). Because the host also replicates placed actors
+    // over the network, guests receive duplicate cloned AI. Hooking ai_place and returning early
+    // on non-host clients ensures AI is spawned authoritatively by the host only and synchronized cleanly.
+    {
+        constexpr uintptr_t kAiPlaceRva = 0x6C2B10;
+        uintptr_t aiPlaceAddr = 0;
+        uint8_t* staticAddr = reinterpret_cast<uint8_t*>(baseAddress + kAiPlaceRva);
+        static const uint8_t kAiPlaceHead[] = { 0x48, 0x89, 0x5C, 0x24, 0x18, 0x48, 0x89, 0x7C, 0x24, 0x20, 0x55, 0x48, 0x8B, 0xEC, 0x48, 0x83 };
+        if (std::memcmp(staticAddr, kAiPlaceHead, sizeof(kAiPlaceHead)) == 0) {
+            aiPlaceAddr = reinterpret_cast<uintptr_t>(staticAddr);
+        } else {
+            aiPlaceAddr = SigScanner::FindPattern(
+                baseAddress,
+                modInfo.SizeOfImage,
+                "48 89 5C 24 18 48 89 7C 24 20 55 48 8B EC 48 83"
+            );
+        }
+
+        if (aiPlaceAddr) {
+            if (HookManager::InstallHook(
+                reinterpret_cast<void*>(aiPlaceAddr),
+                reinterpret_cast<void*>(&Hook_AiPlace),
+                reinterpret_cast<void**>(&s_originalAiPlace),
+                "haloreach_ai_place"
+            )) {
+                NOBLE_INFO("EnginePatches: Successfully hooked ai_place at 0x{:X} for multiplayer AI clone suppression.", aiPlaceAddr);
+            } else {
+                NOBLE_ERROR("EnginePatches: Failed to hook ai_place at 0x{:X}!", aiPlaceAddr);
+            }
+        } else {
+            NOBLE_WARN("EnginePatches: Could not locate ai_place in haloreach.dll.");
+        }
+    }
 
     s_isApplied = true;
     return true;

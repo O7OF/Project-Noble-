@@ -20,6 +20,8 @@
 #include "engine/KeyBindings.hpp"
 #include "engine/CameraFov.hpp"
 #include "engine/CameraThirdPerson.hpp"
+#include "engine/BlamEngine.hpp"
+#include "engine/DevCheats.hpp"
 #include "engine/ReachArmory.hpp"
 #include "engine/ElitePack.hpp"
 #include "engine/SharedTagCache.hpp"
@@ -269,6 +271,10 @@ static uint64_t __fastcall HostSlot0_QueryInterface(void* thisPtr, uint64_t a1, 
 static void ExecuteGammaPass(IDXGISwapChain* swapChain);
 static void ResetGammaPass();
 static std::atomic<bool> s_sessionStarted{false};
+// Last time the engine pumped a frame; a stall watchdog (main.cpp, NOBLE_STALL_DUMP=1) reads this to dump the
+// thread stacks when the engine stops making progress without crashing.
+std::atomic<uint64_t> s_lastFrameTickMs{0};
+uint64_t ReachHost::GetLastFrameTickMs() { return s_lastFrameTickMs.load(); }
 static std::atomic<bool> s_testCaptureRequest{false};  // -scoreboard-at: screenshot on the next frame  // set on the first slot-10 call (loading screen ends)
 
 // Test option "-end-round-after <seconds>": ends the current round that many seconds after the
@@ -308,6 +314,10 @@ static std::atomic<bool> s_presentHookInstalled{false};
 static std::atomic<bool> s_presentHookAttempted{false};
 
 static HRESULT STDMETHODCALLTYPE HookSwapChainPresent(IDXGISwapChain* swapChain, UINT syncInterval, UINT flags) {
+    if (noble::FrontEndMenu::IsMatchRunning()) {
+        Sleep(25);
+        return S_OK; // Match is running in child container window; discard parent presentation completely
+    }
     (void)syncInterval;
     // DISPLAY MODE = FULLSCREEN: enter/leave DXGI exclusive full screen on this (the render) thread.
     SyncExclusiveFullscreen(swapChain);
@@ -322,7 +332,20 @@ static HRESULT STDMETHODCALLTYPE HookSwapChainPresent(IDXGISwapChain* swapChain,
 
     DXGI_SWAP_CHAIN_DESC scDesc{};
     HWND hwnd = (swapChain && SUCCEEDED(swapChain->GetDesc(&scDesc))) ? scDesc.OutputWindow : nullptr;
-    const bool isFocused = (hwnd == nullptr || GetForegroundWindow() == hwnd);
+    // Container window mode: the launcher window is the foreground one, the match window is a child of it.
+    // IsForeground() accepts the container, so a match in a container is not mistaken for a background
+    // window (which used to throttle it to 30 FPS and made it look like it never had the focus).
+    const bool isFocused = (hwnd == nullptr || noble::Window::IsForeground(hwnd));
+    if (isFocused) {
+        // ...and make that focus real: hand the keyboard focus to the match window at most once a second,
+        // so the match takes it back after the launcher (or an Alt-Tab) had it.
+        static ULONGLONG s_nextFocusRequest = 0;
+        const ULONGLONG focusNow = GetTickCount64();
+        if (focusNow >= s_nextFocusRequest) {
+            s_nextFocusRequest = focusNow + 1000;
+            noble::Window::RequestFocus();
+        }
+    }
 
     // FRAME-RATE LIMIT: 0 means what it says - no pacing at all while the window is active. (It used to be
     // silently capped at 120, which made "No limit" a lie and confused the FPS counter.)
@@ -340,9 +363,27 @@ static HRESULT STDMETHODCALLTYPE HookSwapChainPresent(IDXGISwapChain* swapChain,
         targetFps = kMenuFpsCap;
     }
 
+    // While a match is still loading (the loading screen) nothing on screen needs more than 60 FPS, and a
+    // 240-360 FPS limit just drives the GPU flat out during the heaviest part of the join. Hold it to 60 until
+    // the session starts, then the player's own limit applies. (Menu process is capped separately above.)
+    constexpr int kLoadingFpsCap = 60;
+    if (!ReachArmory::IsMenuMode() && !s_sessionStarted.load() && (targetFps <= 0 || targetFps > kLoadingFpsCap)) {
+        targetFps = kLoadingFpsCap;
+    }
+
     if (targetFps != previousLimit) {
         previousLimit = targetFps;
         nextPresentTicks = now.QuadPart;
+        // One line per limit change, so a "why is my game at 30" report can be answered from the log: it
+        // says whether the window counts as being in front and whether the unfocused throttle is what
+        // capped it (SETTINGS > GRAPHICS > "Cap frame rate in the background").
+        if (targetFps > 0) {
+            NOBLE_INFO("Present: frame limit {} FPS (window {}, background throttle {})", targetFps,
+                       isFocused ? "in front" : "not in front",
+                       settings.throttleUnfocused ? "enabled" : "disabled");
+        } else {
+            NOBLE_INFO("Present: frame limit off (window {})", isFocused ? "in front" : "not in front");
+        }
     }
 
     if (targetFps <= 0) {
@@ -365,9 +406,27 @@ static HRESULT STDMETHODCALLTYPE HookSwapChainPresent(IDXGISwapChain* swapChain,
         nextPresentTicks = now.QuadPart + interval;
     }
 
-    return s_originalSwapChainPresent
-        ? s_originalSwapChainPresent(swapChain, effectiveSyncInterval, flags)
-        : DXGI_ERROR_INVALID_CALL;
+    if (!s_originalSwapChainPresent) return DXGI_ERROR_INVALID_CALL;
+    const HRESULT presentHr = s_originalSwapChainPresent(swapChain, effectiveSyncInterval, flags);
+
+    // The graphics driver reset or removed the device (a driver timeout, crash or hang recovery). Nothing can
+    // draw after that, and a match left running in that state just shows a frozen picture. Record why, then
+    // end this match process at once so the menu gets control back instead of staying stuck.
+    if ((presentHr == DXGI_ERROR_DEVICE_REMOVED || presentHr == DXGI_ERROR_DEVICE_RESET) && !ReachArmory::IsMenuMode()) {
+        static std::atomic<bool> s_deviceLostHandled{false};
+        if (!s_deviceLostHandled.exchange(true)) {
+            HRESULT reason = S_OK;
+            ID3D11Device* device = nullptr;
+            if (swapChain && SUCCEEDED(swapChain->GetDevice(__uuidof(ID3D11Device), reinterpret_cast<void**>(&device))) && device) {
+                reason = device->GetDeviceRemovedReason();
+                device->Release();
+            }
+            NOBLE_ERROR("Present: the graphics device was lost (Present 0x{:08X}, reason 0x{:08X}). Ending the match so the menu can recover.",
+                        static_cast<uint32_t>(presentHr), static_cast<uint32_t>(reason));
+            TerminateProcess(GetCurrentProcess(), 0xD3D10001u);
+        }
+    }
+    return presentHr;
 }
 
 static void InstallPresentSettingsHook(IDXGISwapChain* swapChain) {
@@ -386,13 +445,186 @@ static void InstallPresentSettingsHook(IDXGISwapChain* swapChain) {
     }
 }
 
+namespace {
+
+// ---- "-team-probe" research hook -------------------------------------------------------------
+// The team lives in the engine's session/player state, and the engine's game-state root is reached through
+// a *thread-local* slot - so this runs on the engine thread (here) and not on a worker thread, which is why
+// an earlier version always read datum 0xFFFFFFFF / objTable 0.
+struct TeamProbeSnapshot {
+    uint32_t datum = 0xFFFFFFFFu;
+    uintptr_t objTable = 0;
+    uintptr_t object = 0;
+    bool haveUnit = false;
+    bool haveObject = false;
+    bool havePlayer = false;
+    uint8_t bytes[0x200] = {};
+    uint8_t player[0x490] = {};
+};
+
+bool TeamProbeEnabled() {
+    static const bool enabled = [] {
+        int argc = 0;
+        LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+        bool on = false;
+        for (int i = 1; argv && i < argc; ++i) {
+            if (_wcsicmp(argv[i], L"-team-probe") == 0) on = true;
+        }
+        if (argv) LocalFree(argv);
+        return on;
+    }();
+    return enabled;
+}
+
+// No logging and no objects with destructors in here: a function containing __try cannot unwind.
+bool TeamProbeRead(TeamProbeSnapshot* out) {
+    __try {
+        const HMODULE module = GetModuleHandleW(L"haloreach.dll");
+        if (!module) return false;
+        const uintptr_t base = reinterpret_cast<uintptr_t>(module);
+        using GetLocalUnitFn = int32_t(__fastcall*)(int32_t);
+        out->datum = static_cast<uint32_t>(reinterpret_cast<GetLocalUnitFn>(base + 0x53EF8)(0));
+        const uint32_t tlsIdx = *reinterpret_cast<const uint32_t*>(base + 0xC17B18);
+        auto** tls = reinterpret_cast<uint8_t**>(__readgsqword(0x58));
+        if (!tls || !tls[tlsIdx]) return true;
+        out->objTable = reinterpret_cast<uintptr_t>(*reinterpret_cast<uint8_t**>(tls[tlsIdx] + 0x10));
+        if (!out->objTable || out->datum == 0xFFFFFFFFu) return true;
+        out->haveUnit = true;
+        uint8_t* objTable = reinterpret_cast<uint8_t*>(out->objTable);
+        const int32_t maxObjects = *reinterpret_cast<const int32_t*>(objTable + 0x44);
+        uint8_t* entries = *reinterpret_cast<uint8_t**>(objTable + 0x50);
+        const uint32_t index = out->datum & 0xFFFFu;
+        const uint16_t salt = static_cast<uint16_t>(out->datum >> 16);
+        if (!entries || index >= static_cast<uint32_t>(maxObjects < 0 ? 0 : (maxObjects > 4096 ? 4096 : maxObjects))) return true;
+        uint8_t* entry = entries + static_cast<size_t>(index) * 0x18;
+        if (*reinterpret_cast<const uint16_t*>(entry) != salt) return true;
+        uint8_t* object = *reinterpret_cast<uint8_t**>(entry + 0x10);
+        if (!object) return true;
+        out->object = reinterpret_cast<uintptr_t>(object);
+        out->haveObject = true;
+        std::memcpy(out->bytes, object, sizeof(out->bytes));
+
+        // The player datum too: the team belongs to the player, not the biped (the object holds its own team
+        // index for AI/spawn bookkeeping, but the session's choice lives here).
+        uint8_t* root = tls[tlsIdx];
+        uint8_t* header = *reinterpret_cast<uint8_t**>(root + 0x18);
+        if (header && std::strncmp(reinterpret_cast<const char*>(header), "players", 7) == 0) {
+            const int32_t cap = *reinterpret_cast<const int32_t*>(header + 0x2C);
+            uint8_t* records = *reinterpret_cast<uint8_t**>(header + 0x50);
+            const auto* bitmap = reinterpret_cast<const uint32_t*>(header + *reinterpret_cast<const int64_t*>(header + 0x68));
+            if (records && bitmap) {
+                for (int i = 0; i < (cap > 16 ? 16 : cap); ++i) {
+                    if (((bitmap[i >> 5] >> (i & 31)) & 1) == 0) continue;
+                    std::memcpy(out->player, records + static_cast<size_t>(i) * 0x490,
+                                sizeof(out->player) < 0x490 ? sizeof(out->player) : 0x490);
+                    out->havePlayer = true;
+                    break;
+                }
+            }
+        }
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {}
+    return false;
+}
+
+struct TeamProbeState {
+    uint8_t prev[0x200] = {};
+    uint8_t snapA[0x490] = {};
+    uint8_t snapA2[0x490] = {};
+    uint8_t snapB[0x490] = {};
+    bool noisy[0x490] = {};
+    bool haveObject = false;
+    uint64_t foundFrame = 0;
+    uint64_t lastReportFrame = 0;
+    int phase = 0;
+    uint64_t phaseFrame = 0;
+    bool reportedNoPlayer = false;
+};
+TeamProbeState g_teamProbe;
+
+void TeamProbeTick(uint64_t frame) {
+    TeamProbeSnapshot snap;
+    if (!TeamProbeRead(&snap)) return;
+    if (!snap.haveObject) {
+        if (frame - g_teamProbe.lastReportFrame > 600) {
+            g_teamProbe.lastReportFrame = frame;
+            NOBLE_INFO("team-probe: no unit yet (frame {}, datum 0x{:08X}, objTable 0x{:X})",
+                       frame, snap.datum, snap.objTable);
+        }
+        return;
+    }
+    if (!g_teamProbe.haveObject) {
+        g_teamProbe.haveObject = true;
+        g_teamProbe.foundFrame = frame;
+        NOBLE_INFO("team-probe: local unit object 0x{:X} (frame {}, datum 0x{:08X})", snap.object, frame, snap.datum);
+    }
+    if (!snap.havePlayer) {
+        if (!g_teamProbe.reportedNoPlayer) {
+            g_teamProbe.reportedNoPlayer = true;
+            NOBLE_INFO("team-probe: no players-pool record (object 0x{:X} found)", snap.object);
+        }
+        return;
+    }
+    // Noise-aware diff: sample twice while alive, then switch sides AND kill (a team change only lands on the
+    // respawn in a team game), then compare. Offsets that already moved between the two live samples are
+    // animation/view noise and are not reported; whatever is left is the team field plus respawn state.
+    const uint64_t sincePhase = frame - g_teamProbe.phaseFrame;
+    switch (g_teamProbe.phase) {
+        case 0:
+            std::memcpy(g_teamProbe.snapA, snap.player, sizeof(g_teamProbe.snapA));
+            g_teamProbe.phase = 1;
+            g_teamProbe.phaseFrame = frame;
+            break;
+        case 1:
+            if (sincePhase >= 90) {
+                std::memcpy(g_teamProbe.snapA2, snap.player, sizeof(g_teamProbe.snapA2));
+                for (size_t off = 0; off < sizeof(g_teamProbe.noisy); ++off) {
+                    g_teamProbe.noisy[off] = snap.player[off] != g_teamProbe.snapA[off];
+                }
+                size_t noisyCount = 0;
+                for (bool n : g_teamProbe.noisy) noisyCount += n ? 1 : 0;
+                NOBLE_INFO("team-probe: baseline at frame {} ({} noisy byte(s) while idle); switching to BLUE and dying",
+                           frame, noisyCount);
+                if (BlamEngine* engine = BlamEngine::Active()) engine->ExecuteCommand("player_override_team 0 1");
+                DevCheats::RequestLocalSuicide();
+                g_teamProbe.phase = 2;
+                g_teamProbe.phaseFrame = frame;
+            }
+            break;
+        case 2:
+            if (sincePhase >= 600) {   // 10 s: dead, respawned, standing again
+                std::memcpy(g_teamProbe.snapB, snap.player, sizeof(g_teamProbe.snapB));
+                size_t reported = 0;
+                for (size_t off = 0; off < sizeof(g_teamProbe.snapB); ++off) {
+                    if (g_teamProbe.snapB[off] == g_teamProbe.snapA2[off]) continue;
+                    if (g_teamProbe.noisy[off]) continue;
+                    NOBLE_INFO("team-probe: TEAM? +0x{:04X} 0x{:02X} -> 0x{:02X}",
+                               static_cast<unsigned>(off), g_teamProbe.snapA2[off], g_teamProbe.snapB[off]);
+                    ++reported;
+                }
+                NOBLE_INFO("team-probe: after the switch, {} candidate byte(s) changed", reported);
+                g_teamProbe.phase = 3;
+            }
+            break;
+        default:
+            break;
+    }
+}
+
+} // namespace
+
 static uint64_t __fastcall HostSlot1_FrameTick(void* thisPtr, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
     (void)thisPtr; (void)a2; (void)a3; (void)a4;
+    if (noble::FrontEndMenu::IsMatchRunning()) {
+        Sleep(25);
+        return 0; // Match is running in child container window; suppress parent engine frame tick
+    }
     // haloreach.dll invokes Slot 1 every frame before Present. a1 = the swap chain it is about to
     // present (the engine host::hit case 1). Our passes draw here, on the engine thread, because the engine
     // owns the immediate context.
     static std::atomic<uint64_t> s_frameCount{0};
     uint64_t frames = ++s_frameCount;
+    s_lastFrameTickMs.store(GetTickCount64());
     if (ReachArmory::IsMenuMode()) {
         ReachArmory::Tick();
         if (a1 > 0x10000) {
@@ -414,6 +646,9 @@ static uint64_t __fastcall HostSlot1_FrameTick(void* thisPtr, uint64_t a1, uint6
     // SETTINGS > VIDEO field of view: keep the engine's camera FOV in step with the saved setting
     // (cheap: it only reads the settings and writes haloreach+0xB42C10 when the value changed).
     CameraFov::Tick();
+
+    // Synchronize live biped change colors and visor shaders in all match modes (Campaign, Firefight, Forge, Custom Games)
+    ReachArmory::SyncMatchLiveBipeds();
     if (a1 > 0x10000) {
         IDXGISwapChain* swapChain = reinterpret_cast<IDXGISwapChain*>(a1);
         InstallPresentSettingsHook(swapChain);
@@ -453,8 +688,10 @@ static uint64_t __fastcall HostSlot1_FrameTick(void* thisPtr, uint64_t a1, uint6
         if (s_testCaptureRequest.exchange(false)) FrameCapture::SaveNow(swapChain, 777777);
         FrameCapture::OnFrame(swapChain, frames);  // test screenshots (-capture-frames)
     }
+    if (TeamProbeEnabled() && (frames % 60) == 0) TeamProbeTick(frames);
+
     if (frames == 1 || (frames % 300) == 0) {
-        // Engine "external launch" state machine (haloreach+0xC1A114): 0..10 while launching, 11 = launched.
+        // Engine "external launch" state machine (haloreach+C1A114): 0..10 while launching, 11 = launched.
         // State 10 waits for the game session to be ready.
         int launchState = -1;
         if (HMODULE reach = GetModuleHandleW(L"haloreach.dll")) {
@@ -496,7 +733,13 @@ static uint64_t __fastcall HostSlot4_LogMessage(void* thisPtr, uint64_t a1, uint
     if (a2 > 0x10000) {
         SafeCopyAnsiString(buf, sizeof(buf), reinterpret_cast<const char*>(a2));
     }
-    NOBLE_WARN("ReachHost [Slot 4 - EngineEvent]: reason={} message='{}'", a1, buf);
+    // Where in the engine this event came from: a return address (module RVA) turns every engine-side refusal
+    // into a Ghidra lookup. Reason 4 is the map/game compatibility answer.
+    const auto caller = reinterpret_cast<uintptr_t>(_ReturnAddress());
+    const HMODULE callerModule = GetModuleHandleW(L"haloreach.dll");
+    const uintptr_t engineBase = reinterpret_cast<uintptr_t>(callerModule);
+    const uintptr_t callerRva = (callerModule && caller > engineBase) ? caller - engineBase : 0;
+    NOBLE_WARN("ReachHost [Slot 4 - EngineEvent]: reason={} message='{}' from haloreach+0x{:X}", a1, buf, callerRva);
     if (a1 == 4 && NetworkTransport::Get().IsActive() && !NetworkTransport::Get().IsHost() && !s_sessionStarted.load()) {
         if (std::strstr(buf, "timeout") != nullptr) {
             NOBLE_ERROR("ReachHost [Slot 4 - EngineEvent]: Remote session join timed out ('{}'); returning to main menu.", buf);
@@ -989,8 +1232,10 @@ static void ApplyArmoryAppearance(uint8_t* profile) {
         };
         // haloreach.dll+0x2EDC5E is patched (EnginePatches) to convert kVisor + 0..29 directly to internal
         // visor indices 0..29 without stock 0..4 clamping, and 0x2C7DCC is patched to allow network replication.
+        // Note: in haloreach.dll's internal pmcg visor table (see 0x393CC / 0x3B2F4), internal index 3 is Gold
+        // and internal index 4 is Black, whereas the Armory UI catalog has 3 = "black" and 4 = "gold".
         auto visorOffset = [](int idx, const std::string& id) -> uint32_t {
-            if (idx >= 0 && idx < 30) return static_cast<uint32_t>(idx);
+            int uiIdx = -1;
             static const std::string_view kVisorIds[30] = {
                 "default", "silver", "blue", "black", "gold", "rose_gold",
                 "emerald", "ice", "crimson", "onyx", "violet", "amber",
@@ -998,10 +1243,16 @@ static void ApplyArmoryAppearance(uint8_t* profile) {
                 "lime", "platinum", "obsidian", "pearl", "electric_blue", "blood_orange",
                 "mint", "copper", "midnight", "magenta", "aquamarine", "titanium"
             };
-            for (size_t i = 0; i < 30; ++i) {
-                if (kVisorIds[i] == id) return static_cast<uint32_t>(i);
+            if (!id.empty()) {
+                for (size_t i = 0; i < 30; ++i) {
+                    if (kVisorIds[i] == id) { uiIdx = static_cast<int>(i); break; }
+                }
             }
-            return 0;
+            if (uiIdx < 0 && idx >= 0 && idx < 30) uiIdx = idx;
+            if (uiIdx < 0) return 0;
+            if (uiIdx == 3) return 4; // UI 3 ("black") -> engine pmcg visor 4 (Black)
+            if (uiIdx == 4) return 3; // UI 4 ("gold")  -> engine pmcg visor 3 (Gold)
+            return static_cast<uint32_t>(uiIdx);
         };
 
         const uint32_t spEffectOff = armoryEffectOffset(num(sp, "armor_effect_index", 0, 6, 0), str(sp, "armor_effect_id"));
@@ -1047,11 +1298,16 @@ static void ApplyArmoryAppearance(uint8_t* profile) {
         // the profile field exists (the engine: Steel) and the Armory's third colour word follows it.
         put(0xA0, kColor + accentColor);
 
+        const std::string settingsTag = Settings::Get().Snapshot().serviceTag;
         const std::string armoryTag = str(appearance, "service_tag");
-        if (!armoryTag.empty()) {
+        const std::string effectiveTag =
+            (!settingsTag.empty() && (armoryTag.empty() || (armoryTag == "N06" && settingsTag != "N06" && settingsTag != "NOBL") || settingsTag != "NOBL"))
+                ? settingsTag
+                : armoryTag;
+        if (!effectiveTag.empty()) {
             wchar_t serviceTag[4] = {};
-            for (size_t i = 0; i < 4 && i < armoryTag.size(); ++i) {
-                serviceTag[i] = static_cast<wchar_t>(armoryTag[i]);
+            for (size_t i = 0; i < 4 && i < effectiveTag.size(); ++i) {
+                serviceTag[i] = static_cast<wchar_t>(effectiveTag[i]);
             }
             memcpy(profile + 0x1AC, serviceTag, sizeof(serviceTag));
         }
@@ -1178,6 +1434,14 @@ static uint64_t __fastcall HostSlot34_ProfileSettings(void* thisPtr, uint64_t a1
             WriteDefaultKeyBindings(s_hostProfileBuffer);
             WritePadLookSettings(s_hostProfileBuffer);
             WriteDefaultVolumes(s_hostProfileBuffer);
+            const std::string liveTag = Settings::Get().Snapshot().serviceTag;
+            if (!liveTag.empty()) {
+                wchar_t serviceTag[4] = {};
+                for (size_t i = 0; i < 4 && i < liveTag.size(); ++i) {
+                    serviceTag[i] = static_cast<wchar_t>(liveTag[i]);
+                }
+                memcpy(s_hostProfileBuffer + 0x1AC, serviceTag, sizeof(serviceTag));
+            }
         }
     }
     RefreshArmoryAppearance(s_hostProfileBuffer);
@@ -1251,8 +1515,14 @@ static float InputMouseScaleOverride() {
     return s_scale;
 }
 
-// Returns our window if it is the foreground window, else nullptr.
+// Returns our window while the player is in it, else nullptr. In container window mode the engine renders
+// into a WS_CHILD window inside the launcher's top-level window, so the foreground window belongs to the
+// launcher process: ask Window::IsForeground() (which accepts the container as "ours") instead of comparing
+// handles or process IDs, and hand back this process's own window because the mouse maths below
+// (GetClientRect / ClientToScreen / ClipCursor) needs the window the engine is drawing in.
 static HWND InputFocusedWindow() {
+    const HWND own = noble::Window::ActiveHwnd();
+    if (own && noble::Window::IsForeground(own)) return own;
     HWND fg = GetForegroundWindow();
     if (!fg) return nullptr;
     DWORD pid = 0;
@@ -1272,7 +1542,35 @@ static std::atomic<ULONGLONG> s_uiScreenLastTick{0};
 
 static uint64_t __fastcall UiScreenHook(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
     s_uiScreenLastTick.store(GetTickCount64(), std::memory_order_relaxed);
+    if (HMODULE reach = GetModuleHandleW(L"haloreach.dll")) {
+        auto* w = reinterpret_cast<uint32_t*>(reinterpret_cast<uint8_t*>(reach) + 0xB43A90);
+        auto* h = reinterpret_cast<uint32_t*>(reinterpret_cast<uint8_t*>(reach) + 0xB43A94);
+        if (*w == 0 || *h == 0) {
+            *w = 1920;
+            *h = 1080;
+        }
+    }
     return s_origUiScreen(a1, a2, a3, a4);
+}
+
+// In container mode (-container-hwnd), haloreach.dll's g_hwnd (haloreach+0xC1A188) is a WS_CHILD
+// window inside the launcher's top-level window. haloreach.dll's UI cursor & list-widget hit-test
+// routines (0x1802D219E, 0x180305D96, 0x18034E7F6) call USER32!GetForegroundWindow via IAT
+// (haloreach+0x91E4B0) and compare it directly against g_hwnd; when g_hwnd is a child window,
+// GetForegroundWindow() returns the parent top-level window, causing the comparison to fail and
+// zeroing the UI mouse cursor to (-1, -1) on the loadout screen!
+static HWND WINAPI EngineGetForegroundWindow() {
+    if (HMODULE reach = GetModuleHandleW(L"haloreach.dll")) {
+        HWND engineHwnd = *reinterpret_cast<HWND*>(reinterpret_cast<uint8_t*>(reach) + 0xC1A188);
+        if (engineHwnd && noble::Window::IsForeground(engineHwnd)) {
+            return engineHwnd;
+        }
+    }
+    const HWND own = noble::Window::ActiveHwnd();
+    if (own && noble::Window::IsForeground(own)) {
+        return own;
+    }
+    return ::GetForegroundWindow();
 }
 
 // Subtitles. Before drawing cinematic/dialogue subtitles the engine asks haloreach+0xD5244
@@ -1317,6 +1615,21 @@ static void EnsureUiCursorHook() {
     HMODULE reach = GetModuleHandleW(L"haloreach.dll");
     if (!reach) return;
     EnsureSubtitleHook(reach);
+    {
+        auto* iatSlot = reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(reach) + 0x91E4B0);
+        DWORD oldProt = 0;
+        if (VirtualProtect(iatSlot, sizeof(void*), PAGE_READWRITE, &oldProt)) {
+            *iatSlot = reinterpret_cast<void*>(&EngineGetForegroundWindow);
+            VirtualProtect(iatSlot, sizeof(void*), oldProt, &oldProt);
+            NOBLE_INFO("ReachHost [UI cursor]: GetForegroundWindow IAT redirected for child-window hit-testing");
+        }
+        auto* w = reinterpret_cast<uint32_t*>(reinterpret_cast<uint8_t*>(reach) + 0xB43A90);
+        auto* h = reinterpret_cast<uint32_t*>(reinterpret_cast<uint8_t*>(reach) + 0xB43A94);
+        if (*w == 0 || *h == 0) {
+            *w = 1920;
+            *h = 1080;
+        }
+    }
     uint8_t* target = reinterpret_cast<uint8_t*>(reach) + kUiScreenRva;
     // Same check the engine makes: the function must start with "mov [rsp+18h], rbx" for this build.
     static const uint8_t kPrologue[5] = { 0x48, 0x89, 0x5C, 0x24, 0x18 };
@@ -1345,6 +1658,9 @@ static void InputRelease(HWND hwnd, const char* reason) {
     if (hwnd) {
         HCURSOR arrow = s_savedClassCursor ? s_savedClassCursor : LoadCursorW(nullptr, IDC_ARROW);
         SetClassLongPtrW(hwnd, GCLP_HCURSOR, reinterpret_cast<LONG_PTR>(arrow));
+        if (HWND parent = GetParent(hwnd)) {
+            SetClassLongPtrW(parent, GCLP_HCURSOR, reinterpret_cast<LONG_PTR>(arrow));
+        }
     }
     s_inputCaptured = false;
     NOBLE_INFO("ReachHost [Slot 36 - Input]: {}, mouse released", reason);
@@ -1637,6 +1953,9 @@ static void FillLocalInput(uint8_t* st) {
             HCURSOR cls = reinterpret_cast<HCURSOR>(GetClassLongPtrW(hwnd, GCLP_HCURSOR));
             if (cls) s_savedClassCursor = cls;
             SetClassLongPtrW(hwnd, GCLP_HCURSOR, 0); // hide the arrow over our window
+            if (HWND parent = GetParent(hwnd)) {
+                SetClassLongPtrW(parent, GCLP_HCURSOR, 0);
+            }
             s_inputCaptured = true;
             firstCapturedFrame = true;
             {
@@ -1845,6 +2164,22 @@ static void FillLocalInput(uint8_t* st) {
     if (st[0x004 + VK_XBUTTON1]) buttons |= 0x08;
     if (st[0x004 + VK_XBUTTON2]) buttons |= 0x10;
     *reinterpret_cast<uint32_t*>(st + 0x11C) = buttons;
+
+    // When an in-engine UI screen (such as the match loadout selection screen) is active, hovering a
+    // row moves the engine's list focus to that row, and left-clicking inside the game client area
+    // pulses VK_RETURN on the rising edge so clicking a loadout immediately selects it.
+    {
+        static bool s_uiWasLDown = false;
+        const bool lDown = (st[0x004 + VK_LBUTTON] != 0);
+        if (uiPointer && !PauseMenu::IsOpen() && !PauseMenu::IsGameOver() && lDown && !s_uiWasLDown) {
+            POINT pt{};
+            RECT rc{};
+            if (GetCursorPos(&pt) && ScreenToClient(hwnd, &pt) && GetClientRect(hwnd, &rc) && PtInRect(&rc, pt)) {
+                st[0x004 + VK_RETURN] = 0x80;
+            }
+        }
+        s_uiWasLDown = uiPointer && lDown;
+    }
 
     // Mouse wheel (+0x114, f32), as the engine's WheelPulse: each notch becomes a +1/-1 pulse held for 40 ms,
     // at most one pulse every 80 ms, up to 3 notches queued (wheel up = +1).

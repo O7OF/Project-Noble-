@@ -27,6 +27,7 @@ constexpr ImGuiWindowFlags kPanelFlags =
 const ImVec4 kBody = ImVec4(0.86f, 0.90f, 0.94f, 1.0f);
 const ImVec4 kDim  = ImVec4(0.55f, 0.62f, 0.70f, 1.0f);
 const ImVec4 kGood = ImVec4(0.35f, 0.85f, 0.45f, 1.0f);
+static ULONGLONG s_lastActionTime = 0;
 
 bool CaseInsensitiveContains(const std::string& str, const std::string& query) {
     if (query.empty()) return true;
@@ -363,17 +364,25 @@ void DevMenu::Draw() {
 
                 if (canGive) {
                     if (NobleStyle::PrimaryButton("GIVE", ImVec2(buttonW, 26.0f * s))) {
-                        DevCheats::QueueItemAction(item.name, item.category, item.tagPath, item.tagIndex, true /* give */);
-                        s_statusMessage = "Gave " + item.name + " directly to player!";
-                        s_statusTime = GetTickCount64();
+                        const ULONGLONG now = GetTickCount64();
+                        if (now - s_lastActionTime >= 300) {
+                            s_lastActionTime = now;
+                            DevCheats::QueueItemAction(item.name, item.category, item.tagPath, item.tagIndex, true /* give */);
+                            s_statusMessage = "Gave " + item.name + " directly to player!";
+                            s_statusTime = now;
+                        }
                     }
                     ImGui::SameLine();
                 }
 
                 if (ImGui::Button("SPAWN IN FRONT", ImVec2(canGive ? 90.0f * s : 140.0f * s, 26.0f * s))) {
-                    DevCheats::QueueItemAction(item.name, item.category, item.tagPath, item.tagIndex, false /* spawn */);
-                    s_statusMessage = "Spawned " + item.name + " in front of player!";
-                    s_statusTime = GetTickCount64();
+                    const ULONGLONG now = GetTickCount64();
+                    if (now - s_lastActionTime >= 300) {
+                        s_lastActionTime = now;
+                        DevCheats::QueueItemAction(item.name, item.category, item.tagPath, item.tagIndex, false /* spawn */);
+                        s_statusMessage = "Spawned " + item.name + " in front of player!";
+                        s_statusTime = now;
+                    }
                 }
 
                 ImGui::Separator();

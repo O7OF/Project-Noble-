@@ -38,6 +38,11 @@ void AuthClient::Initialize() {
     s.accountUserId = GetUserId();
     s.isDeveloper = id.developer;
     if (s.playerName.empty()) s.playerName = id.playerName;
+    if (!s.serviceTag.empty() && s.serviceTag != "NOBL" && id.serviceTag != s.serviceTag) {
+        DeviceIdentity updatedId = id;
+        updatedId.serviceTag = s.serviceTag;
+        DeviceIdentityStore::Save(updatedId);
+    }
     Settings::Get().Update(s);
     NOBLE_INFO("AuthClient: offline identity '{}' (device {}, developer {})",
                id.playerName, id.deviceId, id.developer ? "YES" : "NO");

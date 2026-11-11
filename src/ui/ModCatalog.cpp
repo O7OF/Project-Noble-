@@ -72,6 +72,16 @@ std::vector<std::string> StringList(const json& j, const char* key) {
     return out;
 }
 
+// The Firefight scenarios Reach ships. A mod built on one of these can only be started by the Firefight engine.
+bool IsFirefightScenario(const std::string& baseScenario) {
+    static const char* const kFirefight[] = {
+        "cex_ff_halo", "ff50_park", "ff45_corvette", "ff20_courtyard", "ff60_icecave", "ff70_holdout",
+        "ff60_airview", "ff60_ruins", "ff10_prototype", "ff30_waterfront", "ff_unearthed",
+    };
+    for (const char* name : kFirefight) if (baseScenario == name) return true;
+    return false;
+}
+
 bool ReadMap(const fs::path& file, ModMap& map) {
     json j;
     if (!ReadJson(file, j)) return false;
@@ -95,6 +105,14 @@ bool ReadMap(const fs::path& file, ModMap& map) {
     for (const std::string& flag : StringList(j, "Flags")) {
         if (Lower(flag) == "forgemap") map.forgeMap = true;
     }
+    // The manifest fields that describe Forge support. Kept for the launcher: the engine builds its palette
+    // from the map's own tags, not from this file.
+    if (j.contains("ValidMultiplayerObjectTypes") && j["ValidMultiplayerObjectTypes"].is_array()) {
+        for (const json& v : j["ValidMultiplayerObjectTypes"]) {
+            if (v.is_number_integer() || v.is_number_unsigned()) map.validObjectTypes.push_back(static_cast<uint32_t>(v.get<int>()));
+        }
+    }
+    map.defaultForgeWeapon = j.value("MapDefaultPrimaryWeaponForge", std::string());
     if (j.contains("Images") && j["Images"].is_object()) {
         map.imageLarge = std::filesystem::path(Text(j["Images"], "Large"));
         map.imageThumbnail = std::filesystem::path(Text(j["Images"], "Thumbnail"));
@@ -158,6 +176,35 @@ void ScanFolder(const fs::path& root, bool workshop, std::vector<ModEntry>& out)
         mod.campaign = ReadMaps(dir.path(), campaignList, "campaign");
         mod.firefight = ReadMaps(dir.path(), StringList(contents, "FirefightMaps"), "firefight");
         mod.multiplayer = ReadMaps(dir.path(), StringList(contents, "MultiplayerMaps"), "multiplayer");
+        for (ModMap& m : mod.campaign) m.gameCategory = "campaign";
+        for (ModMap& m : mod.firefight) m.gameCategory = "firefight";
+        for (ModMap& m : mod.multiplayer) m.gameCategory = "multiplayer";
+        for (const std::vector<ModMap>* list : { &mod.campaign, &mod.firefight, &mod.multiplayer }) {
+            for (const ModMap& m : *list) {
+                if (!m.validObjectTypes.empty() || !m.defaultForgeWeapon.empty()) {
+                    NOBLE_INFO("ModCatalog: '{}' [{}] declares {} Forge object type(s), Forge weapon '{}'",
+                               m.title, m.gameCategory, m.validObjectTypes.size(), m.defaultForgeWeapon);
+                }
+            }
+        }
+        // A map is listed by the scenario it is built on, not by the folder the author put its JSON in. Several
+        // AI Battleground mods ship Firefight-canvas maps inside multiplayer (Installation 04 = cex_ff_halo,
+        // Glacier = ff60_icecave); the engine refuses those scenarios in Forge ("map and game incompatible") but
+        // runs them as Firefight, so they belong in the Firefight list.
+        {
+            std::vector<ModMap> moved;
+            for (auto it = mod.multiplayer.begin(); it != mod.multiplayer.end();) {
+                if (IsFirefightScenario(it->baseScenario)) {
+                    NOBLE_INFO("ModCatalog: '{}' is built on Firefight map '{}'; listing it under Firefight",
+                               it->title, it->baseScenario);
+                    moved.push_back(*it);
+                    it = mod.multiplayer.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+            for (ModMap& m : moved) mod.firefight.push_back(std::move(m));
+        }
         auto markMapFiles = [&](std::vector<ModMap>& maps) {
             for (ModMap& m : maps) {
                 m.hasMapFile = fs::is_regular_file(dir.path() / "maps" / (m.scenario + ".map"), ec);

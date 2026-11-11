@@ -4,7 +4,7 @@
 #include "common/Logger.hpp"
 #include "common/Settings.hpp"
 #include "hooks/HookManager.hpp"
-#include "network/NetworkTransport.hpp"
+#include "vfs/VFS.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -46,7 +46,7 @@ constexpr uint8_t kExpectedPrologue[9] = {0x48, 0x89, 0x5C, 0x24, 0x08, 0x48, 0x
 constexpr uint8_t kUnitThirdPersonPrologue[10] = {0x48, 0x89, 0x5C, 0x24, 0x08, 0x48, 0x89, 0x6C, 0x24, 0x10};
 constexpr uint8_t kFirstPersonUpdatePrologue[11] = {0x48, 0x8B, 0xC4, 0x48, 0x89, 0x58, 0x10, 0x48, 0x89, 0x68, 0x18};
 
-using CameraModeCheckFn = bool(__fastcall*)(int32_t playerIndex);
+using CameraModeCheckFn = int32_t(__fastcall*)(int32_t unitDatumIndex);
 using UnitThirdPersonFn = int32_t(__fastcall*)(int32_t unitDatumIndex, int32_t* outReason);
 using GetLocalUnitFn = int32_t(__fastcall*)(int32_t userIndex);
 using GetObjectMarkersFn = int16_t(__fastcall*)(int32_t objectDatumIndex, int32_t markerStringId, void* outMarkers,
@@ -91,6 +91,9 @@ int32_t __fastcall Hook_UnitThirdPerson(int32_t unitDatumIndex, int32_t* outReas
         if (inVehicle && s_vehicleFirstPerson.load()) {
             *reasonPtr = 0;
             return 0;
+        }
+        if (!inVehicle && s_enabled.load() && s_mode.load() != 1) {
+            return 1;
         }
     }
     return orig;
@@ -237,9 +240,17 @@ void __fastcall Hook_FirstPersonUpdate(void* camera, int32_t userIndex, float dt
     }
 }
 
+// Mods that are third-person by default (the ODST-based Civil Unrest, for one) drive their own camera and aim
+// zoom. When Noble's third person is off and a mod is active, the engine's own third-person request belongs to
+// the mod: leave its camera alone instead of applying Noble's zoom, offset and distance on top of it.
+bool NobleShapesCamera() {
+    if (s_enabled.load()) return true;
+    return s_engineThirdPerson.load() && !VFS::HasActiveMod();
+}
+
 void ApplyThirdPersonCameraTuning(float dt, void* observerCommand) {
     if (!observerCommand) return;
-    const bool active = s_enabled.load() || s_engineThirdPerson.load();
+    const bool active = NobleShapesCamera();
     const bool wantZoom = active && s_zoomHeld.load();
     const float step = std::clamp(dt > 0.0f && dt < 0.25f ? dt : (1.0f / 60.0f), 0.001f, 0.1f) * 10.0f;
     float blend = s_zoomBlend.load();
@@ -308,26 +319,22 @@ void __fastcall Hook_CameraFollowingUpdate(void* camera, int32_t userIndex, floa
     ApplyThirdPersonCameraTuning(dt, observerCommand);
 }
 
-bool __fastcall Hook_CameraModeCheck(int32_t playerIndex) {
-    const bool orig = s_original ? s_original(playerIndex) : false;
-    if (playerIndex == 0) s_engineThirdPerson.store(orig);
-    if (!s_enabled.load()) return orig;
-    // Host/mode gate: online guests do not get the camera unless the session host runs it too (Tyler's rule). Offline and
-    // the host always may.
-    const bool online = noble::NetworkTransport::Get().IsActive();
-    const bool allowed = !online || noble::NetworkTransport::Get().IsHost();
-    if (!allowed) {
-        static std::atomic<int> s_deniedLog{0};
-        if (s_deniedLog.fetch_add(1) < 1) NOBLE_INFO("CameraThirdPerson: third person is host-only; guest keeps first person");
-        return orig;
+int32_t __fastcall Hook_CameraModeCheck(int32_t unitDatumIndex) {
+    const int32_t orig = s_original ? s_original(unitDatumIndex) : 0;
+    const int32_t localUnit = s_getLocalUnit ? s_getLocalUnit(0) : -1;
+    if (unitDatumIndex == 0 || (localUnit != -1 && unitDatumIndex == localUnit)) {
+        s_engineThirdPerson.store(orig != 0);
     }
+    if (!s_enabled.load()) return orig;
+    if (localUnit != -1 && unitDatumIndex != localUnit) return orig;
     const int mode = s_mode.load();
     if (s_logCount.fetch_add(1) < 5) {
-        NOBLE_INFO("CameraThirdPerson: camera check fired (player {}, mode {}, original {})", playerIndex, mode, orig);
+        NOBLE_INFO("CameraThirdPerson: camera check fired (unit 0x{:X}, mode {}, original {})",
+                   static_cast<uint32_t>(unitDatumIndex), mode, orig);
     }
-    if (mode == 1) return false;              // experiment: maybe true means "first person"
-    if (mode == 2) return orig || true;       // same as true, kept for completeness
-    return true;
+    if (mode == 1) return 0;                  // experiment: maybe non-zero means "first person"
+    if (mode == 2) return orig != 0 ? orig : 1;
+    return 1;
 }
 
 } // namespace
@@ -471,7 +478,7 @@ bool CameraThirdPerson::IsZoomHeld() {
 }
 
 float CameraThirdPerson::EffectiveFovScale() {
-    if (!s_enabled.load() && !s_engineThirdPerson.load()) return 1.0f;
+    if (!NobleShapesCamera()) return 1.0f;
     const float blend = std::clamp(s_zoomBlend.load(), 0.0f, 1.0f);
     if (blend <= 0.001f) return 1.0f;
     const float zoomPercent = std::clamp(Settings::Get().Snapshot().thirdPersonZoom, 0.10f, 1.00f);

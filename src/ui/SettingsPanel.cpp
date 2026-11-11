@@ -1,4 +1,5 @@
 #include "SettingsPanel.hpp"
+#include "UIManager.hpp"
 #include "host/Window.hpp"
 #include "audio/VoiceChat.hpp"
 #include "common/Logger.hpp"
@@ -262,7 +263,12 @@ void SettingsPanel::SyncBuffers() {
     n.erase(std::find_if(n.rbegin(), n.rend(), [](unsigned char ch) { return !std::isspace(ch); }).base(), n.end());
     if (n.size() > 20) n.resize(20);
     m_edit.playerName = n.empty() ? "NobleSix" : n;
-    m_edit.serviceTag = m_tagBuf;
+    if (m_tagBuf[0] != '\0') {
+        m_edit.serviceTag = m_tagBuf;
+    } else if (!ImGui::GetIO().WantTextInput) {
+        std::snprintf(m_tagBuf, sizeof(m_tagBuf), "%s", m_saved.serviceTag.c_str());
+        m_edit.serviceTag = m_saved.serviceTag;
+    }
     m_edit.masterServerUrl = m_masterBuf;
 }
 
@@ -283,6 +289,19 @@ void SettingsPanel::Render() {
         std::snprintf(m_tagBuf, sizeof(m_tagBuf), "%s", m_edit.serviceTag.c_str());
         std::snprintf(m_masterBuf, sizeof(m_masterBuf), "%s", m_edit.masterServerUrl.c_str());
         m_loaded = true;
+    } else {
+        // Keep identity fields in sync if they were updated outside SettingsPanel (e.g. in Armory or First-Start).
+        const SettingsData latest = Settings::Get().Snapshot();
+        if (latest.playerName != m_saved.playerName) {
+            m_saved.playerName = latest.playerName;
+            m_edit.playerName = latest.playerName;
+            std::snprintf(m_nameBuf, sizeof(m_nameBuf), "%s", latest.playerName.c_str());
+        }
+        if (latest.serviceTag != m_saved.serviceTag) {
+            m_saved.serviceTag = latest.serviceTag;
+            m_edit.serviceTag = latest.serviceTag;
+            std::snprintf(m_tagBuf, sizeof(m_tagBuf), "%s", latest.serviceTag.c_str());
+        }
     }
     m_captureEndedThisFrame = false;
     if (m_swallowKey > 0) {
@@ -313,12 +332,18 @@ void SettingsPanel::Render() {
         m_saved.serviceTag = saved.serviceTag;
         m_edit.playerName = saved.playerName;
         m_edit.serviceTag = saved.serviceTag;
+        if (!ImGui::GetIO().WantTextInput) {
+            std::snprintf(m_tagBuf, sizeof(m_tagBuf), "%s", saved.serviceTag.c_str());
+        }
 
         DeviceIdentity id = DeviceIdentityStore::Get();
         id.playerName = saved.playerName;
         id.serviceTag = saved.serviceTag;
         DeviceIdentityStore::Save(id);
         AuthClient::Get().SetPlayerName(saved.playerName);
+        if (UIManager::HasArmorCustomizer()) {
+            UIManager::GetArmorCustomizer().SetServiceTag(saved.serviceTag);
+        }
     }
 
     // Shared key state for this frame (rows read it; text fields and rebinding take the keys).
@@ -1982,6 +2007,17 @@ void SettingsPanel::Apply() {
     std::snprintf(m_nameBuf, sizeof(m_nameBuf), "%s", m_edit.playerName.c_str());
     std::snprintf(m_tagBuf, sizeof(m_tagBuf), "%s", m_edit.serviceTag.c_str());
     std::snprintf(m_masterBuf, sizeof(m_masterBuf), "%s", m_edit.masterServerUrl.c_str());
+    {
+        DeviceIdentity id = DeviceIdentityStore::Get();
+        if (id.playerName != m_saved.playerName || id.serviceTag != m_saved.serviceTag) {
+            id.playerName = m_saved.playerName;
+            id.serviceTag = m_saved.serviceTag;
+            DeviceIdentityStore::Save(id);
+        }
+        if (UIManager::HasArmorCustomizer()) {
+            UIManager::GetArmorCustomizer().SetServiceTag(m_saved.serviceTag);
+        }
+    }
     m_message = displayChanged ? "Display updated." : "Saved.";
     m_messageTime = ImGui::GetTime();
     MenuSounds::Click();
@@ -2230,7 +2266,12 @@ void SettingsPanel::RenderSystem() {
         Settings::Get().Load();
         m_saved = Settings::Get().Snapshot();
         m_edit = m_saved;
-        SyncBuffers();
+        std::snprintf(m_nameBuf, sizeof(m_nameBuf), "%s", m_edit.playerName.c_str());
+        std::snprintf(m_tagBuf, sizeof(m_tagBuf), "%s", m_edit.serviceTag.c_str());
+        std::snprintf(m_masterBuf, sizeof(m_masterBuf), "%s", m_edit.masterServerUrl.c_str());
+        if (UIManager::HasArmorCustomizer()) {
+            UIManager::GetArmorCustomizer().LoadProfile(ArmorCustomizer::ResolveDefaultProfilePath());
+        }
         s_note = "Restored " + newest.filename().string() + " and reloaded it.";
     });
     action("OPEN BACKUP FOLDER", "Shows the backups on disk, so an old one can be copied back by hand.", "Explorer", [&] {
@@ -2275,7 +2316,12 @@ void SettingsPanel::RenderSystem() {
         }
         m_saved = Settings::Get().Snapshot();
         m_edit = m_saved;
-        SyncBuffers();
+        std::snprintf(m_nameBuf, sizeof(m_nameBuf), "%s", m_edit.playerName.c_str());
+        std::snprintf(m_tagBuf, sizeof(m_tagBuf), "%s", m_edit.serviceTag.c_str());
+        std::snprintf(m_masterBuf, sizeof(m_masterBuf), "%s", m_edit.masterServerUrl.c_str());
+        if (UIManager::HasArmorCustomizer()) {
+            UIManager::GetArmorCustomizer().SetServiceTag(m_saved.serviceTag);
+        }
         s_note = "Imported " + file.filename().string() + ".";
     });
     Section("SETUP");
