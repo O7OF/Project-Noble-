@@ -336,14 +336,40 @@ std::wstring NextMissionArgs(const std::wstring &next, std::wstring lobbyArgs) {
 
 void RelaunchAndClose(HWND hwnd, const std::wstring &args, const char *what) {
   NOBLE_INFO("PauseMenu: {} requested", what);
+  const bool isLobbyReturn = args.find(L"-lobby-return") != std::wstring::npos;
+  const bool keepHostSession = args.find(L"-lobby-return host") != std::wstring::npos;
+  if (args.empty()) {
+    // Leaving match to menu: if we joined a lobby session as a guest, notify the master server immediately.
+    std::wstring wSession = ArgValue(Relaunch::CurrentGameArgs(), L"-session-id");
+    if (wSession.empty()) wSession = ArgValue(GetCommandLineW(), L"-session-id");
+    const bool isHostCmd = (wcsstr(GetCommandLineW(), L"-host") != nullptr ||
+                            Relaunch::CurrentGameArgs().find(L" -host") != std::wstring::npos);
+    if (!wSession.empty() && !isHostCmd) {
+      char sessUtf8[128] = {};
+      WideCharToMultiByte(CP_UTF8, 0, wSession.c_str(), -1, sessUtf8, sizeof(sessUtf8) - 1, nullptr, nullptr);
+      uint64_t fallbackId = (MasterServerClient::GetLobbyMachineId() & 0x7FFFFFFFULL);
+      if (fallbackId < 2ULL) fallbackId = 2ULL;
+      MasterServerClient::Get().LeaveLobbySync(sessUtf8, fallbackId);
+    }
+  }
+  MasterServerClient::Get().Shutdown(keepHostSession);
+  SessionManager::Get().Shutdown();
+  NetworkTransport::Get().Shutdown();
+
   std::wstring containerVal = ArgValue(GetCommandLineW(), L"-container-hwnd");
   if (!containerVal.empty()) {
-      if (args.empty() || args.find(L"-lobby-return") != std::wstring::npos) {
-          NOBLE_INFO("PauseMenu: {} in container mode - ending match to return to container launcher window", what);
+      if (args.empty()) {
+          Relaunch::RequestContainerRelaunch(L"-leave-lobby");
+          NOBLE_INFO("PauseMenu: {} in container mode - leaving match and lobby to return to container launcher window", what);
+          TerminateProcess(GetCurrentProcess(), 0);
+          return;
+      } else if (isLobbyReturn) {
+          Relaunch::RequestContainerRelaunch(args);
+          NOBLE_INFO("PauseMenu: {} in container mode - returning to lobby in container launcher window", what);
           TerminateProcess(GetCurrentProcess(), 0);
           return;
       } else {
-          // PLAY AGAIN / NEXT MISSION: a hosted match cannot start its own successor (the launcher tracks
+          // PLAY AGAIN / NEXT MISSION / RESTART MATCH: a hosted match cannot start its own successor (the launcher tracks
           // one match process and would bring its menu back over the new game), so record what to start and
           // let the launcher window start it once this process is gone.
           std::wstring childArgs = args;
@@ -361,6 +387,36 @@ void RelaunchAndClose(HWND hwnd, const std::wstring &args, const char *what) {
       }
   }
   Relaunch::HandOff(args);  // ends this process; returns only if the new one could not start
+  PostMessageW(hwnd, WM_CLOSE, 0, 0);
+}
+
+void QuitFromMatch(HWND hwnd, const char *what) {
+  NOBLE_INFO("PauseMenu: {}", what);
+  std::wstring wSession = ArgValue(Relaunch::CurrentGameArgs(), L"-session-id");
+  if (wSession.empty()) wSession = ArgValue(GetCommandLineW(), L"-session-id");
+  const bool isHostCmd = (wcsstr(GetCommandLineW(), L"-host") != nullptr ||
+                          Relaunch::CurrentGameArgs().find(L" -host") != std::wstring::npos);
+  if (!wSession.empty() && !isHostCmd) {
+    char sessUtf8[128] = {};
+    WideCharToMultiByte(CP_UTF8, 0, wSession.c_str(), -1, sessUtf8, sizeof(sessUtf8) - 1, nullptr, nullptr);
+    uint64_t fallbackId = (MasterServerClient::GetLobbyMachineId() & 0x7FFFFFFFULL);
+    if (fallbackId < 2ULL) fallbackId = 2ULL;
+    MasterServerClient::Get().LeaveLobbySync(sessUtf8, fallbackId);
+  }
+  MasterServerClient::Get().Shutdown(false);
+  SessionManager::Get().Shutdown();
+  NetworkTransport::Get().Shutdown();
+
+  std::wstring containerVal = ArgValue(GetCommandLineW(), L"-container-hwnd");
+  if (!containerVal.empty()) {
+    Relaunch::RequestContainerRelaunch(L"-quit-app");
+    HWND root = hwnd ? GetAncestor(hwnd, GA_ROOT) : nullptr;
+    if (root && root != hwnd) {
+      PostMessageW(root, WM_CLOSE, 0, 0);
+    }
+    TerminateProcess(GetCurrentProcess(), 0);
+    return;
+  }
   PostMessageW(hwnd, WM_CLOSE, 0, 0);
 }
 
@@ -834,8 +890,7 @@ void PauseMenu::DrawMenu(HWND hwnd) {
             s_confirmRestart = true;
         } else {
             Close();
-            if (!Relaunch::HandOff(restartArgs)) NOBLE_WARN("PauseMenu: restart failed, the match keeps running");
-            else NOBLE_INFO("PauseMenu: restarting the match");
+            RelaunchAndClose(hwnd, restartArgs, "restart match");
         }
     } else if (activated == 2) {
         MenuSounds::Click();
@@ -856,9 +911,8 @@ void PauseMenu::DrawMenu(HWND hwnd) {
         Close();
         RelaunchAndClose(hwnd, L"", "leave game");
     } else if (activated == quitEntry) {
-        NOBLE_INFO("PauseMenu: quit requested");
         Close();
-        PostMessageW(hwnd, WM_CLOSE, 0, 0);
+        QuitFromMatch(hwnd, "quit requested");
     } else if (interactive && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)) {
         // B resumes. Esc is not read here: the input poll already toggles on Esc, and closing here as well reopened the
         // menu when both saw the same press.
@@ -2020,7 +2074,7 @@ static void DrawScoreboardPanel() {
 
 // Guest-side connection-lost panel: the host vanished (no packets for a while) but the engine keeps pumping frames, so
 // without this the guest just sits frozen in the mission. Offers the only reliable exit - relaunch the menu process.
-static bool DrawConnectionLostPanel() {
+static bool DrawConnectionLostPanel(HWND hwnd) {
   using namespace NobleUi;
   ImGuiIO &io = ImGui::GetIO();
   const float W = io.DisplaySize.x, H = io.DisplaySize.y;
@@ -2048,12 +2102,9 @@ static bool DrawConnectionLostPanel() {
                         ImGui::IsKeyPressed(ImGuiKey_Enter, false) ||
                         ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false);
   if (activate) {
-    NOBLE_INFO("PauseMenu: connection lost - returning to the menu");
     ImGui::End();
     ImGui::PopStyleColor();
-    if (!Relaunch::HandOff(L"")) {
-      NOBLE_ERROR("PauseMenu: relaunch to menu failed; keeping the connection-lost panel");
-    }
+    RelaunchAndClose(hwnd, L"", "connection lost - returning to the menu");
     return true;
   }
   ImGui::End();
@@ -2507,8 +2558,7 @@ void PauseMenu::DrawGameOver(HWND hwnd) {
   };
   ImGui::SetCursorScreenPos(ImVec2(bx, by));
   if (NobleStyle::DangerButton("QUIT", ImVec2(bw, bh)) || (padPress && s_padButton == kPadQuit)) {
-    NOBLE_INFO("PauseMenu: quit requested from post-game panel");
-    PostMessageW(hwnd, WM_CLOSE, 0, 0);
+    QuitFromMatch(hwnd, "quit requested from post-game panel");
   }
   padOutline(kPadQuit);
   overButton |= ImGui::IsItemHovered();
@@ -2978,7 +3028,7 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading,
         DrawLoading();
       if (open)
         DrawMenu(hwnd);
-      if (connectionLost && DrawConnectionLostPanel()) return;
+      if (connectionLost && DrawConnectionLostPanel(hwnd)) return;
       if (scoreboardHeld && !connectionLost) {
         DrawScoreboardPanel();
         // -scoreboard-demo: one screenshot about 30 s in, so the match is on screen behind the panel, not a loading frame.

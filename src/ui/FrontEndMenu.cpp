@@ -3609,6 +3609,7 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
 
     // If launch was signaled (via WebSocket or HTTP poll) and we are guest, launch!
     if (!st.isLobbyHost && st.lobbyLaunchPending && !done) {
+        st.lobbyLaunchPending = false;
         choice.play = true;
         for (size_t p = 0; p < st.lobbyRoster.size(); ++p) {
             const auto& player = st.lobbyRoster[p];
@@ -4807,17 +4808,28 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         st.lobbyProfileOpen = false;
         MenuSounds::Back();
     } else if (back && !pickerWasOpen && !profileWasOpen) {
+        st.lobbyLaunchPending = false;
+        ClearPendingLobbyEvents();
         if (st.isLobbyHost) {
             MasterServerClient::Get().StopAdvertising();
             SessionManager::Get().StopHosting();
             NetworkTransport::Get().StopRelay();
+            st.lobbySessionId.clear();
+            st.lobbySessionToken.clear();
+            st.lobbyRoster.clear();
             st.screen = campaign ? Screen::Campaign : firefight ? Screen::Firefight : forge ? Screen::Forge : Screen::CustomGame;
         } else {
             uint64_t fallbackId = (MasterServerClient::GetLobbyMachineId() & 0x7FFFFFFFULL);
             if (fallbackId < 2ULL) fallbackId = 2ULL;
             uint64_t pId = AuthClient::Get().IsLoggedIn() ? static_cast<uint64_t>(AuthClient::Get().GetUserId()) : fallbackId;
-            MasterServerClient::Get().LeaveLobbySync(st.lobbySessionId, pId);
+            if (!st.lobbySessionId.empty()) {
+                MasterServerClient::Get().LeaveLobbySync(st.lobbySessionId, pId);
+            }
             NetworkTransport::Get().StopRelay();
+            st.lobbySessionId.clear();
+            st.lobbySessionToken.clear();
+            st.lobbyHostEndpoint.clear();
+            st.lobbyRoster.clear();
             st.screen = Screen::Servers;
         }
         st.focusRow = 0;
@@ -5543,8 +5555,39 @@ void ContainerMatchEnded(OverlayContext& ctx, DWORD exitCode) {
     if (ctx.hMatchProcess) CloseHandle(reinterpret_cast<HANDLE>(ctx.hMatchProcess));
     ctx.hMatchProcess = nullptr;
 
+    ctx.st.lobbyLaunchPending = false;
+    ClearPendingLobbyEvents();
+
     const std::wstring successor = Relaunch::TakeContainerRelaunch();
-    if (!successor.empty()) {
+    if (successor == L"-quit-app") {
+        ctx.matchRunning = false;
+        FrontEndMenu::SetMatchRunning(false);
+        if (!ctx.st.lobbySessionId.empty()) {
+            if (ctx.st.isLobbyHost) {
+                MasterServerClient::Get().StopAdvertising();
+                SessionManager::Get().StopHosting();
+            } else {
+                uint64_t fallbackId = (MasterServerClient::GetLobbyMachineId() & 0x7FFFFFFFULL);
+                if (fallbackId < 2ULL) fallbackId = 2ULL;
+                uint64_t pId = AuthClient::Get().IsLoggedIn() ? static_cast<uint64_t>(AuthClient::Get().GetUserId()) : fallbackId;
+                MasterServerClient::Get().LeaveLobbySync(ctx.st.lobbySessionId, pId);
+            }
+            NetworkTransport::Get().StopRelay();
+            ctx.st.lobbySessionId.clear();
+            ctx.st.lobbySessionToken.clear();
+            ctx.st.lobbyHostEndpoint.clear();
+            ctx.st.lobbyRoster.clear();
+        }
+        NOBLE_INFO("FrontEndMenu: match requested application quit; closing container window");
+        if (HWND hwnd = Window::ActiveHwnd()) {
+            PostMessageW(hwnd, WM_CLOSE, 0, 0);
+        }
+        return;
+    }
+
+    const bool isLobbyReturn = successor.find(L"-lobby-return") != std::wstring::npos;
+    const bool isLeaveLobby = successor.empty() || successor == L"-leave-lobby";
+    if (!isLobbyReturn && !isLeaveLobby) {
         if (StartContainerChild(successor, ctx)) {
             NOBLE_INFO("FrontEndMenu: container match relaunched (the previous match exited with {})", exitCode);
             return;
@@ -5567,6 +5610,77 @@ void ContainerMatchEnded(OverlayContext& ctx, DWORD exitCode) {
     NOBLE_INFO("FrontEndMenu: container child match finished (exit code {}), restoring menu", exitCode);
     SessionManager::Get().Initialize();
     MasterServerClient::Get().SetUrl(Settings::Get().Snapshot().masterServerUrl);
+
+    if (isLobbyReturn) {
+        if (ctx.st.isLobbyHost) {
+            const ModEntry* mod = nullptr;
+            for (const ModEntry& m : ctx.mods) {
+                if (!ctx.st.lobbyModFolder.empty() && m.folder == ctx.st.lobbyModFolder) {
+                    mod = &m;
+                    break;
+                }
+            }
+            SetupHostLobby(ctx.st, ctx.st.lobbyMap, ctx.st.lobbyMode, ctx.st.lobbyVariantPath, ctx.st.lobbyVariantName,
+                           ctx.st.lobbyDifficulty, ctx.st.lobbySkulls, ctx.st.lobbyMaxPlayers, mod,
+                           ctx.st.lobbyMapOverride, ctx.st.lobbyMapTitle, ctx.st.lobbyMapImage, ctx.st.lobbyMapThumb,
+                           ctx.st.lobbySessionId, ctx.st.lobbySessionToken);
+            if (successor.find(L"-lobby-advance 1") != std::wstring::npos &&
+                ctx.st.playlistChoice >= 0 && ctx.st.playlistChoice < static_cast<int>(ctx.st.playlists.size())) {
+                const Playlists::Playlist& playlist = ctx.st.playlists[ctx.st.playlistChoice];
+                if (!playlist.entries.empty()) {
+                    const int n = static_cast<int>(playlist.entries.size());
+                    int at = ctx.st.playlistPosition;
+                    if (playlist.shuffle && n > 1) {
+                        const int was = at;
+                        while (at == was) at = static_cast<int>(std::random_device{}() % n);
+                    } else {
+                        at = (at + 1) % n;
+                    }
+                    ResolvedEntry resolved;
+                    if (ResolveEntry(ctx, playlist.entries[at], playlist.randomType, resolved)) {
+                        ApplyEntryToLobby(ctx.st, resolved);
+                    }
+                    ctx.st.playlistPosition = at;
+                }
+                if (playlist.autoStart > 0) {
+                    ctx.st.autoStartAt = ImGui::GetTime() + playlist.autoStart + 2.0;
+                }
+            }
+        } else {
+            ctx.st.lobbyLaunchPending = false;
+            ctx.st.screen = Screen::PreGameLobby;
+        }
+    } else if (ctx.st.screen == Screen::PreGameLobby || !ctx.st.lobbySessionId.empty() || !ctx.st.lobbyHostEndpoint.empty()) {
+        // Player left the match (LEAVE GAME / RETURN TO MENU / Connection Lost): exit the lobby so we never
+        // auto-rejoin an in-progress match.
+        if (ctx.st.isLobbyHost) {
+            MasterServerClient::Get().StopAdvertising();
+            SessionManager::Get().StopHosting();
+            NetworkTransport::Get().StopRelay();
+            ctx.st.lobbySessionId.clear();
+            ctx.st.lobbySessionToken.clear();
+            ctx.st.lobbyRoster.clear();
+            ctx.st.screen = (ctx.st.lobbyMode == "campaign") ? Screen::Campaign
+                          : (ctx.st.lobbyMode == "firefight") ? Screen::Firefight
+                          : (ctx.st.lobbyMode == "forge") ? Screen::Forge
+                          : Screen::CustomGame;
+        } else {
+            uint64_t fallbackId = (MasterServerClient::GetLobbyMachineId() & 0x7FFFFFFFULL);
+            if (fallbackId < 2ULL) fallbackId = 2ULL;
+            uint64_t pId = AuthClient::Get().IsLoggedIn() ? static_cast<uint64_t>(AuthClient::Get().GetUserId()) : fallbackId;
+            if (!ctx.st.lobbySessionId.empty()) {
+                MasterServerClient::Get().LeaveLobbySync(ctx.st.lobbySessionId, pId);
+            }
+            NetworkTransport::Get().StopRelay();
+            ctx.st.lobbySessionId.clear();
+            ctx.st.lobbySessionToken.clear();
+            ctx.st.lobbyHostEndpoint.clear();
+            ctx.st.lobbyRoster.clear();
+            ctx.st.screen = Screen::Servers;
+        }
+        ctx.st.focusRow = 0;
+    }
+
     MasterServerClient::Get().RequestOnlineCount();
     ReachAudio::SetMenuMusicEnabled(true);
     ReachAudio::SetMusicVolume(Settings::Get().Snapshot().volumeMusic);
