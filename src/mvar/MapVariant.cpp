@@ -289,11 +289,15 @@ MapVariant ReadMapVariant(const std::filesystem::path& path) {
     PositionBitCounts(h.boundsMin, h.boundsMax, positionBits);
     int present = 0;
     for (int i = 0; i < 0x28B; ++i) {
+        const size_t recordStart = stream.BitPosition();
         const ForgeObject object = ReadObject(stream, positionBits, h.boundsMin, h.boundsMax);
         if (!object.present) continue;
-        if (present < 3) {
+        if (present < 6) {
             NOBLE_INFO("Mvar: object[{}] type {} subcat {} at ({:.1f}, {:.1f}, {:.1f}) shape {}", i, object.type,
                        object.subcat, object.position[0], object.position[1], object.position[2], object.shapeType);
+        }
+        if (present < 6) {
+            NOBLE_INFO("Mvar:   record {} consumed {} bits", i, stream.BitPosition() - recordStart);
         }
         ++present;
     }
