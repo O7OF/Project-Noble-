@@ -165,6 +165,8 @@ set(SOURCES
     src/engine/MvarDump.cpp
     src/mvar/BitReader.cpp
     src/mvar/MapVariant.cpp
+    src/mvar/MapVariantWriter.cpp
+    src/mvar/Sha1.cpp
     src/engine/SharedTagCache.cpp
     src/engine/DevCheats.cpp
     src/engine/CameraFov.cpp
@@ -300,6 +302,16 @@ if(NOT NOBLE_MENU_DATA_OK)
     message(STATUS "Project Noble: menu map/string table missing - building without embedded menu data")
     set_source_files_properties(src/res/noble.rc PROPERTIES COMPILE_DEFINITIONS "NOBLE_NO_MENU_DATA")
 endif()
+
+# Headless map variant tool (parse / repack / JSON round trip), independent of the launcher.
+add_executable(mvar-tool
+    tools/mvar_tool.cpp
+    src/mvar/BitReader.cpp
+    src/mvar/MapVariant.cpp
+    src/mvar/MapVariantWriter.cpp
+    src/mvar/Sha1.cpp
+)
+target_include_directories(mvar-tool PRIVATE src)
 
 add_executable(noble-client WIN32 ${SOURCES} ${HEADERS})
 if(NOBLE_DEV_BUILD)

@@ -1,22 +1,43 @@
 #include "mvar/MapVariant.hpp"
 #include "mvar/BitReader.hpp"
-#include "common/Logger.hpp"
 
-#include <windows.h>
-
+#include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <fstream>
 #include <sstream>
 
-#include <cmath>
-
 namespace noble::mvar {
 namespace {
-constexpr size_t kMvarChunkOffset = 0x2F0;   // "mvar" inside the BLF container
-constexpr uint32_t kChunkSize = 0x7028;      // the one size every MCC Reach map variant uses
 
-// A content author: two 64-bit values, an ASCII name (max 16 bytes, null terminated, read as 8-bit units because the
-// whole block is bit-packed) and a 1-bit online flag. Its variable length is why offsets differ between files.
+constexpr uint32_t kChunkSize = 0x7028;   // every MCC Reach map variant uses this chunk size
+constexpr size_t kMvarBodyHeader = 0x24;  // BLF chunk header (0x0C) + hash (0x14) + packed length (0x04)
+constexpr int kMaximumVariantObjects = 0x28B;   // 651
+constexpr int kMaximumVariantQuotas = 0x100;    // 256
+
+uint32_t ReadBigU32(const uint8_t* p) {
+    return (static_cast<uint32_t>(p[0]) << 24) | (static_cast<uint32_t>(p[1]) << 16) |
+           (static_cast<uint32_t>(p[2]) << 8) | static_cast<uint32_t>(p[3]);
+}
+
+// Walks the BLF chunk list. The mvar chunk is the one this whole module is about; finding it by walking beats
+// hard-coding 0x2F0, which only holds while the preceding chunks keep their sizes.
+size_t FindChunk(const std::vector<uint8_t>& bytes, const char* signature, uint32_t* sizeOut) {
+    size_t offset = 0;
+    while (offset + 12 <= bytes.size()) {
+        const uint32_t size = ReadBigU32(bytes.data() + offset + 4);
+        if (size < 12 || offset + size > bytes.size()) return SIZE_MAX;
+        if (std::memcmp(bytes.data() + offset, signature, 4) == 0) {
+            if (sizeOut) *sizeOut = size;
+            return offset;
+        }
+        offset += size;
+    }
+    return SIZE_MAX;
+}
+
+// A content author: two 64-bit values, an ASCII name (at most 16 bytes, null terminated) and a 1-bit online flag.
+// The name is bit-packed like everything else, so it is read as eight-bit units, not whole bytes.
 Author ReadAuthor(BitReader& stream) {
     Author author;
     author.timestamp = stream.ReadBits(64);
@@ -29,8 +50,6 @@ Author ReadAuthor(BitReader& stream) {
     author.onlineId = stream.ReadBits(1) != 0;
     return author;
 }
-} // namespace
-
 
 // Reads a 128-character wide string. MCC stores the variant's title/description as UTF-16; the reference parser reads
 // them big-endian, but the bytes are the same either way, so try both orders and keep the one that reads as text.
@@ -54,155 +73,130 @@ bool LooksLikeText(const std::wstring& text) {
     return true;
 }
 
-
-// --- Object records ---------------------------------------------------------------------------------------------
-// 651 of these follow the label table (0x28B, fixed count - which is why every variant file is the same size).
-// Ported from ReachVariantTool's LoadedForgeObject / LFOUnk30.
-
-static int HighestBitSet(uint32_t value) {
-    int r = 0;
-    while (value >>= 1) ++r;
-    return r;
+// Per-axis bit count for a quantized position, from the map's bounds. Mirrors the engine's
+// adjust_axis_encoding_bit_count_to_match_error_goals: a 21-bit encoding targets 1/120 world unit divided by 2^5,
+// and each axis takes however many bits its range needs, capped at 26.
+int AxisBits(int bitCount, double dimension) {
+    constexpr double kInchesToWorldUnits = 1.0 / 120.0;
+    const double maxError = bitCount <= 16 ? kInchesToWorldUnits * static_cast<double>(1 << (16 - bitCount))
+                                           : kInchesToWorldUnits / static_cast<double>(1 << (bitCount - 16));
+    const double maxValue = std::min(std::ceil(dimension / (maxError * 2.0)), 8388608.0);
+    if (maxValue <= 1.0) return 0;
+    return std::min(static_cast<int>(std::ceil(std::log2(maxValue))), 26);
 }
 
-// Per-axis bit counts for a quantized position, from the map's bounds (reference: _sub4DC8E0 with bitcount 21).
-void PositionBitCounts(const float boundsMin[3], const float boundsMax[3], int out[3]) {
-    constexpr int bitCount = 21;
-    float minStep = 0.00833333333f / static_cast<float>(1 << (bitCount - 16));
-    minStep *= 2.0f;
-    for (int i = 0; i < 3; ++i) {
-        const float range = boundsMax[i] - boundsMin[i];
-        uint32_t steps = static_cast<uint32_t>(std::ceil(range / minStep));
-        if (steps > 0x800000) steps = 0x800000;
-        out[i] = steps ? HighestBitSet(steps) : bitCount;
-    }
-}
-
-struct ForgeObject {
-    bool present = false;
-    uint8_t subcat = 0xFF;
-    uint8_t type = 0xFF;
-    float position[3] = {};
-    float axis[3] = { 0, 0, 1 };
-    uint16_t angleRaw = 0;
-    uint8_t shapeType = 0;
-    uint8_t spawnSequence = 0;
-    uint8_t respawnTime = 0;
-    uint8_t unk13 = 0;
-    int16_t forgeLabelIndex = -1;
-};
-
-// LFOUnk30: the object's shape/behaviour tail. Variable length, so it has to be walked exactly.
-static void ReadObjectTail(BitReader& stream, ForgeObject& object) {
-    const uint32_t shape = static_cast<uint32_t>(stream.ReadBits(2));
-    object.shapeType = static_cast<uint8_t>(shape);
-    switch (shape) {
-        case 1:
-        case 2:
-        case 3:
-            stream.ReadBits(11);
-            if (shape == 3) stream.ReadBits(11);
-            if (shape != 1) stream.ReadBits(11);
-            break;
-        default:
-            if (shape == 0) {
-                // 2-bit type 0 ends the tail immediately.
-                break;
-            }
-            stream.ReadBits(11);
-            break;
-    }
-    if (shape == 2 || shape == 3) stream.ReadBits(11);
-    if (shape == 3) {
-        stream.ReadBits(11);
-        stream.ReadBits(11);
-    }
-    // Common tail.
-    object.spawnSequence = static_cast<uint8_t>(stream.ReadBits(8));
-    object.respawnTime = static_cast<uint8_t>(stream.ReadBits(8));
-    object.unk13 = static_cast<uint8_t>(stream.ReadBits(5));
-    if (!stream.ReadBits(1)) {
-        object.forgeLabelIndex = static_cast<int16_t>(stream.ReadBits(8));
-    } else {
-        object.forgeLabelIndex = -1;
-    }
-    stream.ReadBits(8);   // unk16
-    stream.ReadBits(4);   // unk17 (object colour)
-    if (!stream.ReadBits(1)) stream.ReadBits(3);   // team
-    if (object.unk13 == 1) {
-        stream.ReadBits(8);
-    } else if (object.unk13 > 0xB) {
-        if (object.unk13 <= 0xE) {
-            stream.ReadBits(5);
-            stream.ReadBits(5);
-        } else if (object.unk13 == 0x13) {
-            stream.ReadBits(8);
-        }
-    }
-}
-
-static ForgeObject ReadObject(BitReader& stream, const int positionBits[3], const float boundsMin[3],
-                              const float boundsMax[3]) {
-    ForgeObject object;
-    if (!stream.ReadBits(1)) return object;   // presence bit
-    object.present = true;
-    stream.ReadBits(2);                        // unk00
-    if (!stream.ReadBits(1)) object.subcat = static_cast<uint8_t>(stream.ReadBits(8));
-    if (!stream.ReadBits(1)) object.type = static_cast<uint8_t>(stream.ReadBits(5));
-
-    // Position: one "bounds set" bit, then three quantized fields.
+// read_index: one presence bit, and the value only when the bit is clear. The invalid case is a real value (-1),
+// not an error, and it is part of the record's width, so it has to be modelled.
+void ReadIndex(BitReader& stream, int bits, int16_t& out) {
     if (stream.ReadBits(1)) {
-        // The reference falls back to static values here; the bit still has to be consumed.
+        out = -1;
+        return;
     }
-    for (int i = 0; i < 3; ++i) {
-        const uint32_t raw = static_cast<uint32_t>(stream.ReadBits(positionBits[i]));
-        const float range = boundsMax[i] - boundsMin[i];
-        object.position[i] = (0.5f + static_cast<float>(raw)) * (range / static_cast<float>(1 << positionBits[i])) +
-                             boundsMin[i];
-    }
-
-    // Rotation: an axis-angle. A single bit means "yaw only".
-    if (!stream.ReadBits(1)) {
-        stream.ReadBits(20);   // packed unit vector
-    }
-    object.angleRaw = static_cast<uint16_t>(stream.ReadBits(14));
-    stream.ReadBits(10);       // unk2C
-    ReadObjectTail(stream, object);
-    return object;
+    out = static_cast<int16_t>(stream.ReadBits(bits));
 }
 
-// Field order mirrors ReachVariantTool's reference parser read for read (see tools/mvar_oracle): everything after the
-// chunk header is bit-packed, so every field is a bit read - byte-aligning any of them shifts the rest.
-MapVariant ReadMapVariant(const std::filesystem::path& path) {
-    MapVariant out;
-    std::ifstream file(path, std::ios::binary);
-    if (!file) {
-        out.error = "cannot open the file";
-        return out;
+void ReadObject(BitReader& stream, ForgeObject& object, const int positionBits[3], const MapVariantHeader& header) {
+    object.present = stream.ReadBits(1) != 0;
+    if (!object.present) return;
+
+    object.flags = static_cast<uint8_t>(stream.ReadBits(2));
+    ReadIndex(stream, 8, object.quotaIndex);
+    ReadIndex(stream, 5, object.variantIndex);
+
+    object.positionInBounds = stream.ReadBits(1) != 0;
+    for (int i = 0; i < 3; ++i) object.positionRaw[i] = static_cast<uint32_t>(stream.ReadBits(positionBits[i]));
+
+    object.upIsGlobal = stream.ReadBits(1) != 0;
+    if (!object.upIsGlobal) object.upRaw = static_cast<uint32_t>(stream.ReadBits(20));
+    object.forwardAngleRaw = static_cast<uint32_t>(stream.ReadBits(14));
+    object.spawnRelativeTo = static_cast<uint16_t>(stream.ReadBits(10));
+
+    object.boundaryShape = static_cast<uint8_t>(stream.ReadBits(2));
+    int boundaryFields = 0;
+    if (object.boundaryShape == 1) boundaryFields = 1;
+    else if (object.boundaryShape == 2) boundaryFields = 3;
+    else if (object.boundaryShape == 3) boundaryFields = 4;
+    for (int i = 0; i < boundaryFields; ++i) object.boundaryRaw[i] = static_cast<uint32_t>(stream.ReadBits(11));
+
+    object.userData = static_cast<uint8_t>(stream.ReadBits(8));
+    object.spawnTime = static_cast<uint8_t>(stream.ReadBits(8));
+    object.cachedType = static_cast<uint8_t>(stream.ReadBits(5));
+    ReadIndex(stream, 8, object.labelIndex);
+    object.placementFlags = static_cast<uint8_t>(stream.ReadBits(8));
+    object.team = static_cast<int8_t>(static_cast<int>(stream.ReadBits(4)) - 1);
+    int16_t primaryColor = -1;
+    ReadIndex(stream, 3, primaryColor);
+    object.primaryColor = static_cast<int8_t>(primaryColor);
+
+    switch (object.cachedType) {
+        case 1:   // weapon: spare clips
+            object.extraKind = 1;
+            object.extraA = static_cast<uint8_t>(stream.ReadBits(8));
+            break;
+        case 12:  // teleporter: channel, passability
+        case 13:
+        case 14:
+            object.extraKind = 2;
+            object.extraA = static_cast<uint8_t>(stream.ReadBits(5));
+            object.extraB = static_cast<uint8_t>(stream.ReadBits(5));
+            break;
+        case 19: { // location name
+            object.extraKind = 3;
+            int16_t index = -1;
+            ReadIndex(stream, 8, index);
+            object.extraValid = index >= 0;
+            object.extraA = index < 0 ? 0 : static_cast<uint8_t>(index);
+            break;
+        }
+        default:
+            break;
     }
-    std::vector<uint8_t> data((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-    if (data.size() < kMvarChunkOffset + 0x20) {
+
+    // Decode the position for display only; the writer reuses positionRaw.
+    for (int i = 0; i < 3; ++i) {
+        const int bits = positionBits[i];
+        const double range = static_cast<double>(header.boundsMax[i]) - static_cast<double>(header.boundsMin[i]);
+        const double scale = bits > 0 ? range / static_cast<double>(1 << bits) : 0.0;
+        object.position[i] = static_cast<float>((0.5 + static_cast<double>(object.positionRaw[i])) * scale +
+                                                static_cast<double>(header.boundsMin[i]));
+    }
+}
+
+} // namespace
+
+MapVariant ReadMapVariantBytes(std::vector<uint8_t> bytes, const std::string& name) {
+    (void)name;   // kept for callers that want to label a parse; the module itself does not log
+    MapVariant out;
+    if (bytes.size() < 0x40) {
         out.error = "file is too short for a map variant";
         return out;
     }
-    if (std::memcmp(data.data(), "_blf", 4) != 0) {
+    if (std::memcmp(bytes.data(), "_blf", 4) != 0) {
         out.error = "not a BLF container (no '_blf')";
         return out;
     }
-    if (std::memcmp(data.data() + kMvarChunkOffset, "mvar", 4) != 0) {
-        out.error = "no 'mvar' chunk at +0x2F0";
+
+    uint32_t chunkSize = 0;
+    const size_t chunkOffset = FindChunk(bytes, "mvar", &chunkSize);
+    if (chunkOffset == SIZE_MAX) {
+        out.error = "no 'mvar' chunk in the container";
         return out;
     }
+    if (chunkOffset + chunkSize > bytes.size()) {
+        out.error = "the 'mvar' chunk runs past the end of the file";
+        return out;
+    }
+    out.chunkOffset = chunkOffset;
+    out.chunkSize = chunkSize;
 
-    BitReader stream(data.data() + kMvarChunkOffset, data.size() - kMvarChunkOffset);
+    BitReader stream(bytes.data() + chunkOffset, bytes.size() - chunkOffset);
     MapVariantHeader& h = out.header;
     h.signature = stream.ReadString(4);
-    // These three are big-endian on disk, and a 32-bit MSB-first bit read already yields them in that order.
     h.chunkSize = static_cast<uint32_t>(stream.ReadBits(32));
     h.chunkVersion = static_cast<uint16_t>(stream.ReadBits(16));
     h.chunkFlags = static_cast<uint16_t>(stream.ReadBits(16));
-    stream.ReadBytes(0x14);                        // SHA-1
-    stream.ReadBytes(0x4);                         // content length
+    for (int i = 0; i < 20; ++i) h.storedHash[i] = static_cast<uint8_t>(stream.ReadBits(8));
+    h.packedLength = static_cast<uint32_t>(stream.ReadBits(32));
     h.contentType = static_cast<int32_t>(stream.ReadBits(4)) - 1;
     h.fileLength = static_cast<uint32_t>(stream.ReadBits(32));
     h.unk08 = stream.ReadBits(64);
@@ -220,7 +214,7 @@ MapVariant ReadMapVariant(const std::filesystem::path& path) {
     h.modifiedBy = ReadAuthor(stream);
     h.authorsEndBits = stream.BitPosition();
 
-    // Title and description: 128 wide characters each.
+    // Title and description: 128 wide characters each, stored up to the terminator.
     {
         const size_t start = stream.BitPosition();
         std::wstring little = ReadWideText(stream, 128, false);
@@ -237,27 +231,24 @@ MapVariant ReadMapVariant(const std::filesystem::path& path) {
             h.titleEndianBig = true;
             stream.Seek(afterBig);
         }
-        const size_t descStart = stream.BitPosition();
-        std::wstring dLittle = ReadWideText(stream, 128, h.titleEndianBig);
-        (void)dLittle;
-        h.description = dLittle;
-        (void)descStart;
+        h.description = ReadWideText(stream, 128, h.titleEndianBig);
     }
     h.titleEndBits = stream.BitPosition();
+
     if (h.activity == 2) stream.ReadBits(16);            // hopper id
     if (h.gameMode == 1) {
         stream.ReadBits(8); stream.ReadBits(2); stream.ReadBits(2); stream.ReadBits(8); stream.ReadBits(32);
     } else if (h.gameMode == 2) {
         stream.ReadBits(2); stream.ReadBits(32);
     }
-    stream.ReadBits(8);                                   // unk02B0
+    stream.ReadBits(8);                                   // unk02B0 (0x1F in every file)
     stream.ReadBits(32);                                  // unk02DC
     stream.ReadBits(32);                                  // unk02E0
-    h.unk02B2 = static_cast<uint32_t>(stream.ReadBits(9));
+    h.unk02B2 = static_cast<uint32_t>(stream.ReadBits(9));   // placeable-object quota count
     h.secondMapIdBits = stream.BitPosition();
     h.secondMapId = static_cast<uint32_t>(stream.ReadBits(32));
-    stream.ReadBits(1);                                   // unk02D9
-    stream.ReadBits(1);                                   // unk02DA
+    stream.ReadBits(1);
+    stream.ReadBits(1);
     // Six big-endian floats: x.min, x.max, y.min, y.max, z.min, z.max.
     h.boundsMin[0] = stream.ReadFloatBitsBig();
     h.boundsMax[0] = stream.ReadFloatBitsBig();
@@ -267,6 +258,8 @@ MapVariant ReadMapVariant(const std::filesystem::path& path) {
     h.boundsMax[2] = stream.ReadFloatBitsBig();
     stream.ReadBits(32);                                  // unk02D0
     stream.ReadBits(32);                                  // unk02D4
+
+    // Forge label table.
     h.labelsBits = stream.BitPosition();
     h.labelCount = static_cast<uint32_t>(stream.ReadBits(9));
     for (uint32_t i = 0; i < h.labelCount; ++i) {
@@ -283,54 +276,69 @@ MapVariant ReadMapVariant(const std::filesystem::path& path) {
             for (uint32_t i = 0; i < compSize; ++i) stream.ReadBits(8);
         }
     }
-    h.objectsBits = stream.BitPosition();
 
-    int positionBits[3] = { 21, 21, 21 };
-    PositionBitCounts(h.boundsMin, h.boundsMax, positionBits);
+    for (int i = 0; i < 3; ++i) {
+        h.positionBits[i] = AxisBits(21, static_cast<double>(h.boundsMax[i]) - static_cast<double>(h.boundsMin[i]));
+    }
+
+    h.objectsBits = stream.BitPosition();
+    h.objects.resize(kMaximumVariantObjects);
     int present = 0;
-    for (int i = 0; i < 0x28B; ++i) {
-        const size_t recordStart = stream.BitPosition();
-        const ForgeObject object = ReadObject(stream, positionBits, h.boundsMin, h.boundsMax);
-        if (!object.present) continue;
-        if (present < 6) {
-            NOBLE_INFO("Mvar: object[{}] type {} subcat {} at ({:.1f}, {:.1f}, {:.1f}) shape {}", i, object.type,
-                       object.subcat, object.position[0], object.position[1], object.position[2], object.shapeType);
-        }
-        if (present < 6) {
-            NOBLE_INFO("Mvar:   record {} consumed {} bits", i, stream.BitPosition() - recordStart);
-        }
-        ++present;
+    for (int i = 0; i < kMaximumVariantObjects; ++i) {
+        ReadObject(stream, h.objects[i], h.positionBits, h);
+        if (h.objects[i].present) ++present;
     }
     h.presentObjects = present;
     h.objectsEndBits = stream.BitPosition();
-    NOBLE_INFO("Mvar: {} of {} object slots used, position bits {}/{}/{}, objects end at bit {}", present, 0x28B,
-               positionBits[0], positionBits[1], positionBits[2], h.objectsEndBits);
 
-    NOBLE_INFO("Mvar: '{}' sig='{}' size=0x{:X} ver=0x{:X} flags=0x{:X} type={} mode={} engine={} mapId={} "
-               "category={} headerBits={} authorsEnd={} author='{}'",
-               path.filename().string(), h.signature, h.chunkSize, h.chunkVersion, h.chunkFlags, h.contentType,
-               h.gameMode, h.engine, h.mapId, h.engineCategoryIndex, h.headerBits, h.authorsEndBits,
-               h.createdBy.name);
-    NOBLE_INFO("Mvar: title='{}' desc='{}' secondMapId={} (bit {}) labels={} (bit {}) objects at bit {}",
-               std::string(h.title.begin(), h.title.end()), std::string(h.description.begin(), h.description.end()),
-               h.secondMapId, h.secondMapIdBits, h.labelCount, h.labelsBits, h.objectsBits);
-    NOBLE_INFO("Mvar: activity={} bounds x[{:.1f},{:.1f}] y[{:.1f},{:.1f}] z[{:.1f},{:.1f}]",
-               h.activity, h.boundsMin[0], h.boundsMax[0], h.boundsMin[1], h.boundsMax[1], h.boundsMin[2], h.boundsMax[2]);
-    out.valid = !stream.Overran() && h.chunkSize == kChunkSize && h.signature == "mvar";
+    const uint32_t quotaCount = std::min<uint32_t>(kMaximumVariantQuotas, h.unk02B2);
+    h.quotas.resize(quotaCount);
+    for (uint32_t i = 0; i < quotaCount; ++i) {
+        h.quotas[i].minimum = static_cast<uint8_t>(stream.ReadBits(8));
+        h.quotas[i].maximum = static_cast<uint8_t>(stream.ReadBits(8));
+        h.quotas[i].placedOnMap = static_cast<uint8_t>(stream.ReadBits(8));
+    }
+    h.quotasEndBits = stream.BitPosition();
+
+    const size_t packedEnd = kMvarBodyHeader * 8 + static_cast<size_t>(h.packedLength) * 8;
+    const size_t slack = packedEnd > h.quotasEndBits ? packedEnd - h.quotasEndBits : 0;
+    const bool overran = stream.Overran() || h.packedLength > 0x7000 || h.quotasEndBits > packedEnd || slack > 7;
+
+    out.valid = !overran && h.chunkSize == kChunkSize && h.signature == "mvar";
     if (!out.valid) {
         std::ostringstream why;
-        why << "chunk size 0x" << std::hex << h.chunkSize << " signature '" << h.signature << "'";
+        why << "signature '" << h.signature << "', chunk size 0x" << std::hex << h.chunkSize;
         if (stream.Overran()) why << ", ran past the end";
+        else if (h.quotasEndBits > packedEnd) why << ", object/quota data runs " << std::dec
+                                                  << (h.quotasEndBits - packedEnd) << " bits past the packed length";
+        else why << ", " << std::dec << slack << " bits of padding (expected 0-7)";
         out.error = why.str();
     }
+
+    if (!out.valid) return out;
+
+    out.fileBytes = std::move(bytes);
     return out;
+}
+
+MapVariant ReadMapVariant(const std::filesystem::path& path) {
+    std::ifstream file(path, std::ios::binary);
+    if (!file) {
+        MapVariant out;
+        out.error = "cannot open the file";
+        return out;
+    }
+    std::vector<uint8_t> data((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    return ReadMapVariantBytes(std::move(data), path.filename().string());
 }
 
 std::string Describe(const MapVariant& variant) {
     if (!variant.valid) return "invalid: " + variant.error;
     std::ostringstream out;
     out << "map " << variant.header.mapId << ", mode " << variant.header.gameMode << ", engine " << variant.header.engine
-        << ", version 0x" << std::hex << variant.header.chunkVersion << ", by '" << variant.header.createdBy.name << "'";
+        << ", version 0x" << std::hex << variant.header.chunkVersion << std::dec << ", "
+        << variant.header.presentObjects << "/" << kMaximumVariantObjects << " objects, "
+        << variant.header.quotas.size() << " quotas, by '" << variant.header.createdBy.name << "'";
     return out.str();
 }
 

@@ -845,3 +845,4 @@ try {
       }
    }
 }
+module.exports = { MapVariant, MVVector, LoadedForgeObject, LFOUnk30 };

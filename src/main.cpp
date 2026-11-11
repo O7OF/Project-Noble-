@@ -26,6 +26,7 @@
 #include "engine/DevCheats.hpp"
 #include "engine/MvarDump.hpp"
 #include "mvar/MapVariant.hpp"
+#include "mvar/MapVariantWriter.hpp"
 #include "engine/VariantFields.hpp"
 #include "ui/UIManager.hpp"
 #include "ui/ForgeMenu.hpp"
@@ -1113,6 +1114,79 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             } else if (arg == L"-third-person-mode" && i + 1 < numArgs) {
                 thirdPersonMode = _wtoi(argvW[++i]);
                 thirdPerson = true;
+            } else if (arg == L"-mvar-write" && i + 2 < numArgs) {
+                const std::wstring in = argvW[++i];
+                const std::wstring outPath = argvW[++i];
+                const noble::mvar::MapVariant variant = noble::mvar::ReadMapVariant(in);
+                std::vector<uint8_t> bytes;
+                bool hashRecomputed = false;
+                std::string error;
+                if (!noble::mvar::WriteMapVariant(variant, bytes, hashRecomputed, error)) {
+                    NOBLE_ERROR("Mvar write: {}", error);
+                    return 1;
+                }
+                std::ofstream out(outPath, std::ios::binary | std::ios::trunc);
+                out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+                out.close();
+                if (!out) {
+                    NOBLE_ERROR("Mvar write: could not write '{}'", WideToNarrow(outPath));
+                    return 1;
+                }
+                NOBLE_INFO("Mvar write: '{}' -> '{}' ({} bytes, hash {})", WideToNarrow(in), WideToNarrow(outPath),
+                           bytes.size(), hashRecomputed ? "recomputed" : "preserved");
+                return 0;
+            } else if (arg == L"-mvar-save" && i + 2 < numArgs) {
+                const std::wstring in = argvW[++i];
+                const std::wstring outPath = argvW[++i];
+                const noble::mvar::MapVariant variant = noble::mvar::ReadMapVariant(in);
+                std::string error;
+                if (!noble::mvar::SaveMapVariantJson(variant, outPath, std::string(), error)) {
+                    NOBLE_ERROR("Mvar save: {}", error);
+                    return 1;
+                }
+                return 0;
+            } else if (arg == L"-mvar-roundtrip" && i + 1 < numArgs) {
+                const std::wstring target = argvW[++i];
+                std::vector<std::wstring> files;
+                std::error_code ec;
+                if (std::filesystem::is_directory(target, ec)) {
+                    for (const auto& entry : std::filesystem::directory_iterator(target, ec)) {
+                        if (!entry.is_regular_file(ec)) continue;
+                        if (entry.path().extension() != L".mvar") continue;
+                        files.push_back(entry.path().wstring());
+                    }
+                    std::sort(files.begin(), files.end());
+                } else {
+                    files.push_back(target);
+                }
+                int identical = 0, different = 0, failed = 0;
+                for (const std::wstring& file : files) {
+                    const noble::mvar::MapVariant variant = noble::mvar::ReadMapVariant(file);
+                    if (!variant.valid) {
+                        NOBLE_WARN("Mvar roundtrip: '{}' did not parse: {}", WideToNarrow(file), variant.error);
+                        ++failed;
+                        continue;
+                    }
+                    std::vector<uint8_t> bytes;
+                    bool hashRecomputed = false;
+                    std::string error;
+                    if (!noble::mvar::WriteMapVariant(variant, bytes, hashRecomputed, error)) {
+                        NOBLE_WARN("Mvar roundtrip: '{}' did not write: {}", WideToNarrow(file), error);
+                        ++failed;
+                        continue;
+                    }
+                    if (bytes == variant.fileBytes) {
+                        ++identical;
+                    } else {
+                        size_t at = 0;
+                        while (at < bytes.size() && at < variant.fileBytes.size() && bytes[at] == variant.fileBytes[at]) ++at;
+                        NOBLE_WARN("Mvar roundtrip: '{}' differs at 0x{:X} ({} vs {} bytes)", WideToNarrow(file), at,
+                                   bytes.size(), variant.fileBytes.size());
+                        ++different;
+                    }
+                }
+                NOBLE_INFO("Mvar roundtrip: {} identical, {} different, {} failed", identical, different, failed);
+                return (different || failed) ? 1 : 0;
             } else if (arg == L"-mvar-parse") {
                 {
                     const std::wstring path = argvW[++i];
