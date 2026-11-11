@@ -21,6 +21,8 @@ fs::path VFS::s_activeMod;
 fs::path VFS::s_mapOverrideFile;
 std::string VFS::s_mapOverrideCarrier;
 bool VFS::s_isInitialized = false;
+std::unordered_map<HANDLE, std::wstring> VFS::s_mapHandles;
+std::mutex VFS::s_mapHandleMutex;
 std::mutex VFS::s_mutex;
 
 static thread_local bool t_inVfsHook = false;
@@ -90,6 +92,12 @@ bool VFS::Initialize(const ReachInstallInfo& installInfo, const fs::path& userSt
     s_origGetFileAttributesExW = &::GetFileAttributesExW;
 
     s_isInitialized = true;
+    {
+        wchar_t traceEnv[8] = {};
+        if (GetEnvironmentVariableW(L"NOBLE_MAP_READ_TRACE", traceEnv, 8) > 0 && traceEnv[0] != L'0') {
+            InstallMapReadTrace();
+        }
+    }
     NOBLE_INFO("VFS initialized. Ready to hook target engine modules.");
     return true;
 }
@@ -324,7 +332,55 @@ HANDLE WINAPI VFS::HookedCreateFileW(
     }
     t_inVfsHook = false;
 
+    // Remember handles opened on a .map so the ReadFile trace can report where a failing map load stopped.
+    if (hFile != INVALID_HANDLE_VALUE && lpFileName) {
+        const std::wstring name(lpFileName);
+        const size_t dot = name.find_last_of(L'.');
+        if (dot != std::wstring::npos && _wcsicmp(name.c_str() + dot, L".map") == 0) {
+            std::lock_guard<std::mutex> lock(s_mapHandleMutex);
+            s_mapHandles[hFile] = name;
+        }
+    }
+
     return hFile;
+}
+
+// ReadFile trace: every read from a .map handle logs its offset and size, so the last read before an engine
+// launch routine unwinds says which part of the map it choked on. Enabled with NOBLE_MAP_READ_TRACE=1.
+namespace {
+using ReadFileFn = BOOL(WINAPI*)(HANDLE, LPVOID, DWORD, LPDWORD, LPOVERLAPPED);
+ReadFileFn s_origReadFileTrace = nullptr;
+std::atomic<uint64_t> s_mapBytesRead{0};
+
+BOOL WINAPI HookedReadFileTrace(HANDLE hFile, LPVOID buffer, DWORD toRead, LPDWORD read, LPOVERLAPPED overlapped) {
+    const bool tracked = [&] {
+        std::lock_guard<std::mutex> lock(VFS::s_mapHandleMutex);
+        return VFS::s_mapHandles.find(hFile) != VFS::s_mapHandles.end();
+    }();
+    const BOOL ok = s_origReadFileTrace ? s_origReadFileTrace(hFile, buffer, toRead, read, overlapped) : FALSE;
+    if (tracked && ok) {
+        LARGE_INTEGER zero{};
+        LARGE_INTEGER pos{};
+        if (SetFilePointerEx(hFile, zero, &pos, FILE_CURRENT)) {
+            const uint64_t total = s_mapBytesRead.fetch_add(read && *read ? *read : 0) + (read && *read ? *read : 0);
+            char line[256];
+            std::snprintf(line, sizeof(line), "map read: asked %lu, got %lu, now at 0x%llX (total 0x%llX)",
+                          static_cast<unsigned long>(toRead), static_cast<unsigned long>(read ? *read : 0),
+                          static_cast<unsigned long long>(pos.QuadPart), static_cast<unsigned long long>(total));
+            NOBLE_INFO("{}", line);
+        }
+    }
+    return ok;
+}
+} // namespace
+
+void VFS::InstallMapReadTrace() {
+    if (s_origReadFileTrace) return;
+    if (noble::HookManager::InstallHook(reinterpret_cast<void*>(&ReadFile),
+                                        reinterpret_cast<void*>(&HookedReadFileTrace),
+                                        reinterpret_cast<void**>(&s_origReadFileTrace), "trace_readfile")) {
+        NOBLE_INFO("VFS: map read trace installed (NOBLE_MAP_READ_TRACE)");
+    }
 }
 
 DWORD WINAPI VFS::HookedGetFileAttributesW(LPCWSTR lpFileName) {
