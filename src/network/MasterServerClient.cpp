@@ -775,6 +775,7 @@ LobbyState MasterServerClient::FetchLobbyStateSync(const std::string& sessionId)
     const std::string& resolvedId = sessionId;
 
     const HttpResult r = HttpRequest(Url(), L"GET", "/api/sessions/" + sessionId + "/lobby", {});
+    state.httpStatus = r.status;
     if (!r.ok) return state;
 
     try {
