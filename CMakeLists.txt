@@ -166,6 +166,7 @@ set(SOURCES
     src/mvar/BitReader.cpp
     src/mvar/MapVariant.cpp
     src/mvar/MapVariantWriter.cpp
+    src/mvar/MapVariantLibrary.cpp
     src/mvar/Sha1.cpp
     src/engine/SharedTagCache.cpp
     src/engine/DevCheats.cpp
@@ -309,6 +310,7 @@ add_executable(mvar-tool
     src/mvar/BitReader.cpp
     src/mvar/MapVariant.cpp
     src/mvar/MapVariantWriter.cpp
+    src/mvar/MapVariantLibrary.cpp
     src/mvar/Sha1.cpp
 )
 target_include_directories(mvar-tool PRIVATE src)

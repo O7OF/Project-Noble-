@@ -8,6 +8,7 @@
 
 #include "mvar/MapVariant.hpp"
 #include "mvar/MapVariantWriter.hpp"
+#include "mvar/MapVariantLibrary.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -176,6 +177,18 @@ int Nudge(const std::filesystem::path& in, const std::filesystem::path& out, int
     return ok ? 0 : 1;
 }
 
+int Library(const std::filesystem::path& in, const std::filesystem::path& dir, const std::string& name) {
+    std::string detail;
+    const std::string useName = name.empty() ? noble::mvar::VariantTitle(in) : name;
+    const std::filesystem::path out = noble::mvar::SaveVariantToLibrary(in, useName, dir, detail);
+    if (out.empty()) {
+        std::printf("FAIL  %s: %s\n", in.filename().string().c_str(), detail.c_str());
+        return 1;
+    }
+    std::printf("OK  %s -> %s\n", in.filename().string().c_str(), out.string().c_str());
+    return 0;
+}
+
 int SaveJson(const std::filesystem::path& in, const std::filesystem::path& out) {
     const noble::mvar::MapVariant variant = noble::mvar::ReadMapVariant(in);
     std::string error;
@@ -205,6 +218,7 @@ int main(int argc, char** argv) {
     if (mode == "-save" && argc >= 4) return SaveJson(argv[2], argv[3]);
     if (mode == "-write" && argc >= 4) return WriteBytes(argv[2], argv[3]);
     if (mode == "-nudge" && argc >= 6) return Nudge(argv[2], argv[3], std::atoi(argv[4]), std::atoi(argv[5]));
+    if (mode == "-library" && argc >= 4) return Library(argv[2], argv[3], argc >= 5 ? argv[4] : "");
 
     std::vector<std::filesystem::path> files;
     std::error_code ec;

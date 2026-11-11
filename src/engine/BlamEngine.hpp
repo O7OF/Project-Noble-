@@ -49,6 +49,11 @@ public:
     // Dispatches a developer/console command to haloreach.dll
     bool ExecuteCommand(const std::string& command);
 
+    // Runs the engine's own map-variant save (RVA 0x156974). It builds the whole BLF from the live session variant -
+    // the same bytes the game's Forge save writes - and hands them to the engine's save system. Must be called on the
+    // engine thread (PauseMenu::Render is). Returns false if the call faulted; the save itself may still be asynchronous.
+    bool TriggerMapVariantSave();
+
     const std::string& GetCurrentMap() const { return m_currentMap; }
     const std::string& GetCurrentMode() const { return m_currentMode; }
     bool IsForgeMode() const { return _stricmp(m_currentMode.c_str(), "forge") == 0 || _stricmp(m_currentMode.c_str(), "sandbox") == 0; }

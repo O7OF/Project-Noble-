@@ -68,6 +68,18 @@ BlamEngine::~BlamEngine() {
     Shutdown();
 }
 
+bool BlamEngine::TriggerMapVariantSave() {
+    if (!m_hModule) return false;
+    __try {
+        typedef void (*SaveMapVariantFn)(void);
+        auto pSave = reinterpret_cast<SaveMapVariantFn>(reinterpret_cast<uintptr_t>(m_hModule) + 0x156974);
+        pSave();
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
 bool BlamEngine::Initialize(const ReachInstallInfo& installInfo, HMODULE hModule, const ReachExports& exports, const EngineHostContext& context) {
     s_active = this;
     if (m_isInitialized) return true;

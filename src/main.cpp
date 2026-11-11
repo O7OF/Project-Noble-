@@ -27,6 +27,8 @@
 #include "engine/MvarDump.hpp"
 #include "mvar/MapVariant.hpp"
 #include "mvar/MapVariantWriter.hpp"
+#include "mvar/MapVariantLibrary.hpp"
+#include "engine/SessionVariant.hpp"
 #include "engine/VariantFields.hpp"
 #include "ui/UIManager.hpp"
 #include "ui/ForgeMenu.hpp"
@@ -1068,6 +1070,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
                 launchMode = WideToNarrow(argvW[++i]);
             } else if (arg == L"-mvar" && i + 1 < numArgs) {
                 customMvar = WideToNarrow(argvW[++i]);
+                noble::SetSessionMapVariantPath(std::filesystem::path(argvW[i]));
             } else if (arg == L"-variant" && i + 1 < numArgs) {
                 customVariant = WideToNarrow(argvW[++i]);
             } else if (arg == L"-mod" && i + 1 < numArgs) {
@@ -1144,6 +1147,18 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
                     NOBLE_ERROR("Mvar save: {}", error);
                     return 1;
                 }
+                return 0;
+            } else if (arg == L"-mvar-import" && i + 1 < numArgs) {
+                const std::wstring in = argvW[++i];
+                const std::filesystem::path library = noble::ReachHost::Get().GetDataDir() / "map_variants";
+                std::string detail;
+                const std::filesystem::path out =
+                    noble::mvar::SaveVariantToLibrary(in, noble::mvar::VariantTitle(in), library, detail);
+                if (out.empty()) {
+                    NOBLE_ERROR("Mvar import: {}", detail);
+                    return 1;
+                }
+                NOBLE_INFO("Mvar import: '{}' -> '{}'", WideToNarrow(in), out.string());
                 return 0;
             } else if (arg == L"-mvar-roundtrip" && i + 1 < numArgs) {
                 const std::wstring target = argvW[++i];
