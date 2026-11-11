@@ -334,6 +334,50 @@ uint64_t __fastcall Stage3Hook(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a
     return res;
 }
 
+// Read helper with SEH, for probing engine structures from the debug hooks.
+static bool SafeReadPtr(uintptr_t address, void* out, size_t size) {
+    __try {
+        std::memcpy(out, reinterpret_cast<const void*>(address), size);
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {}
+    return false;
+}
+
+// The map state tick (haloreach+0x40A008) is where "loading_map" becomes "running". It reads a game-type integer
+// from *(*(lVar3+0x47f8)+0x60ef8); logging that value on a working map and on a Firefight-canvas map says whether
+// the engine treats them as different types.
+using MapStateTickFn = void(__fastcall*)(void*);
+MapStateTickFn s_origMapStateTick = nullptr;
+std::atomic<int> s_mapStateCalls{0};
+
+void __fastcall MapStateTickHook(void* state) {
+    const int call = s_mapStateCalls.fetch_add(1);
+    if ((call % 60) == 0) {
+        uintptr_t lVar3 = 0;
+        int gameType = -1;
+        uintptr_t slot68 = 0;
+        int mapState = -1;
+        if (SafeReadPtr(reinterpret_cast<uintptr_t>(state) + 0x30, &lVar3, sizeof(lVar3)) && lVar3) {
+            uintptr_t inner = 0;
+            if (SafeReadPtr(lVar3 + 0xC0, &inner, sizeof(inner)) && inner) {
+                uintptr_t table = 0;
+                if (SafeReadPtr(inner + 0x47F8, &table, sizeof(table)) && table) {
+                    SafeReadPtr(table + 0x60EF8, &gameType, sizeof(gameType));
+                }
+            }
+        }
+        SafeReadPtr(reinterpret_cast<uintptr_t>(state) + 0x68, &slot68, sizeof(slot68));
+        if (HMODULE reach = GetModuleHandleW(L"haloreach.dll")) {
+            SafeReadPtr(reinterpret_cast<uintptr_t>(reach) + 0xC1A118, &mapState, sizeof(mapState));
+        }
+        char line[256];
+        std::snprintf(line, sizeof(line), "map state tick #%d: state %d slot68 0x%llX gameType %d", call, mapState,
+                      static_cast<unsigned long long>(slot68), gameType);
+        NOBLE_INFO("{}", line);
+    }
+    if (s_origMapStateTick) s_origMapStateTick(state);
+}
+
 // The map state machine promotes "loading_map" to "running" only when FUN_18040b4c8 returns something other than
 // -1 (haloreach+0x40A008: lVar9 = FUN_18040b4c8(...); if (lVar9 != -1) DAT_180c1a118 = 2). Log its verdict.
 using SessionStartFn = uint64_t(__fastcall*)(void*);
@@ -1304,6 +1348,15 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     noble::HookManager::InstallHook(reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(loader->GetModuleHandle()) + 0xC390),
                                     reinterpret_cast<void*>(&EngineMainLoopHook),
                                     reinterpret_cast<void**>(&s_origEngineMainLoop), "trace_engine_main_loop");
+    {
+        wchar_t stateEnv[8] = {};
+        if (GetEnvironmentVariableW(L"NOBLE_TRACE_MAP_STATE", stateEnv, 8) > 0 && stateEnv[0] != L'0') {
+            noble::HookManager::InstallHook(
+                reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(loader->GetModuleHandle()) + 0x40A008),
+                reinterpret_cast<void*>(&MapStateTickHook), reinterpret_cast<void**>(&s_origMapStateTick),
+                "trace_map_state_tick");
+        }
+    }
     {
         wchar_t startEnv[8] = {};
         if (GetEnvironmentVariableW(L"NOBLE_TRACE_SESSION_START", startEnv, 8) > 0 && startEnv[0] != L'0') {
