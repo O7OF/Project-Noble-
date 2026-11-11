@@ -38,6 +38,8 @@ struct MapVariantHeader {
     size_t secondMapIdBits = 0;
     size_t labelsBits = 0;
     size_t objectsBits = 0;
+    size_t objectsEndBits = 0;
+    int presentObjects = 0;
     std::wstring title, description;
     bool titleEndianBig = false;
     uint32_t unk02B2 = 0;

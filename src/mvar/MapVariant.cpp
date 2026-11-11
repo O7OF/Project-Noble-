@@ -8,6 +8,8 @@
 #include <fstream>
 #include <sstream>
 
+#include <cmath>
+
 namespace noble::mvar {
 namespace {
 constexpr size_t kMvarChunkOffset = 0x2F0;   // "mvar" inside the BLF container
@@ -50,6 +52,123 @@ bool LooksLikeText(const std::wstring& text) {
         if (c < 0x20 || c > 0x7E) return false;
     }
     return true;
+}
+
+
+// --- Object records ---------------------------------------------------------------------------------------------
+// 651 of these follow the label table (0x28B, fixed count - which is why every variant file is the same size).
+// Ported from ReachVariantTool's LoadedForgeObject / LFOUnk30.
+
+static int HighestBitSet(uint32_t value) {
+    int r = 0;
+    while (value >>= 1) ++r;
+    return r;
+}
+
+// Per-axis bit counts for a quantized position, from the map's bounds (reference: _sub4DC8E0 with bitcount 21).
+void PositionBitCounts(const float boundsMin[3], const float boundsMax[3], int out[3]) {
+    constexpr int bitCount = 21;
+    float minStep = 0.00833333333f / static_cast<float>(1 << (bitCount - 16));
+    minStep *= 2.0f;
+    for (int i = 0; i < 3; ++i) {
+        const float range = boundsMax[i] - boundsMin[i];
+        uint32_t steps = static_cast<uint32_t>(std::ceil(range / minStep));
+        if (steps > 0x800000) steps = 0x800000;
+        out[i] = steps ? HighestBitSet(steps) : bitCount;
+    }
+}
+
+struct ForgeObject {
+    bool present = false;
+    uint8_t subcat = 0xFF;
+    uint8_t type = 0xFF;
+    float position[3] = {};
+    float axis[3] = { 0, 0, 1 };
+    uint16_t angleRaw = 0;
+    uint8_t shapeType = 0;
+    uint8_t spawnSequence = 0;
+    uint8_t respawnTime = 0;
+    uint8_t unk13 = 0;
+    int16_t forgeLabelIndex = -1;
+};
+
+// LFOUnk30: the object's shape/behaviour tail. Variable length, so it has to be walked exactly.
+static void ReadObjectTail(BitReader& stream, ForgeObject& object) {
+    const uint32_t shape = static_cast<uint32_t>(stream.ReadBits(2));
+    object.shapeType = static_cast<uint8_t>(shape);
+    switch (shape) {
+        case 1:
+        case 2:
+        case 3:
+            stream.ReadBits(11);
+            if (shape == 3) stream.ReadBits(11);
+            if (shape != 1) stream.ReadBits(11);
+            break;
+        default:
+            if (shape == 0) {
+                // 2-bit type 0 ends the tail immediately.
+                break;
+            }
+            stream.ReadBits(11);
+            break;
+    }
+    if (shape == 2 || shape == 3) stream.ReadBits(11);
+    if (shape == 3) {
+        stream.ReadBits(11);
+        stream.ReadBits(11);
+    }
+    // Common tail.
+    object.spawnSequence = static_cast<uint8_t>(stream.ReadBits(8));
+    object.respawnTime = static_cast<uint8_t>(stream.ReadBits(8));
+    object.unk13 = static_cast<uint8_t>(stream.ReadBits(5));
+    if (!stream.ReadBits(1)) {
+        object.forgeLabelIndex = static_cast<int16_t>(stream.ReadBits(8));
+    } else {
+        object.forgeLabelIndex = -1;
+    }
+    stream.ReadBits(8);   // unk16
+    stream.ReadBits(4);   // unk17 (object colour)
+    if (!stream.ReadBits(1)) stream.ReadBits(3);   // team
+    if (object.unk13 == 1) {
+        stream.ReadBits(8);
+    } else if (object.unk13 > 0xB) {
+        if (object.unk13 <= 0xE) {
+            stream.ReadBits(5);
+            stream.ReadBits(5);
+        } else if (object.unk13 == 0x13) {
+            stream.ReadBits(8);
+        }
+    }
+}
+
+static ForgeObject ReadObject(BitReader& stream, const int positionBits[3], const float boundsMin[3],
+                              const float boundsMax[3]) {
+    ForgeObject object;
+    if (!stream.ReadBits(1)) return object;   // presence bit
+    object.present = true;
+    stream.ReadBits(2);                        // unk00
+    if (!stream.ReadBits(1)) object.subcat = static_cast<uint8_t>(stream.ReadBits(8));
+    if (!stream.ReadBits(1)) object.type = static_cast<uint8_t>(stream.ReadBits(5));
+
+    // Position: one "bounds set" bit, then three quantized fields.
+    if (stream.ReadBits(1)) {
+        // The reference falls back to static values here; the bit still has to be consumed.
+    }
+    for (int i = 0; i < 3; ++i) {
+        const uint32_t raw = static_cast<uint32_t>(stream.ReadBits(positionBits[i]));
+        const float range = boundsMax[i] - boundsMin[i];
+        object.position[i] = (0.5f + static_cast<float>(raw)) * (range / static_cast<float>(1 << positionBits[i])) +
+                             boundsMin[i];
+    }
+
+    // Rotation: an axis-angle. A single bit means "yaw only".
+    if (!stream.ReadBits(1)) {
+        stream.ReadBits(20);   // packed unit vector
+    }
+    object.angleRaw = static_cast<uint16_t>(stream.ReadBits(14));
+    stream.ReadBits(10);       // unk2C
+    ReadObjectTail(stream, object);
+    return object;
 }
 
 // Field order mirrors ReachVariantTool's reference parser read for read (see tools/mvar_oracle): everything after the
@@ -165,6 +284,23 @@ MapVariant ReadMapVariant(const std::filesystem::path& path) {
         }
     }
     h.objectsBits = stream.BitPosition();
+
+    int positionBits[3] = { 21, 21, 21 };
+    PositionBitCounts(h.boundsMin, h.boundsMax, positionBits);
+    int present = 0;
+    for (int i = 0; i < 0x28B; ++i) {
+        const ForgeObject object = ReadObject(stream, positionBits, h.boundsMin, h.boundsMax);
+        if (!object.present) continue;
+        if (present < 3) {
+            NOBLE_INFO("Mvar: object[{}] type {} subcat {} at ({:.1f}, {:.1f}, {:.1f}) shape {}", i, object.type,
+                       object.subcat, object.position[0], object.position[1], object.position[2], object.shapeType);
+        }
+        ++present;
+    }
+    h.presentObjects = present;
+    h.objectsEndBits = stream.BitPosition();
+    NOBLE_INFO("Mvar: {} of {} object slots used, position bits {}/{}/{}, objects end at bit {}", present, 0x28B,
+               positionBits[0], positionBits[1], positionBits[2], h.objectsEndBits);
 
     NOBLE_INFO("Mvar: '{}' sig='{}' size=0x{:X} ver=0x{:X} flags=0x{:X} type={} mode={} engine={} mapId={} "
                "category={} headerBits={} authorsEnd={} author='{}'",
