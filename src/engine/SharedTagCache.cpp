@@ -58,6 +58,9 @@ void* __fastcall SharedTagCache::HookedTagGet([[maybe_unused]] uint32_t groupTag
     }
 
     // 2. If active map does not contain this tag, resolve from our mounted SharedTagCache!
+    if (datumIndex == 0xFFFFFFFFu || (datumIndex & 0xFFFF0000u) == 0) {
+        return nullptr;
+    }
     if (s_isMounted && s_mappedView) {
         auto it = s_tagOffsets.find(datumIndex);
         if (it != s_tagOffsets.end()) {
@@ -73,6 +76,7 @@ void* __fastcall SharedTagCache::HookedTagGet([[maybe_unused]] uint32_t groupTag
 
 void* SharedTagCache::ResolveTag([[maybe_unused]] uint32_t groupTag, uint32_t datumIndex) {
     if (!s_isMounted || !s_mappedView) return nullptr;
+    if (datumIndex == 0xFFFFFFFFu || (datumIndex & 0xFFFF0000u) == 0) return nullptr;
 
     auto it = s_tagOffsets.find(datumIndex);
     if (it != s_tagOffsets.end()) {
@@ -103,13 +107,11 @@ static bool IsAvoidedDonor(const std::filesystem::path& candidate) {
 bool SharedTagCache::DiscoverDonorMap(const std::filesystem::path& dataDir, [[maybe_unused]] const std::filesystem::path& workshopDir, const std::filesystem::path& reachDir) {
     std::vector<std::filesystem::path> searchCandidates;
 
-    // 1. Native stock Campaign maps from local MCC installation (Zero mod download required!)
-    // m20.map (Sword Base) contains Spartans, Marines, Troopers, ODSTs, Grunts, Jackals, Skirmishers, Elites, Hunters, and the Pelican!
+    // 1. Native stock Campaign donor map from local MCC installation (Zero mod download required!)
+    // ParseDonorTags uses m20.map's exact tag-instances offset (+0x413DCC) and m20 datum table, so only m20.map
+    // may be mounted here (mounting m45.map/campaign.map/shared.map with m20's offset indexes non-instance bytes).
     if (!reachDir.empty()) {
         searchCandidates.push_back(reachDir / "maps" / "m20.map");
-        searchCandidates.push_back(reachDir / "maps" / "m45.map");
-        searchCandidates.push_back(reachDir / "maps" / "campaign.map");
-        searchCandidates.push_back(reachDir / "maps" / "shared.map");
     }
 
     // 2. Local mods directory in User Storage (if a custom campaign donor map is placed there)
@@ -277,7 +279,12 @@ bool SharedTagCache::ParseDonorTags() {
         s_donorTagCount = 17707;
     }
 
-    // Locate Tag Instances Array
+    // Locate Tag Instances Array (stock m20.map layout: tagCount == 17356, instances at +0x413DCC)
+    if (s_donorTagCount != 17356) {
+        NOBLE_WARN("SharedTagCache: Donor map '{}' has tagCount={} (expected 17356 for stock m20.map); skipping hardcoded instance table.",
+                   s_donorMapPath.filename().string(), s_donorTagCount);
+        return false;
+    }
     // Tag index header is located at s_tagIndexFileOffset + 0x4375D4
     // Tag instances array is located at s_tagIndexFileOffset + 0x413DCC
     uint32_t instancesOffset = s_tagIndexFileOffset + 0x413DCC;

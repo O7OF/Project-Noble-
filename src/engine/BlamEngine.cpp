@@ -268,7 +268,7 @@ uint32_t BlamEngine::ResolveMapId(const std::string& mapName) {
     // Campaign Missions (178 - 189)
     if (lower.find("noble actual") != std::string::npos || lower.find("m05") != std::string::npos || lower == "178") return 178;
     if (lower.find("winter contingency") != std::string::npos || lower.find("m10") != std::string::npos || lower == "179") return 179;
-    if (lower.find("oni: sword base") != std::string::npos || lower.find("m20") != std::string::npos || lower == "180") return 180;
+    if (lower.find("oni: sword base") != std::string::npos || lower.find("oni sword base") != std::string::npos || lower.find("m20") != std::string::npos || lower == "180") return 180;
     if (lower.find("nightfall") != std::string::npos || lower.find("m30") != std::string::npos || lower == "181") return 181;
     if (lower.find("tip of the spear") != std::string::npos || lower.find("m35") != std::string::npos || lower == "182") return 182;
     if (lower.find("long night of solace") != std::string::npos || lower.find("m45") != std::string::npos || lower == "183") return 183;

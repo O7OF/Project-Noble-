@@ -3,6 +3,7 @@
 #include "SigScanner.hpp"
 #include "common/Logger.hpp"
 #include "host/SlotPatch.hpp"
+#include "network/NetworkTransport.hpp"
 #include <psapi.h>
 #include <vector>
 #include <string>
@@ -375,11 +376,11 @@ static uint64_t __fastcall Hook_BootPeer(void* session, int32_t peerIndex, int32
         wchar_t env[8] = {};
         return !(GetEnvironmentVariableW(L"NOBLE_COOP_NO_KEEP_PEER", env, 8) > 0 && env[0] != L'0');
     }();
-    if (keepCoopPeer && reason == 9 && s_campaignCoop.load()) {
+    if (keepCoopPeer && (reason == 9 || reason == 13) && s_campaignCoop.load()) {
         static std::atomic<int> logged{0};
         if (logged.fetch_add(1) == 0) {
-            NOBLE_WARN("LobbyPatches: keeping guest peer {} in the campaign co-op session (engine boot reason 9, "
-                       "campaign progress mismatch); further occurrences are not logged", peerIndex);
+            NOBLE_WARN("LobbyPatches: keeping guest peer {} in the campaign co-op session (engine boot reason {}); "
+                       "further occurrences are not logged", peerIndex, reason);
         }
         return 0;
     }
@@ -757,6 +758,36 @@ static uint64_t __fastcall Hook_ChannelReceive(void* channel, void* bitstream, u
     return ret;
 }
 
+// Host-handoff state evaluation (hr+0x4035DC, c_network_session::process_host_handoff).
+// Reach's Xbox Live P2P session leader evaluates peer NAT/UPnP/bandwidth before starting a game and attempts
+// to migrate host authority (msg 16 host-handoff) to a guest if it scores higher. Project Noble's relay/UDP
+// transport pins the Host and Guest roles, so host-handoff causes the guest to leave (msg 12 leave-session)
+// and the host to disband (msg 14 session-disband -> "An error occurred while loading co-op").
+// Clearing the candidate peer mask (+0x60F04) and target handoff peer (+0x60F18 = -1) with +0x60F0D = 1
+// makes process_host_handoff immediately take its native "current host stays host" completion branch
+// (hr+0x4038B3 -> hr+0x403B79 -> hr+0x4029A0 / hr+0x3940E4) without ever sending msg 16 (host-handoff).
+typedef void(__fastcall* ProcessHostHandoffFn)(void* session);
+static ProcessHostHandoffFn s_originalProcessHostHandoff = nullptr;
+static std::atomic<int> s_hostHandoffLogCount{0};
+static void __fastcall Hook_ProcessHostHandoff(void* session) {
+    if (session && NetworkTransport::Get().IsActive()) {
+        auto* s = static_cast<uint8_t*>(session);
+        const uint32_t prevCandidates = *reinterpret_cast<const uint32_t*>(s + 0x60F04);
+        const int32_t prevTarget = *reinterpret_cast<const int32_t*>(s + 0x60F18);
+        *reinterpret_cast<uint8_t*>(s + 0x60F0D) = 1;
+        *reinterpret_cast<uint32_t*>(s + 0x60F04) = 0;
+        *reinterpret_cast<int32_t*>(s + 0x60F18) = -1;
+        if ((prevCandidates != 0 || prevTarget != -1) && s_hostHandoffLogCount.fetch_add(1) < 10) {
+            NOBLE_INFO("LobbyPatches: [{} pid {}] keeping session host on current host (suppressed P2P host-handoff, "
+                       "candidates=0x{:X}, targetPeer={})",
+                       RefuseRole(), GetCurrentProcessId(), prevCandidates, prevTarget);
+        }
+    }
+    if (s_originalProcessHostHandoff) {
+        s_originalProcessHostHandoff(session);
+    }
+}
+
 static bool WriteProtectedMemory(void* destination, const void* source, size_t size) {
     DWORD oldProtect = 0;
     if (!VirtualProtect(destination, size, PAGE_EXECUTE_READWRITE, &oldProtect)) {
@@ -1015,6 +1046,28 @@ bool LobbyPatches::Apply(HMODULE hReachDll) {
                 patchCount++;
                 NOBLE_INFO("LobbyPatches: Installed MinHook detour on c_network_session::abort at 0x{:X}", fnSessionAbort);
             }
+        }
+    }
+
+    // 7c. MinHook Detour on c_network_session::process_host_handoff (RVA 0x4035DC)
+    // Keeps session leadership on the actual Noble Host and prevents msg 16 (host-handoff) -> msg 12 (leave-session)
+    // -> msg 14 (session-disband) during Co-Op Campaign and Multiplayer launch.
+    {
+        uintptr_t fnHostHandoff = base + 0x4035DC;
+        static const uint8_t kHostHandoffPrologue[15] = {
+            0x48, 0x8B, 0xC4, 0x48, 0x89, 0x58, 0x10, 0x48, 0x89, 0x70, 0x18, 0x48, 0x89, 0x78, 0x20
+        };
+        if (0x4035DC + sizeof(kHostHandoffPrologue) <= size &&
+            std::memcmp(reinterpret_cast<const void*>(fnHostHandoff), kHostHandoffPrologue, sizeof(kHostHandoffPrologue)) == 0) {
+            if (HookManager::InstallHook(reinterpret_cast<void*>(fnHostHandoff),
+                                         reinterpret_cast<void*>(&Hook_ProcessHostHandoff),
+                                         reinterpret_cast<void**>(&s_originalProcessHostHandoff),
+                                         "c_network_session::process_host_handoff")) {
+                patchCount++;
+                NOBLE_INFO("LobbyPatches: Installed MinHook detour on process_host_handoff at 0x{:X}", fnHostHandoff);
+            }
+        } else {
+            NOBLE_WARN("LobbyPatches: process_host_handoff bytes differ at hr+0x4035DC; left alone");
         }
     }
 

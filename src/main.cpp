@@ -1190,6 +1190,13 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
                 }
             }
         }
+    } else if (!launchMap.empty()) {
+        std::error_code infoEc;
+        const fs::path staleInfoDst = userStoragePath / "maps" / "info" / (launchMap + ".mapinfo");
+        if (fs::is_regular_file(staleInfoDst, infoEc)) {
+            fs::remove(staleInfoDst, infoEc);
+            NOBLE_INFO("main: removed stale patched mapinfo override '{}'", staleInfoDst.string());
+        }
     }
     if (!mapOverride.empty()) {
         NOBLE_INFO("Map override: serving '{}' as maps\\{}.map", mapOverride.string(), launchMap);
@@ -1450,6 +1457,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 
     // Apply 32/64 player lobby expansion detours
     noble::LobbyPatches::Apply(loader->GetModuleHandle());
+    noble::LobbyPatches::SetCampaignCoop(!showMenu && _stricmp(launchMode.c_str(), "campaign") == 0);
 
     // Apply engine stability and appearance cap patches (unlocks all 200+ armor permutations in haloreach.dll)
     noble::EnginePatches::Apply(loader->GetModuleHandle());
@@ -1458,10 +1466,13 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     noble::ForgePatches::Apply(loader->GetModuleHandle());
 
     // Initialize Shared Tag Cache for cross-map AI spawning (Approach 1)
-    // The donor AI cache mounts a whole campaign map; never the one this launch is about to load, or that map's
-    // load crawls and stalls (ONI: Sword Base = m20, which was also the hard-coded donor).
-    noble::SharedTagCache::SetAvoidMap(launchMap);
-    noble::SharedTagCache::Initialize(loader->GetModuleHandle(), userStoragePath, reachInstall->workshopDirectory, reachInstall->reachDirectory);
+    // Skip for front-end menu and Campaign launches: Campaign scenarios already carry native AI/vehicle tags in
+    // campaign.map + <mission>.map, and mounting a donor campaign map (or falling back from m20.map to m45.map)
+    // interferes with mission loading (especially ONI: Sword Base = m20).
+    if (!showMenu && _stricmp(launchMode.c_str(), "campaign") != 0) {
+        noble::SharedTagCache::SetAvoidMap(launchMap);
+        noble::SharedTagCache::Initialize(loader->GetModuleHandle(), userStoragePath, reachInstall->workshopDirectory, reachInstall->reachDirectory);
+    }
 
     // Wire guest-to-host spawn forwarder to prevent duplicate local spawning in multiplayer
     noble::SharedTagCache::SetSpawnForwarder([](uint32_t datumIndex, const std::string& tagPath) -> bool {
