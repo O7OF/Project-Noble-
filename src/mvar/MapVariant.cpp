@@ -139,8 +139,13 @@ MapVariant ReadMapVariant(const std::filesystem::path& path) {
     h.secondMapId = static_cast<uint32_t>(stream.ReadBits(32));
     stream.ReadBits(1);                                   // unk02D9
     stream.ReadBits(1);                                   // unk02DA
-    for (float& f : h.boundsMin) f = stream.ReadFloatBig();
-    for (int i = 0; i < 3; ++i) { stream.ReadFloatBig(); stream.ReadFloatBig(); }   // max, then y/z pairs
+    // Six big-endian floats: x.min, x.max, y.min, y.max, z.min, z.max.
+    h.boundsMin[0] = stream.ReadFloatBitsBig();
+    h.boundsMax[0] = stream.ReadFloatBitsBig();
+    h.boundsMin[1] = stream.ReadFloatBitsBig();
+    h.boundsMax[1] = stream.ReadFloatBitsBig();
+    h.boundsMin[2] = stream.ReadFloatBitsBig();
+    h.boundsMax[2] = stream.ReadFloatBitsBig();
     stream.ReadBits(32);                                  // unk02D0
     stream.ReadBits(32);                                  // unk02D4
     h.labelsBits = stream.BitPosition();
@@ -169,6 +174,8 @@ MapVariant ReadMapVariant(const std::filesystem::path& path) {
     NOBLE_INFO("Mvar: title='{}' desc='{}' secondMapId={} (bit {}) labels={} (bit {}) objects at bit {}",
                std::string(h.title.begin(), h.title.end()), std::string(h.description.begin(), h.description.end()),
                h.secondMapId, h.secondMapIdBits, h.labelCount, h.labelsBits, h.objectsBits);
+    NOBLE_INFO("Mvar: activity={} bounds x[{:.1f},{:.1f}] y[{:.1f},{:.1f}] z[{:.1f},{:.1f}]",
+               h.activity, h.boundsMin[0], h.boundsMax[0], h.boundsMin[1], h.boundsMax[1], h.boundsMin[2], h.boundsMax[2]);
     out.valid = !stream.Overran() && h.chunkSize == kChunkSize && h.signature == "mvar";
     if (!out.valid) {
         std::ostringstream why;

@@ -67,6 +67,13 @@ float BitReader::ReadFloatBig() {
     return value;
 }
 
+float BitReader::ReadFloatBitsBig() {
+    const uint32_t raw = static_cast<uint32_t>(ReadBits(32));
+    float value = 0.0f;
+    std::memcpy(&value, &raw, sizeof(value));
+    return value;
+}
+
 std::string BitReader::ReadString(int count) {
     std::string out;
     out.reserve(static_cast<size_t>(count));

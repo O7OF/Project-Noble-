@@ -32,6 +32,9 @@ public:
     uint16_t ReadUInt16Big();
     uint32_t ReadUInt32Big();
     float ReadFloatBig();
+    // 32 bits read straight from the stream: the same bit order as every other packed field, so this is what a
+    // big-endian float looks like inside a bit-packed structure.
+    float ReadFloatBitsBig();
     std::string ReadString(int count);
     std::wstring ReadWidecharString(int chars);
     std::vector<uint8_t> ReadBytes(int count);

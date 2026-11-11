@@ -44,6 +44,7 @@ struct MapVariantHeader {
     uint32_t secondMapId = 0;
     uint32_t labelCount = 0;
     float boundsMin[3] = {};
+    float boundsMax[3] = {};
     Author createdBy, modifiedBy;
 };
 
