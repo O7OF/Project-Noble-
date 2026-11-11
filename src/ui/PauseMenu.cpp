@@ -510,6 +510,28 @@ std::string UniqueVariantName(const std::filesystem::path& library, const std::s
     return candidate;
 }
 
+// The map's build palette, harvested from variants that contain the definitions (tag -> variant/quota index).
+noble::mvar::TagPalette LoadMapPalette(const std::filesystem::path& dataDir, uint32_t mapId) {
+    noble::mvar::TagPalette palette;
+    std::ifstream file(dataDir / "mvar_palette" / (std::to_string(mapId) + ".json"), std::ios::binary);
+    if (!file) return palette;
+    nlohmann::json json;
+    try {
+        json = nlohmann::json::parse(file);
+    } catch (...) {
+        return palette;
+    }
+    if (!json.contains("tags")) return palette;
+    for (auto it = json["tags"].begin(); it != json["tags"].end(); ++it) {
+        const std::string value = it.value().get<std::string>();
+        const size_t comma = value.find(',');
+        if (comma == std::string::npos) continue;
+        palette[static_cast<uint32_t>(std::stoul(it.key(), nullptr, 16))] = {
+            std::stoi(value.substr(0, comma)), std::stoi(value.substr(comma + 1)) };
+    }
+    return palette;
+}
+
 std::filesystem::path FindVariantTemplate(const std::filesystem::path& dataDir) {
     namespace fs = std::filesystem;
     std::error_code ec;
@@ -570,7 +592,8 @@ std::filesystem::path PauseMenu::SaveForgeMapVariant(const std::string& name) {
                     if (noble::mvar::BuildVariantFromChunk(liveChunk, tmpl, name, base, buildDetail)) {
                         std::string applyError;
 
-                        const int added = noble::mvar::ApplyWorldPlacements(base, placements, applyError);
+                        const noble::mvar::TagPalette palette = LoadMapPalette(dataDir, base.header.mapId);
+                        const int added = noble::mvar::ApplyWorldPlacements(base, placements, palette, applyError);
 
                         NOBLE_INFO("PauseMenu: {} placement(s) captured, {} encoded{}", placements.size(), added,
 

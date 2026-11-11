@@ -27,7 +27,38 @@ float DistanceSquared(const float a[3], const float b[3]) {
 
 } // namespace
 
+namespace {
+
+int FindRecordForPalette(const MapVariantHeader& header, int variantIndex, int quotaIndex) {
+    for (size_t i = 0; i < header.objects.size(); ++i) {
+        const ForgeObject& object = header.objects[i];
+        if (!object.present) continue;
+        if (object.variantIndex == variantIndex && object.quotaIndex == quotaIndex) return static_cast<int>(i);
+    }
+    return -1;
+}
+
+ForgeObject MakeDefaultObject(int variantIndex, int quotaIndex) {
+    ForgeObject object;
+    object.present = true;
+    object.variantIndex = static_cast<int16_t>(variantIndex);
+    object.quotaIndex = static_cast<int16_t>(quotaIndex);
+    object.positionInBounds = true;
+    object.upIsGlobal = true;
+    object.team = -1;
+    object.labelIndex = -1;
+    object.primaryColor = -1;
+    return object;
+}
+
+} // namespace
+
 int ApplyWorldPlacements(MapVariant& variant, const std::vector<WorldPlacement>& placements, std::string& error) {
+    return ApplyWorldPlacements(variant, placements, TagPalette{}, error);
+}
+
+int ApplyWorldPlacements(MapVariant& variant, const std::vector<WorldPlacement>& placements, const TagPalette& palette,
+                         std::string& error) {
     if (!variant.valid) {
         error = "the variant is not valid";
         return 0;
@@ -70,13 +101,20 @@ int ApplyWorldPlacements(MapVariant& variant, const std::vector<WorldPlacement>&
         if (existing) continue;
 
         // Clone a record of the same tag definition so type/quota/shape/properties match; only the transform changes.
+        int templateIndex = -1;
         const auto it = std::find(tagKeys.begin(), tagKeys.end(), placement.tag);
-        if (it == tagKeys.end()) {
-            error = "no record of that tag definition in the map yet";
-            continue;
+        if (it != tagKeys.end()) {
+            templateIndex = tagTemplate[static_cast<size_t>(it - tagKeys.begin())];
+        } else {
+            // Not in this variant: consult the map's build palette. If the palette entry already appears in the
+            // variant, clone that record; otherwise synthesise a minimal one with the palette's indices.
+            const auto entry = palette.find(placement.tag);
+            if (entry == palette.end()) {
+                error = "no record or palette entry for that tag definition";
+                continue;
+            }
+            templateIndex = FindRecordForPalette(header, entry->second.first, entry->second.second);
         }
-        const int templateIndex = tagTemplate[static_cast<size_t>(it - tagKeys.begin())];
-        if (templateIndex < 0) continue;
 
         int freeSlot = -1;
         for (size_t i = 0; i < header.objects.size(); ++i) {
@@ -87,8 +125,13 @@ int ApplyWorldPlacements(MapVariant& variant, const std::vector<WorldPlacement>&
             break;
         }
         ForgeObject& object = header.objects[static_cast<size_t>(freeSlot)];
-        object = header.objects[static_cast<size_t>(templateIndex)];
-        object.present = true;
+        if (templateIndex >= 0) {
+            object = header.objects[static_cast<size_t>(templateIndex)];
+            object.present = true;
+        } else {
+            const auto entry = palette.find(placement.tag);
+            object = MakeDefaultObject(entry->second.first, entry->second.second);
+        }
         for (int axis = 0; axis < 3; ++axis) {
             object.positionRaw[axis] = QuantizeAxis(placement.position[axis], header.boundsMin[axis],
                                                     header.boundsMax[axis], header.positionBits[axis]);

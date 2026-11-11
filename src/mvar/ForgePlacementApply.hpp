@@ -1,7 +1,9 @@
 #pragma once
 
 #include <cstdint>
+#include <map>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace noble::mvar {
@@ -21,5 +23,11 @@ struct MapVariant;
 // replacing its transform. Load-time placements (the map's own objects) match an existing record by position and are
 // skipped. Returns how many records were added; `error` is set when none could be (e.g. no free slot).
 int ApplyWorldPlacements(MapVariant& variant, const std::vector<WorldPlacement>& placements, std::string& error);
+
+// Same, but with the map's build palette (tag -> {variant_index, quota_index}) so a definition the variant does not
+// contain yet can still be written: a record with the same palette entry is cloned, or a minimal one is synthesised.
+using TagPalette = std::map<uint32_t, std::pair<int, int>>;
+int ApplyWorldPlacements(MapVariant& variant, const std::vector<WorldPlacement>& placements, const TagPalette& palette,
+                         std::string& error);
 
 } // namespace noble::mvar
