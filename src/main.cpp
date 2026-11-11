@@ -334,13 +334,71 @@ uint64_t __fastcall Stage3Hook(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a
     return res;
 }
 
-// Read helper with SEH, for probing engine structures from the debug hooks.
+// SEH-guarded memory read, for probing engine structures from the debug hooks.
 static bool SafeReadPtr(uintptr_t address, void* out, size_t size) {
     __try {
         std::memcpy(out, reinterpret_cast<const void*>(address), size);
         return true;
     } __except (EXCEPTION_EXECUTE_HANDLER) {}
     return false;
+}
+
+// A map built by MCC's workshop tools declares the game type of the canvas it was built on, and the engine's map
+// loader (haloreach+0x141C0) rejects the load when that type differs from the type the launch asks for. The AI
+// Battleground maps declare 0x7D2 (the Firefight canvas) while a Forge/Firefight launch asks for 0x2760, so the
+// loader returned 0 and the launch unwound right after the map was read. The loader parses the file (haloreach+
+// 0x31204) and only then compares id/type, so this hook aligns the loaded header's type with the request in
+// between - that is what lets a mod map built on another canvas mount in the mode the player picked.
+static std::atomic<int> s_requestedMapType{-1};
+using MapLoadFullFn = unsigned char(__fastcall*)(void*, int, int, void*);
+MapLoadFullFn s_origMapLoadFull = nullptr;
+
+unsigned char __fastcall MapLoadFullHook(void* a1, int a2, int a3, void* a4) {
+    s_requestedMapType.store(a3);
+    const unsigned char result = s_origMapLoadFull ? s_origMapLoadFull(a1, a2, a3, a4) : 0;
+    s_requestedMapType.store(-1);
+    return result;
+}
+
+using MapParseFn = char(__fastcall*)(void*, void*);
+MapParseFn s_origMapParse = nullptr;
+
+char __fastcall MapParseHook(void* a1, void* a2) {
+    const char result = s_origMapParse ? s_origMapParse(a1, a2) : 0;
+    if (result) {
+        // Inside the loader, right after the file is parsed: read the header id/type the loader is about to compare
+        // against the requested ones. Layout from FUN_1800141c0:
+        //   index = *(u32*)(DAT_180c1a600 + 4 + (DAT_180afbe38 & 0xffff) * 8)
+        //   header id   = *(int*)((&DAT_184e39f20)[index >> 28] + 0x0C + index * 4)
+        //   header type = *(int*)((&DAT_184e39f20)[index >> 28] + 0x10 + index * 4)
+        HMODULE reach = GetModuleHandleW(L"haloreach.dll");
+        const uintptr_t base = reinterpret_cast<uintptr_t>(reach);
+        int slot = 0;
+        uintptr_t header = 0;
+        uint32_t index = 0;
+        uintptr_t table = 0;
+        int fileId = 0;
+        int fileType = 0;
+        bool ok = base && SafeReadPtr(base + 0xAFBE38, &slot, sizeof(slot)) &&
+                  SafeReadPtr(base + 0xC1A600, &header, sizeof(header)) && header &&
+                  SafeReadPtr(header + 4 + static_cast<uint64_t>(slot & 0xffff) * 8, &index, sizeof(index)) &&
+                  SafeReadPtr(base + 0x4E39F20 + static_cast<uint64_t>(index >> 28) * 8, &table, sizeof(table)) && table &&
+                  SafeReadPtr(table + 0xC + static_cast<uint64_t>(index) * 4, &fileId, sizeof(fileId)) &&
+                  SafeReadPtr(table + 0x10 + static_cast<uint64_t>(index) * 4, &fileType, sizeof(fileType));
+        const int want = s_requestedMapType.load();
+        if (ok && want != -1 && fileType != want) {
+            int* typeField = reinterpret_cast<int*>(table + 0x10 + static_cast<uint64_t>(index) * 4);
+            DWORD oldProtect = 0;
+            if (VirtualProtect(typeField, sizeof(int), PAGE_READWRITE, &oldProtect)) {
+                const int previous = *typeField;
+                *typeField = want;
+                VirtualProtect(typeField, sizeof(int), oldProtect, &oldProtect);
+                NOBLE_INFO("main: map declares game type 0x{:X}; mounted it as the launch requested 0x{:X}", previous,
+                           want);
+            }
+        }
+    }
+    return result;
 }
 
 // The map state tick (haloreach+0x40A008) is where "loading_map" becomes "running". It reads a game-type integer
@@ -1115,17 +1173,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         if (fs::is_regular_file(infoSrc, infoEc)) {
             std::ifstream infoIn(infoSrc, std::ios::binary);
             std::vector<uint8_t> infoBytes((std::istreambuf_iterator<char>(infoIn)), std::istreambuf_iterator<char>());
-            // Forcing a Firefight canvas to "multiplayer" gets the launch accepted, but the session it produces has
-            // no Forge palette and loops the round - the engine dies mid-load when the mod's own map is served.
-            // Until the mod-map manifest is fed to the engine the way MCC does it, leave those canvases alone so
-            // they keep running as Firefight (where they work).
-            wchar_t forceEnv[8] = {};
-            const bool forceMp = GetEnvironmentVariableW(L"NOBLE_MOD_FORCE_MP", forceEnv, 8) > 0 && forceEnv[0] != L'0';
-            const bool firefightCanvas = !forceMp && infoBytes.size() > 0x44 && infoBytes[0x42] == 0x04;
-            if (firefightCanvas) {
-                NOBLE_INFO("main: '{}' is a Firefight canvas; leaving its map info alone (play it as Firefight)", launchMap);
-            }
-            if (!firefightCanvas && infoBytes.size() > 0x44 && (infoBytes[0x42] != 0x00 || (infoBytes[0x43] & 0x40) == 0)) {
+            // Firefight canvases are patched too: the engine's map loader is aligned with the launch's requested game
+            // type while it loads (see MapParseHook), so a mod map built on a Firefight canvas mounts in Forge.
+            if (infoBytes.size() > 0x44 && (infoBytes[0x42] != 0x00 || (infoBytes[0x43] & 0x40) == 0)) {
                 const uint8_t stockType = infoBytes[0x42];
                 infoBytes[0x42] = 0x00;                                              // multiplayer engine type
                 infoBytes[0x43] = static_cast<uint8_t>(infoBytes[0x43] | 0x40);      // multiplayer map flag
@@ -1351,6 +1401,12 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     noble::HookManager::InstallHook(reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(loader->GetModuleHandle()) + 0xC390),
                                     reinterpret_cast<void*>(&EngineMainLoopHook),
                                     reinterpret_cast<void**>(&s_origEngineMainLoop), "trace_engine_main_loop");
+    noble::HookManager::InstallHook(
+        reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(loader->GetModuleHandle()) + 0x31204),
+        reinterpret_cast<void*>(&MapParseHook), reinterpret_cast<void**>(&s_origMapParse), "trace_map_parse");
+    noble::HookManager::InstallHook(
+        reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(loader->GetModuleHandle()) + 0x141C0),
+        reinterpret_cast<void*>(&MapLoadFullHook), reinterpret_cast<void**>(&s_origMapLoadFull), "trace_map_load");
     {
         wchar_t stateEnv[8] = {};
         if (GetEnvironmentVariableW(L"NOBLE_TRACE_MAP_STATE", stateEnv, 8) > 0 && stateEnv[0] != L'0') {

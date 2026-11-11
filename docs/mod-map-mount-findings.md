@@ -1,58 +1,60 @@
-# Mod map mounting: what blocks Forge on a Firefight canvas
+# Mod map mounting: why the AI Battleground maps did not run
 
-Findings from the 2026-11-10 session (Halo: Reach, `haloreach.dll`, image base 0x180000000).
+## The failure
 
-## What already works
+Installation 04 AI Battleground (`cex_ff_halo`) and Glacier AI Battleground (`ff60_icecave`) loaded their map,
+built the palette (26,936 tags, `ltom` + `glum` present) and were accepted (EngineEvent reason 0), then the engine's
+launch routine unwound and the client sat on the loading screen. No exception, no dump.
 
-- VFS serves a mod's own map: `maps/<scenario>_normal.map` for the engine's `maps/<scenario>.map` request
-  (`src/vfs/VFS.cpp`). Without this every mod ran on MCC's stock map.
-- A mod's own `haloreach.dll` ("modded haloreach.dll (REQUIRED)") is loaded when it is the installed build
-  (`src/main.cpp`), so the author's patches are present.
-- `ModCatalog` parses MCC's manifest fields (`ValidMultiplayerObjectTypes`, `MapDefaultPrimaryWeaponForge`,
-  the JSON folder as game category).
-- `<scenario>.mapinfo` byte `+0x42` is the map's game-engine type: `0x00` multiplayer, `0x04` Firefight,
-  `0x08` campaign; `+0x43` carries mode flags (`|= 0x40` = multiplayer). `NOBLE_MOD_FORCE_MP=1` patches a mod
-  map's entry.
-- Firefight canvases keep `kMainMenuMapId` (1035) in the launch block instead of a game-mode tag.
+## Root cause
 
-With those, a Forge launch of Installation 04 (cex_ff_halo) finally takes the multiplayer load path:
+The engine's map loader `FUN_1800141c0` (RVA `0x141C0`) does, in order:
 
-```
-ElitePack: cache step call 1 (tags 0x7FFFC5DCDA40, cache 0x7FF3EE4BA0D0)
-SharedTagCache: palette step on tag table 0x7FFFC5DCDA40: 26936 tag(s)
-SharedTagCache: 153 tag group(s): ... ltom ... glum ...
-EngineEvent: reason=0
-```
+1. `FUN_180031204` (RVA `0x31204`) opens and parses the cache file. This always succeeded (returned 1).
+2. It compares the requested map id/type with the *loaded map header's* own id/type:
+   `headerId == arg2 || arg2 == -1` and `headerType == arg3 || arg3 == -1`.
+3. Only if those match does it load; otherwise it returns 0 and the launch unwinds.
 
-(`ltom` = multiplayer_object_type_list, `glum` = multiplayer_globals: the map does carry the Forge data.)
-
-## The remaining fault
+Measured with a hook on the parse step (inside the loader, before the comparison):
 
 ```
-exception 0xC0000005 (read) at haloreach+0x10DB1B
-AV parameter: read address 0x748
+stock cex_ff_halo:  header id 0x0  type 0x2760   requested type 0x2760   -> loads
+mod   cex_ff_halo:  header id 0x0  type 0x7D2    requested type 0x2760   -> rejected
 ```
 
-Ghidra decompiles the containing function (`FUN_18010da70`) as:
+So the mod's map declares the game type of the canvas it was built on (`0x7D2` = Firefight), while a Forge or
+Firefight launch asks for `0x2760`. MCC's manifest supplies that mapping; a raw workshop map does not.
 
-```c
-lVar12 = *(longlong *)((longlong)ThreadLocalStoragePointer + _tls_index * 8);
-iVar7  = *(int *)(*(longlong *)(lVar12 + 0x20) + 400);
-sVar1  = (short)(iVar7 / 5);
-sVar6  = (short)iVar7 + sVar1 * -5;
-if ((-1 < sVar6) && (sVar6 < 0x10)) {
-    if (iVar7 == 0xf) uVar10 = *(uint *)(DAT_184e30388 + 0x7e8);
-    else              uVar10 = *(uint *)((longlong)sVar1 * 0x34 + 0x748 + DAT_184e30388);
-}
+## The fix
+
+`src/main.cpp`, `MapParseHook` + `MapLoadFullHook`:
+
+- Hook `0x141C0` to capture the requested type (`arg3`) of the load in progress.
+- Hook `0x31204` (the parse step): after it returns, resolve the loaded header record
+  (`index = *(u32*)(DAT_180c1a600 + 4 + (DAT_180afbe38 & 0xffff) * 8)`, record at
+  `((&DAT_184e39f20)[index >> 28] + index * 4)`), and if `headerType != requested` write the requested type into the
+  header's `+0x10` field before the loader compares them.
+
+That happens between the parse and the comparison, so the engine's own check passes and the map mounts normally.
+For maps whose declared type already matches (Forge World, Boneyard, all stock maps) nothing is written.
+
+Also required for these maps: `<scenario>.mapinfo` is patched to multiplayer for Forge launches (it previously was
+skipped for Firefight canvases, and the launch was refused with "map and game incompatible").
+
+## Verification
+
+```
+Installation 04 (Forge): session STARTED   (map declares 0x7D2, mounted as 0x2760)
+Glacier        (Forge): session STARTED
+Forge World    (Forge): session STARTED
+Boneyard       (Forge): session STARTED
 ```
 
-`DAT_184e30388` (RVA 0x4E30388) is **null**, so the read lands at 0x748. Its layout — a 0x34-byte stride,
-0x748 base, index < 0x10 — is a team/score array inside the **game engine globals**. So the crash means no
-multiplayer game engine instance was created for this launch: the map is still Firefight-typed where the engine
-picks its game engine, even though the launch block and the map info say multiplayer.
+## Tools in the repo
 
-## Next step
-
-Find where the engine selects the game engine (scenario/map type), and either force the multiplayer selection
-for a mod map whose manifest category is multiplayer, or patch the scenario's type inside the mod's `.map`
-(its own `map_type` field — locating it needs the tag index, not a byte poke).
+- `tools/ghidra/{DumpAt,Callers,Xrefs,Vtable,FindString,DataAround}.java` — headless scripts used for every
+  decompilation here (`DUMP_RVA=0x... analyzeHeadless ... -postScript DumpAt.java`).
+- `tools/hdr_diff.py`, `tools/hdr_dump.py`, `tools/find_type_field.py`, `tools/compare_mod_headers.py`,
+  `tools/diff_two_mods.py`, `tools/find_scenario_paths.py` — map header/asset comparisons.
+- Runtime switches: `NOBLE_MOD_FORCE_MP`, `NOBLE_SCENARIO_DUMP`, `NOBLE_TAG_MISS_TRACE`, `NOBLE_MAP_READ_TRACE`,
+  `NOBLE_TRACE_MAP_STATE`, `NOBLE_STALL_DUMP`, `-no-mod-dll`, `-no-elite-pack`.

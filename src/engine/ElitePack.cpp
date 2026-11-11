@@ -171,7 +171,26 @@ uint8_t __fastcall MapLoadHook(void* a1, void* a2, void* a3, LoadRequest* req) {
     if (!s_ready || !req || !req->mapName || req->extraCount != 0) {
         if (req) NOBLE_INFO("ElitePack: not added (map {}, extra caches already {})",
                             req->mapName ? req->mapName : "?", req->extraCount);
+        if (req) {
+            const uint8_t result = s_mapLoad(a1, a2, a3, req);
+            char line[224];
+            std::snprintf(line, sizeof(line), "map load (passthrough): id 0x%X type 0x%X '%s' -> %u",
+                          static_cast<unsigned>(reinterpret_cast<uintptr_t>(a2)),
+                          static_cast<unsigned>(reinterpret_cast<uintptr_t>(a3)), req->mapName, result);
+            NOBLE_INFO("{}", line);
+            return result;
+        }
         return s_mapLoad(a1, a2, a3, req);
+    }
+    // The loader (haloreach+0x141C0) rejects a map whose own header id/type disagrees with these two arguments
+    // (it compares them against the loaded header at +0xC and +0x10, and accepts -1 as "any"). Log them, plus the
+    // verdict, so a mod map that fails to load shows which side disagrees.
+    {
+        char line[192];
+        std::snprintf(line, sizeof(line), "ElitePack: map load request (mapId 0x%X, type 0x%X) for '%s'",
+                      static_cast<unsigned>(reinterpret_cast<uintptr_t>(a2)),
+                      static_cast<unsigned>(reinterpret_cast<uintptr_t>(a3)), req->mapName);
+        NOBLE_INFO("{}", line);
     }
     std::string name = req->mapName;
     const size_t slash = name.find_last_of("\\/");
@@ -187,6 +206,52 @@ uint8_t __fastcall MapLoadHook(void* a1, void* a2, void* a3, LoadRequest* req) {
     s_relocPending = false;
     NOBLE_INFO("ElitePack: map load returned {} (pack {}, {} adapted resource calls so far)", ok,
                s_loaded ? "loaded" : "not loaded", s_adaptedCalls.load());
+    if (ok == 0) {
+        // The loader compares the requested id/type with the loaded map header's own values; log both sides so a
+        // rejected map shows exactly which field disagrees.
+        static const auto readMem = [](uintptr_t address, void* out, size_t size) -> bool {
+            __try {
+                std::memcpy(out, reinterpret_cast<const void*>(address), size);
+                return true;
+            } __except (EXCEPTION_EXECUTE_HANDLER) {}
+            return false;
+        };
+        int slot = 0;
+        uintptr_t base = 0;
+        const bool gotSlot = readMem(s_base + 0xAFBE38, &slot, sizeof(slot));
+        const bool gotBase = readMem(s_base + 0xC1A600, &base, sizeof(base));
+        {
+            char dbg[192];
+            std::snprintf(dbg, sizeof(dbg), "ElitePack: header probe slot ok=%d (%d) base ok=%d (0x%llX)", gotSlot, slot,
+                          gotBase, static_cast<unsigned long long>(base));
+            NOBLE_WARN("{}", dbg);
+        }
+        if (gotSlot && gotBase && base) {
+            uint32_t index = 0;
+            uintptr_t table = 0;
+            const bool gotIndex = readMem(base + 4 + static_cast<uint64_t>(slot & 0xffff) * 8, &index, sizeof(index));
+            const bool gotTable = gotIndex &&
+                readMem(s_base + 0x4E39F20 + static_cast<uint64_t>(index >> 28) * 8, &table, sizeof(table));
+            {
+                char dbg[192];
+                std::snprintf(dbg, sizeof(dbg), "ElitePack: header probe index ok=%d (0x%X) table ok=%d (0x%llX)", gotIndex,
+                              index, gotTable, static_cast<unsigned long long>(table));
+                NOBLE_WARN("{}", dbg);
+            }
+            if (gotIndex && gotTable && table) {
+                int fileId = 0;
+                int fileType = 0;
+                readMem(table + 0xC + static_cast<uint64_t>(index) * 4, &fileId, sizeof(fileId));
+                readMem(table + 0x10 + static_cast<uint64_t>(index) * 4, &fileType, sizeof(fileType));
+                char line[224];
+                std::snprintf(line, sizeof(line),
+                              "ElitePack: map header says id 0x%X type 0x%X (requested id 0x%X type 0x%X)", fileId,
+                              fileType, static_cast<unsigned>(reinterpret_cast<uintptr_t>(a2)),
+                              static_cast<unsigned>(reinterpret_cast<uintptr_t>(a3)));
+                NOBLE_WARN("{}", line);
+            }
+        }
+    }
     {
         wchar_t dumpEnv[8] = {};
         if (GetEnvironmentVariableW(L"NOBLE_SCENARIO_DUMP", dumpEnv, 8) > 0 && dumpEnv[0] == L'3') {
