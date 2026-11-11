@@ -7,24 +7,34 @@
 
 namespace noble::mvar {
 
+inline uint16_t ByteSwap16(uint16_t v) { return static_cast<uint16_t>((v << 8) | (v >> 8)); }
+inline uint32_t ByteSwap32(uint32_t v) {
+    return ((v & 0xFF) << 24) | ((v & 0xFF00) << 8) | ((v >> 8) & 0xFF00) | ((v >> 24) & 0xFF);
+}
+
+struct Author {
+    uint64_t timestamp = 0;
+    uint64_t xuid = 0;
+    std::string name;
+    bool onlineId = false;
+};
+
 struct MapVariantHeader {
-    std::string signature;          // "mvar"
+    std::string signature;
     uint32_t chunkSize = 0;
     uint16_t chunkVersion = 0;
     uint16_t chunkFlags = 0;
     int32_t contentType = -1;
     uint32_t fileLength = 0;
+    uint64_t unk08 = 0, unk10 = 0, unk18 = 0, unk20 = 0;
     int32_t activity = -1;
     int32_t gameMode = -1;
     int32_t engine = -1;
     uint32_t mapId = 0;
     uint32_t engineCategoryIndex = 0;
-    std::wstring title;
-    std::wstring description;
-    uint32_t secondMapId = 0;
-    float boundsMin[3] = {};
-    float boundsMax[3] = {};
-    size_t headerBits = 0;          // where the object data starts, for the writer to repack
+    size_t headerBits = 0;      // where the author blocks begin
+    size_t authorsEndBits = 0;  // where the title/description begin
+    Author createdBy, modifiedBy;
 };
 
 struct MapVariant {
@@ -33,12 +43,8 @@ struct MapVariant {
     MapVariantHeader header;
 };
 
-// Reads the "mvar" chunk out of an MCC map variant file (the BLF container with "chdr" at +0x30 and "mvar" at +0x2F0)
-// and decodes its header. This is the first piece of the variant writer: the header has to be understood before the
-// object list can be re-emitted.
+// Decodes the "mvar" chunk of an MCC map variant: header, authors, and (next) the forge labels and object list.
 MapVariant ReadMapVariant(const std::filesystem::path& path);
-
-// Human-readable summary, for the "-mvar-parse" diagnostic.
 std::string Describe(const MapVariant& variant);
 
 } // namespace noble::mvar
