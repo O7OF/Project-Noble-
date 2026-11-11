@@ -301,6 +301,12 @@ static uint64_t __fastcall Hook_EncodeMessage(void* table, void* stream, int32_t
         NOBLE_INFO("LobbyPatches: [{} pid {}] SEND msg {} ({}) size {}", RefuseRole(), GetCurrentProcessId(), type,
                    SessionMessageName(type), size);
     }
+    // Session teardown messages: who asked for it. A guest that leaves on its own (msg 12) or disbands (14) used to be
+    // logged only as an effect; the caller RVA says which engine path decided it.
+    if (type == 12 || type == 14 || type == 15) {
+        NOBLE_WARN("LobbyPatches: [{} pid {}] SEND msg {} ({}) from hr+0x{:X} - session teardown requested here",
+                   RefuseRole(), GetCurrentProcessId(), type, SessionMessageName(type), CallerRva(_ReturnAddress()));
+    }
     return s_originalEncodeMessage ? s_originalEncodeMessage(table, stream, type, size, data) : 0;
 }
 
