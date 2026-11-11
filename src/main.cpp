@@ -776,6 +776,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         NOBLE_ERROR("Failed to initialize MinHook.");
         return 1;
     }
+    // Watch the engine's file writes: a map variant save that ends up zero bytes still hands its buffer to WriteFile,
+    // and that buffer is what a working save needs (see MvarDump.cpp).
+    (void)noble::InstallWriteWatch();
     // Trace who ends the process: a silent engine exit during a world load leaves no dump and no log line.
     noble::HookManager::InstallHook(reinterpret_cast<void*>(&ExitProcess),
                                     reinterpret_cast<void*>(&ExitProcessHook),
@@ -1036,6 +1039,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     int engineCommandAt = -1;
     int forgeSaveAt = -1;   // dev: run the Forge "save map variant" path N seconds into the match
     std::vector<int> mvarDumpTimes;   // dev: memory dumps of the loaded map variant at these seconds
+    int mvarDumpEvery = 0;            // dev: dump repeatedly, this many seconds apart (find the live map buffer)
     std::string connectAddress = "";
     std::string connectSessionId = "";
     std::string connectSessionToken = "";
@@ -1107,6 +1111,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             } else if (arg == L"-third-person-mode" && i + 1 < numArgs) {
                 thirdPersonMode = _wtoi(argvW[++i]);
                 thirdPerson = true;
+            } else if (arg == L"-mvar-dump-every") {
+                mvarDumpEvery = _wtoi(argvW[++i]);
             } else if (arg == L"-mvar-dump-at") {
                 const std::wstring spec = argvW[++i];
                 size_t from = 0;
@@ -1264,6 +1270,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     args += L" -difficulty " + std::to_wstring(launchDifficulty);
     if (!customVariant.empty()) args += L" -variant \"" + toWide(customVariant) + L"\"";
     if (!customMvar.empty()) args += L" -mvar \"" + toWide(customMvar) + L"\"";
+    // Keep the map-variant memory dump running after the menu relaunches into a match.
+    if (mvarDumpEvery > 0) args += L" -mvar-dump-every " + std::to_wstring(mvarDumpEvery);
     if (launchSkulls != 0) args += L" -skulls " + std::to_wstring(launchSkulls);
     if (!modFolder.empty()) args += L" -mod \"" + modFolder.wstring() + L"\"";
     if (!mapOverride.empty()) args += L" -map-override \"" + mapOverride.wstring() + L"\"";
@@ -1728,6 +1736,19 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         }).detach();
     }
 
+    if (mvarDumpEvery > 0) {
+        std::thread([mvarDumpEvery] {
+            int index = 0;
+            while (true) {
+                std::this_thread::sleep_for(std::chrono::seconds(mvarDumpEvery));
+                const std::filesystem::path out = noble::ReachHost::Get().GetDataDir() / "mvar_dump" /
+                                                  ("t" + std::to_string(++index));
+                const int found = noble::DumpMapVariantCandidates(out);
+                NOBLE_WARN("main: -mvar-dump-every snapshot {} -> {} candidate(s)", index, found);
+            }
+        }).detach();
+    }
+
     if (!mvarDumpTimes.empty()) {
         std::thread([times = mvarDumpTimes] {
             int previous = 0;
@@ -1740,6 +1761,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
                     noble::ReachHost::Get().GetDataDir() / "mvar_dump" / std::to_string(at);
                 const int found = noble::DumpMapVariantCandidates(out);
                 NOBLE_WARN("main: -mvar-dump-at {} found {} candidate(s) in '{}'", at, found, out.string());
+                (void)noble::InstallWriteWatch();
             }
         }).detach();
     }

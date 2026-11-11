@@ -759,6 +759,24 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
                 SafeCallVariantInit(m_hModule, parsedVariant.data());
                 char status = 0;
                 if (SafeCallMapVariantParse(m_hModule, mvarData.data(), 0x7329, parsedVariant.data(), &status) && status != 0) {
+                    // Dev: keep the file and the structure the engine parsed it into, so the mapping between them can
+                    // be worked out (that is what a save has to invert - the engine's own save produces no bytes here).
+                    if (GetEnvironmentVariableW(L"NOBLE_MVAR_PAIR", nullptr, 0) || GetCommandLineW() != nullptr) {
+                        static int s_pair = 0;
+                        if (s_pair < 8) {
+                            const std::filesystem::path out = std::filesystem::path("data") / "mvar_pair";
+                            std::error_code ec;
+                            std::filesystem::create_directories(out, ec);
+                            char tag[32] = {};
+                            std::snprintf(tag, sizeof(tag), "pair_%02d", ++s_pair);
+                            std::ofstream(out / (std::string(tag) + "_file.bin"), std::ios::binary)
+                                .write(reinterpret_cast<const char*>(mvarData.data()), static_cast<std::streamsize>(mvarData.size()));
+                            std::ofstream(out / (std::string(tag) + "_parsed.bin"), std::ios::binary)
+                                .write(reinterpret_cast<const char*>(parsedVariant.data()), static_cast<std::streamsize>(parsedVariant.size()));
+                            NOBLE_INFO("BlamEngine: map variant pair '{}' written (file {} bytes, parsed {} bytes)", tag,
+                                       mvarData.size(), parsedVariant.size());
+                        }
+                    }
                     memcpy(&block[0x1D308], parsedVariant.data(), 0xE800);
                     uint32_t mvarMapId = *reinterpret_cast<uint32_t*>(&block[0x1D5C0]);
                     *reinterpret_cast<uint32_t*>(&block[0x10]) = mvarMapId;

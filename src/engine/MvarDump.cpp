@@ -1,5 +1,6 @@
 #include "MvarDump.hpp"
 #include "common/Logger.hpp"
+#include "hooks/HookManager.hpp"
 
 #include <windows.h>
 #include <cstring>
@@ -9,11 +10,83 @@
 
 namespace noble {
 
+// The engine's save leaves a zero-byte temp behind, so watch what it actually writes: hook WriteFile in this process,
+// and when the engine hands over a map-variant-sized buffer for a file under the profile, keep a copy. That tells us
+// whether the bytes exist at the point of writing (then the failure is only the file) or never get produced.
+namespace {
+using WriteFileFn = BOOL(WINAPI*)(HANDLE, LPCVOID, DWORD, LPDWORD, LPOVERLAPPED);
+WriteFileFn s_origWriteFile = nullptr;
+
+std::string HandlePath(HANDLE h) {
+    wchar_t buf[MAX_PATH * 4] = {};
+    const DWORD len = GetFinalPathNameByHandleW(h, buf, static_cast<DWORD>(std::size(buf)), FILE_NAME_NORMALIZED);
+    if (len == 0 || len >= std::size(buf)) return {};
+    char out[MAX_PATH * 4] = {};
+    WideCharToMultiByte(CP_UTF8, 0, buf, -1, out, sizeof(out) - 1, nullptr, nullptr);
+    return out;
+}
+
+// Capture itself: plain C++ (ofstream unwinds), so it must stay outside the __try below.
+static void WriteCaptureFile(HANDLE hFile, const void* buffer, DWORD nBytes, BOOL ok) {
+    const std::string path = hFile ? HandlePath(hFile) : std::string();
+    const std::filesystem::path out = std::filesystem::path("data") / "mvar_write";
+    std::error_code ec;
+    std::filesystem::create_directories(out, ec);
+    static int index = 0;
+    char name[32] = {};
+    std::snprintf(name, sizeof(name), "write_%03d.bin", ++index);
+    std::ofstream file(out / name, std::ios::binary | std::ios::trunc);
+    file.write(static_cast<const char*>(buffer), nBytes);
+    file.close();
+    const bool container = nBytes >= 0x300 && std::memcmp(static_cast<const unsigned char*>(buffer), "_blf", 4) == 0;
+    NOBLE_INFO("MvarWrite: {} byte(s) to '{}' (ok={}, container={}) -> '{}/{}'", nBytes, path, ok ? 1 : 0,
+               container ? 1 : 0, out.string(), name);
+}
+
+static void CaptureWrite(HANDLE hFile, LPCVOID lpBuffer, DWORD nBytes, BOOL ok) {
+    // Only raw reads here: a bad pointer must not take the process down, and SEH cannot unwind C++ objects.
+    int container = 0;
+    __try {
+        const unsigned char* bytes = static_cast<const unsigned char*>(lpBuffer);
+        container = (nBytes >= 0x300 && std::memcmp(bytes, "_blf", 4) == 0) ? 1 : 0;
+        if (!container && nBytes < 0x7000) return;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return;
+    }
+    WriteCaptureFile(hFile, lpBuffer, nBytes, ok);
+}
+
+BOOL WINAPI HookWriteFile(HANDLE hFile, LPCVOID lpBuffer, DWORD nBytes, LPDWORD lpWritten, LPOVERLAPPED ov) {
+    const BOOL ok = s_origWriteFile(hFile, lpBuffer, nBytes, lpWritten, ov);
+    // No C++ objects before this point would matter: the capture lives in a helper the SEH wrapper calls.
+    if (nBytes >= 0x4000 && lpBuffer) CaptureWrite(hFile, lpBuffer, nBytes, ok);
+    return ok;
+}
+} // namespace
+
+bool InstallWriteWatch() {
+    if (s_origWriteFile) return true;
+    HMODULE kernel32 = GetModuleHandleW(L"kernel32.dll");
+    if (!kernel32) return false;
+    void* target = reinterpret_cast<void*>(GetProcAddress(kernel32, "WriteFile"));
+    if (!target) return false;
+    if (!HookManager::InstallHook(target, reinterpret_cast<void*>(&HookWriteFile),
+                                  reinterpret_cast<void**>(&s_origWriteFile), "trace_write_file")) {
+        NOBLE_WARN("MvarWrite: could not hook WriteFile");
+        return false;
+    }
+    NOBLE_INFO("MvarWrite: watching WriteFile for map variant buffers");
+    return true;
+}
+
+
 // Finds the loaded map variant inside the running process.
 //
 // A map variant is a BLF container: "_blf" at +0x00, "chdr" at +0x30 and the "mvar" body at +0x2F0, then the variant
 // itself (0x7329 bytes upward). The engine has to keep the one it loaded (Forge re-saves it), so walking our own
 // committed memory for that signature finds it whatever structure the engine wraps it in.
+bool InstallWriteWatch();
+
 int DumpMapVariantCandidates(const std::filesystem::path& outDir) {
     std::error_code ec;
     std::filesystem::create_directories(outDir, ec);
