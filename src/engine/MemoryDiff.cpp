@@ -117,7 +117,10 @@ void StartPageScan(int seconds, std::filesystem::path outDir) {
                 }
                 if (!changed.empty()) {
                     char name[64] = {};
-                    std::snprintf(name, sizeof(name), "scan_%03d.txt", index);
+                    // Tag with the process id: the launcher and the match child both scan and would otherwise
+                    // overwrite each other's reports.
+                    std::snprintf(name, sizeof(name), "scan_%lu_%03d.txt",
+                                  static_cast<unsigned long>(GetCurrentProcessId()), index);
                     std::ofstream report(outDir / name, std::ios::trunc);
                     size_t runStart = 0;
                     int runs = 0, blobs = 0;
@@ -130,7 +133,8 @@ void StartPageScan(int seconds, std::filesystem::path outDir) {
                         // Only keep small runs: a placement lands in a data structure, while the big animated
                         // buffers (audio, render targets) would otherwise write hundreds of megabytes per scan.
                         if (bytes <= 0x40000 && blobs < 128) {
-                            std::snprintf(name, sizeof(name), "scan_%03d_%llX.bin", index,
+                            std::snprintf(name, sizeof(name), "scan_%lu_%03d_%llX.bin",
+                                          static_cast<unsigned long>(GetCurrentProcessId()), index,
                                           static_cast<unsigned long long>(base));
                             std::ofstream blob(outDir / name, std::ios::binary | std::ios::trunc);
                             blob.write(reinterpret_cast<const char*>(base), static_cast<std::streamsize>(bytes));

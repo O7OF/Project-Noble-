@@ -1,4 +1,5 @@
 #include "BlamEngine.hpp"
+#include "engine/ForgePlacement.hpp"
 #include "EmbeddedBlocks.hpp"
 #include "engine/VariantRules.hpp"
 #include "ReachHost.hpp"
@@ -478,6 +479,7 @@ bool BlamEngine::TriggerMapVariantSave() {
 bool BlamEngine::Initialize(const ReachInstallInfo& installInfo, HMODULE hModule, const ReachExports& exports, const EngineHostContext& context) {
     m_hModule = hModule;
     InstallMapVariantCapture();
+    InstallForgePlacementWatch(m_hModule);
     s_active = this;
     if (m_isInitialized) return true;
 
