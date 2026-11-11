@@ -569,7 +569,12 @@ std::filesystem::path PauseMenu::SaveForgeMapVariant(const std::string& name) {
                     std::string buildDetail;
                     if (noble::mvar::BuildVariantFromChunk(liveChunk, tmpl, name, base, buildDetail)) {
                         std::string applyError;
+
                         const int added = noble::mvar::ApplyWorldPlacements(base, placements, applyError);
+
+                        NOBLE_INFO("PauseMenu: {} placement(s) captured, {} encoded{}", placements.size(), added,
+
+                                   (added < static_cast<int>(placements.size()) && !applyError.empty()) ? ": " + applyError : std::string());
                         std::error_code dirEc;
                         std::filesystem::create_directories(library, dirEc);
                         const fs::path placedOut = library / (noble::mvar::SanitizeVariantName(name) + ".json");
