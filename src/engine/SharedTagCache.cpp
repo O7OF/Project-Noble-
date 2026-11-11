@@ -409,6 +409,58 @@ bool SharedTagCache::Initialize(HMODULE hReachDll, const std::filesystem::path& 
     return s_isMounted;
 }
 
+
+// Probe for the scenario tag's data (NOBLE_SCENARIO_DUMP=3). Called after the map load, when the tag index is live.
+void SharedTagCache::DumpScenarioTag(const char* when) {
+    static const auto readMem = [](uintptr_t ptr, void* out, size_t size) -> bool {
+        __try {
+            std::memcpy(out, reinterpret_cast<const void*>(ptr), size);
+            return true;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {}
+        return false;
+    };
+    uintptr_t header = 0;
+    if (!readMem(s_baseAddress + 0xC1A230, &header, sizeof(header)) || !header) {
+        NOBLE_WARN("scenario dump ({}): tag index header not readable", when);
+        return;
+    }
+    int32_t count = 0;
+    uint32_t baseOffset = 0;
+    if (!readMem(header + 0x430, &count, sizeof(count)) || !readMem(header + 0x434, &baseOffset, sizeof(baseOffset))) {
+        NOBLE_WARN("scenario dump ({}): header fields not readable", when);
+        return;
+    }
+    const uint32_t selector = baseOffset >> 28;
+    uintptr_t tablePtr = 0;
+    if (!readMem(s_baseAddress + 0x4E39F20 + selector * 8, &tablePtr, sizeof(tablePtr)) || !tablePtr) {
+        NOBLE_WARN("scenario dump ({}): tag index base[{}] not readable", when, selector);
+        return;
+    }
+    NOBLE_WARN("scenario dump ({}): header 0x{:X} count {} baseOffset 0x{:X} selector {} table 0x{:X}", when, header,
+               count, baseOffset, selector, tablePtr);
+    for (int32_t i = 0; i < count; ++i) {
+        uint32_t fields[6] = {};
+        const uintptr_t entry = tablePtr + (static_cast<uint64_t>(baseOffset) + static_cast<uint64_t>(i) * 6) * 4;
+        if (!readMem(entry, fields, sizeof(fields))) continue;
+        if (fields[0] != 0x726E6373 && fields[0] != 0x73636E72) continue;   // 'scnr'
+        char line[256];
+        std::snprintf(line, sizeof(line), "scenario entry %d: %08X %08X %08X %08X %08X %08X", i, fields[0], fields[1],
+                      fields[2], fields[3], fields[4], fields[5]);
+        NOBLE_WARN("scenario dump ({}): {}", when, line);
+        for (int k = 0; k < 6; ++k) {
+            const uint64_t v = fields[k];
+            if (v < 0x10000) continue;
+            uint8_t bytes[16] = {};
+            if (readMem(static_cast<uintptr_t>(v), bytes, sizeof(bytes))) {
+                char hex[64];
+                for (int n = 0; n < 16; ++n) std::snprintf(hex + n * 3, 4, " %02X", bytes[n]);
+                NOBLE_WARN("scenario dump ({}):   field[{}]=0x{:X} as pointer:{}", when, k, v, hex);
+            }
+        }
+        break;
+    }
+}
+
 void SharedTagCache::Shutdown() {
     if (s_mappedView) {
         UnmapViewOfFile(s_mappedView);

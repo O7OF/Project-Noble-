@@ -30,6 +30,10 @@ public:
     static bool Initialize(HMODULE hReachDll, const std::filesystem::path& dataDir, const std::filesystem::path& workshopDir, const std::filesystem::path& reachDir = {});
     static void Shutdown();
 
+    // Diagnostic: find the scenario ('scnr') tag in the engine's live tag index and print its record plus any field
+    // that resolves as a pointer (NOBLE_SCENARIO_DUMP=3). Call after a map load.
+    static void DumpScenarioTag(const char* when);
+
     static bool IsMounted() { return s_isMounted; }
     static const std::filesystem::path& GetDonorMapPath() { return s_donorMapPath; }
     static uint32_t GetDonorTagCount() { return s_donorTagCount; }

@@ -187,6 +187,12 @@ uint8_t __fastcall MapLoadHook(void* a1, void* a2, void* a3, LoadRequest* req) {
     s_relocPending = false;
     NOBLE_INFO("ElitePack: map load returned {} (pack {}, {} adapted resource calls so far)", ok,
                s_loaded ? "loaded" : "not loaded", s_adaptedCalls.load());
+    {
+        wchar_t dumpEnv[8] = {};
+        if (GetEnvironmentVariableW(L"NOBLE_SCENARIO_DUMP", dumpEnv, 8) > 0 && dumpEnv[0] == L'3') {
+            SharedTagCache::DumpScenarioTag("after map load");
+        }
+    }
     return ok;
 }
 
