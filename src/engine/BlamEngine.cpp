@@ -277,17 +277,29 @@ bool BlamEngine::TrySerializeLiveMapVariant(std::vector<uint8_t>& outChunk) {
     if (!ReadEngineState(tlsBlock, engineState) || !engineState) return false;
 
     void* variant = static_cast<uint8_t*>(engineState) + 0x110F0;
-    // What the engine's own save does before serializing: initialise a map-variant struct and copy the live one into
-    // it. The copy is where the session state is committed, so serializing the raw pointer misses recent edits.
-    std::vector<uint8_t> committed(0x20000, 0);
-    void* source = variant;
-    if (CallVariantInit(m_hModule, committed.data()) && CallVariantCopy(m_hModule, committed.data(), variant, 1)) {
-        source = committed.data();
-    }
     std::vector<uint8_t> chunk(0x7028, 0);
-    if (!CallMapVariantSerialize(m_hModule, chunk.data(), source)) {
-        NOBLE_WARN("BlamEngine: serializing the live variant at {:p} faulted", source);
-        return false;
+    uint32_t rawPacked = 0;
+    if (CallMapVariantSerialize(m_hModule, chunk.data(), variant) && std::memcmp(chunk.data(), "mvar", 4) == 0) {
+        rawPacked = (static_cast<uint32_t>(chunk[0x20]) << 24) | (static_cast<uint32_t>(chunk[0x21]) << 16) |
+                    (static_cast<uint32_t>(chunk[0x22]) << 8) | chunk[0x23];
+    }
+
+    // What the engine's own save does before serializing: initialise a map-variant struct and copy the live one into
+    // it. Log both lengths: if they match, the copy is a no-op and the placements live somewhere else entirely.
+    std::vector<uint8_t> committed(0x20000, 0);
+    const bool initOk = CallVariantInit(m_hModule, committed.data());
+    const bool copyOk = initOk && CallVariantCopy(m_hModule, committed.data(), variant, 1);
+    uint32_t committedPacked = 0;
+    if (copyOk && CallMapVariantSerialize(m_hModule, chunk.data(), committed.data()) &&
+        std::memcmp(chunk.data(), "mvar", 4) == 0) {
+        committedPacked = (static_cast<uint32_t>(chunk[0x20]) << 24) | (static_cast<uint32_t>(chunk[0x21]) << 16) |
+                          (static_cast<uint32_t>(chunk[0x22]) << 8) | chunk[0x23];
+    }
+    NOBLE_INFO("BlamEngine: live variant probe: raw {} bytes, committed {} bytes (init {}, copy {})", rawPacked,
+               committedPacked, initOk, copyOk);
+    if (committedPacked == 0) {
+        if (rawPacked == 0) return false;
+        if (!CallMapVariantSerialize(m_hModule, chunk.data(), variant)) return false;
     }
 
     const auto be32 = [](const uint8_t* p) {

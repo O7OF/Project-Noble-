@@ -547,8 +547,16 @@ std::filesystem::path PauseMenu::SaveForgeMapVariant(const std::string& name) {
     // Direct path first: serialize the live session variant ourselves. It does not touch the save UI or the save
     // device, so it is the only source that works while the game is paused, and it carries the Forge edits.
     {
+        // Forge commits placements on simulation ticks, and the pause menu freezes the sim (game_speed 0). Let it run
+        // for a few frames so the live variant contains anything placed since the last tick, then freeze again.
+        if (BlamEngine::Active()) {
+            BlamEngine::Active()->ExecuteCommand("game_speed 1");
+            Sleep(150);
+        }
         std::vector<uint8_t> liveChunk;
-        if (BlamEngine::Active() && BlamEngine::Active()->TrySerializeLiveMapVariant(liveChunk)) {
+        const bool captured = BlamEngine::Active() && BlamEngine::Active()->TrySerializeLiveMapVariant(liveChunk);
+        if (BlamEngine::Active()) BlamEngine::Active()->ExecuteCommand("game_speed 0");
+        if (captured) {
             const fs::path tmpl = FindVariantTemplate(dataDir);
             if (!tmpl.empty()) {
                 std::string detail;

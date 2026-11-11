@@ -527,7 +527,18 @@ std::vector<ForgeMap> ScanForgeMaps() {
     std::error_code ec;
     int skipped = 0;
     for (const std::filesystem::path& folder : folders) {
-        for (const auto& entry : std::filesystem::directory_iterator(folder, ec)) {
+        // A saved variant exists twice: the JSON (source of truth) and the .mvar unpacked next to it for the engine.
+        // Walk the JSONs first and let them claim the stem, otherwise the stale .mvar can be listed and the saved
+        // variant is never seen (and never unpacked) until something else refreshes it.
+        std::vector<std::filesystem::directory_entry> entries;
+        for (const auto& entry : std::filesystem::directory_iterator(folder, ec)) entries.push_back(entry);
+        std::sort(entries.begin(), entries.end(), [](const auto& a, const auto& b) {
+            const bool aj = Lower(a.path().extension().wstring()) == L".json";
+            const bool bj = Lower(b.path().extension().wstring()) == L".json";
+            if (aj != bj) return aj;
+            return a.path().wstring() < b.path().wstring();
+        });
+        for (const auto& entry : entries) {
             if (!entry.is_regular_file(ec)) continue;
             const std::wstring ext = Lower(entry.path().extension().wstring());
             if (ext != L".mvar" && ext != L".json") continue;
