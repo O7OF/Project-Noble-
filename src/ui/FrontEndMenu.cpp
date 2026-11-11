@@ -8043,7 +8043,8 @@ void FrontEndMenu::RenderOverlayImpl(IDXGISwapChain* swapChain, bool clear) {
                 // picked purple was red in the match.
                 bool anyTeam = false;
                 for (const auto& player : ctx.st.lobbyRoster) anyTeam = anyTeam || player.team > 0;
-                if (anyTeam && !ctx.st.lobbyRoster.empty()) {
+                if (anyTeam && !ctx.st.lobbyRoster.empty() &&
+                    choice.mode != "campaign" && choice.mode != "firefight") {
                     std::wstring teams;
                     for (const auto& player : ctx.st.lobbyRoster) {
                         if (!teams.empty()) teams += L",";

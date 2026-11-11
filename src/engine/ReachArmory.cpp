@@ -1,6 +1,7 @@
 #include "ReachArmory.hpp"
 #include "ElitePack.hpp"
 #include "common/Logger.hpp"
+#include "network/NetworkTransport.hpp"
 #include "ui/FrontEndMenu.hpp"
 #include "EmbeddedBlocks.hpp"
 #include <sstream>
@@ -2674,11 +2675,38 @@ static bool CampaignKeepsStockMaterial() {
     return s_campaign;
 }
 
+// Reads haloreach.dll's live game_globals ([TLS + 0x48]) to identify Campaign ([+0x10] == 1) and
+// deterministic synchronous lockstep modes (Campaign, Firefight/Survival [+0x110EC] != 0, or Co-Op [+0x1EAB0] != 0).
+static bool ReadEngineModeFlagsSEH(uintptr_t base, bool* outIsCampaign, bool* outIsSynchronousSim) {
+    if (!base) return false;
+    __try {
+        const uint32_t tlsIdx = *reinterpret_cast<const uint32_t*>(base + 0xC17B18);
+        const uintptr_t tlsArray = *reinterpret_cast<const uintptr_t*>(
+            __readgsqword(0x58) + static_cast<uintptr_t>(tlsIdx) * 8u);
+        if (!tlsArray) return false;
+        const uint8_t* gameGlobals = *reinterpret_cast<const uint8_t* const*>(tlsArray + 0x48);
+        if (!gameGlobals) return false;
+        const uint8_t gameMode = gameGlobals[0x10];          // 1 = campaign, 2 = ui_shell, 3 = multiplayer
+        const uint8_t isSurvival = gameGlobals[0x110EC];     // non-zero in Firefight / Survival
+        const uint8_t isCooperative = gameGlobals[0x1EAB0];  // non-zero in Co-Op sessions
+        if (outIsCampaign) *outIsCampaign = (gameMode == 1);
+        if (outIsSynchronousSim) *outIsSynchronousSim = (gameMode != 3) || (isSurvival != 0) || (isCooperative != 0);
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
 void ReachArmory::SyncMatchLiveBipeds() {
     if (CampaignKeepsStockMaterial()) return;
     HMODULE hReach = GetModuleHandleW(L"haloreach.dll");
     if (!hReach) return;
     const uintptr_t base = reinterpret_cast<uintptr_t>(hReach);
+
+    bool liveCampaign = false;
+    bool liveSynchronousSim = false;
+    const bool hasLiveFlags = ReadEngineModeFlagsSEH(base, &liveCampaign, &liveSynchronousSim);
+    if (hasLiveFlags && liveCampaign) return;
 
     const ReachArmorySelection sel = GetSelection();
     // Palette colours (and stock 0..4 visors) travel in the player's appearance record, and the engine
@@ -2713,6 +2741,12 @@ void ReachArmory::SyncMatchLiveBipeds() {
             sel.accentCustom ? sel.accentRgb.data() : nullptr,
             nullptr,   // undersuit: never painted (see WriteColorsAndSuit)
             customVisor ? visFloats : nullptr);
+    }
+
+    // Never mutate deterministic object-pool datums locally in networked synchronous lockstep modes
+    // (Campaign / Firefight Co-Op), as asymmetric game_state object writes trigger CRC Out-Of-Sync.
+    if (NetworkTransport::Get().IsActive() && (!hasLiveFlags || liveSynchronousSim)) {
+        return;
     }
 
     const float slot0[3] = { sel.primaryRgb[0], sel.primaryRgb[1], sel.primaryRgb[2] };

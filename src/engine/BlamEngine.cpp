@@ -963,6 +963,18 @@ bool BlamEngine::ExecuteCommand(const std::string& command) {
     return true;
 }
 
+static bool ReadEngineLaunchMapStateSEH(HMODULE hMod, int32_t* outLaunchState, int32_t* outMapState) {
+    if (!hMod) return false;
+    __try {
+        const uintptr_t base = reinterpret_cast<uintptr_t>(hMod);
+        if (outLaunchState) *outLaunchState = *reinterpret_cast<const int32_t*>(base + 0xC1A114);
+        if (outMapState) *outMapState = *reinterpret_cast<const int32_t*>(base + 0xC1A118);
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
 bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMode, int difficulty, uint64_t skulls,
                            const std::string& customMvarPath, const std::string& customVariantPath,
                            const std::string& connectAddress, int expectedPeers) {
@@ -1070,7 +1082,7 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
     const bool isGuest = !connectAddress.empty();
     if (!isGuest) {
         const bool isOnlineHost = noble::NetworkTransport::Get().IsActive() && noble::NetworkTransport::Get().IsHost();
-        const bool settleLonger = (gameModeTag == 1 || gameModeTag == 3); // campaign co-op / Forge
+        const bool settleLonger = (gameModeTag == 1 || gameModeTag == 3 || gameModeTag == 1035); // campaign co-op / Forge / Firefight
         const int peersToWaitFor = (isOnlineHost && expectedPeers > 0) ? expectedPeers : 0;
 
         std::thread([this, isOnlineHost, peersToWaitFor, settleLonger, gameModeTag]() {
@@ -1129,14 +1141,34 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
             std::thread([this]() {
                 // Post Command 10 promptly so the engine loads scenario map tags and initializes the network session
                 std::this_thread::sleep_for(std::chrono::milliseconds(500));
-                if (!m_engineInstance || !m_fnProcessEvent) return;
+                if (!m_isGameRunning || !m_engineInstance || !m_fnProcessEvent) return;
+
+                int32_t launchState = -1;
+                int32_t mapState = -1;
+                if (ReadEngineLaunchMapStateSEH(m_hModule, &launchState, &mapState) &&
+                    (launchState >= 11 || mapState >= 2)) {
+                    NOBLE_INFO("BlamEngine: [GUEST Campaign] Engine already running via host session sync (launch={}, map={}); skipping manual PostCommand(10/11).",
+                               launchState, mapState);
+                    return;
+                }
+
                 NOBLE_INFO("BlamEngine: [GUEST Campaign] Posting Command 10 (Event: Start) via vtbl+0x18...");
                 int32_t status10 = m_fnProcessEvent(m_engineInstance, 10, 0);
                 NOBLE_INFO("BlamEngine: [GUEST Campaign] PostCommand(10) returned 0x{:X}", status10);
 
-                // Wait for map loading to finish before posting Command 11 (simulation start)
+                // Wait for map loading to finish OR for host session sync to start simulation directly.
+                // Note: On Campaign maps, LoadProgress can remain at 5.0% while haloreach.dll advances
+                // launchState -> 11 and mapState -> 2 ("running") via host session parameters. Re-posting
+                // Command 11 after the 30s timeout while Co-Op simulation is already running disrupts gameplay.
                 const ULONGLONG deadline = GetTickCount64() + 30000;
                 while (GetTickCount64() < deadline) {
+                    if (!m_isGameRunning || !m_engineInstance || !m_fnProcessEvent) return;
+                    if (ReadEngineLaunchMapStateSEH(m_hModule, &launchState, &mapState) &&
+                        (launchState >= 11 || mapState >= 2)) {
+                        NOBLE_INFO("BlamEngine: [GUEST Campaign] Simulation started via host session sync (launch={}, map={}); skipping manual PostCommand(11).",
+                                   launchState, mapState);
+                        return;
+                    }
                     if (LoadScreen::Get().GetLoadProgress() >= 0.95f) {
                         NOBLE_INFO("BlamEngine: [GUEST Campaign] Map load reached {:.1f}%; settling for host session sync",
                                    LoadScreen::Get().GetLoadProgress() * 100.0f);
@@ -1148,11 +1180,17 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
                 // Settle a moment for world replication / session sync from host
                 std::this_thread::sleep_for(std::chrono::milliseconds(2500));
 
-                if (m_engineInstance && m_fnProcessEvent) {
-                    NOBLE_INFO("BlamEngine: [GUEST Campaign] Posting Command 11 (Simulation Start) via vtbl+0x18...");
-                    int32_t status11 = m_fnProcessEvent(m_engineInstance, 11, 0);
-                    NOBLE_INFO("BlamEngine: [GUEST Campaign] PostCommand(11) returned 0x{:X}", status11);
+                if (!m_isGameRunning || !m_engineInstance || !m_fnProcessEvent) return;
+                if (ReadEngineLaunchMapStateSEH(m_hModule, &launchState, &mapState) &&
+                    (launchState >= 11 || mapState >= 2)) {
+                    NOBLE_INFO("BlamEngine: [GUEST Campaign] Simulation already active after settle (launch={}, map={}); skipping manual PostCommand(11).",
+                               launchState, mapState);
+                    return;
                 }
+
+                NOBLE_INFO("BlamEngine: [GUEST Campaign] Posting Command 11 (Simulation Start) via vtbl+0x18...");
+                int32_t status11 = m_fnProcessEvent(m_engineInstance, 11, 0);
+                NOBLE_INFO("BlamEngine: [GUEST Campaign] PostCommand(11) returned 0x{:X}", status11);
             }).detach();
         } else {
             NOBLE_INFO("BlamEngine: [GUEST] Remote join active - skipping manual PostCommand(10/11); waiting for host session sync.");

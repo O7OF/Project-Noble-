@@ -6,6 +6,7 @@
 #include <psapi.h>
 #include <atomic>
 #include <cstring>
+#include <cwchar>
 #include <intrin.h>
 
 namespace noble {
@@ -59,16 +60,57 @@ static PlayerControlUpdateFn s_originalPlayerControlUpdate = nullptr;
 static std::atomic<bool> s_lowerWeaponTogglePending{false};
 
 // ai_place (RVA 0x6C2B10): places an AI squad from scenario definitions.
-// In multiplayer mods with AI, scenario scripts execute on both the host and clients.
-// The host's entity replication layer serializes and sends created AI bipeds to the guest.
-// If the guest also runs ai_place locally, two copies of every AI unit exist on the client (a clone!).
-// Suppressing ai_place on non-host clients ensures AI is only spawned by the authoritative host.
+// In distributed multiplayer/Forge mods with AI ([game_globals + 0x10] == 3, c_simulation_distributed_world),
+// scenario scripts execute on both host and clients while the host ALSO replicates created AI bipeds to guests,
+// producing duplicate non-replicated clones if guests run ai_place locally.
+// By contrast, Campaign ([+0x10] == 1) and Firefight/Survival ([+0x110EC] != 0) run deterministic synchronous
+// lockstep (c_simulation_synchronous_world): the host does NOT replicate AI entities, and BOTH host and guest
+// MUST execute every scenario (ai_place ...) call on the exact same tick or the engine raises
+// c_network_session_parameter_synchronous_out_of_sync (network_coop_oos_alert) right after cutscenes / wave spawns.
 using AiPlaceFn = void(__fastcall*)(uint32_t aiValue, int32_t count, int32_t flag);
 static AiPlaceFn s_originalAiPlace = nullptr;
 
+static bool IsCliSynchronousMode() {
+    static const bool s_syncMode = []() {
+        const wchar_t* cmd = GetCommandLineW();
+        if (!cmd) return false;
+        std::wstring lower(cmd);
+        for (wchar_t& c : lower) {
+            if (c >= L'A' && c <= L'Z') c = static_cast<wchar_t>(c - L'A' + L'a');
+        }
+        return lower.find(L"-mode campaign") != std::wstring::npos ||
+               lower.find(L"-mode \"campaign\"") != std::wstring::npos ||
+               lower.find(L"-mode firefight") != std::wstring::npos ||
+               lower.find(L"-mode \"firefight\"") != std::wstring::npos;
+    }();
+    return s_syncMode;
+}
+
+static bool IsDistributedMultiplayerGameSEH(uintptr_t base) {
+    if (!base) return false;
+    __try {
+        // haloreach+0x058B38 (game_is_multiplayer), +0x058C04 (game_is_survival), +0x0586C4 (game_is_cooperative)
+        const uint32_t tlsIdx = *reinterpret_cast<const uint32_t*>(base + 0xC17B18);
+        const uintptr_t tlsArray = *reinterpret_cast<const uintptr_t*>(
+            __readgsqword(0x58) + static_cast<uintptr_t>(tlsIdx) * 8u);
+        if (!tlsArray) return false;
+        const uint8_t* gameGlobals = *reinterpret_cast<const uint8_t* const*>(tlsArray + 0x48);
+        if (!gameGlobals) return false;
+        const uint8_t gameMode = gameGlobals[0x10];          // 1 = campaign, 2 = ui_shell, 3 = multiplayer
+        const uint8_t isSurvival = gameGlobals[0x110EC];     // non-zero in Firefight / Survival
+        const uint8_t isCooperative = gameGlobals[0x1EAB0];  // non-zero in Co-Op sessions
+        return (gameMode == 3) && (isSurvival == 0) && (isCooperative == 0);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
 static void __fastcall Hook_AiPlace(uint32_t aiValue, int32_t count, int32_t flag) {
-    if (NetworkTransport::Get().IsActive() && !NetworkTransport::Get().IsHost()) {
-        NOBLE_DEBUG("EnginePatches: Suppressed client-side ai_place(0x{:08X}, {}, {}) to prevent duplicate AI clones.",
+    if (NetworkTransport::Get().IsActive() &&
+        !NetworkTransport::Get().IsHost() &&
+        !IsCliSynchronousMode() &&
+        IsDistributedMultiplayerGameSEH(s_baseAddress)) {
+        NOBLE_DEBUG("EnginePatches: Suppressed client-side ai_place(0x{:08X}, {}, {}) in distributed multiplayer to prevent duplicate AI clones.",
                     aiValue, count, flag);
         return;
     }

@@ -1664,7 +1664,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             if (argv) LocalFree(argv);
         }
 
-        if (!lobbyTeams.empty()) {
+        // Synchronous Co-Op modes (Campaign / Firefight) do not have opposing player teams, and executing
+        // host-only HaloScript `player_override_team` mutates deterministic player state asymmetrically (OOS).
+        if (!lobbyTeams.empty() && launchMode != "campaign" && launchMode != "firefight") {
             // The scoreboard's roster-less fallback and voice chat use this: -lobby-teams is in roster order,
             // so entry 0 is the local player of a hosted match.
             noble::PauseMenu::SetLocalTeam(lobbyTeams.front());
