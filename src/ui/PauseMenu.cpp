@@ -494,6 +494,19 @@ namespace {
 // The container around a captured engine chunk comes from an existing variant: BLF header + chdr + trailing chunks.
 // The session's own .mvar is preferred; otherwise any shipped variant works, because the engine reads the map and
 // objects from the mvar chunk that is being replaced.
+// "Save as copy" never silently replaces an existing variant: append (2), (3), ... until the name is free.
+std::string UniqueVariantName(const std::filesystem::path& library, const std::string& requested) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const std::string base = noble::mvar::SanitizeVariantName(requested);
+    std::string candidate = base;
+    for (int n = 2; n < 100; ++n) {
+        if (!fs::exists(library / (candidate + ".json"), ec)) return candidate;
+        candidate = base + " (" + std::to_string(n) + ")";
+    }
+    return candidate;
+}
+
 std::filesystem::path FindVariantTemplate(const std::filesystem::path& dataDir) {
     namespace fs = std::filesystem;
     std::error_code ec;
@@ -1127,22 +1140,36 @@ void PauseMenu::DrawMenu(HWND hwnd) {
         ImGui::InputText("##variant_name", s_saveVariantName, sizeof(s_saveVariantName));
         ImGui::Spacing();
         const bool typed = s_saveVariantName[0] != 0;
+        const std::filesystem::path library = ReachHost::Get().GetDataDir() / "map_variants";
+        // The variant this session was launched with is what OVERWRITE updates; SAVE AS COPY always makes a new file.
+        const std::string currentName = noble::mvar::VariantTitle(noble::SessionMapVariantPath());
+        const bool canOverwrite = !currentName.empty();
+        const auto finishSave = [](const std::filesystem::path& saved) {
+            s_saveMapVariantResult = saved.empty() ? "Could not save the map variant (see the log)."
+                                                   : "Saved: " + saved.filename().string();
+            s_saveVariantOpen = false;
+            ImGui::CloseCurrentPopup();
+        };
         if (typed && (ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false))) {
             MenuSounds::Click();
-            const std::filesystem::path saved = SaveForgeMapVariant(s_saveVariantName);
-            s_saveMapVariantResult = saved.empty() ? "Could not save the map variant (see the log)."
-                                                   : "Saved: " + saved.filename().string();
-            s_saveVariantOpen = false;
-            ImGui::CloseCurrentPopup();
+            finishSave(SaveForgeMapVariant(UniqueVariantName(library, s_saveVariantName)));
+        }
+        if (!canOverwrite) {
+            ImGui::PushStyleColor(ImGuiCol_Text, NobleStyle::TextMuted());
+            ImGui::TextWrapped("This map was not opened from a saved variant; use SAVE AS COPY.");
+            ImGui::PopStyleColor();
         }
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.16f, 0.42f, 0.62f, 1.0f));
-        if (ImGui::Button("SAVE", ImVec2(120.0f * s, 34.0f * s)) && typed) {
+        if (ImGui::Button("OVERWRITE", ImVec2(150.0f * s, 34.0f * s)) && canOverwrite) {
             MenuSounds::Click();
-            const std::filesystem::path saved = SaveForgeMapVariant(s_saveVariantName);
-            s_saveMapVariantResult = saved.empty() ? "Could not save the map variant (see the log)."
-                                                   : "Saved: " + saved.filename().string();
-            s_saveVariantOpen = false;
-            ImGui::CloseCurrentPopup();
+            finishSave(SaveForgeMapVariant(currentName));
+        }
+        ImGui::PopStyleColor();
+        ImGui::SameLine();
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.16f, 0.42f, 0.62f, 1.0f));
+        if (ImGui::Button("SAVE AS COPY", ImVec2(170.0f * s, 34.0f * s)) && typed) {
+            MenuSounds::Click();
+            finishSave(SaveForgeMapVariant(UniqueVariantName(library, s_saveVariantName)));
         }
         ImGui::PopStyleColor();
         ImGui::SameLine();

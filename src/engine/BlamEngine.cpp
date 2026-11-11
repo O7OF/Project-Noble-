@@ -76,16 +76,38 @@ std::mutex s_capturedMutex;
 std::vector<uint8_t> s_capturedChunk(0x7028, 0);
 bool s_haveCapturedChunk = false;
 
+// Candidates for the live variant struct, collected while a save call is in flight. The save routine reaches the
+// variant either through a copy (mode 1 for the local one, mode 0 for the signed-in one) or through a getter.
+constexpr int kMaxVariantCandidates = 6;
+std::mutex s_candidateMutex;
+void* s_variantCandidates[kMaxVariantCandidates] = {};
+int s_variantCandidateCount = 0;
+std::atomic<bool> s_armVariantCapture{ false };
+
+void RecordVariantCandidate(void* pointer) {
+    if (!pointer || !s_armVariantCapture.load(std::memory_order_relaxed)) return;
+    std::lock_guard<std::mutex> lock(s_candidateMutex);
+    for (int i = 0; i < s_variantCandidateCount; ++i) {
+        if (s_variantCandidates[i] == pointer) return;
+    }
+    if (s_variantCandidateCount < kMaxVariantCandidates) s_variantCandidates[s_variantCandidateCount++] = pointer;
+}
+
 using CopyMapVariantFn = void (*)(void* dst, void* src, long long mode, void* extra);
 CopyMapVariantFn s_origCopyMapVariant = nullptr;
-std::atomic<void*> s_liveVariantFromCopy{ nullptr };
-std::atomic<bool> s_armVariantCopy{ false };
 
 void HookCopyMapVariant(void* dst, void* src, long long mode, void* extra) {
     if (s_origCopyMapVariant) s_origCopyMapVariant(dst, src, mode, extra);
-    if (mode == 1 && src && s_armVariantCopy.load(std::memory_order_relaxed)) {
-        s_liveVariantFromCopy.store(src, std::memory_order_relaxed);
-    }
+    RecordVariantCandidate(src);
+}
+
+using GetVariantSourceFn = void* (*)();
+GetVariantSourceFn s_origGetVariantSource = nullptr;
+
+void* HookGetVariantSource() {
+    void* source = s_origGetVariantSource ? s_origGetVariantSource() : nullptr;
+    RecordVariantCandidate(source);
+    return source;
 }
 
 void HookSerializeMapVariant(void* outChunk, void* variant) {
@@ -94,11 +116,6 @@ void HookSerializeMapVariant(void* outChunk, void* variant) {
     std::lock_guard<std::mutex> lock(s_capturedMutex);
     std::memcpy(s_capturedChunk.data(), outChunk, s_capturedChunk.size());
     s_haveCapturedChunk = true;
-    static bool logged = false;
-    if (!logged) {
-        logged = true;
-        NOBLE_INFO("BlamEngine: captured a map-variant chunk from the engine serializer");
-    }
 }
 } // namespace
 
@@ -118,6 +135,14 @@ bool BlamEngine::InstallMapVariantCapture() {
         NOBLE_WARN("BlamEngine: could not hook the map-variant copy");
     } else {
         NOBLE_INFO("BlamEngine: map-variant copy hooked (RVA 0x6C290)");
+    }
+
+    void* getterTarget = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(m_hModule) + 0x6BCEC);
+    if (!HookManager::InstallHook(getterTarget, reinterpret_cast<void*>(&HookGetVariantSource),
+                                  reinterpret_cast<void**>(&s_origGetVariantSource), "capture_mvar_source")) {
+        NOBLE_WARN("BlamEngine: could not hook the map-variant source getter");
+    } else {
+        NOBLE_INFO("BlamEngine: map-variant source getter hooked (RVA 0x6BCEC)");
     }
     return true;
 }
@@ -172,6 +197,18 @@ bool CallMapVariantSave(HMODULE module) {
     return true;
 }
 
+void* CallGetVariantSource(HMODULE module) {
+    void* source = nullptr;
+    __try {
+        typedef void* (*GetSourceFn)();
+        auto pGet = reinterpret_cast<GetSourceFn>(reinterpret_cast<uintptr_t>(module) + 0x6BCEC);
+        source = pGet();
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        source = nullptr;
+    }
+    return source;
+}
+
 bool CallMapVariantSerialize(HMODULE module, void* out, void* variant) {
     __try {
         typedef void (*SerializeFn)(void*, void*);
@@ -186,6 +223,27 @@ bool CallMapVariantSerialize(HMODULE module, void* out, void* variant) {
 
 bool BlamEngine::TrySerializeLiveMapVariant(std::vector<uint8_t>& outChunk) {
     if (!m_hModule) return false;
+
+    // The engine's own save path asks 0x6BCEC for the live variant; calling it directly avoids both the save
+    // routine and the TLS walk, and works from the pause menu.
+    if (void* source = CallGetVariantSource(m_hModule)) {
+        std::vector<uint8_t> chunk(0x7028, 0);
+        if (CallMapVariantSerialize(m_hModule, chunk.data(), source)) {
+            const auto be32 = [](const uint8_t* p) {
+                return (static_cast<uint32_t>(p[0]) << 24) | (static_cast<uint32_t>(p[1]) << 16) |
+                       (static_cast<uint32_t>(p[2]) << 8) | p[3];
+            };
+            if (std::memcmp(chunk.data(), "mvar", 4) == 0 && be32(chunk.data() + 4) == 0x7028) {
+                const uint32_t packed = be32(chunk.data() + 0x20);
+                if (packed > 0 && packed <= 0x7000) {
+                    NOBLE_INFO("BlamEngine: serialized the live variant from the engine getter at {:p} ({} packed bytes)",
+                               source, packed);
+                    outChunk = std::move(chunk);
+                    return true;
+                }
+            }
+        }
+    }
     DWORD tlsIndex = 0;
     if (!ReadModuleTlsIndex(m_hModule, tlsIndex)) {
         NOBLE_WARN("BlamEngine: haloreach.dll has no TLS directory");
@@ -232,32 +290,40 @@ bool BlamEngine::TakeCapturedMapVariantChunk(std::vector<uint8_t>& out) {
 bool BlamEngine::TriggerMapVariantSave() {
     if (!m_hModule) return false;
 
-    // The routine resolves the live variant itself and copies it before serializing; arming the copy hook lets the
-    // engine hand us that pointer even if the rest of the save path bails out (which is what happens when paused).
-    s_liveVariantFromCopy.store(nullptr, std::memory_order_relaxed);
-    s_armVariantCopy.store(true, std::memory_order_relaxed);
+    {
+        std::lock_guard<std::mutex> lock(s_candidateMutex);
+        s_variantCandidateCount = 0;
+    }
+    s_armVariantCapture.store(true, std::memory_order_relaxed);
     const bool ok = CallMapVariantSave(m_hModule);
-    s_armVariantCopy.store(false, std::memory_order_relaxed);
+    s_armVariantCapture.store(false, std::memory_order_relaxed);
 
-    void* live = s_liveVariantFromCopy.load(std::memory_order_relaxed);
-    if (live) {
-        NOBLE_INFO("BlamEngine: engine copy hook saw the live variant at {:p}", live);
+    void* candidates[kMaxVariantCandidates] = {};
+    int count = 0;
+    {
+        std::lock_guard<std::mutex> lock(s_candidateMutex);
+        count = s_variantCandidateCount;
+        for (int i = 0; i < count; ++i) candidates[i] = s_variantCandidates[i];
+    }
+    NOBLE_INFO("BlamEngine: save routine {} and exposed {} variant candidate(s)", ok ? "returned" : "faulted", count);
+
+    const auto be32 = [](const uint8_t* p) {
+        return (static_cast<uint32_t>(p[0]) << 24) | (static_cast<uint32_t>(p[1]) << 16) |
+               (static_cast<uint32_t>(p[2]) << 8) | p[3];
+    };
+    for (int i = 0; i < count; ++i) {
+        void* candidate = candidates[i];
+        if (!candidate) continue;
         std::vector<uint8_t> chunk(0x7028, 0);
-        if (CallMapVariantSerialize(m_hModule, chunk.data(), live)) {
-            const auto be32 = [](const uint8_t* p) {
-                return (static_cast<uint32_t>(p[0]) << 24) | (static_cast<uint32_t>(p[1]) << 16) |
-                       (static_cast<uint32_t>(p[2]) << 8) | p[3];
-            };
-            if (std::memcmp(chunk.data(), "mvar", 4) == 0 && be32(chunk.data() + 4) == 0x7028) {
-                const uint32_t packed = be32(chunk.data() + 0x20);
-                if (packed > 0 && packed <= 0x7000) {
-                    std::lock_guard<std::mutex> lock(s_capturedMutex);
-                    s_capturedChunk = std::move(chunk);
-                    s_haveCapturedChunk = true;
-                    NOBLE_INFO("BlamEngine: serialized the live variant ({} packed bytes)", packed);
-                }
-            }
-        }
+        if (!CallMapVariantSerialize(m_hModule, chunk.data(), candidate)) continue;
+        if (std::memcmp(chunk.data(), "mvar", 4) != 0 || be32(chunk.data() + 4) != 0x7028) continue;
+        const uint32_t packed = be32(chunk.data() + 0x20);
+        if (packed == 0 || packed > 0x7000) continue;
+        NOBLE_INFO("BlamEngine: serialized variant candidate {:p} ({} packed bytes)", candidate, packed);
+        std::lock_guard<std::mutex> lock(s_capturedMutex);
+        s_capturedChunk = std::move(chunk);
+        s_haveCapturedChunk = true;
+        break;
     }
     return ok;
 }
