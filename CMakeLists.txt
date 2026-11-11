@@ -163,6 +163,8 @@ set(SOURCES
     src/engine/ReachArmory.cpp
     src/engine/ElitePack.cpp
     src/engine/MvarDump.cpp
+    src/mvar/BitReader.cpp
+    src/mvar/MapVariant.cpp
     src/engine/SharedTagCache.cpp
     src/engine/DevCheats.cpp
     src/engine/CameraFov.cpp

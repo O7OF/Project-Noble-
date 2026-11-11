@@ -25,6 +25,7 @@
 #include "engine/SharedTagCache.hpp"
 #include "engine/DevCheats.hpp"
 #include "engine/MvarDump.hpp"
+#include "mvar/MapVariant.hpp"
 #include "engine/VariantFields.hpp"
 #include "ui/UIManager.hpp"
 #include "ui/ForgeMenu.hpp"
@@ -1038,6 +1039,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     std::string engineCommand;
     int engineCommandAt = -1;
     int forgeSaveAt = -1;   // dev: run the Forge "save map variant" path N seconds into the match
+    std::wstring mvarParsePath;       // dev: decode a map variant file and report it, then exit
     std::vector<int> mvarDumpTimes;   // dev: memory dumps of the loaded map variant at these seconds
     int mvarDumpEvery = 0;            // dev: dump repeatedly, this many seconds apart (find the live map buffer)
     std::string connectAddress = "";
@@ -1111,6 +1113,13 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             } else if (arg == L"-third-person-mode" && i + 1 < numArgs) {
                 thirdPersonMode = _wtoi(argvW[++i]);
                 thirdPerson = true;
+            } else if (arg == L"-mvar-parse") {
+                {
+                    const std::wstring path = argvW[++i];
+                    const noble::mvar::MapVariant variant = noble::mvar::ReadMapVariant(path);
+                    NOBLE_INFO("Mvar parse: {}", noble::mvar::Describe(variant));
+                    return variant.valid ? 0 : 1;
+                }
             } else if (arg == L"-mvar-dump-every") {
                 mvarDumpEvery = _wtoi(argvW[++i]);
             } else if (arg == L"-mvar-dump-at") {
