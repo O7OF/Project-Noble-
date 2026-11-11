@@ -1068,9 +1068,9 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
     if (gameModeTag == 1 || gameModeTag == 1035 || gameModeTag == 5) {
         int declaredPlayers = 1;
         if (connectAddress.empty() && expectedPeers > 0) declaredPlayers = 1 + expectedPeers;
-        // Campaign co-op capacity is only raised for a host that is expecting guests: declaring four players for a
-        // solo launch leaves the engine waiting for players that will never come (load stuck at state 8).
-        if (gameModeTag == 1 && expectedPeers > 0) declaredPlayers = std::max(declaredPlayers, 4);
+        // Exactly the players this launch is for. Declaring more than are present leaves the engine waiting at load
+        // state 8 for participants that never arrive (a solo launch with 4 declared hangs on the loading screen), and
+        // the lobby already passes the full roster, so a three-player lobby declares three and starts.
         launchBlock[0xE8] = static_cast<uint8_t>(declaredPlayers);
         NOBLE_INFO("BlamEngine: launch block declares {} player(s) (0xE8)", declaredPlayers);
     }
