@@ -53,6 +53,22 @@ std::string VariantTitle(const std::filesystem::path& sourceMvar) {
     return out;
 }
 
+namespace {
+// The maps menu keys a variant by the base-map id in the chdr (+0x6C). Used to pick a container for the same base map
+// when the caller's template is an unrelated variant (e.g. saving a variant of a map that had none before).
+int32_t ReadBaseMapId(const std::filesystem::path& path) {
+    std::ifstream file(path, std::ios::binary);
+    if (!file) return -1;
+    uint8_t header[0x70] = {};
+    file.read(reinterpret_cast<char*>(header), sizeof(header));
+    if (file.gcount() < static_cast<std::streamsize>(sizeof(header))) return -1;
+    if (std::memcmp(header, "_blf", 4) != 0 || std::memcmp(header + 0x30, "chdr", 4) != 0) return -1;
+    int32_t id = 0;
+    std::memcpy(&id, header + 0x6C, sizeof(id));
+    return id;
+}
+} // namespace
+
 std::filesystem::path SaveVariantChunkToLibrary(const std::vector<uint8_t>& mvarChunk,
                                                 const std::filesystem::path& templateMvar, const std::string& name,
                                                 const std::filesystem::path& directory, std::string& detail) {
@@ -100,6 +116,37 @@ std::filesystem::path SaveVariantChunkToLibrary(const std::vector<uint8_t>& mvar
         variant.fileBytes[0x6D] = static_cast<uint8_t>((mapId >> 8) & 0xFF);
         variant.fileBytes[0x6E] = static_cast<uint8_t>((mapId >> 16) & 0xFF);
         variant.fileBytes[0x6F] = static_cast<uint8_t>((mapId >> 24) & 0xFF);
+    }
+
+    // A variant created on a base map has no container of its own; use a shipped variant of the same base map so the
+    // chdr (description, author, image) belongs to that map rather than to whichever template was passed in.
+    const int32_t baseMapId = static_cast<int32_t>(variant.header.mapId);
+    if (ReadBaseMapId(templateMvar) != baseMapId) {
+        std::error_code searchEc;
+        const std::filesystem::path folder = templateMvar.parent_path();
+        for (const auto& entry : std::filesystem::directory_iterator(folder, searchEc)) {
+            if (!entry.is_regular_file(searchEc) || entry.path().extension() != ".mvar") continue;
+            if (ReadBaseMapId(entry.path()) != baseMapId) continue;
+            std::ifstream candidate(entry.path(), std::ios::binary);
+            std::vector<uint8_t> candidateBytes((std::istreambuf_iterator<char>(candidate)),
+                                                std::istreambuf_iterator<char>());
+            size_t offset = 0, at = SIZE_MAX;
+            while (offset + 12 <= candidateBytes.size()) {
+                const uint32_t size = (static_cast<uint32_t>(candidateBytes[offset + 4]) << 24) |
+                                      (static_cast<uint32_t>(candidateBytes[offset + 5]) << 16) |
+                                      (static_cast<uint32_t>(candidateBytes[offset + 6]) << 8) | candidateBytes[offset + 7];
+                if (size < 12 || offset + size > candidateBytes.size()) break;
+                if (std::memcmp(candidateBytes.data() + offset, "mvar", 4) == 0) { at = offset; break; }
+                offset += size;
+            }
+            if (at == SIZE_MAX || at + 0x7028 > candidateBytes.size()) continue;
+            std::memcpy(candidateBytes.data() + at, mvarChunk.data(), mvarChunk.size());
+            SetContainerTitle(candidateBytes, safe);
+            MapVariant retry = ReadMapVariantBytes(std::move(candidateBytes), safe);
+            if (!retry.valid) continue;
+            variant = std::move(retry);
+            break;
+        }
     }
 
     std::error_code ec;
