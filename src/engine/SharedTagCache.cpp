@@ -34,12 +34,26 @@ SharedTagCache::TagGetFn SharedTagCache::s_origTagGet = nullptr;
 
 constexpr uintptr_t kStaticTagGetRva = 0x81BE8;
 
+// NOBLE_TAG_MISS_TRACE=1: log the first tag lookups that find nothing, in the active map or in the donor. A map
+// that fails to load usually misses a specific tag, and this names the datum and group it asked for.
+static std::atomic<int> s_tagMissLogged{0};
+
 void* __fastcall SharedTagCache::HookedTagGet([[maybe_unused]] uint32_t groupTag, uint32_t datumIndex) {
     // 1. Check active match map first
     if (s_origTagGet) {
         void* result = s_origTagGet(groupTag, datumIndex);
         if (result != nullptr) {
             return result;
+        }
+    }
+    {
+        wchar_t traceEnv[8] = {};
+        static const bool traceMisses = GetEnvironmentVariableW(L"NOBLE_TAG_MISS_TRACE", traceEnv, 8) > 0 &&
+                                        traceEnv[0] != L'0';
+        if (traceMisses && s_tagMissLogged.fetch_add(1) < 60) {
+            char line[128];
+            std::snprintf(line, sizeof(line), "tag_get miss: group 0x%X datum 0x%08X", groupTag, datumIndex);
+            NOBLE_WARN("{}", line);
         }
     }
 
