@@ -711,6 +711,17 @@ static uint64_t __fastcall HostSlot1_FrameTick(void* thisPtr, uint64_t a1, uint6
         return false;
     };
 
+    // Join handshake: while this host's match is running, tell the relay's guests (every couple of seconds, so a
+    // guest joining mid-match gets it too) that the simulation is up. Guests time their start on this instead of a
+    // fixed delay.
+    if (frames % 120 == 0) {
+        int sessionState = -1;
+        if (HMODULE reach = GetModuleHandleW(L"haloreach.dll")) {
+            SafeReadInt32(reinterpret_cast<uintptr_t>(reach) + 0xC1A118, &sessionState);
+        }
+        noble::NetworkTransport::Get().SendSessionSync(frames, sessionState == 2);
+    }
+
     // "Game running" flag (TLS block +0x48, byte +0x1EAB8). The engine's main loop finishes the game and tears the
     // session down when it is 0, so logging every change says exactly when a co-op match is declared over.
     if (frames % 10 == 0) {

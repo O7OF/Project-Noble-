@@ -508,6 +508,13 @@ NetworkTransport::NetworkProfile NetworkTransport::GetNetworkProfile() const {
     return prof;
 }
 
+bool NetworkTransport::SendSessionSync(uint64_t frame, bool running) {
+    if (!m_relayConnected.load()) return false;
+    nlohmann::json j = {{"type", "session_sync"}, {"frame", frame}, {"running", running}};
+    SendLobbyControlJson(j.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace));
+    return true;
+}
+
 void NetworkTransport::SendLobbyControlJson(const std::string& jsonString) {
     std::lock_guard<std::mutex> lock(m_relayMutex);
     if (m_relayActive.load()) {
@@ -789,6 +796,15 @@ void NetworkTransport::RelayWorkerThread(std::string relayUrl, std::string sessi
                                 if (cb) {
                                     cb(reason);
                                 }
+                            } else if (type == "session_sync") {
+                                const bool running = j.value("running", false);
+                                const uint64_t frame = static_cast<uint64_t>(j.value("frame", 0ULL));
+                                if (running && !m_hostSimRunning.exchange(true)) {
+                                    NOBLE_INFO("NetworkTransport: host reports its simulation running at frame {}", frame);
+                                } else if (!running) {
+                                    m_hostSimRunning.store(false);
+                                }
+                                m_hostSimFrame.store(frame);
                             } else if (type == "spawn_request") {
                                 if (m_isHost) {
                                     uint32_t datum = j.value("datum", 0xFFFFFFFF);

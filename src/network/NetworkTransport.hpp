@@ -44,6 +44,13 @@ public:
     void SetChatCallback(ChatCallback cb);
     bool SendChat(const std::string& channel, const std::string& text, const std::string& from, const std::string& target = "");
 
+    // Join handshake (host -> guests, repeated while the match runs): tells a joining client that the host's
+    // simulation is actually running, so a guest - including one joining mid-match - can time its start to it
+    // instead of guessing with a fixed delay.
+    bool SendSessionSync(uint64_t frame, bool running);
+    bool HostSimulationRunning() const { return m_hostSimRunning.load(); }
+    uint64_t HostSimulationFrame() const { return m_hostSimFrame.load(); }
+
     bool IsActive() const { return m_active.load(); }
     bool IsHost() const { return m_isHost; }
     uint64_t GetLocalMachineId() const { return m_localMachineId; }
@@ -173,6 +180,8 @@ private:
     LobbyLaunchCallback m_lobbyLaunchCb;
     LobbyRosterCallback m_lobbyRosterCb;
     LobbyClosedCallback m_lobbyClosedCb;
+    std::atomic<bool> m_hostSimRunning{ false };    // last session_sync said the host's simulation is running
+    std::atomic<uint64_t> m_hostSimFrame{ 0 };      // host frame number from that message
 
     struct HeldPacket {
         std::vector<uint8_t> data;

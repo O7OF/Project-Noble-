@@ -1184,8 +1184,22 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
                     std::this_thread::sleep_for(std::chrono::milliseconds(100));
                 }
 
-                // Settle a moment for world replication / session sync from host
-                std::this_thread::sleep_for(std::chrono::milliseconds(2500));
+                // Join handshake: wait for the host's session_sync (repeated every couple of seconds while its
+                // simulation runs, so a guest joining mid-match receives it promptly). Falls back to a short settle
+                // if the host never reports - older hosts, or a LAN join without the relay.
+                {
+                    const ULONGLONG syncDeadline = GetTickCount64() + 20000;
+                    while (GetTickCount64() < syncDeadline &&
+                           !noble::NetworkTransport::Get().HostSimulationRunning()) {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                    }
+                    if (noble::NetworkTransport::Get().HostSimulationRunning()) {
+                        NOBLE_INFO("BlamEngine: [GUEST Campaign] host reports its simulation running (frame {}); starting",
+                                   noble::NetworkTransport::Get().HostSimulationFrame());
+                    } else {
+                        NOBLE_WARN("BlamEngine: [GUEST Campaign] no session_sync from the host after 20 s; starting anyway");
+                    }
+                }
 
                 if (!m_isGameRunning || !m_engineInstance || !m_fnProcessEvent) return;
                 if (ReadEngineLaunchMapStateSEH(m_hModule, &launchState, &mapState) &&
