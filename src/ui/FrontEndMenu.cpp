@@ -2943,6 +2943,24 @@ struct PendingLobbyEvents {
 static std::mutex s_lobbyEventMutex;
 static PendingLobbyEvents s_lobbyEvents;
 
+// The master server keeps a roster per session and the host re-registers it every few seconds, so a guest who
+// leaves can linger as a nameless row - which the UI then labels "Host" for want of a name. Drop nameless rows that
+// are not the host, keep exactly one host row, and give it a name.
+static void SanitizeLobbyRoster(std::vector<LobbyPlayer>& roster) {
+    roster.erase(std::remove_if(roster.begin(), roster.end(),
+                                [](const LobbyPlayer& p) { return p.username.empty() && !p.isHost; }),
+                 roster.end());
+    bool hostSeen = false;
+    for (LobbyPlayer& p : roster) {
+        if (p.isHost && !hostSeen) { hostSeen = true; if (p.username.empty()) p.username = "Host"; }
+        else if (p.isHost) { p.isHost = false; }
+    }
+    if (!hostSeen && !roster.empty()) {
+        roster.front().isHost = true;
+        if (roster.front().username.empty()) roster.front().username = "Host";
+    }
+}
+
 static void ClearPendingLobbyEvents() {
     std::lock_guard<std::mutex> lock(s_lobbyEventMutex);
     s_lobbyEvents = PendingLobbyEvents{};
@@ -3512,6 +3530,10 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
                     return;
                 }
             } else if (current.ok) {
+                if (!st.isLobbyHost && !current.roster.empty()) {
+                    st.lobbyRoster = current.roster;
+                    SanitizeLobbyRoster(st.lobbyRoster);
+                }
                 if (!st.isLobbyHost) {
                     st.lobbyMap = current.map;
                     st.lobbyMode = current.mode;
@@ -3524,6 +3546,7 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
                 }
                 if (!current.roster.empty()) {
                     st.lobbyRoster = current.roster;
+                    SanitizeLobbyRoster(st.lobbyRoster);
                     if (st.isLobbyHost) {
                         std::string pName = AuthClient::Get().IsLoggedIn() ? AuthClient::Get().GetUsername() : Settings::Get().Snapshot().playerName;
                         if (pName.empty()) pName = "Host";
