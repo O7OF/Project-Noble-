@@ -334,6 +334,21 @@ uint64_t __fastcall Stage3Hook(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a
     return res;
 }
 
+// The map state machine promotes "loading_map" to "running" only when FUN_18040b4c8 returns something other than
+// -1 (haloreach+0x40A008: lVar9 = FUN_18040b4c8(...); if (lVar9 != -1) DAT_180c1a118 = 2). Log its verdict.
+using SessionStartFn = uint64_t(__fastcall*)(void*);
+SessionStartFn s_origSessionStart = nullptr;
+
+uint64_t __fastcall SessionStartHook(void* a1) {
+    const uint64_t result = s_origSessionStart ? s_origSessionStart(a1) : 0;
+    char line[160];
+    std::snprintf(line, sizeof(line), "session start check (haloreach+0x40B4C8) returned 0x%llX%s",
+                  static_cast<unsigned long long>(result), result == ~0ull ? " (FAILED)" : "");
+    NOBLE_WARN("{}", line);
+    if (auto logger = spdlog::default_logger()) logger->flush();
+    return result;
+}
+
 using ExitThreadFn = VOID(WINAPI*)(DWORD);
 ExitThreadFn s_origExitThread = nullptr;
 
@@ -1289,6 +1304,15 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     noble::HookManager::InstallHook(reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(loader->GetModuleHandle()) + 0xC390),
                                     reinterpret_cast<void*>(&EngineMainLoopHook),
                                     reinterpret_cast<void**>(&s_origEngineMainLoop), "trace_engine_main_loop");
+    {
+        wchar_t startEnv[8] = {};
+        if (GetEnvironmentVariableW(L"NOBLE_TRACE_SESSION_START", startEnv, 8) > 0 && startEnv[0] != L'0') {
+            noble::HookManager::InstallHook(
+                reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(loader->GetModuleHandle()) + 0x40B4C8),
+                reinterpret_cast<void*>(&SessionStartHook),
+                reinterpret_cast<void**>(&s_origSessionStart), "trace_session_start");
+        }
+    }
     noble::HookManager::InstallHook(reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(loader->GetModuleHandle()) + 0xD564),
                                     reinterpret_cast<void*>(&Stage1Hook),
                                     reinterpret_cast<void**>(&s_origStage1), "trace_stage1");
