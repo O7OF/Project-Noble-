@@ -700,6 +700,19 @@ static uint64_t __fastcall HostSlot1_FrameTick(void* thisPtr, uint64_t a1, uint6
         NOBLE_INFO("ReachHost [Slot 1 - FrameTick]: Frame {} pumped from haloreach.dll (LoadProgress: {:.1f}%, launch state {})",
             frames, LoadScreen::Get().GetLoadProgress() * 100.0f, launchState);
     }
+    // Launch/map state machine (haloreach+0xC1A114 launch state, +0xC1A118 map state). The engine's state machine
+    // (FUN_180034818) prints _map_state_* names; logging both values per tick shows where a launch stops.
+    if (frames == 1 || (frames % 60) == 0) {
+        int launchState = -1;
+        int mapState = -1;
+        if (HMODULE reach = GetModuleHandleW(L"haloreach.dll")) {
+            SafeReadInt32(reinterpret_cast<uintptr_t>(reach) + 0xC1A114, &launchState);
+            SafeReadInt32(reinterpret_cast<uintptr_t>(reach) + 0xC1A118, &mapState);
+        }
+        static const char* const kMapStates[] = { "none", "loading_map", "running", "ending", "??" };
+        const char* name = (mapState >= 0 && mapState <= 3) ? kMapStates[mapState] : "?";
+        NOBLE_INFO("ReachHost [State]: frame {} launch {} map {} ({})", frames, launchState, mapState, name);
+    }
     if (frames == 2 || frames == 30) {
         // NOBLE_SCENARIO_DUMP=1: dump the scenario tag now that its data is loaded (it is still zeroes at palette time).
         wchar_t dumpEnv[8] = {};
