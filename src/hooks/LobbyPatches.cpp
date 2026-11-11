@@ -376,7 +376,9 @@ static uint64_t __fastcall Hook_BootPeer(void* session, int32_t peerIndex, int32
         wchar_t env[8] = {};
         return !(GetEnvironmentVariableW(L"NOBLE_COOP_NO_KEEP_PEER", env, 8) > 0 && env[0] != L'0');
     }();
-    if (keepCoopPeer && (reason == 9 || reason == 13) && s_campaignCoop.load()) {
+    // 9 is the progress/insertion mismatch; 13 is campaign/session state mismatch; 0x1B is "players incompatible
+    // for network co-op", which the same check escalates to once a second joining player is involved.
+    if (keepCoopPeer && (reason == 9 || reason == 13 || reason == 0x1B) && s_campaignCoop.load()) {
         static std::atomic<int> logged{0};
         if (logged.fetch_add(1) == 0) {
             NOBLE_WARN("LobbyPatches: keeping guest peer {} in the campaign co-op session (engine boot reason {}); "
