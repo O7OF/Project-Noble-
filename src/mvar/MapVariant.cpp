@@ -29,6 +29,29 @@ Author ReadAuthor(BitReader& stream) {
 }
 } // namespace
 
+
+// Reads a 128-character wide string. MCC stores the variant's title/description as UTF-16; the reference parser reads
+// them big-endian, but the bytes are the same either way, so try both orders and keep the one that reads as text.
+std::wstring ReadWideText(BitReader& stream, int chars, bool bigEndian) {
+    std::wstring out;
+    for (int i = 0; i < chars; ++i) {
+        const uint16_t a = static_cast<uint16_t>(stream.ReadBits(8));
+        const uint16_t b = static_cast<uint16_t>(stream.ReadBits(8));
+        const uint16_t ch = bigEndian ? static_cast<uint16_t>((a << 8) | b) : static_cast<uint16_t>((b << 8) | a);
+        if (ch == 0) break;
+        out.push_back(static_cast<wchar_t>(ch));
+    }
+    return out;
+}
+
+bool LooksLikeText(const std::wstring& text) {
+    if (text.empty()) return false;
+    for (wchar_t c : text) {
+        if (c < 0x20 || c > 0x7E) return false;
+    }
+    return true;
+}
+
 // Field order mirrors ReachVariantTool's reference parser read for read (see tools/mvar_oracle): everything after the
 // chunk header is bit-packed, so every field is a bit read - byte-aligning any of them shifts the rest.
 MapVariant ReadMapVariant(const std::filesystem::path& path) {
@@ -78,11 +101,74 @@ MapVariant ReadMapVariant(const std::filesystem::path& path) {
     h.modifiedBy = ReadAuthor(stream);
     h.authorsEndBits = stream.BitPosition();
 
+    // Title and description: 128 wide characters each.
+    {
+        const size_t start = stream.BitPosition();
+        std::wstring little = ReadWideText(stream, 128, false);
+        const size_t afterLittle = stream.BitPosition();
+        stream.Seek(start);
+        std::wstring big = ReadWideText(stream, 128, true);
+        const size_t afterBig = stream.BitPosition();
+        if (LooksLikeText(little)) {
+            h.title = little;
+            h.titleEndianBig = false;
+            stream.Seek(afterLittle);
+        } else {
+            h.title = big;
+            h.titleEndianBig = true;
+            stream.Seek(afterBig);
+        }
+        const size_t descStart = stream.BitPosition();
+        std::wstring dLittle = ReadWideText(stream, 128, h.titleEndianBig);
+        (void)dLittle;
+        h.description = dLittle;
+        (void)descStart;
+    }
+    h.titleEndBits = stream.BitPosition();
+    if (h.activity == 2) stream.ReadBits(16);            // hopper id
+    if (h.gameMode == 1) {
+        stream.ReadBits(8); stream.ReadBits(2); stream.ReadBits(2); stream.ReadBits(8); stream.ReadBits(32);
+    } else if (h.gameMode == 2) {
+        stream.ReadBits(2); stream.ReadBits(32);
+    }
+    stream.ReadBits(8);                                   // unk02B0
+    stream.ReadBits(32);                                  // unk02DC
+    stream.ReadBits(32);                                  // unk02E0
+    h.unk02B2 = static_cast<uint32_t>(stream.ReadBits(9));
+    h.secondMapIdBits = stream.BitPosition();
+    h.secondMapId = static_cast<uint32_t>(stream.ReadBits(32));
+    stream.ReadBits(1);                                   // unk02D9
+    stream.ReadBits(1);                                   // unk02DA
+    for (float& f : h.boundsMin) f = stream.ReadFloatBig();
+    for (int i = 0; i < 3; ++i) { stream.ReadFloatBig(); stream.ReadFloatBig(); }   // max, then y/z pairs
+    stream.ReadBits(32);                                  // unk02D0
+    stream.ReadBits(32);                                  // unk02D4
+    h.labelsBits = stream.BitPosition();
+    h.labelCount = static_cast<uint32_t>(stream.ReadBits(9));
+    for (uint32_t i = 0; i < h.labelCount; ++i) {
+        if (!stream.ReadBits(1)) continue;
+        stream.ReadBits(12);
+    }
+    if (h.labelCount > 0) {
+        const uint32_t dataLength = static_cast<uint32_t>(stream.ReadBits(13));
+        const bool compressed = stream.ReadBits(1) != 0;
+        if (!compressed) {
+            for (uint32_t i = 0; i < dataLength; ++i) stream.ReadBits(8);
+        } else {
+            const uint32_t compSize = static_cast<uint32_t>(stream.ReadBits(13));
+            for (uint32_t i = 0; i < compSize; ++i) stream.ReadBits(8);
+        }
+    }
+    h.objectsBits = stream.BitPosition();
+
     NOBLE_INFO("Mvar: '{}' sig='{}' size=0x{:X} ver=0x{:X} flags=0x{:X} type={} mode={} engine={} mapId={} "
                "category={} headerBits={} authorsEnd={} author='{}'",
                path.filename().string(), h.signature, h.chunkSize, h.chunkVersion, h.chunkFlags, h.contentType,
                h.gameMode, h.engine, h.mapId, h.engineCategoryIndex, h.headerBits, h.authorsEndBits,
                h.createdBy.name);
+    NOBLE_INFO("Mvar: title='{}' desc='{}' secondMapId={} (bit {}) labels={} (bit {}) objects at bit {}",
+               std::string(h.title.begin(), h.title.end()), std::string(h.description.begin(), h.description.end()),
+               h.secondMapId, h.secondMapIdBits, h.labelCount, h.labelsBits, h.objectsBits);
     out.valid = !stream.Overran() && h.chunkSize == kChunkSize && h.signature == "mvar";
     if (!out.valid) {
         std::ostringstream why;

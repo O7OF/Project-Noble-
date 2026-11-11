@@ -21,6 +21,7 @@ public:
 
     uint64_t ReadBits(int count);
     void Align();
+    void Seek(size_t bitPosition) { m_bitPos = bitPosition; }
     size_t BitPosition() const { return m_bitPos; }
     bool Overran() const { return m_overrun; }
 

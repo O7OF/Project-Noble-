@@ -34,6 +34,16 @@ struct MapVariantHeader {
     uint32_t engineCategoryIndex = 0;
     size_t headerBits = 0;      // where the author blocks begin
     size_t authorsEndBits = 0;  // where the title/description begin
+    size_t titleEndBits = 0;
+    size_t secondMapIdBits = 0;
+    size_t labelsBits = 0;
+    size_t objectsBits = 0;
+    std::wstring title, description;
+    bool titleEndianBig = false;
+    uint32_t unk02B2 = 0;
+    uint32_t secondMapId = 0;
+    uint32_t labelCount = 0;
+    float boundsMin[3] = {};
     Author createdBy, modifiedBy;
 };
 
