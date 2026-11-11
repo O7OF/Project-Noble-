@@ -1,0 +1,598 @@
+{
+ "mapId": 2001,
+ "entryCount": 70,
+ "entries": [
+  {
+   "quota": 0,
+   "palette": "ff_weapons_human",
+   "entry": "assault_rifle",
+   "variants": [
+    "assault_rifle"
+   ]
+  },
+  {
+   "quota": 1,
+   "palette": "ff_weapons_human",
+   "entry": "dmr",
+   "variants": [
+    "dmr"
+   ]
+  },
+  {
+   "quota": 2,
+   "palette": "ff_weapons_human",
+   "entry": "grenade_launcher",
+   "variants": [
+    "grenade_launcher"
+   ]
+  },
+  {
+   "quota": 3,
+   "palette": "ff_weapons_human",
+   "entry": "magnum",
+   "variants": [
+    "magnum"
+   ]
+  },
+  {
+   "quota": 4,
+   "palette": "ff_weapons_human",
+   "entry": "rocket_launcher",
+   "variants": [
+    "rocket_launcher"
+   ]
+  },
+  {
+   "quota": 5,
+   "palette": "ff_weapons_human",
+   "entry": "shotgun",
+   "variants": [
+    "shotgun"
+   ]
+  },
+  {
+   "quota": 6,
+   "palette": "ff_weapons_human",
+   "entry": "sniper_rifle",
+   "variants": [
+    "sniper_rifle"
+   ]
+  },
+  {
+   "quota": 7,
+   "palette": "ff_weapons_human",
+   "entry": "spartan_laser",
+   "variants": [
+    "spartan_laser"
+   ]
+  },
+  {
+   "quota": 8,
+   "palette": "ff_weapons_human",
+   "entry": "wep_nade_frag",
+   "variants": [
+    "frag_grenade"
+   ]
+  },
+  {
+   "quota": 9,
+   "palette": "ff_weapons_human",
+   "entry": "wep_machinegun",
+   "variants": [
+    "machinegun"
+   ]
+  },
+  {
+   "quota": 10,
+   "palette": "ff_weapons_covenant",
+   "entry": "concussion_rifle",
+   "variants": [
+    "concussion_rifle"
+   ]
+  },
+  {
+   "quota": 11,
+   "palette": "ff_weapons_covenant",
+   "entry": "energy_sword",
+   "variants": [
+    "energy_sword"
+   ]
+  },
+  {
+   "quota": 12,
+   "palette": "ff_weapons_covenant",
+   "entry": "wep_flakcannon",
+   "variants": [
+    "flak_cannon"
+   ]
+  },
+  {
+   "quota": 13,
+   "palette": "ff_weapons_covenant",
+   "entry": "gravity_hammer",
+   "variants": [
+    "gravity_hammer"
+   ]
+  },
+  {
+   "quota": 14,
+   "palette": "ff_weapons_covenant",
+   "entry": "focus_rifle",
+   "variants": [
+    "focus_rifle"
+   ]
+  },
+  {
+   "quota": 15,
+   "palette": "ff_weapons_covenant",
+   "entry": "needle_rifle",
+   "variants": [
+    "needle_rifle"
+   ]
+  },
+  {
+   "quota": 16,
+   "palette": "ff_weapons_covenant",
+   "entry": "needler",
+   "variants": [
+    "needler"
+   ]
+  },
+  {
+   "quota": 17,
+   "palette": "ff_weapons_covenant",
+   "entry": "wep_plasmalauncher",
+   "variants": [
+    "plasma_launcher"
+   ]
+  },
+  {
+   "quota": 18,
+   "palette": "ff_weapons_covenant",
+   "entry": "plasma_pistol",
+   "variants": [
+    "plasma_pistol"
+   ]
+  },
+  {
+   "quota": 19,
+   "palette": "ff_weapons_covenant",
+   "entry": "plasma_repeater",
+   "variants": [
+    "plasma_repeater"
+   ]
+  },
+  {
+   "quota": 20,
+   "palette": "ff_weapons_covenant",
+   "entry": "plasma_rifle",
+   "variants": [
+    "plasma_rifle"
+   ]
+  },
+  {
+   "quota": 21,
+   "palette": "ff_weapons_covenant",
+   "entry": "spike_rifle",
+   "variants": [
+    "spike_rifle"
+   ]
+  },
+  {
+   "quota": 22,
+   "palette": "ff_weapons_covenant",
+   "entry": "wep_nade_plasma",
+   "variants": [
+    "plasma_grenade"
+   ]
+  },
+  {
+   "quota": 23,
+   "palette": "ff_weapons_covenant",
+   "entry": "wep_plasmaturret",
+   "variants": [
+    "plasma_turret_mounted"
+   ]
+  },
+  {
+   "quota": 24,
+   "palette": "ff_armor_abilities",
+   "entry": "arm_camo",
+   "variants": [
+    "active_camouflage"
+   ]
+  },
+  {
+   "quota": 25,
+   "palette": "ff_armor_abilities",
+   "entry": "arm_lock",
+   "variants": [
+    "armor_lockup"
+   ]
+  },
+  {
+   "quota": 26,
+   "palette": "ff_armor_abilities",
+   "entry": "arm_dropshield",
+   "variants": [
+    "drop_shield"
+   ]
+  },
+  {
+   "quota": 27,
+   "palette": "ff_armor_abilities",
+   "entry": "arm_evade",
+   "variants": [
+    "evade"
+   ]
+  },
+  {
+   "quota": 28,
+   "palette": "ff_armor_abilities",
+   "entry": "arm_hologram",
+   "variants": [
+    "hologram"
+   ]
+  },
+  {
+   "quota": 29,
+   "palette": "ff_armor_abilities",
+   "entry": "arm_jetpack",
+   "variants": [
+    "jet_pack"
+   ]
+  },
+  {
+   "quota": 30,
+   "palette": "ff_armor_abilities",
+   "entry": "arm_sprint",
+   "variants": [
+    "sprint"
+   ]
+  },
+  {
+   "quota": 31,
+   "palette": "ff_gadgets",
+   "entry": "gadget_explosive",
+   "variants": [
+    "fusion_coil",
+    "land_mine"
+   ]
+  },
+  {
+   "quota": 32,
+   "palette": "ff_gadgets",
+   "entry": "gadget_healthstation",
+   "variants": [
+    "health_station"
+   ]
+  },
+  {
+   "quota": 33,
+   "palette": "ff_gadgets",
+   "entry": "gadget_powerups",
+   "variants": [
+    "powerup_blue",
+    "powerup_red",
+    "powerup_yellow"
+   ]
+  },
+  {
+   "quota": 34,
+   "palette": "ff_gadgets",
+   "entry": "gadget_mancannons",
+   "variants": [
+    "ff_man_cannon_forge",
+    "ff_man_cannon_forge_heavy",
+    "ff_man_cannon_forge_light",
+    "ff_veh_man_cannon",
+    "ff_grav_lift"
+   ]
+  },
+  {
+   "quota": 35,
+   "palette": "ff_gadgets",
+   "entry": "gadget_sfx",
+   "variants": [
+    "colorblind",
+    "gloomy",
+    "juicy",
+    "nova",
+    "olde_timey",
+    "pen_and_ink"
+   ]
+  },
+  {
+   "quota": 36,
+   "palette": "ff_gadgets",
+   "entry": "gadget_teleporters",
+   "variants": [
+    "ff_teleporter_receiver",
+    "ff_teleporter_sender",
+    "ff_teleporter_2_way"
+   ]
+  },
+  {
+   "quota": 37,
+   "palette": "ff_gadgets",
+   "entry": "gadget_toys",
+   "variants": [
+    "dice",
+    "golf_ball",
+    "golf_club",
+    "damage_sphere",
+    "soccer_ball",
+    "golf_cup"
+   ]
+  },
+  {
+   "quota": 38,
+   "palette": "ff_gadgets",
+   "entry": "gadget_lights",
+   "variants": [
+    "ff_light_red",
+    "ff_light_blue",
+    "ff_light_green",
+    "ff_light_orange",
+    "ff_light_purple",
+    "ff_light_yellow",
+    "ff_light_white",
+    "ff_light_flash_red",
+    "ff_light_flash_yellow"
+   ]
+  },
+  {
+   "quota": 39,
+   "palette": "ff_spawning",
+   "entry": "spawning_initial",
+   "variants": [
+    "initial_spawn_point"
+   ]
+  },
+  {
+   "quota": 40,
+   "palette": "ff_spawning",
+   "entry": "spawning_respawn",
+   "variants": [
+    "respawn_point"
+   ]
+  },
+  {
+   "quota": 41,
+   "palette": "ff_spawning",
+   "entry": "spawning_camera",
+   "variants": [
+    "mp_cinematic_camera"
+   ]
+  },
+  {
+   "quota": 42,
+   "palette": "ff_spawning",
+   "entry": "respawn_zone",
+   "variants": [
+    "respawn_zone"
+   ]
+  },
+  {
+   "quota": 43,
+   "palette": "ff_spawning",
+   "entry": "respawn_zone_weak",
+   "variants": [
+    "weak_respawn_zone"
+   ]
+  },
+  {
+   "quota": 44,
+   "palette": "ff_spawning",
+   "entry": "respawn_zone_anti",
+   "variants": [
+    "weak_anti_respawn_zone"
+   ]
+  },
+  {
+   "quota": 45,
+   "palette": "ff_spawning",
+   "entry": "spawning_boundaries_safe",
+   "variants": [
+    "safe_volume",
+    "soft_safe_volume"
+   ]
+  },
+  {
+   "quota": 46,
+   "palette": "ff_spawning",
+   "entry": "spawning_boundaries_kill",
+   "variants": [
+    "kill_volume",
+    "soft_kill_volume"
+   ]
+  },
+  {
+   "quota": 47,
+   "palette": "ff_objectives",
+   "entry": "obj_flag_base",
+   "variants": [
+    "mp_flag_base"
+   ]
+  },
+  {
+   "quota": 48,
+   "palette": "ff_objectives",
+   "entry": "obj_plate",
+   "variants": [
+    "mp_circle"
+   ]
+  },
+  {
+   "quota": 49,
+   "palette": "ff_objectives",
+   "entry": "obj_hill_marker",
+   "variants": [
+    "mp_hill_beacon"
+   ]
+  },
+  {
+   "quota": 50,
+   "palette": "ff_scenery",
+   "entry": "dlc_slayer_cart_a",
+   "variants": [
+    "dlc_slayer_cart_a"
+   ]
+  },
+  {
+   "quota": 51,
+   "palette": "ff_scenery",
+   "entry": "dlc_slayer_cart_b",
+   "variants": [
+    "dlc_slayer_cart_b"
+   ]
+  },
+  {
+   "quota": 52,
+   "palette": "ff_scenery",
+   "entry": "wall",
+   "variants": [
+    "slayer_door_forge"
+   ]
+  },
+  {
+   "quota": 53,
+   "palette": "ff_scenery",
+   "entry": "ff_scn_street_cone",
+   "variants": [
+    "street_cone"
+   ]
+  },
+  {
+   "quota": 54,
+   "palette": "ff_scenery",
+   "entry": "structure_doors",
+   "variants": [
+    "dlc_hangar_shield_repair_s",
+    "dlc_hangar_forcefield_small_solid",
+    "dlc_hangar_shield",
+    "dlc_hangar_forcefield_solid"
+   ]
+  },
+  {
+   "quota": 55,
+   "palette": "custom_pieces",
+   "entry": "low_grav",
+   "variants": [
+    "large_low_grav_volume"
+   ]
+  },
+  {
+   "quota": 56,
+   "palette": "custom_pieces",
+   "entry": "shield_door_large",
+   "variants": [
+    ""
+   ]
+  },
+  {
+   "quota": 57,
+   "palette": "custom_pieces",
+   "entry": "shield_door_small",
+   "variants": [
+    ""
+   ]
+  },
+  {
+   "quota": 58,
+   "palette": "structure_blocks",
+   "entry": "block_2x2",
+   "variants": [
+    "box_l"
+   ]
+  },
+  {
+   "quota": 59,
+   "palette": "structure_blocks",
+   "entry": "block_1x1",
+   "variants": [
+    "box_m"
+   ]
+  },
+  {
+   "quota": 60,
+   "palette": "structure_blocks",
+   "entry": "block_3x3",
+   "variants": [
+    "box_xl"
+   ]
+  },
+  {
+   "quota": 61,
+   "palette": "structure_blocks",
+   "entry": "block_4x4",
+   "variants": [
+    "box_xxl"
+   ]
+  },
+  {
+   "quota": 62,
+   "palette": "structure_blocks",
+   "entry": "block_5x5_flat",
+   "variants": [
+    "box_xxxl"
+   ]
+  },
+  {
+   "quota": 63,
+   "palette": "structure_blocks",
+   "entry": "block_3x3_flat",
+   "variants": [
+    "wall_l"
+   ]
+  },
+  {
+   "quota": 64,
+   "palette": "structure_blocks",
+   "entry": "block_2x2_flat",
+   "variants": [
+    "wall_m"
+   ]
+  },
+  {
+   "quota": 65,
+   "palette": "structure_blocks",
+   "entry": "block_1x1_flat",
+   "variants": [
+    "wall_s"
+   ]
+  },
+  {
+   "quota": 66,
+   "palette": "structure_blocks",
+   "entry": "block_4x4_flat",
+   "variants": [
+    "wall_xl"
+   ]
+  },
+  {
+   "quota": 67,
+   "palette": "structure_blocks",
+   "entry": "block_4x4_tall",
+   "variants": [
+    "wall_xxl"
+   ]
+  },
+  {
+   "quota": 68,
+   "palette": "structure_blocks",
+   "entry": "block_5x1_flat",
+   "variants": [
+    "wall_xxxl"
+   ]
+  },
+  {
+   "quota": 69,
+   "palette": "structure_blocks",
+   "entry": "destination_delta",
+   "variants": [
+    "danger_zone"
+   ]
+  }
+ ]
+}
