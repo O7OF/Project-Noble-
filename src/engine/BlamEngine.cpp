@@ -76,6 +76,18 @@ std::mutex s_capturedMutex;
 std::vector<uint8_t> s_capturedChunk(0x7028, 0);
 bool s_haveCapturedChunk = false;
 
+using CopyMapVariantFn = void (*)(void* dst, void* src, long long mode, void* extra);
+CopyMapVariantFn s_origCopyMapVariant = nullptr;
+std::atomic<void*> s_liveVariantFromCopy{ nullptr };
+std::atomic<bool> s_armVariantCopy{ false };
+
+void HookCopyMapVariant(void* dst, void* src, long long mode, void* extra) {
+    if (s_origCopyMapVariant) s_origCopyMapVariant(dst, src, mode, extra);
+    if (mode == 1 && src && s_armVariantCopy.load(std::memory_order_relaxed)) {
+        s_liveVariantFromCopy.store(src, std::memory_order_relaxed);
+    }
+}
+
 void HookSerializeMapVariant(void* outChunk, void* variant) {
     if (s_origSerializeMapVariant) s_origSerializeMapVariant(outChunk, variant);
     if (!outChunk) return;
@@ -99,6 +111,14 @@ bool BlamEngine::InstallMapVariantCapture() {
         return false;
     }
     NOBLE_INFO("BlamEngine: map-variant serializer hooked (RVA 0x17AC38)");
+
+    void* copyTarget = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(m_hModule) + 0x6C290);
+    if (!HookManager::InstallHook(copyTarget, reinterpret_cast<void*>(&HookCopyMapVariant),
+                                  reinterpret_cast<void**>(&s_origCopyMapVariant), "capture_mvar_copy")) {
+        NOBLE_WARN("BlamEngine: could not hook the map-variant copy");
+    } else {
+        NOBLE_INFO("BlamEngine: map-variant copy hooked (RVA 0x6C290)");
+    }
     return true;
 }
 
@@ -135,6 +155,17 @@ bool ReadTlsBlock(DWORD index, void*& tlsBlock) {
 bool ReadEngineState(void* tlsBlock, void*& state) {
     __try {
         state = *reinterpret_cast<void**>(static_cast<uint8_t*>(tlsBlock) + 0x48);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+    return true;
+}
+
+bool CallMapVariantSave(HMODULE module) {
+    __try {
+        typedef void (*SaveMapVariantFn)(void);
+        auto pSave = reinterpret_cast<SaveMapVariantFn>(reinterpret_cast<uintptr_t>(module) + 0x156974);
+        pSave();
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return false;
     }
@@ -200,14 +231,35 @@ bool BlamEngine::TakeCapturedMapVariantChunk(std::vector<uint8_t>& out) {
 
 bool BlamEngine::TriggerMapVariantSave() {
     if (!m_hModule) return false;
-    __try {
-        typedef void (*SaveMapVariantFn)(void);
-        auto pSave = reinterpret_cast<SaveMapVariantFn>(reinterpret_cast<uintptr_t>(m_hModule) + 0x156974);
-        pSave();
-        return true;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return false;
+
+    // The routine resolves the live variant itself and copies it before serializing; arming the copy hook lets the
+    // engine hand us that pointer even if the rest of the save path bails out (which is what happens when paused).
+    s_liveVariantFromCopy.store(nullptr, std::memory_order_relaxed);
+    s_armVariantCopy.store(true, std::memory_order_relaxed);
+    const bool ok = CallMapVariantSave(m_hModule);
+    s_armVariantCopy.store(false, std::memory_order_relaxed);
+
+    void* live = s_liveVariantFromCopy.load(std::memory_order_relaxed);
+    if (live) {
+        NOBLE_INFO("BlamEngine: engine copy hook saw the live variant at {:p}", live);
+        std::vector<uint8_t> chunk(0x7028, 0);
+        if (CallMapVariantSerialize(m_hModule, chunk.data(), live)) {
+            const auto be32 = [](const uint8_t* p) {
+                return (static_cast<uint32_t>(p[0]) << 24) | (static_cast<uint32_t>(p[1]) << 16) |
+                       (static_cast<uint32_t>(p[2]) << 8) | p[3];
+            };
+            if (std::memcmp(chunk.data(), "mvar", 4) == 0 && be32(chunk.data() + 4) == 0x7028) {
+                const uint32_t packed = be32(chunk.data() + 0x20);
+                if (packed > 0 && packed <= 0x7000) {
+                    std::lock_guard<std::mutex> lock(s_capturedMutex);
+                    s_capturedChunk = std::move(chunk);
+                    s_haveCapturedChunk = true;
+                    NOBLE_INFO("BlamEngine: serialized the live variant ({} packed bytes)", packed);
+                }
+            }
+        }
     }
+    return ok;
 }
 
 bool BlamEngine::Initialize(const ReachInstallInfo& installInfo, HMODULE hModule, const ReachExports& exports, const EngineHostContext& context) {
