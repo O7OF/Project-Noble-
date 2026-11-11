@@ -353,11 +353,30 @@ static void* __fastcall Hook_FindChannel(const uint8_t* address) {
 // host accepts the guest, the channel connects, then the host boots it ~8.5 s later. Logs who boots and why.
 typedef uint64_t(__fastcall* BootPeerFn)(void* session, int32_t peerIndex, int32_t reason);
 static BootPeerFn s_originalBootPeer = nullptr;
+static std::atomic<bool> s_campaignCoop{false};
+void LobbyPatches::SetCampaignCoop(bool on) { s_campaignCoop.store(on); }
+
 static uint64_t __fastcall Hook_BootPeer(void* session, int32_t peerIndex, int32_t reason) {
     int32_t sessionState = -99;
     if (session) std::memcpy(&sessionState, static_cast<const uint8_t*>(session) + 0x60EF8, sizeof(sessionState));
     NOBLE_WARN("LobbyPatches: [{} pid {}] BOOT peer {} reason {} (session state {}) stack: {}", RefuseRole(),
                GetCurrentProcessId(), peerIndex, reason, sessionState, ReachStack());
+    // A campaign co-op host boots its guest with reason 9 a few seconds after both spawn (the guest's campaign
+    // progress does not match the host's, so the engine treats the peer as incompatible for network co-op) and the
+    // mission ends with "Error hosting co-op". Dropping that boot keeps both players in the mission; the engine
+    // re-evaluates it every frame, which is harmless once the peer stays. NOBLE_COOP_NO_KEEP_PEER=1 disables it.
+    static const bool keepCoopPeer = [] {
+        wchar_t env[8] = {};
+        return !(GetEnvironmentVariableW(L"NOBLE_COOP_NO_KEEP_PEER", env, 8) > 0 && env[0] != L'0');
+    }();
+    if (keepCoopPeer && reason == 9 && s_campaignCoop.load()) {
+        static std::atomic<int> logged{0};
+        if (logged.fetch_add(1) == 0) {
+            NOBLE_WARN("LobbyPatches: keeping guest peer {} in the campaign co-op session (engine boot reason 9, "
+                       "campaign progress mismatch); further occurrences are not logged", peerIndex);
+        }
+        return 0;
+    }
     return s_originalBootPeer ? s_originalBootPeer(session, peerIndex, reason) : 0;
 }
 
