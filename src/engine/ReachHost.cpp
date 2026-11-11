@@ -700,6 +700,15 @@ static uint64_t __fastcall HostSlot1_FrameTick(void* thisPtr, uint64_t a1, uint6
         NOBLE_INFO("ReachHost [Slot 1 - FrameTick]: Frame {} pumped from haloreach.dll (LoadProgress: {:.1f}%, launch state {})",
             frames, LoadScreen::Get().GetLoadProgress() * 100.0f, launchState);
     }
+    if (frames == 2 || frames == 30) {
+        // NOBLE_SCENARIO_DUMP=1: dump the scenario tag now that its data is loaded (it is still zeroes at palette time).
+        wchar_t dumpEnv[8] = {};
+        if (GetEnvironmentVariableW(L"NOBLE_SCENARIO_DUMP", dumpEnv, 8) > 0 && dumpEnv[0] == L'1') {
+            char when[32];
+            std::snprintf(when, sizeof(when), "frame %llu", static_cast<unsigned long long>(frames));
+            SharedTagCache::DumpScenarioFromLastTable(when);
+        }
+    }
     if (frames == 1 || (frames % 1800) == 0) {
         // Memory use over time (leak tracking): private bytes and working set of the process.
         PROCESS_MEMORY_COUNTERS_EX pmc{};
