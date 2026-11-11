@@ -2,6 +2,8 @@
 #include "common/Logger.hpp"
 #include "hooks/HookManager.hpp"
 
+#include <map>
+
 #include <windows.h>
 #include <cstring>
 #include <filesystem>
@@ -27,29 +29,50 @@ std::string HandlePath(HANDLE h) {
 }
 
 // Capture itself: plain C++ (ofstream unwinds), so it must stay outside the __try below.
+//
+// The engine writes its saves in chunks (a header, then records), so every write to a file under the player's save
+// folder is appended to one capture per handle: the concatenation is the file the engine would have produced.
 static void WriteCaptureFile(HANDLE hFile, const void* buffer, DWORD nBytes, BOOL ok) {
+    static std::map<uintptr_t, std::pair<std::string, std::string>> s_files;   // handle -> (path, capture file)
     const std::string path = hFile ? HandlePath(hFile) : std::string();
     const std::filesystem::path out = std::filesystem::path("data") / "mvar_write";
     std::error_code ec;
     std::filesystem::create_directories(out, ec);
-    static int index = 0;
-    char name[32] = {};
-    std::snprintf(name, sizeof(name), "write_%03d.bin", ++index);
-    std::ofstream file(out / name, std::ios::binary | std::ios::trunc);
+
+    bool interesting = false;
+    for (const char* marker : {"HaloReach", "map_variants", "autosave"}) {
+        if (path.find(marker) != std::string::npos) { interesting = true; break; }
+    }
+    if (!interesting && nBytes < 0x4000) return;
+
+    std::string capture;
+    auto it = s_files.find(reinterpret_cast<uintptr_t>(hFile));
+    if (it != s_files.end()) {
+        capture = it->second.second;
+    } else {
+        static int index = 0;
+        char name[64] = {};
+        std::snprintf(name, sizeof(name), "capture_%03d.bin", ++index);
+        capture = (out / name).string();
+        s_files[reinterpret_cast<uintptr_t>(hFile)] = {path, capture};
+        NOBLE_INFO("MvarWrite: handle 0x{:X} is '{}' -> capture '{}'", reinterpret_cast<uintptr_t>(hFile), path, capture);
+    }
+    std::ofstream file(capture, std::ios::binary | std::ios::app);
     file.write(static_cast<const char*>(buffer), nBytes);
     file.close();
-    const bool container = nBytes >= 0x300 && std::memcmp(static_cast<const unsigned char*>(buffer), "_blf", 4) == 0;
-    NOBLE_INFO("MvarWrite: {} byte(s) to '{}' (ok={}, container={}) -> '{}/{}'", nBytes, path, ok ? 1 : 0,
-               container ? 1 : 0, out.string(), name);
+    const unsigned char* first = static_cast<const unsigned char*>(buffer);
+    const bool container = nBytes >= 4 && std::memcmp(first, "_blf", 4) == 0;
+    NOBLE_INFO("MvarWrite: +{} byte(s) to '{}' (ok={}, starts '_blf'={}) total capture '{}'", nBytes, path, ok ? 1 : 0,
+               container ? 1 : 0, capture);
 }
 
 static void CaptureWrite(HANDLE hFile, LPCVOID lpBuffer, DWORD nBytes, BOOL ok) {
     // Only raw reads here: a bad pointer must not take the process down, and SEH cannot unwind C++ objects.
-    int container = 0;
     __try {
-        const unsigned char* bytes = static_cast<const unsigned char*>(lpBuffer);
-        container = (nBytes >= 0x300 && std::memcmp(bytes, "_blf", 4) == 0) ? 1 : 0;
-        if (!container && nBytes < 0x7000) return;
+        if (lpBuffer && nBytes > 0) {
+            volatile unsigned char probe = *static_cast<const unsigned char*>(lpBuffer);
+            (void)probe;
+        }
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return;
     }
@@ -58,8 +81,8 @@ static void CaptureWrite(HANDLE hFile, LPCVOID lpBuffer, DWORD nBytes, BOOL ok) 
 
 BOOL WINAPI HookWriteFile(HANDLE hFile, LPCVOID lpBuffer, DWORD nBytes, LPDWORD lpWritten, LPOVERLAPPED ov) {
     const BOOL ok = s_origWriteFile(hFile, lpBuffer, nBytes, lpWritten, ov);
-    // No C++ objects before this point would matter: the capture lives in a helper the SEH wrapper calls.
-    if (nBytes >= 0x4000 && lpBuffer) CaptureWrite(hFile, lpBuffer, nBytes, ok);
+    // Every write is considered; CaptureWrite drops the ones that are neither large nor in a save folder.
+    if (nBytes > 0 && lpBuffer) CaptureWrite(hFile, lpBuffer, nBytes, ok);
     return ok;
 }
 } // namespace
