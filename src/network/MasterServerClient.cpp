@@ -628,11 +628,12 @@ void MasterServerClient::DoHeartbeat() {
             {"host_team", m_advert.hostTeam},
             {"limits_id", noble::limits::LocalNetworkId()}
         };
-        // The match process re-registers the host's session with an advert built in main.cpp, which does
-        // not know the lobby's Workshop mod. Omitting the fields (instead of sending empty strings) keeps
-        // the mod id the pre-game lobby advertised.
-        if (!m_advert.modId.empty()) body["mod_id"] = m_advert.modId;
-        if (!m_advert.modTitle.empty()) body["mod_title"] = m_advert.modTitle;
+        // Always send the mod fields, empty when this host has no mod. Omitting them made the master server keep
+        // the previous session's mod id (it defaults to the existing value), so a host that switched from a modded
+        // map back to a stock one kept advertising the old Workshop item - guests then looked for that mod's maps
+        // and joined with the wrong map file.
+        body["mod_id"] = m_advert.modId;
+        body["mod_title"] = m_advert.modTitle;
     }
     const auto peerPings = NetworkTransport::Get().GetAllPeerPingsMs();
     if (!peerPings.empty()) {

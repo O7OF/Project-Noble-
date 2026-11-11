@@ -1607,6 +1607,12 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
                     advert.hasPassword = false;
                     advert.isPrivate = !hostPublic;
                     advert.isMod = !modFolder.empty();
+                    // The match process re-registers the host's session; carry the mod it launched with so the
+                    // session's mod id matches the map (the lobby's id is not available here).
+                    if (!modFolder.empty()) {
+                        advert.modId = modFolder.filename().string();
+                        advert.modTitle = mapTitle;
+                    }
                     advert.address = noble::UPnP::Get().GetExternalIP();
                     if (!connectSessionId.empty()) {
                         advert.id = connectSessionId;

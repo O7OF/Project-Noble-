@@ -3660,6 +3660,22 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
             std::filesystem::path(st.lobbyLaunchModFolder) : st.lobbyModFolder;
         std::string hostModId = !st.lobbyLaunchModId.empty() ? st.lobbyLaunchModId : st.lobbyModId;
 
+        // A map override only applies to the map it belongs to. Leftovers from a previous lobby used to be applied to
+        // whatever launched next (a campaign mission loading the previous lobby's mod map, then failing mid-load).
+        if (!hostMapOverride.empty()) {
+            const std::string overrideStem = hostMapOverride.stem().string();
+            const std::string scenario = choice.map;
+            const bool belongs = overrideStem == scenario || overrideStem.rfind(scenario + "_", 0) == 0 ||
+                                 scenario.rfind(overrideStem + "_", 0) == 0;
+            if (!belongs) {
+                NOBLE_WARN("FrontEndMenu: ignoring map override '{}' for map '{}' (left over from another lobby)",
+                           hostMapOverride.filename().string(), scenario);
+                hostMapOverride.clear();
+                st.lobbyMapOverride.clear();
+                st.lobbyLaunchMapOverride.clear();
+            }
+        }
+
         if (!hostMapOverride.empty() || !hostModFolder.empty() || !hostModId.empty()) {
             std::filesystem::path resolvedMap;
             std::filesystem::path resolvedModFolder = hostModFolder;
@@ -3713,10 +3729,22 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
                 NOBLE_INFO("FrontEndMenu: Guest resolved modded map: '{}' (folder: '{}')",
                            choice.mapOverride.string(), choice.modFolder.string());
             } else {
-                choice.mapOverride = hostMapOverride;
-                choice.modFolder = resolvedModFolder;
-                NOBLE_WARN("FrontEndMenu: Modded map '{}' (mod: '{}') not found on guest PC",
-                           wantMapFile, hostModId);
+                // The host is on a mod map this PC does not have. Launching the plain map anyway puts the guest in a
+                // match on a different map than the host (the engine then errors out or the two desync), so refuse
+                // the launch and say which Workshop item is missing instead.
+                const bool stockScenario = KnownScenario(choice.map, kMissions, Count(kMissions)) ||
+                                           KnownScenario(choice.map, kFirefightMaps, Count(kFirefightMaps)) ||
+                                           KnownScenario(choice.map, kMaps, Count(kMaps));
+                if (!stockScenario || !hostModId.empty()) {
+                    NOBLE_WARN("FrontEndMenu: host's mod map '{}' (mod: '{}') is not on this PC; not launching",
+                               wantMapFile, hostModId);
+                    st.lobbyLaunchPending = false;
+                    return;
+                }
+                choice.mapOverride.clear();
+                choice.modFolder.clear();
+                NOBLE_WARN("FrontEndMenu: host launched stock map '{}' without a mod map; launching it as is",
+                           choice.map);
             }
         } else {
             choice.mapOverride = st.lobbyMapOverride;
@@ -7496,6 +7524,14 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
         ctx.st.lobbyModId = modId;
         ctx.st.lobbyModTitle = modTitle;
         ctx.st.lobbyModFolder = modFolder;
+        // A map override, Forge map or launch payload left over from the previous lobby must not follow the player
+        // into this one: it made a guest launch a campaign mission with the previous lobby's mod map overlaid on it.
+        ctx.st.lobbyMapOverride.clear();
+        ctx.st.lobbyMapVariant.clear();
+        ctx.st.lobbyLaunchMapOverride.clear();
+        ctx.st.lobbyLaunchMapVariant.clear();
+        ctx.st.lobbyLaunchModFolder.clear();
+        ctx.st.lobbyLaunchModId.clear();
         ctx.st.lobbyRoster.clear();
         ctx.st.lobbyLaunchPending = false;
         {   // a launch or roster left over from an earlier lobby doesn't apply to this one
