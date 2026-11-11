@@ -302,7 +302,11 @@ MapVariant ReadMapVariantBytes(std::vector<uint8_t> bytes, const std::string& na
 
     const size_t packedEnd = kMvarBodyHeader * 8 + static_cast<size_t>(h.packedLength) * 8;
     const size_t slack = packedEnd > h.quotasEndBits ? packedEnd - h.quotasEndBits : 0;
-    const bool overran = stream.Overran() || h.packedLength > 0x7000 || h.quotasEndBits > packedEnd || slack > 7;
+    // Files written by the engine itself carry more trailing slack than the shipped ones (47 bits on a live Forge
+    // save, versus 0-7 in MCC's variants), so the tolerance is wider. Anything past a few bytes is still rejected.
+    constexpr size_t kMaximumTrailingSlack = 64;
+    const bool overran = stream.Overran() || h.packedLength > 0x7000 || h.quotasEndBits > packedEnd ||
+                         slack > kMaximumTrailingSlack;
 
     out.valid = !overran && h.chunkSize == kChunkSize && h.signature == "mvar";
     if (!out.valid) {
@@ -311,7 +315,7 @@ MapVariant ReadMapVariantBytes(std::vector<uint8_t> bytes, const std::string& na
         if (stream.Overran()) why << ", ran past the end";
         else if (h.quotasEndBits > packedEnd) why << ", object/quota data runs " << std::dec
                                                   << (h.quotasEndBits - packedEnd) << " bits past the packed length";
-        else why << ", " << std::dec << slack << " bits of padding (expected 0-7)";
+        else why << ", " << std::dec << slack << " bits of trailing padding (expected 0-64)";
         out.error = why.str();
     }
 

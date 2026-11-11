@@ -106,7 +106,8 @@ std::filesystem::path SaveVariantChunkToLibrary(const std::vector<uint8_t>& mvar
     std::filesystem::create_directories(directory, ec);
     const std::filesystem::path out = directory / (safe + ".json");
     std::string error;
-    if (!SaveMapVariantJson(variant, out, safe, error)) {
+    // The chunk came from the engine's serializer: keep its bytes, hash and trailing padding exactly as written.
+    if (!SaveContainerJson(variant.fileBytes, variant.header.mapId, safe, out, error)) {
         detail = error;
         return {};
     }

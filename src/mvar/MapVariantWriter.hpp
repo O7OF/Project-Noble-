@@ -23,6 +23,11 @@ bool WriteMapVariant(const MapVariant& variant, std::vector<uint8_t>& out, bool&
 bool SaveMapVariantJson(const MapVariant& variant, const std::filesystem::path& jsonPath, const std::string& name,
                         std::string& error);
 
+// Writes a container exactly as given (no repack, no hash change) in the same JSON form. Used for chunks produced by
+// the engine's own serializer, where its bytes and trailing padding must survive untouched.
+bool SaveContainerJson(const std::vector<uint8_t>& container, uint32_t baseMapId, const std::string& name,
+                       const std::filesystem::path& jsonPath, std::string& error);
+
 // The canonical chunk hash: SHA1(GEN3_SALT || packed_length (big-endian) || packed data).
 std::array<uint8_t, 20> ComputeChunkHash(const std::vector<uint8_t>& packedData, uint32_t packedLength);
 

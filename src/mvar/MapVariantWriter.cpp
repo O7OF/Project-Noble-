@@ -231,6 +231,24 @@ bool WriteMapVariant(const MapVariant& variant, std::vector<uint8_t>& out, bool&
     return true;
 }
 
+bool SaveContainerJson(const std::vector<uint8_t>& container, uint32_t baseMapId, const std::string& name,
+                       const std::filesystem::path& jsonPath, std::string& error) {
+    std::ofstream file(jsonPath, std::ios::binary | std::ios::trunc);
+    if (!file) {
+        error = "cannot open '" + jsonPath.string() + "' for writing";
+        return false;
+    }
+    const std::string safeName = name.empty() ? std::string("Forge Map") : name;
+    file << "{\n  \"version\": 1,\n  \"name\": \"" << JsonEscape(safeName) << "\",\n  \"base_map_id\": "
+         << baseMapId << ",\n  \"mode\": \"forge\",\n  \"data\": \"" << Base64(container) << "\"\n}\n";
+    file.close();
+    if (!file) {
+        error = "could not write '" + jsonPath.string() + "'";
+        return false;
+    }
+    return true;
+}
+
 bool SaveMapVariantJson(const MapVariant& variant, const std::filesystem::path& jsonPath, const std::string& name,
                         std::string& error) {
     std::vector<uint8_t> bytes;
