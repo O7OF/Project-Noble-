@@ -490,6 +490,28 @@ static char s_saveVariantName[64] = "My Forge Map";
 // "save_map" command, waits for the file on a background thread (waiting here froze the render thread for seconds),
 // and stores it as JSON: {"version","name","base_map","mode","data"} with the variant base64-encoded - the same idea
 // as Project Reclaimer's Halo 3 map files, so a saved map is one small readable file that can be shared.
+namespace {
+// The container around a captured engine chunk comes from an existing variant: BLF header + chdr + trailing chunks.
+// The session's own .mvar is preferred; otherwise any shipped variant works, because the engine reads the map and
+// objects from the mvar chunk that is being replaced.
+std::filesystem::path FindVariantTemplate(const std::filesystem::path& dataDir) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const fs::path session = noble::SessionMapVariantPath();
+    if (!session.empty() && fs::exists(session, ec)) return session;
+    const fs::path candidates[] = { dataDir / "map_variants", noble::ReachHost::Get().GetReachDir() / "map_variants",
+                                    noble::ReachHost::Get().GetReachDir() / "hopper_map_variants" };
+    for (const fs::path& dir : candidates) {
+        for (const auto& entry : fs::directory_iterator(dir, ec)) {
+            if (!entry.is_regular_file(ec)) continue;
+            if (entry.path().extension() != ".mvar") continue;
+            return entry.path();
+        }
+    }
+    return {};
+}
+} // namespace
+
 std::filesystem::path PauseMenu::SaveForgeMapVariant(const std::string& name) {
     namespace fs = std::filesystem;
     std::error_code ec;
@@ -543,6 +565,24 @@ std::filesystem::path PauseMenu::SaveForgeMapVariant(const std::string& name) {
             ec.clear();
         }
         if (source.empty()) NOBLE_WARN("PauseMenu: the engine wrote no map variant; using this session's variant");
+    }
+
+    // Best source: the chunk the engine's serializer produced. Its save routine builds that chunk from the live
+    // variant before handing it to the save device, so it holds the edits even when the device write fails.
+    std::vector<uint8_t> capturedChunk;
+    if (source.empty() && BlamEngine::Active() && BlamEngine::Active()->TakeCapturedMapVariantChunk(capturedChunk)) {
+        const fs::path tmpl = FindVariantTemplate(dataDir);
+        if (!tmpl.empty()) {
+            std::string detail;
+            const fs::path out = noble::mvar::SaveVariantChunkToLibrary(capturedChunk, tmpl, name, library, detail);
+            if (!out.empty()) {
+                NOBLE_INFO("PauseMenu: map variant '{}' saved from the engine serializer to '{}' (template '{}')", name,
+                           out.string(), tmpl.string());
+                FrontEndMenu::InvalidateForgeMaps();
+                return out;
+            }
+            NOBLE_WARN("PauseMenu: captured variant chunk could not be saved: {}", detail);
+        }
     }
 
     if (source.empty()) {

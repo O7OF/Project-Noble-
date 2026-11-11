@@ -54,6 +54,12 @@ public:
     // engine thread (PauseMenu::Render is). Returns false if the call faulted; the save itself may still be asynchronous.
     bool TriggerMapVariantSave();
 
+    // Hooks the engine's map-variant serializer (RVA 0x17AC38) and keeps the 0x7028-byte chunk it produces. The
+    // engine's save routine builds that chunk before handing it to the save device, so this is where the edited
+    // variant exists even when the device write fails.
+    bool InstallMapVariantCapture();
+    bool TakeCapturedMapVariantChunk(std::vector<uint8_t>& out);
+
     const std::string& GetCurrentMap() const { return m_currentMap; }
     const std::string& GetCurrentMode() const { return m_currentMode; }
     bool IsForgeMode() const { return _stricmp(m_currentMode.c_str(), "forge") == 0 || _stricmp(m_currentMode.c_str(), "sandbox") == 0; }

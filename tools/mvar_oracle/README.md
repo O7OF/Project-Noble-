@@ -103,3 +103,19 @@ byte-identical) and writes the canonical hash once an object is actually edited.
 * Title and description are stored only up to the terminator, not as fixed 128-character fields.
 * The header, authors, title, bounds and label table land at 3,748 for atom.mvar; the 651 object slots run from there
   to 78,295 and the quotas to 84,439.
+
+## The engine's own serializer (for saving edited maps)
+
+The hosted engine can build the container itself, and this is how an edited Forge map becomes bytes:
+
+* `RVA 0x17AC38` - `void serialize(void* outChunk, void* variantStruct)`. Fills a `0x7028`-byte `mvar` chunk:
+  `mvar`, size `0x7028`, version `0x1F`, flags `1`, packed length, packed data (via `0x6D04C`), and the SHA-1
+  with `BCrypt`. This is the function to hook or call: it takes the live variant struct directly.
+* `RVA 0x156974` - the save routine. Builds the whole `_blf` file (header, `chdr`, the chunk above, `_eof`) from the
+  live session variant and hands it to the save device. Its two callers are `0x692CC` and itself via a data slot at
+  `0x18E5FB2C`.
+
+Noble hooks `0x17AC38` and keeps the chunk it produces, so a save works even when the save device writes nothing
+(which is what happens in the hosted build: the routine runs, no file appears). The chunk is wrapped in an existing
+container - the session's `.mvar`, or any shipped variant - by replacing bytes `[chunkOffset, +0x7028)` and patching
+the `+0xC0` title; the engine reads the map and objects from the replaced chunk.

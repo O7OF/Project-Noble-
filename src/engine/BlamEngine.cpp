@@ -18,6 +18,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <cwchar>
+#include <mutex>
 #include <fstream>
 #include <filesystem>
 #include <objbase.h>
@@ -68,6 +69,47 @@ BlamEngine::~BlamEngine() {
     Shutdown();
 }
 
+namespace {
+using SerializeMapVariantFn = void (*)(void* outChunk, void* variant);
+SerializeMapVariantFn s_origSerializeMapVariant = nullptr;
+std::mutex s_capturedMutex;
+std::vector<uint8_t> s_capturedChunk(0x7028, 0);
+bool s_haveCapturedChunk = false;
+
+void HookSerializeMapVariant(void* outChunk, void* variant) {
+    if (s_origSerializeMapVariant) s_origSerializeMapVariant(outChunk, variant);
+    if (!outChunk) return;
+    std::lock_guard<std::mutex> lock(s_capturedMutex);
+    std::memcpy(s_capturedChunk.data(), outChunk, s_capturedChunk.size());
+    s_haveCapturedChunk = true;
+    static bool logged = false;
+    if (!logged) {
+        logged = true;
+        NOBLE_INFO("BlamEngine: captured a map-variant chunk from the engine serializer");
+    }
+}
+} // namespace
+
+bool BlamEngine::InstallMapVariantCapture() {
+    if (s_origSerializeMapVariant || !m_hModule) return s_origSerializeMapVariant != nullptr;
+    void* target = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(m_hModule) + 0x17AC38);
+    if (!HookManager::InstallHook(target, reinterpret_cast<void*>(&HookSerializeMapVariant),
+                                  reinterpret_cast<void**>(&s_origSerializeMapVariant), "capture_mvar_serialize")) {
+        NOBLE_WARN("BlamEngine: could not hook the map-variant serializer");
+        return false;
+    }
+    NOBLE_INFO("BlamEngine: map-variant serializer hooked (RVA 0x17AC38)");
+    return true;
+}
+
+bool BlamEngine::TakeCapturedMapVariantChunk(std::vector<uint8_t>& out) {
+    std::lock_guard<std::mutex> lock(s_capturedMutex);
+    if (!s_haveCapturedChunk) return false;
+    out = s_capturedChunk;
+    s_haveCapturedChunk = false;
+    return true;
+}
+
 bool BlamEngine::TriggerMapVariantSave() {
     if (!m_hModule) return false;
     __try {
@@ -81,6 +123,8 @@ bool BlamEngine::TriggerMapVariantSave() {
 }
 
 bool BlamEngine::Initialize(const ReachInstallInfo& installInfo, HMODULE hModule, const ReachExports& exports, const EngineHostContext& context) {
+    m_hModule = hModule;
+    InstallMapVariantCapture();
     s_active = this;
     if (m_isInitialized) return true;
 

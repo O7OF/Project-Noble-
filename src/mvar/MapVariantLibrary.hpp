@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <string>
+#include <vector>
 
 namespace noble::mvar {
 
@@ -20,6 +21,13 @@ std::string VariantTitle(const std::filesystem::path& sourceMvar);
 
 // Saves `sourceMvar` into `directory` as "<name>.json", overwriting an existing file of the same name.
 // Returns the written path; empty on failure with `detail` holding the reason (or "saved" on success).
+// Saves a raw 0x7028-byte "mvar" chunk produced by the engine's serializer. The surrounding container (BLF header,
+// chdr chunk, trailing chunks) comes from `templateMvar`; the template's map/thumbnail are kept and only the variant
+// chunk and the +0xC0 title are replaced.
+std::filesystem::path SaveVariantChunkToLibrary(const std::vector<uint8_t>& mvarChunk,
+                                                const std::filesystem::path& templateMvar, const std::string& name,
+                                                const std::filesystem::path& directory, std::string& detail);
+
 std::filesystem::path SaveVariantToLibrary(const std::filesystem::path& sourceMvar, const std::string& name,
                                            const std::filesystem::path& directory, std::string& detail);
 

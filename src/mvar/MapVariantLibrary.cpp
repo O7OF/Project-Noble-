@@ -53,6 +53,67 @@ std::string VariantTitle(const std::filesystem::path& sourceMvar) {
     return out;
 }
 
+std::filesystem::path SaveVariantChunkToLibrary(const std::vector<uint8_t>& mvarChunk,
+                                                const std::filesystem::path& templateMvar, const std::string& name,
+                                                const std::filesystem::path& directory, std::string& detail) {
+    if (mvarChunk.size() != 0x7028) {
+        detail = "the captured chunk is not 0x7028 bytes";
+        return {};
+    }
+    std::ifstream file(templateMvar, std::ios::binary);
+    if (!file) {
+        detail = "no template variant to wrap the chunk in ('" + templateMvar.string() + "')";
+        return {};
+    }
+    std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+
+    // Walk the template's BLF chunks to the mvar chunk it already has.
+    size_t offset = 0, chunkOffset = SIZE_MAX;
+    while (offset + 12 <= bytes.size()) {
+        const uint32_t size = (static_cast<uint32_t>(bytes[offset + 4]) << 24) |
+                              (static_cast<uint32_t>(bytes[offset + 5]) << 16) |
+                              (static_cast<uint32_t>(bytes[offset + 6]) << 8) | bytes[offset + 7];
+        if (size < 12 || offset + size > bytes.size()) break;
+        if (std::memcmp(bytes.data() + offset, "mvar", 4) == 0) { chunkOffset = offset; break; }
+        offset += size;
+    }
+    if (chunkOffset == SIZE_MAX || chunkOffset + 0x7028 > bytes.size()) {
+        detail = "the template has no usable mvar chunk";
+        return {};
+    }
+    std::memcpy(bytes.data() + chunkOffset, mvarChunk.data(), mvarChunk.size());
+
+    const std::string safe = SanitizeVariantName(name);
+    SetContainerTitle(bytes, safe);
+
+    MapVariant variant = ReadMapVariantBytes(std::move(bytes), safe);
+    if (!variant.valid) {
+        detail = "the assembled variant did not parse: " + variant.error;
+        return {};
+    }
+
+    // The maps menu groups a variant by the base-map id in the chdr, while the engine loads the map and objects from
+    // the mvar chunk. Writing the chunk's id over it keeps the two copies agreeing when the template is another map.
+    if (variant.fileBytes.size() > 0x70) {
+        const uint32_t mapId = variant.header.mapId;
+        variant.fileBytes[0x6C] = static_cast<uint8_t>(mapId & 0xFF);
+        variant.fileBytes[0x6D] = static_cast<uint8_t>((mapId >> 8) & 0xFF);
+        variant.fileBytes[0x6E] = static_cast<uint8_t>((mapId >> 16) & 0xFF);
+        variant.fileBytes[0x6F] = static_cast<uint8_t>((mapId >> 24) & 0xFF);
+    }
+
+    std::error_code ec;
+    std::filesystem::create_directories(directory, ec);
+    const std::filesystem::path out = directory / (safe + ".json");
+    std::string error;
+    if (!SaveMapVariantJson(variant, out, safe, error)) {
+        detail = error;
+        return {};
+    }
+    detail = "saved";
+    return out;
+}
+
 std::filesystem::path SaveVariantToLibrary(const std::filesystem::path& sourceMvar, const std::string& name,
                                            const std::filesystem::path& directory, std::string& detail) {
     std::ifstream file(sourceMvar, std::ios::binary);

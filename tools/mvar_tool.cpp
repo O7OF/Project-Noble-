@@ -177,6 +177,19 @@ int Nudge(const std::filesystem::path& in, const std::filesystem::path& out, int
     return ok ? 0 : 1;
 }
 
+int Assemble(const std::filesystem::path& chunkFile, const std::filesystem::path& tmpl,
+             const std::filesystem::path& dir, const std::string& name) {
+    const std::vector<uint8_t> chunk = ReadFile(chunkFile);
+    std::string detail;
+    const std::filesystem::path out = noble::mvar::SaveVariantChunkToLibrary(chunk, tmpl, name, dir, detail);
+    if (out.empty()) {
+        std::printf("FAIL  %s\n", detail.c_str());
+        return 1;
+    }
+    std::printf("OK  %s\n", out.string().c_str());
+    return 0;
+}
+
 int Library(const std::filesystem::path& in, const std::filesystem::path& dir, const std::string& name) {
     std::string detail;
     const std::string useName = name.empty() ? noble::mvar::VariantTitle(in) : name;
@@ -219,6 +232,7 @@ int main(int argc, char** argv) {
     if (mode == "-write" && argc >= 4) return WriteBytes(argv[2], argv[3]);
     if (mode == "-nudge" && argc >= 6) return Nudge(argv[2], argv[3], std::atoi(argv[4]), std::atoi(argv[5]));
     if (mode == "-library" && argc >= 4) return Library(argv[2], argv[3], argc >= 5 ? argv[4] : "");
+    if (mode == "-assemble" && argc >= 6) return Assemble(argv[2], argv[3], argv[4], argv[5]);
 
     std::vector<std::filesystem::path> files;
     std::error_code ec;
