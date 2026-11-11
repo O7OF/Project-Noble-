@@ -102,6 +102,94 @@ bool BlamEngine::InstallMapVariantCapture() {
     return true;
 }
 
+namespace {
+// The module's TLS index, from its TLS directory. The engine's per-thread state pointer lives at [tls block + 0x48];
+// the live map variant is 0x110F0 into that state.
+bool ReadModuleTlsIndex(HMODULE module, DWORD& index) {
+    if (!module) return false;
+    const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(module);
+    if (dos->e_magic != IMAGE_DOS_SIGNATURE) return false;
+    const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(reinterpret_cast<const uint8_t*>(module) + dos->e_lfanew);
+    if (nt->Signature != IMAGE_NT_SIGNATURE) return false;
+    const IMAGE_DATA_DIRECTORY& dir = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_TLS];
+    if (!dir.VirtualAddress) return false;
+    const auto* tls = reinterpret_cast<const IMAGE_TLS_DIRECTORY*>(reinterpret_cast<const uint8_t*>(module) + dir.VirtualAddress);
+    const uintptr_t imageBase = reinterpret_cast<uintptr_t>(module);
+    if (tls->AddressOfIndex < imageBase) return false;
+    index = *reinterpret_cast<const DWORD*>(tls->AddressOfIndex);
+    return true;
+}
+
+// SEH reads live in their own object-free helpers: MSVC cannot mix __try with C++ objects that need unwinding.
+bool ReadTlsBlock(DWORD index, void*& tlsBlock) {
+    __try {
+        const uintptr_t teb = __readgsqword(0x30);
+        auto** slots = *reinterpret_cast<void***>(teb + 0x58);
+        tlsBlock = slots ? slots[index] : nullptr;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+    return true;
+}
+
+bool ReadEngineState(void* tlsBlock, void*& state) {
+    __try {
+        state = *reinterpret_cast<void**>(static_cast<uint8_t*>(tlsBlock) + 0x48);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+    return true;
+}
+
+bool CallMapVariantSerialize(HMODULE module, void* out, void* variant) {
+    __try {
+        typedef void (*SerializeFn)(void*, void*);
+        auto pSerialize = reinterpret_cast<SerializeFn>(reinterpret_cast<uintptr_t>(module) + 0x17AC38);
+        pSerialize(out, variant);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+    return true;
+}
+} // namespace
+
+bool BlamEngine::TrySerializeLiveMapVariant(std::vector<uint8_t>& outChunk) {
+    if (!m_hModule) return false;
+    DWORD tlsIndex = 0;
+    if (!ReadModuleTlsIndex(m_hModule, tlsIndex)) {
+        NOBLE_WARN("BlamEngine: haloreach.dll has no TLS directory");
+        return false;
+    }
+    void* tlsBlock = nullptr;
+    if (!ReadTlsBlock(tlsIndex, tlsBlock) || !tlsBlock) return false;
+    void* engineState = nullptr;
+    if (!ReadEngineState(tlsBlock, engineState) || !engineState) return false;
+
+    void* variant = static_cast<uint8_t*>(engineState) + 0x110F0;
+    std::vector<uint8_t> chunk(0x7028, 0);
+    if (!CallMapVariantSerialize(m_hModule, chunk.data(), variant)) {
+        NOBLE_WARN("BlamEngine: serializing the live variant at {:p} faulted", variant);
+        return false;
+    }
+
+    const auto be32 = [](const uint8_t* p) {
+        return (static_cast<uint32_t>(p[0]) << 24) | (static_cast<uint32_t>(p[1]) << 16) |
+               (static_cast<uint32_t>(p[2]) << 8) | p[3];
+    };
+    if (std::memcmp(chunk.data(), "mvar", 4) != 0 || be32(chunk.data() + 4) != 0x7028) {
+        NOBLE_WARN("BlamEngine: live variant at {:p} did not serialize to an mvar chunk", variant);
+        return false;
+    }
+    const uint32_t packed = be32(chunk.data() + 0x20);
+    if (packed == 0 || packed > 0x7000) {
+        NOBLE_WARN("BlamEngine: live variant serialized with implausible packed length {}", packed);
+        return false;
+    }
+    NOBLE_INFO("BlamEngine: serialized live map variant at {:p} ({} packed bytes)", variant, packed);
+    outChunk = std::move(chunk);
+    return true;
+}
+
 bool BlamEngine::TakeCapturedMapVariantChunk(std::vector<uint8_t>& out) {
     std::lock_guard<std::mutex> lock(s_capturedMutex);
     if (!s_haveCapturedChunk) return false;

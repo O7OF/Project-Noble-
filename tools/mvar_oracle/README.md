@@ -119,3 +119,10 @@ Noble hooks `0x17AC38` and keeps the chunk it produces, so a save works even whe
 (which is what happens in the hosted build: the routine runs, no file appears). The chunk is wrapped in an existing
 container - the session's `.mvar`, or any shipped variant - by replacing bytes `[chunkOffset, +0x7028)` and patching
 the `+0xC0` title; the engine reads the map and objects from the replaced chunk.
+
+### The live variant pointer
+
+The save routine copies the session's map variant from `[TLS block + 0x48] + 0x110F0` before serializing it
+(`FUN_180156974`). Noble reads the module's TLS index from its TLS directory, takes that pointer on the engine thread,
+and calls `0x17AC38` on it directly - no save UI, no save device, and it works while the game is paused. The result is
+validated by parsing it back before anything is written.

@@ -531,6 +531,28 @@ std::filesystem::path PauseMenu::SaveForgeMapVariant(const std::string& name) {
     }
     ec.clear();
 
+    // Direct path first: serialize the live session variant ourselves. It does not touch the save UI or the save
+    // device, so it is the only source that works while the game is paused, and it carries the Forge edits.
+    {
+        std::vector<uint8_t> liveChunk;
+        if (BlamEngine::Active() && BlamEngine::Active()->TrySerializeLiveMapVariant(liveChunk)) {
+            const fs::path tmpl = FindVariantTemplate(dataDir);
+            if (!tmpl.empty()) {
+                std::string detail;
+                const fs::path out = noble::mvar::SaveVariantChunkToLibrary(liveChunk, tmpl, name, library, detail);
+                if (!out.empty()) {
+                    NOBLE_INFO("PauseMenu: map variant '{}' saved from the live variant to '{}' (template '{}')", name,
+                               out.string(), tmpl.string());
+                    FrontEndMenu::InvalidateForgeMaps();
+                    return out;
+                }
+                NOBLE_WARN("PauseMenu: live variant chunk could not be saved: {}", detail);
+            } else {
+                NOBLE_WARN("PauseMenu: no template .mvar to wrap the live variant in");
+            }
+        }
+    }
+
     fs::path source;
     if (BlamEngine::Active()) {
         fs::path autosaveDir;

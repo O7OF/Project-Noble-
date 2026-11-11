@@ -58,6 +58,11 @@ public:
     // engine's save routine builds that chunk before handing it to the save device, so this is where the edited
     // variant exists even when the device write fails.
     bool InstallMapVariantCapture();
+
+    // Serializes the live session map variant by calling the engine's serializer directly. The engine keeps it at
+    // [TLS block + 0x48] + 0x110F0 (the pointer its own save routine copies from). Returns a 0x7028-byte mvar chunk;
+    // this does not depend on the save UI or the save device, so it also works while the game is paused.
+    bool TrySerializeLiveMapVariant(std::vector<uint8_t>& outChunk);
     bool TakeCapturedMapVariantChunk(std::vector<uint8_t>& out);
 
     const std::string& GetCurrentMap() const { return m_currentMap; }
