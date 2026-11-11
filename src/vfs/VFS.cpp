@@ -374,6 +374,43 @@ BOOL WINAPI HookedReadFileTrace(HANDLE hFile, LPVOID buffer, DWORD toRead, LPDWO
 }
 } // namespace
 
+// The engine reads a map's game-engine type from mapsinfo<scenario>.mapinfo at launch time and refuses the launch
+// when it says Firefight/campaign but the launch asks for multiplayer. Mod maps built on a Firefight canvas therefore
+// need a patched copy in user storage (VFS serves user storage before MCC's own files). Menu launches never pass
+// through main's command-line patch, so this is called from BlamEngine::LaunchMap as well.
+// Was <scenario> shipped by MCC as a Firefight map? Mod maps built on those canvases only render through the Forge
+// engine, so the launcher uses this to pick the mode that works.
+bool VFS::IsFirefightCanvas(const std::string& scenario) {
+    std::error_code ec;
+    const fs::path src = s_baseMccPath / "maps" / "info" / (scenario + ".mapinfo");
+    std::ifstream in(src, std::ios::binary);
+    if (!in) return false;
+    char header[0x44] = {};
+    in.read(header, sizeof(header));
+    return in.gcount() >= 0x43 && static_cast<uint8_t>(header[0x42]) == 0x04;
+}
+
+bool VFS::EnsureMultiplayerMapInfo(const std::string& scenario) {
+    if (scenario.empty()) return false;
+    std::error_code ec;
+    const fs::path src = s_baseMccPath / "maps" / "info" / (scenario + ".mapinfo");
+    std::ifstream in(src, std::ios::binary);
+    if (!in) return false;
+    std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    if (bytes.size() <= 0x44) return false;
+    if (bytes[0x42] == 0x00 && (bytes[0x43] & 0x40) != 0) return true;   // already a multiplayer map
+    const uint8_t wasType = bytes[0x42];
+    bytes[0x42] = 0x00;                                                  // multiplayer engine type
+    bytes[0x43] = static_cast<uint8_t>(bytes[0x43] | 0x40);              // multiplayer map flag
+    const fs::path dst = s_userStoragePath / "maps" / "info" / (scenario + ".mapinfo");
+    fs::create_directories(dst.parent_path(), ec);
+    std::ofstream out(dst, std::ios::binary);
+    if (!out) return false;
+    out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+    NOBLE_INFO("VFS: map info for '{}' presented as multiplayer (was engine type 0x{:02X})", scenario, wasType);
+    return true;
+}
+
 void VFS::InstallMapReadTrace() {
     if (s_origReadFileTrace) return;
     if (noble::HookManager::InstallHook(reinterpret_cast<void*>(&ReadFile),
