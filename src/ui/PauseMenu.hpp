@@ -26,6 +26,11 @@ class PauseMenu {
 public:
     static bool IsOpen();
     static void Toggle();
+
+    // Forge: ask the engine to save the current map variant (save_map), then copy what it wrote from the engine's
+    // autosave folder into data\map_variants so it shows up under its base map in the maps menu. Returns the
+    // written file's path, empty on failure.
+    static std::filesystem::path SaveForgeMapVariant(const std::string& name);
     static void Close();
 
     // Post-game panel. Once shown it stays up (the engine has nothing more to play).

@@ -1033,6 +1033,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     int thirdPersonDistance = 100;
     std::string engineCommand;
     int engineCommandAt = -1;
+    int forgeSaveAt = -1;   // dev: run the Forge "save map variant" path N seconds into the match
     std::string connectAddress = "";
     std::string connectSessionId = "";
     std::string connectSessionToken = "";
@@ -1104,6 +1105,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             } else if (arg == L"-third-person-mode" && i + 1 < numArgs) {
                 thirdPersonMode = _wtoi(argvW[++i]);
                 thirdPerson = true;
+            } else if (arg == L"-forge-save-at") {
+                forgeSaveAt = _wtoi(argvW[++i]);
             } else if (arg == L"-guest-post-start") {
                 guestPostStart = true;
             } else if (arg == L"-engine-cmd" && i + 1 < numArgs) {
@@ -1710,6 +1713,15 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             NOBLE_WARN("main: dispatching engine command '{}' (research hook)", cmd);
             if (noble::BlamEngine::Active()) noble::BlamEngine::Active()->ExecuteCommand(cmd);
             else NOBLE_WARN("main: no active engine for command '{}'", cmd);
+        }).detach();
+    }
+
+    if (forgeSaveAt >= 0) {
+        std::thread([forgeSaveAt] {
+            std::this_thread::sleep_for(std::chrono::seconds(forgeSaveAt));
+            NOBLE_WARN("main: -forge-save-at {} - running the Forge save-map-variant path (test hook)", forgeSaveAt);
+            const std::filesystem::path saved = noble::PauseMenu::SaveForgeMapVariant("Dev Test Variant");
+            NOBLE_WARN("main: -forge-save-at result: '{}'", saved.empty() ? std::string("(nothing)") : saved.string());
         }).detach();
     }
 

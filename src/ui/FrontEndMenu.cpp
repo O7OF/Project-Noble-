@@ -460,6 +460,12 @@ bool ReadForgeMap(const std::filesystem::path& path, ForgeMap& out) {
 std::vector<ForgeMap> ScanForgeMaps() {
     std::vector<ForgeMap> list;
     std::vector<std::filesystem::path> folders = { VFS::GetUserStoragePath() / "map_variants" };
+    // MCC ships its own Forge map variants with the game: haloreachmap_variants (the maps' defaults) and
+    // haloreachhopper_map_variants (the matchmaking hopper layouts, 266 files). Listing them makes every base
+    // variant playable and gives a large, known-good set to check loading/saving against.
+    const std::filesystem::path reachDir = VFS::GetBaseMccPath();
+    folders.push_back(reachDir / "map_variants");
+    folders.push_back(reachDir / "hopper_map_variants");
     wchar_t userProfile[MAX_PATH] = {};
     if (GetEnvironmentVariableW(L"USERPROFILE", userProfile, MAX_PATH) > 0) {
         const std::filesystem::path uProf(userProfile);
@@ -2629,6 +2635,61 @@ std::vector<MapEntry> ForgeMapEntries(const std::vector<ForgeMap>& forgeMaps, co
     return out;
 }
 
+// Maps menu nesting: under each stock map, its own Forge map variants, as a collapsible heading. MCC ships them
+// (haloreach\map_variants and haloreach\hopper_map_variants) and a player's own saved ones live in
+// data\map_variants, so "atom" or "cliffhanger" appear under Forge World where they belong rather than only in the
+// separate Forge maps tab.
+void InsertMapVariants(std::vector<MapEntry>& list, const std::vector<ForgeMap>& forgeMaps, std::set<std::string>& open) {
+    if (forgeMaps.empty() || list.empty()) return;
+    std::vector<MapEntry> out;
+    out.reserve(list.size() + forgeMaps.size());
+    for (const MapEntry& e : list) {
+        out.push_back(e);
+        if (e.header || e.mod || e.custom || !e.mvar.empty() || e.scenario.empty()) continue;   // stock map rows only
+        std::vector<const ForgeMap*> variants;
+        for (const ForgeMap& m : forgeMaps) if (m.scenario == e.scenario) variants.push_back(&m);
+        if (variants.empty()) continue;
+        MapEntry heading;
+        heading.name = "Map variants  (" + std::to_string(variants.size()) + ")";
+        heading.header = true;
+        heading.scenario = e.scenario;
+        heading.forgeGroup = "variants:" + e.scenario;
+        heading.enabled = open.count(ForgeOpenKey(heading.forgeGroup)) != 0;
+        heading.blurb = "Forge map variants built on " + MapNames::Display(e.scenario) + ".";
+        out.push_back(heading);
+        if (!heading.enabled) continue;
+        for (const ForgeMap* m : variants) {
+            MapEntry row;
+            row.scenario = m->scenario;
+            row.name = m->title;
+            row.blurb = !m->description.empty() ? PlainDescription(m->description, 150) + " (Forge map)"
+                                                : "Forge map on " + MapNames::Display(m->scenario) + ".";
+            row.mvar = m->path;
+            row.forgeGroup = m->group;
+            out.push_back(row);
+        }
+    }
+    static int s_logged = 0;
+    if (s_logged < 6) {
+        ++s_logged;
+        int rows = 0;
+        for (const MapEntry& e : out) if (!e.mvar.empty()) ++rows;
+        std::string sample;
+        for (const ForgeMap& m : forgeMaps) {
+            sample += m.scenario + " ";
+            if (sample.size() > 200) break;
+        }
+        sample += " || ";
+        for (const MapEntry& e : out) {
+            if (e.header || e.mod || e.custom) continue;
+            sample += e.scenario + " ";
+            if (sample.size() > 400) break;
+        }
+        NOBLE_INFO("FrontEndMenu: map list {} row(s), {} variants nested; base rows: {}", out.size(), rows, sample);
+    }
+    list.swap(out);
+}
+
 void ToggleForgeGroup(std::set<std::string>& open, const std::string& group) {
     const std::string k = ForgeOpenKey(group);
     if (!open.erase(k)) open.insert(k);
@@ -2684,6 +2745,7 @@ struct OverlayContext {
     std::vector<MenuVariant> variants;
     std::vector<MenuVariant> ffVariants;
     std::vector<ForgeMap> forgeMaps;
+    bool forgeMapsScanned = false;   // the scan is lazy: the maps menu needs it before the Forge tab is opened
     std::filesystem::path forgeVariant;
     std::vector<ModEntry> mods;
     std::vector<const ModEntry*> campaignMods;
@@ -6645,6 +6707,7 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
                 ctx.variants = ScanVariants(ctx.reachDir, false);
                 ctx.ffVariants = ScanVariants(ctx.reachDir, true);
                 ctx.forgeMaps = ScanForgeMaps();
+                ctx.forgeMapsScanned = true;
                 int& index = ffScreen ? st.ffVariant : st.variant;
                 const std::vector<MenuVariant>& modes = ffScreen ? ctx.ffVariants : ctx.variants;
                 index = FindVariant(modes, ffScreen ? L"hr_ff_standard_1set.bin" : L"slayer_054.bin");
@@ -6756,8 +6819,17 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         if (DrawSearchBox(ui, "##map_search", ImVec2(searchX, top + 70.0f * ui.s), 140.0f * ui.s, st.mapSearch, sizeof(st.mapSearch), "Search")) st.mapSearchRow = 0;
         if (ImGui::IsItemActive()) st.focusRow = 0;
         const bool searching = st.mapSearch[0] != 0;
-        const std::vector<MapEntry> maps = forgeTab ? ForgeMapEntries(ctx.forgeMaps, st.openMods, st.mapSearch)
-                                                    : ListedMaps(modded, modList, modMode, baseMaps, baseCount, st.openMods, carrier, st.mapSearch);
+        std::vector<MapEntry> maps = forgeTab ? ForgeMapEntries(ctx.forgeMaps, st.openMods, st.mapSearch)
+                                              : ListedMaps(modded, modList, modMode, baseMaps, baseCount, st.openMods, carrier, st.mapSearch);
+        // Custom Game and Forge: the base maps' own variants nest under them (not in Campaign/Firefight). Scan the
+        // variants once here too - the list needs them before the Forge tab has ever been opened.
+        if (!forgeTab && !ff) {
+            if (!ctx.forgeMapsScanned) {
+                ctx.forgeMaps = ScanForgeMaps();
+                ctx.forgeMapsScanned = true;
+            }
+            InsertMapVariants(maps, ctx.forgeMaps, st.openMods);
+        }
         int& realIndex = forgeTab ? (forge ? st.forgeForgeMap : st.mpForgeMap)
                        : modded ? (ff ? st.ffModded : forge ? st.forgeModded : st.mpModded) : (ff ? st.ffMap : forge ? st.forgeMap : st.map);
         int& mapIndex = searching ? st.mapSearchRow : realIndex;

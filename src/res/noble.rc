@@ -22,12 +22,12 @@ BEGIN
         BEGIN
             VALUE "CompanyName",      "Project Noble Team\0"
             VALUE "FileDescription",  "Project Noble Game Client\0"
-            VALUE "FileVersion",      "0.19.60.0\0"
+            VALUE "FileVersion",      "0.19.61.0\0"
             VALUE "InternalName",     "noble-client\0"
             VALUE "LegalCopyright",   "Project Noble Team. Non-commercial community mod.\0"
             VALUE "OriginalFilename", "noble-client.exe\0"
             VALUE "ProductName",      "Project Noble\0"
-            VALUE "ProductVersion",   "0.19.60.0\0"
+            VALUE "ProductVersion",   "0.19.61.0\0"
         END
     END
     BLOCK "VarFileInfo"

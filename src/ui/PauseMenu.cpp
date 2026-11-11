@@ -466,7 +466,105 @@ static ULONGLONG s_openedAt = 0;
 static int s_focus = 0;
 static bool s_waitForRelease = true;
 static bool s_confirmRestart = false;
+static std::string s_saveMapVariantResult;   // shown under the SAVE MAP VARIANT row after a save
+static bool s_saveVariantOpen = false;      // the "name this map variant" box is up
+static char s_saveVariantName[64] = "My Forge Map";
 } // namespace
+
+// Forge: save the map being edited as a map variant.
+//
+// The engine owns the save. Its Forge save writes a map variant file into the player's profile
+// (<userdata>/<id>/saves/HaloReach/autosave/asq*.map), in the same BLF/"mvar" container as MCC's .mvar files - which
+// is exactly what BlamEngine's parse_map_variant takes on the way in. Noble asks for the save with the engine's own
+// "save_map" command, waits for the new file, and copies it into data\map_variants so it appears in the maps menu
+// under the map it was built on.
+std::filesystem::path PauseMenu::SaveForgeMapVariant(const std::string& name) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const fs::path dataDir = ReachHost::Get().GetDataDir();
+    const fs::path userData = dataDir / "userdata";
+    fs::path autosaveDir;
+    for (const auto& entry : fs::directory_iterator(userData, ec)) {
+        if (!entry.is_directory(ec)) continue;
+        const fs::path candidate = entry.path() / "saves" / "HaloReach" / "autosave";
+        if (fs::is_directory(candidate, ec)) { autosaveDir = candidate; break; }
+    }
+    if (autosaveDir.empty()) {
+        NOBLE_WARN("PauseMenu: no HaloReach autosave folder under '{}'; cannot save a map variant", userData.string());
+        return {};
+    }
+
+    // What is already there, so the file this save writes can be told apart from older ones.
+    std::set<std::wstring> before;
+    for (const auto& entry : fs::directory_iterator(autosaveDir, ec)) {
+        if (entry.is_regular_file(ec)) before.insert(entry.path().filename().wstring());
+    }
+
+    if (BlamEngine::Active()) {
+        NOBLE_INFO("PauseMenu: asking the engine to save the Forge map (save_map)");
+        BlamEngine::Active()->ExecuteCommand("save_map");
+    } else {
+        NOBLE_WARN("PauseMenu: no engine instance; cannot issue save_map");
+        return {};
+    }
+
+    // The save completes on the engine thread; give it a few seconds and take whatever new file appears.
+    fs::path written;
+    const ULONGLONG deadline = GetTickCount64() + 8000;
+    while (GetTickCount64() < deadline && written.empty()) {
+        Sleep(200);
+        for (const auto& entry : fs::directory_iterator(autosaveDir, ec)) {
+            if (!entry.is_regular_file(ec)) continue;
+            const std::wstring name = entry.path().filename().wstring();
+            if (before.count(name)) continue;
+            std::wstring ext = entry.path().extension().wstring();
+            for (wchar_t& c : ext) c = static_cast<wchar_t>(::towlower(c));
+            if (ext != L".map") continue;
+            const auto size = fs::file_size(entry.path(), ec);
+            if (size < 0x7329) continue;   // still being written (the engine leaves a .temp behind first)
+            written = entry.path();
+            break;
+        }
+    }
+    if (written.empty()) {
+        NOBLE_WARN("PauseMenu: the engine did not write a map variant in '{}' (save_map might need the Forge save UI)",
+                   autosaveDir.string());
+        return {};
+    }
+
+    // Copy it where the maps menu scans: data<user storage>map_variants, named after the moment it was saved.
+    const fs::path outDir = dataDir / "map_variants";
+    fs::create_directories(outDir, ec);
+    std::string safe = name;
+    for (char& c : safe) if (static_cast<unsigned char>(c) < 0x20 || std::strchr("\\/:*?\"<>|", c)) c = '_';
+    if (safe.empty()) safe = "Forge Map";
+    const fs::path out = outDir / (safe + ".mvar");
+    fs::copy_file(written, out, fs::copy_options::overwrite_existing, ec);
+    if (ec) {
+        NOBLE_WARN("PauseMenu: could not copy '{}' to '{}' ({})", written.string(), out.string(), ec.message());
+        return {};
+    }
+    // The name the player typed is the variant's title as the maps menu shows it: +0xC0, UTF-16, 64 characters.
+    {
+        std::vector<unsigned char> bytes;
+        {
+            std::ifstream in(out, std::ios::binary);
+            bytes.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+        }
+        if (bytes.size() > 0xC0 + 128) {
+            const std::wstring wide(safe.begin(), safe.end());
+            std::memset(bytes.data() + 0xC0, 0, 128);
+            for (size_t i = 0; i < wide.size() && i < 63; ++i) {
+                bytes[0xC0 + i * 2] = static_cast<unsigned char>(wide[i] & 0xFF);
+                bytes[0xC0 + i * 2 + 1] = static_cast<unsigned char>((wide[i] >> 8) & 0xFF);
+            }
+            std::ofstream outFile(out, std::ios::binary | std::ios::trunc);
+            outFile.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+        }
+    }
+    NOBLE_INFO("PauseMenu: Forge map variant '{}' saved as '{}' (from '{}')", safe, out.string(), written.string());
+    return out;
+}
 
 bool PauseMenu::IsOpen() { return s_open.load(); }
 
@@ -760,6 +858,13 @@ void PauseMenu::DrawMenu(HWND hwnd) {
         WideCharToMultiByte(CP_UTF8, 0, wmode.c_str(), -1, mb, sizeof(mb) - 1, nullptr, nullptr);
         currentMode = mb;
     }
+    int saveMapVariantEntry = -1;
+    if (_stricmp(currentMode.c_str(), "forge") == 0) {
+        saveMapVariantEntry = static_cast<int>(entries.size());
+        entries.push_back({ "SAVE MAP VARIANT",
+                            "Saves the Forge map you have built as a map variant, under its base map in the maps menu.",
+                            false, true });
+    }
     const bool isMultiOrForge = (currentMode == "multiplayer" || currentMode == "forge" || currentMode.empty());
     if (BlamEngine::GameTeamsEnabled() || isMultiOrForge) {
         teamEntry = static_cast<int>(entries.size());
@@ -903,6 +1008,12 @@ void PauseMenu::DrawMenu(HWND hwnd) {
         PauseSettings().SetTab(InputPrompts::Current() == InputPrompts::Device::Gamepad ? 5 : 4);   // Controller, or Keyboard & Mouse
         s_showSettings.store(true);
         NOBLE_INFO("PauseMenu: controls opened from the pause menu");
+    } else if (saveMapVariantEntry >= 0 && activated == saveMapVariantEntry) {
+        // Ask for a name first: it becomes the variant's title in the maps menu and its file name.
+        MenuSounds::Click();
+        s_saveMapVariantResult.clear();
+        s_saveVariantOpen = true;
+        ImGui::OpenPopup("##save_map_variant");
     } else if (teamEntry >= 0 && activated == teamEntry) {
         ChangeLocalTeam();
     } else if (activated == leaveEntry) {
@@ -917,6 +1028,60 @@ void PauseMenu::DrawMenu(HWND hwnd) {
         // B resumes. Esc is not read here: the input poll already toggles on Esc, and closing here as well reopened the
         // menu when both saw the same press.
         Close();
+    }
+
+    // ---- Name this map variant (SAVE MAP VARIANT, Forge only) ----
+    // A small box over the pause menu: type the name, SAVE writes the variant under it. The name is also written into
+    // the variant's title, which is what the maps menu shows under the base map.
+    ImGui::SetNextWindowSize(ImVec2(520.0f * s, 0.0f), ImGuiCond_Appearing);
+    if (ImGui::BeginPopupModal("##save_map_variant", nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings |
+                               ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove)) {
+        if (!ImGui::IsAnyItemActive() && ImGui::GetIO().Framerate > 0) {
+            // Focus on the first frame the box is up, so typing goes straight into the name.
+            static bool s_focused = false;
+            if (!s_focused) { ImGui::SetKeyboardFocusHere(); s_focused = true; }
+        }
+        ImGui::TextUnformatted("MAP VARIANT NAME");
+        ImGui::PushStyleColor(ImGuiCol_Text, NobleStyle::TextMuted());
+        ImGui::TextWrapped("Shown under its base map in the maps menu, for Custom Game and Forge.");
+        ImGui::PopStyleColor();
+        ImGui::Spacing();
+        ImGui::InputText("##variant_name", s_saveVariantName, sizeof(s_saveVariantName));
+        ImGui::Spacing();
+        const bool typed = s_saveVariantName[0] != 0;
+        if (typed && (ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false))) {
+            MenuSounds::Click();
+            const std::filesystem::path saved = SaveForgeMapVariant(s_saveVariantName);
+            s_saveMapVariantResult = saved.empty() ? "The engine did not write a map variant (see the log)."
+                                                   : "Saved: " + saved.filename().string();
+            s_saveVariantOpen = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.16f, 0.42f, 0.62f, 1.0f));
+        if (ImGui::Button("SAVE", ImVec2(120.0f * s, 34.0f * s)) && typed) {
+            MenuSounds::Click();
+            const std::filesystem::path saved = SaveForgeMapVariant(s_saveVariantName);
+            s_saveMapVariantResult = saved.empty() ? "The engine did not write a map variant (see the log)."
+                                                   : "Saved: " + saved.filename().string();
+            s_saveVariantOpen = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::PopStyleColor();
+        ImGui::SameLine();
+        if (ImGui::Button("CANCEL", ImVec2(120.0f * s, 34.0f * s)) ||
+            ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)) {
+            MenuSounds::Back();
+            s_saveVariantOpen = false;
+            ImGui::CloseCurrentPopup();
+        }
+        if (!s_saveMapVariantResult.empty()) {
+            ImGui::Spacing();
+            ImGui::PushStyleColor(ImGuiCol_Text, NobleStyle::TextMuted());
+            ImGui::TextWrapped("%s", s_saveMapVariantResult.c_str());
+            ImGui::PopStyleColor();
+        }
+        ImGui::EndPopup();
     }
 
     ImGui::Spacing();
