@@ -22,4 +22,9 @@ inline int& LiveDumpSeconds() {
     return seconds;
 }
 
+inline int& PageScanSeconds() {
+    static int seconds = 0;
+    return seconds;
+}
+
 } // namespace noble

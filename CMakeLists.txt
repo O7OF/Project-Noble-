@@ -163,6 +163,7 @@ set(SOURCES
     src/engine/ReachArmory.cpp
     src/engine/ElitePack.cpp
     src/engine/MvarDump.cpp
+    src/engine/MemoryDiff.cpp
     src/mvar/BitReader.cpp
     src/mvar/MapVariant.cpp
     src/mvar/MapVariantWriter.cpp

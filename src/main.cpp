@@ -25,6 +25,7 @@
 #include "engine/SharedTagCache.hpp"
 #include "engine/DevCheats.hpp"
 #include "engine/MvarDump.hpp"
+#include "engine/MemoryDiff.hpp"
 #include "mvar/MapVariant.hpp"
 #include "mvar/MapVariantWriter.hpp"
 #include "mvar/MapVariantLibrary.hpp"
@@ -1046,6 +1047,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     std::vector<int> mvarDumpTimes;   // dev: memory dumps of the loaded map variant at these seconds
     int mvarDumpEvery = 0;            // dev: dump repeatedly, this many seconds apart (find the live map buffer)
 int mvarLiveDumpEvery = 0;        // dev: dump the live variant struct/state every N seconds (Forge placement diff)
+int mvarPageScanEvery = 0;        // dev: diff every writable page every N seconds (find the editor's placement list)
     std::string connectAddress = "";
     std::string connectSessionId = "";
     std::string connectSessionToken = "";
@@ -1215,6 +1217,9 @@ int mvarLiveDumpEvery = 0;        // dev: dump the live variant struct/state eve
             } else if (arg == L"-mvar-live-dump" && i + 1 < numArgs) {
                 mvarLiveDumpEvery = _wtoi(argvW[++i]);
                 noble::LiveDumpSeconds() = mvarLiveDumpEvery;
+            } else if (arg == L"-mvar-page-scan" && i + 1 < numArgs) {
+                mvarPageScanEvery = _wtoi(argvW[++i]);
+                noble::PageScanSeconds() = mvarPageScanEvery;
             } else if (arg == L"-mvar-dump-at") {
                 const std::wstring spec = argvW[++i];
                 size_t from = 0;
@@ -1375,6 +1380,7 @@ int mvarLiveDumpEvery = 0;        // dev: dump the live variant struct/state eve
     // Keep the map-variant memory dump running after the menu relaunches into a match.
     if (mvarDumpEvery > 0) args += L" -mvar-dump-every " + std::to_wstring(mvarDumpEvery);
     if (mvarLiveDumpEvery > 0) args += L" -mvar-live-dump " + std::to_wstring(mvarLiveDumpEvery);
+    if (mvarPageScanEvery > 0) args += L" -mvar-page-scan " + std::to_wstring(mvarPageScanEvery);
     if (launchSkulls != 0) args += L" -skulls " + std::to_wstring(launchSkulls);
     if (!modFolder.empty()) args += L" -mod \"" + modFolder.wstring() + L"\"";
     if (!mapOverride.empty()) args += L" -map-override \"" + mapOverride.wstring() + L"\"";
@@ -1842,6 +1848,9 @@ int mvarLiveDumpEvery = 0;        // dev: dump the live variant struct/state eve
     if (mvarLiveDumpEvery > 0) {
         // The snapshot needs the engine thread's TLS state, so it runs from slot 1 rather than a worker thread.
         noble::BlamEngine::ConfigureLiveDump(noble::ReachHost::Get().GetDataDir() / "mvar_live", mvarLiveDumpEvery);
+    }
+    if (mvarPageScanEvery > 0) {
+        noble::StartPageScan(mvarPageScanEvery, noble::ReachHost::Get().GetDataDir() / "mvar_pages");
     }
 
     if (mvarDumpEvery > 0) {
