@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <string>
 #include <vector>
+#include "mvar/MapVariant.hpp"
 
 namespace noble::mvar {
 
@@ -24,6 +25,11 @@ std::string VariantTitle(const std::filesystem::path& sourceMvar);
 // Saves a raw 0x7028-byte "mvar" chunk produced by the engine's serializer. The surrounding container (BLF header,
 // chdr chunk, trailing chunks) comes from `templateMvar`; the template's map/thumbnail are kept and only the variant
 // chunk and the +0xC0 title are replaced.
+// Builds the variant model from a raw engine chunk wrapped in \`templateMvar\` (same assembly as the save path, but
+// without writing anything) so callers can modify it - e.g. append Forge placements - before saving.
+bool BuildVariantFromChunk(const std::vector<uint8_t>& mvarChunk, const std::filesystem::path& templateMvar,
+                           const std::string& name, MapVariant& out, std::string& detail);
+
 std::filesystem::path SaveVariantChunkToLibrary(const std::vector<uint8_t>& mvarChunk,
                                                 const std::filesystem::path& templateMvar, const std::string& name,
                                                 const std::filesystem::path& directory, std::string& detail);

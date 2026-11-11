@@ -24,7 +24,10 @@
 #include "engine/ReachHost.hpp"
 #include "engine/BlamEngine.hpp"
 #include "engine/SessionVariant.hpp"
+#include "engine/ForgePlacement.hpp"
+#include "mvar/ForgePlacementApply.hpp"
 #include "mvar/MapVariantLibrary.hpp"
+#include "mvar/MapVariantWriter.hpp"
 #include "mvar/MapVariant.hpp"
 #include "engine/CameraThirdPerson.hpp"
 #include "engine/CameraThirdPerson.hpp"
@@ -559,6 +562,29 @@ std::filesystem::path PauseMenu::SaveForgeMapVariant(const std::string& name) {
         if (captured) {
             const fs::path tmpl = FindVariantTemplate(dataDir);
             if (!tmpl.empty()) {
+                // Apply the objects placed since the map loaded, using the captures taken at object_new.
+                std::vector<noble::mvar::WorldPlacement> placements = noble::TakeForgePlacements();
+                if (!placements.empty()) {
+                    noble::mvar::MapVariant base;
+                    std::string buildDetail;
+                    if (noble::mvar::BuildVariantFromChunk(liveChunk, tmpl, name, base, buildDetail)) {
+                        std::string applyError;
+                        const int added = noble::mvar::ApplyWorldPlacements(base, placements, applyError);
+                        std::error_code dirEc;
+                        std::filesystem::create_directories(library, dirEc);
+                        const fs::path placedOut = library / (noble::mvar::SanitizeVariantName(name) + ".json");
+                        std::string saveError;
+                        if (noble::mvar::SaveMapVariantJson(base, placedOut, name, saveError)) {
+                            NOBLE_INFO("PauseMenu: map variant '{}' saved with {} Forge placement(s) to '{}'", name, added,
+                                       placedOut.string());
+                            FrontEndMenu::InvalidateForgeMaps();
+                            return placedOut;
+                        }
+                        NOBLE_WARN("PauseMenu: placements could not be saved: {}", saveError);
+                    } else {
+                        NOBLE_WARN("PauseMenu: could not build the variant for placements: {}", buildDetail);
+                    }
+                }
                 std::string detail;
                 const fs::path out = noble::mvar::SaveVariantChunkToLibrary(liveChunk, tmpl, name, library, detail);
                 if (!out.empty()) {

@@ -1,6 +1,8 @@
 #pragma once
 
 #include <windows.h>
+#include "mvar/ForgePlacementApply.hpp"
+#include <vector>
 
 namespace noble {
 
@@ -8,5 +10,8 @@ namespace noble {
 // the placement data (tag index, position, facing). This is where a placed object exists before any variant record is
 // written, so it is the capture point for building variants out of Forge edits.
 void InstallForgePlacementWatch(HMODULE reachModule);
+
+// Every placement captured since the last call (the caller takes ownership and clears the list).
+std::vector<mvar::WorldPlacement> TakeForgePlacements();
 
 } // namespace noble

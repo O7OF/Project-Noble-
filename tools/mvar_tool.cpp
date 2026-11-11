@@ -9,6 +9,7 @@
 #include "mvar/MapVariant.hpp"
 #include "mvar/MapVariantWriter.hpp"
 #include "mvar/MapVariantLibrary.hpp"
+#include "mvar/ForgePlacementApply.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -190,6 +191,40 @@ int Assemble(const std::filesystem::path& chunkFile, const std::filesystem::path
     return 0;
 }
 
+// Offline check of the placement applier: pretend the first present object was a load-time placement of tag T, then
+// place another object with the same tag next to it. Expect one new record at that position.
+int PlaceSim(const std::filesystem::path& in, const std::filesystem::path& dir) {
+    noble::mvar::MapVariant variant = noble::mvar::ReadMapVariant(in);
+    if (!variant.valid) {
+        std::printf("FAIL  %s\n", variant.error.c_str());
+        return 1;
+    }
+    int first = -1;
+    for (size_t i = 0; i < variant.header.objects.size(); ++i) {
+        if (variant.header.objects[i].present) { first = static_cast<int>(i); break; }
+    }
+    if (first < 0) { std::printf("FAIL  no objects\n"); return 1; }
+    const auto& object = variant.header.objects[first];
+    std::vector<noble::mvar::WorldPlacement> placements(2);
+    placements[0].tag = 0xDEADBEEF;
+    std::memcpy(placements[0].position, object.position, sizeof(placements[0].position));
+    placements[1].tag = 0xDEADBEEF;
+    placements[1].position[0] = object.position[0] + 1.0f;
+    placements[1].position[1] = object.position[1];
+    placements[1].position[2] = object.position[2];
+    std::string error;
+    const int added = noble::mvar::ApplyWorldPlacements(variant, placements, error);
+    std::printf("added %d, present %d, error '%s'\n", added, variant.header.presentObjects, error.c_str());
+    std::string saveError;
+    const std::filesystem::path out = dir / "placed.json";
+    if (!noble::mvar::SaveMapVariantJson(variant, out, "Placed", saveError)) {
+        std::printf("FAIL  %s\n", saveError.c_str());
+        return 1;
+    }
+    std::printf("OK  %s (expected present %d)\n", out.string().c_str(), variant.header.presentObjects);
+    return added == 1 ? 0 : 1;
+}
+
 int Library(const std::filesystem::path& in, const std::filesystem::path& dir, const std::string& name) {
     std::string detail;
     const std::string useName = name.empty() ? noble::mvar::VariantTitle(in) : name;
@@ -233,6 +268,7 @@ int main(int argc, char** argv) {
     if (mode == "-nudge" && argc >= 6) return Nudge(argv[2], argv[3], std::atoi(argv[4]), std::atoi(argv[5]));
     if (mode == "-library" && argc >= 4) return Library(argv[2], argv[3], argc >= 5 ? argv[4] : "");
     if (mode == "-assemble" && argc >= 6) return Assemble(argv[2], argv[3], argv[4], argv[5]);
+    if (mode == "-place-sim" && argc >= 4) return PlaceSim(argv[2], argv[3]);
 
     std::vector<std::filesystem::path> files;
     std::error_code ec;

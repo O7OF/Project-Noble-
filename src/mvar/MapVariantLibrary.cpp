@@ -69,6 +69,41 @@ int32_t ReadBaseMapId(const std::filesystem::path& path) {
 }
 } // namespace
 
+bool BuildVariantFromChunk(const std::vector<uint8_t>& mvarChunk, const std::filesystem::path& templateMvar,
+                           const std::string& name, MapVariant& out, std::string& detail) {
+    if (mvarChunk.size() != 0x7028) {
+        detail = "the captured chunk is not 0x7028 bytes";
+        return false;
+    }
+    std::ifstream file(templateMvar, std::ios::binary);
+    if (!file) {
+        detail = "no template variant ('" + templateMvar.string() + "')";
+        return false;
+    }
+    std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    size_t walk = 0, chunkOffset = SIZE_MAX;
+    while (walk + 12 <= bytes.size()) {
+        const uint32_t size = (static_cast<uint32_t>(bytes[walk + 4]) << 24) |
+                              (static_cast<uint32_t>(bytes[walk + 5]) << 16) |
+                              (static_cast<uint32_t>(bytes[walk + 6]) << 8) | bytes[walk + 7];
+        if (size < 12 || walk + size > bytes.size()) break;
+        if (std::memcmp(bytes.data() + walk, "mvar", 4) == 0) { chunkOffset = walk; break; }
+        walk += size;
+    }
+    if (chunkOffset == SIZE_MAX || chunkOffset + 0x7028 > bytes.size()) {
+        detail = "the template has no usable mvar chunk";
+        return false;
+    }
+    std::memcpy(bytes.data() + chunkOffset, mvarChunk.data(), mvarChunk.size());
+    SetContainerTitle(bytes, SanitizeVariantName(name));
+    out = ReadMapVariantBytes(std::move(bytes), name);
+    if (!out.valid) {
+        detail = "the assembled variant did not parse: " + out.error;
+        return false;
+    }
+    return true;
+}
+
 std::filesystem::path SaveVariantChunkToLibrary(const std::vector<uint8_t>& mvarChunk,
                                                 const std::filesystem::path& templateMvar, const std::string& name,
                                                 const std::filesystem::path& directory, std::string& detail) {
