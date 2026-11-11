@@ -88,16 +88,6 @@ static bool SafeCopyMem(void* dst, const void* src, size_t len) {
     }
 }
 
-static bool SafeWriteFloats(uintptr_t addr, const float* vals, size_t count) {
-    if (addr <= 0x10000 || !vals || count == 0) return false;
-    __try {
-        std::memcpy(reinterpret_cast<void*>(addr), vals, count * sizeof(float));
-        return true;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return false;
-    }
-}
-
 static std::string ToLowerAscii(std::string s) {
     std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) {
         return static_cast<char>(std::tolower(c));
@@ -1794,6 +1784,14 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx, const std::strin
     const int32_t mainSceneIdx = s_mainScene.load();
     int32_t effectiveSceneIdx = showElite ? 0x0B : targetSceneIdx;
     if (mainScene && mainSceneIdx >= 0) effectiveSceneIdx = mainSceneIdx;
+    // The Elite camera (0x0B) belongs to the Elite on screen. The Armory points its camera at the species the player
+    // just pressed straight away, while the species itself waits (kSpeciesSettleMs) - so with the Spartan still shown,
+    // the camera jumped to the Elite pedestal, where the Elite character still stands, and back: 1-2 frames of Elite
+    // between Spartan frames (Tyler's 21:43 video; 112 "0xB (shows_elite=0)" switches in one session). Keep the camera
+    // where it is (or the Spartan's full-body view) until the Elite is really shown.
+    if (!showElite && effectiveSceneIdx == 0x0B) {
+        effectiveSceneIdx = (curScene >= 0 && curScene != 0x0B) ? curScene : 0x0C;
+    }
 
     const uint32_t wantElite = showElite ? 1u : 0u;
 
@@ -1802,8 +1800,15 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx, const std::strin
     const uint64_t frameEarly = s_frameCounter.load();
     int32_t remadeEarly = 0;
     SafeReadI32(base + 0x32 * stride, &remadeEarly);
+    // rr_armory copies rr_seq into rr_done once it has applied the pairs: that, not only REMADE (which now moves only
+    // when the script re-creates the character for an effect change), says a rebuild has been processed.
+    int32_t seqEarly = 0, doneEarly = 0;
+    SafeReadI32(base + kRrSeq * stride, &seqEarly);
+    SafeReadI32(base + kRrDone * stride, &doneEarly);
+    const bool scriptCaughtUp = (seqEarly == doneEarly);
     const bool rebuildBusy = (s_bumpAtFrame != 0) || s_settlePending || (frameEarly < s_rebuildReadyFrame) ||
-                             (s_remadeAtBump != 0 && remadeEarly == s_remadeAtBump && frameEarly < s_settleDeadline);
+                             (s_remadeAtBump != 0 && remadeEarly == s_remadeAtBump && !scriptCaughtUp &&
+                              frameEarly < s_settleDeadline);
     const uint64_t nowMs = GetTickCount64();
     const bool speciesFlipWanted = armoryScene && (curElite != wantElite);
     const bool speciesDeferred = speciesFlipWanted &&
@@ -1904,11 +1909,12 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx, const std::strin
     }
     const uint64_t frameNow = s_frameCounter.load();
     auto bumpRebuild = [&](const char* why) {
-        if (!showElite && std::strcmp(why, "new pieces") == 0) {
-            // Invalidate rr_fxp (GLOBALS[0x31]) so rr_armory's (!= rr_fxn rr_fxp) check recreates
-            // chief_armory & chief cleanly (clearing any previous attachment regions) and increments rr_remade (GLOBALS[0x32]).
-            SafeWriteU32(base + kRrFxp * stride, 0u);
-        }
+        // No longer invalidates rr_fxp (2026-11-10). mainmenu.hsc (decompiled with Assembly): on every rr_seq bump
+        // rr_armory runs (object_set_variant "chief_armory" "default") - which clears all attachments - then applies
+        // the 16 pairs and restarts the effect (rr_fx). It re-creates the character (object_create_anew, the DMR
+        // throw / idle restart) only when the armour effect changed (rr_fxn != rr_fxp). Zeroing rr_fxp here forced
+        // that re-creation on every Spartan piece change. The script still re-creates on a real effect change.
+        (void)why;
         int32_t rebuildCounter = 0;
         SafeReadI32(base + 0x02 * stride, &rebuildCounter);
         SafeWriteI32(base + 0x02 * stride, rebuildCounter + 1);
@@ -1933,7 +1939,8 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx, const std::strin
     // One rebuild at a time: a request while the map script is still recreating the biped (see kRebuildQuietFrames,
     // the pending settle and the script's own REMADE counter) is what made rapid changes crash. The generation is
     // left unapplied in that case, so every change made meanwhile collapses into a single rebuild of the final look.
-    const bool rebuildSettled = (s_remadeAtBump == 0) || (remade != s_remadeAtBump) || (frameNow >= s_settleDeadline);
+    const bool rebuildSettled = (s_remadeAtBump == 0) || (remade != s_remadeAtBump) || scriptCaughtUp ||
+                                (frameNow >= s_settleDeadline);
     const bool rebuildInFlight = (s_bumpAtFrame != 0) || s_settlePending ||
                                  (frameNow < s_rebuildReadyFrame) || !rebuildSettled;
     const uint64_t gen = s_selectionGeneration.load();
@@ -2031,6 +2038,10 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx, const std::strin
                 if (it != perm.end()) {
                     pushPair(region, it->second, nullptr);
                 } else {
+                    // Regions the chosen items don't use are NOT sent. Tried 2026-11-10: filling them with "default"
+                    // put visible parts on (for flair_head_* and flair_chest_b, "default" is a real attachment in the
+                    // menu map's model - the visor strip, the chest knife). A region that disappears from the list
+                    // makes the change a rebuild, which re-creates the character without it.
                     const uint32_t regId = LookupStringId(region);
                     if (regId != 0) livePairs.emplace_back(regId, 0u);
                 }
@@ -2086,7 +2097,63 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx, const std::strin
                 }
             }
             const bool piecesChanged = (writtenPairs != s_lastPairs || base != s_lastPairsBase);
-            if (!piecesChanged) {
+            // Live piece change (2026-11-10). A rebuild re-creates the character, which restarts Reach's Armory idle
+            // (the DMR throw) on every click. Male <-> female proved the live character takes new permutations without
+            // being re-created: NotifyEngineTick applies the new pairs (SetRegionPermutation) for a couple of ticks,
+            // and the engine's gender setter handles the body. So a change is applied live when the pairs cover the
+            // same regions in the same order and only permutations differ. Still rebuilt: the first build of a
+            // species, a change in which regions are used (a helmet adding or removing attachment regions, so no old
+            // attachment can stay behind), and any armour effect change (the menu script only shows an effect on a
+            // re-created character). Experiment: if pieces don't change on screen, narrow this back down.
+            bool liveChange = false;
+            if (piecesChanged && base == s_lastPairsBase && !writtenPairs.empty() && writtenPairs.size() == s_lastPairs.size()) {
+                const uint32_t fxId = LookupStringId("armor_fx");
+                // Safety net: an item that sets an attachment ("flair_*") region to "default" (the pmcg does that,
+                // e.g. "flair_head_b default", "flair_knees default") is applied with a rebuild, not live - on the
+                // live character a region set back to "default" kept the old part (Tyler's tests 22:19 / 22:29).
+                // Non-attachment regions (head, body, arms) use "default" as a real permutation and stay live.
+                const uint32_t defaultId = LookupStringId("default");
+                static const char* const kFlairRegions[] = { "flair_head_a", "flair_head_b", "flair_head_c",
+                    "flair_left_shoulder", "flair_right_shoulder", "flair_chest_a", "flair_chest_b",
+                    "flair_forearm", "flair_thigh", "flair_knees" };
+                auto isFlair = [&](uint32_t region) {
+                    for (const char* name : kFlairRegions) {
+                        if (region == LookupStringId(name)) return true;
+                    }
+                    return false;
+                };
+                bool anyDiff = false;
+                bool needsRebuild = false;
+                for (size_t i = 0; i < writtenPairs.size(); ++i) {
+                    const uint32_t region = writtenPairs[i].first;
+                    if (region != s_lastPairs[i].first || region == 0) { needsRebuild = true; break; }
+                    if (writtenPairs[i].second == s_lastPairs[i].second) continue;
+                    anyDiff = true;
+                    if (fxId != 0 && region == fxId) needsRebuild = true;
+                    if (defaultId != 0 && writtenPairs[i].second == defaultId && isFlair(region)) needsRebuild = true;   // attachment removed
+                }
+                liveChange = anyDiff && !needsRebuild;
+            }
+            if (liveChange) {
+                {
+                    ArmoryLock lock(s_dataMutex);
+                    s_lastPairs = writtenPairs;
+                    s_livePairs = livePairs;
+                    s_livePairsGen.fetch_add(1);
+                    const int sp = showElite ? 1 : 0;
+                    s_builtPairs[sp] = writtenPairs;
+                    s_builtLivePairs[sp] = livePairs;
+                    s_builtBase[sp] = base;
+                }
+                if (showElite) {
+                    NOBLE_INFO("ReachArmory: Elite pieces changed live (no rebuild): {} / {} / {} / {} / {} / {}", sel.eliteHelmet,
+                               sel.eliteLeftShoulder, sel.eliteRightShoulder, sel.eliteChest, sel.eliteArms, sel.eliteLegs);
+                } else {
+                    NOBLE_INFO("ReachArmory: Spartan pieces changed live (no rebuild): head {}, chest {}, L {}, R {}, wrist {}, "
+                               "utility {}, knees {}, body {}", sel.helmet, sel.chest, sel.leftShoulder, sel.rightShoulder,
+                               sel.wrist, sel.utility, sel.knees, sel.isFemale ? "female" : "male");
+                }
+            } else if (!piecesChanged) {
                 // Same pieces: no rebuild needed, colors and lights are written to live memory every frame.
             } else {
                 {

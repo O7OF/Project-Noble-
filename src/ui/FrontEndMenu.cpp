@@ -2065,6 +2065,7 @@ struct MenuState {
     std::string lobbyLaunchModFolder;
     std::string lobbyLaunchModId;
     double lastLobbyPoll = 0.0;
+    int lobbyPollFailures = 0;     // consecutive failed lobby-state fetches; a guest only leaves after 3
     int lobbyMenuRow = 0;          // Focused row in pre-game options list
     // Playlists. -1 = none chosen.
     std::vector<Playlists::Playlist> playlists;
@@ -3474,13 +3475,39 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         }
         if (!st.lobbySessionId.empty() && MasterServerClient::Get().Enabled()) {
             LobbyState current = MasterServerClient::Get().FetchLobbyStateSync(st.lobbySessionId);
+            if (current.ok) st.lobbyPollFailures = 0;
             if (!current.ok || current.isClosed) {
-                if (!st.isLobbyHost) {
+                if (st.isLobbyHost) {
+                    // The host owns the session; a failed fetch just means the master server blipped.
+                } else if (!current.isClosed) {
+                    // A failed fetch is not a kick. One dropped request (timeout, 502, a relay hiccup) used to send
+                    // the guest straight back to the server browser, which is what "auto kicked from the lobby"
+                    // looked like. Retry a few times before giving up, and say why.
+                    if (++st.lobbyPollFailures < 3) {
+                        NOBLE_WARN("FrontEndMenu: lobby poll failed ({} of 3, http {}); staying in the lobby",
+                                   st.lobbyPollFailures, current.httpStatus);
+                    } else {
+                        NOBLE_WARN("FrontEndMenu: lobby poll failed 3 times (http {}); leaving the lobby",
+                                   current.httpStatus);
+                        st.screen = Screen::Servers;
+                        st.lobbySessionId.clear();
+                        st.lobbySessionToken.clear();
+                        st.lobbyRoster.clear();
+                        st.isLobbyHost = false;
+                        st.lobbyPollFailures = 0;
+                        NetworkTransport::Get().StopRelay();
+                        return;
+                    }
+                } else {
+                    // The host closed the session (or the server timed it out): no point staying.
+                    NOBLE_INFO("FrontEndMenu: lobby closed ({}); returning to the server browser",
+                               current.closeReason.empty() ? "host closed" : current.closeReason);
                     st.screen = Screen::Servers;
                     st.lobbySessionId.clear();
                     st.lobbySessionToken.clear();
                     st.lobbyRoster.clear();
                     st.isLobbyHost = false;
+                    st.lobbyPollFailures = 0;
                     NetworkTransport::Get().StopRelay();
                     return;
                 }
