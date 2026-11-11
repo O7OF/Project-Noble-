@@ -187,6 +187,17 @@ bool ReadEngineState(void* tlsBlock, void*& state) {
     return true;
 }
 
+bool CallMapVariantSaveTask(HMODULE module) {
+    __try {
+        typedef void (*SaveTaskFn)(void);
+        auto pTask = reinterpret_cast<SaveTaskFn>(reinterpret_cast<uintptr_t>(module) + 0x156788);
+        pTask();
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+    return true;
+}
+
 bool CallMapVariantSave(HMODULE module) {
     __try {
         typedef void (*SaveMapVariantFn)(void);
@@ -429,8 +440,12 @@ bool BlamEngine::TriggerMapVariantSave() {
         s_variantCandidateCount = 0;
     }
     s_armVariantCapture.store(true, std::memory_order_relaxed);
+    // 0x156788 is the engine's save task: it checks the game state and then drives the save. If placements are
+    // committed anywhere, it happens on the way through here.
+    const bool taskOk = CallMapVariantSaveTask(m_hModule);
     const bool ok = CallMapVariantSave(m_hModule);
     s_armVariantCapture.store(false, std::memory_order_relaxed);
+    NOBLE_INFO("BlamEngine: save task {} / save routine {}", taskOk ? "ran" : "faulted", ok ? "ran" : "faulted");
 
     void* candidates[kMaxVariantCandidates] = {};
     int count = 0;
