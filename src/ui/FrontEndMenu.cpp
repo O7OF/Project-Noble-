@@ -1,6 +1,7 @@
 #include <map>
 #include <functional>
 #include "FrontEndMenu.hpp"
+#include "engine/SessionVariant.hpp"
 #include "audio/VoiceChat.hpp"
 #include "SocialOverlay.hpp"
 #include "NobleUi.hpp"
@@ -8223,6 +8224,7 @@ void FrontEndMenu::RenderOverlayImpl(IDXGISwapChain* swapChain, bool clear) {
                 if (!choice.modFolder.empty()) args += L" -mod \"" + choice.modFolder.wstring() + L"\"";
                 if (!choice.mapOverride.empty()) args += L" -map-override \"" + choice.mapOverride.wstring() + L"\"";
                 if (!choice.mapVariant.empty()) args += L" -mvar \"" + choice.mapVariant.wstring() + L"\"";
+                if (noble::LiveDumpSeconds() > 0) args += L" -mvar-live-dump " + std::to_wstring(noble::LiveDumpSeconds());
                 if (!choice.mapTitle.empty()) args += L" -map-title \"" + ToWide(choice.mapTitle) + L"\"";
                 if (!choice.mapImage.empty()) args += L" -map-image \"" + choice.mapImage.wstring() + L"\"";
                 if (!choice.mapThumb.empty()) args += L" -map-thumb \"" + choice.mapThumb.wstring() + L"\"";

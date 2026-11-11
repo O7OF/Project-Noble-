@@ -1214,6 +1214,7 @@ int mvarLiveDumpEvery = 0;        // dev: dump the live variant struct/state eve
                 mvarDumpEvery = _wtoi(argvW[++i]);
             } else if (arg == L"-mvar-live-dump" && i + 1 < numArgs) {
                 mvarLiveDumpEvery = _wtoi(argvW[++i]);
+                noble::LiveDumpSeconds() = mvarLiveDumpEvery;
             } else if (arg == L"-mvar-dump-at") {
                 const std::wstring spec = argvW[++i];
                 size_t from = 0;

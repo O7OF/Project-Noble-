@@ -375,7 +375,7 @@ bool BlamEngine::DumpLiveMapVariant(const std::filesystem::path& dir, int index)
     std::error_code ec;
     std::filesystem::create_directories(dir, ec);
     char name[64] = {};
-    std::snprintf(name, sizeof(name), "live_%03d", index);
+    std::snprintf(name, sizeof(name), "live_%lu_%03d", static_cast<unsigned long>(GetCurrentProcessId()), index);
     const std::string stem = name;
 
     // A wide window around the state, so the editor's own structures are in the dump too.
