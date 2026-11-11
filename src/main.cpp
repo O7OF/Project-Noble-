@@ -1045,6 +1045,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     std::wstring mvarParsePath;       // dev: decode a map variant file and report it, then exit
     std::vector<int> mvarDumpTimes;   // dev: memory dumps of the loaded map variant at these seconds
     int mvarDumpEvery = 0;            // dev: dump repeatedly, this many seconds apart (find the live map buffer)
+int mvarLiveDumpEvery = 0;        // dev: dump the live variant struct/state every N seconds (Forge placement diff)
     std::string connectAddress = "";
     std::string connectSessionId = "";
     std::string connectSessionToken = "";
@@ -1211,6 +1212,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
                 }
             } else if (arg == L"-mvar-dump-every") {
                 mvarDumpEvery = _wtoi(argvW[++i]);
+            } else if (arg == L"-mvar-live-dump" && i + 1 < numArgs) {
+                mvarLiveDumpEvery = _wtoi(argvW[++i]);
             } else if (arg == L"-mvar-dump-at") {
                 const std::wstring spec = argvW[++i];
                 size_t from = 0;
@@ -1370,6 +1373,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     if (!customMvar.empty()) args += L" -mvar \"" + toWide(customMvar) + L"\"";
     // Keep the map-variant memory dump running after the menu relaunches into a match.
     if (mvarDumpEvery > 0) args += L" -mvar-dump-every " + std::to_wstring(mvarDumpEvery);
+    if (mvarLiveDumpEvery > 0) args += L" -mvar-live-dump " + std::to_wstring(mvarLiveDumpEvery);
     if (launchSkulls != 0) args += L" -skulls " + std::to_wstring(launchSkulls);
     if (!modFolder.empty()) args += L" -mod \"" + modFolder.wstring() + L"\"";
     if (!mapOverride.empty()) args += L" -map-override \"" + mapOverride.wstring() + L"\"";
@@ -1831,6 +1835,20 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             NOBLE_WARN("main: dispatching engine command '{}' (research hook)", cmd);
             if (noble::BlamEngine::Active()) noble::BlamEngine::Active()->ExecuteCommand(cmd);
             else NOBLE_WARN("main: no active engine for command '{}'", cmd);
+        }).detach();
+    }
+
+    if (mvarLiveDumpEvery > 0) {
+        std::thread([mvarLiveDumpEvery] {
+            int index = 0;
+            for (;;) {
+                std::this_thread::sleep_for(std::chrono::seconds(mvarLiveDumpEvery));
+                if (!noble::BlamEngine::Active()) continue;
+                const std::filesystem::path out =
+                    noble::ReachHost::Get().GetDataDir() / "mvar_live";
+                const bool ok = noble::BlamEngine::Active()->DumpLiveMapVariant(out, ++index);
+                NOBLE_WARN("main: -mvar-live-dump snapshot {} -> {} ('{}')", index, ok ? 1 : 0, out.string());
+            }
         }).detach();
     }
 

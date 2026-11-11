@@ -16,6 +16,7 @@
 #include <thread>
 #include <chrono>
 #include <cstdlib>
+#include <cstdio>
 #include <cstring>
 #include <cwchar>
 #include <mutex>
@@ -231,6 +232,15 @@ bool CallVariantCopy(HMODULE module, void* dst, void* src, long long mode) {
     return true;
 }
 
+bool CopyMemorySafe(void* dst, const void* src, size_t size) {
+    __try {
+        std::memcpy(dst, src, size);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+    return true;
+}
+
 bool CallMapVariantSerialize(HMODULE module, void* out, void* variant) {
     __try {
         typedef void (*SerializeFn)(void*, void*);
@@ -317,6 +327,56 @@ bool BlamEngine::TrySerializeLiveMapVariant(std::vector<uint8_t>& outChunk) {
     }
     NOBLE_INFO("BlamEngine: serialized live map variant at {:p} ({} packed bytes)", variant, packed);
     outChunk = std::move(chunk);
+    return true;
+}
+
+bool BlamEngine::DumpLiveMapVariant(const std::filesystem::path& dir, int index) {
+    if (!m_hModule) return false;
+    DWORD tlsIndex = 0;
+    if (!ReadModuleTlsIndex(m_hModule, tlsIndex)) return false;
+    void* tlsBlock = nullptr;
+    if (!ReadTlsBlock(tlsIndex, tlsBlock) || !tlsBlock) return false;
+    void* engineState = nullptr;
+    if (!ReadEngineState(tlsBlock, engineState) || !engineState) return false;
+
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    char name[64] = {};
+    std::snprintf(name, sizeof(name), "live_%03d", index);
+    const std::string stem = name;
+
+    // A wide window around the state, so the editor's own structures are in the dump too.
+    std::vector<uint8_t> state(0x60000, 0);
+    if (!CopyMemorySafe(state.data(), engineState, state.size())) state.clear();
+    if (!state.empty()) {
+        std::ofstream(dir / (stem + "_state.bin"), std::ios::binary).write(
+            reinterpret_cast<const char*>(state.data()), static_cast<std::streamsize>(state.size()));
+    }
+
+    void* variant = static_cast<uint8_t*>(engineState) + 0x110F0;
+    std::vector<uint8_t> raw(0x20000, 0);
+    if (!CopyMemorySafe(raw.data(), variant, raw.size())) raw.clear();
+    if (!raw.empty()) {
+        std::ofstream(dir / (stem + "_variant.bin"), std::ios::binary).write(
+            reinterpret_cast<const char*>(raw.data()), static_cast<std::streamsize>(raw.size()));
+    }
+
+    std::vector<uint8_t> chunk(0x7028, 0);
+    if (CallMapVariantSerialize(m_hModule, chunk.data(), variant)) {
+        std::ofstream(dir / (stem + "_chunk.bin"), std::ios::binary).write(
+            reinterpret_cast<const char*>(chunk.data()), static_cast<std::streamsize>(chunk.size()));
+    }
+
+    std::vector<uint8_t> committed(0x20000, 0);
+    if (CallVariantInit(m_hModule, committed.data()) && CallVariantCopy(m_hModule, committed.data(), variant, 1)) {
+        std::vector<uint8_t> copyChunk(0x7028, 0);
+        if (CallMapVariantSerialize(m_hModule, copyChunk.data(), committed.data())) {
+            std::ofstream(dir / (stem + "_copy_chunk.bin"), std::ios::binary).write(
+                reinterpret_cast<const char*>(copyChunk.data()), static_cast<std::streamsize>(copyChunk.size()));
+        }
+        std::ofstream(dir / (stem + "_copy.bin"), std::ios::binary).write(
+            reinterpret_cast<const char*>(committed.data()), static_cast<std::streamsize>(committed.size()));
+    }
     return true;
 }
 

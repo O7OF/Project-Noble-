@@ -65,6 +65,10 @@ public:
     bool TrySerializeLiveMapVariant(std::vector<uint8_t>& outChunk);
     bool TakeCapturedMapVariantChunk(std::vector<uint8_t>& out);
 
+    // Dev: dump the engine state around the live map variant (raw state, the struct, and its serialized chunk) so
+    // two snapshots can be diffed around a Forge placement.
+    bool DumpLiveMapVariant(const std::filesystem::path& dir, int index);
+
     const std::string& GetCurrentMap() const { return m_currentMap; }
     const std::string& GetCurrentMode() const { return m_currentMode; }
     bool IsForgeMode() const { return _stricmp(m_currentMode.c_str(), "forge") == 0 || _stricmp(m_currentMode.c_str(), "sandbox") == 0; }
