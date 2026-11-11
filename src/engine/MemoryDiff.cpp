@@ -120,17 +120,22 @@ void StartPageScan(int seconds, std::filesystem::path outDir) {
                     std::snprintf(name, sizeof(name), "scan_%03d.txt", index);
                     std::ofstream report(outDir / name, std::ios::trunc);
                     size_t runStart = 0;
-                    int runs = 0;
+                    int runs = 0, blobs = 0;
                     while (runStart < changed.size()) {
                         size_t runEnd = runStart;
                         while (runEnd + 1 < changed.size() && changed[runEnd + 1] == changed[runEnd] + kPage) ++runEnd;
                         const uintptr_t base = changed[runStart];
                         const size_t bytes = (runEnd - runStart + 1) * kPage;
                         report << "0x" << std::hex << base << " " << std::dec << bytes << "\n";
-                        std::snprintf(name, sizeof(name), "scan_%03d_%llX.bin", index,
-                                      static_cast<unsigned long long>(base));
-                        std::ofstream blob(outDir / name, std::ios::binary | std::ios::trunc);
-                        blob.write(reinterpret_cast<const char*>(base), static_cast<std::streamsize>(bytes));
+                        // Only keep small runs: a placement lands in a data structure, while the big animated
+                        // buffers (audio, render targets) would otherwise write hundreds of megabytes per scan.
+                        if (bytes <= 0x40000 && blobs < 128) {
+                            std::snprintf(name, sizeof(name), "scan_%03d_%llX.bin", index,
+                                          static_cast<unsigned long long>(base));
+                            std::ofstream blob(outDir / name, std::ios::binary | std::ios::trunc);
+                            blob.write(reinterpret_cast<const char*>(base), static_cast<std::streamsize>(bytes));
+                            ++blobs;
+                        }
                         ++runs;
                         runStart = runEnd + 1;
                     }
