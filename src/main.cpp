@@ -377,6 +377,7 @@ static bool SafeReadPtr(uintptr_t address, void* out, size_t size) {
 // 0x31204) and only then compares id/type, so this hook aligns the loaded header's type with the request in
 // between - that is what lets a mod map built on another canvas mount in the mode the player picked.
 static std::atomic<int> s_requestedMapType{-1};
+std::atomic<int> s_requestedMapId{-1};
 using MapLoadFullFn = unsigned char(__fastcall*)(void*, int, int, void*);
 MapLoadFullFn s_origMapLoadFull = nullptr;
 
@@ -414,6 +415,30 @@ char __fastcall MapParseHook(void* a1, void* a2) {
                   SafeReadPtr(table + 0x10 + static_cast<uint64_t>(index) * 4, &fileType, sizeof(fileType));
         const int want = s_requestedMapType.load();
         static const bool s_mapTypePatchOff = std::getenv("NOBLE_MAPTYPE_OFF") != nullptr;
+        static const bool s_mapIdPatch = std::getenv("NOBLE_MAPID_PATCH") != nullptr;
+        const int wantId = s_requestedMapId.load();
+        if (ok) NOBLE_INFO("main: map declares id {} type 0x{:X}; launch requested id {} type 0x{:X}", fileId, fileType,
+                           wantId, want);
+        static const bool s_idForce = std::getenv("NOBLE_ID_FORCE") != nullptr;
+        if (ok && s_idForce && wantId == -1 && fileId == 0 && want == 0x1392) {
+            // Experiment: a foreign map parsed into a campaign slot reports id 0; a stock campaign map reports 1.
+            int* idField = reinterpret_cast<int*>(table + 0xC + static_cast<uint64_t>(index) * 4);
+            DWORD oldIdProtect = 0;
+            if (VirtualProtect(idField, sizeof(int), PAGE_READWRITE, &oldIdProtect)) {
+                *idField = 1;
+                VirtualProtect(idField, sizeof(int), oldIdProtect, &oldIdProtect);
+                NOBLE_INFO("main: map id 0 mounted as 1 for the campaign slot");
+            }
+        }
+        if (ok && wantId != -1 && fileId != wantId && s_mapIdPatch) {
+            int* idField = reinterpret_cast<int*>(table + 0xC + static_cast<uint64_t>(index) * 4);
+            DWORD oldIdProtect = 0;
+            if (VirtualProtect(idField, sizeof(int), PAGE_READWRITE, &oldIdProtect)) {
+                *idField = wantId;
+                VirtualProtect(idField, sizeof(int), oldIdProtect, &oldIdProtect);
+                NOBLE_INFO("main: map id {} mounted as the launch requested {}", fileId, wantId);
+            }
+        }
         if (ok && want != -1 && fileType != want && !s_mapTypePatchOff) {
             int* typeField = reinterpret_cast<int*>(table + 0x10 + static_cast<uint64_t>(index) * 4);
             DWORD oldProtect = 0;
