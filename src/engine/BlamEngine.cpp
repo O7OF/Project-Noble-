@@ -1483,31 +1483,29 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
     if (forgeMode) {
         // Forge is a multiplayer Megalo mode, not the special map-editor engine (0x04).
         gameModeTag = 3;
-    } else if (!(std::getenv("NOBLE_CAMPAIGN_FORCE") && _stricmp(gameMode.c_str(), "campaign") == 0) &&
-               ((mapId >= 210 && mapId <= 219) || _stricmp(gameMode.c_str(), "firefight") == 0)) {
+    } else if (_stricmp(gameMode.c_str(), "campaign") == 0) {
+        gameModeTag = 1;    // Explicit Campaign mode (including Firefight-canvas campaign mods)
+    } else if (_stricmp(gameMode.c_str(), "firefight") == 0 ||
+               (_stricmp(gameMode.c_str(), "multiplayer") != 0 && mapId >= 210 && mapId <= 219)) {
         gameModeTag = 1035; // 0x40B Firefight
-    } else if ((mapId >= 178 && mapId <= 189) || _stricmp(gameMode.c_str(), "campaign") == 0) {
+    } else if (mapId >= 178 && mapId <= 189) {
         gameModeTag = 1;    // Campaign
     } else if (mapId == static_cast<uint32_t>(-2) || mapId == 0 ||
                _stricmp(gameMode.c_str(), "mainmenu") == 0 || _stricmp(gameMode.c_str(), "menu") == 0) {
         gameModeTag = 0;    // Main Menu
     }
 
-    // A mod map built on a Firefight canvas is a Forge map in Reach terms: its world is only loaded by the Forge
-    // engine. Launched as Firefight or Slayer it loads and reports the session as running, but renders a black screen.
-    // MCC plays these mods in Forge for the same reason. Do this before the map info is presented, since the type
-    // written there follows the engine mode.
-    // A map installed as an override is usually served for a stock carrier (a campaign slot, a multiplayer map), so the
-    // carrier name says nothing about the canvas the mod was built on. Ask the override instead: a campaign launch of a
-    // Firefight-canvas map otherwise parses the map as campaign, loads for ~2 s and aborts.
+    // A multiplayer mod map built on a Firefight canvas is a Forge map in Reach terms: its world is only loaded by the
+    // Forge/multiplayer engine. Do this before the map info is presented, since the type written there follows the
+    // engine mode.
     const std::string overrideCanvas = noble::VFS::MapOverrideCanvas();
     const bool firefightCanvas =
         noble::VFS::IsFirefightCanvas(mapName) ||
         (!overrideCanvas.empty() &&
          (noble::VFS::IsFirefightCanvas(overrideCanvas) || overrideCanvas.rfind("ff_", 0) == 0 ||
           overrideCanvas.rfind("ff60", 0) == 0 || overrideCanvas.rfind("cex_ff", 0) == 0));
-    if (noble::VFS::HasActiveMod() && gameModeTag != 3 && gameModeTag != 1 && firefightCanvas) {
-        NOBLE_WARN("BlamEngine: '{}' is a mod map on a Firefight canvas ({}); launching it through the Forge engine",
+    if (noble::VFS::HasActiveMod() && gameModeTag == 2 && firefightCanvas) {
+        NOBLE_WARN("BlamEngine: '{}' is a multiplayer mod map on a Firefight canvas ({}); launching it through the Forge engine",
                    mapName, overrideCanvas.empty() ? mapName : overrideCanvas);
         gameModeTag = 3;
     }

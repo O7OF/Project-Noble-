@@ -2524,8 +2524,8 @@ std::string CarrierForScenario(const std::string& scenario, const std::string& f
     std::string key = scenario;
     for (char& c : key) c = static_cast<char>(::tolower(static_cast<unsigned char>(c)));
     const auto it = s_carriers.find(key);
-    if (it != s_carriers.end()) return it->second;
-    if (key.find("forge_halo") != std::string::npos) return "forge_halo";
+    if (it != s_carriers.end() && fallback != "m10") return it->second;
+    if (fallback != "m10" && key.find("forge_halo") != std::string::npos) return "forge_halo";
     return fallback;
 }
 
@@ -2560,7 +2560,7 @@ std::vector<MapEntry> ModMaps(const ModEntry& mod, const std::vector<ModMap>& li
         // data\map_carriers.json entry for the map).
         const bool baseUsable = !m.baseScenario.empty() &&
                                 (KnownScenario(m.baseScenario, base, baseCount) ||
-                                 m.baseScenario.find("forge_halo") != std::string::npos);
+                                 (carrier != "m10" && m.baseScenario.find("forge_halo") != std::string::npos));
         const std::string defaultCarrier = baseUsable ? m.baseScenario : carrier;
         entry.launchScenario = CarrierForScenario(m.scenario, defaultCarrier);
         entry.mapOverride = mapFile;
@@ -2573,27 +2573,30 @@ std::vector<MapEntry> ModMaps(const ModEntry& mod, const std::vector<ModMap>& li
         entry.blurb = "Custom map \xC2\xB7 loads through " + MapNames::Display(entry.launchScenario) + ".";
         out.push_back(std::move(entry));
     }
-    for (const std::string& file : mod.mapFiles) {
-        if (!KnownScenario(file, base, baseCount)) {
+    const bool hasManifestMaps = !mod.campaign.empty() || !mod.firefight.empty() || !mod.multiplayer.empty();
+    if (!hasManifestMaps) {
+        for (const std::string& file : mod.mapFiles) {
+            if (!KnownScenario(file, base, baseCount)) {
+                if (std::any_of(out.begin(), out.end(), [&](const MapEntry& e) { return e.scenario == file; })) continue;
+                const std::filesystem::path mapFile = mod.folder / "maps" / (file + ".map");
+                MapEntry entry;
+                entry.scenario = file;
+                entry.name = MapNames::Display(file);
+                std::string fileCarrier = carrier;
+                if (carrier != "m10" && file.find("forge_halo") != std::string::npos) fileCarrier = "forge_halo";
+                entry.launchScenario = CarrierForScenario(file, fileCarrier);
+                entry.mapOverride = mapFile;
+                entry.enabled = true;
+                entry.mod = &mod;
+                entry.custom = true;
+                entry.blurb = "Custom map \xC2\xB7 loads on " + MapNames::Display(entry.launchScenario);
+                out.push_back(std::move(entry));
+                continue;
+            }
             if (std::any_of(out.begin(), out.end(), [&](const MapEntry& e) { return e.scenario == file; })) continue;
-            const std::filesystem::path mapFile = mod.folder / "maps" / (file + ".map");
-            MapEntry entry;
-            entry.scenario = file;
-            entry.name = MapNames::Display(file);
-            std::string fileCarrier = carrier;
-            if (file.find("forge_halo") != std::string::npos) fileCarrier = "forge_halo";
-            entry.launchScenario = CarrierForScenario(file, fileCarrier);
-            entry.mapOverride = mapFile;
-            entry.enabled = true;
-            entry.mod = &mod;
-            entry.custom = true;
-            entry.blurb = "Custom map \xC2\xB7 loads on " + MapNames::Display(entry.launchScenario);
-            out.push_back(std::move(entry));
-            continue;
-        }
-        if (std::any_of(out.begin(), out.end(), [&](const MapEntry& e) { return e.scenario == file; })) continue;
-        for (int i = 0; i < baseCount; ++i) {
-            if (file == base[i].scenario) out.push_back({ file, base[i].name, base[i].blurb, {}, {}, {}, {}, {}, true, &mod });
+            for (int i = 0; i < baseCount; ++i) {
+                if (file == base[i].scenario) out.push_back({ file, base[i].name, base[i].blurb, {}, {}, {}, {}, {}, true, &mod });
+            }
         }
     }
     return out;

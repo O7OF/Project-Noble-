@@ -382,8 +382,10 @@ using MapLoadFullFn = unsigned char(__fastcall*)(void*, int, int, void*);
 MapLoadFullFn s_origMapLoadFull = nullptr;
 
 unsigned char __fastcall MapLoadFullHook(void* a1, int a2, int a3, void* a4) {
+    s_requestedMapId.store(a2);
     s_requestedMapType.store(a3);
     const unsigned char result = s_origMapLoadFull ? s_origMapLoadFull(a1, a2, a3, a4) : 0;
+    s_requestedMapId.store(-1);
     s_requestedMapType.store(-1);
     return result;
 }
@@ -415,28 +417,21 @@ char __fastcall MapParseHook(void* a1, void* a2) {
                   SafeReadPtr(table + 0x10 + static_cast<uint64_t>(index) * 4, &fileType, sizeof(fileType));
         const int want = s_requestedMapType.load();
         static const bool s_mapTypePatchOff = std::getenv("NOBLE_MAPTYPE_OFF") != nullptr;
-        static const bool s_mapIdPatch = std::getenv("NOBLE_MAPID_PATCH") != nullptr;
         const int wantId = s_requestedMapId.load();
         if (ok) NOBLE_INFO("main: map declares id {} type 0x{:X}; launch requested id {} type 0x{:X}", fileId, fileType,
                            wantId, want);
-        static const bool s_idForce = std::getenv("NOBLE_ID_FORCE") != nullptr;
-        if (ok && s_idForce && wantId == -1 && fileId == 0 && want == 0x1392) {
-            // Experiment: a foreign map parsed into a campaign slot reports id 0; a stock campaign map reports 1.
+        // Stock Halo: Reach campaign missions (map types 5005..5080 / 0x138D..0x13D8) declare campaign_id = 1 at
+        // scnr+0x0C, whereas maps built on Firefight or multiplayer canvases declare 0. Mounting a Firefight/MP-canvas
+        // campaign mod into a campaign carrier slot requires both scnr+0x0C = 1 and scnr+0x10 = want.
+        const bool isCampaignSlot = (want >= 5000 && want <= 5080);
+        const int targetId = (wantId != -1) ? wantId : ((isCampaignSlot && fileId == 0) ? 1 : fileId);
+        if (ok && targetId != fileId) {
             int* idField = reinterpret_cast<int*>(table + 0xC + static_cast<uint64_t>(index) * 4);
             DWORD oldIdProtect = 0;
             if (VirtualProtect(idField, sizeof(int), PAGE_READWRITE, &oldIdProtect)) {
-                *idField = 1;
+                *idField = targetId;
                 VirtualProtect(idField, sizeof(int), oldIdProtect, &oldIdProtect);
-                NOBLE_INFO("main: map id 0 mounted as 1 for the campaign slot");
-            }
-        }
-        if (ok && wantId != -1 && fileId != wantId && s_mapIdPatch) {
-            int* idField = reinterpret_cast<int*>(table + 0xC + static_cast<uint64_t>(index) * 4);
-            DWORD oldIdProtect = 0;
-            if (VirtualProtect(idField, sizeof(int), PAGE_READWRITE, &oldIdProtect)) {
-                *idField = wantId;
-                VirtualProtect(idField, sizeof(int), oldIdProtect, &oldIdProtect);
-                NOBLE_INFO("main: map id {} mounted as the launch requested {}", fileId, wantId);
+                NOBLE_INFO("main: map id {} mounted as {} for the campaign slot", fileId, targetId);
             }
         }
         if (ok && want != -1 && fileType != want && !s_mapTypePatchOff) {
@@ -1371,6 +1366,46 @@ int mvarPageScanEvery = 0;        // dev: diff every writable page every N secon
         if (fs::is_regular_file(staleInfoDst, infoEc)) {
             fs::remove(staleInfoDst, infoEc);
             NOBLE_INFO("main: removed stale patched mapinfo override '{}'", staleInfoDst.string());
+        }
+    }
+    // A campaign mission whose scenario is not one of the stock campaign slots (e.g. a campaign mod built on a
+    // Firefight or multiplayer canvas such as ff_unearthed) must launch through a stock campaign carrier ('m10')
+    // with the scenario's .map file served as the carrier override; otherwise the campaign validator rejects the
+    // non-campaign .mapinfo with 'no map selected'.
+    if (!showMenu && _stricmp(launchMode.c_str(), "campaign") == 0 && !launchMap.empty()) {
+        static const char* const kStockCampaignMissions[] = {
+            "m05", "m10", "m20", "m30", "m35", "m45", "m50", "m52", "m60", "m70", "m70_a", "m70_bonus"
+        };
+        bool isStockMission = false;
+        for (const char* m : kStockCampaignMissions) {
+            if (_stricmp(launchMap.c_str(), m) == 0) {
+                isStockMission = true;
+                break;
+            }
+        }
+        std::error_code mapEc;
+        if (!isStockMission) {
+            if (mapOverride.empty()) {
+                const fs::path modCandidate = !modFolder.empty() ? (modFolder / "maps" / (launchMap + ".map")) : fs::path();
+                const fs::path baseCandidate = reachInstall->mapsDirectory / (launchMap + ".map");
+                if (!modCandidate.empty() && fs::is_regular_file(modCandidate, mapEc)) {
+                    mapOverride = modCandidate;
+                } else if (fs::is_regular_file(baseCandidate, mapEc)) {
+                    mapOverride = baseCandidate;
+                }
+            }
+            NOBLE_INFO("main: campaign scenario '{}' routed through carrier slot 'm10' (override '{}')",
+                       launchMap, mapOverride.string());
+            launchMap = "m10";
+        } else if (mapOverride.empty() && !modFolder.empty() &&
+                   !fs::is_regular_file(modFolder / "maps" / (launchMap + ".map"), mapEc)) {
+            for (const auto& entry : fs::directory_iterator(modFolder / "maps", mapEc)) {
+                if (entry.is_regular_file(mapEc) && _stricmp(entry.path().extension().string().c_str(), ".map") == 0) {
+                    mapOverride = entry.path();
+                    NOBLE_INFO("main: campaign carrier '{}' bound to mod map '{}'", launchMap, mapOverride.string());
+                    break;
+                }
+            }
         }
     }
     if (!mapOverride.empty()) {
