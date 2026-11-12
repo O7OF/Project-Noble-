@@ -1527,19 +1527,24 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
     if (m_fnStart) {
         void* hostPtr = ReachHost::Get().GetInterface();
         // Campaign missions are chosen by the launch block, not by the requested map: the block carries the map id at
-    // 0x10/0x14 (179 for m10, 180 for the next mission). A mod map served into a campaign slot therefore never loads;
-    // retarget the block at the override's own map id so the campaign engine asks for that map instead.
-    if (std::getenv("NOBLE_BLOCK_IDPATCH")) {
-        const std::string canvas = noble::VFS::MapOverrideCanvas();
-        const uint32_t canvasId = canvas.empty() ? 0xFFFFFFFFu : ResolveMapId(canvas);
-        if (canvasId != 0xFFFFFFFFu && canvasId != mapId) {
-            std::memcpy(block.data() + 0x10, &canvasId, sizeof(canvasId));
-            std::memcpy(block.data() + 0x14, &canvasId, sizeof(canvasId));
-            noble::VFS::SetMapOverride(canvas, std::filesystem::path(std::getenv("NOBLE_BLOCK_IDPATCH")));
-            NOBLE_WARN("BlamEngine: campaign launch block retargeted from map {} to '{}' ({})", mapId, canvas, canvasId);
+        // 0x10/0x14 (179 for m10, 180 for the next mission). A mod map served into a campaign slot therefore never
+        // loads; retarget the block at the override's own map id so the campaign engine asks for that map instead.
+        if (const char* retarget = std::getenv("NOBLE_BLOCK_IDPATCH")) {
+            (void)retarget;
+            const std::string canvas = noble::VFS::MapOverrideCanvas();
+            const uint32_t canvasId = canvas.empty() ? 0xFFFFFFFFu : ResolveMapId(canvas);
+            NOBLE_INFO("BlamEngine: block retarget check: canvas='{}' id={} launch={} mapId={}", canvas, canvasId, mapName,
+                       mapId);
+            if (canvasId != 0xFFFFFFFFu && canvasId != mapId) {
+                std::memcpy(launchBlock.data() + 0x10, &canvasId, sizeof(canvasId));
+                std::memcpy(launchBlock.data() + 0x14, &canvasId, sizeof(canvasId));
+                noble::VFS::SetMapOverride(canvas, noble::VFS::MapOverrideFile());
+                NOBLE_WARN("BlamEngine: campaign launch block retargeted from map {} to '{}' ({})", mapId, canvas,
+                           canvasId);
+            }
         }
-    }
-    NOBLE_INFO("Invoking c_game_engine Start(engine, host:0x{:X}, launch_block) [Map: {}]...",
+
+        NOBLE_INFO("Invoking c_game_engine Start(engine, host:0x{:X}, launch_block) [Map: {}]...",
             reinterpret_cast<uintptr_t>(hostPtr), mapName);
         int32_t startStatus = m_fnStart(m_engineInstance, hostPtr, launchBlock.data());
         NOBLE_INFO("c_game_engine Start returned: 0x{:X}", startStatus);
