@@ -823,6 +823,7 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
     }
 
     std::string blockName;
+    bool convertToCampaign = false;
     if (isMainMenu) {
         blockName = "lb_m_c_1.bin";
     } else if (gameModeTag == 1035) {
@@ -839,6 +840,17 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
         else if (EmbeddedBlocks::HasBlock(cand2)) blockName = cand2;
         else if (std::filesystem::exists(dataRoot / "blocks" / cand1)) blockPath = dataRoot / "blocks" / cand1;
         else if (std::filesystem::exists(dataRoot / "blocks" / cand2)) blockPath = dataRoot / "blocks" / cand2;
+        // A campaign mission on a map that only ships Firefight blocks (e.g. a mod map on a Firefight canvas):
+        // the block differs only in four mode bytes, so take the Firefight block for this map and present it as
+        // campaign (0x0C/0x28 = 1, 0x2A/0x2B = 0x11, as every campaign block has).
+        if (blockName.empty() && blockPath.empty()) {
+            std::string ff1 = "firefight_" + std::to_string(blockMapId) + "_d" + std::to_string(clampedDiff) + ".bin";
+            std::string ff2 = "firefight_" + std::to_string(blockMapId) + ".bin";
+            if (EmbeddedBlocks::HasBlock(ff1)) { blockName = ff1; convertToCampaign = true; }
+            else if (EmbeddedBlocks::HasBlock(ff2)) { blockName = ff2; convertToCampaign = true; }
+            else if (std::filesystem::exists(dataRoot / "blocks" / ff1)) { blockPath = dataRoot / "blocks" / ff1; convertToCampaign = true; }
+            else if (std::filesystem::exists(dataRoot / "blocks" / ff2)) { blockPath = dataRoot / "blocks" / ff2; convertToCampaign = true; }
+        }
     }
 
     if (!blockName.empty()) {
@@ -860,6 +872,14 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
             loadedPrebuilt = true;
             NOBLE_INFO("BlamEngine: Loaded authentic pre-built launch block from '{}'", blockPath.string());
         }
+    }
+
+    if (convertToCampaign) {
+        block[0x0C] = 0x01;
+        block[0x28] = 0x01;
+        block[0x2A] = 0x11;
+        block[0x2B] = 0x11;
+        NOBLE_INFO("BlamEngine: Firefight block for map {} presented as campaign (mode bytes 0x0C/0x28/0x2A/0x2B)", blockMapId);
     }
 
     // Fallback: Synthesize from lb_m_c_1.bin template if needed
