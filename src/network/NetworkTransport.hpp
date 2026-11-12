@@ -72,6 +72,7 @@ public:
     // Direct peer registration & NAT hole punching
     void AddPeer(uint64_t machineId, const std::string& ip, uint16_t port);
     void SetRemoteHostLanAddress(const std::string& lanIp, uint16_t port = 0);
+    void SendDisconnectPacket();
 
     // Real RTT ping measurement (ms) per remote peer machineId (0 = default/host peer, returns -1 if unknown)
     int GetPeerPingMs(uint64_t machineId = 0) const;

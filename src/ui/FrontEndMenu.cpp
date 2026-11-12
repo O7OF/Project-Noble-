@@ -5050,7 +5050,7 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         st.lobbyLaunchPending = false;
         ClearPendingLobbyEvents();
         if (st.isLobbyHost) {
-            MasterServerClient::Get().StopAdvertising();
+            MasterServerClient::Get().StopAdvertisingSync();
             SessionManager::Get().StopHosting();
             NetworkTransport::Get().StopRelay();
             st.lobbySessionId.clear();
@@ -5803,7 +5803,7 @@ void ContainerMatchEnded(OverlayContext& ctx, DWORD exitCode) {
         FrontEndMenu::SetMatchRunning(false);
         if (!ctx.st.lobbySessionId.empty()) {
             if (ctx.st.isLobbyHost) {
-                MasterServerClient::Get().StopAdvertising();
+                MasterServerClient::Get().StopAdvertisingSync();
                 SessionManager::Get().StopHosting();
             } else {
                 uint64_t fallbackId = (MasterServerClient::GetLobbyMachineId() & 0x7FFFFFFFULL);
@@ -5908,7 +5908,7 @@ void ContainerMatchEnded(OverlayContext& ctx, DWORD exitCode) {
     } else if (successor == L"-main-menu" || ctx.st.screen == Screen::PreGameLobby || !ctx.st.lobbySessionId.empty() || !ctx.st.lobbyHostEndpoint.empty()) {
         // Player left the match or lobby disbanded: return to main menu or appropriate mode screen.
         if (ctx.st.isLobbyHost) {
-            MasterServerClient::Get().StopAdvertising();
+            MasterServerClient::Get().StopAdvertisingSync();
             SessionManager::Get().StopHosting();
             NetworkTransport::Get().StopRelay();
             ctx.st.lobbySessionId.clear();

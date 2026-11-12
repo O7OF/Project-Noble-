@@ -425,17 +425,32 @@ void MasterServerClient::StopAdvertising() {
     m_wake.notify_all();
 }
 
+void MasterServerClient::StopAdvertisingSync() {
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (!m_advertising && m_sessionId.empty()) return;
+        m_advertising = false;
+        m_unregisterRequested = false;
+    }
+    DoUnregister();
+}
+
 void MasterServerClient::Shutdown(bool keepSession) {
+    bool doUnregNow = false;
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         if (m_advertising) {
             m_advertising = false;
             // Handing the session to the match process: deleting it here made the match's first heartbeat
             // get 404 and register a brand-new session, while the guests were sent to the old one (2026-10-29).
-            m_unregisterRequested = !keepSession;
+            doUnregNow = !keepSession;
+            m_unregisterRequested = false;
         }
         m_stop = true;
         m_wake.notify_all();
+    }
+    if (doUnregNow) {
+        DoUnregister();
     }
     if (m_thread.joinable()) m_thread.join();
 }
@@ -643,6 +658,7 @@ void MasterServerClient::DoList() {
                     const bool isFederated = item.value("federated", false);
                     std::string homeRegion = Str(item, "region_url", 128);
                     if (homeRegion.empty()) homeRegion = Str(item, "origin_url", 128);
+                    if (homeRegion.empty() && !isFederated) homeRegion = rf.regionUrl;
                     if (!s.id.empty()) {
                         if (!homeRegion.empty()) {
                             SetSessionRegionUrl(s.id, homeRegion);
@@ -650,6 +666,17 @@ void MasterServerClient::DoList() {
                             SetSessionRegionUrl(s.id, rf.regionUrl);
                         }
                     }
+
+                    s.regionUrl = homeRegion.empty() ? rf.regionUrl : homeRegion;
+                    auto getRegionName = [](const std::string& url) -> std::string {
+                        std::string lower = url;
+                        for (char& c : lower) c = static_cast<char>(tolower(static_cast<unsigned char>(c)));
+                        if (lower.find("west") != std::string::npos) return "US West";
+                        if (lower.find("east") != std::string::npos) return "US East";
+                        if (lower.find("uk") != std::string::npos || lower.find("london") != std::string::npos) return "UK";
+                        return "ONLINE";
+                    };
+                    s.regionName = getRegionName(s.regionUrl);
 
                     const std::string epKey = s.address + ":" + std::to_string(s.port);
                     if (!s.id.empty() && !seenIds.insert(s.id).second) continue;
@@ -660,12 +687,12 @@ void MasterServerClient::DoList() {
         } catch (...) {}
     };
 
-    // Process direct regional /api/sessions responses first so native home regions are recorded before federated copies
-    for (const auto& rf : results) {
-        if (!rf.isPrimary) parseRegionResponse(rf);
-    }
+    // Process primary configured region first, then peer regional nodes
     for (const auto& rf : results) {
         if (rf.isPrimary) parseRegionResponse(rf);
+    }
+    for (const auto& rf : results) {
+        if (!rf.isPrimary) parseRegionResponse(rf);
     }
 
     if (online >= 0) m_onlinePlayers.store(std::max(0, online));
@@ -858,7 +885,9 @@ void MasterServerClient::DoUnregister() {
         m_sessionToken.clear();
     }
     if (id.empty()) return;
-    HttpRequest(Url(), L"DELETE", "/api/sessions/" + id, {}, token);
+    for (const std::string& baseUrl : GetCandidateUrls(id)) {
+        HttpRequest(baseUrl, L"DELETE", "/api/sessions/" + id, {}, token);
+    }
     SetStatus("your game was removed from the master server");
 }
 

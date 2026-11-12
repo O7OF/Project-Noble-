@@ -347,17 +347,25 @@ void RelaunchAndClose(HWND hwnd, const std::wstring &args, const char *what) {
   const bool keepHostSession = args.find(L"-lobby-return host") != std::wstring::npos;
   const bool isMainMenu = (args == L"-main-menu");
   if (args.empty() || isMainMenu) {
-    // Leaving match to menu: if we joined a lobby session as a guest, notify the master server immediately.
+    // Leaving match to menu: notify master server and peers immediately.
     std::wstring wSession = ArgValue(Relaunch::CurrentGameArgs(), L"-session-id");
     if (wSession.empty()) wSession = ArgValue(GetCommandLineW(), L"-session-id");
     const bool isHostCmd = (wcsstr(GetCommandLineW(), L"-host") != nullptr ||
                             Relaunch::CurrentGameArgs().find(L" -host") != std::wstring::npos);
-    if (!wSession.empty() && !isHostCmd) {
+    if (!wSession.empty()) {
       char sessUtf8[128] = {};
       WideCharToMultiByte(CP_UTF8, 0, wSession.c_str(), -1, sessUtf8, sizeof(sessUtf8) - 1, nullptr, nullptr);
-      uint64_t fallbackId = (MasterServerClient::GetLobbyMachineId() & 0x7FFFFFFFULL);
-      if (fallbackId < 2ULL) fallbackId = 2ULL;
-      MasterServerClient::Get().LeaveLobbySync(sessUtf8, fallbackId);
+      if (isHostCmd) {
+        NetworkTransport::Get().SendLobbyControlJson("{\"type\":\"lobby_disband\"}");
+        MasterServerClient::Get().DisbandSessionSync(sessUtf8);
+      } else {
+        uint64_t fallbackId = (MasterServerClient::GetLobbyMachineId() & 0x7FFFFFFFULL);
+        if (fallbackId < 2ULL) fallbackId = 2ULL;
+        NetworkTransport::Get().SendDisconnectPacket();
+        MasterServerClient::Get().LeaveLobbySync(sessUtf8, fallbackId);
+      }
+    } else if (!isHostCmd) {
+      NetworkTransport::Get().SendDisconnectPacket();
     }
   }
   MasterServerClient::Get().Shutdown(keepHostSession);
@@ -418,8 +426,11 @@ void QuitFromMatch(HWND hwnd, const char *what) {
     } else {
       uint64_t fallbackId = (MasterServerClient::GetLobbyMachineId() & 0x7FFFFFFFULL);
       if (fallbackId < 2ULL) fallbackId = 2ULL;
+      NetworkTransport::Get().SendDisconnectPacket();
       MasterServerClient::Get().LeaveLobbySync(sessUtf8, fallbackId);
     }
+  } else if (!isHostCmd) {
+    NetworkTransport::Get().SendDisconnectPacket();
   }
   MasterServerClient::Get().Shutdown(false);
   SessionManager::Get().Shutdown();

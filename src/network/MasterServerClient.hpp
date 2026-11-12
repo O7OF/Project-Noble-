@@ -96,6 +96,8 @@ struct MasterSession {
     bool isPrivate = false;
     std::string lanAddress;
     std::string build;
+    std::string regionUrl;
+    std::string regionName;
 };
 
 // Description of the game this player hosts, sent to the master server.
@@ -168,6 +170,7 @@ public:
     void StartAdvertising(const MasterAdvert& advert);
     void UpdateAdvert(int playerCount, bool inProgress);
     void StopAdvertising();
+    void StopAdvertisingSync();
     bool IsAdvertising() const { return m_advertising.load(); }
 
     // Join signaling to trigger host NAT hole punching & WebSocket relay URL retrieval.
