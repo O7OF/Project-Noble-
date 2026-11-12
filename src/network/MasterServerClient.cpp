@@ -16,7 +16,9 @@
 #include <cctype>
 #include <chrono>
 #include <filesystem>
+#include <future>
 #include <set>
+#include <unordered_set>
 #include <utility>
 
 namespace noble {
@@ -216,20 +218,110 @@ MasterServerClient::~MasterServerClient() {
     Shutdown();
 }
 
+namespace {
+
+std::string NormalizeUrl(std::string normalized) {
+    while (!normalized.empty() && std::isspace(static_cast<unsigned char>(normalized.front()))) normalized.erase(normalized.begin());
+    while (!normalized.empty() && std::isspace(static_cast<unsigned char>(normalized.back()))) normalized.pop_back();
+    while (!normalized.empty() && normalized.back() == '/') normalized.pop_back();
+    return normalized;
+}
+
+} // namespace
+
 void MasterServerClient::SetUrl(const std::string& url) {
     std::lock_guard<std::mutex> lock(m_mutex);
     // Accept URLs copied from a browser (often with a trailing slash) and normalise before every
     // request; m_url + "/api/..." with a double slash 404s on Express.
-    std::string normalized = url;
-    while (!normalized.empty() && std::isspace(static_cast<unsigned char>(normalized.front()))) normalized.erase(normalized.begin());
-    while (!normalized.empty() && std::isspace(static_cast<unsigned char>(normalized.back()))) normalized.pop_back();
-    while (!normalized.empty() && normalized.back() == '/') normalized.pop_back();
-    m_url = std::move(normalized);
+    m_url = NormalizeUrl(url);
 }
 
 std::string MasterServerClient::Url() const {
     std::lock_guard<std::mutex> lock(m_mutex);
     return m_url;
+}
+
+std::string MasterServerClient::GetSessionRegionUrl(const std::string& sessionId) const {
+    if (sessionId.empty()) return {};
+    std::lock_guard<std::mutex> lock(m_mutex);
+    auto it = m_sessionRegionUrl.find(sessionId);
+    return it != m_sessionRegionUrl.end() ? it->second : std::string();
+}
+
+void MasterServerClient::SetSessionRegionUrl(const std::string& sessionId, const std::string& regionUrl) {
+    if (sessionId.empty() || regionUrl.empty()) return;
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_sessionRegionUrl[sessionId] = NormalizeUrl(regionUrl);
+}
+
+std::vector<std::string> MasterServerClient::GetCandidateUrls(const std::string& sessionId) const {
+    std::vector<std::string> urls;
+    auto addUnique = [&](std::string_view raw) {
+        std::string u = NormalizeUrl(std::string(raw));
+        if (u.empty()) return;
+        if (std::find(urls.begin(), urls.end(), u) == urls.end()) {
+            urls.push_back(std::move(u));
+        }
+    };
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (!sessionId.empty()) {
+            auto it = m_sessionRegionUrl.find(sessionId);
+            if (it != m_sessionRegionUrl.end()) {
+                addUnique(it->second);
+            }
+        }
+        addUnique(m_url);
+    }
+    if (!urls.empty()) {
+        addUnique(kMasterUsEast);
+        addUnique(kMasterUsWest);
+        addUnique(kMasterUk);
+    }
+    return urls;
+}
+
+std::string MasterServerClient::ResolveSessionIdAcrossRegions(const std::string& fallbackHostIp, uint16_t fallbackHostPort) {
+    if (fallbackHostIp.empty() || !Enabled()) return {};
+    const auto candidates = GetCandidateUrls();
+    for (const std::string& baseUrl : candidates) {
+        const HttpResult listRes = HttpRequest(baseUrl, L"GET", "/api/sessions", {});
+        if (!listRes.ok) continue;
+        try {
+            const nlohmann::json parsed = nlohmann::json::parse(listRes.body);
+            const nlohmann::json* arr = &parsed;
+            if (parsed.is_object() && parsed.contains("sessions") && parsed["sessions"].is_array()) {
+                arr = &parsed["sessions"];
+            }
+            if (!arr->is_array()) continue;
+            for (const auto& item : *arr) {
+                if (!item.is_object()) continue;
+                const std::string addr = Str(item, "address", 64);
+                const std::string lanAddr = Str(item, "lan_address", 64);
+                const uint16_t port = static_cast<uint16_t>(Int(item, "port", 11774, 1, 65535));
+                if ((addr == fallbackHostIp || (!lanAddr.empty() && lanAddr == fallbackHostIp)) && port == fallbackHostPort) {
+                    const std::string resolvedId = Str(item, "id", 64);
+                    if (!resolvedId.empty()) {
+                        SetSessionRegionUrl(resolvedId, baseUrl);
+                        return resolvedId;
+                    }
+                }
+            }
+            for (const auto& item : *arr) {
+                if (!item.is_object()) continue;
+                const std::string addr = Str(item, "address", 64);
+                const std::string lanAddr = Str(item, "lan_address", 64);
+                if (addr == fallbackHostIp || (!lanAddr.empty() && lanAddr == fallbackHostIp)) {
+                    const std::string resolvedId = Str(item, "id", 64);
+                    if (!resolvedId.empty()) {
+                        SetSessionRegionUrl(resolvedId, baseUrl);
+                        return resolvedId;
+                    }
+                }
+            }
+        } catch (...) {}
+    }
+    return {};
 }
 
 void MasterServerClient::SetStatus(const std::string& status) {
@@ -445,62 +537,137 @@ void MasterServerClient::DoOnline() {
 }
 
 void MasterServerClient::DoList() {
-    HttpResult r = HttpRequest(Url(), L"GET", "/api/browser", {});
-    if (!r.ok) r = HttpRequest(Url(), L"GET", "/api/sessions", {});
-    if (!r.ok) {
-        SetStatus(r.error);
+    const std::string primaryUrl = Url();
+    const std::vector<std::string> candidateUrls = GetCandidateUrls();
+    if (primaryUrl.empty() || candidateUrls.empty()) return;
+
+    // Query the primary configured server (/api/browser) and all cluster regional nodes (/api/sessions) in parallel
+    // so cross-region lobbies (US East, US West, UK) are always discovered immediately and mapped to their home region.
+    struct RegionFetch {
+        std::string regionUrl;
+        bool isPrimary = false;
+        HttpResult res;
+    };
+    std::vector<std::future<RegionFetch>> futures;
+    futures.reserve(candidateUrls.size());
+    for (size_t i = 0; i < candidateUrls.size(); ++i) {
+        const std::string regionUrl = candidateUrls[i];
+        const bool isPrimary = (i == 0);
+        futures.push_back(std::async(std::launch::async, [regionUrl, isPrimary]() {
+            RegionFetch rf;
+            rf.regionUrl = regionUrl;
+            rf.isPrimary = isPrimary;
+            if (isPrimary) {
+                rf.res = HttpRequest(regionUrl, L"GET", "/api/browser", {});
+                if (!rf.res.ok) rf.res = HttpRequest(regionUrl, L"GET", "/api/sessions", {});
+            } else {
+                rf.res = HttpRequest(regionUrl, L"GET", "/api/sessions", {});
+                if (!rf.res.ok) rf.res = HttpRequest(regionUrl, L"GET", "/api/browser", {});
+            }
+            return rf;
+        }));
+    }
+
+    std::vector<RegionFetch> results;
+    results.reserve(futures.size());
+    bool anyOk = false;
+    std::string firstError;
+    for (auto& f : futures) {
+        RegionFetch rf = f.get();
+        if (rf.res.ok) anyOk = true;
+        else if (firstError.empty()) firstError = rf.res.error;
+        results.push_back(std::move(rf));
+    }
+
+    if (!anyOk) {
+        SetStatus(firstError.empty() ? "master server unreachable" : firstError);
         return;
     }
+
     std::vector<MasterSession> list;
+    std::unordered_set<std::string> seenIds;
+    std::unordered_set<std::string> seenEndpoints;
     int online = -1;
     int total = -1;
-    try {
-        const nlohmann::json j = nlohmann::json::parse(r.body);
-        const nlohmann::json* items = &j;
-        if (j.is_object()) {
-            if (j.contains("online")) online = j.value("online", 0);
-            if (j.contains("totalPlayers")) total = j.value("totalPlayers", 0);
-            else if (j.contains("registeredPlayers")) total = j.value("registeredPlayers", 0);
-            if (total >= 0) {
-                int masterNodeCount = 0;
-                if (j.contains("peerRegistries") && j["peerRegistries"].is_array()) {
-                    masterNodeCount = 1 + static_cast<int>(j["peerRegistries"].size());
-                } else if (j.contains("cluster") && j["cluster"].is_object()) {
-                    masterNodeCount = 1 + j["cluster"].value("peerCount", 0);
-                } else {
-                    masterNodeCount = 3;
+
+    auto parseRegionResponse = [&](const RegionFetch& rf) {
+        if (!rf.res.ok) return;
+        try {
+            const nlohmann::json j = nlohmann::json::parse(rf.res.body);
+            const nlohmann::json* items = &j;
+            if (j.is_object()) {
+                if (rf.isPrimary || online < 0) {
+                    if (j.contains("online")) online = std::max(online, j.value("online", 0));
                 }
-                total = std::max(0, total - masterNodeCount);
+                if (rf.isPrimary || total < 0) {
+                    int regionTotal = -1;
+                    if (j.contains("totalPlayers")) regionTotal = j.value("totalPlayers", 0);
+                    else if (j.contains("registeredPlayers")) regionTotal = j.value("registeredPlayers", 0);
+                    if (regionTotal >= 0) {
+                        int masterNodeCount = 0;
+                        if (j.contains("peerRegistries") && j["peerRegistries"].is_array()) {
+                            masterNodeCount = 1 + static_cast<int>(j["peerRegistries"].size());
+                        } else if (j.contains("cluster") && j["cluster"].is_object()) {
+                            masterNodeCount = 1 + j["cluster"].value("peerCount", 0);
+                        } else {
+                            masterNodeCount = 3;
+                        }
+                        regionTotal = std::max(0, regionTotal - masterNodeCount);
+                        total = std::max(total, regionTotal);
+                    }
+                }
+                if (j.contains("sessions") && j["sessions"].is_array()) items = &j["sessions"];
             }
-            if (j.contains("sessions") && j["sessions"].is_array()) items = &j["sessions"];
-        }
-        if (items->is_array()) {
-            for (const auto& item : *items) {
-                if (!item.is_object() || list.size() >= 500) continue;
-                MasterSession s;
-                s.id = Str(item, "id", 64);
-                s.name = Str(item, "name", 64);
-                s.address = Str(item, "address", 64);
-                s.port = static_cast<uint16_t>(Int(item, "port", 11774, 1, 65535));
-                s.playerCount = Int(item, "player_count", 0, 0, 64);
-                s.maxPlayers = Int(item, "max_players", 16, 1, 64);
-                s.map = Str(item, "map", 64);
-                s.mode = Str(item, "mode", 32);
-                s.inProgress = item.value("in_progress", false);
-                s.hasPassword = item.value("has_password", false);
-                s.isMod = item.value("is_mod", false);
-                s.modId = Str(item, "mod_id", 32);
-                s.modTitle = Str(item, "mod_title", 96);
-                s.isPrivate = item.value("is_private", false);
-                s.lanAddress = Str(item, "lan_address", 64);
-                s.build = Str(item, "build", 32);
-                if (!s.address.empty()) list.push_back(std::move(s));
+            if (items->is_array()) {
+                for (const auto& item : *items) {
+                    if (!item.is_object() || list.size() >= 500) continue;
+                    MasterSession s;
+                    s.id = Str(item, "id", 64);
+                    s.name = Str(item, "name", 64);
+                    s.address = Str(item, "address", 64);
+                    s.port = static_cast<uint16_t>(Int(item, "port", 11774, 1, 65535));
+                    s.playerCount = Int(item, "player_count", 0, 0, 64);
+                    s.maxPlayers = Int(item, "max_players", 16, 1, 64);
+                    s.map = Str(item, "map", 64);
+                    s.mode = Str(item, "mode", 32);
+                    s.inProgress = item.value("in_progress", false);
+                    s.hasPassword = item.value("has_password", false);
+                    s.isMod = item.value("is_mod", false);
+                    s.modId = Str(item, "mod_id", 32);
+                    s.modTitle = Str(item, "mod_title", 96);
+                    s.isPrivate = item.value("is_private", false);
+                    s.lanAddress = Str(item, "lan_address", 64);
+                    s.build = Str(item, "build", 32);
+                    if (s.address.empty()) continue;
+
+                    const bool isFederated = item.value("federated", false);
+                    std::string homeRegion = Str(item, "region_url", 128);
+                    if (homeRegion.empty()) homeRegion = Str(item, "origin_url", 128);
+                    if (!s.id.empty()) {
+                        if (!homeRegion.empty()) {
+                            SetSessionRegionUrl(s.id, homeRegion);
+                        } else if (!isFederated || GetSessionRegionUrl(s.id).empty()) {
+                            SetSessionRegionUrl(s.id, rf.regionUrl);
+                        }
+                    }
+
+                    const std::string epKey = s.address + ":" + std::to_string(s.port);
+                    if (!s.id.empty() && !seenIds.insert(s.id).second) continue;
+                    if (!seenEndpoints.insert(epKey).second) continue;
+                    list.push_back(std::move(s));
+                }
             }
-        }
-    } catch (...) {
-        SetStatus("master server sent an unreadable list");
-        return;
+        } catch (...) {}
+    };
+
+    // Process direct regional /api/sessions responses first so native home regions are recorded before federated copies
+    for (const auto& rf : results) {
+        if (!rf.isPrimary) parseRegionResponse(rf);
     }
+    for (const auto& rf : results) {
+        if (rf.isPrimary) parseRegionResponse(rf);
+    }
+
     if (online >= 0) m_onlinePlayers.store(std::max(0, online));
     const int localKnown = CountLocalKnownPlayers();
     if (total > 0 || localKnown > 0) {
@@ -583,6 +750,9 @@ void MasterServerClient::DoRegister() {
             std::lock_guard<std::mutex> lock(m_mutex);
             m_sessionId = Str(j, "session_id", 64);
             m_sessionToken = Str(j, "token", 128);
+            if (!m_sessionId.empty() && !m_url.empty()) {
+                m_sessionRegionUrl[m_sessionId] = m_url;
+            }
             m_status = "your game is listed on the master server";
             sid = m_sessionId;
         }
@@ -700,35 +870,9 @@ MasterJoinInfo MasterServerClient::JoinSessionSync(const std::string& sessionId,
     MasterJoinInfo info;
     std::string resolvedId = sessionId;
 
-    // If no sessionId was provided (e.g. Direct Connect via IP:port), attempt to resolve it from /api/sessions
+    // If no sessionId was provided (e.g. Direct Connect via IP:port), attempt to resolve it across all cluster regions
     if (resolvedId.empty() && !fallbackHostIp.empty() && Enabled()) {
-        const HttpResult listRes = HttpRequest(Url(), L"GET", "/api/sessions", {});
-        if (listRes.ok) {
-            try {
-                const nlohmann::json arr = nlohmann::json::parse(listRes.body);
-                if (arr.is_array()) {
-                    for (const auto& item : arr) {
-                        if (!item.is_object()) continue;
-                        const std::string addr = Str(item, "address", 64);
-                        const uint16_t port = static_cast<uint16_t>(Int(item, "port", 11774, 1, 65535));
-                        if (addr == fallbackHostIp && port == fallbackHostPort) {
-                            resolvedId = Str(item, "id", 64);
-                            break;
-                        }
-                    }
-                    // Fallback: match by IP if port was NAT-mapped
-                    if (resolvedId.empty()) {
-                        for (const auto& item : arr) {
-                            if (!item.is_object()) continue;
-                            if (Str(item, "address", 64) == fallbackHostIp) {
-                                resolvedId = Str(item, "id", 64);
-                                break;
-                            }
-                        }
-                    }
-                }
-            } catch (...) {}
-        }
+        resolvedId = ResolveSessionIdAcrossRegions(fallbackHostIp, fallbackHostPort);
     }
 
     if (resolvedId.empty()) {
@@ -744,7 +888,31 @@ MasterJoinInfo MasterServerClient::JoinSessionSync(const std::string& sessionId,
         { "guest_address", UPnP::Get().GetExternalIP() },
         { "guest_lan_address", UPnP::Get().GetInternalIP() }
     };
-    const HttpResult r = HttpRequest(Url(), L"POST", "/api/sessions/" + resolvedId + "/join", body.dump());
+    const std::string dump = body.dump();
+    HttpResult r;
+    std::string matchedRegion;
+    for (const std::string& baseUrl : GetCandidateUrls(resolvedId)) {
+        r = HttpRequest(baseUrl, L"POST", "/api/sessions/" + resolvedId + "/join", dump);
+        if (r.ok) {
+            matchedRegion = baseUrl;
+            SetSessionRegionUrl(resolvedId, baseUrl);
+            break;
+        }
+    }
+    if (!r.ok && !fallbackHostIp.empty() && Enabled()) {
+        const std::string reResolved = ResolveSessionIdAcrossRegions(fallbackHostIp, fallbackHostPort);
+        if (!reResolved.empty() && reResolved != resolvedId) {
+            resolvedId = reResolved;
+            for (const std::string& baseUrl : GetCandidateUrls(resolvedId)) {
+                r = HttpRequest(baseUrl, L"POST", "/api/sessions/" + resolvedId + "/join", dump);
+                if (r.ok) {
+                    matchedRegion = baseUrl;
+                    SetSessionRegionUrl(resolvedId, baseUrl);
+                    break;
+                }
+            }
+        }
+    }
     if (!r.ok) {
         info.error = r.error;
         return info;
@@ -761,7 +929,7 @@ MasterJoinInfo MasterServerClient::JoinSessionSync(const std::string& sessionId,
         if (!info.hostLanIp.empty()) {
             NetworkTransport::Get().SetRemoteHostLanAddress(info.hostLanIp, info.hostPort);
         }
-        NOBLE_INFO("MasterServer: joined session {} (relay: {})", resolvedId, info.relayUrl);
+        NOBLE_INFO("MasterServer: joined session {} on {} (relay: {})", resolvedId, matchedRegion, info.relayUrl);
         return info;
     } catch (...) {
         info.error = "Unreadable join response";
@@ -775,8 +943,15 @@ LobbyState MasterServerClient::FetchLobbyStateSync(const std::string& sessionId)
     if (sessionId.empty() || !Enabled()) return state;
     const std::string& resolvedId = sessionId;
 
-    const HttpResult r = HttpRequest(Url(), L"GET", "/api/sessions/" + sessionId + "/lobby", {});
-    state.httpStatus = r.status;
+    HttpResult r;
+    for (const std::string& baseUrl : GetCandidateUrls(sessionId)) {
+        r = HttpRequest(baseUrl, L"GET", "/api/sessions/" + sessionId + "/lobby", {});
+        state.httpStatus = r.status;
+        if (r.ok) {
+            SetSessionRegionUrl(sessionId, baseUrl);
+            break;
+        }
+    }
     if (!r.ok) return state;
 
     try {
@@ -891,24 +1066,7 @@ LobbyState MasterServerClient::JoinLobbySync(const std::string& sessionId,
     if (!Enabled()) return state;
     std::string resolvedId = sessionId;
     if (resolvedId.empty() && !fallbackHostIp.empty()) {
-        const HttpResult listRes = HttpRequest(Url(), L"GET", "/api/sessions", {});
-        if (listRes.ok) {
-            try {
-                const nlohmann::json arr = nlohmann::json::parse(listRes.body);
-                if (arr.is_array()) {
-                    for (const auto& item : arr) {
-                        if (!item.is_object()) continue;
-                        const std::string addr = Str(item, "address", 64);
-                        const std::string lanAddr = Str(item, "lan_address", 64);
-                        const uint16_t port = static_cast<uint16_t>(Int(item, "port", 11774, 1, 65535));
-                        if ((addr == fallbackHostIp || (!lanAddr.empty() && lanAddr == fallbackHostIp)) && port == fallbackHostPort) {
-                            resolvedId = Str(item, "id", 64);
-                            break;
-                        }
-                    }
-                }
-            } catch (...) {}
-        }
+        resolvedId = ResolveSessionIdAcrossRegions(fallbackHostIp, fallbackHostPort);
     }
     if (resolvedId.empty()) return state;
 
@@ -942,7 +1100,30 @@ LobbyState MasterServerClient::JoinLobbySync(const std::string& sessionId,
         { "ping", measuredPing > 0 ? measuredPing : 25 }
     };
 
-    const HttpResult r = HttpRequest(Url(), L"POST", "/api/sessions/" + resolvedId + "/lobby/join", body.dump());
+    const std::string dump = body.dump();
+    HttpResult r;
+    for (const std::string& baseUrl : GetCandidateUrls(resolvedId)) {
+        r = HttpRequest(baseUrl, L"POST", "/api/sessions/" + resolvedId + "/lobby/join", dump);
+        state.httpStatus = r.status;
+        if (r.ok) {
+            SetSessionRegionUrl(resolvedId, baseUrl);
+            break;
+        }
+    }
+    if (!r.ok && !fallbackHostIp.empty()) {
+        const std::string reResolved = ResolveSessionIdAcrossRegions(fallbackHostIp, fallbackHostPort);
+        if (!reResolved.empty() && reResolved != resolvedId) {
+            resolvedId = reResolved;
+            for (const std::string& baseUrl : GetCandidateUrls(resolvedId)) {
+                r = HttpRequest(baseUrl, L"POST", "/api/sessions/" + resolvedId + "/lobby/join", dump);
+                state.httpStatus = r.status;
+                if (r.ok) {
+                    SetSessionRegionUrl(resolvedId, baseUrl);
+                    break;
+                }
+            }
+        }
+    }
     if (!r.ok) return state;
 
     try {
@@ -1036,8 +1217,12 @@ bool MasterServerClient::LeaveLobbySync(const std::string& sessionId, uint64_t p
     nlohmann::json body = {
         { "peer_id", peerId }
     };
-    const HttpResult r = HttpRequest(Url(), L"POST", "/api/sessions/" + sessionId + "/lobby/leave", body.dump());
-    return r.ok;
+    const std::string dump = body.dump();
+    for (const std::string& baseUrl : GetCandidateUrls(sessionId)) {
+        const HttpResult r = HttpRequest(baseUrl, L"POST", "/api/sessions/" + sessionId + "/lobby/leave", dump);
+        if (r.ok) return true;
+    }
+    return false;
 }
 
 bool MasterServerClient::SendReportSync(const std::string& sessionId, const std::string& reporter, const std::string& target,
@@ -1047,7 +1232,11 @@ bool MasterServerClient::SendReportSync(const std::string& sessionId, const std:
         { "session_id", sessionId }, { "reporter", reporter }, { "target", target },
         { "reason", reason }, { "map", map }, { "mode", mode }
     };
-    return HttpRequest(Url(), L"POST", "/api/reports", body.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace)).ok;
+    const std::string dump = body.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
+    for (const std::string& baseUrl : GetCandidateUrls(sessionId)) {
+        if (HttpRequest(baseUrl, L"POST", "/api/reports", dump).ok) return true;
+    }
+    return false;
 }
 
 bool MasterServerClient::StartVoteSync(const std::string& sessionId, const std::vector<std::string>& options, int seconds) {
@@ -1058,13 +1247,27 @@ bool MasterServerClient::StartVoteSync(const std::string& sessionId, const std::
     }
     if (sessionId.empty() || token.empty() || !Enabled()) return false;
     const nlohmann::json body = { { "options", options }, { "seconds", seconds } };
-    return HttpRequest(Url(), L"POST", "/api/sessions/" + sessionId + "/vote/start", body.dump(), token).ok;
+    const std::string dump = body.dump();
+    for (const std::string& baseUrl : GetCandidateUrls(sessionId)) {
+        if (HttpRequest(baseUrl, L"POST", "/api/sessions/" + sessionId + "/vote/start", dump, token).ok) {
+            SetSessionRegionUrl(sessionId, baseUrl);
+            return true;
+        }
+    }
+    return false;
 }
 
 bool MasterServerClient::CastVoteSync(const std::string& sessionId, uint64_t peerId, int choice) {
     if (sessionId.empty() || !Enabled()) return false;
     const nlohmann::json body = { { "peer_id", peerId }, { "choice", choice } };
-    return HttpRequest(Url(), L"POST", "/api/sessions/" + sessionId + "/vote", body.dump()).ok;
+    const std::string dump = body.dump();
+    for (const std::string& baseUrl : GetCandidateUrls(sessionId)) {
+        if (HttpRequest(baseUrl, L"POST", "/api/sessions/" + sessionId + "/vote", dump).ok) {
+            SetSessionRegionUrl(sessionId, baseUrl);
+            return true;
+        }
+    }
+    return false;
 }
 
 void MasterServerClient::SetAdvertHostTeam(int team) {
@@ -1082,7 +1285,14 @@ bool MasterServerClient::SetTeamsSync(const std::string& sessionId, const std::v
     nlohmann::json list = nlohmann::json::array();
     for (const auto& [peer, team] : teams) list.push_back({ { "peer_id", peer }, { "team", team } });
     const nlohmann::json body = { { "teams", list } };
-    return HttpRequest(Url(), L"POST", "/api/sessions/" + sessionId + "/teams", body.dump(), token).ok;
+    const std::string dump = body.dump();
+    for (const std::string& baseUrl : GetCandidateUrls(sessionId)) {
+        if (HttpRequest(baseUrl, L"POST", "/api/sessions/" + sessionId + "/teams", dump, token).ok) {
+            SetSessionRegionUrl(sessionId, baseUrl);
+            return true;
+        }
+    }
+    return false;
 }
 
 bool MasterServerClient::EndVoteSync(const std::string& sessionId) {
@@ -1092,7 +1302,13 @@ bool MasterServerClient::EndVoteSync(const std::string& sessionId) {
         token = m_sessionToken;
     }
     if (sessionId.empty() || token.empty() || !Enabled()) return false;
-    return HttpRequest(Url(), L"POST", "/api/sessions/" + sessionId + "/vote/end", "{}", token).ok;
+    for (const std::string& baseUrl : GetCandidateUrls(sessionId)) {
+        if (HttpRequest(baseUrl, L"POST", "/api/sessions/" + sessionId + "/vote/end", "{}", token).ok) {
+            SetSessionRegionUrl(sessionId, baseUrl);
+            return true;
+        }
+    }
+    return false;
 }
 
 bool MasterServerClient::LaunchLobbySync(const std::string& sessionId,
@@ -1129,9 +1345,15 @@ bool MasterServerClient::LaunchLobbySync(const std::string& sessionId,
             { "map_variant", mapVariant }
         };
 
-        const HttpResult r = HttpRequest(Url(), L"POST", "/api/sessions/" + sessionId + "/lobby/launch",
-                                         body.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace), token);
-        return r.ok;
+        const std::string dump = body.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
+        for (const std::string& baseUrl : GetCandidateUrls(sessionId)) {
+            const HttpResult r = HttpRequest(baseUrl, L"POST", "/api/sessions/" + sessionId + "/lobby/launch", dump, token);
+            if (r.ok) {
+                SetSessionRegionUrl(sessionId, baseUrl);
+                return true;
+            }
+        }
+        return false;
     } catch (const std::exception& e) {
         NOBLE_ERROR("MasterServerClient: LaunchLobbySync exception: {}", e.what());
         return false;

@@ -7,6 +7,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 namespace noble {
@@ -244,6 +245,10 @@ private:
     void DoHeartbeat();
     void DoUnregister();
     void SetStatus(const std::string& status);
+    std::string GetSessionRegionUrl(const std::string& sessionId) const;
+    void SetSessionRegionUrl(const std::string& sessionId, const std::string& regionUrl);
+    std::vector<std::string> GetCandidateUrls(const std::string& sessionId = "") const;
+    std::string ResolveSessionIdAcrossRegions(const std::string& fallbackHostIp, uint16_t fallbackHostPort);
 
     mutable std::mutex m_mutex;
     std::condition_variable m_wake;
@@ -254,6 +259,7 @@ private:
     bool m_unregisterRequested = false;
 
     std::string m_url;
+    std::unordered_map<std::string, std::string> m_sessionRegionUrl;
     std::string m_status;
     std::vector<MasterSession> m_sessions;
     std::atomic<int> m_onlinePlayers{0};

@@ -3,6 +3,7 @@
 
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <condition_variable>
 #include <cstdint>
 #include <string>
 #include <mutex>
@@ -172,6 +173,7 @@ private:
     std::string m_relayUrl;
     std::thread m_relayThread;
     std::mutex m_relayMutex;
+    std::condition_variable m_relaySendCv;
     void* m_relaySessionHandle = nullptr;
     void* m_relayWsHandle = nullptr;
     std::deque<std::vector<uint8_t>> m_relaySendQueue;

@@ -154,12 +154,14 @@ static std::string ReachStack() {
 // keeps the simulation running and prevents the host from booting peers or aborting the game.
 typedef void(__fastcall* SessionAbortFn)(void* session, uint32_t reason);
 static SessionAbortFn s_originalSessionAbort = nullptr;
+static std::atomic<bool> s_campaignCoop{false};
+void LobbyPatches::SetCampaignCoop(bool on) { s_campaignCoop.store(on); }
 
 static void __fastcall Hook_SessionAbort(void* session, uint32_t reason) {
     uintptr_t caller = CallerRva(_ReturnAddress());
     NOBLE_WARN("LobbyPatches: [{} pid {}] c_network_session::abort called: session=0x{:p}, reason={} (0x{:X}), caller hr+0x{:X}",
         RefuseRole(), GetCurrentProcessId(), session, reason, reason, caller);
-    if (reason >= 0x10 && reason <= 0x25) {
+    if (s_campaignCoop.load() || (reason >= 0x10 && reason <= 0x25)) {
         NOBLE_WARN("LobbyPatches: SUPPRESSED session abort reason 0x{:X} from hr+0x{:X} to keep co-op match running!", reason, caller);
         return;
     }
@@ -360,8 +362,6 @@ static void* __fastcall Hook_FindChannel(const uint8_t* address) {
 // host accepts the guest, the channel connects, then the host boots it ~8.5 s later. Logs who boots and why.
 typedef uint64_t(__fastcall* BootPeerFn)(void* session, int32_t peerIndex, int32_t reason);
 static BootPeerFn s_originalBootPeer = nullptr;
-static std::atomic<bool> s_campaignCoop{false};
-void LobbyPatches::SetCampaignCoop(bool on) { s_campaignCoop.store(on); }
 
 static uint64_t __fastcall Hook_BootPeer(void* session, int32_t peerIndex, int32_t reason) {
     int32_t sessionState = -99;
@@ -376,12 +376,11 @@ static uint64_t __fastcall Hook_BootPeer(void* session, int32_t peerIndex, int32
         wchar_t env[8] = {};
         return !(GetEnvironmentVariableW(L"NOBLE_COOP_NO_KEEP_PEER", env, 8) > 0 && env[0] != L'0');
     }();
-    // 9 is the progress/insertion mismatch; 13 is campaign/session state mismatch; 0x1B is "players incompatible
-    // for network co-op", which the same check escalates to once a second joining player is involved.
-    if (keepCoopPeer && (reason == 9 || reason == 13 || reason == 0x1B) && s_campaignCoop.load()) {
+    // Suppress automatic engine peer boots during campaign/firefight co-op so peers are never dropped with "Error hosting co-op".
+    if (keepCoopPeer && s_campaignCoop.load()) {
         static std::atomic<int> logged{0};
         if (logged.fetch_add(1) == 0) {
-            NOBLE_WARN("LobbyPatches: keeping guest peer {} in the campaign co-op session (engine boot reason {}); "
+            NOBLE_WARN("LobbyPatches: keeping guest peer {} in the co-op session (engine boot reason {}); "
                        "further occurrences are not logged", peerIndex, reason);
         }
         return 0;

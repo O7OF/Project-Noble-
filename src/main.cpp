@@ -1675,7 +1675,7 @@ int mvarPageScanEvery = 0;        // dev: diff every writable page every N secon
 
     // Apply 32/64 player lobby expansion detours
     noble::LobbyPatches::Apply(loader->GetModuleHandle());
-    noble::LobbyPatches::SetCampaignCoop(!showMenu && _stricmp(launchMode.c_str(), "campaign") == 0);
+    noble::LobbyPatches::SetCampaignCoop(!showMenu && (_stricmp(launchMode.c_str(), "campaign") == 0 || _stricmp(launchMode.c_str(), "firefight") == 0));
 
     // Apply engine stability and appearance cap patches (unlocks all 200+ armor permutations in haloreach.dll)
     noble::EnginePatches::Apply(loader->GetModuleHandle());

@@ -3634,33 +3634,51 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
             st.lobbySessionId = MasterServerClient::Get().GetCurrentSessionId();
             st.lobbySessionToken = MasterServerClient::Get().GetCurrentSessionToken();
         }
-        if (!st.lobbySessionId.empty() && MasterServerClient::Get().Enabled()) {
+        if ((!st.lobbySessionId.empty() || (!st.isLobbyHost && !st.lobbyHostEndpoint.empty())) && MasterServerClient::Get().Enabled()) {
             LobbyState current = MasterServerClient::Get().FetchLobbyStateSync(st.lobbySessionId);
+            if (!current.ok && !current.isClosed && !st.isLobbyHost && !st.lobbyHostEndpoint.empty()) {
+                // If the guest's configured region differs from the host's region or the host re-registered its session ID,
+                // re-resolve and re-join across all cluster regions using the host's IP:port before counting a failure.
+                std::string hostIp = st.lobbyHostEndpoint;
+                uint16_t hostPort = 11774;
+                const size_t colon = hostIp.rfind(':');
+                if (colon != std::string::npos) {
+                    hostPort = static_cast<uint16_t>(std::atoi(hostIp.c_str() + colon + 1));
+                    hostIp = hostIp.substr(0, colon);
+                }
+                std::string pName = AuthClient::Get().IsLoggedIn() ? AuthClient::Get().GetUsername() : Settings::Get().Snapshot().playerName;
+                if (pName.empty()) pName = "Guest";
+                uint64_t fallbackId = (MasterServerClient::GetLobbyMachineId() & 0x7FFFFFFFULL);
+                if (fallbackId < 2ULL) fallbackId = 2ULL;
+                const uint64_t pId = AuthClient::Get().IsLoggedIn() ? static_cast<uint64_t>(AuthClient::Get().GetUserId()) : fallbackId;
+                const std::string sTag = PlayerServiceTag(Settings::Get().Snapshot());
+                LobbyState rejoined = MasterServerClient::Get().JoinLobbySync(
+                    st.lobbySessionId, pId, pName, AuthClient::Get().IsDeveloper(), sTag,
+                    Career::RankIndex(Career::Get().credits),
+                    UIManager::GetArmorCustomizer().GetProfile().emblemIndex,
+                    UIManager::GetArmorCustomizer().GetProfile().emblemBackgroundIndex,
+                    UIManager::GetArmorCustomizer().GetProfile().nameplateIndex, 0,
+                    11774, hostIp, hostPort);
+                if (rejoined.ok) {
+                    if (!rejoined.sessionId.empty()) st.lobbySessionId = rejoined.sessionId;
+                    current = std::move(rejoined);
+                }
+            }
             if (current.ok) st.lobbyPollFailures = 0;
             if (!current.ok || current.isClosed) {
                 if (st.isLobbyHost) {
                     // The host owns the session; a failed fetch just means the master server blipped.
                 } else if (!current.isClosed) {
-                    // A failed fetch is not a kick. One dropped request (timeout, 502, a relay hiccup) used to send
-                    // the guest straight back to the server browser, which is what "auto kicked from the lobby"
-                    // looked like. Retry a few times before giving up, and say why.
-                    if (++st.lobbyPollFailures < 3) {
-                        NOBLE_WARN("FrontEndMenu: lobby poll failed ({} of 3, http {}); staying in the lobby",
+                    // Never kick a guest while the WebSocket relay is connected or during cross-region / transient HTTP poll drops.
+                    ++st.lobbyPollFailures;
+                    if (NetworkTransport::Get().IsRelayConnected()) {
+                        st.lobbyPollFailures = 1;
+                    } else if (st.lobbyPollFailures <= 5 || (st.lobbyPollFailures % 10) == 0) {
+                        NOBLE_WARN("FrontEndMenu: lobby poll failed ({}, http {}); staying in the lobby",
                                    st.lobbyPollFailures, current.httpStatus);
-                    } else {
-                        NOBLE_WARN("FrontEndMenu: lobby poll failed 3 times (http {}); leaving the lobby",
-                                   current.httpStatus);
-                        st.screen = Screen::Servers;
-                        st.lobbySessionId.clear();
-                        st.lobbySessionToken.clear();
-                        st.lobbyRoster.clear();
-                        st.isLobbyHost = false;
-                        st.lobbyPollFailures = 0;
-                        NetworkTransport::Get().StopRelay();
-                        return;
                     }
                 } else {
-                    // The host closed the session (or the server timed it out): no point staying.
+                    // The host explicitly closed the session: return to the server browser.
                     NOBLE_INFO("FrontEndMenu: lobby closed ({}); returning to the server browser",
                                current.closeReason.empty() ? "host closed" : current.closeReason);
                     st.screen = Screen::Servers;
