@@ -1492,6 +1492,12 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
         gameModeTag = 3;
     }
 
+    // Diagnostic: force the engine mode tag (1 campaign, 3 forge, 5 campaign-like, 1035 firefight).
+    if (const char* forcedTag = std::getenv("NOBLE_GAMEMODE_TAG")) {
+        gameModeTag = std::atoi(forcedTag);
+        NOBLE_WARN("BlamEngine: engine mode tag forced to {}", gameModeTag);
+    }
+
     // A mod map built on a Firefight canvas has to be presented to the engine as a multiplayer map, whichever way the
     // launch came in (command line or the pre-game lobby): the engine reads the type from
     // mapsinfo<scenario>.mapinfo before the map loads and refuses a Firefight entry for a multiplayer launch.

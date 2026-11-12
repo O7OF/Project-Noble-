@@ -99,6 +99,11 @@ bool ReadMap(const fs::path& file, ModMap& map) {
     } else {
         map.scenario = Lower(norm);
     }
+    map.mapGuid = j.value("MapGuid", std::string());
+    map.campaignMapKind = j.value("CampaignMapKind", std::string());
+    if (j.contains("InsertionPoints") && j["InsertionPoints"].is_array()) {
+        map.insertionPoints = static_cast<int>(j["InsertionPoints"].size());
+    }
     map.title = Text(j, "Title");
     map.description = Text(j, "Description");
     map.forgeMap = false;
@@ -170,13 +175,20 @@ void ScanFolder(const fs::path& root, bool workshop, std::vector<ModEntry>& out)
                             ? info["GameModContents"] : json::object();
         std::vector<std::string> campaignList = StringList(contents, "CampaignMaps");
         json campaignInfo;
+        std::string campaignGuid;
         if (ReadJson(dir.path() / "CampaignInfo.json", campaignInfo)) {
             for (const std::string& s : StringList(campaignInfo, "CampaignMaps")) campaignList.push_back(s);
+            campaignGuid = campaignInfo.value("CampaignGuid", std::string());
         }
         mod.campaign = ReadMaps(dir.path(), campaignList, "campaign");
         mod.firefight = ReadMaps(dir.path(), StringList(contents, "FirefightMaps"), "firefight");
         mod.multiplayer = ReadMaps(dir.path(), StringList(contents, "MultiplayerMaps"), "multiplayer");
-        for (ModMap& m : mod.campaign) m.gameCategory = "campaign";
+        for (ModMap& m : mod.campaign) {
+            m.gameCategory = "campaign";
+            m.campaignGuid = campaignGuid;
+            NOBLE_INFO("ModCatalog: campaign map '{}' scenario '{}' campaign {} map {} kind '{}' insertion point(s) {}",
+                       m.title, m.scenario, m.campaignGuid, m.mapGuid, m.campaignMapKind, m.insertionPoints);
+        }
         for (ModMap& m : mod.firefight) m.gameCategory = "firefight";
         for (ModMap& m : mod.multiplayer) m.gameCategory = "multiplayer";
         for (const std::vector<ModMap>* list : { &mod.campaign, &mod.firefight, &mod.multiplayer }) {

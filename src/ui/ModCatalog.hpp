@@ -28,6 +28,13 @@ struct ModMap {
     // The mod's own art (Images.Large / Thumbnail / LoadingScreen in the map JSON), absolute and
     // checked to exist. Empty when the mod has no picture for that slot.
     std::filesystem::path imageLarge, imageThumbnail, imageLoading;
+    // MCC campaign-mod descriptor. CampaignInfo.json carries the CampaignGuid; the map JSON carries MapGuid,
+    // CampaignMapKind and InsertionPoints. MCC launches the mission from these, which is how a campaign mod runs a
+    // map (e.g. ff_unearthed) as a campaign mission instead of overriding a stock mission slot.
+    std::string campaignGuid;    // CampaignInfo.json "CampaignGuid"
+    std::string mapGuid;         // campaign map JSON "MapGuid"
+    std::string campaignMapKind; // "Default" / ...
+    int insertionPoints = 0;     // count of "InsertionPoints"
 };
 
 struct ModEntry {
