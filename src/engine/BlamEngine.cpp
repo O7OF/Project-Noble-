@@ -1470,8 +1470,18 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
     // engine. Launched as Firefight or Slayer it loads and reports the session as running, but renders a black screen.
     // MCC plays these mods in Forge for the same reason. Do this before the map info is presented, since the type
     // written there follows the engine mode.
-    if (noble::VFS::HasActiveMod() && gameModeTag != 3 && noble::VFS::IsFirefightCanvas(mapName)) {
-        NOBLE_WARN("BlamEngine: '{}' is a mod map on a Firefight canvas; launching it through the Forge engine", mapName);
+    // A map installed as an override is usually served for a stock carrier (a campaign slot, a multiplayer map), so the
+    // carrier name says nothing about the canvas the mod was built on. Ask the override instead: a campaign launch of a
+    // Firefight-canvas map otherwise parses the map as campaign, loads for ~2 s and aborts.
+    const std::string overrideCanvas = noble::VFS::MapOverrideCanvas();
+    const bool firefightCanvas =
+        noble::VFS::IsFirefightCanvas(mapName) ||
+        (!overrideCanvas.empty() &&
+         (noble::VFS::IsFirefightCanvas(overrideCanvas) || overrideCanvas.rfind("ff_", 0) == 0 ||
+          overrideCanvas.rfind("ff60", 0) == 0 || overrideCanvas.rfind("cex_ff", 0) == 0));
+    if (noble::VFS::HasActiveMod() && gameModeTag != 3 && gameModeTag != 1 && firefightCanvas) {
+        NOBLE_WARN("BlamEngine: '{}' is a mod map on a Firefight canvas ({}); launching it through the Forge engine",
+                   mapName, overrideCanvas.empty() ? mapName : overrideCanvas);
         gameModeTag = 3;
     }
 

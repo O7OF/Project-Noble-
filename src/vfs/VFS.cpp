@@ -139,6 +139,13 @@ void VFS::SetMapOverride(const std::string& carrierScenario, const fs::path& map
     }
 }
 
+std::string VFS::MapOverrideCanvas() {
+    if (s_mapOverrideFile.empty()) return {};
+    std::string stem = s_mapOverrideFile.stem().string();
+    for (char& c : stem) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return stem;
+}
+
 void VFS::ClearMapOverride() {
     s_mapOverrideFile.clear();
     s_mapOverrideCarrier.clear();

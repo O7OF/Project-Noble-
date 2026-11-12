@@ -35,6 +35,10 @@ public:
     // map data, header and scenario are the mod's. Pass an empty path to clear it.
     static void SetMapOverride(const std::string& carrierScenario, const fs::path& mapFile);
     static void ClearMapOverride();
+    // The stem of the .map being substituted (e.g. "ff_unearthed" when a mod serves its map for a campaign slot), or
+    // empty when no override is active. Mod maps are often installed against a stock carrier, so this is the only
+    // place that knows which canvas the map was really built on.
+    static std::string MapOverrideCanvas();
 
     // NOBLE_MAP_READ_TRACE=1: log every read from a .map handle (offset + size). The last line before an engine
     // launch routine unwinds says which part of the map it gave up on.

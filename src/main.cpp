@@ -340,6 +340,27 @@ uint64_t __fastcall Stage3Hook(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a
     return res;
 }
 
+// The engine prints its own fatal/warning text through OutputDebugString. Capture it: a failed map load reports the
+// reason there and nowhere else, so this is the only way to see why a scenario was rejected.
+using OdsAFn = void(WINAPI*)(LPCSTR);
+using OdsWFn = void(WINAPI*)(LPCWSTR);
+OdsAFn s_origOdsA = nullptr;
+OdsWFn s_origOdsW = nullptr;
+
+void WINAPI HookOutputDebugStringA(LPCSTR text) {
+    if (text && *text) NOBLE_INFO("[engine] {}", text);
+    if (s_origOdsA) s_origOdsA(text);
+}
+void WINAPI HookOutputDebugStringW(LPCWSTR text) {
+    if (text && *text) {
+        // Widen-to-narrow properly: the plain std::string(range) constructor truncates each wchar to a char.
+        char buffer[1024] = {};
+        const int written = WideCharToMultiByte(CP_UTF8, 0, text, -1, buffer, sizeof(buffer) - 1, nullptr, nullptr);
+        if (written > 0) NOBLE_INFO("[engine] {}", buffer);
+    }
+    if (s_origOdsW) s_origOdsW(text);
+}
+
 // SEH-guarded memory read, for probing engine structures from the debug hooks.
 static bool SafeReadPtr(uintptr_t address, void* out, size_t size) {
     __try {
@@ -1570,6 +1591,10 @@ int mvarPageScanEvery = 0;        // dev: diff every writable page every N secon
     noble::HookManager::InstallHook(reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(loader->GetModuleHandle()) + 0xC8F8),
                                     reinterpret_cast<void*>(&Stage2Hook),
                                     reinterpret_cast<void**>(&s_origStage2), "trace_stage2");
+    noble::HookManager::InstallHook(reinterpret_cast<void*>(&OutputDebugStringA), reinterpret_cast<void*>(&HookOutputDebugStringA),
+                                    reinterpret_cast<void**>(&s_origOdsA), "capture_engine_output");
+    noble::HookManager::InstallHook(reinterpret_cast<void*>(&OutputDebugStringW), reinterpret_cast<void*>(&HookOutputDebugStringW),
+                                    reinterpret_cast<void**>(&s_origOdsW), "capture_engine_output_w");
     noble::HookManager::InstallHook(reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(loader->GetModuleHandle()) + 0x3873C),
                                     reinterpret_cast<void*>(&Stage3Hook),
                                     reinterpret_cast<void**>(&s_origStage3), "trace_stage3");
