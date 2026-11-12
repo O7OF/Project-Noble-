@@ -413,7 +413,8 @@ char __fastcall MapParseHook(void* a1, void* a2) {
                   SafeReadPtr(table + 0xC + static_cast<uint64_t>(index) * 4, &fileId, sizeof(fileId)) &&
                   SafeReadPtr(table + 0x10 + static_cast<uint64_t>(index) * 4, &fileType, sizeof(fileType));
         const int want = s_requestedMapType.load();
-        if (ok && want != -1 && fileType != want) {
+        static const bool s_mapTypePatchOff = std::getenv("NOBLE_MAPTYPE_OFF") != nullptr;
+        if (ok && want != -1 && fileType != want && !s_mapTypePatchOff) {
             int* typeField = reinterpret_cast<int*>(table + 0x10 + static_cast<uint64_t>(index) * 4);
             DWORD oldProtect = 0;
             if (VirtualProtect(typeField, sizeof(int), PAGE_READWRITE, &oldProtect)) {
