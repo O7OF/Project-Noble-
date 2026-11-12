@@ -815,20 +815,26 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
     const bool isFirefight = (gameModeTag == 1035);
     const bool isForge = (gameModeTag == 3);
     uint32_t effectiveMapId = isMainMenu ? static_cast<uint32_t>(-2) : mapId;
+    // Diagnostic: force which map's launch block is loaded, independent of the map being launched.
+    uint32_t blockMapId = mapId;
+    if (const char* forcedBlockMap = std::getenv("NOBLE_BLOCK_MAP")) {
+        blockMapId = static_cast<uint32_t>(std::stoul(forcedBlockMap));
+        NOBLE_WARN("BlamEngine: launch block forced to map id {} (launching {})", blockMapId, mapId);
+    }
 
     std::string blockName;
     if (isMainMenu) {
         blockName = "lb_m_c_1.bin";
     } else if (gameModeTag == 1035) {
-        std::string cand1 = "firefight_" + std::to_string(mapId) + "_d" + std::to_string(clampedDiff) + ".bin";
-        std::string cand2 = "firefight_" + std::to_string(mapId) + ".bin";
+        std::string cand1 = "firefight_" + std::to_string(blockMapId) + "_d" + std::to_string(clampedDiff) + ".bin";
+        std::string cand2 = "firefight_" + std::to_string(blockMapId) + ".bin";
         if (EmbeddedBlocks::HasBlock(cand1)) blockName = cand1;
         else if (EmbeddedBlocks::HasBlock(cand2)) blockName = cand2;
         else if (std::filesystem::exists(dataRoot / "blocks" / cand1)) blockPath = dataRoot / "blocks" / cand1;
         else if (std::filesystem::exists(dataRoot / "blocks" / cand2)) blockPath = dataRoot / "blocks" / cand2;
     } else if (gameModeTag == 1) {
-        std::string cand1 = "campaign_" + std::to_string(mapId) + "_d" + std::to_string(clampedDiff) + ".bin";
-        std::string cand2 = "campaign_" + std::to_string(mapId) + ".bin";
+        std::string cand1 = "campaign_" + std::to_string(blockMapId) + "_d" + std::to_string(clampedDiff) + ".bin";
+        std::string cand2 = "campaign_" + std::to_string(blockMapId) + ".bin";
         if (EmbeddedBlocks::HasBlock(cand1)) blockName = cand1;
         else if (EmbeddedBlocks::HasBlock(cand2)) blockName = cand2;
         else if (std::filesystem::exists(dataRoot / "blocks" / cand1)) blockPath = dataRoot / "blocks" / cand1;
@@ -1457,7 +1463,8 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
     if (forgeMode) {
         // Forge is a multiplayer Megalo mode, not the special map-editor engine (0x04).
         gameModeTag = 3;
-    } else if ((mapId >= 210 && mapId <= 219) || _stricmp(gameMode.c_str(), "firefight") == 0) {
+    } else if (!(std::getenv("NOBLE_CAMPAIGN_FORCE") && _stricmp(gameMode.c_str(), "campaign") == 0) &&
+               ((mapId >= 210 && mapId <= 219) || _stricmp(gameMode.c_str(), "firefight") == 0)) {
         gameModeTag = 1035; // 0x40B Firefight
     } else if ((mapId >= 178 && mapId <= 189) || _stricmp(gameMode.c_str(), "campaign") == 0) {
         gameModeTag = 1;    // Campaign
@@ -1519,7 +1526,20 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
 
     if (m_fnStart) {
         void* hostPtr = ReachHost::Get().GetInterface();
-        NOBLE_INFO("Invoking c_game_engine Start(engine, host:0x{:X}, launch_block) [Map: {}]...",
+        // Campaign missions are chosen by the launch block, not by the requested map: the block carries the map id at
+    // 0x10/0x14 (179 for m10, 180 for the next mission). A mod map served into a campaign slot therefore never loads;
+    // retarget the block at the override's own map id so the campaign engine asks for that map instead.
+    if (std::getenv("NOBLE_BLOCK_IDPATCH")) {
+        const std::string canvas = noble::VFS::MapOverrideCanvas();
+        const uint32_t canvasId = canvas.empty() ? 0xFFFFFFFFu : ResolveMapId(canvas);
+        if (canvasId != 0xFFFFFFFFu && canvasId != mapId) {
+            std::memcpy(block.data() + 0x10, &canvasId, sizeof(canvasId));
+            std::memcpy(block.data() + 0x14, &canvasId, sizeof(canvasId));
+            noble::VFS::SetMapOverride(canvas, std::filesystem::path(std::getenv("NOBLE_BLOCK_IDPATCH")));
+            NOBLE_WARN("BlamEngine: campaign launch block retargeted from map {} to '{}' ({})", mapId, canvas, canvasId);
+        }
+    }
+    NOBLE_INFO("Invoking c_game_engine Start(engine, host:0x{:X}, launch_block) [Map: {}]...",
             reinterpret_cast<uintptr_t>(hostPtr), mapName);
         int32_t startStatus = m_fnStart(m_engineInstance, hostPtr, launchBlock.data());
         NOBLE_INFO("c_game_engine Start returned: 0x{:X}", startStatus);

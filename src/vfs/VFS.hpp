@@ -39,6 +39,7 @@ public:
     // empty when no override is active. Mod maps are often installed against a stock carrier, so this is the only
     // place that knows which canvas the map was really built on.
     static std::string MapOverrideCanvas();
+    static const std::filesystem::path& MapOverrideFile();
 
     // NOBLE_MAP_READ_TRACE=1: log every read from a .map handle (offset + size). The last line before an engine
     // launch routine unwinds says which part of the map it gave up on.

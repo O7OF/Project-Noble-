@@ -139,6 +139,8 @@ void VFS::SetMapOverride(const std::string& carrierScenario, const fs::path& map
     }
 }
 
+const std::filesystem::path& VFS::MapOverrideFile() { return s_mapOverrideFile; }
+
 std::string VFS::MapOverrideCanvas() {
     if (s_mapOverrideFile.empty()) return {};
     std::string stem = s_mapOverrideFile.stem().string();
