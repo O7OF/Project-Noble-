@@ -134,6 +134,53 @@ static void __fastcall Hook_PlayerControlUpdate(int32_t playerIndex, int32_t inp
     }
 }
 
+// haloreach+0x3F9620: c_network_observer::observer_channel_send_message
+// haloreach+0x3F95A4: c_network_observer::observer_channel_send_immediate (flushes channel throttle state 1 -> 2 and calls 0x3F7D2C)
+// In retail Xbox 360 Halo: Reach, queuing synchronous client inputs (msg 0x29 synchronous-actions), synchronous host tick
+// updates (msg 0x27 synchronous-update), or distributed client inputs (msg 0x23) via 0x3F9620 leaves the observer channel
+// in bandwidth-throttle state 1 ([channel + 0x12A0] == 1) until the next periodic observer timer expires, adding 16-33 ms
+// of artificial one-way buffering on both Guest and Host (33-66 ms round-trip input lag in Co-Op Campaign).
+// Flushing the observer channel immediately via 0x3F95A4 transmits simulation/input packets on the exact tick they are produced.
+using ObserverChannelSendMessageFn = uint8_t(__fastcall*)(
+    void* thisPtr,
+    int32_t ownerType,
+    int32_t observerChannelIndex,
+    uint8_t outOfBand,
+    uint8_t unsequenced,
+    int32_t msgType,
+    int32_t msgSize,
+    const void* payload);
+using ObserverChannelFlushFn = void(__fastcall*)(void* unusedRcx, void* unusedRdx, int32_t observerChannelIndex);
+
+static ObserverChannelSendMessageFn s_originalObserverChannelSendMessage = nullptr;
+static ObserverChannelFlushFn s_observerChannelFlush = nullptr;
+
+static uint8_t __fastcall Hook_ObserverChannelSendMessage(
+    void* thisPtr,
+    int32_t ownerType,
+    int32_t observerChannelIndex,
+    uint8_t outOfBand,
+    uint8_t unsequenced,
+    int32_t msgType,
+    int32_t msgSize,
+    const void* payload) {
+    const uint8_t sent = s_originalObserverChannelSendMessage
+        ? s_originalObserverChannelSendMessage(thisPtr, ownerType, observerChannelIndex, outOfBand, unsequenced, msgType, msgSize, payload)
+        : 0;
+    if (sent && !outOfBand && s_observerChannelFlush && observerChannelIndex >= 0 && observerChannelIndex < 34) {
+        // Messages 0x22..0x2A are simulation world updates, distributed player inputs/acks, and synchronous lockstep actions/updates.
+        if (msgType >= 0x22 && msgType <= 0x2A) {
+            thread_local bool t_flushing = false;
+            if (!t_flushing) {
+                t_flushing = true;
+                s_observerChannelFlush(nullptr, nullptr, observerChannelIndex);
+                t_flushing = false;
+            }
+        }
+    }
+    return sent;
+}
+
 bool EnginePatches::Apply(HMODULE hReachDll) {
     if (!hReachDll) {
         NOBLE_ERROR("EnginePatches: Invalid haloreach.dll handle provided.");
@@ -480,6 +527,36 @@ bool EnginePatches::Apply(HMODULE hReachDll) {
             }
         } else {
             NOBLE_WARN("EnginePatches: Could not locate ai_place in haloreach.dll.");
+        }
+    }
+
+    // 6. Zero-Latency Observer Channel Flush for Co-Op Campaign & Multiplayer Simulation Packets (RVAs 0x3F9620 / 0x3F95A4)
+    {
+        static const uint8_t kExpectedSendMsg[12] = {
+            0x48, 0x89, 0x5C, 0x24, 0x08, 0x48, 0x89, 0x74, 0x24, 0x20, 0x55, 0x57
+        };
+        static const uint8_t kExpectedFlush[12] = {
+            0x48, 0x89, 0x5C, 0x24, 0x08, 0x48, 0x89, 0x74, 0x24, 0x10, 0x57, 0x48
+        };
+        uint8_t* sendMsgAddr = reinterpret_cast<uint8_t*>(baseAddress + 0x3F9620);
+        uint8_t* flushAddr   = reinterpret_cast<uint8_t*>(baseAddress + 0x3F95A4);
+        if (0x3F9620 + sizeof(kExpectedSendMsg) <= modInfo.SizeOfImage &&
+            std::memcmp(sendMsgAddr, kExpectedSendMsg, sizeof(kExpectedSendMsg)) == 0 &&
+            std::memcmp(flushAddr, kExpectedFlush, sizeof(kExpectedFlush)) == 0) {
+            s_observerChannelFlush = reinterpret_cast<ObserverChannelFlushFn>(flushAddr);
+            if (HookManager::InstallHook(
+                reinterpret_cast<void*>(sendMsgAddr),
+                reinterpret_cast<void*>(&Hook_ObserverChannelSendMessage),
+                reinterpret_cast<void**>(&s_originalObserverChannelSendMessage),
+                "haloreach_observer_channel_send_message"
+            )) {
+                NOBLE_INFO("EnginePatches: Installed immediate observer-channel flush hook at 0x{:X} (flush 0x{:X}) for zero-latency Co-Op/MP input.",
+                           reinterpret_cast<uintptr_t>(sendMsgAddr), reinterpret_cast<uintptr_t>(flushAddr));
+            } else {
+                NOBLE_WARN("EnginePatches: Failed to hook observer_channel_send_message at RVA 0x3F9620.");
+            }
+        } else {
+            NOBLE_WARN("EnginePatches: Prologue mismatch at RVA 0x3F9620 / 0x3F95A4; immediate observer flush hook skipped.");
         }
     }
 

@@ -3118,7 +3118,7 @@ static void TakePendingLobbyEvents(MenuState& st) {
         s_lobbyEvents = PendingLobbyEvents{};
     }
     if (ev.closed) {
-        st.screen = Screen::Servers;
+        st.screen = Screen::Main;
         st.lobbySessionId.clear();
         st.lobbySessionToken.clear();
         st.lobbyRoster.clear();
@@ -3678,10 +3678,10 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
                                    st.lobbyPollFailures, current.httpStatus);
                     }
                 } else {
-                    // The host explicitly closed the session: return to the server browser.
-                    NOBLE_INFO("FrontEndMenu: lobby closed ({}); returning to the server browser",
+                    // The host explicitly closed or disbanded the session: return to the main menu.
+                    NOBLE_INFO("FrontEndMenu: lobby closed/disbanded ({}); returning to main menu",
                                current.closeReason.empty() ? "host closed" : current.closeReason);
-                    st.screen = Screen::Servers;
+                    st.screen = Screen::Main;
                     st.lobbySessionId.clear();
                     st.lobbySessionToken.clear();
                     st.lobbyRoster.clear();
@@ -5889,10 +5889,24 @@ void ContainerMatchEnded(OverlayContext& ctx, DWORD exitCode) {
         } else {
             ctx.st.lobbyLaunchPending = false;
             ctx.st.screen = Screen::PreGameLobby;
+            // Guest returning to lobby: restart relay session with the host if session ID is present
+            if (!ctx.st.lobbySessionId.empty()) {
+                std::string hostEndpoint = ctx.st.lobbyHostEndpoint;
+                uint16_t hostPort = 11774;
+                const size_t colon = hostEndpoint.rfind(':');
+                if (colon != std::string::npos) {
+                    hostPort = static_cast<uint16_t>(std::atoi(hostEndpoint.c_str() + colon + 1));
+                    hostEndpoint = hostEndpoint.substr(0, colon);
+                }
+                const auto jinfo = MasterServerClient::Get().JoinSessionSync(
+                    ctx.st.lobbySessionId, MasterServerClient::GetLobbyMachineId(), 11774, hostEndpoint, hostPort);
+                if (jinfo.ok && !jinfo.relayUrl.empty()) {
+                    NetworkTransport::Get().StartRelay(jinfo.relayUrl, ctx.st.lobbySessionId, false, MasterServerClient::GetLobbyMachineId());
+                }
+            }
         }
-    } else if (ctx.st.screen == Screen::PreGameLobby || !ctx.st.lobbySessionId.empty() || !ctx.st.lobbyHostEndpoint.empty()) {
-        // Player left the match (LEAVE GAME / RETURN TO MENU / Connection Lost): exit the lobby so we never
-        // auto-rejoin an in-progress match.
+    } else if (successor == L"-main-menu" || ctx.st.screen == Screen::PreGameLobby || !ctx.st.lobbySessionId.empty() || !ctx.st.lobbyHostEndpoint.empty()) {
+        // Player left the match or lobby disbanded: return to main menu or appropriate mode screen.
         if (ctx.st.isLobbyHost) {
             MasterServerClient::Get().StopAdvertising();
             SessionManager::Get().StopHosting();
@@ -5900,7 +5914,8 @@ void ContainerMatchEnded(OverlayContext& ctx, DWORD exitCode) {
             ctx.st.lobbySessionId.clear();
             ctx.st.lobbySessionToken.clear();
             ctx.st.lobbyRoster.clear();
-            ctx.st.screen = (ctx.st.lobbyMode == "campaign") ? Screen::Campaign
+            ctx.st.screen = (successor == L"-main-menu") ? Screen::Main
+                          : (ctx.st.lobbyMode == "campaign") ? Screen::Campaign
                           : (ctx.st.lobbyMode == "firefight") ? Screen::Firefight
                           : (ctx.st.lobbyMode == "forge") ? Screen::Forge
                           : Screen::CustomGame;
@@ -5916,7 +5931,7 @@ void ContainerMatchEnded(OverlayContext& ctx, DWORD exitCode) {
             ctx.st.lobbySessionToken.clear();
             ctx.st.lobbyHostEndpoint.clear();
             ctx.st.lobbyRoster.clear();
-            ctx.st.screen = Screen::Servers;
+            ctx.st.screen = Screen::Main;
         }
         ctx.st.focusRow = 0;
     }

@@ -952,7 +952,13 @@ LobbyState MasterServerClient::FetchLobbyStateSync(const std::string& sessionId)
             break;
         }
     }
-    if (!r.ok) return state;
+    if (!r.ok) {
+        if (r.status == 404) {
+            state.isClosed = true;
+            state.closeReason = "Session not found";
+        }
+        return state;
+    }
 
     try {
         const auto j = nlohmann::json::parse(r.body);
@@ -1361,6 +1367,43 @@ bool MasterServerClient::LaunchLobbySync(const std::string& sessionId,
         NOBLE_ERROR("MasterServerClient: LaunchLobbySync unknown exception");
         return false;
     }
+}
+
+bool MasterServerClient::ReturnLobbySync(const std::string& sessionId) {
+    std::string token;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        token = m_sessionToken;
+        m_advertInProgress = false;
+    }
+    if (sessionId.empty() || token.empty() || !Enabled()) return false;
+
+    for (const std::string& baseUrl : GetCandidateUrls(sessionId)) {
+        const HttpResult r = HttpRequest(baseUrl, L"POST", "/api/sessions/" + sessionId + "/lobby/return", "{}", token);
+        if (r.ok) {
+            SetSessionRegionUrl(sessionId, baseUrl);
+            return true;
+        }
+    }
+    return false;
+}
+
+bool MasterServerClient::DisbandSessionSync(const std::string& sessionId) {
+    std::string token;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        token = m_sessionToken;
+        m_advertInProgress = false;
+        m_sessionId.clear();
+        m_sessionToken.clear();
+    }
+    if (sessionId.empty() || token.empty() || !Enabled()) return false;
+
+    for (const std::string& baseUrl : GetCandidateUrls(sessionId)) {
+        const HttpResult r = HttpRequest(baseUrl, L"DELETE", "/api/sessions/" + sessionId, {}, token);
+        if (r.ok) return true;
+    }
+    return false;
 }
 
 } // namespace noble

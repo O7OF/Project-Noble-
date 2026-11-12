@@ -57,6 +57,8 @@
 #include <nlohmann/json.hpp>
 
 #include <windows.h>
+#include <mmsystem.h>
+#pragma comment(lib, "winmm.lib")
 #include <shellapi.h>
 #include <tlhelp32.h>
 #include <algorithm>
@@ -86,6 +88,16 @@ static constexpr const char* kLogFileName = "noble-client.log";
 static void WriteCrashDump(EXCEPTION_POINTERS* info);
 
 static LONG WINAPI NobleCrashHandler(EXCEPTION_POINTERS* pExceptionInfo) {
+    // Notify master server & guests if the host crashed so lobbies disband immediately instead of hanging
+    try {
+        if (noble::NetworkTransport::Get().IsHost()) {
+            noble::NetworkTransport::Get().SendLobbyControlJson("{\"type\":\"lobby_disband\"}");
+            std::string sid = noble::MasterServerClient::Get().GetCurrentSessionId();
+            if (!sid.empty()) {
+                noble::MasterServerClient::Get().DisbandSessionSync(sid);
+            }
+        }
+    } catch (...) {}
     if (pExceptionInfo && pExceptionInfo->ExceptionRecord) {
         uintptr_t faultAddr = reinterpret_cast<uintptr_t>(pExceptionInfo->ExceptionRecord->ExceptionAddress);
         HMODULE hMod = nullptr;
@@ -156,6 +168,15 @@ static void WriteCrashDump(EXCEPTION_POINTERS* info) {
 // stopped working" in Windows and nothing in our log. This logs the exception's what() and a stack with
 // module RVAs (resolvable through noble-client.map) before the CRT kills the process.
 static void NobleTerminateHandler() {
+    try {
+        if (noble::NetworkTransport::Get().IsHost()) {
+            noble::NetworkTransport::Get().SendLobbyControlJson("{\"type\":\"lobby_disband\"}");
+            std::string sid = noble::MasterServerClient::Get().GetCurrentSessionId();
+            if (!sid.empty()) {
+                noble::MasterServerClient::Get().DisbandSessionSync(sid);
+            }
+        }
+    } catch (...) {}
     spdlog::error("UNHANDLED C++ EXCEPTION: the process is being terminated");
     if (std::exception_ptr current = std::current_exception()) {
         try {
@@ -753,6 +774,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     _set_invalid_parameter_handler(&NobleInvalidParameterHandler);
     _set_purecall_handler(&NoblePureCallHandler);
     DisableProcessWindowsGhosting();
+    timeBeginPeriod(1);
 
     // 1. Initialize logging
     // "-log <file>" lets a second instance (or an automated test) keep its own log instead of truncating
@@ -2021,7 +2043,7 @@ int mvarPageScanEvery = 0;        // dev: diff every writable page every N secon
         // post-game panel is drawn and presented from here (PauseMenu::HoldFrame, as the engine does).
         // The front-end menu likewise once the engine drops its menu map (FrontEndMenu::HoldFrame).
         if (!noble::PauseMenu::HoldFrame() && !noble::FrontEndMenu::HoldFrame()) {
-            MsgWaitForMultipleObjectsEx(0, nullptr, 10, QS_ALLINPUT, MWMO_ALERTABLE);
+            MsgWaitForMultipleObjectsEx(0, nullptr, 1, QS_ALLINPUT, MWMO_ALERTABLE | MWMO_INPUTAVAILABLE);
         }
     }
 

@@ -147,10 +147,19 @@ bool NetworkTransport::Initialize(bool isHost, const std::string& remoteIp, uint
         NOBLE_WARN("NetworkTransport: Failed to set non-blocking socket mode");
     }
 
-    // Set socket buffer sizes to 512 KB
-    int bufSize = 512 * 1024;
+    // Set socket buffer sizes to 1 MB for zero-drop burst absorption
+    int bufSize = 1024 * 1024;
     setsockopt(m_socket, SOL_SOCKET, SO_RCVBUF, reinterpret_cast<const char*>(&bufSize), sizeof(bufSize));
     setsockopt(m_socket, SOL_SOCKET, SO_SNDBUF, reinterpret_cast<const char*>(&bufSize), sizeof(bufSize));
+
+    // Disable Windows ICMP Port Unreachable WSAECONNRESET behavior on UDP socket so transient NAT punch
+    // misses never poison subsequent recvfrom() calls on Host or Guest.
+    {
+        constexpr DWORD kSioUdpConnreset = _WSAIOW(IOC_VENDOR, 12);
+        BOOL newBehavior = FALSE;
+        DWORD bytesReturned = 0;
+        WSAIoctl(m_socket, kSioUdpConnreset, &newBehavior, sizeof(newBehavior), nullptr, 0, &bytesReturned, nullptr, nullptr);
+    }
 
     // Exclusive use of the port. On Windows SO_REUSEADDR (used here before 2026-10-29) lets a SECOND process
     // bind the same UDP port and take datagrams meant for the first: a stray second Noble on the guest's PC
@@ -406,6 +415,11 @@ void NetworkTransport::SetLobbyClosedCallback(LobbyClosedCallback cb) {
     m_lobbyClosedCb = std::move(cb);
 }
 
+void NetworkTransport::SetLobbyReturnCallback(LobbyReturnCallback cb) {
+    std::lock_guard<std::mutex> lock(m_relayMutex);
+    m_lobbyReturnCb = std::move(cb);
+}
+
 void NetworkTransport::FlushHeldPackets(uint64_t peerId, const sockaddr_in& destAddr) {
     std::deque<HeldPacket> toFlush;
     {
@@ -657,7 +671,7 @@ void NetworkTransport::RelayWorkerThread(std::string relayUrl, std::string sessi
             continue;
         }
 
-        WinHttpSetTimeouts(hWebSocket, 5000, 5000, 1000, 2);
+        WinHttpSetTimeouts(hWebSocket, 5000, 5000, 1000, 50);
         {
             std::lock_guard<std::mutex> lock(m_relayMutex);
             m_relaySessionHandle = hSession;
@@ -665,6 +679,7 @@ void NetworkTransport::RelayWorkerThread(std::string relayUrl, std::string sessi
         }
         m_relayActive.store(true);
         m_relayConnected.store(true);
+        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
         NOBLE_INFO("NetworkTransport: WebSocket relay connected successfully!");
 
         std::vector<uint8_t> recvBuffer(65536);
@@ -675,6 +690,7 @@ void NetworkTransport::RelayWorkerThread(std::string relayUrl, std::string sessi
         // has its own thread so that nothing queued waits for the other side to speak first (found by voice, 2026-10-31).
         std::atomic<bool> senderStop{ false };
         std::thread sender([this, hWebSocket, &senderStop] {
+            SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
             bool warned = false;
             const auto sendOne = [&](WINHTTP_WEB_SOCKET_BUFFER_TYPE type, const void* data, size_t size) {
                 const DWORD err = WinHttpWebSocketSend(hWebSocket, type, const_cast<void*>(data), static_cast<DWORD>(size));
@@ -689,7 +705,7 @@ void NetworkTransport::RelayWorkerThread(std::string relayUrl, std::string sessi
                 {
                     std::unique_lock<std::mutex> lock(m_relayMutex);
                     if (m_relayTextSendQueue.empty() && m_relaySendQueue.empty() && m_relayVoiceSendQueue.empty()) {
-                        m_relaySendCv.wait_for(lock, std::chrono::milliseconds(2), [&] {
+                        m_relaySendCv.wait_for(lock, std::chrono::milliseconds(50), [&] {
                             return senderStop.load() || m_relayStopRequested.load() || !m_relayActive.load() ||
                                    !m_relayTextSendQueue.empty() || !m_relaySendQueue.empty() || !m_relayVoiceSendQueue.empty();
                         });
@@ -711,15 +727,13 @@ void NetworkTransport::RelayWorkerThread(std::string relayUrl, std::string sessi
         });
 
         while (!m_relayStopRequested.load() && m_relayActive.load()) {
-            // Poll for incoming packets; drain bursts immediately.
-            bool receivedAny = false;
+            // Drain incoming WebSocket frames with zero sleep delay (WinHttpWebSocketReceive blocks in kernel until data arrives).
             for (int pollIter = 0; pollIter < 32 && !m_relayStopRequested.load() && m_relayActive.load(); ++pollIter) {
                 DWORD bytesRead = 0;
                 WINHTTP_WEB_SOCKET_BUFFER_TYPE bufferType;
                 DWORD err = WinHttpWebSocketReceive(hWebSocket, recvBuffer.data(), static_cast<DWORD>(recvBuffer.size()), &bytesRead, &bufferType);
 
                 if (err == NO_ERROR && bytesRead > 0) {
-                    receivedAny = true;
                     if (bufferType == WINHTTP_WEB_SOCKET_BINARY_FRAGMENT_BUFFER_TYPE ||
                         bufferType == WINHTTP_WEB_SOCKET_UTF8_FRAGMENT_BUFFER_TYPE) {
                         if (fragmentBuffer.size() + bytesRead <= 131072) {
@@ -811,6 +825,15 @@ void NetworkTransport::RelayWorkerThread(std::string relayUrl, std::string sessi
                                 if (cb) {
                                     cb(reason);
                                 }
+                            } else if (type == "host_return_to_lobby") {
+                                LobbyReturnCallback cb;
+                                {
+                                    std::lock_guard<std::mutex> lock(m_relayMutex);
+                                    cb = m_lobbyReturnCb;
+                                }
+                                if (cb) {
+                                    cb();
+                                }
                             } else if (type == "session_sync") {
                                 const bool running = j.value("running", false);
                                 const uint64_t frame = static_cast<uint64_t>(j.value("frame", 0ULL));
@@ -848,14 +871,14 @@ void NetworkTransport::RelayWorkerThread(std::string relayUrl, std::string sessi
                         std::vector<uint8_t> pkt(msgData, msgData + msgLen);
                         fragmentBuffer.clear();
                         std::lock_guard<std::mutex> lock(m_relayMutex);
-                        if (m_relayRecvQueue.size() < 512) {
+                        if (m_relayRecvQueue.size() < 2048) {
                             m_relayRecvQueue.push_back(std::move(pkt));
                         }
                     } else {
                         fragmentBuffer.clear();
                     }
                 } else if (err == ERROR_WINHTTP_TIMEOUT) {
-                    break; // normal idle
+                    break; // normal idle; loop back into WinHttpWebSocketReceive without Sleep(1) stall
                 } else if (err != NO_ERROR) {
                     m_relayActive.store(false);
                     break;
@@ -863,9 +886,6 @@ void NetworkTransport::RelayWorkerThread(std::string relayUrl, std::string sessi
             }
 
             if (!m_relayActive.load()) break;
-            if (!receivedAny) {
-                Sleep(1);
-            }
         }
 
         m_relayConnected.store(false);
@@ -952,7 +972,7 @@ uint64_t NetworkTransport::OnNetSend(uint64_t targetPeerId, const uint8_t* data,
             std::lock_guard<std::mutex> lock(m_mutex);
             auto& route = m_peerRouteStates[m_hostMachineId];
             route.lastUdpSendTick = nowTick;
-            directUdpAlive = route.directConfirmed && (route.lastUdpRecvTick != 0 && (nowTick - route.lastUdpRecvTick) < 3500);
+            directUdpAlive = route.directConfirmed && (route.lastPongRecvTick != 0 && (nowTick - route.lastPongRecvTick) < 3500);
         }
         // Guest sends directly to host
         int sent = sendto(m_socket, reinterpret_cast<const char*>(wireData), static_cast<int>(totalBytes), 0,
@@ -1057,7 +1077,7 @@ uint64_t NetworkTransport::OnNetSend(uint64_t targetPeerId, const uint8_t* data,
                 targets.push_back(kv.second);
                 auto& route = m_peerRouteStates[kv.first];
                 route.lastUdpSendTick = nowTick;
-                if (!route.directConfirmed || route.lastUdpRecvTick == 0 || (nowTick - route.lastUdpRecvTick) >= 3500) {
+                if (!route.directConfirmed || route.lastPongRecvTick == 0 || (nowTick - route.lastPongRecvTick) >= 3500) {
                     allDirectConfirmed = false;
                 }
             }
@@ -1090,7 +1110,7 @@ uint64_t NetworkTransport::OnNetSend(uint64_t targetPeerId, const uint8_t* data,
             foundInUdp = true;
             auto& route = m_peerRouteStates[targetPeerId];
             route.lastUdpSendTick = nowTick;
-            directConfirmed = route.directConfirmed && (route.lastUdpRecvTick != 0 && (nowTick - route.lastUdpRecvTick) < 3500);
+            directConfirmed = route.directConfirmed && (route.lastPongRecvTick != 0 && (nowTick - route.lastPongRecvTick) < 3500);
         } else {
             // Target route unknown yet: hold packet (Star-routing) instead of broadcasting (Finding #9, #10)
             auto& q = m_heldPackets[targetPeerId];
@@ -1225,6 +1245,7 @@ uint64_t NetworkTransport::OnNetRecv(uint8_t* outBuffer, size_t bufferCapacity, 
                     // Only a PONG (echo to our outbound PING) confirms bidirectional UDP; a one-way PING only proves inbound UDP.
                     if (isPong) {
                         route.directConfirmed = true;
+                        route.lastPongRecvTick = now;
                     }
                     if (isPong && route.lastPingSentTick != 0 && now >= route.lastPingSentTick) {
                         const int sample = static_cast<int>(std::min<uint64_t>(999, now - route.lastPingSentTick));
@@ -1306,9 +1327,6 @@ uint64_t NetworkTransport::OnNetRecv(uint8_t* outBuffer, size_t bufferCapacity, 
             auto& route = m_peerRouteStates[wireSender];
             route.addr = senderAddr;
             route.lastUdpRecvTick = now;
-            if (route.lastUdpSendTick != 0 && now >= route.lastUdpSendTick && (now - route.lastUdpSendTick) < 3500) {
-                route.directConfirmed = true;
-            }
             if (route.rttMs < 0 && route.lastUdpSendTick != 0 && now >= route.lastUdpSendTick && (now - route.lastUdpSendTick) < 500) {
                 route.rttMs = static_cast<int>(now - route.lastUdpSendTick);
             }
@@ -1331,9 +1349,6 @@ uint64_t NetworkTransport::OnNetRecv(uint8_t* outBuffer, size_t bufferCapacity, 
                 auto& route = m_peerRouteStates[wireSender];
                 route.addr = senderAddr;
                 route.lastUdpRecvTick = now;
-                if (route.lastUdpSendTick != 0 && now >= route.lastUdpSendTick && (now - route.lastUdpSendTick) < 3500) {
-                    route.directConfirmed = true;
-                }
                 if (route.rttMs < 0 && route.lastUdpSendTick != 0 && now >= route.lastUdpSendTick && (now - route.lastUdpSendTick) < 500) {
                     route.rttMs = static_cast<int>(now - route.lastUdpSendTick);
                 }

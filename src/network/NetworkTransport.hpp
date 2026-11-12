@@ -81,10 +81,12 @@ public:
     using LobbyLaunchCallback = std::function<void(const std::string& map, const std::string& mode, const std::string& variant, int diff, uint64_t skulls, const std::string& hostIp, uint16_t hostPort, const std::string& sessionId, const std::string& mapOverride, const std::string& modFolder, const std::string& modId)>;
     using LobbyRosterCallback = std::function<void(const std::string& rosterJson)>;
     using LobbyClosedCallback = std::function<void(const std::string& reason)>;
+    using LobbyReturnCallback = std::function<void()>;
 
     void SetLobbyLaunchCallback(LobbyLaunchCallback cb);
     void SetLobbyRosterCallback(LobbyRosterCallback cb);
     void SetLobbyClosedCallback(LobbyClosedCallback cb);
+    void SetLobbyReturnCallback(LobbyReturnCallback cb);
     void SendLobbyControlJson(const std::string& jsonString);
 
     void StartRelay(const std::string& relayUrl, const std::string& sessionId, bool isHost, uint64_t machineId);
@@ -182,6 +184,7 @@ private:
     LobbyLaunchCallback m_lobbyLaunchCb;
     LobbyRosterCallback m_lobbyRosterCb;
     LobbyClosedCallback m_lobbyClosedCb;
+    LobbyReturnCallback m_lobbyReturnCb;
     std::atomic<bool> m_hostSimRunning{ false };    // last session_sync said the host's simulation is running
     std::atomic<uint64_t> m_hostSimFrame{ 0 };      // host frame number from that message
 
@@ -194,6 +197,7 @@ private:
         uint64_t lastUdpRecvTick = 0;
         uint64_t lastUdpSendTick = 0;
         uint64_t lastPingSentTick = 0;
+        uint64_t lastPongRecvTick = 0;
         int rttMs = -1;
         bool directConfirmed = false;
     };

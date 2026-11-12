@@ -216,6 +216,9 @@ public:
                          const std::string& modId = "",
                          const std::string& mapVariant = "");
 
+    bool ReturnLobbySync(const std::string& sessionId);
+    bool DisbandSessionSync(const std::string& sessionId);
+
     void UpdateLobbyAdvert(const std::string& map, const std::string& mode, const std::string& variant, int diff, uint64_t skulls);
     std::string GetCurrentSessionId() const;
     std::string GetCurrentSessionToken() const;

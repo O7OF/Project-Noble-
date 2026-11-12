@@ -345,7 +345,8 @@ void RelaunchAndClose(HWND hwnd, const std::wstring &args, const char *what) {
   NOBLE_INFO("PauseMenu: {} requested", what);
   const bool isLobbyReturn = args.find(L"-lobby-return") != std::wstring::npos;
   const bool keepHostSession = args.find(L"-lobby-return host") != std::wstring::npos;
-  if (args.empty()) {
+  const bool isMainMenu = (args == L"-main-menu");
+  if (args.empty() || isMainMenu) {
     // Leaving match to menu: if we joined a lobby session as a guest, notify the master server immediately.
     std::wstring wSession = ArgValue(Relaunch::CurrentGameArgs(), L"-session-id");
     if (wSession.empty()) wSession = ArgValue(GetCommandLineW(), L"-session-id");
@@ -365,7 +366,12 @@ void RelaunchAndClose(HWND hwnd, const std::wstring &args, const char *what) {
 
   std::wstring containerVal = ArgValue(GetCommandLineW(), L"-container-hwnd");
   if (!containerVal.empty()) {
-      if (args.empty()) {
+      if (isMainMenu) {
+          Relaunch::RequestContainerRelaunch(L"-main-menu");
+          NOBLE_INFO("PauseMenu: {} in container mode - returning to main menu in container launcher window", what);
+          TerminateProcess(GetCurrentProcess(), 0);
+          return;
+      } else if (args.empty()) {
           Relaunch::RequestContainerRelaunch(L"-leave-lobby");
           NOBLE_INFO("PauseMenu: {} in container mode - leaving match and lobby to return to container launcher window", what);
           TerminateProcess(GetCurrentProcess(), 0);
@@ -403,12 +409,17 @@ void QuitFromMatch(HWND hwnd, const char *what) {
   if (wSession.empty()) wSession = ArgValue(GetCommandLineW(), L"-session-id");
   const bool isHostCmd = (wcsstr(GetCommandLineW(), L"-host") != nullptr ||
                           Relaunch::CurrentGameArgs().find(L" -host") != std::wstring::npos);
-  if (!wSession.empty() && !isHostCmd) {
+  if (!wSession.empty()) {
     char sessUtf8[128] = {};
     WideCharToMultiByte(CP_UTF8, 0, wSession.c_str(), -1, sessUtf8, sizeof(sessUtf8) - 1, nullptr, nullptr);
-    uint64_t fallbackId = (MasterServerClient::GetLobbyMachineId() & 0x7FFFFFFFULL);
-    if (fallbackId < 2ULL) fallbackId = 2ULL;
-    MasterServerClient::Get().LeaveLobbySync(sessUtf8, fallbackId);
+    if (isHostCmd) {
+      NetworkTransport::Get().SendLobbyControlJson("{\"type\":\"lobby_disband\"}");
+      MasterServerClient::Get().DisbandSessionSync(sessUtf8);
+    } else {
+      uint64_t fallbackId = (MasterServerClient::GetLobbyMachineId() & 0x7FFFFFFFULL);
+      if (fallbackId < 2ULL) fallbackId = 2ULL;
+      MasterServerClient::Get().LeaveLobbySync(sessUtf8, fallbackId);
+    }
   }
   MasterServerClient::Get().Shutdown(false);
   SessionManager::Get().Shutdown();
@@ -1172,7 +1183,27 @@ void PauseMenu::DrawMenu(HWND hwnd) {
         // The engine can't switch maps once started, so start a fresh Noble with no -map: that opens the menu.
         MenuSounds::Click();
         Close();
-        RelaunchAndClose(hwnd, L"", "leave game");
+        const bool isHost = NetworkTransport::Get().IsHost() ||
+                            (wcsstr(GetCommandLineW(), L"-host") != nullptr) ||
+                            (Relaunch::CurrentGameArgs().find(L" -host") != std::wstring::npos);
+        std::wstring wSession = ArgValue(Relaunch::CurrentGameArgs(), L"-session-id");
+        if (wSession.empty()) wSession = ArgValue(GetCommandLineW(), L"-session-id");
+        if (isHost && (!wSession.empty() || MasterServerClient::Get().IsAdvertising())) {
+            // Host leaving match returns the entire party to the Pre-Game Lobby
+            char sessUtf8[128] = {};
+            if (!wSession.empty()) {
+                WideCharToMultiByte(CP_UTF8, 0, wSession.c_str(), -1, sessUtf8, sizeof(sessUtf8) - 1, nullptr, nullptr);
+            } else {
+                std::string curSid = MasterServerClient::Get().GetCurrentSessionId();
+                std::snprintf(sessUtf8, sizeof(sessUtf8), "%s", curSid.c_str());
+            }
+            NetworkTransport::Get().SendLobbyControlJson("{\"type\":\"host_return_to_lobby\"}");
+            MasterServerClient::Get().ReturnLobbySync(sessUtf8);
+            std::wstring returnArgs = LobbyReturnArgs(true);
+            RelaunchAndClose(hwnd, returnArgs, "host leave match to pre-game lobby");
+        } else {
+            RelaunchAndClose(hwnd, L"", "leave game");
+        }
     } else if (activated == quitEntry) {
         Close();
         QuitFromMatch(hwnd, "quit requested");
@@ -3200,11 +3231,68 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading,
   const bool boardPointer = s_boardPointer.load();
   const bool scoreboardHeld = !loading && !open && !gameOver &&
                               (ReachHost::IsKeyHeld(boardVk) || s_scoreboardTest || demo > 0 || boardPointer);
+
+  DXGI_SWAP_CHAIN_DESC desc{};
+  if (FAILED(swapChain->GetDesc(&desc)) || !desc.OutputWindow)
+    return;
+  const HWND hwnd = desc.OutputWindow;
+
   // Guests: if the host has been silent for a while, the engine keeps pumping frames but the session is dead. Show a panel
   // instead of freezing in the mission.
   static bool s_connectionLost = false;
+  static std::atomic<bool> s_guestShouldReturnLobby{false};
+  static std::atomic<bool> s_guestShouldDisband{false};
+  static bool s_callbacksRegistered = false;
+  if (!s_callbacksRegistered) {
+    s_callbacksRegistered = true;
+    NetworkTransport::Get().SetLobbyReturnCallback([]() {
+      NOBLE_INFO("PauseMenu: received host_return_to_lobby");
+      s_guestShouldReturnLobby.store(true);
+    });
+    NetworkTransport::Get().SetLobbyClosedCallback([](const std::string& reason) {
+      NOBLE_INFO("PauseMenu: received lobby_closed/disband: {}", reason);
+      s_guestShouldDisband.store(true);
+    });
+  }
+
   const bool guest = NetworkTransport::Get().IsActive() && !NetworkTransport::Get().IsHost();
+  if (guest) {
+    if (s_guestShouldReturnLobby.exchange(false)) {
+      NOBLE_INFO("PauseMenu: host returned to lobby, returning guest to pre-game lobby");
+      std::wstring returnArgs = LobbyReturnArgs(false);
+      RelaunchAndClose(hwnd, returnArgs, "host returned to pre-game lobby");
+      return;
+    }
+    if (s_guestShouldDisband.exchange(false)) {
+      NOBLE_INFO("PauseMenu: host disbanded lobby / quit game, returning guest to main menu");
+      RelaunchAndClose(hwnd, L"-main-menu", "host disbanded lobby");
+      return;
+    }
+  }
+
   const double hostSilence = guest ? NetworkTransport::Get().SecondsSinceRemotePacket() : 0.0;
+  static ULONGLONG s_lastStateCheck = 0;
+  const ULONGLONG nowTick = GetTickCount64();
+  if (guest && hostSilence > 3.0 && nowTick - s_lastStateCheck > 1500) {
+    s_lastStateCheck = nowTick;
+    std::wstring wSession = ArgValue(Relaunch::CurrentGameArgs(), L"-session-id");
+    if (wSession.empty()) wSession = ArgValue(GetCommandLineW(), L"-session-id");
+    if (!wSession.empty()) {
+      char sessUtf8[128] = {};
+      WideCharToMultiByte(CP_UTF8, 0, wSession.c_str(), -1, sessUtf8, sizeof(sessUtf8) - 1, nullptr, nullptr);
+      std::thread([sessUtf8, hostSilence]() {
+        const LobbyState state = MasterServerClient::Get().FetchLobbyStateSync(sessUtf8);
+        if (state.ok && !state.isClosed && !state.inProgress) {
+          NOBLE_INFO("PauseMenu: host lobby poll shows inProgress=false, returning guest to pre-game lobby");
+          s_guestShouldReturnLobby.store(true);
+        } else if (!state.ok || state.isClosed || hostSilence > 8.0) {
+          NOBLE_INFO("PauseMenu: host lobby poll shows closed/404 or host silence {:.1f}s, disbanding to main menu", hostSilence);
+          s_guestShouldDisband.store(true);
+        }
+      }).detach();
+    }
+  }
+
   if (!loading && !open && !gameOver && guest && hostSilence > 8.0) {
     if (!s_connectionLost) {
       s_connectionLost = true;
@@ -3218,11 +3306,6 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading,
   const bool connectionLost = s_connectionLost;
   if (!(open || gameOver || loading || showFps || scoreboardHeld || connectionLost || extraOverlay || SocialOverlay::WantsFrame()) || !swapChain ||      !ImGui::GetCurrentContext())
     return;
-
-  DXGI_SWAP_CHAIN_DESC desc{};
-  if (FAILED(swapChain->GetDesc(&desc)) || !desc.OutputWindow)
-    return;
-  const HWND hwnd = desc.OutputWindow;
 
   ID3D11Device *device = nullptr;
   if (FAILED(swapChain->GetDevice(__uuidof(ID3D11Device),

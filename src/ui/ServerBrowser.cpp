@@ -439,7 +439,7 @@ void ServerBrowser::RenderFilterBar() {
         sessions.TriggerDiscoveryScan();
     }
     ImGui::SameLine();
-    const char* regionNames[] = { "US West (Oregon)", "US East (Virginia)", "EU West (London, UK)", "LAN / Offline Only" };
+    const char* regionNames[] = { "US East (Virginia)", "US West (Oregon)", "UK (London)", "LAN / Offline Only" };
     int curRegion = 0;
     const std::string curUrl = MasterServerClient::Get().Url();
     if (curUrl.empty()) {
@@ -1111,9 +1111,16 @@ void ServerBrowser::RenderMasterServerModal() {
 
         const std::string curUrl = MasterServerClient::Get().Url();
         int curRegion = 0;
-        if (curUrl.find("noble-server-2") != std::string::npos || curUrl.find("virginia") != std::string::npos) curRegion = 1;
-        else if (curUrl.find("uk") != std::string::npos || curUrl.find("london") != std::string::npos) curRegion = 2;
-        else if (curUrl.empty()) curRegion = 3;
+        if (curUrl.empty()) {
+            curRegion = 3;
+        } else {
+            for (int i = 0; i < 3; ++i) {
+                if (curUrl == kMasterRegions[i].url || curUrl.rfind(kMasterRegions[i].url, 0) == 0) {
+                    curRegion = i;
+                    break;
+                }
+            }
+        }
 
         static int chosenRegion = 0;
         if (ImGui::IsWindowAppearing()) chosenRegion = curRegion;
