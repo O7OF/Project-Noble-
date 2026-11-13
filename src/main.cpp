@@ -1022,14 +1022,17 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         }
     }
     if (showMenu) {
-        const float scale = std::min(1.5f, std::min(static_cast<float>(kMaxRenderWidth) / static_cast<float>(renderWidth),
-                                                     static_cast<float>(kMaxRenderHeight) / static_cast<float>(renderHeight)));
-        if (scale > 1.0f) {
-            renderWidth = static_cast<uint32_t>(std::lround(static_cast<float>(renderWidth) * scale));
-            renderHeight = static_cast<uint32_t>(std::lround(static_cast<float>(renderHeight) * scale));
+        if (startupSettings.menuSupersampling && renderWidth < 2560 && renderHeight < 1440) {
+            const float scale = std::min(1.5f, std::min(static_cast<float>(kMaxRenderWidth) / static_cast<float>(renderWidth),
+                                                         static_cast<float>(kMaxRenderHeight) / static_cast<float>(renderHeight)));
+            if (scale > 1.0f) {
+                renderWidth = static_cast<uint32_t>(std::lround(static_cast<float>(renderWidth) * scale));
+                renderHeight = static_cast<uint32_t>(std::lround(static_cast<float>(renderHeight) * scale));
+            }
         }
-        NOBLE_INFO("main: menu render resolution {}x{} (window {}x{}, display {}x{})", renderWidth, renderHeight,
-                   window->GetWidth(), window->GetHeight(), monitorWidth, monitorHeight);
+        NOBLE_INFO("main: menu render resolution {}x{} (window {}x{}, display {}x{}, supersampling {})", renderWidth, renderHeight,
+                   window->GetWidth(), window->GetHeight(), monitorWidth, monitorHeight,
+                   startupSettings.menuSupersampling ? "enabled" : "disabled");
     } else {
         NOBLE_INFO("main: match render resolution {}x{} (window {}x{}, display {}x{})", renderWidth, renderHeight,
                    window->GetWidth(), window->GetHeight(), monitorWidth, monitorHeight);

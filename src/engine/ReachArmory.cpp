@@ -2459,6 +2459,7 @@ void ReachArmory::Tick() {
     if ((s_globalsBase.load() == 0 || s_rescanRequested.load()) && frame >= 15 && !s_scanning.exchange(true)) {
         const bool isRescan = s_rescanRequested.exchange(false);
         std::thread([isRescan]() {
+          SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
           try {
             if (!isRescan) {
                 NOBLE_INFO("ReachArmory: Scanning process memory for mainmenu_all.map GLOBALS table...");

@@ -205,12 +205,36 @@ bool D3D11Renderer::Initialize(HWND hwnd, uint32_t width, uint32_t height) {
         NOBLE_INFO("Direct3D 11 multithread protection enabled.");
     }
 
-    // Set maximum frame latency to 1 on the DXGI device to eliminate 2-3 frames (16-33 ms) of render-queue
-    // input latency across all modes (Solo, Co-Op Campaign, Firefight, Custom Games, Forge).
+    // Query adapter to detect GPU vendor (AMD Radeon: 0x1002, NVIDIA: 0x10DE, Intel: 0x8086)
+    bool isAmdGpu = false;
+    ComPtr<IDXGIDevice> dxgiDevice;
+    if (SUCCEEDED(m_device.As(&dxgiDevice))) {
+        ComPtr<IDXGIAdapter> adapter;
+        if (SUCCEEDED(dxgiDevice->GetAdapter(&adapter))) {
+            DXGI_ADAPTER_DESC desc{};
+            if (SUCCEEDED(adapter->GetDesc(&desc))) {
+                if (desc.VendorId == 0x1002) {
+                    isAmdGpu = true;
+                    char descStr[128] = { 0 };
+                    WideCharToMultiByte(CP_UTF8, 0, desc.Description, -1, descStr, sizeof(descStr), nullptr, nullptr);
+                    NOBLE_INFO("Direct3D 11: Detected AMD Radeon GPU '{}' (VendorId: 0x{:04X})", descStr, desc.VendorId);
+                }
+            }
+        }
+    }
+
+    // Set maximum frame latency on the DXGI device.
+    // On NVIDIA and Intel GPUs, 1 frame latency gives minimal input lag without pipeline stalling.
+    // On AMD Radeon GPUs (e.g. RX 5700 XT, RDNA/GCN), setting latency to 1 with DXGI_SWAP_EFFECT_DISCARD
+    // forces the AMD driver to hard-synchronize and wait for GPU idle on every Present, resulting in
+    // severe micro-stutter and halving the frame rate. Latency 2 allows the AMD Command Processor to
+    // overlap commands smoothly without pipeline stalls.
     ComPtr<IDXGIDevice1> dxgiDevice1;
     if (SUCCEEDED(m_device.As(&dxgiDevice1)) && dxgiDevice1) {
-        dxgiDevice1->SetMaximumFrameLatency(1);
-        NOBLE_INFO("Direct3D 11 DXGI maximum frame latency set to 1 (low-latency input mode).");
+        const UINT latency = isAmdGpu ? 2u : 1u;
+        dxgiDevice1->SetMaximumFrameLatency(latency);
+        NOBLE_INFO("Direct3D 11 DXGI maximum frame latency set to {} ({}).",
+                   latency, isAmdGpu ? "AMD Radeon optimized latency" : "low-latency input mode");
     }
 
     // Alt+Enter would toggle exclusive full screen behind the DISPLAY MODE setting's back; the setting owns it.

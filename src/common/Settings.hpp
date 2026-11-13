@@ -39,6 +39,7 @@ struct SettingsData {
     bool throttleUnfocused = true;   // drop to 30 FPS when Noble is not the active window
     float brightness = 1.0f;    // 0.7..1.4, applied as a gamma exponent by the post-process (1.0 = untouched)
     bool fxaa = false;          // post-process anti-aliasing in Noble's own pass (Noble's device can do this)
+    bool menuSupersampling = false; // 1.5x menu supersampling; off by default for optimal performance (native 1:1)
 
     // Controls
     float mouseSensitivity = 1.0f; // multiplier on Noble's base mouse scale (0.0008 per pixel); horizontal

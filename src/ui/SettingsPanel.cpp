@@ -1056,6 +1056,10 @@ void SettingsPanel::RenderGraphics() {
             When::Apply, "Off", m_edit.fxaa != m_saved.fxaa)) {
         ToggleValue(m_edit.fxaa);
     }
+    if (Row("MENU SUPERSAMPLING", "Renders Noble's menus and 3D Armory at 1.5x resolution for extra zoom detail. Off renders at your native display resolution (1:1), saving GPU power and recommended for AMD Radeon / mid-range graphics cards.",
+            When::Restart, "Off", m_edit.menuSupersampling != m_saved.menuSupersampling)) {
+        ToggleValue(m_edit.menuSupersampling);
+    }
     Section("REACH'S OWN SETTINGS");
     Paragraph("Texture filtering, shadows, motion blur and draw distance are handled inside Halo: Reach itself. Noble has no "
               "handle on them yet, so they are not offered here rather than shown as switches that do nothing. Set them in MCC's "

@@ -167,6 +167,7 @@ void Settings::Load() {
             Read(j, "throttleUnfocused", d.throttleUnfocused);
             Read(j, "brightness", d.brightness);
             Read(j, "fxaa", d.fxaa);
+            Read(j, "menuSupersampling", d.menuSupersampling);
             Read(j, "mouseSensitivity", d.mouseSensitivity);
             Read(j, "mouseSensitivityY", d.mouseSensitivityY);
             Read(j, "mouseAcceleration", d.mouseAcceleration);
@@ -346,6 +347,7 @@ bool Settings::Save() {
         j["throttleUnfocused"] = d.throttleUnfocused;
         j["brightness"] = d.brightness;
         j["fxaa"] = d.fxaa;
+        j["menuSupersampling"] = d.menuSupersampling;
         j["mouseSensitivity"] = d.mouseSensitivity;
         j["mouseSensitivityY"] = d.mouseSensitivityY;
         j["mouseAcceleration"] = d.mouseAcceleration;

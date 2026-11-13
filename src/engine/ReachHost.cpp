@@ -392,7 +392,22 @@ static HRESULT STDMETHODCALLTYPE HookSwapChainPresent(IDXGISwapChain* swapChain,
         const LONGLONG interval = frequency.QuadPart / targetFps;
         if (now.QuadPart < nextPresentTicks) {
             LONGLONG remaining = nextPresentTicks - now.QuadPart;
-            while (remaining > (frequency.QuadPart / 500)) { // >= 2ms
+            const LONGLONG oneMs = frequency.QuadPart / 1000;
+            const LONGLONG safetyMargin = (frequency.QuadPart * 3) / 2000; // 1.5 ms margin
+
+            // High-resolution Sleep for multi-millisecond waits.
+            // On AMD Ryzen (Zen 2 / 3800X CCX architecture), sleeping the bulk of the wait instead of
+            // busy-spinning calling QPC hundreds of thousands of times per frame eliminates 100% CPU core
+            // burn and cross-CCX interconnect memory bus contention.
+            if (remaining > safetyMargin) {
+                const DWORD msToSleep = static_cast<DWORD>((remaining - safetyMargin) / oneMs);
+                if (msToSleep > 0) {
+                    Sleep(msToSleep);
+                    QueryPerformanceCounter(&now);
+                    remaining = nextPresentTicks - now.QuadPart;
+                }
+            }
+            while (remaining > oneMs) {
                 Sleep(1);
                 QueryPerformanceCounter(&now);
                 remaining = nextPresentTicks - now.QuadPart;
@@ -403,7 +418,11 @@ static HRESULT STDMETHODCALLTYPE HookSwapChainPresent(IDXGISwapChain* swapChain,
             }
         }
         QueryPerformanceCounter(&now);
-        nextPresentTicks = now.QuadPart + interval;
+        if (now.QuadPart > nextPresentTicks + interval) {
+            nextPresentTicks = now.QuadPart + interval;
+        } else {
+            nextPresentTicks += interval;
+        }
     }
 
     if (!s_originalSwapChainPresent) return DXGI_ERROR_INVALID_CALL;
