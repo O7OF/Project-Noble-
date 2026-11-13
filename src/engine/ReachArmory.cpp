@@ -2821,8 +2821,12 @@ static int32_t MarineRegionIndexSEH(uintptr_t base, uint32_t unitDatum, uint32_t
     }
 }
 
-static bool MarineApplySEH(uintptr_t base, uint32_t unit, const uint32_t* pairs, size_t pairCount, const float* pri, const float* sec, const float* c3, const float* c4, uint8_t* results) {
+static bool MarineApplySEH(uintptr_t base, uint32_t unit, const uint32_t* pairs, size_t pairCount, const float* pri, const float* sec, const float* c3, const float* c4, uint8_t* results, uint32_t variantSid) {
     __try {
+        // haloreach+0x472B70 = object_set_variant(object, variant string id): what the menu script runs before its
+        // object_set_permutation calls (hs evaluator haloreach+0x19C0B8, 2026-11-13).
+        using SetVariantFn = void(__fastcall*)(uint32_t, uint32_t);
+        if (variantSid) reinterpret_cast<SetVariantFn>(base + 0x472B70)(unit, variantSid);
         using SetRegionPermutationFn = uint8_t(__fastcall*)(uint32_t, uint32_t, uint32_t, uint8_t);
         using SetChangeColorFn = uint8_t(__fastcall*)(uint32_t, int32_t, const float*);
         auto SetRegionPermutation = reinterpret_cast<SetRegionPermutationFn>(base + 0x4729F4);
@@ -2902,9 +2906,15 @@ void ReachArmory::SyncMarine() {
     if (!s_marineSidsTried) {
         s_marineSidsTried = true;
         std::vector<std::string> wanted = { "helmet", "flair_backpack" };
+        if (const char* v = std::getenv("NOBLE_MARINE_VARIANT")) wanted.push_back(v);
         for (const auto& [r, p] : sel.marinePieces) { wanted.push_back(r); wanted.push_back(p); }
         const size_t n = ReadMapStringIds(mapPath, wanted, s_marineSids);
         NOBLE_INFO("MarineArmor: {} of {} names found in {}", n, wanted.size(), mapPath);
+        {   // 2026-11-13: the ids themselves (compare with Reclaimer: tools\rc_meshidx.fsx)
+            std::string ids;
+            for (const auto& [k, v] : s_marineSids) { char buf[24]; snprintf(buf, sizeof(buf), "=0x%X", v); ids += " " + k + buf; }
+            NOBLE_INFO("MarineArmor: string ids{}", ids);
+        }
     }
     auto sid = [](const std::string& name) -> uint32_t {
         auto it = s_marineSids.find(name);
@@ -2951,8 +2961,11 @@ void ReachArmory::SyncMarine() {
     const float c3[3] = { sel.marineThirdRgb[0], sel.marineThirdRgb[1], sel.marineThirdRgb[2] };
     const float c4[3] = { sel.marineFourthRgb[0], sel.marineFourthRgb[1], sel.marineFourthRgb[2] };
     uint8_t results[16] = {};
+    // Dev (2026-11-13): env NOBLE_MARINE_VARIANT=<model variant> runs object_set_variant first, on the first apply tick.
+    static const char* s_variant = std::getenv("NOBLE_MARINE_VARIANT");
+    const uint32_t variantSid = (s_variant && s_ticksLeft == 29) ? sid(s_variant) : 0u;
     const bool ok = MarineApplySEH(base, unit, pairs.data(), pairs.size() / 2, sel.marineColors ? pri : nullptr,
-                                   sel.marineColors ? sec : nullptr, sel.marineColors ? c3 : nullptr, sel.marineColors ? c4 : nullptr, results);
+                                   sel.marineColors ? sec : nullptr, sel.marineColors ? c3 : nullptr, sel.marineColors ? c4 : nullptr, results, variantSid);
     if (s_ticksLeft == 29) {
         NOBLE_INFO("MarineArmor: applied {} of {} piece(s){} to 0x{:08X}{}", pairs.size() / 2, sel.marinePieces.size(),
                    sel.marineColors ? " + colours" : "", unit, ok ? "" : " (FAILED)");
