@@ -2702,6 +2702,233 @@ void ReachArmory::SyncMatchLiveBipeds() {
     SyncMatchLiveBipedsSEH(base, wantSlots, LocalUnitDatum(base));
 }
 
+// =====================================================================================================================
+// Marine / ODST pieces (2026-11-13). Mods such as Improved Trooper Firefight make the player a Marine
+// (objects\characters\marine\marine). The Armory's Marine tab saves {region, permutation} picks; here they are put on
+// the LOCAL player's biped with the engine's own set-permutation call, the way the menu does it for the Spartan.
+// String ids are map-specific, so they are read from the scenario map file (header +0x30.. string tables, the same
+// layout tools\map-slim.ps1 / sidcsv.py use for the menu map). Networked sessions are skipped: Firefight/campaign
+// co-op are lockstep and a local-only change to the object pool would desync them.
+// =====================================================================================================================
+namespace {
+std::mutex s_marineMutex;
+std::string s_marineMapPath;                              // last scenario map resolved by slot 48
+std::string s_marineSidMapPath;                           // map the table below was read from
+std::unordered_map<std::string, uint32_t> s_marineSids;   // only the names the Marine code asks for
+bool s_marineSidsTried = false;
+}
+
+void ReachArmory::NoteMapPath(const std::string& path) {
+    std::string name = ToLowerAscii(std::filesystem::path(path).filename().string());
+    if (name == "shared.map" || name == "campaign.map" || name == "mainmenu.map" || name == "noble_menu.map" ||
+        name.find("elite_pack") != std::string::npos || name.find("mainmenu_all") != std::string::npos) return;
+    std::lock_guard<std::mutex> lock(s_marineMutex);
+    if (s_marineMapPath != path) {
+        s_marineMapPath = path;
+        NOBLE_INFO("MarineArmor: scenario map file {}", path);
+    }
+}
+
+// Reads the string tables of `path` and keeps the ids of `wanted` (lower case). Header: +0x30 string count,
+// +0x34 string data offset, +0x38 data size, +0x3C index offset, +0x40 namespace count, +0x44 namespace table offset.
+// A string's id: namespace k (k>0) -> (k << 19) | (g - start of namespace k); the global block maps as in sidcsv.py.
+static size_t ReadMapStringIds(const std::string& path, const std::vector<std::string>& wanted,
+                               std::unordered_map<std::string, uint32_t>& out) {
+    std::ifstream f(std::filesystem::u8path(path), std::ios::binary);
+    if (!f) return 0;
+    std::vector<char> h(0x48);
+    if (!f.read(h.data(), h.size())) return 0;
+    auto i32 = [&](size_t o) { int32_t v; std::memcpy(&v, h.data() + o, 4); return v; };
+    const int32_t count = i32(0x30), dataOff = i32(0x34), dataLen = i32(0x38), idxOff = i32(0x3C);
+    const int32_t nsCount = i32(0x40), nsOff = i32(0x44);
+    if (count <= 0 || count > 400000 || dataLen <= 0 || dataLen > 64 * 1024 * 1024 || nsCount <= 0 || nsCount > 64) return 0;
+    std::vector<int32_t> idx(static_cast<size_t>(count)), ns(static_cast<size_t>(nsCount));
+    std::vector<char> data(static_cast<size_t>(dataLen));
+    f.seekg(idxOff); f.read(reinterpret_cast<char*>(idx.data()), static_cast<std::streamsize>(idx.size() * 4));
+    f.seekg(nsOff); f.read(reinterpret_cast<char*>(ns.data()), static_cast<std::streamsize>(ns.size() * 4));
+    f.seekg(dataOff); f.read(data.data(), dataLen);
+    if (!f) return 0;
+    int64_t total = 0;
+    for (int32_t n : ns) total += n;
+    auto sidOf = [&](int64_t g) -> uint32_t {
+        if (g < ns[0]) return static_cast<uint32_t>(g);
+        if (g >= total) return static_cast<uint32_t>(g - total + ns[0]);
+        int64_t base = ns[0];
+        size_t k = 1;
+        while (k < ns.size() && g >= base + ns[k]) { base += ns[k]; ++k; }
+        return static_cast<uint32_t>((k << 19) | static_cast<uint64_t>(g - base));
+    };
+    size_t found = 0;
+    for (int32_t g = 0; g < count; ++g) {
+        const int32_t o = idx[static_cast<size_t>(g)];
+        if (o < 0 || o >= dataLen) continue;
+        const char* s = data.data() + o;
+        const size_t maxLen = static_cast<size_t>(dataLen - o);
+        const size_t len = strnlen(s, maxLen);
+        const std::string name(s, len);
+        if (std::find(wanted.begin(), wanted.end(), name) == wanted.end()) continue;
+        if (out.emplace(name, sidOf(g)).second) ++found;
+    }
+    return found;
+}
+
+// Region index of `regionSid` on the object's model, or -1 (haloreach+0x1CBF0C, the lookup set-permutation uses).
+static int32_t MarineRegionIndexSEH(uintptr_t base, uint32_t unitDatum, uint32_t regionSid) {
+    __try {
+        const uint32_t tlsIdx = *reinterpret_cast<const uint32_t*>(base + 0xC17B18);
+        const uintptr_t tlsArray = *reinterpret_cast<const uintptr_t*>(__readgsqword(0x58) + static_cast<uintptr_t>(tlsIdx) * 8u);
+        if (!tlsArray) return -1;
+        const uint8_t* objTable = *reinterpret_cast<const uint8_t* const*>(tlsArray + 0x10);
+        if (!objTable) return -1;
+        const uint8_t* entries = *reinterpret_cast<const uint8_t* const*>(objTable + 0x50);
+        const int32_t maxObjects = *reinterpret_cast<const int32_t*>(objTable + 0x44);
+        const int32_t i = static_cast<int32_t>(unitDatum & 0xFFFFu);
+        if (!entries || i < 0 || i >= maxObjects) return -1;
+        const uint8_t* entry = entries + static_cast<size_t>(i) * 0x18;
+        if (*reinterpret_cast<const uint16_t*>(entry) != static_cast<uint16_t>(unitDatum >> 16)) return -1;
+        const uint8_t* obj = *reinterpret_cast<const uint8_t* const*>(entry + 0x10);
+        if (!obj) return -1;
+        const uint16_t defIdx = *reinterpret_cast<const uint16_t*>(obj);
+        const uint8_t* tagInstances = *reinterpret_cast<const uint8_t* const*>(base + 0xC1A600);
+        if (!tagInstances) return -1;
+        const uint32_t packed = *reinterpret_cast<const uint32_t*>(tagInstances + static_cast<size_t>(defIdx) * 8 + 4);
+        const uint64_t* pages = reinterpret_cast<const uint64_t*>(base + 0x4E39F20);
+        const uint8_t* def = reinterpret_cast<const uint8_t*>(pages[packed >> 28] + static_cast<uint64_t>(packed) * 4);
+        const uint32_t model = *reinterpret_cast<const uint32_t*>(def + 0x70);
+        if (model == 0xFFFFFFFFu) return -1;
+        using RegionIndexFn = int32_t(__fastcall*)(uint32_t, uint32_t);
+        return reinterpret_cast<RegionIndexFn>(base + 0x1CBF0C)(model, regionSid);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return -1;
+    }
+}
+
+static bool MarineApplySEH(uintptr_t base, uint32_t unit, const uint32_t* pairs, size_t pairCount, const float* pri, const float* sec) {
+    __try {
+        using SetRegionPermutationFn = uint8_t(__fastcall*)(uint32_t, uint32_t, uint32_t, uint8_t);
+        using SetChangeColorFn = uint8_t(__fastcall*)(uint32_t, int32_t, const float*);
+        auto SetRegionPermutation = reinterpret_cast<SetRegionPermutationFn>(base + 0x4729F4);
+        auto SetChangeColor = reinterpret_cast<SetChangeColorFn>(base + 0x473858);
+        for (size_t p = 0; p < pairCount; ++p) SetRegionPermutation(unit, pairs[p * 2], pairs[p * 2 + 1], 1);
+        if (pri) SetChangeColor(unit, 0, pri);
+        if (sec) SetChangeColor(unit, 1, sec);
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+static uint32_t LocalUnitDatumNow(uintptr_t base) {
+    using GetLocalUnitFn = int32_t(__fastcall*)(int32_t);
+    return static_cast<uint32_t>(reinterpret_cast<GetLocalUnitFn>(base + 0x53EF8)(0));
+}
+
+static uint32_t LocalUnitDatumNowSEH(uintptr_t base) {
+    __try { return LocalUnitDatumNow(base); } __except (EXCEPTION_EXECUTE_HANDLER) { return 0xFFFFFFFFu; }
+}
+
+void ReachArmory::SyncMarine() {
+    static ULONGLONG s_next = 0;
+    const ULONGLONG now = GetTickCount64();
+    if (now < s_next) return;
+    s_next = now + 100;
+
+    ReachArmorySelection sel = GetSelection();
+    // Dev test (2026-11-13): env NOBLE_MARINE_TEST="helmet=odst_light;flair_backpack=odst_jetpack;color=1,0,0;color2=0,0,1"
+    // replaces the saved Marine picks.
+    if (const char* test = std::getenv("NOBLE_MARINE_TEST")) {
+        sel.marinePieces.clear();
+        std::stringstream ss(test);
+        std::string item;
+        while (std::getline(ss, item, ';')) {
+            const size_t eq = item.find('=');
+            if (eq == std::string::npos) continue;
+            const std::string k = item.substr(0, eq), v = item.substr(eq + 1);
+            float r = 0, g = 0, b = 0;
+            if ((k == "color" || k == "color2") && sscanf_s(v.c_str(), "%f,%f,%f", &r, &g, &b) == 3) {
+                sel.marineColors = true;
+                (k == "color" ? sel.marinePrimaryRgb : sel.marineSecondaryRgb) = { r, g, b };
+            } else {
+                sel.marinePieces.emplace_back(k, v);
+            }
+        }
+    }
+    if (sel.marinePieces.empty() && !sel.marineColors) return;
+    // Solo Firefight still runs Noble's transport as a host with no peers; only skip when other players are in.
+    if (NetworkTransport::Get().IsActive() &&
+        (!NetworkTransport::Get().IsHost() || NetworkTransport::Get().GetGamePeerCount() > 0)) {
+        static bool s_logged = false;
+        if (!s_logged) { s_logged = true; NOBLE_INFO("MarineArmor: other players in the session - Marine pieces are not applied (lockstep safety)"); }
+        return;
+    }
+    HMODULE hReach = GetModuleHandleW(L"haloreach.dll");
+    if (!hReach) return;
+    const uintptr_t base = reinterpret_cast<uintptr_t>(hReach);
+
+    // String ids of every name we may need, read once per map.
+    std::string mapPath;
+    { std::lock_guard<std::mutex> lock(s_marineMutex); mapPath = s_marineMapPath; }
+    if (mapPath.empty()) return;
+    if (mapPath != s_marineSidMapPath) {
+        s_marineSidMapPath = mapPath;
+        s_marineSids.clear();
+        s_marineSidsTried = false;
+    }
+    if (!s_marineSidsTried) {
+        s_marineSidsTried = true;
+        std::vector<std::string> wanted = { "helmet", "flair_backpack" };
+        for (const auto& [r, p] : sel.marinePieces) { wanted.push_back(r); wanted.push_back(p); }
+        const size_t n = ReadMapStringIds(mapPath, wanted, s_marineSids);
+        NOBLE_INFO("MarineArmor: {} of {} names found in {}", n, wanted.size(), mapPath);
+    }
+    auto sid = [](const std::string& name) -> uint32_t {
+        auto it = s_marineSids.find(name);
+        return it == s_marineSids.end() ? 0u : it->second;
+    };
+
+    const uint32_t unit = LocalUnitDatumNowSEH(base);
+    if (unit == 0xFFFFFFFFu) return;
+
+    // Apply for ~3 s after a new body (spawn / respawn) or new picks, then leave it alone.
+    static uint32_t s_lastUnit = 0xFFFFFFFFu;
+    static std::vector<std::pair<std::string, std::string>> s_lastPieces;
+    static std::array<float, 3> s_lastPri{}, s_lastSec{};
+    static bool s_lastColors = false;
+    static int s_ticksLeft = 0;
+    static int s_isMarine = -1;
+    if (unit != s_lastUnit || sel.marinePieces != s_lastPieces || sel.marineColors != s_lastColors ||
+        sel.marinePrimaryRgb != s_lastPri || sel.marineSecondaryRgb != s_lastSec) {
+        if (unit != s_lastUnit) s_isMarine = -1;
+        s_lastUnit = unit; s_lastPieces = sel.marinePieces; s_lastColors = sel.marineColors;
+        s_lastPri = sel.marinePrimaryRgb; s_lastSec = sel.marineSecondaryRgb;
+        s_ticksLeft = 30;
+    }
+    if (s_ticksLeft <= 0) return;
+    --s_ticksLeft;
+
+    if (s_isMarine < 0) {
+        const uint32_t helmetSid = sid("helmet"), backpackSid = sid("flair_backpack");
+        s_isMarine = (helmetSid && backpackSid && MarineRegionIndexSEH(base, unit, helmetSid) >= 0 &&
+                      MarineRegionIndexSEH(base, unit, backpackSid) >= 0) ? 1 : 0;
+        NOBLE_INFO("MarineArmor: local unit 0x{:08X} is {}a Marine", unit, s_isMarine ? "" : "not ");
+    }
+    if (s_isMarine != 1) return;
+
+    std::vector<uint32_t> pairs;
+    for (const auto& [r, p] : sel.marinePieces) {
+        const uint32_t rs = sid(r), ps = sid(p);
+        if (rs && ps) { pairs.push_back(rs); pairs.push_back(ps); }
+    }
+    const float pri[3] = { sel.marinePrimaryRgb[0], sel.marinePrimaryRgb[1], sel.marinePrimaryRgb[2] };
+    const float sec[3] = { sel.marineSecondaryRgb[0], sel.marineSecondaryRgb[1], sel.marineSecondaryRgb[2] };
+    const bool ok = MarineApplySEH(base, unit, pairs.data(), pairs.size() / 2, sel.marineColors ? pri : nullptr,
+                                   sel.marineColors ? sec : nullptr);
+    if (s_ticksLeft == 29) {
+        NOBLE_INFO("MarineArmor: applied {} of {} piece(s){} to 0x{:08X}{}", pairs.size() / 2, sel.marinePieces.size(),
+                   sel.marineColors ? " + colours" : "", unit, ok ? "" : " (FAILED)");
+    }
+}
+
 std::vector<std::string> ReachArmory::MissingPermutationsFor(const std::string& list, const std::string& item) {
     std::vector<std::string> missing;
     const std::vector<PmcgChange>* changes = PmcgItem(list.c_str(), item);

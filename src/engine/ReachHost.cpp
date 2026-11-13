@@ -654,6 +654,7 @@ static uint64_t __fastcall HostSlot1_FrameTick(void* thisPtr, uint64_t a1, uint6
 
     // Synchronize live biped change colors and visor shaders in all match modes (Campaign, Firefight, Forge, Custom Games)
     ReachArmory::SyncMatchLiveBipeds();
+    ReachArmory::SyncMarine();   // Marine / ODST pieces when a mod makes the player a Marine
     if (a1 > 0x10000) {
         IDXGISwapChain* swapChain = reinterpret_cast<IDXGISwapChain*>(a1);
         InstallPresentSettingsHook(swapChain);
@@ -2624,6 +2625,10 @@ static uint64_t __fastcall HostSlot48_FilePathResolver(void* thisPtr, uint64_t a
 
         std::string resolvedA = absPath.string();
         SafeCopyAnsiString(s_resolvedPathBufA, MAX_PATH, resolvedA.c_str());
+        // Marine pieces (2026-11-13): remember the scenario map file, so its string ids can be read.
+        if (resolvedA.size() > 4 && _stricmp(resolvedA.c_str() + resolvedA.size() - 4, ".map") == 0) {
+            ReachArmory::NoteMapPath(resolvedA);
+        }
 
         // Safely write the resolved path back into inOutPtr without touching caller stack frames
         if (isWide) {

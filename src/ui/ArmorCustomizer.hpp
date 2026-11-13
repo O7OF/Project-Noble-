@@ -73,6 +73,12 @@ struct AppearanceProfile {
     int eliteArmsIndex = 0;
     int eliteLegsIndex = 0;
     int eliteArmorEffectIndex = 0;
+    // Marine / ODST picks (2026-11-13), used when a mod makes the player a Marine: position in the slot's option
+    // list (MarineSlots() in ArmorCustomizer.cpp), 0 = keep the mod's own piece. Saved by permutation name.
+    std::array<int, 9> marinePieces = {};
+    int marineColorsOn = 0;          // 0 = the mod's colours, 1 = the two below
+    int marinePrimaryColor = 1;      // Reach palette index
+    int marineSecondaryColor = 10;
     int nameplateIndex = 1;
     int emblemIndex = 1;            // Reach foreground index = position in UiArt::GetEmblemCatalog() (1 = Bull's-eye)
     int emblemBackgroundIndex = 0;  // Reach background index: 0 = Blank, n = UiArt::GetEmblemBackgrounds()[n - 1]
@@ -137,6 +143,7 @@ private:
     // m_profile cannot silently reset the equipped colour back to Default (index 0).
     int m_visorSelection = -1;
     PlayerSpecies m_previewSpecies = PlayerSpecies::Spartan;
+    bool m_marineTab = false;   // MARINE tab: edits the Marine / ODST picks (not a species of its own)
     std::filesystem::path m_profilePath;
     bool m_dirty = false;
     mutable bool m_syncedInitial = false;

@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace noble {
@@ -69,6 +70,12 @@ struct ReachArmorySelection {
     // player's appearance record and the engine already renders every player's own choice.
     bool primaryCustom = false;
     bool secondaryCustom = false;
+    // Marine / ODST pieces (2026-11-13): applied to the local player's biped in matches where a mod makes the player a
+    // Marine (Reach's objects\characters\marine model). {region, permutation} pairs; empty = keep the mod's pieces.
+    std::vector<std::pair<std::string, std::string>> marinePieces;
+    bool marineColors = false;   // apply marinePrimaryRgb / marineSecondaryRgb to change colours 0 / 1
+    std::array<float, 3> marinePrimaryRgb = { 0.3f, 0.3f, 0.3f };
+    std::array<float, 3> marineSecondaryRgb = { 0.3f, 0.3f, 0.3f };
     bool accentCustom = false;
     bool lightsCustom = false;
 };
@@ -97,6 +104,10 @@ public:
     static void Tick();
     static void NotifyEngineTick();
     static void SyncMatchLiveBipeds();
+    // Marine / ODST pieces on the local player's Marine biped (mods). Called every match frame.
+    static void SyncMarine();
+    // Slot 48 reports every map file it resolves; the scenario map's string ids are read from it.
+    static void NoteMapPath(const std::string& path);
 
     // True once the Armory map's HS GLOBALS table is active.
     static bool IsSceneReady();

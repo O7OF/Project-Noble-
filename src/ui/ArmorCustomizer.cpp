@@ -167,6 +167,38 @@ struct HelmetSpec {
 };
 
 // All helmet string_ids verified against data/menumaps/mainmenu_all.string_ids.csv (IDs 12473..12537 & 8905..8927)
+// Marine / ODST pieces (2026-11-13): Reach's objects\characters\marine render model (regions and permutations read
+// from the HREK tag; tools\rm_regions.py). Option 0 of every slot keeps the mod's own piece.
+struct MarineOption { const char* name; const char* perm; };
+struct MarineSlot { const char* label; const char* region; std::vector<MarineOption> options; };
+const std::vector<MarineSlot>& MarineSlots() {
+    static const std::vector<MarineSlot> slots = {
+        { "Helmet", "helmet", { {"MOD DEFAULT", ""}, {"TROOPER", "trooper_light"}, {"TROOPER HEAVY", "trooper_heavy"},
+            {"TROOPER RADIO", "trooper_radio"}, {"TROOPER MEDIC", "trooper_medic"}, {"COMMANDER", "trooper_commander"},
+            {"OFFICER", "trooper_officer"}, {"ODST", "odst_light"}, {"ODST JUMP JET", "odst_jetpack"},
+            {"SPACE MARINE", "space_marine"}, {"SPACE MARINE (OPEN)", "space_marine_no_visor"} } },
+        { "Face", "head", { {"MOD DEFAULT", ""}, {"FACE 1", "default"}, {"FACE 2", "trooper_light"}, {"FACE 3", "trooper_heavy"},
+            {"FACE 4", "trooper_radio"}, {"FACE 5", "trooper_medic"}, {"FACE 6", "trooper_commander"} } },
+        { "Left Shoulder", "flair_shoulder_l", { {"MOD DEFAULT", ""}, {"TROOPER", "trooper_light"}, {"TROOPER HEAVY", "trooper_heavy"},
+            {"ODST", "odst_light"}, {"SPACE MARINE", "space_marine"} } },
+        { "Right Shoulder", "flair_shoulder_r", { {"MOD DEFAULT", ""}, {"TROOPER", "trooper_light"}, {"TROOPER HEAVY", "trooper_heavy"},
+            {"ODST", "odst_light"}, {"SPACE MARINE", "space_marine"} } },
+        { "Chest", "flair_chest_a", { {"MOD DEFAULT", ""}, {"TROOPER", "trooper_light"}, {"TROOPER HEAVY", "trooper_heavy"},
+            {"ODST", "odst_light"}, {"SPACE MARINE", "space_marine"} } },
+        { "Backpack", "flair_backpack", { {"MOD DEFAULT", ""}, {"STANDARD", "default"}, {"TROOPER", "trooper_light"},
+            {"TROOPER HEAVY", "trooper_heavy"}, {"RADIO", "trooper_radio"}, {"MEDIC", "trooper_medic"},
+            {"COMMANDER", "trooper_commander"}, {"OFFICER", "trooper_officer"}, {"ODST", "odst_light"},
+            {"ODST JUMP JET", "odst_jetpack"}, {"SPACE MARINE", "space_marine"}, {"SPACE MARINE (OPEN)", "space_marine_no_visor"} } },
+        { "Belt", "flair_belt", { {"MOD DEFAULT", ""}, {"TROOPER", "trooper_light"}, {"TROOPER HEAVY", "trooper_heavy"},
+            {"ODST", "odst_light"}, {"SPACE MARINE", "space_marine"} } },
+        { "Neck", "flair_neck", { {"MOD DEFAULT", ""}, {"TROOPER", "trooper_light"}, {"RADIO", "trooper_radio"},
+            {"SPACE MARINE", "space_marine"} } },
+        { "Legs", "legs", { {"MOD DEFAULT", ""}, {"STANDARD", "default"}, {"TROOPER", "trooper_light"},
+            {"TROOPER HEAVY", "trooper_heavy"}, {"SPACE MARINE", "space_marine"} } },
+    };
+    return slots;
+}
+
 const std::vector<HelmetSpec>& GetSpartanHelmets() {
     static const std::vector<HelmetSpec> kHelmets = {
         {
@@ -1263,6 +1295,19 @@ void ArmorCustomizer::SyncToReachArmory() const {
     sel.accentCustom = accCust;
     sel.lightsCustom = lgtCust;
     sel.visorRgb = { SrgbToLinear(vCol.r), SrgbToLinear(vCol.g), SrgbToLinear(vCol.b) };
+    // Marine / ODST picks (used only when a mod makes the player a Marine; ReachArmory::SyncMarine).
+    {
+        const auto& slots = MarineSlots();
+        for (size_t k = 0; k < slots.size() && k < m_profile.marinePieces.size(); ++k) {
+            const int o = std::clamp(m_profile.marinePieces[k], 0, static_cast<int>(slots[k].options.size()) - 1);
+            if (slots[k].options[static_cast<size_t>(o)].perm[0]) sel.marinePieces.emplace_back(slots[k].region, slots[k].options[static_cast<size_t>(o)].perm);
+        }
+        sel.marineColors = m_profile.marineColorsOn != 0;
+        const auto& mp = kReachColors[std::clamp(m_profile.marinePrimaryColor, 0, 29)];
+        const auto& ms = kReachColors[std::clamp(m_profile.marineSecondaryColor, 0, 29)];
+        sel.marinePrimaryRgb = { SrgbToLinear(mp.r), SrgbToLinear(mp.g), SrgbToLinear(mp.b) };
+        sel.marineSecondaryRgb = { SrgbToLinear(ms.r), SrgbToLinear(ms.g), SrgbToLinear(ms.b) };
+    }
 
     static auto SelectionsEqual = [](const ReachArmorySelection& a, const ReachArmorySelection& b) -> bool {
         return a.previewElite == b.previewElite && a.isFemale == b.isFemale &&
@@ -1282,7 +1327,9 @@ void ArmorCustomizer::SyncToReachArmory() const {
                a.eliteArmorEffectIndex == b.eliteArmorEffectIndex &&
                a.primaryRgb == b.primaryRgb && a.secondaryRgb == b.secondaryRgb &&
                a.accentRgb == b.accentRgb && a.lightsRgb == b.lightsRgb && a.visorRgb == b.visorRgb &&
-               a.lightsCustom == b.lightsCustom;
+               a.lightsCustom == b.lightsCustom &&
+               a.marinePieces == b.marinePieces && a.marineColors == b.marineColors &&
+               a.marinePrimaryRgb == b.marinePrimaryRgb && a.marineSecondaryRgb == b.marineSecondaryRgb;
     };
 
     if (SelectionsEqual(s_pendingSelection, sel) && !s_pushPending) {
@@ -1456,6 +1503,24 @@ bool ArmorCustomizer::LoadProfile(const std::filesystem::path& path) {
             remapByStringId("knees_id", GetSpartanKneeGuards(), [](const MultiLayerSpec& k) { return k.stringId; }, m_profile.kneeGuardsIndex);
             remapByStringId("visor_id", kVisorColors, [](const VisorEntry& v) { return v.stringId; }, m_profile.visorColorIndex);
             remapByStringId("armor_effect_id", kArmorEffects, [](const SimpleOption& a) { return a.stringId; }, m_profile.armorEffectIndex);
+        }
+
+        // Marine / ODST picks (2026-11-13), saved by permutation name per region.
+        if (j.contains("marine") && j["marine"].is_object()) {
+            const auto& mj = j["marine"];
+            const auto& slots = MarineSlots();
+            for (size_t k = 0; k < slots.size() && k < m_profile.marinePieces.size(); ++k) {
+                m_profile.marinePieces[k] = 0;
+                if (!mj.contains(slots[k].region) || !mj[slots[k].region].is_string()) continue;
+                const std::string perm = mj[slots[k].region].get<std::string>();
+                for (size_t o = 1; o < slots[k].options.size(); ++o)
+                    if (perm == slots[k].options[o].perm) m_profile.marinePieces[k] = static_cast<int>(o);
+            }
+            if (mj.contains("colors_on") && mj["colors_on"].is_boolean()) m_profile.marineColorsOn = mj["colors_on"].get<bool>() ? 1 : 0;
+            if (mj.contains("primary_color") && mj["primary_color"].is_number_integer())
+                m_profile.marinePrimaryColor = std::clamp(mj["primary_color"].get<int>(), 0, 29);
+            if (mj.contains("secondary_color") && mj["secondary_color"].is_number_integer())
+                m_profile.marineSecondaryColor = std::clamp(mj["secondary_color"].get<int>(), 0, 29);
         }
 
         if (j.contains("elite") && j["elite"].is_object()) {
@@ -1710,6 +1775,19 @@ bool ArmorCustomizer::SaveProfile(const std::filesystem::path& path) {
             {"armor_effect_id", kArmorEffects[m_profile.armorEffectIndex].stringId},
             {"voice_id", kFirefightVoices[m_profile.firefightVoiceIndex].stringId}
         };
+
+        {   // Marine / ODST picks (2026-11-13): region -> permutation name ("" = the mod's own piece).
+            nlohmann::json mj = nlohmann::json::object();
+            const auto& slots = MarineSlots();
+            for (size_t k = 0; k < slots.size() && k < m_profile.marinePieces.size(); ++k) {
+                const int o = std::clamp(m_profile.marinePieces[k], 0, static_cast<int>(slots[k].options.size()) - 1);
+                mj[slots[k].region] = slots[k].options[static_cast<size_t>(o)].perm;
+            }
+            mj["colors_on"] = m_profile.marineColorsOn != 0;
+            mj["primary_color"] = m_profile.marinePrimaryColor;
+            mj["secondary_color"] = m_profile.marineSecondaryColor;
+            j["marine"] = mj;
+        }
 
         j["elite"] = {
             {"primary_color", m_profile.elitePrimaryColor},
@@ -2033,6 +2111,21 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
                     if (s_index < count) {
                         m_profile.visorColorIndex = s_index; m_visorSelection = s_index; name = kVisorColors[s_index].name;
                         m_pickerScrollToEquipped = true;   // dev: keep the picked tile in view for captures
+                    }
+                } else if (s_cycle == "marine") {
+                    // Dev test (2026-11-13): open the MARINE tab and save distinct picks through the normal save path
+                    // (ODST helmet/shoulders/chest, ODST jump jet pack, my colours red/cobalt).
+                    count = 1;
+                    if (s_index == 0) {
+                        m_marineTab = true;
+                        m_profile.marinePieces = { 7, 0, 3, 3, 3, 9, 0, 0, 0 };
+                        m_profile.marineColorsOn = 1;
+                        m_profile.marinePrimaryColor = 3;
+                        m_profile.marineSecondaryColor = 16;
+                        m_dirty = true;
+                        SaveProfile(m_profilePath);
+                        SyncToReachArmory();
+                        name = "marine picks saved";
                     }
                 } else if (s_cycle == "elitecolor") {
                     // Dev test (2026-11-11): switch the preview to the Elite, then change the Elite colours the way
@@ -2437,6 +2530,32 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
         rows.push_back({ "IDENTITY", "Service Tag", RowKind::Tag });
     }
 
+    // MARINE tab (2026-11-13): the Marine / ODST picks replace the species rows. They are applied in matches where a
+    // mod makes the player a Marine (ReachArmory::SyncMarine); there is no Marine on the Armory pedestal yet.
+    if (m_marineTab) {
+        rows.clear();
+        static const char* kMarineDesc = "Used when a mod makes you a Marine or ODST (for example Trooper Firefight). "
+                                         "MOD DEFAULT keeps the mod's own piece.";
+        const auto& slots = MarineSlots();
+        for (size_t k = 0; k < slots.size() && k < m_profile.marinePieces.size(); ++k) {
+            SlotRow r{ "MARINE / ODST", slots[k].label, RowKind::List, &m_profile.marinePieces[k] };
+            for (const auto& o : slots[k].options) r.options.push_back({ o.name, kMarineDesc });
+            rows.push_back(std::move(r));
+        }
+        SlotRow on{ "COLORS", "Marine Colors", RowKind::List, &m_profile.marineColorsOn };
+        on.options = { { "MOD DEFAULT", "Keep the mod's Marine colours." },
+                       { "MY COLORS", "Paint your Marine with the Primary and Secondary colours below." } };
+        rows.push_back(std::move(on));
+        std::vector<PickOption> palette;
+        for (const auto& c : kReachColors) palette.push_back({ c.name, "", ColourU32(c.r, c.g, c.b) });
+        SlotRow mp{ "COLORS", "Primary", RowKind::Colour, &m_profile.marinePrimaryColor };
+        mp.options = palette;
+        rows.push_back(std::move(mp));
+        SlotRow ms{ "COLORS", "Secondary", RowKind::Colour, &m_profile.marineSecondaryColor };
+        ms.options = palette;
+        rows.push_back(std::move(ms));
+    }
+
     const int rowCount = static_cast<int>(rows.size());
     m_focusedRow = std::clamp(m_focusedRow, 0, rowCount - 1);
 
@@ -2601,14 +2720,15 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
 
         // Preferred Species Switcher
         {
-            const float btnW = (listW - 12.0f * s) * 0.5f;
+            const float btnW = (listW - 18.0f * s) / 3.0f;
             const float btnH = 28.0f * s;
-            const bool isSpartan = (m_profile.species == PlayerSpecies::Spartan);
-            const bool isElite = (m_profile.species == PlayerSpecies::Elite);
+            const bool isSpartan = !m_marineTab && (m_profile.species == PlayerSpecies::Spartan);
+            const bool isElite = !m_marineTab && (m_profile.species == PlayerSpecies::Elite);
 
             ImGui::PushStyleColor(ImGuiCol_Button, isSpartan ? ImVec4(0.20f, 0.45f, 0.70f, 0.85f) : ImVec4(0.10f, 0.14f, 0.18f, 0.6f));
             ImGui::PushStyleColor(ImGuiCol_Border, isSpartan ? ImVec4(0.55f, 0.85f, 1.0f, 1.0f) : ImVec4(0.25f, 0.35f, 0.45f, 0.4f));
             if (ImGui::Button("SPARTAN", ImVec2(btnW, btnH))) {
+                m_marineTab = false;
                 SetPreferredSpecies(PlayerSpecies::Spartan);
             }
             ImGui::PopStyleColor(2);
@@ -2618,7 +2738,20 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
             ImGui::PushStyleColor(ImGuiCol_Button, isElite ? ImVec4(0.18f, 0.40f, 0.68f, 0.90f) : ImVec4(0.10f, 0.14f, 0.18f, 0.6f));
             ImGui::PushStyleColor(ImGuiCol_Border, isElite ? ImVec4(0.56f, 0.85f, 1.0f, 1.0f) : ImVec4(0.25f, 0.35f, 0.45f, 0.4f));
             if (ImGui::Button("ELITE", ImVec2(btnW, btnH))) {
+                m_marineTab = false;
                 SetPreferredSpecies(PlayerSpecies::Elite);
+            }
+            ImGui::PopStyleColor(2);
+
+            ImGui::SameLine();
+
+            // MARINE edits the Marine / ODST picks for Marine mods; it doesn't change the species you play.
+            ImGui::PushStyleColor(ImGuiCol_Button, m_marineTab ? ImVec4(0.18f, 0.40f, 0.68f, 0.90f) : ImVec4(0.10f, 0.14f, 0.18f, 0.6f));
+            ImGui::PushStyleColor(ImGuiCol_Border, m_marineTab ? ImVec4(0.56f, 0.85f, 1.0f, 1.0f) : ImVec4(0.25f, 0.35f, 0.45f, 0.4f));
+            if (ImGui::Button("MARINE", ImVec2(btnW, btnH)) && !m_marineTab) {
+                m_marineTab = true;
+                m_focusedRow = 0;
+                m_pickerScrollToEquipped = true;
             }
             ImGui::PopStyleColor(2);
 
