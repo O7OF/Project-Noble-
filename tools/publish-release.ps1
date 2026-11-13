@@ -43,6 +43,7 @@ $excludeFiles = 'appearance*','career*','settings*','preferences*','*.pncsold','
 & robocopy (Join-Path $release 'data') (Join-Path $pkg 'data') /E /XD $excludeDirs /XF $excludeFiles /NFL /NDL /NJH /NJS /NP | Out-Null
 if ($LASTEXITCODE -gt 7) { throw "robocopy data failed ($LASTEXITCODE)" }
 New-Item -ItemType Directory -Force -Path (Join-Path $pkg 'data\mods') | Out-Null
+New-Item -ItemType Directory -Force -Path (Join-Path $pkg 'data\limits') | Out-Null
 
 # Copy the armor folder (rr_elite_pack.map, .rrreloc, etc.) into data\armor\
 $srcArmor = Join-Path $root 'data\armor'

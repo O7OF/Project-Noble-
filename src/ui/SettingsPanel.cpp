@@ -1293,6 +1293,14 @@ void SettingsPanel::RenderGame() {
             }
         }
     }
+    {
+        const noble::limits::Profile active = noble::limits::ActiveProfile();
+        const char* activeName = noble::limits::ProfileName(active);
+        if (Row("ACTIVE ENGINE LIMITS", "The engine limit profile currently running in this session. Change ENGINE LIMITS above and restart to switch profiles.",
+                When::Info, activeName, false)) {
+            InfoValue(activeName);
+        }
+    }
     // AI actor pool (LIMITS-TODO C7d). The engine build carries the extra AI memory and the bigger stack
     // frames; this only sizes the pools. Like ENGINE LIMITS it is a network-visible value (ProfileNetworkId)
     // and needs a restart. 1,024 is marked experimental: the last proved run was 512; 1,024 needs the
@@ -1304,12 +1312,24 @@ void SettingsPanel::RenderGame() {
         int current = 0;
         for (int i = 0; i < count; ++i) if (kAiActorValues[i] == m_edit.aiActors) current = i;
         const bool extended = m_edit.extendedLimits != 0;
-        if (Row("AI ACTORS", "How many AI actors the engine can hold (stock 96). Needs ENGINE LIMITS set to Extended; every player and the server must use the same value. Takes effect after a restart. 1,024 is experimental.",
+        if (Row("AI ACTORS", "How many AI actors the engine can hold (stock 96). Active when ENGINE LIMITS is set to Extended or Full; every player and the server must use the same value. Takes effect after a restart. 1,024 is experimental.",
                 When::Restart, kAiActorLabels[0], m_edit.aiActors != m_saved.aiActors, !extended)) {
             if (const int d = CycleValue(kAiActorLabels[current], current, count, false)) {
                 const int next = std::clamp(current + d, 0, count - 1);
                 m_edit.aiActors = extended ? kAiActorValues[next] : 0;
             }
+        }
+    }
+    if (noble::limits::ActiveProfile() != noble::limits::Profile::Stock) {
+        wchar_t envActors[16] = {};
+        int activeActors = 96;
+        if (GetEnvironmentVariableW(L"NOBLE_AI_ACTORS", envActors, 16) > 0) {
+            const int a = _wtoi(envActors);
+            if (a > 0) activeActors = a;
+        }
+        const std::string actorStr = std::to_string(activeActors) + " ACTORS";
+        if (Row("ACTIVE AI POOL", "The active AI actor capacity running in the loaded engine.", When::Info, actorStr.c_str(), false)) {
+            InfoValue(actorStr.c_str());
         }
     }
 }

@@ -1,5 +1,6 @@
 #include "PoolResize.hpp"
 #include "SlotPatch.hpp"
+#include "EngineLimits.hpp"
 
 #include "common/Logger.hpp"
 #include "hooks/HookManager.hpp"
@@ -139,6 +140,62 @@ const Rule kRules[] = {
     { "cached object render states", [](int32_t stock) { return stock; } },   // -render-states overrides
 };
 
+static bool PatchDword(uintptr_t addr, int32_t delta, bool isAbsolute = false) {
+    DWORD oldProtect = 0;
+    if (!VirtualProtect(reinterpret_cast<void*>(addr), 4, PAGE_EXECUTE_READWRITE, &oldProtect)) return false;
+    int32_t val = 0;
+    std::memcpy(&val, reinterpret_cast<void*>(addr), 4);
+    val = isAbsolute ? delta : (val + delta);
+    std::memcpy(reinterpret_cast<void*>(addr), &val, 4);
+    VirtualProtect(reinterpret_cast<void*>(addr), 4, oldProtect, &oldProtect);
+    FlushInstructionCache(GetCurrentProcess(), reinterpret_cast<void*>(addr), 4);
+    return true;
+}
+
+constexpr int32_t kAiFrameExtra = 1024 * 12 - 96 * 12; // 0x2B80
+struct FrameOp { uintptr_t rva; int32_t delta; };
+const FrameOp kAiFrameOps[] = {
+    { 0x70ABD7, -kAiFrameExtra },
+    { 0x70ABDE,  kAiFrameExtra },
+    { 0x70ABF8,  kAiFrameExtra },
+    { 0x70AFA7,  kAiFrameExtra },
+    { 0x70AFB7,  kAiFrameExtra },
+};
+
+constexpr int32_t kAiFrame2Extra = 0x5800;
+const FrameOp kAiFrame2Ops[] = {
+    { 0x76EC0C, -kAiFrame2Extra },
+    { 0x76EC11,  kAiFrame2Extra },
+    { 0x76EC21,  kAiFrame2Extra },
+    { 0x76EC32,  kAiFrame2Extra },
+    { 0x76EC39,  kAiFrame2Extra },
+    { 0x76EC5F,  kAiFrame2Extra },
+    { 0x76EC72,  kAiFrame2Extra },
+    { 0x76ED0D,  kAiFrame2Extra },
+    { 0x76EE4B,  kAiFrame2Extra },
+    { 0x76EE5B,  kAiFrame2Extra },
+};
+const FrameOp kAiFrame2Caps[] = {
+    { 0x76EC6B, 0x200 },
+    { 0x76EB83, 0x200 },
+    { 0x76EA68, 0x200 },
+};
+
+constexpr int32_t kAiFrame3Extra = 0x800;
+const FrameOp kAiFrame3Ops[] = {
+    { 0x76E829, -kAiFrame3Extra },
+    { 0x76E830,  kAiFrame3Extra },
+    { 0x76E845,  kAiFrame3Extra },
+    { 0x76E854,  kAiFrame3Extra },
+    { 0x76E869,  kAiFrame3Extra },
+    { 0x76EAB4,  kAiFrame3Extra },
+    { 0x76EAC4,  kAiFrame3Extra },
+};
+const FrameOp kAiFrame3Caps[] = {
+    { 0x76E8EF, 0x200 },
+    { 0x76E925, 0x200 },
+};
+
 // C12-L step 4: per-player pools follow the slot arrays to 32 - only once SlotPatch has really installed 32-player
 // mode (the pools are created at game-state init, after SlotPatch::Install). Their memory comes from the engine's
 // own allocator object (not the AI bank budget); data_array_new returns null when it has no room, so fall back to
@@ -159,6 +216,41 @@ void* __fastcall Hook_DataArrayNew(const char* name, int32_t count, uint64_t rec
             }
             Trace(name, made, recordSize, allocator, header);
             return header;
+        }
+    }
+
+    const noble::limits::Profile profile = noble::limits::ActiveProfile();
+    const bool extendedProfile = profile != noble::limits::Profile::Stock;
+
+    if (extendedProfile && name) {
+        int32_t wanted = count;
+        if (std::strcmp(name, "object") == 0 && count == 2048) {
+            wanted = 32767;
+        } else if (std::strcmp(name, "cached object render states") == 0 && count < 16384) {
+            wanted = 16384;
+        } else if (profile >= noble::limits::Profile::V16Particles) {
+            if (std::strcmp(name, "c_particle_emitter_gpu") == 0 && count == 832) wanted = 6656;
+            else if (std::strcmp(name, "c_particle_gpu") == 0 && count == 2048) wanted = 16384;
+            else if (std::strcmp(name, "c_particle_emitter_gpu::s_row") == 0 && count == 448) wanted = 3584;
+        }
+        if (profile == noble::limits::Profile::Full) {
+            if (std::strcmp(name, "c_light_volume_gpu") == 0 && count == 160) wanted = 65535;
+            else if (std::strcmp(name, "c_light_volume_gpu::s_row") == 0 && count == 160) wanted = 65535;
+            else if (std::strcmp(name, "beam") == 0 && count == 160) wanted = 65535;
+            else if (std::strcmp(name, "beam_location") == 0 && count == 160) wanted = 65535;
+            else if (std::strcmp(name, "beam_system") == 0 && count == 160) wanted = 65535;
+        }
+
+        if (wanted > count) {
+            void* header = s_original(name, wanted, recordSize, alignBits, allocator);
+            if (header) {
+                NOBLE_INFO("Engine limits: {} {} -> {} ({} KB)", name, count, wanted,
+                    (static_cast<uint64_t>(wanted - count) * recordSize) / 1024);
+                Trace(name, wanted, recordSize, allocator, header);
+                return header;
+            } else {
+                NOBLE_WARN("Engine limits: memory allocation fallback for '{}' (wanted {}); using {}", name, wanted, count);
+            }
         }
     }
     if (s_actors > 0 && name) {
@@ -255,82 +347,85 @@ int ReadActorSetting() {
 
 void InstallResize(HMODULE engine, bool extendedProfile) {
     const auto base = reinterpret_cast<uintptr_t>(engine);
-    // The bigger AI update frame is part of the engine build itself, so its stack commit is needed
-    // whenever that build is loaded, with or without -ai-actors.
-    const bool bigAiFrame = std::memcmp(reinterpret_cast<void*>(base + kAiUpdateRva), kAiUpdateHead, sizeof(kAiUpdateHead)) == 0;
-    if (bigAiFrame && !HookManager::InstallHook(reinterpret_cast<void*>(base + kAiUpdateRva), reinterpret_cast<void*>(&Hook_AiUpdate),
-            reinterpret_cast<void**>(&s_aiUpdateOriginal), "ai_update_stack")) {
-        NOBLE_ERROR("AI limits: could not hook the AI update scheduler; its 12 KB frame is used without a stack commit");
-    }
-    const bool bigSpawnFrame = std::memcmp(reinterpret_cast<void*>(base + kAiSpawnSearchRva), kAiSpawnSearchHead, sizeof(kAiSpawnSearchHead)) == 0;
-    if (bigSpawnFrame && !HookManager::InstallHook(reinterpret_cast<void*>(base + kAiSpawnSearchRva), reinterpret_cast<void*>(&Hook_AiSpawnSearch),
-            reinterpret_cast<void**>(&s_aiSpawnSearchOriginal), "ai_spawn_search_stack")) {
-        NOBLE_ERROR("AI limits: could not hook the AI spawn search; its 0x1100-byte frame is used without a stack commit");
-    }
     s_engineBase = base;
     s_engineEnd = base + 0x20000000;
+
+    const int actors = ReadActorSetting();
+    if (!extendedProfile && actors <= 96 && !slots::Players32Requested()) {
+        return;
+    }
+
+    if (std::memcmp(reinterpret_cast<void*>(base + kDataArrayNewRva), kDataArrayNewHead, sizeof(kDataArrayNewHead)) != 0) {
+        NOBLE_WARN("AI limits: haloreach.dll code does not match the expected build; ignored");
+        return;
+    }
+
+    // Stack probes and frame patches for AI update scheduler & spawn candidate search
+    const bool bigAiFrame = std::memcmp(reinterpret_cast<void*>(base + kAiUpdateRva), kAiUpdateHead, sizeof(kAiUpdateHead)) == 0;
+    if (!bigAiFrame) {
+        for (const auto& op : kAiFrameOps) {
+            PatchDword(base + op.rva, op.delta);
+        }
+    }
+    if (!HookManager::InstallHook(reinterpret_cast<void*>(base + kAiUpdateRva), reinterpret_cast<void*>(&Hook_AiUpdate),
+            reinterpret_cast<void**>(&s_aiUpdateOriginal), "ai_update_stack")) {
+        NOBLE_WARN("AI limits: could not hook the AI update scheduler stack probe");
+    }
+
+    const bool bigSpawnFrame = std::memcmp(reinterpret_cast<void*>(base + kAiSpawnSearchRva), kAiSpawnSearchHead, sizeof(kAiSpawnSearchHead)) == 0;
+    if (!bigSpawnFrame) {
+        for (const auto& op : kAiFrame2Ops) PatchDword(base + op.rva, op.delta);
+        for (const auto& op : kAiFrame2Caps) PatchDword(base + op.rva, op.delta);
+        for (const auto& op : kAiFrame3Ops) PatchDword(base + op.rva, op.delta);
+        for (const auto& op : kAiFrame3Caps) PatchDword(base + op.rva, op.delta);
+    }
+    if (!HookManager::InstallHook(reinterpret_cast<void*>(base + kAiSpawnSearchRva), reinterpret_cast<void*>(&Hook_AiSpawnSearch),
+            reinterpret_cast<void**>(&s_aiSpawnSearchOriginal), "ai_spawn_search_stack")) {
+        NOBLE_WARN("AI limits: could not hook the AI spawn search stack probe");
+    }
+
     if (extendedProfile &&
         std::memcmp(reinterpret_cast<void*>(base + kReportGsFailureRva), kReportGsFailureHead, sizeof(kReportGsFailureHead)) == 0)
         HookManager::InstallHook(reinterpret_cast<void*>(base + kReportGsFailureRva), reinterpret_cast<void*>(&Hook_GsFailure),
             reinterpret_cast<void**>(&s_gsOriginal), "gs_failure_report");
 
-    const int actors = ReadActorSetting();
-    if (actors <= 96) {                             // AI pools not requested (or not an increase)
-        // C12-L: the per-player pools still need the hook in 32-player mode (dev override only, see SlotPatch).
-        if (extendedProfile && slots::Players32Requested() &&
-            std::memcmp(reinterpret_cast<void*>(base + kDataArrayNewRva), kDataArrayNewHead, sizeof(kDataArrayNewHead)) == 0) {
-            ReadPoolOptions();
-            if (HookManager::InstallHook(reinterpret_cast<void*>(base + kDataArrayNewRva), reinterpret_cast<void*>(&Hook_DataArrayNew),
-                    reinterpret_cast<void**>(&s_original), "ai_pool_resize"))
-                NOBLE_INFO("C12 players: pool hook installed; players / fire team / simulation view data array go to 32 "
-                           "if 32-player mode installs");
-        }
-        return;
-    }
-    if (!extendedProfile) {
-        NOBLE_WARN("AI limits: -ai-actors needs ENGINE LIMITS set to Extended; ignored on Stock");
-        return;
-    }
-    if (std::memcmp(reinterpret_cast<void*>(base + kDataArrayNewRva), kDataArrayNewHead, sizeof(kDataArrayNewHead)) != 0) {
-        NOBLE_WARN("AI limits: haloreach.dll code does not match the expected build; ignored");
-        return;
-    }
+    // Bank 1 (AI memory bank)
     const auto* sizeInsn = reinterpret_cast<const uint8_t*>(base + kAiBankSizeInsnRva);
     uint32_t aiBank = 0;
     if (sizeInsn[0] == 0xBA) std::memcpy(&aiBank, sizeInsn + 1, 4);
     if (aiBank <= kStockAiBank + kSafetyMargin) {
-        NOBLE_WARN("AI limits: this engine build has no extra AI memory (bank 0x{:X}); rebuild data/limits with "
-                   "make_v16_particles.py. -ai-actors ignored", aiBank);
-        return;
+        PatchDword(base + kAiBankSizeInsnRva + 1, kStockAiBank + 0x600000, true);
+        aiBank = kStockAiBank + 0x600000;
+        NOBLE_INFO("AI limits: patched bank 1 size to 0x{:X} (+6 MB) in memory", aiBank);
     }
     s_budget = aiBank - kStockAiBank - kSafetyMargin;
-    {
-        // Render bank 3 size: `mov edx, <size>` at RVA 0x16199. Noble's builds add 0x800000 to V16 (0x560000) or
-        // V16+particles (0xD80000); any other value means no added room, so -render-states stays off.
-        const auto* renderInsn = reinterpret_cast<const uint8_t*>(base + 0x16199);
-        uint32_t renderBank = 0;
-        if (renderInsn[0] == 0xBA) std::memcpy(&renderBank, renderInsn + 1, 4);
-        if (renderBank == 0x560000 + 0x800000 || renderBank == 0xD80000 + 0x800000) s_renderBudget = 0x800000 - kSafetyMargin;
+
+    // Bank 3 (Render memory bank)
+    const auto* renderInsn = reinterpret_cast<const uint8_t*>(base + 0x16199);
+    uint32_t renderBank = 0;
+    if (renderInsn[0] == 0xBA) std::memcpy(&renderBank, renderInsn + 1, 4);
+    if (renderBank <= 0x560000) {
+        PatchDword(base + 0x16199 + 1, 0x560000 + 0x800000, true);
+        renderBank = 0x560000 + 0x800000;
+        NOBLE_INFO("Render limits: patched bank 3 size to 0x{:X} (+8 MB) in memory", renderBank);
     }
-    if (!bigAiFrame || !s_aiUpdateOriginal) {
-        // Without the bigger frame the scheduler overflows past 96 live actors.
-        NOBLE_WARN("AI limits: this engine build lacks the 1,024-actor AI update frame; actor pool stays at 96");
-        return;
+    s_renderBudget = 0x800000 - kSafetyMargin;
+
+    if (actors > 96) {
+        s_actors = (std::min)(actors, 1024);
     }
-    s_actors = (std::min)(actors, 1024);
     ReadPoolOptions();
-    if (s_renderStates > 0 && s_renderBudget == 0) {
-        NOBLE_WARN("AI limits: -render-states needs the engine build with the bigger render bank; ignored");
-        s_renderStates = 0;
-    }
+
     if (!HookManager::InstallHook(reinterpret_cast<void*>(base + kDataArrayNewRva), reinterpret_cast<void*>(&Hook_DataArrayNew),
             reinterpret_cast<void**>(&s_original), "ai_pool_resize")) {
-        NOBLE_WARN("AI limits: could not hook data_array_new; ignored");
+        NOBLE_WARN("AI limits: could not hook data_array_new; pool resize disabled");
         s_actors = 0;
         return;
     }
-    NOBLE_INFO("AI limits: experimental, actor pool {} (stock 96); AI memory +{} KB; pools: {}{}", s_actors, s_budget / 1024,
-        s_only.empty() ? std::string("all") : s_only, s_trace ? "; tracing every pool" : "");
+    NOBLE_INFO("Engine limits & AI pools hook installed (profile: {}, actors: {}, AI memory: +{} KB)",
+        noble::limits::ProfileName(noble::limits::ActiveProfile()),
+        s_actors > 0 ? std::to_string(s_actors) : "stock (96)",
+        s_budget / 1024);
 }
 
 } // namespace noble::pools
