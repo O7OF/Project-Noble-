@@ -2923,8 +2923,10 @@ void ReachArmory::SyncMarine() {
         s_lastPri = sel.marinePrimaryRgb; s_lastSec = sel.marineSecondaryRgb;
         s_ticksLeft = 30;
     }
-    if (s_ticksLeft <= 0) return;
-    --s_ticksLeft;
+    // Dev (2026-11-13): env NOBLE_MARINE_HOLD=1 keeps applying (tests whether something re-sets the helmet).
+    static const bool s_hold = std::getenv("NOBLE_MARINE_HOLD") != nullptr;
+    if (s_ticksLeft <= 0 && !s_hold) return;
+    if (s_ticksLeft > 0) --s_ticksLeft;
 
     if (s_isMarine < 0) {
         const uint32_t helmetSid = sid("helmet"), backpackSid = sid("flair_backpack");
