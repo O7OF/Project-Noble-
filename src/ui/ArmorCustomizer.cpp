@@ -2566,6 +2566,15 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
         for (size_t k = 0; k < slots.size() && k < m_profile.marinePieces.size(); ++k) {
             SlotRow r{ "MARINE / ODST", slots[k].label, RowKind::List, &m_profile.marinePieces[k] };
             for (const auto& o : slots[k].options) r.options.push_back({ o.name, kMarineDesc });
+            // Close-up cameras (2026-11-13): the Marine stands on the Spartan pedestal, so the Spartan's per-slot
+            // cameras frame the same body parts. Backpack keeps the whole-body view (the close-ups look at the front).
+            const std::string region = slots[k].region;
+            if (region == "helmet" || region == "head" || region == "flair_neck") r.scene = "c_helmet";
+            else if (region == "flair_shoulder_l") r.scene = "c_left_shoulder";
+            else if (region == "flair_shoulder_r") r.scene = "c_right_shoulder";
+            else if (region == "flair_chest_a") r.scene = "c_chest";
+            else if (region == "flair_belt") r.scene = "c_utility";
+            else if (region == "legs") r.scene = "c_knees";
             rows.push_back(std::move(r));
         }
         SlotRow on{ "COLORS", "Marine Colors", RowKind::List, &m_profile.marineColorsOn };
