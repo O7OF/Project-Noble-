@@ -3034,6 +3034,17 @@ static std::atomic<int> s_simMarineTicks{0};
 static std::atomic<uint64_t> s_simMarineApplied{0};
 static std::atomic<uint32_t> s_simHelmetSid{0}, s_simBackpackSid{0};
 
+// Dev (2026-11-13, NOBLE_MARINE_REFRESH): the permutation setter's "changed" tail (+0x4730CC) calls +0x472F80(obj) and,
+// with its flag, +0x47B210(obj). Run those on the render thread too (render-side state of the object).
+static void MarineRefreshSEH(uintptr_t base, uint32_t unit) {
+    __try {
+        using ObjFn = void(__fastcall*)(uint32_t);
+        reinterpret_cast<ObjFn>(base + 0x472F80)(unit);
+        reinterpret_cast<ObjFn>(base + 0x47B210)(unit);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+}
+
 static uint32_t LocalUnitDatumNow(uintptr_t base) {
     using GetLocalUnitFn = int32_t(__fastcall*)(int32_t);
     return static_cast<uint32_t>(reinterpret_cast<GetLocalUnitFn>(base + 0x53EF8)(0));
@@ -3206,6 +3217,7 @@ void ReachArmory::SyncMarine() {
     const uint32_t variantSid = (s_variant && s_ticksLeft == 29) ? sid(s_variant) : 0u;
     // Pieces: simulation thread (NotifyMatchTick). Here only colours, unless the dev switch NOBLE_MARINE_RENDERAPPLY.
     static const bool s_renderApply = std::getenv("NOBLE_MARINE_RENDERAPPLY") != nullptr;
+    if (std::getenv("NOBLE_MARINE_REFRESH")) MarineRefreshSEH(base, unit);
     const bool ok = MarineApplySEH(base, unit, pairs.data(), s_renderApply ? pairs.size() / 2 : 0, sel.marineColors ? pri : nullptr,
                                    sel.marineColors ? sec : nullptr, sel.marineColors ? c3 : nullptr, sel.marineColors ? c4 : nullptr, results, variantSid);
     if (std::getenv("NOBLE_MARINE_PERMLOG")) {   // dev: the same byte right after this frame's apply
