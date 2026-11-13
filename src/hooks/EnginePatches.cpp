@@ -181,6 +181,22 @@ static uint8_t __fastcall Hook_ObserverChannelSendMessage(
     return sent;
 }
 
+
+static void* AllocateNear(uintptr_t target, size_t size, DWORD protect) {
+    SYSTEM_INFO si{};
+    GetSystemInfo(&si);
+    const uintptr_t step = si.dwAllocationGranularity;
+    for (uintptr_t delta = step; delta < 0x7FFF0000ull; delta += step) {
+        const uintptr_t candidates[2] = { target + delta, target > delta ? target - delta : 0 };
+        for (const uintptr_t candidate : candidates) {
+            if (!candidate) continue;
+            if (void* p = VirtualAlloc(reinterpret_cast<void*>(candidate & ~(step - 1)), size, MEM_RESERVE | MEM_COMMIT, protect))
+                return p;
+        }
+    }
+    return nullptr;
+}
+
 bool EnginePatches::Apply(HMODULE hReachDll) {
     if (!hReachDll) {
         NOBLE_ERROR("EnginePatches: Invalid haloreach.dll handle provided.");
@@ -557,6 +573,78 @@ bool EnginePatches::Apply(HMODULE hReachDll) {
             }
         } else {
             NOBLE_WARN("EnginePatches: Prologue mismatch at RVA 0x3F9620 / 0x3F95A4; immediate observer flush hook skipped.");
+        }
+    }
+
+
+    // 7. Object iteration null-dereference crash patch (RVA 0x99A0D)
+    // During Campaign autosaves/checkpoints (e.g. asq_campaign_m10), cutscenes, or biped despawns,
+    // haloreach.dll iterates over the player table (0x1D0) and looks up each player's biped datum in
+    // the object table (0x10). If the player has no active biped (despawned or null slot), the object
+    // pointer at [rcx + rdx*8 + 0x10] is NULL.
+    // The engine at 0x99A0D executes 'mov ecx, [rax + 0xcc]' without testing if rax is NULL,
+    // causing an immediate 0xC0000005 access violation reading 0x000000CC.
+    // We install a near-trampoline replacing the 11 bytes at 0x99A0D:
+    //   test rax, rax
+    //   jz is_null (base + 0x99A39)
+    //   mov ecx, [rax + 0xcc]
+    //   cmp ecx, r12d
+    //   je is_null (base + 0x99A39)
+    //   jmp valid (base + 0x99A18)
+    {
+        static const uint8_t kExpectedBytes[11] = {
+            0x8B, 0x88, 0xCC, 0x00, 0x00, 0x00, // mov ecx, dword ptr [rax + 0xcc]
+            0x41, 0x3B, 0xCC,                   // cmp ecx, r12d
+            0x74, 0x21                          // je 0x99a39
+        };
+        uint8_t* patchAddr = reinterpret_cast<uint8_t*>(baseAddress + 0x99A0D);
+        if (0x99A0D + sizeof(kExpectedBytes) <= modInfo.SizeOfImage &&
+            std::memcmp(patchAddr, kExpectedBytes, sizeof(kExpectedBytes)) == 0) {
+            void* trampoline = AllocateNear(reinterpret_cast<uintptr_t>(patchAddr), 64, PAGE_EXECUTE_READWRITE);
+            if (trampoline) {
+                uint8_t* trampBytes = reinterpret_cast<uint8_t*>(trampoline);
+                const uintptr_t trampAddr = reinterpret_cast<uintptr_t>(trampoline);
+                const uintptr_t targetNull = baseAddress + 0x99A39;
+                const uintptr_t targetValid = baseAddress + 0x99A18;
+
+                const int32_t relNull = static_cast<int32_t>(targetNull - (trampAddr + 0x12 + 5));
+                const int32_t relValid = static_cast<int32_t>(targetValid - (trampAddr + 0x17 + 5));
+
+                uint8_t code[28] = {
+                    0x48, 0x85, 0xC0,                   // 0x00: test rax, rax
+                    0x74, 0x0D,                         // 0x03: jz +13 (to 0x12)
+                    0x8B, 0x88, 0xCC, 0x00, 0x00, 0x00, // 0x05: mov ecx, [rax + 0xCC]
+                    0x41, 0x3B, 0xCC,                   // 0x0B: cmp ecx, r12d
+                    0x74, 0x02,                         // 0x0E: je +2 (to 0x12)
+                    0xEB, 0x05,                         // 0x10: jmp +5 (to 0x17)
+                    0xE9, 0x00, 0x00, 0x00, 0x00,       // 0x12: jmp rel32 to targetNull (0x99A39)
+                    0xE9, 0x00, 0x00, 0x00, 0x00        // 0x17: jmp rel32 to targetValid (0x99A18)
+                };
+                std::memcpy(code + 0x13, &relNull, sizeof(int32_t));
+                std::memcpy(code + 0x18, &relValid, sizeof(int32_t));
+
+                std::memcpy(trampBytes, code, sizeof(code));
+                FlushInstructionCache(GetCurrentProcess(), trampBytes, sizeof(code));
+
+                // Now patch patchAddr with jmp rel32 to trampAddr + 6 NOPs (11 bytes total)
+                const int32_t relToTramp = static_cast<int32_t>(trampAddr - (reinterpret_cast<uintptr_t>(patchAddr) + 5));
+                uint8_t patch[11] = { 0xE9, 0, 0, 0, 0, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90 };
+                std::memcpy(patch + 1, &relToTramp, sizeof(int32_t));
+
+                DWORD oldProt = 0;
+                if (VirtualProtect(patchAddr, sizeof(patch), PAGE_EXECUTE_READWRITE, &oldProt)) {
+                    std::memcpy(patchAddr, patch, sizeof(patch));
+                    FlushInstructionCache(GetCurrentProcess(), patchAddr, sizeof(patch));
+                    VirtualProtect(patchAddr, sizeof(patch), oldProt, &oldProt);
+                    NOBLE_INFO("EnginePatches: Installed null-biped dereference crash patch at RVA 0x99A0D -> trampoline 0x{:X}.", trampAddr);
+                } else {
+                    NOBLE_WARN("EnginePatches: Failed to VirtualProtect at RVA 0x99A0D.");
+                }
+            } else {
+                NOBLE_WARN("EnginePatches: Failed to allocate near trampoline for RVA 0x99A0D crash patch.");
+            }
+        } else {
+            NOBLE_INFO("EnginePatches: RVA 0x99A0D already patched or unexpected opcodes.");
         }
     }
 

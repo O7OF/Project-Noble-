@@ -336,22 +336,32 @@ static HRESULT STDMETHODCALLTYPE HookSwapChainPresent(IDXGISwapChain* swapChain,
     // IsForeground() accepts the container, so a match in a container is not mistaken for a background
     // window (which used to throttle it to 30 FPS and made it look like it never had the focus).
     const bool isFocused = (hwnd == nullptr || noble::Window::IsForeground(hwnd));
-    if (isFocused) {
-        // ...and make that focus real: hand the keyboard focus to the match window at most once a second,
-        // so the match takes it back after the launcher (or an Alt-Tab) had it.
+    if (!isFocused) {
+        // Hand the keyboard focus to the match window at most once every 500 ms when focus is lost,
+        // so the match takes it back cleanly after the launcher (or an Alt-Tab) had it.
         static ULONGLONG s_nextFocusRequest = 0;
         const ULONGLONG focusNow = GetTickCount64();
         if (focusNow >= s_nextFocusRequest) {
-            s_nextFocusRequest = focusNow + 1000;
+            s_nextFocusRequest = focusNow + 500;
             noble::Window::RequestFocus();
         }
+    }
+
+    static thread_local ULONGLONG s_unfocusedSince = 0;
+    const ULONGLONG nowMs = GetTickCount64();
+    if (isFocused) {
+        s_unfocusedSince = 0;
+    } else if (s_unfocusedSince == 0) {
+        s_unfocusedSince = nowMs;
     }
 
     // FRAME-RATE LIMIT: 0 means what it says - no pacing at all while the window is active. (It used to be
     // silently capped at 120, which made "No limit" a lie and confused the FPS counter.)
     int targetFps = settings.fpsLimit;
-    if (!isFocused && settings.throttleUnfocused) {
-        // While unfocused (alt-tabbed, or waiting as a guest) throttle to 30 FPS so a background window cannot peg a
+    const bool shouldThrottle = !isFocused && settings.throttleUnfocused &&
+                               (s_unfocusedSince != 0 && (nowMs - s_unfocusedSince >= 1500));
+    if (shouldThrottle) {
+        // While unfocused (alt-tabbed for > 1.5s, or waiting as a guest) throttle to 30 FPS so a background window cannot peg a
         // CPU core or trip Windows' unresponsive-app detection. SETTINGS > Graphics can turn this off for streaming.
         targetFps = (targetFps > 0 && targetFps < 30) ? targetFps : 30;
     }
@@ -393,25 +403,21 @@ static HRESULT STDMETHODCALLTYPE HookSwapChainPresent(IDXGISwapChain* swapChain,
         if (now.QuadPart < nextPresentTicks) {
             LONGLONG remaining = nextPresentTicks - now.QuadPart;
             const LONGLONG oneMs = frequency.QuadPart / 1000;
-            const LONGLONG safetyMargin = (frequency.QuadPart * 3) / 2000; // 1.5 ms margin
+            const LONGLONG twoMs = (frequency.QuadPart * 2) / 1000; // 2.0 ms safety margin
 
             // High-resolution Sleep for multi-millisecond waits.
             // On AMD Ryzen (Zen 2 / 3800X CCX architecture), sleeping the bulk of the wait instead of
             // busy-spinning calling QPC hundreds of thousands of times per frame eliminates 100% CPU core
             // burn and cross-CCX interconnect memory bus contention.
-            if (remaining > safetyMargin) {
-                const DWORD msToSleep = static_cast<DWORD>((remaining - safetyMargin) / oneMs);
+            // We sleep down to 2.0 ms before the deadline so Sleep() never overshoots the frame presentation time.
+            if (remaining > twoMs) {
+                const DWORD msToSleep = static_cast<DWORD>((remaining - twoMs) / oneMs);
                 if (msToSleep > 0) {
                     Sleep(msToSleep);
                     QueryPerformanceCounter(&now);
-                    remaining = nextPresentTicks - now.QuadPart;
                 }
             }
-            while (remaining > oneMs) {
-                Sleep(1);
-                QueryPerformanceCounter(&now);
-                remaining = nextPresentTicks - now.QuadPart;
-            }
+            // For the final sub-2ms slice, spin with YieldProcessor() (_mm_pause) for microsecond precision
             while (now.QuadPart < nextPresentTicks) {
                 YieldProcessor();
                 QueryPerformanceCounter(&now);

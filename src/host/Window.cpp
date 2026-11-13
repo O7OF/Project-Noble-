@@ -57,12 +57,37 @@ bool Window::IsForeground(HWND hwnd) {
     const HWND foreground = GetForegroundWindow();
     if (!foreground) return false;
     if (foreground == hwnd) return true;
+
+    // Check window ancestry in both directions (parent or child)
+    if (IsChild(foreground, hwnd) || IsChild(hwnd, foreground)) return true;
+
+    // Check if both share the same root top-level window
+    HWND rootHwnd = RootWindowOf(hwnd);
+    HWND rootFg = RootWindowOf(foreground);
+    if (rootHwnd && rootFg && rootHwnd == rootFg) return true;
+
+    // Check if foreground belongs to our process
+    DWORD fgPid = 0;
+    GetWindowThreadProcessId(foreground, &fgPid);
+    if (fgPid != 0 && fgPid == GetCurrentProcessId()) return true;
+
     // Container window mode: the match renders into a WS_CHILD window inside the launcher's top-level
-    // window, and Windows only ever reports a top-level window as the foreground one. That child is still
-    // "in front" whenever the launcher is, so accept any foreground window it is a descendant of. IsChild
-    // walks the window tree, which is shared by every process on the desktop (mouse clicks reach the child
-    // by position, and the launcher forwards nothing), so this is exactly the container case.
-    return IsChild(foreground, hwnd) != FALSE;
+    // window. Check if foreground belongs to the launcher's container parent window or its process.
+    Window* activeWin = Active();
+    if (activeWin) {
+        HWND containerParent = activeWin->GetContainerParent();
+        if (containerParent) {
+            if (foreground == containerParent) return true;
+            if (IsChild(containerParent, foreground) || IsChild(foreground, containerParent)) return true;
+            HWND rootParent = RootWindowOf(containerParent);
+            if (rootParent && rootFg && rootParent == rootFg) return true;
+
+            DWORD parentPid = 0;
+            GetWindowThreadProcessId(containerParent, &parentPid);
+            if (parentPid != 0 && fgPid == parentPid) return true;
+        }
+    }
+    return false;
 }
 
 void Window::RequestFocus() {
