@@ -1,5 +1,6 @@
 #include "ReachArmory.hpp"
 #include "ElitePack.hpp"
+#include "SharedTagCache.hpp"
 #include "common/Logger.hpp"
 #include "network/NetworkTransport.hpp"
 #include "ui/FrontEndMenu.hpp"
@@ -3340,7 +3341,55 @@ void ReachArmory::TickFlashlight() {
     }
 }
 
+static uint32_t TagDatumForIndexSEH(uintptr_t base, uint32_t id) {
+    __try {
+        const uint8_t* tagTable = *reinterpret_cast<const uint8_t* const*>(base + 0xC1A600);
+        if (!tagTable) return 0xFFFFFFFFu;
+        const uint16_t salt = *reinterpret_cast<const uint16_t*>(tagTable + static_cast<size_t>(id) * 8u + 2);
+        return (static_cast<uint32_t>(salt) << 16) | id;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return 0xFFFFFFFFu;
+    }
+}
+
+// Dev (2026-11-13): "-spawn-test <seconds> <tagId>[,<tagId>...]": in a match, after <seconds>, queue a Forge spawn of each
+// tag (by tag index; the datum's salt is read from the live tag table) one per second. Proves new Forge palette items.
+static void DevSpawnTestTick() {
+    static int s_state = -1;   // -1 not parsed, 0 off, 1 armed
+    static ULONGLONG s_at = 0;
+    static std::vector<uint32_t> s_ids;
+    static size_t s_next = 0;
+    if (s_state < 0) {
+        s_state = 0;
+        int argc = 0;
+        LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+        for (int i = 1; argv && i + 2 < argc; ++i) {
+            if (_wcsicmp(argv[i], L"-spawn-test") == 0) {
+                s_at = GetTickCount64() + static_cast<ULONGLONG>(_wtoi(argv[i + 1])) * 1000ull;
+                std::wstring list = argv[i + 2];
+                size_t p = 0;
+                while (p < list.size()) {
+                    size_t q = list.find(L',', p); if (q == std::wstring::npos) q = list.size();
+                    s_ids.push_back(static_cast<uint32_t>(_wtoi(list.substr(p, q - p).c_str())));
+                    p = q + 1;
+                }
+                s_state = 1;
+            }
+        }
+        if (argv) LocalFree(argv);
+    }
+    if (s_state != 1 || s_next >= s_ids.size() || GetTickCount64() < s_at) return;
+    s_at = GetTickCount64() + 1000;
+    const uint32_t id = s_ids[s_next++];
+    HMODULE hReach = GetModuleHandleW(L"haloreach.dll");
+    if (!hReach) return;
+    const uint32_t datum = TagDatumForIndexSEH(reinterpret_cast<uintptr_t>(hReach), id);
+    NOBLE_INFO("SpawnTest: tag index {} -> datum 0x{:08X}", id, datum);
+    if (datum != 0xFFFFFFFFu) SharedTagCache::QueueSpawn(datum, "spawn-test");
+}
+
 void ReachArmory::NotifyMatchTick() {
+    DevSpawnTestTick();
     if (s_simMarineTicks.load(std::memory_order_relaxed) <= 0) return;
     s_simMarineTicks.fetch_sub(1);
     uint32_t unit; std::vector<uint32_t> pairs;
