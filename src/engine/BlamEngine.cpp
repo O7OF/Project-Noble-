@@ -1602,7 +1602,7 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
                         const size_t playersJoined = LobbyPatches::GetRemotePlayerAddCount();
                         const size_t channelPeers = NetworkTransport::Get().GetGamePeerCount();
                         if (playersJoined >= targetPeers || channelPeers >= targetPeers) {
-                            const int settleMs = settleLonger ? 3000 : 1500;
+                            const int settleMs = settleLonger ? 1000 : 400;
                             NOBLE_INFO("BlamEngine: {}/{} remote player(s) in session (membership: {}, engine peers: {}); settling {} ms for world replication",
                                        std::max(playersJoined, channelPeers), targetPeers, playersJoined, channelPeers, settleMs);
                             std::this_thread::sleep_for(std::chrono::milliseconds(settleMs));

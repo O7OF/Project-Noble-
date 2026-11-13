@@ -4,6 +4,8 @@
 #include "common/Logger.hpp"
 #include "host/SlotPatch.hpp"
 #include "network/NetworkTransport.hpp"
+#include "career/Career.hpp"
+#include "ui/PauseMenu.hpp"
 #include <psapi.h>
 #include <vector>
 #include <string>
@@ -418,6 +420,8 @@ static void __fastcall Hook_GameFinish() {
         NOBLE_WARN("LobbyPatches: [{} pid {}] GAME FINISH requested by hr+0x{:X} stack: {}", RefuseRole(), GetCurrentProcessId(),
                    CallerRva(_ReturnAddress()), ReachStack());
     }
+    Career::EnsureMatchSaved("game_finish");
+    PauseMenu::ShowGameOver();
     if (s_originalGameFinish) s_originalGameFinish();
 }
 
@@ -431,6 +435,8 @@ static void __fastcall Hook_GameOver(int32_t reason) {
         NOBLE_WARN("LobbyPatches: [{} pid {}] GAME OVER reason {} (0x{:X}) from hr+0x{:X}", RefuseRole(), GetCurrentProcessId(),
                    reason, reason, CallerRva(_ReturnAddress()));
     }
+    Career::EnsureMatchSaved("game_over");
+    PauseMenu::ShowGameOver();
     if (s_originalGameOver) s_originalGameOver(reason);
 }
 

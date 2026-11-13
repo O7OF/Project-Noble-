@@ -161,6 +161,13 @@ void BeginMatch(BaseType type, const std::string& map, int difficulty, uint64_t 
 // Called from host slot 6 (engine thread) with a copy of the results record.
 void OnGameResults(const uint8_t* record, size_t size);
 
+// Called when receiving a match_over JSON broadcast packet over NetworkTransport.
+void OnMatchOverJson(const std::string& jsonStr);
+
+// Fallback / client match end: ensures stats, credits, challenges, and commendations
+// are computed from live engine memory/scoreboard and saved to career.dat if slot 6 didn't run.
+void EnsureMatchSaved(const char* reason = "match_ended");
+
 Award LastAward();
 Totals Get();
 

@@ -203,10 +203,16 @@ std::wstring LobbyReturnArgs(bool host, bool advance = false) {
   return out;
 }
 
+static std::atomic<int> s_hostLobbyState{0};
+
+void SetHostBackInLobby(int st) {
+  s_hostLobbyState.store(st);
+}
+
 // For a guest on the post-game panel: 0 still waiting, 1 the host is back in the lobby, 2 the session has gone. The server
 // says the match is running until the host's new process registers again.
 int PollHostBackInLobby() {
-  static std::atomic<int> s_state{0};
+  if (s_hostLobbyState.load() != 0) return s_hostLobbyState.load();
   static bool s_started = false;
   if (!s_started) {
     s_started = true;
@@ -226,11 +232,11 @@ int PollHostBackInLobby() {
           auto sessions = SessionManager::Get().GetDiscoveredSessions();
           if (!sessions.empty()) {
             NOBLE_INFO("PauseMenu: detected host LAN lobby, pulling back to lobby");
-            s_state = 1;
+            s_hostLobbyState = 1;
             return;
           }
         }
-        s_state = 2;
+        s_hostLobbyState = 2;
       }).detach();
     } else {
       std::thread([session] {
@@ -241,7 +247,7 @@ int PollHostBackInLobby() {
           if (!state.ok || state.isClosed) {
             if (++missing >= 25) {
               NOBLE_WARN("PauseMenu: host lobby closed or timed out (missing: {})", missing);
-              s_state = 2;
+              s_hostLobbyState = 2;
               return;
             }
             continue;
@@ -249,14 +255,14 @@ int PollHostBackInLobby() {
           missing = 0;
           if (!state.inProgress) {
             NOBLE_INFO("PauseMenu: the host is back in the lobby (session: {})", session);
-            s_state = 1;
+            s_hostLobbyState = 1;
             return;
           }
         }
       }).detach();
     }
   }
-  return s_state;
+  return s_hostLobbyState.load();
 }
 
 // Finds " -name value" in a built command line. Returns false if it is not there; [begin, end) covers the separator,
@@ -344,6 +350,7 @@ std::wstring NextMissionArgs(const std::wstring &next, std::wstring lobbyArgs) {
 
 void RelaunchAndClose(HWND hwnd, const std::wstring &args, const char *what) {
   NOBLE_INFO("PauseMenu: {} requested", what);
+  Career::EnsureMatchSaved(what);
   const bool isLobbyReturn = args.find(L"-lobby-return") != std::wstring::npos;
   const bool keepHostSession = args.find(L"-lobby-return host") != std::wstring::npos;
   const bool isMainMenu = (args == L"-main-menu");
@@ -375,14 +382,9 @@ void RelaunchAndClose(HWND hwnd, const std::wstring &args, const char *what) {
 
   std::wstring containerVal = ArgValue(GetCommandLineW(), L"-container-hwnd");
   if (!containerVal.empty()) {
-      if (isMainMenu) {
+      if (isMainMenu || args.empty()) {
           Relaunch::RequestContainerRelaunch(L"-main-menu");
           NOBLE_INFO("PauseMenu: {} in container mode - returning to main menu in container launcher window", what);
-          TerminateProcess(GetCurrentProcess(), 0);
-          return;
-      } else if (args.empty()) {
-          Relaunch::RequestContainerRelaunch(L"-leave-lobby");
-          NOBLE_INFO("PauseMenu: {} in container mode - leaving match and lobby to return to container launcher window", what);
           TerminateProcess(GetCurrentProcess(), 0);
           return;
       } else if (isLobbyReturn) {
@@ -414,6 +416,7 @@ void RelaunchAndClose(HWND hwnd, const std::wstring &args, const char *what) {
 
 void QuitFromMatch(HWND hwnd, const char *what) {
   NOBLE_INFO("PauseMenu: {}", what);
+  Career::EnsureMatchSaved(what);
   std::wstring wSession = ArgValue(Relaunch::CurrentGameArgs(), L"-session-id");
   if (wSession.empty()) wSession = ArgValue(GetCommandLineW(), L"-session-id");
   const bool isHostCmd = (wcsstr(GetCommandLineW(), L"-host") != nullptr ||
@@ -2939,7 +2942,7 @@ void PauseMenu::DrawGameOver(HWND hwnd) {
   bx -= bw + gap;
   ImGui::SetCursorScreenPos(ImVec2(bx, by));
   if (ImGui::Button("RETURN TO MENU", ImVec2(bw, bh)) || (padPress && s_padButton == kPadMenu))
-    RelaunchAndClose(hwnd, L"", "return to menu");
+    RelaunchAndClose(hwnd, L"-main-menu", "return to menu");
   padOutline(kPadMenu);
   overButton |= ImGui::IsItemHovered();
   if (canPlayAgain) {
@@ -2987,19 +2990,27 @@ void PauseMenu::DrawGameOver(HWND hwnd) {
     bx -= bw + gap;
     ImGui::SetCursorScreenPos(ImVec2(bx, by));
     const int lobbyState = PollHostBackInLobby();
-    if (lobbyState == 1 && (t >= 2.0f || s_reveal.skipped)) {
-      static bool s_leaving = false;
-      if (!s_leaving) {
-        s_leaving = true;
-        RelaunchAndClose(hwnd, LobbyReturnArgs(false), "guest back to lobby");
+    const bool canReturnLobby = (lobbyState == 1);
+    if (canReturnLobby) {
+      if (NobleStyle::PrimaryButton("RETURN TO LOBBY", ImVec2(bw, bh)) || (padPress && s_padButton == kPadLobby)) {
+        RelaunchAndClose(hwnd, LobbyReturnArgs(false), "guest return to lobby");
+      }
+      padOutline(kPadLobby);
+      overButton |= ImGui::IsItemHovered();
+    } else {
+      const char* guestBtnText = (lobbyState == 2 ? "HOST LEFT" : "WAITING FOR HOST");
+      const char* guestBtnTip = (lobbyState == 2 ? "The host's lobby closed. Return to the menu to play again."
+                                                 : "You can wait for the host or return to the menu at any time.");
+      UnavailableButton(guestBtnText, ImVec2(bw, bh), guestBtnTip);
+      overButton |= ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
+    }
+    if (canReturnLobby && t >= 15.0f) {
+      static bool s_guestAutoReturned = false;
+      if (!s_guestAutoReturned) {
+        s_guestAutoReturned = true;
+        RelaunchAndClose(hwnd, LobbyReturnArgs(false), "guest auto return to lobby");
       }
     }
-    const char* guestBtnText = lobbyState == 1 ? "RETURNING TO LOBBY..." : (lobbyState == 2 ? "HOST LEFT" : "WAITING FOR HOST");
-    const char* guestBtnTip = lobbyState == 1 ? "Host is back in lobby; returning now..."
-                                              : (lobbyState == 2 ? "The host's lobby closed. Return to the menu to play again."
-                                                                 : "You'll go back to the lobby as soon as the host does.");
-    UnavailableButton(guestBtnText, ImVec2(bw, bh), guestBtnTip);
-    overButton |= ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
   }
   if (hostRole || guestRole) {
     std::string current, display;
@@ -3295,14 +3306,22 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading,
   if (guest) {
     if (s_guestShouldReturnLobby.exchange(false)) {
       NOBLE_INFO("PauseMenu: host returned to lobby, returning guest to pre-game lobby");
-      std::wstring returnArgs = LobbyReturnArgs(false);
-      RelaunchAndClose(hwnd, returnArgs, "host returned to pre-game lobby");
-      return;
+      Career::EnsureMatchSaved("host_returned_to_lobby");
+      SetHostBackInLobby(1);
+      if (!s_gameOver.load()) {
+        std::wstring returnArgs = LobbyReturnArgs(false);
+        RelaunchAndClose(hwnd, returnArgs, "host returned to pre-game lobby");
+        return;
+      }
     }
     if (s_guestShouldDisband.exchange(false)) {
       NOBLE_INFO("PauseMenu: host disbanded lobby / quit game, returning guest to main menu");
-      RelaunchAndClose(hwnd, L"-main-menu", "host disbanded lobby");
-      return;
+      Career::EnsureMatchSaved("host_disbanded_lobby");
+      SetHostBackInLobby(2);
+      if (!s_gameOver.load()) {
+        RelaunchAndClose(hwnd, L"-main-menu", "host disbanded lobby");
+        return;
+      }
     }
   }
 

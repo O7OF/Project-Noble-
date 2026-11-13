@@ -3,6 +3,8 @@
 #include "common/Logger.hpp"
 #include "engine/SharedTagCache.hpp"
 #include "engine/DevCheats.hpp"
+#include "career/Career.hpp"
+#include "ui/PauseMenu.hpp"
 
 #include <windows.h>
 #include <winhttp.h>
@@ -871,6 +873,10 @@ void NetworkTransport::RelayWorkerThread(std::string relayUrl, std::string sessi
                                 if (cb) {
                                     cb(reason);
                                 }
+                            } else if (type == "match_over") {
+                                NOBLE_INFO("NetworkTransport: received match_over packet from host");
+                                Career::OnMatchOverJson(msgStr);
+                                PauseMenu::ShowGameOver();
                             } else if (type == "host_return_to_lobby") {
                                 LobbyReturnCallback cb;
                                 {

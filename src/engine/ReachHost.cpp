@@ -899,16 +899,45 @@ static uint64_t __fastcall HostSlot6_GameResults(void* thisPtr, uint64_t a1, uin
     if (!stackStr.empty()) {
         NOBLE_INFO("ReachHost [Slot 6 - GameResults]: caller stack: {}", stackStr);
     }
-    if (launchState >= 11 && a1 > 0x10000) {
+    if (a1 > 0x10000) {
         static std::vector<uint8_t> s_record;
         s_record.assign(Career::kResultsSize, 0);
         if (SafeCopyMemory(s_record.data(), reinterpret_cast<const void*>(a1), s_record.size())) {
             Career::OnGameResults(s_record.data(), s_record.size());
+
+            // Broadcast match_over to connected peers
+            if (NetworkTransport::Get().IsActive() && NetworkTransport::Get().IsHost()) {
+                try {
+                    const Career::Award award = Career::LastAward();
+                    nlohmann::json j;
+                    j["type"] = "match_over";
+                    j["map"] = award.map;
+                    j["mode"] = award.type;
+                    j["minutes"] = award.minutes;
+                    j["difficulty"] = award.difficulty;
+                    j["players"] = nlohmann::json::array();
+                    for (const auto& p : award.players) {
+                        j["players"].push_back({
+                            { "name", p.name },
+                            { "score", p.score },
+                            { "kills", p.kills },
+                            { "assists", p.assists },
+                            { "deaths", p.deaths },
+                            { "medals", p.medals }
+                        });
+                    }
+                    NetworkTransport::Get().SendLobbyControlJson(j.dump());
+                    NOBLE_INFO("ReachHost: sent match_over JSON to all connected clients");
+                } catch (...) {}
+            }
         } else {
             NOBLE_WARN("ReachHost [Slot 6 - GameResults]: results record not readable");
+            Career::EnsureMatchSaved("slot6_unreadable");
         }
+    } else {
+        Career::EnsureMatchSaved("slot6_null");
     }
-    if (launchState >= 11) PauseMenu::ShowGameOver();  // only for a match that was actually running
+    PauseMenu::ShowGameOver();
     return 0;
 }
 

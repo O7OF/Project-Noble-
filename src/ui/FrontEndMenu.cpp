@@ -5914,7 +5914,7 @@ void ContainerMatchEnded(OverlayContext& ctx, DWORD exitCode) {
             ctx.st.lobbySessionId.clear();
             ctx.st.lobbySessionToken.clear();
             ctx.st.lobbyRoster.clear();
-            ctx.st.screen = (successor == L"-main-menu") ? Screen::Main
+            ctx.st.screen = (successor == L"-main-menu" || isLeaveLobby) ? Screen::Main
                           : (ctx.st.lobbyMode == "campaign") ? Screen::Campaign
                           : (ctx.st.lobbyMode == "firefight") ? Screen::Firefight
                           : (ctx.st.lobbyMode == "forge") ? Screen::Forge

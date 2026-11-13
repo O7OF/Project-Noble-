@@ -284,7 +284,7 @@ bool HandOff(const std::wstring& args) {
     WindowSearch search;
     search.pid = childPid;
     bool appeared = false;
-    for (int attempt = 0; attempt < 300; ++attempt) {   // up to 30 s, then give up and swap anyway
+    for (int attempt = 0; attempt < 25; ++attempt) {   // up to 2.5 s
         Sleep(100);
         search.found = nullptr;
         EnumWindows(&FindVisibleWindow, reinterpret_cast<LPARAM>(&search));
@@ -295,7 +295,7 @@ bool HandOff(const std::wstring& args) {
         SetForegroundWindow(search.found);
         NOBLE_INFO("Relaunch: new window up after {} ms; swapping to it", GetTickCount64() - startTick);
     } else {
-        NOBLE_WARN("Relaunch: the new process did not show a window within 30 s; swapping anyway");
+        NOBLE_INFO("Relaunch: child pid {} started; closing current window immediately", childPid);
     }
 
     // The network was already released in Start, so the new process can bind its ports. Hide this window
