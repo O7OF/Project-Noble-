@@ -396,8 +396,15 @@ static HRESULT STDMETHODCALLTYPE HookSwapChainPresent(IDXGISwapChain* swapChain,
         }
     }
 
-    if (targetFps <= 0) {
-        nextPresentTicks = now.QuadPart;   // uncapped: present immediately
+    // When hardware VSync is enabled (effectiveSyncInterval > 0) and target is 60+ FPS,
+    // DXGI's swap chain naturally synchronizes to the monitor's VBlank. Performing a software
+    // Sleep/Yield right before Present() causes the render thread to miss the hardware VBlank deadline,
+    // causing severe stutter and dropping frame rate to ~45-48 FPS. Only run software pacing when VSync
+    // is OFF or when background-throttling below 60 FPS (e.g. 30 FPS).
+    const bool hardwareSyncs = (effectiveSyncInterval > 0) && (targetFps >= 60);
+
+    if (targetFps <= 0 || hardwareSyncs) {
+        nextPresentTicks = now.QuadPart;   // Hardware VSync or uncapped: present immediately
     } else if (frequency.QuadPart > 0) {
         const LONGLONG interval = frequency.QuadPart / targetFps;
         if (now.QuadPart < nextPresentTicks) {

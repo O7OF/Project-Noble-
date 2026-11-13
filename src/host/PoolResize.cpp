@@ -191,6 +191,9 @@ const FrameOp kAiFrame3Ops[] = {
     { 0x76EAB4,  kAiFrame3Extra },
     { 0x76EAC4,  kAiFrame3Extra },
 };
+// Global tracking for pool hooks
+static bool s_hasOfflinePatches = false;
+
 const FrameOp kAiFrame3Caps[] = {
     { 0x76E8EF, 0x200 },
     { 0x76E925, 0x200 },
@@ -226,19 +229,19 @@ void* __fastcall Hook_DataArrayNew(const char* name, int32_t count, uint64_t rec
         int32_t wanted = count;
         if (std::strcmp(name, "object") == 0 && count == 2048) {
             wanted = 32767;
-        } else if (std::strcmp(name, "cached object render states") == 0 && count < 16384) {
-            wanted = 16384;
-        } else if (profile >= noble::limits::Profile::V16Particles) {
-            if (std::strcmp(name, "c_particle_emitter_gpu") == 0 && count == 832) wanted = 6656;
-            else if (std::strcmp(name, "c_particle_gpu") == 0 && count == 2048) wanted = 16384;
-            else if (std::strcmp(name, "c_particle_emitter_gpu::s_row") == 0 && count == 448) wanted = 3584;
-        }
-        if (profile == noble::limits::Profile::Full) {
-            if (std::strcmp(name, "c_light_volume_gpu") == 0 && count == 160) wanted = 65535;
-            else if (std::strcmp(name, "c_light_volume_gpu::s_row") == 0 && count == 160) wanted = 65535;
-            else if (std::strcmp(name, "beam") == 0 && count == 160) wanted = 65535;
-            else if (std::strcmp(name, "beam_location") == 0 && count == 160) wanted = 65535;
-            else if (std::strcmp(name, "beam_system") == 0 && count == 160) wanted = 65535;
+        } else if (s_hasOfflinePatches) {
+            if (profile >= noble::limits::Profile::V16Particles) {
+                if (std::strcmp(name, "c_particle_emitter_gpu") == 0 && count == 832) wanted = 6656;
+                else if (std::strcmp(name, "c_particle_gpu") == 0 && count == 2048) wanted = 16384;
+                else if (std::strcmp(name, "c_particle_emitter_gpu::s_row") == 0 && count == 448) wanted = 3584;
+            }
+            if (profile == noble::limits::Profile::Full) {
+                if (std::strcmp(name, "c_light_volume_gpu") == 0 && count == 160) wanted = 65535;
+                else if (std::strcmp(name, "c_light_volume_gpu::s_row") == 0 && count == 160) wanted = 65535;
+                else if (std::strcmp(name, "beam") == 0 && count == 160) wanted = 65535;
+                else if (std::strcmp(name, "beam_location") == 0 && count == 160) wanted = 65535;
+                else if (std::strcmp(name, "beam_system") == 0 && count == 160) wanted = 65535;
+            }
         }
 
         if (wanted > count) {
@@ -394,26 +397,26 @@ void InstallResize(HMODULE engine, bool extendedProfile) {
     uint32_t aiBank = 0;
     if (sizeInsn[0] == 0xBA) std::memcpy(&aiBank, sizeInsn + 1, 4);
     if (aiBank <= kStockAiBank + kSafetyMargin) {
-        PatchDword(base + kAiBankSizeInsnRva + 1, kStockAiBank + 0x600000, true);
-        aiBank = kStockAiBank + 0x600000;
-        NOBLE_INFO("AI limits: patched bank 1 size to 0x{:X} (+6 MB) in memory", aiBank);
+        NOBLE_WARN("AI limits: this engine build has stock AI memory bank (0x{:X}); actor pool stays at 96 on stock DLL", aiBank);
+        s_budget = 0;
+        s_actors = 0;
+    } else {
+        s_budget = aiBank - kStockAiBank - kSafetyMargin;
+        if (actors > 96) s_actors = (std::min)(actors, 1024);
     }
-    s_budget = aiBank - kStockAiBank - kSafetyMargin;
 
     // Bank 3 (Render memory bank)
     const auto* renderInsn = reinterpret_cast<const uint8_t*>(base + 0x16199);
     uint32_t renderBank = 0;
     if (renderInsn[0] == 0xBA) std::memcpy(&renderBank, renderInsn + 1, 4);
-    if (renderBank <= 0x560000) {
-        PatchDword(base + 0x16199 + 1, 0x560000 + 0x800000, true);
-        renderBank = 0x560000 + 0x800000;
-        NOBLE_INFO("Render limits: patched bank 3 size to 0x{:X} (+8 MB) in memory", renderBank);
+    if (renderBank > 0x560000) {
+        s_renderBudget = renderBank - 0x560000 - kSafetyMargin;
+        s_hasOfflinePatches = true;
+    } else {
+        s_renderBudget = 0;
+        s_hasOfflinePatches = false;
     }
-    s_renderBudget = 0x800000 - kSafetyMargin;
 
-    if (actors > 96) {
-        s_actors = (std::min)(actors, 1024);
-    }
     ReadPoolOptions();
 
     if (!HookManager::InstallHook(reinterpret_cast<void*>(base + kDataArrayNewRva), reinterpret_cast<void*>(&Hook_DataArrayNew),
@@ -426,6 +429,10 @@ void InstallResize(HMODULE engine, bool extendedProfile) {
         noble::limits::ProfileName(noble::limits::ActiveProfile()),
         s_actors > 0 ? std::to_string(s_actors) : "stock (96)",
         s_budget / 1024);
+}
+
+int ActiveActors() {
+    return s_actors > 0 ? s_actors : 96;
 }
 
 } // namespace noble::pools

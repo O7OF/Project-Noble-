@@ -16,6 +16,7 @@
 #include "engine/CameraFov.hpp"
 #include "engine/PadLayouts.hpp"
 #include "host/EngineLimits.hpp"
+#include "host/PoolResize.hpp"
 #include "common/DeviceIdentity.hpp"
 #include "network/AuthClient.hpp"
 #include <map>
@@ -1321,12 +1322,7 @@ void SettingsPanel::RenderGame() {
         }
     }
     if (noble::limits::ActiveProfile() != noble::limits::Profile::Stock) {
-        wchar_t envActors[16] = {};
-        int activeActors = 96;
-        if (GetEnvironmentVariableW(L"NOBLE_AI_ACTORS", envActors, 16) > 0) {
-            const int a = _wtoi(envActors);
-            if (a > 0) activeActors = a;
-        }
+        const int activeActors = noble::pools::ActiveActors();
         const std::string actorStr = std::to_string(activeActors) + " ACTORS";
         if (Row("ACTIVE AI POOL", "The active AI actor capacity running in the loaded engine.", When::Info, actorStr.c_str(), false)) {
             InfoValue(actorStr.c_str());
