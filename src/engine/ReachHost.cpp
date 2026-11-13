@@ -1369,6 +1369,24 @@ static void ApplyArmoryAppearance(uint8_t* profile) {
         // the profile field exists (the engine: Steel) and the Armory's third colour word follows it.
         put(0xA0, kColor + accentColor);
 
+        // Dev (2026-11-13): NOBLE_FORCE_PROFILE="species=0;helmet=69;chest=126;lsh=..;rsh=.." overrides raw profile item ids
+        // (test: does the player's armour customization drive a Marine mod's look?).
+        if (const char* fp = std::getenv("NOBLE_FORCE_PROFILE")) {
+            std::string spec(fp), item;
+            std::stringstream ss(spec);
+            while (std::getline(ss, item, ';')) {
+                const size_t eq = item.find('=');
+                if (eq == std::string::npos) continue;
+                const std::string k = item.substr(0, eq);
+                const uint32_t v = static_cast<uint32_t>(std::strtoul(item.substr(eq + 1).c_str(), nullptr, 10));
+                if (k == "species") { profile[0x27] = static_cast<uint8_t>(v); profile[0x38] = static_cast<uint8_t>(v); }
+                else if (k == "helmet") put(0x40, v);
+                else if (k == "lsh") put(0x44, v);
+                else if (k == "rsh") put(0x48, v);
+                else if (k == "chest") put(0x4C, v);
+            }
+            NOBLE_INFO("ReachHost [Slot 34]: NOBLE_FORCE_PROFILE {}", spec);
+        }
         const std::string settingsTag = Settings::Get().Snapshot().serviceTag;
         const std::string armoryTag = str(appearance, "service_tag");
         const std::string effectiveTag =
