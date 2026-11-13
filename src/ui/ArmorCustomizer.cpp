@@ -186,10 +186,11 @@ const std::vector<MarineSlot>& MarineSlots() {
             {"ODST", "odst_light"}, {"SPACE MARINE", "space_marine"} } },
         { "Chest", "flair_chest_a", { {"MOD DEFAULT", ""}, {"TROOPER", "trooper_light"}, {"TROOPER HEAVY", "trooper_heavy"},
             {"ODST", "odst_light"}, {"SPACE MARINE", "space_marine"} } },
-        { "Backpack", "flair_backpack", { {"MOD DEFAULT", ""}, {"STANDARD", "default"}, {"TROOPER", "trooper_light"},
-            {"TROOPER HEAVY", "trooper_heavy"}, {"RADIO", "trooper_radio"}, {"MEDIC", "trooper_medic"},
-            {"COMMANDER", "trooper_commander"}, {"OFFICER", "trooper_officer"}, {"ODST", "odst_light"},
-            {"ODST JUMP JET", "odst_jetpack"}, {"SPACE MARINE", "space_marine"}, {"SPACE MARINE (OPEN)", "space_marine_no_visor"} } },
+        // Backpacks are instanced geometry (render model instance placements). Only these three permutations switch any
+        // on (instance masks, tools\rm_instances.py, 2026-11-13); medic/commander/officer/ODST/jump jet/space marine
+        // and "default" have no backpack at all in Reach's marine, so "default" is offered as NONE.
+        { "Backpack", "flair_backpack", { {"MOD DEFAULT", ""}, {"NONE", "default"}, {"TROOPER", "trooper_light"},
+            {"TROOPER HEAVY", "trooper_heavy"}, {"RADIO", "trooper_radio"} } },
         { "Belt", "flair_belt", { {"MOD DEFAULT", ""}, {"TROOPER", "trooper_light"}, {"TROOPER HEAVY", "trooper_heavy"},
             {"ODST", "odst_light"}, {"SPACE MARINE", "space_marine"} } },
         { "Neck", "flair_neck", { {"MOD DEFAULT", ""}, {"TROOPER", "trooper_light"}, {"RADIO", "trooper_radio"},
@@ -2133,7 +2134,7 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
                     if (s_index == 0) {
                         m_marineTab = true;
                         m_previewSpecies = PlayerSpecies::Spartan;   // same as the MARINE button
-                        m_profile.marinePieces = { 7, 0, 3, 3, 3, 9, 0, 0, 0 };
+                        m_profile.marinePieces = { 7, 0, 3, 3, 3, 4, 0, 0, 0 };   // backpack 4 = RADIO
                         m_profile.marineColorsOn = 1;
                         m_profile.marinePrimaryColor = 3;
                         m_profile.marineSecondaryColor = 16;

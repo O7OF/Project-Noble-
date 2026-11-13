@@ -2821,13 +2821,18 @@ static int32_t MarineRegionIndexSEH(uintptr_t base, uint32_t unitDatum, uint32_t
     }
 }
 
-static bool MarineApplySEH(uintptr_t base, uint32_t unit, const uint32_t* pairs, size_t pairCount, const float* pri, const float* sec, const float* c3, const float* c4) {
+static bool MarineApplySEH(uintptr_t base, uint32_t unit, const uint32_t* pairs, size_t pairCount, const float* pri, const float* sec, const float* c3, const float* c4, uint8_t* results) {
     __try {
         using SetRegionPermutationFn = uint8_t(__fastcall*)(uint32_t, uint32_t, uint32_t, uint8_t);
         using SetChangeColorFn = uint8_t(__fastcall*)(uint32_t, int32_t, const float*);
         auto SetRegionPermutation = reinterpret_cast<SetRegionPermutationFn>(base + 0x4729F4);
         auto SetChangeColor = reinterpret_cast<SetChangeColorFn>(base + 0x473858);
-        for (size_t p = 0; p < pairCount; ++p) SetRegionPermutation(unit, pairs[p * 2], pairs[p * 2 + 1], 1);
+        for (size_t p = 0; p < pairCount; ++p) {
+            // Dev (2026-11-13): env NOBLE_MARINE_FLAG = last argument of the engine call (default 1).
+            static const uint8_t s_flag = std::getenv("NOBLE_MARINE_FLAG") ? static_cast<uint8_t>(std::atoi(std::getenv("NOBLE_MARINE_FLAG"))) : 1;
+            const uint8_t rc = SetRegionPermutation(unit, pairs[p * 2], pairs[p * 2 + 1], s_flag);
+            if (results && p < 16) results[p] = rc;
+        }
         if (pri) SetChangeColor(unit, 0, pri);
         if (sec) SetChangeColor(unit, 1, sec);
         if (c3) SetChangeColor(unit, 2, c3);
@@ -2945,11 +2950,21 @@ void ReachArmory::SyncMarine() {
     const float sec[3] = { sel.marineSecondaryRgb[0], sel.marineSecondaryRgb[1], sel.marineSecondaryRgb[2] };
     const float c3[3] = { sel.marineThirdRgb[0], sel.marineThirdRgb[1], sel.marineThirdRgb[2] };
     const float c4[3] = { sel.marineFourthRgb[0], sel.marineFourthRgb[1], sel.marineFourthRgb[2] };
+    uint8_t results[16] = {};
     const bool ok = MarineApplySEH(base, unit, pairs.data(), pairs.size() / 2, sel.marineColors ? pri : nullptr,
-                                   sel.marineColors ? sec : nullptr, sel.marineColors ? c3 : nullptr, sel.marineColors ? c4 : nullptr);
+                                   sel.marineColors ? sec : nullptr, sel.marineColors ? c3 : nullptr, sel.marineColors ? c4 : nullptr, results);
     if (s_ticksLeft == 29) {
         NOBLE_INFO("MarineArmor: applied {} of {} piece(s){} to 0x{:08X}{}", pairs.size() / 2, sel.marinePieces.size(),
                    sel.marineColors ? " + colours" : "", unit, ok ? "" : " (FAILED)");
+        // 2026-11-13: per-piece result of the engine call (helmet/chest/legs did not change in Trooper Firefight).
+        std::string rcs;
+        size_t i = 0;
+        for (const auto& [r, p] : sel.marinePieces) {
+            if (i >= pairs.size() / 2 || i >= 16) break;
+            if (!sid(r) || !sid(p)) { rcs += " " + r + "=" + p + ":nosid"; continue; }
+            rcs += " " + r + "=" + p + ":" + std::to_string(results[i]); ++i;
+        }
+        NOBLE_INFO("MarineArmor: results{}", rcs);
     }
 }
 
