@@ -21,12 +21,13 @@ public:
 
     void Initialize();
 
-    AuthResult Login(const std::string& username, const std::string& password);
-    AuthResult Register(const std::string& username, const std::string& password);
+    AuthResult Login(const std::string& username, const std::string& password, bool rememberMe = true);
+    AuthResult Register(const std::string& username, const std::string& password, bool rememberMe = true);
     AuthResult LoginWithSteam();
     bool SetPlayerName(const std::string& name);
     bool IsSteamLinked() const;
     void Logout();
+    void InvalidateSession(const std::string& reason = "");
 
     // Re-asks the master server whether this account is a developer (POST /api/dev/check).
     // The cached login keeps the flag from the last login, so an account promoted with

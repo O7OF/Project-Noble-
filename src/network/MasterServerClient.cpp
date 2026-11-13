@@ -181,29 +181,6 @@ int Int(const nlohmann::json& j, const char* key, int fallback, int lo, int hi) 
     return v < lo ? lo : (v > hi ? hi : v);
 }
 
-int CountLocalKnownPlayers() {
-    std::set<std::string> knownNames;
-    const DeviceIdentity& id = DeviceIdentityStore::Get();
-    if (!id.playerName.empty()) {
-        std::string lower = id.playerName;
-        for (char& c : lower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-        knownNames.insert(lower);
-    }
-    auto scanDir = [&](const std::filesystem::path& dir) {
-        std::error_code ec;
-        if (!std::filesystem::exists(dir, ec)) return;
-        for (const auto& entry : std::filesystem::directory_iterator(dir, ec)) {
-            if (!entry.is_regular_file(ec) || entry.path().extension() != ".json") continue;
-            std::string stem = entry.path().stem().string();
-            for (char& c : stem) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-            if (!stem.empty()) knownNames.insert(stem);
-        }
-    };
-    scanDir(DeviceIdentityStore::DataDir() / "players");
-    scanDir(DeviceIdentityStore::UserDir() / "players");
-    return std::max(1, static_cast<int>(knownNames.size()));
-}
-
 } // namespace
 
 uint64_t MasterServerClient::GetLobbyMachineId() {
@@ -353,9 +330,6 @@ void MasterServerClient::RequestList() {
 }
 
 void MasterServerClient::RequestOnlineCount() {
-    if (m_totalPlayers.load() == 0) {
-        m_totalPlayers.store(CountLocalKnownPlayers());
-    }
     std::lock_guard<std::mutex> lock(m_mutex);
     if (m_url.empty()) return;
     m_onlineRequested = true;
@@ -498,7 +472,15 @@ void MasterServerClient::DoOnline() {
         {"username", id.playerName},
         {"serviceTag", id.serviceTag}
     };
+    if (AuthClient::Get().IsLoggedIn()) {
+        presenceBody["userId"] = AuthClient::Get().GetUserId();
+        presenceBody["sessionToken"] = AuthClient::Get().GetSessionToken();
+        presenceBody["session_token"] = AuthClient::Get().GetSessionToken();
+    }
     HttpResult r = HttpRequest(Url(), L"POST", "/api/presence", presenceBody.dump());
+    if (r.status == 401) {
+        AuthClient::Get().InvalidateSession("Session invalidated by master server");
+    }
     if (!r.ok) {
         r = HttpRequest(Url(), L"GET", "/api/players/online", {});
     }
@@ -510,47 +492,18 @@ void MasterServerClient::DoOnline() {
     try {
         const nlohmann::json j = nlohmann::json::parse(r.body);
         const int online = j.value("online", j.value("activeSessions", 0));
-        int total = j.value("totalPlayers", j.value("registeredPlayers", 0));
+        const int total = j.value("totalPlayers", j.value("registeredPlayers", online));
         const int servers = j.value("servers", j.value("masterSessions", 0));
 
-        // Master server cluster nodes (East, West, UK) register internal accounts for peer federation;
-        // ensure master server infrastructure nodes are never counted as total players.
-        int masterNodeCount = 0;
-        if (j.contains("cluster") && j["cluster"].is_object()) {
-            const auto& cluster = j["cluster"];
-            masterNodeCount = 1 + cluster.value("peerCount", 0);
-            if (cluster.contains("nodes") && cluster["nodes"].is_array()) {
-                masterNodeCount = std::max(masterNodeCount, 1 + static_cast<int>(cluster["nodes"].size()));
-            }
-        } else if (j.contains("peerRegistries") && j["peerRegistries"].is_array()) {
-            masterNodeCount = 1 + static_cast<int>(j["peerRegistries"].size());
-        } else {
-            masterNodeCount = 3;
-        }
-        total = std::max(0, total - masterNodeCount);
-
         m_onlinePlayers.store(std::max(0, online));
+        m_totalPlayers.store(std::max(online, total));
+        m_onlineServers.store(std::max(0, servers));
+
         if (j.contains("is_developer") || j.contains("is_tester")) {
             const bool isDev = j.value("is_developer", false);
             const bool isTester = j.value("is_tester", false);
             AuthClient::Get().SetRoles(isDev, isTester);
         }
-        if (total <= 1) {
-            const HttpResult lb = HttpRequest(Url(), L"GET", "/api/leaderboard?limit=250", {});
-            if (lb.ok) {
-                try {
-                    const auto lbJson = nlohmann::json::parse(lb.body);
-                    if (lbJson.is_array() && static_cast<int>(lbJson.size()) > total) {
-                        total = static_cast<int>(lbJson.size());
-                    }
-                } catch (...) {}
-            }
-        }
-        const int localKnown = CountLocalKnownPlayers();
-        if (total > 0 || localKnown > 0) {
-            m_totalPlayers.store(std::max({ total, localKnown, m_totalPlayers.load() }));
-        }
-        m_onlineServers.store(std::max(0, servers));
     } catch (...) {
     }
 }
@@ -700,10 +653,7 @@ void MasterServerClient::DoList() {
     }
 
     if (online >= 0) m_onlinePlayers.store(std::max(0, online));
-    const int localKnown = CountLocalKnownPlayers();
-    if (total > 0 || localKnown > 0) {
-        m_totalPlayers.store(std::max({ total, localKnown, m_totalPlayers.load() }));
-    }
+    if (total > 0) m_totalPlayers.store(std::max(online, total));
     std::lock_guard<std::mutex> lock(m_mutex);
     m_status = std::to_string(list.size()) + " game(s) on the master server";
     m_sessions = std::move(list);

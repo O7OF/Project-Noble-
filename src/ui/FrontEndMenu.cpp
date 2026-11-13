@@ -1176,6 +1176,12 @@ static void OpenAccountModal() {
     s_showAccountModal = true;
     s_openAccountPopup = true;
     s_accountStatusMsg.clear();
+    if (AuthClient::Get().IsLoggedIn()) {
+        std::snprintf(s_accountUser, sizeof(s_accountUser), "%s", AuthClient::Get().GetUsername().c_str());
+    } else {
+        std::snprintf(s_accountUser, sizeof(s_accountUser), "%s", Settings::Get().Snapshot().accountUsername.c_str());
+    }
+    s_accountPass[0] = 0;
 }
 
 static void OpenDevMenuModal() {
@@ -1353,6 +1359,13 @@ void DrawAccountModal(const Ui& ui) {
                                    "%s", s_accountStatusMsg.c_str());
             }
             ImGui::Dummy(ImVec2(0, 8));
+            if (ImGui::Button("LOG OUT", ImVec2(-1, 30.0f * ui.s))) {
+                AuthClient::Get().Logout();
+                s_accountStatusMsg = "Logged out.";
+                s_accountStatusError = false;
+                s_accountPass[0] = 0;
+            }
+            ImGui::Dummy(ImVec2(0, 4));
             if (ImGui::Button("CLOSE", ImVec2(-1, 32.0f * ui.s))) {
                 s_showAccountModal = false;
                 ImGui::CloseCurrentPopup();
@@ -1380,6 +1393,15 @@ void DrawAccountModal(const Ui& ui) {
             ImGui::SetNextItemWidth(-FLT_MIN);
             ImGui::InputText("##acc_pass", s_accountPass, sizeof(s_accountPass), ImGuiInputTextFlags_Password);
 
+            static bool s_rememberMe = true;
+            static bool s_rememberInit = false;
+            if (!s_rememberInit) {
+                s_rememberMe = Settings::Get().Snapshot().rememberAccount;
+                s_rememberInit = true;
+            }
+            ImGui::Dummy(ImVec2(0, 2));
+            ImGui::Checkbox("Remember Me", &s_rememberMe);
+
             if (!s_accountStatusMsg.empty()) {
                 ImGui::Dummy(ImVec2(0, 4));
                 ImGui::TextColored(s_accountStatusError ? ImVec4(1.0f, 0.4f, 0.4f, 1.0f) : ImVec4(0.4f, 0.9f, 0.4f, 1.0f),
@@ -1390,10 +1412,11 @@ void DrawAccountModal(const Ui& ui) {
             const float subW = (ImGui::GetContentRegionAvail().x - 10.0f * ui.s) * 0.5f;
             if (s_accountTab == 0) {
                 if (ImGui::Button("LOG IN##submit", ImVec2(subW, 32.0f * ui.s)) || (ImGui::IsKeyPressed(ImGuiKey_Enter) && ImGui::IsWindowFocused())) {
-                    auto res = AuthClient::Get().Login(s_accountUser, s_accountPass);
+                    auto res = AuthClient::Get().Login(s_accountUser, s_accountPass, s_rememberMe);
                     if (res.success) {
                         s_accountStatusMsg = "Login successful!";
                         s_accountStatusError = false;
+                        s_accountPass[0] = 0;
                         s_showAccountModal = false;
                         ImGui::CloseCurrentPopup();
                     } else {
@@ -1403,10 +1426,11 @@ void DrawAccountModal(const Ui& ui) {
                 }
             } else {
                 if (ImGui::Button("REGISTER##submit", ImVec2(subW, 32.0f * ui.s)) || (ImGui::IsKeyPressed(ImGuiKey_Enter) && ImGui::IsWindowFocused())) {
-                    auto res = AuthClient::Get().Register(s_accountUser, s_accountPass);
+                    auto res = AuthClient::Get().Register(s_accountUser, s_accountPass, s_rememberMe);
                     if (res.success) {
                         s_accountStatusMsg = "Registration successful! Logged in.";
                         s_accountStatusError = false;
+                        s_accountPass[0] = 0;
                         s_showAccountModal = false;
                         ImGui::CloseCurrentPopup();
                     } else {

@@ -122,6 +122,7 @@ struct SettingsData {
     // Account / Auth
     std::string accountUsername = "";
     std::string accountToken = "";
+    bool rememberAccount = true;
     bool isDeveloper = false;
     int accountUserId = 0; // "address:port" entries saved in the SERVERS tab
 };

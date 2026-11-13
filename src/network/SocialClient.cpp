@@ -366,10 +366,12 @@ void SocialClient::PollInvitesAsync() {
 }
 
 void SocialClient::SearchUsersAsync(const std::string& prefix, std::function<void(bool ok, const std::vector<UserSearchResult>& results)> callback) {
-    std::thread([prefix, callback]() {
+    const int userId = AuthClient::Get().GetUserId();
+    std::thread([prefix, userId, callback]() {
         const std::string url = ResolveMasterUrl();
         nlohmann::json req;
         req["prefix"] = prefix;
+        if (userId > 0) req["userId"] = userId;
         int status = 0;
         std::string res = PostJson(url, "/api/friends/search", req.dump(), status);
         std::vector<UserSearchResult> out;

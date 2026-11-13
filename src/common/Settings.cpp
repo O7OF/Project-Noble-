@@ -256,6 +256,7 @@ void Settings::Load() {
             Read(j, "favorites", d.favorites);
             Read(j, "accountUsername", d.accountUsername);
             Read(j, "accountToken", d.accountToken);
+            Read(j, "rememberAccount", d.rememberAccount);
             Read(j, "isDeveloper", d.isDeveloper);
             Read(j, "accountUserId", d.accountUserId);
             auto keys = j.find("keyOverrides");
@@ -407,6 +408,7 @@ bool Settings::Save() {
         j["favorites"] = d.favorites;
         j["accountUsername"] = d.accountUsername;
         j["accountToken"] = d.accountToken;
+        j["rememberAccount"] = d.rememberAccount;
         j["isDeveloper"] = d.isDeveloper;
         j["accountUserId"] = d.accountUserId;
         nlohmann::json keys = nlohmann::json::object();
