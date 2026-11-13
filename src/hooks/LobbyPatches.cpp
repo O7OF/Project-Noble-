@@ -771,7 +771,14 @@ typedef void(__fastcall* ProcessHostHandoffFn)(void* session);
 static ProcessHostHandoffFn s_originalProcessHostHandoff = nullptr;
 static std::atomic<int> s_hostHandoffLogCount{0};
 static void __fastcall Hook_ProcessHostHandoff(void* session) {
-    if (session && NetworkTransport::Get().IsActive()) {
+#ifdef NOBLE_DEDICATED
+    // noble-dedicated has no Noble P2P transport (NetworkTransport.cpp is not part of that target; linking it failed
+    // with unresolved NetworkTransport ctor/dtor, 2026-11-13): the transport is never active there.
+    constexpr bool transportActive = false;
+#else
+    const bool transportActive = NetworkTransport::Get().IsActive();
+#endif
+    if (session && transportActive) {
         auto* s = static_cast<uint8_t*>(session);
         const uint32_t prevCandidates = *reinterpret_cast<const uint32_t*>(s + 0x60F04);
         const int32_t prevTarget = *reinterpret_cast<const int32_t*>(s + 0x60F18);

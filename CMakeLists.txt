@@ -442,6 +442,8 @@ set(DEDICATED_HEADERS
 )
 
 add_executable(noble-dedicated ${DEDICATED_SOURCES} ${DEDICATED_HEADERS})
+# Code shared with the client can test this (e.g. LobbyPatches: no Noble P2P transport in the dedicated server).
+target_compile_definitions(noble-dedicated PRIVATE NOBLE_DEDICATED=1)
 # Dev diagnostics (pool report, spawn test, MemberTrace) stay out of the dedicated server: it must not ship
 # development features until it hosts real sessions.
 if(NOBLE_DEV_BUILD)
