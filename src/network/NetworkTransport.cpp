@@ -908,7 +908,6 @@ void NetworkTransport::RelayWorkerThread(std::string relayUrl, std::string sessi
                                 }
                             } else if (type == "dev_spawn") {
                                 if (m_isHost) {
-#if defined(NOBLE_DEV_BUILD)
                                     std::string name = j.value("name", "");
                                     std::string cat = j.value("category", "");
                                     std::string tagPath = j.value("tagPath", "");
@@ -916,7 +915,6 @@ void NetworkTransport::RelayWorkerThread(std::string relayUrl, std::string sessi
                                     bool give = j.value("give", false);
                                     NOBLE_INFO("NetworkTransport: [HOST] Received guest dev_spawn for '{}' ({})", name, cat);
                                     DevCheats::QueueItemAction(name, cat, tagPath, tagIndex, give);
-#endif
                                 }
                             }
                         } catch (...) {}

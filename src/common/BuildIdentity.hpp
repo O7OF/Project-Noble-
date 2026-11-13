@@ -15,11 +15,11 @@ namespace noble {
 
 constexpr int kClientProtocol = 2;                 // closed-source wire/API revision
 #ifdef NOBLE_DEV_BUILD
-constexpr std::string_view kBuildTag = "0.19.74-dev";
+constexpr std::string_view kBuildTag = "0.19.75-dev";
 #else
-constexpr std::string_view kBuildTag = "0.19.74";  // prefix of VERSION_STRING
+constexpr std::string_view kBuildTag = "0.19.75";  // prefix of VERSION_STRING
 #endif
-constexpr std::string_view kBaseBuildTag = "0.19.74";
+constexpr std::string_view kBaseBuildTag = "0.19.75";
 
 // Sent on every master-server request. The cluster refuses requests without a
 // matching build/protocol pair (HTTP 403 client_outdated).
@@ -31,12 +31,9 @@ constexpr std::string_view kClientProtocolHeader = "X-Noble-Protocol";
 // engine's own session check, not only the master-server gate.
 constexpr uint64_t kSessionMagic = 0x504E43534C4F4231ULL;   // "PNCSLOB1"
 
-// Master-server cluster (three Render regions; they federate with each other
-// through PEER_REGISTRY_URL - see ServerTestDeploy/README.md).
-constexpr std::string_view kMasterUsEast = "https://projectnobleeast.onrender.com";
-constexpr std::string_view kMasterUsWest = "https://projectnoblewest.onrender.com";
-constexpr std::string_view kMasterUk     = "https://projectnobleuk.onrender.com";
-constexpr std::string_view kMasterDefault = kMasterUsEast;
+// Master-server backend on Render (Global Main)
+constexpr std::string_view kMasterMain   = "https://projectnoblebackend.onrender.com";
+constexpr std::string_view kMasterDefault = kMasterMain;
 
 inline std::string_view ExtractBaseVersion(std::string_view v) {
     while (!v.empty() && (v.front() == ' ' || v.front() == '\t')) v.remove_prefix(1);

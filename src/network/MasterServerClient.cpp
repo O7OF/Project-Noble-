@@ -1,6 +1,7 @@
 #include "MasterServerClient.hpp"
 #include "UPnP.hpp"
 #include "NetworkTransport.hpp"
+#include "AuthClient.hpp"
 #include "common/DeviceIdentity.hpp"
 #include "common/Logger.hpp"
 #include "common/Version.hpp"
@@ -273,10 +274,8 @@ std::vector<std::string> MasterServerClient::GetCandidateUrls(const std::string&
         }
         addUnique(m_url);
     }
-    if (!urls.empty()) {
-        addUnique(kMasterUsEast);
-        addUnique(kMasterUsWest);
-        addUnique(kMasterUk);
+    if (urls.empty()) {
+        addUnique(kMasterMain);
     }
     return urls;
 }
@@ -531,6 +530,11 @@ void MasterServerClient::DoOnline() {
         total = std::max(0, total - masterNodeCount);
 
         m_onlinePlayers.store(std::max(0, online));
+        if (j.contains("is_developer") || j.contains("is_tester")) {
+            const bool isDev = j.value("is_developer", false);
+            const bool isTester = j.value("is_tester", false);
+            AuthClient::Get().SetRoles(isDev, isTester);
+        }
         if (total <= 1) {
             const HttpResult lb = HttpRequest(Url(), L"GET", "/api/leaderboard?limit=250", {});
             if (lb.ok) {
@@ -737,9 +741,9 @@ void MasterServerClient::DoRegister() {
         {"host_peer_id", advert.hostPeerId == 0 ? 1ULL : advert.hostPeerId}, {"player_id", advert.hostPeerId == 0 ? 1ULL : advert.hostPeerId},
         {"host_machine_id", advert.hostMachineId.empty() ? "0x484F535400000001" : advert.hostMachineId},
         {"host_username", advert.hostUsername.empty() ? "Host" : advert.hostUsername}, {"player_name", advert.hostUsername.empty() ? "Host" : advert.hostUsername},
-        {"host_is_dev", advert.hostIsDev}, {"host_service_tag", advert.hostServiceTag.empty() ? "117" : advert.hostServiceTag},
+        {"host_is_dev", advert.hostIsDev}, {"host_is_tester", advert.hostIsTester}, {"host_service_tag", advert.hostServiceTag.empty() ? "117" : advert.hostServiceTag},
         {"host_rank_index", advert.hostRankIndex}, {"host_emblem_id", advert.hostEmblemId},
-      {"host_emblem_background_id", advert.hostEmblemBackgroundId},
+        {"host_emblem_background_id", advert.hostEmblemBackgroundId},
         {"host_nameplate_id", advert.hostNameplateId}, {"host_team", advert.hostTeam},
         {"host_games_played", advert.hostGamesPlayed}, {"host_kills", advert.hostKills},
         {"host_deaths", advert.hostDeaths}, {"host_challenges_done", advert.hostChallengesDone},
@@ -754,6 +758,7 @@ void MasterServerClient::DoRegister() {
                 {"username", advert.hostUsername.empty() ? "Host" : advert.hostUsername},
                 {"isHost", true},
                 {"isDev", advert.hostIsDev},
+                {"isTester", advert.hostIsTester},
                 {"serviceTag", advert.hostServiceTag.empty() ? "117" : advert.hostServiceTag},
                 {"rankIndex", advert.hostRankIndex}, {"emblemId", advert.hostEmblemId},
         {"emblemBackgroundId", advert.hostEmblemBackgroundId},
@@ -817,6 +822,7 @@ void MasterServerClient::DoHeartbeat() {
             {"host_machine_id", m_advert.hostMachineId},
             {"host_username", m_advert.hostUsername},
             {"host_is_dev", m_advert.hostIsDev},
+            {"host_is_tester", m_advert.hostIsTester},
             {"host_service_tag", m_advert.hostServiceTag},
             {"host_rank_index", m_advert.hostRankIndex},
             {"host_emblem_id", m_advert.hostEmblemId},
@@ -1048,9 +1054,10 @@ LobbyState MasterServerClient::FetchLobbyStateSync(const std::string& sessionId)
             p.challengesDone = item.value("challengesDone", item.value("challenges_done", 0));
             p.commendations = item.value("commendations", 0);
             p.armoryOwned = item.value("armoryOwned", item.value("armory_owned", 0));
-                p.isHost = item.value("isHost", false);
-                p.isDev = item.value("isDev", false);
-                p.ping = item.value("ping", 0);
+            p.isHost = item.value("isHost", false);
+            p.isDev = item.value("isDev", false);
+            p.isTester = item.value("isTester", false);
+            p.ping = item.value("ping", 0);
                 if (!p.isHost && !p.machineId.empty()) {
                     try {
                         uint64_t mid = std::stoull(p.machineId, nullptr, 0);
@@ -1095,7 +1102,8 @@ LobbyState MasterServerClient::JoinLobbySync(const std::string& sessionId,
                                              int team,
                                              uint16_t localPort,
                                              const std::string& fallbackHostIp,
-                                             uint16_t fallbackHostPort) {
+                                             uint16_t fallbackHostPort,
+                                             bool isTester) {
     LobbyState state;
 
     if (!Enabled()) return state;
@@ -1113,6 +1121,7 @@ LobbyState MasterServerClient::JoinLobbySync(const std::string& sessionId,
         { "player_id", peerId },
         { "username", username },
         { "is_dev", isDev },
+        { "is_tester", isTester },
         { "service_tag", serviceTag },
         { "rank_index", rankIndex },
         { "emblem_id", emblemId },
@@ -1208,9 +1217,10 @@ LobbyState MasterServerClient::JoinLobbySync(const std::string& sessionId,
             p.challengesDone = item.value("challengesDone", item.value("challenges_done", 0));
             p.commendations = item.value("commendations", 0);
             p.armoryOwned = item.value("armoryOwned", item.value("armory_owned", 0));
-                p.isHost = item.value("isHost", false);
-                p.isDev = item.value("isDev", false);
-                p.ping = item.value("ping", 0);
+            p.isHost = item.value("isHost", false);
+            p.isDev = item.value("isDev", false);
+            p.isTester = item.value("isTester", false);
+            p.ping = item.value("ping", 0);
                 if (!p.isHost && !p.machineId.empty()) {
                     try {
                         uint64_t mid = std::stoull(p.machineId, nullptr, 0);

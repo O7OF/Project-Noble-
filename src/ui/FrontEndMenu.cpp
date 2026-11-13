@@ -1298,9 +1298,10 @@ void DrawAccountModal(const Ui& ui) {
             }
 
             const bool isDev = AuthClient::Get().IsDeveloper();
-            // One line for the account, one gold chip for developer status - no more "[DEV] [DEVELOPER]".
-            ImGui::TextColored(isDev ? ImVec4(1.0f, 0.85f, 0.2f, 1.0f) : ImVec4(0.4f, 0.9f, 0.4f, 1.0f),
-                               "Logged in as: %s", AuthClient::Get().GetUsername().c_str());
+            const bool isTester = AuthClient::Get().IsTester();
+            ImVec4 userCol = isDev ? ImVec4(1.0f, 0.85f, 0.2f, 1.0f)
+                           : (isTester ? ImVec4(0.3f, 0.85f, 0.95f, 1.0f) : ImVec4(0.4f, 0.9f, 0.4f, 1.0f));
+            ImGui::TextColored(userCol, "Logged in as: %s", AuthClient::Get().GetUsername().c_str());
             if (isDev) {
                 ImGui::SameLine();
                 const ImVec2 chip = ImGui::GetCursorScreenPos();
@@ -1313,6 +1314,20 @@ void DrawAccountModal(const Ui& ui) {
                 ImGui::Dummy(ImVec2(0, 4));
                 ImGui::PushStyleColor(ImGuiCol_Text, NobleStyle::TextMuted());
                 ImGui::TextWrapped("Developer account (ID: %d). The Developer Menu is on the main menu, above Quit.",
+                                   AuthClient::Get().GetUserId());
+                ImGui::PopStyleColor();
+            } else if (isTester) {
+                ImGui::SameLine();
+                const ImVec2 chip = ImGui::GetCursorScreenPos();
+                ImGui::GetWindowDrawList()->AddRectFilled(chip, ImVec2(chip.x + 58.0f * ui.s, chip.y + 18.0f * ui.s),
+                                                          IM_COL32(30, 160, 210, 240), 3.0f * ui.s);
+                ImGui::GetWindowDrawList()->AddText(ImGui::GetFont(), 11.0f * ui.s,
+                                                    ImVec2(chip.x + 8.0f * ui.s, chip.y + 3.0f * ui.s),
+                                                    IM_COL32(10, 10, 10, 255), "TESTER");
+                ImGui::Dummy(ImVec2(62.0f * ui.s, 18.0f * ui.s));
+                ImGui::Dummy(ImVec2(0, 4));
+                ImGui::PushStyleColor(ImGuiCol_Text, NobleStyle::TextMuted());
+                ImGui::TextWrapped("Tester account (ID: %d). Verified community tester tag active.",
                                    AuthClient::Get().GetUserId());
                 ImGui::PopStyleColor();
             } else {
@@ -1418,7 +1433,7 @@ void DrawAccountModal(const Ui& ui) {
 // player), in which case that piece is drawn as a plain placeholder or left out.
 float PlayerRow(const Ui& ui, ImVec2 pos, float width, int rankIndex, int emblemIndex, int nameplateIndex,
                 int team, const std::string& serviceTag, const std::string& name, bool dev, bool selected,
-                int emblemBackground = 0, const UiArt::EmblemColors& emblemColors = {}) {
+                int emblemBackground = 0, const UiArt::EmblemColors& emblemColors = {}, bool tester = false) {
     const float h = 40.0f * ui.s;
     const float rankW = 29.0f * ui.s;      // square, centred on the row
     const float embW = 30.0f * ui.s;
@@ -1487,6 +1502,10 @@ float PlayerRow(const Ui& ui, ImVec2 pos, float width, int rankIndex, int emblem
         const float tagW = TextWidth(NobleStyle::SmallFont(), 11.5f * ui.s, tagText.c_str());
         Text(ui, NobleStyle::SmallFont(), 11.5f, ImVec2(p0.x + pad + tagW + 5.0f * ui.s, tagY),
              IM_COL32(240, 196, 70, 255), "[DEV]");
+    } else if (tester) {
+        const float tagW = TextWidth(NobleStyle::SmallFont(), 11.5f * ui.s, tagText.c_str());
+        Text(ui, NobleStyle::SmallFont(), 11.5f, ImVec2(p0.x + pad + tagW + 5.0f * ui.s, tagY),
+             IM_COL32(70, 210, 240, 255), "[TESTER]");
     }
 
     ui.dl->PushClipRect(ImVec2(p0.x + pad, pos.y + 13.0f * ui.s), ImVec2(p1.x - pad, p1.y), true);
@@ -1594,7 +1613,8 @@ void DrawParty(const Ui& ui, const std::string& playerName, const char* status) 
         }
         y += PlayerRow(ui, ImVec2(x2, y), x + w - x2, s_rank, prof.emblemIndex, prof.nameplateIndex,
                        0 /* no team in the main menu */, PlayerServiceTag(sd), playerName,
-                       AuthClient::Get().IsDeveloper(), false, prof.emblemBackgroundIndex, UIManager::GetArmorCustomizer().EmblemColorsNow());
+                       AuthClient::Get().IsDeveloper(), false, prof.emblemBackgroundIndex, UIManager::GetArmorCustomizer().EmblemColorsNow(),
+                       AuthClient::Get().IsTester());
     }
     const float accH = 22.0f * ui.s;
     const ImVec2 accP0(x2, y);
@@ -1613,8 +1633,10 @@ void DrawParty(const Ui& ui, const std::string& playerName, const char* status) 
     if (AuthClient::Get().IsLoggedIn()) {
         char buf[64];
         std::snprintf(buf, sizeof(buf), "ONLINE: %s", AuthClient::Get().GetUsername().c_str());
-        Text(ui, NobleStyle::SmallFont(), 12.0f, ImVec2(x2 + 8.0f * ui.s, y + 4.0f * ui.s),
-             AuthClient::Get().IsDeveloper() ? IM_COL32(255, 215, 0, 255) : IM_COL32(120, 220, 160, 255), buf);
+        const ImU32 col = AuthClient::Get().IsDeveloper() ? IM_COL32(255, 215, 0, 255)
+                        : (AuthClient::Get().IsTester()   ? IM_COL32(70, 210, 240, 255)
+                                                          : IM_COL32(120, 220, 160, 255));
+        Text(ui, NobleStyle::SmallFont(), 12.0f, ImVec2(x2 + 8.0f * ui.s, y + 4.0f * ui.s), col, buf);
     } else {
         Text(ui, NobleStyle::SmallFont(), 12.0f, ImVec2(x2 + 8.0f * ui.s, y + 4.0f * ui.s), IM_COL32(200, 210, 220, 200), "[ LOGIN / REGISTER ]");
     }
@@ -2293,6 +2315,7 @@ static void SetupHostLobby(MenuState& st, const std::string& mapScenario, const 
         adv.hostMachineId = "0x484F535400000001";
         adv.hostUsername = pName;
         adv.hostIsDev = AuthClient::Get().IsDeveloper();
+        adv.hostIsTester = AuthClient::Get().IsTester();
         adv.hostServiceTag = PlayerServiceTag(Settings::Get().Snapshot());
         // The host's own row identity, so guests can draw it (rank / emblem / nameplate / team).
         {
@@ -2329,6 +2352,7 @@ static void SetupHostLobby(MenuState& st, const std::string& mapScenario, const 
     me.serviceTag = PlayerServiceTag(Settings::Get().Snapshot());
     me.isHost = true;
     me.isDev = AuthClient::Get().IsDeveloper();
+    me.isTester = AuthClient::Get().IsTester();
     me.ping = 0;
     {
         const auto& prof = UIManager::GetArmorCustomizer().GetProfile();
@@ -4883,7 +4907,7 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
                   player.nameplateId > 0 ? player.nameplateId : (local ? ownProf.nameplateIndex : 0),
                   player.team, player.serviceTag, player.username, player.isDev, false,
                   player.emblemBackgroundId > 0 ? player.emblemBackgroundId : (local ? ownProf.emblemBackgroundIndex : 0),
-                  local ? UIManager::GetArmorCustomizer().EmblemColorsNow() : UiArt::EmblemColors{});
+                  local ? UIManager::GetArmorCustomizer().EmblemColorsNow() : UiArt::EmblemColors{}, player.isTester);
         y += slotH + 14.0f * ui.s;
         auto statLine = [&](const char* label, const std::string& value) {
             Text(ui, NobleStyle::SmallFont(), 15.0f, ImVec2(cardX + 4.0f * ui.s, y), kDim, label);
@@ -5034,7 +5058,7 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
                           teamForRow,
                           player.serviceTag, (local ? (Settings::Get().Snapshot().playerName.empty() ? std::string("Noble Six") : Settings::Get().Snapshot().playerName) : (player.username.empty() ? std::string(player.isHost ? "Host" : "Spartan") : player.username)), player.isDev, selected,
                           player.emblemBackgroundId > 0 ? player.emblemBackgroundId : (local ? ownProf.emblemBackgroundIndex : 0),
-                          local ? UIManager::GetArmorCustomizer().EmblemColorsNow() : UiArt::EmblemColors{});
+                          local ? UIManager::GetArmorCustomizer().EmblemColorsNow() : UiArt::EmblemColors{}, player.isTester);
                 if (selected) ui.dl->AddRect(s0, s1, kAccent, 0.0f, 0, 1.5f * ui.s);
                 {
                     uint64_t machine = 1000ULL + static_cast<uint64_t>(idx);   // demo rosters have no ids; only real ids ever talk
@@ -7408,7 +7432,8 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
                  IM_COL32(143, 216, 255, 235), credits.c_str());
             PlayerRow(ui, cardPos, rowW, Career::RankIndex(Career::Get().credits),
                       prof.emblemIndex, prof.nameplateIndex, 0, PlayerServiceTag(settings), settings.playerName,
-                      AuthClient::Get().IsDeveloper(), false, prof.emblemBackgroundIndex, UIManager::GetArmorCustomizer().EmblemColorsNow());
+                      AuthClient::Get().IsDeveloper(), false, prof.emblemBackgroundIndex, UIManager::GetArmorCustomizer().EmblemColorsNow(),
+                      AuthClient::Get().IsTester());
         }
 
         // Thin horizontal rule with active "HALO: REACH" underline
@@ -7809,7 +7834,7 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
             UIManager::GetArmorCustomizer().GetProfile().emblemIndex,
             UIManager::GetArmorCustomizer().GetProfile().emblemBackgroundIndex,
             UIManager::GetArmorCustomizer().GetProfile().nameplateIndex, 0,
-            11774, s.hostAddress, s.port);
+            11774, s.hostAddress, s.port, AuthClient::Get().IsTester());
         if (state.ok) {
             if (!state.sessionId.empty()) ctx.st.lobbySessionId = state.sessionId;
             ctx.st.lobbyRoster = state.roster;
@@ -7847,6 +7872,7 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
             me.serviceTag = sTag;
             me.isHost = false;
             me.isDev = AuthClient::Get().IsDeveloper();
+            me.isTester = AuthClient::Get().IsTester();
             me.ping = s.ping >= 0 ? s.ping : 25;
             ctx.st.lobbyRoster.push_back(me);
         }

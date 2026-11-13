@@ -13,6 +13,7 @@
 #include "ui/PauseMenu.hpp"
 #include "ui/ForgeMenu.hpp"
 #include "ui/DevMenu.hpp"
+#include "network/AuthClient.hpp"
 #include "career/Career.hpp"
 #include "engine/FrameCapture.hpp"
 #include "engine/PadLayouts.hpp"
@@ -2046,13 +2047,13 @@ static void FillLocalInput(uint8_t* st) {
     }
     s_escWasDown = escDown;
 
-#if defined(NOBLE_DEV_BUILD)
-    // + / Numpad+ opens/closes the developer mod/cheat menu (Dev builds only)
+    // + / Numpad+ opens/closes the developer mod/cheat menu (Developer accounts only)
     static bool s_plusWasDown = false;
     const bool plusDown = ((GetAsyncKeyState(VK_OEM_PLUS) & 0x8000) != 0) || ((GetAsyncKeyState(VK_ADD) & 0x8000) != 0);
-    if (plusDown && !s_plusWasDown && !uiPointer && !PauseMenu::IsGameOver()) DevMenu::Toggle();
+    if (plusDown && !s_plusWasDown && !uiPointer && !PauseMenu::IsGameOver()) {
+        if (AuthClient::Get().IsDeveloper()) DevMenu::Toggle();
+    }
     s_plusWasDown = plusDown;
-#endif
 
     // Insert / F3 opens/closes the custom palette; it never uses the native Forge menu's keys.
     static bool s_insertWasDown = false;
@@ -2367,7 +2368,6 @@ static void FillLocalInput(uint8_t* st) {
     }
     *reinterpret_cast<float*>(st + 0x114) = wheel;
 
-#if defined(NOBLE_DEV_BUILD)
     if (DevCheats::IsFreecam()) {
         // Suppress player character movement while freecam is active, so the Spartan does not walk away!
         st[0x004 + 'W'] = 0;
@@ -2383,7 +2383,6 @@ static void FillLocalInput(uint8_t* st) {
         st[0x004 + VK_SHIFT] = 0;
         st[0x004 + 'C'] = 0;
     }
-#endif
 
     for (int vk = 0; vk < 256; ++vk) {
         const bool down = st[0x004 + vk] != 0;

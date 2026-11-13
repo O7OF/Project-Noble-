@@ -102,6 +102,9 @@ void Clamp(SettingsData& d) {
             "https://servertestdeploy-jfxb.onrender.com",
             "https://noble-server-2.onrender.com",
             "https://servertestdeploy-1.onrender.com",
+            "https://projectnobleeast.onrender.com",
+            "https://projectnoblewest.onrender.com",
+            "https://projectnobleuk.onrender.com",
         };
         bool legacy = d.masterServerUrl.empty();
         for (const char* old : kLegacyMasterUrls) {

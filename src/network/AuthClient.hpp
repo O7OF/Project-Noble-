@@ -36,6 +36,8 @@ public:
 
     bool IsLoggedIn() const;
     bool IsDeveloper() const;
+    bool IsTester() const;
+    void SetRoles(bool isDev, bool isTester);
     std::string GetUsername() const;
     std::string GetSessionToken() const;
     int GetUserId() const;
@@ -47,6 +49,7 @@ private:
     bool m_isLoggedIn = false;
     bool m_steamLinked = false;
     std::atomic<bool> m_isDeveloper{ false };
+    std::atomic<bool> m_isTester{ false };
     std::atomic<bool> m_refreshing{ false };
     std::string m_username;
     std::string m_sessionToken;

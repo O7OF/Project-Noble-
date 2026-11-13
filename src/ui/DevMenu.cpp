@@ -1,11 +1,9 @@
 #include "DevMenu.hpp"
-
-#if defined(NOBLE_DEV_BUILD)
-
 #include "NobleStyle.hpp"
 #include "engine/DevCheats.hpp"
 #include "host/SpawnTest.hpp"
 #include "common/Logger.hpp"
+#include "network/AuthClient.hpp"
 
 #include <imgui.h>
 #include <algorithm>
@@ -41,15 +39,20 @@ bool CaseInsensitiveContains(const std::string& str, const std::string& query) {
 } // namespace
 
 bool DevMenu::IsOpen() {
-    return s_open;
+    return s_open && AuthClient::Get().IsDeveloper();
 }
 
 void DevMenu::Toggle() {
+    if (!AuthClient::Get().IsDeveloper()) {
+        s_open = false;
+        return;
+    }
     s_open = !s_open;
     NOBLE_INFO("DevMenu: {} (key: +)", s_open ? "opened" : "closed");
 }
 
 void DevMenu::Open() {
+    if (!AuthClient::Get().IsDeveloper()) return;
     s_open = true;
 }
 
@@ -58,11 +61,11 @@ void DevMenu::Close() {
 }
 
 bool DevMenu::WantsPointer() {
-    return s_open;
+    return s_open && AuthClient::Get().IsDeveloper();
 }
 
 void DevMenu::Draw() {
-    if (!s_open) return;
+    if (!s_open || !AuthClient::Get().IsDeveloper()) return;
 
     ImGuiIO& io = ImGui::GetIO();
     ImGui::GetBackgroundDrawList()->AddRectFilled(ImVec2(0, 0), io.DisplaySize, IM_COL32(0, 0, 0, 110));
@@ -413,5 +416,3 @@ void DevMenu::Draw() {
 }
 
 } // namespace noble
-
-#endif // defined(NOBLE_DEV_BUILD)

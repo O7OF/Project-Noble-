@@ -1,6 +1,7 @@
 #include "UiArt.hpp"
 #include "common/Logger.hpp"
 #include "common/Settings.hpp"
+#include "network/AuthClient.hpp"
 
 #include <windows.h>
 #include <d3d11.h>
@@ -925,9 +926,7 @@ bool NameplateSelectable(int index) {
     if (index < 0 || static_cast<size_t>(index) >= s_nameplateCatalog.size()) return false;
     const NameplateInfo& np = s_nameplateCatalog[static_cast<size_t>(index)];
     if (np.removed) return false;
-#ifndef NOBLE_DEV_BUILD
-    if (np.devOnly) return false;
-#endif
+    if (np.devOnly && !AuthClient::Get().IsDeveloper()) return false;
     return true;
 }
 

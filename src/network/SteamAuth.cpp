@@ -141,6 +141,7 @@ SteamAuthResult SteamAuth::Authenticate(const std::string& registryUrl, const st
         result.username = j.value("username", "Steam " + std::string(idText));
         result.token = j.value("session_token", "");
         result.isDeveloper = j.value("is_developer", false);
+        result.isTester = j.value("is_tester", false);
         NOBLE_INFO("SteamAuth: verified Steam ID {} ({})", result.steamId, result.username);
     } catch (...) {
         result.error = "Registry returned an unreadable Steam response";

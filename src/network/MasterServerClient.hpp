@@ -20,6 +20,7 @@ struct LobbyPlayer {
     std::string serviceTag = "117";
     bool isHost = false;
     bool isDev = false;
+    bool isTester = false;
     int ping = 0;
     // Identity for the party/lobby row, so other players' rows show their own rank, emblem, nameplate
     // and team instead of placeholders (2026-10-30). 0 / -1 = not known.
@@ -127,6 +128,7 @@ struct MasterAdvert {
     std::string hostMachineId;
     std::string hostUsername;
     bool hostIsDev = false;
+    bool hostIsTester = false;
     std::string hostServiceTag = "117";
     // The host's row identity (same meaning as LobbyPlayer's fields).
     int hostRankIndex = -1;
@@ -195,7 +197,8 @@ public:
                             int team,
                             uint16_t localPort,
                             const std::string& fallbackHostIp = "",
-                            uint16_t fallbackHostPort = 11774);
+                            uint16_t fallbackHostPort = 11774,
+                            bool isTester = false);
     bool LeaveLobbySync(const std::string& sessionId, uint64_t peerId);
     // Voting: the host opens and closes it with the session token; a lobby member's choice is 0..options-1, or options for none.
     bool StartVoteSync(const std::string& sessionId, const std::vector<std::string>& options, int seconds);

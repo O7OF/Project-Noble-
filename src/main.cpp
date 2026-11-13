@@ -1732,10 +1732,8 @@ int mvarPageScanEvery = 0;        // dev: diff every writable page every N secon
         return false;
     });
 
-#if defined(NOBLE_DEV_BUILD)
-    // Initialize Developer Cheats & Mod Menu engine hooks (Dev builds only)
+    // Initialize Developer Cheats & Mod Menu engine hooks
     noble::DevCheats::Initialize(loader->GetModuleHandle());
-#endif
 
     // Wire Forge palette placement handler
     noble::ForgeMenu::SetPlaceHandler([](const noble::ForgeMenu::Item& item) -> bool {

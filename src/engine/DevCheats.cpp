@@ -1,11 +1,10 @@
 #include "DevCheats.hpp"
 
-#if defined(NOBLE_DEV_BUILD)
-
 #include "SharedTagCache.hpp"
 #include "hooks/HookManager.hpp"
 #include "common/Logger.hpp"
 #include "network/NetworkTransport.hpp"
+#include "network/AuthClient.hpp"
 #include <nlohmann/json.hpp>
 
 #include <cmath>
@@ -640,6 +639,18 @@ void DevCheats::GameTick(int32_t userIndex) {
     if (!s_initialized || !s_baseAddress) return;
     if (userIndex != 0) return; // Process cheats and spawns only once per simulation frame for local player 0
 
+    const bool isDev = AuthClient::Get().IsDeveloper();
+    if (!isDev) {
+        s_godmode.store(false);
+        s_superJump.store(false);
+        s_superSpeed.store(false);
+        s_noclip.store(false);
+        s_freecam.store(false);
+        s_infiniteAmmo.store(false);
+        s_bottomlessClip.store(false);
+        s_infiniteEquipment.store(false);
+    }
+
     ObjectPool pool;
     if (!GetObjectPool(s_baseAddress, pool)) return;
 
@@ -836,5 +847,3 @@ void DevCheats::BuildCatalog() {
 }
 
 } // namespace noble
-
-#endif // defined(NOBLE_DEV_BUILD)
