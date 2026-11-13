@@ -294,9 +294,9 @@ static bool s_haveShownSelection = false;
 // What each species' character was last built with (index 0 = Spartan, 1 = Elite). The menu map keeps the hidden
 // species' character, so switching back to a species whose pieces did not change needs no rebuild: the forced
 // rebuild on every species switch was the flicker (pose reset) and the DMR drop seen in Tyler's 21:00 video.
-static std::vector<std::pair<uint32_t, uint32_t>> s_builtPairs[4];
-static std::vector<std::pair<uint32_t, uint32_t>> s_builtLivePairs[4];
-static uintptr_t s_builtBase[4] = { 0, 0, 0, 0 };
+static std::vector<std::pair<uint32_t, uint32_t>> s_builtPairs[3];
+static std::vector<std::pair<uint32_t, uint32_t>> s_builtLivePairs[3];
+static uintptr_t s_builtBase[3] = { 0, 0, 0 };
 // The pack map that carries the Armory models and the player_model_customization tag.
 static const std::filesystem::path& ArmoryMapPath() {
     if (!s_armoryMapChecked) {
@@ -1561,7 +1561,6 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx, const std::strin
     const bool armoryScene = (targetSceneIdx >= 0x0A && targetSceneIdx <= 0x14 && targetSceneIdx != 0x0E) || closeUpScene;
     const bool showMarine = sel.previewMarine && armoryScene;   // 2026-11-13: MARINE tab (rr_elite = 2)
     const bool showElite = sel.previewElite && armoryScene && !showMarine;
-    const bool showH2A = showMarine && sel.marineH2A;   // H2A Marine (h2a_armory, rr_elite = 3)
 
     // 1. Camera Scene Index at GLOBALS[0x24] and shows_elite at GLOBALS[0x26]
     int32_t curScene = -1;
@@ -1594,7 +1593,7 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx, const std::strin
         effectiveSceneIdx = (curScene >= 0 && curScene != 0x0B) ? curScene : 0x0C;
     }
 
-    const uint32_t wantElite = showH2A ? 3u : (showMarine ? 2u : (showElite ? 1u : 0u));
+    const uint32_t wantElite = showMarine ? 2u : (showElite ? 1u : 0u);
 
     // Species switch wait (see kSpeciesSettleMs). Only inside the Armory: leaving it switches back at once.
     // rebuildBusy mirrors rebuildInFlight below (pairs written / settle pending / quiet frames / REMADE not yet moved).
@@ -1640,7 +1639,7 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx, const std::strin
             // The character of this species is still in the scene: compare the next pairs with what it was
             // last built with, so an unchanged look is not rebuilt. Its live pairs are re-applied for a couple
             // of ticks (NotifyEngineTick) in case the map script re-created it on the flip.
-            const int sp = static_cast<int>(std::min<uint32_t>(wantElite, 3u));
+            const int sp = static_cast<int>(std::min<uint32_t>(wantElite, 2u));
             s_lastPairs = s_builtPairs[sp];
             s_lastPairsBase = s_builtBase[sp];
             s_livePairs = s_builtLivePairs[sp];
@@ -1824,17 +1823,7 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx, const std::strin
             }
         };
 
-        if (showH2A) {
-            // H2A Marine (2026-11-13): h2a_armory takes these pairs (mainmenu.hsc, rr_elite = 3).
-            static const std::pair<const char*, const char*> kH2ADefaults[] = {
-                { "packs_chest", "standard" }, { "thigh_pack", "frags" }, { "backpack", "backpack2" },
-                { "abs", "standard" }, { "shoulders", "sniper_rounds" }, { "decal", "medic" } };
-            for (const auto& [region, def] : kH2ADefaults) {
-                std::string perm = def;
-                for (const auto& [r, p] : sel.h2aPieces) if (r == region) perm = p;
-                pushPair(region, perm, def);
-            }
-        } else if (showMarine) {
+        if (showMarine) {
             // MARINE tab (2026-11-13): marine_armory takes these pairs (mainmenu.hsc, rr_elite = 2). A slot left on MOD
             // DEFAULT shows the stock trooper piece.
             static const std::pair<const char*, const char*> kMarineDefaults[] = {
@@ -2077,7 +2066,7 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx, const std::strin
                     s_lastPairs = writtenPairs;
                     s_livePairs = livePairs;
                     s_livePairsGen.fetch_add(1);
-                    const int sp = showH2A ? 3 : (showMarine ? 2 : (showElite ? 1 : 0));
+                    const int sp = showMarine ? 2 : (showElite ? 1 : 0);
                     s_builtPairs[sp] = writtenPairs;
                     s_builtLivePairs[sp] = livePairs;
                     s_builtBase[sp] = base;
@@ -2098,7 +2087,7 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx, const std::strin
                     s_lastPairs = writtenPairs;
                     s_livePairs = livePairs;
                     s_livePairsGen.fetch_add(1);
-                    const int sp = showH2A ? 3 : (showMarine ? 2 : (showElite ? 1 : 0));
+                    const int sp = showMarine ? 2 : (showElite ? 1 : 0);
                     s_builtPairs[sp] = writtenPairs;
                     s_builtLivePairs[sp] = livePairs;
                     s_builtBase[sp] = base;
@@ -2295,7 +2284,7 @@ void ReachArmory::SetMenuMode(bool menuMode) {
         s_previewDirty.store(false);
         s_speciesDeferred.store(false);
         s_speciesWaitStartMs = 0;
-        for (int sp = 0; sp < 4; ++sp) {
+        for (int sp = 0; sp < 3; ++sp) {   // Spartan, Elite, Marine
             s_builtPairs[sp].clear();
             s_builtLivePairs[sp].clear();
             s_builtBase[sp] = 0;
@@ -2328,7 +2317,7 @@ void ReachArmory::SetSelection(const ReachArmorySelection& sel) {
     {
         ArmoryLock lock(s_sceneMutex);
         const ReachArmorySelection& prev = s_selection;
-        if (prev.previewElite != sel.previewElite || prev.previewMarine != sel.previewMarine || prev.marineH2A != sel.marineH2A) {
+        if (prev.previewElite != sel.previewElite || prev.previewMarine != sel.previewMarine) {
             const uint64_t now = GetTickCount64();
             s_speciesChangeMs.store(now);
             // Hold the Armory picture from the click, not only from the switch: between the click and the switch
@@ -2340,7 +2329,7 @@ void ReachArmory::SetSelection(const ReachArmorySelection& sel) {
         }
         pieceChanged =
             prev.previewElite != sel.previewElite || prev.previewMarine != sel.previewMarine || prev.isFemale != sel.isFemale ||
-            prev.marinePieces != sel.marinePieces || prev.h2aPieces != sel.h2aPieces || prev.marineH2A != sel.marineH2A ||
+            prev.marinePieces != sel.marinePieces ||
             prev.helmet != sel.helmet || prev.chest != sel.chest ||
             prev.leftShoulder != sel.leftShoulder || prev.rightShoulder != sel.rightShoulder ||
             prev.hands != sel.hands || prev.wrist != sel.wrist || prev.utility != sel.utility ||
@@ -2907,9 +2896,8 @@ void ReachArmory::SyncMarine() {
     }
     if (!s_marineSidsTried) {
         s_marineSidsTried = true;
-        std::vector<std::string> wanted = { "helmet", "flair_backpack", "packs_chest", "thigh_pack" };
+        std::vector<std::string> wanted = { "helmet", "flair_backpack" };
         for (const auto& [r, p] : sel.marinePieces) { wanted.push_back(r); wanted.push_back(p); }
-        for (const auto& [r, p] : sel.h2aPieces) { wanted.push_back(r); wanted.push_back(p); }
         const size_t n = ReadMapStringIds(mapPath, wanted, s_marineSids);
         NOBLE_INFO("MarineArmor: {} of {} names found in {}", n, wanted.size(), mapPath);
     }
@@ -2923,15 +2911,15 @@ void ReachArmory::SyncMarine() {
 
     // Apply for ~3 s after a new body (spawn / respawn) or new picks, then leave it alone.
     static uint32_t s_lastUnit = 0xFFFFFFFFu;
-    static std::vector<std::pair<std::string, std::string>> s_lastPieces, s_lastH2A;
+    static std::vector<std::pair<std::string, std::string>> s_lastPieces;
     static std::array<float, 3> s_lastPri{}, s_lastSec{};
     static bool s_lastColors = false;
     static int s_ticksLeft = 0;
     static int s_isMarine = -1;
-    if (unit != s_lastUnit || sel.marinePieces != s_lastPieces || sel.h2aPieces != s_lastH2A || sel.marineColors != s_lastColors ||
+    if (unit != s_lastUnit || sel.marinePieces != s_lastPieces || sel.marineColors != s_lastColors ||
         sel.marinePrimaryRgb != s_lastPri || sel.marineSecondaryRgb != s_lastSec) {
         if (unit != s_lastUnit) s_isMarine = -1;
-        s_lastUnit = unit; s_lastPieces = sel.marinePieces; s_lastH2A = sel.h2aPieces; s_lastColors = sel.marineColors;
+        s_lastUnit = unit; s_lastPieces = sel.marinePieces; s_lastColors = sel.marineColors;
         s_lastPri = sel.marinePrimaryRgb; s_lastSec = sel.marineSecondaryRgb;
         s_ticksLeft = 30;
     }
@@ -2944,17 +2932,12 @@ void ReachArmory::SyncMarine() {
         const uint32_t helmetSid = sid("helmet"), backpackSid = sid("flair_backpack");
         s_isMarine = (helmetSid && backpackSid && MarineRegionIndexSEH(base, unit, helmetSid) >= 0 &&
                       MarineRegionIndexSEH(base, unit, backpackSid) >= 0) ? 1 : 0;
-        // H2A Marine (2026-11-13; Noble packs / maps only): its own regions, its own picks.
-        const uint32_t chestSid = sid("packs_chest"), thighSid = sid("thigh_pack");
-        if (!s_isMarine && chestSid && thighSid && MarineRegionIndexSEH(base, unit, chestSid) >= 0 &&
-            MarineRegionIndexSEH(base, unit, thighSid) >= 0) s_isMarine = 2;
-        NOBLE_INFO("MarineArmor: local unit 0x{:08X} is {}", unit, s_isMarine == 2 ? "an H2A Marine" : (s_isMarine ? "a Marine" : "not a Marine"));
+        NOBLE_INFO("MarineArmor: local unit 0x{:08X} is {}a Marine", unit, s_isMarine ? "" : "not ");
     }
-    if (s_isMarine != 1 && s_isMarine != 2) return;
+    if (s_isMarine != 1) return;
 
-    const auto& pieces = s_isMarine == 2 ? sel.h2aPieces : sel.marinePieces;
     std::vector<uint32_t> pairs;
-    for (const auto& [r, p] : pieces) {
+    for (const auto& [r, p] : sel.marinePieces) {
         const uint32_t rs = sid(r), ps = sid(p);
         if (rs && ps) { pairs.push_back(rs); pairs.push_back(ps); }
     }
@@ -2965,7 +2948,7 @@ void ReachArmory::SyncMarine() {
     const bool ok = MarineApplySEH(base, unit, pairs.data(), pairs.size() / 2, sel.marineColors ? pri : nullptr,
                                    sel.marineColors ? sec : nullptr, sel.marineColors ? c3 : nullptr, sel.marineColors ? c4 : nullptr);
     if (s_ticksLeft == 29) {
-        NOBLE_INFO("MarineArmor: applied {} of {} piece(s){} to 0x{:08X}{}", pairs.size() / 2, pieces.size(),
+        NOBLE_INFO("MarineArmor: applied {} of {} piece(s){} to 0x{:08X}{}", pairs.size() / 2, sel.marinePieces.size(),
                    sel.marineColors ? " + colours" : "", unit, ok ? "" : " (FAILED)");
     }
 }

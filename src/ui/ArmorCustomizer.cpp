@@ -200,29 +200,6 @@ const std::vector<MarineSlot>& MarineSlots() {
     return slots;
 }
 
-// Halo Wars Marine colours (2026-11-13, kReachColors indices): Drab armour, Silver fatigues, Khaki gear, Tan accents.
-// Light tints on purpose: the H2A textures are already olive camo and the change colours multiply them (Sage/Steel
-// made the body near-black, capture h2a1 vs h2a_white).
-constexpr int kHaloWarsMarine[4] = { 8, 1, 5, 4 };
-
-// H2A Marine pieces (2026-11-13): objects\characters\h2a_marines render model (Nexus 2561 pack; regions read with
-// tools\rm_regions.py, every permutation has a real mesh). Option 0 = the piece the preview shows by default.
-// The compiled model has one helmet / head / body; more helmets need a re-import from the pack's source files.
-const std::vector<MarineSlot>& H2ASlots() {
-    static const std::vector<MarineSlot> slots = {
-        { "Chest Rig", "packs_chest", { {"STANDARD", "standard"}, {"LIGHT", "light"}, {"TACTICAL MAGS", "tact_mags"},
-            {"M2497 POUCHES", "tacm2497_pouches"}, {"RECON PACKAGE", "tacrecon_package"},
-            {"RUCKAMUCK HIPPOTOOTH", "ruckamuck_hippotooth"}, {"RUCKAMUCK RANGEKING", "ruckamuck_rangeking"} } },
-        { "Thigh Pack", "thigh_pack", { {"FRAGS", "frags"}, {"UTILITY BAG", "util_bag"}, {"TACTICAL KIT", "tacticalkit"},
-            {"TRAUMA KIT", "trama_kit"}, {"TAC SCANNER", "tac_scan"}, {"ON", "on"} } },
-        { "Backpack", "backpack", { {"BACKPACK", "backpack2"}, {"COMM PACK", "comm_pack"} } },
-        { "Abdomen", "abs", { {"STANDARD", "standard"}, {"ALTERNATE", "alt3"} } },
-        { "Shoulders", "shoulders", { {"SNIPER ROUNDS", "sniper_rounds"} } },
-        { "Decal", "decal", { {"MEDIC", "medic"} } },
-    };
-    return slots;
-}
-
 const std::vector<HelmetSpec>& GetSpartanHelmets() {
     static const std::vector<HelmetSpec> kHelmets = {
         {
@@ -1326,23 +1303,15 @@ void ArmorCustomizer::SyncToReachArmory() const {
             const int o = std::clamp(m_profile.marinePieces[k], 0, static_cast<int>(slots[k].options.size()) - 1);
             if (slots[k].options[static_cast<size_t>(o)].perm[0]) sel.marinePieces.emplace_back(slots[k].region, slots[k].options[static_cast<size_t>(o)].perm);
         }
-        const auto& hs = H2ASlots();
-        for (size_t k = 0; k < hs.size() && k < m_profile.h2aPieces.size(); ++k) {
-            const int o = std::clamp(m_profile.h2aPieces[k], 0, static_cast<int>(hs[k].options.size()) - 1);
-            sel.h2aPieces.emplace_back(hs[k].region, hs[k].options[static_cast<size_t>(o)].perm);
-        }
-        sel.marineH2A = m_profile.marineModel == 1;
         sel.marineColors = m_profile.marineColorsOn != 0;
         sel.previewMarine = m_marineTab;
         if (m_marineTab) sel.previewElite = false;
-        // Marine Colors = HALO WARS (2): fixed Halo Wars look (olive armour over grey fatigues, brown/tan gear).
-        const bool hw = m_profile.marineColorsOn == 2;
-        const auto& mp = kReachColors[hw ? kHaloWarsMarine[0] : std::clamp(m_profile.marinePrimaryColor, 0, 29)];
-        const auto& ms = kReachColors[hw ? kHaloWarsMarine[1] : std::clamp(m_profile.marineSecondaryColor, 0, 29)];
+        const auto& mp = kReachColors[std::clamp(m_profile.marinePrimaryColor, 0, 29)];
+        const auto& ms = kReachColors[std::clamp(m_profile.marineSecondaryColor, 0, 29)];
         sel.marinePrimaryRgb = { SrgbToLinear(mp.r), SrgbToLinear(mp.g), SrgbToLinear(mp.b) };
         sel.marineSecondaryRgb = { SrgbToLinear(ms.r), SrgbToLinear(ms.g), SrgbToLinear(ms.b) };
-        const auto& m3 = kReachColors[hw ? kHaloWarsMarine[2] : std::clamp(m_profile.marineThirdColor, 0, 29)];
-        const auto& m4 = kReachColors[hw ? kHaloWarsMarine[3] : std::clamp(m_profile.marineFourthColor, 0, 29)];
+        const auto& m3 = kReachColors[std::clamp(m_profile.marineThirdColor, 0, 29)];
+        const auto& m4 = kReachColors[std::clamp(m_profile.marineFourthColor, 0, 29)];
         sel.marineThirdRgb = { SrgbToLinear(m3.r), SrgbToLinear(m3.g), SrgbToLinear(m3.b) };
         sel.marineFourthRgb = { SrgbToLinear(m4.r), SrgbToLinear(m4.g), SrgbToLinear(m4.b) };
     }
@@ -1367,7 +1336,6 @@ void ArmorCustomizer::SyncToReachArmory() const {
                a.accentRgb == b.accentRgb && a.lightsRgb == b.lightsRgb && a.visorRgb == b.visorRgb &&
                a.lightsCustom == b.lightsCustom &&
                a.marinePieces == b.marinePieces && a.marineColors == b.marineColors && a.previewMarine == b.previewMarine &&
-               a.h2aPieces == b.h2aPieces && a.marineH2A == b.marineH2A &&
                a.marinePrimaryRgb == b.marinePrimaryRgb && a.marineSecondaryRgb == b.marineSecondaryRgb &&
                a.marineThirdRgb == b.marineThirdRgb && a.marineFourthRgb == b.marineFourthRgb;
     };
@@ -1565,19 +1533,6 @@ bool ArmorCustomizer::LoadProfile(const std::filesystem::path& path) {
                 m_profile.marineThirdColor = std::clamp(mj["third_color"].get<int>(), 0, 29);
             if (mj.contains("fourth_color") && mj["fourth_color"].is_number_integer())
                 m_profile.marineFourthColor = std::clamp(mj["fourth_color"].get<int>(), 0, 29);
-            if (mj.contains("colors_preset") && mj["colors_preset"].is_string() &&
-                mj["colors_preset"].get<std::string>() == "halo_wars") m_profile.marineColorsOn = 2;
-            m_profile.marineModel = (mj.contains("model") && mj["model"].is_string() && mj["model"].get<std::string>() == "h2a") ? 1 : 0;
-            const auto& hs = H2ASlots();
-            for (size_t k = 0; k < hs.size() && k < m_profile.h2aPieces.size(); ++k) {
-                m_profile.h2aPieces[k] = 0;
-                if (!mj.contains("h2a") || !mj["h2a"].is_object()) continue;
-                const auto& hj = mj["h2a"];
-                if (!hj.contains(hs[k].region) || !hj[hs[k].region].is_string()) continue;
-                const std::string perm = hj[hs[k].region].get<std::string>();
-                for (size_t o = 0; o < hs[k].options.size(); ++o)
-                    if (perm == hs[k].options[o].perm) m_profile.h2aPieces[k] = static_cast<int>(o);
-            }
         }
 
         if (j.contains("elite") && j["elite"].is_object()) {
@@ -1845,15 +1800,6 @@ bool ArmorCustomizer::SaveProfile(const std::filesystem::path& path) {
             mj["secondary_color"] = m_profile.marineSecondaryColor;
             mj["third_color"] = m_profile.marineThirdColor;
             mj["fourth_color"] = m_profile.marineFourthColor;
-            mj["model"] = m_profile.marineModel == 1 ? "h2a" : "reach";
-            mj["colors_preset"] = m_profile.marineColorsOn == 2 ? "halo_wars" : "";
-            nlohmann::json hj = nlohmann::json::object();
-            const auto& hs = H2ASlots();
-            for (size_t k = 0; k < hs.size() && k < m_profile.h2aPieces.size(); ++k) {
-                const int o = std::clamp(m_profile.h2aPieces[k], 0, static_cast<int>(hs[k].options.size()) - 1);
-                hj[hs[k].region] = hs[k].options[static_cast<size_t>(o)].perm;
-            }
-            mj["h2a"] = hj;
             j["marine"] = mj;
         }
 
@@ -2179,25 +2125,6 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
                     if (s_index < count) {
                         m_profile.visorColorIndex = s_index; m_visorSelection = s_index; name = kVisorColors[s_index].name;
                         m_pickerScrollToEquipped = true;   // dev: keep the picked tile in view for captures
-                    }
-                } else if (s_cycle == "h2a") {
-                    // Dev test (2026-11-13): MARINE tab on the H2A model, HALO WARS colours, non-default pieces
-                    // (tactical mags / utility bag / comm pack). Preview only: nothing is saved.
-                    count = 1;
-                    if (s_index == 0) {
-                        m_marineTab = true;
-                        m_previewSpecies = PlayerSpecies::Spartan;
-                        m_profile.marineModel = 1;
-                        m_profile.h2aPieces = { 2, 1, 1, 0, 0, 0 };
-                        m_profile.marineColorsOn = 2;
-                        name = "h2a halo wars";
-                        // -armory-cycle-list 1: MY COLORS, all four White (colour test against the texture's own look)
-                        if (!s_cycleList.empty() && s_cycleList[0] == 1) {
-                            m_profile.marineColorsOn = 1;
-                            m_profile.marinePrimaryColor = m_profile.marineSecondaryColor = 2;
-                            m_profile.marineThirdColor = m_profile.marineFourthColor = 2;
-                            name = "h2a white";
-                        }
                     }
                 } else if (s_cycle == "marine") {
                     // Dev test (2026-11-13): open the MARINE tab and save distinct picks through the normal save path
@@ -2634,38 +2561,18 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
         }
         static const char* kMarineDesc = "Used when a mod makes you a Marine or ODST (for example Trooper Firefight). "
                                          "MOD DEFAULT keeps the mod's own piece.";
-        {
-            SlotRow r{ "MARINE / ODST", "Marine Model", RowKind::List, &m_profile.marineModel };
-            r.options = { { "REACH", "Reach's Marine / ODST pieces. Used in Marine mods such as Trooper Firefight." },
-                          { "H2A", "Halo 2 Anniversary Marine (LoneFOx et al., Nexus 2561). Used in maps and packs "
-                                   "Noble builds; Marine mods keep the Reach pieces." } };
-            rows.push_back(r);
-        }
-        if (m_profile.marineModel == 1) {
-            static const char* kH2ADesc = "Halo 2 Anniversary Marine piece (LoneFOx et al.).";
-            const auto& hs = H2ASlots();
-            for (size_t k = 0; k < hs.size() && k < m_profile.h2aPieces.size(); ++k) {
-                SlotRow r{ "H2A MARINE", hs[k].label, RowKind::List, &m_profile.h2aPieces[k] };
-                for (const auto& o : hs[k].options) r.options.push_back({ o.name, kH2ADesc });
-                rows.push_back(std::move(r));
-            }
-        } else {
-            const auto& slots = MarineSlots();
-            for (size_t k = 0; k < slots.size() && k < m_profile.marinePieces.size(); ++k) {
-                SlotRow r{ "MARINE / ODST", slots[k].label, RowKind::List, &m_profile.marinePieces[k] };
-                for (const auto& o : slots[k].options) r.options.push_back({ o.name, kMarineDesc });
-                rows.push_back(std::move(r));
-            }
+        const auto& slots = MarineSlots();
+        for (size_t k = 0; k < slots.size() && k < m_profile.marinePieces.size(); ++k) {
+            SlotRow r{ "MARINE / ODST", slots[k].label, RowKind::List, &m_profile.marinePieces[k] };
+            for (const auto& o : slots[k].options) r.options.push_back({ o.name, kMarineDesc });
+            rows.push_back(std::move(r));
         }
         SlotRow on{ "COLORS", "Marine Colors", RowKind::List, &m_profile.marineColorsOn };
         on.options = { { "MOD DEFAULT", "Keep the mod's Marine colours." },
-                       { "MY COLORS", "Paint your Marine with the Primary and Secondary colours below." },
-                       { "HALO WARS", "Halo Wars look: olive drab armour, light grey fatigues, khaki and tan gear." } };
+                       { "MY COLORS", "Paint your Marine with the Primary and Secondary colours below." } };
         rows.push_back(std::move(on));
         std::vector<PickOption> palette;
         for (const auto& c : kReachColors) palette.push_back({ c.name, "", ColourU32(c.r, c.g, c.b) });
-        // HALO WARS uses fixed colours: the four pickers would only show (and edit) colours that are not in use.
-        if (m_profile.marineColorsOn != 2) {
         SlotRow mp{ "COLORS", "Primary", RowKind::Colour, &m_profile.marinePrimaryColor };
         mp.options = palette;
         rows.push_back(std::move(mp));
@@ -2678,7 +2585,6 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
         SlotRow m4{ "COLORS", "Accent", RowKind::Colour, &m_profile.marineFourthColor };
         m4.options = palette;
         rows.push_back(std::move(m4));
-        }
     }
 
     const int rowCount = static_cast<int>(rows.size());
