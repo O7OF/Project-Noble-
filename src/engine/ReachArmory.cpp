@@ -3111,6 +3111,91 @@ void ReachArmory::SyncMarine() {
     }
 }
 
+// haloreach+0x4F9184 = hs unit_open: object+0x3B8 = 1.0f, then +0x46C854(unit). hs unit_close (evaluator +0x19DD0C) does
+// the same with 0. The flashlight lights are attached with function unit_open -> flashlight_new.
+static bool FlashlightSetSEH(uintptr_t base, uint32_t unit, bool on, bool notify) {
+    __try {
+        const uint32_t tlsIdx = *reinterpret_cast<const uint32_t*>(base + 0xC17B18);
+        const uintptr_t tlsArray = *reinterpret_cast<const uintptr_t*>(__readgsqword(0x58) + static_cast<uintptr_t>(tlsIdx) * 8u);
+        if (!tlsArray) return false;
+        uint8_t* objTable = *reinterpret_cast<uint8_t* const*>(tlsArray + 0x10);
+        if (!objTable) return false;
+        uint8_t* entries = *reinterpret_cast<uint8_t* const*>(objTable + 0x50);
+        if (!entries) return false;
+        uint8_t* obj = *reinterpret_cast<uint8_t* const*>(entries + static_cast<size_t>(unit & 0xFFFFu) * 0x18 + 0x10);
+        if (!obj) return false;
+        // The game resets this every update in matches (seen: 0.00 one second after a toggle), so while the light is
+        // on it is written every frame; the change notify only on the toggle itself.
+        *reinterpret_cast<float*>(obj + 0x3B8) = on ? 1.0f : 0.0f;
+        if (notify) {
+            using UnitOpenChangedFn = void(__fastcall*)(uint32_t);
+            reinterpret_cast<UnitOpenChangedFn>(base + 0x46C854)(unit);
+        }
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+static float FlashlightValueSEH(uintptr_t base, uint32_t unit) {
+    __try {
+        const uint32_t tlsIdx = *reinterpret_cast<const uint32_t*>(base + 0xC17B18);
+        const uintptr_t tlsArray = *reinterpret_cast<const uintptr_t*>(__readgsqword(0x58) + static_cast<uintptr_t>(tlsIdx) * 8u);
+        uint8_t* objTable = *reinterpret_cast<uint8_t* const*>(tlsArray + 0x10);
+        uint8_t* entries = *reinterpret_cast<uint8_t* const*>(objTable + 0x50);
+        uint8_t* obj = *reinterpret_cast<uint8_t* const*>(entries + static_cast<size_t>(unit & 0xFFFFu) * 0x18 + 0x10);
+        return obj ? *reinterpret_cast<const float*>(obj + 0x3B8) : -1.0f;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return -2.0f;
+    }
+}
+
+void ReachArmory::TickFlashlight() {
+    // Dev check: the open value one and three seconds after a toggle (does the game keep it?).
+    static ULONGLONG s_checkAt[2] = { 0, 0 };
+    static uint32_t s_checkUnit = 0xFFFFFFFFu;
+    for (auto& at : s_checkAt) {
+        if (at && GetTickCount64() >= at) {
+            at = 0;
+            HMODULE h = GetModuleHandleW(L"haloreach.dll");
+            if (h) NOBLE_INFO("Flashlight: open value now {:.2f}", FlashlightValueSEH(reinterpret_cast<uintptr_t>(h), s_checkUnit));
+        }
+    }
+    static bool s_on = false;
+    static uint32_t s_onUnit = 0xFFFFFFFFu;
+    static bool s_wasDown = false;
+    const bool down = (GetAsyncKeyState('L') & 0x8000) != 0;
+    const bool pressed = down && !s_wasDown;
+    s_wasDown = down;
+    if (!pressed) {
+        if (s_on) {   // keep it on (new body after a respawn = light off again)
+            HMODULE hR = GetModuleHandleW(L"haloreach.dll");
+            const uintptr_t b = reinterpret_cast<uintptr_t>(hR);
+            if (!hR || LocalUnitDatumNowSEH(b) != s_onUnit) { s_on = false; return; }
+            FlashlightSetSEH(b, s_onUnit, true, false);
+        }
+        return;
+    }
+    // Only for this game window (not while typing elsewhere) and not in the menus (no local unit there).
+    DWORD pid = 0;
+    GetWindowThreadProcessId(GetForegroundWindow(), &pid);
+    if (pid != GetCurrentProcessId()) return;
+    // Same lockstep caution as the Marine pieces: a local-only state change, so not with other players in.
+    if (NetworkTransport::Get().IsActive() &&
+        (!NetworkTransport::Get().IsHost() || NetworkTransport::Get().GetGamePeerCount() > 0)) return;
+    HMODULE hReach = GetModuleHandleW(L"haloreach.dll");
+    if (!hReach) return;
+    const uintptr_t base = reinterpret_cast<uintptr_t>(hReach);
+    const uint32_t unit = LocalUnitDatumNowSEH(base);
+    if (unit == 0xFFFFFFFFu) return;
+    const bool on = !(s_on && s_onUnit == unit);
+    if (FlashlightSetSEH(base, unit, on, true)) {
+        s_on = on; s_onUnit = unit;
+        NOBLE_INFO("Flashlight: {} (unit 0x{:08X})", on ? "on" : "off", unit);
+        s_checkUnit = unit; s_checkAt[0] = GetTickCount64() + 1000; s_checkAt[1] = GetTickCount64() + 3000;
+    }
+}
+
 std::vector<std::string> ReachArmory::MissingPermutationsFor(const std::string& list, const std::string& item) {
     std::vector<std::string> missing;
     const std::vector<PmcgChange>* changes = PmcgItem(list.c_str(), item);

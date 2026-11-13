@@ -655,6 +655,7 @@ static uint64_t __fastcall HostSlot1_FrameTick(void* thisPtr, uint64_t a1, uint6
     // Synchronize live biped change colors and visor shaders in all match modes (Campaign, Firefight, Forge, Custom Games)
     ReachArmory::SyncMatchLiveBipeds();
     ReachArmory::SyncMarine();   // Marine / ODST pieces when a mod makes the player a Marine
+    ReachArmory::TickFlashlight();   // L: flashlight (maps built with the merged spartans.biped)
     if (a1 > 0x10000) {
         IDXGISwapChain* swapChain = reinterpret_cast<IDXGISwapChain*>(a1);
         InstallPresentSettingsHook(swapChain);
