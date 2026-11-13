@@ -1303,6 +1303,8 @@ void ArmorCustomizer::SyncToReachArmory() const {
             if (slots[k].options[static_cast<size_t>(o)].perm[0]) sel.marinePieces.emplace_back(slots[k].region, slots[k].options[static_cast<size_t>(o)].perm);
         }
         sel.marineColors = m_profile.marineColorsOn != 0;
+        sel.previewMarine = m_marineTab;
+        if (m_marineTab) sel.previewElite = false;
         const auto& mp = kReachColors[std::clamp(m_profile.marinePrimaryColor, 0, 29)];
         const auto& ms = kReachColors[std::clamp(m_profile.marineSecondaryColor, 0, 29)];
         sel.marinePrimaryRgb = { SrgbToLinear(mp.r), SrgbToLinear(mp.g), SrgbToLinear(mp.b) };
@@ -1328,7 +1330,7 @@ void ArmorCustomizer::SyncToReachArmory() const {
                a.primaryRgb == b.primaryRgb && a.secondaryRgb == b.secondaryRgb &&
                a.accentRgb == b.accentRgb && a.lightsRgb == b.lightsRgb && a.visorRgb == b.visorRgb &&
                a.lightsCustom == b.lightsCustom &&
-               a.marinePieces == b.marinePieces && a.marineColors == b.marineColors &&
+               a.marinePieces == b.marinePieces && a.marineColors == b.marineColors && a.previewMarine == b.previewMarine &&
                a.marinePrimaryRgb == b.marinePrimaryRgb && a.marineSecondaryRgb == b.marineSecondaryRgb;
     };
 

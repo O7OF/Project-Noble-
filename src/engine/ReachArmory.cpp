@@ -294,9 +294,9 @@ static bool s_haveShownSelection = false;
 // What each species' character was last built with (index 0 = Spartan, 1 = Elite). The menu map keeps the hidden
 // species' character, so switching back to a species whose pieces did not change needs no rebuild: the forced
 // rebuild on every species switch was the flicker (pose reset) and the DMR drop seen in Tyler's 21:00 video.
-static std::vector<std::pair<uint32_t, uint32_t>> s_builtPairs[2];
-static std::vector<std::pair<uint32_t, uint32_t>> s_builtLivePairs[2];
-static uintptr_t s_builtBase[2] = { 0, 0 };
+static std::vector<std::pair<uint32_t, uint32_t>> s_builtPairs[3];
+static std::vector<std::pair<uint32_t, uint32_t>> s_builtLivePairs[3];
+static uintptr_t s_builtBase[3] = { 0, 0, 0 };
 // The pack map that carries the Armory models and the player_model_customization tag.
 static const std::filesystem::path& ArmoryMapPath() {
     if (!s_armoryMapChecked) {
@@ -1559,7 +1559,8 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx, const std::strin
     // character can be turned around whatever the Armory is zoomed in on.
     const bool closeUpScene = targetSceneName.rfind("c_", 0) == 0 && targetSceneName != "c_full_spartan";
     const bool armoryScene = (targetSceneIdx >= 0x0A && targetSceneIdx <= 0x14 && targetSceneIdx != 0x0E) || closeUpScene;
-    const bool showElite = sel.previewElite && armoryScene;
+    const bool showMarine = sel.previewMarine && armoryScene;   // 2026-11-13: MARINE tab (rr_elite = 2)
+    const bool showElite = sel.previewElite && armoryScene && !showMarine;
 
     // 1. Camera Scene Index at GLOBALS[0x24] and shows_elite at GLOBALS[0x26]
     int32_t curScene = -1;
@@ -1592,7 +1593,7 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx, const std::strin
         effectiveSceneIdx = (curScene >= 0 && curScene != 0x0B) ? curScene : 0x0C;
     }
 
-    const uint32_t wantElite = showElite ? 1u : 0u;
+    const uint32_t wantElite = showMarine ? 2u : (showElite ? 1u : 0u);
 
     // Species switch wait (see kSpeciesSettleMs). Only inside the Armory: leaving it switches back at once.
     // rebuildBusy mirrors rebuildInFlight below (pairs written / settle pending / quiet frames / REMADE not yet moved).
@@ -1638,7 +1639,7 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx, const std::strin
             // The character of this species is still in the scene: compare the next pairs with what it was
             // last built with, so an unchanged look is not rebuilt. Its live pairs are re-applied for a couple
             // of ticks (NotifyEngineTick) in case the map script re-created it on the flip.
-            const int sp = wantElite ? 1 : 0;
+            const int sp = static_cast<int>(std::min<uint32_t>(wantElite, 2u));
             s_lastPairs = s_builtPairs[sp];
             s_lastPairsBase = s_builtBase[sp];
             s_livePairs = s_builtLivePairs[sp];
@@ -1822,7 +1823,20 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx, const std::strin
             }
         };
 
-        if (showElite) {
+        if (showMarine) {
+            // MARINE tab (2026-11-13): marine_armory takes these pairs (mainmenu.hsc, rr_elite = 2). A slot left on MOD
+            // DEFAULT shows the stock trooper piece.
+            static const std::pair<const char*, const char*> kMarineDefaults[] = {
+                { "helmet", "trooper_light" }, { "head", "default" }, { "flair_shoulder_l", "trooper_light" },
+                { "flair_shoulder_r", "trooper_light" }, { "flair_chest_a", "trooper_light" },
+                { "flair_backpack", "trooper_light" }, { "flair_belt", "trooper_light" }, { "flair_neck", "trooper_light" },
+                { "legs", "trooper_light" } };
+            for (const auto& [region, def] : kMarineDefaults) {
+                std::string perm = def;
+                for (const auto& [r, p] : sel.marinePieces) if (r == region) perm = p;
+                pushPair(region, perm, def);
+            }
+        } else if (showElite) {
             // Noble's menu Elite (objects\characters\elite_noble, built from The Prophets' Hand's per-piece Elite by
             // Lachiebuzzx) has one region per piece: Reach's 8 sets plus Honor Guard, Council, Ossoona, Schism and
             // Combat. Pieces it lacks (H2A, Honor Guard robe) fall back to the default named here.
@@ -2052,7 +2066,7 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx, const std::strin
                     s_lastPairs = writtenPairs;
                     s_livePairs = livePairs;
                     s_livePairsGen.fetch_add(1);
-                    const int sp = showElite ? 1 : 0;
+                    const int sp = showMarine ? 2 : (showElite ? 1 : 0);
                     s_builtPairs[sp] = writtenPairs;
                     s_builtLivePairs[sp] = livePairs;
                     s_builtBase[sp] = base;
@@ -2073,7 +2087,7 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx, const std::strin
                     s_lastPairs = writtenPairs;
                     s_livePairs = livePairs;
                     s_livePairsGen.fetch_add(1);
-                    const int sp = showElite ? 1 : 0;
+                    const int sp = showMarine ? 2 : (showElite ? 1 : 0);
                     s_builtPairs[sp] = writtenPairs;
                     s_builtLivePairs[sp] = livePairs;
                     s_builtBase[sp] = base;
@@ -2303,7 +2317,7 @@ void ReachArmory::SetSelection(const ReachArmorySelection& sel) {
     {
         ArmoryLock lock(s_sceneMutex);
         const ReachArmorySelection& prev = s_selection;
-        if (prev.previewElite != sel.previewElite) {
+        if (prev.previewElite != sel.previewElite || prev.previewMarine != sel.previewMarine) {
             const uint64_t now = GetTickCount64();
             s_speciesChangeMs.store(now);
             // Hold the Armory picture from the click, not only from the switch: between the click and the switch
@@ -2314,7 +2328,8 @@ void ReachArmory::SetSelection(const ReachArmorySelection& sel) {
             s_holdIsSpecies.store(true);
         }
         pieceChanged =
-            prev.previewElite != sel.previewElite || prev.isFemale != sel.isFemale ||
+            prev.previewElite != sel.previewElite || prev.previewMarine != sel.previewMarine || prev.isFemale != sel.isFemale ||
+            prev.marinePieces != sel.marinePieces ||
             prev.helmet != sel.helmet || prev.chest != sel.chest ||
             prev.leftShoulder != sel.leftShoulder || prev.rightShoulder != sel.rightShoulder ||
             prev.hands != sel.hands || prev.wrist != sel.wrist || prev.utility != sel.utility ||
@@ -2506,12 +2521,14 @@ void ReachArmory::NotifyEngineTick() {
     }
     float eliteSlot2[3] = {}, eliteSlot3[3] = {};
     const bool haveEliteFixed = sel.previewElite && EliteFixedChangeColors(eliteSlot2, eliteSlot3);
+    static const float kMarineGrey[3] = { 0.35f, 0.35f, 0.33f };
     SyncArmoryLiveBipedEngineTickSEH(
         sel.previewElite,
         sel.isFemale,
         s_lastRemade.load(),
-        sel.primaryRgb.data(),
-        sel.secondaryRgb.data(),
+        // MARINE tab: the Marine's own colours (or a neutral grey for MOD DEFAULT) on the preview.
+        sel.previewMarine ? (sel.marineColors ? sel.marinePrimaryRgb.data() : kMarineGrey) : sel.primaryRgb.data(),
+        sel.previewMarine ? (sel.marineColors ? sel.marineSecondaryRgb.data() : kMarineGrey) : sel.secondaryRgb.data(),
         sel.accentRgb.data(),
         sel.lightsRgb.data(),
         visFloats,

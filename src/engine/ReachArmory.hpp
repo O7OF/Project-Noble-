@@ -74,6 +74,7 @@ struct ReachArmorySelection {
     // Marine (Reach's objects\characters\marine model). {region, permutation} pairs; empty = keep the mod's pieces.
     std::vector<std::pair<std::string, std::string>> marinePieces;
     bool marineColors = false;   // apply marinePrimaryRgb / marineSecondaryRgb to change colours 0 / 1
+    bool previewMarine = false;  // Armory MARINE tab: show marine_armory (rr_elite = 2) instead of the Spartan
     std::array<float, 3> marinePrimaryRgb = { 0.3f, 0.3f, 0.3f };
     std::array<float, 3> marineSecondaryRgb = { 0.3f, 0.3f, 0.3f };
     bool accentCustom = false;
