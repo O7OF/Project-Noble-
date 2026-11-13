@@ -916,17 +916,23 @@ static uint64_t __fastcall HostSlot23_LoadProgress(void* thisPtr, uint64_t a1, u
     (void)thisPtr; (void)a2; (void)a3; (void)a4;
     void* caller = _ReturnAddress();
     
-    // a1 is phase index or integer percentage, a2 is optional progress float
+    // a1 is phase index (e.g. 5) or integer percentage
     uint32_t phaseIndex = static_cast<uint32_t>(a1 & 0xFFFFFFFF);
     if (phaseIndex < 32) {
         s_loadPhases.fetch_or(1u << (phaseIndex & 0x1F));
     }
 
     float fraction = 0.0f;
-    if (a1 <= 100) {
-        fraction = static_cast<float>(a1) / 100.0f;
-    } else {
-        memcpy(&fraction, &a1, sizeof(float));
+    const HMODULE engineMod = GetModuleHandleW(L"haloreach.dll");
+    if (engineMod) {
+        fraction = *reinterpret_cast<const float*>(reinterpret_cast<uintptr_t>(engineMod) + 0x46F0E04);
+    }
+    if (fraction <= 0.0f || fraction > 1.0f) {
+        if (a1 <= 100 && a1 > 5) {
+            fraction = static_cast<float>(a1) / 100.0f;
+        } else if (a1 > 100) {
+            memcpy(&fraction, &a1, sizeof(float));
+        }
     }
 
     if (fraction < 0.0f) fraction = 0.0f;
@@ -936,7 +942,7 @@ static uint64_t __fastcall HostSlot23_LoadProgress(void* thisPtr, uint64_t a1, u
     LoadScreen::Get().SetLoadProgress(fraction);
 
     static float s_lastLoggedFraction = -1.0f;
-    if (std::abs(fraction - s_lastLoggedFraction) >= 0.01f || fraction >= 1.0f) {
+    if (std::abs(fraction - s_lastLoggedFraction) >= 0.05f || fraction >= 1.0f) {
         s_lastLoggedFraction = fraction;
         NOBLE_INFO("ReachHost [Slot 23 - LoadProgress]: progress={:.1f}% (raw=0x{:X}, phases=0x{:08X}) [Caller: 0x{:X}]",
             fraction * 100.0f, a1, s_loadPhases.load(), reinterpret_cast<uintptr_t>(caller));

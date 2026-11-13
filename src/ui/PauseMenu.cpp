@@ -2,6 +2,7 @@
 #include "../engine/DevCheats.hpp"
 #include "ForgeMenu.hpp"
 #include "FrontEndMenu.hpp"
+#include "LoadScreen.hpp"
 #include "SocialOverlay.hpp"
 #include "PauseMenu.hpp"
 #include "MenuSounds.hpp"
@@ -3124,26 +3125,50 @@ void PauseMenu::DrawLoading() {
   const float uiScale = h / 1080.0f > 1.0f ? h / 1080.0f : 1.0f;
   const float labelSize = ImGui::GetFontSize();
   const float titleTop = base - titleSize - 4.0f * uiScale;
+
+  // Query live loading progress from engine or LoadScreen
+  float progress = LoadScreen::Get().GetLoadProgress();
+  const HMODULE engineMod = GetModuleHandleW(L"haloreach.dll");
+  if (engineMod) {
+    float engineProg = *reinterpret_cast<const float*>(reinterpret_cast<uintptr_t>(engineMod) + 0x46F0E04);
+    if (engineProg >= 0.0f && engineProg <= 1.0f && engineProg > progress) {
+      progress = engineProg;
+      LoadScreen::Get().SetLoadProgress(progress);
+    }
+  }
+  progress = (std::max)(0.0f, (std::min)(progress, 1.0f));
+  const int progressPct = static_cast<int>(progress * 100.0f);
+
   dl->AddText(font, labelSize,
               ImVec2(left, titleTop - labelSize - 8.0f * uiScale), mutedCol,
               "LOADING");
+
+  const float barW = w * 0.30f;
+  const float barH = 5.0f * uiScale;
+  const ImVec2 b0(left, base + 8.0f * uiScale);
+  const ImVec2 b1(left + barW, base + 8.0f * uiScale + barH);
+
+  // Actual percentage text right-aligned at bar's end
+  char pctBuf[32];
+  std::snprintf(pctBuf, sizeof(pctBuf), "%d%%", progressPct);
+  const ImVec2 pctSize = font->CalcTextSizeA(labelSize, FLT_MAX, 0.0f, pctBuf);
+  dl->AddText(font, labelSize,
+              ImVec2(left + barW - pctSize.x, titleTop - labelSize - 8.0f * uiScale),
+              accentCol, pctBuf);
+
   if (!mapName.empty()) {
     dl->AddText(title ? title : font, titleSize, ImVec2(left, titleTop),
                 IM_COL32(235, 240, 245, 255), mapName.c_str());
   }
 
-  const float barW = w * 0.30f;
-  const float barH = 4.0f * uiScale;
-  const ImVec2 b0(left, base + 8.0f * uiScale);
-  const ImVec2 b1(left + barW, base + 8.0f * uiScale + barH);
+  // Background track
   dl->AddRectFilled(b0, b1, IM_COL32(255, 255, 255, 30));
-  const float t = static_cast<float>(ImGui::GetTime());
-  const float seg = barW * 0.25f;
-  const float pos = std::fmod(t * 0.6f, 1.0f) * (barW + seg) - seg;
-  const float x0 = b0.x + (pos < 0.0f ? 0.0f : pos);
-  const float x1 = b0.x + ((pos + seg) > barW ? barW : (pos + seg));
-  if (x1 > x0)
-    dl->AddRectFilled(ImVec2(x0, b0.y), ImVec2(x1, b1.y), accentCol);
+
+  // Filled progress bar based on actual %
+  if (progress > 0.001f) {
+    const float fillW = barW * progress;
+    dl->AddRectFilled(b0, ImVec2(b0.x + fillW, b1.y), accentCol);
+  }
 
   // The mod map's own description under the bar, wrapped to the bar's width plus a little.
   if (!description.empty()) {

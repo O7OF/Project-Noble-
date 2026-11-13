@@ -225,11 +225,11 @@ void* __fastcall Hook_DataArrayNew(const char* name, int32_t count, uint64_t rec
     const noble::limits::Profile profile = noble::limits::ActiveProfile();
     const bool extendedProfile = profile != noble::limits::Profile::Stock;
 
-    if (extendedProfile && name) {
+    if (extendedProfile && s_hasOfflinePatches && name) {
         int32_t wanted = count;
         if (std::strcmp(name, "object") == 0 && count == 2048) {
             wanted = 32767;
-        } else if (s_hasOfflinePatches) {
+        } else {
             if (profile >= noble::limits::Profile::V16Particles) {
                 if (std::strcmp(name, "c_particle_emitter_gpu") == 0 && count == 832) wanted = 6656;
                 else if (std::strcmp(name, "c_particle_gpu") == 0 && count == 2048) wanted = 16384;
