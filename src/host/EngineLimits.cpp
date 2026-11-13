@@ -13,6 +13,7 @@
 #else
 #include "common/Logger.hpp"
 #include <windows.h>
+#include <psapi.h>
 #endif
 
 namespace fs = std::filesystem;
@@ -230,6 +231,18 @@ void RegisterUnwindTables(void* engineBase) {
         { 0xAAE8C20, 0xAAE8CE2, 0xA9A880 },   // message queue consumer
         { 0xAAE8DA0, 0xAAE8E5E, 0xA9ABD8 },   // message queue filtering
     };
+    const auto baseAddr = reinterpret_cast<uintptr_t>(engineBase);
+    MODULEINFO modInfo{};
+    if (!GetModuleInformation(GetCurrentProcess(), static_cast<HMODULE>(engineBase), &modInfo, sizeof(modInfo))) {
+        return;
+    }
+    const uintptr_t modEnd = baseAddr + modInfo.SizeOfImage;
+
+    // Check bounds of target functions before accessing memory
+    if (baseAddr + kFunctions[0].begin + 3 > modEnd) {
+        return;
+    }
+
     const uint8_t* code = static_cast<const uint8_t*>(engineBase);
     if (code[kFunctions[0].begin] != 0x48 || code[kFunctions[0].begin + 1] != 0x8B ||
         code[kFunctions[0].begin + 2] != 0xC4) {
