@@ -11,9 +11,9 @@
 
 namespace noble {
 
-// Release logs can be shared in bug reports. Never print module RVAs / absolute addresses there;
-// development builds keep them. Every 0x-prefixed hexadecimal token (hook RVAs, addresses, string
-// ids, ARGB values) is replaced with 0x<redacted>.
+// Release logs can be shared in bug reports. Absolute 64-bit addresses are redacted; module-relative
+// RVAs (<= 32 bits) are kept, because they are the same in every copy of the game and are what makes a
+// reported failure diagnosable without a development build.
 inline std::string SanitizeLog(std::string text) {
     std::string out;
     out.reserve(text.size());
@@ -21,9 +21,17 @@ inline std::string SanitizeLog(std::string text) {
         // 0x-prefixed values: module RVAs, absolute addresses, string ids, ARGB colors.
         if (i + 2 < text.size() && text[i] == '0' && (text[i + 1] == 'x' || text[i + 1] == 'X') &&
             std::isxdigit(static_cast<unsigned char>(text[i + 2]))) {
-            out += "0x<redacted>";
-            i += 2;
-            while (i < text.size() && std::isxdigit(static_cast<unsigned char>(text[i]))) ++i;
+            const size_t hexStart = i + 2;
+            size_t hexEnd = hexStart;
+            while (hexEnd < text.size() && std::isxdigit(static_cast<unsigned char>(text[hexEnd]))) ++hexEnd;
+            const size_t digits = hexEnd - hexStart;
+            if (digits <= 8) {
+                // Module RVA or a small value: safe and useful to keep.
+                out.append(text, i, hexEnd - i);
+            } else {
+                out += "0x<redacted>";
+            }
+            i = hexEnd;
             continue;
         }
         // URLs: master/relay endpoints, download URLs.

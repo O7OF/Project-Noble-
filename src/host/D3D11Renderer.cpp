@@ -205,6 +205,14 @@ bool D3D11Renderer::Initialize(HWND hwnd, uint32_t width, uint32_t height) {
         NOBLE_INFO("Direct3D 11 multithread protection enabled.");
     }
 
+    // Set maximum frame latency to 1 on the DXGI device to eliminate 2-3 frames (16-33 ms) of render-queue
+    // input latency across all modes (Solo, Co-Op Campaign, Firefight, Custom Games, Forge).
+    ComPtr<IDXGIDevice1> dxgiDevice1;
+    if (SUCCEEDED(m_device.As(&dxgiDevice1)) && dxgiDevice1) {
+        dxgiDevice1->SetMaximumFrameLatency(1);
+        NOBLE_INFO("Direct3D 11 DXGI maximum frame latency set to 1 (low-latency input mode).");
+    }
+
     // Alt+Enter would toggle exclusive full screen behind the DISPLAY MODE setting's back; the setting owns it.
     ComPtr<IDXGIFactory> factory;
     if (SUCCEEDED(m_swapChain->GetParent(IID_PPV_ARGS(factory.GetAddressOf()))) && factory) {

@@ -7,6 +7,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 namespace noble {
@@ -95,6 +96,8 @@ struct MasterSession {
     bool isPrivate = false;
     std::string lanAddress;
     std::string build;
+    std::string regionUrl;
+    std::string regionName;
 };
 
 // Description of the game this player hosts, sent to the master server.
@@ -167,6 +170,7 @@ public:
     void StartAdvertising(const MasterAdvert& advert);
     void UpdateAdvert(int playerCount, bool inProgress);
     void StopAdvertising();
+    void StopAdvertisingSync();
     bool IsAdvertising() const { return m_advertising.load(); }
 
     // Join signaling to trigger host NAT hole punching & WebSocket relay URL retrieval.
@@ -215,6 +219,9 @@ public:
                          const std::string& modId = "",
                          const std::string& mapVariant = "");
 
+    bool ReturnLobbySync(const std::string& sessionId);
+    bool DisbandSessionSync(const std::string& sessionId);
+
     void UpdateLobbyAdvert(const std::string& map, const std::string& mode, const std::string& variant, int diff, uint64_t skulls);
     std::string GetCurrentSessionId() const;
     std::string GetCurrentSessionToken() const;
@@ -244,6 +251,10 @@ private:
     void DoHeartbeat();
     void DoUnregister();
     void SetStatus(const std::string& status);
+    std::string GetSessionRegionUrl(const std::string& sessionId) const;
+    void SetSessionRegionUrl(const std::string& sessionId, const std::string& regionUrl);
+    std::vector<std::string> GetCandidateUrls(const std::string& sessionId = "") const;
+    std::string ResolveSessionIdAcrossRegions(const std::string& fallbackHostIp, uint16_t fallbackHostPort);
 
     mutable std::mutex m_mutex;
     std::condition_variable m_wake;
@@ -254,6 +265,7 @@ private:
     bool m_unregisterRequested = false;
 
     std::string m_url;
+    std::unordered_map<std::string, std::string> m_sessionRegionUrl;
     std::string m_status;
     std::vector<MasterSession> m_sessions;
     std::atomic<int> m_onlinePlayers{0};

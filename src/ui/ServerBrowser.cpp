@@ -265,6 +265,7 @@ void ServerBrowser::RefreshServers() {
             e.modId = cfg.modId;
             e.modTitle = cfg.modTitle;
             e.source = "YOU";
+            e.region = "YOU";
             add(e);
         }
     }
@@ -287,6 +288,7 @@ void ServerBrowser::RefreshServers() {
         e.modTitle = d.modTitle;
         e.isMod = IsModdedGame(d.mapName, d.sessionName) || !d.modId.empty();
         e.source = "LAN";
+        e.region = "LAN";
         // Our own beacon heard on the LAN: already listed as "YOU".
         if (sessions.IsHosting() && d.port == sessions.GetHostConfig().port && d.sessionName == sessions.GetHostConfig().sessionName) continue;
         add(e);
@@ -305,6 +307,7 @@ void ServerBrowser::RefreshServers() {
                 }
                 existing.inProgress = m.inProgress;
                 existing.isMod = existing.isMod || m.isMod || !m.modId.empty();
+                if (!m.regionName.empty()) existing.region = m.regionName;
                 mergedWithLan = true;
                 break;
             }
@@ -336,7 +339,8 @@ void ServerBrowser::RefreshServers() {
         e.modTitle = m.modTitle;
         e.isMod = IsModdedGame(m.map, m.name, m.isMod) || !m.modId.empty();
         e.build = m.build;
-        e.source = "ONLINE";
+        e.source = m.regionName.empty() ? "ONLINE" : m.regionName;
+        e.region = m.regionName.empty() ? "ONLINE" : m.regionName;
         add(e);
     }
 
@@ -425,7 +429,7 @@ void ServerBrowser::RenderFilterBar() {
     if (hosting) {
         if (NobleStyle::DangerButton("STOP HOSTING", ImVec2(U(140), 0))) {
             sessions.StopHosting();
-            MasterServerClient::Get().StopAdvertising();
+            MasterServerClient::Get().StopAdvertisingSync();
             m_status = "Session closed. Stopped hosting.";
             RefreshServers();
         }
@@ -439,7 +443,7 @@ void ServerBrowser::RenderFilterBar() {
         sessions.TriggerDiscoveryScan();
     }
     ImGui::SameLine();
-    const char* regionNames[] = { "US West (Oregon)", "US East (Virginia)", "EU West (London, UK)", "LAN / Offline Only" };
+    const char* regionNames[] = { "US East (Virginia)", "US West (Oregon)", "UK (London)", "LAN / Offline Only" };
     int curRegion = 0;
     const std::string curUrl = MasterServerClient::Get().Url();
     if (curUrl.empty()) {
@@ -721,6 +725,12 @@ void ServerBrowser::RenderServerList() {
             ImGui::TextColored(NobleStyle::Accent(), "YOU");
         } else if (s.isFavorite) {
             ImGui::TextColored(ImVec4(1.0f, 0.84f, 0.0f, 1.0f), "FAV");
+        } else if (!s.region.empty() && s.region != "ONLINE") {
+            const ImVec4 regionColor = (s.region == "US East") ? ImVec4(0.4f, 0.8f, 1.0f, 1.0f)
+                                     : (s.region == "US West") ? ImVec4(0.45f, 0.95f, 0.55f, 1.0f)
+                                     : (s.region == "UK")      ? ImVec4(0.95f, 0.75f, 0.35f, 1.0f)
+                                                               : ImVec4(0.7f, 0.7f, 0.7f, 1.0f);
+            ImGui::TextColored(regionColor, "%s", s.region.c_str());
         } else {
             ImGui::TextDisabled("%s", s.source.c_str());
         }
@@ -845,6 +855,16 @@ void ServerBrowser::RenderServerDetails() {
     ImGui::SameLine(U(100));
     ImGui::TextUnformatted(s.gameMode.c_str());
 
+    if (!s.region.empty() && s.region != "YOU") {
+        ImGui::TextDisabled("Region:");
+        ImGui::SameLine(U(100));
+        const char* regDesc = (s.region == "US East") ? "US East (Virginia)"
+                            : (s.region == "US West") ? "US West (Oregon)"
+                            : (s.region == "UK")      ? "UK (London)"
+                            : s.region.c_str();
+        ImGui::TextUnformatted(regDesc);
+    }
+
     ImGui::TextDisabled("Map:");
     ImGui::SameLine(U(100));
     ImGui::TextWrapped("%s", MapNames::Display(s.mapName).c_str());
@@ -909,7 +929,7 @@ void ServerBrowser::RenderServerDetails() {
         ImGui::TextDisabled("You are hosting this game.");
         if (NobleStyle::DangerButton("STOP HOSTING", ImVec2(-1, 34))) {
             SessionManager::Get().StopHosting();
-            MasterServerClient::Get().StopAdvertising();
+            MasterServerClient::Get().StopAdvertisingSync();
             m_status = "Session closed. Stopped hosting.";
             RefreshServers();
         }
@@ -1111,9 +1131,16 @@ void ServerBrowser::RenderMasterServerModal() {
 
         const std::string curUrl = MasterServerClient::Get().Url();
         int curRegion = 0;
-        if (curUrl.find("noble-server-2") != std::string::npos || curUrl.find("virginia") != std::string::npos) curRegion = 1;
-        else if (curUrl.find("uk") != std::string::npos || curUrl.find("london") != std::string::npos) curRegion = 2;
-        else if (curUrl.empty()) curRegion = 3;
+        if (curUrl.empty()) {
+            curRegion = 3;
+        } else {
+            for (int i = 0; i < 3; ++i) {
+                if (curUrl == kMasterRegions[i].url || curUrl.rfind(kMasterRegions[i].url, 0) == 0) {
+                    curRegion = i;
+                    break;
+                }
+            }
+        }
 
         static int chosenRegion = 0;
         if (ImGui::IsWindowAppearing()) chosenRegion = curRegion;

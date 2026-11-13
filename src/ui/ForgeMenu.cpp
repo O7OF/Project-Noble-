@@ -247,7 +247,9 @@ void ForgeMenu::Draw() {
     ImGui::SameLine(ImGui::GetWindowWidth() - 44.0f * s);
     if (ImGui::SmallButton("X")) Close();
     ImGui::Separator();
-    // Keep the Windows arrow visible while this menu owns the mouse.
+    // Keep the Windows arrow visible while this menu owns the mouse. The engine clips the cursor for mouse-look
+    // every frame it is not paused, which made clicks land at the clip centre instead of on the palette rows.
+    ClipCursor(nullptr);
     SetCursor(LoadCursorW(nullptr, IDC_ARROW));
     ImGui::SetMouseCursor(ImGuiMouseCursor_Arrow);
 
@@ -258,18 +260,7 @@ void ForgeMenu::Draw() {
     static const std::vector<Item> kEmpty;
     const auto& items = s_tabs.empty() ? kEmpty : s_tabs[s_tab].items;
 
-    // Mouse scroll wheel navigation across items
-    const bool menuHovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows);
     bool selectionMoved = false;
-    if (menuHovered && io.MouseWheel != 0.0f && !items.empty()) {
-        if (io.MouseWheel > 0.0f) {
-            s_item = (s_item + static_cast<int>(items.size()) - 1) % static_cast<int>(items.size());
-        } else {
-            s_item = (s_item + 1) % static_cast<int>(items.size());
-        }
-        selectionMoved = true;
-        MenuSounds::Scroll();
-    }
 
     // Category list (tabs in forge_palette.json)
     ImGui::BeginChild("##forgecats", ImVec2(tabW, bodyH), ImGuiChildFlags_Borders);
@@ -293,6 +284,11 @@ void ForgeMenu::Draw() {
     const float listW = 210.0f * s;
     ImGui::BeginGroup();
     ImGui::BeginChild("##forgeitems", ImVec2(listW, bodyH), ImGuiChildFlags_Borders);
+    // The list scrolls with the wheel in both directions (and stays in step with keyboard navigation below).
+    if (ImGui::IsWindowHovered() && io.MouseWheel != 0.0f) {
+        ImGui::SetScrollY(ImGui::GetScrollY() - io.MouseWheel * 40.0f * s);
+        MenuSounds::Scroll();
+    }
     for (int i = 0; i < static_cast<int>(items.size()); ++i) {
         ImGui::PushID(200 + i);
         const bool focused = i == s_item;

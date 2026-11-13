@@ -24,6 +24,12 @@
 #include "engine/ElitePack.hpp"
 #include "engine/SharedTagCache.hpp"
 #include "engine/DevCheats.hpp"
+#include "engine/MvarDump.hpp"
+#include "engine/MemoryDiff.hpp"
+#include "mvar/MapVariant.hpp"
+#include "mvar/MapVariantWriter.hpp"
+#include "mvar/MapVariantLibrary.hpp"
+#include "engine/SessionVariant.hpp"
 #include "engine/VariantFields.hpp"
 #include "ui/UIManager.hpp"
 #include "ui/ForgeMenu.hpp"
@@ -51,6 +57,8 @@
 #include <nlohmann/json.hpp>
 
 #include <windows.h>
+#include <mmsystem.h>
+#pragma comment(lib, "winmm.lib")
 #include <shellapi.h>
 #include <tlhelp32.h>
 #include <algorithm>
@@ -80,6 +88,16 @@ static constexpr const char* kLogFileName = "noble-client.log";
 static void WriteCrashDump(EXCEPTION_POINTERS* info);
 
 static LONG WINAPI NobleCrashHandler(EXCEPTION_POINTERS* pExceptionInfo) {
+    // Notify master server & guests if the host crashed so lobbies disband immediately instead of hanging
+    try {
+        if (noble::NetworkTransport::Get().IsHost()) {
+            noble::NetworkTransport::Get().SendLobbyControlJson("{\"type\":\"lobby_disband\"}");
+            std::string sid = noble::MasterServerClient::Get().GetCurrentSessionId();
+            if (!sid.empty()) {
+                noble::MasterServerClient::Get().DisbandSessionSync(sid);
+            }
+        }
+    } catch (...) {}
     if (pExceptionInfo && pExceptionInfo->ExceptionRecord) {
         uintptr_t faultAddr = reinterpret_cast<uintptr_t>(pExceptionInfo->ExceptionRecord->ExceptionAddress);
         HMODULE hMod = nullptr;
@@ -150,6 +168,15 @@ static void WriteCrashDump(EXCEPTION_POINTERS* info) {
 // stopped working" in Windows and nothing in our log. This logs the exception's what() and a stack with
 // module RVAs (resolvable through noble-client.map) before the CRT kills the process.
 static void NobleTerminateHandler() {
+    try {
+        if (noble::NetworkTransport::Get().IsHost()) {
+            noble::NetworkTransport::Get().SendLobbyControlJson("{\"type\":\"lobby_disband\"}");
+            std::string sid = noble::MasterServerClient::Get().GetCurrentSessionId();
+            if (!sid.empty()) {
+                noble::MasterServerClient::Get().DisbandSessionSync(sid);
+            }
+        }
+    } catch (...) {}
     spdlog::error("UNHANDLED C++ EXCEPTION: the process is being terminated");
     if (std::exception_ptr current = std::current_exception()) {
         try {
@@ -334,6 +361,27 @@ uint64_t __fastcall Stage3Hook(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a
     return res;
 }
 
+// The engine prints its own fatal/warning text through OutputDebugString. Capture it: a failed map load reports the
+// reason there and nowhere else, so this is the only way to see why a scenario was rejected.
+using OdsAFn = void(WINAPI*)(LPCSTR);
+using OdsWFn = void(WINAPI*)(LPCWSTR);
+OdsAFn s_origOdsA = nullptr;
+OdsWFn s_origOdsW = nullptr;
+
+void WINAPI HookOutputDebugStringA(LPCSTR text) {
+    if (text && *text) NOBLE_INFO("[engine] {}", text);
+    if (s_origOdsA) s_origOdsA(text);
+}
+void WINAPI HookOutputDebugStringW(LPCWSTR text) {
+    if (text && *text) {
+        // Widen-to-narrow properly: the plain std::string(range) constructor truncates each wchar to a char.
+        char buffer[1024] = {};
+        const int written = WideCharToMultiByte(CP_UTF8, 0, text, -1, buffer, sizeof(buffer) - 1, nullptr, nullptr);
+        if (written > 0) NOBLE_INFO("[engine] {}", buffer);
+    }
+    if (s_origOdsW) s_origOdsW(text);
+}
+
 // SEH-guarded memory read, for probing engine structures from the debug hooks.
 static bool SafeReadPtr(uintptr_t address, void* out, size_t size) {
     __try {
@@ -350,12 +398,15 @@ static bool SafeReadPtr(uintptr_t address, void* out, size_t size) {
 // 0x31204) and only then compares id/type, so this hook aligns the loaded header's type with the request in
 // between - that is what lets a mod map built on another canvas mount in the mode the player picked.
 static std::atomic<int> s_requestedMapType{-1};
+std::atomic<int> s_requestedMapId{-1};
 using MapLoadFullFn = unsigned char(__fastcall*)(void*, int, int, void*);
 MapLoadFullFn s_origMapLoadFull = nullptr;
 
 unsigned char __fastcall MapLoadFullHook(void* a1, int a2, int a3, void* a4) {
+    s_requestedMapId.store(a2);
     s_requestedMapType.store(a3);
     const unsigned char result = s_origMapLoadFull ? s_origMapLoadFull(a1, a2, a3, a4) : 0;
+    s_requestedMapId.store(-1);
     s_requestedMapType.store(-1);
     return result;
 }
@@ -386,7 +437,25 @@ char __fastcall MapParseHook(void* a1, void* a2) {
                   SafeReadPtr(table + 0xC + static_cast<uint64_t>(index) * 4, &fileId, sizeof(fileId)) &&
                   SafeReadPtr(table + 0x10 + static_cast<uint64_t>(index) * 4, &fileType, sizeof(fileType));
         const int want = s_requestedMapType.load();
-        if (ok && want != -1 && fileType != want) {
+        static const bool s_mapTypePatchOff = std::getenv("NOBLE_MAPTYPE_OFF") != nullptr;
+        const int wantId = s_requestedMapId.load();
+        if (ok) NOBLE_INFO("main: map declares id {} type 0x{:X}; launch requested id {} type 0x{:X}", fileId, fileType,
+                           wantId, want);
+        // Stock Halo: Reach campaign missions (map types 5005..5080 / 0x138D..0x13D8) declare campaign_id = 1 at
+        // scnr+0x0C, whereas maps built on Firefight or multiplayer canvases declare 0. Mounting a Firefight/MP-canvas
+        // campaign mod into a campaign carrier slot requires both scnr+0x0C = 1 and scnr+0x10 = want.
+        const bool isCampaignSlot = (want >= 5000 && want <= 5080);
+        const int targetId = (wantId != -1) ? wantId : ((isCampaignSlot && fileId == 0) ? 1 : fileId);
+        if (ok && targetId != fileId) {
+            int* idField = reinterpret_cast<int*>(table + 0xC + static_cast<uint64_t>(index) * 4);
+            DWORD oldIdProtect = 0;
+            if (VirtualProtect(idField, sizeof(int), PAGE_READWRITE, &oldIdProtect)) {
+                *idField = targetId;
+                VirtualProtect(idField, sizeof(int), oldIdProtect, &oldIdProtect);
+                NOBLE_INFO("main: map id {} mounted as {} for the campaign slot", fileId, targetId);
+            }
+        }
+        if (ok && want != -1 && fileType != want && !s_mapTypePatchOff) {
             int* typeField = reinterpret_cast<int*>(table + 0x10 + static_cast<uint64_t>(index) * 4);
             DWORD oldProtect = 0;
             if (VirtualProtect(typeField, sizeof(int), PAGE_READWRITE, &oldProtect)) {
@@ -705,6 +774,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     _set_invalid_parameter_handler(&NobleInvalidParameterHandler);
     _set_purecall_handler(&NoblePureCallHandler);
     DisableProcessWindowsGhosting();
+    timeBeginPeriod(1);
 
     // 1. Initialize logging
     // "-log <file>" lets a second instance (or an automated test) keep its own log instead of truncating
@@ -775,6 +845,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         NOBLE_ERROR("Failed to initialize MinHook.");
         return 1;
     }
+    // Watch the engine's file writes: a map variant save that ends up zero bytes still hands its buffer to WriteFile,
+    // and that buffer is what a working save needs (see MvarDump.cpp).
+    (void)noble::InstallWriteWatch();
     // Trace who ends the process: a silent engine exit during a world load leaves no dump and no log line.
     noble::HookManager::InstallHook(reinterpret_cast<void*>(&ExitProcess),
                                     reinterpret_cast<void*>(&ExitProcessHook),
@@ -1034,6 +1107,12 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     int thirdPersonDistance = 100;
     std::string engineCommand;
     int engineCommandAt = -1;
+    int forgeSaveAt = -1;   // dev: run the Forge "save map variant" path N seconds into the match
+    std::wstring mvarParsePath;       // dev: decode a map variant file and report it, then exit
+    std::vector<int> mvarDumpTimes;   // dev: memory dumps of the loaded map variant at these seconds
+    int mvarDumpEvery = 0;            // dev: dump repeatedly, this many seconds apart (find the live map buffer)
+int mvarLiveDumpEvery = 0;        // dev: dump the live variant struct/state every N seconds (Forge placement diff)
+int mvarPageScanEvery = 0;        // dev: diff every writable page every N seconds (find the editor's placement list)
     std::string connectAddress = "";
     std::string connectSessionId = "";
     std::string connectSessionToken = "";
@@ -1059,6 +1138,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
                 launchMode = WideToNarrow(argvW[++i]);
             } else if (arg == L"-mvar" && i + 1 < numArgs) {
                 customMvar = WideToNarrow(argvW[++i]);
+                noble::SetSessionMapVariantPath(std::filesystem::path(argvW[i]));
             } else if (arg == L"-variant" && i + 1 < numArgs) {
                 customVariant = WideToNarrow(argvW[++i]);
             } else if (arg == L"-mod" && i + 1 < numArgs) {
@@ -1105,6 +1185,118 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             } else if (arg == L"-third-person-mode" && i + 1 < numArgs) {
                 thirdPersonMode = _wtoi(argvW[++i]);
                 thirdPerson = true;
+            } else if (arg == L"-mvar-write" && i + 2 < numArgs) {
+                const std::wstring in = argvW[++i];
+                const std::wstring outPath = argvW[++i];
+                const noble::mvar::MapVariant variant = noble::mvar::ReadMapVariant(in);
+                std::vector<uint8_t> bytes;
+                bool hashRecomputed = false;
+                std::string error;
+                if (!noble::mvar::WriteMapVariant(variant, bytes, hashRecomputed, error)) {
+                    NOBLE_ERROR("Mvar write: {}", error);
+                    return 1;
+                }
+                std::ofstream out(outPath, std::ios::binary | std::ios::trunc);
+                out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+                out.close();
+                if (!out) {
+                    NOBLE_ERROR("Mvar write: could not write '{}'", WideToNarrow(outPath));
+                    return 1;
+                }
+                NOBLE_INFO("Mvar write: '{}' -> '{}' ({} bytes, hash {})", WideToNarrow(in), WideToNarrow(outPath),
+                           bytes.size(), hashRecomputed ? "recomputed" : "preserved");
+                return 0;
+            } else if (arg == L"-mvar-save" && i + 2 < numArgs) {
+                const std::wstring in = argvW[++i];
+                const std::wstring outPath = argvW[++i];
+                const noble::mvar::MapVariant variant = noble::mvar::ReadMapVariant(in);
+                std::string error;
+                if (!noble::mvar::SaveMapVariantJson(variant, outPath, std::string(), error)) {
+                    NOBLE_ERROR("Mvar save: {}", error);
+                    return 1;
+                }
+                return 0;
+            } else if (arg == L"-mvar-import" && i + 1 < numArgs) {
+                const std::wstring in = argvW[++i];
+                const std::filesystem::path library = noble::ReachHost::Get().GetDataDir() / "map_variants";
+                std::string detail;
+                const std::filesystem::path out =
+                    noble::mvar::SaveVariantToLibrary(in, noble::mvar::VariantTitle(in), library, detail);
+                if (out.empty()) {
+                    NOBLE_ERROR("Mvar import: {}", detail);
+                    return 1;
+                }
+                NOBLE_INFO("Mvar import: '{}' -> '{}'", WideToNarrow(in), out.string());
+                return 0;
+            } else if (arg == L"-mvar-roundtrip" && i + 1 < numArgs) {
+                const std::wstring target = argvW[++i];
+                std::vector<std::wstring> files;
+                std::error_code ec;
+                if (std::filesystem::is_directory(target, ec)) {
+                    for (const auto& entry : std::filesystem::directory_iterator(target, ec)) {
+                        if (!entry.is_regular_file(ec)) continue;
+                        if (entry.path().extension() != L".mvar") continue;
+                        files.push_back(entry.path().wstring());
+                    }
+                    std::sort(files.begin(), files.end());
+                } else {
+                    files.push_back(target);
+                }
+                int identical = 0, different = 0, failed = 0;
+                for (const std::wstring& file : files) {
+                    const noble::mvar::MapVariant variant = noble::mvar::ReadMapVariant(file);
+                    if (!variant.valid) {
+                        NOBLE_WARN("Mvar roundtrip: '{}' did not parse: {}", WideToNarrow(file), variant.error);
+                        ++failed;
+                        continue;
+                    }
+                    std::vector<uint8_t> bytes;
+                    bool hashRecomputed = false;
+                    std::string error;
+                    if (!noble::mvar::WriteMapVariant(variant, bytes, hashRecomputed, error)) {
+                        NOBLE_WARN("Mvar roundtrip: '{}' did not write: {}", WideToNarrow(file), error);
+                        ++failed;
+                        continue;
+                    }
+                    if (bytes == variant.fileBytes) {
+                        ++identical;
+                    } else {
+                        size_t at = 0;
+                        while (at < bytes.size() && at < variant.fileBytes.size() && bytes[at] == variant.fileBytes[at]) ++at;
+                        NOBLE_WARN("Mvar roundtrip: '{}' differs at 0x{:X} ({} vs {} bytes)", WideToNarrow(file), at,
+                                   bytes.size(), variant.fileBytes.size());
+                        ++different;
+                    }
+                }
+                NOBLE_INFO("Mvar roundtrip: {} identical, {} different, {} failed", identical, different, failed);
+                return (different || failed) ? 1 : 0;
+            } else if (arg == L"-mvar-parse") {
+                {
+                    const std::wstring path = argvW[++i];
+                    const noble::mvar::MapVariant variant = noble::mvar::ReadMapVariant(path);
+                    NOBLE_INFO("Mvar parse: {}", noble::mvar::Describe(variant));
+                    return variant.valid ? 0 : 1;
+                }
+            } else if (arg == L"-mvar-dump-every") {
+                mvarDumpEvery = _wtoi(argvW[++i]);
+            } else if (arg == L"-mvar-live-dump" && i + 1 < numArgs) {
+                mvarLiveDumpEvery = _wtoi(argvW[++i]);
+                noble::LiveDumpSeconds() = mvarLiveDumpEvery;
+            } else if (arg == L"-mvar-page-scan" && i + 1 < numArgs) {
+                mvarPageScanEvery = _wtoi(argvW[++i]);
+                noble::PageScanSeconds() = mvarPageScanEvery;
+            } else if (arg == L"-mvar-dump-at") {
+                const std::wstring spec = argvW[++i];
+                size_t from = 0;
+                while (from <= spec.size()) {
+                    const size_t comma = spec.find(L',', from);
+                    const std::wstring piece = spec.substr(from, comma == std::wstring::npos ? std::wstring::npos : comma - from);
+                    if (!piece.empty()) mvarDumpTimes.push_back(_wtoi(piece.c_str()));
+                    if (comma == std::wstring::npos) break;
+                    from = comma + 1;
+                }
+            } else if (arg == L"-forge-save-at") {
+                forgeSaveAt = _wtoi(argvW[++i]);
             } else if (arg == L"-guest-post-start") {
                 guestPostStart = true;
             } else if (arg == L"-engine-cmd" && i + 1 < numArgs) {
@@ -1191,6 +1383,53 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
                 }
             }
         }
+    } else if (!launchMap.empty()) {
+        std::error_code infoEc;
+        const fs::path staleInfoDst = userStoragePath / "maps" / "info" / (launchMap + ".mapinfo");
+        if (fs::is_regular_file(staleInfoDst, infoEc)) {
+            fs::remove(staleInfoDst, infoEc);
+            NOBLE_INFO("main: removed stale patched mapinfo override '{}'", staleInfoDst.string());
+        }
+    }
+    // A campaign mission whose scenario is not one of the stock campaign slots (e.g. a campaign mod built on a
+    // Firefight or multiplayer canvas such as ff_unearthed) must launch through a stock campaign carrier ('m10')
+    // with the scenario's .map file served as the carrier override; otherwise the campaign validator rejects the
+    // non-campaign .mapinfo with 'no map selected'.
+    if (!showMenu && _stricmp(launchMode.c_str(), "campaign") == 0 && !launchMap.empty()) {
+        static const char* const kStockCampaignMissions[] = {
+            "m05", "m10", "m20", "m30", "m35", "m45", "m50", "m52", "m60", "m70", "m70_a", "m70_bonus"
+        };
+        bool isStockMission = false;
+        for (const char* m : kStockCampaignMissions) {
+            if (_stricmp(launchMap.c_str(), m) == 0) {
+                isStockMission = true;
+                break;
+            }
+        }
+        std::error_code mapEc;
+        if (!isStockMission) {
+            if (mapOverride.empty()) {
+                const fs::path modCandidate = !modFolder.empty() ? (modFolder / "maps" / (launchMap + ".map")) : fs::path();
+                const fs::path baseCandidate = reachInstall->mapsDirectory / (launchMap + ".map");
+                if (!modCandidate.empty() && fs::is_regular_file(modCandidate, mapEc)) {
+                    mapOverride = modCandidate;
+                } else if (fs::is_regular_file(baseCandidate, mapEc)) {
+                    mapOverride = baseCandidate;
+                }
+            }
+            NOBLE_INFO("main: campaign scenario '{}' routed through carrier slot 'm10' (override '{}')",
+                       launchMap, mapOverride.string());
+            launchMap = "m10";
+        } else if (mapOverride.empty() && !modFolder.empty() &&
+                   !fs::is_regular_file(modFolder / "maps" / (launchMap + ".map"), mapEc)) {
+            for (const auto& entry : fs::directory_iterator(modFolder / "maps", mapEc)) {
+                if (entry.is_regular_file(mapEc) && _stricmp(entry.path().extension().string().c_str(), ".map") == 0) {
+                    mapOverride = entry.path();
+                    NOBLE_INFO("main: campaign carrier '{}' bound to mod map '{}'", launchMap, mapOverride.string());
+                    break;
+                }
+            }
+        }
     }
     if (!mapOverride.empty()) {
         NOBLE_INFO("Map override: serving '{}' as maps\\{}.map", mapOverride.string(), launchMap);
@@ -1243,6 +1482,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     args += L" -difficulty " + std::to_wstring(launchDifficulty);
     if (!customVariant.empty()) args += L" -variant \"" + toWide(customVariant) + L"\"";
     if (!customMvar.empty()) args += L" -mvar \"" + toWide(customMvar) + L"\"";
+    // Keep the map-variant memory dump running after the menu relaunches into a match.
+    if (mvarDumpEvery > 0) args += L" -mvar-dump-every " + std::to_wstring(mvarDumpEvery);
+    if (mvarLiveDumpEvery > 0) args += L" -mvar-live-dump " + std::to_wstring(mvarLiveDumpEvery);
+    if (mvarPageScanEvery > 0) args += L" -mvar-page-scan " + std::to_wstring(mvarPageScanEvery);
     if (launchSkulls != 0) args += L" -skulls " + std::to_wstring(launchSkulls);
     if (!modFolder.empty()) args += L" -mod \"" + modFolder.wstring() + L"\"";
     if (!mapOverride.empty()) args += L" -map-override \"" + mapOverride.wstring() + L"\"";
@@ -1432,6 +1675,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     noble::HookManager::InstallHook(reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(loader->GetModuleHandle()) + 0xC8F8),
                                     reinterpret_cast<void*>(&Stage2Hook),
                                     reinterpret_cast<void**>(&s_origStage2), "trace_stage2");
+    noble::HookManager::InstallHook(reinterpret_cast<void*>(&OutputDebugStringA), reinterpret_cast<void*>(&HookOutputDebugStringA),
+                                    reinterpret_cast<void**>(&s_origOdsA), "capture_engine_output");
+    noble::HookManager::InstallHook(reinterpret_cast<void*>(&OutputDebugStringW), reinterpret_cast<void*>(&HookOutputDebugStringW),
+                                    reinterpret_cast<void**>(&s_origOdsW), "capture_engine_output_w");
     noble::HookManager::InstallHook(reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(loader->GetModuleHandle()) + 0x3873C),
                                     reinterpret_cast<void*>(&Stage3Hook),
                                     reinterpret_cast<void**>(&s_origStage3), "trace_stage3");
@@ -1451,6 +1698,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 
     // Apply 32/64 player lobby expansion detours
     noble::LobbyPatches::Apply(loader->GetModuleHandle());
+    noble::LobbyPatches::SetCampaignCoop(!showMenu && (_stricmp(launchMode.c_str(), "campaign") == 0 || _stricmp(launchMode.c_str(), "firefight") == 0));
 
     // Apply engine stability and appearance cap patches (unlocks all 200+ armor permutations in haloreach.dll)
     noble::EnginePatches::Apply(loader->GetModuleHandle());
@@ -1459,10 +1707,13 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     noble::ForgePatches::Apply(loader->GetModuleHandle());
 
     // Initialize Shared Tag Cache for cross-map AI spawning (Approach 1)
-    // The donor AI cache mounts a whole campaign map; never the one this launch is about to load, or that map's
-    // load crawls and stalls (ONI: Sword Base = m20, which was also the hard-coded donor).
-    noble::SharedTagCache::SetAvoidMap(launchMap);
-    noble::SharedTagCache::Initialize(loader->GetModuleHandle(), userStoragePath, reachInstall->workshopDirectory, reachInstall->reachDirectory);
+    // Skip for front-end menu and Campaign launches: Campaign scenarios already carry native AI/vehicle tags in
+    // campaign.map + <mission>.map, and mounting a donor campaign map (or falling back from m20.map to m45.map)
+    // interferes with mission loading (especially ONI: Sword Base = m20).
+    if (!showMenu && _stricmp(launchMode.c_str(), "campaign") != 0) {
+        noble::SharedTagCache::SetAvoidMap(launchMap);
+        noble::SharedTagCache::Initialize(loader->GetModuleHandle(), userStoragePath, reachInstall->workshopDirectory, reachInstall->reachDirectory);
+    }
 
     // Wire guest-to-host spawn forwarder to prevent duplicate local spawning in multiplayer
     noble::SharedTagCache::SetSpawnForwarder([](uint32_t datumIndex, const std::string& tagPath) -> bool {
@@ -1608,6 +1859,12 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
                     advert.hasPassword = false;
                     advert.isPrivate = !hostPublic;
                     advert.isMod = !modFolder.empty();
+                    // The match process re-registers the host's session; carry the mod it launched with so the
+                    // session's mod id matches the map (the lobby's id is not available here).
+                    if (!modFolder.empty()) {
+                        advert.modId = modFolder.filename().string();
+                        advert.modTitle = mapTitle;
+                    }
                     advert.address = noble::UPnP::Get().GetExternalIP();
                     if (!connectSessionId.empty()) {
                         advert.id = connectSessionId;
@@ -1659,7 +1916,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             if (argv) LocalFree(argv);
         }
 
-        if (!lobbyTeams.empty()) {
+        // Synchronous Co-Op modes (Campaign / Firefight) do not have opposing player teams, and executing
+        // host-only HaloScript `player_override_team` mutates deterministic player state asymmetrically (OOS).
+        if (!lobbyTeams.empty() && launchMode != "campaign" && launchMode != "firefight") {
             // The scoreboard's roster-less fallback and voice chat use this: -lobby-teams is in roster order,
             // so entry 0 is the local player of a hosted match.
             noble::PauseMenu::SetLocalTeam(lobbyTeams.front());
@@ -1692,6 +1951,53 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             NOBLE_WARN("main: dispatching engine command '{}' (research hook)", cmd);
             if (noble::BlamEngine::Active()) noble::BlamEngine::Active()->ExecuteCommand(cmd);
             else NOBLE_WARN("main: no active engine for command '{}'", cmd);
+        }).detach();
+    }
+
+    if (mvarLiveDumpEvery > 0) {
+        // The snapshot needs the engine thread's TLS state, so it runs from slot 1 rather than a worker thread.
+        noble::BlamEngine::ConfigureLiveDump(noble::ReachHost::Get().GetDataDir() / "mvar_live", mvarLiveDumpEvery);
+    }
+    if (mvarPageScanEvery > 0) {
+        noble::StartPageScan(mvarPageScanEvery, noble::ReachHost::Get().GetDataDir() / "mvar_pages");
+    }
+
+    if (mvarDumpEvery > 0) {
+        std::thread([mvarDumpEvery] {
+            int index = 0;
+            while (true) {
+                std::this_thread::sleep_for(std::chrono::seconds(mvarDumpEvery));
+                const std::filesystem::path out = noble::ReachHost::Get().GetDataDir() / "mvar_dump" /
+                                                  ("t" + std::to_string(++index));
+                const int found = noble::DumpMapVariantCandidates(out);
+                NOBLE_WARN("main: -mvar-dump-every snapshot {} -> {} candidate(s)", index, found);
+            }
+        }).detach();
+    }
+
+    if (!mvarDumpTimes.empty()) {
+        std::thread([times = mvarDumpTimes] {
+            int previous = 0;
+            for (const int at : times) {
+                const int wait = at > previous ? at - previous : 0;
+                previous = at;
+                std::this_thread::sleep_for(std::chrono::seconds(wait));
+                NOBLE_WARN("main: -mvar-dump-at {} - scanning memory for loaded map variants", at);
+                const std::filesystem::path out =
+                    noble::ReachHost::Get().GetDataDir() / "mvar_dump" / std::to_string(at);
+                const int found = noble::DumpMapVariantCandidates(out);
+                NOBLE_WARN("main: -mvar-dump-at {} found {} candidate(s) in '{}'", at, found, out.string());
+                (void)noble::InstallWriteWatch();
+            }
+        }).detach();
+    }
+
+    if (forgeSaveAt >= 0) {
+        std::thread([forgeSaveAt] {
+            std::this_thread::sleep_for(std::chrono::seconds(forgeSaveAt));
+            NOBLE_WARN("main: -forge-save-at {} - running the Forge save-map-variant path (test hook)", forgeSaveAt);
+            const std::filesystem::path saved = noble::PauseMenu::SaveForgeMapVariant("Dev Test Variant");
+            NOBLE_WARN("main: -forge-save-at result: '{}'", saved.empty() ? std::string("(nothing)") : saved.string());
         }).detach();
     }
 
@@ -1738,7 +2044,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         // post-game panel is drawn and presented from here (PauseMenu::HoldFrame, as the engine does).
         // The front-end menu likewise once the engine drops its menu map (FrontEndMenu::HoldFrame).
         if (!noble::PauseMenu::HoldFrame() && !noble::FrontEndMenu::HoldFrame()) {
-            MsgWaitForMultipleObjectsEx(0, nullptr, 10, QS_ALLINPUT, MWMO_ALERTABLE);
+            MsgWaitForMultipleObjectsEx(0, nullptr, 1, QS_ALLINPUT, MWMO_ALERTABLE | MWMO_INPUTAVAILABLE);
         }
     }
 

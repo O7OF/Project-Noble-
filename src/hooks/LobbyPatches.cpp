@@ -3,6 +3,7 @@
 #include "SigScanner.hpp"
 #include "common/Logger.hpp"
 #include "host/SlotPatch.hpp"
+#include "network/NetworkTransport.hpp"
 #include <psapi.h>
 #include <vector>
 #include <string>
@@ -153,12 +154,14 @@ static std::string ReachStack() {
 // keeps the simulation running and prevents the host from booting peers or aborting the game.
 typedef void(__fastcall* SessionAbortFn)(void* session, uint32_t reason);
 static SessionAbortFn s_originalSessionAbort = nullptr;
+static std::atomic<bool> s_campaignCoop{false};
+void LobbyPatches::SetCampaignCoop(bool on) { s_campaignCoop.store(on); }
 
 static void __fastcall Hook_SessionAbort(void* session, uint32_t reason) {
     uintptr_t caller = CallerRva(_ReturnAddress());
     NOBLE_WARN("LobbyPatches: [{} pid {}] c_network_session::abort called: session=0x{:p}, reason={} (0x{:X}), caller hr+0x{:X}",
         RefuseRole(), GetCurrentProcessId(), session, reason, reason, caller);
-    if (reason >= 0x10 && reason <= 0x25) {
+    if (s_campaignCoop.load() || (reason >= 0x10 && reason <= 0x25)) {
         NOBLE_WARN("LobbyPatches: SUPPRESSED session abort reason 0x{:X} from hr+0x{:X} to keep co-op match running!", reason, caller);
         return;
     }
@@ -301,6 +304,12 @@ static uint64_t __fastcall Hook_EncodeMessage(void* table, void* stream, int32_t
         NOBLE_INFO("LobbyPatches: [{} pid {}] SEND msg {} ({}) size {}", RefuseRole(), GetCurrentProcessId(), type,
                    SessionMessageName(type), size);
     }
+    // Session teardown messages: who asked for it. A guest that leaves on its own (msg 12) or disbands (14) used to be
+    // logged only as an effect; the caller RVA says which engine path decided it.
+    if (type == 12 || type == 14 || type == 15) {
+        NOBLE_WARN("LobbyPatches: [{} pid {}] SEND msg {} ({}) from hr+0x{:X} - session teardown requested here",
+                   RefuseRole(), GetCurrentProcessId(), type, SessionMessageName(type), CallerRva(_ReturnAddress()));
+    }
     return s_originalEncodeMessage ? s_originalEncodeMessage(table, stream, type, size, data) : 0;
 }
 
@@ -353,11 +362,29 @@ static void* __fastcall Hook_FindChannel(const uint8_t* address) {
 // host accepts the guest, the channel connects, then the host boots it ~8.5 s later. Logs who boots and why.
 typedef uint64_t(__fastcall* BootPeerFn)(void* session, int32_t peerIndex, int32_t reason);
 static BootPeerFn s_originalBootPeer = nullptr;
+
 static uint64_t __fastcall Hook_BootPeer(void* session, int32_t peerIndex, int32_t reason) {
     int32_t sessionState = -99;
     if (session) std::memcpy(&sessionState, static_cast<const uint8_t*>(session) + 0x60EF8, sizeof(sessionState));
     NOBLE_WARN("LobbyPatches: [{} pid {}] BOOT peer {} reason {} (session state {}) stack: {}", RefuseRole(),
                GetCurrentProcessId(), peerIndex, reason, sessionState, ReachStack());
+    // A campaign co-op host boots its guest with reason 9 a few seconds after both spawn (the guest's campaign
+    // progress does not match the host's, so the engine treats the peer as incompatible for network co-op) and the
+    // mission ends with "Error hosting co-op". Dropping that boot keeps both players in the mission; the engine
+    // re-evaluates it every frame, which is harmless once the peer stays. NOBLE_COOP_NO_KEEP_PEER=1 disables it.
+    static const bool keepCoopPeer = [] {
+        wchar_t env[8] = {};
+        return !(GetEnvironmentVariableW(L"NOBLE_COOP_NO_KEEP_PEER", env, 8) > 0 && env[0] != L'0');
+    }();
+    // Suppress automatic engine peer boots during campaign/firefight co-op so peers are never dropped with "Error hosting co-op".
+    if (keepCoopPeer && s_campaignCoop.load()) {
+        static std::atomic<int> logged{0};
+        if (logged.fetch_add(1) == 0) {
+            NOBLE_WARN("LobbyPatches: keeping guest peer {} in the co-op session (engine boot reason {}); "
+                       "further occurrences are not logged", peerIndex, reason);
+        }
+        return 0;
+    }
     return s_originalBootPeer ? s_originalBootPeer(session, peerIndex, reason) : 0;
 }
 
@@ -732,6 +759,36 @@ static uint64_t __fastcall Hook_ChannelReceive(void* channel, void* bitstream, u
     return ret;
 }
 
+// Host-handoff state evaluation (hr+0x4035DC, c_network_session::process_host_handoff).
+// Reach's Xbox Live P2P session leader evaluates peer NAT/UPnP/bandwidth before starting a game and attempts
+// to migrate host authority (msg 16 host-handoff) to a guest if it scores higher. Project Noble's relay/UDP
+// transport pins the Host and Guest roles, so host-handoff causes the guest to leave (msg 12 leave-session)
+// and the host to disband (msg 14 session-disband -> "An error occurred while loading co-op").
+// Clearing the candidate peer mask (+0x60F04) and target handoff peer (+0x60F18 = -1) with +0x60F0D = 1
+// makes process_host_handoff immediately take its native "current host stays host" completion branch
+// (hr+0x4038B3 -> hr+0x403B79 -> hr+0x4029A0 / hr+0x3940E4) without ever sending msg 16 (host-handoff).
+typedef void(__fastcall* ProcessHostHandoffFn)(void* session);
+static ProcessHostHandoffFn s_originalProcessHostHandoff = nullptr;
+static std::atomic<int> s_hostHandoffLogCount{0};
+static void __fastcall Hook_ProcessHostHandoff(void* session) {
+    if (session && NetworkTransport::Get().IsActive()) {
+        auto* s = static_cast<uint8_t*>(session);
+        const uint32_t prevCandidates = *reinterpret_cast<const uint32_t*>(s + 0x60F04);
+        const int32_t prevTarget = *reinterpret_cast<const int32_t*>(s + 0x60F18);
+        *reinterpret_cast<uint8_t*>(s + 0x60F0D) = 1;
+        *reinterpret_cast<uint32_t*>(s + 0x60F04) = 0;
+        *reinterpret_cast<int32_t*>(s + 0x60F18) = -1;
+        if ((prevCandidates != 0 || prevTarget != -1) && s_hostHandoffLogCount.fetch_add(1) < 10) {
+            NOBLE_INFO("LobbyPatches: [{} pid {}] keeping session host on current host (suppressed P2P host-handoff, "
+                       "candidates=0x{:X}, targetPeer={})",
+                       RefuseRole(), GetCurrentProcessId(), prevCandidates, prevTarget);
+        }
+    }
+    if (s_originalProcessHostHandoff) {
+        s_originalProcessHostHandoff(session);
+    }
+}
+
 static bool WriteProtectedMemory(void* destination, const void* source, size_t size) {
     DWORD oldProtect = 0;
     if (!VirtualProtect(destination, size, PAGE_EXECUTE_READWRITE, &oldProtect)) {
@@ -990,6 +1047,28 @@ bool LobbyPatches::Apply(HMODULE hReachDll) {
                 patchCount++;
                 NOBLE_INFO("LobbyPatches: Installed MinHook detour on c_network_session::abort at 0x{:X}", fnSessionAbort);
             }
+        }
+    }
+
+    // 7c. MinHook Detour on c_network_session::process_host_handoff (RVA 0x4035DC)
+    // Keeps session leadership on the actual Noble Host and prevents msg 16 (host-handoff) -> msg 12 (leave-session)
+    // -> msg 14 (session-disband) during Co-Op Campaign and Multiplayer launch.
+    {
+        uintptr_t fnHostHandoff = base + 0x4035DC;
+        static const uint8_t kHostHandoffPrologue[15] = {
+            0x48, 0x8B, 0xC4, 0x48, 0x89, 0x58, 0x10, 0x48, 0x89, 0x70, 0x18, 0x48, 0x89, 0x78, 0x20
+        };
+        if (0x4035DC + sizeof(kHostHandoffPrologue) <= size &&
+            std::memcmp(reinterpret_cast<const void*>(fnHostHandoff), kHostHandoffPrologue, sizeof(kHostHandoffPrologue)) == 0) {
+            if (HookManager::InstallHook(reinterpret_cast<void*>(fnHostHandoff),
+                                         reinterpret_cast<void*>(&Hook_ProcessHostHandoff),
+                                         reinterpret_cast<void**>(&s_originalProcessHostHandoff),
+                                         "c_network_session::process_host_handoff")) {
+                patchCount++;
+                NOBLE_INFO("LobbyPatches: Installed MinHook detour on process_host_handoff at 0x{:X}", fnHostHandoff);
+            }
+        } else {
+            NOBLE_WARN("LobbyPatches: process_host_handoff bytes differ at hr+0x4035DC; left alone");
         }
     }
 

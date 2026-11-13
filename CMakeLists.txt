@@ -9,7 +9,7 @@ if(WIN32)
     set(CMAKE_THREAD_LIBS_INIT "" CACHE INTERNAL "" FORCE)
     set(Threads_FOUND TRUE CACHE INTERNAL "" FORCE)
 endif()
-project(ProjectNoble VERSION 0.19.48 LANGUAGES C CXX)
+project(ProjectNoble VERSION 0.19.64 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -162,6 +162,15 @@ set(SOURCES
     src/engine/ReachHost.cpp
     src/engine/ReachArmory.cpp
     src/engine/ElitePack.cpp
+    src/engine/MvarDump.cpp
+    src/engine/MemoryDiff.cpp
+    src/engine/ForgePlacement.cpp
+    src/mvar/BitReader.cpp
+    src/mvar/MapVariant.cpp
+    src/mvar/MapVariantWriter.cpp
+    src/mvar/MapVariantLibrary.cpp
+    src/mvar/ForgePlacementApply.cpp
+    src/mvar/Sha1.cpp
     src/engine/SharedTagCache.cpp
     src/engine/DevCheats.cpp
     src/engine/CameraFov.cpp
@@ -297,6 +306,18 @@ if(NOT NOBLE_MENU_DATA_OK)
     message(STATUS "Project Noble: menu map/string table missing - building without embedded menu data")
     set_source_files_properties(src/res/noble.rc PROPERTIES COMPILE_DEFINITIONS "NOBLE_NO_MENU_DATA")
 endif()
+
+# Headless map variant tool (parse / repack / JSON round trip), independent of the launcher.
+add_executable(mvar-tool
+    tools/mvar_tool.cpp
+    src/mvar/BitReader.cpp
+    src/mvar/MapVariant.cpp
+    src/mvar/MapVariantWriter.cpp
+    src/mvar/MapVariantLibrary.cpp
+    src/mvar/ForgePlacementApply.cpp
+    src/mvar/Sha1.cpp
+)
+target_include_directories(mvar-tool PRIVATE src)
 
 add_executable(noble-client WIN32 ${SOURCES} ${HEADERS})
 if(NOBLE_DEV_BUILD)

@@ -147,8 +147,8 @@ bool NetworkTransport::Initialize(bool isHost, const std::string& remoteIp, uint
         NOBLE_WARN("NetworkTransport: Failed to set non-blocking socket mode");
     }
 
-    // Set socket buffer sizes to 512 KB
-    int bufSize = 512 * 1024;
+    // Set socket buffer sizes to 1 MB for zero-drop burst absorption
+    int bufSize = 1024 * 1024;
     setsockopt(m_socket, SOL_SOCKET, SO_RCVBUF, reinterpret_cast<const char*>(&bufSize), sizeof(bufSize));
     setsockopt(m_socket, SOL_SOCKET, SO_SNDBUF, reinterpret_cast<const char*>(&bufSize), sizeof(bufSize));
 
@@ -205,7 +205,7 @@ bool NetworkTransport::Initialize(bool isHost, const std::string& remoteIp, uint
     NOBLE_INFO("NetworkTransport: Initialized {} on UDP port {} (Local Machine ID: 0x{:X}, Host ID: 0x{:X}, Session ID: 0x{:X})",
         m_isHost ? "HOST" : "GUEST", m_localPort, m_localMachineId, m_hostMachineId, m_sessionId);
 
-    // If Guest, fire an immediate NAT hole-punch PING packet to the Host so the local NAT mapping opens
+    // If Guest, fire an immediate NAT hole-punch PING packet burst to the Host so the local NAT mapping opens
     // and the Host learns our external IP:port before the first Blam! handshake packet.
     if (!m_isHost && m_remoteHostAddr.sin_addr.s_addr != 0) {
         uint8_t punch[sizeof(uint64_t) + 4] = { 0 };
@@ -214,8 +214,10 @@ bool NetworkTransport::Initialize(bool isHost, const std::string& remoteIp, uint
         punch[sizeof(uint64_t) + 1] = 'I';
         punch[sizeof(uint64_t) + 2] = 'N';
         punch[sizeof(uint64_t) + 3] = 'G';
-        sendto(m_socket, reinterpret_cast<const char*>(punch), sizeof(punch), 0,
-               reinterpret_cast<const sockaddr*>(&m_remoteHostAddr), sizeof(m_remoteHostAddr));
+        for (int i = 0; i < 5; ++i) {
+            sendto(m_socket, reinterpret_cast<const char*>(punch), sizeof(punch), 0,
+                   reinterpret_cast<const sockaddr*>(&m_remoteHostAddr), sizeof(m_remoteHostAddr));
+        }
         // Also send a localhost punch to 127.0.0.1:remotePort so same-PC Online P2P tests connect directly
         // without relying on router Hairpin NAT (harmless if the Host is on a remote PC since Guest is on an ephemeral port).
         if (m_remoteHostAddr.sin_addr.s_addr != htonl(INADDR_LOOPBACK)) {
@@ -223,10 +225,12 @@ bool NetworkTransport::Initialize(bool isHost, const std::string& remoteIp, uint
             localHostAddr.sin_family = AF_INET;
             localHostAddr.sin_port = m_remoteHostAddr.sin_port;
             localHostAddr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-            sendto(m_socket, reinterpret_cast<const char*>(punch), sizeof(punch), 0,
-                   reinterpret_cast<const sockaddr*>(&localHostAddr), sizeof(localHostAddr));
+            for (int i = 0; i < 3; ++i) {
+                sendto(m_socket, reinterpret_cast<const char*>(punch), sizeof(punch), 0,
+                       reinterpret_cast<const sockaddr*>(&localHostAddr), sizeof(localHostAddr));
+            }
         }
-        NOBLE_INFO("NetworkTransport: [GUEST] Sent initial NAT punch PING to {}:{}", remoteIp, remotePort);
+        NOBLE_INFO("NetworkTransport: [GUEST] Sent initial NAT punch PING burst to {}:{}", remoteIp, remotePort);
     }
 
     return true;
@@ -287,7 +291,7 @@ void NetworkTransport::AddPeer(uint64_t machineId, const std::string& ip, uint16
         }
     }
 
-    // Fire UDP punch packet immediately to punch open NAT router firewall
+    // Fire UDP punch packet burst immediately to punch open NAT router firewall
     if (m_socket != INVALID_SOCKET) {
         if (machineId != 0) {
             std::lock_guard<std::mutex> lock(m_mutex);
@@ -299,9 +303,11 @@ void NetworkTransport::AddPeer(uint64_t machineId, const std::string& ip, uint16
         punch[sizeof(uint64_t) + 1] = 'I';
         punch[sizeof(uint64_t) + 2] = 'N';
         punch[sizeof(uint64_t) + 3] = 'G';
-        sendto(m_socket, reinterpret_cast<const char*>(punch), sizeof(punch), 0,
-               reinterpret_cast<const sockaddr*>(&addr), sizeof(addr));
-        NOBLE_INFO("NetworkTransport: Dispatched NAT punch datagram to {} (Peer 0x{:X})", key, machineId);
+        for (int i = 0; i < 3; ++i) {
+            sendto(m_socket, reinterpret_cast<const char*>(punch), sizeof(punch), 0,
+                   reinterpret_cast<const sockaddr*>(&addr), sizeof(addr));
+        }
+        NOBLE_INFO("NetworkTransport: Dispatched NAT punch datagrams to {} (Peer 0x{:X})", key, machineId);
     }
 }
 
@@ -325,11 +331,60 @@ void NetworkTransport::SetRemoteHostLanAddress(const std::string& lanIp, uint16_
         punch[sizeof(uint64_t) + 1] = 'I';
         punch[sizeof(uint64_t) + 2] = 'N';
         punch[sizeof(uint64_t) + 3] = 'G';
-        sendto(m_socket, reinterpret_cast<const char*>(punch), sizeof(punch), 0,
-               reinterpret_cast<const sockaddr*>(&m_remoteHostLanAddr), sizeof(m_remoteHostLanAddr));
+        for (int i = 0; i < 3; ++i) {
+            sendto(m_socket, reinterpret_cast<const char*>(punch), sizeof(punch), 0,
+                   reinterpret_cast<const sockaddr*>(&m_remoteHostLanAddr), sizeof(m_remoteHostLanAddr));
+        }
         NOBLE_INFO("NetworkTransport: [GUEST] Configured & punched Host LAN address {}:{}",
                    lanIp, ntohs(m_remoteHostLanAddr.sin_port));
     }
+}
+
+void NetworkTransport::SendDisconnectPacket() {
+    if (m_socket == INVALID_SOCKET) return;
+
+    uint8_t disc[sizeof(uint64_t) + 4] = { 0 };
+    std::memcpy(disc, &m_localMachineId, sizeof(uint64_t));
+    disc[sizeof(uint64_t)]     = 'D';
+    disc[sizeof(uint64_t) + 1] = 'I';
+    disc[sizeof(uint64_t) + 2] = 'S';
+    disc[sizeof(uint64_t) + 3] = 'C';
+
+    if (!m_isHost) {
+        if (m_remoteHostAddr.sin_addr.s_addr != 0) {
+            for (int i = 0; i < 3; ++i) {
+                sendto(m_socket, reinterpret_cast<const char*>(disc), sizeof(disc), 0,
+                       reinterpret_cast<const sockaddr*>(&m_remoteHostAddr), sizeof(m_remoteHostAddr));
+            }
+        }
+        if (m_remoteHostLanAddr.sin_addr.s_addr != 0) {
+            for (int i = 0; i < 3; ++i) {
+                sendto(m_socket, reinterpret_cast<const char*>(disc), sizeof(disc), 0,
+                       reinterpret_cast<const sockaddr*>(&m_remoteHostLanAddr), sizeof(m_remoteHostLanAddr));
+            }
+        }
+    } else {
+        std::vector<sockaddr_in> targets;
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            targets.reserve(m_peerTable.size());
+            for (const auto& kv : m_peerTable) {
+                targets.push_back(kv.second);
+            }
+        }
+        for (const auto& dest : targets) {
+            for (int i = 0; i < 3; ++i) {
+                sendto(m_socket, reinterpret_cast<const char*>(disc), sizeof(disc), 0,
+                       reinterpret_cast<const sockaddr*>(&dest), sizeof(dest));
+            }
+        }
+    }
+
+    if (m_relayConnected.load()) {
+        nlohmann::json j = {{"type", "lobby_leave"}};
+        SendLobbyControlJson(j.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace));
+    }
+    NOBLE_INFO("NetworkTransport: Dispatched disconnect datagrams (DISC).");
 }
 
 int NetworkTransport::GetPeerPingMs(uint64_t machineId) const {
@@ -383,9 +438,12 @@ void NetworkTransport::SetVoiceFrameCallback(VoiceFrameCallback cb) {
 
 void NetworkTransport::SendVoiceFrame(const uint8_t* data, size_t size) {
     if (!m_relayConnected.load()) return;
-    std::lock_guard<std::mutex> lock(m_relayMutex);
-    while (m_relayVoiceSendQueue.size() >= 10) m_relayVoiceSendQueue.pop_front();   // old speech is worthless
-    m_relayVoiceSendQueue.emplace_back(data, data + size);
+    {
+        std::lock_guard<std::mutex> lock(m_relayMutex);
+        while (m_relayVoiceSendQueue.size() >= 10) m_relayVoiceSendQueue.pop_front();   // old speech is worthless
+        m_relayVoiceSendQueue.emplace_back(data, data + size);
+    }
+    m_relaySendCv.notify_one();
 }
 
 void NetworkTransport::SetLobbyLaunchCallback(LobbyLaunchCallback cb) {
@@ -401,6 +459,11 @@ void NetworkTransport::SetLobbyRosterCallback(LobbyRosterCallback cb) {
 void NetworkTransport::SetLobbyClosedCallback(LobbyClosedCallback cb) {
     std::lock_guard<std::mutex> lock(m_relayMutex);
     m_lobbyClosedCb = std::move(cb);
+}
+
+void NetworkTransport::SetLobbyReturnCallback(LobbyReturnCallback cb) {
+    std::lock_guard<std::mutex> lock(m_relayMutex);
+    m_lobbyReturnCb = std::move(cb);
 }
 
 void NetworkTransport::FlushHeldPackets(uint64_t peerId, const sockaddr_in& destAddr) {
@@ -508,16 +571,27 @@ NetworkTransport::NetworkProfile NetworkTransport::GetNetworkProfile() const {
     return prof;
 }
 
+bool NetworkTransport::SendSessionSync(uint64_t frame, bool running) {
+    if (!m_relayConnected.load()) return false;
+    nlohmann::json j = {{"type", "session_sync"}, {"frame", frame}, {"running", running}};
+    SendLobbyControlJson(j.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace));
+    return true;
+}
+
 void NetworkTransport::SendLobbyControlJson(const std::string& jsonString) {
-    std::lock_guard<std::mutex> lock(m_relayMutex);
-    if (m_relayActive.load()) {
-        m_relayTextSendQueue.push_back(jsonString);
+    {
+        std::lock_guard<std::mutex> lock(m_relayMutex);
+        if (m_relayActive.load()) {
+            m_relayTextSendQueue.push_back(jsonString);
+        }
     }
+    m_relaySendCv.notify_one();
 }
 
 void NetworkTransport::StopRelay() {
     m_relayStopRequested.store(true);
     const bool wasActive = m_relayActive.exchange(false);
+    m_relaySendCv.notify_all();
     if (wasActive) {
         std::lock_guard<std::mutex> lock(m_relayMutex);
         if (m_relayWsHandle) {
@@ -556,8 +630,11 @@ bool NetworkTransport::SendChat(const std::string& channel, const std::string& t
     if (!m_relayConnected.load() || text.empty()) return false;
     nlohmann::json j = {{"type", "chat"}, {"channel", channel}, {"text", text}, {"from", from}};
     if (!target.empty()) j["target"] = target;
-    std::lock_guard<std::mutex> lock(m_relayMutex);
-    m_relayTextSendQueue.push_back(j.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace));
+    {
+        std::lock_guard<std::mutex> lock(m_relayMutex);
+        m_relayTextSendQueue.push_back(j.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace));
+    }
+    m_relaySendCv.notify_one();
     return true;
 }
 
@@ -640,7 +717,7 @@ void NetworkTransport::RelayWorkerThread(std::string relayUrl, std::string sessi
             continue;
         }
 
-        WinHttpSetTimeouts(hWebSocket, 5000, 5000, 1000, 2);
+        WinHttpSetTimeouts(hWebSocket, 5000, 5000, 1000, 50);
         {
             std::lock_guard<std::mutex> lock(m_relayMutex);
             m_relaySessionHandle = hSession;
@@ -648,6 +725,7 @@ void NetworkTransport::RelayWorkerThread(std::string relayUrl, std::string sessi
         }
         m_relayActive.store(true);
         m_relayConnected.store(true);
+        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
         NOBLE_INFO("NetworkTransport: WebSocket relay connected successfully!");
 
         std::vector<uint8_t> recvBuffer(65536);
@@ -658,6 +736,7 @@ void NetworkTransport::RelayWorkerThread(std::string relayUrl, std::string sessi
         // has its own thread so that nothing queued waits for the other side to speak first (found by voice, 2026-10-31).
         std::atomic<bool> senderStop{ false };
         std::thread sender([this, hWebSocket, &senderStop] {
+            SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
             bool warned = false;
             const auto sendOne = [&](WINHTTP_WEB_SOCKET_BUFFER_TYPE type, const void* data, size_t size) {
                 const DWORD err = WinHttpWebSocketSend(hWebSocket, type, const_cast<void*>(data), static_cast<DWORD>(size));
@@ -670,7 +749,13 @@ void NetworkTransport::RelayWorkerThread(std::string relayUrl, std::string sessi
                 std::deque<std::string> text;
                 std::deque<std::vector<uint8_t>> packets, voice;
                 {
-                    std::lock_guard<std::mutex> lock(m_relayMutex);
+                    std::unique_lock<std::mutex> lock(m_relayMutex);
+                    if (m_relayTextSendQueue.empty() && m_relaySendQueue.empty() && m_relayVoiceSendQueue.empty()) {
+                        m_relaySendCv.wait_for(lock, std::chrono::milliseconds(50), [&] {
+                            return senderStop.load() || m_relayStopRequested.load() || !m_relayActive.load() ||
+                                   !m_relayTextSendQueue.empty() || !m_relaySendQueue.empty() || !m_relayVoiceSendQueue.empty();
+                        });
+                    }
                     text.swap(m_relayTextSendQueue);
                     packets.swap(m_relaySendQueue);
                     voice.swap(m_relayVoiceSendQueue);
@@ -684,20 +769,17 @@ void NetworkTransport::RelayWorkerThread(std::string relayUrl, std::string sessi
                 for (const auto& frame : voice) {
                     sendOne(WINHTTP_WEB_SOCKET_BINARY_MESSAGE_BUFFER_TYPE, frame.data(), frame.size());
                 }
-                if (text.empty() && packets.empty() && voice.empty()) Sleep(1);
             }
         });
 
         while (!m_relayStopRequested.load() && m_relayActive.load()) {
-            // Poll for incoming packets; drain bursts immediately.
-            bool receivedAny = false;
+            // Drain incoming WebSocket frames with zero sleep delay (WinHttpWebSocketReceive blocks in kernel until data arrives).
             for (int pollIter = 0; pollIter < 32 && !m_relayStopRequested.load() && m_relayActive.load(); ++pollIter) {
                 DWORD bytesRead = 0;
                 WINHTTP_WEB_SOCKET_BUFFER_TYPE bufferType;
                 DWORD err = WinHttpWebSocketReceive(hWebSocket, recvBuffer.data(), static_cast<DWORD>(recvBuffer.size()), &bytesRead, &bufferType);
 
                 if (err == NO_ERROR && bytesRead > 0) {
-                    receivedAny = true;
                     if (bufferType == WINHTTP_WEB_SOCKET_BINARY_FRAGMENT_BUFFER_TYPE ||
                         bufferType == WINHTTP_WEB_SOCKET_UTF8_FRAGMENT_BUFFER_TYPE) {
                         if (fragmentBuffer.size() + bytesRead <= 131072) {
@@ -789,6 +871,24 @@ void NetworkTransport::RelayWorkerThread(std::string relayUrl, std::string sessi
                                 if (cb) {
                                     cb(reason);
                                 }
+                            } else if (type == "host_return_to_lobby") {
+                                LobbyReturnCallback cb;
+                                {
+                                    std::lock_guard<std::mutex> lock(m_relayMutex);
+                                    cb = m_lobbyReturnCb;
+                                }
+                                if (cb) {
+                                    cb();
+                                }
+                            } else if (type == "session_sync") {
+                                const bool running = j.value("running", false);
+                                const uint64_t frame = static_cast<uint64_t>(j.value("frame", 0ULL));
+                                if (running && !m_hostSimRunning.exchange(true)) {
+                                    NOBLE_INFO("NetworkTransport: host reports its simulation running at frame {}", frame);
+                                } else if (!running) {
+                                    m_hostSimRunning.store(false);
+                                }
+                                m_hostSimFrame.store(frame);
                             } else if (type == "spawn_request") {
                                 if (m_isHost) {
                                     uint32_t datum = j.value("datum", 0xFFFFFFFF);
@@ -817,14 +917,14 @@ void NetworkTransport::RelayWorkerThread(std::string relayUrl, std::string sessi
                         std::vector<uint8_t> pkt(msgData, msgData + msgLen);
                         fragmentBuffer.clear();
                         std::lock_guard<std::mutex> lock(m_relayMutex);
-                        if (m_relayRecvQueue.size() < 512) {
+                        if (m_relayRecvQueue.size() < 2048) {
                             m_relayRecvQueue.push_back(std::move(pkt));
                         }
                     } else {
                         fragmentBuffer.clear();
                     }
                 } else if (err == ERROR_WINHTTP_TIMEOUT) {
-                    break; // normal idle
+                    break; // normal idle; loop back into WinHttpWebSocketReceive without Sleep(1) stall
                 } else if (err != NO_ERROR) {
                     m_relayActive.store(false);
                     break;
@@ -832,13 +932,11 @@ void NetworkTransport::RelayWorkerThread(std::string relayUrl, std::string sessi
             }
 
             if (!m_relayActive.load()) break;
-            if (!receivedAny) {
-                Sleep(1);
-            }
         }
 
         m_relayConnected.store(false);
         senderStop.store(true);
+        m_relaySendCv.notify_all();
         sender.join();
         HINTERNET wsToClose = nullptr;
         HINTERNET sessionToClose = nullptr;
@@ -915,16 +1013,16 @@ uint64_t NetworkTransport::OnNetSend(uint64_t targetPeerId, const uint8_t* data,
     const uint64_t nowTick = GetTickCount64();
 
     if (!m_isHost) {
+        bool directUdpAlive = false;
         {
             std::lock_guard<std::mutex> lock(m_mutex);
-            m_peerRouteStates[m_hostMachineId].lastUdpSendTick = nowTick;
+            auto& route = m_peerRouteStates[m_hostMachineId];
+            route.lastUdpSendTick = nowTick;
+            directUdpAlive = route.directConfirmed || (route.lastUdpRecvTick != 0 && (nowTick - route.lastUdpRecvTick) < 3000);
         }
         // Guest sends directly to host
         int sent = sendto(m_socket, reinterpret_cast<const char*>(wireData), static_cast<int>(totalBytes), 0,
                           reinterpret_cast<const sockaddr*>(&m_remoteHostAddr), sizeof(m_remoteHostAddr));
-
-        const uint64_t lastUdpTick = m_lastUdpRecvTick.load();
-        const bool directUdpAlive = (lastUdpTick != 0 && (nowTick - lastUdpTick) < 15000);
 
         // While direct UDP is not yet confirmed, also probe Host's LAN IP (if known) and 127.0.0.1:<hostPort>.
         if (!directUdpAlive && m_remoteHostAddr.sin_addr.s_addr != 0) {
@@ -943,9 +1041,9 @@ uint64_t NetworkTransport::OnNetSend(uint64_t targetPeerId, const uint8_t* data,
             }
         }
 
-        // Periodically send a 12-byte PING every 500ms while !directUdpAlive (NAT hole punch) or every 1500ms
-        // while active so the Host echoes PONG and both sides measure live RTT ping.
-        const uint64_t pingInterval = directUdpAlive ? 1500ULL : 500ULL;
+        // Periodically send a 12-byte PING every 500ms while !directUdpAlive (NAT hole punch) or every 1000ms
+        // while active so the Host echoes PONG and both sides measure live RTT ping and confirm bidirectional UDP.
+        const uint64_t pingInterval = directUdpAlive ? 1000ULL : 500ULL;
         if (m_remoteHostAddr.sin_addr.s_addr != 0 && (nowTick - m_lastPunchTick >= pingInterval)) {
             m_lastPunchTick = nowTick;
             {
@@ -967,25 +1065,29 @@ uint64_t NetworkTransport::OnNetSend(uint64_t targetPeerId, const uint8_t* data,
             }
         }
 
-        // Fallback to relay if direct UDP not confirmed active
-        if (m_relayActive.load() && !directUdpAlive) {
-            std::lock_guard<std::mutex> lock(m_relayMutex);
-            if (m_relaySendQueue.size() < 2048) {
-                m_relaySendQueue.emplace_back(wireData, wireData + totalBytes);
+        // Fallback to relay ONLY if direct UDP is not confirmed active, or for out-of-band session control (port 1001).
+        // Never send simulation channel traffic (port 1000) over relay when direct UDP is active!
+        if (m_relayActive.load() && (!directUdpAlive || port == 1001)) {
+            {
+                std::lock_guard<std::mutex> lock(m_relayMutex);
+                if (m_relaySendQueue.size() < 2048) {
+                    m_relaySendQueue.emplace_back(wireData, wireData + totalBytes);
+                }
             }
+            m_relaySendCv.notify_one();
         }
 
         if (packetNum <= 15 || (packetNum % 500) == 0) {
-            NOBLE_INFO("NetworkTransport: [GUEST] Sent packet #{} to Host 0x{:X} ({} payload bytes, result: {}, relayFallback: {})",
-                       packetNum, targetPeerId, size, sent, !directUdpAlive && m_relayActive.load());
+            NOBLE_INFO("NetworkTransport: [GUEST] Sent packet #{} to Host 0x{:X} ({} payload bytes, result: {}, direct: {}, relayFallback: {})",
+                       packetNum, targetPeerId, size, sent, directUdpAlive, (!directUdpAlive || port == 1001) && m_relayActive.load());
         }
         return static_cast<uint64_t>(size);
     }
 
     // Host sends traffic:
-    // Periodically send a 12-byte PING every 1500ms to all known peers so Guests echo PONG
-    // and the Host continuously measures accurate 1-RTT live ping for every joined client.
-    if (nowTick - m_lastPunchTick >= 1500ULL) {
+    // Periodically send a 12-byte PING every 1000ms to all known peers so Guests echo PONG
+    // and the Host continuously measures accurate 1-RTT live ping and confirms bidirectional UDP for every joined client.
+    if (nowTick - m_lastPunchTick >= 1000ULL) {
         m_lastPunchTick = nowTick;
         std::vector<sockaddr_in> pingTargets;
         {
@@ -1013,17 +1115,33 @@ uint64_t NetworkTransport::OnNetSend(uint64_t targetPeerId, const uint8_t* data,
     // If target is broadcast (0 or ~0ULL), broadcast to all known peers
     if (targetPeerId == 0 || targetPeerId == 0xFFFFFFFFFFFFFFFFULL) {
         std::vector<sockaddr_in> targets;
+        bool allDirectConfirmed = false;
         {
             std::lock_guard<std::mutex> lock(m_mutex);
             targets.reserve(m_peerTable.size());
+            allDirectConfirmed = !m_peerTable.empty();
             for (const auto& kv : m_peerTable) {
                 targets.push_back(kv.second);
-                m_peerRouteStates[kv.first].lastUdpSendTick = nowTick;
+                auto& route = m_peerRouteStates[kv.first];
+                route.lastUdpSendTick = nowTick;
+                const bool routeAlive = route.directConfirmed || (route.lastUdpRecvTick != 0 && (nowTick - route.lastUdpRecvTick) < 3000);
+                if (!routeAlive) {
+                    allDirectConfirmed = false;
+                }
             }
         }
         for (const auto& destAddr : targets) {
             sendto(m_socket, reinterpret_cast<const char*>(wireData), static_cast<int>(totalBytes), 0,
                    reinterpret_cast<const sockaddr*>(&destAddr), sizeof(destAddr));
+        }
+        if (m_relayActive.load() && (!allDirectConfirmed || port == 1001)) {
+            {
+                std::lock_guard<std::mutex> lock(m_relayMutex);
+                if (m_relaySendQueue.size() < 2048) {
+                    m_relaySendQueue.emplace_back(wireData, wireData + totalBytes);
+                }
+            }
+            m_relaySendCv.notify_one();
         }
         return static_cast<uint64_t>(size);
     }
@@ -1040,7 +1158,7 @@ uint64_t NetworkTransport::OnNetSend(uint64_t targetPeerId, const uint8_t* data,
             foundInUdp = true;
             auto& route = m_peerRouteStates[targetPeerId];
             route.lastUdpSendTick = nowTick;
-            directConfirmed = route.directConfirmed && (nowTick - route.lastUdpRecvTick < 15000);
+            directConfirmed = route.directConfirmed || (route.lastUdpRecvTick != 0 && (nowTick - route.lastUdpRecvTick) < 3000);
         } else {
             // Target route unknown yet: hold packet (Star-routing) instead of broadcasting (Finding #9, #10)
             auto& q = m_heldPackets[targetPeerId];
@@ -1056,17 +1174,20 @@ uint64_t NetworkTransport::OnNetSend(uint64_t targetPeerId, const uint8_t* data,
         if (packetNum <= 15 || (packetNum % 500) == 0) {
             char ipStr[INET_ADDRSTRLEN] = { 0 };
             inet_ntop(AF_INET, &destAddr.sin_addr, ipStr, sizeof(ipStr));
-            NOBLE_INFO("NetworkTransport: [HOST] Sent packet #{} to Peer 0x{:X} ({}:{}) ({} payload bytes, result: {})",
-                       packetNum, targetPeerId, ipStr, ntohs(destAddr.sin_port), size, sent);
+            NOBLE_INFO("NetworkTransport: [HOST] Sent packet #{} to Peer 0x{:X} ({}:{}) ({} payload bytes, result: {}, direct: {})",
+                       packetNum, targetPeerId, ipStr, ntohs(destAddr.sin_port), size, sent, directConfirmed);
         }
     }
 
-    // If direct UDP is not confirmed bidirectional, or peer UDP route is unknown, fallback via relay
-    if (m_relayActive.load() && (!foundInUdp || !directConfirmed)) {
-        std::lock_guard<std::mutex> lock(m_relayMutex);
-        if (m_relaySendQueue.size() < 2048) {
-            m_relaySendQueue.emplace_back(wireData, wireData + totalBytes);
+    // If direct UDP is not confirmed active, or peer UDP route is unknown, or out-of-band control (port 1001), fallback via relay
+    if (m_relayActive.load() && (!foundInUdp || !directConfirmed || port == 1001)) {
+        {
+            std::lock_guard<std::mutex> lock(m_relayMutex);
+            if (m_relaySendQueue.size() < 2048) {
+                m_relaySendQueue.emplace_back(wireData, wireData + totalBytes);
+            }
         }
+        m_relaySendCv.notify_one();
     }
 
     return static_cast<uint64_t>(size);
@@ -1156,12 +1277,31 @@ uint64_t NetworkTransport::OnNetRecv(uint8_t* outBuffer, size_t bufferCapacity, 
         inet_ntop(AF_INET, &senderAddr.sin_addr, ipStr, sizeof(ipStr));
         const std::string addrKey = std::string(ipStr) + ":" + std::to_string(ntohs(senderAddr.sin_port));
 
+        // Disconnect datagram (DISC)
+        if (received == static_cast<int>(sizeof(uint64_t) + 4) &&
+            rawBuf[8] == 'D' && rawBuf[9] == 'I' && rawBuf[10] == 'S' && rawBuf[11] == 'C') {
+            if (wireSender != 0 && wireSender != m_localMachineId) {
+                std::lock_guard<std::mutex> lock(m_mutex);
+                m_peerTable.erase(wireSender);
+                m_gamePeers.erase(wireSender);
+                m_peerRouteStates.erase(wireSender);
+                m_heldPackets.erase(wireSender);
+                for (auto it = m_addrToPeer.begin(); it != m_addrToPeer.end();) {
+                    if (it->second == wireSender) it = m_addrToPeer.erase(it);
+                    else ++it;
+                }
+                NOBLE_INFO("NetworkTransport: [{}] Remote peer 0x{:X} sent DISC; removed from peer table immediately.",
+                           m_isHost ? "HOST" : "GUEST", wireSender);
+            }
+            continue;
+        }
+
         // NAT hole-punch PING / PONG packet
         if (received == static_cast<int>(sizeof(uint64_t) + 4) &&
             rawBuf[8] == 'P' && (rawBuf[9] == 'I' || rawBuf[9] == 'O') && rawBuf[10] == 'N' && rawBuf[11] == 'G') {
             const bool isPong = (rawBuf[9] == 'O');
             if (wireSender != 0 && wireSender != m_localMachineId) {
-                bool sendHostPingProbe = false;
+                bool sendPingProbe = false;
                 {
                     std::lock_guard<std::mutex> lock(m_mutex);
                     m_peerTable[wireSender] = senderAddr;
@@ -1170,6 +1310,7 @@ uint64_t NetworkTransport::OnNetRecv(uint8_t* outBuffer, size_t bufferCapacity, 
                     route.addr = senderAddr;
                     route.lastUdpRecvTick = now;
                     route.directConfirmed = true;
+                    route.lastPongRecvTick = now;
                     if (isPong && route.lastPingSentTick != 0 && now >= route.lastPingSentTick) {
                         const int sample = static_cast<int>(std::min<uint64_t>(999, now - route.lastPingSentTick));
                         route.rttMs = (route.rttMs < 0) ? sample : ((route.rttMs * 3 + sample) / 4);
@@ -1177,9 +1318,9 @@ uint64_t NetworkTransport::OnNetRecv(uint8_t* outBuffer, size_t bufferCapacity, 
                         const int sample = static_cast<int>(now - route.lastUdpSendTick);
                         route.rttMs = sample;
                     }
-                    if (m_isHost && !isPong && (route.rttMs < 0 || route.lastPingSentTick == 0 || (now - route.lastPingSentTick) >= 1000)) {
+                    if (!isPong && (route.lastPingSentTick == 0 || (now - route.lastPingSentTick) >= 1000)) {
                         route.lastPingSentTick = now;
-                        sendHostPingProbe = true;
+                        sendPingProbe = true;
                     }
                 }
 
@@ -1187,16 +1328,18 @@ uint64_t NetworkTransport::OnNetRecv(uint8_t* outBuffer, size_t bufferCapacity, 
                 FlushHeldPackets(wireSender, senderAddr);
 
                 if (m_isHost && !isPong) {
-                    // Echo PONG back to Guest over direct UDP so Guest measures its RTT
+                    // Echo PONG back to Guest over direct UDP (burst 3) so Guest measures its RTT and confirms bidirectional UDP
                     uint8_t pong[sizeof(uint64_t) + 4] = { 0 };
                     std::memcpy(pong, &m_localMachineId, sizeof(uint64_t));
                     pong[sizeof(uint64_t)]     = 'P';
                     pong[sizeof(uint64_t) + 1] = 'O';
                     pong[sizeof(uint64_t) + 2] = 'N';
                     pong[sizeof(uint64_t) + 3] = 'G';
-                    sendto(m_socket, reinterpret_cast<const char*>(pong), sizeof(pong), 0,
-                           reinterpret_cast<const sockaddr*>(&senderAddr), sizeof(senderAddr));
-                    if (sendHostPingProbe) {
+                    for (int p = 0; p < 3; ++p) {
+                        sendto(m_socket, reinterpret_cast<const char*>(pong), sizeof(pong), 0,
+                               reinterpret_cast<const sockaddr*>(&senderAddr), sizeof(senderAddr));
+                    }
+                    if (sendPingProbe) {
                         // Also send a PING probe to Guest so Guest echoes PONG and Host gets an immediate 1-RTT sample
                         uint8_t pingPkt[sizeof(uint64_t) + 4] = { 0 };
                         std::memcpy(pingPkt, &m_localMachineId, sizeof(uint64_t));
@@ -1213,7 +1356,7 @@ uint64_t NetworkTransport::OnNetRecv(uint8_t* outBuffer, size_t bufferCapacity, 
                     if (wireSender == m_hostMachineId) {
                         m_remoteHostAddr = senderAddr;
                     }
-                    // Echo PONG back so the Host also gets an exact 1-RTT sample for this Guest
+                    // Echo PONG back so the Host also gets an exact 1-RTT sample and bidirectional confirmation for this Guest
                     if (!isPong) {
                         uint8_t pong[sizeof(uint64_t) + 4] = { 0 };
                         std::memcpy(pong, &m_localMachineId, sizeof(uint64_t));
@@ -1221,8 +1364,20 @@ uint64_t NetworkTransport::OnNetRecv(uint8_t* outBuffer, size_t bufferCapacity, 
                         pong[sizeof(uint64_t) + 1] = 'O';
                         pong[sizeof(uint64_t) + 2] = 'N';
                         pong[sizeof(uint64_t) + 3] = 'G';
-                        sendto(m_socket, reinterpret_cast<const char*>(pong), sizeof(pong), 0,
-                               reinterpret_cast<const sockaddr*>(&senderAddr), sizeof(senderAddr));
+                        for (int p = 0; p < 3; ++p) {
+                            sendto(m_socket, reinterpret_cast<const char*>(pong), sizeof(pong), 0,
+                                   reinterpret_cast<const sockaddr*>(&senderAddr), sizeof(senderAddr));
+                        }
+                        if (sendPingProbe) {
+                            uint8_t pingPkt[sizeof(uint64_t) + 4] = { 0 };
+                            std::memcpy(pingPkt, &m_localMachineId, sizeof(uint64_t));
+                            pingPkt[sizeof(uint64_t)]     = 'P';
+                            pingPkt[sizeof(uint64_t) + 1] = 'I';
+                            pingPkt[sizeof(uint64_t) + 2] = 'N';
+                            pingPkt[sizeof(uint64_t) + 3] = 'G';
+                            sendto(m_socket, reinterpret_cast<const char*>(pingPkt), sizeof(pingPkt), 0,
+                                   reinterpret_cast<const sockaddr*>(&senderAddr), sizeof(senderAddr));
+                        }
                     }
                     NOBLE_INFO("NetworkTransport: [GUEST] Received NAT punch {} from Host ({})", isPong ? "PONG" : "PING", addrKey);
                 }
@@ -1241,6 +1396,7 @@ uint64_t NetworkTransport::OnNetRecv(uint8_t* outBuffer, size_t bufferCapacity, 
             route.addr = senderAddr;
             route.lastUdpRecvTick = now;
             route.directConfirmed = true;
+            route.lastPongRecvTick = now;
             if (route.rttMs < 0 && route.lastUdpSendTick != 0 && now >= route.lastUdpSendTick && (now - route.lastUdpSendTick) < 500) {
                 route.rttMs = static_cast<int>(now - route.lastUdpSendTick);
             }
@@ -1264,6 +1420,7 @@ uint64_t NetworkTransport::OnNetRecv(uint8_t* outBuffer, size_t bufferCapacity, 
                 route.addr = senderAddr;
                 route.lastUdpRecvTick = now;
                 route.directConfirmed = true;
+                route.lastPongRecvTick = now;
                 if (route.rttMs < 0 && route.lastUdpSendTick != 0 && now >= route.lastUdpSendTick && (now - route.lastUdpSendTick) < 500) {
                     route.rttMs = static_cast<int>(now - route.lastUdpSendTick);
                 }

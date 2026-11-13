@@ -3,6 +3,7 @@
 
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <condition_variable>
 #include <cstdint>
 #include <string>
 #include <mutex>
@@ -44,6 +45,13 @@ public:
     void SetChatCallback(ChatCallback cb);
     bool SendChat(const std::string& channel, const std::string& text, const std::string& from, const std::string& target = "");
 
+    // Join handshake (host -> guests, repeated while the match runs): tells a joining client that the host's
+    // simulation is actually running, so a guest - including one joining mid-match - can time its start to it
+    // instead of guessing with a fixed delay.
+    bool SendSessionSync(uint64_t frame, bool running);
+    bool HostSimulationRunning() const { return m_hostSimRunning.load(); }
+    uint64_t HostSimulationFrame() const { return m_hostSimFrame.load(); }
+
     bool IsActive() const { return m_active.load(); }
     bool IsHost() const { return m_isHost; }
     uint64_t GetLocalMachineId() const { return m_localMachineId; }
@@ -64,6 +72,7 @@ public:
     // Direct peer registration & NAT hole punching
     void AddPeer(uint64_t machineId, const std::string& ip, uint16_t port);
     void SetRemoteHostLanAddress(const std::string& lanIp, uint16_t port = 0);
+    void SendDisconnectPacket();
 
     // Real RTT ping measurement (ms) per remote peer machineId (0 = default/host peer, returns -1 if unknown)
     int GetPeerPingMs(uint64_t machineId = 0) const;
@@ -73,10 +82,12 @@ public:
     using LobbyLaunchCallback = std::function<void(const std::string& map, const std::string& mode, const std::string& variant, int diff, uint64_t skulls, const std::string& hostIp, uint16_t hostPort, const std::string& sessionId, const std::string& mapOverride, const std::string& modFolder, const std::string& modId)>;
     using LobbyRosterCallback = std::function<void(const std::string& rosterJson)>;
     using LobbyClosedCallback = std::function<void(const std::string& reason)>;
+    using LobbyReturnCallback = std::function<void()>;
 
     void SetLobbyLaunchCallback(LobbyLaunchCallback cb);
     void SetLobbyRosterCallback(LobbyRosterCallback cb);
     void SetLobbyClosedCallback(LobbyClosedCallback cb);
+    void SetLobbyReturnCallback(LobbyReturnCallback cb);
     void SendLobbyControlJson(const std::string& jsonString);
 
     void StartRelay(const std::string& relayUrl, const std::string& sessionId, bool isHost, uint64_t machineId);
@@ -165,6 +176,7 @@ private:
     std::string m_relayUrl;
     std::thread m_relayThread;
     std::mutex m_relayMutex;
+    std::condition_variable m_relaySendCv;
     void* m_relaySessionHandle = nullptr;
     void* m_relayWsHandle = nullptr;
     std::deque<std::vector<uint8_t>> m_relaySendQueue;
@@ -173,6 +185,9 @@ private:
     LobbyLaunchCallback m_lobbyLaunchCb;
     LobbyRosterCallback m_lobbyRosterCb;
     LobbyClosedCallback m_lobbyClosedCb;
+    LobbyReturnCallback m_lobbyReturnCb;
+    std::atomic<bool> m_hostSimRunning{ false };    // last session_sync said the host's simulation is running
+    std::atomic<uint64_t> m_hostSimFrame{ 0 };      // host frame number from that message
 
     struct HeldPacket {
         std::vector<uint8_t> data;
@@ -183,6 +198,7 @@ private:
         uint64_t lastUdpRecvTick = 0;
         uint64_t lastUdpSendTick = 0;
         uint64_t lastPingSentTick = 0;
+        uint64_t lastPongRecvTick = 0;
         int rttMs = -1;
         bool directConfirmed = false;
     };

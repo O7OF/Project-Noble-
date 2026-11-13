@@ -1,6 +1,7 @@
 #include "audio/VoiceChat.hpp"
 #include "../engine/DevCheats.hpp"
 #include "ForgeMenu.hpp"
+#include "FrontEndMenu.hpp"
 #include "SocialOverlay.hpp"
 #include "PauseMenu.hpp"
 #include "MenuSounds.hpp"
@@ -22,6 +23,12 @@
 #include "engine/FrameCapture.hpp"
 #include "engine/ReachHost.hpp"
 #include "engine/BlamEngine.hpp"
+#include "engine/SessionVariant.hpp"
+#include "engine/ForgePlacement.hpp"
+#include "mvar/ForgePlacementApply.hpp"
+#include "mvar/MapVariantLibrary.hpp"
+#include "mvar/MapVariantWriter.hpp"
+#include "mvar/MapVariant.hpp"
 #include "engine/CameraThirdPerson.hpp"
 #include "engine/CameraThirdPerson.hpp"
 #include "engine/KeyBindings.hpp"
@@ -336,14 +343,54 @@ std::wstring NextMissionArgs(const std::wstring &next, std::wstring lobbyArgs) {
 
 void RelaunchAndClose(HWND hwnd, const std::wstring &args, const char *what) {
   NOBLE_INFO("PauseMenu: {} requested", what);
+  const bool isLobbyReturn = args.find(L"-lobby-return") != std::wstring::npos;
+  const bool keepHostSession = args.find(L"-lobby-return host") != std::wstring::npos;
+  const bool isMainMenu = (args == L"-main-menu");
+  if (args.empty() || isMainMenu) {
+    // Leaving match to menu: notify master server and peers immediately.
+    std::wstring wSession = ArgValue(Relaunch::CurrentGameArgs(), L"-session-id");
+    if (wSession.empty()) wSession = ArgValue(GetCommandLineW(), L"-session-id");
+    const bool isHostCmd = (wcsstr(GetCommandLineW(), L"-host") != nullptr ||
+                            Relaunch::CurrentGameArgs().find(L" -host") != std::wstring::npos);
+    if (!wSession.empty()) {
+      char sessUtf8[128] = {};
+      WideCharToMultiByte(CP_UTF8, 0, wSession.c_str(), -1, sessUtf8, sizeof(sessUtf8) - 1, nullptr, nullptr);
+      if (isHostCmd) {
+        NetworkTransport::Get().SendLobbyControlJson("{\"type\":\"lobby_disband\"}");
+        MasterServerClient::Get().DisbandSessionSync(sessUtf8);
+      } else {
+        uint64_t fallbackId = (MasterServerClient::GetLobbyMachineId() & 0x7FFFFFFFULL);
+        if (fallbackId < 2ULL) fallbackId = 2ULL;
+        NetworkTransport::Get().SendDisconnectPacket();
+        MasterServerClient::Get().LeaveLobbySync(sessUtf8, fallbackId);
+      }
+    } else if (!isHostCmd) {
+      NetworkTransport::Get().SendDisconnectPacket();
+    }
+  }
+  MasterServerClient::Get().Shutdown(keepHostSession);
+  SessionManager::Get().Shutdown();
+  NetworkTransport::Get().Shutdown();
+
   std::wstring containerVal = ArgValue(GetCommandLineW(), L"-container-hwnd");
   if (!containerVal.empty()) {
-      if (args.empty() || args.find(L"-lobby-return") != std::wstring::npos) {
-          NOBLE_INFO("PauseMenu: {} in container mode - ending match to return to container launcher window", what);
+      if (isMainMenu) {
+          Relaunch::RequestContainerRelaunch(L"-main-menu");
+          NOBLE_INFO("PauseMenu: {} in container mode - returning to main menu in container launcher window", what);
+          TerminateProcess(GetCurrentProcess(), 0);
+          return;
+      } else if (args.empty()) {
+          Relaunch::RequestContainerRelaunch(L"-leave-lobby");
+          NOBLE_INFO("PauseMenu: {} in container mode - leaving match and lobby to return to container launcher window", what);
+          TerminateProcess(GetCurrentProcess(), 0);
+          return;
+      } else if (isLobbyReturn) {
+          Relaunch::RequestContainerRelaunch(args);
+          NOBLE_INFO("PauseMenu: {} in container mode - returning to lobby in container launcher window", what);
           TerminateProcess(GetCurrentProcess(), 0);
           return;
       } else {
-          // PLAY AGAIN / NEXT MISSION: a hosted match cannot start its own successor (the launcher tracks
+          // PLAY AGAIN / NEXT MISSION / RESTART MATCH: a hosted match cannot start its own successor (the launcher tracks
           // one match process and would bring its menu back over the new game), so record what to start and
           // let the launcher window start it once this process is gone.
           std::wstring childArgs = args;
@@ -361,6 +408,44 @@ void RelaunchAndClose(HWND hwnd, const std::wstring &args, const char *what) {
       }
   }
   Relaunch::HandOff(args);  // ends this process; returns only if the new one could not start
+  PostMessageW(hwnd, WM_CLOSE, 0, 0);
+}
+
+void QuitFromMatch(HWND hwnd, const char *what) {
+  NOBLE_INFO("PauseMenu: {}", what);
+  std::wstring wSession = ArgValue(Relaunch::CurrentGameArgs(), L"-session-id");
+  if (wSession.empty()) wSession = ArgValue(GetCommandLineW(), L"-session-id");
+  const bool isHostCmd = (wcsstr(GetCommandLineW(), L"-host") != nullptr ||
+                          Relaunch::CurrentGameArgs().find(L" -host") != std::wstring::npos);
+  if (!wSession.empty()) {
+    char sessUtf8[128] = {};
+    WideCharToMultiByte(CP_UTF8, 0, wSession.c_str(), -1, sessUtf8, sizeof(sessUtf8) - 1, nullptr, nullptr);
+    if (isHostCmd) {
+      NetworkTransport::Get().SendLobbyControlJson("{\"type\":\"lobby_disband\"}");
+      MasterServerClient::Get().DisbandSessionSync(sessUtf8);
+    } else {
+      uint64_t fallbackId = (MasterServerClient::GetLobbyMachineId() & 0x7FFFFFFFULL);
+      if (fallbackId < 2ULL) fallbackId = 2ULL;
+      NetworkTransport::Get().SendDisconnectPacket();
+      MasterServerClient::Get().LeaveLobbySync(sessUtf8, fallbackId);
+    }
+  } else if (!isHostCmd) {
+    NetworkTransport::Get().SendDisconnectPacket();
+  }
+  MasterServerClient::Get().Shutdown(false);
+  SessionManager::Get().Shutdown();
+  NetworkTransport::Get().Shutdown();
+
+  std::wstring containerVal = ArgValue(GetCommandLineW(), L"-container-hwnd");
+  if (!containerVal.empty()) {
+    Relaunch::RequestContainerRelaunch(L"-quit-app");
+    HWND root = hwnd ? GetAncestor(hwnd, GA_ROOT) : nullptr;
+    if (root && root != hwnd) {
+      PostMessageW(root, WM_CLOSE, 0, 0);
+    }
+    TerminateProcess(GetCurrentProcess(), 0);
+    return;
+  }
   PostMessageW(hwnd, WM_CLOSE, 0, 0);
 }
 
@@ -410,8 +495,246 @@ static ULONGLONG s_openedAt = 0;
 static int s_focus = 0;
 static bool s_waitForRelease = true;
 static bool s_confirmRestart = false;
+static std::string s_saveMapVariantResult;   // shown under the SAVE MAP VARIANT row after a save
+static bool s_saveVariantOpen = false;      // the "name this map variant" box is up
+static char s_saveVariantName[64] = "My Forge Map";
 } // namespace
 
+// Forge: save the map being edited as a map variant.
+//
+// The engine owns the save. Its Forge save writes a map variant file into the player's profile
+// (<userdata>/<id>/saves/HaloReach/autosave/asq*.map), in the same BLF/"mvar" container as MCC's .mvar files - which
+// is exactly what BlamEngine's parse_map_variant takes on the way in. Noble asks for the save with the engine's own
+// "save_map" command, waits for the new file, and copies it into data\map_variants so it appears in the maps menu
+// under the map it was built on.
+// Forge: save the map being edited as a map variant.
+//
+// The engine owns the map data; its Forge save writes a map variant into the player's profile
+// (<userdata>/<id>/saves/HaloReach/autosave/asq*.map) in the same BLF/"mvar" container MCC's .mvar files use, which
+// is exactly what BlamEngine's parse_map_variant takes on the way in. Noble asks for that save with the engine's own
+// "save_map" command, waits for the file on a background thread (waiting here froze the render thread for seconds),
+// and stores it as JSON: {"version","name","base_map","mode","data"} with the variant base64-encoded - the same idea
+// as Project Reclaimer's Halo 3 map files, so a saved map is one small readable file that can be shared.
+namespace {
+// The container around a captured engine chunk comes from an existing variant: BLF header + chdr + trailing chunks.
+// The session's own .mvar is preferred; otherwise any shipped variant works, because the engine reads the map and
+// objects from the mvar chunk that is being replaced.
+// "Save as copy" never silently replaces an existing variant: append (2), (3), ... until the name is free.
+std::string UniqueVariantName(const std::filesystem::path& library, const std::string& requested) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const std::string base = noble::mvar::SanitizeVariantName(requested);
+    std::string candidate = base;
+    for (int n = 2; n < 100; ++n) {
+        if (!fs::exists(library / (candidate + ".json"), ec)) return candidate;
+        candidate = base + " (" + std::to_string(n) + ")";
+    }
+    return candidate;
+}
+
+// The map's build palette, harvested from variants that contain the definitions (tag -> variant/quota index).
+noble::mvar::TagPalette LoadMapPalette(const std::filesystem::path& dataDir, uint32_t mapId) {
+    noble::mvar::TagPalette palette;
+    std::ifstream file(dataDir / "mvar_palette" / (std::to_string(mapId) + ".json"), std::ios::binary);
+    if (!file) return palette;
+    nlohmann::json json;
+    try {
+        json = nlohmann::json::parse(file);
+    } catch (...) {
+        return palette;
+    }
+    if (!json.contains("tags")) return palette;
+    for (auto it = json["tags"].begin(); it != json["tags"].end(); ++it) {
+        const std::string value = it.value().get<std::string>();
+        const size_t comma = value.find(',');
+        if (comma == std::string::npos) continue;
+        palette[static_cast<uint32_t>(std::stoul(it.key(), nullptr, 16))] = {
+            std::stoi(value.substr(0, comma)), std::stoi(value.substr(comma + 1)) };
+    }
+    return palette;
+}
+
+std::filesystem::path FindVariantTemplate(const std::filesystem::path& dataDir) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const fs::path session = noble::SessionMapVariantPath();
+    if (!session.empty() && fs::exists(session, ec)) return session;
+    const fs::path candidates[] = { dataDir / "map_variants", noble::ReachHost::Get().GetReachDir() / "map_variants",
+                                    noble::ReachHost::Get().GetReachDir() / "hopper_map_variants" };
+    for (const fs::path& dir : candidates) {
+        for (const auto& entry : fs::directory_iterator(dir, ec)) {
+            if (!entry.is_regular_file(ec)) continue;
+            if (entry.path().extension() != ".mvar") continue;
+            return entry.path();
+        }
+    }
+    return {};
+}
+} // namespace
+
+std::filesystem::path PauseMenu::SaveForgeMapVariant(const std::string& name) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const fs::path dataDir = ReachHost::Get().GetDataDir();
+    const fs::path library = dataDir / "map_variants";
+
+    // The engine owns the map data, so ask it to write the variant first and give it a short window: when the hosted
+    // engine's save does run, those bytes are the edited map. In this build it usually writes nothing at all
+    // ("save_map" needs the engine's own save UI), so fall back to the variant this session was launched with. That
+    // keeps SAVE working from Noble's own pause menu instead of failing silently.
+    // MvarDump's WriteFile watch keeps every buffer the engine hands to a save file under data/mvar_write; a fresh
+    // one that parses as a variant is the edited map even when the file itself ends up empty.
+    const fs::path captureDir = fs::current_path() / "data" / "mvar_write";
+    std::set<std::wstring> beforeCaptures;
+    for (const auto& entry : fs::directory_iterator(captureDir, ec)) {
+        if (entry.is_regular_file(ec)) beforeCaptures.insert(entry.path().filename().wstring());
+    }
+    ec.clear();
+
+    // Direct path first: serialize the live session variant ourselves. It does not touch the save UI or the save
+    // device, so it is the only source that works while the game is paused, and it carries the Forge edits.
+    {
+        // Forge commits placements on simulation ticks, and the pause menu freezes the sim (game_speed 0). Let it run
+        // for a few frames so the live variant contains anything placed since the last tick, then freeze again.
+        if (BlamEngine::Active()) {
+            BlamEngine::Active()->ExecuteCommand("game_speed 1");
+            Sleep(150);
+        }
+        std::vector<uint8_t> liveChunk;
+        const bool captured = BlamEngine::Active() && BlamEngine::Active()->TrySerializeLiveMapVariant(liveChunk);
+        if (BlamEngine::Active()) BlamEngine::Active()->ExecuteCommand("game_speed 0");
+        if (captured) {
+            const fs::path tmpl = FindVariantTemplate(dataDir);
+            if (!tmpl.empty()) {
+                // Apply the objects placed since the map loaded, using the captures taken at object_new.
+                std::vector<noble::mvar::WorldPlacement> placements = noble::TakeForgePlacements();
+                if (!placements.empty()) {
+                    noble::mvar::MapVariant base;
+                    std::string buildDetail;
+                    if (noble::mvar::BuildVariantFromChunk(liveChunk, tmpl, name, base, buildDetail)) {
+                        std::string applyError;
+
+                        const noble::mvar::TagPalette palette = LoadMapPalette(dataDir, base.header.mapId);
+                        const int added = noble::mvar::ApplyWorldPlacements(base, placements, palette, applyError);
+
+                        NOBLE_INFO("PauseMenu: {} placement(s) captured, {} encoded{}", placements.size(), added,
+
+                                   (added < static_cast<int>(placements.size()) && !applyError.empty()) ? ": " + applyError : std::string());
+                        std::error_code dirEc;
+                        std::filesystem::create_directories(library, dirEc);
+                        const fs::path placedOut = library / (noble::mvar::SanitizeVariantName(name) + ".json");
+                        std::string saveError;
+                        if (noble::mvar::SaveMapVariantJson(base, placedOut, name, saveError)) {
+                            NOBLE_INFO("PauseMenu: map variant '{}' saved with {} Forge placement(s) to '{}'", name, added,
+                                       placedOut.string());
+                            FrontEndMenu::InvalidateForgeMaps();
+                            return placedOut;
+                        }
+                        NOBLE_WARN("PauseMenu: placements could not be saved: {}", saveError);
+                    } else {
+                        NOBLE_WARN("PauseMenu: could not build the variant for placements: {}", buildDetail);
+                    }
+                }
+                std::string detail;
+                const fs::path out = noble::mvar::SaveVariantChunkToLibrary(liveChunk, tmpl, name, library, detail);
+                if (!out.empty()) {
+                    NOBLE_INFO("PauseMenu: map variant '{}' saved from the live variant to '{}' (template '{}')", name,
+                               out.string(), tmpl.string());
+                    FrontEndMenu::InvalidateForgeMaps();
+                    return out;
+                }
+                NOBLE_WARN("PauseMenu: live variant chunk could not be saved: {}", detail);
+            } else {
+                NOBLE_WARN("PauseMenu: no template .mvar to wrap the live variant in");
+            }
+        }
+    }
+
+    fs::path source;
+    if (BlamEngine::Active()) {
+        fs::path autosaveDir;
+        for (const auto& entry : fs::directory_iterator(dataDir / "userdata", ec)) {
+            if (!entry.is_directory(ec)) continue;
+            const fs::path candidate = entry.path() / "saves" / "HaloReach" / "autosave";
+            if (fs::is_directory(candidate, ec)) { autosaveDir = candidate; break; }
+        }
+        std::set<std::wstring> before;
+        if (!autosaveDir.empty()) {
+            for (const auto& entry : fs::directory_iterator(autosaveDir, ec)) {
+                if (entry.is_regular_file(ec)) before.insert(entry.path().filename().wstring());
+            }
+        }
+
+        const bool engineSave = BlamEngine::Active()->TriggerMapVariantSave();
+        NOBLE_INFO("PauseMenu: engine map-variant save {}", engineSave ? "invoked" : "faulted");
+        if (!engineSave) BlamEngine::Active()->ExecuteCommand("save_map");
+        for (int attempt = 0; attempt < 20 && source.empty() && !autosaveDir.empty(); ++attempt) {
+            Sleep(50);
+            for (const auto& entry : fs::directory_iterator(autosaveDir, ec)) {
+                if (!entry.is_regular_file(ec)) continue;
+                if (before.count(entry.path().filename().wstring())) continue;
+                std::wstring ext = entry.path().extension().wstring();
+                for (wchar_t& c : ext) c = static_cast<wchar_t>(::towlower(c));
+                if (ext != L".map") continue;
+                if (fs::file_size(entry.path(), ec) < 0x7329) continue;
+                source = entry.path();
+                NOBLE_INFO("PauseMenu: the engine wrote map variant '{}'", entry.path().string());
+                break;
+            }
+            ec.clear();
+        }
+        if (source.empty()) NOBLE_WARN("PauseMenu: the engine wrote no map variant; using this session's variant");
+    }
+
+    // Best source: the chunk the engine's serializer produced. Its save routine builds that chunk from the live
+    // variant before handing it to the save device, so it holds the edits even when the device write fails.
+    std::vector<uint8_t> capturedChunk;
+    if (source.empty() && BlamEngine::Active() && BlamEngine::Active()->TakeCapturedMapVariantChunk(capturedChunk)) {
+        const fs::path tmpl = FindVariantTemplate(dataDir);
+        if (!tmpl.empty()) {
+            std::string detail;
+            const fs::path out = noble::mvar::SaveVariantChunkToLibrary(capturedChunk, tmpl, name, library, detail);
+            if (!out.empty()) {
+                NOBLE_INFO("PauseMenu: map variant '{}' saved from the engine serializer to '{}' (template '{}')", name,
+                           out.string(), tmpl.string());
+                FrontEndMenu::InvalidateForgeMaps();
+                return out;
+            }
+            NOBLE_WARN("PauseMenu: captured variant chunk could not be saved: {}", detail);
+        }
+    }
+
+    if (source.empty()) {
+        std::vector<fs::path> fresh;
+        for (const auto& entry : fs::directory_iterator(captureDir, ec)) {
+            if (!entry.is_regular_file(ec)) continue;
+            if (beforeCaptures.count(entry.path().filename().wstring())) continue;
+            fresh.push_back(entry.path());
+        }
+        for (const fs::path& candidate : fresh) {
+            const noble::mvar::MapVariant captured = noble::mvar::ReadMapVariant(candidate);
+            if (!captured.valid) continue;
+            source = candidate;
+            NOBLE_INFO("PauseMenu: using captured engine save '{}'", candidate.string());
+            break;
+        }
+    }
+    if (source.empty()) source = noble::SessionMapVariantPath();
+    if (source.empty()) {
+        NOBLE_WARN("PauseMenu: no variant to save (the session was not launched with -mvar)");
+        return {};
+    }
+
+    std::string detail;
+    const fs::path out = noble::mvar::SaveVariantToLibrary(source, name, library, detail);
+    if (out.empty()) {
+        NOBLE_WARN("PauseMenu: could not save map variant '{}': {}", name, detail);
+        return {};
+    }
+    NOBLE_INFO("PauseMenu: map variant '{}' saved to '{}' (source '{}')", name, out.string(), source.string());
+    FrontEndMenu::InvalidateForgeMaps();
+    return out;
+}
 bool PauseMenu::IsOpen() { return s_open.load(); }
 
 void PauseMenu::Toggle() {
@@ -704,6 +1027,13 @@ void PauseMenu::DrawMenu(HWND hwnd) {
         WideCharToMultiByte(CP_UTF8, 0, wmode.c_str(), -1, mb, sizeof(mb) - 1, nullptr, nullptr);
         currentMode = mb;
     }
+    int saveMapVariantEntry = -1;
+    if (_stricmp(currentMode.c_str(), "forge") == 0) {
+        saveMapVariantEntry = static_cast<int>(entries.size());
+        entries.push_back({ "SAVE MAP VARIANT",
+                            "Saves the Forge map you have built as a map variant, under its base map in the maps menu.",
+                            false, true });
+    }
     const bool isMultiOrForge = (currentMode == "multiplayer" || currentMode == "forge" || currentMode.empty());
     if (BlamEngine::GameTeamsEnabled() || isMultiOrForge) {
         teamEntry = static_cast<int>(entries.size());
@@ -834,8 +1164,7 @@ void PauseMenu::DrawMenu(HWND hwnd) {
             s_confirmRestart = true;
         } else {
             Close();
-            if (!Relaunch::HandOff(restartArgs)) NOBLE_WARN("PauseMenu: restart failed, the match keeps running");
-            else NOBLE_INFO("PauseMenu: restarting the match");
+            RelaunchAndClose(hwnd, restartArgs, "restart match");
         }
     } else if (activated == 2) {
         MenuSounds::Click();
@@ -848,21 +1177,119 @@ void PauseMenu::DrawMenu(HWND hwnd) {
         PauseSettings().SetTab(InputPrompts::Current() == InputPrompts::Device::Gamepad ? 5 : 4);   // Controller, or Keyboard & Mouse
         s_showSettings.store(true);
         NOBLE_INFO("PauseMenu: controls opened from the pause menu");
+    } else if (saveMapVariantEntry >= 0 && activated == saveMapVariantEntry) {
+        // Ask for a name first: it becomes the variant's title in the maps menu and its file name.
+        MenuSounds::Click();
+        s_saveMapVariantResult.clear();
+        {
+            std::string suggested = noble::mvar::VariantTitle(noble::SessionMapVariantPath());
+            if (suggested.empty()) suggested = "My Forge Map";
+            std::snprintf(s_saveVariantName, sizeof(s_saveVariantName), "%s", suggested.c_str());
+        }
+        s_saveVariantOpen = true;
+        ImGui::OpenPopup("##save_map_variant");
     } else if (teamEntry >= 0 && activated == teamEntry) {
         ChangeLocalTeam();
     } else if (activated == leaveEntry) {
         // The engine can't switch maps once started, so start a fresh Noble with no -map: that opens the menu.
         MenuSounds::Click();
         Close();
-        RelaunchAndClose(hwnd, L"", "leave game");
+        const bool isHost = NetworkTransport::Get().IsHost() ||
+                            (wcsstr(GetCommandLineW(), L"-host") != nullptr) ||
+                            (Relaunch::CurrentGameArgs().find(L" -host") != std::wstring::npos);
+        std::wstring wSession = ArgValue(Relaunch::CurrentGameArgs(), L"-session-id");
+        if (wSession.empty()) wSession = ArgValue(GetCommandLineW(), L"-session-id");
+        if (isHost && (!wSession.empty() || MasterServerClient::Get().IsAdvertising())) {
+            // Host leaving match returns the entire party to the Pre-Game Lobby
+            char sessUtf8[128] = {};
+            if (!wSession.empty()) {
+                WideCharToMultiByte(CP_UTF8, 0, wSession.c_str(), -1, sessUtf8, sizeof(sessUtf8) - 1, nullptr, nullptr);
+            } else {
+                std::string curSid = MasterServerClient::Get().GetCurrentSessionId();
+                std::snprintf(sessUtf8, sizeof(sessUtf8), "%s", curSid.c_str());
+            }
+            NetworkTransport::Get().SendLobbyControlJson("{\"type\":\"host_return_to_lobby\"}");
+            MasterServerClient::Get().ReturnLobbySync(sessUtf8);
+            std::wstring returnArgs = LobbyReturnArgs(true);
+            RelaunchAndClose(hwnd, returnArgs, "host leave match to pre-game lobby");
+        } else {
+            RelaunchAndClose(hwnd, L"", "leave game");
+        }
     } else if (activated == quitEntry) {
-        NOBLE_INFO("PauseMenu: quit requested");
         Close();
-        PostMessageW(hwnd, WM_CLOSE, 0, 0);
+        QuitFromMatch(hwnd, "quit requested");
     } else if (interactive && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)) {
         // B resumes. Esc is not read here: the input poll already toggles on Esc, and closing here as well reopened the
         // menu when both saw the same press.
         Close();
+    }
+
+    // ---- Name this map variant (SAVE MAP VARIANT, Forge only) ----
+    // A small box over the pause menu: type the name, SAVE writes the variant under it. The name is also written into
+    // the variant's title, which is what the maps menu shows under the base map.
+    ImGui::SetNextWindowSize(ImVec2(520.0f * s, 0.0f), ImGuiCond_Appearing);
+    if (ImGui::BeginPopupModal("##save_map_variant", nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings |
+                               ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove)) {
+        if (!ImGui::IsAnyItemActive() && ImGui::GetIO().Framerate > 0) {
+            // Focus on the first frame the box is up, so typing goes straight into the name.
+            static bool s_focused = false;
+            if (!s_focused) { ImGui::SetKeyboardFocusHere(); s_focused = true; }
+        }
+        ImGui::TextUnformatted("MAP VARIANT NAME");
+        ImGui::PushStyleColor(ImGuiCol_Text, NobleStyle::TextMuted());
+        ImGui::TextWrapped("Shown under its base map in the maps menu, for Custom Game and Forge.");
+        ImGui::PopStyleColor();
+        ImGui::Spacing();
+        ImGui::InputText("##variant_name", s_saveVariantName, sizeof(s_saveVariantName));
+        ImGui::Spacing();
+        const bool typed = s_saveVariantName[0] != 0;
+        const std::filesystem::path library = ReachHost::Get().GetDataDir() / "map_variants";
+        // The variant this session was launched with is what OVERWRITE updates; SAVE AS COPY always makes a new file.
+        const std::string currentName = noble::mvar::VariantTitle(noble::SessionMapVariantPath());
+        const bool canOverwrite = !currentName.empty();
+        const auto finishSave = [](const std::filesystem::path& saved) {
+            s_saveMapVariantResult = saved.empty() ? "Could not save the map variant (see the log)."
+                                                   : "Saved: " + saved.filename().string();
+            s_saveVariantOpen = false;
+            ImGui::CloseCurrentPopup();
+        };
+        if (typed && (ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false))) {
+            MenuSounds::Click();
+            finishSave(SaveForgeMapVariant(UniqueVariantName(library, s_saveVariantName)));
+        }
+        if (!canOverwrite) {
+            ImGui::PushStyleColor(ImGuiCol_Text, NobleStyle::TextMuted());
+            ImGui::TextWrapped("This map was not opened from a saved variant; use SAVE AS COPY.");
+            ImGui::PopStyleColor();
+        }
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.16f, 0.42f, 0.62f, 1.0f));
+        if (ImGui::Button("OVERWRITE", ImVec2(150.0f * s, 34.0f * s)) && canOverwrite) {
+            MenuSounds::Click();
+            finishSave(SaveForgeMapVariant(currentName));
+        }
+        ImGui::PopStyleColor();
+        ImGui::SameLine();
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.16f, 0.42f, 0.62f, 1.0f));
+        if (ImGui::Button("SAVE AS COPY", ImVec2(170.0f * s, 34.0f * s)) && typed) {
+            MenuSounds::Click();
+            finishSave(SaveForgeMapVariant(UniqueVariantName(library, s_saveVariantName)));
+        }
+        ImGui::PopStyleColor();
+        ImGui::SameLine();
+        if (ImGui::Button("CANCEL", ImVec2(120.0f * s, 34.0f * s)) ||
+            ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)) {
+            MenuSounds::Back();
+            s_saveVariantOpen = false;
+            ImGui::CloseCurrentPopup();
+        }
+        if (!s_saveMapVariantResult.empty()) {
+            ImGui::Spacing();
+            ImGui::PushStyleColor(ImGuiCol_Text, NobleStyle::TextMuted());
+            ImGui::TextWrapped("%s", s_saveMapVariantResult.c_str());
+            ImGui::PopStyleColor();
+        }
+        ImGui::EndPopup();
     }
 
     ImGui::Spacing();
@@ -2020,7 +2447,7 @@ static void DrawScoreboardPanel() {
 
 // Guest-side connection-lost panel: the host vanished (no packets for a while) but the engine keeps pumping frames, so
 // without this the guest just sits frozen in the mission. Offers the only reliable exit - relaunch the menu process.
-static bool DrawConnectionLostPanel() {
+static bool DrawConnectionLostPanel(HWND hwnd) {
   using namespace NobleUi;
   ImGuiIO &io = ImGui::GetIO();
   const float W = io.DisplaySize.x, H = io.DisplaySize.y;
@@ -2048,12 +2475,9 @@ static bool DrawConnectionLostPanel() {
                         ImGui::IsKeyPressed(ImGuiKey_Enter, false) ||
                         ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false);
   if (activate) {
-    NOBLE_INFO("PauseMenu: connection lost - returning to the menu");
     ImGui::End();
     ImGui::PopStyleColor();
-    if (!Relaunch::HandOff(L"")) {
-      NOBLE_ERROR("PauseMenu: relaunch to menu failed; keeping the connection-lost panel");
-    }
+    RelaunchAndClose(hwnd, L"", "connection lost - returning to the menu");
     return true;
   }
   ImGui::End();
@@ -2507,8 +2931,7 @@ void PauseMenu::DrawGameOver(HWND hwnd) {
   };
   ImGui::SetCursorScreenPos(ImVec2(bx, by));
   if (NobleStyle::DangerButton("QUIT", ImVec2(bw, bh)) || (padPress && s_padButton == kPadQuit)) {
-    NOBLE_INFO("PauseMenu: quit requested from post-game panel");
-    PostMessageW(hwnd, WM_CLOSE, 0, 0);
+    QuitFromMatch(hwnd, "quit requested from post-game panel");
   }
   padOutline(kPadQuit);
   overButton |= ImGui::IsItemHovered();
@@ -2819,11 +3242,68 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading,
   const bool boardPointer = s_boardPointer.load();
   const bool scoreboardHeld = !loading && !open && !gameOver &&
                               (ReachHost::IsKeyHeld(boardVk) || s_scoreboardTest || demo > 0 || boardPointer);
+
+  DXGI_SWAP_CHAIN_DESC desc{};
+  if (FAILED(swapChain->GetDesc(&desc)) || !desc.OutputWindow)
+    return;
+  const HWND hwnd = desc.OutputWindow;
+
   // Guests: if the host has been silent for a while, the engine keeps pumping frames but the session is dead. Show a panel
   // instead of freezing in the mission.
   static bool s_connectionLost = false;
+  static std::atomic<bool> s_guestShouldReturnLobby{false};
+  static std::atomic<bool> s_guestShouldDisband{false};
+  static bool s_callbacksRegistered = false;
+  if (!s_callbacksRegistered) {
+    s_callbacksRegistered = true;
+    NetworkTransport::Get().SetLobbyReturnCallback([]() {
+      NOBLE_INFO("PauseMenu: received host_return_to_lobby");
+      s_guestShouldReturnLobby.store(true);
+    });
+    NetworkTransport::Get().SetLobbyClosedCallback([](const std::string& reason) {
+      NOBLE_INFO("PauseMenu: received lobby_closed/disband: {}", reason);
+      s_guestShouldDisband.store(true);
+    });
+  }
+
   const bool guest = NetworkTransport::Get().IsActive() && !NetworkTransport::Get().IsHost();
+  if (guest) {
+    if (s_guestShouldReturnLobby.exchange(false)) {
+      NOBLE_INFO("PauseMenu: host returned to lobby, returning guest to pre-game lobby");
+      std::wstring returnArgs = LobbyReturnArgs(false);
+      RelaunchAndClose(hwnd, returnArgs, "host returned to pre-game lobby");
+      return;
+    }
+    if (s_guestShouldDisband.exchange(false)) {
+      NOBLE_INFO("PauseMenu: host disbanded lobby / quit game, returning guest to main menu");
+      RelaunchAndClose(hwnd, L"-main-menu", "host disbanded lobby");
+      return;
+    }
+  }
+
   const double hostSilence = guest ? NetworkTransport::Get().SecondsSinceRemotePacket() : 0.0;
+  static ULONGLONG s_lastStateCheck = 0;
+  const ULONGLONG nowTick = GetTickCount64();
+  if (guest && hostSilence > 3.0 && nowTick - s_lastStateCheck > 1500) {
+    s_lastStateCheck = nowTick;
+    std::wstring wSession = ArgValue(Relaunch::CurrentGameArgs(), L"-session-id");
+    if (wSession.empty()) wSession = ArgValue(GetCommandLineW(), L"-session-id");
+    if (!wSession.empty()) {
+      char sessUtf8[128] = {};
+      WideCharToMultiByte(CP_UTF8, 0, wSession.c_str(), -1, sessUtf8, sizeof(sessUtf8) - 1, nullptr, nullptr);
+      std::thread([sessUtf8, hostSilence]() {
+        const LobbyState state = MasterServerClient::Get().FetchLobbyStateSync(sessUtf8);
+        if (state.ok && !state.isClosed && !state.inProgress) {
+          NOBLE_INFO("PauseMenu: host lobby poll shows inProgress=false, returning guest to pre-game lobby");
+          s_guestShouldReturnLobby.store(true);
+        } else if (!state.ok || state.isClosed || hostSilence > 8.0) {
+          NOBLE_INFO("PauseMenu: host lobby poll shows closed/404 or host silence {:.1f}s, disbanding to main menu", hostSilence);
+          s_guestShouldDisband.store(true);
+        }
+      }).detach();
+    }
+  }
+
   if (!loading && !open && !gameOver && guest && hostSilence > 8.0) {
     if (!s_connectionLost) {
       s_connectionLost = true;
@@ -2837,11 +3317,6 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading,
   const bool connectionLost = s_connectionLost;
   if (!(open || gameOver || loading || showFps || scoreboardHeld || connectionLost || extraOverlay || SocialOverlay::WantsFrame()) || !swapChain ||      !ImGui::GetCurrentContext())
     return;
-
-  DXGI_SWAP_CHAIN_DESC desc{};
-  if (FAILED(swapChain->GetDesc(&desc)) || !desc.OutputWindow)
-    return;
-  const HWND hwnd = desc.OutputWindow;
 
   ID3D11Device *device = nullptr;
   if (FAILED(swapChain->GetDevice(__uuidof(ID3D11Device),
@@ -2978,7 +3453,7 @@ void PauseMenu::RenderImpl(IDXGISwapChain *swapChain, bool loading,
         DrawLoading();
       if (open)
         DrawMenu(hwnd);
-      if (connectionLost && DrawConnectionLostPanel()) return;
+      if (connectionLost && DrawConnectionLostPanel(hwnd)) return;
       if (scoreboardHeld && !connectionLost) {
         DrawScoreboardPanel();
         // -scoreboard-demo: one screenshot about 30 s in, so the match is on screen behind the panel, not a loading frame.

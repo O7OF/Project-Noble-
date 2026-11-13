@@ -1,4 +1,5 @@
 #include "BlamEngine.hpp"
+#include "engine/ForgePlacement.hpp"
 #include "EmbeddedBlocks.hpp"
 #include "engine/VariantRules.hpp"
 #include "ReachHost.hpp"
@@ -16,8 +17,10 @@
 #include <thread>
 #include <chrono>
 #include <cstdlib>
+#include <cstdio>
 #include <cstring>
 #include <cwchar>
+#include <mutex>
 #include <fstream>
 #include <filesystem>
 #include <objbase.h>
@@ -68,7 +71,415 @@ BlamEngine::~BlamEngine() {
     Shutdown();
 }
 
+namespace {
+using SerializeMapVariantFn = void (*)(void* outChunk, void* variant);
+SerializeMapVariantFn s_origSerializeMapVariant = nullptr;
+std::mutex s_capturedMutex;
+std::vector<uint8_t> s_capturedChunk(0x7028, 0);
+bool s_haveCapturedChunk = false;
+
+// Candidates for the live variant struct, collected while a save call is in flight. The save routine reaches the
+// variant either through a copy (mode 1 for the local one, mode 0 for the signed-in one) or through a getter.
+constexpr int kMaxVariantCandidates = 6;
+std::mutex s_candidateMutex;
+void* s_variantCandidates[kMaxVariantCandidates] = {};
+int s_variantCandidateCount = 0;
+std::atomic<bool> s_armVariantCapture{ false };
+
+void RecordVariantCandidate(void* pointer) {
+    if (!pointer || !s_armVariantCapture.load(std::memory_order_relaxed)) return;
+    std::lock_guard<std::mutex> lock(s_candidateMutex);
+    for (int i = 0; i < s_variantCandidateCount; ++i) {
+        if (s_variantCandidates[i] == pointer) return;
+    }
+    if (s_variantCandidateCount < kMaxVariantCandidates) s_variantCandidates[s_variantCandidateCount++] = pointer;
+}
+
+using CopyMapVariantFn = void (*)(void* dst, void* src, long long mode, void* extra);
+CopyMapVariantFn s_origCopyMapVariant = nullptr;
+
+void HookCopyMapVariant(void* dst, void* src, long long mode, void* extra) {
+    if (s_origCopyMapVariant) s_origCopyMapVariant(dst, src, mode, extra);
+    RecordVariantCandidate(src);
+}
+
+using GetVariantSourceFn = void* (*)();
+GetVariantSourceFn s_origGetVariantSource = nullptr;
+
+void* HookGetVariantSource() {
+    void* source = s_origGetVariantSource ? s_origGetVariantSource() : nullptr;
+    RecordVariantCandidate(source);
+    return source;
+}
+
+void HookSerializeMapVariant(void* outChunk, void* variant) {
+    if (s_origSerializeMapVariant) s_origSerializeMapVariant(outChunk, variant);
+    if (!outChunk) return;
+    std::lock_guard<std::mutex> lock(s_capturedMutex);
+    std::memcpy(s_capturedChunk.data(), outChunk, s_capturedChunk.size());
+    s_haveCapturedChunk = true;
+}
+} // namespace
+
+bool BlamEngine::InstallMapVariantCapture() {
+    if (s_origSerializeMapVariant || !m_hModule) return s_origSerializeMapVariant != nullptr;
+    void* target = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(m_hModule) + 0x17AC38);
+    if (!HookManager::InstallHook(target, reinterpret_cast<void*>(&HookSerializeMapVariant),
+                                  reinterpret_cast<void**>(&s_origSerializeMapVariant), "capture_mvar_serialize")) {
+        NOBLE_WARN("BlamEngine: could not hook the map-variant serializer");
+        return false;
+    }
+    NOBLE_INFO("BlamEngine: map-variant serializer hooked (RVA 0x17AC38)");
+
+    void* copyTarget = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(m_hModule) + 0x6C290);
+    if (!HookManager::InstallHook(copyTarget, reinterpret_cast<void*>(&HookCopyMapVariant),
+                                  reinterpret_cast<void**>(&s_origCopyMapVariant), "capture_mvar_copy")) {
+        NOBLE_WARN("BlamEngine: could not hook the map-variant copy");
+    } else {
+        NOBLE_INFO("BlamEngine: map-variant copy hooked (RVA 0x6C290)");
+    }
+
+    void* getterTarget = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(m_hModule) + 0x6BCEC);
+    if (!HookManager::InstallHook(getterTarget, reinterpret_cast<void*>(&HookGetVariantSource),
+                                  reinterpret_cast<void**>(&s_origGetVariantSource), "capture_mvar_source")) {
+        NOBLE_WARN("BlamEngine: could not hook the map-variant source getter");
+    } else {
+        NOBLE_INFO("BlamEngine: map-variant source getter hooked (RVA 0x6BCEC)");
+    }
+    return true;
+}
+
+namespace {
+// The module's TLS index, from its TLS directory. The engine's per-thread state pointer lives at [tls block + 0x48];
+// the live map variant is 0x110F0 into that state.
+bool ReadModuleTlsIndex(HMODULE module, DWORD& index) {
+    if (!module) return false;
+    const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(module);
+    if (dos->e_magic != IMAGE_DOS_SIGNATURE) return false;
+    const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(reinterpret_cast<const uint8_t*>(module) + dos->e_lfanew);
+    if (nt->Signature != IMAGE_NT_SIGNATURE) return false;
+    const IMAGE_DATA_DIRECTORY& dir = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_TLS];
+    if (!dir.VirtualAddress) return false;
+    const auto* tls = reinterpret_cast<const IMAGE_TLS_DIRECTORY*>(reinterpret_cast<const uint8_t*>(module) + dir.VirtualAddress);
+    const uintptr_t imageBase = reinterpret_cast<uintptr_t>(module);
+    if (tls->AddressOfIndex < imageBase) return false;
+    index = *reinterpret_cast<const DWORD*>(tls->AddressOfIndex);
+    return true;
+}
+
+// SEH reads live in their own object-free helpers: MSVC cannot mix __try with C++ objects that need unwinding.
+bool ReadTlsBlock(DWORD index, void*& tlsBlock) {
+    __try {
+        const uintptr_t teb = __readgsqword(0x30);
+        auto** slots = *reinterpret_cast<void***>(teb + 0x58);
+        tlsBlock = slots ? slots[index] : nullptr;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+    return true;
+}
+
+bool ReadEngineState(void* tlsBlock, void*& state) {
+    __try {
+        state = *reinterpret_cast<void**>(static_cast<uint8_t*>(tlsBlock) + 0x48);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+    return true;
+}
+
+bool CallMapVariantSaveTask(HMODULE module) {
+    __try {
+        typedef void (*SaveTaskFn)(void);
+        auto pTask = reinterpret_cast<SaveTaskFn>(reinterpret_cast<uintptr_t>(module) + 0x156788);
+        pTask();
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+    return true;
+}
+
+bool CallMapVariantSave(HMODULE module) {
+    __try {
+        typedef void (*SaveMapVariantFn)(void);
+        auto pSave = reinterpret_cast<SaveMapVariantFn>(reinterpret_cast<uintptr_t>(module) + 0x156974);
+        pSave();
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+    return true;
+}
+
+void* CallGetVariantSource(HMODULE module) {
+    void* source = nullptr;
+    __try {
+        typedef void* (*GetSourceFn)();
+        auto pGet = reinterpret_cast<GetSourceFn>(reinterpret_cast<uintptr_t>(module) + 0x6BCEC);
+        source = pGet();
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        source = nullptr;
+    }
+    return source;
+}
+
+bool CallVariantInit(HMODULE module, void* variant) {
+    __try {
+        typedef void (*InitFn)(void*);
+        auto pInit = reinterpret_cast<InitFn>(reinterpret_cast<uintptr_t>(module) + 0x6BFF8);
+        pInit(variant);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+    return true;
+}
+
+bool CallVariantCopy(HMODULE module, void* dst, void* src, long long mode) {
+    __try {
+        typedef void (*CopyFn)(void*, void*, long long, void*);
+        auto pCopy = reinterpret_cast<CopyFn>(reinterpret_cast<uintptr_t>(module) + 0x6C290);
+        pCopy(dst, src, mode, nullptr);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+    return true;
+}
+
+bool CopyMemorySafe(void* dst, const void* src, size_t size) {
+    __try {
+        std::memcpy(dst, src, size);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+    return true;
+}
+
+bool CallMapVariantSerialize(HMODULE module, void* out, void* variant) {
+    __try {
+        typedef void (*SerializeFn)(void*, void*);
+        auto pSerialize = reinterpret_cast<SerializeFn>(reinterpret_cast<uintptr_t>(module) + 0x17AC38);
+        pSerialize(out, variant);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+    return true;
+}
+} // namespace
+
+bool BlamEngine::TrySerializeLiveMapVariant(std::vector<uint8_t>& outChunk) {
+    if (!m_hModule) return false;
+
+    // The engine's own save path asks 0x6BCEC for the live variant; calling it directly avoids both the save
+    // routine and the TLS walk, and works from the pause menu.
+    if (void* source = CallGetVariantSource(m_hModule)) {
+        std::vector<uint8_t> chunk(0x7028, 0);
+        if (CallMapVariantSerialize(m_hModule, chunk.data(), source)) {
+            const auto be32 = [](const uint8_t* p) {
+                return (static_cast<uint32_t>(p[0]) << 24) | (static_cast<uint32_t>(p[1]) << 16) |
+                       (static_cast<uint32_t>(p[2]) << 8) | p[3];
+            };
+            if (std::memcmp(chunk.data(), "mvar", 4) == 0 && be32(chunk.data() + 4) == 0x7028) {
+                const uint32_t packed = be32(chunk.data() + 0x20);
+                if (packed > 0 && packed <= 0x7000) {
+                    NOBLE_INFO("BlamEngine: serialized the live variant from the engine getter at {:p} ({} packed bytes)",
+                               source, packed);
+                    outChunk = std::move(chunk);
+                    return true;
+                }
+            }
+        }
+    }
+    DWORD tlsIndex = 0;
+    if (!ReadModuleTlsIndex(m_hModule, tlsIndex)) {
+        NOBLE_WARN("BlamEngine: haloreach.dll has no TLS directory");
+        return false;
+    }
+    void* tlsBlock = nullptr;
+    if (!ReadTlsBlock(tlsIndex, tlsBlock) || !tlsBlock) return false;
+    void* engineState = nullptr;
+    if (!ReadEngineState(tlsBlock, engineState) || !engineState) return false;
+
+    void* variant = static_cast<uint8_t*>(engineState) + 0x110F0;
+    std::vector<uint8_t> chunk(0x7028, 0);
+    uint32_t rawPacked = 0;
+    if (CallMapVariantSerialize(m_hModule, chunk.data(), variant) && std::memcmp(chunk.data(), "mvar", 4) == 0) {
+        rawPacked = (static_cast<uint32_t>(chunk[0x20]) << 24) | (static_cast<uint32_t>(chunk[0x21]) << 16) |
+                    (static_cast<uint32_t>(chunk[0x22]) << 8) | chunk[0x23];
+    }
+
+    // What the engine's own save does before serializing: initialise a map-variant struct and copy the live one into
+    // it. Log both lengths: if they match, the copy is a no-op and the placements live somewhere else entirely.
+    std::vector<uint8_t> committed(0x20000, 0);
+    const bool initOk = CallVariantInit(m_hModule, committed.data());
+    const bool copyOk = initOk && CallVariantCopy(m_hModule, committed.data(), variant, 1);
+    uint32_t committedPacked = 0;
+    if (copyOk && CallMapVariantSerialize(m_hModule, chunk.data(), committed.data()) &&
+        std::memcmp(chunk.data(), "mvar", 4) == 0) {
+        committedPacked = (static_cast<uint32_t>(chunk[0x20]) << 24) | (static_cast<uint32_t>(chunk[0x21]) << 16) |
+                          (static_cast<uint32_t>(chunk[0x22]) << 8) | chunk[0x23];
+    }
+    NOBLE_INFO("BlamEngine: live variant probe: raw {} bytes, committed {} bytes (init {}, copy {})", rawPacked,
+               committedPacked, initOk, copyOk);
+    if (committedPacked == 0) {
+        if (rawPacked == 0) return false;
+        if (!CallMapVariantSerialize(m_hModule, chunk.data(), variant)) return false;
+    }
+
+    const auto be32 = [](const uint8_t* p) {
+        return (static_cast<uint32_t>(p[0]) << 24) | (static_cast<uint32_t>(p[1]) << 16) |
+               (static_cast<uint32_t>(p[2]) << 8) | p[3];
+    };
+    if (std::memcmp(chunk.data(), "mvar", 4) != 0 || be32(chunk.data() + 4) != 0x7028) {
+        NOBLE_WARN("BlamEngine: live variant at {:p} did not serialize to an mvar chunk", variant);
+        return false;
+    }
+    const uint32_t packed = be32(chunk.data() + 0x20);
+    if (packed == 0 || packed > 0x7000) {
+        NOBLE_WARN("BlamEngine: live variant serialized with implausible packed length {}", packed);
+        return false;
+    }
+    NOBLE_INFO("BlamEngine: serialized live map variant at {:p} ({} packed bytes)", variant, packed);
+    outChunk = std::move(chunk);
+    return true;
+}
+
+namespace {
+std::mutex s_liveDumpMutex;
+std::filesystem::path s_liveDumpDir;
+int s_liveDumpSeconds = 0;
+int s_liveDumpIndex = 0;
+uint64_t s_liveDumpNextMs = 0;
+} // namespace
+
+void BlamEngine::ConfigureLiveDump(std::filesystem::path dir, int seconds) {
+    std::lock_guard<std::mutex> lock(s_liveDumpMutex);
+    s_liveDumpDir = std::move(dir);
+    s_liveDumpSeconds = seconds;
+    s_liveDumpIndex = 0;
+    s_liveDumpNextMs = GetTickCount64() + static_cast<uint64_t>(seconds) * 1000;
+    if (seconds > 0) NOBLE_INFO("BlamEngine: live variant dumps every {}s into '{}'", seconds, s_liveDumpDir.string());
+}
+
+void BlamEngine::TickLiveDump() {
+    std::filesystem::path dir;
+    int index = 0;
+    {
+        std::lock_guard<std::mutex> lock(s_liveDumpMutex);
+        if (s_liveDumpSeconds <= 0) return;
+        const uint64_t now = GetTickCount64();
+        if (now < s_liveDumpNextMs) return;
+        s_liveDumpNextMs = now + static_cast<uint64_t>(s_liveDumpSeconds) * 1000;
+        dir = s_liveDumpDir;
+        index = ++s_liveDumpIndex;
+    }
+    const bool ok = DumpLiveMapVariant(dir, index);
+    NOBLE_WARN("BlamEngine: live dump {} -> {} ('{}')", index, ok ? 1 : 0, dir.string());
+}
+
+bool BlamEngine::DumpLiveMapVariant(const std::filesystem::path& dir, int index) {
+    if (!m_hModule) return false;
+    DWORD tlsIndex = 0;
+    if (!ReadModuleTlsIndex(m_hModule, tlsIndex)) return false;
+    void* tlsBlock = nullptr;
+    if (!ReadTlsBlock(tlsIndex, tlsBlock) || !tlsBlock) return false;
+    void* engineState = nullptr;
+    if (!ReadEngineState(tlsBlock, engineState) || !engineState) return false;
+
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    char name[64] = {};
+    std::snprintf(name, sizeof(name), "live_%lu_%03d", static_cast<unsigned long>(GetCurrentProcessId()), index);
+    const std::string stem = name;
+
+    // A wide window around the state, so the editor's own structures are in the dump too.
+    std::vector<uint8_t> state(0x60000, 0);
+    if (!CopyMemorySafe(state.data(), engineState, state.size())) state.clear();
+    if (!state.empty()) {
+        std::ofstream(dir / (stem + "_state.bin"), std::ios::binary).write(
+            reinterpret_cast<const char*>(state.data()), static_cast<std::streamsize>(state.size()));
+    }
+
+    void* variant = static_cast<uint8_t*>(engineState) + 0x110F0;
+    std::vector<uint8_t> raw(0x20000, 0);
+    if (!CopyMemorySafe(raw.data(), variant, raw.size())) raw.clear();
+    if (!raw.empty()) {
+        std::ofstream(dir / (stem + "_variant.bin"), std::ios::binary).write(
+            reinterpret_cast<const char*>(raw.data()), static_cast<std::streamsize>(raw.size()));
+    }
+
+    std::vector<uint8_t> chunk(0x7028, 0);
+    if (CallMapVariantSerialize(m_hModule, chunk.data(), variant)) {
+        std::ofstream(dir / (stem + "_chunk.bin"), std::ios::binary).write(
+            reinterpret_cast<const char*>(chunk.data()), static_cast<std::streamsize>(chunk.size()));
+    }
+
+    std::vector<uint8_t> committed(0x20000, 0);
+    if (CallVariantInit(m_hModule, committed.data()) && CallVariantCopy(m_hModule, committed.data(), variant, 1)) {
+        std::vector<uint8_t> copyChunk(0x7028, 0);
+        if (CallMapVariantSerialize(m_hModule, copyChunk.data(), committed.data())) {
+            std::ofstream(dir / (stem + "_copy_chunk.bin"), std::ios::binary).write(
+                reinterpret_cast<const char*>(copyChunk.data()), static_cast<std::streamsize>(copyChunk.size()));
+        }
+        std::ofstream(dir / (stem + "_copy.bin"), std::ios::binary).write(
+            reinterpret_cast<const char*>(committed.data()), static_cast<std::streamsize>(committed.size()));
+    }
+    return true;
+}
+
+bool BlamEngine::TakeCapturedMapVariantChunk(std::vector<uint8_t>& out) {
+    std::lock_guard<std::mutex> lock(s_capturedMutex);
+    if (!s_haveCapturedChunk) return false;
+    out = s_capturedChunk;
+    s_haveCapturedChunk = false;
+    return true;
+}
+
+bool BlamEngine::TriggerMapVariantSave() {
+    if (!m_hModule) return false;
+
+    {
+        std::lock_guard<std::mutex> lock(s_candidateMutex);
+        s_variantCandidateCount = 0;
+    }
+    s_armVariantCapture.store(true, std::memory_order_relaxed);
+    // Calling the task and then the routine made the routine fault (the task had already started it), so only the
+    // routine is invoked here.
+    const bool ok = CallMapVariantSave(m_hModule);
+    s_armVariantCapture.store(false, std::memory_order_relaxed);
+
+    void* candidates[kMaxVariantCandidates] = {};
+    int count = 0;
+    {
+        std::lock_guard<std::mutex> lock(s_candidateMutex);
+        count = s_variantCandidateCount;
+        for (int i = 0; i < count; ++i) candidates[i] = s_variantCandidates[i];
+    }
+    NOBLE_INFO("BlamEngine: save routine {} and exposed {} variant candidate(s)", ok ? "returned" : "faulted", count);
+
+    const auto be32 = [](const uint8_t* p) {
+        return (static_cast<uint32_t>(p[0]) << 24) | (static_cast<uint32_t>(p[1]) << 16) |
+               (static_cast<uint32_t>(p[2]) << 8) | p[3];
+    };
+    for (int i = 0; i < count; ++i) {
+        void* candidate = candidates[i];
+        if (!candidate) continue;
+        std::vector<uint8_t> chunk(0x7028, 0);
+        if (!CallMapVariantSerialize(m_hModule, chunk.data(), candidate)) continue;
+        if (std::memcmp(chunk.data(), "mvar", 4) != 0 || be32(chunk.data() + 4) != 0x7028) continue;
+        const uint32_t packed = be32(chunk.data() + 0x20);
+        if (packed == 0 || packed > 0x7000) continue;
+        NOBLE_INFO("BlamEngine: serialized variant candidate {:p} ({} packed bytes)", candidate, packed);
+        std::lock_guard<std::mutex> lock(s_capturedMutex);
+        s_capturedChunk = std::move(chunk);
+        s_haveCapturedChunk = true;
+        break;
+    }
+    return ok;
+}
+
 bool BlamEngine::Initialize(const ReachInstallInfo& installInfo, HMODULE hModule, const ReachExports& exports, const EngineHostContext& context) {
+    m_hModule = hModule;
+    InstallMapVariantCapture();
+    InstallForgePlacementWatch(m_hModule);
     s_active = this;
     if (m_isInitialized) return true;
 
@@ -268,7 +679,7 @@ uint32_t BlamEngine::ResolveMapId(const std::string& mapName) {
     // Campaign Missions (178 - 189)
     if (lower.find("noble actual") != std::string::npos || lower.find("m05") != std::string::npos || lower == "178") return 178;
     if (lower.find("winter contingency") != std::string::npos || lower.find("m10") != std::string::npos || lower == "179") return 179;
-    if (lower.find("oni: sword base") != std::string::npos || lower.find("m20") != std::string::npos || lower == "180") return 180;
+    if (lower.find("oni: sword base") != std::string::npos || lower.find("oni sword base") != std::string::npos || lower.find("m20") != std::string::npos || lower == "180") return 180;
     if (lower.find("nightfall") != std::string::npos || lower.find("m30") != std::string::npos || lower == "181") return 181;
     if (lower.find("tip of the spear") != std::string::npos || lower.find("m35") != std::string::npos || lower == "182") return 182;
     if (lower.find("long night of solace") != std::string::npos || lower.find("m45") != std::string::npos || lower == "183") return 183;
@@ -404,24 +815,42 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
     const bool isFirefight = (gameModeTag == 1035);
     const bool isForge = (gameModeTag == 3);
     uint32_t effectiveMapId = isMainMenu ? static_cast<uint32_t>(-2) : mapId;
+    // Diagnostic: force which map's launch block is loaded, independent of the map being launched.
+    uint32_t blockMapId = mapId;
+    if (const char* forcedBlockMap = std::getenv("NOBLE_BLOCK_MAP")) {
+        blockMapId = static_cast<uint32_t>(std::stoul(forcedBlockMap));
+        NOBLE_WARN("BlamEngine: launch block forced to map id {} (launching {})", blockMapId, mapId);
+    }
 
     std::string blockName;
+    bool convertToCampaign = false;
     if (isMainMenu) {
         blockName = "lb_m_c_1.bin";
     } else if (gameModeTag == 1035) {
-        std::string cand1 = "firefight_" + std::to_string(mapId) + "_d" + std::to_string(clampedDiff) + ".bin";
-        std::string cand2 = "firefight_" + std::to_string(mapId) + ".bin";
+        std::string cand1 = "firefight_" + std::to_string(blockMapId) + "_d" + std::to_string(clampedDiff) + ".bin";
+        std::string cand2 = "firefight_" + std::to_string(blockMapId) + ".bin";
         if (EmbeddedBlocks::HasBlock(cand1)) blockName = cand1;
         else if (EmbeddedBlocks::HasBlock(cand2)) blockName = cand2;
         else if (std::filesystem::exists(dataRoot / "blocks" / cand1)) blockPath = dataRoot / "blocks" / cand1;
         else if (std::filesystem::exists(dataRoot / "blocks" / cand2)) blockPath = dataRoot / "blocks" / cand2;
     } else if (gameModeTag == 1) {
-        std::string cand1 = "campaign_" + std::to_string(mapId) + "_d" + std::to_string(clampedDiff) + ".bin";
-        std::string cand2 = "campaign_" + std::to_string(mapId) + ".bin";
+        std::string cand1 = "campaign_" + std::to_string(blockMapId) + "_d" + std::to_string(clampedDiff) + ".bin";
+        std::string cand2 = "campaign_" + std::to_string(blockMapId) + ".bin";
         if (EmbeddedBlocks::HasBlock(cand1)) blockName = cand1;
         else if (EmbeddedBlocks::HasBlock(cand2)) blockName = cand2;
         else if (std::filesystem::exists(dataRoot / "blocks" / cand1)) blockPath = dataRoot / "blocks" / cand1;
         else if (std::filesystem::exists(dataRoot / "blocks" / cand2)) blockPath = dataRoot / "blocks" / cand2;
+        // A campaign mission on a map that only ships Firefight blocks (e.g. a mod map on a Firefight canvas):
+        // the block differs only in four mode bytes, so take the Firefight block for this map and present it as
+        // campaign (0x0C/0x28 = 1, 0x2A/0x2B = 0x11, as every campaign block has).
+        if (blockName.empty() && blockPath.empty()) {
+            std::string ff1 = "firefight_" + std::to_string(blockMapId) + "_d" + std::to_string(clampedDiff) + ".bin";
+            std::string ff2 = "firefight_" + std::to_string(blockMapId) + ".bin";
+            if (EmbeddedBlocks::HasBlock(ff1)) { blockName = ff1; convertToCampaign = true; }
+            else if (EmbeddedBlocks::HasBlock(ff2)) { blockName = ff2; convertToCampaign = true; }
+            else if (std::filesystem::exists(dataRoot / "blocks" / ff1)) { blockPath = dataRoot / "blocks" / ff1; convertToCampaign = true; }
+            else if (std::filesystem::exists(dataRoot / "blocks" / ff2)) { blockPath = dataRoot / "blocks" / ff2; convertToCampaign = true; }
+        }
     }
 
     if (!blockName.empty()) {
@@ -443,6 +872,14 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
             loadedPrebuilt = true;
             NOBLE_INFO("BlamEngine: Loaded authentic pre-built launch block from '{}'", blockPath.string());
         }
+    }
+
+    if (convertToCampaign) {
+        block[0x0C] = 0x01;
+        block[0x28] = 0x01;
+        block[0x2A] = 0x11;
+        block[0x2B] = 0x11;
+        NOBLE_INFO("BlamEngine: Firefight block for map {} presented as campaign (mode bytes 0x0C/0x28/0x2A/0x2B)", blockMapId);
     }
 
     // Fallback: Synthesize from lb_m_c_1.bin template if needed
@@ -759,6 +1196,24 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
                 SafeCallVariantInit(m_hModule, parsedVariant.data());
                 char status = 0;
                 if (SafeCallMapVariantParse(m_hModule, mvarData.data(), 0x7329, parsedVariant.data(), &status) && status != 0) {
+                    // Dev: keep the file and the structure the engine parsed it into, so the mapping between them can
+                    // be worked out (that is what a save has to invert - the engine's own save produces no bytes here).
+                    if (GetEnvironmentVariableW(L"NOBLE_MVAR_PAIR", nullptr, 0) || GetCommandLineW() != nullptr) {
+                        static int s_pair = 0;
+                        if (s_pair < 8) {
+                            const std::filesystem::path out = std::filesystem::path("data") / "mvar_pair";
+                            std::error_code ec;
+                            std::filesystem::create_directories(out, ec);
+                            char tag[32] = {};
+                            std::snprintf(tag, sizeof(tag), "pair_%02d", ++s_pair);
+                            std::ofstream(out / (std::string(tag) + "_file.bin"), std::ios::binary)
+                                .write(reinterpret_cast<const char*>(mvarData.data()), static_cast<std::streamsize>(mvarData.size()));
+                            std::ofstream(out / (std::string(tag) + "_parsed.bin"), std::ios::binary)
+                                .write(reinterpret_cast<const char*>(parsedVariant.data()), static_cast<std::streamsize>(parsedVariant.size()));
+                            NOBLE_INFO("BlamEngine: map variant pair '{}' written (file {} bytes, parsed {} bytes)", tag,
+                                       mvarData.size(), parsedVariant.size());
+                        }
+                    }
                     memcpy(&block[0x1D308], parsedVariant.data(), 0xE800);
                     uint32_t mvarMapId = *reinterpret_cast<uint32_t*>(&block[0x1D5C0]);
                     *reinterpret_cast<uint32_t*>(&block[0x10]) = mvarMapId;
@@ -963,6 +1418,18 @@ bool BlamEngine::ExecuteCommand(const std::string& command) {
     return true;
 }
 
+static bool ReadEngineLaunchMapStateSEH(HMODULE hMod, int32_t* outLaunchState, int32_t* outMapState) {
+    if (!hMod) return false;
+    __try {
+        const uintptr_t base = reinterpret_cast<uintptr_t>(hMod);
+        if (outLaunchState) *outLaunchState = *reinterpret_cast<const int32_t*>(base + 0xC1A114);
+        if (outMapState) *outMapState = *reinterpret_cast<const int32_t*>(base + 0xC1A118);
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
 bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMode, int difficulty, uint64_t skulls,
                            const std::string& customMvarPath, const std::string& customVariantPath,
                            const std::string& connectAddress, int expectedPeers) {
@@ -1016,22 +1483,37 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
     if (forgeMode) {
         // Forge is a multiplayer Megalo mode, not the special map-editor engine (0x04).
         gameModeTag = 3;
-    } else if ((mapId >= 210 && mapId <= 219) || _stricmp(gameMode.c_str(), "firefight") == 0) {
+    } else if (_stricmp(gameMode.c_str(), "campaign") == 0) {
+        gameModeTag = 1;    // Explicit Campaign mode (including Firefight-canvas campaign mods)
+    } else if (_stricmp(gameMode.c_str(), "firefight") == 0 ||
+               (_stricmp(gameMode.c_str(), "multiplayer") != 0 && mapId >= 210 && mapId <= 219)) {
         gameModeTag = 1035; // 0x40B Firefight
-    } else if ((mapId >= 178 && mapId <= 189) || _stricmp(gameMode.c_str(), "campaign") == 0) {
+    } else if (mapId >= 178 && mapId <= 189) {
         gameModeTag = 1;    // Campaign
     } else if (mapId == static_cast<uint32_t>(-2) || mapId == 0 ||
                _stricmp(gameMode.c_str(), "mainmenu") == 0 || _stricmp(gameMode.c_str(), "menu") == 0) {
         gameModeTag = 0;    // Main Menu
     }
 
-    // A mod map built on a Firefight canvas is a Forge map in Reach terms: its world is only loaded by the Forge
-    // engine. Launched as Firefight or Slayer it loads and reports the session as running, but renders a black screen.
-    // MCC plays these mods in Forge for the same reason. Do this before the map info is presented, since the type
-    // written there follows the engine mode.
-    if (noble::VFS::HasActiveMod() && gameModeTag != 3 && noble::VFS::IsFirefightCanvas(mapName)) {
-        NOBLE_WARN("BlamEngine: '{}' is a mod map on a Firefight canvas; launching it through the Forge engine", mapName);
+    // A multiplayer mod map built on a Firefight canvas is a Forge map in Reach terms: its world is only loaded by the
+    // Forge/multiplayer engine. Do this before the map info is presented, since the type written there follows the
+    // engine mode.
+    const std::string overrideCanvas = noble::VFS::MapOverrideCanvas();
+    const bool firefightCanvas =
+        noble::VFS::IsFirefightCanvas(mapName) ||
+        (!overrideCanvas.empty() &&
+         (noble::VFS::IsFirefightCanvas(overrideCanvas) || overrideCanvas.rfind("ff_", 0) == 0 ||
+          overrideCanvas.rfind("ff60", 0) == 0 || overrideCanvas.rfind("cex_ff", 0) == 0));
+    if (noble::VFS::HasActiveMod() && gameModeTag == 2 && firefightCanvas) {
+        NOBLE_WARN("BlamEngine: '{}' is a multiplayer mod map on a Firefight canvas ({}); launching it through the Forge engine",
+                   mapName, overrideCanvas.empty() ? mapName : overrideCanvas);
         gameModeTag = 3;
+    }
+
+    // Diagnostic: force the engine mode tag (1 campaign, 3 forge, 5 campaign-like, 1035 firefight).
+    if (const char* forcedTag = std::getenv("NOBLE_GAMEMODE_TAG")) {
+        gameModeTag = std::atoi(forcedTag);
+        NOBLE_WARN("BlamEngine: engine mode tag forced to {}", gameModeTag);
     }
 
     // A mod map built on a Firefight canvas has to be presented to the engine as a multiplayer map, whichever way the
@@ -1040,6 +1522,10 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
     if (noble::VFS::HasActiveMod() && (gameModeTag == 3 || gameModeTag == 2)) {
         noble::VFS::EnsureMultiplayerMapInfo(mapName);
     }
+
+    // Campaign co-op: keep the joining peer even when the engine decides its campaign progress is incompatible
+    // (see LobbyPatches::Hook_BootPeer) - otherwise the mission ends with "Error hosting co-op".
+    noble::LobbyPatches::SetCampaignCoop(gameModeTag == 1);
 
     // Career pays by base type, so modded maps/variants earn exactly what their stock type earns.
     if (gameModeTag != 0) Career::BeginMatch(Career::BaseTypeFromEngineMode(gameModeTag), mapName, difficulty, skulls);
@@ -1052,6 +1538,9 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
     if (gameModeTag == 1 || gameModeTag == 1035 || gameModeTag == 5) {
         int declaredPlayers = 1;
         if (connectAddress.empty() && expectedPeers > 0) declaredPlayers = 1 + expectedPeers;
+        // Exactly the players this launch is for. Declaring more than are present leaves the engine waiting at load
+        // state 8 for participants that never arrive (a solo launch with 4 declared hangs on the loading screen), and
+        // the lobby already passes the full roster, so a three-player lobby declares three and starts.
         launchBlock[0xE8] = static_cast<uint8_t>(declaredPlayers);
         NOBLE_INFO("BlamEngine: launch block declares {} player(s) (0xE8)", declaredPlayers);
     }
@@ -1061,6 +1550,24 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
 
     if (m_fnStart) {
         void* hostPtr = ReachHost::Get().GetInterface();
+        // Campaign missions are chosen by the launch block, not by the requested map: the block carries the map id at
+        // 0x10/0x14 (179 for m10, 180 for the next mission). A mod map served into a campaign slot therefore never
+        // loads; retarget the block at the override's own map id so the campaign engine asks for that map instead.
+        if (const char* retarget = std::getenv("NOBLE_BLOCK_IDPATCH")) {
+            (void)retarget;
+            const std::string canvas = noble::VFS::MapOverrideCanvas();
+            const uint32_t canvasId = canvas.empty() ? 0xFFFFFFFFu : ResolveMapId(canvas);
+            NOBLE_INFO("BlamEngine: block retarget check: canvas='{}' id={} launch={} mapId={}", canvas, canvasId, mapName,
+                       mapId);
+            if (canvasId != 0xFFFFFFFFu && canvasId != mapId) {
+                std::memcpy(launchBlock.data() + 0x10, &canvasId, sizeof(canvasId));
+                std::memcpy(launchBlock.data() + 0x14, &canvasId, sizeof(canvasId));
+                noble::VFS::SetMapOverride(canvas, noble::VFS::MapOverrideFile());
+                NOBLE_WARN("BlamEngine: campaign launch block retargeted from map {} to '{}' ({})", mapId, canvas,
+                           canvasId);
+            }
+        }
+
         NOBLE_INFO("Invoking c_game_engine Start(engine, host:0x{:X}, launch_block) [Map: {}]...",
             reinterpret_cast<uintptr_t>(hostPtr), mapName);
         int32_t startStatus = m_fnStart(m_engineInstance, hostPtr, launchBlock.data());
@@ -1070,7 +1577,7 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
     const bool isGuest = !connectAddress.empty();
     if (!isGuest) {
         const bool isOnlineHost = noble::NetworkTransport::Get().IsActive() && noble::NetworkTransport::Get().IsHost();
-        const bool settleLonger = (gameModeTag == 1 || gameModeTag == 3); // campaign co-op / Forge
+        const bool settleLonger = (gameModeTag == 1 || gameModeTag == 3 || gameModeTag == 1035); // campaign co-op / Forge / Firefight
         const int peersToWaitFor = (isOnlineHost && expectedPeers > 0) ? expectedPeers : 0;
 
         std::thread([this, isOnlineHost, peersToWaitFor, settleLonger, gameModeTag]() {
@@ -1129,14 +1636,34 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
             std::thread([this]() {
                 // Post Command 10 promptly so the engine loads scenario map tags and initializes the network session
                 std::this_thread::sleep_for(std::chrono::milliseconds(500));
-                if (!m_engineInstance || !m_fnProcessEvent) return;
+                if (!m_isGameRunning || !m_engineInstance || !m_fnProcessEvent) return;
+
+                int32_t launchState = -1;
+                int32_t mapState = -1;
+                if (ReadEngineLaunchMapStateSEH(m_hModule, &launchState, &mapState) &&
+                    (launchState >= 11 || mapState >= 2)) {
+                    NOBLE_INFO("BlamEngine: [GUEST Campaign] Engine already running via host session sync (launch={}, map={}); skipping manual PostCommand(10/11).",
+                               launchState, mapState);
+                    return;
+                }
+
                 NOBLE_INFO("BlamEngine: [GUEST Campaign] Posting Command 10 (Event: Start) via vtbl+0x18...");
                 int32_t status10 = m_fnProcessEvent(m_engineInstance, 10, 0);
                 NOBLE_INFO("BlamEngine: [GUEST Campaign] PostCommand(10) returned 0x{:X}", status10);
 
-                // Wait for map loading to finish before posting Command 11 (simulation start)
+                // Wait for map loading to finish OR for host session sync to start simulation directly.
+                // Note: On Campaign maps, LoadProgress can remain at 5.0% while haloreach.dll advances
+                // launchState -> 11 and mapState -> 2 ("running") via host session parameters. Re-posting
+                // Command 11 after the 30s timeout while Co-Op simulation is already running disrupts gameplay.
                 const ULONGLONG deadline = GetTickCount64() + 30000;
                 while (GetTickCount64() < deadline) {
+                    if (!m_isGameRunning || !m_engineInstance || !m_fnProcessEvent) return;
+                    if (ReadEngineLaunchMapStateSEH(m_hModule, &launchState, &mapState) &&
+                        (launchState >= 11 || mapState >= 2)) {
+                        NOBLE_INFO("BlamEngine: [GUEST Campaign] Simulation started via host session sync (launch={}, map={}); skipping manual PostCommand(11).",
+                                   launchState, mapState);
+                        return;
+                    }
                     if (LoadScreen::Get().GetLoadProgress() >= 0.95f) {
                         NOBLE_INFO("BlamEngine: [GUEST Campaign] Map load reached {:.1f}%; settling for host session sync",
                                    LoadScreen::Get().GetLoadProgress() * 100.0f);
@@ -1145,14 +1672,34 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
                     std::this_thread::sleep_for(std::chrono::milliseconds(100));
                 }
 
-                // Settle a moment for world replication / session sync from host
-                std::this_thread::sleep_for(std::chrono::milliseconds(2500));
-
-                if (m_engineInstance && m_fnProcessEvent) {
-                    NOBLE_INFO("BlamEngine: [GUEST Campaign] Posting Command 11 (Simulation Start) via vtbl+0x18...");
-                    int32_t status11 = m_fnProcessEvent(m_engineInstance, 11, 0);
-                    NOBLE_INFO("BlamEngine: [GUEST Campaign] PostCommand(11) returned 0x{:X}", status11);
+                // Join handshake: wait for the host's session_sync (repeated every couple of seconds while its
+                // simulation runs, so a guest joining mid-match receives it promptly). Falls back to a short settle
+                // if the host never reports - older hosts, or a LAN join without the relay.
+                {
+                    const ULONGLONG syncDeadline = GetTickCount64() + 20000;
+                    while (GetTickCount64() < syncDeadline &&
+                           !noble::NetworkTransport::Get().HostSimulationRunning()) {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                    }
+                    if (noble::NetworkTransport::Get().HostSimulationRunning()) {
+                        NOBLE_INFO("BlamEngine: [GUEST Campaign] host reports its simulation running (frame {}); starting",
+                                   noble::NetworkTransport::Get().HostSimulationFrame());
+                    } else {
+                        NOBLE_WARN("BlamEngine: [GUEST Campaign] no session_sync from the host after 20 s; starting anyway");
+                    }
                 }
+
+                if (!m_isGameRunning || !m_engineInstance || !m_fnProcessEvent) return;
+                if (ReadEngineLaunchMapStateSEH(m_hModule, &launchState, &mapState) &&
+                    (launchState >= 11 || mapState >= 2)) {
+                    NOBLE_INFO("BlamEngine: [GUEST Campaign] Simulation already active after settle (launch={}, map={}); skipping manual PostCommand(11).",
+                               launchState, mapState);
+                    return;
+                }
+
+                NOBLE_INFO("BlamEngine: [GUEST Campaign] Posting Command 11 (Simulation Start) via vtbl+0x18...");
+                int32_t status11 = m_fnProcessEvent(m_engineInstance, 11, 0);
+                NOBLE_INFO("BlamEngine: [GUEST Campaign] PostCommand(11) returned 0x{:X}", status11);
             }).detach();
         } else {
             NOBLE_INFO("BlamEngine: [GUEST] Remote join active - skipping manual PostCommand(10/11); waiting for host session sync.");

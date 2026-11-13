@@ -49,6 +49,30 @@ public:
     // Dispatches a developer/console command to haloreach.dll
     bool ExecuteCommand(const std::string& command);
 
+    // Runs the engine's own map-variant save (RVA 0x156974). It builds the whole BLF from the live session variant -
+    // the same bytes the game's Forge save writes - and hands them to the engine's save system. Must be called on the
+    // engine thread (PauseMenu::Render is). Returns false if the call faulted; the save itself may still be asynchronous.
+    bool TriggerMapVariantSave();
+
+    // Hooks the engine's map-variant serializer (RVA 0x17AC38) and keeps the 0x7028-byte chunk it produces. The
+    // engine's save routine builds that chunk before handing it to the save device, so this is where the edited
+    // variant exists even when the device write fails.
+    bool InstallMapVariantCapture();
+
+    // Serializes the live session map variant by calling the engine's serializer directly. The engine keeps it at
+    // [TLS block + 0x48] + 0x110F0 (the pointer its own save routine copies from). Returns a 0x7028-byte mvar chunk;
+    // this does not depend on the save UI or the save device, so it also works while the game is paused.
+    bool TrySerializeLiveMapVariant(std::vector<uint8_t>& outChunk);
+    bool TakeCapturedMapVariantChunk(std::vector<uint8_t>& out);
+
+    // Dev: dump the engine state around the live map variant (raw state, the struct, and its serialized chunk) so
+    // two snapshots can be diffed around a Forge placement.
+    bool DumpLiveMapVariant(const std::filesystem::path& dir, int index);
+
+    // -mvar-live-dump: snapshot on a timer from the engine thread (slot 1), where the TLS state is valid.
+    static void ConfigureLiveDump(std::filesystem::path dir, int seconds);
+    void TickLiveDump();
+
     const std::string& GetCurrentMap() const { return m_currentMap; }
     const std::string& GetCurrentMode() const { return m_currentMode; }
     bool IsForgeMode() const { return _stricmp(m_currentMode.c_str(), "forge") == 0 || _stricmp(m_currentMode.c_str(), "sandbox") == 0; }

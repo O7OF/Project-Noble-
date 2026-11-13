@@ -4,6 +4,7 @@
 #include "common/Logger.hpp"
 #include "common/Settings.hpp"
 #include "hooks/HookManager.hpp"
+#include "network/NetworkTransport.hpp"
 #include "vfs/VFS.hpp"
 
 #include <algorithm>
@@ -11,6 +12,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <intrin.h>
 
 namespace noble {
 
@@ -54,6 +56,7 @@ using GetObjectMarkersFn = int16_t(__fastcall*)(int32_t objectDatumIndex, int32_
 using GetUnitHeadPosFn = float*(__fastcall*)(int32_t unitDatumIndex, float* outPos);
 using GetUltimateParentFn = int32_t(__fastcall*)(int32_t objectDatumIndex);
 using UpdateObjectNodesFn = void(__fastcall*)(int32_t objectDatumIndex);
+uintptr_t s_reachBase = 0;
 CameraModeCheckFn s_original = nullptr;
 UnitThirdPersonFn s_origUnitThirdPerson = nullptr;
 GetLocalUnitFn s_getLocalUnit = nullptr;
@@ -80,6 +83,17 @@ CameraUpdateFn s_originalFollow = nullptr;
 CameraUpdateFn s_originalFollowingUpdate = nullptr;
 CameraUpdateFn s_origFirstPersonUpdate = nullptr;
 
+// Return-address RVAs of the local camera-director and FP-arms-visibility callers of haloreach+0xC6948:
+//   - 0x1348B6: c_game_director::update (local camera mode selection: 0 = following_camera, 3 = first_person_camera)
+//   - 0x1DAFF0: c_saved_film_director::update (local camera mode selection)
+//   - 0x1DB656: first_person_weapon_should_draw (local 1st-person arms/weapon model visibility)
+// Any other caller (specifically 0x134B53 in player_control_get_aiming_position, which computes the unit's
+// simulation aiming/projectile origin) MUST receive the unmodified engine result so local 3rd-person view
+// never alters simulation state or causes co-op / multiplayer desync.
+bool IsLocalCameraOrRenderCaller(uintptr_t callerRva) {
+    return callerRva == 0x1348B6 || callerRva == 0x1DAFF0 || callerRva == 0x1DB656;
+}
+
 int32_t __fastcall Hook_UnitThirdPerson(int32_t unitDatumIndex, int32_t* outReason) {
     int32_t dummyReason = 0;
     int32_t* reasonPtr = outReason ? outReason : &dummyReason;
@@ -88,12 +102,17 @@ int32_t __fastcall Hook_UnitThirdPerson(int32_t unitDatumIndex, int32_t* outReas
         const int32_t reason = *reasonPtr;
         const bool inVehicle = (reason >= 1 && reason <= 3);
         s_localInVehicle.store(inVehicle);
-        if (inVehicle && s_vehicleFirstPerson.load()) {
-            *reasonPtr = 0;
-            return 0;
-        }
-        if (!inVehicle && s_enabled.load() && s_mode.load() != 1) {
-            return 1;
+        const uintptr_t retAddr = reinterpret_cast<uintptr_t>(_ReturnAddress());
+        const uintptr_t callerRva = (s_reachBase && retAddr > s_reachBase) ? (retAddr - s_reachBase) : 0;
+        if (IsLocalCameraOrRenderCaller(callerRva)) {
+            if (inVehicle && s_vehicleFirstPerson.load()) {
+                *reasonPtr = 0;
+                return 0;
+            }
+            if (!inVehicle && s_enabled.load() && s_mode.load() != 1) {
+                if (*reasonPtr == 0) *reasonPtr = 4;
+                return 1;
+            }
         }
     }
     return orig;
@@ -129,7 +148,8 @@ void __fastcall Hook_FirstPersonUpdate(void* camera, int32_t userIndex, float dt
             const auto* up  = reinterpret_cast<const float*>(static_cast<const uint8_t*>(observerCommand) + 0x38);
 
             const int32_t vehicleDatum = s_getUltimateParent ? s_getUltimateParent(unitDatum) : -1;
-            if (vehicleDatum != -1 && vehicleDatum != unitDatum && s_updateObjectNodes) {
+            const bool netActive = NetworkTransport::Get().IsActive();
+            if (!netActive && vehicleDatum != -1 && vehicleDatum != unitDatum && s_updateObjectNodes) {
                 s_updateObjectNodes(unitDatum);
             }
 
@@ -137,7 +157,7 @@ void __fastcall Hook_FirstPersonUpdate(void* camera, int32_t userIndex, float dt
             float headPos[3] = {pos[0], pos[1], pos[2]};
             bool gotHead = false;
             if (s_getObjectMarkers) {
-                const int16_t count = s_getObjectMarkers(unitDatum, 0xC2, unitMarkerTick, 1, 1, 0);
+                const int16_t count = s_getObjectMarkers(unitDatum, 0xC2, unitMarkerTick, 1, 1, netActive ? 1 : 0);
                 if (count > 0) {
                     const auto* mp = reinterpret_cast<const float*>(unitMarkerTick + 0x60);
                     headPos[0] = mp[0];
@@ -151,7 +171,7 @@ void __fastcall Hook_FirstPersonUpdate(void* camera, int32_t userIndex, float dt
                 gotHead = true;
             }
 
-            if (gotHead && vehicleDatum != -1 && vehicleDatum != unitDatum && s_getObjectMarkers) {
+            if (!netActive && gotHead && vehicleDatum != -1 && vehicleDatum != unitDatum && s_getObjectMarkers) {
                 alignas(16) uint8_t vehMarkerTick[0x80] = {};
                 alignas(16) uint8_t vehMarkerRender[0x80] = {};
                 const int16_t tickCount   = s_getObjectMarkers(vehicleDatum, 0, vehMarkerTick, 1, 1, 0);
@@ -322,11 +342,16 @@ void __fastcall Hook_CameraFollowingUpdate(void* camera, int32_t userIndex, floa
 int32_t __fastcall Hook_CameraModeCheck(int32_t unitDatumIndex) {
     const int32_t orig = s_original ? s_original(unitDatumIndex) : 0;
     const int32_t localUnit = s_getLocalUnit ? s_getLocalUnit(0) : -1;
-    if (unitDatumIndex == 0 || (localUnit != -1 && unitDatumIndex == localUnit)) {
+    if (localUnit != -1 && unitDatumIndex == localUnit) {
         s_engineThirdPerson.store(orig != 0);
     }
+    // When Hook_UnitThirdPerson (haloreach+0xC6948) is active, it selectively overrides only local camera-director
+    // and FP-arms-visibility call sites while preserving simulation aiming (haloreach+0x134B4E) and weapon camera
+    // marker checks (haloreach+0x48A527). Never override haloreach+0x48A910 directly when unit_third_person is hooked
+    // or when localUnit is unknown (-1), as doing so alters simulation aiming and remote co-op units.
+    if (s_origUnitThirdPerson != nullptr) return orig;
     if (!s_enabled.load()) return orig;
-    if (localUnit != -1 && unitDatumIndex != localUnit) return orig;
+    if (localUnit == -1 || unitDatumIndex != localUnit) return orig;
     const int mode = s_mode.load();
     if (s_logCount.fetch_add(1) < 5) {
         NOBLE_INFO("CameraThirdPerson: camera check fired (unit 0x{:X}, mode {}, original {})",
@@ -342,6 +367,7 @@ int32_t __fastcall Hook_CameraModeCheck(int32_t unitDatumIndex) {
 bool CameraThirdPerson::Install(HMODULE haloreach) {
     const uintptr_t base = reinterpret_cast<uintptr_t>(haloreach);
     if (!base) return false;
+    s_reachBase = base;
     s_getLocalUnit = reinterpret_cast<GetLocalUnitFn>(base + kGetLocalUnitRva);
     s_getObjectMarkers = reinterpret_cast<GetObjectMarkersFn>(base + kGetObjectMarkersRva);
     s_getUnitHeadPos = reinterpret_cast<GetUnitHeadPosFn>(base + kGetUnitHeadPosRva);

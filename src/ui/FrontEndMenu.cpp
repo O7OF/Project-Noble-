@@ -1,6 +1,7 @@
 #include <map>
 #include <functional>
 #include "FrontEndMenu.hpp"
+#include "engine/SessionVariant.hpp"
 #include "audio/VoiceChat.hpp"
 #include "SocialOverlay.hpp"
 #include "NobleUi.hpp"
@@ -460,9 +461,66 @@ bool ReadForgeMap(const std::filesystem::path& path, ForgeMap& out) {
     return true;
 }
 
+// A map variant saved by Noble is JSON: {"version","name","base_map_id","mode","data":"<base64>"} where data is the
+// variant in the engine's own BLF/"mvar" container. Unpack it into <stem>.mvar next to the JSON (the form the engine
+// mounts through "-mvar"), reusing the file when it is already current.
+bool UnpackJsonForgeMap(const std::filesystem::path& jsonPath, std::filesystem::path& outMvar) {
+    std::error_code ec;
+    std::ifstream file(jsonPath, std::ios::binary);
+    if (!file) return false;
+    nlohmann::json j;
+    try {
+        j = nlohmann::json::parse(file);
+    } catch (...) {
+        return false;
+    }
+    const std::string encoded = j.value("data", std::string());
+    if (encoded.empty()) return false;
+
+    static const auto value = [](char c) -> int {
+        if (c >= 'A' && c <= 'Z') return c - 'A';
+        if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+        if (c >= '0' && c <= '9') return c - '0' + 52;
+        if (c == '+') return 62;
+        if (c == '/') return 63;
+        return -1;
+    };
+    std::vector<unsigned char> bytes;
+    bytes.reserve(encoded.size() / 4 * 3 + 3);
+    uint32_t buffer = 0;
+    int bits = 0;
+    for (char c : encoded) {
+        const int v = value(c);
+        if (v < 0) continue;
+        buffer = (buffer << 6) | static_cast<uint32_t>(v);
+        bits += 6;
+        if (bits >= 8) {
+            bits -= 8;
+            bytes.push_back(static_cast<unsigned char>((buffer >> bits) & 0xFF));
+        }
+    }
+    if (bytes.size() < 0x7329) return false;
+
+    outMvar = jsonPath;
+    outMvar.replace_extension(L".mvar");
+    bool current = std::filesystem::exists(outMvar, ec) &&
+                   std::filesystem::file_size(outMvar, ec) == bytes.size() &&
+                   std::filesystem::last_write_time(outMvar, ec) >= std::filesystem::last_write_time(jsonPath, ec);
+    if (current) return true;
+    std::ofstream out(outMvar, std::ios::binary | std::ios::trunc);
+    out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+    return static_cast<bool>(out);
+}
+
 std::vector<ForgeMap> ScanForgeMaps() {
     std::vector<ForgeMap> list;
     std::vector<std::filesystem::path> folders = { VFS::GetUserStoragePath() / "map_variants" };
+    // MCC ships its own Forge map variants with the game: haloreachmap_variants (the maps' defaults) and
+    // haloreachhopper_map_variants (the matchmaking hopper layouts, 266 files). Listing them makes every base
+    // variant playable and gives a large, known-good set to check loading/saving against.
+    const std::filesystem::path reachDir = VFS::GetBaseMccPath();
+    folders.push_back(reachDir / "map_variants");
+    folders.push_back(reachDir / "hopper_map_variants");
     wchar_t userProfile[MAX_PATH] = {};
     if (GetEnvironmentVariableW(L"USERPROFILE", userProfile, MAX_PATH) > 0) {
         const std::filesystem::path uProf(userProfile);
@@ -473,12 +531,37 @@ std::vector<ForgeMap> ScanForgeMaps() {
     std::error_code ec;
     int skipped = 0;
     for (const std::filesystem::path& folder : folders) {
-        for (const auto& entry : std::filesystem::directory_iterator(folder, ec)) {
-            if (!entry.is_regular_file(ec) || Lower(entry.path().extension().wstring()) != L".mvar") continue;
-            if (!seen.insert(Lower(entry.path().filename().wstring())).second) continue;
+        // A saved variant exists twice: the JSON (source of truth) and the .mvar unpacked next to it for the engine.
+        // Walk the JSONs first and let them claim the stem, otherwise the stale .mvar can be listed and the saved
+        // variant is never seen (and never unpacked) until something else refreshes it.
+        std::vector<std::filesystem::directory_entry> entries;
+        for (const auto& entry : std::filesystem::directory_iterator(folder, ec)) entries.push_back(entry);
+        std::sort(entries.begin(), entries.end(), [](const auto& a, const auto& b) {
+            const bool aj = Lower(a.path().extension().wstring()) == L".json";
+            const bool bj = Lower(b.path().extension().wstring()) == L".json";
+            if (aj != bj) return aj;
+            return a.path().wstring() < b.path().wstring();
+        });
+        for (const auto& entry : entries) {
+            if (!entry.is_regular_file(ec)) continue;
+            const std::wstring ext = Lower(entry.path().extension().wstring());
+            if (ext != L".mvar" && ext != L".json") continue;
+            if (!seen.insert(Lower(entry.path().stem().wstring())).second) continue;
+            std::filesystem::path variantFile = entry.path();
+            // A saved map variant is JSON (base64 payload + name + base map): unpack it next to itself as the .mvar the
+            // engine mounts, and read the metadata from that.
+            if (ext == L".json") {
+                std::filesystem::path unpacked;
+                if (!UnpackJsonForgeMap(entry.path(), unpacked)) { ++skipped; continue; }
+                variantFile = unpacked;
+            }
             ForgeMap map;
-            if (ReadForgeMap(entry.path(), map)) list.push_back(std::move(map));
-            else ++skipped;
+            if (ReadForgeMap(variantFile, map)) {
+                map.path = variantFile;   // the engine gets the .mvar; the JSON stays the source of truth
+                list.push_back(std::move(map));
+            } else {
+                ++skipped;
+            }
         }
         ec.clear();
     }
@@ -3053,8 +3136,8 @@ std::string CarrierForScenario(const std::string& scenario, const std::string& f
     std::string key = scenario;
     for (char& c : key) c = static_cast<char>(::tolower(static_cast<unsigned char>(c)));
     const auto it = s_carriers.find(key);
-    if (it != s_carriers.end()) return it->second;
-    if (key.find("forge_halo") != std::string::npos) return "forge_halo";
+    if (it != s_carriers.end() && fallback != "m10") return it->second;
+    if (fallback != "m10" && key.find("forge_halo") != std::string::npos) return "forge_halo";
     return fallback;
 }
 
@@ -3089,7 +3172,7 @@ std::vector<MapEntry> ModMaps(const ModEntry& mod, const std::vector<ModMap>& li
         // data\map_carriers.json entry for the map).
         const bool baseUsable = !m.baseScenario.empty() &&
                                 (KnownScenario(m.baseScenario, base, baseCount) ||
-                                 m.baseScenario.find("forge_halo") != std::string::npos);
+                                 (carrier != "m10" && m.baseScenario.find("forge_halo") != std::string::npos));
         const std::string defaultCarrier = baseUsable ? m.baseScenario : carrier;
         entry.launchScenario = CarrierForScenario(m.scenario, defaultCarrier);
         entry.mapOverride = mapFile;
@@ -3102,27 +3185,30 @@ std::vector<MapEntry> ModMaps(const ModEntry& mod, const std::vector<ModMap>& li
         entry.blurb = "Custom map \xC2\xB7 loads through " + MapNames::Display(entry.launchScenario) + ".";
         out.push_back(std::move(entry));
     }
-    for (const std::string& file : mod.mapFiles) {
-        if (!KnownScenario(file, base, baseCount)) {
+    const bool hasManifestMaps = !mod.campaign.empty() || !mod.firefight.empty() || !mod.multiplayer.empty();
+    if (!hasManifestMaps) {
+        for (const std::string& file : mod.mapFiles) {
+            if (!KnownScenario(file, base, baseCount)) {
+                if (std::any_of(out.begin(), out.end(), [&](const MapEntry& e) { return e.scenario == file; })) continue;
+                const std::filesystem::path mapFile = mod.folder / "maps" / (file + ".map");
+                MapEntry entry;
+                entry.scenario = file;
+                entry.name = MapNames::Display(file);
+                std::string fileCarrier = carrier;
+                if (carrier != "m10" && file.find("forge_halo") != std::string::npos) fileCarrier = "forge_halo";
+                entry.launchScenario = CarrierForScenario(file, fileCarrier);
+                entry.mapOverride = mapFile;
+                entry.enabled = true;
+                entry.mod = &mod;
+                entry.custom = true;
+                entry.blurb = "Custom map \xC2\xB7 loads on " + MapNames::Display(entry.launchScenario);
+                out.push_back(std::move(entry));
+                continue;
+            }
             if (std::any_of(out.begin(), out.end(), [&](const MapEntry& e) { return e.scenario == file; })) continue;
-            const std::filesystem::path mapFile = mod.folder / "maps" / (file + ".map");
-            MapEntry entry;
-            entry.scenario = file;
-            entry.name = MapNames::Display(file);
-            std::string fileCarrier = carrier;
-            if (file.find("forge_halo") != std::string::npos) fileCarrier = "forge_halo";
-            entry.launchScenario = CarrierForScenario(file, fileCarrier);
-            entry.mapOverride = mapFile;
-            entry.enabled = true;
-            entry.mod = &mod;
-            entry.custom = true;
-            entry.blurb = "Custom map \xC2\xB7 loads on " + MapNames::Display(entry.launchScenario);
-            out.push_back(std::move(entry));
-            continue;
-        }
-        if (std::any_of(out.begin(), out.end(), [&](const MapEntry& e) { return e.scenario == file; })) continue;
-        for (int i = 0; i < baseCount; ++i) {
-            if (file == base[i].scenario) out.push_back({ file, base[i].name, base[i].blurb, {}, {}, {}, {}, {}, true, &mod });
+            for (int i = 0; i < baseCount; ++i) {
+                if (file == base[i].scenario) out.push_back({ file, base[i].name, base[i].blurb, {}, {}, {}, {}, {}, true, &mod });
+            }
         }
     }
     return out;
@@ -3241,6 +3327,61 @@ std::vector<MapEntry> ForgeMapEntries(const std::vector<ForgeMap>& forgeMaps, co
     return out;
 }
 
+// Maps menu nesting: under each stock map, its own Forge map variants, as a collapsible heading. MCC ships them
+// (haloreach\map_variants and haloreach\hopper_map_variants) and a player's own saved ones live in
+// data\map_variants, so "atom" or "cliffhanger" appear under Forge World where they belong rather than only in the
+// separate Forge maps tab.
+void InsertMapVariants(std::vector<MapEntry>& list, const std::vector<ForgeMap>& forgeMaps, std::set<std::string>& open) {
+    if (forgeMaps.empty() || list.empty()) return;
+    std::vector<MapEntry> out;
+    out.reserve(list.size() + forgeMaps.size());
+    for (const MapEntry& e : list) {
+        out.push_back(e);
+        if (e.header || e.mod || e.custom || !e.mvar.empty() || e.scenario.empty()) continue;   // stock map rows only
+        std::vector<const ForgeMap*> variants;
+        for (const ForgeMap& m : forgeMaps) if (m.scenario == e.scenario) variants.push_back(&m);
+        if (variants.empty()) continue;
+        MapEntry heading;
+        heading.name = "Map variants  (" + std::to_string(variants.size()) + ")";
+        heading.header = true;
+        heading.scenario = e.scenario;
+        heading.forgeGroup = "variants:" + e.scenario;
+        heading.enabled = open.count(ForgeOpenKey(heading.forgeGroup)) != 0;
+        heading.blurb = "Forge map variants built on " + MapNames::Display(e.scenario) + ".";
+        out.push_back(heading);
+        if (!heading.enabled) continue;
+        for (const ForgeMap* m : variants) {
+            MapEntry row;
+            row.scenario = m->scenario;
+            row.name = m->title;
+            row.blurb = !m->description.empty() ? PlainDescription(m->description, 150) + " (Forge map)"
+                                                : "Forge map on " + MapNames::Display(m->scenario) + ".";
+            row.mvar = m->path;
+            row.forgeGroup = m->group;
+            out.push_back(row);
+        }
+    }
+    static int s_logged = 0;
+    if (s_logged < 6) {
+        ++s_logged;
+        int rows = 0;
+        for (const MapEntry& e : out) if (!e.mvar.empty()) ++rows;
+        std::string sample;
+        for (const ForgeMap& m : forgeMaps) {
+            sample += m.scenario + " ";
+            if (sample.size() > 200) break;
+        }
+        sample += " || ";
+        for (const MapEntry& e : out) {
+            if (e.header || e.mod || e.custom) continue;
+            sample += e.scenario + " ";
+            if (sample.size() > 400) break;
+        }
+        NOBLE_INFO("FrontEndMenu: map list {} row(s), {} variants nested; base rows: {}", out.size(), rows, sample);
+    }
+    list.swap(out);
+}
+
 void ToggleForgeGroup(std::set<std::string>& open, const std::string& group) {
     const std::string k = ForgeOpenKey(group);
     if (!open.erase(k)) open.insert(k);
@@ -3296,6 +3437,7 @@ struct OverlayContext {
     std::vector<MenuVariant> variants;
     std::vector<MenuVariant> ffVariants;
     std::vector<ForgeMap> forgeMaps;
+    bool forgeMapsScanned = false;   // the scan is lazy: the maps menu needs it before the Forge tab is opened
     std::filesystem::path forgeVariant;
     std::vector<ModEntry> mods;
     std::vector<const ModEntry*> campaignMods;
@@ -3325,6 +3467,7 @@ OverlayContext& GetOverlayCtx() {
     static OverlayContext s_ctx;
     return s_ctx;
 }
+
 
 // Rescans Workshop + data\mods and rebuilds the per-mode lists the setup screens use. Called at menu start
 // and again after the Download & Join prompt installs the lobby's mod.
@@ -3555,6 +3698,24 @@ struct PendingLobbyEvents {
 static std::mutex s_lobbyEventMutex;
 static PendingLobbyEvents s_lobbyEvents;
 
+// The master server keeps a roster per session and the host re-registers it every few seconds, so a guest who
+// leaves can linger as a nameless row - which the UI then labels "Host" for want of a name. Drop nameless rows that
+// are not the host, keep exactly one host row, and give it a name.
+static void SanitizeLobbyRoster(std::vector<LobbyPlayer>& roster) {
+    roster.erase(std::remove_if(roster.begin(), roster.end(),
+                                [](const LobbyPlayer& p) { return p.username.empty() && !p.isHost; }),
+                 roster.end());
+    bool hostSeen = false;
+    for (LobbyPlayer& p : roster) {
+        if (p.isHost && !hostSeen) { hostSeen = true; if (p.username.empty()) p.username = "Host"; }
+        else if (p.isHost) { p.isHost = false; }
+    }
+    if (!hostSeen && !roster.empty()) {
+        roster.front().isHost = true;
+        if (roster.front().username.empty()) roster.front().username = "Host";
+    }
+}
+
 static void ClearPendingLobbyEvents() {
     std::lock_guard<std::mutex> lock(s_lobbyEventMutex);
     s_lobbyEvents = PendingLobbyEvents{};
@@ -3569,7 +3730,7 @@ static void TakePendingLobbyEvents(MenuState& st) {
         s_lobbyEvents = PendingLobbyEvents{};
     }
     if (ev.closed) {
-        st.screen = Screen::Servers;
+        st.screen = Screen::Main;
         st.lobbySessionId.clear();
         st.lobbySessionToken.clear();
         st.lobbyRoster.clear();
@@ -4085,36 +4246,54 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
             st.lobbySessionId = MasterServerClient::Get().GetCurrentSessionId();
             st.lobbySessionToken = MasterServerClient::Get().GetCurrentSessionToken();
         }
-        if (!st.lobbySessionId.empty() && MasterServerClient::Get().Enabled()) {
+        if ((!st.lobbySessionId.empty() || (!st.isLobbyHost && !st.lobbyHostEndpoint.empty())) && MasterServerClient::Get().Enabled()) {
             LobbyState current = MasterServerClient::Get().FetchLobbyStateSync(st.lobbySessionId);
+            if (!current.ok && !current.isClosed && !st.isLobbyHost && !st.lobbyHostEndpoint.empty()) {
+                // If the guest's configured region differs from the host's region or the host re-registered its session ID,
+                // re-resolve and re-join across all cluster regions using the host's IP:port before counting a failure.
+                std::string hostIp = st.lobbyHostEndpoint;
+                uint16_t hostPort = 11774;
+                const size_t colon = hostIp.rfind(':');
+                if (colon != std::string::npos) {
+                    hostPort = static_cast<uint16_t>(std::atoi(hostIp.c_str() + colon + 1));
+                    hostIp = hostIp.substr(0, colon);
+                }
+                std::string pName = AuthClient::Get().IsLoggedIn() ? AuthClient::Get().GetUsername() : Settings::Get().Snapshot().playerName;
+                if (pName.empty()) pName = "Guest";
+                uint64_t fallbackId = (MasterServerClient::GetLobbyMachineId() & 0x7FFFFFFFULL);
+                if (fallbackId < 2ULL) fallbackId = 2ULL;
+                const uint64_t pId = AuthClient::Get().IsLoggedIn() ? static_cast<uint64_t>(AuthClient::Get().GetUserId()) : fallbackId;
+                const std::string sTag = PlayerServiceTag(Settings::Get().Snapshot());
+                LobbyState rejoined = MasterServerClient::Get().JoinLobbySync(
+                    st.lobbySessionId, pId, pName, AuthClient::Get().IsDeveloper(), sTag,
+                    Career::RankIndex(Career::Get().credits),
+                    UIManager::GetArmorCustomizer().GetProfile().emblemIndex,
+                    UIManager::GetArmorCustomizer().GetProfile().emblemBackgroundIndex,
+                    UIManager::GetArmorCustomizer().GetProfile().nameplateIndex, 0,
+                    11774, hostIp, hostPort);
+                if (rejoined.ok) {
+                    if (!rejoined.sessionId.empty()) st.lobbySessionId = rejoined.sessionId;
+                    current = std::move(rejoined);
+                }
+            }
             if (current.ok) st.lobbyPollFailures = 0;
             if (!current.ok || current.isClosed) {
                 if (st.isLobbyHost) {
                     // The host owns the session; a failed fetch just means the master server blipped.
                 } else if (!current.isClosed) {
-                    // A failed fetch is not a kick. One dropped request (timeout, 502, a relay hiccup) used to send
-                    // the guest straight back to the server browser, which is what "auto kicked from the lobby"
-                    // looked like. Retry a few times before giving up, and say why.
-                    if (++st.lobbyPollFailures < 3) {
-                        NOBLE_WARN("FrontEndMenu: lobby poll failed ({} of 3, http {}); staying in the lobby",
+                    // Never kick a guest while the WebSocket relay is connected or during cross-region / transient HTTP poll drops.
+                    ++st.lobbyPollFailures;
+                    if (NetworkTransport::Get().IsRelayConnected()) {
+                        st.lobbyPollFailures = 1;
+                    } else if (st.lobbyPollFailures <= 5 || (st.lobbyPollFailures % 10) == 0) {
+                        NOBLE_WARN("FrontEndMenu: lobby poll failed ({}, http {}); staying in the lobby",
                                    st.lobbyPollFailures, current.httpStatus);
-                    } else {
-                        NOBLE_WARN("FrontEndMenu: lobby poll failed 3 times (http {}); leaving the lobby",
-                                   current.httpStatus);
-                        st.screen = Screen::Servers;
-                        st.lobbySessionId.clear();
-                        st.lobbySessionToken.clear();
-                        st.lobbyRoster.clear();
-                        st.isLobbyHost = false;
-                        st.lobbyPollFailures = 0;
-                        NetworkTransport::Get().StopRelay();
-                        return;
                     }
                 } else {
-                    // The host closed the session (or the server timed it out): no point staying.
-                    NOBLE_INFO("FrontEndMenu: lobby closed ({}); returning to the server browser",
+                    // The host explicitly closed or disbanded the session: return to the main menu.
+                    NOBLE_INFO("FrontEndMenu: lobby closed/disbanded ({}); returning to main menu",
                                current.closeReason.empty() ? "host closed" : current.closeReason);
-                    st.screen = Screen::Servers;
+                    st.screen = Screen::Main;
                     st.lobbySessionId.clear();
                     st.lobbySessionToken.clear();
                     st.lobbyRoster.clear();
@@ -4124,6 +4303,10 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
                     return;
                 }
             } else if (current.ok) {
+                if (!st.isLobbyHost && !current.roster.empty()) {
+                    st.lobbyRoster = current.roster;
+                    SanitizeLobbyRoster(st.lobbyRoster);
+                }
                 if (!st.isLobbyHost) {
                     st.lobbyMap = current.map;
                     st.lobbyMode = current.mode;
@@ -4136,6 +4319,7 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
                 }
                 if (!current.roster.empty()) {
                     st.lobbyRoster = current.roster;
+                    SanitizeLobbyRoster(st.lobbyRoster);
                     if (st.isLobbyHost) {
                         std::string pName = AuthClient::Get().IsLoggedIn() ? AuthClient::Get().GetUsername() : Settings::Get().Snapshot().playerName;
                         if (pName.empty()) pName = "Host";
@@ -4248,6 +4432,7 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
 
     // If launch was signaled (via WebSocket or HTTP poll) and we are guest, launch!
     if (!st.isLobbyHost && st.lobbyLaunchPending && !done) {
+        st.lobbyLaunchPending = false;
         choice.play = true;
         for (size_t p = 0; p < st.lobbyRoster.size(); ++p) {
             const auto& player = st.lobbyRoster[p];
@@ -4270,6 +4455,22 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         std::filesystem::path hostModFolder = !st.lobbyLaunchModFolder.empty() ?
             std::filesystem::path(st.lobbyLaunchModFolder) : st.lobbyModFolder;
         std::string hostModId = !st.lobbyLaunchModId.empty() ? st.lobbyLaunchModId : st.lobbyModId;
+
+        // A map override only applies to the map it belongs to. Leftovers from a previous lobby used to be applied to
+        // whatever launched next (a campaign mission loading the previous lobby's mod map, then failing mid-load).
+        if (!hostMapOverride.empty()) {
+            const std::string overrideStem = hostMapOverride.stem().string();
+            const std::string scenario = choice.map;
+            const bool belongs = overrideStem == scenario || overrideStem.rfind(scenario + "_", 0) == 0 ||
+                                 scenario.rfind(overrideStem + "_", 0) == 0;
+            if (!belongs) {
+                NOBLE_WARN("FrontEndMenu: ignoring map override '{}' for map '{}' (left over from another lobby)",
+                           hostMapOverride.filename().string(), scenario);
+                hostMapOverride.clear();
+                st.lobbyMapOverride.clear();
+                st.lobbyLaunchMapOverride.clear();
+            }
+        }
 
         if (!hostMapOverride.empty() || !hostModFolder.empty() || !hostModId.empty()) {
             std::filesystem::path resolvedMap;
@@ -4324,10 +4525,22 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
                 NOBLE_INFO("FrontEndMenu: Guest resolved modded map: '{}' (folder: '{}')",
                            choice.mapOverride.string(), choice.modFolder.string());
             } else {
-                choice.mapOverride = hostMapOverride;
-                choice.modFolder = resolvedModFolder;
-                NOBLE_WARN("FrontEndMenu: Modded map '{}' (mod: '{}') not found on guest PC",
-                           wantMapFile, hostModId);
+                // The host is on a mod map this PC does not have. Launching the plain map anyway puts the guest in a
+                // match on a different map than the host (the engine then errors out or the two desync), so refuse
+                // the launch and say which Workshop item is missing instead.
+                const bool stockScenario = KnownScenario(choice.map, kMissions, Count(kMissions)) ||
+                                           KnownScenario(choice.map, kFirefightMaps, Count(kFirefightMaps)) ||
+                                           KnownScenario(choice.map, kMaps, Count(kMaps));
+                if (!stockScenario || !hostModId.empty()) {
+                    NOBLE_WARN("FrontEndMenu: host's mod map '{}' (mod: '{}') is not on this PC; not launching",
+                               wantMapFile, hostModId);
+                    st.lobbyLaunchPending = false;
+                    return;
+                }
+                choice.mapOverride.clear();
+                choice.modFolder.clear();
+                NOBLE_WARN("FrontEndMenu: host launched stock map '{}' without a mod map; launching it as is",
+                           choice.map);
             }
         } else {
             choice.mapOverride = st.lobbyMapOverride;
@@ -5446,17 +5659,28 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         st.lobbyProfileOpen = false;
         MenuSounds::Back();
     } else if (back && !pickerWasOpen && !profileWasOpen) {
+        st.lobbyLaunchPending = false;
+        ClearPendingLobbyEvents();
         if (st.isLobbyHost) {
-            MasterServerClient::Get().StopAdvertising();
+            MasterServerClient::Get().StopAdvertisingSync();
             SessionManager::Get().StopHosting();
             NetworkTransport::Get().StopRelay();
+            st.lobbySessionId.clear();
+            st.lobbySessionToken.clear();
+            st.lobbyRoster.clear();
             st.screen = campaign ? Screen::Campaign : firefight ? Screen::Firefight : forge ? Screen::Forge : Screen::CustomGame;
         } else {
             uint64_t fallbackId = (MasterServerClient::GetLobbyMachineId() & 0x7FFFFFFFULL);
             if (fallbackId < 2ULL) fallbackId = 2ULL;
             uint64_t pId = AuthClient::Get().IsLoggedIn() ? static_cast<uint64_t>(AuthClient::Get().GetUserId()) : fallbackId;
-            MasterServerClient::Get().LeaveLobbySync(st.lobbySessionId, pId);
+            if (!st.lobbySessionId.empty()) {
+                MasterServerClient::Get().LeaveLobbySync(st.lobbySessionId, pId);
+            }
             NetworkTransport::Get().StopRelay();
+            st.lobbySessionId.clear();
+            st.lobbySessionToken.clear();
+            st.lobbyHostEndpoint.clear();
+            st.lobbyRoster.clear();
             st.screen = Screen::Servers;
         }
         st.focusRow = 0;
@@ -6182,8 +6406,39 @@ void ContainerMatchEnded(OverlayContext& ctx, DWORD exitCode) {
     if (ctx.hMatchProcess) CloseHandle(reinterpret_cast<HANDLE>(ctx.hMatchProcess));
     ctx.hMatchProcess = nullptr;
 
+    ctx.st.lobbyLaunchPending = false;
+    ClearPendingLobbyEvents();
+
     const std::wstring successor = Relaunch::TakeContainerRelaunch();
-    if (!successor.empty()) {
+    if (successor == L"-quit-app") {
+        ctx.matchRunning = false;
+        FrontEndMenu::SetMatchRunning(false);
+        if (!ctx.st.lobbySessionId.empty()) {
+            if (ctx.st.isLobbyHost) {
+                MasterServerClient::Get().StopAdvertisingSync();
+                SessionManager::Get().StopHosting();
+            } else {
+                uint64_t fallbackId = (MasterServerClient::GetLobbyMachineId() & 0x7FFFFFFFULL);
+                if (fallbackId < 2ULL) fallbackId = 2ULL;
+                uint64_t pId = AuthClient::Get().IsLoggedIn() ? static_cast<uint64_t>(AuthClient::Get().GetUserId()) : fallbackId;
+                MasterServerClient::Get().LeaveLobbySync(ctx.st.lobbySessionId, pId);
+            }
+            NetworkTransport::Get().StopRelay();
+            ctx.st.lobbySessionId.clear();
+            ctx.st.lobbySessionToken.clear();
+            ctx.st.lobbyHostEndpoint.clear();
+            ctx.st.lobbyRoster.clear();
+        }
+        NOBLE_INFO("FrontEndMenu: match requested application quit; closing container window");
+        if (HWND hwnd = Window::ActiveHwnd()) {
+            PostMessageW(hwnd, WM_CLOSE, 0, 0);
+        }
+        return;
+    }
+
+    const bool isLobbyReturn = successor.find(L"-lobby-return") != std::wstring::npos;
+    const bool isLeaveLobby = successor.empty() || successor == L"-leave-lobby";
+    if (!isLobbyReturn && !isLeaveLobby) {
         if (StartContainerChild(successor, ctx)) {
             NOBLE_INFO("FrontEndMenu: container match relaunched (the previous match exited with {})", exitCode);
             return;
@@ -6204,8 +6459,95 @@ void ContainerMatchEnded(OverlayContext& ctx, DWORD exitCode) {
         NOBLE_ERROR("FrontEndMenu: the match process ended with the Windows error status 0x{:08X}", exitCode);
     }
     NOBLE_INFO("FrontEndMenu: container child match finished (exit code {}), restoring menu", exitCode);
+    FrontEndMenu::InvalidateForgeMaps();   // a variant saved in Forge must show up without restarting Noble
     SessionManager::Get().Initialize();
     MasterServerClient::Get().SetUrl(Settings::Get().Snapshot().masterServerUrl);
+
+    if (isLobbyReturn) {
+        if (ctx.st.isLobbyHost) {
+            const ModEntry* mod = nullptr;
+            for (const ModEntry& m : ctx.mods) {
+                if (!ctx.st.lobbyModFolder.empty() && m.folder == ctx.st.lobbyModFolder) {
+                    mod = &m;
+                    break;
+                }
+            }
+            SetupHostLobby(ctx.st, ctx.st.lobbyMap, ctx.st.lobbyMode, ctx.st.lobbyVariantPath, ctx.st.lobbyVariantName,
+                           ctx.st.lobbyDifficulty, ctx.st.lobbySkulls, ctx.st.lobbyMaxPlayers, mod,
+                           ctx.st.lobbyMapOverride, ctx.st.lobbyMapTitle, ctx.st.lobbyMapImage, ctx.st.lobbyMapThumb,
+                           ctx.st.lobbySessionId, ctx.st.lobbySessionToken);
+            if (successor.find(L"-lobby-advance 1") != std::wstring::npos &&
+                ctx.st.playlistChoice >= 0 && ctx.st.playlistChoice < static_cast<int>(ctx.st.playlists.size())) {
+                const Playlists::Playlist& playlist = ctx.st.playlists[ctx.st.playlistChoice];
+                if (!playlist.entries.empty()) {
+                    const int n = static_cast<int>(playlist.entries.size());
+                    int at = ctx.st.playlistPosition;
+                    if (playlist.shuffle && n > 1) {
+                        const int was = at;
+                        while (at == was) at = static_cast<int>(std::random_device{}() % n);
+                    } else {
+                        at = (at + 1) % n;
+                    }
+                    ResolvedEntry resolved;
+                    if (ResolveEntry(ctx, playlist.entries[at], playlist.randomType, resolved)) {
+                        ApplyEntryToLobby(ctx.st, resolved);
+                    }
+                    ctx.st.playlistPosition = at;
+                }
+                if (playlist.autoStart > 0) {
+                    ctx.st.autoStartAt = ImGui::GetTime() + playlist.autoStart + 2.0;
+                }
+            }
+        } else {
+            ctx.st.lobbyLaunchPending = false;
+            ctx.st.screen = Screen::PreGameLobby;
+            // Guest returning to lobby: restart relay session with the host if session ID is present
+            if (!ctx.st.lobbySessionId.empty()) {
+                std::string hostEndpoint = ctx.st.lobbyHostEndpoint;
+                uint16_t hostPort = 11774;
+                const size_t colon = hostEndpoint.rfind(':');
+                if (colon != std::string::npos) {
+                    hostPort = static_cast<uint16_t>(std::atoi(hostEndpoint.c_str() + colon + 1));
+                    hostEndpoint = hostEndpoint.substr(0, colon);
+                }
+                const auto jinfo = MasterServerClient::Get().JoinSessionSync(
+                    ctx.st.lobbySessionId, MasterServerClient::GetLobbyMachineId(), 11774, hostEndpoint, hostPort);
+                if (jinfo.ok && !jinfo.relayUrl.empty()) {
+                    NetworkTransport::Get().StartRelay(jinfo.relayUrl, ctx.st.lobbySessionId, false, MasterServerClient::GetLobbyMachineId());
+                }
+            }
+        }
+    } else if (successor == L"-main-menu" || ctx.st.screen == Screen::PreGameLobby || !ctx.st.lobbySessionId.empty() || !ctx.st.lobbyHostEndpoint.empty()) {
+        // Player left the match or lobby disbanded: return to main menu or appropriate mode screen.
+        if (ctx.st.isLobbyHost) {
+            MasterServerClient::Get().StopAdvertisingSync();
+            SessionManager::Get().StopHosting();
+            NetworkTransport::Get().StopRelay();
+            ctx.st.lobbySessionId.clear();
+            ctx.st.lobbySessionToken.clear();
+            ctx.st.lobbyRoster.clear();
+            ctx.st.screen = (successor == L"-main-menu") ? Screen::Main
+                          : (ctx.st.lobbyMode == "campaign") ? Screen::Campaign
+                          : (ctx.st.lobbyMode == "firefight") ? Screen::Firefight
+                          : (ctx.st.lobbyMode == "forge") ? Screen::Forge
+                          : Screen::CustomGame;
+        } else {
+            uint64_t fallbackId = (MasterServerClient::GetLobbyMachineId() & 0x7FFFFFFFULL);
+            if (fallbackId < 2ULL) fallbackId = 2ULL;
+            uint64_t pId = AuthClient::Get().IsLoggedIn() ? static_cast<uint64_t>(AuthClient::Get().GetUserId()) : fallbackId;
+            if (!ctx.st.lobbySessionId.empty()) {
+                MasterServerClient::Get().LeaveLobbySync(ctx.st.lobbySessionId, pId);
+            }
+            NetworkTransport::Get().StopRelay();
+            ctx.st.lobbySessionId.clear();
+            ctx.st.lobbySessionToken.clear();
+            ctx.st.lobbyHostEndpoint.clear();
+            ctx.st.lobbyRoster.clear();
+            ctx.st.screen = Screen::Main;
+        }
+        ctx.st.focusRow = 0;
+    }
+
     MasterServerClient::Get().RequestOnlineCount();
     ReachAudio::SetMenuMusicEnabled(true);
     ReachAudio::SetMusicVolume(Settings::Get().Snapshot().volumeMusic);
@@ -6253,6 +6595,8 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         if (static_cast<int>(st.screen) != s_lastScreen) {
             NOBLE_INFO("FrontEndMenu: screen {} -> {}", s_lastScreen, static_cast<int>(st.screen));
             s_lastScreen = static_cast<int>(st.screen);
+            // Variants saved in a match (or another menu) must be visible the moment the maps screen is entered.
+            FrontEndMenu::InvalidateForgeMaps();
         }
     }
     Ui ui;
@@ -7095,6 +7439,7 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
                 ctx.variants = ScanVariants(ctx.reachDir, false);
                 ctx.ffVariants = ScanVariants(ctx.reachDir, true);
                 ctx.forgeMaps = ScanForgeMaps();
+                ctx.forgeMapsScanned = true;
                 int& index = ffScreen ? st.ffVariant : st.variant;
                 const std::vector<MenuVariant>& modes = ffScreen ? ctx.ffVariants : ctx.variants;
                 index = FindVariant(modes, ffScreen ? L"hr_ff_standard_1set.bin" : L"slayer_054.bin");
@@ -7206,8 +7551,17 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
         if (DrawSearchBox(ui, "##map_search", ImVec2(searchX, top + 70.0f * ui.s), 140.0f * ui.s, st.mapSearch, sizeof(st.mapSearch), "Search")) st.mapSearchRow = 0;
         if (ImGui::IsItemActive()) st.focusRow = 0;
         const bool searching = st.mapSearch[0] != 0;
-        const std::vector<MapEntry> maps = forgeTab ? ForgeMapEntries(ctx.forgeMaps, st.openMods, st.mapSearch)
-                                                    : ListedMaps(modded, modList, modMode, baseMaps, baseCount, st.openMods, carrier, st.mapSearch);
+        std::vector<MapEntry> maps = forgeTab ? ForgeMapEntries(ctx.forgeMaps, st.openMods, st.mapSearch)
+                                              : ListedMaps(modded, modList, modMode, baseMaps, baseCount, st.openMods, carrier, st.mapSearch);
+        // Custom Game and Forge: the base maps' own variants nest under them (not in Campaign/Firefight). Scan the
+        // variants once here too - the list needs them before the Forge tab has ever been opened.
+        if (!forgeTab && !ff) {
+            if (!ctx.forgeMapsScanned) {
+                ctx.forgeMaps = ScanForgeMaps();
+                ctx.forgeMapsScanned = true;
+            }
+            InsertMapVariants(maps, ctx.forgeMaps, st.openMods);
+        }
         int& realIndex = forgeTab ? (forge ? st.forgeForgeMap : st.mpForgeMap)
                        : modded ? (ff ? st.ffModded : forge ? st.forgeModded : st.mpModded) : (ff ? st.ffMap : forge ? st.forgeMap : st.map);
         int& mapIndex = searching ? st.mapSearchRow : realIndex;
@@ -7738,6 +8092,13 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
 }
 
 } // namespace
+// A Forge map saved during a match is not in the list yet: the scan is cached, so drop it.
+void FrontEndMenu::InvalidateForgeMaps() {
+    OverlayContext& ctx = GetOverlayCtx();
+    ctx.forgeMapsScanned = false;
+    ctx.forgeMaps.clear();
+}
+
 
 std::string FrontEndMenu::StockBlurb(const std::string& scenario) {
     for (const MenuMap& m : kMissions) if (scenario == m.scenario) return m.blurb;
@@ -7997,6 +8358,14 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
         ctx.st.lobbyModId = modId;
         ctx.st.lobbyModTitle = modTitle;
         ctx.st.lobbyModFolder = modFolder;
+        // A map override, Forge map or launch payload left over from the previous lobby must not follow the player
+        // into this one: it made a guest launch a campaign mission with the previous lobby's mod map overlaid on it.
+        ctx.st.lobbyMapOverride.clear();
+        ctx.st.lobbyMapVariant.clear();
+        ctx.st.lobbyLaunchMapOverride.clear();
+        ctx.st.lobbyLaunchMapVariant.clear();
+        ctx.st.lobbyLaunchModFolder.clear();
+        ctx.st.lobbyLaunchModId.clear();
         ctx.st.lobbyRoster.clear();
         ctx.st.lobbyLaunchPending = false;
         {   // a launch or roster left over from an earlier lobby doesn't apply to this one
@@ -8485,7 +8854,8 @@ void FrontEndMenu::RenderOverlayImpl(IDXGISwapChain* swapChain, bool clear) {
                 // picked purple was red in the match.
                 bool anyTeam = false;
                 for (const auto& player : ctx.st.lobbyRoster) anyTeam = anyTeam || player.team > 0;
-                if (anyTeam && !ctx.st.lobbyRoster.empty()) {
+                if (anyTeam && !ctx.st.lobbyRoster.empty() &&
+                    choice.mode != "campaign" && choice.mode != "firefight") {
                     std::wstring teams;
                     for (const auto& player : ctx.st.lobbyRoster) {
                         if (!teams.empty()) teams += L",";
@@ -8505,6 +8875,8 @@ void FrontEndMenu::RenderOverlayImpl(IDXGISwapChain* swapChain, bool clear) {
                 if (!choice.modFolder.empty()) args += L" -mod \"" + choice.modFolder.wstring() + L"\"";
                 if (!choice.mapOverride.empty()) args += L" -map-override \"" + choice.mapOverride.wstring() + L"\"";
                 if (!choice.mapVariant.empty()) args += L" -mvar \"" + choice.mapVariant.wstring() + L"\"";
+                if (noble::LiveDumpSeconds() > 0) args += L" -mvar-live-dump " + std::to_wstring(noble::LiveDumpSeconds());
+                if (noble::PageScanSeconds() > 0) args += L" -mvar-page-scan " + std::to_wstring(noble::PageScanSeconds());
                 if (!choice.mapTitle.empty()) args += L" -map-title \"" + ToWide(choice.mapTitle) + L"\"";
                 if (!choice.mapImage.empty()) args += L" -map-image \"" + choice.mapImage.wstring() + L"\"";
                 if (!choice.mapThumb.empty()) args += L" -map-thumb \"" + choice.mapThumb.wstring() + L"\"";

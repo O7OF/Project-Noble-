@@ -6,6 +6,7 @@
 #include <psapi.h>
 #include <atomic>
 #include <cstring>
+#include <cwchar>
 #include <intrin.h>
 
 namespace noble {
@@ -59,16 +60,57 @@ static PlayerControlUpdateFn s_originalPlayerControlUpdate = nullptr;
 static std::atomic<bool> s_lowerWeaponTogglePending{false};
 
 // ai_place (RVA 0x6C2B10): places an AI squad from scenario definitions.
-// In multiplayer mods with AI, scenario scripts execute on both the host and clients.
-// The host's entity replication layer serializes and sends created AI bipeds to the guest.
-// If the guest also runs ai_place locally, two copies of every AI unit exist on the client (a clone!).
-// Suppressing ai_place on non-host clients ensures AI is only spawned by the authoritative host.
+// In distributed multiplayer/Forge mods with AI ([game_globals + 0x10] == 3, c_simulation_distributed_world),
+// scenario scripts execute on both host and clients while the host ALSO replicates created AI bipeds to guests,
+// producing duplicate non-replicated clones if guests run ai_place locally.
+// By contrast, Campaign ([+0x10] == 1) and Firefight/Survival ([+0x110EC] != 0) run deterministic synchronous
+// lockstep (c_simulation_synchronous_world): the host does NOT replicate AI entities, and BOTH host and guest
+// MUST execute every scenario (ai_place ...) call on the exact same tick or the engine raises
+// c_network_session_parameter_synchronous_out_of_sync (network_coop_oos_alert) right after cutscenes / wave spawns.
 using AiPlaceFn = void(__fastcall*)(uint32_t aiValue, int32_t count, int32_t flag);
 static AiPlaceFn s_originalAiPlace = nullptr;
 
+static bool IsCliSynchronousMode() {
+    static const bool s_syncMode = []() {
+        const wchar_t* cmd = GetCommandLineW();
+        if (!cmd) return false;
+        std::wstring lower(cmd);
+        for (wchar_t& c : lower) {
+            if (c >= L'A' && c <= L'Z') c = static_cast<wchar_t>(c - L'A' + L'a');
+        }
+        return lower.find(L"-mode campaign") != std::wstring::npos ||
+               lower.find(L"-mode \"campaign\"") != std::wstring::npos ||
+               lower.find(L"-mode firefight") != std::wstring::npos ||
+               lower.find(L"-mode \"firefight\"") != std::wstring::npos;
+    }();
+    return s_syncMode;
+}
+
+static bool IsDistributedMultiplayerGameSEH(uintptr_t base) {
+    if (!base) return false;
+    __try {
+        // haloreach+0x058B38 (game_is_multiplayer), +0x058C04 (game_is_survival), +0x0586C4 (game_is_cooperative)
+        const uint32_t tlsIdx = *reinterpret_cast<const uint32_t*>(base + 0xC17B18);
+        const uintptr_t tlsArray = *reinterpret_cast<const uintptr_t*>(
+            __readgsqword(0x58) + static_cast<uintptr_t>(tlsIdx) * 8u);
+        if (!tlsArray) return false;
+        const uint8_t* gameGlobals = *reinterpret_cast<const uint8_t* const*>(tlsArray + 0x48);
+        if (!gameGlobals) return false;
+        const uint8_t gameMode = gameGlobals[0x10];          // 1 = campaign, 2 = ui_shell, 3 = multiplayer
+        const uint8_t isSurvival = gameGlobals[0x110EC];     // non-zero in Firefight / Survival
+        const uint8_t isCooperative = gameGlobals[0x1EAB0];  // non-zero in Co-Op sessions
+        return (gameMode == 3) && (isSurvival == 0) && (isCooperative == 0);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
 static void __fastcall Hook_AiPlace(uint32_t aiValue, int32_t count, int32_t flag) {
-    if (NetworkTransport::Get().IsActive() && !NetworkTransport::Get().IsHost()) {
-        NOBLE_DEBUG("EnginePatches: Suppressed client-side ai_place(0x{:08X}, {}, {}) to prevent duplicate AI clones.",
+    if (NetworkTransport::Get().IsActive() &&
+        !NetworkTransport::Get().IsHost() &&
+        !IsCliSynchronousMode() &&
+        IsDistributedMultiplayerGameSEH(s_baseAddress)) {
+        NOBLE_DEBUG("EnginePatches: Suppressed client-side ai_place(0x{:08X}, {}, {}) in distributed multiplayer to prevent duplicate AI clones.",
                     aiValue, count, flag);
         return;
     }
@@ -90,6 +132,53 @@ static void __fastcall Hook_PlayerControlUpdate(int32_t playerIndex, int32_t inp
         auto* actionFlags = reinterpret_cast<uint32_t*>(static_cast<uint8_t*>(controlOut) + 0x28);
         *actionFlags |= (1u << 10);
     }
+}
+
+// haloreach+0x3F9620: c_network_observer::observer_channel_send_message
+// haloreach+0x3F95A4: c_network_observer::observer_channel_send_immediate (flushes channel throttle state 1 -> 2 and calls 0x3F7D2C)
+// In retail Xbox 360 Halo: Reach, queuing synchronous client inputs (msg 0x29 synchronous-actions), synchronous host tick
+// updates (msg 0x27 synchronous-update), or distributed client inputs (msg 0x23) via 0x3F9620 leaves the observer channel
+// in bandwidth-throttle state 1 ([channel + 0x12A0] == 1) until the next periodic observer timer expires, adding 16-33 ms
+// of artificial one-way buffering on both Guest and Host (33-66 ms round-trip input lag in Co-Op Campaign).
+// Flushing the observer channel immediately via 0x3F95A4 transmits simulation/input packets on the exact tick they are produced.
+using ObserverChannelSendMessageFn = uint8_t(__fastcall*)(
+    void* thisPtr,
+    int32_t ownerType,
+    int32_t observerChannelIndex,
+    uint8_t outOfBand,
+    uint8_t unsequenced,
+    int32_t msgType,
+    int32_t msgSize,
+    const void* payload);
+using ObserverChannelFlushFn = void(__fastcall*)(void* unusedRcx, void* unusedRdx, int32_t observerChannelIndex);
+
+static ObserverChannelSendMessageFn s_originalObserverChannelSendMessage = nullptr;
+static ObserverChannelFlushFn s_observerChannelFlush = nullptr;
+
+static uint8_t __fastcall Hook_ObserverChannelSendMessage(
+    void* thisPtr,
+    int32_t ownerType,
+    int32_t observerChannelIndex,
+    uint8_t outOfBand,
+    uint8_t unsequenced,
+    int32_t msgType,
+    int32_t msgSize,
+    const void* payload) {
+    const uint8_t sent = s_originalObserverChannelSendMessage
+        ? s_originalObserverChannelSendMessage(thisPtr, ownerType, observerChannelIndex, outOfBand, unsequenced, msgType, msgSize, payload)
+        : 0;
+    if (sent && !outOfBand && s_observerChannelFlush && observerChannelIndex >= 0 && observerChannelIndex < 34) {
+        // Messages 0x22..0x2A are simulation world updates, distributed player inputs/acks, and synchronous lockstep actions/updates.
+        if (msgType >= 0x22 && msgType <= 0x2A) {
+            thread_local bool t_flushing = false;
+            if (!t_flushing) {
+                t_flushing = true;
+                s_observerChannelFlush(nullptr, nullptr, observerChannelIndex);
+                t_flushing = false;
+            }
+        }
+    }
+    return sent;
 }
 
 bool EnginePatches::Apply(HMODULE hReachDll) {
@@ -438,6 +527,36 @@ bool EnginePatches::Apply(HMODULE hReachDll) {
             }
         } else {
             NOBLE_WARN("EnginePatches: Could not locate ai_place in haloreach.dll.");
+        }
+    }
+
+    // 6. Zero-Latency Observer Channel Flush for Co-Op Campaign & Multiplayer Simulation Packets (RVAs 0x3F9620 / 0x3F95A4)
+    {
+        static const uint8_t kExpectedSendMsg[12] = {
+            0x48, 0x89, 0x5C, 0x24, 0x08, 0x48, 0x89, 0x74, 0x24, 0x20, 0x55, 0x57
+        };
+        static const uint8_t kExpectedFlush[12] = {
+            0x48, 0x89, 0x5C, 0x24, 0x08, 0x48, 0x89, 0x74, 0x24, 0x10, 0x57, 0x48
+        };
+        uint8_t* sendMsgAddr = reinterpret_cast<uint8_t*>(baseAddress + 0x3F9620);
+        uint8_t* flushAddr   = reinterpret_cast<uint8_t*>(baseAddress + 0x3F95A4);
+        if (0x3F9620 + sizeof(kExpectedSendMsg) <= modInfo.SizeOfImage &&
+            std::memcmp(sendMsgAddr, kExpectedSendMsg, sizeof(kExpectedSendMsg)) == 0 &&
+            std::memcmp(flushAddr, kExpectedFlush, sizeof(kExpectedFlush)) == 0) {
+            s_observerChannelFlush = reinterpret_cast<ObserverChannelFlushFn>(flushAddr);
+            if (HookManager::InstallHook(
+                reinterpret_cast<void*>(sendMsgAddr),
+                reinterpret_cast<void*>(&Hook_ObserverChannelSendMessage),
+                reinterpret_cast<void**>(&s_originalObserverChannelSendMessage),
+                "haloreach_observer_channel_send_message"
+            )) {
+                NOBLE_INFO("EnginePatches: Installed immediate observer-channel flush hook at 0x{:X} (flush 0x{:X}) for zero-latency Co-Op/MP input.",
+                           reinterpret_cast<uintptr_t>(sendMsgAddr), reinterpret_cast<uintptr_t>(flushAddr));
+            } else {
+                NOBLE_WARN("EnginePatches: Failed to hook observer_channel_send_message at RVA 0x3F9620.");
+            }
+        } else {
+            NOBLE_WARN("EnginePatches: Prologue mismatch at RVA 0x3F9620 / 0x3F95A4; immediate observer flush hook skipped.");
         }
     }
 
