@@ -75,6 +75,10 @@ struct ReachArmorySelection {
     std::vector<std::pair<std::string, std::string>> marinePieces;
     bool marineColors = false;   // apply marinePrimaryRgb / marineSecondaryRgb to change colours 0 / 1
     bool previewMarine = false;  // Armory MARINE tab: show marine_armory (rr_elite = 2) instead of the Spartan
+    // Female Marine (2026-11-13): pairs for objects\characters\marine_female; marineFemale = the Marine tab's gender is
+    // female (preview shows marine_f_armory, rr_elite = 3; in matches used on a female-marine body).
+    std::vector<std::pair<std::string, std::string>> femalePieces;
+    bool marineFemale = false;
     std::array<float, 3> marinePrimaryRgb = { 0.3f, 0.3f, 0.3f };
     std::array<float, 3> marineSecondaryRgb = { 0.3f, 0.3f, 0.3f };
     std::array<float, 3> marineThirdRgb = { 0.3f, 0.3f, 0.3f };    // change colour slot 2

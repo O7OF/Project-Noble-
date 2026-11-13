@@ -81,6 +81,11 @@ struct AppearanceProfile {
     int marineSecondaryColor = 10;
     int marineThirdColor = 1;        // change colour slot 2 (was random per spawn: the stray blue, 2026-11-13)
     int marineFourthColor = 1;       // change colour slot 3
+    // Female Marine (2026-11-13): 0 = male (marinePieces), 1 = female (objects\characters\marine_female, its own,
+    // smaller piece set: femalePieces = position in FemaleMarineSlots()). Shown in the Armory; in matches only where a
+    // mod's map contains the female marine.
+    int marineFemale = 0;
+    std::array<int, 9> femalePieces = {};
     int nameplateIndex = 1;
     int emblemIndex = 1;            // Reach foreground index = position in UiArt::GetEmblemCatalog() (1 = Bull's-eye)
     int emblemBackgroundIndex = 0;  // Reach background index: 0 = Blank, n = UiArt::GetEmblemBackgrounds()[n - 1]

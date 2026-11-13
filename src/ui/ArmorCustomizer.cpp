@@ -201,6 +201,26 @@ const std::vector<MarineSlot>& MarineSlots() {
     return slots;
 }
 
+// Female Marine pieces (2026-11-13): objects\characters\marine_female render model (HREK; every permutation has a mesh
+// or instanced geometry, tools\rm_instances.py). Option 0 keeps the mod's piece; the Armory shows trooper_light then.
+const std::vector<MarineSlot>& FemaleMarineSlots() {
+    static const std::vector<MarineSlot> slots = {
+        { "Helmet", "helmet", { {"MOD DEFAULT", ""}, {"STANDARD", "default"}, {"TROOPER", "trooper_light"},
+            {"TROOPER HEAVY", "trooper_heavy"}, {"COMMANDER", "trooper_commander"} } },
+        { "Face", "head", { {"MOD DEFAULT", ""}, {"FACE 1", "default"}, {"FACE 2", "trooper_light"}, {"FACE 3", "trooper_heavy"},
+            {"FACE 4", "trooper_commander"} } },
+        { "Helmet Gear", "flair_helmet_a", { {"MOD DEFAULT", ""}, {"TROOPER", "trooper_light"}, {"TROOPER HEAVY", "trooper_heavy"} } },
+        { "Left Shoulder", "flair_shoulder_l", { {"MOD DEFAULT", ""}, {"TROOPER", "trooper_light"}, {"TROOPER HEAVY", "trooper_heavy"} } },
+        { "Right Shoulder", "flair_shoulder_r", { {"MOD DEFAULT", ""}, {"TROOPER", "trooper_light"}, {"TROOPER HEAVY", "trooper_heavy"} } },
+        { "Chest", "flair_chest_a", { {"MOD DEFAULT", ""}, {"TROOPER", "trooper_light"}, {"TROOPER HEAVY", "trooper_heavy"} } },
+        { "Backpack", "flair_backpack", { {"MOD DEFAULT", ""}, {"TROOPER", "trooper_light"} } },
+        { "Belt", "flair_belt", { {"MOD DEFAULT", ""}, {"TROOPER", "trooper_light"}, {"TROOPER HEAVY", "trooper_heavy"} } },
+        { "Legs", "legs", { {"MOD DEFAULT", ""}, {"STANDARD", "default"}, {"TROOPER", "trooper_light"},
+            {"TROOPER HEAVY", "trooper_heavy"} } },
+    };
+    return slots;
+}
+
 const std::vector<HelmetSpec>& GetSpartanHelmets() {
     static const std::vector<HelmetSpec> kHelmets = {
         {
@@ -1304,6 +1324,12 @@ void ArmorCustomizer::SyncToReachArmory() const {
             const int o = std::clamp(m_profile.marinePieces[k], 0, static_cast<int>(slots[k].options.size()) - 1);
             if (slots[k].options[static_cast<size_t>(o)].perm[0]) sel.marinePieces.emplace_back(slots[k].region, slots[k].options[static_cast<size_t>(o)].perm);
         }
+        const auto& fs = FemaleMarineSlots();
+        for (size_t k = 0; k < fs.size() && k < m_profile.femalePieces.size(); ++k) {
+            const int o = std::clamp(m_profile.femalePieces[k], 0, static_cast<int>(fs[k].options.size()) - 1);
+            if (fs[k].options[static_cast<size_t>(o)].perm[0]) sel.femalePieces.emplace_back(fs[k].region, fs[k].options[static_cast<size_t>(o)].perm);
+        }
+        sel.marineFemale = m_profile.marineFemale == 1;
         sel.marineColors = m_profile.marineColorsOn != 0;
         sel.previewMarine = m_marineTab;
         if (m_marineTab) sel.previewElite = false;
@@ -1337,6 +1363,7 @@ void ArmorCustomizer::SyncToReachArmory() const {
                a.accentRgb == b.accentRgb && a.lightsRgb == b.lightsRgb && a.visorRgb == b.visorRgb &&
                a.lightsCustom == b.lightsCustom &&
                a.marinePieces == b.marinePieces && a.marineColors == b.marineColors && a.previewMarine == b.previewMarine &&
+               a.femalePieces == b.femalePieces && a.marineFemale == b.marineFemale &&
                a.marinePrimaryRgb == b.marinePrimaryRgb && a.marineSecondaryRgb == b.marineSecondaryRgb &&
                a.marineThirdRgb == b.marineThirdRgb && a.marineFourthRgb == b.marineFourthRgb;
     };
@@ -1534,6 +1561,17 @@ bool ArmorCustomizer::LoadProfile(const std::filesystem::path& path) {
                 m_profile.marineThirdColor = std::clamp(mj["third_color"].get<int>(), 0, 29);
             if (mj.contains("fourth_color") && mj["fourth_color"].is_number_integer())
                 m_profile.marineFourthColor = std::clamp(mj["fourth_color"].get<int>(), 0, 29);
+            m_profile.marineFemale = (mj.contains("gender") && mj["gender"].is_string() && mj["gender"].get<std::string>() == "female") ? 1 : 0;
+            const auto& fs = FemaleMarineSlots();
+            for (size_t k = 0; k < fs.size() && k < m_profile.femalePieces.size(); ++k) {
+                m_profile.femalePieces[k] = 0;
+                if (!mj.contains("female") || !mj["female"].is_object()) continue;
+                const auto& fj = mj["female"];
+                if (!fj.contains(fs[k].region) || !fj[fs[k].region].is_string()) continue;
+                const std::string perm = fj[fs[k].region].get<std::string>();
+                for (size_t o = 1; o < fs[k].options.size(); ++o)
+                    if (perm == fs[k].options[o].perm) m_profile.femalePieces[k] = static_cast<int>(o);
+            }
         }
 
         if (j.contains("elite") && j["elite"].is_object()) {
@@ -1801,6 +1839,14 @@ bool ArmorCustomizer::SaveProfile(const std::filesystem::path& path) {
             mj["secondary_color"] = m_profile.marineSecondaryColor;
             mj["third_color"] = m_profile.marineThirdColor;
             mj["fourth_color"] = m_profile.marineFourthColor;
+            mj["gender"] = m_profile.marineFemale == 1 ? "female" : "male";
+            nlohmann::json fj = nlohmann::json::object();
+            const auto& fs = FemaleMarineSlots();
+            for (size_t k = 0; k < fs.size() && k < m_profile.femalePieces.size(); ++k) {
+                const int o = std::clamp(m_profile.femalePieces[k], 0, static_cast<int>(fs[k].options.size()) - 1);
+                fj[fs[k].region] = fs[k].options[static_cast<size_t>(o)].perm;
+            }
+            mj["female"] = fj;
             j["marine"] = mj;
         }
 
@@ -2126,6 +2172,17 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
                     if (s_index < count) {
                         m_profile.visorColorIndex = s_index; m_visorSelection = s_index; name = kVisorColors[s_index].name;
                         m_pickerScrollToEquipped = true;   // dev: keep the picked tile in view for captures
+                    }
+                } else if (s_cycle == "marine_f") {
+                    // Dev test (2026-11-13): MARINE tab, FEMALE, commander helmet + heavy pieces. Preview only: nothing saved.
+                    count = 1;
+                    if (s_index == 0) {
+                        m_marineTab = true;
+                        m_previewSpecies = PlayerSpecies::Spartan;
+                        m_profile.marineFemale = 1;
+                        m_profile.femalePieces = { 4, 0, 2, 2, 2, 2, 1, 2, 3 };
+                        m_profile.marineColorsOn = 1;
+                        name = "female marine";
                     }
                 } else if (s_cycle == "marine") {
                     // Dev test (2026-11-13): open the MARINE tab and save distinct picks through the normal save path
@@ -2562,14 +2619,23 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
         }
         static const char* kMarineDesc = "Used when a mod makes you a Marine or ODST (for example Trooper Firefight). "
                                          "MOD DEFAULT keeps the mod's own piece.";
-        const auto& slots = MarineSlots();
-        for (size_t k = 0; k < slots.size() && k < m_profile.marinePieces.size(); ++k) {
-            SlotRow r{ "MARINE / ODST", slots[k].label, RowKind::List, &m_profile.marinePieces[k] };
+        {
+            SlotRow g{ "CHARACTER", "Gender", RowKind::List, &m_profile.marineFemale };
+            g.options = { { "MALE", "Reach's Marine / ODST pieces. Used in Marine mods such as Trooper Firefight." },
+                          { "FEMALE", "Reach's female Marine (fewer pieces). Shown here; in matches only where the mod's map "
+                                      "includes the female Marine (Trooper Firefight does not)." } };
+            rows.push_back(g);
+        }
+        const bool female = m_profile.marineFemale == 1;
+        const auto& slots = female ? FemaleMarineSlots() : MarineSlots();
+        auto& pieces = female ? m_profile.femalePieces : m_profile.marinePieces;
+        for (size_t k = 0; k < slots.size() && k < pieces.size(); ++k) {
+            SlotRow r{ "MARINE / ODST", slots[k].label, RowKind::List, &pieces[k] };
             for (const auto& o : slots[k].options) r.options.push_back({ o.name, kMarineDesc });
             // Close-up cameras (2026-11-13): the Marine stands on the Spartan pedestal, so the Spartan's per-slot
             // cameras frame the same body parts. Backpack keeps the whole-body view (the close-ups look at the front).
             const std::string region = slots[k].region;
-            if (region == "helmet" || region == "head" || region == "flair_neck") r.scene = "c_helmet";
+            if (region == "helmet" || region == "head" || region == "flair_neck" || region == "flair_helmet_a") r.scene = "c_helmet";
             else if (region == "flair_shoulder_l") r.scene = "c_left_shoulder";
             else if (region == "flair_shoulder_r") r.scene = "c_right_shoulder";
             else if (region == "flair_chest_a") r.scene = "c_chest";
