@@ -77,6 +77,8 @@ struct ReachArmorySelection {
     bool previewMarine = false;  // Armory MARINE tab: show marine_armory (rr_elite = 2) instead of the Spartan
     std::array<float, 3> marinePrimaryRgb = { 0.3f, 0.3f, 0.3f };
     std::array<float, 3> marineSecondaryRgb = { 0.3f, 0.3f, 0.3f };
+    std::array<float, 3> marineThirdRgb = { 0.3f, 0.3f, 0.3f };    // change colour slot 2
+    std::array<float, 3> marineFourthRgb = { 0.3f, 0.3f, 0.3f };   // change colour slot 3
     bool accentCustom = false;
     bool lightsCustom = false;
 };

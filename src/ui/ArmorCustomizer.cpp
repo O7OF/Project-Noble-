@@ -175,7 +175,8 @@ const std::vector<MarineSlot>& MarineSlots() {
     static const std::vector<MarineSlot> slots = {
         { "Helmet", "helmet", { {"MOD DEFAULT", ""}, {"TROOPER", "trooper_light"}, {"TROOPER HEAVY", "trooper_heavy"},
             {"TROOPER RADIO", "trooper_radio"}, {"TROOPER MEDIC", "trooper_medic"}, {"COMMANDER", "trooper_commander"},
-            {"OFFICER", "trooper_officer"}, {"ODST", "odst_light"}, {"ODST JUMP JET", "odst_jetpack"},
+            {"OFFICER", "trooper_officer"}, {"ODST", "odst_light"},
+            // "odst_jetpack" removed (2026-11-13): an empty helmet permutation in the marine render model.
             {"SPACE MARINE", "space_marine"}, {"SPACE MARINE (OPEN)", "space_marine_no_visor"} } },
         { "Face", "head", { {"MOD DEFAULT", ""}, {"FACE 1", "default"}, {"FACE 2", "trooper_light"}, {"FACE 3", "trooper_heavy"},
             {"FACE 4", "trooper_radio"}, {"FACE 5", "trooper_medic"}, {"FACE 6", "trooper_commander"} } },
@@ -1309,6 +1310,10 @@ void ArmorCustomizer::SyncToReachArmory() const {
         const auto& ms = kReachColors[std::clamp(m_profile.marineSecondaryColor, 0, 29)];
         sel.marinePrimaryRgb = { SrgbToLinear(mp.r), SrgbToLinear(mp.g), SrgbToLinear(mp.b) };
         sel.marineSecondaryRgb = { SrgbToLinear(ms.r), SrgbToLinear(ms.g), SrgbToLinear(ms.b) };
+        const auto& m3 = kReachColors[std::clamp(m_profile.marineThirdColor, 0, 29)];
+        const auto& m4 = kReachColors[std::clamp(m_profile.marineFourthColor, 0, 29)];
+        sel.marineThirdRgb = { SrgbToLinear(m3.r), SrgbToLinear(m3.g), SrgbToLinear(m3.b) };
+        sel.marineFourthRgb = { SrgbToLinear(m4.r), SrgbToLinear(m4.g), SrgbToLinear(m4.b) };
     }
 
     static auto SelectionsEqual = [](const ReachArmorySelection& a, const ReachArmorySelection& b) -> bool {
@@ -1331,7 +1336,8 @@ void ArmorCustomizer::SyncToReachArmory() const {
                a.accentRgb == b.accentRgb && a.lightsRgb == b.lightsRgb && a.visorRgb == b.visorRgb &&
                a.lightsCustom == b.lightsCustom &&
                a.marinePieces == b.marinePieces && a.marineColors == b.marineColors && a.previewMarine == b.previewMarine &&
-               a.marinePrimaryRgb == b.marinePrimaryRgb && a.marineSecondaryRgb == b.marineSecondaryRgb;
+               a.marinePrimaryRgb == b.marinePrimaryRgb && a.marineSecondaryRgb == b.marineSecondaryRgb &&
+               a.marineThirdRgb == b.marineThirdRgb && a.marineFourthRgb == b.marineFourthRgb;
     };
 
     if (SelectionsEqual(s_pendingSelection, sel) && !s_pushPending) {
@@ -1523,6 +1529,10 @@ bool ArmorCustomizer::LoadProfile(const std::filesystem::path& path) {
                 m_profile.marinePrimaryColor = std::clamp(mj["primary_color"].get<int>(), 0, 29);
             if (mj.contains("secondary_color") && mj["secondary_color"].is_number_integer())
                 m_profile.marineSecondaryColor = std::clamp(mj["secondary_color"].get<int>(), 0, 29);
+            if (mj.contains("third_color") && mj["third_color"].is_number_integer())
+                m_profile.marineThirdColor = std::clamp(mj["third_color"].get<int>(), 0, 29);
+            if (mj.contains("fourth_color") && mj["fourth_color"].is_number_integer())
+                m_profile.marineFourthColor = std::clamp(mj["fourth_color"].get<int>(), 0, 29);
         }
 
         if (j.contains("elite") && j["elite"].is_object()) {
@@ -1788,6 +1798,8 @@ bool ArmorCustomizer::SaveProfile(const std::filesystem::path& path) {
             mj["colors_on"] = m_profile.marineColorsOn != 0;
             mj["primary_color"] = m_profile.marinePrimaryColor;
             mj["secondary_color"] = m_profile.marineSecondaryColor;
+            mj["third_color"] = m_profile.marineThirdColor;
+            mj["fourth_color"] = m_profile.marineFourthColor;
             j["marine"] = mj;
         }
 
@@ -2120,10 +2132,13 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
                     count = 1;
                     if (s_index == 0) {
                         m_marineTab = true;
+                        m_previewSpecies = PlayerSpecies::Spartan;   // same as the MARINE button
                         m_profile.marinePieces = { 7, 0, 3, 3, 3, 9, 0, 0, 0 };
                         m_profile.marineColorsOn = 1;
                         m_profile.marinePrimaryColor = 3;
                         m_profile.marineSecondaryColor = 16;
+                        m_profile.marineThirdColor = 9;    // distinct test colours for slots 2/3
+                        m_profile.marineFourthColor = 27;
                         m_dirty = true;
                         SaveProfile(m_profilePath);
                         SyncToReachArmory();
@@ -2280,14 +2295,15 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
     RenderCharacterPreview(device, context, previewW, avail.y, true);
 
     // ---- Slot rows for the species being edited.
-    int speciesInt = static_cast<int>(m_profile.species);
+    int speciesInt = m_marineTab ? 2 : static_cast<int>(m_profile.species);
     int bodyInt = static_cast<int>(m_profile.bodyType);
     std::vector<SlotRow> rows;
     rows.reserve(28);
     {
         SlotRow r{ "CHARACTER", "Species", RowKind::List, &speciesInt };
         r.options = { { "SPARTAN", "UNSC SPARTAN-III. Used in multiplayer, Forge and custom games." },
-                      { "ELITE", "Sangheili Elite. Used in multiplayer, Forge and custom games." } };
+                      { "ELITE", "Sangheili Elite. Used in multiplayer, Forge and custom games." },
+                      { "MARINE", "UNSC Marine / ODST. Used when a mod makes you a Marine." } };
         rows.push_back(r);
     }
 
@@ -2536,6 +2552,13 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
     // mod makes the player a Marine (ReachArmory::SyncMarine); there is no Marine on the Armory pedestal yet.
     if (m_marineTab) {
         rows.clear();
+        {
+            SlotRow r{ "CHARACTER", "Species", RowKind::List, &speciesInt };
+            r.options = { { "SPARTAN", "UNSC SPARTAN-III. Used in multiplayer, Forge and custom games." },
+                          { "ELITE", "Sangheili Elite. Used in multiplayer, Forge and custom games." },
+                          { "MARINE", "UNSC Marine / ODST. Used when a mod makes you a Marine." } };
+            rows.push_back(r);
+        }
         static const char* kMarineDesc = "Used when a mod makes you a Marine or ODST (for example Trooper Firefight). "
                                          "MOD DEFAULT keeps the mod's own piece.";
         const auto& slots = MarineSlots();
@@ -2556,6 +2579,12 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
         SlotRow ms{ "COLORS", "Secondary", RowKind::Colour, &m_profile.marineSecondaryColor };
         ms.options = palette;
         rows.push_back(std::move(ms));
+        SlotRow m3{ "COLORS", "Detail", RowKind::Colour, &m_profile.marineThirdColor };
+        m3.options = palette;
+        rows.push_back(std::move(m3));
+        SlotRow m4{ "COLORS", "Accent", RowKind::Colour, &m_profile.marineFourthColor };
+        m4.options = palette;
+        rows.push_back(std::move(m4));
     }
 
     const int rowCount = static_cast<int>(rows.size());
@@ -2646,8 +2675,14 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
             else if (r.index == &m_profile.eliteLightsColor) m_profile.eliteLightsCustom = false;
         }
         if (r.index == &speciesInt) {
-            m_profile.species = static_cast<PlayerSpecies>(std::clamp(speciesInt, 0, 1));
-            m_previewSpecies = m_profile.species;
+            if (speciesInt == 2) {   // MARINE: the Marine page; the species you play stays as it is
+                m_marineTab = true;
+                m_previewSpecies = PlayerSpecies::Spartan;   // Spartan pedestal + cameras (the Marine stands there)
+            } else {
+                m_marineTab = false;
+                m_profile.species = static_cast<PlayerSpecies>(std::clamp(speciesInt, 0, 1));
+                m_previewSpecies = m_profile.species;
+            }
             m_focusedRow = 0;
         } else if (r.index == &bodyInt) {
             m_profile.bodyType = static_cast<BodyType>(std::clamp(bodyInt, 0, 1));
@@ -2752,6 +2787,10 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
             ImGui::PushStyleColor(ImGuiCol_Border, m_marineTab ? ImVec4(0.56f, 0.85f, 1.0f, 1.0f) : ImVec4(0.25f, 0.35f, 0.45f, 0.4f));
             if (ImGui::Button("MARINE", ImVec2(btnW, btnH)) && !m_marineTab) {
                 m_marineTab = true;
+                // Spartan pedestal + cameras: from the Elite the camera otherwise stayed on the Elite pedestal until
+                // the next piece click (Tyler 05:51).
+                m_previewSpecies = PlayerSpecies::Spartan;
+                SyncToReachArmory();
                 m_focusedRow = 0;
                 m_pickerScrollToEquipped = true;
             }

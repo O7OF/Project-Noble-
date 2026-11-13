@@ -79,6 +79,8 @@ struct AppearanceProfile {
     int marineColorsOn = 0;          // 0 = the mod's colours, 1 = the two below
     int marinePrimaryColor = 1;      // Reach palette index
     int marineSecondaryColor = 10;
+    int marineThirdColor = 1;        // change colour slot 2 (was random per spawn: the stray blue, 2026-11-13)
+    int marineFourthColor = 1;       // change colour slot 3
     int nameplateIndex = 1;
     int emblemIndex = 1;            // Reach foreground index = position in UiArt::GetEmblemCatalog() (1 = Bull's-eye)
     int emblemBackgroundIndex = 0;  // Reach background index: 0 = Blank, n = UiArt::GetEmblemBackgrounds()[n - 1]

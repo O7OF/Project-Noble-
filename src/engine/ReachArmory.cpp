@@ -2529,9 +2529,10 @@ void ReachArmory::NotifyEngineTick() {
         // MARINE tab: the Marine's own colours (or a neutral grey for MOD DEFAULT) on the preview.
         sel.previewMarine ? (sel.marineColors ? sel.marinePrimaryRgb.data() : kMarineGrey) : sel.primaryRgb.data(),
         sel.previewMarine ? (sel.marineColors ? sel.marineSecondaryRgb.data() : kMarineGrey) : sel.secondaryRgb.data(),
-        sel.accentRgb.data(),
+        // Marine slots 2/3 (random per spawn otherwise: the stray blue / blue ODST helmet, Tyler 05:51).
+        sel.previewMarine ? (sel.marineColors ? sel.marineThirdRgb.data() : kMarineGrey) : sel.accentRgb.data(),
         sel.lightsRgb.data(),
-        visFloats,
+        sel.previewMarine ? (sel.marineColors ? sel.marineFourthRgb.data() : kMarineGrey) : visFloats,
         haveEliteFixed ? eliteSlot2 : nullptr,
         haveEliteFixed ? eliteSlot3 : nullptr,
         permPairsFlat,
@@ -2820,7 +2821,7 @@ static int32_t MarineRegionIndexSEH(uintptr_t base, uint32_t unitDatum, uint32_t
     }
 }
 
-static bool MarineApplySEH(uintptr_t base, uint32_t unit, const uint32_t* pairs, size_t pairCount, const float* pri, const float* sec) {
+static bool MarineApplySEH(uintptr_t base, uint32_t unit, const uint32_t* pairs, size_t pairCount, const float* pri, const float* sec, const float* c3, const float* c4) {
     __try {
         using SetRegionPermutationFn = uint8_t(__fastcall*)(uint32_t, uint32_t, uint32_t, uint8_t);
         using SetChangeColorFn = uint8_t(__fastcall*)(uint32_t, int32_t, const float*);
@@ -2829,6 +2830,8 @@ static bool MarineApplySEH(uintptr_t base, uint32_t unit, const uint32_t* pairs,
         for (size_t p = 0; p < pairCount; ++p) SetRegionPermutation(unit, pairs[p * 2], pairs[p * 2 + 1], 1);
         if (pri) SetChangeColor(unit, 0, pri);
         if (sec) SetChangeColor(unit, 1, sec);
+        if (c3) SetChangeColor(unit, 2, c3);
+        if (c4) SetChangeColor(unit, 3, c4);
         return true;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return false;
@@ -2938,8 +2941,10 @@ void ReachArmory::SyncMarine() {
     }
     const float pri[3] = { sel.marinePrimaryRgb[0], sel.marinePrimaryRgb[1], sel.marinePrimaryRgb[2] };
     const float sec[3] = { sel.marineSecondaryRgb[0], sel.marineSecondaryRgb[1], sel.marineSecondaryRgb[2] };
+    const float c3[3] = { sel.marineThirdRgb[0], sel.marineThirdRgb[1], sel.marineThirdRgb[2] };
+    const float c4[3] = { sel.marineFourthRgb[0], sel.marineFourthRgb[1], sel.marineFourthRgb[2] };
     const bool ok = MarineApplySEH(base, unit, pairs.data(), pairs.size() / 2, sel.marineColors ? pri : nullptr,
-                                   sel.marineColors ? sec : nullptr);
+                                   sel.marineColors ? sec : nullptr, sel.marineColors ? c3 : nullptr, sel.marineColors ? c4 : nullptr);
     if (s_ticksLeft == 29) {
         NOBLE_INFO("MarineArmor: applied {} of {} piece(s){} to 0x{:08X}{}", pairs.size() / 2, sel.marinePieces.size(),
                    sel.marineColors ? " + colours" : "", unit, ok ? "" : " (FAILED)");
