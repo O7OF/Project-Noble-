@@ -2895,6 +2895,44 @@ static int MarinePermByteSEH(uintptr_t base, uint32_t object, int ri, int* count
     }
 }
 
+// 2026-11-13: in Trooper Firefight the game re-imposes the Marine's model variant every frame: haloreach+0x6A4BA0
+// (one int argument, per player) checks each variant region's permutation against the variant's allowed list and
+// puts an allowed one back (proven: helmet byte 5 after our call, back to 7/2 by the next frame; NOBLE_MARINE_PERMLOG).
+// Hook it and re-apply the player's Marine pieces right after it returns, so the renderer sees ours.
+using MarineVariantFn = uint64_t(__fastcall*)(int32_t);
+static MarineVariantFn s_origMarineVariant = nullptr;
+static std::atomic<bool> s_marineHookArmed{false};
+static std::mutex s_marineHookMutex;
+static uint32_t s_marineHookUnit = 0xFFFFFFFFu;
+static std::vector<uint32_t> s_marineHookPairs;
+static std::atomic<uint64_t> s_marineHookCalls{0};
+static bool MarineApplySEH(uintptr_t base, uint32_t unit, const uint32_t* pairs, size_t pairCount, const float* pri, const float* sec, const float* c3, const float* c4, uint8_t* results, uint32_t variantSid);
+static uint64_t __fastcall MarineVariantDetour(int32_t arg) {
+    const uint64_t r = s_origMarineVariant(arg);
+    if (s_marineHookArmed.load(std::memory_order_relaxed)) {
+        std::unique_lock<std::mutex> lock(s_marineHookMutex, std::try_to_lock);
+        if (lock.owns_lock() && s_marineHookUnit != 0xFFFFFFFFu && !s_marineHookPairs.empty()) {
+            const uintptr_t base = reinterpret_cast<uintptr_t>(GetModuleHandleW(L"haloreach.dll"));
+            if (base) MarineApplySEH(base, s_marineHookUnit, s_marineHookPairs.data(), s_marineHookPairs.size() / 2,
+                                     nullptr, nullptr, nullptr, nullptr, nullptr, 0);
+            s_marineHookCalls.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    return r;
+}
+static void InstallMarineVariantHookOnce(uintptr_t base) {
+    static bool s_done = false;
+    if (s_done) return;
+    s_done = true;
+    void* target = reinterpret_cast<void*>(base + 0x6A4BA0);
+    if (HookManager::InstallHook(target, reinterpret_cast<void*>(&MarineVariantDetour), reinterpret_cast<void**>(&s_origMarineVariant), "MarineVariant")) {
+        HookManager::EnableAll();
+        NOBLE_INFO("MarineArmor: hooked +0x6A4BA0 (variant re-impose)");
+    } else {
+        NOBLE_WARN("MarineArmor: could not hook +0x6A4BA0");
+    }
+}
+
 static uint32_t LocalUnitDatumNow(uintptr_t base) {
     using GetLocalUnitFn = int32_t(__fastcall*)(int32_t);
     return static_cast<uint32_t>(reinterpret_cast<GetLocalUnitFn>(base + 0x53EF8)(0));
@@ -3007,6 +3045,16 @@ void ReachArmory::SyncMarine() {
         const uint32_t rs = sid(r), ps = sid(p);
         if (rs && ps) { pairs.push_back(rs); pairs.push_back(ps); }
     }
+    // Re-apply after the game's per-frame variant check (see MarineVariantDetour). Dev switch while being proven.
+    if (std::getenv("NOBLE_MARINE_HOOK") && !pairs.empty()) {
+        InstallMarineVariantHookOnce(base);
+        {
+            std::lock_guard<std::mutex> lock(s_marineHookMutex);
+            s_marineHookUnit = unit;
+            s_marineHookPairs = pairs;
+        }
+        s_marineHookArmed.store(true);
+    }
     const float pri[3] = { sel.marinePrimaryRgb[0], sel.marinePrimaryRgb[1], sel.marinePrimaryRgb[2] };
     const float sec[3] = { sel.marineSecondaryRgb[0], sel.marineSecondaryRgb[1], sel.marineSecondaryRgb[2] };
     const float c3[3] = { sel.marineThirdRgb[0], sel.marineThirdRgb[1], sel.marineThirdRgb[2] };
@@ -3034,7 +3082,7 @@ void ReachArmory::SyncMarine() {
         if (t >= s_nextLog2) {
             s_nextLog2 = t + 1000;
             const int ri = MarineRegionIndexSEH(base, unit, sid("helmet"));
-            NOBLE_INFO("MarineArmor: PERMLOG helmet byte right after the apply: {}", MarinePermByteSEH(base, unit, ri, nullptr));
+            NOBLE_INFO("MarineArmor: PERMLOG helmet byte right after the apply: {} (hook re-applies so far: {})", MarinePermByteSEH(base, unit, ri, nullptr), s_marineHookCalls.load());
         }
     }
     if (std::getenv("NOBLE_MARINE_ALL")) {
