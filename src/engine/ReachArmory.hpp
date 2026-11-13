@@ -75,6 +75,10 @@ struct ReachArmorySelection {
     std::vector<std::pair<std::string, std::string>> marinePieces;
     bool marineColors = false;   // apply marinePrimaryRgb / marineSecondaryRgb to change colours 0 / 1
     bool previewMarine = false;  // Armory MARINE tab: show marine_armory (rr_elite = 2) instead of the Spartan
+    // H2A Marine setup (2026-11-13): region/permutation pairs for objects\characters\h2a_marines; marineH2A = the
+    // Marine tab's model is H2A (preview shows h2a_armory, rr_elite = 3).
+    std::vector<std::pair<std::string, std::string>> h2aPieces;
+    bool marineH2A = false;
     std::array<float, 3> marinePrimaryRgb = { 0.3f, 0.3f, 0.3f };
     std::array<float, 3> marineSecondaryRgb = { 0.3f, 0.3f, 0.3f };
     std::array<float, 3> marineThirdRgb = { 0.3f, 0.3f, 0.3f };    // change colour slot 2
