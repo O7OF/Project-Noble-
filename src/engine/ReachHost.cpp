@@ -1946,6 +1946,8 @@ static void FillLocalInput(uint8_t* st) {
 
     if (ReachArmory::IsMenuMode()) {
         ReachArmory::NotifyEngineTick();
+    } else {
+        ReachArmory::NotifyMatchTick();   // Marine pieces: must be set on this (simulation) thread
     }
 
     static HWND s_lastWindow = nullptr;

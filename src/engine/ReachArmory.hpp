@@ -116,6 +116,8 @@ public:
     // Flashlight (2026-11-13; PepperMan's Nexus 2507 lights merged into spartans.biped): L toggles the local unit's
     // "open" state like hs unit_open / unit_close. Only maps built with that biped show a light.
     static void TickFlashlight();
+    // Simulation-thread tick in matches (ReachHost FillLocalInput): applies the queued Marine pieces.
+    static void NotifyMatchTick();
     // Slot 48 reports every map file it resolves; the scenario map's string ids are read from it.
     static void NoteMapPath(const std::string& path);
 

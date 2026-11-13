@@ -2946,6 +2946,94 @@ static void InstallMarineVariantHookOnce(uintptr_t base) {
     }
 }
 
+// Dev (2026-11-13, env NOBLE_MARINE_WATCH): hardware write breakpoint (DR0, 1 byte) on the player's helmet permutation
+// byte, set on every thread of the process; a vectored handler logs each distinct writer (haloreach offset).
+static uintptr_t MarinePermByteAddrSEH(uintptr_t base, uint32_t object, int ri) {
+    __try {
+        using GetPermsFn = void(__fastcall*)(uint32_t, int32_t*, uint8_t**, uint8_t**);
+        int32_t count = 0; uint8_t* perms = nullptr; uint8_t* state = nullptr;
+        reinterpret_cast<GetPermsFn>(base + 0x473028)(object, &count, &perms, &state);
+        if (!perms || ri < 0 || ri >= count) return 0;
+        return reinterpret_cast<uintptr_t>(perms + ri);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return 0;
+    }
+}
+static std::atomic<uintptr_t> s_watchBase{0};
+static std::atomic<uintptr_t> s_watchAddr{0};
+static uintptr_t s_watchSeen[32] = {};
+static std::atomic<int> s_watchSeenCount{0};
+static std::atomic<uint64_t> s_watchHits{0};
+static LONG CALLBACK MarineWatchVeh(PEXCEPTION_POINTERS ep) {
+    if (ep->ExceptionRecord->ExceptionCode != EXCEPTION_SINGLE_STEP) return EXCEPTION_CONTINUE_SEARCH;
+    if (!(ep->ContextRecord->Dr6 & 1)) return EXCEPTION_CONTINUE_SEARCH;
+    ep->ContextRecord->Dr6 = 0;
+    s_watchHits.fetch_add(1);
+    const uintptr_t rip = static_cast<uintptr_t>(ep->ContextRecord->Rip);
+    const int n = s_watchSeenCount.load();
+    bool seen = false;
+    for (int i = 0; i < n && i < 32; ++i) seen = seen || s_watchSeen[i] == rip;
+    if (!seen && n < 32) {
+        s_watchSeen[n] = rip;
+        s_watchSeenCount.store(n + 1);
+        const uintptr_t b = s_watchBase.load();
+        const uint8_t v = *reinterpret_cast<const uint8_t*>(s_watchAddr.load());
+        HMODULE mod = nullptr; char modName[MAX_PATH] = "?";
+        if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                               reinterpret_cast<LPCSTR>(rip), &mod) && mod) {
+            GetModuleFileNameA(mod, modName, MAX_PATH);
+        }
+        // haloreach return addresses on the faulting stack (who called the writer)
+        std::string callers;
+        const uintptr_t* sp = reinterpret_cast<const uintptr_t*>(ep->ContextRecord->Rsp);
+        int found = 0;
+        for (int i = 0; i < 160 && found < 8; ++i) {
+            const uintptr_t q = sp[i];
+            if (q > b && q < b + 0x1000000) { char buf[24]; snprintf(buf, sizeof(buf), " +0x%llX", static_cast<unsigned long long>(q - b)); callers += buf; ++found; }
+        }
+        NOBLE_INFO("MarineWatch: write to helmet perm byte from {}+0x{:X} (value now {}, thread {}); haloreach on stack:{}",
+                   modName, mod ? rip - reinterpret_cast<uintptr_t>(mod) : rip, v, GetCurrentThreadId(), callers);
+    }
+    return EXCEPTION_CONTINUE_EXECUTION;
+}
+static DWORD WINAPI MarineWatchArmThread(LPVOID p) {
+    const uintptr_t addr = reinterpret_cast<uintptr_t>(p);
+    const DWORD self = GetCurrentThreadId(), pid = GetCurrentProcessId();
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    if (snap == INVALID_HANDLE_VALUE) return 0;
+    THREADENTRY32 te{}; te.dwSize = sizeof(te);
+    int armed = 0;
+    for (BOOL ok = Thread32First(snap, &te); ok; ok = Thread32Next(snap, &te)) {
+        if (te.th32OwnerProcessID != pid || te.th32ThreadID == self) continue;
+        HANDLE th = OpenThread(THREAD_GET_CONTEXT | THREAD_SET_CONTEXT | THREAD_SUSPEND_RESUME, FALSE, te.th32ThreadID);
+        if (!th) continue;
+        if (SuspendThread(th) != static_cast<DWORD>(-1)) {
+            CONTEXT c{}; c.ContextFlags = CONTEXT_DEBUG_REGISTERS;
+            if (GetThreadContext(th, &c)) {
+                c.Dr0 = addr;
+                c.Dr7 = (c.Dr7 & ~0x000F0003ull) | 0x1ull | (0x1ull << 16);   // L0, RW0 = write, LEN0 = 1 byte
+                if (SetThreadContext(th, &c)) ++armed;
+            }
+            ResumeThread(th);
+        }
+        CloseHandle(th);
+    }
+    CloseHandle(snap);
+    NOBLE_INFO("MarineWatch: write breakpoint on 0x{:X} armed on {} thread(s)", addr, armed);
+    return 0;
+}
+
+// 2026-11-13: Marine pieces must be set on the SIMULATION thread. Each frame haloreach+0x1CD2BC copies the whole game
+// state from the update thread's buffer over the render thread's copy (proven with a write breakpoint: VCRUNTIME memcpy
+// called from +0x1CD389 wrote the variant's piece back right after our render-thread call). SyncMarine queues the
+// pairs; ReachArmory::NotifyMatchTick (FillLocalInput, simulation thread) applies them.
+static std::mutex s_simMarineMutex;
+static uint32_t s_simMarineUnit = 0xFFFFFFFFu;
+static std::vector<uint32_t> s_simMarinePairs;
+static std::atomic<int> s_simMarineTicks{0};
+static std::atomic<uint64_t> s_simMarineApplied{0};
+static std::atomic<uint32_t> s_simHelmetSid{0}, s_simBackpackSid{0};
+
 static uint32_t LocalUnitDatumNow(uintptr_t base) {
     using GetLocalUnitFn = int32_t(__fastcall*)(int32_t);
     return static_cast<uint32_t>(reinterpret_cast<GetLocalUnitFn>(base + 0x53EF8)(0));
@@ -3089,11 +3177,36 @@ void ReachArmory::SyncMarine() {
             NOBLE_INFO("MarineArmor: PERMLOG helmet region {} of {}: stored perm byte {} (read before this frame's apply)", ri, count, before);
         }
     }
+    if (std::getenv("NOBLE_MARINE_WATCH")) {   // dev: who rewrites the helmet piece? (see MarineWatchVeh)
+        static uint32_t s_watchUnit = 0xFFFFFFFFu;
+        if (unit != s_watchUnit) {
+            const uintptr_t addr = MarinePermByteAddrSEH(base, unit, MarineRegionIndexSEH(base, unit, sid("helmet")));
+            if (addr) {
+                s_watchUnit = unit;
+                static PVOID s_veh = AddVectoredExceptionHandler(1, MarineWatchVeh);
+                (void)s_veh;
+                s_watchBase.store(base); s_watchAddr.store(addr);
+                HANDLE t = CreateThread(nullptr, 0, MarineWatchArmThread, reinterpret_cast<LPVOID>(addr), 0, nullptr);
+                if (t) CloseHandle(t);
+            }
+        }
+        static ULONGLONG s_nextHits = 0;
+        if (GetTickCount64() >= s_nextHits) { s_nextHits = GetTickCount64() + 5000; NOBLE_INFO("MarineWatch: {} write(s) so far", s_watchHits.load()); }
+    }
+    {   // queue for the simulation thread (see s_simMarineMutex)
+        std::lock_guard<std::mutex> lock(s_simMarineMutex);
+        s_simMarineUnit = unit;
+        s_simMarinePairs = pairs;
+    }
+    s_simHelmetSid.store(sid("helmet")); s_simBackpackSid.store(sid("flair_backpack"));
+    s_simMarineTicks.store(s_hold ? 1000000 : 60);
     uint8_t results[16] = {};
     // Dev (2026-11-13): env NOBLE_MARINE_VARIANT=<model variant> runs object_set_variant first, on the first apply tick.
     static const char* s_variant = std::getenv("NOBLE_MARINE_VARIANT");
     const uint32_t variantSid = (s_variant && s_ticksLeft == 29) ? sid(s_variant) : 0u;
-    const bool ok = MarineApplySEH(base, unit, pairs.data(), pairs.size() / 2, sel.marineColors ? pri : nullptr,
+    // Pieces: simulation thread (NotifyMatchTick). Here only colours, unless the dev switch NOBLE_MARINE_RENDERAPPLY.
+    static const bool s_renderApply = std::getenv("NOBLE_MARINE_RENDERAPPLY") != nullptr;
+    const bool ok = MarineApplySEH(base, unit, pairs.data(), s_renderApply ? pairs.size() / 2 : 0, sel.marineColors ? pri : nullptr,
                                    sel.marineColors ? sec : nullptr, sel.marineColors ? c3 : nullptr, sel.marineColors ? c4 : nullptr, results, variantSid);
     if (std::getenv("NOBLE_MARINE_PERMLOG")) {   // dev: the same byte right after this frame's apply
         static ULONGLONG s_nextLog2 = 0;
@@ -3213,6 +3326,30 @@ void ReachArmory::TickFlashlight() {
         NOBLE_INFO("Flashlight: {} (unit 0x{:08X})", on ? "on" : "off", unit);
         s_checkUnit = unit; s_checkAt[0] = GetTickCount64() + 1000; s_checkAt[1] = GetTickCount64() + 3000;
     }
+}
+
+void ReachArmory::NotifyMatchTick() {
+    if (s_simMarineTicks.load(std::memory_order_relaxed) <= 0) return;
+    s_simMarineTicks.fetch_sub(1);
+    uint32_t unit; std::vector<uint32_t> pairs;
+    {
+        std::lock_guard<std::mutex> lock(s_simMarineMutex);
+        unit = s_simMarineUnit; pairs = s_simMarinePairs;
+    }
+    if (unit == 0xFFFFFFFFu || pairs.empty()) return;
+    HMODULE hReach = GetModuleHandleW(L"haloreach.dll");
+    if (!hReach) return;
+    MarineApplySEH(reinterpret_cast<uintptr_t>(hReach), unit, pairs.data(), pairs.size() / 2, nullptr, nullptr, nullptr, nullptr,
+                   nullptr, 0);
+    static const bool s_all = std::getenv("NOBLE_MARINE_ALL") != nullptr;   // dev: every marine-model object, sim thread
+    if (s_all) {
+        uint32_t hits[16] = {}; uint8_t types[16] = {};
+        const int n = MarineApplyAllSEH(reinterpret_cast<uintptr_t>(hReach), s_simHelmetSid.load(), s_simBackpackSid.load(),
+                                        pairs.data(), pairs.size() / 2, hits, types, 16);
+        static int s_lastN = -999;
+        if (n != s_lastN) { s_lastN = n; NOBLE_INFO("MarineArmor: sim ALL -> {} marine-model object(s)", n); }
+    }
+    if (s_simMarineApplied.fetch_add(1) == 0) NOBLE_INFO("MarineArmor: pieces applied on the simulation thread (thread {})", GetCurrentThreadId());
 }
 
 std::vector<std::string> ReachArmory::MissingPermutationsFor(const std::string& list, const std::string& item) {
