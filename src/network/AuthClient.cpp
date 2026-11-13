@@ -138,6 +138,7 @@ void AuthClient::Initialize() {
             m_sessionToken = s.accountToken;
             m_userId = s.accountUserId;
             m_isDeveloper = s.isDeveloper || kDevBuild;
+            m_isTester = s.isTester;
         }
         NOBLE_INFO("AuthClient: restored remembered account '{}' (#{}, dev={})",
                    s.accountUsername, s.accountUserId, m_isDeveloper.load() ? "YES" : "NO");
@@ -427,6 +428,14 @@ void AuthClient::Logout() {
 }
 
 void AuthClient::InvalidateSession(const std::string& reason) {
+    auto s = Settings::Get().Snapshot();
+    if (s.rememberAccount && !s.accountToken.empty()) {
+        // Remember Me is enabled; preserve saved token across server restarts / idle sleeps
+        std::lock_guard<std::mutex> lock(m_authMutex);
+        m_isLoggedIn = false;
+        NOBLE_WARN("AuthClient: session disconnected, credentials kept for Remember Me: {}", reason.empty() ? "expired" : reason);
+        return;
+    }
     {
         std::lock_guard<std::mutex> lock(m_authMutex);
         m_isLoggedIn = false;
@@ -435,7 +444,6 @@ void AuthClient::InvalidateSession(const std::string& reason) {
         m_isDeveloper = kDevBuild;
         m_isTester = false;
     }
-    auto s = Settings::Get().Snapshot();
     s.accountToken.clear();
     s.accountUserId = 0;
     Settings::Get().Update(s);
@@ -448,14 +456,25 @@ bool AuthClient::SetPlayerName(const std::string& name) {
     DeviceIdentity id = DeviceIdentityStore::Get();
     id.playerName = clean;
     DeviceIdentityStore::Save(id);
+    int uid = 0;
     {
         std::lock_guard<std::mutex> lock(m_authMutex);
         m_username = clean;
+        uid = m_userId;
     }
     auto s = Settings::Get().Snapshot();
     s.playerName = clean;
     s.accountUsername = clean;
     Settings::Get().Update(s);
+    if (uid > 0) {
+        std::thread([uid, clean]() {
+            const std::string masterUrl = MasterServerClient::Get().Url();
+            if (masterUrl.empty()) return;
+            nlohmann::json body = { {"userId", uid}, {"newUsername", clean} };
+            int status = 0;
+            AuthPostJson(masterUrl, "/api/account/change-name", body.dump(), status);
+        }).detach();
+    }
     NOBLE_INFO("AuthClient: display name changed to '{}' (device {} unchanged)", clean, id.deviceId);
     return true;
 }
@@ -512,6 +531,7 @@ void AuthClient::SetRoles(bool isDev, bool isTester) {
     m_isTester.store(isTester);
     auto s = Settings::Get().Snapshot();
     s.isDeveloper = m_isDeveloper.load();
+    s.isTester = m_isTester.load();
     Settings::Get().Update(s);
 }
 

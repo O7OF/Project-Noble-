@@ -258,6 +258,7 @@ void Settings::Load() {
             Read(j, "accountToken", d.accountToken);
             Read(j, "rememberAccount", d.rememberAccount);
             Read(j, "isDeveloper", d.isDeveloper);
+            Read(j, "isTester", d.isTester);
             Read(j, "accountUserId", d.accountUserId);
             auto keys = j.find("keyOverrides");
             if (keys != j.end() && keys->is_object()) {
@@ -302,6 +303,10 @@ void Settings::Load() {
                     d.accountUserId = _wtoi(argv[++i]);
                 } else if (arg == L"-account-dev") {
                     d.isDeveloper = (_wtoi(argv[++i]) != 0);
+                } else if (arg == L"-account-tester") {
+                    d.isTester = (_wtoi(argv[++i]) != 0);
+                } else if (arg == L"-remember-account") {
+                    d.rememberAccount = true;
                 }
             }
             LocalFree(argv);
@@ -410,6 +415,7 @@ bool Settings::Save() {
         j["accountToken"] = d.accountToken;
         j["rememberAccount"] = d.rememberAccount;
         j["isDeveloper"] = d.isDeveloper;
+        j["isTester"] = d.isTester;
         j["accountUserId"] = d.accountUserId;
         nlohmann::json keys = nlohmann::json::object();
         for (const auto& [action, vk] : d.keyOverrides) keys[std::to_string(action)] = vk;

@@ -21,6 +21,7 @@
 #include <set>
 #include <unordered_set>
 #include <utility>
+#include <random>
 
 namespace noble {
 
@@ -355,7 +356,12 @@ void MasterServerClient::StartAdvertising(const MasterAdvert& advert) {
         m_sessionId = advert.id;
         m_sessionToken = advert.token;
     } else {
-        m_sessionId.clear();
+        static std::random_device rd;
+        static std::mt19937_64 gen(rd());
+        char sidBuf[32];
+        std::snprintf(sidBuf, sizeof(sidBuf), "%016llx", static_cast<unsigned long long>(gen()));
+        m_sessionId = sidBuf;
+        m_advert.id = m_sessionId;
         m_sessionToken.clear();
     }
     m_unregisterRequested = false;
@@ -478,8 +484,8 @@ void MasterServerClient::DoOnline() {
         presenceBody["session_token"] = AuthClient::Get().GetSessionToken();
     }
     HttpResult r = HttpRequest(Url(), L"POST", "/api/presence", presenceBody.dump());
-    if (r.status == 401) {
-        AuthClient::Get().InvalidateSession("Session invalidated by master server");
+    if (r.status == 401 && AuthClient::Get().IsLoggedIn()) {
+        NOBLE_WARN("MasterServerClient: presence rejected by master server (401)");
     }
     if (!r.ok) {
         r = HttpRequest(Url(), L"GET", "/api/players/online", {});
@@ -499,7 +505,7 @@ void MasterServerClient::DoOnline() {
         m_totalPlayers.store(std::max(online, total));
         m_onlineServers.store(std::max(0, servers));
 
-        if (j.contains("is_developer") || j.contains("is_tester")) {
+        if (AuthClient::Get().IsLoggedIn() && (j.contains("is_developer") || j.contains("is_tester"))) {
             const bool isDev = j.value("is_developer", false);
             const bool isTester = j.value("is_tester", false);
             AuthClient::Get().SetRoles(isDev, isTester);
@@ -683,6 +689,7 @@ void MasterServerClient::DoRegister() {
     }
 
     nlohmann::json body = {
+        {"session_id", advert.id.empty() ? m_sessionId : advert.id},
         {"name", advert.name}, {"port", advert.port}, {"player_count", advert.playerCount},
         {"max_players", advert.maxPlayers}, {"map", advert.map}, {"mode", advert.mode},
         {"has_password", advert.hasPassword}, {"is_mod", advert.isMod}, {"mod_id", advert.modId}, {"mod_title", advert.modTitle},

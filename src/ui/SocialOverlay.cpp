@@ -31,20 +31,22 @@ constexpr int kFeedLines = 6;
 constexpr int kVoiceRows = 8;
 constexpr float kLineGap = 4.0f;
 
-enum Channel { kAll = 0, kTeam = 1, kParty = 2, kDirect = 3, kChannelCount = 4 };
+enum Channel { kGlobal = 0, kAll = 1, kTeam = 2, kParty = 3, kDirect = 4, kChannelCount = 5 };
 
-const char* const kChannelIds[kChannelCount] = { "all", "team", "party", "dm" };
-const char* const kChannelTags[kChannelCount] = { "ALL", "TEAM", "PARTY", "DM" };
+const char* const kChannelIds[kChannelCount] = { "global", "all", "team", "party", "dm" };
+const char* const kChannelTags[kChannelCount] = { "GLOBAL", "LOBBY", "TEAM", "PARTY", "DM" };
 const char* const kAudience[kChannelCount] = {
-    "Everyone in this session",
+    "Everyone online (Global Chat)",
+    "Everyone in this lobby/session",
     "Your team",
     "Your party",
     "Direct Message (/w <player> <msg>)"
 };
 const ImU32 kChannelColors[kChannelCount] = {
-    IM_COL32(236, 242, 248, 255), // All
-    IM_COL32(120, 214, 150, 255), // Team
-    IM_COL32(196, 162, 255, 255), // Party
+    IM_COL32(245, 200, 90, 255),  // Global (Gold)
+    IM_COL32(236, 242, 248, 255), // Lobby / All (White)
+    IM_COL32(120, 214, 150, 255), // Team (Green)
+    IM_COL32(196, 162, 255, 255), // Party (Purple)
     IM_COL32(80, 220, 255, 255)   // DM (Cyan)
 };
 const ImU32 kSystemColor = IM_COL32(255, 196, 120, 255);
@@ -101,8 +103,12 @@ std::string Clean(std::string text, size_t limit) {
 }
 
 int ChannelFromId(const std::string& id) {
+    if (id == "global") return kGlobal;
+    if (id == "all" || id == "lobby") return kAll;
+    if (id == "team") return kTeam;
+    if (id == "party") return kParty;
+    if (id == "dm" || id == "whisper" || id.rfind("dm:", 0) == 0) return kDirect;
     for (int i = 0; i < kChannelCount; ++i) if (id == kChannelIds[i]) return i;
-    if (id.rfind("dm:", 0) == 0 || id == "whisper") return kDirect;
     return kAll;
 }
 
@@ -238,7 +244,11 @@ void SendLine() {
             text = rest;
             channel = kDirect;
             s_dmTarget = target;
-        } else if (cmdLower == "all" || cmdLower == "a") {
+        } else if (cmdLower == "g" || cmdLower == "global") {
+            channel = kGlobal;
+            text = rest;
+            if (text.empty()) { s_channel = kGlobal; return; }
+        } else if (cmdLower == "l" || cmdLower == "lobby" || cmdLower == "all" || cmdLower == "a") {
             channel = kAll;
             text = rest;
             if (text.empty()) { s_channel = kAll; return; }
@@ -268,6 +278,10 @@ void SendLine() {
     if (s_demo) {
         AddLine(std::move(line));
         return;
+    }
+
+    if (!NetworkTransport::Get().IsRelayConnected()) {
+        NetworkTransport::Get().EnsureGlobalRelay();
     }
 
     if (NetworkTransport::Get().IsRelayConnected()) {
@@ -578,6 +592,9 @@ void OpenDirectMessage(const std::string& friendName) {
     if (!friendName.empty()) s_dmTarget = friendName;
     s_channel = kDirect;
     OpenLine(kDirect, 0);
+    if (!NetworkTransport::Get().IsRelayConnected()) {
+        NetworkTransport::Get().EnsureGlobalRelay();
+    }
 }
 
 bool WantsFrame() { return s_wantsFrame; }

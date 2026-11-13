@@ -189,9 +189,12 @@ bool UPnP::IsPublicIP(const std::string& ip) const {
 }
 
 std::string UPnP::QueryPublicIPWithIpify() {
-    HttpResponse resp = HttpRequest("https://api.ipify.org", L"GET", {}, {});
+    HttpResponse resp = HttpRequest("https://api4.ipify.org", L"GET", {}, {});
     if (!resp.ok || resp.body.empty()) {
-        resp = HttpRequest("http://api.ipify.org", L"GET", {}, {});
+        resp = HttpRequest("http://api4.ipify.org", L"GET", {}, {});
+    }
+    if (!resp.ok || resp.body.empty()) {
+        resp = HttpRequest("https://api.ipify.org", L"GET", {}, {});
     }
     if (resp.ok && !resp.body.empty()) {
         std::string ip = resp.body;
@@ -209,12 +212,26 @@ const std::string& UPnP::GetExternalIP() const {
     if (IsPublicIP(m_externalIp)) {
         return m_externalIp;
     }
-    std::string ip = const_cast<UPnP*>(this)->QueryPublicIPWithIpify();
-    if (IsPublicIP(ip)) {
-        const_cast<UPnP*>(this)->m_externalIp = ip;
-        return m_externalIp;
+    return (m_externalIp.empty() || m_externalIp == "Unknown") ? m_internalIp : m_externalIp;
+}
+
+UPnP::NatType UPnP::GetNatType() const {
+    if (m_isActive.load() || IsPublicIP(m_internalIp)) {
+        return NatType::Open;
     }
-    return m_externalIp.empty() ? m_internalIp : m_externalIp;
+    if (IsPublicIP(m_externalIp)) {
+        return NatType::Moderate;
+    }
+    return NatType::Strict;
+}
+
+const char* UPnP::GetNatTypeString() const {
+    switch (GetNatType()) {
+    case NatType::Open: return "OPEN";
+    case NatType::Moderate: return "MODERATE";
+    case NatType::Strict: return "STRICT";
+    default: return "STRICT";
+    }
 }
 
 bool UPnP::Initialize() {
@@ -233,12 +250,16 @@ bool UPnP::Initialize() {
 
     std::thread([this]() {
         std::string pub = QueryPublicIPWithIpify();
-        std::lock_guard<std::mutex> lk(m_mutex);
-        if (IsPublicIP(pub)) {
-            m_externalIp = pub;
-            m_statusMessage = "Network ready: " + m_externalIp + " (Local: " + m_internalIp + ")";
-            NOBLE_INFO("UPnP: Public IP resolved via ipify: {}", m_externalIp);
+        {
+            std::lock_guard<std::mutex> lk(m_mutex);
+            if (IsPublicIP(pub)) {
+                m_externalIp = pub;
+                m_statusMessage = "Network ready: " + m_externalIp + " (Local: " + m_internalIp + ")";
+                NOBLE_INFO("UPnP: Public IP resolved via ipify: {}", m_externalIp);
+            }
         }
+        // Auto-forward Reach host port 11774 in background so any player can host
+        ForwardPort(11774, "UDP", "Halo Reach CE");
     }).detach();
 
     return true;

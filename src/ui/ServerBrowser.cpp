@@ -508,14 +508,11 @@ void ServerBrowser::RenderFilterBar() {
 
     // NAT Type & UPnP Status Indicator
     const bool upnpActive = UPnP::Get().IsActive();
-    const std::string& intIp = UPnP::Get().GetInternalIP();
-    const std::string& extIp = UPnP::Get().GetExternalIP();
-    const bool isDirectPublic = (!intIp.empty() && intIp != "127.0.0.1" && UPnP::Get().IsPublicIP(intIp));
-    const bool isOpenNat = upnpActive || isDirectPublic;
-    const bool isModerateNat = !isOpenNat && (!extIp.empty() && extIp != "Unknown" && extIp != "127.0.0.1");
-    const char* natLabel = isOpenNat ? "OPEN" : (isModerateNat ? "MODERATE" : "STRICT");
-    const ImVec4 natColor = isOpenNat ? ImVec4(0.35f, 0.85f, 0.45f, 1.0f)
-                                      : (isModerateNat ? ImVec4(0.95f, 0.85f, 0.35f, 1.0f) : ImVec4(0.95f, 0.35f, 0.35f, 1.0f));
+    const UPnP::NatType natType = UPnP::Get().GetNatType();
+    const char* natLabel = UPnP::Get().GetNatTypeString();
+    const ImVec4 natColor = (natType == UPnP::NatType::Open) ? ImVec4(0.35f, 0.85f, 0.45f, 1.0f)
+                            : ((natType == UPnP::NatType::Moderate) ? ImVec4(0.95f, 0.85f, 0.35f, 1.0f) : ImVec4(0.95f, 0.35f, 0.35f, 1.0f));
+    const bool isOpenNat = (natType == UPnP::NatType::Open);
 
     std::string regionDisplay = (curRegion == 0) ? kMasterRegions[0].label : "Offline / LAN Only";
     const std::string masterStatus = MasterServerClient::Get().Enabled()

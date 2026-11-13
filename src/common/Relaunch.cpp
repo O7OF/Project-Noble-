@@ -117,6 +117,8 @@ bool Start(const std::wstring& args, unsigned long* outPid) {
         cmd += L" -account-token \"" + ToWideUtf8(AuthClient::Get().GetSessionToken()) + L"\"";
         cmd += L" -user-id " + std::to_wstring(AuthClient::Get().GetUserId());
         cmd += L" -account-dev " + std::to_wstring(AuthClient::Get().IsDeveloper() ? 1 : 0);
+        cmd += L" -account-tester " + std::to_wstring(AuthClient::Get().IsTester() ? 1 : 0);
+        if (snap.rememberAccount) cmd += L" -remember-account";
     }
     // Test switches the menu was started with carry on to the match process.
     for (const wchar_t* sw : { L"--guest-block", L"-armory-unlock-all" }) {
@@ -170,6 +172,8 @@ bool StartChildMatch(const std::wstring& args, void** outProcessHandle, unsigned
         cmd += L" -account-token \"" + ToWideUtf8(AuthClient::Get().GetSessionToken()) + L"\"";
         cmd += L" -user-id " + std::to_wstring(AuthClient::Get().GetUserId());
         cmd += L" -account-dev " + std::to_wstring(AuthClient::Get().IsDeveloper() ? 1 : 0);
+        cmd += L" -account-tester " + std::to_wstring(AuthClient::Get().IsTester() ? 1 : 0);
+        if (snap.rememberAccount) cmd += L" -remember-account";
     }
     for (const wchar_t* sw : { L"--guest-block", L"-armory-unlock-all" }) {
         if (std::wcsstr(GetCommandLineW(), sw) && cmd.find(sw) == std::wstring::npos) cmd += std::wstring(L" ") + sw;

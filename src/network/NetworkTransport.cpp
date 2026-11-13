@@ -1,4 +1,7 @@
 #include "NetworkTransport.hpp"
+#include "MasterServerClient.hpp"
+#include "common/BuildIdentity.hpp"
+#include "common/Settings.hpp"
 #include <nlohmann/json.hpp>
 #include "common/Logger.hpp"
 #include "engine/SharedTagCache.hpp"
@@ -623,6 +626,18 @@ void NetworkTransport::StopRelay() {
     m_relayTextSendQueue.clear();
     m_relayVoiceSendQueue.clear();
     NOBLE_INFO("NetworkTransport: Stopped WebSocket packet relay.");
+}
+
+void NetworkTransport::EnsureGlobalRelay() {
+    if (m_relayConnected.load() || m_relayActive.load()) return;
+    const std::string masterUrl = MasterServerClient::Get().Url();
+    if (masterUrl.empty()) return;
+    std::string wss = masterUrl;
+    if (wss.rfind("https://", 0) == 0) wss = "wss://" + wss.substr(8);
+    else if (wss.rfind("http://", 0) == 0) wss = "ws://" + wss.substr(7);
+    const std::string uname = Settings::Get().Snapshot().playerName;
+    const std::string url = wss + "/ws/relay2?session=global_main&role=guest&username=" + uname + "&protocol=" + std::to_string(kClientProtocol);
+    StartRelay(url, "global_main", false, GetLocalMachineId());
 }
 
 void NetworkTransport::SetChatCallback(ChatCallback cb) {

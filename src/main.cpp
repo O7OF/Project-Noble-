@@ -942,6 +942,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     }
     noble::AuthClient::Get().Initialize();
     noble::SocialClient::Get().Initialize();
+    noble::UPnP::Get().Initialize();
     const noble::SettingsData startupSettings = noble::Settings::Get().Snapshot();
 
     // Front-end menu or a direct map launch? Needed before the swap chain is created: the menu process

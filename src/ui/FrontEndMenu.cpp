@@ -2228,6 +2228,11 @@ struct MenuState {
     std::filesystem::path optionsFile;  // the saved mode being edited; empty for a new one
     std::string confirmAction;          // a save-over or delete waiting for its second press
     bool optionsOpen = false;           // Custom Game: the game options editor replaces the setup screen
+    bool pendingInviteJoin = false;
+    std::string pendingInviteConnect;
+    std::string pendingInviteSession;
+    std::string pendingInviteMap;
+    std::string pendingInviteMode;
     int optionsRow = 0;
     char optionsName[48] = {};
     std::string optionsBase;            // base variant file name
@@ -5246,8 +5251,9 @@ static void DrawSocialScreen(OverlayContext& ctx, const Ui& ui, float left, floa
                 choice.play = true;
                 choice.host = false;
                 choice.connectAddress = inv.hostIp + ":" + std::to_string(inv.hostPort);
-                choice.map = "20_sword_slayer";
-                choice.mode = "multiplayer";
+                choice.map = inv.map.empty() ? "20_sword_slayer" : inv.map;
+                choice.mode = inv.mode.empty() ? "multiplayer" : inv.mode;
+                choice.sessionId = inv.sessionId;
                 SocialClient::Get().ClearInviteAsync(inv.senderUsername);
                 done = true;
                 MenuSounds::Click();
@@ -5812,11 +5818,11 @@ void DrawInviteToast(const Ui& ui, MenuState& st) {
             SocialClient::Get().RefreshFriendsAsync();
             NOBLE_INFO("FrontEndMenu: accepting invite from {} ({}, mode='{}')",
                        newest->senderUsername, newest->hostIp, newest->mode);
-            std::wstring args = L"-connect \"" + ToWide(newest->hostIp + ":" + std::to_string(newest->hostPort)) + L"\"";
-            if (!newest->sessionId.empty()) {
-                args += L" -session-id \"" + ToWide(newest->sessionId) + L"\"";
-            }
-            Relaunch::HandOff(args);
+            st.pendingInviteJoin = true;
+            st.pendingInviteConnect = newest->hostIp + ":" + std::to_string(newest->hostPort);
+            st.pendingInviteSession = newest->sessionId;
+            st.pendingInviteMap = newest->map;
+            st.pendingInviteMode = newest->mode;
         }
     }
     if (button("invite_dismiss", d0, "DISMISS", false)) {
@@ -7552,6 +7558,16 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
 
     // Friend invites reach the player on any screen (Settings > Online services can turn this off).
     DrawInviteToast(ui, st);
+    if (st.pendingInviteJoin) {
+        st.pendingInviteJoin = false;
+        choice.play = true;
+        choice.host = false;
+        choice.connectAddress = st.pendingInviteConnect;
+        choice.sessionId = st.pendingInviteSession;
+        choice.map = st.pendingInviteMap.empty() ? "20_sword_slayer" : st.pendingInviteMap;
+        choice.mode = st.pendingInviteMode.empty() ? "multiplayer" : st.pendingInviteMode;
+        done = true;
+    }
 
     // The Workshop-mod gate sits above every screen: the Server browser stays behind it until the
     // player downloads the lobby's mod or cancels.
@@ -8089,6 +8105,7 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
                     p.team = item.value("team", 0);
                     p.isHost = item.value("isHost", false);
                     p.isDev = item.value("isDev", false);
+                    p.isTester = item.value("isTester", false);
                     p.ping = item.value("ping", 0);
                     try {
                         const uint64_t machine = p.machineId.empty() ? 0 : std::stoull(p.machineId, nullptr, 0);
