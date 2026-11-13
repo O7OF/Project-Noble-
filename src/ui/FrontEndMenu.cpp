@@ -24,6 +24,7 @@
 #include "audio/ReachAudio.hpp"
 #include "audio/ProcessAudio.hpp"
 #include "UiArt.hpp"
+#include "hooks/HookManager.hpp"
 #include "ServerBrowser.hpp"
 #include "ArmorCustomizer.hpp"
 #include "WorkshopManager.hpp"
@@ -51,6 +52,7 @@
 #include <windows.h>
 #include <shellapi.h>
 #include <d3d11.h>
+#include <d3dcompiler.h>
 #include <dxgi.h>
 #include <imgui.h>
 #include <imgui_impl_win32.h>
@@ -58,6 +60,7 @@
 #include <algorithm>
 #include <cfloat>
 #include <cmath>
+#include <cstring>
 #include <cstdio>
 #include <fstream>
 #include <cwctype>
@@ -633,12 +636,503 @@ ID3D11BlendState* s_opaque = nullptr;
 ID3D11BlendState* s_additive = nullptr;
 ID3D11DeviceContext* s_context = nullptr;
 float s_windowScale = 1.0f;   // back-buffer pixels per window pixel (menu supersampling)
+bool s_stageHeld = false;     // this frame shows the held picture (and its depth) instead of the engine's
 
 void UseOpaque(const ImDrawList*, const ImDrawCmd*) {
     if (s_context) s_context->OMSetBlendState(s_opaque, nullptr, 0xFFFFFFFF);   // the engine's alpha is not coverage
 }
 void UseAdditive(const ImDrawList*, const ImDrawCmd*) {
     if (s_context) s_context->OMSetBlendState(s_additive, nullptr, 0xFFFFFFFF);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Armory backdrop: a procedural glowing diamond lattice (after the "Auntie Dot" Reach dreamscene). Drawn by a pixel
+// shader at full resolution, so the lines stay sharp at 1080p/1440p/4K. A wave of light spreads out from the centre
+// along the lattice to the screen edges and back. The engine's frame is composited on top: where the engine image
+// is black (the empty chamber around the character) the lattice shows; on the character it does not.
+// ---------------------------------------------------------------------------------------------------------------
+const char* const kBackdropPs = R"HLSL(
+cbuffer Params : register(b0) {
+    float2 screenSize;   // the menu rectangle, menu units
+    float2 framePos;     // engine frame placement inside it
+    float2 frameSize;
+    float2 center;       // lattice centre
+    float  time;
+    float  frameAlpha;   // 0..1 fade-in of the engine frame
+    float  hasFrame;
+    float  pad;
+    float  clearDepth;   // the value the engine cleared its depth buffer to: untouched = empty background
+    float  hasDepth;
+    float  depthW;
+    float  depthH;
+    float  depthThreshold;   // > 0: nearer than this = character (measured on the CPU from a depth sample grid)
+    float  pad1, pad2, pad3;
+};
+Texture2D frameTex : register(t0);
+Texture2D<float> depthTex : register(t1);
+SamplerState samp : register(s0);
+struct PS_INPUT { float4 pos : SV_POSITION; float4 col : COLOR0; float2 uv : TEXCOORD0; };
+
+float Luma(float3 c) { return dot(c, float3(0.299, 0.587, 0.114)); }
+
+float3 Lattice(float2 px) {
+    float H = screenSize.y;
+    float2 q = (px - center) / H;
+    float2 r = float2(q.x + q.y, q.y - q.x) * 0.70710678;   // 45 degrees: the bars become axis-aligned
+    float cell = 0.078;                                       // bar spacing, in screen heights
+    float2 g = r / cell;
+    float2 id = floor(g);
+    float2 f = g - id;
+
+    // The wave: 0 -> 1 -> 0 over T seconds. Its radius grows from the centre to past the screen corners.
+    float T = 36.0;                                                 // one full out-and-back cycle, seconds
+    float w = 0.5 - 0.5 * cos(6.2831853 * time / T);
+    float R = lerp(0.10, 1.55, w * w * (3.0 - 2.0 * w));
+
+    float3 acc = 0;
+    [unroll] for (int fam = 0; fam < 2; ++fam) {
+        float across = fam == 0 ? f.y : f.x;
+        float along  = fam == 0 ? f.x : f.y;
+        float nearHi = across > 0.5 ? 1.0 : 0.0;
+        float dLine = min(across, 1.0 - across) * cell;
+        float lineIdx = (fam == 0 ? id.y : id.x) + nearHi;
+        float gap = 0.17;                                           // dark node at each crossing
+        float inside = min(along - gap, 1.0 - gap - along) * cell;  // > 0 inside the bar
+        float dist = length(float2(max(-inside, 0.0), dLine));
+        // Each bar lights as a whole when the wave reaches its middle, so the light follows the lattice.
+        float2 mid = fam == 0 ? float2(id.x + 0.5, lineIdx) : float2(lineIdx, id.y + 0.5);
+        float d = max(abs(mid.x), abs(mid.y)) * cell;              // diamond rings, like the lattice
+        float lit = saturate((R - d) / 0.09 + 0.5);
+        float front = exp(-((d - R) / 0.07) * ((d - R) / 0.07));
+        float fall = lerp(1.0, 0.22, saturate(d / 1.3));   // outer bars dimmer: the character stays the focus
+        float intensity = lit * fall + front * 0.55;
+        float core = smoothstep(0.0042, 0.0012, dist);
+        float glow = exp(-dist / 0.010) * 0.50 + exp(-dist / 0.040) * 0.10;
+        acc += float3(0.58, 0.80, 0.95) * core * intensity * 0.81;
+        acc += float3(0.08, 0.34, 0.85) * glow * intensity * 0.70;
+        acc += float3(0.07, 0.09, 0.12) * core * (1.0 - lit);   // unlit bars stay faintly visible
+    }
+    float3 bg = float3(0.010, 0.014, 0.022) * (1.0 - 0.6 * saturate(length(q) / 1.3));
+    // Soft shoulder instead of a hard clip, so stacked glows never burn out to flat white-blue.
+    acc = acc / (1.0 + 0.35 * acc);
+    return bg + acc;
+}
+
+float4 main(PS_INPUT input) : SV_Target {
+    float2 px = input.uv * screenSize;
+    float3 lat = Lattice(px);
+    float3 outc = lat;
+    if (hasFrame > 0.5) {
+        float2 fuv = (px - framePos) / frameSize;
+        if (all(fuv >= 0.0) && all(fuv <= 1.0)) {
+            float3 fc = frameTex.Sample(samp, fuv).rgb;
+            float keep;
+            if (hasDepth > 0.5) {
+                // Exact: the character is the geometry NEARER than the room. The engine uses reversed depth (cleared
+                // to 0 = infinitely far, bigger = nearer). The room behind the model (a back wall fills the top half of
+                // the frame) is measured at the frame's left and right edges, where the character never is; anything
+                // clearly nearer than that is the character. 3x3 average for a soft, anti-aliased outline.
+                int2 dmax = int2(depthW - 1, depthH - 1);
+                // The room = the FARTHEST thing seen at the frame's edges (smallest reversed depth that is not empty).
+                // In close-ups the character itself reaches some edges; taking the farthest edge sample still finds
+                // the wall wherever any edge shows it. No geometry at the edges at all: everything drawn is character.
+                float room = 1e30;
+                [unroll] for (int ex = 0; ex < 2; ++ex) {
+                    [unroll] for (int ey = 0; ey < 6; ++ey) {
+                        float e = depthTex.Load(int3(int2((ex == 0 ? 0.015 : 0.985) * depthW, (0.03 + 0.18 * ey) * depthH), 0));
+                        if (e > clearDepth + 1e-7) room = min(room, e);
+                    }
+                }
+                [unroll] for (int tx = 1; tx < 6; ++tx) {
+                    float e = depthTex.Load(int3(int2((tx / 6.0) * depthW, 0.015 * depthH), 0));
+                    if (e > clearDepth + 1e-7) room = min(room, e);
+                }
+                if (room > 1e29) room = clearDepth;
+                float threshold = depthThreshold > 0.0 ? depthThreshold : room * 1.25 + 1e-6;
+                int2 c = int2(fuv * float2(depthW, depthH));
+                float cover = 0.0;
+                [unroll] for (int dy = -1; dy <= 1; ++dy) {
+                    [unroll] for (int dx = -1; dx <= 1; ++dx) {
+                        int2 q = clamp(c + int2(dx, dy), int2(0, 0), dmax);
+                        cover += depthTex.Load(int3(q, 0)) > threshold ? 1.0 : 0.0;
+                    }
+                }
+                keep = 1.0 - cover / 9.0;
+            } else {
+                // Where is the character? Brightness alone can't tell: dark armour (an Elite's teal plates, a black
+                // undersuit) is as dark as the empty room, so a pure brightness key let the lattice show through the
+                // model. Instead the lattice is hidden wherever clearly lit armour is NEAR: three rings of samples
+                // (about 1%, 2.5% and 4.5% of the screen height). Dark parts sit inside or next to lit ones, so they
+                // are covered too; away from the model the lattice comes back gradually, like a soft shadow behind him.
+                keep = 1.0 - smoothstep(0.05, 0.14, Luma(fc));
+                float2 unit = float2(screenSize.y / frameSize.x, screenSize.y / frameSize.y);   // 1 screen-height in frame uv
+                static const float radii[3]   = { 0.010, 0.025, 0.045 };
+                static const float weights[3] = { 1.00, 0.85, 0.55 };
+                [unroll] for (int ring = 0; ring < 3; ++ring) {
+                    float lit = 0.0;
+                    [unroll] for (int k = 0; k < 8; ++k) {
+                        float ang = 6.2831853 * (k + 0.5 * ring) / 8.0;
+                        float2 off = float2(cos(ang), sin(ang)) * radii[ring] * unit;
+                        lit = max(lit, smoothstep(0.06, 0.16, Luma(frameTex.SampleLevel(samp, fuv + off, 0).rgb)));
+                    }
+                    keep *= 1.0 - lit * weights[ring];
+                }
+            }
+            outc = fc * frameAlpha + lat * lerp(1.0, keep, frameAlpha);
+        }
+    }
+    return float4(outc, 1.0);
+}
+)HLSL";
+
+struct BackdropParams {
+    float screenW, screenH, frameX, frameY, frameW, frameH, centerX, centerY;
+    float time, frameAlpha, hasFrame, pad;
+    float clearDepth, hasDepth, depthW, depthH;
+    float depthThreshold, pad1, pad2, pad3;
+};
+static_assert(sizeof(BackdropParams) % 16 == 0, "constant buffer size");
+ID3D11PixelShader* s_backdropPs = nullptr;
+ID3D11Buffer* s_backdropCb = nullptr;
+ID3D11ShaderResourceView* s_blankSrv = nullptr;   // bound while there is no engine frame (the shader ignores it)
+ID3D11ShaderResourceView* s_depthSrv = nullptr;   // engine depth copy for the lattice mask (see CaptureEngineDepth)
+bool s_backdropFailed = false;
+BackdropParams s_backdropParams{};
+
+bool EnsureBackdrop(ID3D11Device* device) {
+    if (s_backdropPs && s_backdropCb && s_opaque) return true;
+    if (s_backdropFailed || !device) return false;
+    if (!s_opaque) {
+        D3D11_BLEND_DESC blend{};
+        blend.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+        device->CreateBlendState(&blend, &s_opaque);
+    }
+    ID3DBlob* code = nullptr;
+    ID3DBlob* errors = nullptr;
+    const HRESULT hr = D3DCompile(kBackdropPs, strlen(kBackdropPs), "noble_armory_backdrop", nullptr, nullptr, "main",
+                                  "ps_4_0", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &code, &errors);
+    if (FAILED(hr) || !code) {
+        NOBLE_WARN("FrontEndMenu: Armory backdrop shader failed to compile: {}",
+                   errors ? std::string(static_cast<const char*>(errors->GetBufferPointer()), errors->GetBufferSize()) : "?");
+        if (errors) errors->Release();
+        if (code) code->Release();
+        s_backdropFailed = true;
+        return false;
+    }
+    if (errors) errors->Release();
+    const bool okPs = SUCCEEDED(device->CreatePixelShader(code->GetBufferPointer(), code->GetBufferSize(), nullptr, &s_backdropPs));
+    code->Release();
+    D3D11_BUFFER_DESC cb{};
+    cb.ByteWidth = sizeof(BackdropParams);
+    cb.Usage = D3D11_USAGE_DYNAMIC;
+    cb.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+    cb.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+    const bool okCb = SUCCEEDED(device->CreateBuffer(&cb, nullptr, &s_backdropCb));
+    {
+        const uint32_t black = 0xFF000000u;
+        D3D11_TEXTURE2D_DESC td{};
+        td.Width = td.Height = 1;
+        td.MipLevels = td.ArraySize = 1;
+        td.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        td.SampleDesc.Count = 1;
+        td.Usage = D3D11_USAGE_IMMUTABLE;
+        td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+        D3D11_SUBRESOURCE_DATA init{ &black, 4, 4 };
+        ID3D11Texture2D* tex = nullptr;
+        if (SUCCEEDED(device->CreateTexture2D(&td, &init, &tex)) && tex) {
+            device->CreateShaderResourceView(tex, nullptr, &s_blankSrv);
+            tex->Release();
+        }
+    }
+    if (!okPs || !okCb || !s_opaque || !s_blankSrv) {
+        NOBLE_WARN("FrontEndMenu: Armory backdrop could not be created; using the plain black chamber");
+        s_backdropFailed = true;
+        return false;
+    }
+    NOBLE_INFO("FrontEndMenu: Armory lattice backdrop ready");
+    return true;
+}
+
+void UseBackdrop(const ImDrawList*, const ImDrawCmd*) {
+    if (!s_context || !s_backdropPs || !s_backdropCb) return;
+    D3D11_MAPPED_SUBRESOURCE mapped{};
+    if (SUCCEEDED(s_context->Map(s_backdropCb, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
+        std::memcpy(mapped.pData, &s_backdropParams, sizeof(s_backdropParams));
+        s_context->Unmap(s_backdropCb, 0);
+    }
+    s_context->PSSetShader(s_backdropPs, nullptr, 0);
+    s_context->PSSetConstantBuffers(0, 1, &s_backdropCb);
+    if (s_backdropParams.hasDepth > 0.5f && s_depthSrv) s_context->PSSetShaderResources(1, 1, &s_depthSrv);
+    s_context->OMSetBlendState(s_opaque, nullptr, 0xFFFFFFFF);
+}
+
+// "LOADING..." in the middle of the stage while the menu map starts and the character is dressed.
+void DrawLoading(const Ui& ui, ImVec2 centre) {
+    const char* const kFull = "LOADING...";
+    const float px = 22.0f * ui.s;
+    const float fullW = TextWidth(NobleStyle::TitleFont(), px, kFull);
+    const int dots = static_cast<int>(ImGui::GetTime() * 2.5) % 4;
+    const std::string text = std::string("LOADING") + std::string(static_cast<size_t>(dots), '.');
+    const ImVec2 padding(22.0f * ui.s, 10.0f * ui.s);
+    ui.dl->AddRectFilled(ImVec2(centre.x - fullW * 0.5f - padding.x, centre.y - px * 0.5f - padding.y),
+                         ImVec2(centre.x + fullW * 0.5f + padding.x, centre.y + px * 0.5f + padding.y),
+                         IM_COL32(2, 6, 12, 150), 6.0f * ui.s);   // ~20% more see-through than before
+    Text(ui, NobleStyle::TitleFont(), 22.0f, ImVec2(centre.x - fullW * 0.5f, centre.y - px * 0.5f),
+         IM_COL32(236, 240, 244, 245), text.c_str());
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Engine depth capture for the Armory lattice. The depth buffer is not bound any more when Noble draws, so the
+// engine's ClearDepthStencilView is hooked: during each engine frame the biggest single-sample depth buffer it clears
+// is remembered (with the value it was cleared to), and at UI time Noble copies it. Pixels still holding the clear
+// value are empty background; everything else is the character (or other geometry).
+// ---------------------------------------------------------------------------------------------------------------
+using ClearDsvFn = void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*, ID3D11DepthStencilView*, UINT, FLOAT, UINT8);
+ClearDsvFn s_origClearDsv = nullptr;
+std::mutex s_depthMutex;
+ID3D11Texture2D* s_frameDepth = nullptr;   // chosen this engine frame (AddRef'd)
+float s_frameDepthClear = 1.0f;
+int s_frameDepthClears = 0;
+std::string s_frameDepthLog;               // every depth clear this frame, for the diagnostic log
+bool s_depthHookTried = false;
+ID3D11Texture2D* s_depthCopy = nullptr;
+D3D11_TEXTURE2D_DESC s_depthCopyDesc{};
+float s_depthClear = 1.0f;
+bool s_depthValid = false;
+
+void STDMETHODCALLTYPE HookClearDsv(ID3D11DeviceContext* ctx, ID3D11DepthStencilView* dsv, UINT flags, FLOAT depth, UINT8 stencil) {
+    if (dsv && (flags & D3D11_CLEAR_DEPTH)) {
+        ID3D11Resource* res = nullptr;
+        dsv->GetResource(&res);
+        ID3D11Texture2D* tex = nullptr;
+        if (res) res->QueryInterface(__uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&tex));
+        if (res) res->Release();
+        if (tex) {
+            D3D11_TEXTURE2D_DESC d{};
+            tex->GetDesc(&d);
+            std::lock_guard<std::mutex> lock(s_depthMutex);
+            ++s_frameDepthClears;
+            if (s_frameDepthLog.size() < 400) {
+                s_frameDepthLog += std::format(" {}x{}/f{}/s{}/c{:.1f}", d.Width, d.Height, static_cast<int>(d.Format), d.SampleDesc.Count, depth);
+            }
+            D3D11_TEXTURE2D_DESC best{};
+            if (s_frameDepth) s_frameDepth->GetDesc(&best);
+            // Biggest wins; on a tie the first one of the frame stays (the scene is drawn before later passes).
+            if (d.SampleDesc.Count == 1 && d.ArraySize == 1 && static_cast<uint64_t>(d.Width) * d.Height > static_cast<uint64_t>(best.Width) * best.Height) {
+                if (s_frameDepth) s_frameDepth->Release();
+                s_frameDepth = tex;
+                s_frameDepth->AddRef();
+                s_frameDepthClear = depth;
+            }
+            tex->Release();
+        }
+    }
+    s_origClearDsv(ctx, dsv, flags, depth, stencil);
+}
+
+void InstallDepthHook(ID3D11DeviceContext* context) {
+    if (s_depthHookTried || !context) return;
+    s_depthHookTried = true;
+    void** vtable = *reinterpret_cast<void***>(context);
+    void* target = vtable[53];   // ID3D11DeviceContext::ClearDepthStencilView
+    if (!HookManager::InstallHook(target, reinterpret_cast<void*>(&HookClearDsv), reinterpret_cast<void**>(&s_origClearDsv),
+                                  "D3D11 ClearDepthStencilView (Armory depth)")) {
+        NOBLE_WARN("ArmoryDepth: could not hook ClearDepthStencilView; the lattice uses the brightness mask");
+    }
+}
+
+DXGI_FORMAT TypelessOf(DXGI_FORMAT f) {
+    switch (f) {
+    case DXGI_FORMAT_D24_UNORM_S8_UINT: case DXGI_FORMAT_R24G8_TYPELESS: return DXGI_FORMAT_R24G8_TYPELESS;
+    case DXGI_FORMAT_D32_FLOAT: case DXGI_FORMAT_R32_TYPELESS: return DXGI_FORMAT_R32_TYPELESS;
+    case DXGI_FORMAT_D32_FLOAT_S8X24_UINT: case DXGI_FORMAT_R32G8X24_TYPELESS: return DXGI_FORMAT_R32G8X24_TYPELESS;
+    case DXGI_FORMAT_D16_UNORM: case DXGI_FORMAT_R16_TYPELESS: return DXGI_FORMAT_R16_TYPELESS;
+    default: return DXGI_FORMAT_UNKNOWN;
+    }
+}
+DXGI_FORMAT ReadFormatOf(DXGI_FORMAT typeless) {
+    switch (typeless) {
+    case DXGI_FORMAT_R24G8_TYPELESS: return DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
+    case DXGI_FORMAT_R32_TYPELESS: return DXGI_FORMAT_R32_FLOAT;
+    case DXGI_FORMAT_R32G8X24_TYPELESS: return DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS;
+    case DXGI_FORMAT_R16_TYPELESS: return DXGI_FORMAT_R16_UNORM;
+    default: return DXGI_FORMAT_UNKNOWN;
+    }
+}
+
+void UpdateDepthThreshold(ID3D11Device* device, ID3D11DeviceContext* context, float clear);
+
+// UI time: copy the depth buffer the engine used for the frame just finished, then start collecting the next one.
+void CaptureEngineDepth(ID3D11Device* device, ID3D11DeviceContext* context) {
+    ID3D11Texture2D* src = nullptr;
+    float clear = 1.0f;
+    int clears = 0;
+    std::string log;
+    {
+        std::lock_guard<std::mutex> lock(s_depthMutex);
+        src = s_frameDepth;
+        s_frameDepth = nullptr;
+        clear = s_frameDepthClear;
+        clears = s_frameDepthClears;
+        s_frameDepthClears = 0;
+        log.swap(s_frameDepthLog);
+    }
+    static ULONGLONG s_lastLog = 0;
+    const ULONGLONG now = GetTickCount64();
+    const bool logNow = now - s_lastLog >= 3000;
+    if (logNow) s_lastLog = now;
+    if (!src) {
+        // The menu draws at up to 60 fps and the engine can be slower: no new engine frame since the last UI frame
+        // means the copy we have still matches the picture on screen. Keep it (dropping it switched to the
+        // brightness mask every other frame: lattice flickering over dark armour).
+        static ULONGLONG s_lastDepthMs = 0;
+        (void)s_lastDepthMs;
+        return;
+    }
+    D3D11_TEXTURE2D_DESC d{};
+    src->GetDesc(&d);
+    const DXGI_FORMAT typeless = TypelessOf(d.Format);
+    if (typeless == DXGI_FORMAT_UNKNOWN) {
+        if (logNow) NOBLE_INFO("ArmoryDepth: unsupported depth format {} ({}x{})", static_cast<int>(d.Format), d.Width, d.Height);
+        src->Release();
+        s_depthValid = false;
+        return;
+    }
+    if (!s_depthCopy || s_depthCopyDesc.Width != d.Width || s_depthCopyDesc.Height != d.Height || s_depthCopyDesc.Format != typeless) {
+        if (s_depthSrv) { s_depthSrv->Release(); s_depthSrv = nullptr; }
+        if (s_depthCopy) { s_depthCopy->Release(); s_depthCopy = nullptr; }
+        D3D11_TEXTURE2D_DESC c{};
+        c.Width = d.Width;
+        c.Height = d.Height;
+        c.MipLevels = 1;
+        c.ArraySize = 1;
+        c.Format = typeless;
+        c.SampleDesc.Count = 1;
+        c.Usage = D3D11_USAGE_DEFAULT;
+        c.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+        D3D11_SHADER_RESOURCE_VIEW_DESC v{};
+        v.Format = ReadFormatOf(typeless);
+        v.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+        v.Texture2D.MipLevels = 1;
+        if (FAILED(device->CreateTexture2D(&c, nullptr, &s_depthCopy)) || !s_depthCopy ||
+            FAILED(device->CreateShaderResourceView(s_depthCopy, &v, &s_depthSrv)) || !s_depthSrv) {
+            NOBLE_WARN("ArmoryDepth: could not create the depth copy ({}x{} format {})", d.Width, d.Height, static_cast<int>(typeless));
+            if (s_depthCopy) { s_depthCopy->Release(); s_depthCopy = nullptr; }
+            src->Release();
+            s_depthValid = false;
+            return;
+        }
+        s_depthCopyDesc = c;
+        NOBLE_INFO("ArmoryDepth: copying engine depth {}x{} (format {}, cleared to {})", d.Width, d.Height, static_cast<int>(d.Format), clear);
+    }
+    context->CopyResource(s_depthCopy, src);
+    src->Release();
+    s_depthClear = clear;
+    s_depthValid = true;
+    UpdateDepthThreshold(device, context, clear);
+    if (logNow) NOBLE_INFO("ArmoryDepth: last frame's depth clears:{} -> using {}x{} cleared to {}", log, d.Width, d.Height, clear);
+}
+
+// Depth sample grid read back on the CPU (a few frames late, never stalling): the character is the NEAREST cluster of
+// depths and the room/wall a far one, so the biggest jump between sorted sample depths separates them. This works in
+// whole-body views (wall behind) and close-ups (character at the frame edges) alike.
+constexpr UINT kGridW = 32, kGridH = 18;
+ID3D11Texture2D* s_depthStage[3] = {};
+bool s_depthStagePending[3] = {};
+DXGI_FORMAT s_depthStageFormat = DXGI_FORMAT_UNKNOWN;
+int s_depthStageNext = 0;
+int s_depthGridCounter = 0;
+float s_depthThreshold = -1.0f;
+
+float ReadDepthTexel(const uint8_t* p, DXGI_FORMAT typeless) {
+    switch (typeless) {
+    case DXGI_FORMAT_R32_TYPELESS:
+    case DXGI_FORMAT_R32G8X24_TYPELESS: { float f; std::memcpy(&f, p, 4); return f; }
+    case DXGI_FORMAT_R24G8_TYPELESS: { uint32_t v; std::memcpy(&v, p, 4); return static_cast<float>(v & 0xFFFFFFu) / 16777215.0f; }
+    case DXGI_FORMAT_R16_TYPELESS: { uint16_t v; std::memcpy(&v, p, 2); return static_cast<float>(v) / 65535.0f; }
+    default: return 0.0f;
+    }
+}
+
+void UpdateDepthThreshold(ID3D11Device* device, ID3D11DeviceContext* context, float clear) {
+    const DXGI_FORMAT fmt = s_depthCopyDesc.Format;
+    // Collect finished read-backs.
+    for (int i = 0; i < 3; ++i) {
+        if (!s_depthStagePending[i] || !s_depthStage[i]) continue;
+        D3D11_MAPPED_SUBRESOURCE m{};
+        if (context->Map(s_depthStage[i], 0, D3D11_MAP_READ, D3D11_MAP_FLAG_DO_NOT_WAIT, &m) != S_OK) continue;
+        s_depthStagePending[i] = false;
+        const UINT texel = fmt == DXGI_FORMAT_R32G8X24_TYPELESS ? 8u : (fmt == DXGI_FORMAT_R16_TYPELESS ? 2u : 4u);
+        std::vector<float> v;
+        v.reserve(kGridW * kGridH);
+        for (UINT y = 0; y < kGridH; ++y) {
+            const uint8_t* row = static_cast<const uint8_t*>(m.pData) + y * m.RowPitch;
+            for (UINT x = 0; x < kGridW; ++x) {
+                const float d = ReadDepthTexel(row + x * texel, fmt);
+                if (d > clear + 1e-7f) v.push_back(d);
+            }
+        }
+        context->Unmap(s_depthStage[i], 0);
+        if (v.empty()) { s_depthThreshold = -1.0f; continue; }
+        std::sort(v.begin(), v.end(), std::greater<float>());   // nearest first (reversed depth)
+        float bestRatio = 1.0f;
+        size_t bestAt = v.size();
+        for (size_t k = 0; k + 1 < v.size(); ++k) {
+            if (v[k + 1] <= 0.0f) break;
+            const float r = v[k] / v[k + 1];
+            if (r > bestRatio) { bestRatio = r; bestAt = k; }
+        }
+        // A real character/room gap is large; small steps are just the character's own depth (rifle vs body).
+        const float threshold = (bestRatio >= 1.6f && bestAt < v.size())
+            ? std::sqrt(v[bestAt] * v[bestAt + 1])
+            : v.back() * 0.5f;   // one cluster only: everything drawn is the character
+        s_depthThreshold = threshold;
+        static ULONGLONG s_lastLog = 0;
+        const ULONGLONG now = GetTickCount64();
+        if (now - s_lastLog >= 3000) {
+            s_lastLog = now;
+            NOBLE_INFO("ArmoryDepth: grid {} samples, nearest {:.6g}, farthest {:.6g}, biggest gap x{:.2f} after {} samples -> threshold {:.6g}",
+                       v.size(), v.front(), v.back(), bestRatio, bestAt == v.size() ? 0 : bestAt + 1, threshold);
+        }
+    }
+    // Start a new read-back every 4th frame.
+    if (++s_depthGridCounter % 4 != 0 || !s_depthCopy) return;
+    if (s_depthStageFormat != fmt) {
+        for (auto& st : s_depthStage) if (st) { st->Release(); st = nullptr; }
+        for (bool& p : s_depthStagePending) p = false;
+        s_depthStageFormat = fmt;
+    }
+    const int i = s_depthStageNext;
+    if (s_depthStagePending[i]) return;   // still in flight
+    if (!s_depthStage[i]) {
+        D3D11_TEXTURE2D_DESC d{};
+        d.Width = kGridW;
+        d.Height = kGridH;
+        d.MipLevels = 1;
+        d.ArraySize = 1;
+        d.Format = fmt;
+        d.SampleDesc.Count = 1;
+        d.Usage = D3D11_USAGE_STAGING;
+        d.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+        if (FAILED(device->CreateTexture2D(&d, nullptr, &s_depthStage[i])) || !s_depthStage[i]) return;
+    }
+    const UINT w = s_depthCopyDesc.Width, h = s_depthCopyDesc.Height;
+    for (UINT gy = 0; gy < kGridH; ++gy) {
+        for (UINT gx = 0; gx < kGridW; ++gx) {
+            const UINT sx = std::min(w - 1, static_cast<UINT>((gx + 0.5f) * w / kGridW));
+            const UINT sy = std::min(h - 1, static_cast<UINT>((gy + 0.5f) * h / kGridH));
+            const D3D11_BOX box{ sx, sy, 0, sx + 1, sy + 1, 1 };
+            context->CopySubresourceRegion(s_depthStage[i], 0, gx, gy, 0, s_depthCopy, 0, &box);
+        }
+    }
+    s_depthStagePending[i] = true;
+    s_depthStageNext = (i + 1) % 3;
+}
+
+void UnbindDepth(const ImDrawList*, const ImDrawCmd*) {
+    if (!s_context) return;
+    ID3D11ShaderResourceView* none = nullptr;
+    s_context->PSSetShaderResources(1, 1, &none);
 }
 
 bool Prepare(ID3D11Device* device, ID3D11DeviceContext* context) {
@@ -673,12 +1167,22 @@ bool Prepare(ID3D11Device* device, ID3D11DeviceContext* context) {
         s_copyH = desc.Height;
         s_copyFormat = desc.Format;
     }
-    if (ok && s_copy) context->CopyResource(s_copy, backBuffer);
+    // While the character is being rebuilt (effect change) or switched (species), keep the last finished picture:
+    // the engine shows the new biped for a frame in default colours / un-posed (white armour flash, Elite jump).
+    const bool hold = ReachArmory::IsStageHeld() && s_copySrv != nullptr && s_copy != nullptr;
+    s_stageHeld = hold;
+    if (ok && s_copy && !hold) context->CopyResource(s_copy, backBuffer);
     backBuffer->Release();
+    // Each state on its own: EnsureBackdrop() may already have made s_opaque, and skipping s_additive then left
+    // Prepare() returning false for good (the character never appeared behind "LOADING").
     if (!s_opaque) {
         D3D11_BLEND_DESC blend{};
         blend.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
         device->CreateBlendState(&blend, &s_opaque);
+    }
+    if (!s_additive) {
+        D3D11_BLEND_DESC blend{};
+        blend.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
         blend.RenderTarget[0].BlendEnable = TRUE;
         blend.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC_ALPHA;
         blend.RenderTarget[0].DestBlend = D3D11_BLEND_ONE;
@@ -692,12 +1196,39 @@ bool Prepare(ID3D11Device* device, ID3D11DeviceContext* context) {
 }
 
 void Draw(const Ui& ui, ID3D11Device* device, ID3D11DeviceContext* context, float ruleY) {
-    if (!ReachArmory::IsSceneReady() || !Prepare(device, context)) return;
+    // The character shows only once the menu script runs and the first armour apply has settled; before that the
+    // stage shows the lattice with "LOADING..." (the engine frame then is the main menu's camera or a black room).
+    const bool presentable = ReachArmory::IsCharacterPresentable();
+    // No fresh engine frame (s_frameRtv null) = the fallback path, where the menu is drawn from the main thread while
+    // the engine thread may still use the same D3D11 immediate context. Nothing here may touch the context then
+    // (copies, read-backs, hooks): doing so crashed inside the NVIDIA driver (06:22, clicking Nameplate).
+    const bool engineFrame = s_frameRtv != nullptr;
+    if (engineFrame) InstallDepthHook(context);
+    const bool haveFrame = presentable && Prepare(device, context);
+    if (haveFrame && engineFrame && !s_stageHeld) CaptureEngineDepth(device, context);
+    s_context = context;
+    const bool backdrop = (engineFrame || s_backdropPs != nullptr) && EnsureBackdrop(device);
+    if (!haveFrame && !backdrop) return;
     const float W = ui.size.x, H = ui.size.y;
     constexpr float kStageX = 0.7425f;  // the middle of the free area right of the picker
     float k = 1.0f;
     ImVec2 p0;
-    if (UIManager::GetArmorCustomizer().IsFullBodyCamera()) {
+    // Whole-body vs close-up placement follows the menu's selection, which changes the instant a row or species is
+    // clicked - a frame before the engine shows that camera. Switching placement on that frame drew the OLD picture
+    // at the other size for one frame (the Elite "jump" when picking Spartan, Tyler's 06:18 video). The placement
+    // only follows after the new value has held for a few frames, and never while the picture itself is held.
+    static bool s_fullBodyPlacement = true;
+    static int s_placementPending = 0;
+    {
+        const bool wantFull = UIManager::GetArmorCustomizer().IsFullBodyCamera();
+        if (wantFull == s_fullBodyPlacement) {
+            s_placementPending = 0;
+        } else if (!ReachArmory::IsStageHeld() && ++s_placementPending >= 4) {
+            s_fullBodyPlacement = wantFull;
+            s_placementPending = 0;
+        }
+    }
+    if (s_fullBodyPlacement) {
         // Whole-body cameras frame the pedestal, so the character sits small in the middle of the
         // engine frame. Enlarge that frame around the character until it fills the stage and the
         // weapon prop below the feet is off-screen. The menu process renders 1.5x its window, so a
@@ -723,10 +1254,40 @@ void Draw(const Ui& ui, ID3D11Device* device, ID3D11DeviceContext* context, floa
     }
     const ImVec2 p1(p0.x + W * k, p0.y + H * k);
 
-    ui.dl->AddRectFilled(ui.origin, ImVec2(ui.origin.x + W, ui.origin.y + H), IM_COL32(0, 0, 0, 255));
-    ui.dl->AddCallback(&UseOpaque, nullptr);
-    ui.dl->AddImage(reinterpret_cast<ImTextureID>(s_copySrv), p0, p1);
-    ui.dl->AddCallback(ImDrawCallback_ResetRenderState, nullptr);
+    if (backdrop) {
+        s_backdropParams.screenW = W;
+        s_backdropParams.screenH = H;
+        s_backdropParams.frameX = p0.x - ui.origin.x;
+        s_backdropParams.frameY = p0.y - ui.origin.y;
+        s_backdropParams.frameW = p1.x - p0.x;
+        s_backdropParams.frameH = p1.y - p0.y;
+        s_backdropParams.centerX = W * kStageX;
+        s_backdropParams.centerY = H * 0.52f;
+        s_backdropParams.time = static_cast<float>(std::fmod(ImGui::GetTime(), 36000.0));
+        s_backdropParams.frameAlpha = std::clamp(static_cast<float>(ReachArmory::CharacterPresentableForMs()) / 350.0f, 0.0f, 1.0f);
+        s_backdropParams.hasFrame = haveFrame ? 1.0f : 0.0f;
+        s_backdropParams.clearDepth = s_depthClear;
+        s_backdropParams.hasDepth = (haveFrame && s_depthValid && s_depthSrv) ? 1.0f : 0.0f;
+        s_backdropParams.depthW = static_cast<float>(s_depthCopyDesc.Width);
+        s_backdropParams.depthH = static_cast<float>(s_depthCopyDesc.Height);
+        s_backdropParams.depthThreshold = s_depthThreshold;
+        const ImTextureID tex = haveFrame ? reinterpret_cast<ImTextureID>(s_copySrv) : reinterpret_cast<ImTextureID>(s_blankSrv);
+        ui.dl->AddCallback(&UseBackdrop, nullptr);
+        ui.dl->AddImage(tex, ui.origin, ImVec2(ui.origin.x + W, ui.origin.y + H));
+        ui.dl->AddCallback(&UnbindDepth, nullptr);
+        ui.dl->AddCallback(ImDrawCallback_ResetRenderState, nullptr);
+    } else {
+        ui.dl->AddRectFilled(ui.origin, ImVec2(ui.origin.x + W, ui.origin.y + H), IM_COL32(0, 0, 0, 255));
+        ui.dl->AddCallback(&UseOpaque, nullptr);
+        ui.dl->AddImage(reinterpret_cast<ImTextureID>(s_copySrv), p0, p1);
+        ui.dl->AddCallback(ImDrawCallback_ResetRenderState, nullptr);
+    }
+    if (!haveFrame) {
+        DrawLoading(ui, ImVec2(ui.origin.x + W * kStageX, ui.origin.y + H * 0.52f));
+        ui.dl->AddRectFilledMultiColor(ui.origin, ImVec2(ui.origin.x + W * 0.56f, ui.origin.y + H), IM_COL32(4, 8, 14, 255),
+                                       IM_COL32(4, 8, 14, 0), IM_COL32(4, 8, 14, 0), IM_COL32(4, 8, 14, 255));
+        return;
+    }
 
     // Floor pool only. The old 30-ring chest glow was additive white/blue over the model and added ~30/255 to
     // every channel, which desaturated armour colours. The engine already lights the model; keep the atmosphere
@@ -772,9 +1333,60 @@ void DrawBackdrop(const Ui& ui, Screen screen) {
             const std::string scenario = MapNames::ScenarioOf(s_lobbyBackdropMap);
             bg = UiArt::MapPhoto(scenario.empty() ? s_lobbyBackdropMap : scenario);
         }
-        if (!bg) bg = UiArt::MenuBackground();
-        if (bg) {
+        // Fixed artwork for the screens that have their own: layered (screens\<name>\layers.json) first, then
+        // one picture (screens\<name>.*), in data\ui\custom then data\ui\noble.
+        bool drewLayered = false;
+        if (!bg) {
+            const char* screenArt = nullptr;
+            switch (screen) {
+            case Screen::Firefight: screenArt = "firefight"; break;
+            case Screen::CustomGame:
+            case Screen::Servers: screenArt = "custom_games"; break;
+            case Screen::Campaign:
+            case Screen::Skulls: screenArt = "campaign"; break;
+            case Screen::Forge: screenArt = "forge"; break;
+            default: break;
+            }
+            if (screenArt) {
+                if (const UiArt::LayeredArt* layered = UiArt::ScreenLayers(screenArt)) {
+                    UiArt::DrawLayered(ui.dl, *layered, o, extent, ImGui::GetTime());
+                    drewLayered = true;
+                } else {
+                    bg = UiArt::ScreenBackground(screenArt);
+                }
+            }
+        }
+        if (drewLayered) {
+            // drawn above
+        } else if (bg) {
             UiArt::DrawCover(ui.dl, bg, o, extent, IM_COL32(255, 255, 255, 255));
+        } else {
+            // Shared menu background. On the main menu it changes every kSlideSeconds with a cross-fade.
+            constexpr double kSlideSeconds = 20.0;
+            constexpr double kFadeSeconds = 1.5;
+            static double s_slideStart = -1.0;
+            static double s_fadeStart = -100.0;
+            static UiTexture s_previous;
+            const double now = ImGui::GetTime();
+            if (s_slideStart < 0.0) s_slideStart = now;
+            UiTexture current = UiArt::MenuBackground();
+            if (screen == Screen::Main && now - s_slideStart >= kSlideSeconds) {
+                s_slideStart = now;
+                const UiTexture next = UiArt::MenuBackgroundNext();
+                if (next && next.id != current.id) {
+                    s_previous = current;
+                    s_fadeStart = now;
+                    current = next;
+                }
+            }
+            const double fade = (now - s_fadeStart) / kFadeSeconds;
+            if (fade < 1.0 && s_previous) {
+                UiArt::DrawCover(ui.dl, s_previous, o, extent, IM_COL32(255, 255, 255, 255));
+                const int a = static_cast<int>(255.0 * (fade < 0.0 ? 0.0 : fade));
+                if (current) UiArt::DrawCover(ui.dl, current, o, extent, IM_COL32(255, 255, 255, a));
+            } else if (current) {
+                UiArt::DrawCover(ui.dl, current, o, extent, IM_COL32(255, 255, 255, 255));
+            }
         }
     }
 
@@ -5649,6 +6261,9 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
     ui.size = vp->Size;
     // 4K back buffer = 2.4 (was capped at 2.0), times the player's UI SCALE setting (75 - 150 %).
     ui.s = std::clamp(vp->Size.y / 900.0f, 0.75f, 4.0f) * Settings::UiScale();
+    // Scrollbars follow the UI scale (a fixed pixel width was a hairline on the 4K/supersampled menu).
+    ImGui::GetStyle().ScrollbarSize = std::round(14.0f * ui.s);
+    ImGui::GetStyle().GrabMinSize = std::round(24.0f * ui.s);
 
     s_lobbyBackdropMap = st.lobbyMap;
     s_lobbyBackdropImage = st.lobbyMapImage.empty() ? st.lobbyMapThumb : st.lobbyMapImage;

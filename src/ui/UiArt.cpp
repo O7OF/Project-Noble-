@@ -2,6 +2,8 @@
 #include "common/Logger.hpp"
 #include "common/Settings.hpp"
 
+#include <nlohmann/json.hpp>
+
 #include <windows.h>
 #include <d3d11.h>
 #include <wincodec.h>
@@ -13,8 +15,11 @@
 #include <fstream>
 #include <functional>
 #include <map>
+#include <cmath>
+#include <memory>
 #include <mutex>
 #include <random>
+#include <thread>
 #include <string_view>
 #include <unordered_map>
 
@@ -226,6 +231,14 @@ UiTexture LoadPackImageKeyed(const std::string& pack, const std::string& name) {
         }
     } else {
         return CreateTexture(w, h, fmt, data.data());
+    }
+    // MCC's emblem masks don't reach full brightness (the brightest parts are ~70-85 %), so a "white" emblem drawn
+    // through them came out light grey and the three layers showed different greys. Stretch each mask so its
+    // brightest pixel is fully opaque: the colour picked is then the colour shown.
+    uint8_t maxA = 0;
+    for (const Rgba& px : pixels) maxA = std::max(maxA, px.a);
+    if (maxA > 0 && maxA < 255) {
+        for (Rgba& px : pixels) px.a = static_cast<uint8_t>(std::min(255, static_cast<int>(px.a) * 255 / maxA));
     }
     return CreateTexture(w, h, DXGI_FORMAT_R8G8B8A8_UNORM, pixels.data());
 }
@@ -479,59 +492,18 @@ const PreviewName kPreviews[] = {
 
 UiTexture s_menuBackground;
 bool s_menuBackgroundChosen = false;
+std::string s_menuBackgroundKey;          // deck key of the current background ("file:..." / "scene:...")
+std::thread::id s_menuOwnerThread;        // thread that called WarmMenuBackground (owns the D3D device)
+bool s_menuOwnerKnown = false;
+bool s_menuPoolWarm = false;              // WarmMenuBackground uploaded the whole slideshow pool
+bool s_menuBackgroundFixed = false;       // the player picked one picture: no slideshow
 
-} // namespace
+const char* const kScreenBackgrounds[] = { "firefight", "custom_games", "campaign", "forge" };
+std::map<std::string, std::unique_ptr<LayeredArt>> s_layered;   // name -> art (null = none)
 
-void Init(ID3D11Device* device, const fs::path& mccRoot, const fs::path& exeDir) {
-    std::lock_guard<std::recursive_mutex> lock(s_mutex);
-    s_device = device;
-    if (s_device) s_device->AddRef();
-    s_mccRoot = mccRoot;
-    s_exeDir = exeDir;
-    std::error_code ec;
-    fs::create_directories(CustomDir() / "backgrounds", ec);
-    fs::create_directories(CustomDir() / "loading", ec);
-    NOBLE_INFO("UiArt: MCC '{}', custom art in '{}'", mccRoot.string(), CustomDir().string());
-}
-
-void Shutdown() {
-    std::lock_guard<std::recursive_mutex> lock(s_mutex);
-    for (ID3D11ShaderResourceView* v : s_views) v->Release();
-    s_views.clear();
-    s_cache.clear();
-    s_packs.clear();
-    s_menuBackground = {};
-    s_menuBackgroundChosen = false;
-    if (s_device) s_device->Release();
-    s_device = nullptr;
-}
-
-UiTexture PackImage(const std::string& pack, const std::string& name) {
-    std::lock_guard<std::recursive_mutex> lock(s_mutex);
-    return Cached("pack:" + pack + ":" + name, [&] { return LoadPackImage(pack, name); });
-}
-
-UiTexture MenuBackground() {
-    std::lock_guard<std::recursive_mutex> lock(s_mutex);
-    if (s_menuBackgroundChosen) return s_menuBackground;
-    s_menuBackgroundChosen = true;
-
-    // 0. An explicitly chosen picture ("file:<name>") wins over everything else.
-    const std::string chosen = Settings::Get().Snapshot().menuBackground;
-    if (chosen.rfind("file:", 0) == 0) {
-        const fs::path picked = CustomDir() / "backgrounds" / chosen.substr(5);
-        std::error_code ec;
-        if (fs::exists(picked, ec)) {
-            s_menuBackground = FileCached(picked);
-            if (s_menuBackground) {
-                NOBLE_INFO("UiArt: menu background file:{}", picked.filename().string());
-                return s_menuBackground;
-            }
-        }
-        NOBLE_WARN("UiArt: menu background '{}' is missing; falling back to the random pool", chosen);
-    }
-
-    // 1. The pool: the player's own backgrounds if there are any, else Noble's art and/or Reach's campaign scenes.
+// The pool the menu background is dealt from: the player's own backgrounds if there are any, else Noble's art
+// and/or Reach's campaign scenes.
+std::vector<std::string> MenuPool() {
     const std::string mode = Settings::Get().Snapshot().menuBackground;
     std::vector<std::string> pool;  // "file:<path>" or "scene:<scenario>"
     for (const fs::path& p : ImagesIn(CustomDir() / "backgrounds")) pool.push_back("file:" + p.string());
@@ -544,9 +516,13 @@ UiTexture MenuBackground() {
             }
         }
     }
+    return pool;
+}
 
-    // 2. Deal from a shuffled deck kept between runs: every picture shows once before any repeats. Each run is a new process,
-    // so picking at random every time kept landing on the same few.
+// Deals the next picture from a shuffled deck kept between runs: every picture shows once before any repeats.
+// Skips the picture on screen now. Returns false when nothing could be loaded.
+bool DealMenuBackground() {
+    const std::vector<std::string> pool = MenuPool();
     const fs::path deckFile = s_exeDir / "data" / "userdata" / "menu-background-deck.txt";
     std::vector<std::string> deck;
     std::string last;
@@ -570,21 +546,216 @@ UiTexture MenuBackground() {
         }
         const std::string key = deck.back();
         deck.pop_back();
+        if (key == s_menuBackgroundKey && pool.size() > 1) continue;
         const UiTexture t = key.rfind("file:", 0) == 0 ? FileCached(fs::path(key.substr(5))) : SceneCached(key.substr(6));
         if (!t) continue;
         s_menuBackground = t;
+        s_menuBackgroundKey = key;
         NOBLE_INFO("UiArt: menu background {} ({} left in the deck)", key, deck.size());
         std::error_code ec;
         fs::create_directories(deckFile.parent_path(), ec);
         std::ofstream out(deckFile, std::ios::trunc);
         out << key << "\n";
         for (const std::string& remaining : deck) out << remaining << "\n";
-        break;
+        return true;
     }
+    return false;
+}
+
+} // namespace
+
+void Init(ID3D11Device* device, const fs::path& mccRoot, const fs::path& exeDir) {
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
+    s_device = device;
+    if (s_device) s_device->AddRef();
+    s_mccRoot = mccRoot;
+    s_exeDir = exeDir;
+    std::error_code ec;
+    fs::create_directories(CustomDir() / "backgrounds", ec);
+    fs::create_directories(CustomDir() / "loading", ec);
+    NOBLE_INFO("UiArt: MCC '{}', custom art in '{}'", mccRoot.string(), CustomDir().string());
+}
+
+void Shutdown() {
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
+    for (ID3D11ShaderResourceView* v : s_views) v->Release();
+    s_views.clear();
+    s_cache.clear();
+    s_packs.clear();
+    s_menuBackground = {};
+    s_menuBackgroundChosen = false;
+    s_menuBackgroundKey.clear();
+    s_menuBackgroundFixed = false;
+    s_menuOwnerKnown = false;
+    s_menuPoolWarm = false;
+    s_layered.clear();
+    if (s_device) s_device->Release();
+    s_device = nullptr;
+}
+
+UiTexture PackImage(const std::string& pack, const std::string& name) {
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
+    return Cached("pack:" + pack + ":" + name, [&] { return LoadPackImage(pack, name); });
+}
+
+UiTexture MenuBackground() {
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
+    if (s_menuBackgroundChosen) return s_menuBackground;
+    s_menuBackgroundChosen = true;
+
+    // 0. An explicitly chosen picture ("file:<name>") wins over everything else.
+    const std::string chosen = Settings::Get().Snapshot().menuBackground;
+    if (chosen.rfind("file:", 0) == 0) {
+        const fs::path picked = CustomDir() / "backgrounds" / chosen.substr(5);
+        std::error_code ec;
+        if (fs::exists(picked, ec)) {
+            s_menuBackground = FileCached(picked);
+            if (s_menuBackground) {
+                s_menuBackgroundFixed = true;
+                NOBLE_INFO("UiArt: menu background file:{}", picked.filename().string());
+                return s_menuBackground;
+            }
+        }
+        NOBLE_WARN("UiArt: menu background '{}' is missing; falling back to the random pool", chosen);
+    }
+
+    // 1./2. Deal from the shuffled pool (see DealMenuBackground).
+    DealMenuBackground();
     return s_menuBackground;
 }
 
-void WarmMenuBackground() { (void)MenuBackground(); }
+void WarmMenuBackground() {
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
+    s_menuOwnerThread = std::this_thread::get_id();
+    s_menuOwnerKnown = true;
+    (void)MenuBackground();
+    // Upload every picture the slideshow can deal now, on this (device-owner) thread: the menu is drawn from
+    // other threads too, and those must only ever read the cache. MCC's campaign stills are 1920x1080 BC1
+    // (about 1 MB each); the player's own pictures are capped so a huge folder can't eat video memory.
+    if (!s_menuBackgroundFixed) {
+        int warmed = 0;
+        for (const std::string& key : MenuPool()) {
+            if (warmed >= 24) break;
+            const UiTexture t = key.rfind("file:", 0) == 0 ? FileCached(fs::path(key.substr(5))) : SceneCached(key.substr(6));
+            if (t) ++warmed;
+        }
+        s_menuPoolWarm = true;
+        NOBLE_INFO("UiArt: {} menu background(s) ready for the main-menu slideshow", warmed);
+    }
+    for (const char* name : kScreenBackgrounds) {
+        if (ScreenLayers(name)) continue;
+        if (const UiTexture t = ScreenBackground(name)) NOBLE_INFO("UiArt: screen background '{}' {}x{}", name, t.width, t.height);
+    }
+}
+
+UiTexture MenuBackgroundNext() {
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
+    if (!s_menuBackgroundChosen) return MenuBackground();
+    if (s_menuBackgroundFixed || !s_menuPoolWarm) return s_menuBackground;
+    DealMenuBackground();   // every candidate was uploaded by WarmMenuBackground, so this only reads the cache
+    return s_menuBackground;
+}
+
+namespace {
+std::unique_ptr<LayeredArt> LoadLayered(const std::string& name) {
+    for (const fs::path& dir : { CustomDir() / "screens" / name, NobleDir() / "screens" / name }) {
+        const fs::path jsonPath = dir / "layers.json";
+        std::error_code ec;
+        if (!fs::exists(jsonPath, ec)) continue;
+        try {
+            std::ifstream in(jsonPath);
+            const nlohmann::json j = nlohmann::json::parse(in);
+            auto art = std::make_unique<LayeredArt>();
+            art->width = j.value("width", 1920.0f);
+            art->height = j.value("height", 1080.0f);
+            for (const auto& l : j.at("layers")) {
+                LayeredLayer layer;
+                layer.tex = FileCached(dir / l.at("file").get<std::string>());
+                if (!layer.tex) {
+                    NOBLE_WARN("UiArt: layered '{}': missing layer {}", name, l.at("file").get<std::string>());
+                    continue;
+                }
+                layer.x = l.value("x", 0.0f);
+                layer.y = l.value("y", 0.0f);
+                layer.w = l.value("w", static_cast<float>(layer.tex.width));
+                layer.h = l.value("h", static_cast<float>(layer.tex.height));
+                layer.depth = l.value("depth", 0.0f);
+                layer.flicker = l.value("flicker", 0.0f);
+                art->layers.push_back(layer);
+            }
+            if (art->layers.empty()) continue;
+            NOBLE_INFO("UiArt: layered screen art '{}' ({} layers) from {}", name, art->layers.size(), dir.string());
+            return art;
+        } catch (const std::exception& e) {
+            NOBLE_WARN("UiArt: layered '{}': bad {}: {}", name, jsonPath.string(), e.what());
+        }
+    }
+    return nullptr;
+}
+} // namespace
+
+const LayeredArt* ScreenLayers(const std::string& name) {
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
+    auto it = s_layered.find(name);
+    if (it == s_layered.end()) {
+        // Only load on the device-owner thread (see WarmMenuBackground); elsewhere report "none" for now.
+        if (s_menuOwnerKnown && std::this_thread::get_id() != s_menuOwnerThread) return nullptr;
+        it = s_layered.emplace(name, LoadLayered(name)).first;
+    }
+    return it->second.get();
+}
+
+void DrawLayered(ImDrawList* dl, const LayeredArt& art, ImVec2 min, ImVec2 max, double t) {
+    const float w = max.x - min.x, h = max.y - min.y;
+    if (w <= 0.0f || h <= 0.0f || art.width <= 0.0f || art.height <= 0.0f) return;
+    // Cover the rectangle, with a little overscan so the drifting layers never show an edge.
+    constexpr float kOverscan = 1.05f;
+    const float scale = std::max(w / art.width, h / art.height) * kOverscan;
+    const float ox = min.x + (w - art.width * scale) * 0.5f;
+    const float oy = min.y + (h - art.height * scale) * 0.5f;
+
+    // Mouse parallax, eased so the picture glides rather than snapping to the cursor.
+    static float s_mx = 0.0f, s_my = 0.0f;
+    const ImVec2 mp = ImGui::GetIO().MousePos;
+    float tx = 0.0f, ty = 0.0f;
+    if (mp.x > -1e30f && mp.y > -1e30f) {
+        tx = std::clamp((mp.x - (min.x + w * 0.5f)) / (w * 0.5f), -1.0f, 1.0f);
+        ty = std::clamp((mp.y - (min.y + h * 0.5f)) / (h * 0.5f), -1.0f, 1.0f);
+    }
+    s_mx += (tx - s_mx) * 0.04f;
+    s_my += (ty - s_my) * 0.04f;
+
+    // Slow idle drift (reference-canvas pixels at depth 1).
+    const double phase = t * 2.0 * 3.14159265358979 / 40.0;
+    const float driftX = static_cast<float>(std::sin(phase)) * 14.0f - s_mx * 16.0f;
+    const float driftY = static_cast<float>(std::cos(phase * 0.7)) * 5.0f - s_my * 8.0f;
+
+    dl->PushClipRect(min, max, true);
+    for (const LayeredLayer& l : art.layers) {
+        const float px = ox + (l.x + driftX * l.depth) * scale;
+        const float py = oy + (l.y + driftY * l.depth) * scale;
+        int shade = 255;
+        if (l.flicker > 0.0f) {
+            // Irregular fire-light: a few unrelated sine waves, mapped to 0..1.
+            const double n = 0.5 + 0.25 * std::sin(t * 7.3) + 0.15 * std::sin(t * 13.1 + 1.7) + 0.10 * std::sin(t * 2.3 + 0.4);
+            shade = static_cast<int>(255.0 * (1.0 - l.flicker * std::clamp(n, 0.0, 1.0)));
+        }
+        dl->AddImage(l.tex.id, ImVec2(px, py), ImVec2(px + l.w * scale, py + l.h * scale), ImVec2(0, 0), ImVec2(1, 1),
+                     IM_COL32(shade, shade, shade, 255));
+    }
+    dl->PopClipRect();
+}
+
+UiTexture ScreenBackground(const std::string& name) {
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
+    return Cached("screen:" + name, [&] {
+        for (const fs::path& dir : { CustomDir() / "screens", NobleDir() / "screens" }) {
+            const fs::path p = FindImage(dir, name);
+            if (!p.empty()) return FileCached(p);
+        }
+        return UiTexture{};
+    });
+}
 
 namespace {
 std::vector<std::string> s_backgroundFiles;
@@ -780,6 +951,9 @@ void DrawCover(ImDrawList* dl, const UiTexture& tex, ImVec2 min, ImVec2 max, ImU
 static std::vector<NameplateInfo> s_nameplateCatalog;
 static std::vector<EmblemInfo> s_emblemCatalog;
 static std::vector<EmblemBackground> s_emblemBackgrounds;
+// MCC's emblem names by Armory position, kept to convert appearance files saved before the switch to Reach's emblems.
+static std::vector<std::string> s_mccEmblemNames;
+static std::vector<std::string> s_mccBackgroundNames;
 static bool s_customizationCatalogLoaded = false;
 
 static std::string CleanXmlName(const std::string& raw, const std::string& prefix) {
@@ -835,6 +1009,7 @@ static bool IsDeveloperNameplate(const std::string& name) {
 
 static void EnsureCustomizationCatalogs() {
     if (s_customizationCatalogLoaded) return;
+    if (s_exeDir.empty()) return;   // before Init: don't latch empty lists
     s_customizationCatalogLoaded = true;
 
     // Try reading <mccRoot>/Data/UI/playercustomization.xml
@@ -900,6 +1075,51 @@ static void EnsureCustomizationCatalogs() {
         }
     }
 
+    // Reach's own emblems (2026-11-11, Tyler: Reach emblems only). The game's emblem slot (settings record +0x9E)
+    // takes Reach's 80 foregrounds and 53 backgrounds by index, so the Armory offers exactly those, in the game's
+    // order: position in the catalog == the game's index. Art: data\ui\noble\emblems\reach (split from
+    // ui\cui\common\emblems: red = foreground primary, green = foreground secondary, blue = background).
+    {
+        std::ifstream list(NobleDir() / "emblems" / "reach" / "emblems.txt");
+        std::vector<EmblemInfo> fg;
+        std::vector<EmblemBackground> bg;
+        std::string line;
+        while (list && std::getline(list, line)) {
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            if (line.size() < 4 || line[0] == '#') continue;
+            const bool isFg = line.rfind("fg ", 0) == 0, isBg = line.rfind("bg ", 0) == 0;
+            if (!isFg && !isBg) continue;
+            const size_t sp = line.find(' ', 3);
+            if (sp == std::string::npos) continue;
+            const int idx = std::atoi(line.substr(3, sp - 3).c_str());
+            const std::string name = line.substr(sp + 1);
+            char fileName[32];
+            if (isFg && idx == static_cast<int>(fg.size())) {
+                EmblemInfo info;
+                info.id = idx;
+                info.name = name;
+                std::snprintf(fileName, sizeof(fileName), "reach:fg_%02d_p", idx);
+                info.image1 = fileName;
+                std::snprintf(fileName, sizeof(fileName), "reach:fg_%02d_s", idx);
+                info.image2 = fileName;
+                fg.push_back(info);
+            } else if (isBg && idx >= 1 && idx == static_cast<int>(bg.size()) + 1) {   // bg 0 = Blank (no art)
+                std::snprintf(fileName, sizeof(fileName), "reach:bg_%02d", idx);
+                bg.push_back({ fileName, name });
+            }
+        }
+        if (!fg.empty()) {
+            for (const EmblemInfo& e : s_emblemCatalog) s_mccEmblemNames.push_back(e.name);
+            for (const EmblemBackground& b : s_emblemBackgrounds) s_mccBackgroundNames.push_back(b.name);
+            s_emblemCatalog = std::move(fg);
+            s_emblemBackgrounds = std::move(bg);
+            NOBLE_INFO("UiArt: using Reach's emblems ({} foregrounds, {} backgrounds)", s_emblemCatalog.size(),
+                       s_emblemBackgrounds.size());
+        } else {
+            NOBLE_WARN("UiArt: Reach emblem list not found (data\\ui\\noble\\emblems\\reach\\emblems.txt); using MCC's emblems");
+        }
+    }
+
     if (s_emblemCatalog.empty()) {
         static const char* kFallbackEmblems[] = {
             "e_002_p", "Radioactive", "e_003_p", "Jolly Roger", "e_004_p", "Valkyrie",
@@ -934,6 +1154,28 @@ bool NameplateSelectable(int index) {
 const std::vector<EmblemBackground>& GetEmblemBackgrounds() {
     EnsureCustomizationCatalogs();
     return s_emblemBackgrounds;
+}
+
+bool CatalogsReady() { return !s_exeDir.empty(); }
+
+int ReachEmblemFromMcc(int mccPosition, bool background) {
+    EnsureCustomizationCatalogs();
+    auto key = [](const std::string& n) {
+        std::string k;
+        for (char ch : n) if (std::isalnum(static_cast<unsigned char>(ch))) k += static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+        return k;
+    };
+    if (!background) {
+        if (mccPosition < 0 || static_cast<size_t>(mccPosition) >= s_mccEmblemNames.size()) return -1;
+        const std::string want = key(s_mccEmblemNames[static_cast<size_t>(mccPosition)]);
+        for (size_t i = 0; i < s_emblemCatalog.size(); ++i) if (key(s_emblemCatalog[i].name) == want) return static_cast<int>(i);
+        return -1;
+    }
+    if (mccPosition <= 0) return 0;
+    if (static_cast<size_t>(mccPosition) > s_mccBackgroundNames.size()) return -1;
+    const std::string want = key(s_mccBackgroundNames[static_cast<size_t>(mccPosition) - 1]);
+    for (size_t i = 0; i < s_emblemBackgrounds.size(); ++i) if (key(s_emblemBackgrounds[i].name) == want) return static_cast<int>(i) + 1;
+    return -1;
 }
 
 const std::vector<EmblemInfo>& GetEmblemCatalog() {
@@ -975,8 +1217,52 @@ UiTexture KeyedPackImage(const std::string& pack, const std::string& name) {
     return Cached("packkeyed:" + pack + ":" + name, [&] { return LoadPackImageKeyed(pack, name); });
 }
 
+// 2026-11-13: alpha mask (0..255) of a Reach emblem layer ("reach:fg_09_p" etc.) at size x size, for the engine's
+// armour emblem texture (ReachHost slot 73). Empty if the file can't be read.
+std::vector<uint8_t> EmblemLayerMask(const std::string& image, int size) {
+    std::vector<uint8_t> out;
+    if (image.rfind("reach:", 0) != 0 || size <= 0) return out;
+    const fs::path path = NobleDir() / "emblems" / "reach" / (image.substr(6) + ".png");
+    const HRESULT coInit = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    IWICImagingFactory* factory = nullptr;
+    IWICBitmapDecoder* decoder = nullptr;
+    IWICBitmapFrameDecode* frame = nullptr;
+    IWICFormatConverter* converter = nullptr;
+    if (SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory))) &&
+        SUCCEEDED(factory->CreateDecoderFromFilename(path.c_str(), nullptr, GENERIC_READ, WICDecodeMetadataCacheOnDemand, &decoder)) &&
+        SUCCEEDED(decoder->GetFrame(0, &frame)) &&
+        SUCCEEDED(factory->CreateFormatConverter(&converter)) &&
+        SUCCEEDED(converter->Initialize(frame, GUID_WICPixelFormat32bppRGBA, WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeCustom))) {
+        UINT w = 0, h = 0;
+        converter->GetSize(&w, &h);
+        if (w > 0 && h > 0 && w <= 4096 && h <= 4096) {
+            std::vector<uint8_t> px(static_cast<size_t>(w) * h * 4);
+            if (SUCCEEDED(converter->CopyPixels(nullptr, w * 4, static_cast<UINT>(px.size()), px.data()))) {
+                out.resize(static_cast<size_t>(size) * size);
+                for (int y = 0; y < size; ++y)
+                    for (int x = 0; x < size; ++x) {
+                        const size_t sx = static_cast<size_t>(x) * w / size, sy = static_cast<size_t>(y) * h / size;
+                        const uint8_t* p = &px[(sy * w + sx) * 4];
+                        const int lum = std::max({ p[0], p[1], p[2] });
+                        out[static_cast<size_t>(y) * size + x] = static_cast<uint8_t>(p[3] * lum / 255);
+                    }
+            }
+        }
+    }
+    if (converter) converter->Release();
+    if (frame) frame->Release();
+    if (decoder) decoder->Release();
+    if (factory) factory->Release();
+    if (SUCCEEDED(coInit)) CoUninitialize();
+    return out;
+}
+
 UiTexture EmblemByName(const std::string& image1) {
     if (image1.empty()) return {};
+    if (image1.rfind("reach:", 0) == 0) {   // Reach emblem layer (see EnsureCustomizationCatalogs)
+        std::lock_guard<std::recursive_mutex> lock(s_mutex);
+        return FileCached(NobleDir() / "emblems" / "reach" / (image1.substr(6) + ".png"));
+    }
     // The pack stores MCC's emblem images in UPPER CASE and only as the small variant ("e_002_p" in
     // playercustomization.xml is "E_002_P_SML" in emblemstexturepack.perm.bin), so an exact lookup never
     // matched and every emblem slot came out empty (2026-10-30).

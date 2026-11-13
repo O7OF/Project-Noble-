@@ -590,8 +590,9 @@ struct EliteSetSpec {
 };
 
 // Verified against mainmenu_all.string_ids.csv IDs 2398, 2421..2426, 12624. Sets 0..8 are Reach's own
-// harnesses (plus the Honor Guard bonus); 9 and 10 are the two mixed presets (H2A Ranger and Counselor).
-constexpr std::array<EliteSetSpec, 12> kEliteSets = {{
+// harnesses (plus the Honor Guard bonus); 9 is the mixed Counselor preset. (H2A Ranger + the H2A / Honor Guard robe
+// pieces were removed 2026-11-12: Noble's Elite model has no such meshes.)
+constexpr std::array<EliteSetSpec, 11> kEliteSets = {{
     {"MINOR", "minor",
      "Standard-issue Sangheili Minor combat harness worn by newly blooded frontline warriors.",
      {"minor", "minor", "minor", "minor", "default", "minor"}},
@@ -619,19 +620,16 @@ constexpr std::array<EliteSetSpec, 12> kEliteSets = {{
     {"HONOR GUARD", "honor_guard",
      "Ceremonial and protective combat harness of the High Council's elite Honor Guard detachment.",
      {"honor_guard", "honor_guard", "honor_guard", "honor_guard", "honor_guard", "honor_guard"}},
-    {"H2A RANGER", "h2a_ranger",
-     "Halo 2 Anniversary Ranger harness: H2A Ranger helmet, H2A pauldrons and H2A legs with the Ranger chest and arms.",
-     {"h2a_space_helmet", "h2a_l_shoulder", "h2a_r_shoulder", "space", "space", "h2a_legs"}},
     {"COUNSELOR", "counselor",
-     "Counselor harness: Council helmet, Schism pauldrons, Honor Guard chest and H2A legs with Minor arms.",
-     {"council", "schism", "schism", "honor_guard", "default", "h2a_legs"}},
+     "Counselor harness: Council helmet, Schism pauldrons, Honor Guard chest and legs with Minor arms.",
+     {"council", "schism", "schism", "honor_guard", "default", "honor_guard"}},
     // Not a real preset: shown when the six pieces are mixed by hand, so the set label never lies
     // about what the model is wearing. Selecting it leaves the current pieces alone.
     {"CUSTOM", "custom",
      "Mixed pieces: pick any helmet, shoulders, chest, arms and legs independently.",
      {"", "", "", "", "", ""}},
 }};
-constexpr int kEliteCustomSet = 11;
+constexpr int kEliteCustomSet = 10;
 
 // The first N sets also exist as entries in every per-piece list (indices 0..N-1); the mixed presets
 // after them only reference those entries.
@@ -660,15 +658,10 @@ const std::vector<ElitePieceSpec>& GetElitePieces(int piece) {
         }
         l[kEliteHelmet].push_back({ "COUNCIL", "council", kExtraNote });
         l[kEliteHelmet].push_back({ "OSSOONA", "ossoona", kExtraNote });
-        l[kEliteHelmet].push_back({ "RANGER (H2A)", "h2a_space_helmet", kExtraNote });
         l[kEliteLeftShoulder].push_back({ "SCHISM", "schism", kExtraNote });
         l[kEliteLeftShoulder].push_back({ "COMBAT", "combat", kExtraNote });
-        l[kEliteLeftShoulder].push_back({ "H2A", "h2a_l_shoulder", kExtraNote });
         l[kEliteRightShoulder].push_back({ "SCHISM", "schism", kExtraNote });
         l[kEliteRightShoulder].push_back({ "COMBAT", "combat", kExtraNote });
-        l[kEliteRightShoulder].push_back({ "H2A", "h2a_r_shoulder", kExtraNote });
-        l[kEliteLegs].push_back({ "HONOR GUARD (ROBE)", "honor_guard_legs", kExtraNote });
-        l[kEliteLegs].push_back({ "H2A", "h2a_legs", kExtraNote });
         return l;
     }();
     return lists[std::clamp(piece, 0, kElitePieceCount - 1)];
@@ -727,11 +720,8 @@ constexpr EliteUnlock kEliteUnlocks[] = {
     { "ultra", "Warrant Officer" },      { "zealot", "Captain" },              { "general", "Major" },
     { "story_elite", "Lt. Colonel" },    { "ossoona", "Major Grade 3" },       { "schism", "Commander Grade 2" },
     { "combat", "Commander Grade 2" },   { "council", "Brigadier" },
-    // 2026-10-30 (Tyler): the H2A Ranger set and its pieces take the General slot Honor Guard used to
-    // hold; Honor Guard moves later and the Counselor preset is the last Elite set to unlock.
-    { "h2a_space_helmet", "General" },   { "h2a_l_shoulder", "General" },
-    { "h2a_r_shoulder", "General" },     { "h2a_legs", "General" },
-    { "h2a_ranger", "General" },         { "honor_guard", "Field Marshall" },  { "honor_guard_legs", "Field Marshall" },
+    // Honor Guard unlocks late and the Counselor preset is the last Elite set to unlock (H2A removed 2026-11-12).
+    { "honor_guard", "Field Marshall" },
     { "counselor", "Eclipse" },
 };
 
@@ -1227,6 +1217,10 @@ void ArmorCustomizer::SyncToReachArmory() const {
     sel.firefightVoiceIndex = fvIdx;
     sel.eliteSuitIndex = elIdx;
     sel.serviceTag = m_profile.serviceTag;
+    sel.emblemForeground = m_profile.emblemIndex;            // Reach's own indices (see UiArt emblem catalog)
+    sel.emblemBackground = m_profile.emblemBackgroundIndex;
+    sel.emblemFlags = 0;
+    sel.emblemColors = { m_profile.emblemPrimaryColor, m_profile.emblemSecondaryColor, m_profile.emblemBackgroundColor };
 
     sel.helmet = hvSpec.stringId;
     // Preview the permutation that matches the picture; the profile ids (appearance.json) stay untouched.
@@ -1276,6 +1270,8 @@ void ArmorCustomizer::SyncToReachArmory() const {
                a.accentColorIndex == b.accentColorIndex && a.lightsColorIndex == b.lightsColorIndex &&
                a.visorColorIndex == b.visorColorIndex && a.armorEffectIndex == b.armorEffectIndex &&
                a.eliteSuitIndex == b.eliteSuitIndex && a.serviceTag == b.serviceTag &&
+               a.emblemForeground == b.emblemForeground && a.emblemBackground == b.emblemBackground &&
+               a.emblemFlags == b.emblemFlags && a.emblemColors == b.emblemColors &&
                a.helmet == b.helmet && a.chest == b.chest &&
                a.leftShoulder == b.leftShoulder && a.rightShoulder == b.rightShoulder &&
                a.hands == b.hands && a.wrist == b.wrist && a.utility == b.utility &&
@@ -1304,6 +1300,20 @@ void ArmorCustomizer::SyncToReachArmory() const {
         ReachArmory::SetSelection(s_pendingSelection);
         UpdateArmoryCamera();
     }
+}
+
+void ArmorCustomizer::MigrateEmblemIfNeeded() const {
+    if (!m_emblemFromMcc || !UiArt::CatalogsReady()) return;
+    m_emblemFromMcc = false;
+    auto& p = const_cast<AppearanceProfile&>(m_profile);
+    const int fg = UiArt::ReachEmblemFromMcc(p.emblemIndex, false);
+    const int bg = UiArt::ReachEmblemFromMcc(p.emblemBackgroundIndex, true);
+    NOBLE_INFO("ArmorCustomizer: emblem converted to Reach's emblems ({} -> {}, background {} -> {})",
+               p.emblemIndex, fg, p.emblemBackgroundIndex, bg);
+    p.emblemIndex = fg >= 0 ? fg : 1;   // no Reach emblem of that name: Bull's-eye
+    p.emblemBackgroundIndex = bg >= 0 ? bg : 0;
+    p.emblemIndex = std::clamp(p.emblemIndex, 0, std::max(0, static_cast<int>(UiArt::GetEmblemCatalog().size()) - 1));
+    p.emblemBackgroundIndex = std::clamp(p.emblemBackgroundIndex, 0, static_cast<int>(UiArt::GetEmblemBackgrounds().size()));
 }
 
 bool ArmorCustomizer::LoadProfile(const std::filesystem::path& path) {
@@ -1541,6 +1551,11 @@ bool ArmorCustomizer::LoadProfile(const std::filesystem::path& path) {
             m_profile.emblemSecondaryColor = std::clamp(j["emblem_secondary_color"].get<int>(), 0, 29);
         if (j.contains("emblem_background_color") && j["emblem_background_color"].is_number_integer())
             m_profile.emblemBackgroundColor = std::clamp(j["emblem_background_color"].get<int>(), 0, 29);
+        // Before 2026-11-11 the emblem was a position in MCC's emblem list; it is now Reach's own emblem index (the
+        // game's index too). Older files are converted by name in MigrateEmblemIfNeeded, once UiArt's lists exist
+        // (the first profile load happens before UiArt::Init).
+        m_emblemFromMcc = !j.contains("emblem_set");
+        MigrateEmblemIfNeeded();
 
         MigrateFromLegacyFields();
         SyncLegacyFields();
@@ -1733,6 +1748,7 @@ bool ArmorCustomizer::SaveProfile(const std::filesystem::path& path) {
         j["emblem_primary_color"] = m_profile.emblemPrimaryColor;
         j["emblem_secondary_color"] = m_profile.emblemSecondaryColor;
         j["emblem_background_color"] = m_profile.emblemBackgroundColor;
+        if (!m_emblemFromMcc) j["emblem_set"] = "reach";   // emblem_index / emblem_background_index are Reach's own indices
 
         std::error_code ec;
         if (targetPath.has_parent_path()) {
@@ -1814,11 +1830,10 @@ void ArmorCustomizer::RenderCharacterPreview(ID3D11Device* device, ID3D11DeviceC
             return true;
         }();
         (void)s_loggedMissingPack;
-        const std::string msg = std::string("LOADING ARMORY") +
-            std::string(static_cast<size_t>(static_cast<int>(ImGui::GetTime() * 2.0) % 4), '.');
-        const ImVec2 ts = ImGui::CalcTextSize(msg.c_str());
-        dl->AddText(ImVec2(cursorPos.x + std::max(0.0f, (width - ts.x) * 0.5f), cursorPos.y + height * 0.45f),
-                    IM_COL32(143, 216, 255, 220), msg.c_str());
+        // The loading message itself is drawn by the Armory stage (FrontEndMenu ArmoryStage::DrawLoading), centred
+        // on the lattice; a second one here showed two "LOADING" texts at once.
+        (void)dl;
+        (void)cursorPos;
     }
 
     if (m_autoRotate) ReachArmory::AddYawRotation(ImGui::GetIO().DeltaTime * 0.45f);
@@ -1906,6 +1921,7 @@ float TextW(ImFont* f, float px, const char* t) {
 } // namespace
 
 void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context) {
+    MigrateEmblemIfNeeded();
     // Test-only: "-armory-species spartan|elite" shows the other species without saving the profile,
     // so both 3D previews can be captured with the same appearance.
     {
@@ -1931,6 +1947,9 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
     {
         static std::string s_cycle;
         static uint64_t s_cycleDelay = 900;
+        static std::vector<int> s_cycleList;
+        static int s_cycleChest = -1;
+        static std::string s_cycleScene;
         static bool s_parsed = false;
         if (!s_parsed) {
             s_parsed = true;
@@ -1941,6 +1960,25 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
                     for (const wchar_t* c = argv[i + 1]; c && *c; ++c) s_cycle.push_back(static_cast<char>(*c));
                 } else if (_wcsicmp(argv[i], L"-armory-cycle-delay") == 0) {
                     s_cycleDelay = std::clamp<uint64_t>(static_cast<uint64_t>(_wtoi(argv[i + 1])), 30u, 60000u);
+                } else if (_wcsicmp(argv[i], L"-armory-yaw") == 0) {
+                    // "-armory-yaw <degrees>": turn the preview character (dev test, 2026-11-12).
+                    ReachArmory::SetYawRotation(static_cast<float>(_wtof(argv[i + 1])) * 3.14159265f / 180.f);
+                } else if (_wcsicmp(argv[i], L"-armory-scene") == 0) {
+                    // "-armory-scene c_helmet": open on a close-up camera like a click on that row (dev test, 2026-11-13).
+                    std::string sc; for (const wchar_t* c = argv[i + 1]; c && *c; ++c) sc.push_back(static_cast<char>(*c));
+                    s_cycleScene = sc;
+                } else if (_wcsicmp(argv[i], L"-armory-cycle-chest") == 0) {
+                    // "-armory-cycle-chest <idx>": helmet cycle keeps this chest (dev test, 2026-11-13).
+                    s_cycleChest = _wtoi(argv[i + 1]);
+                } else if (_wcsicmp(argv[i], L"-armory-cycle-list") == 0) {
+                    // "-armory-cycle-list 0,10,12": visit only these entries (dev test, 2026-11-12).
+                    std::wstring w = argv[i + 1];
+                    size_t p = 0;
+                    while (p < w.size()) {
+                        size_t q = w.find(L',', p); if (q == std::wstring::npos) q = w.size();
+                        s_cycleList.push_back(_wtoi(w.substr(p, q - p).c_str()));
+                        p = q + 1;
+                    }
                 }
             }
             if (argv) LocalFree(argv);
@@ -1951,16 +1989,33 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
             const uint64_t now = GetTickCount64();
             if (s_index < 0 || now >= s_next) {
                 ++s_index;
+                if (!s_cycleScene.empty()) { m_focusScene = s_cycleScene; ReachArmory::SetTargetScene(s_cycleScene.c_str()); }
                 int count = 0;
                 std::string name;
                 if (s_cycle == "helmet") {
                     const auto& list = GetSpartanHelmets();
-                    count = static_cast<int>(list.size());
-                    if (s_index < count) { m_profile.helmetIndex = s_index; m_profile.helmetVariantIndex = 0; name = list[s_index].name; }
+                    count = s_cycleList.empty() ? static_cast<int>(list.size()) : static_cast<int>(s_cycleList.size());
+                    const int pick = s_cycleList.empty() ? s_index : (s_index < count ? s_cycleList[s_index] : -1);
+                    if (s_index < count && pick >= 0 && pick < static_cast<int>(list.size())) {
+                        m_profile.helmetIndex = pick; m_profile.helmetVariantIndex = 0; name = list[pick].name;
+                        if (s_cycleChest >= 0) m_profile.chestIndex = s_cycleChest;
+                    }
                 } else if (s_cycle == "chest") {
                     const auto& list = GetSpartanChests();
-                    count = static_cast<int>(list.size());
-                    if (s_index < count) { m_profile.chestIndex = s_index; name = list[s_index].name; }
+                    count = s_cycleList.empty() ? static_cast<int>(list.size()) : static_cast<int>(s_cycleList.size());
+                    const int pick = s_cycleList.empty() ? s_index : (s_index < count ? s_cycleList[s_index] : -1);
+                    if (s_index < count && pick >= 0 && pick < static_cast<int>(list.size())) {
+                        m_profile.chestIndex = pick; name = list[pick].name;
+                    }
+                } else if (s_cycle == "effect") {
+                    // Dev test (2026-11-12): Spartan armour effects (each change re-creates the character).
+                    const int fxCount = static_cast<int>(kArmorEffects.size());
+                    count = s_cycleList.empty() ? fxCount : static_cast<int>(s_cycleList.size());
+                    const int pick = s_cycleList.empty() ? s_index : (s_index < count ? s_cycleList[s_index] : -1);
+                    if (s_index < count && pick >= 0 && pick < fxCount) {
+                        m_profile.armorEffectIndex = pick; name = kArmorEffects[pick].stringId;
+                        m_profile.chestIndex = 0;   // DEFAULT chest: its emblem plate is visible
+                    }
                 } else if (s_cycle == "shoulder") {
                     const auto& list = GetSpartanShoulders();
                     count = static_cast<int>(list.size());
@@ -1976,6 +2031,82 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
                 } else if (s_cycle == "visor") {
                     count = static_cast<int>(kVisorColors.size());
                     if (s_index < count) { m_profile.visorColorIndex = s_index; m_visorSelection = s_index; name = kVisorColors[s_index].name; }
+                } else if (s_cycle == "elitecolor") {
+                    // Dev test (2026-11-11): switch the preview to the Elite, then change the Elite colours the way
+                    // the colour pickers do, so the live colour path can be checked with -capture-at.
+                    static const int kPri[4] = { -1, 3, 13, 20 };
+                    static const int kSec[4] = { -1, 18, 9, 2 };
+                    count = 4;
+                    if (s_index == 0) {
+                        m_profile.species = PlayerSpecies::Elite;
+                        m_previewSpecies = PlayerSpecies::Elite;
+                        name = "species elite";
+                    } else if (s_index < count) {
+                        m_profile.elitePrimaryColor = kPri[s_index];
+                        m_profile.eliteSecondaryColor = kSec[s_index];
+                        name = "elite colours " + std::to_string(kPri[s_index]) + "/" + std::to_string(kSec[s_index]);
+                    }
+                } else if (s_cycle == "elitefx") {
+                    // Dev test (2026-11-11): Elite preview, then every armour effect and back to none - each change
+                    // rebuilds the character, which used to leave random pieces on it (Tyler's video 23:16).
+                    const int fxCount = static_cast<int>(kArmorEffects.size());
+                    count = fxCount + 2;
+                    if (s_index == 0) {
+                        m_profile.species = PlayerSpecies::Elite;
+                        m_previewSpecies = PlayerSpecies::Elite;
+                        name = "species elite";
+                    } else if (s_index < count) {
+                        m_profile.eliteArmorEffectIndex = s_index <= fxCount ? s_index % fxCount : 0;
+                        name = std::string("elite effect ") + kArmorEffects[m_profile.eliteArmorEffectIndex].stringId;
+                    }
+                } else if (s_cycle == "elitepieces") {
+                    // Dev test (2026-11-12): Elite preview, then the extra (Prophets' Hand) pieces one look at a time.
+                    static const char* kLooks[][6] = {
+                        {"honor_guard", "honor_guard", "honor_guard", "honor_guard", "honor_guard", "honor_guard"},
+                        {"council", "schism", "schism", "honor_guard", "minor", "minor"},
+                        {"ossoona", "combat", "combat", "minor", "minor", "minor"},
+                        {"minor", "minor", "minor", "minor", "minor", "minor"},
+                    };
+                    // "-armory-look <1..4>" (2026-11-12): show only that look and keep it, so captures don't depend on
+                    // timing. "-armory-test-colors": White primary, Cobalt secondary, Gold lights (easy to tell apart).
+                    static int s_lookOnly = -2;
+                    static bool s_testColors = false;
+                    static int s_testPri = 2, s_testSec = 16, s_testLit = 27;   // White / Cobalt / Gold
+                    if (s_lookOnly == -2) {
+                        s_lookOnly = -1;
+                        int ac = 0;
+                        LPWSTR* av = CommandLineToArgvW(GetCommandLineW(), &ac);
+                        for (int i = 1; av && i < ac; ++i) {
+                            if (_wcsicmp(av[i], L"-armory-look") == 0 && i + 1 < ac)
+                                s_lookOnly = std::clamp(_wtoi(av[i + 1]), 1, static_cast<int>(std::size(kLooks))) - 1;
+                            if (_wcsicmp(av[i], L"-armory-test-colors") == 0) s_testColors = true;
+                            // "-armory-test-pri/-sec/-lit <0..29>": override one test colour (palette index).
+                            if (i + 1 < ac && _wcsicmp(av[i], L"-armory-test-pri") == 0) s_testPri = std::clamp(_wtoi(av[i + 1]), 0, 29);
+                            if (i + 1 < ac && _wcsicmp(av[i], L"-armory-test-sec") == 0) s_testSec = std::clamp(_wtoi(av[i + 1]), 0, 29);
+                            if (i + 1 < ac && _wcsicmp(av[i], L"-armory-test-lit") == 0) s_testLit = std::clamp(_wtoi(av[i + 1]), 0, 29);
+                        }
+                        if (av) LocalFree(av);
+                    }
+                    count = s_lookOnly >= 0 ? 2 : 1 + static_cast<int>(std::size(kLooks));
+                    if (s_index == 0) {
+                        m_profile.species = PlayerSpecies::Elite;
+                        m_previewSpecies = PlayerSpecies::Elite;
+                        if (s_testColors) {
+                            m_profile.elitePrimaryColor = s_testPri; m_profile.eliteSecondaryColor = s_testSec; m_profile.eliteLightsColor = s_testLit;
+                            m_profile.elitePrimaryCustom = m_profile.eliteSecondaryCustom = false;
+                            m_profile.eliteAccentCustom = m_profile.eliteLightsCustom = false;
+                        }
+                        name = "species elite";
+                    } else if (s_index < count) {
+                        const auto& look = kLooks[s_lookOnly >= 0 ? s_lookOnly : s_index - 1];
+                        int* pieces[kElitePieceCount] = { &m_profile.eliteHelmetIndex, &m_profile.eliteLeftShoulderIndex,
+                            &m_profile.eliteRightShoulderIndex, &m_profile.eliteChestIndex, &m_profile.eliteArmsIndex,
+                            &m_profile.eliteLegsIndex };
+                        for (int p = 0; p < kElitePieceCount; ++p) *pieces[p] = ElitePieceIndexOf(p, look[p]);
+                        m_profile.eliteArmorSet = EliteSetForPieces(m_profile);
+                        m_profile.eliteArmorEffectIndex = 0;
+                        name = std::string("elite look ") + look[0] + "/" + look[1] + "/" + look[3];
+                    }
                 } else if (s_cycle == "custom") {
                     count = 4;
                     if (s_index < count) {
@@ -2169,6 +2300,15 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
         q.options = s_reachColorOptions;
         rows.push_back(std::move(p));
         rows.push_back(std::move(q));
+        // 2026-11-12 (Tyler): Lights row hidden - the Honor Guard glow is fixed gold until the Lights colour can
+        // drive it (see HANDOFF-ELITE-2026-11-12-NIGHT, "Lights idea"). Flip kShowEliteLights to bring it back.
+        constexpr bool kShowEliteLights = false;
+        if (isElite && kShowEliteLights) {
+            SlotRow l{ "COLORS", "Lights", RowKind::Colour, &m_profile.eliteLightsColor };
+            l.scene = "c_full_spartan";
+            l.options = s_reachColorOptions;
+            rows.push_back(std::move(l));
+        }
     }
 
 
@@ -2193,6 +2333,11 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
         for (const auto& e : kArmorEffects) {
             r.options.push_back({ e.name, e.description });
             LockEliteOption(r.options.back(), e.stringId);
+            // Same effect pictures as the Spartan list (the effects are shared), so the Elite grid isn't a bare text list.
+            if (const SpartanItem* it = FindSpartanItem("armor effect", e.stringId); it && it->pic[0]) {
+                r.options.back().art = it->pic;
+                r.options.back().artDir = it->picDir;
+            }
         }
         rows.push_back(r);
     }
@@ -2687,7 +2832,17 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
         // Picture tiles (Elite armour sets) when at least the equipped option's picture is there.
         const char* eqArt = row.options[equipped].art;
         auto artDir = [](const PickOption& o) { return o.artDir ? o.artDir : "elite_sets"; };
-        const bool artGrid = !colourGrid && !isNameplate && !isEmblem && eqArt && UiArt::ReachArt(artDir(row.options[equipped]), eqArt);
+        // Picture tiles when ANY option has a picture (not only the equipped one): deciding by the equipped option made
+        // the grid flip between pictures and a text list as you picked (visor colours, Elite armour sets - 06:37 videos).
+        // Options without a picture get a placeholder tile (their colour swatch, or just the name).
+        (void)eqArt;
+        bool anyArt = false;
+        if (!colourGrid && !isNameplate && !isEmblem) {
+            for (int k = 0; k < n && !anyArt; ++k) {
+                if (row.options[k].art && UiArt::ReachArt(artDir(row.options[k]), row.options[k].art)) anyArt = true;
+            }
+        }
+        const bool artGrid = anyArt;
         const float tileH = colourGrid ? tileW : isEmblem ? tileW : isNameplate ? 56.0f * s : artGrid ? tileW * 1.15f : 46.0f * s;
         // Grid origin in screen space, taken once (it already includes the scroll offset).
         const ImVec2 base = ImGui::GetCursorScreenPos();
@@ -2746,11 +2901,24 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
             } else if (artGrid) {
                 gdl->AddRectFilled(t0, t1, isEq ? IM_COL32(34, 70, 104, 235) : (hov ? IM_COL32(40, 54, 70, 235) : IM_COL32(20, 28, 38, 220)), 2.0f * s);
                 const float nameH = 30.0f * s;
-                if (row.options[i].art) {
-                    const UiTexture pic = UiArt::ReachArt(artDir(row.options[i]), row.options[i].art);
-                    if (pic) UiArt::DrawContain(gdl, pic, ImVec2(t0.x + 4.0f * s, t0.y + 4.0f * s), ImVec2(t1.x - 4.0f * s, t1.y - nameH),
-                                                row.options[i].locked ? IM_COL32(70, 70, 70, 255)
-                                                : (isEq || hov) ? IM_COL32_WHITE : IM_COL32(205, 205, 205, 255));
+                const UiTexture pic = row.options[i].art ? UiArt::ReachArt(artDir(row.options[i]), row.options[i].art) : UiTexture{};
+                if (pic) {
+                    UiArt::DrawContain(gdl, pic, ImVec2(t0.x + 4.0f * s, t0.y + 4.0f * s), ImVec2(t1.x - 4.0f * s, t1.y - nameH),
+                                       row.options[i].locked ? IM_COL32(70, 70, 70, 255)
+                                       : (isEq || hov) ? IM_COL32_WHITE : IM_COL32(205, 205, 205, 255));
+                } else if (row.options[i].swatch) {
+                    // No picture: the option's colour as a large chip (visor colours), so the tile still says what it is.
+                    const float cw = std::min(tileW, tileH - nameH) * 0.45f;
+                    const ImVec2 c((t0.x + t1.x) * 0.5f, t0.y + (tileH - nameH) * 0.5f);
+                    gdl->AddRectFilled(ImVec2(c.x - cw * 0.5f, c.y - cw * 0.5f), ImVec2(c.x + cw * 0.5f, c.y + cw * 0.5f),
+                                       row.options[i].swatch, 4.0f * s);
+                    gdl->AddRect(ImVec2(c.x - cw * 0.5f, c.y - cw * 0.5f), ImVec2(c.x + cw * 0.5f, c.y + cw * 0.5f),
+                                 IM_COL32(255, 255, 255, 60), 4.0f * s);
+                } else {
+                    // No picture and no colour: a quiet "no preview" mark, the name stays below as on every tile.
+                    const char* np = "NO PREVIEW";
+                    TextAt(gdl, smallFont, 13.0f * s, ImVec2(t0.x + (tileW - TextW(smallFont, 13.0f * s, np)) * 0.5f, t0.y + (tileH - nameH) * 0.5f - 7.0f * s),
+                           IM_COL32(110, 130, 150, 200), np);
                 }
                 gdl->AddRectFilled(ImVec2(t0.x, t1.y - nameH), t1, IM_COL32(8, 12, 18, 200), 2.0f * s);
                 const std::string& name = row.options[i].name;
@@ -2832,18 +3000,30 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
         }
         // Firefight voices: X (pad or key) plays a sample line for the highlighted character, cycling through its lines.
         if (std::strcmp(row.label, "Firefight Voice") == 0) {
+            // The prompt: the X key on keyboard/mouse, the X button on a pad; the whole prompt is also a mouse button.
+            const float glyph = 20.0f * s;
+            const float py = k1.y - 30.0f * s;
+            const ImVec2 r0(k1.x - pad - 100.0f * s, py - 4.0f * s), r1(k1.x - pad + 4.0f * s, py + glyph + 4.0f * s);
+            const bool hovered = ImGui::IsMouseHoveringRect(r0, r1);
+            if (hovered) {
+                dl->AddRectFilled(r0, r1, IM_COL32(40, 90, 130, 140), 4.0f * s);
+                ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+            }
             const bool press = !ImGui::GetIO().WantTextInput &&
-                               (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceLeft, false) || ImGui::IsKeyPressed(ImGuiKey_X, false));
+                               (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceLeft, false) || ImGui::IsKeyPressed(ImGuiKey_X, false) ||
+                                (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)));
             if (press && shown >= 0 && static_cast<size_t>(shown) < kFirefightVoices.size()) {
                 const SettingsData sound = Settings::Get().Snapshot();
                 ReachAudio::PlayVoicePreview(kFirefightVoices[static_cast<size_t>(shown)].stringId, m_profile.bodyType == BodyType::Female,
                                              sound.masterMute ? 0.0f : sound.volumeOther);
             }
-            const float glyph = 20.0f * s;
-            float px = k1.x - pad - 92.0f * s;
-            const float py = k1.y - 30.0f * s;
-            px += InputPrompts::DrawButton(dl, bodyFont, ImVec2(px, py), glyph, InputPrompts::Button::X) + 5.0f * s;
-            TextAt(dl, smallFont, 14.0f * s, ImVec2(px, py + 3.0f * s), IM_COL32(190, 214, 232, 255), "Preview");
+            float px = r0.x + 6.0f * s;
+            if (InputPrompts::Current() == InputPrompts::Device::Gamepad) {
+                px += InputPrompts::DrawButton(dl, bodyFont, ImVec2(px, py), glyph, InputPrompts::Button::X) + 5.0f * s;
+            } else {
+                px += InputPrompts::DrawKey(dl, bodyFont, ImVec2(px, py), glyph, "X") + 5.0f * s;
+            }
+            TextAt(dl, smallFont, 14.0f * s, ImVec2(px, py + 3.0f * s), hovered ? IM_COL32(236, 244, 250, 255) : IM_COL32(190, 214, 232, 255), "Preview");
         }
         const std::string count = std::to_string(shown + 1) + " / " + std::to_string(n) +
             (shown == equipped ? "   EQUIPPED"

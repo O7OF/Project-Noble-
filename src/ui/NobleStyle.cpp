@@ -70,7 +70,7 @@ void Apply() {
     style.ChildRounding = 0.0f;
     style.FrameRounding = 0.0f;
     style.PopupRounding = 0.0f;
-    style.ScrollbarRounding = 0.0f;
+    style.ScrollbarRounding = 4.0f;
     style.GrabRounding = 0.0f;
     style.TabRounding = 0.0f;
     style.WindowBorderSize = 1.0f;
@@ -82,7 +82,7 @@ void Apply() {
     style.FramePadding = ImVec2(10.0f, 6.0f);
     style.ItemSpacing = ImVec2(10.0f, 8.0f);
     style.ItemInnerSpacing = ImVec2(8.0f, 6.0f);
-    style.ScrollbarSize = 12.0f;
+    style.ScrollbarSize = 18.0f;   // wider and easier to grab/see (Tyler 2026-11-11)
     style.GrabMinSize = 12.0f;
     style.WindowTitleAlign = ImVec2(0.0f, 0.5f);
 
@@ -101,9 +101,11 @@ void Apply() {
     c[ImGuiCol_TitleBgActive]        = kPanelHi;
     c[ImGuiCol_TitleBgCollapsed]     = kPanel;
     c[ImGuiCol_MenuBarBg]            = kPanel;
-    c[ImGuiCol_ScrollbarBg]          = ImVec4(0.03f, 0.04f, 0.06f, 0.60f);
-    c[ImGuiCol_ScrollbarGrab]        = ImVec4(0.22f, 0.30f, 0.38f, 1.00f);
-    c[ImGuiCol_ScrollbarGrabHovered] = kAccentDim;
+    // Scrollbars: a visible track and a bright Noble-blue thumb (the old grey-blue one was nearly invisible on the
+    // dark panels).
+    c[ImGuiCol_ScrollbarBg]          = ImVec4(0.08f, 0.12f, 0.17f, 0.85f);
+    c[ImGuiCol_ScrollbarGrab]        = ImVec4(0.36f, 0.68f, 0.90f, 0.90f);
+    c[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.50f, 0.80f, 1.00f, 1.00f);
     c[ImGuiCol_ScrollbarGrabActive]  = kAccent;
     c[ImGuiCol_CheckMark]            = kAccent;
     c[ImGuiCol_SliderGrab]           = kAccentDim;

@@ -103,7 +103,9 @@ static_assert(std::size(kEngineLimitLabels) == static_cast<size_t>(limits::Profi
               "add an ENGINE LIMITS label for every engine-limits profile");
 
 // The display Noble's window is on, in real pixels (the process is per-monitor DPI aware, see main.cpp).
-void NativeDisplaySize(int& w, int& h) {
+void NativeDisplaySize(int& w, int& h, int monitorIndex = 0) {
+    w = h = 0;
+    if (monitorIndex > 0 && Window::MonitorSize(monitorIndex, w, h)) return;   // SETTINGS > MONITOR picked a display: its own size
     w = h = 0;
     HWND hwnd = nullptr;
     if (auto* win = Window::Active()) hwnd = win->GetHwnd();
@@ -945,6 +947,29 @@ void SettingsPanel::RenderGraphics() {
         InfoValue(GpuLine().c_str());
     }
     {
+        // MONITOR: 0 = Auto (the primary display), 1..N = that display (primary first, then left to right). Each display's
+        // own resolution is detected and shown; picking another display resets RESOLUTION to that display's native size.
+        const int count = Window::MonitorCount();
+        const int cur = std::clamp(m_edit.monitor, 0, count);
+        char label[64];
+        if (cur == 0) {
+            std::snprintf(label, sizeof(label), "AUTO (PRIMARY)");
+        } else {
+            int mw = 0, mh = 0;
+            bool primary = false;
+            Window::MonitorSize(cur, mw, mh, &primary);
+            std::snprintf(label, sizeof(label), "DISPLAY %d - %d x %d%s", cur, mw, mh, primary ? " (PRIMARY)" : "");
+        }
+        if (Row("MONITOR", "Which display Noble opens on. Auto uses your primary display. Display 1 is the primary one, the others follow from left to right, and each shows its own resolution. The window moves as soon as you apply; the picture is drawn at the new display's native size from the next time Noble starts. Resets RESOLUTION to Native.",
+                When::Apply, "Auto", m_edit.monitor != m_saved.monitor)) {
+            if (const int d = CycleValue(label, cur, count + 1, false)) {
+                m_edit.monitor = std::clamp(cur + d, 0, count);
+                m_edit.fullscreenWidth = 0;    // the new display's own size
+                m_edit.fullscreenHeight = 0;
+            }
+        }
+    }
+    {
         // 0 = Windowed, 1 = Borderless, 2 = Fullscreen (exclusive; stored as borderless + exclusiveFullscreen).
         static const char* const kModeNames[] = { "WINDOWED", "BORDERLESS FULL SCREEN", "FULLSCREEN" };
         static const char* const kModeDefaults[] = { "Windowed", "Borderless", "Fullscreen" };
@@ -964,7 +989,7 @@ void SettingsPanel::RenderGraphics() {
         // renders at. DXGI scales it up to the display. Only sizes no larger than the display and of the same
         // shape are offered, so nothing is stretched; Native is the display's own size and the default.
         int nativeW = 0, nativeH = 0;
-        NativeDisplaySize(nativeW, nativeH);
+        NativeDisplaySize(nativeW, nativeH, m_edit.monitor);
         std::vector<Resolution> options;
         for (const Resolution& r : kResolutions) {
             if (nativeW <= 0 || nativeH <= 0) break;   // display unknown: offer Native only
@@ -1858,7 +1883,7 @@ int SettingsPanel::CountDiff(const SettingsData& a, const SettingsData& b, Cat c
     case Cat::Graphics:
         return (a.width != b.width || a.height != b.height) + (a.borderless != b.borderless || a.exclusiveFullscreen != b.exclusiveFullscreen) + (a.verticalSync != b.verticalSync) +
                (a.fpsLimit != b.fpsLimit) + (a.showFps != b.showFps) + f(a.uiScale, b.uiScale) +
-               (a.fullscreenWidth != b.fullscreenWidth || a.fullscreenHeight != b.fullscreenHeight);
+               (a.fullscreenWidth != b.fullscreenWidth || a.fullscreenHeight != b.fullscreenHeight) + (a.monitor != b.monitor);
     case Cat::Audio:
         return f(a.volumeGame, b.volumeGame) + f(a.volumeMusic, b.volumeMusic) + f(a.volumeOther, b.volumeOther) +
                (a.masterMute != b.masterMute) + (a.muteInBackground != b.muteInBackground) +
@@ -1927,7 +1952,7 @@ SettingsData SettingsPanel::WithDefaults(SettingsData e, Cat c) {
     case Cat::Graphics:
         e.width = d.width; e.height = d.height; e.borderless = d.borderless; e.exclusiveFullscreen = d.exclusiveFullscreen; e.verticalSync = d.verticalSync;
         e.fpsLimit = Settings::DefaultFpsLimit(); e.showFps = d.showFps; e.uiScale = d.uiScale;
-        e.fullscreenWidth = d.fullscreenWidth; e.fullscreenHeight = d.fullscreenHeight;
+        e.fullscreenWidth = d.fullscreenWidth; e.fullscreenHeight = d.fullscreenHeight; e.monitor = d.monitor;
         break;
     case Cat::Audio:
         e.volumeGame = d.volumeGame; e.volumeMusic = d.volumeMusic; e.volumeOther = d.volumeOther;
@@ -1985,8 +2010,10 @@ void SettingsPanel::Apply() {
     // No restart and no swap-chain resize are needed.
     const bool displayChanged = m_saved.width != m_edit.width || m_saved.height != m_edit.height ||
                                 m_saved.borderless != m_edit.borderless ||
-                                m_saved.exclusiveFullscreen != m_edit.exclusiveFullscreen;
+                                m_saved.exclusiveFullscreen != m_edit.exclusiveFullscreen ||
+                                m_saved.monitor != m_edit.monitor;
     Settings::Get().Update(m_edit);
+    Window::SetMonitorSetting(m_edit.monitor);
     if (displayChanged) {
         if (auto* win = Window::Active()) win->ApplyWindowSettings(m_edit.width, m_edit.height, m_edit.borderless, m_edit.exclusiveFullscreen);
     }

@@ -41,6 +41,13 @@ public:
 
     // DISPLAY MODE = FULLSCREEN chosen. Call before Create() (it also makes the window borderless).
     void SetExclusiveFullscreen(bool on);
+
+    // SETTINGS > GRAPHICS > MONITOR. 0 = Auto (the primary display), 1..N = that display, numbered primary first and then
+    // left to right. Read when the window is created and by ApplyWindowSettings (so changing it moves the window).
+    static void SetMonitorSetting(int monitor);
+    static int MonitorCount();
+    // Real-pixel size of display `index` (1-based, 0 = the primary display). False when there is no such display.
+    static bool MonitorSize(int index, int& width, int& height, bool* isPrimary = nullptr);
     // True when the swap chain should be in exclusive full screen right now: the setting is on, Noble is
     // the active app and the window is not minimized. Alt-Tab / focus loss turns it false. Any thread.
     static bool WantsExclusiveFullscreen();

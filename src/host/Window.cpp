@@ -36,6 +36,36 @@ bool SecondaryMonitor(MONITORINFO& out) {
     out = info;
     return true;
 }
+// SETTINGS > GRAPHICS > MONITOR (0 = Auto/primary, 1..N = a display). See Window::SetMonitorSetting.
+std::atomic<int> s_monitorSetting{ 0 };
+BOOL CALLBACK CollectMonitors(HMONITOR monitor, HDC, LPRECT, LPARAM param) {
+    MONITORINFO info{};
+    info.cbSize = sizeof(info);
+    if (GetMonitorInfoW(monitor, &info)) reinterpret_cast<std::vector<MONITORINFO>*>(param)->push_back(info);
+    return TRUE;
+}
+// Every display, in a stable order the player can follow: the primary display first, then left to right, top to bottom.
+std::vector<MONITORINFO> ListMonitors() {
+    std::vector<MONITORINFO> list;
+    EnumDisplayMonitors(nullptr, nullptr, &CollectMonitors, reinterpret_cast<LPARAM>(&list));
+    std::stable_sort(list.begin(), list.end(), [](const MONITORINFO& a, const MONITORINFO& b) {
+        const bool ap = (a.dwFlags & MONITORINFOF_PRIMARY) != 0, bp = (b.dwFlags & MONITORINFOF_PRIMARY) != 0;
+        if (ap != bp) return ap;
+        if (a.rcMonitor.left != b.rcMonitor.left) return a.rcMonitor.left < b.rcMonitor.left;
+        return a.rcMonitor.top < b.rcMonitor.top;
+    });
+    return list;
+}
+// The display the player chose (1..N). False for Auto, or when that display is not connected any more (then the
+// primary display is used, as before).
+bool ChosenMonitor(MONITORINFO& out) {
+    const int index = s_monitorSetting.load();
+    if (index <= 0) return false;
+    const std::vector<MONITORINFO> list = ListMonitors();
+    if (index > static_cast<int>(list.size())) return false;
+    out = list[static_cast<size_t>(index) - 1];
+    return true;
+}
 // Posted by RequestFocus(): the window's own thread takes the keyboard focus back from the container
 // window it is hosted in (see EnsureContainerFocus).
 constexpr UINT kMsgEnsureFocus = WM_APP + 0x4F;
@@ -144,6 +174,20 @@ bool Window::WantsExclusiveFullscreen() {
 bool Window::IsExclusiveFullscreenActive() { return s_exclusiveFullscreenActive.load(); }
 void Window::SetExclusiveFullscreenActive(bool on) { s_exclusiveFullscreenActive.store(on); }
 
+void Window::SetMonitorSetting(int monitor) { s_monitorSetting.store(monitor < 0 ? 0 : monitor); }
+
+int Window::MonitorCount() { return static_cast<int>(ListMonitors().size()); }
+
+bool Window::MonitorSize(int index, int& width, int& height, bool* isPrimary) {
+    const std::vector<MONITORINFO> list = ListMonitors();
+    if (list.empty() || index < 0 || index > static_cast<int>(list.size())) return false;
+    const MONITORINFO& info = list[index == 0 ? 0 : static_cast<size_t>(index) - 1];   // the primary display sorts first
+    width = info.rcMonitor.right - info.rcMonitor.left;
+    height = info.rcMonitor.bottom - info.rcMonitor.top;
+    if (isPrimary) *isPrimary = (info.dwFlags & MONITORINFOF_PRIMARY) != 0;
+    return true;
+}
+
 void Window::RequestGeometryRefresh() {
     if (m_hwnd) PostMessageW(m_hwnd, kMsgRefreshGeometry, 0, 0);
 }
@@ -181,6 +225,7 @@ void Window::ApplyWindowSettings(uint32_t width, uint32_t height, bool borderles
     monitorInfo.cbSize = sizeof(monitorInfo);
     const HMONITOR monitor = MonitorFromWindow(m_hwnd, MONITOR_DEFAULTTOPRIMARY);
     GetMonitorInfoW(monitor, &monitorInfo);
+    if (MONITORINFO chosen{}; ChosenMonitor(chosen)) monitorInfo = chosen;   // SETTINGS > MONITOR picked a display
     const RECT monitorRect = monitorInfo.rcMonitor;
     const RECT workRect = monitorInfo.rcWork;
 
@@ -330,7 +375,8 @@ bool Window::Create() {
         if (posY < work.top) posY = work.top;
     }
 
-    if (MONITORINFO second{}; SecondaryMonitor(second)) {
+    // NOBLE_WINDOW_SECONDARY (dev/test) or SETTINGS > MONITOR: open on that display instead of the primary one.
+    if (MONITORINFO second{}; SecondaryMonitor(second) || ChosenMonitor(second)) {
         if (m_borderless) {
             m_width = static_cast<uint32_t>(second.rcMonitor.right - second.rcMonitor.left);
             m_height = static_cast<uint32_t>(second.rcMonitor.bottom - second.rcMonitor.top);

@@ -1297,8 +1297,8 @@ static void ApplyArmoryAppearance(uint8_t* profile) {
         put(0x68, kEffect + spEffectOff);
         put(0x6C, kKnees + num(sp, "knee_guards_index", 0, 3, 0));
         put(0x70, kVisor + visorOff);
-        // Armory set indices: 0..7 = MCC's eight Elite sets (194..201), 8 = Honor Guard, 9 = H2A Ranger,
-        // 10 = Counselor. MCC has no set item for 8..10 - those presets are carried by their per-piece
+        // Armory set indices: 0..7 = MCC's eight Elite sets (194..201), 8 = Honor Guard, 9 = Counselor,
+        // 10 = Custom. MCC has no set item for 8..10 - those presets are carried by their per-piece
         // entries in the appearance record (ElitePack) - so the profile set item stays at Minor (194).
         const int eliteSet = num(el, "armor_set", 0, 10, 0);
         put(0x8C, kEliteSet + (eliteSet < 8 ? eliteSet : 0));
@@ -3948,6 +3948,125 @@ static uint64_t __fastcall HostSlot116_ControllerMap(void* thisPtr, uint64_t a1,
     return 0;
 }
 
+// -----------------------------------------------------------------------------
+// Slots 73 / 74: player emblems on armour (2026-11-13).
+// haloreach+0x261B00 (render-method extern 16 "object_emblem_bitmap_and_data") asks the host for the emblem of the
+// rendered object's player: key = player + 0xD0 (players are 0x490 bytes, table at TLS+0x18), or 0 for a player-less
+// object in the main menu (the Armory character, emblem at haloreach+0x4E38F60). Slot 73(key) returns an
+// ID3D11ShaderResourceView* bound to pixel slots 4..9; slot 74(key, &fg, &alt, &bg) returns three 0xAARRGGBB colours.
+// The decal shader (player_emblem.fx, H3-compatible path) reads G = symbol, R = second symbol layer, B = background.
+// MCC renders these itself; Noble's stubs returned 0, so every armour showed the fallback emblem (the yellow "7").
+// -----------------------------------------------------------------------------
+namespace {
+struct EmblemBytes { uint8_t fg = 0, bg = 0, flags = 0, c1 = 0, c2 = 0, c3 = 0; };
+
+bool EmblemForKeySEH(uint64_t key, EmblemBytes* out) {
+    HMODULE hReach = GetModuleHandleW(L"haloreach.dll");
+    if (!hReach) return false;
+    const uintptr_t base = reinterpret_cast<uintptr_t>(hReach);
+    __try {
+        const uint8_t* src = nullptr;
+        if (key != 0) {
+            const uint32_t tlsIdx = *reinterpret_cast<const uint32_t*>(base + 0xC17B18);
+            const uintptr_t tlsArray = *reinterpret_cast<const uintptr_t*>(__readgsqword(0x58) + static_cast<uintptr_t>(tlsIdx) * 8u);
+            if (tlsArray) {
+                const uint8_t* players = *reinterpret_cast<const uint8_t* const*>(tlsArray + 0x18);
+                if (players) {
+                    const int32_t count = std::clamp(*reinterpret_cast<const int32_t*>(players + 0x48), 0, 16);
+                    const uint8_t* entries = *reinterpret_cast<const uint8_t* const*>(players + 0x50);
+                    for (int32_t i = 0; entries && i < count; ++i) {
+                        const uint8_t* p = entries + static_cast<size_t>(i) * 0x490;
+                        if (*reinterpret_cast<const uint16_t*>(p) == 0) continue;
+                        if (*reinterpret_cast<const uint64_t*>(p + 0xD0) == key) { src = p + 0xE0; break; }
+                    }
+                }
+            }
+        }
+        if (!src) src = reinterpret_cast<const uint8_t*>(base + 0x4E38F60);   // main-menu / unknown key
+        out->fg = src[0]; out->bg = src[1]; out->flags = src[2]; out->c1 = src[3]; out->c2 = src[4]; out->c3 = src[5];
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+// Reach's 30 armour/emblem colours (sRGB, same table as ArmorCustomizer kReachColors).
+uint32_t ReachPaletteArgb(int index) {
+    static const uint8_t k[30][3] = {
+        {89,89,89},{155,155,155},{216,216,216},{109,79,56},{158,126,96},{199,171,138},{88,104,77},{125,145,102},
+        {164,185,136},{42,94,54},{68,139,80},{119,186,129},{42,110,117},{71,155,162},{120,201,206},{45,77,131},
+        {74,116,177},{132,173,223},{79,58,127},{117,93,173},{166,144,218},{119,41,51},{173,64,71},{220,122,126},
+        {142,59,34},{200,96,61},{240,150,115},{163,112,36},{219,166,56},{245,208,114} };
+    const int i = std::clamp(index, 0, 29);
+    return 0xFF000000u | (uint32_t(k[i][0]) << 16) | (uint32_t(k[i][1]) << 8) | k[i][2];
+}
+
+std::mutex s_emblemMutex;
+std::unordered_map<uint32_t, ID3D11ShaderResourceView*> s_emblemViews;   // key: fg | bg << 8
+}
+
+static uint64_t __fastcall HostSlot73_EmblemTexture(void* thisPtr, uint64_t key, uint64_t, uint64_t, uint64_t) {
+    (void)thisPtr;
+    static std::atomic<int> s_calls{0};
+    const int call = s_calls.fetch_add(1);
+    EmblemBytes e;
+    const bool found = EmblemForKeySEH(key, &e);
+    if (call < 5) NOBLE_INFO("ReachHost: slot 73 emblem request key 0x{:X} -> fg {} bg {} (ok {}, device {}, catalogs {})",
+                             key, e.fg, e.bg, found, ReachHost::Get().GetDevice() != nullptr, UiArt::CatalogsReady());
+    if (!found) return 0;
+    const uint32_t cacheKey = uint32_t(e.fg) | (uint32_t(e.bg) << 8);
+    std::lock_guard<std::mutex> lock(s_emblemMutex);
+    if (auto it = s_emblemViews.find(cacheKey); it != s_emblemViews.end()) return reinterpret_cast<uint64_t>(it->second);
+    ID3D11Device* device = ReachHost::Get().GetDevice();
+    if (!device || !UiArt::CatalogsReady()) return 0;
+    constexpr int kSize = 128;
+    const auto& symbols = UiArt::GetEmblemCatalog();
+    const auto& backs = UiArt::GetEmblemBackgrounds();
+    std::vector<uint8_t> fg1, fg2, bk;
+    if (!symbols.empty()) {
+        const auto& s = symbols[std::min<size_t>(e.fg, symbols.size() - 1)];
+        fg1 = UiArt::EmblemLayerMask(s.image1, kSize);
+        fg2 = UiArt::EmblemLayerMask(s.image2, kSize);
+    }
+    if (e.bg > 0 && e.bg <= backs.size()) bk = UiArt::EmblemLayerMask(backs[e.bg - 1].image, kSize);
+    std::vector<uint8_t> px(static_cast<size_t>(kSize) * kSize * 4, 0);
+    for (size_t i = 0; i < static_cast<size_t>(kSize) * kSize; ++i) {
+        px[i * 4 + 0] = fg2.empty() ? 0 : fg2[i];   // R: second symbol layer
+        px[i * 4 + 1] = fg1.empty() ? 0 : fg1[i];   // G: symbol
+        px[i * 4 + 2] = bk.empty() ? 0 : bk[i];     // B: background
+        px[i * 4 + 3] = 255;
+    }
+    D3D11_TEXTURE2D_DESC desc{};
+    desc.Width = desc.Height = kSize;
+    desc.MipLevels = 1; desc.ArraySize = 1;
+    desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    desc.SampleDesc.Count = 1;
+    desc.Usage = D3D11_USAGE_IMMUTABLE;
+    desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    D3D11_SUBRESOURCE_DATA init{ px.data(), kSize * 4, 0 };
+    ID3D11Texture2D* tex = nullptr;
+    ID3D11ShaderResourceView* srv = nullptr;
+    if (SUCCEEDED(device->CreateTexture2D(&desc, &init, &tex)) && tex) {
+        device->CreateShaderResourceView(tex, nullptr, &srv);
+        tex->Release();
+    }
+    if (!srv) return 0;
+    s_emblemViews[cacheKey] = srv;   // kept for the process lifetime (a handful of emblems)
+    NOBLE_INFO("ReachHost: built armour emblem texture fg {} bg {} (key 0x{:X}, layers {}/{}/{})", e.fg, e.bg, key,
+               !fg1.empty(), !fg2.empty(), !bk.empty());
+    return reinterpret_cast<uint64_t>(srv);
+}
+
+static uint64_t __fastcall HostSlot74_EmblemColors(void* thisPtr, uint64_t key, uint64_t fgOut, uint64_t altOut, uint64_t bgOut) {
+    (void)thisPtr;
+    EmblemBytes e;
+    if (!EmblemForKeySEH(key, &e)) return 0;
+    uint32_t* const outs[3] = { reinterpret_cast<uint32_t*>(fgOut), reinterpret_cast<uint32_t*>(altOut), reinterpret_cast<uint32_t*>(bgOut) };
+    const uint32_t vals[3] = { ReachPaletteArgb(e.c1), ReachPaletteArgb(e.c2), ReachPaletteArgb(e.c3) };
+    for (int i = 0; i < 3; ++i) if (reinterpret_cast<uintptr_t>(outs[i]) > 0x10000) *outs[i] = vals[i];
+    return 1;
+}
+
 template<size_t... Is>
 static void InitVTableHelper(void** vtable, std::index_sequence<Is...>) {
     ((vtable[Is] = reinterpret_cast<void*>(&SlotDispatcher<Is>::Stub)), ...);
@@ -3989,6 +4108,10 @@ void ReachHost::InitializeVTable() {
     s_vtable[65]  = reinterpret_cast<void*>(&HostSlot65_TextKerning);
     s_vtable[66]  = reinterpret_cast<void*>(&HostSlot66_TextRegisterIcon);
     s_vtable[67]  = reinterpret_cast<void*>(&HostSlot67_TextMetrics);
+    if (!std::getenv("NOBLE_NO_EMBLEM")) {   // dev A/B switch (2026-11-13)
+        s_vtable[73]  = reinterpret_cast<void*>(&HostSlot73_EmblemTexture);
+        s_vtable[74]  = reinterpret_cast<void*>(&HostSlot74_EmblemColors);
+    }
     s_vtable[88]  = reinterpret_cast<void*>(&HostSlot88_UserIdentity);
     s_vtable[97]  = reinterpret_cast<void*>(&HostSlot97_ColorFilter);
     s_vtable[116] = reinterpret_cast<void*>(&HostSlot116_ControllerMap);

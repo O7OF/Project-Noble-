@@ -48,6 +48,7 @@ void Clamp(SettingsData& d) {
         d.fullscreenWidth = std::clamp(d.fullscreenWidth, 640, 7680);
         d.fullscreenHeight = std::clamp(d.fullscreenHeight, 360, 4320);
     }
+    d.monitor = std::clamp(d.monitor, 0, 16);
     d.fieldOfView = std::clamp(d.fieldOfView, 70.0f, 120.0f);  // slider range (SETTINGS > VIDEO)
     d.uiScale = std::isfinite(d.uiScale) ? std::clamp(d.uiScale, 0.75f, 1.50f) : 1.0f;
     d.firstPersonFovMod = std::clamp(d.firstPersonFovMod, -1.20f, 1.20f);
@@ -152,6 +153,7 @@ void Settings::Load() {
             if (d.exclusiveFullscreen) d.borderless = true;
             Read(j, "fullscreenWidth", d.fullscreenWidth);
             Read(j, "fullscreenHeight", d.fullscreenHeight);
+            Read(j, "monitor", d.monitor);
             Read(j, "fieldOfView", d.fieldOfView);
             Read(j, "firstPersonFovMod", d.firstPersonFovMod);
             Read(j, "vehicleFirstPersonFovMod", d.vehicleFirstPersonFovMod);
@@ -331,6 +333,7 @@ bool Settings::Save() {
         j["exclusiveFullscreen"] = d.exclusiveFullscreen;
         j["fullscreenWidth"] = d.fullscreenWidth;
         j["fullscreenHeight"] = d.fullscreenHeight;
+        j["monitor"] = d.monitor;
         j["fieldOfView"] = d.fieldOfView;
         j["firstPersonFovMod"] = d.firstPersonFovMod;
         j["vehicleFirstPersonFovMod"] = d.vehicleFirstPersonFovMod;

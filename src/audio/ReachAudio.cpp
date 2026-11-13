@@ -711,6 +711,9 @@ void TrimCache() {
 
 // ---------------------------------------------------------------- music
 
+// Label of the "all" entry: only Reach tracks are loaded for now, so it shuffles the Reach soundtrack.
+constexpr const char* kOtherGamesLabel = "Shuffle Soundtrack";
+
 const Track* FindTrack(const std::string& id) {
     for (const Track& t : s_tracks) if (t.id == id) return &t;
     return nullptr;
@@ -952,11 +955,16 @@ void Init(const fs::path& reachDir, const fs::path& cacheDir) {
         NOBLE_WARN("ReachAudio: {}", s_problem);
         return;
     }
-    // The other games' music, from the same MCC install (all optional).
-    const fs::path mcc = reachDir.parent_path();
-    AddHalo1(mcc);
-    AddInfoBank(mcc / "halo3", "Halo 3", "h3", "h3", false, kHalo3Names);
-    AddInfoBank(mcc / "halo3odst", "Halo 3: ODST", "odst", "odst", false, kOdstNames);
+    // The other games' music, from the same MCC install (all optional). Off for now (Tyler 2026-11-11: Reach
+    // soundtrack only; tracks from other games will be picked and added back one by one later).
+    // Saved settings that name a removed track fall back to the Reach menu theme (see Resolve).
+    constexpr bool kOtherGamesMusic = false;
+    if (kOtherGamesMusic) {
+        const fs::path mcc = reachDir.parent_path();
+        AddHalo1(mcc);
+        AddInfoBank(mcc / "halo3", "Halo 3", "h3", "h3", false, kHalo3Names);
+        AddInfoBank(mcc / "halo3odst", "Halo 3: ODST", "odst", "odst", false, kOdstNames);
+    }
     // Halo 2 Anniversary keeps its sound in h2_maps_win64_dx11\sounds_*.dat, a format Noble can't read yet.
     NOBLE_INFO("ReachAudio: {} music tracks under {} s left out of the menu playlist", s_shortTracksDropped, kShortestMenuTrack);
     LoadVoicePreviews(reachDir);
@@ -1115,7 +1123,7 @@ bool IsMusicPaused() { return s_musicPaused.load(); }
 
 std::vector<TrackInfo> MusicTracks() {
     std::vector<TrackInfo> list;
-    if (s_tracks.size() > 1) list.push_back({ "all", "", "Shuffle All Games" });
+    if (s_tracks.size() > 1) list.push_back({ "all", "", kOtherGamesLabel });
     for (const Track& t : s_tracks) list.push_back({ t.id, t.game, t.label });
     list.push_back({ "off", "", "Off" });
     return list;
@@ -1124,7 +1132,7 @@ std::vector<TrackInfo> MusicTracks() {
 std::string TrackLabel(const std::string& requested) {
     const std::string id = Resolve(requested);
     if (id == "off") return "Off";
-    if (id == "all") return "Shuffle All Games";
+    if (id == "all") return kOtherGamesLabel;
     if (const Track* t = FindTrack(id)) return t->game + " - " + t->label;
     return "Halo: Reach - Main Menu Theme";
 }

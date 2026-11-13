@@ -25,6 +25,12 @@ struct ReachArmorySelection {
     int firefightVoiceIndex = 0;  // 0..15
     int eliteSuitIndex = 0;       // 0..10 (the Armory's elite set presets)
     std::string serviceTag = "N06";
+    // Emblem, in Reach's own indices (2026-11-11): foreground 0..79, background 0..52 (0 = Blank), colours 0..29,
+    // flags bit 0 = toggled (hide the secondary layer). Written into the game's emblem slot by ApplyLocalEmblem.
+    int emblemForeground = 1;
+    int emblemBackground = 0;
+    int emblemFlags = 0;
+    std::array<int, 3> emblemColors = { 2, 2, 16 };   // primary, secondary, background
 
     // Spartan permutation string_id names (matching mainmenu_all.string_ids.csv)
     std::string helmet = "default";
@@ -94,6 +100,19 @@ public:
 
     // True once the Armory map's HS GLOBALS table is active.
     static bool IsSceneReady();
+    // True once the menu map's script is running and Noble's first armour apply has gone through (plus a short
+    // settle so the engine has drawn the dressed character). Until then the Armory shows its loading state:
+    // IsSceneReady() turns true as soon as the map's memory exists, while the script's values are still garbage.
+    static bool IsCharacterPresentable();
+    // Milliseconds since IsCharacterPresentable() turned true (0 while it is false); used to fade the model in.
+    static uint64_t CharacterPresentableForMs();
+    // True for a moment around a character rebuild (armour effect change) or species switch: the engine shows the
+    // new biped for a frame or two in default colours / before it is posed, so the Armory keeps showing the last
+    // finished picture until the change has settled.
+    static bool IsStageHeld();
+    // Hold the Armory picture for a quarter second from now (the game reacting to a profile/appearance update can
+    // show the character from another camera or pose for a single frame).
+    static void HoldStageBriefly();
 
     // True when the player has an armour pack map installed (data\armor\*.map + .rrreloc).
     static bool HasArmoryMap();

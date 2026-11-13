@@ -18,10 +18,10 @@ struct UiTexture {
     explicit operator bool() const { return id != 0; }
 };
 
-// Pictures for Noble's menus and loading screens. Nothing from Halo is shipped with Noble: images
-// come from, in this order,
+// Pictures for Noble's menus and loading screens. Images come from, in this order,
 //   1. data\ui\custom\   the player's own files (PNG/JPG/BMP), always preferred when present;
-//   2. data\ui\noble\    art the Noble team ships with releases (original work);
+//   2. data\ui\noble\    art the Noble team ships with releases (Noble's own art, plus the layered Reach menu
+//                         artwork in screens\<name>\, exported from Bungie's HREK menu bitmaps; Tyler 2026-11-11);
 //   3. the player's MCC install, read at run time (MCC's UI texture packs in <MCC>\Data\UI\texturepacks);
 //   4. nothing: the screen draws its plain dark style.
 // Folder layout for 1 and 2:  backgrounds\*.png   loading\<scenario>.png   loading\default.png
@@ -40,6 +40,37 @@ UiTexture PackImage(const std::string& pack, const std::string& name);
 // Full-screen background for the front-end menu. Picked once per run (see SettingsData::menuBackground, which can
 // name one file as "file:<name>").
 UiTexture MenuBackground();
+
+// Main-menu slideshow: deals the next picture from the same shuffled deck and makes it the menu background.
+// Only loads on the thread that called WarmMenuBackground (the device owner); anywhere else, or when the player
+// picked one fixed picture, or when there is nothing else to show, it returns the current background unchanged.
+UiTexture MenuBackgroundNext();
+
+// Fixed background for one front-end screen: data\ui\custom\screens\<name>.(png|jpg|jpeg|bmp) first, then
+// data\ui\noble\screens\<name>.*; empty when there is none (the screen then uses MenuBackground()).
+// Names used by the menu: "firefight", "custom_games", "campaign", "forge". Loaded by WarmMenuBackground.
+UiTexture ScreenBackground(const std::string& name);
+
+// Layered (parallax) artwork for one screen, the way Bungie built the Reach menu backgrounds: several transparent
+// layers on a 1920x1080 reference canvas, each moving by its own depth. Read from screens\<name>\layers.json in
+// data\ui\custom\ then data\ui\noble\. {"width":1920,"height":1080,"layers":[{"file":"background.png","x":0,"y":0,
+// "w":1920,"h":1080,"depth":0.2,"flicker":0}, ...]} (back to front; depth 0 = still, 1 = moves most; flicker 0..1 dims
+// the layer in an irregular fire-light pulse).
+struct LayeredLayer {
+    UiTexture tex;
+    float x = 0, y = 0, w = 0, h = 0;
+    float depth = 0;
+    float flicker = 0;
+};
+struct LayeredArt {
+    float width = 1920.0f, height = 1080.0f;
+    std::vector<LayeredLayer> layers;
+    explicit operator bool() const { return !layers.empty(); }
+};
+// Null when the screen has no layered artwork. Loaded by WarmMenuBackground; afterwards this only reads the cache.
+const LayeredArt* ScreenLayers(const std::string& name);
+// Draws layered artwork to cover [min, max] (cropping like DrawCover), animated by timeSeconds and the mouse.
+void DrawLayered(ImDrawList* dl, const LayeredArt& art, ImVec2 min, ImVec2 max, double timeSeconds);
 
 // Loads and caches the menu background now. Call it once from the thread that owns the D3D device (menu init):
 // the fallback path that draws the menu from the main thread when the engine stops must not create textures.
@@ -117,16 +148,25 @@ const std::vector<EmblemInfo>& GetEmblemCatalog();
 // Nameplate texture for a position in GetNameplateCatalog() (what the Armory stores; not the XML id).
 UiTexture Nameplate(int index);
 
-// MCC's emblem backgrounds: playercustomization.xml entries with background="eb_001" (circle, diamond, ...).
+// Emblem backgrounds. Reach's own (2026-11-11): GetEmblemBackgrounds()[n - 1] is the game's background n (0 = Blank);
+// MCC's playercustomization.xml list is only the fallback when the Reach art is missing.
 struct EmblemBackground {
     std::string image;   // e.g. "eb_001"
     std::string name;    // e.g. "Circle"
 };
 const std::vector<EmblemBackground>& GetEmblemBackgrounds();
 UiTexture EmblemByName(const std::string& image1);
+// Alpha mask (size x size, 0..255) of a Reach emblem layer image ("reach:fg_09_p"); empty when unavailable.
+std::vector<uint8_t> EmblemLayerMask(const std::string& image, int size);
+// Converts an emblem saved as an MCC catalog position (appearance files from before 2026-11-11) to Reach's emblem with
+// the same name: a foreground index, or for background = true a background index (0 = Blank). -1 = no Reach match.
+int ReachEmblemFromMcc(int mccPosition, bool background);
+// True once Init has run (the emblem / nameplate lists can be read).
+bool CatalogsReady();
 
 // Draws a player's emblem: the background (0 = none, n = GetEmblemBackgrounds()[n - 1]), then both layers of the symbol
-// (symbolIndex = position in GetEmblemCatalog(), which is what the Armory stores; it is not the XML id).
+// (symbolIndex = position in GetEmblemCatalog(), which is what the Armory stores; with Reach's emblems that is also the
+// game's own foreground index).
 // The three emblem layers' colours. Black in MCC's art is already transparent, so a tint colours only the shape.
 struct EmblemColors {
     ImU32 primary = IM_COL32(216, 216, 216, 255);     // Reach's White

@@ -217,7 +217,7 @@ std::wstring VFS::ResolvePath(const std::wstring& requestedPath, DWORD desiredAc
             // haloreach\maps\mainmenu.map; otherwise fall back to the stock MCC map below.
             if (!isWriting && !s_userStoragePath.empty() && !p.filename().empty() &&
                 _wcsicmp(p.filename().c_str(), L"mainmenu.map") == 0) {
-                for (const wchar_t* name : { L"mainmenu_all.map", L"mainmenu.map" }) {
+                for (const wchar_t* name : { L"noble_menu.map", L"mainmenu_all.map", L"mainmenu.map" }) {
                     const fs::path menuMod = s_userStoragePath / "menumaps" / name;
                     if (RawPathExists(menuMod.wstring())) {
                         return menuMod.wstring();

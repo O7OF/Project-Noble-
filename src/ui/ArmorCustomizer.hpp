@@ -74,8 +74,8 @@ struct AppearanceProfile {
     int eliteLegsIndex = 0;
     int eliteArmorEffectIndex = 0;
     int nameplateIndex = 1;
-    int emblemIndex = 1;            // position in UiArt::GetEmblemCatalog()
-    int emblemBackgroundIndex = 0;  // 0 = none, n = UiArt::GetEmblemBackgrounds()[n - 1]
+    int emblemIndex = 1;            // Reach foreground index = position in UiArt::GetEmblemCatalog() (1 = Bull's-eye)
+    int emblemBackgroundIndex = 0;  // Reach background index: 0 = Blank, n = UiArt::GetEmblemBackgrounds()[n - 1]
     int emblemPrimaryColor = 2;     // White (Reach's 30-colour palette)
     int emblemSecondaryColor = 2;   // White
     int emblemBackgroundColor = 16; // Cobalt
@@ -116,7 +116,7 @@ public:
     // mode on the Species/Body rows). The stage enlarges that view; per-slot close-ups stay as they are.
     bool IsFullBodyCamera() const;
 
-    const AppearanceProfile& GetProfile() const { return m_profile; }
+    const AppearanceProfile& GetProfile() const { MigrateEmblemIfNeeded(); return m_profile; }
     // The saved emblem colours, for rows that show the local player's emblem.
     UiArt::EmblemColors EmblemColorsNow() const;
     AppearanceProfile& GetProfileMutable() { return m_profile; }
@@ -124,6 +124,9 @@ public:
     static std::filesystem::path ResolveDefaultProfilePath();
 
 private:
+    // Appearance files from before 2026-11-11 store MCC emblem positions; converted to Reach's once UiArt is ready.
+    void MigrateEmblemIfNeeded() const;
+    mutable bool m_emblemFromMcc = false;
     void RenderCharacterPreview(ID3D11Device* device, ID3D11DeviceContext* context,
                                 float width, float height, bool fullBleed);
     void SyncLegacyFields();

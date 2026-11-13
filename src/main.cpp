@@ -910,6 +910,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         window->SetContainerParent(containerParentHwnd);
         NOBLE_INFO("main: running in container window mode [Parent HWND: 0x{:X}]", reinterpret_cast<uintptr_t>(containerParentHwnd));
     }
+    noble::Window::SetMonitorSetting(startupSettings.monitor);
     window->SetBorderless(startupSettings.borderless);
     window->SetExclusiveFullscreen(startupSettings.exclusiveFullscreen);
     if (!window->Create()) {
