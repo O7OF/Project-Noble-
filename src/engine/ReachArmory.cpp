@@ -2880,6 +2880,21 @@ static int MarineApplyAllSEH(uintptr_t base, uint32_t helmetSid, uint32_t backpa
     return n;
 }
 
+// Dev (2026-11-13): the object's per-region permutation byte array, as haloreach+0x4729F4 reads it via +0x473028
+// (object, &regionCount, &permBytes, &state). Returns the byte for region index ri, or -1.
+static int MarinePermByteSEH(uintptr_t base, uint32_t object, int ri, int* countOut) {
+    __try {
+        using GetPermsFn = void(__fastcall*)(uint32_t, int32_t*, uint8_t**, uint8_t**);
+        int32_t count = 0; uint8_t* perms = nullptr; uint8_t* state = nullptr;
+        reinterpret_cast<GetPermsFn>(base + 0x473028)(object, &count, &perms, &state);
+        if (countOut) *countOut = count;
+        if (!perms || ri < 0 || ri >= count) return -1;
+        return perms[ri];
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return -2;
+    }
+}
+
 static uint32_t LocalUnitDatumNow(uintptr_t base) {
     using GetLocalUnitFn = int32_t(__fastcall*)(int32_t);
     return static_cast<uint32_t>(reinterpret_cast<GetLocalUnitFn>(base + 0x53EF8)(0));
@@ -2996,12 +3011,32 @@ void ReachArmory::SyncMarine() {
     const float sec[3] = { sel.marineSecondaryRgb[0], sel.marineSecondaryRgb[1], sel.marineSecondaryRgb[2] };
     const float c3[3] = { sel.marineThirdRgb[0], sel.marineThirdRgb[1], sel.marineThirdRgb[2] };
     const float c4[3] = { sel.marineFourthRgb[0], sel.marineFourthRgb[1], sel.marineFourthRgb[2] };
+    if (std::getenv("NOBLE_MARINE_PERMLOG")) {   // dev: helmet region's stored permutation byte, once a second
+        static ULONGLONG s_nextLog = 0;
+        const ULONGLONG t = GetTickCount64();
+        if (t >= s_nextLog) {
+            s_nextLog = t + 1000;
+            const int ri = MarineRegionIndexSEH(base, unit, sid("helmet"));
+            int count = 0;
+            const int before = MarinePermByteSEH(base, unit, ri, &count);
+            NOBLE_INFO("MarineArmor: PERMLOG helmet region {} of {}: stored perm byte {} (read before this frame's apply)", ri, count, before);
+        }
+    }
     uint8_t results[16] = {};
     // Dev (2026-11-13): env NOBLE_MARINE_VARIANT=<model variant> runs object_set_variant first, on the first apply tick.
     static const char* s_variant = std::getenv("NOBLE_MARINE_VARIANT");
     const uint32_t variantSid = (s_variant && s_ticksLeft == 29) ? sid(s_variant) : 0u;
     const bool ok = MarineApplySEH(base, unit, pairs.data(), pairs.size() / 2, sel.marineColors ? pri : nullptr,
                                    sel.marineColors ? sec : nullptr, sel.marineColors ? c3 : nullptr, sel.marineColors ? c4 : nullptr, results, variantSid);
+    if (std::getenv("NOBLE_MARINE_PERMLOG")) {   // dev: the same byte right after this frame's apply
+        static ULONGLONG s_nextLog2 = 0;
+        const ULONGLONG t = GetTickCount64();
+        if (t >= s_nextLog2) {
+            s_nextLog2 = t + 1000;
+            const int ri = MarineRegionIndexSEH(base, unit, sid("helmet"));
+            NOBLE_INFO("MarineArmor: PERMLOG helmet byte right after the apply: {}", MarinePermByteSEH(base, unit, ri, nullptr));
+        }
+    }
     if (std::getenv("NOBLE_MARINE_ALL")) {
         uint32_t hits[16] = {}; uint8_t types[16] = {};
         const int n = MarineApplyAllSEH(base, sid("helmet"), sid("flair_backpack"), pairs.data(), pairs.size() / 2, hits, types, 16);
