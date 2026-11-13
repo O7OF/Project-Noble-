@@ -148,6 +148,7 @@ set(SOURCES
     src/host/SpawnTest.cpp
     src/engine/PelicanControls.cpp
     src/host/SchedulerGuard.cpp
+    src/host/CollisionWalkGuard.cpp
     src/host/PoolResize.cpp
     src/host/MemberTrace.cpp
     src/host/SlotPatch.cpp
@@ -235,6 +236,7 @@ set(HEADERS
     src/host/SpawnTest.hpp
     src/engine/PelicanControls.hpp
     src/host/SchedulerGuard.hpp
+    src/host/CollisionWalkGuard.hpp
     src/host/PoolResize.hpp
     src/host/MemberTrace.hpp
     src/host/MemberKnown.inc
