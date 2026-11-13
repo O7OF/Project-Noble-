@@ -209,9 +209,9 @@ bool D3D11Renderer::Initialize(HWND hwnd, uint32_t width, uint32_t height) {
     // Query adapter to detect GPU vendor (AMD Radeon: 0x1002, NVIDIA: 0x10DE, Intel: 0x8086)
     bool isAmdGpu = false;
     ComPtr<IDXGIDevice> dxgiDevice;
-    if (SUCCEEDED(m_device.As(&dxgiDevice))) {
+    if (SUCCEEDED(m_device->QueryInterface(IID_PPV_ARGS(dxgiDevice.GetAddressOf()))) && dxgiDevice) {
         ComPtr<IDXGIAdapter> adapter;
-        if (SUCCEEDED(dxgiDevice->GetAdapter(&adapter))) {
+        if (SUCCEEDED(dxgiDevice->GetAdapter(adapter.GetAddressOf())) && adapter) {
             DXGI_ADAPTER_DESC desc{};
             if (SUCCEEDED(adapter->GetDesc(&desc))) {
                 if (desc.VendorId == 0x1002) {
@@ -231,7 +231,7 @@ bool D3D11Renderer::Initialize(HWND hwnd, uint32_t width, uint32_t height) {
     // severe micro-stutter and halving the frame rate. Latency 2 allows the AMD Command Processor to
     // overlap commands smoothly without pipeline stalls.
     ComPtr<IDXGIDevice1> dxgiDevice1;
-    if (SUCCEEDED(m_device.As(&dxgiDevice1)) && dxgiDevice1) {
+    if (SUCCEEDED(m_device->QueryInterface(IID_PPV_ARGS(dxgiDevice1.GetAddressOf()))) && dxgiDevice1) {
         const UINT latency = isAmdGpu ? 2u : 1u;
         dxgiDevice1->SetMaximumFrameLatency(latency);
         NOBLE_INFO("Direct3D 11 DXGI maximum frame latency set to {} ({}).",

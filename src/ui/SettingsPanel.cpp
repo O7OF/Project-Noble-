@@ -1470,6 +1470,12 @@ void SettingsPanel::RenderKeyboardMouse() {
                      When::Apply, defText, current != saved)) continue;
             KeyBindValue(action);
         }
+        if (g == ActionGroup::Movement) {
+            if (Row("TOGGLE CROUCH", "On: press Crouch once to stay crouched, press again to stand up. Off: crouch only while you hold the Crouch key.",
+                    When::Apply, "Off", m_edit.toggleCrouch != m_saved.toggleCrouch)) {
+                ToggleValue(m_edit.toggleCrouch);
+            }
+        }
     }
 }
 
@@ -1898,7 +1904,7 @@ int SettingsPanel::CountDiff(const SettingsData& a, const SettingsData& b, Cat c
         return (a.playerName != b.playerName) + (a.serviceTag != b.serviceTag);
     case Cat::KeyboardMouse: {
         int n = f(a.mouseSensitivity, b.mouseSensitivity) + f(a.mouseSensitivityY, b.mouseSensitivityY) + (a.invertLook != b.invertLook) +
-                (a.wheelUpAction != b.wheelUpAction) + (a.wheelDownAction != b.wheelDownAction);
+                (a.toggleCrouch != b.toggleCrouch) + (a.wheelUpAction != b.wheelUpAction) + (a.wheelDownAction != b.wheelDownAction);
         for (int i = 0; i < KeyBindings::kActionCount; ++i) {
             auto ia = a.keyOverrides.find(i);
             auto ib = b.keyOverrides.find(i);
@@ -1970,6 +1976,7 @@ SettingsData SettingsPanel::WithDefaults(SettingsData e, Cat c) {
         break;
     case Cat::KeyboardMouse:
         e.mouseSensitivity = d.mouseSensitivity; e.mouseSensitivityY = d.mouseSensitivityY; e.invertLook = d.invertLook;
+        e.toggleCrouch = d.toggleCrouch;
         e.wheelUpAction = d.wheelUpAction; e.wheelDownAction = d.wheelDownAction; e.keyOverrides.clear();
         break;
     case Cat::Controller:
