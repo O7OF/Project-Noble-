@@ -3234,6 +3234,93 @@ static void TakePendingLobbyEvents(MenuState& st) {
     }
 }
 
+static void EnterLobby(OverlayContext& ctx, const ServerEntry& s, const std::string& modId = {}, const std::string& modTitle = {},
+                       const std::filesystem::path& modFolder = {}) {
+    ctx.st.isLobbyHost = false;
+    ctx.st.lobbySessionId = s.id;
+    ctx.st.lobbyHostEndpoint = s.hostAddress + ":" + std::to_string(s.port);
+    ctx.st.lobbyMap = s.mapName.empty() ? "20_sword_slayer" : s.mapName;
+    ctx.st.lobbyMode = s.gameMode.empty() ? "multiplayer" : s.gameMode;
+    ctx.st.lobbyVariantName = s.variantName.empty() ? "Default" : s.variantName;
+    ctx.st.lobbyMaxPlayers = s.maxPlayers > 0 ? s.maxPlayers : 16;
+    ctx.st.lobbyModId = modId;
+    ctx.st.lobbyModTitle = modTitle;
+    ctx.st.lobbyModFolder = modFolder;
+    ctx.st.lobbyMapOverride.clear();
+    ctx.st.lobbyMapVariant.clear();
+    ctx.st.lobbyLaunchMapOverride.clear();
+    ctx.st.lobbyLaunchMapVariant.clear();
+    ctx.st.lobbyLaunchModFolder.clear();
+    ctx.st.lobbyLaunchModId.clear();
+    ctx.st.lobbyRoster.clear();
+    ctx.st.lobbyLaunchPending = false;
+    {
+        std::lock_guard<std::mutex> lock(s_lobbyEventMutex);
+        s_lobbyEvents = PendingLobbyEvents{};
+    }
+    ctx.st.lastLobbyPoll = ImGui::GetTime();
+    NOBLE_INFO("EnterLobby: joining lobby '{}' ({}:{}) mod='{}' folder='{}'", s.name, s.hostAddress, s.port,
+               modId, modFolder.string());
+
+    std::string pName = AuthClient::Get().IsLoggedIn() ? AuthClient::Get().GetUsername() : Settings::Get().Snapshot().playerName;
+    if (pName.empty()) pName = "Guest";
+    uint64_t fallbackId = (MasterServerClient::GetLobbyMachineId() & 0x7FFFFFFFULL);
+    if (fallbackId < 2ULL) fallbackId = 2ULL;
+    uint64_t pId = AuthClient::Get().IsLoggedIn() ? static_cast<uint64_t>(AuthClient::Get().GetUserId()) : fallbackId;
+    std::string sTag = PlayerServiceTag(Settings::Get().Snapshot());
+
+    LobbyState state = MasterServerClient::Get().JoinLobbySync(
+        s.id, pId, pName, AuthClient::Get().IsDeveloper(), sTag,
+        Career::RankIndex(Career::Get().credits),
+        UIManager::GetArmorCustomizer().GetProfile().emblemIndex,
+        UIManager::GetArmorCustomizer().GetProfile().emblemBackgroundIndex,
+        UIManager::GetArmorCustomizer().GetProfile().nameplateIndex, 0,
+        11774, s.hostAddress, s.port, AuthClient::Get().IsTester());
+    if (state.ok) {
+        if (!state.sessionId.empty()) ctx.st.lobbySessionId = state.sessionId;
+        ctx.st.lobbyRoster = state.roster;
+        ctx.st.lobbyMap = state.map;
+        ctx.st.lobbyMode = state.mode;
+        ctx.st.lobbyVariantName = state.variant;
+        ctx.st.lobbyDifficulty = state.difficulty;
+        ctx.st.lobbySkulls = state.skulls;
+        if (!state.modTitle.empty()) ctx.st.lobbyModTitle = state.modTitle;
+        if (state.isLan && !state.hostLanIp.empty()) {
+            ctx.st.lobbyHostEndpoint = state.hostLanIp + ":" + std::to_string(state.hostPort);
+        }
+        if (state.inProgress || state.launchTriggered) {
+            ctx.st.lobbyLaunchPending = true;
+            ctx.st.lobbyLaunchMap = state.launchMap.empty() ? state.map : state.launchMap;
+            ctx.st.lobbyLaunchMode = state.launchMode.empty() ? state.mode : state.launchMode;
+            ctx.st.lobbyLaunchVariant = state.launchVariant;
+            ctx.st.lobbyLaunchDiff = state.launchDifficulty;
+            ctx.st.lobbyLaunchSkulls = state.launchSkulls;
+            ctx.st.lobbyLaunchMapOverride = state.launchMapOverride;
+            ctx.st.lobbyLaunchModFolder = state.launchModFolder;
+            ctx.st.lobbyLaunchModId = state.launchModId.empty() ? state.modId : state.launchModId;
+        }
+    } else {
+        LobbyPlayer hostP;
+        hostP.peerId = 1;
+        hostP.username = s.name.empty() ? "Host" : s.name;
+        hostP.isHost = true;
+        hostP.ping = s.ping >= 0 ? s.ping : 25;
+        ctx.st.lobbyRoster.push_back(hostP);
+
+        LobbyPlayer me;
+        me.peerId = pId;
+        me.username = pName;
+        me.serviceTag = sTag;
+        me.isHost = false;
+        me.isDev = AuthClient::Get().IsDeveloper();
+        me.isTester = AuthClient::Get().IsTester();
+        me.ping = s.ping >= 0 ? s.ping : 25;
+        ctx.st.lobbyRoster.push_back(me);
+    }
+
+    ctx.st.screen = Screen::PreGameLobby;
+}
+
 // A line about each game type for the lobby's list. Only what the type itself is: a variant's own settings can't be read yet.
 static const char* GameTypeBlurb(const std::string& type) {
     if (type == "slayer") return "Score points by killing the other players.";
@@ -5248,14 +5335,16 @@ static void DrawSocialScreen(OverlayContext& ctx, const Ui& ui, float left, floa
             ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), "%s invited you to join their game!", inv.senderUsername.c_str());
             ImGui::SameLine();
             if (padButton("JOIN GAME", ImVec2(100.0f * ui.s, 24.0f * ui.s))) {
-                choice.play = true;
-                choice.host = false;
-                choice.connectAddress = inv.hostIp + ":" + std::to_string(inv.hostPort);
-                choice.map = inv.map.empty() ? "20_sword_slayer" : inv.map;
-                choice.mode = inv.mode.empty() ? "multiplayer" : inv.mode;
-                choice.sessionId = inv.sessionId;
+                ServerEntry s;
+                s.id = inv.sessionId;
+                s.name = inv.senderUsername + "'s Game";
+                s.hostAddress = inv.hostIp;
+                s.port = inv.hostPort;
+                s.mapName = inv.map.empty() ? "20_sword_slayer" : inv.map;
+                s.gameMode = inv.mode.empty() ? "multiplayer" : inv.mode;
+                s.maxPlayers = 16;
+                EnterLobby(GetOverlayCtx(), s);
                 SocialClient::Get().ClearInviteAsync(inv.senderUsername);
-                done = true;
                 MenuSounds::Click();
             }
             ImGui::SameLine();
@@ -5399,10 +5488,15 @@ static void DrawSocialScreen(OverlayContext& ctx, const Ui& ui, float left, floa
                 ImGui::SameLine();
                 if (!f.endpoint.empty()) {
                     if (padButton("JOIN", ImVec2(75.0f * ui.s, 24.0f * ui.s))) {
-                        choice.play = true;
-                        choice.host = false;
-                        choice.connectAddress = f.endpoint;
-                        done = true;
+                        ServerEntry s;
+                        s.name = f.username + "'s Game";
+                        const size_t colon = f.endpoint.rfind(':');
+                        s.hostAddress = colon != std::string::npos ? f.endpoint.substr(0, colon) : f.endpoint;
+                        s.port = static_cast<uint16_t>(colon != std::string::npos ? std::atoi(f.endpoint.c_str() + colon + 1) : 11774);
+                        s.mapName = "20_sword_slayer";
+                        s.gameMode = "multiplayer";
+                        s.maxPlayers = 16;
+                        EnterLobby(GetOverlayCtx(), s);
                         MenuSounds::Click();
                     }
                     ImGui::SameLine();
@@ -5816,13 +5910,18 @@ void DrawInviteToast(const Ui& ui, MenuState& st) {
             s_answered = key;
             SocialClient::Get().ClearInviteAsync(newest->senderUsername);
             SocialClient::Get().RefreshFriendsAsync();
-            NOBLE_INFO("FrontEndMenu: accepting invite from {} ({}, mode='{}')",
+            NOBLE_INFO("FrontEndMenu: accepting invite into lobby from {} ({}, mode='{}')",
                        newest->senderUsername, newest->hostIp, newest->mode);
-            st.pendingInviteJoin = true;
-            st.pendingInviteConnect = newest->hostIp + ":" + std::to_string(newest->hostPort);
-            st.pendingInviteSession = newest->sessionId;
-            st.pendingInviteMap = newest->map;
-            st.pendingInviteMode = newest->mode;
+            ServerEntry s;
+            s.id = newest->sessionId;
+            s.name = newest->senderUsername + "'s Game";
+            s.hostAddress = newest->hostIp;
+            s.port = newest->hostPort;
+            s.mapName = newest->map.empty() ? "20_sword_slayer" : newest->map;
+            s.gameMode = newest->mode.empty() ? "multiplayer" : newest->mode;
+            s.maxPlayers = 16;
+            EnterLobby(GetOverlayCtx(), s);
+            MenuSounds::Click();
         }
     }
     if (button("invite_dismiss", d0, "DISMISS", false)) {
@@ -7560,13 +7659,15 @@ void DrawFrontEndContents(OverlayContext& ctx, ID3D11Device* device, ID3D11Devic
     DrawInviteToast(ui, st);
     if (st.pendingInviteJoin) {
         st.pendingInviteJoin = false;
-        choice.play = true;
-        choice.host = false;
-        choice.connectAddress = st.pendingInviteConnect;
-        choice.sessionId = st.pendingInviteSession;
-        choice.map = st.pendingInviteMap.empty() ? "20_sword_slayer" : st.pendingInviteMap;
-        choice.mode = st.pendingInviteMode.empty() ? "multiplayer" : st.pendingInviteMode;
-        done = true;
+        ServerEntry s;
+        s.id = st.pendingInviteSession;
+        const size_t colon = st.pendingInviteConnect.rfind(':');
+        s.hostAddress = colon != std::string::npos ? st.pendingInviteConnect.substr(0, colon) : st.pendingInviteConnect;
+        s.port = colon != std::string::npos ? static_cast<uint16_t>(std::atoi(st.pendingInviteConnect.c_str() + colon + 1)) : 11774;
+        s.mapName = st.pendingInviteMap.empty() ? "20_sword_slayer" : st.pendingInviteMap;
+        s.gameMode = st.pendingInviteMode.empty() ? "multiplayer" : st.pendingInviteMode;
+        s.maxPlayers = 16;
+        EnterLobby(ctx, s);
     }
 
     // The Workshop-mod gate sits above every screen: the Server browser stays behind it until the
@@ -7833,91 +7934,7 @@ void FrontEndMenu::Initialize(const std::filesystem::path& reachDir) {
     // whose map the guest could not load.)
     auto enterLobby = [&ctx](const ServerEntry& s, const std::string& modId, const std::string& modTitle,
                              const std::filesystem::path& modFolder) {
-        ctx.st.isLobbyHost = false;
-        ctx.st.lobbySessionId = s.id;
-        ctx.st.lobbyHostEndpoint = s.hostAddress + ":" + std::to_string(s.port);
-        ctx.st.lobbyMap = s.mapName.empty() ? "20_sword_slayer" : s.mapName;
-        ctx.st.lobbyMode = s.gameMode.empty() ? "multiplayer" : s.gameMode;
-        ctx.st.lobbyVariantName = s.variantName.empty() ? "Default" : s.variantName;
-        ctx.st.lobbyMaxPlayers = s.maxPlayers;
-        ctx.st.lobbyModId = modId;
-        ctx.st.lobbyModTitle = modTitle;
-        ctx.st.lobbyModFolder = modFolder;
-        // A map override, Forge map or launch payload left over from the previous lobby must not follow the player
-        // into this one: it made a guest launch a campaign mission with the previous lobby's mod map overlaid on it.
-        ctx.st.lobbyMapOverride.clear();
-        ctx.st.lobbyMapVariant.clear();
-        ctx.st.lobbyLaunchMapOverride.clear();
-        ctx.st.lobbyLaunchMapVariant.clear();
-        ctx.st.lobbyLaunchModFolder.clear();
-        ctx.st.lobbyLaunchModId.clear();
-        ctx.st.lobbyRoster.clear();
-        ctx.st.lobbyLaunchPending = false;
-        {   // a launch or roster left over from an earlier lobby doesn't apply to this one
-            std::lock_guard<std::mutex> lock(s_lobbyEventMutex);
-            s_lobbyEvents = PendingLobbyEvents{};
-        }
-        ctx.st.lastLobbyPoll = ImGui::GetTime();
-        NOBLE_INFO("ServerBrowser join: lobby '{}' ({}:{}) mod='{}' folder='{}'", s.name, s.hostAddress, s.port,
-                   modId, modFolder.string());
-
-        std::string pName = AuthClient::Get().IsLoggedIn() ? AuthClient::Get().GetUsername() : Settings::Get().Snapshot().playerName;
-        if (pName.empty()) pName = "Guest";
-        uint64_t fallbackId = (MasterServerClient::GetLobbyMachineId() & 0x7FFFFFFFULL);
-        if (fallbackId < 2ULL) fallbackId = 2ULL;
-        uint64_t pId = AuthClient::Get().IsLoggedIn() ? static_cast<uint64_t>(AuthClient::Get().GetUserId()) : fallbackId;
-        std::string sTag = PlayerServiceTag(Settings::Get().Snapshot());
-
-        LobbyState state = MasterServerClient::Get().JoinLobbySync(
-            s.id, pId, pName, AuthClient::Get().IsDeveloper(), sTag,
-            Career::RankIndex(Career::Get().credits),
-            UIManager::GetArmorCustomizer().GetProfile().emblemIndex,
-            UIManager::GetArmorCustomizer().GetProfile().emblemBackgroundIndex,
-            UIManager::GetArmorCustomizer().GetProfile().nameplateIndex, 0,
-            11774, s.hostAddress, s.port, AuthClient::Get().IsTester());
-        if (state.ok) {
-            if (!state.sessionId.empty()) ctx.st.lobbySessionId = state.sessionId;
-            ctx.st.lobbyRoster = state.roster;
-            ctx.st.lobbyMap = state.map;
-            ctx.st.lobbyMode = state.mode;
-            ctx.st.lobbyVariantName = state.variant;
-            ctx.st.lobbyDifficulty = state.difficulty;
-            ctx.st.lobbySkulls = state.skulls;
-            if (!state.modTitle.empty()) ctx.st.lobbyModTitle = state.modTitle;
-            if (state.isLan && !state.hostLanIp.empty()) {
-                ctx.st.lobbyHostEndpoint = state.hostLanIp + ":" + std::to_string(state.hostPort);
-            }
-            if (state.inProgress || state.launchTriggered) {
-                ctx.st.lobbyLaunchPending = true;
-                ctx.st.lobbyLaunchMap = state.launchMap.empty() ? state.map : state.launchMap;
-                ctx.st.lobbyLaunchMode = state.launchMode.empty() ? state.mode : state.launchMode;
-                ctx.st.lobbyLaunchVariant = state.launchVariant;
-                ctx.st.lobbyLaunchDiff = state.launchDifficulty;
-                ctx.st.lobbyLaunchSkulls = state.launchSkulls;
-                ctx.st.lobbyLaunchMapOverride = state.launchMapOverride;
-                ctx.st.lobbyLaunchModFolder = state.launchModFolder;
-                ctx.st.lobbyLaunchModId = state.launchModId.empty() ? state.modId : state.launchModId;
-            }
-        } else {
-            LobbyPlayer hostP;
-            hostP.peerId = 1;
-            hostP.username = s.name;
-            hostP.isHost = true;
-            hostP.ping = s.ping >= 0 ? s.ping : 25;
-            ctx.st.lobbyRoster.push_back(hostP);
-
-            LobbyPlayer me;
-            me.peerId = pId;
-            me.username = pName;
-            me.serviceTag = sTag;
-            me.isHost = false;
-            me.isDev = AuthClient::Get().IsDeveloper();
-            me.isTester = AuthClient::Get().IsTester();
-            me.ping = s.ping >= 0 ? s.ping : 25;
-            ctx.st.lobbyRoster.push_back(me);
-        }
-
-        ctx.st.screen = Screen::PreGameLobby;
+        EnterLobby(ctx, s, modId, modTitle, modFolder);
     };
 
     RefreshPlaylists(ctx);

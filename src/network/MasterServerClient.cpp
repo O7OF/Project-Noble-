@@ -217,7 +217,7 @@ void MasterServerClient::SetUrl(const std::string& url) {
 
 std::string MasterServerClient::Url() const {
     std::lock_guard<std::mutex> lock(m_mutex);
-    return m_url;
+    return m_url.empty() ? std::string(kMasterDefault) : m_url;
 }
 
 std::string MasterServerClient::GetSessionRegionUrl(const std::string& sessionId) const {
@@ -324,7 +324,7 @@ void MasterServerClient::EnsureThread() {
 
 void MasterServerClient::RequestList() {
     std::lock_guard<std::mutex> lock(m_mutex);
-    if (m_url.empty()) return;
+    if (m_url.empty()) m_url = std::string(kMasterDefault);
     m_listRequested = true;
     EnsureThread();
     m_wake.notify_all();
@@ -332,7 +332,7 @@ void MasterServerClient::RequestList() {
 
 void MasterServerClient::RequestOnlineCount() {
     std::lock_guard<std::mutex> lock(m_mutex);
-    if (m_url.empty()) return;
+    if (m_url.empty()) m_url = std::string(kMasterDefault);
     m_onlineRequested = true;
     EnsureThread();
     m_wake.notify_all();
@@ -340,7 +340,7 @@ void MasterServerClient::RequestOnlineCount() {
 
 void MasterServerClient::StartAdvertising(const MasterAdvert& advert) {
     std::lock_guard<std::mutex> lock(m_mutex);
-    if (m_url.empty()) return;
+    if (m_url.empty()) m_url = std::string(kMasterDefault);
     m_advert = advert;
     std::string pub = UPnP::Get().GetExternalIP();
     if (UPnP::Get().IsPublicIP(pub)) {
@@ -446,7 +446,7 @@ void MasterServerClient::WorkerLoop() {
         const bool doOnline = m_onlineRequested;
         const bool doHeartbeat = m_advertising && std::chrono::steady_clock::now() >= m_nextHeartbeat;
         const bool stop = m_stop;
-        const bool registered = !m_sessionId.empty();
+        const bool registered = !m_sessionId.empty() && !m_sessionToken.empty();
         m_unregisterRequested = false;
         m_listRequested = false;
         m_onlineRequested = false;
@@ -667,11 +667,13 @@ void MasterServerClient::DoList() {
 
 void MasterServerClient::DoRegister() {
     std::string existingId;
+    std::string existingToken;
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         existingId = m_sessionId;
+        existingToken = m_sessionToken;
     }
-    if (!existingId.empty()) {
+    if (!existingId.empty() && !existingToken.empty()) {
         NOBLE_INFO("MasterServer: Continuing existing session {}", existingId);
         DoHeartbeat();
         return;
@@ -757,6 +759,15 @@ void MasterServerClient::DoRegister() {
 
 void MasterServerClient::DoHeartbeat() {
     std::string id, token;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        id = m_sessionId;
+        token = m_sessionToken;
+    }
+    if (id.empty() || token.empty()) {
+        DoRegister();
+        return;
+    }
     nlohmann::json body;
     {
         std::lock_guard<std::mutex> lock(m_mutex);
@@ -829,10 +840,11 @@ void MasterServerClient::DoHeartbeat() {
                 NetworkTransport::Get().StartRelay(relayUrl, id, true, NetworkTransport::Get().GetLocalMachineId());
             }
         } catch (...) {}
-    } else if (r.status == 404) {
+    } else if (r.status == 404 || r.status == 403) {
         std::lock_guard<std::mutex> lock(m_mutex);
         m_sessionId.clear();
         m_sessionToken.clear();
+        m_nextHeartbeat = std::chrono::steady_clock::now();
     } else {
         SetStatus("heartbeat failed: " + r.error);
     }

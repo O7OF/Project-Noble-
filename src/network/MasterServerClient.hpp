@@ -1,5 +1,7 @@
 #pragma once
 
+#include "common/BuildIdentity.hpp"
+
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -267,7 +269,7 @@ private:
     bool m_onlineRequested = false;
     bool m_unregisterRequested = false;
 
-    std::string m_url;
+    std::string m_url = std::string(kMasterDefault);
     std::unordered_map<std::string, std::string> m_sessionRegionUrl;
     std::string m_status;
     std::vector<MasterSession> m_sessions;
