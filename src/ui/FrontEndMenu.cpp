@@ -3626,45 +3626,72 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
         if (!curTok.empty()) st.lobbySessionToken = curTok;
     }
 
-    // Polling for lobby state updates
+    // Non-blocking asynchronous lobby polling (never stalls the render thread)
+    static std::atomic<bool> s_lobbyPollActive{false};
+    static std::mutex s_lobbyPollMutex;
+    static LobbyState s_latestLobbyState;
+    static std::atomic<bool> s_hasNewLobbyState{false};
+
     const double now = ImGui::GetTime();
-    if (now - st.lastLobbyPoll > 1.2) {
+    if (now - st.lastLobbyPoll > 1.2 && !s_lobbyPollActive.load()) {
         st.lastLobbyPoll = now;
         if (st.isLobbyHost && st.lobbySessionId.empty()) {
             st.lobbySessionId = MasterServerClient::Get().GetCurrentSessionId();
             st.lobbySessionToken = MasterServerClient::Get().GetCurrentSessionToken();
         }
         if ((!st.lobbySessionId.empty() || (!st.isLobbyHost && !st.lobbyHostEndpoint.empty())) && MasterServerClient::Get().Enabled()) {
-            LobbyState current = MasterServerClient::Get().FetchLobbyStateSync(st.lobbySessionId);
-            if (!current.ok && !current.isClosed && !st.isLobbyHost && !st.lobbyHostEndpoint.empty()) {
-                // If the guest's configured region differs from the host's region or the host re-registered its session ID,
-                // re-resolve and re-join across all cluster regions using the host's IP:port before counting a failure.
-                std::string hostIp = st.lobbyHostEndpoint;
-                uint16_t hostPort = 11774;
-                const size_t colon = hostIp.rfind(':');
-                if (colon != std::string::npos) {
-                    hostPort = static_cast<uint16_t>(std::atoi(hostIp.c_str() + colon + 1));
-                    hostIp = hostIp.substr(0, colon);
+            s_lobbyPollActive.store(true);
+            const std::string pollSessionId = st.lobbySessionId;
+            const bool pollIsHost = st.isLobbyHost;
+            const std::string pollHostEndpoint = st.lobbyHostEndpoint;
+            const std::string pName = AuthClient::Get().IsLoggedIn() ? AuthClient::Get().GetUsername() : Settings::Get().Snapshot().playerName;
+            const uint64_t fallbackId = (MasterServerClient::GetLobbyMachineId() & 0x7FFFFFFFULL) < 2ULL ? 2ULL : (MasterServerClient::GetLobbyMachineId() & 0x7FFFFFFFULL);
+            const uint64_t pId = AuthClient::Get().IsLoggedIn() ? static_cast<uint64_t>(AuthClient::Get().GetUserId()) : fallbackId;
+            const std::string sTag = PlayerServiceTag(Settings::Get().Snapshot());
+            const bool isDev = AuthClient::Get().IsDeveloper();
+            const int rankIdx = Career::RankIndex(Career::Get().credits);
+            const auto& prof = UIManager::GetArmorCustomizer().GetProfile();
+            const int embIdx = prof.emblemIndex;
+            const int embBgIdx = prof.emblemBackgroundIndex;
+            const int npIdx = prof.nameplateIndex;
+
+            std::thread([pollSessionId, pollIsHost, pollHostEndpoint, pName, pId, sTag, isDev, rankIdx, embIdx, embBgIdx, npIdx]() {
+                LobbyState current = MasterServerClient::Get().FetchLobbyStateSync(pollSessionId);
+                if (!current.ok && !current.isClosed && !pollIsHost && !pollHostEndpoint.empty()) {
+                    std::string hostIp = pollHostEndpoint;
+                    uint16_t hostPort = 11774;
+                    const size_t colon = hostIp.rfind(':');
+                    if (colon != std::string::npos) {
+                        hostPort = static_cast<uint16_t>(std::atoi(hostIp.c_str() + colon + 1));
+                        hostIp = hostIp.substr(0, colon);
+                    }
+                    LobbyState rejoined = MasterServerClient::Get().JoinLobbySync(
+                        pollSessionId, pId, pName.empty() ? "Guest" : pName, isDev, sTag,
+                        rankIdx, embIdx, embBgIdx, npIdx, 0, 11774, hostIp, hostPort);
+                    if (rejoined.ok) {
+                        current = std::move(rejoined);
+                    }
                 }
-                std::string pName = AuthClient::Get().IsLoggedIn() ? AuthClient::Get().GetUsername() : Settings::Get().Snapshot().playerName;
-                if (pName.empty()) pName = "Guest";
-                uint64_t fallbackId = (MasterServerClient::GetLobbyMachineId() & 0x7FFFFFFFULL);
-                if (fallbackId < 2ULL) fallbackId = 2ULL;
-                const uint64_t pId = AuthClient::Get().IsLoggedIn() ? static_cast<uint64_t>(AuthClient::Get().GetUserId()) : fallbackId;
-                const std::string sTag = PlayerServiceTag(Settings::Get().Snapshot());
-                LobbyState rejoined = MasterServerClient::Get().JoinLobbySync(
-                    st.lobbySessionId, pId, pName, AuthClient::Get().IsDeveloper(), sTag,
-                    Career::RankIndex(Career::Get().credits),
-                    UIManager::GetArmorCustomizer().GetProfile().emblemIndex,
-                    UIManager::GetArmorCustomizer().GetProfile().emblemBackgroundIndex,
-                    UIManager::GetArmorCustomizer().GetProfile().nameplateIndex, 0,
-                    11774, hostIp, hostPort);
-                if (rejoined.ok) {
-                    if (!rejoined.sessionId.empty()) st.lobbySessionId = rejoined.sessionId;
-                    current = std::move(rejoined);
+                {
+                    std::lock_guard<std::mutex> lk(s_lobbyPollMutex);
+                    s_latestLobbyState = std::move(current);
+                    s_hasNewLobbyState.store(true);
                 }
-            }
-            if (current.ok) st.lobbyPollFailures = 0;
+                s_lobbyPollActive.store(false);
+            }).detach();
+        }
+    }
+
+    if (s_hasNewLobbyState.exchange(false)) {
+        LobbyState current;
+        {
+            std::lock_guard<std::mutex> lk(s_lobbyPollMutex);
+            current = std::move(s_latestLobbyState);
+        }
+        if (!current.sessionId.empty() && current.sessionId != st.lobbySessionId) {
+            st.lobbySessionId = current.sessionId;
+        }
+        if (current.ok) st.lobbyPollFailures = 0;
             if (!current.ok || current.isClosed) {
                 if (st.isLobbyHost) {
                     // The host owns the session; a failed fetch just means the master server blipped.
@@ -3816,7 +3843,6 @@ static void DrawPreGameLobby(OverlayContext& ctx, const Ui& ui, float left, floa
                 }
             }
         }
-    }
 
     // If launch was signaled (via WebSocket or HTTP poll) and we are guest, launch!
     if (!st.isLobbyHost && st.lobbyLaunchPending && !done) {
@@ -5840,6 +5866,15 @@ void ContainerMatchEnded(OverlayContext& ctx, DWORD exitCode) {
     // out on it: without this the launcher came back showing the engine's own mainmenu_all map (the
     // spaceship) instead of Noble's front end.
     ctx.closed = false;
+    if (isLobbyReturn) {
+        ctx.st.screen = Screen::PreGameLobby;
+        ctx.st.isLobbyHost = (successor.find(L"-lobby-return host") != std::wstring::npos);
+        ctx.st.lastLobbyPoll = 0.0;
+        NOBLE_INFO("FrontEndMenu: container returned to lobby as {}", ctx.st.isLobbyHost ? "host" : "guest");
+    } else {
+        ctx.st.screen = Screen::Main;
+        NOBLE_INFO("FrontEndMenu: container returned to main menu");
+    }
     if (const char* crash = CrashExitMeaning(exitCode)) {
         NOBLE_ERROR("FrontEndMenu: the match process CRASHED, exit code 0x{:08X}: {}. Check noble-dev.log / noble-client.log "
                     "and noble-*crash.dmp beside the exe, and Windows Event Viewer (Application).", exitCode, crash);
@@ -8051,8 +8086,8 @@ bool FrontEndMenu::HoldFrame() {
         std::lock_guard<std::mutex> lock(s_overlayMutex);
         RenderOverlayImpl(swapChain, true);
         FrameCapture::OnFrame(nullptr, 0);   // keeps -quit-after working in test runs
+        swapChain->Present(1, 0);
     }
-    swapChain->Present(1, 0);
     return true;
 }
 

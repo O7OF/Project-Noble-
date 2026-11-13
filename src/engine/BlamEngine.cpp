@@ -1020,6 +1020,18 @@ std::vector<uint8_t> BlamEngine::BuildLaunchBlock(uint32_t mapId, uint32_t gameM
         block[0x109] = 0x00;
         block[0x10A] = 0x00;
         block[0x10B] = 0x00;
+
+        // Pre-allocate slots 1..15 loaded in the chamber for mid-match join-in-progress / direct connect
+        for (size_t s = 1; s < 16; ++s) {
+            size_t off = 0x100 + (s * 0x20);
+            block[off + 0] = 0xFF;
+            block[off + 1] = 0xFF;
+            block[off + 2] = 0xFF;
+            block[off + 3] = 0xFF;
+            block[off + 4] = 0x00;
+            for (size_t b = 8; b < 16; ++b) block[off + b] = 0xFF;
+        }
+
         block[0x2F0] = 0x01;
         *reinterpret_cast<uint32_t*>(&block[0x2F4]) = 0;
         *reinterpret_cast<uint64_t*>(&block[0x2F8]) = 0;
@@ -1674,18 +1686,19 @@ bool BlamEngine::LaunchMap(const std::string& mapName, const std::string& gameMo
 
                 // Join handshake: wait for the host's session_sync (repeated every couple of seconds while its
                 // simulation runs, so a guest joining mid-match receives it promptly). Falls back to a short settle
-                // if the host never reports - older hosts, or a LAN join without the relay.
+                // if the host never reports - older hosts, or a LAN / direct connect join without the relay.
                 {
-                    const ULONGLONG syncDeadline = GetTickCount64() + 20000;
+                    const bool isDirectConnect = (wcsstr(GetCommandLineW(), L"-connect") != nullptr) || !noble::NetworkTransport::Get().IsRelayConnected();
+                    const ULONGLONG syncDeadline = GetTickCount64() + (isDirectConnect ? 500 : 20000);
                     while (GetTickCount64() < syncDeadline &&
                            !noble::NetworkTransport::Get().HostSimulationRunning()) {
-                        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                        std::this_thread::sleep_for(std::chrono::milliseconds(50));
                     }
                     if (noble::NetworkTransport::Get().HostSimulationRunning()) {
                         NOBLE_INFO("BlamEngine: [GUEST Campaign] host reports its simulation running (frame {}); starting",
                                    noble::NetworkTransport::Get().HostSimulationFrame());
                     } else {
-                        NOBLE_WARN("BlamEngine: [GUEST Campaign] no session_sync from the host after 20 s; starting anyway");
+                        NOBLE_INFO("BlamEngine: [GUEST Campaign] fast settle active (direct connect/local); proceeding with simulation start");
                     }
                 }
 

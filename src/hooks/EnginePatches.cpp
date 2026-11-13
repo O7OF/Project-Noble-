@@ -168,8 +168,8 @@ static uint8_t __fastcall Hook_ObserverChannelSendMessage(
         ? s_originalObserverChannelSendMessage(thisPtr, ownerType, observerChannelIndex, outOfBand, unsequenced, msgType, msgSize, payload)
         : 0;
     if (sent && !outOfBand && s_observerChannelFlush && observerChannelIndex >= 0 && observerChannelIndex < 34) {
-        // Messages 0x22..0x2A are simulation world updates, distributed player inputs/acks, and synchronous lockstep actions/updates.
-        if (msgType >= 0x22 && msgType <= 0x2A) {
+        // Messages 0x1F..0x30 are simulation world updates, distributed player inputs/acks, and synchronous lockstep actions/updates.
+        if (msgType >= 0x1F && msgType <= 0x30) {
             thread_local bool t_flushing = false;
             if (!t_flushing) {
                 t_flushing = true;

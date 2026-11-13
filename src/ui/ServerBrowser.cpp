@@ -753,6 +753,10 @@ void ServerBrowser::RenderServerList() {
         // Column 2: mode
         ImGui::TableNextColumn();
         ImGui::TextUnformatted(s.gameMode.c_str());
+        if (s.inProgress) {
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(1.0f, 0.72f, 0.15f, 1.0f), "[IN PROGRESS]");
+        }
 
         // Column 3: map, by the name players know it by ("Forge World", not "forge_halo"). Modded maps keep
         // their own name and get the MOD badge; hovering shows the raw file name.

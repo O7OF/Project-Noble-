@@ -197,13 +197,13 @@ bool D3D11Renderer::Initialize(HWND hwnd, uint32_t width, uint32_t height) {
     NOBLE_INFO("Direct3D 11 device and swap chain created. Feature Level: 0x{:X}", static_cast<uint32_t>(featureLevel));
     spdlog::default_logger()->flush();
 
-    // ID3D11Multithread protection wraps every context call in a critical section, which causes
-    // massive CPU overhead and draw call stalls under AMD Radeon graphics drivers (e.g. RX 5700 XT).
-    // haloreach.dll and Noble's UI/loading overlays execute strictly sequentially on the dedicated render thread.
+    // Enable ID3D11Multithread protection on the immediate context so concurrent overlay
+    // presentation from the engine thread and fallback HoldFrame from the main Win32 thread
+    // do not trigger race conditions in graphics drivers (e.g. nvwgf2umx.dll crash 0xC0000005).
     ComPtr<ID3D11Multithread> multithread;
     if (SUCCEEDED(m_context->QueryInterface(IID_PPV_ARGS(multithread.GetAddressOf()))) && multithread) {
-        multithread->SetMultithreadProtected(FALSE);
-        NOBLE_INFO("Direct3D 11 multithread protection disabled for peak draw call throughput.");
+        multithread->SetMultithreadProtected(TRUE);
+        NOBLE_INFO("Direct3D 11 multithread protection enabled for thread-safe cross-thread rendering and HoldFrame.");
     }
 
     // Query adapter to detect GPU vendor (AMD Radeon: 0x1002, NVIDIA: 0x10DE, Intel: 0x8086)

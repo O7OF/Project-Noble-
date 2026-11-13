@@ -32,6 +32,7 @@
 #include "host/Window.hpp"
 #include "host/D3D11Renderer.hpp"
 #include "network/NetworkTransport.hpp"
+#include "network/MasterServerClient.hpp"
 #include <windows.h>
 #include <shellapi.h>
 #include <psapi.h>
@@ -787,6 +788,13 @@ static uint64_t __fastcall HostSlot1_FrameTick(void* thisPtr, uint64_t a1, uint6
         static const char* const kMapStates[] = { "none", "loading_map", "running", "ending", "??" };
         const char* name = (mapState >= 0 && mapState <= 3) ? kMapStates[mapState] : "?";
         NOBLE_INFO("ReachHost [State]: frame {} launch {} map {} ({})", frames, launchState, mapState, name);
+
+        // Keep master server advert synchronized with live game state
+        if (MasterServerClient::Get().Enabled()) {
+            const bool inGame = (launchState >= 11 || mapState == 2);
+            const int players = static_cast<int>(NetworkTransport::Get().GetGamePeerCount()) + 1;
+            MasterServerClient::Get().UpdateAdvert(players, inGame);
+        }
     }
     if (frames == 2 || frames == 30) {
         // NOBLE_SCENARIO_DUMP=1: dump the scenario tag now that its data is loaded (it is still zeroes at palette time).

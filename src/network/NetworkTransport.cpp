@@ -290,6 +290,10 @@ void NetworkTransport::AddPeer(uint64_t machineId, const std::string& ip, uint16
         if (m_peerTable.find(machineId) == m_peerTable.end()) {
             m_peerTable[machineId] = addr;
             m_addrToPeer[key] = machineId;
+            auto& route = m_peerRouteStates[machineId];
+            route.addr = addr;
+            route.directConfirmed = true;
+            route.lastUdpRecvTick = GetTickCount64();
         }
     }
 

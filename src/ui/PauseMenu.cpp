@@ -355,7 +355,7 @@ void RelaunchAndClose(HWND hwnd, const std::wstring &args, const char *what) {
   const bool keepHostSession = args.find(L"-lobby-return host") != std::wstring::npos;
   const bool isMainMenu = (args == L"-main-menu");
   if (args.empty() || isMainMenu) {
-    // Leaving match to menu: notify master server and peers immediately.
+    // Leaving match to menu: notify master server and peers immediately without blocking the UI thread.
     std::wstring wSession = ArgValue(Relaunch::CurrentGameArgs(), L"-session-id");
     if (wSession.empty()) wSession = ArgValue(GetCommandLineW(), L"-session-id");
     const bool isHostCmd = (wcsstr(GetCommandLineW(), L"-host") != nullptr ||
@@ -363,25 +363,25 @@ void RelaunchAndClose(HWND hwnd, const std::wstring &args, const char *what) {
     if (!wSession.empty()) {
       char sessUtf8[128] = {};
       WideCharToMultiByte(CP_UTF8, 0, wSession.c_str(), -1, sessUtf8, sizeof(sessUtf8) - 1, nullptr, nullptr);
+      const std::string sId(sessUtf8);
       if (isHostCmd) {
         NetworkTransport::Get().SendLobbyControlJson("{\"type\":\"lobby_disband\"}");
-        MasterServerClient::Get().DisbandSessionSync(sessUtf8);
+        std::thread([sId]() { MasterServerClient::Get().DisbandSessionSync(sId); }).detach();
       } else {
         uint64_t fallbackId = (MasterServerClient::GetLobbyMachineId() & 0x7FFFFFFFULL);
         if (fallbackId < 2ULL) fallbackId = 2ULL;
         NetworkTransport::Get().SendDisconnectPacket();
-        MasterServerClient::Get().LeaveLobbySync(sessUtf8, fallbackId);
+        std::thread([sId, fallbackId]() { MasterServerClient::Get().LeaveLobbySync(sId, fallbackId); }).detach();
       }
     } else if (!isHostCmd) {
       NetworkTransport::Get().SendDisconnectPacket();
     }
   }
-  MasterServerClient::Get().Shutdown(keepHostSession);
-  SessionManager::Get().Shutdown();
-  NetworkTransport::Get().Shutdown();
 
   std::wstring containerVal = ArgValue(GetCommandLineW(), L"-container-hwnd");
   if (!containerVal.empty()) {
+      MasterServerClient::Get().Shutdown(keepHostSession);
+      SessionManager::Get().Shutdown();
       if (isMainMenu || args.empty()) {
           Relaunch::RequestContainerRelaunch(L"-main-menu");
           NOBLE_INFO("PauseMenu: {} in container mode - returning to main menu in container launcher window", what);
@@ -410,6 +410,10 @@ void RelaunchAndClose(HWND hwnd, const std::wstring &args, const char *what) {
           return;
       }
   }
+
+  MasterServerClient::Get().Shutdown(keepHostSession);
+  SessionManager::Get().Shutdown();
+  NetworkTransport::Get().Shutdown();
   Relaunch::HandOff(args);  // ends this process; returns only if the new one could not start
   PostMessageW(hwnd, WM_CLOSE, 0, 0);
 }
@@ -424,24 +428,24 @@ void QuitFromMatch(HWND hwnd, const char *what) {
   if (!wSession.empty()) {
     char sessUtf8[128] = {};
     WideCharToMultiByte(CP_UTF8, 0, wSession.c_str(), -1, sessUtf8, sizeof(sessUtf8) - 1, nullptr, nullptr);
+    const std::string sId(sessUtf8);
     if (isHostCmd) {
       NetworkTransport::Get().SendLobbyControlJson("{\"type\":\"lobby_disband\"}");
-      MasterServerClient::Get().DisbandSessionSync(sessUtf8);
+      std::thread([sId]() { MasterServerClient::Get().DisbandSessionSync(sId); }).detach();
     } else {
       uint64_t fallbackId = (MasterServerClient::GetLobbyMachineId() & 0x7FFFFFFFULL);
       if (fallbackId < 2ULL) fallbackId = 2ULL;
       NetworkTransport::Get().SendDisconnectPacket();
-      MasterServerClient::Get().LeaveLobbySync(sessUtf8, fallbackId);
+      std::thread([sId, fallbackId]() { MasterServerClient::Get().LeaveLobbySync(sId, fallbackId); }).detach();
     }
   } else if (!isHostCmd) {
     NetworkTransport::Get().SendDisconnectPacket();
   }
-  MasterServerClient::Get().Shutdown(false);
-  SessionManager::Get().Shutdown();
-  NetworkTransport::Get().Shutdown();
 
   std::wstring containerVal = ArgValue(GetCommandLineW(), L"-container-hwnd");
   if (!containerVal.empty()) {
+    MasterServerClient::Get().Shutdown(false);
+    SessionManager::Get().Shutdown();
     Relaunch::RequestContainerRelaunch(L"-quit-app");
     HWND root = hwnd ? GetAncestor(hwnd, GA_ROOT) : nullptr;
     if (root && root != hwnd) {
@@ -450,6 +454,9 @@ void QuitFromMatch(HWND hwnd, const char *what) {
     TerminateProcess(GetCurrentProcess(), 0);
     return;
   }
+  MasterServerClient::Get().Shutdown(false);
+  SessionManager::Get().Shutdown();
+  NetworkTransport::Get().Shutdown();
   PostMessageW(hwnd, WM_CLOSE, 0, 0);
 }
 
@@ -3232,8 +3239,8 @@ bool PauseMenu::HoldFrame() {
     if (s_testCapture && s_holdFrames == 60)
       FrameCapture::SaveNow(swapChain, 900000);
     FrameCapture::OnFrame(nullptr, 0);
+    swapChain->Present(1, 0);
   }
-  swapChain->Present(1, 0);
   return true;
 }
 
