@@ -2069,6 +2069,7 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
                         {"council", "schism", "schism", "honor_guard", "minor", "minor"},
                         {"ossoona", "combat", "combat", "minor", "minor", "minor"},
                         {"minor", "minor", "minor", "minor", "minor", "minor"},
+                        {"council", "schism", "schism", "honor_guard", "default", "honor_guard"},   // 5: COUNSELOR preset exactly
                     };
                     // "-armory-look <1..4>" (2026-11-12): show only that look and keep it, so captures don't depend on
                     // timing. "-armory-test-colors": White primary, Cobalt secondary, Gold lights (easy to tell apart).

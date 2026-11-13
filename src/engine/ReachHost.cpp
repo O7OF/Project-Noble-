@@ -632,6 +632,10 @@ static uint64_t __fastcall HostSlot1_FrameTick(void* thisPtr, uint64_t a1, uint6
             IDXGISwapChain* swapChain = reinterpret_cast<IDXGISwapChain*>(a1);
             InstallPresentSettingsHook(swapChain);
             ExecuteGammaPass(swapChain);
+            // Dev (2026-11-13): env NOBLE_CAPTURE_NO_UI=1 saves -capture-at frames BEFORE the menu UI is drawn
+            // (scene only), for Armory preset pictures.
+            static const bool s_captureNoUi = (std::getenv("NOBLE_CAPTURE_NO_UI") != nullptr);
+            if (s_captureNoUi) FrameCapture::OnFrame(swapChain, frames);
             try {
                 FrontEndMenu::RenderOverlay(swapChain);
             } catch (const std::exception& e) {
@@ -640,7 +644,7 @@ static uint64_t __fastcall HostSlot1_FrameTick(void* thisPtr, uint64_t a1, uint6
                 NOBLE_ERROR("ReachHost [Slot 1]: unknown exception in FrontEndMenu::RenderOverlay");
             }
             if (s_testCaptureRequest.exchange(false)) FrameCapture::SaveNow(swapChain, 777777);
-            FrameCapture::OnFrame(swapChain, frames);
+            if (!s_captureNoUi) FrameCapture::OnFrame(swapChain, frames);
         }
         return 0;
     }
