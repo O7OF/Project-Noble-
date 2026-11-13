@@ -1402,6 +1402,10 @@ static void RefreshArmoryAppearance(uint8_t* profile, bool force = false) {
     const auto t = std::filesystem::last_write_time(path, ec);
     if (!force && (ec || t == s_lastWrite)) return;
     if (!ec) s_lastWrite = t;
+    // Dev (2026-11-13): NOBLE_NO_APPEARANCE skips Noble's Armory appearance (test: does the profile drive the Marine look
+    // in Marine mods?).
+    static const bool s_noAppearance = std::getenv("NOBLE_NO_APPEARANCE") != nullptr;
+    if (s_noAppearance) return;
     ApplyArmoryAppearance(profile);
 }
 

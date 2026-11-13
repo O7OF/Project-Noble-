@@ -2847,6 +2847,39 @@ static bool MarineApplySEH(uintptr_t base, uint32_t unit, const uint32_t* pairs,
     }
 }
 
+// Dev (2026-11-13, env NOBLE_MARINE_ALL): apply the pairs to EVERY object (any type) whose model has the marine regions,
+// to test whether the Marine on screen is another object than the player unit (an attached puppet). Returns the count;
+// types[] gets each hit's object type byte.
+static int MarineApplyAllSEH(uintptr_t base, uint32_t helmetSid, uint32_t backpackSid, const uint32_t* pairs, size_t pairCount,
+                             uint32_t* hits, uint8_t* types, int maxHits) {
+    int n = 0;
+    __try {
+        const uint32_t tlsIdx = *reinterpret_cast<const uint32_t*>(base + 0xC17B18);
+        const uintptr_t tlsArray = *reinterpret_cast<const uintptr_t*>(__readgsqword(0x58) + static_cast<uintptr_t>(tlsIdx) * 8u);
+        if (!tlsArray) return -1;
+        uint8_t* objTable = *reinterpret_cast<uint8_t* const*>(tlsArray + 0x10);
+        if (!objTable) return -2;
+        const int32_t maxObjects = std::clamp(*reinterpret_cast<const int32_t*>(objTable + 0x44), 0, 2048);
+        uint8_t* entries = *reinterpret_cast<uint8_t* const*>(objTable + 0x50);
+        if (!entries) return -3;
+        using SetRegionPermutationFn = uint8_t(__fastcall*)(uint32_t, uint32_t, uint32_t, uint8_t);
+        auto SetRegionPermutation = reinterpret_cast<SetRegionPermutationFn>(base + 0x4729F4);
+        for (int32_t i = 0; i < maxObjects; ++i) {
+            const uint8_t* entry = entries + static_cast<size_t>(i) * 0x18;
+            const uint16_t salt = *reinterpret_cast<const uint16_t*>(entry + 0x00);
+            if (salt == 0 || !*reinterpret_cast<uint8_t* const*>(entry + 0x10)) continue;
+            const uint32_t datum = (static_cast<uint32_t>(salt) << 16) | static_cast<uint32_t>(i);
+            if (MarineRegionIndexSEH(base, datum, helmetSid) < 0 || MarineRegionIndexSEH(base, datum, backpackSid) < 0) continue;
+            for (size_t p = 0; p < pairCount; ++p) SetRegionPermutation(datum, pairs[p * 2], pairs[p * 2 + 1], 1);
+            if (n < maxHits) { hits[n] = datum; types[n] = entry[0x04]; }
+            ++n;
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return -100 - n;
+    }
+    return n;
+}
+
 static uint32_t LocalUnitDatumNow(uintptr_t base) {
     using GetLocalUnitFn = int32_t(__fastcall*)(int32_t);
     return static_cast<uint32_t>(reinterpret_cast<GetLocalUnitFn>(base + 0x53EF8)(0));
@@ -2859,7 +2892,10 @@ static uint32_t LocalUnitDatumNowSEH(uintptr_t base) {
 void ReachArmory::SyncMarine() {
     static ULONGLONG s_next = 0;
     const ULONGLONG now = GetTickCount64();
-    if (now < s_next) return;
+    // Dev (2026-11-13): NOBLE_MARINE_HOLD also drops the 100 ms throttle (apply on every call; tests a mod script that
+    // re-sets the look every tick).
+    static const bool s_holdEvery = std::getenv("NOBLE_MARINE_HOLD") != nullptr;
+    if (!s_holdEvery && now < s_next) return;
     s_next = now + 100;
 
     ReachArmorySelection sel = GetSelection();
@@ -2966,6 +3002,17 @@ void ReachArmory::SyncMarine() {
     const uint32_t variantSid = (s_variant && s_ticksLeft == 29) ? sid(s_variant) : 0u;
     const bool ok = MarineApplySEH(base, unit, pairs.data(), pairs.size() / 2, sel.marineColors ? pri : nullptr,
                                    sel.marineColors ? sec : nullptr, sel.marineColors ? c3 : nullptr, sel.marineColors ? c4 : nullptr, results, variantSid);
+    if (std::getenv("NOBLE_MARINE_ALL")) {
+        uint32_t hits[16] = {}; uint8_t types[16] = {};
+        const int n = MarineApplyAllSEH(base, sid("helmet"), sid("flair_backpack"), pairs.data(), pairs.size() / 2, hits, types, 16);
+        static int s_lastN = -999;
+        if (n != s_lastN) {
+            s_lastN = n;
+            std::string list;
+            for (int k = 0; k < n && k < 16; ++k) { char buf[40]; snprintf(buf, sizeof(buf), " 0x%08X(type %u)", hits[k], types[k]); list += buf; }
+            NOBLE_INFO("MarineArmor: ALL -> {} marine-model object(s):{} (player unit 0x{:08X})", n, list, unit);
+        }
+    }
     if (s_ticksLeft == 29) {
         NOBLE_INFO("MarineArmor: applied {} of {} piece(s){} to 0x{:08X}{}", pairs.size() / 2, sel.marinePieces.size(),
                    sel.marineColors ? " + colours" : "", unit, ok ? "" : " (FAILED)");
