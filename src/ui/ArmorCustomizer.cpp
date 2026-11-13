@@ -2030,7 +2030,10 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
                     if (s_index < count) { m_profile.kneeGuardsIndex = s_index; name = list[s_index].name; }
                 } else if (s_cycle == "visor") {
                     count = static_cast<int>(kVisorColors.size());
-                    if (s_index < count) { m_profile.visorColorIndex = s_index; m_visorSelection = s_index; name = kVisorColors[s_index].name; }
+                    if (s_index < count) {
+                        m_profile.visorColorIndex = s_index; m_visorSelection = s_index; name = kVisorColors[s_index].name;
+                        m_pickerScrollToEquipped = true;   // dev: keep the picked tile in view for captures
+                    }
                 } else if (s_cycle == "elitecolor") {
                     // Dev test (2026-11-11): switch the preview to the Elite, then change the Elite colours the way
                     // the colour pickers do, so the live colour path can be checked with -capture-at.
@@ -2237,7 +2240,13 @@ void ArmorCustomizer::Render(ID3D11Device* device, ID3D11DeviceContext* context)
         addList("Utility", &m_profile.utilityIndex, "c_utility", multi(GetSpartanUtilities(), "utility"));
         addList("Knee Guards", &m_profile.kneeGuardsIndex, "c_knees", multi(GetSpartanKneeGuards(), "knees"));
         addList("Visor Color", &m_profile.visorColorIndex, "c_helmet", [&](std::vector<PickOption>& o) {
-            for (const auto& v : kVisorColors) { o.push_back({ v.name, v.description, ColourU32(v.r, v.g, v.b) }); spartanItem(o.back(), "visor", v.stringId); }
+            for (const auto& v : kVisorColors) {
+                o.push_back({ v.name, v.description, ColourU32(v.r, v.g, v.b) });
+                spartanItem(o.back(), "visor", v.stringId);
+                // 2026-11-13: Noble's own visor colours have no stock picture; data\ui\reach\armory\visor_color\<id>.png
+                // (stock Mark V [B] icon with the visor recoloured, tools\visor_icons.ps1). Missing file -> colour chip.
+                if (!o.back().art) { o.back().art = v.stringId; o.back().artDir = "armory/visor_color"; }
+            }
         });
     } else {
         // Locked items can't stay equipped (e.g. a look saved before the rank locks): they fall back to Minor.
