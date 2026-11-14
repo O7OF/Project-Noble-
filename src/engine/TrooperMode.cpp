@@ -155,5 +155,162 @@ bool Install(HMODULE engine, const std::string& map, const std::string& mode) {
 
 bool Active() { return s_active.load(); }
 
+// ---- test-only model/permutation dump (NOBLE_MODEL_DUMP=1) -----------------------------------------------------
+
+namespace {
+
+uintptr_t EngineBaseForDump() {
+    if (s_base) return s_base;
+    return reinterpret_cast<uintptr_t>(GetModuleHandleW(L"haloreach.dll"));
+}
+
+const uint8_t* PagesAt(uintptr_t base, uint32_t packed) {
+    const uint64_t* pages = reinterpret_cast<const uint64_t*>(base + 0x4E39F20);
+    const uint64_t page = pages[packed >> 28];
+    if (!page) return nullptr;
+    return reinterpret_cast<const uint8_t*>(page + static_cast<uint64_t>(packed) * 4);
+}
+
+const uint8_t* TagDataAt(uintptr_t base, const uint8_t* tagInstances, uint32_t datum) {
+    if (!tagInstances || datum == 0xFFFFFFFFu) return nullptr;
+    const uint32_t packed = *reinterpret_cast<const uint32_t*>(tagInstances + static_cast<size_t>(datum & 0xFFFFu) * 8 + 4);
+    return PagesAt(base, packed);
+}
+
+uint32_t LocalUnitDatumForDump(uintptr_t base) {
+    using GetLocalUnitFn = int32_t(__fastcall*)(int32_t);
+    return static_cast<uint32_t>(reinterpret_cast<GetLocalUnitFn>(base + 0x53EF8)(0));
+}
+
+const uint8_t* ObjectEntryForDump(uintptr_t base, uint32_t unit) {
+    const uint32_t tlsIdx = *reinterpret_cast<const uint32_t*>(base + 0xC17B18);
+    const uintptr_t tlsArray = *reinterpret_cast<const uintptr_t*>(__readgsqword(0x58) + static_cast<uintptr_t>(tlsIdx) * 8u);
+    if (!tlsArray) return nullptr;
+    const uint8_t* objTable = *reinterpret_cast<const uint8_t* const*>(tlsArray + 0x10);
+    if (!objTable) return nullptr;
+    const uint8_t* entries = *reinterpret_cast<const uint8_t* const*>(objTable + 0x50);
+    if (!entries) return nullptr;
+    return *reinterpret_cast<const uint8_t* const*>(entries + static_cast<size_t>(unit & 0xFFFFu) * 0x18 + 0x10);
+}
+
+void DumpRegionsSEH(uintptr_t base, uint32_t unit) {
+    __try {
+        const uint8_t* entry = ObjectEntryForDump(base, unit);
+        if (!entry) { NOBLE_WARN("ModelDump: no object entry for unit 0x{:08X}", unit); return; }
+        const uint32_t bipedDatum = *reinterpret_cast<const uint32_t*>(entry);
+        const uint16_t variant = *reinterpret_cast<const uint16_t*>(entry + 0xEA);   // object_set_variant's field
+        const uint8_t* tagInstances = *reinterpret_cast<const uint8_t* const*>(base + 0xC1A600);
+        const uint8_t* biped = TagDataAt(base, tagInstances, bipedDatum);
+        if (!biped) { NOBLE_WARN("ModelDump: no biped tag for unit 0x{:08X}", unit); return; }
+        const uint32_t hlmtDatum = *reinterpret_cast<const uint32_t*>(biped + 0x70);
+        const uint8_t* hlmt = TagDataAt(base, tagInstances, hlmtDatum);
+        if (!hlmt) { NOBLE_WARN("ModelDump: no hlmt for biped 0x{:08X}", bipedDatum); return; }
+        const uint32_t modeDatum = *reinterpret_cast<const uint32_t*>(hlmt + 0x0C);
+        const uint8_t* mode = TagDataAt(base, tagInstances, modeDatum);
+        if (!mode) { NOBLE_WARN("ModelDump: no model for hlmt 0x{:08X}", hlmtDatum); return; }
+        const int32_t regionCount = *reinterpret_cast<const int32_t*>(mode + 0x0C);
+        const uint32_t regionPacked = *reinterpret_cast<const uint32_t*>(mode + 0x10);
+        const uint8_t* regions = PagesAt(base, regionPacked);
+
+        // haloreach+0x473028: per-object region state (count, byte per region, region table).
+        using RegionStateFn = void(__fastcall*)(uint16_t, int32_t*, int64_t*, int64_t*);
+        int32_t stateCount = 0;
+        int64_t statePtr = 0, tablePtr = 0;
+        reinterpret_cast<RegionStateFn>(base + 0x473028)(static_cast<uint16_t>(unit), &stateCount, &statePtr, &tablePtr);
+        const uint8_t* state = reinterpret_cast<const uint8_t*>(statePtr);
+
+        NOBLE_INFO("ModelDump: unit 0x{:08X} biped 0x{:08X} hlmt 0x{:08X} model 0x{:08X} variant {} regions {} state {} table 0x{:X}",
+                   unit, bipedDatum, hlmtDatum, modeDatum, variant, regionCount, stateCount, static_cast<uint64_t>(tablePtr));
+
+        for (int32_t i = 0; i < regionCount && i < 64 && regions; ++i) {
+            const uint8_t* region = regions + static_cast<size_t>(i) * 0x10;
+            const uint32_t nameSid = *reinterpret_cast<const uint32_t*>(region);
+            const int32_t permCount = *reinterpret_cast<const int32_t*>(region + 4);
+            const uint32_t permPacked = *reinterpret_cast<const uint32_t*>(region + 8);
+            const uint8_t* perms = PagesAt(base, permPacked);
+            const int32_t current = (state && i < stateCount) ? state[i] : -1;
+            uint32_t permSid = 0;
+            if (perms && current >= 0 && current < permCount)
+                permSid = *reinterpret_cast<const uint32_t*>(perms + static_cast<size_t>(current) * 0x18);
+            NOBLE_INFO("ModelDump: region {:02} name 0x{:08X} perms {:2} current {:3} perm 0x{:08X}", i, nameSid,
+                       permCount, current, permSid);
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        NOBLE_WARN("ModelDump: fault while reading the model");
+    }
+}
+
+int EnvInt(const wchar_t* name, int fallback) {
+    wchar_t value[32] = {};
+    if (GetEnvironmentVariableW(name, value, 32) <= 0) return fallback;
+    return _wtoi(value);
+}
+
+// Test-only: force region permutation(s) by index from the environment. NOBLE_TROOPER_FORCE_REGION=-1 forces every
+// region; a non-negative value forces just that region (region order = the applied model variant's region list).
+void ForceRegionPermSEH(uintptr_t base, uint32_t unit, int32_t regionIndex, int32_t permIndex) {
+    __try {
+        const uint8_t* entry = ObjectEntryForDump(base, unit);
+        if (!entry) return;
+        const uint32_t bipedDatum = *reinterpret_cast<const uint32_t*>(entry);
+        const uint8_t* tagInstances = *reinterpret_cast<const uint8_t* const*>(base + 0xC1A600);
+        const uint8_t* biped = TagDataAt(base, tagInstances, bipedDatum);
+        if (!biped) return;
+        const uint8_t* hlmt = TagDataAt(base, tagInstances, *reinterpret_cast<const uint32_t*>(biped + 0x70));
+        if (!hlmt) return;
+        const uint8_t* mode = TagDataAt(base, tagInstances, *reinterpret_cast<const uint32_t*>(hlmt + 0x0C));
+        if (!mode) return;
+        const int32_t regionCount = *reinterpret_cast<const int32_t*>(mode + 0x0C);
+        const uint8_t* regions = PagesAt(base, *reinterpret_cast<const uint32_t*>(mode + 0x10));
+        if (!regions) return;
+        using SetRegionPermutationFn = uint8_t(__fastcall*)(uint32_t, uint32_t, uint32_t, uint8_t);
+        auto setRegionPermutation = reinterpret_cast<SetRegionPermutationFn>(base + 0x4729F4);
+
+        const int32_t first = (regionIndex >= 0) ? regionIndex : 0;
+        const int32_t last = (regionIndex >= 0) ? regionIndex : (regionCount - 1);
+        for (int32_t i = first; i <= last && i < regionCount; ++i) {
+            const uint8_t* region = regions + static_cast<size_t>(i) * 0x10;
+            const uint32_t regionSid = *reinterpret_cast<const uint32_t*>(region);
+            const int32_t permCount = *reinterpret_cast<const int32_t*>(region + 4);
+            const uint8_t* perms = PagesAt(base, *reinterpret_cast<const uint32_t*>(region + 8));
+            if (!perms || permCount <= 0) continue;
+            const int32_t use = (permIndex < permCount) ? permIndex : 0;
+            const uint32_t permSid = *reinterpret_cast<const uint32_t*>(perms + static_cast<size_t>(use) * 0x18);
+            const uint8_t rc = setRegionPermutation(unit, regionSid, permSid, 1);
+            NOBLE_INFO("ModelForce: region {} sid 0x{:08X} -> perm {} sid 0x{:08X} rc {}", i, regionSid, use, permSid, rc);
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        NOBLE_WARN("ModelForce: fault");
+    }
+}
+
+} // namespace
+
+void DumpModelState() {
+    static int mode = -1;   // bit 1 = dump, bit 2 = force
+    static int forceRegion = -1, forcePerm = -1;
+    if (mode < 0) {
+        mode = 0;
+        wchar_t value[8] = {};
+        if (GetEnvironmentVariableW(L"NOBLE_MODEL_DUMP", value, 8) > 0) mode |= 1;
+        forceRegion = EnvInt(L"NOBLE_TROOPER_FORCE_REGION", -1);
+        forcePerm = EnvInt(L"NOBLE_TROOPER_FORCE_PERM", -1);
+        if (forcePerm >= 0) mode |= 2;
+    }
+    if (!mode) return;
+    static bool done = false;
+    static int frames = 0;
+    if (done) return;
+    const uintptr_t base = EngineBaseForDump();
+    if (!base) return;
+    uint32_t unit;
+    __try { unit = LocalUnitDatumForDump(base); } __except (EXCEPTION_EXECUTE_HANDLER) { return; }
+    if (unit == 0xFFFFFFFFu) return;
+    if (++frames < 120) return;   // about two seconds at 60 fps
+    done = true;
+    if (mode & 1) DumpRegionsSEH(base, unit);
+    if (mode & 2) ForceRegionPermSEH(base, unit, forceRegion, forcePerm);
+}
+
 } // namespace TrooperMode
 } // namespace noble

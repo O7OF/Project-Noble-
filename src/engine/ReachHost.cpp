@@ -25,6 +25,7 @@
 #include "engine/DevCheats.hpp"
 #include "engine/ReachArmory.hpp"
 #include "engine/ElitePack.hpp"
+#include "engine/TrooperMode.hpp"
 #include "engine/SharedTagCache.hpp"
 #include "engine/DevCheats.hpp"
 #include "vfs/VFS.hpp"
@@ -2004,9 +2005,27 @@ static void FillLocalPad(uint8_t* st, bool keyboardMouseUsed) {
     memcpy(st + 0x12C, &ry, sizeof(SHORT));
 }
 
+// Test-only: NOBLE_TEST_SKIP_CINEMATICS=<seconds> pulses Space (2 s down, 0.5 s up) for that many seconds, so a
+// campaign test can skip its intro cutscene without the game window ever being focused. It must run BEFORE the
+// focus gate: FillLocalInput returns early when the window is unfocused, which is exactly how tests run now.
+void InjectTestSkipInput(uint8_t* st) {
+    static ULONGLONG s_start = 0;
+    static int s_seconds = -1;
+    if (s_seconds < 0) {
+        wchar_t value[16] = {};
+        s_seconds = (GetEnvironmentVariableW(L"NOBLE_TEST_SKIP_CINEMATICS", value, 16) > 0) ? _wtoi(value) : 0;
+        s_start = GetTickCount64();
+    }
+    if (s_seconds <= 0) return;
+    const ULONGLONG elapsed = GetTickCount64() - s_start;
+    if (elapsed < static_cast<ULONGLONG>(s_seconds) * 1000 && elapsed > 3000 && (elapsed % 2500) < 2000)
+        st[0x004 + VK_SPACE] = 0x80;
+}
+
 static void FillLocalInput(uint8_t* st) {
     *reinterpret_cast<uint32_t*>(st + 0x000) = 1;
     *reinterpret_cast<float*>(st + 0x118) = 1.0f;
+    InjectTestSkipInput(st);
 
     if (SharedTagCache::HasPendingSpawn()) {
         SharedTagCache::ProcessPendingSpawn();
@@ -2016,6 +2035,7 @@ static void FillLocalInput(uint8_t* st) {
         ReachArmory::NotifyEngineTick();
     } else {
         ReachArmory::NotifyMatchTick();   // Marine pieces: must be set on this (simulation) thread
+        TrooperMode::DumpModelState();    // test-only (NOBLE_MODEL_DUMP=1): log the local unit's regions/permutations once
     }
 
     static HWND s_lastWindow = nullptr;

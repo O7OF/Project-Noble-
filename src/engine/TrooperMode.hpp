@@ -18,5 +18,11 @@ bool Install(HMODULE engine, const std::string& map, const std::string& mode);
 
 bool Active();   // the player representations were switched to the marine
 
+// Test-only instrumentation: with NOBLE_MODEL_DUMP=1 in the environment, once per process, about two seconds after a
+// local unit exists, log that unit's model chain and every region's name string-id, permutation count and the
+// permutation index/name actually applied. Used to compare a Spartan run with a Trooper (marine) run; no effect
+// unless the variable is set. Call every tick (it gates itself).
+void DumpModelState();
+
 } // namespace TrooperMode
 } // namespace noble
