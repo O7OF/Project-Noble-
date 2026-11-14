@@ -260,7 +260,8 @@ void RecommendedMaps::Initialize(const std::filesystem::path& installDir) {
     forge.id = "forge_world";
     forge.title = "Noble Forge World";
     forge.description = "Pelican, Spectre, Boathog and the targeting laser in the Forge palette. Optional download.";
-    forge.assetPrefix = "Project-Noble-ForgeWorld-";
+    forge.assetPrefix = "Noble-ForgeWorld-";   // deliberately not "Project-Noble-*": the updater must not see this
+                                               // pack as a client update (see Updater.cpp asset selection).
     forge.installedMarker = std::filesystem::path("data") / "maps" / "forge_halo.map";
     forge.approxBytes = 653ull * 1024ull * 1024ull;   // shown until the release reports the real asset size
     m_items.push_back(forge);

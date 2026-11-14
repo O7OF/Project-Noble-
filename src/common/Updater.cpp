@@ -368,12 +368,20 @@ void Updater::CheckThread() {
 
     std::string assetName, assetUrl;
     uint64_t assetSize = 0;
+    // Only the client zip is an update. Releases also carry optional packs (Forge World); an earlier looser match
+    // ("name contains Project-Noble and ends .zip") picked the Forge World pack as the update, so the client was
+    // left unchanged and the update/reinstall looked broken (v0.19.84, 2026-11-14).
+    const std::string expectedAsset = "Project-Noble-" + tag + "-win64.zip";
     if (release.contains("assets") && release["assets"].is_array()) {
         for (const auto& asset : release["assets"]) {
             if (!asset.is_object()) continue;
             const std::string name = asset.value("name", "");
             if (name.size() < 4 || name.rfind(".zip") != name.size() - 4) continue;
-            if (name.find("Project-Noble") == std::string::npos) continue;
+            const bool exact = (name == expectedAsset);
+            const bool fallback = name.rfind("Project-Noble-v", 0) == 0 &&
+                                  name.compare(name.size() - 10, 10, "-win64.zip") == 0 &&
+                                  name.find("ForgeWorld") == std::string::npos;
+            if (!exact && !fallback) continue;
             assetName = name;
             // Prefer the API asset URL with application/octet-stream as it redirects directly to
             // Azure blob storage, avoiding github.com 504 gateway timeouts on browser_download_url.

@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string]$Repo = 'O7OF/Project-Noble-',
     [string]$Version = '',
     [switch]$SkipBuild,
@@ -164,7 +164,7 @@ Set-Content -Path $hashFile -Value ($hash + '  ' + $assetName) -Encoding ASCII
 # == Optional Forge World asset (the 760 MB map stays out of the base package) ==
 $forgeZip = $null
 $forgeHashFile = $null
-$forgeAssetName = 'Project-Noble-ForgeWorld-' + $tag + '-win64.zip'
+$forgeAssetName = 'Noble-ForgeWorld-' + $tag + '-win64.zip'
 if (-not $NoForgePack -and $srcForge) {
     Write-Host '== Creating the optional Forge World pack =='
     $forgePkg = Join-Path $env:TEMP 'noble-forge-world-pack'
