@@ -1119,6 +1119,7 @@ int mvarPageScanEvery = 0;        // dev: diff every writable page every N secon
     std::string connectSessionId = "";
     std::string connectSessionToken = "";
     std::string relayUrl = "";
+    std::string savedFilmPath = "";
 
     auto WideToNarrow = [](const std::wstring& w) -> std::string {
         if (w.empty()) return "";
@@ -1143,6 +1144,8 @@ int mvarPageScanEvery = 0;        // dev: diff every writable page every N secon
                 noble::SetSessionMapVariantPath(std::filesystem::path(argvW[i]));
             } else if (arg == L"-variant" && i + 1 < numArgs) {
                 customVariant = WideToNarrow(argvW[++i]);
+            } else if (arg == L"-film" && i + 1 < numArgs) {
+                savedFilmPath = WideToNarrow(argvW[++i]);
             } else if (arg == L"-mod" && i + 1 < numArgs) {
                 modFolder = fs::path(argvW[++i]);
             } else if (arg == L"-map-override" && i + 1 < numArgs) {
@@ -1484,6 +1487,7 @@ int mvarPageScanEvery = 0;        // dev: diff every writable page every N secon
     args += L" -difficulty " + std::to_wstring(launchDifficulty);
     if (!customVariant.empty()) args += L" -variant \"" + toWide(customVariant) + L"\"";
     if (!customMvar.empty()) args += L" -mvar \"" + toWide(customMvar) + L"\"";
+    if (!savedFilmPath.empty()) args += L" -film \"" + toWide(savedFilmPath) + L"\"";
     // Keep the map-variant memory dump running after the menu relaunches into a match.
     if (mvarDumpEvery > 0) args += L" -mvar-dump-every " + std::to_wstring(mvarDumpEvery);
     if (mvarLiveDumpEvery > 0) args += L" -mvar-live-dump " + std::to_wstring(mvarLiveDumpEvery);
@@ -1909,7 +1913,11 @@ int mvarPageScanEvery = 0;        // dev: diff every writable page every N secon
             }
         }
 
-        NOBLE_INFO("Launching Halo: Reach Engine: Target Map='{}', Mode='{}'", launchMap, launchMode);
+        NOBLE_INFO("Launching Halo: Reach Engine: Target Map='{}', Mode='{}'{}", launchMap, launchMode,
+                   savedFilmPath.empty() ? "" : (" [Theater Film: '" + savedFilmPath + "']"));
+        if (!savedFilmPath.empty()) {
+            noble::BlamEngine::SetSavedFilmPath(savedFilmPath);
+        }
         blamEngine->LaunchMap(launchMap, launchMode, launchDifficulty, launchSkulls, customMvar, customVariant, "", expectedPeers);
 
         // The lobby's teams, from "-lobby-teams "1,2,4"": player index -> team (1..8). The engine deals its own
@@ -2085,6 +2093,7 @@ int mvarPageScanEvery = 0;        // dev: diff every writable page every N secon
     noble::MasterServerClient::Get().Shutdown();
     noble::SessionManager::Get().Shutdown();
     blamEngine->Shutdown();
+    noble::FrontEndMenu::SyncTheaterFiles();
 
     NOBLE_INFO("Network and host services shut down; exiting process cleanly.");
     RemoveOwnRunFlag();

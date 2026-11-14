@@ -108,6 +108,10 @@ public:
 
     static void SetEngineModeOverride(int mode) { s_engineModeOverride = mode; }
 
+    // Saved film (.film) path for Theater playback (written to launch_block + 0x2BF20).
+    static void SetSavedFilmPath(std::string path) { s_savedFilmPath = std::move(path); }
+    static const std::string& SavedFilmPath() { return s_savedFilmPath; }
+
     // Research switch: a guest normally skips PostCommand(10/11) and waits for the host's session sync. Campaign may
     // still need the guest to post them itself to create its own player; "-guest-post-start" enables that for a test.
     static void SetGuestPostStart(bool value) { s_guestPostStart = value; }
@@ -117,6 +121,7 @@ public:
 private:
     static int s_engineModeOverride;   // research hook: forces launch-block +0x0C
     static bool s_guestPostStart;      // research hook: guest posts its own Command 10/11
+    static std::string s_savedFilmPath; // Theater mode saved film path (.film)
     static BlamEngine* s_active;       // the running client's engine, for command dispatch
     static std::atomic<bool> s_gameTeamsEnabled;   // Teams option decoded for the running match
     static std::optional<VariantFields> s_variantOverrides;   // host options applied at launch
