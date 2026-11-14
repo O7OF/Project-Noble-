@@ -1641,17 +1641,14 @@ int mvarPageScanEvery = 0;        // dev: diff every writable page every N secon
         }
     }
     noble::limits::Profile requestedLimits = noble::limits::ProfileFromInt(startupSettings.extendedLimits);
-    // Every Extended profile patches the engine's renderer (AI/particle/light-volume limits). On campaign maps that
-    // leaves the frame black after the intro cutscene: m10 reproduced 2026-11-14 on V16, V16+Particles and Full,
-    // while the same launch on Stock shows the cutscene and then hands over to gameplay (played through, 185 s).
-    // Campaign never needs those limits, so force the stock DLL for campaign launches. The saved setting is
-    // untouched: Forge, multiplayer and Firefight still get the saved profile on their next launch.
-    if (!showMenu && _stricmp(launchMode.c_str(), "campaign") == 0 &&
-        requestedLimits != noble::limits::Profile::Stock) {
+    // Extended engine limits (V16, V16Particles, Full) currently cause infinite blackscreen loads in Campaign
+    // and network kicks in Firefight/Multiplayer. Only Forge mode functions with extended limits.
+    // Force Stock for all non-Forge launches and menu sessions until limits patches are updated.
+    if (_stricmp(launchMode.c_str(), "forge") != 0 && requestedLimits != noble::limits::Profile::Stock) {
         requestedLimits = noble::limits::Profile::Stock;
-        NOBLE_WARN("main: Engine limits {} leave campaign missions black after the intro cutscene; using Stock for "
-                   "this campaign launch",
-                   noble::limits::ProfileName(noble::limits::ProfileFromInt(startupSettings.extendedLimits)));
+        NOBLE_WARN("main: Engine limits {} are disabled for mode '{}' (only Forge supports extended limits until stability patches land); using Stock",
+                   noble::limits::ProfileName(noble::limits::ProfileFromInt(startupSettings.extendedLimits)),
+                   launchMode.empty() ? (showMenu ? "menu" : "match") : launchMode.c_str());
     }
     const noble::limits::PrepareResult engineDll =
         noble::limits::PrepareEngineDll(reachInstall->reachDllPath, requestedLimits);
