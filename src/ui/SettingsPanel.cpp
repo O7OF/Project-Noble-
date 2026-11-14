@@ -1312,7 +1312,7 @@ void SettingsPanel::RenderGame() {
     {
         constexpr int count = static_cast<int>(std::size(kEngineLimitLabels));
         const int current = std::clamp(m_edit.extendedLimits, 0, count - 1);
-        if (Row("ENGINE LIMITS", "Raises the object and render limits. All players in a match must use the same setting. Takes effect after a restart.",
+        if (Row("ENGINE LIMITS", "Raises object and render limits (Forge mode only; non-Forge modes run on Stock limits for stability). All players in a match must use the same setting. Takes effect after a restart.",
                 When::Restart, kEngineLimitLabels[0], m_edit.extendedLimits != m_saved.extendedLimits)) {
             if (const int d = CycleValue(kEngineLimitLabels[current], current, count, false)) {
                 m_edit.extendedLimits = std::clamp(current + d, 0, count - 1);
