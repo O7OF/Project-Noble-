@@ -285,6 +285,16 @@ static uint64_t s_rebuildReadyFrame = 0;
 // been stable for kSpeciesSettleMs and no rebuild is running, then the camera, shows_elite and that species' pairs
 // are written in the same frame (one rebuild). While it waits, the character on screen keeps the look it has.
 constexpr uint64_t kSpeciesSettleMs = 350;
+
+// The shows_elite value the menu script reads: 0 Spartan, 1 Elite, 2 Marine, 3 Female Marine.
+static const char* SpeciesName(uint32_t wantElite) {
+    switch (wantElite) {
+    case 1: return "Elite";
+    case 2: return "Marine";
+    case 3: return "Female Marine";
+    default: return "Spartan";
+    }
+}
 static std::atomic<uint64_t> s_speciesChangeMs{0};    // GetTickCount64 of the last selection whose species changed
 static std::atomic<bool> s_speciesDeferred{false};    // a species flip is waiting (read by Tick / NotifyEngineTick)
 static uint64_t s_speciesWaitStartMs = 0;              // first frame of the current wait (for the log line)
@@ -1599,14 +1609,19 @@ static void ApplyGlobalsAndPermutations(int32_t targetSceneIdx, const std::strin
                               frameEarly < s_settleDeadline);
     const uint64_t nowMs = GetTickCount64();
     const bool speciesFlipWanted = armoryScene && (curElite != wantElite);
+    // The settle wait exists because the Elite has its own pedestal/camera (0x0B): flipping the camera before the
+    // character keeps 1-2 frames of Elite on screen (Tyler's 21:43 video). Marine / Female Marine / Spartan all
+    // stand on the Spartan pedestal, so those flips can be applied at once - waiting on the Elite settle path is what
+    // left the previous character (and its colours) on screen for seconds when switching Spartan <-> Marine.
+    const bool eliteInvolved = ((curElite == 1u) != (wantElite == 1u));
     const bool speciesDeferred = speciesFlipWanted &&
-                                 (nowMs - s_speciesChangeMs.load() < kSpeciesSettleMs || rebuildBusy);
+                                 (rebuildBusy || (eliteInvolved && nowMs - s_speciesChangeMs.load() < kSpeciesSettleMs));
     s_speciesDeferred.store(speciesDeferred);
     if (speciesDeferred) {
         if (s_speciesWaitStartMs == 0) s_speciesWaitStartMs = nowMs;
     } else if (s_speciesWaitStartMs != 0) {
         if (speciesFlipWanted) {
-            NOBLE_INFO("ReachArmory: species switch to {} applied after a {} ms wait", wantElite ? "Elite" : "Spartan",
+            NOBLE_INFO("ReachArmory: species switch to {} applied after a {} ms wait", SpeciesName(wantElite),
                        nowMs - s_speciesWaitStartMs);
         }
         s_speciesWaitStartMs = 0;
