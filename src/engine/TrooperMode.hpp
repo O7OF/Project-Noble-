@@ -12,8 +12,9 @@ namespace noble {
 // tag table (must be a biped) before anything is changed. Cutscenes keep their own actors.
 namespace TrooperMode {
 
-// Call once after haloreach.dll is loaded and before the engine starts the match.
-void Install(HMODULE engine, const std::string& map, const std::string& mode);
+// Call once after haloreach.dll is loaded and before the engine starts the match. Returns true when Trooper mode is
+// on for this mission (the caller locks the camera to third person: the marine has no first-person arms).
+bool Install(HMODULE engine, const std::string& map, const std::string& mode);
 
 bool Active();   // the player representations were switched to the marine
 

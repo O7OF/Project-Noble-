@@ -450,7 +450,19 @@ void CameraThirdPerson::SetMode(int mode) {
     NOBLE_INFO("CameraThirdPerson: experiment mode {}", mode);
 }
 
+static std::atomic<bool> s_locked{false};
+
+void CameraThirdPerson::LockThirdPerson() {
+    s_locked.store(true);
+    s_vehicleFirstPerson.store(false);
+    SetEnabled(true);
+    NOBLE_INFO("CameraThirdPerson: locked to third person (Trooper mode)");
+}
+
+bool CameraThirdPerson::IsLocked() { return s_locked.load(); }
+
 void CameraThirdPerson::SetEnabled(bool enabled) {
+    if (!enabled && s_locked.load()) return;   // Trooper mode: third person only
     const bool before = s_enabled.exchange(enabled);
     if (!enabled) {
         s_zoomHeld.store(false);
@@ -470,6 +482,7 @@ void CameraThirdPerson::PollHotkey(bool keyDown) {
 }
 
 void CameraThirdPerson::SetVehicleFirstPerson(bool enabled) {
+    if (enabled && s_locked.load()) return;   // Trooper mode: third person only
     const bool before = s_vehicleFirstPerson.exchange(enabled);
     if (before != enabled) {
         NOBLE_INFO("CameraThirdPerson: vehicle first person {}", enabled ? "on" : "off");

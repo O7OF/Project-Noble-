@@ -126,30 +126,31 @@ void __fastcall RebuildHook(uint8_t* arg) {
 
 } // namespace
 
-void Install(HMODULE engine, const std::string& map, const std::string& mode) {
-    if (!engine || s_base) return;
+bool Install(HMODULE engine, const std::string& map, const std::string& mode) {
+    if (!engine || s_base) return false;
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
     bool on = false;
     for (int i = 1; argv && i < argc; ++i) if (_wcsicmp(argv[i], L"-trooper") == 0) on = true;
     if (argv) LocalFree(argv);
-    if (!on) return;
-    if (mode != "campaign") { NOBLE_INFO("TrooperMode: -trooper is campaign only for now (mode {})", mode); return; }
+    if (!on) return false;
+    if (mode != "campaign") { NOBLE_INFO("TrooperMode: -trooper is campaign only for now (mode {})", mode); return false; }
     for (const auto& e : kMaps) if (_stricmp(e.map, map.c_str()) == 0) s_entry = &e;
-    if (!s_entry) { NOBLE_WARN("TrooperMode: no marine known for map '{}'", map); return; }
+    if (!s_entry) { NOBLE_WARN("TrooperMode: no marine known for map '{}'", map); return false; }
     s_base = reinterpret_cast<uintptr_t>(engine);
     static const uint8_t kPrologue[7] = {0x48, 0x8B, 0xC4, 0x48, 0x89, 0x58, 0x10};
     if (std::memcmp(reinterpret_cast<void*>(s_base + kZoneRebuild), kPrologue, 7) != 0) {
         NOBLE_WARN("TrooperMode: haloreach.dll doesn't look as expected; off");
-        return;
+        return false;
     }
     if (!HookManager::InstallHook(reinterpret_cast<void*>(s_base + kZoneRebuild), reinterpret_cast<void*>(&RebuildHook),
                                   reinterpret_cast<void**>(&s_original), "trooper_zone_rebuild")) {
         NOBLE_WARN("TrooperMode: hook failed; off");
-        return;
+        return false;
     }
     HookManager::EnableAll();
     NOBLE_INFO("TrooperMode: on for {} (marine tag {}, Spartan tag {})", map, s_entry->marine, s_entry->spartan);
+    return true;
 }
 
 bool Active() { return s_active.load(); }

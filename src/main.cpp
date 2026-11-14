@@ -1770,7 +1770,9 @@ int mvarPageScanEvery = 0;        // dev: diff every writable page every N secon
         noble::ElitePack::Install(loader->GetModuleHandle(), userStoragePath, launchMode);
     }
     // Trooper mode prototype (-trooper): the campaign player is a UNSC Marine.
-    if (!showMenu) noble::TrooperMode::Install(loader->GetModuleHandle(), launchMap, launchMode);
+    if (!showMenu && noble::TrooperMode::Install(loader->GetModuleHandle(), launchMap, launchMode)) {
+        noble::CameraThirdPerson::LockThirdPerson();   // Tyler: Trooper mode is third person only
+    }
 
     if (!connectAddress.empty()) {
         launchHost = false; // Guest joining remote match

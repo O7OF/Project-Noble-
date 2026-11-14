@@ -17,6 +17,10 @@ public:
     static bool Install(HMODULE haloreach);
 
     static void SetEnabled(bool enabled);
+    // Trooper mode: third person on and kept on (the marine has no first-person arms). While locked, nothing turns
+    // third person off (hotkey, settings) and the vehicle first-person camera stays off.
+    static void LockThirdPerson();
+    static bool IsLocked();
     static void SetMode(int mode);   // experiment switch
     static void SetDistancePercent(int percent);   // 100 = engine default, >100 pulls the camera back
     static bool IsEnabled();
