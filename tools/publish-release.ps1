@@ -59,17 +59,37 @@ if (Test-Path (Join-Path $srcArmor 'rr_elite_pack.map')) {
     Write-Warning "data\armor\rr_elite_pack.map was not found to package"
 }
 
-# Copy the public Armory menu map mod and its string_id tables into data\menumaps\
+# Copy the public Armory menu maps and their string_id tables into data\menumaps\.
+# - mainmenu_all.map: RR's public menu map (Armory scripts / GLOBALS tables / Spartan + Elite previews).
+# - noble_menu.map: Noble's rebuilt menu map. It embeds the campaign marine model and animation
+#   (hlmt/mode objects\characters\marine\marine plus its campaign shaders/bitmaps) and the
+#   objects\characters\marine\noble_menu_marine + marine_female\noble_menu_marine_female bipeds that the Armory's
+#   Marine tab previews. Without it a player without a Marine mod cannot customise a Marine in the menu.
 $srcMenuMaps = Join-Path $root 'data\menumaps'
-if (-not (Test-Path (Join-Path $srcMenuMaps 'mainmenu_all.map'))) {
-    $srcMenuMaps = Join-Path $release 'data\menumaps'
+$relMenuMaps = Join-Path $release 'data\menumaps'
+New-Item -ItemType Directory -Force -Path (Join-Path $pkg 'data\menumaps') | Out-Null
+$copiedMaps = @()
+foreach ($name in 'mainmenu_all.map', 'noble_menu.map') {
+    $src = Join-Path $srcMenuMaps $name
+    if (-not (Test-Path $src)) { $src = Join-Path $relMenuMaps $name }
+    if (Test-Path $src) {
+        Copy-Item $src (Join-Path $pkg ('data\menumaps\' + $name)) -Force
+        $copiedMaps += $name
+    }
 }
-if (-not (Test-Path (Join-Path $srcMenuMaps 'mainmenu_all.map'))) {
+if ($copiedMaps -notcontains 'mainmenu_all.map') {
     throw "missing mainmenu_all.map in data\menumaps (required for Armory in release zip)"
 }
-New-Item -ItemType Directory -Force -Path (Join-Path $pkg 'data\menumaps') | Out-Null
-& robocopy $srcMenuMaps (Join-Path $pkg 'data\menumaps') mainmenu_all.map *.string_ids.csv /NFL /NDL /NJH /NJS /NP | Out-Null
-if ($LASTEXITCODE -gt 7) { throw "robocopy menumaps failed ($LASTEXITCODE)" }
+if ($copiedMaps -notcontains 'noble_menu.map') {
+    Write-Warning 'noble_menu.map is missing from the package: the Armory Marine tab needs it (players would need a Marine mod to customise a Marine)'
+}
+# Loose string_id tables next to the maps (noble_menu.string_ids.csv is the newest table).
+foreach ($dir in $srcMenuMaps, $relMenuMaps) {
+    if (-not (Test-Path $dir)) { continue }
+    Get-ChildItem $dir -Filter '*.string_ids.csv' | ForEach-Object {
+        Copy-Item $_.FullName (Join-Path $pkg ('data\menumaps\' + $_.Name)) -Force
+    }
+}
 
 # Noble's Forge World (Pelican, Spectre, Boathog, targeting laser in the Forge palette). The VFS serves data\maps\<name>.map
 # in place of MCC's map, so every player must have this same file or Forge World lobbies won't match. The data copy above
